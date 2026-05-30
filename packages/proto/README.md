@@ -22,7 +22,7 @@ From this directory (`packages/proto`):
 # Lint
 buf lint
 
-# Breaking changes vs main (run on PR branches)
+# Breaking changes vs main (after packages/proto exists on main; skipped on initial import PR)
 buf breaking --against "https://github.com/Rick1330/ibex-harness.git#branch=main,subdir=packages/proto"
 
 # Generate stubs (local only; output under gen/)
