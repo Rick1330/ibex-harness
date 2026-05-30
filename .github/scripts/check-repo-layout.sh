@@ -34,7 +34,7 @@ while IFS= read -r f; do
   if [[ "$f" == .github/* ]]; then
     continue
   fi
-  if [[ "$f" != docs/* && "$f" != prompts/* && "$f" != AGENTS.md && "$f" != PROMPTS.md && "$f" != README.md ]]; then
+  if [[ "$f" != docs/* && "$f" != prompts/* && "$f" != AGENTS.md && "$f" != PROMPTS.md && "$f" != README.md && "$f" != CONTRIBUTING.md ]]; then
     echo "Doc outside allowed paths: $f"
     fail=1
   fi
