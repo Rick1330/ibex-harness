@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package ibex.context.v1;
 
-option go_package = "github.com/ibexharness/ibex-harness/packages/proto/gen/go/ibex/context/v1;contextv1";
+option go_package = "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/context/v1;contextv1";
 
 service ContextAssemblyService {
   // Assemble context for an inference call
