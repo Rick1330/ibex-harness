@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   repo-guards:
-    name: Repo guards
+    name: repo-guards
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -59,7 +59,7 @@ jobs:
         run: bash .github/scripts/check-repo-layout.sh
 
   markdown:
-    name: Markdown (structural)
+    name: markdownlint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -70,7 +70,7 @@ jobs:
         run: npx --yes markdownlint-cli2 "**/*.md" "#node_modules"
 
   secrets:
-    name: Secret scan (gitleaks)
+    name: gitleaks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6

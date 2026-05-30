@@ -1,0 +1,5 @@
+# Default owner for the entire repository.
+# When teams grow, add path-specific rules, for example:
+# /services/proxy/     @org/proxy-team
+# /packages/proto/     @org/platform-team
+* @Rick1330

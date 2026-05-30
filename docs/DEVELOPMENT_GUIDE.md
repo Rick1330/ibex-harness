@@ -208,6 +208,24 @@ A branch should correspond to **one coherent unit of change**:
 
 **Avoid:** branches that touch every service “a little bit”. That’s where AI-assisted work becomes unreviewable.
 
+### 6.3 Branch protection + PR-only workflow
+
+**Direct pushes to `main` are forbidden** once branch protection is enabled on GitHub.
+
+All changes must:
+
+1. Be made on a feature branch (see §6.1 naming).
+2. Open a pull request against `main`.
+3. Pass required CI status checks before merge:
+   - `repo-guards`
+   - `markdownlint`
+   - `gitleaks`
+4. Keep the PR branch up to date with `main` when required by branch protection.
+
+Solo maintainer mode uses **zero required approvals** (the PR author cannot approve their own PR on GitHub). Use the PR description and checklist for self-review until team reviewers exist.
+
+Policy details: [CONTRIBUTING.md](../CONTRIBUTING.md), [adr/ADR-0003-branch-protection-and-merge-policy.md](adr/ADR-0003-branch-protection-and-merge-policy.md).
+
 ---
 
 ## 7) Pull Requests (PRs)

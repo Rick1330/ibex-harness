@@ -33,7 +33,13 @@ When working on any feature, consult the relevant docs:
 - docs/MONITORING.md + docs/PERFORMANCE.md — SLOs, metrics, perf budgets
 Also consult:
 - AGENTS.md — agent workflow rules
+- CONTRIBUTING.md — PR workflow, branches, required CI checks
 - prompts/ — reusable prompts; prefer them to free-form instructions
+
+## 1.5) Governance (non-negotiable)
+- Never commit or push directly to `main`. Use a feature branch and open a PR.
+- Required CI checks before merge: `repo-guards`, `markdownlint`, `gitleaks`.
+- See CONTRIBUTING.md and docs/adr/ADR-0003-branch-protection-and-merge-policy.md.
 
 ## 2) Repository structure rules (file placement is strict)
 Allowed top-level dirs: services/, packages/, infra/, docs/, prompts/

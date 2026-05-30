@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ALLOWED_TOP='^(docs|prompts|services|packages|infra|reports|\.github|\.git|\.cursor|_report)$'
-ROOT_DOCS='^(AGENTS\.md|PROMPTS\.md|README\.md|LICENSE)$'
+ROOT_DOCS='^(AGENTS\.md|PROMPTS\.md|README\.md|LICENSE|CONTRIBUTING\.md)$'
 
 fail=0
 
