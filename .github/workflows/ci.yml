@@ -101,7 +101,11 @@ jobs:
         working-directory: packages/proto
         run: |
           buf lint
-          buf breaking --against "https://github.com/${{ github.repository }}.git#branch=main,subdir=packages/proto"
+          if git cat-file -e "main:packages/proto/buf.yaml" 2>/dev/null; then
+            buf breaking --against "https://github.com/${{ github.repository }}.git#branch=main,subdir=packages/proto"
+          else
+            echo "Skipping buf breaking: no proto baseline on main yet (initial proto import)"
+          fi
 
   compose-validate:
     name: compose-validate
