@@ -15,4 +15,9 @@ Planned services (see [docs/FILE_STRUCTURE.md](../docs/FILE_STRUCTURE.md)):
 | `worker/` | Python Celery — async jobs |
 | `dashboard/` | Next.js — operator UI |
 
-No service implementation code exists yet. Bootstrap the first skeleton via [docs/FILE_STRUCTURE.md](../docs/FILE_STRUCTURE.md) scaffolds.
+**Available now:**
+
+- `auth/` - Go skeleton with `/health`, `/ready`, and `/metrics`
+- `proxy/` - Go skeleton with `/health`, `/ready`, and `/metrics`
+
+Other services remain planned and should be bootstrapped via [docs/FILE_STRUCTURE.md](../docs/FILE_STRUCTURE.md) scaffolds.

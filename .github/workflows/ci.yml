@@ -116,3 +116,30 @@ jobs:
         run: docker compose -f infra/compose/dev/docker-compose.yml --env-file infra/compose/dev/.env.example config
       - name: Validate test compose
         run: docker compose -f infra/compose/test/docker-compose.yml config
+
+  go-services:
+    name: go-services
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [auth, proxy]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.21.x"
+      - name: gofmt check
+        run: |
+          files="$(find "services/${{ matrix.service }}" -name '*.go')"
+          test -n "$files"
+          unformatted="$(gofmt -l $files)"
+          if [ -n "$unformatted" ]; then
+            echo "$unformatted"
+            exit 1
+          fi
+      - name: go test
+        working-directory: services/${{ matrix.service }}
+        run: go test ./...
+      - name: go build
+        working-directory: services/${{ matrix.service }}
+        run: go build ./cmd/${{ matrix.service }}
