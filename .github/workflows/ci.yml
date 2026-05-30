@@ -86,3 +86,29 @@ jobs:
 
       - name: Run gitleaks
         run: gitleaks detect --source . --config .gitleaks.toml --redact --verbose
+
+  buf-lint:
+    name: buf-lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: bufbuild/buf-setup-action@v1.49.0
+        with:
+          version: "1.47.2"
+      - name: buf lint and breaking
+        working-directory: packages/proto
+        run: |
+          buf lint
+          buf breaking --against "https://github.com/${{ github.repository }}.git#branch=main,subdir=packages/proto"
+
+  compose-validate:
+    name: compose-validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Validate dev compose
+        run: docker compose -f infra/compose/dev/docker-compose.yml --env-file infra/compose/dev/.env.example config
+      - name: Validate test compose
+        run: docker compose -f infra/compose/test/docker-compose.yml config

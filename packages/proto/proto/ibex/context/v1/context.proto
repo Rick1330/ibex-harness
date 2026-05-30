@@ -1,0 +1,125 @@
+syntax = "proto3";
+
+package ibex.context.v1;
+
+option go_package = "github.com/ibexharness/ibex-harness/packages/proto/gen/go/ibex/context/v1;contextv1";
+
+service ContextAssemblyService {
+  // Assemble context for an inference call
+  rpc AssembleContext(AssembleContextRequest)
+      returns (AssembleContextResponse);
+
+  // Retrieve memories without full assembly
+  rpc SearchMemories(SearchMemoriesRequest)
+      returns (SearchMemoriesResponse);
+
+  // Update memory usefulness after outcome known
+  rpc RecordMemoryFeedback(RecordMemoryFeedbackRequest)
+      returns (RecordMemoryFeedbackResponse);
+}
+
+message AssembleContextRequest {
+  string agent_id = 1;
+  string org_id = 2;
+  string session_id = 3;
+  string query = 4;
+  string model = 5;
+  string directive_version_id = 6;
+  int32 available_tokens = 7;
+  repeated Message recent_messages = 8;
+  AssemblyOptions options = 9;
+}
+
+message AssemblyOptions {
+  bool skip_cold_memories = 1;
+  bool skip_hot_memories = 2;
+  float recency_weight = 3;
+  float relevance_weight = 4;
+  float usefulness_weight = 5;
+  float confidence_weight = 6;
+  int32 max_memories = 7;
+}
+
+message AssembleContextResponse {
+  string assembled_context = 1;
+  int32 tokens_used = 2;
+  int32 memories_included = 3;
+  repeated MemoryUsed memories_used = 4;
+  int32 directive_tokens = 5;
+  int32 history_tokens = 6;
+  int32 memory_tokens = 7;
+  AssemblyMetrics metrics = 8;
+}
+
+message AssemblyMetrics {
+  int32 budget_calculation_ms = 1;
+  int32 directive_load_ms = 2;
+  int32 hot_memory_retrieval_ms = 3;
+  int32 cold_memory_retrieval_ms = 4;
+  int32 ranking_ms = 5;
+  int32 packing_ms = 6;
+  int32 formatting_ms = 7;
+  int32 total_ms = 8;
+  int32 candidates_evaluated = 9;
+}
+
+message MemoryUsed {
+  string memory_id = 1;
+  float composite_score = 2;
+  float relevance_score = 3;
+  float recency_score = 4;
+  float usefulness_score = 5;
+  int32 rank = 6;
+  string category = 7;
+}
+
+message Message {
+  string role = 1;
+  string content = 2;
+}
+
+message SearchMemoriesRequest {
+  string agent_id = 1;
+  string org_id = 2;
+  string query = 3;
+  int32 limit = 4;
+  float min_similarity = 5;
+  repeated string categories = 6;
+  repeated string tags = 7;
+  string session_id = 8;
+}
+
+message SearchMemoriesResponse {
+  repeated Memory memories = 1;
+  int32 total_candidates = 2;
+  int32 search_time_ms = 3;
+}
+
+message Memory {
+  string id = 1;
+  string content = 2;
+  string category = 3;
+  float confidence = 4;
+  float composite_score = 5;
+  int32 retrieval_count = 6;
+  string created_at = 7;
+}
+
+message RecordMemoryFeedbackRequest {
+  repeated string memory_ids = 1;
+  string session_id = 2;
+  string trace_id = 3;
+  string org_id = 4;
+  string feedback = 5;  // "positive", "negative", "neutral"
+}
+
+message RecordMemoryFeedbackResponse {
+  bool success = 1;
+  repeated MemoryScoreUpdate updates = 2;
+}
+
+message MemoryScoreUpdate {
+  string memory_id = 1;
+  float previous_score = 2;
+  float new_score = 3;
+}

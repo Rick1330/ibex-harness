@@ -28,7 +28,7 @@ done
 
 while IFS= read -r f; do
   [[ "$f" == *.md ]] || continue
-  if [[ "$f" =~ ^(services|packages|infra)/README\.md$ ]]; then
+  if [[ "$f" =~ ^(services|packages|infra)/README\.md$ ]] || [[ "$f" =~ ^(services|packages|infra)/.+/README\.md$ ]]; then
     continue
   fi
   if [[ "$f" == .github/* ]]; then

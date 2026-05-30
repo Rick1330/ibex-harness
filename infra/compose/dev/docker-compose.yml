@@ -1,0 +1,76 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: ibex-dev-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ibex}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ibex}
+      POSTGRES_DB: ${POSTGRES_DB:-ibex}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - ibex_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ibex} -d ${POSTGRES_DB:-ibex}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  redis:
+    image: redis/redis-stack:7.4.0-v1
+    container_name: ibex-dev-redis
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - ibex_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8.8.16
+    container_name: ibex-dev-clickhouse
+    environment:
+      CLICKHOUSE_DB: ${CLICKHOUSE_DB:-ibex}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-default}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
+    ports:
+      - "${CLICKHOUSE_HTTP_PORT:-8123}:8123"
+      - "${CLICKHOUSE_NATIVE_HOST_PORT:-9002}:9000"
+    volumes:
+      - ibex_clickhouse_data:/var/lib/clickhouse
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8123/ping | grep -q Ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  minio:
+    image: minio/minio:RELEASE.2024-12-18T13-15-44Z
+    container_name: ibex-dev-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-minioadmin}
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - ibex_minio_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9000/minio/health/live || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+volumes:
+  ibex_postgres_data:
+  ibex_redis_data:
+  ibex_clickhouse_data:
+  ibex_minio_data:

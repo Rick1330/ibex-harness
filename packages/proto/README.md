@@ -1,0 +1,36 @@
+# packages/proto
+
+Protobuf source of truth for IBEX Harness internal gRPC contracts.
+
+## Layout
+
+```text
+proto/ibex/<domain>/v1/*.proto
+```
+
+Generated output (when run locally) goes to `gen/` and is **not committed** — see [ADR-0004](../../docs/adr/ADR-0004-protobuf-and-codegen-policy.md).
+
+## Prerequisites
+
+- [Buf CLI](https://buf.build/docs/installation)
+
+## Commands
+
+From this directory (`packages/proto`):
+
+```bash
+# Lint
+buf lint
+
+# Breaking changes vs main (run on PR branches)
+buf breaking --against "https://github.com/Rick1330/ibex-harness.git#branch=main,subdir=packages/proto"
+
+# Generate stubs (local only; output under gen/)
+buf generate
+```
+
+## Contracts
+
+| Package | Service | Source doc |
+|---------|---------|------------|
+| `ibex.context.v1` | `ContextAssemblyService` | [API_DOCUMENTATION.md](../../docs/API_DOCUMENTATION.md) (gRPC section) |

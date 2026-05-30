@@ -12,6 +12,8 @@ Canonical documentation for the monorepo. Implementation has not started; these 
 
 Then use [DEVELOPMENT_GUIDE.md](DEVELOPMENT_GUIDE.md) for day-to-day workflow and PR expectations.
 
+**Local dependencies:** [../infra/compose/dev/README.md](../infra/compose/dev/README.md) (Docker Compose). **Contracts:** [../packages/proto/README.md](../packages/proto/README.md) (Buf / protobuf).
+
 **AI-assisted work:** read [../AGENTS.md](../AGENTS.md) and copy prompts from [../prompts/](../prompts/) (see [../PROMPTS.md](../PROMPTS.md)).
 
 ---
@@ -59,3 +61,5 @@ Then use [DEVELOPMENT_GUIDE.md](DEVELOPMENT_GUIDE.md) for day-to-day workflow an
 - [adr/README.md](adr/README.md)
 - [adr/ADR-0001-template.md](adr/ADR-0001-template.md)
 - [adr/ADR-0002-repo-foundation-bootstrap.md](adr/ADR-0002-repo-foundation-bootstrap.md)
+- [adr/ADR-0003-branch-protection-and-merge-policy.md](adr/ADR-0003-branch-protection-and-merge-policy.md)
+- [adr/ADR-0004-protobuf-and-codegen-policy.md](adr/ADR-0004-protobuf-and-codegen-policy.md)

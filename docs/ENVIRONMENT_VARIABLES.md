@@ -435,7 +435,7 @@ REDIS_URL=redis://localhost:6379/0
 # Postgres (example DSN; do not commit real passwords)
 POSTGRES_DSN=postgresql+asyncpg://ibex:ibex@localhost:5432/ibex
 
-# ClickHouse
+# ClickHouse (HTTP; local compose maps native protocol to host port 9002 — see infra/compose/dev/README.md)
 CLICKHOUSE_DSN=clickhouse://default:@localhost:8123/ibex
 
 # MinIO

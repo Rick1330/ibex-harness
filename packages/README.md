@@ -6,10 +6,8 @@ Planned packages (see [docs/FILE_STRUCTURE.md](../docs/FILE_STRUCTURE.md)):
 
 | Directory | Role |
 | --- | --- |
-| `proto/` | Protobuf source of truth + buf codegen |
-| `sdk-python/` | Python client SDK |
-| `sdk-typescript/` | TypeScript client SDK |
-| `sdk-go/` | Go client SDK |
-| `cli/` | `ibex` CLI (Go) |
-
-No package code exists yet.
+| `proto/` | Protobuf source of truth + buf codegen — [proto/README.md](proto/README.md) |
+| `sdk-python/` | Python client SDK (planned) |
+| `sdk-typescript/` | TypeScript client SDK (planned) |
+| `sdk-go/` | Go client SDK (planned) |
+| `cli/` | `ibex` CLI (Go) (planned) |
