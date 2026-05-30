@@ -80,18 +80,10 @@ After merge, register check names on a PR, then apply via Settings → Branches 
 ```bash
 gh api --method PUT \
   repos/Rick1330/ibex-harness/branches/main/protection \
-  -f required_status_checks[strict]=true \
-  -f required_status_checks[checks][]=context=repo-guards \
-  -f required_status_checks[checks][]=context=markdownlint \
-  -f required_status_checks[checks][]=context=gitleaks \
-  -F enforce_admins=true \
-  -F required_conversation_resolution=true \
-  -F allow_force_pushes=false \
-  -F allow_deletions=false \
-  -f required_pull_request_reviews[dismiss_stale_reviews]=false \
-  -f required_pull_request_reviews[require_code_owner_reviews]=false \
-  -f required_pull_request_reviews[required_approving_review_count]=0
+  --input .github/branch-protection-main.json
 ```
+
+Payload: [.github/branch-protection-main.json](../../.github/branch-protection-main.json) (solo mode: PR required, 0 approvals, three CI checks, `enforce_admins: true`).
 
 ## References
 

@@ -4,9 +4,12 @@
 
 **Do not** open a public GitHub issue for security vulnerabilities.
 
-Report privately to:
+Report privately using **GitHub Private vulnerability reporting** (Security Advisories):
 
-- **Email:** `security@example.com` *(replace with your security contact before production use)*
+1. Open the repository [Security](https://github.com/Rick1330/ibex-harness/security) tab.
+2. Choose **Report a vulnerability**, or go directly to [Report a vulnerability](https://github.com/Rick1330/ibex-harness/security/advisories/new).
+
+Repository maintainers must enable **Private vulnerability reporting** under **Settings → Security → Code security and analysis** if the option is not visible.
 
 Include: description, impact, reproduction steps, and affected components if known.
 

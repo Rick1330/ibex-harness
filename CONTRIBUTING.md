@@ -41,6 +41,15 @@ Examples: `feat(proxy): add request ID middleware`, `docs(adr): add branch prote
 
 Align with [docs/CODING_STANDARDS.md](docs/CODING_STANDARDS.md) where language-specific rules apply.
 
+## Automated PR review (Copilot)
+
+**GitHub Copilot** (`copilot-pull-request-reviewer`) may comment on pull requests. Treat Copilot feedback as **advisory** only:
+
+- Triage each comment: fix, track in an issue, or reply and dismiss with rationale.
+- Copilot does **not** satisfy merge requirements and is not a required status check.
+
+Repository hints for Copilot: [.github/instructions/ibex-harness.instructions.md](.github/instructions/ibex-harness.instructions.md).
+
 ## Required CI checks
 
 Every PR must pass these status checks (stable names for branch protection):
