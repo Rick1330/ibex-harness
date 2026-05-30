@@ -12,6 +12,8 @@ Canonical documentation for the monorepo. Implementation has not started; these 
 
 Then use [DEVELOPMENT_GUIDE.md](DEVELOPMENT_GUIDE.md) for day-to-day workflow and PR expectations.
 
+**Toolchain:** [TOOLCHAIN.md](TOOLCHAIN.md) lists required local tools, installation options, and sanity checks.
+
 **Local dependencies:** [../infra/compose/dev/README.md](../infra/compose/dev/README.md) (Docker Compose). **Contracts:** [../packages/proto/README.md](../packages/proto/README.md) (Buf / protobuf).
 
 **AI-assisted work:** read [../AGENTS.md](../AGENTS.md) and copy prompts from [../prompts/](../prompts/) (see [../PROMPTS.md](../PROMPTS.md)).
@@ -29,6 +31,7 @@ Then use [DEVELOPMENT_GUIDE.md](DEVELOPMENT_GUIDE.md) for day-to-day workflow an
 | [API_DOCUMENTATION.md](API_DOCUMENTATION.md) | REST, gRPC, and LLM proxy API contracts |
 | [CODING_STANDARDS.md](CODING_STANDARDS.md) | Universal and Go/Python/TypeScript standards |
 | [DEVELOPMENT_GUIDE.md](DEVELOPMENT_GUIDE.md) | Local dev, branches, PRs, CI, ADRs, AI-assisted development |
+| [TOOLCHAIN.md](TOOLCHAIN.md) | Required tools, installation, sanity checks, and local command surface |
 | [TESTING_STRATEGY.md](TESTING_STRATEGY.md) | Unit, integration, contract, and performance testing |
 | [SECURITY.md](SECURITY.md) | Multi-tenancy, cryptography, prompt injection, incident response |
 | [ENVIRONMENT_VARIABLES.md](ENVIRONMENT_VARIABLES.md) | Env var registry and validation rules |

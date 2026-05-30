@@ -15,10 +15,13 @@ for entry in *; do
     fi
   elif [[ -f "$entry" ]]; then
     case "$entry" in
-      .cursorrules|.editorconfig|.gitattributes|.gitignore|.markdownlint-cli2.jsonc|.gitleaks.toml) ;;
+      .cursorrules|.editorconfig|.gitattributes|.gitignore|.markdownlint-cli2.jsonc|.gitleaks.toml|.pre-commit-config.yaml|Makefile|LICENSE|AGENTS.md|CONTRIBUTING.md|PROMPTS.md|README.md) ;;
       *)
         if [[ "$entry" =~ \.md$ ]] && ! [[ "$entry" =~ $ROOT_DOCS ]]; then
           echo "Markdown at repo root not allowed: $entry (use docs/)"
+          fail=1
+        else
+          echo "Unexpected root file: $entry"
           fail=1
         fi
         ;;

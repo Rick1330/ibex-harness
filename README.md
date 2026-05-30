@@ -21,7 +21,10 @@ This repository is a monorepo containing all services, packages, and infrastruct
 - Go 1.21+
 - Python 3.11+
 - Node.js 18+
-- (Optional) GNU Make
+- Buf CLI
+- GNU Make or Git Bash `make`
+
+Install and verify tools with [docs/TOOLCHAIN.md](docs/TOOLCHAIN.md).
 
 ### 1) Clone
 
@@ -33,7 +36,7 @@ cd ibex-harness
 ### 2) Start infrastructure (databases, caches, analytics)
 
 ```bash
-docker compose -f infra/compose/dev/docker-compose.yml up -d
+make compose-dev-up
 ```
 
 Expected services:
@@ -42,34 +45,23 @@ Expected services:
 - Redis (Redis Stack recommended)
 - ClickHouse
 - MinIO (S3-compatible)
-- Observability stack (optional in dev): Prometheus, Grafana, Loki
+- MinIO (S3-compatible)
 
-### 3) Run migrations + seed dev data
-
-```bash
-make db-migrate
-make db-seed
-```
-
-### 4) Start core services (dev mode)
-
-In separate terminals (or use `make dev` if provided):
+### 3) Run local validation
 
 ```bash
-make dev-api
-make dev-worker
-make dev-context
-make dev-embedder
-make dev-proxy
-make dev-dashboard
+make repo-guards
+make lint-docs
+make proto-lint
 ```
 
-### 5) Verify health
+### 4) Stop infrastructure
 
 ```bash
-curl -s http://localhost:8000/v1/health | jq
-curl -s http://localhost:8080/health | jq
+make compose-dev-down
 ```
+
+Application services are introduced incrementally. Do not assume product endpoints exist until the relevant service README documents them.
 
 ---
 

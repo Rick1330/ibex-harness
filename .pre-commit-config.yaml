@@ -1,0 +1,20 @@
+repos:
+  - repo: local
+    hooks:
+      - id: repo-guards
+        name: repo guards
+        entry: bash .github/scripts/check-repo-layout.sh
+        language: system
+        pass_filenames: false
+
+      - id: markdownlint
+        name: markdownlint
+        entry: npx --yes markdownlint-cli2 "**/*.md" "#node_modules"
+        language: system
+        pass_filenames: false
+
+      - id: gitleaks-optional
+        name: gitleaks optional local scan
+        entry: bash -c 'if command -v gitleaks >/dev/null 2>&1; then gitleaks detect --source . --config .gitleaks.toml --redact; else echo "gitleaks not installed; skipping local secret scan (CI still runs gitleaks)"; fi'
+        language: system
+        pass_filenames: false

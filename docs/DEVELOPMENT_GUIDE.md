@@ -104,6 +104,21 @@ A new contributor should be able to get productive in **≤ 1 hour**.
 - Go 1.21+
 - Python 3.11+
 - Node.js 18+
+- Buf CLI
+
+See [TOOLCHAIN.md](TOOLCHAIN.md) for installation instructions and sanity checks.
+
+### 4.1.1 Canonical local commands
+
+Use the root `Makefile` for common local tasks:
+
+```bash
+make help
+make repo-guards
+make lint-docs
+make proto-lint
+make compose-dev-up
+```
 
 ### 4.2 Local infra
 
@@ -306,6 +321,31 @@ If a PR fails CI:
 - Fix the code
 - Do not disable the rule unless there is a documented, reviewed reason
 - If disabling is needed, add an ADR and update `CODING_STANDARDS.md`
+
+### 8.3 Optional pre-commit hooks
+
+Local pre-commit hooks mirror the fast CI checks where practical. They are recommended for contributors and AI-assisted workflows.
+
+Install:
+
+```bash
+python -m pip install pre-commit
+pre-commit install
+```
+
+Run manually:
+
+```bash
+pre-commit run --all-files
+```
+
+Emergency skip:
+
+```bash
+git commit --no-verify
+```
+
+Only skip hooks for urgent or tooling-related cases. The PR description must explain what was skipped and how the equivalent CI checks were verified.
 
 ---
 
