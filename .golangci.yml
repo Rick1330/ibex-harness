@@ -1,0 +1,17 @@
+version: "2"
+run:
+  timeout: 3m
+linters:
+  enable:
+    - govet
+    - gofmt
+    - goimports
+    - staticcheck
+    - revive
+    - errcheck
+  disable:
+    - gocyclo
+    - prealloc
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

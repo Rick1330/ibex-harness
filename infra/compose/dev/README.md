@@ -34,7 +34,7 @@ docker compose down -v
 |---------|-------|------------|---------|
 | Postgres + pgvector | `pgvector/pgvector:pg16` | 5432 | Primary OLTP |
 | Redis Stack | `redis/redis-stack:7.4.0-v1` | 6379 | Cache, Bloom/Cuckoo filters |
-| ClickHouse | `clickhouse/clickhouse-server:24.8.8.16` | 8123 (HTTP), **9002** (native) | Analytics |
+| ClickHouse | `clickhouse/clickhouse-server:24.8.14.39` | 8123 (HTTP), **9002** (native) | Analytics |
 | MinIO | `minio/minio:RELEASE.2024-12-18T13-15-44Z` | 9000 (API), 9001 (console) | Object storage |
 
 ClickHouse **native** is mapped to host port **9002** so it does not conflict with MinIO on **9000**. Use HTTP (`8123`) for typical local DSNs — see [docs/ENVIRONMENT_VARIABLES.md](../../../docs/ENVIRONMENT_VARIABLES.md).

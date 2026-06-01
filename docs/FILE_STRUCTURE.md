@@ -157,6 +157,8 @@ services/proxy/
   README.md
 ```
 
+Note: this repository uses a single root Go module (`go.mod` at repository root) for monorepo convenience. Service directories should *not* contain independent module files unless there is a deliberate reason to opt-in to per-service versioning; prefer the root module so tooling (`go test ./...`, `gofmt`, `golangci-lint`) runs from repository root.
+
 **Rules:**
 
 - `cmd/<service>/main.go` contains **wiring only** (config + start + graceful shutdown).
