@@ -32,7 +32,7 @@ services:
       start_period: 10s
 
   clickhouse:
-    image: clickhouse/clickhouse-server:24.8.8.16
+    image: clickhouse/clickhouse-server:24.8.14.39
     container_name: ibex-dev-clickhouse
     environment:
       CLICKHOUSE_DB: ${CLICKHOUSE_DB:-ibex}
