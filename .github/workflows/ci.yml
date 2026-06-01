@@ -130,9 +130,11 @@ jobs:
           go-version: "1.21.x"
       - name: gofmt check
         run: |
-          files="$(find "services/${{ matrix.service }}" -name '*.go')"
-          test -n "$files"
-          unformatted="$(gofmt -l $files)"
+          if ! find "services/${{ matrix.service }}" -name '*.go' -print -quit | grep -q .; then
+            echo "No Go files found"
+            exit 1
+          fi
+          unformatted="$(find "services/${{ matrix.service }}" -name '*.go' -print0 | xargs -0 gofmt -l)"
           if [ -n "$unformatted" ]; then
             echo "$unformatted"
             exit 1
