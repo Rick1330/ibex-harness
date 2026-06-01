@@ -36,6 +36,10 @@ ibex-harness/
   .gitattributes
   .editorconfig
   .pre-commit-config.yaml
+  Makefile
+  go.mod                       # single Go module for all Go code (services + future CLI/SDK)
+  go.sum
+  .golangci.yml
 
   docs/
     README.md
@@ -151,9 +155,7 @@ services/proxy/
   test/
     integration/               # optional if not co-located
   .env.example
-  Dockerfile
-  go.mod
-  go.sum
+  Dockerfile                   # build from repo root; see service README
   README.md
 ```
 
@@ -161,6 +163,7 @@ Note: this repository uses a single root Go module (`go.mod` at repository root)
 
 **Rules:**
 
+- Go services use the **repository root** `go.mod` (`github.com/Rick1330/ibex-harness`). Do not add per-service `go.mod` files.
 - `cmd/<service>/main.go` contains **wiring only** (config + start + graceful shutdown).
 - `internal/` contains almost all logic.
 - `pkg/` is only for code intended to be imported by other modules. Default is **do not use pkg**.

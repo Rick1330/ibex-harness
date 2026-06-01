@@ -24,9 +24,16 @@ See [.env.example](.env.example).
 
 ## Run locally
 
+From the repository root (single Go module):
+
 ```bash
-cd services/proxy
-IBEX_PORT=8080 REDIS_URL=redis://localhost:6379/0 go run ./cmd/proxy
+IBEX_PORT=8080 REDIS_URL=redis://localhost:6379/0 go run ./services/proxy/cmd/proxy
+```
+
+Docker build (from repository root):
+
+```bash
+docker build -f services/proxy/Dockerfile .
 ```
 
 ## Verify

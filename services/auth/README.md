@@ -24,9 +24,16 @@ See [.env.example](.env.example).
 
 ## Run locally
 
+From the repository root (single Go module):
+
 ```bash
-cd services/auth
-IBEX_PORT=8081 POSTGRES_DSN=postgres://ibex:ibex@localhost:5432/ibex go run ./cmd/auth
+IBEX_PORT=8081 POSTGRES_DSN=postgres://ibex:ibex@localhost:5432/ibex go run ./services/auth/cmd/auth
+```
+
+Docker build (from repository root):
+
+```bash
+docker build -f services/auth/Dockerfile .
 ```
 
 ## Verify
