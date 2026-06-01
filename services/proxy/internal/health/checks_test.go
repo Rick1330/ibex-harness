@@ -17,6 +17,19 @@ func TestReadyRedisMissingURL(t *testing.T) {
 	}
 }
 
+func TestRedisEndpointNoUserInfo(t *testing.T) {
+	ep, err := redisEndpoint("redis://localhost:6379/0")
+	if err != nil {
+		t.Fatalf("redisEndpoint: %v", err)
+	}
+	if ep.address != "localhost:6379" {
+		t.Fatalf("unexpected address: %s", ep.address)
+	}
+	if ep.password != "" || ep.username != "" {
+		t.Fatalf("expected empty credentials, got user=%q pass=%q", ep.username, ep.password)
+	}
+}
+
 func TestReadyRedisPing(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

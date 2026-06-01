@@ -45,7 +45,6 @@ Expected services:
 - Redis (Redis Stack recommended)
 - ClickHouse
 - MinIO (S3-compatible)
-- MinIO (S3-compatible)
 
 ### 3) Run local validation
 

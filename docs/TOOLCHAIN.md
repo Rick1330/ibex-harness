@@ -19,6 +19,7 @@ make help
 | Git | 2.40+ | Source control and PR workflow |
 | Docker Engine + Docker Compose | Docker 24+, Compose v2 | Local Postgres, Redis, ClickHouse, and MinIO |
 | Go | 1.21+ | Go services (`auth`, `proxy`, future CLI) |
+| GNU Make | any POSIX `make` implementation | Canonical command surface (`Makefile`) used by developers and CI; on Windows prefer running via Git Bash or install a compatible `make` implementation |
 | Node.js | 18+ | `markdownlint-cli2` and future dashboard |
 | Python | 3.11+ | Future Python services and optional tooling |
 | Buf CLI | 1.47+ | Protobuf linting and breaking-change checks |
@@ -38,7 +39,7 @@ make help
 
 ### 4.1 Windows
 
-Use PowerShell. Install Git Bash because Make targets run POSIX shell scripts.
+Use PowerShell. Install Git Bash because Make targets run POSIX shell scripts. If `make` is not available, install Git for Windows (includes Git Bash) or install `make` via Chocolatey/winget. Prefer running `make` inside Git Bash to match CI behavior.
 
 ```powershell
 winget install --id Git.Git -e
@@ -171,7 +172,7 @@ make compose-dev-down
 
 ## 7) Troubleshooting
 
-If `make` is missing on Windows, run commands from Git Bash after installing Git for Windows.
+If `make` is missing on Windows, install GNU Make (for example `winget install GnuWin32.Make` or Chocolatey `make`) and run `make` from Git Bash. Git for Windows does not include GNU Make by itself.
 
 If Docker commands fail with connection errors, start Docker Desktop or the Docker daemon and retry `docker version`.
 

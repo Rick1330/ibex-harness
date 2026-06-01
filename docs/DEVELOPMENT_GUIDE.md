@@ -101,10 +101,12 @@ A new contributor should be able to get productive in **≤ 1 hour**.
 ### 4.1 Prerequisites
 
 - Docker + Docker Compose
+- GNU Make
 - Go 1.21+
 - Python 3.11+
 - Node.js 18+
 - Buf CLI
+- Bash (Git Bash on Windows)
 
 See [TOOLCHAIN.md](TOOLCHAIN.md) for installation instructions and sanity checks.
 
