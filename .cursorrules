@@ -34,9 +34,18 @@ When working on any feature, consult the relevant docs:
 Also consult:
 - AGENTS.md — agent workflow rules
 - CONTRIBUTING.md — PR workflow, branches, required CI checks
+- docs/DEVELOPMENT_GUIDE.md §12 — session workspace layout and discovery
+- docs/roadmap/CURRENT_STATE.md — canonical implementation status (update after merges)
 - prompts/ — reusable prompts; prefer them to free-form instructions
 
-## 1.5) Governance (non-negotiable)
+## 1.5) Session workspace (outside repo)
+- Never commit session workspace files.
+- Default location: sibling directory named `ibex-harness-workspace` next to the repository root (same parent as the clone). Optional override: environment variable `IBEX_WORKSPACE_DIR`.
+- Use workspace `handoff.md`, `current_state.md`, and `session_log/` for session continuity; use `archive/` for closed implementation audits.
+- Before milestone work: read `docs/roadmap/CURRENT_STATE.md`; refresh workspace notes after merges per DEVELOPMENT_GUIDE §12.3.
+- Do not hardcode machine-specific absolute paths in rules, commits, or docs you generate.
+
+## 1.6) Governance (non-negotiable)
 - Never commit or push directly to `main`. Use a feature branch and open a PR.
 - Required CI checks before merge: `repo-guards`, `markdownlint`, `gitleaks`.
 - See CONTRIBUTING.md and docs/adr/ADR-0003-branch-protection-and-merge-policy.md.

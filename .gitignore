@@ -17,10 +17,6 @@ Thumbs.db
 !.vscode/extensions.json
 !.vscode/settings.json.example
 
-# --- Local reports (not versioned; see reports/INDEX.md) ---
-reports/
-_report/
-
 # --- Go ---
 bin/
 dist/

@@ -110,6 +110,12 @@ A new contributor should be able to get productive in **≤ 1 hour**.
 
 See [TOOLCHAIN.md](TOOLCHAIN.md) for installation instructions and sanity checks.
 
+### 4.0 Development roadmap
+
+Implementation progress is tracked in [docs/roadmap/CURRENT_STATE.md](roadmap/CURRENT_STATE.md). After every milestone merges to `main`, update that file (Git SHA, what works / does not, next three tasks). Milestone definitions live under [docs/roadmap/phase-1-core-platform/milestones/](roadmap/phase-1-core-platform/milestones/). Log plan changes in [docs/roadmap/FINDINGS.md](roadmap/FINDINGS.md).
+
+Session notes and closed audits live in the **session workspace** (sibling `ibex-harness-workspace`, not in git). See §12.
+
 ### 4.1.1 Canonical local commands
 
 Use the root `Makefile` for common local tasks:
@@ -214,6 +220,30 @@ Use:
 - `security/IBEX-1234-short-description`
 - `refactor/IBEX-1234-short-description`
 - `chore/IBEX-1234-short-description`
+
+### 6.1.1 Milestone branches (roadmap)
+
+When implementing a milestone from [docs/roadmap/](roadmap/README.md), use this pattern until a GitHub issue exists:
+
+```text
+<type>/m{phase}-{goal}-{milestone}-{kebab-slug}
+```
+
+| Type | Use for |
+| --- | --- |
+| `chore` | Migrations, proto/codegen, observability scaffolding, docs-only roadmap |
+| `feature` | Auth, proxy, or other user-visible behavior |
+| `fix` / `security` | Defect or security work scoped to one milestone |
+
+**Examples:** `chore/m1-1-1-postgres-migrations`, `feature/m1-2-1-proxy-auth-client`.
+
+**Ticket override:** When tracked as `IBEX-####`, prefer `feature/IBEX-####-same-slug` (or `chore/` / `fix/` as appropriate) instead of the `m*` prefix.
+
+**PR title:** Conventional commit + milestone tag, e.g. `chore(db): postgres migrations (m1.1.1)`.
+
+**Historical:** Foundation work used `chore/foundation-00N-*` without ticket IDs; do not reuse that pattern for Phase 1+ milestones.
+
+One milestone per branch (see §6.2). Branch names and PR titles for each milestone are listed in the milestone file under `docs/roadmap/`.
 
 ### 6.2 Branch scope rule (AI-friendly)
 
@@ -497,13 +527,38 @@ These become drift factories.
 
 ---
 
-## 12) Session Workspace (recommended, outside repo)
+## 12) Session Workspace (required layout, outside repo)
 
-Because AI sessions lose context, maintain a workspace folder (not committed):
+AI sessions lose context. Keep a **session workspace** next to the git clone (never committed). The versioned roadmap in `docs/roadmap/` describes *what to build*; the workspace holds *session continuity* and *archived audits*.
+
+### 12.0 Recommended host layout
+
+Use a parent directory with **two siblings**:
 
 ```text
-~/ibex-harness-workspace/
-  current_state.md
+<parent>/
+  ibex-harness/                 # git clone (this repository)
+  ibex-harness-workspace/       # local only — see below
+```
+
+Examples:
+
+- Windows: `D:\ibex-r\ibex-harness` and `D:\ibex-r\ibex-harness-workspace`
+- macOS/Linux: `~/ibex-r/ibex-harness` and `~/ibex-r/ibex-harness-workspace`
+
+After cloning, create the workspace folder manually or copy the structure from this section. **Do not** store session files under `reports/` inside the repo (removed).
+
+### 12.1 Discovery
+
+**Default:** If the repository root is `<parent>/ibex-harness`, the workspace is `<parent>/ibex-harness-workspace`.
+
+**Override:** Set `IBEX_WORKSPACE_DIR` to the workspace root (absolute path). Tools and agents should read [DEVELOPMENT_GUIDE.md](DEVELOPMENT_GUIDE.md) §12 rather than hardcoding host paths.
+
+### 12.2 Workspace tree
+
+```text
+ibex-harness-workspace/
+  current_state.md          # session scratch; pointers to docs/roadmap/CURRENT_STATE.md
   decisions.md
   active_task.md
   handoff.md
@@ -511,9 +566,38 @@ Because AI sessions lose context, maintain a workspace folder (not committed):
   contracts.md
   session_log/
     2026-05-30-session-01.md
+  archive/
+    foundation/               # closed implementation audits (formerly repo-local reports/)
+      INDEX.md
+      001-....md
 ```
 
-### 12.1 Minimal templates
+### 12.3 Sync with the roadmap
+
+After each milestone merges to `main`:
+
+1. Update [docs/roadmap/CURRENT_STATE.md](roadmap/CURRENT_STATE.md) in the repo (via PR).
+2. Refresh workspace `current_state.md` and `handoff.md`.
+3. Log surprises in [docs/roadmap/FINDINGS.md](roadmap/FINDINGS.md) when the plan changes.
+4. Do **not** rewrite files under `archive/`; add new session log entries instead.
+
+### 12.4 Minimal templates
+
+**current_state.md**
+
+```markdown
+# Session current state
+
+Canonical status: docs/roadmap/CURRENT_STATE.md in the repo.
+
+| Field | Value |
+| --- | --- |
+| main SHA | ... |
+| Next milestone | ... |
+
+## This session
+- ...
+```
 
 **handoff.md**
 
@@ -604,13 +688,14 @@ Refactor before adding features if:
 
 ## 15) Getting Started Checklist (first day)
 
-1. Start local infra via Compose
-2. Run migrations + seed
-3. Run one service at a time (auth → proxy → memory)
-4. Call health endpoints
-5. Run test suite
-6. Create first small issue (e.g., `/health` endpoints)
-7. Enforce CI early (do not defer quality gates)
+1. Clone under a parent directory (e.g. `ibex-r/ibex-harness`) and create sibling `ibex-harness-workspace/` per §12
+2. Start local infra via Compose
+3. Run migrations + seed
+4. Run one service at a time (auth → proxy → memory)
+5. Call health endpoints
+6. Run test suite
+7. Create first small issue (e.g., `/health` endpoints)
+8. Enforce CI early (do not defer quality gates)
 
 ---
 

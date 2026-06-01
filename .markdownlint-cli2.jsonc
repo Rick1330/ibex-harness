@@ -13,5 +13,5 @@
     "MD060": false
   },
   "globs": ["**/*.md"],
-  "ignores": ["node_modules/**", ".git/**", "reports/**", "_report/**"]
+  "ignores": ["node_modules/**", ".git/**"]
 }

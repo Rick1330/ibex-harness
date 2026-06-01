@@ -401,7 +401,7 @@ Before presenting changes, the agent must verify:
 
 ## 13) Session Continuity (How Work Survives Context Loss)
 
-Agents should leave “handoff notes” at the end of a session or PR.
+Agents should leave handoff notes at the end of a session or PR in the **session workspace** (`handoff.md` next to the clone; see `docs/DEVELOPMENT_GUIDE.md` §12), not in the git repository.
 
 Minimum handoff:
 

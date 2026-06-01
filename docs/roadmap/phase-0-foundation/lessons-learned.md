@@ -1,0 +1,33 @@
+# Phase 0 — Lessons Learned
+
+## PR stacking and branch hygiene
+
+- Keep **toolchain-only** changes off branches that add service code (avoid `go-services` CI on empty `services/auth`).
+- When PR A must merge before PR B, rebase B onto `main` immediately after A merges; do not leave B targeting a deleted branch.
+- Resolve Copilot review threads in GitHub when code is fixed, not only in local commits.
+
+## Go module strategy
+
+- Adopt a **single root `go.mod`** early (`github.com/Rick1330/ibex-harness`).
+- Build Docker images from repo root with `COPY go.mod` + service path.
+
+## Developer experience
+
+- Windows contributors need **GNU Make** documented explicitly (Git Bash alone is insufficient).
+- Delegate `Makefile` targets to `infra/scripts/dev-tool.sh` for consistent Bash on Windows.
+- `security-scan` should soft-skip when `gitleaks` is missing locally; CI remains authoritative.
+
+## Observability deferrals
+
+- Custom Prometheus text metrics in skeletons are acceptable for Foundation; migrate to `prometheus/client_golang` in Phase 1 Goal 1.3.
+- OTel was deferred; wire noop provider in Phase 1 before production exporters.
+
+## Agent attribution
+
+- Use `.cursor/cli.json` with `attributeCommitsToAgent: false` and `attributePRsToAgent: false`.
+- Do not add `Co-authored-by: Cursor` trailers to commits.
+
+## Roadmap process (going forward)
+
+- Update `docs/roadmap/CURRENT_STATE.md` after every milestone merge.
+- Log pivots in `docs/roadmap/FINDINGS.md` instead of rewriting archived foundation audits in the session workspace.

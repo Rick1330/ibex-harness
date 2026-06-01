@@ -1,16 +1,19 @@
 # IBEX Harness — Documentation Index
 
-Canonical documentation for the monorepo. Implementation has not started; these docs define the target system.
+Canonical documentation for the monorepo. **Target system** design lives here; **implementation status** lives in the [roadmap](roadmap/CURRENT_STATE.md).
 
 ## Start here
 
-1. [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) — vision, problem, capabilities, and phases
+1. [roadmap/CURRENT_STATE.md](roadmap/CURRENT_STATE.md) — what works today and next tasks
+2. [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) — vision, problem, capabilities, and phases
 2. [ARCHITECTURE.md](ARCHITECTURE.md) — services, data flows, security, deployment topology
 3. [TECH_STACK.md](TECH_STACK.md) — approved technologies and rationale
 4. [SECURITY.md](SECURITY.md) — threat model, tenant isolation, auth, and checklists
 5. [TESTING_STRATEGY.md](TESTING_STRATEGY.md) — test pyramid, CI gates, and no-mock rules
 
-Then use [DEVELOPMENT_GUIDE.md](DEVELOPMENT_GUIDE.md) for day-to-day workflow and PR expectations.
+Then use [DEVELOPMENT_GUIDE.md](DEVELOPMENT_GUIDE.md) for day-to-day workflow, PR expectations, and the **session workspace** (§12 — sibling `ibex-harness-workspace/`, outside git).
+
+**Session workspace vs roadmap:** [roadmap/CURRENT_STATE.md](roadmap/CURRENT_STATE.md) is versioned in the repo; workspace `current_state.md` is session scratch. Closed audits live under `ibex-harness-workspace/archive/foundation/`.
 
 **Toolchain:** [TOOLCHAIN.md](TOOLCHAIN.md) lists required local tools, installation options, and sanity checks.
 
@@ -45,6 +48,15 @@ Then use [DEVELOPMENT_GUIDE.md](DEVELOPMENT_GUIDE.md) for day-to-day workflow an
 | [CHANGELOG.md](CHANGELOG.md) | Release history and changelog discipline |
 | [GLOSSARY.md](GLOSSARY.md) | Domain terminology (agent, memory, directive, trace, etc.) |
 | [UI_UX_GUIDELINES.md](UI_UX_GUIDELINES.md) | Dashboard UX, accessibility, and trace inspector |
+
+### Roadmap
+
+| Document | Description |
+| --- | --- |
+| [roadmap/README.md](roadmap/README.md) | How to read phases, goals, milestones |
+| [roadmap/CURRENT_STATE.md](roadmap/CURRENT_STATE.md) | Living snapshot (update after each merge) |
+| [roadmap/PHASES.md](roadmap/PHASES.md) | All phases and exit criteria |
+| [roadmap/phase-1-core-platform/](roadmap/phase-1-core-platform/) | Active phase — milestones and risks |
 
 ---
 

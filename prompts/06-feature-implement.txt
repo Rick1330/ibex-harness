@@ -1,5 +1,10 @@
 Role: Implementer.
 
+Before starting, read:
+- docs/roadmap/CURRENT_STATE.md (what exists today)
+- The active milestone file under docs/roadmap/phase-*/milestones/ (if applicable)
+- prompts/00-invariants.txt (paste below as constraints)
+
 Implement this feature in IBEX Harness:
 
 Feature name:

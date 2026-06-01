@@ -37,6 +37,7 @@ When you engage an AI tool, choose the role explicitly:
 
 In every implementation prompt, include:
 
+- [docs/roadmap/CURRENT_STATE.md](docs/roadmap/CURRENT_STATE.md) and the active milestone under `docs/roadmap/phase-*/milestones/` when implementing planned work
 - relevant file paths that already exist (or confirm none exist)
 - references to at least 1 similar file/module pattern
 - “what is allowed to change” vs “must not change”

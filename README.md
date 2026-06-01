@@ -26,6 +26,8 @@ This repository is a monorepo containing all services, packages, and infrastruct
 
 Install and verify tools with [docs/TOOLCHAIN.md](docs/TOOLCHAIN.md).
 
+**Development roadmap:** [docs/roadmap/CURRENT_STATE.md](docs/roadmap/CURRENT_STATE.md) (what works, what is next).
+
 ### 1) Clone
 
 ```bash

@@ -1,0 +1,55 @@
+# Phase 5 — Goals
+
+## Goal 5.1: Observability production stack
+
+**Description:** Deploy Prometheus, Grafana, Loki, Tempo (or equivalent) per TECH_STACK.md; wire exporters from all services.
+
+**Acceptance criteria:**
+
+- Dashboards for proxy golden signals and dependency health
+- Alert rules for SLO burn (error rate, latency)
+- No high-cardinality labels (no `org_id` in Prometheus labels)
+
+**Validation:** Staging soak; alert fire drill
+
+---
+
+## Goal 5.2: Resilience and performance validation
+
+**Description:** Load, chaos, and benchmark tests on proxy and context assembly.
+
+**Acceptance criteria:**
+
+- Documented results vs PERFORMANCE.md budgets
+- Circuit breaker thresholds tuned with metrics evidence
+- No memory leaks under sustained streaming load
+
+**Validation:** CI nightly or manual gate before release
+
+---
+
+## Goal 5.3: CI and release discipline
+
+**Description:** Harden CI, release process, and dependency governance.
+
+**Acceptance criteria:**
+
+- Go/Python/TS CI matrices where applicable
+- Release checklist in DEPLOYMENT.md followed for v0.x
+- Dependabot policy expanded beyond github-actions
+
+**Validation:** Dry-run release from `main`
+
+---
+
+## Goal 5.4: Security and compliance baseline
+
+**Description:** Threat model review, pen-test fixes, GDPR deletion path for memories.
+
+**Acceptance criteria:**
+
+- SECURITY.md checklist items traced to tests or runbooks
+- Deletion flow audited; no cross-tenant deletion possible
+- Secrets rotation documented
+
+**Validation:** Security review sign-off; table-top incident exercise
