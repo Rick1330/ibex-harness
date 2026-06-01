@@ -90,10 +90,14 @@ func redisEndpoint(rawURL string) (endpoint, error) {
 	if port == "" {
 		port = "6379"
 	}
-	password, _ := parsed.User.Password()
+	var username, password string
+	if parsed.User != nil {
+		password, _ = parsed.User.Password()
+		username = parsed.User.Username()
+	}
 	return endpoint{
 		address:  net.JoinHostPort(parsed.Hostname(), port),
-		username: parsed.User.Username(),
+		username: username,
 		password: password,
 	}, nil
 }
