@@ -172,7 +172,7 @@ make compose-dev-down
 
 ## 7) Troubleshooting
 
-If `make` is missing on Windows, run commands from Git Bash after installing Git for Windows.
+If `make` is missing on Windows, install GNU Make (for example `winget install GnuWin32.Make` or Chocolatey `make`) and run `make` from Git Bash. Git for Windows does not include GNU Make by itself.
 
 If Docker commands fail with connection errors, start Docker Desktop or the Docker daemon and retry `docker version`.
 

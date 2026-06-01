@@ -22,7 +22,7 @@ This repository is a monorepo containing all services, packages, and infrastruct
 - Python 3.11+
 - Node.js 18+
 - Buf CLI
-- GNU Make or Git Bash `make`
+- GNU Make (run `make` from Git Bash on Windows; Git Bash alone does not include Make)
 
 Install and verify tools with [docs/TOOLCHAIN.md](docs/TOOLCHAIN.md).
 
@@ -44,7 +44,6 @@ Expected services:
 - PostgreSQL (with pgvector)
 - Redis (Redis Stack recommended)
 - ClickHouse
-- MinIO (S3-compatible)
 - MinIO (S3-compatible)
 
 ### 3) Run local validation
