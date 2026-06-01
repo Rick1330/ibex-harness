@@ -12,7 +12,7 @@ import (
 var durationBuckets = []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5}
 
 type Metrics struct {
-	mu        sync.Mutex
+	mu       sync.Mutex
 	requests map[labelKey]uint64
 	buckets  map[labelKey][]uint64
 	sums     map[labelKey]float64
@@ -44,26 +44,41 @@ func (m *Metrics) Middleware(next http.Handler) http.Handler {
 func (m *Metrics) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 
+	// Snapshot metrics under lock, then write response without holding the mutex
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	reqSnap := make(map[labelKey]uint64, len(m.requests))
+	for k, v := range m.requests {
+		reqSnap[k] = v
+	}
+	bucketsSnap := make(map[labelKey][]uint64, len(m.buckets))
+	for k, v := range m.buckets {
+		a := make([]uint64, len(v))
+		copy(a, v)
+		bucketsSnap[k] = a
+	}
+	sumsSnap := make(map[labelKey]float64, len(m.sums))
+	for k, v := range m.sums {
+		sumsSnap[k] = v
+	}
+	m.mu.Unlock()
 
 	fmt.Fprintln(w, "# HELP ibex_http_requests_total Total HTTP requests.")
 	fmt.Fprintln(w, "# TYPE ibex_http_requests_total counter")
-	for _, key := range sortedKeys(m.requests) {
-		fmt.Fprintf(w, "ibex_http_requests_total{method=%q,path=%q,status=%q} %d\n", key.Method, key.Path, key.Status, m.requests[key])
+	for _, key := range sortedKeys(reqSnap) {
+		fmt.Fprintf(w, "ibex_http_requests_total{method=%q,path=%q,status=%q} %d\n", key.Method, key.Path, key.Status, reqSnap[key])
 	}
 
 	fmt.Fprintln(w, "# HELP ibex_http_request_duration_seconds HTTP request duration.")
 	fmt.Fprintln(w, "# TYPE ibex_http_request_duration_seconds histogram")
-	for _, key := range sortedKeys(m.buckets) {
+	for _, key := range sortedKeys(bucketsSnap) {
 		var cumulative uint64
 		for i, bucket := range durationBuckets {
-			cumulative += m.buckets[key][i]
+			cumulative += bucketsSnap[key][i]
 			fmt.Fprintf(w, "ibex_http_request_duration_seconds_bucket{method=%q,path=%q,status=%q,le=%q} %d\n", key.Method, key.Path, key.Status, strconv.FormatFloat(bucket, 'f', -1, 64), cumulative)
 		}
-		cumulative += m.buckets[key][len(durationBuckets)]
+		cumulative += bucketsSnap[key][len(durationBuckets)]
 		fmt.Fprintf(w, "ibex_http_request_duration_seconds_bucket{method=%q,path=%q,status=%q,le=%q} %d\n", key.Method, key.Path, key.Status, "+Inf", cumulative)
-		fmt.Fprintf(w, "ibex_http_request_duration_seconds_sum{method=%q,path=%q,status=%q} %f\n", key.Method, key.Path, key.Status, m.sums[key])
+		fmt.Fprintf(w, "ibex_http_request_duration_seconds_sum{method=%q,path=%q,status=%q} %f\n", key.Method, key.Path, key.Status, sumsSnap[key])
 		fmt.Fprintf(w, "ibex_http_request_duration_seconds_count{method=%q,path=%q,status=%q} %d\n", key.Method, key.Path, key.Status, cumulative)
 	}
 }
