@@ -39,6 +39,16 @@ docker compose down -v
 
 ClickHouse **native** is mapped to host port **9002** so it does not conflict with MinIO on **9000**. Use HTTP (`8123`) for typical local DSNs — see [docs/ENVIRONMENT_VARIABLES.md](../../../docs/ENVIRONMENT_VARIABLES.md).
 
+## Apply database migrations
+
+From the repository root (with containers healthy):
+
+```bash
+make db-migrate
+```
+
+See [ADR-0005](../../../docs/adr/ADR-0005-postgres-migration-strategy.md) and `make db-version` / `make db-migrate-down` (dev rollback, one step).
+
 ## Verify health
 
 Wait until all containers are healthy (`docker compose ps`), then:

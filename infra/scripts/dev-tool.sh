@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+DB_MIGRATE="$ROOT_DIR/infra/scripts/db-migrate.sh"
 PROTO_DIR="$ROOT_DIR/packages/proto"
 DEV_COMPOSE="$ROOT_DIR/infra/compose/dev/docker-compose.yml"
 DEV_ENV="$ROOT_DIR/infra/compose/dev/.env.example"
@@ -36,7 +37,10 @@ case "${1:-help}" in
       "  compose-dev-logs       Tail local development dependency logs" \
       "  compose-dev-ps         Show local development dependency status" \
       "  compose-test-up        Start minimal test dependencies" \
-      "  compose-test-down      Stop minimal test dependencies"
+      "  compose-test-down      Stop minimal test dependencies" \
+      "  db-migrate             Apply all pending Postgres migrations" \
+      "  db-migrate-down        Roll back one Postgres migration step" \
+      "  db-version             Show current Postgres migration version"
     ;;
   lint-docs)
     cd "$ROOT_DIR"
@@ -88,6 +92,15 @@ case "${1:-help}" in
   compose-test-down)
     require_tool docker "docker is required for compose-test-down."
     docker compose -f "$TEST_COMPOSE" down
+    ;;
+  db-migrate)
+    bash "$DB_MIGRATE" up
+    ;;
+  db-migrate-down)
+    bash "$DB_MIGRATE" down
+    ;;
+  db-version)
+    bash "$DB_MIGRATE" version
     ;;
   *)
     echo "unknown command: $1"

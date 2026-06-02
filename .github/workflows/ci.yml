@@ -117,6 +117,42 @@ jobs:
       - name: Validate test compose
         run: docker compose -f infra/compose/test/docker-compose.yml config
 
+  db-migrate-smoke:
+    name: db-migrate-smoke
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ibex
+          POSTGRES_PASSWORD: ibex
+          POSTGRES_DB: ibex
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ibex -d ibex"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.21.x"
+      - name: Unit tests (migrations package)
+        run: go test ./infra/migrations/postgres/...
+      - name: Migrate up twice (idempotent)
+        env:
+          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+        run: |
+          go run ./infra/migrations/postgres/cmd/migrate -command up
+          go run ./infra/migrations/postgres/cmd/migrate -command up
+          go run ./infra/migrations/postgres/cmd/migrate -command version
+      - name: Integration tests (RLS, schema)
+        env:
+          POSTGRES_TEST_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+        run: go test -tags=integration ./infra/migrations/postgres/...
+
   go-services:
     name: go-services
     runs-on: ubuntu-latest

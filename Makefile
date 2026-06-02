@@ -6,7 +6,7 @@ endif
 
 DEV_TOOL := infra/scripts/dev-tool.sh
 
-.PHONY: help lint-docs security-scan repo-guards proto-lint proto-breaking compose-dev-up compose-dev-down compose-dev-logs compose-dev-ps compose-test-up compose-test-down
+.PHONY: help lint-docs security-scan repo-guards proto-lint proto-breaking compose-dev-up compose-dev-down compose-dev-logs compose-dev-ps compose-test-up compose-test-down db-migrate db-migrate-down db-version
 
 help: ## Show available commands
 	@"$(BASH)" "$(DEV_TOOL)" help
@@ -43,3 +43,12 @@ compose-test-up: ## Start minimal test dependencies
 
 compose-test-down: ## Stop minimal test dependencies
 	@"$(BASH)" "$(DEV_TOOL)" compose-test-down
+
+db-migrate: ## Apply all pending Postgres migrations
+	@"$(BASH)" "$(DEV_TOOL)" db-migrate
+
+db-migrate-down: ## Roll back one Postgres migration step
+	@"$(BASH)" "$(DEV_TOOL)" db-migrate-down
+
+db-version: ## Show current Postgres migration version
+	@"$(BASH)" "$(DEV_TOOL)" db-version

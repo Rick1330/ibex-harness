@@ -106,6 +106,8 @@ Used by: **auth, api, memory, context, worker, dashboard (server-only)**
 | Variable | Required | Default | Description | Security Notes |
 |----------|----------|---------|-------------|----------------|
 | `POSTGRES_DSN` | Yes | (none) | Full DSN, e.g. `postgresql+asyncpg://user:pass@host:5432/db` | Secret (contains password) |
+| `POSTGRES_MIGRATE_DSN` | No | (derived) | Go migrate runner DSN (`postgres://...` for lib/pq). If unset, `POSTGRES_DSN` is normalized (driver suffix stripped, `sslmode=disable` added when missing). | Secret |
+| `POSTGRES_TEST_DSN` | No | `postgres://ibex:ibex@localhost:5433/ibex_test?sslmode=disable` | Integration tests (`go test -tags=integration ./infra/migrations/postgres/...`) | Secret |
 | `POSTGRES_HOST` | Optional* | `localhost` | Host if DSN not used | Prefer DSN |
 | `POSTGRES_PORT` | Optional* | `5432` | Port | |
 | `POSTGRES_DB` | Optional* | `ibex` | Database name | |
@@ -126,7 +128,7 @@ These are not env vars, but mandatory behavior:
 - Every request must set:
   - `SET LOCAL app.current_org_id = '{org_id}'`
   - `SET LOCAL app.current_user_id = '{user_id}'` (if available)
-  - `SET LOCAL app.is_service_account = true/false`
+  - `SET LOCAL app.is_service_account = 'true'` or `'false'` (string; migrations compare to `'true'`)
 
 ---
 

@@ -168,6 +168,20 @@ make compose-dev-up
 make compose-dev-down
 ```
 
+Apply Postgres schema (after compose is healthy):
+
+```bash
+make db-migrate
+make db-version
+```
+
+Integration tests for migrations (requires [test compose](../../infra/compose/test/docker-compose.yml) on port 5433):
+
+```bash
+make compose-test-up
+go test -tags=integration ./infra/migrations/postgres/...
+```
+
 ---
 
 ## 7) Troubleshooting

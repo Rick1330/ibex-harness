@@ -8,6 +8,7 @@ Index of significant technical decisions for IBEX Harness.
 | [ADR-0002-repo-foundation-bootstrap.md](ADR-0002-repo-foundation-bootstrap.md) | Accepted | Repository foundation bootstrap |
 | [ADR-0003-branch-protection-and-merge-policy.md](ADR-0003-branch-protection-and-merge-policy.md) | Accepted | Branch protection and merge policy |
 | [ADR-0004-protobuf-and-codegen-policy.md](ADR-0004-protobuf-and-codegen-policy.md) | Accepted | Protobuf and code generation policy |
+| [ADR-0005-postgres-migration-strategy.md](ADR-0005-postgres-migration-strategy.md) | Accepted | Postgres migration strategy |
 
 ## When to write an ADR
 

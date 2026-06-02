@@ -39,6 +39,8 @@ CREATE SCHEMA ibex_analytics; -- Summary analytics
 
 #### Organizations and Users
 
+> **Milestone 1.1.1:** `ibex_core.organizations` and `ibex_core.tokens` are applied via numbered SQL in [`infra/migrations/postgres/`](../../infra/migrations/postgres/). Run `make db-migrate` after local Compose is up. `tokens.user_id`, `tokens.agent_id`, and `tokens.revoked_by` are nullable without foreign keys until `users` / `agents` tables exist.
+
 ```sql
 -- ================================================================
 -- ORGANIZATIONS
