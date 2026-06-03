@@ -99,7 +99,7 @@ trivy fs --severity CRITICAL,HIGH --ignore-unfixed .
 # Dependency CVE scan (install osv-scanner CLI)
 osv-scanner --recursive .
 
-# SBOM + Grype (install syft and grype CLI)
+# SBOM + Grype (install syft and grype CLI; CI uploads table/JSON artifacts only—not Code Scanning SARIF)
 syft . -o spdx-json > sbom.spdx.json
 grype sbom:sbom.spdx.json --fail-on critical
 

@@ -59,3 +59,17 @@ Unexpected discoveries, design pivots, and plan changes. Update this file when i
 **Decision:** Schedule auth proto milestone before auth validation and proxy integration.
 
 **Updated:** `phase-1-core-platform/goals.md`, milestone prerequisites
+
+---
+
+## 2026-06-03 — OpenSSF Scorecard alerts triaged (not product CVEs)
+
+**Context:** Post StepSecurity [PR #33](https://github.com/Rick1330/ibex-harness/pull/33) merge
+
+**Finding:** GitHub Code Scanning showed ~30 open **Scorecard** supply-chain policy alerts (pinned dependencies, code review, fuzzing, SAST maturity)—not exploitable application findings. Grype had a stale failed analysis from pre–PR #31 SARIF upload; SBOM workflow is artifact-only per ADR-0008.
+
+**Impact:** Security tab noise obscured real gates (CodeQL, Semgrep, Trivy, OSV). Solo-maintainer repo will not satisfy every Scorecard recommendation without explicit policy choices.
+
+**Decision:** Delete stale Grype analysis on `main`; dismiss fixed `PinnedDependencies` alerts after pinned SHAs landed; dismiss CodeReview/Fuzzing/SAST/CII alerts as not applicable or tracked as backlog. Grype remains workflow artifacts only (`grype-report.txt/json`).
+
+**Updated:** `CONTRIBUTING.md`, `docs/roadmap/CURRENT_STATE.md`, workspace archive 010
