@@ -39,42 +39,54 @@ rules:
       metavariable: $SECRET
       regex: (?i).*(token|password|secret|api_key|apikey|api-key|private_key).*
 
-  - id: ibex-memory-content-direct-prompt
+  - id: ibex-memory-content-direct-prompt-fstring
+    languages: [python]
+    severity: WARNING
+    message: >-
+      Memory content injected directly into prompt without delimiter isolation.
+      Prompt injection risk. See .cursorrules §6.
+    patterns:
+      - pattern: |
+          $PROMPT = f"...{$MEMORY}..."
+      - metavariable-regex:
+          metavariable: $MEMORY
+          regex: (?i)^(memory|memory_content|retrieved_memories)$
+      - metavariable-regex:
+          metavariable: $PROMPT
+          regex: (?i)^(prompt|messages|system_prompt)$
+
+  - id: ibex-memory-content-direct-prompt-concat
     languages: [python, typescript, javascript]
     severity: WARNING
     message: >-
       Memory content injected directly into prompt without delimiter isolation.
       Prompt injection risk. See .cursorrules §6.
-    pattern-either:
+    patterns:
       - pattern: |
           $PROMPT = ... + $MEMORY + ...
-      - pattern: |
-          $PROMPT = f"...{$MEMORY}..."
-      - pattern: |
-          $MESSAGES = ... + $MEMORY + ...
-      - pattern: |
-          $SYSTEM_PROMPT = f"...{$MEMORY}..."
-    metavariable-regex:
-      metavariable: $MEMORY
-      regex: (?i)^(memory|memory_content|retrieved_memories)$
-    metavariable-regex:
-      metavariable: $PROMPT
-      regex: (?i)^(prompt|messages|system_prompt)$
+      - metavariable-regex:
+          metavariable: $MEMORY
+          regex: (?i)^(memory|memory_content|retrieved_memories)$
+      - metavariable-regex:
+          metavariable: $PROMPT
+          regex: (?i)^(prompt|messages|system_prompt)$
 
   - id: ibex-no-raw-sql-format
     languages: [python]
     severity: ERROR
     message: "SQL must be parameterized. No string formatting in queries. See .cursorrules §5."
     pattern-either:
-      - pattern: |
-          f"...{$VAR}..."
-      - pattern: |
-          "...".format(...)
-      - pattern: |
-          "...".format($VAR, ...)
-    metavariable-regex:
-      metavariable: $VAR
-      regex: (?i).*(select|insert|update|delete|from|where).*
+      - patterns:
+          - pattern: |
+              f"...{$VAR}..."
+          - metavariable-regex:
+              metavariable: $VAR
+              regex: (?i).*(select|insert|update|delete|from|where).*
+      - patterns:
+          - pattern: |
+              "...".format(...)
+          - pattern: |
+              "...".format($VAR, ...)
     paths:
       include:
         - services/

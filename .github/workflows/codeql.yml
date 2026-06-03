@@ -24,7 +24,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: [go, python, javascript]
+        # Python/JS added when services/memory and services/dashboard exist (ADR-0008).
+        language: [go]
     steps:
       - uses: actions/checkout@v6
 
@@ -34,13 +35,7 @@ jobs:
           languages: ${{ matrix.language }}
 
       - name: Autobuild
-        if: matrix.language == 'go'
         uses: github/codeql-action/autobuild@v3
-
-      # No Python/TS app code yet; manual no-op build so matrix jobs succeed until services land.
-      - name: Skip autobuild (no sources yet)
-        if: matrix.language != 'go'
-        run: echo "No ${{ matrix.language }} application sources yet; CodeQL will analyze tracked files only."
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3
