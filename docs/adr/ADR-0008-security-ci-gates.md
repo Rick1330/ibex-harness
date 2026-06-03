@@ -33,7 +33,7 @@ The repo has a single root `go.mod`, Go services `auth` and `proxy`, two Dockerf
 
 Weekly `schedule` on CI runs **only** `osv-scan` (other jobs use `if: github.event_name != 'schedule'`).
 
-CI uses `go-version-file: go.mod` so the runner Go version tracks `go.mod` (currently **1.23.4**).
+CI uses `go-version-file: go.mod` so the runner Go version tracks `go.mod` (currently **1.25.0**; `golang.org/x/crypto` ≥ v0.52.0 for critical CVE fixes).
 
 ### CodeQL default vs advanced
 
