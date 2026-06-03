@@ -270,6 +270,14 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version: "1.22.x"
+      - uses: bufbuild/buf-setup-action@v1.50.0
+        if: matrix.service == 'auth'
+        with:
+          version: "1.47.2"
+      - name: Generate protobuf stubs for auth
+        if: matrix.service == 'auth'
+        working-directory: packages/proto
+        run: buf generate
       - name: Install golangci-lint
         run: |
           curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b /usr/local/bin v1.59.0

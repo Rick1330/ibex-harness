@@ -5,9 +5,9 @@ import (
 	"errors"
 	"testing"
 
+	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/metrics"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/token"
-	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )

@@ -6,8 +6,8 @@ import (
 	"errors"
 	"time"
 
-	"github.com/Rick1330/ibex-harness/services/auth/internal/repository"
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
+	"github.com/Rick1330/ibex-harness/services/auth/internal/repository"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 

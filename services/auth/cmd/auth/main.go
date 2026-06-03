@@ -12,13 +12,13 @@ import (
 	"syscall"
 	"time"
 
+	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/config"
 	grpcserver "github.com/Rick1330/ibex-harness/services/auth/internal/grpc"
 	authhttp "github.com/Rick1330/ibex-harness/services/auth/internal/http"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/metrics"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/repository"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/token"
-	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	_ "github.com/lib/pq"
 	"google.golang.org/grpc"
 )
