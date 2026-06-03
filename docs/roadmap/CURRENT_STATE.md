@@ -1,7 +1,7 @@
 # Current State
 
 **Last updated:** 2026-06-03  
-**Git SHA (`main`):** `343e8c3`  
+**Git SHA (`main`):** `a5e64e2`  
 **Current phase:** Phase 1 — Core Platform  
 **Current goal:** Goal 1.1 — Persistence and auth data plane  
 **Next milestone:** [1.1.3 Auth token validation](phase-1-core-platform/milestones/1.1.3-auth-token-validation.md)

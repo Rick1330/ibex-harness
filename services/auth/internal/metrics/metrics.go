@@ -1,10 +1,10 @@
 package metrics
 
 import (
-	"fmt"
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -16,6 +16,11 @@ type Metrics struct {
 	requests map[labelKey]uint64
 	buckets  map[labelKey][]uint64
 	sums     map[labelKey]float64
+
+	validateTotal   uint64
+	validateErrors  uint64
+	validateLatency []uint64 // histogram buckets for validate_token_seconds
+	validateSum     float64
 }
 
 type labelKey struct {
@@ -26,11 +31,14 @@ type labelKey struct {
 
 func New() *Metrics {
 	return &Metrics{
-		requests: make(map[labelKey]uint64),
-		buckets:  make(map[labelKey][]uint64),
-		sums:     make(map[labelKey]float64),
+		requests:        make(map[labelKey]uint64),
+		buckets:         make(map[labelKey][]uint64),
+		sums:            make(map[labelKey]float64),
+		validateLatency: make([]uint64, len(validateDurationBuckets)+1),
 	}
 }
+
+var validateDurationBuckets = []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1}
 
 func (m *Metrics) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -41,10 +49,23 @@ func (m *Metrics) Middleware(next http.Handler) http.Handler {
 	})
 }
 
+func (m *Metrics) ObserveValidateToken(seconds float64, ok bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.validateTotal++
+	if !ok {
+		m.validateErrors++
+	}
+	recordHistogram(m.validateLatency, validateDurationBuckets, seconds)
+	m.validateSum += seconds
+}
+
 func (m *Metrics) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+	_, _ = w.Write([]byte(m.renderPrometheus()))
+}
 
-	// Snapshot metrics under lock, then write response without holding the mutex
+func (m *Metrics) renderPrometheus() string {
 	m.mu.Lock()
 	reqSnap := make(map[labelKey]uint64, len(m.requests))
 	for k, v := range m.requests {
@@ -60,27 +81,146 @@ func (m *Metrics) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
 	for k, v := range m.sums {
 		sumsSnap[k] = v
 	}
+	validateTotal := m.validateTotal
+	validateErrors := m.validateErrors
+	validateLatency := make([]uint64, len(m.validateLatency))
+	copy(validateLatency, m.validateLatency)
+	validateSum := m.validateSum
 	m.mu.Unlock()
 
-	fmt.Fprintln(w, "# HELP ibex_http_requests_total Total HTTP requests.")
-	fmt.Fprintln(w, "# TYPE ibex_http_requests_total counter")
+	var b strings.Builder
+	b.WriteString("# HELP ibex_http_requests_total Total HTTP requests.\n")
+	b.WriteString("# TYPE ibex_http_requests_total counter\n")
 	for _, key := range sortedKeys(reqSnap) {
-		fmt.Fprintf(w, "ibex_http_requests_total{method=%q,path=%q,status=%q} %d\n", key.Method, key.Path, key.Status, reqSnap[key])
+		writeCounterLine(&b, "ibex_http_requests_total", key, reqSnap[key])
 	}
 
-	fmt.Fprintln(w, "# HELP ibex_http_request_duration_seconds HTTP request duration.")
-	fmt.Fprintln(w, "# TYPE ibex_http_request_duration_seconds histogram")
+	b.WriteString("# HELP ibex_http_request_duration_seconds HTTP request duration.\n")
+	b.WriteString("# TYPE ibex_http_request_duration_seconds histogram\n")
 	for _, key := range sortedKeys(bucketsSnap) {
-		var cumulative uint64
-		for i, bucket := range durationBuckets {
-			cumulative += bucketsSnap[key][i]
-			fmt.Fprintf(w, "ibex_http_request_duration_seconds_bucket{method=%q,path=%q,status=%q,le=%q} %d\n", key.Method, key.Path, key.Status, strconv.FormatFloat(bucket, 'f', -1, 64), cumulative)
-		}
-		cumulative += bucketsSnap[key][len(durationBuckets)]
-		fmt.Fprintf(w, "ibex_http_request_duration_seconds_bucket{method=%q,path=%q,status=%q,le=%q} %d\n", key.Method, key.Path, key.Status, "+Inf", cumulative)
-		fmt.Fprintf(w, "ibex_http_request_duration_seconds_sum{method=%q,path=%q,status=%q} %f\n", key.Method, key.Path, key.Status, sumsSnap[key])
-		fmt.Fprintf(w, "ibex_http_request_duration_seconds_count{method=%q,path=%q,status=%q} %d\n", key.Method, key.Path, key.Status, cumulative)
+		writeHistogramLines(&b, "ibex_http_request_duration_seconds", key, bucketsSnap[key], sumsSnap[key], durationBuckets)
 	}
+
+	b.WriteString("# HELP ibex_auth_validate_token_total ValidateToken RPC attempts.\n")
+	b.WriteString("# TYPE ibex_auth_validate_token_total counter\n")
+	b.WriteString("ibex_auth_validate_token_total ")
+	b.WriteString(strconv.FormatUint(validateTotal, 10))
+	b.WriteString("\n")
+
+	b.WriteString("# HELP ibex_auth_validate_token_errors_total ValidateToken failures.\n")
+	b.WriteString("# TYPE ibex_auth_validate_token_errors_total counter\n")
+	b.WriteString("ibex_auth_validate_token_errors_total ")
+	b.WriteString(strconv.FormatUint(validateErrors, 10))
+	b.WriteString("\n")
+
+	b.WriteString("# HELP ibex_auth_validate_token_duration_seconds ValidateToken latency.\n")
+	b.WriteString("# TYPE ibex_auth_validate_token_duration_seconds histogram\n")
+	writeSimpleHistogram(&b, "ibex_auth_validate_token_duration_seconds", validateLatency, validateSum, validateDurationBuckets)
+
+	return b.String()
+}
+
+func writeCounterLine(b *strings.Builder, name string, key labelKey, value uint64) {
+	b.WriteString(name)
+	b.WriteString("{method=")
+	writeQuoted(b, key.Method)
+	b.WriteString(",path=")
+	writeQuoted(b, key.Path)
+	b.WriteString(",status=")
+	writeQuoted(b, key.Status)
+	b.WriteString("} ")
+	b.WriteString(strconv.FormatUint(value, 10))
+	b.WriteString("\n")
+}
+
+func writeHistogramLines(b *strings.Builder, name string, key labelKey, counts []uint64, sum float64, buckets []float64) {
+	var cumulative uint64
+	for i, bucket := range buckets {
+		cumulative += counts[i]
+		writeHistogramBucket(b, name+"_bucket", key, strconv.FormatFloat(bucket, 'f', -1, 64), cumulative)
+	}
+	cumulative += counts[len(buckets)]
+	writeHistogramBucket(b, name+"_bucket", key, "+Inf", cumulative)
+	writeHistogramValue(b, name+"_sum", key, strconv.FormatFloat(sum, 'f', -1, 64))
+	writeHistogramValue(b, name+"_count", key, strconv.FormatUint(cumulative, 10))
+}
+
+func writeSimpleHistogram(b *strings.Builder, name string, counts []uint64, sum float64, buckets []float64) {
+	var cumulative uint64
+	for i, bucket := range buckets {
+		cumulative += counts[i]
+		b.WriteString(name)
+		b.WriteString("_bucket{le=")
+		writeQuoted(b, strconv.FormatFloat(bucket, 'f', -1, 64))
+		b.WriteString("} ")
+		b.WriteString(strconv.FormatUint(cumulative, 10))
+		b.WriteString("\n")
+	}
+	cumulative += counts[len(buckets)]
+	b.WriteString(name)
+	b.WriteString("_bucket{le=")
+	writeQuoted(b, "+Inf")
+	b.WriteString("} ")
+	b.WriteString(strconv.FormatUint(cumulative, 10))
+	b.WriteString("\n")
+	b.WriteString(name)
+	b.WriteString("_sum ")
+	b.WriteString(strconv.FormatFloat(sum, 'f', -1, 64))
+	b.WriteString("\n")
+	b.WriteString(name)
+	b.WriteString("_count ")
+	b.WriteString(strconv.FormatUint(cumulative, 10))
+	b.WriteString("\n")
+}
+
+func writeHistogramBucket(b *strings.Builder, name string, key labelKey, le string, value uint64) {
+	b.WriteString(name)
+	b.WriteString("{method=")
+	writeQuoted(b, key.Method)
+	b.WriteString(",path=")
+	writeQuoted(b, key.Path)
+	b.WriteString(",status=")
+	writeQuoted(b, key.Status)
+	b.WriteString(",le=")
+	writeQuoted(b, le)
+	b.WriteString("} ")
+	b.WriteString(strconv.FormatUint(value, 10))
+	b.WriteString("\n")
+}
+
+func writeHistogramValue(b *strings.Builder, name string, key labelKey, value string) {
+	b.WriteString(name)
+	b.WriteString("{method=")
+	writeQuoted(b, key.Method)
+	b.WriteString(",path=")
+	writeQuoted(b, key.Path)
+	b.WriteString(",status=")
+	writeQuoted(b, key.Status)
+	b.WriteString("} ")
+	b.WriteString(value)
+	b.WriteString("\n")
+}
+
+func writeQuoted(b *strings.Builder, s string) {
+	b.WriteByte('"')
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == '"' || c == '\\' {
+			b.WriteByte('\\')
+		}
+		b.WriteByte(c)
+	}
+	b.WriteByte('"')
+}
+
+func recordHistogram(counts []uint64, buckets []float64, seconds float64) {
+	for i, bucket := range buckets {
+		if seconds <= bucket {
+			counts[i]++
+			return
+		}
+	}
+	counts[len(buckets)]++
 }
 
 func (m *Metrics) observe(method, path string, status int, seconds float64) {
@@ -93,17 +233,7 @@ func (m *Metrics) observe(method, path string, status int, seconds float64) {
 	if _, ok := m.buckets[key]; !ok {
 		m.buckets[key] = make([]uint64, len(durationBuckets)+1)
 	}
-	recorded := false
-	for i, bucket := range durationBuckets {
-		if seconds <= bucket {
-			m.buckets[key][i]++
-			recorded = true
-			break
-		}
-	}
-	if !recorded {
-		m.buckets[key][len(durationBuckets)]++
-	}
+	recordHistogram(m.buckets[key], durationBuckets, seconds)
 	m.sums[key] += seconds
 }
 
