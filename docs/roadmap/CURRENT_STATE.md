@@ -1,7 +1,7 @@
 # Current State
 
 **Last updated:** 2026-06-03  
-**Git SHA (`main`):** `68691c8` (security CI); pending post-merge follow-up PR  
+**Git SHA (`main`):** `c939d75` (security CI + post-merge follow-up [PR #31](https://github.com/Rick1330/ibex-harness/pull/31))  
 **Current phase:** Phase 1 — Core Platform  
 **Current goal:** Goal 1.1 — Persistence and auth data plane  
 **Next milestone:** [1.2.1 Proxy auth client](phase-1-core-platform/milestones/1.2.1-proxy-auth-client.md)
