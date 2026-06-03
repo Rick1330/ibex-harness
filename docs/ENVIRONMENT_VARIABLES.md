@@ -213,6 +213,12 @@ Used by: **proxy**, optionally **worker** (LLM-based extraction/judging)
 
 Used by: **auth service**, **any service verifying JWTs**
 
+### gRPC (internal ValidateToken)
+
+| Variable | Required | Default | Description | Security Notes |
+|----------|----------|---------|-------------|----------------|
+| `IBEX_GRPC_PORT` | No | `9091` | gRPC listen port for `AuthService` | Internal only; use mTLS in production |
+
 ### Token hashing
 
 | Variable | Required | Default | Description | Security Notes |

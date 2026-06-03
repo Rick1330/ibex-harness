@@ -184,6 +184,45 @@ jobs:
           POSTGRES_TEST_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
         run: go test -tags=integration ./infra/migrations/postgres/...
 
+  auth-validate-smoke:
+    name: auth-validate-smoke
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ibex
+          POSTGRES_PASSWORD: ibex
+          POSTGRES_DB: ibex
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ibex -d ibex"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.22.x"
+      - uses: bufbuild/buf-setup-action@v1.50.0
+        with:
+          version: "1.47.2"
+      - name: Generate protobuf stubs
+        working-directory: packages/proto
+        run: buf generate
+      - name: Migrate up
+        env:
+          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+        run: go run ./infra/migrations/postgres/cmd/migrate -command up
+      - name: Auth unit tests
+        run: go test ./services/auth/...
+      - name: Auth integration tests
+        env:
+          POSTGRES_TEST_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+        run: go test -tags=integration ./services/auth/...
+
   go-services:
     name: go-services
     runs-on: ubuntu-latest
@@ -195,6 +234,14 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version: "1.22.x"
+      - uses: bufbuild/buf-setup-action@v1.50.0
+        if: matrix.service == 'auth'
+        with:
+          version: "1.47.2"
+      - name: Generate protobuf stubs for auth
+        if: matrix.service == 'auth'
+        working-directory: packages/proto
+        run: buf generate
       - name: gofmt check
         run: |
           if ! find "services/${{ matrix.service }}" -name '*.go' -print -quit | grep -q .; then

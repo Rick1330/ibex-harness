@@ -19,6 +19,8 @@ func TestValidateAcceptsDefaultShape(t *testing.T) {
 		Environment: "development",
 		ServiceName: "auth",
 		Port:        "8081",
+		GRPCPort:    "9091",
+		PostgresDSN: "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable",
 	}
 
 	if err := cfg.Validate(); err != nil {

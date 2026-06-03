@@ -7,6 +7,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/Rick1330/ibex-harness/services/auth/internal/token"
 )
 
 const (
@@ -14,6 +16,7 @@ const (
 	defaultServiceName = "auth"
 	defaultLogLevel    = slog.LevelInfo
 	defaultPort        = "8081"
+	defaultGRPCPort    = "9091"
 )
 
 type Config struct {
@@ -21,7 +24,9 @@ type Config struct {
 	ServiceName string
 	LogLevel    slog.Level
 	Port        string
+	GRPCPort    string
 	PostgresDSN string
+	Argon2      token.Argon2Params
 }
 
 func Load() (Config, error) {
@@ -29,7 +34,9 @@ func Load() (Config, error) {
 		Environment: getEnv("IBEX_ENV", defaultEnvironment),
 		ServiceName: getEnv("IBEX_SERVICE_NAME", defaultServiceName),
 		Port:        getEnv("IBEX_PORT", defaultPort),
+		GRPCPort:    getEnv("IBEX_GRPC_PORT", defaultGRPCPort),
 		PostgresDSN: strings.TrimSpace(os.Getenv("POSTGRES_DSN")),
+		Argon2:      token.DefaultArgon2Params(),
 	}
 
 	level, err := parseLogLevel(getEnv("IBEX_LOG_LEVEL", "INFO"))
@@ -37,6 +44,28 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	cfg.LogLevel = level
+
+	if v := os.Getenv("IBEX_ARGON2_MEMORY_KIB"); v != "" {
+		n, err := strconv.ParseUint(strings.TrimSpace(v), 10, 32)
+		if err != nil {
+			return Config{}, fmt.Errorf("IBEX_ARGON2_MEMORY_KIB: %w", err)
+		}
+		cfg.Argon2.MemoryKiB = uint32(n)
+	}
+	if v := os.Getenv("IBEX_ARGON2_TIME"); v != "" {
+		n, err := strconv.ParseUint(strings.TrimSpace(v), 10, 32)
+		if err != nil {
+			return Config{}, fmt.Errorf("IBEX_ARGON2_TIME: %w", err)
+		}
+		cfg.Argon2.Time = uint32(n)
+	}
+	if v := os.Getenv("IBEX_ARGON2_PARALLELISM"); v != "" {
+		n, err := strconv.ParseUint(strings.TrimSpace(v), 10, 8)
+		if err != nil {
+			return Config{}, fmt.Errorf("IBEX_ARGON2_PARALLELISM: %w", err)
+		}
+		cfg.Argon2.Parallelism = uint8(n)
+	}
 
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
@@ -53,9 +82,14 @@ func (c Config) Validate() error {
 	if strings.TrimSpace(c.ServiceName) == "" {
 		return fmt.Errorf("IBEX_SERVICE_NAME must not be empty")
 	}
-	portNum, err := strconv.Atoi(c.Port)
-	if err != nil || portNum < 1 || portNum > 65535 {
-		return fmt.Errorf("IBEX_PORT must be a valid TCP port")
+	for name, port := range map[string]string{"IBEX_PORT": c.Port, "IBEX_GRPC_PORT": c.GRPCPort} {
+		portNum, err := strconv.Atoi(port)
+		if err != nil || portNum < 1 || portNum > 65535 {
+			return fmt.Errorf("%s must be a valid TCP port", name)
+		}
+	}
+	if c.PostgresDSN == "" {
+		return fmt.Errorf("POSTGRES_DSN is required for auth token validation")
 	}
 	return nil
 }
