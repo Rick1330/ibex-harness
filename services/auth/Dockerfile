@@ -1,4 +1,4 @@
-FROM golang:1.23.4-alpine3.20 AS build
+FROM golang:1.23.12-alpine3.20 AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 COPY services/auth ./services/auth

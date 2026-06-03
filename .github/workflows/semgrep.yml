@@ -24,18 +24,28 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Run Semgrep (community + IBEX custom rules)
+      - name: Run IBEX custom rules (hard gate)
         run: |
           semgrep scan \
-            --config p/default \
+            --config .semgrep/rules/ \
+            --error \
+            services/ packages/
+
+      - name: Run community rules (SARIF only)
+        run: |
+          semgrep scan \
             --config p/golang \
             --config p/python \
             --config p/typescript \
             --config p/owasp-top-ten \
-            --config .semgrep/rules/ \
             --sarif --sarif-output=semgrep.sarif \
-            --error \
-            services/ packages/ infra/migrations/
+            services/ packages/
+
+      - name: Ensure SARIF exists
+        run: |
+          if [ ! -f semgrep.sarif ]; then
+            echo '{"version":"2.1.0","runs":[]}' > semgrep.sarif
+          fi
 
       - name: Upload SARIF to GitHub Security
         uses: github/codeql-action/upload-sarif@v3

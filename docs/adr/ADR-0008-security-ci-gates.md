@@ -17,7 +17,7 @@ The repo has a single root `go.mod`, Go services `auth` and `proxy`, two Dockerf
 | Workflow | Purpose | PR required check |
 |----------|---------|-------------------|
 | `.github/workflows/codeql.yml` | CodeQL (`go` now; python/javascript when app code exists) | `CodeQL` |
-| `.github/workflows/semgrep.yml` | Community rules + `.semgrep/rules/ibex-security.yml` | `semgrep` |
+| `.github/workflows/semgrep.yml` | IBEX custom rules (hard gate) + community rules (SARIF, non-blocking) | `semgrep` |
 | `.github/workflows/scorecard.yml` | OSSF supply-chain score | No |
 | `.github/workflows/sbom.yml` | Syft SBOM + Grype (CRITICAL) | No |
 

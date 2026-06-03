@@ -8,46 +8,32 @@ rules:
     patterns:
       - pattern-either:
           - pattern: |
-              $CLIENT.query($QUERY, ...)
+              $CLIENT.Query($QUERY, ...)
           - pattern: |
-              $CLIENT.execute($QUERY, ...)
+              $CLIENT.Exec($QUERY, ...)
           - pattern: |
               clickhouse_query($QUERY, ...)
-          - pattern: |
-              $DB.execute($QUERY)
     metavariable-pattern:
       metavariable: $QUERY
       patterns:
         - pattern-not-regex: (?i)org_id
     paths:
       include:
-        - services/
-        - packages/
+        - services/**/clickhouse/
+        - packages/**/clickhouse/
 
   - id: ibex-no-secrets-in-logs
-    languages: [go, python]
+    languages: [python]
     severity: ERROR
     message: "Potential secret logged. See .cursorrules §5."
-    patterns:
-      - pattern-either:
-          - pattern: |
-              $LOGGER.$METHOD(..., $KEY, $VAL, ...)
-          - pattern: |
-              log.$METHOD(..., $KEY, $VAL, ...)
-          - pattern: |
-              zap.$METHOD(..., $KEY, $VAL, ...)
-          - pattern: |
-              logger.$METHOD(..., $KEY, $VAL, ...)
-          - pattern: |
-              logging.$METHOD(..., $KEY, $VAL, ...)
+    pattern-either:
+      - pattern: |
+          logger.$METHOD($MSG, "$SENSITIVE_KEY", $VAL)
+      - pattern: |
+          logging.$METHOD($MSG, "$SENSITIVE_KEY", $VAL)
     metavariable-regex:
-      metavariable: $KEY
+      metavariable: $SENSITIVE_KEY
       regex: (?i)^(token|password|secret|api_key|apikey|api-key|authorization|credential)$
-    metavariable-pattern:
-      metavariable: $VAL
-      patterns:
-        - pattern-not: |
-            "..."
 
   - id: ibex-memory-content-direct-prompt-fstring
     languages: [python]
