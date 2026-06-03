@@ -2266,9 +2266,21 @@ Content-Type: application/json
 
 ## gRPC API
 
+Internal gRPC contracts live under [packages/proto/proto/ibex/](../packages/proto/proto/ibex/). Generated stubs are produced locally (`make proto-gen`) and are not committed to git — see [ADR-0004](adr/ADR-0004-protobuf-and-codegen-policy.md).
+
+### Auth Service (`ibex.auth.v1`)
+
+The Auth service exposes `AuthService.ValidateToken` for internal consumers (e.g. the LLM proxy). Source of truth: [packages/proto/proto/ibex/auth/v1/auth.proto](../packages/proto/proto/ibex/auth/v1/auth.proto). Contract policy: [ADR-0006](adr/ADR-0006-auth-proto-contract.md).
+
+- **Request:** `access_token` — full `Authorization: Bearer ...` value
+- **Response (success):** `org_id`, `permissions` (int64 bitmap), optional `agent_id`, `user_id`, `token_id`, `expires_at`
+- **Errors:** gRPC status only (`Unauthenticated` for invalid/revoked/expired tokens)
+
+### Context Assembly (`ibex.context.v1`)
+
 The Context Assembly Engine exposes a gRPC API consumed internally by the proxy. Not exposed publicly.
 
-### Proto Definition
+### Proto Definition (context)
 
 ```protobuf
 syntax = "proto3";

@@ -1,0 +1,39 @@
+syntax = "proto3";
+
+package ibex.auth.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1;authv1";
+
+// AuthService validates API tokens for internal consumers (e.g. LLM proxy).
+// Not exposed on the public internet.
+service AuthService {
+  // ValidateToken checks a bearer token and returns tenant context on success.
+  rpc ValidateToken(ValidateTokenRequest) returns (ValidateTokenResponse);
+}
+
+message ValidateTokenRequest {
+  // Full Authorization bearer value (e.g. "ibex_pat_..."). Never log in implementations.
+  string access_token = 1;
+}
+
+message ValidateTokenResponse {
+  // Organization UUID for tenant context (maps to app.current_org_id).
+  string org_id = 1;
+
+  // Permission bitmap (64 bits). See ARCHITECTURE.md auth permission table.
+  int64 permissions = 2;
+
+  // Present when the token is scoped to an agent.
+  optional string agent_id = 3;
+
+  // Present when the token is scoped to a user.
+  optional string user_id = 4;
+
+  // ibex_core.tokens row id for audit and revocation flows.
+  optional string token_id = 5;
+
+  // Token expiry; omitted when the token does not expire.
+  optional google.protobuf.Timestamp expires_at = 6;
+}
