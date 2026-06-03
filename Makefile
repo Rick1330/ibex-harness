@@ -6,7 +6,7 @@ endif
 
 DEV_TOOL := infra/scripts/dev-tool.sh
 
-.PHONY: help lint-docs security-scan repo-guards proto-lint proto-breaking compose-dev-up compose-dev-down compose-dev-logs compose-dev-ps compose-test-up compose-test-down db-migrate db-migrate-down db-version
+.PHONY: help lint-docs security-scan repo-guards proto-lint proto-breaking proto-gen compose-dev-up compose-dev-down compose-dev-logs compose-dev-ps compose-test-up compose-test-down db-migrate db-migrate-down db-version
 
 help: ## Show available commands
 	@"$(BASH)" "$(DEV_TOOL)" help
@@ -25,6 +25,9 @@ proto-lint: ## Run Buf lint for protobuf contracts
 
 proto-breaking: ## Run Buf breaking checks against main
 	@"$(BASH)" "$(DEV_TOOL)" proto-breaking
+
+proto-gen: ## Generate protobuf stubs locally (output gitignored)
+	@"$(BASH)" "$(DEV_TOOL)" proto-gen
 
 compose-dev-up: ## Start local development dependencies
 	@"$(BASH)" "$(DEV_TOOL)" compose-dev-up
