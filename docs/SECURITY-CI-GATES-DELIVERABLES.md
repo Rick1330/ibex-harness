@@ -33,7 +33,7 @@ gh api --method PUT repos/Rick1330/ibex-harness/branches/main/protection \
 
 ## Toolchain
 
-- `go.mod` **Go 1.25.9** with `go-version-file: go.mod` in CI.
+- `go.mod` **Go 1.25.11** with `go-version-file: go.mod` in CI.
 - `golang.org/x/crypto` **v0.52.0+** for critical `x/crypto` advisories (requires Go ≥ 1.25).
 - Docker builder images: `golang:1.25-alpine3.20`.
 

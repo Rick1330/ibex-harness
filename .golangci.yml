@@ -1,11 +1,13 @@
 version: "2"
 run:
   timeout: 3m
+formatters:
+  enable:
+    - gofmt
+    - goimports
 linters:
   enable:
     - govet
-    - gofmt
-    - goimports
     - staticcheck
     - revive
     - errcheck
