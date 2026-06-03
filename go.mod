@@ -6,7 +6,7 @@ require (
 	github.com/bufbuild/protocompile v0.10.0
 	github.com/golang-migrate/migrate/v4 v4.18.2
 	github.com/google/uuid v1.6.0
-	github.com/lib/pq v1.10.9
+	github.com/lib/pq v1.12.3
 	golang.org/x/crypto v0.52.0
 	google.golang.org/grpc v1.79.3
 	google.golang.org/protobuf v1.36.10
