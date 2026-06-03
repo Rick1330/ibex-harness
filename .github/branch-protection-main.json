@@ -7,7 +7,7 @@
       { "context": "gitleaks" },
       { "context": "CodeQL" },
       { "context": "trivy" },
-      { "context": "osv-scan" },
+      { "context": "osv-scan / osv-scan" },
       { "context": "semgrep" },
       { "context": "golangci-lint" },
       { "context": "bandit" },
