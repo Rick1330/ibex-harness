@@ -1,10 +1,10 @@
 # Current State
 
 **Last updated:** 2026-06-03  
-**Git SHA (`main`):** `a5e64e2`  
+**Git SHA (`main`):** `5691dd8`  
 **Current phase:** Phase 1 — Core Platform  
 **Current goal:** Goal 1.1 — Persistence and auth data plane  
-**Next milestone:** [1.1.3 Auth token validation](phase-1-core-platform/milestones/1.1.3-auth-token-validation.md)
+**Next milestone:** [1.2.1 Proxy auth client](phase-1-core-platform/milestones/1.2.1-proxy-auth-client.md)
 
 ---
 
@@ -17,19 +17,20 @@
 - Protobuf source: `packages/proto` (`ContextAssemblyService`, `AuthService.ValidateToken`); Buf lint/breaking in CI; generated code not committed
 - **Postgres migrations (m1.1.1):** `make db-migrate` applies `ibex_core.organizations` + `ibex_core.tokens` with RLS ([ADR-0005](../adr/ADR-0005-postgres-migration-strategy.md))
 - **Auth protobuf (m1.1.2):** `ibex.auth.v1` + ADR-0006; `make proto-gen`, `make proto-test`, `make proto-test-integration`; CI `proto-contract` job
-- Go services (skeletons):
-  - `services/auth` — `/health`, `/ready` (Postgres TCP if `POSTGRES_DSN` set), `/metrics`
+- **Auth ValidateToken (m1.1.3):** gRPC server on `IBEX_GRPC_PORT` (default 9091); PAT parse + Argon2id + Postgres lookup ([ADR-0007](../adr/ADR-0007-auth-token-validation.md)); CI `auth-validate-smoke`
+- Go services:
+  - `services/auth` — `/health`, `/ready`, `/metrics`, gRPC `ValidateToken`
   - `services/proxy` — `/health`, `/ready` (Redis PING if `REDIS_URL` set), `/metrics`
 - Root Go module: `github.com/Rick1330/ibex-harness` (Go **1.22+**)
-- Advisory CI: `go-services`, `golangci-lint`, `db-migrate-smoke`, `proto-contract`, `buf-lint` (not branch protection)
+- Advisory CI: `go-services`, `golangci-lint`, `db-migrate-smoke`, `proto-contract`, `auth-validate-smoke`, `buf-lint`
 - README: [DeepWiki](https://deepwiki.com/Rick1330/ibex-harness) badge
+- Semgrep: Prometheus `/metrics` handlers use `strings.Builder` (no Fprintf to ResponseWriter)
 
 ## What does NOT work yet
 
-- Auth token validation server (Postgres lookup, Argon2 hash) — next in 1.1.3
-- JWT issuance, permission enforcement at proxy
+- Proxy auth gRPC client + middleware (1.2.1)
+- JWT issuance, dashboard session flows
 - Proxy LLM forwarding, rate limiting, context injection
-- gRPC between proxy and auth (blocked on 1.1.3 + 1.2.1)
 - Python services: memory, context assembly, embedder, worker, API, dashboard
 - Background jobs (Celery), ClickHouse trace ingestion, MinIO session archives
 - OpenTelemetry exporters; official Prometheus client libraries in services
@@ -37,9 +38,9 @@
 
 ## Next 3 immediate tasks
 
-1. **Milestone 1.1.3** — Auth service: validate PAT against Postgres (fail-closed)
-2. **Milestone 1.2.1** — Proxy auth gRPC client + middleware
-3. **Milestone 1.2.2** — Proxy LLM forwarding (if sequenced after auth)
+1. **Milestone 1.2.1** — Proxy auth gRPC client + middleware
+2. **Milestone 1.2.2** — Proxy LLM forwarding (if sequenced after auth client)
+3. **Goal 1.1 completion** — review remaining 1.1 milestones in roadmap
 
 ## Verify current state locally
 
@@ -49,22 +50,20 @@ make repo-guards
 make compose-dev-up
 make db-migrate
 make db-version          # expect version=4 dirty=false
+make proto-gen
 make proto-test
-make proto-test-integration
-go test ./...
-go test -tags=integration ./infra/migrations/postgres/...
-go build -o /tmp/auth ./services/auth/cmd/auth
-go build -o /tmp/proxy ./services/proxy/cmd/proxy
+go test ./services/auth/...
+go test -tags=integration ./services/auth/...
 
-# Auth (requires POSTGRES_DSN; compose provides Postgres)
-IBEX_PORT=8081 POSTGRES_DSN=postgres://ibex:ibex@localhost:5432/ibex go run ./services/auth/cmd/auth
+IBEX_PORT=8081 IBEX_GRPC_PORT=9091 \
+  POSTGRES_DSN=postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable \
+  go run ./services/auth/cmd/auth
 curl -s http://localhost:8081/health
 curl -s http://localhost:8081/ready
 
-# Proxy (requires REDIS_URL)
-IBEX_PORT=8080 REDIS_URL=redis://localhost:6379/0 go run ./services/proxy/cmd/proxy
-curl -s http://localhost:8080/health
-curl -s http://localhost:8080/ready
+# After seeding a PAT (see services/auth README / integration tests):
+# grpcurl -plaintext -d '{"access_token":"ibex_pat_<uuid>_<secret>"}' \
+#   localhost:9091 ibex.auth.v1.AuthService/ValidateToken
 ```
 
-Expected: `/health` → `{"status":"ok"}`; `/ready` → 200 when dependency env is set and compose is healthy, else 503 with JSON reason.
+Expected: `/health` → `{"status":"ok"}`; `/ready` → 200 when Postgres is reachable; ValidateToken returns `OK` for a valid seeded PAT.
