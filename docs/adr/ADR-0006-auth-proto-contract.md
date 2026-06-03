@@ -56,7 +56,8 @@ Use **standard gRPC status codes** only. Do not define REST-style error envelope
 - **Generated output:** `packages/proto/gen/` (gitignored per ADR-0004)
 - **Plugins:** `protocolbuffers/go` + `grpc/go` in [buf.gen.yaml](../../packages/proto/buf.gen.yaml) for local `buf generate`
 - **Local command:** `make proto-gen` (runs `buf generate` in `packages/proto`)
-- **CI:** `buf lint` and `buf breaking` against `main`; no `buf generate` in CI
+- **Contract tests:** `make proto-test` (unit); `make proto-test-integration` (requires buf; generates stubs ephemerally)
+- **CI:** `buf lint` and `buf breaking` against `main`; `proto-contract` job runs ephemeral `buf generate` + contract tests — **`gen/` is never committed** (ADR-0004)
 
 ### 6) Consumers
 

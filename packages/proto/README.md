@@ -34,6 +34,17 @@ make proto-gen
 
 `buf generate` emits Go messages and gRPC stubs (`protocolbuffers/go` + `grpc/go`) under `gen/go/`. Generated files are **not committed** — see [ADR-0004](../../docs/adr/ADR-0004-protobuf-and-codegen-policy.md).
 
+## Contract tests
+
+From repository root:
+
+```bash
+make proto-test              # unit: ADR-0006 descriptor assertions (no buf generate)
+make proto-test-integration  # integration: buf generate + gRPC stub smoke (requires buf)
+```
+
+CI runs both in the `proto-contract` job (ephemeral `buf generate`; `gen/` must not appear in git).
+
 ## Contracts
 
 | Package | Service | Source doc |

@@ -33,6 +33,8 @@ case "${1:-help}" in
       "  proto-lint             Run Buf lint for protobuf contracts" \
       "  proto-breaking         Run Buf breaking checks against main" \
       "  proto-gen              Generate protobuf stubs locally (not committed)" \
+      "  proto-test             Run protobuf contract unit tests" \
+      "  proto-test-integration Run protobuf contract integration tests (requires buf)" \
       "  compose-dev-up         Start local development dependencies" \
       "  compose-dev-down       Stop local development dependencies" \
       "  compose-dev-logs       Tail local development dependency logs" \
@@ -75,6 +77,17 @@ case "${1:-help}" in
     cd "$PROTO_DIR"
     buf generate
     echo "proto-gen: output under packages/proto/gen/ (gitignored; do not commit)"
+    ;;
+  proto-test)
+    cd "$ROOT_DIR"
+    go test ./packages/proto/...
+    ;;
+  proto-test-integration)
+    require_tool buf "buf is required for proto-test-integration. Install Buf CLI: https://buf.build/docs/installation"
+    cd "$PROTO_DIR"
+    buf generate
+    cd "$ROOT_DIR"
+    go test -tags=integration ./packages/proto/...
     ;;
   compose-dev-up)
     require_tool docker "docker is required for compose-dev-up."

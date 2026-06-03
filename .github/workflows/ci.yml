@@ -107,6 +107,37 @@ jobs:
             echo "Skipping buf breaking: no proto baseline on main yet (initial proto import)"
           fi
 
+  proto-contract:
+    name: proto-contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.22.x"
+      - uses: bufbuild/buf-setup-action@v1.50.0
+        with:
+          version: "1.47.2"
+      - name: Generate stubs (ephemeral; not committed)
+        working-directory: packages/proto
+        run: buf generate
+      - name: Contract unit tests
+        run: go test ./packages/proto/...
+      - name: Contract integration tests
+        run: go test -tags=integration ./packages/proto/...
+      - name: Assert gen/ is not tracked
+        run: |
+          if git status --porcelain packages/proto/gen 2>/dev/null | grep -q .; then
+            echo "packages/proto/gen/ must not be committed"
+            git status --porcelain packages/proto/gen
+            exit 1
+          fi
+          if git ls-files packages/proto/gen | grep -q .; then
+            echo "packages/proto/gen/ must not be tracked in git"
+            git ls-files packages/proto/gen
+            exit 1
+          fi
+
   compose-validate:
     name: compose-validate
     runs-on: ubuntu-latest
