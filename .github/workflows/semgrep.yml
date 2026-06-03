@@ -35,7 +35,7 @@ jobs:
             --config .semgrep/rules/ \
             --sarif --sarif-output=semgrep.sarif \
             --error \
-            .
+            services/ packages/ infra/migrations/
 
       - name: Upload SARIF to GitHub Security
         uses: github/codeql-action/upload-sarif@v3

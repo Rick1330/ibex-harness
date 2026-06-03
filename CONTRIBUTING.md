@@ -109,6 +109,10 @@ python3 -c "import yaml; import pathlib; [yaml.safe_load(p.read_text()) for p in
 
 CI/security config changes: use [prompts/20-security-ci-audit.txt](prompts/20-security-ci-audit.txt).
 
+**CodeQL (one-time, repo admin):** Disable GitHub **Default** CodeQL setup so the advanced [`.github/workflows/codeql.yml`](.github/workflows/codeql.yml) can upload SARIF (Settings → Code security → Code scanning → CodeQL → use Advanced / disable Default).
+
+**Never commit personal access tokens** in chat, issues, or repository secrets; CI uses the built-in `GITHUB_TOKEN` only.
+
 ## Pull request template
 
 Use [.github/pull_request_template.md](.github/pull_request_template.md). Include What/Why, How, Testing, Security, and Docs sections per [docs/DEVELOPMENT_GUIDE.md](docs/DEVELOPMENT_GUIDE.md) §7.

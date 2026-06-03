@@ -38,22 +38,16 @@ jobs:
       - name: Install Grype and update vulnerability DB
         run: |
           curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin
+          grype version
           grype db update
 
       - name: Scan SBOM with Grype
-        uses: anchore/scan-action@v3
-        id: grype
-        env:
-          GRYPE_DB_AUTO_UPDATE: "true"
-        with:
-          sbom: sbom.spdx.json
-          fail-build: true
-          severity-cutoff: critical
-          output-format: sarif
+        run: |
+          grype sbom:sbom.spdx.json -o sarif --file grype.sarif --fail-on critical
 
       - name: Upload Grype SARIF
         uses: github/codeql-action/upload-sarif@v3
-        if: success() && steps.grype.outputs.sarif != ''
+        if: always()
         with:
-          sarif_file: ${{ steps.grype.outputs.sarif }}
+          sarif_file: grype.sarif
           category: grype

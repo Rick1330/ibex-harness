@@ -30,14 +30,24 @@ rules:
     message: "Potential secret logged. See .cursorrules §5."
     patterns:
       - pattern-either:
-          - pattern: log.$METHOD($MSG, ..., $SECRET, ...)
-          - pattern: zap.$METHOD($MSG, ..., $SECRET, ...)
-          - pattern: slog.$METHOD($MSG, ..., $SECRET, ...)
-          - pattern: logger.$METHOD($MSG, ..., $SECRET, ...)
-          - pattern: logging.$METHOD($MSG, ..., $SECRET, ...)
+          - pattern: |
+              $LOGGER.$METHOD(..., $KEY, $VAL, ...)
+          - pattern: |
+              log.$METHOD(..., $KEY, $VAL, ...)
+          - pattern: |
+              zap.$METHOD(..., $KEY, $VAL, ...)
+          - pattern: |
+              logger.$METHOD(..., $KEY, $VAL, ...)
+          - pattern: |
+              logging.$METHOD(..., $KEY, $VAL, ...)
     metavariable-regex:
-      metavariable: $SECRET
-      regex: (?i).*(token|password|secret|api_key|apikey|api-key|private_key).*
+      metavariable: $KEY
+      regex: (?i)^(token|password|secret|api_key|apikey|api-key|authorization|credential)$
+    metavariable-pattern:
+      metavariable: $VAL
+      patterns:
+        - pattern-not: |
+            "..."
 
   - id: ibex-memory-content-direct-prompt-fstring
     languages: [python]

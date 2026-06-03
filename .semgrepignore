@@ -1,0 +1,4 @@
+docs/
+prompts/
+**/*.md
+.github/

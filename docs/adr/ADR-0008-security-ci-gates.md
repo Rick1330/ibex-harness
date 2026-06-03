@@ -33,6 +33,12 @@ The repo has a single root `go.mod`, Go services `auth` and `proxy`, two Dockerf
 
 Weekly `schedule` on CI runs **only** `osv-scan` (other jobs use `if: github.event_name != 'schedule'`).
 
+CI uses `go-version-file: go.mod` so the runner Go version tracks `go.mod` (currently **1.23.4**).
+
+### CodeQL default vs advanced
+
+GitHub **Default** CodeQL setup conflicts with the advanced `.github/workflows/codeql.yml` (SARIF rejected). **Repo admin must disable Default setup** (Settings → Code security → Code scanning → CodeQL → Advanced) before the `CodeQL` check is reliable.
+
 ### Dependabot
 
 - Active: `github-actions`, `gomod` at `/`
@@ -68,7 +74,7 @@ gh api --method PUT \
 
 - First PR may fail until CVEs/lint/hadolint findings are fixed
 - Branch protection cannot include new checks until GitHub has seen them on a PR
-- Alpine Dockerfiles may need Hadolint waivers or Dockerfile hardening (distroless policy is future work)
+- CodeQL requires one-time disable of GitHub Default setup
 
 ## References
 
