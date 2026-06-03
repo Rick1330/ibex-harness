@@ -102,7 +102,7 @@ A new contributor should be able to get productive in **≤ 1 hour**.
 
 - Docker + Docker Compose
 - GNU Make
-- Go 1.21+
+- Go 1.22+
 - Python 3.11+
 - Node.js 18+
 - Buf CLI

@@ -1,5 +1,7 @@
 # IBEX Harness
 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/Rick1330/ibex-harness)
+
 IBEX Harness is a production-grade AI agent memory and context management platform. It provides:
 
 - Persistent memory (write, deduplicate, retrieve, conflict-resolve)
@@ -18,7 +20,7 @@ This repository is a monorepo containing all services, packages, and infrastruct
 ### Prerequisites
 
 - Docker + Docker Compose
-- Go 1.21+
+- Go 1.22+
 - Python 3.11+
 - Node.js 18+
 - Buf CLI

@@ -72,7 +72,7 @@ Never log full DSNs (passwords).
 
 ### Negative
 
-- Developers need Go 1.21+ to run migrations (already required for services).
+- Developers need Go 1.22+ to run migrations (aligned with root `go.mod` after golang-migrate).
 - `POSTGRES_DSN` in `.env.example` remains Python-oriented; migrate path documents `POSTGRES_MIGRATE_DSN` or normalization.
 
 ## Alternatives considered
