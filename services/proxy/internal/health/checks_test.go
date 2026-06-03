@@ -35,7 +35,7 @@ func TestReadyRedisPing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 
 	done := make(chan struct{})
 	go func() {
@@ -44,7 +44,7 @@ func TestReadyRedisPing(t *testing.T) {
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		reader := bufio.NewReader(conn)
 		_, _ = reader.ReadString('\n')
 		_, _ = reader.ReadString('\n')

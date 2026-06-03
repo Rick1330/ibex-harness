@@ -33,7 +33,7 @@ func ReadyRedis(ctx context.Context, rawURL string) Result {
 		}
 		return Result{OK: false, Reason: "redis unreachable"}
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	deadline := time.Now().Add(500 * time.Millisecond)
 	_ = conn.SetDeadline(deadline)
