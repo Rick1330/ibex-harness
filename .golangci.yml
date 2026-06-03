@@ -14,6 +14,13 @@ linters:
   disable:
     - gocyclo
     - prealloc
+  settings:
+    revive:
+      rules:
+        - name: package-comments
+          disabled: true
+        - name: exported
+          disabled: true
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0
