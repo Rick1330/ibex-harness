@@ -17,6 +17,16 @@ updates:
     open-pull-requests-limit: 5
     labels: ["dependencies", "go"]
 
+  - package-ecosystem: docker
+    directory: /services/auth
+    schedule:
+      interval: daily
+
+  - package-ecosystem: docker
+    directory: /services/proxy
+    schedule:
+      interval: daily
+
 # Enable when manifests exist (see docs/DEPENDENCIES.md §9 and prompts/05-new-service-bootstrap.txt):
 #
 #  - package-ecosystem: pip
