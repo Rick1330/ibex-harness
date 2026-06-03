@@ -19,7 +19,7 @@ The repo has a single root `go.mod`, Go services `auth` and `proxy`, two Dockerf
 | `.github/workflows/codeql.yml` | CodeQL (`go` now; python/javascript when app code exists) | `CodeQL` |
 | `.github/workflows/semgrep.yml` | IBEX custom rules (hard gate) + community rules (SARIF, non-blocking) | `semgrep` |
 | `.github/workflows/scorecard.yml` | OSSF supply-chain score | No |
-| `.github/workflows/sbom.yml` | Syft SBOM + Grype (CRITICAL) | No |
+| `.github/workflows/sbom.yml` | Syft SBOM + Grype scan (CRITICAL); reports as workflow artifacts only (no SARIF upload—Grype SBOM SARIF lacks GitHub `artifactLocation`) | No |
 
 ### CI jobs added or changed (`.github/workflows/ci.yml`)
 

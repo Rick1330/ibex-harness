@@ -18,7 +18,7 @@ Reference for the DevSecOps hardening work on branch `chore/security-ci-gates`. 
 | Trivy (fs) | Yes | CRITICAL, HIGH (`ignore-unfixed: true`) |
 | OSV Scanner | Yes | Any unfixed vuln in lockfiles (`fail-on-vuln`) |
 | Semgrep | Yes | `.semgrep/rules/` only (`--error`); community packs → SARIF only |
-| Grype (SBOM) | No | `--fail-on critical` (informational job) |
+| Grype (SBOM) | No | `--fail-on critical`; table/JSON artifacts only (not Code Scanning SARIF) |
 | golangci-lint | Yes | Lint errors on auth + proxy |
 | bandit / hadolint | Yes | Findings per tool defaults |
 

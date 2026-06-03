@@ -6,7 +6,6 @@ on:
     branches: [main]
 
 permissions:
-  security-events: write
   contents: read
   actions: read
 
@@ -29,7 +28,7 @@ jobs:
           output-file: sbom.spdx.json
 
       - name: Upload SBOM artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sbom-spdx-json
           path: sbom.spdx.json
@@ -43,12 +42,15 @@ jobs:
 
       - name: Scan SBOM with Grype
         run: |
-          grype sbom:sbom.spdx.json -o sarif --file grype.sarif --fail-on critical
+          grype sbom:sbom.spdx.json --fail-on critical -o table > grype-report.txt
+          grype sbom:sbom.spdx.json --fail-on critical -o json > grype-report.json
 
-      - name: Upload Grype SARIF
-        uses: github/codeql-action/upload-sarif@v3
-        if: success()
-        continue-on-error: true
+      - name: Upload Grype report artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
         with:
-          sarif_file: grype.sarif
-          category: grype
+          name: grype-sbom-scan
+          path: |
+            grype-report.txt
+            grype-report.json
+          retention-days: 90

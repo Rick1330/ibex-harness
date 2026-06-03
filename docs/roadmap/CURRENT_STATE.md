@@ -1,7 +1,7 @@
 # Current State
 
 **Last updated:** 2026-06-03  
-**Git SHA (`main`):** `5691dd8`  
+**Git SHA (`main`):** `68691c8` (security CI); pending post-merge follow-up PR  
 **Current phase:** Phase 1 — Core Platform  
 **Current goal:** Goal 1.1 — Persistence and auth data plane  
 **Next milestone:** [1.2.1 Proxy auth client](phase-1-core-platform/milestones/1.2.1-proxy-auth-client.md)
@@ -10,7 +10,7 @@
 
 ## What works now
 
-- Repository governance: PR-only `main`, required CI (`repo-guards`, `markdownlint`, `gitleaks`)
+- Repository governance: PR-only `main`, required CI ([ADR-0008](../adr/ADR-0008-security-ci-gates.md)): `repo-guards`, `markdownlint`, `gitleaks`, `CodeQL`, `trivy`, `osv-scan`, `semgrep`, `golangci-lint`, `bandit`, `hadolint`
 - Documentation corpus under `docs/` (architecture, schema, APIs, security, testing)
 - Local toolchain: `Makefile`, `infra/scripts/dev-tool.sh`, [TOOLCHAIN.md](../TOOLCHAIN.md), optional pre-commit
 - Docker Compose dev stack: Postgres (pgvector), Redis, ClickHouse, MinIO
@@ -21,8 +21,9 @@
 - Go services:
   - `services/auth` — `/health`, `/ready`, `/metrics`, gRPC `ValidateToken`
   - `services/proxy` — `/health`, `/ready` (Redis PING if `REDIS_URL` set), `/metrics`
-- Root Go module: `github.com/Rick1330/ibex-harness` (Go **1.22+**)
-- Advisory CI: `go-services`, `golangci-lint`, `db-migrate-smoke`, `proto-contract`, `auth-validate-smoke`, `buf-lint`
+- Root Go module: `github.com/Rick1330/ibex-harness` (Go **1.25.11+** per [TOOLCHAIN.md](../TOOLCHAIN.md))
+- Security / quality CI: CodeQL, Semgrep (IBEX rules), Trivy, OSV, hard-gate `golangci-lint`, Hadolint, Bandit (skip until `services/memory`)
+- Informational CI: `scorecard`, `sbom` (Syft + Grype artifacts), `go-services`, `db-migrate-smoke`, `proto-contract`, `auth-validate-smoke`, `buf-lint`
 - README: [DeepWiki](https://deepwiki.com/Rick1330/ibex-harness) badge
 - Semgrep: Prometheus `/metrics` handlers use `strings.Builder` (no Fprintf to ResponseWriter)
 
