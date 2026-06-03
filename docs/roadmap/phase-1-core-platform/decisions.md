@@ -6,7 +6,7 @@ Quick decisions during Phase 1. Promote durable choices to `docs/adr/` when they
 | --- | --- | --- | --- |
 | 2026-06-01 | Roadmap lives under `docs/roadmap/` | Avoid new top-level dir; repo-guards unchanged | — |
 | 2026-06-02 | Migration tool: golang-migrate + Go embed runner | Version-pinned in root `go.mod`; reproducible CI; `make db-migrate` via `go run` | [ADR-0005](../../adr/ADR-0005-postgres-migration-strategy.md) |
-| TBD | Auth package: `ibex.auth.v1` | Matches existing `ibex.context.v1` layout | ADR-0006 (planned 1.1.2) |
+| 2026-06-03 | Auth package: `ibex.auth.v1` | Matches `ibex.context.v1`; `ValidateToken` only in v1 | [ADR-0006](../../adr/ADR-0006-auth-proto-contract.md) |
 | TBD | Token table subset first | `organizations` + `tokens` only for validate path | — |
 | TBD | Proto gen: Option A uncommitted | Consistent with ADR-0004 | ADR-0004 |
 
