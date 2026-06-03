@@ -305,27 +305,42 @@ Avoid:
 
 ## 9) Dependency Scanning in CI (Required Gates)
 
+### 9.0 Unified scanning (active)
+
+- **OSV Scanner** (`osv-scan` in `.github/workflows/ci.yml`): recursive scan of `go.sum` and future lockfiles; fails on CRITICAL/HIGH; SARIF to GitHub Security.
+- **Dependabot** (`.github/dependabot.yml`): `github-actions` + root `gomod` at `/` (weekly). Automated dependency PRs are the primary CVE remediation between CI runs.
+
+**Enable when services land** (uncomment blocks in `.github/dependabot.yml`):
+
+| Ecosystem | Directory | Prerequisite |
+|-----------|-----------|--------------|
+| `pip` | `/services/memory` | `requirements.txt` or `pyproject.toml` + lockfile |
+| `npm` | `/services/dashboard` | `package-lock.json` |
+
+Also add `services/memory` to the Bandit CI job and extend golangci-lint paths for new Go services (see `prompts/05-new-service-bootstrap.txt`).
+
 ### 9.1 Go
 
-- `govulncheck ./...`
-- `golangci-lint` includes `gosec` where appropriate
+- OSV Scanner (replaces separate `govulncheck` in CI)
+- `golangci-lint` on `./services/auth/...` and `./services/proxy/...` (hard gate)
 
 ### 9.2 Python
 
-- `pip-audit` (or equivalent via uv)
-- `ruff` includes security lint rules (bandit-like)
-- Semgrep rules for common injection patterns
+- Bandit on `services/memory/` when present (HIGH confidence + HIGH severity)
+- Semgrep `p/python` + `.semgrep/rules/` (active in CI)
+- Future: uncomment Dependabot `pip` entry when memory service has a lockfile
 
 ### 9.3 Node/TypeScript
 
-- `npm audit --production` (or pnpm equivalent)
-- OSV scanning
-- Semgrep rules for Node/TS
+- CodeQL `javascript` + Semgrep `p/typescript` (active)
+- Future: uncomment Dependabot `npm` when dashboard has `package-lock.json`
 
 ### 9.4 Containers
 
-- `trivy image` scan for each built image
-- block critical CVEs unless explicitly waived with documented reason and deadline
+- **Trivy filesystem** scan on PR/push (`trivy` job): CRITICAL/HIGH, `ignore-unfixed: true`
+- **Hadolint** on all `Dockerfile*` paths
+- **Future:** `trivy image` per built image when CI produces tagged images (see `.github/workflows/sbom.yml` for SBOM supply chain)
+- block critical CVEs unless explicitly waived with documented reason and deadline (ADR required)
 
 ---
 

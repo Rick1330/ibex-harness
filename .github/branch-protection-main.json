@@ -4,7 +4,14 @@
     "checks": [
       { "context": "repo-guards" },
       { "context": "markdownlint" },
-      { "context": "gitleaks" }
+      { "context": "gitleaks" },
+      { "context": "CodeQL" },
+      { "context": "trivy" },
+      { "context": "osv-scan" },
+      { "context": "semgrep" },
+      { "context": "golangci-lint" },
+      { "context": "bandit" },
+      { "context": "hadolint" }
     ]
   },
   "enforce_admins": true,

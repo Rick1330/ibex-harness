@@ -1,0 +1,45 @@
+name: Semgrep
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  security-events: write
+  contents: read
+  actions: read
+
+concurrency:
+  group: semgrep-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  semgrep:
+    name: semgrep
+    runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep:1.103.0
+    if: github.actor != 'dependabot[bot]'
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Run Semgrep (community + IBEX custom rules)
+        run: |
+          semgrep scan \
+            --config p/default \
+            --config p/golang \
+            --config p/python \
+            --config p/typescript \
+            --config p/owasp-top-ten \
+            --config .semgrep/rules/ \
+            --sarif --sarif-output=semgrep.sarif \
+            --error \
+            .
+
+      - name: Upload SARIF to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep

@@ -8,10 +8,29 @@ updates:
     open-pull-requests-limit: 5
     labels: ["dependencies", "github-actions"]
 
-# Enable when manifests exist (see docs/adr/ADR-0002-repo-foundation-bootstrap.md):
-#  - package-ecosystem: gomod
-#    directory: "/services/proxy"
+  # Root go.mod (single module for auth, proxy, infra, packages/proto tests).
+  - package-ecosystem: gomod
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "go"]
+
+# Enable when manifests exist (see docs/DEPENDENCIES.md §9 and prompts/05-new-service-bootstrap.txt):
+#
 #  - package-ecosystem: pip
 #    directory: "/services/memory"
+#    schedule:
+#      interval: weekly
+#      day: monday
+#    open-pull-requests-limit: 5
+#    labels: ["dependencies", "python"]
+#
 #  - package-ecosystem: npm
 #    directory: "/services/dashboard"
+#    schedule:
+#      interval: weekly
+#      day: monday
+#    open-pull-requests-limit: 5
+#    labels: ["dependencies", "typescript"]

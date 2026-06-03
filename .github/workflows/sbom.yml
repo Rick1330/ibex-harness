@@ -1,0 +1,52 @@
+name: SBOM
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  security-events: write
+  contents: read
+  actions: read
+
+concurrency:
+  group: sbom-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sbom:
+    name: sbom
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Generate SBOM (Syft)
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: spdx-json
+          output-file: sbom.spdx.json
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-spdx-json
+          path: sbom.spdx.json
+          retention-days: 90
+
+      - name: Scan SBOM with Grype
+        uses: anchore/scan-action@v3
+        id: grype
+        with:
+          sbom: sbom.spdx.json
+          fail-build: true
+          severity-cutoff: critical
+          output-format: sarif
+
+      - name: Upload Grype SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: ${{ steps.grype.outputs.sarif }}
+          category: grype

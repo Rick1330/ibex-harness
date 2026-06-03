@@ -136,6 +136,14 @@ Every service must:
 - propagate trace context (OTel)
 - avoid high-cardinality metric labels (no org_id/agent_id/session_id in Prometheus labels)
 
+## 9.5) CI and security tooling invariants (non-negotiable)
+- Never set continue-on-error: true on a security scanning job.
+- Never remove a tool from .github/branch-protection-main.json without an ADR.
+- Never downgrade a pinned tool version without documenting the reason in the PR.
+- SARIF upload must be preserved for all scanning jobs (CodeQL, Trivy, Semgrep, OSV, Grype, Bandit).
+- Custom Semgrep rules in .semgrep/rules/ must be updated when new invariants are added to .cursorrules.
+- When adding a new service, add it to the Dependabot config and to the golangci-lint/bandit matrix.
+
 ## 10) Change discipline (docs/contracts)
 If you change behavior, you must update the relevant docs:
 - REST changes → docs/API_DOCUMENTATION.md

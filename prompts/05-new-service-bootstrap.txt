@@ -20,6 +20,9 @@ Deliverables:
    - metrics endpoint (if applicable)
    - config loading with env vars
 2) Minimal CI integration (lint/typecheck/test)
+   - Go: ensure paths are included in `golangci-lint` job in `.github/workflows/ci.yml`
+   - Python: add `services/<name>/` to Bandit job; uncomment Dependabot `pip` in `.github/dependabot.yml` when lockfile exists
+   - TypeScript: uncomment Dependabot `npm` when `package-lock.json` exists under `services/dashboard` or new app dir
 3) Minimal README in the service folder explaining how to run it
 
 Before writing any code:

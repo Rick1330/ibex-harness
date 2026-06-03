@@ -421,13 +421,23 @@ Before adding a dependency:
 - minimize transitive dependency count
 - document why it’s needed
 
-### 12.2 Tooling (recommended gates)
+### 12.2 Tooling (active CI gates)
 
-- Secret scanning: gitleaks
-- SAST: semgrep ruleset + language-specific analyzers
-- Dependency scanning: OSV / Dependabot
-- Container scanning: Trivy
-- SBOM generation (optional but recommended): Syft + Grype
+| Tool | Workflow | PR gate | SARIF |
+|------|----------|---------|-------|
+| gitleaks | `.github/workflows/ci.yml` | Yes | No |
+| Semgrep (community + `.semgrep/rules/`) | `.github/workflows/semgrep.yml` | Yes | Yes |
+| CodeQL (Go, Python, JS/TS) | `.github/workflows/codeql.yml` | Yes | Yes |
+| OSV Scanner | `.github/workflows/ci.yml` (`osv-scan`) | Yes | Yes |
+| Trivy (filesystem; image scan when CI builds images) | `.github/workflows/ci.yml` (`trivy`) | Yes | Yes |
+| golangci-lint | `.github/workflows/ci.yml` | Yes | No |
+| Bandit (Python; skips until `services/memory` exists) | `.github/workflows/ci.yml` | Yes | When run |
+| Hadolint | `.github/workflows/ci.yml` | Yes | No |
+| Syft + Grype (SBOM) | `.github/workflows/sbom.yml` | No (main/PR artifact) | Yes |
+| OSSF Scorecard | `.github/workflows/scorecard.yml` | No (main + schedule) | Yes |
+| Dependabot | `.github/dependabot.yml` | N/A (automated PRs) | N/A |
+
+Required status checks: `.github/branch-protection-main.json` (see [ADR-0008](adr/ADR-0008-security-ci-gates.md)).
 
 ### 12.3 Build integrity
 

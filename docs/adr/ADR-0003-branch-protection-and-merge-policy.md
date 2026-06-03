@@ -19,6 +19,15 @@ The repository is maintained solo today but must scale to team review without re
 | `repo-guards` | `repo-guards` |
 | `markdown` | `markdownlint` |
 | `secrets` | `gitleaks` |
+| `analyze` (codeql.yml) | `CodeQL` |
+| `trivy` | `trivy` |
+| `osv-scan` | `osv-scan` |
+| `semgrep` (semgrep.yml) | `semgrep` |
+| `golangci-lint` | `golangci-lint` |
+| `bandit` | `bandit` |
+| `hadolint` | `hadolint` |
+
+See [ADR-0008](ADR-0008-security-ci-gates.md) for failure thresholds and non-gated workflows (`scorecard`, `sbom`).
 
 ### Solo mode (active now)
 
@@ -29,7 +38,7 @@ Apply to branch `main` after the governance PR merges:
 | Require pull request before merge | Yes |
 | Required approving review count | **0** (author cannot self-approve on GitHub) |
 | Require CODEOWNERS review | No |
-| Required status checks | `repo-guards`, `markdownlint`, `gitleaks` |
+| Required status checks | `repo-guards`, `markdownlint`, `gitleaks`, `CodeQL`, `trivy`, `osv-scan`, `semgrep`, `golangci-lint`, `bandit`, `hadolint` |
 | Require branches up to date | Yes (`strict`) |
 | Require conversation resolution | Yes |
 | Allow force pushes | No |
@@ -83,7 +92,7 @@ gh api --method PUT \
   --input .github/branch-protection-main.json
 ```
 
-Payload: [.github/branch-protection-main.json](../../.github/branch-protection-main.json) (solo mode: PR required, 0 approvals, three CI checks, `enforce_admins: true`).
+Payload: [.github/branch-protection-main.json](../../.github/branch-protection-main.json) (solo mode: PR required, 0 approvals, security CI checks per ADR-0008, `enforce_admins: true`).
 
 ## References
 

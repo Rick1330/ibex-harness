@@ -1,0 +1,48 @@
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 2 * * 0"
+
+permissions:
+  security-events: write
+  contents: read
+  actions: read
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: CodeQL
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [go, python, javascript]
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+
+      - name: Autobuild
+        if: matrix.language == 'go'
+        uses: github/codeql-action/autobuild@v3
+
+      # No Python/TS app code yet; manual no-op build so matrix jobs succeed until services land.
+      - name: Skip autobuild (no sources yet)
+        if: matrix.language != 'go'
+        run: echo "No ${{ matrix.language }} application sources yet; CodeQL will analyze tracked files only."
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: /language:${{ matrix.language }}

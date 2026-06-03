@@ -4,6 +4,8 @@ on:
   pull_request:
   push:
     branches: [main]
+  schedule:
+    - cron: "0 3 * * 0"
 
 permissions:
   contents: read
@@ -15,6 +17,7 @@ concurrency:
 jobs:
   repo-guards:
     name: repo-guards
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -60,6 +63,7 @@ jobs:
 
   markdown:
     name: markdownlint
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -71,6 +75,7 @@ jobs:
 
   secrets:
     name: gitleaks
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -89,6 +94,7 @@ jobs:
 
   buf-lint:
     name: buf-lint
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -109,6 +115,7 @@ jobs:
 
   proto-contract:
     name: proto-contract
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -140,6 +147,7 @@ jobs:
 
   compose-validate:
     name: compose-validate
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -150,6 +158,7 @@ jobs:
 
   db-migrate-smoke:
     name: db-migrate-smoke
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -186,6 +195,7 @@ jobs:
 
   auth-validate-smoke:
     name: auth-validate-smoke
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -225,6 +235,7 @@ jobs:
 
   go-services:
     name: go-services
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -260,22 +271,17 @@ jobs:
 
   golangci-lint:
     name: golangci-lint
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
-    continue-on-error: true
-    strategy:
-      matrix:
-        service: [auth, proxy]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with:
           go-version: "1.22.x"
       - uses: bufbuild/buf-setup-action@v1.50.0
-        if: matrix.service == 'auth'
         with:
           version: "1.47.2"
       - name: Generate protobuf stubs for auth
-        if: matrix.service == 'auth'
         working-directory: packages/proto
         run: buf generate
       - name: Install golangci-lint
@@ -283,4 +289,96 @@ jobs:
           curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b /usr/local/bin v1.59.0
           golangci-lint --version
       - name: Run golangci-lint
-        run: golangci-lint run ./services/${{ matrix.service }}/...
+        run: |
+          golangci-lint run ./services/auth/... ./services/proxy/...
+
+  trivy:
+    name: trivy
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v6
+      - name: Run Trivy filesystem scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          format: sarif
+          output: trivy-results.sarif
+          exit-code: "1"
+      - name: Upload Trivy SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy
+
+  osv-scan:
+    name: osv-scan
+    permissions:
+      security-events: write
+      contents: read
+      actions: read
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@v2.3.8
+    with:
+      scan-args: |-
+        --recursive
+        .
+
+  hadolint:
+    name: hadolint
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Hadolint all Dockerfiles
+        run: |
+          # Dockerfiles today: services/auth, services/proxy.
+          # Pending: services/memory, services/dashboard (see docs/DEPENDENCIES.md §10).
+          mapfile -t files < <(find . -name 'Dockerfile*' -not -path './.git/*' | sort)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No Dockerfiles found"
+            exit 0
+          fi
+          for f in "${files[@]}"; do
+            echo "Linting $f"
+            docker run --rm -i \
+              -v "${GITHUB_WORKSPACE}:/workdir" \
+              -w /workdir \
+              hadolint/hadolint:v2.12.0 \
+              hadolint -f tty --config .hadolint.yaml "$f"
+          done
+
+  bandit:
+    name: bandit
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Bandit (memory service)
+        run: |
+          if [ ! -d services/memory ]; then
+            echo "services/memory not present — skipping bandit until Python memory service lands"
+            exit 0
+          fi
+          pip install bandit
+          bandit -r services/memory/ -x tests/,test_ -f sarif -o bandit.sarif
+      - name: Upload Bandit SARIF
+        if: ${{ hashFiles('bandit.sarif') != '' }}
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: bandit.sarif
+          category: bandit

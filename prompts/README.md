@@ -26,5 +26,6 @@ Reusable prompts for AI-assisted development. Paste file contents into your tool
 | `17-spike.txt` | Research before implementation |
 | `18-pr-description.txt` | PR description from a diff |
 | `19-issue-spec-audit.txt` | Validate an issue before assigning to AI |
+| `20-security-ci-audit.txt` | Review changes to CI, security configs, or `.cursorrules` |
 
 Full narrative and usage guide: [PROMPTS.md](../PROMPTS.md).

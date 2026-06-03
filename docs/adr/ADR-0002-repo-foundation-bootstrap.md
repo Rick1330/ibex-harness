@@ -13,7 +13,7 @@ Documentation and AI guardrails exist, but the repo lacked hygiene files, CI enf
 1. **Hygiene:** Add `.gitignore`, `.editorconfig`, `.gitattributes`; license set to **MIT** ([LICENSE](../../LICENSE)).
 2. **CI (PR-only, fast):** Structural markdown lint, gitleaks, forbidden-file checks, repo layout guard. No language build/test until services exist.
 3. **Markdown policy:** `markdownlint-cli2` tuned via `.markdownlint-cli2.jsonc` — style rules (MD013, MD022, MD024, MD029, MD032, MD056, MD060, etc.) disabled for existing reference docs; structural rules (fences MD031/MD040, link integrity) remain enabled. Tighten rules incrementally as docs are normalized.
-4. **Dependabot:** Enable `github-actions` weekly updates only until `go.mod` / `pyproject.toml` / `package.json` exist in services.
+4. **Dependabot:** Enable `github-actions` weekly updates; enable root `gomod` when `go.mod` exists at repo root ([ADR-0008](ADR-0008-security-ci-gates.md)). Enable `pip` / `npm` when memory/dashboard manifests exist (see `.github/dependabot.yml` comments).
 5. **Branch:** Rename default branch `master` → `main` to match [DEVELOPMENT_GUIDE.md](../DEVELOPMENT_GUIDE.md) and [DEPLOYMENT.md](../DEPLOYMENT.md).
 6. **Scaffold dirs:** Create `services/`, `packages/`, `infra/` with README stubs only (no service code in this ADR).
 7. **Templates:** PR template aligned with DEVELOPMENT_GUIDE §7.2; bug/feature/security issue templates.

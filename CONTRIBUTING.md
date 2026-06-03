@@ -52,13 +52,22 @@ Repository hints for Copilot: [.github/instructions/ibex-harness.instructions.md
 
 ## Required CI checks
 
-Every PR must pass these status checks (stable names for branch protection):
+Every PR must pass these status checks (stable names for branch protection; see [ADR-0008](docs/adr/ADR-0008-security-ci-gates.md)):
 
 | Check | Purpose |
 |-------|---------|
 | `repo-guards` | Layout, no `.env`, no conflict markers, no large files |
 | `markdownlint` | Structural markdown lint |
 | `gitleaks` | Secret scan |
+| `CodeQL` | Dataflow SAST (Go, Python, JS/TS) |
+| `semgrep` | Community SAST + `.semgrep/rules/` IBEX invariants |
+| `trivy` | Filesystem CVE scan (CRITICAL/HIGH, unfixed ignored) |
+| `osv-scan` | Lockfile CVE scan (OSV database) |
+| `golangci-lint` | Go lint (auth + proxy) |
+| `bandit` | Python security lint (skips until `services/memory` exists) |
+| `hadolint` | Dockerfile best practices |
+
+Not required for merge (informational / supply chain): `scorecard`, `sbom` (Grype), `buf-lint`, `go-services`, smoke tests.
 
 ## Local validation (before pushing)
 
@@ -73,7 +82,32 @@ bash .github/scripts/check-repo-layout.sh
 
 # Secrets (optional; CI always runs gitleaks)
 gitleaks detect --source . --config .gitleaks.toml --redact
+
+# Go lint (buf generate first for auth)
+cd packages/proto && buf generate && cd ../..
+golangci-lint run ./services/auth/... ./services/proxy/...
+
+# IBEX custom Semgrep rules
+semgrep --config .semgrep/rules/ --error .
+
+# Dockerfiles (requires Docker)
+find . -name 'Dockerfile*' -not -path './.git/*' -exec docker run --rm -i -v "${PWD}:/workdir" -w /workdir hadolint/hadolint:v2.12.0 hadolint -f tty --config .hadolint.yaml {} \;
+
+# Filesystem CVE scan (install trivy CLI)
+trivy fs --severity CRITICAL,HIGH --ignore-unfixed .
+
+# Dependency CVE scan (install osv-scanner CLI)
+osv-scanner --recursive .
+
+# SBOM + Grype (install syft and grype CLI)
+syft . -o spdx-json > sbom.spdx.json
+grype sbom:sbom.spdx.json --fail-on critical
+
+# Validate workflow YAML
+python3 -c "import yaml; import pathlib; [yaml.safe_load(p.read_text()) for p in pathlib.Path('.github/workflows').glob('*.yml')]"
 ```
+
+CI/security config changes: use [prompts/20-security-ci-audit.txt](prompts/20-security-ci-audit.txt).
 
 ## Pull request template
 
@@ -92,3 +126,4 @@ See [.github/SECURITY.md](.github/SECURITY.md) for vulnerability reporting.
 - [docs/DEVELOPMENT_GUIDE.md](docs/DEVELOPMENT_GUIDE.md) — branching, PRs, CI expectations
 - [docs/CODING_STANDARDS.md](docs/CODING_STANDARDS.md) — style and quality bar
 - [docs/adr/ADR-0003-branch-protection-and-merge-policy.md](docs/adr/ADR-0003-branch-protection-and-merge-policy.md) — branch protection policy
+- [docs/adr/ADR-0008-security-ci-gates.md](docs/adr/ADR-0008-security-ci-gates.md) — security scanning CI gates
