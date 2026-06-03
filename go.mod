@@ -1,6 +1,6 @@
 module github.com/Rick1330/ibex-harness
 
-go 1.25.0
+go 1.25.9
 
 require (
 	github.com/bufbuild/protocompile v0.10.0

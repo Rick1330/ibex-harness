@@ -18,7 +18,7 @@ make help
 | --- | --- | --- |
 | Git | 2.40+ | Source control and PR workflow |
 | Docker Engine + Docker Compose | Docker 24+, Compose v2 | Local Postgres, Redis, ClickHouse, and MinIO |
-| Go | 1.25.0+ | Go services (`auth`, `proxy`, future CLI); must match `go.mod` |
+| Go | 1.25.9+ | Go services (`auth`, `proxy`, future CLI); must match `go.mod` |
 | GNU Make | any POSIX `make` implementation | Canonical command surface (`Makefile`) used by developers and CI; on Windows prefer running via Git Bash or install a compatible `make` implementation |
 | Node.js | 18+ | `markdownlint-cli2` and future dashboard |
 | Python | 3.11+ | Future Python services and optional tooling |
