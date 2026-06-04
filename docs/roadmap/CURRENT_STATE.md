@@ -1,7 +1,7 @@
 # Current State
 
 **Last updated:** 2026-06-04  
-**Git SHA (`main`):** `3c01bd2` — PR #49 M1.1.6 crypto policy (ADR-0010, `packages/crypto`)  
+**Git SHA (`main`):** `42ac2f9` — PR #51 M1.2.1 proxy auth (ADR-0011, auth middleware)  
 **Current phase:** Phase 1 — Core Platform  
 **Current goal:** Goal 1.2 — Proxy platform integration  
 **Next milestone:** [1.2.2 Proxy request normalization](phase-1-core-platform/milestones/1.2.2-proxy-request-normalization.md)
