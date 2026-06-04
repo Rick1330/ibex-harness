@@ -1,5 +1,17 @@
 # Phase 1 — Goals
 
+## Goal 1.0: Test infrastructure (prerequisite)
+
+**Description:** Shared Go integration test harness (testcontainers, tags, CI) before auth/proxy integration milestones scale up.
+
+**Related milestones:**
+
+- [1.0.1](milestones/1.0.1-go-integration-test-infrastructure.md)
+
+**Validation:** `go test -tags=integration ./...` documented and runnable in CI smoke path
+
+---
+
 ## Goal 1.1: Persistence and auth data plane
 
 **Description:** Introduce Postgres migrations and the minimum schema for organizations and API tokens, plus the auth gRPC contract and validation logic.
@@ -17,6 +29,9 @@
 - [1.1.1](milestones/1.1.1-postgres-migrations.md)
 - [1.1.2](milestones/1.1.2-auth-proto-and-codegen.md)
 - [1.1.3](milestones/1.1.3-auth-token-validation.md)
+- [1.1.4](milestones/1.1.4-token-creation-and-management-api.md)
+- [1.1.5](milestones/1.1.5-permission-bitmap-contract-and-adr.md)
+- [1.1.6](milestones/1.1.6-argon2id-parameters-and-crypto-policy-adr.md)
 
 **Validation:** `make db-migrate`; `go test ./services/auth/...` with integration tag; grpcurl or integration client against auth
 
@@ -37,6 +52,8 @@
 
 - [1.2.1](milestones/1.2.1-proxy-auth-client.md)
 - [1.2.2](milestones/1.2.2-proxy-request-normalization.md)
+- [1.2.3](milestones/1.2.3-proxy-input-validation-and-stable-error-envelope.md)
+- [1.2.4](milestones/1.2.4-proxy-rate-limit-skeleton.md)
 
 **Validation:** Integration tests with auth + proxy running; httptest for malformed payloads
 

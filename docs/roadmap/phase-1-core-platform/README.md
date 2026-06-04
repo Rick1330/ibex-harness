@@ -2,7 +2,24 @@
 
 **Status:** In Progress  
 **Estimated duration:** 4–6 weeks  
-**Current milestone:** [1.1.1 Postgres migrations](milestones/1.1.1-postgres-migrations.md)
+**Current milestone:** [1.2.1 Proxy auth client](milestones/1.2.1-proxy-auth-client.md) (after optional [1.0.1 integration test infra](milestones/1.0.1-go-integration-test-infrastructure.md))
+
+## Milestones
+
+| ID | Milestone | Status |
+| --- | --- | --- |
+| 1.0.1 | [Go integration test infrastructure](milestones/1.0.1-go-integration-test-infrastructure.md) | Planned |
+| 1.1.1 | [Postgres migrations](milestones/1.1.1-postgres-migrations.md) | Complete |
+| 1.1.2 | [Auth proto and codegen](milestones/1.1.2-auth-proto-and-codegen.md) | Complete |
+| 1.1.3 | [Auth token validation](milestones/1.1.3-auth-token-validation.md) | Complete |
+| 1.1.4 | [Token creation and management API](milestones/1.1.4-token-creation-and-management-api.md) | Planned |
+| 1.1.5 | [Permission bitmap contract and ADR](milestones/1.1.5-permission-bitmap-contract-and-adr.md) | Planned |
+| 1.1.6 | [Argon2id parameters and crypto policy ADR](milestones/1.1.6-argon2id-parameters-and-crypto-policy-adr.md) | Planned |
+| 1.2.1 | [Proxy auth client](milestones/1.2.1-proxy-auth-client.md) | Next |
+| 1.2.2 | [Proxy request normalization](milestones/1.2.2-proxy-request-normalization.md) | Planned |
+| 1.2.3 | [Proxy input validation and error envelope](milestones/1.2.3-proxy-input-validation-and-stable-error-envelope.md) | Planned |
+| 1.2.4 | [Proxy rate limit skeleton](milestones/1.2.4-proxy-rate-limit-skeleton.md) | Planned |
+| 1.3.1 | [Observability baseline](milestones/1.3.1-observability-baseline.md) | Planned |
 
 ## Theme
 
@@ -39,7 +56,7 @@ Foundation-004 delivered honest skeletons. Phase 1 turns them into a **fail-clos
 
 ## Documents
 
-- [goals.md](goals.md) — Goals 1.1–1.3
+- [goals.md](goals.md) — Goals 1.0–1.3
 - [milestones/](milestones/) — PR-sized work units
 - [decisions.md](decisions.md) — Phase-local decision log
 - [risks.md](risks.md) — Risks and mitigations
@@ -48,8 +65,9 @@ Foundation-004 delivered honest skeletons. Phase 1 turns them into a **fail-clos
 
 | Goal | Focus |
 | --- | --- |
-| [1.1](goals.md#goal-11-persistence-and-auth-data-plane) | Migrations, auth proto, token validation |
-| [1.2](goals.md#goal-12-proxy-platform-integration) | Proxy auth client, request normalization |
+| [1.0](goals.md#goal-10-test-infrastructure-prerequisite) | Integration test harness (optional before heavy integration work) |
+| [1.1](goals.md#goal-11-persistence-and-auth-data-plane) | Migrations, auth proto, token validation, token API backlog |
+| [1.2](goals.md#goal-12-proxy-platform-integration) | Proxy auth client, normalization, validation, rate limits |
 | [1.3](goals.md#goal-13-observability-baseline) | OTel + Prometheus client |
 
 ## Next phase
