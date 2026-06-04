@@ -269,6 +269,29 @@ Only critical flows; E2E tests are the slowest and most fragile.
 - ensure no endpoint returns token plaintext except on creation
 - ensure logs never include token values (log scrubbing tests)
 
+### 6.2.1 Proxy auth middleware (Go)
+
+**Primary risks:**
+
+- bypassing auth on protected routes
+- fail-open when auth is unavailable
+- bearer token leakage in logs
+- cross-tenant scope on org-scoped paths
+
+**Unit tests must cover:**
+
+- bearer header parsing (missing, malformed, valid)
+- middleware with mock `TokenValidator` (401/403/503/200)
+- minimal stable error envelope JSON
+
+**Integration tests must cover:**
+
+- proxy + real auth gRPC + Postgres
+- valid / invalid / revoked PAT
+- org path mismatch → 403
+- chat route requires `ProxyChatCompletion`
+- auth stopped → 503 on protected routes
+
 ---
 
 ### 6.3 Memory Service (Python) — Data Integrity + Isolation
