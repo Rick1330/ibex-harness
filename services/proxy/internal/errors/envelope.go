@@ -11,6 +11,8 @@ const (
 	CodeInvalidToken            = "INVALID_TOKEN"
 	CodeInsufficientPermissions = "INSUFFICIENT_PERMISSIONS"
 	CodeServiceDegraded         = "SERVICE_DEGRADED"
+	CodeInvalidJSON             = "INVALID_JSON"
+	CodeProviderNotConfigured   = "PROVIDER_NOT_CONFIGURED"
 )
 
 // Detail is the stable error envelope (extended by milestone 1.2.3).

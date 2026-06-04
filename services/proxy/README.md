@@ -12,9 +12,9 @@ Go service for the IBEX Harness LLM proxy.
 
 - `GET /v1/internal/auth-probe` — returns `{org_id, permissions}` for the caller token
 - `GET /v1/orgs/{org_id}/auth-probe` — same; **403** if path org ≠ token org
-- `POST /v1/chat/completions` — auth + `ProxyChatCompletion` permission; returns **501** stub (provider not configured)
+- `POST /v1/chat/completions` — auth + `ProxyChatCompletion`; parses JSON body; **501** if valid parse (provider not configured); **400** `INVALID_JSON` if malformed
 
-Auth validates via gRPC `ValidateToken` ([ADR-0011](../../docs/adr/ADR-0011-proxy-auth-client.md)). Fail closed: auth outage → **503**.
+Auth validates via gRPC `ValidateToken` ([ADR-0011](../../docs/adr/ADR-0011-proxy-auth-client.md)). Request bodies parsed per [ADR-0012](../../docs/adr/ADR-0012-proxy-request-normalization.md). Fail closed: auth outage → **503**.
 
 ## Configuration
 
@@ -49,6 +49,11 @@ IBEX_AUTH_GRPC_ADDR=127.0.0.1:9091 REDIS_URL=redis://localhost:6379/0 \
 ```bash
 curl -s http://localhost:8080/health
 curl -s -H "Authorization: Bearer <pat>" http://localhost:8080/v1/internal/auth-probe
+curl -s -X POST http://localhost:8080/v1/chat/completions \
+  -H "Authorization: Bearer <pat>" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"gpt-4","messages":[{"role":"user","content":"hello"}]}'
+# expect 501 PROVIDER_NOT_CONFIGURED
 ```
 
 ## Tests

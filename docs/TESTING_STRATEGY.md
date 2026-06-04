@@ -294,6 +294,27 @@ Only critical flows; E2E tests are the slowest and most fragile.
 
 ---
 
+### 6.2.2 Proxy request normalization (Go)
+
+**Primary risks:**
+
+- parsing message content into logs
+- accepting unbounded bodies before 1.2.3 limits
+- bypassing auth and parsing unauthenticated bodies
+
+**Unit tests must cover:**
+
+- valid OpenAI-shaped JSON
+- invalid/truncated JSON, non-array `messages`, non-object message elements
+- httptest: auth + valid JSON → 501; auth + bad JSON → 400
+
+**Integration tests must cover:**
+
+- authenticated valid JSON → 501 `PROVIDER_NOT_CONFIGURED`
+- authenticated malformed JSON → 400 `INVALID_JSON`
+
+---
+
 ### 6.3 Memory Service (Python) — Data Integrity + Isolation
 
 **Primary risks:**

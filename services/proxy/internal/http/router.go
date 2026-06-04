@@ -12,6 +12,7 @@ import (
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
 	proxyerrors "github.com/Rick1330/ibex-harness/services/proxy/internal/errors"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/health"
+	"github.com/Rick1330/ibex-harness/services/proxy/internal/llm"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/metrics"
 )
 
@@ -72,7 +73,9 @@ func NewRouter(cfg config.Config, logger *slog.Logger, meter *metrics.Metrics, v
 		})
 
 		authChat := AuthMiddleware(validator, meter, logger, AuthOptions{RequireProxyChatCompletion: true})
-		mux.Handle("/v1/chat/completions", authChat(http.HandlerFunc(handleChatCompletionsStub)))
+		mux.Handle("/v1/chat/completions", authChat(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			handleChatCompletions(w, r, logger)
+		})))
 	}
 
 	return meter.Middleware(loggingMiddleware(logger, mux))
@@ -93,13 +96,33 @@ func handleAuthProbe(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func handleChatCompletionsStub(w http.ResponseWriter, r *http.Request) {
+func handleChatCompletions(w http.ResponseWriter, r *http.Request, logger *slog.Logger) {
 	if !requireMethod(w, r, http.MethodPost) {
 		return
 	}
-	proxyerrors.WriteJSON(w, http.StatusNotImplemented, "PROVIDER_NOT_CONFIGURED",
+	requestID := requestIDFromContext(r.Context())
+
+	parsed, err := llm.ParseChatCompletionRequest(r.Body)
+	if err != nil {
+		proxyerrors.WriteJSON(w, http.StatusBadRequest, proxyerrors.CodeInvalidJSON,
+			"Malformed JSON in request body", "", requestID)
+		return
+	}
+
+	if res, ok := auth.FromContext(r.Context()); ok {
+		logger.Info("chat completion parsed",
+			"request_id", requestID,
+			"org_id", res.OrgID,
+			"model", parsed.Model,
+			"message_count", len(parsed.Messages),
+			"stream", parsed.Stream,
+		)
+	}
+	_ = llm.WithChatRequest(r.Context(), parsed)
+
+	proxyerrors.WriteJSON(w, http.StatusNotImplemented, proxyerrors.CodeProviderNotConfigured,
 		"LLM provider not configured", "Phase 2 milestone required for upstream calls",
-		requestIDFromContext(r.Context()))
+		requestID)
 }
 
 func loggingMiddleware(logger *slog.Logger, next http.Handler) http.Handler {

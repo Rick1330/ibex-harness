@@ -198,6 +198,9 @@ HTTP 429 - Too Many Requests
 
 HTTP 500 - Internal Server Error
   INTERNAL_ERROR           -- Unexpected server error
+
+HTTP 501 - Not Implemented
+  PROVIDER_NOT_CONFIGURED  -- LLM provider not configured (Phase 1 proxy stub)
   DATABASE_ERROR           -- Database operation failed
   UPSTREAM_ERROR           -- External service error
 
@@ -2136,6 +2139,10 @@ All webhooks use this envelope:
 **Proxy OpenAI-compatible chat completion**
 
 Drop-in replacement for OpenAI's chat completions endpoint. Context and memory injection happen transparently.
+
+**Service route (direct proxy):** `POST /v1/chat/completions` — same handler; `/proxy` is the external gateway path prefix.
+
+**Phase 1 behavior:** Authenticated requests with valid JSON are parsed; response is **501 Not Implemented** with `PROVIDER_NOT_CONFIGURED` until Phase 2 provider forwarding. Malformed JSON returns **400** with `INVALID_JSON`.
 
 **Request:**
 

@@ -160,8 +160,10 @@ func TestProxyAuthIntegration(t *testing.T) {
 	})
 
 	t.Run("chat stub with permission", func(t *testing.T) {
-		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/chat/completions", strings.NewReader("{}"))
+		body := `{"model":"gpt-4","messages":[{"role":"user","content":"hi"}]}`
+		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/chat/completions", strings.NewReader(body))
 		req.Header.Set("Authorization", "Bearer "+chatBearer)
+		req.Header.Set("Content-Type", "application/json")
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatal(err)
@@ -169,6 +171,28 @@ func TestProxyAuthIntegration(t *testing.T) {
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusNotImplemented {
 			t.Fatalf("status: %d", resp.StatusCode)
+		}
+		b, _ := io.ReadAll(resp.Body)
+		if !strings.Contains(string(b), "PROVIDER_NOT_CONFIGURED") {
+			t.Fatalf("body: %s", string(b))
+		}
+	})
+
+	t.Run("chat malformed json", func(t *testing.T) {
+		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/chat/completions", strings.NewReader(`{invalid`))
+		req.Header.Set("Authorization", "Bearer "+chatBearer)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("status: %d body=%s", resp.StatusCode, readBody(resp))
+		}
+		b := readBody(resp)
+		if !strings.Contains(b, "INVALID_JSON") {
+			t.Fatalf("body: %s", b)
 		}
 	})
 
