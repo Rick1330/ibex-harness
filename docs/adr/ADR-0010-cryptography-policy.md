@@ -1,0 +1,108 @@
+# ADR-0010: Cryptography policy
+
+- **Status:** Accepted
+- **Date:** 2026-06-04
+- **Authors:** IBEX Harness team
+
+## Context
+
+[SECURITY.md](../SECURITY.md) §4.2 and [AGENTS.md](../AGENTS.md) §5.4 require Argon2id for password and token storage. Milestone 1.1.3 implemented PAT validation with PHC-encoded Argon2id hashes ([ADR-0007](ADR-0007-auth-token-validation.md)), but parameters lived only in env defaults and duplicated Go code in `services/auth/internal/token` and `infra/testing/testutil`.
+
+Without a single policy ADR and shared library, future services may choose incompatible parameters, making upgrades impossible without knowing historical encoding.
+
+## Decision
+
+### 1) Canonical implementation
+
+- **Package:** `packages/crypto` (`github.com/Rick1330/ibex-harness/packages/crypto`)
+- **Argon2id:** `HashSecret`, `VerifySecret`, `HashToken`, `VerifyToken`, `HashPassword`, `VerifyPassword`
+- **Random:** `GenerateRandomBytes`, `GenerateRandomBase62`
+- **Compare:** `ConstantTimeEqual`
+- Do **not** call `golang.org/x/crypto/argon2` outside this package without a new ADR.
+
+### 2) Argon2id production parameters
+
+| Parameter | Value |
+| --- | --- |
+| Algorithm | Argon2id |
+| Memory (`m`) | 65536 KiB (64 MiB) |
+| Iterations (`t`) | 3 |
+| Parallelism (`p`) | 4 |
+| Salt length | 16 bytes (`crypto/rand`) |
+| Key length | 32 bytes |
+
+**Rationale:** OWASP recommends at least 19 MiB memory; 64 MiB provides margin. ~100ms per hash on a modern server is acceptable for login/token creation. `p=4` matches typical server core count.
+
+**PHC string format** (parameters embedded for future upgrades):
+
+```text
+$argon2id$v=19$m=65536,t=3,p=4$<base64_salt>$<base64_hash>
+```
+
+Encoding uses base64 **RawStdEncoding** (no padding) for salt and hash segments.
+
+Passwords (future) and API token bearers use the **same** Argon2id parameters.
+
+### 3) Verify semantics
+
+- `VerifySecret` parses `m`, `t`, `p` from the PHC string and verifies with those values.
+- Wrong plaintext → `(false, nil)` — not an error (no oracle).
+- Malformed PHC → `(false, err)`.
+- Comparison uses `crypto/subtle.ConstantTimeCompare` on derived keys.
+
+### 4) Parameter upgrade procedure
+
+1. Deploy code that verifies both old and new parameter sets (PHC-embedded params already support this).
+2. On successful authentication with a hash below the new production bar: rehash with `ProductionParams()` and persist.
+3. After 90 days: remove support for deprecated parameter profiles if any were hard-coded.
+4. Update this ADR with new canonical parameters.
+
+### 5) Fast test profile (non-production)
+
+For unit tests and local speed:
+
+| Parameter | Value |
+| --- | --- |
+| Memory | 4096 KiB |
+| Iterations | 1 |
+| Parallelism | 1 |
+
+Use `crypto.TestParams()` or `IBEX_CRYPTO_TEST_FAST=1` only in tests — **never** in production config.
+
+Timing-ratio smoke tests are **advisory**; skip under `testing.Short()` or in CI.
+
+### 6) Other approved primitives (documented; implement when needed)
+
+| Use | Primitive |
+| --- | --- |
+| JWT signing | RS256, 2048-bit RSA minimum; rotation via JWKS |
+| Symmetric encryption | AES-256-GCM, random 96-bit nonce |
+| Non-password hashing | SHA-256 (content hashes, token prefixes) |
+| Webhooks | HMAC-SHA256 |
+| Random | `crypto/rand` only |
+| Secret comparison | `crypto/subtle.ConstantTimeCompare` or `packages/crypto.ConstantTimeEqual` |
+
+### 7) Forbidden
+
+- MD5, SHA-1 for security purposes
+- bcrypt, PBKDF2 for password/token storage (use Argon2id)
+- AES-ECB
+- Custom crypto implementations
+
+## Consequences
+
+### Positive
+
+- One import path for Argon2id across auth, tests, and future services
+- PHC-embedded parameters enable gradual upgrades
+- Aligns docs, env defaults, and code on `p=4`
+
+### Negative
+
+- New hashes cost slightly more CPU than `p=2` legacy defaults; existing rows unchanged until rehash
+
+## References
+
+- [ADR-0007](ADR-0007-auth-token-validation.md) — PAT validation and PHC storage
+- [Milestone 1.1.6](../roadmap/phase-1-core-platform/milestones/1.1.6-argon2id-parameters-and-crypto-policy-adr.md)
+- [ENVIRONMENT_VARIABLES.md](../ENVIRONMENT_VARIABLES.md) — `IBEX_ARGON2_*` overrides

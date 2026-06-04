@@ -227,7 +227,7 @@ Used by: **auth service**, **any service verifying JWTs**
 | `IBEX_TOKEN_HASH_ALGO` | No | `argon2id` | Hash algorithm for stored tokens | Must stay argon2id |
 | `IBEX_ARGON2_MEMORY_KIB` | No | `65536` | Argon2 memory | Tune for security |
 | `IBEX_ARGON2_TIME` | No | `3` | Argon2 iterations | |
-| `IBEX_ARGON2_PARALLELISM` | No | `2` | Argon2 parallelism | |
+| `IBEX_ARGON2_PARALLELISM` | No | `4` | Argon2 parallelism | See [ADR-0010](adr/ADR-0010-cryptography-policy.md) |
 
 ### JWT signing and verification
 

@@ -405,7 +405,7 @@ When upgrading embedding model (e.g., to larger, better model):
 1. **Personal Access Token (PAT)**:
    - Long-lived (no expiry unless revoked)
    - Created by users for SDK usage
-   - Hashed with Argon2id before storage
+   - Hashed with Argon2id before storage via `packages/crypto` ([ADR-0010](adr/ADR-0010-cryptography-policy.md))
    - Never stored in plaintext after creation
 
 2. **Organization Token**:
