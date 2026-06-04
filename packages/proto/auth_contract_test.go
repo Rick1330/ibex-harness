@@ -92,15 +92,27 @@ func TestAuthProtoContractADR0006(t *testing.T) {
 	if svc == nil {
 		t.Fatal("AuthService not found")
 	}
-	if svc.Methods().Len() != 1 {
-		t.Fatalf("AuthService methods: got %d want 1", svc.Methods().Len())
+	wantMethods := []string{"ValidateToken", "CreateToken", "RevokeToken", "ListTokens"}
+	if svc.Methods().Len() != len(wantMethods) {
+		t.Fatalf("AuthService methods: got %d want %d", svc.Methods().Len(), len(wantMethods))
 	}
-	method := svc.Methods().Get(0)
-	if string(method.Name()) != "ValidateToken" {
-		t.Errorf("RPC name: got %q want ValidateToken", method.Name())
+	for i, name := range wantMethods {
+		method := svc.Methods().Get(i)
+		if string(method.Name()) != name {
+			t.Errorf("RPC %d: got %q want %q", i, method.Name(), name)
+		}
+		if method.IsStreamingClient() || method.IsStreamingServer() {
+			t.Errorf("%s must be unary", name)
+		}
 	}
-	if method.IsStreamingClient() || method.IsStreamingServer() {
-		t.Error("ValidateToken must be unary")
+
+	createResp := findMessage(fd, "CreateTokenResponse")
+	if createResp == nil {
+		t.Fatal("CreateTokenResponse not found")
+	}
+	plaintext := fieldByNumber(createResp, 2)
+	if plaintext == nil || string(plaintext.Name()) != "plaintext" {
+		t.Fatal("CreateTokenResponse.plaintext field missing")
 	}
 
 	req := findMessage(fd, "ValidateTokenRequest")

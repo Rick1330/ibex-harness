@@ -18,6 +18,7 @@ import (
 	authhttp "github.com/Rick1330/ibex-harness/services/auth/internal/http"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/metrics"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/repository"
+	"github.com/Rick1330/ibex-harness/services/auth/internal/service"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/token"
 	_ "github.com/lib/pq"
 	"google.golang.org/grpc"
@@ -45,10 +46,13 @@ func main() {
 
 	repo := repository.NewTokensRepository(db)
 	validator := token.NewValidator(repo, cfg.Argon2)
+	tokenSvc := service.NewTokenService(repo, cfg.Argon2, logger)
 	meter := metrics.New()
 
-	grpcSrv := grpc.NewServer()
-	authv1.RegisterAuthServiceServer(grpcSrv, grpcserver.NewServer(validator, meter))
+	grpcSrv := grpc.NewServer(
+		grpc.UnaryInterceptor(grpcserver.AuthzUnaryInterceptor(validator)),
+	)
+	authv1.RegisterAuthServiceServer(grpcSrv, grpcserver.NewServer(validator, tokenSvc, meter))
 
 	grpcLis, err := net.Listen("tcp", config.ListenAddress(cfg.GRPCPort))
 	if err != nil {

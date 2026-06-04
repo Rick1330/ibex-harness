@@ -21,6 +21,10 @@ type Metrics struct {
 	validateErrors  uint64
 	validateLatency []uint64 // histogram buckets for validate_token_seconds
 	validateSum     float64
+
+	tokenCreated uint64
+	tokenRevoked uint64
+	listTokens   uint64
 }
 
 type labelKey struct {
@@ -47,6 +51,24 @@ func (m *Metrics) Middleware(next http.Handler) http.Handler {
 		next.ServeHTTP(rec, r)
 		m.observe(r.Method, r.URL.Path, rec.status, time.Since(start).Seconds())
 	})
+}
+
+func (m *Metrics) IncTokenCreated() {
+	m.mu.Lock()
+	m.tokenCreated++
+	m.mu.Unlock()
+}
+
+func (m *Metrics) IncTokenRevoked() {
+	m.mu.Lock()
+	m.tokenRevoked++
+	m.mu.Unlock()
+}
+
+func (m *Metrics) IncListTokens() {
+	m.mu.Lock()
+	m.listTokens++
+	m.mu.Unlock()
 }
 
 func (m *Metrics) ObserveValidateToken(seconds float64, ok bool) {
@@ -86,6 +108,9 @@ func (m *Metrics) renderPrometheus() string {
 	validateLatency := make([]uint64, len(m.validateLatency))
 	copy(validateLatency, m.validateLatency)
 	validateSum := m.validateSum
+	tokenCreated := m.tokenCreated
+	tokenRevoked := m.tokenRevoked
+	listTokens := m.listTokens
 	m.mu.Unlock()
 
 	var b strings.Builder
@@ -116,6 +141,24 @@ func (m *Metrics) renderPrometheus() string {
 	b.WriteString("# HELP ibex_auth_validate_token_duration_seconds ValidateToken latency.\n")
 	b.WriteString("# TYPE ibex_auth_validate_token_duration_seconds histogram\n")
 	writeSimpleHistogram(&b, "ibex_auth_validate_token_duration_seconds", validateLatency, validateSum, validateDurationBuckets)
+
+	b.WriteString("# HELP ibex_auth_token_created_total PATs created.\n")
+	b.WriteString("# TYPE ibex_auth_token_created_total counter\n")
+	b.WriteString("ibex_auth_token_created_total ")
+	b.WriteString(strconv.FormatUint(tokenCreated, 10))
+	b.WriteString("\n")
+
+	b.WriteString("# HELP ibex_auth_token_revoked_total PATs revoked.\n")
+	b.WriteString("# TYPE ibex_auth_token_revoked_total counter\n")
+	b.WriteString("ibex_auth_token_revoked_total ")
+	b.WriteString(strconv.FormatUint(tokenRevoked, 10))
+	b.WriteString("\n")
+
+	b.WriteString("# HELP ibex_auth_list_tokens_total ListTokens RPC calls.\n")
+	b.WriteString("# TYPE ibex_auth_list_tokens_total counter\n")
+	b.WriteString("ibex_auth_list_tokens_total ")
+	b.WriteString(strconv.FormatUint(listTokens, 10))
+	b.WriteString("\n")
 
 	return b.String()
 }

@@ -379,7 +379,7 @@ Any external HTTP call must:
 
 Audit log must capture:
 
-- token creation/revocation
+- token creation/revocation (gRPC `CreateToken` / `RevokeToken`; plaintext returned once, never logged; see milestone 1.1.4)
 - directive promotion/revocation
 - GDPR deletion requests and completion certificates
 - data exports
