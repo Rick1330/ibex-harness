@@ -465,6 +465,14 @@ Bit Position | Permission
 56-63        | Reserved for future use
 ```
 
+**Canonical implementation:** Go constants and predefined sets live in `packages/permissions` ([ADR-0009](adr/ADR-0009-permission-bitmap.md)). Use `permissions.Has(bitmap, required)` for checks — do not invent ad-hoc bit values in services.
+
+| Constant | Bit | Notes |
+| --- | --- | --- |
+| `TokenCreate` | 36 | Required for `CreateToken` / `ListTokens` gRPC (auth service) |
+| `TokenRevoke` | 37 | Required to revoke another user's token |
+| `ProxyChatCompletion` | 0, 16, 17 | Phase 2 proxy minimum: `MemoryRead \| SessionCreate \| SessionRead` |
+
 **Enterprise SSO** (via Keycloak):
 
 ```text

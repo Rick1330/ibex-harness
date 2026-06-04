@@ -2276,6 +2276,17 @@ The Auth service exposes `AuthService.ValidateToken` for internal consumers (e.g
 - **Response (success):** `org_id`, `permissions` (int64 bitmap), optional `agent_id`, `user_id`, `token_id`, `expires_at`
 - **Errors:** gRPC status only (`Unauthenticated` for invalid/revoked/expired tokens)
 
+**Permission bitmap:** 64-bit `permissions` field per [ADR-0009](adr/ADR-0009-permission-bitmap.md). Go source of truth: `packages/permissions`. Key admin bits for token management:
+
+| Bit | Constant | Required for |
+| --- | --- | --- |
+| 36 | `TokenCreate` | `CreateToken`, `ListTokens` (caller bearer in metadata) |
+| 37 | `TokenRevoke` | Revoking another user's token in the same org |
+
+**Phase 2 proxy minimum:** `permissions.ProxyChatCompletion` = `MemoryRead | SessionCreate | SessionRead`.
+
+Management RPCs (`CreateToken`, `RevokeToken`, `ListTokens`) are documented in milestone 1.1.4; callers must send gRPC metadata `authorization: Bearer <pat>` except for `ValidateToken`.
+
 ### Context Assembly (`ibex.context.v1`)
 
 The Context Assembly Engine exposes a gRPC API consumed internally by the proxy. Not exposed publicly.
