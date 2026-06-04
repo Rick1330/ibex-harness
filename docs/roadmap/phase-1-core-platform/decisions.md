@@ -10,6 +10,7 @@ Quick decisions during Phase 1. Promote durable choices to `docs/adr/` when they
 | 2026-06-03 | PAT wire format + service-account lookup | `ibex_pat_<uuid>_<secret>`; Argon2id PHC on full bearer; RLS bypass for lookup only | [ADR-0007](../../adr/ADR-0007-auth-token-validation.md) |
 | 2026-06-03 | Integration Postgres: CI services vs local testcontainers | Required CI uses GHA service Postgres; local default is compose test (5433); `IBEX_USE_TESTCONTAINERS=1` for self-contained runs | — |
 | 2026-06-04 | Permission bitmap layout locked | `packages/permissions`; Phase 2 proxy minimum `ProxyChatCompletion` | [ADR-0009](../../adr/ADR-0009-permission-bitmap.md) |
+| 2026-06-04 | Token management gRPC + caller bearer authz | `CreateToken`/`RevokeToken`/`ListTokens`; metadata `authorization: Bearer` | [ADR-0006](../../adr/ADR-0006-auth-proto-contract.md) |
 | TBD | Token table subset first | `organizations` + `tokens` only for validate path | — |
 | TBD | Proto gen: Option A uncommitted | Consistent with ADR-0004 | ADR-0004 |
 
