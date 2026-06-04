@@ -18,11 +18,16 @@ Milestone 1.1.1 established Postgres schema for `ibex_core.tokens` and RLS. Mile
 - **Source file:** [packages/proto/proto/ibex/auth/v1/auth.proto](../../packages/proto/proto/ibex/auth/v1/auth.proto)
 - **Layout:** Same pattern as `ibex.context.v1` under `packages/proto/proto/ibex/<domain>/v1/` ([FILE_STRUCTURE.md](../FILE_STRUCTURE.md) §4.1)
 
-### 2) Service and RPC (v1 minimal surface)
+### 2) Service and RPCs (v1)
 
 - **Service:** `AuthService`
-- **RPC:** `ValidateToken(ValidateTokenRequest) returns (ValidateTokenResponse)` only in v1
-- **Deferred:** JWT issuance, SSO exchange, revocation broadcast RPCs (future versions or packages)
+- **RPCs:**
+  - `ValidateToken` — proxy hot path; **no caller bearer required**
+  - `CreateToken` — returns plaintext **once**; requires caller bearer with `TokenCreate` ([ADR-0009](ADR-0009-permission-bitmap.md))
+  - `RevokeToken` — requires `TokenRevoke` or revoking caller's own `token_id`
+  - `ListTokens` — metadata only (no hash/plaintext); requires `TokenCreate` for v1
+- **Caller auth (management RPCs):** gRPC metadata `authorization: Bearer <pat>` validated via the same path as `ValidateToken`
+- **Deferred:** JWT issuance, SSO exchange, Redis bloom invalidation RPCs
 
 ### 3) Messages
 
@@ -47,6 +52,9 @@ Use **standard gRPC status codes** only. Do not define REST-style error envelope
 | --- | --- |
 | Missing, malformed, unknown, revoked, or expired token | `Unauthenticated` |
 | Valid token but insufficient permission for a later scoped operation | `PermissionDenied` (enforced by callers using `permissions`; not returned by successful `ValidateToken`) |
+| Invalid create/list request fields | `InvalidArgument` |
+| Token not found in org scope (revoke/list) | `NotFound` |
+| Caller bearer missing on management RPC | `Unauthenticated` |
 
 `ValidateToken` returns `OK` with populated `ValidateTokenResponse` when the token is valid and not revoked.
 
@@ -64,6 +72,7 @@ Use **standard gRPC status codes** only. Do not define REST-style error envelope
 | Milestone | Role |
 | --- | --- |
 | 1.1.3 | Auth service: implement `ValidateToken` server |
+| 1.1.4 | Auth service: `CreateToken`, `RevokeToken`, `ListTokens` |
 | 1.2.1 | Proxy: gRPC client + middleware |
 
 ## Consequences

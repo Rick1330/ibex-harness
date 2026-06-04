@@ -6,11 +6,25 @@ import "google/protobuf/timestamp.proto";
 
 option go_package = "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1;authv1";
 
-// AuthService validates API tokens for internal consumers (e.g. LLM proxy).
+// AuthService validates API tokens and manages PAT lifecycle for internal consumers.
 // Not exposed on the public internet.
 service AuthService {
   // ValidateToken checks a bearer token and returns tenant context on success.
   rpc ValidateToken(ValidateTokenRequest) returns (ValidateTokenResponse);
+
+  // CreateToken creates a PAT and returns the plaintext value once.
+  rpc CreateToken(CreateTokenRequest) returns (CreateTokenResponse);
+
+  // RevokeToken marks a token revoked; subsequent ValidateToken fails closed.
+  rpc RevokeToken(RevokeTokenRequest) returns (RevokeTokenResponse);
+
+  // ListTokens returns token metadata for an org (never plaintext or hash).
+  rpc ListTokens(ListTokensRequest) returns (ListTokensResponse);
+}
+
+enum TokenType {
+  TOKEN_TYPE_UNSPECIFIED = 0;
+  TOKEN_TYPE_PAT = 1;
 }
 
 message ValidateTokenRequest {
@@ -22,7 +36,7 @@ message ValidateTokenResponse {
   // Organization UUID for tenant context (maps to app.current_org_id).
   string org_id = 1;
 
-  // Permission bitmap (64 bits). See ARCHITECTURE.md auth permission table.
+  // Permission bitmap (64 bits). See packages/permissions and ADR-0009.
   int64 permissions = 2;
 
   // Present when the token is scoped to an agent.
@@ -36,4 +50,54 @@ message ValidateTokenResponse {
 
   // Token expiry; omitted when the token does not expire.
   optional google.protobuf.Timestamp expires_at = 6;
+}
+
+message CreateTokenRequest {
+  string org_id = 1;
+  string name = 2;
+  string description = 3;
+  TokenType type = 4;
+  int64 permissions = 5;
+  optional google.protobuf.Timestamp expires_at = 6;
+  optional string user_id = 7;
+  optional string agent_id = 8;
+}
+
+message CreateTokenResponse {
+  string token_id = 1;
+  // Plaintext bearer returned exactly once; never stored or logged.
+  string plaintext = 2;
+  // Safe display prefix (ibex_pat_<uuid> per ADR-0007).
+  string prefix = 3;
+  google.protobuf.Timestamp created_at = 4;
+}
+
+message RevokeTokenRequest {
+  string org_id = 1;
+  string token_id = 2;
+  optional string revoke_reason = 3;
+}
+
+message RevokeTokenResponse {}
+
+message ListTokensRequest {
+  string org_id = 1;
+  string cursor = 2;
+  int32 limit = 3;
+}
+
+message TokenMetadata {
+  string token_id = 1;
+  string name = 2;
+  string prefix = 3;
+  int64 permissions = 4;
+  optional google.protobuf.Timestamp expires_at = 5;
+  google.protobuf.Timestamp created_at = 6;
+  optional google.protobuf.Timestamp revoked_at = 7;
+  bool is_revoked = 8;
+}
+
+message ListTokensResponse {
+  repeated TokenMetadata tokens = 1;
+  string next_cursor = 2;
 }

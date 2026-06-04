@@ -1,6 +1,6 @@
 # Auth service
 
-Go service for IBEX Harness authentication. Exposes HTTP health/metrics and gRPC `AuthService.ValidateToken` ([ADR-0006](../../docs/adr/ADR-0006-auth-proto-contract.md), [ADR-0007](../../docs/adr/ADR-0007-auth-token-validation.md)).
+Go service for IBEX Harness authentication. Exposes HTTP health/metrics and gRPC `AuthService` ([ADR-0006](../../docs/adr/ADR-0006-auth-proto-contract.md), [ADR-0007](../../docs/adr/ADR-0007-auth-token-validation.md), [ADR-0009](../../docs/adr/ADR-0009-permission-bitmap.md)).
 
 ## Endpoints
 
@@ -9,7 +9,8 @@ Go service for IBEX Harness authentication. Exposes HTTP health/metrics and gRPC
 | `GET /health` | Liveness |
 | `GET /ready` | Readiness (Postgres TCP when `POSTGRES_DSN` set) |
 | `GET /metrics` | Prometheus text metrics |
-| gRPC `ibex.auth.v1.AuthService/ValidateToken` | Internal token validation |
+| gRPC `ValidateToken` | Internal token validation (no caller bearer) |
+| gRPC `CreateToken` / `RevokeToken` / `ListTokens` | PAT lifecycle (caller bearer required) |
 
 ## Configuration
 
@@ -36,14 +37,34 @@ IBEX_PORT=8081 IBEX_GRPC_PORT=9091 \
   go run ./services/auth/cmd/auth
 ```
 
-## ValidateToken (grpcurl)
+## gRPC examples (grpcurl)
 
-After seeding a PAT in Postgres (see integration tests or insert with `token.HashForTest` in a one-off script):
+**ValidateToken** (no authorization metadata):
 
 ```bash
 grpcurl -plaintext \
   -d '{"access_token":"ibex_pat_<uuid>_<secret>"}' \
   localhost:9091 ibex.auth.v1.AuthService/ValidateToken
+```
+
+**CreateToken** (requires admin PAT with `TokenCreate` in metadata):
+
+```bash
+grpcurl -plaintext \
+  -H "authorization: Bearer ibex_pat_<admin-uuid>_<secret>" \
+  -d '{"org_id":"<org-uuid>","name":"dev-pat","type":1,"permissions":23}' \
+  localhost:9091 ibex.auth.v1.AuthService/CreateToken
+```
+
+Store the returned `plaintext` immediately; it cannot be retrieved again.
+
+**RevokeToken**:
+
+```bash
+grpcurl -plaintext \
+  -H "authorization: Bearer ibex_pat_<admin-uuid>_<secret>" \
+  -d '{"org_id":"<org-uuid>","token_id":"<token-uuid>"}' \
+  localhost:9091 ibex.auth.v1.AuthService/RevokeToken
 ```
 
 ## Tests

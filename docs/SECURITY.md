@@ -136,8 +136,10 @@ IBEX Harness supports multiple token types (each with different risk profiles):
 ### 4.3 Authorization Model
 
 - Permissions are represented as:
-  - a 64-bit bitmap (efficient checks)
+  - a 64-bit bitmap (efficient checks) — canonical layout in [ADR-0009](adr/ADR-0009-permission-bitmap.md); Go constants in `packages/permissions`
   - plus explicit role checks (owner/admin/member/viewer)
+- Phase 2 proxy chat completion minimum: `MemoryRead | SessionCreate | SessionRead` (`permissions.ProxyChatCompletion`)
+- Token management (create/revoke/list): requires `TokenCreate` / `TokenRevoke` bits (see milestone 1.1.4)
 - Every endpoint declares:
   - Required permission(s)
   - Required role(s) for privileged actions
@@ -377,7 +379,7 @@ Any external HTTP call must:
 
 Audit log must capture:
 
-- token creation/revocation
+- token creation/revocation (gRPC `CreateToken` / `RevokeToken`; plaintext returned once, never logged; see milestone 1.1.4)
 - directive promotion/revocation
 - GDPR deletion requests and completion certificates
 - data exports

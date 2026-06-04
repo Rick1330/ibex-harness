@@ -1,0 +1,18 @@
+---
+description: Require full GitHub PR template sections on every pull request
+alwaysApply: true
+---
+
+# Pull request template (required)
+
+When opening or updating a PR for this repository:
+
+1. Copy the structure from `.github/pull_request_template.md`.
+2. Fill every section: What and Why, How, Testing (with checkboxes), Performance, Security, Migrations / Ops, Docs, Definition of Done.
+3. Prefer `gh pr create --body-file` or `gh pr edit --body-file` with a file under `ibex-harness-workspace/pr-bodies/`.
+4. Do not use one-line PR bodies.
+5. Never store PR body drafts in the git repository.
+6. No agent attribution in PR descriptions.
+7. Run local tests per `testing-verification.mdc` before push.
+
+See `docs/DEVELOPMENT_GUIDE.md` §7.2 and `CONTRIBUTING.md`.

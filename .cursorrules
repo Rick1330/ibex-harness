@@ -41,7 +41,12 @@ Also consult:
 ## 1.5) Session workspace (outside repo)
 - Never commit session workspace files.
 - Default location: sibling directory named `ibex-harness-workspace` next to the repository root (same parent as the clone). Optional override: environment variable `IBEX_WORKSPACE_DIR`.
-- Use workspace `handoff.md`, `current_state.md`, and `session_log/` for session continuity; use `archive/` for closed implementation audits.
+- Use workspace `handoff.md`, `current_state.md`, `session_log/`, `archive/`, and `pr-bodies/` for session continuity (see DEVELOPMENT_GUIDE §12).
+- **When to write workspace files:**
+  - Before opening a PR: `pr-bodies/pr-<number>-<slug>.md` (full template; never under repo `.github/`).
+  - Milestone start: refresh `active_task.md`; read repo `docs/roadmap/CURRENT_STATE.md`.
+  - After each squash merge to `main`: update `handoff.md`, `current_state.md`, add `archive/phase-1/NNN-*.md` + INDEX row, optional `session_log/` entry.
+  - Surprises or plan drift: `known_issues.md` or repo `docs/roadmap/FINDINGS.md` via PR.
 - Before milestone work: read `docs/roadmap/CURRENT_STATE.md`; refresh workspace notes after merges per DEVELOPMENT_GUIDE §12.3.
 - Do not hardcode machine-specific absolute paths in rules, commits, or docs you generate.
 
@@ -49,6 +54,24 @@ Also consult:
 - Never commit or push directly to `main`. Use a feature branch and open a PR.
 - Required CI checks before merge: `repo-guards`, `markdownlint`, `gitleaks`.
 - See CONTRIBUTING.md and docs/adr/ADR-0003-branch-protection-and-merge-policy.md.
+
+### 1.6.1) Pull request descriptions (required)
+When creating or updating a GitHub PR, fill **every** section from `.github/pull_request_template.md`:
+- What and Why, How, Testing (checkboxes), Performance, Security, Migrations / Ops, Docs, Definition of Done checklist.
+- Use `gh pr create --body-file <file>` (or `gh pr edit --body-file`) with all sections populated — never a one-line PR body.
+- **Body file location:** `ibex-harness-workspace/pr-bodies/` (or `IBEX_WORKSPACE_DIR/pr-bodies/`). **Forbidden:** committing PR body drafts into the git repo (including `.github/pr-body-*.md`).
+- Cross-reference `docs/DEVELOPMENT_GUIDE.md` §7.2 and `CONTRIBUTING.md`.
+- No agent attribution in PR titles, commits, or descriptions.
+
+### 1.6.2) Post-implementation testing (required)
+Before pushing or opening/updating a PR, run applicable commands and record outcomes in the PR Testing section:
+- `make proto-gen` and `make proto-test` when proto changes.
+- `go test` on every affected package (e.g. `./services/auth/...`, `./packages/permissions/...`).
+- `go test -tags=integration ./...` when auth, migrations, or Postgres/RLS behavior changes (requires `POSTGRES_TEST_DSN` or `make compose-test-up`).
+- `make repo-guards` before merge.
+- `gofmt -l` on touched Go files must produce no output.
+- Do not push with known CI failures; fix locally first.
+- Map auth work to `docs/TESTING_STRATEGY.md` §6.
 
 ## 2) Repository structure rules (file placement is strict)
 Allowed top-level dirs: services/, packages/, infra/, docs/, prompts/
