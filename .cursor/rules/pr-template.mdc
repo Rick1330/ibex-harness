@@ -1,0 +1,16 @@
+---
+description: Require full GitHub PR template sections on every pull request
+alwaysApply: true
+---
+
+# Pull request template (required)
+
+When opening or updating a PR for this repository:
+
+1. Copy the structure from `.github/pull_request_template.md`.
+2. Fill every section: What and Why, How, Testing (with checkboxes), Performance, Security, Migrations / Ops, Docs, Definition of Done.
+3. Prefer `gh pr create --body-file` with a completed markdown file.
+4. Do not use one-line PR bodies.
+5. No agent attribution in PR descriptions.
+
+See `docs/DEVELOPMENT_GUIDE.md` §7.2 and `CONTRIBUTING.md`.

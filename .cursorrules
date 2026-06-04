@@ -50,6 +50,13 @@ Also consult:
 - Required CI checks before merge: `repo-guards`, `markdownlint`, `gitleaks`.
 - See CONTRIBUTING.md and docs/adr/ADR-0003-branch-protection-and-merge-policy.md.
 
+### 1.6.1) Pull request descriptions (required)
+When creating or updating a GitHub PR, fill **every** section from `.github/pull_request_template.md`:
+- What and Why, How, Testing (checkboxes), Performance, Security, Migrations / Ops, Docs, Definition of Done checklist.
+- Use `gh pr create --body-file <file>` (or equivalent) with all sections populated — never a one-line PR body.
+- Cross-reference `docs/DEVELOPMENT_GUIDE.md` §7.2 and `CONTRIBUTING.md`.
+- No agent attribution in PR titles, commits, or descriptions.
+
 ## 2) Repository structure rules (file placement is strict)
 Allowed top-level dirs: services/, packages/, infra/, docs/, prompts/
 Do NOT create new top-level directories without explicit instruction.
