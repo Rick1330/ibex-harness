@@ -4,7 +4,7 @@ COPY go.mod go.sum ./
 COPY services/auth ./services/auth
 RUN go build -o /out/auth ./services/auth/cmd/auth
 
-FROM alpine:3.20
+FROM alpine:3.23
 RUN adduser -D -H -u 10001 ibex
 USER ibex
 COPY --from=build /out/auth /usr/local/bin/auth
