@@ -20,7 +20,19 @@ Unexpected discoveries, design pivots, and plan changes. Update this file when i
 
 ---
 
-## 2026-06-01 — Roadmap published under docs/roadmap/
+## 2026-06-04 — Auth cache (bloom/LRU) deferred to Phase 2 optional 2.2.1
+
+**Context:** Milestone 1.2.1 / PR #51
+
+**Finding:** [ARCHITECTURE.md](../ARCHITECTURE.md) described bloom → LRU → gRPC as if implemented; Phase 1 shipped gRPC-only fail-closed validation per ADR-0011 and SECURITY §15.
+
+**Impact:** Docs must distinguish Phase 1 implemented vs Phase 2 target; avoid implying cached permissions on auth outage before 2.2.1.
+
+**Decision:** Formal deferral record in ADR-0011 §7; ARCHITECTURE updated; stub milestone `2.2.1-auth-cache-bloom.md` added. Implement cache only in Phase 2 optional milestone via `TokenValidator` decorator.
+
+**Updated:** `docs/adr/ADR-0011-proxy-auth-client.md`, `docs/ARCHITECTURE.md`, `docs/roadmap/phase-2-single-provider/milestones/2.2.1-auth-cache-bloom.md`, `decisions.md`, `CURRENT_STATE.md`
+
+---
 
 **Context:** Post Foundation-004 closure
 

@@ -55,10 +55,25 @@ Minimal stable JSON envelope in `services/proxy/internal/errors/` (extended by m
 | Insufficient permissions / org mismatch | 403 | `INSUFFICIENT_PERMISSIONS` |
 | Auth unreachable / timeout / internal | 503 | `SERVICE_DEGRADED` |
 
-### 7) Cache (deferred)
+### 7) Auth validation cache (deferred — deferral record)
 
-- **Not implemented in v1**
-- `auth.TokenValidator` interface allows a cache decorator in Phase 2 optional 2.2.1
+**What is deferred:** Redis bloom filter for fast rejection, in-process LRU cache for validated claims, Redis validated-token cache.
+
+**Why Phase 1 skips it:**
+
+1. Phase 1 exit prioritizes **correctness and fail-closed** behavior before latency optimization.
+2. [SECURITY.md](../SECURITY.md) §15: deny access when validation cannot complete and **no safe cached claims** exist.
+3. Revocation propagation and cache invalidation are non-trivial (see TESTING_STRATEGY auth cache cases).
+4. Proxy has no Redis auth-cache wiring in Phase 1.
+5. Provider forwarding is not live yet; per-request gRPC validation is acceptable for integration.
+
+**Why not a partial cache:** A negative cache without bloom risks false rejects; serving stale claims after revoke violates fail-closed unless a full invalidation story exists.
+
+**Extension point:** `auth.TokenValidator` interface; `GRPCValidator` today; Phase 2 optional **2.2.1-auth-cache-bloom** adds a `CachingValidator` decorator.
+
+**When implemented:** Phase 2 optional milestone [2.2.1-auth-cache-bloom](../roadmap/phase-2-single-provider/milestones/2.2.1-auth-cache-bloom.md) (after Goal 1.2, before/at provider scale).
+
+**Risk accepted:** Every protected request hits auth gRPC (~50ms budget per [ADR-0011](ADR-0011-proxy-auth-client.md)) until 2.2.1.
 
 ### 8) Observability
 
