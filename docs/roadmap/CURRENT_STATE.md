@@ -1,7 +1,7 @@
 # Current State
 
 **Last updated:** 2026-06-04  
-**Git SHA (`main`):** `1707fbd` (PR #45 cursorrules); M1.1.5 #46 and M1.1.4 #47 pending merge  
+**Git SHA (`main`):** `0ada899` — PR #45 (`1707fbd`), #46 (`4b18663`), #47 M1.1.4 token management  
 **Current phase:** Phase 1 — Core Platform  
 **Current goal:** Goal 1.2 — Proxy platform integration  
 **Next milestone:** [1.2.1 Proxy auth client](phase-1-core-platform/milestones/1.2.1-proxy-auth-client.md)
