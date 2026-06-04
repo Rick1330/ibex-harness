@@ -2,7 +2,7 @@
 
 **Status:** In Progress  
 **Estimated duration:** 4–6 weeks  
-**Current milestone:** [1.2.1 Proxy auth client](milestones/1.2.1-proxy-auth-client.md)
+**Current milestone:** [1.2.2 Proxy request normalization](milestones/1.2.2-proxy-request-normalization.md)
 
 ## Milestones
 
@@ -15,8 +15,8 @@
 | 1.1.4 | [Token creation and management API](milestones/1.1.4-token-creation-and-management-api.md) | Complete |
 | 1.1.5 | [Permission bitmap contract and ADR](milestones/1.1.5-permission-bitmap-contract-and-adr.md) | Complete |
 | 1.1.6 | [Argon2id parameters and crypto policy ADR](milestones/1.1.6-argon2id-parameters-and-crypto-policy-adr.md) | Complete |
-| 1.2.1 | [Proxy auth client](milestones/1.2.1-proxy-auth-client.md) | Next |
-| 1.2.2 | [Proxy request normalization](milestones/1.2.2-proxy-request-normalization.md) | Planned |
+| 1.2.1 | [Proxy auth client](milestones/1.2.1-proxy-auth-client.md) | Complete |
+| 1.2.2 | [Proxy request normalization](milestones/1.2.2-proxy-request-normalization.md) | Next |
 | 1.2.3 | [Proxy input validation and error envelope](milestones/1.2.3-proxy-input-validation-and-stable-error-envelope.md) | Planned |
 | 1.2.4 | [Proxy rate limit skeleton](milestones/1.2.4-proxy-rate-limit-skeleton.md) | Planned |
 | 1.3.1 | [Observability baseline](milestones/1.3.1-observability-baseline.md) | Planned |

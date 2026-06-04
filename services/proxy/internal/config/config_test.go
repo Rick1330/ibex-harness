@@ -16,9 +16,11 @@ func TestValidateRejectsInvalidEnvironment(t *testing.T) {
 
 func TestValidateAcceptsDefaultShape(t *testing.T) {
 	cfg := Config{
-		Environment: "development",
-		ServiceName: "proxy",
-		Port:        "8080",
+		Environment:         "development",
+		ServiceName:         "proxy",
+		Port:                "8080",
+		AuthGRPCAddr:        "127.0.0.1:9091",
+		AuthValidateTimeout: defaultAuthValidateTimeout,
 	}
 
 	if err := cfg.Validate(); err != nil {

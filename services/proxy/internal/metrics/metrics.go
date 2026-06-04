@@ -16,6 +16,10 @@ type Metrics struct {
 	requests map[labelKey]uint64
 	buckets  map[labelKey][]uint64
 	sums     map[labelKey]float64
+
+	authValidateTotal   map[string]uint64
+	authValidateBuckets map[string][]uint64
+	authValidateSums    map[string]float64
 }
 
 type labelKey struct {
@@ -26,9 +30,12 @@ type labelKey struct {
 
 func New() *Metrics {
 	return &Metrics{
-		requests: make(map[labelKey]uint64),
-		buckets:  make(map[labelKey][]uint64),
-		sums:     make(map[labelKey]float64),
+		requests:            make(map[labelKey]uint64),
+		buckets:             make(map[labelKey][]uint64),
+		sums:                make(map[labelKey]float64),
+		authValidateTotal:   make(map[string]uint64),
+		authValidateBuckets: make(map[string][]uint64),
+		authValidateSums:    make(map[string]float64),
 	}
 }
 
@@ -62,6 +69,20 @@ func (m *Metrics) renderPrometheus() string {
 	for k, v := range m.sums {
 		sumsSnap[k] = v
 	}
+	authTotalSnap := make(map[string]uint64, len(m.authValidateTotal))
+	for k, v := range m.authValidateTotal {
+		authTotalSnap[k] = v
+	}
+	authBucketsSnap := make(map[string][]uint64, len(m.authValidateBuckets))
+	for k, v := range m.authValidateBuckets {
+		a := make([]uint64, len(v))
+		copy(a, v)
+		authBucketsSnap[k] = a
+	}
+	authSumsSnap := make(map[string]float64, len(m.authValidateSums))
+	for k, v := range m.authValidateSums {
+		authSumsSnap[k] = v
+	}
 	m.mu.Unlock()
 
 	var b strings.Builder
@@ -75,6 +96,22 @@ func (m *Metrics) renderPrometheus() string {
 	b.WriteString("# TYPE ibex_http_request_duration_seconds histogram\n")
 	for _, key := range sortedKeys(bucketsSnap) {
 		writeHistogramLines(&b, "ibex_http_request_duration_seconds", key, bucketsSnap[key], sumsSnap[key], durationBuckets)
+	}
+
+	b.WriteString("# HELP ibex_proxy_auth_validate_total Auth middleware ValidateToken attempts.\n")
+	b.WriteString("# TYPE ibex_proxy_auth_validate_total counter\n")
+	for _, result := range sortedAuthResults(authTotalSnap) {
+		b.WriteString("ibex_proxy_auth_validate_total{result=")
+		writeQuoted(&b, result)
+		b.WriteString("} ")
+		b.WriteString(strconv.FormatUint(authTotalSnap[result], 10))
+		b.WriteString("\n")
+	}
+
+	b.WriteString("# HELP ibex_proxy_auth_validate_duration_seconds Auth middleware validate latency.\n")
+	b.WriteString("# TYPE ibex_proxy_auth_validate_duration_seconds histogram\n")
+	for _, result := range sortedAuthResultsFromBuckets(authBucketsSnap) {
+		writeAuthHistogramLines(&b, "ibex_proxy_auth_validate_duration_seconds", result, authBucketsSnap[result], authSumsSnap[result], durationBuckets)
 	}
 
 	return b.String()
@@ -167,6 +204,74 @@ func (m *Metrics) observe(method, path string, status int, seconds float64) {
 	}
 	recordHistogram(m.buckets[key], durationBuckets, seconds)
 	m.sums[key] += seconds
+}
+
+// ObserveAuthValidate records auth middleware validation latency and result.
+// result must be one of: ok, unauthenticated, error.
+func (m *Metrics) ObserveAuthValidate(seconds float64, result string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.authValidateTotal[result]++
+	if _, ok := m.authValidateBuckets[result]; !ok {
+		m.authValidateBuckets[result] = make([]uint64, len(durationBuckets)+1)
+	}
+	recordHistogram(m.authValidateBuckets[result], durationBuckets, seconds)
+	m.authValidateSums[result] += seconds
+}
+
+func writeAuthHistogramLines(b *strings.Builder, name, result string, counts []uint64, sum float64, buckets []float64) {
+	var cumulative uint64
+	for i, bucket := range buckets {
+		cumulative += counts[i]
+		b.WriteString(name)
+		b.WriteString("_bucket{result=")
+		writeQuoted(b, result)
+		b.WriteString(",le=")
+		writeQuoted(b, strconv.FormatFloat(bucket, 'f', -1, 64))
+		b.WriteString("} ")
+		b.WriteString(strconv.FormatUint(cumulative, 10))
+		b.WriteString("\n")
+	}
+	cumulative += counts[len(buckets)]
+	b.WriteString(name)
+	b.WriteString("_bucket{result=")
+	writeQuoted(b, result)
+	b.WriteString(",le=")
+	writeQuoted(b, "+Inf")
+	b.WriteString("} ")
+	b.WriteString(strconv.FormatUint(cumulative, 10))
+	b.WriteString("\n")
+	b.WriteString(name)
+	b.WriteString("_sum{result=")
+	writeQuoted(b, result)
+	b.WriteString("} ")
+	b.WriteString(strconv.FormatFloat(sum, 'f', -1, 64))
+	b.WriteString("\n")
+	b.WriteString(name)
+	b.WriteString("_count{result=")
+	writeQuoted(b, result)
+	b.WriteString("} ")
+	b.WriteString(strconv.FormatUint(cumulative, 10))
+	b.WriteString("\n")
+}
+
+func sortedAuthResults(m map[string]uint64) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func sortedAuthResultsFromBuckets(m map[string][]uint64) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 type statusRecorder struct {

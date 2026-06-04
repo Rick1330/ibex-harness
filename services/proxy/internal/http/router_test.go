@@ -13,7 +13,7 @@ import (
 )
 
 func TestHealthReturnsOK(t *testing.T) {
-	router := NewRouter(config.Config{ServiceName: "proxy"}, slog.New(slog.NewTextHandler(io.Discard, nil)), metrics.New())
+	router := NewRouter(config.Config{ServiceName: "proxy"}, slog.New(slog.NewTextHandler(io.Discard, nil)), metrics.New(), nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	rec := httptest.NewRecorder()
@@ -28,7 +28,7 @@ func TestHealthReturnsOK(t *testing.T) {
 }
 
 func TestReadyMissingRedisURL(t *testing.T) {
-	router := NewRouter(config.Config{ServiceName: "proxy"}, slog.New(slog.NewTextHandler(io.Discard, nil)), metrics.New())
+	router := NewRouter(config.Config{ServiceName: "proxy"}, slog.New(slog.NewTextHandler(io.Discard, nil)), metrics.New(), nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/ready", nil)
 	rec := httptest.NewRecorder()

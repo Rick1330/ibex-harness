@@ -276,6 +276,52 @@ jobs:
           POSTGRES_TEST_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
         run: go test -tags=integration ./services/auth/...
 
+  proxy-auth-smoke:
+    name: proxy-auth-smoke
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ibex
+          POSTGRES_PASSWORD: ibex
+          POSTGRES_DB: ibex
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ibex -d ibex"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+      - uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1.50.0
+        with:
+          version: "1.47.2"
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Generate protobuf stubs
+        working-directory: packages/proto
+        run: buf generate
+      - name: Migrate up
+        env:
+          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+        run: go run ./infra/migrations/postgres/cmd/migrate -command up
+      - name: Proxy unit tests
+        run: go test ./services/proxy/...
+      - name: Proxy auth integration tests
+        env:
+          POSTGRES_TEST_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+        run: go test -tags=integration ./services/proxy/...
+
   go-services:
     name: go-services
     if: github.event_name != 'schedule'
@@ -294,12 +340,10 @@ jobs:
         with:
           go-version-file: go.mod
       - uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1.50.0
-        if: matrix.service == 'auth'
         with:
           version: "1.47.2"
           github_token: ${{ secrets.GITHUB_TOKEN }}
-      - name: Generate protobuf stubs for auth
-        if: matrix.service == 'auth'
+      - name: Generate protobuf stubs
         working-directory: packages/proto
         run: buf generate
       - name: gofmt check

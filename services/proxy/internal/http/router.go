@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
+	proxyerrors "github.com/Rick1330/ibex-harness/services/proxy/internal/errors"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/health"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/metrics"
 )
@@ -17,7 +20,13 @@ type response struct {
 	Reason string `json:"reason,omitempty"`
 }
 
-func NewRouter(cfg config.Config, logger *slog.Logger, meter *metrics.Metrics) http.Handler {
+type authProbeResponse struct {
+	OrgID       string `json:"org_id"`
+	Permissions int64  `json:"permissions"`
+}
+
+// NewRouter builds the proxy HTTP handler with optional auth validator for protected routes.
+func NewRouter(cfg config.Config, logger *slog.Logger, meter *metrics.Metrics, validator auth.TokenValidator) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		if !requireMethod(w, r, http.MethodGet) {
@@ -47,7 +56,50 @@ func NewRouter(cfg config.Config, logger *slog.Logger, meter *metrics.Metrics) h
 		meter.ServeHTTP(w, r)
 	})
 
+	if validator != nil {
+		authNone := AuthMiddleware(validator, meter, logger, AuthOptions{})
+		mux.Handle("/v1/internal/auth-probe", authNone(http.HandlerFunc(handleAuthProbe)))
+
+		authOrg := func(orgID string) func(http.Handler) http.Handler {
+			return AuthMiddleware(validator, meter, logger, AuthOptions{PathOrgID: orgID})
+		}
+		mux.HandleFunc("/v1/orgs/{org_id}/auth-probe", func(w http.ResponseWriter, r *http.Request) {
+			if !requireMethod(w, r, http.MethodGet) {
+				return
+			}
+			orgID := strings.TrimSpace(r.PathValue("org_id"))
+			authOrg(orgID)(http.HandlerFunc(handleAuthProbe)).ServeHTTP(w, r)
+		})
+
+		authChat := AuthMiddleware(validator, meter, logger, AuthOptions{RequireProxyChatCompletion: true})
+		mux.Handle("/v1/chat/completions", authChat(http.HandlerFunc(handleChatCompletionsStub)))
+	}
+
 	return meter.Middleware(loggingMiddleware(logger, mux))
+}
+
+func handleAuthProbe(w http.ResponseWriter, r *http.Request) {
+	res, ok := auth.FromContext(r.Context())
+	if !ok {
+		proxyerrors.WriteJSON(w, http.StatusInternalServerError, proxyerrors.CodeServiceDegraded,
+			"Internal error", "missing auth context", requestIDFromContext(r.Context()))
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(authProbeResponse{
+		OrgID:       res.OrgID,
+		Permissions: res.Permissions,
+	})
+}
+
+func handleChatCompletionsStub(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+	proxyerrors.WriteJSON(w, http.StatusNotImplemented, "PROVIDER_NOT_CONFIGURED",
+		"LLM provider not configured", "Phase 2 milestone required for upstream calls",
+		requestIDFromContext(r.Context()))
 }
 
 func loggingMiddleware(logger *slog.Logger, next http.Handler) http.Handler {

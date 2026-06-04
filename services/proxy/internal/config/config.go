@@ -7,29 +7,36 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
-	defaultEnvironment = "development"
-	defaultServiceName = "proxy"
-	defaultLogLevel    = slog.LevelInfo
-	defaultPort        = "8080"
+	defaultEnvironment         = "development"
+	defaultServiceName         = "proxy"
+	defaultLogLevel            = slog.LevelInfo
+	defaultPort                = "8080"
+	defaultAuthGRPCAddr        = "127.0.0.1:9091"
+	defaultAuthValidateTimeout = 50 * time.Millisecond
 )
 
 type Config struct {
-	Environment string
-	ServiceName string
-	LogLevel    slog.Level
-	Port        string
-	RedisURL    string
+	Environment         string
+	ServiceName         string
+	LogLevel            slog.Level
+	Port                string
+	RedisURL            string
+	AuthGRPCAddr        string
+	AuthValidateTimeout time.Duration
 }
 
 func Load() (Config, error) {
 	cfg := Config{
-		Environment: getEnv("IBEX_ENV", defaultEnvironment),
-		ServiceName: getEnv("IBEX_SERVICE_NAME", defaultServiceName),
-		Port:        getEnv("IBEX_PORT", defaultPort),
-		RedisURL:    strings.TrimSpace(os.Getenv("REDIS_URL")),
+		Environment:         getEnv("IBEX_ENV", defaultEnvironment),
+		ServiceName:         getEnv("IBEX_SERVICE_NAME", defaultServiceName),
+		Port:                getEnv("IBEX_PORT", defaultPort),
+		RedisURL:            strings.TrimSpace(os.Getenv("REDIS_URL")),
+		AuthGRPCAddr:        getEnv("IBEX_AUTH_GRPC_ADDR", defaultAuthGRPCAddr),
+		AuthValidateTimeout: defaultAuthValidateTimeout,
 	}
 
 	level, err := parseLogLevel(getEnv("IBEX_LOG_LEVEL", "INFO"))
@@ -37,6 +44,14 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	cfg.LogLevel = level
+
+	if v := strings.TrimSpace(os.Getenv("IBEX_AUTH_VALIDATE_TIMEOUT")); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return Config{}, fmt.Errorf("IBEX_AUTH_VALIDATE_TIMEOUT: %w", err)
+		}
+		cfg.AuthValidateTimeout = d
+	}
 
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
@@ -56,6 +71,17 @@ func (c Config) Validate() error {
 	portNum, err := strconv.Atoi(c.Port)
 	if err != nil || portNum < 1 || portNum > 65535 {
 		return fmt.Errorf("IBEX_PORT must be a valid TCP port")
+	}
+	if c.Environment != "development" && strings.TrimSpace(c.AuthGRPCAddr) == "" {
+		return fmt.Errorf("IBEX_AUTH_GRPC_ADDR is required outside development")
+	}
+	if strings.TrimSpace(c.AuthGRPCAddr) != "" {
+		if _, _, err := net.SplitHostPort(c.AuthGRPCAddr); err != nil {
+			return fmt.Errorf("IBEX_AUTH_GRPC_ADDR must be host:port: %w", err)
+		}
+	}
+	if c.AuthValidateTimeout <= 0 {
+		return fmt.Errorf("IBEX_AUTH_VALIDATE_TIMEOUT must be positive")
 	}
 	return nil
 }

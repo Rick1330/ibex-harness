@@ -194,6 +194,8 @@ Used by: **proxy**, optionally **worker** (LLM-based extraction/judging)
 
 | Variable | Required | Default | Description | Security Notes |
 |----------|----------|---------|-------------|----------------|
+| `IBEX_AUTH_GRPC_ADDR` | No | `127.0.0.1:9091` | Auth gRPC target for ValidateToken | Internal; mTLS in prod |
+| `IBEX_AUTH_VALIDATE_TIMEOUT` | No | `50ms` | Per-request auth validate budget | See [ADR-0011](adr/ADR-0011-proxy-auth-client.md) |
 | `IBEX_LLM_MODE` | No | `live` | `live` \| `mock` | Mock recommended for dev |
 | `OPENAI_API_KEY` | Conditional | (none) | Required if using OpenAI in `live` mode | Secret |
 | `ANTHROPIC_API_KEY` | Conditional | (none) | Required if using Anthropic in `live` mode | Secret |
