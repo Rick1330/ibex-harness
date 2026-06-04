@@ -108,6 +108,44 @@ func TestTokenManagementCreateValidateRevoke(t *testing.T) {
 	}
 }
 
+func TestListTokensAfterCreate(t *testing.T) {
+	dsn, cleanupPG := testutil.SetupPostgres(t)
+	defer cleanupPG()
+
+	db := testutil.OpenDB(t, dsn)
+	orgID := testutil.SeedOrganization(t, db, "List Org", "list-"+uuid.NewString()[:8])
+	adminBearer := testutil.SeedBootstrapAdminToken(t, db, orgID)
+	_ = db.Close()
+
+	client, cleanup := startAuthGRPC(t, dsn)
+	defer cleanup()
+
+	ctx := authCtx(adminBearer)
+	_, tokenID1 := testutil.SeedTokenViaCreateToken(t, client, adminBearer, orgID, permissions.AgentDefault)
+	_, tokenID2 := testutil.SeedTokenViaCreateToken(t, client, adminBearer, orgID, permissions.ReadOnly)
+
+	listResp, err := client.ListTokens(ctx, &authv1.ListTokensRequest{
+		OrgId: orgID,
+		Limit: 10,
+	})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(listResp.GetTokens()) < 2 {
+		t.Fatalf("expected at least 2 tokens, got %d", len(listResp.GetTokens()))
+	}
+	seen := map[string]bool{}
+	for _, meta := range listResp.GetTokens() {
+		if meta.GetPrefix() == "" || meta.GetTokenId() == "" {
+			t.Fatal("metadata missing id or prefix")
+		}
+		seen[meta.GetTokenId()] = true
+	}
+	if !seen[tokenID1] || !seen[tokenID2] {
+		t.Fatalf("list missing created ids: %v", seen)
+	}
+}
+
 func TestRevokeTokenCrossTenant(t *testing.T) {
 	dsn, cleanupPG := testutil.SetupPostgres(t)
 	defer cleanupPG()

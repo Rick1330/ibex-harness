@@ -2272,9 +2272,22 @@ Internal gRPC contracts live under [packages/proto/proto/ibex/](../packages/prot
 
 The Auth service exposes `AuthService.ValidateToken` for internal consumers (e.g. the LLM proxy). Source of truth: [packages/proto/proto/ibex/auth/v1/auth.proto](../packages/proto/proto/ibex/auth/v1/auth.proto). Contract policy: [ADR-0006](adr/ADR-0006-auth-proto-contract.md).
 
-- **Request:** `access_token` — full `Authorization: Bearer ...` value
-- **Response (success):** `org_id`, `permissions` (int64 bitmap), optional `agent_id`, `user_id`, `token_id`, `expires_at`
-- **Errors:** gRPC status only (`Unauthenticated` for invalid/revoked/expired tokens)
+- **ValidateToken** — no caller metadata required (proxy hot path)
+  - **Request:** `access_token` — full `Authorization: Bearer ...` value
+  - **Response (success):** `org_id`, `permissions` (int64 bitmap), optional `agent_id`, `user_id`, `token_id`, `expires_at`
+  - **Errors:** `Unauthenticated` for invalid/revoked/expired tokens
+
+**Permission bitmap:** [ADR-0009](adr/ADR-0009-permission-bitmap.md), `packages/permissions`. Admin bits: `TokenCreate` (36), `TokenRevoke` (37). Phase 2 proxy minimum: `ProxyChatCompletion`.
+
+**Management RPCs** (internal; milestone 1.1.4):
+
+| RPC | Caller | Notes |
+| --- | --- | --- |
+| `CreateToken` | `authorization: Bearer` + `TokenCreate` | `plaintext` returned once only |
+| `RevokeToken` | Bearer + `TokenRevoke` or own token | Cross-org → `NotFound` |
+| `ListTokens` | Bearer + `TokenCreate` | Metadata only; no hash/plaintext |
+
+Additional errors: `InvalidArgument`, `PermissionDenied`, `NotFound` per [ADR-0006](adr/ADR-0006-auth-proto-contract.md).
 
 **Permission bitmap:** 64-bit `permissions` field per [ADR-0009](adr/ADR-0009-permission-bitmap.md). Go source of truth: `packages/permissions`. Key admin bits for token management:
 
