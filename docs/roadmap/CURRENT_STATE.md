@@ -1,7 +1,7 @@
 # Current State
 
-**Last updated:** 2026-06-03  
-**Git SHA (`main`):** `af8a1c3` (Dependabot batch [PR #42](https://github.com/Rick1330/ibex-harness/pull/42); milestone docs [PR #41](https://github.com/Rick1330/ibex-harness/pull/41))  
+**Last updated:** 2026-06-04  
+**Git SHA (`main`):** `55bb33e` (M1.0.1 integration test infra [PR #43](https://github.com/Rick1330/ibex-harness/pull/43); Dependabot batch [PR #42](https://github.com/Rick1330/ibex-harness/pull/42))  
 **Current phase:** Phase 1 — Core Platform  
 **Current goal:** Goal 1.2 — Proxy platform integration  
 **Next milestone:** [1.2.1 Proxy auth client](phase-1-core-platform/milestones/1.2.1-proxy-auth-client.md)
