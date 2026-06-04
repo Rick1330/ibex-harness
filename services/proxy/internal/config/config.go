@@ -36,6 +36,37 @@ type Config struct {
 	ErrorDocsBase       string
 }
 
+// ApplyDefaults fills zero-valued fields so httptest and partial Config literals behave like Load().
+func (c *Config) ApplyDefaults() {
+	if strings.TrimSpace(c.Environment) == "" {
+		c.Environment = defaultEnvironment
+	}
+	if strings.TrimSpace(c.ServiceName) == "" {
+		c.ServiceName = defaultServiceName
+	}
+	if c.LogLevel == 0 {
+		c.LogLevel = defaultLogLevel
+	}
+	if strings.TrimSpace(c.Port) == "" {
+		c.Port = defaultPort
+	}
+	if strings.TrimSpace(c.AuthGRPCAddr) == "" {
+		c.AuthGRPCAddr = defaultAuthGRPCAddr
+	}
+	if c.AuthValidateTimeout <= 0 {
+		c.AuthValidateTimeout = defaultAuthValidateTimeout
+	}
+	if c.MaxRequestBodyBytes < 1 {
+		c.MaxRequestBodyBytes = defaultMaxRequestBodyBytes
+	}
+	if strings.TrimSpace(c.RequestIDHeader) == "" {
+		c.RequestIDHeader = defaultRequestIDHeader
+	}
+	if strings.TrimSpace(c.TraceIDHeader) == "" {
+		c.TraceIDHeader = defaultTraceIDHeader
+	}
+}
+
 func Load() (Config, error) {
 	cfg := Config{
 		Environment:         getEnv("IBEX_ENV", defaultEnvironment),

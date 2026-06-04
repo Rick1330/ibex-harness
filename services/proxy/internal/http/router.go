@@ -30,6 +30,7 @@ type authProbeResponse struct {
 
 // NewRouter builds the proxy HTTP handler with optional auth validator for protected routes.
 func NewRouter(cfg config.Config, logger *slog.Logger, meter *metrics.Metrics, validator auth.TokenValidator) http.Handler {
+	cfg.ApplyDefaults()
 	mux := http.NewServeMux()
 	docsBase := cfg.ErrorDocsBase
 
@@ -163,7 +164,6 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request, logger *slog.
 	}
 
 	ctx := llm.WithChatRequest(r.Context(), parsed)
-	r = r.WithContext(ctx)
 
 	if res, ok := auth.FromContext(ctx); ok {
 		logger.Info("chat completion parsed",

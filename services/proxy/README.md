@@ -44,7 +44,11 @@ See [.env.example](.env.example).
 
 ## Run locally
 
-Terminal 1 — auth (Postgres required):
+Start **auth first**, then proxy. Chat requires a real PAT with `ProxyChatCompletion` permission (create via [auth CreateToken](../auth/README.md#grpc-examples-grpcurl) — replace `<pat>` below).
+
+### Bash
+
+Terminal 1 — auth:
 
 ```bash
 make compose-dev-up && make db-migrate
@@ -57,6 +61,28 @@ Terminal 2 — proxy:
 ```bash
 IBEX_AUTH_GRPC_ADDR=127.0.0.1:9091 REDIS_URL=redis://localhost:6379/0 \
   go run ./services/proxy/cmd/proxy
+```
+
+### Windows (PowerShell)
+
+Terminal 1 — auth:
+
+```powershell
+cd D:\ibex-r\ibex-harness
+make compose-dev-up
+make db-migrate
+$env:POSTGRES_DSN = "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable"
+$env:IBEX_GRPC_PORT = "9091"
+go run ./services/auth/cmd/auth
+```
+
+Terminal 2 — proxy (new window; auth must stay running):
+
+```powershell
+cd D:\ibex-r\ibex-harness
+$env:IBEX_AUTH_GRPC_ADDR = "127.0.0.1:9091"
+$env:REDIS_URL = "redis://localhost:6379/0"
+go run ./services/proxy/cmd/proxy
 ```
 
 ## Verify
@@ -110,5 +136,16 @@ Validation error example (**400**):
 ```bash
 make proto-gen
 go test ./services/proxy/...
+go test -tags=integration ./services/proxy/...
+```
+
+**Windows integration tests** — default Postgres is port **5433** (`make compose-test-up`), or point at dev Postgres on **5432**:
+
+```powershell
+make compose-test-up
+go test -tags=integration ./services/proxy/...
+
+# Or reuse compose-dev-up Postgres:
+$env:POSTGRES_TEST_DSN = "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable"
 go test -tags=integration ./services/proxy/...
 ```

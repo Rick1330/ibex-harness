@@ -20,6 +20,7 @@ import (
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
 	proxyhttp "github.com/Rick1330/ibex-harness/services/proxy/internal/http"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/metrics"
+	"github.com/Rick1330/ibex-harness/services/proxy/internal/validation"
 	"github.com/google/uuid"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -258,9 +259,9 @@ func TestProxyAuthIntegration(t *testing.T) {
 	})
 
 	t.Run("chat body too large", func(t *testing.T) {
-		big := strings.Repeat("a", 1024*1024+1)
-		body := `{"model":"gpt-4","messages":[{"role":"user","content":"` + big + `"}]}`
+		body := `{"model":"gpt-4","messages":[{"role":"user","content":"x"}]}`
 		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/chat/completions", strings.NewReader(body))
+		req.ContentLength = validation.MaxRequestBodyBytes + 1
 		req.Header.Set("Authorization", "Bearer "+chatBearer)
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-IBEX-Agent-ID", agentID)
@@ -269,8 +270,12 @@ func TestProxyAuthIntegration(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer resp.Body.Close()
+		b := readBody(resp)
 		if resp.StatusCode != http.StatusRequestEntityTooLarge {
-			t.Fatalf("status: %d body=%s", resp.StatusCode, readBody(resp))
+			t.Fatalf("status: %d body=%s", resp.StatusCode, b)
+		}
+		if !strings.Contains(b, "PAYLOAD_TOO_LARGE") {
+			t.Fatalf("expected PAYLOAD_TOO_LARGE, body=%s", b)
 		}
 	})
 

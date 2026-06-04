@@ -753,6 +753,12 @@ make format              # gofmt + ruff format + prettier
 - Self-contained testcontainers: deferred (see `DEPENDENCIES.md` §8.2.1); use compose test stack for now.
 - CI uses GitHub Actions service Postgres in `auth-validate-smoke` / `db-migrate-smoke` (no testcontainers in merge gates).
 
+**Windows (PowerShell):**
+
+- Set env vars with `$env:NAME = "value"` then run the command on the next line — do **not** paste bash `VAR=value cmd` or `\` line continuations.
+- Integration tests with `compose-dev-up` only: `$env:POSTGRES_TEST_DSN = "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable"` before `go test -tags=integration ./...`
+- Service runbooks: [services/auth/README.md](../services/auth/README.md), [services/proxy/README.md](../services/proxy/README.md)
+
 ---
 
 This development guide defines how we keep IBEX Harness consistent and high quality as we build it with AI assistance.
