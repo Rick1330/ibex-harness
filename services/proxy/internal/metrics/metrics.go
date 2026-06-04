@@ -17,9 +17,9 @@ type Metrics struct {
 	buckets  map[labelKey][]uint64
 	sums     map[labelKey]float64
 
-	authValidateTotal    map[string]uint64
-	authValidateBuckets  map[string][]uint64
-	authValidateSums     map[string]float64
+	authValidateTotal   map[string]uint64
+	authValidateBuckets map[string][]uint64
+	authValidateSums    map[string]float64
 }
 
 type labelKey struct {

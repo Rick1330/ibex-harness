@@ -11,22 +11,22 @@ import (
 )
 
 const (
-	defaultEnvironment       = "development"
-	defaultServiceName       = "proxy"
-	defaultLogLevel          = slog.LevelInfo
-	defaultPort              = "8080"
-	defaultAuthGRPCAddr      = "127.0.0.1:9091"
+	defaultEnvironment         = "development"
+	defaultServiceName         = "proxy"
+	defaultLogLevel            = slog.LevelInfo
+	defaultPort                = "8080"
+	defaultAuthGRPCAddr        = "127.0.0.1:9091"
 	defaultAuthValidateTimeout = 50 * time.Millisecond
 )
 
 type Config struct {
-	Environment          string
-	ServiceName          string
-	LogLevel             slog.Level
-	Port                 string
-	RedisURL             string
-	AuthGRPCAddr         string
-	AuthValidateTimeout  time.Duration
+	Environment         string
+	ServiceName         string
+	LogLevel            slog.Level
+	Port                string
+	RedisURL            string
+	AuthGRPCAddr        string
+	AuthValidateTimeout time.Duration
 }
 
 func Load() (Config, error) {

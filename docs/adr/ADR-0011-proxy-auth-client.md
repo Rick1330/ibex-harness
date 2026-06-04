@@ -27,7 +27,7 @@ Milestone 1.1.3 delivered auth `ValidateToken` ([ADR-0007](ADR-0007-auth-token-v
 ### 3) Bearer parsing
 
 - Read `Authorization: Bearer <token>`
-- Strip `Bearer ` prefix; pass PAT wire string (`ibex_pat_...`) as `ValidateTokenRequest.access_token`
+- Strip the `Bearer` prefix and following space; pass PAT wire string (`ibex_pat_...`) as `ValidateTokenRequest.access_token`
 - Missing header → HTTP **401** `MISSING_TOKEN`
 - Invalid/revoked → HTTP **401** `INVALID_TOKEN` (maps gRPC `Unauthenticated`)
 
