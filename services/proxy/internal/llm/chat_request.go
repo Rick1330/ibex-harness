@@ -78,7 +78,7 @@ func ParseChatCompletionRequest(r io.Reader) (*ChatCompletionRequest, error) {
 		if err := json.Unmarshal(raw, &wm); err != nil {
 			return nil, fmt.Errorf("%w: messages[%d]: %v", ErrInvalidJSON, i, err)
 		}
-		out.Messages = append(out.Messages, Message{Role: wm.Role, Content: wm.Content})
+		out.Messages = append(out.Messages, Message(wm))
 	}
 	return out, nil
 }
