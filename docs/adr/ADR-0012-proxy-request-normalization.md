@@ -43,7 +43,7 @@ Per [SECURITY.md](../SECURITY.md) §10.1: after successful parse, log **metadata
 
 ### 6) Middleware order
 
-`metrics → logging → auth → handler` (parse inside chat handler in 1.2.2; body-limit middleware before handler in 1.2.3)
+`metrics → logging → auth → handler` in 1.2.2 only. **1.2.3+** ([ADR-0013](ADR-0013-proxy-input-validation-and-error-envelope.md)): `metrics → requestContext → responseHeaders → logging → [bodyLimit → contentType → auth] → handler`
 
 ### 7) Deferred to 1.2.3
 

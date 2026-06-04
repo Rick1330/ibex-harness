@@ -21,6 +21,9 @@ func TestValidateAcceptsDefaultShape(t *testing.T) {
 		Port:                "8080",
 		AuthGRPCAddr:        "127.0.0.1:9091",
 		AuthValidateTimeout: defaultAuthValidateTimeout,
+		MaxRequestBodyBytes: defaultMaxRequestBodyBytes,
+		RequestIDHeader:     defaultRequestIDHeader,
+		TraceIDHeader:       defaultTraceIDHeader,
 	}
 
 	if err := cfg.Validate(); err != nil {

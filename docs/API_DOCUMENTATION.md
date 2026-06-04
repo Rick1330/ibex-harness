@@ -165,6 +165,15 @@ HTTP 400 - Bad Request
   MISSING_REQUIRED_FIELD   -- Required field not provided
   INVALID_FIELD_VALUE      -- Field value out of allowed range/enum
 
+HTTP 405 - Method Not Allowed
+  METHOD_NOT_ALLOWED       -- HTTP method not supported for route
+
+HTTP 413 - Payload Too Large
+  PAYLOAD_TOO_LARGE        -- Request body exceeds configured limit (proxy: 1 MiB default)
+
+HTTP 415 - Unsupported Media Type
+  UNSUPPORTED_MEDIA_TYPE   -- Content-Type not supported (proxy chat POST requires application/json)
+
 HTTP 401 - Unauthorized
   MISSING_TOKEN            -- No Authorization header
   INVALID_TOKEN            -- Token not recognized

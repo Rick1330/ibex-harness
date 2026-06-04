@@ -279,6 +279,29 @@ Solo maintainer mode uses **zero required approvals** (the PR author cannot appr
 
 Policy details: [CONTRIBUTING.md](../CONTRIBUTING.md), [adr/ADR-0003-branch-protection-and-merge-policy.md](adr/ADR-0003-branch-protection-and-merge-policy.md).
 
+### 6.4 Post-merge checklist (milestones)
+
+After a milestone PR is approved on GitHub:
+
+1. **Squash merge and delete the remote branch** (required — avoids stale `feature/m*` branches):
+
+   ```bash
+   gh pr merge <PR_NUMBER> --squash --delete-branch
+   ```
+
+2. **Update local `main`:**
+
+   ```bash
+   git checkout main && git pull origin main
+   git fetch origin --prune
+   ```
+
+3. **Optional local cleanup:** `git branch -d feature/m1-x-x-slug` if the branch still exists locally.
+
+4. **CURRENT_STATE:** Open a small docs PR (e.g. `docs/current-state-m1-x-x`) updating [roadmap/CURRENT_STATE.md](roadmap/CURRENT_STATE.md) with the merge SHA — do not fold unrelated product code into that PR.
+
+5. **Workspace archive:** Add a session note under `ibex-harness-workspace/archive/` when the milestone closes.
+
 ---
 
 ## 7) Pull Requests (PRs)

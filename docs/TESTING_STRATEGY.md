@@ -315,6 +315,38 @@ Only critical flows; E2E tests are the slowest and most fragile.
 
 ---
 
+### 6.2.3 Proxy input validation and error envelope (Go)
+
+**Primary risks:**
+
+- unbounded bodies before `MaxBytesReader`
+- inconsistent error shapes across routes
+- missing `X-IBEX-Agent-ID` allowing anonymous agent attribution
+- logging message content during validation failures
+
+**Unit tests must cover:**
+
+- `internal/validation` — model/messages/roles/temperature/max_tokens; header UUID; multi-error aggregation
+- middleware — 413 Content-Length, 415 Content-Type, response headers
+- envelope — `field_errors`, optional `docs_url`
+
+**Integration tests must cover:**
+
+| Case | Expected |
+| --- | --- |
+| Valid JSON + headers | 501 `PROVIDER_NOT_CONFIGURED` |
+| Missing `model` | 400 `VALIDATION_ERROR` + field `model` |
+| Body > 1 MiB | 413 `PAYLOAD_TOO_LARGE` |
+| Wrong Content-Type | 415 `UNSUPPORTED_MEDIA_TYPE` |
+| Missing / invalid `X-IBEX-Agent-ID` | 400 validation |
+| Malformed JSON | 400 `INVALID_JSON` |
+| Invalid path `org_id` | 400 before auth |
+| 401/400/501 responses | `X-Request-ID`, `X-Trace-ID`, `X-Response-Time` present |
+
+CI: existing `proxy-auth-smoke` job (no new job required).
+
+---
+
 ### 6.3 Memory Service (Python) — Data Integrity + Isolation
 
 **Primary risks:**
