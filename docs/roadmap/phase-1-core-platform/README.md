@@ -2,7 +2,7 @@
 
 **Status:** In Progress  
 **Estimated duration:** 4–6 weeks  
-**Current milestone:** [1.2.1 Proxy auth client](milestones/1.2.1-proxy-auth-client.md) (after optional [1.0.1 integration test infra](milestones/1.0.1-go-integration-test-infrastructure.md))
+**Current milestone:** [1.1.4 Token creation and management API](milestones/1.1.4-token-creation-and-management-api.md) (after [1.1.5 Permission bitmap](milestones/1.1.5-permission-bitmap-contract-and-adr.md))
 
 ## Milestones
 
@@ -13,7 +13,7 @@
 | 1.1.2 | [Auth proto and codegen](milestones/1.1.2-auth-proto-and-codegen.md) | Complete |
 | 1.1.3 | [Auth token validation](milestones/1.1.3-auth-token-validation.md) | Complete |
 | 1.1.4 | [Token creation and management API](milestones/1.1.4-token-creation-and-management-api.md) | Planned |
-| 1.1.5 | [Permission bitmap contract and ADR](milestones/1.1.5-permission-bitmap-contract-and-adr.md) | Planned |
+| 1.1.5 | [Permission bitmap contract and ADR](milestones/1.1.5-permission-bitmap-contract-and-adr.md) | Complete |
 | 1.1.6 | [Argon2id parameters and crypto policy ADR](milestones/1.1.6-argon2id-parameters-and-crypto-policy-adr.md) | Planned |
 | 1.2.1 | [Proxy auth client](milestones/1.2.1-proxy-auth-client.md) | Next |
 | 1.2.2 | [Proxy request normalization](milestones/1.2.2-proxy-request-normalization.md) | Planned |
