@@ -570,6 +570,8 @@ ibex-harness-workspace/
   handoff.md
   known_issues.md
   contracts.md
+  pr-bodies/                # PR description drafts (full template); never commit to git repo
+    pr-<number>-<slug>.md
   session_log/
     2026-05-30-session-01.md
   archive/

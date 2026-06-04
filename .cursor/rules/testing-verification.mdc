@@ -1,0 +1,16 @@
+---
+description: Require local tests and gofmt before push or PR
+alwaysApply: true
+---
+
+# Post-implementation verification
+
+Before pushing or updating a PR:
+
+1. Run tests for every package you changed.
+2. Run `go test -tags=integration` when auth/DB/RLS paths change (Postgres required).
+3. Run `make repo-guards` before requesting merge.
+4. Ensure `gofmt -l` on touched `.go` files is empty.
+5. Record what you ran in the PR Testing section (see `ibex-harness-workspace/pr-bodies/`).
+
+See `.cursorrules` §1.6.2 and `docs/TESTING_STRATEGY.md`.
