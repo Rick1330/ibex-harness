@@ -6,7 +6,7 @@ endif
 
 DEV_TOOL := infra/scripts/dev-tool.sh
 
-.PHONY: help lint-docs security-scan repo-guards proto-lint proto-breaking proto-gen proto-test proto-test-integration compose-dev-up compose-dev-down compose-dev-logs compose-dev-ps compose-test-up compose-test-down db-migrate db-migrate-down db-version
+.PHONY: help lint-docs security-scan repo-guards proto-lint proto-breaking proto-gen proto-test proto-test-integration test-integration compose-dev-up compose-dev-down compose-dev-logs compose-dev-ps compose-test-up compose-test-down db-migrate db-migrate-down db-version
 
 help: ## Show available commands
 	@"$(BASH)" "$(DEV_TOOL)" help
@@ -34,6 +34,9 @@ proto-test: ## Run protobuf contract unit tests
 
 proto-test-integration: ## Run protobuf contract integration tests (requires buf)
 	@"$(BASH)" "$(DEV_TOOL)" proto-test-integration
+
+test-integration: ## Run all Go integration tests (-tags=integration)
+	@"$(BASH)" "$(DEV_TOOL)" test-integration
 
 compose-dev-up: ## Start local development dependencies
 	@"$(BASH)" "$(DEV_TOOL)" compose-dev-up

@@ -714,12 +714,19 @@ make dev                 # start core services and deps
 make lint                # run all linters
 make typecheck           # mypy + tsc + go build checks
 make test                # unit tests
-make test-integration    # integration tests via testcontainers
+make compose-test-up     # Postgres on port 5433 for integration tests (default local mode)
+make test-integration    # all Go integration tests (-tags=integration)
 make db-migrate          # apply migrations
 make db-seed             # seed dev org/user/agent
 make proto-gen           # regenerate protobuf clients
 make format              # gofmt + ruff format + prettier
 ```
+
+**Integration tests (Go):**
+
+- Default: `make compose-test-up` then `make test-integration` (uses `POSTGRES_TEST_DSN` or port 5433).
+- Self-contained testcontainers: deferred (see `DEPENDENCIES.md` §8.2.1); use compose test stack for now.
+- CI uses GitHub Actions service Postgres in `auth-validate-smoke` / `db-migrate-smoke` (no testcontainers in merge gates).
 
 ---
 

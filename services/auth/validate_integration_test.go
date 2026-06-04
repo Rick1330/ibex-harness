@@ -4,60 +4,28 @@ package auth_test
 
 import (
 	"context"
-	"database/sql"
 	"errors"
-	"os"
 	"testing"
 
-	"github.com/Rick1330/ibex-harness/infra/migrations/postgres"
+	"github.com/Rick1330/ibex-harness/infra/testing/testutil"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/repository"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/token"
 	"github.com/google/uuid"
-	_ "github.com/lib/pq"
 )
 
-const defaultTestDSN = "postgres://ibex:ibex@localhost:5433/ibex_test?sslmode=disable"
-
-func testDSN() string {
-	if dsn := os.Getenv("POSTGRES_TEST_DSN"); dsn != "" {
-		return dsn
-	}
-	return defaultTestDSN
-}
-
-func openTestDB(t *testing.T) *sql.DB {
-	t.Helper()
-	db, err := sql.Open("postgres", testDSN())
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	if err := db.Ping(); err != nil {
-		t.Skipf("postgres not available: %v", err)
-	}
-	return db
-}
-
 func TestValidateTokenIntegration(t *testing.T) {
-	dsn := testDSN()
-	if err := postgres.Up(dsn); err != nil {
-		t.Fatalf("migrate up: %v", err)
-	}
+	dsn, cleanup := testutil.SetupPostgres(t)
+	defer cleanup()
 
-	db := openTestDB(t)
+	db := testutil.OpenDB(t, dsn)
 	defer db.Close()
 
 	repo := repository.NewTokensRepository(db)
 	argon2 := token.DefaultArgon2Params()
 	validator := token.NewValidator(repo, argon2)
 
-	orgA, err := repo.InsertTestOrganization(context.Background(), "Org A", "org-a-val-"+uuid.NewString()[:8])
-	if err != nil {
-		t.Fatalf("org a: %v", err)
-	}
-	orgB, err := repo.InsertTestOrganization(context.Background(), "Org B", "org-b-val-"+uuid.NewString()[:8])
-	if err != nil {
-		t.Fatalf("org b: %v", err)
-	}
+	orgA := testutil.SeedOrganization(t, db, "Org A", "org-a-val-"+uuid.NewString()[:8])
+	orgB := testutil.SeedOrganization(t, db, "Org B", "org-b-val-"+uuid.NewString()[:8])
 
 	tokenID := uuid.New()
 	bearer := "ibex_pat_" + tokenID.String() + "_integrationsecret"
@@ -110,7 +78,6 @@ func TestValidateTokenIntegration(t *testing.T) {
 		t.Fatalf("insert org b token: %v", err)
 	}
 
-	// Cross-tenant: org B token prefix must not validate when row exists only under org B (lookup is global by prefix).
 	respB, err := validator.Validate(context.Background(), otherBearer)
 	if err != nil {
 		t.Fatalf("validate org b: %v", err)
@@ -118,5 +85,4 @@ func TestValidateTokenIntegration(t *testing.T) {
 	if respB.GetOrgId() != orgB {
 		t.Fatalf("org b id: got %s want %s", respB.GetOrgId(), orgB)
 	}
-	_ = orgA
 }

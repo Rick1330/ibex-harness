@@ -35,6 +35,7 @@ case "${1:-help}" in
       "  proto-gen              Generate protobuf stubs locally (not committed)" \
       "  proto-test             Run protobuf contract unit tests" \
       "  proto-test-integration Run protobuf contract integration tests (requires buf)" \
+      "  test-integration         Run all Go integration tests (-tags=integration)" \
       "  compose-dev-up         Start local development dependencies" \
       "  compose-dev-down       Stop local development dependencies" \
       "  compose-dev-logs       Tail local development dependency logs" \
@@ -88,6 +89,10 @@ case "${1:-help}" in
     buf generate
     cd "$ROOT_DIR"
     go test -tags=integration ./packages/proto/...
+    ;;
+  test-integration)
+    cd "$ROOT_DIR"
+    go test -tags=integration -race -timeout=120s ./...
     ;;
   compose-dev-up)
     require_tool docker "docker is required for compose-dev-up."

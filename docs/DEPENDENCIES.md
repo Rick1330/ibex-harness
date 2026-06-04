@@ -262,6 +262,21 @@ Avoid:
 - custom JWT parsing/signing
 - custom crypto helpers
 
+### 8.2.1 Go — Integration test harness (root module, `infra/testing/testutil`)
+
+**Dependency (planned):** `github.com/testcontainers/testcontainers-go` — **not yet in root `go.mod`** (Moby/docker transitive CVE and `repo-guards` layout blocked a root `internal/` path). Compose test stack is the supported path; testcontainers will land in an optional `infra/testing/` submodule in a follow-up PR.
+
+**Admission (summary, for when added):**
+
+1. **Why:** `TESTING_STRATEGY.md` requires real Postgres/Redis in integration tests; testcontainers provides self-contained local runs without compose.
+2. **Scope:** Integration-tagged tests only (`//go:build integration`); not linked into service binaries.
+3. **Security:** Pulls Docker client libraries; no runtime in production images; scan via `go mod` + OSV in CI.
+4. **Maintenance:** CNCF-affiliated project; widely used; active releases.
+5. **Transitive:** Docker/Moby client chain — acceptable for dev/test-only path.
+6. **Performance:** Container startup adds seconds locally; CI continues to use GHA service containers.
+7. **License:** MIT.
+8. **Exit:** Fall back to compose test stack (`make compose-test-up`) permanently supported.
+
 ### 8.3 Python — Memory/API/Context/Embedder/Worker services
 
 Required (typical):

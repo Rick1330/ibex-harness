@@ -8,7 +8,7 @@
 
 | ID | Milestone | Status |
 | --- | --- | --- |
-| 1.0.1 | [Go integration test infrastructure](milestones/1.0.1-go-integration-test-infrastructure.md) | Planned |
+| 1.0.1 | [Go integration test infrastructure](milestones/1.0.1-go-integration-test-infrastructure.md) | Complete |
 | 1.1.1 | [Postgres migrations](milestones/1.1.1-postgres-migrations.md) | Complete |
 | 1.1.2 | [Auth proto and codegen](milestones/1.1.2-auth-proto-and-codegen.md) | Complete |
 | 1.1.3 | [Auth token validation](milestones/1.1.3-auth-token-validation.md) | Complete |
