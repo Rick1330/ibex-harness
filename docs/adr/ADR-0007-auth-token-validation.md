@@ -59,13 +59,15 @@ Generated stubs: `make proto-gen` → `packages/proto/gen/go/ibex/auth/v1` (giti
 
 ### 5) Configuration
 
+Argon2id **parameters** are defined in [ADR-0010](ADR-0010-cryptography-policy.md). Implementation: `packages/crypto`. Env vars override production defaults at process start; stored PHC strings embed the parameters used at hash time.
+
 | Variable | Default | Notes |
 |----------|---------|-------|
 | `IBEX_GRPC_PORT` | `9091` | gRPC listen port |
 | `POSTGRES_DSN` | (empty) | Required for ValidateToken; readiness uses TCP check if set |
-| `IBEX_ARGON2_MEMORY_KIB` | `65536` | Verify parameters must match hash encoding |
-| `IBEX_ARGON2_TIME` | `3` | |
-| `IBEX_ARGON2_PARALLELISM` | `2` | |
+| `IBEX_ARGON2_MEMORY_KIB` | `65536` | See ADR-0010 |
+| `IBEX_ARGON2_TIME` | `3` | See ADR-0010 |
+| `IBEX_ARGON2_PARALLELISM` | `4` | See ADR-0010 |
 
 ### 6) Observability
 

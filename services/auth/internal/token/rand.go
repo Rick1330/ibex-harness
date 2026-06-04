@@ -1,7 +1,8 @@
 package token
 
-import "crypto/rand"
+import "github.com/Rick1330/ibex-harness/packages/crypto"
 
 func readCryptoRand(b []byte) (int, error) {
-	return rand.Read(b)
+	copy(b, crypto.GenerateRandomBytes(len(b)))
+	return len(b), nil
 }

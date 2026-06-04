@@ -127,7 +127,8 @@ IBEX Harness supports multiple token types (each with different risk profiles):
 
 ### 4.2 Password Storage and MFA
 
-- Passwords (if enabled) stored using **Argon2id** with sane parameters.
+- Passwords (if enabled) stored using **Argon2id** with parameters defined in [ADR-0010](adr/ADR-0010-cryptography-policy.md) (`packages/crypto`; production: 64 MiB, t=3, p=4).
+- API token bearers hashed with the same Argon2id policy (PHC string in `ibex_core.tokens.hash`).
 - MFA implemented via **TOTP**:
   - Required for privileged actions: directive promotion, directive revoke, token create, bulk export, org deletion
   - Backup codes supported (stored hashed)

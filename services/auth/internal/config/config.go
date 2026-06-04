@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Rick1330/ibex-harness/packages/crypto"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/token"
 )
 
@@ -36,7 +37,7 @@ func Load() (Config, error) {
 		Port:        getEnv("IBEX_PORT", defaultPort),
 		GRPCPort:    getEnv("IBEX_GRPC_PORT", defaultGRPCPort),
 		PostgresDSN: strings.TrimSpace(os.Getenv("POSTGRES_DSN")),
-		Argon2:      token.DefaultArgon2Params(),
+		Argon2:      crypto.ProductionParams(),
 	}
 
 	level, err := parseLogLevel(getEnv("IBEX_LOG_LEVEL", "INFO"))

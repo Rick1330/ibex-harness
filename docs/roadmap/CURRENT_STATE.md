@@ -20,6 +20,7 @@
 - **Auth ValidateToken (m1.1.3):** gRPC server on `IBEX_GRPC_PORT` (default 9091); PAT parse + Argon2id + Postgres lookup ([ADR-0007](../adr/ADR-0007-auth-token-validation.md)); CI `auth-validate-smoke`
 - **Permission bitmap (m1.1.5):** `packages/permissions`, [ADR-0009](../adr/ADR-0009-permission-bitmap.md)
 - **Token management (m1.1.4):** gRPC `CreateToken`, `RevokeToken`, `ListTokens`; caller bearer authz; `GeneratePAT` per ADR-0007
+- **Crypto policy (m1.1.6):** `packages/crypto`, [ADR-0010](../adr/ADR-0010-cryptography-policy.md) (Argon2id PHC, production p=4)
 - **Integration test infra (m1.0.1):** `infra/testing/testutil`, `make test-integration`, compose test (5433) or optional `testcontainers` build tag
 - Go services:
   - `services/auth` — `/health`, `/ready`, `/metrics`, gRPC `ValidateToken`
@@ -28,7 +29,7 @@
 - Security / quality CI: CodeQL v4, Semgrep (IBEX rules), Trivy, OSV, hard-gate `golangci-lint`, Hadolint, Bandit (skip until `services/memory`)
 - Informational CI: `scorecard`, `sbom` (Syft + Grype table/JSON artifacts only), `dependency-review`, `go-services`, `db-migrate-smoke`, `proto-contract`, `auth-validate-smoke`, `buf-lint`
 - StepSecurity hardening ([PR #33](https://github.com/Rick1330/ibex-harness/pull/33)): Harden-Runner (audit egress), pinned GitHub Action SHAs, Docker Dependabot
-- **Roadmap:** remaining planned milestones 1.1.6, 1.2.3–1.2.4 (docs only)
+- **Roadmap:** remaining planned milestones 1.2.3–1.2.4 (docs only)
 - README: [DeepWiki](https://deepwiki.com/Rick1330/ibex-harness) badge
 - Semgrep: Prometheus `/metrics` handlers use `strings.Builder` (no Fprintf to ResponseWriter)
 
@@ -45,8 +46,8 @@
 ## Next 3 immediate tasks
 
 1. **Milestone 1.2.1** — Proxy auth gRPC client + middleware
-2. **Goal 1.1 backlog** — Argon2id policy ADR (1.1.6)
-3. **Proxy platform** — Input validation envelope (1.2.3), rate limit skeleton (1.2.4) after 1.2.1
+2. **Proxy platform** — Input validation envelope (1.2.3), rate limit skeleton (1.2.4) after 1.2.1
+3. **Observability baseline** — Milestone 1.3.1 when proxy path is wired
 
 ## Verify current state locally
 
