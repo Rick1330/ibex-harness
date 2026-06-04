@@ -318,6 +318,19 @@ IBEX Harness explicitly treats memory content as **untrusted input** that may co
   - metadata size
   - tag counts and lengths
 
+**Proxy chat (`POST /v1/chat/completions`) — enforced in milestone 1.2.3 ([ADR-0013](adr/ADR-0013-proxy-input-validation-and-error-envelope.md)):**
+
+| Limit | Value |
+| --- | --- |
+| Max request body | 1 MiB (`IBEX_MAX_REQUEST_BODY_BYTES`) |
+| Max messages per request | 1000 |
+| Max message content | 100 KiB per message |
+| Max model name length | 256 characters |
+| Required header | `X-IBEX-Agent-ID` (UUID) |
+| Content-Type | `application/json` only |
+
+Body size is enforced with `http.MaxBytesReader` **before** JSON decode. Semantic failures return **400** `VALIDATION_ERROR` with `field_errors` (not **501**).
+
 ### 8.2 Rate Limiting
 
 - Hierarchical rate limiting:

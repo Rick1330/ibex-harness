@@ -142,6 +142,8 @@ services/proxy/
   internal/
     config/                    # env config parsing + validation
     http/                      # HTTP server wiring (router/middleware)
+    llm/                       # OpenAI chat request parse + context (M1.2.2+)
+    validation/                # semantic limits + header validation (M1.2.3)
     auth/                      # token validation (consumer-side interfaces)
     ratelimit/                 # token bucket + lua scripts
     upstream/                  # provider adapter layer

@@ -37,6 +37,18 @@ IBEX_PORT=8081 IBEX_GRPC_PORT=9091 \
   go run ./services/auth/cmd/auth
 ```
 
+**Windows (PowerShell)** — use `$env:` instead of bash `VAR=value cmd` (no `\` line continuation):
+
+```powershell
+cd D:\ibex-r\ibex-harness
+make compose-dev-up
+make db-migrate
+make proto-gen
+$env:POSTGRES_DSN = "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable"
+$env:IBEX_GRPC_PORT = "9091"
+go run ./services/auth/cmd/auth
+```
+
 ## gRPC examples (grpcurl)
 
 **ValidateToken** (no authorization metadata):

@@ -25,3 +25,21 @@ func TestWriteJSONEnvelopeShape(t *testing.T) {
 		t.Fatal("expected timestamp")
 	}
 }
+
+func TestWrite_fieldErrorsAndDocsURL(t *testing.T) {
+	rec := httptest.NewRecorder()
+	Write(rec, http.StatusBadRequest, CodeValidationError, "Request validation failed", "req-2", WriteOpts{
+		DocsBase:    "https://docs.ibexharness.com",
+		FieldErrors: []FieldError{{Field: "model", Code: "REQUIRED", Message: "model is required"}},
+	})
+	var body Response
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(body.Error.FieldErrors) != 1 {
+		t.Fatalf("field_errors: %+v", body.Error.FieldErrors)
+	}
+	if body.Error.DocsURL != "https://docs.ibexharness.com/errors/VALIDATION_ERROR" {
+		t.Fatalf("docs_url: %s", body.Error.DocsURL)
+	}
+}

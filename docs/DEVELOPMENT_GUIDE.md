@@ -279,6 +279,29 @@ Solo maintainer mode uses **zero required approvals** (the PR author cannot appr
 
 Policy details: [CONTRIBUTING.md](../CONTRIBUTING.md), [adr/ADR-0003-branch-protection-and-merge-policy.md](adr/ADR-0003-branch-protection-and-merge-policy.md).
 
+### 6.4 Post-merge checklist (milestones)
+
+After a milestone PR is approved on GitHub:
+
+1. **Squash merge and delete the remote branch** (required — avoids stale `feature/m*` branches):
+
+   ```bash
+   gh pr merge <PR_NUMBER> --squash --delete-branch
+   ```
+
+2. **Update local `main`:**
+
+   ```bash
+   git checkout main && git pull origin main
+   git fetch origin --prune
+   ```
+
+3. **Optional local cleanup:** `git branch -d feature/m1-x-x-slug` if the branch still exists locally.
+
+4. **CURRENT_STATE:** Open a small docs PR (e.g. `docs/current-state-m1-x-x`) updating [roadmap/CURRENT_STATE.md](roadmap/CURRENT_STATE.md) with the merge SHA — do not fold unrelated product code into that PR.
+
+5. **Workspace archive:** Add a session note under `ibex-harness-workspace/archive/` when the milestone closes.
+
 ---
 
 ## 7) Pull Requests (PRs)
@@ -729,6 +752,12 @@ make format              # gofmt + ruff format + prettier
 - Default: `make compose-test-up` then `make test-integration` (uses `POSTGRES_TEST_DSN` or port 5433).
 - Self-contained testcontainers: deferred (see `DEPENDENCIES.md` §8.2.1); use compose test stack for now.
 - CI uses GitHub Actions service Postgres in `auth-validate-smoke` / `db-migrate-smoke` (no testcontainers in merge gates).
+
+**Windows (PowerShell):**
+
+- Set env vars with `$env:NAME = "value"` then run the command on the next line — do **not** paste bash `VAR=value cmd` or `\` line continuations.
+- Integration tests with `compose-dev-up` only: `$env:POSTGRES_TEST_DSN = "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable"` before `go test -tags=integration ./...`
+- Service runbooks: [services/auth/README.md](../services/auth/README.md), [services/proxy/README.md](../services/proxy/README.md)
 
 ---
 

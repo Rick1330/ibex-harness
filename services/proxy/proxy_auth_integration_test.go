@@ -20,6 +20,7 @@ import (
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
 	proxyhttp "github.com/Rick1330/ibex-harness/services/proxy/internal/http"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/metrics"
+	"github.com/Rick1330/ibex-harness/services/proxy/internal/validation"
 	"github.com/google/uuid"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -146,9 +147,13 @@ func TestProxyAuthIntegration(t *testing.T) {
 		}
 	})
 
+	const agentID = "550e8400-e29b-41d4-a716-446655440000"
+
 	t.Run("chat without permission", func(t *testing.T) {
 		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/chat/completions", strings.NewReader("{}"))
 		req.Header.Set("Authorization", "Bearer "+lowPermsBearer)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-IBEX-Agent-ID", agentID)
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatal(err)
@@ -160,8 +165,11 @@ func TestProxyAuthIntegration(t *testing.T) {
 	})
 
 	t.Run("chat stub with permission", func(t *testing.T) {
-		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/chat/completions", strings.NewReader("{}"))
+		body := `{"model":"gpt-4","messages":[{"role":"user","content":"hi"}]}`
+		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/chat/completions", strings.NewReader(body))
 		req.Header.Set("Authorization", "Bearer "+chatBearer)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-IBEX-Agent-ID", agentID)
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatal(err)
@@ -170,6 +178,127 @@ func TestProxyAuthIntegration(t *testing.T) {
 		if resp.StatusCode != http.StatusNotImplemented {
 			t.Fatalf("status: %d", resp.StatusCode)
 		}
+		b, _ := io.ReadAll(resp.Body)
+		if !strings.Contains(string(b), "PROVIDER_NOT_CONFIGURED") {
+			t.Fatalf("body: %s", string(b))
+		}
+		assertResponseHeaders(t, resp)
+	})
+
+	t.Run("chat malformed json", func(t *testing.T) {
+		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/chat/completions", strings.NewReader(`{invalid`))
+		req.Header.Set("Authorization", "Bearer "+chatBearer)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-IBEX-Agent-ID", agentID)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("status: %d body=%s", resp.StatusCode, readBody(resp))
+		}
+		b := readBody(resp)
+		if !strings.Contains(b, "INVALID_JSON") {
+			t.Fatalf("body: %s", b)
+		}
+	})
+
+	t.Run("chat missing model", func(t *testing.T) {
+		body := `{"messages":[{"role":"user","content":"hi"}]}`
+		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/chat/completions", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+chatBearer)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-IBEX-Agent-ID", agentID)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("status: %d body=%s", resp.StatusCode, readBody(resp))
+		}
+		b := readBody(resp)
+		if !strings.Contains(b, "VALIDATION_ERROR") || !strings.Contains(b, `"field":"model"`) {
+			t.Fatalf("body: %s", b)
+		}
+		assertResponseHeaders(t, resp)
+	})
+
+	t.Run("chat missing agent header", func(t *testing.T) {
+		body := `{"model":"gpt-4","messages":[{"role":"user","content":"hi"}]}`
+		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/chat/completions", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+chatBearer)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("status: %d body=%s", resp.StatusCode, readBody(resp))
+		}
+	})
+
+	t.Run("chat wrong content type", func(t *testing.T) {
+		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/chat/completions", strings.NewReader(`{}`))
+		req.Header.Set("Authorization", "Bearer "+chatBearer)
+		req.Header.Set("Content-Type", "text/plain")
+		req.Header.Set("X-IBEX-Agent-ID", agentID)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusUnsupportedMediaType {
+			t.Fatalf("status: %d body=%s", resp.StatusCode, readBody(resp))
+		}
+		if !strings.Contains(readBody(resp), "UNSUPPORTED_MEDIA_TYPE") {
+			t.Fatal("expected UNSUPPORTED_MEDIA_TYPE")
+		}
+	})
+
+	t.Run("chat body too large", func(t *testing.T) {
+		// Body byte count over limit triggers 413 in BodySizeLimitMiddleware (Content-Length check).
+		oversized := strings.Repeat("x", int(validation.MaxRequestBodyBytes+1))
+		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/chat/completions", strings.NewReader(oversized))
+		req.Header.Set("Authorization", "Bearer "+chatBearer)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-IBEX-Agent-ID", agentID)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b := readBody(resp)
+		if resp.StatusCode != http.StatusRequestEntityTooLarge {
+			t.Fatalf("status: %d body=%s", resp.StatusCode, b)
+		}
+		if !strings.Contains(b, "PAYLOAD_TOO_LARGE") {
+			t.Fatalf("expected PAYLOAD_TOO_LARGE, body=%s", b)
+		}
+	})
+
+	t.Run("invalid org path uuid", func(t *testing.T) {
+		req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v1/orgs/not-a-uuid/auth-probe", nil)
+		req.Header.Set("Authorization", "Bearer "+validBearer)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("status: %d body=%s", resp.StatusCode, readBody(resp))
+		}
+	})
+
+	t.Run("response headers on 401", func(t *testing.T) {
+		resp, err := http.Get(srv.URL + "/v1/internal/auth-probe")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		assertResponseHeaders(t, resp)
 	})
 
 	t.Run("revoke via grpc then reject", func(t *testing.T) {
@@ -261,4 +390,17 @@ func TestProxyAuthUnavailable(t *testing.T) {
 func readBody(resp *http.Response) string {
 	b, _ := io.ReadAll(resp.Body)
 	return string(b)
+}
+
+func assertResponseHeaders(t *testing.T, resp *http.Response) {
+	t.Helper()
+	if resp.Header.Get("X-Request-ID") == "" {
+		t.Fatal("missing X-Request-ID response header")
+	}
+	if resp.Header.Get("X-Trace-ID") == "" {
+		t.Fatal("missing X-Trace-ID response header")
+	}
+	if resp.Header.Get("X-Response-Time") == "" {
+		t.Fatal("missing X-Response-Time response header")
+	}
 }

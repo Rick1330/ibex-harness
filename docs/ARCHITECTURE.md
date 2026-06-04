@@ -85,7 +85,7 @@ Agent Request → Proxy → Context Assembly → LLM Provider → Proxy → Agen
 
 Every component has explicit fallback behavior:
 
-- Auth service down → Use cached permissions (with audit flag)
+- Auth service down → **Fail closed** (HTTP 503); no cached-permission bypass in Phase 1 ([SECURITY.md](SECURITY.md) §15, [ADR-0011](adr/ADR-0011-proxy-auth-client.md)). Phase 2 optional cache may degrade with audit flag after 2.2.1.
 - Context assembly timeout → Return directive-only context
 - Memory service slow → Serve from hot cache only
 - Embedding service down → Queue writes, succeed synchronously with placeholder
@@ -123,7 +123,7 @@ Every operation emits:
 **Key Responsibilities**:
 
 - Parse and validate incoming LLM requests
-- Authenticate requests via token validation (bloom filter → LRU cache → Auth Service)
+- Authenticate requests via gRPC `ValidateToken` on every protected request in Phase 1; optional bloom → LRU → gRPC pipeline in Phase 2 ([2.2.1](roadmap/phase-2-single-provider/milestones/2.2.1-auth-cache-bloom.md))
 - Rate limit enforcement (Redis Lua scripts, hierarchical: agent/org/global)
 - Parallel context retrieval (40ms deadline):
   - Directive from Redis
@@ -163,7 +163,7 @@ Every operation emits:
 
 | Failure | Detection | Handling | Impact |
 |---------|-----------|----------|--------|
-| Auth Service down | 3 consecutive timeouts | Use disk-cached permissions (5min TTL) | Degraded auth, flagged in audit |
+| Auth Service down | 3 consecutive timeouts | **Phase 1:** HTTP 503 fail closed. **Phase 2 (2.2.1):** optional cached permissions with audit flag | Phase 1: request denied; Phase 2: degraded auth if cache enabled |
 | Context Assembly timeout | 40ms deadline | Return directive-only context | Reduced quality, not failure |
 | Memory Service slow | Latency >100ms | Skip memory retrieval, log warning | Degraded quality |
 | LLM Provider down | Connection refused or 5xx | Circuit breaker (5 failures → open) | Return 503 with retry-after |
@@ -430,6 +430,16 @@ When upgrading embedding model (e.g., to larger, better model):
    - For third-party directive publishers
 
 **Validation Pipeline** (in Proxy):
+
+**Phase 1 implemented (M1.2.1):**
+
+```text
+1. HTTP Bearer parse
+2. gRPC AuthService.ValidateToken (50ms budget, fail closed)
+3. Attach org_id + permissions to request context
+```
+
+**Target — Phase 2 optional [2.2.1-auth-cache-bloom](roadmap/phase-2-single-provider/milestones/2.2.1-auth-cache-bloom.md):**
 
 ```text
 1. Bloom Filter Check (Redis):

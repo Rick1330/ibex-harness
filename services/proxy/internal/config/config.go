@@ -17,6 +17,9 @@ const (
 	defaultPort                = "8080"
 	defaultAuthGRPCAddr        = "127.0.0.1:9091"
 	defaultAuthValidateTimeout = 50 * time.Millisecond
+	defaultRequestIDHeader     = "X-Request-ID"
+	defaultTraceIDHeader       = "X-Trace-ID"
+	defaultMaxRequestBodyBytes = 1 * 1024 * 1024
 )
 
 type Config struct {
@@ -27,6 +30,41 @@ type Config struct {
 	RedisURL            string
 	AuthGRPCAddr        string
 	AuthValidateTimeout time.Duration
+	MaxRequestBodyBytes int64
+	RequestIDHeader     string
+	TraceIDHeader       string
+	ErrorDocsBase       string
+}
+
+// ApplyDefaults fills zero-valued fields so httptest and partial Config literals behave like Load().
+func (c *Config) ApplyDefaults() {
+	if strings.TrimSpace(c.Environment) == "" {
+		c.Environment = defaultEnvironment
+	}
+	if strings.TrimSpace(c.ServiceName) == "" {
+		c.ServiceName = defaultServiceName
+	}
+	if c.LogLevel == 0 {
+		c.LogLevel = defaultLogLevel
+	}
+	if strings.TrimSpace(c.Port) == "" {
+		c.Port = defaultPort
+	}
+	if strings.TrimSpace(c.AuthGRPCAddr) == "" {
+		c.AuthGRPCAddr = defaultAuthGRPCAddr
+	}
+	if c.AuthValidateTimeout <= 0 {
+		c.AuthValidateTimeout = defaultAuthValidateTimeout
+	}
+	if c.MaxRequestBodyBytes < 1 {
+		c.MaxRequestBodyBytes = defaultMaxRequestBodyBytes
+	}
+	if strings.TrimSpace(c.RequestIDHeader) == "" {
+		c.RequestIDHeader = defaultRequestIDHeader
+	}
+	if strings.TrimSpace(c.TraceIDHeader) == "" {
+		c.TraceIDHeader = defaultTraceIDHeader
+	}
 }
 
 func Load() (Config, error) {
@@ -37,6 +75,10 @@ func Load() (Config, error) {
 		RedisURL:            strings.TrimSpace(os.Getenv("REDIS_URL")),
 		AuthGRPCAddr:        getEnv("IBEX_AUTH_GRPC_ADDR", defaultAuthGRPCAddr),
 		AuthValidateTimeout: defaultAuthValidateTimeout,
+		MaxRequestBodyBytes: defaultMaxRequestBodyBytes,
+		RequestIDHeader:     getEnv("IBEX_REQUEST_ID_HEADER", defaultRequestIDHeader),
+		TraceIDHeader:       getEnv("IBEX_TRACE_ID_HEADER", defaultTraceIDHeader),
+		ErrorDocsBase:       strings.TrimSpace(os.Getenv("IBEX_ERROR_DOCS_BASE")),
 	}
 
 	level, err := parseLogLevel(getEnv("IBEX_LOG_LEVEL", "INFO"))
@@ -44,6 +86,14 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	cfg.LogLevel = level
+
+	if v := strings.TrimSpace(os.Getenv("IBEX_MAX_REQUEST_BODY_BYTES")); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || n < 1 {
+			return Config{}, fmt.Errorf("IBEX_MAX_REQUEST_BODY_BYTES must be a positive integer")
+		}
+		cfg.MaxRequestBodyBytes = n
+	}
 
 	if v := strings.TrimSpace(os.Getenv("IBEX_AUTH_VALIDATE_TIMEOUT")); v != "" {
 		d, err := time.ParseDuration(v)
@@ -82,6 +132,15 @@ func (c Config) Validate() error {
 	}
 	if c.AuthValidateTimeout <= 0 {
 		return fmt.Errorf("IBEX_AUTH_VALIDATE_TIMEOUT must be positive")
+	}
+	if c.MaxRequestBodyBytes < 1 {
+		return fmt.Errorf("IBEX_MAX_REQUEST_BODY_BYTES must be positive")
+	}
+	if strings.TrimSpace(c.RequestIDHeader) == "" {
+		return fmt.Errorf("IBEX_REQUEST_ID_HEADER must not be empty")
+	}
+	if strings.TrimSpace(c.TraceIDHeader) == "" {
+		return fmt.Errorf("IBEX_TRACE_ID_HEADER must not be empty")
 	}
 	return nil
 }

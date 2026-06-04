@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -12,7 +13,9 @@ import (
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
 	proxyerrors "github.com/Rick1330/ibex-harness/services/proxy/internal/errors"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/health"
+	"github.com/Rick1330/ibex-harness/services/proxy/internal/llm"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/metrics"
+	"github.com/Rick1330/ibex-harness/services/proxy/internal/validation"
 )
 
 type response struct {
@@ -27,15 +30,18 @@ type authProbeResponse struct {
 
 // NewRouter builds the proxy HTTP handler with optional auth validator for protected routes.
 func NewRouter(cfg config.Config, logger *slog.Logger, meter *metrics.Metrics, validator auth.TokenValidator) http.Handler {
+	cfg.ApplyDefaults()
 	mux := http.NewServeMux()
+	docsBase := cfg.ErrorDocsBase
+
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		if !requireMethod(w, r, http.MethodGet) {
+		if !requireMethod(w, r, http.MethodGet, docsBase) {
 			return
 		}
 		writeJSON(w, http.StatusOK, response{Status: "ok"})
 	})
 	mux.HandleFunc("/ready", func(w http.ResponseWriter, r *http.Request) {
-		if !requireMethod(w, r, http.MethodGet) {
+		if !requireMethod(w, r, http.MethodGet, docsBase) {
 			return
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 750*time.Millisecond)
@@ -50,7 +56,7 @@ func NewRouter(cfg config.Config, logger *slog.Logger, meter *metrics.Metrics, v
 		writeJSON(w, http.StatusOK, response{Status: "ok"})
 	})
 	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
-		if !requireMethod(w, r, http.MethodGet) {
+		if !requireMethod(w, r, http.MethodGet, docsBase) {
 			return
 		}
 		meter.ServeHTTP(w, r)
@@ -64,25 +70,52 @@ func NewRouter(cfg config.Config, logger *slog.Logger, meter *metrics.Metrics, v
 			return AuthMiddleware(validator, meter, logger, AuthOptions{PathOrgID: orgID})
 		}
 		mux.HandleFunc("/v1/orgs/{org_id}/auth-probe", func(w http.ResponseWriter, r *http.Request) {
-			if !requireMethod(w, r, http.MethodGet) {
+			if !requireMethod(w, r, http.MethodGet, docsBase) {
 				return
 			}
 			orgID := strings.TrimSpace(r.PathValue("org_id"))
-			authOrg(orgID)(http.HandlerFunc(handleAuthProbe)).ServeHTTP(w, r)
+			chain(
+				PathOrgUUIDMiddleware(docsBase),
+				authOrg(orgID),
+			)(http.HandlerFunc(handleAuthProbe)).ServeHTTP(w, r)
 		})
 
-		authChat := AuthMiddleware(validator, meter, logger, AuthOptions{RequireProxyChatCompletion: true})
-		mux.Handle("/v1/chat/completions", authChat(http.HandlerFunc(handleChatCompletionsStub)))
+		chatChain := chain(
+			BodySizeLimitMiddleware(cfg.MaxRequestBodyBytes, docsBase),
+			ContentTypeMiddleware(docsBase),
+			AuthMiddleware(validator, meter, logger, AuthOptions{RequireProxyChatCompletion: true}),
+		)
+		mux.Handle("/v1/chat/completions", chatChain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			handleChatCompletions(w, r, logger, docsBase)
+		})))
 	}
 
-	return meter.Middleware(loggingMiddleware(logger, mux))
+	handler := meter.Middleware(
+		RequestContextMiddleware(cfg)(
+			ResponseHeadersMiddleware(cfg)(
+				loggingMiddleware(logger, mux),
+			),
+		),
+	)
+	return handler
+}
+
+func chain(middlewares ...func(http.Handler) http.Handler) func(http.Handler) http.Handler {
+	return func(final http.Handler) http.Handler {
+		h := final
+		for i := len(middlewares) - 1; i >= 0; i-- {
+			h = middlewares[i](h)
+		}
+		return h
+	}
 }
 
 func handleAuthProbe(w http.ResponseWriter, r *http.Request) {
 	res, ok := auth.FromContext(r.Context())
 	if !ok {
-		proxyerrors.WriteJSON(w, http.StatusInternalServerError, proxyerrors.CodeServiceDegraded,
-			"Internal error", "missing auth context", requestIDFromContext(r.Context()))
+		proxyerrors.Write(w, http.StatusInternalServerError, proxyerrors.CodeServiceDegraded,
+			"Internal error", requestIDFromContext(r.Context()),
+			proxyerrors.WriteOpts{Detail: "missing auth context", DocsBase: ErrorDocsBaseFromContext(r.Context())})
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -93,13 +126,58 @@ func handleAuthProbe(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func handleChatCompletionsStub(w http.ResponseWriter, r *http.Request) {
-	if !requireMethod(w, r, http.MethodPost) {
+func handleChatCompletions(w http.ResponseWriter, r *http.Request, logger *slog.Logger, docsBase string) {
+	if !requireMethod(w, r, http.MethodPost, docsBase) {
 		return
 	}
-	proxyerrors.WriteJSON(w, http.StatusNotImplemented, "PROVIDER_NOT_CONFIGURED",
-		"LLM provider not configured", "Phase 2 milestone required for upstream calls",
-		requestIDFromContext(r.Context()))
+	requestID := requestIDFromContext(r.Context())
+	opts := proxyerrors.WriteOpts{DocsBase: docsBase}
+
+	if fieldErrors := validation.ValidateChatHeaders(r.Header); len(fieldErrors) > 0 {
+		proxyerrors.Write(w, http.StatusBadRequest, proxyerrors.CodeValidationError,
+			"Request validation failed", requestID, proxyerrors.WriteOpts{DocsBase: docsBase, FieldErrors: fieldErrors})
+		return
+	}
+
+	parsed, err := llm.ParseChatCompletionRequest(r.Body)
+	if err != nil {
+		if IsMaxBytesError(err) {
+			proxyerrors.Write(w, http.StatusRequestEntityTooLarge, proxyerrors.CodePayloadTooLarge,
+				"Request body too large", requestID, opts)
+			return
+		}
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			proxyerrors.Write(w, http.StatusRequestEntityTooLarge, proxyerrors.CodePayloadTooLarge,
+				"Request body too large", requestID, opts)
+			return
+		}
+		proxyerrors.Write(w, http.StatusBadRequest, proxyerrors.CodeInvalidJSON,
+			"Malformed JSON in request body", requestID, opts)
+		return
+	}
+
+	if fieldErrors := validation.ValidateChatCompletionRequest(parsed); len(fieldErrors) > 0 {
+		proxyerrors.Write(w, http.StatusBadRequest, proxyerrors.CodeValidationError,
+			"Request validation failed", requestID, proxyerrors.WriteOpts{DocsBase: docsBase, FieldErrors: fieldErrors})
+		return
+	}
+
+	ctx := llm.WithChatRequest(r.Context(), parsed)
+
+	if res, ok := auth.FromContext(ctx); ok {
+		logger.Info("chat completion parsed",
+			"request_id", requestID,
+			"org_id", res.OrgID,
+			"model", parsed.Model,
+			"message_count", len(parsed.Messages),
+			"stream", parsed.Stream,
+		)
+	}
+
+	proxyerrors.Write(w, http.StatusNotImplemented, proxyerrors.CodeProviderNotConfigured,
+		"LLM provider not configured", requestID,
+		proxyerrors.WriteOpts{Detail: "Phase 2 milestone required for upstream calls", DocsBase: docsBase})
 }
 
 func loggingMiddleware(logger *slog.Logger, next http.Handler) http.Handler {
@@ -127,11 +205,13 @@ func writeJSON(w http.ResponseWriter, status int, body response) {
 	_ = json.NewEncoder(w).Encode(body)
 }
 
-func requireMethod(w http.ResponseWriter, r *http.Request, method string) bool {
+func requireMethod(w http.ResponseWriter, r *http.Request, method, docsBase string) bool {
 	if r.Method == method {
 		return true
 	}
 	w.Header().Set("Allow", method)
-	writeJSON(w, http.StatusMethodNotAllowed, response{Status: "error", Reason: "method not allowed"})
+	proxyerrors.Write(w, http.StatusMethodNotAllowed, proxyerrors.CodeMethodNotAllowed,
+		"Method not allowed", requestIDFromContext(r.Context()),
+		proxyerrors.WriteOpts{Detail: "expected " + method, DocsBase: docsBase})
 	return false
 }

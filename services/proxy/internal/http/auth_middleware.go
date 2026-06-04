@@ -1,7 +1,6 @@
 package http
 
 import (
-	"context"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -14,8 +13,6 @@ import (
 	"github.com/google/uuid"
 )
 
-type requestIDKey struct{}
-
 // AuthOptions configures auth middleware behavior per route.
 type AuthOptions struct {
 	RequireProxyChatCompletion bool
@@ -26,8 +23,13 @@ type AuthOptions struct {
 func AuthMiddleware(validator auth.TokenValidator, meter *metrics.Metrics, logger *slog.Logger, opts AuthOptions) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			requestID := uuid.NewString()
-			ctx := context.WithValue(r.Context(), requestIDKey{}, requestID)
+			requestID := RequestIDFromContext(r.Context())
+			if requestID == "" {
+				requestID = uuid.NewString()
+				r = r.WithContext(WithRequestID(r.Context(), requestID))
+			}
+			docsBase := ErrorDocsBaseFromContext(r.Context())
+			ctx := r.Context()
 
 			start := time.Now()
 			token, err := auth.ParseAuthorizationHeader(r.Header.Get("Authorization"))
@@ -38,12 +40,13 @@ func AuthMiddleware(validator auth.TokenValidator, meter *metrics.Metrics, logge
 				}
 				meter.ObserveAuthValidate(time.Since(start).Seconds(), result)
 				if errors.Is(err, auth.ErrMissingToken) {
-					proxyerrors.WriteJSON(w, http.StatusUnauthorized, proxyerrors.CodeMissingToken,
-						"Authorization header required", "", requestID)
+					proxyerrors.Write(w, http.StatusUnauthorized, proxyerrors.CodeMissingToken,
+						"Authorization header required", requestID, proxyerrors.WriteOpts{DocsBase: docsBase})
 					return
 				}
-				proxyerrors.WriteJSON(w, http.StatusUnauthorized, proxyerrors.CodeInvalidToken,
-					"Invalid Authorization header", err.Error(), requestID)
+				proxyerrors.Write(w, http.StatusUnauthorized, proxyerrors.CodeInvalidToken,
+					"Invalid Authorization header", requestID,
+					proxyerrors.WriteOpts{Detail: err.Error(), DocsBase: docsBase})
 				return
 			}
 
@@ -53,32 +56,34 @@ func AuthMiddleware(validator auth.TokenValidator, meter *metrics.Metrics, logge
 				switch {
 				case errors.Is(err, auth.ErrInvalidToken):
 					meter.ObserveAuthValidate(elapsed, "unauthenticated")
-					proxyerrors.WriteJSON(w, http.StatusUnauthorized, proxyerrors.CodeInvalidToken,
-						"Invalid or expired token", "", requestID)
+					proxyerrors.Write(w, http.StatusUnauthorized, proxyerrors.CodeInvalidToken,
+						"Invalid or expired token", requestID, proxyerrors.WriteOpts{DocsBase: docsBase})
 					return
 				case errors.Is(err, auth.ErrAuthUnavailable):
 					meter.ObserveAuthValidate(elapsed, "error")
 					logger.Warn("auth validate unavailable", "request_id", requestID)
-					proxyerrors.WriteJSON(w, http.StatusServiceUnavailable, proxyerrors.CodeServiceDegraded,
-						"Authentication service unavailable", "", requestID)
+					proxyerrors.Write(w, http.StatusServiceUnavailable, proxyerrors.CodeServiceDegraded,
+						"Authentication service unavailable", requestID, proxyerrors.WriteOpts{DocsBase: docsBase})
 					return
 				default:
 					meter.ObserveAuthValidate(elapsed, "error")
-					proxyerrors.WriteJSON(w, http.StatusServiceUnavailable, proxyerrors.CodeServiceDegraded,
-						"Authentication service unavailable", "", requestID)
+					proxyerrors.Write(w, http.StatusServiceUnavailable, proxyerrors.CodeServiceDegraded,
+						"Authentication service unavailable", requestID, proxyerrors.WriteOpts{DocsBase: docsBase})
 					return
 				}
 			}
 			meter.ObserveAuthValidate(elapsed, "ok")
 
 			if opts.PathOrgID != "" && res.OrgID != opts.PathOrgID {
-				proxyerrors.WriteJSON(w, http.StatusForbidden, proxyerrors.CodeInsufficientPermissions,
-					"Insufficient permissions", "organization scope mismatch", requestID)
+				proxyerrors.Write(w, http.StatusForbidden, proxyerrors.CodeInsufficientPermissions,
+					"Insufficient permissions", requestID,
+					proxyerrors.WriteOpts{Detail: "organization scope mismatch", DocsBase: docsBase})
 				return
 			}
 			if opts.RequireProxyChatCompletion && !permissions.Has(res.Permissions, permissions.ProxyChatCompletion) {
-				proxyerrors.WriteJSON(w, http.StatusForbidden, proxyerrors.CodeInsufficientPermissions,
-					"Insufficient permissions", "token lacks proxy chat completion permissions", requestID)
+				proxyerrors.Write(w, http.StatusForbidden, proxyerrors.CodeInsufficientPermissions,
+					"Insufficient permissions", requestID,
+					proxyerrors.WriteOpts{Detail: "token lacks proxy chat completion permissions", DocsBase: docsBase})
 				return
 			}
 
@@ -86,11 +91,4 @@ func AuthMiddleware(validator auth.TokenValidator, meter *metrics.Metrics, logge
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
-}
-
-func requestIDFromContext(ctx context.Context) string {
-	if id, ok := ctx.Value(requestIDKey{}).(string); ok {
-		return id
-	}
-	return ""
 }
