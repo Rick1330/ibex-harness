@@ -194,7 +194,7 @@ func (r *TokensRepository) ListTokens(ctx context.Context, orgID, cursor string,
 		if err != nil {
 			return err
 		}
-		defer result.Close()
+		defer func() { _ = result.Close() }()
 		for result.Next() {
 			var m TokenMetadata
 			if err := result.Scan(

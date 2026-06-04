@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
-	"github.com/Rick1330/ibex-harness/packages/permissions"
 	"github.com/Rick1330/ibex-harness/infra/testing/testutil"
+	"github.com/Rick1330/ibex-harness/packages/permissions"
+	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	grpcserver "github.com/Rick1330/ibex-harness/services/auth/internal/grpc"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/metrics"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/repository"
