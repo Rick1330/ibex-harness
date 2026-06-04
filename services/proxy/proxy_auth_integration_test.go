@@ -259,9 +259,9 @@ func TestProxyAuthIntegration(t *testing.T) {
 	})
 
 	t.Run("chat body too large", func(t *testing.T) {
-		body := `{"model":"gpt-4","messages":[{"role":"user","content":"x"}]}`
-		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/chat/completions", strings.NewReader(body))
-		req.ContentLength = validation.MaxRequestBodyBytes + 1
+		// Body byte count over limit triggers 413 in BodySizeLimitMiddleware (Content-Length check).
+		oversized := strings.Repeat("x", int(validation.MaxRequestBodyBytes+1))
+		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/chat/completions", strings.NewReader(oversized))
 		req.Header.Set("Authorization", "Bearer "+chatBearer)
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-IBEX-Agent-ID", agentID)
