@@ -1,10 +1,10 @@
 # Current State
 
 **Last updated:** 2026-06-03  
-**Git SHA (`main`):** `c939d75` (security CI + post-merge follow-up [PR #31](https://github.com/Rick1330/ibex-harness/pull/31))  
+**Git SHA (`main`):** `c6ad7a1` (StepSecurity hardening [PR #33](https://github.com/Rick1330/ibex-harness/pull/33); prior security CI [PR #18](https://github.com/Rick1330/ibex-harness/pull/18), post-merge [PR #31](https://github.com/Rick1330/ibex-harness/pull/31))  
 **Current phase:** Phase 1 — Core Platform  
-**Current goal:** Goal 1.1 — Persistence and auth data plane  
-**Next milestone:** [1.2.1 Proxy auth client](phase-1-core-platform/milestones/1.2.1-proxy-auth-client.md)
+**Current goal:** Goal 1.2 — Proxy platform integration  
+**Next milestone:** [1.2.1 Proxy auth client](phase-1-core-platform/milestones/1.2.1-proxy-auth-client.md) (optional prerequisite: [1.0.1 integration test infra](phase-1-core-platform/milestones/1.0.1-go-integration-test-infrastructure.md))
 
 ---
 
@@ -23,7 +23,9 @@
   - `services/proxy` — `/health`, `/ready` (Redis PING if `REDIS_URL` set), `/metrics`
 - Root Go module: `github.com/Rick1330/ibex-harness` (Go **1.25.11+** per [TOOLCHAIN.md](../TOOLCHAIN.md))
 - Security / quality CI: CodeQL, Semgrep (IBEX rules), Trivy, OSV, hard-gate `golangci-lint`, Hadolint, Bandit (skip until `services/memory`)
-- Informational CI: `scorecard`, `sbom` (Syft + Grype artifacts), `go-services`, `db-migrate-smoke`, `proto-contract`, `auth-validate-smoke`, `buf-lint`
+- Informational CI: `scorecard`, `sbom` (Syft + Grype table/JSON artifacts only—no Code Scanning SARIF), `dependency-review`, `go-services`, `db-migrate-smoke`, `proto-contract`, `auth-validate-smoke`, `buf-lint`
+- StepSecurity hardening ([PR #33](https://github.com/Rick1330/ibex-harness/pull/33)): Harden-Runner (audit egress), pinned GitHub Action SHAs, Docker Dependabot for service images
+- **Roadmap:** six Phase 1 milestones documented (1.0.1, 1.1.4–1.1.6, 1.2.3–1.2.4)—**planned only**, not implemented
 - README: [DeepWiki](https://deepwiki.com/Rick1330/ibex-harness) badge
 - Semgrep: Prometheus `/metrics` handlers use `strings.Builder` (no Fprintf to ResponseWriter)
 
@@ -40,8 +42,8 @@
 ## Next 3 immediate tasks
 
 1. **Milestone 1.2.1** — Proxy auth gRPC client + middleware
-2. **Milestone 1.2.2** — Proxy LLM forwarding (if sequenced after auth client)
-3. **Goal 1.1 completion** — review remaining 1.1 milestones in roadmap
+2. **Optional 1.0.1** — Shared Go integration test infrastructure before scaling proxy/auth integration tests
+3. **Goal 1.1 backlog** — Token management API (1.1.4), permission bitmap ADR (1.1.5), Argon2id policy ADR (1.1.6)
 
 ## Verify current state locally
 
