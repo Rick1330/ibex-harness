@@ -1,10 +1,10 @@
 # Current State
 
 **Last updated:** 2026-06-04  
-**Git SHA (`main`):** `42ac2f9` — PR #51 M1.2.1 proxy auth (ADR-0011, auth middleware)  
+**Git SHA (`main`):** `26a727e` — PR #53 M1.2.2 proxy request normalization (ADR-0012)  
 **Current phase:** Phase 1 — Core Platform  
 **Current goal:** Goal 1.2 — Proxy platform integration  
-**Next milestone:** [1.2.2 Proxy request normalization](phase-1-core-platform/milestones/1.2.2-proxy-request-normalization.md)
+**Next milestone:** [1.2.3 Proxy input validation and error envelope](phase-1-core-platform/milestones/1.2.3-proxy-input-validation-and-stable-error-envelope.md)
 
 ---
 
@@ -22,15 +22,16 @@
 - **Token management (m1.1.4):** gRPC `CreateToken`, `RevokeToken`, `ListTokens`; caller bearer authz; `GeneratePAT` per ADR-0007
 - **Crypto policy (m1.1.6):** `packages/crypto`, [ADR-0010](../adr/ADR-0010-cryptography-policy.md) (Argon2id PHC, production p=4)
 - **Proxy auth client (m1.2.1):** gRPC ValidateToken middleware, protected probe routes ([ADR-0011](../adr/ADR-0011-proxy-auth-client.md))
+- **Proxy request normalization (m1.2.2):** OpenAI chat JSON parse; `INVALID_JSON` / `501 PROVIDER_NOT_CONFIGURED` ([ADR-0012](../adr/ADR-0012-proxy-request-normalization.md))
 - **Integration test infra (m1.0.1):** `infra/testing/testutil`, `make test-integration`, compose test (5433) or optional `testcontainers` build tag
 - Go services:
   - `services/auth` — `/health`, `/ready`, `/metrics`, gRPC `ValidateToken`
-  - `services/proxy` — `/health`, `/ready`, `/metrics`, auth middleware on `/v1/*` protected routes
+  - `services/proxy` — auth on `/v1/*`; `POST /v1/chat/completions` parses body then 501 stub
 - Root Go module: `github.com/Rick1330/ibex-harness` (Go **1.25.11+** per [TOOLCHAIN.md](../TOOLCHAIN.md))
 - Security / quality CI: CodeQL v4, Semgrep (IBEX rules), Trivy, OSV, hard-gate `golangci-lint`, Hadolint, Bandit (skip until `services/memory`)
 - Informational CI: `scorecard`, `sbom` (Syft + Grype table/JSON artifacts only), `dependency-review`, `go-services`, `db-migrate-smoke`, `proto-contract`, `auth-validate-smoke`, `proxy-auth-smoke`, `buf-lint`
 - StepSecurity hardening ([PR #33](https://github.com/Rick1330/ibex-harness/pull/33)): Harden-Runner (audit egress), pinned GitHub Action SHAs, Docker Dependabot
-- **Roadmap:** remaining planned milestones 1.2.3–1.2.4 (docs only)
+- **Roadmap:** remaining planned milestones 1.2.4, 1.3.1 (docs only for 1.2.3 in progress)
 - README: [DeepWiki](https://deepwiki.com/Rick1330/ibex-harness) badge
 - Semgrep: Prometheus `/metrics` handlers use `strings.Builder` (no Fprintf to ResponseWriter)
 
@@ -45,8 +46,8 @@
 
 ## Next 3 immediate tasks
 
-1. **Milestone 1.2.2** — Proxy request normalization
-2. **Proxy platform** — Input validation envelope (1.2.3), rate limit skeleton (1.2.4)
+1. **Milestone 1.2.3** — Proxy input validation and stable error envelope
+2. **Proxy platform** — Rate limit skeleton (1.2.4)
 3. **Observability baseline** — Milestone 1.3.1 when proxy path is wired
 
 ## Verify current state locally
