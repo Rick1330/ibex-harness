@@ -166,4 +166,3 @@ func TestValidateAgent_OK(t *testing.T) {
 		t.Fatalf("response mismatch: %+v", resp)
 	}
 }
-

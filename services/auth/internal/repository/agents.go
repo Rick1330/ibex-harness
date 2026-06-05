@@ -75,4 +75,3 @@ func (r *AgentsRepository) withServiceAccount(ctx context.Context, fn func(*sql.
 	}
 	return tx.Commit()
 }
-
