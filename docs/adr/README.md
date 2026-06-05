@@ -12,6 +12,7 @@ Index of significant technical decisions for IBEX Harness.
 | [ADR-0006-auth-proto-contract.md](ADR-0006-auth-proto-contract.md) | Accepted | Auth protobuf contract (`ibex.auth.v1`) |
 | [ADR-0007-auth-token-validation.md](ADR-0007-auth-token-validation.md) | Accepted | Auth ValidateToken implementation |
 | [ADR-0008-security-ci-gates.md](ADR-0008-security-ci-gates.md) | Accepted | Security scanning and CI quality gates |
+| [ADR-0014-core-domain-migration-sequencing.md](ADR-0014-core-domain-migration-sequencing.md) | Accepted | Core domain migration sequencing |
 
 ## When to write an ADR
 

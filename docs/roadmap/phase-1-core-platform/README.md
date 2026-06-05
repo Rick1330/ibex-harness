@@ -2,7 +2,7 @@
 
 **Status:** In Progress  
 **Estimated duration:** 4–6 weeks  
-**Current milestone:** [1.2.4 Proxy rate limit skeleton](milestones/1.2.4-proxy-rate-limit-skeleton.md)
+**Current milestone:** [1.1.7 Users and agents schema](milestones/1.1.7-users-and-agents-schema.md)
 
 ## Milestones
 
@@ -18,8 +18,14 @@
 | 1.2.1 | [Proxy auth client](milestones/1.2.1-proxy-auth-client.md) | Complete |
 | 1.2.2 | [Proxy request normalization](milestones/1.2.2-proxy-request-normalization.md) | Complete |
 | 1.2.3 | [Proxy input validation and error envelope](milestones/1.2.3-proxy-input-validation-and-stable-error-envelope.md) | Complete |
-| 1.2.4 | [Proxy rate limit skeleton](milestones/1.2.4-proxy-rate-limit-skeleton.md) | Next |
-| 1.3.1 | [Observability baseline](milestones/1.3.1-observability-baseline.md) | Planned |
+| 1.1.7 | [Users and agents schema](milestones/1.1.7-users-and-agents-schema.md) | Next |
+| 1.2.4 | [Proxy rate limit skeleton](milestones/1.2.4-proxy-rate-limit-skeleton.md) | Planned |
+| 1.2.5 | [Proxy agent identity verification](milestones/1.2.5-proxy-agent-identity-verification.md) | Planned |
+| 1.2.6 | [Request ID correlation middleware](milestones/1.2.6-request-id-correlation-middleware.md) | Planned |
+| 1.2.7 | [Graceful shutdown](milestones/1.2.7-graceful-shutdown.md) | Planned |
+| 1.3.1 | [OTel tracer and meter provider init](milestones/1.3.1-otel-tracer-provider-init.md) | Planned |
+| 1.3.2 | [Prometheus metric catalog and client migration](milestones/1.3.2-prometheus-metric-catalog.md) | Planned |
+| 1.3.3 | [Shared structured logger package](milestones/1.3.3-shared-logger-package.md) | Planned |
 
 ## Theme
 
@@ -60,6 +66,7 @@ Foundation-004 delivered honest skeletons. Phase 1 turns them into a **fail-clos
 - [milestones/](milestones/) — PR-sized work units
 - [decisions.md](decisions.md) — Phase-local decision log
 - [risks.md](risks.md) — Risks and mitigations
+- [milestones/PHASE1_GAP_ANALYSIS.md](milestones/PHASE1_GAP_ANALYSIS.md) — gap analysis driving Phase 1 execution order
 
 ## Goal overview
 

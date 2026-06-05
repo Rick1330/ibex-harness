@@ -32,6 +32,7 @@
 - [1.1.4](milestones/1.1.4-token-creation-and-management-api.md)
 - [1.1.5](milestones/1.1.5-permission-bitmap-contract-and-adr.md)
 - [1.1.6](milestones/1.1.6-argon2id-parameters-and-crypto-policy-adr.md)
+- [1.1.7](milestones/1.1.7-users-and-agents-schema.md)
 
 **Validation:** `make db-migrate`; `go test ./services/auth/...` with integration tag; grpcurl or integration client against auth
 
@@ -54,6 +55,9 @@
 - [1.2.2](milestones/1.2.2-proxy-request-normalization.md)
 - [1.2.3](milestones/1.2.3-proxy-input-validation-and-stable-error-envelope.md)
 - [1.2.4](milestones/1.2.4-proxy-rate-limit-skeleton.md)
+- [1.2.5](milestones/1.2.5-proxy-agent-identity-verification.md)
+- [1.2.6](milestones/1.2.6-request-id-correlation-middleware.md)
+- [1.2.7](milestones/1.2.7-graceful-shutdown.md)
 
 **Validation:** Integration tests with auth + proxy running; httptest for malformed payloads
 
@@ -72,7 +76,23 @@
 
 **Related milestones:**
 
-- [1.3.1](milestones/1.3.1-observability-baseline.md)
+- [1.3.1](milestones/1.3.1-otel-tracer-provider-init.md)
+- [1.3.2](milestones/1.3.2-prometheus-metric-catalog.md)
+- [1.3.3](milestones/1.3.3-shared-logger-package.md)
+
+---
+
+## Goal 1.4: Developer experience baseline
+
+**Description:** Improve local developer experience, seeds, and smoke tests.  
+**Milestones:** 1.4.x milestone files **pending**; this goal will be wired when those land.
+
+---
+
+## Goal 1.5: Security integration test suite
+
+**Description:** End-to-end security regression suite across auth and proxy.  
+**Milestones:** 1.5.1 milestone file **pending**; this goal will be wired when that file lands.
 
 **Validation:** `/metrics` scrapeable; trace context propagates in integration test when exporter enabled
 

@@ -16,8 +16,8 @@ Quick decisions during Phase 1. Promote durable choices to `docs/adr/` when they
 | 2026-06-04 | Auth cache deferred to Phase 2 optional 2.2.1 | Correctness + SECURITY §15 before bloom/LRU; `TokenValidator` wrapper | [ADR-0011](../../adr/ADR-0011-proxy-auth-client.md) §7 |
 | 2026-06-04 | Proxy chat body normalization | Parse-only; INVALID_JSON / 501 stub | [ADR-0012](../../adr/ADR-0012-proxy-request-normalization.md) |
 | 2026-06-02 | Proxy input validation + envelope | Body limit, 413/415, field_errors, response headers | [ADR-0013](../../adr/ADR-0013-proxy-input-validation-and-error-envelope.md) |
-| TBD | Token table subset first | `organizations` + `tokens` only for validate path | — |
-| TBD | Proto gen: Option A uncommitted | Consistent with ADR-0004 | ADR-0004 |
+| 2026-06-05 | Core domain schema sequencing | `users` / `agents` added in M1.1.7; token FKs via NOT VALID + VALIDATE; Phase-1 column subset only | [ADR-0014](../../adr/ADR-0014-core-domain-migration-sequencing.md) |
+| TBD | Proto gen: Option A uncommitted | Consistent with ADR-0004 | [ADR-0004](../../adr/ADR-0004-protobuf-and-codegen-policy.md) |
 
 ## Pending decisions (resolve during milestones)
 

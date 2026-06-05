@@ -45,6 +45,7 @@ func main() {
 	db.SetConnMaxLifetime(30 * time.Minute)
 
 	repo := repository.NewTokensRepository(db)
+	agentsRepo := repository.NewAgentsRepository(db)
 	validator := token.NewValidator(repo, cfg.Argon2)
 	tokenSvc := service.NewTokenService(repo, cfg.Argon2, logger)
 	meter := metrics.New()
@@ -52,7 +53,7 @@ func main() {
 	grpcSrv := grpc.NewServer(
 		grpc.UnaryInterceptor(grpcserver.AuthzUnaryInterceptor(validator)),
 	)
-	authv1.RegisterAuthServiceServer(grpcSrv, grpcserver.NewServer(validator, tokenSvc, meter))
+	authv1.RegisterAuthServiceServer(grpcSrv, grpcserver.NewServer(validator, tokenSvc, agentsRepo, meter))
 
 	grpcLis, err := net.Listen("tcp", config.ListenAddress(cfg.GRPCPort))
 	if err != nil {

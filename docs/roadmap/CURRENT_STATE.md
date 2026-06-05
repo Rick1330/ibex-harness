@@ -1,10 +1,10 @@
 # Current State
 
-**Last updated:** 2026-06-04  
-**Git SHA (`main`):** `0762f8b` — PR #55 M1.2.3 proxy input validation and stable error envelope (ADR-0013)  
+**Last updated:** 2026-06-05  
+**Git SHA (`main`):** _TBD — update after M1.1.7 merge_  
 **Current phase:** Phase 1 — Core Platform  
-**Current goal:** Goal 1.2 — Proxy platform integration (validation + envelope complete; rate limit → 1.2.4)  
-**Next milestone:** [1.2.4 Proxy rate limit skeleton](phase-1-core-platform/milestones/1.2.4-proxy-rate-limit-skeleton.md)
+**Current goal:** Goal 1.1 / 1.2 — core schema and proxy platform integration (M1.2.3 complete; M1.1.7 in progress)  
+**Next milestone:** [1.1.7 Users and agents schema](phase-1-core-platform/milestones/1.1.7-users-and-agents-schema.md)
 
 ---
 
@@ -32,7 +32,7 @@
 - Security / quality CI: CodeQL v4, Semgrep (IBEX rules), Trivy, OSV, hard-gate `golangci-lint`, Hadolint, Bandit (skip until `services/memory`)
 - Informational CI: `scorecard`, `sbom` (Syft + Grype table/JSON artifacts only), `dependency-review`, `go-services`, `db-migrate-smoke`, `proto-contract`, `auth-validate-smoke`, `proxy-auth-smoke`, `buf-lint`
 - StepSecurity hardening ([PR #33](https://github.com/Rick1330/ibex-harness/pull/33)): Harden-Runner (audit egress), pinned GitHub Action SHAs, Docker Dependabot
-- **Roadmap:** next planned milestones 1.2.4, 1.3.1
+- **Roadmap:** next planned milestones 1.1.7, then 1.2.4 / 1.2.5
 - README: [DeepWiki](https://deepwiki.com/Rick1330/ibex-harness) badge
 - Semgrep: Prometheus `/metrics` handlers use `strings.Builder` (no Fprintf to ResponseWriter)
 

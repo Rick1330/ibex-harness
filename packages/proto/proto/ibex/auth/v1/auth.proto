@@ -12,6 +12,10 @@ service AuthService {
   // ValidateToken checks a bearer token and returns tenant context on success.
   rpc ValidateToken(ValidateTokenRequest) returns (ValidateTokenResponse);
 
+  // ValidateAgent checks that agent_id belongs to org_id and is active.
+  // Called by the proxy after ValidateToken.
+  rpc ValidateAgent(ValidateAgentRequest) returns (ValidateAgentResponse);
+
   // CreateToken creates a PAT and returns the plaintext value once.
   rpc CreateToken(CreateTokenRequest) returns (CreateTokenResponse);
 
@@ -50,6 +54,22 @@ message ValidateTokenResponse {
 
   // Token expiry; omitted when the token does not expire.
   optional google.protobuf.Timestamp expires_at = 6;
+}
+
+message ValidateAgentRequest {
+  // UUID string for the agent being verified.
+  string agent_id = 1;
+
+  // UUID string extracted from caller token claims (tenant scope).
+  string org_id = 2;
+}
+
+message ValidateAgentResponse {
+  string agent_id = 1;
+  string org_id = 2;
+
+  // "active", "paused", "suspended", or "archived"
+  string status = 3;
 }
 
 message CreateTokenRequest {

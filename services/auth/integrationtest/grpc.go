@@ -29,6 +29,7 @@ func StartAuthGRPC(t testing.TB, dbDSN string) *AuthGRPCFixture {
 	t.Helper()
 	db := testutil.OpenDB(t, dbDSN)
 	repo := repository.NewTokensRepository(db)
+	agentsRepo := repository.NewAgentsRepository(db)
 	argon2 := token.DefaultArgon2Params()
 	validator := token.NewValidator(repo, argon2)
 	tokenSvc := service.NewTokenService(repo, argon2, nil)
@@ -39,7 +40,7 @@ func StartAuthGRPC(t testing.TB, dbDSN string) *AuthGRPCFixture {
 		t.Fatalf("listen: %v", err)
 	}
 	grpcSrv := grpc.NewServer(grpc.UnaryInterceptor(grpcserver.AuthzUnaryInterceptor(validator)))
-	authv1.RegisterAuthServiceServer(grpcSrv, grpcserver.NewServer(validator, tokenSvc, meter))
+	authv1.RegisterAuthServiceServer(grpcSrv, grpcserver.NewServer(validator, tokenSvc, agentsRepo, meter))
 	go func() { _ = grpcSrv.Serve(lis) }()
 
 	conn, err := grpc.NewClient(lis.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
