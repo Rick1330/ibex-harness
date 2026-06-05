@@ -2,7 +2,7 @@
 
 **Status:** In Progress  
 **Estimated duration:** 4–6 weeks  
-**Current milestone:** [1.1.7 Users and agents schema](milestones/1.1.7-users-and-agents-schema.md)
+**Current milestone:** [1.2.4 Proxy rate limit skeleton](milestones/1.2.4-proxy-rate-limit-skeleton.md)
 
 ## Milestones
 
@@ -18,8 +18,8 @@
 | 1.2.1 | [Proxy auth client](milestones/1.2.1-proxy-auth-client.md) | Complete |
 | 1.2.2 | [Proxy request normalization](milestones/1.2.2-proxy-request-normalization.md) | Complete |
 | 1.2.3 | [Proxy input validation and error envelope](milestones/1.2.3-proxy-input-validation-and-stable-error-envelope.md) | Complete |
-| 1.1.7 | [Users and agents schema](milestones/1.1.7-users-and-agents-schema.md) | Next |
-| 1.2.4 | [Proxy rate limit skeleton](milestones/1.2.4-proxy-rate-limit-skeleton.md) | Planned |
+| 1.1.7 | [Users and agents schema](milestones/1.1.7-users-and-agents-schema.md) | Complete |
+| 1.2.4 | [Proxy rate limit skeleton](milestones/1.2.4-proxy-rate-limit-skeleton.md) | Next |
 | 1.2.5 | [Proxy agent identity verification](milestones/1.2.5-proxy-agent-identity-verification.md) | Planned |
 | 1.2.6 | [Request ID correlation middleware](milestones/1.2.6-request-id-correlation-middleware.md) | Planned |
 | 1.2.7 | [Graceful shutdown](milestones/1.2.7-graceful-shutdown.md) | Planned |
