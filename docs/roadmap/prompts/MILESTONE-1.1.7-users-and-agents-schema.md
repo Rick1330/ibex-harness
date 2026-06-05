@@ -31,4 +31,3 @@ Reconcile DATABASE_SCHEMA with reality by introducing `ibex_core.users` and `ibe
 - New ADR-0014 describing core domain migration sequencing and the `NOT VALID` FK pattern.
 - `docs/DATABASE_SCHEMA.md` updated to mark `users` and `agents` as applied via M1.1.7 and to call out deferred columns as Phase 3+.
 - Phase-1 roadmap `README.md`, `goals.md`, `decisions.md`, and `CURRENT_STATE.md` updated to include M1.1.7 and link to `PHASE1_GAP_ANALYSIS.md` for context.
-

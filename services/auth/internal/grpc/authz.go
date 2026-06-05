@@ -18,6 +18,7 @@ type callerContextKey struct{}
 type CallerContext struct {
 	OrgID       string
 	TokenID     string
+	UserID      string
 	Permissions int64
 }
 
@@ -51,9 +52,14 @@ func AuthzUnaryInterceptor(validator *token.Validator) grpc.UnaryServerIntercept
 		if resp.TokenId != nil {
 			tokenID = *resp.TokenId
 		}
+		userID := ""
+		if resp.UserId != nil {
+			userID = *resp.UserId
+		}
 		ctx = ContextWithCaller(ctx, CallerContext{
 			OrgID:       resp.GetOrgId(),
 			TokenID:     tokenID,
+			UserID:      userID,
 			Permissions: resp.GetPermissions(),
 		})
 		return handler(ctx, req)

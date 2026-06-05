@@ -39,7 +39,9 @@ CREATE SCHEMA ibex_analytics; -- Summary analytics
 
 #### Organizations and Users
 
-> **Milestone 1.1.1:** `ibex_core.organizations` and `ibex_core.tokens` are applied via numbered SQL in [`infra/migrations/postgres/`](../../infra/migrations/postgres/). Run `make db-migrate` after local Compose is up. `tokens.user_id`, `tokens.agent_id`, and `tokens.revoked_by` are nullable without foreign keys until `users` / `agents` tables exist.
+> **Milestone 1.1.1:** `ibex_core.organizations` and `ibex_core.tokens` are applied via numbered SQL in [`infra/migrations/postgres/`](../../infra/migrations/postgres/). Run `make db-migrate` after local Compose is up.
+>
+> **Milestone 1.1.7:** `ibex_core.users` and `ibex_core.agents` are applied as the Phase-1 column subset (see migrations `000006`–`000007`). `tokens.user_id`, `tokens.agent_id`, and `tokens.revoked_by` now have enforced foreign keys (`000008`). Full-schema columns deferred to Phase 3+ remain documented below but are not yet migrated.
 
 ```sql
 -- ================================================================

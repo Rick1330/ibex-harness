@@ -161,6 +161,12 @@ services/proxy/
   README.md
 ```
 
+`services/auth/` follows the same `cmd/` + `internal/` layout. Notable paths after M1.1.7:
+
+- `internal/repository/tokens.go` — PAT persistence and lookup (service-account RLS)
+- `internal/repository/agents.go` — `GetByIDAndOrg` for `ValidateAgent` gRPC (M1.1.7)
+- `internal/grpc/server.go` — `ValidateToken`, `ValidateAgent`, token management RPCs
+
 Note: this repository uses a single root Go module (`go.mod` at repository root) for monorepo convenience. Service directories should *not* contain independent module files unless there is a deliberate reason to opt-in to per-service versioning; prefer the root module so tooling (`go test ./...`, `gofmt`, `golangci-lint`) runs from repository root.
 
 **Rules:**

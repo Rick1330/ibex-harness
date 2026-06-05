@@ -7,8 +7,8 @@ import (
 	"database/sql"
 	"testing"
 
-	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	"github.com/Rick1330/ibex-harness/infra/testing/testutil"
+	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/repository"
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
@@ -83,4 +83,3 @@ func TestValidateAgentIntegration_OKAndSecurity(t *testing.T) {
 
 // Compile-time reference to ensure repository types remain reachable.
 var _ = repository.AgentRecord{}
-

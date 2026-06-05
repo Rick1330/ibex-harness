@@ -96,7 +96,8 @@ func (s *Server) RevokeToken(ctx context.Context, req *authv1.RevokeTokenRequest
 	if req.RevokeReason != nil {
 		reason = req.RevokeReason
 	}
-	err := s.tokenService.RevokeToken(ctx, req.GetOrgId(), req.GetTokenId(), caller.TokenID, reason)
+	// revoked_by references ibex_core.users (M1.1.7 FK); use caller user_id when present.
+	err := s.tokenService.RevokeToken(ctx, req.GetOrgId(), req.GetTokenId(), caller.UserID, reason)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return nil, status.Error(codes.NotFound, "token not found")

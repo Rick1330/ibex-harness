@@ -35,4 +35,3 @@ Adding foreign keys to an existing large table can require scanning and acquirin
 - Referential integrity for token-scoped identities is enforced at the database layer once `M1.1.7` is applied.
 - Proxy/validator logic can rely on tenant-scoped identity lookups without existence leakage.
 - Migration down in development should be treated as a rollback convenience only; production rollback follows the standard migration strategy documented in `ADR-0005`.
-

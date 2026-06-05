@@ -205,7 +205,7 @@ The gRPC connection to auth has no keepalive parameters, no retry interceptor, a
 
 ## Revised Phase 1 Milestone Map
 
-```
+```text
 Goal 1.0 — Test Infrastructure
   1.0.1  Go integration test infra              ✅ DONE
 
