@@ -1,10 +1,10 @@
 # Current State
 
 **Last updated:** 2026-06-04  
-**Git SHA (`main`):** `26a727e` — PR #53 M1.2.2 proxy request normalization (ADR-0012)  
+**Git SHA (`main`):** `0762f8b` — PR #55 M1.2.3 proxy input validation and stable error envelope (ADR-0013)  
 **Current phase:** Phase 1 — Core Platform  
-**Current goal:** Goal 1.2 — Proxy platform integration  
-**Next milestone:** [1.2.3 Proxy input validation and error envelope](phase-1-core-platform/milestones/1.2.3-proxy-input-validation-and-stable-error-envelope.md)
+**Current goal:** Goal 1.2 — Proxy platform integration (validation + envelope complete; rate limit → 1.2.4)  
+**Next milestone:** [1.2.4 Proxy rate limit skeleton](phase-1-core-platform/milestones/1.2.4-proxy-rate-limit-skeleton.md)
 
 ---
 
@@ -23,22 +23,23 @@
 - **Crypto policy (m1.1.6):** `packages/crypto`, [ADR-0010](../adr/ADR-0010-cryptography-policy.md) (Argon2id PHC, production p=4)
 - **Proxy auth client (m1.2.1):** gRPC ValidateToken middleware, protected probe routes ([ADR-0011](../adr/ADR-0011-proxy-auth-client.md))
 - **Proxy request normalization (m1.2.2):** OpenAI chat JSON parse; `INVALID_JSON` / `501 PROVIDER_NOT_CONFIGURED` ([ADR-0012](../adr/ADR-0012-proxy-request-normalization.md))
+- **Proxy input validation (m1.2.3):** body limit, Content-Type, semantic `field_errors`, response headers, `X-IBEX-Agent-ID` ([ADR-0013](../adr/ADR-0013-proxy-input-validation-and-error-envelope.md))
 - **Integration test infra (m1.0.1):** `infra/testing/testutil`, `make test-integration`, compose test (5433) or optional `testcontainers` build tag
 - Go services:
   - `services/auth` — `/health`, `/ready`, `/metrics`, gRPC `ValidateToken`
-  - `services/proxy` — auth on `/v1/*`; `POST /v1/chat/completions` parses body then 501 stub
+  - `services/proxy` — validation middleware on chat; stable error envelope on JSON errors; auth on `/v1/*`
 - Root Go module: `github.com/Rick1330/ibex-harness` (Go **1.25.11+** per [TOOLCHAIN.md](../TOOLCHAIN.md))
 - Security / quality CI: CodeQL v4, Semgrep (IBEX rules), Trivy, OSV, hard-gate `golangci-lint`, Hadolint, Bandit (skip until `services/memory`)
 - Informational CI: `scorecard`, `sbom` (Syft + Grype table/JSON artifacts only), `dependency-review`, `go-services`, `db-migrate-smoke`, `proto-contract`, `auth-validate-smoke`, `proxy-auth-smoke`, `buf-lint`
 - StepSecurity hardening ([PR #33](https://github.com/Rick1330/ibex-harness/pull/33)): Harden-Runner (audit egress), pinned GitHub Action SHAs, Docker Dependabot
-- **Roadmap:** remaining planned milestones 1.2.4, 1.3.1 (docs only for 1.2.3 in progress)
+- **Roadmap:** next planned milestones 1.2.4, 1.3.1
 - README: [DeepWiki](https://deepwiki.com/Rick1330/ibex-harness) badge
 - Semgrep: Prometheus `/metrics` handlers use `strings.Builder` (no Fprintf to ResponseWriter)
 
 ## What does NOT work yet
 
 - JWT issuance, dashboard session flows
-- Proxy LLM forwarding, rate limiting, context injection
+- Proxy LLM forwarding, Redis rate limiting, context injection
 - Python services: memory, context assembly, embedder, worker, API, dashboard
 - Background jobs (Celery), ClickHouse trace ingestion, MinIO session archives
 - OpenTelemetry exporters; official Prometheus client libraries in services
@@ -46,9 +47,9 @@
 
 ## Next 3 immediate tasks
 
-1. **Milestone 1.2.3** — Proxy input validation and stable error envelope
-2. **Proxy platform** — Rate limit skeleton (1.2.4)
-3. **Observability baseline** — Milestone 1.3.1 when proxy path is wired
+1. **Milestone 1.2.4** — Proxy rate limit skeleton
+2. **Observability baseline** — Milestone 1.3.1 (OTel, Prometheus client)
+3. **Phase 2** — Provider HTTP / upstream forwarding
 
 ## Verify current state locally
 
@@ -57,18 +58,12 @@ make help
 make repo-guards
 make compose-dev-up
 make db-migrate
-make db-version          # expect version=4 dirty=false
 make proto-gen
-make proto-test
-go test ./services/auth/...
+go test ./services/proxy/...
 make compose-test-up
 make test-integration
-
-IBEX_PORT=8081 IBEX_GRPC_PORT=9091 \
-  POSTGRES_DSN=postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable \
-  go run ./services/auth/cmd/auth
-curl -s http://localhost:8081/health
-curl -s http://localhost:8081/ready
 ```
 
-Expected: `/health` → `{"status":"ok"}`; `/ready` → 200 when Postgres is reachable; integration tests pass with compose test or CI Postgres.
+Windows: see [services/auth/README.md](../../services/auth/README.md) and [services/proxy/README.md](../../services/proxy/README.md) for PowerShell env syntax (`$env:VAR = "..."`). Integration tests on dev Postgres: `$env:POSTGRES_TEST_DSN = "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable"`.
+
+Expected: `proxy-auth-smoke` green in CI; local integration tests pass with `compose-test-up` (5433) or `POSTGRES_TEST_DSN` pointing at dev Postgres (5432).
