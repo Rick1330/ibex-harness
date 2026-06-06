@@ -27,7 +27,7 @@ See [phase-0-foundation/README.md](phase-0-foundation/README.md).
 
 ## Phase 1: Core Platform
 
-**Status:** In Progress — current milestone [1.2.4](phase-1-core-platform/milestones/1.2.4-proxy-rate-limit-skeleton.md)
+**Status:** In Progress — current milestone [1.2.5](phase-1-core-platform/milestones/1.2.5-proxy-agent-identity-verification.md)
 
 **Goals:** [goals.md](phase-1-core-platform/goals.md)
 

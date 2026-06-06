@@ -1,10 +1,10 @@
 # Current State
 
 **Last updated:** 2026-06-06  
-**Git SHA (`main`):** `17264ee` — PR #59 cursor rules + phase 1/2 roadmap import  
+**Git SHA (`main`):** pending [PR #62](https://github.com/Rick1330/ibex-harness/pull/62) — M1.2.4 rate limit skeleton  
 **Current phase:** Phase 1 — Core Platform  
-**Current goal:** Goal 1.2 — proxy platform integration (M1.1.7 complete; rate limit → 1.2.4)  
-**Next milestone:** [1.2.4 Proxy rate limit skeleton](phase-1-core-platform/milestones/1.2.4-proxy-rate-limit-skeleton.md)
+**Current goal:** Goal 1.2 — proxy platform integration  
+**Next milestone:** [1.2.5 Proxy agent identity verification](phase-1-core-platform/milestones/1.2.5-proxy-agent-identity-verification.md)
 
 ---
 
@@ -25,24 +25,25 @@
 - **Proxy auth client (m1.2.1):** gRPC ValidateToken middleware, protected probe routes ([ADR-0011](../adr/ADR-0011-proxy-auth-client.md))
 - **Proxy request normalization (m1.2.2):** OpenAI chat JSON parse; `INVALID_JSON` / `501 PROVIDER_NOT_CONFIGURED` ([ADR-0012](../adr/ADR-0012-proxy-request-normalization.md))
 - **Proxy input validation (m1.2.3):** body limit, Content-Type, semantic `field_errors`, response headers, `X-IBEX-Agent-ID` ([ADR-0013](../adr/ADR-0013-proxy-input-validation-and-error-envelope.md))
+- **Proxy rate limit skeleton (m1.2.4):** `packages/ratelimit`, org-level Redis RPM, fail-open, 429 `RATE_LIMITED` ([ADR-0015](../adr/ADR-0015-proxy-rate-limit-skeleton.md))
 - **Integration test infra (m1.0.1):** `infra/testing/testutil`, `make test-integration`, compose test (5433) or optional `testcontainers` build tag
 - Go services:
   - `services/auth` — `/health`, `/ready`, `/metrics`, gRPC `ValidateToken` + `ValidateAgent`
-  - `services/proxy` — validation middleware on chat; stable error envelope on JSON errors; auth on `/v1/*`
+  - `services/proxy` — validation + rate limit middleware on `/v1/*`; stable error envelope on JSON errors
 - Root Go module: `github.com/Rick1330/ibex-harness` (Go **1.25.11+** per [TOOLCHAIN.md](../TOOLCHAIN.md))
 - Security / quality CI: CodeQL v4, Semgrep (IBEX rules), Trivy, OSV, hard-gate `golangci-lint`, Hadolint, Bandit (skip until `services/memory`)
 - Informational CI: `scorecard`, `sbom` (Syft + Grype table/JSON artifacts only), `dependency-review`, `go-services`, `db-migrate-smoke`, `proto-contract`, `auth-validate-smoke`, `proxy-auth-smoke`, `buf-lint`
 - StepSecurity hardening ([PR #33](https://github.com/Rick1330/ibex-harness/pull/33)): Harden-Runner (audit egress), pinned GitHub Action SHAs, Docker Dependabot
 - **Cursor rules (PR #59):** `.cursorrules` registry + `.cursor/rules/00–29.mdc`; markdownlint covers `*.mdc`
 - **Roadmap (PR #59):** Phase 1 milestones 1.4.1–1.4.3, 1.5.1 documented; Phase 2 full milestone tree (2.1.1–2.6.2) in [phase-2-single-provider/](phase-2-single-provider/README.md); `PHASE1_GAP_ANALYSIS.md` retired
-- **Roadmap execution:** next milestones 1.2.4 → 1.2.5 → … → 1.5.1 (see [phase-1 README](phase-1-core-platform/README.md#execution-order))
+- **Roadmap execution:** next milestones 1.2.5 → … → 1.5.1 (see [phase-1 README](phase-1-core-platform/README.md#execution-order))
 - README: [DeepWiki](https://deepwiki.com/Rick1330/ibex-harness) badge
 - Semgrep: Prometheus `/metrics` handlers use `strings.Builder` (no Fprintf to ResponseWriter)
 
 ## What does NOT work yet
 
 - JWT issuance, dashboard session flows
-- Proxy LLM forwarding, Redis rate limiting, context injection
+- Proxy LLM forwarding, context injection
 - Python services: memory, context assembly, embedder, worker, API, dashboard
 - Background jobs (Celery), ClickHouse trace ingestion, MinIO session archives
 - OpenTelemetry exporters; official Prometheus client libraries in services
@@ -50,7 +51,7 @@
 
 ## Next 3 immediate tasks
 
-1. **Milestone 1.2.4** — Proxy rate limit skeleton
+1. **Milestone 1.2.5** — Proxy agent identity verification
 2. **Observability baseline** — Milestone 1.3.1 (OTel, Prometheus client)
 3. **Phase 1 exit gate** — Milestone [1.5.1](phase-1-core-platform/milestones/1.5.1-security-integration-test-suite.md) security integration suite (after 1.4.x)
 
@@ -62,6 +63,7 @@ make repo-guards
 make compose-dev-up
 make db-migrate
 make proto-gen
+go test ./packages/ratelimit/...
 go test ./services/proxy/...
 make compose-test-up
 make test-integration
