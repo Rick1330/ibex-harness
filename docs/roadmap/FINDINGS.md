@@ -85,3 +85,13 @@ Unexpected discoveries, design pivots, and plan changes. Update this file when i
 **Decision:** Delete stale Grype analysis on `main`; dismiss fixed `PinnedDependencies` alerts after pinned SHAs landed; dismiss CodeReview/Fuzzing/SAST/CII alerts as not applicable or tracked as backlog. Grype remains workflow artifacts only (`grype-report.txt/json`).
 
 **Updated:** `CONTRIBUTING.md`, `docs/roadmap/CURRENT_STATE.md`, workspace archive 010
+
+---
+
+## 2026-06-06 — Runtime Alpine base images pinned by digest
+
+**Context:** Two open Scorecard `PinnedDependencies` Code Scanning alerts ([#720](https://github.com/Rick1330/ibex-harness/security/code-scanning/720), [#721](https://github.com/Rick1330/ibex-harness/security/code-scanning/721)) on `services/auth/Dockerfile` and `services/proxy/Dockerfile` runtime stage.
+
+**Decision:** Pin `alpine:3.23` to `alpine:3.23@sha256:5b10f432ef3da1b8d4c7eb6c487f2f5a8f096bc91145e68878dd4a5019afde11` per Scorecard remediation. Build stage `golang:1.25-alpine3.20` unchanged (semantic version; not flagged).
+
+**Updated:** `services/auth/Dockerfile`, `services/proxy/Dockerfile`
