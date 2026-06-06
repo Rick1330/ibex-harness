@@ -31,6 +31,7 @@ Milestone 1.2.2 parses OpenAI-shaped chat JSON after auth with an **unbounded** 
 | Malformed JSON (parse) | 400 | `INVALID_JSON` (unchanged) |
 | Auth failures | 401/403/503 | `MISSING_TOKEN`, `INVALID_TOKEN`, `INSUFFICIENT_PERMISSIONS`, `SERVICE_DEGRADED` (ADR-0011; **no renames**) |
 | Valid request, no provider | 501 | `PROVIDER_NOT_CONFIGURED` |
+| Rate limit exceeded | 429 | `RATE_LIMITED` |
 | Wrong HTTP method (JSON routes) | 405 | `METHOD_NOT_ALLOWED` |
 
 ### 3) Field error codes (canonical)
@@ -67,13 +68,16 @@ Single package `services/proxy/internal/errors`:
 metrics → requestContext → responseHeaders → logging → mux
 
 POST /v1/chat/completions:
-  bodyLimit → contentType → auth → handler
+  bodyLimit → contentType → auth → rateLimit → handler
+
+GET /v1/internal/auth-probe:
+  auth → rateLimit → handler
 
 GET /v1/orgs/{org_id}/auth-probe:
-  pathOrgUUID → auth → handler
+  pathOrgUUID → auth → rateLimit → handler
 ```
 
-Milestone **1.2.4** inserts `rateLimit` **after auth**, before handler (document only; not implemented in 1.2.3).
+Implemented in milestone **1.2.4** ([ADR-0015](ADR-0015-proxy-rate-limit-skeleton.md)).
 
 Amends [ADR-0012](ADR-0012-proxy-request-normalization.md) §6 footnote accordingly.
 
@@ -85,7 +89,6 @@ Amends [ADR-0012](ADR-0012-proxy-request-normalization.md) §6 footnote accordin
 
 ### 10) Deferred / out of scope
 
-- Redis rate limit (**1.2.4**)
 - OTel exporter (**1.3.1**)
 - Multimodal `content` arrays (string-only until Phase 2+)
 - Bloom/LRU auth cache (**2.2.1**)
@@ -109,5 +112,6 @@ Amends [ADR-0012](ADR-0012-proxy-request-normalization.md) §6 footnote accordin
 - [Milestone 1.2.3](../roadmap/phase-1-core-platform/milestones/1.2.3-proxy-input-validation-and-stable-error-envelope.md)
 - [ADR-0011](ADR-0011-proxy-auth-client.md)
 - [ADR-0012](ADR-0012-proxy-request-normalization.md)
+- [ADR-0015](ADR-0015-proxy-rate-limit-skeleton.md)
 - [API_DOCUMENTATION.md](../API_DOCUMENTATION.md)
 - [SECURITY.md](../SECURITY.md) §8.1

@@ -12,9 +12,9 @@ Go service for the IBEX Harness LLM proxy.
 
 - `GET /v1/internal/auth-probe` — returns `{org_id, permissions}` for the caller token
 - `GET /v1/orgs/{org_id}/auth-probe` — same; path `org_id` must be UUID; **403** if path org ≠ token org
-- `POST /v1/chat/completions` — auth + `ProxyChatCompletion`; body limit + JSON Content-Type; semantic validation; **501** when valid; **400** `VALIDATION_ERROR` / `INVALID_JSON`; **413** / **415** per [ADR-0013](../../docs/adr/ADR-0013-proxy-input-validation-and-error-envelope.md)
+- `POST /v1/chat/completions` — auth + `ProxyChatCompletion`; body limit + JSON Content-Type; semantic validation; rate limit; **501** when valid; **429** `RATE_LIMITED`; **400** `VALIDATION_ERROR` / `INVALID_JSON`; **413** / **415** per [ADR-0013](../../docs/adr/ADR-0013-proxy-input-validation-and-error-envelope.md)
 
-Auth validates via gRPC `ValidateToken` ([ADR-0011](../../docs/adr/ADR-0011-proxy-auth-client.md)). Parse: [ADR-0012](../../docs/adr/ADR-0012-proxy-request-normalization.md). Validation + envelope: [ADR-0013](../../docs/adr/ADR-0013-proxy-input-validation-and-error-envelope.md). Fail closed: auth outage → **503**.
+Auth validates via gRPC `ValidateToken` ([ADR-0011](../../docs/adr/ADR-0011-proxy-auth-client.md)). Parse: [ADR-0012](../../docs/adr/ADR-0012-proxy-request-normalization.md). Validation + envelope: [ADR-0013](../../docs/adr/ADR-0013-proxy-input-validation-and-error-envelope.md). Rate limit: [ADR-0015](../../docs/adr/ADR-0015-proxy-rate-limit-skeleton.md). Fail closed: auth outage → **503**. Rate limit Redis outage → fail open (request allowed).
 
 ## Middleware order
 
@@ -22,8 +22,16 @@ Auth validates via gRPC `ValidateToken` ([ADR-0011](../../docs/adr/ADR-0011-prox
 metrics → requestContext → responseHeaders → logging → mux
 
 POST /v1/chat/completions:
-  bodyLimit → contentType → auth → handler
+  bodyLimit → contentType → auth → rateLimit → handler
+
+GET /v1/internal/auth-probe:
+  auth → rateLimit → handler
+
+GET /v1/orgs/{org_id}/auth-probe:
+  pathOrgUUID → auth → rateLimit → handler
 ```
+
+Protected responses include `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `X-RateLimit-Reset` when rate limiting is enabled. **429** responses also include `Retry-After`.
 
 All responses include `X-Request-ID`, `X-Trace-ID`, and `X-Response-Time` (configurable header names via env).
 
@@ -41,6 +49,8 @@ See [.env.example](.env.example).
 | `IBEX_REQUEST_ID_HEADER` | `X-Request-ID` | Incoming/outgoing request ID |
 | `IBEX_TRACE_ID_HEADER` | `X-Trace-ID` | Trace ID header |
 | `IBEX_ERROR_DOCS_BASE` | (empty) | Optional `docs_url` prefix |
+| `IBEX_RATE_LIMIT_DEFAULT_RPM` | `60` | Org requests per minute |
+| `IBEX_RATE_LIMIT_ORG_OVERRIDES` | (empty) | `uuid=rpm,uuid2=rpm2` |
 
 ## Run locally
 

@@ -15,6 +15,7 @@ import (
 	"github.com/Rick1330/ibex-harness/infra/testing/testutil"
 	"github.com/Rick1330/ibex-harness/packages/permissions"
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
+	"github.com/Rick1330/ibex-harness/packages/ratelimit"
 	"github.com/Rick1330/ibex-harness/services/auth/integrationtest"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
@@ -44,7 +45,7 @@ func startProxyServer(t *testing.T, authAddr string) *httptest.Server {
 		AuthValidateTimeout: 200 * time.Millisecond,
 	}
 	validator := auth.NewGRPCValidator(authv1.NewAuthServiceClient(conn), cfg.AuthValidateTimeout)
-	handler := proxyhttp.NewRouter(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), metrics.New(), validator)
+	handler := proxyhttp.NewRouter(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), metrics.New(), validator, ratelimit.Noop())
 	return httptest.NewServer(handler)
 }
 

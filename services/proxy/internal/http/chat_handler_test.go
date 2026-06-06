@@ -10,11 +10,14 @@ import (
 	"testing"
 
 	"github.com/Rick1330/ibex-harness/packages/permissions"
+	"github.com/Rick1330/ibex-harness/packages/ratelimit"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
 	proxyerrors "github.com/Rick1330/ibex-harness/services/proxy/internal/errors"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/metrics"
 )
+
+const testChatOrgID = "550e8400-e29b-41d4-a716-446655440001"
 
 type chatMockValidator struct {
 	res *auth.ValidateResult
@@ -27,10 +30,10 @@ func (m *chatMockValidator) Validate(_ context.Context, _ string) (*auth.Validat
 
 func TestChatCompletions_validJSON_returns501(t *testing.T) {
 	validator := &chatMockValidator{res: &auth.ValidateResult{
-		OrgID: "org-1", Permissions: permissions.ProxyChatCompletion,
+		OrgID: testChatOrgID, Permissions: permissions.ProxyChatCompletion,
 	}}
 	cfg := config.Config{Environment: "test", ServiceName: "proxy", Port: "8080", MaxRequestBodyBytes: 1 << 20, RequestIDHeader: "X-Request-ID", TraceIDHeader: "X-Trace-ID"}
-	handler := NewRouter(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), metrics.New(), validator)
+	handler := NewRouter(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), metrics.New(), validator, ratelimit.Noop())
 
 	body := `{"model":"gpt-4","messages":[{"role":"user","content":"hi"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
@@ -50,10 +53,10 @@ func TestChatCompletions_validJSON_returns501(t *testing.T) {
 
 func TestChatCompletions_invalidJSON_returns400(t *testing.T) {
 	validator := &chatMockValidator{res: &auth.ValidateResult{
-		OrgID: "org-1", Permissions: permissions.ProxyChatCompletion,
+		OrgID: testChatOrgID, Permissions: permissions.ProxyChatCompletion,
 	}}
 	cfg := config.Config{Environment: "test", ServiceName: "proxy", Port: "8080", MaxRequestBodyBytes: 1 << 20, RequestIDHeader: "X-Request-ID", TraceIDHeader: "X-Trace-ID"}
-	handler := NewRouter(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), metrics.New(), validator)
+	handler := NewRouter(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), metrics.New(), validator, ratelimit.Noop())
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{bad`))
 	req.Header.Set("Authorization", "Bearer ibex_pat_test")
@@ -71,9 +74,9 @@ func TestChatCompletions_invalidJSON_returns400(t *testing.T) {
 }
 
 func TestChatCompletions_noAuth_returns401(t *testing.T) {
-	validator := &chatMockValidator{res: &auth.ValidateResult{OrgID: "org-1", Permissions: permissions.ProxyChatCompletion}}
+	validator := &chatMockValidator{res: &auth.ValidateResult{OrgID: testChatOrgID, Permissions: permissions.ProxyChatCompletion}}
 	cfg := config.Config{Environment: "test", ServiceName: "proxy", Port: "8080", MaxRequestBodyBytes: 1 << 20, RequestIDHeader: "X-Request-ID", TraceIDHeader: "X-Trace-ID"}
-	handler := NewRouter(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), metrics.New(), validator)
+	handler := NewRouter(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), metrics.New(), validator, ratelimit.Noop())
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{}`))
 	req.Header.Set("Content-Type", "application/json")
@@ -87,10 +90,10 @@ func TestChatCompletions_noAuth_returns401(t *testing.T) {
 
 func TestChatCompletions_missingAgentID_returns400(t *testing.T) {
 	validator := &chatMockValidator{res: &auth.ValidateResult{
-		OrgID: "org-1", Permissions: permissions.ProxyChatCompletion,
+		OrgID: testChatOrgID, Permissions: permissions.ProxyChatCompletion,
 	}}
 	cfg := config.Config{Environment: "test", ServiceName: "proxy", Port: "8080", MaxRequestBodyBytes: 1 << 20, RequestIDHeader: "X-Request-ID", TraceIDHeader: "X-Trace-ID"}
-	handler := NewRouter(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), metrics.New(), validator)
+	handler := NewRouter(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), metrics.New(), validator, ratelimit.Noop())
 
 	body := `{"model":"gpt-4","messages":[{"role":"user","content":"hi"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
@@ -109,10 +112,10 @@ func TestChatCompletions_missingAgentID_returns400(t *testing.T) {
 
 func TestChatCompletions_emptyMessages_returns400(t *testing.T) {
 	validator := &chatMockValidator{res: &auth.ValidateResult{
-		OrgID: "org-1", Permissions: permissions.ProxyChatCompletion,
+		OrgID: testChatOrgID, Permissions: permissions.ProxyChatCompletion,
 	}}
 	cfg := config.Config{Environment: "test", ServiceName: "proxy", Port: "8080", MaxRequestBodyBytes: 1 << 20, RequestIDHeader: "X-Request-ID", TraceIDHeader: "X-Trace-ID"}
-	handler := NewRouter(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), metrics.New(), validator)
+	handler := NewRouter(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), metrics.New(), validator, ratelimit.Noop())
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"m","messages":[]}`))
 	req.Header.Set("Authorization", "Bearer ibex_pat_test")
@@ -129,7 +132,7 @@ func TestChatCompletions_emptyMessages_returns400(t *testing.T) {
 func TestChatCompletions_validatorError_returns503(t *testing.T) {
 	validator := &chatMockValidator{err: auth.ErrAuthUnavailable}
 	cfg := config.Config{Environment: "test", ServiceName: "proxy", Port: "8080", MaxRequestBodyBytes: 1 << 20, RequestIDHeader: "X-Request-ID", TraceIDHeader: "X-Trace-ID"}
-	handler := NewRouter(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), metrics.New(), validator)
+	handler := NewRouter(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), metrics.New(), validator, ratelimit.Noop())
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"m","messages":[]}`))
 	req.Header.Set("Authorization", "Bearer ibex_pat_test")

@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 const (
@@ -20,7 +22,14 @@ const (
 	defaultRequestIDHeader     = "X-Request-ID"
 	defaultTraceIDHeader       = "X-Trace-ID"
 	defaultMaxRequestBodyBytes = 1 * 1024 * 1024
+	defaultRateLimitRPM        = 60
 )
+
+// RateLimitConfig holds org-level rate limit settings (Phase 1; no DB).
+type RateLimitConfig struct {
+	DefaultRPM   int
+	OrgOverrides map[uuid.UUID]int
+}
 
 type Config struct {
 	Environment         string
@@ -34,6 +43,7 @@ type Config struct {
 	RequestIDHeader     string
 	TraceIDHeader       string
 	ErrorDocsBase       string
+	RateLimit           RateLimitConfig
 }
 
 // ApplyDefaults fills zero-valued fields so httptest and partial Config literals behave like Load().
@@ -65,6 +75,12 @@ func (c *Config) ApplyDefaults() {
 	if strings.TrimSpace(c.TraceIDHeader) == "" {
 		c.TraceIDHeader = defaultTraceIDHeader
 	}
+	if c.RateLimit.DefaultRPM < 1 {
+		c.RateLimit.DefaultRPM = defaultRateLimitRPM
+	}
+	if c.RateLimit.OrgOverrides == nil {
+		c.RateLimit.OrgOverrides = map[uuid.UUID]int{}
+	}
 }
 
 func Load() (Config, error) {
@@ -79,6 +95,10 @@ func Load() (Config, error) {
 		RequestIDHeader:     getEnv("IBEX_REQUEST_ID_HEADER", defaultRequestIDHeader),
 		TraceIDHeader:       getEnv("IBEX_TRACE_ID_HEADER", defaultTraceIDHeader),
 		ErrorDocsBase:       strings.TrimSpace(os.Getenv("IBEX_ERROR_DOCS_BASE")),
+		RateLimit: RateLimitConfig{
+			DefaultRPM:   defaultRateLimitRPM,
+			OrgOverrides: map[uuid.UUID]int{},
+		},
 	}
 
 	level, err := parseLogLevel(getEnv("IBEX_LOG_LEVEL", "INFO"))
@@ -101,6 +121,22 @@ func Load() (Config, error) {
 			return Config{}, fmt.Errorf("IBEX_AUTH_VALIDATE_TIMEOUT: %w", err)
 		}
 		cfg.AuthValidateTimeout = d
+	}
+
+	if v := strings.TrimSpace(os.Getenv("IBEX_RATE_LIMIT_DEFAULT_RPM")); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			return Config{}, fmt.Errorf("IBEX_RATE_LIMIT_DEFAULT_RPM must be a positive integer")
+		}
+		cfg.RateLimit.DefaultRPM = n
+	}
+
+	if v := strings.TrimSpace(os.Getenv("IBEX_RATE_LIMIT_ORG_OVERRIDES")); v != "" {
+		overrides, err := parseOrgRPMOverrides(v)
+		if err != nil {
+			return Config{}, fmt.Errorf("IBEX_RATE_LIMIT_ORG_OVERRIDES: %w", err)
+		}
+		cfg.RateLimit.OrgOverrides = overrides
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -142,7 +178,43 @@ func (c Config) Validate() error {
 	if strings.TrimSpace(c.TraceIDHeader) == "" {
 		return fmt.Errorf("IBEX_TRACE_ID_HEADER must not be empty")
 	}
+	if c.RateLimit.DefaultRPM < 1 {
+		return fmt.Errorf("IBEX_RATE_LIMIT_DEFAULT_RPM must be positive")
+	}
+	for orgID, rpm := range c.RateLimit.OrgOverrides {
+		if rpm < 1 {
+			return fmt.Errorf("IBEX_RATE_LIMIT_ORG_OVERRIDES org %s must have positive RPM", orgID)
+		}
+	}
 	return nil
+}
+
+func parseOrgRPMOverrides(raw string) (map[uuid.UUID]int, error) {
+	out := make(map[uuid.UUID]int)
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return out, nil
+	}
+	for _, pair := range strings.Split(raw, ",") {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+		parts := strings.SplitN(pair, "=", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("invalid pair %q (expected uuid=rpm)", pair)
+		}
+		orgID, err := uuid.Parse(strings.TrimSpace(parts[0]))
+		if err != nil {
+			return nil, fmt.Errorf("invalid org UUID in %q: %w", pair, err)
+		}
+		rpm, err := strconv.Atoi(strings.TrimSpace(parts[1]))
+		if err != nil || rpm < 1 {
+			return nil, fmt.Errorf("invalid RPM in %q", pair)
+		}
+		out[orgID] = rpm
+	}
+	return out, nil
 }
 
 func ListenAddress(port string) string {

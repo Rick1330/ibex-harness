@@ -18,6 +18,7 @@ const (
 	CodeUnsupportedMediaType    = "UNSUPPORTED_MEDIA_TYPE"
 	CodeValidationError         = "VALIDATION_ERROR"
 	CodeMethodNotAllowed        = "METHOD_NOT_ALLOWED"
+	CodeRateLimited             = "RATE_LIMITED"
 )
 
 // FieldError is one validation failure (API_DOCUMENTATION.md).

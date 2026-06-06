@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Rick1330/ibex-harness/packages/ratelimit"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
 	proxyerrors "github.com/Rick1330/ibex-harness/services/proxy/internal/errors"
@@ -29,7 +30,7 @@ type authProbeResponse struct {
 }
 
 // NewRouter builds the proxy HTTP handler with optional auth validator for protected routes.
-func NewRouter(cfg config.Config, logger *slog.Logger, meter *metrics.Metrics, validator auth.TokenValidator) http.Handler {
+func NewRouter(cfg config.Config, logger *slog.Logger, meter *metrics.Metrics, validator auth.TokenValidator, limiter ratelimit.Limiter) http.Handler {
 	cfg.ApplyDefaults()
 	mux := http.NewServeMux()
 	docsBase := cfg.ErrorDocsBase
@@ -63,8 +64,13 @@ func NewRouter(cfg config.Config, logger *slog.Logger, meter *metrics.Metrics, v
 	})
 
 	if validator != nil {
+		var rateLimit func(http.Handler) http.Handler
+		if limiter != nil {
+			rateLimit = RateLimitMiddleware(limiter, logger)
+		}
+
 		authNone := AuthMiddleware(validator, meter, logger, AuthOptions{})
-		mux.Handle("/v1/internal/auth-probe", authNone(http.HandlerFunc(handleAuthProbe)))
+		mux.Handle("/v1/internal/auth-probe", chainOptional(rateLimit, authNone(http.HandlerFunc(handleAuthProbe))))
 
 		authOrg := func(orgID string) func(http.Handler) http.Handler {
 			return AuthMiddleware(validator, meter, logger, AuthOptions{PathOrgID: orgID})
@@ -77,6 +83,7 @@ func NewRouter(cfg config.Config, logger *slog.Logger, meter *metrics.Metrics, v
 			chain(
 				PathOrgUUIDMiddleware(docsBase),
 				authOrg(orgID),
+				rateLimit,
 			)(http.HandlerFunc(handleAuthProbe)).ServeHTTP(w, r)
 		})
 
@@ -84,6 +91,7 @@ func NewRouter(cfg config.Config, logger *slog.Logger, meter *metrics.Metrics, v
 			BodySizeLimitMiddleware(cfg.MaxRequestBodyBytes, docsBase),
 			ContentTypeMiddleware(docsBase),
 			AuthMiddleware(validator, meter, logger, AuthOptions{RequireProxyChatCompletion: true}),
+			rateLimit,
 		)
 		mux.Handle("/v1/chat/completions", chatChain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			handleChatCompletions(w, r, logger, docsBase)
@@ -104,10 +112,20 @@ func chain(middlewares ...func(http.Handler) http.Handler) func(http.Handler) ht
 	return func(final http.Handler) http.Handler {
 		h := final
 		for i := len(middlewares) - 1; i >= 0; i-- {
+			if middlewares[i] == nil {
+				continue
+			}
 			h = middlewares[i](h)
 		}
 		return h
 	}
+}
+
+func chainOptional(middleware func(http.Handler) http.Handler, handler http.Handler) http.Handler {
+	if middleware == nil {
+		return handler
+	}
+	return middleware(handler)
 }
 
 func handleAuthProbe(w http.ResponseWriter, r *http.Request) {
