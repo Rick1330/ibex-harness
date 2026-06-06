@@ -1,9 +1,9 @@
 # Current State
 
-**Last updated:** 2026-06-05  
-**Git SHA (`main`):** `59e7e04` — PR #57 M1.1.7 users/agents schema and token FK constraints (ADR-0014)  
+**Last updated:** 2026-06-06  
+**Git SHA (`main`):** `17264ee` — PR #59 cursor rules + phase 1/2 roadmap import  
 **Current phase:** Phase 1 — Core Platform  
-**Current goal:** Goal 1.1 / 1.2 — core schema and proxy platform integration (M1.1.7 complete; rate limit → 1.2.4)  
+**Current goal:** Goal 1.2 — proxy platform integration (M1.1.7 complete; rate limit → 1.2.4)  
 **Next milestone:** [1.2.4 Proxy rate limit skeleton](phase-1-core-platform/milestones/1.2.4-proxy-rate-limit-skeleton.md)
 
 ---
@@ -33,7 +33,9 @@
 - Security / quality CI: CodeQL v4, Semgrep (IBEX rules), Trivy, OSV, hard-gate `golangci-lint`, Hadolint, Bandit (skip until `services/memory`)
 - Informational CI: `scorecard`, `sbom` (Syft + Grype table/JSON artifacts only), `dependency-review`, `go-services`, `db-migrate-smoke`, `proto-contract`, `auth-validate-smoke`, `proxy-auth-smoke`, `buf-lint`
 - StepSecurity hardening ([PR #33](https://github.com/Rick1330/ibex-harness/pull/33)): Harden-Runner (audit egress), pinned GitHub Action SHAs, Docker Dependabot
-- **Roadmap:** next planned milestones 1.2.4, then 1.2.5 (agent verify middleware)
+- **Cursor rules (PR #59):** `.cursorrules` registry + `.cursor/rules/00–29.mdc`; markdownlint covers `*.mdc`
+- **Roadmap (PR #59):** Phase 1 milestones 1.4.1–1.4.3, 1.5.1 documented; Phase 2 full milestone tree (2.1.1–2.6.2) in [phase-2-single-provider/](phase-2-single-provider/README.md); `PHASE1_GAP_ANALYSIS.md` retired
+- **Roadmap execution:** next milestones 1.2.4 → 1.2.5 → … → 1.5.1 (see [phase-1 README](phase-1-core-platform/README.md#execution-order))
 - README: [DeepWiki](https://deepwiki.com/Rick1330/ibex-harness) badge
 - Semgrep: Prometheus `/metrics` handlers use `strings.Builder` (no Fprintf to ResponseWriter)
 
@@ -50,7 +52,7 @@
 
 1. **Milestone 1.2.4** — Proxy rate limit skeleton
 2. **Observability baseline** — Milestone 1.3.1 (OTel, Prometheus client)
-3. **Phase 2** — Provider HTTP / upstream forwarding
+3. **Phase 1 exit gate** — Milestone [1.5.1](phase-1-core-platform/milestones/1.5.1-security-integration-test-suite.md) security integration suite (after 1.4.x)
 
 ## Verify current state locally
 
