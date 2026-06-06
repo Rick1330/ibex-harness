@@ -1,0 +1,109 @@
+---
+description: CI/CD pipeline requirements, linting gates, and deployment standards.
+globs: [".github/workflows/**/*.yml", "Makefile", "infra/scripts/**/*.sh"]
+alwaysApply: false
+---
+
+# CI/CD Pipeline Standards
+
+> **Note:** Job names and matrix below are the target bar. The authoritative required checks are those defined in `.github/workflows/ci.yml` and `.github/branch-protection-main.json` — align changes with those files, not this aspirational list alone.
+
+## CI must be green before merge — no exceptions
+
+The following checks must all pass on every PR:
+
+```yaml
+# .github/workflows/ci.yml — required jobs
+jobs:
+  lint-go:      # golangci-lint with .golangci.yml config
+  lint-python:  # ruff + mypy --strict
+  lint-ts:      # eslint + tsc --noEmit
+  lint-proto:   # buf lint + buf breaking
+  test-unit:    # go test ./... (no -tags=integration)
+  test-unit-py: # pytest -m unit
+  test-integration:  # go test -tags=integration + pytest -m integration
+  security-scan:     # trufflehog + govulncheck + pip-audit
+  migration-smoke:   # apply all migrations; verify idempotent
+  metrics-format:    # promtool check metrics against running service
+  coverage-gate:     # fail if coverage drops below thresholds
+```
+
+## golangci-lint configuration — the enforced linters
+
+```yaml
+# .golangci.yml
+linters:
+  enable:
+    - gocyclo       # cyclomatic complexity ≤ 8
+    - gocognit      # cognitive complexity ≤ 10
+    - funlen        # function lines ≤ 40
+    - cyclop        # file lines ≤ 400
+    - gocritic      # style + correctness
+    - gosec         # security vulnerabilities
+    - errcheck      # all errors checked
+    - wrapcheck     # errors wrapped with context
+    - godot         # doc comments end with period
+    - exhaustive    # switch cases exhaustive
+    - maintidx      # maintainability index ≥ 20
+    - revive        # Go idioms
+    - unused        # no dead code
+    - godox         # no TODO/FIXME in merged code
+
+linters-settings:
+  gocyclo:
+    min-complexity: 8
+  gocognit:
+    min-complexity: 10
+  funlen:
+    lines: 40
+    statements: 30
+```
+
+## Python linting configuration
+
+```toml
+# pyproject.toml
+[tool.ruff]
+select = ["E", "F", "W", "C90", "I", "N", "UP", "ANN", "S", "BLE", "B", "A", "COM", "DTZ", "EM", "ISC", "PIE", "PT", "Q", "RET", "SIM", "TID", "ARG", "PTH", "ERA", "PL", "TRY", "RUF"]
+ignore = []
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.mccabe]
+max-complexity = 8
+
+[tool.mypy]
+strict = true
+python_version = "3.11"
+```
+
+## No TODO/FIXME in merged code
+
+```go
+// WRONG — committed to main
+// TODO: validate the org_id here
+// FIXME: this is broken for edge case X
+
+// RIGHT — create a GitHub issue, reference it if needed
+// See: https://github.com/Rick1330/ibex-harness/issues/123
+```
+
+Use `godox` linter which fails CI if TODO/FIXME/HACK/XXX appears in merged code.
+
+## Makefile — every target documented
+
+```makefile
+# WRONG — undocumented targets; no one knows what they do
+build:
+    go build ./...
+
+# RIGHT — self-documenting with help target
+.PHONY: build
+build: ## Build all Go services for the current platform
+    go build $(BUILD_FLAGS) ./services/...
+
+.PHONY: help
+help: ## Show this help
+    @grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
+        awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
+```

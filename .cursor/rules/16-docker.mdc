@@ -1,0 +1,135 @@
+---
+description: Dockerfile and docker-compose standards for all containerised services.
+globs: ["**/Dockerfile*", "**/docker-compose*.yml", "**/docker-compose*.yaml"]
+alwaysApply: false
+---
+
+# Docker Standards
+
+## Dockerfile — multi-stage, non-root, pinned, minimal
+
+```dockerfile
+# WRONG — single stage, root user, latest tag, unoptimised
+FROM golang:latest
+COPY . .
+RUN go build -o app .
+CMD ["./app"]
+
+# RIGHT — multi-stage, pinned digest, non-root, minimal final image
+# ── Build stage ──────────────────────────────────────────────────────────────
+FROM golang:1.22-alpine3.19 AS builder
+WORKDIR /src
+
+# Download dependencies first (cached layer unless go.mod changes)
+COPY go.mod go.sum ./
+RUN go mod download -x
+
+# Build with reproducible settings
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build \
+    -ldflags="-s -w -X main.Version=${VERSION}" \
+    -trimpath \
+    -o /app/proxy \
+    ./services/proxy/cmd/proxy
+
+# ── Final stage ──────────────────────────────────────────────────────────────
+FROM gcr.io/distroless/static-debian12:nonroot AS runtime
+# distroless/static: no shell, no package manager, attack surface ~5MB
+
+COPY --from=builder --chown=nonroot:nonroot /app/proxy /proxy
+
+EXPOSE 8080
+ENTRYPOINT ["/proxy"]
+```
+
+## Never use `latest` tag — always pin to an immutable digest or exact version
+
+```yaml
+# WRONG
+image: postgres:latest
+image: redis:latest
+
+# RIGHT — pinned exact version (update deliberately, not accidentally)
+image: postgres:16.2-alpine3.19
+image: redis:7.2-alpine3.19
+```
+
+## Docker Compose — health checks, resource limits, no hardcoded secrets
+
+```yaml
+# WRONG
+services:
+  postgres:
+    image: postgres:latest
+    environment:
+      POSTGRES_PASSWORD: password123
+    # no health check
+    # no resource limits
+
+# RIGHT
+services:
+  postgres:
+    image: postgres:16.2-alpine3.19
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB:       ${POSTGRES_DB:-ibex_dev}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 1G
+    networks:
+      - ibex_internal
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+networks:
+  ibex_internal:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
+```
+
+## .dockerignore — always present
+
+```text
+# .dockerignore
+.git
+.github
+.cursor
+docs/
+*.md
+*_test.go
+**/*_test.go
+infra/
+dist/
+node_modules/
+__pycache__/
+*.pyc
+.env
+.env.*
+!.env.example
+```
+
+## Never put secrets in Dockerfiles or docker-compose.yml
+
+Secrets come from environment variables, mounted files, or secret management systems (Vault, AWS Secrets Manager). The repo must never contain credentials.
+
+```yaml
+# WRONG — secret in compose file
+environment:
+  JWT_SECRET: "my-super-secret-key-123"
+
+# RIGHT — reference to env var, which is populated from secret manager
+environment:
+  JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+```

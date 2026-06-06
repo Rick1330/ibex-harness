@@ -1,0 +1,192 @@
+---
+description: Go code quality standards for all non-test .go files. Addresses CodeScene complexity, structural, and idiom issues.
+globs: ["**/*.go"]
+alwaysApply: false
+---
+
+# Go Code Quality Standards
+
+## Complexity limits (CodeScene gates)
+
+- **Cyclomatic complexity ≤ 8 per function.** If a function needs more than 8 decision points, it has more than one responsibility. Split it.
+- **Cognitive complexity ≤ 10 per function.** Count every nesting level, every boolean operator, every break/continue.
+- **Lines per function ≤ 40.** Count only non-blank, non-comment lines. Constructors and handlers that delegate are exempt up to 60 lines.
+- **Lines per file ≤ 400.** A file that grows past 400 lines is absorbing too many concerns.
+- **Parameters per function ≤ 4.** If you need more, introduce a config or options struct.
+- **Nesting depth ≤ 3.** Flatten with early returns, extracted functions, or guard clauses.
+
+## Interfaces — accept wide, return narrow
+
+```go
+// WRONG — accepts concrete type, locks callers in
+func NewRateLimiter(client *redis.Client) *RedisSlider { ... }
+
+// RIGHT — accepts interface, returns interface
+// The concrete type is the implementation detail; callers own the interface.
+func NewRedisSlider(client redis.UniversalClient) ratelimit.Limiter { ... }
+```
+
+Accept the narrowest interface your function needs. Return the most concrete type you have.
+Never define an interface in the same package that implements it — that's not an abstraction, it's a mock target.
+
+## Error handling — every error is handled or explicitly discarded
+
+```go
+// WRONG — ignoring errors silently
+rows, _ := pool.Query(ctx, q, id)
+defer rows.Close()
+
+// WRONG — too generic, loses context
+return fmt.Errorf("query failed: %w", err)
+
+// RIGHT — wraps with operation context
+return fmt.Errorf("AgentStore.GetByIDAndOrg orgID=%s agentID=%s: %w", orgID, agentID, err)
+```
+
+Full rules in `02-go-error-handling.mdc`.
+
+## Struct design — no data clumps, no primitive obsession
+
+```go
+// WRONG — primitive obsession; which string is which?
+func CreateToken(orgID, userID, name, description string, perms int64) error { ... }
+
+// WRONG — data clump; these travel together, should be a type
+orgID := ctx.Value("org_id").(string)
+agentID := ctx.Value("agent_id").(string)
+
+// RIGHT — options struct for >3 related params
+type CreateTokenParams struct {
+    OrgID       uuid.UUID
+    UserID      uuid.UUID
+    Name        string
+    Description string
+    Permissions permissions.Bitmap
+    ExpiresAt   *time.Time // nil = non-expiring
+}
+func CreateToken(ctx context.Context, p CreateTokenParams) (string, error) { ... }
+
+// RIGHT — typed IDs prevent mixing up org_id and agent_id
+type OrgID   uuid.UUID
+type AgentID uuid.UUID
+```
+
+## No global state
+
+```go
+// WRONG — global logger, hidden dependency
+var log = slog.Default()
+
+// WRONG — init() with side effects
+func init() {
+    prometheus.MustRegister(requestCounter)
+}
+
+// RIGHT — dependency injection; state is explicit
+type Handler struct {
+    store  AgentStore
+    logger *logger.Logger
+    tracer trace.Tracer
+}
+func NewHandler(store AgentStore, logger *logger.Logger, tracer trace.Tracer) *Handler { ... }
+```
+
+## Constants and magic values
+
+```go
+// WRONG — magic numbers
+if count > 60 { return ErrRateLimited }
+time.Sleep(30 * time.Second)
+
+// RIGHT — named constants with units in name
+const defaultRPMLimit = 60
+const defaultShutdownTimeout = 30 * time.Second
+```
+
+## Receivers — consistent, short, non-generic
+
+```go
+// WRONG — this, self, s, srv (generic)
+func (this *AgentStore) Get(...) {}
+func (s *AgentStore) Get(...) {}  // 's' is ok only if the type is also one char
+
+// RIGHT — 1-2 chars derived from the type name
+func (as *AgentStore) Get(...) {}
+func (p *Proxy) ServeHTTP(...) {}
+func (r *RedisSlider) Check(...) {}
+```
+
+## defer — never in loops, careful with closures
+
+```go
+// WRONG — defer in loop; rows never closed until function returns
+for _, id := range ids {
+    rows, _ := pool.Query(ctx, q, id)
+    defer rows.Close() // BUG: deferred, not called per iteration
+    // ...
+}
+
+// RIGHT — extract to function or close explicitly
+for _, id := range ids {
+    if err := processOne(ctx, pool, id); err != nil {
+        return err
+    }
+}
+
+func processOne(ctx context.Context, pool *pgxpool.Pool, id uuid.UUID) error {
+    rows, err := pool.Query(ctx, q, id)
+    if err != nil { return err }
+    defer rows.Close()
+    // ...
+    return rows.Err()
+}
+```
+
+## No naked `any` / `interface{}`
+
+```go
+// WRONG — loses all type safety
+func Set(key string, value interface{}) {}
+
+// RIGHT — generics (Go 1.21+) or typed alternatives
+func Set[T any](key string, value T) {}
+
+// RIGHT — for context keys: unexported struct type, not string
+type reqIDKey struct{}
+ctx = context.WithValue(ctx, reqIDKey{}, id) // cannot collide with other keys
+```
+
+## Exported API surface is the contract — comment everything exported
+
+Every exported function, type, constant, and variable must have a Go doc comment.
+The comment explains WHY, not WHAT (the signature already says what).
+
+```go
+// WRONG — no comment
+func (as *AgentStore) GetByIDAndOrg(ctx context.Context, agentID, orgID uuid.UUID) (*AgentRecord, error)
+
+// WRONG — restates the signature
+// GetByIDAndOrg gets an agent by ID and org.
+
+// RIGHT — explains semantics, failure mode, and caller contract
+// GetByIDAndOrg fetches a single agent and verifies it belongs to orgID.
+// Returns (nil, nil) when the agent does not exist or belongs to a different
+// org — the caller must map this to a 403, not a 404, to avoid leaking the
+// existence of another org's resources.
+func (as *AgentStore) GetByIDAndOrg(ctx context.Context, agentID, orgID uuid.UUID) (*AgentRecord, error)
+```
+
+## File organisation within a package
+
+```text
+internal/middleware/
+  requestid.go       ← one concern per file
+  requestid_test.go  ← test file adjacent to implementation
+  auth.go
+  auth_test.go
+  ratelimit.go
+  ratelimit_test.go
+  context.go         ← shared context key types and accessors
+```
+
+Never put unrelated types in the same file because "they're small." Small is not a reason to co-locate. Shared types go in a dedicated `types.go` or `context.go`.

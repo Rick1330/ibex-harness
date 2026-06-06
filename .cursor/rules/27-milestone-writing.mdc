@@ -1,0 +1,107 @@
+---
+description: Standards for writing milestone documents in docs/roadmap/. Every milestone must meet this standard.
+globs: ["docs/roadmap/**/*.md"]
+alwaysApply: false
+---
+
+# Milestone Writing Standards
+
+## Every milestone document must contain these sections in order
+
+1. **Title**: `# Milestone {N.N.N} — {Descriptive Title}`
+2. **Header block**: Status, Goal link, Phase, Estimated effort, ADR required (if any)
+3. **Why This Milestone Exists**: The problem being solved. 2–4 paragraphs. Explains what breaks or is missing without this work.
+4. **Non-Goals**: Explicitly what this milestone does NOT deliver.
+5. **Branch / PR Title**: The exact branch name and PR title format.
+6. **Prerequisites**: Linked milestones that must be merged first.
+7. **Deliverables**: Detailed tasks with code stubs showing the exact API/signatures.
+8. **Files Affected**: Table of every file changed, with action (Add/Modify/Delete).
+9. **Testing Requirements**: Specific test function names and what each verifies.
+10. **Acceptance Criteria**: Checkbox list. CI must be green on all of these.
+11. **Risks**: Table of risk + mitigation. Minimum 3 rows.
+
+## "Why This Milestone Exists" — the most important section
+
+This section must answer:
+- What is currently broken or missing?
+- What downstream work is blocked by this missing thing?
+- Why is this the right solution (and not some other approach)?
+
+```markdown
+## Why This Milestone Exists
+
+M1.2.3 added extraction of `X-IBEX-Agent-ID` from the HTTP header and attaches
+the raw UUID to the request context. It performs no validation beyond "is this a
+parseable UUID." The result is a concrete security gap: an authenticated token
+from Org A combined with the UUID of Org B's agent produces a request context
+that downstream services will treat as belonging to Org B's agent.
+```
+
+## Non-Goals — be specific, not generic
+
+```markdown
+## Non-Goals
+- Per-agent rate limits (Phase 4)   ← specific
+- Caching ValidateAgent responses (Phase 2 — auth cache bloom filter milestone)   ← specific + forward reference
+
+# NOT THIS:
+## Non-Goals
+- Out of scope items   ← useless
+- Future work   ← useless
+```
+
+## Deliverables — include code stubs with real signatures
+
+Every deliverable that produces code must include the function signature, the key type, and a comment block explaining the contract. Not pseudocode — real Go or Python.
+
+```markdown
+### 3. HTTP middleware
+
+```go
+// AgentVerificationMiddleware validates that the agent identified by
+// X-IBEX-Agent-ID exists, is active, and belongs to the authenticated org.
+// Must be placed AFTER AuthMiddleware and BEFORE RateLimitMiddleware.
+// On gRPC failure: fail CLOSED (return 503). This differs from rate limiting.
+func AgentVerificationMiddleware(
+    authClient authv1connect.AuthServiceClient,
+    timeout time.Duration,
+    log *logger.Logger,
+) func(http.Handler) http.Handler
+```
+
+## Testing requirements — named test functions, not categories
+
+```markdown
+## Testing Requirements
+
+### Unit tests
+- **`TestAgentVerification_WrongOrg`**: gRPC returns PERMISSION_DENIED → 403 AGENT_NOT_AUTHORIZED
+- **`TestAgentVerification_AuthServiceDown`**: gRPC transport error → 503 AUTH_UNAVAILABLE
+```
+
+Not:
+
+```markdown
+## Testing Requirements
+- Unit tests covering the middleware
+- Integration tests
+```
+
+## Acceptance criteria — binary checkboxes, not prose
+
+Every criterion must be verifiable by CI or by a specific manual step.
+
+```markdown
+## Acceptance Criteria
+- [ ] `X-IBEX-Agent-ID` absent → `400 MISSING_AGENT_ID`   ← testable
+- [ ] Agent in different org → `403 AGENT_NOT_AUTHORIZED` (not 404)   ← testable
+- [ ] Auth gRPC unavailable → `503 AUTH_UNAVAILABLE` (fail closed)   ← testable
+```
+
+Not:
+
+```markdown
+## Acceptance Criteria
+- [ ] Works correctly   ← not testable
+- [ ] All tests pass   ← redundant; CI does this
+```

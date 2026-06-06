@@ -1,0 +1,99 @@
+---
+description: Redis key naming, TTL rules, and usage patterns for all services that interact with Redis.
+globs: ["packages/ratelimit/**", "services/proxy/**/*.go", "services/auth/**/*.go", "services/memory/**/*.py"]
+alwaysApply: false
+---
+
+# Redis Usage Standards
+
+## Key naming — always follow the canonical pattern from DATABASE_SCHEMA.md
+
+Every Redis key must include `org_id` as the second segment for multi-tenant isolation.
+
+```text
+Pattern:          {prefix}:{org_id}:{discriminator}[:{sub-discriminator}]
+Rate limiting:    ratelimit:{org_id}:rpm:{unix_minute}
+Auth token cache: auth:token:{sha256_hash}
+Revocation set:   auth:revoked:{token_id}
+Hot memory cache: {org_id}:hot_memories:{agent_id}
+Memory object:    {org_id}:memory:{memory_id}
+Directive cache:  {org_id}:directive:{agent_id}
+Session state:    session:{session_id}:state
+```
+
+```go
+// WRONG — no org_id; cross-tenant data collision
+key := fmt.Sprintf("ratelimit:%d", unixMinute)
+key := fmt.Sprintf("hot_memories:%s", agentID)
+
+// RIGHT — org_id always present
+key := fmt.Sprintf("ratelimit:%s:rpm:%d", orgID, unixMinute)
+key := fmt.Sprintf("%s:hot_memories:%s", orgID, agentID)
+```
+
+## Every key must have an explicit TTL — no immortal keys
+
+```go
+// WRONG — key lives forever; data never expires; memory grows unbounded
+client.Set(ctx, key, value, 0)
+
+// RIGHT — explicit TTL from constants
+const tokenCacheTTL = 30 * time.Second
+client.Set(ctx, key, value, tokenCacheTTL)
+
+// When using INCR (rate limiting): set TTL immediately after first increment
+count, _ := client.Incr(ctx, key).Result()
+if count == 1 {
+    client.Expire(ctx, key, 90*time.Second)
+}
+```
+
+## Fail open for rate limiting, fail closed for auth
+
+```go
+// Rate limiting — fail open (cost control, not security)
+if err != nil {
+    log.WarnCtx(ctx, "rate limit Redis error; failing open", "error", err)
+    return ratelimit.Result{Allowed: true}, nil
+}
+
+// Auth cache — fail closed (security control)
+// If Redis is down: call auth gRPC directly, do not assume token is valid
+if err != nil {
+    return authClient.ValidateToken(ctx, token)
+}
+```
+
+## No raw JSON in Redis — always use a typed serialisation function
+
+```go
+// WRONG — raw JSON; schema changes silently break deserialization
+client.Set(ctx, key, `{"org_id":"...","perms":123}`, ttl)
+json.Unmarshal([]byte(val), &record)
+
+// RIGHT — typed marshalling with version field for forward compat
+type CachedToken struct {
+    Version     int       `json:"v"` // bump when schema changes
+    OrgID       uuid.UUID `json:"org_id"`
+    Permissions int64     `json:"perms"`
+    ExpiresAt   time.Time `json:"exp"`
+}
+data, _ := json.Marshal(CachedToken{Version: 1, ...})
+client.Set(ctx, key, data, ttl)
+```
+
+## Pub/Sub channels — typed message envelopes
+
+```go
+// All pub/sub messages have a type discriminator for forward compatibility
+type PubSubMessage struct {
+    Type    string          `json:"type"`
+    Payload json.RawMessage `json:"payload"`
+}
+
+// channel: directive_updates:{org_id}
+type DirectiveUpdatedPayload struct {
+    AgentID        uuid.UUID `json:"agent_id"`
+    NewVersionID   uuid.UUID `json:"new_version_id"`
+}
+```

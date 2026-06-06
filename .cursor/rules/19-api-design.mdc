@@ -1,0 +1,99 @@
+---
+description: REST API and gRPC API design standards. Error envelopes, versioning, pagination, status codes.
+globs: ["**/*.proto", "**/handler/**/*.go", "**/router/**/*.py", "**/routes/**/*.py"]
+alwaysApply: false
+---
+
+# API Design Standards
+
+## Versioning — every public API is versioned from day one
+
+```text
+# HTTP: version in URL path, never in headers or query params
+/v1/agents
+/v1/agents/{id}/memories
+/v1/tokens
+
+# gRPC: version in package name
+package ibex.auth.v1;
+```
+
+## Error envelope — all error responses use the stable envelope
+
+```json
+{
+  "error": {
+    "code": "RATE_LIMITED",
+    "message": "Rate limit exceeded. Retry after the indicated interval.",
+    "request_id": "01HXYZ..."
+  }
+}
+```
+
+- `code`: UPPER_SNAKE_CASE from `packages/apierror` canonical registry. Never a raw string literal.
+- `message`: Human-readable. Safe to show to the end user. No internal details.
+- `request_id`: Always populated. Used for correlating with logs.
+
+**Do not** add `details`, `stack_trace`, `cause`, or any internal information to the error body. Those go in logs, not responses.
+
+## Status codes — use the correct one, every time
+
+| Situation | Code |
+|---|---|
+| Validation failure (bad field value) | 400 |
+| Missing required field | 400 |
+| Missing or invalid auth token | 401 |
+| Valid token, insufficient permissions | 403 |
+| Cross-org resource access | 403 (not 404) |
+| Resource not found (own org) | 404 |
+| Method not allowed | 405 |
+| Rate limited | 429 |
+| Dependency (auth/DB) unavailable | 503 |
+| Request timed out | 504 |
+
+## Pagination — all list endpoints are paginated from day one
+
+```json
+// Request: GET /v1/agents?limit=20&cursor=eyJ...
+// Response:
+{
+  "agents": [...],
+  "next_cursor": "eyJ...",  // null if no more pages
+  "total": null             // do NOT return total count (expensive at scale)
+}
+```
+
+Use cursor-based pagination (not page number). Cursor encodes the last seen `(created_at, id)` tuple, base64-encoded. Page number pagination is an anti-pattern at scale (deep pages are expensive; inconsistent under inserts).
+
+## Idempotency — mutations accept idempotency keys
+
+```text
+POST /v1/tokens
+Idempotency-Key: client-generated-uuid
+```
+
+If the same `Idempotency-Key` is seen within 24 hours, return the original response. This allows clients to safely retry POST/PUT/DELETE without creating duplicates.
+
+## Response shapes — consistent across the entire API
+
+```go
+// Every response (success or error) has Content-Type: application/json
+// Every success response for a resource returns the full resource object
+// Never return 200 with an empty body (use 204 No Content)
+// Never return different shapes for the same endpoint depending on parameters
+```
+
+## Naming conventions for REST endpoints
+
+```text
+Collection:     GET    /v1/agents           → list
+Single:         GET    /v1/agents/{id}      → get
+Create:         POST   /v1/agents           → create
+Update (full):  PUT    /v1/agents/{id}      → replace
+Update (patch): PATCH  /v1/agents/{id}      → partial update
+Delete:         DELETE /v1/agents/{id}      → soft delete
+
+Sub-resources:  GET    /v1/agents/{id}/memories
+Actions:        POST   /v1/agents/{id}/activate    ← verb-based action
+                POST   /v1/tokens/{id}/revoke
+```

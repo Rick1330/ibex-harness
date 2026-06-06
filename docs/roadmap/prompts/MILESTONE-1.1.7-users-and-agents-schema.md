@@ -1,6 +1,6 @@
 ## What and Why
 
-Reconcile DATABASE_SCHEMA with reality by introducing `ibex_core.users` and `ibex_core.agents` plus the deferred foreign key constraints on `ibex_core.tokens`. Close security gaps S-1/S-2 from `PHASE1_GAP_ANALYSIS.md` so that agent-scoped tokens and proxy `X-IBEX-Agent-ID` lookups can rely on enforced org ownership.
+Reconcile DATABASE_SCHEMA with reality by introducing `ibex_core.users` and `ibex_core.agents` plus the deferred foreign key constraints on `ibex_core.tokens`. Close security gaps addressed by [M1.2.5](../phase-1-core-platform/milestones/1.2.5-proxy-agent-identity-verification.md) (agent identity) and token FK integrity so that agent-scoped tokens and proxy `X-IBEX-Agent-ID` lookups can rely on enforced org ownership.
 
 ## How
 
@@ -30,4 +30,4 @@ Reconcile DATABASE_SCHEMA with reality by introducing `ibex_core.users` and `ibe
 
 - New ADR-0014 describing core domain migration sequencing and the `NOT VALID` FK pattern.
 - `docs/DATABASE_SCHEMA.md` updated to mark `users` and `agents` as applied via M1.1.7 and to call out deferred columns as Phase 3+.
-- Phase-1 roadmap `README.md`, `goals.md`, `decisions.md`, and `CURRENT_STATE.md` updated to include M1.1.7 and link to `PHASE1_GAP_ANALYSIS.md` for context.
+- Phase-1 roadmap `README.md`, `goals.md`, `decisions.md`, and `CURRENT_STATE.md` updated to include M1.1.7 and execution order for downstream milestones (1.2.5, 1.5.1).

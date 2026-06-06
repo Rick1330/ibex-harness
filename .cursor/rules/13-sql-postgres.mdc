@@ -1,0 +1,124 @@
+---
+description: PostgreSQL query patterns, RLS, indexing, and multi-tenancy enforcement for all SQL and Go/Python DB code.
+globs: ["**/*.sql", "**/store/**/*.go", "**/repository/**/*.py"]
+alwaysApply: false
+---
+
+# PostgreSQL Standards
+
+## NEVER write a query without org_id in the WHERE clause
+
+Every table in `ibex_core` has `org_id`. RLS is the database-level defence. The application layer is the second defence. Both must be present.
+
+```sql
+-- WRONG — no org_id; RLS is the only protection
+SELECT * FROM ibex_core.agents WHERE id = $1;
+
+-- WRONG — RLS provides isolation but this allows timing attacks
+-- (response time differs when row exists vs not)
+SELECT id FROM ibex_core.agents WHERE id = $1 AND org_id = $2;
+
+-- RIGHT — explicit org_id AND deleted_at guard; always limit columns
+SELECT id, org_id, status, slug
+FROM ibex_core.agents
+WHERE id      = $1
+  AND org_id  = $2
+  AND deleted_at IS NULL
+LIMIT 1;
+```
+
+```go
+// In Go store code — org_id must be a bound parameter, never interpolated
+const q = `
+    SELECT id, org_id, status
+    FROM ibex_core.agents
+    WHERE id     = $1
+      AND org_id = $2
+      AND deleted_at IS NULL
+    LIMIT 1`
+
+row := pool.QueryRow(ctx, q, agentID, orgID) // both are parameters
+```
+
+## SET LOCAL before every transaction that touches RLS tables
+
+```go
+// RLS reads current_setting('app.current_org_id').
+// Set it at the start of every transaction.
+func withOrgContext(ctx context.Context, pool *pgxpool.Pool, orgID uuid.UUID, fn func(pgx.Tx) error) error {
+    return pgx.BeginTxFunc(ctx, pool, pgx.TxOptions{}, func(tx pgx.Tx) error {
+        if _, err := tx.Exec(ctx,
+            "SET LOCAL app.current_org_id = $1", orgID.String(),
+        ); err != nil {
+            return fmt.Errorf("set org context: %w", err)
+        }
+        return fn(tx)
+    })
+}
+```
+
+## No SELECT * in application queries
+
+```sql
+-- WRONG — fetches all columns including future-added sensitive columns
+SELECT * FROM ibex_core.tokens WHERE id = $1;
+
+-- RIGHT — explicit columns; adding a sensitive column doesn't leak it
+SELECT id, org_id, type, prefix, name, permissions, expires_at, is_revoked, last_used_at
+FROM ibex_core.tokens
+WHERE id = $1 AND is_revoked = FALSE;
+```
+
+## Index every foreign key and every filtering column
+
+```sql
+-- Every org_id column is indexed with a partial index WHERE deleted_at IS NULL.
+-- Every (org_id, status) pair used in WHERE clauses is a composite index.
+-- Every column used in ORDER BY without a WHERE equality is indexed.
+
+-- Required indexes for any new table:
+CREATE INDEX idx_{table}_org_id ON ibex_core.{table}(org_id) WHERE deleted_at IS NULL;
+-- Add more specific indexes as query patterns require.
+```
+
+## Soft deletes — set deleted_at, never DELETE rows on business entities
+
+```sql
+-- WRONG — hard delete loses audit trail
+DELETE FROM ibex_core.agents WHERE id = $1;
+
+-- RIGHT — soft delete
+UPDATE ibex_core.agents
+SET deleted_at = NOW()
+WHERE id     = $1
+  AND org_id = $2
+  AND deleted_at IS NULL;
+```
+
+## Timestamps — always TIMESTAMPTZ, never TIMESTAMP
+
+```sql
+-- WRONG — stores without timezone; ambiguous on DST transitions
+created_at TIMESTAMP NOT NULL DEFAULT NOW()
+
+-- RIGHT — always with timezone (UTC internally, any TZ in client)
+created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+```
+
+## N+1 query prevention
+
+```go
+// WRONG — queries inside loop
+agents, _ := store.ListAgents(ctx, orgID)
+for _, agent := range agents {
+    stats, _ := store.GetStats(ctx, agent.ID) // N+1!
+    render(agent, stats)
+}
+
+// RIGHT — single join or batch lookup
+type AgentWithStats struct { Agent; Stats }
+agentsWithStats, _ := store.ListAgentsWithStats(ctx, orgID)
+for _, item := range agentsWithStats {
+    render(item.Agent, item.Stats)
+}
+```

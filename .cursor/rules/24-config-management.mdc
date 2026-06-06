@@ -1,0 +1,103 @@
+---
+description: Configuration loading, validation, and documentation standards for all services.
+globs: ["**/config/**/*.go", "**/config/**/*.py", "**/settings.py", "**/*.env*"]
+alwaysApply: false
+---
+
+# Configuration Management Standards
+
+## All config comes from environment variables — no config files
+
+```go
+// WRONG — config.yaml in the repo; different values per environment
+viper.SetConfigFile("config.yaml")
+
+// RIGHT — environment variables, loaded once at startup by packages/config
+type ProxyConfig struct {
+    Port               int           `env:"IBEX_PROXY_PORT"         envDefault:"8080"`
+    AuthServiceAddr    string        `env:"IBEX_AUTH_ADDR"          required:"true"`
+    RedisURL           string        `env:"IBEX_REDIS_URL"          required:"true"`
+    ShutdownTimeout    time.Duration `env:"IBEX_SHUTDOWN_TIMEOUT"   envDefault:"30s"`
+    DefaultRPM         int64         `env:"IBEX_RATE_LIMIT_DEFAULT_RPM" envDefault:"60"`
+}
+```
+
+## Fail fast on startup if required config is missing
+
+```go
+// WRONG — discovers missing config at runtime when handling first request
+func getAuthAddr() string {
+    return os.Getenv("IBEX_AUTH_ADDR") // returns "" silently if missing
+}
+
+// RIGHT — panic at startup with clear message
+func LoadConfig() ProxyConfig {
+    cfg, err := env.Parse(&ProxyConfig{})
+    if err != nil {
+        log.Fatal("configuration error", "error", err)
+        // error message: "required environment variable IBEX_AUTH_ADDR is not set"
+    }
+    return cfg
+}
+```
+
+## .env.example is the source of truth for env var documentation
+
+Every service directory must have a `.env.example` file. It is the executable documentation of what environment variables the service needs.
+
+```bash
+# services/proxy/.env.example
+# IBEX Proxy Service configuration
+# Copy to .env for local development: cp .env.example .env
+
+# Required: Auth service gRPC address
+IBEX_AUTH_ADDR=localhost:9090
+
+# Required: Redis URL
+IBEX_REDIS_URL=redis://localhost:6379/0
+
+# Optional: HTTP listen port (default: 8080)
+IBEX_PROXY_PORT=8080
+
+# Optional: Rate limit (default: 60 requests per minute per org)
+IBEX_RATE_LIMIT_DEFAULT_RPM=60
+
+# Optional: Graceful shutdown timeout (default: 30s)
+IBEX_SHUTDOWN_TIMEOUT=30s
+
+# Optional: OTel endpoint (no-op if unset)
+OTEL_EXPORTER_OTLP_ENDPOINT=
+
+# Required for auth service: Postgres DSN
+POSTGRES_DSN=postgresql://ibex:ibex@localhost:5432/ibex_dev?sslmode=disable
+```
+
+## Never commit .env files (only .env.example)
+
+`.env` is gitignored. `.env.example` is committed. `.env.production` does not exist in the repository.
+
+## All config is validated at the type level, not at call site
+
+```python
+# Python — pydantic-settings for typed, validated config
+from pydantic_settings import BaseSettings
+from pydantic import AnyUrl, field_validator
+
+class Settings(BaseSettings):
+    database_url: AnyUrl          # validated as a URL; fails if malformed
+    redis_url: AnyUrl
+    auth_service_addr: str
+    rate_limit_default_rpm: int = 60
+
+    @field_validator("rate_limit_default_rpm")
+    def must_be_positive(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError("rate_limit_default_rpm must be positive")
+        return v
+
+    class Config:
+        env_file = ".env"
+        env_file_encoding = "utf-8"
+
+settings = Settings()  # raises ValidationError at startup if invalid
+```

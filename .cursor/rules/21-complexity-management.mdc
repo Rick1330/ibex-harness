@@ -1,0 +1,113 @@
+---
+description: CodeScene complexity management. Hard limits, refactoring patterns, and hotspot prevention.
+alwaysApply: true
+---
+
+# Complexity Management (CodeScene Gates)
+
+## Hard complexity limits — CI fails above these
+
+| Metric | Limit | Enforcement |
+|---|---|---|
+| Cyclomatic complexity per function | 8 | `golangci-lint` (gocyclo), `pylint` (C901) |
+| Cognitive complexity per function | 10 | `golangci-lint` (gocognit), `ruff` |
+| Lines per function | 40 | `golangci-lint` (funlen) |
+| Lines per file | 400 | `golangci-lint` (cyclop), `wc -l` gate |
+| Function parameters | 4 | custom lint rule |
+| Nesting depth | 3 | manual review + `cyclop` |
+| Code duplication (clone detection) | 0 clones >10 lines | CodeScene clone detection |
+
+## The guard clause pattern — eliminate nesting
+
+```go
+// WRONG — 4 levels of nesting; cognitive complexity ~12
+func processRequest(r *http.Request) error {
+    if r != nil {
+        if r.Body != nil {
+            var req CreateRequest
+            if err := json.Decode(r.Body, &req); err == nil {
+                if req.Name != "" {
+                    return doWork(req)
+                }
+            }
+        }
+    }
+    return ErrInvalidRequest
+}
+
+// RIGHT — flat with guard clauses; cognitive complexity ~4
+func processRequest(r *http.Request) error {
+    if r == nil || r.Body == nil {
+        return ErrInvalidRequest
+    }
+    var req CreateRequest
+    if err := json.Decode(r.Body, &req); err != nil {
+        return fmt.Errorf("decode: %w", err)
+    }
+    if req.Name == "" {
+        return ErrInvalidRequest
+    }
+    return doWork(req)
+}
+```
+
+## Extract function when a block has a comment describing it
+
+A comment that describes what a block of code does is a signal that the block should be its own function with that name.
+
+```go
+// WRONG — comment says "validate input"; that's a function name
+func handleCreateToken(ctx context.Context, req CreateTokenRequest) error {
+    // validate input
+    if req.Name == "" { return ErrEmptyName }
+    if req.Permissions == 0 { return ErrEmptyPermissions }
+    if req.ExpiresAt != nil && req.ExpiresAt.Before(time.Now()) { return ErrExpiredToken }
+
+    // hash the token
+    hash, err := argon2.Hash(rawToken)
+    if err != nil { return err }
+
+    // save to database
+    return store.Insert(ctx, hash, req)
+}
+
+// RIGHT — each commented section is its own function
+func handleCreateToken(ctx context.Context, req CreateTokenRequest) error {
+    if err := validateCreateTokenRequest(req); err != nil { return err }
+    hash, err := hashToken(rawToken)
+    if err != nil { return err }
+    return store.Insert(ctx, hash, req)
+}
+
+func validateCreateTokenRequest(req CreateTokenRequest) error {
+    if req.Name == "" { return ErrEmptyName }
+    if req.Permissions == 0 { return ErrEmptyPermissions }
+    if req.ExpiresAt != nil && req.ExpiresAt.Before(time.Now()) { return ErrExpiredToken }
+    return nil
+}
+```
+
+## Prevent file hotspots — distribute change
+
+A file that is changed in every PR AND has high complexity is a CodeScene "hotspot". Prevention:
+1. Keep files ≤400 lines
+2. Each file has one primary responsibility
+3. If you touch a file 3 PRs in a row, it needs to be split
+
+## Long parameter lists → options struct or builder
+
+```go
+// WRONG — 7 parameters; impossible to call without mistakes
+func NewRedisSlider(host string, port int, password string, db int, timeout time.Duration, defaultRPM int64, orgOverrides map[uuid.UUID]int64) *RedisSlider
+
+// RIGHT — options struct; fields are self-documenting; zero value = sane default
+type RedisSliderConfig struct {
+    Addr           string        // default: "localhost:6379"
+    Password       string        // default: "" (no auth)
+    DB             int           // default: 0
+    Timeout        time.Duration // default: 5s
+    DefaultRPM     int64         // default: 60
+    OrgOverrides   map[uuid.UUID]int64 // default: nil (use DefaultRPM for all)
+}
+func NewRedisSlider(cfg RedisSliderConfig) *RedisSlider
+```

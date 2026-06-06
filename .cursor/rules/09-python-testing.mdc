@@ -1,0 +1,128 @@
+---
+description: Python testing standards using pytest. Fixtures, parametrize, async tests, test isolation.
+globs: ["**/test_*.py", "**/*_test.py", "**/conftest.py"]
+alwaysApply: false
+---
+
+# Python Testing Standards
+
+## pytest — always, never unittest
+
+All tests use pytest. No `unittest.TestCase` subclasses. No `self.assert*` methods.
+
+## Naming — same philosophy as Go
+
+```python
+# WRONG
+def test_agent(): ...
+def test1(): ...
+
+# RIGHT — test_{unit}_{scenario}_{expected_outcome}
+def test_agent_store_get_returns_none_for_cross_org_lookup(): ...
+def test_rate_limit_check_fails_open_when_redis_unavailable(): ...
+def test_create_token_raises_validation_error_for_empty_name(): ...
+```
+
+## Parametrize — never copy-paste tests
+
+```python
+# WRONG — three identical tests with different values
+def test_permission_denied_on_status_paused(): ...
+def test_permission_denied_on_status_suspended(): ...
+def test_permission_denied_on_status_archived(): ...
+
+# RIGHT
+@pytest.mark.parametrize("status", ["paused", "suspended", "archived"])
+async def test_agent_verification_denies_inactive_agent(
+    status: str,
+    agent_factory: AgentFactory,
+    client: AsyncClient,
+) -> None:
+    agent = await agent_factory.create(status=status)
+    response = await client.get(f"/v1/agents/{agent.id}")
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "AGENT_NOT_AUTHORIZED"
+```
+
+## Fixtures — always scoped, never leak state
+
+```python
+# conftest.py
+import pytest
+import pytest_asyncio
+
+@pytest_asyncio.fixture(scope="session")
+async def db_pool():
+    """Session-scoped pool. One pool for all tests in the session."""
+    pool = await asyncpg.create_pool(TEST_DATABASE_URL)
+    yield pool
+    await pool.close()
+
+@pytest_asyncio.fixture(scope="function")
+async def db_transaction(db_pool):
+    """
+    Function-scoped transaction. Every test gets a clean transaction
+    that is ROLLED BACK at the end. Tests are perfectly isolated.
+    No cleanup code needed in tests.
+    """
+    async with db_pool.acquire() as conn:
+        async with conn.transaction():
+            yield conn
+            raise Exception("rollback")  # force rollback
+
+@pytest.fixture
+def org_id() -> UUID:
+    """A stable test org UUID. Every test that needs an org uses this."""
+    return UUID("00000000-0000-0000-0000-000000000001")
+```
+
+## Async tests — always use pytest-asyncio with asyncio_mode="auto"
+
+```python
+# pyproject.toml
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+# test file — no decorator needed with auto mode
+async def test_memory_store_creates_record(db_transaction, org_id):
+    store = MemoryStore(db_transaction)
+    record = await store.create(org_id=org_id, content="test memory")
+    assert record.id is not None
+    assert record.org_id == org_id
+```
+
+## No production database in tests
+
+All tests use:
+1. `testcontainers-python` for Postgres (session-scoped, started once)
+2. `fakeredis` for Redis (function-scoped, fresh per test)
+3. `httpx.AsyncClient` with `app` transport for HTTP tests (no real server)
+
+```python
+# WRONG — hits production (or shared dev) database
+DATABASE_URL = "postgresql://prod-db/ibex"
+
+# RIGHT — testcontainers
+@pytest.fixture(scope="session")
+def postgres_url():
+    with PostgresContainer("postgres:16") as postgres:
+        yield postgres.get_connection_url()
+```
+
+## Test isolation — every test owns its data
+
+Tests must not depend on insertion order or data from other tests. Each test creates exactly the data it needs using factories/fixtures, and that data is rolled back.
+
+```python
+# WRONG — depends on other test having run first
+async def test_list_agents(client, org_id):
+    # assumes agents already exist from a previous test
+    response = await client.get("/agents")
+    assert len(response.json()["agents"]) == 3
+
+# RIGHT — creates its own data
+async def test_list_agents(client, org_id, agent_factory):
+    await agent_factory.create_batch(3, org_id=org_id)
+    response = await client.get("/agents")
+    assert len(response.json()["agents"]) == 3
+```

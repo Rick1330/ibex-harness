@@ -1,0 +1,80 @@
+---
+description: PR descriptions, commit messages, branch naming, and review standards.
+alwaysApply: false
+---
+
+# PR and Git Workflow Standards
+
+## Branch naming
+
+```text
+feature/m{N}-{N}-{N}-{short-description}    # milestone work
+fix/m{N}-{N}-{N}-{short-description}        # bug fix in milestone
+chore/m{N}-{N}-{N}-{short-description}      # infra, deps, docs
+hotfix/{short-description}                   # production emergency
+```
+
+Examples:
+- `feature/m1-1-7-users-agents-schema`
+- `chore/m1-3-3-shared-logger-package`
+- `fix/m1-2-4-rate-limit-key-format`
+
+## Commit messages — Conventional Commits
+
+```text
+{type}({scope}): {imperative description}
+
+[body: WHY this change, not WHAT]
+
+[footer: closes #issue, breaking changes]
+```
+
+Types: `feat`, `fix`, `chore`, `docs`, `test`, `perf`, `refactor`, `ci`
+
+```text
+# WRONG — no type, no scope, past tense, vague
+fixed the rate limiter
+updated code
+made changes
+
+# RIGHT
+feat(proxy): add org-level rate limit skeleton with Redis sliding window
+
+Implements the soft rate limiter described in ADR-0015.
+Uses INCR+EXPIRE rather than Lua scripts; the race window is
+documented and tested with TestRedisSlider_ConcurrentBurst.
+Phase 4 will replace RedisSlider with a Lua atomic implementation.
+
+Closes #42
+```
+
+## PR description — fill every section of the template
+
+Required sections:
+- **What and Why**: What changed and why this PR exists
+- **How**: Key design decisions; link to ADR if one was written
+- **Testing**: What tests were added; how to run them locally
+- **Performance**: Latency/throughput impact if measurable
+- **Security**: Any security implications; auth/permission changes
+- **Migrations / Ops**: DB migrations, env var changes, deploy order
+- **Docs**: What documentation was updated
+- **Definition of Done**: Checklist against milestone acceptance criteria
+
+## PR size — small, reviewable, single concern
+
+- Target: ≤400 lines changed (excluding generated files and migrations)
+- Maximum: 800 lines (requires justification in PR description)
+- Never mix refactoring and features in one PR
+- Migrations always in their own PR from the feature that uses them
+
+## Code review standards
+
+Every PR requires review from at least one other contributor. Reviewers check:
+
+1. Does the code match the milestone acceptance criteria?
+2. Are the complexity limits respected (no function >40 lines, no nesting >3)?
+3. Are all error returns handled?
+4. Does every new function have a doc comment?
+5. Are new env vars documented in `.env.example` and `ENVIRONMENT_VARIABLES.md`?
+6. Is there a test for every new behaviour, including failure modes?
+7. Is there a test for every security boundary?

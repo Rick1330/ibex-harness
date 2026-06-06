@@ -1,0 +1,78 @@
+---
+description: Multi-tenancy enforcement rules. Every line of code that touches data must respect org isolation.
+alwaysApply: true
+---
+
+# Multi-Tenant Security
+
+## The isolation contract
+
+Every data access must satisfy ALL of:
+1. `org_id` comes from the verified auth token, never from the request body or URL
+2. `org_id` is always present in WHERE clauses for DB queries
+3. Redis keys always include `org_id` as the second segment
+4. gRPC calls propagate `org_id` from the verified token, not from request fields
+
+## org_id from token, not from request — always
+
+```go
+// WRONG — org_id from request body; caller can spoof any org
+func handleListAgents(w http.ResponseWriter, r *http.Request) {
+    var req struct { OrgID uuid.UUID `json:"org_id"` }
+    json.Decode(r.Body, &req)
+    agents := store.List(ctx, req.OrgID) // can be any org!
+}
+
+// RIGHT — org_id extracted from verified token claims by middleware
+func handleListAgents(w http.ResponseWriter, r *http.Request) {
+    orgID := middleware.OrgIDMust(r.Context()) // set by AuthMiddleware from token
+    agents := store.List(ctx, orgID)
+}
+```
+
+## PERMISSION_DENIED on cross-tenant miss, NOT NOT_FOUND
+
+This rule is restated here because it is the most commonly violated rule in multi-tenant systems. Returning 404 for a cross-tenant resource access teaches attackers which resource IDs exist in other orgs.
+
+```text
+Attacker: GET /v1/agents/org-b-agent-uuid  (with org A token)
+WRONG response: 404 Not Found  ← attacker knows the UUID is valid but in another org
+RIGHT response: 403 Forbidden  ← attacker learns nothing
+```
+
+## Verify tenant at every layer — do not rely on a single check
+
+```text
+HTTP Handler: AuthMiddleware sets org_id from token ✓
+gRPC Handler: Validates org_id in request matches auth context ✓
+Store layer:  org_id in WHERE clause ✓
+Database:     RLS policy enforces org_id ✓
+```
+
+Each layer is a defence. If any layer is missing, the next one catches it. No single point of failure.
+
+## Tenant context propagation in gRPC
+
+```go
+// When proxy calls auth via gRPC, propagate org_id in metadata
+// so auth service can include it in audit logs
+ctx = metadata.AppendToOutgoingContext(ctx,
+    "x-ibex-org-id", orgID.String(),
+    "x-request-id",  requestID,
+)
+```
+
+## Audit log every cross-tenant denial
+
+Every 403 PERMISSION_DENIED on a cross-tenant resource access must emit an audit log entry. This enables forensic analysis of probing attacks.
+
+```go
+if isCrossTenantAccess {
+    auditLog.Warn("cross-tenant access attempt",
+        "requesting_org_id", requestingOrgID,
+        "target_resource_type", "agent",
+        "target_resource_id", agentID,
+        "request_id", requestID,
+    )
+}
+```

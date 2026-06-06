@@ -27,15 +27,17 @@ See [phase-0-foundation/README.md](phase-0-foundation/README.md).
 
 ## Phase 1: Core Platform
 
-**Status:** In Progress — starting Milestone 1.1.1
+**Status:** In Progress — current milestone [1.2.4](phase-1-core-platform/milestones/1.2.4-proxy-rate-limit-skeleton.md)
 
 **Goals:** [goals.md](phase-1-core-platform/goals.md)
 
 | Goal | Summary |
 | --- | --- |
 | 1.1 | Persistence and auth data plane (migrations, auth proto, token validation) |
-| 1.2 | Proxy platform integration (auth client, request normalization) |
-| 1.3 | Observability baseline (OTel wiring, Prometheus client) |
+| 1.2 | Proxy platform integration (auth client, normalization, rate limits, agent verify) |
+| 1.3 | Observability baseline (OTel wiring, Prometheus client, shared logger) |
+| 1.4 | Developer experience (seed data, `.env.example`, shared packages, health checks) |
+| 1.5 | Security integration gate (cross-tenant end-to-end tests) |
 
 **Exit criteria:**
 
@@ -43,21 +45,31 @@ See [phase-0-foundation/README.md](phase-0-foundation/README.md).
 - Auth validates org tokens against Postgres; cross-tenant tests pass
 - Proxy rejects unauthenticated requests; normalizes OpenAI-shaped bodies (no upstream yet)
 - Structured logs + metrics on critical paths; OTel tracer provider wired (no exporter required)
+- [M1.5.1](phase-1-core-platform/milestones/1.5.1-security-integration-test-suite.md) security suite green
 
 ---
 
 ## Phase 2: Single Provider E2E
 
-**Status:** Planned
+**Status:** Planned — detailed milestones in [phase-2 README](phase-2-single-provider/README.md)
 
 **Goals:** [phase-2-single-provider/goals.md](phase-2-single-provider/goals.md)
 
+| Goal | Summary |
+| --- | --- |
+| 2.1 | Provider abstraction and OpenAI forwarding (streaming + error mapping) |
+| 2.2 | Auth LRU + bloom cache and revocation propagation |
+| 2.3 | Directive resolution and system prompt injection |
+| 2.4 | Session tracking and checkpoints |
+| 2.5 | Async ClickHouse trace emission |
+| 2.6 | Latency benchmark and Phase 2 exit gate |
+
 **Exit criteria:**
 
-- End-to-end chat completion via proxy to one provider (OpenAI-compatible)
-- Streaming responses forwarded to client
-- Traces/metrics emitted async; no sync analytics on hot path
-- Rate limit skeleton or basic org-level limit in Redis (optional milestone)
+- End-to-end chat completion via proxy to OpenAI (streaming and non-streaming)
+- Proxy overhead <20ms p99; auth cache hit path <1ms
+- Directive injected; sessions and ClickHouse traces emitted async
+- Phase 1 security tests still pass; `make e2e-smoke` green
 
 ---
 

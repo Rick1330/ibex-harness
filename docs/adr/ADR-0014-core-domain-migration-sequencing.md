@@ -13,10 +13,10 @@ Phase 1 requires tenant isolation and fail-closed identity verification on the a
 
 At the time of milestone 1.1.1, `users` and `agents` were intentionally deferred so the initial migration could be minimal and unblock the token/permission plane.
 
-That deferral left two security-critical gaps identified in `docs/roadmap/phase-1-core-platform/milestones/PHASE1_GAP_ANALYSIS.md`:
+That deferral left two security-critical gaps tracked in Phase 1 milestones:
 
-- **S-2**: `tokens.user_id` / `agent_id` / `revoked_by` have no foreign keys, so revocation and tenant-scoping can’t rely on referential integrity.
-- **S-1**: The proxy currently accepts `X-IBEX-Agent-ID` as a UUID without validating that the referenced agent belongs to the authenticated org. The planned fix (`M1.2.5 ValidateAgent`) depends on a real `ibex_core.agents` table.
+- **Token FK integrity (S-2):** `tokens.user_id` / `agent_id` / `revoked_by` had no foreign keys, so revocation and tenant-scoping could not rely on referential integrity. Resolved in M1.1.7.
+- **Agent identity (S-1):** The proxy accepted `X-IBEX-Agent-ID` as a UUID without validating org ownership. The fix is [M1.2.5](../roadmap/phase-1-core-platform/milestones/1.2.5-proxy-agent-identity-verification.md), which depends on `ibex_core.agents` from M1.1.7.
 
 ## Decision
 

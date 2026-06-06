@@ -1,0 +1,92 @@
+---
+description: Data structure selection and algorithm complexity guidelines. Always choose the right structure for the use case.
+alwaysApply: false
+---
+
+# Data Structures and Algorithms
+
+## Choose the right data structure — always justify the choice
+
+```go
+// Lookup by unique key (agent by ID): map[uuid.UUID]AgentRecord — O(1)
+// Ordered iteration (memories by score): sorted slice or heap — O(n log n) sort once
+// Membership testing (is this token revoked?): Redis Bloom filter — O(1) probabilistic
+// Range queries (sessions started between T1 and T2): B-Tree index in Postgres
+// Vector similarity search (top-K memories by embedding): IVFFlat index in pgvector — O(n/lists)
+// Queue with at-least-once delivery: Redis Streams (not channels, not list)
+// LRU cache: container/list + map (Go), functools.lru_cache (Python)
+```
+
+## Complexity awareness for hot-path code
+
+Always state the time and space complexity of any non-trivial algorithm.
+
+```go
+// GetTopMemories retrieves the k most relevant memories for an agent.
+// Time: O(n log k) where n = total memories, k = requested count.
+//       Uses a min-heap of size k; does not sort all n memories.
+// Space: O(k) for the heap.
+// If n > 10_000, this query is served from the IVFFlat index (O(n/lists) ANN).
+func GetTopMemories(ctx context.Context, agentID uuid.UUID, k int) ([]Memory, error) { ... }
+```
+
+## Never use O(n²) when O(n log n) or O(n) is available
+
+```go
+// WRONG — O(n²): checking every pair for duplicates
+for i, m1 := range memories {
+    for j, m2 := range memories {
+        if i != j && m1.ContentHash == m2.ContentHash { deduplicate(i, j) }
+    }
+}
+
+// RIGHT — O(n): hash set for duplicate detection
+seen := make(map[string]int, len(memories)) // pre-allocate
+for i, m := range memories {
+    if existing, ok := seen[m.ContentHash]; ok {
+        deduplicate(existing, i)
+    }
+    seen[m.ContentHash] = i
+}
+```
+
+## Use sets for membership, maps for association, slices for ordered sequences
+
+```go
+// WRONG — using slice for membership testing: O(n) per lookup
+validStatuses := []string{"active", "paused", "suspended", "archived"}
+func isValid(s string) bool {
+    for _, v := range validStatuses { if v == s { return true } }
+    return false
+}
+
+// RIGHT — map for O(1) lookup
+var validStatuses = map[string]bool{
+    "active": true, "paused": true, "suspended": true, "archived": true,
+}
+func isValid(s string) bool { return validStatuses[s] }
+```
+
+## Pre-allocate when cardinality is known
+
+```go
+// When the number of elements is known at collection time:
+memories := make([]Memory, 0, totalCount)  // one allocation
+ids := make(map[uuid.UUID]bool, len(rows)) // one allocation
+```
+
+## Prefer immutable data structures for cached objects
+
+Objects stored in Redis or in-process caches must be treated as immutable after insertion. Mutating a cached object (slice append, map write) causes bugs when the same pointer is shared.
+
+```go
+// WRONG — mutates the cached object
+cached := cache.Get(agentID)
+cached.Tags = append(cached.Tags, "new-tag") // modifies cache!
+
+// RIGHT — copy before mutation
+cached := cache.Get(agentID)
+updated := *cached // shallow copy of struct
+updated.Tags = append(slices.Clone(cached.Tags), "new-tag")
+cache.Set(agentID, &updated)
+```

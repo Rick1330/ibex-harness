@@ -1,0 +1,103 @@
+---
+description: Package usage rules for ibex-harness shared packages. Where to import from, what not to duplicate.
+alwaysApply: true
+---
+
+# IBEX Harness Shared Package Rules
+
+## packages/logger — the only permitted logger in service code
+
+```go
+// FORBIDDEN in services/* and packages/*:
+import "log"           // stdlib log
+import "log/slog"      // use only inside packages/logger itself
+import "fmt"; fmt.Println(...)  // debug output
+import "github.com/rs/zerolog"  // no external logger libraries
+
+// REQUIRED:
+import "github.com/Rick1330/ibex-harness/packages/logger"
+// Obtain via DI from main.go; never create a package-level logger
+```
+
+## packages/apierror — all error codes must be registered here
+
+```go
+// FORBIDDEN — inline string literals for error codes
+return writeError(w, 400, "SOME_ERROR_CODE", "message") // string not in registry
+
+// REQUIRED — all codes from the package
+import "github.com/Rick1330/ibex-harness/packages/apierror"
+return writeError(w, 400, apierror.ErrCodeInvalidJSON, err.Error())
+```
+
+## packages/reqid — request ID must come from here only
+
+```go
+// FORBIDDEN — generate request ID anywhere else
+requestID := uuid.New().String()   // bypasses the context propagation contract
+requestID := r.Header.Get("X-Req") // not validated as UUID
+
+// REQUIRED
+requestID, ok := reqid.FromContext(r.Context())
+// or in handlers guaranteed to have RequestIDMiddleware:
+requestID := reqid.MustFromContext(r.Context())
+```
+
+## packages/ratelimit — rate limiting must use the interface
+
+```go
+// FORBIDDEN — direct Redis calls for rate limiting outside packages/ratelimit
+redisClient.Incr(ctx, fmt.Sprintf("ratelimit:%s:...", orgID))
+
+// REQUIRED — use the Limiter interface
+var limiter ratelimit.Limiter = ratelimit.NewRedisSlider(redisClient, cfg)
+result, err := limiter.Check(ctx, orgID)
+```
+
+## packages/config — all env loading goes through here
+
+```go
+// FORBIDDEN — direct os.Getenv in service code
+addr := os.Getenv("IBEX_AUTH_ADDR")  // no validation, no default, no documentation
+
+// REQUIRED — typed config struct loaded by packages/config at startup
+cfg := config.MustLoad[ProxyConfig]()  // panics with clear message if invalid
+```
+
+## packages/telemetry — OTel tracer obtained from here
+
+```go
+// FORBIDDEN
+tracer := otel.Tracer("proxy")  // global; skips resource attributes
+
+// REQUIRED — tracer from the initialized provider
+providers, _ := telemetry.Init(ctx, cfg)
+tracer := providers.TracerProvider.Tracer("ibex-proxy")
+```
+
+## packages/metrics — all Prometheus metrics registered here
+
+```go
+// FORBIDDEN — registration outside the metrics package
+var myCounter = prometheus.NewCounter(...)
+func init() { prometheus.MustRegister(myCounter) }
+
+// REQUIRED — call the function from packages/metrics
+metrics.ProxyRequests.WithLabelValues(route, method, code).Inc()
+```
+
+## packages/shutdown — all services use this coordinator
+
+```go
+// FORBIDDEN — ad-hoc signal handling in main.go
+sigCh := make(chan os.Signal, 1)
+signal.Notify(sigCh, syscall.SIGTERM)
+<-sigCh
+server.Shutdown(context.Background())
+
+// REQUIRED — coordinated shutdown via the package
+sd := shutdown.New(cfg.ShutdownTimeout, logger)
+sd.Register(func(ctx context.Context) error { return httpServer.Shutdown(ctx) })
+sd.Register(func(ctx context.Context) error { return grpcConn.Close() })
+if err := sd.Wait(); err != nil { os.Exit(1) }
+```

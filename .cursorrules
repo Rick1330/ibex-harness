@@ -1,188 +1,45 @@
-# IBEX Harness — Cursor Rules (.cursorrules)
-# Scope: Entire repository
-# Goal: Make AI-assisted development maximally correct, secure, consistent, and framework-compliant.
+# IBEX Harness — Root Cursor Rules
+# Production-grade AI agent memory and context management platform
+# Target: Fortune 500 / MAANG-acceptable code quality
 
-## 0) Prime Directive (Non‑Negotiable)
-You are editing a production-grade, security-sensitive, multi-tenant distributed system.
+## MANDATORY: Read before any task
+Before generating any code, always read and apply the rules from
+.cursor/rules/ that match the file type and task at hand.
 
-Your output MUST be:
-- correct (happy paths + edge cases)
-- secure (authz + tenant isolation + secret hygiene)
-- maintainable (consistent patterns, low complexity, clear naming)
-- test-backed (unit + integration where relevant)
-- observable (metrics/logs/traces for significant behavior)
+## Rule registry
+00-project-overview.mdc        → Always applied. Project context, service map, naming conventions.
+01-go-code-quality.mdc         → All *.go files outside test files.
+02-go-error-handling.mdc       → All *.go files.
+03-go-concurrency.mdc          → All *.go files that use goroutines, channels, sync primitives.
+04-go-testing.mdc              → All *_test.go files.
+05-go-performance.mdc          → All *.go files in hot paths (proxy, auth, ratelimit, context).
+06-go-grpc-protobuf.mdc        → *.proto files and gRPC handler/client code.
+07-python-code-quality.mdc     → All *.py files.
+08-python-fastapi.mdc          → *.py files in services/api/, services/memory/, services/context/.
+09-python-testing.mdc          → test_*.py and *_test.py files.
+10-python-async.mdc            → *.py files using asyncio, Celery, aiohttp.
+11-typescript-react.mdc        → *.ts, *.tsx files in services/dashboard/.
+12-typescript-testing.mdc      → *.test.ts, *.spec.ts, *.test.tsx files.
+13-sql-postgres.mdc            → *.sql files, Go files with SQL queries, Python SQLAlchemy.
+14-sql-migrations.mdc          → infra/migrations/**/*.sql files.
+15-redis-patterns.mdc          → Any code that calls Redis (Go, Python).
+16-docker.mdc                  → Dockerfile*, docker-compose*.yml files.
+17-security.mdc                → Always applied. Security is non-negotiable across all files.
+18-observability.mdc           → Always applied. Logging/metrics/tracing in all services.
+19-api-design.mdc              → HTTP handler files, proto definitions, OpenAPI specs.
+20-architecture-layering.mdc   → Always applied. Layer boundaries enforced everywhere.
+21-complexity-management.mdc   → Always applied. CodeScene complexity gates.
+22-data-structures-algorithms.mdc → Algorithm selection and data structure choices.
+23-testing-strategy.mdc        → Always applied. Test quality and coverage requirements.
+24-config-management.mdc       → Config loading files, env vars, any os.Getenv call.
+25-ci-cd-pipeline.mdc          → .github/workflows/*.yml, Makefile, scripts/*.sh.
+26-pr-git-workflow.mdc         → PR descriptions, commit messages, branch names.
+27-milestone-writing.mdc       → docs/roadmap/**/*.md files.
+28-multitenant-security.mdc    → Always applied. Every DB query, every handler, every cache key.
+29-ibex-packages.mdc           → Always applied. Package usage rules for shared packages.
+pr-template.mdc                → Always applied. Full GitHub PR template sections (repo-specific).
+testing-verification.mdc       → Always applied. Local test/gofmt/repo-guards before push.
 
-If you cannot verify an assumption from repository files:
-- STOP and ask a precise question, OR
-- propose a small SPIKE plan (timeboxed) before implementing.
-
-Do NOT invent APIs, file paths, tables, env vars, or framework behavior.
-
-## 1) Read-first context (load these before making non-trivial changes)
-When working on any feature, consult the relevant docs:
-- docs/PROJECT_CONTEXT.md — what we are building and why
-- docs/ARCHITECTURE.md — service boundaries and system flows
-- docs/TECH_STACK.md — approved stack and tradeoffs
-- docs/SECURITY.md — threat model + invariants + fail-closed rules
-- docs/TESTING_STRATEGY.md — what must be tested and how
-- docs/CODING_STANDARDS.md — style + complexity limits
-- docs/FILE_STRUCTURE.md — canonical paths and scaffolds
-- docs/API_DOCUMENTATION.md — REST contracts + error shape
-- docs/DATABASE_SCHEMA.md — Postgres/Redis/ClickHouse schema + RLS rules
-- docs/ENVIRONMENT_VARIABLES.md — env var contract
-- docs/MONITORING.md + docs/PERFORMANCE.md — SLOs, metrics, perf budgets
-Also consult:
-- AGENTS.md — agent workflow rules
-- CONTRIBUTING.md — PR workflow, branches, required CI checks
-- docs/DEVELOPMENT_GUIDE.md §12 — session workspace layout and discovery
-- docs/roadmap/CURRENT_STATE.md — canonical implementation status (update after merges)
-- prompts/ — reusable prompts; prefer them to free-form instructions
-
-## 1.5) Session workspace (outside repo)
-- Never commit session workspace files.
-- Default location: sibling directory named `ibex-harness-workspace` next to the repository root (same parent as the clone). Optional override: environment variable `IBEX_WORKSPACE_DIR`.
-- Use workspace `handoff.md`, `current_state.md`, `session_log/`, `archive/`, and `pr-bodies/` for session continuity (see DEVELOPMENT_GUIDE §12).
-- **When to write workspace files:**
-  - Before opening a PR: `pr-bodies/pr-<number>-<slug>.md` (full template; never under repo `.github/`).
-  - Milestone start: refresh `active_task.md`; read repo `docs/roadmap/CURRENT_STATE.md`.
-  - After each squash merge to `main`: update `handoff.md`, `current_state.md`, add `archive/phase-1/NNN-*.md` + INDEX row, optional `session_log/` entry.
-  - Surprises or plan drift: `known_issues.md` or repo `docs/roadmap/FINDINGS.md` via PR.
-- Before milestone work: read `docs/roadmap/CURRENT_STATE.md`; refresh workspace notes after merges per DEVELOPMENT_GUIDE §12.3.
-- Do not hardcode machine-specific absolute paths in rules, commits, or docs you generate.
-
-## 1.6) Governance (non-negotiable)
-- Never commit or push directly to `main`. Use a feature branch and open a PR.
-- Required CI checks before merge: `repo-guards`, `markdownlint`, `gitleaks`.
-- See CONTRIBUTING.md and docs/adr/ADR-0003-branch-protection-and-merge-policy.md.
-
-### 1.6.1) Pull request descriptions (required)
-When creating or updating a GitHub PR, fill **every** section from `.github/pull_request_template.md`:
-- What and Why, How, Testing (checkboxes), Performance, Security, Migrations / Ops, Docs, Definition of Done checklist.
-- Use `gh pr create --body-file <file>` (or `gh pr edit --body-file`) with all sections populated — never a one-line PR body.
-- **Body file location:** `ibex-harness-workspace/pr-bodies/` (or `IBEX_WORKSPACE_DIR/pr-bodies/`). **Forbidden:** committing PR body drafts into the git repo (including `.github/pr-body-*.md`).
-- Cross-reference `docs/DEVELOPMENT_GUIDE.md` §7.2 and `CONTRIBUTING.md`.
-- No agent attribution in PR titles, commits, or descriptions.
-
-### 1.6.2) Post-implementation testing (required)
-Before pushing or opening/updating a PR, run applicable commands and record outcomes in the PR Testing section:
-- `make proto-gen` and `make proto-test` when proto changes.
-- `go test` on every affected package (e.g. `./services/auth/...`, `./packages/permissions/...`).
-- `go test -tags=integration ./...` when auth, migrations, or Postgres/RLS behavior changes (requires `POSTGRES_TEST_DSN` or `make compose-test-up`).
-- `make repo-guards` before merge.
-- `gofmt -l` on touched Go files must produce no output.
-- Do not push with known CI failures; fix locally first.
-- Map auth work to `docs/TESTING_STRATEGY.md` §6.
-
-## 2) Repository structure rules (file placement is strict)
-Allowed top-level dirs: services/, packages/, infra/, docs/, prompts/
-Do NOT create new top-level directories without explicit instruction.
-
-Follow docs/FILE_STRUCTURE.md scaffolds:
-- Go services: cmd/ + internal/ (+ pkg/ only if intentionally shared)
-- Python FastAPI services: src/<package>/routers|services|repositories|models|core
-- Next.js App Router: server components by default; client components only at leaf
-
-If the requested file path conflicts with these scaffolds:
-- STOP and ask; do not “fix” it silently.
-
-## 3) No placeholders policy
-Forbidden in core paths (auth, proxy, tenant isolation, persistence, contracts):
-- TODO stubs, `pass`, empty handlers returning success, fake data
-
-If something must be deferred:
-- create an explicit issue reference in a comment with rationale and scope,
-- and ensure the system fails safely in the meantime.
-
-## 4) Multi-tenancy isolation (defense in depth)
-IBEX Harness must never leak data across orgs.
-
-### PostgreSQL
-- RLS is enabled, BUT every query must still include org_id filtering.
-- Per-request DB transactions must set:
-  - SET LOCAL app.current_org_id = '<org_id>'
-- If org context is missing/invalid: FAIL CLOSED.
-
-### Redis
-- All tenant data keys must be namespaced:
-  - {org_id}:<domain>:<id>
-- Global keys are allowed only if explicitly safe and documented.
-
-### ClickHouse
-- ClickHouse has no RLS.
-- Every query must require org_id and enforce org_id filter.
-- Any query without org filtering must be rejected by a guard layer.
-
-## 5) Security (non-negotiable)
-- Never log secrets (tokens, keys, passwords, cookies).
-- Never log raw memory content by default (PII risk). Log IDs + metadata.
-- SQL must always be parameterized (no string formatting).
-- External calls must always have timeouts; retry only transient errors.
-- AuthN != AuthZ: every endpoint must declare required permissions explicitly.
-- Security failures fail CLOSED; quality failures degrade gracefully.
-
-## 6) AI-specific threat: prompt injection via memory
-Treat all memory content as untrusted input that might contain malicious instructions.
-Required:
-- write-time risk scoring + quarantine for high-risk content
-- retrieval-time injection as DATA with strict delimiters (nonce-based if implemented)
-- directive must instruct model to never treat memory as instructions
-
-## 7) Performance rules (critical path)
-Critical path: proxy + context assembly.
-- Avoid allocations in hot loops
-- Avoid blocking calls without strict timeouts
-- Never synchronously write analytics/billing in request path
-- Parallelize independent retrieval operations with a shared deadline
-- Always preserve fallback behavior (directive-only context if needed)
-
-If changing proxy/context code:
-- add/update benchmark or perf check
-- update metrics stage breakdown if behavior changes
-
-## 8) Testing rules (minimum bar)
-- Unit tests for logic changes
-- Integration tests for DB/Redis/ClickHouse behavior (real deps; testcontainers where feasible)
-- Cross-tenant tests for any data access change
-- Contract tests for proto/OpenAPI changes
-- Performance tests/benchmarks for hot path changes
-
-Do NOT mock:
-- Postgres RLS behavior
-- Redis Lua rate limiting atomicity
-- pgvector similarity query behavior
-- token revocation propagation logic
-
-## 9) Observability rules
-Every service must:
-- emit Prometheus metrics (latency, rate, errors)
-- log structured JSON with request_id + trace_id when available
-- propagate trace context (OTel)
-- avoid high-cardinality metric labels (no org_id/agent_id/session_id in Prometheus labels)
-
-## 9.5) CI and security tooling invariants (non-negotiable)
-- Never set continue-on-error: true on a security scanning job.
-- Never remove a tool from .github/branch-protection-main.json without an ADR.
-- Never downgrade a pinned tool version without documenting the reason in the PR.
-- SARIF upload must be preserved for all scanning jobs (CodeQL, Trivy, Semgrep, OSV, Grype, Bandit).
-- Custom Semgrep rules in .semgrep/rules/ must be updated when new invariants are added to .cursorrules.
-- When adding a new service, add it to the Dependabot config and to the golangci-lint/bandit matrix.
-
-## 10) Change discipline (docs/contracts)
-If you change behavior, you must update the relevant docs:
-- REST changes → docs/API_DOCUMENTATION.md
-- Schema changes → docs/DATABASE_SCHEMA.md (+ migrations)
-- Security changes → docs/SECURITY.md
-- Perf budget changes → docs/PERFORMANCE.md
-- New env vars → docs/ENVIRONMENT_VARIABLES.md
-Major decisions require ADRs under docs/adr/.
-
-## 11) Output format (how you should respond when asked to implement)
-When proposing changes or producing diffs, always include:
-1) Summary (what/why)
-2) Files changed (exact paths)
-3) New/updated contracts (REST/proto/schema)
-4) Tests added/updated
-5) How to verify locally (commands + expected result)
-6) Risks/assumptions (and how to validate)
-
-If anything is ambiguous, ask questions before coding.
+## The one rule above all rules
+"Would a principal engineer at Stripe, Google, or AWS accept this in code review?"
+If the honest answer is no, do not write it.

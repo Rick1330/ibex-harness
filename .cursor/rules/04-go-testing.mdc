@@ -1,0 +1,185 @@
+---
+description: Go testing standards. Table-driven tests, naming, parallelism, test helpers, and forbidden patterns.
+globs: ["**/*_test.go"]
+alwaysApply: false
+---
+
+# Go Testing Standards
+
+## The testing philosophy
+Tests are first-class production code. They have the same quality bar as implementation code. A flaky test is a broken test. A slow test that can be parallelised is a broken test.
+
+## Naming — every test must be instantly readable
+
+```go
+// WRONG — says nothing about the scenario or expected outcome
+func TestGet(t *testing.T) {}
+func TestAgentStore(t *testing.T) {}
+func Test1(t *testing.T) {}
+
+// RIGHT — TestUnit_Scenario or TestUnit_Scenario_ExpectedOutcome
+func TestAgentStore_GetByIDAndOrg_ReturnsNilOnCrossOrgLookup(t *testing.T) {}
+func TestRedisSlider_Check_FailsOpenWhenRedisDown(t *testing.T) {}
+func TestRateLimitMiddleware_Returns429WithRetryAfterHeader(t *testing.T) {}
+```
+
+## Table-driven tests for multiple scenarios of the same function
+
+```go
+// WRONG — copy-pasted tests
+func TestCheck_UnderLimit(t *testing.T) { ... }
+func TestCheck_OverLimit(t *testing.T) { ... }
+func TestCheck_AtLimit(t *testing.T) { ... }
+
+// RIGHT — one table, runs in parallel, easy to add cases
+func TestRedisSlider_Check(t *testing.T) {
+    t.Parallel()
+
+    tests := []struct {
+        name        string
+        requests    int
+        limit       int64
+        wantAllowed bool
+        wantRemain  int64
+    }{
+        {name: "under limit", requests: 10, limit: 60, wantAllowed: true, wantRemain: 50},
+        {name: "at limit",    requests: 60, limit: 60, wantAllowed: true, wantRemain: 0},
+        {name: "over limit",  requests: 61, limit: 60, wantAllowed: false, wantRemain: 0},
+    }
+
+    for _, tc := range tests {
+        tc := tc // capture range variable (Go < 1.22)
+        t.Run(tc.name, func(t *testing.T) {
+            t.Parallel()
+            // arrange
+            mr := miniredis.RunT(t)
+            slider := NewRedisSlider(redis.NewClient(&redis.Options{Addr: mr.Addr()}), tc.limit)
+            // act
+            var result ratelimit.Result
+            for i := 0; i < tc.requests; i++ {
+                result, _ = slider.Check(t.Context(), testOrgID)
+            }
+            // assert
+            if result.Allowed != tc.wantAllowed {
+                t.Errorf("Allowed = %v, want %v", result.Allowed, tc.wantAllowed)
+            }
+        })
+    }
+}
+```
+
+## t.Parallel() — always on parallelisable tests
+
+Call `t.Parallel()` as the first line of every `Test*` function that does not modify shared state. Integration tests that hit a shared DB are exempt if they use separate orgs (preferred) or use transactions.
+
+## No time.Sleep in tests
+
+```go
+// WRONG — flaky; different machines have different timing
+time.Sleep(100 * time.Millisecond)
+assert(result)
+
+// RIGHT — poll with eventual consistency or use channels/sync primitives
+require.Eventually(t, func() bool {
+    return getValue() == expected
+}, 5*time.Second, 10*time.Millisecond)
+
+// RIGHT — use synchronisation primitives
+done := make(chan struct{})
+go func() { doWork(); close(done) }()
+select {
+case <-done:
+case <-time.After(5 * time.Second):
+    t.Fatal("timed out waiting for work")
+}
+```
+
+## Arrange-Act-Assert structure — always
+
+Every test function follows AAA. Separate the three phases with a blank line. Never mix assertion and setup.
+
+```go
+func TestTokenService_Revoke_MarksTokenAsRevoked(t *testing.T) {
+    t.Parallel()
+
+    // Arrange
+    svc, store := buildTestService(t)
+    token := store.InsertTestToken(t, testOrgID)
+
+    // Act
+    err := svc.Revoke(t.Context(), token.ID)
+
+    // Assert
+    if err != nil {
+        t.Fatalf("unexpected error: %v", err)
+    }
+    got, _ := store.GetByID(t.Context(), token.ID)
+    if !got.IsRevoked {
+        t.Error("expected token to be revoked")
+    }
+}
+```
+
+## Test helpers — use t.Helper() religiously
+
+```go
+// WRONG — failure points to helper line, not test line
+func createOrg(pool *pgxpool.Pool) uuid.UUID {
+    // ...
+}
+
+// RIGHT — t.Helper() makes error point to the CALLER
+func createTestOrg(t *testing.T, pool *pgxpool.Pool) uuid.UUID {
+    t.Helper()
+    // ...
+}
+```
+
+## Integration vs unit — tag every integration test
+
+```go
+//go:build integration
+// +build integration
+
+package store_test
+
+// Integration tests run with: go test -tags=integration ./...
+// They require real Postgres/Redis (from compose-test stack).
+// Unit tests must run without any external infrastructure.
+```
+
+## No assertions in goroutines — use t.Fatal only in main goroutine
+
+```go
+// WRONG — t.Fatal in goroutine causes panic, not test failure
+go func() {
+    result := compute()
+    if result != expected {
+        t.Fatalf("wrong result") // PANIC: called from non-test goroutine
+    }
+}()
+
+// RIGHT — communicate result back to main goroutine
+resultCh := make(chan int, 1)
+go func() { resultCh <- compute() }()
+result := <-resultCh
+if result != expected {
+    t.Errorf("compute() = %d, want %d", result, expected)
+}
+```
+
+## Coverage requirements
+
+- Packages in `packages/*`: ≥ 90% statement coverage
+- `services/*/internal/middleware/*`: ≥ 85% statement coverage
+- `services/*/internal/store/*`: ≥ 80% statement coverage
+- `services/*/internal/grpc/*`: ≥ 80% statement coverage
+- CI fails below these thresholds.
+
+## Forbidden in tests
+
+- No `assert.True(t, err == nil)` — use `require.NoError` or `if err != nil { t.Fatal }`
+- No global test state (package-level `var` modified by tests)
+- No production database — always use testcontainers or miniredis
+- No hardcoded ports — let the OS assign ephemeral ports
+- No `fmt.Println` for test debugging — use `t.Log`

@@ -1,0 +1,96 @@
+---
+description: Project context, service map, technology stack, and naming conventions for IBEX Harness. Always applied to every task.
+alwaysApply: true
+---
+
+# IBEX Harness — Project Overview
+
+## What this system is
+IBEX Harness is a production-grade AI agent memory and context management platform. It proxies every LLM request, injects persistent memory and directive context, and provides behavioral drift detection for AI agents. Target users are enterprise engineering teams running AI agents at scale.
+
+The quality bar is MAANG-level. This codebase must be readable by a principal engineer at Stripe who has never seen it before and they must be able to trust it.
+
+## Service map
+
+| Service | Language | Path | Purpose |
+|---|---|---|---|
+| Proxy | Go | `services/proxy/` | LLM request interception, <20ms overhead target |
+| Auth | Go | `services/auth/` | Token validation, agent identity, gRPC |
+| Memory | Python | `services/memory/` | Memory CRUD, vector search, dedup |
+| Context Assembly | Python | `services/context/` | Context construction per request |
+| Embedder | Python | `services/embedder/` | Text → vector embeddings |
+| Worker | Python | `services/worker/` | Celery: extraction, fingerprinting, drift |
+| API Server | Python | `services/api/` | Management REST API, dashboard backend |
+| Dashboard | TypeScript/Next.js | `services/dashboard/` | Operator web UI |
+
+## Shared packages (Go)
+
+| Package | Path | Purpose |
+|---|---|---|
+| `ratelimit` | `packages/ratelimit/` | Rate limiter interface + Redis implementation |
+| `reqid` | `packages/reqid/` | UUID v7 request ID generation and context |
+| `logger` | `packages/logger/` | Structured JSON logger wrapping slog |
+| `telemetry` | `packages/telemetry/` | OTel provider initialization |
+| `metrics` | `packages/metrics/` | Prometheus metric registry |
+| `config` | `packages/config/` | Env-based config loading with validation |
+| `apierror` | `packages/apierror/` | Canonical error codes and typed errors |
+| `shutdown` | `packages/shutdown/` | Graceful shutdown coordinator |
+
+## Infrastructure
+
+| Component | Purpose | Key constraint |
+|---|---|---|
+| PostgreSQL + pgvector | OLTP + vector search | RLS on every tenant table |
+| Redis | Auth cache, rate limit, hot memory cache | Key format: `{prefix}:{org_id}:{...}` |
+| ClickHouse | LLM trace analytics | Append-only, never update |
+| MinIO | Session archives | S3-compatible |
+| Prometheus | Metrics | No high-cardinality labels |
+| OpenTelemetry | Distributed traces | W3C traceparent propagation |
+
+## Naming conventions
+
+### Go
+- Packages: `lowercase`, single word where possible (`ratelimit`, not `rate_limit`)
+- Interfaces: noun or noun-phrase (`Limiter`, `AgentStore`, not `ILimiter`)
+- Errors: `Err` prefix for sentinel values (`ErrNotFound`), typed structs for structured errors
+- Context keys: unexported struct types, never strings
+- Test functions: `TestUnit_Scenario` (e.g. `TestRedisSlider_ConcurrentBurst`)
+- Constructors: `New*` returns the concrete type; caller assigns to interface
+
+### Python
+- Modules: `snake_case`
+- Classes: `PascalCase`
+- Functions/variables: `snake_case`
+- Constants: `UPPER_SNAKE_CASE`
+- Type aliases: `PascalCase`
+
+### TypeScript
+- Components: `PascalCase`
+- Hooks: `use` prefix, camelCase
+- Utilities: `camelCase`
+- Constants: `UPPER_SNAKE_CASE`
+- Types/Interfaces: `PascalCase` (no `I` prefix)
+
+### SQL / Migrations
+- Tables: `snake_case`, plural (`organizations`, `agents`)
+- Columns: `snake_case`
+- Indexes: `idx_{table}_{columns}` (e.g. `idx_agents_org_id`)
+- Constraints: `{table}_{column}_{type}` (e.g. `agents_slug_format`)
+- Migration files: `{6-digit-seq}_{action}_{subject}.{up,down}.sql`
+
+### Proto
+- Messages: `PascalCase`
+- Fields: `snake_case`
+- RPCs: `PascalCase` verb-noun (`ValidateToken`, `ValidateAgent`)
+- Packages: `ibex.{service}.v{N}` (e.g. `ibex.auth.v1`)
+
+## Critical path latency budgets (never exceed)
+
+| Operation | Budget |
+|---|---|
+| Auth `ValidateToken` gRPC | 50ms |
+| Auth `ValidateAgent` gRPC | 50ms |
+| Redis rate limit check | 5ms |
+| Full proxy overhead (not including LLM) | 20ms (p99) |
+| DB query (indexed lookup) | 10ms |
+| Context assembly (Phase 2) | 40ms |

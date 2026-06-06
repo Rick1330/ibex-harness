@@ -1,0 +1,105 @@
+---
+description: Python async patterns, Celery worker rules, background task design.
+globs: ["services/worker/**/*.py", "services/context/**/*.py", "services/memory/**/*.py"]
+alwaysApply: false
+---
+
+# Python Async and Celery Standards
+
+## Never mix sync and async carelessly
+
+```python
+# WRONG — blocking call in async context; blocks the event loop
+async def get_agent(id: UUID) -> AgentRecord:
+    time.sleep(0.1)  # blocks event loop; all other coroutines starve
+    result = requests.get(f"http://auth/{id}")  # blocking HTTP!
+
+# RIGHT — use async equivalents
+async def get_agent(id: UUID) -> AgentRecord:
+    await asyncio.sleep(0.1)
+    async with httpx.AsyncClient() as client:
+        result = await client.get(f"http://auth/{id}")
+```
+
+## CPU-bound work goes to a process pool
+
+```python
+# WRONG — embedding computation in async function blocks event loop
+async def generate_embedding(text: str) -> list[float]:
+    model = SentenceTransformer("all-MiniLM-L6-v2")
+    return model.encode(text).tolist()  # CPU-bound; blocks all coroutines
+
+# RIGHT — offload to executor
+async def generate_embedding(text: str) -> list[float]:
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        process_pool,  # ProcessPoolExecutor, not ThreadPoolExecutor
+        _generate_embedding_sync,
+        text,
+    )
+
+def _generate_embedding_sync(text: str) -> list[float]:
+    return model.encode(text).tolist()
+```
+
+## Celery tasks — idempotent by design
+
+Every Celery task must be safe to execute multiple times with the same arguments. Workers retry on failure; if the task is not idempotent, retries cause data corruption.
+
+```python
+# WRONG — creates duplicate records on retry
+@celery_app.task
+def extract_memory(session_id: str, content: str) -> None:
+    MemoryStore.create(session_id=session_id, content=content)
+
+# RIGHT — idempotent: ON CONFLICT DO NOTHING with content_hash dedup
+@celery_app.task(bind=True, max_retries=3, default_retry_delay=5)
+def extract_memory(self, session_id: str, content: str) -> None:
+    try:
+        MemoryStore.upsert_by_content_hash(
+            session_id=session_id,
+            content=content,
+            # upsert = INSERT ... ON CONFLICT (org_id, agent_id, content_hash) DO NOTHING
+        )
+    except Exception as exc:
+        raise self.retry(exc=exc)
+```
+
+## Always set task timeouts
+
+```python
+# WRONG — task can run forever
+@celery_app.task
+def compute_fingerprint(agent_id: str): ...
+
+# RIGHT — hard time limit + soft limit for cleanup
+@celery_app.task(
+    soft_time_limit=30,  # raises SoftTimeLimitExceeded at 30s (can catch and clean up)
+    time_limit=60,       # kills worker at 60s (no recovery; last resort)
+    max_retries=3,
+)
+def compute_fingerprint(agent_id: str): ...
+```
+
+## asyncio.gather — always handle partial failures
+
+```python
+# WRONG — one failure cancels nothing; all results are mixed with exceptions
+results = await asyncio.gather(
+    fetch_directive(agent_id),
+    fetch_hot_memories(agent_id),
+)
+
+# RIGHT — return_exceptions so all tasks complete; inspect individually
+directive, memories = await asyncio.gather(
+    fetch_directive(agent_id),
+    fetch_hot_memories(agent_id),
+    return_exceptions=True,
+)
+if isinstance(directive, Exception):
+    logger.warning("directive fetch failed, using empty", error=directive)
+    directive = ""
+if isinstance(memories, Exception):
+    logger.warning("memory fetch failed, using empty", error=memories)
+    memories = []
+```

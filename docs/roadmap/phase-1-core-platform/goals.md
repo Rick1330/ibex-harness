@@ -84,17 +84,43 @@
 
 ## Goal 1.4: Developer experience baseline
 
-**Description:** Improve local developer experience, seeds, and smoke tests.  
-**Milestones:** 1.4.x milestone files **pending**; this goal will be wired when those land.
+**Description:** Canonical local dev onboarding: idempotent seed data, `.env.example` files, local smoke tests, shared config/error packages, and a standardised health check contract.
+
+**Acceptance criteria:**
+
+- `make db-seed` produces a working org, user, agent, and PAT on a migrated dev database
+- `make dev-smoke` validates auth → proxy without an LLM key
+- `packages/config` and `packages/apierror` are used by auth and proxy (no scattered `os.Getenv` for required vars)
+- `/health` and `/ready` follow a documented JSON contract across Go services
+
+**Related milestones:**
+
+- [1.4.1](milestones/1.4.1-developer-experience-baseline.md)
+- [1.4.2](milestones/1.4.2-shared-config-and-error-packages.md)
+- [1.4.3](milestones/1.4.3-health-check-contract.md)
+
+**Validation:** Fresh clone + `make compose-dev-up` + `make db-migrate` + `make db-seed` + `make dev-smoke` exits 0
 
 ---
 
-## Goal 1.5: Security integration test suite
+## Goal 1.5: Phase 1 security gate
 
-**Description:** End-to-end security regression suite across auth and proxy.  
-**Milestones:** 1.5.1 milestone file **pending**; this goal will be wired when that file lands.
+**Description:** End-to-end security integration test suite validating the composed proxy middleware chain (auth → agent verify → rate limit) against real Postgres and Redis. Explicit Phase 1 completion gate.
 
-**Validation:** `/metrics` scrapeable; trace context propagates in integration test when exporter enabled
+**Acceptance criteria:**
+
+- Token from Org A cannot access Org B resources (403)
+- Revoked token rejected (401) within documented SLA
+- Cross-org agent ID rejected (403)
+- Rate limit returns 429 with `Retry-After`
+- Insufficient permission bitmap returns 403
+- All tests run under `go test -tags=integration` in CI
+
+**Related milestones:**
+
+- [1.5.1](milestones/1.5.1-security-integration-test-suite.md)
+
+**Validation:** `go test -tags=integration ./services/proxy/...` security suite green; Phase 1 exit criteria in README satisfied
 
 ---
 

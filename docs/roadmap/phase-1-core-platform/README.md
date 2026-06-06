@@ -26,6 +26,20 @@
 | 1.3.1 | [OTel tracer and meter provider init](milestones/1.3.1-otel-tracer-provider-init.md) | Planned |
 | 1.3.2 | [Prometheus metric catalog and client migration](milestones/1.3.2-prometheus-metric-catalog.md) | Planned |
 | 1.3.3 | [Shared structured logger package](milestones/1.3.3-shared-logger-package.md) | Planned |
+| 1.4.1 | [Developer experience baseline](milestones/1.4.1-developer-experience-baseline.md) | Planned |
+| 1.4.2 | [Shared config and error packages](milestones/1.4.2-shared-config-and-error-packages.md) | Planned |
+| 1.4.3 | [Health check contract](milestones/1.4.3-health-check-contract.md) | Planned |
+| 1.5.1 | [Security integration test suite](milestones/1.5.1-security-integration-test-suite.md) | Planned |
+
+## Execution order
+
+After M1.1.7 (complete), run remaining milestones in this order:
+
+```text
+1.2.4 → 1.2.5 → 1.2.6 → 1.2.7 → 1.3.3 → 1.3.1 → 1.3.2 → 1.4.1 → 1.4.2 → 1.4.3 → 1.5.1
+```
+
+`1.1.7` precedes `1.2.5`. `1.3.3` precedes `1.3.1` and `1.3.2`. `1.5.1` is the explicit Phase 1 completion gate.
 
 ## Theme
 
@@ -62,11 +76,10 @@ Foundation-004 delivered honest skeletons. Phase 1 turns them into a **fail-clos
 
 ## Documents
 
-- [goals.md](goals.md) — Goals 1.0–1.3
+- [goals.md](goals.md) — Goals 1.0–1.5
 - [milestones/](milestones/) — PR-sized work units
 - [decisions.md](decisions.md) — Phase-local decision log
 - [risks.md](risks.md) — Risks and mitigations
-- [milestones/PHASE1_GAP_ANALYSIS.md](milestones/PHASE1_GAP_ANALYSIS.md) — gap analysis driving Phase 1 execution order
 
 ## Goal overview
 
@@ -76,6 +89,8 @@ Foundation-004 delivered honest skeletons. Phase 1 turns them into a **fail-clos
 | [1.1](goals.md#goal-11-persistence-and-auth-data-plane) | Migrations, auth proto, token validation, token API backlog |
 | [1.2](goals.md#goal-12-proxy-platform-integration) | Proxy auth client, normalization, validation, rate limits |
 | [1.3](goals.md#goal-13-observability-baseline) | OTel + Prometheus client |
+| [1.4](goals.md#goal-14-developer-experience-baseline) | Seed data, `.env.example`, shared packages, health checks |
+| [1.5](goals.md#goal-15-phase-1-security-gate) | Cross-tenant security integration gate |
 
 ## Next phase
 

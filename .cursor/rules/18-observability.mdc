@@ -1,0 +1,91 @@
+---
+description: Logging, metrics, and tracing standards. Always applied to all services.
+alwaysApply: true
+---
+
+# Observability Standards
+
+## Logging — use packages/logger, never log.Printf or fmt.Println
+
+```go
+// WRONG — uses stdlib log; no structured fields; no request_id
+log.Printf("processing request for agent %s", agentID)
+fmt.Println("error:", err)
+
+// WRONG — uses slog directly; bypasses mandatory field enforcement
+slog.InfoContext(ctx, "processing request", "agent_id", agentID)
+
+// RIGHT — uses packages/logger; request_id and trace_id auto-injected from ctx
+log.InfoCtx(ctx, "processing agent request", "agent_id", agentID, "org_id", orgID)
+```
+
+## Log levels — use them correctly
+
+| Level | When to use |
+|---|---|
+| `DEBUG` | Developer debugging only. Disabled in production. Never log per-request in DEBUG (high volume). |
+| `INFO` | Significant lifecycle events: service started, migration applied, config loaded. Not every request. |
+| `WARN` | Recoverable problems that need attention: Redis down (fail-open), retry succeeded, deprecated usage. |
+| `ERROR` | Unrecoverable problems that require action: DB failure, panic recovered, auth service down. |
+
+```go
+// WRONG — INFO on every request; drowns logs at scale
+log.InfoCtx(ctx, "request received", "method", r.Method, "path", r.URL.Path)
+
+// RIGHT — metrics capture per-request data; logs capture anomalies
+// At INFO level, log only when something notable happens
+if result.Allowed == false {
+    log.WarnCtx(ctx, "request rate limited", "org_id", orgID, "limit", result.Limit)
+}
+```
+
+## Metrics — use packages/metrics, follow the naming convention
+
+```go
+// WRONG — custom metric registered outside packages/metrics
+var myCounter = prometheus.NewCounter(prometheus.CounterOpts{Name: "requests"})
+prometheus.MustRegister(myCounter)
+
+// WRONG — high-cardinality label
+ibexProxyRequests.WithLabelValues(orgID.String()).Inc() // explodes cardinality!
+
+// RIGHT — use the canonical registry; bounded label values only
+metrics.ProxyRequests.WithLabelValues(
+    routeTemplate, // "/v1/chat/completions" — static string
+    r.Method,      // "POST" — bounded
+    strconv.Itoa(statusCode), // "200", "429", etc.
+).Inc()
+```
+
+## Traces — add spans for every operation that crosses a boundary
+
+A "boundary" is: an HTTP call, a gRPC call, a database query, a Redis call, a cache miss.
+
+```go
+// WRONG — no span; can't see this operation in Jaeger
+func (as *AgentStore) GetByIDAndOrg(ctx context.Context, agentID, orgID uuid.UUID) (*AgentRecord, error) {
+    row := as.pool.QueryRow(ctx, q, agentID, orgID)
+    // ...
+}
+
+// RIGHT — span per DB operation; name includes operation + table
+func (as *AgentStore) GetByIDAndOrg(ctx context.Context, agentID, orgID uuid.UUID) (*AgentRecord, error) {
+    ctx, span := tracer.Start(ctx, "AgentStore.GetByIDAndOrg",
+        trace.WithAttributes(
+            attribute.String("db.table", "ibex_core.agents"),
+            attribute.String("db.operation", "SELECT"),
+        ),
+    )
+    defer span.End()
+    // ...
+    if err != nil {
+        span.RecordError(err)
+        span.SetStatus(codes.Error, err.Error())
+    }
+    return record, err
+}
+```
+
+## Correlation — request_id must be in every log line
+
+Every log line within the scope of an HTTP request must carry `request_id`. This is automatically handled by `packages/logger.InfoCtx(ctx, ...)` when `reqid.WithRequestID` is in the context. Never emit a log line inside a handler with a context-less logger.

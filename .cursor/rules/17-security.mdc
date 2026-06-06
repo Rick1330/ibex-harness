@@ -1,0 +1,90 @@
+---
+description: Security requirements for the entire codebase. Always applied. Non-negotiable.
+alwaysApply: true
+---
+
+# Security Rules — Non-Negotiable
+
+## Never log sensitive values
+
+```go
+// WRONG — logs the raw token; anyone with log access has the token
+log.InfoCtx(ctx, "token validated", "token", rawToken)
+log.InfoCtx(ctx, "user auth", "password_hash", hash)
+
+// RIGHT — log only the prefix (first 8 chars, safe to display)
+log.InfoCtx(ctx, "token validated", "token_prefix", token[:8]+"...")
+```
+
+Forbidden values in log output: raw tokens, password hashes, Argon2id hashes, email addresses, IP addresses, PII fields, `content` from memories.
+
+## Return PERMISSION_DENIED (not NOT_FOUND) for cross-tenant resource access
+
+This prevents timing and enumeration attacks. An attacker should not be able to determine whether a resource (agent, token, memory) exists in another org by observing the HTTP status code or response time.
+
+```go
+// If an agent exists in org B and an org A request asks for it:
+// WRONG — tells the attacker the agent exists
+return status.Errorf(codes.NotFound, "agent not found in your org")
+
+// RIGHT — ambiguous; attacker cannot distinguish exists-in-other-org from doesn't-exist
+return status.Errorf(codes.PermissionDenied,
+    "agent is not authorized for this organization")
+```
+
+## Every DB write has org_id in both INSERT and the constraint check
+
+```sql
+-- WRONG — no org_id check; malformed request could insert wrong org data
+INSERT INTO ibex_core.agents (id, name) VALUES ($1, $2);
+
+-- RIGHT
+INSERT INTO ibex_core.agents (id, org_id, name, slug)
+VALUES ($1, $2, $3, $4)
+-- RLS will also reject if app.current_org_id doesn't match $2
+```
+
+## All external input is validated before use
+
+```go
+// WRONG — using header value directly
+agentID := r.Header.Get("X-IBEX-Agent-ID")
+// agentID could be "'; DROP TABLE agents;--"
+
+// RIGHT — parse and validate before use
+agentIDStr := r.Header.Get("X-IBEX-Agent-ID")
+agentID, err := uuid.Parse(agentIDStr)
+if err != nil {
+    return writeError(w, http.StatusBadRequest, apierror.ErrCodeMissingAgentID, "Invalid X-IBEX-Agent-ID header")
+}
+// Now agentID is a UUID type; injection is impossible
+```
+
+## No hardcoded credentials anywhere in the codebase
+
+Run `git grep -r "password\|secret\|token\|api_key" --include="*.go" --include="*.py" --include="*.ts"` before every PR. CI runs `trufflehog` on every commit.
+
+## Permission check before every state mutation
+
+```go
+// WRONG — assumes the caller has permission because they called the function
+func (s *AgentService) Delete(ctx context.Context, agentID uuid.UUID) error {
+    return s.store.Delete(ctx, agentID)
+}
+
+// RIGHT — explicit permission check before mutation
+func (s *AgentService) Delete(ctx context.Context, orgID, agentID uuid.UUID, callerPerms permissions.Bitmap) error {
+    if !callerPerms.Has(permissions.AgentDelete) {
+        return apierror.ErrForbidden
+    }
+    return s.store.Delete(ctx, orgID, agentID) // orgID from verified token, not request body
+}
+```
+
+## Rate limit all public endpoints
+
+No endpoint exposed to the internet is without rate limiting. Auth endpoints are additionally limited per-IP. Token creation is limited to 10/minute per org.
+
+## HTTPS everywhere — no plaintext in production
+
+All inter-service communication uses mTLS in production. The dev compose stack uses plaintext on `ibex_internal` network only. No insecure transport in CI against staging.

@@ -1,0 +1,136 @@
+---
+description: Go performance rules for hot paths. Memory allocation, string handling, pre-allocation, benchmarking.
+globs: ["services/proxy/**/*.go", "services/auth/**/*.go", "packages/**/*.go"]
+alwaysApply: false
+---
+
+# Go Performance Rules (Hot Paths)
+
+The proxy must achieve <20ms p99 overhead. Every allocation in the request path is a potential GC pause. Write code that is correct first, then profile before optimising — but never write obviously slow code.
+
+## Pre-allocate slices and maps when size is known
+
+```go
+// WRONG — reallocates repeatedly as slice grows
+var ids []uuid.UUID
+for _, row := range rows {
+    ids = append(ids, row.ID)
+}
+
+// RIGHT — single allocation
+ids := make([]uuid.UUID, 0, len(rows))
+for _, row := range rows {
+    ids = append(ids, row.ID)
+}
+```
+
+## strings.Builder for string concatenation
+
+```go
+// WRONG — O(n²) allocations; each + allocates a new string
+var s string
+for _, part := range parts {
+    s += part
+}
+
+// RIGHT — single underlying buffer
+var b strings.Builder
+b.Grow(estimatedLen) // pre-grow if length is known
+for _, part := range parts {
+    b.WriteString(part)
+}
+return b.String()
+```
+
+## Avoid heap allocations in the critical path
+
+```go
+// WRONG — error value allocated on heap per request
+return fmt.Errorf("rate limit exceeded")
+
+// RIGHT — sentinel error (allocated once at init)
+var ErrRateLimited = errors.New("rate limit exceeded")
+return ErrRateLimited
+
+// RIGHT — for structured errors that carry per-request data, accept the allocation
+// but profile to confirm it's not a bottleneck
+return &RateLimitError{Limit: limit, RetryAfter: retryAfter}
+```
+
+## sync.Pool for frequently allocated, short-lived objects
+
+```go
+// For objects allocated and discarded on every request:
+var requestPool = sync.Pool{
+    New: func() any { return &RequestContext{} },
+}
+
+func handleRequest(w http.ResponseWriter, r *http.Request) {
+    ctx := requestPool.Get().(*RequestContext)
+    defer func() {
+        ctx.reset() // clear all fields
+        requestPool.Put(ctx)
+    }()
+    // ...
+}
+```
+
+## Benchmark before and after any performance optimisation
+
+```go
+func BenchmarkRedisSlider_Check(b *testing.B) {
+    mr := miniredis.RunT(b)
+    slider := NewRedisSlider(redis.NewClient(&redis.Options{Addr: mr.Addr()}), 60)
+    ctx := context.Background()
+
+    b.ResetTimer()
+    b.ReportAllocs()
+    for i := 0; i < b.N; i++ {
+        slider.Check(ctx, testOrgID)
+    }
+}
+// Run: go test -bench=BenchmarkRedisSlider_Check -benchmem -count=5
+```
+
+## No defer in tight loops
+
+```go
+// WRONG — defer in loop; allocates closure per iteration
+for _, f := range files {
+    f, err := os.Open(f)
+    if err != nil { return err }
+    defer f.Close() // only called at function return, holds all handles
+    process(f)
+}
+
+// RIGHT — close explicitly in loop
+for _, name := range files {
+    if err := processFile(name); err != nil {
+        return err
+    }
+}
+func processFile(name string) error {
+    f, err := os.Open(name)
+    if err != nil { return err }
+    defer f.Close() // fine here — one file per function call
+    return process(f)
+}
+```
+
+## Context values are not for performance-critical data
+
+Do not store frequently accessed data (org_id, agent_id) only in context. Context value lookup is a linear search by key. For hot-path data, extract from context once at handler entry and pass explicitly.
+
+```go
+// WRONG — repeated context lookups in inner loop
+for _, mem := range memories {
+    orgID := r.Context().Value(orgIDKey{}).(uuid.UUID) // lookup every iteration
+    process(orgID, mem)
+}
+
+// RIGHT — extract once
+orgID, _ := middleware.OrgIDFromContext(r.Context())
+for _, mem := range memories {
+    process(orgID, mem)
+}
+```

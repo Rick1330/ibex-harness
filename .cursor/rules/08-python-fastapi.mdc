@@ -1,0 +1,149 @@
+---
+description: FastAPI service patterns for ibex-harness API and memory services. Routing, dependency injection, error handling.
+globs: ["services/api/**/*.py", "services/memory/**/*.py", "services/context/**/*.py"]
+alwaysApply: false
+---
+
+# Python FastAPI Standards
+
+## Router organisation — one router per resource, one file per router
+
+```python
+# WRONG — all routes in main.py
+app = FastAPI()
+@app.get("/agents")
+async def list_agents(): ...
+@app.post("/agents")
+async def create_agent(): ...
+@app.get("/memories")
+async def list_memories(): ...
+
+# RIGHT — routers in separate modules
+# routers/agents.py
+router = APIRouter(prefix="/agents", tags=["agents"])
+
+@router.get("/", response_model=ListAgentsResponse)
+async def list_agents(...) -> ListAgentsResponse: ...
+
+# main.py
+app.include_router(agents.router)
+app.include_router(memories.router)
+```
+
+## Dependency injection for all shared resources
+
+```python
+# WRONG — global database connection
+DB = asyncpg.Pool(...)
+
+@app.get("/agents/{id}")
+async def get_agent(id: UUID):
+    conn = await DB.acquire()  # global state
+
+# RIGHT — FastAPI DI
+from functools import lru_cache
+from typing import Annotated
+
+async def get_db_pool() -> asyncpg.Pool:
+    return app.state.db_pool
+
+DBPool = Annotated[asyncpg.Pool, Depends(get_db_pool)]
+
+@router.get("/{id}", response_model=AgentResponse)
+async def get_agent(id: UUID, pool: DBPool) -> AgentResponse:
+    record = await agent_repo.get(pool, id, org_id_from_context)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    return AgentResponse.model_validate(record)
+```
+
+## Response models — always specify, never return raw dicts
+
+```python
+# WRONG — undocumented response shape
+@router.get("/{id}")
+async def get_agent(id: UUID) -> dict:
+    return {"id": str(id), "name": "..."}
+
+# RIGHT — typed, documented, validated
+@router.get("/{id}", response_model=AgentResponse, status_code=200)
+async def get_agent(
+    id: UUID,
+    pool: DBPool,
+    org: OrgContext,
+) -> AgentResponse:
+    ...
+```
+
+## Error responses — use HTTPException with standard error envelope
+
+```python
+# WRONG — returns 200 with error in body
+return {"error": "agent not found"}
+
+# WRONG — raw string detail
+raise HTTPException(status_code=403, detail="permission denied")
+
+# RIGHT — structured error matching the stable envelope from M1.2.3
+from models.errors import APIError, ErrorDetail
+
+class APIError(BaseModel):
+    code: str
+    message: str
+    request_id: str
+
+def permission_denied(request_id: str, message: str = "Access denied.") -> HTTPException:
+    return HTTPException(
+        status_code=403,
+        detail=APIError(
+            code="PERMISSION_DENIED",
+            message=message,
+            request_id=request_id,
+        ).model_dump(),
+    )
+```
+
+## Multi-tenancy — org_id extracted from verified token, never from request body
+
+```python
+# WRONG — caller controls which org they're acting on
+@router.get("/agents")
+async def list_agents(org_id: UUID = Query(...)):
+    return await repo.list(org_id)  # any org_id can be passed!
+
+# RIGHT — org_id comes from the verified auth context
+async def get_current_org(request: Request) -> UUID:
+    """Dependency: extracts org_id from the verified bearer token in request state."""
+    org_id = request.state.org_id  # set by auth middleware
+    if org_id is None:
+        raise HTTPException(status_code=401)
+    return org_id
+
+OrgID = Annotated[UUID, Depends(get_current_org)]
+
+@router.get("/agents", response_model=ListAgentsResponse)
+async def list_agents(pool: DBPool, org_id: OrgID) -> ListAgentsResponse:
+    return await agent_repo.list_by_org(pool, org_id)
+```
+
+## Startup and shutdown lifespan events — never in module scope
+
+```python
+# WRONG — connection opened at import time
+db_pool = asyncio.run(asyncpg.create_pool(...))
+
+# RIGHT — lifespan context manager
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # startup
+    app.state.db_pool = await asyncpg.create_pool(settings.DATABASE_URL)
+    app.state.redis = await aioredis.from_url(settings.REDIS_URL)
+    yield
+    # shutdown
+    await app.state.db_pool.close()
+    await app.state.redis.close()
+
+app = FastAPI(lifespan=lifespan)
+```

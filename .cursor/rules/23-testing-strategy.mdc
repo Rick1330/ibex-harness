@@ -1,0 +1,96 @@
+---
+description: Overall testing strategy. Test pyramid, coverage requirements, forbidden test patterns.
+alwaysApply: true
+---
+
+# Testing Strategy
+
+## The test pyramid — enforce the ratio
+
+```text
+        E2E Tests (few, slow, catch integration regressions)
+       /                                                    \
+     Integration Tests (medium, real infra, per milestone)
+    /                                                        \
+  Unit Tests (many, fast, in-process, parallel, ≥ 85% coverage)
+```
+
+We do NOT test the same thing at multiple levels. Unit tests cover logic. Integration tests cover contracts. E2E tests cover user journeys.
+
+## Test categories and tags
+
+```go
+// Unit tests — no build tag; run with `go test ./...`
+// No external dependencies. Must be runnable offline.
+
+//go:build integration
+// Integration tests — run with `go test -tags=integration ./...`
+// Require compose-test stack running.
+
+//go:build e2e
+// E2E tests — run with `go test -tags=e2e ./...`
+// Require full local deployment.
+```
+
+```python
+# Python — pytest marks
+@pytest.mark.unit         # no infra required
+@pytest.mark.integration  # requires testcontainers
+@pytest.mark.e2e          # requires full stack
+```
+
+## Mandatory test types per code category
+
+| Code category | Required test types |
+|---|---|
+| packages/* (Go) | Unit ≥ 90%, benchmark for hot paths |
+| middleware/* (Go) | Unit (httptest) + integration |
+| store/* (Go) | Integration (real Postgres), no unit with mocks |
+| gRPC handler/* | Unit (connect test client) + integration |
+| Python repository/* | Integration (testcontainers), no unit with mocks |
+| Python service/* | Unit (mock repository) |
+| React components | Unit (Vitest + Testing Library) |
+| React pages | Integration (Playwright) |
+
+## Do not mock what you can test for real
+
+Database stores are tested with real Postgres (testcontainers), never with mocked DB interfaces. Mocking a database interface tests the mock, not the SQL.
+
+```go
+// WRONG — tests the mock, not the SQL
+func TestAgentStore_Get(t *testing.T) {
+    mockDB := &MockDB{}
+    mockDB.On("QueryRow", ...).Return(mockRow)
+    store := NewAgentStore(mockDB)
+    // This tests that store calls QueryRow; it doesn't test the SQL is correct
+}
+
+// RIGHT — real Postgres in integration test; catches SQL errors, index issues, RLS
+//go:build integration
+func TestAgentStore_GetByIDAndOrg_CrossOrgReturnsNil(t *testing.T) {
+    pool := testPGPool(t) // uses testcontainers
+    store := NewAgentStore(pool)
+    orgA, orgB := insertTestOrg(t, pool), insertTestOrg(t, pool)
+    agent := insertTestAgent(t, pool, orgB)
+
+    result, err := store.GetByIDAndOrg(t.Context(), agent.ID, orgA) // org A asking for org B's agent
+    require.NoError(t, err)
+    require.Nil(t, result) // must return nil, not an error
+}
+```
+
+## Every security-critical path has a negative test
+
+For every `PERMISSION_DENIED`, `401`, `403`, `AGENT_NOT_AUTHORIZED` response code: there must be a test that verifies the denial. Security tests are as important as functionality tests.
+
+```go
+// Test matrix for proxy auth:
+// 1. Missing token → 401
+// 2. Invalid token format → 401
+// 3. Revoked token → 401
+// 4. Expired token → 401
+// 5. Valid token, wrong org agent → 403
+// 6. Valid token, inactive agent → 403
+// 7. Valid token, insufficient permissions → 403
+// 8. Valid token, correct org, active agent → 200
+```

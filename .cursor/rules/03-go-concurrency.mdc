@@ -1,0 +1,172 @@
+---
+description: Go concurrency correctness rules. Goroutine lifecycle, channels, mutexes, context propagation.
+globs: ["**/*.go"]
+alwaysApply: false
+---
+
+# Go Concurrency Rules
+
+## Every goroutine has an explicit lifetime
+
+```go
+// WRONG — goroutine leaks when main returns or context cancels; no way to wait
+go func() {
+    for {
+        doWork()
+    }
+}()
+
+// RIGHT — goroutine is tracked; parent can wait for it
+type Worker struct {
+    wg  sync.WaitGroup
+    ctx context.Context
+}
+
+func (w *Worker) Start() {
+    w.wg.Add(1)
+    go func() {
+        defer w.wg.Done()
+        for {
+            select {
+            case <-w.ctx.Done():
+                return
+            default:
+                w.doWork()
+            }
+        }
+    }()
+}
+
+func (w *Worker) Stop() {
+    // cancel context in caller, then:
+    w.wg.Wait()
+}
+```
+
+## Context is always the first parameter and always propagated
+
+```go
+// WRONG — ignores context; request cannot be cancelled
+func (s *AgentStore) Get(agentID uuid.UUID) (*AgentRecord, error) {
+    return s.pool.QueryRow(context.Background(), q, agentID)
+}
+
+// RIGHT
+func (s *AgentStore) Get(ctx context.Context, agentID uuid.UUID) (*AgentRecord, error) {
+    return s.pool.QueryRow(ctx, q, agentID)
+}
+```
+
+Never create `context.Background()` inside a function that received a `ctx context.Context` parameter. The only valid use of `context.Background()` is in `main()`, test setup, and package-level initialisation.
+
+## Mutex rules
+
+```go
+// WRONG — protecting too much; holds lock during IO
+func (c *Cache) Get(key string) (string, error) {
+    c.mu.Lock()
+    defer c.mu.Unlock()
+    val, ok := c.m[key]
+    if !ok {
+        val, _ = c.redis.Get(ctx, key).Result() // IO inside lock!
+        c.m[key] = val
+    }
+    return val, nil
+}
+
+// RIGHT — lock only for map access, IO outside
+func (c *Cache) Get(ctx context.Context, key string) (string, error) {
+    c.mu.RLock()
+    val, ok := c.m[key]
+    c.mu.RUnlock()
+    if ok {
+        return val, nil
+    }
+    val, err := c.redis.Get(ctx, key).Result()
+    if err != nil { return "", err }
+    c.mu.Lock()
+    c.m[key] = val
+    c.mu.Unlock()
+    return val, nil
+}
+```
+
+## Channel design
+
+```go
+// WRONG — unbuffered channel blocks producer until consumer reads; fine for signalling, wrong for work queues
+jobs := make(chan Job)
+
+// RIGHT — buffer sized to expected burst; document the sizing rationale
+// Buffer = max concurrent workers * 2; producers don't block under normal load.
+jobs := make(chan Job, workerCount*2)
+
+// WRONG — channel of pointers risks race on shared data
+results := make(chan *Result)
+
+// RIGHT — channel of values; each goroutine owns its copy
+results := make(chan Result)
+```
+
+## `sync.WaitGroup` — Add before goroutine launch, Done in defer
+
+```go
+// WRONG — race: goroutine may complete before Add is called
+go func() {
+    wg.Add(1)
+    defer wg.Done()
+}()
+
+// RIGHT
+wg.Add(1)
+go func() {
+    defer wg.Done()
+    // ...
+}()
+```
+
+## `errgroup` for parallel fan-out with error propagation
+
+```go
+// Use golang.org/x/sync/errgroup for parallel operations where any failure
+// should cancel the group:
+g, gctx := errgroup.WithContext(ctx)
+g.Go(func() error { return fetchDirective(gctx, agentID) })
+g.Go(func() error { return fetchHotMemories(gctx, agentID) })
+if err := g.Wait(); err != nil {
+    return fmt.Errorf("context assembly: %w", err)
+}
+```
+
+## No data races — EVER
+
+All code is tested with `-race`. A data race is a bug. The data race detector finding a race means the PR is rejected.
+
+```go
+// WRONG — shared map written from multiple goroutines
+var cache = map[string]string{}
+go func() { cache["key"] = "val" }() // data race
+
+// RIGHT — use sync.Map or protect with mutex
+var cache sync.Map
+go func() { cache.Store("key", "val") }()
+```
+
+## Timeouts on all external calls
+
+```go
+// WRONG — gRPC call with no deadline; can hang forever
+resp, err := authClient.ValidateToken(ctx, req)
+
+// RIGHT — always enforce deadline per ARCHITECTURE.md budget
+const authTimeout = 50 * time.Millisecond
+timeoutCtx, cancel := context.WithTimeout(ctx, authTimeout)
+defer cancel()
+resp, err := authClient.ValidateToken(timeoutCtx, req)
+if err != nil {
+    if errors.Is(err, context.DeadlineExceeded) {
+        return nil, fmt.Errorf("auth.ValidateToken deadline exceeded (%s): %w", authTimeout, err)
+    }
+    return nil, fmt.Errorf("auth.ValidateToken: %w", err)
+}
+```

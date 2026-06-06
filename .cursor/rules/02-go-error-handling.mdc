@@ -1,0 +1,135 @@
+---
+description: Go error handling standards. Covers wrapping, sentinel errors, typed errors, and forbidden patterns.
+globs: ["**/*.go"]
+alwaysApply: false
+---
+
+# Go Error Handling
+
+## The fundamental rules
+
+1. Every error return must be handled. The only exception is explicitly documented intentional discard with a `//nolint:errcheck // reason` comment.
+2. Wrap errors with context using `fmt.Errorf("operation description: %w", err)`.
+3. Use `errors.Is` and `errors.As` for error inspection. Never do string comparison on error messages.
+4. Sentinel errors for discrete failure modes. Typed error structs for errors that carry data.
+5. Never return `errors.New("something failed")` from a public API — it tells callers nothing actionable.
+6. `panic` is forbidden in library code (`packages/*`). It is acceptable in `main()` for unrecoverable startup failures.
+7. `recover` is only permitted in top-level HTTP/gRPC handler middleware to prevent one bad request from crashing the process.
+
+## Error wrapping — always add context
+
+```go
+// WRONG — caller has no idea what failed or what values caused it
+if err != nil {
+    return err
+}
+
+// WRONG — adds "error" to an error; circular and redundant
+return fmt.Errorf("error: %w", err)
+
+// RIGHT — operation + discriminating values + wrapped cause
+return fmt.Errorf("AgentStore.GetByIDAndOrg orgID=%s agentID=%s: %w", orgID, agentID, err)
+
+// RIGHT — for multi-step operations, each wrapper adds one layer
+// (don't build a stack — three layers max before it's noise)
+func (s *TokenService) Revoke(ctx context.Context, tokenID uuid.UUID) error {
+    if err := s.store.MarkRevoked(ctx, tokenID); err != nil {
+        return fmt.Errorf("TokenService.Revoke tokenID=%s: %w", tokenID, err)
+    }
+    return nil
+}
+```
+
+## Sentinel errors — discrete, package-level, testable
+
+```go
+// WRONG — string literal comparison in callers
+if err.Error() == "not found" { ... }
+
+// RIGHT — sentinel var; callers use errors.Is
+var ErrAgentNotFound   = errors.New("agent not found")
+var ErrAgentNotActive  = errors.New("agent is not active")
+var ErrOrgMismatch     = errors.New("agent does not belong to this organization")
+
+// RIGHT — wrap sentinel with context, preserve identity
+return fmt.Errorf("AgentStore.GetByIDAndOrg: %w", ErrAgentNotFound)
+// caller: if errors.Is(err, ErrAgentNotFound) { ... } ← still works
+```
+
+## Typed errors — when callers need structured data
+
+```go
+// Use when the error payload drives caller behaviour (HTTP code, retry, etc.)
+type ValidationError struct {
+    Field   string
+    Message string
+}
+func (e *ValidationError) Error() string {
+    return fmt.Sprintf("validation failed on field %q: %s", e.Field, e.Message)
+}
+
+// Caller:
+var ve *ValidationError
+if errors.As(err, &ve) {
+    http.Error(w, ve.Message, http.StatusBadRequest)
+}
+```
+
+## pgx-specific patterns
+
+```go
+// WRONG — comparing error string
+if err.Error() == "no rows in result set" { return nil, ErrNotFound }
+
+// RIGHT — use pgx sentinel
+import "github.com/jackc/pgx/v5"
+if errors.Is(err, pgx.ErrNoRows) {
+    return nil, nil // caller treats nil as "not found"
+}
+return nil, fmt.Errorf("...: %w", err)
+```
+
+## gRPC error codes — use the right code, never leak internals
+
+```go
+// WRONG — NOT_FOUND leaks that the resource exists in another org
+return nil, status.Errorf(codes.NotFound, "agent %s not found", agentID)
+
+// RIGHT — PERMISSION_DENIED for any cross-tenant miss
+// (agent exists but not in this org, or truly doesn't exist — same response)
+return nil, status.Errorf(codes.PermissionDenied, "agent not authorized for this organization")
+
+// WRONG — exposing internal error to external caller
+return nil, status.Errorf(codes.Internal, "pgx: connection refused: dial tcp ...")
+
+// RIGHT — log internally, return opaque message
+log.ErrorCtx(ctx, "db query failed", "error", err)
+return nil, status.Errorf(codes.Internal, "internal error")
+
+// Standard ibex gRPC error code mapping:
+// pgx.ErrNoRows (cross-tenant) → codes.PermissionDenied
+// pgx.ErrNoRows (own org)      → codes.NotFound
+// validation failure           → codes.InvalidArgument
+// db/redis/infra error         → codes.Internal (log original)
+// context.DeadlineExceeded     → codes.DeadlineExceeded
+// context.Canceled             → codes.Canceled
+```
+
+## No error swallowing in goroutines
+
+```go
+// WRONG — error disappears into the void
+go func() {
+    if err := doWork(ctx); err != nil {
+        // nothing
+    }
+}()
+
+// RIGHT — log or send to errCh
+go func() {
+    if err := doWork(ctx); err != nil {
+        log.ErrorCtx(ctx, "background work failed", "error", err)
+        // or: errCh <- err
+    }
+}()
+```

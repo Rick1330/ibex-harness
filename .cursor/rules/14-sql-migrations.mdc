@@ -1,0 +1,93 @@
+---
+description: Database migration writing standards for infra/migrations/postgres/*.sql files.
+globs: ["infra/migrations/**/*.sql"]
+alwaysApply: false
+---
+
+# Database Migration Standards
+
+## Migration file naming — strictly enforced
+
+```text
+{6-digit-sequence}_{action}_{subject}.{up|down}.sql
+```
+
+Examples:
+- `000001_init_schemas.up.sql`
+- `000006_create_users.up.sql`
+- `000006_create_users.down.sql`
+- `000008_tokens_fk_constraints.up.sql`
+
+Sequence numbers are never reused. If a migration is superseded, a new migration is written (not edit of existing).
+
+## Every migration must have a corresponding .down.sql
+
+```sql
+-- 000006_create_users.down.sql
+-- Reverse of up.sql; must be safe to run after up.sql
+DROP TRIGGER IF EXISTS users_updated_at ON ibex_core.users;
+DROP POLICY  IF EXISTS users_isolation  ON ibex_core.users;
+DROP INDEX   IF EXISTS idx_users_email;
+DROP INDEX   IF EXISTS idx_users_org_id;
+DROP TABLE   IF EXISTS ibex_core.users;
+```
+
+## Expand-contract — never breaking changes in one step
+
+```sql
+-- PHASE 1 MIGRATION (backward-compatible addition):
+ALTER TABLE ibex_core.agents ADD COLUMN embedding_model TEXT DEFAULT 'all-MiniLM-L6-v2';
+-- Code is deployed that reads the new column but also works without it.
+
+-- PHASE 2 MIGRATION (make it required after all code is deployed):
+ALTER TABLE ibex_core.agents ALTER COLUMN embedding_model SET NOT NULL;
+-- Run only after the Phase 1 code is fully deployed.
+
+-- NEVER do both in one migration on a live system.
+```
+
+## Large table index creation — always CONCURRENTLY
+
+```sql
+-- WRONG — takes table lock; blocks reads and writes for minutes
+CREATE INDEX idx_memories_embedding ON ibex_core.memories USING ivfflat (...);
+
+-- RIGHT — builds without locking (takes longer but zero downtime)
+CREATE INDEX CONCURRENTLY idx_memories_embedding
+ON ibex_core.memories USING ivfflat (embedding vector_cosine_ops) WITH (lists=100)
+WHERE status = 'active' AND deleted_at IS NULL;
+```
+
+## FK constraints on populated tables — NOT VALID then VALIDATE
+
+```sql
+-- WRONG — full table scan with lock; blocks production
+ALTER TABLE ibex_core.tokens
+    ADD CONSTRAINT tokens_user_id_fk FOREIGN KEY (user_id) REFERENCES ibex_core.users(id);
+
+-- RIGHT — add without validation (instant), validate separately (concurrent)
+ALTER TABLE ibex_core.tokens
+    ADD CONSTRAINT tokens_user_id_fk FOREIGN KEY (user_id)
+    REFERENCES ibex_core.users(id) NOT VALID;
+
+ALTER TABLE ibex_core.tokens VALIDATE CONSTRAINT tokens_user_id_fk;
+```
+
+## RLS on every new tenant table — enabled by default, fail closed
+
+```sql
+-- Every table with org_id must have:
+ALTER TABLE ibex_core.{new_table} ENABLE ROW LEVEL SECURITY;
+
+-- Default: deny all (fail closed)
+-- Then add the isolation policy:
+CREATE POLICY {new_table}_isolation ON ibex_core.{new_table}
+    USING (
+        org_id = current_setting('app.current_org_id', true)::UUID
+        OR current_setting('app.is_service_account', true)::BOOLEAN = true
+    );
+```
+
+## Never modify a released migration
+
+A migration that has been applied to any environment (dev, staging, production) is immutable. If you need to change the schema, write a new migration. Modifying applied migrations causes checksum failures in golang-migrate and divergence between environments.

@@ -1,0 +1,104 @@
+---
+description: Architectural layer boundaries. No cross-layer violations. Dependency direction rules.
+alwaysApply: true
+---
+
+# Architecture and Layering Rules
+
+## Dependency direction — one way only
+
+```text
+Handler/Controller
+    ↓ (calls)
+Service / Use Case
+    ↓ (calls)
+Repository / Store
+    ↓ (calls)
+Infrastructure (DB, Redis, gRPC)
+```
+
+A lower layer must never import or depend on a higher layer. Violations are detected by `go-arch-lint` in CI.
+
+```go
+// WRONG — store calls service; inverts dependency
+package store
+
+import "github.com/Rick1330/ibex-harness/services/auth/internal/service"
+
+func (s *AgentStore) GetAndValidate(...) {
+    service.ValidatePermissions(...) // store calling service!
+}
+
+// RIGHT — store only touches database; service composes store + validation
+package store
+// No import of service package
+func (s *AgentStore) GetByIDAndOrg(...) (*AgentRecord, error) { ... } // pure DB access
+
+package service
+import "store"
+func (s *AgentService) GetVerifiedAgent(ctx, orgID, agentID) (*AgentRecord, error) {
+    record, err := s.store.GetByIDAndOrg(ctx, orgID, agentID)
+    if err != nil { return nil, err }
+    if record == nil { return nil, ErrAgentNotAuthorized }
+    return record, nil
+}
+```
+
+## No business logic in handlers
+
+Handlers (HTTP, gRPC) do exactly four things:
+1. Parse and validate input
+2. Extract auth context (org_id, permissions) from middleware
+3. Call one service function
+4. Serialize and write the response
+
+```go
+// WRONG — business logic in handler
+func (h *Handler) CreateToken(w http.ResponseWriter, r *http.Request) {
+    // ...
+    if len(req.Name) == 0 { // ← validation belongs in service/request type
+        ...
+    }
+    hash := argon2.Hash(token) // ← business logic in handler
+    _, err := h.db.Exec(ctx, "INSERT INTO tokens...") // ← direct DB access in handler!
+}
+
+// RIGHT — handler delegates completely
+func (h *Handler) CreateToken(w http.ResponseWriter, r *http.Request) {
+    var req CreateTokenRequest
+    if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+        writeError(w, 400, "INVALID_JSON", err.Error()); return
+    }
+    orgID := middleware.OrgIDMust(r.Context())
+    resp, err := h.tokenService.Create(r.Context(), orgID, req) // one service call
+    if err != nil {
+        writeServiceError(w, err); return
+    }
+    writeJSON(w, 201, resp)
+}
+```
+
+## No direct database access from proxy service in Phase 1
+
+The proxy service communicates with the database ONLY through the auth service gRPC API. It does not have its own `pgxpool.Pool`. This keeps the proxy stateless and eliminates a class of multi-master write issues.
+
+```go
+// WRONG — proxy has its own DB connection
+func init() {
+    proxyDB, _ = pgxpool.New(ctx, os.Getenv("DATABASE_URL"))
+}
+
+// RIGHT — proxy calls auth gRPC for all identity operations
+// The proxy's only external connections are: Redis (rate limit + cache) + Auth gRPC
+```
+
+## Shared packages (`packages/*`) have no service-specific imports
+
+A package in `packages/` must not import from `services/`. It is shared infrastructure. If it imports a service, it has become tightly coupled to that service's internals.
+
+```go
+// WRONG — packages/ratelimit imports from the proxy service
+import "github.com/Rick1330/ibex-harness/services/proxy/internal/config"
+
+// RIGHT — packages/* only import other packages/* or stdlib/external libraries
+```

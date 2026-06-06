@@ -1,0 +1,126 @@
+---
+description: TypeScript and React (Next.js) standards for the dashboard service.
+globs: ["services/dashboard/**/*.ts", "services/dashboard/**/*.tsx"]
+alwaysApply: false
+---
+
+# TypeScript and React Standards
+
+## No `any` — ever
+
+```typescript
+// WRONG
+function processAgent(data: any): any { ... }
+const response = await fetch(url) as any;
+
+// RIGHT — narrow the type or use unknown with type guards
+function processAgent(data: unknown): AgentRecord {
+    if (!isAgentRecord(data)) throw new Error("Invalid agent data");
+    return data;
+}
+
+// Type guard
+function isAgentRecord(data: unknown): data is AgentRecord {
+    return (
+        typeof data === "object" &&
+        data !== null &&
+        "id" in data &&
+        "org_id" in data
+    );
+}
+```
+
+## Strict TypeScript configuration
+
+```json
+// tsconfig.json — non-negotiable settings
+{
+  "compilerOptions": {
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "exactOptionalPropertyTypes": true
+  }
+}
+```
+
+## API client — typed, centralised, never fetch() in components
+
+```typescript
+// WRONG — raw fetch in component, no error handling, no type safety
+const AgentList = () => {
+    const [agents, setAgents] = useState([]);
+    useEffect(() => {
+        fetch("/api/agents").then(r => r.json()).then(setAgents);
+    }, []);
+};
+
+// RIGHT — typed API client + React Query
+// lib/api/agents.ts
+export async function listAgents(orgId: string): Promise<AgentRecord[]> {
+    const response = await apiClient.get<ListAgentsResponse>(`/agents`);
+    return response.data.agents;
+}
+
+// Component — no fetch, no useEffect for data fetching
+const AgentList = () => {
+    const { data, error, isPending } = useQuery({
+        queryKey: ["agents"],
+        queryFn: listAgents,
+    });
+    if (isPending) return <LoadingSpinner />;
+    if (error) return <ErrorBanner error={error} />;
+    return <AgentTable agents={data} />;
+};
+```
+
+## Component design — small, single responsibility
+
+```typescript
+// WRONG — one component does layout, data fetching, business logic, and presentation
+export const AgentDashboard = () => {
+    // 200 lines of everything mixed together
+};
+
+// RIGHT — separated concerns
+// components/agents/AgentDashboard.tsx — layout only
+// components/agents/AgentTable.tsx — table presentation
+// components/agents/AgentRow.tsx — single row
+// hooks/useAgents.ts — data fetching
+// lib/agents.ts — business logic (filtering, sorting)
+```
+
+## State management — server state in React Query, UI state in useState/useReducer
+
+Never put server data in Zustand/Redux. React Query handles caching, invalidation, and background refresh. Zustand/Redux is only for purely client-side state (modal open/closed, selected tab, user preferences).
+
+## Error boundaries — every feature-level component tree needs one
+
+```typescript
+// Every major page/section gets an error boundary
+<ErrorBoundary fallback={<FeatureErrorFallback />}>
+    <AgentDashboard />
+</ErrorBoundary>
+```
+
+## No prop drilling beyond 2 levels
+
+If a prop is passed through more than 2 component layers, introduce a context or lift it to React Query. Prop drilling is a maintenance time-bomb.
+
+## Accessibility — every interactive element
+
+```typescript
+// WRONG — div acting as button; keyboard inaccessible
+<div onClick={handleRevoke}>Revoke</div>
+
+// RIGHT
+<button
+    type="button"
+    onClick={handleRevoke}
+    aria-label="Revoke token"
+    disabled={isPending}
+>
+    Revoke
+</button>
+```

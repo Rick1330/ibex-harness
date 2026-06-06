@@ -1,0 +1,173 @@
+---
+description: Python code quality standards for all .py files. PEP 8, type hints, idioms, complexity limits.
+globs: ["**/*.py"]
+alwaysApply: false
+---
+
+# Python Code Quality Standards
+
+## Complexity limits (same bar as Go)
+
+- Cyclomatic complexity ≤ 8 per function/method
+- Lines per function ≤ 40 (excluding docstring)
+- Lines per file ≤ 400
+- Parameters per function ≤ 4 (use dataclass/Pydantic model for more)
+- Nesting depth ≤ 3 (flatten with early return)
+
+## Type hints — mandatory everywhere
+
+```python
+# WRONG — no type hints; caller has no contract
+def get_agent(org_id, agent_id):
+    ...
+
+# WRONG — incomplete
+def get_agent(org_id: str, agent_id: str):
+    ...
+
+# RIGHT — full signature with return type
+from uuid import UUID
+from typing import Optional
+
+async def get_agent(
+    ctx: RequestContext,
+    org_id: UUID,
+    agent_id: UUID,
+) -> Optional[AgentRecord]:
+    ...
+```
+
+All public functions/methods must have complete type annotations. Use `from __future__ import annotations` at the top of every file to support forward references without quotes.
+
+## Pydantic v2 for all data models — never raw dicts as API/DB contracts
+
+```python
+# WRONG — raw dict; no validation, no schema, typos silently pass
+def create_token(data: dict) -> dict:
+    org_id = data["org_id"]  # KeyError if missing, no type check
+
+# RIGHT — Pydantic model; validated, documented, serializable
+from pydantic import BaseModel, Field
+from uuid import UUID
+
+class CreateTokenRequest(BaseModel):
+    org_id: UUID
+    name: str = Field(min_length=1, max_length=255)
+    permissions: int = Field(ge=0, description="64-bit permission bitmap")
+
+class CreateTokenResponse(BaseModel):
+    token_id: UUID
+    token: str  # only returned at creation, never again
+    prefix: str
+```
+
+## No mutable default arguments
+
+```python
+# WRONG — the list is created once and shared across all calls
+def add_memory(content: str, tags: list = []) -> None:
+    tags.append("auto")  # mutates the shared default!
+
+# RIGHT
+def add_memory(content: str, tags: list[str] | None = None) -> None:
+    if tags is None:
+        tags = []
+    tags.append("auto")
+```
+
+## Exception handling — specific, never bare except
+
+```python
+# WRONG — catches everything including SystemExit, KeyboardInterrupt
+try:
+    result = await db.execute(q)
+except:
+    return None
+
+# WRONG — too broad; hides logic errors
+try:
+    result = await db.execute(q)
+except Exception:
+    return None
+
+# RIGHT — catch what you expect; let the rest propagate
+try:
+    result = await db.execute(q)
+except asyncpg.NoDataFoundError:
+    return None
+except asyncpg.PostgresError as e:
+    raise RepositoryError(f"get_agent failed: {e}") from e
+```
+
+## Dataclasses for internal data transfer, Pydantic for API contracts
+
+```python
+# Use dataclass for internal objects (fast, no validation overhead)
+from dataclasses import dataclass, field
+from uuid import UUID
+
+@dataclass(frozen=True)  # frozen = immutable = safe to cache
+class AgentRecord:
+    id: UUID
+    org_id: UUID
+    status: str
+    config: dict = field(default_factory=dict)
+
+# Use Pydantic for API requests/responses (validated, serialized)
+from pydantic import BaseModel
+class AgentResponse(BaseModel):
+    id: UUID
+    org_id: UUID
+    status: str
+```
+
+## Constants — UPPER_SNAKE_CASE, in a constants module
+
+```python
+# WRONG — magic numbers and strings scattered in code
+if count > 60:
+    raise RateLimitError()
+key = f"ratelimit:{org_id}:rpm:{minute}"
+
+# RIGHT — constants module
+# constants.py
+DEFAULT_RPM_LIMIT = 60
+REDIS_RATE_LIMIT_KEY_TEMPLATE = "ratelimit:{org_id}:rpm:{minute}"
+REDIS_KEY_TTL_SECONDS = 90
+```
+
+## No `import *`
+
+```python
+# WRONG — pollutes namespace, breaks static analysis, hides dependencies
+from models import *
+from utils import *
+
+# RIGHT — explicit imports
+from models import AgentRecord, TokenRecord
+from utils.validation import validate_uuid
+```
+
+## f-strings for all string formatting (never % or .format())
+
+```python
+# WRONG
+"org_id=%s agent_id=%s" % (org_id, agent_id)
+"org_id={} agent_id={}".format(org_id, agent_id)
+
+# RIGHT
+f"org_id={org_id} agent_id={agent_id}"
+```
+
+## Context managers for all resource management
+
+```python
+# WRONG — connection not guaranteed to close on exception
+conn = await pool.acquire()
+result = await conn.execute(q)
+await pool.release(conn)
+
+# RIGHT — async context manager guarantees cleanup
+async with pool.acquire() as conn:
+    result = await conn.execute(q)
+```

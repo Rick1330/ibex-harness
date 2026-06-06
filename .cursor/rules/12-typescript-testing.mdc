@@ -1,0 +1,68 @@
+---
+description: TypeScript and React testing standards for dashboard test files.
+globs: ["services/dashboard/**/*.test.ts", "services/dashboard/**/*.test.tsx", "services/dashboard/**/*.spec.ts", "services/dashboard/**/*.spec.tsx"]
+alwaysApply: false
+---
+
+# TypeScript Testing Standards
+
+## Test stack
+
+- **Runner:** Vitest (preferred) or Jest — match existing `package.json` in `services/dashboard/`.
+- **Component tests:** React Testing Library (`@testing-library/react`).
+- **API mocking:** MSW or typed mocks — never untyped `jest.fn()` returning `any`.
+
+## No `any` in tests
+
+```typescript
+// WRONG
+const mockFetch = jest.fn() as any;
+
+// RIGHT
+const mockListAgents = vi.fn<[], Promise<AgentRecord[]>>();
+mockListAgents.mockResolvedValue([fixtureAgent()]);
+```
+
+## Test naming
+
+- File: `ComponentName.test.tsx` or `feature-name.test.ts`
+- Case: `describe("ComponentName", () => { it("shows error when API fails", ...) })`
+- Prefer behaviour descriptions over implementation details.
+
+## Component tests — user-centric queries
+
+```typescript
+// WRONG — tests implementation detail
+expect(wrapper.find(".spinner")).toHaveLength(1);
+
+// RIGHT — tests what the user sees
+render(<AgentList />);
+expect(screen.getByRole("status", { name: /loading/i })).toBeInTheDocument();
+```
+
+## Async patterns
+
+```typescript
+// WRONG — missing await, flaky
+it("loads agents", () => {
+    render(<AgentList />);
+    expect(screen.getByText("Dev Agent")).toBeInTheDocument();
+});
+
+// RIGHT
+it("loads agents", async () => {
+    render(<AgentList />);
+    expect(await screen.findByText("Dev Agent")).toBeInTheDocument();
+});
+```
+
+## Cross-tenant and auth UI
+
+- Dashboard is org-scoped: tests must set org context in providers or route params.
+- Never assert on raw tokens or API keys in DOM snapshots.
+
+## Coverage expectations
+
+- New components: render + primary interaction + error state.
+- Hooks: success path, error path, and loading state.
+- See `23-testing-strategy.mdc` for repo-wide coverage gates.
