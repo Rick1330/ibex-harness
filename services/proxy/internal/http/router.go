@@ -70,7 +70,7 @@ func NewRouter(cfg config.Config, logger *slog.Logger, meter *metrics.Metrics, v
 		}
 
 		authNone := AuthMiddleware(validator, meter, logger, AuthOptions{})
-		mux.Handle("/v1/internal/auth-probe", chainOptional(rateLimit, authNone(http.HandlerFunc(handleAuthProbe))))
+		mux.Handle("/v1/internal/auth-probe", chain(authNone, rateLimit)(http.HandlerFunc(handleAuthProbe)))
 
 		authOrg := func(orgID string) func(http.Handler) http.Handler {
 			return AuthMiddleware(validator, meter, logger, AuthOptions{PathOrgID: orgID})
@@ -119,13 +119,6 @@ func chain(middlewares ...func(http.Handler) http.Handler) func(http.Handler) ht
 		}
 		return h
 	}
-}
-
-func chainOptional(middleware func(http.Handler) http.Handler, handler http.Handler) http.Handler {
-	if middleware == nil {
-		return handler
-	}
-	return middleware(handler)
 }
 
 func handleAuthProbe(w http.ResponseWriter, r *http.Request) {

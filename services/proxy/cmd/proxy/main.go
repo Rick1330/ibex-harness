@@ -36,7 +36,7 @@ func main() {
 	meter := metrics.New()
 
 	var redisClient redis.UniversalClient
-	var limiter ratelimit.Limiter = ratelimit.Noop()
+	var limiter = ratelimit.Noop()
 	if cfg.RedisURL != "" {
 		client, err := ratelimit.ParseRedisURL(cfg.RedisURL)
 		if err != nil {
