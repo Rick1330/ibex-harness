@@ -89,10 +89,8 @@ func setupAuthClients(cfg config.Config, log *logger.Logger) (auth.TokenValidato
 	}
 	conn, err := grpc.NewClient(cfg.AuthGRPCAddr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithChainUnaryInterceptor(
-			proxygrpc.RequestIDUnaryInterceptor(),
-			otelgrpc.UnaryClientInterceptor(),
-		),
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
+		grpc.WithChainUnaryInterceptor(proxygrpc.RequestIDUnaryInterceptor()),
 	)
 	if err != nil {
 		log.ErrorCtx(context.Background(), "auth grpc dial failed", "error", err, "addr", cfg.AuthGRPCAddr)
