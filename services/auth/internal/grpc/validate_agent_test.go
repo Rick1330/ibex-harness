@@ -18,7 +18,7 @@ type fakeAgentsStore struct {
 }
 
 func testAuthRegistry() *metrics.AuthRegistry {
-	return metrics.NewAuth("test", nil)
+	return metrics.NewAuth(metrics.AuthConfig{ServiceName: "test"})
 }
 
 func (f *fakeAgentsStore) GetByIDAndOrg(ctx context.Context, agentID, orgID uuid.UUID) (*repository.AgentRecord, error) {

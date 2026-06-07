@@ -47,7 +47,7 @@ func main() {
 	db.SetMaxIdleConns(5)
 	db.SetConnMaxLifetime(30 * time.Minute)
 
-	reg := ibexmetrics.NewAuth(cfg.ServiceName, db)
+	reg := ibexmetrics.NewAuth(ibexmetrics.AuthConfig{ServiceName: cfg.ServiceName, DB: db})
 	repo := repository.NewTokensRepository(db, reg)
 	agentsRepo := repository.NewAgentsRepository(db, reg)
 	validator := token.NewValidator(repo, cfg.Argon2)

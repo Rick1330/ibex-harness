@@ -6,7 +6,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/metrics"
 )
 
-func observeQuery(obs metrics.QueryObserver, operation string, start time.Time) {
+func observeQuery(obs metrics.QueryObserver, operation metrics.DBOperation, start time.Time) {
 	if obs == nil {
 		return
 	}

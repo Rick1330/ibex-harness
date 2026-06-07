@@ -29,7 +29,7 @@ type AuthGRPCFixture struct {
 func StartAuthGRPC(t testing.TB, dbDSN string) *AuthGRPCFixture {
 	t.Helper()
 	db := testutil.OpenDB(t, dbDSN)
-	reg := ibexmetrics.NewAuth("auth-test", db)
+	reg := ibexmetrics.NewAuth(ibexmetrics.AuthConfig{ServiceName: "auth-test", DB: db})
 	repo := repository.NewTokensRepository(db, reg)
 	agentsRepo := repository.NewAgentsRepository(db, reg)
 	argon2 := token.DefaultArgon2Params()

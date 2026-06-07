@@ -14,7 +14,7 @@ import (
 )
 
 func TestHealthReturnsOK(t *testing.T) {
-	router := NewRouter(config.Config{ServiceName: "auth"}, logger.Discard("auth"), metrics.NewAuth("test", nil), telemetry.NoopTracer("auth"))
+	router := NewRouter(config.Config{ServiceName: "auth"}, logger.Discard("auth"), metrics.NewAuth(metrics.AuthConfig{ServiceName: "test"}), telemetry.NoopTracer("auth"))
 
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	rec := httptest.NewRecorder()
@@ -29,7 +29,7 @@ func TestHealthReturnsOK(t *testing.T) {
 }
 
 func TestReadyMissingPostgresDSN(t *testing.T) {
-	router := NewRouter(config.Config{ServiceName: "auth"}, logger.Discard("auth"), metrics.NewAuth("test", nil), telemetry.NoopTracer("auth"))
+	router := NewRouter(config.Config{ServiceName: "auth"}, logger.Discard("auth"), metrics.NewAuth(metrics.AuthConfig{ServiceName: "test"}), telemetry.NoopTracer("auth"))
 
 	req := httptest.NewRequest(http.MethodGet, "/ready", nil)
 	rec := httptest.NewRecorder()

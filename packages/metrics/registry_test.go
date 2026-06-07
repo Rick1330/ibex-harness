@@ -43,14 +43,14 @@ func TestMetricsEndpoint_RequiredMetrics(t *testing.T) {
 }
 
 func TestAuthMetricsEndpoint_RequiredMetrics(t *testing.T) {
-	reg := NewAuth("test-auth", nil)
+	reg := NewAuth(AuthConfig{ServiceName: "test-auth"})
 	seedAuthSamples(reg)
 	assertRequiredMetrics(t, reg.Gatherer(), AuthRequiredMetricNames)
 }
 
 func TestMetricLabels_NoHighCardinality(t *testing.T) {
 	proxyReg := NewProxy("test-proxy")
-	authReg := NewAuth("test-auth", nil)
+	authReg := NewAuth(AuthConfig{ServiceName: "test-auth"})
 
 	assertNoForbiddenLabels(t, proxyReg.Gatherer())
 	assertNoForbiddenLabels(t, authReg.Gatherer())
@@ -64,8 +64,8 @@ func seedProxySamples(reg *ProxyRegistry) {
 func seedAuthSamples(reg *AuthRegistry) {
 	reg.ObserveValidateToken(TokenResultOK, 0.001)
 	reg.ObserveValidateAgent(AgentResultOK, 0.001)
-	reg.IncGRPCRequest("ValidateToken", "OK")
-	reg.ObserveDBQuery("find_token_by_prefix", 0.001)
+	reg.IncGRPCRequest(GRPCRequestLabels{Method: "ValidateToken", Status: "OK"})
+	reg.ObserveDBQuery(DBOpFindTokenByPrefix, 0.001)
 }
 
 func assertRequiredMetrics(t *testing.T, gatherer prometheus.Gatherer, required []string) {

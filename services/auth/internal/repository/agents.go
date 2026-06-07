@@ -33,7 +33,7 @@ func (r *AgentsRepository) GetByIDAndOrg(
 	agentID, orgID uuid.UUID,
 ) (*AgentRecord, error) {
 	start := time.Now()
-	defer observeQuery(r.obs, "get_agent_by_id", start)
+	defer observeQuery(r.obs, metrics.DBOpGetAgentByID, start)
 
 	var out *AgentRecord
 	err := r.withServiceAccount(ctx, func(tx *sql.Tx) error {

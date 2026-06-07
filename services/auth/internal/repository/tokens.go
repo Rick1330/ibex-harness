@@ -37,7 +37,7 @@ func NewTokensRepository(db *sql.DB, obs metrics.QueryObserver) *TokensRepositor
 // FindActiveByPrefix returns a non-revoked, non-expired token with the given prefix.
 func (r *TokensRepository) FindActiveByPrefix(ctx context.Context, prefix string) (TokenRow, error) {
 	start := time.Now()
-	defer observeQuery(r.obs, "find_token_by_prefix", start)
+	defer observeQuery(r.obs, metrics.DBOpFindTokenByPrefix, start)
 
 	var row TokenRow
 	err := r.withServiceAccount(ctx, func(tx *sql.Tx) error {
@@ -120,7 +120,7 @@ type TokenMetadata struct {
 // CreateToken inserts a new PAT row and returns its id.
 func (r *TokensRepository) CreateToken(ctx context.Context, p CreateTokenParams) (string, error) {
 	start := time.Now()
-	defer observeQuery(r.obs, "create_token", start)
+	defer observeQuery(r.obs, metrics.DBOpCreateToken, start)
 
 	var id string
 	err := r.withServiceAccount(ctx, func(tx *sql.Tx) error {
@@ -184,7 +184,7 @@ func (r *TokensRepository) RevokeToken(ctx context.Context, orgID, tokenID, revo
 // ListTokens returns token metadata for an org with cursor pagination.
 func (r *TokensRepository) ListTokens(ctx context.Context, orgID, cursor string, limit int) ([]TokenMetadata, string, error) {
 	start := time.Now()
-	defer observeQuery(r.obs, "list_tokens", start)
+	defer observeQuery(r.obs, metrics.DBOpListTokens, start)
 
 	if limit <= 0 || limit > 100 {
 		limit = 50

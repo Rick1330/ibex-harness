@@ -35,7 +35,7 @@ func (s *testAuthServer) ValidateToken(ctx context.Context, req *authv1.Validate
 }
 
 func TestValidateTokenUnauthenticated(t *testing.T) {
-	reg := metrics.NewAuth("test", nil)
+	reg := metrics.NewAuth(metrics.AuthConfig{ServiceName: "test"})
 	s := &testAuthServer{
 		metrics: reg,
 		fn: func(context.Context, string) (*authv1.ValidateTokenResponse, error) {
@@ -49,7 +49,7 @@ func TestValidateTokenUnauthenticated(t *testing.T) {
 }
 
 func TestValidateTokenOK(t *testing.T) {
-	reg := metrics.NewAuth("test", nil)
+	reg := metrics.NewAuth(metrics.AuthConfig{ServiceName: "test"})
 	want := &authv1.ValidateTokenResponse{OrgId: "org", Permissions: 7}
 	s := &testAuthServer{
 		metrics: reg,
