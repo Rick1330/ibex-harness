@@ -36,7 +36,14 @@ func main() {
 	redisClient, limiter := setupRateLimiter(cfg, logger)
 	validator, grpcConn := setupAuthValidator(cfg, logger)
 
-	server := newHTTPServer(cfg, logger, meter, validator, limiter)
+	deps := proxyhttp.RouterDeps{
+		Config:    cfg,
+		Logger:    logger,
+		Metrics:   meter,
+		Validator: validator,
+		Limiter:   limiter,
+	}
+	server := newHTTPServer(deps)
 	runUntilShutdown(server, logger, grpcConn, redisClient, cfg.ServiceName)
 }
 
@@ -71,16 +78,10 @@ func setupAuthValidator(cfg config.Config, logger *slog.Logger) (auth.TokenValid
 	return validator, conn
 }
 
-func newHTTPServer(cfg config.Config, logger *slog.Logger, meter *metrics.Metrics, validator auth.TokenValidator, limiter ratelimit.Limiter) *http.Server {
+func newHTTPServer(deps proxyhttp.RouterDeps) *http.Server {
 	return &http.Server{
-		Addr: ":" + cfg.Port,
-		Handler: proxyhttp.NewRouter(proxyhttp.RouterDeps{
-			Config:    cfg,
-			Logger:    logger,
-			Metrics:   meter,
-			Validator: validator,
-			Limiter:   limiter,
-		}),
+		Addr:              ":" + deps.Config.Port,
+		Handler:           proxyhttp.NewRouter(deps),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 }

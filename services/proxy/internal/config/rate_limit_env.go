@@ -15,7 +15,10 @@ func loadOptionalOverrides(cfg *Config) error {
 	if err := loadAuthValidateTimeout(cfg); err != nil {
 		return err
 	}
-	return loadRateLimitEnv(cfg)
+	if err := loadDefaultRPMEnv(cfg); err != nil {
+		return err
+	}
+	return loadOrgOverridesEnv(cfg)
 }
 
 func loadMaxBodyBytes(cfg *Config) error {
@@ -44,20 +47,28 @@ func loadAuthValidateTimeout(cfg *Config) error {
 	return nil
 }
 
-func loadRateLimitEnv(cfg *Config) error {
-	if v := strings.TrimSpace(os.Getenv("IBEX_RATE_LIMIT_DEFAULT_RPM")); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n < 1 {
-			return fmt.Errorf("IBEX_RATE_LIMIT_DEFAULT_RPM must be a positive integer")
-		}
-		cfg.RateLimit.DefaultRPM = n
+func loadDefaultRPMEnv(cfg *Config) error {
+	v := strings.TrimSpace(os.Getenv("IBEX_RATE_LIMIT_DEFAULT_RPM"))
+	if v == "" {
+		return nil
 	}
-	if v := strings.TrimSpace(os.Getenv("IBEX_RATE_LIMIT_ORG_OVERRIDES")); v != "" {
-		overrides, err := parseOrgRPMOverrides(v)
-		if err != nil {
-			return fmt.Errorf("IBEX_RATE_LIMIT_ORG_OVERRIDES: %w", err)
-		}
-		cfg.RateLimit.OrgOverrides = overrides
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 1 {
+		return fmt.Errorf("IBEX_RATE_LIMIT_DEFAULT_RPM must be a positive integer")
 	}
+	cfg.RateLimit.DefaultRPM = n
+	return nil
+}
+
+func loadOrgOverridesEnv(cfg *Config) error {
+	v := strings.TrimSpace(os.Getenv("IBEX_RATE_LIMIT_ORG_OVERRIDES"))
+	if v == "" {
+		return nil
+	}
+	overrides, err := parseOrgRPMOverrides(v)
+	if err != nil {
+		return fmt.Errorf("IBEX_RATE_LIMIT_ORG_OVERRIDES: %w", err)
+	}
+	cfg.RateLimit.OrgOverrides = overrides
 	return nil
 }
