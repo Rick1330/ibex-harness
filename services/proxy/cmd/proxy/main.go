@@ -21,6 +21,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
+	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -38,6 +39,7 @@ func main() {
 		os.Exit(1)
 	}
 
+	providers, tracer := initTelemetry(cfg, log)
 	meter := metrics.New()
 	redisClient, limiter := setupRateLimiter(cfg, log)
 	validator, agentVerifier, grpcConn := setupAuthClients(cfg, log)
@@ -46,13 +48,14 @@ func main() {
 		Config:        cfg,
 		Logger:        log,
 		Metrics:       meter,
+		Tracer:        tracer,
 		Validator:     validator,
 		AgentVerifier: agentVerifier,
 		Limiter:       limiter,
 	}
 	server := newHTTPServer(deps)
 	runWithShutdown(shutdownOpts{
-		cfg: cfg, logger: log, server: server,
+		cfg: cfg, logger: log, providers: providers, server: server,
 		grpcConn: grpcConn, redisClient: redisClient,
 	})
 }
@@ -64,6 +67,15 @@ type shutdownOpts struct {
 	providers   *telemetry.Providers
 	grpcConn    *grpc.ClientConn
 	redisClient redis.UniversalClient
+}
+
+func initTelemetry(cfg config.Config, log *logger.Logger) (*telemetry.Providers, trace.Tracer) {
+	providers, tracer, err := telemetry.InitTracer(context.Background(), cfg.Telemetry, "ibex-proxy")
+	if err != nil {
+		log.ErrorCtx(context.Background(), "telemetry init failed", "error", err)
+		os.Exit(1)
+	}
+	return providers, tracer
 }
 
 func setupRateLimiter(cfg config.Config, log *logger.Logger) (redis.UniversalClient, ratelimit.Limiter) {

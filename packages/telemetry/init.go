@@ -7,6 +7,7 @@ import (
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
@@ -63,6 +64,15 @@ func Init(ctx context.Context, cfg Config) (*Providers, error) {
 		MeterProvider:  mp,
 		Shutdown:       shutdown,
 	}, nil
+}
+
+// InitTracer initialises providers and returns a named tracer for the service.
+func InitTracer(ctx context.Context, cfg Config, instrumentationName string) (*Providers, trace.Tracer, error) {
+	providers, err := Init(ctx, cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	return providers, providers.TracerProvider.Tracer(instrumentationName), nil
 }
 
 func validateConfig(cfg *Config) error {
