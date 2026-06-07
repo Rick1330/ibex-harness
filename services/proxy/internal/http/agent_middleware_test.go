@@ -11,7 +11,6 @@ import (
 
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	proxyerrors "github.com/Rick1330/ibex-harness/services/proxy/internal/errors"
-	"github.com/Rick1330/ibex-harness/services/proxy/internal/metrics"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/validation"
 	"github.com/google/uuid"
 )
@@ -43,7 +42,7 @@ func agentTestAgentID() string {
 
 func runAgentVerification(t *testing.T, verifier auth.AgentVerifier, agentID string, withAuth bool) *httptest.ResponseRecorder {
 	t.Helper()
-	handler := AgentVerificationMiddleware(verifier, metrics.New(), logger.Discard("proxy"))(
+	handler := AgentVerificationMiddleware(verifier, logger.Discard("proxy"))(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			rec, ok := AgentFromContext(r.Context())
 			if !ok {

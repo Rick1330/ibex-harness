@@ -11,13 +11,13 @@ import (
 	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/logger"
+	ibexmetrics "github.com/Rick1330/ibex-harness/packages/metrics"
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	"github.com/Rick1330/ibex-harness/packages/shutdown"
 	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/config"
 	grpcserver "github.com/Rick1330/ibex-harness/services/auth/internal/grpc"
 	authhttp "github.com/Rick1330/ibex-harness/services/auth/internal/http"
-	"github.com/Rick1330/ibex-harness/services/auth/internal/metrics"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/repository"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/service"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/token"
@@ -47,11 +47,11 @@ func main() {
 	db.SetMaxIdleConns(5)
 	db.SetConnMaxLifetime(30 * time.Minute)
 
-	repo := repository.NewTokensRepository(db)
-	agentsRepo := repository.NewAgentsRepository(db)
+	reg := ibexmetrics.NewAuth(cfg.ServiceName, db)
+	repo := repository.NewTokensRepository(db, reg)
+	agentsRepo := repository.NewAgentsRepository(db, reg)
 	validator := token.NewValidator(repo, cfg.Argon2)
 	tokenSvc := service.NewTokenService(repo, cfg.Argon2, log)
-	meter := metrics.New()
 
 	providers, tracer, err := telemetry.InitTracer(context.Background(), cfg.Telemetry, "ibex-auth")
 	if err != nil {
@@ -60,9 +60,12 @@ func main() {
 	}
 
 	grpcSrv := grpc.NewServer(
-		grpc.UnaryInterceptor(grpcserver.AuthzUnaryInterceptor(validator)),
+		grpc.ChainUnaryInterceptor(
+			grpcserver.MetricsUnaryInterceptor(reg),
+			grpcserver.AuthzUnaryInterceptor(validator),
+		),
 	)
-	authv1.RegisterAuthServiceServer(grpcSrv, grpcserver.NewServer(validator, tokenSvc, agentsRepo, meter))
+	authv1.RegisterAuthServiceServer(grpcSrv, grpcserver.NewServer(validator, tokenSvc, agentsRepo, reg))
 
 	grpcLis, err := net.Listen("tcp", config.ListenAddress(cfg.GRPCPort))
 	if err != nil {
@@ -72,7 +75,7 @@ func main() {
 
 	httpServer := &http.Server{
 		Addr:              config.ListenAddress(cfg.Port),
-		Handler:           authhttp.NewRouter(cfg, log, meter, tracer),
+		Handler:           authhttp.NewRouter(cfg, log, reg, tracer),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

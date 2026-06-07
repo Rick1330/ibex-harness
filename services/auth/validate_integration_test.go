@@ -20,7 +20,7 @@ func TestValidateTokenIntegration(t *testing.T) {
 	db := testutil.OpenDB(t, dsn)
 	defer db.Close()
 
-	repo := repository.NewTokensRepository(db)
+	repo := repository.NewTokensRepository(db, nil)
 	argon2 := token.DefaultArgon2Params()
 	validator := token.NewValidator(repo, argon2)
 

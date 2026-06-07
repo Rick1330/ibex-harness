@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Rick1330/ibex-harness/infra/testing/testutil"
+	"github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/packages/permissions"
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
@@ -23,7 +24,6 @@ import (
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
 	proxygrpc "github.com/Rick1330/ibex-harness/services/proxy/internal/grpc"
 	proxyhttp "github.com/Rick1330/ibex-harness/services/proxy/internal/http"
-	"github.com/Rick1330/ibex-harness/services/proxy/internal/metrics"
 	"github.com/google/uuid"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -104,7 +104,7 @@ func startProxyServer(t *testing.T, authAddr string) *httptest.Server {
 	handler := proxyhttp.NewRouter(proxyhttp.RouterDeps{
 		Config:        cfg,
 		Logger:        logger.Discard("proxy"),
-		Metrics:       metrics.New(),
+		Metrics:       metrics.NewProxy("test"),
 		Tracer:        telemetry.NoopTracer("proxy"),
 		Validator:     validator,
 		AgentVerifier: agentVerifier,

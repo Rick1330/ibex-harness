@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/logger"
+	"github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
 	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
@@ -15,7 +16,6 @@ import (
 	proxyerrors "github.com/Rick1330/ibex-harness/services/proxy/internal/errors"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/health"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/llm"
-	"github.com/Rick1330/ibex-harness/services/proxy/internal/metrics"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/validation"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -34,7 +34,7 @@ type authProbeResponse struct {
 type RouterDeps struct {
 	Config        config.Config
 	Logger        *logger.Logger
-	Metrics       *metrics.Metrics
+	Metrics       *metrics.ProxyRegistry
 	Tracer        trace.Tracer
 	Validator     auth.TokenValidator
 	AgentVerifier auth.AgentVerifier
@@ -45,7 +45,7 @@ type RouterDeps struct {
 func NewRouter(deps RouterDeps) http.Handler {
 	cfg := deps.Config
 	logger := deps.Logger
-	meter := deps.Metrics
+	reg := deps.Metrics
 	validator := deps.Validator
 	agentVerifier := deps.AgentVerifier
 	limiter := deps.Limiter
@@ -74,19 +74,14 @@ func NewRouter(deps RouterDeps) http.Handler {
 		}
 		writeJSON(w, http.StatusOK, response{Status: "ok"})
 	})
-	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
-		if !requireMethod(w, r, http.MethodGet, docsBase) {
-			return
-		}
-		meter.ServeHTTP(w, r)
-	})
+	mux.Handle("/metrics", metrics.Handler(reg.Gatherer()))
 
 	if validator != nil {
 		registerProtectedRoutes(protectedRouteDeps{
 			mux:           mux,
 			cfg:           cfg,
 			logger:        logger,
-			meter:         meter,
+			reg:           reg,
 			validator:     validator,
 			agentVerifier: agentVerifier,
 			limiter:       limiter,
@@ -94,7 +89,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 		})
 	}
 
-	handler := meter.Middleware(
+	handler := metrics.HTTPMiddleware(reg)(
 		RequestContextMiddleware(cfg)(
 			telemetry.SpanMiddleware(deps.Tracer)(
 				ResponseHeadersMiddleware(cfg)(

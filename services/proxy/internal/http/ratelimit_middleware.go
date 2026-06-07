@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/logger"
+	"github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	proxyerrors "github.com/Rick1330/ibex-harness/services/proxy/internal/errors"
@@ -42,14 +43,15 @@ func (w *rateLimitResponseWriter) ensureHeaders() {
 type rateLimitHandler struct {
 	limiter ratelimit.Limiter
 	logger  *logger.Logger
+	reg     *metrics.ProxyRegistry
 	next    http.Handler
 }
 
 // RateLimitMiddleware enforces org-level rate limits after authentication.
 // On Redis failure: fail open (allow request) with warning log.
-func RateLimitMiddleware(limiter ratelimit.Limiter, log *logger.Logger) func(http.Handler) http.Handler {
+func RateLimitMiddleware(limiter ratelimit.Limiter, log *logger.Logger, reg *metrics.ProxyRegistry) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
-		return &rateLimitHandler{limiter: limiter, logger: log, next: next}
+		return &rateLimitHandler{limiter: limiter, logger: log, reg: reg, next: next}
 	}
 }
 
@@ -70,6 +72,7 @@ func (h *rateLimitHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	res, _ := auth.FromContext(r.Context())
 	result, err := h.limiter.Check(r.Context(), orgUUID, agentUUID)
 	if err != nil {
+		h.reg.IncRateLimitRedisError()
 		h.logger.WarnCtx(r.Context(), "rate limit check failed; failing open",
 			"org_id", res.OrgID,
 			"error", err,
@@ -78,9 +81,11 @@ func (h *rateLimitHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !result.Allowed {
+		h.reg.IncRateLimitDenied()
 		writeRateLimitExceeded(w, requestID, docsBase, result)
 		return
 	}
+	h.reg.IncRateLimitAllowed()
 
 	wrapped := &rateLimitResponseWriter{
 		ResponseWriter: w,

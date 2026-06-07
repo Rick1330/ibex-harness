@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/Rick1330/ibex-harness/packages/metrics"
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
-	"github.com/Rick1330/ibex-harness/services/auth/internal/metrics"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/token"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -17,27 +17,27 @@ type validateFunc func(context.Context, string) (*authv1.ValidateTokenResponse, 
 type testAuthServer struct {
 	authv1.UnimplementedAuthServiceServer
 	fn      validateFunc
-	metrics *metrics.Metrics
+	metrics *metrics.AuthRegistry
 }
 
 func (s *testAuthServer) ValidateToken(ctx context.Context, req *authv1.ValidateTokenRequest) (*authv1.ValidateTokenResponse, error) {
 	resp, err := s.fn(ctx, req.GetAccessToken())
 	if err != nil {
 		if errors.Is(err, token.ErrUnauthenticated) {
-			s.metrics.ObserveValidateToken(0, false)
+			s.metrics.ObserveValidateToken(metrics.TokenResultError, 0)
 			return nil, status.Error(codes.Unauthenticated, "invalid or expired token")
 		}
-		s.metrics.ObserveValidateToken(0, false)
+		s.metrics.ObserveValidateToken(metrics.TokenResultError, 0)
 		return nil, status.Errorf(codes.Internal, "validation failed")
 	}
-	s.metrics.ObserveValidateToken(0, true)
+	s.metrics.ObserveValidateToken(metrics.TokenResultOK, 0)
 	return resp, nil
 }
 
 func TestValidateTokenUnauthenticated(t *testing.T) {
-	m := metrics.New()
+	reg := metrics.NewAuth("test", nil)
 	s := &testAuthServer{
-		metrics: m,
+		metrics: reg,
 		fn: func(context.Context, string) (*authv1.ValidateTokenResponse, error) {
 			return nil, token.ErrUnauthenticated
 		},
@@ -49,10 +49,10 @@ func TestValidateTokenUnauthenticated(t *testing.T) {
 }
 
 func TestValidateTokenOK(t *testing.T) {
-	m := metrics.New()
+	reg := metrics.NewAuth("test", nil)
 	want := &authv1.ValidateTokenResponse{OrgId: "org", Permissions: 7}
 	s := &testAuthServer{
-		metrics: m,
+		metrics: reg,
 		fn: func(context.Context, string) (*authv1.ValidateTokenResponse, error) {
 			return want, nil
 		},

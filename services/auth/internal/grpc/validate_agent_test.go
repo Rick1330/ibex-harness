@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/Rick1330/ibex-harness/packages/metrics"
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/repository"
 	"github.com/google/uuid"
@@ -16,6 +17,10 @@ type fakeAgentsStore struct {
 	err error
 }
 
+func testAuthRegistry() *metrics.AuthRegistry {
+	return metrics.NewAuth("test", nil)
+}
+
 func (f *fakeAgentsStore) GetByIDAndOrg(ctx context.Context, agentID, orgID uuid.UUID) (*repository.AgentRecord, error) {
 	_ = ctx
 	_ = agentID
@@ -25,6 +30,7 @@ func (f *fakeAgentsStore) GetByIDAndOrg(ctx context.Context, agentID, orgID uuid
 
 func TestValidateAgent_MissingCallerContext(t *testing.T) {
 	s := &Server{
+		metrics:     testAuthRegistry(),
 		agentsStore: &fakeAgentsStore{rec: nil},
 	}
 
@@ -43,6 +49,7 @@ func TestValidateAgent_ForbiddenOrgMismatch(t *testing.T) {
 		TokenID: "t",
 	})
 	s := &Server{
+		metrics:     testAuthRegistry(),
 		agentsStore: &fakeAgentsStore{rec: &repository.AgentRecord{ID: "a", OrgID: "x", Status: "active"}},
 	}
 
@@ -62,6 +69,7 @@ func TestValidateAgent_InvalidOrgId(t *testing.T) {
 		TokenID: "t",
 	})
 	s := &Server{
+		metrics:     testAuthRegistry(),
 		agentsStore: &fakeAgentsStore{rec: nil},
 	}
 
@@ -81,6 +89,7 @@ func TestValidateAgent_InvalidAgentId(t *testing.T) {
 		TokenID: "t",
 	})
 	s := &Server{
+		metrics:     testAuthRegistry(),
 		agentsStore: &fakeAgentsStore{rec: nil},
 	}
 
@@ -102,6 +111,7 @@ func TestValidateAgent_NotFoundBecomesPermissionDenied(t *testing.T) {
 	})
 
 	s := &Server{
+		metrics:     testAuthRegistry(),
 		agentsStore: &fakeAgentsStore{rec: nil, err: nil},
 	}
 
@@ -123,6 +133,7 @@ func TestValidateAgent_InactiveAgentPermissionDenied(t *testing.T) {
 	})
 
 	s := &Server{
+		metrics: testAuthRegistry(),
 		agentsStore: &fakeAgentsStore{rec: &repository.AgentRecord{
 			ID:     agentID,
 			OrgID:  orgID,
@@ -148,6 +159,7 @@ func TestValidateAgent_OK(t *testing.T) {
 	})
 
 	s := &Server{
+		metrics: testAuthRegistry(),
 		agentsStore: &fakeAgentsStore{rec: &repository.AgentRecord{
 			ID:     agentID,
 			OrgID:  orgID,

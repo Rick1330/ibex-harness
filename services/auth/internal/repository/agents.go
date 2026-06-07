@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
+	"github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/google/uuid"
 )
 
@@ -18,17 +20,21 @@ type AgentRecord struct {
 
 // AgentsRepository loads agents under the service-account RLS context.
 type AgentsRepository struct {
-	db *sql.DB
+	db  *sql.DB
+	obs metrics.QueryObserver
 }
 
-func NewAgentsRepository(db *sql.DB) *AgentsRepository {
-	return &AgentsRepository{db: db}
+func NewAgentsRepository(db *sql.DB, obs metrics.QueryObserver) *AgentsRepository {
+	return &AgentsRepository{db: db, obs: obs}
 }
 
 func (r *AgentsRepository) GetByIDAndOrg(
 	ctx context.Context,
 	agentID, orgID uuid.UUID,
 ) (*AgentRecord, error) {
+	start := time.Now()
+	defer observeQuery(r.obs, "get_agent_by_id", start)
+
 	var out *AgentRecord
 	err := r.withServiceAccount(ctx, func(tx *sql.Tx) error {
 		// Note: org_id is part of the WHERE clause to prevent cross-tenant lookups.

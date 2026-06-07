@@ -7,10 +7,10 @@ import (
 	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/logger"
+	"github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/config"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/health"
-	"github.com/Rick1330/ibex-harness/services/auth/internal/metrics"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -19,7 +19,7 @@ type response struct {
 	Reason string `json:"reason,omitempty"`
 }
 
-func NewRouter(cfg config.Config, log *logger.Logger, meter *metrics.Metrics, tracer trace.Tracer) http.Handler {
+func NewRouter(cfg config.Config, log *logger.Logger, reg *metrics.AuthRegistry, tracer trace.Tracer) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		if !requireMethod(w, r, http.MethodGet) {
@@ -42,14 +42,9 @@ func NewRouter(cfg config.Config, log *logger.Logger, meter *metrics.Metrics, tr
 		}
 		writeJSON(w, http.StatusOK, response{Status: "ok"})
 	})
-	mux.HandleFunc("/metrics", func(w http.ResponseWriter, r *http.Request) {
-		if !requireMethod(w, r, http.MethodGet) {
-			return
-		}
-		meter.ServeHTTP(w, r)
-	})
+	mux.Handle("/metrics", metrics.Handler(reg.Gatherer()))
 
-	return meter.Middleware(telemetry.SpanMiddleware(tracer)(loggingMiddleware(log, mux)))
+	return telemetry.SpanMiddleware(tracer)(loggingMiddleware(log, mux))
 }
 
 func loggingMiddleware(log *logger.Logger, next http.Handler) http.Handler {

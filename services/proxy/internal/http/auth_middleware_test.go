@@ -11,7 +11,6 @@ import (
 
 	"github.com/Rick1330/ibex-harness/packages/permissions"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
-	"github.com/Rick1330/ibex-harness/services/proxy/internal/metrics"
 )
 
 type mockValidator struct {
@@ -24,7 +23,7 @@ func (m *mockValidator) Validate(_ context.Context, _ string) (*auth.ValidateRes
 }
 
 func TestAuthMiddlewareMissingToken(t *testing.T) {
-	handler := AuthMiddleware(&mockValidator{}, metrics.New(), logger.Discard("proxy"), AuthOptions{})(
+	handler := AuthMiddleware(&mockValidator{}, logger.Discard("proxy"), AuthOptions{})(
 		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }),
 	)
 	rec := httptest.NewRecorder()
@@ -35,7 +34,7 @@ func TestAuthMiddlewareMissingToken(t *testing.T) {
 }
 
 func TestAuthMiddlewareInvalidToken(t *testing.T) {
-	handler := AuthMiddleware(&mockValidator{err: auth.ErrInvalidToken}, metrics.New(), logger.Discard("proxy"), AuthOptions{})(
+	handler := AuthMiddleware(&mockValidator{err: auth.ErrInvalidToken}, logger.Discard("proxy"), AuthOptions{})(
 		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }),
 	)
 	rec := httptest.NewRecorder()
@@ -48,7 +47,7 @@ func TestAuthMiddlewareInvalidToken(t *testing.T) {
 }
 
 func TestAuthMiddlewareAuthUnavailable(t *testing.T) {
-	handler := AuthMiddleware(&mockValidator{err: auth.ErrAuthUnavailable}, metrics.New(), logger.Discard("proxy"), AuthOptions{})(
+	handler := AuthMiddleware(&mockValidator{err: auth.ErrAuthUnavailable}, logger.Discard("proxy"), AuthOptions{})(
 		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }),
 	)
 	rec := httptest.NewRecorder()
@@ -61,7 +60,7 @@ func TestAuthMiddlewareAuthUnavailable(t *testing.T) {
 }
 
 func TestAuthMiddlewareInsufficientPermissions(t *testing.T) {
-	handler := AuthMiddleware(&mockValidator{res: &auth.ValidateResult{OrgID: "org-a", Permissions: 0}}, metrics.New(), logger.Discard("proxy"), AuthOptions{RequireProxyChatCompletion: true})(
+	handler := AuthMiddleware(&mockValidator{res: &auth.ValidateResult{OrgID: "org-a", Permissions: 0}}, logger.Discard("proxy"), AuthOptions{RequireProxyChatCompletion: true})(
 		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }),
 	)
 	rec := httptest.NewRecorder()
@@ -74,7 +73,7 @@ func TestAuthMiddlewareInsufficientPermissions(t *testing.T) {
 }
 
 func TestAuthMiddlewareOrgMismatch(t *testing.T) {
-	handler := AuthMiddleware(&mockValidator{res: &auth.ValidateResult{OrgID: "org-a", Permissions: permissions.Admin}}, metrics.New(), logger.Discard("proxy"), AuthOptions{PathOrgID: "org-b"})(
+	handler := AuthMiddleware(&mockValidator{res: &auth.ValidateResult{OrgID: "org-a", Permissions: permissions.Admin}}, logger.Discard("proxy"), AuthOptions{PathOrgID: "org-b"})(
 		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }),
 	)
 	rec := httptest.NewRecorder()
@@ -88,7 +87,7 @@ func TestAuthMiddlewareOrgMismatch(t *testing.T) {
 
 func TestAuthMiddlewareSuccess(t *testing.T) {
 	var gotOrg string
-	handler := AuthMiddleware(&mockValidator{res: &auth.ValidateResult{OrgID: "org-a", Permissions: 42}}, metrics.New(), logger.Discard("proxy"), AuthOptions{})(
+	handler := AuthMiddleware(&mockValidator{res: &auth.ValidateResult{OrgID: "org-a", Permissions: 42}}, logger.Discard("proxy"), AuthOptions{})(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			res, ok := auth.FromContext(r.Context())
 			if !ok {
@@ -108,7 +107,7 @@ func TestAuthMiddlewareSuccess(t *testing.T) {
 }
 
 func TestAuthMiddlewareUnexpectedError(t *testing.T) {
-	handler := AuthMiddleware(&mockValidator{err: errors.New("boom")}, metrics.New(), logger.Discard("proxy"), AuthOptions{})(
+	handler := AuthMiddleware(&mockValidator{err: errors.New("boom")}, logger.Discard("proxy"), AuthOptions{})(
 		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }),
 	)
 	rec := httptest.NewRecorder()

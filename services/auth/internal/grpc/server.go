@@ -5,9 +5,9 @@ import (
 	"errors"
 	"time"
 
+	"github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/packages/permissions"
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
-	"github.com/Rick1330/ibex-harness/services/auth/internal/metrics"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/repository"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/service"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/token"
@@ -22,7 +22,7 @@ type Server struct {
 	authv1.UnimplementedAuthServiceServer
 	validator    *token.Validator
 	tokenService *service.TokenService
-	metrics      *metrics.Metrics
+	metrics      *metrics.AuthRegistry
 	agentsStore  AgentStore
 }
 
@@ -34,12 +34,12 @@ func NewServer(
 	validator *token.Validator,
 	tokenSvc *service.TokenService,
 	agentsStore AgentStore,
-	m *metrics.Metrics,
+	reg *metrics.AuthRegistry,
 ) *Server {
 	return &Server{
 		validator:    validator,
 		tokenService: tokenSvc,
-		metrics:      m,
+		metrics:      reg,
 		agentsStore:  agentsStore,
 	}
 }
@@ -51,13 +51,13 @@ func (s *Server) ValidateToken(ctx context.Context, req *authv1.ValidateTokenReq
 
 	if err != nil {
 		if errors.Is(err, token.ErrUnauthenticated) {
-			s.metrics.ObserveValidateToken(elapsed, false)
+			s.metrics.ObserveValidateToken(metrics.TokenResultError, elapsed)
 			return nil, status.Error(codes.Unauthenticated, "invalid or expired token")
 		}
-		s.metrics.ObserveValidateToken(elapsed, false)
+		s.metrics.ObserveValidateToken(metrics.TokenResultError, elapsed)
 		return nil, status.Errorf(codes.Internal, "validation failed")
 	}
-	s.metrics.ObserveValidateToken(elapsed, true)
+	s.metrics.ObserveValidateToken(metrics.TokenResultOK, elapsed)
 	return resp, nil
 }
 
@@ -72,7 +72,6 @@ func (s *Server) CreateToken(ctx context.Context, req *authv1.CreateTokenRequest
 		}
 		return nil, status.Errorf(codes.Internal, "create token failed")
 	}
-	s.metrics.IncTokenCreated()
 	return &authv1.CreateTokenResponse{
 		TokenId:   result.TokenID,
 		Plaintext: result.Plaintext,
@@ -96,7 +95,6 @@ func (s *Server) RevokeToken(ctx context.Context, req *authv1.RevokeTokenRequest
 	if req.RevokeReason != nil {
 		reason = req.RevokeReason
 	}
-	// revoked_by references ibex_core.users (M1.1.7 FK); use caller user_id when present.
 	err := s.tokenService.RevokeToken(ctx, req.GetOrgId(), req.GetTokenId(), caller.UserID, reason)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
@@ -104,7 +102,6 @@ func (s *Server) RevokeToken(ctx context.Context, req *authv1.RevokeTokenRequest
 		}
 		return nil, status.Errorf(codes.Internal, "revoke token failed")
 	}
-	s.metrics.IncTokenRevoked()
 	return &authv1.RevokeTokenResponse{}, nil
 }
 
@@ -116,7 +113,6 @@ func (s *Server) ListTokens(ctx context.Context, req *authv1.ListTokensRequest) 
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "list tokens failed")
 	}
-	s.metrics.IncListTokens()
 	return &authv1.ListTokensResponse{
 		Tokens:     service.ToProtoList(rows),
 		NextCursor: next,
@@ -124,40 +120,52 @@ func (s *Server) ListTokens(ctx context.Context, req *authv1.ListTokensRequest) 
 }
 
 func (s *Server) ValidateAgent(ctx context.Context, req *authv1.ValidateAgentRequest) (*authv1.ValidateAgentResponse, error) {
+	start := time.Now()
+
 	caller, ok := CallerFromContext(ctx)
 	if !ok {
+		s.observeValidateAgent(start, metrics.AgentResultError)
 		return nil, status.Error(codes.Unauthenticated, "missing caller context")
 	}
 
-	// ValidateAgent is always tenant-scoped; never allow cross-org lookups.
 	if caller.OrgID != req.GetOrgId() {
+		s.observeValidateAgent(start, metrics.AgentResultError)
 		return nil, status.Error(codes.PermissionDenied, "forbidden")
 	}
 
 	orgID, err := uuid.Parse(req.GetOrgId())
 	if err != nil {
+		s.observeValidateAgent(start, metrics.AgentResultError)
 		return nil, status.Error(codes.InvalidArgument, "invalid org_id")
 	}
 	agentID, err := uuid.Parse(req.GetAgentId())
 	if err != nil {
+		s.observeValidateAgent(start, metrics.AgentResultError)
 		return nil, status.Error(codes.InvalidArgument, "invalid agent_id")
 	}
 
 	rec, err := s.agentsStore.GetByIDAndOrg(ctx, agentID, orgID)
 	if err != nil {
+		s.observeValidateAgent(start, metrics.AgentResultError)
 		return nil, status.Error(codes.Internal, "agent lookup failed")
 	}
 	if rec == nil {
-		// Not found for this org is treated as permission denied to avoid existence leakage.
+		s.observeValidateAgent(start, metrics.AgentResultNotFound)
 		return nil, status.Error(codes.PermissionDenied, "agent not found")
 	}
 	if rec.Status != "active" {
+		s.observeValidateAgent(start, metrics.AgentResultError)
 		return nil, status.Error(codes.PermissionDenied, "agent is not active")
 	}
 
+	s.observeValidateAgent(start, metrics.AgentResultOK)
 	return &authv1.ValidateAgentResponse{
 		AgentId: rec.ID,
 		OrgId:   rec.OrgID,
 		Status:  rec.Status,
 	}, nil
+}
+
+func (s *Server) observeValidateAgent(start time.Time, result string) {
+	s.metrics.ObserveValidateAgent(result, time.Since(start).Seconds())
 }

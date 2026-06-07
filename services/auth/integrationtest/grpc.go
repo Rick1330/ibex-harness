@@ -8,9 +8,9 @@ import (
 
 	"github.com/Rick1330/ibex-harness/infra/testing/testutil"
 	"github.com/Rick1330/ibex-harness/packages/logger"
+	ibexmetrics "github.com/Rick1330/ibex-harness/packages/metrics"
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	grpcserver "github.com/Rick1330/ibex-harness/services/auth/internal/grpc"
-	"github.com/Rick1330/ibex-harness/services/auth/internal/metrics"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/repository"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/service"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/token"
@@ -29,19 +29,22 @@ type AuthGRPCFixture struct {
 func StartAuthGRPC(t testing.TB, dbDSN string) *AuthGRPCFixture {
 	t.Helper()
 	db := testutil.OpenDB(t, dbDSN)
-	repo := repository.NewTokensRepository(db)
-	agentsRepo := repository.NewAgentsRepository(db)
+	reg := ibexmetrics.NewAuth("auth-test", db)
+	repo := repository.NewTokensRepository(db, reg)
+	agentsRepo := repository.NewAgentsRepository(db, reg)
 	argon2 := token.DefaultArgon2Params()
 	validator := token.NewValidator(repo, argon2)
 	tokenSvc := service.NewTokenService(repo, argon2, logger.Discard("auth"))
-	meter := metrics.New()
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	grpcSrv := grpc.NewServer(grpc.UnaryInterceptor(grpcserver.AuthzUnaryInterceptor(validator)))
-	authv1.RegisterAuthServiceServer(grpcSrv, grpcserver.NewServer(validator, tokenSvc, agentsRepo, meter))
+	grpcSrv := grpc.NewServer(grpc.ChainUnaryInterceptor(
+		grpcserver.MetricsUnaryInterceptor(reg),
+		grpcserver.AuthzUnaryInterceptor(validator),
+	))
+	authv1.RegisterAuthServiceServer(grpcSrv, grpcserver.NewServer(validator, tokenSvc, agentsRepo, reg))
 	go func() { _ = grpcSrv.Serve(lis) }()
 
 	conn, err := grpc.NewClient(lis.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))

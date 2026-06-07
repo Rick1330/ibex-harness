@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/logger"
+	ibexmetrics "github.com/Rick1330/ibex-harness/packages/metrics"
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
 	"github.com/Rick1330/ibex-harness/packages/shutdown"
@@ -17,7 +18,6 @@ import (
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
 	proxygrpc "github.com/Rick1330/ibex-harness/services/proxy/internal/grpc"
 	proxyhttp "github.com/Rick1330/ibex-harness/services/proxy/internal/http"
-	"github.com/Rick1330/ibex-harness/services/proxy/internal/metrics"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
@@ -43,14 +43,14 @@ func main() {
 		log.ErrorCtx(context.Background(), "telemetry init failed", "error", err)
 		os.Exit(1)
 	}
-	meter := metrics.New()
+	reg := ibexmetrics.NewProxy(cfg.ServiceName)
 	redisClient, limiter := setupRateLimiter(cfg, log)
 	validator, agentVerifier, grpcConn := setupAuthClients(cfg, log)
 
 	deps := proxyhttp.RouterDeps{
 		Config:        cfg,
 		Logger:        log,
-		Metrics:       meter,
+		Metrics:       reg,
 		Tracer:        tracer,
 		Validator:     validator,
 		AgentVerifier: agentVerifier,

@@ -1,0 +1,27 @@
+package grpcserver
+
+import (
+	"context"
+	"strings"
+
+	ibexmetrics "github.com/Rick1330/ibex-harness/packages/metrics"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/status"
+)
+
+// MetricsUnaryInterceptor records gRPC request outcomes on the auth registry.
+func MetricsUnaryInterceptor(reg *ibexmetrics.AuthRegistry) grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+		resp, err := handler(ctx, req)
+		st, _ := status.FromError(err)
+		reg.IncGRPCRequest(shortGRPCMethod(info.FullMethod), st.Code().String())
+		return resp, err
+	}
+}
+
+func shortGRPCMethod(full string) string {
+	if i := strings.LastIndex(full, "/"); i >= 0 && i < len(full)-1 {
+		return full[i+1:]
+	}
+	return full
+}
