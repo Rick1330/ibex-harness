@@ -1,6 +1,6 @@
 ---
 description: PR descriptions, commit messages, branch naming, and review standards.
-alwaysApply: false
+alwaysApply: true
 ---
 
 # PR and Git Workflow Standards

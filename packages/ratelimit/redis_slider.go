@@ -11,6 +11,12 @@ import (
 
 const keyTTL = 90 * time.Second
 
+type minuteWindow struct {
+	unixMinute int64
+	resetUnix  int64
+	retryAfter time.Duration
+}
+
 // RedisSliderConfig configures org-level per-minute rate limits.
 type RedisSliderConfig struct {
 	DefaultRPM   int64
@@ -39,48 +45,59 @@ func (r *RedisSlider) Check(ctx context.Context, orgID, _ uuid.UUID) (Result, er
 		limit = 60
 	}
 
-	now := time.Now().UTC()
+	window := currentMinuteWindow(time.Now().UTC())
+	key := fmt.Sprintf("ratelimit:%s:rpm:%d", orgID.String(), window.unixMinute)
+
+	count, err := r.incrWithExpire(ctx, key)
+	if err != nil {
+		return Result{}, fmt.Errorf("RedisSlider.Check orgID=%s: %w", orgID, err)
+	}
+	return resultFromCount(count, limit, window), nil
+}
+
+func (r *RedisSlider) incrWithExpire(ctx context.Context, key string) (int64, error) {
+	count, err := r.client.Incr(ctx, key).Result()
+	if err != nil {
+		return 0, err
+	}
+	if count == 1 {
+		if expireErr := r.client.Expire(ctx, key, keyTTL).Err(); expireErr != nil {
+			return 0, expireErr
+		}
+	}
+	return count, nil
+}
+
+func currentMinuteWindow(now time.Time) minuteWindow {
 	unixMinute := now.Unix() / 60
 	resetUnix := (unixMinute + 1) * 60
 	retryAfter := time.Until(time.Unix(resetUnix, 0))
 	if retryAfter < 0 {
 		retryAfter = 0
 	}
+	return minuteWindow{unixMinute: unixMinute, resetUnix: resetUnix, retryAfter: retryAfter}
+}
 
-	key := fmt.Sprintf("ratelimit:%s:rpm:%d", orgID.String(), unixMinute)
-
-	count, err := r.client.Incr(ctx, key).Result()
-	if err != nil {
-		return Result{}, fmt.Errorf("RedisSlider.Check orgID=%s: %w", orgID, err)
-	}
-	if count == 1 {
-		if expireErr := r.client.Expire(ctx, key, keyTTL).Err(); expireErr != nil {
-			return Result{}, fmt.Errorf("RedisSlider.Check expire orgID=%s: %w", orgID, expireErr)
-		}
-	}
-
+func resultFromCount(count, limit int64, window minuteWindow) Result {
 	remaining := int(limit) - int(count)
 	if remaining < 0 {
 		remaining = 0
 	}
-
 	if count > limit {
 		return Result{
 			Allowed:    false,
 			Limit:      int(limit),
 			Remaining:  0,
-			ResetUnix:  resetUnix,
-			RetryAfter: retryAfter,
-		}, nil
+			ResetUnix:  window.resetUnix,
+			RetryAfter: window.retryAfter,
+		}
 	}
-
 	return Result{
 		Allowed:    true,
 		Limit:      int(limit),
 		Remaining:  remaining,
-		ResetUnix:  resetUnix,
-		RetryAfter: 0,
-	}, nil
+		ResetUnix:  window.resetUnix,
+	}
 }
 
 func (r *RedisSlider) effectiveLimit(orgID uuid.UUID) int64 {

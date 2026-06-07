@@ -3,43 +3,63 @@
 # Target: Fortune 500 / MAANG-acceptable code quality
 
 ## MANDATORY: Read before any task
-Before generating any code, always read and apply the rules from
-.cursor/rules/ that match the file type and task at hand.
 
-## Rule registry
-00-project-overview.mdc        → Always applied. Project context, service map, naming conventions.
-01-go-code-quality.mdc         → All *.go files outside test files.
-02-go-error-handling.mdc       → All *.go files.
-03-go-concurrency.mdc          → All *.go files that use goroutines, channels, sync primitives.
-04-go-testing.mdc              → All *_test.go files.
-05-go-performance.mdc          → All *.go files in hot paths (proxy, auth, ratelimit, context).
-06-go-grpc-protobuf.mdc        → *.proto files and gRPC handler/client code.
-07-python-code-quality.mdc     → All *.py files.
-08-python-fastapi.mdc          → *.py files in services/api/, services/memory/, services/context/.
-09-python-testing.mdc          → test_*.py and *_test.py files.
-10-python-async.mdc            → *.py files using asyncio, Celery, aiohttp.
-11-typescript-react.mdc        → *.ts, *.tsx files in services/dashboard/.
-12-typescript-testing.mdc      → *.test.ts, *.spec.ts, *.test.tsx files.
-13-sql-postgres.mdc            → *.sql files, Go files with SQL queries, Python SQLAlchemy.
-14-sql-migrations.mdc          → infra/migrations/**/*.sql files.
-15-redis-patterns.mdc          → Any code that calls Redis (Go, Python).
-16-docker.mdc                  → Dockerfile*, docker-compose*.yml files.
-17-security.mdc                → Always applied. Security is non-negotiable across all files.
-18-observability.mdc           → Always applied. Logging/metrics/tracing in all services.
-19-api-design.mdc              → HTTP handler files, proto definitions, OpenAPI specs.
-20-architecture-layering.mdc   → Always applied. Layer boundaries enforced everywhere.
-21-complexity-management.mdc   → Always applied. CodeScene complexity gates.
-22-data-structures-algorithms.mdc → Algorithm selection and data structure choices.
-23-testing-strategy.mdc        → Always applied. Test quality and coverage requirements.
-24-config-management.mdc       → Config loading files, env vars, any os.Getenv call.
-25-ci-cd-pipeline.mdc          → .github/workflows/*.yml, Makefile, scripts/*.sh.
-26-pr-git-workflow.mdc         → PR descriptions, commit messages, branch names.
-27-milestone-writing.mdc       → docs/roadmap/**/*.md files.
-28-multitenant-security.mdc    → Always applied. Every DB query, every handler, every cache key.
-29-ibex-packages.mdc           → Always applied. Package usage rules for shared packages.
-pr-template.mdc                → Always applied. Full GitHub PR template sections (repo-specific).
-testing-verification.mdc       → Always applied. Local test/gofmt/repo-guards before push.
+Before generating or editing code, read and apply the matching rules in
+`.cursor/rules/`. Cursor loads them via each file's YAML frontmatter:
+
+- `alwaysApply: true` — injected into every agent session (listed below).
+- `alwaysApply: false` + `globs: [...]` — apply when your edits touch
+  matching paths (listed below). If you edit Go proxy code, 01–05, 15, 19,
+  24, and 29 all apply.
+
+Also read [AGENTS.md](AGENTS.md) for repo workflow and security constraints.
+
+Do not strip `description`, `globs`, or `alwaysApply` from `.mdc` frontmatter.
+Rules with `alwaysApply: false` and no `globs` are dead — never ship that.
+
+## Always applied (every task)
+
+| Rule | Purpose |
+| --- | --- |
+| [00-project-overview.mdc](.cursor/rules/00-project-overview.mdc) | Service map, naming, stack |
+| [17-security.mdc](.cursor/rules/17-security.mdc) | Security — non-negotiable |
+| [18-observability.mdc](.cursor/rules/18-observability.mdc) | Logs, metrics, traces |
+| [20-architecture-layering.mdc](.cursor/rules/20-architecture-layering.mdc) | Layer boundaries |
+| [21-complexity-management.mdc](.cursor/rules/21-complexity-management.mdc) | CodeScene / complexity gates |
+| [23-testing-strategy.mdc](.cursor/rules/23-testing-strategy.mdc) | Test pyramid, coverage |
+| [26-pr-git-workflow.mdc](.cursor/rules/26-pr-git-workflow.mdc) | Branches, commits, PRs |
+| [28-multitenant-security.mdc](.cursor/rules/28-multitenant-security.mdc) | org_id isolation |
+| [29-ibex-packages.mdc](.cursor/rules/29-ibex-packages.mdc) | Shared packages |
+| [pr-template.mdc](.cursor/rules/pr-template.mdc) | Full PR template sections |
+| [testing-verification.mdc](.cursor/rules/testing-verification.mdc) | go test, gofmt, repo-guards |
+
+## Glob-scoped (apply when editing matching files)
+
+| Rule | Globs (summary) |
+| --- | --- |
+| [01-go-code-quality.mdc](.cursor/rules/01-go-code-quality.mdc) | `**/*.go` |
+| [02-go-error-handling.mdc](.cursor/rules/02-go-error-handling.mdc) | `**/*.go` |
+| [03-go-concurrency.mdc](.cursor/rules/03-go-concurrency.mdc) | `**/*.go` |
+| [04-go-testing.mdc](.cursor/rules/04-go-testing.mdc) | `**/*_test.go` |
+| [05-go-performance.mdc](.cursor/rules/05-go-performance.mdc) | proxy, auth, packages Go |
+| [06-go-grpc-protobuf.mdc](.cursor/rules/06-go-grpc-protobuf.mdc) | proto, grpc, packages/proto |
+| [07-python-code-quality.mdc](.cursor/rules/07-python-code-quality.mdc) | `**/*.py` |
+| [08-python-fastapi.mdc](.cursor/rules/08-python-fastapi.mdc) | api, memory, context services |
+| [09-python-testing.mdc](.cursor/rules/09-python-testing.mdc) | test_*.py, conftest |
+| [10-python-async.mdc](.cursor/rules/10-python-async.mdc) | worker, context, memory |
+| [11-typescript-react.mdc](.cursor/rules/11-typescript-react.mdc) | dashboard ts/tsx |
+| [12-typescript-testing.mdc](.cursor/rules/12-typescript-testing.mdc) | dashboard tests |
+| [13-sql-postgres.mdc](.cursor/rules/13-sql-postgres.mdc) | sql, store, repository |
+| [14-sql-migrations.mdc](.cursor/rules/14-sql-migrations.mdc) | infra/migrations |
+| [15-redis-patterns.mdc](.cursor/rules/15-redis-patterns.mdc) | ratelimit, proxy, auth, memory |
+| [16-docker.mdc](.cursor/rules/16-docker.mdc) | Dockerfile, compose |
+| [19-api-design.mdc](.cursor/rules/19-api-design.mdc) | proto, HTTP handlers, routes |
+| [22-data-structures-algorithms.mdc](.cursor/rules/22-data-structures-algorithms.mdc) | packages, services Go/Python |
+| [24-config-management.mdc](.cursor/rules/24-config-management.mdc) | config, env files |
+| [25-ci-cd-pipeline.mdc](.cursor/rules/25-ci-cd-pipeline.mdc) | workflows, Makefile, scripts |
+| [27-milestone-writing.mdc](.cursor/rules/27-milestone-writing.mdc) | docs/roadmap |
 
 ## The one rule above all rules
+
 "Would a principal engineer at Stripe, Google, or AWS accept this in code review?"
 If the honest answer is no, do not write it.
