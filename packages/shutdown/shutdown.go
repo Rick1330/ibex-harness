@@ -4,12 +4,12 @@ package shutdown
 
 import (
 	"context"
-	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"github.com/Rick1330/ibex-harness/packages/logger"
 	"google.golang.org/grpc"
 )
 
@@ -19,18 +19,18 @@ type Handler func(ctx context.Context) error
 // Coordinator manages ordered shutdown of registered components.
 type Coordinator struct {
 	timeout  time.Duration
-	log      *slog.Logger
+	log      *logger.Logger
 	signals  chan os.Signal
 	handlers []Handler
 }
 
 // New creates a Coordinator that listens for SIGTERM and SIGINT.
-func New(timeout time.Duration, log *slog.Logger) *Coordinator {
+func New(timeout time.Duration, log *logger.Logger) *Coordinator {
 	return &Coordinator{timeout: timeout, log: log}
 }
 
 // NewWithSignalChan creates a Coordinator for tests with an injected signal channel.
-func NewWithSignalChan(timeout time.Duration, log *slog.Logger, signals chan os.Signal) *Coordinator {
+func NewWithSignalChan(timeout time.Duration, log *logger.Logger, signals chan os.Signal) *Coordinator {
 	return &Coordinator{timeout: timeout, log: log, signals: signals}
 }
 
@@ -42,28 +42,29 @@ func (c *Coordinator) Register(fn Handler) {
 // Wait blocks until a signal is received, then runs handlers within the drain timeout.
 func (c *Coordinator) Wait() error {
 	sig := c.waitForSignal()
-	c.log.Info("shutdown signal received", "signal", sig.String())
+	ctx := context.Background()
+	c.log.InfoCtx(ctx, "shutdown signal received", "signal", sig.String())
 
 	immediate := sig == syscall.SIGINT
 	drain := c.drainTimeout(sig)
-	ctx, cancel := context.WithTimeout(context.Background(), drain)
+	drainCtx, cancel := context.WithTimeout(ctx, drain)
 	defer cancel()
 
 	for _, fn := range c.handlers {
-		if err := fn(ctx); err != nil {
-			c.log.Error("shutdown handler error", "error", err)
+		if err := fn(drainCtx); err != nil {
+			c.log.ErrorCtx(drainCtx, "shutdown handler error", "error", err)
 		}
 	}
 
 	if immediate {
-		c.log.Info("shutdown complete")
+		c.log.InfoCtx(ctx, "shutdown complete")
 		return nil
 	}
-	if ctx.Err() != nil {
-		c.log.Error("shutdown drain timeout exceeded; some requests may have been dropped")
-		return ctx.Err()
+	if drainCtx.Err() != nil {
+		c.log.ErrorCtx(ctx, "shutdown drain timeout exceeded; some requests may have been dropped")
+		return drainCtx.Err()
 	}
-	c.log.Info("shutdown complete")
+	c.log.InfoCtx(ctx, "shutdown complete")
 	return nil
 }
 

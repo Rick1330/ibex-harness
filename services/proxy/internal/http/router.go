@@ -4,10 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log/slog"
 	"net/http"
 	"time"
 
+	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
@@ -31,7 +31,7 @@ type authProbeResponse struct {
 // RouterDeps wires the proxy HTTP handler and middleware chain.
 type RouterDeps struct {
 	Config        config.Config
-	Logger        *slog.Logger
+	Logger        *logger.Logger
 	Metrics       *metrics.Metrics
 	Validator     auth.TokenValidator
 	AgentVerifier auth.AgentVerifier
@@ -65,7 +65,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 
 		result := health.ReadyRedis(ctx, cfg.RedisURL)
 		if !result.OK {
-			logger.Warn("readiness check failed", "reason", result.Reason)
+			logger.WarnCtx(r.Context(), "readiness check failed", "reason", result.Reason)
 			writeJSON(w, http.StatusServiceUnavailable, response{Status: "not_ready", Reason: result.Reason})
 			return
 		}
@@ -130,7 +130,7 @@ func handleAuthProbe(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func handleChatCompletions(w http.ResponseWriter, r *http.Request, logger *slog.Logger, docsBase string) {
+func handleChatCompletions(w http.ResponseWriter, r *http.Request, log *logger.Logger, docsBase string) {
 	if !requireMethod(w, r, http.MethodPost, docsBase) {
 		return
 	}
@@ -170,8 +170,7 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request, logger *slog.
 	ctx := llm.WithChatRequest(r.Context(), parsed)
 
 	if res, ok := auth.FromContext(ctx); ok {
-		logger.Info("chat completion parsed",
-			"request_id", requestID,
+		log.InfoCtx(ctx, "chat completion parsed",
 			"org_id", res.OrgID,
 			"model", parsed.Model,
 			"message_count", len(parsed.Messages),
@@ -184,12 +183,17 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request, logger *slog.
 		proxyerrors.WriteOpts{Detail: "Phase 2 milestone required for upstream calls", DocsBase: docsBase})
 }
 
-func loggingMiddleware(logger *slog.Logger, next http.Handler) http.Handler {
+func loggingMiddleware(log *logger.Logger, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rec, r)
-		logger.Info("http request", "method", r.Method, "path", r.URL.Path, "status", rec.status, "duration_ms", time.Since(start).Milliseconds())
+		log.DebugCtx(r.Context(), "http request",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", rec.status,
+			"duration_ms", time.Since(start).Milliseconds(),
+		)
 	})
 }
 

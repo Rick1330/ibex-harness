@@ -2,8 +2,6 @@ package proxy_test
 
 import (
 	"context"
-	"io"
-	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -12,11 +10,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/shutdown"
 )
 
 func TestShutdownDrainsSlowHandler(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	log := logger.Discard("proxy")
 	var handlerDone atomic.Bool
 	handlerStarted := make(chan struct{})
 
@@ -40,7 +39,7 @@ func TestShutdownDrainsSlowHandler(t *testing.T) {
 	}()
 
 	sigCh := make(chan os.Signal, 1)
-	coord := shutdown.NewWithSignalChan(5*time.Second, logger, sigCh)
+	coord := shutdown.NewWithSignalChan(5*time.Second, log, sigCh)
 	coord.Register(func(ctx context.Context) error {
 		return server.Shutdown(ctx)
 	})

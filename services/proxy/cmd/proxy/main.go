@@ -8,6 +8,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/Rick1330/ibex-harness/packages/logger"
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
 	"github.com/Rick1330/ibex-harness/packages/shutdown"
@@ -29,16 +30,19 @@ func main() {
 		os.Exit(1)
 	}
 
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: cfg.LogLevel}))
-	slog.SetDefault(logger)
+	log, err := logger.New(logger.Config{Service: cfg.ServiceName, Level: cfg.LogLevel})
+	if err != nil {
+		slog.New(slog.NewJSONHandler(os.Stderr, nil)).Error("logger init failed", "error", err)
+		os.Exit(1)
+	}
 
 	meter := metrics.New()
-	redisClient, limiter := setupRateLimiter(cfg, logger)
-	validator, agentVerifier, grpcConn := setupAuthClients(cfg, logger)
+	redisClient, limiter := setupRateLimiter(cfg, log)
+	validator, agentVerifier, grpcConn := setupAuthClients(cfg, log)
 
 	deps := proxyhttp.RouterDeps{
 		Config:        cfg,
-		Logger:        logger,
+		Logger:        log,
 		Metrics:       meter,
 		Validator:     validator,
 		AgentVerifier: agentVerifier,
@@ -46,37 +50,37 @@ func main() {
 	}
 	server := newHTTPServer(deps)
 	runWithShutdown(shutdownOpts{
-		cfg: cfg, logger: logger, server: server,
+		cfg: cfg, logger: log, server: server,
 		grpcConn: grpcConn, redisClient: redisClient,
 	})
 }
 
 type shutdownOpts struct {
 	cfg         config.Config
-	logger      *slog.Logger
+	logger      *logger.Logger
 	server      *http.Server
 	grpcConn    *grpc.ClientConn
 	redisClient redis.UniversalClient
 }
 
-func setupRateLimiter(cfg config.Config, logger *slog.Logger) (redis.UniversalClient, ratelimit.Limiter) {
+func setupRateLimiter(cfg config.Config, log *logger.Logger) (redis.UniversalClient, ratelimit.Limiter) {
 	if cfg.RedisURL == "" {
 		return nil, ratelimit.Noop()
 	}
 	client, err := ratelimit.ParseRedisURL(cfg.RedisURL)
 	if err != nil {
-		logger.Error("redis client init failed", "error", err)
+		log.ErrorCtx(context.Background(), "redis client init failed", "error", err)
 		os.Exit(1)
 	}
 	limiter := ratelimit.NewRedisSlider(client, rateLimitSliderConfig(cfg))
-	logger.Info("rate limiter configured",
+	log.InfoCtx(context.Background(), "rate limiter configured",
 		"default_rpm", cfg.RateLimit.DefaultRPM,
 		"org_overrides", len(cfg.RateLimit.OrgOverrides),
 	)
 	return client, limiter
 }
 
-func setupAuthClients(cfg config.Config, logger *slog.Logger) (auth.TokenValidator, auth.AgentVerifier, *grpc.ClientConn) {
+func setupAuthClients(cfg config.Config, log *logger.Logger) (auth.TokenValidator, auth.AgentVerifier, *grpc.ClientConn) {
 	if cfg.AuthGRPCAddr == "" {
 		return nil, nil, nil
 	}
@@ -85,13 +89,13 @@ func setupAuthClients(cfg config.Config, logger *slog.Logger) (auth.TokenValidat
 		grpc.WithChainUnaryInterceptor(proxygrpc.RequestIDUnaryInterceptor()),
 	)
 	if err != nil {
-		logger.Error("auth grpc dial failed", "error", err, "addr", cfg.AuthGRPCAddr)
+		log.ErrorCtx(context.Background(), "auth grpc dial failed", "error", err, "addr", cfg.AuthGRPCAddr)
 		os.Exit(1)
 	}
 	client := authv1.NewAuthServiceClient(conn)
 	validator := auth.NewGRPCValidator(client, cfg.AuthValidateTimeout)
 	agentVerifier := auth.NewGRPCAgentVerifier(client, cfg.AuthValidateTimeout)
-	logger.Info("auth grpc client configured", "addr", cfg.AuthGRPCAddr, "timeout", cfg.AuthValidateTimeout.String())
+	log.InfoCtx(context.Background(), "auth grpc client configured", "addr", cfg.AuthGRPCAddr, "timeout", cfg.AuthValidateTimeout.String())
 	return validator, agentVerifier, conn
 }
 
@@ -106,7 +110,7 @@ func newHTTPServer(deps proxyhttp.RouterDeps) *http.Server {
 func runWithShutdown(opts shutdownOpts) {
 	errCh := make(chan error, 1)
 	go func() {
-		opts.logger.Info("service starting", "service", opts.cfg.ServiceName, "addr", opts.server.Addr)
+		opts.logger.InfoCtx(context.Background(), "service starting", "addr", opts.server.Addr)
 		if err := opts.server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 			return
@@ -139,14 +143,14 @@ func runWithShutdown(opts shutdownOpts) {
 	select {
 	case err := <-errCh:
 		if err != nil {
-			opts.logger.Error("server failed", "error", err)
+			opts.logger.ErrorCtx(context.Background(), "server failed", "error", err)
 			os.Exit(1)
 		}
 	case err := <-shutdownErrCh:
 		if err != nil {
 			os.Exit(1)
 		}
-		opts.logger.Info("service stopped", "service", opts.cfg.ServiceName)
+		opts.logger.InfoCtx(context.Background(), "service stopped")
 	}
 }
 

@@ -3,9 +3,9 @@ package service
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"time"
 
+	"github.com/Rick1330/ibex-harness/packages/logger"
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/repository"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/token"
@@ -16,14 +16,11 @@ import (
 type TokenService struct {
 	repo   *repository.TokensRepository
 	argon2 token.Argon2Params
-	logger *slog.Logger
+	logger *logger.Logger
 }
 
-func NewTokenService(repo *repository.TokensRepository, argon2 token.Argon2Params, logger *slog.Logger) *TokenService {
-	if logger == nil {
-		logger = slog.Default()
-	}
-	return &TokenService{repo: repo, argon2: argon2, logger: logger}
+func NewTokenService(repo *repository.TokensRepository, argon2 token.Argon2Params, log *logger.Logger) *TokenService {
+	return &TokenService{repo: repo, argon2: argon2, logger: log}
 }
 
 // CreateTokenResult holds the one-time plaintext response fields.
@@ -80,7 +77,7 @@ func (s *TokenService) CreateToken(ctx context.Context, req *authv1.CreateTokenR
 		return CreateTokenResult{}, err
 	}
 
-	s.logger.Info("token_created",
+	s.logger.InfoCtx(ctx, "token_created",
 		"token_id", id,
 		"org_id", req.GetOrgId(),
 		"type", "pat",
@@ -101,7 +98,7 @@ func (s *TokenService) RevokeToken(ctx context.Context, orgID, tokenID, revokedB
 	if err != nil {
 		return err
 	}
-	s.logger.Info("token_revoked",
+	s.logger.InfoCtx(ctx, "token_revoked",
 		"token_id", tokenID,
 		"org_id", orgID,
 	)

@@ -3,10 +3,10 @@ package http
 import (
 	"context"
 	"encoding/json"
-	"log/slog"
 	"net/http"
 	"time"
 
+	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/config"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/health"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/metrics"
@@ -17,7 +17,7 @@ type response struct {
 	Reason string `json:"reason,omitempty"`
 }
 
-func NewRouter(cfg config.Config, logger *slog.Logger, meter *metrics.Metrics) http.Handler {
+func NewRouter(cfg config.Config, log *logger.Logger, meter *metrics.Metrics) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		if !requireMethod(w, r, http.MethodGet) {
@@ -34,7 +34,7 @@ func NewRouter(cfg config.Config, logger *slog.Logger, meter *metrics.Metrics) h
 
 		result := health.ReadyPostgres(ctx, cfg.PostgresDSN)
 		if !result.OK {
-			logger.Warn("readiness check failed", "reason", result.Reason)
+			log.WarnCtx(r.Context(), "readiness check failed", "reason", result.Reason)
 			writeJSON(w, http.StatusServiceUnavailable, response{Status: "not_ready", Reason: result.Reason})
 			return
 		}
@@ -47,15 +47,20 @@ func NewRouter(cfg config.Config, logger *slog.Logger, meter *metrics.Metrics) h
 		meter.ServeHTTP(w, r)
 	})
 
-	return meter.Middleware(loggingMiddleware(logger, mux))
+	return meter.Middleware(loggingMiddleware(log, mux))
 }
 
-func loggingMiddleware(logger *slog.Logger, next http.Handler) http.Handler {
+func loggingMiddleware(log *logger.Logger, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rec, r)
-		logger.Info("http request", "method", r.Method, "path", r.URL.Path, "status", rec.status, "duration_ms", time.Since(start).Milliseconds())
+		log.DebugCtx(r.Context(), "http request",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", rec.status,
+			"duration_ms", time.Since(start).Milliseconds(),
+		)
 	})
 }
 

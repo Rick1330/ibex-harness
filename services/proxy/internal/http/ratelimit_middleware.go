@@ -1,12 +1,12 @@
 package http
 
 import (
-	"log/slog"
 	"math"
 	"net/http"
 	"strconv"
 	"time"
 
+	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	proxyerrors "github.com/Rick1330/ibex-harness/services/proxy/internal/errors"
@@ -41,15 +41,15 @@ func (w *rateLimitResponseWriter) ensureHeaders() {
 
 type rateLimitHandler struct {
 	limiter ratelimit.Limiter
-	logger  *slog.Logger
+	logger  *logger.Logger
 	next    http.Handler
 }
 
 // RateLimitMiddleware enforces org-level rate limits after authentication.
 // On Redis failure: fail open (allow request) with warning log.
-func RateLimitMiddleware(limiter ratelimit.Limiter, logger *slog.Logger) func(http.Handler) http.Handler {
+func RateLimitMiddleware(limiter ratelimit.Limiter, log *logger.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
-		return &rateLimitHandler{limiter: limiter, logger: logger, next: next}
+		return &rateLimitHandler{limiter: limiter, logger: log, next: next}
 	}
 }
 
@@ -70,8 +70,7 @@ func (h *rateLimitHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	res, _ := auth.FromContext(r.Context())
 	result, err := h.limiter.Check(r.Context(), orgUUID, agentUUID)
 	if err != nil {
-		h.logger.Warn("rate limit check failed; failing open",
-			"request_id", requestID,
+		h.logger.WarnCtx(r.Context(), "rate limit check failed; failing open",
 			"org_id", res.OrgID,
 			"error", err,
 		)

@@ -2,8 +2,7 @@ package http
 
 import (
 	"context"
-	"io"
-	"log/slog"
+	"github.com/Rick1330/ibex-harness/packages/logger"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -37,7 +36,7 @@ func newTestRouter(cfg config.Config, validator auth.TokenValidator, limiter rat
 	}
 	return NewRouter(RouterDeps{
 		Config:        cfg,
-		Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Logger:        logger.Discard("proxy"),
 		Metrics:       metrics.New(),
 		Validator:     validator,
 		AgentVerifier: agentVerifier,

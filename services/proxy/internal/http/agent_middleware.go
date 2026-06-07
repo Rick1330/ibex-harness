@@ -1,12 +1,13 @@
 package http
 
 import (
+	"context"
 	"errors"
-	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	proxyerrors "github.com/Rick1330/ibex-harness/services/proxy/internal/errors"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/metrics"
@@ -17,7 +18,7 @@ import (
 type agentVerifyHandler struct {
 	verifier auth.AgentVerifier
 	meter    *metrics.Metrics
-	logger   *slog.Logger
+	logger   *logger.Logger
 	next     http.Handler
 }
 
@@ -26,13 +27,13 @@ type agentVerifyHandler struct {
 func AgentVerificationMiddleware(
 	verifier auth.AgentVerifier,
 	meter *metrics.Metrics,
-	logger *slog.Logger,
+	log *logger.Logger,
 ) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return &agentVerifyHandler{
 			verifier: verifier,
 			meter:    meter,
-			logger:   logger,
+			logger:   log,
 			next:     next,
 		}
 	}
@@ -80,6 +81,7 @@ func (h *agentVerifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	elapsed := time.Since(start).Seconds()
 	if err != nil {
 		h.writeAgentVerifyError(w, err, agentVerifyErrorOpts{
+			ctx:       r.Context(),
 			requestID: requestID,
 			docsBase:  docsBase,
 			elapsed:   elapsed,
@@ -93,6 +95,7 @@ func (h *agentVerifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 type agentVerifyErrorOpts struct {
+	ctx       context.Context
 	requestID string
 	docsBase  string
 	elapsed   float64
@@ -112,13 +115,13 @@ func (h *agentVerifyHandler) writeAgentVerifyError(w http.ResponseWriter, err er
 			proxyerrors.WriteOpts{DocsBase: opts.docsBase})
 	case errors.Is(err, auth.ErrAgentVerifyUnavailable):
 		h.meter.ObserveAgentValidate(opts.elapsed, "error")
-		h.logger.Warn("agent verify unavailable", "request_id", opts.requestID)
+		h.logger.WarnCtx(opts.ctx, "agent verify unavailable")
 		proxyerrors.Write(w, http.StatusServiceUnavailable, proxyerrors.CodeAuthUnavailable,
 			"Authentication service unavailable. The request cannot be verified.", opts.requestID,
 			proxyerrors.WriteOpts{DocsBase: opts.docsBase})
 	default:
 		h.meter.ObserveAgentValidate(opts.elapsed, "error")
-		h.logger.Warn("agent verify failed", "request_id", opts.requestID, "error", err)
+		h.logger.WarnCtx(opts.ctx, "agent verify failed", "error", err)
 		proxyerrors.Write(w, http.StatusServiceUnavailable, proxyerrors.CodeAuthUnavailable,
 			"Authentication service unavailable. The request cannot be verified.", opts.requestID,
 			proxyerrors.WriteOpts{DocsBase: opts.docsBase})

@@ -5,8 +5,8 @@ package proxy_test
 import (
 	"context"
 	"database/sql"
+	"github.com/Rick1330/ibex-harness/packages/logger"
 	"io"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -102,7 +102,7 @@ func startProxyServer(t *testing.T, authAddr string) *httptest.Server {
 	agentVerifier := auth.NewGRPCAgentVerifier(client, cfg.AuthValidateTimeout)
 	handler := proxyhttp.NewRouter(proxyhttp.RouterDeps{
 		Config:        cfg,
-		Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Logger:        logger.Discard("proxy"),
 		Metrics:       metrics.New(),
 		Validator:     validator,
 		AgentVerifier: agentVerifier,

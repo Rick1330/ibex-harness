@@ -4,8 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
-	"log/slog"
+	"github.com/Rick1330/ibex-harness/packages/logger"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -37,7 +36,7 @@ func TestRateLimitMiddleware_allowed(t *testing.T) {
 		ResetUnix: time.Now().UTC().Unix() + 30,
 	}}
 
-	handler := RateLimitMiddleware(limiter, slog.New(slog.NewTextHandler(io.Discard, nil)))(
+	handler := RateLimitMiddleware(limiter, logger.Discard("proxy"))(
 		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusOK)
 		}),
@@ -72,7 +71,7 @@ func TestRateLimitMiddleware_denied(t *testing.T) {
 		RetryAfter: 42 * time.Second,
 	}}
 
-	handler := RateLimitMiddleware(limiter, slog.New(slog.NewTextHandler(io.Discard, nil)))(
+	handler := RateLimitMiddleware(limiter, logger.Discard("proxy"))(
 		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusOK)
 		}),
@@ -112,7 +111,7 @@ func TestRateLimitMiddleware_failOpen(t *testing.T) {
 	orgID := uuid.MustParse("550e8400-e29b-41d4-a716-446655440000")
 	limiter := &mockLimiter{err: errors.New("redis down")}
 
-	handler := RateLimitMiddleware(limiter, slog.New(slog.NewTextHandler(io.Discard, nil)))(
+	handler := RateLimitMiddleware(limiter, logger.Discard("proxy"))(
 		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusOK)
 		}),
@@ -131,7 +130,7 @@ func TestRateLimitMiddleware_failOpen(t *testing.T) {
 func TestRateLimitMiddleware_missingAuthContext(t *testing.T) {
 	t.Parallel()
 
-	handler := RateLimitMiddleware(&mockLimiter{}, slog.New(slog.NewTextHandler(io.Discard, nil)))(
+	handler := RateLimitMiddleware(&mockLimiter{}, logger.Discard("proxy"))(
 		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusOK)
 		}),

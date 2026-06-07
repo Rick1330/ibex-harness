@@ -3,10 +3,10 @@ package service
 import (
 	"bytes"
 	"context"
-	"log/slog"
 	"strings"
 	"testing"
 
+	"github.com/Rick1330/ibex-harness/packages/logger"
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/token"
 )
@@ -14,13 +14,15 @@ import (
 // TestTokenServiceLogsOmitPlaintext verifies audit log attributes never include the bearer secret.
 func TestTokenServiceLogsOmitPlaintext(t *testing.T) {
 	var buf bytes.Buffer
-	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	log, err := logger.New(logger.Config{Service: "auth", Writer: &buf})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	secret := "ibex_pat_00000000-0000-4000-8000-000000000001_neverLogThisSecret"
-	svc := &TokenService{logger: logger}
+	svc := &TokenService{logger: log}
 
-	// Simulate successful create audit (same fields as CreateToken without hitting DB).
-	logger.Info("token_created",
+	log.InfoCtx(context.Background(), "token_created",
 		"token_id", "00000000-0000-4000-8000-000000000099",
 		"org_id", "00000000-0000-4000-8000-000000000002",
 		"type", "pat",
@@ -38,16 +40,15 @@ func TestTokenServiceLogsOmitPlaintext(t *testing.T) {
 		t.Fatal("expected token_created audit event")
 	}
 
-	// Revoke audit shape
 	buf.Reset()
-	logger.Info("token_revoked", "token_id", "tid", "org_id", "oid")
+	log.InfoCtx(context.Background(), "token_revoked", "token_id", "tid", "org_id", "oid")
 	if strings.Contains(buf.String(), secret) {
 		t.Fatal("revoke log leaked secret")
 	}
 }
 
 func TestCreateTokenRejectsEmptyOrg(t *testing.T) {
-	svc := NewTokenService(nil, token.Argon2Params{}, nil)
+	svc := NewTokenService(nil, token.Argon2Params{}, logger.Discard("auth"))
 	_, err := svc.CreateToken(context.Background(), &authv1.CreateTokenRequest{Name: "x"})
 	if err != ErrInvalidArgument {
 		t.Fatalf("got %v", err)

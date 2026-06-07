@@ -1,10 +1,10 @@
 package http
 
 import (
-	"log/slog"
 	"net/http"
 	"strings"
 
+	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
@@ -14,7 +14,7 @@ import (
 type protectedRouteDeps struct {
 	mux           *http.ServeMux
 	cfg           config.Config
-	logger        *slog.Logger
+	logger        *logger.Logger
 	meter         *metrics.Metrics
 	validator     auth.TokenValidator
 	agentVerifier auth.AgentVerifier

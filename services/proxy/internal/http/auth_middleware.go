@@ -2,10 +2,10 @@ package http
 
 import (
 	"errors"
-	"log/slog"
 	"net/http"
 	"time"
 
+	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/permissions"
 	"github.com/Rick1330/ibex-harness/packages/reqid"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
@@ -20,7 +20,7 @@ type AuthOptions struct {
 }
 
 // AuthMiddleware validates bearer tokens and attaches auth context.
-func AuthMiddleware(validator auth.TokenValidator, meter *metrics.Metrics, logger *slog.Logger, opts AuthOptions) func(http.Handler) http.Handler {
+func AuthMiddleware(validator auth.TokenValidator, meter *metrics.Metrics, log *logger.Logger, opts AuthOptions) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			requestID := RequestIDFromContext(r.Context())
@@ -61,7 +61,7 @@ func AuthMiddleware(validator auth.TokenValidator, meter *metrics.Metrics, logge
 					return
 				case errors.Is(err, auth.ErrAuthUnavailable):
 					meter.ObserveAuthValidate(elapsed, "error")
-					logger.Warn("auth validate unavailable", "request_id", requestID)
+					log.WarnCtx(r.Context(), "auth validate unavailable")
 					proxyerrors.Write(w, http.StatusServiceUnavailable, proxyerrors.CodeServiceDegraded,
 						"Authentication service unavailable", requestID, proxyerrors.WriteOpts{DocsBase: docsBase})
 					return

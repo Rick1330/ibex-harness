@@ -4,21 +4,27 @@ import (
 	"context"
 	"errors"
 	"io"
-	"log/slog"
 	"os"
 	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/Rick1330/ibex-harness/packages/logger"
 )
 
-func testLogger() *slog.Logger {
-	return slog.New(slog.NewTextHandler(io.Discard, nil))
+func testLogger(t *testing.T) *logger.Logger {
+	t.Helper()
+	log, err := logger.New(logger.Config{Service: "test", Writer: io.Discard})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return log
 }
 
 func TestCoordinator_CleanShutdown(t *testing.T) {
 	sigCh := make(chan os.Signal, 1)
-	coord := NewWithSignalChan(5*time.Second, testLogger(), sigCh)
+	coord := NewWithSignalChan(5*time.Second, testLogger(t), sigCh)
 	var order []int
 	coord.Register(func(ctx context.Context) error {
 		order = append(order, 1)
@@ -49,7 +55,7 @@ func TestCoordinator_CleanShutdown(t *testing.T) {
 
 func TestCoordinator_TimeoutExceeded(t *testing.T) {
 	sigCh := make(chan os.Signal, 1)
-	coord := NewWithSignalChan(50*time.Millisecond, testLogger(), sigCh)
+	coord := NewWithSignalChan(50*time.Millisecond, testLogger(t), sigCh)
 	coord.Register(func(ctx context.Context) error {
 		select {
 		case <-time.After(200 * time.Millisecond):
@@ -70,7 +76,7 @@ func TestCoordinator_TimeoutExceeded(t *testing.T) {
 
 func TestCoordinator_HandlerError(t *testing.T) {
 	sigCh := make(chan os.Signal, 1)
-	coord := NewWithSignalChan(5*time.Second, testLogger(), sigCh)
+	coord := NewWithSignalChan(5*time.Second, testLogger(t), sigCh)
 	handlerErr := errors.New("close failed")
 	var ranSecond atomic.Bool
 	coord.Register(func(ctx context.Context) error {
@@ -95,7 +101,7 @@ func TestCoordinator_HandlerError(t *testing.T) {
 
 func TestCoordinator_SIGINTImmediate(t *testing.T) {
 	sigCh := make(chan os.Signal, 1)
-	coord := NewWithSignalChan(30*time.Second, testLogger(), sigCh)
+	coord := NewWithSignalChan(30*time.Second, testLogger(t), sigCh)
 	var start time.Time
 	coord.Register(func(ctx context.Context) error {
 		start = time.Now()

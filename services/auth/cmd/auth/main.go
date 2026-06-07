@@ -10,6 +10,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/Rick1330/ibex-harness/packages/logger"
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	"github.com/Rick1330/ibex-harness/packages/shutdown"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/config"
@@ -30,12 +31,15 @@ func main() {
 		os.Exit(1)
 	}
 
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: cfg.LogLevel}))
-	slog.SetDefault(logger)
+	log, err := logger.New(logger.Config{Service: cfg.ServiceName, Level: cfg.LogLevel})
+	if err != nil {
+		slog.New(slog.NewJSONHandler(os.Stderr, nil)).Error("logger init failed", "error", err)
+		os.Exit(1)
+	}
 
 	db, err := sql.Open("postgres", cfg.PostgresDSN)
 	if err != nil {
-		logger.Error("postgres open failed", "error", err)
+		log.ErrorCtx(context.Background(), "postgres open failed", "error", err)
 		os.Exit(1)
 	}
 	db.SetMaxOpenConns(10)
@@ -45,7 +49,7 @@ func main() {
 	repo := repository.NewTokensRepository(db)
 	agentsRepo := repository.NewAgentsRepository(db)
 	validator := token.NewValidator(repo, cfg.Argon2)
-	tokenSvc := service.NewTokenService(repo, cfg.Argon2, logger)
+	tokenSvc := service.NewTokenService(repo, cfg.Argon2, log)
 	meter := metrics.New()
 
 	grpcSrv := grpc.NewServer(
@@ -55,25 +59,25 @@ func main() {
 
 	grpcLis, err := net.Listen("tcp", config.ListenAddress(cfg.GRPCPort))
 	if err != nil {
-		logger.Error("grpc listen failed", "error", err)
+		log.ErrorCtx(context.Background(), "grpc listen failed", "error", err)
 		os.Exit(1)
 	}
 
 	httpServer := &http.Server{
 		Addr:              config.ListenAddress(cfg.Port),
-		Handler:           authhttp.NewRouter(cfg, logger, meter),
+		Handler:           authhttp.NewRouter(cfg, log, meter),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
 	runWithShutdown(shutdownOpts{
-		cfg: cfg, logger: logger, grpcSrv: grpcSrv, grpcLis: grpcLis,
+		cfg: cfg, logger: log, grpcSrv: grpcSrv, grpcLis: grpcLis,
 		httpServer: httpServer, db: db,
 	})
 }
 
 type shutdownOpts struct {
 	cfg        config.Config
-	logger     *slog.Logger
+	logger     *logger.Logger
 	grpcSrv    *grpc.Server
 	grpcLis    net.Listener
 	httpServer *http.Server
@@ -83,7 +87,7 @@ type shutdownOpts struct {
 func runWithShutdown(opts shutdownOpts) {
 	errCh := make(chan error, 2)
 	go func() {
-		opts.logger.Info("grpc starting", "port", opts.cfg.GRPCPort)
+		opts.logger.InfoCtx(context.Background(), "grpc starting", "port", opts.cfg.GRPCPort)
 		if err := opts.grpcSrv.Serve(opts.grpcLis); err != nil {
 			errCh <- err
 			return
@@ -91,7 +95,7 @@ func runWithShutdown(opts shutdownOpts) {
 		errCh <- nil
 	}()
 	go func() {
-		opts.logger.Info("http starting", "service", opts.cfg.ServiceName, "port", opts.cfg.Port, "env", opts.cfg.Environment)
+		opts.logger.InfoCtx(context.Background(), "http starting", "port", opts.cfg.Port, "env", opts.cfg.Environment)
 		if err := opts.httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 			return
@@ -118,13 +122,13 @@ func runWithShutdown(opts shutdownOpts) {
 	select {
 	case err := <-errCh:
 		if err != nil {
-			opts.logger.Error("server failed", "error", err)
+			opts.logger.ErrorCtx(context.Background(), "server failed", "error", err)
 			os.Exit(1)
 		}
 	case err := <-shutdownErrCh:
 		if err != nil {
 			os.Exit(1)
 		}
-		opts.logger.Info("service stopped", "service", opts.cfg.ServiceName)
+		opts.logger.InfoCtx(context.Background(), "service stopped")
 	}
 }
