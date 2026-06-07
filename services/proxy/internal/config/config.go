@@ -19,6 +19,7 @@ const (
 	defaultTraceIDHeader       = "X-Trace-ID"
 	defaultMaxRequestBodyBytes = 1 * 1024 * 1024
 	defaultRateLimitRPM        = 60
+	defaultShutdownTimeout     = 30 * time.Second
 )
 
 // RateLimitConfig holds org-level rate limit settings (Phase 1; no DB).
@@ -40,6 +41,7 @@ type Config struct {
 	TraceIDHeader       string
 	ErrorDocsBase       string
 	RateLimit           RateLimitConfig
+	ShutdownTimeout     time.Duration
 }
 
 // ApplyDefaults fills zero-valued fields so httptest and partial Config literals behave like Load().
@@ -76,5 +78,8 @@ func (c *Config) ApplyDefaults() {
 	}
 	if c.RateLimit.OrgOverrides == nil {
 		c.RateLimit.OrgOverrides = map[uuid.UUID]int{}
+	}
+	if c.ShutdownTimeout <= 0 {
+		c.ShutdownTimeout = defaultShutdownTimeout
 	}
 }

@@ -8,11 +8,10 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
+	"github.com/Rick1330/ibex-harness/packages/shutdown"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/config"
 	grpcserver "github.com/Rick1330/ibex-harness/services/auth/internal/grpc"
 	authhttp "github.com/Rick1330/ibex-harness/services/auth/internal/http"
@@ -39,7 +38,6 @@ func main() {
 		logger.Error("postgres open failed", "error", err)
 		os.Exit(1)
 	}
-	defer func() { _ = db.Close() }()
 	db.SetMaxOpenConns(10)
 	db.SetMaxIdleConns(5)
 	db.SetConnMaxLifetime(30 * time.Minute)
@@ -67,6 +65,17 @@ func main() {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
+	runWithShutdown(cfg, logger, grpcSrv, grpcLis, httpServer, db)
+}
+
+func runWithShutdown(
+	cfg config.Config,
+	logger *slog.Logger,
+	grpcSrv *grpc.Server,
+	grpcLis net.Listener,
+	httpServer *http.Server,
+	db *sql.DB,
+) {
 	errCh := make(chan error, 2)
 	go func() {
 		logger.Info("grpc starting", "port", cfg.GRPCPort)
@@ -85,25 +94,32 @@ func main() {
 		errCh <- nil
 	}()
 
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+	sd := shutdown.New(cfg.ShutdownTimeout, logger)
+	sd.Register(func(ctx context.Context) error {
+		return shutdown.GracefulStopGRPC(grpcSrv, ctx)
+	})
+	sd.Register(func(ctx context.Context) error {
+		return httpServer.Shutdown(ctx)
+	})
+	sd.Register(func(ctx context.Context) error {
+		return db.Close()
+	})
+
+	shutdownErrCh := make(chan error, 1)
+	go func() {
+		shutdownErrCh <- sd.Wait()
+	}()
 
 	select {
-	case sig := <-stop:
-		logger.Info("shutdown signal received", "signal", sig.String())
 	case err := <-errCh:
 		if err != nil {
 			logger.Error("server failed", "error", err)
 			os.Exit(1)
 		}
+	case err := <-shutdownErrCh:
+		if err != nil {
+			os.Exit(1)
+		}
+		logger.Info("service stopped", "service", cfg.ServiceName)
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	grpcSrv.GracefulStop()
-	if err := httpServer.Shutdown(ctx); err != nil {
-		logger.Error("http shutdown failed", "error", err)
-		os.Exit(1)
-	}
-	logger.Info("service stopped", "service", cfg.ServiceName)
 }

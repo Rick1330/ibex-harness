@@ -9,6 +9,7 @@ Shared libraries and contract artifacts (not deployable as standalone processes)
 | `crypto/` | Approved cryptography — Argon2id PHC, random, constant-time compare ([ADR-0010](../docs/adr/ADR-0010-cryptography-policy.md)) |
 | `ratelimit/` | Org-level Redis rate limiting — `Limiter`, `RedisSlider` ([ADR-0015](../docs/adr/ADR-0015-proxy-rate-limit-skeleton.md)) |
 | `reqid/` | Request ID generation (UUID v7), context propagation ([ADR-0017](../docs/adr/ADR-0017-request-id-strategy.md)) |
+| `shutdown/` | Graceful shutdown coordinator for auth and proxy ([ADR-0018](../docs/adr/ADR-0018-graceful-shutdown.md)) |
 | `sdk-python/` | Python client SDK (planned) |
 | `sdk-typescript/` | TypeScript client SDK (planned) |
 | `sdk-go/` | Go client SDK (planned) |

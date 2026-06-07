@@ -89,6 +89,7 @@ These apply across services, or are read by most services.
 | `IBEX_PORT` | Yes | service-specific | Service listen port | Not secret |
 | `IBEX_PUBLIC_BASE_URL` | No | (none) | Public URL for links in emails/webhooks | Ensure correct in prod |
 | `IBEX_ALLOWED_ORIGINS` | No | `http://localhost:3000` | CORS allowed origins (comma-separated) | Must be strict in prod |
+| `IBEX_SHUTDOWN_TIMEOUT` | No | `30s` | Graceful drain window on SIGTERM (Go duration, e.g. `30s`, `60s`) | SIGINT triggers immediate shutdown; see [ADR-0018](adr/ADR-0018-graceful-shutdown.md) |
 
 ### Tracing/Correlation
 

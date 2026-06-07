@@ -7,37 +7,41 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/crypto"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/token"
 )
 
 const (
-	defaultEnvironment = "development"
-	defaultServiceName = "auth"
-	defaultLogLevel    = slog.LevelInfo
-	defaultPort        = "8081"
-	defaultGRPCPort    = "9091"
+	defaultEnvironment     = "development"
+	defaultServiceName     = "auth"
+	defaultLogLevel        = slog.LevelInfo
+	defaultPort            = "8081"
+	defaultGRPCPort        = "9091"
+	defaultShutdownTimeout = 30 * time.Second
 )
 
 type Config struct {
-	Environment string
-	ServiceName string
-	LogLevel    slog.Level
-	Port        string
-	GRPCPort    string
-	PostgresDSN string
-	Argon2      token.Argon2Params
+	Environment     string
+	ServiceName     string
+	LogLevel        slog.Level
+	Port            string
+	GRPCPort        string
+	PostgresDSN     string
+	Argon2          token.Argon2Params
+	ShutdownTimeout time.Duration
 }
 
 func Load() (Config, error) {
 	cfg := Config{
-		Environment: getEnv("IBEX_ENV", defaultEnvironment),
-		ServiceName: getEnv("IBEX_SERVICE_NAME", defaultServiceName),
-		Port:        getEnv("IBEX_PORT", defaultPort),
-		GRPCPort:    getEnv("IBEX_GRPC_PORT", defaultGRPCPort),
-		PostgresDSN: strings.TrimSpace(os.Getenv("POSTGRES_DSN")),
-		Argon2:      crypto.ProductionParams(),
+		Environment:     getEnv("IBEX_ENV", defaultEnvironment),
+		ServiceName:     getEnv("IBEX_SERVICE_NAME", defaultServiceName),
+		Port:            getEnv("IBEX_PORT", defaultPort),
+		GRPCPort:        getEnv("IBEX_GRPC_PORT", defaultGRPCPort),
+		PostgresDSN:     strings.TrimSpace(os.Getenv("POSTGRES_DSN")),
+		Argon2:          crypto.ProductionParams(),
+		ShutdownTimeout: defaultShutdownTimeout,
 	}
 
 	level, err := parseLogLevel(getEnv("IBEX_LOG_LEVEL", "INFO"))
@@ -59,6 +63,13 @@ func Load() (Config, error) {
 			return Config{}, fmt.Errorf("IBEX_ARGON2_TIME: %w", err)
 		}
 		cfg.Argon2.Time = uint32(n)
+	}
+	if v := strings.TrimSpace(os.Getenv("IBEX_SHUTDOWN_TIMEOUT")); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return Config{}, fmt.Errorf("IBEX_SHUTDOWN_TIMEOUT: %w", err)
+		}
+		cfg.ShutdownTimeout = d
 	}
 	if v := os.Getenv("IBEX_ARGON2_PARALLELISM"); v != "" {
 		n, err := strconv.ParseUint(strings.TrimSpace(v), 10, 8)
@@ -91,6 +102,9 @@ func (c Config) Validate() error {
 	}
 	if c.PostgresDSN == "" {
 		return fmt.Errorf("POSTGRES_DSN is required for auth token validation")
+	}
+	if c.ShutdownTimeout <= 0 {
+		return fmt.Errorf("IBEX_SHUTDOWN_TIMEOUT must be positive")
 	}
 	return nil
 }

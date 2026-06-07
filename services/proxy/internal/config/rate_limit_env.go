@@ -18,7 +18,10 @@ func loadOptionalOverrides(cfg *Config) error {
 	if err := loadDefaultRPMEnv(cfg); err != nil {
 		return err
 	}
-	return loadOrgOverridesEnv(cfg)
+	if err := loadOrgOverridesEnv(cfg); err != nil {
+		return err
+	}
+	return loadShutdownTimeout(cfg)
 }
 
 func loadMaxBodyBytes(cfg *Config) error {

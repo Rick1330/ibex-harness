@@ -16,7 +16,17 @@ func (c Config) Validate() error {
 	if err := c.validateHTTPHeaders(); err != nil {
 		return err
 	}
-	return c.validateRateLimit()
+	if err := c.validateRateLimit(); err != nil {
+		return err
+	}
+	return c.validateShutdownTimeout()
+}
+
+func (c Config) validateShutdownTimeout() error {
+	if c.ShutdownTimeout <= 0 {
+		return fmt.Errorf("IBEX_SHUTDOWN_TIMEOUT must be positive")
+	}
+	return nil
 }
 
 func (c Config) validateEnvironment() error {

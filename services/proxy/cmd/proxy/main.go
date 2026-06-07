@@ -6,12 +6,11 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
+	"github.com/Rick1330/ibex-harness/packages/shutdown"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
 	proxygrpc "github.com/Rick1330/ibex-harness/services/proxy/internal/grpc"
@@ -46,21 +45,7 @@ func main() {
 		Limiter:       limiter,
 	}
 	server := newHTTPServer(deps)
-	runUntilShutdown(shutdownDeps{
-		server:      server,
-		logger:      logger,
-		grpcConn:    grpcConn,
-		redisClient: redisClient,
-		serviceName: cfg.ServiceName,
-	})
-}
-
-type shutdownDeps struct {
-	server      *http.Server
-	logger      *slog.Logger
-	grpcConn    *grpc.ClientConn
-	redisClient redis.UniversalClient
-	serviceName string
+	runWithShutdown(cfg, logger, server, grpcConn, redisClient)
 }
 
 func setupRateLimiter(cfg config.Config, logger *slog.Logger) (redis.UniversalClient, ratelimit.Limiter) {
@@ -107,43 +92,57 @@ func newHTTPServer(deps proxyhttp.RouterDeps) *http.Server {
 	}
 }
 
-func runUntilShutdown(d shutdownDeps) {
+func runWithShutdown(
+	cfg config.Config,
+	logger *slog.Logger,
+	server *http.Server,
+	grpcConn *grpc.ClientConn,
+	redisClient redis.UniversalClient,
+) {
 	errCh := make(chan error, 1)
 	go func() {
-		d.logger.Info("service starting", "service", d.serviceName, "addr", d.server.Addr)
-		if err := d.server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		logger.Info("service starting", "service", cfg.ServiceName, "addr", server.Addr)
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 			return
 		}
 		errCh <- nil
 	}()
 
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+	sd := shutdown.New(cfg.ShutdownTimeout, logger)
+	sd.Register(func(ctx context.Context) error {
+		return server.Shutdown(ctx)
+	})
+	sd.Register(func(ctx context.Context) error {
+		if grpcConn != nil {
+			return grpcConn.Close()
+		}
+		return nil
+	})
+	sd.Register(func(ctx context.Context) error {
+		if redisClient != nil {
+			return redisClient.Close()
+		}
+		return nil
+	})
+
+	shutdownErrCh := make(chan error, 1)
+	go func() {
+		shutdownErrCh <- sd.Wait()
+	}()
 
 	select {
-	case sig := <-stop:
-		d.logger.Info("shutdown signal received", "signal", sig.String())
 	case err := <-errCh:
 		if err != nil {
-			d.logger.Error("server failed", "error", err)
+			logger.Error("server failed", "error", err)
 			os.Exit(1)
 		}
+	case err := <-shutdownErrCh:
+		if err != nil {
+			os.Exit(1)
+		}
+		logger.Info("service stopped", "service", cfg.ServiceName)
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if err := d.server.Shutdown(ctx); err != nil {
-		d.logger.Error("graceful shutdown failed", "error", err)
-		os.Exit(1)
-	}
-	if d.grpcConn != nil {
-		_ = d.grpcConn.Close()
-	}
-	if d.redisClient != nil {
-		_ = d.redisClient.Close()
-	}
-	d.logger.Info("service stopped", "service", d.serviceName)
 }
 
 func rateLimitSliderConfig(cfg config.Config) ratelimit.RedisSliderConfig {
