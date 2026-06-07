@@ -45,8 +45,18 @@ func (c Config) validatePort() error {
 	if strings.TrimSpace(c.ServiceName) == "" {
 		return fmt.Errorf("IBEX_SERVICE_NAME must not be empty")
 	}
-	portNum, err := strconv.Atoi(c.Port)
-	if err != nil || portNum < 1 || portNum > 65535 {
+	return validateTCPPort(c.Port)
+}
+
+func validateTCPPort(port string) error {
+	portNum, err := strconv.Atoi(port)
+	if err != nil {
+		return fmt.Errorf("IBEX_PORT must be a valid TCP port")
+	}
+	if portNum < 1 {
+		return fmt.Errorf("IBEX_PORT must be a valid TCP port")
+	}
+	if portNum > 65535 {
 		return fmt.Errorf("IBEX_PORT must be a valid TCP port")
 	}
 	return nil
