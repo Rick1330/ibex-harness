@@ -14,6 +14,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
+	proxygrpc "github.com/Rick1330/ibex-harness/services/proxy/internal/grpc"
 	proxyhttp "github.com/Rick1330/ibex-harness/services/proxy/internal/http"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/metrics"
 	"github.com/google/uuid"
@@ -83,7 +84,10 @@ func setupAuthClients(cfg config.Config, logger *slog.Logger) (auth.TokenValidat
 	if cfg.AuthGRPCAddr == "" {
 		return nil, nil, nil
 	}
-	conn, err := grpc.NewClient(cfg.AuthGRPCAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(cfg.AuthGRPCAddr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithChainUnaryInterceptor(proxygrpc.RequestIDUnaryInterceptor()),
+	)
 	if err != nil {
 		logger.Error("auth grpc dial failed", "error", err, "addr", cfg.AuthGRPCAddr)
 		os.Exit(1)

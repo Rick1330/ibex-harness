@@ -15,6 +15,7 @@ Index of significant technical decisions for IBEX Harness.
 | [ADR-0014-core-domain-migration-sequencing.md](ADR-0014-core-domain-migration-sequencing.md) | Accepted | Core domain migration sequencing |
 | [ADR-0015-proxy-rate-limit-skeleton.md](ADR-0015-proxy-rate-limit-skeleton.md) | Accepted | Proxy rate limit skeleton (Phase 1) |
 | [ADR-0016-agent-identity-verification.md](ADR-0016-agent-identity-verification.md) | Accepted | Proxy agent identity verification |
+| [ADR-0017-request-id-strategy.md](ADR-0017-request-id-strategy.md) | Accepted | Request ID and trace context strategy |
 
 ## When to write an ADR
 

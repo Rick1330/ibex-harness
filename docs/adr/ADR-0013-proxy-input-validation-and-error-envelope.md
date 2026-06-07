@@ -60,10 +60,12 @@ Single package `services/proxy/internal/errors`:
 
 ### 7) Request / trace IDs
 
-- `RequestContextMiddleware` (outer chain): accept incoming request ID header or generate UUID; generate `trace_id` per request until OTel (1.3.1)
+- `RequestContextMiddleware` (outer chain): accept incoming request ID header when valid UUID (v4 or v7), else generate **UUID v7** via `packages/reqid` ([ADR-0017](ADR-0017-request-id-strategy.md)); generate synthetic `trace_id` per request until OTel (1.3.1)
+- Context key owned by `packages/reqid`; proxy `http` layer delegates to `reqid.FromContext`
 - `AuthMiddleware` **reuses** request ID from context (fallback generate for isolated tests)
 - `ResponseHeadersMiddleware`: sets request ID, trace ID, and `X-Response-Time` (ms) on every response
 - Header names configurable: `IBEX_REQUEST_ID_HEADER` (default `X-Request-ID`), `IBEX_TRACE_ID_HEADER` (default `X-Trace-ID`)
+- Proxy → auth gRPC: `x-request-id` metadata via client interceptor (ADR-0017)
 
 ### 8) Middleware order
 

@@ -7,10 +7,10 @@ import (
 	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/permissions"
+	"github.com/Rick1330/ibex-harness/packages/reqid"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	proxyerrors "github.com/Rick1330/ibex-harness/services/proxy/internal/errors"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/metrics"
-	"github.com/google/uuid"
 )
 
 // AuthOptions configures auth middleware behavior per route.
@@ -25,7 +25,7 @@ func AuthMiddleware(validator auth.TokenValidator, meter *metrics.Metrics, logge
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			requestID := RequestIDFromContext(r.Context())
 			if requestID == "" {
-				requestID = uuid.NewString()
+				requestID = reqid.New()
 				r = r.WithContext(WithRequestID(r.Context(), requestID))
 			}
 			docsBase := ErrorDocsBaseFromContext(r.Context())

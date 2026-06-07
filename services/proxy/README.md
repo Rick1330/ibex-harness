@@ -40,6 +40,8 @@ Protected responses include `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `X
 
 All responses include `X-Request-ID`, `X-Trace-ID`, and `X-Response-Time` (configurable header names via env).
 
+Request IDs use **UUID v7** when generated ([ADR-0017](../../docs/adr/ADR-0017-request-id-strategy.md)). Valid inbound UUIDs (v4 or v7) on `IBEX_REQUEST_ID_HEADER` are honoured; invalid values are replaced. The same ID appears in JSON error `request_id` and is propagated to auth gRPC calls via `x-request-id` metadata (`packages/reqid`).
+
 ## Configuration
 
 See [.env.example](.env.example).

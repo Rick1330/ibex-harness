@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Rick1330/ibex-harness/packages/reqid"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
 	proxyerrors "github.com/Rick1330/ibex-harness/services/proxy/internal/errors"
 	"github.com/google/uuid"
@@ -17,16 +18,13 @@ func RequestContextMiddleware(cfg config.Config) func(http.Handler) http.Handler
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
-			requestID := strings.TrimSpace(r.Header.Get(cfg.RequestIDHeader))
-			if requestID == "" {
-				requestID = uuid.NewString()
-			}
+			requestID := reqid.ResolveInbound(r.Header.Get(cfg.RequestIDHeader))
 			traceID := strings.TrimSpace(r.Header.Get(cfg.TraceIDHeader))
 			if traceID == "" {
 				traceID = uuid.NewString()
 			}
 			ctx := r.Context()
-			ctx = WithRequestID(ctx, requestID)
+			ctx = reqid.WithRequestID(ctx, requestID)
 			ctx = WithTraceID(ctx, traceID)
 			ctx = WithRequestStart(ctx, start)
 			ctx = WithErrorDocsBase(ctx, cfg.ErrorDocsBase)

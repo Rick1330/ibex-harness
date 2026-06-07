@@ -4,14 +4,14 @@ import (
 	"context"
 	"time"
 
+	"github.com/Rick1330/ibex-harness/packages/reqid"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 )
 
 type contextKey int
 
 const (
-	ctxKeyRequestID contextKey = iota + 1
-	ctxKeyTraceID
+	ctxKeyTraceID contextKey = iota + 1
 	ctxKeyRequestStart
 	ctxKeyErrorDocsBase
 	ctxKeyAgent
@@ -19,15 +19,13 @@ const (
 
 // WithRequestID stores the request ID on the context.
 func WithRequestID(ctx context.Context, id string) context.Context {
-	return context.WithValue(ctx, ctxKeyRequestID, id)
+	return reqid.WithRequestID(ctx, id)
 }
 
 // RequestIDFromContext returns the request ID when present.
 func RequestIDFromContext(ctx context.Context) string {
-	if id, ok := ctx.Value(ctxKeyRequestID).(string); ok {
-		return id
-	}
-	return ""
+	id, _ := reqid.FromContext(ctx)
+	return id
 }
 
 // WithTraceID stores the trace ID on the context.

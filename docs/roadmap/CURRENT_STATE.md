@@ -1,10 +1,10 @@
 # Current State
 
 **Last updated:** 2026-06-07  
-**Git SHA (`main`):** `6d244cf` — M1.2.5 agent identity verification merged ([#64](https://github.com/Rick1330/ibex-harness/pull/64))
+**Git SHA (`main`):** pending merge — M1.2.6 request ID correlation  
 **Current phase:** Phase 1 — Core Platform  
 **Current goal:** Goal 1.2 — proxy platform integration  
-**Next milestone:** [1.3.1 OTel tracer provider init](phase-1-core-platform/milestones/1.3.1-otel-tracer-provider-init.md)
+**Next milestone:** [1.2.7 Graceful shutdown](phase-1-core-platform/milestones/1.2.7-graceful-shutdown.md)
 
 ---
 
@@ -27,6 +27,7 @@
 - **Proxy input validation (m1.2.3):** body limit, Content-Type, semantic `field_errors`, response headers, `X-IBEX-Agent-ID` ([ADR-0013](../adr/ADR-0013-proxy-input-validation-and-error-envelope.md))
 - **Proxy rate limit skeleton (m1.2.4):** `packages/ratelimit`, org-level Redis RPM, fail-open, 429 `RATE_LIMITED` ([ADR-0015](../adr/ADR-0015-proxy-rate-limit-skeleton.md))
 - **Proxy agent identity verification (m1.2.5):** `ValidateAgent` middleware, required `X-IBEX-Agent-ID`, fail-closed, 403/503 agent errors ([ADR-0016](../adr/ADR-0016-agent-identity-verification.md))
+- **Request ID correlation (m1.2.6):** `packages/reqid` UUID v7, inbound validation, gRPC `x-request-id` to auth ([ADR-0017](../adr/ADR-0017-request-id-strategy.md))
 - **Integration test infra (m1.0.1):** `infra/testing/testutil`, `make test-integration`, compose test (5433) or optional `testcontainers` build tag
 - Go services:
   - `services/auth` — `/health`, `/ready`, `/metrics`, gRPC `ValidateToken` + `ValidateAgent`
@@ -37,7 +38,7 @@
 - StepSecurity hardening ([PR #33](https://github.com/Rick1330/ibex-harness/pull/33)): Harden-Runner (audit egress), pinned GitHub Action SHAs, Docker Dependabot
 - **Cursor rules (PR #59):** `.cursorrules` registry + `.cursor/rules/00–29.mdc`; markdownlint covers `*.mdc`
 - **Roadmap (PR #59):** Phase 1 milestones 1.4.1–1.4.3, 1.5.1 documented; Phase 2 full milestone tree (2.1.1–2.6.2) in [phase-2-single-provider/](phase-2-single-provider/README.md); `PHASE1_GAP_ANALYSIS.md` retired
-- **Roadmap execution:** next milestones 1.3.1 → … → 1.5.1 (see [phase-1 README](phase-1-core-platform/README.md#execution-order))
+- **Roadmap execution:** next milestones 1.2.7 → 1.3.3 → 1.3.1 → … → 1.5.1 (see [phase-1 README](phase-1-core-platform/README.md#execution-order))
 - README: [DeepWiki](https://deepwiki.com/Rick1330/ibex-harness) badge
 - Semgrep: Prometheus `/metrics` handlers use `strings.Builder` (no Fprintf to ResponseWriter)
 
@@ -52,9 +53,9 @@
 
 ## Next 3 immediate tasks
 
-1. **Milestone 1.3.1** — Observability baseline (OTel, Prometheus client)
-2. **Milestone 1.3.2** — Proxy metrics (rate limit, auth latency)
-3. **Phase 1 exit gate** — Milestone [1.5.1](phase-1-core-platform/milestones/1.5.1-security-integration-test-suite.md) security integration suite (after 1.4.x)
+1. **Milestone 1.2.7** — Graceful shutdown
+2. **Milestone 1.3.3** — Shared structured logger package
+3. **Milestone 1.3.1** — OTel tracer provider init
 
 ## Verify current state locally
 

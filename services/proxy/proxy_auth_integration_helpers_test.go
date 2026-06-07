@@ -20,6 +20,7 @@ import (
 	"github.com/Rick1330/ibex-harness/services/auth/integrationtest"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
+	proxygrpc "github.com/Rick1330/ibex-harness/services/proxy/internal/grpc"
 	proxyhttp "github.com/Rick1330/ibex-harness/services/proxy/internal/http"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/metrics"
 	"github.com/google/uuid"
@@ -79,7 +80,10 @@ func setupProxyAuthFixture(t *testing.T) proxyAuthFixture {
 
 func startProxyServer(t *testing.T, authAddr string) *httptest.Server {
 	t.Helper()
-	conn, err := grpc.NewClient(authAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(authAddr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithChainUnaryInterceptor(proxygrpc.RequestIDUnaryInterceptor()),
+	)
 	if err != nil {
 		t.Fatalf("dial auth: %v", err)
 	}
