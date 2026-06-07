@@ -45,7 +45,18 @@ func main() {
 		Limiter:       limiter,
 	}
 	server := newHTTPServer(deps)
-	runWithShutdown(cfg, logger, server, grpcConn, redisClient)
+	runWithShutdown(shutdownOpts{
+		cfg: cfg, logger: logger, server: server,
+		grpcConn: grpcConn, redisClient: redisClient,
+	})
+}
+
+type shutdownOpts struct {
+	cfg         config.Config
+	logger      *slog.Logger
+	server      *http.Server
+	grpcConn    *grpc.ClientConn
+	redisClient redis.UniversalClient
 }
 
 func setupRateLimiter(cfg config.Config, logger *slog.Logger) (redis.UniversalClient, ratelimit.Limiter) {
@@ -92,36 +103,30 @@ func newHTTPServer(deps proxyhttp.RouterDeps) *http.Server {
 	}
 }
 
-func runWithShutdown(
-	cfg config.Config,
-	logger *slog.Logger,
-	server *http.Server,
-	grpcConn *grpc.ClientConn,
-	redisClient redis.UniversalClient,
-) {
+func runWithShutdown(opts shutdownOpts) {
 	errCh := make(chan error, 1)
 	go func() {
-		logger.Info("service starting", "service", cfg.ServiceName, "addr", server.Addr)
-		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		opts.logger.Info("service starting", "service", opts.cfg.ServiceName, "addr", opts.server.Addr)
+		if err := opts.server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 			return
 		}
 		errCh <- nil
 	}()
 
-	sd := shutdown.New(cfg.ShutdownTimeout, logger)
+	sd := shutdown.New(opts.cfg.ShutdownTimeout, opts.logger)
 	sd.Register(func(ctx context.Context) error {
-		return server.Shutdown(ctx)
+		return opts.server.Shutdown(ctx)
 	})
 	sd.Register(func(ctx context.Context) error {
-		if grpcConn != nil {
-			return grpcConn.Close()
+		if opts.grpcConn != nil {
+			return opts.grpcConn.Close()
 		}
 		return nil
 	})
 	sd.Register(func(ctx context.Context) error {
-		if redisClient != nil {
-			return redisClient.Close()
+		if opts.redisClient != nil {
+			return opts.redisClient.Close()
 		}
 		return nil
 	})
@@ -134,14 +139,14 @@ func runWithShutdown(
 	select {
 	case err := <-errCh:
 		if err != nil {
-			logger.Error("server failed", "error", err)
+			opts.logger.Error("server failed", "error", err)
 			os.Exit(1)
 		}
 	case err := <-shutdownErrCh:
 		if err != nil {
 			os.Exit(1)
 		}
-		logger.Info("service stopped", "service", cfg.ServiceName)
+		opts.logger.Info("service stopped", "service", opts.cfg.ServiceName)
 	}
 }
 

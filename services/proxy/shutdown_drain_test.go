@@ -18,9 +18,11 @@ import (
 func TestShutdownDrainsSlowHandler(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	var handlerDone atomic.Bool
+	handlerStarted := make(chan struct{})
 
 	server := &http.Server{
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			close(handlerStarted)
 			time.Sleep(150 * time.Millisecond)
 			handlerDone.Store(true)
 			w.WriteHeader(http.StatusOK)
@@ -45,13 +47,19 @@ func TestShutdownDrainsSlowHandler(t *testing.T) {
 
 	reqDone := make(chan struct{})
 	go func() {
+		defer close(reqDone)
 		resp, err := http.Get("http://" + ln.Addr().String() + "/")
-		if err == nil {
-			resp.Body.Close()
+		if err != nil {
+			return
 		}
-		close(reqDone)
+		_ = resp.Body.Close()
 	}()
-	time.Sleep(20 * time.Millisecond)
+
+	select {
+	case <-handlerStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler did not start")
+	}
 
 	go func() {
 		sigCh <- syscall.SIGTERM

@@ -65,44 +65,49 @@ func main() {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
-	runWithShutdown(cfg, logger, grpcSrv, grpcLis, httpServer, db)
+	runWithShutdown(shutdownOpts{
+		cfg: cfg, logger: logger, grpcSrv: grpcSrv, grpcLis: grpcLis,
+		httpServer: httpServer, db: db,
+	})
 }
 
-func runWithShutdown(
-	cfg config.Config,
-	logger *slog.Logger,
-	grpcSrv *grpc.Server,
-	grpcLis net.Listener,
-	httpServer *http.Server,
-	db *sql.DB,
-) {
+type shutdownOpts struct {
+	cfg        config.Config
+	logger     *slog.Logger
+	grpcSrv    *grpc.Server
+	grpcLis    net.Listener
+	httpServer *http.Server
+	db         *sql.DB
+}
+
+func runWithShutdown(opts shutdownOpts) {
 	errCh := make(chan error, 2)
 	go func() {
-		logger.Info("grpc starting", "port", cfg.GRPCPort)
-		if err := grpcSrv.Serve(grpcLis); err != nil {
+		opts.logger.Info("grpc starting", "port", opts.cfg.GRPCPort)
+		if err := opts.grpcSrv.Serve(opts.grpcLis); err != nil {
 			errCh <- err
 			return
 		}
 		errCh <- nil
 	}()
 	go func() {
-		logger.Info("http starting", "service", cfg.ServiceName, "port", cfg.Port, "env", cfg.Environment)
-		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		opts.logger.Info("http starting", "service", opts.cfg.ServiceName, "port", opts.cfg.Port, "env", opts.cfg.Environment)
+		if err := opts.httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 			return
 		}
 		errCh <- nil
 	}()
 
-	sd := shutdown.New(cfg.ShutdownTimeout, logger)
+	sd := shutdown.New(opts.cfg.ShutdownTimeout, opts.logger)
 	sd.Register(func(ctx context.Context) error {
-		return shutdown.GracefulStopGRPC(grpcSrv, ctx)
+		return shutdown.GracefulStopGRPC(opts.grpcSrv, ctx)
 	})
 	sd.Register(func(ctx context.Context) error {
-		return httpServer.Shutdown(ctx)
+		return opts.httpServer.Shutdown(ctx)
 	})
 	sd.Register(func(ctx context.Context) error {
-		return db.Close()
+		return opts.db.Close()
 	})
 
 	shutdownErrCh := make(chan error, 1)
@@ -113,13 +118,13 @@ func runWithShutdown(
 	select {
 	case err := <-errCh:
 		if err != nil {
-			logger.Error("server failed", "error", err)
+			opts.logger.Error("server failed", "error", err)
 			os.Exit(1)
 		}
 	case err := <-shutdownErrCh:
 		if err != nil {
 			os.Exit(1)
 		}
-		logger.Info("service stopped", "service", cfg.ServiceName)
+		opts.logger.Info("service stopped", "service", opts.cfg.ServiceName)
 	}
 }
