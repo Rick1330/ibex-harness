@@ -34,44 +34,51 @@ func TestFromContext_missing(t *testing.T) {
 	}
 }
 
-func TestResolveInbound(t *testing.T) {
+func TestResolveInbound_emptyGeneratesV7(t *testing.T) {
+	assertGeneratedV7(t, reqid.ResolveInbound(""))
+}
+
+func TestResolveInbound_whitespaceGeneratesV7(t *testing.T) {
+	assertGeneratedV7(t, reqid.ResolveInbound("  "))
+}
+
+func TestResolveInbound_garbageGeneratesV7(t *testing.T) {
+	assertGeneratedV7(t, reqid.ResolveInbound("not-a-uuid"))
+}
+
+func TestResolveInbound_honoursV4(t *testing.T) {
 	v4 := uuid.New().String()
+	if got := reqid.ResolveInbound(v4); got != v4 {
+		t.Fatalf("got %q want %q", got, v4)
+	}
+}
+
+func TestResolveInbound_honoursV7(t *testing.T) {
 	v7, err := uuid.NewV7()
 	if err != nil {
 		t.Fatal(err)
 	}
 	v7Str := v7.String()
-
-	cases := []struct {
-		name    string
-		raw     string
-		want    string
-		checkV7 bool
-	}{
-		{name: "empty generates", raw: "", checkV7: true},
-		{name: "whitespace generates", raw: "  ", checkV7: true},
-		{name: "garbage generates", raw: "not-a-uuid", checkV7: true},
-		{name: "honours v4", raw: v4, want: v4},
-		{name: "honours v7", raw: v7Str, want: v7Str},
-		{name: "honours trimmed v4", raw: "  " + v4 + "  ", want: v4},
+	if got := reqid.ResolveInbound(v7Str); got != v7Str {
+		t.Fatalf("got %q want %q", got, v7Str)
 	}
+}
 
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := reqid.ResolveInbound(tc.raw)
-			if tc.want != "" && got != tc.want {
-				t.Fatalf("got %q want %q", got, tc.want)
-			}
-			if _, err := uuid.Parse(got); err != nil {
-				t.Fatalf("invalid uuid: %q", got)
-			}
-			if tc.checkV7 {
-				parsed, _ := uuid.Parse(got)
-				if parsed.Version() != 7 {
-					t.Fatalf("expected v7 generated, got version %d", parsed.Version())
-				}
-			}
-		})
+func TestResolveInbound_honoursTrimmedV4(t *testing.T) {
+	v4 := uuid.New().String()
+	if got := reqid.ResolveInbound("  " + v4 + "  "); got != v4 {
+		t.Fatalf("got %q want %q", got, v4)
+	}
+}
+
+func assertGeneratedV7(t *testing.T, got string) {
+	t.Helper()
+	parsed, err := uuid.Parse(got)
+	if err != nil {
+		t.Fatalf("invalid uuid: %q", got)
+	}
+	if parsed.Version() != 7 {
+		t.Fatalf("expected v7, got version %d", parsed.Version())
 	}
 }
 
