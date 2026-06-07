@@ -68,6 +68,13 @@ func TestApplyDefaultsShutdownTimeout(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsNonPositiveShutdownTimeout(t *testing.T) {
+	t.Setenv("IBEX_SHUTDOWN_TIMEOUT", "0s")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected error for zero shutdown timeout")
+	}
+}
+
 func TestParseOrgRPMOverrides(t *testing.T) {
 	orgID := uuid.MustParse("550e8400-e29b-41d4-a716-446655440000")
 	got, err := parseOrgRPMOverrides(orgID.String() + "=1000")

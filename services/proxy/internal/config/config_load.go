@@ -12,6 +12,7 @@ import (
 
 func Load() (Config, error) {
 	cfg := baseConfigFromEnv()
+	cfg.ApplyDefaults()
 
 	level, err := parseLogLevel(getEnv("IBEX_LOG_LEVEL", "INFO"))
 	if err != nil {

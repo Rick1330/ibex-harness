@@ -6,7 +6,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/Rick1330/ibex-harness/packages/shutdown"
 	"github.com/google/uuid"
 )
 
@@ -17,10 +16,7 @@ func (c Config) Validate() error {
 	if err := c.validateHTTPHeaders(); err != nil {
 		return err
 	}
-	if err := c.validateRateLimit(); err != nil {
-		return err
-	}
-	return shutdown.ValidateTimeout(c.ShutdownTimeout)
+	return c.validateRateLimit()
 }
 
 func (c Config) validateEnvironment() error {

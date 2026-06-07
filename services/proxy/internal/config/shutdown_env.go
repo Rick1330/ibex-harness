@@ -16,6 +16,9 @@ func loadShutdownTimeout(cfg *Config) error {
 	if err != nil {
 		return fmt.Errorf("IBEX_SHUTDOWN_TIMEOUT: %w", err)
 	}
+	if d <= 0 {
+		return fmt.Errorf("IBEX_SHUTDOWN_TIMEOUT must be positive")
+	}
 	cfg.ShutdownTimeout = d
 	return nil
 }
