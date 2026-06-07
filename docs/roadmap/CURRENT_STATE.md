@@ -1,10 +1,10 @@
 # Current State
 
 **Last updated:** 2026-06-07  
-**Git SHA (`main`):** `716565e` — M1.2.7 graceful shutdown merged ([#68](https://github.com/Rick1330/ibex-harness/pull/68))
+**Git SHA (`main`):** `4ce35ba` — M1.3.3 shared structured logger merged ([#70](https://github.com/Rick1330/ibex-harness/pull/70))
 **Current phase:** Phase 1 — Core Platform  
-**Current goal:** Goal 1.2 — proxy platform integration  
-**Next milestone:** [1.3.3 Shared structured logger package](phase-1-core-platform/milestones/1.3.3-shared-logger-package.md)
+**Current goal:** Goal 1.3 — observability baseline  
+**Next milestone:** [1.3.1 OTel tracer and meter provider init](phase-1-core-platform/milestones/1.3.1-otel-tracer-provider-init.md)
 
 ---
 
@@ -29,6 +29,7 @@
 - **Proxy agent identity verification (m1.2.5):** `ValidateAgent` middleware, required `X-IBEX-Agent-ID`, fail-closed, 403/503 agent errors ([ADR-0016](../adr/ADR-0016-agent-identity-verification.md))
 - **Request ID correlation (m1.2.6):** `packages/reqid` UUID v7, inbound validation, gRPC `x-request-id` to auth ([ADR-0017](../adr/ADR-0017-request-id-strategy.md))
 - **Graceful shutdown (m1.2.7):** `packages/shutdown` coordinator, SIGTERM drain / SIGINT immediate, `IBEX_SHUTDOWN_TIMEOUT` ([ADR-0018](../adr/ADR-0018-graceful-shutdown.md))
+- **Shared structured logger (m1.3.3):** `packages/logger` mandatory JSON schema (`timestamp`, `level`, `message`, `service`, `request_id`, `trace_id`); forbidden-field redaction; adopted in auth/proxy via DI; `packages/shutdown` uses `*logger.Logger`; per-request access logs at DEBUG
 - **Integration test infra (m1.0.1):** `infra/testing/testutil`, `make test-integration`, compose test (5433) or optional `testcontainers` build tag
 - Go services:
   - `services/auth` — `/health`, `/ready`, `/metrics`, gRPC `ValidateToken` + `ValidateAgent`
@@ -39,7 +40,7 @@
 - StepSecurity hardening ([PR #33](https://github.com/Rick1330/ibex-harness/pull/33)): Harden-Runner (audit egress), pinned GitHub Action SHAs, Docker Dependabot
 - **Cursor rules (PR #59):** `.cursorrules` registry + `.cursor/rules/00–29.mdc`; markdownlint covers `*.mdc`
 - **Roadmap (PR #59):** Phase 1 milestones 1.4.1–1.4.3, 1.5.1 documented; Phase 2 full milestone tree (2.1.1–2.6.2) in [phase-2-single-provider/](phase-2-single-provider/README.md); `PHASE1_GAP_ANALYSIS.md` retired
-- **Roadmap execution:** next milestones 1.3.3 → 1.3.1 → 1.3.2 → … → 1.5.1 (see [phase-1 README](phase-1-core-platform/README.md#execution-order))
+- **Roadmap execution:** next milestones 1.3.1 → 1.3.2 → … → 1.5.1 (see [phase-1 README](phase-1-core-platform/README.md#execution-order))
 - README: [DeepWiki](https://deepwiki.com/Rick1330/ibex-harness) badge
 - Semgrep: Prometheus `/metrics` handlers use `strings.Builder` (no Fprintf to ResponseWriter)
 
@@ -54,9 +55,9 @@
 
 ## Next 3 immediate tasks
 
-1. **Milestone 1.3.3** — Shared structured logger package
-2. **Milestone 1.3.1** — OTel tracer provider init
-3. **Milestone 1.3.2** — Prometheus metric catalog
+1. **Milestone 1.3.1** — OTel tracer provider init
+2. **Milestone 1.3.2** — Prometheus metric catalog
+3. **Milestone 1.4.1** — Developer experience baseline
 
 ## Verify current state locally
 
@@ -66,6 +67,7 @@ make repo-guards
 make compose-dev-up
 make db-migrate
 make proto-gen
+go test ./packages/logger/...
 go test ./packages/shutdown/...
 go test ./packages/ratelimit/...
 go test ./services/proxy/...
