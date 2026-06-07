@@ -84,27 +84,32 @@ func (v *GRPCAgentVerifier) Verify(ctx context.Context, bearer, agentID, orgID s
 
 func mapValidateAgentError(err error, callCtx context.Context) error {
 	if st, ok := status.FromError(err); ok {
-		switch st.Code() {
-		case codes.PermissionDenied:
-			if strings.Contains(st.Message(), authInactiveAgentMessage) {
-				return ErrAgentSuspended
-			}
-			return ErrAgentNotAuthorized
-		case codes.Unauthenticated:
-			return ErrAgentNotAuthorized
-		case codes.InvalidArgument:
-			return ErrAgentNotAuthorized
-		case codes.DeadlineExceeded, codes.Unavailable, codes.Canceled:
-			return ErrAgentVerifyUnavailable
-		default:
-			if errors.Is(callCtx.Err(), context.DeadlineExceeded) {
-				return ErrAgentVerifyUnavailable
-			}
-			return ErrAgentVerifyUnavailable
+		if mapped := mapGRPCAgentStatus(st.Code(), st.Message()); mapped != nil {
+			return mapped
 		}
 	}
-	if errors.Is(callCtx.Err(), context.DeadlineExceeded) {
+	if isAgentVerifyTimeout(callCtx, err) {
 		return ErrAgentVerifyUnavailable
 	}
 	return ErrAgentVerifyUnavailable
+}
+
+func mapGRPCAgentStatus(code codes.Code, msg string) error {
+	switch code {
+	case codes.PermissionDenied:
+		if strings.Contains(msg, authInactiveAgentMessage) {
+			return ErrAgentSuspended
+		}
+		return ErrAgentNotAuthorized
+	case codes.Unauthenticated, codes.InvalidArgument:
+		return ErrAgentNotAuthorized
+	case codes.DeadlineExceeded, codes.Unavailable, codes.Canceled:
+		return ErrAgentVerifyUnavailable
+	default:
+		return nil
+	}
+}
+
+func isAgentVerifyTimeout(callCtx context.Context, err error) bool {
+	return errors.Is(callCtx.Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded)
 }

@@ -1,6 +1,10 @@
 ---
 description: TypeScript and React testing standards for dashboard test files.
-globs: ["services/dashboard/**/*.test.ts", "services/dashboard/**/*.test.tsx", "services/dashboard/**/*.spec.ts", "services/dashboard/**/*.spec.tsx"]
+globs:
+  - "**/services/dashboard/**/*.test.ts"
+  - "**/services/dashboard/**/*.test.tsx"
+  - "**/services/dashboard/**/*.spec.ts"
+  - "**/services/dashboard/**/*.spec.tsx"
 alwaysApply: false
 ---
 

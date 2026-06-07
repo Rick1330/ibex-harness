@@ -1,6 +1,9 @@
 ---
 description: Python testing standards using pytest. Fixtures, parametrize, async tests, test isolation.
-globs: ["**/test_*.py", "**/*_test.py", "**/conftest.py"]
+globs:
+  - "**/test_*.py"
+  - "**/*_test.py"
+  - "**/conftest.py"
 alwaysApply: false
 ---
 

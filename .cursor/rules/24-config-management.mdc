@@ -1,6 +1,10 @@
 ---
 description: Configuration loading, validation, and documentation standards for all services.
-globs: ["**/config/**/*.go", "**/config/**/*.py", "**/settings.py", "**/*.env*"]
+globs:
+  - "**/config/**/*.go"
+  - "**/config/**/*.py"
+  - "**/settings.py"
+  - "**/*.env*"
 alwaysApply: false
 ---
 

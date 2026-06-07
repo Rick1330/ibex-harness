@@ -1,6 +1,7 @@
 ---
 description: Python code quality standards for all .py files. PEP 8, type hints, idioms, complexity limits.
-globs: ["**/*.py"]
+globs:
+  - "**/*.py"
 alwaysApply: false
 ---
 

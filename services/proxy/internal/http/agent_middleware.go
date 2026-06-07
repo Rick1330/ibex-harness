@@ -79,7 +79,7 @@ func (h *agentVerifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rec, err := h.verifier.Verify(r.Context(), bearer, agentHeader, authRes.OrgID)
 	elapsed := time.Since(start).Seconds()
 	if err != nil {
-		writeAgentVerifyError(w, err, requestID, docsBase, h.logger, h.meter, elapsed)
+		h.writeAgentVerifyError(w, err, requestID, docsBase, elapsed)
 		return
 	}
 
@@ -88,34 +88,32 @@ func (h *agentVerifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.next.ServeHTTP(w, r.WithContext(ctx))
 }
 
-func writeAgentVerifyError(
+func (h *agentVerifyHandler) writeAgentVerifyError(
 	w http.ResponseWriter,
 	err error,
 	requestID, docsBase string,
-	logger *slog.Logger,
-	meter *metrics.Metrics,
 	elapsed float64,
 ) {
 	switch {
 	case errors.Is(err, auth.ErrAgentSuspended):
-		meter.ObserveAgentValidate(elapsed, "suspended")
+		h.meter.ObserveAgentValidate(elapsed, "suspended")
 		proxyerrors.Write(w, http.StatusForbidden, proxyerrors.CodeAgentSuspended,
 			"The agent is not active for this organization.", requestID,
 			proxyerrors.WriteOpts{DocsBase: docsBase})
 	case errors.Is(err, auth.ErrAgentNotAuthorized):
-		meter.ObserveAgentValidate(elapsed, "forbidden")
+		h.meter.ObserveAgentValidate(elapsed, "forbidden")
 		proxyerrors.Write(w, http.StatusForbidden, proxyerrors.CodeAgentNotAuthorized,
 			"The agent is not authorized for this organization or is not active.", requestID,
 			proxyerrors.WriteOpts{DocsBase: docsBase})
 	case errors.Is(err, auth.ErrAgentVerifyUnavailable):
-		meter.ObserveAgentValidate(elapsed, "error")
-		logger.Warn("agent verify unavailable", "request_id", requestID)
+		h.meter.ObserveAgentValidate(elapsed, "error")
+		h.logger.Warn("agent verify unavailable", "request_id", requestID)
 		proxyerrors.Write(w, http.StatusServiceUnavailable, proxyerrors.CodeAuthUnavailable,
 			"Authentication service unavailable. The request cannot be verified.", requestID,
 			proxyerrors.WriteOpts{DocsBase: docsBase})
 	default:
-		meter.ObserveAgentValidate(elapsed, "error")
-		logger.Warn("agent verify failed", "request_id", requestID, "error", err)
+		h.meter.ObserveAgentValidate(elapsed, "error")
+		h.logger.Warn("agent verify failed", "request_id", requestID, "error", err)
 		proxyerrors.Write(w, http.StatusServiceUnavailable, proxyerrors.CodeAuthUnavailable,
 			"Authentication service unavailable. The request cannot be verified.", requestID,
 			proxyerrors.WriteOpts{DocsBase: docsBase})

@@ -1,6 +1,7 @@
 ---
 description: Database migration writing standards for infra/migrations/postgres/*.sql files.
-globs: ["infra/migrations/**/*.sql"]
+globs:
+  - "**/infra/migrations/**/*.sql"
 alwaysApply: false
 ---
 

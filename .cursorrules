@@ -8,9 +8,15 @@ Before generating or editing code, read and apply the matching rules in
 `.cursor/rules/`. Cursor loads them via each file's YAML frontmatter:
 
 - `alwaysApply: true` — injected into every agent session (listed below).
-- `alwaysApply: false` + `globs: [...]` — apply when your edits touch
+- `alwaysApply: false` + `globs:` (YAML list) — apply when your edits touch
   matching paths (listed below). If you edit Go proxy code, 01–05, 15, 19,
   24, and 29 all apply.
+
+**Workspace layout:** Globs are relative to the folder you opened in Cursor.
+If you open the parent `ibex-r/` workspace, use the junction at `ibex-r/.cursor`
+(linked to this repo's `.cursor/`). Globs use `**/` prefixes so they match
+whether the workspace root is `ibex-r/` or `ibex-harness/` (e.g.
+`**/packages/**/*.go`, not `packages/**/*.go`).
 
 Also read [AGENTS.md](AGENTS.md) for repo workflow and security constraints.
 
@@ -28,6 +34,7 @@ Rules with `alwaysApply: false` and no `globs` are dead — never ship that.
 | [21-complexity-management.mdc](.cursor/rules/21-complexity-management.mdc) | CodeScene / complexity gates |
 | [23-testing-strategy.mdc](.cursor/rules/23-testing-strategy.mdc) | Test pyramid, coverage |
 | [26-pr-git-workflow.mdc](.cursor/rules/26-pr-git-workflow.mdc) | Branches, commits, PRs |
+| [30-pre-push-ci-gates.mdc](.cursor/rules/30-pre-push-ci-gates.mdc) | Local CI gates before push |
 | [28-multitenant-security.mdc](.cursor/rules/28-multitenant-security.mdc) | org_id isolation |
 | [29-ibex-packages.mdc](.cursor/rules/29-ibex-packages.mdc) | Shared packages |
 | [pr-template.mdc](.cursor/rules/pr-template.mdc) | Full PR template sections |
@@ -41,7 +48,7 @@ Rules with `alwaysApply: false` and no `globs` are dead — never ship that.
 | [02-go-error-handling.mdc](.cursor/rules/02-go-error-handling.mdc) | `**/*.go` |
 | [03-go-concurrency.mdc](.cursor/rules/03-go-concurrency.mdc) | `**/*.go` |
 | [04-go-testing.mdc](.cursor/rules/04-go-testing.mdc) | `**/*_test.go` |
-| [05-go-performance.mdc](.cursor/rules/05-go-performance.mdc) | proxy, auth, packages Go |
+| [05-go-performance.mdc](.cursor/rules/05-go-performance.mdc) | `**/services/proxy`, auth, packages Go |
 | [06-go-grpc-protobuf.mdc](.cursor/rules/06-go-grpc-protobuf.mdc) | proto, grpc, packages/proto |
 | [07-python-code-quality.mdc](.cursor/rules/07-python-code-quality.mdc) | `**/*.py` |
 | [08-python-fastapi.mdc](.cursor/rules/08-python-fastapi.mdc) | api, memory, context services |
@@ -50,14 +57,14 @@ Rules with `alwaysApply: false` and no `globs` are dead — never ship that.
 | [11-typescript-react.mdc](.cursor/rules/11-typescript-react.mdc) | dashboard ts/tsx |
 | [12-typescript-testing.mdc](.cursor/rules/12-typescript-testing.mdc) | dashboard tests |
 | [13-sql-postgres.mdc](.cursor/rules/13-sql-postgres.mdc) | sql, store, repository |
-| [14-sql-migrations.mdc](.cursor/rules/14-sql-migrations.mdc) | infra/migrations |
+| [14-sql-migrations.mdc](.cursor/rules/14-sql-migrations.mdc) | `**/infra/migrations` |
 | [15-redis-patterns.mdc](.cursor/rules/15-redis-patterns.mdc) | ratelimit, proxy, auth, memory |
 | [16-docker.mdc](.cursor/rules/16-docker.mdc) | Dockerfile, compose |
 | [19-api-design.mdc](.cursor/rules/19-api-design.mdc) | proto, HTTP handlers, routes |
 | [22-data-structures-algorithms.mdc](.cursor/rules/22-data-structures-algorithms.mdc) | packages, services Go/Python |
 | [24-config-management.mdc](.cursor/rules/24-config-management.mdc) | config, env files |
 | [25-ci-cd-pipeline.mdc](.cursor/rules/25-ci-cd-pipeline.mdc) | workflows, Makefile, scripts |
-| [27-milestone-writing.mdc](.cursor/rules/27-milestone-writing.mdc) | docs/roadmap |
+| [27-milestone-writing.mdc](.cursor/rules/27-milestone-writing.mdc) | `**/docs/roadmap` |
 
 ## The one rule above all rules
 

@@ -78,3 +78,7 @@ Every PR requires review from at least one other contributor. Reviewers check:
 5. Are new env vars documented in `.env.example` and `ENVIRONMENT_VARIABLES.md`?
 6. Is there a test for every new behaviour, including failure modes?
 7. Is there a test for every security boundary?
+
+## Before push (mandatory)
+
+Follow [30-pre-push-ci-gates.mdc](30-pre-push-ci-gates.mdc): run `gofmt -l`, unit tests, and CI-equivalent checks locally **before** `git push`. Do not push to fix CI failures you could have caught locally.

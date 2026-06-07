@@ -1,5 +1,5 @@
 ---
-description: Require local tests and gofmt before push or PR
+description: Require local tests, gofmt, and CI-equivalent gates before push or PR. See also 30-pre-push-ci-gates.mdc.
 alwaysApply: true
 ---
 
@@ -7,10 +7,11 @@ alwaysApply: true
 
 Before pushing or updating a PR:
 
-1. Run tests for every package you changed.
-2. Run `go test -tags=integration` when auth/DB/RLS paths change (Postgres required).
-3. Run `make repo-guards` before requesting merge.
-4. Ensure `gofmt -l` on touched `.go` files is empty.
-5. Record what you ran in the PR Testing section (see `ibex-harness-workspace/pr-bodies/`).
+1. **Read and follow [30-pre-push-ci-gates.mdc](30-pre-push-ci-gates.mdc)** — run CI-equivalent checks locally first.
+2. Run tests for every package you changed.
+3. Run `go test -tags=integration` when auth/DB/RLS paths change (Postgres required).
+4. Run `make repo-guards` before requesting merge.
+5. Ensure `gofmt -l` on touched `.go` files is empty (empty output = pass).
+6. Record what you ran in the PR Testing section (see `ibex-harness-workspace/pr-bodies/`).
 
 See `23-testing-strategy.mdc` and `docs/TESTING_STRATEGY.md`.

@@ -1,6 +1,7 @@
 ---
 description: Go code quality standards for all non-test .go files. Addresses CodeScene complexity, structural, and idiom issues.
-globs: ["**/*.go"]
+globs:
+  - "**/*.go"
 alwaysApply: false
 ---
 

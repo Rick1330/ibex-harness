@@ -1,6 +1,7 @@
 ---
 description: Standards for writing milestone documents in docs/roadmap/. Every milestone must meet this standard.
-globs: ["docs/roadmap/**/*.md"]
+globs:
+  - "**/docs/roadmap/**/*.md"
 alwaysApply: false
 ---
 

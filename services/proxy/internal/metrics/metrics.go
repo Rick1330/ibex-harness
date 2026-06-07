@@ -17,13 +17,8 @@ type Metrics struct {
 	buckets  map[labelKey][]uint64
 	sums     map[labelKey]float64
 
-	authValidateTotal   map[string]uint64
-	authValidateBuckets map[string][]uint64
-	authValidateSums    map[string]float64
-
-	agentValidateTotal   map[string]uint64
-	agentValidateBuckets map[string][]uint64
-	agentValidateSums    map[string]float64
+	authValidate  resultMetricStore
+	agentValidate resultMetricStore
 }
 
 type labelKey struct {
@@ -34,15 +29,11 @@ type labelKey struct {
 
 func New() *Metrics {
 	return &Metrics{
-		requests:            make(map[labelKey]uint64),
-		buckets:             make(map[labelKey][]uint64),
-		sums:                make(map[labelKey]float64),
-		authValidateTotal:    make(map[string]uint64),
-		authValidateBuckets:  make(map[string][]uint64),
-		authValidateSums:     make(map[string]float64),
-		agentValidateTotal:   make(map[string]uint64),
-		agentValidateBuckets: make(map[string][]uint64),
-		agentValidateSums:    make(map[string]float64),
+		requests:      make(map[labelKey]uint64),
+		buckets:       make(map[labelKey][]uint64),
+		sums:          make(map[labelKey]float64),
+		authValidate:  newResultMetricStore(),
+		agentValidate: newResultMetricStore(),
 	}
 }
 
@@ -76,34 +67,8 @@ func (m *Metrics) renderPrometheus() string {
 	for k, v := range m.sums {
 		sumsSnap[k] = v
 	}
-	authTotalSnap := make(map[string]uint64, len(m.authValidateTotal))
-	for k, v := range m.authValidateTotal {
-		authTotalSnap[k] = v
-	}
-	authBucketsSnap := make(map[string][]uint64, len(m.authValidateBuckets))
-	for k, v := range m.authValidateBuckets {
-		a := make([]uint64, len(v))
-		copy(a, v)
-		authBucketsSnap[k] = a
-	}
-	authSumsSnap := make(map[string]float64, len(m.authValidateSums))
-	for k, v := range m.authValidateSums {
-		authSumsSnap[k] = v
-	}
-	agentTotalSnap := make(map[string]uint64, len(m.agentValidateTotal))
-	for k, v := range m.agentValidateTotal {
-		agentTotalSnap[k] = v
-	}
-	agentBucketsSnap := make(map[string][]uint64, len(m.agentValidateBuckets))
-	for k, v := range m.agentValidateBuckets {
-		a := make([]uint64, len(v))
-		copy(a, v)
-		agentBucketsSnap[k] = a
-	}
-	agentSumsSnap := make(map[string]float64, len(m.agentValidateSums))
-	for k, v := range m.agentValidateSums {
-		agentSumsSnap[k] = v
-	}
+	authSnap := snapResultMetrics(m.authValidate)
+	agentSnap := snapResultMetrics(m.agentValidate)
 	m.mu.Unlock()
 
 	var b strings.Builder
@@ -119,37 +84,14 @@ func (m *Metrics) renderPrometheus() string {
 		writeHistogramLines(&b, "ibex_http_request_duration_seconds", key, bucketsSnap[key], sumsSnap[key], durationBuckets)
 	}
 
-	b.WriteString("# HELP ibex_proxy_auth_validate_total Auth middleware ValidateToken attempts.\n")
-	b.WriteString("# TYPE ibex_proxy_auth_validate_total counter\n")
-	for _, result := range sortedAuthResults(authTotalSnap) {
-		b.WriteString("ibex_proxy_auth_validate_total{result=")
-		writeQuoted(&b, result)
-		b.WriteString("} ")
-		b.WriteString(strconv.FormatUint(authTotalSnap[result], 10))
-		b.WriteString("\n")
-	}
-
-	b.WriteString("# HELP ibex_proxy_auth_validate_duration_seconds Auth middleware validate latency.\n")
-	b.WriteString("# TYPE ibex_proxy_auth_validate_duration_seconds histogram\n")
-	for _, result := range sortedAuthResultsFromBuckets(authBucketsSnap) {
-		writeAuthHistogramLines(&b, "ibex_proxy_auth_validate_duration_seconds", result, authBucketsSnap[result], authSumsSnap[result], durationBuckets)
-	}
-
-	b.WriteString("# HELP ibex_proxy_agent_validate_total Agent middleware ValidateAgent attempts.\n")
-	b.WriteString("# TYPE ibex_proxy_agent_validate_total counter\n")
-	for _, result := range sortedAuthResults(agentTotalSnap) {
-		b.WriteString("ibex_proxy_agent_validate_total{result=")
-		writeQuoted(&b, result)
-		b.WriteString("} ")
-		b.WriteString(strconv.FormatUint(agentTotalSnap[result], 10))
-		b.WriteString("\n")
-	}
-
-	b.WriteString("# HELP ibex_proxy_agent_validate_duration_seconds Agent middleware validate latency.\n")
-	b.WriteString("# TYPE ibex_proxy_agent_validate_duration_seconds histogram\n")
-	for _, result := range sortedAuthResultsFromBuckets(agentBucketsSnap) {
-		writeAuthHistogramLines(&b, "ibex_proxy_agent_validate_duration_seconds", result, agentBucketsSnap[result], agentSumsSnap[result], durationBuckets)
-	}
+	writeResultValidateSection(&b, "ibex_proxy_auth_validate",
+		"Auth middleware ValidateToken attempts.",
+		"Auth middleware validate latency.",
+		authSnap)
+	writeResultValidateSection(&b, "ibex_proxy_agent_validate",
+		"Agent middleware ValidateAgent attempts.",
+		"Agent middleware validate latency.",
+		agentSnap)
 
 	return b.String()
 }
@@ -247,13 +189,7 @@ func (m *Metrics) observe(method, path string, status int, seconds float64) {
 func (m *Metrics) ObserveAgentValidate(seconds float64, result string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-
-	m.agentValidateTotal[result]++
-	if _, ok := m.agentValidateBuckets[result]; !ok {
-		m.agentValidateBuckets[result] = make([]uint64, len(durationBuckets)+1)
-	}
-	recordHistogram(m.agentValidateBuckets[result], durationBuckets, seconds)
-	m.agentValidateSums[result] += seconds
+	m.agentValidate.observe(result, seconds)
 }
 
 // ObserveAuthValidate records auth middleware validation latency and result.
@@ -261,13 +197,7 @@ func (m *Metrics) ObserveAgentValidate(seconds float64, result string) {
 func (m *Metrics) ObserveAuthValidate(seconds float64, result string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-
-	m.authValidateTotal[result]++
-	if _, ok := m.authValidateBuckets[result]; !ok {
-		m.authValidateBuckets[result] = make([]uint64, len(durationBuckets)+1)
-	}
-	recordHistogram(m.authValidateBuckets[result], durationBuckets, seconds)
-	m.authValidateSums[result] += seconds
+	m.authValidate.observe(result, seconds)
 }
 
 func writeAuthHistogramLines(b *strings.Builder, name, result string, counts []uint64, sum float64, buckets []float64) {
@@ -304,24 +234,6 @@ func writeAuthHistogramLines(b *strings.Builder, name, result string, counts []u
 	b.WriteString("} ")
 	b.WriteString(strconv.FormatUint(cumulative, 10))
 	b.WriteString("\n")
-}
-
-func sortedAuthResults(m map[string]uint64) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
-func sortedAuthResultsFromBuckets(m map[string][]uint64) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
 }
 
 type statusRecorder struct {

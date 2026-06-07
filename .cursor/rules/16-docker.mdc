@@ -1,6 +1,9 @@
 ---
 description: Dockerfile and docker-compose standards for all containerised services.
-globs: ["**/Dockerfile*", "**/docker-compose*.yml", "**/docker-compose*.yaml"]
+globs:
+  - "**/Dockerfile*"
+  - "**/docker-compose*.yml"
+  - "**/docker-compose*.yaml"
 alwaysApply: false
 ---
 

@@ -1,6 +1,7 @@
 ---
 description: Go error handling standards. Covers wrapping, sentinel errors, typed errors, and forbidden patterns.
-globs: ["**/*.go"]
+globs:
+  - "**/*.go"
 alwaysApply: false
 ---
 

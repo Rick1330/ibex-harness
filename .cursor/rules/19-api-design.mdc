@@ -1,6 +1,11 @@
 ---
 description: REST API and gRPC API design standards. Error envelopes, versioning, pagination, status codes.
-globs: ["**/*.proto", "**/handler/**/*.go", "**/internal/http/**/*.go", "**/router/**/*.py", "**/routes/**/*.py"]
+globs:
+  - "**/*.proto"
+  - "**/handler/**/*.go"
+  - "**/internal/http/**/*.go"
+  - "**/router/**/*.py"
+  - "**/routes/**/*.py"
 alwaysApply: false
 ---
 

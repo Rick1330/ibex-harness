@@ -41,109 +41,58 @@ func agentTestAgentID() string {
 	return "550e8400-e29b-41d4-a716-446655440000"
 }
 
-func wrapAgentMiddleware(verifier auth.AgentVerifier) http.Handler {
-	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		rec, ok := AgentFromContext(r.Context())
-		if !ok {
-			http.Error(w, "no agent", http.StatusInternalServerError)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(rec.ID.String()))
-	})
-	return AgentVerificationMiddleware(verifier, metrics.New(), slog.New(slog.NewTextHandler(io.Discard, nil)))(inner)
-}
-
-func agentAuthedRequest(agentID string) *http.Request {
+func runAgentVerification(t *testing.T, verifier auth.AgentVerifier, agentID string, withAuth bool) *httptest.ResponseRecorder {
+	t.Helper()
+	handler := AgentVerificationMiddleware(verifier, metrics.New(), slog.New(slog.NewTextHandler(io.Discard, nil)))(
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			rec, ok := AgentFromContext(r.Context())
+			if !ok {
+				http.Error(w, "no agent", http.StatusInternalServerError)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(rec.ID.String()))
+		}),
+	)
+	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/v1/internal/auth-probe", nil)
 	req.Header.Set("Authorization", "Bearer ibex_pat_test")
 	if agentID != "" {
 		req.Header.Set(validation.HeaderAgentID, agentID)
 	}
-	ctx := auth.WithContext(req.Context(), &auth.ValidateResult{OrgID: agentTestOrgID()})
-	return req.WithContext(ctx)
-}
-
-func TestAgentVerification_Valid(t *testing.T) {
-	handler := wrapAgentMiddleware(&mockAgentVerifier{})
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, agentAuthedRequest(agentTestAgentID()))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status: %d body=%s", rec.Code, rec.Body.String())
+	if withAuth {
+		req = req.WithContext(auth.WithContext(req.Context(), &auth.ValidateResult{OrgID: agentTestOrgID()}))
 	}
-	if !strings.Contains(rec.Body.String(), agentTestAgentID()) {
-		t.Fatalf("body: %s", rec.Body.String())
-	}
-}
-
-func TestAgentVerification_MissingHeader(t *testing.T) {
-	handler := wrapAgentMiddleware(&mockAgentVerifier{})
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, agentAuthedRequest(""))
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status: %d", rec.Code)
-	}
-	if !strings.Contains(rec.Body.String(), proxyerrors.CodeMissingAgentID) {
-		t.Fatalf("body: %s", rec.Body.String())
-	}
-}
-
-func TestAgentVerification_MalformedUUID(t *testing.T) {
-	handler := wrapAgentMiddleware(&mockAgentVerifier{})
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, agentAuthedRequest("not-a-uuid"))
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("status: %d", rec.Code)
-	}
-	if !strings.Contains(rec.Body.String(), proxyerrors.CodeValidationError) {
-		t.Fatalf("body: %s", rec.Body.String())
-	}
-}
-
-func TestAgentVerification_WrongOrg(t *testing.T) {
-	handler := wrapAgentMiddleware(&mockAgentVerifier{err: auth.ErrAgentNotAuthorized})
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, agentAuthedRequest(agentTestAgentID()))
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("status: %d", rec.Code)
-	}
-	if !strings.Contains(rec.Body.String(), proxyerrors.CodeAgentNotAuthorized) {
-		t.Fatalf("body: %s", rec.Body.String())
-	}
-}
-
-func TestAgentVerification_AgentSuspended(t *testing.T) {
-	handler := wrapAgentMiddleware(&mockAgentVerifier{err: auth.ErrAgentSuspended})
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, agentAuthedRequest(agentTestAgentID()))
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("status: %d", rec.Code)
-	}
-	if !strings.Contains(rec.Body.String(), proxyerrors.CodeAgentSuspended) {
-		t.Fatalf("body: %s", rec.Body.String())
-	}
-}
-
-func TestAgentVerification_AuthServiceDown(t *testing.T) {
-	handler := wrapAgentMiddleware(&mockAgentVerifier{err: auth.ErrAgentVerifyUnavailable})
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, agentAuthedRequest(agentTestAgentID()))
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status: %d", rec.Code)
-	}
-	if !strings.Contains(rec.Body.String(), proxyerrors.CodeAuthUnavailable) {
-		t.Fatalf("body: %s", rec.Body.String())
-	}
-}
-
-func TestAgentVerification_NoAuthContext(t *testing.T) {
-	handler := wrapAgentMiddleware(&mockAgentVerifier{})
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/v1/internal/auth-probe", nil)
-	req.Header.Set("Authorization", "Bearer ibex_pat_test")
-	req.Header.Set(validation.HeaderAgentID, agentTestAgentID())
 	handler.ServeHTTP(rec, req)
-	if rec.Code != http.StatusInternalServerError {
-		t.Fatalf("status: %d", rec.Code)
+	return rec
+}
+
+func TestAgentVerification(t *testing.T) {
+	tests := []struct {
+		name       string
+		verifier   auth.AgentVerifier
+		agentID    string
+		withAuth   bool
+		wantStatus int
+		wantBody   string
+	}{
+		{name: "valid", verifier: &mockAgentVerifier{}, agentID: agentTestAgentID(), withAuth: true, wantStatus: http.StatusOK, wantBody: agentTestAgentID()},
+		{name: "missing header", verifier: &mockAgentVerifier{}, agentID: "", withAuth: true, wantStatus: http.StatusBadRequest, wantBody: proxyerrors.CodeMissingAgentID},
+		{name: "malformed uuid", verifier: &mockAgentVerifier{}, agentID: "not-a-uuid", withAuth: true, wantStatus: http.StatusBadRequest, wantBody: proxyerrors.CodeValidationError},
+		{name: "wrong org", verifier: &mockAgentVerifier{err: auth.ErrAgentNotAuthorized}, agentID: agentTestAgentID(), withAuth: true, wantStatus: http.StatusForbidden, wantBody: proxyerrors.CodeAgentNotAuthorized},
+		{name: "suspended", verifier: &mockAgentVerifier{err: auth.ErrAgentSuspended}, agentID: agentTestAgentID(), withAuth: true, wantStatus: http.StatusForbidden, wantBody: proxyerrors.CodeAgentSuspended},
+		{name: "auth down", verifier: &mockAgentVerifier{err: auth.ErrAgentVerifyUnavailable}, agentID: agentTestAgentID(), withAuth: true, wantStatus: http.StatusServiceUnavailable, wantBody: proxyerrors.CodeAuthUnavailable},
+		{name: "no auth context", verifier: &mockAgentVerifier{}, agentID: agentTestAgentID(), withAuth: false, wantStatus: http.StatusInternalServerError},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := runAgentVerification(t, tt.verifier, tt.agentID, tt.withAuth)
+			if rec.Code != tt.wantStatus {
+				t.Fatalf("status: %d body=%s", rec.Code, rec.Body.String())
+			}
+			if tt.wantBody != "" && !strings.Contains(rec.Body.String(), tt.wantBody) {
+				t.Fatalf("body: %s", rec.Body.String())
+			}
+		})
 	}
 }

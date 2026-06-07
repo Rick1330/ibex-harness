@@ -1,6 +1,9 @@
 ---
 description: FastAPI service patterns for ibex-harness API and memory services. Routing, dependency injection, error handling.
-globs: ["services/api/**/*.py", "services/memory/**/*.py", "services/context/**/*.py"]
+globs:
+  - "**/services/api/**/*.py"
+  - "**/services/memory/**/*.py"
+  - "**/services/context/**/*.py"
 alwaysApply: false
 ---
 

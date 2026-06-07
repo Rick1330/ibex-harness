@@ -1,6 +1,10 @@
 ---
 description: Redis key naming, TTL rules, and usage patterns for all services that interact with Redis.
-globs: ["packages/ratelimit/**", "services/proxy/**/*.go", "services/auth/**/*.go", "services/memory/**/*.py"]
+globs:
+  - "**/packages/ratelimit/**"
+  - "**/services/proxy/**/*.go"
+  - "**/services/auth/**/*.go"
+  - "**/services/memory/**/*.py"
 alwaysApply: false
 ---
 

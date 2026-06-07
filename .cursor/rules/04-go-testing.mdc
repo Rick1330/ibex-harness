@@ -1,6 +1,7 @@
 ---
 description: Go testing standards. Table-driven tests, naming, parallelism, test helpers, and forbidden patterns.
-globs: ["**/*_test.go"]
+globs:
+  - "**/*_test.go"
 alwaysApply: false
 ---
 

@@ -1,6 +1,10 @@
 ---
 description: Data structure selection and algorithm complexity guidelines. Always choose the right structure for the use case.
-globs: ["packages/**/*.go", "services/**/*.go", "services/**/*.py", "packages/**/*.py"]
+globs:
+  - "**/packages/**/*.go"
+  - "**/services/**/*.go"
+  - "**/services/**/*.py"
+  - "**/packages/**/*.py"
 alwaysApply: false
 ---
 

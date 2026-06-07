@@ -1,6 +1,9 @@
 ---
 description: CI/CD pipeline requirements, linting gates, and deployment standards.
-globs: [".github/workflows/**/*.yml", "Makefile", "infra/scripts/**/*.sh"]
+globs:
+  - "**/.github/workflows/**/*.yml"
+  - "**/Makefile"
+  - "**/infra/scripts/**/*.sh"
 alwaysApply: false
 ---
 

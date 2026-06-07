@@ -1,6 +1,9 @@
 ---
 description: PostgreSQL query patterns, RLS, indexing, and multi-tenancy enforcement for all SQL and Go/Python DB code.
-globs: ["**/*.sql", "**/store/**/*.go", "**/repository/**/*.py"]
+globs:
+  - "**/*.sql"
+  - "**/store/**/*.go"
+  - "**/repository/**/*.py"
 alwaysApply: false
 ---
 

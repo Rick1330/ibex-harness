@@ -59,6 +59,97 @@ func startProxyServer(t *testing.T, authAddr string) *httptest.Server {
 	return httptest.NewServer(handler)
 }
 
+func authProbeGET(t *testing.T, srvURL, bearer, agentID string) (*http.Response, string) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, srvURL+"/v1/internal/auth-probe", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+bearer)
+	}
+	if agentID != "" {
+		req.Header.Set("X-IBEX-Agent-ID", agentID)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp, readBody(resp)
+}
+
+func seedPausedAgent(t *testing.T, db *sql.DB, orgID, userID string) string {
+	t.Helper()
+	pausedID := uuid.New().String()
+	err := testutil.WithServiceAccount(context.Background(), db, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(context.Background(), `
+			INSERT INTO ibex_core.agents (id, org_id, created_by, name, slug, status)
+			VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, 'paused')`,
+			pausedID, orgID, userID, "Paused Agent", "paused-"+uuid.NewString()[:8],
+		)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("seed paused agent: %v", err)
+	}
+	return pausedID
+}
+
+func TestProxyAgentVerificationIntegration(t *testing.T) {
+	dsn, cleanup := testutil.SetupPostgres(t)
+	defer cleanup()
+
+	db := testutil.OpenDB(t, dsn)
+	defer db.Close()
+
+	authFx := integrationtest.StartAuthGRPC(t, dsn)
+	defer authFx.Close()
+
+	orgA := testutil.SeedOrganization(t, db, "Org A", "org-a-agent-"+uuid.NewString()[:8])
+	orgB := testutil.SeedOrganization(t, db, "Org B", "org-b-agent-"+uuid.NewString()[:8])
+	userA := testutil.SeedUser(t, db, orgA, "user-a-"+uuid.NewString()[:8]+"@example.com", "User A")
+	userB := testutil.SeedUser(t, db, orgB, "user-b-"+uuid.NewString()[:8]+"@example.com", "User B")
+	agentA := testutil.SeedAgent(t, db, orgA, userA, "Agent A", "agent-a-"+uuid.NewString()[:8])
+	agentB := testutil.SeedAgent(t, db, orgB, userB, "Agent B", "agent-b-"+uuid.NewString()[:8])
+	validBearer, _ := testutil.SeedToken(t, db, orgA, 42)
+
+	srv := startProxyServer(t, authFx.Addr)
+	defer srv.Close()
+
+	t.Run("missing agent header", func(t *testing.T) {
+		resp, body := authProbeGET(t, srv.URL, validBearer, "")
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest || !strings.Contains(body, "MISSING_AGENT_ID") {
+			t.Fatalf("status=%d body=%s", resp.StatusCode, body)
+		}
+	})
+
+	t.Run("cross tenant rejected", func(t *testing.T) {
+		resp, body := authProbeGET(t, srv.URL, validBearer, agentB)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusForbidden || !strings.Contains(body, "AGENT_NOT_AUTHORIZED") {
+			t.Fatalf("status=%d body=%s", resp.StatusCode, body)
+		}
+	})
+
+	t.Run("own agent allowed", func(t *testing.T) {
+		resp, _ := authProbeGET(t, srv.URL, validBearer, agentA)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status=%d", resp.StatusCode)
+		}
+	})
+
+	t.Run("paused agent rejected", func(t *testing.T) {
+		pausedID := seedPausedAgent(t, db, orgA, userA)
+		resp, body := authProbeGET(t, srv.URL, validBearer, pausedID)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusForbidden || !strings.Contains(body, "AGENT_SUSPENDED") {
+			t.Fatalf("status=%d body=%s", resp.StatusCode, body)
+		}
+	})
+}
+
 func TestProxyAuthIntegration(t *testing.T) {
 	dsn, cleanup := testutil.SetupPostgres(t)
 	defer cleanup()
@@ -393,65 +484,6 @@ func TestProxyAuthIntegration(t *testing.T) {
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("status: %d", resp.StatusCode)
-		}
-	})
-
-	t.Run("cross tenant agent rejected", func(t *testing.T) {
-		req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v1/internal/auth-probe", nil)
-		req.Header.Set("Authorization", "Bearer "+validBearer)
-		req.Header.Set("X-IBEX-Agent-ID", agentB)
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusForbidden {
-			t.Fatalf("status: %d body=%s", resp.StatusCode, readBody(resp))
-		}
-		if !strings.Contains(readBody(resp), "AGENT_NOT_AUTHORIZED") {
-			t.Fatal("expected AGENT_NOT_AUTHORIZED")
-		}
-	})
-
-	t.Run("own agent allowed", func(t *testing.T) {
-		req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v1/internal/auth-probe", nil)
-		req.Header.Set("Authorization", "Bearer "+validBearer)
-		req.Header.Set("X-IBEX-Agent-ID", agentA)
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("status: %d body=%s", resp.StatusCode, readBody(resp))
-		}
-	})
-
-	t.Run("paused agent rejected", func(t *testing.T) {
-		pausedID := uuid.New().String()
-		if err := testutil.WithServiceAccount(context.Background(), db, func(tx *sql.Tx) error {
-			_, err := tx.ExecContext(context.Background(), `
-				INSERT INTO ibex_core.agents (id, org_id, created_by, name, slug, status)
-				VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, 'paused')`,
-				pausedID, orgA, userA, "Paused Agent", "paused-"+uuid.NewString()[:8],
-			)
-			return err
-		}); err != nil {
-			t.Fatalf("seed paused agent: %v", err)
-		}
-		req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v1/internal/auth-probe", nil)
-		req.Header.Set("Authorization", "Bearer "+validBearer)
-		req.Header.Set("X-IBEX-Agent-ID", pausedID)
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusForbidden {
-			t.Fatalf("status: %d body=%s", resp.StatusCode, readBody(resp))
-		}
-		if !strings.Contains(readBody(resp), "AGENT_SUSPENDED") {
-			t.Fatal("expected AGENT_SUSPENDED")
 		}
 	})
 }

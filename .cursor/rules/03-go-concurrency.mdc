@@ -1,6 +1,7 @@
 ---
 description: Go concurrency correctness rules. Goroutine lifecycle, channels, mutexes, context propagation.
-globs: ["**/*.go"]
+globs:
+  - "**/*.go"
 alwaysApply: false
 ---
 

@@ -1,0 +1,63 @@
+---
+description: Mandatory local CI gate verification before git push or PR update. Never push until equivalent CI jobs pass locally.
+alwaysApply: true
+---
+
+# Pre-Push CI Gate Verification
+
+## Non-negotiable rule
+
+**Do not run `git push` or open/update a PR until you have run the CI-equivalent checks locally and they pass.**
+
+Pushing broken code wastes review time and blocks the merge queue. If you cannot run a check locally (missing Postgres, Redis), run every check you can and note the gap in the PR Testing section — but never skip `gofmt` or unit tests.
+
+## Minimum local gate (every Go change)
+
+Run from repo root (`ibex-harness/`):
+
+```bash
+# 1. Format — must produce no output
+gofmt -l $(find services/proxy services/auth packages -name '*.go' 2>/dev/null | tr '\n' ' ')
+
+# 2. Unit tests for touched packages
+go test ./services/proxy/...
+go test ./packages/ratelimit/...   # when ratelimit touched
+
+# 3. Repo guards
+make repo-guards
+```
+
+PowerShell gofmt check:
+
+```powershell
+Get-ChildItem -Recurse -Filter *.go services/proxy,services/auth,packages | ForEach-Object { gofmt -l $_.FullName }
+```
+
+## Proxy/auth milestone gate (when touching proxy or auth)
+
+```bash
+make proto-gen
+go test -tags=integration ./services/proxy/...   # requires Postgres (5432 or 5433)
+```
+
+Set `POSTGRES_TEST_DSN` if not using default test compose port.
+
+## CI jobs you must mirror before push
+
+| CI job | Local equivalent |
+| --- | --- |
+| `golangci-lint` | `gofmt -l` on all touched `.go` files (gofmt is the common failure) |
+| `go-services (proxy)` | `gofmt -l services/proxy/...` + `go test ./services/proxy/...` |
+| `proxy-auth-smoke` | `go test -tags=integration ./services/proxy/...` |
+| `proxy-agent-verify-smoke` | `go test ./services/proxy/internal/http/ -run AgentVerification` + integration agent tests |
+| `CodeScene` | Keep functions ≤4 args, extract helpers, avoid duplicated metric blocks (see `21-complexity-management.mdc`) |
+
+## When push is allowed
+
+Only after:
+
+1. All applicable commands above exit 0
+2. You recorded what you ran in the PR Testing section
+3. No known failing CI checks on the branch
+
+If CI fails after push, fix locally, re-run the gate, then push the fix — do not iterate blindly on CI.

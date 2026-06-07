@@ -1,6 +1,8 @@
 ---
 description: TypeScript and React (Next.js) standards for the dashboard service.
-globs: ["services/dashboard/**/*.ts", "services/dashboard/**/*.tsx"]
+globs:
+  - "**/services/dashboard/**/*.ts"
+  - "**/services/dashboard/**/*.tsx"
 alwaysApply: false
 ---
 

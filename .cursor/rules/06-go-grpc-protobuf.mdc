@@ -1,6 +1,9 @@
 ---
 description: gRPC service design, proto conventions, error handling, and client patterns for ibex-harness.
-globs: ["**/*.proto", "**/grpc/**/*.go", "packages/proto/**"]
+globs:
+  - "**/*.proto"
+  - "**/grpc/**/*.go"
+  - "**/packages/proto/**"
 alwaysApply: false
 ---
 

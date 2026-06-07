@@ -366,7 +366,7 @@ jobs:
       - name: Proxy agent verification integration tests
         env:
           POSTGRES_TEST_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
-        run: go test -tags=integration ./services/proxy/ -run "Agent|cross tenant agent|own agent|paused agent|missing agent"
+        run: go test -tags=integration ./services/proxy/ -run "TestProxyAgentVerificationIntegration|cross tenant|own agent|paused agent|missing agent"
 
   go-services:
     name: go-services

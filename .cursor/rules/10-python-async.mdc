@@ -1,6 +1,9 @@
 ---
 description: Python async patterns, Celery worker rules, background task design.
-globs: ["services/worker/**/*.py", "services/context/**/*.py", "services/memory/**/*.py"]
+globs:
+  - "**/services/worker/**/*.py"
+  - "**/services/context/**/*.py"
+  - "**/services/memory/**/*.py"
 alwaysApply: false
 ---
 

@@ -1,6 +1,9 @@
 ---
 description: Go performance rules for hot paths. Memory allocation, string handling, pre-allocation, benchmarking.
-globs: ["services/proxy/**/*.go", "services/auth/**/*.go", "packages/**/*.go"]
+globs:
+  - "**/services/proxy/**/*.go"
+  - "**/services/auth/**/*.go"
+  - "**/packages/**/*.go"
 alwaysApply: false
 ---
 
