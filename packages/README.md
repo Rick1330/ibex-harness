@@ -11,6 +11,7 @@ Shared libraries and contract artifacts (not deployable as standalone processes)
 | `reqid/` | Request ID generation (UUID v7), context propagation ([ADR-0017](../docs/adr/ADR-0017-request-id-strategy.md)) |
 | `shutdown/` | Graceful shutdown coordinator for auth and proxy ([ADR-0018](../docs/adr/ADR-0018-graceful-shutdown.md)) |
 | `logger/` | Structured JSON logger with mandatory field schema ([18-observability.mdc](../.cursor/rules/18-observability.mdc)) |
+| `telemetry/` | OpenTelemetry tracer/meter init, HTTP span middleware ([ADR-0019](../docs/adr/ADR-0019-opentelemetry-provider-configuration.md)) |
 | `sdk-python/` | Python client SDK (planned) |
 | `sdk-typescript/` | TypeScript client SDK (planned) |
 | `sdk-go/` | Go client SDK (planned) |

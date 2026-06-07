@@ -1,16 +1,19 @@
 package http
 
 import (
+	"context"
 	"errors"
 	"mime"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/Rick1330/ibex-harness/packages/reqid"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
 	proxyerrors "github.com/Rick1330/ibex-harness/services/proxy/internal/errors"
-	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // RequestContextMiddleware assigns request/trace IDs and request start time.
@@ -19,13 +22,8 @@ func RequestContextMiddleware(cfg config.Config) func(http.Handler) http.Handler
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
 			requestID := reqid.ResolveInbound(r.Header.Get(cfg.RequestIDHeader))
-			traceID := strings.TrimSpace(r.Header.Get(cfg.TraceIDHeader))
-			if traceID == "" {
-				traceID = uuid.NewString()
-			}
 			ctx := r.Context()
 			ctx = reqid.WithRequestID(ctx, requestID)
-			ctx = WithTraceID(ctx, traceID)
 			ctx = WithRequestStart(ctx, start)
 			ctx = WithErrorDocsBase(ctx, cfg.ErrorDocsBase)
 			next.ServeHTTP(w, r.WithContext(ctx))
@@ -86,6 +84,15 @@ func formatMillis(ms int64) string {
 	return string(b[pos:])
 }
 
+func traceIDFromContext(ctx context.Context) string {
+	span := trace.SpanFromContext(ctx)
+	sc := span.SpanContext()
+	if !sc.IsValid() {
+		return ""
+	}
+	return sc.TraceID().String()
+}
+
 // ResponseHeadersMiddleware sets IBEX response headers on every response.
 func ResponseHeadersMiddleware(cfg config.Config) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
@@ -99,7 +106,7 @@ func ResponseHeadersMiddleware(cfg config.Config) func(http.Handler) http.Handle
 				requestIDHeader: cfg.RequestIDHeader,
 				traceIDHeader:   cfg.TraceIDHeader,
 				requestID:       RequestIDFromContext(r.Context()),
-				traceID:         TraceIDFromContext(r.Context()),
+				traceID:         traceIDFromContext(r.Context()),
 				start:           start,
 			}
 			next.ServeHTTP(wrapped, r)

@@ -13,6 +13,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	"github.com/Rick1330/ibex-harness/packages/shutdown"
+	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/config"
 	grpcserver "github.com/Rick1330/ibex-harness/services/auth/internal/grpc"
 	authhttp "github.com/Rick1330/ibex-harness/services/auth/internal/http"
@@ -52,6 +53,13 @@ func main() {
 	tokenSvc := service.NewTokenService(repo, cfg.Argon2, log)
 	meter := metrics.New()
 
+	providers, err := telemetry.Init(context.Background(), cfg.Telemetry)
+	if err != nil {
+		log.ErrorCtx(context.Background(), "telemetry init failed", "error", err)
+		os.Exit(1)
+	}
+	tracer := providers.TracerProvider.Tracer("ibex-auth")
+
 	grpcSrv := grpc.NewServer(
 		grpc.UnaryInterceptor(grpcserver.AuthzUnaryInterceptor(validator)),
 	)
@@ -65,12 +73,12 @@ func main() {
 
 	httpServer := &http.Server{
 		Addr:              config.ListenAddress(cfg.Port),
-		Handler:           authhttp.NewRouter(cfg, log, meter),
+		Handler:           authhttp.NewRouter(cfg, log, meter, tracer),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
 	runWithShutdown(shutdownOpts{
-		cfg: cfg, logger: log, grpcSrv: grpcSrv, grpcLis: grpcLis,
+		cfg: cfg, logger: log, providers: providers, grpcSrv: grpcSrv, grpcLis: grpcLis,
 		httpServer: httpServer, db: db,
 	})
 }
@@ -78,6 +86,7 @@ func main() {
 type shutdownOpts struct {
 	cfg        config.Config
 	logger     *logger.Logger
+	providers  *telemetry.Providers
 	grpcSrv    *grpc.Server
 	grpcLis    net.Listener
 	httpServer *http.Server
@@ -104,6 +113,7 @@ func runWithShutdown(opts shutdownOpts) {
 	}()
 
 	sd := shutdown.New(opts.cfg.ShutdownTimeout, opts.logger)
+	sd.Register(opts.providers.Shutdown)
 	sd.Register(func(ctx context.Context) error {
 		return shutdown.GracefulStopGRPC(opts.grpcSrv, ctx)
 	})

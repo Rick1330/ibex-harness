@@ -17,6 +17,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/permissions"
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
+	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"github.com/Rick1330/ibex-harness/services/auth/integrationtest"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
@@ -104,6 +105,7 @@ func startProxyServer(t *testing.T, authAddr string) *httptest.Server {
 		Config:        cfg,
 		Logger:        logger.Discard("proxy"),
 		Metrics:       metrics.New(),
+		Tracer:        telemetry.NoopTracer("proxy"),
 		Validator:     validator,
 		AgentVerifier: agentVerifier,
 		Limiter:       ratelimit.Noop(),

@@ -9,6 +9,7 @@ import (
 
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
+	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
 	proxyerrors "github.com/Rick1330/ibex-harness/services/proxy/internal/errors"
@@ -16,6 +17,7 @@ import (
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/llm"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/metrics"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/validation"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type response struct {
@@ -33,6 +35,7 @@ type RouterDeps struct {
 	Config        config.Config
 	Logger        *logger.Logger
 	Metrics       *metrics.Metrics
+	Tracer        trace.Tracer
 	Validator     auth.TokenValidator
 	AgentVerifier auth.AgentVerifier
 	Limiter       ratelimit.Limiter
@@ -93,8 +96,10 @@ func NewRouter(deps RouterDeps) http.Handler {
 
 	handler := meter.Middleware(
 		RequestContextMiddleware(cfg)(
-			ResponseHeadersMiddleware(cfg)(
-				loggingMiddleware(logger, mux),
+			telemetry.SpanMiddleware(deps.Tracer)(
+				ResponseHeadersMiddleware(cfg)(
+					loggingMiddleware(logger, mux),
+				),
 			),
 		),
 	)

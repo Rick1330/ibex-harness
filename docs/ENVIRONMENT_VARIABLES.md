@@ -380,13 +380,15 @@ Used by: **all services**
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `OTEL_ENABLED` | No | `true` | Enable OTel |
-| `OTEL_SERVICE_NAME` | Yes | from `IBEX_SERVICE_NAME` | OTel service name |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | No | (none) | OTLP collector endpoint |
-| `OTEL_EXPORTER_OTLP_PROTOCOL` | No | `grpc` | `grpc` \| `http/protobuf` |
-| `OTEL_TRACES_SAMPLER` | No | `parentbased_traceidratio` | Sampler |
-| `OTEL_TRACES_SAMPLER_ARG` | No | `0.01` | 1% default sampling |
-| `OTEL_PROPAGATORS` | No | `tracecontext,baggage` | Propagators |
+| `OTEL_SERVICE_NAME` | Yes* | from `IBEX_SERVICE_NAME` | OTel service name |
+| `OTEL_SERVICE_VERSION` | No | `dev` | Binary version tag |
+| `OTEL_DEPLOYMENT_ENVIRONMENT` | No | from `IBEX_ENV` | `development`, `staging`, `production` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | No | (none) | OTLP gRPC collector (e.g. `localhost:4317`); empty = noop |
+| `OTEL_SAMPLE_RATIO` | No | `0.01` | Fraction of root spans sampled (`ParentBased` + `TraceIDRatio`) |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | No | `grpc` | Reserved; Phase 1 uses gRPC only |
+| `OTEL_PROPAGATORS` | No | `tracecontext,baggage` | Fixed in `packages/telemetry` (ADR-0019) |
+
+\*Required directly or via `IBEX_SERVICE_NAME` fallback.
 
 **Sampling policy recommendation:**
 

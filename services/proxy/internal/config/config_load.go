@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"github.com/google/uuid"
 )
 
@@ -23,6 +24,11 @@ func Load() (Config, error) {
 	if err := loadOptionalOverrides(&cfg); err != nil {
 		return Config{}, err
 	}
+	telemetryCfg, err := telemetry.ConfigFromEnv(cfg.ServiceName, cfg.Environment)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.Telemetry = telemetryCfg
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
 	}

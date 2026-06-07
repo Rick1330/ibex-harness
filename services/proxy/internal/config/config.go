@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"github.com/google/uuid"
 )
 
@@ -42,6 +43,7 @@ type Config struct {
 	ErrorDocsBase       string
 	RateLimit           RateLimitConfig
 	ShutdownTimeout     time.Duration
+	Telemetry           telemetry.Config
 }
 
 // ApplyDefaults fills zero-valued fields so httptest and partial Config literals behave like Load().

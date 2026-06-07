@@ -17,6 +17,7 @@ Index of significant technical decisions for IBEX Harness.
 | [ADR-0016-agent-identity-verification.md](ADR-0016-agent-identity-verification.md) | Accepted | Proxy agent identity verification |
 | [ADR-0017-request-id-strategy.md](ADR-0017-request-id-strategy.md) | Accepted | Request ID and trace context strategy |
 | [ADR-0018-graceful-shutdown.md](ADR-0018-graceful-shutdown.md) | Accepted | Graceful shutdown contract (Phase 1) |
+| [ADR-0019-opentelemetry-provider-configuration.md](ADR-0019-opentelemetry-provider-configuration.md) | Accepted | OpenTelemetry provider configuration (Phase 1) |
 
 ## When to write an ADR
 

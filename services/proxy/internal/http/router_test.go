@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"github.com/Rick1330/ibex-harness/packages/logger"
-
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
+	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/metrics"
@@ -39,6 +39,7 @@ func newTestRouter(cfg config.Config, validator auth.TokenValidator, limiter rat
 		Config:        cfg,
 		Logger:        logger.Discard("proxy"),
 		Metrics:       metrics.New(),
+		Tracer:        telemetry.NoopTracer("proxy"),
 		Validator:     validator,
 		AgentVerifier: agentVerifier,
 		Limiter:       limiter,

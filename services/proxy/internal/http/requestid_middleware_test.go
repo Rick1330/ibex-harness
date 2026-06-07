@@ -8,16 +8,20 @@ import (
 	"testing"
 
 	"github.com/Rick1330/ibex-harness/packages/reqid"
+	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
 	proxyerrors "github.com/Rick1330/ibex-harness/services/proxy/internal/errors"
 	"github.com/google/uuid"
 )
 
 func requestIDHandlerChain(cfg config.Config) http.Handler {
+	tracer := telemetry.NoopTracer("test")
 	return RequestContextMiddleware(cfg)(
-		ResponseHeadersMiddleware(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-		})),
+		telemetry.SpanMiddleware(tracer)(
+			ResponseHeadersMiddleware(cfg)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			})),
+		),
 	)
 }
 
@@ -85,12 +89,15 @@ func TestRequestContextMiddleware_contextPropagation(t *testing.T) {
 
 func TestRequestIDInErrorEnvelope_matchesHeader(t *testing.T) {
 	cfg := config.Config{RequestIDHeader: "X-Request-ID", TraceIDHeader: "X-Trace-ID"}
+	tracer := telemetry.NoopTracer("test")
 	handler := RequestContextMiddleware(cfg)(
-		ResponseHeadersMiddleware(cfg)(
-			ContentTypeMiddleware("")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				proxyerrors.Write(w, http.StatusBadRequest, proxyerrors.CodeValidationError,
-					"fail", RequestIDFromContext(r.Context()), proxyerrors.WriteOpts{})
-			})),
+		telemetry.SpanMiddleware(tracer)(
+			ResponseHeadersMiddleware(cfg)(
+				ContentTypeMiddleware("")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					proxyerrors.Write(w, http.StatusBadRequest, proxyerrors.CodeValidationError,
+						"fail", RequestIDFromContext(r.Context()), proxyerrors.WriteOpts{})
+				})),
+			),
 		),
 	)
 	rec := httptest.NewRecorder()

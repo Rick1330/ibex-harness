@@ -11,6 +11,7 @@ import (
 
 	"github.com/Rick1330/ibex-harness/packages/crypto"
 	"github.com/Rick1330/ibex-harness/packages/shutdown"
+	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/token"
 )
 
@@ -32,6 +33,7 @@ type Config struct {
 	PostgresDSN     string
 	Argon2          token.Argon2Params
 	ShutdownTimeout time.Duration
+	Telemetry       telemetry.Config
 }
 
 func Load() (Config, error) {
@@ -79,6 +81,12 @@ func Load() (Config, error) {
 		}
 		cfg.Argon2.Parallelism = uint8(n)
 	}
+
+	telemetryCfg, err := telemetry.ConfigFromEnv(cfg.ServiceName, cfg.Environment)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.Telemetry = telemetryCfg
 
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
 	proxyerrors "github.com/Rick1330/ibex-harness/services/proxy/internal/errors"
 )
@@ -45,11 +46,14 @@ func TestContentTypeMiddleware_requiresJSON(t *testing.T) {
 
 func TestResponseHeadersMiddleware_setsHeaders(t *testing.T) {
 	cfg := config.Config{RequestIDHeader: "X-Request-ID", TraceIDHeader: "X-Trace-ID"}
+	tracer := telemetry.NoopTracer("test")
 	handler := RequestContextMiddleware(cfg)(
-		ResponseHeadersMiddleware(cfg)(
-			http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				w.WriteHeader(http.StatusOK)
-			}),
+		telemetry.SpanMiddleware(tracer)(
+			ResponseHeadersMiddleware(cfg)(
+				http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					w.WriteHeader(http.StatusOK)
+				}),
+			),
 		),
 	)
 	rec := httptest.NewRecorder()
