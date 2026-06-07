@@ -2,7 +2,7 @@
 
 **Status:** In Progress  
 **Estimated duration:** 4–6 weeks  
-**Current milestone:** [1.3.1 OTel tracer and meter provider init](milestones/1.3.1-otel-tracer-provider-init.md)
+**Current milestone:** [1.3.2 Prometheus metric catalog and client migration](milestones/1.3.2-prometheus-metric-catalog.md)
 
 ## Milestones
 
@@ -23,8 +23,8 @@
 | 1.2.5 | [Proxy agent identity verification](milestones/1.2.5-proxy-agent-identity-verification.md) | Complete |
 | 1.2.6 | [Request ID correlation middleware](milestones/1.2.6-request-id-correlation-middleware.md) | Complete |
 | 1.2.7 | [Graceful shutdown](milestones/1.2.7-graceful-shutdown.md) | Complete |
-| 1.3.1 | [OTel tracer and meter provider init](milestones/1.3.1-otel-tracer-provider-init.md) | Next |
-| 1.3.2 | [Prometheus metric catalog and client migration](milestones/1.3.2-prometheus-metric-catalog.md) | Planned |
+| 1.3.1 | [OTel tracer and meter provider init](milestones/1.3.1-otel-tracer-provider-init.md) | Complete |
+| 1.3.2 | [Prometheus metric catalog and client migration](milestones/1.3.2-prometheus-metric-catalog.md) | Next |
 | 1.3.3 | [Shared structured logger package](milestones/1.3.3-shared-logger-package.md) | Complete |
 | 1.4.1 | [Developer experience baseline](milestones/1.4.1-developer-experience-baseline.md) | Planned |
 | 1.4.2 | [Shared config and error packages](milestones/1.4.2-shared-config-and-error-packages.md) | Planned |
