@@ -8,13 +8,18 @@ Go service for the IBEX Harness LLM proxy.
 - `GET /ready` — readiness; Redis `PING` when `REDIS_URL` is set
 - `GET /metrics` — Prometheus text metrics
 
-## Protected endpoints (Bearer PAT required)
+## Protected endpoints (Bearer PAT + agent header required)
+
+All protected routes require:
+
+- `Authorization: Bearer <pat>`
+- `X-IBEX-Agent-ID: <uuid>` — must be an **active** agent owned by the token's org ([ADR-0016](../../docs/adr/ADR-0016-agent-identity-verification.md))
 
 - `GET /v1/internal/auth-probe` — returns `{org_id, permissions}` for the caller token
 - `GET /v1/orgs/{org_id}/auth-probe` — same; path `org_id` must be UUID; **403** if path org ≠ token org
-- `POST /v1/chat/completions` — auth + `ProxyChatCompletion`; body limit + JSON Content-Type; semantic validation; rate limit; **501** when valid; **429** `RATE_LIMITED`; **400** `VALIDATION_ERROR` / `INVALID_JSON`; **413** / **415** per [ADR-0013](../../docs/adr/ADR-0013-proxy-input-validation-and-error-envelope.md)
+- `POST /v1/chat/completions` — auth + agent verify + `ProxyChatCompletion`; body limit + JSON Content-Type; semantic validation; rate limit; **501** when valid; **429** `RATE_LIMITED`; **400** `MISSING_AGENT_ID` / `VALIDATION_ERROR` / `INVALID_JSON`; **403** `AGENT_NOT_AUTHORIZED` / `AGENT_SUSPENDED`; **413** / **415** per [ADR-0013](../../docs/adr/ADR-0013-proxy-input-validation-and-error-envelope.md)
 
-Auth validates via gRPC `ValidateToken` ([ADR-0011](../../docs/adr/ADR-0011-proxy-auth-client.md)). Parse: [ADR-0012](../../docs/adr/ADR-0012-proxy-request-normalization.md). Validation + envelope: [ADR-0013](../../docs/adr/ADR-0013-proxy-input-validation-and-error-envelope.md). Rate limit: [ADR-0015](../../docs/adr/ADR-0015-proxy-rate-limit-skeleton.md). Fail closed: auth outage → **503**. Rate limit Redis outage → fail open (request allowed).
+Auth validates via gRPC `ValidateToken` ([ADR-0011](../../docs/adr/ADR-0011-proxy-auth-client.md)). Agent ownership via gRPC `ValidateAgent` ([ADR-0016](../../docs/adr/ADR-0016-agent-identity-verification.md)). Parse: [ADR-0012](../../docs/adr/ADR-0012-proxy-request-normalization.md). Validation + envelope: [ADR-0013](../../docs/adr/ADR-0013-proxy-input-validation-and-error-envelope.md). Rate limit: [ADR-0015](../../docs/adr/ADR-0015-proxy-rate-limit-skeleton.md). Fail closed: token auth outage → **503** `SERVICE_DEGRADED`; agent verify outage → **503** `AUTH_UNAVAILABLE`. Rate limit Redis outage → fail open (request allowed).
 
 ## Middleware order
 
@@ -22,13 +27,13 @@ Auth validates via gRPC `ValidateToken` ([ADR-0011](../../docs/adr/ADR-0011-prox
 metrics → requestContext → responseHeaders → logging → mux
 
 POST /v1/chat/completions:
-  bodyLimit → contentType → auth → rateLimit → handler
+  bodyLimit → contentType → auth → agentVerify → rateLimit → handler
 
 GET /v1/internal/auth-probe:
-  auth → rateLimit → handler
+  auth → agentVerify → rateLimit → handler
 
 GET /v1/orgs/{org_id}/auth-probe:
-  pathOrgUUID → auth → rateLimit → handler
+  pathOrgUUID → auth → agentVerify → rateLimit → handler
 ```
 
 Protected responses include `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `X-RateLimit-Reset` when rate limiting is enabled. **429** responses also include `Retry-After`.
@@ -99,7 +104,7 @@ go run ./services/proxy/cmd/proxy
 
 ```bash
 curl -s http://localhost:8080/health
-curl -s -H "Authorization: Bearer <pat>" http://localhost:8080/v1/internal/auth-probe
+curl -s -H "Authorization: Bearer <pat>" -H "X-IBEX-Agent-ID: <agent-uuid>" http://localhost:8080/v1/internal/auth-probe
 ```
 
 Chat (bash):

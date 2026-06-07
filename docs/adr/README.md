@@ -13,6 +13,8 @@ Index of significant technical decisions for IBEX Harness.
 | [ADR-0007-auth-token-validation.md](ADR-0007-auth-token-validation.md) | Accepted | Auth ValidateToken implementation |
 | [ADR-0008-security-ci-gates.md](ADR-0008-security-ci-gates.md) | Accepted | Security scanning and CI quality gates |
 | [ADR-0014-core-domain-migration-sequencing.md](ADR-0014-core-domain-migration-sequencing.md) | Accepted | Core domain migration sequencing |
+| [ADR-0015-proxy-rate-limit-skeleton.md](ADR-0015-proxy-rate-limit-skeleton.md) | Accepted | Proxy rate limit skeleton (Phase 1) |
+| [ADR-0016-agent-identity-verification.md](ADR-0016-agent-identity-verification.md) | Accepted | Proxy agent identity verification |
 
 ## When to write an ADR
 

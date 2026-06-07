@@ -30,6 +30,9 @@ Milestone 1.2.2 parses OpenAI-shaped chat JSON after auth with an **unbounded** 
 | Semantic / header validation | 400 | `VALIDATION_ERROR` + `field_errors` |
 | Malformed JSON (parse) | 400 | `INVALID_JSON` (unchanged) |
 | Auth failures | 401/403/503 | `MISSING_TOKEN`, `INVALID_TOKEN`, `INSUFFICIENT_PERMISSIONS`, `SERVICE_DEGRADED` (ADR-0011; **no renames**) |
+| Missing agent header | 400 | `MISSING_AGENT_ID` (ADR-0016) |
+| Agent not authorized | 403 | `AGENT_NOT_AUTHORIZED`, `AGENT_SUSPENDED` (ADR-0016) |
+| Agent verify unavailable | 503 | `AUTH_UNAVAILABLE` (ADR-0016; distinct from token `SERVICE_DEGRADED`) |
 | Valid request, no provider | 501 | `PROVIDER_NOT_CONFIGURED` |
 | Rate limit exceeded | 429 | `RATE_LIMITED` |
 | Wrong HTTP method (JSON routes) | 405 | `METHOD_NOT_ALLOWED` |
@@ -68,16 +71,16 @@ Single package `services/proxy/internal/errors`:
 metrics → requestContext → responseHeaders → logging → mux
 
 POST /v1/chat/completions:
-  bodyLimit → contentType → auth → rateLimit → handler
+  bodyLimit → contentType → auth → agentVerify → rateLimit → handler
 
 GET /v1/internal/auth-probe:
-  auth → rateLimit → handler
+  auth → agentVerify → rateLimit → handler
 
 GET /v1/orgs/{org_id}/auth-probe:
-  pathOrgUUID → auth → rateLimit → handler
+  pathOrgUUID → auth → agentVerify → rateLimit → handler
 ```
 
-Implemented in milestone **1.2.4** ([ADR-0015](ADR-0015-proxy-rate-limit-skeleton.md)).
+Rate limit added in **1.2.4** ([ADR-0015](ADR-0015-proxy-rate-limit-skeleton.md)). Agent verify added in **1.2.5** ([ADR-0016](ADR-0016-agent-identity-verification.md)).
 
 Amends [ADR-0012](ADR-0012-proxy-request-normalization.md) §6 footnote accordingly.
 

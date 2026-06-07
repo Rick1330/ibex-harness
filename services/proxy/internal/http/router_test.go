@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"net/http"
@@ -12,15 +13,35 @@ import (
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/metrics"
+	"github.com/google/uuid"
 )
 
+type passAgentVerifier struct{}
+
+func (passAgentVerifier) Verify(_ context.Context, _, agentID, orgID string) (*auth.AgentRecord, error) {
+	aid, err := uuid.Parse(agentID)
+	if err != nil {
+		return nil, auth.ErrAgentNotAuthorized
+	}
+	oid, err := uuid.Parse(orgID)
+	if err != nil {
+		return nil, auth.ErrAgentNotAuthorized
+	}
+	return &auth.AgentRecord{ID: aid, OrgID: oid, Status: "active"}, nil
+}
+
 func newTestRouter(cfg config.Config, validator auth.TokenValidator, limiter ratelimit.Limiter) http.Handler {
+	var agentVerifier auth.AgentVerifier
+	if validator != nil {
+		agentVerifier = passAgentVerifier{}
+	}
 	return NewRouter(RouterDeps{
-		Config:    cfg,
-		Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Metrics:   metrics.New(),
-		Validator: validator,
-		Limiter:   limiter,
+		Config:        cfg,
+		Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Metrics:       metrics.New(),
+		Validator:     validator,
+		AgentVerifier: agentVerifier,
+		Limiter:       limiter,
 	})
 }
 

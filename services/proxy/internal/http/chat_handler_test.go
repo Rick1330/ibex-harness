@@ -102,7 +102,7 @@ func TestChatCompletions_missingAgentID_returns400(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status: %d body=%s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), proxyerrors.CodeValidationError) {
+	if !strings.Contains(rec.Body.String(), proxyerrors.CodeMissingAgentID) {
 		t.Fatalf("body: %s", rec.Body.String())
 	}
 }

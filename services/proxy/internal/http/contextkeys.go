@@ -3,6 +3,8 @@ package http
 import (
 	"context"
 	"time"
+
+	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 )
 
 type contextKey int
@@ -12,6 +14,7 @@ const (
 	ctxKeyTraceID
 	ctxKeyRequestStart
 	ctxKeyErrorDocsBase
+	ctxKeyAgent
 )
 
 // WithRequestID stores the request ID on the context.
@@ -66,4 +69,15 @@ func ErrorDocsBaseFromContext(ctx context.Context) string {
 
 func requestIDFromContext(ctx context.Context) string {
 	return RequestIDFromContext(ctx)
+}
+
+// WithAgent stores the verified agent record on the context.
+func WithAgent(ctx context.Context, rec auth.AgentRecord) context.Context {
+	return context.WithValue(ctx, ctxKeyAgent, rec)
+}
+
+// AgentFromContext returns the verified agent record when agent middleware ran.
+func AgentFromContext(ctx context.Context) (auth.AgentRecord, bool) {
+	rec, ok := ctx.Value(ctxKeyAgent).(auth.AgentRecord)
+	return rec, ok
 }

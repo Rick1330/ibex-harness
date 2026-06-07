@@ -1,10 +1,10 @@
 # Current State
 
 **Last updated:** 2026-06-06  
-**Git SHA (`main`):** `b4a1aa5` — [PR #62](https://github.com/Rick1330/ibex-harness/pull/62) M1.2.4 rate limit skeleton  
+**Git SHA (`main`):** pending merge — M1.2.5 agent identity verification  
 **Current phase:** Phase 1 — Core Platform  
 **Current goal:** Goal 1.2 — proxy platform integration  
-**Next milestone:** [1.2.5 Proxy agent identity verification](phase-1-core-platform/milestones/1.2.5-proxy-agent-identity-verification.md)
+**Next milestone:** [1.3.1 OTel tracer provider init](phase-1-core-platform/milestones/1.3.1-otel-tracer-provider-init.md)
 
 ---
 
@@ -26,10 +26,11 @@
 - **Proxy request normalization (m1.2.2):** OpenAI chat JSON parse; `INVALID_JSON` / `501 PROVIDER_NOT_CONFIGURED` ([ADR-0012](../adr/ADR-0012-proxy-request-normalization.md))
 - **Proxy input validation (m1.2.3):** body limit, Content-Type, semantic `field_errors`, response headers, `X-IBEX-Agent-ID` ([ADR-0013](../adr/ADR-0013-proxy-input-validation-and-error-envelope.md))
 - **Proxy rate limit skeleton (m1.2.4):** `packages/ratelimit`, org-level Redis RPM, fail-open, 429 `RATE_LIMITED` ([ADR-0015](../adr/ADR-0015-proxy-rate-limit-skeleton.md))
+- **Proxy agent identity verification (m1.2.5):** `ValidateAgent` middleware, required `X-IBEX-Agent-ID`, fail-closed, 403/503 agent errors ([ADR-0016](../adr/ADR-0016-agent-identity-verification.md))
 - **Integration test infra (m1.0.1):** `infra/testing/testutil`, `make test-integration`, compose test (5433) or optional `testcontainers` build tag
 - Go services:
   - `services/auth` — `/health`, `/ready`, `/metrics`, gRPC `ValidateToken` + `ValidateAgent`
-  - `services/proxy` — validation + rate limit middleware on `/v1/*`; stable error envelope on JSON errors
+  - `services/proxy` — auth + agent verify + rate limit on `/v1/*`; stable error envelope on JSON errors
 - Root Go module: `github.com/Rick1330/ibex-harness` (Go **1.25.11+** per [TOOLCHAIN.md](../TOOLCHAIN.md))
 - Security / quality CI: CodeQL v4, Semgrep (IBEX rules), Trivy, OSV, hard-gate `golangci-lint`, Hadolint, Bandit (skip until `services/memory`)
 - Informational CI: `scorecard`, `sbom` (Syft + Grype table/JSON artifacts only), `dependency-review`, `go-services`, `db-migrate-smoke`, `proto-contract`, `auth-validate-smoke`, `proxy-auth-smoke`, `buf-lint`
@@ -51,8 +52,8 @@
 
 ## Next 3 immediate tasks
 
-1. **Milestone 1.2.5** — Proxy agent identity verification
-2. **Observability baseline** — Milestone 1.3.1 (OTel, Prometheus client)
+1. **Milestone 1.3.1** — Observability baseline (OTel, Prometheus client)
+2. **Milestone 1.3.2** — Proxy metrics (rate limit, auth latency)
 3. **Phase 1 exit gate** — Milestone [1.5.1](phase-1-core-platform/milestones/1.5.1-security-integration-test-suite.md) security integration suite (after 1.4.x)
 
 ## Verify current state locally

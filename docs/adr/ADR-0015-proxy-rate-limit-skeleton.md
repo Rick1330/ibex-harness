@@ -57,17 +57,17 @@ No DB-backed limits in Phase 1.
 
 ### 6) Middleware order
 
-Amends [ADR-0013](ADR-0013-proxy-input-validation-and-error-envelope.md) §8:
+Amends [ADR-0013](ADR-0013-proxy-input-validation-and-error-envelope.md) §8. **Superseded for agent step by [ADR-0016](ADR-0016-agent-identity-verification.md)** (M1.2.5 inserts `agentVerify` after auth, before rateLimit):
 
 ```text
 POST /v1/chat/completions:
-  bodyLimit → contentType → auth → rateLimit → handler
+  bodyLimit → contentType → auth → agentVerify → rateLimit → handler
 
 GET /v1/internal/auth-probe:
-  auth → rateLimit → handler
+  auth → agentVerify → rateLimit → handler
 
 GET /v1/orgs/{org_id}/auth-probe:
-  pathOrgUUID → auth → rateLimit → handler
+  pathOrgUUID → auth → agentVerify → rateLimit → handler
 ```
 
 ### 7) Deferred

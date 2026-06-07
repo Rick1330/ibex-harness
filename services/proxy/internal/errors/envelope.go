@@ -19,6 +19,10 @@ const (
 	CodeValidationError         = "VALIDATION_ERROR"
 	CodeMethodNotAllowed        = "METHOD_NOT_ALLOWED"
 	CodeRateLimited             = "RATE_LIMITED"
+	CodeMissingAgentID          = "MISSING_AGENT_ID"
+	CodeAgentNotAuthorized      = "AGENT_NOT_AUTHORIZED"
+	CodeAgentSuspended          = "AGENT_SUSPENDED"
+	CodeAuthUnavailable         = "AUTH_UNAVAILABLE"
 )
 
 // FieldError is one validation failure (API_DOCUMENTATION.md).

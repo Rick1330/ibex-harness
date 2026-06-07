@@ -318,7 +318,15 @@ IBEX Harness explicitly treats memory content as **untrusted input** that may co
   - metadata size
   - tag counts and lengths
 
-**Proxy chat (`POST /v1/chat/completions`) — enforced in milestone 1.2.3 ([ADR-0013](adr/ADR-0013-proxy-input-validation-and-error-envelope.md)):**
+**Proxy protected routes — auth pipeline (milestones 1.2.1–1.2.5):**
+
+1. **Token validation** — gRPC `ValidateToken`; fail closed → **503** `SERVICE_DEGRADED` ([ADR-0011](adr/ADR-0011-proxy-auth-client.md))
+2. **Agent identity verification** — gRPC `ValidateAgent(agent_id, org_id_from_token)`; requires `X-IBEX-Agent-ID`; cross-org or inactive agent → **403** (`AGENT_NOT_AUTHORIZED` / `AGENT_SUSPENDED`, never **404**); auth outage → **503** `AUTH_UNAVAILABLE` ([ADR-0016](adr/ADR-0016-agent-identity-verification.md))
+3. **Rate limit** — org-level Redis RPM; fail open on Redis errors ([ADR-0015](adr/ADR-0015-proxy-rate-limit-skeleton.md))
+
+Middleware order: `auth → agentVerify → rateLimit → handler`.
+
+**Proxy chat (`POST /v1/chat/completions`) — input limits enforced in milestone 1.2.3 ([ADR-0013](adr/ADR-0013-proxy-input-validation-and-error-envelope.md)):**
 
 | Limit | Value |
 | --- | --- |

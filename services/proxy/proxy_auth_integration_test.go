@@ -4,6 +4,7 @@ package proxy_test
 
 import (
 	"context"
+	"database/sql"
 	"io"
 	"log/slog"
 	"net/http"
@@ -44,13 +45,16 @@ func startProxyServer(t *testing.T, authAddr string) *httptest.Server {
 		AuthGRPCAddr:        authAddr,
 		AuthValidateTimeout: 200 * time.Millisecond,
 	}
-	validator := auth.NewGRPCValidator(authv1.NewAuthServiceClient(conn), cfg.AuthValidateTimeout)
+	client := authv1.NewAuthServiceClient(conn)
+	validator := auth.NewGRPCValidator(client, cfg.AuthValidateTimeout)
+	agentVerifier := auth.NewGRPCAgentVerifier(client, cfg.AuthValidateTimeout)
 	handler := proxyhttp.NewRouter(proxyhttp.RouterDeps{
-		Config:    cfg,
-		Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Metrics:   metrics.New(),
-		Validator: validator,
-		Limiter:   ratelimit.Noop(),
+		Config:        cfg,
+		Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Metrics:       metrics.New(),
+		Validator:     validator,
+		AgentVerifier: agentVerifier,
+		Limiter:       ratelimit.Noop(),
 	})
 	return httptest.NewServer(handler)
 }
@@ -67,6 +71,10 @@ func TestProxyAuthIntegration(t *testing.T) {
 
 	orgA := testutil.SeedOrganization(t, db, "Org A", "org-a-proxy-"+uuid.NewString()[:8])
 	orgB := testutil.SeedOrganization(t, db, "Org B", "org-b-proxy-"+uuid.NewString()[:8])
+	userA := testutil.SeedUser(t, db, orgA, "user-a-"+uuid.NewString()[:8]+"@example.com", "User A")
+	userB := testutil.SeedUser(t, db, orgB, "user-b-"+uuid.NewString()[:8]+"@example.com", "User B")
+	agentA := testutil.SeedAgent(t, db, orgA, userA, "Agent A", "agent-a-"+uuid.NewString()[:8])
+	agentB := testutil.SeedAgent(t, db, orgB, userB, "Agent B", "agent-b-"+uuid.NewString()[:8])
 
 	validBearer, _ := testutil.SeedToken(t, db, orgA, 42)
 	chatBearer, _ := testutil.SeedToken(t, db, orgA, permissions.ProxyChatCompletion)
@@ -88,9 +96,27 @@ func TestProxyAuthIntegration(t *testing.T) {
 		}
 	})
 
+	t.Run("missing agent header on auth-probe", func(t *testing.T) {
+		req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v1/internal/auth-probe", nil)
+		req.Header.Set("Authorization", "Bearer "+validBearer)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b := readBody(resp)
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("status: %d body=%s", resp.StatusCode, b)
+		}
+		if !strings.Contains(b, "MISSING_AGENT_ID") {
+			t.Fatal("expected MISSING_AGENT_ID")
+		}
+	})
+
 	t.Run("valid token", func(t *testing.T) {
 		req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v1/internal/auth-probe", nil)
 		req.Header.Set("Authorization", "Bearer "+validBearer)
+		req.Header.Set("X-IBEX-Agent-ID", agentA)
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatal(err)
@@ -144,6 +170,7 @@ func TestProxyAuthIntegration(t *testing.T) {
 	t.Run("matching org path", func(t *testing.T) {
 		req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v1/orgs/"+orgA+"/auth-probe", nil)
 		req.Header.Set("Authorization", "Bearer "+validBearer)
+		req.Header.Set("X-IBEX-Agent-ID", agentA)
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatal(err)
@@ -154,13 +181,11 @@ func TestProxyAuthIntegration(t *testing.T) {
 		}
 	})
 
-	const agentID = "550e8400-e29b-41d4-a716-446655440000"
-
 	t.Run("chat without permission", func(t *testing.T) {
 		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/chat/completions", strings.NewReader("{}"))
 		req.Header.Set("Authorization", "Bearer "+lowPermsBearer)
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-IBEX-Agent-ID", agentID)
+		req.Header.Set("X-IBEX-Agent-ID", agentA)
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatal(err)
@@ -176,7 +201,7 @@ func TestProxyAuthIntegration(t *testing.T) {
 		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/chat/completions", strings.NewReader(body))
 		req.Header.Set("Authorization", "Bearer "+chatBearer)
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-IBEX-Agent-ID", agentID)
+		req.Header.Set("X-IBEX-Agent-ID", agentA)
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatal(err)
@@ -196,7 +221,7 @@ func TestProxyAuthIntegration(t *testing.T) {
 		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/chat/completions", strings.NewReader(`{invalid`))
 		req.Header.Set("Authorization", "Bearer "+chatBearer)
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-IBEX-Agent-ID", agentID)
+		req.Header.Set("X-IBEX-Agent-ID", agentA)
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatal(err)
@@ -216,7 +241,7 @@ func TestProxyAuthIntegration(t *testing.T) {
 		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/chat/completions", strings.NewReader(body))
 		req.Header.Set("Authorization", "Bearer "+chatBearer)
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-IBEX-Agent-ID", agentID)
+		req.Header.Set("X-IBEX-Agent-ID", agentA)
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatal(err)
@@ -242,8 +267,12 @@ func TestProxyAuthIntegration(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer resp.Body.Close()
+		b := readBody(resp)
 		if resp.StatusCode != http.StatusBadRequest {
-			t.Fatalf("status: %d body=%s", resp.StatusCode, readBody(resp))
+			t.Fatalf("status: %d body=%s", resp.StatusCode, b)
+		}
+		if !strings.Contains(b, "MISSING_AGENT_ID") {
+			t.Fatal("expected MISSING_AGENT_ID")
 		}
 	})
 
@@ -251,7 +280,7 @@ func TestProxyAuthIntegration(t *testing.T) {
 		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/chat/completions", strings.NewReader(`{}`))
 		req.Header.Set("Authorization", "Bearer "+chatBearer)
 		req.Header.Set("Content-Type", "text/plain")
-		req.Header.Set("X-IBEX-Agent-ID", agentID)
+		req.Header.Set("X-IBEX-Agent-ID", agentA)
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatal(err)
@@ -271,7 +300,7 @@ func TestProxyAuthIntegration(t *testing.T) {
 		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/chat/completions", strings.NewReader(oversized))
 		req.Header.Set("Authorization", "Bearer "+chatBearer)
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-IBEX-Agent-ID", agentID)
+		req.Header.Set("X-IBEX-Agent-ID", agentA)
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatal(err)
@@ -323,6 +352,7 @@ func TestProxyAuthIntegration(t *testing.T) {
 		plain := createResp.GetPlaintext()
 		req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v1/internal/auth-probe", nil)
 		req.Header.Set("Authorization", "Bearer "+plain)
+		req.Header.Set("X-IBEX-Agent-ID", agentA)
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatal(err)
@@ -355,6 +385,7 @@ func TestProxyAuthIntegration(t *testing.T) {
 	t.Run("org b token on org b path", func(t *testing.T) {
 		req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v1/orgs/"+orgB+"/auth-probe", nil)
 		req.Header.Set("Authorization", "Bearer "+orgBBearer)
+		req.Header.Set("X-IBEX-Agent-ID", agentB)
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			t.Fatal(err)
@@ -362,6 +393,65 @@ func TestProxyAuthIntegration(t *testing.T) {
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("status: %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("cross tenant agent rejected", func(t *testing.T) {
+		req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v1/internal/auth-probe", nil)
+		req.Header.Set("Authorization", "Bearer "+validBearer)
+		req.Header.Set("X-IBEX-Agent-ID", agentB)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusForbidden {
+			t.Fatalf("status: %d body=%s", resp.StatusCode, readBody(resp))
+		}
+		if !strings.Contains(readBody(resp), "AGENT_NOT_AUTHORIZED") {
+			t.Fatal("expected AGENT_NOT_AUTHORIZED")
+		}
+	})
+
+	t.Run("own agent allowed", func(t *testing.T) {
+		req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v1/internal/auth-probe", nil)
+		req.Header.Set("Authorization", "Bearer "+validBearer)
+		req.Header.Set("X-IBEX-Agent-ID", agentA)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status: %d body=%s", resp.StatusCode, readBody(resp))
+		}
+	})
+
+	t.Run("paused agent rejected", func(t *testing.T) {
+		pausedID := uuid.New().String()
+		if err := testutil.WithServiceAccount(context.Background(), db, func(tx *sql.Tx) error {
+			_, err := tx.ExecContext(context.Background(), `
+				INSERT INTO ibex_core.agents (id, org_id, created_by, name, slug, status)
+				VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, 'paused')`,
+				pausedID, orgA, userA, "Paused Agent", "paused-"+uuid.NewString()[:8],
+			)
+			return err
+		}); err != nil {
+			t.Fatalf("seed paused agent: %v", err)
+		}
+		req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v1/internal/auth-probe", nil)
+		req.Header.Set("Authorization", "Bearer "+validBearer)
+		req.Header.Set("X-IBEX-Agent-ID", pausedID)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusForbidden {
+			t.Fatalf("status: %d body=%s", resp.StatusCode, readBody(resp))
+		}
+		if !strings.Contains(readBody(resp), "AGENT_SUSPENDED") {
+			t.Fatal("expected AGENT_SUSPENDED")
 		}
 	})
 }

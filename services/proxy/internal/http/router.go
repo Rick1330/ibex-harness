@@ -31,11 +31,12 @@ type authProbeResponse struct {
 
 // RouterDeps wires the proxy HTTP handler and middleware chain.
 type RouterDeps struct {
-	Config    config.Config
-	Logger    *slog.Logger
-	Metrics   *metrics.Metrics
-	Validator auth.TokenValidator
-	Limiter   ratelimit.Limiter
+	Config        config.Config
+	Logger        *slog.Logger
+	Metrics       *metrics.Metrics
+	Validator     auth.TokenValidator
+	AgentVerifier auth.AgentVerifier
+	Limiter       ratelimit.Limiter
 }
 
 // NewRouter builds the proxy HTTP handler with optional auth validator for protected routes.
@@ -44,6 +45,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 	logger := deps.Logger
 	meter := deps.Metrics
 	validator := deps.Validator
+	agentVerifier := deps.AgentVerifier
 	limiter := deps.Limiter
 	cfg.ApplyDefaults()
 	mux := http.NewServeMux()
@@ -82,9 +84,13 @@ func NewRouter(deps RouterDeps) http.Handler {
 		if limiter != nil {
 			rateLimit = RateLimitMiddleware(limiter, logger)
 		}
+		var agentVerify func(http.Handler) http.Handler
+		if agentVerifier != nil {
+			agentVerify = AgentVerificationMiddleware(agentVerifier, meter, logger)
+		}
 
 		authNone := AuthMiddleware(validator, meter, logger, AuthOptions{})
-		mux.Handle("/v1/internal/auth-probe", chain(authNone, rateLimit)(http.HandlerFunc(handleAuthProbe)))
+		mux.Handle("/v1/internal/auth-probe", chain(authNone, agentVerify, rateLimit)(http.HandlerFunc(handleAuthProbe)))
 
 		authOrg := func(orgID string) func(http.Handler) http.Handler {
 			return AuthMiddleware(validator, meter, logger, AuthOptions{PathOrgID: orgID})
@@ -97,6 +103,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 			chain(
 				PathOrgUUIDMiddleware(docsBase),
 				authOrg(orgID),
+				agentVerify,
 				rateLimit,
 			)(http.HandlerFunc(handleAuthProbe)).ServeHTTP(w, r)
 		})
@@ -105,6 +112,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 			BodySizeLimitMiddleware(cfg.MaxRequestBodyBytes, docsBase),
 			ContentTypeMiddleware(docsBase),
 			AuthMiddleware(validator, meter, logger, AuthOptions{RequireProxyChatCompletion: true}),
+			agentVerify,
 			rateLimit,
 		)
 		mux.Handle("/v1/chat/completions", chatChain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

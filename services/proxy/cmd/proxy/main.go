@@ -34,14 +34,15 @@ func main() {
 
 	meter := metrics.New()
 	redisClient, limiter := setupRateLimiter(cfg, logger)
-	validator, grpcConn := setupAuthValidator(cfg, logger)
+	validator, agentVerifier, grpcConn := setupAuthClients(cfg, logger)
 
 	deps := proxyhttp.RouterDeps{
-		Config:    cfg,
-		Logger:    logger,
-		Metrics:   meter,
-		Validator: validator,
-		Limiter:   limiter,
+		Config:        cfg,
+		Logger:        logger,
+		Metrics:       meter,
+		Validator:     validator,
+		AgentVerifier: agentVerifier,
+		Limiter:       limiter,
 	}
 	server := newHTTPServer(deps)
 	runUntilShutdown(shutdownDeps{
@@ -78,18 +79,20 @@ func setupRateLimiter(cfg config.Config, logger *slog.Logger) (redis.UniversalCl
 	return client, limiter
 }
 
-func setupAuthValidator(cfg config.Config, logger *slog.Logger) (auth.TokenValidator, *grpc.ClientConn) {
+func setupAuthClients(cfg config.Config, logger *slog.Logger) (auth.TokenValidator, auth.AgentVerifier, *grpc.ClientConn) {
 	if cfg.AuthGRPCAddr == "" {
-		return nil, nil
+		return nil, nil, nil
 	}
 	conn, err := grpc.NewClient(cfg.AuthGRPCAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		logger.Error("auth grpc dial failed", "error", err, "addr", cfg.AuthGRPCAddr)
 		os.Exit(1)
 	}
-	validator := auth.NewGRPCValidator(authv1.NewAuthServiceClient(conn), cfg.AuthValidateTimeout)
+	client := authv1.NewAuthServiceClient(conn)
+	validator := auth.NewGRPCValidator(client, cfg.AuthValidateTimeout)
+	agentVerifier := auth.NewGRPCAgentVerifier(client, cfg.AuthValidateTimeout)
 	logger.Info("auth grpc client configured", "addr", cfg.AuthGRPCAddr, "timeout", cfg.AuthValidateTimeout.String())
-	return validator, conn
+	return validator, agentVerifier, conn
 }
 
 func newHTTPServer(deps proxyhttp.RouterDeps) *http.Server {

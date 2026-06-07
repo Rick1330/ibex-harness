@@ -5,7 +5,6 @@ import (
 	"math"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
@@ -13,8 +12,6 @@ import (
 	proxyerrors "github.com/Rick1330/ibex-harness/services/proxy/internal/errors"
 	"github.com/google/uuid"
 )
-
-const headerAgentID = "X-IBEX-Agent-ID"
 
 type rateLimitResponseWriter struct {
 	http.ResponseWriter
@@ -104,7 +101,10 @@ func rateLimitScopeFromRequest(r *http.Request) (orgUUID, agentUUID uuid.UUID, o
 	if err != nil {
 		return uuid.Nil, uuid.Nil, true
 	}
-	return orgUUID, parseOptionalAgentID(r.Header.Get(headerAgentID)), true
+	if rec, ok := AgentFromContext(r.Context()); ok {
+		return orgUUID, rec.ID, true
+	}
+	return orgUUID, parseAgentIDHeader(r.Header), true
 }
 
 func writeRateLimitInternalError(w http.ResponseWriter, requestID, docsBase, detail string) {
@@ -128,18 +128,6 @@ func setRateLimitHeaders(w http.ResponseWriter, limit, remaining int, resetUnix 
 	w.Header().Set("X-RateLimit-Limit", strconv.Itoa(limit))
 	w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(remaining))
 	w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(resetUnix, 10))
-}
-
-func parseOptionalAgentID(raw string) uuid.UUID {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return uuid.Nil
-	}
-	parsed, err := uuid.Parse(raw)
-	if err != nil {
-		return uuid.Nil
-	}
-	return parsed
 }
 
 func retryAfterSeconds(d time.Duration) int {

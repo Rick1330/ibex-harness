@@ -20,6 +20,10 @@ type Metrics struct {
 	authValidateTotal   map[string]uint64
 	authValidateBuckets map[string][]uint64
 	authValidateSums    map[string]float64
+
+	agentValidateTotal   map[string]uint64
+	agentValidateBuckets map[string][]uint64
+	agentValidateSums    map[string]float64
 }
 
 type labelKey struct {
@@ -33,9 +37,12 @@ func New() *Metrics {
 		requests:            make(map[labelKey]uint64),
 		buckets:             make(map[labelKey][]uint64),
 		sums:                make(map[labelKey]float64),
-		authValidateTotal:   make(map[string]uint64),
-		authValidateBuckets: make(map[string][]uint64),
-		authValidateSums:    make(map[string]float64),
+		authValidateTotal:    make(map[string]uint64),
+		authValidateBuckets:  make(map[string][]uint64),
+		authValidateSums:     make(map[string]float64),
+		agentValidateTotal:   make(map[string]uint64),
+		agentValidateBuckets: make(map[string][]uint64),
+		agentValidateSums:    make(map[string]float64),
 	}
 }
 
@@ -83,6 +90,20 @@ func (m *Metrics) renderPrometheus() string {
 	for k, v := range m.authValidateSums {
 		authSumsSnap[k] = v
 	}
+	agentTotalSnap := make(map[string]uint64, len(m.agentValidateTotal))
+	for k, v := range m.agentValidateTotal {
+		agentTotalSnap[k] = v
+	}
+	agentBucketsSnap := make(map[string][]uint64, len(m.agentValidateBuckets))
+	for k, v := range m.agentValidateBuckets {
+		a := make([]uint64, len(v))
+		copy(a, v)
+		agentBucketsSnap[k] = a
+	}
+	agentSumsSnap := make(map[string]float64, len(m.agentValidateSums))
+	for k, v := range m.agentValidateSums {
+		agentSumsSnap[k] = v
+	}
 	m.mu.Unlock()
 
 	var b strings.Builder
@@ -112,6 +133,22 @@ func (m *Metrics) renderPrometheus() string {
 	b.WriteString("# TYPE ibex_proxy_auth_validate_duration_seconds histogram\n")
 	for _, result := range sortedAuthResultsFromBuckets(authBucketsSnap) {
 		writeAuthHistogramLines(&b, "ibex_proxy_auth_validate_duration_seconds", result, authBucketsSnap[result], authSumsSnap[result], durationBuckets)
+	}
+
+	b.WriteString("# HELP ibex_proxy_agent_validate_total Agent middleware ValidateAgent attempts.\n")
+	b.WriteString("# TYPE ibex_proxy_agent_validate_total counter\n")
+	for _, result := range sortedAuthResults(agentTotalSnap) {
+		b.WriteString("ibex_proxy_agent_validate_total{result=")
+		writeQuoted(&b, result)
+		b.WriteString("} ")
+		b.WriteString(strconv.FormatUint(agentTotalSnap[result], 10))
+		b.WriteString("\n")
+	}
+
+	b.WriteString("# HELP ibex_proxy_agent_validate_duration_seconds Agent middleware validate latency.\n")
+	b.WriteString("# TYPE ibex_proxy_agent_validate_duration_seconds histogram\n")
+	for _, result := range sortedAuthResultsFromBuckets(agentBucketsSnap) {
+		writeAuthHistogramLines(&b, "ibex_proxy_agent_validate_duration_seconds", result, agentBucketsSnap[result], agentSumsSnap[result], durationBuckets)
 	}
 
 	return b.String()
@@ -204,6 +241,19 @@ func (m *Metrics) observe(method, path string, status int, seconds float64) {
 	}
 	recordHistogram(m.buckets[key], durationBuckets, seconds)
 	m.sums[key] += seconds
+}
+
+// ObserveAgentValidate records agent middleware validation latency and result.
+func (m *Metrics) ObserveAgentValidate(seconds float64, result string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.agentValidateTotal[result]++
+	if _, ok := m.agentValidateBuckets[result]; !ok {
+		m.agentValidateBuckets[result] = make([]uint64, len(durationBuckets)+1)
+	}
+	recordHistogram(m.agentValidateBuckets[result], durationBuckets, seconds)
+	m.agentValidateSums[result] += seconds
 }
 
 // ObserveAuthValidate records auth middleware validation latency and result.
