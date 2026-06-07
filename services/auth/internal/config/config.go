@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/crypto"
+	"github.com/Rick1330/ibex-harness/packages/shutdown"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/token"
 )
 
@@ -103,10 +104,7 @@ func (c Config) Validate() error {
 	if c.PostgresDSN == "" {
 		return fmt.Errorf("POSTGRES_DSN is required for auth token validation")
 	}
-	if c.ShutdownTimeout <= 0 {
-		return fmt.Errorf("IBEX_SHUTDOWN_TIMEOUT must be positive")
-	}
-	return nil
+	return shutdown.ValidateTimeout(c.ShutdownTimeout)
 }
 
 func ListenAddress(port string) string {

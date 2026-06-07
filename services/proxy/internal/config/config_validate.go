@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Rick1330/ibex-harness/packages/shutdown"
 	"github.com/google/uuid"
 )
 
@@ -23,10 +24,7 @@ func (c Config) Validate() error {
 }
 
 func (c Config) validateShutdownTimeout() error {
-	if c.ShutdownTimeout <= 0 {
-		return fmt.Errorf("IBEX_SHUTDOWN_TIMEOUT must be positive")
-	}
-	return nil
+	return shutdown.ValidateTimeout(c.ShutdownTimeout)
 }
 
 func (c Config) validateEnvironment() error {

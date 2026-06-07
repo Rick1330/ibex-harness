@@ -36,8 +36,14 @@ func TestCoordinator_CleanShutdown(t *testing.T) {
 	if err := coord.Wait(); err != nil {
 		t.Fatalf("Wait: %v", err)
 	}
-	if len(order) != 2 || order[0] != 1 || order[1] != 2 {
-		t.Fatalf("handler order: %v", order)
+	if len(order) != 2 {
+		t.Fatalf("handler count: %d", len(order))
+	}
+	if order[0] != 1 {
+		t.Fatalf("first handler: %d", order[0])
+	}
+	if order[1] != 2 {
+		t.Fatalf("second handler: %d", order[1])
 	}
 }
 
