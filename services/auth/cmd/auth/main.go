@@ -22,7 +22,6 @@ import (
 	"github.com/Rick1330/ibex-harness/services/auth/internal/service"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/token"
 	_ "github.com/lib/pq"
-	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc"
 )
 
