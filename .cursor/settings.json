@@ -1,0 +1,22 @@
+{
+  "plugins": {
+    "pr-review-canvas": {
+      "enabled": true
+    },
+    "shadcn": {
+      "enabled": true
+    },
+    "slack": {
+      "enabled": true
+    },
+    "azure": {
+      "enabled": true
+    },
+    "semgrep-plugin": {
+      "enabled": true
+    },
+    "snyk-secure-development": {
+      "enabled": true
+    }
+  }
+}
