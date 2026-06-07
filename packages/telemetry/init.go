@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -40,29 +38,12 @@ func Init(ctx context.Context, cfg Config) (*Providers, error) {
 		return nil, fmt.Errorf("telemetry meter: %w", err)
 	}
 
-	otel.SetTracerProvider(tp)
-	otel.SetMeterProvider(mp)
-	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
-		propagation.TraceContext{},
-		propagation.Baggage{},
-	))
-
-	shutdown := func(ctx context.Context) error {
-		var errs []error
-		if traceExpShutdown != nil {
-			errs = append(errs, traceExpShutdown(ctx))
-		}
-		if metricExpShutdown != nil {
-			errs = append(errs, metricExpShutdown(ctx))
-		}
-		errs = append(errs, tp.Shutdown(ctx), mp.Shutdown(ctx))
-		return errors.Join(errs...)
-	}
+	registerGlobals(tp, mp)
 
 	return &Providers{
 		TracerProvider: tp,
 		MeterProvider:  mp,
-		Shutdown:       shutdown,
+		Shutdown:       buildShutdown(tp, mp, traceExpShutdown, metricExpShutdown),
 	}, nil
 }
 

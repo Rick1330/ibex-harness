@@ -54,7 +54,11 @@ func main() {
 	tokenSvc := service.NewTokenService(repo, cfg.Argon2, log)
 	meter := metrics.New()
 
-	providers, tracer := initTelemetry(cfg, log)
+	providers, tracer, err := telemetry.InitTracer(context.Background(), cfg.Telemetry, "ibex-auth")
+	if err != nil {
+		log.ErrorCtx(context.Background(), "telemetry init failed", "error", err)
+		os.Exit(1)
+	}
 
 	grpcSrv := grpc.NewServer(
 		grpc.UnaryInterceptor(grpcserver.AuthzUnaryInterceptor(validator)),
@@ -77,15 +81,6 @@ func main() {
 		cfg: cfg, logger: log, providers: providers, grpcSrv: grpcSrv, grpcLis: grpcLis,
 		httpServer: httpServer, db: db,
 	})
-}
-
-func initTelemetry(cfg config.Config, log *logger.Logger) (*telemetry.Providers, trace.Tracer) {
-	providers, tracer, err := telemetry.InitTracer(context.Background(), cfg.Telemetry, "ibex-auth")
-	if err != nil {
-		log.ErrorCtx(context.Background(), "telemetry init failed", "error", err)
-		os.Exit(1)
-	}
-	return providers, tracer
 }
 
 type shutdownOpts struct {

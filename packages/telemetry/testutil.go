@@ -3,8 +3,6 @@ package telemetry
 import (
 	"context"
 
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -36,12 +34,7 @@ func InitForTest(exporter sdktrace.SpanExporter) (*Providers, error) {
 	if err != nil {
 		return nil, err
 	}
-	otel.SetTracerProvider(tp)
-	otel.SetMeterProvider(mp)
-	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
-		propagation.TraceContext{},
-		propagation.Baggage{},
-	))
+	registerGlobals(tp, mp)
 	shutdown := func(ctx context.Context) error {
 		return tp.Shutdown(ctx)
 	}
