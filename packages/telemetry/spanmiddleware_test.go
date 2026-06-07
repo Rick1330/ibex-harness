@@ -7,9 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Rick1330/ibex-harness/packages/reqid"
 	"github.com/Rick1330/ibex-harness/packages/telemetry"
-	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
@@ -81,35 +79,4 @@ func TestSpanMiddleware_ErrorSpan(t *testing.T) {
 	if spans[0].Status.Code != codes.Error {
 		t.Fatalf("expected ERROR status, got %v", spans[0].Status.Code)
 	}
-}
-
-func reqidMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		id := reqid.New()
-		ctx := reqid.WithRequestID(r.Context(), id)
-		next.ServeHTTP(w, r.WithContext(ctx))
-	})
-}
-
-func attrString(attrs []attribute.KeyValue, key string) string {
-	v, _ := attrStringOK(attrs, key)
-	return v
-}
-
-func attrStringOK(attrs []attribute.KeyValue, key string) (string, bool) {
-	for _, a := range attrs {
-		if string(a.Key) == key {
-			return a.Value.AsString(), true
-		}
-	}
-	return "", false
-}
-
-func attrInt(attrs []attribute.KeyValue, key string) int64 {
-	for _, a := range attrs {
-		if string(a.Key) == key {
-			return a.Value.AsInt64()
-		}
-	}
-	return 0
 }
