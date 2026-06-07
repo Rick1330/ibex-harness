@@ -44,7 +44,21 @@ func main() {
 		Limiter:   limiter,
 	}
 	server := newHTTPServer(deps)
-	runUntilShutdown(server, logger, grpcConn, redisClient, cfg.ServiceName)
+	runUntilShutdown(shutdownDeps{
+		server:      server,
+		logger:      logger,
+		grpcConn:    grpcConn,
+		redisClient: redisClient,
+		serviceName: cfg.ServiceName,
+	})
+}
+
+type shutdownDeps struct {
+	server      *http.Server
+	logger      *slog.Logger
+	grpcConn    *grpc.ClientConn
+	redisClient redis.UniversalClient
+	serviceName string
 }
 
 func setupRateLimiter(cfg config.Config, logger *slog.Logger) (redis.UniversalClient, ratelimit.Limiter) {
@@ -86,11 +100,11 @@ func newHTTPServer(deps proxyhttp.RouterDeps) *http.Server {
 	}
 }
 
-func runUntilShutdown(server *http.Server, logger *slog.Logger, grpcConn *grpc.ClientConn, redisClient redis.UniversalClient, serviceName string) {
+func runUntilShutdown(d shutdownDeps) {
 	errCh := make(chan error, 1)
 	go func() {
-		logger.Info("service starting", "service", serviceName, "addr", server.Addr)
-		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		d.logger.Info("service starting", "service", d.serviceName, "addr", d.server.Addr)
+		if err := d.server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 			return
 		}
@@ -102,27 +116,27 @@ func runUntilShutdown(server *http.Server, logger *slog.Logger, grpcConn *grpc.C
 
 	select {
 	case sig := <-stop:
-		logger.Info("shutdown signal received", "signal", sig.String())
+		d.logger.Info("shutdown signal received", "signal", sig.String())
 	case err := <-errCh:
 		if err != nil {
-			logger.Error("server failed", "error", err)
+			d.logger.Error("server failed", "error", err)
 			os.Exit(1)
 		}
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := server.Shutdown(ctx); err != nil {
-		logger.Error("graceful shutdown failed", "error", err)
+	if err := d.server.Shutdown(ctx); err != nil {
+		d.logger.Error("graceful shutdown failed", "error", err)
 		os.Exit(1)
 	}
-	if grpcConn != nil {
-		_ = grpcConn.Close()
+	if d.grpcConn != nil {
+		_ = d.grpcConn.Close()
 	}
-	if redisClient != nil {
-		_ = redisClient.Close()
+	if d.redisClient != nil {
+		_ = d.redisClient.Close()
 	}
-	logger.Info("service stopped", "service", serviceName)
+	d.logger.Info("service stopped", "service", d.serviceName)
 }
 
 func rateLimitSliderConfig(cfg config.Config) ratelimit.RedisSliderConfig {
