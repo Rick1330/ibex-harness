@@ -20,10 +20,6 @@ func (c Config) Validate() error {
 	if err := c.validateRateLimit(); err != nil {
 		return err
 	}
-	return c.validateShutdownTimeout()
-}
-
-func (c Config) validateShutdownTimeout() error {
 	return shutdown.ValidateTimeout(c.ShutdownTimeout)
 }
 
