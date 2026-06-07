@@ -84,14 +84,18 @@ func (m *Metrics) renderPrometheus() string {
 		writeHistogramLines(&b, "ibex_http_request_duration_seconds", key, bucketsSnap[key], sumsSnap[key], durationBuckets)
 	}
 
-	writeResultValidateSection(&b, "ibex_proxy_auth_validate",
-		"Auth middleware ValidateToken attempts.",
-		"Auth middleware validate latency.",
-		authSnap)
-	writeResultValidateSection(&b, "ibex_proxy_agent_validate",
-		"Agent middleware ValidateAgent attempts.",
-		"Agent middleware validate latency.",
-		agentSnap)
+	writeResultValidateSection(&b, resultValidateSectionOpts{
+		metricPrefix: "ibex_proxy_auth_validate",
+		helpTotal:    "Auth middleware ValidateToken attempts.",
+		helpDuration: "Auth middleware validate latency.",
+		snap:         authSnap,
+	})
+	writeResultValidateSection(&b, resultValidateSectionOpts{
+		metricPrefix: "ibex_proxy_agent_validate",
+		helpTotal:    "Agent middleware ValidateAgent attempts.",
+		helpDuration: "Agent middleware validate latency.",
+		snap:         agentSnap,
+	})
 
 	return b.String()
 }

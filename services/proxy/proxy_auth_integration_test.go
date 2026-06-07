@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/Rick1330/ibex-harness/infra/testing/testutil"
-	"github.com/Rick1330/ibex-harness/packages/permissions"
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
 	"github.com/Rick1330/ibex-harness/services/auth/integrationtest"
@@ -150,34 +149,11 @@ func TestProxyAgentVerificationIntegration(t *testing.T) {
 	})
 }
 
-func TestProxyAuthIntegration(t *testing.T) {
-	dsn, cleanup := testutil.SetupPostgres(t)
-	defer cleanup()
-
-	db := testutil.OpenDB(t, dsn)
-	defer db.Close()
-
-	authFx := integrationtest.StartAuthGRPC(t, dsn)
-	defer authFx.Close()
-
-	orgA := testutil.SeedOrganization(t, db, "Org A", "org-a-proxy-"+uuid.NewString()[:8])
-	orgB := testutil.SeedOrganization(t, db, "Org B", "org-b-proxy-"+uuid.NewString()[:8])
-	userA := testutil.SeedUser(t, db, orgA, "user-a-"+uuid.NewString()[:8]+"@example.com", "User A")
-	userB := testutil.SeedUser(t, db, orgB, "user-b-"+uuid.NewString()[:8]+"@example.com", "User B")
-	agentA := testutil.SeedAgent(t, db, orgA, userA, "Agent A", "agent-a-"+uuid.NewString()[:8])
-	agentB := testutil.SeedAgent(t, db, orgB, userB, "Agent B", "agent-b-"+uuid.NewString()[:8])
-
-	validBearer, _ := testutil.SeedToken(t, db, orgA, 42)
-	chatBearer, _ := testutil.SeedToken(t, db, orgA, permissions.ProxyChatCompletion)
-	revokedBearer := testutil.SeedTokenRevoked(t, db, orgA, uuid.New(), 42)
-	orgBBearer, _ := testutil.SeedToken(t, db, orgB, 42)
-	lowPermsBearer, _ := testutil.SeedToken(t, db, orgA, permissions.ReadOnly)
-
-	srv := startProxyServer(t, authFx.Addr)
-	defer srv.Close()
+func TestProxyAuthIntegration_Tokens(t *testing.T) {
+	fx := setupProxyAuthFixture(t)
 
 	t.Run("missing auth", func(t *testing.T) {
-		resp, err := http.Get(srv.URL + "/v1/internal/auth-probe")
+		resp, err := http.Get(fx.srv.URL + "/v1/internal/auth-probe")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -188,44 +164,23 @@ func TestProxyAuthIntegration(t *testing.T) {
 	})
 
 	t.Run("missing agent header on auth-probe", func(t *testing.T) {
-		req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v1/internal/auth-probe", nil)
-		req.Header.Set("Authorization", "Bearer "+validBearer)
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
+		resp, body := authProbeGET(t, fx.srv.URL, fx.validBearer, "")
 		defer resp.Body.Close()
-		b := readBody(resp)
-		if resp.StatusCode != http.StatusBadRequest {
-			t.Fatalf("status: %d body=%s", resp.StatusCode, b)
-		}
-		if !strings.Contains(b, "MISSING_AGENT_ID") {
-			t.Fatal("expected MISSING_AGENT_ID")
+		if resp.StatusCode != http.StatusBadRequest || !strings.Contains(body, "MISSING_AGENT_ID") {
+			t.Fatalf("status: %d body=%s", resp.StatusCode, body)
 		}
 	})
 
 	t.Run("valid token", func(t *testing.T) {
-		req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v1/internal/auth-probe", nil)
-		req.Header.Set("Authorization", "Bearer "+validBearer)
-		req.Header.Set("X-IBEX-Agent-ID", agentA)
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
+		resp, _ := authProbeGET(t, fx.srv.URL, fx.validBearer, fx.agentA)
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
-			t.Fatalf("status: %d body=%s", resp.StatusCode, string(body))
+			t.Fatalf("status: %d", resp.StatusCode)
 		}
 	})
 
 	t.Run("invalid token", func(t *testing.T) {
-		req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v1/internal/auth-probe", nil)
-		req.Header.Set("Authorization", "Bearer "+validBearer+"wrong")
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
+		resp, _ := authProbeGET(t, fx.srv.URL, fx.validBearer+"wrong", "")
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusUnauthorized {
 			t.Fatalf("status: %d", resp.StatusCode)
@@ -233,194 +188,15 @@ func TestProxyAuthIntegration(t *testing.T) {
 	})
 
 	t.Run("revoked token", func(t *testing.T) {
-		req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v1/internal/auth-probe", nil)
-		req.Header.Set("Authorization", "Bearer "+revokedBearer)
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
+		resp, _ := authProbeGET(t, fx.srv.URL, fx.revokedBearer, "")
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusUnauthorized {
 			t.Fatalf("status: %d", resp.StatusCode)
 		}
 	})
 
-	t.Run("cross tenant path", func(t *testing.T) {
-		req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v1/orgs/"+orgB+"/auth-probe", nil)
-		req.Header.Set("Authorization", "Bearer "+validBearer)
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusForbidden {
-			t.Fatalf("status: %d", resp.StatusCode)
-		}
-	})
-
-	t.Run("matching org path", func(t *testing.T) {
-		req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v1/orgs/"+orgA+"/auth-probe", nil)
-		req.Header.Set("Authorization", "Bearer "+validBearer)
-		req.Header.Set("X-IBEX-Agent-ID", agentA)
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("status: %d", resp.StatusCode)
-		}
-	})
-
-	t.Run("chat without permission", func(t *testing.T) {
-		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/chat/completions", strings.NewReader("{}"))
-		req.Header.Set("Authorization", "Bearer "+lowPermsBearer)
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-IBEX-Agent-ID", agentA)
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusForbidden {
-			t.Fatalf("status: %d", resp.StatusCode)
-		}
-	})
-
-	t.Run("chat stub with permission", func(t *testing.T) {
-		body := `{"model":"gpt-4","messages":[{"role":"user","content":"hi"}]}`
-		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/chat/completions", strings.NewReader(body))
-		req.Header.Set("Authorization", "Bearer "+chatBearer)
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-IBEX-Agent-ID", agentA)
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusNotImplemented {
-			t.Fatalf("status: %d", resp.StatusCode)
-		}
-		b, _ := io.ReadAll(resp.Body)
-		if !strings.Contains(string(b), "PROVIDER_NOT_CONFIGURED") {
-			t.Fatalf("body: %s", string(b))
-		}
-		assertResponseHeaders(t, resp)
-	})
-
-	t.Run("chat malformed json", func(t *testing.T) {
-		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/chat/completions", strings.NewReader(`{invalid`))
-		req.Header.Set("Authorization", "Bearer "+chatBearer)
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-IBEX-Agent-ID", agentA)
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusBadRequest {
-			t.Fatalf("status: %d body=%s", resp.StatusCode, readBody(resp))
-		}
-		b := readBody(resp)
-		if !strings.Contains(b, "INVALID_JSON") {
-			t.Fatalf("body: %s", b)
-		}
-	})
-
-	t.Run("chat missing model", func(t *testing.T) {
-		body := `{"messages":[{"role":"user","content":"hi"}]}`
-		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/chat/completions", strings.NewReader(body))
-		req.Header.Set("Authorization", "Bearer "+chatBearer)
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-IBEX-Agent-ID", agentA)
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusBadRequest {
-			t.Fatalf("status: %d body=%s", resp.StatusCode, readBody(resp))
-		}
-		b := readBody(resp)
-		if !strings.Contains(b, "VALIDATION_ERROR") || !strings.Contains(b, `"field":"model"`) {
-			t.Fatalf("body: %s", b)
-		}
-		assertResponseHeaders(t, resp)
-	})
-
-	t.Run("chat missing agent header", func(t *testing.T) {
-		body := `{"model":"gpt-4","messages":[{"role":"user","content":"hi"}]}`
-		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/chat/completions", strings.NewReader(body))
-		req.Header.Set("Authorization", "Bearer "+chatBearer)
-		req.Header.Set("Content-Type", "application/json")
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		b := readBody(resp)
-		if resp.StatusCode != http.StatusBadRequest {
-			t.Fatalf("status: %d body=%s", resp.StatusCode, b)
-		}
-		if !strings.Contains(b, "MISSING_AGENT_ID") {
-			t.Fatal("expected MISSING_AGENT_ID")
-		}
-	})
-
-	t.Run("chat wrong content type", func(t *testing.T) {
-		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/chat/completions", strings.NewReader(`{}`))
-		req.Header.Set("Authorization", "Bearer "+chatBearer)
-		req.Header.Set("Content-Type", "text/plain")
-		req.Header.Set("X-IBEX-Agent-ID", agentA)
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusUnsupportedMediaType {
-			t.Fatalf("status: %d body=%s", resp.StatusCode, readBody(resp))
-		}
-		if !strings.Contains(readBody(resp), "UNSUPPORTED_MEDIA_TYPE") {
-			t.Fatal("expected UNSUPPORTED_MEDIA_TYPE")
-		}
-	})
-
-	t.Run("chat body too large", func(t *testing.T) {
-		// Body byte count over limit triggers 413 in BodySizeLimitMiddleware (Content-Length check).
-		oversized := strings.Repeat("x", int(validation.MaxRequestBodyBytes+1))
-		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/chat/completions", strings.NewReader(oversized))
-		req.Header.Set("Authorization", "Bearer "+chatBearer)
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-IBEX-Agent-ID", agentA)
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		b := readBody(resp)
-		if resp.StatusCode != http.StatusRequestEntityTooLarge {
-			t.Fatalf("status: %d body=%s", resp.StatusCode, b)
-		}
-		if !strings.Contains(b, "PAYLOAD_TOO_LARGE") {
-			t.Fatalf("expected PAYLOAD_TOO_LARGE, body=%s", b)
-		}
-	})
-
-	t.Run("invalid org path uuid", func(t *testing.T) {
-		req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v1/orgs/not-a-uuid/auth-probe", nil)
-		req.Header.Set("Authorization", "Bearer "+validBearer)
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusBadRequest {
-			t.Fatalf("status: %d body=%s", resp.StatusCode, readBody(resp))
-		}
-	})
-
 	t.Run("response headers on 401", func(t *testing.T) {
-		resp, err := http.Get(srv.URL + "/v1/internal/auth-probe")
+		resp, err := http.Get(fx.srv.URL + "/v1/internal/auth-probe")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -429,10 +205,10 @@ func TestProxyAuthIntegration(t *testing.T) {
 	})
 
 	t.Run("revoke via grpc then reject", func(t *testing.T) {
-		admin := testutil.SeedBootstrapAdminToken(t, db, orgA)
+		admin := testutil.SeedBootstrapAdminToken(t, fx.db, fx.orgA)
 		createCtx := metadata.NewOutgoingContext(context.Background(), metadata.Pairs("authorization", "Bearer "+admin))
-		createResp, err := authFx.Client.CreateToken(createCtx, &authv1.CreateTokenRequest{
-			OrgId:       orgA,
+		createResp, err := fx.authFx.Client.CreateToken(createCtx, &authv1.CreateTokenRequest{
+			OrgId:       fx.orgA,
 			Name:        "revoke-me",
 			Type:        authv1.TokenType_TOKEN_TYPE_PAT,
 			Permissions: 42,
@@ -441,49 +217,132 @@ func TestProxyAuthIntegration(t *testing.T) {
 			t.Fatalf("create: %v", err)
 		}
 		plain := createResp.GetPlaintext()
-		req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v1/internal/auth-probe", nil)
-		req.Header.Set("Authorization", "Bearer "+plain)
-		req.Header.Set("X-IBEX-Agent-ID", agentA)
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
+		resp, _ := authProbeGET(t, fx.srv.URL, plain, fx.agentA)
 		resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("pre-revoke status: %d", resp.StatusCode)
 		}
 
-		_, err = authFx.Client.RevokeToken(createCtx, &authv1.RevokeTokenRequest{
-			OrgId:   orgA,
+		_, err = fx.authFx.Client.RevokeToken(createCtx, &authv1.RevokeTokenRequest{
+			OrgId:   fx.orgA,
 			TokenId: createResp.GetTokenId(),
 		})
 		if err != nil {
 			t.Fatalf("revoke: %v", err)
 		}
 
-		req2, _ := http.NewRequest(http.MethodGet, srv.URL+"/v1/internal/auth-probe", nil)
-		req2.Header.Set("Authorization", "Bearer "+plain)
-		resp2, err := http.DefaultClient.Do(req2)
-		if err != nil {
-			t.Fatal(err)
-		}
+		resp2, _ := authProbeGET(t, fx.srv.URL, plain, "")
 		defer resp2.Body.Close()
 		if resp2.StatusCode != http.StatusUnauthorized {
 			t.Fatalf("post-revoke status: %d", resp2.StatusCode)
 		}
 	})
+}
 
-	t.Run("org b token on org b path", func(t *testing.T) {
-		req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v1/orgs/"+orgB+"/auth-probe", nil)
-		req.Header.Set("Authorization", "Bearer "+orgBBearer)
-		req.Header.Set("X-IBEX-Agent-ID", agentB)
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
+func TestProxyAuthIntegration_OrgPaths(t *testing.T) {
+	fx := setupProxyAuthFixture(t)
+
+	t.Run("cross tenant path", func(t *testing.T) {
+		resp, _ := orgAuthProbeGET(t, fx.srv.URL, fx.orgB, fx.validBearer, "")
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusForbidden {
+			t.Fatalf("status: %d", resp.StatusCode)
 		}
+	})
+
+	t.Run("matching org path", func(t *testing.T) {
+		resp, _ := orgAuthProbeGET(t, fx.srv.URL, fx.orgA, fx.validBearer, fx.agentA)
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("status: %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("invalid org path uuid", func(t *testing.T) {
+		resp, _ := orgAuthProbeGET(t, fx.srv.URL, "not-a-uuid", fx.validBearer, "")
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("status: %d body=%s", resp.StatusCode, readBody(resp))
+		}
+	})
+
+	t.Run("org b token on org b path", func(t *testing.T) {
+		resp, _ := orgAuthProbeGET(t, fx.srv.URL, fx.orgB, fx.orgBBearer, fx.agentB)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status: %d", resp.StatusCode)
+		}
+	})
+}
+
+func TestProxyAuthIntegration_Chat(t *testing.T) {
+	fx := setupProxyAuthFixture(t)
+
+	t.Run("chat without permission", func(t *testing.T) {
+		resp, _ := chatPOST(t, fx.srv.URL, fx.lowPermsBearer, fx.agentA, "application/json", "{}")
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusForbidden {
+			t.Fatalf("status: %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("chat stub with permission", func(t *testing.T) {
+		body := `{"model":"gpt-4","messages":[{"role":"user","content":"hi"}]}`
+		resp, b := chatPOST(t, fx.srv.URL, fx.chatBearer, fx.agentA, "application/json", body)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusNotImplemented {
+			t.Fatalf("status: %d", resp.StatusCode)
+		}
+		if !strings.Contains(b, "PROVIDER_NOT_CONFIGURED") {
+			t.Fatalf("body: %s", b)
+		}
+		assertResponseHeaders(t, resp)
+	})
+
+	t.Run("chat malformed json", func(t *testing.T) {
+		resp, b := chatPOST(t, fx.srv.URL, fx.chatBearer, fx.agentA, "application/json", `{invalid`)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest || !strings.Contains(b, "INVALID_JSON") {
+			t.Fatalf("status: %d body=%s", resp.StatusCode, b)
+		}
+	})
+
+	t.Run("chat missing model", func(t *testing.T) {
+		body := `{"messages":[{"role":"user","content":"hi"}]}`
+		resp, b := chatPOST(t, fx.srv.URL, fx.chatBearer, fx.agentA, "application/json", body)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("status: %d body=%s", resp.StatusCode, b)
+		}
+		if !strings.Contains(b, "VALIDATION_ERROR") || !strings.Contains(b, `"field":"model"`) {
+			t.Fatalf("body: %s", b)
+		}
+		assertResponseHeaders(t, resp)
+	})
+
+	t.Run("chat missing agent header", func(t *testing.T) {
+		body := `{"model":"gpt-4","messages":[{"role":"user","content":"hi"}]}`
+		resp, b := chatPOST(t, fx.srv.URL, fx.chatBearer, "", "application/json", body)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest || !strings.Contains(b, "MISSING_AGENT_ID") {
+			t.Fatalf("status: %d body=%s", resp.StatusCode, b)
+		}
+	})
+
+	t.Run("chat wrong content type", func(t *testing.T) {
+		resp, b := chatPOST(t, fx.srv.URL, fx.chatBearer, fx.agentA, "text/plain", `{}`)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusUnsupportedMediaType || !strings.Contains(b, "UNSUPPORTED_MEDIA_TYPE") {
+			t.Fatalf("status: %d body=%s", resp.StatusCode, b)
+		}
+	})
+
+	t.Run("chat body too large", func(t *testing.T) {
+		oversized := strings.Repeat("x", int(validation.MaxRequestBodyBytes+1))
+		resp, b := chatPOST(t, fx.srv.URL, fx.chatBearer, fx.agentA, "application/json", oversized)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusRequestEntityTooLarge || !strings.Contains(b, "PAYLOAD_TOO_LARGE") {
+			t.Fatalf("status: %d body=%s", resp.StatusCode, b)
 		}
 	})
 }

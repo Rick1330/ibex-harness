@@ -53,36 +53,39 @@ func snapResultMetrics(s resultMetricStore) resultMetricSnap {
 	return resultMetricSnap{total: total, buckets: buckets, sums: sums}
 }
 
-func writeResultValidateSection(
-	b *strings.Builder,
-	metricPrefix, helpTotal, helpDuration string,
-	snap resultMetricSnap,
-) {
+type resultValidateSectionOpts struct {
+	metricPrefix string
+	helpTotal    string
+	helpDuration string
+	snap         resultMetricSnap
+}
+
+func writeResultValidateSection(b *strings.Builder, opts resultValidateSectionOpts) {
 	b.WriteString("# HELP ")
-	b.WriteString(metricPrefix)
+	b.WriteString(opts.metricPrefix)
 	b.WriteString("_total ")
-	b.WriteString(helpTotal)
+	b.WriteString(opts.helpTotal)
 	b.WriteString("\n# TYPE ")
-	b.WriteString(metricPrefix)
+	b.WriteString(opts.metricPrefix)
 	b.WriteString("_total counter\n")
-	for _, result := range sortedStringKeys(snap.total) {
-		b.WriteString(metricPrefix)
+	for _, result := range sortedStringKeys(opts.snap.total) {
+		b.WriteString(opts.metricPrefix)
 		b.WriteString("_total{result=")
 		writeQuoted(b, result)
 		b.WriteString("} ")
-		b.WriteString(strconv.FormatUint(snap.total[result], 10))
+		b.WriteString(strconv.FormatUint(opts.snap.total[result], 10))
 		b.WriteString("\n")
 	}
 
 	b.WriteString("# HELP ")
-	b.WriteString(metricPrefix)
+	b.WriteString(opts.metricPrefix)
 	b.WriteString("_duration_seconds ")
-	b.WriteString(helpDuration)
+	b.WriteString(opts.helpDuration)
 	b.WriteString("\n# TYPE ")
-	b.WriteString(metricPrefix)
+	b.WriteString(opts.metricPrefix)
 	b.WriteString("_duration_seconds histogram\n")
-	for _, result := range sortedStringKeysFromBuckets(snap.buckets) {
-		writeAuthHistogramLines(b, metricPrefix+"_duration_seconds", result, snap.buckets[result], snap.sums[result], durationBuckets)
+	for _, result := range sortedStringKeysFromBuckets(opts.snap.buckets) {
+		writeAuthHistogramLines(b, opts.metricPrefix+"_duration_seconds", result, opts.snap.buckets[result], opts.snap.sums[result], durationBuckets)
 	}
 }
 
