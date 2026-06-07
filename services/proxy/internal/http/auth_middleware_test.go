@@ -3,10 +3,11 @@ package http
 import (
 	"context"
 	"errors"
-	"github.com/Rick1330/ibex-harness/packages/logger"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/Rick1330/ibex-harness/packages/logger"
 
 	"github.com/Rick1330/ibex-harness/packages/permissions"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"

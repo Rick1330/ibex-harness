@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Rick1330/ibex-harness/infra/testing/testutil"
+	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/permissions"
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	grpcserver "github.com/Rick1330/ibex-harness/services/auth/internal/grpc"
@@ -31,7 +32,7 @@ func startAuthGRPC(t *testing.T, dbDSN string) (authv1.AuthServiceClient, func()
 	agentsRepo := repository.NewAgentsRepository(db)
 	argon2 := token.DefaultArgon2Params()
 	validator := token.NewValidator(repo, argon2)
-	tokenSvc := service.NewTokenService(repo, argon2, nil)
+	tokenSvc := service.NewTokenService(repo, argon2, logger.Discard("auth"))
 	meter := metrics.New()
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")

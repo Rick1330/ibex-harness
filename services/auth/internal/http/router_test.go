@@ -1,11 +1,12 @@
 package http
 
 import (
-	"github.com/Rick1330/ibex-harness/packages/logger"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/Rick1330/ibex-harness/packages/logger"
 
 	"github.com/Rick1330/ibex-harness/services/auth/internal/config"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/metrics"
