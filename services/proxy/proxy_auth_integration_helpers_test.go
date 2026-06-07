@@ -115,21 +115,7 @@ type authProbeOpts struct {
 
 func authProbeGET(t *testing.T, opts authProbeOpts) (*http.Response, string) {
 	t.Helper()
-	req, err := http.NewRequest(http.MethodGet, opts.srvURL+"/v1/internal/auth-probe", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if opts.bearer != "" {
-		req.Header.Set("Authorization", "Bearer "+opts.bearer)
-	}
-	if opts.agentID != "" {
-		req.Header.Set("X-IBEX-Agent-ID", opts.agentID)
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return resp, readBody(resp)
+	return authenticatedGET(t, opts.srvURL+"/v1/internal/auth-probe", opts.bearer, opts.agentID)
 }
 
 type orgAuthProbeOpts struct {
@@ -141,15 +127,20 @@ type orgAuthProbeOpts struct {
 
 func orgAuthProbeGET(t *testing.T, opts orgAuthProbeOpts) (*http.Response, string) {
 	t.Helper()
-	req, err := http.NewRequest(http.MethodGet, opts.srvURL+"/v1/orgs/"+opts.orgID+"/auth-probe", nil)
+	return authenticatedGET(t, opts.srvURL+"/v1/orgs/"+opts.orgID+"/auth-probe", opts.bearer, opts.agentID)
+}
+
+func authenticatedGET(t *testing.T, url, bearer, agentID string) (*http.Response, string) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if opts.bearer != "" {
-		req.Header.Set("Authorization", "Bearer "+opts.bearer)
+	if bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+bearer)
 	}
-	if opts.agentID != "" {
-		req.Header.Set("X-IBEX-Agent-ID", opts.agentID)
+	if agentID != "" {
+		req.Header.Set("X-IBEX-Agent-ID", agentID)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
