@@ -1,7 +1,7 @@
 # Current State
 
 **Last updated:** 2026-06-06  
-**Git SHA (`main`):** pending [PR #62](https://github.com/Rick1330/ibex-harness/pull/62) — M1.2.4 rate limit skeleton  
+**Git SHA (`main`):** `b4a1aa5` — [PR #62](https://github.com/Rick1330/ibex-harness/pull/62) M1.2.4 rate limit skeleton  
 **Current phase:** Phase 1 — Core Platform  
 **Current goal:** Goal 1.2 — proxy platform integration  
 **Next milestone:** [1.2.5 Proxy agent identity verification](phase-1-core-platform/milestones/1.2.5-proxy-agent-identity-verification.md)
