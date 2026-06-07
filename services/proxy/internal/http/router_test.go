@@ -8,12 +8,24 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Rick1330/ibex-harness/packages/ratelimit"
+	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/metrics"
 )
 
+func newTestRouter(cfg config.Config, validator auth.TokenValidator, limiter ratelimit.Limiter) http.Handler {
+	return NewRouter(RouterDeps{
+		Config:    cfg,
+		Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Metrics:   metrics.New(),
+		Validator: validator,
+		Limiter:   limiter,
+	})
+}
+
 func TestHealthReturnsOK(t *testing.T) {
-	router := NewRouter(config.Config{ServiceName: "proxy"}, slog.New(slog.NewTextHandler(io.Discard, nil)), metrics.New(), nil, nil)
+	router := newTestRouter(config.Config{ServiceName: "proxy"}, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	rec := httptest.NewRecorder()
@@ -28,7 +40,7 @@ func TestHealthReturnsOK(t *testing.T) {
 }
 
 func TestReadyMissingRedisURL(t *testing.T) {
-	router := NewRouter(config.Config{ServiceName: "proxy"}, slog.New(slog.NewTextHandler(io.Discard, nil)), metrics.New(), nil, nil)
+	router := newTestRouter(config.Config{ServiceName: "proxy"}, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/ready", nil)
 	rec := httptest.NewRecorder()

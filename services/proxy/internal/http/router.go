@@ -29,8 +29,22 @@ type authProbeResponse struct {
 	Permissions int64  `json:"permissions"`
 }
 
+// RouterDeps wires the proxy HTTP handler and middleware chain.
+type RouterDeps struct {
+	Config    config.Config
+	Logger    *slog.Logger
+	Metrics   *metrics.Metrics
+	Validator auth.TokenValidator
+	Limiter   ratelimit.Limiter
+}
+
 // NewRouter builds the proxy HTTP handler with optional auth validator for protected routes.
-func NewRouter(cfg config.Config, logger *slog.Logger, meter *metrics.Metrics, validator auth.TokenValidator, limiter ratelimit.Limiter) http.Handler {
+func NewRouter(deps RouterDeps) http.Handler {
+	cfg := deps.Config
+	logger := deps.Logger
+	meter := deps.Metrics
+	validator := deps.Validator
+	limiter := deps.Limiter
 	cfg.ApplyDefaults()
 	mux := http.NewServeMux()
 	docsBase := cfg.ErrorDocsBase

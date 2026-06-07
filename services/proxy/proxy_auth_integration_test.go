@@ -45,7 +45,13 @@ func startProxyServer(t *testing.T, authAddr string) *httptest.Server {
 		AuthValidateTimeout: 200 * time.Millisecond,
 	}
 	validator := auth.NewGRPCValidator(authv1.NewAuthServiceClient(conn), cfg.AuthValidateTimeout)
-	handler := proxyhttp.NewRouter(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), metrics.New(), validator, ratelimit.Noop())
+	handler := proxyhttp.NewRouter(proxyhttp.RouterDeps{
+		Config:    cfg,
+		Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Metrics:   metrics.New(),
+		Validator: validator,
+		Limiter:   ratelimit.Noop(),
+	})
 	return httptest.NewServer(handler)
 }
 

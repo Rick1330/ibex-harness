@@ -107,36 +107,8 @@ func Load() (Config, error) {
 	}
 	cfg.LogLevel = level
 
-	if v := strings.TrimSpace(os.Getenv("IBEX_MAX_REQUEST_BODY_BYTES")); v != "" {
-		n, err := strconv.ParseInt(v, 10, 64)
-		if err != nil || n < 1 {
-			return Config{}, fmt.Errorf("IBEX_MAX_REQUEST_BODY_BYTES must be a positive integer")
-		}
-		cfg.MaxRequestBodyBytes = n
-	}
-
-	if v := strings.TrimSpace(os.Getenv("IBEX_AUTH_VALIDATE_TIMEOUT")); v != "" {
-		d, err := time.ParseDuration(v)
-		if err != nil {
-			return Config{}, fmt.Errorf("IBEX_AUTH_VALIDATE_TIMEOUT: %w", err)
-		}
-		cfg.AuthValidateTimeout = d
-	}
-
-	if v := strings.TrimSpace(os.Getenv("IBEX_RATE_LIMIT_DEFAULT_RPM")); v != "" {
-		n, err := strconv.Atoi(v)
-		if err != nil || n < 1 {
-			return Config{}, fmt.Errorf("IBEX_RATE_LIMIT_DEFAULT_RPM must be a positive integer")
-		}
-		cfg.RateLimit.DefaultRPM = n
-	}
-
-	if v := strings.TrimSpace(os.Getenv("IBEX_RATE_LIMIT_ORG_OVERRIDES")); v != "" {
-		overrides, err := parseOrgRPMOverrides(v)
-		if err != nil {
-			return Config{}, fmt.Errorf("IBEX_RATE_LIMIT_ORG_OVERRIDES: %w", err)
-		}
-		cfg.RateLimit.OrgOverrides = overrides
+	if err := loadOptionalOverrides(&cfg); err != nil {
+		return Config{}, err
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -146,6 +118,16 @@ func Load() (Config, error) {
 }
 
 func (c Config) Validate() error {
+	if err := c.validateEnvironment(); err != nil {
+		return err
+	}
+	if err := c.validateHTTPHeaders(); err != nil {
+		return err
+	}
+	return c.validateRateLimit()
+}
+
+func (c Config) validateEnvironment() error {
 	switch c.Environment {
 	case "development", "staging", "production":
 	default:
@@ -172,12 +154,20 @@ func (c Config) Validate() error {
 	if c.MaxRequestBodyBytes < 1 {
 		return fmt.Errorf("IBEX_MAX_REQUEST_BODY_BYTES must be positive")
 	}
+	return nil
+}
+
+func (c Config) validateHTTPHeaders() error {
 	if strings.TrimSpace(c.RequestIDHeader) == "" {
 		return fmt.Errorf("IBEX_REQUEST_ID_HEADER must not be empty")
 	}
 	if strings.TrimSpace(c.TraceIDHeader) == "" {
 		return fmt.Errorf("IBEX_TRACE_ID_HEADER must not be empty")
 	}
+	return nil
+}
+
+func (c Config) validateRateLimit() error {
 	if c.RateLimit.DefaultRPM < 1 {
 		return fmt.Errorf("IBEX_RATE_LIMIT_DEFAULT_RPM must be positive")
 	}

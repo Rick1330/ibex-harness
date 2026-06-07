@@ -16,11 +16,10 @@ import (
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
 	proxyhttp "github.com/Rick1330/ibex-harness/services/proxy/internal/http"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/metrics"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
-
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 func main() {
@@ -34,42 +33,62 @@ func main() {
 	slog.SetDefault(logger)
 
 	meter := metrics.New()
+	redisClient, limiter := setupRateLimiter(cfg, logger)
+	validator, grpcConn := setupAuthValidator(cfg, logger)
 
-	var redisClient redis.UniversalClient
-	var limiter = ratelimit.Noop()
-	if cfg.RedisURL != "" {
-		client, err := ratelimit.ParseRedisURL(cfg.RedisURL)
-		if err != nil {
-			logger.Error("redis client init failed", "error", err)
-			os.Exit(1)
-		}
-		redisClient = client
-		limiter = ratelimit.NewRedisSlider(client, rateLimitSliderConfig(cfg))
-		logger.Info("rate limiter configured", "default_rpm", cfg.RateLimit.DefaultRPM, "org_overrides", len(cfg.RateLimit.OrgOverrides))
+	server := newHTTPServer(cfg, logger, meter, validator, limiter)
+	runUntilShutdown(server, logger, grpcConn, redisClient, cfg.ServiceName)
+}
+
+func setupRateLimiter(cfg config.Config, logger *slog.Logger) (redis.UniversalClient, ratelimit.Limiter) {
+	if cfg.RedisURL == "" {
+		return nil, ratelimit.Noop()
 	}
-
-	var validator auth.TokenValidator
-	var grpcConn *grpc.ClientConn
-	if cfg.AuthGRPCAddr != "" {
-		conn, err := grpc.NewClient(cfg.AuthGRPCAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-		if err != nil {
-			logger.Error("auth grpc dial failed", "error", err, "addr", cfg.AuthGRPCAddr)
-			os.Exit(1)
-		}
-		grpcConn = conn
-		validator = auth.NewGRPCValidator(authv1.NewAuthServiceClient(conn), cfg.AuthValidateTimeout)
-		logger.Info("auth grpc client configured", "addr", cfg.AuthGRPCAddr, "timeout", cfg.AuthValidateTimeout.String())
+	client, err := ratelimit.ParseRedisURL(cfg.RedisURL)
+	if err != nil {
+		logger.Error("redis client init failed", "error", err)
+		os.Exit(1)
 	}
+	limiter := ratelimit.NewRedisSlider(client, rateLimitSliderConfig(cfg))
+	logger.Info("rate limiter configured",
+		"default_rpm", cfg.RateLimit.DefaultRPM,
+		"org_overrides", len(cfg.RateLimit.OrgOverrides),
+	)
+	return client, limiter
+}
 
-	server := &http.Server{
-		Addr:              ":" + cfg.Port,
-		Handler:           proxyhttp.NewRouter(cfg, logger, meter, validator, limiter),
+func setupAuthValidator(cfg config.Config, logger *slog.Logger) (auth.TokenValidator, *grpc.ClientConn) {
+	if cfg.AuthGRPCAddr == "" {
+		return nil, nil
+	}
+	conn, err := grpc.NewClient(cfg.AuthGRPCAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		logger.Error("auth grpc dial failed", "error", err, "addr", cfg.AuthGRPCAddr)
+		os.Exit(1)
+	}
+	validator := auth.NewGRPCValidator(authv1.NewAuthServiceClient(conn), cfg.AuthValidateTimeout)
+	logger.Info("auth grpc client configured", "addr", cfg.AuthGRPCAddr, "timeout", cfg.AuthValidateTimeout.String())
+	return validator, conn
+}
+
+func newHTTPServer(cfg config.Config, logger *slog.Logger, meter *metrics.Metrics, validator auth.TokenValidator, limiter ratelimit.Limiter) *http.Server {
+	return &http.Server{
+		Addr: ":" + cfg.Port,
+		Handler: proxyhttp.NewRouter(proxyhttp.RouterDeps{
+			Config:    cfg,
+			Logger:    logger,
+			Metrics:   meter,
+			Validator: validator,
+			Limiter:   limiter,
+		}),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
+}
 
+func runUntilShutdown(server *http.Server, logger *slog.Logger, grpcConn *grpc.ClientConn, redisClient redis.UniversalClient, serviceName string) {
 	errCh := make(chan error, 1)
 	go func() {
-		logger.Info("service starting", "service", cfg.ServiceName, "port", cfg.Port, "env", cfg.Environment)
+		logger.Info("service starting", "service", serviceName, "addr", server.Addr)
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 			return
@@ -102,7 +121,7 @@ func main() {
 	if redisClient != nil {
 		_ = redisClient.Close()
 	}
-	logger.Info("service stopped", "service", cfg.ServiceName)
+	logger.Info("service stopped", "service", serviceName)
 }
 
 func rateLimitSliderConfig(cfg config.Config) ratelimit.RedisSliderConfig {

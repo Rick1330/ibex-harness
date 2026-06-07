@@ -42,17 +42,21 @@ func (w *rateLimitResponseWriter) ensureHeaders() {
 	setRateLimitHeaders(w.ResponseWriter, w.limit, w.remaining, w.resetUnix)
 }
 
+type rateLimitHandler struct {
+	limiter ratelimit.Limiter
+	logger  *slog.Logger
+	next    http.Handler
+}
+
 // RateLimitMiddleware enforces org-level rate limits after authentication.
 // On Redis failure: fail open (allow request) with warning log.
 func RateLimitMiddleware(limiter ratelimit.Limiter, logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			handleRateLimit(w, r, limiter, logger, next)
-		})
+		return &rateLimitHandler{limiter: limiter, logger: logger, next: next}
 	}
 }
 
-func handleRateLimit(w http.ResponseWriter, r *http.Request, limiter ratelimit.Limiter, logger *slog.Logger, next http.Handler) {
+func (h *rateLimitHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	requestID := requestIDFromContext(r.Context())
 	docsBase := ErrorDocsBaseFromContext(r.Context())
 
@@ -67,14 +71,14 @@ func handleRateLimit(w http.ResponseWriter, r *http.Request, limiter ratelimit.L
 	}
 
 	res, _ := auth.FromContext(r.Context())
-	result, err := limiter.Check(r.Context(), orgUUID, agentUUID)
+	result, err := h.limiter.Check(r.Context(), orgUUID, agentUUID)
 	if err != nil {
-		logger.Warn("rate limit check failed; failing open",
+		h.logger.Warn("rate limit check failed; failing open",
 			"request_id", requestID,
 			"org_id", res.OrgID,
 			"error", err,
 		)
-		next.ServeHTTP(w, r)
+		h.next.ServeHTTP(w, r)
 		return
 	}
 	if !result.Allowed {
@@ -88,7 +92,7 @@ func handleRateLimit(w http.ResponseWriter, r *http.Request, limiter ratelimit.L
 		remaining:      result.Remaining,
 		resetUnix:      result.ResetUnix,
 	}
-	next.ServeHTTP(wrapped, r)
+	h.next.ServeHTTP(wrapped, r)
 }
 
 func rateLimitScopeFromRequest(r *http.Request) (orgUUID, agentUUID uuid.UUID, ok bool) {
@@ -100,20 +104,7 @@ func rateLimitScopeFromRequest(r *http.Request) (orgUUID, agentUUID uuid.UUID, o
 	if err != nil {
 		return uuid.Nil, uuid.Nil, true
 	}
-	agentUUID = parseOptionalAgentID(r.Header.Get(headerAgentID))
-	return orgUUID, agentUUID, true
-}
-
-func parseOptionalAgentID(raw string) uuid.UUID {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return uuid.Nil
-	}
-	parsed, err := uuid.Parse(raw)
-	if err != nil {
-		return uuid.Nil
-	}
-	return parsed
+	return orgUUID, parseOptionalAgentID(r.Header.Get(headerAgentID)), true
 }
 
 func writeRateLimitInternalError(w http.ResponseWriter, requestID, docsBase, detail string) {
@@ -137,6 +128,18 @@ func setRateLimitHeaders(w http.ResponseWriter, limit, remaining int, resetUnix 
 	w.Header().Set("X-RateLimit-Limit", strconv.Itoa(limit))
 	w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(remaining))
 	w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(resetUnix, 10))
+}
+
+func parseOptionalAgentID(raw string) uuid.UUID {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return uuid.Nil
+	}
+	parsed, err := uuid.Parse(raw)
+	if err != nil {
+		return uuid.Nil
+	}
+	return parsed
 }
 
 func retryAfterSeconds(d time.Duration) int {
