@@ -1,7 +1,7 @@
 # Current State
 
-**Last updated:** 2026-06-06  
-**Git SHA (`main`):** pending merge — M1.2.5 agent identity verification  
+**Last updated:** 2026-06-07  
+**Git SHA (`main`):** `6d244cf` — M1.2.5 agent identity verification merged ([#64](https://github.com/Rick1330/ibex-harness/pull/64))
 **Current phase:** Phase 1 — Core Platform  
 **Current goal:** Goal 1.2 — proxy platform integration  
 **Next milestone:** [1.3.1 OTel tracer provider init](phase-1-core-platform/milestones/1.3.1-otel-tracer-provider-init.md)
@@ -33,11 +33,11 @@
   - `services/proxy` — auth + agent verify + rate limit on `/v1/*`; stable error envelope on JSON errors
 - Root Go module: `github.com/Rick1330/ibex-harness` (Go **1.25.11+** per [TOOLCHAIN.md](../TOOLCHAIN.md))
 - Security / quality CI: CodeQL v4, Semgrep (IBEX rules), Trivy, OSV, hard-gate `golangci-lint`, Hadolint, Bandit (skip until `services/memory`)
-- Informational CI: `scorecard`, `sbom` (Syft + Grype table/JSON artifacts only), `dependency-review`, `go-services`, `db-migrate-smoke`, `proto-contract`, `auth-validate-smoke`, `proxy-auth-smoke`, `buf-lint`
+- Informational CI: `scorecard`, `sbom` (Syft + Grype table/JSON artifacts only), `dependency-review`, `go-services`, `db-migrate-smoke`, `proto-contract`, `auth-validate-smoke`, `proxy-auth-smoke`, `proxy-agent-verify-smoke`, `buf-lint`
 - StepSecurity hardening ([PR #33](https://github.com/Rick1330/ibex-harness/pull/33)): Harden-Runner (audit egress), pinned GitHub Action SHAs, Docker Dependabot
 - **Cursor rules (PR #59):** `.cursorrules` registry + `.cursor/rules/00–29.mdc`; markdownlint covers `*.mdc`
 - **Roadmap (PR #59):** Phase 1 milestones 1.4.1–1.4.3, 1.5.1 documented; Phase 2 full milestone tree (2.1.1–2.6.2) in [phase-2-single-provider/](phase-2-single-provider/README.md); `PHASE1_GAP_ANALYSIS.md` retired
-- **Roadmap execution:** next milestones 1.2.5 → … → 1.5.1 (see [phase-1 README](phase-1-core-platform/README.md#execution-order))
+- **Roadmap execution:** next milestones 1.3.1 → … → 1.5.1 (see [phase-1 README](phase-1-core-platform/README.md#execution-order))
 - README: [DeepWiki](https://deepwiki.com/Rick1330/ibex-harness) badge
 - Semgrep: Prometheus `/metrics` handlers use `strings.Builder` (no Fprintf to ResponseWriter)
 
