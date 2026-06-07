@@ -1,7 +1,7 @@
 # Current State
 
 **Last updated:** 2026-06-07  
-**Git SHA (`main`):** pending merge — M1.2.6 request ID correlation  
+**Git SHA (`main`):** `b5653fb` — M1.2.6 request ID correlation merged ([#66](https://github.com/Rick1330/ibex-harness/pull/66))
 **Current phase:** Phase 1 — Core Platform  
 **Current goal:** Goal 1.2 — proxy platform integration  
 **Next milestone:** [1.2.7 Graceful shutdown](phase-1-core-platform/milestones/1.2.7-graceful-shutdown.md)
