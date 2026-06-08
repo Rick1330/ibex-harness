@@ -16,9 +16,22 @@ load_dev_defaults() {
 
 normalize_psql_dsn() {
   local dsn="$1"
-  dsn="${dsn/postgresql+asyncpg:\/\//postgres:\/\/}"
-  dsn="${dsn/postgresql:\/\//postgres:\/\/}"
+  dsn="${dsn//postgresql+asyncpg:/postgres:}"
+  dsn="${dsn//postgresql:/postgres:}"
   echo "$dsn"
+}
+
+extract_dsn_host() {
+  local dsn="$1"
+  local host=""
+  if [[ "$dsn" =~ @([^:/?]+) ]]; then
+    host="${BASH_REMATCH[1]}"
+  elif [[ "$dsn" =~ ^postgres://([^:/?@]+) ]]; then
+    host="${BASH_REMATCH[1]}"
+  elif [[ "$dsn" =~ (^|[[:space:]])host=([^[:space:]]+) ]]; then
+    host="${BASH_REMATCH[2]}"
+  fi
+  echo "$host"
 }
 
 refuse_non_local_seed() {
@@ -27,19 +40,23 @@ refuse_non_local_seed() {
     exit 1
   fi
   local dsn="$1"
-  if [[ "$dsn" =~ @([^:/]+) ]]; then
-    local host="${BASH_REMATCH[1]}"
-    case "$host" in
-      localhost|127.0.0.1|host.docker.internal)
-        return 0
-        ;;
-      *)
-        echo "refusing db-seed: POSTGRES_DSN host '$host' does not look local"
-        echo "override only if you know this is a dev database"
-        exit 1
-        ;;
-    esac
+  local host
+  host="$(extract_dsn_host "$dsn")"
+  if [[ -z "$host" ]]; then
+    echo "refusing db-seed: cannot parse host from POSTGRES_DSN (fail closed)"
+    echo "use a URL DSN with a known local host or libpq host= keyword"
+    exit 1
   fi
+  case "$host" in
+    localhost|127.0.0.1|host.docker.internal|::1)
+      return 0
+      ;;
+    *)
+      echo "refusing db-seed: POSTGRES_DSN host '$host' does not look local"
+      echo "override only if you know this is a dev database"
+      exit 1
+      ;;
+  esac
 }
 
 if [[ -z "${POSTGRES_DSN:-}" ]]; then

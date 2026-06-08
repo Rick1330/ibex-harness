@@ -38,8 +38,16 @@ func TestSeedScript_Idempotent(t *testing.T) {
 			t.Fatalf("%s count changed after second seed: %d -> %d", table, n, counts2[table])
 		}
 	}
-	if counts1["organizations"] != 1 || counts1["users"] != 1 || counts1["agents"] != 1 || counts1["tokens"] != 1 {
-		t.Fatalf("unexpected seed counts: %+v", counts1)
+	expectedCounts := map[string]int{
+		"organizations": 1,
+		"users":         1,
+		"agents":        1,
+		"tokens":        1,
+	}
+	for table, want := range expectedCounts {
+		if got := counts1[table]; got != want {
+			t.Fatalf("%s: got %d rows, want %d (counts=%+v)", table, got, want, counts1)
+		}
 	}
 }
 

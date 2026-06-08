@@ -61,7 +61,6 @@ func TestParseArgs_TwoTokens(t *testing.T) {
 }
 
 func TestRun_HashError(t *testing.T) {
-	t.Parallel()
 	old := hashBearerFn
 	t.Cleanup(func() { hashBearerFn = old })
 	hashBearerFn = func(string) (string, error) {
@@ -74,7 +73,6 @@ func TestRun_HashError(t *testing.T) {
 }
 
 func TestMain_Success(t *testing.T) {
-	t.Parallel()
 	oldExit := exitFn
 	oldArgs := os.Args
 	t.Cleanup(func() {
@@ -87,8 +85,14 @@ func TestMain_Success(t *testing.T) {
 		panic("exit")
 	}
 	os.Args = []string{"hashtoken", devSeedPAT}
-	defer func() { _ = recover() }()
-	main()
+	var recovered any
+	func() {
+		defer func() { recovered = recover() }()
+		main()
+	}()
+	if recovered != "exit" {
+		t.Fatalf("expected exit panic, got %v", recovered)
+	}
 	if code != 0 {
 		t.Fatalf("exit code: %d", code)
 	}
