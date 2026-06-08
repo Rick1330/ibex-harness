@@ -1,10 +1,10 @@
 # Current State
 
-**Last updated:** 2026-06-07  
-**Git SHA (`main`):** `2d036fd` — M1.3.1 OTel tracer and meter provider init merged ([#72](https://github.com/Rick1330/ibex-harness/pull/72))
+**Last updated:** 2026-06-08  
+**Git SHA (`main`):** `104066f` — M1.3.2 Prometheus metric catalog merged ([#74](https://github.com/Rick1330/ibex-harness/pull/74))
 **Current phase:** Phase 1 — Core Platform  
 **Current goal:** Goal 1.3 — observability baseline  
-**Next milestone:** [1.3.2 Prometheus metric catalog and client migration](phase-1-core-platform/milestones/1.3.2-prometheus-metric-catalog.md)
+**Next milestone:** [1.4.1 Developer experience baseline](phase-1-core-platform/milestones/1.4.1-developer-experience-baseline.md)
 
 ---
 
@@ -31,6 +31,7 @@
 - **Graceful shutdown (m1.2.7):** `packages/shutdown` coordinator, SIGTERM drain / SIGINT immediate, `IBEX_SHUTDOWN_TIMEOUT` ([ADR-0018](../adr/ADR-0018-graceful-shutdown.md))
 - **Shared structured logger (m1.3.3):** `packages/logger` mandatory JSON schema (`timestamp`, `level`, `message`, `service`, `request_id`, `trace_id`); forbidden-field redaction; adopted in auth/proxy via DI; `packages/shutdown` uses `*logger.Logger`; per-request access logs at DEBUG
 - **OTel tracer and meter providers (m1.3.1):** `packages/telemetry` Init with OTLP gRPC or noop exporters; W3C trace context propagator; HTTP `SpanMiddleware` on auth/proxy; `X-Trace-ID` from OTel span (synthetic UUID retired); gRPC client trace propagation via `otelgrpc`; shutdown hook registered first ([ADR-0019](../adr/ADR-0019-opentelemetry-provider-configuration.md))
+- **Prometheus metric catalog (m1.3.2):** `packages/metrics` canonical registry; `prometheus/client_golang` on auth/proxy; Phase 1 catalog (proxy HTTP, auth gRPC/HTTP/DB, rate-limit, process_up); route-template labels; proxy middleware order `RequestContext → Span → metrics → …` ([ADR-0021](../adr/ADR-0021-prometheus-metric-catalog.md))
 - **Integration test infra (m1.0.1):** `infra/testing/testutil`, `make test-integration`, compose test (5433) or optional `testcontainers` build tag
 - Go services:
   - `services/auth` — `/health`, `/ready`, `/metrics`, gRPC `ValidateToken` + `ValidateAgent`
@@ -51,14 +52,13 @@
 - Proxy LLM forwarding, context injection
 - Python services: memory, context assembly, embedder, worker, API, dashboard
 - Background jobs (Celery), ClickHouse trace ingestion, MinIO session archives
-- Official Prometheus client libraries in services (M1.3.2)
 - `make db-seed` (dev seed data — future milestone)
 
 ## Next 3 immediate tasks
 
-1. **Milestone 1.3.2** — Prometheus metric catalog and client migration
-2. **Milestone 1.4.1** — Developer experience baseline
-3. **Milestone 1.4.2** — Shared config and error packages
+1. **Milestone 1.4.1** — Developer experience baseline
+2. **Milestone 1.4.2** — Shared config and error packages
+3. **Milestone 1.4.3** — API documentation baseline
 
 ## Verify current state locally
 
@@ -72,6 +72,7 @@ go test ./packages/logger/...
 go test ./packages/telemetry/...
 go test ./packages/shutdown/...
 go test ./packages/ratelimit/...
+go test ./packages/metrics/...
 go test ./services/proxy/...
 make compose-test-up
 make test-integration
