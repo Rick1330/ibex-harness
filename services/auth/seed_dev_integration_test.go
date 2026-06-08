@@ -23,30 +23,40 @@ const (
 // Fixed seed IDs are shared across tests; serialize seed SQL on the compose-test DB.
 var seedDevSQLMu sync.Mutex
 
+var devSeedExpectedCounts = map[string]int{
+	"organizations": 1,
+	"users":         1,
+	"agents":        1,
+	"tokens":        1,
+}
+
 func TestSeedScript_Idempotent(t *testing.T) {
 	t.Parallel()
 	dsn, cleanupPG := testutil.SetupPostgres(t)
 	defer cleanupPG()
 
 	runSeedDevSQL(t, dsn)
-	counts1 := seedRowCounts(t, dsn)
-	runSeedDevSQL(t, dsn)
-	counts2 := seedRowCounts(t, dsn)
+	afterFirst := seedRowCounts(t, dsn)
+	assertDevSeedCounts(t, afterFirst)
 
-	for table, n := range counts1 {
-		if counts2[table] != n {
-			t.Fatalf("%s count changed after second seed: %d -> %d", table, n, counts2[table])
+	runSeedDevSQL(t, dsn)
+	assertSeedCountsUnchanged(t, afterFirst, seedRowCounts(t, dsn))
+}
+
+func assertSeedCountsUnchanged(t *testing.T, before, after map[string]int) {
+	t.Helper()
+	for table, want := range before {
+		if got := after[table]; got != want {
+			t.Fatalf("%s count changed after second seed: %d -> %d", table, want, got)
 		}
 	}
-	expectedCounts := map[string]int{
-		"organizations": 1,
-		"users":         1,
-		"agents":        1,
-		"tokens":        1,
-	}
-	for table, want := range expectedCounts {
-		if got := counts1[table]; got != want {
-			t.Fatalf("%s: got %d rows, want %d (counts=%+v)", table, got, want, counts1)
+}
+
+func assertDevSeedCounts(t *testing.T, counts map[string]int) {
+	t.Helper()
+	for table, want := range devSeedExpectedCounts {
+		if got := counts[table]; got != want {
+			t.Fatalf("%s: got %d rows, want %d (counts=%+v)", table, got, want, counts)
 		}
 	}
 }
