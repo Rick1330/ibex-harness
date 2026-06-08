@@ -101,6 +101,8 @@ func mapGRPCAgentStatus(code codes.Code, msg string) error {
 			return ErrAgentSuspended
 		}
 		return ErrAgentNotAuthorized
+	case codes.NotFound:
+		return ErrAgentNotAuthorized
 	case codes.Unauthenticated, codes.InvalidArgument:
 		return ErrAgentNotAuthorized
 	case codes.DeadlineExceeded, codes.Unavailable, codes.Canceled:
