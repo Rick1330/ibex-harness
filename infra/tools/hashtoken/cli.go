@@ -15,20 +15,17 @@ func parseArgs(args []string) (string, error) {
 	return args[0], nil
 }
 
-var (
-	hashBearerFn = func(bearer string) (string, error) {
-		return crypto.HashToken(bearer, crypto.ProductionParams())
-	}
-	exitFn = os.Exit
-)
+func defaultHashBearer(bearer string) (string, error) {
+	return crypto.HashToken(bearer, crypto.ProductionParams())
+}
 
-func run(args []string, stdout, stderr io.Writer) int {
+func run(args []string, stdout, stderr io.Writer, hashBearer func(string) (string, error)) int {
 	bearer, err := parseArgs(args)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 2
 	}
-	hash, err := hashBearerFn(bearer)
+	hash, err := hashBearer(bearer)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 2
@@ -37,6 +34,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+func runCLI(args []string) int {
+	return run(args, os.Stdout, os.Stderr, defaultHashBearer)
+}
+
 func main() {
-	exitFn(run(os.Args[1:], os.Stdout, os.Stderr))
+	os.Exit(runCLI(os.Args[1:]))
 }

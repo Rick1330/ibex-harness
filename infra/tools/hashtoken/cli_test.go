@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"errors"
-	"os"
 	"strings"
 	"testing"
 
@@ -15,7 +14,7 @@ const devSeedPAT = "ibex_pat_00000000-0000-0000-0000-000000000004_LOCALDEVELOPME
 func TestRun_Success(t *testing.T) {
 	t.Parallel()
 	var out bytes.Buffer
-	code := run([]string{devSeedPAT}, &out, ioDiscard{t})
+	code := run([]string{devSeedPAT}, &out, ioDiscard{t}, defaultHashBearer)
 	if code != 0 {
 		t.Fatalf("exit code: %d", code)
 	}
@@ -32,7 +31,7 @@ func TestRun_Success(t *testing.T) {
 func TestRun_EmptyToken(t *testing.T) {
 	t.Parallel()
 	var errBuf bytes.Buffer
-	if code := run([]string{""}, ioDiscard{t}, &errBuf); code != 2 {
+	if code := run([]string{""}, ioDiscard{t}, &errBuf, defaultHashBearer); code != 2 {
 		t.Fatalf("code: %d", code)
 	}
 }
@@ -40,7 +39,7 @@ func TestRun_EmptyToken(t *testing.T) {
 func TestRun_NoArgs(t *testing.T) {
 	t.Parallel()
 	var errBuf bytes.Buffer
-	if code := run(nil, ioDiscard{t}, &errBuf); code != 2 {
+	if code := run(nil, ioDiscard{t}, &errBuf, defaultHashBearer); code != 2 {
 		t.Fatalf("code: %d", code)
 	}
 }
@@ -48,7 +47,7 @@ func TestRun_NoArgs(t *testing.T) {
 func TestRun_TooManyArgs(t *testing.T) {
 	t.Parallel()
 	var errBuf bytes.Buffer
-	if code := run([]string{"a", "b"}, ioDiscard{t}, &errBuf); code != 2 {
+	if code := run([]string{"a", "b"}, ioDiscard{t}, &errBuf, defaultHashBearer); code != 2 {
 		t.Fatalf("code: %d", code)
 	}
 }
@@ -61,39 +60,19 @@ func TestParseArgs_TwoTokens(t *testing.T) {
 }
 
 func TestRun_HashError(t *testing.T) {
-	old := hashBearerFn
-	t.Cleanup(func() { hashBearerFn = old })
-	hashBearerFn = func(string) (string, error) {
+	t.Parallel()
+	var errBuf bytes.Buffer
+	hashErr := func(string) (string, error) {
 		return "", errors.New("hash failed")
 	}
-	var errBuf bytes.Buffer
-	if code := run([]string{devSeedPAT}, ioDiscard{t}, &errBuf); code != 2 {
+	if code := run([]string{devSeedPAT}, ioDiscard{t}, &errBuf, hashErr); code != 2 {
 		t.Fatalf("code: %d", code)
 	}
 }
 
-func TestMain_Success(t *testing.T) {
-	oldExit := exitFn
-	oldArgs := os.Args
-	t.Cleanup(func() {
-		exitFn = oldExit
-		os.Args = oldArgs
-	})
-	var code int
-	exitFn = func(c int) {
-		code = c
-		panic("exit")
-	}
-	os.Args = []string{"hashtoken", devSeedPAT}
-	var recovered any
-	func() {
-		defer func() { recovered = recover() }()
-		main()
-	}()
-	if recovered != "exit" {
-		t.Fatalf("expected exit panic, got %v", recovered)
-	}
-	if code != 0 {
+func TestRunCLI_Success(t *testing.T) {
+	t.Parallel()
+	if code := runCLI([]string{devSeedPAT}); code != 0 {
 		t.Fatalf("exit code: %d", code)
 	}
 }
