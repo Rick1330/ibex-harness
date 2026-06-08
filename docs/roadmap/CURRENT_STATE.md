@@ -58,7 +58,7 @@
 
 1. **Milestone 1.4.1** — Developer experience baseline
 2. **Milestone 1.4.2** — Shared config and error packages
-3. **Milestone 1.4.3** — API documentation baseline
+3. **Milestone 1.4.3** — Health check contract
 
 ## Verify current state locally
 
