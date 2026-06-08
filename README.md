@@ -50,7 +50,51 @@ Expected services:
 - ClickHouse
 - MinIO (S3-compatible)
 
-### 3) Run local validation
+### 3) Run migrations and seed development data
+
+```bash
+make db-migrate
+make db-seed
+```
+
+`make db-seed` is idempotent and creates a fixed dev org, user, agent, and PAT. See [DEVELOPMENT_GUIDE.md](docs/DEVELOPMENT_GUIDE.md) for the seed PAT wire format (ADR-0007).
+
+### 4) Configure service environment files
+
+```bash
+cp services/auth/.env.example services/auth/.env
+cp services/proxy/.env.example services/proxy/.env
+```
+
+Edit both files as needed. Defaults in `.env.example` match the local Compose stack (`postgres://ibex:ibex@localhost:5432/ibex`, `redis://localhost:6379/0`).
+
+### 5) Start Go services and run smoke test
+
+From the repository root (two terminals or background):
+
+```bash
+# Terminal 1 — auth (HTTP :8081, gRPC :9091)
+go run ./services/auth/cmd/auth
+
+# Terminal 2 — proxy (:8080)
+go run ./services/proxy/cmd/proxy
+```
+
+Verify the auth → proxy pipeline:
+
+```bash
+make dev-smoke
+```
+
+Export the dev PAT for manual curls:
+
+```bash
+export IBEX_DEV_TOKEN=ibex_pat_00000000-0000-0000-0000-000000000004_LOCALDEVELOPMENTONLY
+```
+
+Full workflow: [DEVELOPMENT_GUIDE.md](docs/DEVELOPMENT_GUIDE.md). Environment registry: [ENVIRONMENT_VARIABLES.md](docs/ENVIRONMENT_VARIABLES.md).
+
+### 6) Run local validation
 
 ```bash
 make repo-guards
@@ -58,7 +102,7 @@ make lint-docs
 make proto-lint
 ```
 
-### 4) Stop infrastructure
+### 7) Stop infrastructure
 
 ```bash
 make compose-dev-down

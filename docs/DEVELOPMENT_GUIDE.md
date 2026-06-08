@@ -155,7 +155,29 @@ make db-migrate
 
 Re-running `make db-migrate` is idempotent (no pending migrations). Roll back one step in dev only: `make db-migrate-down`. Check version: `make db-version`.
 
-`make db-seed` is planned for a later milestone (dev org/user/agent seed data).
+### Seed data (`make db-seed`)
+
+After migrations, seed fixed development rows (org, user, agent, PAT):
+
+```bash
+make db-seed
+```
+
+- **Idempotent:** safe to run multiple times (`ON CONFLICT DO NOTHING`).
+- **Never run against staging or production** — `db-seed` refuses non-local DSN hosts and `IBEX_ENV=production`.
+- **Dev PAT (ADR-0007 wire form):** `ibex_pat_00000000-0000-0000-0000-000000000004_LOCALDEVELOPMENTONLY`
+- **Fixed IDs:** org `...0001`, agent `...0003` (see `infra/scripts/seed_dev.sql`).
+- Hash embedded in SQL is generated via `go run ./infra/tools/hashtoken <bearer>`.
+
+### Local smoke test (`make dev-smoke`)
+
+With Compose, migrations, seed, auth, and proxy running:
+
+```bash
+make dev-smoke
+```
+
+Checks `/health`, `/ready`, auth failures (401/400), chat stub (501 without LLM), and auth probe routes. Optional rate-limit WARN if 429 is not observed in 65 rapid requests.
 
 ### 4.4 Run services
 
