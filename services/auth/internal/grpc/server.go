@@ -157,7 +157,7 @@ func (s *Server) ValidateAgent(ctx context.Context, req *authv1.ValidateAgentReq
 	}
 	if rec == nil {
 		s.observeValidateAgent(start, metrics.AgentResultNotFound)
-		return nil, status.Error(codes.NotFound, "agent not found")
+		return nil, status.Error(codes.PermissionDenied, "agent not found")
 	}
 	if rec.Status != "active" {
 		s.observeValidateAgent(start, metrics.AgentResultError)

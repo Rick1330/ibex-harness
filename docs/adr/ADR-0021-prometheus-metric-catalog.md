@@ -32,6 +32,8 @@ All Prometheus metrics are defined and registered in `packages/metrics`. Service
 | `ibex_auth_validate_token_duration_seconds` | Histogram | `result` (`ok`/`error`/`revoked`) | auth |
 | `ibex_auth_validate_agent_duration_seconds` | Histogram | `result` (`ok`/`error`/`not_found`) | auth |
 | `ibex_auth_grpc_requests_total` | Counter | `method`, `status` | auth |
+| `ibex_auth_http_request_duration_seconds` | Histogram | `route`, `method`, `status_code` | auth |
+| `ibex_auth_http_requests_total` | Counter | `route`, `method`, `status_code` | auth |
 | `ibex_db_query_duration_seconds` | Histogram | `operation` | auth |
 | `ibex_db_pool_open_connections` | Gauge | `state` (`in_use`/`idle`) | auth |
 | `ibex_process_up` | Gauge | `service` | both |
@@ -57,13 +59,19 @@ Tuned for the <20ms proxy overhead target.
 
 `/metrics` on each service uses `promhttp.HandlerFor(registry, promhttp.HandlerOpts{})`. Content-Type is set by promhttp.
 
-### 7) Middleware order (proxy)
+### 7) Middleware order
 
-Per ADR-0019: `metrics → RequestContext → Span → ResponseHeaders → logging → mux`.
+**Proxy** (outer → inner): `RequestContext → Span → metrics → ResponseHeaders → logging → mux`.
 
-Auth HTTP has no request histogram in the catalog; auth `/metrics` exposes gRPC and DB metrics only.
+Metrics middleware must run after `RequestContext` and `Span` (both call `r.WithContext`) so `http.ServeMux` sets `r.Pattern` on the same request pointer the metrics middleware observes. See `TestHTTPMiddleware_RecordsRouteTemplate`.
 
-### 8) Validate timing location
+**Auth HTTP:** `AuthHTTPMiddleware` records `ibex_auth_http_*` on the auth HTTP router (health, metrics, etc.).
+
+### 8) ValidateAgent status vs metric labels
+
+`ValidateAgent` returns gRPC `PermissionDenied` when the agent record is missing or belongs to another org (`GetByIDAndOrg` returns nil). This follows multi-tenant isolation rules (no `NotFound` that leaks cross-org existence). The histogram label `result=not_found` is used for observability only and does not mirror the gRPC status code.
+
+### 9) Validate timing location
 
 `ibex_auth_validate_token_duration_seconds` and `ibex_auth_validate_agent_duration_seconds` are recorded on the **auth gRPC server**. Proxy-side `ibex_proxy_auth_validate_*` and `ibex_proxy_agent_validate_*` metrics are **retired** (supersedes [ADR-0011](ADR-0011-proxy-auth-client.md) §8 proxy metric names).
 

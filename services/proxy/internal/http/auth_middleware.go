@@ -55,6 +55,7 @@ func AuthMiddleware(validator auth.TokenValidator, log *logger.Logger, opts Auth
 						"Authentication service unavailable", requestID, proxyerrors.WriteOpts{DocsBase: docsBase})
 					return
 				default:
+					log.ErrorCtx(r.Context(), "unexpected auth validation error", "error", err)
 					proxyerrors.Write(w, http.StatusServiceUnavailable, proxyerrors.CodeServiceDegraded,
 						"Authentication service unavailable", requestID, proxyerrors.WriteOpts{DocsBase: docsBase})
 					return
