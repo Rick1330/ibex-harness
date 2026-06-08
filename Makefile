@@ -6,7 +6,7 @@ endif
 
 DEV_TOOL := infra/scripts/dev-tool.sh
 
-.PHONY: help lint-docs security-scan repo-guards proto-lint proto-breaking proto-gen proto-test proto-test-integration test-integration compose-dev-up compose-dev-down compose-dev-logs compose-dev-ps compose-test-up compose-test-down db-migrate db-migrate-down db-version
+.PHONY: help lint-docs security-scan repo-guards proto-lint proto-breaking proto-gen proto-test proto-test-integration test-integration compose-dev-up compose-dev-down compose-dev-logs compose-dev-ps compose-test-up compose-test-down db-migrate db-migrate-down db-version db-seed dev-smoke
 
 help: ## Show available commands
 	@"$(BASH)" "$(DEV_TOOL)" help
@@ -64,3 +64,9 @@ db-migrate-down: ## Roll back one Postgres migration step
 
 db-version: ## Show current Postgres migration version
 	@"$(BASH)" "$(DEV_TOOL)" db-version
+
+db-seed: ## Seed local dev database with test org, user, agent, and PAT
+	@"$(BASH)" "$(DEV_TOOL)" db-seed
+
+dev-smoke: ## Run local end-to-end smoke test (auth+proxy)
+	@"$(BASH)" "$(DEV_TOOL)" dev-smoke

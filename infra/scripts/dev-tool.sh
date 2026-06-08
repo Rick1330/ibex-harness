@@ -44,7 +44,9 @@ case "${1:-help}" in
       "  compose-test-down      Stop minimal test dependencies" \
       "  db-migrate             Apply all pending Postgres migrations" \
       "  db-migrate-down        Roll back one Postgres migration step" \
-      "  db-version             Show current Postgres migration version"
+      "  db-version             Show current Postgres migration version" \
+      "  db-seed                Seed local dev database (org/user/agent/PAT)" \
+      "  dev-smoke              Run local auth+proxy smoke test"
     ;;
   lint-docs)
     cd "$ROOT_DIR"
@@ -126,6 +128,12 @@ case "${1:-help}" in
     ;;
   db-version)
     bash "$DB_MIGRATE" version
+    ;;
+  db-seed)
+    bash "$ROOT_DIR/infra/scripts/db-seed.sh"
+    ;;
+  dev-smoke)
+    bash "$ROOT_DIR/infra/scripts/smoke_local.sh"
     ;;
   *)
     echo "unknown command: $1"

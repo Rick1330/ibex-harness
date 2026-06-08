@@ -189,13 +189,20 @@ Used by: **api, worker, dashboard (exports), session replay subsystems**
 
 ---
 
-## 9) LLM Provider Variables (Proxy)
+## 9) Proxy Service Variables (Phase 1)
 
-Used by: **proxy**, optionally **worker** (LLM-based extraction/judging)
+Used by: **proxy** (`services/proxy`)
 
 | Variable | Required | Default | Description | Security Notes |
 |----------|----------|---------|-------------|----------------|
+| `REDIS_URL` | Yes | (none) | Redis for rate limiting, e.g. `redis://localhost:6379/0` | Secret if password present |
+| `IBEX_PORT` | No | `8080` | HTTP listen port | |
 | `IBEX_AUTH_GRPC_ADDR` | No | `127.0.0.1:9091` | Auth gRPC target for ValidateToken | Internal; mTLS in prod |
+| `IBEX_SHUTDOWN_TIMEOUT` | No | `30s` | Graceful shutdown drain | |
+| `IBEX_RATE_LIMIT_DEFAULT_RPM` | No | `60` | Default org RPM | |
+| `IBEX_RATE_LIMIT_ORG_OVERRIDES` | No | (empty) | `uuid=rpm` pairs | |
+| `IBEX_REQUEST_ID_HEADER` | No | `X-Request-ID` | Inbound request ID header | |
+| `IBEX_TRACE_ID_HEADER` | No | `X-Trace-ID` | Trace ID response header | |
 | `IBEX_AUTH_VALIDATE_TIMEOUT` | No | `50ms` | Per-request auth validate budget | See [ADR-0011](adr/ADR-0011-proxy-auth-client.md) |
 | `IBEX_MAX_REQUEST_BODY_BYTES` | No | `1048576` | Max chat request body (1 MiB) | See [ADR-0013](adr/ADR-0013-proxy-input-validation-and-error-envelope.md) |
 | `IBEX_ERROR_DOCS_BASE` | No | (empty) | Base URL for `docs_url` in error envelope | Omit in dev when unset |
@@ -215,15 +222,25 @@ Used by: **proxy**, optionally **worker** (LLM-based extraction/judging)
 
 ---
 
-## 10) Auth Service Variables
+## 10) Auth Service Variables (Phase 1)
 
-Used by: **auth service**, **any service verifying JWTs**
+Used by: **auth** (`services/auth`)
+
+| Variable | Required | Default | Description | Security Notes |
+|----------|----------|---------|-------------|----------------|
+| `POSTGRES_DSN` | Yes | (none) | Postgres DSN (`postgres://...`) | Secret |
+| `IBEX_PORT` | No | `8081` | HTTP port for `/health`, `/ready`, `/metrics` | |
+| `IBEX_GRPC_PORT` | No | `9091` | gRPC listen port for `AuthService` | Internal only; use mTLS in production |
+| `IBEX_SHUTDOWN_TIMEOUT` | No | `30s` | Graceful shutdown drain | |
+| `IBEX_ENV` | No | `development` | `development` \| `staging` \| `production` | |
+| `IBEX_SERVICE_NAME` | No | `auth` | Service name for logs/telemetry | |
+| `IBEX_LOG_LEVEL` | No | `INFO` | `DEBUG` \| `INFO` \| `WARN` \| `ERROR` | |
 
 ### gRPC (internal ValidateToken)
 
 | Variable | Required | Default | Description | Security Notes |
 |----------|----------|---------|-------------|----------------|
-| `IBEX_GRPC_PORT` | No | `9091` | gRPC listen port for `AuthService` | Internal only; use mTLS in production |
+| _(see `IBEX_GRPC_PORT` above)_ | | | | |
 
 ### Token hashing
 
@@ -430,6 +447,19 @@ These MUST be prefixed with `NEXT_PUBLIC_`:
 | `DASHBOARD_CSRF_SECRET` | Yes (prod) | (none) | CSRF secret | Secret |
 
 **Rule:** never put secrets in `NEXT_PUBLIC_*`.
+
+---
+
+## 15.1) Local dev smoke script (`make dev-smoke`)
+
+Used by: **`infra/scripts/smoke_local.sh`** (not read by service binaries)
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `IBEX_PROXY_ADDR` | No | `http://localhost:8080` | Proxy base URL for curl checks |
+| `IBEX_DEV_TOKEN` | No | dev seed PAT wire value | Bearer token for smoke requests |
+| `IBEX_DEV_AGENT_ID` | No | `00000000-0000-0000-0000-000000000003` | `X-IBEX-Agent-ID` header |
+| `IBEX_DEV_ORG_ID` | No | `00000000-0000-0000-0000-000000000001` | Org-scoped auth-probe path |
 
 ---
 
