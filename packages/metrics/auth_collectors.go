@@ -11,6 +11,8 @@ type authMetricSet struct {
 	validateAgentDuration *prometheus.HistogramVec
 	grpcRequestsTotal     *prometheus.CounterVec
 	dbQueryDuration       *prometheus.HistogramVec
+	httpRequestDuration   *prometheus.HistogramVec
+	httpRequestsTotal     *prometheus.CounterVec
 	processUp             prometheus.Gauge
 }
 
@@ -20,6 +22,8 @@ func buildAuthMetricSet(serviceName string) authMetricSet {
 		validateAgentDuration: newValidateAgentHistogram(),
 		grpcRequestsTotal:     newGRPCRequestsCounter(),
 		dbQueryDuration:       newDBQueryHistogram(),
+		httpRequestDuration:   newAuthHTTPRequestHistogram(),
+		httpRequestsTotal:     newAuthHTTPRequestsCounter(),
 		processUp:             newProcessUpGauge(serviceName),
 	}
 }
@@ -30,6 +34,8 @@ func authCollectors(set authMetricSet, db *sql.DB) []prometheus.Collector {
 		set.validateAgentDuration,
 		set.grpcRequestsTotal,
 		set.dbQueryDuration,
+		set.httpRequestDuration,
+		set.httpRequestsTotal,
 		set.processUp,
 	}
 	if db != nil {
@@ -67,6 +73,21 @@ func newDBQueryHistogram() *prometheus.HistogramVec {
 		Help:    "Database query duration.",
 		Buckets: LatencyBuckets,
 	}, []string{"operation"})
+}
+
+func newAuthHTTPRequestHistogram() *prometheus.HistogramVec {
+	return prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "ibex_auth_http_request_duration_seconds",
+		Help:    "Auth HTTP request duration.",
+		Buckets: LatencyBuckets,
+	}, []string{"route", "method", "status_code"})
+}
+
+func newAuthHTTPRequestsCounter() *prometheus.CounterVec {
+	return prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "ibex_auth_http_requests_total",
+		Help: "Total HTTP requests to auth service.",
+	}, []string{"route", "method", "status_code"})
 }
 
 func newProcessUpGauge(serviceName string) prometheus.Gauge {

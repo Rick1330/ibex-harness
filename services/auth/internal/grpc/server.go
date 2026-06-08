@@ -51,13 +51,19 @@ func (s *Server) ValidateToken(ctx context.Context, req *authv1.ValidateTokenReq
 
 	if err != nil {
 		if errors.Is(err, token.ErrUnauthenticated) {
-			s.metrics.ObserveValidateToken(metrics.TokenResultError, elapsed)
+			s.metrics.ObserveValidateToken(metrics.ValidateTokenObservation{
+				Result: metrics.TokenResultError, Seconds: elapsed,
+			})
 			return nil, status.Error(codes.Unauthenticated, "invalid or expired token")
 		}
-		s.metrics.ObserveValidateToken(metrics.TokenResultError, elapsed)
+		s.metrics.ObserveValidateToken(metrics.ValidateTokenObservation{
+			Result: metrics.TokenResultError, Seconds: elapsed,
+		})
 		return nil, status.Errorf(codes.Internal, "validation failed")
 	}
-	s.metrics.ObserveValidateToken(metrics.TokenResultOK, elapsed)
+	s.metrics.ObserveValidateToken(metrics.ValidateTokenObservation{
+		Result: metrics.TokenResultOK, Seconds: elapsed,
+	})
 	return resp, nil
 }
 
@@ -151,7 +157,7 @@ func (s *Server) ValidateAgent(ctx context.Context, req *authv1.ValidateAgentReq
 	}
 	if rec == nil {
 		s.observeValidateAgent(start, metrics.AgentResultNotFound)
-		return nil, status.Error(codes.PermissionDenied, "agent not found")
+		return nil, status.Error(codes.NotFound, "agent not found")
 	}
 	if rec.Status != "active" {
 		s.observeValidateAgent(start, metrics.AgentResultError)
@@ -166,6 +172,9 @@ func (s *Server) ValidateAgent(ctx context.Context, req *authv1.ValidateAgentReq
 	}, nil
 }
 
-func (s *Server) observeValidateAgent(start time.Time, result string) {
-	s.metrics.ObserveValidateAgent(result, time.Since(start).Seconds())
+func (s *Server) observeValidateAgent(start time.Time, result metrics.AgentValidateResult) {
+	s.metrics.ObserveValidateAgent(metrics.ValidateAgentObservation{
+		Result:  result,
+		Seconds: time.Since(start).Seconds(),
+	})
 }

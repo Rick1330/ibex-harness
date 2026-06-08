@@ -44,7 +44,11 @@ func NewRouter(cfg config.Config, log *logger.Logger, reg *metrics.AuthRegistry,
 	})
 	mux.Handle("/metrics", metrics.Handler(reg.Gatherer()))
 
-	return telemetry.SpanMiddleware(tracer)(loggingMiddleware(log, mux))
+	return telemetry.SpanMiddleware(tracer)(
+		metrics.AuthHTTPMiddleware(reg)(
+			loggingMiddleware(log, mux),
+		),
+	)
 }
 
 func loggingMiddleware(log *logger.Logger, next http.Handler) http.Handler {

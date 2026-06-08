@@ -102,7 +102,7 @@ func TestValidateAgent_InvalidAgentId(t *testing.T) {
 	}
 }
 
-func TestValidateAgent_NotFoundBecomesPermissionDenied(t *testing.T) {
+func TestValidateAgent_NotFound(t *testing.T) {
 	orgID := uuid.New().String()
 	agentID := uuid.New().String()
 	callerCtx := ContextWithCaller(context.Background(), CallerContext{
@@ -119,7 +119,7 @@ func TestValidateAgent_NotFoundBecomesPermissionDenied(t *testing.T) {
 		AgentId: agentID,
 		OrgId:   orgID,
 	})
-	if status.Code(err) != codes.PermissionDenied {
+	if status.Code(err) != codes.NotFound {
 		t.Fatalf("code: %v", status.Code(err))
 	}
 }

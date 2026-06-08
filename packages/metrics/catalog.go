@@ -16,6 +16,9 @@ var AuthRequiredMetricNames = []string{
 	"ibex_auth_validate_agent_duration_seconds",
 	"ibex_auth_grpc_requests_total",
 	"ibex_db_query_duration_seconds",
+	"ibex_db_pool_open_connections",
+	"ibex_auth_http_request_duration_seconds",
+	"ibex_auth_http_requests_total",
 	"ibex_process_up",
 }
 

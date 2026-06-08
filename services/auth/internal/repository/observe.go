@@ -10,5 +10,8 @@ func observeQuery(obs metrics.QueryObserver, operation metrics.DBOperation, star
 	if obs == nil {
 		return
 	}
-	obs.ObserveDBQuery(operation, time.Since(start).Seconds())
+	obs.ObserveDBQuery(metrics.DBQueryObservation{
+		Operation: operation,
+		Seconds:   time.Since(start).Seconds(),
+	})
 }

@@ -13,10 +13,9 @@ import (
 func MetricsUnaryInterceptor(reg *ibexmetrics.AuthRegistry) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 		resp, err := handler(ctx, req)
-		st, _ := status.FromError(err)
 		reg.IncGRPCRequest(ibexmetrics.GRPCRequestLabels{
 			Method: shortGRPCMethod(info.FullMethod),
-			Status: st.Code().String(),
+			Status: status.Code(err).String(),
 		})
 		return resp, err
 	}

@@ -27,12 +27,30 @@ func HTTPMiddleware(reg *ProxyRegistry) func(http.Handler) http.Handler {
 			rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 			next.ServeHTTP(rec, r)
 
-			reg.ObserveHTTPRequest(
-				routeTemplate(r),
-				r.Method,
-				strconv.Itoa(rec.status),
-				time.Since(start).Seconds(),
-			)
+			reg.ObserveHTTPRequest(HTTPRequestObservation{
+				Route:      routeTemplate(r),
+				Method:     r.Method,
+				StatusCode: strconv.Itoa(rec.status),
+				Seconds:    time.Since(start).Seconds(),
+			})
+		})
+	}
+}
+
+// AuthHTTPMiddleware records auth HTTP request metrics.
+func AuthHTTPMiddleware(reg *AuthRegistry) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			start := time.Now()
+			rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+			next.ServeHTTP(rec, r)
+
+			reg.ObserveHTTPRequest(HTTPRequestObservation{
+				Route:      routeTemplate(r),
+				Method:     r.Method,
+				StatusCode: strconv.Itoa(rec.status),
+				Seconds:    time.Since(start).Seconds(),
+			})
 		})
 	}
 }

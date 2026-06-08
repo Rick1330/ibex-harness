@@ -13,6 +13,8 @@ type AuthRegistry struct {
 	validateAgentDuration *prometheus.HistogramVec
 	grpcRequestsTotal     *prometheus.CounterVec
 	dbQueryDuration       *prometheus.HistogramVec
+	httpRequestDuration   *prometheus.HistogramVec
+	httpRequestsTotal     *prometheus.CounterVec
 	processUp             prometheus.Gauge
 }
 
@@ -28,6 +30,8 @@ func NewAuth(cfg AuthConfig) *AuthRegistry {
 		validateAgentDuration: set.validateAgentDuration,
 		grpcRequestsTotal:     set.grpcRequestsTotal,
 		dbQueryDuration:       set.dbQueryDuration,
+		httpRequestDuration:   set.httpRequestDuration,
+		httpRequestsTotal:     set.httpRequestsTotal,
 		processUp:             set.processUp,
 	}
 	r.processUp.Set(1)
@@ -40,13 +44,13 @@ func (r *AuthRegistry) Gatherer() prometheus.Gatherer {
 }
 
 // ObserveValidateToken records ValidateToken duration.
-func (r *AuthRegistry) ObserveValidateToken(result TokenValidateResult, seconds float64) {
-	r.validateTokenDuration.WithLabelValues(string(result)).Observe(seconds)
+func (r *AuthRegistry) ObserveValidateToken(obs ValidateTokenObservation) {
+	r.validateTokenDuration.WithLabelValues(string(obs.Result)).Observe(obs.Seconds)
 }
 
 // ObserveValidateAgent records ValidateAgent duration.
-func (r *AuthRegistry) ObserveValidateAgent(result AgentValidateResult, seconds float64) {
-	r.validateAgentDuration.WithLabelValues(string(result)).Observe(seconds)
+func (r *AuthRegistry) ObserveValidateAgent(obs ValidateAgentObservation) {
+	r.validateAgentDuration.WithLabelValues(string(obs.Result)).Observe(obs.Seconds)
 }
 
 // IncGRPCRequest records a gRPC method outcome.
@@ -55,6 +59,12 @@ func (r *AuthRegistry) IncGRPCRequest(labels GRPCRequestLabels) {
 }
 
 // ObserveDBQuery records database query duration.
-func (r *AuthRegistry) ObserveDBQuery(op DBOperation, seconds float64) {
-	r.dbQueryDuration.WithLabelValues(string(op)).Observe(seconds)
+func (r *AuthRegistry) ObserveDBQuery(obs DBQueryObservation) {
+	r.dbQueryDuration.WithLabelValues(string(obs.Operation)).Observe(obs.Seconds)
+}
+
+// ObserveHTTPRequest records auth HTTP request count and duration.
+func (r *AuthRegistry) ObserveHTTPRequest(obs HTTPRequestObservation) {
+	r.httpRequestsTotal.WithLabelValues(obs.Route, obs.Method, obs.StatusCode).Inc()
+	r.httpRequestDuration.WithLabelValues(obs.Route, obs.Method, obs.StatusCode).Observe(obs.Seconds)
 }

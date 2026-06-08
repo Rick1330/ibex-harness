@@ -15,6 +15,24 @@ type GRPCRequestLabels struct {
 	Status string
 }
 
+// ValidateTokenObservation records ValidateToken duration.
+type ValidateTokenObservation struct {
+	Result  TokenValidateResult
+	Seconds float64
+}
+
+// ValidateAgentObservation records ValidateAgent duration.
+type ValidateAgentObservation struct {
+	Result  AgentValidateResult
+	Seconds float64
+}
+
+// DBQueryObservation records database query duration.
+type DBQueryObservation struct {
+	Operation DBOperation
+	Seconds   float64
+}
+
 // DB operation names for ibex_db_query_duration_seconds.
 const (
 	DBOpFindTokenByPrefix DBOperation = "find_token_by_prefix"

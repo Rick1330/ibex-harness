@@ -24,13 +24,13 @@ func (s *testAuthServer) ValidateToken(ctx context.Context, req *authv1.Validate
 	resp, err := s.fn(ctx, req.GetAccessToken())
 	if err != nil {
 		if errors.Is(err, token.ErrUnauthenticated) {
-			s.metrics.ObserveValidateToken(metrics.TokenResultError, 0)
+			s.metrics.ObserveValidateToken(metrics.ValidateTokenObservation{Result: metrics.TokenResultError})
 			return nil, status.Error(codes.Unauthenticated, "invalid or expired token")
 		}
-		s.metrics.ObserveValidateToken(metrics.TokenResultError, 0)
+		s.metrics.ObserveValidateToken(metrics.ValidateTokenObservation{Result: metrics.TokenResultError})
 		return nil, status.Errorf(codes.Internal, "validation failed")
 	}
-	s.metrics.ObserveValidateToken(metrics.TokenResultOK, 0)
+	s.metrics.ObserveValidateToken(metrics.ValidateTokenObservation{Result: metrics.TokenResultOK})
 	return resp, nil
 }
 

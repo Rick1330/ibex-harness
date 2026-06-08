@@ -89,9 +89,9 @@ func NewRouter(deps RouterDeps) http.Handler {
 		})
 	}
 
-	handler := metrics.HTTPMiddleware(reg)(
-		RequestContextMiddleware(cfg)(
-			telemetry.SpanMiddleware(deps.Tracer)(
+	handler := RequestContextMiddleware(cfg)(
+		telemetry.SpanMiddleware(deps.Tracer)(
+			metrics.HTTPMiddleware(reg)(
 				ResponseHeadersMiddleware(cfg)(
 					loggingMiddleware(logger, mux),
 				),

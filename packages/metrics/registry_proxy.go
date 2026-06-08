@@ -75,9 +75,9 @@ func (r *ProxyRegistry) Gatherer() prometheus.Gatherer {
 }
 
 // ObserveHTTPRequest records proxy request count and duration.
-func (r *ProxyRegistry) ObserveHTTPRequest(route, method, statusCode string, seconds float64) {
-	r.requestsTotal.WithLabelValues(route, method, statusCode).Inc()
-	r.requestDuration.WithLabelValues(route, method, statusCode).Observe(seconds)
+func (r *ProxyRegistry) ObserveHTTPRequest(obs HTTPRequestObservation) {
+	r.requestsTotal.WithLabelValues(obs.Route, obs.Method, obs.StatusCode).Inc()
+	r.requestDuration.WithLabelValues(obs.Route, obs.Method, obs.StatusCode).Observe(obs.Seconds)
 }
 
 // IncActiveConnection increments in-flight connection gauge.
