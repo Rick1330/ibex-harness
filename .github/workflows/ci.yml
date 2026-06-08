@@ -463,7 +463,7 @@ jobs:
           output: trivy-results.sarif
           exit-code: "1"
       - name: Upload Trivy SARIF
-        uses: github/codeql-action/upload-sarif@87557b9c84dde89fdd9b10e88954ac2f4248e463 # v4.36.1
+        uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
         if: always()
         with:
           sarif_file: trivy-results.sarif
@@ -538,7 +538,7 @@ jobs:
           bandit -r services/memory/ -x tests/,test_ -f sarif -o bandit.sarif
       - name: Upload Bandit SARIF
         if: ${{ hashFiles('bandit.sarif') != '' }}
-        uses: github/codeql-action/upload-sarif@87557b9c84dde89fdd9b10e88954ac2f4248e463 # v4.36.1
+        uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
         with:
           sarif_file: bandit.sarif
           category: bandit
