@@ -1,10 +1,10 @@
 # Current State
 
 **Last updated:** 2026-06-10  
-**Git SHA (`main`):** `9058a27` (pre-gate); updates on pre-Phase-2 verification merge  
+**Git SHA (`main`):** `cc0703a` — Pre-Phase-2 verification gate merged (#90)  
 **Current phase:** Phase 1 — Core Platform (**Complete**)  
-**Current goal:** Pre-Phase-2 verification gate (CI audit, SEC hardening, Codecov) — **blocks M2.1.1**  
-**Next milestone:** [2.1.1 Provider interface and registry](phase-2-single-provider/milestones/2.1.1-provider-interface-and-registry.md) (after gate)  
+**Current goal:** Phase 2 entry — Single Provider E2E  
+**Next milestone:** [2.1.1 Provider interface and registry](phase-2-single-provider/milestones/2.1.1-provider-interface-and-registry.md)  
 **Phase 1 exit audit:** [PHASE1_EXIT_AUDIT.md](phase-1-core-platform/PHASE1_EXIT_AUDIT.md)  
 **CI audit:** [CI_AUDIT.md](phase-1-core-platform/CI_AUDIT.md)
 
@@ -57,9 +57,9 @@
 
 ## Next 3 immediate tasks
 
-1. **Pre-Phase-2 verification gate** — merge CI audit + SEC hardening + Codecov ([CI_AUDIT.md](phase-1-core-platform/CI_AUDIT.md))
-2. **Branch protection** — apply updated `branch-protection-main.json` on GitHub
-3. **Phase 2 milestone 2.1.1** — Provider interface and registry (after gate green)
+1. **Phase 2 milestone 2.1.1** — Provider interface and registry
+2. **Branch protection** — apply updated `branch-protection-main.json` on GitHub (includes `go-services`, `proxy-auth-smoke`)
+3. **Phase 2 prep** — review [phase-2 README](phase-2-single-provider/README.md)
 
 ## Verify current state locally
 
