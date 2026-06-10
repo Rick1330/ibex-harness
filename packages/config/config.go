@@ -49,39 +49,51 @@ func redactConfig(v any) map[string]any {
 }
 
 func redactValue(v reflect.Value, out map[string]any) {
-	if !v.IsValid() {
+	v, ok := derefValue(v)
+	if !ok {
 		return
-	}
-	for v.Kind() == reflect.Pointer {
-		if v.IsNil() {
-			return
-		}
-		v = v.Elem()
 	}
 	if v.Kind() != reflect.Struct {
 		out["value"] = fmt.Sprintf("%v", v.Interface())
 		return
 	}
+	redactStructFields(v, out)
+}
+
+func derefValue(v reflect.Value) (reflect.Value, bool) {
+	if !v.IsValid() {
+		return v, false
+	}
+	for v.Kind() == reflect.Pointer {
+		if v.IsNil() {
+			return v, false
+		}
+		v = v.Elem()
+	}
+	return v, true
+}
+
+func redactStructFields(v reflect.Value, out map[string]any) {
 	t := v.Type()
 	for i := 0; i < v.NumField(); i++ {
 		field := t.Field(i)
 		if !field.IsExported() {
 			continue
 		}
-		name := fieldName(field)
-		fv := v.Field(i)
-		if isSecretField(field, fv) {
-			out[name] = "[REDACTED]"
-			continue
-		}
-		if fv.Kind() == reflect.Struct && field.Type != reflect.TypeOf(Secret("")) {
-			nested := make(map[string]any)
-			redactValue(fv, nested)
-			out[name] = nested
-			continue
-		}
-		out[name] = fv.Interface()
+		out[fieldName(field)] = redactFieldValue(field, v.Field(i))
 	}
+}
+
+func redactFieldValue(field reflect.StructField, fv reflect.Value) any {
+	if isSecretField(field, fv) {
+		return "[REDACTED]"
+	}
+	if fv.Kind() == reflect.Struct && field.Type != reflect.TypeOf(Secret("")) {
+		nested := make(map[string]any)
+		redactValue(fv, nested)
+		return nested
+	}
+	return fv.Interface()
 }
 
 func fieldName(field reflect.StructField) string {

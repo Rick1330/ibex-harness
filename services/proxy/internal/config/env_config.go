@@ -40,7 +40,15 @@ func loadFromEnv() (Config, error) {
 		return Config{}, err
 	}
 
-	cfg := Config{
+	cfg := baseProxyConfig(envCfg, level)
+	if err := applyProxyEnvOverrides(&cfg, envCfg); err != nil {
+		return Config{}, err
+	}
+	return finalizeProxyConfig(cfg, envCfg)
+}
+
+func baseProxyConfig(envCfg envConfig, level slog.Level) Config {
+	return Config{
 		Environment:     envCfg.Environment,
 		ServiceName:     envCfg.ServiceName,
 		LogLevel:        level,
@@ -55,6 +63,9 @@ func loadFromEnv() (Config, error) {
 			OrgOverrides: map[uuid.UUID]int{},
 		},
 	}
+}
+
+func applyProxyEnvOverrides(cfg *Config, envCfg envConfig) error {
 	if envCfg.AuthValidateTimeout > 0 {
 		cfg.AuthValidateTimeout = envCfg.AuthValidateTimeout
 	}
@@ -64,20 +75,37 @@ func loadFromEnv() (Config, error) {
 	if envCfg.RateLimitDefaultRPM > 0 {
 		cfg.RateLimit.DefaultRPM = envCfg.RateLimitDefaultRPM
 	}
-	if raw := strings.TrimSpace(os.Getenv("IBEX_SHUTDOWN_TIMEOUT")); raw != "" {
-		if envCfg.ShutdownTimeout <= 0 {
-			return Config{}, fmt.Errorf("IBEX_SHUTDOWN_TIMEOUT must be positive")
-		}
-		cfg.ShutdownTimeout = envCfg.ShutdownTimeout
+	if err := applyShutdownFromEnv(cfg, envCfg.ShutdownTimeout); err != nil {
+		return err
 	}
-	if envCfg.RateLimitOrgOverrides != "" {
-		overrides, err := parseOrgRPMOverrides(envCfg.RateLimitOrgOverrides)
-		if err != nil {
-			return Config{}, fmt.Errorf("IBEX_RATE_LIMIT_ORG_OVERRIDES: %w", err)
-		}
-		cfg.RateLimit.OrgOverrides = overrides
-	}
+	return applyRateLimitOverrides(cfg, envCfg.RateLimitOrgOverrides)
+}
 
+func applyShutdownFromEnv(cfg *Config, timeout time.Duration) error {
+	raw := strings.TrimSpace(os.Getenv("IBEX_SHUTDOWN_TIMEOUT"))
+	if raw == "" {
+		return nil
+	}
+	if timeout <= 0 {
+		return fmt.Errorf("IBEX_SHUTDOWN_TIMEOUT must be positive")
+	}
+	cfg.ShutdownTimeout = timeout
+	return nil
+}
+
+func applyRateLimitOverrides(cfg *Config, raw string) error {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	overrides, err := parseOrgRPMOverrides(raw)
+	if err != nil {
+		return fmt.Errorf("IBEX_RATE_LIMIT_ORG_OVERRIDES: %w", err)
+	}
+	cfg.RateLimit.OrgOverrides = overrides
+	return nil
+}
+
+func finalizeProxyConfig(cfg Config, envCfg envConfig) (Config, error) {
 	cfg.ApplyDefaults()
 
 	telemetryCfg, err := telemetry.ConfigFromEnv(cfg.ServiceName, cfg.Environment)

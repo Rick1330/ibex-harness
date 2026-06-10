@@ -9,6 +9,7 @@ import (
 	ibexconfig "github.com/Rick1330/ibex-harness/packages/config"
 	"github.com/Rick1330/ibex-harness/packages/crypto"
 	"github.com/Rick1330/ibex-harness/packages/telemetry"
+	"github.com/Rick1330/ibex-harness/services/auth/internal/token"
 )
 
 type envConfig struct {
@@ -35,6 +36,11 @@ func loadFromEnv() (Config, error) {
 		return Config{}, err
 	}
 
+	cfg := baseAuthConfig(envCfg, level)
+	return finalizeAuthConfig(cfg, envCfg)
+}
+
+func baseAuthConfig(envCfg envConfig, level slog.Level) Config {
 	cfg := Config{
 		Environment: envCfg.Environment,
 		ServiceName: envCfg.ServiceName,
@@ -44,21 +50,32 @@ func loadFromEnv() (Config, error) {
 		PostgresDSN: envCfg.PostgresDSN.String(),
 		Argon2:      crypto.ProductionParams(),
 	}
+	applyAuthEnvOverrides(&cfg, envCfg)
+	return cfg
+}
+
+func applyAuthEnvOverrides(cfg *Config, envCfg envConfig) {
 	if envCfg.ShutdownTimeout > 0 {
 		cfg.ShutdownTimeout = envCfg.ShutdownTimeout
 	} else {
 		cfg.ShutdownTimeout = defaultShutdownTimeout
 	}
+	applyArgon2Overrides(&cfg.Argon2, envCfg)
+}
+
+func applyArgon2Overrides(params *token.Argon2Params, envCfg envConfig) {
 	if envCfg.Argon2MemoryKiB > 0 {
-		cfg.Argon2.MemoryKiB = envCfg.Argon2MemoryKiB
+		params.MemoryKiB = envCfg.Argon2MemoryKiB
 	}
 	if envCfg.Argon2Time > 0 {
-		cfg.Argon2.Time = envCfg.Argon2Time
+		params.Time = envCfg.Argon2Time
 	}
 	if envCfg.Argon2Parallelism > 0 {
-		cfg.Argon2.Parallelism = envCfg.Argon2Parallelism
+		params.Parallelism = envCfg.Argon2Parallelism
 	}
+}
 
+func finalizeAuthConfig(cfg Config, envCfg envConfig) (Config, error) {
 	telemetryCfg, err := telemetry.ConfigFromEnv(cfg.ServiceName, cfg.Environment)
 	if err != nil {
 		return Config{}, err
