@@ -7,11 +7,11 @@ import (
 	"strings"
 	"testing"
 
+	apierror "github.com/Rick1330/ibex-harness/packages/apierror"
 	"github.com/Rick1330/ibex-harness/packages/permissions"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
-	proxyerrors "github.com/Rick1330/ibex-harness/services/proxy/internal/errors"
 )
 
 const testChatOrgID = "550e8400-e29b-41d4-a716-446655440001"
@@ -43,7 +43,7 @@ func TestChatCompletions_validJSON_returns501(t *testing.T) {
 	if rec.Code != http.StatusNotImplemented {
 		t.Fatalf("status: %d body=%s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), proxyerrors.CodeProviderNotConfigured) {
+	if !strings.Contains(rec.Body.String(), string(apierror.CodeProviderNotConfigured)) {
 		t.Fatalf("body: %s", rec.Body.String())
 	}
 }
@@ -65,7 +65,7 @@ func TestChatCompletions_invalidJSON_returns400(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status: %d", rec.Code)
 	}
-	if !strings.Contains(rec.Body.String(), proxyerrors.CodeInvalidJSON) {
+	if !strings.Contains(rec.Body.String(), string(apierror.CodeInvalidJSON)) {
 		t.Fatalf("body: %s", rec.Body.String())
 	}
 }
@@ -102,7 +102,7 @@ func TestChatCompletions_missingAgentID_returns400(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status: %d body=%s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), proxyerrors.CodeMissingAgentID) {
+	if !strings.Contains(rec.Body.String(), string(apierror.CodeMissingAgentID)) {
 		t.Fatalf("body: %s", rec.Body.String())
 	}
 }

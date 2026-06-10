@@ -9,8 +9,8 @@ import (
 
 	"github.com/Rick1330/ibex-harness/packages/logger"
 
+	apierror "github.com/Rick1330/ibex-harness/packages/apierror"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
-	proxyerrors "github.com/Rick1330/ibex-harness/services/proxy/internal/errors"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/validation"
 	"github.com/google/uuid"
 )
@@ -76,11 +76,11 @@ func TestAgentVerification(t *testing.T) {
 		wantBody   string
 	}{
 		{name: "valid", verifier: &mockAgentVerifier{}, agentID: agentTestAgentID(), withAuth: true, wantStatus: http.StatusOK, wantBody: agentTestAgentID()},
-		{name: "missing header", verifier: &mockAgentVerifier{}, agentID: "", withAuth: true, wantStatus: http.StatusBadRequest, wantBody: proxyerrors.CodeMissingAgentID},
-		{name: "malformed uuid", verifier: &mockAgentVerifier{}, agentID: "not-a-uuid", withAuth: true, wantStatus: http.StatusBadRequest, wantBody: proxyerrors.CodeValidationError},
-		{name: "wrong org", verifier: &mockAgentVerifier{err: auth.ErrAgentNotAuthorized}, agentID: agentTestAgentID(), withAuth: true, wantStatus: http.StatusForbidden, wantBody: proxyerrors.CodeAgentNotAuthorized},
-		{name: "suspended", verifier: &mockAgentVerifier{err: auth.ErrAgentSuspended}, agentID: agentTestAgentID(), withAuth: true, wantStatus: http.StatusForbidden, wantBody: proxyerrors.CodeAgentSuspended},
-		{name: "auth down", verifier: &mockAgentVerifier{err: auth.ErrAgentVerifyUnavailable}, agentID: agentTestAgentID(), withAuth: true, wantStatus: http.StatusServiceUnavailable, wantBody: proxyerrors.CodeAuthUnavailable},
+		{name: "missing header", verifier: &mockAgentVerifier{}, agentID: "", withAuth: true, wantStatus: http.StatusBadRequest, wantBody: string(apierror.CodeMissingAgentID)},
+		{name: "malformed uuid", verifier: &mockAgentVerifier{}, agentID: "not-a-uuid", withAuth: true, wantStatus: http.StatusBadRequest, wantBody: string(apierror.CodeValidationError)},
+		{name: "wrong org", verifier: &mockAgentVerifier{err: auth.ErrAgentNotAuthorized}, agentID: agentTestAgentID(), withAuth: true, wantStatus: http.StatusForbidden, wantBody: string(apierror.CodeAgentNotAuthorized)},
+		{name: "suspended", verifier: &mockAgentVerifier{err: auth.ErrAgentSuspended}, agentID: agentTestAgentID(), withAuth: true, wantStatus: http.StatusForbidden, wantBody: string(apierror.CodeAgentSuspended)},
+		{name: "auth down", verifier: &mockAgentVerifier{err: auth.ErrAgentVerifyUnavailable}, agentID: agentTestAgentID(), withAuth: true, wantStatus: http.StatusServiceUnavailable, wantBody: string(apierror.CodeAuthUnavailable)},
 		{name: "no auth context", verifier: &mockAgentVerifier{}, agentID: agentTestAgentID(), withAuth: false, wantStatus: http.StatusInternalServerError},
 	}
 	for _, tt := range tests {

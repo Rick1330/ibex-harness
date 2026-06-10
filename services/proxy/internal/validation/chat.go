@@ -4,7 +4,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/Rick1330/ibex-harness/services/proxy/internal/errors"
+	"github.com/Rick1330/ibex-harness/packages/apierror"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/llm"
 )
 
@@ -22,29 +22,29 @@ var allowedRoles = map[string]struct{}{
 }
 
 // ValidateChatCompletionRequest returns all semantic validation failures.
-func ValidateChatCompletionRequest(req *llm.ChatCompletionRequest) []errors.FieldError {
+func ValidateChatCompletionRequest(req *llm.ChatCompletionRequest) []apierror.FieldError {
 	if req == nil {
-		return []errors.FieldError{{
+		return []apierror.FieldError{{
 			Field: "body", Code: fieldCodeRequired, Message: "request body is required",
 		}}
 	}
-	var out []errors.FieldError
+	var out []apierror.FieldError
 	model := strings.TrimSpace(req.Model)
 	if model == "" {
-		out = append(out, errors.FieldError{Field: "model", Code: fieldCodeRequired, Message: "model is required"})
+		out = append(out, apierror.FieldError{Field: "model", Code: fieldCodeRequired, Message: "model is required"})
 	} else if len(model) > MaxModelNameLength {
-		out = append(out, errors.FieldError{
+		out = append(out, apierror.FieldError{
 			Field: "model", Code: fieldCodeTooLong,
 			Message: "model exceeds maximum length",
 		})
 	}
 	if len(req.Messages) == 0 {
-		out = append(out, errors.FieldError{
+		out = append(out, apierror.FieldError{
 			Field: "messages", Code: fieldCodeRequired, Message: "messages must contain at least one message",
 		})
 	}
 	if len(req.Messages) > MaxMessagesPerRequest {
-		out = append(out, errors.FieldError{
+		out = append(out, apierror.FieldError{
 			Field: "messages", Code: fieldCodeTooMany,
 			Message: "messages exceeds maximum count",
 		})
@@ -52,17 +52,17 @@ func ValidateChatCompletionRequest(req *llm.ChatCompletionRequest) []errors.Fiel
 	for i, msg := range req.Messages {
 		role := strings.TrimSpace(msg.Role)
 		if role == "" {
-			out = append(out, errors.FieldError{
+			out = append(out, apierror.FieldError{
 				Field: msgField(i, "role"), Code: fieldCodeRequired, Message: "role is required",
 			})
 		} else if _, ok := allowedRoles[role]; !ok {
-			out = append(out, errors.FieldError{
+			out = append(out, apierror.FieldError{
 				Field: msgField(i, "role"), Code: fieldCodeInvalidEnum,
 				Message: "role must be one of system, user, assistant, tool",
 			})
 		}
 		if len(msg.Content) > MaxMessageContentBytes {
-			out = append(out, errors.FieldError{
+			out = append(out, apierror.FieldError{
 				Field: msgField(i, "content"), Code: fieldCodeTooLong,
 				Message: "message content exceeds maximum size",
 			})
@@ -71,7 +71,7 @@ func ValidateChatCompletionRequest(req *llm.ChatCompletionRequest) []errors.Fiel
 	if req.Temperature != nil {
 		t := *req.Temperature
 		if t < MinTemperature || t > MaxTemperature {
-			out = append(out, errors.FieldError{
+			out = append(out, apierror.FieldError{
 				Field: "temperature", Code: fieldCodeInvalidEnum,
 				Message: "temperature must be between 0 and 2",
 			})
@@ -79,12 +79,12 @@ func ValidateChatCompletionRequest(req *llm.ChatCompletionRequest) []errors.Fiel
 	}
 	if req.MaxTokens != nil {
 		if *req.MaxTokens <= 0 {
-			out = append(out, errors.FieldError{
+			out = append(out, apierror.FieldError{
 				Field: "max_tokens", Code: fieldCodeInvalidEnum,
 				Message: "max_tokens must be greater than 0",
 			})
 		} else if *req.MaxTokens > MaxChatMaxTokens {
-			out = append(out, errors.FieldError{
+			out = append(out, apierror.FieldError{
 				Field: "max_tokens", Code: fieldCodeTooLong,
 				Message: "max_tokens exceeds maximum allowed value",
 			})

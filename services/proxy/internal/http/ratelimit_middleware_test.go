@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
+	apierror "github.com/Rick1330/ibex-harness/packages/apierror"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
-	proxyerrors "github.com/Rick1330/ibex-harness/services/proxy/internal/errors"
 	"github.com/google/uuid"
 )
 
@@ -101,7 +101,7 @@ func TestRateLimitMiddleware_denied(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	if body.Error.Code != proxyerrors.CodeRateLimited {
+	if body.Error.Code != string(apierror.CodeRateLimited) {
 		t.Fatalf("code: %q", body.Error.Code)
 	}
 }

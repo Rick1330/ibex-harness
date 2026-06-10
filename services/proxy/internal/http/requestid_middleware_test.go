@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
+	apierror "github.com/Rick1330/ibex-harness/packages/apierror"
 	"github.com/Rick1330/ibex-harness/packages/reqid"
 	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
-	proxyerrors "github.com/Rick1330/ibex-harness/services/proxy/internal/errors"
 	"github.com/google/uuid"
 )
 
@@ -94,8 +94,8 @@ func TestRequestIDInErrorEnvelope_matchesHeader(t *testing.T) {
 		telemetry.SpanMiddleware(tracer)(
 			ResponseHeadersMiddleware(cfg)(
 				ContentTypeMiddleware("")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					proxyerrors.Write(w, http.StatusBadRequest, proxyerrors.CodeValidationError,
-						"fail", RequestIDFromContext(r.Context()), proxyerrors.WriteOpts{})
+					apierror.WriteStatus(w, http.StatusBadRequest, apierror.CodeValidationError,
+						"fail", RequestIDFromContext(r.Context()), apierror.WriteOpts{})
 				})),
 			),
 		),

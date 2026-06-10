@@ -10,9 +10,9 @@ import (
 
 	"github.com/google/uuid"
 
+	apierror "github.com/Rick1330/ibex-harness/packages/apierror"
 	"github.com/Rick1330/ibex-harness/packages/reqid"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
-	proxyerrors "github.com/Rick1330/ibex-harness/services/proxy/internal/errors"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -123,9 +123,9 @@ func BodySizeLimitMiddleware(maxBytes int64, docsBase string) func(http.Handler)
 				return
 			}
 			if r.ContentLength > maxBytes {
-				proxyerrors.Write(w, http.StatusRequestEntityTooLarge, proxyerrors.CodePayloadTooLarge,
+				apierror.WriteStatus(w, http.StatusRequestEntityTooLarge, apierror.CodePayloadTooLarge,
 					"Request body too large", requestIDFromContext(r.Context()),
-					proxyerrors.WriteOpts{DocsBase: docsBase})
+					apierror.WriteOpts{DocsBase: docsBase})
 				return
 			}
 			r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
@@ -144,9 +144,9 @@ func ContentTypeMiddleware(docsBase string) func(http.Handler) http.Handler {
 			}
 			ct := r.Header.Get("Content-Type")
 			if ct == "" || !isJSONMediaType(ct) {
-				proxyerrors.Write(w, http.StatusUnsupportedMediaType, proxyerrors.CodeUnsupportedMediaType,
+				apierror.WriteStatus(w, http.StatusUnsupportedMediaType, apierror.CodeUnsupportedMediaType,
 					"Content-Type must be application/json", requestIDFromContext(r.Context()),
-					proxyerrors.WriteOpts{DocsBase: docsBase})
+					apierror.WriteOpts{DocsBase: docsBase})
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -169,11 +169,11 @@ func PathOrgUUIDMiddleware(docsBase string) func(http.Handler) http.Handler {
 				return
 			}
 			if _, err := uuid.Parse(orgID); err != nil {
-				proxyerrors.Write(w, http.StatusBadRequest, proxyerrors.CodeValidationError,
+				apierror.WriteStatus(w, http.StatusBadRequest, apierror.CodeValidationError,
 					"Request validation failed", requestIDFromContext(r.Context()),
-					proxyerrors.WriteOpts{
+					apierror.WriteOpts{
 						DocsBase: docsBase,
-						FieldErrors: []proxyerrors.FieldError{{
+						FieldErrors: []apierror.FieldError{{
 							Field:   "org_id",
 							Code:    "INVALID_FORMAT",
 							Message: "org_id must be a valid UUID",

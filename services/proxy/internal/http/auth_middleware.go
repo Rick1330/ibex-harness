@@ -4,11 +4,11 @@ import (
 	"errors"
 	"net/http"
 
+	apierror "github.com/Rick1330/ibex-harness/packages/apierror"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/permissions"
 	"github.com/Rick1330/ibex-harness/packages/reqid"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
-	proxyerrors "github.com/Rick1330/ibex-harness/services/proxy/internal/errors"
 )
 
 // AuthOptions configures auth middleware behavior per route.
@@ -32,13 +32,13 @@ func AuthMiddleware(validator auth.TokenValidator, log *logger.Logger, opts Auth
 			token, err := auth.ParseAuthorizationHeader(r.Header.Get("Authorization"))
 			if err != nil {
 				if errors.Is(err, auth.ErrMissingToken) {
-					proxyerrors.Write(w, http.StatusUnauthorized, proxyerrors.CodeMissingToken,
-						"Authorization header required", requestID, proxyerrors.WriteOpts{DocsBase: docsBase})
+					apierror.WriteStatus(w, http.StatusUnauthorized, apierror.CodeMissingToken,
+						"Authorization header required", requestID, apierror.WriteOpts{DocsBase: docsBase})
 					return
 				}
-				proxyerrors.Write(w, http.StatusUnauthorized, proxyerrors.CodeInvalidToken,
+				apierror.WriteStatus(w, http.StatusUnauthorized, apierror.CodeInvalidToken,
 					"Invalid Authorization header", requestID,
-					proxyerrors.WriteOpts{Detail: err.Error(), DocsBase: docsBase})
+					apierror.WriteOpts{Detail: err.Error(), DocsBase: docsBase})
 				return
 			}
 
@@ -46,32 +46,32 @@ func AuthMiddleware(validator auth.TokenValidator, log *logger.Logger, opts Auth
 			if err != nil {
 				switch {
 				case errors.Is(err, auth.ErrInvalidToken):
-					proxyerrors.Write(w, http.StatusUnauthorized, proxyerrors.CodeInvalidToken,
-						"Invalid or expired token", requestID, proxyerrors.WriteOpts{DocsBase: docsBase})
+					apierror.WriteStatus(w, http.StatusUnauthorized, apierror.CodeInvalidToken,
+						"Invalid or expired token", requestID, apierror.WriteOpts{DocsBase: docsBase})
 					return
 				case errors.Is(err, auth.ErrAuthUnavailable):
 					log.WarnCtx(r.Context(), "auth validate unavailable")
-					proxyerrors.Write(w, http.StatusServiceUnavailable, proxyerrors.CodeServiceDegraded,
-						"Authentication service unavailable", requestID, proxyerrors.WriteOpts{DocsBase: docsBase})
+					apierror.WriteStatus(w, http.StatusServiceUnavailable, apierror.CodeServiceDegraded,
+						"Authentication service unavailable", requestID, apierror.WriteOpts{DocsBase: docsBase})
 					return
 				default:
 					log.ErrorCtx(r.Context(), "unexpected auth validation error", "error", err)
-					proxyerrors.Write(w, http.StatusServiceUnavailable, proxyerrors.CodeServiceDegraded,
-						"Authentication service unavailable", requestID, proxyerrors.WriteOpts{DocsBase: docsBase})
+					apierror.WriteStatus(w, http.StatusServiceUnavailable, apierror.CodeServiceDegraded,
+						"Authentication service unavailable", requestID, apierror.WriteOpts{DocsBase: docsBase})
 					return
 				}
 			}
 
 			if opts.PathOrgID != "" && res.OrgID != opts.PathOrgID {
-				proxyerrors.Write(w, http.StatusForbidden, proxyerrors.CodeInsufficientPermissions,
+				apierror.WriteStatus(w, http.StatusForbidden, apierror.CodeInsufficientPermissions,
 					"Insufficient permissions", requestID,
-					proxyerrors.WriteOpts{Detail: "organization scope mismatch", DocsBase: docsBase})
+					apierror.WriteOpts{Detail: "organization scope mismatch", DocsBase: docsBase})
 				return
 			}
 			if opts.RequireProxyChatCompletion && !permissions.Has(res.Permissions, permissions.ProxyChatCompletion) {
-				proxyerrors.Write(w, http.StatusForbidden, proxyerrors.CodeInsufficientPermissions,
+				apierror.WriteStatus(w, http.StatusForbidden, apierror.CodeInsufficientPermissions,
 					"Insufficient permissions", requestID,
-					proxyerrors.WriteOpts{Detail: "token lacks proxy chat completion permissions", DocsBase: docsBase})
+					apierror.WriteOpts{Detail: "token lacks proxy chat completion permissions", DocsBase: docsBase})
 				return
 			}
 

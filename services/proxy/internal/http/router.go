@@ -7,13 +7,13 @@ import (
 	"net/http"
 	"time"
 
+	apierror "github.com/Rick1330/ibex-harness/packages/apierror"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
 	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
-	proxyerrors "github.com/Rick1330/ibex-harness/services/proxy/internal/errors"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/health"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/llm"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/validation"
@@ -117,9 +117,9 @@ func chain(middlewares ...func(http.Handler) http.Handler) func(http.Handler) ht
 func handleAuthProbe(w http.ResponseWriter, r *http.Request) {
 	res, ok := auth.FromContext(r.Context())
 	if !ok {
-		proxyerrors.Write(w, http.StatusInternalServerError, proxyerrors.CodeServiceDegraded,
+		apierror.WriteStatus(w, http.StatusInternalServerError, apierror.CodeServiceDegraded,
 			"Internal error", requestIDFromContext(r.Context()),
-			proxyerrors.WriteOpts{Detail: "missing auth context", DocsBase: ErrorDocsBaseFromContext(r.Context())})
+			apierror.WriteOpts{Detail: "missing auth context", DocsBase: ErrorDocsBaseFromContext(r.Context())})
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -135,35 +135,35 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request, log *logger.L
 		return
 	}
 	requestID := requestIDFromContext(r.Context())
-	opts := proxyerrors.WriteOpts{DocsBase: docsBase}
+	opts := apierror.WriteOpts{DocsBase: docsBase}
 
 	if fieldErrors := validation.ValidateChatHeaders(r.Header); len(fieldErrors) > 0 {
-		proxyerrors.Write(w, http.StatusBadRequest, proxyerrors.CodeValidationError,
-			"Request validation failed", requestID, proxyerrors.WriteOpts{DocsBase: docsBase, FieldErrors: fieldErrors})
+		apierror.WriteStatus(w, http.StatusBadRequest, apierror.CodeValidationError,
+			"Request validation failed", requestID, apierror.WriteOpts{DocsBase: docsBase, FieldErrors: fieldErrors})
 		return
 	}
 
 	parsed, err := llm.ParseChatCompletionRequest(r.Body)
 	if err != nil {
 		if IsMaxBytesError(err) {
-			proxyerrors.Write(w, http.StatusRequestEntityTooLarge, proxyerrors.CodePayloadTooLarge,
+			apierror.WriteStatus(w, http.StatusRequestEntityTooLarge, apierror.CodePayloadTooLarge,
 				"Request body too large", requestID, opts)
 			return
 		}
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
-			proxyerrors.Write(w, http.StatusRequestEntityTooLarge, proxyerrors.CodePayloadTooLarge,
+			apierror.WriteStatus(w, http.StatusRequestEntityTooLarge, apierror.CodePayloadTooLarge,
 				"Request body too large", requestID, opts)
 			return
 		}
-		proxyerrors.Write(w, http.StatusBadRequest, proxyerrors.CodeInvalidJSON,
+		apierror.WriteStatus(w, http.StatusBadRequest, apierror.CodeInvalidJSON,
 			"Malformed JSON in request body", requestID, opts)
 		return
 	}
 
 	if fieldErrors := validation.ValidateChatCompletionRequest(parsed); len(fieldErrors) > 0 {
-		proxyerrors.Write(w, http.StatusBadRequest, proxyerrors.CodeValidationError,
-			"Request validation failed", requestID, proxyerrors.WriteOpts{DocsBase: docsBase, FieldErrors: fieldErrors})
+		apierror.WriteStatus(w, http.StatusBadRequest, apierror.CodeValidationError,
+			"Request validation failed", requestID, apierror.WriteOpts{DocsBase: docsBase, FieldErrors: fieldErrors})
 		return
 	}
 
@@ -178,9 +178,9 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request, log *logger.L
 		)
 	}
 
-	proxyerrors.Write(w, http.StatusNotImplemented, proxyerrors.CodeProviderNotConfigured,
+	apierror.WriteStatus(w, http.StatusNotImplemented, apierror.CodeProviderNotConfigured,
 		"LLM provider not configured", requestID,
-		proxyerrors.WriteOpts{Detail: "Phase 2 milestone required for upstream calls", DocsBase: docsBase})
+		apierror.WriteOpts{Detail: "Phase 2 milestone required for upstream calls", DocsBase: docsBase})
 }
 
 func loggingMiddleware(log *logger.Logger, next http.Handler) http.Handler {
@@ -218,8 +218,8 @@ func requireMethod(w http.ResponseWriter, r *http.Request, method, docsBase stri
 		return true
 	}
 	w.Header().Set("Allow", method)
-	proxyerrors.Write(w, http.StatusMethodNotAllowed, proxyerrors.CodeMethodNotAllowed,
+	apierror.WriteStatus(w, http.StatusMethodNotAllowed, apierror.CodeMethodNotAllowed,
 		"Method not allowed", requestIDFromContext(r.Context()),
-		proxyerrors.WriteOpts{Detail: "expected " + method, DocsBase: docsBase})
+		apierror.WriteOpts{Detail: "expected " + method, DocsBase: docsBase})
 	return false
 }

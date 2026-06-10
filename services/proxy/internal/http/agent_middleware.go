@@ -6,9 +6,9 @@ import (
 	"net/http"
 	"strings"
 
+	apierror "github.com/Rick1330/ibex-harness/packages/apierror"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
-	proxyerrors "github.com/Rick1330/ibex-harness/services/proxy/internal/errors"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/validation"
 	"github.com/google/uuid"
 )
@@ -46,24 +46,24 @@ func (h *agentVerifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	agentHeader := strings.TrimSpace(r.Header.Get(validation.HeaderAgentID))
 	if agentHeader == "" {
-		proxyerrors.Write(w, http.StatusBadRequest, proxyerrors.CodeMissingAgentID,
+		apierror.WriteStatus(w, http.StatusBadRequest, apierror.CodeMissingAgentID,
 			"X-IBEX-Agent-ID header is required.", requestID,
-			proxyerrors.WriteOpts{DocsBase: docsBase})
+			apierror.WriteOpts{DocsBase: docsBase})
 		return
 	}
 
 	if fe := validation.ValidateUUIDField("header."+validation.HeaderAgentID, agentHeader); fe != nil {
-		proxyerrors.Write(w, http.StatusBadRequest, proxyerrors.CodeValidationError,
+		apierror.WriteStatus(w, http.StatusBadRequest, apierror.CodeValidationError,
 			"Request validation failed.", requestID,
-			proxyerrors.WriteOpts{DocsBase: docsBase, FieldErrors: []proxyerrors.FieldError{*fe}})
+			apierror.WriteOpts{DocsBase: docsBase, FieldErrors: []apierror.FieldError{*fe}})
 		return
 	}
 
 	bearer, err := auth.ParseAuthorizationHeader(r.Header.Get("Authorization"))
 	if err != nil {
-		proxyerrors.Write(w, http.StatusUnauthorized, proxyerrors.CodeInvalidToken,
+		apierror.WriteStatus(w, http.StatusUnauthorized, apierror.CodeInvalidToken,
 			"Invalid Authorization header", requestID,
-			proxyerrors.WriteOpts{Detail: err.Error(), DocsBase: docsBase})
+			apierror.WriteOpts{Detail: err.Error(), DocsBase: docsBase})
 		return
 	}
 
@@ -90,23 +90,23 @@ type agentVerifyErrorOpts struct {
 func (h *agentVerifyHandler) writeAgentVerifyError(w http.ResponseWriter, err error, opts agentVerifyErrorOpts) {
 	switch {
 	case errors.Is(err, auth.ErrAgentSuspended):
-		proxyerrors.Write(w, http.StatusForbidden, proxyerrors.CodeAgentSuspended,
+		apierror.WriteStatus(w, http.StatusForbidden, apierror.CodeAgentSuspended,
 			"The agent is not active for this organization.", opts.requestID,
-			proxyerrors.WriteOpts{DocsBase: opts.docsBase})
+			apierror.WriteOpts{DocsBase: opts.docsBase})
 	case errors.Is(err, auth.ErrAgentNotAuthorized):
-		proxyerrors.Write(w, http.StatusForbidden, proxyerrors.CodeAgentNotAuthorized,
+		apierror.WriteStatus(w, http.StatusForbidden, apierror.CodeAgentNotAuthorized,
 			"The agent is not authorized for this organization or is not active.", opts.requestID,
-			proxyerrors.WriteOpts{DocsBase: opts.docsBase})
+			apierror.WriteOpts{DocsBase: opts.docsBase})
 	case errors.Is(err, auth.ErrAgentVerifyUnavailable):
 		h.logger.WarnCtx(opts.ctx, "agent verify unavailable")
-		proxyerrors.Write(w, http.StatusServiceUnavailable, proxyerrors.CodeAuthUnavailable,
+		apierror.WriteStatus(w, http.StatusServiceUnavailable, apierror.CodeAuthUnavailable,
 			"Authentication service unavailable. The request cannot be verified.", opts.requestID,
-			proxyerrors.WriteOpts{DocsBase: opts.docsBase})
+			apierror.WriteOpts{DocsBase: opts.docsBase})
 	default:
 		h.logger.WarnCtx(opts.ctx, "agent verify failed", "error", err)
-		proxyerrors.Write(w, http.StatusServiceUnavailable, proxyerrors.CodeAuthUnavailable,
+		apierror.WriteStatus(w, http.StatusServiceUnavailable, apierror.CodeAuthUnavailable,
 			"Authentication service unavailable. The request cannot be verified.", opts.requestID,
-			proxyerrors.WriteOpts{DocsBase: opts.docsBase})
+			apierror.WriteOpts{DocsBase: opts.docsBase})
 	}
 }
 

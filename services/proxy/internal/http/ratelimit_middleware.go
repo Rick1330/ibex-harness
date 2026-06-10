@@ -6,11 +6,11 @@ import (
 	"strconv"
 	"time"
 
+	apierror "github.com/Rick1330/ibex-harness/packages/apierror"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
-	proxyerrors "github.com/Rick1330/ibex-harness/services/proxy/internal/errors"
 	"github.com/google/uuid"
 )
 
@@ -112,17 +112,17 @@ func rateLimitScopeFromRequest(r *http.Request) (orgUUID, agentUUID uuid.UUID, o
 }
 
 func writeRateLimitInternalError(w http.ResponseWriter, requestID, docsBase, detail string) {
-	proxyerrors.Write(w, http.StatusInternalServerError, proxyerrors.CodeServiceDegraded,
+	apierror.WriteStatus(w, http.StatusInternalServerError, apierror.CodeServiceDegraded,
 		"Internal error", requestID,
-		proxyerrors.WriteOpts{Detail: detail, DocsBase: docsBase})
+		apierror.WriteOpts{Detail: detail, DocsBase: docsBase})
 }
 
 func writeRateLimitExceeded(w http.ResponseWriter, requestID, docsBase string, result ratelimit.Result) {
 	w.Header().Set("Retry-After", strconv.Itoa(retryAfterSeconds(result.RetryAfter)))
 	setRateLimitHeaders(w, result.Limit, 0, result.ResetUnix)
-	proxyerrors.Write(w, http.StatusTooManyRequests, proxyerrors.CodeRateLimited,
+	apierror.WriteStatus(w, http.StatusTooManyRequests, apierror.CodeRateLimited,
 		"Rate limit exceeded for this organization", requestID,
-		proxyerrors.WriteOpts{
+		apierror.WriteOpts{
 			Detail:   "You have exceeded the request rate limit. Please retry after the indicated time.",
 			DocsBase: docsBase,
 		})

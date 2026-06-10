@@ -1,28 +1,10 @@
-package errors
+package apierror
 
 import (
 	"encoding/json"
 	"net/http"
 	"strings"
 	"time"
-)
-
-const (
-	CodeMissingToken            = "MISSING_TOKEN"
-	CodeInvalidToken            = "INVALID_TOKEN"
-	CodeInsufficientPermissions = "INSUFFICIENT_PERMISSIONS"
-	CodeServiceDegraded         = "SERVICE_DEGRADED"
-	CodeInvalidJSON             = "INVALID_JSON"
-	CodeProviderNotConfigured   = "PROVIDER_NOT_CONFIGURED"
-	CodePayloadTooLarge         = "PAYLOAD_TOO_LARGE"
-	CodeUnsupportedMediaType    = "UNSUPPORTED_MEDIA_TYPE"
-	CodeValidationError         = "VALIDATION_ERROR"
-	CodeMethodNotAllowed        = "METHOD_NOT_ALLOWED"
-	CodeRateLimited             = "RATE_LIMITED"
-	CodeMissingAgentID          = "MISSING_AGENT_ID"
-	CodeAgentNotAuthorized      = "AGENT_NOT_AUTHORIZED"
-	CodeAgentSuspended          = "AGENT_SUSPENDED"
-	CodeAuthUnavailable         = "AUTH_UNAVAILABLE"
 )
 
 // FieldError is one validation failure (API_DOCUMENTATION.md).
@@ -34,7 +16,7 @@ type FieldError struct {
 
 // Detail is the stable error envelope.
 type Detail struct {
-	Code        string       `json:"code"`
+	Code        Code         `json:"code"`
 	Message     string       `json:"message"`
 	Detail      string       `json:"detail,omitempty"`
 	DocsURL     string       `json:"docs_url,omitempty"`
@@ -56,12 +38,17 @@ type WriteOpts struct {
 	DocsBase    string
 }
 
-// Write writes a stable error response.
-func Write(w http.ResponseWriter, status int, code, message, requestID string, opts WriteOpts) {
+// Write writes a stable error response with the appropriate HTTP status for code.
+func Write(w http.ResponseWriter, code Code, message, requestID string, opts WriteOpts) {
+	WriteStatus(w, HTTPStatus(code), code, message, requestID, opts)
+}
+
+// WriteStatus writes a stable error response with an explicit HTTP status.
+func WriteStatus(w http.ResponseWriter, status int, code Code, message, requestID string, opts WriteOpts) {
 	docsURL := opts.DocsURL
 	if docsURL == "" && strings.TrimSpace(opts.DocsBase) != "" {
 		base := strings.TrimRight(strings.TrimSpace(opts.DocsBase), "/")
-		docsURL = base + "/errors/" + code
+		docsURL = base + "/errors/" + string(code)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -79,6 +66,6 @@ func Write(w http.ResponseWriter, status int, code, message, requestID string, o
 }
 
 // WriteJSON writes a stable error response (compat wrapper).
-func WriteJSON(w http.ResponseWriter, status int, code, message, detail, requestID string) {
-	Write(w, status, code, message, requestID, WriteOpts{Detail: detail})
+func WriteJSON(w http.ResponseWriter, status int, code Code, message, detail, requestID string) {
+	WriteStatus(w, status, code, message, requestID, WriteOpts{Detail: detail})
 }

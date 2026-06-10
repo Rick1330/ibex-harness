@@ -4,12 +4,10 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
-	"os"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/Rick1330/ibex-harness/packages/crypto"
 	"github.com/Rick1330/ibex-harness/packages/shutdown"
 	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/token"
@@ -37,61 +35,7 @@ type Config struct {
 }
 
 func Load() (Config, error) {
-	cfg := Config{
-		Environment:     getEnv("IBEX_ENV", defaultEnvironment),
-		ServiceName:     getEnv("IBEX_SERVICE_NAME", defaultServiceName),
-		Port:            getEnv("IBEX_PORT", defaultPort),
-		GRPCPort:        getEnv("IBEX_GRPC_PORT", defaultGRPCPort),
-		PostgresDSN:     strings.TrimSpace(os.Getenv("POSTGRES_DSN")),
-		Argon2:          crypto.ProductionParams(),
-		ShutdownTimeout: defaultShutdownTimeout,
-	}
-
-	level, err := parseLogLevel(getEnv("IBEX_LOG_LEVEL", "INFO"))
-	if err != nil {
-		return Config{}, err
-	}
-	cfg.LogLevel = level
-
-	if v := os.Getenv("IBEX_ARGON2_MEMORY_KIB"); v != "" {
-		n, err := strconv.ParseUint(strings.TrimSpace(v), 10, 32)
-		if err != nil {
-			return Config{}, fmt.Errorf("IBEX_ARGON2_MEMORY_KIB: %w", err)
-		}
-		cfg.Argon2.MemoryKiB = uint32(n)
-	}
-	if v := os.Getenv("IBEX_ARGON2_TIME"); v != "" {
-		n, err := strconv.ParseUint(strings.TrimSpace(v), 10, 32)
-		if err != nil {
-			return Config{}, fmt.Errorf("IBEX_ARGON2_TIME: %w", err)
-		}
-		cfg.Argon2.Time = uint32(n)
-	}
-	if v := strings.TrimSpace(os.Getenv("IBEX_SHUTDOWN_TIMEOUT")); v != "" {
-		d, err := time.ParseDuration(v)
-		if err != nil {
-			return Config{}, fmt.Errorf("IBEX_SHUTDOWN_TIMEOUT: %w", err)
-		}
-		cfg.ShutdownTimeout = d
-	}
-	if v := os.Getenv("IBEX_ARGON2_PARALLELISM"); v != "" {
-		n, err := strconv.ParseUint(strings.TrimSpace(v), 10, 8)
-		if err != nil {
-			return Config{}, fmt.Errorf("IBEX_ARGON2_PARALLELISM: %w", err)
-		}
-		cfg.Argon2.Parallelism = uint8(n)
-	}
-
-	telemetryCfg, err := telemetry.ConfigFromEnv(cfg.ServiceName, cfg.Environment)
-	if err != nil {
-		return Config{}, err
-	}
-	cfg.Telemetry = telemetryCfg
-
-	if err := cfg.Validate(); err != nil {
-		return Config{}, err
-	}
-	return cfg, nil
+	return loadFromEnv()
 }
 
 func (c Config) Validate() error {
@@ -117,27 +61,4 @@ func (c Config) Validate() error {
 
 func ListenAddress(port string) string {
 	return net.JoinHostPort("", port)
-}
-
-func getEnv(key, fallback string) string {
-	value := strings.TrimSpace(os.Getenv(key))
-	if value == "" {
-		return fallback
-	}
-	return value
-}
-
-func parseLogLevel(value string) (slog.Level, error) {
-	switch strings.ToUpper(strings.TrimSpace(value)) {
-	case "DEBUG":
-		return slog.LevelDebug, nil
-	case "INFO":
-		return slog.LevelInfo, nil
-	case "WARN", "WARNING":
-		return slog.LevelWarn, nil
-	case "ERROR":
-		return slog.LevelError, nil
-	default:
-		return 0, fmt.Errorf("IBEX_LOG_LEVEL must be DEBUG, INFO, WARN, or ERROR")
-	}
 }

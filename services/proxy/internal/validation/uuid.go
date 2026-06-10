@@ -3,7 +3,7 @@ package validation
 import (
 	"strings"
 
-	proxyerrors "github.com/Rick1330/ibex-harness/services/proxy/internal/errors"
+	apierror "github.com/Rick1330/ibex-harness/packages/apierror"
 	"github.com/google/uuid"
 )
 
@@ -13,17 +13,17 @@ const (
 )
 
 // ValidateUUIDField returns a field error when value is not a valid UUID.
-func ValidateUUIDField(field, value string) *proxyerrors.FieldError {
+func ValidateUUIDField(field, value string) *apierror.FieldError {
 	value = strings.TrimSpace(value)
 	if value == "" {
-		return &proxyerrors.FieldError{
+		return &apierror.FieldError{
 			Field:   field,
 			Code:    fieldCodeRequired,
 			Message: field + " is required",
 		}
 	}
 	if _, err := uuid.Parse(value); err != nil {
-		return &proxyerrors.FieldError{
+		return &apierror.FieldError{
 			Field:   field,
 			Code:    fieldCodeInvalidFormat,
 			Message: field + " must be a valid UUID",

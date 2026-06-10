@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	apierror "github.com/Rick1330/ibex-harness/packages/apierror"
 	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
-	proxyerrors "github.com/Rick1330/ibex-harness/services/proxy/internal/errors"
 )
 
 func TestBodySizeLimitMiddleware_rejectsOversizedContentLength(t *testing.T) {
@@ -23,7 +23,7 @@ func TestBodySizeLimitMiddleware_rejectsOversizedContentLength(t *testing.T) {
 	if rec.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status: %d", rec.Code)
 	}
-	if !strings.Contains(rec.Body.String(), proxyerrors.CodePayloadTooLarge) {
+	if !strings.Contains(rec.Body.String(), string(apierror.CodePayloadTooLarge)) {
 		t.Fatalf("body: %s", rec.Body.String())
 	}
 }
@@ -76,8 +76,8 @@ func TestBodySizeLimitMiddleware_enforcesOnRead(t *testing.T) {
 	)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, err := io.ReadAll(r.Body)
 		if IsMaxBytesError(err) {
-			proxyerrors.Write(w, http.StatusRequestEntityTooLarge, proxyerrors.CodePayloadTooLarge,
-				"Request body too large", RequestIDFromContext(r.Context()), proxyerrors.WriteOpts{})
+			apierror.WriteStatus(w, http.StatusRequestEntityTooLarge, apierror.CodePayloadTooLarge,
+				"Request body too large", RequestIDFromContext(r.Context()), apierror.WriteOpts{})
 			return
 		}
 		w.WriteHeader(http.StatusOK)
