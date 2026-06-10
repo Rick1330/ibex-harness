@@ -5,9 +5,9 @@ import (
 	"errors"
 	"fmt"
 
-	"go.opentelemetry.io/otel/trace"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // Providers holds initialized OTel providers and their shutdown function.

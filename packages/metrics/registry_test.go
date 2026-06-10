@@ -26,9 +26,9 @@ func TestMetricsEndpoint_Format(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get metrics: %v", err)
 	}
-	defer resp.Body.Close()
+	t.Cleanup(func() { _ = resp.Body.Close() })
 
-	dec := expfmt.NewDecoder(resp.Body, expfmt.FmtText)
+	dec := expfmt.NewDecoder(resp.Body, expfmt.NewFormat(expfmt.TypeTextPlain))
 	for {
 		var mf dto.MetricFamily
 		err := dec.Decode(&mf)
@@ -54,7 +54,7 @@ func TestAuthMetricsEndpoint_RequiredMetrics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
-	defer db.Close()
+	t.Cleanup(func() { _ = db.Close() })
 
 	reg := NewAuth(AuthConfig{ServiceName: "test-auth", DB: db})
 	seedAuthSamples(reg)

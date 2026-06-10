@@ -93,10 +93,10 @@ func resultFromCount(count, limit int64, window minuteWindow) Result {
 		}
 	}
 	return Result{
-		Allowed:    true,
-		Limit:      int(limit),
-		Remaining:  remaining,
-		ResetUnix:  window.resetUnix,
+		Allowed:   true,
+		Limit:     int(limit),
+		Remaining: remaining,
+		ResetUnix: window.resetUnix,
 	}
 }
 

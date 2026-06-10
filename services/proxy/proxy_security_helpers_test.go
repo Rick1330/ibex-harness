@@ -13,33 +13,52 @@ import (
 	apierror "github.com/Rick1330/ibex-harness/packages/apierror"
 )
 
-const minimalChatBody = `{"model":"gpt-4","messages":[{"role":"user","content":"hi"}]}`
+const (
+	minimalChatBody   = `{"model":"gpt-4","messages":[{"role":"user","content":"hi"}]}`
+	rateLimitBurstRPM = int64(5)
+)
 
 func assertSecurityErrorEnvelope(t *testing.T, resp *http.Response, body, secret string) {
+	t.Helper()
+	assertErrorStatus(t, resp, body)
+	assertJSONContentType(t, resp, body)
+	envelope := parseErrorEnvelope(t, body)
+	assertRequestIDCorrelation(t, resp, envelope)
+	assertNoSecretInBody(t, body, secret)
+}
+
+func assertErrorStatus(t *testing.T, resp *http.Response, body string) {
 	t.Helper()
 	if resp.StatusCode < 400 {
 		t.Fatalf("expected error status, got %d body=%s", resp.StatusCode, body)
 	}
+}
+
+func assertJSONContentType(t *testing.T, resp *http.Response, body string) {
+	t.Helper()
 	ct := resp.Header.Get("Content-Type")
 	if !strings.Contains(ct, "application/json") {
 		t.Fatalf("Content-Type want application/json got %q body=%s", ct, body)
 	}
+}
+
+func parseErrorEnvelope(t *testing.T, body string) apierror.Response {
+	t.Helper()
 	var envelope apierror.Response
 	if err := json.Unmarshal([]byte(body), &envelope); err != nil {
 		t.Fatalf("json unmarshal: %v body=%s", err, body)
 	}
-	if envelope.Error.Code == "" {
-		t.Fatalf("missing error.code body=%s", body)
+	if envelope.Error.Code == "" || envelope.Error.Message == "" {
+		t.Fatalf("missing error fields body=%s", body)
 	}
-	if envelope.Error.Message == "" {
-		t.Fatalf("missing error.message body=%s", body)
+	if envelope.Error.RequestID == "" || envelope.Error.Timestamp.IsZero() {
+		t.Fatalf("missing request_id or timestamp body=%s", body)
 	}
-	if envelope.Error.RequestID == "" {
-		t.Fatalf("missing error.request_id body=%s", body)
-	}
-	if envelope.Error.Timestamp.IsZero() {
-		t.Fatalf("missing error.timestamp body=%s", body)
-	}
+	return envelope
+}
+
+func assertRequestIDCorrelation(t *testing.T, resp *http.Response, envelope apierror.Response) {
+	t.Helper()
 	hdrID := resp.Header.Get("X-Request-ID")
 	if hdrID == "" {
 		t.Fatal("missing X-Request-ID response header")
@@ -47,6 +66,10 @@ func assertSecurityErrorEnvelope(t *testing.T, resp *http.Response, body, secret
 	if hdrID != envelope.Error.RequestID {
 		t.Fatalf("request_id mismatch header=%q body=%q", hdrID, envelope.Error.RequestID)
 	}
+}
+
+func assertNoSecretInBody(t *testing.T, body, secret string) {
+	t.Helper()
 	if secret != "" && strings.Contains(body, secret) {
 		t.Fatalf("response body leaks secret token")
 	}
@@ -54,12 +77,44 @@ func assertSecurityErrorEnvelope(t *testing.T, resp *http.Response, body, secret
 
 func assertNoTokenLeak(t *testing.T, body, secret string) {
 	t.Helper()
-	if secret != "" && strings.Contains(body, secret) {
-		t.Fatalf("response body leaks bearer token")
-	}
+	assertNoSecretInBody(t, body, secret)
 	if strings.Contains(strings.ToLower(body), "bearer ") {
 		t.Fatalf("response body contains bearer prefix: %s", body)
 	}
+}
+
+func securityEnv(t *testing.T) securityTestEnv {
+	t.Helper()
+	return setupSecurityTestEnv(t, proxyServerOpts{defaultRPM: 60})
+}
+
+func rateLimitEnv(t *testing.T) securityTestEnv {
+	t.Helper()
+	return setupSecurityTestEnv(t, proxyServerOpts{defaultRPM: rateLimitBurstRPM})
+}
+
+func orgAProbeOpts(env securityTestEnv) authProbeOpts {
+	return authProbeOpts{srvURL: env.proxy.URL, bearer: env.orgA.Token, agentID: env.orgA.AgentID}
+}
+
+func exhaustOrgARateLimit(t *testing.T, env securityTestEnv) {
+	t.Helper()
+	opts := orgAProbeOpts(env)
+	for i := 0; i < int(rateLimitBurstRPM)+1; i++ {
+		resp, _ := authProbeGET(t, opts)
+		resp.Body.Close()
+	}
+}
+
+func lastBurstProbe(t *testing.T, env securityTestEnv) (*http.Response, string) {
+	t.Helper()
+	opts := orgAProbeOpts(env)
+	var resp *http.Response
+	var body string
+	for i := 0; i < int(rateLimitBurstRPM)+1; i++ {
+		resp, body = authProbeGET(t, opts)
+	}
+	return resp, body
 }
 
 func percentileMs(durations []time.Duration, p float64) time.Duration {
@@ -93,14 +148,7 @@ func parseIntHeader(t *testing.T, hdr string) int {
 
 func parseRetryAfter(t *testing.T, hdr string) int {
 	t.Helper()
-	if hdr == "" {
-		t.Fatal("missing Retry-After header")
-	}
-	v, err := strconv.Atoi(hdr)
-	if err != nil {
-		t.Fatalf("Retry-After not int: %q", hdr)
-	}
-	return v
+	return parseIntHeader(t, hdr)
 }
 
 func parseResetUnix(t *testing.T, hdr string) int64 {

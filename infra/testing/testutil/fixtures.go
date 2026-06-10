@@ -65,54 +65,63 @@ func SeedAgent(t testing.TB, db *sql.DB, orgID, userID, name, slug string) strin
 	return id
 }
 
-// SeedToken inserts a hashed PAT for orgID and returns the plaintext bearer and token ID.
-func SeedToken(t testing.TB, db *sql.DB, orgID string, permissions int64) (plaintext string, tokenID uuid.UUID) {
+type tokenSeedOpts struct {
+	orgID       string
+	permissions int64
+	tokenID     uuid.UUID
+	name        string
+	suffix      string
+	revoked     bool
+	expired     bool
+}
+
+func seedTokenRow(t testing.TB, db *sql.DB, opts tokenSeedOpts) string {
 	t.Helper()
-	tokenID = uuid.New()
-	plaintext = fmt.Sprintf("ibex_pat_%s_integrationsecret", tokenID.String())
+	tokenID := opts.tokenID
+	if tokenID == uuid.Nil {
+		tokenID = uuid.New()
+	}
+	plaintext := fmt.Sprintf("ibex_pat_%s_%s", tokenID.String(), opts.suffix)
 	prefix := "ibex_pat_" + tokenID.String()
 	hash, err := hashBearerForTest(plaintext)
 	if err != nil {
 		t.Fatalf("hash token: %v", err)
 	}
+	expiresClause := "NULL"
+	if opts.expired {
+		expiresClause = "NOW() - INTERVAL '1 hour'"
+	}
 	ctx := context.Background()
+	query := fmt.Sprintf(`
+		INSERT INTO ibex_core.tokens (org_id, type, hash, prefix, name, permissions, is_revoked, expires_at)
+		VALUES ($1::uuid, 'pat', $2, $3, $4, $5, $6, %s)`, expiresClause)
 	err = WithServiceAccount(ctx, db, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `
-			INSERT INTO ibex_core.tokens (org_id, type, hash, prefix, name, permissions, is_revoked, expires_at)
-			VALUES ($1::uuid, 'pat', $2, $3, 'test-pat', $4, false, NULL)`,
-			orgID, hash, prefix, permissions,
-		)
+		_, err := tx.ExecContext(ctx, query, opts.orgID, hash, prefix, opts.name, opts.permissions, opts.revoked)
 		return err
 	})
 	if err != nil {
-		t.Fatalf("seed token: %v", err)
+		t.Fatalf("seed token %q: %v", opts.name, err)
 	}
+	return plaintext
+}
+
+// SeedToken inserts a hashed PAT for orgID and returns the plaintext bearer and token ID.
+func SeedToken(t testing.TB, db *sql.DB, orgID string, permissions int64) (plaintext string, tokenID uuid.UUID) {
+	t.Helper()
+	tokenID = uuid.New()
+	plaintext = seedTokenRow(t, db, tokenSeedOpts{
+		orgID: orgID, permissions: permissions, tokenID: tokenID,
+		name: "test-pat", suffix: "integrationsecret",
+	})
 	return plaintext, tokenID
 }
 
 // SeedTokenExpired inserts a PAT with expires_at in the past.
 func SeedTokenExpired(t testing.TB, db *sql.DB, orgID string, permissions int64) string {
 	t.Helper()
-	tokenID := uuid.New()
-	plaintext := fmt.Sprintf("ibex_pat_%s_expired", tokenID.String())
-	prefix := "ibex_pat_" + tokenID.String()
-	hash, err := hashBearerForTest(plaintext)
-	if err != nil {
-		t.Fatalf("hash token: %v", err)
-	}
-	ctx := context.Background()
-	err = WithServiceAccount(ctx, db, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `
-			INSERT INTO ibex_core.tokens (org_id, type, hash, prefix, name, permissions, is_revoked, expires_at)
-			VALUES ($1::uuid, 'pat', $2, $3, 'expired', $4, false, NOW() - INTERVAL '1 hour')`,
-			orgID, hash, prefix, permissions,
-		)
-		return err
+	return seedTokenRow(t, db, tokenSeedOpts{
+		orgID: orgID, permissions: permissions, name: "expired", suffix: "expired", expired: true,
 	})
-	if err != nil {
-		t.Fatalf("seed expired token: %v", err)
-	}
-	return plaintext
 }
 
 // SeedTokenZeroPerms inserts a PAT with permissions bitmap 0.
@@ -143,23 +152,8 @@ func SeedAgentWithStatus(t testing.TB, db *sql.DB, orgID, userID, name, slug, ag
 // SeedTokenRevoked inserts a revoked token for negative-path tests.
 func SeedTokenRevoked(t testing.TB, db *sql.DB, orgID string, tokenID uuid.UUID, permissions int64) string {
 	t.Helper()
-	plaintext := fmt.Sprintf("ibex_pat_%s_revoked", tokenID.String())
-	prefix := "ibex_pat_" + tokenID.String()
-	hash, err := hashBearerForTest(plaintext)
-	if err != nil {
-		t.Fatalf("hash token: %v", err)
-	}
-	ctx := context.Background()
-	err = WithServiceAccount(ctx, db, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `
-			INSERT INTO ibex_core.tokens (org_id, type, hash, prefix, name, permissions, is_revoked, expires_at)
-			VALUES ($1::uuid, 'pat', $2, $3, 'revoked', $4, true, NULL)`,
-			orgID, hash, prefix, permissions,
-		)
-		return err
+	return seedTokenRow(t, db, tokenSeedOpts{
+		orgID: orgID, permissions: permissions, tokenID: tokenID,
+		name: "revoked", suffix: "revoked", revoked: true,
 	})
-	if err != nil {
-		t.Fatalf("seed revoked token: %v", err)
-	}
-	return plaintext
 }

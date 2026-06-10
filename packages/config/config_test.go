@@ -15,7 +15,7 @@ type sampleConfig struct {
 }
 
 func TestLoad_missingRequiredAggregates(t *testing.T) {
-	os.Unsetenv("TEST_REQUIRED_VAR")
+	_ = os.Unsetenv("TEST_REQUIRED_VAR")
 	t.Setenv("TEST_OPTIONAL_VAR", "")
 	t.Setenv("TEST_SECRET_VAR", "")
 
@@ -51,7 +51,7 @@ func TestMustLoad_exitsOnError(t *testing.T) {
 		return
 	}
 	// MustLoad calls os.Exit; verify error path via Load instead.
-	os.Unsetenv("TEST_REQUIRED_VAR")
+	_ = os.Unsetenv("TEST_REQUIRED_VAR")
 	_, err := config.Load[sampleConfig]()
 	if err == nil {
 		t.Fatal("expected error")
