@@ -564,7 +564,7 @@ This distinction is a core invariant: security failures fail closed; quality fai
 
 ## Appendix A — Phase 1 Validated Security Model (M1.5.1)
 
-The following invariants are enforced by the `security-integration` CI job (`TestSecurityIntegrationSuite`, `TestSecurityIntegrationRateLimit`). Canonical error codes are in `packages/apierror` (ADR-0020).
+The following invariants are enforced by the `security-integration` CI job (`TestSecurity_SEC*` in `services/proxy/proxy_security_sec*_test.go`). Canonical error codes are in `packages/apierror` (ADR-0020).
 
 | Invariant | Test IDs |
 | --- | --- |

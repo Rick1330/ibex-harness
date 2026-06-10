@@ -412,7 +412,7 @@ jobs:
       - name: Phase 1 security integration suite (M1.5.1)
         env:
           POSTGRES_TEST_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
-        run: go test -tags=integration -timeout=120s -count=1 ./services/proxy/... -run Security
+        run: go test -tags=integration -timeout=120s -count=1 -v ./services/proxy -run '^TestSecurity_'
 
   go-race:
     name: go-race
