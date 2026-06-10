@@ -1,10 +1,10 @@
 # Current State
 
 **Last updated:** 2026-06-10  
-**Git SHA (`main`):** `5530ad9` — Dependabot alpine 3.24 ([#80](https://github.com/Rick1330/ibex-harness/pull/80), [#81](https://github.com/Rick1330/ibex-harness/pull/81)); M1.4.1 follow-up ([#79](https://github.com/Rick1330/ibex-harness/pull/79))  
+**Git SHA (`main`):** `bfb8fcb` — M1.4.2 shared config and error packages ([#82](https://github.com/Rick1330/ibex-harness/pull/82))  
 **Current phase:** Phase 1 — Core Platform  
 **Current goal:** Goal 1.4 — developer experience baseline  
-**Next milestone:** [1.4.3 Health check contract](phase-1-core-platform/milestones/1.4.3-health-check-contract.md) (after M1.4.2 merge)
+**Next milestone:** [1.4.3 Health check contract](phase-1-core-platform/milestones/1.4.3-health-check-contract.md)
 
 ---
 
@@ -33,7 +33,7 @@
 - **OTel tracer and meter providers (m1.3.1):** `packages/telemetry` Init with OTLP gRPC or noop exporters; W3C trace context propagator; HTTP `SpanMiddleware` on auth/proxy; `X-Trace-ID` from OTel span (synthetic UUID retired); gRPC client trace propagation via `otelgrpc`; shutdown hook registered first ([ADR-0019](../adr/ADR-0019-opentelemetry-provider-configuration.md))
 - **Prometheus metric catalog (m1.3.2):** `packages/metrics` canonical registry; `prometheus/client_golang` on auth/proxy; Phase 1 catalog (proxy HTTP, auth gRPC/HTTP/DB, rate-limit, process_up); route-template labels; proxy middleware order `RequestContext → Span → metrics → …` ([ADR-0021](../adr/ADR-0021-prometheus-metric-catalog.md))
 - **Developer experience baseline (m1.4.1):** `make db-seed` (idempotent fixed-UUID dev org/user/agent/PAT); `make dev-smoke` (7 local HTTP checks, 501 stub); `infra/tools/hashtoken`; enhanced auth/proxy `.env.example`; README quick-start path; local dev follow-up `compose-dev-reset`, `db-repair-token-fks`, Windows docker psql seed ([#79](https://github.com/Rick1330/ibex-harness/pull/79))
-- **Shared config and error packages (m1.4.2):** `packages/config` typed env load (`caarlos0/env/v11`); `packages/apierror` canonical codes + ADR-0013 envelope; adopted in auth/proxy ([ADR-0020](../adr/ADR-0020-shared-package-boundaries.md)) — pending merge
+- **Shared config and error packages (m1.4.2):** `packages/config` typed env load (`caarlos0/env/v11`); `packages/apierror` canonical codes + ADR-0013 envelope; adopted in auth/proxy ([ADR-0020](../adr/ADR-0020-shared-package-boundaries.md)) ([#82](https://github.com/Rick1330/ibex-harness/pull/82))
 - **Integration test infra (m1.0.1):** `infra/testing/testutil`, `make test-integration`, compose test (5433) or optional `testcontainers` build tag
 - Go services:
   - `services/auth` — `/health`, `/ready`, `/metrics`, gRPC `ValidateToken` + `ValidateAgent`
@@ -57,9 +57,9 @@
 
 ## Next 3 immediate tasks
 
-1. **Merge M1.4.2** — shared config and error packages
-2. **Milestone 1.4.3** — Health check contract
-3. **Milestone 1.5.1** — (see [phase-1 README](phase-1-core-platform/README.md#execution-order))
+1. **Milestone 1.4.3** — Health check contract
+2. **Milestone 1.5.1** — (see [phase-1 README](phase-1-core-platform/README.md#execution-order))
+3. **Phase 2 prep** — review [phase-2 README](phase-2-single-provider/README.md)
 
 ## Verify current state locally
 
