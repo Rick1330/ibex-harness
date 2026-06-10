@@ -70,10 +70,25 @@ fi
 PSQL_DSN="$(normalize_psql_dsn "$POSTGRES_DSN")"
 refuse_non_local_seed "$PSQL_DSN"
 
+docker_seed_matches_compose() {
+  local dsn="$1"
+  case "$dsn" in
+    postgres://ibex:ibex@localhost:5432/ibex*|postgres://ibex:ibex@127.0.0.1:5432/ibex*)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
 run_seed_sql() {
   if command -v psql >/dev/null 2>&1; then
     psql "$PSQL_DSN" -v ON_ERROR_STOP=1 -f "$SEED_SQL"
     return
+  fi
+  if ! docker_seed_matches_compose "$PSQL_DSN"; then
+    echo "db-seed docker fallback requires the default compose dev DSN"
+    echo "install host psql or set POSTGRES_DSN=postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable"
+    exit 1
   fi
   if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx ibex-dev-postgres; then
     echo "psql not on PATH; using docker exec ibex-dev-postgres"

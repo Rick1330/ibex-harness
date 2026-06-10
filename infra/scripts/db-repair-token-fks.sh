@@ -53,15 +53,31 @@ SQL
 echo "Validating token FK constraints (if present)..."
 run_psql <<'SQL'
 DO $$
+DECLARE
+  has_user_fk boolean;
+  has_agent_fk boolean;
+  has_revoked_fk boolean;
 BEGIN
-  IF EXISTS (
+  SELECT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'tokens_user_id_fk' AND conrelid = 'ibex_core.tokens'::regclass
+  ) INTO has_user_fk;
+  SELECT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'tokens_agent_id_fk' AND conrelid = 'ibex_core.tokens'::regclass
+  ) INTO has_agent_fk;
+  SELECT EXISTS (
     SELECT 1 FROM pg_constraint
     WHERE conname = 'tokens_revoked_by_fk' AND conrelid = 'ibex_core.tokens'::regclass
-  ) THEN
-    ALTER TABLE ibex_core.tokens VALIDATE CONSTRAINT tokens_user_id_fk;
-    ALTER TABLE ibex_core.tokens VALIDATE CONSTRAINT tokens_agent_id_fk;
-    ALTER TABLE ibex_core.tokens VALIDATE CONSTRAINT tokens_revoked_by_fk;
+  ) INTO has_revoked_fk;
+
+  IF NOT (has_user_fk AND has_agent_fk AND has_revoked_fk) THEN
+    RAISE EXCEPTION 'missing expected token FK constraints; refusing to force migration version 8 clean';
   END IF;
+
+  ALTER TABLE ibex_core.tokens VALIDATE CONSTRAINT tokens_user_id_fk;
+  ALTER TABLE ibex_core.tokens VALIDATE CONSTRAINT tokens_agent_id_fk;
+  ALTER TABLE ibex_core.tokens VALIDATE CONSTRAINT tokens_revoked_by_fk;
 END $$;
 SQL
 
