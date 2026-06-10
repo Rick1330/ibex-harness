@@ -6,7 +6,7 @@ endif
 
 DEV_TOOL := infra/scripts/dev-tool.sh
 
-.PHONY: help lint-docs security-scan repo-guards proto-lint proto-breaking proto-gen proto-test proto-test-integration test-integration compose-dev-up compose-dev-down compose-dev-logs compose-dev-ps compose-test-up compose-test-down db-migrate db-migrate-down db-version db-seed dev-smoke
+.PHONY: help lint-docs security-scan repo-guards proto-lint proto-breaking proto-gen proto-test proto-test-integration test-integration compose-dev-up compose-dev-down compose-dev-reset compose-dev-logs compose-dev-ps compose-test-up compose-test-down db-migrate db-migrate-down db-version db-seed db-repair-token-fks dev-smoke
 
 help: ## Show available commands
 	@"$(BASH)" "$(DEV_TOOL)" help
@@ -44,6 +44,9 @@ compose-dev-up: ## Start local development dependencies
 compose-dev-down: ## Stop local development dependencies
 	@"$(BASH)" "$(DEV_TOOL)" compose-dev-down
 
+compose-dev-reset: ## Stop dev stack and delete volumes (fresh Postgres data)
+	@"$(BASH)" "$(DEV_TOOL)" compose-dev-reset
+
 compose-dev-logs: ## Tail local development dependency logs
 	@"$(BASH)" "$(DEV_TOOL)" compose-dev-logs
 
@@ -67,6 +70,9 @@ db-version: ## Show current Postgres migration version
 
 db-seed: ## Seed local dev database with test org, user, agent, and PAT
 	@"$(BASH)" "$(DEV_TOOL)" db-seed
+
+db-repair-token-fks: ## Fix orphaned token FKs after failed migration 008
+	@"$(BASH)" "$(DEV_TOOL)" db-repair-token-fks
 
 dev-smoke: ## Run local end-to-end smoke test (auth+proxy)
 	@"$(BASH)" "$(DEV_TOOL)" dev-smoke

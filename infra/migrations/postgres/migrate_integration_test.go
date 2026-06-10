@@ -4,15 +4,15 @@ package postgres
 
 import (
 	"context"
-	"errors"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"testing"
 	"time"
 
-	"github.com/lib/pq"
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 )
 
 const defaultTestDSN = "postgres://ibex:ibex@localhost:5433/ibex_test?sslmode=disable"

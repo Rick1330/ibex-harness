@@ -38,6 +38,7 @@ case "${1:-help}" in
       "  test-integration         Run all Go integration tests (-tags=integration)" \
       "  compose-dev-up         Start local development dependencies" \
       "  compose-dev-down       Stop local development dependencies" \
+      "  compose-dev-reset      Stop dev stack and delete volumes (fresh Postgres)" \
       "  compose-dev-logs       Tail local development dependency logs" \
       "  compose-dev-ps         Show local development dependency status" \
       "  compose-test-up        Start minimal test dependencies" \
@@ -46,6 +47,7 @@ case "${1:-help}" in
       "  db-migrate-down        Roll back one Postgres migration step" \
       "  db-version             Show current Postgres migration version" \
       "  db-seed                Seed local dev database (org/user/agent/PAT)" \
+      "  db-repair-token-fks    Fix orphaned token FKs after failed migration 008" \
       "  dev-smoke              Run local auth+proxy smoke test"
     ;;
   lint-docs)
@@ -104,6 +106,11 @@ case "${1:-help}" in
     require_tool docker "docker is required for compose-dev-down."
     docker compose -f "$DEV_COMPOSE" --env-file "$DEV_ENV" down
     ;;
+  compose-dev-reset)
+    require_tool docker "docker is required for compose-dev-reset."
+    docker compose -f "$DEV_COMPOSE" --env-file "$DEV_ENV" down -v
+    docker compose -f "$DEV_COMPOSE" --env-file "$DEV_ENV" up -d
+    ;;
   compose-dev-logs)
     require_tool docker "docker is required for compose-dev-logs."
     docker compose -f "$DEV_COMPOSE" --env-file "$DEV_ENV" logs -f
@@ -131,6 +138,9 @@ case "${1:-help}" in
     ;;
   db-seed)
     bash "$ROOT_DIR/infra/scripts/db-seed.sh"
+    ;;
+  db-repair-token-fks)
+    bash "$ROOT_DIR/infra/scripts/db-repair-token-fks.sh"
     ;;
   dev-smoke)
     bash "$ROOT_DIR/infra/scripts/smoke_local.sh"

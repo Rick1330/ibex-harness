@@ -160,6 +160,34 @@ Common root cause:
 - multiple Postgres containers running
 - wrong database name
 
+**Migration 008 fails on `tokens_revoked_by_fk` (dirty version 8):**
+
+Stale dev data can leave `tokens.revoked_by` pointing at deleted users. Validation then fails with a dirty `schema_migrations` row.
+
+```bash
+# Fresh local Postgres (recommended)
+make compose-dev-reset
+make db-migrate
+
+# Or repair in place (keeps volume data)
+make db-repair-token-fks
+make db-migrate
+```
+
+**`db-seed` says `psql is required` on Windows:**
+
+`make db-seed` falls back to `docker exec ibex-dev-postgres` when host `psql` is not on `PATH`. Ensure `make compose-dev-up` is running first.
+
+**`make dev-smoke` returns 503 on bearer requests (want 400/501):**
+
+Proxy auth gRPC `ValidateToken` is timing out. The code default is `50ms` (production budget); local Argon2 verify often needs more on developer machines. Restart proxy with:
+
+```bash
+IBEX_AUTH_VALIDATE_TIMEOUT=2s go run ./services/proxy/cmd/proxy
+```
+
+PowerShell: `$env:IBEX_AUTH_VALIDATE_TIMEOUT = "2s"`. See `services/proxy/.env.example`.
+
 ---
 
 ### 3.4 “Redis errors / Lua script failures”

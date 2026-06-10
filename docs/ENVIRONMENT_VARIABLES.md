@@ -203,7 +203,7 @@ Used by: **proxy** (`services/proxy`)
 | `IBEX_RATE_LIMIT_ORG_OVERRIDES` | No | (empty) | `uuid=rpm` pairs | |
 | `IBEX_REQUEST_ID_HEADER` | No | `X-Request-ID` | Inbound request ID header | |
 | `IBEX_TRACE_ID_HEADER` | No | `X-Trace-ID` | Trace ID response header | |
-| `IBEX_AUTH_VALIDATE_TIMEOUT` | No | `50ms` | Per-request auth validate budget | See [ADR-0011](adr/ADR-0011-proxy-auth-client.md) |
+| `IBEX_AUTH_VALIDATE_TIMEOUT` | No | `50ms` (code); `2s` in `services/proxy/.env.example` for local dev | Per-request auth validate budget (`ValidateToken` / `ValidateAgent`) | Code default per [ADR-0011](adr/ADR-0011-proxy-auth-client.md); use `2s` locally when Argon2 verify exceeds 50ms — see [TROUBLESHOOTING.md](TROUBLESHOOTING.md) §3.3 |
 | `IBEX_MAX_REQUEST_BODY_BYTES` | No | `1048576` | Max chat request body (1 MiB) | See [ADR-0013](adr/ADR-0013-proxy-input-validation-and-error-envelope.md) |
 | `IBEX_ERROR_DOCS_BASE` | No | (empty) | Base URL for `docs_url` in error envelope | Omit in dev when unset |
 | `IBEX_LLM_MODE` | No | `live` | `live` \| `mock` | Mock recommended for dev |

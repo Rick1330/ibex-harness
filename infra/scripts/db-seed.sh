@@ -70,17 +70,24 @@ fi
 PSQL_DSN="$(normalize_psql_dsn "$POSTGRES_DSN")"
 refuse_non_local_seed "$PSQL_DSN"
 
-require_tool() {
-  if ! command -v "$1" >/dev/null 2>&1; then
-    echo "$1 is required for db-seed"
-    exit 1
+run_seed_sql() {
+  if command -v psql >/dev/null 2>&1; then
+    psql "$PSQL_DSN" -v ON_ERROR_STOP=1 -f "$SEED_SQL"
+    return
   fi
+  if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx ibex-dev-postgres; then
+    echo "psql not on PATH; using docker exec ibex-dev-postgres"
+    docker exec -i ibex-dev-postgres \
+      psql -U "${POSTGRES_USER:-ibex}" -d "${POSTGRES_DB:-ibex}" -v ON_ERROR_STOP=1 \
+      <"$SEED_SQL"
+    return
+  fi
+  echo "db-seed requires psql on PATH or a running ibex-dev-postgres container (make compose-dev-up)"
+  exit 1
 }
 
-require_tool psql
-
 echo "Seeding development database..."
-psql "$PSQL_DSN" -v ON_ERROR_STOP=1 -f "$SEED_SQL"
+run_seed_sql
 echo ""
 echo "  Dev org ID:    00000000-0000-0000-0000-000000000001"
 echo "  Dev agent ID:  00000000-0000-0000-0000-000000000003"

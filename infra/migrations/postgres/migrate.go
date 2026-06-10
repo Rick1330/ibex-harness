@@ -91,6 +91,16 @@ func Down(dsn string) error {
 	return nil
 }
 
+// Force sets the migration version and clears the dirty flag without running SQL.
+func Force(dsn string, version int) error {
+	m, err := newMigrate(dsn)
+	if err != nil {
+		return err
+	}
+	defer closeMigrate(m)
+	return m.Force(version)
+}
+
 // Version returns the current migration version and dirty flag.
 func Version(dsn string) (uint, bool, error) {
 	m, err := newMigrate(dsn)

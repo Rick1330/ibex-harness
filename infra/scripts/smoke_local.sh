@@ -17,6 +17,13 @@ CHAT_BODY='{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}'
 fail() { echo "FAIL: $1" >&2; exit 1; }
 pass() { echo "PASS: $1"; }
 
+auth_degraded_hint() {
+  echo "  Hint: 503 SERVICE_DEGRADED means proxy could not complete auth gRPC ValidateToken." >&2
+  echo "  - Ensure auth is running (gRPC :9091, POSTGRES_DSN set)" >&2
+  echo "  - Restart proxy with a higher local timeout (Argon2 verify exceeds 50ms on many dev machines):" >&2
+  echo "      IBEX_AUTH_VALIDATE_TIMEOUT=2s" >&2
+}
+
 http_code() {
   curl -s -o /dev/null -w "%{http_code}" "$@"
 }
@@ -49,7 +56,14 @@ HTTP="$(http_code -X POST "$PROXY_ADDR/v1/chat/completions" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $DEV_TOKEN" \
   -d "$CHAT_BODY")"
-[[ "$HTTP" == "400" ]] && pass "missing agent → 400" || fail "missing agent returned $HTTP, want 400"
+if [[ "$HTTP" == "400" ]]; then
+  pass "missing agent → 400"
+elif [[ "$HTTP" == "503" ]]; then
+  auth_degraded_hint
+  fail "missing agent returned 503 (auth validate failed before agent check; want 400)"
+else
+  fail "missing agent returned $HTTP, want 400"
+fi
 
 HTTP="$(http_code -X POST "$PROXY_ADDR/v1/chat/completions" \
   -H "Content-Type: application/json" \

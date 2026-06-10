@@ -77,6 +77,24 @@ From the repository root (two terminals or background):
 go run ./services/auth/cmd/auth
 
 # Terminal 2 — proxy (:8080)
+# Local dev: use a higher auth gRPC timeout (50ms default is too low for Argon2 verify on many laptops)
+IBEX_AUTH_VALIDATE_TIMEOUT=2s go run ./services/proxy/cmd/proxy
+```
+
+**Windows (PowerShell):**
+
+```powershell
+# Terminal 1 — auth
+$env:POSTGRES_DSN = "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable"
+$env:IBEX_PORT = "8081"
+$env:IBEX_GRPC_PORT = "9091"
+go run ./services/auth/cmd/auth
+
+# Terminal 2 — proxy (2s auth timeout required for local smoke on Windows)
+$env:REDIS_URL = "redis://localhost:6379/0"
+$env:IBEX_AUTH_GRPC_ADDR = "127.0.0.1:9091"
+$env:IBEX_AUTH_VALIDATE_TIMEOUT = "2s"
+$env:IBEX_PORT = "8080"
 go run ./services/proxy/cmd/proxy
 ```
 
