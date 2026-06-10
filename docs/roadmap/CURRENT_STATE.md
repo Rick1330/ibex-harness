@@ -1,10 +1,10 @@
 # Current State
 
 **Last updated:** 2026-06-05  
-**Git SHA (`main`):** `2739a78` — README + community governance ([#84](https://github.com/Rick1330/ibex-harness/pull/84)); M1.4.3 in progress on branch  
+**Git SHA (`main`):** `d366743` — M1.4.3 health check contract ([#85](https://github.com/Rick1330/ibex-harness/pull/85))  
 **Current phase:** Phase 1 — Core Platform  
-**Current goal:** Goal 1.4 — developer experience baseline  
-**Next milestone:** [1.5.1 Security integration test suite](phase-1-core-platform/milestones/1.5.1-security-integration-test-suite.md) (after M1.4.3 merge)
+**Current goal:** Goal 1.5 — Phase 1 security gate  
+**Next milestone:** [1.5.1 Security integration test suite](phase-1-core-platform/milestones/1.5.1-security-integration-test-suite.md)
 
 ---
 
