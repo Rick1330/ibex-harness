@@ -114,7 +114,15 @@ func orgAProbeOpts(env securityTestEnv) authProbeOpts {
 
 type probeExpect struct {
 	status int
-	code   string
+	code   apierror.Code
+}
+
+func requireErrorCode(t *testing.T, body string, want apierror.Code) {
+	t.Helper()
+	envelope := parseErrorEnvelope(t, body)
+	if envelope.Error.Code != want {
+		t.Fatalf("code=%q want=%q body=%s", envelope.Error.Code, want, body)
+	}
 }
 
 func requireProbe(t *testing.T, opts authProbeOpts, exp probeExpect, secret string) {
@@ -124,8 +132,23 @@ func requireProbe(t *testing.T, opts authProbeOpts, exp probeExpect, secret stri
 	if resp.StatusCode != exp.status {
 		t.Fatalf("status=%d want=%d body=%s", resp.StatusCode, exp.status, body)
 	}
-	if exp.code != "" && !strings.Contains(body, exp.code) {
-		t.Fatalf("body=%s want code %q", body, exp.code)
+	if exp.code != "" {
+		requireErrorCode(t, body, exp.code)
+	}
+	if exp.status >= 400 {
+		assertSecurityErrorEnvelope(t, resp, body, secret)
+	}
+}
+
+func requireChat(t *testing.T, opts chatRequestOpts, exp probeExpect, secret string) {
+	t.Helper()
+	resp, body := chatPOST(t, opts)
+	defer resp.Body.Close()
+	if resp.StatusCode != exp.status {
+		t.Fatalf("status=%d want=%d body=%s", resp.StatusCode, exp.status, body)
+	}
+	if exp.code != "" {
+		requireErrorCode(t, body, exp.code)
 	}
 	if exp.status >= 400 {
 		assertSecurityErrorEnvelope(t, resp, body, secret)

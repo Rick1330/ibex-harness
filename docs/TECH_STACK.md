@@ -1178,7 +1178,10 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: pip install -r requirements-dev.txt
       - run: pytest --cov --cov-report=xml
-      - uses: codecov/codecov-action@v3
+      - uses: codecov/codecov-action@v5
+        with:
+          files: coverage-python.xml
+          flags: python
 
   test-go:
     runs-on: ubuntu-latest
@@ -1187,7 +1190,11 @@ jobs:
       - uses: actions/setup-go@v4
         with:
           go-version: '1.21'
-      - run: go test -v -race -coverprofile=coverage.out ./...
+      - run: go test -count=1 -coverprofile=coverage-go-unit.out ./packages/... ./services/...
+      - uses: codecov/codecov-action@v5
+        with:
+          files: coverage-go-unit.out
+          flags: go,unit
 
   test-typescript:
     runs-on: ubuntu-latest

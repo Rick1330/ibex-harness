@@ -641,6 +641,18 @@ Coverage is a signal, not a goal — but we still enforce minimums:
 - Python: ≥ 85% for algorithms and security-related code
 - TypeScript: ≥ 70% for core UI logic; E2E covers critical flows
 
+### Codecov (CI)
+
+The `coverage` job uploads Go unit-test coverage to [Codecov](https://codecov.io/gh/Rick1330/ibex-harness) on every PR and `main` push (`codecov/codecov-action@v5`, flag `go,unit`). Integration tests (`-tags=integration`) are excluded initially — they require Postgres and are slower; a second profile with flag `go,integration` can be added when stable.
+
+| Language | When | Tool | Flag | Report file |
+| --- | --- | --- | --- | --- |
+| Go | Now | `go test -coverprofile` | `go` | `coverage-go-unit.out` |
+| Python | Phase 2+ (`services/memory`) | `pytest --cov --cov-report=xml` | `python` | `coverage-python.xml` |
+| TypeScript | Phase 3+ (`apps/dashboard`) | `jest --coverage` | `typescript` | `coverage/lcov.info` |
+
+Repo root [`codecov.yml`](../codecov.yml) sets patch target 80% for new/changed lines; project target `auto` with 1% threshold. The `coverage` job is informational until a baseline exists on the Codecov dashboard — do not add it to branch protection until then.
+
 More important than line coverage:
 
 - branch coverage for decision-heavy code

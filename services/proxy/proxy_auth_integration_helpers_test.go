@@ -90,11 +90,18 @@ type testOrgContext struct {
 }
 
 type securityTestEnv struct {
-	db     *sql.DB
-	authFx *integrationtest.AuthGRPCFixture
-	proxy  *httptest.Server
-	orgA   testOrgContext
-	orgB   testOrgContext
+	db      *sql.DB
+	authFx  *integrationtest.AuthGRPCFixture
+	proxy   *httptest.Server
+	redisMR *miniredis.Miniredis
+	orgA    testOrgContext
+	orgB    testOrgContext
+}
+
+type redisFixture struct {
+	url    string
+	client *redis.Client
+	mr     *miniredis.Miniredis
 }
 
 type proxyServerOpts struct {
@@ -122,26 +129,32 @@ func setupSecurityTestEnv(t *testing.T, srvOpts proxyServerOpts) securityTestEnv
 	tokenA, _ := testutil.SeedToken(t, db, orgAID, 42)
 	tokenB, _ := testutil.SeedToken(t, db, orgBID, 42)
 
-	proxy := startProxyServer(t, authFx.Addr, srvOpts)
+	redis := setupTestRedis(t)
+	proxy := startProxyServerRedis(t, authFx.Addr, srvOpts, redis)
 	t.Cleanup(proxy.Close)
 
 	return securityTestEnv{
-		db: db, authFx: authFx, proxy: proxy,
+		db: db, authFx: authFx, proxy: proxy, redisMR: redis.mr,
 		orgA: testOrgContext{OrgID: orgAID, UserID: userA, AgentID: agentA, Token: tokenA},
 		orgB: testOrgContext{OrgID: orgBID, UserID: userB, AgentID: agentB, Token: tokenB},
 	}
 }
 
-func setupTestRedis(t *testing.T) (redisURL string, client *redis.Client) {
+func setupTestRedis(t *testing.T) redisFixture {
 	t.Helper()
 	mr := miniredis.RunT(t)
-	redisURL = "redis://" + mr.Addr() + "/0"
-	client = redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	url := "redis://" + mr.Addr() + "/0"
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
-	return redisURL, client
+	return redisFixture{url: url, client: client, mr: mr}
 }
 
 func startProxyServer(t *testing.T, authAddr string, srvOpts proxyServerOpts) *httptest.Server {
+	t.Helper()
+	return startProxyServerRedis(t, authAddr, srvOpts, setupTestRedis(t))
+}
+
+func startProxyServerRedis(t *testing.T, authAddr string, srvOpts proxyServerOpts, redis redisFixture) *httptest.Server {
 	t.Helper()
 	conn, err := grpc.NewClient(authAddr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
@@ -152,7 +165,8 @@ func startProxyServer(t *testing.T, authAddr string, srvOpts proxyServerOpts) *h
 	}
 	t.Cleanup(func() { _ = conn.Close() })
 
-	redisURL, redisClient := setupTestRedis(t)
+	redisURL := redis.url
+	redisClient := redis.client
 
 	defaultRPM := srvOpts.defaultRPM
 	if defaultRPM < 1 {

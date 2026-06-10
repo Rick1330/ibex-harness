@@ -9,13 +9,14 @@ import (
 	"time"
 
 	"github.com/Rick1330/ibex-harness/infra/testing/testutil"
+	apierror "github.com/Rick1330/ibex-harness/packages/apierror"
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	"google.golang.org/grpc/metadata"
 )
 
 func TestSecurity_SEC1_1_MissingToken(t *testing.T) {
 	env := securityEnv(t)
-	requireProbe(t, authProbeOpts{srvURL: env.proxy.URL}, probeExpect{http.StatusUnauthorized, "MISSING_TOKEN"}, "")
+	requireProbe(t, authProbeOpts{srvURL: env.proxy.URL}, probeExpect{http.StatusUnauthorized, apierror.CodeMissingToken}, "")
 }
 
 func TestSecurity_SEC1_2_EmptyBearer(t *testing.T) {
@@ -31,6 +32,7 @@ func TestSecurity_SEC1_2_EmptyBearer(t *testing.T) {
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("status=%d body=%s", resp.StatusCode, body)
 	}
+	requireErrorCode(t, body, apierror.CodeMissingToken)
 	assertSecurityErrorEnvelope(t, resp, body, "")
 }
 
@@ -48,7 +50,7 @@ func TestSecurity_SEC1_3_and_4_InvalidTokens(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			requireProbe(t, authProbeOpts{srvURL: env.proxy.URL, bearer: tc.bearer, agentID: tc.agent},
-				probeExpect{http.StatusUnauthorized, ""}, tc.secret)
+				probeExpect{http.StatusUnauthorized, apierror.CodeInvalidToken}, tc.secret)
 		})
 	}
 }
@@ -72,7 +74,7 @@ func TestSecurity_SEC1_5_RevokedTokenSLA(t *testing.T) {
 		t.Fatalf("revoke: %v", err)
 	}
 	requireProbe(t, authProbeOpts{srvURL: env.proxy.URL, bearer: plain, agentID: env.orgA.AgentID},
-		probeExpect{http.StatusUnauthorized, ""}, plain)
+		probeExpect{http.StatusUnauthorized, apierror.CodeInvalidToken}, plain)
 	if elapsed := time.Since(start); elapsed > revocationSLA(t) {
 		t.Fatalf("revocation SLA exceeded: %v (limit %v)", elapsed, revocationSLA(t))
 	}
@@ -82,7 +84,7 @@ func TestSecurity_SEC1_6_ExpiredToken(t *testing.T) {
 	env := securityEnv(t)
 	expired := testutil.SeedTokenExpired(t, env.db, env.orgA.OrgID, 42)
 	requireProbe(t, authProbeOpts{srvURL: env.proxy.URL, bearer: expired, agentID: env.orgA.AgentID},
-		probeExpect{http.StatusUnauthorized, "INVALID_TOKEN"}, expired)
+		probeExpect{http.StatusUnauthorized, apierror.CodeInvalidToken}, expired)
 }
 
 func TestSecurity_SEC1_7_ValidToken(t *testing.T) {

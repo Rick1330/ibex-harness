@@ -5,6 +5,7 @@ Production-grade platform for AI agent memory, context assembly, and secure LLM 
 **Phase 1 (current):** `auth` and `proxy` services are implemented. See [docs/roadmap/CURRENT_STATE.md](docs/roadmap/CURRENT_STATE.md) for what ships today and what is next.
 
 [![CI](https://github.com/Rick1330/ibex-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/Rick1330/ibex-harness/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/Rick1330/ibex-harness/graph/badge.svg)](https://codecov.io/gh/Rick1330/ibex-harness)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![CodeScene Average Code Health](https://codescene.io/projects/80943/status-badges/average-code-health)](https://codescene.io/projects/80943)
 [![CodeScene System Mastery](https://codescene.io/projects/80943/status-badges/system-mastery)](https://codescene.io/projects/80943)

@@ -12,6 +12,9 @@
       { "context": "golangci-lint" },
       { "context": "security-integration" },
       { "context": "go-race" },
+      { "context": "go-services (auth)" },
+      { "context": "go-services (proxy)" },
+      { "context": "proxy-auth-smoke" },
       { "context": "bandit" },
       { "context": "hadolint" }
     ]

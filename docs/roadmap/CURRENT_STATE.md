@@ -1,17 +1,18 @@
 # Current State
 
 **Last updated:** 2026-06-10  
-**Git SHA (`main`):** `17172da` — M1.5.1 Phase 1 security gate merged (#87)  
+**Git SHA (`main`):** `9058a27` (pre-gate); updates on pre-Phase-2 verification merge  
 **Current phase:** Phase 1 — Core Platform (**Complete**)  
-**Current goal:** Phase 2 entry — Single Provider E2E  
-**Next milestone:** [2.1.1 Provider interface and registry](phase-2-single-provider/milestones/2.1.1-provider-interface-and-registry.md)  
-**Phase 1 exit audit:** [PHASE1_EXIT_AUDIT.md](phase-1-core-platform/PHASE1_EXIT_AUDIT.md)
+**Current goal:** Pre-Phase-2 verification gate (CI audit, SEC hardening, Codecov) — **blocks M2.1.1**  
+**Next milestone:** [2.1.1 Provider interface and registry](phase-2-single-provider/milestones/2.1.1-provider-interface-and-registry.md) (after gate)  
+**Phase 1 exit audit:** [PHASE1_EXIT_AUDIT.md](phase-1-core-platform/PHASE1_EXIT_AUDIT.md)  
+**CI audit:** [CI_AUDIT.md](phase-1-core-platform/CI_AUDIT.md)
 
 ---
 
 ## What works now
 
-- Repository governance: PR-only `main`, required CI ([ADR-0008](../adr/ADR-0008-security-ci-gates.md)): `repo-guards`, `markdownlint`, `gitleaks`, `CodeQL`, `trivy`, `osv-scan`, `semgrep`, `golangci-lint`, `security-integration`, `go-race`, `bandit`, `hadolint`
+- Repository governance: PR-only `main`, required CI ([ADR-0008](../adr/ADR-0008-security-ci-gates.md)): `repo-guards`, `markdownlint`, `gitleaks`, `CodeQL`, `trivy`, `osv-scan`, `semgrep`, `golangci-lint`, `security-integration`, `go-race`, `go-services (auth)`, `go-services (proxy)`, `proxy-auth-smoke`, `bandit`, `hadolint`
 - Documentation corpus under `docs/` (architecture, schema, APIs, security, testing)
 - Local toolchain: `Makefile`, `infra/scripts/dev-tool.sh`, [TOOLCHAIN.md](../TOOLCHAIN.md), optional pre-commit
 - Docker Compose dev stack: Postgres (pgvector), Redis, ClickHouse, MinIO
@@ -36,14 +37,15 @@
 - **Developer experience baseline (m1.4.1):** `make db-seed`, `make dev-smoke`, enhanced `.env.example` files
 - **Shared config and error packages (m1.4.2):** `packages/config`, `packages/apierror` ([ADR-0020](../adr/ADR-0020-shared-package-boundaries.md))
 - **Health check contract (m1.4.3):** `packages/healthcheck` ([ADR-0022](../adr/ADR-0022-health-check-contract.md)); [OPS_GUIDE.md](../OPS_GUIDE.md)
-- **Security integration gate (m1.5.1):** 31-case SEC matrix in `services/proxy/proxy_security_sec*_test.go`; CI `security-integration` required; [SECURITY.md](../SECURITY.md) Appendix A
+- **Security integration gate (m1.5.1+):** 35+ SEC cases in `services/proxy/proxy_security_sec*_test.go` (path org, Redis fail-open, envelope sweep); CI `security-integration` with `-list` guard; [SECURITY.md](../SECURITY.md) Appendix A
+- **Codecov (pre-Phase-2):** Go unit coverage upload; badge in README; multi-language flags when Python/TS land
 - **Integration test infra (m1.0.1):** `infra/testing/testutil`, `make test-integration`, compose test (5433) or optional `testcontainers` build tag
 - Go services:
   - `services/auth` — `/health`, `/ready`, `/metrics`, gRPC `ValidateToken` + `ValidateAgent`
   - `services/proxy` — auth + agent verify + rate limit on `/v1/*`; stable error envelope on JSON errors
 - Root Go module: `github.com/Rick1330/ibex-harness` (Go **1.25.11+** per [TOOLCHAIN.md](../TOOLCHAIN.md))
 - Security / quality CI: CodeQL v4, Semgrep (IBEX rules), Trivy, OSV, hard-gate `golangci-lint` (packages + services), `security-integration`, `go-race`, Hadolint, Bandit (skip until `services/memory`)
-- Informational CI: `scorecard`, `sbom`, `dependency-review`, `go-services`, `db-migrate-smoke`, `proto-contract`, `auth-validate-smoke`, `proxy-auth-smoke`, `proxy-agent-verify-smoke`, `buf-lint`
+- Informational CI: `coverage` (Codecov), `scorecard`, `sbom`, `dependency-review`, `db-migrate-smoke`, `proto-contract`, `auth-validate-smoke`, `proxy-agent-verify-smoke`, `buf-lint`
 - README: slim front door with CI + CodeScene badges; [CODE_OF_CONDUCT.md](../../CODE_OF_CONDUCT.md); [.github/SUPPORT.md](../../.github/SUPPORT.md)
 
 ## What does NOT work yet
@@ -55,9 +57,9 @@
 
 ## Next 3 immediate tasks
 
-1. **Phase 2 milestone 2.1.1** — Provider interface and registry
-2. **Phase 2 prep** — review [phase-2 README](phase-2-single-provider/README.md)
-3. **Branch protection** — apply updated `branch-protection-main.json` on GitHub (includes `security-integration`, `go-race`)
+1. **Pre-Phase-2 verification gate** — merge CI audit + SEC hardening + Codecov ([CI_AUDIT.md](phase-1-core-platform/CI_AUDIT.md))
+2. **Branch protection** — apply updated `branch-protection-main.json` on GitHub
+3. **Phase 2 milestone 2.1.1** — Provider interface and registry (after gate green)
 
 ## Verify current state locally
 

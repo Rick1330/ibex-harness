@@ -568,14 +568,17 @@ The following invariants are enforced by the `security-integration` CI job (`Tes
 
 | Invariant | Test IDs |
 | --- | --- |
-| Every request without a valid token is rejected before the handler | SEC-1.1–SEC-1.6 |
+| Every request without a valid token is rejected before the handler | SEC-1.1–SEC-1.7 |
 | Valid token for Org A cannot access Org B resources via agent header | SEC-2.4, SEC-3.2, SEC-3.3 |
+| Path org in URL must match token org | SEC-3.5 |
 | Revoked tokens rejected promptly | SEC-1.5 |
 | Cross-org agent rejection returns 403 (not 404) | SEC-2.3, SEC-2.4, SEC-3.2, SEC-3.3 |
-| Inactive agents (paused/archived) rejected | SEC-2.5, SEC-2.6 |
+| Inactive agents (paused/archived/suspended) rejected | SEC-2.5, SEC-2.6 |
+| Auth service unavailable returns 503 with envelope | SEC-2.8 |
 | Rate limits enforced per org with correct headers | SEC-4.1–SEC-4.5 |
+| Rate limiter fails open when Redis unavailable (ADR-0015) | SEC-4.6 |
 | Permission bitmap enforced on protected routes | SEC-5.1–SEC-5.3 |
-| All error responses use stable JSON envelope | SEC-6.1–SEC-6.5 |
+| All error responses use stable JSON envelope | SEC-6.1–SEC-6.5 (parametrized sweep) |
 
 Full matrix: [M1.5.1 milestone](roadmap/phase-1-core-platform/milestones/1.5.1-security-integration-test-suite.md). Exit audit: [PHASE1_EXIT_AUDIT.md](roadmap/phase-1-core-platform/PHASE1_EXIT_AUDIT.md).
 

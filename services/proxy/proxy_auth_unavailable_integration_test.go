@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Rick1330/ibex-harness/infra/testing/testutil"
+	apierror "github.com/Rick1330/ibex-harness/packages/apierror"
 	"github.com/Rick1330/ibex-harness/services/auth/integrationtest"
 	"github.com/google/uuid"
 )
@@ -22,19 +23,18 @@ func TestProxyAuthUnavailable(t *testing.T) {
 	srv := startProxyServer(t, authFx.Addr, proxyServerOpts{})
 
 	orgID := testutil.SeedOrganization(t, db, "Org", "org-down-"+uuid.NewString()[:8])
+	userID := testutil.SeedUser(t, db, orgID, "u-"+uuid.NewString()[:8]+"@example.com", "User")
+	agentID := testutil.SeedAgent(t, db, orgID, userID, "Agent", "agent-"+uuid.NewString()[:8])
 	validBearer, _ := testutil.SeedToken(t, db, orgID, 42)
 
 	authFx.Close()
 
-	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/v1/internal/auth-probe", nil)
-	req.Header.Set("Authorization", "Bearer "+validBearer)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
+	resp, body := authProbeGET(t, authProbeOpts{srvURL: srv.URL, bearer: validBearer, agentID: agentID})
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusServiceUnavailable {
-		t.Fatalf("status: %d body=%s", resp.StatusCode, readBody(resp))
+		t.Fatalf("status: %d body=%s", resp.StatusCode, body)
 	}
+	requireErrorCode(t, body, apierror.CodeServiceDegraded)
+	assertSecurityErrorEnvelope(t, resp, body, validBearer)
 	srv.Close()
 }

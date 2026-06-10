@@ -4,9 +4,10 @@ package proxy_test
 
 import (
 	"net/http"
-	"strings"
 	"testing"
 	"time"
+
+	apierror "github.com/Rick1330/ibex-harness/packages/apierror"
 )
 
 func TestSecurity_SEC4_1_RemainingDecrements(t *testing.T) {
@@ -27,9 +28,10 @@ func TestSecurity_SEC4_2_BurstReturns429(t *testing.T) {
 	env := rateLimitEnv(t)
 	resp, body := lastBurstProbe(t, env)
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusTooManyRequests || !strings.Contains(body, "RATE_LIMITED") {
+	if resp.StatusCode != http.StatusTooManyRequests {
 		t.Fatalf("burst status=%d body=%s", resp.StatusCode, body)
 	}
+	requireErrorCode(t, body, apierror.CodeRateLimited)
 	assertSecurityErrorEnvelope(t, resp, body, env.orgA.Token)
 }
 
@@ -68,4 +70,10 @@ func TestSecurity_SEC4_5_PerOrgIsolation(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("org B status=%d after org A exhaustion", resp.StatusCode)
 	}
+}
+
+func TestSecurity_SEC4_6_RedisFailOpen(t *testing.T) {
+	env := rateLimitEnv(t)
+	env.redisMR.Close()
+	requireProbeOK(t, orgAProbeOpts(env))
 }

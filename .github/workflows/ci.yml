@@ -156,9 +156,9 @@ jobs:
         working-directory: packages/proto
         run: buf generate
       - name: Contract unit tests
-        run: go test ./packages/proto/...
+        run: go test -count=1 ./packages/proto/...
       - name: Contract integration tests
-        run: go test -tags=integration ./packages/proto/...
+        run: go test -tags=integration -count=1 ./packages/proto/...
       - name: Assert gen/ is not tracked
         run: |
           if git status --porcelain packages/proto/gen 2>/dev/null | grep -q .; then
@@ -217,7 +217,7 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Unit tests (migrations package)
-        run: go test ./infra/migrations/postgres/...
+        run: go test -count=1 ./infra/migrations/postgres/...
       - name: Migrate up twice (idempotent)
         env:
           POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
@@ -228,7 +228,7 @@ jobs:
       - name: Integration tests (RLS, schema)
         env:
           POSTGRES_TEST_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
-        run: go test -tags=integration ./infra/migrations/postgres/...
+        run: go test -tags=integration -count=1 ./infra/migrations/postgres/...
 
   auth-validate-smoke:
     name: auth-validate-smoke
@@ -270,11 +270,11 @@ jobs:
           POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
         run: go run ./infra/migrations/postgres/cmd/migrate -command up
       - name: Auth unit tests
-        run: go test ./services/auth/...
+        run: go test -count=1 ./services/auth/...
       - name: Auth integration tests
         env:
           POSTGRES_TEST_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
-        run: go test -tags=integration ./services/auth/...
+        run: go test -tags=integration -count=1 ./services/auth/...
 
   proxy-auth-smoke:
     name: proxy-auth-smoke
@@ -316,11 +316,11 @@ jobs:
           POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
         run: go run ./infra/migrations/postgres/cmd/migrate -command up
       - name: Proxy unit tests
-        run: go test ./services/proxy/...
+        run: go test -count=1 ./services/proxy/...
       - name: Proxy auth integration tests
         env:
           POSTGRES_TEST_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
-        run: go test -tags=integration ./services/proxy/...
+        run: go test -tags=integration -count=1 ./services/proxy/...
 
   proxy-agent-verify-smoke:
     name: proxy-agent-verify-smoke
@@ -362,11 +362,17 @@ jobs:
           POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
         run: go run ./infra/migrations/postgres/cmd/migrate -command up
       - name: Proxy agent verification unit tests
-        run: go test ./services/proxy/internal/http/ -run AgentVerification
+        run: go test -count=1 ./services/proxy/internal/http/ -run '^TestAgentVerification'
       - name: Proxy agent verification integration tests
         env:
           POSTGRES_TEST_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
-        run: go test -tags=integration ./services/proxy/ -run "TestProxyAgentVerificationIntegration|cross tenant|own agent|paused agent|missing agent"
+        run: |
+          count=$(go test -tags=integration -list '^TestSecurity_SEC[23]_' ./services/proxy | grep -c '^TestSecurity_SEC' || true)
+          if [ "$count" -lt 10 ]; then
+            echo "expected at least 10 SEC-2/SEC-3 tests, found $count"
+            exit 1
+          fi
+          go test -tags=integration -count=1 ./services/proxy/ -run '^TestSecurity_SEC[23]_'
 
   security-integration:
     name: security-integration
@@ -412,7 +418,13 @@ jobs:
       - name: Phase 1 security integration suite (M1.5.1)
         env:
           POSTGRES_TEST_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
-        run: go test -tags=integration -timeout=120s -count=1 -v ./services/proxy -run '^TestSecurity_'
+        run: |
+          count=$(go test -tags=integration -list '^TestSecurity_' ./services/proxy | grep -c '^TestSecurity_' || true)
+          if [ "$count" -lt 28 ]; then
+            echo "expected at least 28 TestSecurity_* tests, found $count"
+            exit 1
+          fi
+          go test -tags=integration -timeout=120s -count=1 -v ./services/proxy -run '^TestSecurity_'
 
   go-race:
     name: go-race
@@ -476,7 +488,7 @@ jobs:
             exit 1
           fi
       - name: go test
-        run: go test ./services/${{ matrix.service }}/...
+        run: go test -count=1 ./services/${{ matrix.service }}/...
       - name: go build
         run: go build -o /dev/null ./services/${{ matrix.service }}/cmd/${{ matrix.service }}
 
@@ -581,6 +593,41 @@ jobs:
               hadolint/hadolint:v2.12.0 \
               hadolint -f tty --config .hadolint.yaml "$f"
           done
+
+  coverage:
+    name: coverage
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+      - uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1.50.0
+        with:
+          version: "1.47.2"
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Generate protobuf stubs
+        working-directory: packages/proto
+        run: buf generate
+      - name: Go unit coverage
+        run: |
+          go test -count=1 -coverprofile=coverage-go-unit.out \
+            ./packages/... ./services/auth/... ./services/proxy/...
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@b9fd7d03fcc4b089b6eb4b35b9c5d9cd6f8d2a35 # v5.4.2
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage-go-unit.out
+          flags: go,unit
+          fail_ci_if_error: true
 
   bandit:
     name: bandit
