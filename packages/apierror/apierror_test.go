@@ -11,6 +11,7 @@ import (
 )
 
 func TestHTTPStatus_knownCodes(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		code   apierror.Code
 		status int
@@ -37,6 +38,7 @@ func TestGRPCCode_knownCodes(t *testing.T) {
 }
 
 func TestWrite_envelopeShape(t *testing.T) {
+	t.Parallel()
 	rec := httptest.NewRecorder()
 	apierror.WriteJSON(rec, http.StatusUnauthorized, apierror.CodeMissingToken, "Authorization header required", "", "req-1")
 
@@ -56,6 +58,7 @@ func TestWrite_envelopeShape(t *testing.T) {
 }
 
 func TestWrite_fieldErrorsAndDocsURL(t *testing.T) {
+	t.Parallel()
 	rec := httptest.NewRecorder()
 	apierror.Write(rec, apierror.CodeValidationError, "Request validation failed", "req-2", apierror.WriteOpts{
 		DocsBase:    "https://docs.ibexharness.com",

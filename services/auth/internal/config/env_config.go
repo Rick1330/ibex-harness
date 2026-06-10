@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
-	"time"
 
 	ibexconfig "github.com/Rick1330/ibex-harness/packages/config"
 	"github.com/Rick1330/ibex-harness/packages/crypto"
@@ -13,16 +12,16 @@ import (
 )
 
 type envConfig struct {
-	Environment       string            `env:"IBEX_ENV" envDefault:"development"`
-	ServiceName       string            `env:"IBEX_SERVICE_NAME" envDefault:"auth"`
-	LogLevel          string            `env:"IBEX_LOG_LEVEL" envDefault:"INFO"`
-	Port              string            `env:"IBEX_PORT" envDefault:"8081"`
-	GRPCPort          string            `env:"IBEX_GRPC_PORT" envDefault:"9091"`
-	PostgresDSN       ibexconfig.Secret `env:"POSTGRES_DSN,required" secret:"true"`
-	ShutdownTimeout   time.Duration     `env:"IBEX_SHUTDOWN_TIMEOUT"`
-	Argon2MemoryKiB   uint32            `env:"IBEX_ARGON2_MEMORY_KIB"`
-	Argon2Time        uint32            `env:"IBEX_ARGON2_TIME"`
-	Argon2Parallelism uint8             `env:"IBEX_ARGON2_PARALLELISM"`
+	Environment        string            `env:"IBEX_ENV" envDefault:"development"`
+	ServiceName        string            `env:"IBEX_SERVICE_NAME" envDefault:"auth"`
+	LogLevel           string            `env:"IBEX_LOG_LEVEL" envDefault:"INFO"`
+	Port               string            `env:"IBEX_PORT" envDefault:"8081"`
+	GRPCPort           string            `env:"IBEX_GRPC_PORT" envDefault:"9091"`
+	PostgresDSN        ibexconfig.Secret `env:"POSTGRES_DSN,required" secret:"true"`
+	ShutdownTimeoutRaw string            `env:"IBEX_SHUTDOWN_TIMEOUT"`
+	Argon2MemoryKiB    uint32            `env:"IBEX_ARGON2_MEMORY_KIB"`
+	Argon2Time         uint32            `env:"IBEX_ARGON2_TIME"`
+	Argon2Parallelism  uint8             `env:"IBEX_ARGON2_PARALLELISM"`
 }
 
 func loadFromEnv() (Config, error) {
@@ -36,11 +35,14 @@ func loadFromEnv() (Config, error) {
 		return Config{}, err
 	}
 
-	cfg := baseAuthConfig(envCfg, level)
+	cfg, err := baseAuthConfig(envCfg, level)
+	if err != nil {
+		return Config{}, err
+	}
 	return finalizeAuthConfig(cfg, envCfg)
 }
 
-func baseAuthConfig(envCfg envConfig, level slog.Level) Config {
+func baseAuthConfig(envCfg envConfig, level slog.Level) (Config, error) {
 	cfg := Config{
 		Environment: envCfg.Environment,
 		ServiceName: envCfg.ServiceName,
@@ -50,17 +52,20 @@ func baseAuthConfig(envCfg envConfig, level slog.Level) Config {
 		PostgresDSN: envCfg.PostgresDSN.String(),
 		Argon2:      crypto.ProductionParams(),
 	}
-	applyAuthEnvOverrides(&cfg, envCfg)
-	return cfg
+	if err := applyAuthEnvOverrides(&cfg, envCfg); err != nil {
+		return Config{}, err
+	}
+	return cfg, nil
 }
 
-func applyAuthEnvOverrides(cfg *Config, envCfg envConfig) {
-	if envCfg.ShutdownTimeout > 0 {
-		cfg.ShutdownTimeout = envCfg.ShutdownTimeout
-	} else {
-		cfg.ShutdownTimeout = defaultShutdownTimeout
+func applyAuthEnvOverrides(cfg *Config, envCfg envConfig) error {
+	timeout, err := ibexconfig.ParseShutdownTimeout(envCfg.ShutdownTimeoutRaw, defaultShutdownTimeout)
+	if err != nil {
+		return err
 	}
+	cfg.ShutdownTimeout = timeout
 	applyArgon2Overrides(&cfg.Argon2, envCfg)
+	return nil
 }
 
 func applyArgon2Overrides(params *token.Argon2Params, envCfg envConfig) {

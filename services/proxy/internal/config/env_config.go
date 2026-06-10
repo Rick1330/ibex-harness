@@ -3,7 +3,6 @@ package config
 import (
 	"fmt"
 	"log/slog"
-	"os"
 	"strings"
 	"time"
 
@@ -13,20 +12,20 @@ import (
 )
 
 type envConfig struct {
-	Environment           string        `env:"IBEX_ENV" envDefault:"development"`
-	ServiceName           string        `env:"IBEX_SERVICE_NAME" envDefault:"proxy"`
-	LogLevel              string        `env:"IBEX_LOG_LEVEL" envDefault:"INFO"`
-	Port                  string        `env:"IBEX_PORT" envDefault:"8080"`
-	RedisURL              string        `env:"REDIS_URL"`
-	AuthGRPCAddr          string        `env:"IBEX_AUTH_GRPC_ADDR" envDefault:"127.0.0.1:9091"`
-	AuthValidateTimeout   time.Duration `env:"IBEX_AUTH_VALIDATE_TIMEOUT"`
-	MaxRequestBodyBytes   int64         `env:"IBEX_MAX_REQUEST_BODY_BYTES"`
-	RequestIDHeader       string        `env:"IBEX_REQUEST_ID_HEADER" envDefault:"X-Request-ID"`
-	TraceIDHeader         string        `env:"IBEX_TRACE_ID_HEADER" envDefault:"X-Trace-ID"`
-	ErrorDocsBase         string        `env:"IBEX_ERROR_DOCS_BASE"`
-	RateLimitDefaultRPM   int           `env:"IBEX_RATE_LIMIT_DEFAULT_RPM"`
-	RateLimitOrgOverrides string        `env:"IBEX_RATE_LIMIT_ORG_OVERRIDES"`
-	ShutdownTimeout       time.Duration `env:"IBEX_SHUTDOWN_TIMEOUT"`
+	Environment           string            `env:"IBEX_ENV" envDefault:"development"`
+	ServiceName           string            `env:"IBEX_SERVICE_NAME" envDefault:"proxy"`
+	LogLevel              string            `env:"IBEX_LOG_LEVEL" envDefault:"INFO"`
+	Port                  string            `env:"IBEX_PORT" envDefault:"8080"`
+	RedisURL              ibexconfig.Secret `env:"REDIS_URL" secret:"true"`
+	AuthGRPCAddr          string            `env:"IBEX_AUTH_GRPC_ADDR" envDefault:"127.0.0.1:9091"`
+	AuthValidateTimeout   time.Duration     `env:"IBEX_AUTH_VALIDATE_TIMEOUT"`
+	MaxRequestBodyBytes   int64             `env:"IBEX_MAX_REQUEST_BODY_BYTES"`
+	RequestIDHeader       string            `env:"IBEX_REQUEST_ID_HEADER" envDefault:"X-Request-ID"`
+	TraceIDHeader         string            `env:"IBEX_TRACE_ID_HEADER" envDefault:"X-Trace-ID"`
+	ErrorDocsBase         string            `env:"IBEX_ERROR_DOCS_BASE"`
+	RateLimitDefaultRPM   int               `env:"IBEX_RATE_LIMIT_DEFAULT_RPM"`
+	RateLimitOrgOverrides string            `env:"IBEX_RATE_LIMIT_ORG_OVERRIDES"`
+	ShutdownTimeoutRaw    string            `env:"IBEX_SHUTDOWN_TIMEOUT"`
 }
 
 func loadFromEnv() (Config, error) {
@@ -53,7 +52,7 @@ func baseProxyConfig(envCfg envConfig, level slog.Level) Config {
 		ServiceName:     envCfg.ServiceName,
 		LogLevel:        level,
 		Port:            envCfg.Port,
-		RedisURL:        envCfg.RedisURL,
+		RedisURL:        envCfg.RedisURL.String(),
 		AuthGRPCAddr:    envCfg.AuthGRPCAddr,
 		RequestIDHeader: envCfg.RequestIDHeader,
 		TraceIDHeader:   envCfg.TraceIDHeader,
@@ -75,22 +74,14 @@ func applyProxyEnvOverrides(cfg *Config, envCfg envConfig) error {
 	if envCfg.RateLimitDefaultRPM > 0 {
 		cfg.RateLimit.DefaultRPM = envCfg.RateLimitDefaultRPM
 	}
-	if err := applyShutdownFromEnv(cfg, envCfg.ShutdownTimeout); err != nil {
+	timeout, err := ibexconfig.ParseShutdownTimeout(envCfg.ShutdownTimeoutRaw, 0)
+	if err != nil {
 		return err
 	}
+	if timeout > 0 {
+		cfg.ShutdownTimeout = timeout
+	}
 	return applyRateLimitOverrides(cfg, envCfg.RateLimitOrgOverrides)
-}
-
-func applyShutdownFromEnv(cfg *Config, timeout time.Duration) error {
-	raw := strings.TrimSpace(os.Getenv("IBEX_SHUTDOWN_TIMEOUT"))
-	if raw == "" {
-		return nil
-	}
-	if timeout <= 0 {
-		return fmt.Errorf("IBEX_SHUTDOWN_TIMEOUT must be positive")
-	}
-	cfg.ShutdownTimeout = timeout
-	return nil
 }
 
 func applyRateLimitOverrides(cfg *Config, raw string) error {

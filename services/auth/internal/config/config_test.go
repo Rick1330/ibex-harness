@@ -17,6 +17,14 @@ func TestValidateRejectsInvalidPort(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsNonPositiveShutdownTimeout(t *testing.T) {
+	t.Setenv("POSTGRES_DSN", "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable")
+	t.Setenv("IBEX_SHUTDOWN_TIMEOUT", "0s")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected error for zero shutdown timeout")
+	}
+}
+
 func TestValidateAcceptsDefaultShape(t *testing.T) {
 	cfg := Config{
 		Environment:     "development",
