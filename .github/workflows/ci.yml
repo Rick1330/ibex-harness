@@ -599,11 +599,6 @@ jobs:
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
-      - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
-        with:
-          egress-policy: audit
-
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
@@ -622,14 +617,12 @@ jobs:
           go test -count=1 -coverprofile=coverage-go-unit.out \
             ./packages/... ./services/auth/... ./services/proxy/...
       - name: Upload coverage reports to Codecov
-        uses: codecov/codecov-action@ad3126e916f78f00edff4ed0317cf185271ccc2d # v5.4.2
+        uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: coverage-go-unit.out
           flags: go,unit
           fail_ci_if_error: true
-          # harden-runner audit mode intercepts GPG keyserver traffic; upload is still HTTPS + token-authenticated
-          skip_validation: true
 
   bandit:
     name: bandit

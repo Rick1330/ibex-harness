@@ -29,7 +29,7 @@
 
 | Job | Notes |
 |-----|-------|
-| `coverage` | Codecov upload (Go unit); not required until baseline established; `skip_validation: true` (harden-runner blocks GPG key fetch) |
+| `coverage` | Codecov upload (Go unit); not required until baseline established; no harden-runner (Codecov CLI needs GPG key fetch + execute bit) |
 | `auth-validate-smoke` | Auth integration; `-count=1` |
 | `proxy-agent-verify-smoke` | SEC-2/SEC-3 subset; explicit `-run` + count guard |
 | `db-migrate-smoke` | Migration idempotency |
