@@ -1,7 +1,7 @@
 # Current State
 
 **Last updated:** 2026-06-10  
-**Git SHA (`main`):** `ce3b0bd` (pre-M1.5.1); merge commit updates this line on [PR #87](https://github.com/Rick1330/ibex-harness/pull/87)  
+**Git SHA (`main`):** `17172da` — M1.5.1 Phase 1 security gate merged (#87)  
 **Current phase:** Phase 1 — Core Platform (**Complete**)  
 **Current goal:** Phase 2 entry — Single Provider E2E  
 **Next milestone:** [2.1.1 Provider interface and registry](phase-2-single-provider/milestones/2.1.1-provider-interface-and-registry.md)  
