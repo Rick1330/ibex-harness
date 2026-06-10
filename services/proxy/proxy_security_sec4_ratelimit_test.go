@@ -14,7 +14,7 @@ func TestSecurity_SEC4_1_RemainingDecrements(t *testing.T) {
 	prevRemaining := -1
 	for i := 0; i < 3; i++ {
 		resp, _ := authProbeGET(t, orgAProbeOpts(env))
-		rem := parseIntHeader(t, resp.Header.Get("X-RateLimit-Remaining"))
+		rem := int(parseHeaderInt(t, resp.Header.Get("X-RateLimit-Remaining"), "X-RateLimit-Remaining"))
 		resp.Body.Close()
 		if prevRemaining >= 0 && rem >= prevRemaining {
 			t.Fatalf("remaining did not decrement: prev=%d cur=%d", prevRemaining, rem)

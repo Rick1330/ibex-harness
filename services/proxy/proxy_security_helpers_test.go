@@ -97,6 +97,35 @@ func orgAProbeOpts(env securityTestEnv) authProbeOpts {
 	return authProbeOpts{srvURL: env.proxy.URL, bearer: env.orgA.Token, agentID: env.orgA.AgentID}
 }
 
+type probeExpect struct {
+	status int
+	code   string
+}
+
+func requireProbe(t *testing.T, opts authProbeOpts, exp probeExpect, secret string) {
+	t.Helper()
+	resp, body := authProbeGET(t, opts)
+	defer resp.Body.Close()
+	if resp.StatusCode != exp.status {
+		t.Fatalf("status=%d want=%d body=%s", resp.StatusCode, exp.status, body)
+	}
+	if exp.code != "" && !strings.Contains(body, exp.code) {
+		t.Fatalf("body=%s want code %q", body, exp.code)
+	}
+	if exp.status >= 400 {
+		assertSecurityErrorEnvelope(t, resp, body, secret)
+	}
+}
+
+func requireProbeOK(t *testing.T, opts authProbeOpts) {
+	t.Helper()
+	resp, _ := authProbeGET(t, opts)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d", resp.StatusCode)
+	}
+}
+
 func exhaustOrgARateLimit(t *testing.T, env securityTestEnv) {
 	t.Helper()
 	opts := orgAProbeOpts(env)
@@ -134,31 +163,24 @@ func percentileMs(durations []time.Duration, p float64) time.Duration {
 	return sorted[idx]
 }
 
-func parseIntHeader(t *testing.T, hdr string) int {
+func parseHeaderInt(t *testing.T, hdr, label string) int64 {
 	t.Helper()
 	if hdr == "" {
-		t.Fatal("missing header value")
+		t.Fatalf("missing %s header", label)
 	}
-	v, err := strconv.Atoi(hdr)
+	v, err := strconv.ParseInt(hdr, 10, 64)
 	if err != nil {
-		t.Fatalf("header not int: %q", hdr)
+		t.Fatalf("%s not int: %q", label, hdr)
 	}
 	return v
 }
 
 func parseRetryAfter(t *testing.T, hdr string) int {
 	t.Helper()
-	return parseIntHeader(t, hdr)
+	return int(parseHeaderInt(t, hdr, "Retry-After"))
 }
 
 func parseResetUnix(t *testing.T, hdr string) int64 {
 	t.Helper()
-	if hdr == "" {
-		t.Fatal("missing X-RateLimit-Reset header")
-	}
-	v, err := strconv.ParseInt(hdr, 10, 64)
-	if err != nil {
-		t.Fatalf("X-RateLimit-Reset not int: %q", hdr)
-	}
-	return v
+	return parseHeaderInt(t, hdr, "X-RateLimit-Reset")
 }

@@ -5,7 +5,6 @@ package proxy_test
 import (
 	"context"
 	"net/http"
-	"strings"
 	"testing"
 	"time"
 
@@ -16,12 +15,7 @@ import (
 
 func TestSecurity_SEC1_1_MissingToken(t *testing.T) {
 	env := securityEnv(t)
-	resp, body := authProbeGET(t, authProbeOpts{srvURL: env.proxy.URL})
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusUnauthorized || !strings.Contains(body, "MISSING_TOKEN") {
-		t.Fatalf("status=%d body=%s", resp.StatusCode, body)
-	}
-	assertSecurityErrorEnvelope(t, resp, body, "")
+	requireProbe(t, authProbeOpts{srvURL: env.proxy.URL}, probeExpect{http.StatusUnauthorized, "MISSING_TOKEN"}, "")
 }
 
 func TestSecurity_SEC1_2_EmptyBearer(t *testing.T) {
@@ -40,26 +34,23 @@ func TestSecurity_SEC1_2_EmptyBearer(t *testing.T) {
 	assertSecurityErrorEnvelope(t, resp, body, "")
 }
 
-func TestSecurity_SEC1_3_MalformedToken(t *testing.T) {
+func TestSecurity_SEC1_3_and_4_InvalidTokens(t *testing.T) {
 	env := securityEnv(t)
-	resp, body := authProbeGET(t, authProbeOpts{srvURL: env.proxy.URL, bearer: "not_a_token"})
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("status=%d body=%s", resp.StatusCode, body)
+	cases := []struct {
+		name   string
+		bearer string
+		agent  string
+		secret string
+	}{
+		{"SEC1_3_MalformedToken", "not_a_token", "", "not_a_token"},
+		{"SEC1_4_UnknownToken", "ibex_sk_unknowntoken", env.orgA.AgentID, ""},
 	}
-	assertSecurityErrorEnvelope(t, resp, body, "not_a_token")
-}
-
-func TestSecurity_SEC1_4_UnknownToken(t *testing.T) {
-	env := securityEnv(t)
-	resp, body := authProbeGET(t, authProbeOpts{
-		srvURL: env.proxy.URL, bearer: "ibex_sk_unknowntoken", agentID: env.orgA.AgentID,
-	})
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("status=%d body=%s", resp.StatusCode, body)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			requireProbe(t, authProbeOpts{srvURL: env.proxy.URL, bearer: tc.bearer, agentID: tc.agent},
+				probeExpect{http.StatusUnauthorized, ""}, tc.secret)
+		})
 	}
-	assertSecurityErrorEnvelope(t, resp, body, "")
 }
 
 func TestSecurity_SEC1_5_RevokedTokenSLA(t *testing.T) {
@@ -73,41 +64,28 @@ func TestSecurity_SEC1_5_RevokedTokenSLA(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 	plain := createResp.GetPlaintext()
-	resp, _ := authProbeGET(t, authProbeOpts{srvURL: env.proxy.URL, bearer: plain, agentID: env.orgA.AgentID})
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("pre-revoke status=%d", resp.StatusCode)
-	}
+	requireProbeOK(t, authProbeOpts{srvURL: env.proxy.URL, bearer: plain, agentID: env.orgA.AgentID})
 	start := time.Now()
 	if _, err = env.authFx.Client.RevokeToken(ctx, &authv1.RevokeTokenRequest{
 		OrgId: env.orgA.OrgID, TokenId: createResp.GetTokenId(),
 	}); err != nil {
 		t.Fatalf("revoke: %v", err)
 	}
-	resp2, body := authProbeGET(t, authProbeOpts{srvURL: env.proxy.URL, bearer: plain, agentID: env.orgA.AgentID})
-	defer resp2.Body.Close()
-	if resp2.StatusCode != http.StatusUnauthorized || time.Since(start) > 100*time.Millisecond {
-		t.Fatalf("post-revoke status=%d elapsed=%v body=%s", resp2.StatusCode, time.Since(start), body)
+	requireProbe(t, authProbeOpts{srvURL: env.proxy.URL, bearer: plain, agentID: env.orgA.AgentID},
+		probeExpect{http.StatusUnauthorized, ""}, plain)
+	if time.Since(start) > 100*time.Millisecond {
+		t.Fatalf("revocation SLA exceeded: %v", time.Since(start))
 	}
-	assertSecurityErrorEnvelope(t, resp2, body, plain)
 }
 
 func TestSecurity_SEC1_6_ExpiredToken(t *testing.T) {
 	env := securityEnv(t)
 	expired := testutil.SeedTokenExpired(t, env.db, env.orgA.OrgID, 42)
-	resp, body := authProbeGET(t, authProbeOpts{srvURL: env.proxy.URL, bearer: expired, agentID: env.orgA.AgentID})
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusUnauthorized || !strings.Contains(body, "INVALID_TOKEN") {
-		t.Fatalf("status=%d body=%s", resp.StatusCode, body)
-	}
-	assertSecurityErrorEnvelope(t, resp, body, expired)
+	requireProbe(t, authProbeOpts{srvURL: env.proxy.URL, bearer: expired, agentID: env.orgA.AgentID},
+		probeExpect{http.StatusUnauthorized, "INVALID_TOKEN"}, expired)
 }
 
 func TestSecurity_SEC1_7_ValidToken(t *testing.T) {
 	env := securityEnv(t)
-	resp, _ := authProbeGET(t, orgAProbeOpts(env))
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status=%d", resp.StatusCode)
-	}
+	requireProbeOK(t, orgAProbeOpts(env))
 }
