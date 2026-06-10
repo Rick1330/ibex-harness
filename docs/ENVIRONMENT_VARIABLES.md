@@ -142,7 +142,7 @@ These are not env vars, but mandatory behavior:
 
 | Variable | Required | Default | Description | Security Notes |
 |----------|----------|---------|-------------|----------------|
-| `REDIS_URL` | Conditional | (none) | e.g. `redis://:password@host:6379/0` | Secret if password present; proxy: empty → Noop limiter |
+| `REDIS_URL` | Conditional | (empty) | e.g. `redis://:password@host:6379/0` | Secret if password present; proxy: empty → Noop limiter |
 | `REDIS_DB_CACHE` | No | `0` | DB index for caches | Keep consistent |
 | `REDIS_DB_QUEUE` | No | `1` | DB index for queues/streams | Keep consistent |
 | `REDIS_DB_RATE_LIMIT` | No | `2` | DB index for rate limiting | Optional separation |
