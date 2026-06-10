@@ -5,7 +5,6 @@ package proxy_test
 import (
 	"context"
 	"database/sql"
-	"github.com/Rick1330/ibex-harness/packages/logger"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +14,7 @@ import (
 
 	"github.com/Rick1330/ibex-harness/infra/testing/testutil"
 	"github.com/Rick1330/ibex-harness/packages/healthcheck"
+	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/packages/permissions"
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
@@ -25,7 +25,9 @@ import (
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
 	proxygrpc "github.com/Rick1330/ibex-harness/services/proxy/internal/grpc"
 	proxyhttp "github.com/Rick1330/ibex-harness/services/proxy/internal/http"
+	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -69,7 +71,7 @@ func setupProxyAuthFixture(t *testing.T) proxyAuthFixture {
 	orgBBearer, _ := testutil.SeedToken(t, db, orgB, 42)
 	lowPermsBearer, _ := testutil.SeedToken(t, db, orgA, permissions.ReadOnly)
 
-	srv := startProxyServer(t, authFx.Addr)
+	srv := startProxyServer(t, authFx.Addr, proxyServerOpts{})
 	t.Cleanup(srv.Close)
 
 	return proxyAuthFixture{
@@ -80,7 +82,57 @@ func setupProxyAuthFixture(t *testing.T) proxyAuthFixture {
 	}
 }
 
-func startProxyServer(t *testing.T, authAddr string) *httptest.Server {
+type testOrgContext struct {
+	OrgID   string
+	UserID  string
+	AgentID string
+	Token   string
+}
+
+type securityTestEnv struct {
+	db     *sql.DB
+	authFx *integrationtest.AuthGRPCFixture
+	proxy  *httptest.Server
+	orgA   testOrgContext
+	orgB   testOrgContext
+}
+
+type proxyServerOpts struct {
+	defaultRPM   int64
+	orgOverrides map[uuid.UUID]int64
+}
+
+func setupSecurityTestEnv(t *testing.T, srvOpts proxyServerOpts) securityTestEnv {
+	t.Helper()
+	dsn, cleanup := testutil.SetupPostgres(t)
+	t.Cleanup(cleanup)
+
+	db := testutil.OpenDB(t, dsn)
+	t.Cleanup(func() { _ = db.Close() })
+
+	authFx := integrationtest.StartAuthGRPC(t, dsn)
+	t.Cleanup(authFx.Close)
+
+	orgAID := testutil.SeedOrganization(t, db, "Org A", "org-a-sec-"+uuid.NewString()[:8])
+	orgBID := testutil.SeedOrganization(t, db, "Org B", "org-b-sec-"+uuid.NewString()[:8])
+	userA := testutil.SeedUser(t, db, orgAID, "user-a-"+uuid.NewString()[:8]+"@example.com", "User A")
+	userB := testutil.SeedUser(t, db, orgBID, "user-b-"+uuid.NewString()[:8]+"@example.com", "User B")
+	agentA := testutil.SeedAgent(t, db, orgAID, userA, "Agent A", "agent-a-"+uuid.NewString()[:8])
+	agentB := testutil.SeedAgent(t, db, orgBID, userB, "Agent B", "agent-b-"+uuid.NewString()[:8])
+	tokenA, _ := testutil.SeedToken(t, db, orgAID, 42)
+	tokenB, _ := testutil.SeedToken(t, db, orgBID, 42)
+
+	proxy := startProxyServer(t, authFx.Addr, srvOpts)
+	t.Cleanup(proxy.Close)
+
+	return securityTestEnv{
+		db: db, authFx: authFx, proxy: proxy,
+		orgA: testOrgContext{OrgID: orgAID, UserID: userA, AgentID: agentA, Token: tokenA},
+		orgB: testOrgContext{OrgID: orgBID, UserID: userB, AgentID: agentB, Token: tokenB},
+	}
+}
+
+func startProxyServer(t *testing.T, authAddr string, srvOpts proxyServerOpts) *httptest.Server {
 	t.Helper()
 	conn, err := grpc.NewClient(authAddr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
@@ -91,17 +143,38 @@ func startProxyServer(t *testing.T, authAddr string) *httptest.Server {
 	}
 	t.Cleanup(func() { _ = conn.Close() })
 
+	mr := miniredis.RunT(t)
+	redisURL := "redis://" + mr.Addr() + "/0"
+	redisClient := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = redisClient.Close() })
+
+	defaultRPM := srvOpts.defaultRPM
+	if defaultRPM < 1 {
+		defaultRPM = 60
+	}
+	orgOverrides := srvOpts.orgOverrides
+	if orgOverrides == nil {
+		orgOverrides = map[uuid.UUID]int64{}
+	}
+
 	cfg := config.Config{
 		Environment:         "development",
 		ServiceName:         "proxy",
 		Port:                "8080",
-		RedisURL:            "redis://localhost:6379/0",
+		RedisURL:            redisURL,
 		AuthGRPCAddr:        authAddr,
 		AuthValidateTimeout: 200 * time.Millisecond,
+		RateLimit: config.RateLimitConfig{
+			DefaultRPM: int(defaultRPM),
+		},
 	}
 	client := authv1.NewAuthServiceClient(conn)
 	validator := auth.NewGRPCValidator(client, cfg.AuthValidateTimeout)
 	agentVerifier := auth.NewGRPCAgentVerifier(client, cfg.AuthValidateTimeout)
+	limiter := ratelimit.NewRedisSlider(redisClient, ratelimit.RedisSliderConfig{
+		DefaultRPM:   defaultRPM,
+		OrgOverrides: orgOverrides,
+	})
 	handler := proxyhttp.NewRouter(proxyhttp.RouterDeps{
 		Config:        cfg,
 		Logger:        logger.Discard("proxy"),
@@ -109,7 +182,7 @@ func startProxyServer(t *testing.T, authAddr string) *httptest.Server {
 		Tracer:        telemetry.NoopTracer("proxy"),
 		Validator:     validator,
 		AgentVerifier: agentVerifier,
-		Limiter:       ratelimit.Noop(),
+		Limiter:       limiter,
 		Health: &healthcheck.Server{
 			CriticalCheckers: map[string]healthcheck.Checker{
 				"auth_grpc": healthcheck.AuthGRPC(client, cfg.AuthValidateTimeout),

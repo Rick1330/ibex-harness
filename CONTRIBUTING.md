@@ -65,7 +65,7 @@ Every PR must pass these status checks (stable names for branch protection; see 
 | `semgrep` | Community SAST + `.semgrep/rules/` IBEX invariants |
 | `trivy` | Filesystem CVE scan (CRITICAL/HIGH, unfixed ignored) |
 | `osv-scan` | Lockfile CVE scan (OSV database) |
-| `golangci-lint` | Go lint (auth + proxy) |
+| `golangci-lint` | Go lint (packages + auth + proxy) |
 | `bandit` | Python security lint (skips until `services/memory` exists) |
 | `hadolint` | Dockerfile best practices |
 

@@ -30,7 +30,7 @@ func TestProxyAgentVerificationIntegration(t *testing.T) {
 	agentB := testutil.SeedAgent(t, db, orgB, userB, "Agent B", "agent-b-"+uuid.NewString()[:8])
 	validBearer, _ := testutil.SeedToken(t, db, orgA, 42)
 
-	srv := startProxyServer(t, authFx.Addr)
+	srv := startProxyServer(t, authFx.Addr, proxyServerOpts{})
 	defer srv.Close()
 
 	t.Run("missing agent header", func(t *testing.T) {

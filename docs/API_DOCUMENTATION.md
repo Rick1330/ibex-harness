@@ -1,5 +1,9 @@
 # IBEX Harness - Complete API Documentation
 
+> **Phase 1 implemented surface (2026-06):** Auth gRPC (`ValidateToken`, `ValidateAgent`, `CreateToken`, `RevokeToken`, `ListTokens`); proxy HTTP (`GET /v1/internal/auth-probe`, `GET /v1/orgs/{org_id}/auth-probe`, `POST /v1/chat/completions` stub → 501); `/health`, `/ready`, `/metrics`. Error envelope per ADR-0013 / `packages/apierror`.
+>
+> **Phase 2+ (below):** REST resources for memories, sessions, agents, directives, analytics, and dashboard APIs are **specified but not implemented**. See [CURRENT_STATE.md](roadmap/CURRENT_STATE.md).
+
 ## 🎯 API Design Philosophy
 
 ### Core Principles

@@ -1,16 +1,17 @@
 # Current State
 
 **Last updated:** 2026-06-05  
-**Git SHA (`main`):** `d366743` — M1.4.3 health check contract ([#85](https://github.com/Rick1330/ibex-harness/pull/85))  
-**Current phase:** Phase 1 — Core Platform  
-**Current goal:** Goal 1.5 — Phase 1 security gate  
-**Next milestone:** [1.5.1 Security integration test suite](phase-1-core-platform/milestones/1.5.1-security-integration-test-suite.md)
+**Git SHA (`main`):** pending merge — M1.5.1 security integration test suite + Phase 1 exit  
+**Current phase:** Phase 1 — Core Platform (**Complete**)  
+**Current goal:** Phase 2 entry — Single Provider E2E  
+**Next milestone:** [2.1.1 Provider interface and registry](phase-2-single-provider/milestones/2.1.1-provider-interface-and-registry.md)  
+**Phase 1 exit audit:** [PHASE1_EXIT_AUDIT.md](phase-1-core-platform/PHASE1_EXIT_AUDIT.md)
 
 ---
 
 ## What works now
 
-- Repository governance: PR-only `main`, required CI ([ADR-0008](../adr/ADR-0008-security-ci-gates.md)): `repo-guards`, `markdownlint`, `gitleaks`, `CodeQL`, `trivy`, `osv-scan`, `semgrep`, `golangci-lint`, `bandit`, `hadolint`
+- Repository governance: PR-only `main`, required CI ([ADR-0008](../adr/ADR-0008-security-ci-gates.md)): `repo-guards`, `markdownlint`, `gitleaks`, `CodeQL`, `trivy`, `osv-scan`, `semgrep`, `golangci-lint`, `security-integration`, `go-race`, `bandit`, `hadolint`
 - Documentation corpus under `docs/` (architecture, schema, APIs, security, testing)
 - Local toolchain: `Makefile`, `infra/scripts/dev-tool.sh`, [TOOLCHAIN.md](../TOOLCHAIN.md), optional pre-commit
 - Docker Compose dev stack: Postgres (pgvector), Redis, ClickHouse, MinIO
@@ -29,25 +30,21 @@
 - **Proxy agent identity verification (m1.2.5):** `ValidateAgent` middleware, required `X-IBEX-Agent-ID`, fail-closed, 403/503 agent errors ([ADR-0016](../adr/ADR-0016-agent-identity-verification.md))
 - **Request ID correlation (m1.2.6):** `packages/reqid` UUID v7, inbound validation, gRPC `x-request-id` to auth ([ADR-0017](../adr/ADR-0017-request-id-strategy.md))
 - **Graceful shutdown (m1.2.7):** `packages/shutdown` coordinator, SIGTERM drain / SIGINT immediate, `IBEX_SHUTDOWN_TIMEOUT` ([ADR-0018](../adr/ADR-0018-graceful-shutdown.md))
-- **Shared structured logger (m1.3.3):** `packages/logger` mandatory JSON schema (`timestamp`, `level`, `message`, `service`, `request_id`, `trace_id`); forbidden-field redaction; adopted in auth/proxy via DI; `packages/shutdown` uses `*logger.Logger`; per-request access logs at DEBUG
-- **OTel tracer and meter providers (m1.3.1):** `packages/telemetry` Init with OTLP gRPC or noop exporters; W3C trace context propagator; HTTP `SpanMiddleware` on auth/proxy; `X-Trace-ID` from OTel span (synthetic UUID retired); gRPC client trace propagation via `otelgrpc`; shutdown hook registered first ([ADR-0019](../adr/ADR-0019-opentelemetry-provider-configuration.md))
-- **Prometheus metric catalog (m1.3.2):** `packages/metrics` canonical registry; `prometheus/client_golang` on auth/proxy; Phase 1 catalog (proxy HTTP, auth gRPC/HTTP/DB, rate-limit, process_up); route-template labels; proxy middleware order `RequestContext → Span → metrics → …` ([ADR-0021](../adr/ADR-0021-prometheus-metric-catalog.md))
-- **Developer experience baseline (m1.4.1):** `make db-seed` (idempotent fixed-UUID dev org/user/agent/PAT); `make dev-smoke` (7 local HTTP checks, 501 stub); `infra/tools/hashtoken`; enhanced auth/proxy `.env.example`; README quick-start path; local dev follow-up `compose-dev-reset`, `db-repair-token-fks`, Windows docker psql seed ([#79](https://github.com/Rick1330/ibex-harness/pull/79))
-- **Shared config and error packages (m1.4.2):** `packages/config` typed env load (`caarlos0/env/v11`); `packages/apierror` canonical codes + ADR-0013 envelope; adopted in auth/proxy ([ADR-0020](../adr/ADR-0020-shared-package-boundaries.md)) ([#82](https://github.com/Rick1330/ibex-harness/pull/82))
-- **Health check contract (m1.4.3):** `packages/healthcheck` shared `/health` + `/ready`; auth checks postgres + grpc; proxy checks auth_grpc + redis ([ADR-0022](../adr/ADR-0022-health-check-contract.md)); [OPS_GUIDE.md](../OPS_GUIDE.md)
+- **Shared structured logger (m1.3.3):** `packages/logger` mandatory JSON schema; adopted in auth/proxy via DI
+- **OTel tracer and meter providers (m1.3.1):** `packages/telemetry` ([ADR-0019](../adr/ADR-0019-opentelemetry-provider-configuration.md))
+- **Prometheus metric catalog (m1.3.2):** `packages/metrics` ([ADR-0021](../adr/ADR-0021-prometheus-metric-catalog.md))
+- **Developer experience baseline (m1.4.1):** `make db-seed`, `make dev-smoke`, enhanced `.env.example` files
+- **Shared config and error packages (m1.4.2):** `packages/config`, `packages/apierror` ([ADR-0020](../adr/ADR-0020-shared-package-boundaries.md))
+- **Health check contract (m1.4.3):** `packages/healthcheck` ([ADR-0022](../adr/ADR-0022-health-check-contract.md)); [OPS_GUIDE.md](../OPS_GUIDE.md)
+- **Security integration gate (m1.5.1):** 31-case SEC matrix in `proxy_security_integration_test.go`; CI `security-integration` required; [SECURITY.md](../SECURITY.md) Appendix A
 - **Integration test infra (m1.0.1):** `infra/testing/testutil`, `make test-integration`, compose test (5433) or optional `testcontainers` build tag
 - Go services:
   - `services/auth` — `/health`, `/ready`, `/metrics`, gRPC `ValidateToken` + `ValidateAgent`
   - `services/proxy` — auth + agent verify + rate limit on `/v1/*`; stable error envelope on JSON errors
 - Root Go module: `github.com/Rick1330/ibex-harness` (Go **1.25.11+** per [TOOLCHAIN.md](../TOOLCHAIN.md))
-- Security / quality CI: CodeQL v4, Semgrep (IBEX rules), Trivy, OSV, hard-gate `golangci-lint`, Hadolint, Bandit (skip until `services/memory`)
-- Informational CI: `scorecard`, `sbom` (Syft + Grype table/JSON artifacts only), `dependency-review`, `go-services`, `db-migrate-smoke`, `proto-contract`, `auth-validate-smoke`, `proxy-auth-smoke`, `proxy-agent-verify-smoke`, `buf-lint`
-- StepSecurity hardening ([PR #33](https://github.com/Rick1330/ibex-harness/pull/33)): Harden-Runner (audit egress), pinned GitHub Action SHAs, Docker Dependabot
-- **Cursor rules (PR #59):** `.cursorrules` registry + `.cursor/rules/00–29.mdc`; markdownlint covers `*.mdc`
-- **Roadmap (PR #59):** Phase 1 milestones 1.4.1–1.4.3, 1.5.1 documented; Phase 2 full milestone tree (2.1.1–2.6.2) in [phase-2-single-provider/](phase-2-single-provider/README.md); `PHASE1_GAP_ANALYSIS.md` retired
-- **Roadmap execution:** next milestones 1.3.2 → 1.4.1 → … → 1.5.1 (see [phase-1 README](phase-1-core-platform/README.md#execution-order))
-- README: slim front door with CI + [CodeScene](https://codescene.io/projects/80943) badges, honest Phase 1 status; [CODE_OF_CONDUCT.md](../../CODE_OF_CONDUCT.md) (Contributor Covenant 2.1); [.github/SUPPORT.md](../../.github/SUPPORT.md)
-- Semgrep: Prometheus `/metrics` handlers use `strings.Builder` (no Fprintf to ResponseWriter)
+- Security / quality CI: CodeQL v4, Semgrep (IBEX rules), Trivy, OSV, hard-gate `golangci-lint` (packages + services), `security-integration`, `go-race`, Hadolint, Bandit (skip until `services/memory`)
+- Informational CI: `scorecard`, `sbom`, `dependency-review`, `go-services`, `db-migrate-smoke`, `proto-contract`, `auth-validate-smoke`, `proxy-auth-smoke`, `proxy-agent-verify-smoke`, `buf-lint`
+- README: slim front door with CI + CodeScene badges; [CODE_OF_CONDUCT.md](../../CODE_OF_CONDUCT.md); [.github/SUPPORT.md](../../.github/SUPPORT.md)
 
 ## What does NOT work yet
 
@@ -58,8 +55,9 @@
 
 ## Next 3 immediate tasks
 
-1. **Milestone 1.5.1** — Security integration test suite
+1. **Phase 2 milestone 2.1.1** — Provider interface and registry
 2. **Phase 2 prep** — review [phase-2 README](phase-2-single-provider/README.md)
+3. **Branch protection** — apply updated `branch-protection-main.json` on GitHub (includes `security-integration`, `go-race`)
 
 ## Verify current state locally
 
@@ -70,19 +68,13 @@ make compose-dev-up
 make db-migrate
 make db-seed
 make proto-gen
-go test ./packages/logger/...
-go test ./packages/telemetry/...
-go test ./packages/shutdown/...
-go test ./packages/ratelimit/...
-go test ./packages/metrics/...
-go test ./packages/config/...
-go test ./packages/apierror/...
-go test ./packages/healthcheck/...
+go test ./packages/...
 go test ./services/proxy/...
 make compose-test-up
+go test -tags=integration -run Security ./services/proxy/...
 make test-integration
 ```
 
-Windows: see [services/auth/README.md](../../services/auth/README.md) and [services/proxy/README.md](../../services/proxy/README.md) for PowerShell env syntax (`$env:VAR = "..."`). Integration tests on dev Postgres: `$env:POSTGRES_TEST_DSN = "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable"`.
+Windows: see [services/auth/README.md](../../services/auth/README.md) and [services/proxy/README.md](../../services/proxy/README.md) for PowerShell env syntax. Integration tests: `make compose-test-up` (Postgres 5433) or `$env:POSTGRES_TEST_DSN = "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable"` for dev Postgres.
 
-Expected: `proxy-auth-smoke` green in CI; local integration tests pass with `compose-test-up` (5433) or `POSTGRES_TEST_DSN` pointing at dev Postgres (5432).
+Expected: `security-integration` green in CI; all proxy integration tests pass with `compose-test-up`.

@@ -10,6 +10,8 @@
       { "context": "osv-scan / osv-scan" },
       { "context": "semgrep" },
       { "context": "golangci-lint" },
+      { "context": "security-integration" },
+      { "context": "go-race" },
       { "context": "bandit" },
       { "context": "hadolint" }
     ]

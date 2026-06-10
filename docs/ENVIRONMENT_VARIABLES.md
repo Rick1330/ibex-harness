@@ -136,11 +136,13 @@ These are not env vars, but mandatory behavior:
 
 ## 6) Redis Variables
 
-Used by: **proxy, auth, api, memory, context, worker**
+**Phase 1 implemented:** `services/proxy` only (org-level rate limiting + `/ready` health check).
+
+**Phase 2+ (documented for future services):** api, memory, context, worker.
 
 | Variable | Required | Default | Description | Security Notes |
 |----------|----------|---------|-------------|----------------|
-| `REDIS_URL` | Yes | (none) | e.g. `redis://:password@host:6379/0` | Secret if password present |
+| `REDIS_URL` | Conditional | (none) | e.g. `redis://:password@host:6379/0` | Secret if password present; proxy: empty → Noop limiter |
 | `REDIS_DB_CACHE` | No | `0` | DB index for caches | Keep consistent |
 | `REDIS_DB_QUEUE` | No | `1` | DB index for queues/streams | Keep consistent |
 | `REDIS_DB_RATE_LIMIT` | No | `2` | DB index for rate limiting | Optional separation |
@@ -195,7 +197,7 @@ Used by: **proxy** (`services/proxy`)
 
 | Variable | Required | Default | Description | Security Notes |
 |----------|----------|---------|-------------|----------------|
-| `REDIS_URL` | Yes | (none) | Redis for rate limiting, e.g. `redis://localhost:6379/0` | Secret if password present |
+| `REDIS_URL` | Conditional | (empty) | Redis for rate limiting + `/ready`; empty → Noop limiter (no RPM enforcement) | Secret if password present |
 | `IBEX_PORT` | No | `8080` | HTTP listen port | |
 | `IBEX_AUTH_GRPC_ADDR` | No | `127.0.0.1:9091` | Auth gRPC target for ValidateToken | Internal; mTLS in prod |
 | `IBEX_SHUTDOWN_TIMEOUT` | No | `30s` | Graceful shutdown drain | |

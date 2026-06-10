@@ -1,8 +1,9 @@
 # Phase 1: Core Platform
 
-**Status:** In Progress  
-**Estimated duration:** 4–6 weeks  
-**Current milestone:** [1.3.2 Prometheus metric catalog and client migration](milestones/1.3.2-prometheus-metric-catalog.md)
+**Status:** Complete  
+**Completed:** 2026-06-05  
+**Exit audit:** [PHASE1_EXIT_AUDIT.md](PHASE1_EXIT_AUDIT.md)  
+**Current milestone:** [1.5.1 Security integration test suite](milestones/1.5.1-security-integration-test-suite.md) — Complete
 
 ## Milestones
 
@@ -24,22 +25,16 @@
 | 1.2.6 | [Request ID correlation middleware](milestones/1.2.6-request-id-correlation-middleware.md) | Complete |
 | 1.2.7 | [Graceful shutdown](milestones/1.2.7-graceful-shutdown.md) | Complete |
 | 1.3.1 | [OTel tracer and meter provider init](milestones/1.3.1-otel-tracer-provider-init.md) | Complete |
-| 1.3.2 | [Prometheus metric catalog and client migration](milestones/1.3.2-prometheus-metric-catalog.md) | Next |
+| 1.3.2 | [Prometheus metric catalog and client migration](milestones/1.3.2-prometheus-metric-catalog.md) | Complete |
 | 1.3.3 | [Shared structured logger package](milestones/1.3.3-shared-logger-package.md) | Complete |
-| 1.4.1 | [Developer experience baseline](milestones/1.4.1-developer-experience-baseline.md) | Planned |
-| 1.4.2 | [Shared config and error packages](milestones/1.4.2-shared-config-and-error-packages.md) | Planned |
-| 1.4.3 | [Health check contract](milestones/1.4.3-health-check-contract.md) | Planned |
-| 1.5.1 | [Security integration test suite](milestones/1.5.1-security-integration-test-suite.md) | Planned |
+| 1.4.1 | [Developer experience baseline](milestones/1.4.1-developer-experience-baseline.md) | Complete |
+| 1.4.2 | [Shared config and error packages](milestones/1.4.2-shared-config-and-error-packages.md) | Complete |
+| 1.4.3 | [Health check contract](milestones/1.4.3-health-check-contract.md) | Complete |
+| 1.5.1 | [Security integration test suite](milestones/1.5.1-security-integration-test-suite.md) | Complete |
 
 ## Execution order
 
-After M1.1.7 (complete), run remaining milestones in this order:
-
-```text
-1.2.4 → 1.2.5 → 1.2.6 → 1.2.7 → 1.3.3 → 1.3.1 → 1.3.2 → 1.4.1 → 1.4.2 → 1.4.3 → 1.5.1
-```
-
-`1.1.7` precedes `1.2.5`. `1.3.3` precedes `1.3.1` and `1.3.2`. `1.5.1` is the explicit Phase 1 completion gate.
+All milestones complete. `1.5.1` was the explicit Phase 1 completion gate.
 
 ## Theme
 
@@ -57,14 +52,14 @@ Foundation-004 delivered honest skeletons. Phase 1 turns them into a **fail-clos
 
 ## Exit criteria
 
-- [ ] `make db-migrate` applies minimal `ibex_core` schema; second run is no-op
-- [ ] Auth service validates organization API tokens (PAT) via gRPC; Argon2id verify; permission bitmap returned
-- [ ] Auth and proxy cross-tenant integration tests pass
-- [ ] Proxy middleware rejects missing/invalid auth before handler logic
-- [ ] Proxy parses OpenAI-compatible chat request JSON into internal struct (no upstream HTTP)
-- [ ] OTel tracer provider registered (noop exporter OK); Prometheus via official client or migration plan executed
-- [ ] ADR-0005 (migrations), ADR-0006 (auth proto) accepted
-- [ ] `docs/roadmap/CURRENT_STATE.md` updated at phase exit
+- [x] `make db-migrate` applies minimal `ibex_core` schema; second run is no-op
+- [x] Auth service validates organization API tokens (PAT) via gRPC; Argon2id verify; permission bitmap returned
+- [x] Auth and proxy cross-tenant integration tests pass ([M1.5.1](milestones/1.5.1-security-integration-test-suite.md) SEC matrix)
+- [x] Proxy middleware rejects missing/invalid auth before handler logic
+- [x] Proxy parses OpenAI-compatible chat request JSON into internal struct (no upstream HTTP)
+- [x] OTel tracer provider registered (noop exporter OK); Prometheus via official client
+- [x] ADR-0005 (migrations), ADR-0006 (auth proto) accepted
+- [x] `docs/roadmap/CURRENT_STATE.md` updated at phase exit
 
 ## Dependencies
 
@@ -78,6 +73,7 @@ Foundation-004 delivered honest skeletons. Phase 1 turns them into a **fail-clos
 
 - [goals.md](goals.md) — Goals 1.0–1.5
 - [milestones/](milestones/) — PR-sized work units
+- [PHASE1_EXIT_AUDIT.md](PHASE1_EXIT_AUDIT.md) — Phase 1 exit audit summary
 - [decisions.md](decisions.md) — Phase-local decision log
 - [risks.md](risks.md) — Risks and mitigations
 
@@ -94,4 +90,4 @@ Foundation-004 delivered honest skeletons. Phase 1 turns them into a **fail-clos
 
 ## Next phase
 
-When exit criteria are met, begin [Phase 2: Single Provider E2E](../phase-2-single-provider/README.md).
+Exit criteria met. Begin [Phase 2: Single Provider E2E](../phase-2-single-provider/README.md).

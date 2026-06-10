@@ -40,7 +40,9 @@ func (h *agentVerifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	authRes, ok := auth.FromContext(r.Context())
 	if !ok || authRes == nil {
-		http.Error(w, "internal server error", http.StatusInternalServerError)
+		apierror.WriteStatus(w, http.StatusInternalServerError, apierror.CodeServiceDegraded,
+			"Internal error", requestID,
+			apierror.WriteOpts{Detail: "missing auth context", DocsBase: docsBase})
 		return
 	}
 

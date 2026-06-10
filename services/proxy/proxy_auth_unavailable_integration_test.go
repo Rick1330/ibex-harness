@@ -19,7 +19,7 @@ func TestProxyAuthUnavailable(t *testing.T) {
 	defer db.Close()
 
 	authFx := integrationtest.StartAuthGRPC(t, dsn)
-	srv := startProxyServer(t, authFx.Addr)
+	srv := startProxyServer(t, authFx.Addr, proxyServerOpts{})
 
 	orgID := testutil.SeedOrganization(t, db, "Org", "org-down-"+uuid.NewString()[:8])
 	validBearer, _ := testutil.SeedToken(t, db, orgID, 42)

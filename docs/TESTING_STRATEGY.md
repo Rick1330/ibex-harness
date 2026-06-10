@@ -343,7 +343,7 @@ Only critical flows; E2E tests are the slowest and most fragile.
 | Invalid path `org_id` | 400 before auth |
 | 401/400/501 responses | `X-Request-ID`, `X-Trace-ID`, `X-Response-Time` present |
 
-CI: existing `proxy-auth-smoke` job (no new job required).
+CI: required `security-integration` job (M1.5.1 SEC matrix); informational `proxy-auth-smoke` for broader proxy integration coverage.
 
 ---
 

@@ -339,17 +339,16 @@ Middleware order: `auth → agentVerify → rateLimit → handler`.
 
 Body size is enforced with `http.MaxBytesReader` **before** JSON decode. Semantic failures return **400** `VALIDATION_ERROR` with `field_errors` (not **501**).
 
-### 8.2 Rate Limiting
+### 8.2 Rate Limiting (Phase 1 — ADR-0015)
 
-- Hierarchical rate limiting:
-  - agent-level
-  - org-level
-  - global-level
-- Token bucket in Redis via Lua script (atomic)
-- When Redis unavailable:
-  - fallback to conservative in-memory limiter
-  - log “degraded rate limiting”
-  - never disable rate limiting entirely
+Phase 1 implements **org-level per-minute RPM** only (agent ID ignored):
+
+- Redis `INCR` + `EXPIRE` per org per calendar minute (not atomic; Lua scripts deferred to Phase 4)
+- Default RPM from `IBEX_RATE_LIMIT_DEFAULT_RPM` (60); optional per-org overrides
+- On Redis errors: **fail open** (allow request, log warning) per [ADR-0015](adr/ADR-0015-proxy-rate-limit-skeleton.md)
+- When `REDIS_URL` is empty: Noop limiter (no rate limiting); `/ready` redis check reports degraded
+
+**Deferred to Phase 4+:** hierarchical agent/org/global limits, atomic Lua token bucket, in-memory fallback limiter.
 
 ### 8.3 SSRF / External Calls
 
@@ -560,6 +559,25 @@ This distinction is a core invariant: security failures fail closed; quality fai
 - Detailed endpoint-by-endpoint permission matrices (see API docs / auth design docs)
 - Detailed cryptographic parameter values (document in ADR when set)
 - Enterprise compliance controls (SOC2 evidence collection, etc.)—separate doc if needed
+
+---
+
+## Appendix A — Phase 1 Validated Security Model (M1.5.1)
+
+The following invariants are enforced by the `security-integration` CI job (`TestSecurityIntegrationSuite`, `TestSecurityIntegrationRateLimit`). Canonical error codes are in `packages/apierror` (ADR-0020).
+
+| Invariant | Test IDs |
+| --- | --- |
+| Every request without a valid token is rejected before the handler | SEC-1.1–SEC-1.6 |
+| Valid token for Org A cannot access Org B resources via agent header | SEC-2.4, SEC-3.2, SEC-3.3 |
+| Revoked tokens rejected promptly | SEC-1.5 |
+| Cross-org agent rejection returns 403 (not 404) | SEC-2.3, SEC-2.4, SEC-3.2, SEC-3.3 |
+| Inactive agents (paused/archived) rejected | SEC-2.5, SEC-2.6 |
+| Rate limits enforced per org with correct headers | SEC-4.1–SEC-4.5 |
+| Permission bitmap enforced on protected routes | SEC-5.1–SEC-5.3 |
+| All error responses use stable JSON envelope | SEC-6.1–SEC-6.5 |
+
+Full matrix: [M1.5.1 milestone](roadmap/phase-1-core-platform/milestones/1.5.1-security-integration-test-suite.md). Exit audit: [PHASE1_EXIT_AUDIT.md](roadmap/phase-1-core-platform/PHASE1_EXIT_AUDIT.md).
 
 ---
 
