@@ -628,6 +628,8 @@ jobs:
           files: coverage-go-unit.out
           flags: go,unit
           fail_ci_if_error: true
+          # harden-runner audit mode intercepts GPG keyserver traffic; upload is still HTTPS + token-authenticated
+          skip_validation: true
 
   bandit:
     name: bandit
