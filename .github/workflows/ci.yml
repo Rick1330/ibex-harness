@@ -622,7 +622,7 @@ jobs:
           go test -count=1 -coverprofile=coverage-go-unit.out \
             ./packages/... ./services/auth/... ./services/proxy/...
       - name: Upload coverage reports to Codecov
-        uses: codecov/codecov-action@b9fd7d03fcc4b089b6eb4b35b9c5d9cd6f8d2a35 # v5.4.2
+        uses: codecov/codecov-action@ad3126e916f78f00edff4ed0317cf185271ccc2d # v5.4.2
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: coverage-go-unit.out

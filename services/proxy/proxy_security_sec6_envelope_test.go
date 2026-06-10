@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/Rick1330/ibex-harness/infra/testing/testutil"
-	apierror "github.com/Rick1330/ibex-harness/packages/apierror"
 	"github.com/Rick1330/ibex-harness/packages/permissions"
 )
 
