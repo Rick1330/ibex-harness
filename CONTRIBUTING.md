@@ -1,5 +1,7 @@
 # Contributing to IBEX Harness
 
+This project follows the [Code of Conduct](CODE_OF_CONDUCT.md). By participating, you agree to uphold it.
+
 Thank you for contributing. This repository is a production-grade, security-sensitive monorepo. Please read this guide before opening a pull request.
 
 ## PR-only workflow

@@ -45,7 +45,7 @@
 - **Cursor rules (PR #59):** `.cursorrules` registry + `.cursor/rules/00–29.mdc`; markdownlint covers `*.mdc`
 - **Roadmap (PR #59):** Phase 1 milestones 1.4.1–1.4.3, 1.5.1 documented; Phase 2 full milestone tree (2.1.1–2.6.2) in [phase-2-single-provider/](phase-2-single-provider/README.md); `PHASE1_GAP_ANALYSIS.md` retired
 - **Roadmap execution:** next milestones 1.3.2 → 1.4.1 → … → 1.5.1 (see [phase-1 README](phase-1-core-platform/README.md#execution-order))
-- README: [DeepWiki](https://deepwiki.com/Rick1330/ibex-harness) badge
+- README: slim front door with CI + [CodeScene](https://codescene.io/projects/80943) badges, honest Phase 1 status; [CODE_OF_CONDUCT.md](../../CODE_OF_CONDUCT.md) (Contributor Covenant 2.1); [.github/SUPPORT.md](../../.github/SUPPORT.md)
 - Semgrep: Prometheus `/metrics` handlers use `strings.Builder` (no Fprintf to ResponseWriter)
 
 ## What does NOT work yet

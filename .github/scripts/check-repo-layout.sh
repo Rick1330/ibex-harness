@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ALLOWED_TOP='^(docs|prompts|services|packages|infra|reports|\.github|\.git|\.cursor|_report)$'
-ROOT_DOCS='^(AGENTS\.md|PROMPTS\.md|README\.md|LICENSE|CONTRIBUTING\.md)$'
+ROOT_DOCS='^(AGENTS\.md|PROMPTS\.md|README\.md|LICENSE|CONTRIBUTING\.md|CODE_OF_CONDUCT\.md)$'
 
 fail=0
 
@@ -15,7 +15,7 @@ for entry in *; do
     fi
   elif [[ -f "$entry" ]]; then
     case "$entry" in
-      .cursorrules|.editorconfig|.gitattributes|.gitignore|.markdownlint-cli2.jsonc|.gitleaks.toml|.golangci.yml|.pre-commit-config.yaml|Makefile|go.mod|go.sum|LICENSE|AGENTS.md|CONTRIBUTING.md|PROMPTS.md|README.md) ;;
+      .cursorrules|.editorconfig|.gitattributes|.gitignore|.markdownlint-cli2.jsonc|.gitleaks.toml|.golangci.yml|.pre-commit-config.yaml|Makefile|go.mod|go.sum|LICENSE|AGENTS.md|CODE_OF_CONDUCT.md|CONTRIBUTING.md|PROMPTS.md|README.md) ;;
       *)
         if [[ "$entry" =~ \.md$ ]] && ! [[ "$entry" =~ $ROOT_DOCS ]]; then
           echo "Markdown at repo root not allowed: $entry (use docs/)"
@@ -37,7 +37,7 @@ while IFS= read -r f; do
   if [[ "$f" == .github/* ]]; then
     continue
   fi
-  if [[ "$f" != docs/* && "$f" != prompts/* && "$f" != AGENTS.md && "$f" != PROMPTS.md && "$f" != README.md && "$f" != CONTRIBUTING.md ]]; then
+  if [[ "$f" != docs/* && "$f" != prompts/* && "$f" != AGENTS.md && "$f" != PROMPTS.md && "$f" != README.md && "$f" != CONTRIBUTING.md && "$f" != CODE_OF_CONDUCT.md ]]; then
     echo "Doc outside allowed paths: $f"
     fail=1
   fi
