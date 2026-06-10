@@ -67,7 +67,7 @@ func setupProxyAuthFixture(t *testing.T) proxyAuthFixture {
 
 	validBearer, _ := testutil.SeedToken(t, db, orgA, 42)
 	chatBearer, _ := testutil.SeedToken(t, db, orgA, permissions.ProxyChatCompletion)
-	revokedBearer := testutil.SeedTokenRevoked(t, db, orgA, uuid.New(), 42)
+	revokedBearer := testutil.SeedTokenRevoked(t, db, orgA, 42)
 	orgBBearer, _ := testutil.SeedToken(t, db, orgB, 42)
 	lowPermsBearer, _ := testutil.SeedToken(t, db, orgA, permissions.ReadOnly)
 

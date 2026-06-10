@@ -78,10 +78,10 @@ func SeedTokenZeroPerms(t testing.TB, db *sql.DB, orgID string) string {
 }
 
 // SeedTokenRevoked inserts a revoked token for negative-path tests.
-func SeedTokenRevoked(t testing.TB, db *sql.DB, orgID string, tokenID uuid.UUID, permissions int64) string {
+func SeedTokenRevoked(t testing.TB, db *sql.DB, orgID string, permissions int64) string {
 	t.Helper()
 	return seedTokenRow(t, db, tokenSeedOpts{
-		orgID: orgID, permissions: permissions, tokenID: tokenID,
+		orgID: orgID, permissions: permissions,
 		name: "revoked", suffix: "revoked", revoked: true,
 	})
 }
