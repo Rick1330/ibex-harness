@@ -132,6 +132,15 @@ func setupSecurityTestEnv(t *testing.T, srvOpts proxyServerOpts) securityTestEnv
 	}
 }
 
+func setupTestRedis(t *testing.T) (redisURL string, client *redis.Client) {
+	t.Helper()
+	mr := miniredis.RunT(t)
+	redisURL = "redis://" + mr.Addr() + "/0"
+	client = redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	return redisURL, client
+}
+
 func startProxyServer(t *testing.T, authAddr string, srvOpts proxyServerOpts) *httptest.Server {
 	t.Helper()
 	conn, err := grpc.NewClient(authAddr,
@@ -143,10 +152,7 @@ func startProxyServer(t *testing.T, authAddr string, srvOpts proxyServerOpts) *h
 	}
 	t.Cleanup(func() { _ = conn.Close() })
 
-	mr := miniredis.RunT(t)
-	redisURL := "redis://" + mr.Addr() + "/0"
-	redisClient := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	t.Cleanup(func() { _ = redisClient.Close() })
+	redisURL, redisClient := setupTestRedis(t)
 
 	defaultRPM := srvOpts.defaultRPM
 	if defaultRPM < 1 {

@@ -1,7 +1,7 @@
 # Current State
 
-**Last updated:** 2026-06-05  
-**Git SHA (`main`):** pending merge — M1.5.1 security integration test suite + Phase 1 exit  
+**Last updated:** 2026-06-10  
+**Git SHA (`main`):** `ce3b0bd` (pre-M1.5.1); merge commit updates this line on [PR #87](https://github.com/Rick1330/ibex-harness/pull/87)  
 **Current phase:** Phase 1 — Core Platform (**Complete**)  
 **Current goal:** Phase 2 entry — Single Provider E2E  
 **Next milestone:** [2.1.1 Provider interface and registry](phase-2-single-provider/milestones/2.1.1-provider-interface-and-registry.md)  
@@ -36,7 +36,7 @@
 - **Developer experience baseline (m1.4.1):** `make db-seed`, `make dev-smoke`, enhanced `.env.example` files
 - **Shared config and error packages (m1.4.2):** `packages/config`, `packages/apierror` ([ADR-0020](../adr/ADR-0020-shared-package-boundaries.md))
 - **Health check contract (m1.4.3):** `packages/healthcheck` ([ADR-0022](../adr/ADR-0022-health-check-contract.md)); [OPS_GUIDE.md](../OPS_GUIDE.md)
-- **Security integration gate (m1.5.1):** 31-case SEC matrix in `proxy_security_integration_test.go`; CI `security-integration` required; [SECURITY.md](../SECURITY.md) Appendix A
+- **Security integration gate (m1.5.1):** 31-case SEC matrix in `services/proxy/proxy_security_sec*_test.go`; CI `security-integration` required; [SECURITY.md](../SECURITY.md) Appendix A
 - **Integration test infra (m1.0.1):** `infra/testing/testutil`, `make test-integration`, compose test (5433) or optional `testcontainers` build tag
 - Go services:
   - `services/auth` — `/health`, `/ready`, `/metrics`, gRPC `ValidateToken` + `ValidateAgent`

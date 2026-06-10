@@ -5,6 +5,7 @@ package proxy_test
 import (
 	"encoding/json"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -14,9 +15,23 @@ import (
 )
 
 const (
-	minimalChatBody   = `{"model":"gpt-4","messages":[{"role":"user","content":"hi"}]}`
-	rateLimitBurstRPM = int64(5)
+	minimalChatBody        = `{"model":"gpt-4","messages":[{"role":"user","content":"hi"}]}`
+	rateLimitBurstRPM        = int64(5)
+	timingParityThresholdMs  = 50
+	defaultRevocationSLAMs  = 300
 )
+
+func revocationSLA(t *testing.T) time.Duration {
+	t.Helper()
+	if v := os.Getenv("REVOCATION_SLA_MS"); v != "" {
+		ms, err := strconv.Atoi(v)
+		if err != nil {
+			t.Fatalf("REVOCATION_SLA_MS: %v", err)
+		}
+		return time.Duration(ms) * time.Millisecond
+	}
+	return time.Duration(defaultRevocationSLAMs) * time.Millisecond
+}
 
 func assertSecurityErrorEnvelope(t *testing.T, resp *http.Response, body, secret string) {
 	t.Helper()

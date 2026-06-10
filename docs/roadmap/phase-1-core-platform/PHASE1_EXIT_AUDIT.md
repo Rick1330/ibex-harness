@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-05  
 **Gate milestone:** [M1.5.1 Security integration test suite](milestones/1.5.1-security-integration-test-suite.md)  
-**Detailed register:** `ibex-harness-workspace/archive/phase-1/031-phase1-exit-audit.md`
+**Detailed register:** [docs/archive/031-phase1-exit-audit.md](../../archive/031-phase1-exit-audit.md)
 
 ---
 
@@ -25,7 +25,7 @@
 
 | ID | Gap | Resolution |
 |----|-----|------------|
-| GAP-001 | M1.5.1 matrix incomplete | `proxy_security_integration_test.go` — 31 SEC cases |
+| GAP-001 | M1.5.1 matrix incomplete | `proxy_security_sec*_test.go` — 31 SEC cases |
 | GAP-002 | Rate limit untestable (Noop) | miniredis + `NewRedisSlider` in integration fixture |
 | GAP-003 | No security CI gate | `security-integration` job + branch protection |
 | GAP-004 | agent middleware `http.Error` | `apierror.WriteStatus` envelope |

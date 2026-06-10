@@ -154,7 +154,11 @@ Validation error example (**400**):
 make proto-gen
 go test ./services/proxy/...
 go test -tags=integration ./services/proxy/...
+# Phase 1 security gate (M1.5.1 — 31 SEC cases)
+go test -tags=integration -run Security ./services/proxy/...
 ```
+
+Security integration tests live in `proxy_security_sec*_test.go` with shared helpers in `proxy_security_helpers_test.go`. CI runs them in the required `security-integration` job.
 
 **Windows integration tests** — default Postgres is port **5433** (`make compose-test-up`), or point at dev Postgres on **5432**:
 

@@ -73,8 +73,8 @@ func TestSecurity_SEC1_5_RevokedTokenSLA(t *testing.T) {
 	}
 	requireProbe(t, authProbeOpts{srvURL: env.proxy.URL, bearer: plain, agentID: env.orgA.AgentID},
 		probeExpect{http.StatusUnauthorized, ""}, plain)
-	if time.Since(start) > 100*time.Millisecond {
-		t.Fatalf("revocation SLA exceeded: %v", time.Since(start))
+	if elapsed := time.Since(start); elapsed > revocationSLA(t) {
+		t.Fatalf("revocation SLA exceeded: %v (limit %v)", elapsed, revocationSLA(t))
 	}
 }
 

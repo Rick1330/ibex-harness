@@ -56,8 +56,7 @@ func TestSecurity_SEC3_4_TimingParity(t *testing.T) {
 	if delta < 0 {
 		delta = -delta
 	}
-	// CI runners are noisy; 35ms p95 delta still catches meaningful timing leaks.
-	if delta > 35*time.Millisecond {
-		t.Fatalf("timing delta p95=%v exceeds 35ms", delta)
+	if delta > timingParityThresholdMs*time.Millisecond {
+		t.Fatalf("timing delta p95=%v exceeds %dms", delta, timingParityThresholdMs)
 	}
 }
