@@ -6,8 +6,8 @@ Go service for IBEX Harness authentication. Exposes HTTP health/metrics and gRPC
 
 | Endpoint | Purpose |
 |----------|---------|
-| `GET /health` | Liveness |
-| `GET /ready` | Readiness (Postgres TCP when `POSTGRES_DSN` set) |
+| `GET /health` | Liveness — `{"status":"ok","checks":{}}` ([ADR-0022](../../docs/adr/ADR-0022-health-check-contract.md)) |
+| `GET /ready` | Readiness — critical: `postgres` (`SELECT 1`), `grpc` (TCP) |
 | `GET /metrics` | Prometheus text metrics |
 | gRPC `ValidateToken` | Internal token validation (no caller bearer) |
 | gRPC `CreateToken` / `RevokeToken` / `ListTokens` | PAT lifecycle (caller bearer required) |

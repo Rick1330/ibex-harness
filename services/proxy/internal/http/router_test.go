@@ -2,11 +2,13 @@ package http
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/Rick1330/ibex-harness/packages/healthcheck"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
@@ -30,6 +32,15 @@ func (passAgentVerifier) Verify(_ context.Context, _, agentID, orgID string) (*a
 	return &auth.AgentRecord{ID: aid, OrgID: oid, Status: "active"}, nil
 }
 
+func testHealthServer() *healthcheck.Server {
+	return &healthcheck.Server{
+		CriticalCheckers: map[string]healthcheck.Checker{
+			"auth_grpc": healthcheck.AuthGRPC(nil, 0),
+			"redis":     healthcheck.RedisPing(""),
+		},
+	}
+}
+
 func newTestRouter(cfg config.Config, validator auth.TokenValidator, limiter ratelimit.Limiter) http.Handler {
 	var agentVerifier auth.AgentVerifier
 	if validator != nil {
@@ -43,10 +54,12 @@ func newTestRouter(cfg config.Config, validator auth.TokenValidator, limiter rat
 		Validator:     validator,
 		AgentVerifier: agentVerifier,
 		Limiter:       limiter,
+		Health:        testHealthServer(),
 	})
 }
 
 func TestHealthReturnsOK(t *testing.T) {
+	t.Parallel()
 	router := newTestRouter(config.Config{ServiceName: "proxy"}, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
@@ -61,7 +74,8 @@ func TestHealthReturnsOK(t *testing.T) {
 	}
 }
 
-func TestReadyMissingRedisURL(t *testing.T) {
+func TestReadyMissingDependencies(t *testing.T) {
+	t.Parallel()
 	router := newTestRouter(config.Config{ServiceName: "proxy"}, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/ready", nil)
@@ -71,7 +85,14 @@ func TestReadyMissingRedisURL(t *testing.T) {
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("expected 503, got %d", rec.Code)
 	}
-	if !strings.Contains(rec.Body.String(), `"reason":"missing REDIS_URL"`) {
-		t.Fatalf("unexpected body: %s", rec.Body.String())
+	var body healthcheck.Response
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.Status != "unhealthy" {
+		t.Fatalf("expected unhealthy, got %s", body.Status)
+	}
+	if body.Checks["redis"].Status != "failed" || body.Checks["auth_grpc"].Status != "failed" {
+		t.Fatalf("unexpected checks: %+v", body.Checks)
 	}
 }

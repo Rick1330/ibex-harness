@@ -1,29 +1,23 @@
 package http
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"time"
 
 	apierror "github.com/Rick1330/ibex-harness/packages/apierror"
+	"github.com/Rick1330/ibex-harness/packages/healthcheck"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
 	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
-	"github.com/Rick1330/ibex-harness/services/proxy/internal/health"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/llm"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/validation"
 	"go.opentelemetry.io/otel/trace"
 )
-
-type response struct {
-	Status string `json:"status"`
-	Reason string `json:"reason,omitempty"`
-}
 
 type authProbeResponse struct {
 	OrgID       string `json:"org_id"`
@@ -39,6 +33,7 @@ type RouterDeps struct {
 	Validator     auth.TokenValidator
 	AgentVerifier auth.AgentVerifier
 	Limiter       ratelimit.Limiter
+	Health        *healthcheck.Server
 }
 
 // NewRouter builds the proxy HTTP handler with optional auth validator for protected routes.
@@ -53,27 +48,12 @@ func NewRouter(deps RouterDeps) http.Handler {
 	mux := http.NewServeMux()
 	docsBase := cfg.ErrorDocsBase
 
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		if !requireMethod(w, r, http.MethodGet, docsBase) {
-			return
-		}
-		writeJSON(w, http.StatusOK, response{Status: "ok"})
-	})
-	mux.HandleFunc("/ready", func(w http.ResponseWriter, r *http.Request) {
-		if !requireMethod(w, r, http.MethodGet, docsBase) {
-			return
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), 750*time.Millisecond)
-		defer cancel()
-
-		result := health.ReadyRedis(ctx, cfg.RedisURL)
-		if !result.OK {
-			logger.WarnCtx(r.Context(), "readiness check failed", "reason", result.Reason)
-			writeJSON(w, http.StatusServiceUnavailable, response{Status: "not_ready", Reason: result.Reason})
-			return
-		}
-		writeJSON(w, http.StatusOK, response{Status: "ok"})
-	})
+	healthSrv := deps.Health
+	if healthSrv == nil {
+		healthSrv = &healthcheck.Server{}
+	}
+	mux.HandleFunc("/health", healthSrv.HealthHandler())
+	mux.HandleFunc("/ready", readyWithLog(logger, healthSrv.ReadyHandler()))
 	mux.Handle("/metrics", metrics.Handler(reg.Gatherer()))
 
 	if validator != nil {
@@ -99,6 +79,16 @@ func NewRouter(deps RouterDeps) http.Handler {
 		),
 	)
 	return handler
+}
+
+func readyWithLog(log *logger.Logger, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next(rec, r)
+		if rec.status == http.StatusServiceUnavailable {
+			log.WarnCtx(r.Context(), "readiness check failed")
+		}
+	}
 }
 
 func chain(middlewares ...func(http.Handler) http.Handler) func(http.Handler) http.Handler {
@@ -205,12 +195,6 @@ type statusRecorder struct {
 func (r *statusRecorder) WriteHeader(status int) {
 	r.status = status
 	r.ResponseWriter.WriteHeader(status)
-}
-
-func writeJSON(w http.ResponseWriter, status int, body response) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(body)
 }
 
 func requireMethod(w http.ResponseWriter, r *http.Request, method, docsBase string) bool {

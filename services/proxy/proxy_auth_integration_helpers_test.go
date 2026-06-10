@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Rick1330/ibex-harness/infra/testing/testutil"
+	"github.com/Rick1330/ibex-harness/packages/healthcheck"
 	"github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/packages/permissions"
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
@@ -109,6 +110,12 @@ func startProxyServer(t *testing.T, authAddr string) *httptest.Server {
 		Validator:     validator,
 		AgentVerifier: agentVerifier,
 		Limiter:       ratelimit.Noop(),
+		Health: &healthcheck.Server{
+			CriticalCheckers: map[string]healthcheck.Checker{
+				"auth_grpc": healthcheck.AuthGRPC(client, cfg.AuthValidateTimeout),
+				"redis":     healthcheck.RedisPing(cfg.RedisURL),
+			},
+		},
 	})
 	return httptest.NewServer(handler)
 }

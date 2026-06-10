@@ -4,8 +4,8 @@ Go service for the IBEX Harness LLM proxy.
 
 ## Platform endpoints (no auth)
 
-- `GET /health` — liveness
-- `GET /ready` — readiness; Redis `PING` when `REDIS_URL` is set
+- `GET /health` — liveness (`{"status":"ok","checks":{}}`; [ADR-0022](../../docs/adr/ADR-0022-health-check-contract.md))
+- `GET /ready` — readiness; critical: `auth_grpc` (ValidateToken probe), `redis` (`PING`)
 - `GET /metrics` — Prometheus text metrics
 
 ## Protected endpoints (Bearer PAT + agent header required)

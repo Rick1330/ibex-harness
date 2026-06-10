@@ -10,6 +10,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/Rick1330/ibex-harness/packages/healthcheck"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	ibexmetrics "github.com/Rick1330/ibex-harness/packages/metrics"
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
@@ -73,9 +74,16 @@ func main() {
 		os.Exit(1)
 	}
 
+	healthSrv := &healthcheck.Server{
+		CriticalCheckers: map[string]healthcheck.Checker{
+			"postgres": healthcheck.PostgresSelect1(db),
+			"grpc":     healthcheck.TCPReachable(config.ListenAddress(cfg.GRPCPort)),
+		},
+	}
+
 	httpServer := &http.Server{
 		Addr:              config.ListenAddress(cfg.Port),
-		Handler:           authhttp.NewRouter(cfg, log, reg, tracer),
+		Handler:           authhttp.NewRouter(log, reg, tracer, healthSrv),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

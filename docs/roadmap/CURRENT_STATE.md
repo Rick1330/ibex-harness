@@ -1,10 +1,10 @@
 # Current State
 
-**Last updated:** 2026-06-10  
-**Git SHA (`main`):** `bfb8fcb` — M1.4.2 shared config and error packages ([#82](https://github.com/Rick1330/ibex-harness/pull/82))  
+**Last updated:** 2026-06-05  
+**Git SHA (`main`):** `2739a78` — README + community governance ([#84](https://github.com/Rick1330/ibex-harness/pull/84)); M1.4.3 in progress on branch  
 **Current phase:** Phase 1 — Core Platform  
 **Current goal:** Goal 1.4 — developer experience baseline  
-**Next milestone:** [1.4.3 Health check contract](phase-1-core-platform/milestones/1.4.3-health-check-contract.md)
+**Next milestone:** [1.5.1 Security integration test suite](phase-1-core-platform/milestones/1.5.1-security-integration-test-suite.md) (after M1.4.3 merge)
 
 ---
 
@@ -34,6 +34,7 @@
 - **Prometheus metric catalog (m1.3.2):** `packages/metrics` canonical registry; `prometheus/client_golang` on auth/proxy; Phase 1 catalog (proxy HTTP, auth gRPC/HTTP/DB, rate-limit, process_up); route-template labels; proxy middleware order `RequestContext → Span → metrics → …` ([ADR-0021](../adr/ADR-0021-prometheus-metric-catalog.md))
 - **Developer experience baseline (m1.4.1):** `make db-seed` (idempotent fixed-UUID dev org/user/agent/PAT); `make dev-smoke` (7 local HTTP checks, 501 stub); `infra/tools/hashtoken`; enhanced auth/proxy `.env.example`; README quick-start path; local dev follow-up `compose-dev-reset`, `db-repair-token-fks`, Windows docker psql seed ([#79](https://github.com/Rick1330/ibex-harness/pull/79))
 - **Shared config and error packages (m1.4.2):** `packages/config` typed env load (`caarlos0/env/v11`); `packages/apierror` canonical codes + ADR-0013 envelope; adopted in auth/proxy ([ADR-0020](../adr/ADR-0020-shared-package-boundaries.md)) ([#82](https://github.com/Rick1330/ibex-harness/pull/82))
+- **Health check contract (m1.4.3):** `packages/healthcheck` shared `/health` + `/ready`; auth checks postgres + grpc; proxy checks auth_grpc + redis ([ADR-0022](../adr/ADR-0022-health-check-contract.md)); [OPS_GUIDE.md](../OPS_GUIDE.md)
 - **Integration test infra (m1.0.1):** `infra/testing/testutil`, `make test-integration`, compose test (5433) or optional `testcontainers` build tag
 - Go services:
   - `services/auth` — `/health`, `/ready`, `/metrics`, gRPC `ValidateToken` + `ValidateAgent`
@@ -57,9 +58,8 @@
 
 ## Next 3 immediate tasks
 
-1. **Milestone 1.4.3** — Health check contract
-2. **Milestone 1.5.1** — (see [phase-1 README](phase-1-core-platform/README.md#execution-order))
-3. **Phase 2 prep** — review [phase-2 README](phase-2-single-provider/README.md)
+1. **Milestone 1.5.1** — Security integration test suite
+2. **Phase 2 prep** — review [phase-2 README](phase-2-single-provider/README.md)
 
 ## Verify current state locally
 
@@ -77,6 +77,7 @@ go test ./packages/ratelimit/...
 go test ./packages/metrics/...
 go test ./packages/config/...
 go test ./packages/apierror/...
+go test ./packages/healthcheck/...
 go test ./services/proxy/...
 make compose-test-up
 make test-integration

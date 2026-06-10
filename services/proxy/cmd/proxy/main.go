@@ -8,6 +8,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/Rick1330/ibex-harness/packages/healthcheck"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	ibexmetrics "github.com/Rick1330/ibex-harness/packages/metrics"
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
@@ -45,7 +46,14 @@ func main() {
 	}
 	reg := ibexmetrics.NewProxy(cfg.ServiceName)
 	redisClient, limiter := setupRateLimiter(cfg, log)
-	validator, agentVerifier, grpcConn := setupAuthClients(cfg, log)
+	validator, agentVerifier, authClient, grpcConn := setupAuthClients(cfg, log)
+
+	healthSrv := &healthcheck.Server{
+		CriticalCheckers: map[string]healthcheck.Checker{
+			"auth_grpc": healthcheck.AuthGRPC(authClient, cfg.AuthValidateTimeout),
+			"redis":     healthcheck.RedisPing(cfg.RedisURL),
+		},
+	}
 
 	deps := proxyhttp.RouterDeps{
 		Config:        cfg,
@@ -55,6 +63,7 @@ func main() {
 		Validator:     validator,
 		AgentVerifier: agentVerifier,
 		Limiter:       limiter,
+		Health:        healthSrv,
 	}
 	server := newHTTPServer(deps)
 	runWithShutdown(shutdownOpts{
@@ -89,9 +98,9 @@ func setupRateLimiter(cfg config.Config, log *logger.Logger) (redis.UniversalCli
 	return client, limiter
 }
 
-func setupAuthClients(cfg config.Config, log *logger.Logger) (auth.TokenValidator, auth.AgentVerifier, *grpc.ClientConn) {
+func setupAuthClients(cfg config.Config, log *logger.Logger) (auth.TokenValidator, auth.AgentVerifier, authv1.AuthServiceClient, *grpc.ClientConn) {
 	if cfg.AuthGRPCAddr == "" {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 	conn, err := grpc.NewClient(cfg.AuthGRPCAddr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
@@ -106,7 +115,7 @@ func setupAuthClients(cfg config.Config, log *logger.Logger) (auth.TokenValidato
 	validator := auth.NewGRPCValidator(client, cfg.AuthValidateTimeout)
 	agentVerifier := auth.NewGRPCAgentVerifier(client, cfg.AuthValidateTimeout)
 	log.InfoCtx(context.Background(), "auth grpc client configured", "addr", cfg.AuthGRPCAddr, "timeout", cfg.AuthValidateTimeout.String())
-	return validator, agentVerifier, conn
+	return validator, agentVerifier, client, conn
 }
 
 func newHTTPServer(deps proxyhttp.RouterDeps) *http.Server {

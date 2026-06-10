@@ -42,6 +42,7 @@ Then use [DEVELOPMENT_GUIDE.md](DEVELOPMENT_GUIDE.md) for day-to-day workflow, P
 | [PERFORMANCE.md](PERFORMANCE.md) | Latency budgets, benchmarking, and profiling |
 | [DEPENDENCIES.md](DEPENDENCIES.md) | Dependency admission, licenses, and security SLAs |
 | [DEPLOYMENT.md](DEPLOYMENT.md) | CI/CD, environments, rollouts, rollbacks, migrations |
+| [OPS_GUIDE.md](OPS_GUIDE.md) | Health probes, Kubernetes liveness/readiness configuration |
 | [FILE_STRUCTURE.md](FILE_STRUCTURE.md) | Monorepo layout and service scaffolds |
 | [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | Local/CI/staging triage and common failures |
 | [runbooks/RUNBOOKS.md](runbooks/RUNBOOKS.md) | P1/P2 incident runbooks (proxy, auth, Redis, DB, workers) |

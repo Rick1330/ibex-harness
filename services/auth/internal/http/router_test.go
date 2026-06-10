@@ -1,20 +1,30 @@
 package http
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/Rick1330/ibex-harness/packages/healthcheck"
 	"github.com/Rick1330/ibex-harness/packages/logger"
-	"github.com/Rick1330/ibex-harness/packages/telemetry"
-
 	"github.com/Rick1330/ibex-harness/packages/metrics"
-	"github.com/Rick1330/ibex-harness/services/auth/internal/config"
+	"github.com/Rick1330/ibex-harness/packages/telemetry"
 )
 
+func testHealthServer() *healthcheck.Server {
+	return &healthcheck.Server{
+		CriticalCheckers: map[string]healthcheck.Checker{
+			"postgres": healthcheck.PostgresSelect1(nil),
+			"grpc":     healthcheck.TCPReachable("127.0.0.1:1"),
+		},
+	}
+}
+
 func TestHealthReturnsOK(t *testing.T) {
-	router := NewRouter(config.Config{ServiceName: "auth"}, logger.Discard("auth"), metrics.NewAuth(metrics.AuthConfig{ServiceName: "test"}), telemetry.NoopTracer("auth"))
+	t.Parallel()
+	router := NewRouter(logger.Discard("auth"), metrics.NewAuth(metrics.AuthConfig{ServiceName: "test"}), telemetry.NoopTracer("auth"), testHealthServer())
 
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	rec := httptest.NewRecorder()
@@ -26,10 +36,14 @@ func TestHealthReturnsOK(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), `"status":"ok"`) {
 		t.Fatalf("unexpected body: %s", rec.Body.String())
 	}
+	if !strings.Contains(rec.Body.String(), `"checks":{}`) {
+		t.Fatalf("expected empty checks: %s", rec.Body.String())
+	}
 }
 
-func TestReadyMissingPostgresDSN(t *testing.T) {
-	router := NewRouter(config.Config{ServiceName: "auth"}, logger.Discard("auth"), metrics.NewAuth(metrics.AuthConfig{ServiceName: "test"}), telemetry.NoopTracer("auth"))
+func TestReadyPostgresNotConfigured(t *testing.T) {
+	t.Parallel()
+	router := NewRouter(logger.Discard("auth"), metrics.NewAuth(metrics.AuthConfig{ServiceName: "test"}), telemetry.NoopTracer("auth"), testHealthServer())
 
 	req := httptest.NewRequest(http.MethodGet, "/ready", nil)
 	rec := httptest.NewRecorder()
@@ -38,7 +52,14 @@ func TestReadyMissingPostgresDSN(t *testing.T) {
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("expected 503, got %d", rec.Code)
 	}
-	if !strings.Contains(rec.Body.String(), `"reason":"missing POSTGRES_DSN"`) {
-		t.Fatalf("unexpected body: %s", rec.Body.String())
+	var body healthcheck.Response
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.Status != "unhealthy" {
+		t.Fatalf("expected unhealthy, got %s", body.Status)
+	}
+	if body.Checks["postgres"].Status != "failed" {
+		t.Fatalf("unexpected postgres check: %+v", body.Checks["postgres"])
 	}
 }

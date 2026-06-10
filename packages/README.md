@@ -15,6 +15,7 @@ Shared libraries and contract artifacts (not deployable as standalone processes)
 | `metrics/` | Canonical Prometheus metric registry ([ADR-0021](../docs/adr/ADR-0021-prometheus-metric-catalog.md)) |
 | `config/` | Typed env loading with aggregated validation ([ADR-0020](../docs/adr/ADR-0020-shared-package-boundaries.md)) |
 | `apierror/` | Canonical HTTP/gRPC error codes and envelope ([ADR-0020](../docs/adr/ADR-0020-shared-package-boundaries.md)) |
+| `healthcheck/` | Shared `/health` and `/ready` probe framework ([ADR-0022](../docs/adr/ADR-0022-health-check-contract.md)) |
 | `sdk-python/` | Python client SDK (planned) |
 | `sdk-typescript/` | TypeScript client SDK (planned) |
 | `sdk-go/` | Go client SDK (planned) |
