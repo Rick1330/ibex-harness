@@ -30,9 +30,7 @@ type Server struct {
 // HealthHandler returns a liveness handler: 200 with no external checks.
 func (s *Server) HealthHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			w.Header().Set("Allow", http.MethodGet)
-			writeJSON(w, http.StatusMethodNotAllowed, Response{Status: statusUnhealthy, Checks: map[string]Check{}})
+		if rejectNonGet(w, r) {
 			return
 		}
 		writeJSON(w, http.StatusOK, Response{Status: statusOK, Checks: map[string]Check{}})
@@ -42,9 +40,7 @@ func (s *Server) HealthHandler() http.HandlerFunc {
 // ReadyHandler returns a readiness handler that runs critical and advisory checkers.
 func (s *Server) ReadyHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			w.Header().Set("Allow", http.MethodGet)
-			writeJSON(w, http.StatusMethodNotAllowed, Response{Status: statusUnhealthy, Checks: map[string]Check{}})
+		if rejectNonGet(w, r) {
 			return
 		}
 
@@ -132,6 +128,15 @@ func anyFailed(checks map[string]Check, group map[string]Checker) bool {
 		}
 	}
 	return false
+}
+
+func rejectNonGet(w http.ResponseWriter, r *http.Request) bool {
+	if r.Method == http.MethodGet {
+		return false
+	}
+	w.Header().Set("Allow", http.MethodGet)
+	writeJSON(w, http.StatusMethodNotAllowed, Response{Status: statusUnhealthy, Checks: map[string]Check{}})
+	return true
 }
 
 func writeJSON(w http.ResponseWriter, status int, body Response) {

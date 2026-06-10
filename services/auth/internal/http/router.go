@@ -1,7 +1,6 @@
 package http
 
 import (
-	"encoding/json"
 	"net/http"
 	"time"
 
@@ -11,11 +10,6 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"go.opentelemetry.io/otel/trace"
 )
-
-type response struct {
-	Status string `json:"status"`
-	Reason string `json:"reason,omitempty"`
-}
 
 // NewRouter builds the auth HTTP handler including health, ready, and metrics routes.
 func NewRouter(log *logger.Logger, reg *metrics.AuthRegistry, tracer trace.Tracer, healthSrv *healthcheck.Server) http.Handler {
@@ -63,19 +57,4 @@ type statusRecorder struct {
 func (r *statusRecorder) WriteHeader(status int) {
 	r.status = status
 	r.ResponseWriter.WriteHeader(status)
-}
-
-func writeJSON(w http.ResponseWriter, status int, body response) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(body)
-}
-
-func requireMethod(w http.ResponseWriter, r *http.Request, method string) bool {
-	if r.Method == method {
-		return true
-	}
-	w.Header().Set("Allow", method)
-	writeJSON(w, http.StatusMethodNotAllowed, response{Status: "error", Reason: "method not allowed"})
-	return false
 }

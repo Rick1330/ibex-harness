@@ -14,51 +14,66 @@ import (
 // RedisPing returns a checker that issues Redis PING over RESP.
 func RedisPing(rawURL string) Checker {
 	return func(ctx context.Context) error {
-		if strings.TrimSpace(rawURL) == "" {
-			return errors.New("missing REDIS_URL")
+		return pingRedis(ctx, rawURL)
+	}
+}
+
+func pingRedis(ctx context.Context, rawURL string) error {
+	if strings.TrimSpace(rawURL) == "" {
+		return errors.New("missing REDIS_URL")
+	}
+
+	endpoint, err := redisEndpoint(rawURL)
+	if err != nil {
+		return errors.New("invalid REDIS_URL")
+	}
+
+	conn, err := dialRedis(ctx, endpoint.address)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = conn.Close() }()
+
+	return redisPING(conn, endpoint)
+}
+
+func dialRedis(ctx context.Context, address string) (net.Conn, error) {
+	dialer := net.Dialer{Timeout: 500 * time.Millisecond}
+	conn, err := dialer.DialContext(ctx, "tcp", address)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, errors.New("redis readiness check timed out")
 		}
+		return nil, errors.New("redis unreachable")
+	}
+	deadline := time.Now().Add(500 * time.Millisecond)
+	_ = conn.SetDeadline(deadline)
+	return conn, nil
+}
 
-		endpoint, err := redisEndpoint(rawURL)
-		if err != nil {
-			return errors.New("invalid REDIS_URL")
-		}
-
-		dialer := net.Dialer{Timeout: 500 * time.Millisecond}
-		conn, err := dialer.DialContext(ctx, "tcp", endpoint.address)
-		if err != nil {
-			if ctx.Err() != nil {
-				return errors.New("redis readiness check timed out")
-			}
-			return errors.New("redis unreachable")
-		}
-		defer func() { _ = conn.Close() }()
-
-		deadline := time.Now().Add(500 * time.Millisecond)
-		_ = conn.SetDeadline(deadline)
-
-		reader := bufio.NewReader(conn)
-		if endpoint.password != "" {
-			if err := writeRESP(conn, "AUTH", endpoint.authArgs()...); err != nil {
-				return errors.New("redis auth failed")
-			}
-			line, err := reader.ReadString('\n')
-			if err != nil || !strings.HasPrefix(line, "+OK") {
-				return errors.New("redis auth failed")
-			}
-		}
-
-		if err := writeRESP(conn, "PING"); err != nil {
-			return errors.New("redis ping failed")
+func redisPING(conn net.Conn, endpoint redisEndpointInfo) error {
+	reader := bufio.NewReader(conn)
+	if endpoint.password != "" {
+		if err := writeRESP(conn, "AUTH", endpoint.authArgs()...); err != nil {
+			return errors.New("redis auth failed")
 		}
 		line, err := reader.ReadString('\n')
-		if err != nil {
-			return errors.New("redis ping failed")
+		if err != nil || !strings.HasPrefix(line, "+OK") {
+			return errors.New("redis auth failed")
 		}
-		if !strings.HasPrefix(line, "+PONG") {
-			return errors.New("redis ping failed")
-		}
-		return nil
 	}
+
+	if err := writeRESP(conn, "PING"); err != nil {
+		return errors.New("redis ping failed")
+	}
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		return errors.New("redis ping failed")
+	}
+	if !strings.HasPrefix(line, "+PONG") {
+		return errors.New("redis ping failed")
+	}
+	return nil
 }
 
 type redisEndpointInfo struct {
