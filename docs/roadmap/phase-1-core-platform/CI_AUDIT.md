@@ -47,6 +47,32 @@
 - Merged integration coverage in Codecov via CI Postgres service; gen/go excluded from gate
 - Python (`bandit`) and TypeScript coverage flags when services land
 
+## Trunk Flaky Tests (JUnit uploads)
+
+All CI jobs that run `go test` emit JUnit XML via [gotestsum](https://github.com/gotestools/gotestsum) and upload results to [Trunk Flaky Tests](https://app.trunk.io) (org: `ibexharness`). Uploads are **informational** (`continue-on-error: true`); they do not block merges.
+
+| Convention | Value |
+|------------|-------|
+| JUnit output dir | `test-results/junit/` (gitignored; `.gitkeep` only) |
+| Test runner wrapper | `infra/scripts/go-test-gotestsum.sh <out.xml> -- [go test args...]` |
+| Upload script | `infra/scripts/trunk-upload-junit.sh` |
+| Composite actions | `.github/actions/setup-gotestsum`, `.github/actions/trunk-upload-junit` |
+| Secrets | `TRUNK_API_TOKEN`, `TRUNK_ORG_URL_SLUG` |
+| Retries | **None** — callers must pass `-count=1` |
+
+**Variants** (Trunk `--variant`): `proto-contract-unit`, `proto-contract-integration`, `db-migrate-unit`, `db-migrate-integration`, `auth-smoke-unit`, `auth-smoke-integration`, `proxy-auth-unit`, `proxy-auth-integration`, `proxy-agent-verify-unit`, `proxy-agent-verify-integration`, `security-integration`, `go-race`, `go-services-auth`, `go-services-proxy`, `coverage-unit`, `coverage-integration`.
+
+**Local validation** (Linux/macOS or WSL):
+
+```bash
+go install gotest.tools/gotestsum@latest
+bash infra/scripts/go-test-gotestsum.sh test-results/junit/local-validate.xml -- \
+  -count=1 ./packages/reqid/...
+bash infra/scripts/trunk-validate-junit.sh test-results/junit/local-validate.xml
+```
+
+**Future frameworks** (Python `pytest --junitxml`, Jest, etc.): write JUnit XML into `test-results/junit/` with distinct filenames and reuse `.github/actions/trunk-upload-junit` — no workflow rewrite required.
+
 ## Manual ops
 
 After promoting checks, apply [`.github/branch-protection-main.json`](../../../.github/branch-protection-main.json) on GitHub repository settings.

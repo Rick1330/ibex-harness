@@ -1,0 +1,33 @@
+name: Upload JUnit to Trunk
+description: Upload test results to Trunk Flaky Tests
+
+inputs:
+  junit-paths:
+    description: Glob path to JUnit XML files
+    required: true
+  variant:
+    description: Trunk upload variant label
+    required: true
+  org-slug:
+    description: Trunk organization URL slug
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Download trunk-analytics-cli
+      shell: bash
+      run: |
+        curl -fL --retry 3 \
+          "https://github.com/trunk-io/analytics-cli/releases/latest/download/trunk-analytics-cli-x86_64-unknown-linux.tar.gz" \
+          | tar -xz
+        chmod +x trunk-analytics-cli
+
+    - name: Upload test results to Trunk
+      shell: bash
+      env:
+        TRUNK_API_TOKEN: ${{ env.TRUNK_API_TOKEN }}
+        TRUNK_ORG_URL_SLUG: ${{ inputs.org-slug }}
+        TRUNK_ANALYTICS_CLI: ${{ github.workspace }}/trunk-analytics-cli
+      run: |
+        bash infra/scripts/trunk-upload-junit.sh "${{ inputs.junit-paths }}" "${{ inputs.variant }}"
