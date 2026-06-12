@@ -53,7 +53,7 @@ All CI jobs that run `go test` emit JUnit XML via [gotestsum](https://github.com
 
 | Convention | Value |
 |------------|-------|
-| JUnit output dir | `test-results/junit/` (gitignored; `.gitkeep` only) |
+| JUnit output dir | `test-results/junit/` (gitignored; created by scripts at runtime) |
 | Test runner wrapper | `infra/scripts/go-test-gotestsum.sh <out.xml> -- [go test args...]` |
 | Upload script | `infra/scripts/trunk-upload-junit.sh` |
 | Composite actions | `.github/actions/setup-gotestsum`, `.github/actions/trunk-upload-junit` |

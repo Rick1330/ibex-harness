@@ -18,10 +18,7 @@ Thumbs.db
 !.vscode/settings.json.example
 
 # --- CI test reports (JUnit for Trunk; ephemeral) ---
-test-results/*
-!test-results/junit/
-test-results/junit/*
-!test-results/junit/.gitkeep
+test-results/
 
 # --- Go ---
 bin/
