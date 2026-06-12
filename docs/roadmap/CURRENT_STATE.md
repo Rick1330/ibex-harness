@@ -1,7 +1,7 @@
 # Current State
 
-**Last updated:** 2026-06-10  
-**Git SHA (`main`):** `cc0703a` — Pre-Phase-2 verification gate merged (#90)  
+**Last updated:** 2026-06-12  
+**Git SHA (`main`):** `0f96293` — Phase 0 handwritten coverage gate merged (#92)  
 **Current phase:** Phase 1 — Core Platform (**Complete**)  
 **Current goal:** Phase 2 entry — Single Provider E2E  
 **Next milestone:** [2.1.1 Provider interface and registry](phase-2-single-provider/milestones/2.1.1-provider-interface-and-registry.md)  
@@ -12,7 +12,7 @@
 
 ## What works now
 
-- Repository governance: PR-only `main`, required CI ([ADR-0008](../adr/ADR-0008-security-ci-gates.md)): `repo-guards`, `markdownlint`, `gitleaks`, `CodeQL`, `trivy`, `osv-scan`, `semgrep`, `golangci-lint`, `security-integration`, `go-race`, `go-services (auth)`, `go-services (proxy)`, `proxy-auth-smoke`, `bandit`, `hadolint`
+- Repository governance: PR-only `main`, required CI ([ADR-0008](../adr/ADR-0008-security-ci-gates.md)): `repo-guards`, `markdownlint`, `gitleaks`, `CodeQL`, `trivy`, `osv-scan`, `semgrep`, `golangci-lint`, `coverage`, `CodeScene Code Health Review (main)`, `security-integration`, `go-race`, `go-services (auth)`, `go-services (proxy)`, `proxy-auth-smoke`, `bandit`, `hadolint`
 - Documentation corpus under `docs/` (architecture, schema, APIs, security, testing)
 - Local toolchain: `Makefile`, `infra/scripts/dev-tool.sh`, [TOOLCHAIN.md](../TOOLCHAIN.md), optional pre-commit
 - Docker Compose dev stack: Postgres (pgvector), Redis, ClickHouse, MinIO
@@ -38,14 +38,15 @@
 - **Shared config and error packages (m1.4.2):** `packages/config`, `packages/apierror` ([ADR-0020](../adr/ADR-0020-shared-package-boundaries.md))
 - **Health check contract (m1.4.3):** `packages/healthcheck` ([ADR-0022](../adr/ADR-0022-health-check-contract.md)); [OPS_GUIDE.md](../OPS_GUIDE.md)
 - **Security integration gate (m1.5.1+):** 35+ SEC cases in `services/proxy/proxy_security_sec*_test.go` (path org, Redis fail-open, envelope sweep); CI `security-integration` with `-list` guard; [SECURITY.md](../SECURITY.md) Appendix A
-- **Codecov (pre-Phase-2):** Go unit coverage upload; badge in README; multi-language flags when Python/TS land
+- **Handwritten coverage gate (#92):** merged unit+integration Go coverage ≥80% on hand-written code (`packages/proto/gen/go` excluded); enforced by CI `coverage` job via `infra/scripts/coverage-gate.sh`; see [CI_AUDIT.md](phase-1-core-platform/CI_AUDIT.md) and [COVERAGE_GAP_REGISTER.md](phase-1-core-platform/COVERAGE_GAP_REGISTER.md)
+- **Codecov:** Go coverage upload; badge in README; patch/project thresholds aligned to 80% handwritten scope
 - **Integration test infra (m1.0.1):** `infra/testing/testutil`, `make test-integration`, compose test (5433) or optional `testcontainers` build tag
 - Go services:
   - `services/auth` — `/health`, `/ready`, `/metrics`, gRPC `ValidateToken` + `ValidateAgent`
   - `services/proxy` — auth + agent verify + rate limit on `/v1/*`; stable error envelope on JSON errors
 - Root Go module: `github.com/Rick1330/ibex-harness` (Go **1.25.11+** per [TOOLCHAIN.md](../TOOLCHAIN.md))
 - Security / quality CI: CodeQL v4, Semgrep (IBEX rules), Trivy, OSV, hard-gate `golangci-lint` (packages + services), `security-integration`, `go-race`, Hadolint, Bandit (skip until `services/memory`)
-- Informational CI: `coverage` (Codecov), `scorecard`, `sbom`, `dependency-review`, `db-migrate-smoke`, `proto-contract`, `auth-validate-smoke`, `proxy-agent-verify-smoke`, `buf-lint`
+- Informational CI: `scorecard`, `sbom`, `dependency-review`, `db-migrate-smoke`, `proto-contract`, `auth-validate-smoke`, `proxy-agent-verify-smoke`, `buf-lint`, `codecov/patch`
 - README: slim front door with CI + CodeScene badges; [CODE_OF_CONDUCT.md](../../CODE_OF_CONDUCT.md); [.github/SUPPORT.md](../../.github/SUPPORT.md)
 
 ## What does NOT work yet

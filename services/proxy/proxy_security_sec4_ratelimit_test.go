@@ -26,22 +26,16 @@ func TestSecurity_SEC4_1_RemainingDecrements(t *testing.T) {
 
 func TestSecurity_SEC4_2_BurstReturns429(t *testing.T) {
 	env := rateLimitEnv(t)
-	resp, body := lastBurstProbe(t, env)
+	resp, body := requireRateLimitedProbe(t, env)
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusTooManyRequests {
-		t.Fatalf("burst status=%d body=%s", resp.StatusCode, body)
-	}
 	requireErrorCode(t, body, apierror.CodeRateLimited)
 	assertSecurityErrorEnvelope(t, resp, body, env.orgA.Token)
 }
 
 func TestSecurity_SEC4_3_RetryAfterHeader(t *testing.T) {
 	env := rateLimitEnv(t)
-	resp, _ := lastBurstProbe(t, env)
+	resp, _ := requireRateLimitedProbe(t, env)
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusTooManyRequests {
-		t.Fatalf("status=%d", resp.StatusCode)
-	}
 	ra := parseRetryAfter(t, resp.Header.Get("Retry-After"))
 	if ra <= 0 || ra > 60 {
 		t.Fatalf("Retry-After out of range: %d", ra)
@@ -50,11 +44,8 @@ func TestSecurity_SEC4_3_RetryAfterHeader(t *testing.T) {
 
 func TestSecurity_SEC4_4_ResetHeader(t *testing.T) {
 	env := rateLimitEnv(t)
-	resp, _ := lastBurstProbe(t, env)
+	resp, _ := requireRateLimitedProbe(t, env)
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusTooManyRequests {
-		t.Fatalf("status=%d", resp.StatusCode)
-	}
 	reset := parseResetUnix(t, resp.Header.Get("X-RateLimit-Reset"))
 	now := time.Now().Unix()
 	if reset < now || reset > now+60 {

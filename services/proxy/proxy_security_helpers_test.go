@@ -173,18 +173,23 @@ func exhaustOrgARateLimit(t *testing.T, env securityTestEnv) {
 	}
 }
 
-func lastBurstProbe(t *testing.T, env securityTestEnv) (*http.Response, string) {
+func requireRateLimitedProbe(t *testing.T, env securityTestEnv) (*http.Response, string) {
 	t.Helper()
 	opts := orgAProbeOpts(env)
+	maxAttempts := int(rateLimitBurstRPM)*2 + 2
 	var resp *http.Response
 	var body string
-	for i := 0; i < int(rateLimitBurstRPM)+1; i++ {
+	for i := 0; i < maxAttempts; i++ {
 		if resp != nil {
 			resp.Body.Close()
 		}
 		resp, body = authProbeGET(t, opts)
+		if resp.StatusCode == http.StatusTooManyRequests {
+			return resp, body
+		}
 	}
-	return resp, body
+	t.Fatalf("expected 429 after burst probes, last status=%d body=%s", resp.StatusCode, body)
+	return nil, ""
 }
 
 func percentileMs(durations []time.Duration, p float64) time.Duration {

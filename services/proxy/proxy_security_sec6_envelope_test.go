@@ -52,7 +52,7 @@ func TestSecurity_SEC6_EnvelopeSweep(t *testing.T) {
 			name: "429_rate_limited",
 			run: func() (*http.Response, string) {
 				rateEnv := rateLimitEnv(t)
-				resp, body := lastBurstProbe(t, rateEnv)
+				resp, body := requireRateLimitedProbe(t, rateEnv)
 				return resp, body
 			},
 			secret: env.orgA.Token,
