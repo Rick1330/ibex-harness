@@ -1,7 +1,7 @@
 # Current State
 
 **Last updated:** 2026-06-12  
-**Git SHA (`main`):** `0f96293` — Phase 0 handwritten coverage gate merged (#92)  
+**Git SHA (`main`):** `14ff703` — Trunk Flaky Tests JUnit uploads (#94)  
 **Current phase:** Phase 1 — Core Platform (**Complete**)  
 **Current goal:** Phase 2 entry — Single Provider E2E  
 **Next milestone:** [2.1.1 Provider interface and registry](phase-2-single-provider/milestones/2.1.1-provider-interface-and-registry.md)  
@@ -39,6 +39,7 @@
 - **Health check contract (m1.4.3):** `packages/healthcheck` ([ADR-0022](../adr/ADR-0022-health-check-contract.md)); [OPS_GUIDE.md](../OPS_GUIDE.md)
 - **Security integration gate (m1.5.1+):** 35+ SEC cases in `services/proxy/proxy_security_sec*_test.go` (path org, Redis fail-open, envelope sweep); CI `security-integration` with `-list` guard; [SECURITY.md](../SECURITY.md) Appendix A
 - **Handwritten coverage gate (#92):** merged unit+integration Go coverage ≥80% on hand-written code (`packages/proto/gen/go` excluded); enforced by CI `coverage` job via `infra/scripts/coverage-gate.sh`; see [CI_AUDIT.md](phase-1-core-platform/CI_AUDIT.md) and [COVERAGE_GAP_REGISTER.md](phase-1-core-platform/COVERAGE_GAP_REGISTER.md)
+- **Trunk Flaky Tests (#94):** all Go CI test jobs emit JUnit via gotestsum and upload to Trunk (`ibexharness` org); per-job variants; informational only (`continue-on-error`); see [CI_AUDIT.md](phase-1-core-platform/CI_AUDIT.md) § Trunk
 - **Codecov:** Go coverage upload; badge in README; patch/project thresholds aligned to 80% handwritten scope
 - **Integration test infra (m1.0.1):** `infra/testing/testutil`, `make test-integration`, compose test (5433) or optional `testcontainers` build tag
 - Go services:
