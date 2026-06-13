@@ -3,3 +3,151 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+:root {
+  --canvas: 0 0% 98%;
+  --panel: 240 5% 96%;
+  --panel-raised: 240 5% 90%;
+  --border: 240 5% 90%;
+  --border-strong: 240 5% 84%;
+  --text-primary: 240 10% 4%;
+  --text-secondary: 240 4% 34%;
+  --text-tertiary: 240 5% 65%;
+  --accent: 240 10% 4%;
+  --accent-fg: 0 0% 98%;
+
+  --success: 142 71% 35%;
+  --warning: 32 95% 44%;
+  --danger: 0 72% 51%;
+  --info: 217 91% 51%;
+
+  /* Fumadocs UI token bridge */
+  --background: var(--canvas);
+  --foreground: var(--text-primary);
+  --primary: var(--text-primary);
+  --primary-foreground: var(--canvas);
+  --muted-foreground: var(--text-secondary);
+  --card: var(--panel);
+  --card-foreground: var(--text-primary);
+}
+
+.dark {
+  --canvas: 240 10% 4%;
+  --panel: 240 6% 7%;
+  --panel-raised: 240 5% 11%;
+  --border: 240 5% 14%;
+  --border-strong: 240 4% 21%;
+  --text-primary: 0 0% 98%;
+  --text-secondary: 240 5% 65%;
+  --text-tertiary: 240 4% 46%;
+  --accent: 0 0% 100%;
+  --accent-fg: 240 10% 4%;
+
+  --success: 142 69% 58%;
+  --warning: 38 92% 50%;
+  --danger: 0 91% 71%;
+  --info: 213 94% 68%;
+}
+
+/* === Hard global rules — enforce the Visual Rules from §A === */
+
+/* 1. Strip every Fumadocs gradient utility */
+.fd-background-gradient,
+[class*="gradient"]:not([class*="border-gradient"]) {
+  background-image: none !important;
+}
+
+/* 2. Sharp corners */
+.fd-card,
+[data-card],
+[data-radix-popper-content-wrapper] {
+  border-radius: 6px !important;
+}
+
+button,
+input,
+textarea,
+select,
+.fd-badge,
+[role="button"] {
+  border-radius: 4px !important;
+}
+
+pre {
+  border-radius: 4px !important;
+}
+
+/* 3. 1px borders on every panel */
+pre {
+  border: 1px solid hsl(var(--border)) !important;
+  background-color: hsl(var(--panel)) !important;
+  line-height: 1.65 !important;
+}
+
+:not(pre) > code {
+  @apply rounded-[4px] px-1.5 py-0.5 text-[0.85em] font-mono;
+  background-color: hsl(var(--panel-raised));
+  border: 1px solid hsl(var(--border));
+}
+
+/* 4. Ligatures OFF in mono */
+pre,
+code,
+kbd {
+  font-variant-ligatures: none !important;
+}
+
+/* 5. Motion budget */
+a,
+button,
+[role="button"],
+[data-card] {
+  transition:
+    background-color 150ms ease-out,
+    border-color 150ms ease-out,
+    color 150ms ease-out,
+    opacity 150ms ease-out;
+}
+
+/* 6. Elevation — neutral shadow only */
+[data-card]:hover {
+  box-shadow: 0 4px 12px rgb(0 0 0 / 0.08);
+}
+
+.dark [data-card]:hover {
+  box-shadow: 0 4px 12px rgb(0 0 0 / 0.4);
+}
+
+/* 7. Scrollbar — minimal */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--border-strong));
+  border-radius: 4px;
+}
+
+/* 8. Focus rings */
+:focus-visible {
+  outline: 1px solid hsl(var(--border-strong));
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* 9. Body baseline */
+body {
+  font-feature-settings: "rlig" 1, "calt" 1;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* 10. Prose width — generous for code-heavy docs */
+.prose {
+  max-width: 72ch;
+}
