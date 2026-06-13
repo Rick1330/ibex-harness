@@ -16,7 +16,7 @@ export default function Layout({ children }: { children: ReactNode }) {
       {...baseOptions()}
       {...docsLayoutOptions()}
     >
-      <div className="docs-page-enter">{children}</div>
+      {children}
     </DocsLayout>
   );
 }
