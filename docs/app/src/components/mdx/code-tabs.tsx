@@ -68,7 +68,7 @@ export function CodeTabs({ defaultValue, children }: CodeTabsProps) {
       </Tabs.List>
       {tabs.map((tab) => (
         <Tabs.Content
-          className="rounded-b-[4px] border border-t-0 border-border bg-panel [&_pre]:mt-0 [&_pre]:rounded-t-none [&_pre]:border-t-0"
+          className="rounded-b-[4px] border border-t-0 border-border bg-panel [&_.fd-codeblock]:my-0 [&_.fd-codeblock]:rounded-t-none [&_.fd-codeblock]:border-t-0"
           key={tab.key}
           value={tab.value}
         >

@@ -6,11 +6,13 @@ import { Callout } from "@/components/mdx/callout";
 import { CodeTab, CodeTabs } from "@/components/mdx/code-tabs";
 import { Endpoint } from "@/components/mdx/endpoint";
 import { Kbd } from "@/components/mdx/kbd";
+import { Pre } from "@/components/mdx/pre";
 import { Step, Steps } from "@/components/mdx/steps";
 
 export function useMDXComponents(components?: MDXComponents): MDXComponents {
   return {
     ...defaultMdxComponents,
+    pre: Pre,
     Callout,
     Steps,
     Step,

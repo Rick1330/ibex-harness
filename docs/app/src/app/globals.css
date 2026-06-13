@@ -84,6 +84,21 @@ pre {
   line-height: 1.65 !important;
 }
 
+.fd-codeblock pre {
+  border: none !important;
+  background-color: transparent !important;
+}
+
+/* D.2.6 — highlighted lines ({3,7-9} meta) */
+.fd-codeblock pre code .line.highlighted,
+.fd-codeblock pre code span.highlighted {
+  display: block;
+  margin: 0 -1rem;
+  padding-left: calc(1rem - 2px);
+  border-left: 2px solid hsl(var(--accent));
+  background-color: hsl(var(--panel-raised));
+}
+
 :not(pre) > code {
   @apply rounded-[4px] px-1.5 py-0.5 text-[0.85em] font-mono;
   background-color: hsl(var(--panel-raised));

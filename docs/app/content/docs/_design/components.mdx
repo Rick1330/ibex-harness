@@ -75,3 +75,28 @@ Inline labels: <Badge>Default</Badge> <Badge variant="beta">Beta</Badge> <Badge 
 ## Kbd
 
 Press <Kbd>⌘</Kbd> <Kbd>K</Kbd> to open search. Use <Kbd>Ctrl</Kbd> <Kbd>C</Kbd> to copy code blocks (D.2.6).
+
+## Code blocks
+
+Filename strip, copy button, and line highlights (D.2.6):
+
+```ts title="src/config.ts"
+export const rateLimit = {
+  windowMs: 60_000,
+  max: 100,
+};
+```
+
+```ts title="src/middleware.ts"
+import { rateLimit } from "./config";
+
+export function middleware(req: Request) { // [!code highlight]
+  const id = req.headers.get("x-org-id");
+  if (!id) return new Response("Unauthorized", { status: 401 });
+
+  const allowed = rateLimit.check(id); // [!code highlight]
+  if (!allowed) return new Response("Too Many Requests", { status: 429 }); // [!code highlight]
+
+  return next(req);
+}
+```
