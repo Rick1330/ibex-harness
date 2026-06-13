@@ -68,8 +68,31 @@ export async function generateMetadata(props: PageProps): Promise<Metadata> {
   const page = source.getPage(params.slug);
   if (!page) notFound();
 
+  const slugPath = params.slug?.length ? params.slug.join("/") : "";
+  const ogPath = `/docs/${slugPath}/opengraph-image`;
+
   return {
     title: page.data.title,
     description: page.data.description,
+    openGraph: {
+      title: page.data.title,
+      description: page.data.description,
+      type: "article",
+      siteName: "IBEX Harness Docs",
+      images: [
+        {
+          url: ogPath,
+          width: 1200,
+          height: 630,
+          alt: page.data.title,
+        },
+      ],
+    },
+    twitter: {
+      card: "summary_large_image",
+      title: page.data.title,
+      description: page.data.description,
+      images: [ogPath],
+    },
   };
 }

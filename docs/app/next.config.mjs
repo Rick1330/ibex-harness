@@ -12,6 +12,12 @@ const config = {
       permanent: false,
     },
   ],
+  rewrites: async () => [
+    {
+      source: "/docs/:slug*/opengraph-image",
+      destination: "/api/og/:slug*",
+    },
+  ],
 };
 
 export default withMDX(config);
