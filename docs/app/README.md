@@ -9,6 +9,8 @@ Next.js + Fumadocs application for [docs.ibexharness.com](https://docs.ibexharne
 
 Engineering documentation (ADRs, roadmap, audits) lives in the parent [`docs/`](../) tree — not in this app.
 
-**Run (after D.2.1):** from repo root, `pnpm docs:dev`.
+**Run (after D.2.1):** from repo root, `pnpm docs:dev` → `http://localhost:3000/docs/getting-started/introduction`.
+
+**Build:** `pnpm docs:build`
 
 See [Phase 1.5 roadmap](../roadmap/phase-1-5-docs-site/README.md) and [ADR-0023](../adr/ADR-0023-docs-site-architecture.md).
