@@ -211,10 +211,11 @@ body {
   border-color: hsl(var(--border)) !important;
 }
 
-/* === Performance — instant sidebar collapsibles (no height keyframes / CLS) === */
+/* === Performance — instant collapsibles (no height keyframes / CLS) === */
 
 #nd-sidebar [class*="animate-fd-collapsible"],
-#nd-toc [class*="animate-fd-collapsible"] {
+#nd-toc [class*="animate-fd-collapsible"],
+#nd-tocnav [class*="animate-fd-collapsible"] {
   animation: none !important;
 }
 
@@ -236,6 +237,14 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+
   #nd-page article {
     animation: none;
   }
