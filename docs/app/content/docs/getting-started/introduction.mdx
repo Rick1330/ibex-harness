@@ -16,3 +16,7 @@ Use the sidebar to navigate. Full content ships in later Phase 1.5 waves.
 - Chat completion routing returns `501 PROVIDER_NOT_CONFIGURED` until Phase 2
 
 See the Quickstart page (Wave 9) for a five-minute local setup path.
+
+## Rate limiting
+
+The proxy applies per-tenant rate limits on incoming requests. Limits are configurable via environment variables and enforced before request routing (full reference in the Proxy → Rate Limiting guide, Wave 9).
