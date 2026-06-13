@@ -184,3 +184,29 @@ body {
   background-color: hsl(var(--canvas)) !important;
   border-color: hsl(var(--border)) !important;
 }
+
+/* === D.2.5 Cmd+K search — Matte Graphite dialog === */
+
+[data-radix-dialog-overlay] {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  background-color: rgb(0 0 0 / 0.5) !important;
+}
+
+[data-radix-dialog-content] {
+  background-color: hsl(var(--panel)) !important;
+  border: 1px solid hsl(var(--border)) !important;
+  border-radius: 6px !important;
+  box-shadow: 0 4px 12px rgb(0 0 0 / 0.25) !important;
+  color: hsl(var(--text-primary)) !important;
+}
+
+[data-radix-dialog-content] button[aria-selected="true"] {
+  background-color: hsl(var(--panel-raised)) !important;
+  color: hsl(var(--text-primary)) !important;
+  border-radius: 4px !important;
+}
+
+[data-radix-dialog-content] .border-t {
+  border-color: hsl(var(--border)) !important;
+}

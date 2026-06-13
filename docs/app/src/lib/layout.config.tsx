@@ -5,6 +5,7 @@ import {
   DocsSidebarFolder,
   DocsSidebarItem,
 } from "@/components/layout/docs-sidebar";
+import { NavSearch } from "@/components/layout/nav-search";
 import { Wordmark } from "@/components/wordmark";
 import { GITHUB_OWNER, GITHUB_REPO } from "@/lib/github";
 
@@ -22,6 +23,8 @@ export function docsLayoutOptions(): Pick<DocsLayoutProps, "sidebar"> {
     sidebar: {
       defaultOpenLevel: 1,
       collapsible: true,
+      hideSearch: true,
+      banner: <NavSearch className="max-md:hidden" />,
       components: {
         Item: DocsSidebarItem,
         Folder: DocsSidebarFolder,
