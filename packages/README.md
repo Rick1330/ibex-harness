@@ -21,4 +21,6 @@ Shared libraries and contract artifacts (not deployable as standalone processes)
 | `sdk-go/` | Go client SDK (planned) |
 | `cli/` | `ibex` CLI (Go) (planned) |
 
+**TypeScript (Phase 1.5+):** pnpm workspace members with a `package.json` (e.g. future `sdk-typescript/`, shared UI tokens) live alongside Go packages. pnpm ignores directories without `package.json`.
+
 See [docs/FILE_STRUCTURE.md](../docs/FILE_STRUCTURE.md).

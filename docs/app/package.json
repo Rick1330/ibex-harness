@@ -1,0 +1,11 @@
+{
+  "name": "docs",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": {
+    "dev": "node -e \"console.error('Fumadocs not bootstrapped yet — complete D.2.1'); process.exit(1)\"",
+    "build": "node -e \"console.error('Fumadocs not bootstrapped yet — complete D.2.1'); process.exit(1)\"",
+    "lint": "node -e \"process.exit(0)\"",
+    "typecheck": "node -e \"process.exit(0)\""
+  }
+}

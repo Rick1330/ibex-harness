@@ -13,14 +13,14 @@
 
 ## Goal D.1: Monorepo + tooling foundation
 
-**Description:** Add pnpm workspace, Turborepo pipelines, and Cursor/editor tooling so the docs app can live in `apps/docs/` alongside existing Go services without package-manager conflicts.
+**Description:** Add pnpm workspace, Turborepo pipelines, and Cursor/editor tooling so the docs app can live in `docs/app/` alongside existing Go services without package-manager conflicts.
 
 **Related milestones:**
 
 - [D.1.1](milestones/d1.1-pnpm-workspace-turborepo.md)
 - [D.1.2](milestones/d1.2-cursor-rules-editorconfig.md)
 
-**Validation:** `pnpm install` at repo root succeeds; `pnpm docs:dev` resolves to Turborepo; Cursor project rules active under `apps/docs/`
+**Validation:** `pnpm install` at repo root succeeds; `pnpm docs:dev` resolves to Turborepo; Cursor project rules active under `docs/app/`
 
 ---
 

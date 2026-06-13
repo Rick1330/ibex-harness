@@ -1,0 +1,12 @@
+{
+  "name": "ibex-harness",
+  "private": true,
+  "packageManager": "pnpm@9.15.9",
+  "scripts": {
+    "docs:dev": "turbo dev --filter=docs",
+    "docs:build": "turbo build --filter=docs"
+  },
+  "devDependencies": {
+    "turbo": "^2.5.4"
+  }
+}

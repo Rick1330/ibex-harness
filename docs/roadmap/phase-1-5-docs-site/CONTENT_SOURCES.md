@@ -1,6 +1,6 @@
 # Content sources — Phase 1.5 public docs
 
-Maps public Fumadocs pages (`apps/docs/content/docs/`) to engineering sources in repo-root `docs/`. **Do not** wholesale-port future Phase 2+ API spec.
+Maps public Fumadocs pages (`docs/app/content/docs/`) to engineering sources in repo-root `docs/`. **Do not** wholesale-port future Phase 2+ API spec.
 
 ## Getting Started
 

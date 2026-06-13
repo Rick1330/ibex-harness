@@ -1,7 +1,7 @@
 # ADR-0023: Docs site architecture (Phase 1.5)
 
 - **Status:** Accepted
-- **Date:** 2026-06-12
+- **Date:** 2026-06-12 (amended 2026-06-13 — `docs/app/` layout)
 - **Authors:** IBEX Harness team
 
 ## Context
@@ -15,27 +15,27 @@
 
 ### 1) Public docs app location
 
-- Add **`apps/docs/`** — Fumadocs on Next.js 15 App Router.
-- Go services remain in **`services/`**; shared Go libraries in **`packages/`**. Do not relocate Go code into `apps/`.
+- Add **`docs/app/`** — Fumadocs on Next.js 15 App Router.
+- Go services remain in **`services/`**; shared Go libraries stay in **`packages/`** (unchanged). Shared **TypeScript** libraries for the docs site also live under **`packages/`** (e.g. future `packages/sdk-typescript/`). Do not relocate Go code into `docs/app/`.
 
 ### 2) Two documentation corpora
 
 | Corpus | Path | Audience |
 | --- | --- | --- |
 | Engineering | `docs/` | Contributors, ADRs, roadmap, CI audits |
-| Public site | `apps/docs/content/docs/` | End users, operators, integrators |
+| Public site | `docs/app/content/docs/` | End users, operators, integrators |
 
 Public pages are authored as MDX; port/adapt from engineering sources per [CONTENT_SOURCES.md](../roadmap/phase-1-5-docs-site/CONTENT_SOURCES.md).
 
 ### 3) JavaScript toolchain
 
 - **pnpm** workspaces + **Turborepo** at repo root.
-- `pnpm-workspace.yaml` includes `apps/*` (and `packages/*` when JS shared libs are added).
+- `pnpm-workspace.yaml` includes `docs/app` and `packages/*` (pnpm ignores Go-only dirs without `package.json`).
 - Tailwind **v3** (Fumadocs UI v14 requirement).
 
 ### 4) Hosting
 
-- **Vercel** project `ibex-harness-docs`, root directory `apps/docs`.
+- **Vercel** project `ibex-harness-docs`, root directory `docs/app`.
 - **Separate** from landing project `ibexdepo` — never attach `docs.ibexharness.com` to the landing Vercel project.
 - `NEXT_PUBLIC_SITE_URL=https://docs.ibexharness.com` in production.
 
@@ -50,7 +50,7 @@ Public pages are authored as MDX; port/adapt from engineering sources per [CONTE
 
 ## Consequences
 
-- `repo-guards` must allow top-level `apps/` and root Node manifest files.
+- `repo-guards` must allow `docs/app/` under `docs/` and root Node manifest files.
 - CI gains `docs-checks` workflow (path-filtered) in Wave 11.
 - Phase 2 entry blocked until Phase 1.5 production launch (docs-first sequencing).
 

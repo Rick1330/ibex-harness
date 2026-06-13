@@ -7,7 +7,7 @@
 
 ## Purpose
 
-Ship a public Fumadocs documentation site at `docs.ibexharness.com` with the **Matte Graphite** design system, aligned with the marketing landing at `ibexharness.com`. Engineering docs remain in repo-root [`docs/`](../../); public MDX lives in [`apps/docs/content/`](../../../apps/docs/content/) (created in Wave 1+).
+Ship a public Fumadocs documentation site at `docs.ibexharness.com` with the **Matte Graphite** design system, aligned with the marketing landing at `ibexharness.com`. Engineering docs remain in [`docs/`](../../) (ADRs, roadmap); the Fumadocs app lives in [`docs/app/`](../../app/); public MDX in [`docs/app/content/`](../../app/content/) (D.2.1+).
 
 ## Wave-based delivery
 
@@ -27,7 +27,7 @@ One focused PR per wave. Do not batch milestones.
 | 11 | [D.4.2](milestones/d4.2-github-actions-docs-checks.md), [D.5.2](milestones/d5.2-verify-phase15-script.md) | CI gates |
 | 12 | [D.5.1](milestones/d5.1-visual-qa-sweep.md), [D.6.2](milestones/d6.2-dns-vercel-domain-attach.md)–[D.6.3](milestones/d6.3-cross-site-nav-sitemaps.md) | Production launch |
 
-**Current wave:** 0 → next [D.1.1](milestones/d1.1-pnpm-workspace-turborepo.md)
+**Current wave:** 1 — [D.1.1](milestones/d1.1-pnpm-workspace-turborepo.md) in progress
 
 ## Goals
 
@@ -43,7 +43,7 @@ See [goals.md](goals.md). Milestone index: [PHASE_1_5_DOCS_SITE_MILESTONES.md](P
 
 - [x] Phase 1 exit complete
 - [x] `ibexharness.com` live; `docs` CNAME in Cloudflare (DNS only)
-- [ ] Phase 1.5 roadmap scaffold merged (Wave 0)
+- [x] Phase 1.5 roadmap scaffold merged (Wave 0)
 
 ## Exit criteria
 
@@ -51,4 +51,4 @@ See [goals.md](goals.md). Milestone index: [PHASE_1_5_DOCS_SITE_MILESTONES.md](P
 - [ ] Matte Graphite design passes visual QA ([D.5.1](milestones/d5.1-visual-qa-sweep.md))
 - [ ] `infra/scripts/verify_phase15.sh` passes against production
 - [ ] Cross-links: landing ↔ docs; both sitemaps in GSC
-- [ ] `docs-checks` CI green on PRs touching `apps/docs/`
+- [ ] `docs-checks` CI green on PRs touching `docs/app/`

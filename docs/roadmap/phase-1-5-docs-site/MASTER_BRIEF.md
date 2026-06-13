@@ -52,7 +52,7 @@ Paste the following into Cursor's **Rules → Project Rules**
 ```md
 ---
 description: IBEX Harness — Docs site build rules. Apply on every prompt.
-globs: apps/docs/**/*
+globs: docs/app/**/*
 alwaysApply: true
 ---
 
@@ -93,9 +93,9 @@ building a SaaS dashboard. You write deliberate, restrained code.
   that reference CSS variables, or `cn()` for variants.
 - Server Components by default. Add `'use client'` only when a hook
   (`useState`, `useEffect`, `useTheme`) is genuinely required.
-- All new components live under `apps/docs/src/components/` and are
+- All new components live under `docs/app/src/components/` and are
   exported by name (no default exports except for Next.js route files).
-- MDX components are registered in `apps/docs/src/mdx-components.tsx`
+- MDX components are registered in `docs/app/src/mdx-components.tsx`
   and consumed everywhere via `useMDXComponents()` — never imported
   directly inside an `.mdx` file.
 
@@ -281,7 +281,7 @@ reveals. The only exception is a 1.5s `pulse` on a "live" status dot
 ### B.1 Repo layout (target state at end of Phase 1.5)
 
 The IBEX Harness repository (`Rick1330/ibex-harness`) is a monorepo.
-The docs site lives at `apps/docs/`. The Go proxy, auth service,
+The docs site lives at `docs/app/`. The Go proxy, auth service,
 worker, and shared libraries already live where Phase 1 placed them —
 this brief does not move any of them.
 
@@ -369,7 +369,7 @@ ibex-harness/
 
 ```yaml
 packages:
-  - "apps/*"
+  - 'docs/app'
   - "packages/*"
 ```
 
@@ -461,19 +461,19 @@ Each milestone has a **branch name**, **goal**, **deliverables**, and
 **Effort:** 2 hours
 
 **Deliverables**
-- `pnpm-workspace.yaml` with `apps/*` and `packages/*`.
+- `pnpm-workspace.yaml` with `docs/app` and `packages/*` and `packages/*`.
 - `turbo.json` with a `build`, `dev`, `lint`, `typecheck` pipeline.
 - Root `package.json` with workspace scripts:
   `"docs:dev": "turbo dev --filter=docs"`,
   `"docs:build": "turbo build --filter=docs"`.
 - `.gitignore` updated to ignore `.source/`, `.next/`, `.turbo/`,
-  `apps/*/node_modules`.
+  `docs/app/node_modules`.
 
 **Acceptance**
 - [ ] `pnpm install` at the repo root succeeds with zero peer warnings
       blocking the install.
 - [ ] `pnpm docs:dev` is a valid command (errors are OK at this stage
-      because `apps/docs` doesn't exist yet — but the command must
+      because `docs/app` doesn't exist yet — but the command must
       resolve to `turbo`).
 
 ---
@@ -487,13 +487,13 @@ Each milestone has a **branch name**, **goal**, **deliverables**, and
 - `.cursor/rules/docs-site.mdc` — the contents from §0.1 of this brief.
 - `.editorconfig` — 2-space indent, LF, trim trailing whitespace.
 - `.nvmrc` — `20.18.0` (Vercel-compatible).
-- `apps/docs/CONTRIBUTING.md` — explains the milestone branch
+- `docs/app/CONTRIBUTING.md` — explains the milestone branch
   naming, the "no gradients / no blurs" rule, and how to run
   `pnpm docs:dev`.
 
 **Acceptance**
 - [ ] Cursor's status bar shows "Project Rules: 1 active" when
-      editing any file under `apps/docs/`.
+      editing any file under `docs/app/`.
 
 ---
 
@@ -504,9 +504,9 @@ Each milestone has a **branch name**, **goal**, **deliverables**, and
 
 **Deliverables**
 
-`apps/docs/package.json` — dependencies pinned per §C.2.
+`docs/app/package.json` — dependencies pinned per §C.2.
 
-`apps/docs/source.config.ts`:
+`docs/app/source.config.ts`:
 
 ```ts
 import { defineDocs, defineConfig } from "fumadocs-mdx/config";
@@ -531,7 +531,7 @@ export default defineConfig({
 });
 ```
 
-`apps/docs/next.config.mjs`:
+`docs/app/next.config.mjs`:
 
 ```js
 import { createMDX } from "fumadocs-mdx/next";
@@ -550,7 +550,7 @@ const config = {
 export default withMDX(config);
 ```
 
-`apps/docs/src/lib/source.ts`:
+`docs/app/src/lib/source.ts`:
 
 ```ts
 import { docs } from "../../.source";
@@ -562,7 +562,7 @@ export const source = loader({
 });
 ```
 
-`apps/docs/src/app/docs/[[...slug]]/page.tsx` and `layout.tsx` — use
+`docs/app/src/app/docs/[[...slug]]/page.tsx` and `layout.tsx` — use
 the canonical Fumadocs templates from the official starter, but **with
 no inline color/style**. Every visual decision is in `globals.css` and
 `tailwind.config.ts` (D.2.2/D.2.3).
@@ -586,7 +586,7 @@ Seed content: a single page at
 
 **Deliverables**
 
-`apps/docs/src/app/globals.css` — the full token file. Use the
+`docs/app/src/app/globals.css` — the full token file. Use the
 **HSL-without-wrapper** format from §A.2 so Tailwind's
 `hsl(var(--token) / <alpha-value>)` works.
 
@@ -715,7 +715,7 @@ body {
 .prose { max-width: 72ch; }
 ```
 
-`apps/docs/tailwind.config.ts`:
+`docs/app/tailwind.config.ts`:
 
 ```ts
 import type { Config } from "tailwindcss";
@@ -757,7 +757,7 @@ const config: Config = {
 export default config;
 ```
 
-`apps/docs/src/app/layout.tsx`:
+`docs/app/src/app/layout.tsx`:
 
 ```tsx
 import { RootProvider } from "fumadocs-ui/provider";
@@ -791,7 +791,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 }
 ```
 
-`apps/docs/src/app/layout.config.tsx` — wordmark nav per §A.5.
+`docs/app/src/app/layout.config.tsx` — wordmark nav per §A.5.
 
 **Acceptance**
 - [ ] Dark mode is the default on first visit; toggle persists across reloads.
@@ -808,7 +808,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 **Branch:** `feat/d2-3-mdx-components`
 **Effort:** 1 day
 
-**Deliverables** — every component in `apps/docs/src/components/mdx/`:
+**Deliverables** — every component in `docs/app/src/components/mdx/`:
 
 - `Callout` — variants `note | tip | warning | danger`. 1px left
   border in semantic color, 16px icon, panel background, 6px radius.
@@ -825,7 +825,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 Registered centrally:
 
 ```tsx
-// apps/docs/src/mdx-components.tsx
+// docs/app/src/mdx-components.tsx
 import defaultMdxComponents from "fumadocs-ui/mdx";
 import { Callout } from "@/components/mdx/callout";
 import { Steps } from "@/components/mdx/steps";
@@ -859,7 +859,7 @@ export function useMDXComponents(components?: MDXComponents): MDXComponents {
 **Effort:** 1 day
 
 Identical implementation to the previous draft (Edge route at
-`apps/docs/src/app/docs/[[...slug]]/opengraph-image.tsx`), updated to
+`docs/app/src/app/docs/[[...slug]]/opengraph-image.tsx`), updated to
 use the Matte Graphite palette: `#09090b` background, wordmark top-left,
 page title bottom-left in 56px Geist Sans 700, description in 24px
 `#a1a1aa`, 1px `#222226` rule between them.
@@ -941,7 +941,7 @@ page title bottom-left in 56px Geist Sans 700, description in 24px
 **Branch:** `feat/d2-8-not-found`
 **Effort:** 2 hours
 
-- `apps/docs/src/app/not-found.tsx` — centered: `404` in 72px Geist
+- `docs/app/src/app/not-found.tsx` — centered: `404` in 72px Geist
   Mono, "Page not found" H2, two outline buttons: "Back to home"
   (`https://ibexharness.com`) and "Documentation home"
   (`/docs/getting-started/introduction`).
@@ -1071,7 +1071,7 @@ hit second. Mandatory shape:
 **Branch:** `feat/d4-1-vercel`
 **Effort:** 1 hour (mostly UI clicks)
 
-- Create Vercel project `ibex-harness-docs`, root directory `apps/docs`.
+- Create Vercel project `ibex-harness-docs`, root directory `docs/app`.
 - Set build command `pnpm --filter docs build`, install command
   `pnpm install --frozen-lockfile`.
 - Env: `NEXT_PUBLIC_SITE_URL=https://docs.ibexharness.com`.
@@ -1094,7 +1094,7 @@ hit second. Mandatory shape:
 name: docs-checks
 on:
   pull_request:
-    paths: ["apps/docs/**", "packages/**", "pnpm-lock.yaml"]
+    paths: ["docs/app/**", "packages/**", "pnpm-lock.yaml"]
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -1144,7 +1144,7 @@ Open every docs page in dark + light, at 375 / 768 / 1440 widths. Check:
 Use Playwright for a smoke-screenshot baseline:
 
 ```ts
-// apps/docs/tests/visual.spec.ts
+// docs/app/tests/visual.spec.ts
 import { test, expect } from "@playwright/test";
 
 for (const path of [
@@ -1164,7 +1164,7 @@ for (const path of [
 
 **Acceptance**
 - [ ] Baseline screenshots committed.
-- [ ] CI runs `playwright test` on PRs that touch `apps/docs/`.
+- [ ] CI runs `playwright test` on PRs that touch `docs/app/`.
 
 ---
 
@@ -1439,7 +1439,7 @@ are already in scope and do not need to be repeated.
 
 ### J.D.2.1 — Bootstrap
 
-> Bootstrap a Fumadocs application at `apps/docs/` per the spec in
+> Bootstrap a Fumadocs application at `docs/app/` per the spec in
 > `DOCS_SITE_MASTER_BRIEF.md` §D.2.1. Use the exact file contents from
 > the brief for `source.config.ts`, `next.config.mjs`, `src/lib/source.ts`,
 > `src/app/layout.tsx`, `src/app/layout.config.tsx`. Create one seed page
@@ -1450,7 +1450,7 @@ are already in scope and do not need to be repeated.
 
 ### J.D.2.2 — Matte Graphite tokens
 
-> Apply the Matte Graphite design tokens to `apps/docs/`. Copy
+> Apply the Matte Graphite design tokens to `docs/app/`. Copy
 > `globals.css` and `tailwind.config.ts` from `DOCS_SITE_MASTER_BRIEF.md`
 > §D.2.2 verbatim. Do not introduce any color outside the token set. Do
 > not remove the global rules at the bottom of `globals.css` (they
@@ -1462,16 +1462,16 @@ are already in scope and do not need to be repeated.
 ### J.D.2.3 — MDX components
 
 > Implement every component in `DOCS_SITE_MASTER_BRIEF.md` §D.2.3 under
-> `apps/docs/src/components/mdx/`. Each component is a named export.
+> `docs/app/src/components/mdx/`. Each component is a named export.
 > Use `lucide-react` icons with `strokeWidth={1.5}`. Register all of
-> them in `apps/docs/src/mdx-components.tsx`. Create one demo page at
+> them in `docs/app/src/mdx-components.tsx`. Create one demo page at
 > `content/docs/_internal/component-gallery.mdx` (do not list it in any
 > `meta.json`) exercising every component, and verify it renders.
 
 ### J.D.2.4 — OG images
 
 > Implement the dynamic OG image route at
-> `apps/docs/src/app/docs/[[...slug]]/opengraph-image.tsx` per
+> `docs/app/src/app/docs/[[...slug]]/opengraph-image.tsx` per
 > §D.2.4. Use `next/og`'s `ImageResponse`, runtime `"edge"`. Reference
 > the page metadata via `source.getPage(slug)`. Background `#09090b`,
 > wordmark top-left, page title bottom-left 56px Geist Sans 700,
@@ -1480,7 +1480,7 @@ are already in scope and do not need to be repeated.
 
 ### J.D.2.5 — Cmd+K
 
-> Rewrite `apps/docs/src/app/api/search/route.ts` to pass each page's
+> Rewrite `docs/app/src/app/api/search/route.ts` to pass each page's
 > `structuredData` into the Orama index so heading-level matches
 > appear. Re-skin the Fumadocs search dialog per §D.2.5: 1px border,
 > 6px radius, `bg-panel`, no backdrop blur. Add a visible
@@ -1503,14 +1503,14 @@ are already in scope and do not need to be repeated.
 
 ### J.D.2.8 — Not-found + redirect
 
-> Create `apps/docs/src/app/not-found.tsx` matching the spec in
+> Create `docs/app/src/app/not-found.tsx` matching the spec in
 > §D.2.8. Verify the root redirect from `next.config.mjs` still
 > resolves `/` → `/docs/getting-started/introduction`.
 
 ### J.D.3.1 — IA
 
 > Create the folder tree and `meta.json` files under
-> `apps/docs/content/docs/` exactly as listed in §D.3.1. Each leaf
+> `docs/app/content/docs/` exactly as listed in §D.3.1. Each leaf
 > gets a stub MDX file with frontmatter only.
 
 ### J.D.3.2 — Seed content
@@ -1546,7 +1546,7 @@ are already in scope and do not need to be repeated.
 
 ### J.D.5.1 — Visual QA
 
-> Add Playwright. Create `apps/docs/tests/visual.spec.ts` from §D.5.1.
+> Add Playwright. Create `docs/app/tests/visual.spec.ts` from §D.5.1.
 > Generate baseline screenshots locally and commit them. Wire
 > `pnpm --filter docs test:visual` into the `docs-checks.yml`
 > workflow.
