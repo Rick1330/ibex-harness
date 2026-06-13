@@ -22,14 +22,14 @@ export const Pre = forwardRef<HTMLPreElement, PreProps>(function Pre(
 ) {
   const areaRef = useRef<HTMLDivElement>(null);
 
-  const onCopy = useCallback(() => {
+  const onCopy = useCallback(async () => {
     const pre = areaRef.current?.querySelector("pre");
     if (!pre) return;
     const clone = pre.cloneNode(true) as HTMLElement;
     clone.querySelectorAll(".nd-copy-ignore").forEach((node) => {
       node.remove();
     });
-    void navigator.clipboard.writeText(clone.textContent ?? "");
+    await navigator.clipboard.writeText(clone.textContent ?? "");
   }, []);
 
   return (
