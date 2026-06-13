@@ -43,10 +43,9 @@ cd services/proxy && go run .
 Use a seeded token and agent from `make db-seed` output:
 
 ```bash
-AUTH_HEADER="Authorization: Bearer ${IBEX_TEST_PAT}"
 curl -s -o /dev/null -w "%{http_code}\n" \
   -X POST http://localhost:8080/v1/orgs/00000000-0000-0000-0000-000000000001/chat/completions \
-  -H "$AUTH_HEADER" \
+  -H "Authorization: Bearer ${IBEX_TEST_PAT}" \
   -H "X-IBEX-Agent-ID: ${IBEX_TEST_AGENT_ID}" \
   -H "Content-Type: application/json" \
   -d '{"model":"gpt-4o","messages":[{"role":"user","content":"hello"}]}'

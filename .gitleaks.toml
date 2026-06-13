@@ -7,6 +7,7 @@ useDefault = true
 paths = [
   '''\.env\.example$''',
   '''docs/ENVIRONMENT_VARIABLES\.md''',
+  '''docs/app/content/docs/.*\.mdx$''',
   '''prompts/''',
   '''services/proxy/internal/auth/validator_test\.go''',
 ]

@@ -27,9 +27,8 @@ IBEX Harness separates **who** is calling (organization + agent), **what** they 
 
 ```bash
 # Required headers on protected proxy routes
-AUTH_HEADER="Authorization: Bearer ${IBEX_TEST_PAT}"
 curl -X POST "http://localhost:8080/v1/orgs/{org_id}/chat/completions" \
-  -H "$AUTH_HEADER" \
+  -H "Authorization: Bearer ${IBEX_TEST_PAT}" \
   -H "X-IBEX-Agent-ID: ${IBEX_TEST_AGENT_ID}" \
   -H "Content-Type: application/json" \
   -d '{"model":"gpt-4o","messages":[{"role":"user","content":"ping"}]}'
