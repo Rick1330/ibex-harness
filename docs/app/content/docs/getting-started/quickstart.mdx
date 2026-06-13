@@ -1,12 +1,73 @@
 ---
 title: Quickstart (5 minutes)
-description: Run ibex harness locally and send your first proxied request in about five minutes.
+description: Run IBEX Harness locally and send your first proxied request in about five minutes.
 ---
 
-# Quickstart (5 minutes)
-
-Run ibex harness locally and send your first proxied request in about five minutes.
+Get a local stack running and hit a protected proxy route. Full multi-language examples ship in the polished quickstart (D.3.3); this page meets the minimum runnable path.
 
 <Callout type="note">
-  Full content ships in Phase 1.5 Waves 6–8.
+  You need Docker running and ports 8080 / 9091 / 5432 / 6379 available on your machine.
 </Callout>
+
+## Prereqs
+
+- Go 1.25+ and `make`
+- Docker Compose
+- An OpenAI API key (optional until Phase 2 — not used in Phase 1 probe)
+
+## 1. Clone and boot
+
+```bash
+git clone https://github.com/Rick1330/ibex-harness.git
+cd ibex-harness
+cp .env.example .env
+make compose-dev-up
+make db-migrate
+make db-seed
+```
+
+## 2. Start services
+
+In separate terminals (or use `make dev` if configured):
+
+```bash
+# Terminal A — auth
+cd services/auth && go run .
+
+# Terminal B — proxy
+cd services/proxy && go run .
+```
+
+## 3. Probe a protected route
+
+Use a seeded token and agent from `make db-seed` output:
+
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" \
+  -X POST http://localhost:8080/v1/orgs/00000000-0000-0000-0000-000000000001/chat/completions \
+  -H "Authorization: Bearer $IBEX_TEST_PAT" \
+  -H "X-IBEX-Agent-ID: $IBEX_TEST_AGENT_ID" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"gpt-4o","messages":[{"role":"user","content":"hello"}]}'
+```
+
+Expected: **501** with `PROVIDER_NOT_CONFIGURED` — that means auth, agent verify, and routing succeeded.
+
+## What just happened
+
+<Steps>
+  <Step title="Token validated">
+    The proxy validated your bearer token via gRPC to the auth service.
+  </Step>
+  <Step title="Agent verified">
+    Agent identity was checked against the organization in the URL path.
+  </Step>
+  <Step title="Body normalized">
+    The JSON body was normalized; provider forwarding is deferred to Phase 2.
+  </Step>
+</Steps>
+
+## Next steps
+
+- [Concepts](/docs/getting-started/concepts) — org / agent / token model
+- [Docker Compose](/docs/deployment/docker-compose) — production-like local stack

@@ -1,22 +1,43 @@
 ---
 title: Introduction
-description: Welcome to the ibex harness documentation.
+description: Welcome to the IBEX Harness documentation — self-hosted LLM proxy with persistent agent memory.
 ---
 
-## Welcome
+IBEX Harness is a self-hosted AI agent platform: an authenticated LLM proxy, multi-tenant auth, and (in later phases) persistent agent memory.
 
-ibex harness is an AI agent memory and context management platform. This site documents the Phase 1 proxy and auth stack.
+<Callout type="note">
+  Phase 1 ships the **proxy** and **auth** services. Chat completion routing returns `501 PROVIDER_NOT_CONFIGURED` until Phase 2 wires a provider adapter.
+</Callout>
 
-Use the sidebar to navigate. Full content ships in later Phase 1.5 waves.
+## What you can do today
 
-## Phase 1 scope
+- Validate bearer tokens and agent identity on every proxied request
+- Run the full stack locally with Docker Compose
+- Enforce per-organization rate limits (Redis-backed, fail-open)
+- Browse this docs site with search, OG previews, and Matte Graphite UI
 
-- Token validation and agent identity on the proxy
-- Local development with Docker Compose
-- Chat completion routing returns `501 PROVIDER_NOT_CONFIGURED` until Phase 2
+## Architecture at a glance
 
-See the Quickstart page (Wave 9) for a five-minute local setup path.
+- **Client** sends authenticated requests to the **proxy** (port 8080)
+- **Proxy** validates tokens via **auth** (gRPC 9091) and rate limits via **Redis**
+- **Auth** reads org/agent/token data from **Postgres**
+
+## Verify the proxy is up
+
+After `make compose-dev-up`, the proxy health endpoint should respond:
+
+```bash
+curl -s http://localhost:8080/health
+```
+
+Expected: HTTP 200 with a JSON body reporting service health.
 
 ## Rate limiting
 
-The proxy applies per-tenant rate limits on incoming requests. Limits are configurable via environment variables and enforced before request routing (full reference in the Proxy → Rate Limiting guide, Wave 9).
+The proxy applies per-tenant rate limits on incoming requests. Limits are configurable via environment variables and enforced before request routing — see [Rate limiting](/docs/proxy/rate-limiting) for the full reference.
+
+## Next steps
+
+- [Quickstart](/docs/getting-started/quickstart) — clone, boot, and send a probe request
+- [Concepts](/docs/getting-started/concepts) — organizations, agents, and tokens
+- [FAQ](/docs/getting-started/faq) — common setup questions

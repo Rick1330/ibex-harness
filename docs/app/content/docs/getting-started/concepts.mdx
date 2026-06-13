@@ -3,10 +3,44 @@ title: Concepts
 description: Core ideas behind the proxy, auth service, and agent memory model.
 ---
 
-# Concepts
+IBEX Harness separates **who** is calling (organization + agent), **what** they may do (permissions), and **where** requests go (proxy routing).
 
-Core ideas behind the proxy, auth service, and agent memory model.
-
-<Callout type="note">
-  Full content ships in Phase 1.5 Waves 6–8.
+<Callout type="note" title="Phase 1 scope">
+  Phase 1 focuses on auth + proxy. Memory, context assembly, and provider forwarding arrive in later phases.
 </Callout>
+
+## Core entities
+
+<Steps>
+  <Step title="Organization">
+    Every token belongs to an organization (`org_id`). Rate limits, RLS policies, and billing boundaries are scoped per org.
+  </Step>
+  <Step title="Agent">
+    An agent is an autonomous actor inside an org. The proxy requires `X-IBEX-Agent-ID` on protected routes and validates it against Postgres via the auth service.
+  </Step>
+  <Step title="Token">
+    Clients authenticate with a Personal Access Token (PAT). The proxy calls `ValidateToken` over gRPC; Argon2id verifies the secret server-side.
+  </Step>
+</Steps>
+
+## Request path
+
+```bash
+# Required headers on protected proxy routes
+curl -X POST http://localhost:8080/v1/orgs/{org_id}/chat/completions \
+  -H "Authorization: Bearer ibex_pat_..." \
+  -H "X-IBEX-Agent-ID: agent_01..." \
+  -H "Content-Type: application/json" \
+  -d '{"model":"gpt-4o","messages":[{"role":"user","content":"ping"}]}'
+```
+
+The proxy validates the token, verifies the agent belongs to the org, applies rate limits, then normalizes the JSON body. Until Phase 2, the response is `501 PROVIDER_NOT_CONFIGURED`.
+
+## Error envelope
+
+All JSON errors share a stable shape: `error.code`, `error.message`, optional `error.field_errors`, and `request_id` for correlation. See [Errors](/docs/api-reference/errors).
+
+## Related guides
+
+- [Auth overview](/docs/auth/overview)
+- [Proxy overview](/docs/proxy/overview)
