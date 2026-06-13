@@ -211,11 +211,101 @@ body {
   border-color: hsl(var(--border)) !important;
 }
 
-/* === Performance + §A.7 — disable height keyframe collapsibles (CLS) === */
+/* === Motion polish — opacity-only (compositor-safe, minimal CLS) === */
 
-#nd-sidebar [class*="animate-fd-collapsible"],
-#nd-toc [class*="animate-fd-collapsible"] {
-  animation: none !important;
+@keyframes ibex-reveal {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes ibex-hide {
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes ibex-pulse {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+
+  50% {
+    opacity: 0.72;
+  }
+}
+
+/* Replace Fumadocs height collapsibles with opacity fades */
+#nd-sidebar [class*="animate-fd-collapsible-down"],
+#nd-tocnav [class*="animate-fd-collapsible-down"] {
+  animation: ibex-reveal 200ms ease-out !important;
+}
+
+#nd-sidebar [class*="animate-fd-collapsible-up"],
+#nd-tocnav [class*="animate-fd-collapsible-up"] {
+  animation: ibex-hide 160ms ease-in !important;
+}
+
+.docs-page-enter {
+  animation: ibex-reveal 240ms ease-out;
+}
+
+.docs-loading {
+  animation: ibex-reveal 180ms ease-out;
+}
+
+.docs-loading-bar {
+  animation: ibex-pulse 1.4s ease-in-out infinite;
+}
+
+.docs-loading-bar:nth-child(2) {
+  animation-delay: 80ms;
+}
+
+.docs-loading-bar:nth-child(3) {
+  animation-delay: 160ms;
+}
+
+.docs-loading .space-y-3 .docs-loading-bar:nth-child(1) {
+  animation-delay: 120ms;
+}
+
+.docs-loading .space-y-3 .docs-loading-bar:nth-child(2) {
+  animation-delay: 200ms;
+}
+
+.docs-loading .space-y-3 .docs-loading-bar:nth-child(3) {
+  animation-delay: 280ms;
+}
+
+.docs-loading .space-y-3 .docs-loading-bar:nth-child(4) {
+  animation-delay: 360ms;
+}
+
+.docs-loading .space-y-3 .docs-loading-bar:nth-child(5) {
+  animation-delay: 440ms;
+}
+
+[data-radix-dialog-overlay] {
+  animation: ibex-reveal 200ms ease-out;
+}
+
+#nd-sidebar a,
+#nd-sidebar button[aria-label] {
+  transition:
+    background-color 150ms ease-out,
+    border-color 150ms ease-out,
+    color 150ms ease-out,
+    opacity 150ms ease-out;
 }
 
 @media (prefers-reduced-motion: reduce) {
