@@ -1,7 +1,7 @@
 # Current State
 
 **Last updated:** 2026-06-13  
-**Git SHA (`main`):** `6a2c2d1` — D.3.2 Getting Started content (#117)  
+**Git SHA (`main`):** `bca974d` — layout hotfix (#119)  
 **Current phase:** Phase 1.5 — Docs Site (**In progress**)  
 **Current goal:** Wave 6 — [D.3.2](phase-1-5-docs-site/milestones/d3.2-seed-pages-content-stubs.md) seed content (Proxy section next)  
 **Next backend milestone (blocked):** [2.1.1 Provider interface and registry](phase-2-single-provider/milestones/2.1.1-provider-interface-and-registry.md) — after Phase 1.5 launch  
@@ -50,7 +50,8 @@
 - **Phase 1.5 D.2.7 (#106):** Sidebar, breadcrumbs, on-this-page rail, Edit-on-GitHub + last-updated footer
 - **Phase 1.5 D.2.3 (#108):** MDX kit — Callout, Steps, CodeTabs, Endpoint, Badge, Kbd; showcase at `_design/components`
 - **Phase 1.5 D.2.4–D.3.1 (#114):** Dynamic OG images, Cmd+K search, enhanced code blocks (Shiki + copy), styled 404, IA skeleton (26 routes), dev perf (Zod v4, webpack default)
-- **Phase 1.5 perf (#116):** Static doc pages, opacity motion polish (page enter, sidebar fade, loading skeleton), low-CLS collapsibles
+- **Phase 1.5 perf (#116):** Static doc pages; subtle article fade (layout-safe)
+- **Phase 1.5 layout hotfix (#119):** Restored 3-column Fumadocs shell after flex-breaking wrapper regression
 - **Phase 1.5 D.3.2 wave 1 (#117):** Getting Started content — introduction, concepts, FAQ, quickstart stubs with Callout, Steps, runnable snippets
 - **Codecov:** Go coverage upload; badge in README; patch/project thresholds aligned to 80% handwritten scope
 - **Integration test infra (m1.0.1):** `infra/testing/testutil`, `make test-integration`, compose test (5433) or optional `testcontainers` build tag
