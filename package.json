@@ -8,5 +8,11 @@
   },
   "devDependencies": {
     "turbo": "^2.5.4"
+  },
+  "pnpm": {
+    "overrides": {
+      "esbuild": ">=0.28.1",
+      "postcss": ">=8.5.10"
+    }
   }
 }
