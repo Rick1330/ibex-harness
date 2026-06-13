@@ -151,3 +151,21 @@ body {
 .prose {
   max-width: 72ch;
 }
+
+/* === D.2.7 nav shell — Fumadocs chrome overrides === */
+
+/* Ban backdrop-blur on mobile sidebar / toc nav (Matte Graphite §A) */
+#nd-sidebar.max-md\:backdrop-blur-lg,
+#nd-tocnav.backdrop-blur-md {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+#nd-sidebar.max-md\:bg-fd-background\/80 {
+  background-color: hsl(var(--canvas) / 0.95) !important;
+}
+
+#nd-tocnav {
+  background-color: hsl(var(--canvas)) !important;
+  border-color: hsl(var(--border)) !important;
+}
