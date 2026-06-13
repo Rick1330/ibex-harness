@@ -1,0 +1,61 @@
+# ADR-0023: Docs site architecture (Phase 1.5)
+
+- **Status:** Accepted
+- **Date:** 2026-06-12
+- **Authors:** IBEX Harness team
+
+## Context
+
+- Marketing landing lives in a **separate repo** ([marvel-scape](https://github.com/Rick1330/marvel-scape)) at `ibexharness.com`.
+- Engineering documentation (~133 markdown files) lives in repo-root `docs/` for ADRs, roadmap, and internal audits.
+- Public product docs must ship at `docs.ibexharness.com` with a polished, Vercel/Linear-style design ([MASTER_BRIEF](../roadmap/phase-1-5-docs-site/MASTER_BRIEF.md)).
+- DNS `docs` CNAME already points to Vercel; no docs deployment exists yet.
+
+## Decision
+
+### 1) Public docs app location
+
+- Add **`apps/docs/`** — Fumadocs on Next.js 15 App Router.
+- Go services remain in **`services/`**; shared Go libraries in **`packages/`**. Do not relocate Go code into `apps/`.
+
+### 2) Two documentation corpora
+
+| Corpus | Path | Audience |
+| --- | --- | --- |
+| Engineering | `docs/` | Contributors, ADRs, roadmap, CI audits |
+| Public site | `apps/docs/content/docs/` | End users, operators, integrators |
+
+Public pages are authored as MDX; port/adapt from engineering sources per [CONTENT_SOURCES.md](../roadmap/phase-1-5-docs-site/CONTENT_SOURCES.md).
+
+### 3) JavaScript toolchain
+
+- **pnpm** workspaces + **Turborepo** at repo root.
+- `pnpm-workspace.yaml` includes `apps/*` (and `packages/*` when JS shared libs are added).
+- Tailwind **v3** (Fumadocs UI v14 requirement).
+
+### 4) Hosting
+
+- **Vercel** project `ibex-harness-docs`, root directory `apps/docs`.
+- **Separate** from landing project `ibexdepo` — never attach `docs.ibexharness.com` to the landing Vercel project.
+- `NEXT_PUBLIC_SITE_URL=https://docs.ibexharness.com` in production.
+
+### 5) API reference
+
+- Phase 1.5: **manual** endpoint pages for implemented surfaces only.
+- OpenAPI-driven pages (`fumadocs-openapi`) deferred until `services/proxy` publishes `openapi.yaml` (Phase 2).
+
+### 6) Delivery
+
+- Wave-based PRs (one milestone or tight pair per PR); see [phase-1-5 README](../roadmap/phase-1-5-docs-site/README.md).
+
+## Consequences
+
+- `repo-guards` must allow top-level `apps/` and root Node manifest files.
+- CI gains `docs-checks` workflow (path-filtered) in Wave 11.
+- Phase 2 entry blocked until Phase 1.5 production launch (docs-first sequencing).
+
+## References
+
+- [MASTER_BRIEF.md](../roadmap/phase-1-5-docs-site/MASTER_BRIEF.md)
+- [DOCS_DOMAIN_HANDOFF](https://github.com/Rick1330/marvel-scape) (landing repo)
+- [ADR-0020](ADR-0020-shared-package-boundaries.md) — Go `packages/` boundaries unchanged

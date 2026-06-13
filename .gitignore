@@ -17,6 +17,11 @@ Thumbs.db
 !.vscode/extensions.json
 !.vscode/settings.json.example
 
+# --- Docs site (Fumadocs / Next.js) ---
+apps/docs/.next/
+apps/docs/.source/
+apps/docs/out/
+
 # --- CI test reports (JUnit for Trunk; ephemeral) ---
 test-results/
 

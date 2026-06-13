@@ -21,6 +21,7 @@ Index of significant technical decisions for IBEX Harness.
 | [ADR-0020-shared-package-boundaries.md](ADR-0020-shared-package-boundaries.md) | Accepted | Shared package boundaries (`packages/config`, `packages/apierror`) |
 | [ADR-0021-prometheus-metric-catalog.md](ADR-0021-prometheus-metric-catalog.md) | Accepted | Prometheus metric catalog (Phase 1) |
 | [ADR-0022-health-check-contract.md](ADR-0022-health-check-contract.md) | Accepted | Health check contract (Phase 1) |
+| [ADR-0023-docs-site-architecture.md](ADR-0023-docs-site-architecture.md) | Accepted | Public docs site (Phase 1.5) |
 
 ## When to write an ADR
 

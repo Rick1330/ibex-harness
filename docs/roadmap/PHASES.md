@@ -5,8 +5,9 @@ High-level roadmap from Foundation through production hardening. Detailed milest
 | Phase | Name | Est. duration | Status | Entry | Exit (summary) |
 | --- | --- | --- | --- | --- | --- |
 | [0](phase-0-foundation/) | Foundation | Done | **Complete** | Empty repo | CI, docs, compose, proto source, Go skeletons |
-| [1](phase-1-core-platform/) | Core Platform | 4–6 weeks | **In Progress** | Phase 0 complete | Migrations, auth validate, proxy auth wire-up, observability baseline |
-| [2](phase-2-single-provider/) | Single Provider E2E | 3–5 weeks | Planned | Phase 1 exit | Authenticated OpenAI-compatible chat through proxy |
+| [1](phase-1-core-platform/) | Core Platform | 4–6 weeks | **Complete** | Phase 0 complete | Migrations, auth, proxy platform, security gate |
+| [1.5](phase-1-5-docs-site/) | Docs Site | 2–3 weeks | **In progress** | Phase 1 complete | Public docs at docs.ibexharness.com |
+| [2](phase-2-single-provider/) | Single Provider E2E | 3–5 weeks | Planned | Phase 1.5 exit | Authenticated OpenAI-compatible chat through proxy |
 | [3](phase-3-context-system/) | Context and Memory | 6–8 weeks | Planned | Phase 2 exit | Memory CRUD, embeddings, context assembly, injection |
 | [4](phase-4-multi-provider/) | Multi-Provider and Routing | 4–6 weeks | Planned | Phase 3 exit | Multiple providers, routing, Redis rate limits |
 | [5](phase-5-production-hardening/) | Production Hardening | 4–8 weeks | Planned | Phase 4 exit | SLOs, OTel pipeline, chaos/load, required Go CI |
@@ -27,31 +28,31 @@ See [phase-0-foundation/README.md](phase-0-foundation/README.md).
 
 ## Phase 1: Core Platform
 
-**Status:** In Progress — current milestone [1.2.5](phase-1-core-platform/milestones/1.2.5-proxy-agent-identity-verification.md)
+**Status:** Complete
 
 **Goals:** [goals.md](phase-1-core-platform/goals.md)
 
-| Goal | Summary |
-| --- | --- |
-| 1.1 | Persistence and auth data plane (migrations, auth proto, token validation) |
-| 1.2 | Proxy platform integration (auth client, normalization, rate limits, agent verify) |
-| 1.3 | Observability baseline (OTel wiring, Prometheus client, shared logger) |
-| 1.4 | Developer experience (seed data, `.env.example`, shared packages, health checks) |
-| 1.5 | Security integration gate (cross-tenant end-to-end tests) |
+See [phase-1-core-platform/README.md](phase-1-core-platform/README.md) and [PHASE1_EXIT_AUDIT.md](phase-1-core-platform/PHASE1_EXIT_AUDIT.md).
+
+---
+
+## Phase 1.5: Docs Site
+
+**Status:** In progress — current milestone [D.1.1](phase-1-5-docs-site/milestones/d1.1-pnpm-workspace-turborepo.md)
+
+**Goals:** [phase-1-5-docs-site/goals.md](phase-1-5-docs-site/goals.md)
 
 **Exit criteria:**
 
-- `make db-migrate` applies minimal auth schema; idempotent re-run
-- Auth validates org tokens against Postgres; cross-tenant tests pass
-- Proxy rejects unauthenticated requests; normalizes OpenAI-shaped bodies (no upstream yet)
-- Structured logs + metrics on critical paths; OTel tracer provider wired (no exporter required)
-- [M1.5.1](phase-1-core-platform/milestones/1.5.1-security-integration-test-suite.md) security suite green
+- Fumadocs site live at `https://docs.ibexharness.com`
+- Matte Graphite design system; `verify_phase15.sh` passes
+- Cross-links and sitemaps with landing site
 
 ---
 
 ## Phase 2: Single Provider E2E
 
-**Status:** Planned — detailed milestones in [phase-2 README](phase-2-single-provider/README.md)
+**Status:** Planned — blocked on Phase 1.5 exit
 
 **Goals:** [phase-2-single-provider/goals.md](phase-2-single-provider/goals.md)
 
@@ -121,8 +122,7 @@ See [phase-0-foundation/README.md](phase-0-foundation/README.md).
 ## Critical path (dependency order)
 
 ```text
-Phase 0 → Migrations → Auth proto → Auth validate → Proxy auth → Proxy normalize
-       → Phase 2 provider → Phase 3 memory/context → Phase 4 scale → Phase 5 harden
+Phase 0 → Phase 1 → Phase 1.5 (docs) → Phase 2 provider → Phase 3 memory/context → Phase 4 scale → Phase 5 harden
 ```
 
 Pivot triggers and discoveries: [FINDINGS.md](FINDINGS.md).

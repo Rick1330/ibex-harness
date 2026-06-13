@@ -80,6 +80,7 @@ Client SDK
 ## Entry criteria
 
 - Phase 1 complete (including [M1.5.1](../phase-1-core-platform/milestones/1.5.1-security-integration-test-suite.md) security gate)
+- [Phase 1.5](../phase-1-5-docs-site/README.md) docs site launched at `docs.ibexharness.com` (docs-first sequencing)
 - Local compose stack healthy (Postgres, Redis; ClickHouse added in 2.5.1)
 
 ## Exit criteria
