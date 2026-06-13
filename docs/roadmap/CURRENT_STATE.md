@@ -1,9 +1,9 @@
 # Current State
 
 **Last updated:** 2026-06-13  
-**Git SHA (`main`):** `37c134d` — D.2.7 navigation shell (#106)  
+**Git SHA (`main`):** `1d317f8` — D.2.3 MDX component catalogue (#108)  
 **Current phase:** Phase 1.5 — Docs Site (**In progress**)  
-**Current goal:** Wave 3 — [D.2.3](phase-1-5-docs-site/milestones/d2.3-mdx-components-catalogue.md) MDX component kit  
+**Current goal:** Wave 4 — [D.2.4](phase-1-5-docs-site/milestones/d2.4-dynamic-og-images.md) dynamic OG images  
 **Next backend milestone (blocked):** [2.1.1 Provider interface and registry](phase-2-single-provider/milestones/2.1.1-provider-interface-and-registry.md) — after Phase 1.5 launch  
 **Phase 1 exit audit:** [PHASE1_EXIT_AUDIT.md](phase-1-core-platform/PHASE1_EXIT_AUDIT.md)  
 **CI audit:** [CI_AUDIT.md](phase-1-core-platform/CI_AUDIT.md)
@@ -47,7 +47,8 @@
 - **Phase 1.5 D.2.1 (#101):** Fumadocs v14 + Next.js 15; introduction seed page; `pnpm docs:build` passes
 - **Phase 1.5 hotfix (#103):** `globals.css` — Fumadocs `@import` before Tailwind directives (Turbopack parse fix)
 - **Phase 1.5 D.2.2 (#104):** Matte Graphite tokens, dark default, IBEX/HARNESS wordmark — **design review gate** (375/768/1440) before D.2.3+
-- **Phase 1.5 D.2.7 (#106):** Sidebar, breadcrumbs, on-this-page rail, Edit-on-GitHub + last-updated footer; `navigation-preview` scroll-spy seed page
+- **Phase 1.5 D.2.7 (#106):** Sidebar, breadcrumbs, on-this-page rail, Edit-on-GitHub + last-updated footer
+- **Phase 1.5 D.2.3 (#108):** MDX kit — Callout, Steps, CodeTabs, Endpoint, Badge, Kbd; showcase at `_design/components`
 - **Codecov:** Go coverage upload; badge in README; patch/project thresholds aligned to 80% handwritten scope
 - **Integration test infra (m1.0.1):** `infra/testing/testutil`, `make test-integration`, compose test (5433) or optional `testcontainers` build tag
 - Go services:
@@ -67,8 +68,8 @@
 
 ## Next 3 immediate tasks
 
-1. **Phase 1.5 Wave 3 — D.2.3** — MDX components catalogue (`feat/d2-3-mdx-kit`)
-2. **Phase 1.5 Wave 4 — D.2.4–D.2.6** — Search, OG images, enhanced code blocks
+1. **Phase 1.5 Wave 4 — D.2.4** — Dynamic OG images (`feat/d2-4-og-images`)
+2. **Phase 1.5 Wave 4 — D.2.5–D.2.6** — Cmd+K search, enhanced code blocks
 3. **Phase 2 blocked** — [2.1.1](phase-2-single-provider/milestones/2.1.1-provider-interface-and-registry.md) until Phase 1.5 launch (Wave 12)
 
 ## Verify current state locally
