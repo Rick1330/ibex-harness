@@ -1,9 +1,9 @@
 # Current State
 
 **Last updated:** 2026-06-13  
-**Git SHA (`main`):** `5c7c006` — Phase 1.5 Wave 0 roadmap scaffold (#96)  
+**Git SHA (`main`):** `ff84bfd` — D.1.1 pnpm workspace for `docs/app` (#98)  
 **Current phase:** Phase 1.5 — Docs Site (**In progress**)  
-**Current goal:** Wave 1 — [D.1.1](phase-1-5-docs-site/milestones/d1.1-pnpm-workspace-turborepo.md) pnpm workspace + Turborepo  
+**Current goal:** Wave 1 — [D.1.2](phase-1-5-docs-site/milestones/d1.2-cursor-rules-editorconfig.md) Cursor rules + EditorConfig  
 **Next backend milestone (blocked):** [2.1.1 Provider interface and registry](phase-2-single-provider/milestones/2.1.1-provider-interface-and-registry.md) — after Phase 1.5 launch  
 **Phase 1 exit audit:** [PHASE1_EXIT_AUDIT.md](phase-1-core-platform/PHASE1_EXIT_AUDIT.md)  
 **CI audit:** [CI_AUDIT.md](phase-1-core-platform/CI_AUDIT.md)
@@ -41,7 +41,8 @@
 - **Handwritten coverage gate (#92):** merged unit+integration Go coverage ≥80% on hand-written code (`packages/proto/gen/go` excluded); enforced by CI `coverage` job via `infra/scripts/coverage-gate.sh`; see [CI_AUDIT.md](phase-1-core-platform/CI_AUDIT.md) and [COVERAGE_GAP_REGISTER.md](phase-1-core-platform/COVERAGE_GAP_REGISTER.md)
 - **Trunk Flaky Tests (#94):** all Go CI test jobs emit JUnit via gotestsum and upload to Trunk (`ibexharness` org); per-job variants; informational only (`continue-on-error`); see [CI_AUDIT.md](phase-1-core-platform/CI_AUDIT.md) § Trunk
 - **Landing + DNS (pre–Phase 1.5):** `ibexharness.com` live ([marvel-scape](https://github.com/Rick1330/marvel-scape)); Cloudflare `docs` CNAME ready for `docs.ibexharness.com` — see [Phase 1.5 roadmap](phase-1-5-docs-site/README.md)
-- **Phase 1.5 Wave 0 (#96):** roadmap scaffold, ADR-0023, 21 milestone specs, `MASTER_BRIEF.md`, repo-guards allows `docs/app/` + pnpm root files — next [D.1.1](phase-1-5-docs-site/milestones/d1.1-pnpm-workspace-turborepo.md)
+- **Phase 1.5 Wave 0 (#96):** roadmap scaffold, ADR-0023, 21 milestone specs, `MASTER_BRIEF.md`, repo-guards allows `docs/app/` + pnpm root files
+- **Phase 1.5 D.1.1 (#98):** pnpm + Turborepo at repo root; public site path `docs/app/` (Fumadocs stub); `pnpm docs:dev` → turbo — next [D.1.2](phase-1-5-docs-site/milestones/d1.2-cursor-rules-editorconfig.md)
 - **Codecov:** Go coverage upload; badge in README; patch/project thresholds aligned to 80% handwritten scope
 - **Integration test infra (m1.0.1):** `infra/testing/testutil`, `make test-integration`, compose test (5433) or optional `testcontainers` build tag
 - Go services:
@@ -61,8 +62,8 @@
 
 ## Next 3 immediate tasks
 
-1. **Phase 1.5 Wave 1 — D.1.1** — pnpm workspace + Turborepo (`feat/d1-1-workspace`)
-2. **Phase 1.5 Wave 1 — D.1.2** — Cursor rules + EditorConfig (`feat/d1-2-cursor-rules`)
+1. **Phase 1.5 Wave 1 — D.1.2** — Cursor rules + EditorConfig (`feat/d1-2-cursor-rules`)
+2. **Phase 1.5 Wave 2 — D.2.1** — Bootstrap Fumadocs at `docs/app/` (`feat/d2-1-bootstrap`)
 3. **Phase 2 blocked** — [2.1.1](phase-2-single-provider/milestones/2.1.1-provider-interface-and-registry.md) until Phase 1.5 launch (Wave 12)
 
 ## Verify current state locally
