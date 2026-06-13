@@ -1,0 +1,11 @@
+{
+  "title": "Proxy",
+  "pages": [
+    "overview",
+    "configuration",
+    "authentication",
+    "rate-limiting",
+    "request-routing",
+    "provider-adapters"
+  ]
+}

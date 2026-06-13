@@ -1,0 +1,9 @@
+{
+  "title": "Deployment",
+  "pages": [
+    "docker-compose",
+    "kubernetes",
+    "environment-variables",
+    "observability"
+  ]
+}

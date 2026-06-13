@@ -1,0 +1,9 @@
+{
+  "title": "Auth",
+  "pages": [
+    "overview",
+    "issuing-api-keys",
+    "org-project-model",
+    "multi-tenant-rls"
+  ]
+}

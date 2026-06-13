@@ -1,4 +1,11 @@
 {
   "title": "Documentation",
-  "pages": ["getting-started", "_design"]
+  "pages": [
+    "getting-started",
+    "proxy",
+    "auth",
+    "deployment",
+    "api-reference",
+    "changelog"
+  ]
 }

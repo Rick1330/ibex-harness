@@ -1,4 +1,4 @@
 {
   "title": "Getting Started",
-  "pages": ["introduction", "navigation-preview"]
+  "pages": ["introduction", "quickstart", "concepts", "faq"]
 }
