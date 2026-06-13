@@ -27,7 +27,7 @@ One focused PR per wave. Do not batch milestones.
 | 11 | [D.4.2](milestones/d4.2-github-actions-docs-checks.md), [D.5.2](milestones/d5.2-verify-phase15-script.md) | CI gates |
 | 12 | [D.5.1](milestones/d5.1-visual-qa-sweep.md), [D.6.2](milestones/d6.2-dns-vercel-domain-attach.md)–[D.6.3](milestones/d6.3-cross-site-nav-sitemaps.md) | Production launch |
 
-**Current wave:** 1 — [D.1.1](milestones/d1.1-pnpm-workspace-turborepo.md) in progress
+**Current wave:** 2 — [D.2.2](milestones/d2.2-matte-graphite-tokens.md) next (design gate after D.2.1)
 
 ## Goals
 

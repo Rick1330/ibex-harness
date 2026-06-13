@@ -1,9 +1,9 @@
 # Current State
 
 **Last updated:** 2026-06-13  
-**Git SHA (`main`):** `ff84bfd` — D.1.1 pnpm workspace for `docs/app` (#98)  
+**Git SHA (`main`):** `fe58260` — D.2.1 Fumadocs bootstrap at `docs/app` (#101)  
 **Current phase:** Phase 1.5 — Docs Site (**In progress**)  
-**Current goal:** Wave 1 — [D.1.2](phase-1-5-docs-site/milestones/d1.2-cursor-rules-editorconfig.md) Cursor rules + EditorConfig  
+**Current goal:** Wave 2 — [D.2.2](phase-1-5-docs-site/milestones/d2.2-matte-graphite-tokens.md) Matte Graphite design tokens (design gate)  
 **Next backend milestone (blocked):** [2.1.1 Provider interface and registry](phase-2-single-provider/milestones/2.1.1-provider-interface-and-registry.md) — after Phase 1.5 launch  
 **Phase 1 exit audit:** [PHASE1_EXIT_AUDIT.md](phase-1-core-platform/PHASE1_EXIT_AUDIT.md)  
 **CI audit:** [CI_AUDIT.md](phase-1-core-platform/CI_AUDIT.md)
@@ -42,7 +42,9 @@
 - **Trunk Flaky Tests (#94):** all Go CI test jobs emit JUnit via gotestsum and upload to Trunk (`ibexharness` org); per-job variants; informational only (`continue-on-error`); see [CI_AUDIT.md](phase-1-core-platform/CI_AUDIT.md) § Trunk
 - **Landing + DNS (pre–Phase 1.5):** `ibexharness.com` live ([marvel-scape](https://github.com/Rick1330/marvel-scape)); Cloudflare `docs` CNAME ready for `docs.ibexharness.com` — see [Phase 1.5 roadmap](phase-1-5-docs-site/README.md)
 - **Phase 1.5 Wave 0 (#96):** roadmap scaffold, ADR-0023, 21 milestone specs, `MASTER_BRIEF.md`, repo-guards allows `docs/app/` + pnpm root files
-- **Phase 1.5 D.1.1 (#98):** pnpm + Turborepo at repo root; public site path `docs/app/` (Fumadocs stub); `pnpm docs:dev` → turbo — next [D.1.2](phase-1-5-docs-site/milestones/d1.2-cursor-rules-editorconfig.md)
+- **Phase 1.5 D.1.1 (#98):** pnpm + Turborepo at repo root; public site at `docs/app/`
+- **Phase 1.5 D.1.2 (#100):** `.cursor/rules/docs-site.mdc`, `.nvmrc`, `docs/app/CONTRIBUTING.md`
+- **Phase 1.5 D.2.1 (#101):** Fumadocs v14 + Next.js 15; introduction seed page; `pnpm docs:build` passes — next [D.2.2](phase-1-5-docs-site/milestones/d2.2-matte-graphite-tokens.md)
 - **Codecov:** Go coverage upload; badge in README; patch/project thresholds aligned to 80% handwritten scope
 - **Integration test infra (m1.0.1):** `infra/testing/testutil`, `make test-integration`, compose test (5433) or optional `testcontainers` build tag
 - Go services:
@@ -62,8 +64,8 @@
 
 ## Next 3 immediate tasks
 
-1. **Phase 1.5 Wave 1 — D.1.2** — Cursor rules + EditorConfig (`feat/d1-2-cursor-rules`)
-2. **Phase 1.5 Wave 2 — D.2.1** — Bootstrap Fumadocs at `docs/app/` (`feat/d2-1-bootstrap`)
+1. **Phase 1.5 Wave 2 — D.2.2** — Matte Graphite tokens (`feat/d2-2-matte-graphite`) — **design review gate**
+2. **Phase 1.5 Wave 2 — D.2.7** — Nav shell after D.2.2 sign-off
 3. **Phase 2 blocked** — [2.1.1](phase-2-single-provider/milestones/2.1.1-provider-interface-and-registry.md) until Phase 1.5 launch (Wave 12)
 
 ## Verify current state locally
@@ -80,6 +82,8 @@ go test ./services/proxy/...
 make compose-test-up
 go test -tags=integration -run '^TestSecurity_' ./services/proxy
 make test-integration
+pnpm install
+pnpm docs:dev
 ```
 
 Windows: see [services/auth/README.md](../../services/auth/README.md) and [services/proxy/README.md](../../services/proxy/README.md) for PowerShell env syntax. Integration tests: `make compose-test-up` (Postgres 5433) or `$env:POSTGRES_TEST_DSN = "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable"` for dev Postgres.
