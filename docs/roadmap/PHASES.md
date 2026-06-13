@@ -38,7 +38,7 @@ See [phase-1-core-platform/README.md](phase-1-core-platform/README.md) and [PHAS
 
 ## Phase 1.5: Docs Site
 
-**Status:** In progress — current milestone [D.1.1](phase-1-5-docs-site/milestones/d1.1-pnpm-workspace-turborepo.md)
+**Status:** In progress — current milestone [D.3.2](phase-1-5-docs-site/milestones/d3.2-seed-pages-content-stubs.md)
 
 **Goals:** [phase-1-5-docs-site/goals.md](phase-1-5-docs-site/goals.md)
 
