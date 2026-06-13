@@ -23,6 +23,8 @@ type PageProps = {
   params: Promise<{ slug?: string[] }>;
 };
 
+export const dynamic = "force-static";
+
 export default async function Page(props: PageProps) {
   const params = await props.params;
   const page = source.getPage(params.slug);

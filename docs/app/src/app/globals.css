@@ -210,3 +210,20 @@ body {
 [data-radix-dialog-content] .border-t {
   border-color: hsl(var(--border)) !important;
 }
+
+/* === Performance + §A.7 — disable height keyframe collapsibles (CLS) === */
+
+#nd-sidebar [class*="animate-fd-collapsible"],
+#nd-toc [class*="animate-fd-collapsible"] {
+  animation: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
