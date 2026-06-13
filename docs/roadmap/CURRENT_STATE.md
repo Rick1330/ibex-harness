@@ -1,9 +1,9 @@
 # Current State
 
 **Last updated:** 2026-06-13  
-**Git SHA (`main`):** `bca974d` — layout hotfix (#119)  
+**Git SHA (`main`):** `f4ef55f` — D.3.2 wave 2 (#121)  
 **Current phase:** Phase 1.5 — Docs Site (**In progress**)  
-**Current goal:** Wave 6 — [D.3.2](phase-1-5-docs-site/milestones/d3.2-seed-pages-content-stubs.md) seed content (Proxy section next)  
+**Current goal:** Wave 7 — [D.3.2](phase-1-5-docs-site/milestones/d3.2-seed-pages-content-stubs.md) seed content (Deployment section next)  
 **Next backend milestone (blocked):** [2.1.1 Provider interface and registry](phase-2-single-provider/milestones/2.1.1-provider-interface-and-registry.md) — after Phase 1.5 launch  
 **Phase 1 exit audit:** [PHASE1_EXIT_AUDIT.md](phase-1-core-platform/PHASE1_EXIT_AUDIT.md)  
 **CI audit:** [CI_AUDIT.md](phase-1-core-platform/CI_AUDIT.md)
@@ -53,6 +53,7 @@
 - **Phase 1.5 perf (#116):** Static doc pages; subtle article fade (layout-safe)
 - **Phase 1.5 layout hotfix (#119):** Restored 3-column Fumadocs shell after flex-breaking wrapper regression
 - **Phase 1.5 D.3.2 wave 1 (#117):** Getting Started content — introduction, concepts, FAQ, quickstart stubs with Callout, Steps, runnable snippets
+- **Phase 1.5 D.3.2 wave 2 (#121):** Proxy + Auth content — 10 pages with Callout/Steps, curl examples, Phase 1 honesty on stubbed provider paths
 - **Codecov:** Go coverage upload; badge in README; patch/project thresholds aligned to 80% handwritten scope
 - **Integration test infra (m1.0.1):** `infra/testing/testutil`, `make test-integration`, compose test (5433) or optional `testcontainers` build tag
 - Go services:
@@ -72,7 +73,7 @@
 
 ## Next 3 immediate tasks
 
-1. **Phase 1.5 Wave 6 — D.3.2 wave 2** — Proxy + Auth content sections (`feat/d3-2-proxy-auth`)
+1. **Phase 1.5 Wave 7 — D.3.2 wave 3** — Deployment content section (`feat/d3-2-deployment`)
 2. **Phase 1.5 Wave 9 — D.3.3** — Five-minute quickstart polish (`feat/d3-3-quickstart`)
 3. **Phase 2 blocked** — [2.1.1](phase-2-single-provider/milestones/2.1.1-provider-interface-and-registry.md) until Phase 1.5 launch (Wave 12)
 
