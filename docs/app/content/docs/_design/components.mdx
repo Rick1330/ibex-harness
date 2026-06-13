@@ -1,0 +1,77 @@
+---
+title: MDX components
+description: Internal showcase for Callout, Steps, CodeTabs, Endpoint, Badge, and Kbd.
+---
+
+## Callout
+
+<Callout type="note" title="Note">
+  Token validation runs before the proxy forwards any request body.
+</Callout>
+
+<Callout type="tip" title="Tip">
+  Use `make dev-smoke` after changing proxy middleware order.
+</Callout>
+
+<Callout type="warning" title="Warning">
+  Rate limiting fails open when Redis is unavailable.
+</Callout>
+
+<Callout type="danger" title="Danger">
+  Never commit PATs or API keys to the repository.
+</Callout>
+
+## Steps
+
+<Steps>
+  <Step title="Start the stack">
+    Run `make compose-dev-up` and wait for Postgres on port 5432.
+  </Step>
+  <Step title="Apply migrations">
+    Run `make db-migrate` to create core tables and RLS policies.
+  </Step>
+  <Step title="Issue a token">
+    Use the auth service gRPC API to create an org-scoped PAT.
+  </Step>
+</Steps>
+
+## CodeTabs
+
+<CodeTabs>
+  <CodeTab label="curl">
+```bash
+curl -H "Authorization: Bearer $IBEX_TOKEN" http://localhost:8080/v1/health
+```
+  </CodeTab>
+  <CodeTab label="node">
+```typescript
+const res = await fetch("http://localhost:8080/v1/health", {
+  headers: { Authorization: `Bearer ${process.env.IBEX_TOKEN}` },
+});
+```
+  </CodeTab>
+  <CodeTab label="python">
+```python
+import os, requests
+requests.get(
+    "http://localhost:8080/v1/health",
+    headers={"Authorization": f"Bearer {os.environ['IBEX_TOKEN']}"},
+)
+```
+  </CodeTab>
+</CodeTabs>
+
+## Endpoint
+
+<Endpoint method="GET" path="/v1/health" />
+<Endpoint method="POST" path="/v1/chat/completions" />
+<Endpoint method="PUT" path="/v1/tokens/{id}" />
+<Endpoint method="DELETE" path="/v1/tokens/{id}" />
+
+## Badge
+
+Inline labels: <Badge>Default</Badge> <Badge variant="beta">Beta</Badge> <Badge variant="new">New</Badge> <Badge variant="deprecated">Deprecated</Badge>
+
+## Kbd
+
+Press <Kbd>⌘</Kbd> <Kbd>K</Kbd> to open search. Use <Kbd>Ctrl</Kbd> <Kbd>C</Kbd> to copy code blocks (D.2.6).
