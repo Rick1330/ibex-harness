@@ -1,12 +1,43 @@
 ---
 title: Rate limiting
-description: Per-org and per-key request budgets enforced at the edge.
+description: Per-org request budgets enforced at the proxy edge.
 ---
 
-# Rate limiting
+The proxy enforces organization-level requests-per-minute (RPM) limits using Redis sliding windows. Limits apply after authentication succeeds and before provider routing.
 
-Per-org and per-key request budgets enforced at the edge.
-
-<Callout type="note">
-  Full content ships in Phase 1.5 Waves 6–8.
+<Callout type="warning" title="Fail-open">
+  When Redis is unreachable, rate limiting is skipped and requests proceed. This preserves availability in Phase 1; monitor Redis health in production.
 </Callout>
+
+## Configuration
+
+```bash
+# Default org RPM (all orgs without override)
+IBEX_RATE_LIMIT_DEFAULT_RPM=60
+
+# Optional per-org overrides: org_id=rpm,org_id=rpm
+IBEX_RATE_LIMIT_ORG_OVERRIDES=
+```
+
+## Response when limited
+
+Clients receive HTTP `429` with error code `RATE_LIMITED` and standard IBEX error envelope fields including `request_id`.
+
+```json
+{
+  "error": {
+    "code": "RATE_LIMITED",
+    "message": "Rate limit exceeded"
+  },
+  "request_id": "01H..."
+}
+```
+
+## Verify limiter is wired
+
+Run the proxy security integration suite (requires test Postgres):
+
+```bash
+make compose-test-up
+go test -tags=integration -run TestSecurity_SEC4 ./services/proxy/...
+```

@@ -3,10 +3,36 @@ title: Multi-tenant RLS
 description: Row-level security policies isolating tenant data in Postgres.
 ---
 
-# Multi-tenant RLS
+Postgres row-level security (RLS) ensures each organization's data is invisible to other tenants, even if application code regresses. Policies live in the `ibex_core` schema and are applied by migrations.
 
-Row-level security policies isolating tenant data in Postgres.
-
-<Callout type="note">
-  Full content ships in Phase 1.5 Waves 6–8.
+<Callout type="note" title="Defense in depth">
+  RLS complements application-level org checks. Auth queries always set the session org context before reading `tokens`, `agents`, or related tables.
 </Callout>
+
+## Protected tables (Phase 1)
+
+| Table | Isolation |
+| --- | --- |
+| `ibex_core.organizations` | Org-scoped reads |
+| `ibex_core.tokens` | Org-scoped CRUD |
+| `ibex_core.agents` | Org-scoped CRUD |
+| `ibex_core.users` | Org-scoped membership |
+
+## Apply migrations locally
+
+```bash
+make compose-dev-up
+make db-migrate
+```
+
+Migrations are idempotent and versioned under `infra/migrations/`. CI runs `db-migrate-smoke` on every pull request.
+
+## Verify RLS is active
+
+```bash
+psql "$POSTGRES_DSN" -c "SELECT tablename, rowsecurity FROM pg_tables WHERE schemaname = 'ibex_core';"
+```
+
+Expected: `rowsecurity = true` on core tenant tables.
+
+See ADR-0005 (Postgres migration strategy) in the engineering `docs/adr/` folder for policy evolution rules.

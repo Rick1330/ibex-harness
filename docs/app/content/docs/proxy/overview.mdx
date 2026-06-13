@@ -1,12 +1,43 @@
 ---
 title: Overview
-description: How the ibex harness proxy sits between clients and LLM providers.
+description: How the IBEX Harness proxy sits between clients and LLM providers.
 ---
 
-# Overview
+The proxy is the public HTTP edge for IBEX Harness. It authenticates every request, enforces agent identity and rate limits, normalizes OpenAI-compatible chat payloads, and (in Phase 2) forwards traffic to provider adapters.
 
-How the ibex harness proxy sits between clients and LLM providers.
-
-<Callout type="note">
-  Full content ships in Phase 1.5 Waves 6–8.
+<Callout type="note" title="Phase 1 scope">
+  Chat completion routes return `501 PROVIDER_NOT_CONFIGURED` until a provider adapter is registered. Auth, agent verify, validation, and rate limiting are fully exercised today.
 </Callout>
+
+## Middleware pipeline
+
+<Steps>
+  <Step title="Request ID">
+    Assigns or validates `X-Request-ID` (UUID v7) for correlation across proxy and auth logs.
+  </Step>
+  <Step title="Auth">
+    Calls auth `ValidateToken` over gRPC with the bearer PAT from the `Authorization` header.
+  </Step>
+  <Step title="Agent verify">
+    Requires `X-IBEX-Agent-ID` and confirms the agent belongs to the org in the URL path.
+  </Step>
+  <Step title="Rate limit">
+    Applies per-org RPM budgets in Redis (fail-open when Redis is down).
+  </Step>
+  <Step title="Normalize">
+    Parses and validates the JSON body before any provider handoff.
+  </Step>
+</Steps>
+
+## Health check
+
+```bash
+curl -s http://localhost:8080/health
+```
+
+Expected: HTTP 200 with JSON reporting proxy readiness.
+
+## Related
+
+- [Authentication](/docs/proxy/authentication)
+- [Configuration](/docs/proxy/configuration)

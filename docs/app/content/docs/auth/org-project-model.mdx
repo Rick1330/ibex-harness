@@ -3,10 +3,44 @@ title: Org and project model
 description: How organizations, projects, and agents relate in Phase 1.
 ---
 
-# Org and project model
+IBEX Harness scopes all runtime identity to an **organization**. Agents belong to exactly one org; tokens are issued per org and encode permissions for that tenant.
 
-How organizations, projects, and agents relate in Phase 1.
-
-<Callout type="note">
-  Full content ships in Phase 1.5 Waves 6–8.
+<Callout type="note" title="Projects in Phase 1">
+  The schema reserves project boundaries for later phases. Phase 1 proxy paths use `org_id` only — project scoping arrives with dashboard and memory features.
 </Callout>
+
+## Entity hierarchy
+
+<Steps>
+  <Step title="Organization">
+    Top-level tenant. Owns agents, tokens, and rate-limit buckets. Maps to `ibex_core.organizations`.
+  </Step>
+  <Step title="User">
+    Human operator (Phase 1 subset). Linked to org membership for token issuance audit.
+  </Step>
+  <Step title="Agent">
+    Autonomous actor that calls the proxy. Identified by `X-IBEX-Agent-ID` on each request.
+  </Step>
+  <Step title="Token">
+    PAT credential with permission bitmap, bound to org (and optionally agent).
+  </Step>
+</Steps>
+
+## URL binding
+
+The proxy enforces that the org in the path matches the validated token:
+
+```
+POST /v1/orgs/{org_id}/chat/completions
+```
+
+Cross-org access attempts return `403` — verified by `security-integration` CI.
+
+## Seed data
+
+```bash
+make db-migrate
+make db-seed
+```
+
+Inspect seeded org and agent IDs in the `make db-seed` output for local testing.

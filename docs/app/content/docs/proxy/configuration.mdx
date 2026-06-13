@@ -3,10 +3,37 @@ title: Configuration
 description: Environment variables and config files for the proxy service.
 ---
 
-# Configuration
+The proxy reads configuration from environment variables (see `services/proxy/.env.example`). Copy the example file and adjust for your environment.
 
-Environment variables and config files for the proxy service.
-
-<Callout type="note">
-  Full content ships in Phase 1.5 Waves 6–8.
+<Callout type="tip" title="Registry">
+  The full variable registry lives in the engineering docs: `docs/ENVIRONMENT_VARIABLES.md`.
 </Callout>
+
+## Required variables
+
+| Variable | Purpose |
+| --- | --- |
+| `IBEX_AUTH_GRPC_ADDR` | Auth gRPC endpoint (default `127.0.0.1:9091`) |
+| `POSTGRES_DSN` | Not used directly by proxy in Phase 1 — auth owns DB access |
+
+## Common tuning
+
+```bash
+# services/proxy/.env (excerpt)
+IBEX_PORT=8080
+IBEX_AUTH_GRPC_ADDR=127.0.0.1:9091
+IBEX_AUTH_VALIDATE_TIMEOUT=2s
+IBEX_MAX_REQUEST_BODY_BYTES=1048576
+IBEX_RATE_LIMIT_DEFAULT_RPM=60
+REDIS_ADDR=127.0.0.1:6379
+```
+
+## Verify config loads
+
+```bash
+cd services/proxy
+go run . &
+curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8080/health
+```
+
+Expected: `200` when auth gRPC and Redis are reachable.

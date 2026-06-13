@@ -3,10 +3,38 @@ title: Issuing API keys
 description: Create and rotate personal access tokens for agents and services.
 ---
 
-# Issuing API keys
+Personal Access Tokens (PATs) are the Phase 1 client credential. Each token is scoped to an organization and carries a permission bitmap. Only a hashed secret is stored — the plaintext PAT is shown once at creation.
 
-Create and rotate personal access tokens for agents and services.
-
-<Callout type="note">
-  Full content ships in Phase 1.5 Waves 6–8.
+<Callout type="danger" title="Secret handling">
+  Never log, commit, or paste PATs into tickets. Use environment variables and rotate on compromise.
 </Callout>
+
+## PAT format
+
+Tokens use the prefix `ibex_pat_` followed by a UUID segment and secret material. The auth service validates by Argon2id hash lookup in `ibex_core.tokens`.
+
+## Create via gRPC
+
+Phase 1 operators use the `CreateToken` RPC (requires an existing admin bearer). After `make db-seed`, development credentials are written to your environment:
+
+```bash
+make db-seed
+# Exports IBEX_DEV_TOKEN, IBEX_DEV_AGENT_ID, IBEX_DEV_ORG_ID for local smoke tests
+make dev-smoke
+```
+
+## Rotate a token
+
+<Steps>
+  <Step title="Revoke">
+    Call `RevokeToken` with the token ID — immediate invalidation.
+  </Step>
+  <Step title="Issue">
+    Call `CreateToken` for the same org/agent with updated permissions.
+  </Step>
+  <Step title="Deploy">
+    Update client env vars; old PAT stops working as soon as revoke succeeds.
+  </Step>
+</Steps>
+
+See [Org and project model](/docs/auth/org-project-model) for how agents map to orgs.

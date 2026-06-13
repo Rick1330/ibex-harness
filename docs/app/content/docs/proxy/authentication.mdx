@@ -3,10 +3,39 @@ title: Authentication
 description: How the proxy validates tokens and resolves agent identity.
 ---
 
-# Authentication
+Protected proxy routes require a valid Personal Access Token (PAT) and a matching agent identity header. Validation is delegated to the auth service over gRPC — the proxy never stores token hashes locally.
 
-How the proxy validates tokens and resolves agent identity.
-
-<Callout type="note">
-  Full content ships in Phase 1.5 Waves 6–8.
+<Callout type="warning" title="Fail-closed on agent">
+  Missing or cross-org `X-IBEX-Agent-ID` returns `403` before the request body is forwarded.
 </Callout>
+
+## Required headers
+
+| Header | Description |
+| --- | --- |
+| `Authorization` | `Bearer` + PAT (issued by auth service) |
+| `X-IBEX-Agent-ID` | UUID of the calling agent, must belong to URL org |
+| `Content-Type` | `application/json` on POST bodies |
+
+## Probe a protected route
+
+```bash
+curl -s -w "\nHTTP %{http_code}\n" \
+  -X POST "http://localhost:8080/v1/orgs/${IBEX_DEV_ORG_ID}/chat/completions" \
+  -H "Authorization: Bearer ${IBEX_TEST_PAT}" \
+  -H "X-IBEX-Agent-ID: ${IBEX_TEST_AGENT_ID}" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"gpt-4o","messages":[{"role":"user","content":"ping"}]}'
+```
+
+Phase 1 expected: `501` with `PROVIDER_NOT_CONFIGURED` (auth and agent checks passed).
+
+## Error codes
+
+| Code | Meaning |
+| --- | --- |
+| `401` | Missing or invalid token |
+| `403` | Agent not in org or path org mismatch |
+| `503` | Auth gRPC unavailable |
+
+See [Errors](/docs/api-reference/errors) for the full envelope.

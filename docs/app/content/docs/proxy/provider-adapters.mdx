@@ -1,12 +1,39 @@
 ---
 title: Provider adapters
-description: Pluggable adapters for OpenAI-compatible and other providers.
+description: Pluggable adapters for OpenAI-compatible and other LLM providers.
 ---
 
-# Provider adapters
+Provider adapters translate normalized IBEX requests into upstream LLM API calls and stream responses back to clients. Phase 1 ships the adapter **interface** and registry skeleton; the first OpenAI adapter lands in Phase 2.
 
-Pluggable adapters for OpenAI-compatible and other providers.
-
-<Callout type="note">
-  Full content ships in Phase 1.5 Waves 6–8.
+<Callout type="note" title="Not yet available">
+  Until an adapter is registered, all chat completion requests stop at the proxy with `501 PROVIDER_NOT_CONFIGURED`.
 </Callout>
+
+## Planned adapter contract
+
+<Steps>
+  <Step title="Register">
+    Adapter registers with the proxy provider registry at startup.
+  </Step>
+  <Step title="Forward">
+    Receives normalized chat payload + org/agent context metadata.
+  </Step>
+  <Step title="Stream">
+    Returns OpenAI-compatible SSE or JSON response to the client.
+  </Step>
+</Steps>
+
+## Phase 1 behavior
+
+```bash
+curl -s http://localhost:8080/v1/orgs/${IBEX_DEV_ORG_ID}/chat/completions \
+  -H "Authorization: Bearer ${IBEX_TEST_PAT}" \
+  -H "X-IBEX-Agent-ID: ${IBEX_TEST_AGENT_ID}" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}' \
+  | jq '.error.code'
+```
+
+Expected output: `"PROVIDER_NOT_CONFIGURED"`.
+
+Track Phase 2 progress in the [roadmap](https://github.com/Rick1330/ibex-harness/blob/main/docs/roadmap/PHASES.md).

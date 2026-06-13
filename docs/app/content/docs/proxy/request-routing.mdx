@@ -3,10 +3,39 @@ title: Request routing
 description: How requests are normalized and forwarded to provider adapters.
 ---
 
-# Request routing
+Protected chat routes follow an OpenAI-compatible URL shape. The proxy extracts the organization from the path, validates auth context against that org, then normalizes the JSON body.
 
-How requests are normalized and forwarded to provider adapters.
+<Endpoint method="POST" path="/v1/orgs/{org_id}/chat/completions" />
 
-<Callout type="note">
-  Full content ships in Phase 1.5 Waves 6–8.
+<Callout type="note" title="Phase 1">
+  Normalization and validation run end-to-end. Provider forwarding returns `501 PROVIDER_NOT_CONFIGURED` until Phase 2.
 </Callout>
+
+## Normalization rules
+
+<Steps>
+  <Step title="Content-Type">
+    POST bodies must be `application/json`.
+  </Step>
+  <Step title="Body size">
+    Rejects payloads over `IBEX_MAX_REQUEST_BODY_BYTES` (default 1 MiB).
+  </Step>
+  <Step title="Schema">
+    Parses OpenAI chat completion shape; semantic errors return `field_errors` in the envelope.
+  </Step>
+</Steps>
+
+## Minimal valid body
+
+```json
+{
+  "model": "gpt-4o",
+  "messages": [
+    { "role": "user", "content": "Hello" }
+  ]
+}
+```
+
+## Path org enforcement
+
+The `org_id` in the URL must match the organization embedded in the validated token. Mismatches return `403` with `PATH_ORG_MISMATCH` (see security integration tests).

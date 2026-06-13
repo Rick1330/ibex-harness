@@ -3,10 +3,35 @@ title: Overview
 description: The auth service issues API keys and enforces org-scoped access.
 ---
 
-# Overview
+The auth service owns identity for IBEX Harness: organizations, users, agents, and Personal Access Tokens (PATs). The proxy calls auth over gRPC on every protected request — there is no shared session cookie in Phase 1.
 
-The auth service issues API keys and enforces org-scoped access.
-
-<Callout type="note">
-  Full content ships in Phase 1.5 Waves 6–8.
+<Callout type="note" title="Phase 1 surface">
+  gRPC: `ValidateToken`, `ValidateAgent`, `CreateToken`, `RevokeToken`, `ListTokens`. HTTP: `/health`, `/ready`, `/metrics`.
 </Callout>
+
+## Service responsibilities
+
+<Steps>
+  <Step title="Issue tokens">
+    Hash PAT secrets with Argon2id and store org-scoped permission bitmaps in Postgres.
+  </Step>
+  <Step title="Validate">
+    Answer `ValidateToken` and `ValidateAgent` for the proxy middleware chain.
+  </Step>
+  <Step title="Isolate tenants">
+    Enforce row-level security on `ibex_core` tables so one org cannot read another's rows.
+  </Step>
+</Steps>
+
+## Health check
+
+```bash
+curl -s http://localhost:8081/health
+```
+
+gRPC listens separately on port `9091` (`IBEX_GRPC_PORT`).
+
+## Related
+
+- [Issuing API keys](/docs/auth/issuing-api-keys)
+- [Multi-tenant RLS](/docs/auth/multi-tenant-rls)
