@@ -57,7 +57,7 @@ export function useMermaidDiagram(chart: string, stableId?: string) {
 
   useEffect(() => {
     if (!mounted) return;
-    void renderDiagram();
+    void renderDiagram().catch(() => undefined);
   }, [mounted, renderDiagram]);
 
   return {

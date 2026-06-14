@@ -1,0 +1,5 @@
+---
+# One-time docs migration scripts are trusted local tooling, not production runtime.
+# Exclude from Codacy security scans to avoid false positives on regex-heavy transforms.
+exclude_paths:
+  - "docs/app/scripts/**"
