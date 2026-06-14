@@ -2,7 +2,7 @@ import type { LucideIcon } from "lucide-react";
 import Link from "next/link";
 import type { ReactNode } from "react";
 
-import { resolveNavIcon, SidebarIcon } from "@/lib/sidebar-icons";
+import { resolveNavIcon, createNavIconQuery, SidebarIcon } from "@/lib/sidebar-icons";
 import { cn } from "@/lib/cn";
 
 type CardGridProps = {
@@ -44,7 +44,7 @@ export function DocCard({
   category,
 }: DocCardProps) {
   const isExternal = href.startsWith("http");
-  const CardIcon = icon ?? (iconName ? resolveNavIcon({ iconName, url: href }) : undefined);
+  const CardIcon = icon ?? (iconName ? resolveNavIcon(createNavIconQuery(iconName, href)) : undefined);
 
   return (
     <Link

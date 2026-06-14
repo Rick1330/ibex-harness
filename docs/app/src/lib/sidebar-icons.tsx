@@ -5,6 +5,7 @@ import { cn } from "@/lib/cn";
 import {
   baseUrlFromPathname,
   contentPathFromUrl,
+  createNavIconQuery,
   docPathFromUrl,
   folderSectionSlugFromUrl,
   getNavIconForUrl,
@@ -28,6 +29,7 @@ export type {
 export {
   baseUrlFromPathname,
   contentPathFromUrl,
+  createNavIconQuery,
   docPathFromUrl,
   folderSectionSlugFromUrl,
   getNavIconForUrl,
@@ -56,7 +58,7 @@ export function navIconElement(
   iconName?: string,
   url?: string,
 ): ReactElement | undefined {
-  const Icon = resolveNavIcon({ iconName, url });
+  const Icon = resolveNavIcon(createNavIconQuery(iconName, url));
   if (!Icon) return undefined;
   return createElement(SidebarIcon, { icon: Icon });
 }
@@ -65,7 +67,7 @@ export function roadmapNavIconElement(
   iconName?: string,
   url?: string,
 ): ReactElement | undefined {
-  const Icon = resolveRoadmapNavIcon({ iconName, url });
+  const Icon = resolveRoadmapNavIcon(createNavIconQuery(iconName, url));
   if (!Icon) return undefined;
   return createElement(SidebarIcon, { icon: Icon });
 }
