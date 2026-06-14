@@ -124,3 +124,7 @@ export function shortenTitle(longTitle, milestoneId, filePath) {
   }
   return shortenDefaultTitle(longTitle);
 }
+
+export function shortenTitleFromFile(longTitle, milestoneId, absPath) {
+  return shortenTitle(longTitle, milestoneId, absPath);
+}

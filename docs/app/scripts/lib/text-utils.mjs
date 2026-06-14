@@ -26,6 +26,16 @@ export function extractBoldField(content, label) {
   return raw.trim();
 }
 
+function endOfSection(content, start) {
+  const endMarkers = ["\n## ", "\n---"];
+  let end = content.length;
+  for (const marker of endMarkers) {
+    const markerIndex = content.indexOf(marker, start);
+    if (markerIndex !== -1 && markerIndex < end) end = markerIndex;
+  }
+  return end;
+}
+
 export function extractSectionAfterHeading(content, heading) {
   const needle = `## ${heading}`;
   const startIndex = content.toLowerCase().indexOf(needle.toLowerCase());
@@ -37,14 +47,7 @@ export function extractSectionAfterHeading(content, heading) {
 
   while (content[start] === "\n") start += 1;
 
-  const endMarkers = ["\n## ", "\n---"];
-  let end = content.length;
-  for (const marker of endMarkers) {
-    const markerIndex = content.indexOf(marker, start);
-    if (markerIndex !== -1 && markerIndex < end) end = markerIndex;
-  }
-
-  return content.slice(start, end).trim();
+  return content.slice(start, endOfSection(content, start)).trim();
 }
 
 export function findYamlLine(fm, key) {

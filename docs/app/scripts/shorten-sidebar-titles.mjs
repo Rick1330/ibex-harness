@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { readYamlValue, setYamlField } from "./lib/yaml-frontmatter.mjs";
-import { shortenTitle } from "./lib/shorten-title-helpers.mjs";
+import { shortenTitleFromFile } from "./lib/shorten-title-helpers.mjs";
 import {
   findYamlLine,
   readYamlLineValue,
@@ -32,7 +32,7 @@ function processFile(abs) {
     ? readYamlValue(readYamlLineValue(milestoneIdLine, "milestoneId") ?? "")
     : undefined;
 
-  const short = shortenTitle(longTitle, milestoneId, abs);
+  const short = shortenTitleFromFile(longTitle, milestoneId, abs);
 
   let fm = match[1];
   if (!fm.includes("fullTitle:") && longTitle !== short) {

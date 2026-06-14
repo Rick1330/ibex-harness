@@ -5,6 +5,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { rewriteMarkdownLinks } from "./lib/markdown-link-rewrite.mjs";
+import {
+  isAdrPath,
+  resolveRoadmapLinkTarget,
+} from "./lib/roadmap-link-target.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../content/roadmap");
 
@@ -33,26 +37,6 @@ const ADR_SLUGS = new Map([
   ["ADR-0023-docs-site-architecture.md", "0023-docs-site-architecture"],
 ]);
 
-const FILE_RENAMES = new Map([
-  ["PHASE1_EXIT_AUDIT.md", "phase1-exit-audit"],
-  ["TEST_ARCHITECTURE.md", "test-architecture"],
-  ["CI_AUDIT.md", "ci-audit"],
-  ["MASTER_BRIEF.md", "master-brief"],
-  ["CONTENT_SOURCES.md", "content-sources"],
-  ["1.2.6-and-1.2.7-reqid-and-shutdown.md", "1.2.6-request-id-correlation-middleware"],
-]);
-
-const SPECIAL_HREFS = new Map([
-  ["CURRENT_STATE.md", "/roadmap/current-state"],
-  ["FINDINGS.md", "/roadmap/findings"],
-  ["PHASES.md", "/roadmap/overview"],
-  ["../CURRENT_STATE.md", "/roadmap/current-state"],
-  ["../FINDINGS.md", "/roadmap/findings"],
-  ["../PHASES.md", "/roadmap/overview"],
-  ["../../CURRENT_STATE.md", "/roadmap/current-state"],
-  ["../../FINDINGS.md", "/roadmap/findings"],
-]);
-
 function adrHref(href) {
   const base = path.basename(href.replace(/\\/g, "/"));
   const slug = ADR_SLUGS.get(base);
@@ -62,70 +46,9 @@ function adrHref(href) {
   return null;
 }
 
-function isPassthroughHref(normalized) {
-  return (
-    normalized.startsWith("http") ||
-    normalized.startsWith("/") ||
-    normalized.startsWith("#")
-  );
-}
-
 function tryAdrHref(normalized) {
   if (!normalized.includes("/adr/") && !normalized.startsWith("adr/")) return null;
   return adrHref(normalized);
-}
-
-function joinRelativePath(rel, fileDir) {
-  const parts = fileDir.split("/").filter(Boolean);
-  for (const seg of rel.split("/")) {
-    if (seg === "..") parts.pop();
-    else if (seg !== ".") parts.push(seg);
-  }
-  return parts.join("/");
-}
-
-function normalizeRelativePath(normalized, fileDir) {
-  let rel = normalized.startsWith("./") ? normalized.slice(2) : normalized;
-  if (rel.startsWith("../")) return joinRelativePath(rel, fileDir);
-  if (rel.startsWith("phase-")) return rel;
-  return `${fileDir}/${rel}`.replace(/\/+/g, "/");
-}
-
-function stripMarkdownExtension(rel, fileDir) {
-  const base = path.basename(rel);
-  if (FILE_RENAMES.has(base)) return rel.replace(base, FILE_RENAMES.get(base));
-  if (base === "README.md") {
-    const stripped = rel.replace(/\/README\.md$/, "").replace(/README\.md$/, "");
-    return stripped || fileDir;
-  }
-  if (base.endsWith(".md")) return rel.slice(0, -3);
-  return rel;
-}
-
-function toRoadmapUrl(rel) {
-  const cleaned = rel.replace(/\\/g, "/").replace(/\/index$/, "");
-  return `/roadmap/${cleaned.replace(/^\/+/, "")}`;
-}
-
-function resolveRoadmapHref(href, fileDir) {
-  const normalized = href.replace(/\\/g, "/");
-  if (isPassthroughHref(normalized)) return href;
-
-  const adr = tryAdrHref(normalized);
-  if (adr) return adr;
-
-  if (SPECIAL_HREFS.has(normalized)) return SPECIAL_HREFS.get(normalized);
-
-  const rel = stripMarkdownExtension(
-    normalizeRelativePath(normalized, fileDir),
-    fileDir,
-  );
-  return toRoadmapUrl(rel);
-}
-
-function isAdrPath(pathPart) {
-  const base = path.basename(pathPart.replaceAll("\\", "/"));
-  return pathPart.includes("/adr/") || base.toUpperCase().startsWith("ADR-");
 }
 
 function rewriteMarkdownFileLink(link, fileDir) {
@@ -134,7 +57,7 @@ function rewriteMarkdownFileLink(link, fileDir) {
     if (adr) return `[${link.text}](${adr}${link.hash ? `#${link.hash}` : ""})`;
   }
 
-  const resolved = resolveRoadmapHref(link.pathPart, fileDir);
+  const resolved = resolveRoadmapLinkTarget(link.pathPart, fileDir, tryAdrHref);
   return `[${link.text}](${resolved}${link.hash ? `#${link.hash}` : ""})`;
 }
 
@@ -149,9 +72,7 @@ function fixLinks(content, fileDir) {
 
   out = out.replaceAll("](../adr/", "](/docs/adr/");
   out = out.replaceAll("](adr/", "](/docs/adr/");
-
   out = out.replaceAll("`docs/roadmap/", "`docs/app/content/roadmap/");
-
   out = fixMarkdownFileLinks(out, fileDir);
 
   return out;
