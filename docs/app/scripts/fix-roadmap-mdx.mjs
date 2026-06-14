@@ -28,9 +28,27 @@ function extractField(text, label) {
   return text.match(re)?.[1]?.trim();
 }
 
+function describeComplete(title, completed) {
+  if (!completed) return `${title} — complete.`;
+  return `${title} — complete as of ${completed.replace(/\.$/, "")}.`;
+}
+
+function describeInProgress(title, milestone) {
+  const current = milestone?.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
+  if (!current) return `${title} — in progress.`;
+  return `${title} — in progress. Current: ${current}.`;
+}
+
+function describePlanned(title, duration, depends) {
+  const parts = [`${title} — planned.`];
+  if (duration) parts.push(`Estimated ${duration.toLowerCase()}.`);
+  if (depends) parts.push(`Depends on ${depends.toLowerCase()}.`);
+  return parts.join(" ");
+}
+
 function cleanDescription(raw, title) {
   const text = raw.replace(/\\n/g, "\n").replace(/\*\*/g, "");
-  if (!text.includes("Status:") && !text.includes("Status:")) {
+  if (!text.includes("Status:")) {
     return text.replace(/\s+/g, " ").trim();
   }
 
@@ -40,23 +58,10 @@ function cleanDescription(raw, title) {
   const depends = extractField(text, "Depends on") ?? text.match(/Depends on:\s*([^\n]+)/i)?.[1]?.trim();
   const milestone = extractField(text, "Current milestone") ?? text.match(/Current milestone:\s*([^\n]+)/i)?.[1]?.trim();
 
-  if (status?.toLowerCase().includes("complete")) {
-    return completed
-      ? `${title} — complete as of ${completed.replace(/\.$/, "")}.`
-      : `${title} — complete.`;
-  }
-  if (status?.toLowerCase().includes("progress")) {
-    const current = milestone?.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
-    return current
-      ? `${title} — in progress. Current: ${current}.`
-      : `${title} — in progress.`;
-  }
-  if (status?.toLowerCase().includes("planned")) {
-    const parts = [`${title} — planned.`];
-    if (duration) parts.push(`Estimated ${duration.toLowerCase()}.`);
-    if (depends) parts.push(`Depends on ${depends.toLowerCase()}.`);
-    return parts.join(" ");
-  }
+  const lower = status?.toLowerCase() ?? "";
+  if (lower.includes("complete")) return describeComplete(title, completed);
+  if (lower.includes("progress")) return describeInProgress(title, milestone);
+  if (lower.includes("planned")) return describePlanned(title, duration, depends);
   return text.replace(/\s+/g, " ").trim();
 }
 

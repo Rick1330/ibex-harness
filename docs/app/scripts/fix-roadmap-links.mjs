@@ -40,6 +40,17 @@ const FILE_RENAMES = new Map([
   ["1.2.6-and-1.2.7-reqid-and-shutdown.md", "1.2.6-request-id-correlation-middleware"],
 ]);
 
+const SPECIAL_HREFS = new Map([
+  ["CURRENT_STATE.md", "/roadmap/current-state"],
+  ["FINDINGS.md", "/roadmap/findings"],
+  ["PHASES.md", "/roadmap/overview"],
+  ["../CURRENT_STATE.md", "/roadmap/current-state"],
+  ["../FINDINGS.md", "/roadmap/findings"],
+  ["../PHASES.md", "/roadmap/overview"],
+  ["../../CURRENT_STATE.md", "/roadmap/current-state"],
+  ["../../FINDINGS.md", "/roadmap/findings"],
+]);
+
 function adrHref(href) {
   const base = path.basename(href.replace(/\\/g, "/"));
   const slug = ADR_SLUGS.get(base);
@@ -49,57 +60,65 @@ function adrHref(href) {
   return null;
 }
 
+function isPassthroughHref(normalized) {
+  return (
+    normalized.startsWith("http") ||
+    normalized.startsWith("/") ||
+    normalized.startsWith("#")
+  );
+}
+
+function tryAdrHref(normalized) {
+  if (!normalized.includes("/adr/") && !normalized.startsWith("adr/")) return null;
+  return adrHref(normalized);
+}
+
+function joinRelativePath(rel, fileDir) {
+  const parts = fileDir.split("/").filter(Boolean);
+  for (const seg of rel.split("/")) {
+    if (seg === "..") parts.pop();
+    else if (seg !== ".") parts.push(seg);
+  }
+  return parts.join("/");
+}
+
+function normalizeRelativePath(normalized, fileDir) {
+  let rel = normalized.startsWith("./") ? normalized.slice(2) : normalized;
+  if (rel.startsWith("../")) return joinRelativePath(rel, fileDir);
+  if (rel.startsWith("phase-")) return rel;
+  return `${fileDir}/${rel}`.replace(/\/+/g, "/");
+}
+
+function stripMarkdownExtension(rel, fileDir) {
+  const base = path.basename(rel);
+  if (FILE_RENAMES.has(base)) return rel.replace(base, FILE_RENAMES.get(base));
+  if (base === "README.md") {
+    const stripped = rel.replace(/\/README\.md$/, "").replace(/README\.md$/, "");
+    return stripped || fileDir;
+  }
+  if (base.endsWith(".md")) return rel.slice(0, -3);
+  return rel;
+}
+
+function toRoadmapUrl(rel) {
+  const cleaned = rel.replace(/\\/g, "/").replace(/\/index$/, "");
+  return `/roadmap/${cleaned.replace(/^\/+/, "")}`;
+}
+
 function resolveRoadmapHref(href, fileDir) {
   const normalized = href.replace(/\\/g, "/");
+  if (isPassthroughHref(normalized)) return href;
 
-  if (normalized.startsWith("http") || normalized.startsWith("/") || normalized.startsWith("#")) {
-    return href;
-  }
+  const adr = tryAdrHref(normalized);
+  if (adr) return adr;
 
-  if (normalized.includes("/adr/") || normalized.startsWith("adr/")) {
-    const adr = adrHref(normalized);
-    if (adr) return adr;
-  }
+  if (SPECIAL_HREFS.has(normalized)) return SPECIAL_HREFS.get(normalized);
 
-  const special = new Map([
-    ["CURRENT_STATE.md", "/roadmap/current-state"],
-    ["FINDINGS.md", "/roadmap/findings"],
-    ["PHASES.md", "/roadmap/overview"],
-    ["../CURRENT_STATE.md", "/roadmap/current-state"],
-    ["../FINDINGS.md", "/roadmap/findings"],
-    ["../PHASES.md", "/roadmap/overview"],
-    ["../../CURRENT_STATE.md", "/roadmap/current-state"],
-    ["../../FINDINGS.md", "/roadmap/findings"],
-  ]);
-  if (special.has(normalized)) return special.get(normalized);
-
-  let rel = normalized;
-  if (rel.startsWith("./")) rel = rel.slice(2);
-  if (rel.startsWith("../")) {
-    const parts = fileDir.split("/").filter(Boolean);
-    const segments = rel.split("/");
-    for (const seg of segments) {
-      if (seg === "..") parts.pop();
-      else if (seg !== ".") parts.push(seg);
-    }
-    rel = parts.join("/");
-  } else if (!rel.startsWith("phase-")) {
-    rel = `${fileDir}/${rel}`.replace(/\/+/g, "/");
-  }
-
-  rel = rel.replace(/\\/g, "/");
-  const base = path.basename(rel);
-  if (FILE_RENAMES.has(base)) {
-    rel = rel.replace(base, FILE_RENAMES.get(base));
-  } else if (base === "README.md") {
-    rel = rel.replace(/\/README\.md$/, "").replace(/README\.md$/, "");
-    if (!rel) rel = fileDir;
-  } else if (base.endsWith(".md")) {
-    rel = rel.slice(0, -3);
-  }
-
-  rel = rel.replace(/\/index$/, "");
-  return `/roadmap/${rel.replace(/^\/+/, "")}`;
+  const rel = stripMarkdownExtension(
+    normalizeRelativePath(normalized, fileDir),
+    fileDir,
+  );
+  return toRoadmapUrl(rel);
 }
 
 function fixLinks(content, fileDir) {
@@ -154,21 +173,27 @@ function readYamlValue(raw) {
   return trimmed.replace(/^"|"$/g, "");
 }
 
+function processMdxFile(abs, rel) {
+  const fileDir = path.dirname(rel.replace(/\\/g, "/"));
+  const raw = fs.readFileSync(abs, "utf8");
+  const match = raw.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
+  if (!match) return;
+
+  const dirForGoal = fileDir === "." ? "" : fileDir;
+  const fm = fixGoalInFrontmatter(match[1], dirForGoal);
+  const body = fixLinks(match[2], fileDir === "." ? "" : fileDir);
+  fs.writeFileSync(abs, `---\n${fm}\n---\n${body}`, "utf8");
+}
+
 function walk(dir, relDir = "") {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const abs = path.join(dir, entry.name);
     const rel = relDir ? `${relDir}/${entry.name}` : entry.name;
-    if (entry.isDirectory()) walk(abs, rel.replace(/\/index\.mdx$/, ""));
-    else if (entry.name.endsWith(".mdx")) {
-      const fileDir = path.dirname(rel.replace(/\\/g, "/"));
-      const raw = fs.readFileSync(abs, "utf8");
-      const match = raw.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
-      if (!match) continue;
-      const dirForGoal = fileDir === "." ? "" : fileDir;
-      const fm = fixGoalInFrontmatter(match[1], dirForGoal);
-      const fixed = `---\n${fm}\n---\n${fixLinks(match[2], fileDir === "." ? "" : fileDir)}`;
-      fs.writeFileSync(abs, fixed, "utf8");
+    if (entry.isDirectory()) {
+      walk(abs, rel.replace(/\/index\.mdx$/, ""));
+      continue;
     }
+    if (entry.name.endsWith(".mdx")) processMdxFile(abs, rel);
   }
 }
 

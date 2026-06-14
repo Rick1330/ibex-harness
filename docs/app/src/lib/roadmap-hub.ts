@@ -67,6 +67,34 @@ export function getOverallRoadmapStats() {
   return { counts, total, completed, progressPct };
 }
 
+function resolvePhaseStatus(
+  slug: PhaseSlug,
+  stats: ReturnType<typeof getPhaseStats>,
+  phaseStatus: MilestoneStatus | undefined,
+): MilestoneStatus | undefined {
+  let status = phaseStatus;
+  if (!status && stats.total > 0) {
+    if (stats.completed === stats.total) status = "completed";
+    else if (stats.counts["in-progress"] > 0) status = "in-progress";
+    else status = "planned";
+  }
+  if (slug === "phase-1-5-docs-site" && !status) return "in-progress";
+  if (slug === "phase-0-foundation" || slug === "phase-1-core-platform") {
+    return "completed";
+  }
+  if (slug === "phase-2-single-provider" && !status) return "planned";
+  return status;
+}
+
+function resolvePhaseDescription(index: ReturnType<typeof getPhaseIndexPage>) {
+  const rawDesc = index?.data.description as string | undefined;
+  if (rawDesc && !rawDesc.includes("**")) return rawDesc;
+
+  const summary = index?.data.summary as string | undefined;
+  if (summary?.includes("**")) return undefined;
+  return summary;
+}
+
 export function getPhaseCards() {
   return PHASE_SLUGS.map((slug) => {
     const index = getPhaseIndexPage(slug);
@@ -79,32 +107,12 @@ export function getPhaseCards() {
         slug,
       );
 
-    let status: MilestoneStatus | undefined = phaseStatus;
-    if (!status && stats.total > 0) {
-      if (stats.completed === stats.total) status = "completed";
-      else if (stats.counts["in-progress"] > 0) status = "in-progress";
-      else status = "planned";
-    }
-    if (slug === "phase-1-5-docs-site" && !status) status = "in-progress";
-    if (slug === "phase-0-foundation" || slug === "phase-1-core-platform") {
-      status = "completed";
-    }
-    if (slug === "phase-2-single-provider" && !status) status = "planned";
-
-    const rawDesc = index?.data.description as string | undefined;
-    const description =
-      rawDesc && !rawDesc.includes("**")
-        ? rawDesc
-        : (index?.data.summary as string | undefined)?.includes("**")
-          ? undefined
-          : (index?.data.summary as string | undefined);
-
     return {
       slug,
       title: index?.data.title ?? slug,
-      description,
+      description: resolvePhaseDescription(index),
       subtitle: index?.data.estimatedEffort as string | undefined,
-      status,
+      status: resolvePhaseStatus(slug, stats, phaseStatus),
       completed: stats.completed,
       total: stats.total,
       milestonesPending,
