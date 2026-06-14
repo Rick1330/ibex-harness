@@ -20,6 +20,18 @@ type MdxMermaidNode = {
   children: [];
 };
 
+function buildMermaidMdxNode(chart: string, diagramId: string): MdxMermaidNode {
+  return {
+    type: "mdxJsxFlowElement",
+    name: "Mermaid",
+    attributes: [
+      { type: "mdxJsxAttribute", name: "id", value: diagramId },
+      { type: "mdxJsxAttribute", name: "chart", value: chart },
+    ],
+    children: [],
+  };
+}
+
 export function remarkMdxMermaid(options: RemarkMdxMermaidOptions = {}) {
   const lang = options.lang ?? "mermaid";
 
@@ -29,26 +41,7 @@ export function remarkMdxMermaid(options: RemarkMdxMermaidOptions = {}) {
 
       const chart = node.value.trim();
       const diagramId = `diagram-${hashString(chart)}`;
-
-      const mdxNode: MdxMermaidNode = {
-        type: "mdxJsxFlowElement",
-        name: "Mermaid",
-        attributes: [
-          {
-            type: "mdxJsxAttribute",
-            name: "id",
-            value: diagramId,
-          },
-          {
-            type: "mdxJsxAttribute",
-            name: "chart",
-            value: node.value,
-          },
-        ],
-        children: [],
-      };
-
-      parent.children[index] = mdxNode as (typeof parent.children)[number];
+      parent.children[index] = buildMermaidMdxNode(chart, diagramId) as (typeof parent.children)[number];
     });
   };
 }

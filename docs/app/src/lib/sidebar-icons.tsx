@@ -14,29 +14,69 @@ import {
 
 export type ContentBaseUrl = "/docs" | "/roadmap";
 
+export type DocsContentPath = string & { readonly __brand: "DocsContentPath" };
+export type RoadmapContentPath = string & { readonly __brand: "RoadmapContentPath" };
+
+function toDocsPath(path: string): DocsContentPath {
+  return path as DocsContentPath;
+}
+
+function toRoadmapPath(path: string): RoadmapContentPath {
+  return path as RoadmapContentPath;
+}
+
 export function contentPathFromUrl(
   url: string,
   baseUrl: ContentBaseUrl = "/docs",
-): string {
+): DocsContentPath | RoadmapContentPath {
   const prefix = baseUrl === "/docs" ? /^\/docs\/?/ : /^\/roadmap\/?/;
-  return url.replace(prefix, "").replace(/\/$/, "");
+  const stripped = url.replace(prefix, "").replace(/\/$/, "");
+  return baseUrl === "/docs" ? toDocsPath(stripped) : toRoadmapPath(stripped);
 }
 
 /** @deprecated Use contentPathFromUrl(url, "/docs") */
-export function docPathFromUrl(url: string): string {
-  return contentPathFromUrl(url, "/docs");
+export function docPathFromUrl(url: string): DocsContentPath {
+  const prefix = /^\/docs\/?/;
+  return toDocsPath(url.replace(prefix, "").replace(/\/$/, ""));
+}
+
+type NavIconResolver = {
+  baseUrl: ContentBaseUrl;
+  fallback: LucideIcon;
+  lookup: (path: string) => LucideIcon | undefined;
+};
+
+const NAV_ICON_RESOLVERS: NavIconResolver[] = [
+  {
+    baseUrl: "/roadmap",
+    fallback: FileText,
+    lookup: (path) => lookupRoadmapPathIcon(path),
+  },
+  {
+    baseUrl: "/docs",
+    fallback: FileCode,
+    lookup: (path) => lookupDocsPathIcon(path),
+  },
+];
+
+function resolveNamedOrPath(
+  iconName: string | undefined,
+  url: string | undefined,
+  resolver: NavIconResolver,
+): LucideIcon {
+  const named = iconName ? iconFromLucideName(iconName) : undefined;
+  if (named) return named;
+  if (!url) return resolver.fallback;
+
+  const path = contentPathFromUrl(url, resolver.baseUrl);
+  return resolver.lookup(path) ?? resolver.fallback;
 }
 
 export function resolveRoadmapNavIcon(
   iconName?: string,
   url?: string,
 ): LucideIcon | undefined {
-  const named = iconName ? iconFromLucideName(iconName) : undefined;
-  if (named) return named;
-  if (!url) return FileText;
-
-  const path = contentPathFromUrl(url, "/roadmap");
-  return lookupRoadmapPathIcon(path) ?? FileText;
+  return resolveNamedOrPath(iconName, url, NAV_ICON_RESOLVERS[0]);
 }
 
 export function resolveNavIcon(
@@ -46,13 +86,7 @@ export function resolveNavIcon(
   if (url?.startsWith("/roadmap")) {
     return resolveRoadmapNavIcon(iconName, url);
   }
-
-  const named = iconName ? iconFromLucideName(iconName) : undefined;
-  if (named) return named;
-  if (!url) return FileCode;
-
-  const path = contentPathFromUrl(url, "/docs");
-  return lookupDocsPathIcon(path) ?? FileCode;
+  return resolveNamedOrPath(iconName, url, NAV_ICON_RESOLVERS[1]);
 }
 
 type SidebarIconProps = {
@@ -96,16 +130,17 @@ export function getRoadmapIconForUrl(url: string): LucideIcon {
   return resolveRoadmapNavIcon(undefined, url) ?? FileText;
 }
 
+const ROADMAP_SECTION_ICON_LOOKUP: Record<string, LucideIcon> = {
+  ...ROADMAP_PHASE_ICONS,
+  ...ROADMAP_SECTION_ICONS,
+};
+
 export function getSectionIconForSlug(
   sectionSlug: string,
   baseUrl: ContentBaseUrl = "/docs",
 ): LucideIcon {
   if (baseUrl === "/roadmap") {
-    return (
-      ROADMAP_PHASE_ICONS[sectionSlug] ??
-      ROADMAP_SECTION_ICONS[sectionSlug] ??
-      FileText
-    );
+    return ROADMAP_SECTION_ICON_LOOKUP[sectionSlug] ?? FileText;
   }
 
   return resolveNavIcon(undefined, `/docs/${sectionSlug}`) ?? FileCode;

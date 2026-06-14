@@ -1,6 +1,6 @@
 "use client";
 
-import { FileCode, Terminal } from "lucide-react";
+import { FileCode, Terminal, type LucideIcon } from "lucide-react";
 import {
   forwardRef,
   useCallback,
@@ -12,6 +12,7 @@ import {
 import { CopyButton } from "@/components/mdx/copy-button";
 import {
   getLanguageDisplayLabel,
+  isShellLanguage,
   languageFromChildren,
   parseCodeLanguage,
   resolveCodeLanguage,
@@ -24,9 +25,67 @@ export type PreProps = HTMLAttributes<HTMLPreElement> & {
   "data-language"?: string;
 };
 
-function isShellLanguage(lang?: string) {
-  if (!lang) return false;
-  return ["bash", "sh", "shell", "zsh", "shellscript"].includes(lang);
+type CodeblockHeaderProps = {
+  tabLabel: string;
+  LabelIcon: LucideIcon;
+  onCopy: () => Promise<void>;
+};
+
+function CodeblockHeader({ tabLabel, LabelIcon, onCopy }: CodeblockHeaderProps) {
+  return (
+    <div className="codeblock-header">
+      <figcaption className="codeblock-tab" data-rehype-pretty-code-title="">
+        <LabelIcon
+          aria-hidden
+          className="codeblock-tab-icon size-3.5 shrink-0 opacity-60"
+          strokeWidth={2}
+        />
+        <span className="truncate">{tabLabel}</span>
+      </figcaption>
+      <CopyButton className="codeblock-copy" onCopy={onCopy} />
+    </div>
+  );
+}
+
+type CodeblockBodyProps = {
+  areaRef: React.RefObject<HTMLDivElement | null>;
+  showHeader: boolean;
+  onCopy: () => Promise<void>;
+  preRef: React.Ref<HTMLPreElement>;
+  className?: string;
+  dataLanguage?: string;
+  lang?: string;
+  children: ReactNode;
+  preProps: HTMLAttributes<HTMLPreElement>;
+};
+
+function CodeblockBody({
+  areaRef,
+  showHeader,
+  onCopy,
+  preRef,
+  className,
+  dataLanguage,
+  lang,
+  children,
+  preProps,
+}: CodeblockBodyProps) {
+  return (
+    <div ref={areaRef} className="codeblock-body">
+      {!showHeader ? <CopyButton className="codeblock-copy" onCopy={onCopy} /> : null}
+      <pre
+        ref={preRef}
+        className={cn(
+          "overflow-x-auto font-mono text-[0.875rem] leading-[1.75] focus-visible:outline-none",
+          className,
+        )}
+        data-language={dataLanguage ?? lang}
+        {...preProps}
+      >
+        {children}
+      </pre>
+    </div>
+  );
 }
 
 export const Pre = forwardRef<HTMLPreElement, PreProps>(function Pre(
@@ -34,7 +93,7 @@ export const Pre = forwardRef<HTMLPreElement, PreProps>(function Pre(
     title,
     className,
     children,
-    icon,
+    icon: _icon,
     "data-language": dataLanguage,
     ...props
   },
@@ -42,9 +101,7 @@ export const Pre = forwardRef<HTMLPreElement, PreProps>(function Pre(
 ) {
   const areaRef = useRef<HTMLDivElement>(null);
   const lang =
-    dataLanguage ??
-    parseCodeLanguage(className) ??
-    languageFromChildren(children);
+    dataLanguage ?? parseCodeLanguage(className) ?? languageFromChildren(children);
   const tabLabel = getLanguageDisplayLabel(lang, title);
   const meta = resolveCodeLanguage(lang, title);
   const languageId = meta?.id ?? lang ?? "code";
@@ -72,45 +129,20 @@ export const Pre = forwardRef<HTMLPreElement, PreProps>(function Pre(
       {...(title ? { title } : {})}
     >
       {showHeader ? (
-        <div className="codeblock-header">
-          <figcaption
-            className="codeblock-tab"
-            data-rehype-pretty-code-title=""
-          >
-            {typeof icon === "string" ? (
-              <span
-                aria-hidden
-                className="codeblock-tab-icon [&_svg]:size-3.5"
-                dangerouslySetInnerHTML={{ __html: icon }}
-              />
-            ) : (
-              <LabelIcon
-                aria-hidden
-                className="codeblock-tab-icon size-3.5 shrink-0 opacity-60"
-                strokeWidth={2}
-              />
-            )}
-            <span className="truncate">{tabLabel}</span>
-          </figcaption>
-          <CopyButton className="codeblock-copy" onCopy={onCopy} />
-        </div>
+        <CodeblockHeader tabLabel={tabLabel!} LabelIcon={LabelIcon} onCopy={onCopy} />
       ) : null}
-      <div ref={areaRef} className="codeblock-body">
-        {!showHeader ? (
-          <CopyButton className="codeblock-copy" onCopy={onCopy} />
-        ) : null}
-        <pre
-          ref={ref}
-          className={cn(
-            "overflow-x-auto font-mono text-[0.875rem] leading-[1.75] focus-visible:outline-none",
-            className,
-          )}
-          data-language={dataLanguage ?? lang}
-          {...props}
-        >
-          {children}
-        </pre>
-      </div>
+      <CodeblockBody
+        areaRef={areaRef}
+        showHeader={showHeader}
+        onCopy={onCopy}
+        preRef={ref}
+        className={className}
+        dataLanguage={dataLanguage}
+        lang={lang}
+        preProps={props}
+      >
+        {children}
+      </CodeblockBody>
     </figure>
   );
 });

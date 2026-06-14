@@ -38,7 +38,8 @@ export function trackMigratedPage(ctx, destName, rel) {
   }
 }
 
-export function processMarkdownEntry(ctx, entry, abs, rel, relPath) {
+export function processMarkdownEntry(ctx, entryDescriptor) {
+  const { entry, abs, rel, relPath } = entryDescriptor;
   let content = fs.readFileSync(abs, "utf8");
   const fields = parseFrontmatterFields(content, abs);
   const destName = resolveDestName(ctx.phaseDir, entry, rel, relPath);
@@ -63,7 +64,7 @@ export function walkPhaseDir(ctx, dir, rel = "") {
     }
 
     if (!entry.name.endsWith(".md")) continue;
-    processMarkdownEntry(ctx, entry, abs, rel, relPath);
+    processMarkdownEntry(ctx, { entry, abs, rel, relPath });
   }
 }
 

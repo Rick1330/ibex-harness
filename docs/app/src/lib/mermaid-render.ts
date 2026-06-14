@@ -16,14 +16,29 @@ export function createMermaidRenderId(diagramKey: string, chartHash: string) {
   return `mermaid-${diagramKey}-${chartHash}-${diagramCounter}`;
 }
 
+export type MermaidRenderOptions = {
+  uniqueId: string;
+  normalizedChart: string;
+  isDark: boolean;
+  isCurrent: () => boolean;
+};
+
+function mountSvg(host: HTMLDivElement, svg: string) {
+  host.replaceChildren();
+  const doc = new DOMParser().parseFromString(svg, "image/svg+xml");
+  const root = doc.documentElement;
+  if (root?.tagName === "parsererror") {
+    throw new Error("Diagram SVG parse failed");
+  }
+  host.append(root);
+}
+
 export async function renderMermaidChart(
   host: HTMLDivElement,
-  uniqueId: string,
-  normalizedChart: string,
-  isDark: boolean,
-  isCurrent: () => boolean,
+  options: MermaidRenderOptions,
 ) {
-  host.innerHTML = "";
+  const { uniqueId, normalizedChart, isDark, isCurrent } = options;
+  host.replaceChildren();
 
   const mermaid = (await import("mermaid")).default;
   const config = getMermaidInitConfig(isDark);
@@ -37,7 +52,7 @@ export async function renderMermaidChart(
   const result = await mermaid.render(uniqueId, normalizedChart);
   if (!isCurrent()) return null;
 
-  host.innerHTML = applyMermaidSvgTheme(result.svg, isDark);
+  mountSvg(host, applyMermaidSvgTheme(result.svg, isDark));
   return result.svg;
 }
 

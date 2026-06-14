@@ -41,7 +41,12 @@ export function useMermaidDiagram(chart: string, stableId?: string) {
 
     try {
       const isCurrent = () => renderIdRef.current === uniqueId;
-      await renderMermaidChart(host, uniqueId, normalizedChart, isDark, isCurrent);
+      await renderMermaidChart(host, {
+        uniqueId,
+        normalizedChart,
+        isDark,
+        isCurrent,
+      });
       if (isCurrent()) setRendering(false);
     } catch (err) {
       if (renderIdRef.current !== uniqueId) return;

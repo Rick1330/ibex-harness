@@ -13,37 +13,46 @@ function isMajorSectionBreak(line) {
   return line.startsWith("## ");
 }
 
-function flushChunk(chunks, current) {
-  if (current.length === 0) return;
-  chunks.push(current.join("\n"));
+function flushChunk(state) {
+  if (state.current.length === 0) return;
+  state.chunks.push(state.current.join("\n"));
+}
+
+function handleHeadingLine(line, state) {
+  const title = normalizeHeadingTitle(line);
+  if (title && matchesWantedSection(title, state.sectionTitles)) {
+    flushChunk(state);
+    state.current = [line];
+    state.capturing = true;
+    return;
+  }
+
+  if (state.capturing && isMajorSectionBreak(line)) {
+    flushChunk(state);
+    state.current = [];
+    state.capturing = false;
+  }
+}
+
+function createExtractState(sectionTitles) {
+  return {
+    sectionTitles,
+    chunks: [],
+    capturing: false,
+    current: [],
+  };
 }
 
 export function extractSections(markdown, sectionTitles) {
   if (!sectionTitles?.length) return markdown;
 
-  const lines = markdown.split("\n");
-  const chunks = [];
-  let capturing = false;
-  let current = [];
+  const state = createExtractState(sectionTitles);
 
-  for (const line of lines) {
-    const title = normalizeHeadingTitle(line);
-    if (title && matchesWantedSection(title, sectionTitles)) {
-      flushChunk(chunks, current);
-      current = [line];
-      capturing = true;
-      continue;
-    }
-
-    if (capturing && isMajorSectionBreak(line)) {
-      flushChunk(chunks, current);
-      current = [];
-      capturing = false;
-    }
-
-    if (capturing) current.push(line);
+  for (const line of markdown.split("\n")) {
+    handleHeadingLine(line, state);
+    if (state.capturing) state.current.push(line);
   }
 
-  flushChunk(chunks, current);
-  return chunks.join("\n\n") || markdown.slice(0, 8000);
+  flushChunk(state);
+  return state.chunks.join("\n\n") || markdown.slice(0, 8000);
 }

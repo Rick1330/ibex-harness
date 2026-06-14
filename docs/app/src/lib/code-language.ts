@@ -1,5 +1,4 @@
 import {
-  Braces,
   FileCode,
   FileJson,
   FileText,
@@ -49,6 +48,8 @@ export type CodeLanguageMeta = {
   icon: LucideIcon;
 };
 
+const SHELL_LANGS = new Set(["bash", "sh", "shell", "zsh", "shellscript"]);
+
 const LANGUAGE_ICONS: Record<string, LucideIcon> = {
   bash: Terminal,
   sh: Terminal,
@@ -63,6 +64,11 @@ const LANGUAGE_ICONS: Record<string, LucideIcon> = {
   mdx: FileText,
   md: FileText,
 };
+
+export function isShellLanguage(lang?: string): boolean {
+  if (!lang) return false;
+  return SHELL_LANGS.has(lang);
+}
 
 export function parseCodeLanguage(className?: string): string | undefined {
   if (!className) return undefined;
@@ -105,11 +111,17 @@ export function getLanguageDisplayLabel(
   lang?: string,
   title?: string,
 ): string | undefined {
-  if (title?.trim()) return title.trim();
-  if (!lang || lang === "plaintext" || lang === "text") return undefined;
+  const trimmedTitle = title?.trim();
+  if (trimmedTitle) return trimmedTitle;
+  if (!lang) return undefined;
+  if (lang === "plaintext" || lang === "text") return undefined;
+  return LANG_DISPLAY[lang.toLowerCase()] ?? lang.toLowerCase();
+}
 
-  const key = lang.toLowerCase();
-  return LANG_DISPLAY[key] ?? key;
+function resolveLanguageIcon(id: string): LucideIcon {
+  if (LANGUAGE_ICONS[id]) return LANGUAGE_ICONS[id];
+  if (isShellLanguage(id)) return Terminal;
+  return FileCode;
 }
 
 export function resolveCodeLanguage(
@@ -120,11 +132,5 @@ export function resolveCodeLanguage(
   if (!label) return undefined;
 
   const id = (lang ?? title ?? "code").toLowerCase();
-  const icon =
-    LANGUAGE_ICONS[id] ??
-    (["bash", "sh", "shell", "zsh", "shellscript"].includes(id)
-      ? Terminal
-      : FileCode);
-
-  return { id, label, icon };
+  return { id, label, icon: resolveLanguageIcon(id) };
 }

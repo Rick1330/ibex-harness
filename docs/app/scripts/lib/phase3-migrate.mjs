@@ -73,29 +73,49 @@ function summaryFromFirstParagraph(content) {
   return para?.replace(/\[(.+?)\]\(.+?\)/g, "$1").slice(0, 320) ?? "";
 }
 
-export function parseFields(content, relPath) {
+function parsePhase3Identity(content, relPath) {
   const h1 = content.match(/^#\s+(.+)$/m)?.[1]?.trim() ?? "Untitled";
-  const status = parseStatus(content.match(/\*\*Status:\*\*\s*(.+)/i)?.[1] ?? "Planned");
-  const effort = content.match(/\*\*Estimated effort:\*\*\s*(.+)/i)?.[1]?.trim();
-  const goal = rewriteGoalLinks(content.match(/\*\*Goal:\*\*\s*(.+)/i)?.[1]?.trim());
+  const isIndex = relPath.endsWith("index.mdx") || relPath.includes("README");
+  const isGoals = relPath.includes("goals.mdx");
   const milestoneId =
     relPath.match(/milestones\/(\d+\.\d+\.\d+)/)?.[1] ??
     h1.match(/^Milestone\s+(\d+\.\d+\.\d+)/i)?.[1];
 
-  const summary = summaryFromWhySection(content) ?? summaryFromFirstParagraph(content);
-  const isIndex = relPath.endsWith("index.mdx") || relPath.includes("README");
-  const isGoals = relPath.includes("goals.mdx");
-  const fullTitle = isIndex ? PHASE_FULL : h1;
-
   return {
     title: h1,
-    fullTitle,
+    fullTitle: isIndex ? PHASE_FULL : h1,
+    milestoneId,
+    isIndex,
+    isGoals,
+  };
+}
+
+function parsePhase3Goal(content) {
+  const effort = content.match(/\*\*Estimated effort:\*\*\s*(.+)/i)?.[1]?.trim();
+  const goal = rewriteGoalLinks(content.match(/\*\*Goal:\*\*\s*(.+)/i)?.[1]?.trim());
+  const status = parseStatus(content.match(/\*\*Status:\*\*\s*(.+)/i)?.[1] ?? "Planned");
+
+  return { effort, goal, status };
+}
+
+function parsePhase3Summary(content) {
+  return summaryFromWhySection(content) ?? summaryFromFirstParagraph(content);
+}
+
+export function parseFields(content, relPath) {
+  const identity = parsePhase3Identity(content, relPath);
+  const goalFields = parsePhase3Goal(content);
+  const summary = parsePhase3Summary(content);
+
+  return {
+    title: identity.title,
+    fullTitle: identity.fullTitle,
     description: summary,
     summary,
-    status: isIndex || isGoals ? "planned" : status,
-    milestoneId,
-    goal,
-    estimatedEffort: effort,
+    status: identity.isIndex || identity.isGoals ? "planned" : goalFields.status,
+    milestoneId: identity.milestoneId,
+    goal: goalFields.goal,
+    estimatedEffort: goalFields.effort,
     phase: PHASE,
   };
 }
