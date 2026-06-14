@@ -146,62 +146,71 @@ function migrateRootFiles() {
   }
 }
 
+function resolveDestName(phaseDir, entry, rel, relPath) {
+  if (entry.name === "README.md") {
+    return rel ? `${rel}/index.mdx` : `${phaseDir}/index.mdx`;
+  }
+  return `${phaseDir}/${relPath.replace(/\.md$/i, ".mdx")}`;
+}
+
+function shouldAppendPhaseStub(phaseDir, rel) {
+  return (
+    rel === "" &&
+    ["phase-3-memory-engine", "phase-4-multi-provider", "phase-5-production-hardening"].includes(
+      phaseDir,
+    )
+  );
+}
+
+function trackMigratedPage(destName, phaseDir, rel, pages, milestonePages) {
+  const slug = destName
+    .replace(`${phaseDir}/`, "")
+    .replace(/\.mdx$/, "")
+    .replace(/\\/g, "/");
+
+  if (destName.includes("/milestones/")) {
+    milestonePages.push(slug);
+    return;
+  }
+
+  if (!destName.endsWith("/index.mdx") || rel === "") {
+    pages.push(slug === "index" ? "index" : slug.replace(/\/index$/, "") || slug);
+  }
+}
+
+function walkPhaseDir(ctx, dir, rel = "") {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (entry.name === "prompts") continue;
+    const abs = path.join(dir, entry.name);
+    const relPath = rel ? `${rel}/${entry.name}` : entry.name;
+
+    if (entry.isDirectory()) {
+      walkPhaseDir(ctx, abs, relPath);
+      continue;
+    }
+
+    if (!entry.name.endsWith(".md")) continue;
+
+    let content = fs.readFileSync(abs, "utf8");
+    const fields = parseFrontmatterFields(content, abs);
+    const destName = resolveDestName(ctx.phaseDir, entry, rel, relPath);
+
+    if (entry.name === "README.md" && shouldAppendPhaseStub(ctx.phaseDir, rel)) {
+      content = `${content.trim()}${PHASE3_STUB}`;
+    }
+
+    writeFile(destName, toMdx(content, fields));
+    trackMigratedPage(destName, ctx.phaseDir, rel, ctx.pages, ctx.milestonePages);
+  }
+}
+
 function migratePhase(phaseDir) {
   const phasePath = path.join(LEGACY_ROOT, phaseDir);
   if (!fs.existsSync(phasePath)) return { pages: [], milestonePages: [] };
 
-  const pages = [];
-  const milestonePages = [];
-
-  function walk(dir, rel = "") {
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      if (entry.name === "prompts") continue;
-      const abs = path.join(dir, entry.name);
-      const relPath = rel ? `${rel}/${entry.name}` : entry.name;
-
-      if (entry.isDirectory()) {
-        walk(abs, relPath);
-        continue;
-      }
-
-      if (!entry.name.endsWith(".md")) continue;
-
-      let content = fs.readFileSync(abs, "utf8");
-      const fields = parseFrontmatterFields(content, abs);
-
-      let destName;
-      if (entry.name === "README.md") {
-        destName = rel ? `${rel}/index.mdx` : `${phaseDir}/index.mdx`;
-        if (
-          ["phase-3-memory-engine", "phase-4-multi-provider", "phase-5-production-hardening"].includes(
-            phaseDir,
-          ) &&
-          rel === ""
-        ) {
-          content = `${content.trim()}${PHASE3_STUB}`;
-        }
-      } else {
-        destName = `${phaseDir}/${relPath.replace(/\.md$/i, ".mdx")}`;
-      }
-
-      writeFile(destName, toMdx(content, fields));
-
-      const slug = destName
-        .replace(`${phaseDir}/`, "")
-        .replace(/\.mdx$/, "")
-        .replace(/\\/g, "/");
-
-      if (destName.includes("/milestones/")) {
-        milestonePages.push(slug);
-      } else if (!destName.endsWith("/index.mdx") || rel === "") {
-        pages.push(slug === "index" ? "index" : slug.replace(/\/index$/, "") || slug);
-      } else if (rel === "" && entry.name === "README.md") {
-        pages.unshift("index");
-      }
-    }
-  }
-
-  walk(phasePath);
+  const ctx = { phaseDir, pages: [], milestonePages: [] };
+  walkPhaseDir(ctx, phasePath);
+  const { pages, milestonePages } = ctx;
 
   // goals.mdx for phase 3-5 if exists
   const goalsPath = path.join(phasePath, "goals.md");

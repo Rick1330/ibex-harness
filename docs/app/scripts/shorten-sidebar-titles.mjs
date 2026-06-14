@@ -4,25 +4,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { readYamlValue, setYamlField } from "./lib/yaml-frontmatter.mjs";
+
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../content/roadmap");
 
 const STOP_WORDS = new Set(["and", "the", "with", "for", "a", "an"]);
-
-function readYamlValue(raw) {
-  const trimmed = raw.trim();
-  try {
-    return JSON.parse(trimmed.startsWith('"') ? trimmed : `"${trimmed}"`);
-  } catch {
-    return trimmed.replace(/^["']|["']$/g, "");
-  }
-}
-
-function setYamlField(fm, key, value) {
-  const re = new RegExp(`^${key}:\\s*.+$`, "m");
-  const line = `${key}: ${JSON.stringify(value)}`;
-  if (re.test(fm)) return fm.replace(re, line);
-  return `${fm}\n${line}`;
-}
 
 function titleCaseWord(word) {
   if (!word) return word;
@@ -34,8 +20,10 @@ function titleCaseWord(word) {
 
 /** Derive a tight 2-word label from the file slug (e.g. 3.5.1-context-assembly-skeleton). */
 function slugCompactName(slug, id) {
-  const escaped = id.replace(/\./g, "\\.");
-  const namePart = slug.replace(new RegExp(`^${escaped}-?`), "");
+  const prefix = id.replace(/\./g, "-");
+  const namePart = slug.startsWith(prefix)
+    ? slug.slice(prefix.length).replace(/^-/, "")
+    : slug.replace(/^[d]?\d+(?:-\d+)+-?/, "");
   const words = namePart
     .split("-")
     .filter((w) => w && !STOP_WORDS.has(w));

@@ -30,7 +30,7 @@ IBEX services load configuration from environment variables at startup via `pack
       name: 'REDIS_URL',
       type: 'string (URL)',
       description:
-        'Redis for rate limiting and proxy /ready. Empty → Noop limiter (no RPM enforcement).',
+        "Redis for rate limiting and proxy /ready. Empty uses Noop limiter (no RPM enforcement).",
       defaultValue: '(empty)',
     },
     {

@@ -4,15 +4,23 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import {
+  extractMarkdownField,
+  matchYamlField,
+  readYamlValue,
+  setYamlField,
+} from "./lib/yaml-frontmatter.mjs";
+
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../content/roadmap");
 
 const ALLOWED_LANGS = new Set([
   "bash", "json", "javascript", "typescript", "tsx", "python", "yaml", "mdx",
   "go", "dockerfile", "sql", "xml", "text", "ini", "toml", "powershell", "sh",
+  "mermaid",
 ]);
 
 const LANG_ALIASES = {
-  svg: "xml", makefile: "bash", make: "bash", mermaid: "text", css: "text",
+  svg: "xml", makefile: "bash", make: "bash", css: "text",
   html: "text", proto: "text", grpc: "text", hcl: "text", env: "bash",
 };
 
@@ -21,11 +29,6 @@ function normalizeLang(lang) {
   if (ALLOWED_LANGS.has(lower)) return lower;
   if (LANG_ALIASES[lower]) return LANG_ALIASES[lower];
   return "text";
-}
-
-function extractField(text, label) {
-  const re = new RegExp(`\\*\\*${label}:\\*\\*\\s*([^\\n*]+)`, "i");
-  return text.match(re)?.[1]?.trim();
 }
 
 function describeComplete(title, completed) {
@@ -52,36 +55,26 @@ function cleanDescription(raw, title) {
     return text.replace(/\s+/g, " ").trim();
   }
 
-  const status = extractField(text, "Status") ?? text.match(/Status:\s*([^\n]+)/i)?.[1]?.trim();
-  const completed = extractField(text, "Completed") ?? text.match(/Completed:\s*([^\n]+)/i)?.[1]?.trim();
-  const duration = extractField(text, "Estimated duration") ?? text.match(/Estimated duration:\s*([^\n]+)/i)?.[1]?.trim();
-  const depends = extractField(text, "Depends on") ?? text.match(/Depends on:\s*([^\n]+)/i)?.[1]?.trim();
-  const milestone = extractField(text, "Current milestone") ?? text.match(/Current milestone:\s*([^\n]+)/i)?.[1]?.trim();
+  const status =
+    extractMarkdownField(text, "Status") ?? text.match(/Status:\s*([^\n]+)/i)?.[1]?.trim();
+  const completed =
+    extractMarkdownField(text, "Completed") ??
+    text.match(/Completed:\s*([^\n]+)/i)?.[1]?.trim();
+  const duration =
+    extractMarkdownField(text, "Estimated duration") ??
+    text.match(/Estimated duration:\s*([^\n]+)/i)?.[1]?.trim();
+  const depends =
+    extractMarkdownField(text, "Depends on") ??
+    text.match(/Depends on:\s*([^\n]+)/i)?.[1]?.trim();
+  const milestone =
+    extractMarkdownField(text, "Current milestone") ??
+    text.match(/Current milestone:\s*([^\n]+)/i)?.[1]?.trim();
 
   const lower = status?.toLowerCase() ?? "";
   if (lower.includes("complete")) return describeComplete(title, completed);
   if (lower.includes("progress")) return describeInProgress(title, milestone);
   if (lower.includes("planned")) return describePlanned(title, duration, depends);
   return text.replace(/\s+/g, " ").trim();
-}
-
-function readYamlValue(raw) {
-  const trimmed = raw.trim();
-  if (trimmed.startsWith('"') || trimmed.startsWith("'")) {
-    try {
-      return JSON.parse(trimmed.startsWith('"') ? trimmed : `"${trimmed.slice(1, -1)}"`);
-    } catch {
-      return trimmed.replace(/^"|"$/g, "");
-    }
-  }
-  return trimmed.replace(/^"|"$/g, "");
-}
-
-function setYamlField(fm, key, value) {
-  const re = new RegExp(`^${key}:\\s*.+$`, "m");
-  const line = `${key}: ${JSON.stringify(value)}`;
-  if (re.test(fm)) return fm.replace(re, line);
-  return `${fm}\n${line}`;
 }
 
 function fixFrontmatter(fm, body) {
@@ -91,7 +84,7 @@ function fixFrontmatter(fm, body) {
   let out = fm;
 
   for (const key of ["description", "summary"]) {
-    const match = out.match(new RegExp(`^${key}:\\s*(.+)$`, "m"));
+    const match = matchYamlField(out, key);
     if (!match) continue;
     const val = readYamlValue(match[1]);
     if (
@@ -110,8 +103,8 @@ function fixFrontmatter(fm, body) {
   });
 
   const statusRaw =
-    extractField(body.slice(0, 800), "Status") ??
-    extractField(out, "Status");
+    extractMarkdownField(body.slice(0, 800), "Status") ??
+    extractMarkdownField(out, "Status");
   if (statusRaw && !/^status:/m.test(out)) {
     const lower = statusRaw.toLowerCase();
     if (lower.includes("complete")) out = setYamlField(out, "status", "completed");
@@ -120,8 +113,8 @@ function fixFrontmatter(fm, body) {
   }
 
   const completed =
-    extractField(out, "Completed") ??
-    extractField(body.slice(0, 500), "Completed");
+    extractMarkdownField(out, "Completed") ??
+    extractMarkdownField(body.slice(0, 500), "Completed");
   if (completed && !/^completedDate:/m.test(out)) {
     out = setYamlField(out, "completedDate", completed);
   }

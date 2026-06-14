@@ -136,7 +136,7 @@ export function DocsSidebarFolder({
 
   return (
     <SidebarFolder
-      key={level <= 1 ? `${sectionSlug}-${pathname}` : sectionSlug}
+      key={level <= 1 ? sectionSlug : `${sectionSlug}-${level}`}
       defaultOpen={defaultOpen}
     >
       <SidebarFolderTrigger className={headerClass}>

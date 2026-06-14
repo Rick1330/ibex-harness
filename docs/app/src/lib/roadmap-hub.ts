@@ -24,23 +24,28 @@ export function getPhaseIndexPage(slug: PhaseSlug) {
   return roadmapSource.getPage([slug]);
 }
 
-export function getPhaseStats(slug: PhaseSlug) {
-  const milestones = getRoadmapPages().filter(
-    (page) =>
-      page.slugs[0] === slug && page.slugs.includes("milestones"),
-  );
-
+function countMilestoneStatuses(pages: RoadmapPage[]) {
   const counts = {
     completed: 0,
     "in-progress": 0,
     planned: 0,
   } satisfies Record<MilestoneStatus, number>;
 
-  for (const page of milestones) {
+  for (const page of pages) {
     const status = normalizeStatus(page.data.status as string | undefined);
     if (status) counts[status] += 1;
   }
 
+  return counts;
+}
+
+export function getPhaseStats(slug: PhaseSlug) {
+  const milestones = getRoadmapPages().filter(
+    (page) =>
+      page.slugs[0] === slug && page.slugs.includes("milestones"),
+  );
+
+  const counts = countMilestoneStatuses(milestones);
   const total = milestones.length;
   const completed = counts.completed;
 
@@ -49,17 +54,7 @@ export function getPhaseStats(slug: PhaseSlug) {
 
 export function getOverallRoadmapStats() {
   const milestones = getMilestonePages();
-  const counts = {
-    completed: 0,
-    "in-progress": 0,
-    planned: 0,
-  } satisfies Record<MilestoneStatus, number>;
-
-  for (const page of milestones) {
-    const status = normalizeStatus(page.data.status as string | undefined);
-    if (status) counts[status] += 1;
-  }
-
+  const counts = countMilestoneStatuses(milestones);
   const total = milestones.length;
   const completed = counts.completed;
   const progressPct = total > 0 ? Math.round((completed / total) * 100) : 0;
