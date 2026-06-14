@@ -2,7 +2,7 @@
 
 Production-grade platform for AI agent memory, context assembly, and secure LLM proxying.
 
-**Phase 1 (current):** `auth` and `proxy` services are implemented. See [docs/roadmap/CURRENT_STATE.md](docs/roadmap/CURRENT_STATE.md) for what ships today and what is next.
+**Phase 1 (current):** `auth` and `proxy` services are implemented. See the [roadmap current state](docs/app/content/roadmap/current-state.mdx) (public: `/roadmap/current-state` on the docs site).
 
 [![CI](https://github.com/Rick1330/ibex-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/Rick1330/ibex-harness/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/Rick1330/ibex-harness/graph/badge.svg)](https://codecov.io/gh/Rick1330/ibex-harness)
@@ -75,7 +75,7 @@ make compose-dev-down   # stop infrastructure when done
 | `packages/config`, `packages/apierror` | Implemented — shared env load and error envelope |
 | `packages/proto` | Implemented — protobuf contracts (Buf) |
 | `infra/compose`, `infra/migrations` | Implemented — local dev and schema |
-| `services/api`, `memory`, `context`, `dashboard`, SDKs, CLI | Planned — see [roadmap](docs/roadmap/CURRENT_STATE.md) |
+| `services/api`, `memory`, `context`, `dashboard`, SDKs, CLI | Planned — see [roadmap](docs/app/content/roadmap/current-state.mdx) |
 
 Target architecture and data flows: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · [docs/PROJECT_CONTEXT.md](docs/PROJECT_CONTEXT.md).
 
@@ -85,7 +85,7 @@ Target architecture and data flows: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
 | Area | Document |
 |------|----------|
-| Status & roadmap | [docs/roadmap/CURRENT_STATE.md](docs/roadmap/CURRENT_STATE.md) |
+| Status & roadmap | [docs/app/content/roadmap/](docs/app/content/roadmap/) (public `/roadmap`) |
 | Architecture | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | Security | [docs/SECURITY.md](docs/SECURITY.md) |
 | Development | [docs/DEVELOPMENT_GUIDE.md](docs/DEVELOPMENT_GUIDE.md) |

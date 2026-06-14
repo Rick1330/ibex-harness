@@ -87,7 +87,7 @@ ibex-harness/
     TESTING_STRATEGY.md
     PERFORMANCE.md
     MONITORING.md
-    adr/                    # architecture decision records
+    adr/                    # README pointer → docs/app/content/docs/adr/
 ```
 
 **Rule:** Don’t invent new top-level directories casually. If you need one, justify it with an ADR.
@@ -112,7 +112,9 @@ See [TOOLCHAIN.md](TOOLCHAIN.md) for installation instructions and sanity checks
 
 ### 4.0 Development roadmap
 
-Implementation progress is tracked in [docs/roadmap/CURRENT_STATE.md](roadmap/CURRENT_STATE.md). After every milestone merges to `main`, update that file (Git SHA, what works / does not, next three tasks). Milestone definitions live under [docs/roadmap/phase-1-core-platform/milestones/](roadmap/phase-1-core-platform/milestones/). Log plan changes in [docs/roadmap/FINDINGS.md](roadmap/FINDINGS.md).
+Implementation progress is tracked in [`docs/app/content/roadmap/current-state.mdx`](../app/content/roadmap/current-state.mdx) (public `/roadmap/current-state` on the docs site). After every milestone merges to `main`, update that file (Git SHA, what works / does not, next three tasks). Milestone definitions live under [`docs/app/content/roadmap/phase-1-core-platform/milestones/`](../app/content/roadmap/phase-1-core-platform/milestones/). Log plan changes in [`docs/app/content/roadmap/findings.mdx`](../app/content/roadmap/findings.mdx).
+
+**Execution prompts** for AI-assisted milestone work live in `ibex-harness-workspace/prompts/` (local workspace, not published on the docs site).
 
 Session notes and closed audits live in the **session workspace** (sibling `ibex-harness-workspace`, not in git). See §12.
 
@@ -253,7 +255,7 @@ Use:
 
 ### 6.1.1 Milestone branches (roadmap)
 
-When implementing a milestone from [docs/roadmap/](roadmap/README.md), use this pattern until a GitHub issue exists:
+When implementing a milestone from [`docs/app/content/roadmap/`](../app/content/roadmap/) (public `/roadmap`), use this pattern until a GitHub issue exists:
 
 ```text
 <type>/m{phase}-{goal}-{milestone}-{kebab-slug}
@@ -273,7 +275,7 @@ When implementing a milestone from [docs/roadmap/](roadmap/README.md), use this 
 
 **Historical:** Foundation work used `chore/foundation-00N-*` without ticket IDs; do not reuse that pattern for Phase 1+ milestones.
 
-One milestone per branch (see §6.2). Branch names and PR titles for each milestone are listed in the milestone file under `docs/roadmap/`.
+One milestone per branch (see §6.2). Branch names and PR titles for each milestone are listed in the milestone file under `docs/app/content/roadmap/`.
 
 ### 6.2 Branch scope rule (AI-friendly)
 
@@ -301,7 +303,7 @@ All changes must:
 
 Solo maintainer mode uses **zero required approvals** (the PR author cannot approve their own PR on GitHub). Use the PR description and checklist for self-review until team reviewers exist.
 
-Policy details: [CONTRIBUTING.md](../CONTRIBUTING.md), [adr/ADR-0003-branch-protection-and-merge-policy.md](adr/ADR-0003-branch-protection-and-merge-policy.md).
+Policy details: [CONTRIBUTING.md](../CONTRIBUTING.md), [ADR-0003](/docs/adr/0003-branch-protection-and-merge-policy) on the docs site.
 
 ### 6.4 Post-merge checklist (milestones)
 
@@ -322,7 +324,7 @@ After a milestone PR is approved on GitHub:
 
 3. **Optional local cleanup:** `git branch -d feature/m1-x-x-slug` if the branch still exists locally.
 
-4. **CURRENT_STATE:** Open a small docs PR (e.g. `docs/current-state-m1-x-x`) updating [roadmap/CURRENT_STATE.md](roadmap/CURRENT_STATE.md) with the merge SHA — do not fold unrelated product code into that PR.
+4. **CURRENT_STATE:** Open a small docs PR (e.g. `docs/current-state-m1-x-x`) updating [`docs/app/content/roadmap/current-state.mdx`](../app/content/roadmap/current-state.mdx) with the merge SHA — do not fold unrelated product code into that PR.
 
 5. **Workspace archive:** Add a session note under `ibex-harness-workspace/archive/` when the milestone closes.
 
@@ -481,7 +483,7 @@ Any decision that changes:
 - migration path
 - major dependency
 
-…requires an ADR in `docs/adr/`.
+…requires an ADR in [`docs/app/content/docs/adr/`](../app/content/docs/adr/) (public `/docs/adr`).
 
 **ADR format (required):**
 
@@ -582,7 +584,7 @@ These become drift factories.
 
 ## 12) Session Workspace (required layout, outside repo)
 
-AI sessions lose context. Keep a **session workspace** next to the git clone (never committed). The versioned roadmap in `docs/roadmap/` describes *what to build*; the workspace holds *session continuity* and *archived audits*.
+AI sessions lose context. Keep a **session workspace** next to the git clone (never committed). The versioned roadmap in `docs/app/content/roadmap/` describes *what to build*; the workspace holds *session continuity*, *archived audits*, and *execution prompts*.
 
 ### 12.0 Recommended host layout
 
@@ -611,12 +613,13 @@ After cloning, create the workspace folder manually or copy the structure from t
 
 ```text
 ibex-harness-workspace/
-  current_state.md          # session scratch; pointers to docs/roadmap/CURRENT_STATE.md
+  current_state.md          # session scratch; pointers to docs/app/content/roadmap/current-state.mdx
   decisions.md
   active_task.md
   handoff.md
   known_issues.md
   contracts.md
+  prompts/                  # milestone execution prompts (not published on docs site)
   pr-bodies/                # PR description drafts (full template); never commit to git repo
     pr-<number>-<slug>.md
   session_log/
@@ -631,9 +634,9 @@ ibex-harness-workspace/
 
 After each milestone merges to `main`:
 
-1. Update [docs/roadmap/CURRENT_STATE.md](roadmap/CURRENT_STATE.md) in the repo (via PR).
+1. Update [`docs/app/content/roadmap/current-state.mdx`](../app/content/roadmap/current-state.mdx) in the repo (via PR).
 2. Refresh workspace `current_state.md` and `handoff.md`.
-3. Log surprises in [docs/roadmap/FINDINGS.md](roadmap/FINDINGS.md) when the plan changes.
+3. Log surprises in [`docs/app/content/roadmap/findings.mdx`](../app/content/roadmap/findings.mdx) when the plan changes.
 4. Do **not** rewrite files under `archive/`; add new session log entries instead.
 
 ### 12.4 Minimal templates
@@ -643,7 +646,7 @@ After each milestone merges to `main`:
 ```markdown
 # Session current state
 
-Canonical status: docs/roadmap/CURRENT_STATE.md in the repo.
+Canonical status: `docs/app/content/roadmap/current-state.mdx` in the repo (public `/roadmap/current-state`).
 
 | Field | Value |
 | --- | --- |
