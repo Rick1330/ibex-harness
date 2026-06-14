@@ -21,7 +21,7 @@ type QuickLinksProps = {
 function linkIcon(link: QuickLink): LucideIcon {
   if (link.icon) return link.icon;
   if (link.iconName) {
-    return resolveNavIcon(link.iconName, link.href) ?? getNavIconForUrl(link.href);
+    return resolveNavIcon({ iconName: link.iconName, url: link.href }) ?? getNavIconForUrl(link.href);
   }
   return getNavIconForUrl(link.href);
 }

@@ -44,7 +44,7 @@ export function DocCard({
   category,
 }: DocCardProps) {
   const isExternal = href.startsWith("http");
-  const CardIcon = icon ?? (iconName ? resolveNavIcon(iconName, href) : undefined);
+  const CardIcon = icon ?? (iconName ? resolveNavIcon({ iconName, url: href }) : undefined);
 
   return (
     <Link
