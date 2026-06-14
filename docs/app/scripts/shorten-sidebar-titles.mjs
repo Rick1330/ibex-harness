@@ -10,9 +10,11 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../cont
 
 const STOP_WORDS = new Set(["and", "the", "with", "for", "a", "an"]);
 
+const SHORT_WORDS = new Set(["api", "rls"]);
+
 function titleCaseWord(word) {
   if (!word) return word;
-  if (word.length <= 3 && word !== "api" && word !== "rls") {
+  if (word.length <= 3 && !SHORT_WORDS.has(word)) {
     return word.toUpperCase();
   }
   return word.charAt(0).toUpperCase() + word.slice(1);

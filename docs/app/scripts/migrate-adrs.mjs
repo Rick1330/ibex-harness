@@ -17,21 +17,29 @@ function slugify(filename) {
   return `${match[1]}-${match[2].toLowerCase()}`;
 }
 
-function parseAdr(content, filename) {
+function parseAdrIdentity(content, filename) {
   const titleMatch = content.match(/^#\s+ADR-(\d{4}):\s*(.+)$/m);
   const adrId = titleMatch?.[1] ?? filename.match(/(\d{4})/)?.[1] ?? "0000";
   const title = titleMatch?.[2]?.trim() ?? filename;
+  return { adrId, title: `ADR-${adrId}: ${title}` };
+}
 
+function parseAdrMetadata(content) {
   const statusMatch = content.match(/\*\*Status:\*\*\s*(.+)/i);
   const dateMatch = content.match(/\*\*Date:\*\*\s*(.+)/i);
   const authorsMatch = content.match(/\*\*Authors:\*\*\s*(.+)/i);
 
   return {
-    adrId,
-    title: `ADR-${adrId}: ${title}`,
     status: statusMatch?.[1]?.trim(),
     date: dateMatch?.[1]?.trim(),
     authors: authorsMatch?.[1]?.trim(),
+  };
+}
+
+function parseAdr(content, filename) {
+  return {
+    ...parseAdrIdentity(content, filename),
+    ...parseAdrMetadata(content),
   };
 }
 
@@ -62,7 +70,7 @@ function rewriteBody(content) {
   return body;
 }
 
-function toMdx(content, meta, slug) {
+function toMdx(content, meta) {
   const fm = ["---"];
   fm.push(`title: ${JSON.stringify(meta.title)}`);
   fm.push(`description: ${JSON.stringify(`Architecture decision record ${meta.adrId}.`)}`);
@@ -93,7 +101,7 @@ function main() {
     if (!slug) continue;
     const content = fs.readFileSync(path.join(LEGACY_ROOT, file), "utf8");
     const meta = parseAdr(content, file);
-    fs.writeFileSync(path.join(OUTPUT_ROOT, `${slug}.mdx`), toMdx(content, meta, slug), "utf8");
+    fs.writeFileSync(path.join(OUTPUT_ROOT, `${slug}.mdx`), toMdx(content, meta), "utf8");
     ADR_SLUGS.push(slug);
   }
 

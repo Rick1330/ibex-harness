@@ -62,23 +62,35 @@ export function getOverallRoadmapStats() {
   return { counts, total, completed, progressPct };
 }
 
+function deriveStatusFromStats(
+  stats: ReturnType<typeof getPhaseStats>,
+  phaseStatus: MilestoneStatus | undefined,
+): MilestoneStatus | undefined {
+  if (phaseStatus || stats.total === 0) return phaseStatus;
+  if (stats.completed === stats.total) return "completed";
+  if (stats.counts["in-progress"] > 0) return "in-progress";
+  return "planned";
+}
+
+function applyPhaseStatusDefaults(
+  slug: PhaseSlug,
+  status: MilestoneStatus | undefined,
+): MilestoneStatus | undefined {
+  if (slug === "phase-0-foundation" || slug === "phase-1-core-platform") {
+    return "completed";
+  }
+  if (slug === "phase-1-5-docs-site" && !status) return "in-progress";
+  if (slug === "phase-2-single-provider" && !status) return "planned";
+  return status;
+}
+
 function resolvePhaseStatus(
   slug: PhaseSlug,
   stats: ReturnType<typeof getPhaseStats>,
   phaseStatus: MilestoneStatus | undefined,
 ): MilestoneStatus | undefined {
-  let status = phaseStatus;
-  if (!status && stats.total > 0) {
-    if (stats.completed === stats.total) status = "completed";
-    else if (stats.counts["in-progress"] > 0) status = "in-progress";
-    else status = "planned";
-  }
-  if (slug === "phase-1-5-docs-site" && !status) return "in-progress";
-  if (slug === "phase-0-foundation" || slug === "phase-1-core-platform") {
-    return "completed";
-  }
-  if (slug === "phase-2-single-provider" && !status) return "planned";
-  return status;
+  const derived = deriveStatusFromStats(stats, phaseStatus);
+  return applyPhaseStatusDefaults(slug, derived);
 }
 
 function resolvePhaseDescription(index: ReturnType<typeof getPhaseIndexPage>) {

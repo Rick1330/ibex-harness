@@ -21,7 +21,8 @@ export function shouldAppendPhaseStub(phaseDir, rel) {
   );
 }
 
-export function trackMigratedPage(destName, phaseDir, rel, pages, milestonePages) {
+export function trackMigratedPage(ctx, destName, rel) {
+  const { phaseDir, pages, milestonePages } = ctx;
   const slug = destName
     .replace(`${phaseDir}/`, "")
     .replace(/\.mdx$/, "")
@@ -47,7 +48,7 @@ export function processMarkdownEntry(ctx, entry, abs, rel, relPath) {
   }
 
   ctx.writeFile(destName, ctx.toMdx(content, fields));
-  trackMigratedPage(destName, ctx.phaseDir, rel, ctx.pages, ctx.milestonePages);
+  trackMigratedPage(ctx, destName, rel);
 }
 
 export function walkPhaseDir(ctx, dir, rel = "") {

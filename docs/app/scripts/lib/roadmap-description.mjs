@@ -1,30 +1,21 @@
 import { extractMarkdownField } from "./yaml-frontmatter.mjs";
 
+export function parseDescriptionMeta(text) {
+  return {
+    status: extractMarkdownField(text, "Status"),
+    completed: extractMarkdownField(text, "Completed"),
+    duration: extractMarkdownField(text, "Estimated duration"),
+    depends: extractMarkdownField(text, "Depends on"),
+    milestone: extractMarkdownField(text, "Current milestone"),
+  };
+}
+
 function normalizeDescriptionText(raw) {
   return raw.replace(/\\n/g, "\n").replace(/\*\*/g, "");
 }
 
 function collapseWhitespace(text) {
   return text.replace(/\s+/g, " ").trim();
-}
-
-export function parseDescriptionMeta(text) {
-  return {
-    status:
-      extractMarkdownField(text, "Status") ?? text.match(/Status:\s*([^\n]+)/i)?.[1]?.trim(),
-    completed:
-      extractMarkdownField(text, "Completed") ??
-      text.match(/Completed:\s*([^\n]+)/i)?.[1]?.trim(),
-    duration:
-      extractMarkdownField(text, "Estimated duration") ??
-      text.match(/Estimated duration:\s*([^\n]+)/i)?.[1]?.trim(),
-    depends:
-      extractMarkdownField(text, "Depends on") ??
-      text.match(/Depends on:\s*([^\n]+)/i)?.[1]?.trim(),
-    milestone:
-      extractMarkdownField(text, "Current milestone") ??
-      text.match(/Current milestone:\s*([^\n]+)/i)?.[1]?.trim(),
-  };
 }
 
 function describeComplete(title, completed) {
