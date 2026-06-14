@@ -1,0 +1,72 @@
+---
+title: Building the IBEX Docs Site and Public Roadmap
+date: "2026-06-15"
+author: Elshaday Mengesha
+authorUrl: "https://github.com/Rick1330"
+featured: true
+tags:
+  - docs
+  - roadmap
+  - architecture
+  - phase-1-5
+readingTime: 8 min read
+excerpt: >
+  How we shipped docs.ibexharness.com on Fumadocs, migrated the full roadmap
+  corpus into navigable MDX, published ADRs, and polished the developer experience
+  from quickstart to architecture decisions.
+---
+
+We set out to give IBEX Harness a public home for product documentation that matches the quality bar of the platform itself — not a pile of markdown in a repo, but a site you can hand to an integrator on day one. Phase 1.5 delivered that foundation. This post walks through what we built, why we made the choices we did, and where to go next.
+
+## Two corpora, one product
+
+Engineering docs and public docs serve different audiences. Contributors need ADRs, roadmap milestones, CI audits, and session workspace continuity. Operators and integrators need quickstarts, API references, and security guidance without wading through implementation specs.
+
+We kept that split explicit:
+
+| Corpus | Location | Audience |
+| --- | --- | --- |
+| Engineering | Repo-root `docs/` (pointers + ADR workflow) | Contributors |
+| Public site | `docs/app/content/` | End users, operators, integrators |
+
+The public site runs at [docs.ibexharness.com](https://docs.ibexharness.com) on **Fumadocs + Next.js 15**, deployed from `docs/app/` on Vercel. Marketing stays in a separate repo; product docs are first-class in this repository.
+
+## Docs site architecture
+
+The stack follows [ADR-0023](/docs/adr/0023-docs-site-architecture):
+
+- **Fumadocs UI v14** for docs layout, sidebar tree, and MDX pipeline
+- **Tailwind v3** with Matte Graphite semantic tokens (`bg-card`, `text-muted-foreground`, etc.)
+- **Shiki** for syntax highlighting and **Mermaid** for diagrams in MDX
+- Root **SiteNav** shared across `/docs`, `/roadmap`, `/blog`, and `/releases`
+
+If you are new, start with the [Quickstart](/docs/getting-started/quickstart). It walks through Docker Compose, migrations, auth + proxy, and a smoke test in about five minutes.
+
+## The public roadmap
+
+For months the roadmap lived as ~110 markdown files under `docs/roadmap/`. Useful for contributors, invisible to anyone browsing the site. Wave 10 migrated that corpus into `docs/app/content/roadmap/` as MDX with:
+
+- A **hub** at [/roadmap](/roadmap) with phase cards, progress, and reference links
+- **Drill-down** pages for every phase, milestone, decision log, and audit doc
+- Sidebar navigation mirroring the docs experience
+- Execution prompts relocated to the local workspace (contributor workspace) — not published
+
+Wave 11 tightened quality: fixed hundreds of stale `.md` links, structured status metadata so `**Status:** Complete` no longer renders as raw markdown, widened the sidebar to 24rem for long milestone names, and added a reference strip linking to current state, findings, and ADRs.
+
+Browse a concrete example: [Phase 1 milestone 1.2.5 — proxy agent identity verification](/roadmap/phase-1-core-platform/milestones/1.2.5-proxy-agent-identity-verification).
+
+## Publishing architecture decisions
+
+Roadmap decision logs reference ADRs constantly — migration strategy, token validation, proxy auth client, and more. Those records now live on the site at [/docs/adr](/docs/adr), cross-linked from phase decision pages like [Phase 1 decisions](/roadmap/phase-1-core-platform/decisions).
+
+Each ADR page preserves context, decision, and consequences from the engineering source. Contributors edit `docs/app/content/docs/adr/` and regenerate types with `pnpm exec fumadocs-mdx`.
+
+## Blog and engineering notes
+
+This blog is intentionally small — deep posts when we ship something worth explaining, not noise. The [Phase 1 platform announcement](/blog/phase-1-launch) covers auth + proxy in depth; [The Journey of a Thought](/blog/ibex-memory-lifecycle-map) maps the Phase 3 memory lifecycle; this post covers the docs layer that wraps it.
+
+## What is next
+
+Phase 1.5 exit gates focus on production launch of the docs site. Phase 2 adds the first LLM provider adapter on top of the authenticated proxy skeleton that Phase 1 delivered. Track progress on the [roadmap hub](/roadmap) and [current state](/roadmap/current-state).
+
+If you are integrating today: [Quickstart](/docs/getting-started/quickstart) → [REST endpoints](/docs/api-reference/rest-endpoints) → [Security model](/docs/auth/security-model). If you are contributing: [Development guide](https://github.com/Rick1330/ibex-harness/blob/main/docs/DEVELOPMENT_GUIDE.md) and the milestone specs under `/roadmap`.
