@@ -16,22 +16,7 @@ function normalizeDescriptionText(raw) {
 }
 
 function collapseWhitespace(text) {
-  let out = "";
-  let inSpace = false;
-
-  for (const char of text) {
-    if (char === " " || char === "\t" || char === "\n" || char === "\r") {
-      if (!inSpace && out.length > 0) {
-        out += " ";
-        inSpace = true;
-      }
-      continue;
-    }
-    out += char;
-    inSpace = false;
-  }
-
-  return out.trim();
+  return text.split(" ").filter(Boolean).join(" ");
 }
 
 function describeComplete(title, completed) {

@@ -3,3 +3,4 @@
 # Exclude from Codacy security scans to avoid false positives on regex-heavy transforms.
 exclude_paths:
   - "docs/app/scripts/**"
+  - "**/docs/app/scripts/**"

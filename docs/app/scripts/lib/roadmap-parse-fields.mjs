@@ -27,22 +27,27 @@ function parseMarkdownMeta(content) {
   };
 }
 
+function isNumericPart(part) {
+  return part.length > 0 && Number.isInteger(Number(part));
+}
+
+function parseNumericMilestoneId(base) {
+  const parts = base.split(".");
+  if (parts.length !== 3 || !parts.every(isNumericPart)) return undefined;
+  return base.toLowerCase();
+}
+
+function parseDecoMilestoneId(base) {
+  const lower = base.toLowerCase();
+  if (!lower.startsWith("d")) return undefined;
+  const parts = lower.slice(1).split(".");
+  if (parts.length !== 2 || !parts.every(isNumericPart)) return undefined;
+  return lower;
+}
+
 function parseMilestoneId(filePath) {
   const base = path.basename(filePath, ".md");
-  const lower = base.toLowerCase();
-  if (lower.startsWith("d")) {
-    const parts = lower.slice(1).split(".");
-    if (parts.length === 2 && parts.every((part) => part.length > 0 && Number.isInteger(Number(part)))) {
-      return lower;
-    }
-    return undefined;
-  }
-
-  const parts = base.split(".");
-  if (parts.length === 3 && parts.every((part) => part.length > 0 && Number.isInteger(Number(part)))) {
-    return base.toLowerCase();
-  }
-  return undefined;
+  return parseNumericMilestoneId(base) ?? parseDecoMilestoneId(base);
 }
 
 function summaryFromWhySection(content) {

@@ -4,6 +4,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { rewriteMarkdownLinks } from "./lib/markdown-link-rewrite.mjs";
+
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../content/roadmap");
 
 const ADR_SLUGS = new Map([
@@ -126,46 +128,20 @@ function isAdrPath(pathPart) {
   return pathPart.includes("/adr/") || base.toUpperCase().startsWith("ADR-");
 }
 
-function fixMarkdownFileLinks(content, fileDir) {
-  let result = "";
-  let index = 0;
-
-  while (index < content.length) {
-    if (content[index] === "[") {
-      const textEnd = content.indexOf("]", index + 1);
-      if (textEnd !== -1 && content[textEnd + 1] === "(") {
-        const hrefStart = textEnd + 2;
-        const hrefEnd = content.indexOf(")", hrefStart);
-        if (hrefEnd !== -1) {
-          const text = content.slice(index + 1, textEnd);
-          const href = content.slice(hrefStart, hrefEnd);
-          const hashIndex = href.indexOf("#");
-          const pathPart = hashIndex === -1 ? href : href.slice(0, hashIndex);
-          const hash = hashIndex === -1 ? "" : href.slice(hashIndex + 1);
-
-          if (pathPart.endsWith(".md")) {
-            if (isAdrPath(pathPart)) {
-              const adr = adrHref(pathPart);
-              if (adr) {
-                result += `[${text}](${adr}${hash ? `#${hash}` : ""})`;
-                index = hrefEnd + 1;
-                continue;
-              }
-            }
-            const resolved = resolveRoadmapHref(pathPart, fileDir);
-            result += `[${text}](${resolved}${hash ? `#${hash}` : ""})`;
-            index = hrefEnd + 1;
-            continue;
-          }
-        }
-      }
-    }
-
-    result += content[index];
-    index += 1;
+function rewriteMarkdownFileLink(link, fileDir) {
+  if (isAdrPath(link.pathPart)) {
+    const adr = adrHref(link.pathPart);
+    if (adr) return `[${link.text}](${adr}${link.hash ? `#${link.hash}` : ""})`;
   }
 
-  return result;
+  const resolved = resolveRoadmapHref(link.pathPart, fileDir);
+  return `[${link.text}](${resolved}${link.hash ? `#${link.hash}` : ""})`;
+}
+
+function fixMarkdownFileLinks(content, fileDir) {
+  return rewriteMarkdownLinks(content, (link) =>
+    rewriteMarkdownFileLink(link, fileDir),
+  );
 }
 
 function fixLinks(content, fileDir) {

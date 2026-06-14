@@ -216,11 +216,11 @@ export function resolveNavIcon(query: NavIconQuery): LucideIcon | undefined {
 }
 
 export function getNavIconForUrl(url: NavUrl): LucideIcon {
-  return SiteNavIconService.docs.resolve({ url });
+  return resolveNavIcon(createNavIconQuery(undefined, url)) ?? FileCode;
 }
 
 export function getRoadmapIconForUrl(url: NavUrl): LucideIcon {
-  return SiteNavIconService.roadmap.resolve({ url });
+  return resolveRoadmapNavIcon(createNavIconQuery(undefined, url)) ?? FileText;
 }
 
 export function getSectionIconForSlug(

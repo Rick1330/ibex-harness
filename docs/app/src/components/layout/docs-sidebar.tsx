@@ -12,35 +12,17 @@ import type { ReactNode } from "react";
 
 import {
   baseUrlFromPathname,
-  folderSectionSlugFromUrl,
-  getSectionIconForSlug,
   navIconElement,
   roadmapNavIconElement,
-  SidebarIcon,
   toNavUrl,
-  toSectionSlug,
 } from "@/lib/sidebar-icons";
+import {
+  resolveFolderDefaultOpen,
+  resolveFolderHeaderIcon,
+  resolveFolderKey,
+  resolveFolderSectionSlug,
+} from "@/lib/sidebar-folder-present";
 import { cn } from "@/lib/cn";
-
-function folderSectionSlug(
-  item: PageTree.Folder,
-  baseUrl: "/docs" | "/roadmap",
-): string {
-  const prefix =
-    baseUrl === "/docs" ? /^\/docs\/?/ : /^\/roadmap\/?/;
-
-  for (const child of item.children) {
-    if (child.type === "page") {
-      const section = child.url.replace(prefix, "").split("/")[0];
-      if (section) return section;
-    }
-    if (child.type === "folder") {
-      const nested = folderSectionSlug(child, baseUrl);
-      if (nested !== "section") return nested;
-    }
-  }
-  return "section";
-}
 
 /** Top-level section folder headers. */
 const sectionHeaderClassName = cn(
@@ -70,19 +52,6 @@ const leafItemClassName = cn(
   "data-[active=true]:font-medium data-[active=true]:text-text-primary",
   "[&_svg:not([data-icon])]:size-4 [&_svg:not([data-icon])]:shrink-0",
 );
-
-function folderContainsPath(
-  folder: PageTree.Folder,
-  pathname: string,
-): boolean {
-  if (folder.index?.url === pathname) return true;
-
-  return folder.children.some((child) => {
-    if (child.type === "page") return child.url === pathname;
-    if (child.type === "folder") return folderContainsPath(child, pathname);
-    return false;
-  });
-}
 
 export function DocsSidebarItem({ item }: { item: PageTree.Item }) {
   const pathname = usePathname();
@@ -114,36 +83,12 @@ export function DocsSidebarFolder({
 }) {
   const pathname = usePathname();
   const baseUrl = baseUrlFromPathname(toNavUrl(pathname));
-  const containsPath = folderContainsPath(item, pathname);
-  const defaultOpen =
-    containsPath || (level > 1 && (item.defaultOpen ?? false));
-
-  const sectionSlug =
-    item.index?.url != null
-      ? folderSectionSlugFromUrl(toNavUrl(item.index.url))
-      : folderSectionSlug(item, baseUrl);
-
-  const folderUrl = item.index?.url ? toNavUrl(item.index.url) : undefined;
-  const iconResolver =
-    baseUrl === "/roadmap" ? roadmapNavIconElement : navIconElement;
-
-  const sectionIcon =
-    level <= 1 ? (
-      <SidebarIcon
-        className="sidebar-section-icon"
-        icon={getSectionIconForSlug(toSectionSlug(sectionSlug), baseUrl)}
-      />
-    ) : (
-      item.icon ?? (folderUrl ? iconResolver(undefined, folderUrl) : undefined)
-    );
-
+  const sectionSlug = resolveFolderSectionSlug(item, baseUrl);
+  const defaultOpen = resolveFolderDefaultOpen(item, level, pathname);
+  const sectionIcon = resolveFolderHeaderIcon(item, level, baseUrl, sectionSlug);
   const headerClass =
     level <= 1 ? sectionHeaderClassName : nestedFolderHeaderClassName;
-
-  const folderKey =
-    level <= 1
-      ? `${sectionSlug}-${pathname}`
-      : `${folderUrl ?? sectionSlug}-${level}`;
+  const folderKey = resolveFolderKey(item, level, pathname, sectionSlug);
 
   return (
     <SidebarFolder key={folderKey} defaultOpen={defaultOpen}>

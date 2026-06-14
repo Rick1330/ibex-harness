@@ -81,17 +81,19 @@ export function readYamlLineValue(line, key) {
 export function stripParenthetical(text) {
   let out = "";
   let depth = 0;
+
   for (const char of text) {
     if (char === "(") {
       depth += 1;
       continue;
     }
-    if (char === ")") {
-      if (depth > 0) depth -= 1;
+    if (char === ")" && depth > 0) {
+      depth -= 1;
       continue;
     }
     if (depth === 0) out += char;
   }
+
   return out.trim();
 }
 

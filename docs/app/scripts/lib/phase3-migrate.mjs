@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { PHASE, PHASE_FULL, STUBS } from "./phase3-data.mjs";
+import { simplifyAdrBackticks } from "./adr-backtick-rewrite.mjs";
 import {
   extractBoldField,
   extractH1Title,
@@ -54,43 +55,6 @@ function stripMarkdownExtension(pathPart) {
 
 function rewriteDocRoadmapLink(matchText, pathPart) {
   return `[${matchText}](/roadmap/${stripMarkdownExtension(pathPart)})`;
-}
-
-function simplifyAdrBackticks(text) {
-  const inlinePrefix = "`docs/adr/ADR-";
-  const writePrefix = "Write `docs/adr/ADR-";
-  let result = "";
-  let index = 0;
-
-  while (index < text.length) {
-    if (text.startsWith(writePrefix, index)) {
-      const idStart = index + writePrefix.length;
-      const close = text.indexOf("`", idStart);
-      if (close !== -1) {
-        const adrId = text.slice(idStart, idStart + 4);
-        result +=
-          `Write ADR-${adrId} (engineering \`docs/adr/\` — promote to \`/docs/adr/\` when accepted)`;
-        index = close + 1;
-        continue;
-      }
-    }
-
-    if (text.startsWith(inlinePrefix, index)) {
-      const idStart = index + inlinePrefix.length;
-      const close = text.indexOf("`", idStart);
-      if (close !== -1) {
-        const adrId = text.slice(idStart, idStart + 4);
-        result += `\`ADR-${adrId}\``;
-        index = close + 1;
-        continue;
-      }
-    }
-
-    result += text[index];
-    index += 1;
-  }
-
-  return result;
 }
 
 function isGoalNumber(value) {

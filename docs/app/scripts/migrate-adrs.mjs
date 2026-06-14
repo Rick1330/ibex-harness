@@ -4,7 +4,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { extractBoldField, extractH1Title } from "./lib/text-utils.mjs";
+import { parseAdrIdentity } from "./lib/adr-identity.mjs";
+import { extractBoldField } from "./lib/text-utils.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const APP_ROOT = path.resolve(__dirname, "..");
@@ -17,32 +18,6 @@ function slugify(filename) {
   const match = filename.match(/^ADR-(\d{4})-(.+)\.md$/i);
   if (!match) return null;
   return `${match[1]}-${match[2].toLowerCase()}`;
-}
-
-function parseAdrIdentity(content, filename) {
-  const h1 = extractH1Title(content);
-  let adrId = "0000";
-  let title = filename;
-
-  if (h1?.startsWith("ADR-")) {
-    const colonIndex = h1.indexOf(":");
-    if (colonIndex !== -1) {
-      adrId = h1.slice(4, colonIndex).trim();
-      title = h1.slice(colonIndex + 1).trim();
-    }
-  } else {
-    let digits = "";
-    for (let index = 0; index < filename.length; index += 1) {
-      const char = filename[index];
-      if (char >= "0" && char <= "9") {
-        digits += char;
-        if (digits.length === 4) break;
-      }
-    }
-    if (digits.length === 4) adrId = digits;
-  }
-
-  return { adrId, title: `ADR-${adrId}: ${title}` };
 }
 
 function parseAdrMetadata(content) {
