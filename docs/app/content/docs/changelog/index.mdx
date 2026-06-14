@@ -1,12 +1,120 @@
 ---
 title: Changelog
-description: Release notes and breaking changes for ibex harness documentation and services.
+description: Release notes for IBEX Harness — Phase 1 platform foundation and ongoing docs-site work.
 ---
 
-# Changelog
+This page mirrors `docs/CHANGELOG.md` for the public docs site. Formal semver tags are not cut yet; entries below describe **Phase 1 backend milestones** (complete) and the **0.1.0 prototype baseline** from the engineering changelog.
 
-Release notes and breaking changes for ibex harness documentation and services.
-
-<Callout type="note">
-  Full content ships in Phase 1.5 Waves 6–8.
+<Callout type="note" title="Unreleased work">
+  Phase 1.5 docs-site milestones (D.2.x, D.3.x) ship continuously on `main` but are not version-tagged separately. See [Current state](/roadmap/current-state) for the latest SHA and milestone list.
 </Callout>
+
+## [Unreleased]
+
+### Added
+
+- _TBD — next Phase 2 provider adapter milestones_
+
+### Changed
+
+- _TBD_
+
+### Fixed
+
+- _TBD_
+
+### Security
+
+- _TBD_
+
+---
+
+## [0.1.0] — Phase 1 platform foundation
+
+Initial internal prototype release. Date placeholder in engineering changelog; backend Phase 1 exit audit: [phase1-exit-audit](/roadmap/phase-1-core-platform/phase1-exit-audit).
+
+### Added
+
+- Monorepo structure (`services/`, `packages/`, `infra/`, `docs/`)
+- LLM Proxy service (Go) — auth middleware, agent verify, rate limit skeleton, chat stub
+- Auth service (Go) — gRPC `ValidateToken`, `ValidateAgent`, token management RPCs
+- Memory service skeleton (Python/FastAPI) — not wired in Phase 1
+- Context assembly service skeleton (Python/gRPC) — not wired in Phase 1
+- PostgreSQL schema with RLS policies (`make db-migrate`)
+- Redis cache and Streams infrastructure in compose dev stack
+- ClickHouse analytics schema (traces + billing events) — ingestion deferred
+- MinIO object storage for session archives — not used in Phase 1
+- CI pipeline: lint, typecheck, unit tests, integration smokes, security gates
+- Core documentation corpus in `docs/`
+- Shared packages: `logger`, `reqid`, `telemetry`, `metrics`, `config`, `apierror`, `ratelimit`, `healthcheck`, `shutdown`
+- Developer targets: `make compose-dev-up`, `make db-seed`, `make dev-smoke`
+- Proxy milestones 1.2.1–1.2.7 (auth client, normalization, validation, rate limit, agent verify, request IDs, shutdown)
+- Auth milestones 1.1.1–1.1.7 (migrations, proto, ValidateToken, token CRUD, permissions, crypto, agents schema)
+- Health check contract ([ADR-0022](/docs/adr/0022-health-check-contract))
+- Stable error envelope ([ADR-0013](/docs/adr/0013-proxy-input-validation-and-error-envelope))
+
+### Security
+
+- Tenant isolation model defined (RLS + defense-in-depth)
+- Secret scanning enabled in CI (gitleaks)
+- Cross-tenant denials return 403, not 404
+- PAT hashing with Argon2id ([ADR-0010](/docs/adr/0010-cryptography-policy))
+
+### Migration notes
+
+- Apply initial database migrations: `make db-migrate`
+- Seed tier limits and dev org/user/agent fixtures: `make db-seed` (local only)
+- Set `IBEX_AUTH_VALIDATE_TIMEOUT=2s` on proxy for local Argon2 latency
+
+---
+
+## [0.1.1] — patch template
+
+Engineering changelog placeholder for post-0.1.0 fixes. No tagged release yet.
+
+### Fixed
+
+- _(example)_ Fixed RLS context initialization bug that could cause empty query results
+
+### Security
+
+- _(example)_ Prevented token-like strings from being logged in error paths
+
+---
+
+## [0.2.0] — future (Phase 2 preview)
+
+**Not released.** Example entries from the engineering template — actual Phase 2 scope tracked on the [roadmap](/roadmap/phase-2-single-provider).
+
+### Added
+
+- _(planned)_ OpenAI provider adapter and non-streaming client
+- _(planned)_ Auth token cache (LRU + Redis bloom filter)
+
+### Changed
+
+- _(planned)_ Proxy forwards chat completions to configured provider
+
+### Performance
+
+- _(planned)_ Reduced proxy auth latency via two-tier token cache
+
+### Migration notes
+
+- _(planned)_ Provider API keys via secret manager; new env vars documented in ENVIRONMENT_VARIABLES.md
+
+---
+
+## Changelog discipline
+
+From `docs/CHANGELOG.md`:
+
+- Semantic versioning for platform tags: `vMAJOR.MINOR.PATCH`
+- URL-based REST versioning: `/v1`, `/v2`
+- Additive protobuf evolution; breaking changes require new package versions
+- Every release PR updates this file; security-sensitive details are not disclosed before patch adoption
+
+## Related
+
+- [Current state](/roadmap/current-state) — live milestone tracker
+- [GitHub releases](https://github.com/Rick1330/ibex-harness/releases) — official tags when published

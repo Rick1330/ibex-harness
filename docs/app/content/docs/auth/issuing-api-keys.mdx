@@ -3,38 +3,161 @@ title: Issuing API keys
 description: Create and rotate personal access tokens for agents and services.
 ---
 
-Personal Access Tokens (PATs) are the Phase 1 client credential. Each token is scoped to an organization and carries a permission bitmap. Only a hashed secret is stored — the plaintext PAT is shown once at creation.
+Personal Access Tokens (PATs) are the Phase 1 client credential for IBEX Harness. Each token is scoped to an organization, carries a permission bitmap, and is verified by Argon2id hash lookup — only the hash is stored; the plaintext is shown **once** at creation ([ADR-0007](/docs/adr/0007-auth-token-validation), [ADR-0010](/docs/adr/0010-cryptography-policy)).
 
 <Callout type="danger" title="Secret handling">
-  Never log, commit, or paste PATs into tickets. Use environment variables and rotate on compromise.
+  Never log, commit, or paste PATs into tickets. Store in environment variables or a secrets manager. Log only an 8-character prefix in application code — see [Secrets and keys](/docs/security/secrets-and-keys).
 </Callout>
 
-## PAT format
+## PAT wire format
 
-Tokens use the prefix `ibex_pat_` followed by a UUID segment and secret material. The auth service validates by Argon2id hash lookup in `ibex_core.tokens`.
-
-## Create via gRPC
-
-Phase 1 operators use the `CreateToken` RPC (requires an existing admin bearer). After `make db-seed`, development credentials are written to your environment:
-
-```bash
-make db-seed
-# Exports IBEX_DEV_TOKEN, IBEX_DEV_AGENT_ID, IBEX_DEV_ORG_ID for local smoke tests
-make dev-smoke
+```
+ibex_pat_<token_uuid>_<secret>
 ```
 
-## Rotate a token
+Example dev token (from `make db-seed`):
+
+```
+ibex_pat_00000000-0000-0000-0000-000000000004_LOCALDEVELOPMENTONLY
+```
+
+The auth service parses the prefix, looks up `token_uuid` in `ibex_core.tokens`, and verifies the secret with Argon2id. Revoked tokens fail immediately regardless of hash match.
+
+## Permission bitmap
+
+Tokens encode capabilities as a 64-bit bitmap ([ADR-0009](/docs/adr/0009-permission-bitmap)). Common bits for proxy integrators:
+
+| Bit | Name | Needed for |
+| --- | --- | --- |
+| — | `ProxyChatCompletion` | `POST /v1/chat/completions` |
+| — | `TokenCreate` | `CreateToken` gRPC |
+| — | `TokenRevoke` | `RevokeToken` gRPC |
+
+`ProxyChatCompletion` is a composite of memory/session read bits — sufficient for Phase 1 chat probes.
+
+## Quick start with seed data
 
 <Steps>
-  <Step title="Revoke">
-    Call `RevokeToken` with the token ID — immediate invalidation.
+  <Step title="Migrate and seed">
+    `make db-migrate && make db-seed` — idempotent; refuses production DSNs.
   </Step>
-  <Step title="Issue">
-    Call `CreateToken` for the same org/agent with updated permissions.
+  <Step title="Export env vars">
+    Seed output sets `IBEX_DEV_TOKEN`, `IBEX_DEV_AGENT_ID`, `IBEX_DEV_ORG_ID`.
   </Step>
-  <Step title="Deploy">
-    Update client env vars; old PAT stops working as soon as revoke succeeds.
+  <Step title="Smoke test">
+    `make dev-smoke` — validates probes and chat stub with seeded credentials.
   </Step>
 </Steps>
 
-See [Org and project model](/docs/auth/org-project-model) for how agents map to orgs.
+Fixed seed IDs: org `00000000-0000-0000-0000-000000000001`, agent `00000000-0000-0000-0000-000000000003`.
+
+## Create via gRPC
+
+`CreateToken` requires an existing admin bearer with `TokenCreate` permission.
+
+<CodeTabs>
+  <CodeTab label="grpcurl">
+```bash
+grpcurl -plaintext \
+  -H "authorization: Bearer ibex_pat_<admin-uuid>_<secret>" \
+  -d '{"org_id":"<org-uuid>","name":"dev-pat","type":1,"permissions":23}' \
+  localhost:9091 ibex.auth.v1.AuthService/CreateToken
+```
+  </CodeTab>
+  <CodeTab label="Validate (no auth)">
+```bash
+grpcurl -plaintext \
+  -d '{"access_token":"ibex_pat_<uuid>_<secret>"}' \
+  localhost:9091 ibex.auth.v1.AuthService/ValidateToken
+```
+  </CodeTab>
+</CodeTabs>
+
+The response field `plaintext` is the only chance to copy the secret. Persist it immediately.
+
+## CreateToken parameters
+
+<ParamTable
+  params={[
+    {
+      name: "org_id",
+      type: "string (uuid)",
+      required: true,
+      description: "Organization that owns the token. Must match caller's org.",
+    },
+    {
+      name: "name",
+      type: "string",
+      required: true,
+      description: "Human-readable label for audit and ListTokens.",
+    },
+    {
+      name: "type",
+      type: "integer",
+      required: true,
+      description: "Token type enum from proto (1 = standard PAT).",
+    },
+    {
+      name: "permissions",
+      type: "int64",
+      required: true,
+      description: "Permission bitmap. Use packages/permissions constants in Go.",
+    },
+  ]}
+/>
+
+## Revoke a token
+
+Immediate invalidation — no grace period:
+
+```bash
+grpcurl -plaintext \
+  -H "authorization: Bearer ibex_pat_<admin-uuid>_<secret>" \
+  -d '{"org_id":"<org-uuid>","token_id":"<token-uuid>"}' \
+  localhost:9091 ibex.auth.v1.AuthService/RevokeToken
+```
+
+Revoked tokens return `401` on the next proxy request.
+
+## Rotation procedure
+
+<ProcessSteps
+  steps={[
+    {
+      title: 'Issue replacement',
+      description: 'CreateToken with the same org and desired permissions.',
+    },
+    {
+      title: 'Deploy new secret',
+      description: 'Update client env vars or secrets manager entry.',
+    },
+    {
+      title: 'Verify traffic',
+      description: 'Probe /v1/internal/auth-probe with the new PAT.',
+    },
+    {
+      title: 'Revoke old token',
+      description: 'RevokeToken on the previous token_id — instant cutover.',
+    },
+  ]}
+/>
+
+Never rotate by deleting rows in Postgres — use the gRPC API so audit and revocation caches stay consistent.
+
+## Operator checklist
+
+<Callout type="tip" title="Production readiness">
+  Before promoting a PAT beyond dev: confirm permissions are minimal, expiry policy is documented, and rotation runbook is assigned.
+</Callout>
+
+- [ ] Permissions follow least privilege (`ProxyChatCompletion` only for LLM clients)
+- [ ] Token name identifies the owning service or agent
+- [ ] Plaintext stored in vault, not `.env` committed to git
+- [ ] Revocation tested in staging
+
+## Related
+
+- [Org and project model](/docs/auth/org-project-model) — how agents map to orgs
+- [Multi-tenant RLS](/docs/auth/multi-tenant-rls) — where hashes are stored
+- [Proxy authentication](/docs/proxy/authentication) — headers clients send
+- [Authentication](/docs/security/authentication) — fail-closed validation rules

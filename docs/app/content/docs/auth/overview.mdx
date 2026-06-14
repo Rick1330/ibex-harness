@@ -3,35 +3,135 @@ title: Overview
 description: The auth service issues API keys and enforces org-scoped access.
 ---
 
-The auth service owns identity for IBEX Harness: organizations, users, agents, and Personal Access Tokens (PATs). The proxy calls auth over gRPC on every protected request — there is no shared session cookie in Phase 1.
+The auth service is the identity plane for IBEX Harness. It owns organizations, users, agents, and Personal Access Tokens (PATs) in Postgres, exposes gRPC validation for the proxy on every protected request, and enforces row-level security so one tenant cannot read another's data.
+
+There is no shared session cookie or JWT dashboard flow in Phase 1 — clients authenticate with PATs; the proxy calls auth over gRPC. See [Security authentication](/docs/security/authentication) for the full trust model.
 
 <Callout type="note" title="Phase 1 surface">
-  gRPC: `ValidateToken`, `ValidateAgent`, `CreateToken`, `RevokeToken`, `ListTokens`. HTTP: `/health`, `/ready`, `/metrics`.
+  **gRPC:** `ValidateToken`, `ValidateAgent`, `CreateToken`, `RevokeToken`, `ListTokens`. **HTTP:** `/health`, `/ready`, `/metrics` only — no public REST token API yet.
 </Callout>
 
-## Service responsibilities
+## Service map
+
+```mermaid
+flowchart TB
+  Proxy["Proxy"] -->|gRPC| Auth["Auth :9091"]
+  Op["Operator / grpcurl"] -->|CreateToken| Auth
+  Auth --> PG["Postgres ibex_core"]
+  Auth -->|/metrics| Prom["Prometheus"]
+```
+
+The proxy never connects to Postgres directly in Phase 1 — all identity reads flow through auth. Architecture detail: [Services](/docs/architecture/services) and [Data model](/docs/architecture/data-model).
+
+## Responsibilities
+
+<ProcessSteps
+  steps={[
+    {
+      title: 'Issue tokens',
+      description:
+        'Hash PAT secrets with Argon2id (ADR-0010); store org-scoped permission bitmaps (ADR-0009). Plaintext shown once at creation.',
+    },
+    {
+      title: 'Validate credentials',
+      description:
+        'Answer ValidateToken and ValidateAgent for the proxy middleware chain within a 50ms budget.',
+    },
+    {
+      title: 'Isolate tenants',
+      description:
+        'RLS on ibex_core tables plus explicit org_id in every query — defense in depth (ADR-0005).',
+    },
+    {
+      title: 'Expose health',
+      description:
+        'Liveness and readiness probes for orchestrators; gRPC TCP check on /ready.',
+    },
+  ]}
+/>
+
+## gRPC contract
+
+Package: `ibex.auth.v1` ([ADR-0006](/docs/adr/0006-auth-proto-contract))
+
+| RPC | Caller auth | Purpose |
+| --- | --- | --- |
+| `ValidateToken` | None (internal) | Parse PAT, verify hash, return org_id + permissions |
+| `ValidateAgent` | None (internal) | Confirm agent is active and belongs to org |
+| `CreateToken` | Admin PAT with `TokenCreate` | Mint new PAT; returns plaintext once |
+| `RevokeToken` | Admin PAT with `TokenRevoke` | Immediate invalidation |
+| `ListTokens` | Admin PAT | Paginated token metadata (no secrets) |
+
+Token validation semantics: [ADR-0007](/docs/adr/0007-auth-token-validation).
+
+## HTTP endpoints
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /health` | Liveness — `{"status":"ok","checks":{}}` |
+| `GET /ready` | Readiness — `postgres` (`SELECT 1`) + `grpc` (TCP listen) |
+| `GET /metrics` | Prometheus metrics from `packages/metrics` |
+
+Default ports: HTTP `8081` (`IBEX_PORT`), gRPC `9091` (`IBEX_GRPC_PORT`).
+
+## Run locally
 
 <Steps>
-  <Step title="Issue tokens">
-    Hash PAT secrets with Argon2id and store org-scoped permission bitmaps in Postgres.
+  <Step title="Infrastructure">
+    `make compose-dev-up && make db-migrate && make proto-gen`
   </Step>
-  <Step title="Validate">
-    Answer `ValidateToken` and `ValidateAgent` for the proxy middleware chain.
+  <Step title="Start auth">
+    Set `POSTGRES_DSN` and run `go run ./services/auth/cmd/auth`.
   </Step>
-  <Step title="Isolate tenants">
-    Enforce row-level security on `ibex_core` tables so one org cannot read another's rows.
+  <Step title="Verify">
+    `curl -s http://localhost:8081/health` and grpcurl `ValidateToken` smoke.
+  </Step>
+  <Step title="Start proxy">
+    Proxy requires auth gRPC before accepting protected traffic.
   </Step>
 </Steps>
 
-## Health check
-
+<CodeTabs>
+  <CodeTab label="bash">
 ```bash
-curl -s http://localhost:8081/health
+POSTGRES_DSN=postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable \
+  IBEX_GRPC_PORT=9091 go run ./services/auth/cmd/auth
 ```
+  </CodeTab>
+  <CodeTab label="PowerShell">
+```powershell
+$env:POSTGRES_DSN = "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable"
+$env:IBEX_GRPC_PORT = "9091"
+go run ./services/auth/cmd/auth
+```
+  </CodeTab>
+</CodeTabs>
 
-gRPC listens separately on port `9091` (`IBEX_GRPC_PORT`).
+## Failure modes
 
-## Related
+| Condition | Proxy impact | Auth signal |
+| --- | --- | --- |
+| Postgres down | `503` on protected routes | `/ready` fails `postgres` check |
+| gRPC port blocked | `503 SERVICE_DEGRADED` | `/ready` fails `grpc` check |
+| Invalid PAT | `401` at proxy | `ValidateToken` returns unauthenticated |
 
-- [Issuing API keys](/docs/auth/issuing-api-keys)
-- [Multi-tenant RLS](/docs/auth/multi-tenant-rls)
+Auth fails **closed** — there is no cached permission bypass in Phase 1. Phase 2 optional bloom/LRU cache is documented in [ADR-0011](/docs/adr/0011-proxy-auth-client) §7.
+
+## What is not in Phase 1
+
+<Callout type="warning" title="Honest scope">
+  JWT issuance, OAuth, dashboard login, and HTTP REST token management are **not** implemented. Operators use gRPC (`grpcurl`) or seeded dev credentials.
+</Callout>
+
+- User signup and org self-service
+- API key rotation UI
+- Service-to-service mTLS (dev compose uses plaintext on internal network)
+
+Track delivery: [current state](/roadmap/current-state).
+
+## Related guides
+
+- [Issuing API keys](/docs/auth/issuing-api-keys) — CreateToken and rotation
+- [Org and project model](/docs/auth/org-project-model) — entities and URL binding
+- [Multi-tenant RLS](/docs/auth/multi-tenant-rls) — Postgres policies
+- [Proxy authentication](/docs/proxy/authentication) — how the proxy consumes auth
