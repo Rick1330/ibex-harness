@@ -25,12 +25,16 @@ export type MermaidRenderOptions = {
 
 function mountSvg(host: HTMLDivElement, svg: string) {
   host.replaceChildren();
-  const doc = new DOMParser().parseFromString(svg, "image/svg+xml");
-  const root = doc.documentElement;
-  if (root?.tagName === "parsererror") {
-    throw new Error("Diagram SVG parse failed");
+  try {
+    const doc = new DOMParser().parseFromString(svg, "image/svg+xml");
+    const root = doc.documentElement;
+    if (root?.tagName === "parsererror") {
+      throw new Error("Diagram SVG parse failed");
+    }
+    host.append(root);
+  } catch (err) {
+    throw err instanceof Error ? err : new Error("Diagram SVG mount failed");
   }
-  host.append(root);
 }
 
 export async function renderMermaidChart(

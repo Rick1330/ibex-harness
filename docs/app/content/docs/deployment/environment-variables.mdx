@@ -78,7 +78,7 @@ Copy `services/proxy/.env.example` and `services/auth/.env.example` before runni
       type: 'string (postgres://…)',
       required: true,
       description:
-        "Postgres for tokens and agents. Compose: postgres://ibex:ibex@localhost:5432/ibex",
+        `Postgres for tokens and agents. Compose: postgres://ibex:ibex@localhost:5432/ibex`,
     },
     {
       name: 'IBEX_PORT',
@@ -96,7 +96,7 @@ Copy `services/proxy/.env.example` and `services/auth/.env.example` before runni
       name: 'POSTGRES_TEST_DSN',
       type: 'string',
       description: 'Integration tests on compose test port 5433.',
-      defaultValue: "postgres://ibex:ibex@localhost:5433/ibex_test?sslmode=disable",
+      defaultValue: `postgres://ibex:ibex@localhost:5433/ibex_test?sslmode=disable`,
     },
   ]}
 />
@@ -111,7 +111,7 @@ The proxy never reads `POSTGRES_DSN` in Phase 1 — identity access is gRPC-only
       name: 'REDIS_URL',
       type: 'string (URL)',
       description: 'Primary connection string, e.g. redis://localhost:6379/0.',
-      defaultValue: "redis://localhost:6379/0",
+      defaultValue: `redis://localhost:6379/0`,
     },
     {
       name: 'REDIS_CONNECT_TIMEOUT_MS',
