@@ -3,6 +3,8 @@ import path from "node:path";
 
 import { parseFrontmatterFields } from "./roadmap-parse-fields.mjs";
 
+const PHASE_PAGE_PREFIX = ["index", "goals", "decisions", "risks"];
+
 export function resolveDestName(phaseDir, entry, rel, relPath) {
   if (entry.name === "README.md") {
     return rel ? `${rel}/index.mdx` : `${phaseDir}/index.mdx`;
@@ -35,13 +37,13 @@ export function trackMigratedPage(destName, phaseDir, rel, pages, milestonePages
   }
 }
 
-export function processMarkdownEntry(ctx, entry, abs, rel, relPath, phaseStub) {
+export function processMarkdownEntry(ctx, entry, abs, rel, relPath) {
   let content = fs.readFileSync(abs, "utf8");
   const fields = parseFrontmatterFields(content, abs);
   const destName = resolveDestName(ctx.phaseDir, entry, rel, relPath);
 
   if (entry.name === "README.md" && shouldAppendPhaseStub(ctx.phaseDir, rel)) {
-    content = `${content.trim()}${phaseStub}`;
+    content = `${content.trim()}${ctx.phaseStub}`;
   }
 
   ctx.writeFile(destName, ctx.toMdx(content, fields));
@@ -60,23 +62,25 @@ export function walkPhaseDir(ctx, dir, rel = "") {
     }
 
     if (!entry.name.endsWith(".md")) continue;
-    processMarkdownEntry(ctx, entry, abs, rel, relPath, ctx.phaseStub);
+    processMarkdownEntry(ctx, entry, abs, rel, relPath);
+  }
+}
+
+function appendUniquePages(target, pages, skip) {
+  for (const page of pages) {
+    if (skip.has(page)) continue;
+    target.push(page);
+    skip.add(page);
   }
 }
 
 export function buildOrderedPages(pages, milestonePages) {
-  const orderedPages = [];
-  if (pages.includes("index")) orderedPages.push("index");
-  for (const p of ["goals", "decisions", "risks"]) {
-    if (pages.includes(p)) orderedPages.push(p);
-  }
-  for (const p of pages) {
-    if (!orderedPages.includes(p) && p !== "index" && !p.startsWith("milestones")) {
-      orderedPages.push(p);
-    }
-  }
-  if (milestonePages.length > 0) orderedPages.push("milestones");
-  return orderedPages;
+  const skip = new Set(PHASE_PAGE_PREFIX);
+  const ordered = PHASE_PAGE_PREFIX.filter((page) => pages.includes(page));
+  const remainder = pages.filter((page) => !skip.has(page) && !page.startsWith("milestones"));
+  appendUniquePages(ordered, remainder, skip);
+  if (milestonePages.length > 0) ordered.push("milestones");
+  return ordered;
 }
 
 export function writePhaseMetaFiles(phaseDir, orderedPages, milestonePages, writeFile) {

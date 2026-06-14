@@ -1,16 +1,16 @@
-import { Circle, FileCode, FileText, type LucideIcon } from "lucide-react";
+import { FileCode, FileText, type LucideIcon } from "lucide-react";
 import { createElement, type ReactElement } from "react";
 
 import { cn } from "@/lib/cn";
 import {
-  LUCIDE_BY_NAME,
-  PAGE_ICONS,
-  ROADMAP_PAGE_ICONS,
   ROADMAP_PHASE_ICONS,
   ROADMAP_SECTION_ICONS,
-  SECTION_ICONS,
-  SLUG_ICONS,
 } from "@/lib/sidebar-icon-maps";
+import {
+  iconFromLucideName,
+  lookupDocsPathIcon,
+  lookupRoadmapPathIcon,
+} from "@/lib/sidebar-icon-resolvers";
 
 export type ContentBaseUrl = "/docs" | "/roadmap";
 
@@ -27,64 +27,16 @@ export function docPathFromUrl(url: string): string {
   return contentPathFromUrl(url, "/docs");
 }
 
-function iconFromLucideName(name: string): LucideIcon | undefined {
-  const trimmed = name.trim();
-  if (!trimmed) return undefined;
-
-  if (trimmed in LUCIDE_BY_NAME) {
-    return LUCIDE_BY_NAME[trimmed];
-  }
-
-  const pascal = trimmed
-    .split(/[-_\s]+/)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join("");
-
-  return LUCIDE_BY_NAME[pascal];
-}
-
-function resolveRoadmapMilestoneIcon(path: string): LucideIcon | undefined {
-  if (!path.includes("/milestones/")) return undefined;
-
-  const slug = path.split("/").pop() ?? "";
-  if (slug.startsWith("d") || /^\d/.test(slug)) {
-    return Circle;
-  }
-
-  return FileText;
-}
-
 export function resolveRoadmapNavIcon(
   iconName?: string,
   url?: string,
 ): LucideIcon | undefined {
   const named = iconName ? iconFromLucideName(iconName) : undefined;
   if (named) return named;
-
   if (!url) return FileText;
 
   const path = contentPathFromUrl(url, "/roadmap");
-  if (ROADMAP_PAGE_ICONS[path]) return ROADMAP_PAGE_ICONS[path];
-
-  const segments = path.split("/");
-  const topLevel = segments[0];
-  if (topLevel && ROADMAP_PHASE_ICONS[topLevel] && segments.length === 1) {
-    return ROADMAP_PHASE_ICONS[topLevel];
-  }
-
-  const section = segments.find((s) => ROADMAP_SECTION_ICONS[s]);
-  if (section) return ROADMAP_SECTION_ICONS[section];
-
-  const milestoneIcon = resolveRoadmapMilestoneIcon(path);
-  if (milestoneIcon) return milestoneIcon;
-
-  const leaf = segments.pop() ?? path;
-  if (SLUG_ICONS[leaf]) return SLUG_ICONS[leaf];
-  if (topLevel && ROADMAP_PHASE_ICONS[topLevel]) {
-    return ROADMAP_PHASE_ICONS[topLevel];
-  }
-
-  return FileText;
+  return lookupRoadmapPathIcon(path) ?? FileText;
 }
 
 export function resolveNavIcon(
@@ -97,22 +49,10 @@ export function resolveNavIcon(
 
   const named = iconName ? iconFromLucideName(iconName) : undefined;
   if (named) return named;
-
   if (!url) return FileCode;
 
   const path = contentPathFromUrl(url, "/docs");
-  if (PAGE_ICONS[path]) return PAGE_ICONS[path];
-
-  const section = path.split("/")[0];
-  if (section && SECTION_ICONS[section] && !path.includes("/")) {
-    return SECTION_ICONS[section];
-  }
-
-  const leaf = path.split("/").pop() ?? path;
-  if (SLUG_ICONS[leaf]) return SLUG_ICONS[leaf];
-  if (SECTION_ICONS[section]) return SECTION_ICONS[section];
-
-  return FileCode;
+  return lookupDocsPathIcon(path) ?? FileCode;
 }
 
 type SidebarIconProps = {

@@ -4,57 +4,68 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { readMdxParts, walkMdxFiles, writeMdxParts } from "./lib/mdx-walk.mjs";
+
+const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
+
 const ROOTS = [
-  path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../content/docs"),
-  path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../content/roadmap"),
-  path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../content/blog"),
+  path.resolve(SCRIPT_DIR, "../content/docs"),
+  path.resolve(SCRIPT_DIR, "../content/roadmap"),
+  path.resolve(SCRIPT_DIR, "../content/blog"),
 ];
 
-function sanitizeBody(body) {
-  let out = body;
+const WORKSPACE_PROMPTS_BACKTICK = "under `ibex-harness-workspace/prompts/`";
+const WORKSPACE_PROMPTS_RELOCATED =
+  "Execution prompts relocated to the local workspace (`ibex-harness-workspace/prompts/`) — not published";
 
-  out = out.replace(
+function stripExecutionPromptSection(body) {
+  return body.replace(
     /## Execution prompt\s*\n[\s\S]*?(?=\n## |\n---\s*\n|$)/gi,
     "",
   );
+}
 
-  out = out.replace(
-    /- \[x\] Execution prompt[^\n]*/gi,
-    "- [x] Contributor execution materials prepared",
-  );
-  out = out.replace(
-    /- \[x\] Add execution prompt[^\n]*/gi,
-    "- [x] Contributor execution materials prepared",
-  );
-  out = out.replace(
-    /- \[x\] Update[^\n]*execution prompt[^\n]*/gi,
-    "- [x] Contributor documentation updated",
-  );
+function normalizeExecutionPromptChecklist(body) {
+  return body
+    .replace(/- \[x\] Execution prompt[^\n]*/gi, "- [x] Contributor execution materials prepared")
+    .replace(/- \[x\] Add execution prompt[^\n]*/gi, "- [x] Contributor execution materials prepared")
+    .replace(
+      /- \[x\] Update[^\n]*execution prompt[^\n]*/gi,
+      "- [x] Contributor documentation updated",
+    );
+}
 
-  out = out.replace(/`ibex-harness-workspace\/prompts\/[^`]*`/g, "contributor workspace");
-  out = out.replace(/ibex-harness-workspace\/prompts\//g, "contributor workspace");
-  out = out.replace(/under `ibex-harness-workspace\/prompts\/`/g, "in the contributor workspace");
-  out = out.replace(
-    /\| `ibex-harness-workspace\/prompts\/[^|]*` \| [^\n]*/g,
-    "| Contributor workspace | Add |",
-  );
+function stripWorkspacePaths(body) {
+  return body
+    .replace(/`ibex-harness-workspace\/prompts\/[^`]*`/g, "contributor workspace")
+    .replace(/ibex-harness-workspace\/prompts\//g, "contributor workspace")
+    .replaceAll(WORKSPACE_PROMPTS_BACKTICK, "in the contributor workspace")
+    .replace(
+      /\| `ibex-harness-workspace\/prompts\/[^|]*` \| [^\n]*/g,
+      "| Contributor workspace | Add |",
+    )
+    .replace(
+      /`ibex-harness-workspace\/archive\/foundation\/`/g,
+      "contributor workspace archive",
+    )
+    .replace(/ibex-harness-workspace\/archive\/foundation\//g, "contributor workspace archive");
+}
 
-  out = out.replace(
-    /\[([^\]]*)\]\(\/roadmap\/prompts\/[^)]+\)/g,
-    "",
-  );
-  out = out.replace(/See \[MILESTONE-[^\]]+\]\(\/roadmap\/prompts\/[^)]+\)\.?/g, "");
+function stripPromptLinks(body) {
+  return body
+    .replace(/\[([^\]]*)\]\(\/roadmap\/prompts\/[^)]+\)/g, "")
+    .replace(/See \[MILESTONE-[^\]]+\]\(\/roadmap\/prompts\/[^)]+\)\.?/g, "")
+    .replace(
+      WORKSPACE_PROMPTS_RELOCATED,
+      "Execution prompts are not published on the public site.",
+    );
+}
 
-  out = out.replace(
-    /Execution prompts relocated to the local workspace \(`ibex-harness-workspace\/prompts\/`\) — not published/g,
-    "Execution prompts are not published on the public site.",
-  );
-  out = out.replace(
-    /`ibex-harness-workspace\/archive\/foundation\/`/g,
-    "contributor workspace archive",
-  );
-  out = out.replace(/ibex-harness-workspace\/archive\/foundation\//g, "contributor workspace archive");
-
+function sanitizeBody(body) {
+  let out = stripExecutionPromptSection(body);
+  out = normalizeExecutionPromptChecklist(out);
+  out = stripWorkspacePaths(out);
+  out = stripPromptLinks(out);
   return out.replace(/\n{3,}/g, "\n\n");
 }
 
@@ -66,22 +77,16 @@ function sanitizeFrontmatter(fm) {
     .replace(/\/roadmap\/prompts\//g, "");
 }
 
-function walk(dir) {
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    const abs = path.join(dir, entry.name);
-    if (entry.isDirectory()) walk(abs);
-    else if (entry.name.endsWith(".mdx")) {
-      const raw = fs.readFileSync(abs, "utf8");
-      const match = raw.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
-      if (!match) continue;
-      const fm = sanitizeFrontmatter(match[1]);
-      const body = sanitizeBody(match[2]);
-      fs.writeFileSync(abs, `---\n${fm}\n---\n${body}`, "utf8");
-    }
-  }
+function sanitizeMdxFile(abs) {
+  const parts = readMdxParts(abs);
+  if (!parts) return;
+  const fm = sanitizeFrontmatter(parts.fm);
+  const body = sanitizeBody(parts.body);
+  writeMdxParts(abs, fm, body);
 }
 
 for (const root of ROOTS) {
-  if (fs.existsSync(root)) walk(root);
+  if (fs.existsSync(root)) walkMdxFiles(root, sanitizeMdxFile);
 }
+
 console.log("Sanitized public content (prompt/workspace paths)");

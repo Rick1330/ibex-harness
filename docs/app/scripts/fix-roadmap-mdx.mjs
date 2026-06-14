@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /** Fix MDX compatibility and frontmatter quality in roadmap content. */
-import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { fixFrontmatter } from "./lib/roadmap-frontmatter-fix.mjs";
+import { readMdxParts, walkMdxFiles, writeMdxParts } from "./lib/mdx-walk.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../content/roadmap");
 
@@ -37,37 +37,33 @@ function fixMetadataBlocks(body) {
   return lines.join("\n");
 }
 
+function fixProsePart(part) {
+  return fixMetadataBlocks(
+    part
+      .replace(/<(\d)/g, "&lt;$1")
+      .replace(/\{(\d)/g, "&#123;$1")
+      .replace(/<!--[\s\S]*?-->/g, ""),
+  );
+}
+
+function fixCodeFence(part) {
+  return part.replace(/^```([a-zA-Z0-9+#.-]+)/m, (_, lang) => `\`\`\`${normalizeLang(lang)}`);
+}
+
 function fixBody(body) {
   const parts = body.split(/(```[\s\S]*?```)/g);
   return parts
-    .map((part, i) => {
-      if (i % 2 === 1) {
-        return part.replace(/^```([a-zA-Z0-9+#.-]+)/m, (_, lang) => `\`\`\`${normalizeLang(lang)}`);
-      }
-      return fixMetadataBlocks(
-        part
-          .replace(/<(\d)/g, "&lt;$1")
-          .replace(/\{(\d)/g, "&#123;$1")
-          .replace(/<!--[\s\S]*?-->/g, ""),
-      );
-    })
+    .map((part, i) => (i % 2 === 1 ? fixCodeFence(part) : fixProsePart(part)))
     .join("");
 }
 
-function walk(dir) {
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    const abs = path.join(dir, entry.name);
-    if (entry.isDirectory()) walk(abs);
-    else if (entry.name.endsWith(".mdx")) {
-      const raw = fs.readFileSync(abs, "utf8");
-      const match = raw.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
-      if (!match) continue;
-      const body = fixBody(match[2]);
-      const fm = fixFrontmatter(match[1], body);
-      fs.writeFileSync(abs, `---\n${fm}\n---\n${body}`, "utf8");
-    }
-  }
+function fixMdxFile(abs) {
+  const parts = readMdxParts(abs);
+  if (!parts) return;
+  const body = fixBody(parts.body);
+  const fm = fixFrontmatter(parts.fm, body);
+  writeMdxParts(abs, fm, body);
 }
 
-walk(ROOT);
+walkMdxFiles(ROOT, fixMdxFile);
 console.log("Fixed roadmap MDX files for MDX/Shiki compatibility and frontmatter");

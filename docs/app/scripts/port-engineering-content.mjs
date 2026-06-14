@@ -11,6 +11,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { extractSections } from "./lib/port-content-sections.mjs";
+
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const APP_ROOT = path.resolve(SCRIPT_DIR, "..");
 const ENGINEERING_DOCS = path.resolve(APP_ROOT, "../../");
@@ -69,36 +71,6 @@ function stripInternalPaths(text) {
     });
   }
   return out;
-}
-
-function extractSections(markdown, sectionTitles) {
-  if (!sectionTitles?.length) return markdown;
-
-  const lines = markdown.split("\n");
-  const chunks = [];
-  let capturing = false;
-  let current = [];
-
-  for (const line of lines) {
-    const heading = line.match(/^#{1,3}\s+(.+)/);
-    if (heading) {
-      const title = heading[1].replace(/[^\w\s-]/g, "").trim();
-      if (sectionTitles.some((s) => title.toLowerCase().includes(s.toLowerCase()))) {
-        if (current.length) chunks.push(current.join("\n"));
-        current = [line];
-        capturing = true;
-        continue;
-      }
-      if (capturing && line.startsWith("## ")) {
-        chunks.push(current.join("\n"));
-        current = [];
-        capturing = false;
-      }
-    }
-    if (capturing) current.push(line);
-  }
-  if (current.length) chunks.push(current.join("\n"));
-  return chunks.join("\n\n") || markdown.slice(0, 8000);
 }
 
 function toFrontmatterTitle(slug) {
