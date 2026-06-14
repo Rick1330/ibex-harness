@@ -21,6 +21,8 @@ const LANG_ALIASES = {
 
 function normalizeLang(lang) {
   const lower = lang.toLowerCase();
+  // Preserve mermaid fences for MDX diagram components (ADR-0023).
+  if (lower === "mermaid") return "mermaid";
   if (ALLOWED_LANGS.has(lower)) return lower;
   if (LANG_ALIASES[lower]) return LANG_ALIASES[lower];
   return "text";

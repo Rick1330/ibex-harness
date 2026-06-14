@@ -58,20 +58,51 @@ function normalizeExecutionPromptChecklist(body) {
     .join("\n");
 }
 
+function replaceBacktickPath(text, needle, replacement) {
+  let out = "";
+  let index = 0;
+
+  while (index < text.length) {
+    const start = text.indexOf("`", index);
+    if (start === -1) {
+      out += text.slice(index);
+      break;
+    }
+
+    out += text.slice(index, start);
+    const end = text.indexOf("`", start + 1);
+    if (end === -1) {
+      out += text.slice(start);
+      break;
+    }
+
+    const inner = text.slice(start + 1, end);
+    out += inner.includes(needle) ? replacement : `\`${inner}\``;
+    index = end + 1;
+  }
+
+  return out;
+}
+
+function replacePlainPath(text, needle, replacement) {
+  return text.split(needle).join(replacement);
+}
+
+function replacePromptTableRows(line) {
+  if (!line.startsWith("| `ibex-harness-workspace/prompts/")) return line;
+  return "| Contributor workspace | Add |";
+}
+
 function stripWorkspacePaths(body) {
-  return body
-    .replace(/`ibex-harness-workspace\/prompts\/[^`]*`/g, "contributor workspace")
-    .replace(/ibex-harness-workspace\/prompts\//g, "contributor workspace")
-    .replaceAll(WORKSPACE_PROMPTS_BACKTICK, "in the contributor workspace")
-    .replace(
-      /\| `ibex-harness-workspace\/prompts\/[^|]*` \| [^\n]*/g,
-      "| Contributor workspace | Add |",
-    )
-    .replace(
-      /`ibex-harness-workspace\/archive\/foundation\/`/g,
-      "contributor workspace archive",
-    )
-    .replace(/ibex-harness-workspace\/archive\/foundation\//g, "contributor workspace archive");
+  let out = replaceBacktickPath(body, "ibex-harness-workspace/prompts/", "contributor workspace");
+  out = replacePlainPath(out, "ibex-harness-workspace/prompts/", "contributor workspace");
+  out = out.replaceAll(WORKSPACE_PROMPTS_BACKTICK, "in the contributor workspace");
+  out = out
+    .split("\n")
+    .map((line) => replacePromptTableRows(line))
+    .join("\n");
+  out = replaceBacktickPath(out, "ibex-harness-workspace/archive/foundation/", "contributor workspace archive");
+  return replacePlainPath(out, "ibex-harness-workspace/archive/foundation/", "contributor workspace archive");
 }
 
 function stripPromptLinks(body) {
@@ -118,11 +149,10 @@ function collapseBlankLines(text) {
 }
 
 function sanitizeFrontmatter(fm) {
-  return fm
-    .replace(/ibex-harness-workspace\/prompts\//g, "contributor workspace")
-    .replace(/ibex-harness-workspace\/archive\/foundation\//g, "contributor workspace archive")
-    .replace(/`ibex-harness-workspace\/[^`]*`/g, "contributor workspace")
-    .replace(/\/roadmap\/prompts\//g, "");
+  let out = replacePlainPath(fm, "ibex-harness-workspace/prompts/", "contributor workspace");
+  out = replacePlainPath(out, "ibex-harness-workspace/archive/foundation/", "contributor workspace archive");
+  out = replaceBacktickPath(out, "ibex-harness-workspace/", "contributor workspace");
+  return replacePlainPath(out, "/roadmap/prompts/", "");
 }
 
 function sanitizeMdxFile(abs) {
