@@ -4,12 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import {
-  extractMarkdownField,
-  matchYamlField,
-  readYamlValue,
-  setYamlField,
-} from "./lib/yaml-frontmatter.mjs";
+import { fixFrontmatter } from "./lib/roadmap-frontmatter-fix.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../content/roadmap");
 
@@ -29,97 +24,6 @@ function normalizeLang(lang) {
   if (ALLOWED_LANGS.has(lower)) return lower;
   if (LANG_ALIASES[lower]) return LANG_ALIASES[lower];
   return "text";
-}
-
-function describeComplete(title, completed) {
-  if (!completed) return `${title} — complete.`;
-  return `${title} — complete as of ${completed.replace(/\.$/, "")}.`;
-}
-
-function describeInProgress(title, milestone) {
-  const current = milestone?.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
-  if (!current) return `${title} — in progress.`;
-  return `${title} — in progress. Current: ${current}.`;
-}
-
-function describePlanned(title, duration, depends) {
-  const parts = [`${title} — planned.`];
-  if (duration) parts.push(`Estimated ${duration.toLowerCase()}.`);
-  if (depends) parts.push(`Depends on ${depends.toLowerCase()}.`);
-  return parts.join(" ");
-}
-
-function cleanDescription(raw, title) {
-  const text = raw.replace(/\\n/g, "\n").replace(/\*\*/g, "");
-  if (!text.includes("Status:")) {
-    return text.replace(/\s+/g, " ").trim();
-  }
-
-  const status =
-    extractMarkdownField(text, "Status") ?? text.match(/Status:\s*([^\n]+)/i)?.[1]?.trim();
-  const completed =
-    extractMarkdownField(text, "Completed") ??
-    text.match(/Completed:\s*([^\n]+)/i)?.[1]?.trim();
-  const duration =
-    extractMarkdownField(text, "Estimated duration") ??
-    text.match(/Estimated duration:\s*([^\n]+)/i)?.[1]?.trim();
-  const depends =
-    extractMarkdownField(text, "Depends on") ??
-    text.match(/Depends on:\s*([^\n]+)/i)?.[1]?.trim();
-  const milestone =
-    extractMarkdownField(text, "Current milestone") ??
-    text.match(/Current milestone:\s*([^\n]+)/i)?.[1]?.trim();
-
-  const lower = status?.toLowerCase() ?? "";
-  if (lower.includes("complete")) return describeComplete(title, completed);
-  if (lower.includes("progress")) return describeInProgress(title, milestone);
-  if (lower.includes("planned")) return describePlanned(title, duration, depends);
-  return text.replace(/\s+/g, " ").trim();
-}
-
-function fixFrontmatter(fm, body) {
-  const titleMatch = fm.match(/^title:\s*(.+)$/m);
-  const title = readYamlValue(titleMatch?.[1] ?? "Untitled");
-
-  let out = fm;
-
-  for (const key of ["description", "summary"]) {
-    const match = matchYamlField(out, key);
-    if (!match) continue;
-    const val = readYamlValue(match[1]);
-    if (
-      val.includes("**") ||
-      val.includes("\\n") ||
-      /Status:/i.test(val) ||
-      val.includes("Exit audit:")
-    ) {
-      out = setYamlField(out, key, cleanDescription(val, title));
-    }
-  }
-
-  out = out.replace(/^completedDate:\s*.+$/m, (line) => {
-    const val = readYamlValue(line.replace(/^completedDate:\s*/, ""));
-    return `completedDate: ${JSON.stringify(val.replace(/\\n.*/, "").trim())}`;
-  });
-
-  const statusRaw =
-    extractMarkdownField(body.slice(0, 800), "Status") ??
-    extractMarkdownField(out, "Status");
-  if (statusRaw && !/^status:/m.test(out)) {
-    const lower = statusRaw.toLowerCase();
-    if (lower.includes("complete")) out = setYamlField(out, "status", "completed");
-    else if (lower.includes("progress")) out = setYamlField(out, "status", "in-progress");
-    else if (lower.includes("planned")) out = setYamlField(out, "status", "planned");
-  }
-
-  const completed =
-    extractMarkdownField(out, "Completed") ??
-    extractMarkdownField(body.slice(0, 500), "Completed");
-  if (completed && !/^completedDate:/m.test(out)) {
-    out = setYamlField(out, "completedDate", completed);
-  }
-
-  return out;
 }
 
 function fixMetadataBlocks(body) {
