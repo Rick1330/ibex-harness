@@ -6,11 +6,13 @@ import { usePathname } from "next/navigation";
 import { useMemo } from "react";
 import { useTreeContext } from "fumadocs-ui/provider";
 
-import { SidebarIcon, getNavIconForUrl, toNavUrl } from "@/lib/sidebar-icons";
+import { baseUrlFromPathname, toNavUrl } from "@/lib/sidebar-icons";
 import {
   adjacentNavPages,
   flattenPageTree,
+  navUrlsMatch,
 } from "@/lib/sidebar-nav-pages";
+import { resolveLeafNavIcon } from "@/lib/sidebar-page-icon";
 import { cn } from "@/lib/cn";
 
 const cardClassName = cn(
@@ -24,6 +26,7 @@ const labelClassName =
 export function DocsFooterNav() {
   const { root } = useTreeContext();
   const pathname = usePathname();
+  const baseUrl = baseUrlFromPathname(toNavUrl(pathname));
 
   const { previous, next } = useMemo(() => {
     const pages = flattenPageTree(root.children);
@@ -34,25 +37,26 @@ export function DocsFooterNav() {
 
   return (
     <div className="not-prose grid grid-cols-2 gap-4 pb-6">
-      {previous ? (
-        <Link className={cardClassName} href={previous.url} prefetch>
+      {previous && !navUrlsMatch(previous.url, pathname) ? (
+        <Link className={cardClassName} href={previous.url} prefetch scroll={false}>
           <span className={labelClassName}>
             <ChevronLeft className="size-4" strokeWidth={1.5} />
             Previous
           </span>
           <span className="inline-flex items-center gap-2 font-medium text-text-primary">
-            <SidebarIcon icon={getNavIconForUrl(toNavUrl(previous.url))} />
+            {resolveLeafNavIcon(previous.icon, previous.url, baseUrl)}
             {previous.name}
           </span>
         </Link>
       ) : (
         <div />
       )}
-      {next ? (
+      {next && !navUrlsMatch(next.url, pathname) ? (
         <Link
           className={cn(cardClassName, "col-start-2 text-end")}
           href={next.url}
           prefetch
+          scroll={false}
         >
           <span className={cn(labelClassName, "justify-end")}>
             Next
@@ -60,7 +64,7 @@ export function DocsFooterNav() {
           </span>
           <span className="inline-flex items-center justify-end gap-2 font-medium text-text-primary">
             {next.name}
-            <SidebarIcon icon={getNavIconForUrl(toNavUrl(next.url))} />
+            {resolveLeafNavIcon(next.icon, next.url, baseUrl)}
           </span>
         </Link>
       ) : null}

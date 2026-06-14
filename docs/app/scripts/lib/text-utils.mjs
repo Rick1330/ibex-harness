@@ -1,26 +1,9 @@
 /** String helpers without backtracking-prone regex (Sonar S5852). */
 
+import { rewriteAllMarkdownLinks } from "./markdown-link-rewrite.mjs";
+
 export function stripMarkdownLinks(text) {
-  let result = "";
-  let index = 0;
-
-  while (index < text.length) {
-    if (text[index] === "[") {
-      const bracketEnd = text.indexOf("]", index + 1);
-      if (bracketEnd !== -1 && text[bracketEnd + 1] === "(") {
-        const parenEnd = text.indexOf(")", bracketEnd + 2);
-        if (parenEnd !== -1) {
-          result += text.slice(index + 1, bracketEnd);
-          index = parenEnd + 1;
-          continue;
-        }
-      }
-    }
-    result += text[index];
-    index += 1;
-  }
-
-  return result;
+  return rewriteAllMarkdownLinks(text, (link) => link.text);
 }
 
 export function extractH1Title(content) {

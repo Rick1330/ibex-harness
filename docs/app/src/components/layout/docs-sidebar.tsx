@@ -12,16 +12,16 @@ import type { ReactNode } from "react";
 
 import {
   baseUrlFromPathname,
-  navIconElement,
-  roadmapNavIconElement,
   toNavUrl,
 } from "@/lib/sidebar-icons";
+import { resolveLeafNavIcon } from "@/lib/sidebar-page-icon";
 import {
+  folderContainsPath,
   resolveFolderDefaultOpen,
   resolveFolderHeaderIcon,
-  resolveFolderKey,
   resolveFolderSectionSlug,
 } from "@/lib/sidebar-folder-present";
+import { PathSyncedSidebarFolder } from "@/components/layout/path-synced-sidebar-folder";
 import { cn } from "@/lib/cn";
 
 /** Top-level section folder headers. */
@@ -56,8 +56,6 @@ const leafItemClassName = cn(
 export function DocsSidebarItem({ item }: { item: PageTree.Item }) {
   const pathname = usePathname();
   const baseUrl = baseUrlFromPathname(toNavUrl(pathname));
-  const iconResolver =
-    baseUrl === "/roadmap" ? roadmapNavIconElement : navIconElement;
   const isMilestone = item.url.includes("/milestones/");
 
   return (
@@ -65,7 +63,7 @@ export function DocsSidebarItem({ item }: { item: PageTree.Item }) {
       className={cn(leafItemClassName, isMilestone && "sidebar-nav-item--milestone")}
       external={item.external}
       href={item.url}
-      icon={item.icon ?? iconResolver(undefined, toNavUrl(item.url))}
+      icon={resolveLeafNavIcon(item.icon, item.url, baseUrl)}
     >
       {item.name}
     </SidebarItem>
@@ -88,10 +86,30 @@ export function DocsSidebarFolder({
   const sectionIcon = resolveFolderHeaderIcon(item, level, baseUrl, sectionSlug);
   const headerClass =
     level <= 1 ? sectionHeaderClassName : nestedFolderHeaderClassName;
-  const folderKey = resolveFolderKey(item, level, pathname, sectionSlug);
+
+  if (level <= 1) {
+    return (
+      <PathSyncedSidebarFolder
+        containsPath={folderContainsPath(item, pathname)}
+        headerClassName={headerClass}
+        header={
+          <>
+            {sectionIcon}
+            <span className="min-w-0 flex-1 text-left break-words">{item.name}</span>
+          </>
+        }
+        depth={level}
+      >
+        {children}
+      </PathSyncedSidebarFolder>
+    );
+  }
 
   return (
-    <SidebarFolder key={folderKey} defaultOpen={defaultOpen}>
+    <SidebarFolder
+      key={`${item.index?.url ?? sectionSlug}-${level}`}
+      defaultOpen={defaultOpen}
+    >
       <SidebarFolderTrigger className={headerClass}>
         {sectionIcon}
         <span className="min-w-0 flex-1 text-left break-words">{item.name}</span>

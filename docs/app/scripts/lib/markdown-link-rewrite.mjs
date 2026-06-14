@@ -19,13 +19,13 @@ export function parseMarkdownLink(content, index) {
   return { text, pathPart, hash, end: hrefEnd + 1 };
 }
 
-export function rewriteMarkdownLinks(content, rewriteLink) {
+export function rewriteAllMarkdownLinks(content, rewriteLink) {
   let result = "";
   let index = 0;
 
   while (index < content.length) {
     const link = parseMarkdownLink(content, index);
-    if (link?.pathPart.endsWith(".md")) {
+    if (link) {
       result += rewriteLink(link);
       index = link.end;
       continue;
@@ -36,4 +36,14 @@ export function rewriteMarkdownLinks(content, rewriteLink) {
   }
 
   return result;
+}
+
+export function rewriteMarkdownLinks(content, rewriteLink) {
+  return rewriteAllMarkdownLinks(content, (link) => {
+    if (!link.pathPart.endsWith(".md")) {
+      const suffix = link.hash ? `#${link.hash}` : "";
+      return `[${link.text}](${link.pathPart}${suffix})`;
+    }
+    return rewriteLink(link);
+  });
 }

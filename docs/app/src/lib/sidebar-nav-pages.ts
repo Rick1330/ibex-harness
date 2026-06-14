@@ -4,20 +4,30 @@ import type { ReactNode } from "react";
 export type NavPage = {
   name: ReactNode;
   url: string;
+  icon?: ReactNode;
 };
 
 export function normalizeNavUrl(url: string): string {
-  if (url.length > 1 && url.endsWith("/")) {
-    return url.slice(0, -1);
+  let normalized = url;
+  if (normalized.length > 1 && normalized.endsWith("/")) {
+    normalized = normalized.slice(0, -1);
   }
-  return url;
+  if (normalized.endsWith("/index")) {
+    normalized = normalized.slice(0, -6) || "/";
+  }
+  return normalized;
+}
+
+/** Match fumadocs-ui footer active-page detection (exact URL, no nested prefix). */
+export function navUrlsMatch(url: string, pathname: string): boolean {
+  return normalizeNavUrl(url) === normalizeNavUrl(pathname);
 }
 
 function appendNavPage(list: NavPage[], seen: Set<string>, page: NavPage) {
   const url = normalizeNavUrl(page.url);
   if (seen.has(url)) return;
   seen.add(url);
-  list.push({ name: page.name, url });
+  list.push({ name: page.name, url: page.url, icon: page.icon });
 }
 
 export function flattenPageTree(nodes: PageTree.Node[]): NavPage[] {
@@ -48,16 +58,27 @@ export function adjacentNavPages(
   pages: NavPage[],
   pathname: string,
 ): { previous?: NavPage; next?: NavPage } {
-  const current = normalizeNavUrl(pathname);
-  const index = pages.findIndex((page) => normalizeNavUrl(page.url) === current);
+  const index = pages.findIndex((page) => navUrlsMatch(page.url, pathname));
   if (index === -1) return {};
 
-  const previous = pages[index - 1];
-  const next = pages[index + 1];
+  let previousIndex = index - 1;
+  while (
+    previousIndex >= 0 &&
+    navUrlsMatch(pages[previousIndex].url, pathname)
+  ) {
+    previousIndex -= 1;
+  }
+
+  let nextIndex = index + 1;
+  while (
+    nextIndex < pages.length &&
+    navUrlsMatch(pages[nextIndex].url, pathname)
+  ) {
+    nextIndex += 1;
+  }
 
   return {
-    previous:
-      previous && normalizeNavUrl(previous.url) !== current ? previous : undefined,
-    next: next && normalizeNavUrl(next.url) !== current ? next : undefined,
+    previous: previousIndex >= 0 ? pages[previousIndex] : undefined,
+    next: nextIndex < pages.length ? pages[nextIndex] : undefined,
   };
 }

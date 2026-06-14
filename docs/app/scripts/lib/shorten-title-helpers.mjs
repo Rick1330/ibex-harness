@@ -24,20 +24,13 @@ function stripLeadingDash(value) {
 }
 
 function stripNumericSlugPrefix(slug) {
-  let index = 0;
-  if (slug[index] === "d" || slug[index] === "D") index += 1;
-
-  while (index < slug.length && slug[index] >= "0" && slug[index] <= "9") {
-    index += 1;
+  for (let index = 0; index < slug.length; index += 1) {
+    const char = slug[index];
+    const isAlpha =
+      (char >= "a" && char <= "z") || (char >= "A" && char <= "Z");
+    if (isAlpha) return stripLeadingDash(slug.slice(index));
   }
-
-  if (index < slug.length && slug[index] === "-") index += 1;
-  while (index < slug.length && slug[index] >= "0" && slug[index] <= "9") {
-    index += 1;
-  }
-
-  if (index < slug.length && slug[index] === "-") index += 1;
-  return stripLeadingDash(slug.slice(index));
+  return slug;
 }
 
 export function slugCompactName(slug, id) {

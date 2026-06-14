@@ -3,6 +3,7 @@ import path from "node:path";
 
 import { PHASE, PHASE_FULL, STUBS } from "./phase3-data.mjs";
 import { simplifyAdrBackticks } from "./adr-backtick-rewrite.mjs";
+import { rewriteAllMarkdownLinks } from "./markdown-link-rewrite.mjs";
 import {
   extractBoldField,
   extractH1Title,
@@ -69,31 +70,13 @@ function goalAnchorId(num, title) {
 
 function rewriteExternalRoadmapLinks(out) {
   const marker = "docs/roadmap/phase-3-memory-engine/";
-  let index = 0;
-  let result = "";
-
-  while (index < out.length) {
-    if (out[index] === "[" && out.slice(index).startsWith("[", 0)) {
-      const bracketEnd = out.indexOf("]", index + 1);
-      if (bracketEnd !== -1 && out[bracketEnd + 1] === "(") {
-        const hrefStart = bracketEnd + 2;
-        const hrefEnd = out.indexOf(")", hrefStart);
-        if (hrefEnd !== -1) {
-          const text = out.slice(index + 1, bracketEnd);
-          const href = out.slice(hrefStart, hrefEnd);
-          if (href.startsWith(marker)) {
-            result += rewriteDocRoadmapLink(text, href.slice(marker.length));
-            index = hrefEnd + 1;
-            continue;
-          }
-        }
-      }
+  return rewriteAllMarkdownLinks(out, (link) => {
+    if (!link.pathPart.startsWith(marker)) {
+      const suffix = link.hash ? `#${link.hash}` : "";
+      return `[${link.text}](${link.pathPart}${suffix})`;
     }
-    result += out[index];
-    index += 1;
-  }
-
-  return result;
+    return rewriteDocRoadmapLink(link.text, link.pathPart.slice(marker.length));
+  });
 }
 
 export function rewriteBody(body) {
