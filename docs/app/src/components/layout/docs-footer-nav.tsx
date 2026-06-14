@@ -7,7 +7,7 @@ import { usePathname } from "next/navigation";
 import { useMemo, type ReactNode } from "react";
 import { useTreeContext } from "fumadocs-ui/provider";
 
-import { SidebarIcon, getNavIconForUrl } from "@/lib/sidebar-icons";
+import { SidebarIcon, getNavIconForUrl, toNavUrl } from "@/lib/sidebar-icons";
 import { cn } from "@/lib/cn";
 
 type NavPage = {
@@ -77,7 +77,7 @@ export function DocsFooterNav() {
             Previous
           </span>
           <span className="inline-flex items-center gap-2 font-medium text-text-primary">
-            <SidebarIcon icon={getNavIconForUrl(previous.url)} />
+            <SidebarIcon icon={getNavIconForUrl(toNavUrl(previous.url))} />
             {previous.name}
           </span>
         </Link>
@@ -95,7 +95,7 @@ export function DocsFooterNav() {
           </span>
           <span className="inline-flex items-center justify-end gap-2 font-medium text-text-primary">
             {next.name}
-            <SidebarIcon icon={getNavIconForUrl(next.url)} />
+            <SidebarIcon icon={getNavIconForUrl(toNavUrl(next.url))} />
           </span>
         </Link>
       ) : null}

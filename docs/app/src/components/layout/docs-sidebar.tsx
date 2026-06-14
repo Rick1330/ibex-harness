@@ -17,6 +17,8 @@ import {
   navIconElement,
   roadmapNavIconElement,
   SidebarIcon,
+  toNavUrl,
+  toSectionSlug,
 } from "@/lib/sidebar-icons";
 import { cn } from "@/lib/cn";
 
@@ -84,7 +86,7 @@ function folderContainsPath(
 
 export function DocsSidebarItem({ item }: { item: PageTree.Item }) {
   const pathname = usePathname();
-  const baseUrl = baseUrlFromPathname(pathname);
+  const baseUrl = baseUrlFromPathname(toNavUrl(pathname));
   const iconResolver =
     baseUrl === "/roadmap" ? roadmapNavIconElement : navIconElement;
   const isMilestone = item.url.includes("/milestones/");
@@ -111,21 +113,21 @@ export function DocsSidebarFolder({
   children: ReactNode;
 }) {
   const pathname = usePathname();
-  const baseUrl = baseUrlFromPathname(pathname);
+  const baseUrl = baseUrlFromPathname(toNavUrl(pathname));
   const containsPath = folderContainsPath(item, pathname);
   const defaultOpen =
     containsPath || (level > 1 && (item.defaultOpen ?? false));
 
   const sectionSlug =
     item.index?.url != null
-      ? folderSectionSlugFromUrl(item.index.url)
+      ? folderSectionSlugFromUrl(toNavUrl(item.index.url))
       : folderSectionSlug(item, baseUrl);
 
   const sectionIcon =
     level <= 1 ? (
       <SidebarIcon
         className="sidebar-section-icon"
-        icon={getSectionIconForSlug(sectionSlug, baseUrl)}
+        icon={getSectionIconForSlug(toSectionSlug(sectionSlug), baseUrl)}
       />
     ) : (
       item.icon

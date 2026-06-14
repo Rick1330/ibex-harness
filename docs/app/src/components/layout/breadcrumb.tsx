@@ -6,7 +6,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Fragment, useMemo } from "react";
 
-import { SidebarIcon, getNavIconForUrl } from "@/lib/sidebar-icons";
+import { SidebarIcon, getNavIconForUrl, toNavUrl } from "@/lib/sidebar-icons";
 
 const MAX_LEVELS = 3;
 
@@ -30,7 +30,7 @@ export function DocsBreadcrumb({ tree }: DocsBreadcrumbProps) {
       className="mb-6 flex flex-row flex-wrap items-center gap-1.5 text-sm text-text-secondary"
     >
       {items.map((item, index) => {
-        const Icon = item.url ? getNavIconForUrl(item.url) : null;
+        const Icon = item.url ? getNavIconForUrl(toNavUrl(item.url)) : null;
 
         return (
           <Fragment key={`${String(item.name)}-${index}`}>

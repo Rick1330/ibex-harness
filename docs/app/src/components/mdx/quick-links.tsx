@@ -2,7 +2,7 @@ import type { LucideIcon } from "lucide-react";
 import { ExternalLink } from "lucide-react";
 import Link from "next/link";
 
-import { getNavIconForUrl, createNavIconQuery, resolveNavIcon, SidebarIcon } from "@/lib/sidebar-icons";
+import { getNavIconForUrl, createNavIconQuery, resolveNavIcon, toNavIconName, toNavUrl, SidebarIcon } from "@/lib/sidebar-icons";
 import { cn } from "@/lib/cn";
 
 export type QuickLink = {
@@ -21,9 +21,12 @@ type QuickLinksProps = {
 function linkIcon(link: QuickLink): LucideIcon {
   if (link.icon) return link.icon;
   if (link.iconName) {
-    return resolveNavIcon(createNavIconQuery(link.iconName, link.href)) ?? getNavIconForUrl(link.href);
+    return (
+      resolveNavIcon(createNavIconQuery(toNavIconName(link.iconName), toNavUrl(link.href))) ??
+      getNavIconForUrl(toNavUrl(link.href))
+    );
   }
-  return getNavIconForUrl(link.href);
+  return getNavIconForUrl(toNavUrl(link.href));
 }
 
 export function QuickLinks({ links }: QuickLinksProps) {

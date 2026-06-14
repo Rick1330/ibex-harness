@@ -6,6 +6,7 @@ import {
   contentPathFromUrl,
   navIconElement,
   roadmapNavIconElement,
+  toNavUrl,
 } from "@/lib/sidebar-icons";
 
 export const source = loader({
@@ -19,7 +20,7 @@ export const source = loader({
     }),
     attachFolder: (node) => {
       const path = node.index?.url
-        ? contentPathFromUrl(node.index.url, "/docs").split("/")[0]
+        ? contentPathFromUrl(toNavUrl(node.index.url), "/docs").split("/")[0]
         : undefined;
 
       return {
@@ -53,7 +54,7 @@ export const roadmapSource = loader({
     }),
     attachFolder: (node) => {
       const path = node.index?.url
-        ? contentPathFromUrl(node.index.url, "/roadmap")
+        ? contentPathFromUrl(toNavUrl(node.index.url), "/roadmap")
         : undefined;
       const section = path?.split("/").pop() ?? path?.split("/")[0];
 

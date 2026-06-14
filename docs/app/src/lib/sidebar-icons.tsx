@@ -15,8 +15,11 @@ import {
   resolveRoadmapNavIcon,
   type ContentBaseUrl,
   type DocsContentPath,
+  type NavIconName,
   type NavIconQuery,
+  type NavUrl,
   type RoadmapContentPath,
+  type SectionSlug,
 } from "@/lib/sidebar-icon-resolvers";
 
 export type {
@@ -39,6 +42,20 @@ export {
   resolveRoadmapNavIcon,
 };
 
+function toNavUrl(url: string): NavUrl {
+  return url as NavUrl;
+}
+
+function toNavIconName(name: string): NavIconName {
+  return name as NavIconName;
+}
+
+function toSectionSlug(slug: string): SectionSlug {
+  return slug as SectionSlug;
+}
+
+export { toNavUrl, toNavIconName, toSectionSlug };
+
 type SidebarIconProps = {
   icon: LucideIcon;
   className?: string;
@@ -58,7 +75,12 @@ export function navIconElement(
   iconName?: string,
   url?: string,
 ): ReactElement | undefined {
-  const Icon = resolveNavIcon(createNavIconQuery(iconName, url));
+  const Icon = resolveNavIcon(
+    createNavIconQuery(
+      iconName ? toNavIconName(iconName) : undefined,
+      url ? toNavUrl(url) : undefined,
+    ),
+  );
   if (!Icon) return undefined;
   return createElement(SidebarIcon, { icon: Icon });
 }
@@ -67,7 +89,12 @@ export function roadmapNavIconElement(
   iconName?: string,
   url?: string,
 ): ReactElement | undefined {
-  const Icon = resolveRoadmapNavIcon(createNavIconQuery(iconName, url));
+  const Icon = resolveRoadmapNavIcon(
+    createNavIconQuery(
+      iconName ? toNavIconName(iconName) : undefined,
+      url ? toNavUrl(url) : undefined,
+    ),
+  );
   if (!Icon) return undefined;
   return createElement(SidebarIcon, { icon: Icon });
 }
