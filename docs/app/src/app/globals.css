@@ -209,8 +209,8 @@ button,
 
 /* 7. Scrollbar — minimal */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 10px;
+  height: 10px;
 }
 
 ::-webkit-scrollbar-track {
@@ -218,8 +218,15 @@ button,
 }
 
 ::-webkit-scrollbar-thumb {
-  background: hsl(var(--border-strong));
-  border-radius: 4px;
+  border: 3px solid transparent;
+  border-radius: 100px;
+  background-color: hsl(var(--border));
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: hsl(var(--muted-foreground) / 0.4);
+  background-clip: content-box;
 }
 
 /* 8. Focus rings */
@@ -419,8 +426,8 @@ html {
 }
 
 ::selection {
-  background-color: hsl(var(--panel-raised));
-  color: hsl(var(--text-primary));
+  background-color: hsl(var(--foreground) / 0.12);
+  color: hsl(var(--foreground));
 }
 
 .prose h2,
@@ -1016,7 +1023,6 @@ figure[data-rehype-pretty-code-figure] button[data-copy]:hover,
   color: hsl(var(--foreground)) !important;
   font-size: 1.25rem !important;
   font-weight: 600 !important;
-  letter-spacing: -0.01em !important;
   line-height: 1.4 !important;
   scroll-margin-top: var(--scroll-padding) !important;
 }
@@ -1151,36 +1157,10 @@ figure[data-rehype-pretty-code-figure] button[data-copy]:hover,
   -moz-osx-font-smoothing: grayscale;
 }
 
-::selection {
-  background-color: hsl(var(--foreground) / 0.12) !important;
-  color: hsl(var(--foreground)) !important;
-}
-
 *:focus-visible {
   outline: 2px solid hsl(var(--foreground)) !important;
   outline-offset: 2px !important;
   border-radius: 0.25rem !important;
-}
-
-::-webkit-scrollbar {
-  width: 10px !important;
-  height: 10px !important;
-}
-
-::-webkit-scrollbar-track {
-  background: transparent !important;
-}
-
-::-webkit-scrollbar-thumb {
-  border: 3px solid transparent !important;
-  border-radius: 100px !important;
-  background-color: hsl(var(--border)) !important;
-  background-clip: content-box !important;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background-color: hsl(var(--muted-foreground) / 0.4) !important;
-  background-clip: content-box !important;
 }
 
 @media (prefers-reduced-motion: no-preference) {

@@ -1,9 +1,9 @@
 import { cn } from "@/lib/cn";
 
-type RoadmapProgressProps = {
+type RoadmapProgressProps = Readonly<{
   value: number;
   className?: string;
-};
+}>;
 
 export function RoadmapProgress({ value, className }: RoadmapProgressProps) {
   return (

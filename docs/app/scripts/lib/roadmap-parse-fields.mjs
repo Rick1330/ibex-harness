@@ -1,5 +1,12 @@
 import path from "node:path";
 
+import {
+  extractBoldField,
+  extractH1Title,
+  extractSectionAfterHeading,
+  stripMarkdownLinks,
+} from "./text-utils.mjs";
+
 function parseStatus(raw) {
   const value = raw.trim().toLowerCase();
   if (value.includes("complete")) return "completed";
@@ -9,53 +16,69 @@ function parseStatus(raw) {
 }
 
 function parseTitle(content, filePath) {
-  const titleMatch = content.match(/^#\s+(.+)$/m);
-  return titleMatch?.[1]?.trim() ?? path.basename(filePath, ".md");
+  return extractH1Title(content) ?? path.basename(filePath, ".md");
 }
 
 function parseMarkdownMeta(content) {
-  const statusMatch = content.match(/\*\*Status:\*\*\s*(.+)/i);
-  const effortMatch = content.match(/\*\*Estimated effort:\*\*\s*(.+)/i);
-  const goalMatch = content.match(/\*\*Goal:\*\*\s*(.+)/i);
-
   return {
-    status: statusMatch ? parseStatus(statusMatch[1]) : undefined,
-    estimatedEffort: effortMatch?.[1]?.trim(),
-    goal: goalMatch?.[1]?.trim(),
+    status: parseStatus(extractBoldField(content, "Status") ?? ""),
+    estimatedEffort: extractBoldField(content, "Estimated effort"),
+    goal: extractBoldField(content, "Goal"),
   };
 }
 
 function parseMilestoneId(filePath) {
   const base = path.basename(filePath, ".md");
-  const idMatch = base.match(/^(\d+\.\d+\.\d+|d\d+\.\d+)/i);
-  return idMatch?.[1]?.toLowerCase();
+  const lower = base.toLowerCase();
+  if (lower.startsWith("d")) {
+    const parts = lower.slice(1).split(".");
+    if (parts.length === 2 && parts.every((part) => part.length > 0 && Number.isInteger(Number(part)))) {
+      return lower;
+    }
+    return undefined;
+  }
+
+  const parts = base.split(".");
+  if (parts.length === 3 && parts.every((part) => part.length > 0 && Number.isInteger(Number(part)))) {
+    return base.toLowerCase();
+  }
+  return undefined;
 }
 
 function summaryFromWhySection(content) {
-  const whySection = content.match(
-    /## Why This Milestone Exists\s*\n+([\s\S]*?)(?=\n## |\n---|\n$)/i,
-  );
-  if (!whySection) return undefined;
+  const section = extractSectionAfterHeading(content, "Why This Milestone Exists");
+  if (!section) return undefined;
 
-  return whySection[1]
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .slice(0, 2)
-    .join(" ")
-    .replace(/\[(.+?)\]\(.+?\)/g, "$1")
-    .slice(0, 320);
+  return stripMarkdownLinks(
+    section
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .slice(0, 2)
+      .join(" "),
+  ).slice(0, 320);
+}
+
+function stripFrontmatter(content) {
+  if (!content.startsWith("---\n")) return content;
+  const end = content.indexOf("\n---\n", 4);
+  if (end === -1) return content;
+  return content.slice(end + 5);
 }
 
 function summaryFromFirstParagraph(content) {
-  const firstPara = content
-    .replace(/^---[\s\S]*?---\n/m, "")
-    .replace(/^#.+$/m, "")
-    .split("\n\n")
-    .map((p) => p.trim())
-    .find((p) => p && !p.startsWith("#") && !p.startsWith("|") && !p.startsWith("```"));
+  const withoutFrontmatter = stripFrontmatter(content);
+  const withoutH1 = withoutFrontmatter
+    .split("\n")
+    .filter((line) => !line.startsWith("# "))
+    .join("\n");
 
-  return firstPara?.replace(/\[(.+?)\]\(.+?\)/g, "$1").slice(0, 320);
+  const firstPara = withoutH1
+    .split("\n\n")
+    .map((part) => part.trim())
+    .find((part) => part && !part.startsWith("#") && !part.startsWith("|") && !part.startsWith("```"));
+
+  return firstPara ? stripMarkdownLinks(firstPara).slice(0, 320) : undefined;
 }
 
 function parseSummary(content) {
@@ -63,7 +86,13 @@ function parseSummary(content) {
 }
 
 function parsePhase(filePath) {
-  return filePath.match(/phase-[^/\\]+/)?.[0];
+  const normalized = filePath.replaceAll("\\", "/");
+  const marker = "phase-";
+  const index = normalized.indexOf(marker);
+  if (index === -1) return undefined;
+  const rest = normalized.slice(index);
+  const slash = rest.indexOf("/");
+  return slash === -1 ? rest : rest.slice(0, slash);
 }
 
 export function parseFrontmatterFields(content, filePath) {

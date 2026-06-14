@@ -16,7 +16,7 @@ import {
 } from "@/lib/github";
 import { getPageLastModified } from "@/lib/page-meta";
 import { source } from "@/lib/source";
-import { useMDXComponents } from "@/mdx-components";
+import { getMDXComponents } from "@/mdx-components";
 
 type PageProps = {
   params: Promise<{ slug?: string[] }>;
@@ -63,7 +63,7 @@ export default async function Page(props: PageProps) {
         title={page.data.title}
       />
       <DocsBody className="docs-prose max-w-none">
-        <MDX components={useMDXComponents()} />
+        <MDX components={getMDXComponents()} />
         <FeedbackWidget pageId={page.file.path} />
       </DocsBody>
     </DocsPage>

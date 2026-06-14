@@ -5,6 +5,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { readYamlValue, setYamlField } from "./lib/yaml-frontmatter.mjs";
+import {
+  findYamlLine,
+  readYamlLineValue,
+  stripAfterDelimiter,
+  stripParenthetical,
+} from "./lib/text-utils.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../content/roadmap");
 
@@ -41,29 +47,42 @@ function slugCompactName(slug, id) {
 }
 
 function compactName(name) {
-  let out = name
-    .replace(/\s*\([^)]*\)/g, "")
-    .replace(/\s*—\s*.+$/, "")
-    .replace(/\s*:\s*.+$/, "")
-    .trim();
+  let out = stripParenthetical(name);
+  out = stripAfterDelimiter(out, "—");
+  out = stripAfterDelimiter(out, ":");
+  out = out.trim();
 
   if (out.length > 22) {
-    const words = out.split(/\s+/);
-    out = words.slice(0, 2).join(" ");
+    out = out.split(" ").slice(0, 2).join(" ");
   }
   return out;
 }
 
+function parseMilestoneIdFromText(text) {
+  const trimmed = text.trim();
+  if (!trimmed) return undefined;
+  const first = trimmed[0];
+  if (first >= "0" && first <= "9") {
+    const parts = trimmed.split(/[\s—–\-:]/)[0];
+    return parts || undefined;
+  }
+  if (first === "d" || first === "D") {
+    const parts = trimmed.split(/[\s—–\-:]/)[0];
+    return parts.toLowerCase();
+  }
+  return undefined;
+}
+
 function shortenTitle(longTitle, milestoneId, filePath) {
-  const normalized = filePath.replace(/\\/g, "/");
+  const normalized = filePath.replaceAll("\\", "/");
   const isMilestone = normalized.includes("/milestones/");
 
   if (isMilestone) {
     const slug = path.basename(filePath, ".mdx");
     const id =
       milestoneId ??
-      longTitle.match(/^(?:Milestone\s+)?([d]?\d+\.\d+(?:\.\d+)?)/i)?.[1] ??
-      slug.match(/^([d]?\d+\.\d+(?:\.\d+)?)/)?.[1];
+      parseMilestoneIdFromText(longTitle) ??
+      parseMilestoneIdFromText(slug);
 
     if (!id) {
       return longTitle.length > 28 ? `${longTitle.slice(0, 26)}…` : longTitle;
@@ -74,17 +93,28 @@ function shortenTitle(longTitle, milestoneId, filePath) {
       return `${id} ${fromSlug}`.trim();
     }
 
-    const stripped = longTitle.replace(/^Milestone\s+/i, "").trim();
-    const dashMatch = stripped.match(/^([d]?\d+\.\d+(?:\.\d+)?)\s*[—–\-]\s*(.+)$/);
-    if (dashMatch) {
-      return `${dashMatch[1]} ${compactName(dashMatch[2])}`.trim();
+    const stripped = longTitle.toLowerCase().startsWith("milestone ")
+      ? longTitle.slice("milestone ".length).trim()
+      : longTitle.trim();
+
+    for (const delimiter of ["—", "–", "-"]) {
+      const delimiterIndex = stripped.indexOf(delimiter);
+      if (delimiterIndex !== -1) {
+        const prefix = stripped.slice(0, delimiterIndex).trim();
+        const suffix = stripped.slice(delimiterIndex + delimiter.length).trim();
+        if (prefix) return `${prefix} ${compactName(suffix)}`.trim();
+      }
     }
 
-    return `${id} ${compactName(stripped.replace(/^[d]?\d+\.\d+(?:\.\d+)?\s*[—–\-]\s*/, ""))}`.trim();
+    return `${id} ${compactName(stripped)}`.trim();
   }
 
   if (longTitle.length <= 32) return longTitle;
-  return longTitle.split(/\s*[—–\-]\s+/)[0].trim();
+  for (const delimiter of ["—", "–", "-"]) {
+    const delimiterIndex = longTitle.indexOf(delimiter);
+    if (delimiterIndex !== -1) return longTitle.slice(0, delimiterIndex).trim();
+  }
+  return longTitle;
 }
 
 function processFile(abs) {
@@ -92,18 +122,18 @@ function processFile(abs) {
   const match = raw.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
   if (!match) return;
 
-  const fullTitleMatch = match[1].match(/^fullTitle:\s*(.+)$/m);
-  const titleMatch = match[1].match(/^title:\s*(.+)$/m);
-  if (!titleMatch) return;
+  const fullTitleLine = findYamlLine(match[1], "fullTitle");
+  const titleLine = findYamlLine(match[1], "title");
+  if (!titleLine) return;
 
-  const currentTitle = readYamlValue(titleMatch[1]);
-  const longTitle = fullTitleMatch
-    ? readYamlValue(fullTitleMatch[1])
+  const currentTitle = readYamlValue(readYamlLineValue(titleLine, "title") ?? "");
+  const longTitle = fullTitleLine
+    ? readYamlValue(readYamlLineValue(fullTitleLine, "fullTitle") ?? currentTitle)
     : currentTitle;
 
-  const milestoneIdMatch = match[1].match(/^milestoneId:\s*(.+)$/m);
-  const milestoneId = milestoneIdMatch
-    ? readYamlValue(milestoneIdMatch[1])
+  const milestoneIdLine = findYamlLine(match[1], "milestoneId");
+  const milestoneId = milestoneIdLine
+    ? readYamlValue(readYamlLineValue(milestoneIdLine, "milestoneId") ?? "")
     : undefined;
 
   const short = shortenTitle(longTitle, milestoneId, abs);

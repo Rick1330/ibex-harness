@@ -3,10 +3,8 @@ import { createMDXSource } from "fumadocs-mdx";
 import { loader } from "fumadocs-core/source";
 
 import {
-  contentPathFromUrl,
   navIconElement,
   roadmapNavIconElement,
-  toNavUrl,
 } from "@/lib/sidebar-icons";
 
 export const source = loader({
@@ -18,18 +16,10 @@ export const source = loader({
       ...node,
       icon: node.icon ?? navIconElement(undefined, node.url),
     }),
-    attachFolder: (node) => {
-      const path = node.index?.url
-        ? contentPathFromUrl(toNavUrl(node.index.url), "/docs").split("/")[0]
-        : undefined;
-
-      return {
-        ...node,
-        icon:
-          node.icon ??
-          navIconElement(undefined, path ? `/docs/${path}` : node.index?.url),
-      };
-    },
+    attachFolder: (node) => ({
+      ...node,
+      icon: node.icon ?? navIconElement(undefined, node.index?.url),
+    }),
   },
 });
 
@@ -52,21 +42,9 @@ export const roadmapSource = loader({
       ...node,
       icon: node.icon ?? roadmapNavIconElement(undefined, node.url),
     }),
-    attachFolder: (node) => {
-      const path = node.index?.url
-        ? contentPathFromUrl(toNavUrl(node.index.url), "/roadmap")
-        : undefined;
-      const section = path?.split("/").pop() ?? path?.split("/")[0];
-
-      return {
-        ...node,
-        icon:
-          node.icon ??
-          roadmapNavIconElement(
-            undefined,
-            section ? `/roadmap/${section}` : node.index?.url,
-          ),
-      };
-    },
+    attachFolder: (node) => ({
+      ...node,
+      icon: node.icon ?? roadmapNavIconElement(undefined, node.index?.url),
+    }),
   },
 });

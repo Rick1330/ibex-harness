@@ -13,7 +13,7 @@ import { getPageLastModified } from "@/lib/page-meta";
 import { getRoadmapContentFilePath } from "@/lib/roadmap-layout.config";
 import { isMilestonePage } from "@/lib/roadmap-types";
 import { roadmapSource } from "@/lib/source";
-import { useMDXComponents } from "@/mdx-components";
+import { getMDXComponents } from "@/mdx-components";
 
 type PageProps = {
   params: Promise<{ slug?: string[] }>;
@@ -71,7 +71,7 @@ export default async function RoadmapDetailPage(props: PageProps) {
       />
 
       <DocsBody className="docs-prose max-w-none">
-        <MDX components={useMDXComponents()} />
+        <MDX components={getMDXComponents()} />
       </DocsBody>
 
       <div className="mt-10 border-t border-border pt-6">

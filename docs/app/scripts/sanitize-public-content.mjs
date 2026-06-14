@@ -19,20 +19,43 @@ const WORKSPACE_PROMPTS_RELOCATED =
   "Execution prompts relocated to the local workspace (`ibex-harness-workspace/prompts/`) — not published";
 
 function stripExecutionPromptSection(body) {
-  return body.replace(
-    /## Execution prompt\s*\n[\s\S]*?(?=\n## |\n---\s*\n|$)/gi,
-    "",
-  );
+  const heading = "## Execution prompt";
+  const start = body.toLowerCase().indexOf(heading.toLowerCase());
+  if (start === -1) return body;
+
+  let sectionStart = body.indexOf("\n", start);
+  if (sectionStart === -1) return body.slice(0, start).trimEnd();
+  sectionStart += 1;
+
+  const endMarkers = ["\n## ", "\n---"];
+  let end = body.length;
+  for (const marker of endMarkers) {
+    const markerIndex = body.indexOf(marker, sectionStart);
+    if (markerIndex !== -1 && markerIndex < end) end = markerIndex;
+  }
+
+  const head = body.slice(0, start).trimEnd();
+  const tail = body.slice(end).trimStart();
+  return tail ? `${head}\n${tail}` : head;
 }
 
 function normalizeExecutionPromptChecklist(body) {
   return body
-    .replace(/- \[x\] Execution prompt[^\n]*/gi, "- [x] Contributor execution materials prepared")
-    .replace(/- \[x\] Add execution prompt[^\n]*/gi, "- [x] Contributor execution materials prepared")
-    .replace(
-      /- \[x\] Update[^\n]*execution prompt[^\n]*/gi,
-      "- [x] Contributor documentation updated",
-    );
+    .split("\n")
+    .map((line) => {
+      const trimmed = line.trimStart().toLowerCase();
+      if (trimmed.startsWith("- [x] execution prompt")) {
+        return "- [x] Contributor execution materials prepared";
+      }
+      if (trimmed.startsWith("- [x] add execution prompt")) {
+        return "- [x] Contributor execution materials prepared";
+      }
+      if (trimmed.startsWith("- [x] update") && trimmed.includes("execution prompt")) {
+        return "- [x] Contributor documentation updated";
+      }
+      return line;
+    })
+    .join("\n");
 }
 
 function stripWorkspacePaths(body) {
@@ -52,10 +75,17 @@ function stripWorkspacePaths(body) {
 }
 
 function stripPromptLinks(body) {
-  return body
-    .replace(/\[([^\]]*)\]\(\/roadmap\/prompts\/[^)]+\)/g, "")
-    .replace(/See \[MILESTONE-[^\]]+\]\(\/roadmap\/prompts\/[^)]+\)\.?/g, "")
-    .replace(
+  const lines = body.split("\n");
+  const filtered = lines.filter((line) => {
+    const lower = line.toLowerCase();
+    if (lower.includes("](/roadmap/prompts/")) return false;
+    if (lower.startsWith("see [milestone-") && lower.includes("(/roadmap/prompts/")) return false;
+    return true;
+  });
+
+  return filtered
+    .join("\n")
+    .replaceAll(
       WORKSPACE_PROMPTS_RELOCATED,
       "Execution prompts are not published on the public site.",
     );
@@ -66,7 +96,25 @@ function sanitizeBody(body) {
   out = normalizeExecutionPromptChecklist(out);
   out = stripWorkspacePaths(out);
   out = stripPromptLinks(out);
-  return out.replace(/\n{3,}/g, "\n\n");
+  return collapseBlankLines(out);
+}
+
+function collapseBlankLines(text) {
+  const lines = text.split("\n");
+  const out = [];
+  let blankRun = 0;
+
+  for (const line of lines) {
+    if (line.trim() === "") {
+      blankRun += 1;
+      if (blankRun <= 2) out.push("");
+      continue;
+    }
+    blankRun = 0;
+    out.push(line);
+  }
+
+  return out.join("\n");
 }
 
 function sanitizeFrontmatter(fm) {

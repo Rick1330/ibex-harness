@@ -1,4 +1,5 @@
 import { extractMarkdownField } from "./yaml-frontmatter.mjs";
+import { stripMarkdownLinks, stripAfterDelimiter } from "./text-utils.mjs";
 
 export function parseDescriptionMeta(text) {
   return {
@@ -11,20 +12,36 @@ export function parseDescriptionMeta(text) {
 }
 
 function normalizeDescriptionText(raw) {
-  return raw.replace(/\\n/g, "\n").replace(/\*\*/g, "");
+  return raw.replaceAll("\\n", "\n").replaceAll("**", "");
 }
 
 function collapseWhitespace(text) {
-  return text.replace(/\s+/g, " ").trim();
+  let out = "";
+  let inSpace = false;
+
+  for (const char of text) {
+    if (char === " " || char === "\t" || char === "\n" || char === "\r") {
+      if (!inSpace && out.length > 0) {
+        out += " ";
+        inSpace = true;
+      }
+      continue;
+    }
+    out += char;
+    inSpace = false;
+  }
+
+  return out.trim();
 }
 
 function describeComplete(title, completed) {
   if (!completed) return `${title} — complete.`;
-  return `${title} — complete as of ${completed.replace(/\.$/, "")}.`;
+  const trimmed = completed.endsWith(".") ? completed.slice(0, -1) : completed;
+  return `${title} — complete as of ${trimmed}.`;
 }
 
 function describeInProgress(title, milestone) {
-  const current = milestone?.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
+  const current = milestone ? stripMarkdownLinks(milestone) : undefined;
   if (!current) return `${title} — in progress.`;
   return `${title} — in progress. Current: ${current}.`;
 }

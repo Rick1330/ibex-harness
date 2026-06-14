@@ -19,9 +19,9 @@ import {
 } from "@/components/layout/toc-reading-progress";
 import { cn } from "@/lib/cn";
 
-type OnThisPageProps = {
+type OnThisPageProps = Readonly<{
   items: TOCItemType[];
-};
+}>;
 
 function filterHeadings(items: TOCItemType[]): TOCItemType[] {
   return items.filter((item) => item.depth === 2 || item.depth === 3);

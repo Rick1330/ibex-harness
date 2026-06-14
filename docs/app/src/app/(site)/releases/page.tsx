@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 
 import { releasesSource } from "@/lib/source";
-import { useMDXComponents } from "@/mdx-components";
+import { getMDXComponents } from "@/mdx-components";
 
 const versionBadge = {
   major:
@@ -18,6 +18,7 @@ export const metadata: Metadata = {
 };
 
 export default function ReleasesPage() {
+  const mdxComponents = getMDXComponents();
   const allReleases = releasesSource
     .getPages()
     .sort(
@@ -84,7 +85,7 @@ export default function ReleasesPage() {
                   </h2>
 
                   <div className="prose docs-prose max-w-none text-sm leading-relaxed text-text-secondary">
-                    <MDX components={useMDXComponents()} />
+                    <MDX components={mdxComponents} />
                   </div>
                 </div>
               </div>

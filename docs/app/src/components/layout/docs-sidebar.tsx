@@ -96,7 +96,7 @@ export function DocsSidebarItem({ item }: { item: PageTree.Item }) {
       className={cn(leafItemClassName, isMilestone && "sidebar-nav-item--milestone")}
       external={item.external}
       href={item.url}
-      icon={item.icon ?? iconResolver(undefined, item.url)}
+      icon={item.icon ?? iconResolver(undefined, toNavUrl(item.url))}
     >
       {item.name}
     </SidebarItem>
@@ -123,6 +123,10 @@ export function DocsSidebarFolder({
       ? folderSectionSlugFromUrl(toNavUrl(item.index.url))
       : folderSectionSlug(item, baseUrl);
 
+  const folderUrl = item.index?.url ? toNavUrl(item.index.url) : undefined;
+  const iconResolver =
+    baseUrl === "/roadmap" ? roadmapNavIconElement : navIconElement;
+
   const sectionIcon =
     level <= 1 ? (
       <SidebarIcon
@@ -130,17 +134,19 @@ export function DocsSidebarFolder({
         icon={getSectionIconForSlug(toSectionSlug(sectionSlug), baseUrl)}
       />
     ) : (
-      item.icon
+      item.icon ?? (folderUrl ? iconResolver(undefined, folderUrl) : undefined)
     );
 
   const headerClass =
     level <= 1 ? sectionHeaderClassName : nestedFolderHeaderClassName;
 
+  const folderKey =
+    level <= 1
+      ? `${sectionSlug}-${pathname}`
+      : `${folderUrl ?? sectionSlug}-${level}`;
+
   return (
-    <SidebarFolder
-      key={level <= 1 ? sectionSlug : `${sectionSlug}-${level}`}
-      defaultOpen={defaultOpen}
-    >
+    <SidebarFolder key={folderKey} defaultOpen={defaultOpen}>
       <SidebarFolderTrigger className={headerClass}>
         {sectionIcon}
         <span className="min-w-0 flex-1 text-left break-words">{item.name}</span>

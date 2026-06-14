@@ -1,5 +1,11 @@
 /** Shared YAML frontmatter helpers for roadmap migration scripts. */
 
+import {
+  extractBoldField,
+  findYamlLine,
+  readYamlLineValue,
+} from "./text-utils.mjs";
+
 export const YAML_FIELD_KEYS = new Set([
   "description",
   "summary",
@@ -9,63 +15,65 @@ export const YAML_FIELD_KEYS = new Set([
   "fullTitle",
 ]);
 
-const YAML_LINE_PATTERNS = {
-  description: /^description:\s*.+$/m,
-  summary: /^summary:\s*.+$/m,
-  status: /^status:\s*.+$/m,
-  completedDate: /^completedDate:\s*.+$/m,
-  title: /^title:\s*.+$/m,
-  fullTitle: /^fullTitle:\s*.+$/m,
-};
-
-const YAML_VALUE_PATTERNS = {
-  description: /^description:\s*(.+)$/m,
-  summary: /^summary:\s*(.+)$/m,
-  status: /^status:\s*(.+)$/m,
-  completedDate: /^completedDate:\s*(.+)$/m,
-  title: /^title:\s*(.+)$/m,
-  fullTitle: /^fullTitle:\s*(.+)$/m,
-};
-
-export const MARKDOWN_FIELD_PATTERNS = {
-  Status: /\*\*Status:\*\*\s*([^\n*]+)/i,
-  Completed: /\*\*Completed:\*\*\s*([^\n*]+)/i,
-  "Estimated duration": /\*\*Estimated duration:\*\*\s*([^\n*]+)/i,
-  "Depends on": /\*\*Depends on:\*\*\s*([^\n*]+)/i,
-  "Current milestone": /\*\*Current milestone:\*\*\s*([^\n*]+)/i,
-};
+const MARKDOWN_FIELD_LABELS = [
+  "Status",
+  "Completed",
+  "Estimated duration",
+  "Depends on",
+  "Current milestone",
+];
 
 export function readYamlValue(raw) {
   const trimmed = raw.trim();
-  if (trimmed.startsWith('"') || trimmed.startsWith("'")) {
+  if (trimmed.startsWith('"')) {
     try {
-      return JSON.parse(trimmed.startsWith('"') ? trimmed : `"${trimmed.slice(1, -1)}"`);
+      return JSON.parse(trimmed);
     } catch {
-      return trimmed.replace(/^"|"$/g, "");
+      return trimmed.slice(1, -1);
     }
   }
-  return trimmed.replace(/^"|"$/g, "");
+  if (trimmed.startsWith("'")) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
 }
 
 export function extractMarkdownField(text, label) {
-  const pattern = MARKDOWN_FIELD_PATTERNS[label];
-  if (!pattern) return undefined;
-  return text.match(pattern)?.[1]?.trim();
+  if (!MARKDOWN_FIELD_LABELS.includes(label)) return undefined;
+  return extractBoldField(text, label);
 }
 
 export function setYamlField(fm, key, value) {
   if (!YAML_FIELD_KEYS.has(key)) {
     throw new Error(`Invalid YAML field key: ${key}`);
   }
-  const re = YAML_LINE_PATTERNS[key];
-  const line = `${key}: ${JSON.stringify(value)}`;
-  if (re.test(fm)) return fm.replace(re, line);
-  return `${fm}\n${line}`;
+
+  const prefix = `${key}:`;
+  const newLine = `${key}: ${JSON.stringify(value)}`;
+  const lines = fm.split("\n");
+  let replaced = false;
+
+  const updated = lines.map((line) => {
+    if (line.startsWith(prefix)) {
+      replaced = true;
+      return newLine;
+    }
+    return line;
+  });
+
+  if (!replaced) return `${fm}\n${newLine}`;
+  return updated.join("\n");
 }
 
 export function matchYamlField(fm, key) {
   if (!YAML_FIELD_KEYS.has(key)) {
     throw new Error(`Invalid YAML field key: ${key}`);
   }
-  return fm.match(YAML_VALUE_PATTERNS[key]);
+
+  const line = findYamlLine(fm, key);
+  if (!line) return null;
+
+  const raw = readYamlLineValue(line, key);
+  if (raw === undefined) return null;
+  return [line, readYamlValue(raw)];
 }

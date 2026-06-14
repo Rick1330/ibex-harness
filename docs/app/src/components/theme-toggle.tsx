@@ -6,9 +6,9 @@ import { useEffect, useState } from "react";
 
 import { cn } from "@/lib/cn";
 
-type ThemeToggleProps = {
+type ThemeToggleProps = Readonly<{
   className?: string;
-};
+}>;
 
 export function ThemeToggle({ className }: ThemeToggleProps) {
   const { resolvedTheme, setTheme } = useTheme();

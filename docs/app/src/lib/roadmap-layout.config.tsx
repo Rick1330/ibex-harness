@@ -48,6 +48,6 @@ export function roadmapLayoutOptions(): Pick<DocsLayoutProps, "sidebar"> {
 }
 
 export function getRoadmapContentFilePath(relativePath: string): string {
-  const normalized = relativePath.replace(/\\/g, "/");
+  const normalized = relativePath.replaceAll("\\", "/");
   return `docs/app/content/roadmap/${normalized}`;
 }

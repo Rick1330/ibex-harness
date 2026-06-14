@@ -2,6 +2,12 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { PHASE, PHASE_FULL, STUBS } from "./phase3-data.mjs";
+import {
+  extractBoldField,
+  extractH1Title,
+  extractSectionAfterHeading,
+  stripMarkdownLinks,
+} from "./text-utils.mjs";
 
 function parseStatus(raw) {
   const value = raw.trim().toLowerCase();
@@ -10,76 +16,222 @@ function parseStatus(raw) {
   return "planned";
 }
 
+function trimEdgeDashes(value) {
+  let start = 0;
+  let end = value.length;
+  while (start < end && value[start] === "-") start += 1;
+  while (end > start && value[end - 1] === "-") end -= 1;
+  return value.slice(start, end);
+}
+
+function slugifyTitle(title) {
+  let slug = "";
+  let lastWasDash = true;
+
+  for (const char of title.toLowerCase()) {
+    const isAlphaNum = (char >= "a" && char <= "z") || (char >= "0" && char <= "9");
+    if (isAlphaNum) {
+      slug += char;
+      lastWasDash = false;
+      continue;
+    }
+    if (!lastWasDash) {
+      slug += "-";
+      lastWasDash = true;
+    }
+  }
+
+  return trimEdgeDashes(slug);
+}
+
+function stripMarkdownExtension(pathPart) {
+  let cleaned = pathPart;
+  if (cleaned.endsWith(".mdx")) cleaned = cleaned.slice(0, -4);
+  else if (cleaned.endsWith(".md")) cleaned = cleaned.slice(0, -3);
+  if (cleaned.endsWith("/README") || cleaned === "README") cleaned = "index";
+  return cleaned;
+}
+
+function rewriteDocRoadmapLink(matchText, pathPart) {
+  return `[${matchText}](/roadmap/${stripMarkdownExtension(pathPart)})`;
+}
+
+function simplifyAdrBackticks(text) {
+  const inlinePrefix = "`docs/adr/ADR-";
+  const writePrefix = "Write `docs/adr/ADR-";
+  let result = "";
+  let index = 0;
+
+  while (index < text.length) {
+    if (text.startsWith(writePrefix, index)) {
+      const idStart = index + writePrefix.length;
+      const close = text.indexOf("`", idStart);
+      if (close !== -1) {
+        const adrId = text.slice(idStart, idStart + 4);
+        result +=
+          `Write ADR-${adrId} (engineering \`docs/adr/\` — promote to \`/docs/adr/\` when accepted)`;
+        index = close + 1;
+        continue;
+      }
+    }
+
+    if (text.startsWith(inlinePrefix, index)) {
+      const idStart = index + inlinePrefix.length;
+      const close = text.indexOf("`", idStart);
+      if (close !== -1) {
+        const adrId = text.slice(idStart, idStart + 4);
+        result += `\`ADR-${adrId}\``;
+        index = close + 1;
+        continue;
+      }
+    }
+
+    result += text[index];
+    index += 1;
+  }
+
+  return result;
+}
+
+function isGoalNumber(value) {
+  const parts = value.split(".");
+  return parts.length === 2 && parts.every((part) => part.length > 0 && Number.isInteger(Number(part)));
+}
+
 function goalAnchorId(num, title) {
-  const n = num.replace(".", "");
-  const slug = title
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "");
-  return `goal-${n}-${slug}`;
+  const n = num.replaceAll(".", "");
+  return `goal-${n}-${slugifyTitle(title)}`;
+}
+
+function rewriteExternalRoadmapLinks(out) {
+  const marker = "docs/roadmap/phase-3-memory-engine/";
+  let index = 0;
+  let result = "";
+
+  while (index < out.length) {
+    if (out[index] === "[" && out.slice(index).startsWith("[", 0)) {
+      const bracketEnd = out.indexOf("]", index + 1);
+      if (bracketEnd !== -1 && out[bracketEnd + 1] === "(") {
+        const hrefStart = bracketEnd + 2;
+        const hrefEnd = out.indexOf(")", hrefStart);
+        if (hrefEnd !== -1) {
+          const text = out.slice(index + 1, bracketEnd);
+          const href = out.slice(hrefStart, hrefEnd);
+          if (href.startsWith(marker)) {
+            result += rewriteDocRoadmapLink(text, href.slice(marker.length));
+            index = hrefEnd + 1;
+            continue;
+          }
+        }
+      }
+    }
+    result += out[index];
+    index += 1;
+  }
+
+  return result;
 }
 
 export function rewriteBody(body) {
   let out = body;
 
-  out = out.replace(/\]\(\.\.\/goals\.md#([^)]+)\)/g, `](/roadmap/${PHASE}/goals#$1)`);
-  out = out.replace(/\(goals\.md#([^)]+)\)/g, `(/roadmap/${PHASE}/goals#$1)`);
-  out = out.replace(/docs\/roadmap\/phase-3-memory-engine\//g, `/roadmap/${PHASE}/`);
-  out = out.replace(/\[([^\]]+)\]\(docs\/roadmap\/phase-3-memory-engine\/([^)]+)\)/g, "[$1](/roadmap/$2)");
-  out = out.replace(/`docs\/adr\/ADR-(\d{4})-([^`]+)`/g, "`ADR-$1`");
-  out = out.replace(
-    /Write `docs\/adr\/ADR-(\d{4})-([^`]+)`/g,
-    "Write ADR-$1 (engineering `docs/adr/` — promote to `/docs/adr/` when accepted)",
-  );
+  out = out.replaceAll("](../goals.md#", `](/roadmap/${PHASE}/goals#`);
+  out = out.replaceAll("(goals.md#", `(/roadmap/${PHASE}/goals#`);
+  out = out.replaceAll("docs/roadmap/phase-3-memory-engine/", `/roadmap/${PHASE}/`);
+  out = rewriteExternalRoadmapLinks(out);
+  out = simplifyAdrBackticks(out);
 
-  out = out.replace(/^## Goal (3\.\d+): (.+)$/gm, (_, num, title) => {
-    const id = goalAnchorId(num, title);
-    return `<h2 id="${id}">Goal ${num}: ${title}</h2>`;
-  });
+  out = out
+    .split("\n")
+    .map((line) => {
+      if (line.trimEnd() === "# Phase 3 — Goals") return "# Phase 3 — Goals";
 
-  return out.replace(/^# Phase 3 — Goals\s*$/m, "# Phase 3 — Goals");
+      const prefix = "## Goal ";
+      if (!line.startsWith(prefix)) return line;
+      const colonIndex = line.indexOf(": ", prefix.length);
+      if (colonIndex === -1) return line;
+      const num = line.slice(prefix.length, colonIndex).trim();
+      const title = line.slice(colonIndex + 2).trim();
+      if (!isGoalNumber(num)) return line;
+      const id = goalAnchorId(num, title);
+      return `<h2 id="${id}">Goal ${num}: ${title}</h2>`;
+    })
+    .join("\n");
+
+  return out;
 }
 
 function rewriteGoalLinks(goal) {
   if (!goal) return goal;
   return goal
-    .replace(/\]\(\.\.\/goals\.md#([^)]+)\)/, `](/roadmap/${PHASE}/goals#$1)`)
-    .replace(/\(goals\.md#([^)]+)\)/, `(/roadmap/${PHASE}/goals#$1)`);
+    .replaceAll("](../goals.md#", `](/roadmap/${PHASE}/goals#`)
+    .replaceAll("(goals.md#", `(/roadmap/${PHASE}/goals#`);
 }
 
 function summaryFromWhySection(content) {
-  const why = content.match(
-    /## Why This Milestone Exists\s*\n+([\s\S]*?)(?=\n## |\n---|\n$)/i,
-  );
-  if (!why) return undefined;
+  const section = extractSectionAfterHeading(content, "Why This Milestone Exists");
+  if (!section) return undefined;
 
-  return why[1]
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .slice(0, 2)
-    .join(" ")
-    .replace(/\[(.+?)\]\(.+?\)/g, "$1")
-    .slice(0, 320);
+  return stripMarkdownLinks(
+    section
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .slice(0, 2)
+      .join(" "),
+  ).slice(0, 320);
 }
 
 function summaryFromFirstParagraph(content) {
-  const para = content
-    .replace(/^#.+$/m, "")
+  const withoutH1 = content
+    .split("\n")
+    .filter((line) => !line.startsWith("# "))
+    .join("\n");
+
+  const para = withoutH1
     .split("\n\n")
     .map((part) => part.trim())
     .find((part) => part && !part.startsWith("#") && !part.startsWith("|") && !part.startsWith("```"));
 
-  return para?.replace(/\[(.+?)\]\(.+?\)/g, "$1").slice(0, 320) ?? "";
+  return para ? stripMarkdownLinks(para).slice(0, 320) : "";
+}
+
+function parseMilestoneIdFromPath(relPath) {
+  const marker = "milestones/";
+  const index = relPath.indexOf(marker);
+  if (index === -1) return undefined;
+
+  const rest = relPath.slice(index + marker.length);
+  const slash = rest.indexOf("/");
+  const raw = slash === -1 ? rest : rest.slice(0, slash);
+  const candidate = raw.endsWith(".mdx") ? raw.slice(0, -4) : raw;
+  const parts = candidate.split(".");
+  if (parts.length !== 3) return undefined;
+  if (!parts.every((part) => part.length > 0 && Number.isInteger(Number(part)))) {
+    return undefined;
+  }
+  return candidate;
+}
+
+function parseMilestoneIdFromTitle(h1) {
+  if (!h1.toLowerCase().startsWith("milestone ")) return undefined;
+  const rest = h1.slice("Milestone ".length).trim();
+  const space = rest.indexOf(" ");
+  const candidate = space === -1 ? rest : rest.slice(0, space);
+  const parts = candidate.split(".");
+  if (parts.length !== 3) return undefined;
+  if (!parts.every((part) => part.length > 0 && Number.isInteger(Number(part)))) {
+    return undefined;
+  }
+  return candidate;
 }
 
 function parsePhase3Identity(content, relPath) {
-  const h1 = content.match(/^#\s+(.+)$/m)?.[1]?.trim() ?? "Untitled";
+  const h1 = extractH1Title(content) ?? "Untitled";
   const isIndex = relPath.endsWith("index.mdx") || relPath.includes("README");
   const isGoals = relPath.includes("goals.mdx");
   const milestoneId =
-    relPath.match(/milestones\/(\d+\.\d+\.\d+)/)?.[1] ??
-    h1.match(/^Milestone\s+(\d+\.\d+\.\d+)/i)?.[1];
+    parseMilestoneIdFromPath(relPath) ?? parseMilestoneIdFromTitle(h1);
 
   return {
     title: h1,
@@ -91,9 +243,9 @@ function parsePhase3Identity(content, relPath) {
 }
 
 function parsePhase3Goal(content) {
-  const effort = content.match(/\*\*Estimated effort:\*\*\s*(.+)/i)?.[1]?.trim();
-  const goal = rewriteGoalLinks(content.match(/\*\*Goal:\*\*\s*(.+)/i)?.[1]?.trim());
-  const status = parseStatus(content.match(/\*\*Status:\*\*\s*(.+)/i)?.[1] ?? "Planned");
+  const effort = extractBoldField(content, "Estimated effort");
+  const goal = rewriteGoalLinks(extractBoldField(content, "Goal"));
+  const status = parseStatus(extractBoldField(content, "Status") ?? "Planned");
 
   return { effort, goal, status };
 }

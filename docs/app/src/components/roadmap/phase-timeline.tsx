@@ -1,12 +1,12 @@
 import Link from "next/link";
 
-type PhaseTimelineProps = {
+type PhaseTimelineProps = Readonly<{
   phases: {
     slug: string;
     title: string;
     milestonesPending?: boolean;
   }[];
-};
+}>;
 
 export function PhaseTimeline({ phases }: PhaseTimelineProps) {
   return (

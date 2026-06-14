@@ -21,7 +21,7 @@ import { StatusBadge } from "@/components/mdx/status-badge";
 import { Step, Steps } from "@/components/mdx/steps";
 import { VersionBadge } from "@/components/mdx/version-badge";
 
-export function useMDXComponents(components?: MDXComponents): MDXComponents {
+export function getMDXComponents(components?: MDXComponents): MDXComponents {
   return {
     ...defaultMdxComponents,
     pre: Pre,
@@ -52,4 +52,9 @@ export function useMDXComponents(components?: MDXComponents): MDXComponents {
     Icon,
     ...components,
   };
+}
+
+/** MDX convention export — not a React hook; prefer getMDXComponents in Server Components. */
+export function useMDXComponents(components?: MDXComponents): MDXComponents {
+  return getMDXComponents(components);
 }

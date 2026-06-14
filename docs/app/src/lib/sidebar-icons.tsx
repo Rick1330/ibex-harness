@@ -2,32 +2,13 @@ import { type LucideIcon } from "lucide-react";
 import { createElement, type ReactElement } from "react";
 
 import { cn } from "@/lib/cn";
-import {
-  baseUrlFromPathname,
-  contentPathFromUrl,
-  createNavIconQuery,
-  docPathFromUrl,
-  folderSectionSlugFromUrl,
-  getNavIconForUrl,
-  getRoadmapIconForUrl,
-  getSectionIconForSlug,
-  resolveNavIcon,
-  resolveRoadmapNavIcon,
-  type ContentBaseUrl,
-  type DocsContentPath,
-  type NavIconName,
-  type NavIconQuery,
-  type NavUrl,
-  type RoadmapContentPath,
-  type SectionSlug,
-} from "@/lib/sidebar-icon-resolvers";
 
 export type {
   ContentBaseUrl,
   DocsContentPath,
   NavIconQuery,
   RoadmapContentPath,
-};
+} from "@/lib/sidebar-icon-resolvers";
 
 export {
   baseUrlFromPathname,
@@ -40,7 +21,16 @@ export {
   getSectionIconForSlug,
   resolveNavIcon,
   resolveRoadmapNavIcon,
-};
+} from "@/lib/sidebar-icon-resolvers";
+
+import {
+  createNavIconQuery,
+  resolveNavIcon,
+  resolveRoadmapNavIcon,
+  type NavIconName,
+  type NavUrl,
+  type SectionSlug,
+} from "@/lib/sidebar-icon-resolvers";
 
 function toNavUrl(url: string): NavUrl {
   return url as NavUrl;
@@ -56,10 +46,10 @@ function toSectionSlug(slug: string): SectionSlug {
 
 export { toNavUrl, toNavIconName, toSectionSlug };
 
-type SidebarIconProps = {
+type SidebarIconProps = Readonly<{
   icon: LucideIcon;
   className?: string;
-};
+}>;
 
 export function SidebarIcon({ icon: Icon, className }: SidebarIconProps) {
   return (

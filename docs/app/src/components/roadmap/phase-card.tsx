@@ -2,7 +2,7 @@ import Link from "next/link";
 
 import { RoadmapProgress } from "@/components/roadmap/roadmap-progress";
 
-type PhaseCardProps = {
+type PhaseCardProps = Readonly<{
   slug: string;
   title: string;
   description?: string;
@@ -10,7 +10,7 @@ type PhaseCardProps = {
   completed: number;
   total: number;
   milestonesPending?: boolean;
-};
+}>;
 
 export function PhaseCard({
   slug,
@@ -41,9 +41,8 @@ export function PhaseCard({
       ) : null}
       {subtitle ? (
         <p className="mb-4 text-xs text-muted-foreground">{subtitle}</p>
-      ) : description ? (
-        <div className="mb-4" />
       ) : null}
+      {!subtitle && description ? <div className="mb-4" /> : null}
 
       {milestonesPending ? (
         <p className="mt-auto text-xs text-muted-foreground">

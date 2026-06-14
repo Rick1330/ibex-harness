@@ -1,14 +1,14 @@
 import { Github } from "lucide-react";
 import Link from "next/link";
 
-type BlogPostHeaderProps = {
+type BlogPostHeaderProps = Readonly<{
   title: string;
   date: string;
   author?: string;
   authorUrl?: string;
   tags?: string[];
   readingTime?: string;
-};
+}>;
 
 export function BlogPostHeader({
   title,

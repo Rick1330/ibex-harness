@@ -2,10 +2,10 @@ import type { ReactNode } from "react";
 
 import { cn } from "@/lib/cn";
 
-type KbdProps = {
+type KbdProps = Readonly<{
   children: ReactNode;
   className?: string;
-};
+}>;
 
 export function Kbd({ children, className }: KbdProps) {
   return (
@@ -21,10 +21,10 @@ export function Kbd({ children, className }: KbdProps) {
   );
 }
 
-type KbdComboProps = {
+type KbdComboProps = Readonly<{
   keys: string[];
   className?: string;
-};
+}>;
 
 export function KbdCombo({ keys, className }: KbdComboProps) {
   return (

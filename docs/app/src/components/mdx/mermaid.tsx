@@ -3,12 +3,12 @@
 import { cn } from "@/lib/cn";
 import { useMermaidDiagram } from "@/hooks/use-mermaid-diagram";
 
-type MermaidProps = {
+type MermaidProps = Readonly<{
   chart: string;
   caption?: string;
   className?: string;
   id?: string;
-};
+}>;
 
 function MermaidPlaceholder({ className }: { className?: string }) {
   return (
@@ -66,8 +66,11 @@ export function Mermaid({ chart, caption, className, id: stableId }: MermaidProp
         />
         {rendering ? (
           <div className="absolute inset-0 flex items-center justify-center gap-2 bg-[hsl(220_14%_98%)]/90 text-sm text-text-secondary dark:bg-[#0d1117]/90">
-            <span className="size-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
-            Rendering diagram…
+            <span
+              aria-hidden
+              className="size-4 animate-spin rounded-full border-2 border-current border-t-transparent"
+            />
+            <span>Rendering diagram…</span>
           </div>
         ) : null}
       </div>

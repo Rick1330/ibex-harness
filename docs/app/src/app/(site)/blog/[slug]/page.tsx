@@ -5,7 +5,7 @@ import { BlogPostHeader } from "@/components/blog/blog-post-header";
 import { RelatedPosts } from "@/components/blog/related-posts";
 import { OnThisPage } from "@/components/layout/toc";
 import { blogSource } from "@/lib/source";
-import { useMDXComponents } from "@/mdx-components";
+import { getMDXComponents } from "@/mdx-components";
 
 type BlogPostPageProps = {
   params: Promise<{ slug: string }>;
@@ -43,7 +43,7 @@ export default async function BlogPostPage(props: BlogPostPageProps) {
             readingTime={page.data.readingTime as string | undefined}
           />
           <div className="prose docs-prose max-w-none">
-            <MDX components={useMDXComponents()} />
+            <MDX components={getMDXComponents()} />
           </div>
           <RelatedPosts posts={related.length > 0 ? related : allPosts} currentUrl={page.url} />
         </article>

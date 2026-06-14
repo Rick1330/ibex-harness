@@ -8,10 +8,10 @@ export type FeatureCard = {
   description: string;
 };
 
-type FeatureGridProps = {
+type FeatureGridProps = Readonly<{
   features: FeatureCard[];
   className?: string;
-};
+}>;
 
 export function FeatureGrid({ features, className }: FeatureGridProps) {
   return (

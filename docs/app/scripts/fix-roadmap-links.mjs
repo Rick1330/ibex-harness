@@ -121,44 +121,83 @@ function resolveRoadmapHref(href, fileDir) {
   return toRoadmapUrl(rel);
 }
 
+function isAdrPath(pathPart) {
+  const base = path.basename(pathPart.replaceAll("\\", "/"));
+  return pathPart.includes("/adr/") || base.toUpperCase().startsWith("ADR-");
+}
+
+function fixMarkdownFileLinks(content, fileDir) {
+  let result = "";
+  let index = 0;
+
+  while (index < content.length) {
+    if (content[index] === "[") {
+      const textEnd = content.indexOf("]", index + 1);
+      if (textEnd !== -1 && content[textEnd + 1] === "(") {
+        const hrefStart = textEnd + 2;
+        const hrefEnd = content.indexOf(")", hrefStart);
+        if (hrefEnd !== -1) {
+          const text = content.slice(index + 1, textEnd);
+          const href = content.slice(hrefStart, hrefEnd);
+          const hashIndex = href.indexOf("#");
+          const pathPart = hashIndex === -1 ? href : href.slice(0, hashIndex);
+          const hash = hashIndex === -1 ? "" : href.slice(hashIndex + 1);
+
+          if (pathPart.endsWith(".md")) {
+            if (isAdrPath(pathPart)) {
+              const adr = adrHref(pathPart);
+              if (adr) {
+                result += `[${text}](${adr}${hash ? `#${hash}` : ""})`;
+                index = hrefEnd + 1;
+                continue;
+              }
+            }
+            const resolved = resolveRoadmapHref(pathPart, fileDir);
+            result += `[${text}](${resolved}${hash ? `#${hash}` : ""})`;
+            index = hrefEnd + 1;
+            continue;
+          }
+        }
+      }
+    }
+
+    result += content[index];
+    index += 1;
+  }
+
+  return result;
+}
+
 function fixLinks(content, fileDir) {
   let out = content;
 
-  out = out.replace(
-    /\]\(([^)]*(?:\.\.\/)?adr\/ADR-\d{4}-[^)]+\.md)\)/gi,
-    (_, href) => {
-      const adr = adrHref(href);
-      return adr ? `](${adr})` : `](${href})`;
-    },
-  );
+  out = out.replaceAll("](../adr/", "](/docs/adr/");
+  out = out.replaceAll("](adr/", "](/docs/adr/");
 
-  out = out.replace(/`docs\/roadmap\/([^`]+)`/g, (_, p) => {
-    const cleaned = p.replace(/\.mdx?$/, "").replace(/README$/, "index");
-    return "`docs/app/content/roadmap/" + cleaned + "`";
-  });
+  out = out.replaceAll("`docs/roadmap/", "`docs/app/content/roadmap/");
 
-  out = out.replace(/\[([^\]]*)\]\(([^)]+\.md(?:#[^)]*)?)\)/g, (match, text, href) => {
-    const [pathPart, hash] = href.split("#");
-    if (pathPart.includes("/adr/") || /^ADR-\d{4}/i.test(pathPart)) {
-      const adr = adrHref(pathPart);
-      if (adr) return `[${text}](${adr}${hash ? `#${hash}` : ""})`;
-    }
-    const resolved = resolveRoadmapHref(pathPart, fileDir);
-    return `[${text}](${resolved}${hash ? `#${hash}` : ""})`;
-  });
+  out = fixMarkdownFileLinks(out, fileDir);
 
   return out;
 }
 
 function fixGoalInFrontmatter(fm, fileDir) {
-  return fm.replace(/^goal:\s*(.+)$/m, (_, raw) => {
-    const val = readYamlValue(raw);
-    const fixed = val.replace(
-      /\]\(\.\.\/goals\.md(#[^)]+)?\)/g,
-      (_, hash) => `](/roadmap/${fileDir.split("/")[0]}/goals${hash ?? ""})`,
-    );
-    return `goal: ${JSON.stringify(fixed)}`;
-  });
+  const phase = fileDir.split("/")[0];
+  const goalPrefix = "](../goals.md";
+  const altPrefix = "(../goals.md";
+
+  return fm
+    .split("\n")
+    .map((line) => {
+      if (!line.startsWith("goal:")) return line;
+      const raw = line.slice("goal:".length).trim();
+      const val = readYamlValue(raw);
+      const fixed = val
+        .replaceAll(goalPrefix, `](/roadmap/${phase}/goals`)
+        .replaceAll(altPrefix, `(/roadmap/${phase}/goals`);
+      return `goal: ${JSON.stringify(fixed)}`;
+    })
+    .join("\n");
 }
 
 function readYamlValue(raw) {

@@ -4,6 +4,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { extractBoldField, extractH1Title } from "./lib/text-utils.mjs";
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const APP_ROOT = path.resolve(__dirname, "..");
 const LEGACY_ROOT = path.resolve(APP_ROOT, "../adr");
@@ -18,21 +20,36 @@ function slugify(filename) {
 }
 
 function parseAdrIdentity(content, filename) {
-  const titleMatch = content.match(/^#\s+ADR-(\d{4}):\s*(.+)$/m);
-  const adrId = titleMatch?.[1] ?? filename.match(/(\d{4})/)?.[1] ?? "0000";
-  const title = titleMatch?.[2]?.trim() ?? filename;
+  const h1 = extractH1Title(content);
+  let adrId = "0000";
+  let title = filename;
+
+  if (h1?.startsWith("ADR-")) {
+    const colonIndex = h1.indexOf(":");
+    if (colonIndex !== -1) {
+      adrId = h1.slice(4, colonIndex).trim();
+      title = h1.slice(colonIndex + 1).trim();
+    }
+  } else {
+    let digits = "";
+    for (let index = 0; index < filename.length; index += 1) {
+      const char = filename[index];
+      if (char >= "0" && char <= "9") {
+        digits += char;
+        if (digits.length === 4) break;
+      }
+    }
+    if (digits.length === 4) adrId = digits;
+  }
+
   return { adrId, title: `ADR-${adrId}: ${title}` };
 }
 
 function parseAdrMetadata(content) {
-  const statusMatch = content.match(/\*\*Status:\*\*\s*(.+)/i);
-  const dateMatch = content.match(/\*\*Date:\*\*\s*(.+)/i);
-  const authorsMatch = content.match(/\*\*Authors:\*\*\s*(.+)/i);
-
   return {
-    status: statusMatch?.[1]?.trim(),
-    date: dateMatch?.[1]?.trim(),
-    authors: authorsMatch?.[1]?.trim(),
+    status: extractBoldField(content, "Status"),
+    date: extractBoldField(content, "Date"),
+    authors: extractBoldField(content, "Authors"),
   };
 }
 
