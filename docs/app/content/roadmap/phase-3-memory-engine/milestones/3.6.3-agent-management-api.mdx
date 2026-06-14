@@ -1,0 +1,81 @@
+---
+title: "3.6.3 Agent Management"
+description: "Milestone 3.6.3 — Agent Management CRUD API — planned."
+summary: "Milestone 3.6.3 — Agent Management CRUD API — planned."
+status: "planned"
+milestoneId: "3.6.3"
+goal: "[3.6 — Management API server](/roadmap/phase-3-memory-engine/goals#goal-36-management-api-server)"
+estimatedEffort: "2–3 days"
+phase: "phase-3-memory-engine"
+fullTitle: "Milestone 3.6.3 — Agent Management CRUD API"
+---
+
+# Milestone 3.6.3 — Agent Management CRUD API
+
+**Status:** Planned  
+**Goal:** [3.6 — Management API server](/roadmap/phase-3-memory-engine/goals#goal-36-management-api-server)  
+**Phase:** 3 — Memory Engine and Operator Platform  
+**Estimated effort:** 2–3 days
+
+---
+
+## Deliverables
+
+### Endpoints
+
+```
+GET    /v1/agents               → ListAgentsResponse (cursor-paginated)
+POST   /v1/agents               → AgentResponse (201)
+GET    /v1/agents/{id}          → AgentResponse
+PATCH  /v1/agents/{id}          → AgentResponse
+DELETE /v1/agents/{id}          → 204 No Content (soft delete)
+POST   /v1/agents/{id}/activate → AgentResponse (status: active)
+POST   /v1/agents/{id}/pause    → AgentResponse (status: paused)
+POST   /v1/agents/{id}/archive  → AgentResponse (status: archived)
+```
+
+### `AgentResponse` schema
+
+```python
+class AgentResponse(BaseModel):
+    id:              UUID
+    org_id:          UUID
+    name:            str
+    slug:            str
+    status:          str   # "active", "paused", "suspended", "archived"
+    config:          dict
+    total_sessions:  int
+    total_memories:  int
+    last_active_at:  datetime | None
+    created_at:      datetime
+    updated_at:      datetime
+
+class CreateAgentRequest(BaseModel):
+    name:   str     = Field(min_length=1, max_length=255)
+    slug:   str     = Field(pattern=r'^[a-z0-9-]+$', min_length=1, max_length=100)
+    config: dict    = Field(default_factory=dict)
+
+class PatchAgentRequest(BaseModel):
+    name:   str | None = Field(None, min_length=1, max_length=255)
+    config: dict | None = None
+    # slug is intentionally not patchable (would break existing integrations)
+```
+
+### Business rules
+
+- `slug` must be unique within `org_id`; return 409 on conflict
+- Cannot delete an agent with `total_sessions > 0` (soft archive instead)
+- Status transitions: `active ↔ paused`, `any → archived` (archived is terminal in Phase 3)
+- All operations scoped to `request.state.org_id` — operator cannot touch other orgs' agents
+
+---
+
+## Acceptance Criteria
+
+- [ ] All 8 endpoints return correct status codes and response shapes
+- [ ] Slug uniqueness enforced (409 on duplicate)
+- [ ] Cannot hard-delete agent with sessions
+- [ ] All operations scoped by org_id (verified by cross-org integration test)
+- [ ] Cursor-based pagination on list endpoint
+
+---

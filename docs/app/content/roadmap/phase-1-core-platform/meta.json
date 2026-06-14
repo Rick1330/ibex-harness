@@ -1,0 +1,16 @@
+{
+  "title": "phase 1 core platform",
+  "icon": "Layers",
+  "pages": [
+    "index",
+    "goals",
+    "decisions",
+    "risks",
+    "ci-audit",
+    "coverage-gap-register",
+    "phase1-exit-audit",
+    "test-architecture",
+    "test-suite-phase4-report",
+    "milestones"
+  ]
+}

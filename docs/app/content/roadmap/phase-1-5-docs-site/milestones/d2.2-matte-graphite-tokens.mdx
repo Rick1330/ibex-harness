@@ -1,0 +1,103 @@
+---
+title: "d2.2 Matte Graphite"
+description: "Default Fumadocs styling uses gradients and rounded corners that conflict with the ibexharness brand (Matte Graphite: zinc monochrome, 1px borders, sharp corners). Wave 2 design quality is a hard gate: D.2.3–D.2.6 and all content work inherit these tokens. Without sign-off here, the site will look like generic AI-gener"
+summary: "Default Fumadocs styling uses gradients and rounded corners that conflict with the ibexharness brand (Matte Graphite: zinc monochrome, 1px borders, sharp corners). Wave 2 design quality is a hard gate: D.2.3–D.2.6 and all content work inherit these tokens. Without sign-off here, the site will look like generic AI-gener"
+status: "planned"
+milestoneId: "d2.2"
+goal: "[D.2](/roadmap/phase-1-5-docs-site/goals)"
+estimatedEffort: "4 hours"
+phase: "phase-1-5-docs-site"
+fullTitle: "Milestone D.2.2 — Matte Graphite design tokens"
+---
+
+# Milestone D.2.2 — Matte Graphite design tokens
+
+**Status:** Planned  
+**Goal:** [D.2](/roadmap/phase-1-5-docs-site/goals)  
+**Phase:** 1.5 — Docs Site  
+**Wave:** 2  
+**Estimated effort:** 4 hours  
+**ADR required:** None (design system in MASTER_BRIEF Part A)
+
+Spec detail: [MASTER_BRIEF.md](/roadmap/phase-1-5-docs-site/master-brief) Part D (D.2.2).
+
+---
+
+## Why This Milestone Exists
+
+Default Fumadocs styling uses gradients and rounded corners that conflict with the ibexharness brand (Matte Graphite: zinc monochrome, 1px borders, sharp corners).
+
+Wave 2 design quality is a hard gate: D.2.3–D.2.6 and all content work inherit these tokens. Without sign-off here, the site will look like generic AI-generated docs.
+
+Token-driven CSS variables (HSL without wrapper) match landing page zinc palette and MASTER_BRIEF Part A.
+
+---
+
+## Non-Goals
+
+- MDX component catalogue (D.2.3)
+- Content pages (D.3.x)
+- Changing Go service themes
+
+---
+
+## Branch
+
+`feat/d2-2-matte-graphite`
+
+## PR Title
+
+`feat(docs): apply Matte Graphite design tokens (D.2.2)`
+
+---
+
+## Prerequisites
+
+- [D.2.1](/roadmap/phase-1-5-docs-site/milestones/d2.1-bootstrap-fumadocs) merged
+
+---
+
+## Deliverables
+
+- `globals.css` full token file + global overrides
+- `tailwind.config.ts` extended colors
+- `layout.tsx` Geist fonts + RootProvider dark default
+
+See MASTER_BRIEF Part D (D.2.2) for full acceptance detail.
+
+---
+
+## Files Affected
+
+| File Path | Action | Notes |
+| --- | --- | --- |
+| `docs/app/src/app/globals.css` | Add/Modify | Matte Graphite tokens |
+| `docs/app/tailwind.config.ts` | Modify | Tailwind color bridge |
+| `docs/app/src/app/layout.tsx` | Modify | Fonts and metadata |
+
+---
+
+## Testing Requirements
+
+- **`verifyTokens_NoGradients`**: No computed `linear-gradient` on introduction page
+- **`verifyTokens_MaxRadius6px`**: No border-radius > 6px on panels/buttons
+- **`verifyTokens_DarkDefault`**: First visit renders dark mode
+- **`verifyTokens_SSR_NoJS`**: Page readable with JS disabled
+
+---
+
+## Acceptance Criteria
+
+- [ ] Dark mode default on first visit
+- [ ] No gradient backgrounds in DevTools computed styles
+- [ ] Visual sign-off at 375/768/1440 vs landing palette
+
+---
+
+## Risks
+
+| Risk | Probability | Impact | Mitigation |
+| --- | --- | --- | --- |
+| Fumadocs preset fights custom CSS | Medium | High | Use global overrides from MASTER_BRIEF D.2.2 |
+| Brand drift vs ibexharness.com | Medium | High | Side-by-side review with landing in same browser |
+| Light mode contrast failures | Low | Medium | Check semantic callout colors only in callouts |

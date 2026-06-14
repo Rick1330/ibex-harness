@@ -1,0 +1,180 @@
+---
+title: "1.3.1 Otel Tracer"
+description: "The original M1.3.1 scope was too broad: OTel init, span middleware, Prometheus migration, and log propagation in one PR. This milestone is reduced to the correct atomic unit: initialize the OTel tracer and meter providers in both Go services, wire the HTTP request span middleware, and propagate trace context through g"
+summary: "The original M1.3.1 scope was too broad: OTel init, span middleware, Prometheus migration, and log propagation in one PR. This milestone is reduced to the correct atomic unit: initialize the OTel tracer and meter providers in both Go services, wire the HTTP request span middleware, and propagate trace context through g"
+status: "completed"
+milestoneId: "1.3.1"
+goal: "[1.3 — Observability baseline](/roadmap/phase-1-core-platform/goals#goal-13-observability-baseline)"
+estimatedEffort: "2–3 days"
+phase: "phase-1-core-platform"
+fullTitle: "Milestone 1.3.1 — OTel Tracer and Meter Provider Initialization"
+---
+
+# Milestone 1.3.1 — OTel Tracer and Meter Provider Initialization
+
+**Status:** Complete  
+**Goal:** [1.3 — Observability baseline](/roadmap/phase-1-core-platform/goals#goal-13-observability-baseline)  
+**Phase:** 1 — Core Platform  
+**Estimated effort:** 2–3 days  
+**ADR required:** ADR-0019 — OpenTelemetry provider configuration
+
+---
+
+## Why This Milestone Exists
+
+The original M1.3.1 scope was too broad: OTel init, span middleware, Prometheus migration, and log propagation in one PR. This milestone is reduced to the correct atomic unit: initialize the OTel tracer and meter providers in both Go services, wire the HTTP request span middleware, and propagate trace context through gRPC calls to auth. The Prometheus metric catalog (M1.3.2) and shared logger (M1.3.3) are separate milestones.
+
+Phase 1 does not require a running Jaeger or Tempo instance. The exporter is configured to the OTLP endpoint if `OTEL_EXPORTER_OTLP_ENDPOINT` is set, and falls back to a no-op exporter if not. The CI test uses the in-process `sdktrace/tracetest` SDK recorder to assert spans are created — no external collector required.
+
+---
+
+## Non-Goals
+
+- Prometheus metric migration (M1.3.2)
+- Shared logger package (M1.3.3)
+- ClickHouse trace ingestion (Phase 2)
+- Sampling configuration beyond "100% errors, 1% of normal" (Phase 2)
+- gRPC server interceptors on the auth service (added when auth gains a full test suite)
+
+---
+
+## Branch
+
+`chore/m1-3-1-otel-providers`
+
+## PR Title
+
+`chore(obs): OTel tracer and meter provider init with HTTP span middleware (m1.3.1)`
+
+---
+
+## Prerequisites
+
+- [1.2.6](/roadmap/phase-1-core-platform/milestones/1.2.6-request-id-correlation-middleware) merged — request ID in context (needed by span middleware)
+- [1.2.7](/roadmap/phase-1-core-platform/milestones/1.2.7-graceful-shutdown) merged — graceful shutdown coordinator (OTel shutdown hooks needed)
+
+---
+
+## Deliverables
+
+### 1. ADR-0019 — OTel provider configuration
+
+Document:
+- SDK version pinned (`go.opentelemetry.io/otel` v1.x)
+- Resource attributes required on every span: `service.name`, `service.version`, `deployment.environment`
+- Exporter selection: OTLP gRPC if `OTEL_EXPORTER_OTLP_ENDPOINT` set; no-op otherwise
+- Sampling: `parentbased_traceidratio` with ratio 0.01 for Phase 1; errors always sampled
+- Propagator: W3C `traceparent` + `tracestate` (standard; compatible with all major backends)
+
+---
+
+### 2. `packages/telemetry` — provider initialization
+
+```go
+// Package telemetry initialises OpenTelemetry providers for IBEX services.
+// It is the single place where SDK, exporter, and resource are configured.
+package telemetry
+
+import (
+    "context"
+
+    "go.opentelemetry.io/otel"
+    "go.opentelemetry.io/otel/sdk/resource"
+    semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
+)
+
+// Config holds all OTel provider configuration.
+// Fields are loaded from environment variables by the service's
+// packages/config loader. Defaults are safe for development.
+type Config struct {
+    ServiceName    string  // OTEL_SERVICE_NAME (required)
+    ServiceVersion string  // OTEL_SERVICE_VERSION (default: "dev")
+    Environment    string  // OTEL_DEPLOYMENT_ENVIRONMENT (default: "development")
+    OTLPEndpoint   string  // OTEL_EXPORTER_OTLP_ENDPOINT (optional; no-op if empty)
+    SampleRatio    float64 // OTEL_SAMPLE_RATIO (default: 0.01)
+}
+
+// Providers holds initialized OTel providers and their shutdown functions.
+type Providers struct {
+    TracerProvider *sdktrace.TracerProvider
+    MeterProvider  *sdkmetric.MeterProvider
+    Shutdown       func(ctx context.Context) error
+}
+
+// Init initialises tracer and meter providers from cfg.
+// Call Shutdown on service exit (wire into packages/shutdown Coordinator).
+// If cfg.OTLPEndpoint is empty, uses no-op exporters suitable for
+// development and CI.
+func Init(ctx context.Context, cfg Config) (*Providers, error)
+```
+
+---
+
+### 3. HTTP span middleware
+
+```go
+// SpanMiddleware creates a server-side OTel span for every HTTP request.
+// The span is named "{method} {route_template}" (e.g. "POST /v1/chat/completions").
+// Do NOT use the raw URL path — it contains high-cardinality segments (UUIDs, IDs).
+// The route template is extracted from the router's pattern, not the URL.
+//
+// Span attributes set on every request:
+//   http.method, http.route, http.status_code, http.request_content_length
+//
+// The request ID from reqid.FromContext is added as span attribute:
+//   ibex.request_id
+//
+// Required position: AFTER RequestIDMiddleware, BEFORE Auth.
+//   RequestID → Span → Auth → AgentVerification → RateLimit → [handler]
+func SpanMiddleware(tracer trace.Tracer) func(http.Handler) http.Handler
+```
+
+---
+
+### 4. gRPC client trace propagation
+
+Inject W3C `traceparent` in outgoing gRPC calls from proxy to auth:
+
+```go
+// In services/proxy/internal/grpc/interceptors.go,
+// alongside RequestIDUnaryInterceptor from M1.2.6:
+
+func OTelUnaryInterceptor() grpc.UnaryClientInterceptor {
+    return otelgrpc.UnaryClientInterceptor()
+    // github.com/open-telemetry/opentelemetry-go-contrib/instrumentation/google.golang.org/grpc/otelgrpc
+}
+```
+
+---
+
+## Environment Variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `OTEL_SERVICE_NAME` | (required) | Service identifier in traces |
+| `OTEL_SERVICE_VERSION` | `dev` | Binary version tag |
+| `OTEL_DEPLOYMENT_ENVIRONMENT` | `development` | `development`, `staging`, `production` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | (empty — no-op) | OTLP gRPC endpoint (e.g. `localhost:4317`) |
+| `OTEL_SAMPLE_RATIO` | `0.01` | Fraction of normal requests sampled |
+
+---
+
+## Testing Requirements
+
+- **`TestSpanMiddleware_SpanCreated`**: use `sdktrace/tracetest` exporter; assert span name `"POST /v1/chat/completions"`, status code attribute, request_id attribute set
+- **`TestSpanMiddleware_ErrorSpan`**: handler returns 500; assert span status is `ERROR`
+- **`TestTelemetry_NoopOnEmptyEndpoint`**: `OTLPEndpoint=""` → providers initialized, no error, spans are no-ops
+- **`TestTelemetry_Shutdown`**: `Providers.Shutdown()` completes within 5s context timeout
+
+---
+
+## Acceptance Criteria
+
+- [ ] `packages/telemetry.Init()` wired into both auth and proxy `main.go`
+- [ ] `Providers.Shutdown` registered with `packages/shutdown.Coordinator`
+- [ ] HTTP span middleware creates spans named by route template (not raw URL)
+- [ ] Span has `ibex.request_id`, `http.method`, `http.route`, `http.status_code` attributes
+- [ ] `service.name`, `service.version`, `deployment.environment` in OTel resource
+- [ ] No-op exporter used when `OTEL_EXPORTER_OTLP_ENDPOINT` is unset
+- [ ] Tests use in-process span recorder (no external collector required in CI)
+- [ ] ADR-0019 written and indexed

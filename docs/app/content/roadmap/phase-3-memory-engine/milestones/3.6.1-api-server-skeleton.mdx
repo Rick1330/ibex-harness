@@ -1,0 +1,118 @@
+---
+title: "3.6.1 Api Server"
+description: "The management API is how operators interact with the platform. It is the backend for the dashboard, the target of SDK calls for managing agents and directives, and the interface for GDPR data requests. Without it, there is no way to create agents, view memories, or manage the platform without direct database access. T"
+summary: "The management API is how operators interact with the platform. It is the backend for the dashboard, the target of SDK calls for managing agents and directives, and the interface for GDPR data requests. Without it, there is no way to create agents, view memories, or manage the platform without direct database access. T"
+status: "planned"
+milestoneId: "3.6.1"
+goal: "[3.6 — Management API server](/roadmap/phase-3-memory-engine/goals#goal-36-management-api-server)"
+estimatedEffort: "2 days"
+phase: "phase-3-memory-engine"
+fullTitle: "Milestone 3.6.1 — Management API Server Skeleton"
+---
+
+# Milestone 3.6.1 — Management API Server Skeleton
+
+**Status:** Planned  
+**Goal:** [3.6 — Management API server](/roadmap/phase-3-memory-engine/goals#goal-36-management-api-server)  
+**Phase:** 3 — Memory Engine and Operator Platform  
+**Estimated effort:** 2 days
+
+---
+
+## Why This Milestone Exists
+
+The management API is how operators interact with the platform. It is the backend for the dashboard, the target of SDK calls for managing agents and directives, and the interface for GDPR data requests. Without it, there is no way to create agents, view memories, or manage the platform without direct database access.
+
+This milestone establishes the service skeleton: FastAPI application, auth middleware (validates IBEX PAT via auth gRPC), shared dependencies, error envelope middleware, and the `/docs` OpenAPI endpoint.
+
+---
+
+## Branch
+
+`feat/m3-6-1-api-server-skeleton`
+
+## PR Title
+
+`feat(api): management API server skeleton — FastAPI, auth, error middleware (m3.6.1)`
+
+---
+
+## Service structure
+
+```
+services/api/
+  pyproject.toml
+  Dockerfile
+  .env.example
+  src/
+    api/
+      __init__.py
+      app.py
+      settings.py
+      middleware/
+        auth.py          # Validates IBEX PAT via auth service gRPC
+        error_handler.py # Converts exceptions to stable IBEX error envelope
+        cors.py
+        logging.py       # Request/response logging (no body content)
+      routers/
+        organizations.py # 3.6.2
+        users.py         # 3.6.2
+        agents.py        # 3.6.3
+        tokens.py        # 3.6.4
+        directives.py    # 3.6.5
+        memories.py      # 3.6.6
+        sessions.py      # 3.6.7
+        analytics.py     # 3.6.7
+      dependencies.py
+      schemas/
+        common.py        # PaginatedResponse, ErrorResponse, CursorPage
+        agents.py
+        tokens.py
+        directives.py
+        memories.py
+        sessions.py
+  tests/
+```
+
+### Stable error envelope (Python)
+
+```python
+# src/api/schemas/common.py
+from __future__ import annotations
+from pydantic import BaseModel
+
+class ErrorDetail(BaseModel):
+    code:       str
+    message:    str
+    request_id: str
+
+class ErrorResponse(BaseModel):
+    error: ErrorDetail
+
+# Cursor-based pagination (all list endpoints)
+class CursorPage[T](BaseModel):
+    items:       list[T]
+    next_cursor: str | None  # None = last page
+    total:       None = None  # NEVER include total count (expensive at scale)
+```
+
+### Auth middleware
+
+```python
+# src/api/middleware/auth.py
+# Calls auth gRPC ValidateToken on every request.
+# Sets request.state.org_id, request.state.user_id, request.state.permissions.
+# Returns 401 on any auth failure.
+```
+
+---
+
+## Acceptance Criteria
+
+- [ ] `GET /docs` returns the auto-generated OpenAPI spec
+- [ ] `GET /health` and `GET /ready` functional
+- [ ] Every unauthenticated request returns 401 with IBEX error envelope
+- [ ] Every unhandled exception returns 500 with IBEX error envelope (not raw exception)
+- [ ] Request ID header (`X-Request-ID`) propagated to all error responses
+
+---

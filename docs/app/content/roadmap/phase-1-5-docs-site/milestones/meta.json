@@ -1,0 +1,27 @@
+{
+  "title": "Milestones",
+  "icon": "Flag",
+  "pages": [
+    "d1.1-pnpm-workspace-turborepo",
+    "d1.2-cursor-rules-editorconfig",
+    "d2.1-bootstrap-fumadocs",
+    "d2.2-matte-graphite-tokens",
+    "d2.3-mdx-components-catalogue",
+    "d2.4-dynamic-og-images",
+    "d2.5-command-palette",
+    "d2.6-enhanced-code-blocks",
+    "d2.7-sidebar-breadcrumbs-on-this-page",
+    "d2.8-not-found-home-redirect",
+    "d3.1-information-architecture-meta-json",
+    "d3.2-seed-pages-content-stubs",
+    "d3.3-quickstart-five-minute-path",
+    "d3.4-api-reference-manual-phase1",
+    "d4.1-vercel-preview-deploys",
+    "d4.2-github-actions-docs-checks",
+    "d5.1-visual-qa-sweep",
+    "d5.2-verify-phase15-script",
+    "d6.1-cloudflare-domain-purchase",
+    "d6.2-dns-vercel-domain-attach",
+    "d6.3-cross-site-nav-sitemaps"
+  ]
+}

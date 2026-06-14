@@ -1,0 +1,95 @@
+---
+title: "2.3.2 Directive Resolver"
+description: "The proxy needs the agent's active directive content on every request. It cannot query Postgres on every request without adding 2–10ms to the proxy overhead. The solution is a Redis cache of directive content, keyed by agent_id, with a 60-second TTL. On a miss, the proxy queries Postgres directly (the proxy gets its ow"
+summary: "The proxy needs the agent's active directive content on every request. It cannot query Postgres on every request without adding 2–10ms to the proxy overhead. The solution is a Redis cache of directive content, keyed by agent_id, with a 60-second TTL. On a miss, the proxy queries Postgres directly (the proxy gets its ow"
+status: "planned"
+milestoneId: "2.3.2"
+goal: "[2.3 — Directive resolution and prompt injection](/roadmap/phase-2-single-provider/goals#goal-23-directive-resolution-and-prompt-injection)"
+estimatedEffort: "2–3 days"
+phase: "phase-2-single-provider"
+fullTitle: "Milestone 2.3.2 — Directive Resolver (Redis Cache → Postgres Fallback)"
+---
+
+# Milestone 2.3.2 — Directive Resolver (Redis Cache → Postgres Fallback)
+
+**Status:** Planned  
+**Goal:** [2.3 — Directive resolution and prompt injection](/roadmap/phase-2-single-provider/goals#goal-23-directive-resolution-and-prompt-injection)  
+**Phase:** 2 — Single Provider End-to-End  
+**Estimated effort:** 2–3 days  
+**ADR required:** None (follows established cache pattern)
+
+---
+
+## Why This Milestone Exists
+
+The proxy needs the agent's active directive content on every request. It cannot query Postgres on every request without adding 2–10ms to the proxy overhead. The solution is a Redis cache of directive content, keyed by agent_id, with a 60-second TTL. On a miss, the proxy queries Postgres directly (the proxy gets its own read-only Postgres connection for directive and session data — distinct from the auth service's pool). On a directive update, the cache entry is invalidated via pub/sub (same pattern as 2.2.2).
+
+---
+
+## Branch
+
+`feature/m2-3-2-directive-resolver`
+
+## PR Title
+
+`feat(proxy): directive resolver with Redis cache and Postgres fallback (m2.3.2)`
+
+---
+
+## Prerequisites
+
+- [2.3.1](/roadmap/phase-2-single-provider/milestones/2.3.1-directive-migrations) merged — directive tables exist
+- [1.4.2](/roadmap/phase-1-core-platform/milestones/1.4.2-shared-config-and-error-packages) merged — packages/config available
+
+---
+
+## Deliverables
+
+### 1. `packages/directive` — resolver interface and cached implementation
+
+```go
+// Package directive provides directive resolution for the proxy hot path.
+package directive
+
+// Resolver resolves the active directive for an agent.
+// Returns ("", nil) when the agent has no active directive.
+// Returns an error only for infrastructure failures (DB/Redis down).
+type Resolver interface {
+    Resolve(ctx context.Context, agentID uuid.UUID) (content string, err error)
+    Invalidate(agentID uuid.UUID) // called by cache invalidation subscriber
+}
+
+// Redis key format: directive:{agent_id} (agent_id is already org-scoped via the agents table)
+// TTL: 60 seconds (configurable)
+// On miss: query Postgres for active directive content and populate cache
+```
+
+### 2. Postgres query for directive resolution
+
+```go
+const resolveDirectiveQuery = `
+    SELECT dv.content
+    FROM ibex_core.directives d
+    JOIN ibex_core.directive_versions dv ON dv.id = d.active_version_id
+    WHERE d.agent_id   = $1
+      AND d.is_active  = true
+      AND dv.id IS NOT NULL
+    LIMIT 1`
+// Returns pgx.ErrNoRows when agent has no active directive — resolved to ("", nil)
+```
+
+### 3. Cache invalidation subscriber
+
+When a directive is updated (via Phase 3 API service), publish to `ibex:directive:updates:{agent_id}`. The proxy subscriber calls `Resolver.Invalidate(agentID)` which deletes the Redis key and clears any in-process pointer.
+
+---
+
+## Acceptance Criteria
+
+- [ ] Directive resolved from Redis on cache hit in < 2ms
+- [ ] Postgres fallback on Redis miss populates cache for subsequent requests
+- [ ] Agent with no directive returns `("", nil)` — not an error
+- [ ] Directive content is NOT logged (privacy)
+- [ ] Cache TTL is configurable via `IBEX_DIRECTIVE_CACHE_TTL` (default: 60s)
+
+---

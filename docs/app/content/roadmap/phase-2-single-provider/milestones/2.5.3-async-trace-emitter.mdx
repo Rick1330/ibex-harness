@@ -1,0 +1,89 @@
+---
+title: "2.5.3 Async Trace"
+description: "With the ClickHouse schema (2.5.1) and typed writer (2.5.2) in place, this milestone wires trace emission into the proxy request handler. The trace is assembled after the LLM response is complete (token counts are only known then) and submitted to the ClickHouse writer's non-blocking queue. The key constraint: trace"
+summary: "With the ClickHouse schema (2.5.1) and typed writer (2.5.2) in place, this milestone wires trace emission into the proxy request handler. The trace is assembled after the LLM response is complete (token counts are only known then) and submitted to the ClickHouse writer's non-blocking queue. The key constraint: trace"
+status: "planned"
+milestoneId: "2.5.3"
+goal: "[2.5 — Async trace emission to ClickHouse](/roadmap/phase-2-single-provider/goals#goal-25-async-trace-emission-to-clickhouse)"
+estimatedEffort: "2 days"
+phase: "phase-2-single-provider"
+fullTitle: "Milestone 2.5.3 — Async Trace Emitter and Handler Integration"
+---
+
+# Milestone 2.5.3 — Async Trace Emitter and Handler Integration
+
+**Status:** Planned  
+**Goal:** [2.5 — Async trace emission to ClickHouse](/roadmap/phase-2-single-provider/goals#goal-25-async-trace-emission-to-clickhouse)  
+**Phase:** 2 — Single Provider End-to-End  
+**Estimated effort:** 2 days
+
+---
+
+## Why This Milestone Exists
+
+With the ClickHouse schema (2.5.1) and typed writer (2.5.2) in place, this milestone wires trace emission into the proxy request handler. The trace is assembled after the LLM response is complete (token counts are only known then) and submitted to the ClickHouse writer's non-blocking queue.
+
+The key constraint: **trace emission must never add latency to the LLM response path.** The implementation uses the same post-response goroutine pattern as session checkpoints (2.4.3).
+
+---
+
+## Branch
+
+`feature/m2-5-3-async-trace-emitter`
+
+## PR Title
+
+`feat(proxy): async trace emitter — ClickHouse integration in LLM handler (m2.5.3)`
+
+---
+
+## Deliverables
+
+### Trace assembly function
+
+```go
+// assembleTrace builds a TraceRecord from the request context and response data.
+// Called after the LLM response is complete (streaming: after [DONE]; non-streaming: after decode).
+// Content (prompt text, completion text) is intentionally excluded — never stored.
+func assembleTrace(
+    ctx context.Context,
+    req provider.Request,
+    resp provider.Response,
+    timings requestTimings,
+    outcome requestOutcome,
+) clickhouse.TraceRecord
+```
+
+### Post-response goroutine
+
+```go
+// After response is written to client:
+go func() {
+    postCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+    defer cancel()
+
+    // 1. Append checkpoint (from 2.4.3)
+    if err := sessionStore.AppendCheckpoint(postCtx, checkpointParams); err != nil {
+        log.WarnCtx(postCtx, "session checkpoint failed", "error", err)
+    }
+
+    // 2. Emit trace
+    trace := assembleTrace(postCtx, req, resp, timings, outcome)
+    if err := traceWriter.Write(trace); err != nil {
+        log.WarnCtx(postCtx, "trace emit failed", "error", err)
+        // Both failures are advisory; the LLM response was already sent successfully
+    }
+}()
+```
+
+---
+
+## Acceptance Criteria
+
+- [ ] Trace record in ClickHouse for every completed LLM request within 500ms of response
+- [ ] Trace includes all fields from the schema (no nil/zero fields for non-optional data)
+- [ ] Trace write failure does NOT affect LLM response (logged at WARN, not propagated)
+- [ ] No LLM content (prompt, completion text) in trace record
+- [ ] `proxy_overhead_ms` (total_latency_ms) in trace matches measured proxy overhead
+
+---

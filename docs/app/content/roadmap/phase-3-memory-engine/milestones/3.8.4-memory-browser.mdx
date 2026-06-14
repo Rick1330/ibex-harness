@@ -1,0 +1,91 @@
+---
+title: "3.8.4 Memory Browser"
+description: "The memory browser is the unique UI of IBEX Harness — nothing like it exists in standard LLM tooling. It allows operators to see exactly what an AI agent \"knows\": browse, search, filter, inspect, and delete individual memories. This is essential for: - Debugging: \"why is the agent saying this wrong thing?\" → find and d"
+summary: "The memory browser is the unique UI of IBEX Harness — nothing like it exists in standard LLM tooling. It allows operators to see exactly what an AI agent \"knows\": browse, search, filter, inspect, and delete individual memories. This is essential for: - Debugging: \"why is the agent saying this wrong thing?\" → find and d"
+status: "planned"
+milestoneId: "3.8.4"
+goal: "[3.8 — Operator dashboard](/roadmap/phase-3-memory-engine/goals#goal-38-operator-dashboard)"
+estimatedEffort: "4 days"
+phase: "phase-3-memory-engine"
+fullTitle: "Milestone 3.8.4 — Memory Browser UI"
+---
+
+# Milestone 3.8.4 — Memory Browser UI
+
+**Status:** Planned  
+**Goal:** [3.8 — Operator dashboard](/roadmap/phase-3-memory-engine/goals#goal-38-operator-dashboard)  
+**Phase:** 3 — Memory Engine and Operator Platform  
+**Estimated effort:** 4 days
+
+---
+
+## Why This Milestone Exists
+
+The memory browser is the unique UI of IBEX Harness — nothing like it exists in standard LLM tooling. It allows operators to see exactly what an AI agent "knows": browse, search, filter, inspect, and delete individual memories. This is essential for:
+- Debugging: "why is the agent saying this wrong thing?" → find and delete the incorrect memory
+- Quality assurance: verify that extraction produced sensible memories
+- GDPR: operator demonstrates to a user what the system knows about them
+
+---
+
+## Deliverables
+
+### Key components
+
+```typescript
+// src/components/memories/MemoryTable.tsx
+// Columns: Content (truncated), Category (badge), Confidence (bar), 
+//          Score (number), Created (relative), Actions (delete, view)
+// Features: Cursor pagination, Filter by category/status/date range
+//           Sort by confidence, score, date, retrieval_count
+
+// src/components/memories/MemoryDetailDrawer.tsx
+// Slide-in panel showing:
+// - Full content (not truncated)
+// - Category, confidence, source, status
+// - Created/updated timestamps
+// - Version history (version_num, operation, change_reason)
+// - Related memories (memory_relationships)
+// - Sessions this memory appears in (memory_ids in InjectionMetadata)
+// - Delete button (with confirmation dialog)
+
+// src/components/memories/MemorySearchBar.tsx
+// Semantic search: debounced input → POST /v1/agents/{id}/memories/search
+// Shows relevance score alongside each result
+// Tag filter pills, category checkboxes
+```
+
+### Semantic search with real-time results
+
+```typescript
+// hooks/useMemorySearch.ts
+export function useMemorySearch(agentId: string) {
+    const [query, setQuery] = useState("");
+    const debouncedQuery = useDebounce(query, 300);
+
+    const { data, isPending } = useQuery({
+        queryKey: ["memory-search", agentId, debouncedQuery],
+        queryFn: () => apiClient.POST("/v1/agents/{agent_id}/memories/search", {
+            params: { path: { agent_id: agentId } },
+            body: { query: debouncedQuery, limit: 20 },
+        }),
+        enabled: debouncedQuery.length >= 3,
+        staleTime: 30_000,
+    });
+
+    return { results: data?.memories ?? [], isPending, query, setQuery };
+}
+```
+
+---
+
+## Acceptance Criteria
+
+- [ ] Memory table loads with cursor pagination (20 per page)
+- [ ] Category filter, date range filter, status filter all work
+- [ ] Semantic search returns results within 2 seconds for queries ≥ 3 characters
+- [ ] Memory detail drawer shows version history
+- [ ] Delete with confirmation dialog; table auto-refreshes after delete
+- [ ] Empty state displayed when agent has no memories yet
+
+---

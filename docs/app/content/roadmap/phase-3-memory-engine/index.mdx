@@ -1,0 +1,172 @@
+---
+title: "Phase 3"
+description: "Phase 2 built a working LLM proxy. Every request is authenticated, rate-limited, and forwarded to OpenAI with a static directive. That is a good proxy. Phase 3 makes it something fundamentally different: a proxy that learns."
+summary: "Phase 2 built a working LLM proxy. Every request is authenticated, rate-limited, and forwarded to OpenAI with a static directive. That is a good proxy. Phase 3 makes it something fundamentally different: a proxy that learns."
+status: "planned"
+phase: "phase-3-memory-engine"
+fullTitle: "Phase 3 — Memory Engine and Operator Platform"
+---
+
+# Phase 3 — Memory Engine and Operator Platform
+
+## What Phase 3 Delivers
+
+Phase 2 built a working LLM proxy. Every request is authenticated, rate-limited, and forwarded to OpenAI with a static directive. That is a good proxy. Phase 3 makes it something fundamentally different: **a proxy that learns**.
+
+After Phase 3, every conversation an AI agent has is automatically analysed, stripped of knowledge, and woven into a persistent memory graph. The next time that agent runs, its context is enriched with the most relevant memories from all prior conversations — transparently, without any change to the application using the agent. Operators see everything through a purpose-built dashboard. The system manages itself: memory extraction, deduplication, conflict resolution, and garbage collection all run in the background.
+
+This is the core value proposition of IBEX Harness. Phase 3 is the most complex phase in the roadmap.
+
+## Phase 3 Scope
+
+### Six new services
+
+| Service | Language | Path | Purpose |
+|---|---|---|---|
+| Embedding Service | Python 3.11 | `services/embedder/` | Text → 384-dim vectors (all-MiniLM-L6-v2) |
+| Memory Service | Python 3.11 | `services/memory/` | Memory CRUD, dedup, vector search, hot cache |
+| Context Assembly Engine | Python 3.11 | `services/context/` | Assemble enriched context, 40ms budget |
+| Worker Service | Python 3.11 | `services/worker/` | Celery: extraction, embedding, fingerprinting |
+| API Server | Python 3.11 | `services/api/` | Management REST API for operators |
+| Dashboard | TypeScript/Next.js 14 | `services/dashboard/` | Operator web UI |
+
+### Major schema additions
+
+- `ibex_core.memories` — core memory store with pgvector (384-dim)
+- `ibex_core.memory_relationships` — graph of memory connections
+- `ibex_core.memory_versions` — immutable memory change history
+- `ibex_core.memory_tags` — flexible tagging for search and filtering
+- MinIO bucket structure — session content archives
+
+### Extended proxy behaviour (Go)
+
+- Context assembly gRPC call added to the hot path
+- Memory extraction job triggered async after every session checkpoint
+- Hot memory cache management (Redis sorted set per agent)
+
+## The Critical Path After Phase 3
+
+```
+Client SDK
+    │
+    ▼  POST /v1/chat/completions
+┌──────────────────────────────────────────────────────────────────────┐
+│                           IBEX Proxy (Go)                            │
+│  RequestID → Auth LRU → AgentVerify → RateLimit                      │
+│  → ContextAssemblyGRPC ─────────────────────────────────────────────►│
+│                  │                                                    │
+│  ┌───────────────▼──────────────────────────────────────────────┐   │
+│  │             Context Assembly Engine (Python/gRPC)             │   │
+│  │  1. Token budget calculation (model-aware)                    │   │
+│  │  2. Parallel retrieval (40ms deadline):                       │   │
+│  │     ├── Directive   → Redis (<1ms)                            │   │
+│  │     ├── Hot memories→ Redis sorted set (<5ms)                 │   │
+│  │     └── Cold search → pgvector IVFFlat ANN (<30ms)            │   │
+│  │  3. Composite scoring (relevance+recency+usefulness)          │   │
+│  │  4. Greedy knapsack packing                                   │   │
+│  │  5. Format: directive → procedural → declarative → episodic   │   │
+│  └───────────────────────────────────────────────────────────────┘   │
+│  → OpenAI Forward → Stream back                                       │
+│  → [async] Session checkpoint + Trace + ExtractionJob trigger         │
+└──────────────────────────────────────────────────────────────────────┘
+                                                │
+                                    ┌───────────▼──────────────────┐
+                                    │     Worker (Celery/Python)    │
+                                    │  1. Read unprocessed turns    │
+                                    │  2. LLM extraction → memories │
+                                    │  3. Embed → pgvector write    │
+                                    │  4. Dedup + conflict detect   │
+                                    │  5. Hot cache refresh          │
+                                    └───────────────────────────────┘
+```
+
+## Phase 3 Latency Budgets
+
+| Operation | Budget | Notes |
+|---|---|---|
+| Context assembly (full) | p95 < 50ms | The 40ms deadline for parallel retrieval + 10ms for scoring and formatting |
+| Embedding (single text) | p95 < 20ms | CPU inference; GPU reduces to &lt;5ms |
+| Embedding (batch 32) | p95 < 100ms | Amortised cost |
+| Memory write | p95 < 200ms | Including embedding call |
+| pgvector search (IVFFlat) | p95 < 30ms | 1M vectors, lists=100, probes=10 |
+| Hot cache read | p99 < 5ms | Redis sorted set ZREVRANGE |
+| Management API (CRUD) | p95 < 300ms | No SLA criticality; operator use |
+| Full proxy overhead (Phase 3) | p99 < 25ms | 5ms added vs Phase 2 for context assembly gRPC |
+
+## Phase 3 Goals
+
+| # | Goal | Key Milestones |
+|---|---|---|
+| 3.1 | Memory schema and data foundation | 3.1.1, 3.1.2 |
+| 3.2 | Embedding service | 3.2.1–3.2.4 |
+| 3.3 | Memory service | 3.3.1–3.3.6 |
+| 3.4 | Memory extraction worker | 3.4.1–3.4.6 |
+| 3.5 | Context assembly engine | 3.5.1–3.5.7 |
+| 3.6 | Management API server | 3.6.1–3.6.8 |
+| 3.7 | MinIO session content archives | 3.7.1–3.7.3 |
+| 3.8 | Operator dashboard | 3.8.1–3.8.6 |
+| 3.9 | Phase 3 quality gate | 3.9.1–3.9.3 |
+
+## Recommended Execution Order
+
+```
+Track A (Infrastructure — start immediately):
+  3.1.1 (memory schema) → 3.1.2 (Python store base)
+  3.7.1 (MinIO client) [parallel with 3.1]
+
+Track B (Embedding — blocks memory writes and context search):
+  3.2.1 → 3.2.2 → 3.2.3 → 3.2.4
+
+Track C (Memory service — blocks worker and context assembly):
+  [after 3.1 + 3.2] → 3.3.1 → 3.3.2 → 3.3.3 → 3.3.4 → 3.3.5 → 3.3.6
+
+Track D (Worker — blocks memory extraction):
+  [after 3.3] → 3.4.1 → 3.4.2 → 3.4.3 → 3.4.4 → 3.4.5 → 3.4.6
+
+Track E (Context assembly — the hot path addition):
+  [after 3.3] → 3.5.1 → 3.5.2 → 3.5.3 → 3.5.4 → 3.5.5 → 3.5.6 → 3.5.7
+
+Track F (Management API — parallel with E after 3.1):
+  3.6.1 → 3.6.2 → 3.6.3 → 3.6.4 → 3.6.5 → 3.6.6 → 3.6.7 → 3.6.8
+
+Track G (Dashboard — after API):
+  [after 3.6] → 3.8.1 → 3.8.2 → 3.8.3 → 3.8.4 → 3.8.5 → 3.8.6
+
+[All tracks merged] → 3.9.1 → 3.9.2 → 3.9.3
+```
+
+## Phase 3 Python Stack Decisions
+
+All Python services use these versions and patterns — non-negotiable:
+
+| Concern | Choice | Reason |
+|---|---|---|
+| Python version | 3.11 | Significant perf gains over 3.10; 3.12 is not yet stable in all ML libs |
+| Web framework | FastAPI 0.110+ | Native async, automatic OpenAPI, DI system |
+| ORM | SQLAlchemy 2.0 (async) | Type-safe async queries, pgvector support |
+| Migrations | Alembic | Standard SQLAlchemy companion |
+| Config | pydantic-settings v2 | Typed, validated, `.env` support |
+| Testing | pytest + pytest-asyncio | Standard; asyncio_mode="auto" |
+| Linting | ruff (format + lint) + mypy --strict | Single tool, fast, comprehensive |
+| Task queue | Celery 5 + Redis broker | Industry standard; no RabbitMQ dependency |
+| gRPC | grpcio + grpcio-tools + betterproto | betterproto generates dataclasses not protobuf classes |
+| HTTP client | httpx (async) | Not aiohttp; httpx has better typing |
+| Embeddings | sentence-transformers 2.x | Wraps HuggingFace; model flexibility |
+| Packaging | pyproject.toml + uv | uv replaces pip; 10–100× faster installs |
+
+## Phase 3 Exit Criteria
+
+Phase 3 is complete when ALL of the following are true:
+
+1. A real LLM conversation produces memories visible in the dashboard within 30 seconds of session completion
+2. Subsequent requests from the same agent contain memory-injected context (verified by examining the requests sent to OpenAI)
+3. Context assembly p95 < 50ms under 50 concurrent requests
+4. Memory extraction worker processes a 10-turn session within 10 seconds of session close
+5. Management API returns 200 on all CRUD endpoints for agents, directives, tokens, memories
+6. Dashboard loads and displays real data for all main views (agents, memories, analytics, sessions)
+7. Cross-tenant memory isolation verified: agent from org A cannot see memories from org B
+8. GDPR memory deletion cascade works end-to-end
+9. All Phase 1 and Phase 2 security tests still pass
+10. `make e2e-smoke-p3` exits 0
+
+---

@@ -1,0 +1,168 @@
+---
+title: "3.3.4 Pgvector Semantic"
+description: "Semantic search is the retrieval mechanism for the context assembly engine. Without it, the system can only use exact keyword search or fetch all memories (which does not scale). This milestone implements the pgvector similarity search in the memory repository — the most technically complex piece of the memory service."
+summary: "Semantic search is the retrieval mechanism for the context assembly engine. Without it, the system can only use exact keyword search or fetch all memories (which does not scale). This milestone implements the pgvector similarity search in the memory repository — the most technically complex piece of the memory service."
+status: "planned"
+milestoneId: "3.3.4"
+goal: "[3.3 — Memory service](/roadmap/phase-3-memory-engine/goals#goal-33-memory-service)"
+estimatedEffort: "3 days"
+phase: "phase-3-memory-engine"
+fullTitle: "Milestone 3.3.4 — pgvector Semantic Search Implementation"
+---
+
+# Milestone 3.3.4 — pgvector Semantic Search Implementation
+
+**Status:** Planned  
+**Goal:** [3.3 — Memory service](/roadmap/phase-3-memory-engine/goals#goal-33-memory-service)  
+**Phase:** 3 — Memory Engine and Operator Platform  
+**Estimated effort:** 3 days  
+**ADR required:** ADR-0035 — Vector search strategy and IVFFlat tuning
+
+---
+
+## Why This Milestone Exists
+
+Semantic search is the retrieval mechanism for the context assembly engine. Without it, the system can only use exact keyword search or fetch all memories (which does not scale). This milestone implements the pgvector similarity search in the memory repository — the most technically complex piece of the memory service.
+
+---
+
+## ADR-0035 — Vector search strategy
+
+Document:
+- **IVFFlat vs HNSW:** IVFFlat is used now; HNSW is planned for Phase 4. IVFFlat `lists=100` is optimal for < 1M vectors. `probes=10` gives ~95% recall at 3× the speed of exact search.
+- **Why cosine similarity (not L2 or inner product):** Normalised embeddings (all-MiniLM-L6-v2 outputs L2-normalised vectors) make cosine similarity = inner product. We use `<=>` (cosine distance) operator.
+- **Why the search always includes `org_id` and `agent_id`:** Multi-tenancy. The pgvector index does not partition by org_id; we must filter. The query planner uses the index then filters.
+- **The `probes` setting:** Set at query time with `SET LOCAL ivfflat.probes = 10`. Higher probes = better recall, slower query. Under 1M vectors, probes=10 gives >95% recall.
+- **Fallback to full-text:** If vector search returns < K results (sparse memories), GIN full-text search supplements.
+
+---
+
+## Deliverables
+
+### Memory repository — semantic search query
+
+```python
+# ibex_db/repositories/memory_repo.py
+
+async def find_similar(
+    self,
+    agent_id: UUID,
+    query_embedding: list[float],
+    limit: int = 50,
+    category_filter: MemoryCategory | None = None,
+    min_confidence: float = 0.3,
+) -> list[tuple[Memory, float]]:
+    """
+    Find the `limit` most similar active memories to `query_embedding`.
+    Returns list of (Memory, cosine_similarity) tuples, sorted by similarity DESC.
+
+    Algorithm:
+    1. SET LOCAL ivfflat.probes = 10 (accuracy/speed tradeoff)
+    2. Use <=> operator (cosine distance; lower = more similar)
+    3. Filter: org_id + agent_id + status='active' + deleted_at IS NULL
+    4. Convert distance to similarity: similarity = 1 - distance
+    """
+    # Set probes for this transaction (affects IVFFlat recall accuracy)
+    await self.session.execute(text("SET LOCAL ivfflat.probes = 10"))
+
+    embedding_literal = f"[{','.join(str(x) for x in query_embedding)}]"
+
+    q = (
+        select(
+            Memory,
+            (1 - func.cast(Memory.embedding, Vector(384)).op("<=>")(
+                func.cast(embedding_literal, Vector(384))
+            )).label("similarity"),
+        )
+        .where(
+            Memory.org_id    == self.org_id,
+            Memory.agent_id  == agent_id,
+            Memory.status    == MemoryStatus.ACTIVE,
+            Memory.deleted_at.is_(None),
+            Memory.confidence >= min_confidence,
+        )
+        .order_by(
+            func.cast(Memory.embedding, Vector(384)).op("<=>")(
+                func.cast(embedding_literal, Vector(384))
+            )
+        )
+        .limit(limit)
+    )
+
+    if category_filter:
+        q = q.where(Memory.category == category_filter)
+
+    result = await self.session.execute(q)
+    return [(row.Memory, float(row.similarity)) for row in result]
+```
+
+### Hot cache Redis sorted set
+
+```python
+# src/memory/services/hot_cache.py
+
+# Key: "{org_id}:hot_memories:{agent_id}"
+# Type: Redis Sorted Set (ZSET)
+# Score: composite ranking score (updated on each memory write/update)
+# Members: memory_id (UUID string)
+# Capacity: top-50 memories per agent (ZREMRANGEBYRANK to trim)
+# TTL: 5 minutes (refreshed on write; cold agents expire naturally)
+
+HOT_CACHE_KEY    = "{org_id}:hot_memories:{agent_id}"
+HOT_CACHE_SIZE   = 50
+HOT_CACHE_TTL    = 300  # seconds
+
+class HotCacheService:
+    def __init__(self, redis: aioredis.Redis) -> None:
+        self._redis = redis
+
+    def _key(self, org_id: UUID, agent_id: UUID) -> str:
+        return HOT_CACHE_KEY.format(org_id=org_id, agent_id=agent_id)
+
+    async def update(self, agent_id: UUID, memory: Memory, org_id: UUID) -> None:
+        """Add or update a memory in the agent's hot cache."""
+        key = self._key(org_id, agent_id)
+        score = self._compute_score(memory)
+        async with self._redis.pipeline(transaction=True) as pipe:
+            pipe.zadd(key, {str(memory.id): score})
+            pipe.zremrangebyrank(key, 0, -(HOT_CACHE_SIZE + 1))  # trim to top-50
+            pipe.expire(key, HOT_CACHE_TTL)
+            await pipe.execute()
+
+    async def get_top_ids(self, org_id: UUID, agent_id: UUID, limit: int = 20) -> list[str]:
+        """Return top `limit` memory IDs by composite score (descending)."""
+        key = self._key(org_id, agent_id)
+        return await self._redis.zrevrange(key, 0, limit - 1)
+
+    def _compute_score(self, memory: Memory) -> float:
+        """
+        Simplified composite score for hot cache ranking.
+        Full scoring (with relevance) is done at query time in context assembly.
+        This score drives which memories are considered "hot" (frequently useful).
+        """
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+        age_hours = max((now - memory.created_at).total_seconds() / 3600, 0.01)
+        recency   = 1.0 / (1.0 + age_hours / 24.0)   # 24h half-life
+        retrieval = min(memory.retrieval_count / 10.0, 1.0)  # caps at 10 retrievals
+
+        return (
+            0.40 * float(memory.confidence)
+          + 0.35 * recency
+          + 0.25 * retrieval
+        )
+```
+
+---
+
+## Acceptance Criteria
+
+- [ ] `find_similar` query uses IVFFlat index (confirmed via EXPLAIN ANALYZE in tests)
+- [ ] `ivfflat.probes = 10` set before every vector search query
+- [ ] Cosine similarity returned as float in range [0.0, 1.0]
+- [ ] Results filtered by `org_id` and `agent_id` — cross-org result is impossible
+- [ ] Hot cache sorted set contains top-50 memories per agent by composite score
+- [ ] Hot cache TTL: 5 minutes (agents that stop receiving traffic naturally evict)
+- [ ] ADR-0035 written with probes tuning guidance
+
+---

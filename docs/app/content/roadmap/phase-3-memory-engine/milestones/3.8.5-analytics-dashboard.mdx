@@ -1,0 +1,71 @@
+---
+title: "3.8.5 Analytics Dashboard"
+description: "Milestone 3.8.5 — Analytics Dashboard — planned."
+summary: "Milestone 3.8.5 — Analytics Dashboard — planned."
+status: "planned"
+milestoneId: "3.8.5"
+goal: "[3.8 — Operator dashboard](/roadmap/phase-3-memory-engine/goals#goal-38-operator-dashboard)"
+estimatedEffort: "3–4 days"
+phase: "phase-3-memory-engine"
+fullTitle: "Milestone 3.8.5 — Analytics Dashboard"
+---
+
+# Milestone 3.8.5 — Analytics Dashboard
+
+**Status:** Planned  
+**Goal:** [3.8 — Operator dashboard](/roadmap/phase-3-memory-engine/goals#goal-38-operator-dashboard)  
+**Phase:** 3 — Memory Engine and Operator Platform  
+**Estimated effort:** 3–4 days
+
+---
+
+## Deliverables
+
+### Dashboard home: summary cards + sparklines
+
+```typescript
+// src/app/dashboard/page.tsx
+// Summary cards (last 7 days):
+//   Total Requests | Total Tokens | Avg Latency (p95) | Active Agents
+//   Each with a sparkline (7-day trend) using Recharts
+```
+
+### Usage chart: token spend over time
+
+```typescript
+// src/components/analytics/UsageChart.tsx
+// Recharts LineChart
+// X-axis: time (hour/day/week depending on date range selected)
+// Y-axis: tokens (input + output stacked area)
+// Date range picker: Last 24h | 7d | 30d | Custom
+// Filter by agent (dropdown, optional)
+```
+
+### Latency histogram
+
+```typescript
+// src/components/analytics/LatencyHistogram.tsx
+// Recharts BarChart — distribution of proxy_overhead_ms
+// Percentile lines: p50, p95, p99 overlaid as reference lines
+// Shows how close to the 20ms target the system is operating
+```
+
+### Model breakdown pie chart
+
+```typescript
+// src/components/analytics/ModelBreakdownPie.tsx
+// Recharts PieChart — request count % by model
+// Subtitle: token spend % by model
+```
+
+---
+
+## Acceptance Criteria
+
+- [ ] All charts load with real data from analytics API
+- [ ] Date range selection updates all charts simultaneously
+- [ ] Latency histogram shows p99 reference line at 20ms target
+- [ ] Charts are responsive (work at 1024px and 1440px widths)
+- [ ] Loading skeletons shown while data fetches
+
+---

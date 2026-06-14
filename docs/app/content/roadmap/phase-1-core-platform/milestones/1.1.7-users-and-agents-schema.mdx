@@ -1,0 +1,443 @@
+---
+title: "1.1.7 Users Agents"
+description: "Milestone 1.1.1 intentionally deferred `ibex_core.users` and `ibex_core.agents` to keep the first migration minimal. That deferral was correct. The debt is now due for two reasons. Reason 1 — Referential integrity. `ibex_core.tokens` has nullable `user_id` and `agent_id` columns without foreign key constraints. The"
+summary: "Milestone 1.1.1 intentionally deferred `ibex_core.users` and `ibex_core.agents` to keep the first migration minimal. That deferral was correct. The debt is now due for two reasons. Reason 1 — Referential integrity. `ibex_core.tokens` has nullable `user_id` and `agent_id` columns without foreign key constraints. The"
+status: "planned"
+milestoneId: "1.1.7"
+goal: "[1.1 — Persistence and auth data plane](/roadmap/phase-1-core-platform/goals#goal-11-persistence-and-auth-data-plane)"
+estimatedEffort: "3–4 days"
+phase: "phase-1-core-platform"
+fullTitle: "Milestone 1.1.7 — Core Domain Schema: `users` and `agents` Migrations"
+---
+
+# Milestone 1.1.7 — Core Domain Schema: `users` and `agents` Migrations
+
+**Status:** Planned  
+**Goal:** [1.1 — Persistence and auth data plane](/roadmap/phase-1-core-platform/goals#goal-11-persistence-and-auth-data-plane)  
+**Phase:** 1 — Core Platform  
+**Estimated effort:** 3–4 days  
+**ADR required:** ADR-0014 — Core domain migration sequencing
+
+---
+
+## Why This Milestone Exists
+
+Milestone 1.1.1 intentionally deferred `ibex_core.users` and `ibex_core.agents` to keep the first migration minimal. That deferral was correct. The debt is now due for two reasons.
+
+**Reason 1 — Referential integrity.** `ibex_core.tokens` has nullable `user_id` and `agent_id` columns without foreign key constraints. The DATABASE_SCHEMA.md note reads: _"tokens.user_id, tokens.agent_id, and tokens.revoked_by are nullable without foreign keys until users / agents tables exist."_ Until those FKs exist, the database cannot enforce that a revoked_by user is a real user in the org, or that an agent-scoped token corresponds to a real agent.
+
+**Reason 2 — Proxy security gap.** M1.2.3 extracts `X-IBEX-Agent-ID` from request headers and attaches the UUID to request context. There is no lookup performed. Any UUID — including one belonging to a different org's agent — is accepted silently. Milestone 1.2.5 (agent identity verification middleware) depends on this table existing in order to validate agent ownership. Until M1.1.7 ships, M1.2.5 cannot be implemented, and the cross-tenant agent confusion attack described in the gap analysis remains open.
+
+This milestone adds exactly two tables (`users`, `agents`), the deferred FK constraints on `tokens`, the `ibex_core.set_updated_at()` trigger function required by both tables, and the RLS policies for each. Nothing beyond what is needed to unblock M1.2.5.
+
+---
+
+## Non-Goals
+
+- `ibex_core.directives`, `directive_versions`, `directive_scenarios`: Phase 3+
+- `ibex_core.sessions`, `checkpoints`, `session_events`: Phase 3+
+- `ibex_core.memories`, `memory_relationships`, `memory_versions`: Phase 3+
+- `ibex_core.behavioral_fingerprints`, `drift_alerts`: Phase 4+
+- `ibex_billing.*`: Phase 3+
+- `ibex_audit.*`: Phase 3+
+- MFA (`mfa_challenges`): Phase 3+
+- GDPR deletion function: Phase 3+
+- Any application code that reads `users` or `agents` beyond what M1.2.5 needs
+
+---
+
+## Branch
+
+`feature/m1-1-7-users-agents-schema`
+
+## PR Title
+
+`feat(db): users and agents schema, token FK constraints (m1.1.7)`
+
+---
+
+## Prerequisites
+
+- [1.1.1](/roadmap/phase-1-core-platform/milestones/1.1.1-postgres-migrations) merged — migration runner and `ibex_core` schema exist
+- `make compose-dev-up` healthy with pgvector image
+
+---
+
+## Deliverables
+
+### 1. Migration files
+
+Add to `infra/migrations/postgres/`:
+
+#### `000005_create_set_updated_at_function.up.sql`
+
+```sql
+-- Shared trigger function for updated_at maintenance.
+-- Referenced by organizations (already created), users, agents.
+CREATE OR REPLACE FUNCTION ibex_core.set_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+```
+
+```sql
+-- 000005_create_set_updated_at_function.down.sql
+DROP FUNCTION IF EXISTS ibex_core.set_updated_at() CASCADE;
+```
+
+> **Note:** If the function was already inlined in an earlier migration, this migration is a no-op `CREATE OR REPLACE`. The down migration must use CASCADE to handle dependent triggers.
+
+---
+
+#### `000006_create_users.up.sql`
+
+```sql
+CREATE TABLE ibex_core.users (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id          UUID NOT NULL
+                    REFERENCES ibex_core.organizations(id)
+                    ON DELETE RESTRICT,
+    email           TEXT NOT NULL,
+    name            TEXT NOT NULL,
+    role            TEXT NOT NULL DEFAULT 'member'
+                    CHECK (role IN ('owner', 'admin', 'member', 'viewer')),
+    status          TEXT NOT NULL DEFAULT 'active'
+                    CHECK (status IN ('active', 'invited', 'suspended', 'deactivated')),
+
+    -- SSO (nullable; filled when org uses SSO)
+    sso_provider    TEXT,
+    sso_subject     TEXT,
+
+    -- Timestamps
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    deleted_at      TIMESTAMPTZ,
+
+    UNIQUE(org_id, email),
+    CONSTRAINT users_email_format CHECK (email ~ '^[^@]+@[^@]+\.[^@]+$')
+);
+
+CREATE INDEX idx_users_org_id
+    ON ibex_core.users(org_id)
+    WHERE deleted_at IS NULL;
+
+CREATE INDEX idx_users_email
+    ON ibex_core.users(email)
+    WHERE deleted_at IS NULL;
+
+-- RLS: users see only their own org's records
+ALTER TABLE ibex_core.users ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY users_isolation ON ibex_core.users
+    USING (
+        org_id = current_setting('app.current_org_id', true)::UUID
+        OR id  = current_setting('app.current_user_id', true)::UUID
+        OR current_setting('app.is_service_account', true)::BOOLEAN = true
+    );
+
+CREATE TRIGGER users_updated_at
+    BEFORE UPDATE ON ibex_core.users
+    FOR EACH ROW EXECUTE FUNCTION ibex_core.set_updated_at();
+```
+
+```sql
+-- 000006_create_users.down.sql
+DROP TRIGGER IF EXISTS users_updated_at ON ibex_core.users;
+DROP POLICY IF EXISTS users_isolation ON ibex_core.users;
+DROP INDEX IF EXISTS idx_users_email;
+DROP INDEX IF EXISTS idx_users_org_id;
+DROP TABLE IF EXISTS ibex_core.users;
+```
+
+> **Scope note:** This is the Phase 1 subset. Columns deferred to Phase 3+ (password_hash, mfa_*, failed_login_attempts, locked_until, preferences, last_login_at, last_login_ip, avatar_url) are intentionally omitted. They will be added via expand-contract migrations when authentication flows require them.
+
+---
+
+#### `000007_create_agents.up.sql`
+
+```sql
+CREATE TABLE ibex_core.agents (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id      UUID NOT NULL
+                REFERENCES ibex_core.organizations(id)
+                ON DELETE RESTRICT,
+    created_by  UUID
+                REFERENCES ibex_core.users(id)
+                ON DELETE SET NULL,
+    name        TEXT NOT NULL,
+    slug        TEXT NOT NULL,
+    status      TEXT NOT NULL DEFAULT 'active'
+                CHECK (status IN ('active', 'paused', 'suspended', 'archived')),
+    config      JSONB NOT NULL DEFAULT '{}',
+    metadata    JSONB NOT NULL DEFAULT '{}',
+    tags        TEXT[] NOT NULL DEFAULT '{}',
+
+    -- Statistics (denormalized; maintained by triggers in Phase 3)
+    total_sessions    INTEGER NOT NULL DEFAULT 0,
+    total_memories    INTEGER NOT NULL DEFAULT 0,
+    total_tokens_used BIGINT  NOT NULL DEFAULT 0,
+    last_active_at    TIMESTAMPTZ,
+
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    deleted_at  TIMESTAMPTZ,
+
+    UNIQUE(org_id, slug),
+    CONSTRAINT agents_slug_format CHECK (slug ~ '^[a-z0-9-]+$')
+);
+
+CREATE INDEX idx_agents_org_id
+    ON ibex_core.agents(org_id)
+    WHERE deleted_at IS NULL;
+
+CREATE INDEX idx_agents_status
+    ON ibex_core.agents(org_id, status)
+    WHERE deleted_at IS NULL;
+
+ALTER TABLE ibex_core.agents ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY agents_isolation ON ibex_core.agents
+    USING (
+        org_id = current_setting('app.current_org_id', true)::UUID
+        OR current_setting('app.is_service_account', true)::BOOLEAN = true
+    );
+
+CREATE TRIGGER agents_updated_at
+    BEFORE UPDATE ON ibex_core.agents
+    FOR EACH ROW EXECUTE FUNCTION ibex_core.set_updated_at();
+```
+
+```sql
+-- 000007_create_agents.down.sql
+DROP TRIGGER IF EXISTS agents_updated_at ON ibex_core.agents;
+DROP POLICY IF EXISTS agents_isolation ON ibex_core.agents;
+DROP INDEX IF EXISTS idx_agents_status;
+DROP INDEX IF EXISTS idx_agents_org_id;
+DROP TABLE IF EXISTS ibex_core.agents;
+```
+
+---
+
+#### `000008_tokens_fk_constraints.up.sql`
+
+```sql
+-- Add the deferred FK constraints noted in DATABASE_SCHEMA.md.
+-- Executed as NOT VALID to avoid a full table scan on the existing
+-- tokens rows (which currently have NULL values in these columns).
+-- VALIDATE CONSTRAINT is run separately below to allow concurrent reads.
+
+ALTER TABLE ibex_core.tokens
+    ADD CONSTRAINT tokens_user_id_fk
+    FOREIGN KEY (user_id)
+    REFERENCES ibex_core.users(id)
+    ON DELETE CASCADE
+    NOT VALID;
+
+ALTER TABLE ibex_core.tokens
+    ADD CONSTRAINT tokens_agent_id_fk
+    FOREIGN KEY (agent_id)
+    REFERENCES ibex_core.agents(id)
+    ON DELETE CASCADE
+    NOT VALID;
+
+ALTER TABLE ibex_core.tokens
+    ADD CONSTRAINT tokens_revoked_by_fk
+    FOREIGN KEY (revoked_by)
+    REFERENCES ibex_core.users(id)
+    ON DELETE SET NULL
+    NOT VALID;
+
+-- Validate now (all existing rows have NULL, so this is instant)
+ALTER TABLE ibex_core.tokens VALIDATE CONSTRAINT tokens_user_id_fk;
+ALTER TABLE ibex_core.tokens VALIDATE CONSTRAINT tokens_agent_id_fk;
+ALTER TABLE ibex_core.tokens VALIDATE CONSTRAINT tokens_revoked_by_fk;
+```
+
+```sql
+-- 000008_tokens_fk_constraints.down.sql
+ALTER TABLE ibex_core.tokens DROP CONSTRAINT IF EXISTS tokens_revoked_by_fk;
+ALTER TABLE ibex_core.tokens DROP CONSTRAINT IF EXISTS tokens_agent_id_fk;
+ALTER TABLE ibex_core.tokens DROP CONSTRAINT IF EXISTS tokens_user_id_fk;
+```
+
+---
+
+### 2. `services/auth` — agent lookup query
+
+Add `internal/store/agent_store.go` to the auth service:
+
+```go
+// Package store provides typed database access functions.
+// All queries enforce org_id isolation via the RLS session variable.
+package store
+
+import (
+    "context"
+
+    "github.com/google/uuid"
+    "github.com/jackc/pgx/v5/pgxpool"
+)
+
+// AgentRecord is the minimal projection needed by the proxy for
+// agent identity verification. Additional fields are added as
+// downstream services require them.
+type AgentRecord struct {
+    ID     uuid.UUID
+    OrgID  uuid.UUID
+    Status string
+}
+
+// AgentStore provides read access to ibex_core.agents.
+type AgentStore struct {
+    pool *pgxpool.Pool
+}
+
+func NewAgentStore(pool *pgxpool.Pool) *AgentStore {
+    return &AgentStore{pool: pool}
+}
+
+// GetByIDAndOrg fetches a single agent and verifies it belongs to orgID.
+// Returns (nil, nil) when the agent does not exist or belongs to a
+// different org — the caller maps this to a 403, not a 404, to avoid
+// leaking the existence of another org's agent.
+func (s *AgentStore) GetByIDAndOrg(
+    ctx context.Context,
+    agentID, orgID uuid.UUID,
+) (*AgentRecord, error) {
+    const q = `
+        SELECT id, org_id, status
+        FROM ibex_core.agents
+        WHERE id = $1
+          AND org_id = $2
+          AND deleted_at IS NULL
+        LIMIT 1`
+
+    row := s.pool.QueryRow(ctx, q, agentID, orgID)
+    var a AgentRecord
+    if err := row.Scan(&a.ID, &a.OrgID, &a.Status); err != nil {
+        return nil, err // pgx.ErrNoRows on miss; caller interprets
+    }
+    return &a, nil
+}
+```
+
+> This function is consumed by M1.2.5. It lives in the auth service because the auth service already holds the database pool and is the single source of truth for identity. The proxy calls auth via gRPC; it does not get its own DB connection in Phase 1.
+
+---
+
+### 3. Auth service protobuf extension
+
+Extend `packages/proto/ibex/auth/v1/auth.proto` with an `ValidateAgent` RPC:
+
+```text
+// ValidateAgent checks that agent_id belongs to org_id and is active.
+// Returns the agent record on success, or UNAUTHENTICATED/PERMISSION_DENIED
+// on failure. Called by the proxy after ValidateToken.
+rpc ValidateAgent(ValidateAgentRequest) returns (ValidateAgentResponse);
+
+message ValidateAgentRequest {
+    string agent_id = 1; // UUID string
+    string org_id   = 2; // UUID string; extracted from token claims
+}
+
+message ValidateAgentResponse {
+    string agent_id = 1;
+    string org_id   = 2;
+    string status   = 3; // "active", "paused", "suspended", "archived"
+}
+```
+
+Run `make proto-gen` and `make proto-lint` after editing.
+
+---
+
+### 4. Auth service gRPC handler
+
+Add `ValidateAgent` to `services/auth/internal/grpc/auth_server.go`.
+
+The handler:
+1. Parses `agent_id` and `org_id` UUIDs; returns `INVALID_ARGUMENT` on parse failure.
+2. Calls `AgentStore.GetByIDAndOrg`.
+3. On `pgx.ErrNoRows`: returns `PERMISSION_DENIED` (not `NOT_FOUND` — avoids leaking agent existence across orgs).
+4. On database error: returns `INTERNAL`.
+5. If `status != "active"`: returns `PERMISSION_DENIED` with detail `"agent is not active"`.
+6. Returns the agent record on success.
+
+---
+
+### 5. ADR-0014
+
+Write `docs/adr/ADR-0014-core-domain-migration-sequencing.md` covering:
+- Why `users` and `agents` were deferred from M1.1.1
+- Why `NOT VALID` + `VALIDATE CONSTRAINT` is the correct pattern for FK additions on existing tables
+- Why this milestone delivers the Phase 1 subset of both tables (not the full schema)
+- Which columns are deferred and which milestone will introduce them
+
+---
+
+## Files Affected
+
+| Path | Action |
+|---|---|
+| `infra/migrations/postgres/000005_create_set_updated_at_function.{up,down}.sql` | Add |
+| `infra/migrations/postgres/000006_create_users.{up,down}.sql` | Add |
+| `infra/migrations/postgres/000007_create_agents.{up,down}.sql` | Add |
+| `infra/migrations/postgres/000008_tokens_fk_constraints.{up,down}.sql` | Add |
+| `services/auth/internal/store/agent_store.go` | Add |
+| `services/auth/internal/grpc/auth_server.go` | Extend with ValidateAgent |
+| `packages/proto/ibex/auth/v1/auth.proto` | Add ValidateAgent RPC |
+| `docs/adr/ADR-0014-core-domain-migration-sequencing.md` | Add |
+| `docs/DATABASE_SCHEMA.md` | Annotate users/agents as "applied via M1.1.7" |
+| `docs/app/content/roadmap/CURRENT_STATE` | Update after merge |
+
+---
+
+## Testing Requirements
+
+### Unit tests
+
+- `TestAgentStore_GetByIDAndOrg_Hit`: found record returns correct fields
+- `TestAgentStore_GetByIDAndOrg_WrongOrg`: different org_id returns nil
+- `TestAgentStore_GetByIDAndOrg_NotFound`: non-existent UUID returns nil
+- `TestAgentStore_GetByIDAndOrg_Deleted`: deleted_at IS NOT NULL returns nil
+
+### Integration tests (real Postgres via compose-test or testcontainers)
+
+- All four migrations apply cleanly in sequence from a clean schema
+- Re-running `make db-migrate` is idempotent (no error, no change)
+- Cross-tenant RLS: session with `app.current_org_id = org_A` cannot `SELECT` an agent row where `org_id = org_B`
+- FK enforcement: inserting a token with a non-existent `user_id` fails with `foreign_key_violation`
+- FK enforcement: inserting a token with a non-existent `agent_id` fails with `foreign_key_violation`
+- `ValidateAgent` gRPC: returns `PERMISSION_DENIED` when agent belongs to different org
+
+### CI gates
+
+- `make db-migrate-smoke`: CI advisory job applies all migrations (including the four new ones)
+- `proto-contract` job: lints and checks breaking changes on the extended proto
+
+---
+
+## Acceptance Criteria
+
+- [ ] `make db-migrate` on a clean volume applies migrations 000005–000008 without error
+- [ ] `make db-migrate` run a second time is idempotent
+- [ ] `ibex_core.users` and `ibex_core.agents` tables exist with RLS enabled
+- [ ] `ibex_core.tokens.user_id`, `agent_id`, `revoked_by` have enforced FK constraints
+- [ ] `ValidateAgent` gRPC returns `PERMISSION_DENIED` (not `NOT_FOUND`) for cross-org agent lookups
+- [ ] All unit and integration tests pass
+- [ ] ADR-0014 written and indexed in `docs/adr/README.md`
+- [ ] `docs/DATABASE_SCHEMA.md` updated to reflect applied status
+
+---
+
+## Risks
+
+| Risk | Likelihood | Mitigation |
+|---|---|---|
+| `set_updated_at()` function already partially defined in an earlier migration | Medium | Use `CREATE OR REPLACE`; verify with `\df ibex_core.set_updated_at` in CI |
+| `NOT VALID` FK pattern unfamiliar to contributors | Low | Document pattern in ADR-0014 and code comment |
+| Proto change requires regenerating stubs in all SDKs | Low | Generated code is not committed (per repo convention); `make proto-gen` handles it |
+| Phase 1 subset of `users` table creates expectation mismatch with full DATABASE_SCHEMA.md | Medium | Annotate deferred columns in schema doc with Phase 3+ marker |

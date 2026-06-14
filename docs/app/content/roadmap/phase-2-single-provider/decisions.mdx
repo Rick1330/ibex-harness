@@ -1,0 +1,32 @@
+---
+title: "Phase 2 — Decision Log"
+description: "Quick decisions during Phase 2. Promote durable choices to `docs/adr/` when they affect multiple phases."
+summary: "Quick decisions during Phase 2. Promote durable choices to `docs/adr/` when they affect multiple phases."
+phase: "phase-2-single-provider"
+---
+
+# Phase 2 — Decision Log
+
+Quick decisions during Phase 2. Promote durable choices to `docs/adr/` when they affect multiple phases.
+
+| Date | Decision | Rationale | ADR |
+| --- | --- | --- | --- |
+| TBD | LLM provider abstraction (`provider.Provider`, registry) | Phase 4 multi-provider without rewriting proxy handlers | [ADR-0022](/docs/adr/0022-llm-provider-abstraction) — **Pending** |
+| TBD | OpenAI HTTP client, pooling, retry policy | Production-grade forwarding for first provider | [ADR-0023](/docs/adr/0023-openai-client-design) — **Pending** |
+| TBD | Streaming dual-write and backpressure | Real-time SSE without buffering full body on hot path | [ADR-0024](/docs/adr/0024-streaming-dual-write) — **Pending** |
+| TBD | Auth LRU + bloom filter cache | Meet &lt;20ms proxy overhead under load | [ADR-0025](/docs/adr/0025-auth-cache-design) — **Pending** |
+| TBD | Token revocation propagation SLA | Cache correctness vs performance (5s Phase 2 target) | [ADR-0026](/docs/adr/0026-revocation-propagation) — **Pending** |
+| TBD | Directive immutable versioning | Safe cache invalidation without lost updates | [ADR-0027](/docs/adr/0027-directive-versioning) — **Pending** |
+| TBD | System prompt injection ordering | Directive precedes caller system message | [ADR-0028](/docs/adr/0028-system-prompt-injection) — **Pending** |
+| TBD | Session and checkpoint data model | Foundation for Phase 3 memory extraction | [ADR-0029](/docs/adr/0029-session-data-model) — **Pending** |
+| TBD | ClickHouse trace schema and retention | Analytics backbone without hot-path blocking | [ADR-0030](/docs/adr/0030-clickhouse-schema) — **Pending** |
+| TBD | Proxy overhead measurement methodology | Reproducible p99 benchmark for exit gate | [ADR-0031](/docs/adr/0031-performance-methodology) — **Pending** |
+| 2026-06-05 | Auth cache required in Phase 2 (not optional) | Phase 2 latency budget impossible with per-request gRPC only | See [phase-1 decisions](/roadmap/phase-1-core-platform/decisions) |
+
+## Pending decisions (resolve during milestones)
+
+1. **OpenAI API base URL** — default `https://api.openai.com/v1`; document override for Azure in Phase 4.
+2. **ClickHouse deployment in dev** — compose service vs external; document in `ENVIRONMENT_VARIABLES.md` at 2.5.2.
+3. **E2E smoke OpenAI key** — sandbox key in CI secrets vs skipped required check (resolve in 2.6.2).
+
+Log pivots in [FINDINGS.md](/roadmap/findings).

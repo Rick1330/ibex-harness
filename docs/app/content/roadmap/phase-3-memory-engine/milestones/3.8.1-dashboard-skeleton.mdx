@@ -1,0 +1,164 @@
+---
+title: "3.8.1 Dashboard Skeleton"
+description: "The dashboard is how operators manage the platform. Without it, every management operation requires API calls or direct database access. A well-designed dashboard is also the most visible signal of product quality to enterprise evaluators. This milestone establishes the Next.js 14 app router structure, design system (s"
+summary: "The dashboard is how operators manage the platform. Without it, every management operation requires API calls or direct database access. A well-designed dashboard is also the most visible signal of product quality to enterprise evaluators. This milestone establishes the Next.js 14 app router structure, design system (s"
+status: "planned"
+milestoneId: "3.8.1"
+goal: "[3.8 — Operator dashboard](/roadmap/phase-3-memory-engine/goals#goal-38-operator-dashboard)"
+estimatedEffort: "3 days"
+phase: "phase-3-memory-engine"
+fullTitle: "Milestone 3.8.1 — Operator Dashboard Skeleton (Next.js 14)"
+---
+
+# Milestone 3.8.1 — Operator Dashboard Skeleton (Next.js 14)
+
+**Status:** Planned  
+**Goal:** [3.8 — Operator dashboard](/roadmap/phase-3-memory-engine/goals#goal-38-operator-dashboard)  
+**Phase:** 3 — Memory Engine and Operator Platform  
+**Estimated effort:** 3 days
+
+---
+
+## Why This Milestone Exists
+
+The dashboard is how operators manage the platform. Without it, every management operation requires API calls or direct database access. A well-designed dashboard is also the most visible signal of product quality to enterprise evaluators.
+
+This milestone establishes the Next.js 14 app router structure, design system (shadcn/ui + Tailwind), API client layer, and authentication. Domain views (agent management, memory browser, analytics) come in subsequent milestones.
+
+---
+
+## Non-Goals
+
+- Real-time updates via WebSocket (Phase 4)
+- Multi-org management (Phase 4)
+- Custom branding / white-labelling (Phase 4)
+
+---
+
+## Branch
+
+`feat/m3-8-1-dashboard-skeleton`
+
+## PR Title
+
+`feat(dashboard): Next.js 14 skeleton with shadcn/ui, auth, and API client (m3.8.1)`
+
+---
+
+## Tech stack decisions
+
+| Concern | Choice | Reason |
+|---|---|---|
+| Framework | Next.js 14 (App Router) | Server components reduce client bundle; built-in API routes for BFF |
+| UI components | shadcn/ui | Copy-paste, fully owned, accessible, Tailwind-compatible |
+| Styling | Tailwind CSS | Utility-first; no CSS-in-JS runtime overhead |
+| Data fetching | TanStack Query v5 | Server state management; cache, optimistic updates, pagination |
+| Forms | React Hook Form + Zod | Type-safe form validation without runtime overhead |
+| Charts | Recharts | Simple, responsive, accessible |
+| Auth | PAT-based session (Next.js auth cookie) | No OAuth in Phase 3; PAT stored in httpOnly cookie, validated server-side |
+| API client | Generated from OpenAPI spec (openapi-fetch) | Type-safe; auto-regenerated when API changes |
+
+---
+
+## Service structure
+
+```
+services/dashboard/
+  package.json
+  tsconfig.json
+  tailwind.config.ts
+  next.config.ts
+  .env.example
+  src/
+    app/
+      layout.tsx          # Root layout with ThemeProvider, QueryClient
+      page.tsx            # Redirect to /dashboard
+      (auth)/
+        login/page.tsx    # PAT login form
+        logout/page.tsx
+      dashboard/
+        layout.tsx        # Shell: sidebar, topbar, breadcrumbs
+        page.tsx          # Dashboard home: summary cards
+        agents/
+          page.tsx        # Agent list
+          [id]/
+            page.tsx      # Agent detail
+            memories/page.tsx
+            sessions/page.tsx
+        analytics/page.tsx
+        settings/page.tsx
+    components/
+      ui/                 # shadcn/ui components
+      agents/
+        AgentCard.tsx
+        AgentTable.tsx
+        AgentStatusBadge.tsx
+      memories/
+        MemoryTable.tsx
+        MemoryDetailDrawer.tsx
+        MemorySearchBar.tsx
+      analytics/
+        UsageChart.tsx
+        LatencyHistogram.tsx
+        ModelBreakdownPie.tsx
+      shared/
+        DataTable.tsx     # Cursor-paginated, sortable, filterable
+        EmptyState.tsx
+        LoadingSpinner.tsx
+        ErrorBanner.tsx
+        ConfirmDialog.tsx
+    lib/
+      api/
+        client.ts         # openapi-fetch client singleton
+        agents.ts
+        memories.ts
+        analytics.ts
+      auth.ts             # Session management helpers
+      utils.ts
+    hooks/
+      useAgents.ts
+      useMemories.ts
+      useAnalytics.ts
+```
+
+### PAT-based auth
+
+```typescript
+// src/lib/auth.ts
+// No OAuth, no NextAuth in Phase 3.
+// The operator enters their PAT on the login page.
+// The PAT is validated against the API server and stored in an httpOnly cookie.
+// The middleware.ts validates the cookie on every request to /dashboard routes.
+
+// src/app/(auth)/login/page.tsx
+// Simple form: PAT input + submit
+// On submit: POST /api/auth/login → validates PAT → sets httpOnly cookie
+// Redirect to /dashboard
+```
+
+### API client generation
+
+```bash
+# Generate type-safe client from the management API's OpenAPI spec
+npx openapi-typescript http://localhost:8090/openapi.json \
+    -o src/lib/api/types.ts
+
+# Creates typed fetch client:
+import createClient from "openapi-fetch";
+import type { paths } from "./types";
+export const apiClient = createClient<paths>({ baseUrl: "/api" });
+```
+
+---
+
+## Acceptance Criteria
+
+- [ ] `pnpm dev` starts without TypeScript errors
+- [ ] Login page accepts PAT, stores in httpOnly cookie, redirects to `/dashboard`
+- [ ] Middleware protects all `/dashboard/**` routes; unauthenticated → `/login`
+- [ ] shadcn/ui components: Button, Card, Table, Dialog, Badge, Input, Select all installed
+- [ ] API client typed and importable
+- [ ] `pnpm build` produces zero TypeScript errors
+- [ ] Lighthouse accessibility score ≥ 90 on the login page
+
+---

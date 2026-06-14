@@ -1,0 +1,138 @@
+---
+title: "3.5.5 Greedy Knapsack"
+description: "After memories are scored and sorted, the packer selects the subset that maximises total quality (composite score) within the token budget. This is a variant of the classic 0/1 knapsack problem. ARCHITECTURE.md specifies the greedy approach (sort by score, take greedily until budget exhausted). This is O(n log n) — cor"
+summary: "After memories are scored and sorted, the packer selects the subset that maximises total quality (composite score) within the token budget. This is a variant of the classic 0/1 knapsack problem. ARCHITECTURE.md specifies the greedy approach (sort by score, take greedily until budget exhausted). This is O(n log n) — cor"
+status: "planned"
+milestoneId: "3.5.5"
+goal: "[3.5 — Context assembly engine](/roadmap/phase-3-memory-engine/goals#goal-35-context-assembly-engine)"
+estimatedEffort: "2 days"
+phase: "phase-3-memory-engine"
+fullTitle: "Milestone 3.5.5 — Greedy Knapsack Context Packer"
+---
+
+# Milestone 3.5.5 — Greedy Knapsack Context Packer
+
+**Status:** Planned  
+**Goal:** [3.5 — Context assembly engine](/roadmap/phase-3-memory-engine/goals#goal-35-context-assembly-engine)  
+**Phase:** 3 — Memory Engine and Operator Platform  
+**Estimated effort:** 2 days  
+**ADR required:** ADR-0041 — Context packing algorithm choice
+
+---
+
+## Why This Milestone Exists
+
+After memories are scored and sorted, the packer selects the subset that maximises total quality (composite score) within the token budget. This is a variant of the classic 0/1 knapsack problem. ARCHITECTURE.md specifies the greedy approach (sort by score, take greedily until budget exhausted). This is O(n log n) — correct for n ≤ 500 memories.
+
+The packer must handle one non-trivial case: **skipping instead of stopping**. A memory with a very high score but very high token count might not fit, but several smaller, lower-scored memories might. A naive greedy algorithm would stop at the first item that doesn't fit. The correct greedy algorithm tries all remaining items before giving up.
+
+---
+
+## ADR-0041 — Context packing algorithm
+
+Document:
+- **Why greedy (not dynamic programming):** DP is O(n × W) where W is the token budget. At W=80,000 tokens and n=50 memories, DP requires 4M operations per request. Greedy is O(n log n). For n ≤ 100, the quality difference is negligible.
+- **Why skip-and-continue (not stop-first-miss):** Stopping at the first item that doesn't fit misses smaller, high-value memories that follow. The correct greedy skips non-fitting items and continues.
+- **The 3-skip limit:** After 3 consecutive skips, stop. Beyond 3 skips, the remaining memories are unlikely to fit without exceeding the budget.
+
+---
+
+## Deliverables
+
+### `src/context/services/packer.py`
+
+```python
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from context.services.scorer import ScoredMemory
+
+MAX_CONSECUTIVE_SKIPS = 3   # stop after 3 consecutive items that don't fit
+
+@dataclass(frozen=True)
+class PackedMemories:
+    memories:           list[ScoredMemory]
+    total_tokens:       int
+    total_score:        float
+    skipped_count:      int   # memories that didn't fit
+    was_budget_reached: bool  # True if any memory was skipped due to budget
+
+class GreedyKnapsackPacker:
+    """
+    Greedy 0/1 knapsack packer for memory context injection.
+
+    Algorithm:
+    1. Memories arrive pre-sorted by composite score (descending) from the scorer.
+    2. For each memory:
+       a. Count its tokens.
+       b. If tokens_used + memory_tokens <= budget: include it.
+       c. Else: skip this memory, increment skip counter.
+       d. If consecutive_skips >= MAX_CONSECUTIVE_SKIPS: stop iterating.
+    3. Return all included memories in original score order.
+
+    Complexity: O(n) after O(n log n) sort in scorer.
+    """
+
+    def __init__(self, budget_calculator) -> None:
+        self._budget_calc = budget_calculator
+
+    def pack(
+        self,
+        scored_memories: list[ScoredMemory],
+        token_budget: int,
+        model: str = "gpt-4o",
+    ) -> PackedMemories:
+        if token_budget <= 0 or not scored_memories:
+            return PackedMemories(
+                memories=[], total_tokens=0, total_score=0.0,
+                skipped_count=len(scored_memories), was_budget_reached=False,
+            )
+
+        packed:             list[ScoredMemory] = []
+        tokens_used:        int   = 0
+        total_score:        float = 0.0
+        consecutive_skips:  int   = 0
+        skipped_count:      int   = 0
+        was_budget_reached: bool  = False
+
+        for scored_mem in scored_memories:
+            content       = scored_mem.memory.get("content", "")
+            memory_tokens = self._budget_calc.count_tokens(content, model)
+
+            if tokens_used + memory_tokens <= token_budget:
+                packed.append(scored_mem)
+                tokens_used       += memory_tokens
+                total_score       += scored_mem.composite_score
+                consecutive_skips  = 0
+            else:
+                skipped_count      += 1
+                consecutive_skips  += 1
+                was_budget_reached  = True
+
+                if consecutive_skips >= MAX_CONSECUTIVE_SKIPS:
+                    # Remaining memories are similar size and also won't fit
+                    skipped_count += len(scored_memories) - packed.__len__() - skipped_count
+                    break
+
+        return PackedMemories(
+            memories=packed,
+            total_tokens=tokens_used,
+            total_score=round(total_score, 6),
+            skipped_count=skipped_count,
+            was_budget_reached=was_budget_reached,
+        )
+```
+
+---
+
+## Acceptance Criteria
+
+- [ ] Packer includes all memories that fit within budget
+- [ ] Skip-and-continue: a large memory that doesn't fit does not stop iteration
+- [ ] After 3 consecutive skips, iteration stops (prevents O(n) wasted token counting)
+- [ ] `was_budget_reached=True` when any memory was skipped
+- [ ] `total_tokens` matches sum of included memories' token counts
+- [ ] ADR-0041 written with algorithm choice rationale
+
+---

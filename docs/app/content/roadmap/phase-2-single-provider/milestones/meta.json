@@ -1,0 +1,24 @@
+{
+  "title": "Milestones",
+  "icon": "Flag",
+  "pages": [
+    "2.1.1-provider-interface-and-registry",
+    "2.1.2-openai-non-streaming-client",
+    "2.1.3-openai-streaming-forwarder",
+    "2.1.4-provider-routing-middleware",
+    "2.1.5-provider-error-mapping",
+    "2.2.1-auth-cache-bloom",
+    "2.2.2-token-revocation-propagation",
+    "2.3.1-directive-migrations",
+    "2.3.2-directive-resolver",
+    "2.3.3-system-prompt-injection",
+    "2.4.1-sessions-checkpoints-migrations",
+    "2.4.2-session-store",
+    "2.4.3-proxy-session-lifecycle",
+    "2.5.1-clickhouse-schema",
+    "2.5.2-clickhouse-client",
+    "2.5.3-async-trace-emitter",
+    "2.6.1-latency-benchmark",
+    "2.6.2-phase2-exit-gate"
+  ]
+}

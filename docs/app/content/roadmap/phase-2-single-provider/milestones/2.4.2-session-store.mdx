@@ -1,0 +1,104 @@
+---
+title: "2.4.2 Session Store"
+description: "The session store is the Go data access layer for the `sessions` and `checkpoints` tables introduced in 2.4.1. It provides typed, tested functions for the proxy to create sessions, record checkpoints, and close sessions."
+summary: "The session store is the Go data access layer for the `sessions` and `checkpoints` tables introduced in 2.4.1. It provides typed, tested functions for the proxy to create sessions, record checkpoints, and close sessions."
+status: "planned"
+milestoneId: "2.4.2"
+goal: "[2.4 — Session tracking infrastructure](/roadmap/phase-2-single-provider/goals#goal-24-session-tracking-infrastructure)"
+estimatedEffort: "2–3 days"
+phase: "phase-2-single-provider"
+fullTitle: "Milestone 2.4.2 — Session Store"
+---
+
+# Milestone 2.4.2 — Session Store
+
+**Status:** Planned  
+**Goal:** [2.4 — Session tracking infrastructure](/roadmap/phase-2-single-provider/goals#goal-24-session-tracking-infrastructure)  
+**Phase:** 2 — Single Provider End-to-End  
+**Estimated effort:** 2–3 days
+
+---
+
+## Why This Milestone Exists
+
+The session store is the Go data access layer for the `sessions` and `checkpoints` tables introduced in 2.4.1. It provides typed, tested functions for the proxy to create sessions, record checkpoints, and close sessions.
+
+---
+
+## Branch
+
+`feature/m2-4-2-session-store`
+
+## PR Title
+
+`feat(proxy): session store — create, checkpoint, close (m2.4.2)`
+
+---
+
+## Deliverables
+
+```go
+// services/proxy/internal/store/session_store.go
+
+// SessionStore provides typed access to ibex_core.sessions and checkpoints.
+// All writes use the proxy's dedicated read-write Postgres pool.
+// All reads use org_id scoping; no RLS SET LOCAL is needed for session writes
+// because the proxy validates org_id from the auth token before writing.
+type SessionStore struct {
+    pool *pgxpool.Pool
+    log  *logger.Logger
+}
+
+// GetOrCreate returns an existing session for the given external_id (from X-IBEX-Session-ID),
+// or creates a new one. The external_id must be unique within (org_id, agent_id).
+// If external_id is empty, a new session is always created.
+func (s *SessionStore) GetOrCreate(ctx context.Context, p GetOrCreateParams) (*Session, error)
+
+type GetOrCreateParams struct {
+    OrgID             uuid.UUID
+    AgentID           uuid.UUID
+    ExternalID        string // optional; from X-IBEX-Session-ID header
+    Model             string
+    Provider          string
+    DirectiveVersionID *uuid.UUID
+}
+
+// AppendCheckpoint creates an immutable checkpoint for one LLM turn.
+// Also atomically increments session.turn_count and session.*_tokens stats.
+// Called after the LLM response is complete (or stream ends).
+func (s *SessionStore) AppendCheckpoint(ctx context.Context, p CheckpointParams) error
+
+type CheckpointParams struct {
+    SessionID          uuid.UUID
+    OrgID              uuid.UUID
+    AgentID            uuid.UUID
+    TurnIndex          int
+    RequestID          string
+    MessagesHash       string
+    InputTokens        int
+    OutputTokens       int
+    Model              string
+    Provider           string
+    CompletionHash     string
+    LatencyMs          int
+    ProviderRequestID  string
+    IsStreaming        bool
+    IsComplete         bool
+}
+
+// Complete marks a session as completed. Called when the client signals
+// end-of-session (X-IBEX-Session-End: true header) or on a configurable idle timeout.
+func (s *SessionStore) Complete(ctx context.Context, sessionID, orgID uuid.UUID) error
+```
+
+---
+
+## Acceptance Criteria
+
+- [ ] `GetOrCreate` is idempotent for the same `external_id` within an org/agent
+- [ ] `AppendCheckpoint` atomically updates session stats in the same transaction
+- [ ] `UNIQUE(session_id, turn_index)` prevents duplicate turns (tested)
+- [ ] All functions accept and propagate context (deadline, cancellation)
+- [ ] Integration tests with real Postgres via testcontainers
+
+---

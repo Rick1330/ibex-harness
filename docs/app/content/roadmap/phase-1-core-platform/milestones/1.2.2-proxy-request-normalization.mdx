@@ -1,0 +1,87 @@
+---
+title: "1.2.2 Proxy Request"
+description: "Milestone 1.2.2: Proxy Request Normalization — complete."
+summary: "Milestone 1.2.2: Proxy Request Normalization — complete."
+status: "completed"
+milestoneId: "1.2.2"
+goal: "[1.2 Proxy platform integration](/roadmap/phase-1-core-platform/goals#goal-12-proxy-platform-integration)"
+phase: "phase-1-core-platform"
+fullTitle: "Milestone 1.2.2: Proxy Request Normalization"
+---
+
+# Milestone 1.2.2: Proxy Request Normalization
+
+**Status:** Complete  
+**Goal:** [1.2 Proxy platform integration](/roadmap/phase-1-core-platform/goals#goal-12-proxy-platform-integration)  
+**Phase:** 1 — Core Platform
+
+## Summary
+
+Parse OpenAI-compatible `POST /v1/chat/completions` bodies into `internal/llm` types after auth. Malformed JSON → **400** `INVALID_JSON`. Valid parse → metadata-only log → **501** stub. No provider HTTP. Semantic validation and body limits → [1.2.3](/roadmap/phase-1-core-platform/milestones/1.2.3-proxy-input-validation-and-stable-error-envelope).
+
+## Branch
+
+`feature/m1-2-2-proxy-request-normalization`
+
+## PR title
+
+`feat(proxy): request normalization (m1.2.2)`
+
+## Prerequisites
+
+- [1.2.1](/roadmap/phase-1-core-platform/milestones/1.2.1-proxy-auth-client) merged (`ADR-0011`, auth middleware)
+- `make proto-gen` (unchanged for this milestone)
+
+## Tasks
+
+- [x] [ADR-0012](/docs/adr/0012-proxy-request-normalization)
+- [x] `services/proxy/internal/llm/` — `ChatCompletionRequest`, `ParseChatCompletionRequest`, context helpers
+- [x] Chat handler reads body after auth; **400** / **501** per ADR-0012
+- [x] Error constants: `INVALID_JSON`, `PROVIDER_NOT_CONFIGURED` in `internal/errors/`
+- [x] Unit tests: parser + httptest handler
+- [x] Integration: valid JSON → 501; malformed → 400
+- [x] Contributor execution materials prepared
+
+## Files affected
+
+| Path | Action |
+| --- | --- |
+| `docs/adr/ADR-0012-proxy-request-normalization.md` | Add |
+| `services/proxy/internal/llm/` | Add |
+| `services/proxy/internal/errors/envelope.go` | Extend codes |
+| `services/proxy/internal/http/router.go` | Chat handler parse |
+| `services/proxy/internal/http/chat_handler_test.go` | Add |
+| `services/proxy/proxy_auth_integration_test.go` | Extend chat cases |
+| `services/proxy/README.md` | Parse + curl examples |
+| `docs/API_DOCUMENTATION.md` | Path alias + 501 code |
+| `docs/TESTING_STRATEGY.md` | §6.2.2 |
+
+## Testing requirements
+
+```bash
+go test ./services/proxy/...
+go test -tags=integration ./services/proxy/...
+```
+
+## Definition of done
+
+- [x] Valid authenticated JSON → parsed + **501** `PROVIDER_NOT_CONFIGURED`
+- [x] Malformed JSON → **400** `INVALID_JSON` with stable envelope
+- [x] Logs contain model/message_count/stream/org_id only — never content
+- [x] No outbound provider HTTP
+- [x] `proxy-auth-smoke` / `go-services (proxy)` green
+
+## Deferred (1.2.3)
+
+- Body size limit, Content-Type 415, 413
+- Required `model`, role enum, message bounds, `field_errors`
+- `X-IBEX-Agent-ID` enforcement
+- Response header middleware
+
+## Risks
+
+| Risk | Mitigation |
+| --- | --- |
+| Unbounded body until 1.2.3 | Document in ADR-0012; ship 1.2.3 next |
+| Logging message content | Code review + structured log fields only |
+| Path `/v1` vs `/proxy/v1` | ADR-0012 + API doc gateway alias |

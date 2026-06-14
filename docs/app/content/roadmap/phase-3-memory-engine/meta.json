@@ -1,0 +1,11 @@
+{
+  "title": "Phase 3 memory engine",
+  "icon": "Lightbulb",
+  "pages": [
+    "index",
+    "goals",
+    "decisions",
+    "risks",
+    "milestones"
+  ]
+}

@@ -1,0 +1,33 @@
+---
+title: "Phase 1 — Decision Log"
+description: "Quick decisions during Phase 1. Promote durable choices to /docs/adr when they affect multiple phases."
+summary: "Quick decisions during Phase 1. Promote durable choices to /docs/adr when they affect multiple phases."
+phase: "phase-1-core-platform"
+---
+
+# Phase 1 — Decision Log
+
+Quick decisions during Phase 1. Promote durable choices to `docs/adr/` when they affect multiple phases.
+
+| Date | Decision | Rationale | ADR |
+| --- | --- | --- | --- |
+| 2026-06-01 | Roadmap lives under `docs/roadmap/` | Avoid new top-level dir; repo-guards unchanged | — |
+| 2026-06-02 | Migration tool: golang-migrate + Go embed runner | Version-pinned in root `go.mod`; reproducible CI; `make db-migrate` via `go run` | [ADR-0005](/docs/adr/0005-postgres-migration-strategy) |
+| 2026-06-03 | Auth package: `ibex.auth.v1` | Matches `ibex.context.v1`; `ValidateToken` only in v1 | [ADR-0006](/docs/adr/0006-auth-proto-contract) |
+| 2026-06-03 | PAT wire format + service-account lookup | `ibex_pat_<uuid>_<secret>`; Argon2id PHC on full bearer; RLS bypass for lookup only | [ADR-0007](/docs/adr/0007-auth-token-validation) |
+| 2026-06-03 | Integration Postgres: CI services vs local testcontainers | Required CI uses GHA service Postgres; local default is compose test (5433); `IBEX_USE_TESTCONTAINERS=1` for self-contained runs | — |
+| 2026-06-04 | Permission bitmap layout locked | `packages/permissions`; Phase 2 proxy minimum `ProxyChatCompletion` | [ADR-0009](/docs/adr/0009-permission-bitmap) |
+| 2026-06-04 | Token management gRPC + caller bearer authz | `CreateToken`/`RevokeToken`/`ListTokens`; metadata `authorization: Bearer` | [ADR-0006](/docs/adr/0006-auth-proto-contract) |
+| 2026-06-04 | Cryptography policy centralized | `packages/crypto`; Argon2id PHC; production p=4 | [ADR-0010](/docs/adr/0010-cryptography-policy) |
+| 2026-06-04 | Proxy auth gRPC client | ValidateToken middleware; fail closed | [ADR-0011](/docs/adr/0011-proxy-auth-client) |
+| 2026-06-04 | Auth cache required in Phase 2 (M2.2.1) | Per-request gRPC cannot meet &lt;20ms overhead; bloom + LRU after Phase 1 security gate | [ADR-0011](/docs/adr/0011-proxy-auth-client) §7; [M2.2.1](/roadmap/phase-2-single-provider/milestones/2.2.1-auth-cache-bloom) |
+| 2026-06-04 | Proxy chat body normalization | Parse-only; INVALID_JSON / 501 stub | [ADR-0012](/docs/adr/0012-proxy-request-normalization) |
+| 2026-06-02 | Proxy input validation + envelope | Body limit, 413/415, field_errors, response headers | [ADR-0013](/docs/adr/0013-proxy-input-validation-and-error-envelope) |
+| 2026-06-05 | Core domain schema sequencing | `users` / `agents` added in M1.1.7; token FKs via NOT VALID + VALIDATE; Phase-1 column subset only | [ADR-0014](/docs/adr/0014-core-domain-migration-sequencing) |
+| TBD | Proto gen: Option A uncommitted | Consistent with ADR-0004 | [ADR-0004](/docs/adr/0004-protobuf-and-codegen-policy) |
+
+## Pending decisions (resolve during milestones)
+
+1. **gRPC port and TLS for local dev** — default insecure localhost for dev only; document production mTLS separately.
+2. ~~**Permission bitmap minimal set**~~ — Resolved: `permissions.ProxyChatCompletion` per ADR-0009.
+3. ~~**Integration test tagging**~~ — Resolved: `//go:build integration` for Postgres/RLS tests (see `infra/migrations/postgres`).

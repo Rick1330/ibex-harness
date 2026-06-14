@@ -1,0 +1,5 @@
+{
+  "title": "phase 4 multi provider",
+  "icon": "Waypoints",
+  "pages": ["index", "goals", "decisions", "risks", "milestones"]
+}

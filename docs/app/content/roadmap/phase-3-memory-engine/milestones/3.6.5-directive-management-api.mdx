@@ -1,0 +1,65 @@
+---
+title: "3.6.5 Directive Management"
+description: "Directive management is more complex than other CRUD resources because directives are versioned. Updating a directive creates a new version and updates the active pointer — it does not modify the existing version. This enables rollback (set `active_version_id` to a previous version), diff viewing, and audit trail. Addi"
+summary: "Directive management is more complex than other CRUD resources because directives are versioned. Updating a directive creates a new version and updates the active pointer — it does not modify the existing version. This enables rollback (set `active_version_id` to a previous version), diff viewing, and audit trail. Addi"
+status: "planned"
+milestoneId: "3.6.5"
+goal: "[3.6 — Management API server](/roadmap/phase-3-memory-engine/goals#goal-36-management-api-server)"
+estimatedEffort: "3 days"
+phase: "phase-3-memory-engine"
+fullTitle: "Milestone 3.6.5 — Directive Management API with Versioning"
+---
+
+# Milestone 3.6.5 — Directive Management API with Versioning
+
+**Status:** Planned  
+**Goal:** [3.6 — Management API server](/roadmap/phase-3-memory-engine/goals#goal-36-management-api-server)  
+**Phase:** 3 — Memory Engine and Operator Platform  
+**Estimated effort:** 3 days
+
+---
+
+## Why This Milestone Exists
+
+Directive management is more complex than other CRUD resources because directives are versioned. Updating a directive creates a new version and updates the active pointer — it does not modify the existing version. This enables rollback (set `active_version_id` to a previous version), diff viewing, and audit trail.
+
+Additionally, updating a directive must invalidate the proxy's Redis directive cache for the affected agent — otherwise the proxy continues using the stale directive for up to 60 seconds.
+
+---
+
+## Endpoints
+
+```
+GET    /v1/agents/{agent_id}/directive                → DirectiveResponse
+POST   /v1/agents/{agent_id}/directive                → DirectiveResponse (create or update)
+GET    /v1/agents/{agent_id}/directive/versions       → list of DirectiveVersionSummary
+GET    /v1/agents/{agent_id}/directive/versions/{num} → DirectiveVersionResponse
+POST   /v1/agents/{agent_id}/directive/rollback       → body: {version_num: int}
+DELETE /v1/agents/{agent_id}/directive                → 204 (deactivate; clears active_version_id)
+```
+
+### Cache invalidation on update
+
+```python
+# After successfully updating directive in Postgres:
+# 1. Publish to Redis pub/sub channel
+await redis.publish(
+    f"ibex:directive:updates:{agent_id}",
+    json.dumps({"agent_id": str(agent_id), "version_num": new_version.version_num}),
+)
+# 2. Also delete the cache key directly (belt and suspenders)
+await redis.delete(f"directive:{agent_id}")
+```
+
+---
+
+## Acceptance Criteria
+
+- [ ] Creating a directive when none exists → version 1, `active_version_id` set
+- [ ] Updating → new version created; `active_version_id` updated; old version preserved
+- [ ] Rollback → `active_version_id` set to specified version; no new version created
+- [ ] Redis directive cache invalidated within 1 second of update
+- [ ] Content change > 32KB rejected with 400 (matches DB constraint)
+- [ ] Directive content NOT logged anywhere in the request/response pipeline
+
+---

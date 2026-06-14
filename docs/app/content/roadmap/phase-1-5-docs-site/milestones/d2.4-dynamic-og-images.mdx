@@ -1,0 +1,101 @@
+---
+title: "d2.4 Dynamic OG"
+description: "Shared links to docs pages (Slack, Discord, social) currently show generic or missing previews. Dynamic OG cards reinforce brand consistency and improve click-through from the landing site cross-links. Edge-generated PNGs at `opengraph-image.tsx` avoid build-time static asset sprawl as page count grows in D.3.x."
+summary: "Shared links to docs pages (Slack, Discord, social) currently show generic or missing previews. Dynamic OG cards reinforce brand consistency and improve click-through from the landing site cross-links. Edge-generated PNGs at `opengraph-image.tsx` avoid build-time static asset sprawl as page count grows in D.3.x."
+status: "completed"
+milestoneId: "d2.4"
+goal: "[D.2](/roadmap/phase-1-5-docs-site/goals)"
+estimatedEffort: "2 hours"
+phase: "phase-1-5-docs-site"
+fullTitle: "Milestone D.2.4 — Dynamic OG image generation"
+---
+
+# Milestone D.2.4 — Dynamic OG image generation
+
+**Status:** Complete  
+**Goal:** [D.2](/roadmap/phase-1-5-docs-site/goals)  
+**Phase:** 1.5 — Docs Site  
+**Wave:** 4  
+**Estimated effort:** 2 hours  
+**ADR required:** None
+
+Spec detail: [MASTER_BRIEF.md](/roadmap/phase-1-5-docs-site/master-brief) Part D (D.2.4).
+
+---
+
+## Why This Milestone Exists
+
+Shared links to docs pages (Slack, Discord, social) currently show generic or missing previews. Dynamic OG cards reinforce brand consistency and improve click-through from the landing site cross-links.
+
+Edge-generated PNGs at `opengraph-image.tsx` avoid build-time static asset sprawl as page count grows in D.3.x.
+
+Matte Graphite palette (`#09090b` background, wordmark, mono description) must match landing unfurls.
+
+---
+
+## Non-Goals
+
+- Static OG for every page at build time
+- OG images for non-doc routes (404, API)
+- Twitter card A/B testing
+
+---
+
+## Branch
+
+`feat/d2-4-og-images`
+
+## PR Title
+
+`feat(docs): dynamic OG images (D.2.4)`
+
+---
+
+## Prerequisites
+
+- [D.2.2](/roadmap/phase-1-5-docs-site/milestones/d2.2-matte-graphite-tokens) merged
+- [D.2.3](/roadmap/phase-1-5-docs-site/milestones/d2.3-mdx-components-catalogue) merged
+
+---
+
+## Deliverables
+
+- `docs/app/src/app/docs/[[...slug]]/opengraph-image.tsx` Edge route
+- 1200×630 PNG: wordmark top-left, title 56px, description 24px `#a1a1aa`
+- 1px `#222226` rule between title block and description
+
+See MASTER_BRIEF Part D (D.2.4) for full acceptance detail.
+
+---
+
+## Files Affected
+
+| File Path | Action | Notes |
+| --- | --- | --- |
+| `docs/app/src/app/docs/[[...slug]]/opengraph-image.tsx` | Add | Edge OG image route |
+
+---
+
+## Testing Requirements
+
+- **`verifyOgImage_ReturnsPng`**: `GET .../opengraph-image` returns `image/png` 1200×630
+- **`verifyOgImage_ContainsTitle`**: PNG metadata or visual check includes page title
+- **`verifyOgImage_SlackUnfurl`**: Paste preview URL into Slack/Discord shows card
+
+---
+
+## Acceptance Criteria
+
+- [ ] `GET /docs/getting-started/introduction/opengraph-image` returns valid PNG
+- [ ] Social unfurl shows wordmark and page title
+- [ ] Lighthouse SEO score on introduction page = 100
+
+---
+
+## Risks
+
+| Risk | Probability | Impact | Mitigation |
+| --- | --- | --- | --- |
+| Edge runtime font loading failures | Medium | High | Use bundled Geist subset per Next OG docs |
+| Long titles truncate poorly | Low | Medium | Ellipsis at 2 lines in ImageResponse layout |
+| Preview URL differs from production domain | Low | Low | Use `NEXT_PUBLIC_SITE_URL` in metadata |

@@ -1,0 +1,95 @@
+---
+title: "1.2.1 Proxy Auth"
+description: "Milestone 1.2.1: Proxy Auth Client and Middleware — complete."
+summary: "Milestone 1.2.1: Proxy Auth Client and Middleware — complete."
+status: "completed"
+milestoneId: "1.2.1"
+goal: "[1.2 Proxy platform integration](/roadmap/phase-1-core-platform/goals#goal-12-proxy-platform-integration)"
+phase: "phase-1-core-platform"
+fullTitle: "Milestone 1.2.1: Proxy Auth Client and Middleware"
+---
+
+# Milestone 1.2.1: Proxy Auth Client and Middleware
+
+**Status:** Complete  
+**Goal:** [1.2 Proxy platform integration](/roadmap/phase-1-core-platform/goals#goal-12-proxy-platform-integration)  
+**Phase:** 1 — Core Platform
+
+## Summary
+
+Connect the proxy to auth via gRPC `ValidateToken`, HTTP auth middleware on protected routes, request context with `org_id` + permissions, minimal stable error envelope, and integration/CI coverage. Bloom/LRU cache deferred to Phase 2 optional 2.2.1.
+
+## Branch
+
+`feature/m1-2-1-proxy-auth-client`
+
+## PR title
+
+`feat(proxy): auth gRPC client (m1.2.1)`
+
+## Prerequisites
+
+- [1.1.3](/roadmap/phase-1-core-platform/milestones/1.1.3-auth-token-validation)–[1.1.6](/roadmap/phase-1-core-platform/milestones/1.1.6-argon2id-parameters-and-crypto-policy-adr) merged
+- `packages/permissions`, `make proto-gen`
+- Auth + Postgres via compose for local/integration tests
+
+## Tasks
+
+- [x] [ADR-0011](/docs/adr/0011-proxy-auth-client)
+- [x] `services/proxy/internal/auth/` — `TokenValidator`, `GRPCValidator`, bearer parse, context
+- [x] `services/proxy/internal/errors/` — minimal stable envelope
+- [x] Auth middleware + routes: `/v1/internal/auth-probe`, `/v1/orgs/{org_id}/auth-probe`, `POST /v1/chat/completions` (501 stub)
+- [x] Config: `IBEX_AUTH_GRPC_ADDR`, `IBEX_AUTH_VALIDATE_TIMEOUT`
+- [x] Metrics: auth validate total/duration (no `org_id` label)
+- [x] Unit tests (mock validator) + integration tests (real auth gRPC + Postgres)
+- [x] CI `proxy-auth-smoke` job
+- [x] Contributor execution materials prepared
+
+## Files affected
+
+| Path | Action |
+| --- | --- |
+| `docs/adr/ADR-0011-proxy-auth-client.md` | Add |
+| `services/proxy/internal/auth/` | Add |
+| `services/proxy/internal/errors/` | Add |
+| `services/proxy/internal/http/auth_middleware.go`, `router.go` | Add / extend |
+| `services/proxy/internal/config/` | Extend |
+| `services/proxy/internal/metrics/` | Extend |
+| `services/proxy/cmd/proxy/main.go` | Wire gRPC dial |
+| `services/proxy/proxy_auth_integration_test.go` | Add |
+| `services/auth/integrationtest/grpc.go` | Add (shared test helper) |
+| `services/proxy/.env.example` | Auth vars |
+| `.github/workflows/ci.yml` | `proxy-auth-smoke` |
+
+## Testing requirements
+
+```bash
+make proto-gen
+go test ./services/proxy/...
+go test -tags=integration ./services/proxy/...
+```
+
+Integration cases: missing token, valid/invalid/revoked PAT, cross-tenant path, permission on chat stub, auth down → 503.
+
+## Definition of done
+
+- [x] Protected routes return 401 without `Authorization`
+- [x] Valid PAT → 200 on auth-probe; chat stub → 501 with `ProxyChatCompletion`
+- [x] Auth service down → 503 fail closed
+- [x] Cross-tenant path → 403
+- [x] Revoke → proxy rejects
+- [x] `proxy-auth-smoke` CI green
+
+## Risks
+
+| Risk | Mitigation |
+| --- | --- |
+| Auth latency on hot path | 50ms timeout; Phase 2 cache via `TokenValidator` wrapper |
+| Circular dependency | Auth never calls proxy |
+| Error envelope drift vs 1.2.3 | Shared `internal/errors` package |
+
+## Deferred
+
+- Bloom filter + LRU cache → Phase 2 optional **2.2.1-auth-cache-bloom**
+- Full validation middleware → [1.2.3](/roadmap/phase-1-core-platform/milestones/1.2.3-proxy-input-validation-and-stable-error-envelope)
+- Request body parsing → [1.2.2](/roadmap/phase-1-core-platform/milestones/1.2.2-proxy-request-normalization)

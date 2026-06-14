@@ -1,0 +1,102 @@
+---
+title: "d3.3 Quickstart Five"
+description: "Quickstart is the second page most visitors open. A failed copy-paste here loses developers before they read proxy or auth docs. Must reflect Phase 1 reality: auth probe works, chat may return 501 stub — document honestly."
+summary: "Quickstart is the second page most visitors open. A failed copy-paste here loses developers before they read proxy or auth docs. Must reflect Phase 1 reality: auth probe works, chat may return 501 stub — document honestly."
+status: "planned"
+milestoneId: "d3.3"
+goal: "[D.3](/roadmap/phase-1-5-docs-site/goals)"
+estimatedEffort: "0.5 day"
+phase: "phase-1-5-docs-site"
+fullTitle: "Milestone D.3.3 — Quickstart (5-minute path)"
+---
+
+# Milestone D.3.3 — Quickstart (5-minute path)
+
+**Status:** Planned  
+**Goal:** [D.3](/roadmap/phase-1-5-docs-site/goals)  
+**Phase:** 1.5 — Docs Site  
+**Wave:** 9  
+**Estimated effort:** 0.5 day  
+**ADR required:** None
+
+Spec detail: [MASTER_BRIEF.md](/roadmap/phase-1-5-docs-site/master-brief) Part D (D.3.3).
+
+---
+
+## Why This Milestone Exists
+
+Quickstart is the second page most visitors open. A failed copy-paste here loses developers before they read proxy or auth docs.
+
+Must reflect Phase 1 reality: auth probe works, chat may return 501 stub — document honestly.
+
+Single-page success path drives first API call through proxy with `make dev` stack.
+
+---
+
+## Non-Goals
+
+- Kubernetes production deploy (Deployment section)
+- Full API reference (D.3.4)
+- SDK client libraries
+
+---
+
+## Branch
+
+`feat/d3-3-quickstart`
+
+## PR Title
+
+`docs(docs): five-minute quickstart (D.3.3)`
+
+---
+
+## Prerequisites
+
+- [D.3.2](/roadmap/phase-1-5-docs-site/milestones/d3.2-seed-pages-content-stubs) merged (Getting Started section)
+
+---
+
+## Deliverables
+
+- Prereqs bullet list (Go ≥ 1.22, Docker, OpenAI key)
+- Clone & boot CodeTabs: `git clone … && make dev`
+- First request CodeTabs: curl, node, python chat completion
+- 3-line Steps explaining auth, routing, memory write
+- Next steps links → Concepts, Deployment
+
+See MASTER_BRIEF Part D (D.3.3) for full acceptance detail.
+
+---
+
+## Files Affected
+
+| File Path | Action | Notes |
+| --- | --- | --- |
+| `docs/app/content/docs/getting-started/quickstart.mdx` | Modify | Full quickstart content |
+
+---
+
+## Testing Requirements
+
+- **`verifyQuickstart_CopyPaste`**: Follow page only on clean machine → working response within 5 min
+- **`verifyQuickstart_501Honesty`**: Callout documents chat stub if 501
+- **`verifyQuickstart_CodeTabs`**: All three client tabs present and syntactically valid
+
+---
+
+## Acceptance Criteria
+
+- [ ] New visitor can copy-paste from this page only and get a working response within 5 minutes
+- [ ] Phase 1 limits (501 chat stub) documented in Callout
+- [ ] CodeTabs render curl, node, and python variants
+
+---
+
+## Risks
+
+| Risk | Probability | Impact | Mitigation |
+| --- | --- | --- | --- |
+| make dev breaks on Windows without WSL | Medium | High | Document Docker Desktop + WSL prerequisite |
+| Env var names drift from compose | Medium | High | Sync with ENVIRONMENT_VARIABLES.md |
+| OpenAI key placeholder confuses users | Low | Medium | Use `<Kbd>` for replaceable token pattern |

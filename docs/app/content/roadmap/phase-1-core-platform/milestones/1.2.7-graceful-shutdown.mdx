@@ -1,0 +1,254 @@
+---
+title: "1.2.7 Graceful Shutdown"
+description: "Neither `services/auth` nor `services/proxy` handles `SIGTERM`. When Kubernetes sends `SIGTERM` during a rolling update, the process exits immediately, dropping every in-flight HTTP request and every open gRPC connection. For a proxy handling real LLM streams (Phase 2), this means visible errors for end users during ev"
+summary: "Neither `services/auth` nor `services/proxy` handles `SIGTERM`. When Kubernetes sends `SIGTERM` during a rolling update, the process exits immediately, dropping every in-flight HTTP request and every open gRPC connection. For a proxy handling real LLM streams (Phase 2), this means visible errors for end users during ev"
+status: "completed"
+milestoneId: "1.2.7"
+goal: "[1.2 — Proxy platform integration](/roadmap/phase-1-core-platform/goals#goal-12-proxy-platform-integration)"
+estimatedEffort: "2 days"
+phase: "phase-1-core-platform"
+fullTitle: "Milestone 1.2.7 — Graceful Shutdown and Connection Draining"
+---
+
+# Milestone 1.2.7 — Graceful Shutdown and Connection Draining
+
+**Status:** Complete  
+**Goal:** [1.2 — Proxy platform integration](/roadmap/phase-1-core-platform/goals#goal-12-proxy-platform-integration)  
+**Phase:** 1 — Core Platform  
+**Estimated effort:** 2 days  
+**ADR required:** ADR-0018 — Graceful shutdown contract
+
+---
+
+## Why This Milestone Exists
+
+Neither `services/auth` nor `services/proxy` handles `SIGTERM`. When Kubernetes sends `SIGTERM` during a rolling update, the process exits immediately, dropping every in-flight HTTP request and every open gRPC connection. For a proxy handling real LLM streams (Phase 2), this means visible errors for end users during every deployment.
+
+The fix is standard Go signal handling: catch `SIGTERM` and `SIGINT`, stop accepting new connections, drain in-flight requests within a configurable timeout, then close all downstream connections cleanly before exiting.
+
+---
+
+## Non-Goals
+
+- Pre-stop hook scripts (Kubernetes configuration — separate ops concern)
+- Zero-downtime connection migration between proxy instances
+- Persistent connection state (sessions are managed separately)
+
+---
+
+## Branch
+
+`feature/m1-2-7-graceful-shutdown`
+
+## PR Title
+
+`feat(infra): graceful shutdown with connection draining for auth and proxy (m1.2.7)`
+
+---
+
+## Prerequisites
+
+- [1.2.1](/roadmap/phase-1-core-platform/milestones/1.2.1-proxy-auth-client) merged — gRPC client connection pool exists in proxy
+- [1.1.3](/roadmap/phase-1-core-platform/milestones/1.1.3-auth-token-validation) merged — auth gRPC server exists
+
+---
+
+## Deliverables
+
+### 1. ADR-0018 — Graceful shutdown contract
+
+Write `docs/adr/ADR-0018-graceful-shutdown.md` defining:
+
+- SIGTERM is the signal for graceful shutdown (Kubernetes default)
+- SIGINT triggers immediate shutdown (development convenience)
+- Drain timeout: `IBEX_SHUTDOWN_TIMEOUT_SECONDS` (default: 30)
+- Shutdown sequence: stop accepting → drain HTTP → close gRPC → close DB pool → close Redis → exit 0
+- Exit code semantics: 0 = clean, 1 = drain timeout exceeded (requests dropped)
+
+---
+
+### 2. `packages/shutdown` — shared signal handler
+
+```go
+// Package shutdown provides a reusable graceful shutdown coordinator.
+// Both auth and proxy services import this package.
+package shutdown
+
+import (
+    "context"
+    "log/slog"
+    "os"
+    "os/signal"
+    "syscall"
+    "time"
+)
+
+// Coordinator manages ordered shutdown of registered components.
+type Coordinator struct {
+    timeout  time.Duration
+    log      *slog.Logger
+    handlers []func(ctx context.Context) error
+}
+
+// New creates a Coordinator with the given drain timeout.
+func New(timeout time.Duration, log *slog.Logger) *Coordinator {
+    return &Coordinator{timeout: timeout, log: log}
+}
+
+// Register adds a shutdown handler. Handlers are called in registration
+// order when a signal is received. Each handler receives a context that
+// is cancelled when the drain timeout expires.
+// Example handlers: httpServer.Shutdown, grpcServer.GracefulStop,
+// dbPool.Close, redisClient.Close.
+func (c *Coordinator) Register(fn func(ctx context.Context) error) {
+    c.handlers = append(c.handlers, fn)
+}
+
+// Wait blocks until SIGTERM or SIGINT is received, then runs all
+// registered handlers in order within the drain timeout.
+// Returns nil if all handlers completed cleanly.
+// Returns an error if the timeout expired before handlers finished.
+func (c *Coordinator) Wait() error {
+    quit := make(chan os.Signal, 1)
+    signal.Notify(quit, syscall.SIGTERM, syscall.SIGINT)
+    sig := <-quit
+    c.log.Info("shutdown signal received", "signal", sig)
+
+    ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
+    defer cancel()
+
+    for _, fn := range c.handlers {
+        if err := fn(ctx); err != nil {
+            c.log.Error("shutdown handler error", "error", err)
+        }
+    }
+
+    if ctx.Err() != nil {
+        c.log.Error("shutdown drain timeout exceeded; some requests may have been dropped")
+        return ctx.Err()
+    }
+    c.log.Info("shutdown complete")
+    return nil
+}
+```
+
+---
+
+### 3. Proxy `main.go` shutdown sequence
+
+```go
+// In services/proxy/cmd/proxy/main.go:
+
+sd := shutdown.New(cfg.ShutdownTimeout, logger)
+
+// 1. Stop accepting new HTTP connections
+sd.Register(func(ctx context.Context) error {
+    return httpServer.Shutdown(ctx)
+})
+
+// 2. Close gRPC client connection to auth
+sd.Register(func(ctx context.Context) error {
+    return authConn.Close()
+})
+
+// 3. Close Redis client
+sd.Register(func(ctx context.Context) error {
+    return redisClient.Close()
+})
+
+// 4. Flush OTel spans (added when M1.3.1 lands)
+// sd.Register(otelShutdown)
+
+if err := sd.Wait(); err != nil {
+    os.Exit(1)
+}
+```
+
+---
+
+### 4. Auth `main.go` shutdown sequence
+
+```go
+// In services/auth/cmd/auth/main.go:
+
+sd := shutdown.New(cfg.ShutdownTimeout, logger)
+
+// 1. Stop accepting new gRPC requests; drain in-flight RPCs
+sd.Register(func(ctx context.Context) error {
+    grpcServer.GracefulStop()
+    return nil
+})
+
+// 2. Stop HTTP server (/health, /ready, /metrics)
+sd.Register(func(ctx context.Context) error {
+    return httpServer.Shutdown(ctx)
+})
+
+// 3. Close DB pool
+sd.Register(func(ctx context.Context) error {
+    dbPool.Close()
+    return nil
+})
+
+if err := sd.Wait(); err != nil {
+    os.Exit(1)
+}
+```
+
+---
+
+### 5. Environment variable
+
+```text
+IBEX_SHUTDOWN_TIMEOUT_SECONDS
+  Type:    integer
+  Default: 30
+  Description: Seconds to wait for in-flight requests to complete
+               before forcing shutdown. Set lower in development,
+               higher (60–120) in production for long-running streams.
+```
+
+Document in `docs/ENVIRONMENT_VARIABLES.md`.
+
+---
+
+## Files Affected
+
+| Path | Action |
+|---|---|
+| `packages/shutdown/shutdown.go` | Add |
+| `packages/shutdown/shutdown_test.go` | Add |
+| `services/proxy/cmd/proxy/main.go` | Adopt Coordinator |
+| `services/auth/cmd/auth/main.go` | Adopt Coordinator |
+| `docs/adr/ADR-0018-graceful-shutdown.md` | Add |
+| `docs/ENVIRONMENT_VARIABLES.md` | Add IBEX_SHUTDOWN_TIMEOUT_SECONDS |
+
+---
+
+## Testing Requirements
+
+- **`TestCoordinator_CleanShutdown`**: send SIGTERM, all handlers called in order, Wait returns nil
+- **`TestCoordinator_TimeoutExceeded`**: one handler blocks beyond timeout, Wait returns error, process does not hang
+- **`TestCoordinator_HandlerError`**: handler returns error, remaining handlers still run, Wait returns nil (error is logged only)
+- **Integration**: start proxy, send SIGTERM, verify no in-flight httptest requests are dropped (use a slow handler with artificial sleep, confirm response is received before process exits)
+
+---
+
+## Acceptance Criteria
+
+- [ ] SIGTERM triggers graceful drain with configured timeout
+- [ ] SIGINT triggers immediate shutdown (no drain)
+- [ ] HTTP server, gRPC client (proxy) and gRPC server (auth) shut down in correct order
+- [ ] DB pool and Redis client closed after HTTP/gRPC drain
+- [ ] Exit code 0 on clean shutdown, 1 on timeout exceeded
+- [ ] `IBEX_SHUTDOWN_TIMEOUT_SECONDS` documented
+- [ ] ADR-0018 written and indexed
+
+---
+
+## Risks
+
+| Risk | Mitigation |
+|---|---|
+| gRPC `GracefulStop` blocks indefinitely if clients hold open streams | Phase 2: add `grpcServer.Stop()` after a secondary timeout |
+| HTTP `Shutdown` does not cancel hijacked connections (WebSockets) | No WebSocket handlers in Phase 1; add note for Phase 2 |

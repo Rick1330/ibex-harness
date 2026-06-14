@@ -1,0 +1,168 @@
+---
+title: "2.2.1 Auth Cache"
+description: "The Phase 1 proxy makes a synchronous gRPC call to the auth service on every protected request. This call has a 50ms budget (ARCHITECTURE.md) and in practice takes 2–10ms under normal load. That is already 10–50% of the 20ms proxy overhead budget, leaving little room for directive resolution, session writes, and trace"
+summary: "The Phase 1 proxy makes a synchronous gRPC call to the auth service on every protected request. This call has a 50ms budget (ARCHITECTURE.md) and in practice takes 2–10ms under normal load. That is already 10–50% of the 20ms proxy overhead budget, leaving little room for directive resolution, session writes, and trace"
+status: "planned"
+milestoneId: "2.2.1"
+goal: "[2.2 — Auth performance cache](/roadmap/phase-2-single-provider/goals#goal-22-auth-performance-cache-critical-path)"
+estimatedEffort: "3–4 days"
+phase: "phase-2-single-provider"
+fullTitle: "Milestone 2.2.1 — Auth Cache: Bloom Filter + In-Process LRU (Performance Critical Path)"
+---
+
+# Milestone 2.2.1 — Auth Cache: Bloom Filter + In-Process LRU (Performance Critical Path)
+
+**Status:** Planned  
+**Goal:** [2.2 — Auth performance cache](/roadmap/phase-2-single-provider/goals#goal-22-auth-performance-cache-critical-path)  
+**Phase:** 2 — Single Provider End-to-End  
+**Estimated effort:** 3–4 days  
+**ADR required:** ADR-0025 — Auth cache design and revocation SLA
+
+---
+
+## Why This Milestone Exists
+
+The Phase 1 proxy makes a synchronous gRPC call to the auth service on every protected request. This call has a 50ms budget (ARCHITECTURE.md) and in practice takes 2–10ms under normal load. That is already 10–50% of the 20ms proxy overhead budget, leaving little room for directive resolution, session writes, and trace emission.
+
+Under load, gRPC connections queue — the auth call latency can spike to 50ms+ when the auth service is saturated. This creates a hard ceiling: the proxy cannot meet its &lt;20ms overhead SLA if it makes a network call on every request.
+
+The solution is a two-tier cache in front of the gRPC call:
+
+**Tier 1 — Bloom filter (Redis):** A probabilistic set of recently-seen invalid tokens. A token NOT in the bloom filter is "probably valid" and is fast-pathed to the LRU. A token IN the bloom filter (or a bloom false positive) falls through to gRPC. This catches replay attacks with known-bad tokens in &lt;1ms.
+
+**Tier 2 — In-process LRU (Go):** A bounded cache of validated token claims (org_id, permissions, expires_at). On a cache hit, the gRPC call is skipped entirely. TTL is min(30s, token.expires_at - now - 5s) — conservative enough that a revoked token is evicted before its revocation SLA.
+
+**The revocation SLA for Phase 2 is 5 seconds.** A revoked token may be served from cache for up to 5 seconds after revocation. This is documented, acceptable for Phase 2, and reduced to 1 second in Phase 3 via pub/sub invalidation (milestone 2.2.2).
+
+---
+
+## Non-Goals
+
+- Negative caching (caching invalid tokens — bloom filter handles rejection, not negative caching)
+- Distributed LRU (each proxy instance has its own LRU; Phase 3 may add Redis-backed distributed cache)
+- Replacing gRPC validation entirely (gRPC remains the authoritative source on LRU miss)
+
+---
+
+## Branch
+
+`feature/m2-2-1-auth-cache-bloom`
+
+## PR Title
+
+`feat(proxy): auth cache — bloom filter + in-process LRU for token validation (m2.2.1)`
+
+---
+
+## ADR-0025 — Auth cache design
+
+Write `docs/adr/ADR-0025-auth-cache-design.md` covering:
+- Why two tiers (bloom + LRU) rather than Redis-only or LRU-only
+- Bloom filter parameters: expected items (10,000 tokens per instance), false positive rate (0.001)
+- LRU capacity: 5,000 entries (each entry ~200 bytes → ~1MB per instance)
+- LRU TTL: `min(30s, token.expires_at - now - 5s)` — conservative to bound revocation lag
+- The 5-second revocation SLA in Phase 2 and how 2.2.2 reduces it to 1 second
+- Failure mode: LRU miss + Redis error → gRPC fallback (fail closed)
+- Audit flag: when serving from LRU during auth service downtime, set `X-IBEX-Auth-Cached: true` response header and emit a metric
+
+---
+
+## Deliverables
+
+### 1. `packages/authcache` — CachingValidator wrapping auth.TokenValidator
+
+```go
+// Package authcache implements a two-tier cache for token validation.
+// It wraps auth.TokenValidator with a bloom filter + LRU layer.
+// The underlying gRPC validator is called only on cache miss.
+package authcache
+
+// Config holds cache configuration.
+type Config struct {
+    // LRUCapacity is the max number of validated token claims to hold in memory.
+    // Each entry is ~200 bytes. Default: 5000 (≈1MB).
+    LRUCapacity int `env:"IBEX_AUTH_CACHE_LRU_CAPACITY" envDefault:"5000"`
+
+    // LRUMaxTTL caps the LRU entry TTL regardless of token expiry.
+    // Default: 30s. Bounds the revocation lag to at most this duration.
+    LRUMaxTTL time.Duration `env:"IBEX_AUTH_CACHE_LRU_MAX_TTL" envDefault:"30s"`
+
+    // BloomExpectedItems is the expected number of distinct tokens the bloom filter
+    // will see. Used to size the filter for the target false-positive rate.
+    // Default: 10000.
+    BloomExpectedItems uint `env:"IBEX_AUTH_CACHE_BLOOM_ITEMS" envDefault:"10000"`
+
+    // BloomFPRate is the target false positive rate. Default: 0.001 (0.1%).
+    // Higher FP rate → smaller filter. Lower FP rate → larger filter, fewer fallbacks.
+    BloomFPRate float64 `env:"IBEX_AUTH_CACHE_BLOOM_FP_RATE" envDefault:"0.001"`
+}
+
+// CachingValidator implements auth.TokenValidator with caching.
+// It wraps an underlying validator (gRPC client) with bloom + LRU layers.
+// Safe for concurrent use.
+type CachingValidator struct {
+    bloom     *bloom.BloomFilter  // github.com/bits-and-blooms/bloom/v3
+    lru       *lru.Cache[string, *cachedClaims] // github.com/hashicorp/golang-lru/v2
+    upstream  auth.TokenValidator
+    cfg       Config
+    log       *logger.Logger
+    metrics   cachingValidatorMetrics
+}
+
+type cachedClaims struct {
+    OrgID       uuid.UUID
+    Permissions permissions.Bitmap
+    ExpiresAt   time.Time
+    CachedAt    time.Time
+}
+
+// Validate implements auth.TokenValidator.
+// Decision tree:
+//   1. Hash token with SHA-256 (don't store raw token anywhere)
+//   2. Check bloom filter: if present → gRPC fallback (possible bloom FP)
+//   3. Check LRU: if hit and not expired → return cached claims
+//   4. LRU miss → call upstream.Validate (gRPC)
+//   5. On gRPC success: add to LRU with TTL; add hash to bloom if valid
+//   6. On gRPC error: return error (fail closed; no cached permissions for new tokens)
+func (v *CachingValidator) Validate(ctx context.Context, token string) (*auth.Claims, error)
+
+// Invalidate removes a token hash from the LRU cache (called on revocation).
+// If the hash is not in the LRU, this is a no-op.
+func (v *CachingValidator) Invalidate(tokenHash string)
+```
+
+### 2. Prometheus metrics for cache
+
+```go
+// Required metrics (add to packages/metrics canonical registry):
+ibex_auth_cache_hits_total{tier="bloom"|"lru"|"grpc"}
+ibex_auth_cache_misses_total{tier="bloom"|"lru"}
+ibex_auth_cache_lru_size            // gauge
+ibex_auth_cache_lru_evictions_total
+ibex_auth_cache_bloom_fp_total      // false positives (bloom said invalid, gRPC said valid)
+```
+
+---
+
+## Testing Requirements
+
+- **`TestCachingValidator_LRUHit`**: validate same token twice; second call does not call gRPC (mock gRPC call count = 1)
+- **`TestCachingValidator_LRUTTLExpiry`**: advance time past LRU TTL; next call goes to gRPC
+- **`TestCachingValidator_RevokedToken`**: token in LRU → `Invalidate(hash)` → next call goes to gRPC → gRPC returns UNAUTHENTICATED → 401
+- **`TestCachingValidator_BloomFalsePositive`**: bloom returns true for an unseen token hash; gRPC validates it as valid; `ibex_auth_cache_bloom_fp_total` incremented by 1
+- **`TestCachingValidator_GRPCDown_FailsClosed`**: upstream returns transport error → `Validate` returns error (not cached claims)
+- **`BenchmarkCachingValidator_LRUHit`**: LRU hit path executes in &lt;100µs (no network)
+
+---
+
+## Acceptance Criteria
+
+- [ ] LRU hit path requires zero network calls; measured p99 < 1ms
+- [ ] LRU miss falls through to gRPC (existing Phase 1 path unchanged)
+- [ ] `Invalidate` removes token from LRU within the same goroutine (synchronous)
+- [ ] Cache metrics exported via `packages/metrics`
+- [ ] Bloom filter false positive rate ≤ 0.1% documented and measured in tests
+- [ ] Token hash (not raw token) is the cache key — raw token never stored in memory beyond validation
+- [ ] ADR-0025 written and indexed
+
+---

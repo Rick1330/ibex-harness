@@ -1,0 +1,144 @@
+---
+title: "3.5.6 Context Formatter"
+description: "After packing, the selected memories must be formatted and injected into the messages array. The format of injected memories is critical for model behaviour — poorly formatted memory injection causes the LLM to misuse or ignore the memories. The injection format uses XML-style delimiters within a system message (not ap"
+summary: "After packing, the selected memories must be formatted and injected into the messages array. The format of injected memories is critical for model behaviour — poorly formatted memory injection causes the LLM to misuse or ignore the memories. The injection format uses XML-style delimiters within a system message (not ap"
+status: "planned"
+milestoneId: "3.5.6"
+goal: "[3.5 — Context assembly engine](/roadmap/phase-3-memory-engine/goals#goal-35-context-assembly-engine)"
+estimatedEffort: "2 days"
+phase: "phase-3-memory-engine"
+fullTitle: "Milestone 3.5.6 — Context Formatter and Injection Strategy"
+---
+
+# Milestone 3.5.6 — Context Formatter and Injection Strategy
+
+**Status:** Planned  
+**Goal:** [3.5 — Context assembly engine](/roadmap/phase-3-memory-engine/goals#goal-35-context-assembly-engine)  
+**Phase:** 3 — Memory Engine and Operator Platform  
+**Estimated effort:** 2 days  
+**ADR required:** ADR-0042 — Context formatting and memory injection format
+
+---
+
+## Why This Milestone Exists
+
+After packing, the selected memories must be formatted and injected into the messages array. The format of injected memories is critical for model behaviour — poorly formatted memory injection causes the LLM to misuse or ignore the memories.
+
+The injection format uses XML-style delimiters within a system message (not appended to user messages). This is the approach recommended by Anthropic and empirically validated for GPT-4 class models.
+
+---
+
+## ADR-0042 — Context formatting
+
+Document:
+- **Why XML delimiters:** Models trained on diverse data recognise XML as structure-bearing. `<memory>` tags signal "this is background knowledge" vs conversational content.
+- **Why category sections:** Procedural memories ("always do X") are processed differently by the model than factual memories ("the user's name is Y"). Grouping by category in the context helps the model apply memories correctly.
+- **Why a session nonce:** A unique string per session in the delimiter prevents prompt injection attacks where a malicious user tries to inject fake memories via conversation content.
+- **Injection order (mandatory):** directive → procedural → factual → preference → behavioral → episodic. Procedural first because it contains instructions the model must follow.
+
+---
+
+## Deliverables
+
+### `src/context/services/formatter.py`
+
+```python
+from __future__ import annotations
+
+from ibex_proto.context.v1 import InjectionMetadata, Message
+from context.services.budget import TokenBudget
+from context.services.packer import PackedMemories
+from context.services.scorer import ScoredMemory
+
+# Category injection order (procedural first — most important)
+CATEGORY_ORDER = ["procedural", "factual", "preference", "behavioral", "episodic"]
+
+class ContextFormatter:
+    """
+    Formats packed memories and directive into the messages array.
+    The output is the enriched messages list that the proxy sends to the LLM.
+    """
+
+    def inject(
+        self,
+        original_messages: list[Message],
+        directive:         str,
+        packed_memories:   PackedMemories,
+        budget:            TokenBudget,
+        session_nonce:     str = "",
+    ) -> tuple[list[Message], InjectionMetadata]:
+        system_sections: list[str] = []
+
+        # 1. Directive (always first if present)
+        if directive:
+            system_sections.append(f"<directive>\n{directive}\n</directive>")
+
+        # 2. Memories by category (in required order)
+        memory_ids: list[str] = []
+        by_category: dict[str, list[ScoredMemory]] = {cat: [] for cat in CATEGORY_ORDER}
+
+        for scored in packed_memories.memories:
+            cat = scored.memory.get("category", "factual")
+            by_category.setdefault(cat, []).append(scored)
+            if mid := scored.memory.get("id"):
+                memory_ids.append(mid)
+
+        for category in CATEGORY_ORDER:
+            mems = by_category.get(category, [])
+            if not mems:
+                continue
+            nonce_attr = f' nonce="{session_nonce}"' if session_nonce else ""
+            mem_lines = "\n".join(
+                f'<memory id="{m.memory["id"]}" '
+                f'confidence="{m.memory.get("confidence", 0.8):.2f}" '
+                f'score="{m.composite_score:.3f}">'
+                f'{m.memory["content"]}'
+                f'</memory>'
+                for m in mems
+            )
+            system_sections.append(
+                f'<{category}_memories{nonce_attr}>\n{mem_lines}\n</{category}_memories>'
+            )
+
+        # Build the injected system message
+        injected_system_content = "\n\n".join(system_sections)
+
+        # 3. Construct enriched messages array
+        # The injected system message is always first.
+        # Existing system messages from the client follow it.
+        enriched: list[Message] = []
+
+        if injected_system_content:
+            enriched.append(Message(role="system", content=injected_system_content))
+
+        enriched.extend(list(original_messages))
+
+        # 4. Build metadata
+        total_injected = budget.directive_tokens + packed_memories.total_tokens
+        context_used_pct = int(100 * (budget.messages_tokens + total_injected) / budget.context_window)
+
+        meta = InjectionMetadata(
+            directive_injected=bool(directive),
+            memories_injected=len(packed_memories.memories),
+            memories_available=len(packed_memories.memories) + packed_memories.skipped_count,
+            total_tokens_injected=total_injected,
+            context_window_used=context_used_pct,
+            was_truncated=packed_memories.was_budget_reached,
+            memory_ids=memory_ids,
+        )
+
+        return enriched, meta
+```
+
+---
+
+## Acceptance Criteria
+
+- [ ] Injected system message is always the first message in the enriched array
+- [ ] Memories grouped by category in the order: procedural → factual → preference → behavioral → episodic
+- [ ] Each memory has `id`, `confidence`, and `score` XML attributes for debugging
+- [ ] `was_truncated=True` in metadata when any memories were skipped by packer
+- [ ] Empty directive + no memories → enriched messages = original messages (no empty system message added)
+- [ ] ADR-0042 written with format rationale and example output
+
+---
