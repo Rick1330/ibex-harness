@@ -14,6 +14,7 @@ import {
 } from "@/lib/sidebar-icons";
 
 import {
+  firstNavUrlInFolder,
   folderContainsPath,
   resolveFolderSectionSlug,
 } from "@/lib/sidebar-folder-slug";
@@ -43,9 +44,14 @@ export function resolveFolderHeaderIcon(
     );
   }
 
-  const folderUrl = item.index?.url ? toNavUrl(item.index.url) : undefined;
+  const nestedUrl = firstNavUrlInFolder(item);
+  const folderUrl = item.index?.url
+    ? toNavUrl(item.index.url)
+    : nestedUrl
+      ? toNavUrl(nestedUrl)
+      : undefined;
   const iconResolver =
     baseUrl === "/roadmap" ? roadmapNavIconElement : navIconElement;
 
-  return item.icon ?? (folderUrl ? iconResolver(undefined, folderUrl) : undefined);
+  return folderUrl ? iconResolver(undefined, folderUrl) : undefined;
 }

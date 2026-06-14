@@ -7,13 +7,11 @@ import {
   type ContentBaseUrl,
 } from "@/lib/sidebar-icons";
 
+/** Resolve sidebar/footer icons from URL — never reuse stale tree-attached icons. */
 export function resolveLeafNavIcon(
-  treeIcon: ReactNode | undefined,
   url: string,
   baseUrl: ContentBaseUrl,
 ): ReactNode {
-  if (treeIcon) return treeIcon;
-
   const iconResolver =
     baseUrl === "/roadmap" ? roadmapNavIconElement : navIconElement;
 

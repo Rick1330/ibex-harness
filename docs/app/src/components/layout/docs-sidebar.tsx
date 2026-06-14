@@ -17,9 +17,11 @@ import {
 import { resolveLeafNavIcon } from "@/lib/sidebar-page-icon";
 import {
   folderContainsPath,
+  resolveFolderSectionSlug,
+} from "@/lib/sidebar-folder-slug";
+import {
   resolveFolderDefaultOpen,
   resolveFolderHeaderIcon,
-  resolveFolderSectionSlug,
 } from "@/lib/sidebar-folder-present";
 import { PathSyncedSidebarFolder } from "@/components/layout/path-synced-sidebar-folder";
 import { cn } from "@/lib/cn";
@@ -63,7 +65,7 @@ export function DocsSidebarItem({ item }: { item: PageTree.Item }) {
       className={cn(leafItemClassName, isMilestone && "sidebar-nav-item--milestone")}
       external={item.external}
       href={item.url}
-      icon={resolveLeafNavIcon(item.icon, item.url, baseUrl)}
+      icon={resolveLeafNavIcon(item.url, baseUrl)}
     >
       {item.name}
     </SidebarItem>

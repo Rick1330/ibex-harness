@@ -115,7 +115,7 @@ export const PAGE_ICONS: Record<string, LucideIcon> = {
   "security/secrets-and-keys": Key,
   "deployment/docker-compose": Container,
   "deployment/kubernetes": Boxes,
-  "deployment/environment-variables": FileCode,
+  "deployment/environment-variables": Settings,
   "operations/observability": Activity,
   "operations/troubleshooting": CircleHelp,
   "operations/health-checks": Gauge,
@@ -157,7 +157,7 @@ export const SLUG_ICONS: Record<string, LucideIcon> = {
   milestones: Flag,
   "current-state": Activity,
   findings: AlertCircle,
-  "content-sources": FileText,
+  "content-sources": ScrollText,
   "master-brief": ScrollText,
 };
 
@@ -198,7 +198,7 @@ export const ROADMAP_PAGE_ICONS: Record<string, LucideIcon> = {
   "phase-1-5-docs-site/goals": Target,
   "phase-1-5-docs-site/decisions": Scale,
   "phase-1-5-docs-site/risks": AlertTriangle,
-  "phase-1-5-docs-site/content-sources": FileText,
+  "phase-1-5-docs-site/content-sources": ScrollText,
   "phase-1-5-docs-site/master-brief": ScrollText,
   "phase-1-5-docs-site/phase-1-5-docs-site-milestones": Flag,
 };

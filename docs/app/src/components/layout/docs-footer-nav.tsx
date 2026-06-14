@@ -6,13 +6,12 @@ import { usePathname } from "next/navigation";
 import { useMemo } from "react";
 import { useTreeContext } from "fumadocs-ui/provider";
 
-import { baseUrlFromPathname, toNavUrl } from "@/lib/sidebar-icons";
+import { SidebarIcon, getNavIconForUrl, toNavUrl } from "@/lib/sidebar-icons";
 import {
   adjacentNavPages,
   flattenPageTree,
   navUrlsMatch,
 } from "@/lib/sidebar-nav-pages";
-import { resolveLeafNavIcon } from "@/lib/sidebar-page-icon";
 import { cn } from "@/lib/cn";
 
 const cardClassName = cn(
@@ -26,7 +25,6 @@ const labelClassName =
 export function DocsFooterNav() {
   const { root } = useTreeContext();
   const pathname = usePathname();
-  const baseUrl = baseUrlFromPathname(toNavUrl(pathname));
 
   const { previous, next } = useMemo(() => {
     const pages = flattenPageTree(root.children);
@@ -44,7 +42,7 @@ export function DocsFooterNav() {
             Previous
           </span>
           <span className="inline-flex items-center gap-2 font-medium text-text-primary">
-            {resolveLeafNavIcon(previous.icon, previous.url, baseUrl)}
+            <SidebarIcon icon={getNavIconForUrl(toNavUrl(previous.url))} />
             {previous.name}
           </span>
         </Link>
@@ -64,7 +62,7 @@ export function DocsFooterNav() {
           </span>
           <span className="inline-flex items-center justify-end gap-2 font-medium text-text-primary">
             {next.name}
-            {resolveLeafNavIcon(next.icon, next.url, baseUrl)}
+            <SidebarIcon icon={getNavIconForUrl(toNavUrl(next.url))} />
           </span>
         </Link>
       ) : null}

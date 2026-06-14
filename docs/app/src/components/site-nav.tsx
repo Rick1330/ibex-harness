@@ -17,7 +17,7 @@ export function SiteNav() {
       data-site-nav
       className="site-nav sticky top-0 z-50 w-full border-b border-border/80 bg-background/90 backdrop-blur-xl supports-[backdrop-filter]:bg-background/80"
     >
-      <div className="site-nav-inner mx-auto flex h-[var(--site-nav-height)] w-full max-w-[90rem] items-stretch gap-0 px-4 sm:px-6 lg:px-8">
+      <div className="site-nav-inner flex h-[var(--site-nav-height)] w-full items-stretch gap-0 px-4 sm:px-6 lg:px-8">
         <Link
           href="/docs/getting-started/introduction"
           className="group flex shrink-0 items-center gap-2.5 border-e border-border/70 pe-4 sm:pe-6"

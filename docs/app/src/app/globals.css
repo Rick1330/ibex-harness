@@ -1276,6 +1276,7 @@ header.site-nav {
 
 header[data-site-nav] .site-nav-inner {
   min-height: var(--site-nav-height) !important;
+  justify-content: flex-start !important;
 }
 
 /* --- Hide Fumadocs built-in nav bar --- */

@@ -11,16 +11,6 @@ export const source = loader({
   baseUrl: "/docs",
   source: docs.toFumadocsSource(),
   icon: (iconName) => navIconElement(iconName),
-  pageTree: {
-    attachFile: (node) => ({
-      ...node,
-      icon: node.icon ?? navIconElement(undefined, node.url),
-    }),
-    attachFolder: (node) => ({
-      ...node,
-      icon: node.icon ?? navIconElement(undefined, node.index?.url),
-    }),
-  },
 });
 
 export const blogSource = loader({
@@ -37,14 +27,4 @@ export const roadmapSource = loader({
   baseUrl: "/roadmap",
   source: roadmap.toFumadocsSource(),
   icon: (iconName) => roadmapNavIconElement(iconName),
-  pageTree: {
-    attachFile: (node) => ({
-      ...node,
-      icon: node.icon ?? roadmapNavIconElement(undefined, node.url),
-    }),
-    attachFolder: (node) => ({
-      ...node,
-      icon: node.icon ?? roadmapNavIconElement(undefined, node.index?.url),
-    }),
-  },
 });

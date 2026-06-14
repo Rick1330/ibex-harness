@@ -4,10 +4,10 @@
   "version": "0.0.0",
   "scripts": {
     "dev": "next dev",
-    "dev:clean": "node scripts/clean-next.mjs && next dev",
+    "dev:clean": "node -e \"require('fs').rmSync('.next',{recursive:true,force:true})\" && next dev",
     "dev:turbo": "next dev --turbo",
     "build": "next build",
-    "build:clean": "node scripts/clean-next.mjs && next build",
+    "build:clean": "node -e \"require('fs').rmSync('.next',{recursive:true,force:true})\" && next build",
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",

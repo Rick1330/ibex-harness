@@ -1,4 +1,9 @@
-import { Circle, FileCode, FileText, type LucideIcon } from "lucide-react";
+import {
+  BookOpen,
+  Circle,
+  Map,
+  type LucideIcon,
+} from "lucide-react";
 
 import {
   ROADMAP_PHASE_ICONS,
@@ -127,23 +132,46 @@ const DOCS_ICON_STEPS: readonly IconLookupStep[] = [
   docsSectionFallback,
 ];
 
+function sectionIconForPath(
+  parsed: ParsedContentPath,
+  site: ContentBaseUrl,
+): LucideIcon | undefined {
+  const section = parsed.segments[0];
+  if (!section) return undefined;
+
+  if (site === "/roadmap") {
+    return (
+      ROADMAP_PAGE_ICONS[parsed.value] ??
+      ROADMAP_SECTION_ICONS[section] ??
+      ROADMAP_PHASE_ICONS[section]
+    );
+  }
+
+  return SECTION_ICONS[section];
+}
+
 class SiteNavIconService {
   private constructor(
     private readonly site: ContentBaseUrl,
-    private readonly fallback: LucideIcon,
+    private readonly defaultIcon: LucideIcon,
     private readonly steps: readonly IconLookupStep[],
   ) {}
 
-  static readonly docs = new SiteNavIconService("/docs", FileCode, DOCS_ICON_STEPS);
-  static readonly roadmap = new SiteNavIconService("/roadmap", FileText, ROADMAP_ICON_STEPS);
+  static readonly docs = new SiteNavIconService("/docs", BookOpen, DOCS_ICON_STEPS);
+  static readonly roadmap = new SiteNavIconService("/roadmap", Map, ROADMAP_ICON_STEPS);
 
   resolve(query: NavIconQuery): LucideIcon {
     const named = query.iconName ? iconFromLucideName(query.iconName) : undefined;
     if (named) return named;
-    if (!query.url) return this.fallback;
+    if (!query.url) return this.defaultIcon;
 
     const path = contentPathFromUrl(query.url, this.site);
-    return firstLookupMatch(parseContentPath(path), this.steps) ?? this.fallback;
+    const parsed = parseContentPath(path);
+    return (
+      firstLookupMatch(parsed, this.steps) ??
+      sectionIconForPath(parsed, this.site) ??
+      this.defaultIcon
+    );
   }
 }
 
@@ -216,11 +244,21 @@ export function resolveNavIcon(query: NavIconQuery): LucideIcon | undefined {
 }
 
 export function getNavIconForUrl(url: NavUrl): LucideIcon {
-  return resolveNavIcon(createNavIconQuery(undefined, url)) ?? FileCode;
+  const baseUrl = baseUrlFromPathname(url);
+  return (
+    resolveNavIcon(createNavIconQuery(undefined, url)) ??
+    SECTION_ICONS[contentPathFromUrl(url, baseUrl).split("/")[0] ?? ""] ??
+    BookOpen
+  );
 }
 
 export function getRoadmapIconForUrl(url: NavUrl): LucideIcon {
-  return resolveRoadmapNavIcon(createNavIconQuery(undefined, url)) ?? FileText;
+  const section = contentPathFromUrl(url, "/roadmap").split("/")[0] ?? "";
+  return (
+    resolveRoadmapNavIcon(createNavIconQuery(undefined, url)) ??
+    ROADMAP_SECTION_ICON_LOOKUP[section] ??
+    Map
+  );
 }
 
 export function getSectionIconForSlug(
@@ -229,7 +267,7 @@ export function getSectionIconForSlug(
 ): LucideIcon {
   const slug = sectionSlug as string;
   if (baseUrl === "/roadmap") {
-    return ROADMAP_SECTION_ICON_LOOKUP[slug] ?? FileText;
+    return ROADMAP_SECTION_ICON_LOOKUP[slug] ?? Map;
   }
 
   return SiteNavIconService.docs.resolve({
