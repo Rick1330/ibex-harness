@@ -1,0 +1,100 @@
+---
+title: "ADR-0005: Postgres migration strategy"
+description: "Architecture decision record 0005."
+adrId: "0005"
+status: "Accepted"
+date: "2026-06-02"
+authors: "IBEX Harness team"
+---
+
+# ADR-0005: Postgres migration strategy
+
+- **Status:** Accepted
+- **Date:** 2026-06-02
+- **Authors:** IBEX Harness team
+
+## Context
+
+Phase 1 Goal 1.1 requires a versioned PostgreSQL schema for the auth data plane (`ibex_core.organizations`, `ibex_core.tokens`) with row-level security before token validation logic lands. The repo has local Postgres via Docker Compose ([infra/compose/dev](../../infra/compose/dev/docker-compose.yml)) and a single root Go module ([go.mod](../../go.mod)), but no migration runner or applied DDL yet.
+
+We need a tool choice, directory layout, DSN conventions (Python services use `postgresql+asyncpg://`; Go uses `lib/pq`), CI policy, and rollback rules consistent with [DATABASE_SCHEMA.md](/docs/database_schema) and [SECURITY.md](/docs/security).
+
+## Decision
+
+### 1) Migration tool and layout
+
+- **Tool:** [golang-migrate](https://github.com/golang-migrate/migrate) v4 with file-based SQL.
+- **Directory:** `infra/migrations/postgres/`
+- **Naming:** `{version}_{title}.up.sql` and matching `.down.sql` (e.g. `000001_init_schemas.up.sql`).
+- **Schema evolution:** Follow expand-contract in [DATABASE_SCHEMA.md](/docs/database_schema); production does not automate `down`.
+
+### 2) Runner — Go embed (not shell-only CLI)
+
+- Migrations are embedded via `//go:embed *.sql` in package `github.com/Rick1330/ibex-harness/infra/migrations/postgres`.
+- CLI: `infra/migrations/postgres/cmd/migrate` with commands `up`, `down` (exactly one step), `version`.
+- Invoked locally via `make db-migrate` → [infra/scripts/db-migrate.sh](../../infra/scripts/db-migrate.sh) → `go run ./infra/migrations/postgres/cmd/migrate`.
+- **Rationale:** Version pinned in root `go.mod`/`go.sum` (reproducible CI); avoids installing a separate `migrate` binary on `PATH` (Windows Git Bash); integration tests import the same `Up()`/`Down()` API without shelling out.
+
+### 3) DSN resolution
+
+Priority:
+
+1. `POSTGRES_MIGRATE_DSN` if set (Go/libpq form: `postgres://user:pass@host:port/db?sslmode=disable`)
+2. Else `POSTGRES_DSN` with driver suffix stripped (`+asyncpg`, `+psycopg`, etc.) and scheme normalized to `postgres://`
+3. Else default dev: `postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable`
+
+Never log full DSNs (passwords).
+
+### 4) Rollback policy
+
+- **Local/dev:** `make db-migrate-down` runs one `down` migration step for experimentation.
+- **Production:** No automated `down`; use expand-contract and forward-only migrations.
+
+### 5) RLS and application role
+
+- Tenant tables enable RLS with policies from [DATABASE_SCHEMA.md](/docs/database_schema).
+- `FORCE ROW LEVEL SECURITY` on tenant tables so table owners cannot bypass policies accidentally.
+- Policies compare `app.is_service_account` to the string `'true'` (not `::boolean` cast) so missing settings fail closed without cast errors.
+- Role `ibex_app` (`NOLOGIN`) receives DML grants; application sessions use `SET ROLE ibex_app` after connecting as the migration/database user.
+
+### 6) Python / Alembic
+
+- **Canonical OLTP DDL** for shared `ibex_core` tables lives under `infra/migrations/postgres/`.
+- Per-service Alembic (if introduced later) must not diverge; coordinate via ADR when Python services need local migrations.
+
+### 7) Extensions
+
+- Do not `CREATE EXTENSION vector` until memory schema milestones require pgvector (dev image already includes it).
+
+### 8) CI
+
+- Advisory job `db-migrate-smoke`: ephemeral Postgres 16, migrate up twice (idempotent), `go test -tags=integration ./infra/migrations/postgres/...`.
+- **Not** added to branch protection required checks ([ADR-0003](/docs/adr/0003-branch-protection-and-merge-policy)).
+
+## Consequences
+
+### Positive
+
+- Single source of truth for auth-plane DDL; idempotent `up` for local and CI.
+- Integration tests exercise real RLS (no mocks).
+- Aligns with Foundation-004 root Go module and Makefile/dev-tool patterns.
+
+### Negative
+
+- Developers need Go 1.22+ to run migrations (aligned with root `go.mod` after golang-migrate).
+- `POSTGRES_DSN` in `.env.example` remains Python-oriented; migrate path documents `POSTGRES_MIGRATE_DSN` or normalization.
+
+## Alternatives considered
+
+| Option | Why not |
+|--------|---------|
+| Shell-only `migrate` CLI via `go install` | Version drift vs CI; fragile on Windows `PATH` |
+| Goose / Atlas | Less alignment with existing milestone spec; golang-migrate widely used |
+| Alembic-only | Split brain between Go auth and Python services; SQL in repo is clearer for shared schema |
+
+## References
+
+- [DATABASE_SCHEMA.md](/docs/database_schema)
+- [Milestone 1.1.1](/roadmap/phase-1-core-platform/milestones/1.1.1-postgres-migrations)
+- [ADR-0002](/docs/adr/0002-repo-foundation-bootstrap)
+- [infra/migrations/postgres](../../infra/migrations/postgres)
