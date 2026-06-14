@@ -1,0 +1,125 @@
+---
+title: Services
+description: Live and planned IBEX Harness services — proxy, auth, memory, context, and workers.
+---
+
+IBEX Harness follows microservice boundaries with a clear split: Go services own the latency-critical proxy and auth paths; Python services own memory, context assembly, and async workers. In Phase 1 only the Go services ship in production compose; everything else is documented here as the integration contract for upcoming milestones.
+
+<Callout type="note" title="Phase 1 shipping surface">
+  Runnable today: **proxy** (HTTP 8080) and **auth** (HTTP 8081, gRPC 9091). Chat routes authenticate and normalize requests, then return `501 PROVIDER_NOT_CONFIGURED`. No Python services are deployed in the default dev stack yet.
+</Callout>
+
+## Live services
+
+### LLM Proxy
+
+<StatusBadge status="stable" />
+
+**Language:** Go · **Port:** 8080
+
+The proxy is the public HTTP edge. Every protected route runs middleware in fixed order: request ID → bearer auth (gRPC) → agent verify → rate limit → body normalization.
+
+| Responsibility | Phase 1 status |
+| --- | --- |
+| `ValidateToken` via auth gRPC | Live |
+| Agent identity (`X-IBEX-Agent-ID`) | Live |
+| Per-org rate limits (Redis) | Live |
+| OpenAI-compatible body normalization | Live |
+| Provider adapter forwarding | Returns `501` |
+| Context / memory injection | Not wired |
+
+See [Proxy overview](/docs/proxy/overview) for middleware detail and probe commands.
+
+### Auth Service
+
+<StatusBadge status="stable" />
+
+**Language:** Go · **HTTP:** 8081 · **gRPC:** 9091
+
+Central identity store. Issues PATs (Argon2id-hashed), validates tokens and agents for the proxy, and enforces Postgres RLS on `ibex_core` tables.
+
+| gRPC RPC | Purpose |
+| --- | --- |
+| `ValidateToken` | Resolve org_id, permissions, token_id from bearer PAT |
+| `ValidateAgent` | Confirm agent belongs to org |
+| `CreateToken` / `RevokeToken` / `ListTokens` | PAT lifecycle |
+
+The proxy has no direct database connection in Phase 1 — all identity reads go through auth. See [Auth overview](/docs/auth/overview) and [ADR-0011](/docs/adr/0011-proxy-auth-client).
+
+<CardGrid>
+  <DocCard title="Proxy" description="Middleware chain, rate limits, and routing." href="/docs/proxy/overview" iconName="Waypoints" category="guide" badge="Live" />
+  <DocCard title="Auth" description="PAT issuance, gRPC validation, and RLS." href="/docs/auth/overview" iconName="Shield" category="guide" badge="Live" />
+  <DocCard title="Proxy auth client" description="ADR for gRPC client and fail-closed behavior." href="/docs/adr/0011-proxy-auth-client" iconName="FileCode" category="reference" />
+</CardGrid>
+
+## Planned services
+
+These services are specified in engineering docs and will appear in compose as their milestones land. Integrators should design against these contracts now; do not assume they are reachable in Phase 1.
+
+### Memory Service
+
+<StatusBadge status="beta" />
+
+**Language:** Python (FastAPI) · **Phase:** 2+
+
+Write, deduplicate, and retrieve agent memories. Semantic search via pgvector, PII redaction, conflict detection triggers, and hot-cache writes to Redis. Target: p95 write &lt;200ms, p95 search &lt;100ms.
+
+### Context Assembly Engine
+
+<StatusBadge status="beta" />
+
+**Language:** Python (gRPC) · **Phase:** 2+
+
+Assembles directive + memories + conversation history within the model token budget. Parallel retrieval with a 40ms deadline; greedy knapsack packing by composite relevance score.
+
+### Embedding Service
+
+<StatusBadge status="beta" />
+
+**Language:** Python (FastAPI) · **Phase:** 2+
+
+Batch embedding via `all-MiniLM-L6-v2` (384 dimensions). Buffers requests (64 items or 50ms) for GPU throughput.
+
+### Background Workers
+
+<StatusBadge status="beta" />
+
+**Language:** Python (Celery) · **Phase:** 3+
+
+Async pipelines: memory extraction after each inference, conflict resolution, behavioral fingerprinting, drift detection, notifications, and garbage collection. Redis Streams as the job broker.
+
+### API Server & Dashboard
+
+<StatusBadge status="beta" />
+
+**Languages:** Python (FastAPI) + Next.js · **Phase:** 4+
+
+Management REST API and operator dashboard for agents, directives, memories, and drift alerts.
+
+<CardGrid>
+  <DocCard title="Data model" description="Orgs, agents, tokens, and future memory tables." href="/docs/architecture/data-model" iconName="Database" category="reference" />
+  <DocCard title="Request lifecycle" description="End-to-end proxy flow with sequence diagram." href="/docs/architecture/request-lifecycle" iconName="GitBranch" category="guide" />
+  <DocCard title="Glossary" description="Service names, acronyms, and domain terms." href="/docs/glossary" iconName="BookOpen" category="reference" />
+</CardGrid>
+
+## Shared Go packages
+
+Cross-cutting infrastructure lives in `packages/*` and is imported by proxy and auth:
+
+| Package | Role |
+| --- | --- |
+| `logger` | Structured JSON logging (mandatory in services) |
+| `reqid` | UUID v7 request ID propagation |
+| `ratelimit` | Redis sliding-window limiter interface |
+| `permissions` | 64-bit permission bitmap ([ADR-0009](/docs/adr/0009-permission-bitmap)) |
+| `apierror` | Canonical error codes |
+| `metrics` / `telemetry` | Prometheus and OpenTelemetry |
+
+## Infrastructure dependencies
+
+| Store | Used by | Phase 1 |
+| --- | --- | --- |
+| PostgreSQL 16 | Auth (identity) | Live |
+| Redis 7 | Proxy (rate limits) | Live |
+| ClickHouse | Proxy (async traces) | Planned |
+| MinIO | Session archives | Planned |
