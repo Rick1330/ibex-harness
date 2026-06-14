@@ -1,0 +1,134 @@
+---
+title: Health and metrics
+description: Liveness, readiness, and Prometheus metrics endpoints on auth and proxy services (ADR-0022).
+---
+
+Both Go services expose three operational HTTP routes on their respective **`IBEX_PORT`** values: proxy **8080**, auth **8081**. These endpoints are unauthenticated and intended for load balancers, Kubernetes probes, and Prometheus scrapes.
+
+<Callout type="note" title="Contract">
+  Response schemas and checker classification are defined in [ADR-0022](/docs/adr/0022-health-check-contract) and implemented via `packages/healthcheck`.
+</Callout>
+
+## Endpoints
+
+<Endpoint
+  method="GET"
+  path="/health"
+  description="Liveness — always 200 when the process responds; no external dependency checks."
+/>
+
+<Endpoint
+  method="GET"
+  path="/ready"
+  description="Readiness — 200 when critical dependencies are healthy; 503 when any critical check fails."
+/>
+
+<Endpoint
+  method="GET"
+  path="/metrics"
+  description="Prometheus text exposition format from packages/metrics."
+/>
+
+Apply the same three routes on **both** `http://localhost:8080` (proxy) and `http://localhost:8081` (auth).
+
+## Response schemas
+
+### GET /health
+
+Always returns **200** with minimal JSON:
+
+```json
+{
+  "status": "ok",
+  "checks": {}
+}
+```
+
+Use for **liveness** probes. Failure → restart the pod/process.
+
+### GET /ready
+
+Returns dependency detail:
+
+```json
+{
+  "status": "ok",
+  "checks": {
+    "postgres": { "status": "ok", "latency_ms": 2 },
+    "auth_grpc": { "status": "ok", "latency_ms": 4 }
+  }
+}
+```
+
+| Top-level `status` | HTTP | Meaning |
+| --- | --- | --- |
+| `ok` | 200 | All critical checks passed |
+| `degraded` | 200 | Critical OK; advisory failure (none in Phase 1) |
+| `unhealthy` | 503 | At least one critical check failed |
+
+Per-check timeout: **500ms**. Overall request budget: **750ms**.
+
+### Critical checks by service
+
+| Service | Check name | What it verifies |
+| --- | --- | --- |
+| Auth | `postgres` | `SELECT 1` via pool |
+| Auth | `grpc` | TCP reachability to gRPC listen address |
+| Proxy | `auth_grpc` | ValidateToken with sentinel probe token; `Unauthenticated` = reachable |
+| Proxy | `redis` | `PING` over RESP |
+
+Use **readiness** probes for load-balancer membership. A failing `/ready` removes traffic without restarting the pod.
+
+## Probe examples
+
+<CodeTabs>
+  <CodeTab label="curl">
+```bash
+# Liveness
+curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8080/health
+
+# Readiness (proxy — needs auth gRPC + Redis)
+curl -s http://localhost:8080/ready | jq
+
+# Metrics scrape
+curl -s http://localhost:8080/metrics | head
+```
+  </CodeTab>
+  <CodeTab label="Kubernetes (preview)">
+```yaml
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 8080
+  periodSeconds: 10
+readinessProbe:
+  httpGet:
+    path: /ready
+    port: 8080
+  periodSeconds: 5
+  failureThreshold: 3
+```
+  </CodeTab>
+</CodeTabs>
+
+<Callout type="tip" title="make dev-smoke">
+  `make dev-smoke` asserts proxy `/health` and `/ready` return 200 when compose, auth, and proxy are running with seed data.
+</Callout>
+
+## Metrics catalog (Phase 1)
+
+Scrape `/metrics` on both services. Key series include:
+
+| Metric | Type | Labels | Service |
+| --- | --- | --- | --- |
+| `ibex_proxy_requests_total` | Counter | route, method, code | Proxy |
+| `ibex_proxy_auth_validate_duration_seconds` | Histogram | result | Proxy |
+| `ibex_auth_validate_token_duration_seconds` | Histogram | result | Auth |
+| `ibex_auth_validate_agent_duration_seconds` | Histogram | result | Auth |
+
+Full catalog: [ADR-0021](/docs/adr/0021-prometheus-metric-catalog).
+
+## Related
+
+- [Docker Compose](/docs/deployment/docker-compose) — local boot order
+- [Kubernetes](/docs/deployment/kubernetes) — future probe wiring (not shipped)

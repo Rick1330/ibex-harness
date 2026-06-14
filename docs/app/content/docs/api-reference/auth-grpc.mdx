@@ -1,0 +1,140 @@
+---
+title: Auth gRPC (ValidateToken, ValidateAgent)
+description: Internal AuthService RPCs consumed by the proxy — not exposed on the public internet in Phase 1.
+---
+
+The auth service exposes `ibex.auth.v1.AuthService` on **`IBEX_GRPC_PORT`** (default **9091**). The proxy is the primary caller in Phase 1. Management RPCs (`CreateToken`, `RevokeToken`, `ListTokens`) exist but are out of scope for this page — see milestone 1.1.4 in the roadmap.
+
+<Callout type="warning" title="Internal only">
+  Do not expose port 9091 to the public internet. Production uses mTLS on the internal mesh. Contract policy: [ADR-0006](/docs/adr/0006-auth-proto-contract).
+</Callout>
+
+## Service definition
+
+```protobuf
+service AuthService {
+  rpc ValidateToken(ValidateTokenRequest) returns (ValidateTokenResponse);
+  rpc ValidateAgent(ValidateAgentRequest) returns (ValidateAgentResponse);
+}
+```
+
+Source: `packages/proto/proto/ibex/auth/v1/auth.proto`
+
+## ValidateToken
+
+Called on every protected proxy request **before** the handler reads the body. No caller metadata is required on the hot path.
+
+```text
+RPC: ibex.auth.v1.AuthService/ValidateToken
+```
+
+Parse and verify a bearer PAT; return tenant context on success.
+
+### Request
+
+<ParamTable
+  params={[
+    {
+      name: 'access_token',
+      type: 'string',
+      required: true,
+      description:
+        'Full bearer value from Authorization header (e.g. ibex_pat_…). Never log in implementations.',
+    },
+  ]}
+/>
+
+### Response (success)
+
+<ParamTable
+  params={[
+    {
+      name: 'org_id',
+      type: 'string (uuid)',
+      required: true,
+      description: 'Organization scope for RLS and rate-limit keys.',
+    },
+    {
+      name: 'permissions',
+      type: 'int64',
+      required: true,
+      description: 'Permission bitmap — see ADR-0009 and packages/permissions.',
+    },
+    {
+      name: 'agent_id',
+      type: 'string (uuid)',
+      description: 'Optional: agent_id, user_id, token_id, expires_at when present on token.',
+    },
+  ]}
+/>
+
+### gRPC status codes
+
+| gRPC code | Meaning |
+| --- | --- |
+| `OK` | Token valid |
+| `Unauthenticated` | Missing, malformed, expired, or revoked token |
+| `Internal` | Postgres or hashing failure (logged server-side) |
+| `DeadlineExceeded` | Exceeded proxy-side validate budget |
+
+Proxy maps transport failures to HTTP **503** `SERVICE_DEGRADED`. See [Errors](/docs/api-reference/errors).
+
+## ValidateAgent
+
+Called after `ValidateToken` on protected routes. Confirms `X-IBEX-Agent-ID` belongs to the token org and is active.
+
+```text
+RPC: ibex.auth.v1.AuthService/ValidateAgent
+```
+
+### Request
+
+<ParamTable
+  params={[
+    {
+      name: 'agent_id',
+      type: 'string (uuid)',
+      required: true,
+      description: 'Value from X-IBEX-Agent-ID header.',
+    },
+    {
+      name: 'org_id',
+      type: 'string (uuid)',
+      required: true,
+      description: 'Org from ValidateToken response — never from the URL alone.',
+    },
+  ]}
+/>
+
+### Response (success)
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `agent_id` | uuid string | Echo of verified agent |
+| `org_id` | uuid string | Echo of verified org |
+| `status` | string | `active`, `paused`, `suspended`, or `archived` |
+
+### gRPC status codes
+
+| gRPC code | Proxy HTTP | IBEX code |
+| --- | --- | --- |
+| `OK` | 200 (handler continues) | — |
+| `PermissionDenied` | 403 | `AGENT_NOT_AUTHORIZED` or `AGENT_SUSPENDED` |
+| `InvalidArgument` | 400 | validation failure |
+| `Unavailable` / transport error | 503 | `AUTH_UNAVAILABLE` |
+
+Cross-org agent lookups return **`PermissionDenied`**, not `NotFound`. Policy: [ADR-0016](/docs/adr/0016-agent-identity-verification).
+
+## Example (grpcurl)
+
+```bash
+grpcurl -plaintext -d '{"access_token":"ibex_pat_…LOCALDEVELOPMENTONLY"}' \
+  localhost:9091 ibex.auth.v1.AuthService/ValidateToken
+```
+
+Requires `make db-seed`, running auth, and `make proto-gen` stubs.
+
+## Related
+
+- [Authentication](/docs/proxy/authentication) — required HTTP headers
+- [Errors](/docs/api-reference/errors) — HTTP envelope for proxy-facing failures

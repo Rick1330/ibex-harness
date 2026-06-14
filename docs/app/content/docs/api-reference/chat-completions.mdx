@@ -1,0 +1,144 @@
+---
+title: Chat completions (Phase 1 stub)
+description: OpenAI-compatible POST /v1/chat/completions — auth and validation succeed; provider forwarding returns 501 until Phase 2.
+---
+
+The proxy exposes an OpenAI-shaped chat endpoint for SDK drop-in compatibility. Phase 1 parses and validates the request, runs auth and agent verification, applies rate limits, then stops with **501 Not Implemented** — no upstream LLM call is made.
+
+<Callout type="experimental" title="501 is expected in Phase 1">
+  A **501** with `PROVIDER_NOT_CONFIGURED` means token validation, agent verification, body normalization, and routing succeeded. Provider adapters ship in Phase 2 — see [Provider adapters](/docs/proxy/provider-adapters).
+</Callout>
+
+## Endpoint
+
+<Endpoint
+  method="POST"
+  path="/v1/chat/completions"
+  description="OpenAI-compatible chat completions. Gateway alias: POST /proxy/v1/chat/completions (same handler)."
+/>
+
+Decision record: [ADR-0012](/docs/adr/0012-proxy-request-normalization). Quickstart also probes org-scoped paths — path `org_id` must match the token org.
+
+## Required headers
+
+<ParamTable
+  params={[
+    {
+      name: 'Authorization',
+      type: 'string',
+      required: true,
+      description: 'Bearer PAT issued by auth service.',
+    },
+    {
+      name: 'X-IBEX-Agent-ID',
+      type: 'string (uuid)',
+      required: true,
+      description: 'Calling agent; must belong to the token organization.',
+    },
+    {
+      name: 'Content-Type',
+      type: 'string',
+      required: true,
+      description: 'Must be application/json (charset suffix allowed).',
+    },
+  ]}
+/>
+
+## Request body (parsed fields)
+
+Per ADR-0012, the proxy decodes OpenAI-shaped JSON and ignores unknown top-level keys:
+
+<ParamTable
+  params={[
+    {
+      name: 'model',
+      type: 'string',
+      required: true,
+      description: 'Model identifier (validated in ADR-0013; max 256 chars).',
+    },
+    {
+      name: 'messages',
+      type: 'array',
+      required: true,
+      description: 'Objects with role and content strings; max 1000 messages.',
+    },
+    {
+      name: 'stream',
+      type: 'boolean',
+      description: 'Optional OpenAI fields (temperature, max_tokens) also parsed.',
+    },
+  ]}
+/>
+
+After successful parse, the proxy logs **metadata only** (`org_id`, `request_id`, `model`, `message_count`, `stream`) — never message content.
+
+## Phase 1 response
+
+### 501 Not Implemented (success path)
+
+```json
+{
+  "error": {
+    "code": "PROVIDER_NOT_CONFIGURED",
+    "message": "No LLM provider is configured for this request",
+    "request_id": "019abc…",
+    "timestamp": "2026-06-14T12:00:00.000Z"
+  }
+}
+```
+
+Response headers include `X-Request-ID`, `X-Trace-ID`, and `X-Response-Time` per [ADR-0013](/docs/adr/0013-proxy-input-validation-and-error-envelope).
+
+## Try it locally
+
+<CodeTabs>
+  <CodeTab label="curl">
+```bash
+curl -s -w "\nHTTP %{http_code}\n" \
+  -X POST http://localhost:8080/v1/chat/completions \
+  -H "Authorization: Bearer ${IBEX_DEV_TOKEN}" \
+  -H "X-IBEX-Agent-ID: ${IBEX_DEV_AGENT_ID}" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"gpt-4o","messages":[{"role":"user","content":"hello"}]}'
+```
+  </CodeTab>
+  <CodeTab label="python">
+```python
+import os, requests
+r = requests.post(
+    "http://localhost:8080/v1/chat/completions",
+    headers={
+        "Authorization": f"Bearer {os.environ['IBEX_DEV_TOKEN']}",
+        "X-IBEX-Agent-ID": os.environ["IBEX_DEV_AGENT_ID"],
+        "Content-Type": "application/json",
+    },
+    json={"model": "gpt-4o", "messages": [{"role": "user", "content": "hello"}]},
+)
+print(r.status_code, r.json()["error"]["code"])  # 501 PROVIDER_NOT_CONFIGURED
+```
+  </CodeTab>
+</CodeTabs>
+
+Expected: HTTP **501** and `"PROVIDER_NOT_CONFIGURED"`.
+
+<ProcessSteps
+  steps={[
+    {
+      title: 'Auth + agent verify',
+      description: 'ValidateToken and ValidateAgent over gRPC before body handling completes.',
+    },
+    {
+      title: 'Parse + validate JSON',
+      description: 'OpenAI-shaped body normalized per ADR-0012/0013.',
+    },
+    {
+      title: '501 stub',
+      description: 'No upstream LLM call — PROVIDER_NOT_CONFIGURED until Phase 2.',
+    },
+  ]}
+/>
+
+## Related
+
+- [Quickstart](/docs/getting-started/quickstart) — five-minute local path
+- [Authentication](/docs/proxy/authentication) — header requirements

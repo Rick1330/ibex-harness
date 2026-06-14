@@ -1,12 +1,150 @@
 ---
 title: Errors
-description: Standard error codes and response shapes returned by the proxy and auth APIs.
+description: Stable JSON error envelope for proxy HTTP responses — codes from packages/apierror per ADR-0013.
 ---
 
-# Errors
+Every proxy JSON error uses the same envelope shape. Codes are **UPPER_SNAKE_CASE** strings from `packages/apierror` — never ad-hoc literals in handlers. Design record: [ADR-0013](/docs/adr/0013-proxy-input-validation-and-error-envelope).
 
-Standard error codes and response shapes returned by the proxy and auth APIs.
-
-<Callout type="note">
-  Full content ships in Phase 1.5 Waves 6–8.
+<Callout type="note" title="Phase 1 scope">
+  This page covers **proxy HTTP** errors returned to integrators. Auth gRPC uses standard gRPC status codes; see [Auth gRPC](/docs/api-reference/auth-grpc). Phase 2+ REST resources are not implemented yet.
 </Callout>
+
+## Envelope shape
+
+```json
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Request validation failed",
+    "detail": "One or more fields failed validation",
+    "docs_url": "https://docs.ibexharness.com/errors/VALIDATION_ERROR",
+    "request_id": "019abc-def0-7890-abcd-ef1234567890",
+    "timestamp": "2026-06-14T12:00:00.000Z",
+    "field_errors": [
+      {
+        "field": "model",
+        "code": "REQUIRED",
+        "message": "model is required"
+      }
+    ]
+  }
+}
+```
+
+| Field | Always present | Description |
+| --- | --- | --- |
+| `code` | Yes | Canonical code from `packages/apierror` |
+| `message` | Yes | Safe, human-readable summary |
+| `detail` | No | Additional context (no secrets) |
+| `docs_url` | No | Set when `IBEX_ERROR_DOCS_BASE` is configured |
+| `request_id` | Yes | UUID v4/v7 from `packages/reqid` |
+| `timestamp` | Yes | UTC RFC 3339 |
+| `field_errors` | No | Present on `VALIDATION_ERROR` |
+
+### Field error codes
+
+`REQUIRED`, `TOO_LONG`, `TOO_MANY`, `INVALID_ENUM`, `INVALID_FORMAT`
+
+## Response headers
+
+All error responses include:
+
+| Header | Description |
+| --- | --- |
+| `X-Request-ID` | Same value as `error.request_id` |
+| `X-Trace-ID` | Synthetic trace id until full OTel wiring |
+| `X-Response-Time` | Server processing time in milliseconds |
+
+Configurable via `IBEX_REQUEST_ID_HEADER` and `IBEX_TRACE_ID_HEADER`.
+
+## Proxy error codes (Phase 1)
+
+### Client errors (4xx)
+
+| HTTP | Code | When |
+| --- | --- | --- |
+| 400 | `INVALID_JSON` | Malformed JSON body |
+| 400 | `VALIDATION_ERROR` | Semantic validation failure (+ `field_errors`) |
+| 400 | `MISSING_AGENT_ID` | `X-IBEX-Agent-ID` missing on protected routes |
+| 401 | `MISSING_TOKEN` | No `Authorization` header |
+| 401 | `INVALID_TOKEN` | Bearer malformed, expired, or revoked |
+| 403 | `INSUFFICIENT_PERMISSIONS` | Token lacks route permission |
+| 403 | `AGENT_NOT_AUTHORIZED` | Agent unknown or wrong org |
+| 403 | `AGENT_SUSPENDED` | Agent paused, suspended, or archived |
+| 405 | `METHOD_NOT_ALLOWED` | Wrong HTTP method for route |
+| 413 | `PAYLOAD_TOO_LARGE` | Body exceeds `IBEX_MAX_REQUEST_BODY_BYTES` (1 MiB) |
+| 415 | `UNSUPPORTED_MEDIA_TYPE` | Chat POST without `application/json` |
+| 429 | `RATE_LIMITED` | Org RPM limit exceeded |
+
+### Server / dependency errors (5xx)
+
+| HTTP | Code | When |
+| --- | --- | --- |
+| 501 | `PROVIDER_NOT_CONFIGURED` | Valid request; no LLM provider wired (Phase 1 stub) |
+| 503 | `SERVICE_DEGRADED` | Auth ValidateToken failed unexpectedly / deadline |
+| 503 | `AUTH_UNAVAILABLE` | Auth ValidateAgent transport failure |
+| 500 | `INTERNAL_ERROR` | Unhandled server fault |
+
+<Callout type="warning" title="Cross-tenant access">
+  Cross-org resource access returns **403** `AGENT_NOT_AUTHORIZED` or `INSUFFICIENT_PERMISSIONS` — never **404** — to prevent enumeration attacks.
+</Callout>
+
+## Examples
+
+<CodeTabs>
+  <CodeTab label="Missing token">
+```bash
+curl -s -X POST http://localhost:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"gpt-4o","messages":[]}'
+```
+```json
+{
+  "error": {
+    "code": "MISSING_TOKEN",
+    "message": "Authorization header is required",
+    "request_id": "…",
+    "timestamp": "…"
+  }
+}
+```
+  </CodeTab>
+  <CodeTab label="Validation error">
+```json
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "field_errors": [{ "field": "model", "code": "REQUIRED", "message": "…" }]
+  }
+}
+```
+  </CodeTab>
+</CodeTabs>
+
+Rate-limited responses include `Retry-After` and `X-RateLimit-*` headers with code `RATE_LIMITED`.
+
+## HTTP status mapping
+
+Implemented in `packages/apierror.HTTPStatus`. Unknown codes default to **500**.
+
+<ProcessSteps
+  steps={[
+    {
+      title: 'Handler detects failure',
+      description: 'Middleware or handler selects a Code from packages/apierror.',
+    },
+    {
+      title: 'errors.Write / WriteFromRequest',
+      description: 'Proxy internal layer delegates to apierror.Write with request_id from context.',
+    },
+    {
+      title: 'Headers + JSON body',
+      description: 'ResponseHeadersMiddleware sets X-Request-ID, X-Trace-ID, X-Response-Time.',
+    },
+  ]}
+/>
+
+## Related
+
+- [Chat completions](/docs/api-reference/chat-completions) — 501 stub behavior
+- [ADR-0013](/docs/adr/0013-proxy-input-validation-and-error-envelope) — limits and middleware order
