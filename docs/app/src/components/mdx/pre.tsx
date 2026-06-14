@@ -1,5 +1,6 @@
 "use client";
 
+import { FileCode, Terminal } from "lucide-react";
 import {
   forwardRef,
   useCallback,
@@ -9,18 +10,46 @@ import {
 } from "react";
 
 import { CopyButton } from "@/components/mdx/copy-button";
+import {
+  getLanguageDisplayLabel,
+  languageFromChildren,
+  parseCodeLanguage,
+  resolveCodeLanguage,
+} from "@/lib/code-language";
 import { cn } from "@/lib/cn";
 
 export type PreProps = HTMLAttributes<HTMLPreElement> & {
   title?: string;
   icon?: ReactNode;
+  "data-language"?: string;
 };
 
+function isShellLanguage(lang?: string) {
+  if (!lang) return false;
+  return ["bash", "sh", "shell", "zsh", "shellscript"].includes(lang);
+}
+
 export const Pre = forwardRef<HTMLPreElement, PreProps>(function Pre(
-  { title, className, children, icon: _icon, ...props },
+  {
+    title,
+    className,
+    children,
+    icon,
+    "data-language": dataLanguage,
+    ...props
+  },
   ref,
 ) {
   const areaRef = useRef<HTMLDivElement>(null);
+  const lang =
+    dataLanguage ??
+    parseCodeLanguage(className) ??
+    languageFromChildren(children);
+  const tabLabel = getLanguageDisplayLabel(lang, title);
+  const meta = resolveCodeLanguage(lang, title);
+  const languageId = meta?.id ?? lang ?? "code";
+  const shell = isShellLanguage(languageId);
+  const showHeader = Boolean(tabLabel);
 
   const onCopy = useCallback(async () => {
     const pre = areaRef.current?.querySelector("pre");
@@ -32,26 +61,51 @@ export const Pre = forwardRef<HTMLPreElement, PreProps>(function Pre(
     await navigator.clipboard.writeText(clone.textContent ?? "");
   }, []);
 
+  const LabelIcon = shell ? Terminal : meta?.icon ?? FileCode;
+
   return (
-    <figure className="fd-codeblock group relative my-6 overflow-hidden rounded-[4px] border border-border bg-panel text-[13.5px] leading-[1.65]">
-      {title ? (
-        <div className="flex h-7 items-center border-b border-border bg-panel-raised px-3">
-          <figcaption className="truncate font-mono text-xs text-text-tertiary">
-            {title}
+    <figure
+      className="fd-codeblock nd-codeblock not-prose group relative my-7 overflow-hidden rounded-[4px]"
+      data-codeblock
+      data-language={languageId}
+      data-rehype-pretty-code-figure=""
+      {...(title ? { title } : {})}
+    >
+      {showHeader ? (
+        <div className="codeblock-header">
+          <figcaption
+            className="codeblock-tab"
+            data-rehype-pretty-code-title=""
+          >
+            {typeof icon === "string" ? (
+              <span
+                aria-hidden
+                className="codeblock-tab-icon [&_svg]:size-3.5"
+                dangerouslySetInnerHTML={{ __html: icon }}
+              />
+            ) : (
+              <LabelIcon
+                aria-hidden
+                className="codeblock-tab-icon size-3.5 shrink-0 opacity-60"
+                strokeWidth={2}
+              />
+            )}
+            <span className="truncate">{tabLabel}</span>
           </figcaption>
+          <CopyButton className="codeblock-copy" onCopy={onCopy} />
         </div>
       ) : null}
-      <div ref={areaRef} className="relative">
-        <CopyButton
-          className="absolute right-2 top-2 z-[2] opacity-0 transition-opacity group-hover:opacity-100"
-          onCopy={onCopy}
-        />
+      <div ref={areaRef} className="codeblock-body">
+        {!showHeader ? (
+          <CopyButton className="codeblock-copy" onCopy={onCopy} />
+        ) : null}
         <pre
           ref={ref}
           className={cn(
-            "overflow-x-auto p-4 font-mono leading-[1.65] focus-visible:outline-none",
+            "overflow-x-auto font-mono text-[0.875rem] leading-[1.75] focus-visible:outline-none",
             className,
           )}
+          data-language={dataLanguage ?? lang}
           {...props}
         >
           {children}

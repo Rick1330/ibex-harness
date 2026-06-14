@@ -20,3 +20,24 @@ export function Kbd({ children, className }: KbdProps) {
     </kbd>
   );
 }
+
+type KbdComboProps = {
+  keys: string[];
+  className?: string;
+};
+
+export function KbdCombo({ keys, className }: KbdComboProps) {
+  return (
+    <span className={cn("inline-flex items-center gap-1", className)}>
+      {keys.map((key, index) => (
+        <span className="inline-flex items-center gap-1" key={`${key}-${index}`}>
+          <Kbd>{key}</Kbd>
+          {index < keys.length - 1 ? (
+            <span className="text-text-tertiary">+</span>
+          ) : null}
+        </span>
+      ))}
+    </span>
+  );
+}
+

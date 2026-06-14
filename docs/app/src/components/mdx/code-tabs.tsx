@@ -19,6 +19,8 @@ type CodeTabProps = {
 
 type CodeTabsProps = {
   defaultValue?: string;
+  value?: string;
+  onValueChange?: (value: string) => void;
   children: ReactNode;
 };
 
@@ -42,14 +44,24 @@ function collectTabs(children: ReactNode) {
     });
 }
 
-export function CodeTabs({ defaultValue, children }: CodeTabsProps) {
+export function CodeTabs({
+  defaultValue,
+  value,
+  onValueChange,
+  children,
+}: CodeTabsProps) {
   const tabs = useMemo(() => collectTabs(children), [children]);
   const initial = defaultValue ?? tabs[0]?.value ?? "";
 
   if (tabs.length === 0) return null;
 
+  const rootProps =
+    value !== undefined
+      ? { value, onValueChange }
+      : { defaultValue: initial };
+
   return (
-    <Tabs.Root className="my-6" defaultValue={initial}>
+    <Tabs.Root className="my-6" {...rootProps}>
       <Tabs.List className="flex gap-0 border-b border-border">
         {tabs.map((tab) => (
           <Tabs.Trigger

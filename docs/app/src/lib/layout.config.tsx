@@ -7,12 +7,20 @@ import {
 } from "@/components/layout/docs-sidebar";
 import { NavSearch } from "@/components/layout/nav-search";
 import { Wordmark } from "@/components/wordmark";
-import { GITHUB_OWNER, GITHUB_REPO } from "@/lib/github";
+
+function SidebarSectionLabel() {
+  return (
+    <p className="px-1 text-[11px] font-semibold uppercase tracking-wider text-text-tertiary">
+      Documentation
+    </p>
+  );
+}
 
 export function baseOptions(): BaseLayoutProps {
   return {
-    githubUrl: `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}`,
+    disableThemeSwitch: true,
     nav: {
+      enabled: false,
       title: <Wordmark />,
     },
   };
@@ -21,10 +29,15 @@ export function baseOptions(): BaseLayoutProps {
 export function docsLayoutOptions(): Pick<DocsLayoutProps, "sidebar"> {
   return {
     sidebar: {
-      defaultOpenLevel: 1,
+      defaultOpenLevel: 0,
       collapsible: true,
       hideSearch: true,
-      banner: <NavSearch className="max-md:hidden" />,
+      banner: (
+        <div className="sidebar-banner flex flex-col gap-4 border-b border-border px-1 pb-5">
+          <SidebarSectionLabel />
+          <NavSearch className="max-md:hidden" />
+        </div>
+      ),
       components: {
         Item: DocsSidebarItem,
         Folder: DocsSidebarFolder,
