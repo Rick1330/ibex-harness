@@ -6,10 +6,10 @@ import { useCallback, useRef } from "react";
 import { CopyButton } from "@/components/mdx/copy-button";
 import { cn } from "@/lib/cn";
 
-type ShellBlockProps = {
+type ShellBlockProps = Readonly<{
   command: string;
   className?: string;
-};
+}>;
 
 export function ShellBlock({ command, className }: ShellBlockProps) {
   const areaRef = useRef<HTMLDivElement>(null);

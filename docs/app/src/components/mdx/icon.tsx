@@ -4,10 +4,10 @@ import { cn } from "@/lib/cn";
 import { iconFromLucideName } from "@/lib/sidebar-icon-resolvers";
 import { toNavIconName } from "@/lib/sidebar-icons";
 
-type IconProps = {
+type IconProps = Readonly<{
   name: string;
   className?: string;
-};
+}>;
 
 function resolveLucideIcon(name: string): LucideIcon | undefined {
   return iconFromLucideName(toNavIconName(name));

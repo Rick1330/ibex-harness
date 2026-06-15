@@ -2,14 +2,13 @@ import Link from "next/link";
 
 import type { InferPageType } from "fumadocs-core/source";
 
-import { PostCard } from "@/components/blog/post-card";
 import type { blogSource } from "@/lib/source";
 
 type BlogPage = InferPageType<typeof blogSource>;
 
-type BlogHeroProps = {
+type BlogHeroProps = Readonly<{
   featured?: BlogPage;
-};
+}>;
 
 export function BlogHero({ featured }: BlogHeroProps) {
   return (

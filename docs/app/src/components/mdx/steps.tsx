@@ -8,16 +8,16 @@ import {
 
 import { cn } from "@/lib/cn";
 
-type StepsProps = {
+type StepsProps = Readonly<{
   children: ReactNode;
-};
+}>;
 
-type StepProps = {
+type StepProps = Readonly<{
   title?: string;
   children: ReactNode;
   index?: number;
   isLast?: boolean;
-};
+}>;
 
 export function Step({ title, children, index = 1, isLast = false }: StepProps) {
   return (

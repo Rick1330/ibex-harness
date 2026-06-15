@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-type PostCardProps = {
+type PostCardProps = Readonly<{
   url: string;
   title: string;
   date: string;
@@ -9,7 +9,7 @@ type PostCardProps = {
   readingTime?: string;
   author?: string;
   authorUrl?: string;
-};
+}>;
 
 export function PostCard({
   url,

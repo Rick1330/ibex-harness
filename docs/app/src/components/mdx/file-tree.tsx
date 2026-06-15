@@ -5,9 +5,9 @@ import { useState, type ReactNode } from "react";
 
 import { cn } from "@/lib/cn";
 
-type FileTreeProps = {
+type FileTreeProps = Readonly<{
   children: ReactNode;
-};
+}>;
 
 export function FileTree({ children }: FileTreeProps) {
   return (
@@ -17,11 +17,11 @@ export function FileTree({ children }: FileTreeProps) {
   );
 }
 
-type FolderItemProps = {
+type FolderItemProps = Readonly<{
   name: string;
   children?: ReactNode;
   defaultOpen?: boolean;
-};
+}>;
 
 export function FolderItem({
   name,
@@ -58,10 +58,10 @@ export function FolderItem({
   );
 }
 
-type FileItemProps = {
+type FileItemProps = Readonly<{
   name: string;
   highlight?: boolean;
-};
+}>;
 
 export function FileItem({ name, highlight = false }: FileItemProps) {
   return (

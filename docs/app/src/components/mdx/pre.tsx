@@ -25,11 +25,11 @@ export type PreProps = HTMLAttributes<HTMLPreElement> & {
   "data-language"?: string;
 };
 
-type CodeblockHeaderProps = {
+type CodeblockHeaderProps = Readonly<{
   tabLabel: string;
   LabelIcon: LucideIcon;
   onCopy: () => Promise<void>;
-};
+}>;
 
 function CodeblockHeader({ tabLabel, LabelIcon, onCopy }: CodeblockHeaderProps) {
   return (
@@ -47,7 +47,7 @@ function CodeblockHeader({ tabLabel, LabelIcon, onCopy }: CodeblockHeaderProps) 
   );
 }
 
-type CodeblockBodyProps = {
+type CodeblockBodyProps = Readonly<{
   areaRef: React.RefObject<HTMLDivElement | null>;
   showHeader: boolean;
   onCopy: () => Promise<void>;
@@ -57,7 +57,7 @@ type CodeblockBodyProps = {
   lang?: string;
   children: ReactNode;
   preProps: HTMLAttributes<HTMLPreElement>;
-};
+}>;
 
 function CodeblockBody({
   areaRef,

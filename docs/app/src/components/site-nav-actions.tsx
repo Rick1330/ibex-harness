@@ -5,11 +5,11 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { SiteNavLinks } from "@/components/site-nav-links";
 import { GITHUB_OWNER, GITHUB_REPO } from "@/lib/github";
 
-type SiteNavActionsProps = {
+type SiteNavActionsProps = Readonly<{
   onDocs: boolean;
   mobileOpen: boolean;
   onToggleMobile: () => void;
-};
+}>;
 
 export function SiteNavActions({
   onDocs,
@@ -61,11 +61,11 @@ export function SiteNavActions({
   );
 }
 
-type SiteNavMobileMenuProps = {
+type SiteNavMobileMenuProps = Readonly<{
   open: boolean;
   pathname: string;
   onNavigate: () => void;
-};
+}>;
 
 export function SiteNavMobileMenu({ open, pathname, onNavigate }: SiteNavMobileMenuProps) {
   if (!open) return null;

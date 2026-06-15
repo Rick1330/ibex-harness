@@ -11,10 +11,10 @@ const BADGE_VARIANTS = {
 
 export type BadgeVariant = keyof typeof BADGE_VARIANTS;
 
-type BadgeProps = {
+type BadgeProps = Readonly<{
   variant?: BadgeVariant;
   children: ReactNode;
-};
+}>;
 
 export function Badge({ variant = "default", children }: BadgeProps) {
   return (

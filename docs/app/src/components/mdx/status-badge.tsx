@@ -53,9 +53,9 @@ function statusConfig(status: Status): StatusConfig {
   }
 }
 
-type StatusBadgeProps = {
+type StatusBadgeProps = Readonly<{
   status: Status;
-};
+}>;
 
 export function StatusBadge({ status }: StatusBadgeProps) {
   const config = statusConfig(status);

@@ -1,11 +1,11 @@
 import { cn } from "@/lib/cn";
 
-type DiagramProps = {
+type DiagramProps = Readonly<{
   src: string;
   alt: string;
   caption?: string;
   className?: string;
-};
+}>;
 
 export function Diagram({ src, alt, caption, className }: DiagramProps) {
   return (

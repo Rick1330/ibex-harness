@@ -2,12 +2,12 @@
 
 import { cn } from "@/lib/cn";
 
-type TagFilterProps = {
+type TagFilterProps = Readonly<{
   tags: string[];
   active: string | null;
   onChange: (tag: string | null) => void;
   className?: string;
-};
+}>;
 
 export function TagFilter({ tags, active, onChange, className }: TagFilterProps) {
   if (tags.length === 0) return null;

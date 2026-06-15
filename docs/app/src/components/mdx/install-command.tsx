@@ -10,10 +10,10 @@ type PackageManager = "npm" | "pnpm" | "yarn" | "bun";
 const STORAGE_KEY = "ibex-docs-preferred-pm";
 const MANAGERS: PackageManager[] = ["npm", "pnpm", "yarn", "bun"];
 
-type InstallCommandProps = {
+type InstallCommandProps = Readonly<{
   packages: string;
   dev?: boolean;
-};
+}>;
 
 type CommandMap = ReturnType<typeof buildCommands>;
 

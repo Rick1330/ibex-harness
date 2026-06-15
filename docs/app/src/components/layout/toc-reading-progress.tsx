@@ -4,9 +4,9 @@ import { useEffect, useState } from "react";
 
 import { cn } from "@/lib/cn";
 
-type TocReadingProgressProps = {
+type TocReadingProgressProps = Readonly<{
   className?: string;
-};
+}>;
 
 export function useReadingProgress() {
   const [progress, setProgress] = useState(0);

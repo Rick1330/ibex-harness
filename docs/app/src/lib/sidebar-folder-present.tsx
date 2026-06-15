@@ -16,7 +16,6 @@ import {
 import {
   firstNavUrlInFolder,
   folderContainsPath,
-  resolveFolderSectionSlug,
 } from "@/lib/sidebar-folder-slug";
 
 export { folderContainsPath, resolveFolderSectionSlug } from "@/lib/sidebar-folder-slug";

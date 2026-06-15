@@ -7,9 +7,9 @@ import { OnThisPage } from "@/components/layout/toc";
 import { blogSource } from "@/lib/source";
 import { getMDXComponents } from "@/mdx-components";
 
-type BlogPostPageProps = {
+type BlogPostPageProps = Readonly<{
   params: Promise<{ slug: string }>;
-};
+}>;
 
 export default async function BlogPostPage(props: BlogPostPageProps) {
   const { slug } = await props.params;

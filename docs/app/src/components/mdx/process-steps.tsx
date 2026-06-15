@@ -5,9 +5,9 @@ export type ProcessStep = {
   description: string;
 };
 
-type ProcessStepsProps = {
+type ProcessStepsProps = Readonly<{
   steps: ProcessStep[];
-};
+}>;
 
 export function ProcessSteps({ steps }: ProcessStepsProps) {
   return (

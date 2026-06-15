@@ -6,10 +6,10 @@ import Link from "next/link";
 import { cn } from "@/lib/cn";
 import { GITHUB_OWNER, GITHUB_REPO } from "@/lib/github";
 
-type NavGithubLinkProps = {
+type NavGithubLinkProps = Readonly<{
   className?: string;
   showLabel?: boolean;
-};
+}>;
 
 export function NavGithubLink({ className, showLabel = false }: NavGithubLinkProps) {
   return (

@@ -1,10 +1,10 @@
 import Link from "next/link";
 
-type RoadmapReferenceCardProps = {
+type RoadmapReferenceCardProps = Readonly<{
   href: string;
   title: string;
   description: string;
-};
+}>;
 
 export function RoadmapReferenceCard({
   href,

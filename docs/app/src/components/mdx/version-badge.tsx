@@ -1,9 +1,9 @@
 import { Badge, type BadgeVariant } from "@/components/mdx/badge";
 
-type VersionBadgeProps = {
+type VersionBadgeProps = Readonly<{
   version: string;
   type?: BadgeVariant;
-};
+}>;
 
 function versionSuffix(type: BadgeVariant): string | undefined {
   switch (type) {

@@ -11,18 +11,18 @@ import {
 
 import { cn } from "@/lib/cn";
 
-type CodeTabProps = {
+type CodeTabProps = Readonly<{
   label: string;
   value?: string;
   children: ReactNode;
-};
+}>;
 
-type CodeTabsProps = {
+type CodeTabsProps = Readonly<{
   defaultValue?: string;
   value?: string;
   onValueChange?: (value: string) => void;
   children: ReactNode;
-};
+}>;
 
 export function CodeTab({ children }: CodeTabProps) {
   return <>{children}</>;

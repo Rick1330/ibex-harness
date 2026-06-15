@@ -9,10 +9,10 @@ export const ogSize = {
 
 export const ogContentType = "image/png";
 
-type OgImageContentProps = {
+type OgImageContentProps = Readonly<{
   title: string;
   description: string;
-};
+}>;
 
 function HornMark() {
   return (

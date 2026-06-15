@@ -18,9 +18,9 @@ import { getPageLastModified } from "@/lib/page-meta";
 import { source } from "@/lib/source";
 import { getMDXComponents } from "@/mdx-components";
 
-type PageProps = {
+type PageProps = Readonly<{
   params: Promise<{ slug?: string[] }>;
-};
+}>;
 
 export const dynamic = "force-static";
 

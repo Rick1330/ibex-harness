@@ -5,9 +5,9 @@ import { useState } from "react";
 
 import { cn } from "@/lib/cn";
 
-type FeedbackWidgetProps = {
+type FeedbackWidgetProps = Readonly<{
   pageId: string;
-};
+}>;
 
 type FeedbackValue = "helpful" | "not-helpful";
 

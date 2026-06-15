@@ -19,7 +19,7 @@ export function useMermaidDiagram(chart: string, stableId?: string) {
   const [error, setError] = useState("");
   const [rendering, setRendering] = useState(true);
 
-  const normalizedChart = chart.replaceAll("\\n", "\n").trim();
+  const normalizedChart = chart.replaceAll(String.raw`\n`, "\n").trim();
   const chartHash = hashString(normalizedChart);
   const diagramKey = stableId ?? chartHash;
   const isDark = (resolvedTheme ?? "dark") === "dark";
@@ -57,7 +57,7 @@ export function useMermaidDiagram(chart: string, stableId?: string) {
 
   useEffect(() => {
     if (!mounted) return;
-    void renderDiagram().catch(() => undefined);
+    renderDiagram().catch(() => undefined);
   }, [mounted, renderDiagram]);
 
   return {

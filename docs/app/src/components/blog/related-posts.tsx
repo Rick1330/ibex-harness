@@ -5,10 +5,10 @@ import type { blogSource } from "@/lib/source";
 
 type BlogPage = InferPageType<typeof blogSource>;
 
-type RelatedPostsProps = {
+type RelatedPostsProps = Readonly<{
   posts: BlogPage[];
   currentUrl: string;
-};
+}>;
 
 export function RelatedPosts({ posts, currentUrl }: RelatedPostsProps) {
   const related = posts.filter((p) => p.url !== currentUrl).slice(0, 3);

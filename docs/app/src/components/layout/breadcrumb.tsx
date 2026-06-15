@@ -10,9 +10,9 @@ import { SidebarIcon, getNavIconForUrl, toNavUrl } from "@/lib/sidebar-icons";
 
 const MAX_LEVELS = 3;
 
-type DocsBreadcrumbProps = {
+type DocsBreadcrumbProps = Readonly<{
   tree: PageTree.Root;
-};
+}>;
 
 export function DocsBreadcrumb({ tree }: DocsBreadcrumbProps) {
   const pathname = usePathname();

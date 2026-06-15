@@ -5,9 +5,9 @@ import type { ReactNode } from "react";
 import { resolveNavIcon, createNavIconQuery, toNavIconName, toNavUrl, SidebarIcon } from "@/lib/sidebar-icons";
 import { cn } from "@/lib/cn";
 
-type CardGridProps = {
+type CardGridProps = Readonly<{
   children: ReactNode;
-};
+}>;
 
 export function CardGrid({ children }: CardGridProps) {
   return (
@@ -19,7 +19,7 @@ export function CardGrid({ children }: CardGridProps) {
 
 type DocCardCategory = "guide" | "reference" | "tutorial" | "example";
 
-type DocCardProps = {
+type DocCardProps = Readonly<{
   title: string;
   description: string;
   href: string;
@@ -27,7 +27,7 @@ type DocCardProps = {
   iconName?: string;
   badge?: string;
   category?: DocCardCategory;
-};
+}>;
 
 function categoryLabel(category: DocCardCategory): string {
   switch (category) {

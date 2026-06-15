@@ -1,7 +1,6 @@
 import Link from "next/link";
 
 import { PhaseCard } from "@/components/roadmap/phase-card";
-import { PhaseTimeline } from "@/components/roadmap/phase-timeline";
 import { RoadmapProgress } from "@/components/roadmap/roadmap-progress";
 import { RoadmapReferenceCard } from "@/components/roadmap/reference-card";
 import { GITHUB_OWNER, GITHUB_REPO } from "@/lib/github";
@@ -46,11 +45,11 @@ export function RoadmapProgressSection({
   completed,
   total,
   progressPct,
-}: {
+}: Readonly<{
   completed: number;
   total: number;
   progressPct: number;
-}) {
+}>) {
   return (
     <section className="mb-12 rounded-xl border border-border bg-card p-6">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
@@ -88,7 +87,9 @@ export function RoadmapCriticalPathSection() {
   );
 }
 
-export function RoadmapRecentSection({ recent }: { recent: RecentMilestone[] }) {
+export function RoadmapRecentSection({
+  recent,
+}: Readonly<{ recent: RecentMilestone[] }>) {
   if (recent.length === 0) return null;
 
   return (
@@ -117,7 +118,9 @@ export function RoadmapRecentSection({ recent }: { recent: RecentMilestone[] }) 
   );
 }
 
-export function RoadmapPhasesSection({ phases }: { phases: PhaseCardData[] }) {
+export function RoadmapPhasesSection({
+  phases,
+}: Readonly<{ phases: PhaseCardData[] }>) {
   return (
     <section>
       <h2 className="mb-6 text-sm font-semibold uppercase tracking-widest text-muted-foreground">

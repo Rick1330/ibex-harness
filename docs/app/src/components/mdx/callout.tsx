@@ -57,11 +57,11 @@ const CALLOUT_VARIANTS = {
 
 export type CalloutType = keyof typeof CALLOUT_VARIANTS;
 
-type CalloutProps = {
+type CalloutProps = Readonly<{
   type?: CalloutType;
   title?: string;
   children: ReactNode;
-};
+}>;
 
 export function Callout({
   type = "note",

@@ -14,9 +14,9 @@ export type QuickLink = {
   description?: string;
 };
 
-type QuickLinksProps = {
+type QuickLinksProps = Readonly<{
   links: QuickLink[];
-};
+}>;
 
 function linkIcon(link: QuickLink): LucideIcon {
   if (link.icon) return link.icon;

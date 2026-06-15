@@ -15,9 +15,9 @@ import { isMilestonePage } from "@/lib/roadmap-types";
 import { roadmapSource } from "@/lib/source";
 import { getMDXComponents } from "@/mdx-components";
 
-type PageProps = {
+type PageProps = Readonly<{
   params: Promise<{ slug?: string[] }>;
-};
+}>;
 
 export const dynamic = "force-static";
 

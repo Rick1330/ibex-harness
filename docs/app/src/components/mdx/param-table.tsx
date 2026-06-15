@@ -7,9 +7,9 @@ export type ParamRow = {
   defaultValue?: string;
 };
 
-type ParamTableProps = {
+type ParamTableProps = Readonly<{
   params: ParamRow[];
-};
+}>;
 
 export function ParamTable({ params }: ParamTableProps) {
   return (

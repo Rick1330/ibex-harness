@@ -10,11 +10,11 @@ const METHOD_TONES = {
 
 export type HttpMethod = keyof typeof METHOD_TONES;
 
-type EndpointProps = {
+type EndpointProps = Readonly<{
   method: HttpMethod;
   path: string;
   description?: string;
-};
+}>;
 
 export function Endpoint({ method, path, description }: EndpointProps) {
   return (

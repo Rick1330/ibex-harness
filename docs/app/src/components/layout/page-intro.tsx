@@ -1,11 +1,11 @@
 import { cn } from "@/lib/cn";
 
-type PageIntroProps = {
+type PageIntroProps = Readonly<{
   title?: string;
   description?: string;
   section?: string;
   hideTitle?: boolean;
-};
+}>;
 
 export function PageIntro({
   title,

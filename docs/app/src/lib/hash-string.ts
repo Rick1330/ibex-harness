@@ -4,7 +4,7 @@ export function hashString(input: string): string {
 
   for (let index = 0; index < input.length; ) {
     const codePoint = input.codePointAt(index) ?? 0;
-    hash = (Math.imul(31, hash) + codePoint) | 0;
+    hash = Math.trunc(Math.imul(31, hash) + codePoint);
     index += codePoint > 0xffff ? 2 : 1;
   }
 

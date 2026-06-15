@@ -13,9 +13,9 @@ type PostGridItem = {
   };
 };
 
-type PostGridProps = {
+type PostGridProps = Readonly<{
   posts: PostGridItem[];
-};
+}>;
 
 export function PostGrid({ posts }: PostGridProps) {
   if (posts.length === 0) {
