@@ -56,9 +56,9 @@ export function CodeTabs({
   if (tabs.length === 0) return null;
 
   const rootProps =
-    value !== undefined
-      ? { value, onValueChange }
-      : { defaultValue: initial };
+    value === undefined
+      ? { defaultValue: initial }
+      : { value, onValueChange };
 
   return (
     <Tabs.Root className="my-6" {...rootProps}>

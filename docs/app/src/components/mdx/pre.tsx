@@ -72,7 +72,7 @@ function CodeblockBody({
 }: CodeblockBodyProps) {
   return (
     <div ref={areaRef} className="codeblock-body">
-      {!showHeader ? <CopyButton className="codeblock-copy" onCopy={onCopy} /> : null}
+      {showHeader ? null : <CopyButton className="codeblock-copy" onCopy={onCopy} />}
       <pre
         ref={preRef}
         className={cn(

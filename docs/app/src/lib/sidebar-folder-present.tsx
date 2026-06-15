@@ -44,11 +44,12 @@ export function resolveFolderHeaderIcon(
   }
 
   const nestedUrl = firstNavUrlInFolder(item);
-  const folderUrl = item.index?.url
-    ? toNavUrl(item.index.url)
-    : nestedUrl
-      ? toNavUrl(nestedUrl)
-      : undefined;
+  let folderUrl: ReturnType<typeof toNavUrl> | undefined;
+  if (item.index?.url) {
+    folderUrl = toNavUrl(item.index.url);
+  } else if (nestedUrl) {
+    folderUrl = toNavUrl(nestedUrl);
+  }
   const iconResolver =
     baseUrl === "/roadmap" ? roadmapNavIconElement : navIconElement;
 

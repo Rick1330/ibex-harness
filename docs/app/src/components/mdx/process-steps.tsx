@@ -24,12 +24,12 @@ export function ProcessSteps({ steps }: ProcessStepsProps) {
             )}
             data-step
           >
-            {!isLast ? (
+            {isLast ? null : (
               <span
                 aria-hidden
                 className="absolute bottom-0 left-4 top-8 w-px bg-border"
               />
-            ) : null}
+            )}
             <div className="relative z-10 flex shrink-0">
               <span
                 className="nd-step-number flex size-8 items-center justify-center rounded-full border border-border bg-muted font-mono text-[0.8125rem] font-semibold text-foreground"

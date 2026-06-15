@@ -26,7 +26,7 @@ export function SiteNavActions({
         >
           <kbd className="mr-1.5 rounded border border-border/80 bg-background px-1 py-0.5 font-mono text-[10px] text-muted-foreground">
             ⌘K
-          </kbd>
+          </kbd>{" "}
           Search
         </Link>
       ) : null}

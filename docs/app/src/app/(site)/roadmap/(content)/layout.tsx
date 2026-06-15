@@ -12,11 +12,13 @@ const pageTree = roadmapSource.getPageTree();
 
 export const dynamic = "force-static";
 
+type RoadmapContentLayoutProps = Readonly<{
+  children: ReactNode;
+}>;
+
 export default function RoadmapContentLayout({
   children,
-}: {
-  children: ReactNode;
-}) {
+}: RoadmapContentLayoutProps) {
   const options = roadmapBaseOptions();
 
   return (

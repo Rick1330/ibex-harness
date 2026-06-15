@@ -72,7 +72,8 @@ export function isShellLanguage(lang?: string): boolean {
 
 export function parseCodeLanguage(className?: string): string | undefined {
   if (!className) return undefined;
-  const match = className.match(/(?:^|\s)language-([\w+#.-]+)/);
+  const pattern = /(?:^|\s)language-([\w+#.-]+)/;
+  const match = pattern.exec(className);
   return match?.[1];
 }
 

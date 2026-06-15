@@ -38,7 +38,7 @@ export function BlogHero({ featured }: BlogHeroProps) {
               </p>
             ) : null}
             <span className="inline-flex items-center gap-1 text-sm font-medium text-foreground">
-              Read featured post
+              Read featured post{" "}
               <span className="transition-transform group-hover:translate-x-0.5">→</span>
             </span>
           </Link>

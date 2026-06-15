@@ -26,7 +26,7 @@ export default async function RoadmapDetailPage(props: PageProps) {
   const page = roadmapSource.getPage(params.slug);
   if (!page) notFound();
 
-  const MDX = page.data.body;
+  const MdxContent = page.data.body;
   const toc = page.data.toc ?? [];
   const tree = roadmapSource.getPageTree();
   const breadcrumbs = getBreadcrumbItems(page.url, tree, {
@@ -71,7 +71,7 @@ export default async function RoadmapDetailPage(props: PageProps) {
       />
 
       <DocsBody className="docs-prose max-w-none">
-        <MDX components={getMDXComponents()} />
+        <MdxContent components={getMDXComponents()} />
       </DocsBody>
 
       <div className="mt-10 border-t border-border pt-6">

@@ -10,7 +10,9 @@ type MermaidProps = Readonly<{
   id?: string;
 }>;
 
-function MermaidPlaceholder({ className }: { className?: string }) {
+type MermaidPlaceholderProps = Readonly<{ className?: string }>;
+
+function MermaidPlaceholder({ className }: MermaidPlaceholderProps) {
   return (
     <div
       aria-hidden
@@ -22,7 +24,9 @@ function MermaidPlaceholder({ className }: { className?: string }) {
   );
 }
 
-function MermaidError({ error, className }: { error: string; className?: string }) {
+type MermaidErrorProps = Readonly<{ error: string; className?: string }>;
+
+function MermaidError({ error, className }: MermaidErrorProps) {
   return (
     <figure className={cn("mermaid-diagram my-10 not-prose", className)}>
       <div className="rounded-[4px] border border-danger/40 bg-panel p-4">

@@ -38,11 +38,11 @@ function OnThisPageItem({
   item,
   index,
   activeIndex,
-}: {
+}: Readonly<{
   item: TOCItemType;
   index: number;
   activeIndex: number;
-}) {
+}>) {
   const isActive = activeIndex === index;
   const isPassed = activeIndex > index;
 
@@ -72,7 +72,7 @@ function OnThisPageItem({
   );
 }
 
-function TocProgressRail({ count }: { count: number }) {
+function TocProgressRail({ count }: Readonly<{ count: number }>) {
   const progress = useReadingProgress();
 
   if (count === 0) return null;

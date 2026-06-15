@@ -79,7 +79,7 @@ export function PostCard({
           </div>
         ) : null}
         <span className="mt-auto inline-flex items-center gap-1 text-sm font-medium text-muted-foreground transition-colors group-hover:text-foreground">
-          Read post
+          Read post{" "}
           <span className="transition-transform group-hover:translate-x-0.5">→</span>
         </span>
       </Link>

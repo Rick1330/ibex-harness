@@ -48,7 +48,7 @@ export default function ReleasesPage() {
 
         <div className="space-y-0">
           {allReleases.map((release) => {
-            const MDX = release.data.body;
+            const MdxContent = release.data.body;
             const releaseType = release.data.type ?? "patch";
             const badgeClass =
               versionBadge[releaseType as keyof typeof versionBadge] ??
@@ -85,7 +85,7 @@ export default function ReleasesPage() {
                   </h2>
 
                   <div className="prose docs-prose max-w-none text-sm leading-relaxed text-text-secondary">
-                    <MDX components={mdxComponents} />
+                    <MdxContent components={mdxComponents} />
                   </div>
                 </div>
               </div>

@@ -16,7 +16,7 @@ export default async function BlogPostPage(props: BlogPostPageProps) {
   const page = blogSource.getPage([slug]);
   if (!page) notFound();
 
-  const MDX = page.data.body;
+  const MdxContent = page.data.body;
   const toc = page.data.toc ?? [];
   const allPosts = blogSource.getPages().sort(
     (a, b) =>
@@ -43,7 +43,7 @@ export default async function BlogPostPage(props: BlogPostPageProps) {
             readingTime={page.data.readingTime as string | undefined}
           />
           <div className="prose docs-prose max-w-none">
-            <MDX components={getMDXComponents()} />
+            <MdxContent components={getMDXComponents()} />
           </div>
           <RelatedPosts posts={related.length > 0 ? related : allPosts} currentUrl={page.url} />
         </article>
