@@ -17,6 +17,8 @@ export function CardGrid({ children }: CardGridProps) {
   );
 }
 
+type DocCardCategory = "guide" | "reference" | "tutorial" | "example";
+
 type DocCardProps = {
   title: string;
   description: string;
@@ -24,15 +26,21 @@ type DocCardProps = {
   icon?: LucideIcon;
   iconName?: string;
   badge?: string;
-  category?: "guide" | "reference" | "tutorial" | "example";
+  category?: DocCardCategory;
 };
 
-const CATEGORY_LABELS = {
-  guide: "Guide",
-  reference: "Reference",
-  tutorial: "Tutorial",
-  example: "Example",
-} as const;
+function categoryLabel(category: DocCardCategory): string {
+  switch (category) {
+    case "guide":
+      return "Guide";
+    case "reference":
+      return "Reference";
+    case "tutorial":
+      return "Tutorial";
+    case "example":
+      return "Example";
+  }
+}
 
 export function DocCard({
   title,
@@ -78,7 +86,7 @@ export function DocCard({
 
       {category ? (
         <span className="text-[11px] font-medium uppercase tracking-wide text-text-tertiary">
-          {CATEGORY_LABELS[category]}
+          {categoryLabel(category)}
         </span>
       ) : null}
 

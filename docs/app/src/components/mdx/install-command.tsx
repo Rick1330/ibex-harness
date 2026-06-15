@@ -15,6 +15,8 @@ type InstallCommandProps = {
   dev?: boolean;
 };
 
+type CommandMap = ReturnType<typeof buildCommands>;
+
 function buildCommands(packages: string, dev: boolean) {
   return {
     npm: `npm install ${dev ? "-D " : ""}${packages}`,
@@ -22,6 +24,19 @@ function buildCommands(packages: string, dev: boolean) {
     yarn: `yarn add ${dev ? "-D " : ""}${packages}`,
     bun: `bun add ${dev ? "-d " : ""}${packages}`,
   } as const;
+}
+
+function commandForManager(commands: CommandMap, manager: PackageManager): string {
+  switch (manager) {
+    case "npm":
+      return commands.npm;
+    case "pnpm":
+      return commands.pnpm;
+    case "yarn":
+      return commands.yarn;
+    case "bun":
+      return commands.bun;
+  }
 }
 
 export function InstallCommand({ packages, dev = false }: InstallCommandProps) {
@@ -46,7 +61,10 @@ export function InstallCommand({ packages, dev = false }: InstallCommandProps) {
     <CodeTabs onValueChange={onManagerChange} value={manager}>
       {MANAGERS.map((pm) => (
         <CodeTab key={pm} label={pm} value={pm}>
-          <ShellBlock className="my-0 rounded-t-none border-t-0" command={commands[pm]} />
+          <ShellBlock
+            className="my-0 rounded-t-none border-t-0"
+            command={commandForManager(commands, pm)}
+          />
         </CodeTab>
       ))}
     </CodeTabs>

@@ -1,7 +1,8 @@
-import * as LucideIcons from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
 import { cn } from "@/lib/cn";
+import { iconFromLucideName } from "@/lib/sidebar-icon-resolvers";
+import { toNavIconName } from "@/lib/sidebar-icons";
 
 type IconProps = {
   name: string;
@@ -9,21 +10,7 @@ type IconProps = {
 };
 
 function resolveLucideIcon(name: string): LucideIcon | undefined {
-  const icons = LucideIcons as Record<string, LucideIcon | unknown>;
-  if (name in icons && typeof icons[name] === "function") {
-    return icons[name] as LucideIcon;
-  }
-
-  const pascal = name
-    .split(/[-_\s]+/)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join("");
-
-  if (pascal in icons && typeof icons[pascal] === "function") {
-    return icons[pascal] as LucideIcon;
-  }
-
-  return undefined;
+  return iconFromLucideName(toNavIconName(name));
 }
 
 export function Icon({ name, className }: IconProps) {

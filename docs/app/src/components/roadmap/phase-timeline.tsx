@@ -8,6 +8,12 @@ type PhaseTimelineProps = Readonly<{
   }[];
 }>;
 
+function stripPhaseTitlePrefix(title: string): string {
+  if (!title.toLowerCase().startsWith("phase ")) return title;
+  const colon = title.indexOf(":");
+  return colon === -1 ? title : title.slice(colon + 1).trim();
+}
+
 export function PhaseTimeline({ phases }: PhaseTimelineProps) {
   return (
     <ol className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-stretch">
@@ -21,7 +27,7 @@ export function PhaseTimeline({ phases }: PhaseTimelineProps) {
               Phase {index}
             </span>
             <span className="mb-2 line-clamp-2 text-xs font-medium leading-snug text-foreground group-hover:underline">
-              {phase.title.replace(/^Phase \d+(?:\.\d+)?:\s*/i, "")}
+              {stripPhaseTitlePrefix(phase.title)}
             </span>
             {phase.milestonesPending ? (
               <span className="mt-auto text-[10px] text-muted-foreground">Goals only</span>
