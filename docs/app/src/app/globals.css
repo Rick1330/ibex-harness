@@ -160,7 +160,7 @@ pre {
 }
 
 /* Standalone pre (outside code blocks) */
-pre:not(.shiki):not(.fd-codeblock pre):not(.nd-codeblock pre) {
+pre:not(.shiki, .fd-codeblock pre, .nd-codeblock pre) {
   border: 1px solid hsl(var(--border)) !important;
   background-color: hsl(var(--panel)) !important;
   line-height: 1.65 !important;

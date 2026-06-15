@@ -16,7 +16,7 @@ export function TagFilter({ tags, active, onChange, className }: TagFilterProps)
     <div className={cn("mb-8 flex flex-wrap gap-2", className)}>
       <button
         type="button"
-        onClick={() => onChange(null)}
+        onClick={() => { onChange(null); }}
         className={cn(
           "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
           active === null
@@ -30,7 +30,7 @@ export function TagFilter({ tags, active, onChange, className }: TagFilterProps)
         <button
           key={tag}
           type="button"
-          onClick={() => onChange(tag === active ? null : tag)}
+          onClick={() => { onChange(tag === active ? null : tag); }}
           className={cn(
             "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
             active === tag

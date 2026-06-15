@@ -37,7 +37,7 @@ export function FolderItem({
           "flex w-full items-center gap-2 rounded-[4px] px-2 py-1 text-left transition-colors",
           "hover:bg-panel-raised",
         )}
-        onClick={() => setOpen((value) => !value)}
+        onClick={() => { setOpen((value) => !value); }}
         type="button"
       >
         <ChevronRight

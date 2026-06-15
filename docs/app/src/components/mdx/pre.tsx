@@ -128,8 +128,8 @@ export const Pre = forwardRef<HTMLPreElement, PreProps>(function Pre(
       data-rehype-pretty-code-figure=""
       {...(title ? { title } : {})}
     >
-      {showHeader ? (
-        <CodeblockHeader tabLabel={tabLabel!} LabelIcon={LabelIcon} onCopy={onCopy} />
+      {showHeader && tabLabel ? (
+        <CodeblockHeader tabLabel={tabLabel} LabelIcon={LabelIcon} onCopy={onCopy} />
       ) : null}
       <CodeblockBody
         areaRef={areaRef}

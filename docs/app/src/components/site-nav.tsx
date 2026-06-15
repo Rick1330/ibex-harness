@@ -47,14 +47,14 @@ export function SiteNav() {
         <SiteNavActions
           onDocs={onDocs}
           mobileOpen={mobileOpen}
-          onToggleMobile={() => setMobileOpen((open) => !open)}
+          onToggleMobile={() => { setMobileOpen((open) => !open); }}
         />
       </div>
 
       <SiteNavMobileMenu
         open={mobileOpen}
         pathname={pathname}
-        onNavigate={() => setMobileOpen(false)}
+        onNavigate={() => { setMobileOpen(false); }}
       />
     </header>
   );

@@ -46,7 +46,7 @@ export function FeedbackWidget({ pageId }: FeedbackWidgetProps) {
             "inline-flex items-center gap-2 rounded-[4px] border border-border px-3 py-2 text-sm text-text-secondary",
             "hover:bg-panel-raised hover:text-text-primary",
           )}
-          onClick={() => handleFeedback("helpful")}
+          onClick={() => { handleFeedback("helpful"); }}
           type="button"
         >
           <ThumbsUp className="size-4" strokeWidth={1.5} />
@@ -57,7 +57,7 @@ export function FeedbackWidget({ pageId }: FeedbackWidgetProps) {
             "inline-flex items-center gap-2 rounded-[4px] border border-border px-3 py-2 text-sm text-text-secondary",
             "hover:bg-panel-raised hover:text-text-primary",
           )}
-          onClick={() => handleFeedback("not-helpful")}
+          onClick={() => { handleFeedback("not-helpful"); }}
           type="button"
         >
           <ThumbsDown className="size-4" strokeWidth={1.5} />
