@@ -21,6 +21,18 @@ description: Internal showcase for Callout, Steps, CodeTabs, Endpoint, Badge, an
   Never commit PATs or API keys to the repository.
 </Callout>
 
+<Callout type="success" title="Success">
+  Migrations applied cleanly on a fresh Postgres instance.
+</Callout>
+
+<Callout type="new" title="New in Phase 1.5">
+  Cmd+K search indexes all doc pages.
+</Callout>
+
+<Callout type="experimental" title="Experimental">
+  Provider adapters return `501` until Phase 2 ships.
+</Callout>
+
 ## Steps
 
 <Steps>
@@ -61,20 +73,125 @@ requests.get(
   </CodeTab>
 </CodeTabs>
 
+## InstallCommand
+
+<InstallCommand packages="@ibex/sdk" />
+
+## File tree
+
+<FileTree>
+  <FolderItem name="services" defaultOpen>
+    <FolderItem name="proxy">
+      <FileItem name="main.go" highlight />
+    </FolderItem>
+    <FolderItem name="auth">
+      <FileItem name="main.go" />
+    </FolderItem>
+  </FolderItem>
+  <FileItem name="Makefile" />
+</FileTree>
+
 ## Endpoint
 
+<Endpoint
+  method="POST"
+  path="/v1/orgs/{org_id}/chat/completions"
+  description="OpenAI-compatible chat completions (Phase 1 returns 501 until a provider is configured)."
+/>
+
 <Endpoint method="GET" path="/v1/health" />
-<Endpoint method="POST" path="/v1/chat/completions" />
 <Endpoint method="PUT" path="/v1/tokens/{id}" />
 <Endpoint method="DELETE" path="/v1/tokens/{id}" />
 
-## Badge
+## ParamTable
+
+<ParamTable
+  params={[
+    {
+      name: "org_id",
+      type: "string (uuid)",
+      required: true,
+      description: "Organization scope for the request.",
+    },
+    {
+      name: "IBEX_RATE_LIMIT_DEFAULT_RPM",
+      type: "integer",
+      description: "Org-level requests per minute when Redis is available.",
+      defaultValue: "60",
+    },
+  ]}
+/>
+
+## Badge and VersionBadge
 
 Inline labels: <Badge>Default</Badge> <Badge variant="beta">Beta</Badge> <Badge variant="new">New</Badge> <Badge variant="deprecated">Deprecated</Badge>
 
+Version: <VersionBadge version="1.0" type="stable" /> <VersionBadge version="0.4" type="beta" />
+
 ## Kbd
 
-Press <Kbd>⌘</Kbd> <Kbd>K</Kbd> to open search. Use <Kbd>Ctrl</Kbd> <Kbd>C</Kbd> to copy code blocks (D.2.6).
+Press <KbdCombo keys={["⌘", "K"]} /> to open search. Use <Kbd>Ctrl</Kbd> <Kbd>C</Kbd> to copy code blocks (D.2.6).
+
+## Card grid
+
+<CardGrid>
+  <DocCard
+    title="Proxy"
+    description="Auth middleware, rate limits, and request routing."
+    href="/docs/proxy/overview"
+    iconName="Waypoints"
+    category="guide"
+    badge="Core"
+  />
+  <DocCard
+    title="Auth"
+    description="PAT issuance, org model, and RLS policies."
+    href="/docs/auth/overview"
+    iconName="Shield"
+    category="reference"
+  />
+  <DocCard
+    title="GitHub"
+    description="Report issues or open a pull request."
+    href="https://github.com/Rick1330/ibex-harness"
+    iconName="Terminal"
+    category="example"
+  />
+</CardGrid>
+
+## QuickLinks
+
+<QuickLinks
+  links={[
+    {
+      title: "Quickstart",
+      href: "/docs/getting-started/quickstart",
+      iconName: "Zap",
+      description: "Five-minute local setup path",
+    },
+    {
+      title: "API Reference",
+      href: "/docs/api-reference/rest-endpoints",
+      iconName: "Terminal",
+      description: "Phase 1 REST surface",
+    },
+    {
+      title: "GitHub",
+      href: "https://github.com/Rick1330/ibex-harness",
+      iconName: "FileCode",
+      external: true,
+      description: "Source and issues",
+    },
+  ]}
+/>
+
+## StatusBadge
+
+<StatusBadge status="stable" /> <StatusBadge status="beta" /> <StatusBadge status="new" /> <StatusBadge status="deprecated" />
+
+## Inline Icon
+
+Press <Icon name="Command" /> + <Icon name="KeyRound" /> or use the search button. Settings live under <Icon name="Settings" /> configuration pages.
 
 ## Code blocks
 
@@ -99,4 +216,8 @@ export function middleware(req: Request) { // [!code highlight]
 
   return next(req);
 }
+```
+
+```bash
+make compose-dev-up && make db-migrate && make dev-smoke
 ```

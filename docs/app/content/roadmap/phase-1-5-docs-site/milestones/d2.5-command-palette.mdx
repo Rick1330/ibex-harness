@@ -1,0 +1,103 @@
+---
+title: "d2.5 Command Palette"
+description: "Docs IA will grow to 30+ pages after D.3.1. Sidebar-only navigation does not scale for returning users who need heading-level jumps (e.g. \\\"rate limit\\\", \\\"RLS\\\"). Fumadocs Orama search must index `structuredData` from each page so Cmd+K returns heading matches, not just page titles."
+summary: "Docs IA will grow to 30+ pages after D.3.1. Sidebar-only navigation does not scale for returning users who need heading-level jumps (e.g. \\\"rate limit\\\", \\\"RLS\\\"). Fumadocs Orama search must index `structuredData` from each page so Cmd+K returns heading matches, not just page titles."
+status: "completed"
+milestoneId: "d2.5"
+goal: "[D.2](/roadmap/phase-1-5-docs-site/goals)"
+estimatedEffort: "2 hours"
+phase: "phase-1-5-docs-site"
+fullTitle: "Milestone D.2.5 — Cmd+K command palette"
+---
+
+# Milestone D.2.5 — Cmd+K command palette
+
+**Status:** Complete  
+**Goal:** [D.2](/roadmap/phase-1-5-docs-site/goals)  
+**Phase:** 1.5 — Docs Site  
+**Wave:** 4  
+**Estimated effort:** 2 hours  
+**ADR required:** None
+
+Spec detail: [MASTER_BRIEF.md](/roadmap/phase-1-5-docs-site/master-brief) Part D (D.2.5).
+
+---
+
+## Why This Milestone Exists
+
+Docs IA will grow to 30+ pages after D.3.1. Sidebar-only navigation does not scale for returning users who need heading-level jumps (e.g. "rate limit", "RLS").
+
+Fumadocs Orama search must index `structuredData` from each page so Cmd+K returns heading matches, not just page titles.
+
+Dialog chrome must follow Matte Graphite: 1px border, 6px radius, no backdrop blur.
+
+---
+
+## Non-Goals
+
+- Algolia or external search SaaS
+- Search over engineering `docs/` markdown at repo root
+- AI chat in search dialog
+
+---
+
+## Branch
+
+`feat/d2-5-command-palette`
+
+## PR Title
+
+`feat(docs): Cmd+K search palette (D.2.5)`
+
+---
+
+## Prerequisites
+
+- [D.2.1](/roadmap/phase-1-5-docs-site/milestones/d2.1-bootstrap-fumadocs) merged
+- [D.2.2](/roadmap/phase-1-5-docs-site/milestones/d2.2-matte-graphite-tokens) merged
+
+---
+
+## Deliverables
+
+- Wire `createSearchAPI("advanced", ...)` to page `structuredData`
+- Re-skin Fumadocs search dialog: `bg-panel`, selected row `bg-panel-raised`
+- Nav trigger shows `<Kbd>⌘ K</Kbd>` hint on `md+` viewports
+
+See MASTER_BRIEF Part D (D.2.5) for full acceptance detail.
+
+---
+
+## Files Affected
+
+| File Path | Action | Notes |
+| --- | --- | --- |
+| `docs/app/src/lib/search.ts` | Add/Modify | Orama advanced search API |
+| `docs/app/src/components/search-dialog.tsx` | Modify | Matte Graphite dialog skin |
+| `docs/app/src/components/layout/nav-search.tsx` | Modify | Kbd hint in nav |
+
+---
+
+## Testing Requirements
+
+- **`verifySearch_CmdKOpens`**: `Cmd+K` / `Ctrl+K` opens dialog from any docs page
+- **`verifySearch_HeadingMatch`**: Query "rate limit" returns at least one heading-level hit
+- **`verifySearch_NoBackdropBlur`**: Dialog has no `backdrop-filter` in computed styles
+
+---
+
+## Acceptance Criteria
+
+- [ ] `Cmd+K` / `Ctrl+K` opens search from any docs page
+- [ ] Query "rate limit" returns at least one heading match (after D.3.1 content exists)
+- [ ] Dialog has no backdrop blur
+
+---
+
+## Risks
+
+| Risk | Probability | Impact | Mitigation |
+| --- | --- | --- | --- |
+| Empty index before D.3.1 pages exist | High | Low | Seed introduction page structuredData; retest after IA |
+| Keyboard trap hurts a11y | Low | High | Follow Fumadocs focus trap; Lighthouse a11y = 100 |
+| Search API route missing in static export | Low | Medium | Verify `/api/search` on Vercel preview (D.4.1) |

@@ -11,16 +11,18 @@ import {
 
 import { cn } from "@/lib/cn";
 
-type CodeTabProps = {
+type CodeTabProps = Readonly<{
   label: string;
   value?: string;
   children: ReactNode;
-};
+}>;
 
-type CodeTabsProps = {
+type CodeTabsProps = Readonly<{
   defaultValue?: string;
+  value?: string;
+  onValueChange?: (value: string) => void;
   children: ReactNode;
-};
+}>;
 
 export function CodeTab({ children }: CodeTabProps) {
   return <>{children}</>;
@@ -42,14 +44,24 @@ function collectTabs(children: ReactNode) {
     });
 }
 
-export function CodeTabs({ defaultValue, children }: CodeTabsProps) {
+export function CodeTabs({
+  defaultValue,
+  value,
+  onValueChange,
+  children,
+}: CodeTabsProps) {
   const tabs = useMemo(() => collectTabs(children), [children]);
   const initial = defaultValue ?? tabs[0]?.value ?? "";
 
   if (tabs.length === 0) return null;
 
+  const rootProps =
+    value === undefined
+      ? { defaultValue: initial }
+      : { value, onValueChange };
+
   return (
-    <Tabs.Root className="my-6" defaultValue={initial}>
+    <Tabs.Root className="my-6" {...rootProps}>
       <Tabs.List className="flex gap-0 border-b border-border">
         {tabs.map((tab) => (
           <Tabs.Trigger

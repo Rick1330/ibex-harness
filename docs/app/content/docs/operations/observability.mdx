@@ -1,0 +1,160 @@
+---
+title: Observability
+description: OpenTelemetry tracing, Prometheus metrics, and structured JSON logs for Phase 1 Go services.
+---
+
+Phase 1 ships observability for the auth and proxy Go services: W3C distributed tracing, a bounded Prometheus catalog, and structured JSON logs correlated by `request_id` and `trace_id`. Python services and full SLO alerting expand in later phases.
+
+<Callout type="note" title="Phase 1 stack">
+  Auth and proxy expose `/metrics`. OTel exports to OTLP when `OTEL_EXPORTER_OTLP_ENDPOINT` is set; otherwise spans exist for in-process propagation only ([ADR-0019](/docs/adr/0019-opentelemetry-provider-configuration)).
+</Callout>
+
+## Correlation identifiers
+
+Every inbound HTTP request carries:
+
+| ID | Source | Propagation |
+| --- | --- | --- |
+| `request_id` | `packages/reqid` — UUID v7 | `X-Request-ID` header; all log lines in request scope |
+| `trace_id` | OpenTelemetry span context | W3C `traceparent`; `X-Trace-ID` response header |
+| `org_id` | Verified token (when authenticated) | Logs and gRPC metadata — never as a metric label |
+
+<Callout type="warning" title="Cardinality budget">
+  Prometheus labels must stay bounded. Never label metrics with `org_id`, `agent_id`, or raw URL paths. Per-tenant analytics belong in ClickHouse ([ADR-0021](/docs/adr/0021-prometheus-metric-catalog)).
+</Callout>
+
+## OpenTelemetry
+
+Both services initialize OTel via `packages/telemetry` at startup:
+
+```mermaid
+graph LR
+    A[HTTP request] --> B[SpanMiddleware]
+    B --> C[Handler / gRPC client]
+    C --> D[OTel context propagation]
+    D --> E[Logger trace_id field]
+```
+
+<ParamTable
+  params={[
+    {
+      name: 'OTEL_EXPORTER_OTLP_ENDPOINT',
+      type: 'host:port',
+      description: 'OTLP gRPC collector (e.g. localhost:4317). Empty = noop exporter.',
+    },
+    {
+      name: 'OTEL_SAMPLE_RATIO',
+      type: 'float',
+      description: 'Root span sampling ratio via ParentBased + TraceIDRatio.',
+      defaultValue: '0.01',
+    },
+    {
+      name: 'OTEL_SERVICE_NAME',
+      type: 'string',
+      description: 'Falls back to IBEX_SERVICE_NAME when unset.',
+    },
+    {
+      name: 'OTEL_DEPLOYMENT_ENVIRONMENT',
+      type: 'string',
+      description: 'Falls back to IBEX_ENV (development, staging, production).',
+    },
+  ]}
+/>
+
+HTTP spans are named `{method} {route_template}` (e.g. `POST /v1/chat/completions`) — never raw paths with UUIDs. Proxy gRPC auth calls propagate trace context via `otelgrpc` client interceptors.
+
+Tail-based 100% export for 5xx traces requires a collector-side sampler (Phase 2). Phase 1 marks span status ERROR on HTTP status ≥ 500 for sampled spans.
+
+## Prometheus metrics
+
+Scrape `GET /metrics` on each service. All metrics register in `packages/metrics` — services never call `prometheus.MustRegister` directly.
+
+### Phase 1 catalog (selected)
+
+| Metric | Type | Service |
+| --- | --- | --- |
+| `ibex_proxy_request_duration_seconds` | Histogram | proxy |
+| `ibex_proxy_requests_total` | Counter | proxy |
+| `ibex_proxy_rate_limited_total` | Counter | proxy |
+| `ibex_auth_validate_token_duration_seconds` | Histogram | auth |
+| `ibex_auth_grpc_requests_total` | Counter | auth |
+| `ibex_db_query_duration_seconds` | Histogram | auth |
+| `ibex_process_up` | Gauge | both |
+
+Histogram buckets target the &lt;20ms proxy overhead budget: `0.001 … 5.000` seconds.
+
+<CodeTabs>
+  <CodeTab label="Proxy">
+```bash
+curl -s http://localhost:8080/metrics | grep ibex_proxy
+```
+  </CodeTab>
+  <CodeTab label="Auth">
+```bash
+curl -s http://localhost:8081/metrics | grep ibex_auth
+```
+  </CodeTab>
+</CodeTabs>
+
+## Structured logging
+
+Logs use `packages/logger` — JSON to stdout in production. Every line in a request scope includes `request_id`; when a span is active, `trace_id` is injected automatically.
+
+| Level | When to use |
+| --- | --- |
+| DEBUG | Local debugging only; never per-request in production |
+| INFO | Lifecycle events: startup, config loaded, migration applied |
+| WARN | Recoverable anomalies: Redis fail-open, retry succeeded |
+| ERROR | Requires action: DB failure, auth service unreachable |
+
+<Callout type="danger" title="Privacy by default">
+  Do not log raw tokens, passwords, memory content, or full prompts/responses. Metrics capture per-request volume; logs capture anomalies.
+</Callout>
+
+### Log level configuration
+
+<ParamTable
+  params={[
+    {
+      name: 'IBEX_LOG_LEVEL',
+      type: 'enum',
+      description: 'DEBUG | INFO | WARN | ERROR',
+      defaultValue: 'INFO',
+    },
+    {
+      name: 'IBEX_LOG_FORMAT',
+      type: 'string',
+      description: 'json in production',
+      defaultValue: 'json',
+    },
+  ]}
+/>
+
+## Middleware order (proxy)
+
+Outer → inner: `RequestContext → Span → metrics → ResponseHeaders → logging → mux`. Auth middleware runs inside the mux after span creation so route templates and trace context are available to metrics and logs.
+
+## Optional error tracking
+
+Sentry DSN via `SENTRY_DSN` is optional in development. Link Sentry events to `trace_id` and `request_id` when enabled.
+
+## Local verification
+
+<Steps>
+  <Step title="Confirm metrics endpoints">
+    `curl -s http://localhost:8080/metrics` and `:8081/metrics` return Prometheus text.
+  </Step>
+  <Step title="Send a traced request">
+    Include `X-Request-ID` on a proxy call; search service stdout for that ID.
+  </Step>
+  <Step title="Optional collector">
+    Point `OTEL_EXPORTER_OTLP_ENDPOINT` at Jaeger or Tempo to visualize spans locally.
+  </Step>
+</Steps>
+
+## Related
+
+- [Health checks](/docs/operations/health-checks)
+- [Troubleshooting](/docs/operations/troubleshooting)
+- [ADR-0019: OpenTelemetry](/docs/adr/0019-opentelemetry-provider-configuration)
+- [ADR-0021: Prometheus catalog](/docs/adr/0021-prometheus-metric-catalog)

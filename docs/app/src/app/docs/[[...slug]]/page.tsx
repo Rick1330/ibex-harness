@@ -1,13 +1,12 @@
-import {
-  DocsBody,
-  DocsDescription,
-  DocsPage,
-  DocsTitle,
-} from "fumadocs-ui/page";
+import { getBreadcrumbItems } from "fumadocs-core/breadcrumb";
+import { DocsBody, DocsPage } from "fumadocs-ui/page";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
 import { DocsBreadcrumb } from "@/components/layout/breadcrumb";
+import { DocsFooterNav } from "@/components/layout/docs-footer-nav";
+import { FeedbackWidget } from "@/components/layout/feedback";
+import { PageIntro } from "@/components/layout/page-intro";
 import { OnThisPage } from "@/components/layout/toc";
 import {
   GITHUB_BRANCH,
@@ -17,11 +16,11 @@ import {
 } from "@/lib/github";
 import { getPageLastModified } from "@/lib/page-meta";
 import { source } from "@/lib/source";
-import { useMDXComponents } from "@/mdx-components";
+import { getMDXComponents } from "@/mdx-components";
 
-type PageProps = {
+type PageProps = Readonly<{
   params: Promise<{ slug?: string[] }>;
-};
+}>;
 
 export const dynamic = "force-static";
 
@@ -30,9 +29,14 @@ export default async function Page(props: PageProps) {
   const page = source.getPage(params.slug);
   if (!page) notFound();
 
-  const MDX = page.data.body;
+  const MdxContent = page.data.body;
   const toc = page.data.toc ?? [];
   const tree = source.getPageTree();
+  const breadcrumbs = getBreadcrumbItems(page.url, tree, {
+    includePage: false,
+  });
+  const section =
+    breadcrumbs.length > 0 ? String(breadcrumbs[0].name) : undefined;
 
   return (
     <DocsPage
@@ -51,11 +55,16 @@ export default async function Page(props: PageProps) {
           "inline-flex h-9 items-center gap-1.5 rounded-[4px] border border-border px-3 text-sm text-text-secondary hover:bg-panel-raised hover:text-text-primary",
       }}
       lastUpdate={getPageLastModified(page)}
+      footer={{ component: <DocsFooterNav /> }}
     >
-      <DocsTitle>{page.data.title}</DocsTitle>
-      <DocsDescription>{page.data.description}</DocsDescription>
-      <DocsBody>
-        <MDX components={useMDXComponents()} />
+      <PageIntro
+        description={page.data.description}
+        section={section}
+        title={page.data.title}
+      />
+      <DocsBody className="docs-prose max-w-none">
+        <MdxContent components={getMDXComponents()} />
+        <FeedbackWidget pageId={page.file.path} />
       </DocsBody>
     </DocsPage>
   );

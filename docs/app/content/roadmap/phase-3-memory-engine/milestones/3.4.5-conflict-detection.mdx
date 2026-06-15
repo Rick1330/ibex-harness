@@ -1,0 +1,83 @@
+---
+title: "3.4.5 Conflict Detection"
+description: "AI agents accumulate memories over time. Memories can conflict: the user said \"I prefer Python\" in March and \"I'm switching to Go\" in June. The new memory contradicts the old one. Without conflict detection, both memories coexist and the agent gives contradictory advice. Conflict detection is triggered during the write"
+summary: "AI agents accumulate memories over time. Memories can conflict: the user said \"I prefer Python\" in March and \"I'm switching to Go\" in June. The new memory contradicts the old one. Without conflict detection, both memories coexist and the agent gives contradictory advice. Conflict detection is triggered during the write"
+status: "planned"
+milestoneId: "3.4.5"
+goal: "[3.4 — Memory extraction worker](/roadmap/phase-3-memory-engine/goals#goal-34-memory-extraction-worker)"
+estimatedEffort: "3 days"
+phase: "phase-3-memory-engine"
+fullTitle: "Milestone 3.4.5 — Memory Conflict Detection"
+---
+
+# Milestone 3.4.5 — Memory Conflict Detection
+
+**Status:** Planned  
+**Goal:** [3.4 — Memory extraction worker](/roadmap/phase-3-memory-engine/goals#goal-34-memory-extraction-worker)  
+**Phase:** 3 — Memory Engine and Operator Platform  
+**Estimated effort:** 3 days  
+**ADR required:** ADR-0037 — Conflict detection and resolution strategy
+
+---
+
+## Why This Milestone Exists
+
+AI agents accumulate memories over time. Memories can conflict: the user said "I prefer Python" in March and "I'm switching to Go" in June. The new memory contradicts the old one. Without conflict detection, both memories coexist and the agent gives contradictory advice.
+
+Conflict detection is triggered during the write pipeline (Step 6). This milestone implements the detection algorithm and the automatic resolution strategies.
+
+---
+
+## Conflict categories
+
+| Type | Detection | Resolution |
+|---|---|---|
+| Contradiction | High similarity (>0.85) + opposite semantic polarity | Mark old as `superseded`; write new as `active` |
+| Supersession | High similarity (>0.92) + new information is a superset | Mark old as `superseded`; new is `active` |
+| Duplicate | Identical content_hash | Skip write; return existing |
+| Near-duplicate | Cosine > 0.92, different hash | Merge: write new combined memory, supersede both |
+
+---
+
+## Deliverables
+
+### Contradiction detection via secondary LLM call
+
+```python
+CONTRADICTION_PROMPT = """
+Given two memory statements, determine if they contradict each other.
+A contradiction means both cannot be true at the same time.
+
+Memory A: {memory_a}
+Memory B: {memory_b}
+
+Respond with JSON: {"contradicts": true|false, "confidence": 0.0-1.0, "reason": "..."}
+"""
+
+async def check_contradiction(
+    memory_a: str,
+    memory_b: str,
+    client: OpenAI,
+) -> tuple[bool, float, str]:
+    """
+    Returns (contradicts, confidence, reason).
+    Only called when cosine similarity > CONFLICT_THRESHOLD (0.85)
+    to avoid LLM calls on unrelated memories.
+    """
+    ...
+```
+
+**Resolution actions:**
+- `contradicts=True, confidence>0.8`: Mark old memory `superseded_by=new_memory_id`. Create `memory_relationship(type='contradicts')`. Write new memory as `active`.
+- `contradicts=True, confidence&lt;0.8`: Write new memory as `pending_review`. Create relationship `type='contradicts'`. Human operator resolves.
+- `contradicts=False`: Write normally.
+
+---
+
+## Acceptance Criteria
+
+- [ ] Contradiction LLM call only made when cosine similarity > 0.85 (not on every write)
+- [ ] `memory_relationships` row created for every detected conflict
+- [ ] Old memory marked `superseded` when contradiction is high-confidence
+- [ ] Contradictory memories with low confidence written as `pending_review` (not auto-resolved)
+- [ ] ADR-0037 written covering detection thresholds and resolution strategies

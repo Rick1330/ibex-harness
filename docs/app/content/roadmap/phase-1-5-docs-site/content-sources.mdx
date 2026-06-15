@@ -1,0 +1,111 @@
+---
+title: "Content sources"
+description: "Maps public Fumadocs pages (`docs/app/content/docs/`) to engineering sources in repo-root `docs/`. Do not wholesale-port future Phase 2+ API spec."
+summary: "Maps public Fumadocs pages (`docs/app/content/docs/`) to engineering sources in repo-root `docs/`. Do not wholesale-port future Phase 2+ API spec."
+phase: "phase-1-5-docs-site"
+fullTitle: "Content sources — Phase 1.5 public docs"
+---
+
+# Content sources — Phase 1.5 public docs
+
+Maps public Fumadocs pages (`docs/app/content/docs/`) to engineering sources in repo-root `docs/`. **Do not** wholesale-port future Phase 2+ API spec.
+
+Draft extraction helper: `ibex-harness-workspace/docs-app-scripts/port-engineering-content.mjs` (`--list`, `--map <slug>`).
+
+## Getting Started
+
+| Public page | Source | Notes |
+| --- | --- | --- |
+| Introduction | `DEVELOPMENT_GUIDE.md`, `/roadmap/current-state` | Phase 1 honest scope |
+| Concepts | `ARCHITECTURE.md` (overview), `GLOSSARY.md` | No memory/LLM forwarding yet |
+| Quickstart | `Makefile`, `compose-dev`, `dev-smoke`, `DEVELOPMENT_GUIDE.md` | D.3.3 — CodeTabs, 501 honesty |
+| FAQ | New | Common Phase 1 questions |
+
+## Architecture
+
+| Public page | Source |
+| --- | --- |
+| Overview | `ARCHITECTURE.md` §1–3, `PROJECT_CONTEXT.md` |
+| Services | `ARCHITECTURE.md` Core Services, `services/*/README.md` |
+| Data model | `DATABASE_SCHEMA.md` (orgs/projects/agents/tokens) |
+| Request lifecycle | `ARCHITECTURE.md`, ADR-0011/0012/0013 |
+
+## Proxy
+
+| Public page | Source |
+| --- | --- |
+| Overview | `services/proxy/README.md` |
+| Configuration | `ENVIRONMENT_VARIABLES.md` (proxy vars) |
+| Authentication | ADR-0011, `services/proxy/README.md` |
+| Rate limiting | ADR-0015 |
+| Request routing | ADR-0012, ADR-0013 |
+| Provider adapters | Phase 2 placeholder note |
+
+## Auth
+
+| Public page | Source |
+| --- | --- |
+| Overview | `services/auth/README.md` |
+| Issuing API keys | ADR-0007, token management docs |
+| Org & project model | `DATABASE_SCHEMA.md`, ADR-0014 |
+| Multi-tenant RLS | `SECURITY.md`, migration docs |
+
+## Security
+
+| Public page | Source |
+| --- | --- |
+| Overview | `SECURITY.md` objectives + threat model |
+| Authentication | ADR-0007, ADR-0010, ADR-0011 |
+| Tenant isolation | `SECURITY.md` §5, ADR-0014, ADR-0009 |
+| Secrets and keys | `ENVIRONMENT_VARIABLES.md`, ADR-0010 |
+
+## Deployment
+
+| Public page | Source |
+| --- | --- |
+| Docker Compose (dev) | `infra/compose/dev/`, `DEVELOPMENT_GUIDE.md` |
+| Kubernetes | Honest Phase 1 stub — `DEPLOYMENT.md` future preview |
+| Environment variables | `ENVIRONMENT_VARIABLES.md` (integrator filter) |
+
+## Operations
+
+| Public page | Source |
+| --- | --- |
+| Observability | `OPS_GUIDE.md`, ADR-0019, ADR-0021 |
+| Troubleshooting | `TROUBLESHOOTING.md` (compose-dev, auth/proxy, DB) |
+| Health checks | ADR-0022, `MONITORING.md` |
+| Incident response | `runbooks/RUNBOOKS.md` (subset) |
+
+## API Reference (manual, Wave 13)
+
+| Public page | Source |
+| --- | --- |
+| Auth gRPC | `packages/proto`, `API_DOCUMENTATION.md` Phase 1 banner |
+| Proxy health | `services/proxy/README.md`, ADR-0022 |
+| Chat completions stub | ADR-0012 (501 `PROVIDER_NOT_CONFIGURED`) |
+| Errors | ADR-0013 error envelope |
+
+**Deferred:** OpenAPI auto-gen from `openapi.yaml` — file does not exist until Phase 2.
+
+## ADRs
+
+| Public page | Source |
+| --- | --- |
+| ADR index + 0002–0023 | `docs/adr/` → migrated to `docs/app/content/docs/adr/` |
+
+## Changelog & Glossary
+
+| Public page | Source |
+| --- | --- |
+| Changelog | `CHANGELOG.md` Phase 1 entries |
+| Glossary | `GLOSSARY.md` (Phase 1 terms + future markers) |
+
+## Stays internal only
+
+- `CODING_STANDARDS.md`, `FILE_STRUCTURE.md`, `TESTING_STRATEGY.md`
+- `DEPENDENCIES.md`, `PERFORMANCE.md`, `TOOLCHAIN.md`, `UI_UX_GUIDELINES.md`
+- Full `DATABASE_SCHEMA.md`, `API_DOCUMENTATION.md` Phase 2+ surfaces
+- `SECURITY-CI-GATES-DELIVERABLES.md`, CI audit registers
+- Contributor workspace prompts (not published)
+
+Public ADRs: [`/docs/adr`](/docs/adr). Live status: [`/roadmap/current-state`](/roadmap/current-state).

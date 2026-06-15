@@ -1,5 +1,6 @@
 {
   "title": "Auth",
+  "icon": "Shield",
   "pages": [
     "overview",
     "issuing-api-keys",

@@ -7,9 +7,9 @@ import { Kbd } from "@/components/mdx/kbd";
 import { cn } from "@/lib/cn";
 import { useSearchContext } from "fumadocs-ui/provider";
 
-type NavSearchProps = {
+type NavSearchProps = Readonly<{
   className?: string;
-};
+}>;
 
 export function NavSearch({ className }: NavSearchProps) {
   const { setOpenSearch, enabled } = useSearchContext();

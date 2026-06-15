@@ -1,0 +1,84 @@
+---
+title: "3.6.6 Memory Management"
+description: "Milestone 3.6.6 — Memory Management API (View, Search, Delete, Export) — planned."
+summary: "Milestone 3.6.6 — Memory Management API (View, Search, Delete, Export) — planned."
+status: "planned"
+milestoneId: "3.6.6"
+goal: "[3.6 — Management API server](/roadmap/phase-3-memory-engine/goals#goal-36-management-api-server)"
+estimatedEffort: "3 days"
+phase: "phase-3-memory-engine"
+fullTitle: "Milestone 3.6.6 — Memory Management API (View, Search, Delete, Export)"
+---
+
+# Milestone 3.6.6 — Memory Management API (View, Search, Delete, Export)
+
+**Status:** Planned  
+**Goal:** [3.6 — Management API server](/roadmap/phase-3-memory-engine/goals#goal-36-management-api-server)  
+**Phase:** 3 — Memory Engine and Operator Platform  
+**Estimated effort:** 3 days
+
+---
+
+## Endpoints
+
+```
+GET    /v1/agents/{agent_id}/memories          → CursorPage[MemoryResponse] (filtered, paginated)
+GET    /v1/agents/{agent_id}/memories/{id}     → MemoryResponse
+POST   /v1/agents/{agent_id}/memories/search   → SearchMemoriesResponse (semantic search)
+DELETE /v1/agents/{agent_id}/memories/{id}     → 204 (soft delete)
+DELETE /v1/agents/{agent_id}/memories          → 204 (bulk soft delete with filter)
+POST   /v1/agents/{agent_id}/memories/export   → 202 Accepted (async; returns job_id)
+GET    /v1/agents/{agent_id}/memories/export/{job_id} → ExportStatusResponse (with download_url)
+```
+
+### Filter parameters for list and bulk delete
+
+```python
+class MemoryListParams(BaseModel):
+    category:   str | None = None       # filter by category
+    status:     str | None = "active"   # default: active only
+    source:     str | None = None       # filter by source
+    tag:        str | None = None       # filter by tag
+    created_after: datetime | None = None
+    created_before: datetime | None = None
+    limit:      int = Field(default=20, ge=1, le=100)
+    cursor:     str | None = None
+```
+
+### GDPR delete cascade
+
+```python
+# DELETE /v1/agents/{agent_id}/memories/{id}
+# 1. Soft-delete: set deleted_at = NOW() in ibex_core.memories
+# 2. Remove from hot cache (Redis ZREM)
+# 3. Remove from any memory_relationships
+# 4. Create memory_version with operation='delete'
+# 5. If MinIO archive exists for sessions referencing this memory: flag for re-archive
+
+# DELETE /v1/organizations/{id} (GDPR full deletion)
+# Hard delete of all memories, sessions, checkpoints, directives for the org
+# MinIO archives deleted via object lifecycle policy + explicit purge
+```
+
+### Export format
+
+```json
+// CSV export of memories for an agent
+// Async job: POST /export returns job_id; GET /export/{job_id} returns download URL
+// Format: id, category, content, confidence, source, created_at, retrieval_count
+// Privacy: content is included (the operator owns this data); embedding is excluded
+```
+
+---
+
+## Acceptance Criteria
+
+- [ ] List endpoint supports all filter params; correct cursor pagination
+- [ ] Semantic search endpoint calls memory service `/internal/memories/search`
+- [ ] Soft delete sets `deleted_at`; memory no longer appears in active list
+- [ ] Bulk delete requires explicit `confirm=true` query param to prevent accidents
+- [ ] Export job completes within 60 seconds for < 10,000 memories
+- [ ] Export download URL is a MinIO pre-signed URL (15-minute expiry)
+- [ ] Cross-org memory access returns 403 (tested explicitly)
+
+---

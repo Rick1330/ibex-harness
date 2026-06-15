@@ -1,0 +1,43 @@
+---
+title: "ADR-0014: Core domain migration sequencing"
+description: "Architecture decision record 0014."
+adrId: "0014"
+---
+
+# ADR-0014: Core domain migration sequencing
+
+## Status
+
+Accepted
+
+## Context
+
+Phase 1 requires tenant isolation and fail-closed identity verification on the auth/proxy path. The database already contains:
+
+- `ibex_core.organizations`
+- `ibex_core.tokens` (with nullable `user_id`, `agent_id`, and `revoked_by`)
+
+At the time of milestone 1.1.1, `users` and `agents` were intentionally deferred so the initial migration could be minimal and unblock the token/permission plane.
+
+That deferral left two security-critical gaps tracked in Phase 1 milestones:
+
+- **Token FK integrity (S-2):** `tokens.user_id` / `agent_id` / `revoked_by` had no foreign keys, so revocation and tenant-scoping could not rely on referential integrity. Resolved in M1.1.7.
+- **Agent identity (S-1):** The proxy accepted `X-IBEX-Agent-ID` as a UUID without validating org ownership. The fix is [M1.2.5](/roadmap/phase-1-core-platform/milestones/1.2.5-proxy-agent-identity-verification), which depends on `ibex_core.agents` from M1.1.7.
+
+## Decision
+
+1. Introduce `ibex_core.users` and `ibex_core.agents` in milestone **M1.1.7** as the Phase-1 subset of the domain schema.
+2. Add foreign keys for `ibex_core.tokens` in milestone **M1.1.7** using the Postgres pattern:
+   - `ADD CONSTRAINT ... NOT VALID`
+   - `VALIDATE CONSTRAINT` in a follow-up statement
+3. Keep this milestone narrowly scoped: only the Phase-1 subset needed for `ValidateAgent` and token FK integrity. Full domain columns are deferred to later phases.
+
+## Why `NOT VALID` + `VALIDATE CONSTRAINT`
+
+Adding foreign keys to an existing large table can require scanning and acquiring locks. Using `NOT VALID` allows the constraint to be added without immediate validation of existing rows. Since Phase 1’s baseline data uses `NULL` values in these FK columns until the new tables exist, this keeps `make db-migrate` fast while still guaranteeing enforcement after `VALIDATE CONSTRAINT`.
+
+## Consequences
+
+- Referential integrity for token-scoped identities is enforced at the database layer once `M1.1.7` is applied.
+- Proxy/validator logic can rely on tenant-scoped identity lookups without existence leakage.
+- Migration down in development should be treated as a rollback convenience only; production rollback follows the standard migration strategy documented in `ADR-0005`.

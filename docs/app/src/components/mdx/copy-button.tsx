@@ -53,28 +53,28 @@ export function CopyButton({
     <button
       type="button"
       aria-label={checked ? "Copied" : "Copy code"}
+      data-copy
+      data-copy-button
+      data-copied={checked ? "true" : undefined}
       className={cn(
-        "relative inline-flex size-7 items-center justify-center rounded-[4px]",
-        "border border-border bg-panel-raised text-text-secondary",
-        "hover:text-text-primary",
+        "codeblock-copy-btn relative inline-flex items-center justify-center",
         className,
       )}
       onClick={onClick}
       {...props}
     >
       <Check
-        className={cn(
-          "size-4 transition-transform",
-          !checked && "scale-0",
-        )}
-        strokeWidth={1.5}
+        aria-hidden
+        className={cn("size-3.5 transition-transform", !checked && "scale-0")}
+        strokeWidth={2}
       />
       <Copy
+        aria-hidden
         className={cn(
-          "absolute size-4 transition-transform",
+          "absolute size-3.5 transition-transform",
           checked && "scale-0",
         )}
-        strokeWidth={1.5}
+        strokeWidth={2}
       />
     </button>
   );

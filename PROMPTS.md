@@ -37,7 +37,9 @@ When you engage an AI tool, choose the role explicitly:
 
 In every implementation prompt, include:
 
-- [docs/roadmap/CURRENT_STATE.md](docs/roadmap/CURRENT_STATE.md) and the active milestone under `docs/roadmap/phase-*/milestones/` when implementing planned work
+- [`docs/app/content/roadmap/current-state.mdx`](docs/app/content/roadmap/current-state.mdx) and the active milestone under `docs/app/content/roadmap/phase-*/milestones/` when implementing planned work
+- Architecture decisions at [`/docs/adr`](docs/app/content/docs/adr/) on the docs site
+- Milestone execution prompts in `ibex-harness-workspace/prompts/` (local workspace, not in git)
 - relevant file paths that already exist (or confirm none exist)
 - references to at least 1 similar file/module pattern
 - “what is allowed to change” vs “must not change”

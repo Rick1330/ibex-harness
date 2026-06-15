@@ -1,0 +1,298 @@
+---
+title: "3.1.1 Memory Schema"
+description: "The memory system is the foundation of Phase 3. Every service in this phase either reads or writes memory data. The schema must be designed to handle: - Scale: Millions of memories per tenant, with sub-100ms semantic search"
+summary: "The memory system is the foundation of Phase 3. Every service in this phase either reads or writes memory data. The schema must be designed to handle: - Scale: Millions of memories per tenant, with sub-100ms semantic search"
+status: "planned"
+milestoneId: "3.1.1"
+goal: "[3.1 — Memory schema and data foundation](/roadmap/phase-3-memory-engine/goals#goal-31-memory-schema-and-data-foundation)"
+estimatedEffort: "3–4 days"
+phase: "phase-3-memory-engine"
+fullTitle: "Milestone 3.1.1 — Memory Schema Migrations"
+---
+
+# Milestone 3.1.1 — Memory Schema Migrations
+
+**Status:** Planned  
+**Goal:** [3.1 — Memory schema and data foundation](/roadmap/phase-3-memory-engine/goals#goal-31-memory-schema-and-data-foundation)  
+**Phase:** 3 — Memory Engine and Operator Platform  
+**Estimated effort:** 3–4 days  
+**ADR required:** ADR-0032 — Memory data model design
+
+---
+
+## Why This Milestone Exists
+
+The memory system is the foundation of Phase 3. Every service in this phase either reads or writes memory data. The schema must be designed to handle:
+
+- **Scale:** Millions of memories per tenant, with sub-100ms semantic search
+- **Correctness:** Deduplication, versioning, and conflict tracking require referential integrity
+- **Multi-tenancy:** RLS on every table, org_id in every query
+- **Evolvability:** The Phase 3 schema is the base; Phase 4 adds behavioural fingerprinting and drift metrics on top
+
+Getting the schema right now — correct vector dimensions, correct index type, correct column types, correct normalization — avoids expensive live migrations. This milestone is thorough and deliberate.
+
+---
+
+## Non-Goals
+
+- `ibex_core.behavioral_fingerprints` (Phase 4)
+- `ibex_core.drift_alerts` (Phase 4)
+- Memory compression or summarisation (Phase 4)
+- pgvector HNSW index (requires pgvector 0.5+, validated in Phase 4)
+
+---
+
+## Branch
+
+`feat/m3-1-1-memory-schema`
+
+## PR Title
+
+`feat(db): complete memory schema — memories, versions, relationships, tags (m3.1.1)`
+
+---
+
+## Prerequisites
+
+- [1.1.7](../../phase-1-core-platform/milestones/1.1.7-users-and-agents-schema.md) merged — `agents` table exists
+- [2.4.1](../../phase-2-single-provider/milestones/2.4.1-sessions-checkpoints-migrations.md) merged — `sessions` and `checkpoints` tables exist
+- pgvector extension enabled in Postgres image (`pgvector/pgvector:pg16`)
+
+---
+
+## Deliverables
+
+### Migration: `000011_create_memories.up.sql`
+
+```sql
+-- ═══════════════════════════════════════════════════════════════════════
+-- Enable pgvector extension (idempotent)
+-- ═══════════════════════════════════════════════════════════════════════
+CREATE EXTENSION IF NOT EXISTS vector;
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- ibex_core.memories — The primary memory store
+-- ═══════════════════════════════════════════════════════════════════════
+CREATE TABLE ibex_core.memories (
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id              UUID NOT NULL REFERENCES ibex_core.organizations(id) ON DELETE CASCADE,
+    agent_id            UUID NOT NULL REFERENCES ibex_core.agents(id) ON DELETE CASCADE,
+    session_id          UUID REFERENCES ibex_core.sessions(id) ON DELETE SET NULL,
+
+    -- Content
+    content             TEXT NOT NULL,
+    content_hash        VARCHAR(64) NOT NULL,        -- SHA-256 hex; used for exact dedup
+    embedding           VECTOR(384) NOT NULL,         -- all-MiniLM-L6-v2; 384 dimensions
+
+    -- Classification
+    category            TEXT NOT NULL
+                        CHECK (category IN ('factual', 'preference', 'behavioral', 'episodic', 'procedural')),
+    source              TEXT NOT NULL DEFAULT 'extracted'
+                        CHECK (source IN ('extracted', 'user_provided', 'imported', 'inferred')),
+    status              TEXT NOT NULL DEFAULT 'active'
+                        CHECK (status IN ('active', 'superseded', 'merged', 'archived', 'pending_review')),
+
+    -- Quality signals (0.00 to 1.00)
+    confidence          DECIMAL(4,3) NOT NULL DEFAULT 0.800
+                        CHECK (confidence >= 0.000 AND confidence <= 1.000),
+    usefulness_score    DECIMAL(4,3) NOT NULL DEFAULT 0.500
+                        CHECK (usefulness_score >= 0.000 AND usefulness_score <= 1.000),
+
+    -- Usage tracking (drives access_frequency score in ranking)
+    retrieval_count     INTEGER NOT NULL DEFAULT 0,
+    last_retrieved_at   TIMESTAMPTZ,
+    last_injected_at    TIMESTAMPTZ,  -- last time this memory was included in a context
+
+    -- Relationships
+    superseded_by       UUID REFERENCES ibex_core.memories(id) ON DELETE SET NULL,
+    merged_into         UUID REFERENCES ibex_core.memories(id) ON DELETE SET NULL,
+
+    -- Retention
+    expires_at          TIMESTAMPTZ,    -- null = no expiry
+    deleted_at          TIMESTAMPTZ,    -- soft delete
+
+    -- Flexible metadata (provider, extraction model, custom agent fields)
+    metadata            JSONB NOT NULL DEFAULT '{}',
+
+    -- Timestamps
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    -- Constraints
+    CONSTRAINT memories_content_not_empty   CHECK (length(content) > 0),
+    CONSTRAINT memories_content_max_length  CHECK (length(content) <= 8192),  -- 8KB max per memory
+    CONSTRAINT memories_superseded_or_active
+        CHECK (NOT (status = 'active' AND superseded_by IS NOT NULL))
+);
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- Indexes — ordered by query frequency in the hot path
+-- ═══════════════════════════════════════════════════════════════════════
+
+-- Primary query: fetch active memories for an agent (context assembly)
+CREATE INDEX idx_memories_agent_active
+    ON ibex_core.memories(org_id, agent_id, created_at DESC)
+    WHERE status = 'active' AND deleted_at IS NULL;
+
+-- Deduplication: exact content hash lookup
+CREATE UNIQUE INDEX idx_memories_content_hash_org
+    ON ibex_core.memories(org_id, agent_id, content_hash)
+    WHERE status = 'active' AND deleted_at IS NULL;
+
+-- Vector similarity search (ANN via IVFFlat)
+-- lists=100 is optimal for datasets up to 1M vectors.
+-- probes=10 is the query-time accuracy/speed tradeoff.
+-- Both are tunable without index rebuild.
+-- NOTE: Build CONCURRENTLY in production to avoid table lock.
+CREATE INDEX idx_memories_embedding_cosine
+    ON ibex_core.memories USING ivfflat (embedding vector_cosine_ops)
+    WITH (lists = 100)
+    WHERE status = 'active' AND deleted_at IS NULL;
+
+-- Full-text search (keyword fallback when vector search is too slow)
+CREATE INDEX idx_memories_content_fts
+    ON ibex_core.memories USING gin(to_tsvector('english', content))
+    WHERE deleted_at IS NULL;
+
+-- Category filtering (used in memory browser API)
+CREATE INDEX idx_memories_category
+    ON ibex_core.memories(org_id, agent_id, category, created_at DESC)
+    WHERE deleted_at IS NULL;
+
+-- Session linkage (for post-session extraction)
+CREATE INDEX idx_memories_session
+    ON ibex_core.memories(session_id)
+    WHERE session_id IS NOT NULL;
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- RLS
+-- ═══════════════════════════════════════════════════════════════════════
+ALTER TABLE ibex_core.memories ENABLE ROW LEVEL SECURITY;
+CREATE POLICY memories_isolation ON ibex_core.memories
+    USING (
+        org_id = current_setting('app.current_org_id', true)::UUID
+        OR current_setting('app.is_service_account', true)::BOOLEAN = true
+    );
+
+CREATE TRIGGER memories_updated_at
+    BEFORE UPDATE ON ibex_core.memories
+    FOR EACH ROW EXECUTE FUNCTION ibex_core.set_updated_at();
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- ibex_core.memory_versions — Immutable change history
+-- Every modification to a memory creates a version. The memory row is
+-- updated; the version row is never modified after creation.
+-- ═══════════════════════════════════════════════════════════════════════
+CREATE TABLE ibex_core.memory_versions (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    memory_id       UUID NOT NULL REFERENCES ibex_core.memories(id) ON DELETE CASCADE,
+    org_id          UUID NOT NULL REFERENCES ibex_core.organizations(id) ON DELETE CASCADE,
+    version_num     INTEGER NOT NULL,
+    operation       TEXT NOT NULL CHECK (operation IN ('create', 'update', 'supersede', 'merge', 'archive', 'delete')),
+
+    -- Snapshot of the memory at this version
+    content         TEXT NOT NULL,
+    category        TEXT NOT NULL,
+    confidence      DECIMAL(4,3) NOT NULL,
+    metadata        JSONB NOT NULL DEFAULT '{}',
+
+    -- Who and why
+    changed_by_type TEXT NOT NULL CHECK (changed_by_type IN ('extraction', 'user', 'system', 'conflict_resolution')),
+    change_reason   TEXT,           -- human-readable description of why this changed
+
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    UNIQUE(memory_id, version_num)
+);
+
+CREATE INDEX idx_memory_versions_memory ON ibex_core.memory_versions(memory_id);
+
+ALTER TABLE ibex_core.memory_versions ENABLE ROW LEVEL SECURITY;
+CREATE POLICY memory_versions_isolation ON ibex_core.memory_versions
+    USING (
+        org_id = current_setting('app.current_org_id', true)::UUID
+        OR current_setting('app.is_service_account', true)::BOOLEAN = true
+    );
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- ibex_core.memory_relationships — Typed graph edges between memories
+-- ═══════════════════════════════════════════════════════════════════════
+CREATE TABLE ibex_core.memory_relationships (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id          UUID NOT NULL REFERENCES ibex_core.organizations(id) ON DELETE CASCADE,
+    source_id       UUID NOT NULL REFERENCES ibex_core.memories(id) ON DELETE CASCADE,
+    target_id       UUID NOT NULL REFERENCES ibex_core.memories(id) ON DELETE CASCADE,
+    relation_type   TEXT NOT NULL
+                    CHECK (relation_type IN (
+                        'supports',         -- source provides evidence for target
+                        'contradicts',      -- source conflicts with target
+                        'supersedes',       -- source replaces target (target is outdated)
+                        'refines',          -- source is a more specific version of target
+                        'co_occurs',        -- source and target appear in the same context often
+                        'derived_from'      -- source was inferred from target
+                    )),
+    confidence      DECIMAL(4,3) NOT NULL DEFAULT 0.800,
+    metadata        JSONB NOT NULL DEFAULT '{}',
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    -- No self-loops; no duplicate edges of same type
+    CONSTRAINT no_self_relationship CHECK (source_id != target_id),
+    UNIQUE(source_id, target_id, relation_type)
+);
+
+CREATE INDEX idx_memory_relationships_source ON ibex_core.memory_relationships(source_id);
+CREATE INDEX idx_memory_relationships_target ON ibex_core.memory_relationships(target_id);
+CREATE INDEX idx_memory_relationships_type   ON ibex_core.memory_relationships(org_id, relation_type);
+
+ALTER TABLE ibex_core.memory_relationships ENABLE ROW LEVEL SECURITY;
+CREATE POLICY memory_relationships_isolation ON ibex_core.memory_relationships
+    USING (
+        org_id = current_setting('app.current_org_id', true)::UUID
+        OR current_setting('app.is_service_account', true)::BOOLEAN = true
+    );
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- ibex_core.memory_tags — Normalised many-to-many tags
+-- ═══════════════════════════════════════════════════════════════════════
+CREATE TABLE ibex_core.memory_tags (
+    memory_id       UUID NOT NULL REFERENCES ibex_core.memories(id) ON DELETE CASCADE,
+    org_id          UUID NOT NULL REFERENCES ibex_core.organizations(id) ON DELETE CASCADE,
+    tag             TEXT NOT NULL CHECK (length(tag) BETWEEN 1 AND 64),
+    PRIMARY KEY (memory_id, tag)
+);
+
+CREATE INDEX idx_memory_tags_lookup ON ibex_core.memory_tags(org_id, tag);
+
+ALTER TABLE ibex_core.memory_tags ENABLE ROW LEVEL SECURITY;
+CREATE POLICY memory_tags_isolation ON ibex_core.memory_tags
+    USING (org_id = current_setting('app.current_org_id', true)::UUID
+           OR current_setting('app.is_service_account', true)::BOOLEAN = true);
+```
+
+---
+
+## ADR-0032 — Memory data model design
+
+Write `ADR-0032` documenting:
+
+- **Why VECTOR(384):** all-MiniLM-L6-v2 produces 384-dim vectors. Changing embedding model requires re-embedding all memories (data migration). Phase 4 may add a second embedding column for a higher-quality model.
+- **Why IVFFlat over HNSW:** IVFFlat is available in pgvector 0.4+; HNSW requires 0.5+. IVFFlat is sufficient for < 5M vectors per org. HNSW is planned for Phase 4 when any org exceeds 1M memories.
+- **Why `lists=100`:** Standard rule: sqrt(total_rows). For 10,000 memories, sqrt(10000) = 100. For 1M memories, increase to 1000. `lists` is set at index creation; changing requires index rebuild.
+- **Why 5 categories (factual, preference, behavioral, episodic, procedural):** Drawn from cognitive science memory taxonomy. Different categories have different injection priorities and decay rates.
+- **Why content_hash as UNIQUE index:** Prevents exact duplicates at the database level, not just at the application level. Defense-in-depth against extraction worker bugs.
+- **Why `expires_at` is nullable:** Not all memories expire. Operator-created memories (user_provided source) may be permanent. Extracted memories default to null (no expiry in Phase 3; decay scoring in Phase 4).
+
+---
+
+## Acceptance Criteria
+
+- [ ] All 4 tables created with correct types, indexes, and RLS
+- [ ] `VECTOR(384)` column exists in `ibex_core.memories`
+- [ ] IVFFlat index created on the embedding column
+- [ ] `idx_memories_content_hash_org` unique index prevents duplicate memories
+- [ ] RLS enforced: cross-org query returns zero rows
+- [ ] `make db-migrate` is idempotent (second run no-ops)
+- [ ] `EXPLAIN (ANALYZE, BUFFERS)` on a vector search query confirms IVFFlat index is used
+- [ ] ADR-0032 written and indexed
+
+---

@@ -1,0 +1,102 @@
+---
+title: "d2.6 Enhanced Code"
+description: "Quickstart and API docs are code-heavy. Default Shiki blocks lack filename strips, copy buttons, and line highlights expected in Vercel-quality docs. D.3.3 quickstart mandates `<CodeTabs>` with curl/node/python — copy must work reliably and filenames must render for config snippets."
+summary: "Quickstart and API docs are code-heavy. Default Shiki blocks lack filename strips, copy buttons, and line highlights expected in Vercel-quality docs. D.3.3 quickstart mandates `<CodeTabs>` with curl/node/python — copy must work reliably and filenames must render for config snippets."
+status: "completed"
+milestoneId: "d2.6"
+goal: "[D.2](/roadmap/phase-1-5-docs-site/goals)"
+estimatedEffort: "3 hours"
+phase: "phase-1-5-docs-site"
+fullTitle: "Milestone D.2.6 — Enhanced code blocks"
+---
+
+# Milestone D.2.6 — Enhanced code blocks
+
+**Status:** Complete  
+**Goal:** [D.2](/roadmap/phase-1-5-docs-site/goals)  
+**Phase:** 1.5 — Docs Site  
+**Wave:** 4  
+**Estimated effort:** 3 hours  
+**ADR required:** None
+
+Spec detail: [MASTER_BRIEF.md](/roadmap/phase-1-5-docs-site/master-brief) Part D (D.2.6).
+
+---
+
+## Why This Milestone Exists
+
+Quickstart and API docs are code-heavy. Default Shiki blocks lack filename strips, copy buttons, and line highlights expected in Vercel-quality docs.
+
+D.3.3 quickstart mandates `<CodeTabs>` with curl/node/python — copy must work reliably and filenames must render for config snippets.
+
+Shiki themes from D.2.1 must integrate against `--panel` without injecting conflicting backgrounds.
+
+---
+
+## Non-Goals
+
+- Runnable code playgrounds (Phase 2+)
+- Syntax highlighting for non-code languages
+- Diff view / line numbers on every block
+
+---
+
+## Branch
+
+`feat/d2-6-code-blocks`
+
+## PR Title
+
+`feat(docs): enhanced code blocks (D.2.6)`
+
+---
+
+## Prerequisites
+
+- [D.2.2](/roadmap/phase-1-5-docs-site/milestones/d2.2-matte-graphite-tokens) merged
+- [D.2.3](/roadmap/phase-1-5-docs-site/milestones/d2.3-mdx-components-catalogue) merged
+
+---
+
+## Deliverables
+
+- Copy button: lucide `Copy` → `Check`, 1.5s confirm, hover on `pre`
+- Filename strip: ` ```text title="src/foo.ts" ` → 28px bar, mono filename
+- Line highlight: ` ```ts &#123;3,7-9} ` → `bg-panel-raised` + 2px accent left border
+
+See MASTER_BRIEF Part D (D.2.6) for full acceptance detail.
+
+---
+
+## Files Affected
+
+| File Path | Action | Notes |
+| --- | --- | --- |
+| `docs/app/src/components/mdx/pre.tsx` | Add/Modify | Enhanced pre/code wrapper |
+| `docs/app/src/components/mdx/copy-button.tsx` | Add | Clipboard copy control |
+
+---
+
+## Testing Requirements
+
+- **`verifyCodeBlock_FilenameStrip`**: Block with `title="…"` renders filename bar
+- **`verifyCodeBlock_CopyButton`**: Copy puts unhighlighted source on clipboard
+- **`verifyCodeBlock_LineHighlight`**: Lines `&#123;3,7-9}` show highlight in both themes
+
+---
+
+## Acceptance Criteria
+
+- [ ] Filename tab renders for blocks with `title="…"`
+- [ ] Copy button works (clipboard contains unhighlighted source)
+- [ ] Highlighted lines visible in dark and light without new colors
+
+---
+
+## Risks
+
+| Risk | Probability | Impact | Mitigation |
+| --- | --- | --- | --- |
+| Clipboard API blocked on HTTP localhost | Low | Medium | Document HTTPS or localhost exception |
+| Shiki meta parsing breaks MDX | Medium | High | Keep meta strings per D.2.1 bootstrap note |
+| Copy includes ANSI/highlight spans | Medium | High | Copy from raw source store, not DOM innerHTML |

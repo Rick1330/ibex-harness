@@ -1,0 +1,102 @@
+---
+title: "d2.8 NOT Found"
+description: "Broken links and mistyped URLs must return HTTP 404 with branded recovery paths, not a generic Next.js error or soft 200. Landing site visitors following old links need clear paths back to `ibexharness.com` and docs home."
+summary: "Broken links and mistyped URLs must return HTTP 404 with branded recovery paths, not a generic Next.js error or soft 200. Landing site visitors following old links need clear paths back to `ibexharness.com` and docs home."
+status: "completed"
+milestoneId: "d2.8"
+goal: "[D.2](/roadmap/phase-1-5-docs-site/goals)"
+estimatedEffort: "1 hour"
+phase: "phase-1-5-docs-site"
+fullTitle: "Milestone D.2.8 — NotFound + home redirect"
+---
+
+# Milestone D.2.8 — NotFound + home redirect
+
+**Status:** Complete  
+**Goal:** [D.2](/roadmap/phase-1-5-docs-site/goals)  
+**Phase:** 1.5 — Docs Site  
+**Wave:** 2  
+**Estimated effort:** 1 hour  
+**ADR required:** None
+
+Spec detail: [MASTER_BRIEF.md](/roadmap/phase-1-5-docs-site/master-brief) Part D (D.2.8).
+
+---
+
+## Why This Milestone Exists
+
+Broken links and mistyped URLs must return HTTP 404 with branded recovery paths, not a generic Next.js error or soft 200.
+
+Landing site visitors following old links need clear paths back to `ibexharness.com` and docs home.
+
+D.5.2 `verify_phase15.sh` asserts 404 status — this page must exist before launch verification.
+
+---
+
+## Non-Goals
+
+- Custom error boundary for 500 errors
+- Redirect map for renamed URLs (post-launch ops)
+- Search on 404 page
+
+---
+
+## Branch
+
+`feat/d2-8-not-found`
+
+## PR Title
+
+`feat(docs): styled 404 and home redirect (D.2.8)`
+
+---
+
+## Prerequisites
+
+- [D.2.1](/roadmap/phase-1-5-docs-site/milestones/d2.1-bootstrap-fumadocs) merged
+- [D.2.7](/roadmap/phase-1-5-docs-site/milestones/d2.7-sidebar-breadcrumbs-on-this-page) merged
+
+---
+
+## Deliverables
+
+- `docs/app/src/app/not-found.tsx` — 72px mono `404`, outline buttons
+- Buttons: "Back to home" → `https://ibexharness.com`, "Documentation home" → introduction
+- Confirm `/` → `/docs/getting-started/introduction` redirect from D.2.1
+
+See MASTER_BRIEF Part D (D.2.8) for full acceptance detail.
+
+---
+
+## Files Affected
+
+| File Path | Action | Notes |
+| --- | --- | --- |
+| `docs/app/src/app/not-found.tsx` | Add | Styled 404 page |
+| `docs/app/next.config.mjs` | Verify | Root redirect intact |
+
+---
+
+## Testing Requirements
+
+- **`verifyNotFound_Http404`**: `curl -I /this-page-does-not-exist` returns status 404
+- **`verifyNotFound_LandingLink`**: Page contains link to ibexharness.com
+- **`verifyRootRedirect_Introduction`**: `/` redirects to introduction
+
+---
+
+## Acceptance Criteria
+
+- [ ] Visiting unknown path returns styled 404 with HTTP 404
+- [ ] Two recovery buttons render and navigate correctly
+- [ ] Root redirect to introduction still works
+
+---
+
+## Risks
+
+| Risk | Probability | Impact | Mitigation |
+| --- | --- | --- | --- |
+| Next.js notFound vs catch-all conflict | Medium | High | Test with `[[...slug]]` route from D.2.1 |
+| 404 cached as 200 on CDN | Low | High | Verify Vercel headers on preview deploy |
+| Button styles drift from Matte Graphite | Low | Medium | Use outline variant from MASTER_BRIEF §E.1 |

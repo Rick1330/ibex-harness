@@ -1,29 +1,45 @@
 # IBEX Harness — Documentation Index
 
-Canonical documentation for the monorepo. **Target system** design lives here; **implementation status** lives in the [roadmap](roadmap/CURRENT_STATE.md).
+Canonical **engineering** documentation for monorepo contributors. **Integrator-facing** docs ship on the public site at [docs.ibexharness.com](https://docs.ibexharness.com) (`docs/app/content/docs/`).
 
 ## Start here
 
-1. [roadmap/CURRENT_STATE.md](roadmap/CURRENT_STATE.md) — what works today and next tasks
+1. [docs/app/content/roadmap/current-state.mdx](../app/content/roadmap/current-state.mdx) — living implementation snapshot (`/roadmap/current-state`)
 2. [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) — vision, problem, capabilities, and phases
-2. [ARCHITECTURE.md](ARCHITECTURE.md) — services, data flows, security, deployment topology
-3. [TECH_STACK.md](TECH_STACK.md) — approved technologies and rationale
-4. [SECURITY.md](SECURITY.md) — threat model, tenant isolation, auth, and checklists
-5. [TESTING_STRATEGY.md](TESTING_STRATEGY.md) — test pyramid, CI gates, and no-mock rules
+3. [ARCHITECTURE.md](ARCHITECTURE.md) — services, data flows, security, deployment topology
+4. [TECH_STACK.md](TECH_STACK.md) — approved technologies and rationale
+5. [SECURITY.md](SECURITY.md) — threat model, tenant isolation, auth, and checklists
+6. [TESTING_STRATEGY.md](TESTING_STRATEGY.md) — test pyramid, CI gates, and no-mock rules
 
 Then use [DEVELOPMENT_GUIDE.md](DEVELOPMENT_GUIDE.md) for day-to-day workflow, PR expectations, and the **session workspace** (§12 — sibling `ibex-harness-workspace/`, outside git).
 
-**Session workspace vs roadmap:** [roadmap/CURRENT_STATE.md](roadmap/CURRENT_STATE.md) is versioned in the repo; workspace `current_state.md` is session scratch. Closed audits live under `ibex-harness-workspace/archive/foundation/`.
+**Public docs mapping:** [docs/app/content/roadmap/phase-1-5-docs-site/content-sources.mdx](../app/content/roadmap/phase-1-5-docs-site/content-sources.mdx) lists which engineering files feed each `/docs/*` page.
 
 **Toolchain:** [TOOLCHAIN.md](TOOLCHAIN.md) lists required local tools, installation options, and sanity checks.
 
 **Local dependencies:** [../infra/compose/dev/README.md](../infra/compose/dev/README.md) (Docker Compose). **Contracts:** [../packages/proto/README.md](../packages/proto/README.md) (Buf / protobuf).
 
-**AI-assisted work:** read [../AGENTS.md](../AGENTS.md) and copy prompts from [../prompts/](../prompts/) (see [../PROMPTS.md](../PROMPTS.md)).
+**AI-assisted work:** read [../AGENTS.md](../AGENTS.md). Execution prompts live in the contributor workspace (not published on the docs site).
 
 ---
 
-## Full table of contents
+## Public docs site (integrators)
+
+| Section | URL | Engineering sources |
+| --- | --- | --- |
+| Getting Started | `/docs/getting-started` | `DEVELOPMENT_GUIDE.md`, quickstart Makefile targets |
+| Architecture | `/docs/architecture` | `ARCHITECTURE.md`, `DATABASE_SCHEMA.md` (subset) |
+| Proxy / Auth | `/docs/proxy`, `/docs/auth` | `services/*/README.md`, ADRs |
+| Security | `/docs/security` | `SECURITY.md`, `ENVIRONMENT_VARIABLES.md` |
+| Deployment | `/docs/deployment` | `DEVELOPMENT_GUIDE.md`, compose dev |
+| Operations | `/docs/operations` | `OPS_GUIDE.md`, `TROUBLESHOOTING.md`, runbooks |
+| API Reference | `/docs/api-reference` | Phase 1 surfaces only — see content-sources |
+| ADRs | `/docs/adr` | Migrated from `docs/adr/` |
+| Changelog / Glossary | `/docs/changelog`, `/docs/glossary` | `CHANGELOG.md`, `GLOSSARY.md` |
+
+---
+
+## Full engineering table of contents
 
 | Document | Description |
 |----------|-------------|
@@ -50,14 +66,13 @@ Then use [DEVELOPMENT_GUIDE.md](DEVELOPMENT_GUIDE.md) for day-to-day workflow, P
 | [GLOSSARY.md](GLOSSARY.md) | Domain terminology (agent, memory, directive, trace, etc.) |
 | [UI_UX_GUIDELINES.md](UI_UX_GUIDELINES.md) | Dashboard UX, accessibility, and trace inspector |
 
-### Roadmap
+### Roadmap (public site)
 
 | Document | Description |
 | --- | --- |
-| [roadmap/README.md](roadmap/README.md) | How to read phases, goals, milestones |
-| [roadmap/CURRENT_STATE.md](roadmap/CURRENT_STATE.md) | Living snapshot (update after each merge) |
-| [roadmap/PHASES.md](roadmap/PHASES.md) | All phases and exit criteria |
-| [roadmap/phase-1-core-platform/](roadmap/phase-1-core-platform/) | Active phase — milestones and risks |
+| [roadmap/README.md](roadmap/README.md) | Pointer to public `/roadmap` on docs site |
+| [app/content/roadmap/current-state.mdx](../app/content/roadmap/current-state.mdx) | Living snapshot (update after each merge) |
+| [app/content/roadmap/](../app/content/roadmap/) | Phase goals, milestones, decisions, risks |
 
 ---
 
@@ -67,15 +82,12 @@ Then use [DEVELOPMENT_GUIDE.md](DEVELOPMENT_GUIDE.md) for day-to-day workflow, P
 |------|-------------|
 | [../README.md](../README.md) | Project entrypoint and quick start |
 | [../AGENTS.md](../AGENTS.md) | Global AI agent operating manual |
-| [../PROMPTS.md](../PROMPTS.md) | Prompt library index |
 | [../.cursorrules](../.cursorrules) | Cursor IDE rules for this repo |
 
 ---
 
 ## ADRs
 
-- [adr/README.md](adr/README.md)
-- [adr/ADR-0001-template.md](adr/ADR-0001-template.md)
-- [adr/ADR-0002-repo-foundation-bootstrap.md](adr/ADR-0002-repo-foundation-bootstrap.md)
-- [adr/ADR-0003-branch-protection-and-merge-policy.md](adr/ADR-0003-branch-protection-and-merge-policy.md)
-- [adr/ADR-0004-protobuf-and-codegen-policy.md](adr/ADR-0004-protobuf-and-codegen-policy.md)
+- [adr/README.md](adr/README.md) — pointer to public ADR index
+- **Published ADRs:** [docs/app/content/docs/adr/](../app/content/docs/adr/) (`/docs/adr` on the docs site)
+- Source markdown remains in [adr/](adr/) for engineering workflow; public site is the canonical reader-facing copy after migration.

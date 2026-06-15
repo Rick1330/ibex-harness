@@ -1,0 +1,158 @@
+---
+title: "Phase 3 — Goals"
+description: "What: The complete Postgres schema for the memory system. Every subsequent Phase 3 milestone depends on this schema. Getting it right on the first pass — correct types, indexes, RLS, constraints — prevents expensive migrations later."
+summary: "What: The complete Postgres schema for the memory system. Every subsequent Phase 3 milestone depends on this schema. Getting it right on the first pass — correct types, indexes, RLS, constraints — prevents expensive migrations later."
+status: "planned"
+phase: "phase-3-memory-engine"
+---
+
+# Phase 3 — Goals
+
+<h2 id="goal-31-memory-schema-and-data-foundation">Goal 3.1: Memory Schema and Data Foundation</h2>
+
+**What:** The complete Postgres schema for the memory system. Every subsequent Phase 3 milestone depends on this schema. Getting it right on the first pass — correct types, indexes, RLS, constraints — prevents expensive migrations later.
+
+**Acceptance criteria:**
+- `ibex_core.memories` table with pgvector `VECTOR(384)` column, RLS enabled
+- `ibex_core.memory_relationships` graph table (typed edges between memory nodes)
+- `ibex_core.memory_versions` immutable history (append-only, never updated)
+- `ibex_core.memory_tags` normalised tagging table
+- IVFFlat vector index (lists=100) for cosine similarity search
+- GIN full-text search index on content
+- All tables have org_id RLS policies
+- Base Python SQLAlchemy models (async) generated from schema
+- Migration runner works: `make db-migrate` applies cleanly from zero
+
+**Milestones:** 3.1.1 → 3.1.2
+
+---
+
+<h2 id="goal-32-embedding-service">Goal 3.2: Embedding Service</h2>
+
+**What:** A dedicated microservice that loads `all-MiniLM-L6-v2` at startup and exposes a batched embedding API. It is the only component that calls the sentence-transformers library. All other services call it via HTTP.
+
+**Acceptance criteria:**
+- Model loaded and warmed up before the service accepts traffic (liveness vs readiness distinction)
+- Batch endpoint: accept up to 512 texts, return 384-dim vectors for each
+- Single-text endpoint: accept one text, return 384-dim vector within 20ms (CPU)
+- Redis content-hash cache: if SHA-256(text) is cached, return stored vector without inference
+- Cache hit rate > 80% under realistic production load (memory content repeats in extraction)
+- Service is stateless and horizontally scalable
+
+**Milestones:** 3.2.1 → 3.2.2 → 3.2.3 → 3.2.4
+
+---
+
+<h2 id="goal-33-memory-service">Goal 3.3: Memory Service</h2>
+
+**What:** The Python microservice that owns all memory data. Writes go through a 9-step pipeline (validation → PII → dedup → embedding → near-duplicate check → conflict trigger → DB → hot cache → index). Reads go through semantic search + ranking.
+
+**Acceptance criteria:**
+- Memory write pipeline executes all 9 steps in order
+- PII detection redacts email, phone, SSN patterns before storage
+- Content dedup: identical content_hash = no insert, return existing memory
+- Near-duplicate (cosine similarity > 0.92): trigger merge/supersession workflow
+- Semantic search returns top-K memories ranked by composite score (formula from ARCHITECTURE.md)
+- Hot cache (Redis sorted set per agent): top-50 memories by composite score
+- Write p95 < 200ms, search p95 < 100ms
+- All data scoped by org_id; RLS + application-layer double enforcement
+
+**Milestones:** 3.3.1 → 3.3.2 → 3.3.3 → 3.3.4 → 3.3.5 → 3.3.6
+
+---
+
+<h2 id="goal-34-memory-extraction-worker">Goal 3.4: Memory Extraction Worker</h2>
+
+**What:** The Celery background worker that reads completed session checkpoints and extracts structured memories using a secondary LLM call. This is the "learning" part of the system.
+
+**Acceptance criteria:**
+- Worker processes sessions incrementally: reads turns > `last_extracted_turn`, updates pointer after extraction
+- Extraction prompt produces structured JSON: category, content, confidence
+- Idempotent: processing the same checkpoint twice produces no duplicates
+- Memory embedding and DB write happen in the same task (not split)
+- Conflict detection triggered when a new memory has similarity > 0.85 to an existing memory of the same category
+- Failed tasks retry 3 times with exponential backoff before dead-letter
+- Worker processes a 10-turn session within 10 seconds under normal load
+- Session `status = 'completed'` is the trigger; `status = 'active'` is NOT processed
+
+**Milestones:** 3.4.1 → 3.4.2 → 3.4.3 → 3.4.4 → 3.4.5 → 3.4.6
+
+---
+
+<h2 id="goal-35-context-assembly-engine">Goal 3.5: Context Assembly Engine</h2>
+
+**What:** The Python gRPC service that assembles the enriched context for every LLM request. Called by the proxy in the hot path with a 40ms deadline on the retrieval operations.
+
+**Acceptance criteria:**
+- gRPC server starts, registers with proto, handles `AssembleContext` RPC
+- Token budget calculated correctly per model (GPT-4o = 128K, GPT-4o-mini = 128K, etc.)
+- Parallel retrieval: directive + hot memories + cold semantic search run concurrently, all within 40ms
+- Composite scoring formula matches ARCHITECTURE.md exactly: 0.40×relevance + 0.25×recency + 0.20×usefulness + 0.10×confidence + 0.05×access_frequency
+- Greedy knapsack correctly packs memories by score until token budget exhausted
+- Context assembly service timeout returns directive-only context (graceful degradation)
+- Output format: directive → procedural → declarative → episodic → episodic → conversation history
+- Proxy wired to call context assembly before every LLM forward
+
+**Milestones:** 3.5.1 → 3.5.2 → 3.5.3 → 3.5.4 → 3.5.5 → 3.5.6 → 3.5.7
+
+---
+
+<h2 id="goal-36-management-api-server">Goal 3.6: Management API Server</h2>
+
+**What:** The REST API that operators use to manage every aspect of the platform: orgs, users, agents, tokens, directives, memories, sessions, and usage analytics.
+
+**Acceptance criteria:**
+- OpenAPI spec auto-generated from FastAPI; accessible at `/docs`
+- Auth middleware: validates IBEX PAT via call to auth gRPC service
+- All endpoints return the stable IBEX error envelope
+- Pagination: all list endpoints use cursor-based pagination
+- Org management: create, update, suspend, delete
+- Agent management: full CRUD + status transitions
+- Token management: create, revoke, list (with scoping)
+- Directive management: CRUD with full version history
+- Memory management: list, get, delete, export (CSV/JSON)
+- Session management: list, get, replay link
+- Analytics endpoints: usage by time range, token spend, model breakdown
+
+**Milestones:** 3.6.1 → 3.6.2 → 3.6.3 → 3.6.4 → 3.6.5 → 3.6.6 → 3.6.7 → 3.6.8
+
+---
+
+<h2 id="goal-37-minio-session-content-archives">Goal 3.7: MinIO Session Content Archives</h2>
+
+**What:** After a session is completed, its full message content (the conversation) is archived to MinIO (S3-compatible). Postgres stores only metadata; MinIO stores content. This enables session replay, GDPR data exports, and cheaper long-term storage.
+
+**Acceptance criteria:**
+- MinIO bucket `ibex-sessions` created at service init
+- Session archive written after `sessions.status = 'completed'`
+- Archive format: newline-delimited JSON (one line per checkpoint)
+- Archive path: `{org_id}/{agent_id}/{session_id}/{session_id}.ndjson`
+- Archive write is async (does not block session completion)
+- Archive readable via pre-signed URL (15-minute expiry)
+- GDPR deletion: archive deleted when org or session is deleted
+
+**Milestones:** 3.7.1 → 3.7.2 → 3.7.3
+
+---
+
+<h2 id="goal-38-operator-dashboard">Goal 3.8: Operator Dashboard</h2>
+
+**What:** The Next.js 14 web application that gives operators visibility and control over the entire platform: agents, memories, usage analytics, and session history.
+
+**Acceptance criteria:**
+- Authenticates with a PAT (no OAuth in Phase 3)
+- Agent list, detail, create, edit, delete
+- Memory browser: search, filter by category/date/agent, delete
+- Analytics: token spend by time range, request count, latency histogram, model breakdown
+- Session list with replay viewer (read from session archive)
+- All pages load in < 2 seconds (LCP) with real data
+
+**Milestones:** 3.8.1 → 3.8.2 → 3.8.3 → 3.8.4 → 3.8.5 → 3.8.6
+
+---
+
+<h2 id="goal-39-phase-3-quality-gate">Goal 3.9: Phase 3 Quality Gate</h2>
+
+**Milestones:** 3.9.1 → 3.9.2 → 3.9.3
+
+---

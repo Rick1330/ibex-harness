@@ -1,12 +1,112 @@
 ---
 title: Docker Compose (dev)
-description: Local development stack with Postgres, auth, and proxy.
+description: Run the local dependency stack with Make targets, migrate Postgres, seed dev fixtures, and start auth and proxy on the host.
 ---
 
-# Docker Compose (dev)
+Phase 1 local development runs **data stores in Docker** and **Go services on the host** for fast iteration. The compose file under `infra/compose/dev/` ships Postgres (pgvector), Redis Stack, ClickHouse, and MinIO — no application containers.
 
-Local development stack with Postgres, auth, and proxy.
-
-<Callout type="note">
-  Full content ships in Phase 1.5 Waves 6–8.
+<Callout type="note" title="Prerequisites">
+  Docker Compose v2, GNU Make, Git Bash on Windows, and ports **5432**, **6379**, **8123**, **9000–9002** available. See the [Quickstart](/docs/getting-started/quickstart) for the five-minute path.
 </Callout>
+
+## Compose services and ports
+
+| Service | Image | Host port | Purpose |
+| --- | --- | --- | --- |
+| Postgres + pgvector | `pgvector/pgvector:pg16` | **5432** | Primary OLTP + migrations |
+| Redis Stack | `redis/redis-stack:7.4.0-v1` | **6379** | Rate limits, readiness probes |
+| ClickHouse | `clickhouse/clickhouse-server:24.8` | **8123** (HTTP), **9002** (native) | Analytics (Phase 2+) |
+| MinIO | `minio/minio` | **9000** (API), **9001** (console) | Object storage (Phase 2+) |
+
+ClickHouse native is mapped to **9002** so it does not collide with MinIO on **9000**.
+
+Application services (run separately on the host):
+
+| Service | HTTP | gRPC | Notes |
+| --- | --- | --- | --- |
+| Proxy | **8080** | — | `/health`, `/ready`, `/metrics`, `/v1/*` |
+| Auth | **8081** | **9091** | gRPC `ValidateToken` / `ValidateAgent` |
+
+## Boot sequence
+
+<ProcessSteps
+  steps={[
+    {
+      title: 'Start dependencies',
+      description:
+        'From the repo root: make compose-dev-up. Waits for healthy Postgres and Redis.',
+    },
+    {
+      title: 'Apply migrations',
+      description:
+        'make db-migrate is idempotent. Use make db-version to inspect the current revision.',
+    },
+    {
+      title: 'Seed dev fixtures',
+      description:
+        'make db-seed inserts a fixed org, agent, and PAT. Never run against staging or production.',
+    },
+    {
+      title: 'Run auth and proxy',
+      description:
+        'cd services/auth && go run . then cd services/proxy && go run . in separate terminals.',
+    },
+    {
+      title: 'Smoke test',
+      description:
+        'make dev-smoke checks /health, /ready, auth failures, and the chat 501 stub.',
+    },
+  ]}
+/>
+
+## Make targets
+
+```bash
+make help              # list all targets
+make compose-dev-up    # start infra/compose/dev stack
+make compose-dev-down  # stop containers (keep volumes)
+make compose-dev-reset # stop + delete volumes (fresh Postgres)
+make compose-dev-ps    # container status
+make compose-dev-logs  # tail dependency logs
+make db-migrate        # apply pending migrations
+make db-migrate-down   # roll back one step (dev only)
+make db-seed           # idempotent dev org/agent/PAT
+make dev-smoke         # end-to-end auth + proxy smoke
+```
+
+## Verify the stack
+
+<CodeTabs>
+  <CodeTab label="curl">
+```bash
+curl -s http://localhost:8080/health | jq
+curl -s http://localhost:8081/ready | jq
+docker compose -f infra/compose/dev/docker-compose.yml exec postgres pg_isready -U ibex -d ibex
+```
+  </CodeTab>
+  <CodeTab label="PowerShell">
+```powershell
+Invoke-RestMethod http://localhost:8080/health
+Invoke-RestMethod http://localhost:8081/ready
+```
+  </CodeTab>
+</CodeTabs>
+
+<Callout type="warning" title="Auth timeout on local machines">
+  Set `IBEX_AUTH_VALIDATE_TIMEOUT=2s` on the proxy for local dev. The production default (`50ms`) is often too low for Argon2 verification and returns **503** `SERVICE_DEGRADED` before agent checks run.
+</Callout>
+
+## Dev PAT from seed
+
+After `make db-seed`, use the wire-form PAT from ADR-0007:
+
+```text
+ibex_pat_00000000-0000-0000-0000-000000000004_LOCALDEVELOPMENTONLY
+```
+
+Fixed IDs: org `…0001`, agent `…0003`. Full values print in the seed script output.
+
+## Next steps
+
+- [Environment variables](/docs/deployment/environment-variables) — proxy, auth, Postgres, Redis
+- [Proxy health](/docs/api-reference/proxy-health) — `/health`, `/ready`, `/metrics` contract

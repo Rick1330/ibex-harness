@@ -1,0 +1,180 @@
+---
+title: Troubleshooting
+description: Common compose-dev, auth, proxy, and database failures for Phase 1.
+---
+
+When something breaks locally, identify which boundary failed first — client to proxy, proxy to auth, or services to Postgres/Redis. This page covers the most common Phase 1 setup and runtime issues. Always redact secrets from bug reports.
+
+<Callout type="tip" title="Golden rule">
+  Start with health endpoints, then infra (Docker), then service logs filtered by `request_id`.
+</Callout>
+
+## Quick triage (first five minutes)
+
+<Steps>
+  <Step title="Confirm scope">
+    Is the failure only on your machine, one service, or all tenants? Did a recent migration or dependency change land?
+  </Step>
+  <Step title="Check service health">
+    Hit `/health` and `/ready` on auth (`8081`) and proxy (`8080`).
+  </Step>
+  <Step title="Confirm infra">
+    Postgres, Redis, and compose containers are running and reachable.
+  </Step>
+  <Step title="Correlate logs">
+    Send a request with `X-Request-ID` and search stdout for that ID.
+  </Step>
+</Steps>
+
+<CodeTabs>
+  <CodeTab label="bash">
+```bash
+curl -s http://localhost:8080/health || echo "proxy down"
+curl -s http://localhost:8080/ready  || echo "proxy not ready"
+curl -s http://localhost:8081/health || echo "auth down"
+curl -s http://localhost:8081/ready  || echo "auth not ready"
+
+docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+```
+  </CodeTab>
+  <CodeTab label="PowerShell">
+```powershell
+Invoke-RestMethod http://localhost:8080/health
+Invoke-RestMethod http://localhost:8081/ready
+docker ps
+```
+  </CodeTab>
+</CodeTabs>
+
+## Compose-dev setup
+
+### Service won't start (missing env)
+
+**Symptoms:** immediate exit; log mentions missing `POSTGRES_DSN` or similar.
+
+<ProcessSteps
+  steps={[
+    {
+      title: 'Check service .env',
+      description:
+        'Copy from the service .env.example. Required vars for auth: POSTGRES_DSN. Proxy also needs IBEX_AUTH_GRPC_ADDR.',
+    },
+    {
+      title: 'Compare registry',
+      description:
+        'Cross-check variable names against the deployment environment-variables page — names must match exactly.',
+    },
+    {
+      title: 'Dashboard pitfall',
+      description:
+        'Never put secrets in NEXT_PUBLIC_* variables; the bundler exposes them to the browser.',
+    },
+  ]}
+/>
+
+### Docker up but DB connection fails
+
+**Symptoms:** connection refused, hostname resolution errors.
+
+| Where service runs | DSN host |
+| --- | --- |
+| On host (go run) | `localhost` |
+| Inside compose network | compose service name (e.g. `postgres`) |
+
+Host-run auth typically uses:
+
+```bash
+POSTGRES_DSN=postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+```
+
+### Migrations fail or schema missing
+
+**Symptoms:** `relation does not exist`; integration tests fail on empty DB.
+
+```bash
+make compose-dev-up
+make db-migrate
+psql "$POSTGRES_DSN" -c "\dt ibex_core.*"
+```
+
+<Callout type="warning" title="Dirty migration 008">
+  Stale dev data can leave invalid `tokens.revoked_by` FKs. Reset with `make compose-dev-reset && make db-migrate`, or repair with `make db-repair-token-fks`.
+</Callout>
+
+**Windows:** `make db-seed` uses `docker exec` when host `psql` is not on PATH. Ensure compose-dev Postgres is running first.
+
+## Auth issues
+
+### 401 Unauthorized
+
+| Check | Action |
+| --- | --- |
+| Bearer header present? | `Authorization: Bearer <PAT>` |
+| Token revoked? | Issue a fresh token via auth gRPC CreateToken |
+| Auth service running? | `curl http://localhost:8081/ready` |
+
+### 403 Agent not authorized
+
+- Confirm `X-IBEX-Agent-ID` is a valid UUID belonging to the org in the URL path.
+- Inactive agents (paused/archived) are rejected with 403, not 404.
+
+### 503 on bearer requests (local dev)
+
+Proxy auth gRPC `ValidateToken` is timing out. Production budget is 50ms; local Argon2 verify often needs more:
+
+```bash
+IBEX_AUTH_VALIDATE_TIMEOUT=2s go run ./services/proxy/cmd/proxy
+```
+
+PowerShell: `$env:IBEX_AUTH_VALIDATE_TIMEOUT = "2s"`.
+
+Phase 1 smoke expectation: **501** `PROVIDER_NOT_CONFIGURED` means auth passed.
+
+## Proxy issues
+
+### Rate limiting oddities
+
+Redis down → rate limiter **fails open** (requests allowed, warning logged). Empty `REDIS_URL` → Noop limiter; `/ready` reports redis check failed.
+
+Verify Redis:
+
+```bash
+docker exec -it ibex-dev-redis redis-cli PING
+```
+
+### Request body rejected
+
+Chat completions enforce limits per [ADR-0013](/docs/adr/0013-proxy-input-validation-and-error-envelope):
+
+| Limit | Value |
+| --- | --- |
+| Max body | 1 MiB |
+| Max messages | 1000 |
+| Max content per message | 100 KiB |
+| Required header | `X-IBEX-Agent-ID` |
+
+Semantic validation errors return **400** `VALIDATION_ERROR` with `field_errors`.
+
+## Database / RLS
+
+### Cross-tenant data (P1)
+
+If Org A sees Org B data: treat as P1 — freeze deploys, follow [incident response](/docs/operations/incident-response). Verify `SET LOCAL app.current_org_id` runs per transaction, not globally on the pool.
+
+### RLS context leak between requests
+
+Root cause is usually `SET` without `LOCAL` or missing transaction boundaries. Integration tests should reuse a pooled connection across two orgs and assert isolation.
+
+## Escalation
+
+| Severity | When |
+| --- | --- |
+| P1 | Suspected tenant isolation breach, secret leak, auth bypass |
+| P2 | Proxy down, sustained 503, migration blocking all devs |
+| P3 | Single-machine compose quirks, non-blocking UI issues |
+
+## Related
+
+- [Health checks](/docs/operations/health-checks)
+- [Docker Compose](/docs/deployment/docker-compose)
+- [Authentication](/docs/security/authentication)

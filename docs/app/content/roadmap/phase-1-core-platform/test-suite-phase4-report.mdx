@@ -1,0 +1,111 @@
+---
+title: "Phase 4"
+description: "Date: 2026-06-05 Scope: Selective upgrade per Phase 0 audit (Tier A keep, Tier B delete, Tier C augment, gen/go excluded from gate)"
+summary: "Date: 2026-06-05 Scope: Selective upgrade per Phase 0 audit (Tier A keep, Tier B delete, Tier C augment, gen/go excluded from gate)"
+phase: "phase-1-core-platform"
+fullTitle: "Phase 4 — Test Suite Transformation Report"
+---
+
+# Phase 4 — Test Suite Transformation Report
+
+**Date:** 2026-06-05  
+**Scope:** Selective upgrade per Phase 0 audit (Tier A keep, Tier B delete, Tier C augment, gen/go excluded from gate)
+
+---
+
+## 1. Summary of changes
+
+| Action | Detail |
+|--------|--------|
+| **Deleted** | 8 mechanical `packages/proto/gen/go/**` test files (nil getters, accessors, grpc_extra, gen duplicates) |
+| **Coverage policy** | `infra/scripts/coverage-filter.sh`, `infra/scripts/coverage-gate.sh` filter `gen/go`; `codecov.yml` ignore; CI prints handwritten total |
+| **Architecture** | `docs/app/content/roadmap/phase-1-core-platform/TEST_ARCHITECTURE` |
+| **Augmented** | cmd shutdown sync, validation 100%, llm edges, ratelimit Redis error, healthcheck Redis auth, config `MustLoad` subprocess |
+| **Preserved** | SEC1–6 matrix, proxy/auth integration, proto contract tests in `packages/proto/` |
+
+---
+
+## 2. Test inventory (post-transform)
+
+| Category | Count | Notes |
+|----------|-------|-------|
+| Unit `*_test.go` | **75** | Colocated; no gen/go mechanical tests |
+| Integration `//go:build integration` | **22** | Postgres, SEC suite, proxy→auth E2E |
+| Pre-audit total | **97** | Before Tier B deletions |
+| **Net total** | **89** files | 97 − 8 deleted gen/go padding tests |
+
+### By tier (Phase 0)
+
+| Tier | Verdict | Files affected |
+|------|---------|----------------|
+| A | KEEP | SEC suite, integration, contract tests, grpc/http unit tests |
+| B | DELETE | 8 gen/ padding files (done) |
+| C | AUGMENT | cmd, validation, llm, healthcheck, ratelimit, config (done) |
+| D | REWRITE | `time.Sleep` removed from auth/proxy `main_test.go` shutdown tests |
+
+---
+
+## 3. Coverage (hand-written scope)
+
+| Profile | Scope | Measured |
+|---------|-------|----------|
+| Unit only | Excludes `packages/proto/gen/go` | **83.5%** (local) |
+| Merged (unit + integration) | CI Postgres service; gate target | **≥80%** (CI job `coverage`) |
+
+**Interpretation:** Unit-only understates production safety — repository, RLS, and SEC paths are integration-only by design. The gate uses the **merged** profile on filtered (hand-written) code.
+
+**Local verification:**
+
+```bash
+make compose-test-up
+POSTGRES_TEST_DSN=postgres://ibex:ibex@localhost:5433/ibex_test?sslmode=disable make coverage-report
+bash infra/scripts/coverage-gate.sh coverage-go-merged.out
+```
+
+---
+
+## 4. Bugs found
+
+**ListTokens keyset cursor** (fixed in PR #92): composite `(created_at, id)` cursor now matches `ORDER BY created_at DESC, id DESC`. Previously page 2 could omit or duplicate rows when multiple tokens shared a timestamp bucket.
+
+---
+
+## 5. Mutation-style confidence (top security tests)
+
+Manual review: deleting function bodies in these tests would **fail** CI:
+
+| Test | Would catch |
+|------|-------------|
+| `TestSecurity_SEC1_1_MissingToken` | Auth bypass (401 + `MISSING_TOKEN`) |
+| `TestSecurity_SEC3_*` | Cross-tenant 404 enumeration |
+| `TestSecurity_SEC4_6_RedisFailOpen` | Rate-limit fail-closed regression |
+| `TestSecurity_SEC6_*` | Error envelope / `request_id` drift |
+| `auth_contract_test.go` | Proto breaking changes |
+| `validate_integration_test.go` | Token validation + RLS |
+
+**Confidence:** **High** on auth boundary, cross-tenant, and envelope invariants. **Medium** on `cmd/main` happy-path wiring (covered indirectly via `runWithShutdown` helpers + integration).
+
+---
+
+## 6. Known gaps (honest)
+
+| Gap | Risk | Mitigation |
+|-----|------|------------|
+| `services/auth/cmd/auth` `run()` happy path | P2 deploy | `runWithShutdown` + integration; full `run()` blocks on signal |
+| `services/proxy/cmd/proxy` `run()` happy path | P2 deploy | Same pattern |
+| `packages/healthcheck` Postgres wrong `SELECT 1` result | P3 | Integration / real DB only |
+| `packages/proto/gen/go` | None | Excluded from gate; contract tests cover schema |
+| Telemetry OTLP export failures | P3 | Partial unit; optional in Phase 1 |
+
+---
+
+## 7. CI verification
+
+The `coverage` workflow job:
+
+1. Unit + integration profiles with Postgres 16 service container  
+2. Merges profiles → `coverage-go-merged.out`  
+3. Filters gen/go → `coverage-go-handwritten.out`  
+4. `infra/scripts/coverage-gate.sh` enforces **≥80%** on hand-written statements  
+
+Push to a branch with these changes to confirm the job passes end-to-end (local Docker/Postgres unavailable in transform environment).

@@ -1,6 +1,6 @@
-type WordmarkProps = {
+type WordmarkProps = Readonly<{
   size?: "nav" | "footer";
-};
+}>;
 
 export function Wordmark({ size = "nav" }: WordmarkProps) {
   const textSize = size === "footer" ? "text-base" : "text-sm";

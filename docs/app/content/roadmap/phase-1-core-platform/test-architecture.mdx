@@ -1,0 +1,67 @@
+---
+title: "Phase 1 — Go Test Architecture"
+description: "Hand-written test layout for IBEX Harness Phase 1 (auth + proxy). Generated protobuf code is out of scope for the coverage gate; contract tests live beside `.proto` sources."
+summary: "Hand-written test layout for IBEX Harness Phase 1 (auth + proxy). Generated protobuf code is out of scope for the coverage gate; contract tests live beside `.proto` sources."
+phase: "phase-1-core-platform"
+---
+
+# Phase 1 — Go Test Architecture
+
+Hand-written test layout for IBEX Harness Phase 1 (auth + proxy). Generated protobuf code is **out of scope** for the coverage gate; contract tests live beside `.proto` sources.
+
+## Layout
+
+```text
+ibex-harness/
+├── packages/*/              # Unit tests colocated (*_test.go)
+├── packages/proto/          # Contract tests ONLY (auth_contract_test.go, …)
+├── packages/proto/gen/go/   # Generated — no mechanical tests; excluded from gate
+├── services/*/
+│   ├── internal/*/          # Unit tests colocated
+│   ├── *_integration_test.go  # //go:build integration
+│   └── proxy_security_sec*.go # SEC matrix (integration)
+└── infra/testing/testutil/  # Shared factories (SeedOrganization, SeedToken, …)
+```
+
+## Pyramid (this project)
+
+| Layer | Share | Focus |
+|-------|-------|--------|
+| Unit | 60–65% | Token parse, permissions, validation, apierror, middleware with fakes |
+| Integration | 30–35% | Postgres RLS, proxy→auth, Redis RPM, SEC matrix |
+| E2E | ~5% | `make dev-smoke`; future k6 |
+
+## Mock boundaries
+
+| Mock | Real |
+|------|------|
+| gRPC `AuthServiceClient` at proxy boundary | Postgres for RLS |
+| miniredis for unit RPM | `token.Validator` DB lookup |
+| | Internal domain logic under test |
+
+## Fixture inventory (`infra/testing/testutil`)
+
+| Helper | Purpose |
+|--------|---------|
+| `SeedOrganization` | Org row via service account |
+| `SeedUser` | User in org |
+| `SeedAgent` / `SeedAgentWithStatus` | Agent lifecycle |
+| `SeedToken` / `token_fixtures.go` | PAT with Argon2 hash |
+| `WithServiceAccount` | RLS bypass for setup |
+| `postgres.go` / `bootstrap.go` | DSN, migrate, test DB |
+
+## Coverage gate scope
+
+- **Included:** `packages/*` (except `packages/proto/gen/go`), `services/auth`, `services/proxy`
+- **Excluded:** `packages/proto/gen/go/**` (generated stubs), `infra/**` (test fixtures, migrate CLI — covered by dedicated jobs)
+- **Contract tests:** `packages/proto/*_contract_test.go` — compile-time + descriptor checks
+- **Gate script:** `infra/scripts/coverage-gate.sh` filters merged profile before enforcing ≥80%
+
+## Tier policy (Phase 0 audit)
+
+| Tier | Action | Examples |
+|------|--------|----------|
+| A | KEEP | SEC suite, integration tests, contract tests, grpc unit tests |
+| B | DELETE | nil-getter, accessor padding, grpc_extra iteration in gen/ |
+| C | AUGMENT | cmd wiring, validation edges, healthcheck, ratelimit |
+| D | REWRITE sections | `time.Sleep` in shutdown tests → sync/poll |

@@ -29,7 +29,14 @@ const config: Config = {
       borderRadius: { DEFAULT: "4px", md: "6px", lg: "6px", xl: "6px" },
       fontFamily: {
         sans: ["var(--font-geist-sans)", "system-ui", "sans-serif"],
-        mono: ["var(--font-geist-mono)", "Consolas", "monospace"],
+        mono: [
+          "var(--font-mono)",
+          "var(--font-geist-mono)",
+          "JetBrains Mono",
+          "Fira Code",
+          "Consolas",
+          "monospace",
+        ],
       },
     },
   },

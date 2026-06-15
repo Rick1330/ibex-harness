@@ -1,0 +1,102 @@
+---
+title: "d4.1 Vercel Preview"
+description: "Local `pnpm docs:dev` cannot catch Vercel-specific edge OG, search API, or build output issues. Reviewers need preview URLs on every docs PR before production domain attach. DNS `docs` CNAME exists but production attach waits until D.6.2 after visual QA."
+summary: "Local `pnpm docs:dev` cannot catch Vercel-specific edge OG, search API, or build output issues. Reviewers need preview URLs on every docs PR before production domain attach. DNS `docs` CNAME exists but production attach waits until D.6.2 after visual QA."
+status: "planned"
+milestoneId: "d4.1"
+goal: "[D.4](/roadmap/phase-1-5-docs-site/goals)"
+estimatedEffort: "1 hour"
+phase: "phase-1-5-docs-site"
+fullTitle: "Milestone D.4.1 — Vercel preview deploys"
+---
+
+# Milestone D.4.1 — Vercel preview deploys
+
+**Status:** Planned  
+**Goal:** [D.4](/roadmap/phase-1-5-docs-site/goals)  
+**Phase:** 1.5 — Docs Site  
+**Wave:** 10  
+**Estimated effort:** 1 hour  
+**ADR required:** None
+
+Spec detail: [MASTER_BRIEF.md](/roadmap/phase-1-5-docs-site/master-brief) Part D (D.4.1).
+
+---
+
+## Why This Milestone Exists
+
+Local `pnpm docs:dev` cannot catch Vercel-specific edge OG, search API, or build output issues. Reviewers need preview URLs on every docs PR before production domain attach.
+
+DNS `docs` CNAME exists but production attach waits until D.6.2 after visual QA.
+
+Vercel project `ibex-harness-docs` with root `docs/app` matches monorepo layout from D.1.1.
+
+---
+
+## Non-Goals
+
+- Production `docs.ibexharness.com` attach (D.6.2)
+- Moving Go services to Vercel
+- Custom Vercel middleware for auth
+
+---
+
+## Branch
+
+`feat/d4-1-vercel`
+
+## PR Title
+
+`ci(docs): Vercel preview project (D.4.1)`
+
+---
+
+## Prerequisites
+
+- [D.3.3](/roadmap/phase-1-5-docs-site/milestones/d3.3-quickstart-five-minute-path) merged
+
+---
+
+## Deliverables
+
+- Vercel project `ibex-harness-docs`, root directory `docs/app`
+- Build: `pnpm --filter docs build`, install: `pnpm install --frozen-lockfile`
+- Env: `NEXT_PUBLIC_SITE_URL=https://docs.ibexharness.com`
+- Preview deploy on every PR touching docs
+
+See MASTER_BRIEF Part D (D.4.1) for full acceptance detail.
+
+---
+
+## Files Affected
+
+| File Path | Action | Notes |
+| --- | --- | --- |
+| `docs/app/vercel.json` | Add | Optional Vercel config |
+| `.github/workflows/docs-checks.yml` | Add | May stub until D.4.2 |
+
+---
+
+## Testing Requirements
+
+- **`test_preview_deploy_on_pr`**: Throwaway PR shows Vercel bot comment with preview URL
+- **`verifyPreview_RendersIntroduction`**: Preview URL serves introduction page 200
+- **`verifyPreview_OgImage`**: OG route works on preview domain
+
+---
+
+## Acceptance Criteria
+
+- [ ] Throwaway PR shows Vercel comment with preview URL
+- [ ] Preview URL renders docs site correctly
+- [ ] Production domain not attached yet
+
+---
+
+## Risks
+
+| Risk | Probability | Impact | Mitigation |
+| --- | --- | --- | --- |
+| Monorepo root directory misconfigured | Medium | High | Set Root Directory to `docs/app` in Vercel UI |
+| pnpm filter name mismatch | Low | High | Package name `docs` must match filter |
+| Preview URL leaks before content ready | Low | Low | Acceptable until D.6.2; noindex until launch |

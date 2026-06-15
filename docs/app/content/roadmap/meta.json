@@ -1,0 +1,16 @@
+{
+  "title": "Roadmap",
+  "pages": [
+    "overview",
+    "current-state",
+    "findings",
+    "reference",
+    "phase-0-foundation",
+    "phase-1-core-platform",
+    "phase-1-5-docs-site",
+    "phase-2-single-provider",
+    "phase-3-memory-engine",
+    "phase-4-multi-provider",
+    "phase-5-production-hardening"
+  ]
+}

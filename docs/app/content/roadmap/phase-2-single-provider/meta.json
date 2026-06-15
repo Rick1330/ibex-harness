@@ -1,0 +1,5 @@
+{
+  "title": "phase 2 single provider",
+  "icon": "Plug",
+  "pages": ["index", "goals", "decisions", "risks", "milestones"]
+}

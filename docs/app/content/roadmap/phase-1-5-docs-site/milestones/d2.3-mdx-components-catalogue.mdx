@@ -1,0 +1,111 @@
+---
+title: "d2.3 MDX Components"
+description: "Content authors need reusable MDX primitives (Callout, Steps, CodeTabs, Endpoint) before we can write accurate proxy/auth/deployment guides. Without a shared component kit, every page will invent one-off markup and drift from Matte Graphite. D.2.6 (code blocks) and D.3.2+ (content waves) depend on Callout, Steps, and C"
+summary: "Content authors need reusable MDX primitives (Callout, Steps, CodeTabs, Endpoint) before we can write accurate proxy/auth/deployment guides. Without a shared component kit, every page will invent one-off markup and drift from Matte Graphite. D.2.6 (code blocks) and D.3.2+ (content waves) depend on Callout, Steps, and C"
+status: "planned"
+milestoneId: "d2.3"
+goal: "[D.2](/roadmap/phase-1-5-docs-site/goals)"
+estimatedEffort: "1 day"
+phase: "phase-1-5-docs-site"
+fullTitle: "Milestone D.2.3 — MDX components catalogue"
+---
+
+# Milestone D.2.3 — MDX components catalogue
+
+**Status:** Planned  
+**Goal:** [D.2](/roadmap/phase-1-5-docs-site/goals)  
+**Phase:** 1.5 — Docs Site  
+**Wave:** 3  
+**Estimated effort:** 1 day  
+**ADR required:** None
+
+Spec detail: [MASTER_BRIEF.md](/roadmap/phase-1-5-docs-site/master-brief) Part D (D.2.3).
+
+---
+
+## Why This Milestone Exists
+
+Content authors need reusable MDX primitives (Callout, Steps, CodeTabs, Endpoint) before we can write accurate proxy/auth/deployment guides. Without a shared component kit, every page will invent one-off markup and drift from Matte Graphite.
+
+D.2.6 (code blocks) and D.3.2+ (content waves) depend on Callout, Steps, and CodeTabs being registered in `mdx-components.tsx`.
+
+Central registration keeps Fumadocs defaults while extending with ibex-specific API reference components.
+
+---
+
+## Non-Goals
+
+- Copy button on code blocks (D.2.6)
+- Cmd+K search (D.2.5)
+- Public IA skeleton (D.3.1)
+
+---
+
+## Branch
+
+`feat/d2-3-mdx-components`
+
+## PR Title
+
+`feat(docs): MDX component catalogue (D.2.3)`
+
+---
+
+## Prerequisites
+
+- [D.2.1](/roadmap/phase-1-5-docs-site/milestones/d2.1-bootstrap-fumadocs) merged
+- [D.2.2](/roadmap/phase-1-5-docs-site/milestones/d2.2-matte-graphite-tokens) merged
+
+---
+
+## Deliverables
+
+- `Callout` — variants `note | tip | warning | danger` with 1px left border
+- `Steps` — square 4px-radius number badges, vertical connector
+- `CodeTabs` — flat top tabs, 1px bottom border
+- `Endpoint`, `Badge`, `Kbd` per MASTER_BRIEF D.2.3
+- Internal showcase page at `content/docs/_design/components.mdx` exercising every variant
+- Register all components in `docs/app/src/mdx-components.tsx`
+
+See MASTER_BRIEF Part D (D.2.3) for full acceptance detail.
+
+---
+
+## Files Affected
+
+| File Path | Action | Notes |
+| --- | --- | --- |
+| `docs/app/src/components/mdx/callout.tsx` | Add | Callout component |
+| `docs/app/src/components/mdx/steps.tsx` | Add | Steps component |
+| `docs/app/src/components/mdx/code-tabs.tsx` | Add | CodeTabs component |
+| `docs/app/src/components/mdx/endpoint.tsx` | Add | Endpoint badge + path |
+| `docs/app/src/components/mdx/badge.tsx` | Add | Generic label badge |
+| `docs/app/src/components/mdx/kbd.tsx` | Add | Keyboard hint styling |
+| `docs/app/src/mdx-components.tsx` | Modify | Central MDX registration |
+| `docs/app/content/docs/_design/components.mdx` | Add | Component showcase page |
+
+---
+
+## Testing Requirements
+
+- **`verifyMdxShowcase_RendersAllVariants`**: Showcase page renders every component in dark + light
+- **`verifyMdxComponents_NoForbiddenClasses`**: No `bg-gradient-*`, `backdrop-blur-*`, or `rounded-2xl` in component source
+- **`verifyMdxIcons_StrokeWidth15`**: All lucide icons use `strokeWidth=&#123;1.5}`
+
+---
+
+## Acceptance Criteria
+
+- [ ] Showcase page uses every component variant without build errors
+- [ ] All icons inside components use `strokeWidth=&#123;1.5}`
+- [ ] No component contains forbidden gradient/blur classes
+
+---
+
+## Risks
+
+| Risk | Probability | Impact | Mitigation |
+| --- | --- | --- | --- |
+| Radix Tabs styling fights Fumadocs defaults | Medium | Medium | Follow CodeTabs spec in MASTER_BRIEF §D.2.3 |
+| Showcase page indexed in public search | Low | Low | Exclude `_design` from Orama index until D.3.1 |
+| Component API churn blocks content PRs | Medium | High | Freeze component props after this milestone |

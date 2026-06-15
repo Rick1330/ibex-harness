@@ -1,0 +1,163 @@
+---
+title: "3.5.2 Token Budget"
+description: "LLM models have context window limits. Injecting memories without tracking token consumption can push the context over the limit, causing provider errors or silent truncation. The budget calculator determines exactly how many tokens are available for memory injection given the model, the existing messages, and required"
+summary: "LLM models have context window limits. Injecting memories without tracking token consumption can push the context over the limit, causing provider errors or silent truncation. The budget calculator determines exactly how many tokens are available for memory injection given the model, the existing messages, and required"
+status: "planned"
+milestoneId: "3.5.2"
+goal: "[3.5 — Context assembly engine](/roadmap/phase-3-memory-engine/goals#goal-35-context-assembly-engine)"
+estimatedEffort: "2 days"
+phase: "phase-3-memory-engine"
+fullTitle: "Milestone 3.5.2 — Token Budget Calculator (Model-Aware, tiktoken)"
+---
+
+# Milestone 3.5.2 — Token Budget Calculator (Model-Aware, tiktoken)
+
+**Status:** Planned  
+**Goal:** [3.5 — Context assembly engine](/roadmap/phase-3-memory-engine/goals#goal-35-context-assembly-engine)  
+**Phase:** 3 — Memory Engine and Operator Platform  
+**Estimated effort:** 2 days  
+**ADR required:** ADR-0039 — Token budget allocation strategy
+
+---
+
+## Why This Milestone Exists
+
+LLM models have context window limits. Injecting memories without tracking token consumption can push the context over the limit, causing provider errors or silent truncation. The budget calculator determines exactly how many tokens are available for memory injection given the model, the existing messages, and required reserves.
+
+Accurate token counting requires the provider's tokeniser — for OpenAI models this is `tiktoken`. Approximations (character count / 4) are off by up to 30% for code, technical content, and non-English text. At 128K token budgets, a 30% error is 38,400 tokens of wasted space.
+
+---
+
+## ADR-0039 — Token budget allocation strategy
+
+Document:
+- **Why tiktoken (not character approximation):** Accuracy. Character/4 approximation fails on code (1.5 chars/token), CJK text (0.5 chars/token), and special tokens.
+- **Token reserve strategy:** Reserve 15% for LLM response (min 500, max 4096 tokens). Reserve 5% safety buffer. Reserve directive tokens (always in full). Remaining = memory budget.
+- **Model context windows used in Phase 3:**
+
+| Model | Context window | Memory budget (approximate) |
+|---|---|---|
+| `gpt-4o` | 128,000 | ~80,000 after safety + directive |
+| `gpt-4o-mini` | 128,000 | ~80,000 |
+| `gpt-4-turbo` | 128,000 | ~80,000 |
+| `gpt-3.5-turbo` | 16,385 | ~8,000 |
+
+---
+
+## Deliverables
+
+### `src/context/services/budget.py`
+
+```python
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import tiktoken
+
+# Context windows by model (as of Phase 3).
+# Update when new models are added.
+MODEL_CONTEXT_WINDOWS: dict[str, int] = {
+    "gpt-4o":             128_000,
+    "gpt-4o-mini":        128_000,
+    "gpt-4-turbo":        128_000,
+    "gpt-4":               8_192,
+    "gpt-3.5-turbo":      16_385,
+    "gpt-3.5-turbo-16k":  16_385,
+}
+DEFAULT_CONTEXT_WINDOW = 8_192   # conservative fallback for unknown models
+
+RESPONSE_RESERVE_RATIO  = 0.15   # 15% reserved for LLM response
+RESPONSE_RESERVE_MIN    = 500    # minimum response reserve, tokens
+RESPONSE_RESERVE_MAX    = 4_096  # maximum response reserve, tokens
+SAFETY_BUFFER_RATIO     = 0.05   # 5% safety margin
+
+@dataclass(frozen=True)
+class TokenBudget:
+    model:            str
+    context_window:   int  # total context window for this model
+    messages_tokens:  int  # tokens consumed by original messages
+    directive_tokens: int  # tokens consumed by directive (reserved in full)
+    response_reserve: int  # tokens reserved for LLM response
+    safety_buffer:    int  # tokens reserved as safety margin
+    memory_tokens:    int  # tokens available for memory injection
+    is_constrained:   bool # True if memory_tokens < 1000 (very little room)
+
+class TokenBudgetCalculator:
+    """
+    Calculates the exact token budget for memory injection.
+    Uses tiktoken for OpenAI models; falls back to character approximation
+    for unknown models.
+    """
+
+    def __init__(self) -> None:
+        self._encoders: dict[str, tiktoken.Encoding] = {}
+
+    def _get_encoder(self, model: str) -> tiktoken.Encoding:
+        if model not in self._encoders:
+            try:
+                self._encoders[model] = tiktoken.encoding_for_model(model)
+            except KeyError:
+                # Unknown model: use cl100k_base (used by GPT-4 family)
+                self._encoders[model] = tiktoken.get_encoding("cl100k_base")
+        return self._encoders[model]
+
+    def count_tokens(self, text: str, model: str) -> int:
+        enc = self._get_encoder(model)
+        return len(enc.encode(text))
+
+    def count_messages_tokens(self, messages: list[dict], model: str) -> int:
+        """
+        Count tokens for a messages array including role overhead.
+        OpenAI charges 4 tokens per message for role + separator tokens.
+        """
+        enc = self._get_encoder(model)
+        total = 3  # priming tokens
+        for msg in messages:
+            total += 4  # message overhead
+            total += len(enc.encode(msg.get("content", "")))
+            total += len(enc.encode(msg.get("role", "")))
+        return total
+
+    def calculate(
+        self,
+        model: str,
+        messages: list,     # list of proto Message objects
+        directive: str = "",
+    ) -> TokenBudget:
+        context_window   = MODEL_CONTEXT_WINDOWS.get(model, DEFAULT_CONTEXT_WINDOW)
+        msg_dicts        = [{"role": m.role, "content": m.content} for m in messages]
+        messages_tokens  = self.count_messages_tokens(msg_dicts, model)
+        directive_tokens = self.count_tokens(directive, model) if directive else 0
+
+        response_reserve = max(
+            RESPONSE_RESERVE_MIN,
+            min(RESPONSE_RESERVE_MAX, int(context_window * RESPONSE_RESERVE_RATIO)),
+        )
+        safety_buffer    = int(context_window * SAFETY_BUFFER_RATIO)
+        consumed         = messages_tokens + directive_tokens + response_reserve + safety_buffer
+        memory_tokens    = max(0, context_window - consumed)
+
+        return TokenBudget(
+            model=model,
+            context_window=context_window,
+            messages_tokens=messages_tokens,
+            directive_tokens=directive_tokens,
+            response_reserve=response_reserve,
+            safety_buffer=safety_buffer,
+            memory_tokens=memory_tokens,
+            is_constrained=memory_tokens < 1_000,
+        )
+```
+
+---
+
+## Acceptance Criteria
+
+- [ ] `count_tokens("Hello world", "gpt-4o")` returns 2 (verified against OpenAI's tokeniser)
+- [ ] `calculate` returns `memory_tokens=0` when messages already fill the context window
+- [ ] Unknown model falls back to `cl100k_base` encoder without raising
+- [ ] `is_constrained=True` when memory budget < 1000 tokens
+- [ ] ADR-0039 written with token reserve rationale and model table
+
+---

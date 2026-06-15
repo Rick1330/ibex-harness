@@ -1,0 +1,128 @@
+---
+title: "3.3.1 Memory Service"
+description: "This milestone establishes the `services/memory/` service structure, dependency wiring, and baseline infrastructure before any domain logic is implemented. Doing this separately keeps the domain milestones (3.3.2–3.3.6) focused on logic, not plumbing."
+summary: "This milestone establishes the `services/memory/` service structure, dependency wiring, and baseline infrastructure before any domain logic is implemented. Doing this separately keeps the domain milestones (3.3.2–3.3.6) focused on logic, not plumbing."
+status: "planned"
+milestoneId: "3.3.1"
+goal: "[3.3 — Memory service](/roadmap/phase-3-memory-engine/goals#goal-33-memory-service)"
+estimatedEffort: "2 days"
+phase: "phase-3-memory-engine"
+fullTitle: "Milestone 3.3.1 — Memory Service Skeleton"
+---
+
+# Milestone 3.3.1 — Memory Service Skeleton
+
+**Status:** Planned  
+**Goal:** [3.3 — Memory service](/roadmap/phase-3-memory-engine/goals#goal-33-memory-service)  
+**Phase:** 3 — Memory Engine and Operator Platform  
+**Estimated effort:** 2 days
+
+---
+
+## Why This Milestone Exists
+
+This milestone establishes the `services/memory/` service structure, dependency wiring, and baseline infrastructure before any domain logic is implemented. Doing this separately keeps the domain milestones (3.3.2–3.3.6) focused on logic, not plumbing.
+
+---
+
+## Branch
+
+`feat/m3-3-1-memory-service-skeleton`
+
+## PR Title
+
+`feat(memory): service skeleton — FastAPI, async SQLAlchemy, dependency wiring (m3.3.1)`
+
+---
+
+## Deliverables
+
+### Service structure
+
+```
+services/memory/
+  pyproject.toml
+  Dockerfile
+  .env.example
+  alembic/
+    alembic.ini
+    env.py
+    versions/        # empty; migrations managed centrally in infra/migrations/
+  src/
+    memory/
+      __init__.py
+      app.py         # FastAPI factory with lifespan
+      settings.py    # pydantic-settings
+      dependencies.py # FastAPI DI: db session, embedder client, redis
+      routers/
+        memories.py  # /v1/memories CRUD
+        search.py    # /v1/memories/search (semantic + keyword)
+        health.py
+      services/
+        write_pipeline.py   # Memory write orchestration (3.3.2)
+        search_service.py   # Semantic search and ranking (3.3.4, 3.3.6)
+        dedup_service.py    # Content hash and near-duplicate (3.3.3)
+        hot_cache.py        # Redis sorted set management (3.3.5)
+      repositories/
+        memory_repo.py      # SQLAlchemy queries
+      schemas.py     # Pydantic request/response models
+  tests/
+```
+
+### `src/memory/dependencies.py` — FastAPI dependency injection
+
+```python
+from __future__ import annotations
+
+from typing import Annotated, AsyncGenerator
+from uuid import UUID
+
+import httpx
+import redis.asyncio as aioredis
+from fastapi import Depends, Request
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from ibex_db.repositories.memory_repo import MemoryRepository
+
+async def get_db_session(request: Request) -> AsyncGenerator[AsyncSession, None]:
+    """Yields a scoped async session. Sets RLS context for the org."""
+    async with request.app.state.db_sessionmaker() as session:
+        yield session
+
+async def get_org_id(request: Request) -> UUID:
+    """
+    Extracts org_id from the verified bearer token in request.state.
+    Set by the auth middleware that validates the IBEX PAT.
+    """
+    org_id: UUID | None = getattr(request.state, "org_id", None)
+    if org_id is None:
+        raise HTTPException(status_code=401, detail="Unauthenticated")
+    return org_id
+
+async def get_memory_repo(
+    session: Annotated[AsyncSession, Depends(get_db_session)],
+    org_id: Annotated[UUID, Depends(get_org_id)],
+) -> MemoryRepository:
+    """Provides a MemoryRepository scoped to the current org."""
+    return MemoryRepository(session=session, org_id=org_id)
+
+async def get_embedder_client(request: Request) -> httpx.AsyncClient:
+    """Reuses the shared httpx client from app state."""
+    return request.app.state.embedder_client
+
+async def get_redis(request: Request) -> aioredis.Redis:
+    return request.app.state.redis
+```
+
+---
+
+## Acceptance Criteria
+
+- [ ] `services/memory/` builds and starts without errors
+- [ ] `/health` and `/ready` endpoints functional
+- [ ] SQLAlchemy async session factory connected to Postgres
+- [ ] httpx client pool to embedder service configured
+- [ ] Redis client connected
+- [ ] Auth middleware validates PAT via call to auth gRPC service
+
+---

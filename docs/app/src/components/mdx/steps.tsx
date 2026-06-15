@@ -8,37 +8,43 @@ import {
 
 import { cn } from "@/lib/cn";
 
-type StepsProps = {
+type StepsProps = Readonly<{
   children: ReactNode;
-};
+}>;
 
-type StepProps = {
+type StepProps = Readonly<{
   title?: string;
   children: ReactNode;
   index?: number;
   isLast?: boolean;
-};
+}>;
 
 export function Step({ title, children, index = 1, isLast = false }: StepProps) {
   return (
-    <div className={cn("relative flex gap-4", !isLast && "pb-8")}>
+    <div
+      className={cn("nd-step process-step relative flex gap-4", !isLast && "pb-8")}
+      data-step
+    >
       {!isLast ? (
         <span
           aria-hidden
-          className="absolute bottom-0 left-[13px] top-7 w-px bg-border"
+          className="absolute bottom-0 left-4 top-8 w-px bg-border"
         />
       ) : null}
       <span
         aria-hidden
-        className="relative z-[1] flex size-7 shrink-0 items-center justify-center rounded-[4px] border border-border bg-panel-raised text-xs font-medium text-text-primary"
+        className="nd-step-number relative z-[1] flex size-8 shrink-0 items-center justify-center rounded-full border border-border bg-muted font-mono text-[0.8125rem] font-semibold text-foreground"
+        data-step-number
       >
         {index}
       </span>
-      <div className="min-w-0 flex-1 pt-0.5">
+      <div className="min-w-0 flex-1 pt-1">
         {title ? (
-          <p className="mb-2 font-medium text-text-primary">{title}</p>
+          <h3 className="mb-2 text-base font-semibold text-text-primary">
+            {title}
+          </h3>
         ) : null}
-        <div className="text-text-secondary [&_p:first-child]:mt-0 [&_p:last-child]:mb-0">
+        <div className="text-[0.9375rem] leading-[1.65] text-text-secondary [&_p:first-child]:mt-0 [&_p:last-child]:mb-0">
           {children}
         </div>
       </div>
@@ -52,7 +58,7 @@ export function Steps({ children }: StepsProps) {
   >[];
 
   return (
-    <div className="my-6">
+    <div className="nd-steps process-steps my-8" data-steps>
       {steps.map((step, index) =>
         cloneElement(step, {
           index: index + 1,

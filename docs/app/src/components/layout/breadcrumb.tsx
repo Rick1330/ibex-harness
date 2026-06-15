@@ -6,11 +6,13 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Fragment, useMemo } from "react";
 
+import { SidebarIcon, getNavIconForUrl, toNavUrl } from "@/lib/sidebar-icons";
+
 const MAX_LEVELS = 3;
 
-type DocsBreadcrumbProps = {
+type DocsBreadcrumbProps = Readonly<{
   tree: PageTree.Root;
-};
+}>;
 
 export function DocsBreadcrumb({ tree }: DocsBreadcrumbProps) {
   const pathname = usePathname();
@@ -25,27 +27,35 @@ export function DocsBreadcrumb({ tree }: DocsBreadcrumbProps) {
   return (
     <nav
       aria-label="Breadcrumb"
-      className="-mb-3 flex flex-row flex-wrap items-center gap-1 text-sm text-text-secondary"
+      className="mb-6 flex flex-row flex-wrap items-center gap-1.5 text-sm text-text-secondary"
     >
-      {items.map((item, index) => (
-        <Fragment key={`${String(item.name)}-${index}`}>
-          {index > 0 ? (
-            <span aria-hidden className="font-mono text-text-tertiary">
-              ›
-            </span>
-          ) : null}
-          {item.url ? (
-            <Link
-              href={item.url}
-              className="truncate hover:text-text-primary"
-            >
-              {item.name}
-            </Link>
-          ) : (
-            <span className="truncate text-text-primary">{item.name}</span>
-          )}
-        </Fragment>
-      ))}
+      {items.map((item, index) => {
+        const Icon = item.url ? getNavIconForUrl(toNavUrl(item.url)) : null;
+
+        return (
+          <Fragment key={`${String(item.name)}-${index}`}>
+            {index > 0 ? (
+              <span aria-hidden className="font-mono text-text-tertiary">
+                ›
+              </span>
+            ) : null}
+            {item.url ? (
+              <Link
+                className="inline-flex max-w-full items-center gap-1.5 truncate hover:text-text-primary"
+                href={item.url}
+              >
+                {Icon ? <SidebarIcon icon={Icon} /> : null}
+                <span className="truncate">{item.name}</span>
+              </Link>
+            ) : (
+              <span className="inline-flex max-w-full items-center gap-1.5 truncate text-text-primary">
+                {Icon ? <SidebarIcon icon={Icon} /> : null}
+                <span className="truncate">{item.name}</span>
+              </span>
+            )}
+          </Fragment>
+        );
+      })}
     </nav>
   );
 }

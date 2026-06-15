@@ -1,0 +1,101 @@
+---
+title: "d4.2 Github Actions"
+description: "Without CI gates, broken internal links and accessibility regressions reach preview and production silently. Go CI already blocks bad merges — docs need equivalent `docs-checks.yml`. lychee on built HTML catches stub pages linking to removed paths. Lighthouse enforces a11y = 100 per Matte Graphite contract."
+summary: "Without CI gates, broken internal links and accessibility regressions reach preview and production silently. Go CI already blocks bad merges — docs need equivalent `docs-checks.yml`. lychee on built HTML catches stub pages linking to removed paths. Lighthouse enforces a11y = 100 per Matte Graphite contract."
+status: "planned"
+milestoneId: "d4.2"
+goal: "[D.4](/roadmap/phase-1-5-docs-site/goals)"
+estimatedEffort: "0.5 day"
+phase: "phase-1-5-docs-site"
+fullTitle: "Milestone D.4.2 — GitHub Actions docs checks"
+---
+
+# Milestone D.4.2 — GitHub Actions docs checks
+
+**Status:** Planned  
+**Goal:** [D.4](/roadmap/phase-1-5-docs-site/goals)  
+**Phase:** 1.5 — Docs Site  
+**Wave:** 11  
+**Estimated effort:** 0.5 day  
+**ADR required:** None
+
+Spec detail: [MASTER_BRIEF.md](/roadmap/phase-1-5-docs-site/master-brief) Part D (D.4.2).
+
+---
+
+## Why This Milestone Exists
+
+Without CI gates, broken internal links and accessibility regressions reach preview and production silently. Go CI already blocks bad merges — docs need equivalent `docs-checks.yml`.
+
+lychee on built HTML catches stub pages linking to removed paths. Lighthouse enforces a11y = 100 per Matte Graphite contract.
+
+Depends on D.4.1 preview URL pattern for Lighthouse job target.
+
+---
+
+## Non-Goals
+
+- Running Lighthouse on every Go PR
+- E2E Playwright in this milestone (D.5.1 adds visual tests)
+- Deploying to production from CI
+
+---
+
+## Branch
+
+`feat/d4-2-ci`
+
+## PR Title
+
+`ci(docs): docs-checks workflow (D.4.2)`
+
+---
+
+## Prerequisites
+
+- [D.4.1](/roadmap/phase-1-5-docs-site/milestones/d4.1-vercel-preview-deploys) merged
+
+---
+
+## Deliverables
+
+- `.github/workflows/docs-checks.yml` — build + lychee on `out/**/*.html`
+- Lighthouse CI job with `.github/lighthouse/config.json` thresholds
+- Path filter: `docs/app/**`, `pnpm-lock.yaml`
+
+See MASTER_BRIEF Part D (D.4.2) for full acceptance detail.
+
+---
+
+## Files Affected
+
+| File Path | Action | Notes |
+| --- | --- | --- |
+| `.github/workflows/docs-checks.yml` | Add | Docs CI workflow |
+| `.github/lighthouse/config.json` | Add | Score thresholds |
+
+---
+
+## Testing Requirements
+
+- **`test_lychee_blocks_broken_links`**: PR with broken href fails lychee job
+- **`test_lighthouse_blocks_a11y_regression`**: PR removing alt text fails Lighthouse
+- **`verifyDocsChecks_PathFilter`**: Go-only PR does not trigger docs-checks
+
+---
+
+## Acceptance Criteria
+
+- [ ] PR with intentionally broken link is blocked by lychee
+- [ ] PR with a11y regression is blocked by Lighthouse
+- [ ] Thresholds documented: perf ≥ 90, a11y = 100, best-practices ≥ 95, SEO = 100
+
+---
+
+## Risks
+
+| Risk | Probability | Impact | Mitigation |
+| --- | --- | --- | --- |
+| lychee false positives on mailto/external | Medium | Medium | Use `--exclude-mail` per brief |
+| Lighthouse flakiness on preview cold start | Medium | Medium | Retry once; pin preview URL template |
+| Build time increases PR latency | Low | Low | Path-filter workflow; cache pnpm |

@@ -1,0 +1,76 @@
+---
+title: "1.1.6 Argon2id Parameters"
+description: "Milestone 1.1.6: Argon2id Parameters and Crypto Policy ADR — complete."
+summary: "Milestone 1.1.6: Argon2id Parameters and Crypto Policy ADR — complete."
+status: "completed"
+milestoneId: "1.1.6"
+goal: "[1.1 Persistence and auth data plane](/roadmap/phase-1-core-platform/goals#goal-11-persistence-and-auth-data-plane)"
+phase: "phase-1-core-platform"
+fullTitle: "Milestone 1.1.6: Argon2id Parameters and Crypto Policy ADR"
+---
+
+# Milestone 1.1.6: Argon2id Parameters and Crypto Policy ADR
+
+**Status:** Complete  
+**Goal:** [1.1 Persistence and auth data plane](/roadmap/phase-1-core-platform/goals#goal-11-persistence-and-auth-data-plane)  
+**Phase:** 1 — Core Platform
+
+## Summary
+
+Centralize Argon2id parameters and approved cryptographic primitives in [ADR-0010](/docs/adr/0010-cryptography-policy) and `packages/crypto`; migrate auth and testutil hash paths; production default parallelism **p=4**.
+
+## Branch
+
+`chore/m1-1-6-crypto-policy`
+
+## PR title
+
+`chore(security): Argon2id parameters and crypto policy ADR (m1.1.6)`
+
+## Prerequisites
+
+- [1.1.3](/roadmap/phase-1-core-platform/milestones/1.1.3-auth-token-validation) merged (Argon2id PHC in use)
+
+## Tasks
+
+- [x] [ADR-0010](/docs/adr/0010-cryptography-policy) — parameters, PHC format, approved/forbidden primitives, upgrade procedure
+- [x] Amend [ADR-0007](/docs/adr/0007-auth-token-validation) §5 to reference ADR-0010
+- [x] `packages/crypto` — HashSecret/VerifySecret, token/password aliases, random, ConstantTimeEqual
+- [x] Unit tests — PHC prefix, round-trip, malformed hash, random entropy; advisory timing smoke (skip `-short`)
+- [x] Migrate `services/auth/internal/token` and `infra/testing/testutil/hash.go`
+- [x] Contributor documentation updated
+
+## Files affected
+
+| Path | Action |
+| --- | --- |
+| `packages/crypto/` | Add |
+| `docs/adr/ADR-0010-cryptography-policy.md` | Add |
+| `docs/adr/ADR-0007-auth-token-validation.md` | Amend §5 |
+| `services/auth/internal/token/hash.go`, `argon2_params.go`, `rand.go` | Delegate to `packages/crypto` |
+| `services/auth/internal/config/config.go` | `crypto.ProductionParams()` |
+| `infra/testing/testutil/hash.go` | Use `packages/crypto` |
+| contributor workspace | Add |
+
+## Testing requirements
+
+```bash
+go test ./packages/crypto/...
+go test ./services/auth/...
+go test -tags=integration ./services/auth/...
+make repo-guards
+```
+
+## Definition of done
+
+- [x] ADR-0010 accepted; PHC embeds `m=65536,t=3,p=4` for new production hashes
+- [x] No direct `argon2.IDKey` outside `packages/crypto`
+- [x] Existing DB hashes verify (params from PHC)
+- [x] Docs and env defaults aligned on p=4
+
+## Risks
+
+| Risk | Mitigation |
+| --- | --- |
+| Timing test flaky | Advisory; skip in `-short` |
+| Slower new hashes vs p=2 legacy default | PHC-embedded params; only new rows use p=4 |

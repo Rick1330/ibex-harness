@@ -3,41 +3,130 @@ title: Rate limiting
 description: Per-org request budgets enforced at the proxy edge.
 ---
 
-The proxy enforces organization-level requests-per-minute (RPM) limits using Redis sliding windows. Limits apply after authentication succeeds and before provider routing.
+The proxy enforces organization-level requests-per-minute (RPM) limits using a Redis sliding window ([ADR-0015](/docs/adr/0015-proxy-rate-limit-skeleton)). Limits apply **after** authentication and agent verification succeed and **before** request normalization hands off to a provider adapter.
 
-<Callout type="warning" title="Fail-open">
-  When Redis is unreachable, rate limiting is skipped and requests proceed. This preserves availability in Phase 1; monitor Redis health in production.
+Rate limiting is a **cost control**, not a security boundary. Auth and tenant isolation remain fail-closed; the limiter intentionally fails open when Redis is down.
+
+<Callout type="warning" title="Fail-open on Redis outage">
+  When Redis is unreachable, rate limiting is skipped and requests proceed. Monitor `/ready` and Redis metrics in production. Phase 2 may add conservative in-memory fallbacks.
 </Callout>
+
+## How it works
+
+```mermaid
+flowchart TD
+  A[Authenticated request] --> B{Redis reachable?}
+  B -->|No| C[Allow request — fail-open]
+  B -->|Yes| D[INCR ratelimit:org_id:rpm:minute]
+  D --> E{count ≤ RPM?}
+  E -->|Yes| F[Allow + set response headers]
+  E -->|No| G[429 RATE_LIMITED + Retry-After]
+```
+
+Implementation lives in `packages/ratelimit` — services must use the `Limiter` interface, not ad-hoc Redis calls. Key format: `ratelimit:{org_id}:rpm:{unix_minute}` with a TTL on first increment.
 
 ## Configuration
 
-```bash
-# Default org RPM (all orgs without override)
-IBEX_RATE_LIMIT_DEFAULT_RPM=60
+<ParamTable
+  params={[
+    {
+      name: "IBEX_RATE_LIMIT_DEFAULT_RPM",
+      type: "integer",
+      required: false,
+      description: "Default requests per minute for all orgs without an override.",
+      defaultValue: "60",
+    },
+    {
+      name: "IBEX_RATE_LIMIT_ORG_OVERRIDES",
+      type: "string",
+      required: false,
+      description:
+        "Comma-separated org_uuid=rpm pairs. Example: 550e8400-e29b-41d4-a716-446655440000=120",
+    },
+    {
+      name: "REDIS_URL",
+      type: "string (URL)",
+      required: true,
+      description: "Redis connection used by the limiter and /ready probe.",
+    },
+  ]}
+/>
 
-# Optional per-org overrides: org_id=rpm,org_id=rpm
-IBEX_RATE_LIMIT_ORG_OVERRIDES=
+Example overrides:
+
+```bash
+IBEX_RATE_LIMIT_DEFAULT_RPM=60
+IBEX_RATE_LIMIT_ORG_OVERRIDES=00000000-0000-0000-0000-000000000001=120,00000000-0000-0000-0000-000000000002=30
 ```
 
-## Response when limited
+Org IDs in overrides must be valid UUIDs. The limiter resolves the org from the **authenticated token**, never from the request body.
 
-Clients receive HTTP `429` with error code `RATE_LIMITED` and standard IBEX error envelope fields including `request_id`.
+## Response headers
+
+When rate limiting is active and Redis is healthy, protected responses include:
+
+| Header | Meaning |
+| --- | --- |
+| `X-RateLimit-Limit` | Configured RPM for this org |
+| `X-RateLimit-Remaining` | Requests left in the current window |
+| `X-RateLimit-Reset` | Unix timestamp when the window resets |
+
+On `429`, the proxy also sets `Retry-After` (seconds) so clients can back off without guessing.
+
+## Rate-limited error envelope
 
 ```json
 {
   "error": {
     "code": "RATE_LIMITED",
-    "message": "Rate limit exceeded"
-  },
-  "request_id": "01H..."
+    "message": "Rate limit exceeded",
+    "request_id": "0192a3b4-c5d6-7890-abcd-ef1234567890",
+    "timestamp": "2026-06-14T12:00:00Z"
+  }
 }
 ```
 
-## Verify limiter is wired
+The `request_id` matches `X-Request-ID` on the response and is propagated to auth gRPC metadata for log correlation ([ADR-0017](/docs/adr/0017-request-id-strategy)).
 
-Run the proxy security integration suite (requires test Postgres):
+## Routes subject to limiting
 
-```bash
-make compose-test-up
-go test -tags=integration -run TestSecurity_SEC4 ./services/proxy/...
-```
+All protected `/v1/*` routes share the same org-level bucket in Phase 1:
+
+- `GET /v1/internal/auth-probe`
+- `GET /v1/orgs/{org_id}/auth-probe`
+- `POST /v1/chat/completions`
+
+There is no per-agent or per-IP tier yet. Hierarchical limits (agent → org → global) are planned for Phase 2+.
+
+## Verify the limiter
+
+<Steps>
+  <Step title="Start test stack">
+    `make compose-test-up` — Postgres on 5433; Redis from compose.
+  </Step>
+  <Step title="Run security tests">
+    `go test -tags=integration -run TestSecurity_SEC4 ./services/proxy/...`
+  </Step>
+  <Step title="Optional smoke burst">
+    `make dev-smoke` may WARN if 429 is not observed in 65 rapid probe requests — acceptable on fast hardware.
+  </Step>
+</Steps>
+
+CI runs the full `security-integration` job including Redis fail-open cases. See [Testing strategy](/docs/architecture/request-lifecycle) and [current state](/roadmap/current-state).
+
+## Operational guidance
+
+<Callout type="tip" title="Monitor fail-open">
+  Alert on Redis `/ready` failures and elevated request volume during outages. Fail-open preserves availability but removes cost protection temporarily.
+</Callout>
+
+- **Staging:** Keep `IBEX_RATE_LIMIT_DEFAULT_RPM` low enough to catch runaway integration tests.
+- **Production:** Set per-org overrides for high-traffic tenants; never embed org IDs in metric labels (cardinality explosion).
+- **Security:** Pair rate limits with auth — unauthenticated traffic should not reach the limiter on protected routes.
+
+## Related
+
+- [Configuration](/docs/proxy/configuration) — full env var reference
+- [Authentication](/docs/proxy/authentication) — limiter runs after auth succeeds
+- [Tenant isolation](/docs/security/tenant-isolation) — Redis key namespacing by org_id
+- [ADR-0015](/docs/adr/0015-proxy-rate-limit-skeleton) — design rationale and race window

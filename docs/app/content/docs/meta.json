@@ -2,10 +2,15 @@
   "title": "Documentation",
   "pages": [
     "getting-started",
+    "architecture",
     "proxy",
     "auth",
+    "security",
     "deployment",
+    "operations",
     "api-reference",
-    "changelog"
+    "adr",
+    "changelog",
+    "glossary"
   ]
 }

@@ -1,0 +1,63 @@
+---
+title: "Phase 3"
+description: "Python stack choices and ADR decisions for the Memory Engine and Operator Platform phase."
+summary: "Python stack choices and ADR decisions for the Memory Engine and Operator Platform phase."
+phase: "phase-3-memory-engine"
+fullTitle: "Phase 3 — Memory Engine and Operator Platform — Decision Log"
+---
+
+# Phase 3 — Decision Log
+
+Quick decisions during Phase 3. Promote durable choices to `docs/adr/` and the public [ADR index](/docs/adr) when they affect multiple phases.
+
+## Python stack (non-negotiable)
+
+| Concern | Choice | Reason |
+| --- | --- | --- |
+| Python version | 3.11 | Performance over 3.10; 3.12 not yet stable across ML libs |
+| Web framework | FastAPI 0.110+ | Native async, automatic OpenAPI, DI |
+| ORM | SQLAlchemy 2.0 (async) | Type-safe async queries, pgvector support |
+| Migrations | Alembic | Standard SQLAlchemy companion |
+| Config | pydantic-settings v2 | Typed, validated `.env` support |
+| Testing | pytest + pytest-asyncio | `asyncio_mode="auto"` |
+| Linting | ruff + mypy --strict | Single tool, fast |
+| Task queue | Celery 5 + Redis broker | Industry standard |
+| gRPC | grpcio + betterproto | Dataclass codegen, mypy-friendly |
+| HTTP client | httpx (async) | Better typing than aiohttp |
+| Embeddings | sentence-transformers 2.x | HuggingFace model flexibility |
+| Packaging | pyproject.toml + uv | Fast installs |
+
+## ADR register (Phase 3)
+
+| ADR | Topic | Milestone | Status |
+| --- | --- | --- | --- |
+| ADR-0032 | Memory data model | 3.1.1 | Pending |
+| ADR-0033 | Embedding service design | 3.2.1 | Pending |
+| ADR-0034 | Memory write pipeline + PII | 3.3.2 | Pending |
+| ADR-0035 | Vector search / IVFFlat tuning | 3.3.4 | Pending |
+| ADR-0036 | Memory extraction strategy | 3.4.3 | Pending |
+| ADR-0037 | Conflict detection + resolution | 3.4.5 | Pending |
+| ADR-0038 | Context assembly gRPC contract | 3.5.1 | Pending |
+| ADR-0039 | Token budget calculator | 3.5.2 | Pending |
+| ADR-0040 | Management API auth middleware | 3.6.1 | Pending |
+| ADR-0041 | MinIO session archive format | 3.7.1 | Pending |
+
+Log pivots in [findings](/roadmap/findings). When an ADR merges, add it under [docs/adr](/docs/adr).
+
+## Architectural decisions
+
+| Decision | Rationale |
+| --- | --- |
+| Separate Python context assembly service (not inline in Go proxy) | Memory ranking needs NumPy, tiktoken, complex caching — wrong language for hot-path Go binary |
+| gRPC for context assembly (not HTTP) | Typed contract, lower overhead than JSON for &lt;50ms target; matches auth pattern |
+| Graceful degradation on context timeout | If assembly exceeds ~45ms, proxy continues with directive-only context |
+| betterproto for Python gRPC | Dataclass stubs vs protobuf message objects |
+| Celery + Redis for workers | At-least-once delivery; idempotent tasks required |
+| MinIO for session archives | Postgres metadata only; bulk conversation content in object storage |
+| PAT auth for dashboard (Phase 3) | OAuth deferred; operators use same token model as SDK |
+
+## Pending decisions (resolve during milestones)
+
+1. **IVFFlat probes vs recall** — default `lists=100`, `probes=10`; tune in 3.3.4 load tests.
+2. **Embedding GPU in dev compose** — CPU default; document optional GPU profile in `ENVIRONMENT_VARIABLES.md`.
+3. **Dashboard chart library** — Recharts vs Tremor; lock in 3.8.5 before analytics pages multiply.

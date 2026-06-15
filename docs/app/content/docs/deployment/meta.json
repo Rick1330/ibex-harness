@@ -1,9 +1,5 @@
 {
   "title": "Deployment",
-  "pages": [
-    "docker-compose",
-    "kubernetes",
-    "environment-variables",
-    "observability"
-  ]
+  "icon": "Container",
+  "pages": ["docker-compose", "kubernetes", "environment-variables"]
 }

@@ -3,41 +3,144 @@ title: Introduction
 description: Welcome to the IBEX Harness documentation — self-hosted LLM proxy with persistent agent memory.
 ---
 
-IBEX Harness is a self-hosted AI agent platform: an authenticated LLM proxy, multi-tenant auth, and (in later phases) persistent agent memory.
+IBEX Harness is a self-hosted AI agent platform: an authenticated LLM proxy, multi-tenant identity service, and (in later phases) persistent agent memory with behavioral drift detection. The long-term goal is enterprise-grade context injection on every LLM call with under 20ms proxy overhead.
 
-<Callout type="note">
-  Phase 1 ships the **proxy** and **auth** services. Chat completion routing returns `501 PROVIDER_NOT_CONFIGURED` until Phase 2 wires a provider adapter.
+This documentation reflects **what ships today** — not the full vision. Phase 1 delivered auth + proxy; Phase 1.5 delivers this docs site. LLM forwarding and memory services are explicitly out of scope until Phase 2+.
+
+<Callout type="note" title="Honest Phase 1 scope">
+  Chat completion routes return `501 PROVIDER_NOT_CONFIGURED` until Phase 2 wires a provider adapter. Python services (memory, context, dashboard) are not runnable yet. Live status: [current state](/roadmap/current-state).
 </Callout>
 
 ## What you can do today
 
-- Validate bearer tokens and agent identity on every proxied request
-- Run the full stack locally with Docker Compose
-- Enforce per-organization rate limits (Redis-backed, fail-open)
-- Browse this docs site with search, OG previews, and Matte Graphite UI
+<Steps>
+  <Step title="Authenticate every proxy request">
+    Bearer PAT validation and agent identity verification over gRPC — fail-closed on auth outage.
+  </Step>
+  <Step title="Run the stack locally">
+    Docker Compose for Postgres and Redis; auth and proxy on the host for fast iteration.
+  </Step>
+  <Step title="Enforce org rate limits">
+    Redis-backed RPM budgets per organization (fail-open when Redis is down).
+  </Step>
+  <Step title="Issue and revoke PATs">
+    gRPC `CreateToken` / `RevokeToken` with Argon2id hashing and Postgres RLS.
+  </Step>
+  <Step title="Browse this docs site">
+    Search, OG previews, ADR index, and roadmap with Phase honesty throughout.
+  </Step>
+</Steps>
+
+## What does not work yet
+
+Per [current state](/roadmap/current-state) and the development guide:
+
+- JWT issuance and dashboard session flows
+- Proxy LLM forwarding and context injection
+- Python services: memory, context assembly, embedder, worker, API, dashboard
+- Background jobs, ClickHouse trace ingestion, MinIO session archives
+
+<Callout type="warning" title="Do not assume future APIs">
+  Integrate against documented Phase 1 endpoints only. Treat `501 PROVIDER_NOT_CONFIGURED` as the expected chat outcome until Phase 2 launches.
+</Callout>
 
 ## Architecture at a glance
 
-- **Client** sends authenticated requests to the **proxy** (port 8080)
-- **Proxy** validates tokens via **auth** (gRPC 9091) and rate limits via **Redis**
-- **Auth** reads org/agent/token data from **Postgres**
+```mermaid
+flowchart LR
+  Client["Agent / SDK"] -->|HTTPS :8080| Proxy["Proxy"]
+  Proxy -->|gRPC :9091| Auth["Auth"]
+  Auth --> PG["Postgres"]
+  Proxy --> Redis["Redis"]
+  Proxy -.->|Phase 2| LLM["LLM provider"]
+```
+
+| Component | Phase 1 status | Port (default) |
+| --- | --- | --- |
+| Proxy | Running — auth, validate, rate limit | HTTP 8080 |
+| Auth | Running — PAT + agent identity | HTTP 8081, gRPC 9091 |
+| Postgres | Running via Compose | 5432 |
+| Redis | Running via Compose | 6379 |
+| Memory / Context | Not implemented | — |
+
+Deeper dive: [Architecture](/docs/architecture) and [Request lifecycle](/docs/architecture/request-lifecycle).
+
+## New contributor path
+
+The development guide targets a **one-hour** onboarding loop:
+
+<ProcessSteps
+  steps={[
+    {
+      title: 'Prerequisites',
+      description:
+        'Docker, GNU Make, Go 1.25+, Buf CLI. See TOOLCHAIN in the roadmap reference.',
+    },
+    {
+      title: 'Clone and boot infra',
+      description: 'make compose-dev-up && make db-migrate && make db-seed',
+    },
+    {
+      title: 'Generate protos',
+      description: 'make proto-gen — required before go test on auth/proxy.',
+    },
+    {
+      title: 'Start auth then proxy',
+      description: 'Auth gRPC must be up before protected proxy routes work.',
+    },
+    {
+      title: 'Smoke test',
+      description: 'make dev-smoke — health, auth failures, 501 chat stub.',
+    },
+  ]}
+/>
+
+Set `IBEX_AUTH_VALIDATE_TIMEOUT=2s` on the proxy locally — the production `50ms` budget often triggers `503` on developer machines during Argon2 verification.
+
+## Security invariants
+
+Security is not deferred to a later phase:
+
+- Multi-tenant isolation via RLS + explicit org filters — [Tenant isolation](/docs/security/tenant-isolation)
+- Cross-tenant resource access returns `403`, never `404`
+- PAT secrets hashed with Argon2id; plaintext shown once — [Secrets and keys](/docs/security/secrets-and-keys)
+- 35+ automated security integration cases in CI
+
+Overview: [Security](/docs/security).
 
 ## Verify the proxy is up
 
-After `make compose-dev-up`, the proxy health endpoint should respond:
+After `make compose-dev-up`, migrations, and seed:
 
 ```bash
 curl -s http://localhost:8080/health
+curl -s http://localhost:8080/ready
 ```
 
-Expected: HTTP 200 with a JSON body reporting service health.
+Expected: HTTP 200 on `/health`. `/ready` reports `ok` when auth gRPC and Redis are reachable.
 
-## Rate limiting
+Protected probe (requires seeded credentials):
 
-The proxy applies per-tenant rate limits on incoming requests. Limits are configurable via environment variables and enforced before request routing — see [Rate limiting](/docs/proxy/rate-limiting) for the full reference.
+```bash
+curl -s http://localhost:8080/v1/internal/auth-probe \
+  -H "Authorization: Bearer ${IBEX_DEV_TOKEN}" \
+  -H "X-IBEX-Agent-ID: ${IBEX_DEV_AGENT_ID}"
+```
+
+## Documentation map
+
+| Section | Start here |
+| --- | --- |
+| Run locally in 5 minutes | [Quickstart](/docs/getting-started/quickstart) |
+| Org, agent, token model | [Concepts](/docs/getting-started/concepts) |
+| Proxy middleware and endpoints | [Proxy overview](/docs/proxy/overview) |
+| PAT issuance | [Issuing API keys](/docs/auth/issuing-api-keys) |
+| Error codes | [API errors](/docs/api-reference/errors) |
+| Implementation progress | [Roadmap](/roadmap) |
 
 ## Next steps
 
 - [Quickstart](/docs/getting-started/quickstart) — clone, boot, and send a probe request
 - [Concepts](/docs/getting-started/concepts) — organizations, agents, and tokens
 - [FAQ](/docs/getting-started/faq) — common setup questions
+- [Proxy overview](/docs/proxy/overview) — middleware pipeline detail

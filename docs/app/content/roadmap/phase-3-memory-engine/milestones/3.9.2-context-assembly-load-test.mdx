@@ -1,0 +1,63 @@
+---
+title: "3.9.2 Context Assembly"
+description: "Phase 3 adds a gRPC call to the proxy's critical path. ARCHITECTURE.md commits to p95 < 50ms for context assembly. Under concurrent load, the context assembly service may queue requests and degrade. This benchmark validates the latency target holds under realistic load."
+summary: "Phase 3 adds a gRPC call to the proxy's critical path. ARCHITECTURE.md commits to p95 < 50ms for context assembly. Under concurrent load, the context assembly service may queue requests and degrade. This benchmark validates the latency target holds under realistic load."
+status: "planned"
+milestoneId: "3.9.2"
+goal: "[3.9 — Phase 3 quality gate](/roadmap/phase-3-memory-engine/goals#goal-39-phase-3-quality-gate)"
+estimatedEffort: "2 days"
+phase: "phase-3-memory-engine"
+fullTitle: "Milestone 3.9.2 — Context Assembly Load Test and Benchmark"
+---
+
+# Milestone 3.9.2 — Context Assembly Load Test and Benchmark
+
+**Status:** Planned  
+**Goal:** [3.9 — Phase 3 quality gate](/roadmap/phase-3-memory-engine/goals#goal-39-phase-3-quality-gate)  
+**Phase:** 3 — Memory Engine and Operator Platform  
+**Estimated effort:** 2 days
+
+---
+
+## Why This Milestone Exists
+
+Phase 3 adds a gRPC call to the proxy's critical path. ARCHITECTURE.md commits to p95 < 50ms for context assembly. Under concurrent load, the context assembly service may queue requests and degrade. This benchmark validates the latency target holds under realistic load.
+
+---
+
+## k6 load test
+
+```javascript
+// benchmarks/k6/context_assembly_load.js
+export const options = {
+    stages: [
+        { duration: "30s", target: 20 },   // ramp to 20 VUs
+        { duration: "2m",  target: 50 },   // hold at 50 VUs (realistic load)
+        { duration: "30s", target: 0 },    // ramp down
+    ],
+    thresholds: {
+        http_req_duration: ["p(95)<50"],   // p95 < 50ms (context assembly only)
+        http_req_failed:   ["rate<0.001"], // error rate < 0.1%
+    },
+};
+
+export default function () {
+    // POST to the context assembly gRPC-gateway endpoint
+    // (or use grpc-load-test tool for native gRPC benchmarking)
+    http.post(`${CONTEXT_URL}/v1/assemble`, JSON.stringify(SAMPLE_REQUEST), {
+        headers: { "Content-Type": "application/json" },
+    });
+}
+```
+
+---
+
+## Acceptance Criteria
+
+- [ ] p95 context assembly latency < 50ms at 50 concurrent VUs
+- [ ] p99 < 100ms (degraded but not failing)
+- [ ] Error rate < 0.1% (context fallback responses are not errors)
+- [ ] Latency breakdown documented: embedding call, pgvector search, hot cache
+- [ ] Benchmark baseline committed to `benchmarks/BASELINE_PHASE3.md`
+
+---

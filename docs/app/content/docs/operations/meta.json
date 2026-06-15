@@ -1,0 +1,10 @@
+{
+  "title": "Operations",
+  "icon": "Activity",
+  "pages": [
+    "observability",
+    "troubleshooting",
+    "health-checks",
+    "incident-response"
+  ]
+}

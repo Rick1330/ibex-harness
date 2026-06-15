@@ -1,0 +1,139 @@
+---
+title: "Phases Overview"
+description: "High-level roadmap from Foundation through production hardening. Detailed milestones for Phase 1 live under phase-1-core-platform/."
+summary: "High-level roadmap from Foundation through production hardening. Detailed milestones for Phase 1 live under phase-1-core-platform/."
+status: "completed"
+---
+
+# Phases Overview
+
+High-level roadmap from Foundation through production hardening. Detailed milestones for Phase 1 live under [phase-1-core-platform/](phase-1-core-platform/).
+
+| Phase | Name | Est. duration | Status | Entry | Exit (summary) |
+| --- | --- | --- | --- | --- | --- |
+| [0](phase-0-foundation/) | Foundation | Done | **Complete** | Empty repo | CI, docs, compose, proto source, Go skeletons |
+| [1](phase-1-core-platform/) | Core Platform | 4–6 weeks | **Complete** | Phase 0 complete | Migrations, auth, proxy platform, security gate |
+| [1.5](phase-1-5-docs-site/) | Docs Site | 2–3 weeks | **In progress** | Phase 1 complete | Public docs at docs.ibexharness.com |
+| [2](phase-2-single-provider/) | Single Provider E2E | 3–5 weeks | Planned | Phase 1.5 exit | Authenticated OpenAI-compatible chat through proxy |
+| [3](phase-3-memory-engine/) | Memory Engine and Operator Platform | 6–8 weeks | Planned | Phase 2 exit | Memory graph, context assembly, operator API + dashboard |
+| [4](phase-4-multi-provider/) | Multi-Provider and Routing | 4–6 weeks | Planned | Phase 3 exit | Multiple providers, routing, Redis rate limits |
+| [5](phase-5-production-hardening/) | Production Hardening | 4–8 weeks | Planned | Phase 4 exit | SLOs, OTel pipeline, chaos/load, required Go CI |
+
+---
+
+## Phase 0: Foundation
+
+**Status:** Complete
+
+**Delivered:** Documentation-first monorepo, governance CI, Buf proto foundation, local compose, toolchain (`Makefile`, `TOOLCHAIN.md`), Go auth/proxy skeletons with health/readiness/metrics.
+
+**Merge commits:** `c4d302a` (toolchain), `5d0bfac` (Go skeletons).
+
+See [phase-0-foundation/README.md](/roadmap/phase-0-foundation).
+
+---
+
+## Phase 1: Core Platform
+
+**Status:** Complete
+
+**Goals:** [goals.md](/roadmap/phase-1-core-platform/goals)
+
+See [phase-1-core-platform/README.md](/roadmap/phase-1-core-platform) and [PHASE1_EXIT_AUDIT.md](/roadmap/phase-1-core-platform/phase1-exit-audit).
+
+---
+
+## Phase 1.5: Docs Site
+
+**Status:** In progress — current milestone [D.3.2](/roadmap/phase-1-5-docs-site/milestones/d3.2-seed-pages-content-stubs)
+
+**Goals:** [phase-1-5-docs-site/goals.md](/roadmap/phase-1-5-docs-site/goals)
+
+**Exit criteria:**
+
+- Fumadocs site live at `https://docs.ibexharness.com`
+- Matte Graphite design system; `verify_phase15.sh` passes
+- Cross-links and sitemaps with landing site
+
+---
+
+## Phase 2: Single Provider E2E
+
+**Status:** Planned — blocked on Phase 1.5 exit
+
+**Goals:** [phase-2-single-provider/goals.md](/roadmap/phase-2-single-provider/goals)
+
+| Goal | Summary |
+| --- | --- |
+| 2.1 | Provider abstraction and OpenAI forwarding (streaming + error mapping) |
+| 2.2 | Auth LRU + bloom cache and revocation propagation |
+| 2.3 | Directive resolution and system prompt injection |
+| 2.4 | Session tracking and checkpoints |
+| 2.5 | Async ClickHouse trace emission |
+| 2.6 | Latency benchmark and Phase 2 exit gate |
+
+**Exit criteria:**
+
+- End-to-end chat completion via proxy to OpenAI (streaming and non-streaming)
+- Proxy overhead &lt;20ms p99; auth cache hit path &lt;1ms
+- Directive injected; sessions and ClickHouse traces emitted async
+- Phase 1 security tests still pass; `make e2e-smoke` green
+
+---
+
+## Phase 3: Memory Engine and Operator Platform
+
+**Status:** Planned
+
+**Goals:** [phase-3-memory-engine/goals](/roadmap/phase-3-memory-engine/goals)
+
+**Milestones:** [45 milestones](/roadmap/phase-3-memory-engine/milestones) across memory schema, embedding, memory service, extraction worker, context assembly, management API, MinIO archives, operator dashboard, and exit gate.
+
+**Exit criteria:**
+
+- Real conversation produces memories visible in dashboard within 30 seconds of session completion
+- Subsequent agent requests include memory-injected context (verified in outbound provider calls)
+- Context assembly p95 &lt; 50ms under 50 concurrent requests
+- Management API CRUD for agents, directives, tokens, memories; dashboard displays real data
+- Cross-tenant memory isolation verified; GDPR deletion cascade works
+- `make e2e-smoke-p3` exits 0; Phase 1 and Phase 2 security tests still pass
+
+---
+
+## Phase 4: Multi-Provider and Routing
+
+**Status:** Planned
+
+**Goals:** [phase-4-multi-provider/goals.md](/roadmap/phase-4-multi-provider/goals)
+
+**Exit criteria:**
+
+- Provider adapter interface; at least two providers
+- Model routing and failover policies
+- Production-grade Redis rate limiting (Lua)
+- Streaming backpressure hardened
+
+---
+
+## Phase 5: Production Hardening
+
+**Status:** Planned
+
+**Goals:** [phase-5-production-hardening/goals.md](/roadmap/phase-5-production-hardening/goals)
+
+**Exit criteria:**
+
+- OTel collectors and Grafana dashboards per MONITORING.md
+- Circuit breakers on external deps; documented fallbacks
+- Load/chaos tests on proxy path
+- Promote `go-services` / `golangci-lint` to required checks when stable
+
+---
+
+## Critical path (dependency order)
+
+```text
+Phase 0 → Phase 1 → Phase 1.5 (docs) → Phase 2 provider → Phase 3 memory/context → Phase 4 scale → Phase 5 harden
+```
+
+Pivot triggers and discoveries: [FINDINGS.md](/roadmap/findings).

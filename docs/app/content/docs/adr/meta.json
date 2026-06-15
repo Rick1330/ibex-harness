@@ -1,0 +1,28 @@
+{
+  "title": "ADRs",
+  "pages": [
+    "index",
+    "0002-repo-foundation-bootstrap",
+    "0003-branch-protection-and-merge-policy",
+    "0004-protobuf-and-codegen-policy",
+    "0005-postgres-migration-strategy",
+    "0006-auth-proto-contract",
+    "0007-auth-token-validation",
+    "0008-security-ci-gates",
+    "0009-permission-bitmap",
+    "0010-cryptography-policy",
+    "0011-proxy-auth-client",
+    "0012-proxy-request-normalization",
+    "0013-proxy-input-validation-and-error-envelope",
+    "0014-core-domain-migration-sequencing",
+    "0015-proxy-rate-limit-skeleton",
+    "0016-agent-identity-verification",
+    "0017-request-id-strategy",
+    "0018-graceful-shutdown",
+    "0019-opentelemetry-provider-configuration",
+    "0020-shared-package-boundaries",
+    "0021-prometheus-metric-catalog",
+    "0022-health-check-contract",
+    "0023-docs-site-architecture"
+  ]
+}

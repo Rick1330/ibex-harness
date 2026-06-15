@@ -1,0 +1,44 @@
+---
+title: "Phase 3"
+description: "Latency, security, and operational risks for the Memory Engine and Operator Platform phase."
+summary: "Latency, security, and operational risks for the Memory Engine and Operator Platform phase."
+phase: "phase-3-memory-engine"
+fullTitle: "Phase 3 — Memory Engine and Operator Platform — Risks"
+---
+
+# Phase 3 — Risks
+
+Phase 3 is the most complex roadmap phase. These risks are tracked during execution; mitigations link to milestones and [SECURITY.md](/docs/security/overview).
+
+## Critical path risks
+
+| Risk | Impact | Mitigation | Owner milestones |
+| --- | --- | --- | --- |
+| Context assembly p95 exceeds 50ms | Proxy SLO breach; blocks Phase 3 exit | 40ms parallel retrieval deadline; directive-only fallback; load test in 3.9.2 | 3.5.1–3.5.7, 3.9.2 |
+| pgvector IVFFlat recall too low at scale | Wrong memories injected; user trust loss | Tune `lists`/`probes`; benchmark 1M vectors; ADR-0035 | 3.3.4, 3.5.3 |
+| Memory extraction worker backlog | Learning lag; stale agent context | Celery concurrency; DLQ alerts; idempotent tasks | 3.4.1–3.4.6 |
+| Hot cache drift from cold store | Inconsistent injection vs search results | Refresh on write; periodic reconciliation job | 3.3.5, 3.4.3 |
+
+## Security risks
+
+| Risk | Impact | Mitigation |
+| --- | --- | --- |
+| Prompt injection via stored memories | Agent ignores directives; data exfiltration | Quarantine high-risk content; delimiter injection; treat memory as untrusted ([SECURITY.md](/docs/security/overview)) |
+| Cross-tenant memory leak | Catastrophic isolation failure | RLS + app-layer org filters; 35+ security tests extended in 3.9.1 |
+| PII in memory content | Compliance violation | Redaction in write pipeline (3.3.2); quarantine workflow |
+| PAT in dashboard bundle | Token leak to browser storage | Server-side session pattern in 3.8.1; no secrets in client bundles |
+
+## Operational risks
+
+| Risk | Impact | Mitigation |
+| --- | --- | --- |
+| MinIO archive GDPR cascade failure | Orphaned PII after org delete | End-to-end delete test in 3.7.3; runbook in [incident response](/docs/operations/incident-response) |
+| Embedding service cold start | Memory writes block on slow model load | Readiness probe waits for warm inference (3.2.1) |
+| Management API scope creep | Delayed dashboard | Strict milestone boundaries 3.6.x; defer analytics depth to 3.6.7 |
+| Six new services in compose-dev | Developer onboarding friction | Update [Docker Compose](/docs/deployment/docker-compose) and `make` targets in 3.4.1 |
+
+## Exit gate dependencies
+
+Phase 3 exit ([3.9.3](/roadmap/phase-3-memory-engine/milestones/3.9.3-phase3-exit-gate)) requires all ten criteria on the [phase index](/roadmap/phase-3-memory-engine) — including `make e2e-smoke-p3` green and Phase 1/2 security regression pass.
+
+If context assembly cannot meet p95 under 50 concurrent requests, **do not** declare Phase 3 complete; escalate in [findings](/roadmap/findings) and revisit IVFFlat tuning or hot-cache strategy before Phase 4.

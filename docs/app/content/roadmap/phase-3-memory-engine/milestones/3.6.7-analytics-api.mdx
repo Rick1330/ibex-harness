@@ -1,0 +1,87 @@
+---
+title: "3.6.7 Analytics Api"
+description: "The dashboard needs aggregate usage data: how many tokens were consumed this week, what was the p99 latency yesterday, which agents are most active. These queries are aggregations over the `llm_traces` ClickHouse table — exactly what ClickHouse is designed for. The challenge is that ClickHouse queries (even simple ones"
+summary: "The dashboard needs aggregate usage data: how many tokens were consumed this week, what was the p99 latency yesterday, which agents are most active. These queries are aggregations over the `llm_traces` ClickHouse table — exactly what ClickHouse is designed for. The challenge is that ClickHouse queries (even simple ones"
+status: "planned"
+milestoneId: "3.6.7"
+goal: "[3.6 — Management API server](/roadmap/phase-3-memory-engine/goals#goal-36-management-api-server)"
+estimatedEffort: "3–4 days"
+phase: "phase-3-memory-engine"
+fullTitle: "Milestone 3.6.7 — Analytics and Session History API"
+---
+
+# Milestone 3.6.7 — Analytics and Session History API
+
+**Status:** Planned  
+**Goal:** [3.6 — Management API server](/roadmap/phase-3-memory-engine/goals#goal-36-management-api-server)  
+**Phase:** 3 — Memory Engine and Operator Platform  
+**Estimated effort:** 3–4 days  
+**ADR required:** ADR-0043 — ClickHouse query patterns and caching strategy
+
+---
+
+## Why This Milestone Exists
+
+The dashboard needs aggregate usage data: how many tokens were consumed this week, what was the p99 latency yesterday, which agents are most active. These queries are aggregations over the `llm_traces` ClickHouse table — exactly what ClickHouse is designed for.
+
+The challenge is that ClickHouse queries (even simple ones) take 50–500ms. These endpoints cannot be called on every dashboard load without caching. This milestone implements both the analytics endpoints and a 60-second Redis result cache.
+
+---
+
+## Endpoints
+
+```
+GET /v1/analytics/usage
+  ?start=ISO8601&end=ISO8601&agent_id=UUID&granularity=hour|day|week
+  → UsageSeries (token counts, request counts by time bucket)
+
+GET /v1/analytics/latency
+  ?start=ISO8601&end=ISO8601&agent_id=UUID&percentile=50|95|99
+  → LatencySeries (proxy overhead + TTFB by time bucket)
+
+GET /v1/analytics/models
+  ?start=ISO8601&end=ISO8601
+  → ModelBreakdown (request count and token spend by model)
+
+GET /v1/analytics/errors
+  ?start=ISO8601&end=ISO8601&error_code=...
+  → ErrorSeries (error counts by code and time)
+```
+
+### ClickHouse query example (usage by day)
+
+```sql
+SELECT
+    toDate(requested_at)                AS day,
+    sum(input_tokens)                   AS input_tokens,
+    sum(output_tokens)                  AS output_tokens,
+    count()                             AS request_count
+FROM ibex.llm_traces
+WHERE
+    org_id = {org_id:UUID}
+    AND requested_at BETWEEN {start:DateTime64} AND {end:DateTime64}
+    AND status_code = 200
+GROUP BY day
+ORDER BY day ASC
+-- clickhouse-driver parameterised queries; org_id always included
+```
+
+### Caching strategy
+
+```python
+# Cache key: SHA-256(org_id + endpoint + params)
+# TTL: 60 seconds for hourly/daily data; 5 minutes for weekly data
+# Redis cache-aside; ClickHouse on miss; result serialised to JSON
+```
+
+---
+
+## Acceptance Criteria
+
+- [ ] Usage endpoint returns correct token totals verified against known test data in ClickHouse
+- [ ] All analytics queries include `org_id` in WHERE clause
+- [ ] Redis cache hit serves result without ClickHouse query
+- [ ] Cache TTL: 60s for granularity=hour/day; 300s for granularity=week
+- [ ] ADR-0043 written with ClickHouse query pattern documentation
+
+---

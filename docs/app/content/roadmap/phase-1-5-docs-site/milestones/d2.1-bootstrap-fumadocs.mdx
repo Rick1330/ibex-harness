@@ -1,0 +1,103 @@
+---
+title: "d2.1 Bootstrap Fumadocs"
+description: "We need a running Next.js + Fumadocs app before any custom design work. The landing site already links to `docs.ibexharness.com`, which 404s today. This milestone proves `pnpm docs:dev`, routing, and MDX compilation. Default Fumadocs styling is acceptable temporarily; Matte Graphite lands in D.2.2."
+summary: "We need a running Next.js + Fumadocs app before any custom design work. The landing site already links to `docs.ibexharness.com`, which 404s today. This milestone proves `pnpm docs:dev`, routing, and MDX compilation. Default Fumadocs styling is acceptable temporarily; Matte Graphite lands in D.2.2."
+status: "planned"
+milestoneId: "d2.1"
+goal: "[D.2](/roadmap/phase-1-5-docs-site/goals)"
+estimatedEffort: "3 hours"
+phase: "phase-1-5-docs-site"
+fullTitle: "Milestone D.2.1 — Bootstrap Fumadocs application"
+---
+
+# Milestone D.2.1 — Bootstrap Fumadocs application
+
+**Status:** Planned  
+**Goal:** [D.2](/roadmap/phase-1-5-docs-site/goals)  
+**Phase:** 1.5 — Docs Site  
+**Wave:** 2  
+**Estimated effort:** 3 hours  
+**ADR required:** None
+
+Spec detail: [MASTER_BRIEF.md](/roadmap/phase-1-5-docs-site/master-brief) Part D (D.2.1).
+
+---
+
+## Why This Milestone Exists
+
+We need a running Next.js + Fumadocs app before any custom design work. The landing site already links to `docs.ibexharness.com`, which 404s today.
+
+This milestone proves `pnpm docs:dev`, routing, and MDX compilation. Default Fumadocs styling is acceptable temporarily; Matte Graphite lands in D.2.2.
+
+Fumadocs on Next 15 App Router matches ADR-0023 and the master brief Part C.
+
+---
+
+## Non-Goals
+
+- Matte Graphite tokens (D.2.2)
+- Full sidebar IA (D.3.1)
+- Production domain attach (D.6.2)
+
+---
+
+## Branch
+
+`feat/d2-1-bootstrap`
+
+## PR Title
+
+`feat(docs): bootstrap Fumadocs app at docs/app (D.2.1)`
+
+---
+
+## Prerequisites
+
+- [D.1.1](/roadmap/phase-1-5-docs-site/milestones/d1.1-pnpm-workspace-turborepo) merged
+- [D.1.2](/roadmap/phase-1-5-docs-site/milestones/d1.2-cursor-rules-editorconfig) merged
+
+---
+
+## Deliverables
+
+- `docs/app/` Fumadocs scaffold per MASTER_BRIEF D.2.1
+- Seed `content/docs/getting-started/introduction.mdx`
+- `source.config.ts`, `next.config.mjs`, `src/lib/source.ts`
+
+See MASTER_BRIEF Part D (D.2.1) for full acceptance detail.
+
+---
+
+## Files Affected
+
+| File Path | Action | Notes |
+| --- | --- | --- |
+| `docs/app/package.json` | Add | Fumadocs dependencies |
+| `docs/app/content/docs/getting-started/introduction.mdx` | Add | Seed page |
+| `docs/app/src/app/docs/[[...slug]]/page.tsx` | Add | Doc route |
+
+---
+
+## Testing Requirements
+
+- **`verifyDocsDev_Boots`**: `pnpm docs:dev` serves localhost without console errors
+- **`verifyRootRedirect_Introduction`**: `/` redirects to introduction page
+- **`verifyHydration_NoWarnings`**: No hydration warnings on seed page
+
+---
+
+## Acceptance Criteria
+
+- [ ] `pnpm docs:dev` boots
+- [ ] Introduction page renders
+- [ ] No hydration errors in browser console
+
+---
+
+## Risks
+
+| Risk | Probability | Impact | Mitigation |
+| --- | --- | --- | --- |
+| Fumadocs version skew with Next 15 | Medium | High | Pin versions per MASTER_BRIEF §C.2 |
+| Buf/proto gen unrelated breakage | Low | Low | Docs app isolated under docs/app |
+| Default theme misleads design review | Medium | Low | Document that D.2.2 replaces tokens |

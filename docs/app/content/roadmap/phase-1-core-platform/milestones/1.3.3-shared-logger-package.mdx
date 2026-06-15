@@ -1,0 +1,193 @@
+---
+title: "1.3.3 Shared Logger"
+description: "ARCHITECTURE.md defines a mandatory JSON log schema. Two services rolling their own logging independently will diverge: different field names, inconsistent severity levels, no guarantee that `request_id`, `org_id`, or `trace_id` appear in every log line. A bug that leaks `org_id` into a log message's string body rather"
+summary: "ARCHITECTURE.md defines a mandatory JSON log schema. Two services rolling their own logging independently will diverge: different field names, inconsistent severity levels, no guarantee that `request_id`, `org_id`, or `trace_id` appear in every log line. A bug that leaks `org_id` into a log message's string body rather"
+status: "completed"
+milestoneId: "1.3.3"
+goal: "[1.3 — Observability baseline](/roadmap/phase-1-core-platform/goals#goal-13-observability-baseline)"
+estimatedEffort: "2 days"
+phase: "phase-1-core-platform"
+fullTitle: "Milestone 1.3.3 — Shared Structured Logger Package (`packages/logger`)"
+---
+
+# Milestone 1.3.3 — Shared Structured Logger Package (`packages/logger`)
+
+**Status:** Complete  
+**Goal:** [1.3 — Observability baseline](/roadmap/phase-1-core-platform/goals#goal-13-observability-baseline)  
+**Phase:** 1 — Core Platform  
+**Estimated effort:** 2 days
+
+---
+
+## Why This Milestone Exists
+
+ARCHITECTURE.md defines a mandatory JSON log schema. Two services rolling their own logging independently will diverge: different field names, inconsistent severity levels, no guarantee that `request_id`, `org_id`, or `trace_id` appear in every log line. A bug that leaks `org_id` into a log message's string body rather than a structured field is impossible to catch without a shared type-safe logger.
+
+This milestone provides `packages/logger`: a thin wrapper over `log/slog` that enforces the mandatory field schema at the type level, makes it impossible to forget `request_id`, and redacts known-sensitive fields.
+
+This milestone should be implemented **before** M1.3.1 and M1.3.2 so that both observability milestones adopt the shared logger from the start.
+
+---
+
+## Branch
+
+`chore/m1-3-3-shared-logger`
+
+## PR Title
+
+`chore(obs): shared structured logger package with mandatory field schema (m1.3.3)`
+
+---
+
+## Prerequisites
+
+- [1.2.6](/roadmap/phase-1-core-platform/milestones/1.2.6-request-id-correlation-middleware) merged — `reqid.FromContext` available
+
+---
+
+## Deliverables
+
+### 1. Mandatory log field schema
+
+Every log line emitted by an IBEX Harness Go service must contain:
+
+| Field | Type | Source | Description |
+|---|---|---|---|
+| `timestamp` | RFC3339Nano | auto | Log line emission time |
+| `level` | string | auto | `DEBUG`, `INFO`, `WARN`, `ERROR` |
+| `service` | string | init | Set once at startup (`OTEL_SERVICE_NAME`) |
+| `request_id` | string | context | From `reqid.FromContext`; `""` if not in an HTTP context |
+| `trace_id` | string | context | From OTel span; `""` if no active span |
+| `message` | string | caller | Human-readable log message |
+
+Optional fields (added by callers as needed, never duplicated):
+
+| Field | Type | Redaction rule |
+|---|---|---|
+| `org_id` | string | Allowed — org_id is not PII |
+| `agent_id` | string | Allowed |
+| `error` | string | Include only error message, never stack trace in production |
+| `duration_ms` | int | Operation duration |
+
+**Forbidden fields** (the logger must reject these at compile time or panic):
+
+| Field | Reason |
+|---|---|
+| `token` | Security — never log tokens |
+| `password` | Security |
+| `hash` | Security — Argon2id hash is sensitive |
+| `content` | Privacy — never log memory content |
+| `email` | PII |
+| `ip` | PII in most jurisdictions |
+
+---
+
+### 2. `packages/logger` API
+
+```go
+// Package logger provides a structured JSON logger for IBEX Harness
+// Go services. It wraps log/slog and enforces the mandatory field
+// schema defined in ARCHITECTURE.md.
+//
+// Usage:
+//   log := logger.New(logger.Config{Service: "proxy", Level: slog.LevelInfo})
+//
+//   // In an HTTP handler (request context available):
+//   log.InfoCtx(r.Context(), "rate limit checked", "remaining", 42)
+//   // Output: {"timestamp":"...","level":"INFO","service":"proxy",
+//   //          "request_id":"01HXYZ...","trace_id":"abcd...","message":"rate limit checked","remaining":42}
+//
+//   // Compile-time prevention of forbidden fields:
+//   log.InfoCtx(ctx, "msg", logger.Forbidden("token", rawToken))
+//   // ^^ Forbidden() returns a logger.ForbiddenAttr which is accepted
+//   //    only by logger.ForbiddenLog(), which writes "token":"[REDACTED]"
+package logger
+
+import (
+    "context"
+    "log/slog"
+)
+
+// Logger is the IBEX Harness structured logger.
+// Construct with New(); do not use slog.New() directly in services.
+type Logger struct {
+    inner   *slog.Logger
+    service string
+}
+
+// Config configures the logger at startup.
+type Config struct {
+    Service string     // Required. Value of OTEL_SERVICE_NAME.
+    Level   slog.Level // Default: slog.LevelInfo
+    // AddSource adds file:line to every log line.
+    // Enable in development; disable in production (performance).
+    AddSource bool
+}
+
+// New constructs a Logger writing JSON to os.Stderr.
+func New(cfg Config) *Logger
+
+// InfoCtx emits an INFO log line, enriching with request_id and
+// trace_id extracted from ctx.
+func (l *Logger) InfoCtx(ctx context.Context, msg string, args ...any)
+
+// WarnCtx emits a WARN log line.
+func (l *Logger) WarnCtx(ctx context.Context, msg string, args ...any)
+
+// ErrorCtx emits an ERROR log line.
+func (l *Logger) ErrorCtx(ctx context.Context, msg string, args ...any)
+
+// DebugCtx emits a DEBUG log line (no-op if level > DEBUG).
+func (l *Logger) DebugCtx(ctx context.Context, msg string, args ...any)
+
+// With returns a new Logger with the given attributes pre-attached
+// to every subsequent log line. Use for per-request loggers:
+//   reqLogger := log.With("org_id", orgID, "agent_id", agentID)
+func (l *Logger) With(args ...any) *Logger
+```
+
+---
+
+### 3. Forbidden field detection
+
+```go
+// isForbiddenKey returns true for field names that must never appear
+// in log output in plaintext.
+var forbiddenKeys = map[string]bool{
+    "token": true, "password": true, "hash": true,
+    "content": true, "email": true, "ip": true,
+    "secret": true, "key": true, "credential": true,
+}
+
+// In the slog Handler's Handle method, iterate attrs and:
+// - If attr.Key is in forbiddenKeys: replace value with "[REDACTED]"
+//   and emit a WARN that a forbidden field was logged
+//   (so the developer knows to fix the call site)
+```
+
+---
+
+### 4. Adopt in both services
+
+Replace all ad-hoc `log.Printf`, `slog.Info`, and custom loggers in `services/auth` and `services/proxy` with `logger.Logger`. Both services construct a `Logger` in `main.go` and pass it down by dependency injection (not a global variable).
+
+---
+
+## Testing Requirements
+
+- **`TestLogger_JSONFormat`**: log one line, parse as JSON, assert all mandatory fields present
+- **`TestLogger_RequestIDFromContext`**: context with request ID → `request_id` field populated
+- **`TestLogger_NoRequestID`**: empty context → `request_id` field is `""` (not absent)
+- **`TestLogger_ForbiddenField`**: log with `"token"` key → output contains `"[REDACTED]"`, not the value
+- **`TestLogger_NoGlobalState`**: two `Logger` instances do not interfere
+
+---
+
+## Acceptance Criteria
+
+- [ ] Every log line is valid JSON with all mandatory fields
+- [ ] `request_id` populated from context in HTTP handlers
+- [ ] `trace_id` populated from OTel context when a span is active
+- [ ] Forbidden field values are redacted to `"[REDACTED]"` automatically
+- [ ] `services/auth` and `services/proxy` adopt `packages/logger`; no direct `slog` or `log` usage in service code
+- [ ] Logger passed by dependency injection; no global `log.SetDefault` or package-level loggers in services

@@ -1,0 +1,89 @@
+---
+title: "1.1.4 Token Creation"
+description: "Milestone 1.1.4: Token Creation and Management API — complete."
+summary: "Milestone 1.1.4: Token Creation and Management API — complete."
+status: "completed"
+milestoneId: "1.1.4"
+goal: "[1.1 Persistence and auth data plane](/roadmap/phase-1-core-platform/goals#goal-11-persistence-and-auth-data-plane)"
+phase: "phase-1-core-platform"
+fullTitle: "Milestone 1.1.4: Token Creation and Management API"
+---
+
+# Milestone 1.1.4: Token Creation and Management API
+
+**Status:** Complete  
+**Goal:** [1.1 Persistence and auth data plane](/roadmap/phase-1-core-platform/goals#goal-11-persistence-and-auth-data-plane)  
+**Phase:** 1 — Core Platform
+
+## Summary
+
+Expose gRPC `CreateToken`, `RevokeToken`, and `ListTokens` on the auth service with ADR-0007 PAT wire format, Argon2id storage, caller bearer authz via metadata, and integration tests over the real creation path.
+
+## Branch
+
+`feature/m1-1-4-token-creation`
+
+## PR title
+
+`feat(auth): token creation and management (m1.1.4)`
+
+## Estimated effort
+
+5–6 days
+
+## Prerequisites
+
+- [1.1.1](/roadmap/phase-1-core-platform/milestones/1.1.1-postgres-migrations), [1.1.2](/roadmap/phase-1-core-platform/milestones/1.1.2-auth-proto-and-codegen), [1.1.3](/roadmap/phase-1-core-platform/milestones/1.1.3-auth-token-validation) merged
+- [1.1.5](/roadmap/phase-1-core-platform/milestones/1.1.5-permission-bitmap-contract-and-adr) merged (`packages/permissions`, ADR-0009)
+
+## Tasks
+
+- [x] Extend `ibex.auth.v1` proto with `CreateToken`, `RevokeToken`, `ListTokens` + messages
+- [x] `GeneratePAT()` in `services/auth/internal/token` (ADR-0007: `ibex_pat_<uuid>_<secret>`, 32-byte `crypto/rand` secret)
+- [x] Reuse `HashBearer` / `VerifyBearer`; repository never accepts plaintext
+- [x] `TokenService` + repository create/revoke/list
+- [x] gRPC handlers with `authorization: Bearer` metadata interceptor (`TokenCreate` / `TokenRevoke`)
+- [x] Audit logs `token_created` / `token_revoked` (prefix only; never plaintext/hash)
+- [x] Metrics: `ibex_auth_token_created_total`, `ibex_auth_token_revoked_total`, `ibex_auth_list_tokens_total`
+- [x] Integration: bootstrap admin → create → validate → revoke → unauthenticated
+- [x] Cross-tenant revoke returns `NotFound`
+- [x] `testutil.SeedBootstrapAdminToken` for bootstrap; management tests use real gRPC
+- [x] Amend ADR-0006; update SECURITY, API docs, auth README
+- [x] Bloom filter invalidation **deferred** to Phase 2 optional 2.2.1-auth-cache-bloom
+- [x] REST deferred (gRPC-only v1)
+
+## Files affected
+
+| Path | Action |
+| --- | --- |
+| `packages/proto/proto/ibex/auth/v1/auth.proto` | Extend |
+| `packages/proto/auth_contract_test.go` | Update |
+| `services/auth/internal/token/generator.go` | Add |
+| `services/auth/internal/repository/tokens.go` | Extend |
+| `services/auth/internal/service/token_service.go` | Add |
+| `services/auth/internal/grpc/authz.go`, `server.go` | Add / extend |
+| `services/auth/cmd/auth/main.go` | Wire interceptor + service |
+| `infra/testing/testutil/bootstrap.go` | Add |
+| `services/auth/token_management_integration_test.go` | Add |
+| `docs/adr/ADR-0006-auth-proto-contract.md` | Amend |
+
+## Testing requirements
+
+- Unit: PAT generation, parse round-trip, proto contract
+- Integration: create → validate → revoke; cross-tenant revoke
+- CI: existing `auth-validate-smoke` runs all `//go:build integration` auth tests
+
+## Definition of done
+
+- [x] `CreateToken` returns plaintext once; not retrievable afterward
+- [x] `RevokeToken` causes `ValidateToken` to fail closed
+- [x] No plaintext in structured audit logs
+- [x] Caller without `TokenCreate` cannot create/list for another org
+- [x] `go test ./services/auth/...` and integration tag pass in CI
+
+## Risks
+
+| Risk | Mitigation |
+| --- | --- |
+| Bootstrap token in tests | SQL-only `SeedBootstrapAdminToken`; documented |
+| Proto breaking change | Contract tests + buf breaking in CI |

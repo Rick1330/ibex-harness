@@ -1,0 +1,185 @@
+---
+title: "3.5.4 Memory Scorer"
+description: "Retrieved memories must be ranked before being packed into the context window. The ranking determines which memories are included when the token budget is insufficient for all of them. A bad ranking means the least useful memories end up in context, which reduces the agent's quality. ARCHITECTURE.md specifies the exact"
+summary: "Retrieved memories must be ranked before being packed into the context window. The ranking determines which memories are included when the token budget is insufficient for all of them. A bad ranking means the least useful memories end up in context, which reduces the agent's quality. ARCHITECTURE.md specifies the exact"
+status: "planned"
+milestoneId: "3.5.4"
+goal: "[3.5 — Context assembly engine](/roadmap/phase-3-memory-engine/goals#goal-35-context-assembly-engine)"
+estimatedEffort: "2 days"
+phase: "phase-3-memory-engine"
+fullTitle: "Milestone 3.5.4 — Memory Composite Scorer"
+---
+
+# Milestone 3.5.4 — Memory Composite Scorer
+
+**Status:** Planned  
+**Goal:** [3.5 — Context assembly engine](/roadmap/phase-3-memory-engine/goals#goal-35-context-assembly-engine)  
+**Phase:** 3 — Memory Engine and Operator Platform  
+**Estimated effort:** 2 days  
+**ADR required:** ADR-0040 — Memory scoring formula and weight rationale
+
+---
+
+## Why This Milestone Exists
+
+Retrieved memories must be ranked before being packed into the context window. The ranking determines which memories are included when the token budget is insufficient for all of them. A bad ranking means the least useful memories end up in context, which reduces the agent's quality.
+
+ARCHITECTURE.md specifies the exact composite scoring formula. This milestone implements it precisely.
+
+---
+
+## The Formula (from ARCHITECTURE.md — non-negotiable)
+
+```
+Score = 0.40 × relevance_score
+      + 0.25 × recency_score
+      + 0.20 × usefulness_score
+      + 0.10 × confidence_score
+      + 0.05 × access_frequency_score
+```
+
+| Component | Source | Calculation |
+|---|---|---|
+| `relevance_score` | Cosine similarity from vector search | Direct from pgvector (0.0–1.0) |
+| `recency_score` | Memory `created_at` | Exponential decay: `exp(-λ × age_days)`, λ=0.05 (14-day half-life) |
+| `usefulness_score` | Memory `usefulness_score` column | Updated via feedback loop in Phase 4; defaults to 0.5 |
+| `confidence_score` | Memory `confidence` column | Set during extraction (0.0–1.0) |
+| `access_frequency_score` | Memory `retrieval_count` | `min(count / 50, 1.0)` — caps at 50 retrievals |
+
+---
+
+## Deliverables
+
+### `src/context/services/scorer.py`
+
+```python
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass
+from datetime import datetime, timezone
+
+WEIGHT_RELEVANCE  = 0.40
+WEIGHT_RECENCY    = 0.25
+WEIGHT_USEFULNESS = 0.20
+WEIGHT_CONFIDENCE = 0.10
+WEIGHT_FREQUENCY  = 0.05
+
+RECENCY_DECAY_LAMBDA = 0.05      # 14-day half-life: ln(2)/14 ≈ 0.0495
+ACCESS_FREQUENCY_CAP = 50.0      # retrieval_count above this → score = 1.0
+
+assert abs(WEIGHT_RELEVANCE + WEIGHT_RECENCY + WEIGHT_USEFULNESS +
+           WEIGHT_CONFIDENCE + WEIGHT_FREQUENCY - 1.0) < 1e-9, \
+    "Scoring weights must sum to 1.0"
+
+@dataclass(frozen=True)
+class ScoredMemory:
+    memory:           dict
+    composite_score:  float
+    relevance_score:  float
+    recency_score:    float
+    usefulness_score: float
+    confidence_score: float
+    frequency_score:  float
+
+class MemoryScorer:
+    """
+    Applies the composite scoring formula from ARCHITECTURE.md to a list of
+    retrieved memories. The formula weights are constants — changing them
+    requires a new ADR and re-evaluation against a test corpus.
+    """
+
+    def score(
+        self,
+        memories: list[dict],
+        query_embedding: list[float],
+    ) -> list[ScoredMemory]:
+        """
+        Score all memories and return sorted list (highest score first).
+        `query_embedding` is used for relevance score (cosine similarity
+        is pre-computed by the vector search; stored in memory["similarity"]).
+        """
+        scored = [self._score_one(mem) for mem in memories]
+        scored.sort(key=lambda m: m.composite_score, reverse=True)
+        return scored
+
+    def _score_one(self, memory: dict) -> ScoredMemory:
+        relevance  = self._relevance(memory)
+        recency    = self._recency(memory)
+        usefulness = self._usefulness(memory)
+        confidence = self._confidence(memory)
+        frequency  = self._frequency(memory)
+
+        composite = (
+            WEIGHT_RELEVANCE  * relevance
+          + WEIGHT_RECENCY    * recency
+          + WEIGHT_USEFULNESS * usefulness
+          + WEIGHT_CONFIDENCE * confidence
+          + WEIGHT_FREQUENCY  * frequency
+        )
+
+        return ScoredMemory(
+            memory=memory,
+            composite_score=round(composite, 6),
+            relevance_score=round(relevance, 6),
+            recency_score=round(recency, 6),
+            usefulness_score=round(usefulness, 6),
+            confidence_score=round(confidence, 6),
+            frequency_score=round(frequency, 6),
+        )
+
+    @staticmethod
+    def _relevance(memory: dict) -> float:
+        """Cosine similarity from vector search; pre-computed and stored in the record."""
+        return float(memory.get("similarity", 0.0))
+
+    @staticmethod
+    def _recency(memory: dict) -> float:
+        """Exponential decay: score = exp(-λ × age_days). 14-day half-life."""
+        created_at_str = memory.get("created_at")
+        if not created_at_str:
+            return 0.5  # unknown age: neutral score
+        try:
+            created_at = datetime.fromisoformat(created_at_str).replace(tzinfo=timezone.utc)
+            age_days = (datetime.now(timezone.utc) - created_at).total_seconds() / 86_400
+            return math.exp(-RECENCY_DECAY_LAMBDA * age_days)
+        except (ValueError, TypeError):
+            return 0.5
+
+    @staticmethod
+    def _usefulness(memory: dict) -> float:
+        return float(memory.get("usefulness_score", 0.5))
+
+    @staticmethod
+    def _confidence(memory: dict) -> float:
+        return float(memory.get("confidence", 0.8))
+
+    @staticmethod
+    def _frequency(memory: dict) -> float:
+        count = float(memory.get("retrieval_count", 0))
+        return min(count / ACCESS_FREQUENCY_CAP, 1.0)
+```
+
+---
+
+## Testing Requirements
+
+- **`test_scorer_weights_sum_to_one`**: Assert the weight constants sum exactly to 1.0 (compile-time check)
+- **`test_relevance_dominates`**: Two memories: one with relevance=1.0 and everything else 0.0; another with relevance=0.0 and everything else 1.0. First must score higher (0.40 > 0.25+0.20+0.10+0.05 = 0.60... wait actually 0.40 < 0.60 — this means a very old, frequently accessed, high-confidence memory can outscore a highly relevant one). Document this in ADR.
+- **`test_recency_decay_14_day_half_life`**: Memory created 14 days ago → recency_score ≈ 0.5
+- **`test_frequency_caps_at_50`**: retrieval_count=100 → frequency_score=1.0 (not 2.0)
+- **`test_unknown_memory_age_neutral`**: Missing `created_at` → recency_score=0.5
+- **`test_scores_sorted_descending`**: Output list is highest-score first
+
+---
+
+## Acceptance Criteria
+
+- [ ] Scoring formula exactly matches ARCHITECTURE.md weights (verified by unit test)
+- [ ] Weights sum assertion in module scope (fails import if wrong)
+- [ ] Recency uses 14-day half-life exponential decay (not linear)
+- [ ] Access frequency caps at 50 retrievals (not unbounded)
+- [ ] Output sorted descending by composite score
+- [ ] ADR-0040 written explaining weight choices and formula origin
+
+---

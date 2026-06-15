@@ -1,0 +1,86 @@
+---
+title: "CI Job Audit"
+description: "Date: 2026-06-10 Purpose: Document what each CI job validates, false-positive risks, and mitigation status."
+summary: "Date: 2026-06-10 Purpose: Document what each CI job validates, false-positive risks, and mitigation status."
+phase: "phase-1-core-platform"
+fullTitle: "CI Job Audit — Pre-Phase 2 Verification"
+---
+
+# CI Job Audit — Pre-Phase 2 Verification
+
+**Date:** 2026-06-10  
+**Purpose:** Document what each CI job validates, false-positive risks, and mitigation status.
+
+---
+
+## Required checks (branch protection)
+
+| Context | Workflow job | Validates | False-positive risk | Mitigation |
+|---------|--------------|-----------|---------------------|------------|
+| `repo-guards` | `repo-guards` | Layout, secrets, large files | Low | — |
+| `markdownlint` | `markdown` | Markdown style | Low | — |
+| `gitleaks` | `secrets` | Secret scan | Low | — |
+| `CodeQL` | `codeql.yml` | Static security analysis | Low | — |
+| `trivy` | `trivy` | FS vulnerability scan | Low | — |
+| `osv-scan / osv-scan` | `osv-scan` | Dependency CVEs | Low | — |
+| `semgrep` | `semgrep.yml` | SAST rules | Low | — |
+| `golangci-lint` | `golangci-lint` | Go lint (packages + auth + proxy) | Medium: weaker than cursor rules | Incremental linter enablement deferred |
+| `security-integration` | `security-integration` | M1.5.1 `TestSecurity_*` matrix | **Was critical:** `-run` with 0 matches exits 0 | Pre-flight `-list` count ≥ 28 |
+| `go-race` | `go-race` | Unit tests under `-race` | Medium: no integration + race | Scheduled integration+race deferred |
+| `go-services (auth)` | `go-services` matrix | Unit tests + gofmt + build | Was informational | Promoted; `-count=1` |
+| `go-services (proxy)` | `go-services` matrix | Unit tests + gofmt + build | Was informational | Promoted; `-count=1` |
+| `proxy-auth-smoke` | `proxy-auth-smoke` | Full proxy unit + integration | Was informational | Promoted; `-count=1` |
+| `bandit` | `bandit` | Python SAST | **High until memory service:** exits 0 if missing | Not required until `services/memory` exists |
+| `hadolint` | `hadolint` | Dockerfile lint | Low (exits 0 if no Dockerfiles) | — |
+| `coverage` | `coverage` | Merged unit+integration Go coverage ≥80% on hand-written scope; Codecov upload | Medium: Postgres service required | `infra/scripts/coverage-gate.sh` filters `packages/proto/gen/go` |
+
+## Informational checks (not merge-blocking)
+
+| Job | Notes |
+|-----|-------|
+| `auth-validate-smoke` | Auth integration; `-count=1` |
+| `proxy-agent-verify-smoke` | SEC-2/SEC-3 subset; explicit `-run` + count guard |
+| `db-migrate-smoke` | Migration idempotency |
+| `proto-contract` | Buf contract tests |
+| `buf-lint` | Skips `buf breaking` without main baseline |
+| `compose-validate` | Compose config syntax |
+| `dependency-review` | PR dependency policy |
+| `sbom` | SBOM generation |
+| CodeScene | Advisory code health |
+
+## Known deferrals
+
+- `golangci-lint` does not yet enable gocyclo/funlen/gosec from cursor rules
+- `infra/` Go packages not in golangci scope
+- Merged integration coverage in Codecov via CI Postgres service; gen/go excluded from gate
+- Python (`bandit`) and TypeScript coverage flags when services land
+
+## Trunk Flaky Tests (JUnit uploads)
+
+All CI jobs that run `go test` emit JUnit XML via [gotestsum](https://github.com/gotestools/gotestsum) and upload results to [Trunk Flaky Tests](https://app.trunk.io) (org: `ibexharness`). Uploads are **informational** (`continue-on-error: true`); they do not block merges.
+
+| Convention | Value |
+|------------|-------|
+| JUnit output dir | `test-results/junit/` (gitignored; created by scripts at runtime) |
+| Test runner wrapper | `infra/scripts/go-test-gotestsum.sh <out.xml> -- [go test args...]` |
+| Upload script | `infra/scripts/trunk-upload-junit.sh` |
+| Composite actions | `.github/actions/setup-gotestsum`, `.github/actions/trunk-upload-junit` |
+| Secrets | `TRUNK_API_TOKEN`, `TRUNK_ORG_URL_SLUG` |
+| Retries | **None** — callers must pass `-count=1` |
+
+**Variants** (Trunk `--variant`): `proto-contract-unit`, `proto-contract-integration`, `db-migrate-unit`, `db-migrate-integration`, `auth-smoke-unit`, `auth-smoke-integration`, `proxy-auth-unit`, `proxy-auth-integration`, `proxy-agent-verify-unit`, `proxy-agent-verify-integration`, `security-integration`, `go-race`, `go-services-auth`, `go-services-proxy`, `coverage-unit`, `coverage-integration`.
+
+**Local validation** (Linux/macOS or WSL):
+
+```bash
+go install gotest.tools/gotestsum@latest
+bash infra/scripts/go-test-gotestsum.sh test-results/junit/local-validate.xml -- \
+  -count=1 ./packages/reqid/...
+bash infra/scripts/trunk-validate-junit.sh test-results/junit/local-validate.xml
+```
+
+**Future frameworks** (Python `pytest --junitxml`, Jest, etc.): write JUnit XML into `test-results/junit/` with distinct filenames and reuse `.github/actions/trunk-upload-junit` — no workflow rewrite required.
+
+## Manual ops
+
+After promoting checks, apply [`.github/branch-protection-main.json`](../../../.github/branch-protection-main.json) on GitHub repository settings.

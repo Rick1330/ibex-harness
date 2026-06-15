@@ -1,0 +1,145 @@
+---
+title: "3.9.1 E2E Memory"
+description: "Phase 3 introduces 6 new services and dramatically increases system complexity. Individual milestone tests verify isolated components. This milestone verifies that the full chain works end-to-end: ```"
+summary: "Phase 3 introduces 6 new services and dramatically increases system complexity. Individual milestone tests verify isolated components. This milestone verifies that the full chain works end-to-end: ```"
+status: "planned"
+milestoneId: "3.9.1"
+goal: "[3.9 — Phase 3 quality gate](/roadmap/phase-3-memory-engine/goals#goal-39-phase-3-quality-gate)"
+estimatedEffort: "3–4 days"
+phase: "phase-3-memory-engine"
+fullTitle: "Milestone 3.9.1 — End-to-End Memory Integration Test"
+---
+
+# Milestone 3.9.1 — End-to-End Memory Integration Test
+
+**Status:** Planned  
+**Goal:** [3.9 — Phase 3 quality gate](/roadmap/phase-3-memory-engine/goals#goal-39-phase-3-quality-gate)  
+**Phase:** 3 — Memory Engine and Operator Platform  
+**Estimated effort:** 3–4 days  
+**ADR required:** None (test milestone)
+
+---
+
+## Why This Milestone Exists
+
+Phase 3 introduces 6 new services and dramatically increases system complexity. Individual milestone tests verify isolated components. This milestone verifies that the full chain works end-to-end:
+
+```
+Agent request → Proxy → Context Assembly → [no memories yet] → OpenAI
+  ↓ (session completes)
+Worker → Extract memories from session
+  ↓ (second request)
+Agent request → Proxy → Context Assembly → [memories found] → OpenAI (with injected memories)
+```
+
+This is the proof that the system learns. Without this test, Phase 3 cannot be declared complete.
+
+---
+
+## Test scenarios
+
+### Scenario 1: Memory extraction produces valid memories
+
+```python
+@pytest.mark.e2e
+async def test_memory_extraction_from_completed_session():
+    """
+    Given: A completed session with 3 turns
+    When:  The extraction worker processes it
+    Then:  At least 1 memory is created in the DB for the agent
+    """
+    # Arrange: create test org, agent, complete a 3-turn session
+    session = await create_test_session(turns=[
+        ("What's our DB host?", "Your DB host is db.internal.example.com"),
+        ("What port?", "Port 5432"),
+        ("I prefer PostgreSQL over MySQL", "Noted, PostgreSQL preference saved"),
+    ])
+
+    # Act: trigger extraction synchronously in test (bypass Celery)
+    result = extract_session_memories(str(session.id), str(session.org_id))
+
+    # Assert
+    memories = await memory_repo.list_active(agent_id=session.agent_id)
+    assert len(memories) >= 1
+    factual = [m for m in memories if m.category == "factual"]
+    assert len(factual) >= 1
+    assert any("db.internal.example.com" in m.content or "5432" in m.content for m in factual)
+    pref = [m for m in memories if m.category == "preference"]
+    assert len(pref) >= 1
+    assert any("PostgreSQL" in m.content for m in pref)
+```
+
+### Scenario 2: Memory injection in subsequent request
+
+```python
+@pytest.mark.e2e
+async def test_memories_injected_in_subsequent_request():
+    """
+    Given: An agent with memories about a user's DB host
+    When:  The user asks a new question
+    Then:  The context assembly includes the relevant memory
+    """
+    # Arrange: insert a memory about DB host
+    await memory_service.write(WriteMemoryParams(
+        org_id=test_org_id, agent_id=test_agent_id,
+        content="User's database host is db.internal.example.com",
+        category=MemoryCategory.FACTUAL, confidence=Decimal("0.9"),
+        source="extracted", metadata={},
+    ))
+
+    # Act: send a request asking about DB connection
+    response = await assemble_context_client.assemble_context(AssembleContextRequest(
+        org_id=str(test_org_id), agent_id=str(test_agent_id),
+        model="gpt-4o", request_id="test-req-001",
+        messages=[Message(role="user", content="How do I connect to the database?")],
+    ))
+
+    # Assert
+    assert response.metadata.memories_injected >= 1
+    injected_content = response.messages[0].content  # system message
+    assert "db.internal.example.com" in injected_content
+```
+
+### Scenario 3: Cross-tenant memory isolation
+
+```python
+@pytest.mark.e2e
+async def test_cross_tenant_memories_not_injected():
+    """Org A's memories NEVER appear in Org B's context."""
+    org_a_memory = await insert_memory(org_id=org_a, content="Org A secret: password123")
+    response = await assemble_context(org_id=org_b, agent_id=org_b_agent,
+                                      query="password")
+    injected = " ".join(m.content for m in response.messages)
+    assert "Org A secret" not in injected
+    assert "password123" not in injected
+```
+
+### Scenario 4: Context assembly latency
+
+```python
+@pytest.mark.e2e
+async def test_context_assembly_p95_latency():
+    """Context assembly must complete in < 50ms at p95 under 20 concurrent requests."""
+    latencies = []
+    async def one_request():
+        start = time.monotonic()
+        await assemble_context(agent_id=test_agent_with_100_memories)
+        latencies.append((time.monotonic() - start) * 1000)
+
+    await asyncio.gather(*[one_request() for _ in range(100)])
+    latencies.sort()
+    p95 = latencies[int(0.95 * len(latencies))]
+    assert p95 < 50.0, f"p95 latency {p95:.1f}ms exceeds 50ms target"
+```
+
+---
+
+## Acceptance Criteria
+
+- [ ] Scenario 1: extraction produces ≥ 1 memory from a 3-turn session
+- [ ] Scenario 2: relevant memory appears in enriched context
+- [ ] Scenario 3: cross-tenant memory isolation verified (zero leakage)
+- [ ] Scenario 4: p95 context assembly latency < 50ms at 20 concurrent requests
+- [ ] `make e2e-smoke-p3` exits 0 (runs all 4 scenarios against full local stack)
+
+---

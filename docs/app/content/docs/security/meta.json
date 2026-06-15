@@ -1,0 +1,10 @@
+{
+  "title": "Security",
+  "icon": "ShieldCheck",
+  "pages": [
+    "overview",
+    "authentication",
+    "tenant-isolation",
+    "secrets-and-keys"
+  ]
+}

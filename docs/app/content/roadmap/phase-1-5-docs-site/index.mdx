@@ -1,0 +1,62 @@
+---
+title: "Phase 1.5: Docs Site"
+description: "Phase 1.5: Docs Site — in progress."
+summary: "Phase 1.5: Docs Site — in progress."
+status: "in-progress"
+phase: "phase-1-5-docs-site"
+---
+
+# Phase 1.5: Docs Site
+
+**Status:** In progress  
+**Target:** [docs.ibexharness.com](https://docs.ibexharness.com)  
+**Depends on:** Phase 1 complete; landing + DNS ready ([ibexdepo](https://github.com/Rick1330/marvel-scape))  
+**Blocks:** [Phase 2](/roadmap/phase-2-single-provider) entry (docs-first sequencing)
+
+## Purpose
+
+Ship a public Fumadocs documentation site at `docs.ibexharness.com` with the **Matte Graphite** design system, aligned with the marketing landing at `ibexharness.com`. Engineering docs remain in [`docs/`](../../) (ADRs, roadmap); the Fumadocs app lives in [`docs/app/`](../../app/); public MDX in [`docs/app/content/`](../../app/content/) (D.2.1+).
+
+## Wave-based delivery
+
+One focused PR per wave. Do not batch milestones.
+
+| Wave | Milestones | Outcome |
+| --- | --- | --- |
+| 0 | (scaffold) | Roadmap, ADR-0023, governance |
+| 1 | [D.1.1](/roadmap/phase-1-5-docs-site/milestones/d1.1-pnpm-workspace-turborepo), [D.1.2](/roadmap/phase-1-5-docs-site/milestones/d1.2-cursor-rules-editorconfig) | pnpm + Turborepo + Cursor rules |
+| 2 | [D.2.1](/roadmap/phase-1-5-docs-site/milestones/d2.1-bootstrap-fumadocs)–[D.2.2](/roadmap/phase-1-5-docs-site/milestones/d2.2-matte-graphite-tokens), [D.2.7](/roadmap/phase-1-5-docs-site/milestones/d2.7-sidebar-breadcrumbs-on-this-page) | Design shell (design gate after D.2.2) |
+| 3 | [D.2.3](/roadmap/phase-1-5-docs-site/milestones/d2.3-mdx-components-catalogue) | MDX component kit |
+| 4 | [D.2.4](/roadmap/phase-1-5-docs-site/milestones/d2.4-dynamic-og-images)–[D.2.6](/roadmap/phase-1-5-docs-site/milestones/d2.6-enhanced-code-blocks) | Search, code blocks, OG |
+| 5 | [D.3.1](/roadmap/phase-1-5-docs-site/milestones/d3.1-information-architecture-meta-json), [D.2.8](/roadmap/phase-1-5-docs-site/milestones/d2.8-not-found-home-redirect) | IA skeleton + 404 |
+| 6–8 | [D.3.2](/roadmap/phase-1-5-docs-site/milestones/d3.2-seed-pages-content-stubs) (sections) | Content by section |
+| 9 | [D.3.3](/roadmap/phase-1-5-docs-site/milestones/d3.3-quickstart-five-minute-path), [D.3.4](/roadmap/phase-1-5-docs-site/milestones/d3.4-api-reference-manual-phase1) | Quickstart + manual API |
+| 10 | [D.4.1](/roadmap/phase-1-5-docs-site/milestones/d4.1-vercel-preview-deploys) | Vercel previews |
+| 11 | [D.4.2](/roadmap/phase-1-5-docs-site/milestones/d4.2-github-actions-docs-checks), [D.5.2](/roadmap/phase-1-5-docs-site/milestones/d5.2-verify-phase15-script) | CI gates |
+| 12 | [D.5.1](/roadmap/phase-1-5-docs-site/milestones/d5.1-visual-qa-sweep), [D.6.2](/roadmap/phase-1-5-docs-site/milestones/d6.2-dns-vercel-domain-attach)–[D.6.3](/roadmap/phase-1-5-docs-site/milestones/d6.3-cross-site-nav-sitemaps) | Production launch |
+
+**Current wave:** 7 — [D.3.2](/roadmap/phase-1-5-docs-site/milestones/d3.2-seed-pages-content-stubs) seed content (Getting Started + Proxy + Auth done; Deployment next)
+
+## Goals
+
+See [goals.md](/roadmap/phase-1-5-docs-site/goals). Milestone index: [PHASE_1_5_DOCS_SITE_MILESTONES.md](/roadmap/phase-1-5-docs-site/PHASE_1_5_DOCS_SITE_MILESTONES).
+
+## References
+
+- [MASTER_BRIEF.md](/roadmap/phase-1-5-docs-site/master-brief) — design and technical spec (canonical)
+- [CONTENT_SOURCES.md](/roadmap/phase-1-5-docs-site/content-sources) — engineering doc → public page mapping
+- [ADR-0023](/docs/adr/0023-docs-site-architecture)
+
+## Entry criteria
+
+- [x] Phase 1 exit complete
+- [x] `ibexharness.com` live; `docs` CNAME in Cloudflare (DNS only)
+- [x] Phase 1.5 roadmap scaffold merged (Wave 0)
+
+## Exit criteria
+
+- [ ] `https://docs.ibexharness.com` serves the Fumadocs site (200)
+- [ ] Matte Graphite design passes visual QA ([D.5.1](/roadmap/phase-1-5-docs-site/milestones/d5.1-visual-qa-sweep))
+- [ ] `infra/scripts/verify_phase15.sh` passes against production
+- [ ] Cross-links: landing ↔ docs; both sitemaps in GSC
+- [ ] `docs-checks` CI green on PRs touching `docs/app/`

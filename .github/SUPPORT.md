@@ -12,7 +12,7 @@ Do **not** open a public issue. Follow [.github/SECURITY.md](SECURITY.md).
 
 - [docs/DEVELOPMENT_GUIDE.md](../docs/DEVELOPMENT_GUIDE.md) — local setup, branches, PR workflow, CI
 - [docs/TOOLCHAIN.md](../docs/TOOLCHAIN.md) — required tools and sanity checks
-- [docs/roadmap/CURRENT_STATE.md](../docs/roadmap/CURRENT_STATE.md) — what is implemented vs planned
+- [Roadmap current state](../docs/app/content/roadmap/current-state.mdx) — what is implemented vs planned (public `/roadmap/current-state`)
 
 ## Documentation
 

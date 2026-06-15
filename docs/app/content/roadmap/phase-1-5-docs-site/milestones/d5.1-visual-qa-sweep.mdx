@@ -1,0 +1,102 @@
+---
+title: "d5.1 Visual QA"
+description: "Incremental PRs can introduce subtle layout regressions (horizontal scroll, overlapping TOC, missing copy buttons) that unit tests miss. Playwright screenshot baselines on representative pages lock Matte Graphite across dark/light before production launch."
+summary: "Incremental PRs can introduce subtle layout regressions (horizontal scroll, overlapping TOC, missing copy buttons) that unit tests miss. Playwright screenshot baselines on representative pages lock Matte Graphite across dark/light before production launch."
+status: "planned"
+milestoneId: "d5.1"
+goal: "[D.5](/roadmap/phase-1-5-docs-site/goals)"
+estimatedEffort: "0.5 day"
+phase: "phase-1-5-docs-site"
+fullTitle: "Milestone D.5.1 — Visual QA sweep"
+---
+
+# Milestone D.5.1 — Visual QA sweep
+
+**Status:** Planned  
+**Goal:** [D.5](/roadmap/phase-1-5-docs-site/goals)  
+**Phase:** 1.5 — Docs Site  
+**Wave:** 12  
+**Estimated effort:** 0.5 day  
+**ADR required:** None
+
+Spec detail: [MASTER_BRIEF.md](/roadmap/phase-1-5-docs-site/master-brief) Part D (D.5.1).
+
+---
+
+## Why This Milestone Exists
+
+Incremental PRs can introduce subtle layout regressions (horizontal scroll, overlapping TOC, missing copy buttons) that unit tests miss.
+
+Playwright screenshot baselines on representative pages lock Matte Graphite across dark/light before production launch.
+
+Manual sweep at 375/768/1440 catches issues automated tests omit.
+
+---
+
+## Non-Goals
+
+- Visual testing for Go services
+- Percy or third-party visual SaaS
+- Full-page screenshot of every leaf (sample set only)
+
+---
+
+## Branch
+
+`feat/d5-1-visual-qa`
+
+## PR Title
+
+`test(docs): visual QA baseline (D.5.1)`
+
+---
+
+## Prerequisites
+
+- [D.4.2](/roadmap/phase-1-5-docs-site/milestones/d4.2-github-actions-docs-checks) merged
+
+---
+
+## Deliverables
+
+- `docs/app/tests/visual.spec.ts` Playwright baseline
+- Sample paths: introduction, proxy/overview, api-reference
+- Dark + light `toHaveScreenshot` per path
+- Manual QA checklist fixes from sweep
+
+See MASTER_BRIEF Part D (D.5.1) for full acceptance detail.
+
+---
+
+## Files Affected
+
+| File Path | Action | Notes |
+| --- | --- | --- |
+| `docs/app/tests/visual.spec.ts` | Add | Screenshot baseline tests |
+| `docs/app/playwright.config.ts` | Add | Playwright config |
+
+---
+
+## Testing Requirements
+
+- **`test_baseline_screenshot_dark`**: Introduction dark mode matches committed snapshot
+- **`test_baseline_screenshot_light`**: Introduction light mode matches committed snapshot
+- **`verifyVisual_NoHorizontalScroll`**: Manual check at 375px width
+
+---
+
+## Acceptance Criteria
+
+- [ ] Baseline screenshots committed
+- [ ] CI runs `playwright test` on PRs touching `docs/app/`
+- [ ] Manual sweep finds no P0 layout bugs
+
+---
+
+## Risks
+
+| Risk | Probability | Impact | Mitigation |
+| --- | --- | --- | --- |
+| Screenshot maintenance burden on token change | Medium | Medium | Update baselines only in D.2.2 or D.5.1 PRs |
+| Font rendering differs CI vs local | Low | Medium | Run Playwright in CI only for gate |
+| Flaky animations break snapshots | Low | Low | Disable motion in test via `prefers-reduced-motion` |

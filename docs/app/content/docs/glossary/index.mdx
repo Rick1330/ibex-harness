@@ -1,0 +1,125 @@
+---
+title: Glossary
+description: Terms and acronyms used across IBEX Harness documentation.
+---
+
+Consistent terminology across docs, code, and issues. Phase 1 terms are fully defined; future-phase terms are marked so integrators know what is not live yet.
+
+## Core entities (Phase 1)
+
+<h3 id="agent">Agent</h3>
+
+A configured AI system that makes LLM calls through the IBEX proxy, scoped to an organization. In Phase 1, agents are rows in `ibex_core.agents` validated on every protected proxy request via `X-IBEX-Agent-ID`.
+
+**Key fields:** `agent_id`, `org_id`, `name`, `status`
+
+See [Org & project model](/docs/auth/org-project-model) and [Concepts](/docs/getting-started/concepts).
+
+<h3 id="organization">Organization (Org / Tenant)</h3>
+
+The tenant boundary. All customer data is scoped to an organization. Org A must never access Org B data — enforced by [RLS](#rls) and application-layer filters.
+
+**Invariant:** cross-tenant resource access returns `403`, never `404`.
+
+<h3 id="user">User</h3>
+
+A human operator who manages org agents and tokens via the dashboard or API. **Not the same as an agent** — users are operators; agents are compute identities.
+
+Dashboard session flows are Phase 2+; Phase 1 focuses on PAT-based SDK access.
+
+<h3 id="project">Project</h3>
+
+A grouping within an org for agents and resources. Present in the schema and migrations; management APIs expand in later phases.
+
+<h3 id="pat">Personal Access Token (PAT)</h3>
+
+A long-lived bearer credential for SDK and automation use. Issued via auth gRPC `CreateToken`, stored as an Argon2id hash, shown in plaintext exactly once.
+
+Wire format: `ibex_pat_{uuid}_{secret}` per [ADR-0007](/docs/adr/0007-auth-token-validation).
+
+## Security and isolation
+
+<h3 id="rls">RLS (Row-Level Security)</h3>
+
+PostgreSQL policy that restricts rows to the current org context. Every tenant table includes `org_id`; connections set `SET LOCAL app.current_org_id` per transaction.
+
+Defense in depth: application queries still filter by `org_id` even when RLS is enabled. See [Tenant isolation](/docs/security/tenant-isolation).
+
+<h3 id="permission-bitmap">Permission bitmap</h3>
+
+A 64-bit field on tokens encoding allowed operations (read memory, create session, proxy chat, etc.). Canonical layout in [ADR-0009](/docs/adr/0009-permission-bitmap).
+
+<h3 id="fail-closed">Fail closed</h3>
+
+When auth or tenant isolation dependencies fail, the system denies access rather than granting cached or anonymous permissions. Phase 1 proxy returns `503 SERVICE_DEGRADED` when auth gRPC is unreachable.
+
+<h3 id="fail-open">Fail open (rate limiting)</h3>
+
+When Redis is unavailable, the proxy rate limiter allows requests through rather than blocking all traffic — availability trade-off documented in [Rate limiting](/docs/proxy/rate-limiting).
+
+## Proxy and API
+
+<h3 id="llm-proxy">LLM Proxy</h3>
+
+The Go HTTP edge service (default port **8080**) that authenticates requests, enforces agent identity, rate limits, normalizes chat payloads, and (Phase 2+) forwards to provider adapters.
+
+Phase 1 middleware: request ID → auth → agent verify → rate limit → normalize.
+
+<h3 id="provider-adapter">Provider adapter</h3>
+
+A module translating normalized internal requests to provider-specific APIs (OpenAI, Anthropic, etc.). **Not configured in Phase 1** — chat routes return `501 PROVIDER_NOT_CONFIGURED`.
+
+<h3 id="error-envelope">Error envelope</h3>
+
+Stable JSON shape for proxy HTTP errors: `error.code`, `error.message`, `error.request_id`, optional `error.docs_url`. Defined in [ADR-0013](/docs/adr/0013-proxy-input-validation-and-error-envelope).
+
+<h3 id="request-id">Request ID</h3>
+
+UUID v7 correlation identifier in `X-Request-ID` (configurable). Assigned by proxy middleware; echoed in logs and error responses.
+
+## Observability
+
+<h3 id="trace">Trace</h3>
+
+A record of an inference call with timing, token counts, and injected memory IDs. Trace ingestion to ClickHouse is Phase 2+; Phase 1 emits structured logs and Prometheus metrics.
+
+<h3 id="span">Span</h3>
+
+A sub-unit of distributed tracing (OpenTelemetry). Example spans: auth validation, rate limit check, provider call.
+
+<h3 id="health-vs-readiness">Health vs readiness</h3>
+
+- **Liveness** (`/health`): process is up; no dependency probes.
+- **Readiness** (`/ready`): critical dependencies (auth gRPC, Redis) are reachable.
+
+See [Health checks](/docs/operations/health-checks) and [ADR-0022](/docs/adr/0022-health-check-contract).
+
+## Future-phase terms
+
+These appear in architecture docs and roadmap but are **not implemented in Phase 1**.
+
+<h3 id="session">Session</h3>
+
+Unit of agent execution over time: crash recovery, trace grouping, directive versioning. State machine: `initializing → active → suspended → resuming → completed/failed/abandoned`.
+
+<h3 id="memory">Memory</h3>
+
+Persistent knowledge unit with embeddings, category, confidence, and lifecycle status. Memory CRUD and injection ship in Phase 3+.
+
+<h3 id="directive">Directive</h3>
+
+Versioned system prompt defining agent behavior. Promotion workflow and regression scenarios are future dashboard features.
+
+<h3 id="context-assembly">Context assembly</h3>
+
+Building the final LLM prompt from directive, history, and retrieved memories under token and latency budgets. Python context engine — Phase 3+.
+
+<h3 id="token-budget">Token budget</h3>
+
+Maximum context window allocation minus response reserve. IBEX prioritizes: directive → history → memories → tools.
+
+## Related
+
+- [Concepts](/docs/getting-started/concepts) — org, agent, token mental model
+- [Architecture overview](/docs/architecture/overview) — system diagram
+- [Security overview](/docs/security/overview) — threat model and objectives
