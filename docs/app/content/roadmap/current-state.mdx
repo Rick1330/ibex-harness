@@ -1,15 +1,15 @@
 ---
 title: "Current State"
-description: "Last updated: 2026-06-13 Git SHA (`main`): `f4ef55f` — D.3.2 wave 2 (#121) Current phase: Phase 1.5 — Docs Site (In progress) Current goal: Wave 7 — D.3.2 seed content (Deployment section next) Next backend milestone (blocked): 2.1.1 Provider interface and registry — after Phase 1.5 laun"
-summary: "Last updated: 2026-06-13 Git SHA (`main`): `f4ef55f` — D.3.2 wave 2 (#121) Current phase: Phase 1.5 — Docs Site (In progress) Current goal: Wave 7 — D.3.2 seed content (Deployment section next) Next backend milestone (blocked): 2.1.1 Provider interface and registry — after Phase 1.5 laun"
+description: "Last updated: 2026-06-15 Git SHA (`main`): `4b32098` — Wave 13 docs site (#123) Current phase: Phase 1.5 — Docs Site (In progress) Current goal: Wave 9 — D.3.3 five-minute quickstart polish Next backend milestone (blocked): 2.1.1 Provider interface and registry — after Phase 1.5 launch"
+summary: "Last updated: 2026-06-15 Git SHA (`main`): `4b32098` — Wave 13 docs site (#123) Current phase: Phase 1.5 — Docs Site (In progress) Current goal: Wave 9 — D.3.3 five-minute quickstart polish Next backend milestone (blocked): 2.1.1 Provider interface and registry — after Phase 1.5 launch"
 ---
 
 # Current State
 
-**Last updated:** 2026-06-13  
-**Git SHA (`main`):** `f4ef55f` — D.3.2 wave 2 (#121)  
+**Last updated:** 2026-06-15  
+**Git SHA (`main`):** `4b32098` — Wave 13 docs site (#123), codecov-action (#124)  
 **Current phase:** Phase 1.5 — Docs Site (**In progress**)  
-**Current goal:** Wave 7 — [D.3.2](/roadmap/phase-1-5-docs-site/milestones/d3.2-seed-pages-content-stubs) seed content (Deployment section next)  
+**Current goal:** Wave 9 — [D.3.3](/roadmap/phase-1-5-docs-site/milestones/d3.3-quickstart-five-minute-path) five-minute quickstart polish  
 **Next backend milestone (blocked):** [2.1.1 Provider interface and registry](/roadmap/phase-2-single-provider/milestones/2.1.1-provider-interface-and-registry) — after Phase 1.5 launch  
 **Phase 1 exit audit:** [PHASE1_EXIT_AUDIT.md](/roadmap/phase-1-core-platform/phase1-exit-audit)  
 **CI audit:** [CI_AUDIT.md](/roadmap/phase-1-core-platform/ci-audit)
@@ -60,6 +60,8 @@ summary: "Last updated: 2026-06-13 Git SHA (`main`): `f4ef55f` — D.3.2 wave 2 
 - **Phase 1.5 layout hotfix (#119):** Restored 3-column Fumadocs shell after flex-breaking wrapper regression
 - **Phase 1.5 D.3.2 wave 1 (#117):** Getting Started content — introduction, concepts, FAQ, quickstart stubs with Callout, Steps, runnable snippets
 - **Phase 1.5 D.3.2 wave 2 (#121):** Proxy + Auth content — 10 pages with Callout/Steps, curl examples, Phase 1 honesty on stubbed provider paths
+- **Phase 1.5 Wave 13 (#123):** Public docs IA expanded to 11 sections (architecture, security, operations, glossary, deployment, changelog); ADR-0002–0023 on `/docs/adr`; manual API reference (auth-gRPC, chat-completions, proxy-health, errors); full roadmap MDX corpus (Phase 0–5 + Phase 3 memory engine); `/blog` and `/releases`; roadmap hub, semantic sidebar icons, site nav UX; engineering pointers to `docs/app/content/`; contributor migration scripts in `ibex-harness-workspace/docs-app-scripts/`; `pnpm docs:build` — 274 static pages
+- **Codecov action (#124):** `codecov/codecov-action` v7.0.0 in CI workflow
 - **Codecov:** Go coverage upload; badge in README; patch/project thresholds aligned to 80% handwritten scope
 - **Integration test infra (m1.0.1):** `infra/testing/testutil`, `make test-integration`, compose test (5433) or optional `testcontainers` build tag
 - Go services:
@@ -79,8 +81,8 @@ summary: "Last updated: 2026-06-13 Git SHA (`main`): `f4ef55f` — D.3.2 wave 2 
 
 ## Next 3 immediate tasks
 
-1. **Phase 1.5 Wave 7 — D.3.2 wave 3** — Deployment content section (`feat/d3-2-deployment`)
-2. **Phase 1.5 Wave 9 — D.3.3** — Five-minute quickstart polish (`feat/d3-3-quickstart`)
+1. **Phase 1.5 Wave 9 — D.3.3** — Five-minute quickstart polish (`feat/d3-3-quickstart`)
+2. **Phase 1.5 Wave 10 — D.4.1** — Vercel preview deploys (`feat/d4-1-vercel-previews`)
 3. **Phase 2 blocked** — [2.1.1](/roadmap/phase-2-single-provider/milestones/2.1.1-provider-interface-and-registry) until Phase 1.5 launch (Wave 12)
 
 ## Verify current state locally
@@ -99,6 +101,7 @@ go test -tags=integration -run '^TestSecurity_' ./services/proxy
 make test-integration
 pnpm install
 pnpm docs:dev
+pnpm docs:build
 ```
 
 Windows: see [services/auth/README.md](/roadmap/services/auth) and [services/proxy/README.md](/roadmap/services/proxy) for PowerShell env syntax. Integration tests: `make compose-test-up` (Postgres 5433) or `$env:POSTGRES_TEST_DSN = "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable"` for dev Postgres.
