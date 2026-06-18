@@ -2,6 +2,7 @@ import type { Code, Parent, Root } from "mdast";
 import { visit } from "unist-util-visit";
 
 import { hashString } from "./hash-string";
+import { normalizeMermaidChart } from "./normalize-mermaid-chart";
 
 type RemarkMdxMermaidOptions = {
   lang?: string;
@@ -20,14 +21,11 @@ type MdxMermaidNode = {
   children: [];
 };
 
-function buildMermaidMdxNode(chart: string, diagramId: string): MdxMermaidNode {
+function buildMermaidMdxNode(diagramId: string): MdxMermaidNode {
   return {
     type: "mdxJsxFlowElement",
     name: "Mermaid",
-    attributes: [
-      { type: "mdxJsxAttribute", name: "id", value: diagramId },
-      { type: "mdxJsxAttribute", name: "chart", value: chart },
-    ],
+    attributes: [{ type: "mdxJsxAttribute", name: "id", value: diagramId }],
     children: [],
   };
 }
@@ -42,7 +40,7 @@ function replaceWithMermaidNode(
   chart: string,
 ): void {
   const diagramId = `diagram-${hashString(chart)}`;
-  parent.children[index] = buildMermaidMdxNode(chart, diagramId) as (typeof parent.children)[number];
+  parent.children[index] = buildMermaidMdxNode(diagramId) as (typeof parent.children)[number];
 }
 
 function transformMermaidCodeBlock(
@@ -54,7 +52,7 @@ function transformMermaidCodeBlock(
   if (index === undefined || !parent) return;
   if (!isMermaidBlock(node, lang)) return;
 
-  replaceWithMermaidNode(parent, index, node.value.trim());
+  replaceWithMermaidNode(parent, index, normalizeMermaidChart(node.value));
 }
 
 export function remarkMdxMermaid(options: RemarkMdxMermaidOptions = {}) {

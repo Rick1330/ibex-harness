@@ -1159,8 +1159,6 @@ nav a:has(.wordmark) {
 
 .mermaid-container svg,
 [data-mermaid] svg {
-  max-width: 100% !important;
-  height: auto !important;
   font-family: inherit !important;
 }
 
@@ -1220,6 +1218,25 @@ nav a:has(.wordmark) {
 .dark .mermaid-container svg marker path,
 .dark [data-mermaid] svg marker path {
   fill: #8b949e !important;
+}
+
+/* Viewer canvas: unconstrain SVG for pan/zoom + fit-to-view */
+.diagram-canvas svg,
+.diagram-canvas .mermaid-container svg,
+.diagram-canvas [data-mermaid] svg,
+.diagram-cached-svg svg {
+  max-width: none !important;
+  max-height: none !important;
+  width: auto !important;
+  height: auto !important;
+  display: block !important;
+}
+
+.diagram-static-svg svg,
+[data-diagram-static] svg {
+  max-width: 100%;
+  height: auto;
+  display: block;
 }
 
 /* === Wave 7 — nav architecture + sidebar polish === */
