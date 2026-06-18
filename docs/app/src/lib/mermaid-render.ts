@@ -5,10 +5,10 @@ import { mermaidThemeVariables } from "@/lib/mermaid-theme-vars";
 let diagramCounter = 0;
 
 export function cleanStaleMermaidNodes(idPrefix: string) {
-  document.getElementById(idPrefix)?.remove();
-  document
-    .querySelectorAll(`[id^="${idPrefix}"]`)
-    .forEach((node) => node.remove());
+  document.querySelectorAll(`[id^="${idPrefix}"]`).forEach((node) => {
+    if (node.closest("[data-mermaid]")) return;
+    node.remove();
+  });
 }
 
 export function createMermaidRenderId(diagramKey: string, chartHash: string) {
@@ -23,7 +23,30 @@ export type MermaidRenderOptions = {
   isCurrent: () => boolean;
 };
 
-function mountSvg(host: HTMLDivElement, svg: string) {
+/** Give mounted SVG explicit pixel dimensions from viewBox so flex canvases do not collapse it. */
+export function normalizeMountedSvg(host: HTMLDivElement): SVGSVGElement | null {
+  const svg = host.querySelector("svg");
+  if (!svg) return null;
+
+  const viewBox = svg.viewBox.baseVal;
+  const width = viewBox.width > 0 ? viewBox.width : Number.parseFloat(svg.getAttribute("width") ?? "0");
+  const height = viewBox.height > 0 ? viewBox.height : Number.parseFloat(svg.getAttribute("height") ?? "0");
+
+  if (width > 0 && height > 0) {
+    svg.setAttribute("width", String(width));
+    svg.setAttribute("height", String(height));
+    svg.style.setProperty("width", `${width}px`, "important");
+    svg.style.setProperty("height", `${height}px`, "important");
+  }
+
+  svg.style.setProperty("max-width", "none", "important");
+  svg.style.setProperty("max-height", "none", "important");
+  svg.style.setProperty("display", "block", "important");
+
+  return svg;
+}
+
+export function mountSvgString(host: HTMLDivElement, svg: string) {
   host.replaceChildren();
   try {
     const doc = new DOMParser().parseFromString(svg, "image/svg+xml");
@@ -31,7 +54,9 @@ function mountSvg(host: HTMLDivElement, svg: string) {
     if (root?.tagName === "parsererror") {
       throw new Error("Diagram SVG parse failed");
     }
-    host.append(root);
+    const adopted = document.importNode(root, true);
+    host.append(adopted);
+    normalizeMountedSvg(host);
   } catch (err) {
     throw err instanceof Error ? err : new Error("Diagram SVG mount failed");
   }
@@ -42,7 +67,6 @@ export async function renderMermaidChart(
   options: MermaidRenderOptions,
 ) {
   const { uniqueId, normalizedChart, isDark, isCurrent } = options;
-  host.replaceChildren();
 
   const mermaid = (await import("mermaid")).default;
   const config = getMermaidInitConfig(isDark);
@@ -56,8 +80,10 @@ export async function renderMermaidChart(
   const result = await mermaid.render(uniqueId, normalizedChart);
   if (!isCurrent()) return null;
 
-  mountSvg(host, applyMermaidSvgTheme(result.svg, isDark));
-  return result.svg;
+  const themedSvg = applyMermaidSvgTheme(result.svg, isDark);
+  mountSvgString(host, themedSvg);
+  result.bindFunctions?.(host);
+  return themedSvg;
 }
 
 export function mermaidErrorMessage(err: unknown) {
