@@ -3,7 +3,9 @@ import { notFound } from "next/navigation";
 
 import { BlogPostHeader } from "@/components/blog/blog-post-header";
 import { RelatedPosts } from "@/components/blog/related-posts";
+import { CopyMarkdownButton } from "@/components/layout/copy-markdown-button";
 import { OnThisPage } from "@/components/layout/toc";
+import { getMarkdownExportUrl } from "@/lib/markdown-export";
 import { blogSource } from "@/lib/source";
 import { getMDXComponents } from "@/mdx-components";
 
@@ -29,6 +31,9 @@ export default async function BlogPostPage(props: BlogPostPageProps) {
     const tags = page.data.tags ?? [];
     return tags.some((tag) => p.data.tags?.includes(tag));
   });
+  const copyMarkdown = (
+    <CopyMarkdownButton markdownUrl={getMarkdownExportUrl("blog", page.file.path)} />
+  );
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-16 md:px-6">
@@ -41,6 +46,7 @@ export default async function BlogPostPage(props: BlogPostPageProps) {
             authorUrl={page.data.authorUrl as string | undefined}
             tags={page.data.tags}
             readingTime={page.data.readingTime as string | undefined}
+            actions={copyMarkdown}
           />
           <div className="prose docs-prose max-w-none">
             <MdxContent components={getMDXComponents()} />
@@ -50,7 +56,7 @@ export default async function BlogPostPage(props: BlogPostPageProps) {
         {toc.length > 0 ? (
           <aside className="hidden lg:block">
             <div className="sticky top-24">
-              <OnThisPage items={toc} />
+              <OnThisPage footer={copyMarkdown} items={toc} />
             </div>
           </aside>
         ) : null}

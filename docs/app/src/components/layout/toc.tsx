@@ -11,7 +11,7 @@ import {
   ScrollViewport,
 } from "fumadocs-ui/components/ui/scroll-area";
 import { ListTree } from "lucide-react";
-import { useRef } from "react";
+import { useRef, type ReactNode } from "react";
 
 import {
   TocReadingProgress,
@@ -21,6 +21,7 @@ import { cn } from "@/lib/cn";
 
 type OnThisPageProps = Readonly<{
   items: TOCItemType[];
+  footer?: ReactNode;
 }>;
 
 function filterHeadings(items: TOCItemType[]): TOCItemType[] {
@@ -90,7 +91,7 @@ function TocProgressRail({ count }: Readonly<{ count: number }>) {
   );
 }
 
-export function OnThisPage({ items }: OnThisPageProps) {
+export function OnThisPage({ items, footer }: OnThisPageProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<HTMLDivElement>(null);
   const headings = filterHeadings(items);
@@ -106,7 +107,7 @@ export function OnThisPage({ items }: OnThisPageProps) {
         On this page
       </p>
       {headings.length === 0 ? (
-        <TocItemsEmpty />
+        footer ? null : <TocItemsEmpty />
       ) : (
         <ScrollArea className="flex min-h-0 flex-1 flex-col">
           <Primitive.ScrollProvider containerRef={viewRef}>
@@ -132,6 +133,7 @@ export function OnThisPage({ items }: OnThisPageProps) {
           <TocReadingProgress className="mt-4" />
         </ScrollArea>
       )}
+      {footer ? <div className="mt-4 border-t border-border pt-4">{footer}</div> : null}
     </Toc>
   );
 }

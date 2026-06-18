@@ -1,9 +1,10 @@
 import { getBreadcrumbItems } from "fumadocs-core/breadcrumb";
 import { DocsBody, DocsPage } from "fumadocs-ui/page";
 import type { Metadata } from "next";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 
 import { DocsBreadcrumb } from "@/components/layout/breadcrumb";
+import { CopyMarkdownButton } from "@/components/layout/copy-markdown-button";
 import { DocsFooterNav } from "@/components/layout/docs-footer-nav";
 import { FeedbackWidget } from "@/components/layout/feedback";
 import { PageIntro } from "@/components/layout/page-intro";
@@ -15,6 +16,7 @@ import {
   getContentFilePath,
 } from "@/lib/github";
 import { getPageLastModified } from "@/lib/page-meta";
+import { getMarkdownExportUrl } from "@/lib/markdown-export";
 import { source } from "@/lib/source";
 import { getMDXComponents } from "@/mdx-components";
 
@@ -26,6 +28,10 @@ export const dynamic = "force-static";
 
 export default async function Page(props: PageProps) {
   const params = await props.params;
+  if (!params.slug?.length) {
+    redirect("/docs/getting-started/introduction");
+  }
+
   const page = source.getPage(params.slug);
   if (!page) notFound();
 
@@ -37,6 +43,9 @@ export default async function Page(props: PageProps) {
   });
   const section =
     breadcrumbs.length > 0 ? String(breadcrumbs[0].name) : undefined;
+  const copyMarkdown = (
+    <CopyMarkdownButton markdownUrl={getMarkdownExportUrl("docs", page.file.path)} />
+  );
 
   return (
     <DocsPage
@@ -44,7 +53,11 @@ export default async function Page(props: PageProps) {
       full={page.data.full}
       breadcrumb={{ component: <DocsBreadcrumb tree={tree} /> }}
       tableOfContent={{
-        component: <OnThisPage items={toc} />,
+        enabled: true,
+        component: <OnThisPage footer={copyMarkdown} items={toc} />,
+      }}
+      tableOfContentPopover={{
+        footer: copyMarkdown,
       }}
       editOnGithub={{
         owner: GITHUB_OWNER,

@@ -5,18 +5,20 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { DocsBreadcrumb } from "@/components/layout/breadcrumb";
+import { CopyMarkdownButton } from "@/components/layout/copy-markdown-button";
 import { DocsFooterNav } from "@/components/layout/docs-footer-nav";
 import { PageIntro } from "@/components/layout/page-intro";
 import { OnThisPage } from "@/components/layout/toc";
 import { GITHUB_BRANCH, GITHUB_OWNER, GITHUB_REPO } from "@/lib/github";
 import { getPageLastModified } from "@/lib/page-meta";
+import { getMarkdownExportUrl } from "@/lib/markdown-export";
 import { getRoadmapContentFilePath } from "@/lib/roadmap-layout.config";
 import { isMilestonePage } from "@/lib/roadmap-types";
 import { roadmapSource } from "@/lib/source";
 import { getMDXComponents } from "@/mdx-components";
 
 type PageProps = Readonly<{
-  params: Promise<{ slug?: string[] }>;
+  params: Promise<{ slug: string[] }>;
 }>;
 
 export const dynamic = "force-static";
@@ -43,6 +45,11 @@ export default async function RoadmapDetailPage(props: PageProps) {
 
   const displayTitle =
     (page.data.fullTitle as string | undefined) ?? page.data.title;
+  const copyMarkdown = (
+    <CopyMarkdownButton
+      markdownUrl={getMarkdownExportUrl("roadmap", page.file.path)}
+    />
+  );
 
   return (
     <DocsPage
@@ -50,7 +57,11 @@ export default async function RoadmapDetailPage(props: PageProps) {
       full={page.data.full}
       breadcrumb={{ component: <DocsBreadcrumb tree={tree} /> }}
       tableOfContent={{
-        component: <OnThisPage items={toc} />,
+        enabled: true,
+        component: <OnThisPage footer={copyMarkdown} items={toc} />,
+      }}
+      tableOfContentPopover={{
+        footer: copyMarkdown,
       }}
       editOnGithub={{
         owner: GITHUB_OWNER,
