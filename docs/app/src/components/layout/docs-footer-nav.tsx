@@ -15,8 +15,9 @@ import {
 import { cn } from "@/lib/cn";
 
 const cardClassName = cn(
-  "flex w-full flex-col gap-2 rounded-md border border-border bg-panel p-4 text-sm",
+  "relative flex w-full flex-col gap-2 rounded-md border border-border bg-panel p-4 text-sm",
   "transition-colors hover:bg-panel-raised hover:text-text-primary",
+  "touch-manipulation",
 );
 
 const labelClassName =
@@ -34,9 +35,13 @@ export function DocsFooterNav() {
   if (!previous && !next) return null;
 
   return (
-    <div className="not-prose grid grid-cols-2 gap-4 pb-6">
+    <nav
+      key={pathname}
+      aria-label="Documentation pages"
+      className="not-prose relative z-[1] grid grid-cols-2 gap-4 pb-6"
+    >
       {previous && !navUrlsMatch(previous.url, pathname) ? (
-        <Link className={cardClassName} href={previous.url} prefetch scroll={false}>
+        <Link className={cardClassName} href={previous.url} prefetch>
           <span className={labelClassName}>
             <ChevronLeft className="size-4" strokeWidth={1.5} />
             Previous
@@ -54,7 +59,6 @@ export function DocsFooterNav() {
           className={cn(cardClassName, "col-start-2 text-end")}
           href={next.url}
           prefetch
-          scroll={false}
         >
           <span className={cn(labelClassName, "justify-end")}>
             Next
@@ -66,6 +70,6 @@ export function DocsFooterNav() {
           </span>
         </Link>
       ) : null}
-    </div>
+    </nav>
   );
 }

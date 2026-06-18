@@ -1,5 +1,6 @@
 import { Github } from "lucide-react";
 import Link from "next/link";
+import type { ReactNode } from "react";
 
 type BlogPostHeaderProps = Readonly<{
   title: string;
@@ -8,6 +9,7 @@ type BlogPostHeaderProps = Readonly<{
   authorUrl?: string;
   tags?: string[];
   readingTime?: string;
+  actions?: ReactNode;
 }>;
 
 export function BlogPostHeader({
@@ -17,6 +19,7 @@ export function BlogPostHeader({
   authorUrl,
   tags,
   readingTime,
+  actions,
 }: BlogPostHeaderProps) {
   return (
     <header className="mb-10 border-b border-border pb-8">
@@ -26,38 +29,41 @@ export function BlogPostHeader({
       <h1 className="mb-5 text-3xl font-bold tracking-tight text-foreground md:text-4xl lg:text-[2.75rem] lg:leading-tight">
         {title}
       </h1>
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm text-muted-foreground">
-        <time className="tabular-nums">
-          {new Date(date).toLocaleDateString("en-US", {
-            year: "numeric",
-            month: "long",
-            day: "numeric",
-          })}
-        </time>
-        {author ? (
-          <>
-            <span>·</span>
-            {authorUrl ? (
-              <Link
-                href={authorUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 font-medium text-foreground transition-opacity hover:opacity-80"
-              >
-                {author}
-                <Github className="size-3.5" strokeWidth={2} />
-              </Link>
-            ) : (
-              <span>{author}</span>
-            )}
-          </>
-        ) : null}
-        {readingTime ? (
-          <>
-            <span>·</span>
-            <span>{readingTime}</span>
-          </>
-        ) : null}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm text-muted-foreground">
+          <time className="tabular-nums">
+            {new Date(date).toLocaleDateString("en-US", {
+              year: "numeric",
+              month: "long",
+              day: "numeric",
+            })}
+          </time>
+          {author ? (
+            <>
+              <span>·</span>
+              {authorUrl ? (
+                <Link
+                  href={authorUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 font-medium text-foreground transition-opacity hover:opacity-80"
+                >
+                  {author}
+                  <Github className="size-3.5" strokeWidth={2} />
+                </Link>
+              ) : (
+                <span>{author}</span>
+              )}
+            </>
+          ) : null}
+          {readingTime ? (
+            <>
+              <span>·</span>
+              <span>{readingTime}</span>
+            </>
+          ) : null}
+        </div>
+        {actions ? <div className="shrink-0">{actions}</div> : null}
       </div>
       {tags && tags.length > 0 ? (
         <div className="mt-4 flex flex-wrap gap-2">
