@@ -3,15 +3,21 @@
   "private": true,
   "version": "0.0.0",
   "scripts": {
-    "dev": "next dev",
-    "dev:clean": "node -e \"require('fs').rmSync('.next',{recursive:true,force:true})\" && next dev",
+    "clean:next": "node ./scripts/clean-next.mjs",
+    "prebuild": "node ./scripts/export-page-markdown.mjs && node ./scripts/prerender-mermaid.mjs && node ./scripts/verify-diagram-assets.mjs",
+    "prerender:diagrams": "node ./scripts/prerender-mermaid.mjs && node ./scripts/verify-diagram-assets.mjs",
+    "dev": "next dev --turbo",
+    "dev:webpack": "next dev",
+    "dev:clean": "node ./scripts/run-next.mjs dev",
     "dev:turbo": "next dev --turbo",
     "build": "next build",
-    "build:clean": "node -e \"require('fs').rmSync('.next',{recursive:true,force:true})\" && next build",
+    "build:clean": "node ./scripts/run-next.mjs build",
     "start": "next start",
+    "measure:payload": "node ./scripts/measure-rsc-payload.mjs",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "postinstall": "fumadocs-mdx"
+    "postinstall": "fumadocs-mdx",
+    "predev": "node ./scripts/export-page-markdown.mjs && node ./scripts/export-mermaid-sources.mjs"
   },
   "dependencies": {
     "@radix-ui/react-tabs": "^1.1.2",
@@ -30,6 +36,7 @@
     "zod": "^4.1.8"
   },
   "devDependencies": {
+    "@mermaid-js/mermaid-cli": "^11.15.0",
     "@types/mdast": "^4.0.4",
     "@types/mdx": "^2.0.13",
     "@types/node": "^22.0.0",

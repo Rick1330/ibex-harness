@@ -21,6 +21,8 @@ Thumbs.db
 docs/app/.next/
 docs/app/.source/
 docs/app/out/
+docs/app/public/markdown/
+docs/app/public/diagrams/
 
 # --- CI test reports (JUnit for Trunk; ephemeral) ---
 test-results/
