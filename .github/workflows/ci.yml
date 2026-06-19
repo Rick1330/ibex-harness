@@ -753,6 +753,8 @@ jobs:
         run: pnpm --filter docs typecheck
 
       - name: Build docs (prebuild diagrams + Next.js)
+        env:
+          CI: true
         run: pnpm docs:build:clean
 
   hadolint:

@@ -18,6 +18,7 @@ const appRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const contentRoot = path.join(appRoot, "content");
 const outDir = path.join(appRoot, "public", "diagrams");
 const mmdcConfigPath = path.join(appRoot, "scripts", "mermaid-mmdc-config.json");
+const puppeteerConfigPath = path.join(appRoot, "scripts", "puppeteer-config.json");
 
 function resolveMmdcBinary() {
   const binName = process.platform === "win32" ? "mmdc.cmd" : "mmdc";
@@ -92,18 +93,24 @@ function renderBaseSvg(chart) {
     // Windows .cmd shims require shell; paths are temp files under our control only.
     const useShell = process.platform === "win32";
 
+    const mmdcArgs = [
+      "-i",
+      inputPath,
+      "-o",
+      outputPath,
+      "-b",
+      "transparent",
+      "-c",
+      mmdcConfigPath,
+    ];
+
+    if (process.env.CI || process.env.GITHUB_ACTIONS) {
+      mmdcArgs.push("-p", puppeteerConfigPath);
+    }
+
     const result = spawnSync(
       mmdc,
-      [
-        "-i",
-        inputPath,
-        "-o",
-        outputPath,
-        "-b",
-        "transparent",
-        "-c",
-        mmdcConfigPath,
-      ],
+      mmdcArgs,
       {
         cwd: appRoot,
         encoding: "utf8",

@@ -1,8 +1,12 @@
 "use client";
 
 import { cn } from "@/lib/cn";
-import { useMermaidDiagram } from "@/hooks/use-mermaid-diagram";
+import {
+  MermaidError,
+  MermaidPlaceholder,
+} from "@/components/mdx/mermaid-diagram-states";
 import { DeepWikiStyleWrapper } from "@/components/mdx/interactive-mermaid";
+import { useMermaidDiagram } from "@/hooks/use-mermaid-diagram";
 
 export type MermaidInteractiveProps = Readonly<{
   chart: string;
@@ -11,35 +15,6 @@ export type MermaidInteractiveProps = Readonly<{
   id?: string;
   onCollapse?: () => void;
 }>;
-
-type MermaidPlaceholderProps = Readonly<{ className?: string }>;
-
-function MermaidPlaceholder({ className }: MermaidPlaceholderProps) {
-  return (
-    <div
-      aria-hidden
-      className={cn(
-        "mermaid-diagram my-8 min-h-[12rem] rounded-[4px] border border-border bg-panel",
-        className,
-      )}
-    />
-  );
-}
-
-type MermaidErrorProps = Readonly<{ error: string; className?: string }>;
-
-function MermaidError({ error, className }: MermaidErrorProps) {
-  return (
-    <figure className={cn("mermaid-diagram my-10 not-prose", className)}>
-      <div className="rounded-[4px] border border-danger/40 bg-panel p-4">
-        <p className="mb-1 text-sm font-semibold text-danger">Diagram error</p>
-        <pre className="whitespace-pre-wrap font-mono text-xs text-text-secondary">
-          {error}
-        </pre>
-      </div>
-    </figure>
-  );
-}
 
 export function MermaidInteractive({
   chart,
@@ -80,11 +55,7 @@ export function MermaidInteractive({
         >
           <div ref={containerRef} className="mermaid leading-none" />
           {rendering ? (
-            <div className="absolute inset-0 flex items-center justify-center gap-2 bg-panel/90 text-sm text-text-secondary">
-              <span
-                aria-hidden
-                className="size-4 animate-spin rounded-full border-2 border-current border-t-transparent"
-              />
+            <div className="absolute inset-0 flex items-center justify-center bg-panel/90 text-sm text-text-secondary">
               <span>Rendering diagram…</span>
             </div>
           ) : null}
