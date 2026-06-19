@@ -743,13 +743,8 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Install pnpm
-        uses: pnpm/action-setup@41ff72655975bd32cabbee17576a7a061a2c20ab # v4.2.0
-        with:
-          version: 9.15.9
-
-      - name: Install Chromium for mmdc
-        run: sudo apt-get update && sudo apt-get install -y chromium-browser
+      - name: Enable corepack (pnpm)
+        run: corepack enable && corepack prepare pnpm@9.15.9 --activate
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -758,8 +753,6 @@ jobs:
         run: pnpm --filter docs typecheck
 
       - name: Build docs (prebuild diagrams + Next.js)
-        env:
-          PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium-browser
         run: pnpm docs:build:clean
 
   hadolint:

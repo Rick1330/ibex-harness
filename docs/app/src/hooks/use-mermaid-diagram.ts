@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MutableRefObject } from "react";
 
 import { useDiagramTheme } from "@/hooks/use-diagram-theme";
 import { hashString } from "@/lib/hash-string";
@@ -12,6 +12,55 @@ import {
   normalizeMountedSvg,
   renderMermaidChart,
 } from "@/lib/mermaid-render";
+
+type RenderState = Readonly<{
+  setRendering: (value: boolean) => void;
+  setError: (value: string) => void;
+  setSvg: (value: string | null) => void;
+}>;
+
+async function renderDiagramToHost(
+  host: HTMLDivElement,
+  diagramKey: string,
+  chartHash: string,
+  normalizedChart: string,
+  isDark: boolean,
+  renderIdRef: MutableRefObject<string>,
+  state: RenderState,
+) {
+  const uniqueId = createMermaidRenderId(diagramKey, chartHash);
+  renderIdRef.current = uniqueId;
+  state.setRendering(true);
+  state.setError("");
+
+  cleanStaleMermaidNodes(`mermaid-${diagramKey}`);
+
+  try {
+    const isCurrent = () => renderIdRef.current === uniqueId;
+    const themedSvg = await renderMermaidChart(host, {
+      uniqueId,
+      normalizedChart,
+      isDark,
+      isCurrent,
+    });
+    if (!isCurrent()) return;
+    normalizeMountedSvg(host);
+    if (themedSvg) {
+      state.setSvg(themedSvg);
+      return;
+    }
+    if (!host.querySelector("svg")) {
+      throw new Error("Diagram render produced no output");
+    }
+  } catch (err) {
+    if (renderIdRef.current !== uniqueId) return;
+    state.setError(mermaidErrorMessage(err));
+  } finally {
+    if (renderIdRef.current === uniqueId) {
+      state.setRendering(false);
+    }
+  }
+}
 
 export function useMermaidDiagram(chart: string, stableId?: string) {
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -40,37 +89,15 @@ export function useMermaidDiagram(chart: string, stableId?: string) {
   const renderDiagram = useCallback(async () => {
     const host = hostRef.current;
     if (!host) return;
-
-    const uniqueId = createMermaidRenderId(diagramKey, chartHash);
-    renderIdRef.current = uniqueId;
-    setRendering(true);
-    setError("");
-
-    cleanStaleMermaidNodes(`mermaid-${diagramKey}`);
-
-    try {
-      const isCurrent = () => renderIdRef.current === uniqueId;
-      const themedSvg = await renderMermaidChart(host, {
-        uniqueId,
-        normalizedChart,
-        isDark,
-        isCurrent,
-      });
-      if (!isCurrent()) return;
-      normalizeMountedSvg(host);
-      if (themedSvg) {
-        setSvg(themedSvg);
-      } else if (!host.querySelector("svg")) {
-        throw new Error("Diagram render produced no output");
-      }
-    } catch (err) {
-      if (renderIdRef.current !== uniqueId) return;
-      setError(mermaidErrorMessage(err));
-    } finally {
-      if (renderIdRef.current === uniqueId) {
-        setRendering(false);
-      }
-    }
+    await renderDiagramToHost(
+      host,
+      diagramKey,
+      chartHash,
+      normalizedChart,
+      isDark,
+      renderIdRef,
+      { setRendering, setError, setSvg },
+    );
   }, [chartHash, diagramKey, isDark, normalizedChart]);
 
   useLayoutEffect(() => {

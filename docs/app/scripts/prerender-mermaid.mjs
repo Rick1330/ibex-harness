@@ -10,9 +10,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  applyMermaidSvgTheme,
   collectMermaidCharts,
 } from "./lib/diagram-build.mjs";
+import { applyMermaidSvgTheme } from "./lib/mermaid-theme-css.mjs";
 
 const appRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const contentRoot = path.join(appRoot, "content");
