@@ -2,7 +2,6 @@
 
 import {
   useCallback,
-  useEffect,
   useRef,
   type ReactNode,
   type RefObject,
@@ -14,6 +13,7 @@ import {
 } from "@/components/mdx/diagram-fullscreen-modal";
 import { DiagramCanvas } from "@/components/mdx/diagram-canvas";
 import { useClickOutside } from "@/hooks/use-click-outside";
+import { useDiagramAutoFit } from "@/hooks/use-diagram-auto-fit";
 import { useDiagramViewports } from "@/hooks/use-diagram-viewport";
 import { normalizeMountedSvg } from "@/lib/mermaid-render";
 
@@ -24,6 +24,13 @@ type DeepWikiStyleWrapperProps = Readonly<{
   hostRef: RefObject<HTMLDivElement | null>;
   onCollapse?: () => void;
 }>;
+
+function resolveSvgFromHost(
+  host: HTMLDivElement | null,
+): SVGSVGElement | null {
+  if (!host) return null;
+  return normalizeMountedSvg(host) ?? host.querySelector("svg");
+}
 
 export function DeepWikiStyleWrapper({
   children,
@@ -48,24 +55,17 @@ export function DeepWikiStyleWrapper({
     onCollapse?.();
   });
 
-  const resolveInlineSvg = useCallback(() => {
-    const host = hostRef.current;
-    if (!host) return null;
-    return normalizeMountedSvg(host) ?? host.querySelector("svg");
-  }, [hostRef]);
-
   const runFitInline = useCallback(() => {
-    const svgEl = resolveInlineSvg();
+    const svgEl = resolveSvgFromHost(hostRef.current);
     if (svgEl) {
       fitInline(svgEl);
       return;
     }
     if (svg) fitInline(svg);
-  }, [fitInline, resolveInlineSvg, svg]);
+  }, [fitInline, hostRef, svg]);
 
   const runFitModal = useCallback(() => {
-    const host = modalHostRef.current;
-    const svgEl = host ? normalizeMountedSvg(host) ?? host.querySelector("svg") : null;
+    const svgEl = resolveSvgFromHost(modalHostRef.current);
     if (svgEl) {
       fitModal(svgEl);
       return;
@@ -73,20 +73,15 @@ export function DeepWikiStyleWrapper({
     if (svg) fitModal(svg);
   }, [fitModal, svg]);
 
-  useEffect(() => {
-    if (!svg || rendering) return;
-    const timer = window.setTimeout(() => {
-      runFitInline();
-    }, 0);
-    return () => {
-      window.clearTimeout(timer);
-    };
-  }, [rendering, runFitInline, svg]);
+  useDiagramAutoFit({
+    enabled: Boolean(svg) && !rendering,
+    onFit: runFitInline,
+  });
 
-  useEffect(() => {
-    if (!isOpen || !svg) return;
-    runFitModal();
-  }, [isOpen, runFitModal, svg]);
+  useDiagramAutoFit({
+    enabled: isOpen && Boolean(svg),
+    onFit: runFitModal,
+  });
 
   const handleOpenModal = useCallback(() => {
     if (!svg || rendering) return;
@@ -97,7 +92,7 @@ export function DeepWikiStyleWrapper({
     <>
       <div
         ref={rootRef}
-        className="relative my-6 w-full rounded-xl border border-border bg-panel p-4"
+        className="relative my-6 w-full rounded-md border border-border bg-panel p-4"
       >
         <div className="absolute end-3 top-3 z-10">
           <DiagramToolbar

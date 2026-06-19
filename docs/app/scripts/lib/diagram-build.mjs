@@ -1,7 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 
-export const MERMAID_BLOCK = /```mermaid\r?\n([\s\S]*?)```/g;
+import themeTokens from "../../src/lib/mermaid-theme-tokens.json" with { type: "json" };
+
+export const MERMAID_BLOCK = /```mermaid[ \t]*[^\n]*\n([\s\S]*?)```/g;
 
 export function hashString(input) {
   let hash = 0;
@@ -21,14 +23,20 @@ export function diagramIdForChart(chart) {
   return `diagram-${hashString(normalizeMermaidChart(chart))}`;
 }
 
+function palette(isDark) {
+  return isDark ? themeTokens.dark : themeTokens.light;
+}
+
 function buildThemeCss(isDark) {
-  const text = isDark ? "#e6edf3" : "#1f2328";
-  const nodeFill = isDark ? "#21262d" : "#f6f8fa";
-  const nodeStroke = isDark ? "#30363d" : "#d0d7de";
-  const line = isDark ? "#8b949e" : "#656d76";
-  const edgeLabelBg = isDark ? "#21262d" : "#ffffff";
-  const edgeLabelText = isDark ? "#c9d1d9" : "#57606a";
-  const clusterFill = isDark ? "#161b22" : "#eef2f6";
+  const {
+    text,
+    nodeFill,
+    nodeStroke,
+    line,
+    edgeLabelBg,
+    edgeLabelText,
+    clusterFill,
+  } = palette(isDark);
 
   return `
     .node rect, .node circle, .node polygon, .node path:not(.flowchart-link) {
@@ -80,7 +88,7 @@ function buildThemeCss(isDark) {
 
 /** Post-process Mermaid SVG for readable labels across diagram types. */
 export function applyMermaidSvgTheme(svg, isDark) {
-  const text = isDark ? "#e6edf3" : "#1f2328";
+  const { text } = palette(isDark);
   const css = buildThemeCss(isDark);
 
   let result = svg.replace(

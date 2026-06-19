@@ -11,6 +11,11 @@ function sleep(ms) {
   });
 }
 
+function isRetryableFsError(error) {
+  const code = error && typeof error === "object" ? error.code : undefined;
+  return code === "EPERM" || code === "EBUSY" || code === "ENOTEMPTY";
+}
+
 async function removeNextDir(retries = 8) {
   if (!fs.existsSync(nextDir)) {
     return;
@@ -21,9 +26,7 @@ async function removeNextDir(retries = 8) {
       fs.rmSync(nextDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
       return;
     } catch (error) {
-      const code = error && typeof error === "object" ? error.code : undefined;
-      const retryable = code === "EPERM" || code === "EBUSY" || code === "ENOTEMPTY";
-      if (!retryable || attempt === retries) {
+      if (!isRetryableFsError(error) || attempt === retries) {
         throw error;
       }
       await sleep(250 * attempt);

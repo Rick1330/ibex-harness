@@ -1,11 +1,21 @@
-function buildThemeCss(isDark: boolean): string {
-  const text = isDark ? "#e6edf3" : "#1f2328";
-  const nodeFill = isDark ? "#21262d" : "#f6f8fa";
-  const nodeStroke = isDark ? "#30363d" : "#d0d7de";
-  const line = isDark ? "#8b949e" : "#656d76";
-  const edgeLabelBg = isDark ? "#21262d" : "#ffffff";
-  const edgeLabelText = isDark ? "#c9d1d9" : "#57606a";
-  const clusterFill = isDark ? "#161b22" : "#eef2f6";
+import themeTokens from "@/lib/mermaid-theme-tokens.json";
+
+type ThemePalette = (typeof themeTokens)["light"];
+
+function palette(isDark: boolean): ThemePalette {
+  return isDark ? themeTokens.dark : themeTokens.light;
+}
+
+export function buildMermaidThemeCss(isDark: boolean): string {
+  const {
+    text,
+    nodeFill,
+    nodeStroke,
+    line,
+    edgeLabelBg,
+    edgeLabelText,
+    clusterFill,
+  } = palette(isDark);
 
   return `
     .node rect, .node circle, .node polygon, .node path:not(.flowchart-link) {
@@ -57,8 +67,8 @@ function buildThemeCss(isDark: boolean): string {
 
 /** Post-process Mermaid SVG for readable native text labels (htmlLabels: false). */
 export function applyMermaidSvgTheme(svg: string, isDark: boolean): string {
-  const text = isDark ? "#e6edf3" : "#1f2328";
-  const css = buildThemeCss(isDark);
+  const { text } = palette(isDark);
+  const css = buildMermaidThemeCss(isDark);
 
   let result = svg.replace(
     /<svg([^>]*)>/i,

@@ -89,6 +89,9 @@ function renderBaseSvg(chart) {
       env.PUPPETEER_EXECUTABLE_PATH = chromePath;
     }
 
+    // Windows .cmd shims require shell; paths are temp files under our control only.
+    const useShell = process.platform === "win32";
+
     const result = spawnSync(
       mmdc,
       [
@@ -105,7 +108,8 @@ function renderBaseSvg(chart) {
         cwd: appRoot,
         encoding: "utf8",
         env,
-        shell: process.platform === "win32",
+        shell: useShell,
+        windowsHide: true,
       },
     );
 

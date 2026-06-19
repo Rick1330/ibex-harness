@@ -1,0 +1,20 @@
+{
+  "light": {
+    "text": "#1f2328",
+    "nodeFill": "#f6f8fa",
+    "nodeStroke": "#d0d7de",
+    "line": "#656d76",
+    "edgeLabelBg": "#ffffff",
+    "edgeLabelText": "#57606a",
+    "clusterFill": "#eef2f6"
+  },
+  "dark": {
+    "text": "#e6edf3",
+    "nodeFill": "#21262d",
+    "nodeStroke": "#30363d",
+    "line": "#8b949e",
+    "edgeLabelBg": "#21262d",
+    "edgeLabelText": "#c9d1d9",
+    "clusterFill": "#161b22"
+  }
+}
