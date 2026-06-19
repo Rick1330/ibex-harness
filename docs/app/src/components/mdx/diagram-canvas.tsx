@@ -60,7 +60,6 @@ export function DiagramCanvas({
           className="inline-block min-h-[1px] min-w-[1px] origin-top-left"
           style={{
             transform: `translate(${position.x}px, ${position.y}px) scale(${scale})`,
-            transition: isDragging ? "none" : "transform 0.1s ease-out",
           }}
         >
           {children}

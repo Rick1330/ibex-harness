@@ -1,11 +1,11 @@
 import type { Metadata } from "next";
-import { RootProvider } from "fumadocs-ui/provider";
 import { JetBrains_Mono } from "next/font/google";
 import { GeistMono } from "geist/font/mono";
 import { GeistSans } from "geist/font/sans";
 import type { ReactNode } from "react";
 
 import { ClearMermaidCache } from "@/components/clear-mermaid-cache";
+import { DocsRootProvider } from "@/components/docs-root-provider";
 import { SiteNav } from "@/components/site-nav";
 import "./globals.css";
 
@@ -30,13 +30,10 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     >
       <body className="bg-canvas text-text-primary antialiased">
         <ClearMermaidCache />
-        <RootProvider
-          search={{ options: { api: "/api/search", type: "static" } }}
-          theme={{ enabled: true, attribute: "class", defaultTheme: "dark" }}
-        >
+        <DocsRootProvider>
           <SiteNav />
           {children}
-        </RootProvider>
+        </DocsRootProvider>
       </body>
     </html>
   );

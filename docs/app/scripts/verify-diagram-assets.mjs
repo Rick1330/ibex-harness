@@ -29,16 +29,22 @@ for (const diagramId of charts.keys()) {
 }
 
 if (fs.existsSync(manifestPath)) {
-  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
-  for (const diagramId of charts.keys()) {
-    if (!manifest[diagramId]) {
-      errors.push(`manifest missing entry for ${diagramId}`);
+  try {
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    for (const diagramId of charts.keys()) {
+      if (!manifest[diagramId]) {
+        errors.push(`manifest missing entry for ${diagramId}`);
+      }
     }
-  }
-  for (const diagramId of Object.keys(manifest)) {
-    if (!charts.has(diagramId)) {
-      errors.push(`stale manifest entry for ${diagramId}`);
+    for (const diagramId of Object.keys(manifest)) {
+      if (!charts.has(diagramId)) {
+        errors.push(`stale manifest entry for ${diagramId}`);
+      }
     }
+  } catch (error) {
+    errors.push(
+      `invalid manifest.json: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 } else if (charts.size > 0) {
   errors.push("missing manifest.json — run prerender-mermaid.mjs");

@@ -16,7 +16,7 @@ import { cn } from "@/lib/cn";
 
 const cardClassName = cn(
   "relative flex w-full flex-col gap-2 rounded-md border border-border bg-panel p-4 text-sm",
-  "transition-colors hover:bg-panel-raised hover:text-text-primary",
+  "transition-colors duration-150 ease-out hover:bg-panel-raised hover:text-text-primary",
   "touch-manipulation",
 );
 

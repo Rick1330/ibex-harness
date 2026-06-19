@@ -6,6 +6,7 @@
  */
 
 const baseUrl = process.argv[2] ?? "http://localhost:3000";
+const FETCH_TIMEOUT_MS = 30_000;
 
 const routes = [
   "/docs/getting-started/introduction",
@@ -22,17 +23,29 @@ const budgets = {
   searchBytes: 4_000_000,
 };
 
+async function fetchWithTimeout(url, options = {}) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => {
+    controller.abort();
+  }, FETCH_TIMEOUT_MS);
+
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 async function measureRoute(route) {
   const url = `${baseUrl}${route}`;
   const headers = route.startsWith("/api/")
     ? {}
     : { RSC: "1", Accept: "text/x-component" };
 
-  // Warm cache (production server should serve static flight data quickly).
-  await fetch(url, { headers }).catch(() => undefined);
+  await fetchWithTimeout(url, { headers }).catch(() => undefined);
 
   const started = performance.now();
-  const response = await fetch(url, { headers });
+  const response = await fetchWithTimeout(url, { headers });
   const body = await response.arrayBuffer();
   const elapsed = Math.round(performance.now() - started);
 

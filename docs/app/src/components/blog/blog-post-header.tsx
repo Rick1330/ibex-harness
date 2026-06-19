@@ -49,7 +49,7 @@ export function BlogPostHeader({
                   className="inline-flex items-center gap-1.5 font-medium text-foreground transition-opacity hover:opacity-80"
                 >
                   {author}
-                  <Github className="size-3.5" strokeWidth={2} />
+                  <Github className="size-4" strokeWidth={1.5} />
                 </Link>
               ) : (
                 <span>{author}</span>

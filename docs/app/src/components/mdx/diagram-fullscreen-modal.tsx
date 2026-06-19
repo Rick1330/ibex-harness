@@ -43,7 +43,7 @@ function ToolbarButton({
       aria-label={label}
       disabled={disabled}
       className={cn(
-        "inline-flex size-8 items-center justify-center rounded-md border border-border bg-panel/30 text-text-secondary transition-colors",
+        "inline-flex size-8 items-center justify-center rounded-sm border border-border bg-panel/30 text-text-secondary transition-colors duration-150 ease-out",
         "hover:bg-panel-raised hover:text-text-primary disabled:pointer-events-none disabled:opacity-40",
         className,
       )}
@@ -133,13 +133,13 @@ export function DiagramFullscreenModal({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-50 flex select-none items-center justify-center bg-black/50 p-6 backdrop-blur-md dark:bg-black/60"
+      className="fixed inset-0 z-50 flex select-none items-center justify-center bg-black/50 p-6 dark:bg-black/60"
       role="dialog"
       aria-modal="true"
       onPointerDown={onOverlayPointerDown}
     >
       <div
-        className="relative flex h-full max-h-[85vh] w-full max-w-7xl flex-col overflow-hidden rounded-2xl border border-border bg-canvas p-6 shadow-2xl"
+        className="relative flex h-full max-h-[85vh] w-full max-w-7xl flex-col overflow-hidden rounded-md border border-border bg-canvas p-6 shadow-2xl"
         onPointerDown={(event) => {
           event.stopPropagation();
         }}
