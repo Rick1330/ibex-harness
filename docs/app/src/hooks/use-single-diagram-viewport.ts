@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { useDiagramPointerDrag } from "@/hooks/use-diagram-pointer-drag";
 import {
   DIAGRAM_FIT_MIN_SCALE,
   DIAGRAM_MAX_SCALE,
@@ -37,12 +38,28 @@ function attachWheelZoom(
   };
 }
 
+function fitSvgInContainer(
+  container: HTMLDivElement,
+  svgSource: SVGSVGElement | string,
+  applyFitTransform: (scale: number, position: DiagramPosition) => void,
+) {
+  if (container.clientWidth <= 0 || container.clientHeight <= 0) {
+    return false;
+  }
+  const transform = fitTransformForContainer(
+    svgSource,
+    container.clientWidth,
+    container.clientHeight,
+  );
+  if (!transform) return false;
+  applyFitTransform(transform.scale, transform.position);
+  return true;
+}
+
 export function useSingleDiagramViewport({ enabled }: SingleViewportOptions) {
   const canvasRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(1);
   const [position, setPosition] = useState<DiagramPosition>({ x: 0, y: 0 });
-  const [isDragging, setIsDragging] = useState(false);
-  const dragStart = useRef<DiagramPosition>({ x: 0, y: 0 });
 
   const zoomIn = useCallback(() => {
     setScale((current) => clampScale(current + BUTTON_ZOOM_STEP));
@@ -66,47 +83,17 @@ export function useSingleDiagramViewport({ enabled }: SingleViewportOptions) {
     (svgSource: SVGSVGElement | string | null) => {
       const container = canvasRef.current;
       if (!container || !svgSource) return false;
-      if (container.clientWidth <= 0 || container.clientHeight <= 0) {
-        return false;
-      }
-      const transform = fitTransformForContainer(
-        svgSource,
-        container.clientWidth,
-        container.clientHeight,
-      );
-      if (!transform) return false;
-      applyFitTransform(transform.scale, transform.position);
-      return true;
+      return fitSvgInContainer(container, svgSource, applyFitTransform);
     },
     [applyFitTransform],
   );
 
-  const handlePointerDown = useCallback(
-    (clientX: number, clientY: number) => {
-      if (!enabled) return;
-      setIsDragging(true);
-      dragStart.current = {
-        x: clientX - position.x,
-        y: clientY - position.y,
-      };
-    },
-    [enabled, position.x, position.y],
-  );
-
-  const handlePointerMove = useCallback(
-    (clientX: number, clientY: number) => {
-      if (!isDragging || !enabled) return;
-      setPosition({
-        x: clientX - dragStart.current.x,
-        y: clientY - dragStart.current.y,
-      });
-    },
-    [enabled, isDragging],
-  );
-
-  const stopDragging = useCallback(() => {
-    setIsDragging(false);
-  }, []);
+  const {
+    handlePointerDown,
+    handlePointerMove,
+    isDragging,
+    stopDragging,
+  } = useDiagramPointerDrag({ enabled, position, setPosition });
 
   useEffect(() => {
     const element = canvasRef.current;

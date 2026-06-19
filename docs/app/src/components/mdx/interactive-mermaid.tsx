@@ -32,29 +32,13 @@ function resolveSvgFromHost(
   return normalizeMountedSvg(host) ?? host.querySelector("svg");
 }
 
-export function DeepWikiStyleWrapper({
-  children,
-  svg,
-  rendering = false,
-  hostRef,
-  onCollapse,
-}: DeepWikiStyleWrapperProps) {
-  const rootRef = useRef<HTMLDivElement>(null);
-  const viewports = useDiagramViewports();
-  const modalHostRef = useRef<HTMLDivElement>(null);
-  const {
-    fitInline,
-    fitModal,
-    fullscreenButtonRef,
-    inline,
-    isOpen,
-    openModal,
-  } = viewports;
-
-  useClickOutside(rootRef, Boolean(onCollapse) && !isOpen, () => {
-    onCollapse?.();
-  });
-
+function useDiagramFitHandlers(
+  hostRef: RefObject<HTMLDivElement | null>,
+  modalHostRef: RefObject<HTMLDivElement | null>,
+  svg: string | null,
+  fitInline: (source: SVGSVGElement | string | null) => void,
+  fitModal: (source: SVGSVGElement | string | null) => void,
+) {
   const runFitInline = useCallback(() => {
     const svgEl = resolveSvgFromHost(hostRef.current);
     if (svgEl) {
@@ -71,7 +55,90 @@ export function DeepWikiStyleWrapper({
       return;
     }
     if (svg) fitModal(svg);
-  }, [fitModal, svg]);
+  }, [fitModal, modalHostRef, svg]);
+
+  return { runFitInline, runFitModal };
+}
+
+type DiagramInlinePanelProps = Readonly<{
+  rootRef: RefObject<HTMLDivElement | null>;
+  fullscreenButtonRef: RefObject<HTMLButtonElement | null>;
+  inline: ReturnType<typeof useDiagramViewports>["inline"];
+  rendering: boolean;
+  svg: string | null;
+  onCollapse?: () => void;
+  onFit: () => void;
+  onFullscreen: () => void;
+  children: ReactNode;
+}>;
+
+function DiagramInlinePanel({
+  rootRef,
+  fullscreenButtonRef,
+  inline,
+  rendering,
+  svg,
+  onCollapse,
+  onFit,
+  onFullscreen,
+  children,
+}: DiagramInlinePanelProps) {
+  return (
+    <div
+      ref={rootRef}
+      className="relative my-6 w-full rounded-md border border-border bg-panel p-4"
+    >
+      <div className="absolute end-3 top-3 z-10">
+        <DiagramToolbar
+          fullscreenButtonRef={fullscreenButtonRef}
+          fullscreenDisabled={rendering || !svg}
+          onClose={onCollapse}
+          onFit={onFit}
+          onFullscreen={onFullscreen}
+          onZoomIn={inline.zoomIn}
+          onZoomOut={inline.zoomOut}
+          showClose={Boolean(onCollapse)}
+          showFullscreen
+        />
+      </div>
+
+      <DiagramCanvas className="h-[420px] w-full" viewport={inline}>
+        {children}
+      </DiagramCanvas>
+    </div>
+  );
+}
+
+export function DeepWikiStyleWrapper({
+  children,
+  svg,
+  rendering = false,
+  hostRef,
+  onCollapse,
+}: DeepWikiStyleWrapperProps) {
+  const rootRef = useRef<HTMLDivElement>(null);
+  const modalHostRef = useRef<HTMLDivElement>(null);
+  const viewports = useDiagramViewports();
+  const {
+    fitInline,
+    fitModal,
+    fullscreenButtonRef,
+    inline,
+    isOpen,
+    openModal,
+  } = viewports;
+
+  useClickOutside(rootRef, Boolean(onCollapse) && !isOpen, () => {
+    onCollapse?.();
+  });
+
+  const { runFitInline, runFitModal } = useDiagramFitHandlers(
+    hostRef,
+    modalHostRef,
+    svg,
+    fitInline,
+    fitModal,
+  );
 
   useDiagramAutoFit({
     enabled: Boolean(svg) && !rendering,
@@ -90,28 +157,18 @@ export function DeepWikiStyleWrapper({
 
   return (
     <>
-      <div
-        ref={rootRef}
-        className="relative my-6 w-full rounded-md border border-border bg-panel p-4"
+      <DiagramInlinePanel
+        fullscreenButtonRef={fullscreenButtonRef}
+        inline={inline}
+        onCollapse={onCollapse}
+        onFit={runFitInline}
+        onFullscreen={handleOpenModal}
+        rendering={rendering}
+        rootRef={rootRef}
+        svg={svg}
       >
-        <div className="absolute end-3 top-3 z-10">
-          <DiagramToolbar
-            fullscreenButtonRef={fullscreenButtonRef}
-            fullscreenDisabled={rendering || !svg}
-            onClose={onCollapse}
-            onFit={runFitInline}
-            onFullscreen={handleOpenModal}
-            onZoomIn={inline.zoomIn}
-            onZoomOut={inline.zoomOut}
-            showClose={Boolean(onCollapse)}
-            showFullscreen
-          />
-        </div>
-
-        <DiagramCanvas className="h-[420px] w-full" viewport={inline}>
-          {children}
-        </DiagramCanvas>
-      </div>
+        {children}
+      </DiagramInlinePanel>
 
       {svg ? (
         <DiagramFullscreenModal

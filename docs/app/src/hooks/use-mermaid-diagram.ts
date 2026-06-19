@@ -1,65 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MutableRefObject } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { useDiagramTheme } from "@/hooks/use-diagram-theme";
 import { hashString } from "@/lib/hash-string";
 import { normalizeMermaidChart } from "@/lib/normalize-mermaid-chart";
-import {
-  cleanStaleMermaidNodes,
-  createMermaidRenderId,
-  mermaidErrorMessage,
-  normalizeMountedSvg,
-  renderMermaidChart,
-} from "@/lib/mermaid-render";
+import { renderDiagramToHost } from "@/lib/mermaid-render";
 
-type RenderState = Readonly<{
-  setRendering: (value: boolean) => void;
-  setError: (value: string) => void;
-  setSvg: (value: string | null) => void;
-}>;
-
-async function renderDiagramToHost(
-  host: HTMLDivElement,
-  diagramKey: string,
-  chartHash: string,
-  normalizedChart: string,
-  isDark: boolean,
-  renderIdRef: MutableRefObject<string>,
-  state: RenderState,
-) {
-  const uniqueId = createMermaidRenderId(diagramKey, chartHash);
-  renderIdRef.current = uniqueId;
-  state.setRendering(true);
-  state.setError("");
-
-  cleanStaleMermaidNodes(`mermaid-${diagramKey}`);
-
-  try {
-    const isCurrent = () => renderIdRef.current === uniqueId;
-    const themedSvg = await renderMermaidChart(host, {
-      uniqueId,
-      normalizedChart,
-      isDark,
-      isCurrent,
-    });
-    if (!isCurrent()) return;
-    normalizeMountedSvg(host);
-    if (themedSvg) {
-      state.setSvg(themedSvg);
-      return;
-    }
-    if (!host.querySelector("svg")) {
-      throw new Error("Diagram render produced no output");
-    }
-  } catch (err) {
-    if (renderIdRef.current !== uniqueId) return;
-    state.setError(mermaidErrorMessage(err));
-  } finally {
-    if (renderIdRef.current === uniqueId) {
-      state.setRendering(false);
-    }
-  }
+function ignoreCancelledRender() {
+  // Layout effect may re-run before an in-flight render completes.
 }
 
 export function useMermaidDiagram(chart: string, stableId?: string) {
@@ -89,20 +38,20 @@ export function useMermaidDiagram(chart: string, stableId?: string) {
   const renderDiagram = useCallback(async () => {
     const host = hostRef.current;
     if (!host) return;
-    await renderDiagramToHost(
+    await renderDiagramToHost({
       host,
       diagramKey,
       chartHash,
       normalizedChart,
       isDark,
       renderIdRef,
-      { setRendering, setError, setSvg },
-    );
+      state: { setRendering, setError, setSvg },
+    });
   }, [chartHash, diagramKey, isDark, normalizedChart]);
 
   useLayoutEffect(() => {
     if (!mounted || !hostReady) return;
-    renderDiagram().catch(() => undefined);
+    renderDiagram().catch(ignoreCancelledRender);
   }, [hostReady, mounted, renderDiagram]);
 
   return {

@@ -3,7 +3,6 @@
  * Requires @mermaid-js/mermaid-cli (mmdc). On Windows, uses system Chrome when
  * available; set PUPPETEER_EXECUTABLE_PATH if mmdc cannot find a browser.
  */
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -13,32 +12,13 @@ import {
   collectMermaidCharts,
 } from "./lib/diagram-build.mjs";
 import { applyMermaidSvgTheme } from "./lib/mermaid-theme-css.mjs";
+import { mmdcFailureMessage, runMmdc } from "./lib/run-mmdc.mjs";
 
 const appRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const contentRoot = path.join(appRoot, "content");
 const outDir = path.join(appRoot, "public", "diagrams");
 const mmdcConfigPath = path.join(appRoot, "scripts", "mermaid-mmdc-config.json");
 const puppeteerConfigPath = path.join(appRoot, "scripts", "puppeteer-config.json");
-
-function resolveMmdcBinary() {
-  const binName = process.platform === "win32" ? "mmdc.cmd" : "mmdc";
-  const localBin = path.join(appRoot, "node_modules", ".bin", binName);
-  if (fs.existsSync(localBin)) return localBin;
-
-  const rootBin = path.join(
-    appRoot,
-    "..",
-    "..",
-    "node_modules",
-    ".bin",
-    binName,
-  );
-  if (fs.existsSync(rootBin)) return rootBin;
-
-  throw new Error(
-    "mmdc not found. Install @mermaid-js/mermaid-cli in docs/app devDependencies.",
-  );
-}
 
 function resolveChromeExecutable() {
   if (process.env.PUPPETEER_EXECUTABLE_PATH) {
@@ -76,6 +56,25 @@ function resolveChromeExecutable() {
   return null;
 }
 
+function buildMmdcArgs(inputPath, outputPath) {
+  const args = [
+    "-i",
+    inputPath,
+    "-o",
+    outputPath,
+    "-b",
+    "transparent",
+    "-c",
+    mmdcConfigPath,
+  ];
+
+  if (process.env.CI || process.env.GITHUB_ACTIONS) {
+    args.push("-p", puppeteerConfigPath);
+  }
+
+  return args;
+}
+
 function renderBaseSvg(chart) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ibex-mermaid-"));
   const inputPath = path.join(tmpDir, "chart.mmd");
@@ -84,50 +83,15 @@ function renderBaseSvg(chart) {
 
   try {
     fs.writeFileSync(inputPath, chart, "utf8");
-    const mmdc = resolveMmdcBinary();
     const env = { ...process.env };
     if (chromePath) {
       env.PUPPETEER_EXECUTABLE_PATH = chromePath;
     }
 
-    // Windows .cmd shims require shell; paths are temp files under our control only.
-    const useShell = process.platform === "win32";
-
-    const mmdcArgs = [
-      "-i",
-      inputPath,
-      "-o",
-      outputPath,
-      "-b",
-      "transparent",
-      "-c",
-      mmdcConfigPath,
-    ];
-
-    if (process.env.CI || process.env.GITHUB_ACTIONS) {
-      mmdcArgs.push("-p", puppeteerConfigPath);
-    }
-
-    const result = spawnSync(
-      mmdc,
-      mmdcArgs,
-      {
-        cwd: appRoot,
-        encoding: "utf8",
-        env,
-        shell: useShell,
-        windowsHide: true,
-      },
-    );
+    const result = runMmdc(appRoot, buildMmdcArgs(inputPath, outputPath), env);
 
     if (result.status !== 0) {
-      const detail = [result.stderr, result.stdout].filter(Boolean).join("\n");
-      const hint = chromePath
-        ? ""
-        : "\nHint: set PUPPETEER_EXECUTABLE_PATH to your Chrome/Chromium binary.";
-      throw new Error(
-        detail || `mmdc exited with code ${result.status ?? "unknown"}${hint}`,
-      );
+      throw new Error(mmdcFailureMessage(result, chromePath));
     }
 
     if (!fs.existsSync(outputPath)) {

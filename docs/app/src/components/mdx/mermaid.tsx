@@ -2,9 +2,11 @@
 
 import dynamic from "next/dynamic";
 
-import { MermaidStaticShell } from "@/components/mdx/mermaid-static-shell";
+import {
+  MermaidPlaceholder,
+} from "@/components/mdx/mermaid-diagram-states";
+import { MermaidProduction } from "@/components/mdx/mermaid-production";
 import { useDiagramChart } from "@/hooks/use-diagram-chart";
-import { useStaticDiagram } from "@/hooks/use-static-diagram";
 import { cn } from "@/lib/cn";
 
 const isDev = process.env.NODE_ENV === "development";
@@ -24,18 +26,6 @@ type MermaidProps = Readonly<{
   className?: string;
 }>;
 
-function MermaidPlaceholder({ className }: Readonly<{ className?: string }> = {}) {
-  return (
-    <div
-      aria-hidden
-      className={cn(
-        "mermaid-diagram my-8 min-h-[12rem] rounded-[4px] border border-border bg-panel",
-        className,
-      )}
-    />
-  );
-}
-
 function MermaidChartError({ className }: Readonly<{ className?: string }>) {
   return (
     <figure className={cn("mermaid-diagram my-10 not-prose", className)}>
@@ -47,15 +37,7 @@ function MermaidChartError({ className }: Readonly<{ className?: string }>) {
   );
 }
 
-function MermaidClientFallback({
-  diagramKey,
-  caption,
-  className,
-}: Readonly<{
-  diagramKey: string;
-  caption?: string;
-  className?: string;
-}>) {
+function MermaidDevClient({ id: diagramKey, caption, className }: MermaidProps) {
   const chartSource = useDiagramChart(diagramKey, true);
 
   if (chartSource.loading) {
@@ -77,53 +59,19 @@ function MermaidClientFallback({
 export function Mermaid({ id: diagramKey, caption, className }: MermaidProps) {
   if (isDev) {
     return (
-      <MermaidClientFallback
+      <MermaidDevClient
         caption={caption}
-        className={className}
-        diagramKey={diagramKey}
-      />
-    );
-  }
-
-  const staticDiagram = useStaticDiagram(diagramKey, { enabled: true });
-  const chartSource = useDiagramChart(
-    diagramKey,
-    staticDiagram.failed || staticDiagram.loading,
-  );
-
-  if (staticDiagram.failed) {
-    if (chartSource.loading) {
-      return <MermaidPlaceholder className={className} />;
-    }
-    if (!chartSource.chart || chartSource.failed) {
-      return <MermaidChartError className={className} />;
-    }
-    return (
-      <MermaidInline
-        caption={caption}
-        chart={chartSource.chart}
         className={className}
         id={diagramKey}
       />
     );
   }
 
-  if (staticDiagram.loading) {
-    return <MermaidPlaceholder className={className} />;
-  }
-
-  if (staticDiagram.svg) {
-    return (
-      <figure className={cn("mermaid-diagram my-10 not-prose", className)}>
-        <MermaidStaticShell svg={staticDiagram.svg} />
-        {caption ? (
-          <figcaption className="mt-3 text-center text-sm text-text-secondary">
-            {caption}
-          </figcaption>
-        ) : null}
-      </figure>
-    );
-  }
-
-  return <MermaidChartError className={className} />;
+  return (
+    <MermaidProduction
+      caption={caption}
+      className={className}
+      diagramKey={diagramKey}
+    />
+  );
 }
