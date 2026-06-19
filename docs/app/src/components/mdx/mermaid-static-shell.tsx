@@ -3,10 +3,9 @@
 import { Maximize2 } from "lucide-react";
 import { useCallback, useEffect, useRef } from "react";
 
-import {
-  DiagramFullscreenModal,
-} from "@/components/mdx/diagram-fullscreen-modal";
+import { DiagramFullscreenModal } from "@/components/mdx/diagram-fullscreen-modal";
 import { useDiagramViewports } from "@/hooks/use-diagram-viewport";
+import { mountSvgString } from "@/lib/mermaid-render";
 import { cn } from "@/lib/cn";
 
 type MermaidStaticShellProps = Readonly<{
@@ -17,7 +16,14 @@ type MermaidStaticShellProps = Readonly<{
 export function MermaidStaticShell({ svg, className }: MermaidStaticShellProps) {
   const viewports = useDiagramViewports();
   const modalHostRef = useRef<HTMLDivElement>(null);
+  const staticHostRef = useRef<HTMLDivElement>(null);
   const { fitModal, isOpen, openModal } = viewports;
+
+  useEffect(() => {
+    const host = staticHostRef.current;
+    if (!host) return;
+    mountSvgString(host, svg);
+  }, [svg]);
 
   const runFitModal = useCallback(() => {
     fitModal(svg);
@@ -32,7 +38,7 @@ export function MermaidStaticShell({ svg, className }: MermaidStaticShellProps) 
     <>
       <div
         className={cn(
-          "relative my-6 w-full rounded-xl border border-border bg-panel p-4",
+          "relative my-6 w-full rounded-md border border-border bg-panel p-4",
           className,
         )}
       >
@@ -41,7 +47,7 @@ export function MermaidStaticShell({ svg, className }: MermaidStaticShellProps) 
             type="button"
             aria-label="Open fullscreen diagram viewer"
             className={cn(
-              "inline-flex size-8 items-center justify-center rounded-md border border-border bg-panel/30 text-text-secondary transition-colors",
+              "inline-flex size-8 items-center justify-center rounded-sm border border-border bg-panel/30 text-text-secondary transition-colors duration-150 ease-out",
               "hover:bg-panel-raised hover:text-text-primary",
             )}
             onClick={openModal}
@@ -50,9 +56,9 @@ export function MermaidStaticShell({ svg, className }: MermaidStaticShellProps) 
           </button>
         </div>
         <div
+          ref={staticHostRef}
           className="diagram-static-svg overflow-x-auto rounded-[4px] border border-border/60 bg-panel p-4"
           data-diagram-static
-          dangerouslySetInnerHTML={{ __html: svg }}
         />
       </div>
 

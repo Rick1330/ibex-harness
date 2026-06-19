@@ -7,19 +7,14 @@ import { useDiagramChart } from "@/hooks/use-diagram-chart";
 import { useStaticDiagram } from "@/hooks/use-static-diagram";
 import { cn } from "@/lib/cn";
 
-const MermaidInteractive = dynamic(
+const isDev = process.env.NODE_ENV === "development";
+
+const MermaidInline = dynamic(
   () =>
-    import("@/components/mdx/mermaid-interactive").then(
-      (mod) => mod.MermaidInteractive,
-    ),
+    import("@/components/mdx/mermaid-inline").then((mod) => mod.MermaidInline),
   {
     ssr: false,
-    loading: () => (
-      <div
-        aria-hidden
-        className="mermaid-diagram my-8 min-h-[12rem] animate-pulse rounded-[4px] border border-border bg-panel"
-      />
-    ),
+    loading: () => <MermaidPlaceholder />,
   },
 );
 
@@ -29,7 +24,7 @@ type MermaidProps = Readonly<{
   className?: string;
 }>;
 
-function MermaidPlaceholder({ className }: Readonly<{ className?: string }>) {
+function MermaidPlaceholder({ className }: Readonly<{ className?: string }> = {}) {
   return (
     <div
       aria-hidden
@@ -52,9 +47,49 @@ function MermaidChartError({ className }: Readonly<{ className?: string }>) {
   );
 }
 
+function MermaidClientFallback({
+  diagramKey,
+  caption,
+  className,
+}: Readonly<{
+  diagramKey: string;
+  caption?: string;
+  className?: string;
+}>) {
+  const chartSource = useDiagramChart(diagramKey, true);
+
+  if (chartSource.loading) {
+    return <MermaidPlaceholder className={className} />;
+  }
+  if (!chartSource.chart || chartSource.failed) {
+    return <MermaidChartError className={className} />;
+  }
+  return (
+    <MermaidInline
+      caption={caption}
+      chart={chartSource.chart}
+      className={className}
+      id={diagramKey}
+    />
+  );
+}
+
 export function Mermaid({ id: diagramKey, caption, className }: MermaidProps) {
-  const staticDiagram = useStaticDiagram(diagramKey);
-  const chartSource = useDiagramChart(diagramKey, staticDiagram.failed);
+  if (isDev) {
+    return (
+      <MermaidClientFallback
+        caption={caption}
+        className={className}
+        diagramKey={diagramKey}
+      />
+    );
+  }
+
+  const staticDiagram = useStaticDiagram(diagramKey, { enabled: true });
+  const chartSource = useDiagramChart(
+    diagramKey,
+    staticDiagram.failed || staticDiagram.loading,
+  );
 
   if (staticDiagram.failed) {
     if (chartSource.loading) {
@@ -64,7 +99,7 @@ export function Mermaid({ id: diagramKey, caption, className }: MermaidProps) {
       return <MermaidChartError className={className} />;
     }
     return (
-      <MermaidInteractive
+      <MermaidInline
         caption={caption}
         chart={chartSource.chart}
         className={className}

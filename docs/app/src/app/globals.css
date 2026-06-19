@@ -1159,6 +1159,8 @@ nav a:has(.wordmark) {
 
 .mermaid-container svg,
 [data-mermaid] svg {
+  max-width: 100% !important;
+  height: auto !important;
   font-family: inherit !important;
 }
 
