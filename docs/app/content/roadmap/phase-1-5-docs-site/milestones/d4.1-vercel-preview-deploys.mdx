@@ -2,7 +2,7 @@
 title: "d4.1 Vercel Preview"
 description: "Local `pnpm docs:dev` cannot catch Vercel-specific edge OG, search API, or build output issues. Reviewers need preview URLs on every docs PR before production domain attach. DNS `docs` CNAME exists but production attach waits until D.6.2 after visual QA."
 summary: "Local `pnpm docs:dev` cannot catch Vercel-specific edge OG, search API, or build output issues. Reviewers need preview URLs on every docs PR before production domain attach. DNS `docs` CNAME exists but production attach waits until D.6.2 after visual QA."
-status: "planned"
+status: "superseded"
 milestoneId: "d4.1"
 goal: "[D.4](/roadmap/phase-1-5-docs-site/goals)"
 estimatedEffort: "1 hour"
@@ -12,7 +12,7 @@ fullTitle: "Milestone D.4.1 — Vercel preview deploys"
 
 # Milestone D.4.1 — Vercel preview deploys
 
-**Status:** Planned  
+**Status:** Superseded  
 **Goal:** [D.4](/roadmap/phase-1-5-docs-site/goals)  
 **Phase:** 1.5 — Docs Site  
 **Wave:** 10  
@@ -23,7 +23,19 @@ Spec detail: [MASTER_BRIEF.md](/roadmap/phase-1-5-docs-site/master-brief) Part D
 
 ---
 
-## Why This Milestone Exists
+## Superseded by
+
+This milestone is **superseded** (2026-06-22). Docs deploy via **GitHub Actions** + **Cloudflare Workers** instead of Vercel preview deploys:
+
+- [`.github/workflows/docs-deploy.yml`](../../../../../../.github/workflows/docs-deploy.yml) — production deploy on `main` push + `workflow_dispatch`
+- [`DEPLOY_CLOUDFLARE.md`](../../../../DEPLOY_CLOUDFLARE.md) — operator runbook
+- PRs [#129](https://github.com/Rick1330/ibex-harness/pull/129)–[#133](https://github.com/Rick1330/ibex-harness/pull/133)
+
+Pre-merge validation: `docs-build` CI job (typecheck, test, build) + optional `workflow_dispatch` deploy with post-deploy smoke test on `*.workers.dev`.
+
+---
+
+## Why This Milestone Existed
 
 Local `pnpm docs:dev` cannot catch Vercel-specific edge OG, search API, or build output issues. Reviewers need preview URLs on every docs PR before production domain attach.
 

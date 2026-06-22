@@ -1,15 +1,15 @@
 ---
 title: "Current State"
-description: "Last updated: 2026-06-15. Git SHA (`main`): `4b32098` — Wave 13 docs site (#123). Current phase: Phase 1.5 — Docs Site (In progress). Current goal: Wave 9 — D.3.3 five-minute quickstart polish. Next backend milestone (blocked): 2.1.1 Provider interface and registry — after Phase 1.5 launch."
-summary: "Last updated: 2026-06-15. Git SHA (`main`): `4b32098` — Wave 13 docs site (#123). Current phase: Phase 1.5 — Docs Site (In progress). Current goal: Wave 9 — D.3.3 five-minute quickstart polish. Next backend milestone (blocked): 2.1.1 Provider interface and registry — after Phase 1.5 launch."
+description: "Last updated: 2026-06-22. Git SHA (`main`): `ded5ccd` — Cloudflare Workers docs launch (#129–#133). Current phase: Phase 1.5 — Docs Site (In progress). Current goal: Wave 11–12 — D.3.3 quickstart polish; D.5.1 visual QA. Next backend milestone (blocked): 2.1.1 Provider interface and registry — after Phase 1.5 launch."
+summary: "Last updated: 2026-06-22. Git SHA (`main`): `ded5ccd` — Cloudflare Workers docs launch (#129–#133). Current phase: Phase 1.5 — Docs Site (In progress). Current goal: Wave 11–12 — D.3.3 quickstart polish; D.5.1 visual QA. Next backend milestone (blocked): 2.1.1 Provider interface and registry — after Phase 1.5 launch."
 ---
 
 # Current State
 
-**Last updated:** 2026-06-15  
-**Git SHA (`main`):** `4b32098` — Wave 13 docs site (#123), codecov-action (#124)  
+**Last updated:** 2026-06-22  
+**Git SHA (`main`):** `ded5ccd` — Cloudflare Workers docs launch (#129–#133)  
 **Current phase:** Phase 1.5 — Docs Site (**In progress**)  
-**Current goal:** Wave 9 — [D.3.3](/roadmap/phase-1-5-docs-site/milestones/d3.3-quickstart-five-minute-path) five-minute quickstart polish  
+**Current goal:** Wave 11–12 — [D.3.3](/roadmap/phase-1-5-docs-site/milestones/d3.3-quickstart-five-minute-path) quickstart polish; [D.5.1](/roadmap/phase-1-5-docs-site/milestones/d5.1-visual-qa-sweep) visual QA  
 **Next backend milestone (blocked):** [2.1.1 Provider interface and registry](/roadmap/phase-2-single-provider/milestones/2.1.1-provider-interface-and-registry) — after Phase 1.5 launch  
 **Phase 1 exit audit:** [PHASE1_EXIT_AUDIT.md](/roadmap/phase-1-core-platform/phase1-exit-audit)  
 **CI audit:** [CI_AUDIT.md](/roadmap/phase-1-core-platform/ci-audit)
@@ -46,7 +46,7 @@ summary: "Last updated: 2026-06-15. Git SHA (`main`): `4b32098` — Wave 13 docs
 - **Security integration gate (m1.5.1+):** 35+ SEC cases in `services/proxy/proxy_security_sec*_test.go` (path org, Redis fail-open, envelope sweep); CI `security-integration` with `-list` guard; [SECURITY.md](/roadmap/SECURITY) Appendix A
 - **Handwritten coverage gate (#92):** merged unit+integration Go coverage ≥80% on hand-written code (`packages/proto/gen/go` excluded); enforced by CI `coverage` job via `infra/scripts/coverage-gate.sh`; see [CI_AUDIT.md](/roadmap/phase-1-core-platform/ci-audit) and [COVERAGE_GAP_REGISTER.md](/roadmap/phase-1-core-platform/COVERAGE_GAP_REGISTER)
 - **Trunk Flaky Tests (#94):** all Go CI test jobs emit JUnit via gotestsum and upload to Trunk (`ibexharness` org); per-job variants; informational only (`continue-on-error`); see [CI_AUDIT.md](/roadmap/phase-1-core-platform/ci-audit) § Trunk
-- **Landing + DNS (pre–Phase 1.5):** `ibexharness.com` live ([marvel-scape](https://github.com/Rick1330/marvel-scape)); Cloudflare `docs` CNAME ready for `docs.ibexharness.com` — see [Phase 1.5 roadmap](/roadmap/phase-1-5-docs-site)
+- **Landing + DNS (pre–Phase 1.5):** `ibexharness.com` live ([marvel-scape](https://github.com/Rick1330/marvel-scape)); Cloudflare DNS for `docs.ibexharness.com` — see [Phase 1.5 roadmap](/roadmap/phase-1-5-docs-site)
 - **Phase 1.5 Wave 0 (#96):** roadmap scaffold, ADR-0023, 21 milestone specs, `MASTER_BRIEF.md`, repo-guards allows `docs/app/` + pnpm root files
 - **Phase 1.5 D.1.1 (#98):** pnpm + Turborepo at repo root; public site at `docs/app/`
 - **Phase 1.5 D.1.2 (#100):** `.cursor/rules/docs-site.mdc`, `.nvmrc`, `docs/app/CONTRIBUTING.md`
@@ -61,6 +61,8 @@ summary: "Last updated: 2026-06-15. Git SHA (`main`): `4b32098` — Wave 13 docs
 - **Phase 1.5 D.3.2 wave 1 (#117):** Getting Started content — introduction, concepts, FAQ, quickstart stubs with Callout, Steps, runnable snippets
 - **Phase 1.5 D.3.2 wave 2 (#121):** Proxy + Auth content — 10 pages with Callout/Steps, curl examples, Phase 1 honesty on stubbed provider paths
 - **Phase 1.5 Wave 13 (#123):** Public docs IA expanded to 11 sections (architecture, security, operations, glossary, deployment, changelog); ADR-0002–0023 on `/docs/adr`; manual API reference (auth-gRPC, chat-completions, proxy-health, errors); full roadmap MDX corpus (Phase 0–5 + Phase 3 memory engine); `/blog` and `/releases`; roadmap hub, semantic sidebar icons, site nav UX; engineering pointers to `docs/app/content/`; contributor migration scripts in `ibex-harness-workspace/docs-app-scripts/`; `pnpm docs:build` — 274 static pages
+- **Phase 1.5 deploy (#129–#133):** ASCII Mermaid (`beautiful-mermaid`), Vitest, OpenNext + `wrangler.jsonc`; GitHub Actions deploy ([`docs-deploy.yml`](../../.github/workflows/docs-deploy.yml)) to Cloudflare Worker `ibex-harness-docs`; `production` environment secrets; pnpm/Next.js CI cache + `detect-changes` path filter; Workers runtime fix (`page-meta.ts` skips `statSync` on Workers); **live** at [docs.ibexharness.com](https://docs.ibexharness.com)
+- **Docs CI (`docs-build`):** typecheck, Vitest, `build:clean` on docs path changes in main CI workflow
 - **Codecov action (#124):** `codecov/codecov-action` v7.0.0 in CI workflow
 - **Codecov:** Go coverage upload; badge in README; patch/project thresholds aligned to 80% handwritten scope
 - **Integration test infra (m1.0.1):** `infra/testing/testutil`, `make test-integration`, compose test (5433) or optional `testcontainers` build tag
@@ -82,8 +84,8 @@ summary: "Last updated: 2026-06-15. Git SHA (`main`): `4b32098` — Wave 13 docs
 ## Next 3 immediate tasks
 
 1. **Phase 1.5 Wave 9 — D.3.3** — Five-minute quickstart polish (`feat/d3-3-quickstart`)
-2. **Phase 1.5 Wave 10 — D.4.1** — Vercel preview deploys (`feat/d4-1-vercel-previews`)
-3. **Phase 2 blocked** — [2.1.1](/roadmap/phase-2-single-provider/milestones/2.1.1-provider-interface-and-registry) until Phase 1.5 launch (Wave 12)
+2. **Phase 1.5 Wave 12 — D.5.1** — Visual QA sweep (`feat/d5-1-visual-qa`)
+3. **Phase 1.5 Wave 11 — D.5.2** — `verify_phase15.sh` against production URL (`feat/d5-2-verify-script`)
 
 ## Verify current state locally
 
