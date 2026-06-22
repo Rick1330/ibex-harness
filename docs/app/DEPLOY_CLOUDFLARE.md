@@ -72,6 +72,8 @@ pnpm --filter docs preview:cf    # Local Workers runtime preview
 
 OpenNext warns on native Windows; CI (Ubuntu) is the source of truth for deploy bundles.
 
+Root [`.npmrc`](../../.npmrc) uses `node-linker=hoisted` so OpenNext can bundle the pnpm monorepo on Workers ([opennextjs-cloudflare#719](https://github.com/opennextjs/opennextjs-cloudflare/issues/719)).
+
 ## Deploy
 
 | Trigger | When |
