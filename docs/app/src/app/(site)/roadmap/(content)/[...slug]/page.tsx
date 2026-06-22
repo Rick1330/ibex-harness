@@ -16,7 +16,7 @@ import { roadmapSource } from "@/lib/source";
 import { getMDXComponents } from "@/mdx-components";
 
 type PageProps = Readonly<{
-  params: Promise<{ slug?: string[] }>;
+  params: Promise<{ slug: string[] }>;
 }>;
 
 export const dynamic = "force-static";

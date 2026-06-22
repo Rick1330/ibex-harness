@@ -1,0 +1,86 @@
+name: Docs Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "package.json"
+      - ".npmrc"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "turbo.json"
+      - ".github/workflows/docs-deploy.yml"
+      - ".github/actions/setup-pnpm-docs/**"
+      - ".github/scripts/docs-smoke.sh"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: deploy-docs-cloudflare
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: production
+      url: https://docs.ibexharness.com
+    env:
+      NEXT_PUBLIC_SITE_URL: https://docs.ibexharness.com
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-pnpm-docs
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Cache Next.js build
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: docs/app/.next/cache
+          key: ${{ runner.os }}-nextjs-${{ hashFiles('pnpm-lock.yaml', 'docs/app/**') }}
+          restore-keys: |
+            ${{ runner.os }}-nextjs-${{ hashFiles('pnpm-lock.yaml') }}-
+
+      - name: Typecheck docs app
+        run: pnpm --filter docs typecheck
+
+      - name: Test docs components
+        run: pnpm --filter docs test
+
+      - name: Build docs (Next.js)
+        run: pnpm --filter docs build:clean
+
+      - name: Build docs (OpenNext for Cloudflare)
+        run: pnpm --filter docs build:cf
+
+      - name: Deploy to Cloudflare Workers
+        id: deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -o pipefail
+          pnpm --filter docs deploy:cf 2>&1 | tee deploy.log
+          BASE_URL=$(grep -oE 'https://[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\.workers\.dev' deploy.log | tail -1)
+          if [ -z "$BASE_URL" ]; then
+            echo "Could not parse workers.dev URL from deploy output"
+            exit 1
+          fi
+          echo "base_url=$BASE_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test deployed worker
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/docs-smoke.sh" "${{ steps.deploy.outputs.base_url }}"

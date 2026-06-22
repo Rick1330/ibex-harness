@@ -12,7 +12,7 @@ import { FileItem, FileTree, FolderItem } from "@/components/mdx/file-tree";
 import { Icon } from "@/components/mdx/icon";
 import { InstallCommand } from "@/components/mdx/install-command";
 import { Kbd, KbdCombo } from "@/components/mdx/kbd";
-import { Mermaid } from "@/components/mdx/mermaid-dynamic";
+import { MermaidAscii } from "@/components/mdx/mermaid-ascii";
 import { ParamTable } from "@/components/mdx/param-table";
 import { Pre } from "@/components/mdx/pre";
 import { ProcessSteps } from "@/components/mdx/process-steps";
@@ -31,7 +31,8 @@ export function getMDXComponents(components?: MDXComponents): MDXComponents {
     ProcessSteps,
     FeatureGrid,
     Diagram,
-    Mermaid,
+    Mermaid: MermaidAscii,
+    MermaidAscii,
     CodeTabs,
     CodeTab,
     Endpoint,
