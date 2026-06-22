@@ -1,33 +1,36 @@
 import type { Code, Parent, Root } from "mdast";
 import { visit } from "unist-util-visit";
 
-import { hashString } from "./hash-string";
+import { mermaidToAscii } from "./mermaid-to-ascii";
 
 type RemarkMdxMermaidOptions = {
   lang?: string;
 };
 
-type MdxMermaidAttribute = {
+type MdxJsxAttribute = {
   type: "mdxJsxAttribute";
   name: string;
   value: string;
 };
 
-type MdxMermaidNode = {
+type MdxMermaidAsciiNode = {
   type: "mdxJsxFlowElement";
-  name: "Mermaid";
-  attributes: MdxMermaidAttribute[];
+  name: "MermaidAscii";
+  attributes: MdxJsxAttribute[];
   children: [];
 };
 
-function buildMermaidMdxNode(chart: string, diagramId: string): MdxMermaidNode {
+function buildMermaidAsciiNode(source: string, ascii: string | null): MdxMermaidAsciiNode {
+  const attributes: MdxJsxAttribute[] = [
+    { type: "mdxJsxAttribute", name: "source", value: source },
+  ];
+  if (ascii) {
+    attributes.push({ type: "mdxJsxAttribute", name: "ascii", value: ascii });
+  }
   return {
     type: "mdxJsxFlowElement",
-    name: "Mermaid",
-    attributes: [
-      { type: "mdxJsxAttribute", name: "id", value: diagramId },
-      { type: "mdxJsxAttribute", name: "chart", value: chart },
-    ],
+    name: "MermaidAscii",
+    attributes,
     children: [],
   };
 }
@@ -36,13 +39,9 @@ function isMermaidBlock(node: Code, expectedLang: string): boolean {
   return node.lang === expectedLang;
 }
 
-function replaceWithMermaidNode(
-  parent: Parent,
-  index: number,
-  chart: string,
-): void {
-  const diagramId = `diagram-${hashString(chart)}`;
-  parent.children[index] = buildMermaidMdxNode(chart, diagramId) as (typeof parent.children)[number];
+function replaceWithAsciiNode(parent: Parent, index: number, chart: string): void {
+  const { ascii, source } = mermaidToAscii(chart);
+  parent.children[index] = buildMermaidAsciiNode(source, ascii) as (typeof parent.children)[number];
 }
 
 function transformMermaidCodeBlock(
@@ -53,8 +52,7 @@ function transformMermaidCodeBlock(
 ): void {
   if (index === undefined || !parent) return;
   if (!isMermaidBlock(node, lang)) return;
-
-  replaceWithMermaidNode(parent, index, node.value.trim());
+  replaceWithAsciiNode(parent, index, node.value);
 }
 
 export function remarkMdxMermaid(options: RemarkMdxMermaidOptions = {}) {
