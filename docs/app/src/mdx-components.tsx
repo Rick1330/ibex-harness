@@ -31,6 +31,7 @@ export function getMDXComponents(components?: MDXComponents): MDXComponents {
     ProcessSteps,
     FeatureGrid,
     Diagram,
+    Mermaid: MermaidAscii,
     MermaidAscii,
     CodeTabs,
     CodeTab,

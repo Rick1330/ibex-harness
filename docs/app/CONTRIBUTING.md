@@ -37,5 +37,10 @@ Full rules: [MASTER_BRIEF §0.1](../roadmap/phase-1-5-docs-site/MASTER_BRIEF.md)
 
 - [ ] Diff scoped to `docs/app/**` (or milestone docs)
 - [ ] `pnpm docs:build` passes
+- [ ] `pnpm --filter docs test` passes (Vitest)
 - [ ] Dark + light checked on touched pages
 - [ ] PR body uses [.github/pull_request_template.md](../../.github/pull_request_template.md)
+
+## Cloudflare deploy
+
+See [DEPLOY_CLOUDFLARE.md](./DEPLOY_CLOUDFLARE.md) for OpenNext build, GitHub Actions deploy, and token permissions.

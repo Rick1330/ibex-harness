@@ -7,6 +7,17 @@ export type MermaidAsciiProps = Readonly<{
   className?: string;
 }>;
 
+function mermaidAccessibleLabel(source: string): string {
+  const firstLine = source
+    .split("\n")
+    .map((line) => line.trim())
+    .find((line) => line.length > 0);
+  return firstLine
+    ? `Mermaid diagram: ${firstLine}`
+    : "Mermaid diagram";
+}
+
+/** Renders a Mermaid diagram as monospace ASCII art (build-time conversion). */
 export function MermaidAscii({
   ascii,
   source,
@@ -18,8 +29,10 @@ export function MermaidAscii({
 
   return (
     <figure className={cn("mermaid-ascii my-10 not-prose", className)}>
+      <span className="sr-only">{mermaidAccessibleLabel(source)}</span>
       <pre
-        className="overflow-x-auto rounded-md border border-border bg-panel p-4 font-mono text-xs leading-relaxed text-text-primary"
+        aria-hidden="true"
+        className="overflow-x-auto rounded-md border border-border bg-panel p-4 font-mono text-xs leading-none text-text-primary"
         data-mermaid-ascii
       >
         <code>{body}</code>
