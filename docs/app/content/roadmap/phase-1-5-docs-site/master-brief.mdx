@@ -436,12 +436,14 @@ without fighting the framework.
 > v4 will work eventually but introduces upgrade pain you do not need
 > mid-Phase-1.5.
 
-### C.3 Hosting: **Vercel** (no alternatives evaluated for this phase)
+### C.3 Hosting: **Cloudflare Workers** (amended 2026-06-22)
 
-- Native Next 15 support.
-- Edge runtime for `opengraph-image.tsx` and `/api/search`.
-- Preview deploys per-PR — required for design review.
-- Same vendor as v0 (used for landing page), simplifies billing.
+> **Original brief:** Vercel project `ibex-harness-docs`. **Superseded** by Cloudflare Workers + GitHub Actions deploy — see [ADR-0023](/docs/adr/0023-docs-site-architecture) and [`DEPLOY_CLOUDFLARE.md`](../../../DEPLOY_CLOUDFLARE.md).
+
+- [@opennextjs/cloudflare](https://opennext.js.org/cloudflare) bundles Next.js 15 for Workers.
+- Deploy only via `.github/workflows/docs-deploy.yml` (not Cloudflare Workers Builds Git).
+- Preview validation: `docs-build` CI on PRs + optional `workflow_dispatch` deploy smoke test.
+- Landing site remains on Vercel (`ibexdepo`); docs are a separate Worker.
 
 ---
 
