@@ -13,11 +13,9 @@ Deploy credentials live in GitHub → **Settings** → **Environments** → **`p
 | `CLOUDFLARE_API_TOKEN` | Scoped API token (Workers Scripts Edit, Account Read, Zone DNS Edit) |
 | `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account ID |
 
-The deploy workflow uses [`cloudflare/wrangler-action`](https://github.com/cloudflare/wrangler-action) so tokens are passed only to the deploy step (`with: apiToken`), not exported to the job environment for build/test steps.
+The deploy workflow passes `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` only on the deploy step (GitHub Environment `production` secrets), not to build/test steps. Cloudflare OIDC for Workers is not available yet — see [workers-sdk#11434](https://github.com/cloudflare/workers-sdk/discussions/11434). Rotate the scoped API token quarterly.
 
 For local manual deploy, use the same values from gitignored `ibexdepo/.env` — never commit tokens.
-
-**OIDC / short-lived tokens:** Cloudflare Workers does not yet support GitHub OIDC trusted publishing (no long-lived token). Track [workers-sdk#11434](https://github.com/cloudflare/workers-sdk/discussions/11434). Until then, rotate the scoped API token quarterly and keep it in the `production` environment only.
 
 ### API token permissions
 
