@@ -3,7 +3,7 @@ title: "ADR-0023: Docs site architecture (Phase 1.5)"
 description: "Architecture decision record 0023."
 adrId: "0023"
 status: "Accepted"
-date: "2026-06-12 (amended 2026-06-13 — `docs/app/` layout)"
+date: "2026-06-12 (amended 2026-06-22 — Cloudflare Workers hosting)"
 authors: "IBEX Harness team"
 ---
 
@@ -18,7 +18,7 @@ authors: "IBEX Harness team"
 - Marketing landing lives in a **separate repo** ([marvel-scape](https://github.com/Rick1330/marvel-scape)) at `ibexharness.com`.
 - Engineering documentation (~133 markdown files) lives in repo-root `docs/` for ADRs, roadmap, and internal audits.
 - Public product docs must ship at `docs.ibexharness.com` with a polished, Vercel/Linear-style design ([MASTER_BRIEF](/roadmap/phase-1-5-docs-site/master_brief)).
-- DNS `docs` CNAME already points to Vercel; no docs deployment exists yet.
+- DNS `docs` CNAME is managed in Cloudflare; production docs deploy to Cloudflare Workers (amended 2026-06-22).
 
 ## Decision
 
@@ -44,9 +44,13 @@ Public pages are authored as MDX; port/adapt from engineering sources per [CONTE
 
 ### 4) Hosting
 
-- **Vercel** project `ibex-harness-docs`, root directory `docs/app`.
+- **Cloudflare Workers** via [@opennextjs/cloudflare](https://opennext.js.org/cloudflare) (OpenNext + static assets).
+- Worker name: **`ibex-harness-docs`** ([`docs/app/wrangler.jsonc`](../../app/wrangler.jsonc)).
+- Deploy **only** through GitHub Actions [`.github/workflows/docs-deploy.yml`](../../../.github/workflows/docs-deploy.yml) — do **not** use Cloudflare Workers Builds Git (misconfigures monorepo root).
+- Credentials in GitHub Environment **`production`** (`CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`); see [`DEPLOY_CLOUDFLARE.md`](../../app/DEPLOY_CLOUDFLARE.md).
 - **Separate** from landing project `ibexdepo` — never attach `docs.ibexharness.com` to the landing Vercel project.
 - `NEXT_PUBLIC_SITE_URL=https://docs.ibexharness.com` in production.
+- **Amendment (2026-06-22):** Original decision was Vercel project `ibex-harness-docs`. Superseded by Cloudflare Workers + GHA deploy ([#129](https://github.com/Rick1330/ibex-harness/pull/129)–[#133](https://github.com/Rick1330/ibex-harness/pull/133)). Cloudflare OIDC for Workers deploy is not available yet; rotate scoped API tokens quarterly.
 
 ### 5) API reference
 
@@ -60,7 +64,8 @@ Public pages are authored as MDX; port/adapt from engineering sources per [CONTE
 ## Consequences
 
 - `repo-guards` must allow `docs/app/` under `docs/` and root Node manifest files.
-- CI gains `docs-checks` workflow (path-filtered) in Wave 11.
+- CI gains `docs-build` job (path-filtered) and `docs-deploy` workflow on `main`; see [D.4.2](/roadmap/phase-1-5-docs-site/milestones/d4.2-github-actions-docs-checks) (partial).
+- [D.4.1 Vercel preview deploys](/roadmap/phase-1-5-docs-site/milestones/d4.1-vercel-preview-deploys) superseded by GHA + `workflow_dispatch` deploy smoke tests.
 - Phase 2 entry blocked until Phase 1.5 production launch (docs-first sequencing).
 
 ## References

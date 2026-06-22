@@ -105,10 +105,12 @@ Do **not** use `pnpm --filter docs build` alone for Cloudflare (missing OpenNext
 
 ## Custom domain
 
-After the first successful deploy to `*.workers.dev`:
+Production DNS is **live** at `https://docs.ibexharness.com` (Cloudflare Worker `ibex-harness-docs`).
+
+For a new environment or disaster recovery:
 
 1. Workers dashboard → **ibex-harness-docs** → **Domains** → add `docs.ibexharness.com`
-2. Replace the old Vercel CNAME (`docs` → `cname.vercel-dns.com`) with the record Cloudflare assigns
+2. Point the `docs` CNAME to the record Cloudflare assigns (DNS-only / grey cloud)
 
 Verify:
 

@@ -1,101 +1,56 @@
 ---
-title: "d6.2 DNS Vercel"
-description: "DNS `docs` CNAME is configured (grey cloud) but Vercel project has no production domain — visitors get 404 at docs.ibexharness.com. Production attach is intentionally last: only after preview review (D.4.1), CI gates (D.4.2), and visual QA (D.5.1)."
-summary: "DNS `docs` CNAME is configured (grey cloud) but Vercel project has no production domain — visitors get 404 at docs.ibexharness.com. Production attach is intentionally last: only after preview review (D.4.1), CI gates (D.4.2), and visual QA (D.5.1)."
-status: "planned"
+title: "d6.2 DNS Production"
+description: "docs.ibexharness.com is live on Cloudflare Worker ibex-harness-docs. DNS CNAME points to Cloudflare; HTTPS valid."
+summary: "docs.ibexharness.com is live on Cloudflare Worker ibex-harness-docs. DNS CNAME points to Cloudflare; HTTPS valid."
+status: "complete"
 milestoneId: "d6.2"
 goal: "[D.6](/roadmap/phase-1-5-docs-site/goals)"
 estimatedEffort: "1 hour"
 phase: "phase-1-5-docs-site"
-fullTitle: "Milestone D.6.2 — DNS + Vercel domain attach"
+fullTitle: "Milestone D.6.2 — DNS + production domain attach"
 ---
 
-# Milestone D.6.2 — DNS + Vercel domain attach
+# Milestone D.6.2 — DNS + production domain attach
 
-**Status:** Planned  
+**Status:** Complete  
 **Goal:** [D.6](/roadmap/phase-1-5-docs-site/goals)  
 **Phase:** 1.5 — Docs Site  
 **Wave:** 12  
 **Estimated effort:** 1 hour  
-**ADR required:** None
+**ADR required:** None (hosting amended in [ADR-0023](/docs/adr/0023-docs-site-architecture))
 
 Spec detail: [MASTER_BRIEF.md](/roadmap/phase-1-5-docs-site/master-brief) Part D (D.6.2).
 
----
-
-## Why This Milestone Exists
-
-DNS `docs` CNAME is configured (grey cloud) but Vercel project has no production domain — visitors get 404 at docs.ibexharness.com.
-
-Production attach is intentionally last: only after preview review (D.4.1), CI gates (D.4.2), and visual QA (D.5.1).
-
-Apex and www records follow ibexdepo landing pattern; docs subdomain points to Vercel.
+> **Note:** Filename retains `vercel` for URL stability. Production attach uses **Cloudflare Workers**, not Vercel (see [ADR-0023](/docs/adr/0023-docs-site-architecture) amendment 2026-06-22).
 
 ---
 
-## Non-Goals
+## What shipped
 
-- Moving landing site off Vercel
-- Orange-cloud proxy on docs CNAME (DNS-only per brief)
-- Wildcard subdomains beyond docs/www
+- Cloudflare Worker **`ibex-harness-docs`** deployed via [`.github/workflows/docs-deploy.yml`](../../../../../../.github/workflows/docs-deploy.yml)
+- Custom domain **`docs.ibexharness.com`** attached in Cloudflare Workers dashboard
+- DNS `docs` CNAME updated from Vercel to Cloudflare-assigned target (DNS-only / grey cloud)
+- HTTPS certificate issued; key paths return 200:
+  - `/roadmap`
+  - `/roadmap/current-state`
+  - `/docs/getting-started/introduction`
 
----
-
-## Branch
-
-`feat/d6-2-domain-attach`
-
-## PR Title
-
-`chore(docs): attach docs.ibexharness.com (D.6.2)`
-
----
-
-## Prerequisites
-
-- [D.4.1](/roadmap/phase-1-5-docs-site/milestones/d4.1-vercel-preview-deploys) merged
-
----
-
-## Deliverables
-
-- Attach `docs.ibexharness.com` to Vercel project `ibex-harness-docs`
-- Verify `docs CNAME → cname.vercel-dns.com` (DNS-only)
-- Confirm HTTPS certificate issued
-
-See MASTER_BRIEF Part D (D.6.2) for full acceptance detail.
-
----
-
-## Files Affected
-
-| File Path | Action | Notes |
-| --- | --- | --- |
-| `(DNS — Cloudflare)` | Configure | docs CNAME |
-| `(Vercel — project settings)` | Configure | Production domain |
-
----
-
-## Testing Requirements
-
-- **`test_docs_cname_resolves`**: `docs.ibexharness.com` resolves to Vercel
-- **`test_apex_dns_resolves`**: Apex still serves landing (no regression)
-- **`verifyHttps_CertificateValid`**: TLS handshake succeeds on docs subdomain
+Operator runbook: [`DEPLOY_CLOUDFLARE.md`](../../../../DEPLOY_CLOUDFLARE.md).
 
 ---
 
 ## Acceptance Criteria
 
-- [ ] `docs.ibexharness.com` returns 200 with docs site
-- [ ] DNS records match MASTER_BRIEF §D.6.2 (grey cloud, CNAME to Vercel)
-- [ ] HTTPS valid
+- [x] `docs.ibexharness.com` returns 200 with docs site
+- [x] DNS records point to Cloudflare Workers (not Vercel)
+- [x] HTTPS valid
 
 ---
 
-## Risks
+## Risks (resolved)
 
-| Risk | Probability | Impact | Mitigation |
-| --- | --- | --- | --- |
-| DNS propagation delay | Medium | Low | Wait TTL; verify from multiple resolvers |
-| Wrong Vercel project attached | Low | High | Confirm project name ibex-harness-docs |
-| Certificate provisioning failure | Low | High | Retry domain verify in Vercel UI |
+| Risk | Mitigation applied |
+| --- | --- |
+| DNS propagation delay | Verified from multiple resolvers after cutover |
+| Wrong worker attached | Worker name `ibex-harness-docs` per `wrangler.jsonc` |
+| OpenNext runtime 500 on content routes | Fixed `page-meta.ts` Workers FS guard (#133) |
