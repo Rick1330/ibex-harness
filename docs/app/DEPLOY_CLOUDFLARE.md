@@ -4,16 +4,20 @@ The docs site deploys to **Cloudflare Workers** via [@opennextjs/cloudflare](htt
 
 **Deploy pipeline:** GitHub Actions only — [`.github/workflows/docs-deploy.yml`](../../.github/workflows/docs-deploy.yml). Do **not** connect Cloudflare Workers Builds Git to this repo (it misconfigures monorepo root, skips OpenNext, and duplicates failed deploys).
 
-## Secrets (GitHub Environment `production`)
+## Secrets (GitHub Environment vault)
 
-Store deploy credentials in GitHub → **Settings** → **Environments** → **production** (encrypted at rest; optional approval gates):
+Deploy credentials live in GitHub → **Settings** → **Environments** → **`production`** — not in repo-level secrets or workflow-wide `env`. GitHub encrypts environment secrets at rest and exposes an audit trail; you can add required reviewers before deploy jobs run.
 
 | Secret | Value |
 | --- | --- |
-| `CLOUDFLARE_API_TOKEN` | API token with Workers Scripts Edit, Account Read, Zone DNS Edit |
+| `CLOUDFLARE_API_TOKEN` | Scoped API token (Workers Scripts Edit, Account Read, Zone DNS Edit) |
 | `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account ID |
 
+The deploy workflow uses [`cloudflare/wrangler-action`](https://github.com/cloudflare/wrangler-action) so tokens are passed only to the deploy step (`with: apiToken`), not exported to the job environment for build/test steps.
+
 For local manual deploy, use the same values from gitignored `ibexdepo/.env` — never commit tokens.
+
+**OIDC / short-lived tokens:** Cloudflare Workers does not yet support GitHub OIDC trusted publishing (no long-lived token). Track [workers-sdk#11434](https://github.com/cloudflare/workers-sdk/discussions/11434). Until then, rotate the scoped API token quarterly and keep it in the `production` environment only.
 
 ### API token permissions
 
@@ -74,8 +78,10 @@ OpenNext warns on native Windows; CI (Ubuntu) is the source of truth for deploy 
 
 | Trigger | When |
 | --- | --- |
-| Push to `main` | Auto when `docs/app/**`, lockfile, or workflow changes |
+| Push to `main` | Auto when `docs/**`, root `package.json`, lockfile, turbo, or workflow changes |
 | `workflow_dispatch` | GitHub → Actions → **Docs Deploy** → **Run workflow** (test before DNS) |
+
+CI skips `docs-build` on pull requests that do not touch docs paths (`detect-changes` job). Deploy uses pnpm + Next.js caches and runs a post-deploy smoke test on `*.workers.dev`.
 
 **Manual (local):**
 
