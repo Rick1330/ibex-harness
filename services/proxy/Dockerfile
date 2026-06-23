@@ -1,4 +1,4 @@
-FROM golang:1.25-alpine3.24 AS build
+FROM golang:1.26-alpine3.24 AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 COPY services/proxy ./services/proxy
