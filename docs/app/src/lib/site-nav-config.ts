@@ -106,7 +106,8 @@ export function resolveActiveMobileSection(pathname: string): string | null {
   const section = MOBILE_NAV_SECTIONS.find((entry) =>
     isLinkActive(pathname, entry.match),
   );
-  return section?.id ?? null;
+  if (!section) return null;
+  return section.id;
 }
 
 export function getActiveMobileSection(

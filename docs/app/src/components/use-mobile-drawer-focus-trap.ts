@@ -35,19 +35,6 @@ function trapTabBetweenEnds(
   first.focus();
 }
 
-function handleDrawerTabKey(event: KeyboardEvent, drawer: HTMLElement) {
-  if (event.key !== "Tab") return;
-
-  const focusable = listFocusableElements(drawer);
-  if (focusable.length === 0) return;
-
-  const first = focusable.at(0);
-  const last = focusable.at(-1);
-  if (!first || !last) return;
-
-  trapTabBetweenEnds(event, first, last);
-}
-
 function restoreFocus(element: HTMLElement | null) {
   if (element && document.contains(element)) {
     element.focus();
@@ -67,7 +54,16 @@ export function useMobileDrawerFocusTrap(open: boolean, drawerId: string) {
         : null;
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      handleDrawerTabKey(event, drawer);
+      if (event.key !== "Tab") return;
+
+      const focusable = listFocusableElements(drawer);
+      if (focusable.length === 0) return;
+
+      const first = focusable.at(0);
+      const last = focusable.at(-1);
+      if (!first || !last) return;
+
+      trapTabBetweenEnds(event, first, last);
     };
 
     document.addEventListener("keydown", handleKeyDown);

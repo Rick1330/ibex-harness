@@ -22,11 +22,14 @@ const STATUS_BY_RAW: Record<string, MilestoneStatus> = {
 };
 
 export function isMilestonePage(slugs: string[] | undefined): boolean {
-  return Boolean(slugs?.includes("milestones") && slugs.length >= 3);
+  if (!slugs) return false;
+  return slugs.includes("milestones") && slugs.length >= 3;
 }
 
 export function getPhaseSlug(slugs: string[] | undefined): string | undefined {
-  return slugs?.[0]?.startsWith("phase-") ? slugs[0] : undefined;
+  if (!slugs || slugs.length === 0) return undefined;
+  const first = slugs[0];
+  return first.startsWith("phase-") ? first : undefined;
 }
 
 export function normalizeStatus(raw: string | undefined): MilestoneStatus | undefined {
