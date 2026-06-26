@@ -18,6 +18,23 @@ function focusFirstElement(drawer: HTMLElement) {
   }
 }
 
+function trapTabBetweenEnds(
+  event: KeyboardEvent,
+  first: HTMLElement,
+  last: HTMLElement,
+) {
+  if (event.shiftKey) {
+    if (document.activeElement !== first) return;
+    event.preventDefault();
+    last.focus();
+    return;
+  }
+
+  if (document.activeElement !== last) return;
+  event.preventDefault();
+  first.focus();
+}
+
 function handleDrawerTabKey(event: KeyboardEvent, drawer: HTMLElement) {
   if (event.key !== "Tab") return;
 
@@ -28,16 +45,7 @@ function handleDrawerTabKey(event: KeyboardEvent, drawer: HTMLElement) {
   const last = focusable[focusable.length - 1];
   if (first === undefined || last === undefined) return;
 
-  if (event.shiftKey && document.activeElement === first) {
-    event.preventDefault();
-    last.focus();
-    return;
-  }
-
-  if (!event.shiftKey && document.activeElement === last) {
-    event.preventDefault();
-    first.focus();
-  }
+  trapTabBetweenEnds(event, first, last);
 }
 
 function restoreFocus(element: HTMLElement | null) {

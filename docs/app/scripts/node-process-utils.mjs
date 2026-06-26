@@ -56,74 +56,78 @@ function listUnixNodeProcesses() {
     .filter(Boolean);
 }
 
-function parseCsvLine(line) {
-  const values = [];
-  let current = "";
-  let inQuotes = false;
-
-  for (const char of line) {
-    if (char === '"') {
-      inQuotes = !inQuotes;
-      continue;
-    }
-    if (char === "," && !inQuotes) {
-      values.push(current.trim());
-      current = "";
-      continue;
-    }
-    current += char;
-  }
-
-  values.push(current.trim());
-  return values;
-}
-
-function parseWmicCsvRows(out, columnNames) {
-  const rows = [];
-  const headerIndex = new Map();
+function parseWmicListRecords(out, keys) {
+  const records = [];
+  let current = {};
 
   for (const line of out.split(/\r?\n/)) {
     const trimmed = line.trim();
-    if (!trimmed) continue;
-
-    const values = parseCsvLine(trimmed);
-    if (values.length === 0) continue;
-
-    if (headerIndex.size === 0) {
-      values.forEach((name, index) => {
-        headerIndex.set(name, index);
-      });
+    if (!trimmed) {
+      if (Object.keys(current).length > 0) {
+        records.push(current);
+      }
+      current = {};
       continue;
     }
 
-    const record = {};
-    for (const name of columnNames) {
-      const index = headerIndex.get(name);
-      record[name] = index === undefined ? "" : values[index] ?? "";
-    }
-    rows.push(record);
+    const separator = trimmed.indexOf("=");
+    if (separator <= 0) continue;
+
+    const key = trimmed.slice(0, separator);
+    if (!keys.includes(key)) continue;
+
+    current[key] = trimmed.slice(separator + 1);
   }
 
-  return rows;
+  if (Object.keys(current).length > 0) {
+    records.push(current);
+  }
+
+  return records;
 }
 
 function listWindowsNodeProcesses() {
   const wmicPath = resolveWindowsExecutable("System32", "wbem", "WMIC.exe");
   const out = runCommand(wmicPath, [
     "process",
+    "where",
+    "name='node.exe'",
     "get",
     "ProcessId,CommandLine",
-    "/FORMAT:CSV",
+    "/format:list",
   ]);
 
-  return parseWmicCsvRows(out, ["ProcessId", "CommandLine"])
-    .map((row) => {
-      const pid = safePid(row.ProcessId);
-      const command = String(row.CommandLine ?? "");
-      if (!pid || !command.toLowerCase().includes("node")) return null;
+  return parseWmicListRecords(out, ["ProcessId", "CommandLine"])
+    .map((record) => {
+      const pid = safePid(record.ProcessId);
+      const command = String(record.CommandLine ?? "");
+      if (!pid || !command) return null;
       return { pid, command };
     })
     .filter(Boolean);
+}
+
+function readWindowsParentByPid() {
+  const wmicPath = resolveWindowsExecutable("System32", "wbem", "WMIC.exe");
+  const out = runCommand(wmicPath, [
+    "process",
+    "get",
+    "ProcessId,ParentProcessId",
+    "/format:list",
+  ]);
+  const parentByPid = new Map();
+
+  for (const record of parseWmicListRecords(out, [
+    "ProcessId",
+    "ParentProcessId",
+  ])) {
+    const pid = safePid(record.ProcessId);
+    const parentPid = safePid(record.ParentProcessId);
+    if (!pid || !parentPid) continue;
+    parentByPid.set(pid, parentPid);
+  }
+
+  return parentByPid;
 }
 
 export function getDocsAppRoot() {
@@ -147,25 +151,6 @@ export function isDocsAppNextStart(command, docsAppRoot = getDocsAppRoot()) {
   return isDocsAppNextProcess(command, docsAppRoot) && NEXT_START_CMD.test(command);
 }
 
-function readWindowsParentPid(pid) {
-  const safe = safePid(pid);
-  if (!safe) return null;
-
-  const wmicPath = resolveWindowsExecutable("System32", "wbem", "WMIC.exe");
-  const out = runCommand(wmicPath, [
-    "process",
-    "get",
-    "ProcessId,ParentProcessId",
-    "/FORMAT:CSV",
-  ]);
-
-  const match = parseWmicCsvRows(out, ["ProcessId", "ParentProcessId"]).find(
-    (row) => safePid(row.ProcessId) === safe,
-  );
-
-  return match ? safePid(match.ParentProcessId) : null;
-}
-
 function readUnixParentPid(pid) {
   const safe = safePid(pid);
   if (!safe) return null;
@@ -176,13 +161,15 @@ function readUnixParentPid(pid) {
 
 export function collectAncestorPids() {
   const self = new Set([process.pid]);
+  const windowsParents =
+    process.platform === "win32" ? readWindowsParentByPid() : null;
   let current = safePid(process.ppid);
 
   for (let depth = 0; depth < 8 && current; depth += 1) {
     self.add(current);
     current =
-      process.platform === "win32"
-        ? readWindowsParentPid(current)
+      windowsParents !== null
+        ? (windowsParents.get(current) ?? null)
         : readUnixParentPid(current);
   }
 
