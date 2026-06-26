@@ -41,8 +41,10 @@ function handleDrawerTabKey(event: KeyboardEvent, drawer: HTMLElement) {
   const focusable = listFocusableElements(drawer);
   if (focusable.length === 0) return;
 
-  const first = focusable[0];
-  const last = focusable[focusable.length - 1];
+  const first = focusable.at(0);
+  const last = focusable.at(-1);
+  if (!first || !last) return;
+
   trapTabBetweenEnds(event, first, last);
 }
 

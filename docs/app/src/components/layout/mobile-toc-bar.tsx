@@ -22,12 +22,13 @@ export function MobileTocBar({ items }: MobileTocBarProps) {
   const headings = filterTocHeadings(items);
   const [open, setOpen] = useState(false);
   const activeAnchor = Primitive.useActiveAnchor();
+
+  if (headings.length === 0) return null;
+
   const activeHeading = headings.find(
     (item) => item.url === `#${activeAnchor}`,
   );
-  const activeTitle = activeHeading?.title ?? headings[0]?.title;
-
-  if (headings.length === 0) return null;
+  const activeTitle = activeHeading ? activeHeading.title : headings[0].title;
 
   return (
     <div className="mobile-toc-bar has-mobile-toc-bar mb-6 lg:hidden">
