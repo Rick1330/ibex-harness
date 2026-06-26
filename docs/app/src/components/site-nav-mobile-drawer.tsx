@@ -61,7 +61,10 @@ function renderSectionContent(
   if (section.kind === "tree") {
     if (!section.baseUrl) return null;
 
-    const nodes = getSectionTree(data, section.dataKey);
+    const nodes = getSectionTree(
+      data,
+      section.dataKey === "docsTree" ? "docsTree" : "roadmapTree",
+    );
 
     return (
       <>
@@ -82,7 +85,10 @@ function renderSectionContent(
     );
   }
 
-  const pages = getSectionPages(data, section.dataKey);
+  const pages = getSectionPages(
+    data,
+    section.dataKey === "blogPosts" ? "blogPosts" : "releasePages",
+  );
 
   return (
     <>
