@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 
 const NEXT_CMD = /\bnext\s+(dev|build|start)\b/i;
 const NEXT_START_CMD = /\bnext\s+start\b/i;
+const UNIX_PS = "/bin/ps";
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const DOCS_APP_ROOT = path.resolve(SCRIPT_DIR, "..");
 
@@ -24,6 +25,7 @@ function resolveWindowsExecutable(...segments) {
 function runCommand(command, args) {
   const result = spawnSync(command, args, {
     encoding: "utf8",
+    shell: false,
     stdio: ["ignore", "pipe", "ignore"],
   });
   if (result.error || result.status !== 0) {
@@ -43,7 +45,7 @@ function parseUnixProcessLine(line) {
 }
 
 function listUnixNodeProcesses() {
-  const out = runCommand("ps", ["-ax", "-o", "pid=,command="]);
+  const out = runCommand(UNIX_PS, ["-ax", "-o", "pid=,command="]);
   if (!out) return [];
 
   return out
@@ -54,36 +56,50 @@ function listUnixNodeProcesses() {
     .filter(Boolean);
 }
 
-function parseWindowsProcessRows(parsed) {
-  const rows = Array.isArray(parsed) ? parsed : [parsed];
-  return rows
-    .map((row) => {
-      const pid = safePid(row?.ProcessId);
-      if (!pid || !row?.CommandLine) return null;
-      return { pid, command: String(row.CommandLine) };
-    })
-    .filter(Boolean);
+function parseWmicProcessBlocks(out) {
+  const processes = [];
+  let pid = null;
+  let command = null;
+
+  for (const line of out.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      if (pid && command) {
+        processes.push({ pid, command });
+      }
+      pid = null;
+      command = null;
+      continue;
+    }
+
+    if (trimmed.startsWith("ProcessId=")) {
+      pid = safePid(trimmed.slice("ProcessId=".length));
+      continue;
+    }
+
+    if (trimmed.startsWith("CommandLine=")) {
+      command = trimmed.slice("CommandLine=".length);
+    }
+  }
+
+  if (pid && command) {
+    processes.push({ pid, command });
+  }
+
+  return processes;
 }
 
 function listWindowsNodeProcesses() {
-  const powershellPath = resolveWindowsExecutable(
-    "System32",
-    "WindowsPowerShell",
-    "v1.0",
-    "powershell.exe",
-  );
-  const out = runCommand(powershellPath, [
-    "-NoProfile",
-    "-Command",
-    "Get-CimInstance Win32_Process -Filter \"Name='node.exe'\" | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress",
-  ]).trim();
-  if (!out) return [];
-
-  try {
-    return parseWindowsProcessRows(JSON.parse(out));
-  } catch {
-    return [];
-  }
+  const wmicPath = resolveWindowsExecutable("System32", "wbem", "WMIC.exe");
+  const out = runCommand(wmicPath, [
+    "process",
+    "where",
+    "name='node.exe'",
+    "get",
+    "ProcessId,CommandLine",
+    "/format:list",
+  ]);
+  return parseWmicProcessBlocks(out);
 }
 
 export function getDocsAppRoot() {
@@ -122,7 +138,7 @@ function readWindowsParentPid(pid) {
 }
 
 function readUnixParentPid(pid) {
-  const out = runCommand("ps", ["-o", "ppid=", "-p", String(pid)]).trim();
+  const out = runCommand(UNIX_PS, ["-o", "ppid=", "-p", String(pid)]).trim();
   return safePid(out);
 }
 
