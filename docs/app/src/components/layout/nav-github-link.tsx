@@ -29,7 +29,7 @@ export function NavGithubLink({ className, showLabel = false }: NavGithubLinkPro
         className,
       )}
     >
-      <Github className="size-4 shrink-0" strokeWidth={2} />
+      <Github className="size-4 shrink-0" strokeWidth={1.5} />
       {showLabel ? (
         <span className="hidden text-sm font-medium lg:inline">GitHub</span>
       ) : null}

@@ -38,7 +38,7 @@ export function NavSearch({ className, variant = "full" }: NavSearchProps) {
         )}
         onClick={() => setOpenSearch(true)}
       >
-        <SearchIcon className="size-3.5 shrink-0" strokeWidth={2} />
+        <SearchIcon className="size-3.5 shrink-0" strokeWidth={1.5} />
       </button>
     );
   }
@@ -56,7 +56,7 @@ export function NavSearch({ className, variant = "full" }: NavSearchProps) {
         )}
         onClick={() => setOpenSearch(true)}
       >
-        <SearchIcon className="size-3.5 shrink-0" strokeWidth={2} />
+        <SearchIcon className="size-3.5 shrink-0" strokeWidth={1.5} />
         <span>Search</span>
         <span className="hidden items-center gap-1 sm:inline-flex">
           <Kbd>{modifier}</Kbd>
