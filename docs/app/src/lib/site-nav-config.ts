@@ -114,8 +114,7 @@ export function getActiveMobileSection(
   pathname: string,
 ): MobileNavSectionConfig {
   const id = resolveActiveMobileSection(pathname);
-  return (
-    MOBILE_NAV_SECTIONS.find((section) => section.id === id) ??
-    MOBILE_NAV_SECTIONS[0]
-  );
+  const match = MOBILE_NAV_SECTIONS.find((section) => section.id === id);
+  if (match) return match;
+  return MOBILE_NAV_SECTIONS[0];
 }

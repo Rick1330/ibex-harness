@@ -81,11 +81,12 @@ export function MobileSectionSwitcher({
   onSelect,
 }: MobileSectionSwitcherProps) {
   const [expanded, setExpanded] = useState(false);
-  const activeSection = useMemo(
-    () =>
-      sections.find((section) => section.id === activeSectionId) ?? sections[0],
-    [activeSectionId, sections],
-  );
+  const activeSection = useMemo(() => {
+    if (sections.length === 0) return null;
+    return (
+      sections.find((section) => section.id === activeSectionId) ?? sections[0]
+    );
+  }, [activeSectionId, sections]);
 
   if (!activeSection) return null;
 

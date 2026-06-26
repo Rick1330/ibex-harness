@@ -19,7 +19,7 @@ function toIndex(page: SearchablePage): AdvancedIndex {
     url: page.url,
     title: page.data.title ?? page.url,
     description: page.data.description ?? page.data.excerpt,
-    keywords: page.data.tags?.join(", "),
+    keywords: page.data.tags ? page.data.tags.join(", ") : undefined,
     structuredData: page.data.structuredData ?? { headings: [], contents: [] },
   };
 }
