@@ -53,7 +53,7 @@ Collecting build traces                   30s–3min (silent)
 Finishing writing to cache                1–5min (silent on Windows)
 ```
 
-`pnpm build` prints this summary at startup. Do not open a second terminal with `pnpm start` until you see the shell prompt return.
+`pnpm docs:build:clean` prints build phase hints at startup. Do not open a second terminal with `pnpm start` until you see the shell prompt return.
 
 ### After MDX / Mermaid changes
 

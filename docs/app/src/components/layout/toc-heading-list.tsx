@@ -8,7 +8,7 @@ import { cn } from "@/lib/cn";
 
 export const tocLinkClassName = cn(
   "block rounded-[4px] border-s-2 border-transparent py-2 pe-2 ps-3 text-[0.8125rem] leading-snug text-text-secondary transition-colors",
-  "first:pt-0 last:pb-0 [overflow-wrap:anywhere]",
+  "first:pt-0 last:pb-0 break-words",
   "hover:bg-panel-raised hover:text-text-primary",
   "data-[active=true]:border-accent data-[active=true]:bg-panel-raised data-[active=true]:font-medium data-[active=true]:text-text-primary",
 );

@@ -31,14 +31,14 @@ export function NavSearch({ className, variant = "full" }: NavSearchProps) {
         aria-label="Open search"
         title={`Search (${modifier}+K)`}
         className={cn(
-          "inline-flex size-8 shrink-0 items-center justify-center rounded-md border border-border/80",
+          "inline-flex size-8 shrink-0 items-center justify-center rounded-sm border border-border/80",
           "bg-muted/25 text-muted-foreground transition-colors",
           "hover:border-border hover:bg-muted/45 hover:text-foreground",
           className,
         )}
         onClick={() => setOpenSearch(true)}
       >
-        <SearchIcon className="size-3.5 shrink-0" strokeWidth={1.5} />
+        <SearchIcon className="size-4 shrink-0" strokeWidth={1.5} />
       </button>
     );
   }
@@ -49,14 +49,14 @@ export function NavSearch({ className, variant = "full" }: NavSearchProps) {
         type="button"
         aria-label="Open search"
         className={cn(
-          "inline-flex h-8 shrink-0 items-center gap-2 rounded-md border border-border/80",
+          "inline-flex h-8 shrink-0 items-center gap-2 rounded-sm border border-border/80",
           "bg-muted/25 px-2.5 text-xs font-medium text-muted-foreground transition-colors",
           "hover:border-border hover:bg-muted/45 hover:text-foreground",
           className,
         )}
         onClick={() => setOpenSearch(true)}
       >
-        <SearchIcon className="size-3.5 shrink-0" strokeWidth={1.5} />
+        <SearchIcon className="size-4 shrink-0" strokeWidth={1.5} />
         <span>Search</span>
         <span className="hidden items-center gap-1 sm:inline-flex">
           <Kbd>{modifier}</Kbd>

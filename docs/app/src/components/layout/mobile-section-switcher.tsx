@@ -43,7 +43,7 @@ function SectionIcon({ iconId }: Readonly<{ iconId: MobileSectionIconId }>) {
   return (
     <Icon
       className="size-4 shrink-0 text-text-primary"
-      strokeWidth={1.75}
+      strokeWidth={1.5}
       aria-hidden
     />
   );
@@ -97,7 +97,7 @@ export function MobileSectionSwitcher({
     >
       <CollapsibleTrigger
         className={cn(
-          "flex w-full items-center gap-2 rounded-lg border border-border",
+          "flex w-full items-center gap-2 rounded-sm border border-border",
           "bg-panel-raised px-2 py-2 text-start",
           "hover:bg-panel transition-colors",
         )}
@@ -105,10 +105,11 @@ export function MobileSectionSwitcher({
         <SectionRow section={activeSection} active />
         <ChevronsUpDown
           className="me-1 size-4 shrink-0 text-text-secondary"
+          strokeWidth={1.5}
           aria-hidden
         />
       </CollapsibleTrigger>
-      <CollapsibleContent className="mobile-section-switcher-panel mt-2 overflow-hidden rounded-lg border border-border bg-canvas">
+      <CollapsibleContent className="mobile-section-switcher-panel mt-2 overflow-hidden rounded-sm border border-border bg-canvas">
         {sections.map((section) => {
           const isActive = section.id === activeSection.id;
 

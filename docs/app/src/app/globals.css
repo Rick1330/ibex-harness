@@ -565,7 +565,7 @@ body {
 }
 
 #site-nav-mobile-drawer .mobile-section-switcher-panel p {
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
 }
 
 /* Mermaid ASCII diagrams — plain monospace, no ANSI */
@@ -1612,5 +1612,5 @@ html {
 #nd-page .docs-prose p,
 #nd-page .docs-prose li,
 #nd-page .docs-prose td {
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
 }
