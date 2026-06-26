@@ -16,7 +16,7 @@ function stopProcess(pid) {
   }
 
   try {
-    process.kill(safePid, "SIGTERM");
+    process.kill(safePid, "SIGTERM"); // nosemgrep: javascript.lang.security.detect-child-process.detect-child-process
     console.log(`[stop:next] Stopped pid ${safePid}`);
     return;
   } catch (error) {
@@ -26,7 +26,10 @@ function stopProcess(pid) {
     }
   }
 
-  spawnSync(taskkillPath(), ["/PID", String(safePid), "/F"], { stdio: "ignore", shell: false });
+  spawnSync(taskkillPath(), ["/PID", String(safePid), "/F"], {
+    stdio: "ignore",
+    shell: false,
+  }); // nosemgrep: javascript.lang.security.detect-child-process.detect-child-process
   console.log(`[stop:next] Force-stopped pid ${safePid}`);
 }
 

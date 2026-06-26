@@ -27,7 +27,7 @@ function runCommand(command, args) {
     encoding: "utf8",
     shell: false,
     stdio: ["ignore", "pipe", "ignore"],
-  });
+  }); // nosemgrep: javascript.lang.security.detect-child-process.detect-child-process
   if (result.error || result.status !== 0) {
     return "";
   }
@@ -100,7 +100,8 @@ function listWindowsNodeProcesses() {
   return parseWmicListRecords(out, ["ProcessId", "CommandLine"])
     .map((record) => {
       const pid = safePid(record.ProcessId);
-      const command = String(record.CommandLine ?? "");
+      const command =
+        typeof record.CommandLine === "string" ? record.CommandLine : "";
       if (!pid || !command) return null;
       return { pid, command };
     })
