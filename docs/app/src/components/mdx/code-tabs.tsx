@@ -54,7 +54,7 @@ export function CodeTabs({
 
   if (tabs.length === 0) return null;
 
-  const initial = defaultValue ?? tabs[0].value ?? "";
+  const initial = defaultValue ?? tabs[0].value;
 
   const rootProps =
     value === undefined

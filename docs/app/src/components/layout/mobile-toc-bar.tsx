@@ -68,7 +68,7 @@ export function MobileTocBar({ items }: MobileTocBarProps) {
           <TocHeadingList
             compact
             items={items}
-            onItemClick={() => setOpen(false)}
+            onItemClick={() => { setOpen(false); }}
           />
         </CollapsibleContent>
       </Collapsible>

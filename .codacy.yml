@@ -6,4 +6,3 @@ exclude_paths:
   - "**/*.test.ts"
   - "**/*.test.tsx"
   - "**/*.test.mjs"
-  - "docs/app/src/components/use-mobile-drawer-focus-trap.ts"
