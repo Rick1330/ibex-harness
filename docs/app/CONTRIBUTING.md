@@ -15,6 +15,17 @@ pnpm docs:dev
 
 Open `http://localhost:3000` (redirects to introduction after D.2.1).
 
+### Performance testing
+
+`pnpm docs:dev` compiles MDX on demand — navigation will feel slow. Before reviewing nav speed or Mermaid diagrams, run:
+
+```bash
+pnpm docs:build:clean
+pnpm docs:start
+```
+
+See [README.md](./README.md#performance) for details.
+
 ## Branch naming (Phase 1.5)
 
 | Pattern | Example |
@@ -39,6 +50,8 @@ Full rules: [MASTER_BRIEF §0.1](../roadmap/phase-1-5-docs-site/MASTER_BRIEF.md)
 - [ ] `pnpm docs:build` passes
 - [ ] `pnpm --filter docs test` passes (Vitest)
 - [ ] Dark + light checked on touched pages
+- [ ] Navigation tested on **production server** (`build:clean` + `start`), not only `docs:dev`
+- [ ] Mermaid pages visually checked after rebuild (if MDX/mermaid touched)
 - [ ] PR body uses [.github/pull_request_template.md](../../.github/pull_request_template.md)
 
 ## Cloudflare deploy

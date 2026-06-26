@@ -21,10 +21,12 @@ export default function BlogPage() {
 
   const featured =
     posts.find((p) => p.data.featured === true) ?? posts[0];
-  const rest = posts.filter((p) => p.url !== featured?.url);
+  const rest = posts.filter(
+    (p) => featured === undefined || p.url !== featured.url,
+  );
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-16 md:px-6">
+    <div className="mx-auto max-w-6xl px-4 py-12 md:px-6 md:py-16 lg:px-8">
       <BlogHero featured={featured} />
       <BlogPostList
         posts={rest.map((post) => ({

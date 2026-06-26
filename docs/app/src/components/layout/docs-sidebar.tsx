@@ -27,7 +27,7 @@ import { PathSyncedSidebarFolder } from "@/components/layout/path-synced-sidebar
 import { cn } from "@/lib/cn";
 
 /** Top-level section folder headers. */
-const sectionHeaderClassName = cn(
+export const docsSectionHeaderClassName = cn(
   "sidebar-nav-section flex w-full min-h-9 items-center gap-2.5 rounded-[4px]",
   "px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-text-secondary",
   "mb-0.5 mt-4 transition-none first:mt-0",
@@ -37,7 +37,7 @@ const sectionHeaderClassName = cn(
 );
 
 /** Nested folder headers (milestones, sub-sections). */
-const nestedFolderHeaderClassName = cn(
+export const docsNestedFolderHeaderClassName = cn(
   "sidebar-nav-section sidebar-nav-section--nested flex w-full min-h-8 items-center gap-2 rounded-[4px]",
   "px-2.5 py-1.5 text-[0.8125rem] font-semibold normal-case tracking-normal text-text-secondary",
   "mb-0.5 transition-none",
@@ -87,7 +87,7 @@ export function DocsSidebarFolder({
   const defaultOpen = resolveFolderDefaultOpen(item, level, pathname);
   const sectionIcon = resolveFolderHeaderIcon(item, level, baseUrl, sectionSlug);
   const headerClass =
-    level <= 1 ? sectionHeaderClassName : nestedFolderHeaderClassName;
+    level <= 1 ? docsSectionHeaderClassName : docsNestedFolderHeaderClassName;
 
   if (level <= 1) {
     return (
@@ -107,9 +107,12 @@ export function DocsSidebarFolder({
     );
   }
 
+  const folderKey =
+    item.index === undefined ? sectionSlug : item.index.url;
+
   return (
     <SidebarFolder
-      key={`${item.index?.url ?? sectionSlug}-${level}`}
+      key={`${folderKey}-${level}`}
       defaultOpen={defaultOpen}
     >
       <SidebarFolderTrigger className={headerClass}>

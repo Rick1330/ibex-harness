@@ -51,9 +51,10 @@ export function CodeTabs({
   children,
 }: CodeTabsProps) {
   const tabs = useMemo(() => collectTabs(children), [children]);
-  const initial = defaultValue ?? tabs[0]?.value ?? "";
 
   if (tabs.length === 0) return null;
+
+  const initial = defaultValue ?? tabs[0].value;
 
   const rootProps =
     value === undefined
@@ -62,11 +63,11 @@ export function CodeTabs({
 
   return (
     <Tabs.Root className="my-6" {...rootProps}>
-      <Tabs.List className="flex gap-0 border-b border-border">
+      <Tabs.List className="flex gap-0 overflow-x-auto border-b border-border">
         {tabs.map((tab) => (
           <Tabs.Trigger
             className={cn(
-              "rounded-t-[4px] border border-transparent px-4 py-2 text-sm text-text-secondary",
+              "shrink-0 rounded-t-[4px] border border-transparent px-3 py-2 text-sm text-text-secondary sm:px-4",
               "hover:text-text-primary",
               "data-[state=active]:border-border data-[state=active]:border-b-transparent",
               "data-[state=active]:bg-panel-raised data-[state=active]:text-text-primary",

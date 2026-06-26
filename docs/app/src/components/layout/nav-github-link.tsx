@@ -17,14 +17,22 @@ export function NavGithubLink({ className, showLabel = false }: NavGithubLinkPro
       href={`https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}`}
       target="_blank"
       rel="noopener noreferrer"
-      aria-label="GitHub"
+      aria-label="GitHub repository"
+      data-site-nav-github=""
       className={cn(
-        "inline-flex items-center gap-2 rounded-[4px] px-2 py-1.5 text-sm text-text-secondary transition-colors hover:bg-panel-raised hover:text-text-primary",
+        "site-nav-github-link inline-flex h-8 shrink-0 items-center gap-2 rounded-md border border-border/80",
+        "bg-muted/25 text-muted-foreground transition-colors",
+        "hover:border-border hover:bg-muted/45 hover:text-foreground",
+        showLabel
+          ? "w-8 justify-center px-0 lg:w-auto lg:justify-start lg:px-3"
+          : "w-8 justify-center px-0",
         className,
       )}
     >
-      <Github className="size-4 shrink-0" strokeWidth={2} />
-      {showLabel ? <span className="text-xs font-medium">GitHub</span> : null}
+      <Github className="size-4 shrink-0" strokeWidth={1.5} />
+      {showLabel ? (
+        <span className="hidden text-sm font-medium lg:inline">GitHub</span>
+      ) : null}
     </Link>
   );
 }

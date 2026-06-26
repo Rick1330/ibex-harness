@@ -1,8 +1,15 @@
 import { renderMermaidAscii } from "beautiful-mermaid";
 
+const ANSI_SEQUENCE_RE = /\x1B\[[0-9;]*m/g;
+
 /** Normalize MDX mermaid source to a stable chart string. */
 export function normalizeMermaidChart(chart: string): string {
   return chart.replaceAll(String.raw`\n`, "\n").trim();
+}
+
+/** Strip terminal color codes so ASCII renders cleanly in the browser. */
+export function stripAnsiSequences(text: string): string {
+  return text.replace(ANSI_SEQUENCE_RE, "");
 }
 
 export type MermaidAsciiResult = Readonly<{
@@ -18,7 +25,11 @@ export function mermaidToAscii(chart: string): MermaidAsciiResult {
   }
 
   try {
-    const ascii = renderMermaidAscii(source, { useAscii: true });
+    const raw = renderMermaidAscii(source, {
+      useAscii: true,
+      colorMode: "none",
+    });
+    const ascii = stripAnsiSequences(raw);
     if (!ascii.trim()) {
       return { ascii: null, source };
     }

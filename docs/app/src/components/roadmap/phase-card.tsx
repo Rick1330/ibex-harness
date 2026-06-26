@@ -1,27 +1,41 @@
 import Link from "next/link";
 
-import { RoadmapProgress } from "@/components/roadmap/roadmap-progress";
+import { PhaseCardMilestones } from "@/components/roadmap/phase-card-milestones";
 
 type PhaseCardProps = Readonly<{
   slug: string;
   title: string;
   description?: string;
   subtitle?: string;
+  status?: "completed" | "in-progress" | "planned";
   completed: number;
   total: number;
   milestonesPending?: boolean;
 }>;
+
+function phaseProgressPercent(
+  completed: number,
+  total: number,
+  status?: PhaseCardProps["status"],
+): number {
+  if (total > 0) {
+    return Math.round((completed / total) * 100);
+  }
+  return status === "completed" ? 100 : 0;
+}
 
 export function PhaseCard({
   slug,
   title,
   description,
   subtitle,
+  status,
   completed,
   total,
   milestonesPending = false,
 }: PhaseCardProps) {
-  const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
+  const showCompleteLabel = total === 0 && status === "completed";
+  const pct = phaseProgressPercent(completed, total, status);
 
   return (
     <Link
@@ -44,21 +58,13 @@ export function PhaseCard({
       ) : null}
       {!subtitle && description ? <div className="mb-4" /> : null}
 
-      {milestonesPending ? (
-        <p className="mt-auto text-xs text-muted-foreground">
-          Goals defined — milestones coming soon
-        </p>
-      ) : (
-        <div className="mt-auto space-y-2">
-          <div className="flex items-center justify-between text-xs text-muted-foreground">
-            <span>Milestones</span>
-            <span className="tabular-nums">
-              {completed}/{total}
-            </span>
-          </div>
-          <RoadmapProgress value={pct} />
-        </div>
-      )}
+      <PhaseCardMilestones
+        milestonesPending={milestonesPending}
+        showCompleteLabel={showCompleteLabel}
+        completed={completed}
+        total={total}
+        pct={pct}
+      />
     </Link>
   );
 }

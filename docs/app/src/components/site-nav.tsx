@@ -1,61 +1,82 @@
 "use client";
 
-import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
-import { SiteNavActions, SiteNavMobileMenu } from "@/components/site-nav-actions";
+import { BrandLockup } from "@/components/brand-lockup";
+import type { MobileNavData } from "@/lib/mobile-nav-data";
+import { SiteNavActions } from "@/components/site-nav-actions";
+import { SiteNavMobileDrawer } from "@/components/site-nav-mobile-drawer";
 import { SiteNavLinks } from "@/components/site-nav-links";
 
-export function SiteNav() {
+type SiteNavProps = Readonly<{
+  mobileNavData: MobileNavData;
+}>;
+
+export function SiteNav({ mobileNavData }: SiteNavProps) {
   const pathname = usePathname();
-  const onDocs = pathname.startsWith("/docs");
   const [mobileOpen, setMobileOpen] = useState(false);
 
+  useEffect(() => {
+    setMobileOpen(false);
+  }, [pathname]);
+
+  useEffect(() => {
+    if (!mobileOpen) return;
+
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setMobileOpen(false);
+      }
+    }
+
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [mobileOpen]);
+
+  useEffect(() => {
+    if (!mobileOpen) return;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [mobileOpen]);
+
   return (
-    <header
-      data-site-nav
-      className="site-nav sticky top-0 z-50 w-full border-b border-border/80 bg-background/90 backdrop-blur-xl supports-[backdrop-filter]:bg-background/80"
-    >
-      <div className="site-nav-inner flex h-[var(--site-nav-height)] w-full items-stretch gap-0 px-4 sm:px-6 lg:px-8">
-        <Link
-          href="/docs/getting-started/introduction"
-          className="group flex shrink-0 items-center gap-2.5 border-e border-border/70 pe-4 sm:pe-6"
-        >
-          <div className="flex size-7 shrink-0 items-center justify-center rounded-md border border-border bg-foreground shadow-sm">
-            <span className="text-[10px] font-black leading-none text-background">
-              I
-            </span>
+    <>
+      <header
+        data-site-nav
+        className="site-nav sticky top-0 z-50 w-full border-b border-border/80 bg-background"
+      >
+        <div className="site-nav-inner h-[var(--site-nav-height)] w-full">
+          <div className="site-nav-brand">
+            <BrandLockup showWordmark="md" />
           </div>
-          <div className="hidden items-baseline gap-1 sm:flex">
-            <span className="text-sm font-semibold tracking-tight text-foreground">
-              IBEX
-            </span>
-            <span className="text-sm font-normal tracking-tight text-muted-foreground">
-              Harness
-            </span>
-          </div>
-        </Link>
 
-        <nav
-          aria-label="Site sections"
-          className="hidden min-w-0 flex-1 items-stretch ps-1 md:flex"
-        >
-          <SiteNavLinks pathname={pathname} variant="desktop" />
-        </nav>
+          <nav
+            aria-label="Site sections"
+            className="site-nav-links hidden md:flex"
+          >
+            <SiteNavLinks pathname={pathname} variant="desktop" />
+          </nav>
 
-        <SiteNavActions
-          onDocs={onDocs}
-          mobileOpen={mobileOpen}
-          onToggleMobile={() => { setMobileOpen((open) => !open); }}
-        />
-      </div>
+          <SiteNavActions
+            mobileOpen={mobileOpen}
+            onToggleMobile={() => { setMobileOpen((open) => !open); }}
+          />
+        </div>
+      </header>
 
-      <SiteNavMobileMenu
+      <SiteNavMobileDrawer
         open={mobileOpen}
-        pathname={pathname}
-        onNavigate={() => { setMobileOpen(false); }}
+        onClose={() => { setMobileOpen(false); }}
+        mobileNavData={mobileNavData}
       />
-    </header>
+    </>
   );
 }

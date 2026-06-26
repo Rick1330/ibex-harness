@@ -11,7 +11,7 @@ type SiteNavLinksProps = Readonly<{
 
 function desktopLinkClass(isActive: boolean): string {
   const base =
-    "relative flex h-full items-center whitespace-nowrap px-3 text-sm font-medium transition-colors lg:px-4";
+    "relative flex h-full items-center whitespace-nowrap px-2 text-xs font-medium transition-colors lg:px-4 lg:text-sm";
   if (isActive) {
     return cn(
       base,
@@ -44,6 +44,7 @@ export function SiteNavLinks({ pathname, variant, onNavigate }: SiteNavLinksProp
           <Link
             key={link.href}
             href={link.href}
+            prefetch
             onClick={onNavigate}
             className={className}
           >

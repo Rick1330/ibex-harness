@@ -1,7 +1,6 @@
 import { DocsLayout } from "fumadocs-ui/layouts/docs";
 import type { ReactNode } from "react";
 
-import { MobileDocsNav } from "@/components/layout/mobile-docs-nav";
 import { baseOptions, docsLayoutOptions } from "@/lib/layout.config";
 import { source } from "@/lib/source";
 
@@ -17,11 +16,6 @@ export default function Layout({ children }: { children: ReactNode }) {
     <DocsLayout
       tree={pageTree}
       {...options}
-      nav={{
-        ...options.nav,
-        enabled: true,
-        component: <MobileDocsNav />,
-      }}
       {...docsLayoutOptions()}
     >
       {children}
