@@ -26,10 +26,10 @@ function stopProcess(pid) {
     }
   }
 
-  spawnSync(taskkillPath(), ["/PID", String(safePid), "/F"], {
+  spawnSync(taskkillPath(), ["/PID", String(safePid), "/F"], { // nosemgrep: javascript.lang.security.detect-child-process.detect-child-process
     stdio: "ignore",
     shell: false,
-  }); // nosemgrep: javascript.lang.security.detect-child-process.detect-child-process
+  });
   console.log(`[stop:next] Force-stopped pid ${safePid}`);
 }
 

@@ -23,11 +23,11 @@ function resolveWindowsExecutable(...segments) {
 }
 
 function runCommand(command, args) {
-  const result = spawnSync(command, args, {
+  const result = spawnSync(command, args, { // nosemgrep: javascript.lang.security.detect-child-process.detect-child-process
     encoding: "utf8",
     shell: false,
     stdio: ["ignore", "pipe", "ignore"],
-  }); // nosemgrep: javascript.lang.security.detect-child-process.detect-child-process
+  });
   if (result.error || result.status !== 0) {
     return "";
   }
