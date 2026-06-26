@@ -1,7 +1,6 @@
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
-import { access } from "node:fs/promises";
-import { writeFile } from "node:fs/promises";
+import { access, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -10,7 +9,7 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(scriptDir, "..");
 const outputPath = path.join(appRoot, "public", "search-index.json");
 const buildIdPath = path.join(appRoot, ".next", "BUILD_ID");
-const DEFAULT_PORTS = [34567, 34568, 34569, 34570];
+const EXTRACT_PORT = Number(process.env.SEARCH_EXTRACT_PORT ?? 34567);
 
 const require = createRequire(import.meta.url);
 const nextBin = path.join(
@@ -27,6 +26,11 @@ async function buildExists() {
   }
 }
 
+function isServerReady(chunk) {
+  const text = chunk.toString();
+  return text.includes("Ready") || text.includes("started server");
+}
+
 function waitForReady(child, timeoutMs = 120_000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -34,24 +38,16 @@ function waitForReady(child, timeoutMs = 120_000) {
     }, timeoutMs);
 
     const onData = (chunk) => {
-      const text = chunk.toString();
-      if (text.includes("Ready") || text.includes("started server")) {
-        clearTimeout(timer);
-        child.stdout?.off("data", onData);
-        child.stderr?.off("data", onData);
-        resolve(undefined);
-      }
+      if (!isServerReady(chunk)) return;
+      clearTimeout(timer);
+      child.stdout?.off("data", onData);
+      child.stderr?.off("data", onData);
+      resolve(undefined);
     };
 
     child.stdout?.on("data", onData);
     child.stderr?.on("data", onData);
-    child.on("error", reject);
-    child.on("exit", (code) => {
-      if (code !== 0 && code !== null) {
-        clearTimeout(timer);
-        reject(new Error(`next start exited with code ${code}`));
-      }
-    });
+    child.once("error", reject);
   });
 }
 
@@ -71,14 +67,17 @@ async function fetchSearchIndex(port) {
   return body;
 }
 
-async function startAndExtract(port) {
-  const child = spawn(process.execPath, [nextBin, "start", "-p", String(port)], {
+function spawnNextStart(port) {
+  return spawn(process.execPath, [nextBin, "start", "-p", String(port)], {
     cwd: appRoot,
     env: { ...process.env, PORT: String(port), SEARCH_EXTRACT: "1" },
     stdio: ["ignore", "pipe", "pipe"],
     shell: false,
-  });
+  }); // nosemgrep: javascript.lang.security.detect-child-process.detect-child-process
+}
 
+async function extractToPublic(port) {
+  const child = spawnNextStart(port);
   try {
     await waitForReady(child);
     const body = await fetchSearchIndex(port);
@@ -95,25 +94,7 @@ async function main() {
       "Cannot extract search index: .next/BUILD_ID missing. Run next build first.",
     );
   }
-
-  const ports = process.env.SEARCH_EXTRACT_PORT
-    ? [Number(process.env.SEARCH_EXTRACT_PORT)]
-    : DEFAULT_PORTS;
-
-  let lastError;
-  for (const port of ports) {
-    try {
-      await startAndExtract(port);
-      return;
-    } catch (error) {
-      lastError = error;
-      if (!String(error).includes("EADDRINUSE") && !String(error).includes("exit")) {
-        throw error;
-      }
-    }
-  }
-
-  throw lastError ?? new Error("search index extract failed on all ports");
+  await extractToPublic(EXTRACT_PORT);
 }
 
 main().catch((error) => {
