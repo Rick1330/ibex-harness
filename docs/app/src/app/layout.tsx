@@ -44,7 +44,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       <body className="bg-canvas text-text-primary antialiased">
         <ClearMermaidCache />
         <RootProvider
-          search={{ options: { api: "/api/search" } }}
+          search={{ options: { type: "static", api: "/api/search" } }}
           theme={{ enabled: true, attribute: "class", defaultTheme: "dark" }}
         >
           <SiteNavShell />
