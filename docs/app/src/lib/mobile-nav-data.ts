@@ -50,6 +50,27 @@ function serializeNodes(nodes: PageTree.Node[]): MobileNavNode[] {
   return result;
 }
 
+function postTimestamp(date: unknown): number {
+  const ms = new Date(String(date ?? 0)).getTime();
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+export function getSectionTree(
+  data: MobileNavData,
+  dataKey: "docsTree" | "roadmapTree",
+): MobileNavNode[] {
+  if (dataKey === "docsTree") return data.docsTree;
+  return data.roadmapTree;
+}
+
+export function getSectionPages(
+  data: MobileNavData,
+  dataKey: "blogPosts" | "releasePages",
+): ReadonlyArray<{ url: string; title: string }> {
+  if (dataKey === "blogPosts") return data.blogPosts;
+  return data.releasePages;
+}
+
 let cachedMobileNavData: MobileNavData | undefined;
 
 export function getMobileNavData(): MobileNavData {
@@ -59,11 +80,7 @@ export function getMobileNavData(): MobileNavData {
 
   const blogPosts = blogSource
     .getPages()
-    .sort(
-      (a, b) =>
-        new Date(String(b.data.date)).getTime() -
-        new Date(String(a.data.date)).getTime(),
-    )
+    .sort((a, b) => postTimestamp(b.data.date) - postTimestamp(a.data.date))
     .map((page) => ({
       url: page.url,
       title: String(page.data.title),
@@ -71,11 +88,7 @@ export function getMobileNavData(): MobileNavData {
 
   const releasePages = releasesSource
     .getPages()
-    .sort(
-      (a, b) =>
-        new Date(String(b.data.date)).getTime() -
-        new Date(String(a.data.date)).getTime(),
-    )
+    .sort((a, b) => postTimestamp(b.data.date) - postTimestamp(a.data.date))
     .map((page) => ({
       url: page.url,
       title: String(page.data.title ?? page.data.version ?? page.url),

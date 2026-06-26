@@ -23,12 +23,31 @@ import type {
   MobileSectionIconId,
 } from "@/lib/site-nav-config";
 
-const SECTION_ICONS: Record<MobileSectionIconId, LucideIcon> = {
-  docs: BookOpen,
-  blog: Newspaper,
-  releases: ScrollText,
-  roadmap: Map,
-};
+function resolveSectionIcon(iconId: MobileSectionIconId): LucideIcon {
+  switch (iconId) {
+    case "docs":
+      return BookOpen;
+    case "blog":
+      return Newspaper;
+    case "releases":
+      return ScrollText;
+    case "roadmap":
+      return Map;
+    default:
+      return BookOpen;
+  }
+}
+
+function SectionIcon({ iconId }: Readonly<{ iconId: MobileSectionIconId }>) {
+  const Icon = resolveSectionIcon(iconId);
+  return (
+    <Icon
+      className="size-4 shrink-0 text-text-primary"
+      strokeWidth={1.75}
+      aria-hidden
+    />
+  );
+}
 
 type MobileSectionSwitcherProps = Readonly<{
   sections: ReadonlyArray<MobileNavSectionConfig>;
@@ -40,17 +59,6 @@ type SectionRowProps = Readonly<{
   section: MobileNavSectionConfig;
   active?: boolean;
 }>;
-
-function SectionIcon({ iconId }: Readonly<{ iconId: MobileSectionIconId }>) {
-  const Icon = SECTION_ICONS[iconId];
-  return (
-    <Icon
-      className="size-4 shrink-0 text-text-primary"
-      strokeWidth={1.75}
-      aria-hidden
-    />
-  );
-}
 
 function SectionRow({ section, active = false }: SectionRowProps) {
   return (

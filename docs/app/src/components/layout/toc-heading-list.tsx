@@ -13,6 +13,24 @@ export const tocLinkClassName = cn(
   "data-[active=true]:border-accent data-[active=true]:bg-panel-raised data-[active=true]:font-medium data-[active=true]:text-text-primary",
 );
 
+function tocDotOffsetClass(depth: number): string {
+  return depth === 3 ? "start-4" : "start-2";
+}
+
+function tocLinkPaddingClass(depth: number, compact: boolean): string {
+  if (depth === 3) return compact ? "ps-5" : "ps-7";
+  if (depth === 2) return compact ? "ps-3" : "ps-5";
+  return "";
+}
+
+function tocDotStateClass(isActive: boolean, isPassed: boolean): string {
+  if (isActive) {
+    return "size-2 border-accent bg-accent ring-4 ring-[hsl(var(--border))]";
+  }
+  if (isPassed) return "border-accent bg-accent";
+  return "";
+}
+
 type TocHeadingItemProps = Readonly<{
   item: TOCItemType;
   index: number;
@@ -28,6 +46,9 @@ export function TocHeadingItem({
 }: TocHeadingItemProps) {
   const isActive = activeIndex === index;
   const isPassed = activeIndex > index;
+  const dotOffset = tocDotOffsetClass(item.depth);
+  const dotState = tocDotStateClass(isActive, isPassed);
+  const linkPadding = tocLinkPaddingClass(item.depth, compact);
 
   return (
     <li className="relative">
@@ -36,21 +57,14 @@ export function TocHeadingItem({
           aria-hidden
           className={cn(
             "absolute top-1/2 z-[1] size-1.5 -translate-y-1/2 rounded-full border border-border bg-canvas transition-colors duration-150",
-            item.depth === 3 ? "start-4" : "start-2",
-            isActive &&
-              "size-2 border-accent bg-accent ring-4 ring-[hsl(var(--border))]",
-            isPassed && !isActive && "border-accent bg-accent",
+            dotOffset,
+            dotState,
           )}
         />
       ) : null}
       <Primitive.TOCItem
         href={item.url}
-        className={cn(
-          tocLinkClassName,
-          item.depth === 3 && (compact ? "ps-5" : "ps-7"),
-          item.depth === 2 && (compact ? "ps-3" : "ps-5"),
-          compact && "py-1.5 text-sm",
-        )}
+        className={cn(tocLinkClassName, linkPadding, compact && "py-1.5 text-sm")}
       >
         {item.title}
       </Primitive.TOCItem>

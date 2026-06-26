@@ -5,7 +5,13 @@ import { fileURLToPath } from "node:url";
 import process from "node:process";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
-const buildIdPath = path.join(root, "..", ".next", "BUILD_ID");
+const appRoot = path.resolve(root, "..");
+const buildIdPath = path.resolve(appRoot, ".next", "BUILD_ID");
+
+if (!buildIdPath.startsWith(`${appRoot}${path.sep}`)) {
+  console.error("[start] Invalid build path.");
+  process.exit(1);
+}
 
 if (!fs.existsSync(buildIdPath)) {
   console.error(

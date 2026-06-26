@@ -10,7 +10,8 @@ import { MobileSectionSwitcher } from "@/components/layout/mobile-section-switch
 import { NavSearch } from "@/components/layout/nav-search";
 import { docsSidebarItemClassName } from "@/components/layout/docs-sidebar";
 import { cn } from "@/lib/cn";
-import type { MobileNavData, MobileNavNode } from "@/lib/mobile-nav-data";
+import type { MobileNavData } from "@/lib/mobile-nav-data";
+import { getSectionPages, getSectionTree } from "@/lib/mobile-nav-data";
 import { navUrlsMatch } from "@/lib/sidebar-nav-pages";
 import {
   getActiveMobileSection,
@@ -60,7 +61,7 @@ function renderSectionContent(
   if (section.kind === "tree") {
     if (!section.baseUrl) return null;
 
-    const nodes = data[section.dataKey] as MobileNavNode[];
+    const nodes = getSectionTree(data, section.dataKey);
 
     return (
       <>
@@ -81,10 +82,7 @@ function renderSectionContent(
     );
   }
 
-  const pages = data[section.dataKey] as ReadonlyArray<{
-    url: string;
-    title: string;
-  }>;
+  const pages = getSectionPages(data, section.dataKey);
 
   return (
     <>
@@ -125,6 +123,44 @@ export function SiteNavMobileDrawer({
     setPortalReady(true);
   }, []);
 
+  useEffect(() => {
+    if (!open) return;
+
+    const drawer = document.getElementById("site-nav-mobile-drawer");
+    if (!drawer) return;
+
+    const selector =
+      'a[href], button:not([disabled]), input, textarea, select, [tabindex]:not([tabindex="-1"])';
+    const focusable = Array.from(
+      drawer.querySelectorAll<HTMLElement>(selector),
+    ).filter((el) => !el.hasAttribute("aria-hidden"));
+
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Tab" || focusable.length === 0) return;
+
+      if (event.shiftKey) {
+        if (document.activeElement === first) {
+          event.preventDefault();
+          last?.focus();
+        }
+        return;
+      }
+
+      if (document.activeElement === last) {
+        event.preventDefault();
+        first?.focus();
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    first?.focus();
+
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [open]);
+
   if (!portalReady) return null;
 
   return createPortal(
@@ -144,6 +180,8 @@ export function SiteNavMobileDrawer({
       <nav
         id="site-nav-mobile-drawer"
         aria-label="Mobile navigation"
+        aria-modal={open ? true : undefined}
+        role="dialog"
         aria-hidden={!open}
         className={cn(
           "fixed left-0 top-[var(--site-nav-height)] z-50 flex md:hidden",
