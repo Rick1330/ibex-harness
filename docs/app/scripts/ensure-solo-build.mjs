@@ -1,4 +1,3 @@
-import { execSync } from "node:child_process";
 import process from "node:process";
 
 import {

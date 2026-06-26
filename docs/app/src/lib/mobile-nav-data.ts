@@ -24,6 +24,31 @@ export type MobileNavData = Readonly<{
   releasePages: ReadonlyArray<{ url: string; title: string }>;
 }>;
 
+function serializePageNode(node: PageTree.Item): MobileNavPage {
+  return {
+    kind: "page",
+    name: String(node.name),
+    url: node.url,
+    external: node.external,
+  };
+}
+
+function serializeFolderNode(node: PageTree.Folder): MobileNavFolder {
+  const children: MobileNavNode[] = [];
+
+  if (node.index) {
+    children.push(serializePageNode(node.index));
+  }
+
+  children.push(...serializeNodes(node.children));
+
+  return {
+    kind: "folder",
+    name: String(node.name),
+    children,
+  };
+}
+
 function serializeNodes(nodes: PageTree.Node[]): MobileNavNode[] {
   const result: MobileNavNode[] = [];
 
@@ -31,33 +56,11 @@ function serializeNodes(nodes: PageTree.Node[]): MobileNavNode[] {
     if (node.type === "separator") continue;
 
     if (node.type === "folder") {
-      const children: MobileNavNode[] = [];
-
-      if (node.index) {
-        children.push({
-          kind: "page",
-          name: String(node.index.name),
-          url: node.index.url,
-          external: node.index.external,
-        });
-      }
-
-      children.push(...serializeNodes(node.children));
-
-      result.push({
-        kind: "folder",
-        name: String(node.name),
-        children,
-      });
+      result.push(serializeFolderNode(node));
       continue;
     }
 
-    result.push({
-      kind: "page",
-      name: String(node.name),
-      url: node.url,
-      external: node.external,
-    });
+    result.push(serializePageNode(node));
   }
 
   return result;
