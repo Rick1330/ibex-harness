@@ -11,6 +11,13 @@ function listFocusableElements(drawer: HTMLElement): HTMLElement[] {
   ).filter((el) => !el.hasAttribute("aria-hidden"));
 }
 
+function focusFirstElement(drawer: HTMLElement) {
+  const initial = listFocusableElements(drawer)[0];
+  if (initial) {
+    initial.focus();
+  }
+}
+
 function handleDrawerTabKey(event: KeyboardEvent, drawer: HTMLElement) {
   if (event.key !== "Tab") return;
 
@@ -40,15 +47,23 @@ export function useMobileDrawerFocusTrap(open: boolean, drawerId: string) {
     const drawer = document.getElementById(drawerId);
     if (!drawer) return;
 
+    const previouslyFocused =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+
     const handleKeyDown = (event: KeyboardEvent) => {
       handleDrawerTabKey(event, drawer);
     };
 
     document.addEventListener("keydown", handleKeyDown);
-    listFocusableElements(drawer)[0]?.focus();
+    focusFirstElement(drawer);
 
     return () => {
       document.removeEventListener("keydown", handleKeyDown);
+      if (previouslyFocused && document.contains(previouslyFocused)) {
+        previouslyFocused.focus();
+      }
     };
   }, [drawerId, open]);
 }

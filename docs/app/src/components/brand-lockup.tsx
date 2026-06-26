@@ -5,12 +5,14 @@ import { cn } from "@/lib/cn";
 
 type BrandLockupProps = Readonly<{
   href?: string;
+  ariaLabel?: string;
   showWordmark?: "md" | "always" | "never";
   className?: string;
 }>;
 
 export function BrandLockup({
   href = "/docs/getting-started/introduction",
+  ariaLabel = "IBEX Harness docs home",
   showWordmark = "md",
   className,
 }: BrandLockupProps) {
@@ -24,7 +26,7 @@ export function BrandLockup({
   return (
     <Link
       href={href}
-      aria-label="IBEX Harness docs home"
+      aria-label={ariaLabel}
       className={cn(
         "group flex min-w-0 items-center gap-2.5 transition-opacity hover:opacity-90",
         className,

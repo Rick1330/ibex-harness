@@ -37,9 +37,13 @@ export function SiteNav({ mobileNavData }: SiteNavProps) {
   }, [mobileOpen]);
 
   useEffect(() => {
-    document.body.style.overflow = mobileOpen ? "hidden" : "";
+    if (!mobileOpen) return;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
     return () => {
-      document.body.style.overflow = "";
+      document.body.style.overflow = previousOverflow;
     };
   }, [mobileOpen]);
 

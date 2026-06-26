@@ -31,7 +31,7 @@ pnpm docs:build:clean
 pnpm docs:start
 ```
 
-Then browse `http://localhost:3000`. All 276 routes are pre-rendered at build time (`force-static`).
+Then browse `http://localhost:3000`. Docs and roadmap route segments set `export const dynamic = "force-static"`, so pages are pre-rendered at build time.
 
 ### Windows tips
 

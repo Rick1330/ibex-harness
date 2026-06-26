@@ -17,7 +17,7 @@ function safePid(value) {
 }
 
 function resolveWindowsExecutable(...segments) {
-  const systemRoot = process.env.SystemRoot ?? "C:\\Windows";
+  const systemRoot = process.env.SystemRoot ?? String.raw`C:\Windows`;
   return path.join(systemRoot, ...segments);
 }
 
@@ -108,18 +108,17 @@ export function isDocsAppNextStart(command, docsAppRoot = getDocsAppRoot()) {
 }
 
 function readWindowsParentPid(pid) {
-  const powershellPath = resolveWindowsExecutable(
-    "System32",
-    "WindowsPowerShell",
-    "v1.0",
-    "powershell.exe",
-  );
-  const out = runCommand(powershellPath, [
-    "-NoProfile",
-    "-Command",
-    `(Get-CimInstance Win32_Process -Filter 'ProcessId=${pid}').ParentProcessId`,
-  ]).trim();
-  return safePid(out);
+  const wmicPath = resolveWindowsExecutable("System32", "wbem", "WMIC.exe");
+  const out = runCommand(wmicPath, [
+    "process",
+    "where",
+    `ProcessId=${pid}`,
+    "get",
+    "ParentProcessId",
+    "/value",
+  ]);
+  const match = out.match(/ParentProcessId=(\d+)/);
+  return match ? safePid(match[1]) : null;
 }
 
 function readUnixParentPid(pid) {
