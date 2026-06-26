@@ -59,10 +59,8 @@ export function useMobileDrawerFocusTrap(open: boolean, drawerId: string) {
       const focusable = listFocusableElements(drawer);
       if (focusable.length === 0) return;
 
-      const first = focusable.at(0);
-      const last = focusable.at(-1);
-      if (!first || !last) return;
-
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
       trapTabBetweenEnds(event, first, last);
     };
 

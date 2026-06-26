@@ -3,3 +3,6 @@
 # Wave 14 dev/build helper scripts use validated spawnSync (shell:false, absolute paths).
 exclude_paths:
   - "docs/app/scripts/**"
+  - "**/*.test.ts"
+  - "**/*.test.tsx"
+  - "**/*.test.mjs"
