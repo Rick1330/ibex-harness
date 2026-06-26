@@ -5,7 +5,6 @@ import {
   DocsSidebarFolder,
   DocsSidebarItem,
 } from "@/components/layout/docs-sidebar";
-import { NavSearch } from "@/components/layout/nav-search";
 import { Wordmark } from "@/components/wordmark";
 
 function SidebarSectionLabel() {
@@ -35,7 +34,6 @@ export function docsLayoutOptions(): Pick<DocsLayoutProps, "sidebar"> {
       banner: (
         <div className="sidebar-banner flex flex-col gap-4 border-b border-border px-1 pb-5">
           <SidebarSectionLabel />
-          <NavSearch className="max-md:hidden" />
         </div>
       ),
       components: {

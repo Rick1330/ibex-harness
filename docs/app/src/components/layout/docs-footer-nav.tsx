@@ -34,7 +34,7 @@ export function DocsFooterNav() {
   if (!previous && !next) return null;
 
   return (
-    <div className="not-prose grid grid-cols-2 gap-4 pb-6">
+    <div className="not-prose grid grid-cols-1 gap-4 pb-6 sm:grid-cols-2">
       {previous && !navUrlsMatch(previous.url, pathname) ? (
         <Link className={cardClassName} href={previous.url} prefetch scroll={false}>
           <span className={labelClassName}>

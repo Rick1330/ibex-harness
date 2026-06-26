@@ -4,8 +4,10 @@
   "packageManager": "pnpm@9.15.9",
   "scripts": {
     "docs:dev": "turbo dev --filter=docs",
+    "docs:dev:clean": "pnpm --filter docs dev:clean",
     "docs:build": "turbo build --filter=docs",
-    "docs:build:clean": "pnpm --filter docs build:clean"
+    "docs:build:clean": "pnpm --filter docs build:clean",
+    "docs:start": "pnpm --filter docs start"
   },
   "devDependencies": {
     "turbo": "^2.5.4"
