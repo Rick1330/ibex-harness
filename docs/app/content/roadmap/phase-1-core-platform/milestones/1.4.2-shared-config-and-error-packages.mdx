@@ -2,7 +2,7 @@
 title: "1.4.2 Shared Config"
 description: "The config problem: Both `services/auth` and `services/proxy` currently call `os.Getenv()` directly, scattered across multiple source files. There is no validation that required variables are set. A service that starts with `POSTGRES_DSN=\\\"\\\"` will crash at runtime when handling the first request, not at startup with"
 summary: "The config problem: Both `services/auth` and `services/proxy` currently call `os.Getenv()` directly, scattered across multiple source files. There is no validation that required variables are set. A service that starts with `POSTGRES_DSN=\\\"\\\"` will crash at runtime when handling the first request, not at startup with"
-status: "planned"
+status: "completed"
 milestoneId: "1.4.2"
 goal: "[1.4 — Developer Experience Baseline](/roadmap/phase-1-core-platform/goals#goal-14-developer-experience-baseline)"
 estimatedEffort: "2–3 days"
@@ -12,7 +12,7 @@ fullTitle: "Milestone 1.4.2 — Shared Infrastructure Packages: `packages/config
 
 # Milestone 1.4.2 — Shared Infrastructure Packages: `packages/config` and `packages/apierror`
 
-**Status:** Planned  
+**Status:** Completed  
 **Goal:** [1.4 — Developer Experience Baseline](/roadmap/phase-1-core-platform/goals#goal-14-developer-experience-baseline)  
 **Phase:** 1 — Core Platform  
 **Estimated effort:** 2–3 days  
