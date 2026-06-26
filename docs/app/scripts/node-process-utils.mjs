@@ -16,8 +16,9 @@ function safePid(value) {
   return pid;
 }
 
-export function getDocsAppRoot() {
-  return DOCS_APP_ROOT.replace(/\\/g, "/");
+function resolveWindowsExecutable(...segments) {
+  const systemRoot = process.env.SystemRoot ?? "C:\\Windows";
+  return path.join(systemRoot, ...segments);
 }
 
 function runCommand(command, args) {
@@ -31,26 +32,47 @@ function runCommand(command, args) {
   return result.stdout ?? "";
 }
 
-export function listNodeProcesses() {
-  if (process.platform !== "win32") {
-    const out = runCommand("ps", ["-ax", "-o", "pid=,command="]);
-    if (!out) return [];
+function parseUnixProcessLine(line) {
+  const spaceIndex = line.indexOf(" ");
+  if (spaceIndex <= 0) return null;
 
-    return out
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .map((line) => {
-        const match = line.match(/^(\d+)\s+(.*)$/);
-        if (!match) return null;
-        const pid = safePid(match[1]);
-        if (!pid) return null;
-        return { pid, command: match[2] };
-      })
-      .filter(Boolean);
-  }
+  const pid = safePid(line.slice(0, spaceIndex));
+  if (!pid) return null;
 
-  const out = runCommand("powershell", [
+  return { pid, command: line.slice(spaceIndex + 1).trim() };
+}
+
+function listUnixNodeProcesses() {
+  const out = runCommand("ps", ["-ax", "-o", "pid=,command="]);
+  if (!out) return [];
+
+  return out
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map(parseUnixProcessLine)
+    .filter(Boolean);
+}
+
+function parseWindowsProcessRows(parsed) {
+  const rows = Array.isArray(parsed) ? parsed : [parsed];
+  return rows
+    .map((row) => {
+      const pid = safePid(row?.ProcessId);
+      if (!pid || !row?.CommandLine) return null;
+      return { pid, command: String(row.CommandLine) };
+    })
+    .filter(Boolean);
+}
+
+function listWindowsNodeProcesses() {
+  const powershellPath = resolveWindowsExecutable(
+    "System32",
+    "WindowsPowerShell",
+    "v1.0",
+    "powershell.exe",
+  );
+  const out = runCommand(powershellPath, [
     "-NoProfile",
     "-Command",
     "Get-CimInstance Win32_Process -Filter \"Name='node.exe'\" | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress",
@@ -58,23 +80,26 @@ export function listNodeProcesses() {
   if (!out) return [];
 
   try {
-    const parsed = JSON.parse(out);
-    const rows = Array.isArray(parsed) ? parsed : [parsed];
-    return rows
-      .map((row) => {
-        const pid = safePid(row?.ProcessId);
-        if (!pid || !row?.CommandLine) return null;
-        return { pid, command: String(row.CommandLine) };
-      })
-      .filter(Boolean);
+    return parseWindowsProcessRows(JSON.parse(out));
   } catch {
     return [];
   }
 }
 
+export function getDocsAppRoot() {
+  return DOCS_APP_ROOT.replaceAll("\\", "/");
+}
+
+export function listNodeProcesses() {
+  if (process.platform === "win32") {
+    return listWindowsNodeProcesses();
+  }
+  return listUnixNodeProcesses();
+}
+
 export function isDocsAppNextProcess(command, docsAppRoot = getDocsAppRoot()) {
   if (!NEXT_CMD.test(command)) return false;
-  const normalized = command.replace(/\\/g, "/");
+  const normalized = command.replaceAll("\\", "/");
   return normalized.includes(docsAppRoot) || normalized.includes("docs/app");
 }
 
@@ -83,7 +108,13 @@ export function isDocsAppNextStart(command, docsAppRoot = getDocsAppRoot()) {
 }
 
 function readWindowsParentPid(pid) {
-  const out = runCommand("powershell", [
+  const powershellPath = resolveWindowsExecutable(
+    "System32",
+    "WindowsPowerShell",
+    "v1.0",
+    "powershell.exe",
+  );
+  const out = runCommand(powershellPath, [
     "-NoProfile",
     "-Command",
     `(Get-CimInstance Win32_Process -Filter 'ProcessId=${pid}').ParentProcessId`,

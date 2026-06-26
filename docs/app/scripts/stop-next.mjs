@@ -1,7 +1,13 @@
 import { spawnSync } from "node:child_process";
+import path from "node:path";
 import process from "node:process";
 
 import { isDocsAppNextProcess, listNodeProcesses } from "./node-process-utils.mjs";
+
+function taskkillPath() {
+  const systemRoot = process.env.SystemRoot ?? "C:\\Windows";
+  return path.join(systemRoot, "System32", "taskkill.exe");
+}
 
 function stopProcess(pid) {
   try {
@@ -15,7 +21,7 @@ function stopProcess(pid) {
     }
   }
 
-  spawnSync("taskkill", ["/PID", String(pid), "/F"], { stdio: "ignore" });
+  spawnSync(taskkillPath(), ["/PID", String(pid), "/F"], { stdio: "ignore" });
   console.log(`[stop:next] Force-stopped pid ${pid}`);
 }
 

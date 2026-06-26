@@ -67,7 +67,11 @@ function serializeNodes(nodes: PageTree.Node[]): MobileNavNode[] {
 }
 
 function postTimestamp(date: unknown): number {
-  const ms = new Date(String(date ?? 0)).getTime();
+  const raw =
+    typeof date === "string" || typeof date === "number"
+      ? String(date)
+      : "";
+  const ms = new Date(raw || 0).getTime();
   return Number.isFinite(ms) ? ms : 0;
 }
 
