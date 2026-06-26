@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { MobileSectionSwitcher } from "@/components/layout/mobile-section-switcher";
@@ -55,8 +55,9 @@ describe("MobileSectionSwitcher", () => {
       />,
     );
 
-    expect(screen.getByText("Blog")).toBeInTheDocument();
-    expect(screen.getByText("Engineering notes")).toBeInTheDocument();
+    const trigger = screen.getByRole("button");
+    expect(within(trigger).getByText("Blog")).toBeInTheDocument();
+    expect(within(trigger).getByText("Engineering notes")).toBeInTheDocument();
   });
 
   it("expands sections and calls onSelect when a link is clicked", async () => {
