@@ -109,7 +109,7 @@ export function DocsSidebarFolder({
 
   return (
     <SidebarFolder
-      key={`${(item.index && item.index.url) || sectionSlug}-${level}`}
+      key={`${item.index?.url ?? sectionSlug}-${level}`}
       defaultOpen={defaultOpen}
     >
       <SidebarFolderTrigger className={headerClass}>

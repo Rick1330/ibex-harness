@@ -21,9 +21,7 @@ export default function BlogPage() {
 
   const featured =
     posts.find((p) => p.data.featured === true) ?? posts[0];
-  const rest = featured
-    ? posts.filter((p) => p.url !== featured.url)
-    : posts;
+  const rest = posts.filter((p) => p.url !== featured?.url);
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-12 md:px-6 md:py-16 lg:px-8">
