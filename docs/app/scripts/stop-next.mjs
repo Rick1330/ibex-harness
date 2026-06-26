@@ -10,19 +10,24 @@ function taskkillPath() {
 }
 
 function stopProcess(pid) {
+  const safePid = Number(pid);
+  if (!Number.isInteger(safePid) || safePid <= 0) {
+    return;
+  }
+
   try {
-    process.kill(pid);
-    console.log(`[stop:next] Stopped pid ${pid}`);
+    process.kill(safePid, "SIGTERM");
+    console.log(`[stop:next] Stopped pid ${safePid}`);
     return;
   } catch (error) {
     if (process.platform !== "win32") {
-      console.warn(`[stop:next] Could not stop pid ${pid}:`, error);
+      console.warn(`[stop:next] Could not stop pid ${safePid}:`, error);
       return;
     }
   }
 
-  spawnSync(taskkillPath(), ["/PID", String(pid), "/F"], { stdio: "ignore" });
-  console.log(`[stop:next] Force-stopped pid ${pid}`);
+  spawnSync(taskkillPath(), ["/PID", String(safePid), "/F"], { stdio: "ignore", shell: false });
+  console.log(`[stop:next] Force-stopped pid ${safePid}`);
 }
 
 const matches = listNodeProcesses().filter((entry) =>

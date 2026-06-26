@@ -56,50 +56,74 @@ function listUnixNodeProcesses() {
     .filter(Boolean);
 }
 
-function parseWmicProcessBlocks(out) {
-  const processes = [];
-  let pid = null;
-  let command = null;
+function parseCsvLine(line) {
+  const values = [];
+  let current = "";
+  let inQuotes = false;
+
+  for (const char of line) {
+    if (char === '"') {
+      inQuotes = !inQuotes;
+      continue;
+    }
+    if (char === "," && !inQuotes) {
+      values.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += char;
+  }
+
+  values.push(current.trim());
+  return values;
+}
+
+function parseWmicCsvRows(out, columnNames) {
+  const rows = [];
+  const headerIndex = new Map();
 
   for (const line of out.split(/\r?\n/)) {
     const trimmed = line.trim();
-    if (!trimmed) {
-      if (pid && command) {
-        processes.push({ pid, command });
-      }
-      pid = null;
-      command = null;
+    if (!trimmed) continue;
+
+    const values = parseCsvLine(trimmed);
+    if (values.length === 0) continue;
+
+    if (headerIndex.size === 0) {
+      values.forEach((name, index) => {
+        headerIndex.set(name, index);
+      });
       continue;
     }
 
-    if (trimmed.startsWith("ProcessId=")) {
-      pid = safePid(trimmed.slice("ProcessId=".length));
-      continue;
+    const record = {};
+    for (const name of columnNames) {
+      const index = headerIndex.get(name);
+      record[name] = index === undefined ? "" : values[index] ?? "";
     }
-
-    if (trimmed.startsWith("CommandLine=")) {
-      command = trimmed.slice("CommandLine=".length);
-    }
+    rows.push(record);
   }
 
-  if (pid && command) {
-    processes.push({ pid, command });
-  }
-
-  return processes;
+  return rows;
 }
 
 function listWindowsNodeProcesses() {
   const wmicPath = resolveWindowsExecutable("System32", "wbem", "WMIC.exe");
   const out = runCommand(wmicPath, [
     "process",
-    "where",
-    "name='node.exe'",
     "get",
     "ProcessId,CommandLine",
-    "/format:list",
+    "/FORMAT:CSV",
   ]);
-  return parseWmicProcessBlocks(out);
+
+  return parseWmicCsvRows(out, ["ProcessId", "CommandLine"])
+    .map((row) => {
+      const pid = safePid(row.ProcessId);
+      const command = String(row.CommandLine ?? "");
+      if (!pid || !command.toLowerCase().includes("node")) return null;
+      return { pid, command };
+    })
+    .filter(Boolean);
 }
 
 export function getDocsAppRoot() {
@@ -124,21 +148,29 @@ export function isDocsAppNextStart(command, docsAppRoot = getDocsAppRoot()) {
 }
 
 function readWindowsParentPid(pid) {
+  const safe = safePid(pid);
+  if (!safe) return null;
+
   const wmicPath = resolveWindowsExecutable("System32", "wbem", "WMIC.exe");
   const out = runCommand(wmicPath, [
     "process",
-    "where",
-    `ProcessId=${pid}`,
     "get",
-    "ParentProcessId",
-    "/value",
+    "ProcessId,ParentProcessId",
+    "/FORMAT:CSV",
   ]);
-  const match = out.match(/ParentProcessId=(\d+)/);
-  return match ? safePid(match[1]) : null;
+
+  const match = parseWmicCsvRows(out, ["ProcessId", "ParentProcessId"]).find(
+    (row) => safePid(row.ProcessId) === safe,
+  );
+
+  return match ? safePid(match.ParentProcessId) : null;
 }
 
 function readUnixParentPid(pid) {
-  const out = runCommand(UNIX_PS, ["-o", "ppid=", "-p", String(pid)]).trim();
+  const safe = safePid(pid);
+  if (!safe) return null;
+
+  const out = runCommand(UNIX_PS, ["-o", "ppid=", "-p", String(safe)]).trim();
   return safePid(out);
 }
 

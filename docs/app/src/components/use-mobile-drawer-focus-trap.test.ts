@@ -19,7 +19,7 @@ function mountDrawer(id: string) {
 }
 
 afterEach(() => {
-  document.body.innerHTML = "";
+  document.body.replaceChildren();
 });
 
 describe("useMobileDrawerFocusTrap", () => {

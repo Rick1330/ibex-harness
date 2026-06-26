@@ -26,6 +26,7 @@ function handleDrawerTabKey(event: KeyboardEvent, drawer: HTMLElement) {
 
   const first = focusable[0];
   const last = focusable[focusable.length - 1];
+  if (first === undefined || last === undefined) return;
 
   if (event.shiftKey && document.activeElement === first) {
     event.preventDefault();
