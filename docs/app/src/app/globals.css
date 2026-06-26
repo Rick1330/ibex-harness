@@ -10,6 +10,12 @@
    ============================================ */
 :root {
   --site-nav-height: 3.75rem;
+  --mobile-docs-chrome-height: 0px;
+  --site-nav-brand-width: 16rem;
+  --site-nav-brand-width-lg: 22rem;
+  --site-nav-brand-width-xl: 24rem;
+  --site-nav-inline-padding: 1rem;
+  --site-nav-brand-inset: calc(var(--site-nav-inline-padding) * 2);
   --sidebar-top-offset: 3.75rem;
   --toc-top-offset: 3.75rem;
   --scroll-padding: 5rem;
@@ -68,6 +74,8 @@
   --popover-foreground: var(--text-primary);
   --input: var(--border);
   --ring: var(--border-strong);
+  --fd-background: var(--canvas);
+  --fd-card: var(--canvas);
 }
 
 .dark {
@@ -126,6 +134,8 @@
   --popover-foreground: var(--text-primary);
   --input: var(--border);
   --ring: var(--border-strong);
+  --fd-background: var(--canvas);
+  --fd-card: var(--canvas);
 }
 
 /* === Hard global rules — enforce the Visual Rules from §A === */
@@ -465,13 +475,23 @@ body {
   -webkit-backdrop-filter: none !important;
 }
 
-#nd-sidebar.max-md\:bg-fd-background\/80 {
-  background-color: hsl(var(--canvas) / 0.95) !important;
-}
-
 #nd-tocnav {
   background-color: hsl(var(--canvas)) !important;
   border-color: hsl(var(--border)) !important;
+}
+
+/* Desktop: right-rail TOC only — hide collapsible mobile toc bar */
+@media (min-width: 1024px) {
+  #nd-tocnav {
+    display: none !important;
+  }
+}
+
+/* Tablet/phone: use tocnav; hide empty right rail column */
+@media (max-width: 1023px) {
+  #nd-toc {
+    display: none !important;
+  }
 }
 
 /* === D.2.5 Cmd+K search — Matte Graphite dialog === */
@@ -508,21 +528,55 @@ body {
   animation: none !important;
 }
 
-/* Subtle content fade — targets article inside Fumadocs page shell, not the flex wrapper */
-@media (prefers-reduced-motion: no-preference) {
-  #nd-page article {
-    animation: ibex-page-in 220ms ease-out;
+.mobile-toc-bar [class*="animate-fd-collapsible"] {
+  animation: none !important;
+}
+
+/* Blog / site pages: sticky mobile TOC bar (mirrors #nd-tocnav) */
+.mobile-toc-bar {
+  --mobile-toc-bar-height: 2.75rem;
+}
+
+.mobile-toc-bar-panel {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+@media (max-width: 1023px) {
+  :root:has(.has-mobile-toc-bar) {
+    --scroll-padding: calc(
+      var(--site-nav-height) + var(--mobile-toc-bar-height, 2.75rem)
+    );
   }
 }
 
-@keyframes ibex-page-in {
-  from {
-    opacity: 0;
-  }
+/* Mobile drawer: Fumadocs-style section switcher */
+.mobile-section-switcher [class*="animate-fd-collapsible"] {
+  animation: none !important;
+}
 
-  to {
-    opacity: 1;
-  }
+.mobile-section-switcher-panel {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+#site-nav-mobile-drawer .mobile-section-switcher-panel a {
+  min-width: 0;
+}
+
+#site-nav-mobile-drawer .mobile-section-switcher-panel p {
+  overflow-wrap: anywhere;
+}
+
+/* Mermaid ASCII diagrams — plain monospace, no ANSI */
+[data-mermaid-ascii] {
+  white-space: pre;
+  tab-size: 2;
+  line-height: 1.35;
+}
+
+.mermaid-ascii pre {
+  line-height: 1.35;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -747,6 +801,17 @@ figure[data-rehype-pretty-code-figure] button[data-copy],
 figure[data-rehype-pretty-code-figure]:hover button[data-copy],
 [data-codeblock]:hover button[data-copy] {
   opacity: 1 !important;
+}
+
+@media (hover: none), (pointer: coarse) {
+  .fd-codeblock .codeblock-copy-btn,
+  .nd-codeblock .codeblock-copy-btn,
+  .fd-codeblock button[data-copy],
+  .nd-codeblock button[data-copy],
+  figure[data-rehype-pretty-code-figure] button[data-copy],
+  [data-codeblock] button[data-copy] {
+    opacity: 1 !important;
+  }
 }
 
 .fd-codeblock .codeblock-copy-btn:hover,
@@ -1095,6 +1160,23 @@ figure[data-rehype-pretty-code-figure] button[data-copy]:hover,
   font-size: 0.9375rem !important;
 }
 
+@media (max-width: 767px) {
+  .prose table,
+  .docs-prose table {
+    display: block !important;
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch;
+    min-width: 100% !important;
+  }
+
+  .prose th,
+  .prose td,
+  .docs-prose th,
+  .docs-prose td {
+    white-space: nowrap !important;
+  }
+}
+
 .prose thead,
 .docs-prose thead {
   background-color: hsl(var(--panel-raised) / 0.5) !important;
@@ -1247,15 +1329,77 @@ header.site-nav {
   position: sticky !important;
   top: 0 !important;
   z-index: 50 !important;
-  background: hsl(var(--background) / 0.97) !important;
-  backdrop-filter: blur(10px) !important;
-  -webkit-backdrop-filter: blur(10px) !important;
+  background: hsl(var(--background)) !important;
   border-bottom: 1px solid hsl(var(--border)) !important;
 }
 
 header[data-site-nav] .site-nav-inner {
+  display: flex !important;
+  align-items: stretch !important;
   min-height: var(--site-nav-height) !important;
-  justify-content: flex-start !important;
+  justify-content: space-between !important;
+  padding-inline: var(--site-nav-inline-padding) !important;
+}
+
+header[data-site-nav] .site-nav-brand {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+header[data-site-nav] .site-nav-links {
+  display: none;
+  align-items: stretch;
+  min-width: 0;
+}
+
+header[data-site-nav] .site-nav-actions {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  flex-wrap: nowrap;
+}
+
+/* GitHub icon must stay visible on all mobile widths (never hidden below sm) */
+header[data-site-nav] .site-nav-github-link,
+header[data-site-nav] a[data-site-nav-github] {
+  display: inline-flex !important;
+}
+
+@media (min-width: 768px) {
+  header[data-site-nav] .site-nav-inner {
+    display: grid !important;
+    grid-template-columns: var(--site-nav-brand-width) 1fr auto;
+    gap: 0;
+    padding-inline: 0 !important;
+  }
+
+  header[data-site-nav] .site-nav-brand {
+    width: var(--site-nav-brand-width);
+    padding-inline-start: var(--site-nav-brand-inset);
+  }
+
+  header[data-site-nav] .site-nav-links {
+    display: flex !important;
+    justify-content: center;
+    overflow-x: auto;
+  }
+
+  header[data-site-nav] .site-nav-actions {
+    padding-inline-end: var(--site-nav-inline-padding);
+  }
+}
+
+@media (min-width: 1024px) {
+  :root {
+    --site-nav-brand-width: var(--site-nav-brand-width-lg);
+  }
+}
+
+@media (min-width: 1280px) {
+  :root {
+    --site-nav-brand-width: var(--site-nav-brand-width-xl);
+  }
 }
 
 /* --- Hide Fumadocs built-in nav bar --- */
@@ -1263,15 +1407,45 @@ header[data-site-nav] .site-nav-inner {
   display: none !important;
 }
 
-/* --- Sidebar --- */
-#nd-sidebar,
-[data-sidebar],
-.nd-sidebar {
-  top: var(--site-nav-height) !important;
-  height: calc(100dvh - var(--site-nav-height)) !important;
-  max-height: calc(100dvh - var(--site-nav-height)) !important;
-  position: sticky !important;
-  overflow-y: auto !important;
+/* --- Sidebar: desktop sticky only; mobile uses unified SiteNav drawer --- */
+@media (min-width: 768px) {
+  #nd-sidebar,
+  [data-sidebar],
+  .nd-sidebar {
+    top: var(--site-nav-height) !important;
+    height: calc(100dvh - var(--site-nav-height)) !important;
+    max-height: calc(100dvh - var(--site-nav-height)) !important;
+    position: sticky !important;
+    overflow-y: auto !important;
+    background-color: hsl(var(--canvas)) !important;
+  }
+}
+
+@media (min-width: 768px) {
+  #nd-sidebar > div,
+  [data-sidebar] > div {
+    border-inline-end: 1px solid hsl(var(--border)) !important;
+  }
+}
+
+@media (max-width: 767px) {
+  :root {
+    --scroll-padding: calc(var(--site-nav-height) + 1rem);
+  }
+
+  #nd-sidebar,
+  [data-sidebar],
+  .nd-sidebar {
+    display: none !important;
+  }
+
+  #nd-page,
+  [data-docs-page],
+  .nd-page {
+    flex: 1 1 100% !important;
+    width: 100% !important;
+    min-width: 0 !important;
+  }
 }
 
 #nd-sidebar > div,
@@ -1282,6 +1456,18 @@ header[data-site-nav] .site-nav-inner {
 
 /* --- Sidebar width + text wrap (Wave 9 / Wave 11) --- */
 @media (min-width: 768px) {
+  #nd-docs-layout {
+    --fd-sidebar-width: 16.5rem !important;
+  }
+}
+
+@media (min-width: 1024px) {
+  #nd-docs-layout {
+    --fd-sidebar-width: 22rem !important;
+  }
+}
+
+@media (min-width: 1280px) {
   #nd-docs-layout {
     --fd-sidebar-width: 24rem !important;
   }
@@ -1402,4 +1588,29 @@ html {
   margin-right: auto !important;
   padding-left: 2rem !important;
   padding-right: 2rem !important;
+}
+
+@media (max-width: 1023px) {
+  #nd-page main > article,
+  .nd-page main > article {
+    padding-left: 1.25rem !important;
+    padding-right: 1.25rem !important;
+  }
+}
+
+@media (max-width: 767px) {
+  #nd-page main > article,
+  .nd-page main > article {
+    padding-left: 1rem !important;
+    padding-right: 1rem !important;
+  }
+}
+
+.docs-prose p,
+.docs-prose li,
+.docs-prose td,
+#nd-page .docs-prose p,
+#nd-page .docs-prose li,
+#nd-page .docs-prose td {
+  overflow-wrap: anywhere;
 }

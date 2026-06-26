@@ -32,7 +32,7 @@ export function MermaidAscii({
       <span className="sr-only">{mermaidAccessibleLabel(source)}</span>
       <pre
         aria-hidden="true"
-        className="overflow-x-auto rounded-md border border-border bg-panel p-4 font-mono text-xs leading-none text-text-primary"
+        className="overflow-x-auto rounded-md border border-border bg-panel p-4 font-mono text-xs text-text-primary"
         data-mermaid-ascii
       >
         <code>{body}</code>

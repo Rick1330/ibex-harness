@@ -7,6 +7,7 @@ type PhaseCardProps = Readonly<{
   title: string;
   description?: string;
   subtitle?: string;
+  status?: "completed" | "in-progress" | "planned";
   completed: number;
   total: number;
   milestonesPending?: boolean;
@@ -17,11 +18,17 @@ export function PhaseCard({
   title,
   description,
   subtitle,
+  status,
   completed,
   total,
   milestonesPending = false,
 }: PhaseCardProps) {
-  const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
+  const pct =
+    total > 0
+      ? Math.round((completed / total) * 100)
+      : status === "completed"
+        ? 100
+        : 0;
 
   return (
     <Link

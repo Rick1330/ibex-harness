@@ -15,6 +15,9 @@ import { isMilestonePage } from "@/lib/roadmap-types";
 import { roadmapSource } from "@/lib/source";
 import { getMDXComponents } from "@/mdx-components";
 
+/** Computed once at module load — shared by all roadmap content pages. */
+const pageTree = roadmapSource.getPageTree();
+
 type PageProps = Readonly<{
   params: Promise<{ slug: string[] }>;
 }>;
@@ -28,8 +31,7 @@ export default async function RoadmapDetailPage(props: PageProps) {
 
   const MdxContent = page.data.body;
   const toc = page.data.toc ?? [];
-  const tree = roadmapSource.getPageTree();
-  const breadcrumbs = getBreadcrumbItems(page.url, tree, {
+  const breadcrumbs = getBreadcrumbItems(page.url, pageTree, {
     includePage: false,
   });
   const section =
@@ -48,7 +50,7 @@ export default async function RoadmapDetailPage(props: PageProps) {
     <DocsPage
       toc={toc}
       full={page.data.full}
-      breadcrumb={{ component: <DocsBreadcrumb tree={tree} /> }}
+      breadcrumb={{ component: <DocsBreadcrumb tree={pageTree} /> }}
       tableOfContent={{
         component: <OnThisPage items={toc} />,
       }}

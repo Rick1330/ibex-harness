@@ -14,7 +14,10 @@ export type PhaseSlug = (typeof PHASE_SLUGS)[number];
 
 const STATUS_BY_RAW: Record<string, MilestoneStatus> = {
   completed: "completed",
+  complete: "completed",
+  superseded: "completed",
   "in-progress": "in-progress",
+  partial: "in-progress",
   planned: "planned",
 };
 
@@ -28,5 +31,5 @@ export function getPhaseSlug(slugs: string[] | undefined): string | undefined {
 
 export function normalizeStatus(raw: string | undefined): MilestoneStatus | undefined {
   if (!raw) return undefined;
-  return STATUS_BY_RAW[raw];
+  return STATUS_BY_RAW[raw.toLowerCase()];
 }

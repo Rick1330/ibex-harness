@@ -1,7 +1,6 @@
 import { DocsLayout } from "fumadocs-ui/layouts/docs";
 import type { ReactNode } from "react";
 
-import { MobileRoadmapNav } from "@/components/layout/mobile-roadmap-nav";
 import {
   roadmapBaseOptions,
   roadmapLayoutOptions,
@@ -25,11 +24,6 @@ export default function RoadmapContentLayout({
     <DocsLayout
       tree={pageTree}
       {...options}
-      nav={{
-        ...options.nav,
-        enabled: true,
-        component: <MobileRoadmapNav />,
-      }}
       {...roadmapLayoutOptions()}
     >
       {children}
