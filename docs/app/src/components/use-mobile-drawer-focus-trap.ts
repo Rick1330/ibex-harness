@@ -40,6 +40,12 @@ function handleDrawerTabKey(event: KeyboardEvent, drawer: HTMLElement) {
   }
 }
 
+function restoreFocus(element: HTMLElement | null) {
+  if (element && document.contains(element)) {
+    element.focus();
+  }
+}
+
 export function useMobileDrawerFocusTrap(open: boolean, drawerId: string) {
   useEffect(() => {
     if (!open) return;
@@ -61,9 +67,7 @@ export function useMobileDrawerFocusTrap(open: boolean, drawerId: string) {
 
     return () => {
       document.removeEventListener("keydown", handleKeyDown);
-      if (previouslyFocused && document.contains(previouslyFocused)) {
-        previouslyFocused.focus();
-      }
+      restoreFocus(previouslyFocused);
     };
   }, [drawerId, open]);
 }

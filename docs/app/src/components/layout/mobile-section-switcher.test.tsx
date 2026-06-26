@@ -4,6 +4,26 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { MobileSectionSwitcher } from "@/components/layout/mobile-section-switcher";
 import { MOBILE_NAV_SECTIONS } from "@/lib/site-nav-config";
 
+vi.mock("fumadocs-ui/components/ui/collapsible", () => ({
+  Collapsible: ({
+    children,
+    open,
+  }: Readonly<{ children: React.ReactNode; open?: boolean }>) => (
+    <div data-open={open ? "true" : "false"}>{children}</div>
+  ),
+  CollapsibleTrigger: ({
+    children,
+    ...props
+  }: Readonly<{ children: React.ReactNode }>) => (
+    <button type="button" {...props}>
+      {children}
+    </button>
+  ),
+  CollapsibleContent: ({
+    children,
+  }: Readonly<{ children: React.ReactNode }>) => <div>{children}</div>,
+}));
+
 vi.mock("next/link", () => ({
   default: ({
     children,

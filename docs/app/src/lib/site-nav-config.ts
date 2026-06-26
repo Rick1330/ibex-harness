@@ -27,9 +27,7 @@ export const NAV_LINKS = [
 export type MobileSectionIconId = "docs" | "blog" | "releases" | "roadmap";
 
 export function isLinkActive(pathname: string, match: string) {
-  return match === "/docs"
-    ? pathname.startsWith("/docs")
-    : pathname.startsWith(match);
+  return pathname.startsWith(match);
 }
 
 type MobileSectionKind = "tree" | "list";

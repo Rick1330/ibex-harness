@@ -54,7 +54,7 @@ export function TocHeadingItem({
 
   return (
     <li className="relative">
-      {!compact ? (
+      {compact ? null : (
         <span
           aria-hidden
           className={cn(
@@ -63,7 +63,7 @@ export function TocHeadingItem({
             dotState,
           )}
         />
-      ) : null}
+      )}
       <Primitive.TOCItem
         href={item.url}
         onClick={onNavigate}
