@@ -1,3 +1,5 @@
+import type { NextRequest } from "next/server";
+
 import { search } from "@/lib/search";
 
 // Pre-build the Orama index at deploy time. Dynamic GET rebuilds the index per
@@ -5,4 +7,11 @@ import { search } from "@/lib/search";
 export const dynamic = "force-static";
 export const revalidate = false;
 
-export const { staticGET: GET } = search;
+const { GET: dynamicGET, staticGET } = search;
+
+export async function GET(request: NextRequest) {
+  if (process.env.NODE_ENV === "development") {
+    return dynamicGET(request);
+  }
+  return staticGET();
+}

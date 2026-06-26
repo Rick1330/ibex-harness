@@ -26,34 +26,43 @@ async function buildExists() {
   }
 }
 
-function isServerReady(chunk) {
-  const text = chunk.toString();
+function isServerReady(text) {
   return text.includes("Ready") || text.includes("started server");
 }
 
 function waitForReady(child, timeoutMs = 120_000) {
   return new Promise((resolve, reject) => {
+    let output = "";
     const timer = setTimeout(() => {
       reject(new Error(`next start did not become ready within ${timeoutMs}ms`));
     }, timeoutMs);
 
     const onData = (chunk) => {
-      if (!isServerReady(chunk)) return;
+      output += chunk.toString();
+      if (!isServerReady(output)) return;
       clearTimeout(timer);
       child.stdout?.off("data", onData);
       child.stderr?.off("data", onData);
+      child.off("exit", onExit);
       resolve(undefined);
+    };
+
+    const onExit = (code) => {
+      clearTimeout(timer);
+      reject(new Error(`next start exited with code ${code ?? "unknown"} before ready`));
     };
 
     child.stdout?.on("data", onData);
     child.stderr?.on("data", onData);
     child.once("error", reject);
+    child.once("exit", onExit);
   });
 }
 
 async function fetchSearchIndex(port) {
   const response = await fetch(`http://127.0.0.1:${port}/api/search`, {
     signal: AbortSignal.timeout(120_000),
+    redirect: "manual",
   });
   if (!response.ok) {
     throw new Error(`/api/search returned HTTP ${response.status}`);
