@@ -11,7 +11,10 @@ import { NavSearch } from "@/components/layout/nav-search";
 import { docsSidebarItemClassName } from "@/components/layout/docs-sidebar";
 import { cn } from "@/lib/cn";
 import type { MobileNavData } from "@/lib/mobile-nav-data";
-import { getSectionPages, getSectionTree } from "@/lib/mobile-nav-data";
+import {
+  getSectionPages,
+  getSectionTree,
+} from "@/lib/mobile-nav-section-data";
 import { navUrlsMatch } from "@/lib/sidebar-nav-pages";
 import {
   getActiveMobileSection,

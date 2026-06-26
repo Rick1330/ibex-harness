@@ -55,22 +55,6 @@ function postTimestamp(date: unknown): number {
   return Number.isFinite(ms) ? ms : 0;
 }
 
-export function getSectionTree(
-  data: MobileNavData,
-  dataKey: "docsTree" | "roadmapTree",
-): MobileNavNode[] {
-  if (dataKey === "docsTree") return data.docsTree;
-  return data.roadmapTree;
-}
-
-export function getSectionPages(
-  data: MobileNavData,
-  dataKey: "blogPosts" | "releasePages",
-): ReadonlyArray<{ url: string; title: string }> {
-  if (dataKey === "blogPosts") return data.blogPosts;
-  return data.releasePages;
-}
-
 let cachedMobileNavData: MobileNavData | undefined;
 
 export function getMobileNavData(): MobileNavData {
