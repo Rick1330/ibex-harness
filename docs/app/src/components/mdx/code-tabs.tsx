@@ -51,9 +51,10 @@ export function CodeTabs({
   children,
 }: CodeTabsProps) {
   const tabs = useMemo(() => collectTabs(children), [children]);
-  const initial = defaultValue ?? tabs[0]?.value ?? "";
 
   if (tabs.length === 0) return null;
+
+  const initial = defaultValue ?? tabs[0].value ?? "";
 
   const rootProps =
     value === undefined
