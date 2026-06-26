@@ -12,10 +12,9 @@ function listFocusableElements(drawer: HTMLElement): HTMLElement[] {
 }
 
 function focusFirstElement(drawer: HTMLElement) {
-  const initial = listFocusableElements(drawer)[0];
-  if (initial) {
-    initial.focus();
-  }
+  const focusable = listFocusableElements(drawer);
+  if (focusable.length === 0) return;
+  focusable[0].focus();
 }
 
 function trapTabBetweenEnds(
