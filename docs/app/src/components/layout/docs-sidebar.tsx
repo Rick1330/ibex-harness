@@ -107,9 +107,12 @@ export function DocsSidebarFolder({
     );
   }
 
+  const folderKey =
+    item.index === undefined ? sectionSlug : item.index.url;
+
   return (
     <SidebarFolder
-      key={`${item.index?.url ?? sectionSlug}-${level}`}
+      key={`${folderKey}-${level}`}
       defaultOpen={defaultOpen}
     >
       <SidebarFolderTrigger className={headerClass}>
