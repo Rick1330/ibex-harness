@@ -51,7 +51,7 @@ export function DocsFooterNav() {
       )}
       {next && !navUrlsMatch(next.url, pathname) ? (
         <Link
-          className={cn(cardClassName, "col-start-2 text-end")}
+          className={cn(cardClassName, "sm:col-start-2 text-end")}
           href={next.url}
           prefetch
           scroll={false}

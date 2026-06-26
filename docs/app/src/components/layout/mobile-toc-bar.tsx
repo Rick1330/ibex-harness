@@ -64,7 +64,11 @@ export function MobileTocBar({ items }: MobileTocBarProps) {
             "[&_[class*='animate-fd-collapsible']]:!animate-none",
           )}
         >
-          <TocHeadingList compact items={items} />
+          <TocHeadingList
+            compact
+            items={items}
+            onItemClick={() => setOpen(false)}
+          />
         </CollapsibleContent>
       </Collapsible>
     </div>

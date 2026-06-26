@@ -1,8 +1,9 @@
 import { execSync } from "node:child_process";
+import path from "node:path";
 import process from "node:process";
 
-const NEXT_CMD =
-  /\bnext\s+(dev|build|start)\b/i;
+const NEXT_CMD = /\bnext\s+(dev|build|start)\b/i;
+const docsAppRoot = path.resolve(process.cwd()).replace(/\\/g, "/");
 
 function collectPids() {
   const self = new Set([process.pid]);
@@ -61,12 +62,13 @@ function listNodeProcesses() {
 }
 
 const selfPids = collectPids();
-const conflicts = listNodeProcesses().filter(
-  (entry) =>
-    !selfPids.has(entry.pid) &&
-    NEXT_CMD.test(entry.command) &&
-    /ibex-harness[\\/]+docs[\\/]+app/i.test(entry.command),
-);
+const conflicts = listNodeProcesses().filter((entry) => {
+  if (selfPids.has(entry.pid) || !NEXT_CMD.test(entry.command)) {
+    return false;
+  }
+  const normalized = entry.command.replace(/\\/g, "/");
+  return normalized.includes(docsAppRoot) || normalized.includes("docs/app");
+});
 
 if (conflicts.length === 0) {
   process.exit(0);
@@ -76,7 +78,7 @@ console.warn(
   "\n[build] Found other Next.js processes for docs/app (can cause Windows ENOTEMPTY / silent hangs):",
 );
 for (const entry of conflicts) {
-  console.warn(`  - pid ${entry.pid}: ${entry.command}`);
+  console.warn(`  - pid ${entry.pid}`);
 }
 console.warn(
   "  Stop them first: Ctrl+C in those terminals, or run `pnpm stop:next` from docs/app.\n",

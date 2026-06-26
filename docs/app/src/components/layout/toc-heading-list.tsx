@@ -36,6 +36,7 @@ type TocHeadingItemProps = Readonly<{
   index: number;
   activeIndex: number;
   compact?: boolean;
+  onNavigate?: () => void;
 }>;
 
 export function TocHeadingItem({
@@ -43,6 +44,7 @@ export function TocHeadingItem({
   index,
   activeIndex,
   compact = false,
+  onNavigate,
 }: TocHeadingItemProps) {
   const isActive = activeIndex === index;
   const isPassed = activeIndex > index;
@@ -64,6 +66,7 @@ export function TocHeadingItem({
       ) : null}
       <Primitive.TOCItem
         href={item.url}
+        onClick={onNavigate}
         className={cn(tocLinkClassName, linkPadding, compact && "py-1.5 text-sm")}
       >
         {item.title}
@@ -76,12 +79,14 @@ type TocHeadingListProps = Readonly<{
   items: TOCItemType[];
   compact?: boolean;
   className?: string;
+  onItemClick?: () => void;
 }>;
 
 export function TocHeadingList({
   items,
   compact = false,
   className,
+  onItemClick,
 }: TocHeadingListProps) {
   const headings = filterTocHeadings(items);
   const activeAnchor = Primitive.useActiveAnchor();
@@ -100,6 +105,7 @@ export function TocHeadingList({
           index={index}
           item={item}
           key={item.url}
+          onNavigate={onItemClick}
         />
       ))}
     </ul>
