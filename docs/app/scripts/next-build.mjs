@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import path from "node:path";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
 const nextBin = path.join(
@@ -26,4 +27,15 @@ const result = spawnSync(process.execPath, [nextBin, "build"], {
   env: process.env,
 });
 
-process.exit(result.status ?? 1);
+if (result.status !== 0) {
+  process.exit(result.status ?? 1);
+}
+
+const extractScript = path.join(path.dirname(fileURLToPath(import.meta.url)), "extract-search-index.mjs");
+const extract = spawnSync(process.execPath, [extractScript], {
+  stdio: "inherit",
+  shell: false,
+  env: process.env,
+});
+
+process.exit(extract.status ?? 1);

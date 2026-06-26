@@ -9,6 +9,7 @@ paths=(
   "/roadmap"
   "/roadmap/current-state"
   "/docs/getting-started/introduction"
+  "/search-index.json"
 )
 
 for path in "${paths[@]}"; do
