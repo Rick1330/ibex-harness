@@ -23,6 +23,7 @@ export function PhaseCard({
   total,
   milestonesPending = false,
 }: PhaseCardProps) {
+  const showCompleteLabel = total === 0 && status === "completed";
   const pct =
     total > 0
       ? Math.round((completed / total) * 100)
@@ -60,7 +61,7 @@ export function PhaseCard({
           <div className="flex items-center justify-between text-xs text-muted-foreground">
             <span>Milestones</span>
             <span className="tabular-nums">
-              {completed}/{total}
+              {showCompleteLabel ? "Complete" : `${completed}/${total}`}
             </span>
           </div>
           <RoadmapProgress value={pct} />

@@ -31,5 +31,5 @@ export function getPhaseSlug(slugs: string[] | undefined): string | undefined {
 
 export function normalizeStatus(raw: string | undefined): MilestoneStatus | undefined {
   if (!raw) return undefined;
-  return STATUS_BY_RAW[raw.toLowerCase()];
+  return STATUS_BY_RAW[raw.trim().toLowerCase()];
 }

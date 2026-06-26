@@ -31,10 +31,23 @@ function serializeNodes(nodes: PageTree.Node[]): MobileNavNode[] {
     if (node.type === "separator") continue;
 
     if (node.type === "folder") {
+      const children: MobileNavNode[] = [];
+
+      if (node.index) {
+        children.push({
+          kind: "page",
+          name: String(node.index.name),
+          url: node.index.url,
+          external: node.index.external,
+        });
+      }
+
+      children.push(...serializeNodes(node.children));
+
       result.push({
         kind: "folder",
         name: String(node.name),
-        children: serializeNodes(node.children),
+        children,
       });
       continue;
     }
