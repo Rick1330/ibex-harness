@@ -35,14 +35,6 @@ You are building docs.ibexharness.com — a developer-tools documentation site t
 
 Open the live [Vercel docs](https://vercel.com/docs) and ask: "would this exact element appear there?" If no, don't ship it.
 
-## Performance rules
-
-- **Do not judge navigation speed on `next dev`** — MDX compiles on demand per route; use `build:clean` + `start` for realistic timing.
-- **Always run `build:clean`** before reporting Mermaid/MDX rendering bugs — ASCII is baked at compile time.
-- **Hoist `getPageTree()` to module scope** in layouts and pages; never rebuild the tree inside per-page render functions.
-- **Use CSS to hide `#nd-sidebar` on mobile** — do not wrap `DocsLayout` in a client component; that forces full client hydration and slows production navigation.
-- **Stop stale Next.js processes on Windows** (`pnpm stop:next`) before `build:clean` to avoid ENOTEMPTY hangs.
-
 ## References
 
 - [MASTER_BRIEF.md](../../docs/roadmap/phase-1-5-docs-site/MASTER_BRIEF.md) — canonical design spec

@@ -18,9 +18,6 @@ import { getPageLastModified } from "@/lib/page-meta";
 import { source } from "@/lib/source";
 import { getMDXComponents } from "@/mdx-components";
 
-/** Computed once at module load — shared by all doc pages. */
-const pageTree = source.getPageTree();
-
 type PageProps = Readonly<{
   params: Promise<{ slug?: string[] }>;
 }>;
@@ -34,7 +31,8 @@ export default async function Page(props: PageProps) {
 
   const MdxContent = page.data.body;
   const toc = page.data.toc ?? [];
-  const breadcrumbs = getBreadcrumbItems(page.url, pageTree, {
+  const tree = source.getPageTree();
+  const breadcrumbs = getBreadcrumbItems(page.url, tree, {
     includePage: false,
   });
   const section =
@@ -44,7 +42,7 @@ export default async function Page(props: PageProps) {
     <DocsPage
       toc={toc}
       full={page.data.full}
-      breadcrumb={{ component: <DocsBreadcrumb tree={pageTree} /> }}
+      breadcrumb={{ component: <DocsBreadcrumb tree={tree} /> }}
       tableOfContent={{
         component: <OnThisPage items={toc} />,
       }}

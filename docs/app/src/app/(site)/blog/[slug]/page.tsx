@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 
 import { BlogPostHeader } from "@/components/blog/blog-post-header";
 import { RelatedPosts } from "@/components/blog/related-posts";
-import { ArticleWithToc } from "@/components/layout/article-with-toc";
+import { OnThisPage } from "@/components/layout/toc";
 import { blogSource } from "@/lib/source";
 import { getMDXComponents } from "@/mdx-components";
 
@@ -31,8 +31,8 @@ export default async function BlogPostPage(props: BlogPostPageProps) {
   });
 
   return (
-    <div className="mx-auto w-full max-w-6xl px-4 py-12 md:px-6 md:py-16 lg:px-8">
-      <ArticleWithToc toc={toc}>
+    <div className="mx-auto max-w-6xl px-4 py-16 md:px-6">
+      <div className="lg:grid lg:grid-cols-[minmax(0,42rem)_14rem] lg:gap-12 lg:justify-center">
         <article className="min-w-0">
           <BlogPostHeader
             title={page.data.title}
@@ -45,12 +45,16 @@ export default async function BlogPostPage(props: BlogPostPageProps) {
           <div className="prose docs-prose max-w-none">
             <MdxContent components={getMDXComponents()} />
           </div>
-          <RelatedPosts
-            posts={related.length > 0 ? related : allPosts}
-            currentUrl={page.url}
-          />
+          <RelatedPosts posts={related.length > 0 ? related : allPosts} currentUrl={page.url} />
         </article>
-      </ArticleWithToc>
+        {toc.length > 0 ? (
+          <aside className="hidden lg:block">
+            <div className="sticky top-24">
+              <OnThisPage items={toc} />
+            </div>
+          </aside>
+        ) : null}
+      </div>
     </div>
   );
 }

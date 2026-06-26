@@ -27,7 +27,7 @@ export default function RoadmapHubPage() {
   const recent = getRecentCompletedMilestones(5);
 
   return (
-    <main className="container mx-auto max-w-5xl px-4 py-12 md:px-6 md:py-16 lg:px-8">
+    <main className="container mx-auto max-w-5xl px-4 py-16 md:px-6">
       <header className="mb-12">
         <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
           Roadmap

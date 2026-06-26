@@ -62,11 +62,11 @@ export function CodeTabs({
 
   return (
     <Tabs.Root className="my-6" {...rootProps}>
-      <Tabs.List className="flex gap-0 overflow-x-auto border-b border-border">
+      <Tabs.List className="flex gap-0 border-b border-border">
         {tabs.map((tab) => (
           <Tabs.Trigger
             className={cn(
-              "shrink-0 rounded-t-[4px] border border-transparent px-3 py-2 text-sm text-text-secondary sm:px-4",
+              "rounded-t-[4px] border border-transparent px-4 py-2 text-sm text-text-secondary",
               "hover:text-text-primary",
               "data-[state=active]:border-border data-[state=active]:border-b-transparent",
               "data-[state=active]:bg-panel-raised data-[state=active]:text-text-primary",

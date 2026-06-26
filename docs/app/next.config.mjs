@@ -1,10 +1,7 @@
 import { createMDX } from "fumadocs-mdx/next";
 import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
 
-// Wrangler platform proxy is for `next dev` only; during `next build` it can hang workers.
-if (process.env.NODE_ENV === "development") {
-  initOpenNextCloudflareForDev();
-}
+initOpenNextCloudflareForDev();
 
 const withMDX = createMDX();
 
@@ -13,13 +10,6 @@ const config = {
   reactStrictMode: true,
   experimental: {
     optimizePackageImports: ["lucide-react", "fumadocs-ui"],
-    webpackMemoryOptimizations: true,
-  },
-  outputFileTracingExcludes: {
-    "*": [
-      "./node_modules/mermaid/**",
-      "./node_modules/@esbuild/**",
-    ],
   },
   serverExternalPackages: ["mermaid"],
   redirects: async () => [

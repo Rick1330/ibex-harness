@@ -164,14 +164,12 @@ Treat these as design targets when reading [Architecture overview](/docs/archite
 
 ## Mental model summary
 
-```mermaid
-flowchart LR
-  Client["Client<br/>(PAT + Agent)"] --> Proxy["Proxy"]
-  Proxy -->|gRPC| Auth["Auth"]
-  Auth --> PG["Postgres<br/>SQL + RLS"]
-  Proxy --> Redis["Redis<br/>rate limits"]
-  Proxy -.->|Phase 2| LLM["LLM provider"]
-  Proxy -.->|Phase 3+| Memory["Memory / Context"]
+```text
+Client ──PAT+Agent──► Proxy ──gRPC──► Auth ──SQL+RLS──► Postgres
+                         │
+                         └──Redis (rate limits)
+                         └──(Phase 2) LLM provider
+                         └──(Phase 3+) Memory / Context
 ```
 
 ## Related guides
