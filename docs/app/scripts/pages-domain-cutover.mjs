@@ -9,7 +9,13 @@ const PAGES_CNAME_TARGET = `${PAGES_PROJECT}.pages.dev`;
 const PRODUCTION_HOST = "docs.ibexharness.com";
 const LEGACY_WORKER = "ibex-harness-docs";
 const API_BASE = "https://api.cloudflare.com/client/v4";
+const CF_API_ORIGIN = "https://api.cloudflare.com";
+const ZONE_APEX = "ibexharness.com";
 const CLOUDFLARE_OPAQUE_ID_RE = /^[0-9a-f]{16,64}$/i;
+const ACCOUNTS_RESOURCE_RE =
+  /^\/(?:workers\/domains(?:\/[0-9a-f]{16,64})?|pages\/projects\/ibex-harness-docs\/domains)$/;
+const ZONES_RESOURCE_RE =
+  /^\/[0-9a-f]{16,64}\/dns_records(?:\/[0-9a-f]{16,64})?$/;
 const WORKER_ALREADY_MISSING_RE =
   /not found|does not exist|no such script|10007|couldn't find/i;
 
@@ -44,7 +50,35 @@ function assertHostname(value, expected) {
   return value;
 }
 
+function buildAccountsApiUrl(accountId, resourcePath) {
+  assertCloudflareId(accountId, "account id");
+  if (!ACCOUNTS_RESOURCE_RE.test(resourcePath)) {
+    throw new Error("disallowed Cloudflare accounts API path");
+  }
+  return `${API_BASE}/accounts/${accountId}${resourcePath}`;
+}
+
+function buildZonesApiUrl(zoneId, resourcePath, query = "") {
+  assertCloudflareId(zoneId, "zone id");
+  if (!ZONES_RESOURCE_RE.test(resourcePath)) {
+    throw new Error("disallowed Cloudflare zones API path");
+  }
+  return `${API_BASE}/zones${resourcePath}${query}`;
+}
+
+function buildZonesLookupUrl() {
+  return `${API_BASE}/zones?name=${encodeURIComponent(ZONE_APEX)}`;
+}
+
+function assertFetchTarget(url) {
+  const parsed = new URL(url);
+  if (parsed.origin !== CF_API_ORIGIN || !parsed.pathname.startsWith("/client/v4/")) {
+    throw new Error("Cloudflare API URL not allowlisted");
+  }
+}
+
 async function cloudflareRequest(url, init = {}) {
+  assertFetchTarget(url);
   const token = requireEnv("CLOUDFLARE_API_TOKEN");
   const response = await fetch(url, {
     ...init,
@@ -69,8 +103,7 @@ async function cloudflareRequest(url, init = {}) {
 
 function accountUrl(suffix) {
   const accountId = requireEnv("CLOUDFLARE_ACCOUNT_ID");
-  assertCloudflareId(accountId, "account id");
-  return `${API_BASE}/accounts/${accountId}${suffix}`;
+  return buildAccountsApiUrl(accountId, suffix);
 }
 
 async function listWorkerDomains() {
@@ -78,19 +111,18 @@ async function listWorkerDomains() {
   return Array.isArray(result) ? result : [];
 }
 
-function zoneUrl(suffix) {
-  return `${API_BASE}/zones${suffix}`;
-}
-
 async function resolveZoneId(hostname) {
+  if (hostname !== PRODUCTION_HOST) {
+    throw new Error("unexpected hostname for zone resolution");
+  }
+
   const pagesDomains = await listPagesDomains();
   const pagesMatch = pagesDomains.find((entry) => entry.name === hostname);
   if (pagesMatch?.zone_tag) {
     return assertCloudflareId(pagesMatch.zone_tag, "zone id");
   }
 
-  const apex = hostname.split(".").slice(-2).join(".");
-  const zones = await cloudflareRequest(`${API_BASE}/zones?name=${apex}`);
+  const zones = await cloudflareRequest(buildZonesLookupUrl());
   const zone = Array.isArray(zones) ? zones[0] : undefined;
   if (!zone?.id) {
     throw new Error(`could not resolve Cloudflare zone for ${hostname}`);
@@ -99,8 +131,16 @@ async function resolveZoneId(hostname) {
 }
 
 async function ensurePagesDnsCname(hostname, zoneId) {
+  if (hostname !== PRODUCTION_HOST) {
+    throw new Error("unexpected hostname for DNS CNAME");
+  }
+
   const records = await cloudflareRequest(
-    zoneUrl(`/${zoneId}/dns_records?name=${hostname}`),
+    buildZonesApiUrl(
+      zoneId,
+      `/${zoneId}/dns_records`,
+      `?name=${encodeURIComponent(hostname)}`,
+    ),
   );
   const existing = Array.isArray(records) ? records : [];
   const cname = existing.find((record) => record.type === "CNAME");
@@ -111,21 +151,25 @@ async function ensurePagesDnsCname(hostname, zoneId) {
   }
 
   if (cname) {
-    await cloudflareRequest(zoneUrl(`/${zoneId}/dns_records/${cname.id}`), {
-      method: "PATCH",
-      body: JSON.stringify({
-        type: "CNAME",
-        content: PAGES_CNAME_TARGET,
-        proxied: true,
-      }),
-    });
+    const cnameId = assertCloudflareId(cname.id, "dns record id");
+    await cloudflareRequest(
+      buildZonesApiUrl(zoneId, `/${zoneId}/dns_records/${cnameId}`),
+      {
+        method: "PATCH",
+        body: JSON.stringify({
+          type: "CNAME",
+          content: PAGES_CNAME_TARGET,
+          proxied: true,
+        }),
+      },
+    );
     console.log(
       `[cutover] updated DNS CNAME for ${hostname} -> ${PAGES_CNAME_TARGET}`,
     );
     return;
   }
 
-  await cloudflareRequest(zoneUrl(`/${zoneId}/dns_records`), {
+  await cloudflareRequest(buildZonesApiUrl(zoneId, `/${zoneId}/dns_records`), {
     method: "POST",
     body: JSON.stringify({
       type: "CNAME",
@@ -140,6 +184,10 @@ async function ensurePagesDnsCname(hostname, zoneId) {
 }
 
 async function removeWorkerDomain(hostname) {
+  if (hostname !== PRODUCTION_HOST) {
+    throw new Error("unexpected hostname for Worker domain removal");
+  }
+
   const domains = await listWorkerDomains();
   const match = domains.find((entry) => entry.hostname === hostname);
   if (!match) {
@@ -166,6 +214,10 @@ async function listPagesDomains() {
 }
 
 async function attachPagesDomain(hostname) {
+  if (hostname !== PRODUCTION_HOST) {
+    throw new Error("unexpected hostname for Pages domain attach");
+  }
+
   const domains = await listPagesDomains();
   if (domains.some((entry) => entry.name === hostname)) {
     console.log(`[cutover] Pages domain already attached: ${hostname}`);
