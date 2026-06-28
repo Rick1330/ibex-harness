@@ -12,10 +12,10 @@ export function SearchIndexPrefetch({ indexUrl }: { indexUrl: string }) {
       }).catch(() => undefined);
     };
 
-    if ("requestIdleCallback" in window) {
-      const id = window.requestIdleCallback(prefetch);
+    if ("requestIdleCallback" in globalThis) {
+      const id = globalThis.requestIdleCallback(prefetch);
       return () => {
-        window.cancelIdleCallback(id);
+        globalThis.cancelIdleCallback(id);
       };
     }
 

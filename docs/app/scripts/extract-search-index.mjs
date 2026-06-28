@@ -53,10 +53,10 @@ function waitForReady(child, timeoutMs = 120_000) {
     const onExit = (code) => {
       clearTimeout(timer);
       const detail = child.stderrBuffer?.() ?? "";
+      const codeLabel = code ?? "unknown";
+      const detailSuffix = detail ? `: ${detail.trim()}` : "";
       reject(
-        new Error(
-          `next start exited with code ${code ?? "unknown"} before ready${detail ? `: ${detail.trim()}` : ""}`,
-        ),
+        new Error(`next start exited with code ${codeLabel} before ready${detailSuffix}`),
       );
     };
 

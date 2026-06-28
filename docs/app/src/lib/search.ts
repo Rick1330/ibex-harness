@@ -60,7 +60,7 @@ const simpleSchema = {
 
 /** Orama v2 save() is async; fumadocs-core spreads it without await. */
 export async function exportStaticSearchIndex() {
-  const items = await searchOptions.indexes();
+  const items = searchOptions.indexes();
   const db = await create({ schema: simpleSchema });
   await insertMultiple(
     db,

@@ -26,7 +26,7 @@ async function walkMdxFiles(dir) {
 }
 
 function filePathToSlugSegments(filePath) {
-  const relative = path.relative(docsContentDir, filePath).replace(/\\/g, "/");
+  const relative = path.relative(docsContentDir, filePath).replaceAll("\\", "/");
   const withoutExt = relative.replace(/\.(mdx|md)$/, "");
   if (withoutExt === "index") {
     return [];

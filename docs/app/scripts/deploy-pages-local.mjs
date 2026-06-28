@@ -1,9 +1,10 @@
-import { readFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+
+import { loadEnvFile } from "./build-script-utils.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(scriptDir, "..");
@@ -15,27 +16,6 @@ const wranglerBin = path.join(
   path.dirname(require.resolve("wrangler/package.json")),
   "bin/wrangler.js",
 );
-
-function loadEnvFile(filePath) {
-  let content = readFileSync(filePath, "utf8");
-  if (content.charCodeAt(0) === 0xfeff) {
-    content = content.slice(1);
-  }
-  for (const rawLine of content.split("\n")) {
-    const line = rawLine.replace(/\r$/, "");
-    const match = line.match(/^([^#=]+)=(.*)$/);
-    if (!match) continue;
-    const key = match[1].trim().replace(/\r$/, "");
-    let value = match[2].trim().replace(/\r$/, "");
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1);
-    }
-    process.env[key] = value;
-  }
-}
 
 function deployPages() {
   return new Promise((resolve, reject) => {
@@ -115,7 +95,9 @@ async function main() {
   await deployPages();
 }
 
-main().catch((error) => {
+try {
+  await main();
+} catch (error) {
   console.error("[deploy] failed:", error.message);
   process.exit(1);
-});
+}

@@ -1,9 +1,11 @@
 import { spawnSync } from "node:child_process";
-import { rename, readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+
+import { renameIgnoreMissing } from "./build-script-utils.mjs";
 
 const require = createRequire(import.meta.url);
 const nextBin = path.join(
@@ -41,27 +43,19 @@ function runNextBuild(phase) {
 }
 
 async function stashApiRoutes() {
-  try {
-    await rename(apiDir, apiStashDir);
-    console.log("[build] stashed src/app/api for static export");
-  } catch (error) {
-    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
-      return;
-    }
-    throw error;
-  }
+  await renameIgnoreMissing(
+    apiDir,
+    apiStashDir,
+    "[build] stashed src/app/api for static export",
+  );
 }
 
 async function restoreApiRoutes() {
-  try {
-    await rename(apiStashDir, apiDir);
-    console.log("[build] restored src/app/api after static export");
-  } catch (error) {
-    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
-      return;
-    }
-    throw error;
-  }
+  await renameIgnoreMissing(
+    apiStashDir,
+    apiDir,
+    "[build] restored src/app/api after static export",
+  );
 }
 
 async function main() {
@@ -89,7 +83,10 @@ async function main() {
   }
 }
 
-main().catch((error) => {
+try {
+  await main();
+} catch (error) {
   console.error("[build] failed:", error);
-  restoreApiRoutes().finally(() => process.exit(1));
-});
+  await restoreApiRoutes();
+  process.exit(1);
+}

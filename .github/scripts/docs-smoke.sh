@@ -26,14 +26,14 @@ done
 
 search_url="${BASE_URL}/search-index.json"
 size="$(curl -fsS "$search_url" | wc -c | tr -d ' ')"
-if [ "$size" -gt "$SEARCH_INDEX_MAX_BYTES" ]; then
+if [[ "$size" -gt "$SEARCH_INDEX_MAX_BYTES" ]]; then
   echo "smoke failed: $search_url is ${size} bytes (max ${SEARCH_INDEX_MAX_BYTES})"
   exit 1
 fi
 echo "ok: search index size ${size} bytes (max ${SEARCH_INDEX_MAX_BYTES})"
 
 redirect_code="$(curl -fsS -o /dev/null -w '%{http_code}' "${BASE_URL}/api/search" || true)"
-if [ "$redirect_code" != "308" ] && [ "$redirect_code" != "301" ] && [ "$redirect_code" != "302" ]; then
+if [[ "$redirect_code" != "308" && "$redirect_code" != "301" && "$redirect_code" != "302" ]]; then
   echo "smoke failed: /api/search redirect returned HTTP $redirect_code"
   exit 1
 fi
