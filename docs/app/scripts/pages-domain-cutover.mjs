@@ -67,7 +67,13 @@ function buildZonesApiUrl(zoneId, resourcePath, query = "") {
 }
 
 function buildZonesLookupUrl() {
-  return `${API_BASE}/zones?name=${encodeURIComponent(ZONE_APEX)}`;
+  const accountId = requireEnv("CLOUDFLARE_ACCOUNT_ID");
+  assertCloudflareId(accountId, "account id");
+  const params = new URLSearchParams({
+    name: ZONE_APEX,
+    "account.id": accountId,
+  });
+  return `${API_BASE}/zones?${params.toString()}`;
 }
 
 function assertFetchTarget(url) {
@@ -89,7 +95,14 @@ async function cloudflareRequest(url, init = {}) {
     },
   });
   const text = await response.text();
-  const body = text ? JSON.parse(text) : { success: response.ok };
+  let body = { success: response.ok };
+  if (text) {
+    try {
+      body = JSON.parse(text);
+    } catch {
+      body = { success: false, errors: [{ message: text }] };
+    }
+  }
   if (!response.ok || body.success === false) {
     const detail = Array.isArray(body.errors)
       ? body.errors.map((e) => e.message ?? JSON.stringify(e)).join("; ")

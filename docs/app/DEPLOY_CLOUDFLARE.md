@@ -122,6 +122,7 @@ cd docs/app
 export CLOUDFLARE_API_TOKEN=...
 export CLOUDFLARE_ACCOUNT_ID=...
 node scripts/pages-domain-cutover.mjs
+cd ../..
 ```
 
 Verify after cutover:

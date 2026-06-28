@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: docs-deploy-${{ github.event.workflow_run.head_branch || github.ref }}
+  group: docs-deploy-${{ github.event.workflow_run.head_branch || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -53,7 +53,7 @@ jobs:
     name: deploy-docs-pages
     needs: changes
     if: >
-      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
       needs.changes.outputs.docs == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
