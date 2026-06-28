@@ -8,6 +8,7 @@ const PAGES_PROJECT = "ibex-harness-docs";
 const PRODUCTION_HOST = "docs.ibexharness.com";
 const LEGACY_WORKER = "ibex-harness-docs";
 const API_BASE = "https://api.cloudflare.com/client/v4";
+const CLOUDFLARE_ID_RE = /^[0-9a-f]{32}$/i;
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(scriptDir, "..");
@@ -26,10 +27,22 @@ function requireEnv(name) {
   return value;
 }
 
-async function cloudflareApi(pathname, init = {}) {
+function assertCloudflareId(value, label) {
+  if (typeof value !== "string" || !CLOUDFLARE_ID_RE.test(value)) {
+    throw new Error(`unexpected ${label} from Cloudflare API`);
+  }
+  return value;
+}
+
+function assertHostname(value, expected) {
+  if (value !== expected) {
+    throw new Error(`unexpected hostname from Cloudflare API`);
+  }
+  return value;
+}
+
+async function cloudflareRequest(url, init = {}) {
   const token = requireEnv("CLOUDFLARE_API_TOKEN");
-  const accountId = requireEnv("CLOUDFLARE_ACCOUNT_ID");
-  const url = `${API_BASE}/accounts/${accountId}${pathname}`;
   const response = await fetch(url, {
     ...init,
     headers: {
@@ -40,15 +53,20 @@ async function cloudflareApi(pathname, init = {}) {
   });
   const body = await response.json();
   if (!response.ok || body.success === false) {
-    const detail = JSON.stringify(body.errors ?? body);
-    throw new Error(`Cloudflare API ${init.method ?? "GET"} ${pathname} failed: ${detail}`);
+    throw new Error(`Cloudflare API request failed with status ${response.status}`);
   }
   return body.result;
 }
 
+function accountUrl(suffix) {
+  const accountId = requireEnv("CLOUDFLARE_ACCOUNT_ID");
+  assertCloudflareId(accountId, "account id");
+  return `${API_BASE}/accounts/${accountId}${suffix}`;
+}
+
 async function listWorkerDomains() {
   try {
-    return await cloudflareApi("/workers/domains");
+    return await cloudflareRequest(accountUrl("/workers/domains"));
   } catch {
     return [];
   }
@@ -61,13 +79,19 @@ async function removeWorkerDomain(hostname) {
     console.log(`[cutover] no Worker custom domain for ${hostname}`);
     return;
   }
-  await cloudflareApi(`/workers/domains/${match.id}`, { method: "DELETE" });
+  assertHostname(match.hostname, PRODUCTION_HOST);
+  const domainId = assertCloudflareId(match.id, "worker domain id");
+  await cloudflareRequest(accountUrl(`/workers/domains/${domainId}`), {
+    method: "DELETE",
+  });
   console.log(`[cutover] removed Worker custom domain ${hostname}`);
 }
 
 async function listPagesDomains() {
   try {
-    return await cloudflareApi(`/pages/projects/${PAGES_PROJECT}/domains`);
+    return await cloudflareRequest(
+      accountUrl(`/pages/projects/${PAGES_PROJECT}/domains`),
+    );
   } catch {
     return [];
   }
@@ -79,7 +103,7 @@ async function attachPagesDomain(hostname) {
     console.log(`[cutover] Pages domain already attached: ${hostname}`);
     return;
   }
-  await cloudflareApi(`/pages/projects/${PAGES_PROJECT}/domains`, {
+  await cloudflareRequest(accountUrl(`/pages/projects/${PAGES_PROJECT}/domains`), {
     method: "POST",
     body: JSON.stringify({ name: hostname }),
   });
@@ -123,7 +147,7 @@ async function main() {
 
 try {
   await main();
-} catch (error) {
-  console.error("[cutover] failed:", error.message);
+} catch {
+  console.error("[cutover] failed — see Cloudflare dashboard for domain and Worker state");
   process.exit(1);
 }
