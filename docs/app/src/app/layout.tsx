@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import dynamic from "next/dynamic";
 import { RootProvider } from "fumadocs-ui/provider";
 import { JetBrains_Mono } from "next/font/google";
 import { GeistMono } from "geist/font/mono";
@@ -16,6 +17,11 @@ const STATIC_SEARCH_INDEX_URL = "/search-index.json";
 const searchOptions = isProd
   ? { type: "static" as const, api: STATIC_SEARCH_INDEX_URL }
   : { type: "fetch" as const, api: "/api/search" };
+
+const StaticSearchDialog = dynamic(
+  () => import("@/components/static-search-dialog"),
+  { ssr: false },
+);
 
 const jetbrainsMono = JetBrains_Mono({
   subsets: ["latin"],
@@ -53,7 +59,10 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <ClearMermaidCache />
         {isProd ? <SearchIndexPrefetch indexUrl={STATIC_SEARCH_INDEX_URL} /> : null}
         <RootProvider
-          search={{ options: searchOptions }}
+          search={{
+            ...(isProd ? { SearchDialog: StaticSearchDialog } : {}),
+            options: searchOptions,
+          }}
           theme={{ enabled: true, attribute: "class", defaultTheme: "dark" }}
         >
           <SiteNavShell />

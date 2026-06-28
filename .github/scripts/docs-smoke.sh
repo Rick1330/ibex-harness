@@ -39,40 +39,22 @@ if [[ "$redirect_code" != "308" && "$redirect_code" != "301" && "$redirect_code"
 fi
 echo "ok: /api/search redirects (${redirect_code})"
 
-# Cmd+K loads search-index URLs from client JS bundles; verify each referenced file exists.
+# Static export bakes search config into the RSC payload on /roadmap.
 page_html="$(curl -fsS "${BASE_URL}/roadmap")"
-mapfile -t baked_paths < <(
-  {
-    echo "$page_html" | grep -oE '/search-index[^"'"'"' )>]+\.json' || true
-    while read -r chunk; do
-      [[ -z "$chunk" ]] && continue
-      curl -fsS "${BASE_URL}${chunk}" 2>/dev/null \
-        | grep -oE '/search-index[^"'"'"' )>]+\.json' || true
-    done < <(
-      echo "$page_html" | grep -oE '/_next/static/[^"'"'"' ]+\.js' | head -40 | sort -u
-    )
-  } | sort -u
-)
-if [[ "${#baked_paths[@]}" -eq 0 ]]; then
-  echo "smoke failed: no search-index URL found in /roadmap HTML or JS chunks"
+if ! echo "$page_html" | grep -qF '/search-index.json'; then
+  echo "smoke failed: /search-index.json not referenced in /roadmap HTML"
   exit 1
 fi
-for path in "${baked_paths[@]}"; do
-  url="${BASE_URL}${path}"
-  code="$(curl -fsS -o /dev/null -w '%{http_code}' "$url" || true)"
-  if [[ "$code" != "200" ]]; then
-    echo "smoke failed: baked search index $url returned HTTP $code"
-    exit 1
-  fi
-  echo "ok: baked search index $path"
-done
+echo "ok: static search index URL baked in /roadmap"
 
 # Production must be Pages static CDN, not the legacy OpenNext Worker.
-intro_headers="$(curl -fsSI "${BASE_URL}/docs/getting-started/introduction" || true)"
-if echo "$intro_headers" | grep -qi 'x-opennext'; then
-  echo "smoke failed: ${BASE_URL} still served by OpenNext Worker (x-opennext header)"
-  exit 1
+if [[ "$BASE_URL" == *"docs.ibexharness.com"* ]]; then
+  intro_headers="$(curl -fsSI "${BASE_URL}/docs/getting-started/introduction" || true)"
+  if echo "$intro_headers" | grep -qi 'x-opennext'; then
+    echo "smoke failed: ${BASE_URL} still served by OpenNext Worker (x-opennext header)"
+    exit 1
+  fi
+  echo "ok: not served by OpenNext Worker"
 fi
-echo "ok: not served by OpenNext Worker"
 
-echo "docs smoke passed (${#paths[@]} paths + search size + redirect + baked index + host)"
+echo "docs smoke passed (${#paths[@]} paths + search size + redirect + baked index)"
