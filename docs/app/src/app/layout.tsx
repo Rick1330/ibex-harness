@@ -12,9 +12,9 @@ import "./globals.css";
 
 const isProd = process.env.NODE_ENV === "production";
 /** Stable path written by extract-search-index; must match public/_redirects. */
-const staticSearchIndexUrl = "/search-index.json";
+const STATIC_SEARCH_INDEX_URL = "/search-index.json";
 const searchOptions = isProd
-  ? { type: "static" as const, api: staticSearchIndexUrl }
+  ? { type: "static" as const, api: STATIC_SEARCH_INDEX_URL }
   : { type: "fetch" as const, api: "/api/search" };
 
 const jetbrainsMono = JetBrains_Mono({
@@ -51,7 +51,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     >
       <body className="bg-canvas text-text-primary antialiased">
         <ClearMermaidCache />
-        {isProd ? <SearchIndexPrefetch indexUrl={staticSearchIndexUrl} /> : null}
+        {isProd ? <SearchIndexPrefetch indexUrl={STATIC_SEARCH_INDEX_URL} /> : null}
         <RootProvider
           search={{ options: searchOptions }}
           theme={{ enabled: true, attribute: "class", defaultTheme: "dark" }}

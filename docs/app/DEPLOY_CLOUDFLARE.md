@@ -109,8 +109,8 @@ Production DNS: **`docs.ibexharness.com`** → Cloudflare Pages project **`ibex-
 CI runs [`scripts/pages-domain-cutover.mjs`](scripts/pages-domain-cutover.mjs) after each deploy:
 
 1. Remove `docs.ibexharness.com` from the legacy OpenNext Worker (if still attached)
-2. Delete Worker script `ibex-harness-docs` (OpenNext only — not the Pages project)
-3. Attach the custom domain to the Pages project
+2. Attach the custom domain to the Pages project
+3. Delete Worker script `ibex-harness-docs` (OpenNext only — not the Pages project)
 
 Manual cutover (one-time or recovery):
 
@@ -126,7 +126,7 @@ Verify:
 ```bash
 curl -fsSI https://docs.ibexharness.com/docs/getting-started/introduction   # no x-opennext header
 curl -fsSI https://docs.ibexharness.com/search-index.json
-curl -fsSI https://docs.ibexharness.com/api/search   # expect 308 → search-index.json
+curl -fsSI https://docs.ibexharness.com/api/search   # 308 via public/_redirects → /search-index.json
 bash .github/scripts/docs-smoke.sh https://docs.ibexharness.com
 ```
 

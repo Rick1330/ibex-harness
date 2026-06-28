@@ -9,6 +9,8 @@ const PRODUCTION_HOST = "docs.ibexharness.com";
 const LEGACY_WORKER = "ibex-harness-docs";
 const API_BASE = "https://api.cloudflare.com/client/v4";
 const CLOUDFLARE_ID_RE = /^[0-9a-f]{32}$/i;
+const WORKER_ALREADY_MISSING_RE =
+  /not found|does not exist|no such script|10007|couldn't find/i;
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(scriptDir, "..");
@@ -36,7 +38,7 @@ function assertCloudflareId(value, label) {
 
 function assertHostname(value, expected) {
   if (value !== expected) {
-    throw new Error(`unexpected hostname from Cloudflare API`);
+    throw new Error("unexpected hostname from Cloudflare API");
   }
   return value;
 }
@@ -65,11 +67,8 @@ function accountUrl(suffix) {
 }
 
 async function listWorkerDomains() {
-  try {
-    return await cloudflareRequest(accountUrl("/workers/domains"));
-  } catch {
-    return [];
-  }
+  const result = await cloudflareRequest(accountUrl("/workers/domains"));
+  return Array.isArray(result) ? result : [];
 }
 
 async function removeWorkerDomain(hostname) {
@@ -88,13 +87,10 @@ async function removeWorkerDomain(hostname) {
 }
 
 async function listPagesDomains() {
-  try {
-    return await cloudflareRequest(
-      accountUrl(`/pages/projects/${PAGES_PROJECT}/domains`),
-    );
-  } catch {
-    return [];
-  }
+  const result = await cloudflareRequest(
+    accountUrl(`/pages/projects/${PAGES_PROJECT}/domains`),
+  );
+  return Array.isArray(result) ? result : [];
 }
 
 async function attachPagesDomain(hostname) {
@@ -112,16 +108,22 @@ async function attachPagesDomain(hostname) {
 
 function runWranglerDeleteWorker() {
   return new Promise((resolve, reject) => {
+    let stderr = "";
     const child = spawn(
       process.execPath,
       [wranglerBin, "delete", LEGACY_WORKER, "--force"],
       {
         cwd: appRoot,
         env: process.env,
-        stdio: "inherit",
+        stdio: ["ignore", "inherit", "pipe"],
         shell: false,
       },
     );
+    child.stderr?.on("data", (chunk) => {
+      const text = chunk.toString();
+      stderr += text;
+      process.stderr.write(chunk);
+    });
     child.once("error", reject);
     child.once("exit", (code) => {
       if (code === 0) {
@@ -129,10 +131,14 @@ function runWranglerDeleteWorker() {
         resolve(undefined);
         return;
       }
-      console.warn(
-        `[cutover] wrangler delete ${LEGACY_WORKER} exited ${code ?? "unknown"} (may already be removed)`,
+      if (WORKER_ALREADY_MISSING_RE.test(stderr)) {
+        console.log(`[cutover] legacy Worker ${LEGACY_WORKER} already removed`);
+        resolve(undefined);
+        return;
+      }
+      reject(
+        new Error(`wrangler delete ${LEGACY_WORKER} exited ${code ?? "unknown"}`),
       );
-      resolve(undefined);
     });
   });
 }
@@ -140,8 +146,8 @@ function runWranglerDeleteWorker() {
 async function main() {
   console.log(`[cutover] moving ${PRODUCTION_HOST} from Worker to Pages`);
   await removeWorkerDomain(PRODUCTION_HOST);
-  await runWranglerDeleteWorker();
   await attachPagesDomain(PRODUCTION_HOST);
+  await runWranglerDeleteWorker();
   console.log("[cutover] complete — verify with docs-smoke.sh on production URL");
 }
 
