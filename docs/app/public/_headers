@@ -1,6 +1,9 @@
 /_next/static/*
   Cache-Control: public, max-age=31536000, immutable
 
+/brand/*
+  Cache-Control: public, max-age=31536000, immutable
+
 /search-index.json
   Cache-Control: public, max-age=86400, must-revalidate
 

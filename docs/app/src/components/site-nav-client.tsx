@@ -1,19 +1,19 @@
 "use client";
 
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
-import { BrandLockup } from "@/components/brand-lockup";
 import type { MobileNavData } from "@/lib/mobile-nav-data";
 import { SiteNavActions } from "@/components/site-nav-actions";
 import { SiteNavMobileDrawer } from "@/components/site-nav-mobile-drawer";
 import { SiteNavLinks } from "@/components/site-nav-links";
 
-type SiteNavProps = Readonly<{
+type SiteNavClientProps = Readonly<{
   mobileNavData: MobileNavData;
+  brand: ReactNode;
 }>;
 
-export function SiteNav({ mobileNavData }: SiteNavProps) {
+export function SiteNavClient({ mobileNavData, brand }: SiteNavClientProps) {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -54,9 +54,7 @@ export function SiteNav({ mobileNavData }: SiteNavProps) {
         className="site-nav sticky top-0 z-50 w-full border-b border-border/80 bg-background"
       >
         <div className="site-nav-inner h-[var(--site-nav-height)] w-full">
-          <div className="site-nav-brand">
-            <BrandLockup showWordmark="md" />
-          </div>
+          <div className="site-nav-brand">{brand}</div>
 
           <nav
             aria-label="Site sections"

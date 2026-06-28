@@ -34,23 +34,21 @@ export function BrandLockup({
     >
       <span className="relative size-7 shrink-0">
         {/* eslint-disable-next-line @next/next/no-img-element -- static brand marks; avoids dev image optimizer latency */}
-        <img
-          src="/brand/ibex-mark-light.png"
-          alt=""
-          width={28}
-          height={28}
-          decoding="async"
-          className="size-7 object-contain dark:hidden"
-        />
-        {/* eslint-disable-next-line @next/next/no-img-element -- static brand marks; avoids dev image optimizer latency */}
-        <img
-          src="/brand/ibex-mark-dark.png"
-          alt=""
-          width={28}
-          height={28}
-          decoding="async"
-          className="hidden size-7 object-contain dark:block"
-        />
+        <picture>
+          <source
+            media="(prefers-color-scheme: dark)"
+            srcSet="/brand/ibex-mark-dark.png"
+          />
+          <img
+            src="/brand/ibex-mark-light.png"
+            alt=""
+            width={28}
+            height={28}
+            decoding="async"
+            fetchPriority="high"
+            className="size-7 object-contain"
+          />
+        </picture>
       </span>
       <WordmarkText size="nav" className={wordmarkClass} />
     </Link>

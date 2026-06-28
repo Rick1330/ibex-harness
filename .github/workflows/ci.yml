@@ -135,6 +135,7 @@ jobs:
 
   buf-lint:
     name: buf-lint
+    needs: repo-guards
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
@@ -162,6 +163,7 @@ jobs:
 
   proto-contract:
     name: proto-contract
+    needs: buf-lint
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
@@ -241,6 +243,7 @@ jobs:
 
   db-migrate-smoke:
     name: db-migrate-smoke
+    needs: repo-guards
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     services:
@@ -308,6 +311,7 @@ jobs:
 
   auth-validate-smoke:
     name: auth-validate-smoke
+    needs: [proto-contract, db-migrate-smoke]
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     services:
@@ -379,6 +383,7 @@ jobs:
 
   proxy-auth-smoke:
     name: proxy-auth-smoke
+    needs: [proto-contract, db-migrate-smoke]
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     services:
@@ -450,6 +455,7 @@ jobs:
 
   proxy-agent-verify-smoke:
     name: proxy-agent-verify-smoke
+    needs: [proto-contract, db-migrate-smoke]
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     services:
@@ -526,6 +532,7 @@ jobs:
 
   security-integration:
     name: security-integration
+    needs: [proto-contract, db-migrate-smoke]
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     services:
@@ -590,6 +597,7 @@ jobs:
 
   go-race:
     name: go-race
+    needs: proto-contract
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
@@ -629,6 +637,7 @@ jobs:
 
   go-services:
     name: go-services
+    needs: proto-contract
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     strategy:
@@ -682,6 +691,7 @@ jobs:
 
   golangci-lint:
     name: golangci-lint
+    needs: proto-contract
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
@@ -755,7 +765,7 @@ jobs:
 
   docs-build:
     name: docs-build
-    needs: changes
+    needs: [changes, repo-guards]
     if: github.event_name != 'schedule' && needs.changes.outputs.docs == 'true'
     runs-on: ubuntu-latest
     steps:
@@ -821,6 +831,7 @@ jobs:
 
   coverage:
     name: coverage
+    needs: [proto-contract, db-migrate-smoke]
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     services:

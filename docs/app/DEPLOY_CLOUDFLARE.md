@@ -35,6 +35,8 @@ Create at [Cloudflare API Tokens](https://dash.cloudflare.com/profile/api-tokens
 | Permission | Access |
 | --- | --- |
 | Account → Cloudflare Pages | Edit |
+| Account → Workers Scripts | Edit |
+| Account → Workers Domains | Edit |
 | Account → Account Settings | Read |
 | Zone → DNS | Edit (`ibexharness.com`) |
 
@@ -87,10 +89,10 @@ npx serve docs/app/out
 
 | Trigger | When |
 | --- | --- |
-| Push to `main` | Auto when `docs/**`, root `package.json`, lockfile, turbo, or workflow changes |
+| CI success on `main` | Auto after the **CI** workflow passes, when `docs/**`, root `package.json`, lockfile, turbo, or deploy workflow changed |
 | `workflow_dispatch` | GitHub → Actions → **Docs Deploy** → **Run workflow** |
 
-CI runs typecheck, unit tests, `build:clean`, deploys `docs/app/out` via `wrangler pages deploy`, then smoke-tests the Pages preview URL and production domain.
+Docs Deploy runs typecheck, unit tests, `build:clean`, deploys `docs/app/out` via `wrangler pages deploy`, then smoke-tests the Pages preview URL and production domain. It does **not** run DNS cutover — that is a one-time manual step (see below).
 
 **Manual (local):**
 
@@ -104,15 +106,16 @@ pnpm --filter docs deploy:pages
 
 ## Custom domain
 
-Production DNS: **`docs.ibexharness.com`** → Cloudflare Pages project **`ibex-harness-docs`**.
+Production DNS: **`docs.ibexharness.com`** → Cloudflare Pages project **`ibex-harness-docs`** (proxied CNAME to `ibex-harness-docs.pages.dev`).
 
-CI runs [`scripts/pages-domain-cutover.mjs`](scripts/pages-domain-cutover.mjs) after each deploy:
+### Manual cutover (one-time or recovery only)
+
+DNS cutover from the legacy OpenNext Worker is **not** part of CI. Run [`scripts/pages-domain-cutover.mjs`](scripts/pages-domain-cutover.mjs) manually when migrating or recovering:
 
 1. Remove `docs.ibexharness.com` from the legacy OpenNext Worker (if still attached)
 2. Attach the custom domain to the Pages project
-3. Delete Worker script `ibex-harness-docs` (OpenNext only — not the Pages project)
-
-Manual cutover (one-time or recovery):
+3. Ensure a proxied CNAME `docs.ibexharness.com` → `ibex-harness-docs.pages.dev` exists (Worker custom domains delete their DNS records on removal)
+4. Delete Worker script `ibex-harness-docs` (OpenNext only — not the Pages project)
 
 ```bash
 cd docs/app
@@ -121,7 +124,7 @@ export CLOUDFLARE_ACCOUNT_ID=...
 node scripts/pages-domain-cutover.mjs
 ```
 
-Verify:
+Verify after cutover:
 
 ```bash
 curl -fsSI https://docs.ibexharness.com/docs/getting-started/introduction   # no x-opennext header
@@ -142,4 +145,4 @@ Production redirects live in [`public/_redirects`](public/_redirects) (Cloudflar
 
 ## Remove legacy Worker (post-cutover)
 
-After Pages is live and stable for 24h, confirm the Worker script is gone (CI deletes it on deploy). Stray scripts to check in the dashboard: `ibex-harness`, `ibexharness`.
+After Pages is live and stable, confirm the OpenNext Worker script `ibex-harness-docs` is gone (the cutover script deletes it). Stray scripts to check in the dashboard: `ibex-harness`, `ibexharness`.

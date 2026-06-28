@@ -1,8 +1,14 @@
-import { SiteNav } from "@/components/site-nav";
+import { BrandLockup } from "@/components/brand-lockup";
+import { SiteNavClient } from "@/components/site-nav-client";
 import { getMobileNavData } from "@/lib/mobile-nav-data";
 
 export function SiteNavShell() {
   const mobileNavData = getMobileNavData();
 
-  return <SiteNav mobileNavData={mobileNavData} />;
+  return (
+    <SiteNavClient
+      mobileNavData={mobileNavData}
+      brand={<BrandLockup showWordmark="md" />}
+    />
+  );
 }
