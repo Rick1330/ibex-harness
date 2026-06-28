@@ -11,10 +11,10 @@ import { SiteNavShell } from "@/components/site-nav-shell";
 import "./globals.css";
 
 const isProd = process.env.NODE_ENV === "production";
-const searchIndexUrl =
-  process.env.NEXT_PUBLIC_SEARCH_INDEX_URL ?? "/search-index.json";
+/** Stable path written by extract-search-index; must match public/_redirects. */
+const staticSearchIndexUrl = "/search-index.json";
 const searchOptions = isProd
-  ? { type: "static" as const, api: searchIndexUrl }
+  ? { type: "static" as const, api: staticSearchIndexUrl }
   : { type: "fetch" as const, api: "/api/search" };
 
 const jetbrainsMono = JetBrains_Mono({
@@ -51,7 +51,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     >
       <body className="bg-canvas text-text-primary antialiased">
         <ClearMermaidCache />
-        {isProd ? <SearchIndexPrefetch indexUrl={searchIndexUrl} /> : null}
+        {isProd ? <SearchIndexPrefetch indexUrl={staticSearchIndexUrl} /> : null}
         <RootProvider
           search={{ options: searchOptions }}
           theme={{ enabled: true, attribute: "class", defaultTheme: "dark" }}

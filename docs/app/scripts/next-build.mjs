@@ -1,5 +1,4 @@
 import { spawnSync } from "node:child_process";
-import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import process from "node:process";
@@ -71,8 +70,9 @@ async function main() {
     throw new Error(`search extract failed with exit code ${extract.status ?? 1}`);
   }
 
-  const buildId = (await readFile(path.join(appRoot, ".next", "BUILD_ID"), "utf8")).trim();
-  process.env.NEXT_PUBLIC_SEARCH_INDEX_URL = `/search-index.${buildId}.json`;
+  // Client always loads /search-index.json (stable). extract-search-index also writes
+  // a build-id copy for immutable cache headers; do not bake the versioned path into
+  // the static export — phase 2 gets a new BUILD_ID and the versioned file 404s.
   process.env.NEXT_STATIC_EXPORT = "1";
 
   await stashApiRoutes();

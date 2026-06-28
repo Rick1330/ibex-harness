@@ -39,4 +39,32 @@ if [[ "$redirect_code" != "308" && "$redirect_code" != "301" && "$redirect_code"
 fi
 echo "ok: /api/search redirects (${redirect_code})"
 
-echo "docs smoke passed (${#paths[@]} paths + search size + redirect)"
+# Cmd+K loads search-index URLs baked into HTML/JS; every referenced file must exist.
+mapfile -t baked_paths < <(
+  curl -fsS "${BASE_URL}/roadmap" \
+    | grep -oE '/search-index[^"'"'"' )>]+\.json' \
+    | sort -u
+)
+if [[ "${#baked_paths[@]}" -eq 0 ]]; then
+  echo "smoke failed: no search-index URL found in /roadmap HTML"
+  exit 1
+fi
+for path in "${baked_paths[@]}"; do
+  url="${BASE_URL}${path}"
+  code="$(curl -fsS -o /dev/null -w '%{http_code}' "$url" || true)"
+  if [[ "$code" != "200" ]]; then
+    echo "smoke failed: baked search index $url returned HTTP $code"
+    exit 1
+  fi
+  echo "ok: baked search index $path"
+done
+
+# Production must be Pages static CDN, not the legacy OpenNext Worker.
+intro_headers="$(curl -fsSI "${BASE_URL}/docs/getting-started/introduction" || true)"
+if echo "$intro_headers" | grep -qi 'x-opennext'; then
+  echo "smoke failed: ${BASE_URL} still served by OpenNext Worker (x-opennext header)"
+  exit 1
+fi
+echo "ok: not served by OpenNext Worker"
+
+echo "docs smoke passed (${#paths[@]} paths + search size + redirect + baked index + host)"

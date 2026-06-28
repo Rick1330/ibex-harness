@@ -19,6 +19,7 @@
     "test:watch": "vitest",
     "deploy:pages": "wrangler pages deploy out --project-name=ibex-harness-docs --branch=main --commit-dirty=true",
     "deploy:pages:local": "node scripts/deploy-pages-local.mjs",
+    "cutover:pages-domain": "node scripts/pages-domain-cutover.mjs",
     "postinstall": "fumadocs-mdx"
   },
   "dependencies": {

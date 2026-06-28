@@ -106,18 +106,33 @@ pnpm --filter docs deploy:pages
 
 Production DNS: **`docs.ibexharness.com`** → Cloudflare Pages project **`ibex-harness-docs`**.
 
-1. Pages dashboard → **ibex-harness-docs** → **Custom domains** → add `docs.ibexharness.com`
-2. Remove the custom domain from the legacy Worker `ibex-harness-docs` (if still attached)
-3. After 24h soak, delete or disable the old Worker script
+CI runs [`scripts/pages-domain-cutover.mjs`](scripts/pages-domain-cutover.mjs) after each deploy:
+
+1. Remove `docs.ibexharness.com` from the legacy OpenNext Worker (if still attached)
+2. Delete Worker script `ibex-harness-docs` (OpenNext only — not the Pages project)
+3. Attach the custom domain to the Pages project
+
+Manual cutover (one-time or recovery):
+
+```bash
+cd docs/app
+export CLOUDFLARE_API_TOKEN=...
+export CLOUDFLARE_ACCOUNT_ID=...
+node scripts/pages-domain-cutover.mjs
+```
 
 Verify:
 
 ```bash
-curl -fsSI https://docs.ibexharness.com/docs/getting-started/introduction
+curl -fsSI https://docs.ibexharness.com/docs/getting-started/introduction   # no x-opennext header
 curl -fsSI https://docs.ibexharness.com/search-index.json
 curl -fsSI https://docs.ibexharness.com/api/search   # expect 308 → search-index.json
 bash .github/scripts/docs-smoke.sh https://docs.ibexharness.com
 ```
+
+### Search index URL
+
+Cmd+K always loads **`/search-index.json`** (stable). The build also writes `search-index.<buildId>.json` for immutable CDN caching, but the client must not reference the versioned path — phase 2 static export gets a new `BUILD_ID` and the versioned file would 404.
 
 ## Redirects and cache headers
 
@@ -127,11 +142,4 @@ Production redirects live in [`public/_redirects`](public/_redirects) (Cloudflar
 
 ## Remove legacy Worker (post-cutover)
 
-After Pages is live and stable for 24h:
-
-```powershell
-cd docs/app
-pnpm exec wrangler delete ibex-harness-docs --force
-```
-
-Delete stray scripts if present: `ibex-harness`, `ibexharness`.
+After Pages is live and stable for 24h, confirm the Worker script is gone (CI deletes it on deploy). Stray scripts to check in the dashboard: `ibex-harness`, `ibexharness`.

@@ -93,7 +93,11 @@ jobs:
       - name: Smoke test deployed Pages preview
         run: bash "$GITHUB_WORKSPACE/.github/scripts/docs-smoke.sh" "${{ steps.deploy.outputs.base_url }}"
 
-      # Production still points at the legacy Worker until DNS is moved to Pages.
-      - name: Smoke test production domain (post-DNS cutover)
-        continue-on-error: true
+      - name: Cut over docs.ibexharness.com to Pages
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: node docs/app/scripts/pages-domain-cutover.mjs
+
+      - name: Smoke test production domain
         run: bash "$GITHUB_WORKSPACE/.github/scripts/docs-smoke.sh" "https://docs.ibexharness.com"
