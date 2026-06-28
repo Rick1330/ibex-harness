@@ -39,14 +39,22 @@ if [[ "$redirect_code" != "308" && "$redirect_code" != "301" && "$redirect_code"
 fi
 echo "ok: /api/search redirects (${redirect_code})"
 
-# Cmd+K loads search-index URLs baked into HTML/JS; every referenced file must exist.
+# Cmd+K loads search-index URLs from client JS bundles; verify each referenced file exists.
+page_html="$(curl -fsS "${BASE_URL}/roadmap")"
 mapfile -t baked_paths < <(
-  curl -fsS "${BASE_URL}/roadmap" \
-    | grep -oE '/search-index[^"'"'"' )>]+\.json' \
-    | sort -u
+  {
+    echo "$page_html" | grep -oE '/search-index[^"'"'"' )>]+\.json' || true
+    while read -r chunk; do
+      [[ -z "$chunk" ]] && continue
+      curl -fsS "${BASE_URL}${chunk}" 2>/dev/null \
+        | grep -oE '/search-index[^"'"'"' )>]+\.json' || true
+    done < <(
+      echo "$page_html" | grep -oE '/_next/static/[^"'"'"' ]+\.js' | head -40 | sort -u
+    )
+  } | sort -u
 )
 if [[ "${#baked_paths[@]}" -eq 0 ]]; then
-  echo "smoke failed: no search-index URL found in /roadmap HTML"
+  echo "smoke failed: no search-index URL found in /roadmap HTML or JS chunks"
   exit 1
 fi
 for path in "${baked_paths[@]}"; do
