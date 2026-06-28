@@ -6,12 +6,15 @@ import { GeistSans } from "geist/font/sans";
 import type { ReactNode } from "react";
 
 import { ClearMermaidCache } from "@/components/clear-mermaid-cache";
+import { SearchIndexPrefetch } from "@/components/search-index-prefetch";
 import { SiteNavShell } from "@/components/site-nav-shell";
 import "./globals.css";
 
 const isProd = process.env.NODE_ENV === "production";
+const searchIndexUrl =
+  process.env.NEXT_PUBLIC_SEARCH_INDEX_URL ?? "/search-index.json";
 const searchOptions = isProd
-  ? { type: "static" as const, api: "/search-index.json" }
+  ? { type: "static" as const, api: searchIndexUrl }
   : { type: "fetch" as const, api: "/api/search" };
 
 const jetbrainsMono = JetBrains_Mono({
@@ -48,6 +51,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     >
       <body className="bg-canvas text-text-primary antialiased">
         <ClearMermaidCache />
+        <SearchIndexPrefetch />
         <RootProvider
           search={{ options: searchOptions }}
           theme={{ enabled: true, attribute: "class", defaultTheme: "dark" }}

@@ -1,15 +1,12 @@
 import { createMDX } from "fumadocs-mdx/next";
-import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
-
-// Wrangler platform proxy is for `next dev` only; during `next build` it can hang workers.
-if (process.env.NODE_ENV === "development") {
-  initOpenNextCloudflareForDev();
-}
 
 const withMDX = createMDX();
 
+const isStaticExport = process.env.NEXT_STATIC_EXPORT === "1";
+
 /** @type {import('next').NextConfig} */
 const config = {
+  ...(isStaticExport ? { output: "export" } : {}),
   reactStrictMode: true,
   experimental: {
     optimizePackageImports: ["lucide-react", "fumadocs-ui"],
@@ -22,6 +19,7 @@ const config = {
     ],
   },
   serverExternalPackages: ["mermaid"],
+  // Redirects apply in `next dev` only; production uses public/_redirects on Pages.
   redirects: async () => [
     {
       source: "/",
@@ -52,12 +50,6 @@ const config = {
       source: "/status",
       destination: "/roadmap/current-state",
       permanent: true,
-    },
-  ],
-  rewrites: async () => [
-    {
-      source: "/docs/:slug*/opengraph-image",
-      destination: "/api/og/:slug*",
     },
   ],
 };

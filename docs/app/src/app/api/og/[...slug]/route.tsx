@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { createOgImageResponse } from "@/lib/og/template";
 import { source } from "@/lib/source";
 
-export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 type RouteContext = {
   params: Promise<{ slug: string[] }>;

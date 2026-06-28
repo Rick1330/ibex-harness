@@ -26,6 +26,10 @@ docs/app/out/
 docs/app/public/diagrams/
 docs/app/public/markdown/
 docs/app/public/search-index.json
+docs/app/public/search-index.*.json
+docs/app/public/docs/
+docs/app/.api-build-stash/
+docs/app/out/
 docs/app/build-output.txt
 
 # --- CI test reports (JUnit for Trunk; ephemeral) ---

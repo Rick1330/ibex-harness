@@ -1,17 +1,16 @@
 import type { NextRequest } from "next/server";
 
-import { search } from "@/lib/search";
+import { exportStaticSearchIndex, search } from "@/lib/search";
 
-// Pre-build the Orama index at deploy time. Dynamic GET rebuilds the index per
-// request and exceeds Cloudflare Worker CPU limits on production.
-export const dynamic = "force-static";
-export const revalidate = false;
-
-const { GET: dynamicGET, staticGET } = search;
+// Dynamic so build-time prerender does not cache an empty Orama export.
+// Production uses /search-index.json; /api/search exists for dev + CI extract.
+export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
-  if (process.env.NODE_ENV === "development") {
-    return dynamicGET(request);
+  const query = request.nextUrl.searchParams.get("query");
+  if (!query) {
+    return Response.json(await exportStaticSearchIndex());
   }
-  return staticGET();
+
+  return search.GET(request);
 }

@@ -82,7 +82,7 @@ export async function generateMetadata(props: PageProps): Promise<Metadata> {
   if (!page) notFound();
 
   const slugPath = params.slug?.length ? params.slug.join("/") : "";
-  const ogPath = `/docs/${slugPath}/opengraph-image`;
+  const ogPath = `/docs/${slugPath}/opengraph-image.png`;
 
   return {
     title: page.data.title,
