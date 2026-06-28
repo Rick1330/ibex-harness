@@ -8,6 +8,8 @@ import {
 } from "@orama/orama";
 import { useEffect, useRef, useState } from "react";
 
+import { resolveAllowedSearchIndexUrl } from "@/lib/search-index-url";
+
 export type DocsSearchResult = {
   type: "page";
   content: string;
@@ -34,6 +36,7 @@ export function mapSimpleSearchHits(hits: SimpleSearchHit[]): DocsSearchResult[]
   }));
 }
 
+/** Debounce a string value for search input. */
 function useDebounce(value: string, delayMs: number): string {
   const [debouncedValue, setDebouncedValue] = useState(value);
   const timer = useRef<number | undefined>(undefined);
@@ -60,12 +63,14 @@ function useDebounce(value: string, delayMs: number): string {
 
 const indexByUrl = new Map<string, Promise<AnyOrama>>();
 
+/** Fetch and cache the baked Orama index exported to /search-index.json. */
 async function loadSearchIndex(from: string): Promise<AnyOrama> {
-  const cached = indexByUrl.get(from);
+  const indexUrl = resolveAllowedSearchIndexUrl(from);
+  const cached = indexByUrl.get(indexUrl);
   if (cached) return cached;
 
   const pending = (async () => {
-    const response = await fetch(from);
+    const response = await fetch(indexUrl);
     if (!response.ok) {
       throw new Error(`search index fetch failed: HTTP ${response.status}`);
     }
@@ -74,9 +79,12 @@ async function loadSearchIndex(from: string): Promise<AnyOrama> {
     const db = await create({ schema: { _: "string" } });
     await load(db, data);
     return db;
-  })();
+  })().catch((error: unknown) => {
+    indexByUrl.delete(indexUrl);
+    throw error;
+  });
 
-  indexByUrl.set(from, pending);
+  indexByUrl.set(indexUrl, pending);
   return pending;
 }
 
@@ -91,6 +99,7 @@ export function useStaticDocsSearch(from: string, delayMs = 100) {
 
   useEffect(() => {
     if (debouncedQuery.length === 0) {
+      requestId.current += 1;
       setResults("empty");
       setIsLoading(false);
       setError(undefined);

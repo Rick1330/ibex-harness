@@ -1,27 +1,19 @@
 import type { Metadata } from "next";
-import dynamic from "next/dynamic";
-import { RootProvider } from "fumadocs-ui/provider";
 import { JetBrains_Mono } from "next/font/google";
 import { GeistMono } from "geist/font/mono";
 import { GeistSans } from "geist/font/sans";
 import type { ReactNode } from "react";
 
 import { ClearMermaidCache } from "@/components/clear-mermaid-cache";
+import {
+  DocsRootProvider,
+} from "@/components/docs-root-provider";
 import { SearchIndexPrefetch } from "@/components/search-index-prefetch";
 import { SiteNavShell } from "@/components/site-nav-shell";
+import { STATIC_SEARCH_INDEX_URL } from "@/lib/search-index-url";
 import "./globals.css";
 
 const isProd = process.env.NODE_ENV === "production";
-/** Stable path written by extract-search-index; must match public/_redirects. */
-const STATIC_SEARCH_INDEX_URL = "/search-index.json";
-const searchOptions = isProd
-  ? { type: "static" as const, api: STATIC_SEARCH_INDEX_URL }
-  : { type: "fetch" as const, api: "/api/search" };
-
-const StaticSearchDialog = dynamic(
-  () => import("@/components/static-search-dialog"),
-  { ssr: false },
-);
 
 const jetbrainsMono = JetBrains_Mono({
   subsets: ["latin"],
@@ -57,17 +49,13 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     >
       <body className="bg-canvas text-text-primary antialiased">
         <ClearMermaidCache />
-        {isProd ? <SearchIndexPrefetch indexUrl={STATIC_SEARCH_INDEX_URL} /> : null}
-        <RootProvider
-          search={{
-            ...(isProd ? { SearchDialog: StaticSearchDialog } : {}),
-            options: searchOptions,
-          }}
-          theme={{ enabled: true, attribute: "class", defaultTheme: "dark" }}
-        >
+        {isProd ? (
+          <SearchIndexPrefetch indexUrl={STATIC_SEARCH_INDEX_URL} />
+        ) : null}
+        <DocsRootProvider>
           <SiteNavShell />
           {children}
-        </RootProvider>
+        </DocsRootProvider>
       </body>
     </html>
   );
