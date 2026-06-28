@@ -82,6 +82,3 @@ jobs:
 
       - name: Smoke test deployed Pages preview
         run: bash "$GITHUB_WORKSPACE/.github/scripts/docs-smoke.sh" "${{ steps.deploy.outputs.base_url }}"
-
-      - name: Smoke test production domain
-        run: bash "$GITHUB_WORKSPACE/.github/scripts/docs-smoke.sh" "https://docs.ibexharness.com"

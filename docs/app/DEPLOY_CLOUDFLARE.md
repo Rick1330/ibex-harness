@@ -92,7 +92,7 @@ npx serve docs/app/out
 | CI success on `main` | The **CI** workflow calls this reusable workflow after required jobs pass, when docs paths changed |
 | `workflow_dispatch` | GitHub → Actions → **Docs Deploy** → **Run workflow** (from `main` only) |
 
-Docs Deploy runs typecheck, unit tests, `build:clean`, deploys `docs/app/out` via `wrangler pages deploy`, then smoke-tests the Pages preview URL and production domain. It does **not** run DNS cutover — that is a one-time manual step (see below).
+Docs Deploy runs typecheck, unit tests, `build:clean`, deploys `docs/app/out` via `wrangler pages deploy`, then smoke-tests the **Pages preview URL** (`*.pages.dev`). It does **not** HTTP-smoke the custom domain: Cloudflare WAF returns **403** to GitHub Actions datacenter IPs on `docs.ibexharness.com` while the preview URL is healthy. Verify production manually after deploy (see below). DNS cutover is also manual.
 
 **Manual (local):**
 
