@@ -17,9 +17,14 @@ concurrency:
 jobs:
   changes:
     name: detect-docs-changes
+    # Only follow CI on push to main — never pull_request workflow_run (production secrets).
     if: >
       github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
+      (
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_branch == 'main'
+      )
     runs-on: ubuntu-latest
     outputs:
       docs: ${{ steps.filter.outputs.docs }}
