@@ -21,11 +21,12 @@ function loadEnvFile(filePath) {
   if (content.charCodeAt(0) === 0xfeff) {
     content = content.slice(1);
   }
-  for (const line of content.split("\n")) {
+  for (const rawLine of content.split("\n")) {
+    const line = rawLine.replace(/\r$/, "");
     const match = line.match(/^([^#=]+)=(.*)$/);
     if (!match) continue;
-    const key = match[1].trim();
-    let value = match[2].trim();
+    const key = match[1].trim().replace(/\r$/, "");
+    let value = match[2].trim().replace(/\r$/, "");
     if (
       (value.startsWith('"') && value.endsWith('"')) ||
       (value.startsWith("'") && value.endsWith("'"))
