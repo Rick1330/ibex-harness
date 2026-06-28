@@ -1,60 +1,20 @@
 name: Docs Deploy
 
 on:
-  workflow_run:
-    workflows: ["CI"]
-    types: [completed]
-    branches: [main]
+  workflow_call:
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: docs-deploy-${{ github.event.workflow_run.head_branch || github.ref_name }}
+  group: docs-deploy-${{ github.ref_name }}
   cancel-in-progress: false
 
 jobs:
-  changes:
-    name: detect-docs-changes
-    # Only follow CI on push to main — never pull_request workflow_run (production secrets).
-    if: >
-      github.event_name == 'workflow_dispatch' ||
-      (
-        github.event.workflow_run.conclusion == 'success' &&
-        github.event.workflow_run.event == 'push' &&
-        github.event.workflow_run.head_branch == 'main'
-      )
-    runs-on: ubuntu-latest
-    outputs:
-      docs: ${{ steps.filter.outputs.docs }}
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
-          persist-credentials: false
-
-      - uses: dorny/paths-filter@d1c1ffe0248fe513906c8e24db8ea791d46f8590 # v3.0.2
-        id: filter
-        with:
-          filters: |
-            docs:
-              - 'docs/**'
-              - 'package.json'
-              - '.npmrc'
-              - 'pnpm-lock.yaml'
-              - 'pnpm-workspace.yaml'
-              - 'turbo.json'
-              - '.github/workflows/docs-deploy.yml'
-              - '.github/actions/setup-pnpm-docs/**'
-              - '.github/scripts/docs-smoke.sh'
-
   deploy:
     name: deploy-docs-pages
-    needs: changes
-    if: >
-      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
-      needs.changes.outputs.docs == 'true'
+    if: github.event_name == 'workflow_call' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment:
@@ -70,7 +30,6 @@ jobs:
 
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
           persist-credentials: false
 
       - uses: ./.github/actions/setup-pnpm-docs

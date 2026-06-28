@@ -947,3 +947,23 @@ jobs:
         with:
           sarif_file: bandit.sarif
           category: bandit
+
+  docs-deploy:
+    name: docs-deploy
+    needs:
+      - changes
+      - repo-guards
+      - docs-build
+      - proto-contract
+      - golangci-lint
+      - security-integration
+      - coverage
+      - proxy-auth-smoke
+      - go-race
+      - go-services
+    if: |
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      needs.changes.outputs.docs == 'true'
+    uses: ./.github/workflows/docs-deploy.yml
+    secrets: inherit

@@ -89,8 +89,8 @@ npx serve docs/app/out
 
 | Trigger | When |
 | --- | --- |
-| CI success on `main` | Auto after the **CI** workflow passes, when `docs/**`, root `package.json`, lockfile, turbo, or deploy workflow changed |
-| `workflow_dispatch` | GitHub → Actions → **Docs Deploy** → **Run workflow** |
+| CI success on `main` | The **CI** workflow calls this reusable workflow after required jobs pass, when docs paths changed |
+| `workflow_dispatch` | GitHub → Actions → **Docs Deploy** → **Run workflow** (from `main` only) |
 
 Docs Deploy runs typecheck, unit tests, `build:clean`, deploys `docs/app/out` via `wrangler pages deploy`, then smoke-tests the Pages preview URL and production domain. It does **not** run DNS cutover — that is a one-time manual step (see below).
 
