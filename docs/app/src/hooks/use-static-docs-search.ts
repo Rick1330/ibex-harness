@@ -8,8 +8,6 @@ import {
 } from "@orama/orama";
 import { useEffect, useRef, useState } from "react";
 
-import { resolveAllowedSearchIndexUrl } from "@/lib/search-index-url";
-
 export type DocsSearchResult = {
   type: "page";
   content: string;
@@ -61,16 +59,14 @@ function useDebounce(value: string, delayMs: number): string {
   return delayMs === 0 ? value : debouncedValue;
 }
 
-const indexByUrl = new Map<string, Promise<AnyOrama>>();
+let cachedIndex: Promise<AnyOrama> | undefined;
 
-/** Fetch and cache the baked Orama index exported to /search-index.json. */
-async function loadSearchIndex(from: string): Promise<AnyOrama> {
-  const indexUrl = resolveAllowedSearchIndexUrl(from);
-  const cached = indexByUrl.get(indexUrl);
-  if (cached) return cached;
+/** Fetch and cache the baked Orama index at the fixed static path. */
+async function loadSearchIndex(): Promise<AnyOrama> {
+  if (cachedIndex) return cachedIndex;
 
-  const pending = (async () => {
-    const response = await fetch(indexUrl);
+  cachedIndex = (async () => {
+    const response = await fetch("/search-index.json");
     if (!response.ok) {
       throw new Error(`search index fetch failed: HTTP ${response.status}`);
     }
@@ -80,16 +76,15 @@ async function loadSearchIndex(from: string): Promise<AnyOrama> {
     await load(db, data);
     return db;
   })().catch((error: unknown) => {
-    indexByUrl.delete(indexUrl);
+    cachedIndex = undefined;
     throw error;
   });
 
-  indexByUrl.set(indexUrl, pending);
-  return pending;
+  return cachedIndex;
 }
 
 /** Client-side Orama search for static export (fumadocs 14 static client bug workaround). */
-export function useStaticDocsSearch(from: string, delayMs = 100) {
+export function useStaticDocsSearch(delayMs = 100) {
   const [search, setSearch] = useState("");
   const [results, setResults] = useState<DocsSearchResult[] | "empty">("empty");
   const [isLoading, setIsLoading] = useState(false);
@@ -110,7 +105,7 @@ export function useStaticDocsSearch(from: string, delayMs = 100) {
     setIsLoading(true);
     setError(undefined);
 
-    void loadSearchIndex(from)
+    void loadSearchIndex()
       .then((db) =>
         oramaSearch(db, {
           term: debouncedQuery,
@@ -135,7 +130,7 @@ export function useStaticDocsSearch(from: string, delayMs = 100) {
           setIsLoading(false);
         }
       });
-  }, [debouncedQuery, from]);
+  }, [debouncedQuery]);
 
   return { search, setSearch, query: { isLoading, data: results, error } };
 }

@@ -6,7 +6,10 @@ import {
 } from "fumadocs-ui/components/dialog/search";
 
 import { useStaticDocsSearch } from "@/hooks/use-static-docs-search";
-import { STATIC_SEARCH_INDEX_URL } from "@/lib/search-index-url";
+import {
+  STATIC_SEARCH_INDEX_URL,
+  resolveAllowedSearchIndexUrl,
+} from "@/lib/search-index-url";
 
 type StaticSearchDialogProps = SharedProps & {
   api?: string;
@@ -19,7 +22,8 @@ export default function StaticSearchDialog({
   delayMs,
   ...props
 }: StaticSearchDialogProps) {
-  const { search, setSearch, query } = useStaticDocsSearch(api, delayMs);
+  resolveAllowedSearchIndexUrl(api);
+  const { search, setSearch, query } = useStaticDocsSearch(delayMs);
 
   return (
     <SearchDialog
