@@ -7,8 +7,7 @@ import { exportStaticSearchIndex, search } from "@/lib/search";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
-  const query = request.nextUrl.searchParams.get("query");
-  if (!query) {
+  if (!request.nextUrl.searchParams.has("query")) {
     return Response.json(await exportStaticSearchIndex());
   }
 

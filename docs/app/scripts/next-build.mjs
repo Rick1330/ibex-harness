@@ -36,7 +36,7 @@ function runNextBuild(phase) {
     env: process.env,
   });
   if (result.status !== 0) {
-    process.exit(result.status ?? 1);
+    throw new Error(`${phase} failed with exit code ${result.status ?? 1}`);
   }
 }
 
@@ -74,7 +74,7 @@ async function main() {
     env: process.env,
   });
   if (extract.status !== 0) {
-    process.exit(extract.status ?? 1);
+    throw new Error(`search extract failed with exit code ${extract.status ?? 1}`);
   }
 
   const buildId = (await readFile(path.join(appRoot, ".next", "BUILD_ID"), "utf8")).trim();

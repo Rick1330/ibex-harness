@@ -65,6 +65,13 @@ pnpm install
 pnpm --filter docs build:clean   # phase 1: compile + extract; phase 2: export to out/
 ```
 
+On Windows, if a prior `next dev` left a lock file, stop it first:
+
+```bash
+pnpm --filter docs stop:next
+pnpm --filter docs build:clean
+```
+
 Build phases:
 
 1. **Phase 1** — standard Next.js build; `next start` extracts search index + OG PNGs into `public/`

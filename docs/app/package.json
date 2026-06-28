@@ -17,7 +17,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "deploy:pages": "wrangler pages deploy out --project-name=ibex-harness-docs --branch=main",
+    "deploy:pages": "wrangler pages deploy out --project-name=ibex-harness-docs --branch=main --commit-dirty=true",
     "deploy:pages:local": "node scripts/deploy-pages-local.mjs",
     "postinstall": "fumadocs-mdx"
   },

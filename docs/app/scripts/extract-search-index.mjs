@@ -122,31 +122,36 @@ async function writeIndexArtifacts(body, buildId) {
   );
 }
 
+async function tryExtractOnPort(port, buildId) {
+  const child = spawnNextStart(port);
+  try {
+    await waitForReady(child);
+    const body = await fetchSearchIndex(port);
+    await writeIndexArtifacts(body, buildId);
+    await generateOgImages(port);
+    return true;
+  } catch (error) {
+    if (!String(error).includes("EADDRINUSE")) {
+      throw error;
+    }
+    console.warn(`[search] port ${port} in use, trying next port`);
+    return false;
+  } finally {
+    child.kill("SIGTERM");
+  }
+}
+
 async function extractToPublic(preferredPort) {
   const buildId = (await readFile(buildIdPath, "utf8")).trim();
   const ports = [preferredPort, preferredPort + 1, preferredPort + 2, preferredPort + 3];
-  let lastError;
 
   for (const port of ports) {
-    const child = spawnNextStart(port);
-    try {
-      await waitForReady(child);
-      const body = await fetchSearchIndex(port);
-      await writeIndexArtifacts(body, buildId);
-      await generateOgImages(port);
+    if (await tryExtractOnPort(port, buildId)) {
       return;
-    } catch (error) {
-      lastError = error;
-      if (!String(error).includes("EADDRINUSE")) {
-        throw error;
-      }
-      console.warn(`[search] port ${port} in use, trying next port`);
-    } finally {
-      child.kill("SIGTERM");
     }
   }
 
-  throw lastError ?? new Error("search extract failed");
+  throw new Error("search extract failed: all ports in use");
 }
 
 async function main() {

@@ -81,7 +81,7 @@ jobs:
           set -o pipefail
           pnpm exec wrangler pages deploy docs/app/out \
             --project-name=ibex-harness-docs \
-            --branch=main \
+            --branch=${{ github.ref_name }} \
             --commit-dirty=true 2>&1 | tee deploy.log
           BASE_URL=$(grep -oE 'https://[a-zA-Z0-9.-]+\.pages\.dev' deploy.log | tail -1)
           if [ -z "$BASE_URL" ]; then

@@ -42,17 +42,22 @@ function deployPages() {
     console.log(
       `[deploy] uploading docs/app/out (timeout ${Math.round(DEPLOY_TIMEOUT_MS / 1000)}s)`,
     );
+    const args = [
+      wranglerBin,
+      "pages",
+      "deploy",
+      "out",
+      "--project-name=ibex-harness-docs",
+      "--commit-dirty=true",
+    ];
+    const branch = process.env.PAGES_DEPLOY_BRANCH;
+    if (branch) {
+      args.push(`--branch=${branch}`);
+    }
+
     const child = spawn(
       process.execPath,
-      [
-        wranglerBin,
-        "pages",
-        "deploy",
-        "out",
-        "--project-name=ibex-harness-docs",
-        "--branch=main",
-        "--commit-dirty=true",
-      ],
+      args,
       {
         cwd: appRoot,
         env: process.env,
