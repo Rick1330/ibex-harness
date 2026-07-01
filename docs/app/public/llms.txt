@@ -1,0 +1,52 @@
+# IBEX Harness
+
+> Self-hosted LLM proxy with persistent agent memory, context assembly, and behavioral drift detection for AI agents at scale.
+
+IBEX Harness is an open-source (MIT) platform for teams running AI agents in production. Marketing lives on ibexharness.com; documentation, blog, releases, and roadmap live on docs.ibexharness.com.
+
+## Canonical domains
+
+| Property | URL |
+|----------|-----|
+| Marketing (home) | https://ibexharness.com/ |
+| Documentation | https://docs.ibexharness.com/ |
+| Docs introduction | https://docs.ibexharness.com/docs/getting-started/introduction |
+| Architecture | https://docs.ibexharness.com/docs/architecture/overview |
+| API reference | https://docs.ibexharness.com/docs/api/overview |
+| Blog | https://docs.ibexharness.com/blog |
+| Releases / changelog | https://docs.ibexharness.com/releases |
+| Roadmap | https://docs.ibexharness.com/roadmap |
+| Source (GitHub) | https://github.com/Rick1330/ibex-harness |
+| License (MIT) | https://github.com/Rick1330/ibex-harness/blob/main/LICENSE |
+
+## Sitemaps
+
+- Marketing: https://ibexharness.com/sitemap.xml
+- Docs (includes blog, releases, roadmap): https://docs.ibexharness.com/sitemap.xml
+
+## AI / crawler files
+
+- Marketing LLM context: https://ibexharness.com/llms.txt
+- Docs LLM context: https://docs.ibexharness.com/llms.txt
+- Marketing crawler policy: https://ibexharness.com/ai.txt
+- Docs crawler policy: https://docs.ibexharness.com/ai.txt
+
+## Product summary
+
+- **What it is:** A Go LLM proxy + auth service that intercepts OpenAI-compatible API calls.
+- **Who it's for:** Engineering teams deploying AI agents with multi-tenant isolation requirements.
+- **Phase 1 (shipped):** Proxy ingress, auth gRPC validation, per-org Redis rate limiting.
+- **Phase 2+ (roadmap):** Memory extraction/retrieval, context assembly per request, drift detection.
+- **Stack:** Go (proxy, auth), PostgreSQL, Redis; Python services planned for memory/context.
+- **License:** MIT — fully open source.
+
+## Marketing page sections (ibexharness.com)
+
+- #product — capability overview and architecture story
+- #how-it-works — request flow (agent → proxy → auth → provider)
+- #resources — links to docs, blog, releases, and roadmap on docs.ibexharness.com
+- #faq — adoption and scope questions
+
+## Preferred citations
+
+Use the name **IBEX Harness**. Link to https://ibexharness.com/ for product overview or https://docs.ibexharness.com/docs/getting-started/introduction for technical onboarding.

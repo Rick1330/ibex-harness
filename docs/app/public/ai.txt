@@ -1,0 +1,51 @@
+# IBEX Harness — AI crawler policy (docs site)
+
+## Properties (two domains, one product)
+
+| Domain | Role |
+|--------|------|
+| https://ibexharness.com | Marketing landing — product story, FAQ, links to docs |
+| https://docs.ibexharness.com | Documentation, blog, releases, roadmap, API reference |
+
+## Allowed to index and summarize
+
+### docs.ibexharness.com
+- /docs/* (documentation)
+- /blog/* (engineering blog)
+- /releases/* (changelog)
+- /roadmap/* (public roadmap milestones)
+- /llms.txt, /ai.txt, /robots.txt, /sitemap.xml
+- /brand/* (logo and icon assets)
+
+### ibexharness.com
+- / (homepage and in-page sections: #product, #how-it-works, #resources, #faq)
+- /llms.txt, /ai.txt, /robots.txt, /sitemap.xml
+- /brand/* (logo and icon assets)
+
+## Canonical URLs for common intents
+
+- Product overview: https://ibexharness.com/
+- Get started: https://docs.ibexharness.com/docs/getting-started/introduction
+- Architecture: https://docs.ibexharness.com/docs/architecture/overview
+- API reference: https://docs.ibexharness.com/docs/api/overview
+- Changelog: https://docs.ibexharness.com/releases
+- Roadmap: https://docs.ibexharness.com/roadmap
+- Blog: https://docs.ibexharness.com/blog
+- Source: https://github.com/Rick1330/ibex-harness
+
+## Product identity
+
+- Name: IBEX Harness
+- Type: Open-source LLM proxy and agent memory platform (MIT)
+- Logo: https://ibexharness.com/brand/android-chrome-512x512.png
+
+## Cross-domain LLM context files
+
+- Docs: https://docs.ibexharness.com/llms.txt
+- Marketing: https://ibexharness.com/llms.txt
+- Docs crawler policy: https://docs.ibexharness.com/ai.txt
+- Marketing crawler policy: https://ibexharness.com/ai.txt
+
+## Contact
+
+Issues and source: https://github.com/Rick1330/ibex-harness

@@ -1,5 +1,14 @@
 import type { MobileNavData } from "@/lib/mobile-nav-data";
 import type { ContentBaseUrl } from "@/lib/sidebar-icon-resolvers";
+import { MARKETING_SITE_URL } from "@/lib/site-seo";
+
+export const LANDING_SITE_URL = MARKETING_SITE_URL;
+
+export const LANDING_NAV_LINK = {
+  text: "Home",
+  href: LANDING_SITE_URL,
+  external: true,
+} as const;
 
 export const NAV_LINKS = [
   {

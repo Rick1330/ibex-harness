@@ -2,6 +2,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { BrandLockup } from "@/components/brand-lockup";
+import { LANDING_SITE_URL } from "@/lib/site-nav-config";
 
 vi.mock("next/link", () => ({
   default: ({
@@ -23,12 +24,13 @@ afterEach(() => {
 });
 
 describe("BrandLockup", () => {
-  it("uses the default docs-home aria label", () => {
+  it("links the default brand lockup to the marketing site", () => {
     render(<BrandLockup />);
 
-    expect(
-      screen.getByRole("link", { name: "IBEX Harness docs home" }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "IBEX Harness home" })).toHaveAttribute(
+      "href",
+      LANDING_SITE_URL,
+    );
   });
 
   it("accepts a custom aria label for alternate destinations", () => {

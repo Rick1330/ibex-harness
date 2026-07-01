@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 import { cn } from "@/lib/cn";
-import { isLinkActive, NAV_LINKS } from "@/lib/site-nav-config";
+import { isLinkActive, LANDING_NAV_LINK, NAV_LINKS } from "@/lib/site-nav-config";
 
 type SiteNavLinksProps = Readonly<{
   pathname: string;
@@ -29,11 +29,26 @@ function mobileLinkClass(isActive: boolean): string {
   return cn(base, "text-muted-foreground hover:bg-muted/30 hover:text-foreground");
 }
 
+function externalLinkClass(variant: "desktop" | "mobile"): string {
+  return variant === "desktop"
+    ? "relative flex h-full items-center whitespace-nowrap px-2 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground lg:px-4 lg:text-sm"
+    : "rounded-md px-3 py-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted/30 hover:text-foreground";
+}
+
 export function SiteNavLinks({ pathname, variant, onNavigate }: SiteNavLinksProps) {
   const isDesktop = variant === "desktop";
 
   return (
     <>
+      <a
+        href={LANDING_NAV_LINK.href}
+        target="_blank"
+        rel="noopener noreferrer"
+        onClick={onNavigate}
+        className={externalLinkClass(variant)}
+      >
+        {LANDING_NAV_LINK.text}
+      </a>
       {NAV_LINKS.map((link) => {
         const isActive = isLinkActive(pathname, link.match);
         const className = isDesktop
