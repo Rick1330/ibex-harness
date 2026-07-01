@@ -60,10 +60,24 @@ jobs:
         id: meta
         run: |
           if [ "${{ github.event_name }}" = "workflow_call" ]; then
-            echo "tag=${{ inputs.image_tag }}" >> "$GITHUB_OUTPUT"
+            tag="${{ inputs.image_tag }}"
           else
-            echo "tag=${{ inputs.image_tag }}" >> "$GITHUB_OUTPUT"
+            tag="${{ inputs.image_tag }}"
           fi
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          tags="ghcr.io/${{ github.repository }}/${{ matrix.service }}:${tag}"
+          case "${tag}" in
+            latest|v*.*.*)
+              if [[ "${tag}" != *-* ]]; then
+                tags="${tags}"$'\n'"ghcr.io/${{ github.repository }}/${{ matrix.service }}:latest"
+              fi
+              ;;
+          esac
+          {
+            echo "tags<<EOF"
+            echo "${tags}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Build and push image
         id: build
@@ -73,9 +87,7 @@ jobs:
           file: services/${{ matrix.service }}/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: |
-            ghcr.io/${{ github.repository }}/${{ matrix.service }}:${{ steps.meta.outputs.tag }}
-            ghcr.io/${{ github.repository }}/${{ matrix.service }}:latest
+          tags: ${{ steps.meta.outputs.tags }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
