@@ -7,10 +7,6 @@ on:
     - cron: "0 3 * * 0"
   workflow_dispatch:
 
-permissions:
-  actions: write
-  contents: read
-
 concurrency:
   group: nightly-${{ github.workflow }}
   cancel-in-progress: false
@@ -18,6 +14,8 @@ concurrency:
 jobs:
   dispatch-full-ci:
     name: dispatch-full-ci
+    permissions:
+      actions: write
     runs-on: ubuntu-latest
     steps:
       - name: Harden the runner (Audit all outbound calls)
