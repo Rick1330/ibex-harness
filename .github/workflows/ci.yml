@@ -6,9 +6,6 @@ on:
     branches: [main]
   workflow_dispatch:
 
-permissions:
-  contents: read
-
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
@@ -18,6 +15,8 @@ jobs:
     name: repo-guards
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -70,6 +69,8 @@ jobs:
     name: detect-changes
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       docs: ${{ steps.filter.outputs.docs }}
       go: ${{ steps.filter.outputs.go }}
@@ -105,6 +106,8 @@ jobs:
     name: markdownlint
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -122,6 +125,8 @@ jobs:
     name: gitleaks
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -147,6 +152,8 @@ jobs:
     name: go-mod-tidy
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -172,6 +179,8 @@ jobs:
     name: shellcheck
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -192,6 +201,8 @@ jobs:
     needs: repo-guards
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -213,6 +224,8 @@ jobs:
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     continue-on-error: true
+    permissions:
+      contents: read
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -239,6 +252,8 @@ jobs:
     needs: buf-lint
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -299,6 +314,8 @@ jobs:
     name: compose-validate
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -316,6 +333,8 @@ jobs:
     needs: repo-guards
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     services:
       postgres:
         image: postgres:16
@@ -384,6 +403,8 @@ jobs:
     needs: [proto-contract, db-migrate-smoke]
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     services:
       postgres:
         image: postgres:16
@@ -453,6 +474,8 @@ jobs:
     needs: [proto-contract, db-migrate-smoke]
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     services:
       postgres:
         image: postgres:16
@@ -522,6 +545,8 @@ jobs:
     needs: [proto-contract, db-migrate-smoke]
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     services:
       postgres:
         image: postgres:16
@@ -596,6 +621,8 @@ jobs:
     needs: [proto-contract, db-migrate-smoke]
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     services:
       postgres:
         image: postgres:16
@@ -658,6 +685,8 @@ jobs:
     needs: proto-contract
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -695,6 +724,8 @@ jobs:
     needs: proto-contract
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     strategy:
       matrix:
         service: [auth, proxy]
@@ -746,6 +777,8 @@ jobs:
     needs: proto-contract
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -818,6 +851,8 @@ jobs:
     needs: [changes, repo-guards]
     if: github.event_name != 'schedule' && needs.changes.outputs.docs == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -854,6 +889,8 @@ jobs:
     name: hadolint
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -884,6 +921,8 @@ jobs:
     needs: [proto-contract, db-migrate-smoke]
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     services:
       postgres:
         image: postgres:16
@@ -1015,6 +1054,8 @@ jobs:
       needs.changes.outputs.docs == 'true' &&
       needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - run: echo "Go quality gates passed for docs deploy"
 
@@ -1033,6 +1074,8 @@ jobs:
       needs.repo-guards.result == 'success' &&
       needs.docs-build.result == 'success' &&
       (needs.changes.outputs.go != 'true' || needs.docs-go-quality-gate.result == 'success')
+    permissions:
+      contents: read
     uses: ./.github/workflows/docs-deploy.yml
     secrets: inherit
 
@@ -1041,6 +1084,8 @@ jobs:
     needs: proto-contract
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -1067,6 +1112,8 @@ jobs:
     name: license-check
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
