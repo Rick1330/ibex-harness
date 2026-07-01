@@ -1,7 +1,7 @@
 name: Nightly CI
 
-# Weekly full CI dispatch — the main ci.yml schedule was a no-op because jobs
-# skipped on schedule events. This workflow triggers a manual CI run instead.
+# Weekly full CI dispatch — triggers ci.yml via workflow_dispatch on main.
+# ci.yml uses event-scoped concurrency so this dispatch does not cancel push runs.
 on:
   schedule:
     - cron: "0 3 * * 0"
