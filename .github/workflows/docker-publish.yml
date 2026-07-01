@@ -13,26 +13,73 @@ on:
         required: true
         default: latest
         type: string
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
 
 permissions:
   contents: read
-  packages: write
-  id-token: write
-  attestations: write
-  security-events: write
 
 concurrency:
-  group: docker-publish-${{ inputs.image_tag || github.ref_name }}
+  group: docker-publish-${{ github.workflow }}-${{ github.event.workflow_run.head_sha || github.sha }}
   cancel-in-progress: false
 
 jobs:
-  build-and-push:
-    name: docker-${{ matrix.service }}
+  resolve-tag:
+    name: resolve-tag
+    if: |
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        service: [auth, proxy]
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+      push_latest: ${{ steps.meta.outputs.push_latest }}
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Resolve and validate image tag
+        id: meta
+        env:
+          INPUT_IMAGE_TAG: ${{ inputs.image_tag }}
+        run: |
+          case "${{ github.event_name }}" in
+            workflow_call|workflow_dispatch)
+              tag="${INPUT_IMAGE_TAG}"
+              ;;
+            workflow_run)
+              tag="latest"
+              ;;
+            *)
+              echo "unsupported event: ${{ github.event_name }}"
+              exit 1
+              ;;
+          esac
+
+          case "${tag}" in
+            latest|v[0-9]*.[0-9]*.[0-9]*)
+              ;;
+            *)
+              echo "invalid image tag: ${tag}"
+              exit 1
+              ;;
+          esac
+
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          if [[ "${tag}" == "latest" ]] || [[ "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "push_latest=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "push_latest=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  build-auth:
+    name: build-auth
+    needs: resolve-tag
+    runs-on: ubuntu-latest
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -40,77 +87,260 @@ jobs:
           egress-policy: audit
 
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@18ce135bb5112fa8ce4ed6c17ab05699d7f3a5e0 # v3.11.0
+      - name: Build auth image artifact
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: .
+          file: services/auth/Dockerfile
+          platforms: linux/amd64
+          push: false
+          outputs: type=oci,dest=/tmp/auth.oci
+          cache-from: type=gha,scope=auth
+          cache-to: type=gha,mode=max,scope=auth
+      - name: Upload auth OCI artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540cddca4673a9b66b6af01e # v4.6.2
+        with:
+          name: oci-auth
+          path: /tmp/auth.oci
+          retention-days: 1
 
+  build-proxy:
+    name: build-proxy
+    needs: resolve-tag
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@18ce135bb5112fa8ce4ed6c17ab05699d7f3a5e0 # v3.11.0
+      - name: Build proxy image artifact
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: .
+          file: services/proxy/Dockerfile
+          platforms: linux/amd64
+          push: false
+          outputs: type=oci,dest=/tmp/proxy.oci
+          cache-from: type=gha,scope=proxy
+          cache-to: type=gha,mode=max,scope=proxy
+      - name: Upload proxy OCI artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540cddca4673a9b66b6af01e # v4.6.2
+        with:
+          name: oci-proxy
+          path: /tmp/proxy.oci
+          retention-days: 1
+
+  scan-image-auth:
+    name: scan-image-auth
+    needs: build-auth
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Download auth OCI artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b5de339ab01bfe222f5c0ae6 # v4.3.0
+        with:
+          name: oci-auth
+          path: /tmp
+      - name: Scan auth image with Trivy
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          input: /tmp/auth.oci
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          format: sarif
+          output: trivy-image-auth.sarif
+          exit-code: "1"
+      - name: Upload Trivy auth SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
+        with:
+          sarif_file: trivy-image-auth.sarif
+          category: trivy-image-auth
+
+  scan-image-proxy:
+    name: scan-image-proxy
+    needs: build-proxy
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Download proxy OCI artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b5de339ab01bfe222f5c0ae6 # v4.3.0
+        with:
+          name: oci-proxy
+          path: /tmp
+      - name: Scan proxy image with Trivy
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          input: /tmp/proxy.oci
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          format: sarif
+          output: trivy-image-proxy.sarif
+          exit-code: "1"
+      - name: Upload Trivy proxy SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
+        with:
+          sarif_file: trivy-image-proxy.sarif
+          category: trivy-image-proxy
+
+  push-auth:
+    name: push-auth
+    needs: [resolve-tag, scan-image-auth]
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      contents: read
+      id-token: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: Set up QEMU
         uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
         with:
           platforms: linux/amd64,linux/arm64
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@18ce135bb5112fa8ce4ed6c17ab05699d7f3a5e0 # v3.11.0
-
       - name: Log in to GHCR
         uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Resolve image tag
-        id: meta
+      - name: Resolve push tags
+        id: tags
+        env:
+          IMAGE_TAG: ${{ needs.resolve-tag.outputs.tag }}
+          PUSH_LATEST: ${{ needs.resolve-tag.outputs.push_latest }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_call" ]; then
-            tag="${{ inputs.image_tag }}"
-          else
-            tag="${{ inputs.image_tag }}"
+          tags="ghcr.io/${{ github.repository }}/auth:${IMAGE_TAG}"
+          if [ "${PUSH_LATEST}" = "true" ]; then
+            tags="${tags}"$'\n'"ghcr.io/${{ github.repository }}/auth:latest"
           fi
-          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
-          tags="ghcr.io/${{ github.repository }}/${{ matrix.service }}:${tag}"
-          case "${tag}" in
-            latest|v*.*.*)
-              if [[ "${tag}" != *-* ]]; then
-                tags="${tags}"$'\n'"ghcr.io/${{ github.repository }}/${{ matrix.service }}:latest"
-              fi
-              ;;
-          esac
           {
             echo "tags<<EOF"
             echo "${tags}"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
-
-      - name: Build and push image
+      - name: Build and push auth image
         id: build
         uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
         with:
           context: .
-          file: services/${{ matrix.service }}/Dockerfile
+          file: services/auth/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          tags: ${{ steps.tags.outputs.tags }}
+          cache-from: type=gha,scope=auth
+          cache-to: type=gha,mode=max,scope=auth
 
-      - name: Scan image with Trivy
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+  push-proxy:
+    name: push-proxy
+    needs: [resolve-tag, scan-image-proxy]
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      contents: read
+      id-token: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
-          image-ref: ghcr.io/${{ github.repository }}/${{ matrix.service }}:${{ steps.meta.outputs.tag }}
-          severity: CRITICAL,HIGH
-          ignore-unfixed: true
-          format: sarif
-          output: trivy-image-${{ matrix.service }}.sarif
-          exit-code: "1"
+          egress-policy: audit
 
-      - name: Upload Trivy image SARIF
-        if: always()
-        uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
         with:
-          sarif_file: trivy-image-${{ matrix.service }}.sarif
-          category: trivy-image-${{ matrix.service }}
+          platforms: linux/amd64,linux/arm64
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@18ce135bb5112fa8ce4ed6c17ab05699d7f3a5e0 # v3.11.0
+      - name: Log in to GHCR
+        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Resolve push tags
+        id: tags
+        env:
+          IMAGE_TAG: ${{ needs.resolve-tag.outputs.tag }}
+          PUSH_LATEST: ${{ needs.resolve-tag.outputs.push_latest }}
+        run: |
+          tags="ghcr.io/${{ github.repository }}/proxy:${IMAGE_TAG}"
+          if [ "${PUSH_LATEST}" = "true" ]; then
+            tags="${tags}"$'\n'"ghcr.io/${{ github.repository }}/proxy:latest"
+          fi
+          {
+            echo "tags<<EOF"
+            echo "${tags}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+      - name: Build and push proxy image
+        id: build
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: .
+          file: services/proxy/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          cache-from: type=gha,scope=proxy
+          cache-to: type=gha,mode=max,scope=proxy
 
-      - name: Attest build provenance
+  attest-provenance:
+    name: attest-provenance
+    needs: [push-auth, push-proxy]
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      attestations: write
+      contents: read
+      packages: read
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Attest auth image provenance
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
         with:
-          subject-name: ghcr.io/${{ github.repository }}/${{ matrix.service }}
-          subject-digest: ${{ steps.build.outputs.digest }}
+          subject-name: ghcr.io/${{ github.repository }}/auth
+          subject-digest: ${{ needs.push-auth.outputs.digest }}
+          push-to-registry: true
+
+      - name: Attest proxy image provenance
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-name: ghcr.io/${{ github.repository }}/proxy
+          subject-digest: ${{ needs.push-proxy.outputs.digest }}
           push-to-registry: true

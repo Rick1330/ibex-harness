@@ -826,6 +826,7 @@ jobs:
 
   osv-scan:
     name: osv-scan
+    if: github.event_name != 'schedule'
     permissions:
       security-events: write
       contents: read
@@ -1048,6 +1049,9 @@ jobs:
       - proxy-auth-smoke
       - go-race
       - go-services
+      - auth-validate-smoke
+      - proxy-agent-verify-smoke
+      - govulncheck
     if: |
       github.event_name == 'push' &&
       github.ref == 'refs/heads/main' &&
@@ -1058,6 +1062,7 @@ jobs:
 
   govulncheck:
     name: govulncheck
+    needs: proto-contract
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:

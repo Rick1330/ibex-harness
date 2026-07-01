@@ -61,7 +61,17 @@ fullTitle: "CI Job Audit — Pre-Phase 2 Verification"
 | Path | Trigger | Required upstream jobs |
 |------|---------|------------------------|
 | Docs-only push to `main` | `changes.docs=true`, `changes.go=false` | `repo-guards`, `docs-build` |
-| Docs + Go push to `main` | `changes.docs=true`, `changes.go=true` | Full Go gate + `docs-build` |
+| Docs + Go push to `main` | `changes.docs=true`, `changes.go=true` | Full Go gate + `docs-build` + `auth-validate-smoke` + `proxy-agent-verify-smoke` + `govulncheck` |
+
+## Docker image publish
+
+[`docker-publish.yml`](../../../.github/workflows/docker-publish.yml) uses a **scan-before-push** pipeline: build amd64 OCI artifact → Trivy scan → multi-arch push → provenance attestation.
+
+| Trigger | Tag | `:latest` pushed |
+|---------|-----|-------------------|
+| `workflow_run` after CI success on `main` push | `latest` | Yes |
+| `release.yml` on `v*.*.*` tag (`workflow_call`) | tag name (e.g. `v1.2.3`) | Yes for stable tags; skipped for prereleases (`v1.0.0-alpha.1`) |
+| `workflow_dispatch` | user-supplied | Yes when tag is `latest` or stable `v*.*.*` |
 
 ## Nightly integration
 
@@ -73,11 +83,11 @@ The weekly `schedule` on `ci.yml` was removed (jobs skipped on schedule). [`nigh
 - `infra/` Go packages not in golangci scope
 - Merged integration coverage in Codecov via CI Postgres service; gen/go excluded from gate
 - Python (`bandit`) and TypeScript coverage flags when services land
-- Docker image publish runs on `v*.*.*` tags via `release.yml` → `docker-publish.yml`
+- Docker image publish runs on CI success (`workflow_run`), `v*.*.*` tags via `release.yml`, or manual `workflow_dispatch`
 
 ## Trunk Flaky Tests (JUnit uploads)
 
-All CI jobs that run `go test` emit JUnit XML via [gotestsum](https://github.com/gotesttools/gotestsum) (pinned `v1.12.0`) and upload results to [Trunk Flaky Tests](https://app.trunk.io) (org: `ibexharness`). Uploads are **informational** (`continue-on-error: true`); they do not block merges.
+All CI jobs that run `go test` emit JUnit XML via [gotestsum](https://github.com/gotesttools/gotestsum) (pinned `v1.13.0`) and upload results to [Trunk Flaky Tests](https://app.trunk.io) (org: `ibexharness`). Uploads are **informational** (`continue-on-error: true`); they do not block merges.
 
 | Convention | Value |
 |------------|-------|
@@ -93,7 +103,7 @@ All CI jobs that run `go test` emit JUnit XML via [gotestsum](https://github.com
 **Local validation** (Linux/macOS or WSL):
 
 ```bash
-go install gotest.tools/gotestsum@v1.12.0
+go install gotest.tools/gotestsum@v1.13.0
 bash infra/scripts/go-test-gotestsum.sh test-results/junit/local-validate.xml -- \
   -count=1 ./packages/reqid/...
 bash infra/scripts/trunk-validate-junit.sh test-results/junit/local-validate.xml

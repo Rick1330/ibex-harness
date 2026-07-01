@@ -21,11 +21,13 @@ updates:
     directory: /services/auth
     schedule:
       interval: daily
+    labels: ["dependencies", "docker"]
 
   - package-ecosystem: docker
     directory: /services/proxy
     schedule:
       interval: daily
+    labels: ["dependencies", "docker"]
 
   # Docs site (pnpm workspace; lockfile at repo root).
   - package-ecosystem: npm
