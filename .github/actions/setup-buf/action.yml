@@ -1,0 +1,11 @@
+name: Setup Buf CLI
+description: Install pinned Buf CLI for codegen and lint (Node 24-compatible buf-action)
+
+runs:
+  using: composite
+  steps:
+    - uses: bufbuild/buf-action@fd21066df7214747548607aaa45548ba2b9bc1ff # v1.4.0
+      with:
+        setup_only: true
+        version: "1.47.2"
+        github_token: ${{ github.token }}

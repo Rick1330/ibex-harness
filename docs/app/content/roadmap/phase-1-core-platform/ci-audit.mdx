@@ -61,7 +61,9 @@ fullTitle: "CI Job Audit — Pre-Phase 2 Verification"
 | Path | Trigger | Required upstream jobs |
 |------|---------|------------------------|
 | Docs-only push to `main` | `changes.docs=true`, `changes.go=false` | `repo-guards`, `docs-build` |
-| Docs + Go push to `main` | `changes.docs=true`, `changes.go=true` | Full Go gate + `docs-build` + `auth-validate-smoke` + `proxy-agent-verify-smoke` + `govulncheck` |
+| Docs + Go push to `main` | `changes.docs=true`, `changes.go=true` | `repo-guards`, `docs-build`, `docs-go-quality-gate` (full Go gate) |
+
+A single `docs-deploy` job runs only on push to `main` after merge (never on pull requests).
 
 ## Docker image publish
 

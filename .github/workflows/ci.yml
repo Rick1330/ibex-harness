@@ -92,6 +92,7 @@ jobs:
               - '.github/workflows/ci.yml'
               - '.github/workflows/docs-deploy.yml'
               - '.github/actions/setup-pnpm-docs/**'
+              - '.github/actions/setup-buf/**'
             go:
               - 'services/**'
               - 'packages/**'
@@ -158,10 +159,7 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-      - uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1.50.0
-        with:
-          version: "1.47.2"
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: ./.github/actions/setup-buf
       - name: Generate protobuf stubs
         working-directory: packages/proto
         run: buf generate
@@ -204,10 +202,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1.50.0
-        with:
-          version: "1.47.2"
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: ./.github/actions/setup-buf
       - name: buf lint
         working-directory: packages/proto
         run: buf lint
@@ -228,10 +223,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1.50.0
-        with:
-          version: "1.47.2"
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: ./.github/actions/setup-buf
       - name: buf breaking (informational)
         working-directory: packages/proto
         run: |
@@ -258,10 +250,7 @@ jobs:
         with:
           go-version-file: go.mod
       - uses: ./.github/actions/setup-gotestsum
-      - uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1.50.0
-        with:
-          version: "1.47.2"
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: ./.github/actions/setup-buf
       - name: Generate stubs (ephemeral; not committed)
         working-directory: packages/proto
         run: buf generate
@@ -420,10 +409,7 @@ jobs:
         with:
           go-version-file: go.mod
       - uses: ./.github/actions/setup-gotestsum
-      - uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1.50.0
-        with:
-          version: "1.47.2"
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: ./.github/actions/setup-buf
       - name: Generate protobuf stubs
         working-directory: packages/proto
         run: buf generate
@@ -492,10 +478,7 @@ jobs:
         with:
           go-version-file: go.mod
       - uses: ./.github/actions/setup-gotestsum
-      - uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1.50.0
-        with:
-          version: "1.47.2"
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: ./.github/actions/setup-buf
       - name: Generate protobuf stubs
         working-directory: packages/proto
         run: buf generate
@@ -564,10 +547,7 @@ jobs:
         with:
           go-version-file: go.mod
       - uses: ./.github/actions/setup-gotestsum
-      - uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1.50.0
-        with:
-          version: "1.47.2"
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: ./.github/actions/setup-buf
       - name: Generate protobuf stubs
         working-directory: packages/proto
         run: buf generate
@@ -643,10 +623,7 @@ jobs:
         with:
           go-version-file: go.mod
       - uses: ./.github/actions/setup-gotestsum
-      - uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1.50.0
-        with:
-          version: "1.47.2"
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: ./.github/actions/setup-buf
       - name: Generate protobuf stubs
         working-directory: packages/proto
         run: buf generate
@@ -694,10 +671,7 @@ jobs:
         with:
           go-version-file: go.mod
       - uses: ./.github/actions/setup-gotestsum
-      - uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1.50.0
-        with:
-          version: "1.47.2"
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: ./.github/actions/setup-buf
       - name: Generate protobuf stubs
         working-directory: packages/proto
         run: buf generate
@@ -735,10 +709,7 @@ jobs:
         with:
           go-version-file: go.mod
       - uses: ./.github/actions/setup-gotestsum
-      - uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1.50.0
-        with:
-          version: "1.47.2"
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: ./.github/actions/setup-buf
       - name: Generate protobuf stubs
         working-directory: packages/proto
         run: buf generate
@@ -785,10 +756,7 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-      - uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1.50.0
-        with:
-          version: "1.47.2"
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: ./.github/actions/setup-buf
       - name: Generate protobuf stubs for auth
         working-directory: packages/proto
         run: buf generate
@@ -941,10 +909,7 @@ jobs:
         with:
           go-version-file: go.mod
       - uses: ./.github/actions/setup-gotestsum
-      - uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1.50.0
-        with:
-          version: "1.47.2"
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: ./.github/actions/setup-buf
       - name: Generate protobuf stubs
         working-directory: packages/proto
         run: buf generate
@@ -1030,26 +995,10 @@ jobs:
           sarif_file: bandit.sarif
           category: bandit
 
-  docs-deploy-docs-only:
-    name: docs-deploy
+  docs-go-quality-gate:
+    name: docs-go-quality-gate
     needs:
       - changes
-      - repo-guards
-      - docs-build
-    if: |
-      github.event_name == 'push' &&
-      github.ref == 'refs/heads/main' &&
-      needs.changes.outputs.docs == 'true' &&
-      needs.changes.outputs.go != 'true'
-    uses: ./.github/workflows/docs-deploy.yml
-    secrets: inherit
-
-  docs-deploy-with-go:
-    name: docs-deploy
-    needs:
-      - changes
-      - repo-guards
-      - docs-build
       - proto-contract
       - golangci-lint
       - security-integration
@@ -1065,6 +1014,25 @@ jobs:
       github.ref == 'refs/heads/main' &&
       needs.changes.outputs.docs == 'true' &&
       needs.changes.outputs.go == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Go quality gates passed for docs deploy"
+
+  docs-deploy:
+    name: docs-deploy
+    needs:
+      - changes
+      - repo-guards
+      - docs-build
+      - docs-go-quality-gate
+    if: |
+      always() &&
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      needs.changes.outputs.docs == 'true' &&
+      needs.repo-guards.result == 'success' &&
+      needs.docs-build.result == 'success' &&
+      (needs.changes.outputs.go != 'true' || needs.docs-go-quality-gate.result == 'success')
     uses: ./.github/workflows/docs-deploy.yml
     secrets: inherit
 
@@ -1085,10 +1053,7 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-      - uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1.50.0
-        with:
-          version: "1.47.2"
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: ./.github/actions/setup-buf
       - name: Generate protobuf stubs
         working-directory: packages/proto
         run: buf generate
@@ -1114,10 +1079,7 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-      - uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1.50.0
-        with:
-          version: "1.47.2"
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: ./.github/actions/setup-buf
       - name: Generate protobuf stubs
         working-directory: packages/proto
         run: buf generate
