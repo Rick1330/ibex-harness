@@ -8,12 +8,11 @@ on:
       - synchronize
       - reopened
 
-permissions:
-  pull-requests: read
-
 jobs:
   semantic-pr-title:
     name: semantic-pr-title
+    permissions:
+      pull-requests: read
     runs-on: ubuntu-latest
     steps:
       - name: Harden the runner (Audit all outbound calls)
