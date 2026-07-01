@@ -18,7 +18,7 @@ jobs:
         with:
           egress-policy: audit
 
-      - uses: actions/stale@1d8f49270749357e6360eb361bc804035959403c # v9.0.0
+      - uses: actions/stale@28ca1036281a5e5922ead5184a1bbf96e5fc984e # v9.0.0
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           days-before-stale: 60

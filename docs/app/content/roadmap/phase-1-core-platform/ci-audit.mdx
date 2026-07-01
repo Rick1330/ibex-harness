@@ -89,7 +89,7 @@ The weekly `schedule` on `ci.yml` was removed (jobs skipped on schedule). [`nigh
 
 ## Trunk Flaky Tests (JUnit uploads)
 
-All CI jobs that run `go test` emit JUnit XML via [gotestsum](https://github.com/gotesttools/gotestsum) (pinned `v1.13.0`) and upload results to [Trunk Flaky Tests](https://app.trunk.io) (org: `ibexharness`). Uploads are **informational** (`continue-on-error: true`); they do not block merges.
+All CI jobs that run `go test` emit JUnit XML via [gotestsum](https://github.com/gotestyourself/gotestsum) (pinned `v1.13.0`) and upload results to [Trunk Flaky Tests](https://app.trunk.io) (org: `ibexharness`). Uploads are **informational** (`continue-on-error: true`); they do not block merges.
 
 | Convention | Value |
 |------------|-------|

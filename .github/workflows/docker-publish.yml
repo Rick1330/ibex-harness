@@ -18,6 +18,8 @@ on:
     types: [completed]
     branches: [main]
 
+permissions: {}
+
 concurrency:
   group: docker-publish-${{ github.workflow }}-${{ github.event.workflow_run.head_sha || github.sha }}
   cancel-in-progress: false

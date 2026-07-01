@@ -2,6 +2,11 @@ name: Docs Deploy
 
 on:
   workflow_call:
+    secrets:
+      CLOUDFLARE_API_TOKEN:
+        required: true
+      CLOUDFLARE_ACCOUNT_ID:
+        required: true
   workflow_dispatch:
 
 concurrency:
