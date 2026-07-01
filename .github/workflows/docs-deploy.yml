@@ -4,9 +4,6 @@ on:
   workflow_call:
   workflow_dispatch:
 
-permissions:
-  contents: read
-
 concurrency:
   group: docs-deploy-${{ github.ref_name }}
   cancel-in-progress: false
@@ -15,6 +12,8 @@ jobs:
   deploy:
     name: deploy-docs-pages
     if: github.event_name == 'workflow_call' || github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment:

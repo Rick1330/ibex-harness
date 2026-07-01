@@ -13,7 +13,6 @@ concurrency:
 jobs:
   repo-guards:
     name: repo-guards
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -67,7 +66,6 @@ jobs:
 
   changes:
     name: detect-changes
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -104,7 +102,6 @@ jobs:
 
   markdown:
     name: markdownlint
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -115,6 +112,8 @@ jobs:
           egress-policy: audit
 
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: "20"
@@ -123,7 +122,6 @@ jobs:
 
   secrets:
     name: gitleaks
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -150,7 +148,6 @@ jobs:
 
   go-mod-tidy:
     name: go-mod-tidy
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -177,7 +174,6 @@ jobs:
 
   shellcheck:
     name: shellcheck
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -199,7 +195,6 @@ jobs:
   buf-lint:
     name: buf-lint
     needs: repo-guards
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -221,7 +216,6 @@ jobs:
   buf-breaking:
     name: buf-breaking
     needs: buf-lint
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     continue-on-error: true
     permissions:
@@ -250,7 +244,6 @@ jobs:
   proto-contract:
     name: proto-contract
     needs: buf-lint
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -261,6 +254,8 @@ jobs:
           egress-policy: audit
 
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
@@ -312,7 +307,6 @@ jobs:
 
   compose-validate:
     name: compose-validate
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -323,6 +317,8 @@ jobs:
           egress-policy: audit
 
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
       - name: Validate dev compose
         run: docker compose -f infra/compose/dev/docker-compose.yml --env-file infra/compose/dev/.env.example config
       - name: Validate test compose
@@ -331,7 +327,6 @@ jobs:
   db-migrate-smoke:
     name: db-migrate-smoke
     needs: repo-guards
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -356,6 +351,8 @@ jobs:
           egress-policy: audit
 
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
@@ -401,7 +398,6 @@ jobs:
   auth-validate-smoke:
     name: auth-validate-smoke
     needs: [proto-contract, db-migrate-smoke]
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -426,6 +422,8 @@ jobs:
           egress-policy: audit
 
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
@@ -472,7 +470,6 @@ jobs:
   proxy-auth-smoke:
     name: proxy-auth-smoke
     needs: [proto-contract, db-migrate-smoke]
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -497,6 +494,8 @@ jobs:
           egress-policy: audit
 
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
@@ -543,7 +542,6 @@ jobs:
   proxy-agent-verify-smoke:
     name: proxy-agent-verify-smoke
     needs: [proto-contract, db-migrate-smoke]
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -568,6 +566,8 @@ jobs:
           egress-policy: audit
 
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
@@ -619,7 +619,6 @@ jobs:
   security-integration:
     name: security-integration
     needs: [proto-contract, db-migrate-smoke]
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -683,7 +682,6 @@ jobs:
   go-race:
     name: go-race
     needs: proto-contract
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -722,7 +720,6 @@ jobs:
   go-services:
     name: go-services
     needs: proto-contract
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -736,6 +733,8 @@ jobs:
           egress-policy: audit
 
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
@@ -775,7 +774,6 @@ jobs:
   golangci-lint:
     name: golangci-lint
     needs: proto-contract
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -786,6 +784,8 @@ jobs:
           egress-policy: audit
 
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
@@ -803,7 +803,6 @@ jobs:
 
   trivy:
     name: trivy
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     permissions:
       security-events: write
@@ -816,6 +815,8 @@ jobs:
           egress-policy: audit
 
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
       - name: Run Trivy filesystem scan
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
@@ -835,7 +836,6 @@ jobs:
 
   osv-scan:
     name: osv-scan
-    if: github.event_name != 'schedule'
     permissions:
       security-events: write
       contents: read
@@ -849,7 +849,7 @@ jobs:
   docs-build:
     name: docs-build
     needs: [changes, repo-guards]
-    if: github.event_name != 'schedule' && needs.changes.outputs.docs == 'true'
+    if: needs.changes.outputs.docs == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -887,7 +887,6 @@ jobs:
 
   hadolint:
     name: hadolint
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -898,6 +897,8 @@ jobs:
           egress-policy: audit
 
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
       - name: Hadolint all Dockerfiles
         run: |
           # Dockerfiles today: services/auth, services/proxy.
@@ -919,7 +920,6 @@ jobs:
   coverage:
     name: coverage
     needs: [proto-contract, db-migrate-smoke]
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1003,7 +1003,6 @@ jobs:
 
   bandit:
     name: bandit
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     permissions:
       security-events: write
@@ -1016,6 +1015,8 @@ jobs:
           egress-policy: audit
 
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.11"
@@ -1082,7 +1083,6 @@ jobs:
   govulncheck:
     name: govulncheck
     needs: proto-contract
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1110,7 +1110,6 @@ jobs:
 
   license-check:
     name: license-check
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     permissions:
       contents: read
