@@ -3,6 +3,8 @@ import type { MetadataRoute } from "next";
 import { blogSource, releasesSource, roadmapSource, source } from "@/lib/source";
 import { DOCS_SITE_URL } from "@/lib/site-seo";
 
+export const dynamic = "force-static";
+
 /** Align with search index policy — skip milestone leaf pages and internal paths. */
 function shouldIndexPage(url: string): boolean {
   if (url.includes("/_design")) return false;

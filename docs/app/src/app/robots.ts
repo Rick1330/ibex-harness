@@ -2,6 +2,8 @@ import type { MetadataRoute } from "next";
 
 import { DOCS_SITE_URL, MARKETING_SITE_URL } from "@/lib/site-seo";
 
+export const dynamic = "force-static";
+
 const AI_CRAWLERS = [
   "GPTBot",
   "ChatGPT-User",
