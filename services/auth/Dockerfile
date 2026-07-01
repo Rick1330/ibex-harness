@@ -1,6 +1,7 @@
 FROM golang:1.25-alpine3.20 AS build
 WORKDIR /src
 COPY go.mod go.sum ./
+COPY packages ./packages
 COPY services/auth ./services/auth
 RUN go build -o /out/auth ./services/auth/cmd/auth
 

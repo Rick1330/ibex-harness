@@ -27,6 +27,15 @@ updates:
     schedule:
       interval: daily
 
+  # Docs site (pnpm workspace; lockfile at repo root).
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "typescript"]
+
 # Enable when manifests exist (see docs/DEPENDENCIES.md §9 and prompts/05-new-service-bootstrap.txt):
 #
 #  - package-ecosystem: pip

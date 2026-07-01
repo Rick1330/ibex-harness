@@ -1,0 +1,53 @@
+name: Benchmarks
+
+on:
+  schedule:
+    - cron: "0 4 * * 0"
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/**'
+      - 'services/auth/**'
+      - 'services/proxy/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/benchmark.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: benchmark-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  benchmark:
+    name: benchmark
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+      - name: Run Go benchmarks
+        run: |
+          go test -bench=. -benchmem -count=3 -run=^$ \
+            ./packages/metrics/... \
+            > benchmark-results.txt
+      - name: Store benchmark result
+        uses: benchmark-action/github-action-benchmark@6044ad467e21b403e815d33933b874aadfb6aaf5 # v1.20.4
+        with:
+          name: Go Benchmark
+          tool: go
+          output-file-path: benchmark-results.txt
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          auto-push: true
+          comment-on-alert: false
+          alert-threshold: 150%
+          fail-on-alert: false

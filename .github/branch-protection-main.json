@@ -17,7 +17,19 @@
       { "context": "proxy-auth-smoke" },
       { "context": "bandit" },
       { "context": "hadolint" },
-      { "context": "coverage" }
+      { "context": "coverage" },
+      { "context": "go-mod-tidy" },
+      { "context": "shellcheck" },
+      { "context": "dependency-review" },
+      { "context": "buf-lint" },
+      { "context": "proto-contract" },
+      { "context": "db-migrate-smoke" },
+      { "context": "auth-validate-smoke" },
+      { "context": "proxy-agent-verify-smoke" },
+      { "context": "compose-validate" },
+      { "context": "govulncheck" },
+      { "context": "semantic-pr-title" },
+      { "context": "license-check" }
     ]
   },
   "enforce_admins": true,

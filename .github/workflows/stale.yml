@@ -1,0 +1,36 @@
+name: Stale Issues and PRs
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  issues: write
+  pull-requests: write
+
+jobs:
+  stale:
+    name: stale
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/stale@1d8f49270749357e6360eb361bc804035959403c # v9.0.0
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          days-before-stale: 60
+          days-before-close: 14
+          stale-issue-label: stale
+          stale-pr-label: stale
+          stale-issue-message: >
+            This issue has been marked stale due to inactivity. It will be closed in 14 days
+            unless there is new activity.
+          stale-pr-message: >
+            This pull request has been marked stale due to inactivity. It will be closed in 14
+            days unless there is new activity.
+          exempt-issue-labels: pinned,security
+          exempt-pr-labels: pinned,security

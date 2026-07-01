@@ -1,0 +1,37 @@
+name: Nightly CI
+
+# Weekly full CI dispatch — the main ci.yml schedule was a no-op because jobs
+# skipped on schedule events. This workflow triggers a manual CI run instead.
+on:
+  schedule:
+    - cron: "0 3 * * 0"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: nightly-${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  dispatch-full-ci:
+    name: dispatch-full-ci
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Trigger CI workflow on main
+        uses: actions/github-script@ed597411d8f9240738a9635f247888d295e2c12c # v8.0.0
+        with:
+          script: |
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'ci.yml',
+              ref: 'main',
+            });
