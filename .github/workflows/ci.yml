@@ -836,6 +836,7 @@ jobs:
 
   osv-scan:
     name: osv-scan
+    if: github.event_name != 'schedule'
     permissions:
       security-events: write
       contents: read
