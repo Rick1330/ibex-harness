@@ -154,6 +154,13 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
+      - uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1.50.0
+        with:
+          version: "1.47.2"
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Generate protobuf stubs
+        working-directory: packages/proto
+        run: buf generate
       - name: Verify go.mod and go.sum are tidy
         run: |
           go mod tidy
@@ -174,7 +181,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y shellcheck
-          find .github/scripts infra/scripts -name '*.sh' -print0 | xargs -0 shellcheck
+          find .github/scripts infra/scripts -name '*.sh' -print0 | xargs -0 shellcheck -S error
 
   buf-lint:
     name: buf-lint
@@ -1062,6 +1069,13 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
+      - uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1.50.0
+        with:
+          version: "1.47.2"
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Generate protobuf stubs
+        working-directory: packages/proto
+        run: buf generate
       - name: Install govulncheck
         run: go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
       - name: Run govulncheck
@@ -1082,6 +1096,13 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
+      - uses: bufbuild/buf-setup-action@a47c93e0b1648d5651a065437926377d060baa99 # v1.50.0
+        with:
+          version: "1.47.2"
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Generate protobuf stubs
+        working-directory: packages/proto
+        run: buf generate
       - name: Install go-licenses
         run: go install github.com/google/go-licenses@v1.6.0
       - name: Verify dependency licenses
