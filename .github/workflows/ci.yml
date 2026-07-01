@@ -6,6 +6,8 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions: read-all
+
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
@@ -63,6 +65,9 @@ jobs:
 
       - name: Repo layout guard
         run: bash .github/scripts/check-repo-layout.sh
+
+      - name: Validate action pins
+        run: bash .github/scripts/validate-action-pins.sh
 
   changes:
     name: detect-changes
@@ -1029,7 +1034,7 @@ jobs:
             echo "run=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          pip install bandit
+          pip install bandit==1.8.3
           bandit -r services/memory/ -x tests/,test_ -f sarif -o bandit.sarif
           echo "run=true" >> "$GITHUB_OUTPUT"
       - name: Upload Bandit SARIF

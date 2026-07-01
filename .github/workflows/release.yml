@@ -5,7 +5,7 @@ on:
     tags:
       - "v*.*.*"
 
-permissions: {}
+permissions: read-all
 
 concurrency:
   group: release-${{ github.ref }}

@@ -66,6 +66,7 @@ case "${1:-help}" in
   repo-guards)
     cd "$ROOT_DIR"
     bash .github/scripts/check-repo-layout.sh
+    bash .github/scripts/validate-action-pins.sh
     ;;
   proto-lint)
     require_tool buf "buf is required for proto-lint. Install Buf CLI: https://buf.build/docs/installation"

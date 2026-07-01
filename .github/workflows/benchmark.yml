@@ -14,7 +14,7 @@ on:
       - 'go.sum'
       - '.github/workflows/benchmark.yml'
 
-permissions: {}
+permissions: read-all
 
 concurrency:
   group: benchmark-${{ github.ref }}
@@ -25,6 +25,7 @@ jobs:
     name: benchmark
     permissions:
       contents: write
+      deployments: write
     runs-on: ubuntu-latest
     steps:
       - name: Harden the runner (Audit all outbound calls)
@@ -44,7 +45,7 @@ jobs:
             ./packages/metrics/... \
             > benchmark-results.txt
       - name: Store benchmark result
-        uses: benchmark-action/github-action-benchmark@6044ad467e21b403e815d33933b874aadfb6aaf5 # v1.20.4
+        uses: benchmark-action/github-action-benchmark@52576c92bccf6ac60c8223ec7eb2565637cae9ba # v1.22.1
         with:
           name: Go Benchmark
           tool: go
