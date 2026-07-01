@@ -38,7 +38,6 @@ export const metadata: Metadata = {
   applicationName: "IBEX Harness Docs",
   manifest: "/site.webmanifest",
   alternates: {
-    canonical: DOCS_SITE_URL,
     types: {
       "text/plain": [
         { url: "/llms.txt", title: "LLM context" },

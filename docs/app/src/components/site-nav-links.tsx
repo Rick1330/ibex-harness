@@ -42,8 +42,6 @@ export function SiteNavLinks({ pathname, variant, onNavigate }: SiteNavLinksProp
     <>
       <a
         href={LANDING_NAV_LINK.href}
-        target="_blank"
-        rel="noopener noreferrer"
         onClick={onNavigate}
         className={externalLinkClass(variant)}
       >

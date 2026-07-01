@@ -72,8 +72,6 @@ export function SiteNavMobileDrawer({
         <div className="shrink-0 space-y-3 border-b border-border/70 p-3">
           <a
             href={LANDING_NAV_LINK.href}
-            target="_blank"
-            rel="noopener noreferrer"
             className="inline-flex rounded-md px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted/30 hover:text-foreground"
           >
             {LANDING_NAV_LINK.text}

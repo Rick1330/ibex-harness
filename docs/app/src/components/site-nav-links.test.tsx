@@ -10,6 +10,6 @@ describe("SiteNavLinks", () => {
 
     const home = screen.getByRole("link", { name: "Home" });
     expect(home).toHaveAttribute("href", LANDING_SITE_URL);
-    expect(home).toHaveAttribute("target", "_blank");
+    expect(home).not.toHaveAttribute("target");
   });
 });
