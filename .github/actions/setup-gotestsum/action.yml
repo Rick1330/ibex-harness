@@ -6,4 +6,4 @@ runs:
   steps:
     - name: Install gotestsum
       shell: bash
-      run: go install gotest.tools/gotestsum@v1.12.0
+      run: go install gotest.tools/gotestsum@v1.13.0
