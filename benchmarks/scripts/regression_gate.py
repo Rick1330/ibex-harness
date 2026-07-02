@@ -11,8 +11,7 @@ def pct_change(cur, base):
 
 
 def main():
-    out = Path("benchmarks/output")
-    latest = json.loads((out / "latest.json").read_text(encoding="utf-8"))
+    latest = json.loads(Path("benchmarks/output/latest.json").read_text(encoding="utf-8"))
     baseline = json.loads(Path("benchmarks/data-schema/baseline.json").read_text(encoding="utf-8"))
 
     policy = baseline["policy"]
@@ -58,9 +57,9 @@ def main():
         summary_lines.append(f"- {mark}: {name} (value={cur:.6f}, limit={lim:.6f})")
         ok = ok and passed
 
-    summary_path = out / "gate-summary.md"
-    summary_path.write_text("\n".join(summary_lines) + "\n", encoding="utf-8")
-    print(summary_path.read_text(encoding="utf-8"))
+    summary_text = "\n".join(summary_lines) + "\n"
+    Path("benchmarks/output/gate-summary.md").write_text(summary_text, encoding="utf-8")
+    print(summary_text)
 
     return 0 if ok else 1
 

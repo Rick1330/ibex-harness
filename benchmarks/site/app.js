@@ -41,7 +41,7 @@
   }
 
   function setActiveNav() {
-    const page = window.location.pathname.split("/").pop() || "index.html";
+    const page = globalThis.location.pathname.split("/").pop() || "index.html";
     document.querySelectorAll("nav a").forEach((a) => {
       const href = a.getAttribute("href") || "";
       if (href.endsWith(page)) a.classList.add("active");
