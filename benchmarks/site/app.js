@@ -38,10 +38,6 @@
     return value <= (limit ?? fallback);
   }
 
-  function policyLimit(policy, key, fallback) {
-    return policy[key] ?? fallback;
-  }
-
   function el(tag, className, text) {
     const node = document.createElement(tag);
     if (className) node.className = className;
@@ -89,32 +85,31 @@
     row.appendChild(cell);
   }
 
-  function runRowMetrics(r) {
-    const k6 = r.k6 || {};
-    const overhead = r.go_benchmarks?.BenchmarkProxyOverhead;
-    return {
-      sha: (r.sha || "").slice(0, 8),
-      when: new Date(r.timestamp).toLocaleString(),
-      branch: r.branch || "",
-      p99: `${(k6.p99_ms || 0).toFixed(2)} ms`,
-      allocs: overhead?.allocs_per_op?.toFixed?.(2) || "0.00",
-      errorRate: (k6.error_rate || 0).toFixed(4),
-      runUrl: r.run_url,
-    };
+  function formatMetricMs(value) {
+    return `${(value || 0).toFixed(2)} ms`;
+  }
+
+  function formatAllocs(run) {
+    const allocs = run.go_benchmarks?.BenchmarkProxyOverhead?.allocs_per_op;
+    return allocs?.toFixed?.(2) || "0.00";
+  }
+
+  function formatErrorRate(value) {
+    return (value || 0).toFixed(4);
   }
 
   function appendRunRow(tbody, r) {
-    const m = runRowMetrics(r);
+    const k6 = r.k6 || {};
     const row = document.createElement("tr");
     const shaCell = document.createElement("td");
-    shaCell.appendChild(el("code", null, m.sha));
+    shaCell.appendChild(el("code", null, (r.sha || "").slice(0, 8)));
     row.appendChild(shaCell);
-    appendTextCell(row, m.when);
-    appendTextCell(row, m.branch);
-    appendTextCell(row, m.p99);
-    appendTextCell(row, m.allocs);
-    appendTextCell(row, m.errorRate);
-    appendRunLinkCell(row, m.runUrl);
+    appendTextCell(row, new Date(r.timestamp).toLocaleString());
+    appendTextCell(row, r.branch || "");
+    appendTextCell(row, formatMetricMs(k6.p99_ms));
+    appendTextCell(row, formatAllocs(r));
+    appendTextCell(row, formatErrorRate(k6.error_rate));
+    appendRunLinkCell(row, r.run_url);
     tbody.appendChild(row);
   }
 
@@ -212,7 +207,7 @@
     const kpis = document.querySelector("#kpis");
     if (!kpis) return;
     clearChildren(kpis);
-    const errLimit = policyLimit(policy, "max_error_rate", 0.001);
+    const errLimit = policy.max_error_rate ?? 0.001;
     const errOk = (k6.error_rate || 0) <= errLimit;
     kpis.appendChild(
       renderCard(
