@@ -1,20 +1,13 @@
 (function () {
   let autoRefreshTimer = null;
 
-  function esc(value) {
-    return String(value ?? "").replace(/[&<>"']/g, (ch) => {
-      const map = {
-        "&": "&amp;",
-        "<": "&lt;",
-        ">": "&gt;",
-        '"': "&quot;",
-        "'": "&#39;",
-      };
-      return map[ch];
-    });
-  }
+  const ALLOWED_JSON = new Set(["./data/runs.json", "./data/baseline.json"]);
 
   async function readJson(path, fallback) {
+    if (!ALLOWED_JSON.has(path)) {
+      console.warn("blocked fetch to disallowed path", path);
+      return fallback;
+    }
     try {
       const res = await fetch(path, { cache: "no-store" });
       if (!res.ok) return fallback;
@@ -40,21 +33,64 @@
     return value <= (limit || fallback);
   }
 
-  function card(title, value, meta, cls) {
-    return `<div class="card ${esc(cls)}"><h3>${esc(title)}</h3><div class="value">${esc(value)}</div><div class="meta">${esc(meta)}</div></div>`;
+  function el(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined) node.textContent = text;
+    return node;
   }
 
-  function runRow(r) {
+  function clearChildren(node) {
+    while (node.firstChild) node.removeChild(node.firstChild);
+  }
+
+  function safeHref(url) {
+    if (!url || url === "#") return "#";
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+        return parsed.href;
+      }
+    } catch (e) {
+      console.warn("invalid run URL", url, e);
+    }
+    return "#";
+  }
+
+  function renderCard(title, value, meta, cls) {
+    const card = el("div", `card ${cls || "neutral"}`);
+    card.appendChild(el("h3", null, title));
+    card.appendChild(el("div", "value", value));
+    card.appendChild(el("div", "meta", meta));
+    return card;
+  }
+
+  function appendRunRow(tbody, r) {
     const k6 = r.k6 || {};
-    return `<tr>
-      <td><code>${esc((r.sha || "").slice(0, 8))}</code></td>
-      <td>${new Date(r.timestamp).toLocaleString()}</td>
-      <td>${esc(r.branch || "")}</td>
-      <td>${(k6.p99_ms || 0).toFixed(2)} ms</td>
-      <td>${r.go_benchmarks?.BenchmarkProxyOverhead?.allocs_per_op?.toFixed?.(2) || "0.00"}</td>
-      <td>${(k6.error_rate || 0).toFixed(4)}</td>
-      <td><a href="${esc(r.run_url || "#")}" target="_blank" rel="noreferrer">run</a></td>
-    </tr>`;
+    const tr = document.createElement("tr");
+
+    const shaTd = document.createElement("td");
+    shaTd.appendChild(el("code", null, (r.sha || "").slice(0, 8)));
+    tr.appendChild(shaTd);
+
+    tr.appendChild(el("td", null, new Date(r.timestamp).toLocaleString()));
+    tr.appendChild(el("td", null, r.branch || ""));
+    tr.appendChild(el("td", null, `${(k6.p99_ms || 0).toFixed(2)} ms`));
+    tr.appendChild(
+      el("td", null, r.go_benchmarks?.BenchmarkProxyOverhead?.allocs_per_op?.toFixed?.(2) || "0.00"),
+    );
+    tr.appendChild(el("td", null, (k6.error_rate || 0).toFixed(4)));
+
+    const runTd = document.createElement("td");
+    const link = document.createElement("a");
+    link.href = safeHref(r.run_url);
+    link.target = "_blank";
+    link.rel = "noreferrer";
+    link.textContent = "run";
+    runTd.appendChild(link);
+    tr.appendChild(runTd);
+
+    tbody.appendChild(tr);
   }
 
   function setActiveNav() {
@@ -68,7 +104,8 @@
   function healthStatus(latest, policy) {
     const p99 = latest.k6?.p99_ms || 0;
     const err = latest.k6?.error_rate || 0;
-    const healthy = withinLimit(p99, policy.max_proxy_overhead_p99_ms, 20) &&
+    const healthy =
+      withinLimit(p99, policy.max_proxy_overhead_p99_ms, 20) &&
       withinLimit(err, policy.max_error_rate, 0.001);
     return healthy
       ? { label: "Healthy", borderColor: "#22c55e" }
@@ -109,6 +146,13 @@
     target.textContent = `Last updated: ${timestamp ? new Date(timestamp).toLocaleString() : "n/a"}`;
   }
 
+  function appendMetaRow(container, label, valueNode) {
+    const row = document.createElement("div");
+    row.appendChild(el("strong", null, `${label}: `));
+    row.appendChild(valueNode);
+    container.appendChild(row);
+  }
+
   function wireHistoryFilter(runs) {
     const input = document.querySelector("#shaFilter");
     const rowsRoot = document.querySelector("#runs tbody");
@@ -116,7 +160,8 @@
     input.addEventListener("input", () => {
       const f = input.value.trim().toLowerCase();
       const filtered = f ? runs.filter((r) => (r.sha || "").toLowerCase().startsWith(f)) : runs;
-      rowsRoot.innerHTML = filtered.slice(0, 50).map(runRow).join("");
+      clearChildren(rowsRoot);
+      filtered.slice(0, 50).forEach((r) => appendRunRow(rowsRoot, r));
     });
   }
 
@@ -141,40 +186,83 @@
     const { k6, go, budget, budgetPct } = model;
     const kpis = document.querySelector("#kpis");
     if (!kpis) return;
-    kpis.innerHTML = [
-      card("Proxy p99", `${(k6.p99_ms || 0).toFixed(2)} ms`, `${budgetPct.toFixed(1)}% of ${budget}ms budget`, tone(budgetPct)),
-      card("Throughput", `${(k6.req_per_s || 0).toFixed(0)} req/s`, "k6 http_reqs rate", "neutral"),
-      card("Allocs/op", `${(go.allocs_per_op || 0).toFixed(2)}`, `${(go.bytes_per_op || 0).toFixed(0)} B/op`, "neutral"),
-      card("Error rate", `${((k6.error_rate || 0) * 100).toFixed(3)}%`, `target < ${(policy.max_error_rate || 0.001) * 100}%`, (k6.error_rate || 0) <= (policy.max_error_rate || 0.001) ? "good" : "bad"),
-    ].join("");
+    clearChildren(kpis);
+    const errOk = (k6.error_rate || 0) <= (policy.max_error_rate || 0.001);
+    kpis.appendChild(
+      renderCard(
+        "Proxy p99",
+        `${(k6.p99_ms || 0).toFixed(2)} ms`,
+        `${budgetPct.toFixed(1)}% of ${budget}ms budget`,
+        tone(budgetPct),
+      ),
+    );
+    kpis.appendChild(
+      renderCard("Throughput", `${(k6.req_per_s || 0).toFixed(0)} req/s`, "k6 http_reqs rate", "neutral"),
+    );
+    kpis.appendChild(
+      renderCard(
+        "Allocs/op",
+        `${(go.allocs_per_op || 0).toFixed(2)}`,
+        `${(go.bytes_per_op || 0).toFixed(0)} B/op`,
+        "neutral",
+      ),
+    );
+    kpis.appendChild(
+      renderCard(
+        "Error rate",
+        `${((k6.error_rate || 0) * 100).toFixed(3)}%`,
+        `target < ${(policy.max_error_rate || 0.001) * 100}%`,
+        errOk ? "good" : "bad",
+      ),
+    );
   }
 
   function renderMeta(latest, baseline) {
     const meta = document.querySelector("#meta");
     if (!meta) return;
-    meta.innerHTML = `
-      <div><strong>Last run:</strong> ${esc(new Date(latest.timestamp).toLocaleString())}</div>
-      <div><strong>Commit:</strong> <code>${esc(latest.sha)}</code></div>
-      <div><strong>Branch:</strong> <code>${esc(latest.branch || "main")}</code></div>
-      <div><strong>Run:</strong> <a href="${esc(latest.run_url || "#")}" target="_blank" rel="noreferrer">${esc(latest.run_url || "n/a")}</a></div>
-      <div><strong>Runner:</strong> ${esc(latest.runner || "unknown")} / ${esc(latest.runner_cpu || "unknown")} / vCPU ${esc(latest.runner_vcpus || "?")}</div>
-      <div><strong>Go:</strong> ${esc(latest.go_version || "unknown")}</div>
-      <div><strong>Baseline:</strong> <code>${esc(baseline.target_commit || "unset")}</code></div>
-    `;
+    clearChildren(meta);
+
+    appendMetaRow(meta, "Last run", el("span", null, new Date(latest.timestamp).toLocaleString()));
+    appendMetaRow(meta, "Commit", el("code", null, latest.sha || "unknown"));
+    appendMetaRow(meta, "Branch", el("code", null, latest.branch || "main"));
+
+    const runLink = document.createElement("a");
+    runLink.href = safeHref(latest.run_url);
+    runLink.target = "_blank";
+    runLink.rel = "noreferrer";
+    runLink.textContent = latest.run_url || "n/a";
+    appendMetaRow(meta, "Run", runLink);
+
+    appendMetaRow(
+      meta,
+      "Runner",
+      el(
+        "span",
+        null,
+        `${latest.runner || "unknown"} / ${latest.runner_cpu || "unknown"} / vCPU ${latest.runner_vcpus || "?"}`,
+      ),
+    );
+    appendMetaRow(meta, "Go", el("span", null, latest.go_version || "unknown"));
+    appendMetaRow(meta, "Baseline", el("code", null, baseline.target_commit || "unset"));
   }
 
   function renderStages(latest) {
     const stages = document.querySelector("#stages");
     if (!stages) return;
-    stages.innerHTML = Object.entries(latest.stages || {})
-      .map(([k, v]) => `<li><span>${esc(k)}</span><strong>${(v || 0).toFixed(3)} ms</strong></li>`)
-      .join("");
+    clearChildren(stages);
+    Object.entries(latest.stages || {}).forEach(([name, value]) => {
+      const li = document.createElement("li");
+      li.appendChild(el("span", null, name));
+      li.appendChild(el("strong", null, `${(value || 0).toFixed(3)} ms`));
+      stages.appendChild(li);
+    });
   }
 
   function renderRuns(runs) {
     const rowsRoot = document.querySelector("#runs tbody");
     if (!rowsRoot) return;
-    rowsRoot.innerHTML = runs.slice(0, 50).map(runRow).join("");
+    clearChildren(rowsRoot);
+    runs.slice(0, 50).forEach((r) => appendRunRow(rowsRoot, r));
   }
 
   async function boot() {
