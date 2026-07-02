@@ -80,7 +80,9 @@ jobs:
           SHA: ${{ github.sha }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          # The benchmark action has already fetched/created the gh-pages branch locally.
+          # Ensure we can push to gh-pages even though the initial checkout disables credentials.
+          git remote set-url origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
+
           cat <<EOF > index.html
           <!doctype html>
           <html lang="en">

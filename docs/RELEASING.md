@@ -22,4 +22,3 @@ This repository uses **Release Please** to keep releases consistent and auditabl
 ## Hotfix releases
 
 Hotfixes are the same flow, but you should use `fix/*` branches and merge to `main` quickly. Release Please will propose the next patch release.
-
