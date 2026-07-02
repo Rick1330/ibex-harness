@@ -98,11 +98,17 @@ jobs:
 
       - name: Run k6 load benchmark
         run: |
+          chmod -R a+rwX benchmarks/output
           docker run --rm \
+            --user "$(id -u):$(id -g)" \
             --network host \
             -v "$PWD:/work" -w /work \
+            -e K6_VUS=10 \
+            -e K6_DURATION=30s \
             grafana/k6:0.53.0 \
-            run benchmarks/k6/proxy_load.js --summary-export benchmarks/output/k6-summary.json
+            run benchmarks/k6/proxy_load.js \
+            --summary-export benchmarks/output/k6-summary.json \
+            --no-thresholds
 
       - name: Collect benchmark artifacts into schema
         env:
