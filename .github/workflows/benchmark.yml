@@ -58,15 +58,22 @@ jobs:
           fail-on-alert: false
           benchmark-data-dir-path: dev/bench
 
-      - name: Verify benchmark report exists
+      - name: Verify benchmark report exists (on gh-pages)
         run: |
-          if [ ! -f dev/bench/index.html ]; then
-            echo "Expected dev/bench/index.html to exist after github-action-benchmark ran."
-            echo "If this fails, the benchmark action may not be writing to the expected directory."
-            ls -la
-            find . -maxdepth 4 -type f -name 'index.html' -print
-            exit 1
+          git checkout gh-pages
+
+          if [ -d dev/bench ] && [ "$(find dev/bench -type f | wc -l)" -gt 0 ]; then
+            echo "Found benchmark output under dev/bench/ on gh-pages."
+            exit 0
           fi
+
+          echo "Expected benchmark output under dev/bench/ on gh-pages, but it was empty or missing."
+          echo "Directory listing:"
+          ls -la
+          if [ -d dev ]; then
+            find dev -maxdepth 3 -type f -print
+          fi
+          exit 1
 
       - name: Ensure gh-pages landing page points to report
         env:
@@ -74,8 +81,6 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           # The benchmark action has already fetched/created the gh-pages branch locally.
-          git checkout gh-pages
-
           cat <<EOF > index.html
           <!doctype html>
           <html lang="en">
