@@ -25,7 +25,8 @@ def load_module(name: str, path: Path):
 
 aggregate_metrics = load_module("aggregate_metrics", SCRIPTS / "aggregate_metrics.py")
 regression_gate = load_module("regression_gate", SCRIPTS / "regression_gate.py")
-build_site = load_module("build_site", SCRIPTS / "build_site.py")
+build_benchmark_data = load_module("build_benchmark_data", SCRIPTS / "build_benchmark_data.py")
+generate_badge = load_module("generate_badge", SCRIPTS / "generate_badge.py")
 
 
 class AggregateMetricsTests(unittest.TestCase):
@@ -118,37 +119,61 @@ class RegressionGateTests(unittest.TestCase):
             self.assertEqual(regression_gate.main(), 0)
 
 
-class BuildSiteTests(unittest.TestCase):
-    def test_build_site_requires_dashboard_assets(self) -> None:
+class BuildBenchmarkDataTests(unittest.TestCase):
+    def test_build_benchmark_data_writes_schema_v1(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             out = root / "benchmarks" / "output"
-            site_src = root / "benchmarks" / "site"
             data_schema = root / "benchmarks" / "data-schema"
-            site_src.mkdir(parents=True)
-            data_schema.mkdir(parents=True)
-            shutil.copytree(ROOT / "benchmarks/site", site_src, dirs_exist_ok=True)
-            shutil.copy(ROOT / "benchmarks/data-schema/baseline.json", data_schema / "baseline.json")
             out.mkdir(parents=True)
-            (out / "runs.json").write_text('{"runs":[]}', encoding="utf-8")
+            data_schema.mkdir(parents=True)
+            shutil.copy(TESTDATA / "latest-pass.json", out / "latest.json")
+            shutil.copy(ROOT / "benchmarks/data-schema/baseline.json", data_schema / "baseline.json")
+            shutil.copy(ROOT / "benchmarks/data-schema/baseline.json", out / "baseline.json")
+            (out / "prev-benchmark-data.json").write_text(
+                '{"schema_version":1,"baseline_sha":"","runs":[]}',
+                encoding="utf-8",
+            )
+            (out / "gate-result.json").write_text(
+                '{"status":"pass","regression_pct":-2.5,"checks":[]}',
+                encoding="utf-8",
+            )
 
             cwd = Path.cwd()
             try:
                 import os
 
                 os.chdir(root)
-                build_site.main()
-                required = [
-                    out / "site/index.html",
-                    out / "site/.nojekyll",
-                    out / "site/data/runs.json",
-                    out / "site/data/baseline.json",
-                    out / "site/data/metadata.json",
-                ]
-                for path in required:
-                    self.assertTrue(path.exists(), path)
+                build_benchmark_data.OUT_DIR = out
+                build_benchmark_data.BASELINE_PATH = data_schema / "baseline.json"
+                build_benchmark_data.main()
+                target = out / "benchmark-data.json"
+                self.assertTrue(target.exists(), target)
+                data = json.loads(target.read_text(encoding="utf-8"))
+                self.assertEqual(data["schema_version"], 1)
+                self.assertEqual(len(data["runs"]), 1)
+                self.assertEqual(data["runs"][0]["status"], "pass")
             finally:
                 os.chdir(cwd)
+
+    def test_generate_badge_writes_svg(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)
+            (out / "benchmark-data.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "baseline_sha": "",
+                        "runs": [{"status": "pass", "k6": {"p99_ms": 4.5}}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            generate_badge.OUT_DIR = out
+            generate_badge.main()
+            badge = out / "badge.svg"
+            self.assertTrue(badge.exists())
+            self.assertIn("pass", badge.read_text(encoding="utf-8").lower())
 
 
 if __name__ == "__main__":
