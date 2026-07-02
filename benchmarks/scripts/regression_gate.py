@@ -7,6 +7,13 @@ LATEST_PATH = Path("benchmarks/output/latest.json")
 BASELINE_PATH = Path("benchmarks/data-schema/baseline.json")
 
 
+def read_float(value, default=0.0):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def pct_change(cur, base):
     if base == 0:
         return 0.0
@@ -14,9 +21,48 @@ def pct_change(cur, base):
 
 
 def load_inputs():
-    latest = json.loads(LATEST_PATH.read_text(encoding="utf-8"))
-    baseline = json.loads(BASELINE_PATH.read_text(encoding="utf-8"))
+    latest_raw = json.loads(LATEST_PATH.read_text(encoding="utf-8"))
+    baseline_raw = json.loads(BASELINE_PATH.read_text(encoding="utf-8"))
+    latest = normalize_latest(latest_raw)
+    baseline = normalize_baseline(baseline_raw)
     return latest, baseline
+
+
+def normalize_latest(raw):
+    k6_raw = raw.get("k6", {})
+    go_raw = raw.get("go_benchmarks", {}).get("BenchmarkProxyOverhead", {})
+    stage_raw = raw.get("stages", {})
+    return {
+        "k6": {
+            "p99_ms": read_float(k6_raw.get("p99_ms")),
+            "req_per_s": read_float(k6_raw.get("req_per_s")),
+            "error_rate": read_float(k6_raw.get("error_rate")),
+        },
+        "go_benchmarks": {
+            "BenchmarkProxyOverhead": {
+                "allocs_per_op": read_float(go_raw.get("allocs_per_op")),
+                "bytes_per_op": read_float(go_raw.get("bytes_per_op")),
+            }
+        },
+        "stages": {
+            "total_overhead_p99_ms": read_float(stage_raw.get("total_overhead_p99_ms")),
+        },
+    }
+
+
+def normalize_baseline(raw):
+    policy_raw = raw.get("policy", {})
+    base_raw = raw.get("baseline", {})
+    return {
+        "policy": {
+            "max_proxy_overhead_p99_ms": read_float(policy_raw.get("max_proxy_overhead_p99_ms"), 20.0),
+            "max_error_rate": read_float(policy_raw.get("max_error_rate"), 0.001),
+            "max_regression_pct": read_float(policy_raw.get("max_regression_pct"), 20.0),
+        },
+        "baseline": {
+            "proxy_overhead_p99_ms": read_float(base_raw.get("proxy_overhead_p99_ms")),
+        },
+    }
 
 
 def build_checks(latest, baseline):
