@@ -172,14 +172,15 @@ jobs:
       - name: Scan auth image with Trivy
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          input: /tmp/auth.oci
+          scan-type: image
+          scan-ref: /tmp/auth.oci
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           format: sarif
           output: trivy-image-auth.sarif
           exit-code: "1"
       - name: Upload Trivy auth SARIF
-        if: always()
+        if: always() && hashFiles('trivy-image-auth.sarif') != ''
         uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
         with:
           sarif_file: trivy-image-auth.sarif
@@ -206,14 +207,15 @@ jobs:
       - name: Scan proxy image with Trivy
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          input: /tmp/proxy.oci
+          scan-type: image
+          scan-ref: /tmp/proxy.oci
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           format: sarif
           output: trivy-image-proxy.sarif
           exit-code: "1"
       - name: Upload Trivy proxy SARIF
-        if: always()
+        if: always() && hashFiles('trivy-image-proxy.sarif') != ''
         uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
         with:
           sarif_file: trivy-image-proxy.sarif
