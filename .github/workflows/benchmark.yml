@@ -14,7 +14,8 @@ on:
       - 'go.sum'
       - '.github/workflows/benchmark.yml'
 
-permissions: read-all
+permissions:
+  contents: read
 
 concurrency:
   group: benchmark-${{ github.ref }}

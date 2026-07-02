@@ -9,7 +9,8 @@ on:
         required: true
   workflow_dispatch:
 
-permissions: read-all
+permissions:
+  contents: read
 
 concurrency:
   group: docs-deploy-${{ github.ref_name }}
