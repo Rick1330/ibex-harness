@@ -41,7 +41,7 @@
   }
 
   function clearChildren(node) {
-    while (node.firstChild) node.removeChild(node.firstChild);
+    while (node.firstChild) node.firstChild.remove();
   }
 
   function safeHref(url) {
