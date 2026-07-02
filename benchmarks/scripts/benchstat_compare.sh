@@ -16,3 +16,8 @@ if ! command -v benchstat >/dev/null 2>&1; then
 fi
 
 benchstat "${OUT_DIR}/prev-go-bench.txt" "${OUT_DIR}/go-bench.txt" > "${OUT_DIR}/benchstat.txt"
+if benchstat -format=json "${OUT_DIR}/go-bench.txt" > "${OUT_DIR}/benchstat.json" 2>/dev/null; then
+  echo "Wrote benchstat JSON to ${OUT_DIR}/benchstat.json"
+else
+  echo '{}' > "${OUT_DIR}/benchstat.json"
+fi

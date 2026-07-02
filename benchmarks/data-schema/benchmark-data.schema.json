@@ -39,17 +39,24 @@
         "timestamp": { "type": "string" },
         "branch": { "type": "string" },
         "pr_number": { "type": ["number", "null"] },
+        "run_number": { "type": "integer" },
         "run_url": { "type": "string" },
         "go_version": { "type": "string" },
         "runner_os": { "type": "string" },
         "runner_cpu": { "type": "string" },
         "runner_vcpus": { "type": "integer" },
+        "runner_ram_gb": { "type": "integer" },
+        "k6_version": { "type": "string" },
         "status": {
           "type": "string",
           "enum": ["pass", "regression", "fail", "unknown"]
         },
         "regression_vs_baseline_pct": { "type": ["number", "null"] },
         "baseline_sha": { "type": ["string", "null"] },
+        "metric_deltas": {
+          "type": "object",
+          "additionalProperties": { "type": ["number", "null"] }
+        },
         "k6": {
           "type": "object",
           "required": [
@@ -79,7 +86,15 @@
           "type": "object",
           "additionalProperties": {
             "type": "object",
-            "required": ["ns_per_op", "allocs_per_op", "bytes_per_op"]
+            "required": [
+              "ns_per_op",
+              "allocs_per_op",
+              "bytes_per_op",
+              "samples",
+              "ci_95_low",
+              "ci_95_high",
+              "geomean_ns"
+            ]
           }
         }
       }

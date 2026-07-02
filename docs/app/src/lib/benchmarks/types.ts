@@ -25,6 +25,10 @@ export interface GoBenchmarkMetrics {
   ns_per_op: number;
   allocs_per_op: number;
   bytes_per_op: number;
+  samples: number;
+  ci_95_low: number;
+  ci_95_high: number;
+  geomean_ns: number;
 }
 
 export interface BenchmarkRun {
@@ -33,16 +37,20 @@ export interface BenchmarkRun {
   timestamp: string;
   branch: string;
   pr_number: number | null;
+  run_number: number;
   run_url: string;
   go_version: string;
   runner_os: string;
   runner_cpu: string;
   runner_vcpus: number;
+  runner_ram_gb: number;
+  k6_version: string;
   k6: K6Result;
   stages: StageLatency;
   status: RunStatus;
   regression_vs_baseline_pct: number | null;
   baseline_sha: string | null;
+  metric_deltas: Record<string, number | null>;
   go_benchmarks: Record<string, GoBenchmarkMetrics>;
 }
 

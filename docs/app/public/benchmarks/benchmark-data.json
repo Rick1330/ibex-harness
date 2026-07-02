@@ -8,11 +8,14 @@
       "timestamp": "2026-07-02T13:38:00+00:00",
       "branch": "main",
       "pr_number": null,
+      "run_number": 28594093144,
       "run_url": "https://github.com/Rick1330/ibex-harness/actions/runs/28594093144",
       "go_version": "1.24.2",
       "runner_os": "Linux",
       "runner_cpu": "AMD EPYC 7763",
       "runner_vcpus": 2,
+      "runner_ram_gb": 7,
+      "k6_version": "0.53.0",
       "k6": {
         "vus": 100,
         "duration_s": 120,
@@ -35,16 +38,27 @@
       "status": "pass",
       "regression_vs_baseline_pct": -2.6,
       "baseline_sha": "bfc0a75",
+      "metric_deltas": {
+        "k6.p99_ms": -2.6
+      },
       "go_benchmarks": {
         "BenchmarkProxyOverhead": {
           "ns_per_op": 8500000,
           "allocs_per_op": 8,
-          "bytes_per_op": 512
+          "bytes_per_op": 512,
+          "samples": 5,
+          "ci_95_low": 8200000,
+          "ci_95_high": 8800000,
+          "geomean_ns": 8500000
         },
         "BenchmarkProxyHealth": {
           "ns_per_op": 420000,
           "allocs_per_op": 2,
-          "bytes_per_op": 128
+          "bytes_per_op": 128,
+          "samples": 5,
+          "ci_95_low": 399000,
+          "ci_95_high": 441000,
+          "geomean_ns": 420000
         }
       }
     }

@@ -21,30 +21,37 @@ const stageLatencySchema = z.object({
   total_overhead_p99_ms: z.number(),
 });
 
+const goBenchmarkSchema = z.object({
+  ns_per_op: z.number(),
+  allocs_per_op: z.number(),
+  bytes_per_op: z.number(),
+  samples: z.number(),
+  ci_95_low: z.number(),
+  ci_95_high: z.number(),
+  geomean_ns: z.number(),
+});
+
 const benchmarkRunSchema = z.object({
   sha: z.string(),
   short_sha: z.string(),
   timestamp: z.string(),
   branch: z.string(),
   pr_number: z.number().nullable(),
+  run_number: z.number(),
   run_url: z.string(),
   go_version: z.string(),
   runner_os: z.string(),
   runner_cpu: z.string(),
   runner_vcpus: z.number(),
+  runner_ram_gb: z.number(),
+  k6_version: z.string(),
   k6: k6ResultSchema,
   stages: stageLatencySchema,
   status: z.enum(["pass", "regression", "fail", "unknown"]),
   regression_vs_baseline_pct: z.number().nullable(),
   baseline_sha: z.string().nullable(),
-  go_benchmarks: z.record(
-    z.string(),
-    z.object({
-      ns_per_op: z.number(),
-      allocs_per_op: z.number(),
-      bytes_per_op: z.number(),
-    }),
-  ),
+  metric_deltas: z.record(z.string(), z.number().nullable()),
+  go_benchmarks: z.record(z.string(), goBenchmarkSchema),
 });
 
 export const benchmarkDataSchema = z.object({
