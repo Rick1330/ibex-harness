@@ -1,0 +1,2 @@
+BenchmarkStageAuth-8         	  500000	      2100 ns/op	     128 B/op	       2 allocs/op
+BenchmarkProxyOverhead-8   	  200000	      8500 ns/op	     512 B/op	       8 allocs/op

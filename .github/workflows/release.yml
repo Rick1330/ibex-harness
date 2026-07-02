@@ -1,4 +1,4 @@
-name: Release
+name: Tagged Release
 
 on:
   push:
@@ -9,12 +9,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: tagged-release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  create-release:
-    name: create-release
+  tagged-github-release:
+    name: tagged-github-release
     permissions:
       contents: write
     runs-on: ubuntu-latest
@@ -43,9 +43,9 @@ jobs:
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}
 
-  docker-publish:
-    name: docker-publish
-    needs: create-release
+  tagged-docker-publish:
+    name: tagged-docker-publish
+    needs: tagged-github-release
     permissions:
       packages: write
       id-token: write

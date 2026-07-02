@@ -1,0 +1,27 @@
+{
+  "metrics": {
+    "http_req_duration": {
+      "values": {
+        "p(50)": 2.5,
+        "p(95)": 8.0,
+        "p(99)": 12.0,
+        "p(99.9)": 15.0
+      }
+    },
+    "http_req_failed": {
+      "values": {
+        "rate": 0.0
+      }
+    },
+    "checks": {
+      "values": {
+        "rate": 1.0
+      }
+    },
+    "http_reqs": {
+      "values": {
+        "rate": 850.5
+      }
+    }
+  }
+}

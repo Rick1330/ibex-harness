@@ -23,13 +23,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  benchmark-and-publish:
-    name: benchmark
-    permissions:
-      contents: write
+  verify-benchmark-pipeline:
+    name: verify-benchmark-pipeline
     runs-on: ubuntu-latest
-    env:
-      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -39,10 +35,74 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Run Go benchmark pipeline unit tests
+        run: go test ./benchmarks/go/...
+
+      - name: Run Python benchmark pipeline unit tests
+        run: python benchmarks/scripts/test_pipeline.py
+
+  collect-proxy-benchmarks:
+    name: collect-proxy-benchmarks
+    needs: verify-benchmark-pipeline
+    runs-on: ubuntu-latest
+    env:
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      BENCH_PROXY_PORT: "18082"
+      POSTGRES_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+      REDIS_URL: redis://127.0.0.1:6379/0
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ibex
+          POSTGRES_PASSWORD: ibex
+          POSTGRES_DB: ibex
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ibex -d ibex"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
       - id: setup_go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+
+      - uses: ./.github/actions/setup-buf
+
       - name: Record overlap policy
         run: |
           cat <<'EOF' >> "$GITHUB_STEP_SUMMARY"
@@ -74,41 +134,37 @@ jobs:
             echo "No gh-pages branch detected yet. First run bootstrap."
           fi
 
+      - name: Generate protobuf stubs
+        working-directory: packages/proto
+        run: buf generate
+
+      - name: Migrate database for benchmark proxy stack
+        env:
+          POSTGRES_MIGRATE_DSN: ${{ env.POSTGRES_DSN }}
+        run: go run ./infra/migrations/postgres/cmd/migrate -command up
+
+      - name: Start real proxy stack for load benchmark
+        run: bash benchmarks/scripts/start_proxy_stack.sh
+
       - name: Run Go microbenchmarks
         run: |
           go test ./benchmarks/go -run=^$ -bench=. -benchmem -count=5 > benchmarks/output/go-bench.txt
 
       - name: Compare against previous benchmark with benchstat
-        run: |
-          bash benchmarks/scripts/benchstat_compare.sh
+        run: bash benchmarks/scripts/benchstat_compare.sh
 
-      - name: Start local HTTP target for k6
-        run: |
-          python -m http.server 18082 --directory . >/tmp/bench-http.log 2>&1 &
-          echo $! > /tmp/bench-http.pid
-          printf "ok\n" > ./healthz
-          for _ in {1..20}; do
-            if curl -fsS http://127.0.0.1:18082/healthz >/dev/null; then
-              exit 0
-            fi
-            sleep 0.5
-          done
-          cat /tmp/bench-http.log >&2
-          exit 1
-
-      - name: Run k6 load benchmark
+      - name: Run k6 load benchmark against proxy /health
         run: |
           chmod -R a+rwX benchmarks/output
           docker run --rm \
             --user "$(id -u):$(id -g)" \
             --network host \
             -v "$PWD:/work" -w /work \
-            -e K6_VUS=10 \
-            -e K6_DURATION=30s \
+            -e BASE_URL="http://127.0.0.1:${BENCH_PROXY_PORT}" \
+            -e K6_HEALTH_PATH=/health \
             grafana/k6:0.53.0 \
             run benchmarks/k6/proxy_load.js \
-            --summary-export benchmarks/output/k6-summary.json \
-            --no-thresholds
+            --summary-export benchmarks/output/k6-summary.json
 
       - name: Collect benchmark artifacts into schema
         env:
@@ -119,8 +175,7 @@ jobs:
           cp benchmarks/output/benchstat.txt benchmarks/output/site/data/benchstat.txt
 
       - name: Build dashboard pages and data
-        run: |
-          python benchmarks/scripts/build_site.py
+        run: python benchmarks/scripts/build_site.py
 
       - name: Run regression gates
         run: |
@@ -142,7 +197,43 @@ jobs:
           test -f benchmarks/output/site/data/baseline.json
           test -f benchmarks/output/site/data/metadata.json
 
-      - name: Publish dashboard to gh-pages
+      - name: Stop proxy stack
+        if: always()
+        run: bash benchmarks/scripts/stop_proxy_stack.sh
+
+      - name: Upload benchmark site artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: bench-marks-site
+          path: benchmarks/output/site/
+          if-no-files-found: error
+
+  publish-bench-marks-gh-pages:
+    name: publish-bench-marks-gh-pages
+    needs: collect-proxy-benchmarks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: benchmark-gh-pages-publish
+      cancel-in-progress: false
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Download benchmark site artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: bench-marks-site
+          path: benchmarks/output/site
+
+      - name: Publish bench-marks dashboard to gh-pages
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -182,7 +273,7 @@ jobs:
           cd - >/dev/null
           git worktree remove /tmp/bench-publish --force
 
-      - name: Final URL summary
+      - name: Final bench-marks URL summary
         if: always()
         run: |
           cat <<EOF >> "$GITHUB_STEP_SUMMARY"
@@ -194,10 +285,3 @@ jobs:
           - Load: https://${{ github.repository_owner }}.github.io/ibex-harness/load.html
           - Commits: https://${{ github.repository_owner }}.github.io/ibex-harness/commits.html
           EOF
-
-      - name: Stop local HTTP target
-        if: always()
-        run: |
-          if [ -f /tmp/bench-http.pid ]; then
-            kill "$(cat /tmp/bench-http.pid)" || true
-          fi

@@ -1,0 +1,16 @@
+{
+  "k6": {
+    "p99_ms": 12.0,
+    "req_per_s": 850.5,
+    "error_rate": 0.0
+  },
+  "go_benchmarks": {
+    "BenchmarkProxyOverhead": {
+      "allocs_per_op": 8.0,
+      "bytes_per_op": 512.0
+    }
+  },
+  "stages": {
+    "total_overhead_p99_ms": 8.5
+  }
+}

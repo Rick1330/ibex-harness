@@ -11,7 +11,7 @@ This repository uses **Release Please** to keep releases consistent and auditabl
 ## Normal release flow
 
 1. Merge changes to `main` using Conventional Commits.
-2. The **Release Please** workflow opens or updates a Release PR.
+2. The **Version Release PR** workflow opens or updates a Release PR.
 3. Review the Release PR:
    - Ensure `docs/CHANGELOG.md` is correct and operationally useful.
 4. Merge the Release PR.
