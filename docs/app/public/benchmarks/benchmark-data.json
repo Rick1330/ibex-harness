@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "baseline_sha": "bfc0a75",
+  "runs": [
+    {
+      "sha": "bfc0a75c8e4f2a1b9d0e3f4a5b6c7d8e9f0a1b2c",
+      "short_sha": "bfc0a75",
+      "timestamp": "2026-07-02T13:38:00+00:00",
+      "branch": "main",
+      "pr_number": null,
+      "run_url": "https://github.com/Rick1330/ibex-harness/actions/runs/28594093144",
+      "go_version": "1.24.2",
+      "runner_os": "Linux",
+      "runner_cpu": "AMD EPYC 7763",
+      "runner_vcpus": 2,
+      "k6": {
+        "vus": 100,
+        "duration_s": 120,
+        "p50_ms": 0.89,
+        "p95_ms": 2.14,
+        "p99_ms": 4.643,
+        "p999_ms": 8.12,
+        "req_per_s": 8665.17,
+        "error_rate": 0,
+        "check_rate": 1
+      },
+      "stages": {
+        "auth_lru_p99_ms": 0.42,
+        "auth_grpc_p99_ms": 0.18,
+        "rate_limit_p99_ms": 0.31,
+        "directive_resolve_p99_ms": 0.12,
+        "prompt_inject_p99_ms": 0.05,
+        "total_overhead_p99_ms": 8.5
+      },
+      "status": "pass",
+      "regression_vs_baseline_pct": -2.6,
+      "baseline_sha": "bfc0a75",
+      "go_benchmarks": {
+        "BenchmarkProxyOverhead": {
+          "ns_per_op": 8500000,
+          "allocs_per_op": 8,
+          "bytes_per_op": 512
+        },
+        "BenchmarkProxyHealth": {
+          "ns_per_op": 420000,
+          "allocs_per_op": 2,
+          "bytes_per_op": 128
+        }
+      }
+    }
+  ]
+}

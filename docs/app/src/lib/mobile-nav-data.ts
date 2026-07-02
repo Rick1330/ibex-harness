@@ -22,6 +22,7 @@ export type MobileNavData = Readonly<{
   roadmapTree: MobileNavNode[];
   blogPosts: ReadonlyArray<{ url: string; title: string }>;
   releasePages: ReadonlyArray<{ url: string; title: string }>;
+  benchmarkPages: ReadonlyArray<{ url: string; title: string }>;
 }>;
 
 function serializePageNode(node: PageTree.Item): MobileNavPage {
@@ -103,6 +104,11 @@ export function getMobileNavData(): MobileNavData {
     roadmapTree: serializeNodes(roadmapSource.getPageTree().children),
     blogPosts,
     releasePages,
+    benchmarkPages: [
+      { url: "/benchmarks", title: "Overview" },
+      { url: "/benchmarks/load", title: "Load test" },
+      { url: "/benchmarks/history", title: "History" },
+    ],
   };
 
   return cachedMobileNavData;

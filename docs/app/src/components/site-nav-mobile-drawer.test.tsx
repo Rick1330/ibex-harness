@@ -37,6 +37,7 @@ const mobileNavData: MobileNavData = {
   roadmapTree: [],
   blogPosts: [],
   releasePages: [],
+  benchmarkPages: [],
 };
 
 afterEach(() => {

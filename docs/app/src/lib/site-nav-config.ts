@@ -17,6 +17,11 @@ export const NAV_LINKS = [
     match: "/docs",
   },
   {
+    text: "Benchmarks",
+    href: "/benchmarks",
+    match: "/benchmarks",
+  },
+  {
     text: "Blog",
     href: "/blog",
     match: "/blog",
@@ -33,7 +38,7 @@ export const NAV_LINKS = [
   },
 ] as const;
 
-export type MobileSectionIconId = "docs" | "blog" | "releases" | "roadmap";
+export type MobileSectionIconId = "docs" | "benchmarks" | "blog" | "releases" | "roadmap";
 
 export function isLinkActive(pathname: string, match: string) {
   return pathname.startsWith(match);
@@ -60,6 +65,13 @@ const MOBILE_SECTION_META: Record<
     baseUrl: "/docs",
     description: "Reference and guides",
     iconId: "docs",
+  },
+  "/benchmarks": {
+    kind: "list",
+    dataKey: "benchmarkPages",
+    hub: { href: "/benchmarks", label: "Overview" },
+    description: "Proxy performance and regression",
+    iconId: "benchmarks",
   },
   "/blog": {
     kind: "list",
