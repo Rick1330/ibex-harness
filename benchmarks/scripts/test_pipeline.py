@@ -140,6 +140,7 @@ class BuildSiteTests(unittest.TestCase):
                 build_site.main()
                 required = [
                     out / "site/index.html",
+                    out / "site/.nojekyll",
                     out / "site/data/runs.json",
                     out / "site/data/baseline.json",
                     out / "site/data/metadata.json",

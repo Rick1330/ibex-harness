@@ -22,9 +22,11 @@ export REDIS_URL
 go run ./services/proxy/cmd/proxy >/tmp/bench-proxy.log 2>&1 &
 echo $! >/tmp/bench-proxy.pid
 
-for _ in $(seq 1 60); do
-  if curl -fsS "http://127.0.0.1:${BENCH_PROXY_PORT}/health" >/dev/null; then
-    echo "proxy ready on http://127.0.0.1:${BENCH_PROXY_PORT}/health"
+echo "starting auth and proxy (go run compile may take ~20-40s on CI)..."
+
+for attempt in $(seq 1 90); do
+  if curl -fsS --max-time 1 "http://127.0.0.1:${BENCH_PROXY_PORT}/health" >/dev/null 2>/dev/null; then
+    echo "proxy ready on http://127.0.0.1:${BENCH_PROXY_PORT}/health (attempt ${attempt})"
     exit 0
   fi
   sleep 0.5

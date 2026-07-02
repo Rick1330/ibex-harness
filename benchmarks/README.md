@@ -6,7 +6,7 @@ This directory contains the benchmark pipeline assets:
 - `services/proxy/internal/http`: real `/health` handler benchmarks (`BenchmarkProxyHealth`).
 - `k6/`: load test script against the real proxy `/health` endpoint.
 - `scripts/`: aggregation, gate, static-site build, and proxy stack helpers.
-- `site/`: static multi-page dashboard (Matte Graphite theme) published to `gh-pages`.
+- `site/`: static multi-page dashboard (Matte Graphite theme) published via GitHub Actions Pages deploy.
 - `data-schema/`: baseline policy and schema-controlled benchmark data.
 - `testdata/`: fixtures for pipeline verification tests.
 

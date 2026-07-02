@@ -44,6 +44,7 @@ def main():
 
     copy_tree(site_src, site_out)
     sync_brand_assets(site_out)
+    (site_out / ".nojekyll").touch()
 
     shutil.copy2(out / RUNS_JSON, data_out / RUNS_JSON)
     shutil.copy2(Path("benchmarks/data-schema/baseline.json"), data_out / BASELINE_JSON)
@@ -56,6 +57,7 @@ def main():
 
     required = [
         site_out / "index.html",
+        site_out / ".nojekyll",
         site_out / "trends.html",
         site_out / "waterfall.html",
         site_out / "load.html",

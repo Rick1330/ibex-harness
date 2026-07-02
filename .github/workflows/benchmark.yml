@@ -116,22 +116,18 @@ jobs:
           mkdir -p benchmarks/output
           mkdir -p benchmarks/output/site/data
 
-      - name: Pull previous benchmark data from gh-pages
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Pull previous benchmark data from live dashboard
         run: |
-          original_origin="$(git remote get-url origin)"
-          trap 'git remote set-url origin "$original_origin"' EXIT
-          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
-          if git ls-remote --exit-code --heads origin gh-pages >/dev/null 2>&1; then
-            git fetch "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" gh-pages:gh-pages
-            git worktree add /tmp/bench-gh-pages gh-pages
-            if [ -f /tmp/bench-gh-pages/data/runs.json ]; then cp /tmp/bench-gh-pages/data/runs.json benchmarks/output/prev-runs.json; fi
-            if [ -f /tmp/bench-gh-pages/data/metadata.json ]; then cp /tmp/bench-gh-pages/data/metadata.json benchmarks/output/prev-metadata.json; fi
-            if [ -f /tmp/bench-gh-pages/data/latest-go-bench.txt ]; then cp /tmp/bench-gh-pages/data/latest-go-bench.txt benchmarks/output/prev-go-bench.txt; fi
-            git worktree remove /tmp/bench-gh-pages --force
+          prev_url="https://${{ github.repository_owner }}.github.io/ibex-harness/data/runs.json"
+          if curl -fsS "$prev_url" -o benchmarks/output/prev-runs.json; then
+            echo "Loaded previous runs from ${prev_url}"
           else
-            echo "No gh-pages branch detected yet. First run bootstrap."
+            echo "No live dashboard yet; starting fresh history."
+            echo '{"runs":[]}' > benchmarks/output/prev-runs.json
+          fi
+          prev_bench_url="https://${{ github.repository_owner }}.github.io/ibex-harness/data/latest-go-bench.txt"
+          if curl -fsS "$prev_bench_url" -o benchmarks/output/prev-go-bench.txt; then
+            echo "Loaded previous go bench text from ${prev_bench_url}"
           fi
 
       - name: Generate protobuf stubs
@@ -215,7 +211,12 @@ jobs:
     needs: collect-proxy-benchmarks
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     concurrency:
       group: benchmark-gh-pages-publish
       cancel-in-progress: false
@@ -235,45 +236,22 @@ jobs:
           name: bench-marks-site
           path: benchmarks/output/site
 
-      - name: Publish bench-marks dashboard to gh-pages
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify publish payload is complete
         run: |
-          publish_dir="$(mktemp -d)"
-          cp -R benchmarks/output/site/. "${publish_dir}/"
-          original_origin="$(git remote get-url origin)"
-          trap 'git remote set-url origin "$original_origin"' EXIT
-          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
-          if git ls-remote --exit-code --heads origin gh-pages >/dev/null 2>&1; then
-            git fetch "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" gh-pages:gh-pages
-            git worktree add /tmp/bench-publish gh-pages
-          else
-            git worktree add --detach /tmp/bench-publish
-            (
-              cd /tmp/bench-publish
-              git checkout --orphan gh-pages
-              git rm -rf . >/dev/null 2>&1 || true
-            )
-          fi
+          test -f benchmarks/output/site/index.html
+          test -f benchmarks/output/site/.nojekyll
+          test -f benchmarks/output/site/data/runs.json
+          test -f benchmarks/output/site/data/baseline.json
+          test -f benchmarks/output/site/data/metadata.json
 
-          find /tmp/bench-publish -mindepth 1 -maxdepth 1 \
-            ! -name ".git" \
-            -exec rm -rf {} +
-          cp -R "${publish_dir}/." /tmp/bench-publish/
+      - name: Upload GitHub Pages artifact
+        uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4.0.0
+        with:
+          path: benchmarks/output/site
 
-          cd /tmp/bench-publish
-          git add .
-          if git diff --cached --quiet; then
-            echo "No benchmark site changes to publish."
-            cd - >/dev/null
-            git worktree remove /tmp/bench-publish --force
-            exit 0
-          fi
-          git -c user.name=github-actions -c user.email=github-actions@users.noreply.github.com \
-            commit -m "chore(bench): publish benchmark dashboard for ${GITHUB_SHA}"
-          git push origin gh-pages
-          cd - >/dev/null
-          git worktree remove /tmp/bench-publish --force
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5
 
       - name: Final bench-marks URL summary
         if: always()
