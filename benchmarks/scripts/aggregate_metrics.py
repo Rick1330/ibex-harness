@@ -78,15 +78,21 @@ def read_trend_ms(values: dict, *keys: str) -> float:
     return 0.0
 
 
+def _optional_float(values: dict, key: str) -> float | None:
+    if key not in values:
+        return None
+    try:
+        return float(values[key])
+    except (TypeError, ValueError):
+        return None
+
+
 def read_rate(values: dict) -> float:
-    for key in ("rate", "value"):
-        if key not in values:
-            continue
-        try:
-            return float(values[key])
-        except (TypeError, ValueError):
-            continue
-    return 0.0
+    rate = _optional_float(values, "rate")
+    if rate is not None:
+        return rate
+    value = _optional_float(values, "value")
+    return value if value is not None else 0.0
 
 
 def derive_req_rate(reqs: dict, data: dict, base_rate: float) -> float:

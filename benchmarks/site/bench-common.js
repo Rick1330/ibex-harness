@@ -144,11 +144,25 @@
     return { label: "Regression Risk", className: "bad" };
   }
 
-  function updateChart(chartKey, buildChart) {
+  function setTrendChart(buildChart) {
     const charts = globalThis.IBEXBenchCharts;
     if (!charts) return;
-    charts.destroyChart(globalThis.IBEXBench[chartKey]);
-    globalThis.IBEXBench[chartKey] = buildChart(charts);
+    charts.destroyChart(globalThis.IBEXBench.trendChart);
+    globalThis.IBEXBench.trendChart = buildChart(charts);
+  }
+
+  function setLoadChart(buildChart) {
+    const charts = globalThis.IBEXBenchCharts;
+    if (!charts) return;
+    charts.destroyChart(globalThis.IBEXBench.loadChart);
+    globalThis.IBEXBench.loadChart = buildChart(charts);
+  }
+
+  function setWaterfallChart(buildChart) {
+    const charts = globalThis.IBEXBenchCharts;
+    if (!charts) return;
+    charts.destroyChart(globalThis.IBEXBench.waterfallChart);
+    globalThis.IBEXBench.waterfallChart = buildChart(charts);
   }
 
   Object.assign(globalThis.IBEXBench, {
@@ -170,6 +184,8 @@
     filterRunsBySha,
     toggleEmptyState,
     healthStatus,
-    updateChart,
+    setTrendChart,
+    setLoadChart,
+    setWaterfallChart,
   });
 })();

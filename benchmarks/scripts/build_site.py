@@ -63,6 +63,7 @@ def main():
         site_out / "brand/ibex-mark-light.png",
         site_out / "brand/ibex-mark-dark.png",
         site_out / "bench-common.js",
+        site_out / "bench-pages.js",
         site_out / "theme.js",
         site_out / "shell.js",
         data_out / RUNS_JSON,
