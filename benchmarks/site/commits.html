@@ -3,44 +3,34 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>IBEX Benchmarks - Commits</title>
+    <title>IBEX Benchmarks — Commits</title>
     <link rel="stylesheet" href="./styles.css" />
+    <script src="./theme.js"></script>
   </head>
-  <body>
-    <div class="wrap">
-      <div class="hero">
-        <div class="brand">
-          <div class="logo-wrap">
-            <div class="logo">IB</div>
-            <div>
-              <strong>IBEX Harness</strong>
-              <div class="muted">Run history and release confidence trail</div>
-            </div>
-          </div>
-          <div class="status">History View</div>
+  <body data-page="commits" data-subtitle="Run history and release confidence">
+    <div id="site-header"></div>
+    <main class="site-main">
+      <div class="wrap">
+        <div class="page-header">
+          <h1>Run History</h1>
+          <p>Filter by commit SHA and inspect regression signals across branches.</p>
+        </div>
+        <div class="toolbar">
+          <label for="shaFilter" class="sr-only">Filter by SHA prefix</label>
+          <input id="shaFilter" class="btn" type="text" placeholder="Filter by SHA prefix…" aria-label="Filter by SHA prefix" />
+          <button id="refreshBtn" class="btn btn-ghost" type="button">Refresh</button>
+        </div>
+        <div class="panel">
+          <table id="runs">
+            <thead>
+              <tr><th>SHA</th><th>Time</th><th>Branch</th><th>p99</th><th>Allocs</th><th>Error</th><th>Run</th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
         </div>
       </div>
-      <nav>
-        <a href="./index.html">Overview</a>
-        <a href="./trends.html">Trends</a>
-        <a href="./waterfall.html">Waterfall</a>
-        <a href="./load.html">Load</a>
-        <a href="./commits.html">Commits</a>
-      </nav>
-      <h1>Run History</h1>
-      <div class="toolbar">
-        <label for="shaFilter" class="sr-only">Filter by SHA prefix</label>
-        <input id="shaFilter" class="btn" type="text" placeholder="Filter by SHA prefix..." aria-label="Filter by SHA prefix" />
-      </div>
-      <div class="panel">
-        <table id="runs">
-          <thead>
-            <tr><th>SHA</th><th>Time</th><th>Branch</th><th>p99</th><th>Allocs</th><th>Error</th><th>Run</th></tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-      </div>
-    </div>
+    </main>
+    <script src="./shell.js"></script>
     <script src="./app.js"></script>
   </body>
 </html>

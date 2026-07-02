@@ -48,14 +48,29 @@ class AggregateMetricsTests(unittest.TestCase):
         self.assertAlmostEqual(k6["error_rate"], 0.0)
         self.assertAlmostEqual(k6["req_per_s"], 850.5)
 
+    def test_parse_k6_summary_reads_flat_v053_export(self) -> None:
+        k6 = aggregate_metrics.parse_k6_summary(TESTDATA / "k6-summary-v053.json")
+        self.assertAlmostEqual(k6["p99_ms"], 1.24)
+        self.assertAlmostEqual(k6["p50_ms"], 0.35)
+        self.assertAlmostEqual(k6["req_per_s"], 8771.65)
+        self.assertAlmostEqual(k6["check_rate"], 1.0)
+        self.assertAlmostEqual(k6["error_rate"], 0.0)
+
+    def test_parse_k6_summary_reads_local_docker_export(self) -> None:
+        export = ROOT / "benchmarks/output/k6-test-export.json"
+        if not export.exists():
+            self.skipTest("local k6 export not available")
+        k6 = aggregate_metrics.parse_k6_summary(export)
+        self.assertGreater(k6["req_per_s"], 0.0)
+
     def test_safe_int_rejects_invalid_runner_vcpu(self) -> None:
         self.assertEqual(aggregate_metrics.safe_int("not-a-number", 4), 4)
 
-    def test_stage_breakdown_maps_go_bench_to_ms(self) -> None:
+    def test_stage_breakdown_maps_go_bench_to_us(self) -> None:
         go_bench = aggregate_metrics.parse_go_bench(TESTDATA / "go-bench-sample.txt")
         stages = aggregate_metrics.stage_breakdown(go_bench)
-        self.assertGreater(stages["total_overhead_p99_ms"], 0.0)
-        self.assertGreater(stages["auth_lru_p99_ms"], 0.0)
+        self.assertGreater(stages["synthetic_total_us"], 0.0)
+        self.assertGreater(stages["synthetic_auth_us"], 0.0)
 
 
 class RegressionGateTests(unittest.TestCase):

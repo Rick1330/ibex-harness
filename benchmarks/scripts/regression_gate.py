@@ -42,6 +42,7 @@ def normalize_latest(raw: dict[str, Any]) -> dict[str, Any]:
             "p99_ms": read_float(k6_raw.get("p99_ms")),
             "req_per_s": read_float(k6_raw.get("req_per_s")),
             "error_rate": read_float(k6_raw.get("error_rate")),
+            "check_rate": read_float(k6_raw.get("check_rate")),
         },
         "go_benchmarks": {
             "BenchmarkProxyOverhead": {
@@ -50,7 +51,7 @@ def normalize_latest(raw: dict[str, Any]) -> dict[str, Any]:
             }
         },
         "stages": {
-            "total_overhead_p99_ms": read_float(stage_raw.get("total_overhead_p99_ms")),
+            "synthetic_total_us": read_float(stage_raw.get("synthetic_total_us")),
         },
     }
 
@@ -77,10 +78,26 @@ def build_checks(latest: dict[str, Any], baseline: dict[str, Any]) -> list[Check
     checks: list[Check] = []
     checks.append(
         (
+            "k6 throughput present",
+            k6["req_per_s"],
+            1.0,
+            k6["req_per_s"] > 0.0,
+        )
+    )
+    checks.append(
+        (
+            "k6 checks passing",
+            k6.get("check_rate", 0.0),
+            0.99,
+            k6.get("check_rate", 0.0) >= 0.99,
+        )
+    )
+    checks.append(
+        (
             "k6 p99 SLA",
             k6["p99_ms"],
             policy["max_proxy_overhead_p99_ms"],
-            k6["p99_ms"] <= policy["max_proxy_overhead_p99_ms"],
+            k6["p99_ms"] > 0.0 and k6["p99_ms"] <= policy["max_proxy_overhead_p99_ms"],
         )
     )
     checks.append(("error rate", k6["error_rate"], policy["max_error_rate"], k6["error_rate"] <= policy["max_error_rate"]))
@@ -105,7 +122,7 @@ def build_summary_lines(latest: dict[str, Any], checks: list[Check]) -> tuple[bo
         f"- error rate: {k6['error_rate']:.6f}",
         f"- allocs/op: {allocs:.3f}",
         f"- bytes/op: {bytes_op:.3f}",
-        f"- stage total overhead: {stage['total_overhead_p99_ms']:.3f} ms",
+        f"- stage synthetic total: {stage['synthetic_total_us']:.3f} µs",
         "",
         "### Checks",
     ]

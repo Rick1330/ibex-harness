@@ -3,60 +3,42 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>IBEX Benchmarks - Trends</title>
+    <title>IBEX Benchmarks — Trends</title>
     <link rel="stylesheet" href="./styles.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js" integrity="sha384-vsrfeLOOY6KuIYKDlmVH5UiBmgIdB1oEf7p01YgWHuqmOHfZr374+odEv96n9tNC" crossorigin="anonymous"></script>
+    <script src="./theme.js"></script>
   </head>
-  <body>
-    <div class="wrap">
-      <div class="hero">
-        <div class="brand">
-          <div class="logo-wrap">
-            <div class="logo">IB</div>
-            <div>
-              <strong>IBEX Harness</strong>
-              <div class="muted">Latency and memory trend analytics</div>
-            </div>
-          </div>
-          <div class="status">Trend View</div>
+  <body data-page="trends" data-subtitle="Latency and throughput trends">
+    <div id="site-header"></div>
+    <main class="site-main">
+      <div class="wrap">
+        <div class="page-header">
+          <h1>Latency &amp; Throughput Trends</h1>
+          <p>Track p99 and allocation drift across the last benchmark runs.</p>
+        </div>
+        <div class="toolbar">
+          <button id="refreshBtn" class="btn" type="button">Refresh</button>
+          <button id="autorefreshBtn" class="btn btn-ghost" type="button">Auto Refresh: Off</button>
+        </div>
+        <div class="panel">
+          <h3>Recent p99 trend</h3>
+          <div class="chart-box"><canvas id="trendChart" aria-label="p99 latency trend chart"></canvas></div>
+        </div>
+        <div class="panel">
+          <h3>Run history</h3>
+          <table id="trendTable">
+            <thead>
+              <tr>
+                <th>SHA</th><th>Time</th><th>p50</th><th>p95</th><th>p99</th><th>p99.9</th><th>req/s</th><th>allocs/op</th><th>B/op</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
         </div>
       </div>
-      <nav>
-        <a href="./index.html">Overview</a>
-        <a href="./trends.html">Trends</a>
-        <a href="./waterfall.html">Waterfall</a>
-        <a href="./load.html">Load</a>
-        <a href="./commits.html">Commits</a>
-      </nav>
-      <h1>Latency & Memory Trends</h1>
-      <div class="panel">
-        <h3>Recent p99 trend</h3>
-        <div id="trendSpark" class="spark"></div>
-      </div>
-      <div class="panel">
-        <p>Use this page to inspect p50/p95/p99/p999 and memory trends over time.</p>
-        <div id="trend-table"></div>
-      </div>
-    </div>
-    <script>
-      (async function () {
-        const res = await fetch("./data/runs.json", { cache: "no-store" });
-        const data = res.ok ? await res.json() : { runs: [] };
-        const recent = (data.runs || []).slice(0, 30).reverse();
-        const maxP99 = Math.max(...recent.map((r) => (r.k6 || {}).p99_ms || 0), 1);
-        document.getElementById("trendSpark").innerHTML = recent
-          .map((r) => {
-            const p99 = (r.k6 || {}).p99_ms || 0;
-            const h = Math.max(4, Math.round((p99 / maxP99) * 44));
-            return `<i title="${(r.sha || "").slice(0, 8)} · ${p99.toFixed(2)}ms" style="height:${h}px"></i>`;
-          })
-          .join("");
-        const rows = (data.runs || []).map((r) => {
-          const k = r.k6 || {};
-          const g = (r.go_benchmarks || {}).BenchmarkProxyOverhead || {};
-          return `<tr><td><code>${(r.sha || "").slice(0,8)}</code></td><td>${new Date(r.timestamp).toLocaleString()}</td><td>${(k.p50_ms||0).toFixed(2)}</td><td>${(k.p95_ms||0).toFixed(2)}</td><td>${(k.p99_ms||0).toFixed(2)}</td><td>${(k.p999_ms||0).toFixed(2)}</td><td>${(g.allocs_per_op||0).toFixed(2)}</td><td>${(g.bytes_per_op||0).toFixed(0)}</td></tr>`;
-        }).join("");
-        document.getElementById("trend-table").innerHTML = `<table><thead><tr><th>SHA</th><th>Time</th><th>p50</th><th>p95</th><th>p99</th><th>p999</th><th>allocs/op</th><th>B/op</th></tr></thead><tbody>${rows}</tbody></table>`;
-      })();
-    </script>
+    </main>
+    <script src="./shell.js"></script>
+    <script src="./charts.js"></script>
+    <script src="./app.js"></script>
   </body>
 </html>

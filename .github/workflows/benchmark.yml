@@ -149,6 +149,7 @@ jobs:
       - name: Run Go microbenchmarks
         run: |
           go test ./benchmarks/go -run=^$ -bench=. -benchmem -count=5 > benchmarks/output/go-bench.txt
+          go test ./services/proxy/internal/http -run=^$ -bench=BenchmarkProxy -benchmem -count=5 >> benchmarks/output/go-bench.txt
 
       - name: Compare against previous benchmark with benchstat
         run: bash benchmarks/scripts/benchstat_compare.sh
@@ -164,6 +165,7 @@ jobs:
             -e K6_HEALTH_PATH=/health \
             grafana/k6:0.53.0 \
             run benchmarks/k6/proxy_load.js \
+            --summary-trend-stats="med,p(90),p(95),p(99),p(99.9),min,max" \
             --summary-export benchmarks/output/k6-summary.json
 
       - name: Collect benchmark artifacts into schema
