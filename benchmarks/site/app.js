@@ -197,7 +197,7 @@
   function viewModel(latest, policy) {
     const k6 = latest.k6 || {};
     const go = latest.go_benchmarks?.BenchmarkProxyOverhead || {};
-    const budget = policyLimit(policy, "max_proxy_overhead_p99_ms", 20);
+    const budget = policy.max_proxy_overhead_p99_ms ?? 20;
     const budgetPct = pctOfBudget(k6.p99_ms || 0, budget);
     return { k6, go, budget, budgetPct };
   }
