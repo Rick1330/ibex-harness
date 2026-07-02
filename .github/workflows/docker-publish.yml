@@ -22,6 +22,9 @@ concurrency:
   group: docker-publish-${{ github.workflow }}-${{ github.event.workflow_run.head_sha || github.sha }}
   cancel-in-progress: false
 
+# Default is explicit none; jobs set what they need.
+permissions: {}
+
 jobs:
   resolve-tag:
     name: resolve-tag
@@ -388,3 +391,69 @@ jobs:
           subject-name: ghcr.io/${{ steps.repo_meta.outputs.repo_lc }}/proxy
           subject-digest: ${{ needs.push-proxy.outputs.digest }}
           push-to-registry: true
+
+  notify:
+    name: notify
+    needs:
+      - resolve-tag
+      - scan-image-auth
+      - scan-image-proxy
+      - push-auth
+      - push-proxy
+      - attest-provenance
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Post Docker Publish summary comment
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TAG: ${{ needs.resolve-tag.outputs.tag }}
+          AUTH_DIGEST: ${{ needs.push-auth.outputs.digest }}
+          PROXY_DIGEST: ${{ needs.push-proxy.outputs.digest }}
+          REPO_LC: ${{ github.repository }}
+          RESULT_SCAN_AUTH: ${{ needs.scan-image-auth.result }}
+          RESULT_SCAN_PROXY: ${{ needs.scan-image-proxy.result }}
+          RESULT_PUSH_AUTH: ${{ needs.push-auth.result }}
+          RESULT_PUSH_PROXY: ${{ needs.push-proxy.result }}
+          RESULT_ATTEST: ${{ needs.attest-provenance.result }}
+        run: |
+          repo_lc="${REPO,,}"
+          if [ -z "${TAG}" ]; then
+            # resolve-tag job can be skipped when CI didn't succeed (workflow_run gate).
+            TAG="(not-run)"
+          fi
+
+          auth_image="ghcr.io/${repo_lc}/auth:${TAG}"
+          proxy_image="ghcr.io/${repo_lc}/proxy:${TAG}"
+
+          cat <<EOF > body.md
+          ## Docker Publish
+
+          - **Run**: ${RUN_URL}
+          - **Commit**: \`${HEAD_SHA}\`
+          - **Tag**: \`${TAG}\`
+
+          ### Images
+          - **Auth**: \`${auth_image}\`  \`${AUTH_DIGEST}\`
+          - **Proxy**: \`${proxy_image}\`  \`${PROXY_DIGEST}\`
+
+          ### Job results
+          - scan-image-auth: **${RESULT_SCAN_AUTH}**
+          - scan-image-proxy: **${RESULT_SCAN_PROXY}**
+          - push-auth: **${RESULT_PUSH_AUTH}**
+          - push-proxy: **${RESULT_PUSH_PROXY}**
+          - attest-provenance: **${RESULT_ATTEST}**
+
+          EOF
+
+          gh api "repos/${REPO}/commits/${HEAD_SHA}/comments" -f body="$(cat body.md)" >/dev/null

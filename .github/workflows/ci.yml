@@ -1040,6 +1040,26 @@ jobs:
           pip install bandit==1.8.3
           bandit -r services/memory/ -x tests/,test_ -f sarif -o bandit.sarif
           echo "run=true" >> "$GITHUB_OUTPUT"
+      - name: Bandit skipped summary
+        if: steps.bandit.outputs.run != 'true'
+        run: |
+          cat <<'EOF' >> "$GITHUB_STEP_SUMMARY"
+          ## Bandit (Python) skipped
+
+          This repository currently does not have `services/memory/` checked in, so the Bandit scan is intentionally skipped.
+
+          - **Why**: Bandit is scoped to the Python memory service to avoid scanning unrelated paths.
+          - **Effect**: `bandit.sarif` is not generated, so the “Upload Bandit SARIF” step is skipped as well.
+          - **Enables automatically**: Once `services/memory/` exists in the repo, Bandit will run and upload SARIF to Code Scanning.
+          EOF
+          printf "Bandit skipped: services/memory not present\n" > bandit-skip.txt
+      - name: Upload Bandit skip note
+        if: steps.bandit.outputs.run != 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: bandit-skip
+          path: bandit-skip.txt
+          retention-days: 7
       - name: Upload Bandit SARIF
         if: steps.bandit.outputs.run == 'true'
         uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
