@@ -1,6 +1,15 @@
 name: Docker Publish
 
 on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'services/auth/**'
+      - 'services/proxy/**'
+      - 'packages/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/docker-publish.yml'
   workflow_call:
     inputs:
       image_tag:
@@ -229,6 +238,7 @@ jobs:
   push-auth:
     name: push-auth
     needs: [resolve-tag, scan-image-auth]
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       packages: write
@@ -293,6 +303,7 @@ jobs:
   push-proxy:
     name: push-proxy
     needs: [resolve-tag, scan-image-proxy]
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       packages: write
@@ -357,6 +368,7 @@ jobs:
   attest-provenance:
     name: attest-provenance
     needs: [push-auth, push-proxy]
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -401,7 +413,7 @@ jobs:
       - push-auth
       - push-proxy
       - attest-provenance
-    if: always()
+    if: always() && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: write
