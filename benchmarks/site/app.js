@@ -2,18 +2,18 @@
   const bench = () => globalThis.IBEXBench;
   const pages = () => globalThis.IBEXBenchPages;
 
-  async function bootPage(page, runs, baselineWrap, latest, rerender) {
-    switch (page) {
+  function bootPage(ctx) {
+    switch (ctx.page) {
       case "commits":
-        return pages().bootCommits(runs, rerender);
+        return pages().bootCommits(ctx.runs, ctx.rerender);
       case "trends":
-        return pages().bootTrends(runs, rerender);
+        return pages().bootTrends(ctx.runs, ctx.rerender);
       case "load":
-        return pages().bootLoad(latest, rerender);
+        return pages().bootLoad(ctx.latest, ctx.rerender);
       case "waterfall":
-        return pages().bootWaterfall(latest, rerender);
+        return pages().bootWaterfall(ctx.latest, ctx.rerender);
       default:
-        return pages().bootOverview(runs, baselineWrap, rerender);
+        return pages().bootOverview(ctx.runs, ctx.baselineWrap, ctx.rerender);
     }
   }
 
@@ -23,9 +23,15 @@
     const baselineWrap = await bench().fetchBaselineJson();
     const runs = runsWrap.runs || [];
     const latest = runs[0];
-    await bootPage(page, runs, baselineWrap, latest, boot);
+    await bootPage({ page, runs, baselineWrap, latest, rerender: boot });
   }
 
-  globalThis.addEventListener("ibex-theme-change", () => boot());
-  boot();
+  function safeBoot() {
+    boot().catch((err) => {
+      console.warn("benchmark dashboard boot failed", err);
+    });
+  }
+
+  globalThis.addEventListener("ibex-theme-change", safeBoot);
+  safeBoot();
 })();

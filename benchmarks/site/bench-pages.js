@@ -157,19 +157,24 @@
     input.oninput = () => renderRuns(bench().filterRunsBySha(runs, input.value));
   }
 
-  function trendMetricTexts(run) {
-    const k = run.k6 || {};
-    const g = bench().goBenchMetrics(run);
+  function k6TrendTexts(k6) {
     return [
-      new Date(run.timestamp).toLocaleString(),
-      (k.p50_ms || 0).toFixed(2),
-      (k.p95_ms || 0).toFixed(2),
-      (k.p99_ms || 0).toFixed(2),
-      (k.p999_ms || 0).toFixed(2),
-      (k.req_per_s || 0).toFixed(0),
-      (g.allocs_per_op || 0).toFixed(2),
-      (g.bytes_per_op || 0).toFixed(0),
+      (k6.p50_ms || 0).toFixed(2),
+      (k6.p95_ms || 0).toFixed(2),
+      (k6.p99_ms || 0).toFixed(2),
+      (k6.p999_ms || 0).toFixed(2),
+      (k6.req_per_s || 0).toFixed(0),
     ];
+  }
+
+  function goTrendTexts(go) {
+    return [(go.allocs_per_op || 0).toFixed(2), (go.bytes_per_op || 0).toFixed(0)];
+  }
+
+  function trendMetricTexts(run) {
+    const k6 = run.k6 || {};
+    const go = bench().goBenchMetrics(run);
+    return [new Date(run.timestamp).toLocaleString(), ...k6TrendTexts(k6), ...goTrendTexts(go)];
   }
 
   function appendTrendRow(tbody, run) {
