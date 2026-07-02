@@ -1,20 +1,25 @@
 (function () {
   let autoRefreshTimer = null;
 
-  const ALLOWED_JSON = new Set(["./data/runs.json", "./data/baseline.json"]);
-
-  async function readJson(path, fallback) {
-    if (!ALLOWED_JSON.has(path)) {
-      console.warn("blocked fetch to disallowed path", path);
-      return fallback;
-    }
+  async function fetchRunsJson() {
     try {
-      const res = await fetch(path, { cache: "no-store" });
-      if (!res.ok) return fallback;
+      const res = await fetch("./data/runs.json", { cache: "no-store" });
+      if (!res.ok) return { runs: [] };
       return await res.json();
     } catch (e) {
-      console.warn("failed to fetch benchmark JSON", path, e);
-      return fallback;
+      console.warn("failed to fetch runs.json", e);
+      return { runs: [] };
+    }
+  }
+
+  async function fetchBaselineJson() {
+    try {
+      const res = await fetch("./data/baseline.json", { cache: "no-store" });
+      if (!res.ok) return {};
+      return await res.json();
+    } catch (e) {
+      console.warn("failed to fetch baseline.json", e);
+      return {};
     }
   }
 
@@ -65,32 +70,34 @@
     return card;
   }
 
-  function appendRunRow(tbody, r) {
-    const k6 = r.k6 || {};
-    const tr = document.createElement("tr");
+  function appendTextCell(row, text) {
+    row.appendChild(el("td", null, text));
+  }
 
-    const shaTd = document.createElement("td");
-    shaTd.appendChild(el("code", null, (r.sha || "").slice(0, 8)));
-    tr.appendChild(shaTd);
-
-    tr.appendChild(el("td", null, new Date(r.timestamp).toLocaleString()));
-    tr.appendChild(el("td", null, r.branch || ""));
-    tr.appendChild(el("td", null, `${(k6.p99_ms || 0).toFixed(2)} ms`));
-    tr.appendChild(
-      el("td", null, r.go_benchmarks?.BenchmarkProxyOverhead?.allocs_per_op?.toFixed?.(2) || "0.00"),
-    );
-    tr.appendChild(el("td", null, (k6.error_rate || 0).toFixed(4)));
-
-    const runTd = document.createElement("td");
+  function appendRunLinkCell(row, url) {
+    const cell = document.createElement("td");
     const link = document.createElement("a");
-    link.href = safeHref(r.run_url);
+    link.href = safeHref(url);
     link.target = "_blank";
     link.rel = "noreferrer";
     link.textContent = "run";
-    runTd.appendChild(link);
-    tr.appendChild(runTd);
+    cell.appendChild(link);
+    row.appendChild(cell);
+  }
 
-    tbody.appendChild(tr);
+  function appendRunRow(tbody, r) {
+    const k6 = r.k6 || {};
+    const row = document.createElement("tr");
+    const shaCell = document.createElement("td");
+    shaCell.appendChild(el("code", null, (r.sha || "").slice(0, 8)));
+    row.appendChild(shaCell);
+    appendTextCell(row, new Date(r.timestamp).toLocaleString());
+    appendTextCell(row, r.branch || "");
+    appendTextCell(row, `${(k6.p99_ms || 0).toFixed(2)} ms`);
+    appendTextCell(row, r.go_benchmarks?.BenchmarkProxyOverhead?.allocs_per_op?.toFixed?.(2) || "0.00");
+    appendTextCell(row, (k6.error_rate || 0).toFixed(4));
+    appendRunLinkCell(row, r.run_url);
+    tbody.appendChild(row);
   }
 
   function setActiveNav() {
@@ -267,8 +274,8 @@
 
   async function boot() {
     setActiveNav();
-    const runsWrap = await readJson("./data/runs.json", { runs: [] });
-    const baselineWrap = await readJson("./data/baseline.json", {});
+    const runsWrap = await fetchRunsJson();
+    const baselineWrap = await fetchBaselineJson();
     const runs = runsWrap.runs || [];
     const latest = runs[0];
     const baseline = baselineWrap.baseline || {};
