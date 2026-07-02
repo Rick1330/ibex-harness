@@ -60,6 +60,10 @@ jobs:
             workflow_call|workflow_dispatch)
               tag="${INPUT_IMAGE_TAG}"
               ;;
+            pull_request)
+              # PR runs are scan-only; publish jobs are gated out.
+              tag="latest"
+              ;;
             workflow_run)
               tag="latest"
               ;;
