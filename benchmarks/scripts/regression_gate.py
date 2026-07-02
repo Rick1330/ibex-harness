@@ -3,10 +3,8 @@ import json
 import sys
 from pathlib import Path
 
-OUTPUT_DIR = Path("benchmarks/output")
-LATEST_PATH = OUTPUT_DIR / "latest.json"
+LATEST_PATH = Path("benchmarks/output/latest.json")
 BASELINE_PATH = Path("benchmarks/data-schema/baseline.json")
-SUMMARY_PATH = OUTPUT_DIR / "gate-summary.md"
 
 
 def pct_change(cur, base):
@@ -68,17 +66,12 @@ def build_summary_lines(latest, checks):
     return ok, summary_lines
 
 
-def write_summary(summary_lines):
-    summary_text = "\n".join(summary_lines) + "\n"
-    SUMMARY_PATH.write_text(summary_text, encoding="utf-8")
-    print(summary_text)
-
-
 def main():
     latest, baseline = load_inputs()
     checks = build_checks(latest, baseline)
     ok, summary_lines = build_summary_lines(latest, checks)
-    write_summary(summary_lines)
+    summary_text = "\n".join(summary_lines) + "\n"
+    print(summary_text)
 
     return 0 if ok else 1
 

@@ -119,7 +119,7 @@ jobs:
       - name: Run regression gates
         run: |
           set +e
-          python benchmarks/scripts/regression_gate.py
+          python benchmarks/scripts/regression_gate.py | tee benchmarks/output/gate-summary.md
           status=$?
           set -e
           cat benchmarks/output/gate-summary.md >> "$GITHUB_STEP_SUMMARY"
