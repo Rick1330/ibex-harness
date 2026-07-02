@@ -36,6 +36,10 @@
     return "bad";
   }
 
+  function withinLimit(value, limit, fallback) {
+    return value <= (limit || fallback);
+  }
+
   function card(title, value, meta, cls) {
     return `<div class="card ${esc(cls)}"><h3>${esc(title)}</h3><div class="value">${esc(value)}</div><div class="meta">${esc(meta)}</div></div>`;
   }
@@ -64,12 +68,11 @@
   function healthStatus(latest, policy) {
     const p99 = latest.k6?.p99_ms || 0;
     const err = latest.k6?.error_rate || 0;
-    const p99Ok = p99 <= (policy.max_proxy_overhead_p99_ms || 20);
-    const errOk = err <= (policy.max_error_rate || 0.001);
-    if (p99Ok && errOk) {
-      return { label: "Healthy", borderColor: "#22c55e" };
-    }
-    return { label: "Regression Risk", borderColor: "#ef4444" };
+    const healthy = withinLimit(p99, policy.max_proxy_overhead_p99_ms, 20) &&
+      withinLimit(err, policy.max_error_rate, 0.001);
+    return healthy
+      ? { label: "Healthy", borderColor: "#22c55e" }
+      : { label: "Regression Risk", borderColor: "#ef4444" };
   }
 
   function updateHealthBadge(latest, policy) {
@@ -86,16 +89,18 @@
 
     const autoBtn = document.querySelector("#autorefreshBtn");
     if (!autoBtn) return;
-    autoBtn.onclick = () => {
-      if (autoRefreshTimer) {
-        clearInterval(autoRefreshTimer);
-        autoRefreshTimer = null;
-        autoBtn.textContent = "Auto Refresh: Off";
-        return;
-      }
-      autoRefreshTimer = setInterval(rerender, 60000);
-      autoBtn.textContent = "Auto Refresh: On (60s)";
-    };
+    autoBtn.onclick = () => toggleAutoRefresh(autoBtn, rerender);
+  }
+
+  function toggleAutoRefresh(button, rerender) {
+    if (autoRefreshTimer) {
+      clearInterval(autoRefreshTimer);
+      autoRefreshTimer = null;
+      button.textContent = "Auto Refresh: Off";
+      return;
+    }
+    autoRefreshTimer = setInterval(rerender, 60000);
+    button.textContent = "Auto Refresh: On (60s)";
   }
 
   function setLastUpdated(timestamp) {
