@@ -79,17 +79,27 @@ def read_trend_ms(values: dict, *keys: str) -> float:
 
 
 def read_rate(values: dict) -> float:
-    if "rate" in values:
+    for key in ("rate", "value"):
+        if key not in values:
+            continue
         try:
-            return float(values["rate"])
+            return float(values[key])
         except (TypeError, ValueError):
-            pass
-    if "value" in values:
-        try:
-            return float(values["value"])
-        except (TypeError, ValueError):
-            pass
+            continue
     return 0.0
+
+
+def derive_req_rate(reqs: dict, data: dict, base_rate: float) -> float:
+    if not math.isclose(base_rate, 0.0, abs_tol=1e-12):
+        return base_rate
+    count = reqs.get("count")
+    duration_ms = data.get("state", {}).get("testRunDurationMs")
+    if not count or not duration_ms:
+        return base_rate
+    duration_s = float(duration_ms) / 1000.0
+    if duration_s <= 0:
+        return base_rate
+    return float(count) / duration_s
 
 
 def parse_k6_summary(path: Path):
@@ -103,11 +113,7 @@ def parse_k6_summary(path: Path):
     failed = metric_values(metrics, "http_req_failed")
     reqs = metric_values(metrics, "http_reqs")
 
-    req_rate = read_rate(reqs)
-    if math.isclose(req_rate, 0.0, abs_tol=1e-12) and reqs.get("count") and data.get("state", {}).get("testRunDurationMs"):
-        duration_s = float(data["state"]["testRunDurationMs"]) / 1000.0
-        if duration_s > 0:
-            req_rate = float(reqs["count"]) / duration_s
+    req_rate = derive_req_rate(reqs, data, read_rate(reqs))
 
     return {
         "p50_ms": read_trend_ms(lat, "p(50)", "med"),
