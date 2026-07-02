@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Validates GitHub Action pins in workflow files:
 # 1) external actions must use full 40-char commit SHAs (not tags)
-# 2) each pinned SHA must resolve in the action repository
+# 2) each pinned SHA must resolve in the action repository (when gh is available)
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -16,11 +16,12 @@ while IFS= read -r ref; do
     fail=1
   fi
 done < <(
-  grep -rhoE 'uses:[[:space:]]*[^[:space:]]+' .github/workflows/ \
+  grep -rhoE 'uses:[[:space:]]*[^#[:space:]]+' .github/workflows/ \
     | sed -E 's#^uses:[[:space:]]*##' \
     | grep -v '^\./' \
     | grep -v '/\.github/workflows/' \
     | sed -E 's#^[^@]+@##' \
+    | sed 's/[[:space:]]*$//' \
     | sort -u
 )
 
@@ -31,24 +32,35 @@ fi
 
 declare -A seen=()
 
-while IFS= read -r line; do
-  [[ -z "$line" ]] && continue
-  if [[ -n "${seen[$line]+x}" ]]; then
+while IFS= read -r pinned; do
+  [[ -z "$pinned" ]] && continue
+  if [[ -n "${seen[$pinned]+x}" ]]; then
     continue
   fi
-  seen[$line]=1
+  seen[$pinned]=1
 
-  key="${line%%@*}"
-  sha="${line##*@}"
-  owner="${key%%/*}"
-  repo="${key#*/}"
+  action="${pinned%@*}"
+  sha="${pinned##*@}"
+  owner="${action%%/*}"
+  repo="${action#*/}"
+  repo="${repo%%/*}"
+
+  if [[ -z "$owner" || -z "$repo" || -z "$sha" ]]; then
+    echo "Unable to parse action pin: ${pinned}"
+    fail=1
+    continue
+  fi
 
   if ! gh api "repos/${owner}/${repo}/commits/${sha}" --jq .sha >/dev/null 2>&1; then
-    echo "Invalid action pin: ${key}@${sha}"
+    echo "Invalid action pin: ${action}@${sha}"
     fail=1
   fi
 done < <(
-  grep -rhoE '[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+@[a-f0-9]{40}' .github/workflows/ \
+  grep -rhoE 'uses:[[:space:]]*[^#[:space:]]+@[a-f0-9]{40}' .github/workflows/ \
+    | sed -E 's#^uses:[[:space:]]*##' \
+    | grep -v '^\./' \
+    | grep -v '/\.github/workflows/' \
+    | sed 's/[[:space:]]*$//' \
     | sort -u
 )
 

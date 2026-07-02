@@ -68,6 +68,8 @@ jobs:
         run: bash .github/scripts/check-repo-layout.sh
 
       - name: Validate action pins
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bash .github/scripts/validate-action-pins.sh
 
   changes:
