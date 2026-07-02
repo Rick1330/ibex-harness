@@ -7,6 +7,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
+def safe_int(value: str, default: int) -> int:
+    try:
+        return int(value)
+    except ValueError:
+        return default
+
+
 def parse_go_bench(path: Path):
     bench = {}
     for line in path.read_text(encoding="utf-8").splitlines():
@@ -117,7 +124,7 @@ def main():
         "go_version": go_ver,
         "runner": os.environ.get("RUNNER_OS", "unknown"),
         "runner_cpu": parse_runner_cpu(),
-        "runner_vcpus": int(os.environ.get("RUNNER_VCPU", "2")),
+        "runner_vcpus": safe_int(os.environ.get("RUNNER_VCPU", "2"), default=2),
         "go_benchmarks": go_bench,
         "k6": k6,
         "stages": stage,

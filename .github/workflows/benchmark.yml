@@ -60,14 +60,16 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          original_origin="$(git remote get-url origin)"
+          trap 'git remote set-url origin "$original_origin"' EXIT
           git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
           if git ls-remote --exit-code --heads origin gh-pages >/dev/null 2>&1; then
-            git fetch origin gh-pages:gh-pages
-            git checkout gh-pages
-            if [ -f data/runs.json ]; then cp data/runs.json benchmarks/output/prev-runs.json; fi
-            if [ -f data/metadata.json ]; then cp data/metadata.json benchmarks/output/prev-metadata.json; fi
-            if [ -f data/latest-go-bench.txt ]; then cp data/latest-go-bench.txt benchmarks/output/prev-go-bench.txt; fi
-            git checkout -
+            git fetch "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" gh-pages:gh-pages
+            git worktree add /tmp/bench-gh-pages gh-pages
+            if [ -f /tmp/bench-gh-pages/data/runs.json ]; then cp /tmp/bench-gh-pages/data/runs.json benchmarks/output/prev-runs.json; fi
+            if [ -f /tmp/bench-gh-pages/data/metadata.json ]; then cp /tmp/bench-gh-pages/data/metadata.json benchmarks/output/prev-metadata.json; fi
+            if [ -f /tmp/bench-gh-pages/data/latest-go-bench.txt ]; then cp /tmp/bench-gh-pages/data/latest-go-bench.txt benchmarks/output/prev-go-bench.txt; fi
+            git worktree remove /tmp/bench-gh-pages --force
           else
             echo "No gh-pages branch detected yet. First run bootstrap."
           fi
@@ -85,6 +87,14 @@ jobs:
           python -m http.server 18082 --directory . >/tmp/bench-http.log 2>&1 &
           echo $! > /tmp/bench-http.pid
           printf "ok\n" > ./healthz
+          for _ in {1..20}; do
+            if curl -fsS http://127.0.0.1:18082/healthz >/dev/null; then
+              exit 0
+            fi
+            sleep 0.5
+          done
+          cat /tmp/bench-http.log >&2
+          exit 1
 
       - name: Run k6 load benchmark
         run: |
@@ -108,8 +118,12 @@ jobs:
 
       - name: Run regression gates
         run: |
+          set +e
           python benchmarks/scripts/regression_gate.py
+          status=$?
+          set -e
           cat benchmarks/output/gate-summary.md >> "$GITHUB_STEP_SUMMARY"
+          exit $status
 
       - name: Verify publish payload is complete
         run: |
@@ -128,31 +142,39 @@ jobs:
         run: |
           publish_dir="$(mktemp -d)"
           cp -R benchmarks/output/site/. "${publish_dir}/"
-
+          original_origin="$(git remote get-url origin)"
+          trap 'git remote set-url origin "$original_origin"' EXIT
           git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
           if git ls-remote --exit-code --heads origin gh-pages >/dev/null 2>&1; then
-            git fetch origin gh-pages:gh-pages
-            git checkout gh-pages
+            git fetch "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" gh-pages:gh-pages
+            git worktree add /tmp/bench-publish gh-pages
           else
-            git checkout --orphan gh-pages
-            git rm -rf . >/dev/null 2>&1 || true
+            git worktree add --detach /tmp/bench-publish
+            (
+              cd /tmp/bench-publish
+              git checkout --orphan gh-pages
+              git rm -rf . >/dev/null 2>&1 || true
+            )
           fi
 
-          find . -mindepth 1 -maxdepth 1 \
+          find /tmp/bench-publish -mindepth 1 -maxdepth 1 \
             ! -name ".git" \
-            ! -name ".github" \
             -exec rm -rf {} +
-          cp -R "${publish_dir}/." .
+          cp -R "${publish_dir}/." /tmp/bench-publish/
 
+          cd /tmp/bench-publish
           git add .
           if git diff --cached --quiet; then
             echo "No benchmark site changes to publish."
+            cd - >/dev/null
+            git worktree remove /tmp/bench-publish --force
             exit 0
           fi
           git -c user.name=github-actions -c user.email=github-actions@users.noreply.github.com \
             commit -m "chore(bench): publish benchmark dashboard for ${GITHUB_SHA}"
           git push origin gh-pages
-          git checkout -
+          cd - >/dev/null
+          git worktree remove /tmp/bench-publish --force
 
       - name: Final URL summary
         if: always()

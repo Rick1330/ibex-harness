@@ -3,6 +3,11 @@ import json
 import sys
 from pathlib import Path
 
+OUTPUT_DIR = Path("benchmarks/output")
+LATEST_PATH = OUTPUT_DIR / "latest.json"
+BASELINE_PATH = Path("benchmarks/data-schema/baseline.json")
+SUMMARY_PATH = OUTPUT_DIR / "gate-summary.md"
+
 
 def pct_change(cur, base):
     if base == 0:
@@ -10,16 +15,16 @@ def pct_change(cur, base):
     return ((cur - base) / base) * 100.0
 
 
-def main():
-    latest = json.loads(Path("benchmarks/output/latest.json").read_text(encoding="utf-8"))
-    baseline = json.loads(Path("benchmarks/data-schema/baseline.json").read_text(encoding="utf-8"))
+def load_inputs():
+    latest = json.loads(LATEST_PATH.read_text(encoding="utf-8"))
+    baseline = json.loads(BASELINE_PATH.read_text(encoding="utf-8"))
+    return latest, baseline
 
+
+def build_checks(latest, baseline):
     policy = baseline["policy"]
     base = baseline["baseline"]
     k6 = latest["k6"]
-    stage = latest["stages"]
-    go_bench = latest["go_benchmarks"].get("BenchmarkProxyOverhead", {})
-
     checks = []
     checks.append(
         (
@@ -30,13 +35,18 @@ def main():
         )
     )
     checks.append(("error rate", k6["error_rate"], policy["max_error_rate"], k6["error_rate"] <= policy["max_error_rate"]))
-
     if base["proxy_overhead_p99_ms"] > 0:
         reg = pct_change(k6["p99_ms"], base["proxy_overhead_p99_ms"])
         checks.append(("regression vs baseline (%)", reg, policy["max_regression_pct"], reg <= policy["max_regression_pct"]))
+    return checks
 
+
+def build_summary_lines(latest, checks):
+    stage = latest["stages"]
+    go_bench = latest["go_benchmarks"].get("BenchmarkProxyOverhead", {})
     allocs = float(go_bench.get("allocs_per_op", 0.0))
     bytes_op = float(go_bench.get("bytes_per_op", 0.0))
+    k6 = latest["k6"]
 
     summary_lines = [
         "## Benchmark regression gate",
@@ -50,16 +60,25 @@ def main():
         "",
         "### Checks",
     ]
-
     ok = True
     for name, cur, lim, passed in checks:
         mark = "PASS" if passed else "FAIL"
         summary_lines.append(f"- {mark}: {name} (value={cur:.6f}, limit={lim:.6f})")
         ok = ok and passed
+    return ok, summary_lines
 
+
+def write_summary(summary_lines):
     summary_text = "\n".join(summary_lines) + "\n"
-    Path("benchmarks/output/gate-summary.md").write_text(summary_text, encoding="utf-8")
+    SUMMARY_PATH.write_text(summary_text, encoding="utf-8")
     print(summary_text)
+
+
+def main():
+    latest, baseline = load_inputs()
+    checks = build_checks(latest, baseline)
+    ok, summary_lines = build_summary_lines(latest, checks)
+    write_summary(summary_lines)
 
     return 0 if ok else 1
 
