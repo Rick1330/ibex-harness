@@ -256,9 +256,10 @@ jobs:
           IMAGE_TAG: ${{ needs.resolve-tag.outputs.tag }}
           PUSH_LATEST: ${{ needs.resolve-tag.outputs.push_latest }}
         run: |
-          tags="ghcr.io/${{ github.repository }}/auth:${IMAGE_TAG}"
+          repo_lc="${GITHUB_REPOSITORY,,}"
+          tags="ghcr.io/${repo_lc}/auth:${IMAGE_TAG}"
           if [ "${PUSH_LATEST}" = "true" ]; then
-            tags="${tags}"$'\n'"ghcr.io/${{ github.repository }}/auth:latest"
+            tags="${tags}"$'\n'"ghcr.io/${repo_lc}/auth:latest"
           fi
           {
             echo "tags<<EOF"
@@ -314,9 +315,10 @@ jobs:
           IMAGE_TAG: ${{ needs.resolve-tag.outputs.tag }}
           PUSH_LATEST: ${{ needs.resolve-tag.outputs.push_latest }}
         run: |
-          tags="ghcr.io/${{ github.repository }}/proxy:${IMAGE_TAG}"
+          repo_lc="${GITHUB_REPOSITORY,,}"
+          tags="ghcr.io/${repo_lc}/proxy:${IMAGE_TAG}"
           if [ "${PUSH_LATEST}" = "true" ]; then
-            tags="${tags}"$'\n'"ghcr.io/${{ github.repository }}/proxy:latest"
+            tags="${tags}"$'\n'"ghcr.io/${repo_lc}/proxy:latest"
           fi
           {
             echo "tags<<EOF"
@@ -349,17 +351,20 @@ jobs:
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
           egress-policy: audit
+      - name: Resolve repository path
+        id: repo_meta
+        run: echo "repo_lc=${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
 
       - name: Attest auth image provenance
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
         with:
-          subject-name: ghcr.io/${{ github.repository }}/auth
+          subject-name: ghcr.io/${{ steps.repo_meta.outputs.repo_lc }}/auth
           subject-digest: ${{ needs.push-auth.outputs.digest }}
           push-to-registry: true
 
       - name: Attest proxy image provenance
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
         with:
-          subject-name: ghcr.io/${{ github.repository }}/proxy
+          subject-name: ghcr.io/${{ steps.repo_meta.outputs.repo_lc }}/proxy
           subject-digest: ${{ needs.push-proxy.outputs.digest }}
           push-to-registry: true
