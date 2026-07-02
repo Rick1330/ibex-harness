@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>IBEX Benchmarks - Waterfall</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="hero">
+        <div class="brand">
+          <div class="logo-wrap">
+            <div class="logo">IB</div>
+            <div>
+              <strong>IBEX Harness</strong>
+              <div class="muted">Stage-level latency decomposition</div>
+            </div>
+          </div>
+          <div class="status">Waterfall View</div>
+        </div>
+      </div>
+      <nav>
+        <a href="./index.html">Overview</a>
+        <a href="./trends.html">Trends</a>
+        <a href="./waterfall.html">Waterfall</a>
+        <a href="./load.html">Load</a>
+        <a href="./commits.html">Commits</a>
+      </nav>
+      <h1>Pipeline Stage Waterfall</h1>
+      <div class="panel">
+        <p class="muted">Bars are normalized to the slowest stage in the selected run.</p>
+        <div id="wf"></div>
+      </div>
+    </div>
+    <script>
+      (async function () {
+        const res = await fetch("./data/runs.json", { cache: "no-store" });
+        const data = res.ok ? await res.json() : { runs: [] };
+        const r = (data.runs || [])[0];
+        if (!r) { document.getElementById("wf").textContent = "No data."; return; }
+        const stages = r.stages || {};
+        const max = Math.max(...Object.values(stages), 1);
+        const rows = Object.entries(stages).map(([k,v]) => {
+          const pct = (v / max) * 100;
+          return `<div style="margin:8px 0;"><div style="display:flex;justify-content:space-between;"><span>${k}</span><strong>${v.toFixed(3)} ms</strong></div><div style="height:10px;background:#1f2937;border-radius:8px;"><div style="height:10px;width:${pct}%;background:#38bdf8;border-radius:8px;"></div></div></div>`;
+        }).join("");
+        document.getElementById("wf").innerHTML = rows;
+      })();
+    </script>
+  </body>
+</html>

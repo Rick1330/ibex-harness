@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>IBEX Benchmarks - Trends</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="hero">
+        <div class="brand">
+          <div class="logo-wrap">
+            <div class="logo">IB</div>
+            <div>
+              <strong>IBEX Harness</strong>
+              <div class="muted">Latency and memory trend analytics</div>
+            </div>
+          </div>
+          <div class="status">Trend View</div>
+        </div>
+      </div>
+      <nav>
+        <a href="./index.html">Overview</a>
+        <a href="./trends.html">Trends</a>
+        <a href="./waterfall.html">Waterfall</a>
+        <a href="./load.html">Load</a>
+        <a href="./commits.html">Commits</a>
+      </nav>
+      <h1>Latency & Memory Trends</h1>
+      <div class="panel">
+        <h3>Recent p99 trend</h3>
+        <div id="trendSpark" class="spark"></div>
+      </div>
+      <div class="panel">
+        <p>Use this page to inspect p50/p95/p99/p999 and memory trends over time.</p>
+        <div id="trend-table"></div>
+      </div>
+    </div>
+    <script>
+      (async function () {
+        const res = await fetch("./data/runs.json", { cache: "no-store" });
+        const data = res.ok ? await res.json() : { runs: [] };
+        const recent = (data.runs || []).slice(0, 30).reverse();
+        const maxP99 = Math.max(...recent.map((r) => (r.k6 || {}).p99_ms || 0), 1);
+        document.getElementById("trendSpark").innerHTML = recent
+          .map((r) => {
+            const p99 = (r.k6 || {}).p99_ms || 0;
+            const h = Math.max(4, Math.round((p99 / maxP99) * 44));
+            return `<i title="${(r.sha || "").slice(0, 8)} · ${p99.toFixed(2)}ms" style="height:${h}px"></i>`;
+          })
+          .join("");
+        const rows = (data.runs || []).map((r) => {
+          const k = r.k6 || {};
+          const g = (r.go_benchmarks || {}).BenchmarkProxyOverhead || {};
+          return `<tr><td><code>${(r.sha || "").slice(0,8)}</code></td><td>${new Date(r.timestamp).toLocaleString()}</td><td>${(k.p50_ms||0).toFixed(2)}</td><td>${(k.p95_ms||0).toFixed(2)}</td><td>${(k.p99_ms||0).toFixed(2)}</td><td>${(k.p999_ms||0).toFixed(2)}</td><td>${(g.allocs_per_op||0).toFixed(2)}</td><td>${(g.bytes_per_op||0).toFixed(0)}</td></tr>`;
+        }).join("");
+        document.getElementById("trend-table").innerHTML = `<table><thead><tr><th>SHA</th><th>Time</th><th>p50</th><th>p95</th><th>p99</th><th>p999</th><th>allocs/op</th><th>B/op</th></tr></thead><tbody>${rows}</tbody></table>`;
+      })();
+    </script>
+  </body>
+</html>

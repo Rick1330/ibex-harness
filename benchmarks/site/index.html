@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>IBEX Benchmarks - Overview</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="hero">
+        <div class="brand">
+          <div class="logo-wrap">
+            <div class="logo">IB</div>
+            <div>
+              <strong>IBEX Harness</strong>
+              <div class="muted">Performance Intelligence Dashboard</div>
+            </div>
+          </div>
+          <div id="healthBadge" class="status">Loading</div>
+        </div>
+      </div>
+      <nav>
+        <a href="./index.html">Overview</a>
+        <a href="./trends.html">Trends</a>
+        <a href="./waterfall.html">Waterfall</a>
+        <a href="./load.html">Load</a>
+        <a href="./commits.html">Commits</a>
+      </nav>
+      <h1>IBEX Harness Benchmark Dashboard</h1>
+      <p>Continuous benchmark view for proxy overhead, load latency, and regressions.</p>
+      <div class="toolbar">
+        <button id="refreshBtn" class="btn" type="button">Refresh Data</button>
+        <button id="autorefreshBtn" class="btn" type="button">Auto Refresh: Off</button>
+        <span id="lastUpdated" class="pill">Last updated: n/a</span>
+      </div>
+      <div id="empty" class="empty" style="display:none;">No benchmark data yet. Run the benchmark workflow once on main.</div>
+      <div id="content">
+        <div id="kpis" class="grid"></div>
+        <div id="meta" class="panel"></div>
+        <div class="panel">
+          <h3>Stage Breakdown</h3>
+          <ul id="stages" class="stages"></ul>
+        </div>
+      </div>
+    </div>
+    <script src="./app.js"></script>
+  </body>
+</html>

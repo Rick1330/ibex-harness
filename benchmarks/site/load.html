@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>IBEX Benchmarks - Load</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="hero">
+        <div class="brand">
+          <div class="logo-wrap">
+            <div class="logo">IB</div>
+            <div>
+              <strong>IBEX Harness</strong>
+              <div class="muted">Load profile and SLO view</div>
+            </div>
+          </div>
+          <div class="status">k6 View</div>
+        </div>
+      </div>
+      <nav>
+        <a href="./index.html">Overview</a>
+        <a href="./trends.html">Trends</a>
+        <a href="./waterfall.html">Waterfall</a>
+        <a href="./load.html">Load</a>
+        <a href="./commits.html">Commits</a>
+      </nav>
+      <h1>k6 Load Metrics</h1>
+      <div class="toolbar">
+        <span class="pill">Target p99 &lt; 20ms</span>
+        <span class="pill">Target error &lt; 0.1%</span>
+      </div>
+      <div class="panel" id="load"></div>
+    </div>
+    <script>
+      (async function () {
+        const res = await fetch("./data/runs.json", { cache: "no-store" });
+        const data = res.ok ? await res.json() : { runs: [] };
+        const r = (data.runs || [])[0];
+        if (!r) { document.getElementById("load").textContent = "No data."; return; }
+        const k = r.k6 || {};
+        document.getElementById("load").innerHTML = `<ul class="stages">
+          <li><span>p50</span><strong>${(k.p50_ms || 0).toFixed(2)} ms</strong></li>
+          <li><span>p95</span><strong>${(k.p95_ms || 0).toFixed(2)} ms</strong></li>
+          <li><span>p99</span><strong>${(k.p99_ms || 0).toFixed(2)} ms</strong></li>
+          <li><span>p999</span><strong>${(k.p999_ms || 0).toFixed(2)} ms</strong></li>
+          <li><span>req/s</span><strong>${(k.req_per_s || 0).toFixed(0)}</strong></li>
+          <li><span>error rate</span><strong>${((k.error_rate || 0)*100).toFixed(3)}%</strong></li>
+        </ul>`;
+      })();
+    </script>
+  </body>
+</html>
