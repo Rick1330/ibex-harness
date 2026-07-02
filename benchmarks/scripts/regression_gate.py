@@ -1,26 +1,31 @@
 #!/usr/bin/env python3
+from __future__ import annotations
+
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 LATEST_PATH = Path("benchmarks/output/latest.json")
 BASELINE_PATH = Path("benchmarks/data-schema/baseline.json")
 
+Check = tuple[str, float, float, bool]
 
-def read_float(value, default=0.0):
+
+def read_float(value: object, default: float = 0.0) -> float:
     try:
-        return float(value)
+        return float(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return default
 
 
-def pct_change(cur, base):
+def pct_change(cur: float, base: float) -> float:
     if base == 0:
         return 0.0
     return ((cur - base) / base) * 100.0
 
 
-def load_inputs():
+def load_inputs() -> tuple[dict[str, Any], dict[str, Any]]:
     latest_raw = json.loads(LATEST_PATH.read_text(encoding="utf-8"))
     baseline_raw = json.loads(BASELINE_PATH.read_text(encoding="utf-8"))
     latest = normalize_latest(latest_raw)
@@ -28,7 +33,7 @@ def load_inputs():
     return latest, baseline
 
 
-def normalize_latest(raw):
+def normalize_latest(raw: dict[str, Any]) -> dict[str, Any]:
     k6_raw = raw.get("k6", {})
     go_raw = raw.get("go_benchmarks", {}).get("BenchmarkProxyOverhead", {})
     stage_raw = raw.get("stages", {})
@@ -50,7 +55,7 @@ def normalize_latest(raw):
     }
 
 
-def normalize_baseline(raw):
+def normalize_baseline(raw: dict[str, Any]) -> dict[str, Any]:
     policy_raw = raw.get("policy", {})
     base_raw = raw.get("baseline", {})
     return {
@@ -65,11 +70,11 @@ def normalize_baseline(raw):
     }
 
 
-def build_checks(latest, baseline):
+def build_checks(latest: dict[str, Any], baseline: dict[str, Any]) -> list[Check]:
     policy = baseline["policy"]
     base = baseline["baseline"]
     k6 = latest["k6"]
-    checks = []
+    checks: list[Check] = []
     checks.append(
         (
             "k6 p99 SLA",
@@ -85,7 +90,7 @@ def build_checks(latest, baseline):
     return checks
 
 
-def build_summary_lines(latest, checks):
+def build_summary_lines(latest: dict[str, Any], checks: list[Check]) -> tuple[bool, list[str]]:
     stage = latest["stages"]
     go_bench = latest["go_benchmarks"].get("BenchmarkProxyOverhead", {})
     allocs = float(go_bench.get("allocs_per_op", 0.0))
@@ -112,7 +117,7 @@ def build_summary_lines(latest, checks):
     return ok, summary_lines
 
 
-def main():
+def main() -> int:
     latest, baseline = load_inputs()
     checks = build_checks(latest, baseline)
     ok, summary_lines = build_summary_lines(latest, checks)

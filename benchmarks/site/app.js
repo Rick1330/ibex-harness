@@ -35,7 +35,11 @@
   }
 
   function withinLimit(value, limit, fallback) {
-    return value <= (limit || fallback);
+    return value <= (limit ?? fallback);
+  }
+
+  function policyLimit(policy, key, fallback) {
+    return policy[key] ?? fallback;
   }
 
   function el(tag, className, text) {
@@ -85,18 +89,32 @@
     row.appendChild(cell);
   }
 
-  function appendRunRow(tbody, r) {
+  function runRowMetrics(r) {
     const k6 = r.k6 || {};
+    const overhead = r.go_benchmarks?.BenchmarkProxyOverhead;
+    return {
+      sha: (r.sha || "").slice(0, 8),
+      when: new Date(r.timestamp).toLocaleString(),
+      branch: r.branch || "",
+      p99: `${(k6.p99_ms || 0).toFixed(2)} ms`,
+      allocs: overhead?.allocs_per_op?.toFixed?.(2) || "0.00",
+      errorRate: (k6.error_rate || 0).toFixed(4),
+      runUrl: r.run_url,
+    };
+  }
+
+  function appendRunRow(tbody, r) {
+    const m = runRowMetrics(r);
     const row = document.createElement("tr");
     const shaCell = document.createElement("td");
-    shaCell.appendChild(el("code", null, (r.sha || "").slice(0, 8)));
+    shaCell.appendChild(el("code", null, m.sha));
     row.appendChild(shaCell);
-    appendTextCell(row, new Date(r.timestamp).toLocaleString());
-    appendTextCell(row, r.branch || "");
-    appendTextCell(row, `${(k6.p99_ms || 0).toFixed(2)} ms`);
-    appendTextCell(row, r.go_benchmarks?.BenchmarkProxyOverhead?.allocs_per_op?.toFixed?.(2) || "0.00");
-    appendTextCell(row, (k6.error_rate || 0).toFixed(4));
-    appendRunLinkCell(row, r.run_url);
+    appendTextCell(row, m.when);
+    appendTextCell(row, m.branch);
+    appendTextCell(row, m.p99);
+    appendTextCell(row, m.allocs);
+    appendTextCell(row, m.errorRate);
+    appendRunLinkCell(row, m.runUrl);
     tbody.appendChild(row);
   }
 
@@ -160,16 +178,16 @@
     container.appendChild(row);
   }
 
+  function filterRunsBySha(runs, prefix) {
+    const f = prefix.trim().toLowerCase();
+    if (!f) return runs;
+    return runs.filter((r) => (r.sha || "").toLowerCase().startsWith(f));
+  }
+
   function wireHistoryFilter(runs) {
     const input = document.querySelector("#shaFilter");
-    const rowsRoot = document.querySelector("#runs tbody");
-    if (!input || !rowsRoot) return;
-    input.addEventListener("input", () => {
-      const f = input.value.trim().toLowerCase();
-      const filtered = f ? runs.filter((r) => (r.sha || "").toLowerCase().startsWith(f)) : runs;
-      clearChildren(rowsRoot);
-      filtered.slice(0, 50).forEach((r) => appendRunRow(rowsRoot, r));
-    });
+    if (!input) return;
+    input.oninput = () => renderRuns(filterRunsBySha(runs, input.value));
   }
 
   function toggleEmptyState(latest) {
@@ -184,7 +202,7 @@
   function viewModel(latest, policy) {
     const k6 = latest.k6 || {};
     const go = latest.go_benchmarks?.BenchmarkProxyOverhead || {};
-    const budget = policy.max_proxy_overhead_p99_ms || 20;
+    const budget = policyLimit(policy, "max_proxy_overhead_p99_ms", 20);
     const budgetPct = pctOfBudget(k6.p99_ms || 0, budget);
     return { k6, go, budget, budgetPct };
   }
@@ -194,7 +212,8 @@
     const kpis = document.querySelector("#kpis");
     if (!kpis) return;
     clearChildren(kpis);
-    const errOk = (k6.error_rate || 0) <= (policy.max_error_rate || 0.001);
+    const errLimit = policyLimit(policy, "max_error_rate", 0.001);
+    const errOk = (k6.error_rate || 0) <= errLimit;
     kpis.appendChild(
       renderCard(
         "Proxy p99",
@@ -218,7 +237,7 @@
       renderCard(
         "Error rate",
         `${((k6.error_rate || 0) * 100).toFixed(3)}%`,
-        `target < ${(policy.max_error_rate || 0.001) * 100}%`,
+        `target < ${errLimit * 100}%`,
         errOk ? "good" : "bad",
       ),
     );
