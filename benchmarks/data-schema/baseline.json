@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "baseline": {
+    "target_commit": "unset",
+    "proxy_overhead_p99_ms": 20.0,
+    "throughput_rps": 0.0,
+    "allocs_per_op": 0.0,
+    "bytes_per_op": 0.0
+  },
+  "policy": {
+    "max_regression_pct": 20.0,
+    "max_proxy_overhead_p99_ms": 20.0,
+    "max_error_rate": 0.001
+  }
+}

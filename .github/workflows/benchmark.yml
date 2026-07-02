@@ -7,12 +7,13 @@ on:
   push:
     branches: [main]
     paths:
-      - 'packages/**'
-      - 'services/auth/**'
-      - 'services/proxy/**'
-      - 'go.mod'
-      - 'go.sum'
-      - '.github/workflows/benchmark.yml'
+      - ".github/workflows/benchmark.yml"
+      - "benchmarks/**"
+      - "packages/**"
+      - "services/auth/**"
+      - "services/proxy/**"
+      - "go.mod"
+      - "go.sum"
 
 permissions:
   contents: read
@@ -22,12 +23,13 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  benchmark:
+  benchmark-and-publish:
     name: benchmark
     permissions:
       contents: write
-      deployments: write
     runs-on: ubuntu-latest
+    env:
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -37,93 +39,137 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+      - id: setup_go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
-      - name: Run Go benchmarks
+      - name: Record overlap policy
         run: |
-          go test -bench=. -benchmem -count=3 -run=^$ \
-            ./packages/metrics/... \
-            > benchmark-results.txt
-      - name: Store benchmark result
-        uses: benchmark-action/github-action-benchmark@52576c92bccf6ac60c8223ec7eb2565637cae9ba # v1.22.1
-        with:
-          name: Go Benchmark
-          tool: go
-          output-file-path: benchmark-results.txt
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          auto-push: true
-          comment-on-alert: false
-          alert-threshold: 150%
-          fail-on-alert: false
-          benchmark-data-dir-path: dev/bench
-
-      - name: Verify benchmark report exists (on gh-pages)
-        run: |
-          git checkout gh-pages
-
-          if [ -d dev/bench ] && [ "$(find dev/bench -type f | wc -l)" -gt 0 ]; then
-            echo "Found benchmark output under dev/bench/ on gh-pages."
-            exit 0
-          fi
-
-          echo "Expected benchmark output under dev/bench/ on gh-pages, but it was empty or missing."
-          echo "Directory listing:"
-          ls -la
-          if [ -d dev ]; then
-            find dev -maxdepth 3 -type f -print
-          fi
-          exit 1
-
-      - name: Ensure gh-pages landing page points to report
-        env:
-          SHA: ${{ github.sha }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          # Ensure we can push to gh-pages even though the initial checkout disables credentials.
-          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
-
-          cat <<EOF > index.html
-          <!doctype html>
-          <html lang="en">
-            <head>
-              <meta charset="utf-8" />
-              <meta name="viewport" content="width=device-width, initial-scale=1" />
-              <title>IBEX Harness — Benchmarks</title>
-              <style>
-                :root { color-scheme: light dark; }
-                body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 0; padding: 48px 20px; }
-                .wrap { max-width: 880px; margin: 0 auto; }
-                h1 { font-size: 28px; margin: 0 0 8px; }
-                p { line-height: 1.55; margin: 0 0 12px; opacity: 0.9; }
-                .card { border: 1px solid rgba(127,127,127,0.35); border-radius: 12px; padding: 16px; margin-top: 16px; }
-                a { color: inherit; }
-                code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace; }
-              </style>
-            </head>
-            <body>
-              <div class="wrap">
-                <h1>IBEX Harness — Benchmarks</h1>
-                <p>Continuous benchmarks are published here. This page is intentionally simple and links to the generated report UI.</p>
-
-                <div class="card">
-                  <p><strong>Report UI</strong>: <a href=\"./dev/bench/\">Open benchmark report</a></p>
-                  <p><strong>Latest run</strong>: <a href=\"${RUN_URL}\">${RUN_URL}</a></p>
-                  <p><strong>Commit</strong>: <code>${SHA}</code></p>
-                </div>
-              </div>
-            </body>
-          </html>
+          cat <<'EOF' >> "$GITHUB_STEP_SUMMARY"
+          ## Concurrency policy
+          - This workflow uses `cancel-in-progress: true` to avoid benchmark noise from overlapping runs.
+          - If another run for this ref starts, the older run is canceled by design.
           EOF
 
-          git add index.html
-          if git diff --cached --quiet; then
-            echo "Landing page already up to date."
-            exit 0
+      - name: Prepare output directories
+        run: |
+          mkdir -p benchmarks/output
+          mkdir -p benchmarks/output/site/data
+
+      - name: Pull previous benchmark data from gh-pages
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+          if git ls-remote --exit-code --heads origin gh-pages >/dev/null 2>&1; then
+            git fetch origin gh-pages:gh-pages
+            git checkout gh-pages
+            if [ -f data/runs.json ]; then cp data/runs.json benchmarks/output/prev-runs.json; fi
+            if [ -f data/metadata.json ]; then cp data/metadata.json benchmarks/output/prev-metadata.json; fi
+            if [ -f data/latest-go-bench.txt ]; then cp data/latest-go-bench.txt benchmarks/output/prev-go-bench.txt; fi
+            git checkout -
+          else
+            echo "No gh-pages branch detected yet. First run bootstrap."
           fi
 
-          git -c user.name=github-action-benchmark -c user.email=github@users.noreply.github.com \
-            commit -m "chore(bench): update benchmarks landing page"
+      - name: Run Go microbenchmarks
+        run: |
+          go test ./benchmarks/go -run=^$ -bench=. -benchmem -count=5 > benchmarks/output/go-bench.txt
 
+      - name: Compare against previous benchmark with benchstat
+        run: |
+          bash benchmarks/scripts/benchstat_compare.sh
+
+      - name: Start local HTTP target for k6
+        run: |
+          python -m http.server 18082 --directory . >/tmp/bench-http.log 2>&1 &
+          echo $! > /tmp/bench-http.pid
+          printf "ok\n" > ./healthz
+
+      - name: Run k6 load benchmark
+        run: |
+          docker run --rm \
+            --network host \
+            -v "$PWD:/work" -w /work \
+            grafana/k6:0.53.0 \
+            run benchmarks/k6/proxy_load.js --summary-export benchmarks/output/k6-summary.json
+
+      - name: Collect benchmark artifacts into schema
+        env:
+          GO_VERSION: ${{ steps.setup_go.outputs.go-version }}
+        run: |
+          python benchmarks/scripts/aggregate_metrics.py > benchmarks/output/collector-summary.json
+          cp benchmarks/output/go-bench.txt benchmarks/output/site/data/latest-go-bench.txt
+          cp benchmarks/output/benchstat.txt benchmarks/output/site/data/benchstat.txt
+
+      - name: Build dashboard pages and data
+        run: |
+          python benchmarks/scripts/build_site.py
+
+      - name: Run regression gates
+        run: |
+          python benchmarks/scripts/regression_gate.py
+          cat benchmarks/output/gate-summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Verify publish payload is complete
+        run: |
+          test -f benchmarks/output/site/index.html
+          test -f benchmarks/output/site/trends.html
+          test -f benchmarks/output/site/waterfall.html
+          test -f benchmarks/output/site/load.html
+          test -f benchmarks/output/site/commits.html
+          test -f benchmarks/output/site/data/runs.json
+          test -f benchmarks/output/site/data/baseline.json
+          test -f benchmarks/output/site/data/metadata.json
+
+      - name: Publish dashboard to gh-pages
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          publish_dir="$(mktemp -d)"
+          cp -R benchmarks/output/site/. "${publish_dir}/"
+
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+          if git ls-remote --exit-code --heads origin gh-pages >/dev/null 2>&1; then
+            git fetch origin gh-pages:gh-pages
+            git checkout gh-pages
+          else
+            git checkout --orphan gh-pages
+            git rm -rf . >/dev/null 2>&1 || true
+          fi
+
+          find . -mindepth 1 -maxdepth 1 \
+            ! -name ".git" \
+            ! -name ".github" \
+            -exec rm -rf {} +
+          cp -R "${publish_dir}/." .
+
+          git add .
+          if git diff --cached --quiet; then
+            echo "No benchmark site changes to publish."
+            exit 0
+          fi
+          git -c user.name=github-actions -c user.email=github-actions@users.noreply.github.com \
+            commit -m "chore(bench): publish benchmark dashboard for ${GITHUB_SHA}"
           git push origin gh-pages
+          git checkout -
+
+      - name: Final URL summary
+        if: always()
+        run: |
+          cat <<EOF >> "$GITHUB_STEP_SUMMARY"
+          ## Benchmark dashboard URLs
+          - Root: https://${{ github.repository_owner }}.github.io/ibex-harness/
+          - Overview: https://${{ github.repository_owner }}.github.io/ibex-harness/index.html
+          - Trends: https://${{ github.repository_owner }}.github.io/ibex-harness/trends.html
+          - Waterfall: https://${{ github.repository_owner }}.github.io/ibex-harness/waterfall.html
+          - Load: https://${{ github.repository_owner }}.github.io/ibex-harness/load.html
+          - Commits: https://${{ github.repository_owner }}.github.io/ibex-harness/commits.html
+          EOF
+
+      - name: Stop local HTTP target
+        if: always()
+        run: |
+          if [ -f /tmp/bench-http.pid ]; then
+            kill "$(cat /tmp/bench-http.pid)" || true
+          fi
