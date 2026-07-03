@@ -37,7 +37,9 @@ export function StageDetailsTable({ stages }: StageDetailsTableProps) {
           {rows.map((row) => {
             const target = SLA_KEY[`${row.base}_p99_ms` as StageKey];
             const budget =
-              target && target > 0 ? `${Math.round((row.p99 / target) * 100)}%` : "—";
+              row.p99 !== undefined && target && target > 0
+                ? `${Math.round((row.p99 / target) * 100)}%`
+                : "—";
 
             return (
               <tr key={row.base} className="history-row border-b border-border last:border-0">
@@ -48,7 +50,9 @@ export function StageDetailsTable({ stages }: StageDetailsTableProps) {
                 <td className="px-4 py-2 font-mono tabular-nums">
                   {row.p95 === undefined ? "—" : formatMs(row.p95)}
                 </td>
-                <td className="px-4 py-2 font-mono tabular-nums">{formatMs(row.p99)}</td>
+                <td className="px-4 py-2 font-mono tabular-nums">
+                  {row.p99 === undefined ? "—" : formatMs(row.p99)}
+                </td>
                 <td className="px-4 py-2 font-mono tabular-nums">
                   {row.p999 === undefined ? "—" : formatMs(row.p999)}
                 </td>

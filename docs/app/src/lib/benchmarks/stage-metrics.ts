@@ -16,7 +16,7 @@ export interface StagePercentileRow {
   label: string;
   p50?: number;
   p95?: number;
-  p99: number;
+  p99?: number;
   p999?: number;
 }
 
@@ -34,7 +34,7 @@ export function stagePercentileRows(
     label: labels[`${base}_p99_ms`] ?? base,
     p50: readOptional(stages, `${base}_p50_ms`),
     p95: readOptional(stages, `${base}_p95_ms`),
-    p99: readOptional(stages, `${base}_p99_ms`) ?? 0,
+    p99: readOptional(stages, `${base}_p99_ms`),
     p999: readOptional(stages, `${base}_p999_ms`),
   }));
 }

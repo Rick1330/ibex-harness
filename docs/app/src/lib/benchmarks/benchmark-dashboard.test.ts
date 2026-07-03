@@ -39,4 +39,20 @@ describe("stagePercentileRows", () => {
     expect(row?.p999).toBeUndefined();
     expect(row?.p99).toBe(0.2);
   });
+
+  it("leaves missing p99 undefined instead of fabricating zero", () => {
+    const sparse = {
+      auth_lru_p50_ms: 0.5,
+      auth_grpc_p99_ms: 0,
+      rate_limit_p99_ms: 0,
+      directive_resolve_p99_ms: 0,
+      prompt_inject_p99_ms: 0,
+      total_overhead_p99_ms: 0,
+    } as StageLatency;
+    const row = stagePercentileRows(sparse, {
+      auth_lru_p99_ms: "Auth",
+    }).find((entry) => entry.base === "auth_lru");
+    expect(row?.p50).toBe(0.5);
+    expect(row?.p99).toBeUndefined();
+  });
 });
