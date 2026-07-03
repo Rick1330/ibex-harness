@@ -4,6 +4,19 @@ import {
   type HistorySortKey,
 } from "@/lib/benchmarks/history-table-utils";
 
+function ariaSortValue(
+  active: boolean,
+  sortDir: HistorySortDir,
+): "ascending" | "descending" | "none" {
+  if (!active) {
+    return "none";
+  }
+  if (sortDir === "asc") {
+    return "ascending";
+  }
+  return "descending";
+}
+
 function SortHeader({
   label,
   column,
@@ -19,7 +32,7 @@ function SortHeader({
 }>) {
   const active = sortKey === column;
   const indicator = sortIndicator(active, sortDir);
-  const ariaSort = active ? (sortDir === "asc" ? "ascending" : "descending") : "none";
+  const ariaSort = ariaSortValue(active, sortDir);
 
   return (
     <th scope="col" aria-sort={ariaSort} className="px-4 py-3 font-medium text-muted-foreground">

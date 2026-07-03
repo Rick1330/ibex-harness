@@ -30,8 +30,51 @@ const SORT_ACCESSORS: Record<HistorySortKey, (run: BenchmarkRun) => string | num
   timestamp: (run) => new Date(run.timestamp).getTime(),
 };
 
+type HistoryMetricsSortKey = "p99" | "req_per_s" | "delta" | "timestamp";
+type HistoryMetaSortKey = Exclude<HistorySortKey, HistoryMetricsSortKey>;
+
+const METRICS_SORT_KEYS = new Set<HistorySortKey>([
+  "p99",
+  "req_per_s",
+  "delta",
+  "timestamp",
+]);
+
+function isMetricsSortKey(key: HistorySortKey): key is HistoryMetricsSortKey {
+  return METRICS_SORT_KEYS.has(key);
+}
+
+function sortValueMeta(run: BenchmarkRun, key: HistoryMetaSortKey): string | number {
+  switch (key) {
+    case "run_number":
+      return SORT_ACCESSORS.run_number(run);
+    case "short_sha":
+      return SORT_ACCESSORS.short_sha(run);
+    case "branch":
+      return SORT_ACCESSORS.branch(run);
+    case "status":
+      return SORT_ACCESSORS.status(run);
+  }
+}
+
+function sortValueMetrics(run: BenchmarkRun, key: HistoryMetricsSortKey): string | number {
+  switch (key) {
+    case "p99":
+      return SORT_ACCESSORS.p99(run);
+    case "req_per_s":
+      return SORT_ACCESSORS.req_per_s(run);
+    case "delta":
+      return SORT_ACCESSORS.delta(run);
+    case "timestamp":
+      return SORT_ACCESSORS.timestamp(run);
+  }
+}
+
 function sortValue(run: BenchmarkRun, key: HistorySortKey): string | number {
-  return SORT_ACCESSORS[key](run);
+  if (isMetricsSortKey(key)) {
+    return sortValueMetrics(run, key);
+  }
+  return sortValueMeta(run, key);
 }
 
 export function compareHistoryRuns(

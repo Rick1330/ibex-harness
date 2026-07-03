@@ -1,3 +1,5 @@
+import { flattenError } from "zod";
+
 import publishedBenchmarkData from "../../../public/benchmarks/benchmark-data.json";
 
 import { benchmarkDataSchema } from "./schema";
@@ -7,7 +9,7 @@ export function loadPublishedBenchmarkRuns(): { short_sha: string }[] {
   if (!parsed.success) {
     console.warn(
       "loadPublishedBenchmarkRuns: benchmark data schema validation failed",
-      parsed.error.flatten(),
+      flattenError(parsed.error),
     );
     return [];
   }
