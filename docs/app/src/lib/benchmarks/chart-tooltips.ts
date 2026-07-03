@@ -1,14 +1,18 @@
 import type { TrendDatum } from "@/lib/benchmarks/plot";
 import { formatDeltaPct, formatMs } from "@/lib/benchmarks/format";
 
-export function formatTrendTipTitle(datum: TrendDatum, valueLabel = "Value"): string {
+export function formatTrendTipTitle(
+  datum: TrendDatum,
+  valueLabel = "Value",
+  formatValue: (value: number) => string = formatMs,
+): string {
   const prPart = datum.prLabel ? ` · ${datum.prLabel}` : "";
   const when = datum.timestamp ?? datum.date.toISOString();
 
   const lines = [
     `${datum.shortSha}${prPart}`,
     new Date(when).toUTCString(),
-    `${valueLabel}: ${formatMs(datum.value)}`,
+    `${valueLabel}: ${formatValue(datum.value)}`,
     ...(typeof datum.deltaPct === "number"
       ? [`vs baseline: ${formatDeltaPct(datum.deltaPct)}`]
       : []),
@@ -22,11 +26,7 @@ export function formatTrendTipTitle(datum: TrendDatum, valueLabel = "Value"): st
 }
 
 export function formatThroughputTipTitle(datum: TrendDatum): string {
-  return formatTrendTipTitle(
-    { ...datum, value: datum.value },
-    "Throughput",
-  ).replace(
-    `Throughput: ${formatMs(datum.value)}`,
-    `Throughput: ${Math.round(datum.value).toLocaleString("en-US")} req/s`,
+  return formatTrendTipTitle(datum, "Throughput", (value) =>
+    `${Math.round(value).toLocaleString("en-US")} req/s`,
   );
 }

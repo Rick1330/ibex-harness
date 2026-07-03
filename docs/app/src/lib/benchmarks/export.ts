@@ -2,6 +2,7 @@ import type { BenchmarkRun } from "@/lib/benchmarks/types";
 import { formatMs, formatReqPerSec } from "@/lib/benchmarks/format";
 import type { TimeRange } from "@/lib/benchmarks/plot";
 import { filterRunsByRange } from "@/lib/benchmarks/plot";
+import { proxyOverheadBenchmark } from "@/lib/benchmarks/run-benchmarks";
 
 function needsCsvQuoting(value: string): boolean {
   return value.includes(",") || value.includes('"') || value.includes("\n");
@@ -15,7 +16,7 @@ function csvEscape(value: string): string {
 }
 
 function overheadBytes(run: BenchmarkRun): string {
-  const bench = run.go_benchmarks.BenchmarkProxyOverhead;
+  const bench = proxyOverheadBenchmark(run);
   return bench ? String(bench.bytes_per_op) : "";
 }
 
@@ -58,6 +59,8 @@ export function exportRunsCsv(runs: BenchmarkRun[], range: TimeRange = "all"): v
   const anchor = document.createElement("a");
   anchor.href = url;
   anchor.download = `ibex-benchmarks-${range}.csv`;
+  document.body.appendChild(anchor);
   anchor.click();
+  anchor.remove();
   URL.revokeObjectURL(url);
 }

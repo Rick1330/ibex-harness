@@ -1,4 +1,5 @@
 import { STAGE_LABELS } from "@/lib/benchmarks/chart-colors";
+import { proxyOverheadBenchmark } from "@/lib/benchmarks/run-benchmarks";
 import type { BenchmarkRun, RunStatus } from "@/lib/benchmarks/types";
 
 export type TimeRange = "7d" | "14d" | "30d" | "90d" | "all";
@@ -14,22 +15,37 @@ export function runDate(run: BenchmarkRun): Date {
   return new Date(run.timestamp);
 }
 
+function filterRunsSinceCutoff(runs: BenchmarkRun[], days: number): BenchmarkRun[] {
+  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+  return runs.filter((run) => runDate(run).getTime() >= cutoff);
+}
+
+export function sortRunsByDate(runs: BenchmarkRun[]): BenchmarkRun[] {
+  return [...runs].sort((a, b) => runDate(a).getTime() - runDate(b).getTime());
+}
+
+const VALID_TIME_RANGES = new Set<TimeRange>(["7d", "14d", "30d", "90d", "all"]);
+
+export function parseTimeRange(value: string | null, fallback: TimeRange = "14d"): TimeRange {
+  if (value && VALID_TIME_RANGES.has(value as TimeRange)) {
+    return value as TimeRange;
+  }
+  return fallback;
+}
+
 export function filterRunsByRange(runs: BenchmarkRun[], range: TimeRange): BenchmarkRun[] {
   if (range === "all" || runs.length === 0) {
     return runs;
   }
 
-  const days = RANGE_DAYS[range];
-  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
-  return runs.filter((run) => runDate(run).getTime() >= cutoff);
+  return filterRunsSinceCutoff(runs, RANGE_DAYS[range]);
 }
 
 export function filterRunsByDays(runs: BenchmarkRun[], days: number): BenchmarkRun[] {
   if (days <= 0 || runs.length === 0) {
     return runs;
   }
-  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
-  return runs.filter((run) => runDate(run).getTime() >= cutoff);
+  return filterRunsSinceCutoff(runs, days);
 }
 
 export interface TrendDatum {
@@ -52,9 +68,7 @@ export function toTrendData(
   ci?: (run: BenchmarkRun) => { low: number; high: number } | null,
   targetMs?: number,
 ): TrendDatum[] {
-  return [...runs]
-    .sort((a, b) => runDate(a).getTime() - runDate(b).getTime())
-    .map((run) => {
+  return sortRunsByDate(runs).map((run) => {
       const band = ci?.(run);
       const value = metric(run);
       return {
@@ -82,7 +96,7 @@ export interface PercentileSeriesRow {
 
 export function toPercentileTrendData(runs: BenchmarkRun[]): PercentileSeriesRow[] {
   const rows: PercentileSeriesRow[] = [];
-  for (const run of [...runs].sort((a, b) => runDate(a).getTime() - runDate(b).getTime())) {
+  for (const run of sortRunsByDate(runs)) {
     const date = runDate(run);
     rows.push(
       { date, series: "p50", value: run.k6.p50_ms },
@@ -102,8 +116,8 @@ export interface AllocSeriesRow {
 
 export function toAllocTrendData(runs: BenchmarkRun[]): AllocSeriesRow[] {
   const rows: AllocSeriesRow[] = [];
-  for (const run of [...runs].sort((a, b) => runDate(a).getTime() - runDate(b).getTime())) {
-    const bench = run.go_benchmarks.BenchmarkProxyOverhead;
+  for (const run of sortRunsByDate(runs)) {
+    const bench = proxyOverheadBenchmark(run);
     if (!bench) {
       continue;
     }
@@ -132,7 +146,7 @@ export interface StageStackRow {
 
 export function toStageStackData(runs: BenchmarkRun[]): StageStackRow[] {
   const rows: StageStackRow[] = [];
-  for (const run of [...runs].sort((a, b) => runDate(a).getTime() - runDate(b).getTime())) {
+  for (const run of sortRunsByDate(runs)) {
     const date = runDate(run);
     for (const key of STACK_STAGE_KEYS) {
       rows.push({

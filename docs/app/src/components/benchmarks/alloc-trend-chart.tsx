@@ -5,7 +5,8 @@ import { useRef } from "react";
 import { ChartContainer } from "@/components/benchmarks/chart-container";
 import { useChartTheme } from "@/hooks/use-chart-theme";
 import { useRenderPlot } from "@/hooks/use-render-plot";
-import { buildAllocTrendPlot } from "@/lib/benchmarks/plot-marks";
+import { allocSeriesPreset } from "@/lib/benchmarks/plot-series-presets";
+import { buildSeriesTrendPlot } from "@/lib/benchmarks/plot-marks";
 import { toAllocTrendData } from "@/lib/benchmarks/plot";
 import type { BenchmarkRun } from "@/lib/benchmarks/types";
 
@@ -24,7 +25,7 @@ export function AllocTrendChart({ runs }: AllocTrendChartProps) {
       if (data.length === 0) {
         return null;
       }
-      return buildAllocTrendPlot(data, theme, width);
+      return buildSeriesTrendPlot(data, theme, allocSeriesPreset(theme), width);
     },
     [runs, theme],
   );

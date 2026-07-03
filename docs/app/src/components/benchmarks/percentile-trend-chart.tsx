@@ -6,7 +6,8 @@ import { ChartContainer } from "@/components/benchmarks/chart-container";
 import { useChartTheme } from "@/hooks/use-chart-theme";
 import { useRenderPlot } from "@/hooks/use-render-plot";
 import { K6_TARGETS } from "@/lib/benchmarks/constants";
-import { buildPercentileTrendPlot } from "@/lib/benchmarks/plot-marks";
+import { buildSeriesTrendPlot } from "@/lib/benchmarks/plot-marks";
+import { percentileSeriesPreset } from "@/lib/benchmarks/plot-series-presets";
 import { toPercentileTrendData } from "@/lib/benchmarks/plot";
 import type { BenchmarkRun } from "@/lib/benchmarks/types";
 
@@ -25,7 +26,12 @@ export function PercentileTrendChart({ runs }: PercentileTrendChartProps) {
       if (data.length === 0) {
         return null;
       }
-      return buildPercentileTrendPlot(data, theme, width, K6_TARGETS.p99_ms);
+      return buildSeriesTrendPlot(
+        data,
+        theme,
+        percentileSeriesPreset(theme, K6_TARGETS.p99_ms),
+        width,
+      );
     },
     [runs, theme],
   );

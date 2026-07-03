@@ -9,10 +9,9 @@ import {
   type StageKey,
 } from "@/lib/benchmarks/chart-colors";
 import type { BenchmarkRun, StageLatency } from "@/lib/benchmarks/types";
+import type { SeriesTrendPreset } from "@/lib/benchmarks/plot-series-presets";
 
 import type {
-  AllocSeriesRow,
-  PercentileSeriesRow,
   StageStackRow,
   ThroughputDurationDatum,
   TrendDatum,
@@ -32,6 +31,35 @@ function plotMonoStyle(theme: ChartTheme): NonNullable<Plot.PlotOptions["style"]
     fontFamily: "var(--font-geist-mono), ui-monospace, monospace",
     fontSize: "11px",
   };
+}
+
+function lineDotMarks<T extends object>(
+  data: T[],
+  opts: Readonly<{
+    x: string;
+    y: string;
+    stroke: string;
+    fill?: string;
+    strokeWidth?: number;
+    dotRadius?: number;
+    z?: string | null;
+  }>,
+): Plot.Markish[] {
+  return [
+    Plot.line(data, {
+      x: opts.x,
+      y: opts.y,
+      stroke: opts.stroke,
+      strokeWidth: opts.strokeWidth ?? 2,
+      z: opts.z ?? null,
+    }),
+    Plot.dot(data, {
+      x: opts.x,
+      y: opts.y,
+      fill: opts.fill ?? opts.stroke,
+      r: opts.dotRadius ?? 2,
+    }),
+  ];
 }
 
 function trendAxisMarks(
@@ -78,18 +106,12 @@ function trendSeriesMarks(
   }
 
   marks.push(
-    Plot.line(data, {
+    ...lineDotMarks(data, {
       x: "date",
       y: "value",
       stroke: theme.primaryLine,
-      strokeWidth: 2,
+      dotRadius: 3,
       z: null,
-    }),
-    Plot.dot(data, {
-      x: "date",
-      y: "value",
-      fill: theme.primaryLine,
-      r: 3,
     }),
   );
 
@@ -134,14 +156,13 @@ function buildDualSeriesTrendPlot(
   }
 
   marks.push(
-    Plot.line(data, {
+    ...lineDotMarks(data, {
       x: "date",
       y: "value",
       stroke: "series",
-      strokeWidth: 2,
+      fill: "series",
       z: "series",
     }),
-    Plot.dot(data, { x: "date", y: "value", fill: "series", r: 2 }),
   );
 
   return {
@@ -262,6 +283,7 @@ export function buildPercentilePlot(
   run: BenchmarkRun,
   theme: ChartTheme,
   width = 640,
+  targetMs = 20,
 ): Plot.PlotOptions {
   const rows = [
     { percentile: "p50", value: run.k6.p50_ms },
@@ -290,7 +312,7 @@ export function buildPercentilePlot(
         fill: "percentile",
         inset: 0.2,
       }),
-      Plot.ruleX([20], {
+      Plot.ruleX([targetMs], {
         stroke: theme.target,
         strokeDasharray: "4,4",
       }),
@@ -300,31 +322,16 @@ export function buildPercentilePlot(
   };
 }
 
-export function buildPercentileTrendPlot(
-  data: PercentileSeriesRow[],
+export function buildSeriesTrendPlot(
+  data: SeriesTrendRow[],
   theme: ChartTheme,
-  width = 640,
-  targetMs = 20,
-): Plot.PlotOptions {
-  return buildDualSeriesTrendPlot(data, theme, {
-    width,
-    height: 220,
-    targetMs,
-    legendDomain: ["p50", "p95", "p99", "p99.9"],
-    legendRange: [...theme.series],
-  });
-}
-
-export function buildAllocTrendPlot(
-  data: AllocSeriesRow[],
-  theme: ChartTheme,
+  preset: SeriesTrendPreset,
   width = 640,
 ): Plot.PlotOptions {
   return buildDualSeriesTrendPlot(data, theme, {
     width,
-    yLabel: "KB / allocs",
-    legendDomain: ["bytes/op", "allocs/op"],
-    legendRange: [...theme.seriesDual],
+    ...preset,
+    legendRange: [...preset.legendRange],
   });
 }
 
@@ -343,14 +350,12 @@ export function buildThroughputDurationPlot(
     x: { label: "Time (s)", grid: true, tickFormat: (value: number) => `${value}s` },
     y: { label: null, grid: true, tickFormat: (value: number) => `${Math.round(value)}` },
     marks: [
-      Plot.line(data, {
+      ...lineDotMarks(data, {
         x: "t_s",
         y: "req_per_s",
         stroke: theme.primaryLine,
-        strokeWidth: 2,
         z: null,
       }),
-      Plot.dot(data, { x: "t_s", y: "req_per_s", fill: theme.primaryLine, r: 2 }),
       Plot.ruleY([0], { stroke: theme.grid }),
     ],
     style: plotMonoStyle(theme),
