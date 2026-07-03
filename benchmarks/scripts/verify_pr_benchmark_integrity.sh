@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Reject manual benchmark-data.json edits that do not match the CI artifact.
+set -euo pipefail
+
+BASE_REF="${1:-}"
+COMMITTED_PATH="docs/app/public/benchmarks/benchmark-data.json"
+
+if [[ -z "$BASE_REF" ]]; then
+  echo "usage: verify_pr_benchmark_integrity.sh <base-ref>" >&2
+  exit 1
+fi
+
+if [[ ! "$BASE_REF" =~ ^[a-zA-Z0-9][a-zA-Z0-9._/-]{0,255}$ ]] || [[ "$BASE_REF" == *".."* ]]; then
+  echo "verify_pr_benchmark_integrity: invalid base ref" >&2
+  exit 1
+fi
+
+git fetch origin "$BASE_REF"
+
+if git diff --quiet "origin/${BASE_REF}...HEAD" -- "$COMMITTED_PATH"; then
+  echo "benchmark-data.json unchanged on branch; publish will apply the workflow artifact."
+  exit 0
+fi
+
+last_author="$(git log -1 --format='%ae' -- "$COMMITTED_PATH")"
+if [[ "$last_author" == "41898282+github-actions[bot]@users.noreply.github.com" ]] || \
+   [[ "$last_author" == "github-actions[bot]@users.noreply.github.com" ]]; then
+  echo "Benchmark data last updated by CI; publish may refresh it for this run."
+  exit 0
+fi
+
+python benchmarks/scripts/compare_pr_benchmark_json.py

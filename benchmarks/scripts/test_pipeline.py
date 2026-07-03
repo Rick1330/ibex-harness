@@ -279,6 +279,28 @@ class ValidatePublishedDataTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             validate_published_data.resolve_benchmark_data_path("../../etc/passwd")
 
+    def test_compare_pr_benchmark_json_accepts_matching_payloads(self) -> None:
+        compare = load_module("compare_pr_benchmark_json", SCRIPTS / "compare_pr_benchmark_json.py")
+        seed = ROOT / "docs/app/public/benchmarks/benchmark-data.json"
+        if not seed.exists():
+            self.skipTest("published benchmark seed not available")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            committed = root / "docs/app/public/benchmarks"
+            artifact = root / "benchmarks/output"
+            committed.mkdir(parents=True)
+            artifact.mkdir(parents=True)
+            shutil.copy(seed, committed / "benchmark-data.json")
+            shutil.copy(seed, artifact / "benchmark-data.json")
+            cwd = Path.cwd()
+            try:
+                import os
+
+                os.chdir(root)
+                self.assertEqual(compare.main(), 0)
+            finally:
+                os.chdir(cwd)
+
     def test_validate_published_data_rejects_duplicate_pr_number(self) -> None:
         payload = {
             "schema_version": 1,

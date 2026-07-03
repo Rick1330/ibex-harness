@@ -261,7 +261,7 @@ jobs:
       - name: Reject manual benchmark JSON edits on PR branches
         env:
           BENCHMARK_BASE_REF: ${{ github.base_ref }}
-        run: python benchmarks/scripts/verify_pr_benchmark_integrity.py "$BENCHMARK_BASE_REF"
+        run: bash benchmarks/scripts/verify_pr_benchmark_integrity.sh "$BENCHMARK_BASE_REF"
 
   publish-benchmark-data:
     name: publish-benchmark-data
