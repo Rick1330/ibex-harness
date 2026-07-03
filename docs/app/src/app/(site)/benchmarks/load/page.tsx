@@ -1,12 +1,20 @@
 import type { Metadata } from "next";
 
-import { BenchmarkLoadPanel } from "@/components/benchmarks/benchmark-load-panel";
+import { BenchmarkLoadPanel } from "@/components/benchmarks/lazy-panels";
+import { BenchmarkPageShell } from "@/components/benchmarks/benchmark-page-shell";
 
 export const metadata: Metadata = {
-  title: "Benchmarks — Load",
-  description: "k6 load test percentiles and throughput for the IBEX proxy.",
+  title: "Benchmarks — Load test",
+  description: "k6 load test results and latency distribution.",
 };
 
 export default function BenchmarksLoadPage() {
-  return <BenchmarkLoadPanel />;
+  return (
+    <BenchmarkPageShell
+      title="Load test results"
+      subtitle="k6 load profile against the mock provider (no real OpenAI calls)."
+    >
+      <BenchmarkLoadPanel />
+    </BenchmarkPageShell>
+  );
 }
