@@ -7,6 +7,7 @@ const isStaticExport = process.env.NEXT_STATIC_EXPORT === "1";
 /** @type {import('next').NextConfig} */
 const config = {
   ...(isStaticExport ? { output: "export" } : {}),
+  distDir: process.env.NEXT_DIST_DIR || ".next",
   reactStrictMode: true,
   experimental: {
     optimizePackageImports: ["lucide-react", "fumadocs-ui"],
