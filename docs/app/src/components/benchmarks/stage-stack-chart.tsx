@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef } from "react";
+import { useMemo, useRef } from "react";
 
 import { ChartContainer } from "@/components/benchmarks/chart-container";
 import { useChartTheme } from "@/hooks/use-chart-theme";
@@ -18,7 +18,7 @@ type StageStackChartProps = Readonly<{
 export function StageStackChart({ runs, days = 30 }: StageStackChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const theme = useChartTheme();
-  const filtered = filterRunsByDays(runs, days);
+  const filtered = useMemo(() => filterRunsByDays(runs, days), [runs, days]);
 
   useRenderPlot(
     containerRef,

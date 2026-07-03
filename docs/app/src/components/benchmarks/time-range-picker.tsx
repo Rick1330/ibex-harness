@@ -4,6 +4,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 import { cn } from "@/lib/cn";
 import type { TimeRange } from "@/lib/benchmarks/plot";
+import { parseTimeRange } from "@/lib/benchmarks/plot";
 
 const RANGES: { value: TimeRange; label: string }[] = [
   { value: "7d", label: "7d" },
@@ -21,7 +22,7 @@ export function TimeRangePicker({ className }: TimeRangePickerProps) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const current = (searchParams.get("range") as TimeRange | null) ?? "14d";
+  const current = parseTimeRange(searchParams.get("range"));
 
   function setRange(range: TimeRange) {
     const params = new URLSearchParams(searchParams.toString());

@@ -7,7 +7,7 @@ type SkeletonProps = Readonly<{
 export function Skeleton({ className }: SkeletonProps) {
   return (
     <div
-      className={cn("animate-pulse rounded-[4px] bg-muted", className)}
+      className={cn("animate-pulse rounded-sm bg-muted", className)}
       aria-hidden="true"
     />
   );

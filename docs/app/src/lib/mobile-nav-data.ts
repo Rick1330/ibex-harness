@@ -1,5 +1,6 @@
 import type { PageTree } from "fumadocs-core/server";
 
+import { BENCHMARK_NAV_PAGES } from "@/lib/benchmark-page-tree";
 import { pageTreeLabel } from "@/lib/page-tree-label";
 import { blogSource, releasesSource, roadmapSource, source } from "@/lib/source";
 
@@ -105,14 +106,10 @@ export function getMobileNavData(): MobileNavData {
     roadmapTree: serializeNodes(roadmapSource.getPageTree().children),
     blogPosts,
     releasePages,
-    benchmarkPages: [
-      { url: "/benchmarks", title: "Overview" },
-      { url: "/benchmarks/latency", title: "Latency" },
-      { url: "/benchmarks/waterfall", title: "Waterfall" },
-      { url: "/benchmarks/load", title: "Load test" },
-      { url: "/benchmarks/history", title: "History" },
-      { url: "/benchmarks/compare", title: "Compare" },
-    ],
+    benchmarkPages: BENCHMARK_NAV_PAGES.map((page) => ({
+      url: page.url,
+      title: page.name,
+    })),
   };
 
   return cachedMobileNavData;

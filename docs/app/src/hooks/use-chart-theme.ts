@@ -1,5 +1,5 @@
 import { useTheme } from "next-themes";
-import { useEffect, useState } from "react";
+import { useMemo } from "react";
 
 import {
   CHART_PRIMARY_LINE_DARK,
@@ -69,11 +69,5 @@ const DARK: ChartTheme = {
 
 export function useChartTheme(): ChartTheme {
   const { resolvedTheme } = useTheme();
-  const [theme, setTheme] = useState<ChartTheme>(LIGHT);
-
-  useEffect(() => {
-    setTheme(resolvedTheme === "dark" ? DARK : LIGHT);
-  }, [resolvedTheme]);
-
-  return theme;
+  return useMemo(() => (resolvedTheme === "dark" ? DARK : LIGHT), [resolvedTheme]);
 }
