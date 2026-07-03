@@ -38,7 +38,7 @@ export function RegressionAlert({ run, baselineP99Ms, runs }: RegressionAlertPro
   const revert = runs ? findRevertRun(runs, run) : null;
 
   return (
-    <div className="regression-pulse rounded-md border border-warning/30 bg-warning/5 p-4">
+    <div className="rounded-md border border-warning/30 bg-warning/5 p-4">
       <div className="flex items-start gap-2">
         <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" aria-hidden />
         <div>

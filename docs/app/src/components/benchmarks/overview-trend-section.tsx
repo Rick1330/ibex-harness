@@ -1,5 +1,6 @@
 import { TrendChart } from "@/components/benchmarks/trend-chart";
-import { CHART_OVERVIEW_DAYS } from "@/lib/benchmarks/constants";
+import { CHART_OVERVIEW_DAYS, K6_TARGETS } from "@/lib/benchmarks/constants";
+import { formatMs } from "@/lib/benchmarks/format";
 import { filterRunsByDays } from "@/lib/benchmarks/plot";
 import type { BenchmarkRun } from "@/lib/benchmarks/types";
 
@@ -17,7 +18,8 @@ export function OverviewTrendSection({ runs }: OverviewTrendSectionProps) {
       </h2>
       <TrendChart runs={trendRuns} />
       <p className="mt-2 text-xs text-muted-foreground">
-        Dashed line = SLA target (20ms) · dots = data points · red dots = regression runs
+        Dashed line = SLA target ({formatMs(K6_TARGETS.p99_ms)}) · dots = data points · red dots =
+        regression runs
       </p>
     </div>
   );

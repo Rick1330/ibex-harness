@@ -1,5 +1,6 @@
 import { SlaGauge } from "@/components/benchmarks/sla-gauge";
 import { K6_TARGETS, SLA_TARGETS } from "@/lib/benchmarks/constants";
+import { formatPercent } from "@/lib/benchmarks/format";
 import type { BenchmarkRun } from "@/lib/benchmarks/types";
 
 type OverviewSlaSectionProps = Readonly<{
@@ -13,31 +14,32 @@ export function OverviewSlaSection({ latest }: OverviewSlaSectionProps) {
         SLA targets
       </h2>
       <div className="space-y-4">
-        <SlaGauge label="Proxy overhead p99" valueMs={latest.k6.p99_ms} targetMs={K6_TARGETS.p99_ms} />
+        <SlaGauge label="Proxy overhead p99" value={latest.k6.p99_ms} target={K6_TARGETS.p99_ms} />
         <SlaGauge
           label="Auth LRU hit"
-          valueMs={latest.stages.auth_lru_p99_ms}
-          targetMs={SLA_TARGETS.auth_lru_hit_p99_ms}
+          value={latest.stages.auth_lru_p99_ms}
+          target={SLA_TARGETS.auth_lru_hit_p99_ms}
         />
         <SlaGauge
           label="Auth gRPC fallback"
-          valueMs={latest.stages.auth_grpc_p99_ms}
-          targetMs={SLA_TARGETS.auth_grpc_fallback_p99_ms}
+          value={latest.stages.auth_grpc_p99_ms}
+          target={SLA_TARGETS.auth_grpc_fallback_p99_ms}
         />
         <SlaGauge
           label="Rate limit"
-          valueMs={latest.stages.rate_limit_p99_ms}
-          targetMs={SLA_TARGETS.rate_limit_p99_ms}
+          value={latest.stages.rate_limit_p99_ms}
+          target={SLA_TARGETS.rate_limit_p99_ms}
         />
         <SlaGauge
           label="Directive resolve"
-          valueMs={latest.stages.directive_resolve_p99_ms}
-          targetMs={SLA_TARGETS.directive_resolve_p99_ms}
+          value={latest.stages.directive_resolve_p99_ms}
+          target={SLA_TARGETS.directive_resolve_p99_ms}
         />
         <SlaGauge
           label="Error rate"
-          valueMs={latest.k6.error_rate * 1000}
-          targetMs={K6_TARGETS.error_rate * 1000}
+          value={latest.k6.error_rate}
+          target={K6_TARGETS.error_rate}
+          formatValue={formatPercent}
         />
       </div>
     </div>
