@@ -19,6 +19,8 @@ Thumbs.db
 
 # --- Docs site (Fumadocs / Next.js) ---
 docs/app/.next/
+docs/app/.next-dev/
+docs/app/.next.stale-*/
 docs/app/.open-next/
 docs/app/.wrangler/
 docs/app/.source/

@@ -4,6 +4,8 @@ import { GeistMono } from "geist/font/mono";
 import { GeistSans } from "geist/font/sans";
 import type { ReactNode } from "react";
 
+import { BenchmarkDataPrefetch } from "@/components/benchmarks/benchmark-data-prefetch";
+import { BenchmarkProvider } from "@/components/benchmarks/benchmark-provider";
 import { ClearMermaidCache } from "@/components/clear-mermaid-cache";
 import {
   DocsRootProvider,
@@ -96,10 +98,15 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({ children }: { children: ReactNode }) {
+type RootLayoutProps = Readonly<{
+  children: ReactNode;
+}>;
+
+export default function RootLayout({ children }: RootLayoutProps) {
   return (
     <html
       lang="en"
+      data-scroll-behavior="smooth"
       suppressHydrationWarning
       className={`${GeistSans.variable} ${GeistMono.variable} ${jetbrainsMono.variable}`}
     >
@@ -109,8 +116,11 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           <SearchIndexPrefetch indexUrl={STATIC_SEARCH_INDEX_URL} />
         ) : null}
         <DocsRootProvider>
-          <SiteNavShell />
-          {children}
+          <BenchmarkProvider>
+            <SiteNavShell />
+            <BenchmarkDataPrefetch />
+            {children}
+          </BenchmarkProvider>
         </DocsRootProvider>
       </body>
     </html>

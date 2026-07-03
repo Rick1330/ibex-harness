@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import Link from "next/link";
 
 import { MobilePageTreeNav } from "@/components/layout/mobile-page-tree-nav";
@@ -35,52 +36,96 @@ function HubLink({ href, label, pathname, onNavigate }: HubLinkProps) {
   );
 }
 
-type MobileDrawerSectionContentProps = Readonly<{
-  section: MobileNavSectionConfig;
-  data: MobileNavData;
-  pathname: string;
-  onClose: () => void;
-}>;
+function shouldSkipHubLink(section: MobileNavSectionConfig): boolean {
+  return section.dataKey === "benchmarkPages";
+}
 
-export function MobileDrawerSectionContent({
-  section,
-  data,
-  pathname,
-  onClose,
-}: MobileDrawerSectionContentProps) {
-  const hub = section.hub ? (
+function renderHubLink(
+  section: MobileNavSectionConfig,
+  pathname: string,
+  onClose: () => void,
+): ReactNode {
+  if (!section.hub || shouldSkipHubLink(section)) {
+    return null;
+  }
+
+  return (
     <HubLink
       href={section.hub.href}
       label={section.hub.label}
       pathname={pathname}
       onNavigate={onClose}
     />
-  ) : null;
+  );
+}
 
-  if (section.kind === "tree") {
-    if (!section.baseUrl) return null;
+type MobileDrawerTreeSectionProps = Readonly<{
+  section: MobileNavSectionConfig;
+  data: MobileNavData;
+  hub: ReactNode;
+  onClose: () => void;
+}>;
 
-    const nodes = getSectionTree(
-      data,
-      section.dataKey === "docsTree" ? "docsTree" : "roadmapTree",
-    );
-
-    return (
-      <>
-        {hub}
-        <MobilePageTreeNav
-          nodes={nodes}
-          baseUrl={section.baseUrl}
-          onNavigate={onClose}
-        />
-      </>
-    );
+function MobileDrawerTreeSection({
+  section,
+  data,
+  hub,
+  onClose,
+}: MobileDrawerTreeSectionProps) {
+  if (!section.baseUrl) {
+    return null;
   }
 
-  const pages = getSectionPages(
-    data,
-    section.dataKey === "blogPosts" ? "blogPosts" : "releasePages",
+  const treeKey = section.dataKey === "docsTree" ? "docsTree" : "roadmapTree";
+  const nodes = getSectionTree(data, treeKey);
+
+  return (
+    <>
+      {hub}
+      <MobilePageTreeNav
+        nodes={nodes}
+        baseUrl={section.baseUrl}
+        onNavigate={onClose}
+      />
+    </>
   );
+}
+
+type ListPageDataKey = "blogPosts" | "releasePages" | "benchmarkPages";
+
+function listPageDataKey(section: MobileNavSectionConfig): ListPageDataKey {
+  if (section.dataKey === "blogPosts") {
+    return "blogPosts";
+  }
+  if (section.dataKey === "benchmarkPages") {
+    return "benchmarkPages";
+  }
+  return "releasePages";
+}
+
+type MobileDrawerListSectionProps = Readonly<{
+  section: MobileNavSectionConfig;
+  data: MobileNavData;
+  hub: ReactNode;
+  pathname: string;
+  onClose: () => void;
+}>;
+
+function MobileDrawerListSection({
+  section,
+  data,
+  hub,
+  pathname,
+  onClose,
+}: MobileDrawerListSectionProps) {
+  const skipHub = shouldSkipHubLink(section);
+  const pageDataKey = listPageDataKey(section);
+  const pages = getSectionPages(data, pageDataKey).filter((page) => {
+    if (skipHub) {
+      return true;
+    }
+    return page.url !== section.hub?.href;
+  });
 
   return (
     <>
@@ -98,5 +143,42 @@ export function MobileDrawerSectionContent({
         </Link>
       ))}
     </>
+  );
+}
+
+type MobileDrawerSectionContentProps = Readonly<{
+  section: MobileNavSectionConfig;
+  data: MobileNavData;
+  pathname: string;
+  onClose: () => void;
+}>;
+
+export function MobileDrawerSectionContent({
+  section,
+  data,
+  pathname,
+  onClose,
+}: MobileDrawerSectionContentProps) {
+  const hub = renderHubLink(section, pathname, onClose);
+
+  if (section.kind === "tree") {
+    return (
+      <MobileDrawerTreeSection
+        section={section}
+        data={data}
+        hub={hub}
+        onClose={onClose}
+      />
+    );
+  }
+
+  return (
+    <MobileDrawerListSection
+      section={section}
+      data={data}
+      hub={hub}
+      pathname={pathname}
+      onClose={onClose}
+    />
   );
 }

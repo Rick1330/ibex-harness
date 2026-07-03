@@ -16,6 +16,7 @@ export {
   createNavIconQuery,
   docPathFromUrl,
   folderSectionSlugFromUrl,
+  getBenchmarkIconForUrl,
   getNavIconForUrl,
   getRoadmapIconForUrl,
   getSectionIconForSlug,

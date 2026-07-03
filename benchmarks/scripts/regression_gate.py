@@ -8,6 +8,7 @@ from typing import Any
 
 LATEST_PATH = Path("benchmarks/output/latest.json")
 BASELINE_PATH = Path("benchmarks/data-schema/baseline.json")
+GATE_RESULT_PATH = Path("benchmarks/output/gate-result.json")
 
 Check = tuple[str, float, float, bool]
 
@@ -107,7 +108,24 @@ def build_checks(latest: dict[str, Any], baseline: dict[str, Any]) -> list[Check
     return checks
 
 
-def build_summary_lines(latest: dict[str, Any], checks: list[Check]) -> tuple[bool, list[str]]:
+def format_check_lines(checks: list[Check]) -> tuple[bool, list[str]]:
+    summary_lines = ["### Checks"]
+    ok = True
+    for name, cur, lim, passed in checks:
+        mark = "PASS" if passed else "FAIL"
+        summary_lines.append(f"- {mark}: {name} (value={cur:.6f}, limit={lim:.6f})")
+        ok = ok and passed
+    return ok, summary_lines
+
+
+def find_regression_pct(checks: list[Check]) -> float | None:
+    for name, cur, _, _ in checks:
+        if name == "regression vs baseline (%)":
+            return cur
+    return None
+
+
+def build_summary_lines(latest: dict[str, Any], checks: list[Check]) -> tuple[bool, list[str], float | None]:
     stage = latest["stages"]
     go_bench = latest["go_benchmarks"].get("BenchmarkProxyOverhead", {})
     allocs = float(go_bench.get("allocs_per_op", 0.0))
@@ -124,20 +142,38 @@ def build_summary_lines(latest: dict[str, Any], checks: list[Check]) -> tuple[bo
         f"- bytes/op: {bytes_op:.3f}",
         f"- stage synthetic total: {stage['synthetic_total_us']:.3f} µs",
         "",
-        "### Checks",
     ]
-    ok = True
-    for name, cur, lim, passed in checks:
-        mark = "PASS" if passed else "FAIL"
-        summary_lines.append(f"- {mark}: {name} (value={cur:.6f}, limit={lim:.6f})")
-        ok = ok and passed
-    return ok, summary_lines
+    ok, check_lines = format_check_lines(checks)
+    summary_lines.extend(check_lines)
+    return ok, summary_lines, find_regression_pct(checks)
+
+
+def resolve_gate_status(ok: bool, regression_pct: float | None) -> str:
+    if not ok:
+        return "fail"
+    if regression_pct is not None and regression_pct > 5.0:
+        return "regression"
+    return "pass"
+
+
+def write_gate_result(ok: bool, checks: list[Check], regression_pct: float | None) -> None:
+    payload = {
+        "status": resolve_gate_status(ok, regression_pct),
+        "regression_pct": regression_pct,
+        "checks": [
+            {"name": name, "value": cur, "limit": lim, "ok": passed}
+            for name, cur, lim, passed in checks
+        ],
+    }
+    GATE_RESULT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    GATE_RESULT_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
 def main() -> int:
     latest, baseline = load_inputs()
     checks = build_checks(latest, baseline)
-    ok, summary_lines = build_summary_lines(latest, checks)
+    ok, summary_lines, regression_pct = build_summary_lines(latest, checks)
+    write_gate_result(ok, checks, regression_pct)
     summary_text = "\n".join(summary_lines) + "\n"
     print(summary_text)
 

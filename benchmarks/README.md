@@ -5,18 +5,18 @@ This directory contains the benchmark pipeline assets:
 - `go/`: synthetic stage microbenchmarks for proxy overhead decomposition.
 - `services/proxy/internal/http`: real `/health` handler benchmarks (`BenchmarkProxyHealth`).
 - `k6/`: load test script against the real proxy `/health` endpoint.
-- `scripts/`: aggregation, gate, static-site build, and proxy stack helpers.
-- `site/`: static multi-page dashboard (Matte Graphite theme) published via GitHub Actions Pages deploy.
-- `data-schema/`: baseline policy and schema-controlled benchmark data.
+- `scripts/`: aggregation, regression gate, published data builders, and proxy stack helpers.
+- `data-schema/`: baseline policy, JSON schema, and benchmark data contracts.
 - `testdata/`: fixtures for pipeline verification tests.
 
-Brand marks are synced from `docs/app/public/brand/` at site build time.
+Published benchmark data is committed to `docs/app/public/benchmarks/` on successful `main` runs and served by the docs site at `/benchmarks/benchmark-data.json`. Phase 2 adds the Next.js `/benchmarks` dashboard UI.
 
 ## Verification
 
 ```bash
 go test ./benchmarks/go/...
 python benchmarks/scripts/test_pipeline.py
+cd docs/app && npm test -- src/lib/benchmarks/ && npm run typecheck
 ```
 
 ## Local quick run
@@ -37,7 +37,15 @@ docker run --rm --network host -v "$PWD:/work" -w /work \
   --summary-export benchmarks/output/k6-summary.json
 bash benchmarks/scripts/stop_proxy_stack.sh
 python benchmarks/scripts/aggregate_metrics.py
-python benchmarks/scripts/build_site.py
+python benchmarks/scripts/regression_gate.py
+python benchmarks/scripts/build_benchmark_data.py
+python benchmarks/scripts/generate_badge.py
 ```
 
-k6 0.53 exports flat metric objects (no `values` wrapper). `aggregate_metrics.py` supports both legacy and v0.53 summary shapes.
+## Data flow
+
+1. `aggregate_metrics.py` writes `benchmarks/output/latest.json`.
+2. `regression_gate.py` writes `gate-result.json` and enforces SLA/regression policy.
+3. `build_benchmark_data.py` merges the latest run into `benchmark-data.json` schema v1.
+4. `generate_badge.py` writes `badge.svg` from the latest run status.
+5. On `main`, CI commits `docs/app/public/benchmarks/*` and triggers docs deploy.

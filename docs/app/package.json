@@ -3,8 +3,8 @@
   "private": true,
   "version": "0.0.0",
   "scripts": {
-    "dev": "next dev",
-    "dev:clean": "node scripts/stop-next.mjs && node scripts/clean-next.mjs && next dev",
+    "dev": "node scripts/run-dev.mjs",
+    "dev:clean": "node scripts/stop-next.mjs && node scripts/clean-next.mjs && node scripts/run-dev.mjs",
     "dev:turbo": "next dev --turbo",
     "prebuild": "node scripts/ensure-solo-build.mjs",
     "build": "node scripts/ensure-solo-build.mjs && node scripts/build-hint.mjs && node scripts/next-build.mjs",
@@ -17,14 +17,17 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:e2e": "playwright test",
     "deploy:pages": "wrangler pages deploy out --project-name=ibex-harness-docs --branch=main --commit-dirty=true",
     "deploy:pages:local": "node scripts/deploy-pages-local.mjs",
     "cutover:pages-domain": "node scripts/pages-domain-cutover.mjs",
     "postinstall": "fumadocs-mdx"
   },
   "dependencies": {
+    "@observablehq/plot": "^0.6.17",
     "@radix-ui/react-tabs": "^1.1.2",
     "beautiful-mermaid": "^1.1.3",
+    "d3": "^7.9.0",
     "fumadocs-core": "^14.0.0",
     "fumadocs-mdx": "^11.0.0",
     "fumadocs-ui": "^14.0.0",
@@ -36,10 +39,12 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "shiki": "^1.22.0",
+    "swr": "^2.3.3",
     "unist-util-visit": "^5.1.0",
     "zod": "^4.1.8"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.3.0",
     "@types/mdast": "^4.0.4",

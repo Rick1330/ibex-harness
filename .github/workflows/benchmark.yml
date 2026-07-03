@@ -4,6 +4,15 @@ on:
   schedule:
     - cron: "0 4 * * 0"
   workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/benchmark.yml"
+      - "benchmarks/**"
+      - "packages/**"
+      - "services/auth/**"
+      - "services/proxy/**"
+      - "go.mod"
+      - "go.sum"
   push:
     branches: [main]
     paths:
@@ -54,6 +63,9 @@ jobs:
     name: collect-proxy-benchmarks
     needs: verify-benchmark-pipeline
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
     env:
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       BENCH_PROXY_PORT: "18082"
@@ -112,22 +124,17 @@ jobs:
           EOF
 
       - name: Prepare output directories
-        run: |
-          mkdir -p benchmarks/output
-          mkdir -p benchmarks/output/site/data
+        run: mkdir -p benchmarks/output
 
-      - name: Pull previous benchmark data from live dashboard
+      - name: Load previous benchmark history from repo
         run: |
-          prev_url="https://${{ github.repository_owner }}.github.io/ibex-harness/data/runs.json"
-          if curl -fsS "$prev_url" -o benchmarks/output/prev-runs.json; then
-            echo "Loaded previous runs from ${prev_url}"
+          src="docs/app/public/benchmarks/benchmark-data.json"
+          if [ -f "$src" ]; then
+            cp "$src" benchmarks/output/prev-benchmark-data.json
+            echo "Loaded previous benchmark history from ${src}"
           else
-            echo "No live dashboard yet; starting fresh history."
-            echo '{"runs":[]}' > benchmarks/output/prev-runs.json
-          fi
-          prev_bench_url="https://${{ github.repository_owner }}.github.io/ibex-harness/data/latest-go-bench.txt"
-          if curl -fsS "$prev_bench_url" -o benchmarks/output/prev-go-bench.txt; then
-            echo "Loaded previous go bench text from ${prev_bench_url}"
+            echo '{"schema_version":1,"baseline_sha":"","runs":[]}' > benchmarks/output/prev-benchmark-data.json
+            echo "No published benchmark history yet; starting fresh."
           fi
 
       - name: Generate protobuf stubs
@@ -167,59 +174,61 @@ jobs:
       - name: Collect benchmark artifacts into schema
         env:
           GO_VERSION: ${{ steps.setup_go.outputs.go-version }}
-        run: |
-          python benchmarks/scripts/aggregate_metrics.py > benchmarks/output/collector-summary.json
-          cp benchmarks/output/go-bench.txt benchmarks/output/site/data/latest-go-bench.txt
-          cp benchmarks/output/benchstat.txt benchmarks/output/site/data/benchstat.txt
-
-      - name: Build dashboard pages and data
-        run: python benchmarks/scripts/build_site.py
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+        run: python benchmarks/scripts/aggregate_metrics.py > benchmarks/output/collector-summary.json
 
       - name: Run regression gates
         run: |
           set +e
           python benchmarks/scripts/regression_gate.py | tee benchmarks/output/gate-summary.md
-          status=$?
-          set -e
+          status=${PIPESTATUS[0]}
           cat benchmarks/output/gate-summary.md >> "$GITHUB_STEP_SUMMARY"
-          exit $status
+          if [ "$status" -ne 0 ]; then
+            exit "$status"
+          fi
+          set -e
+          python benchmarks/scripts/build_benchmark_data.py
+          python benchmarks/scripts/generate_badge.py
 
-      - name: Verify publish payload is complete
+      - name: Verify benchmark data payload
         run: |
-          test -f benchmarks/output/site/index.html
-          test -f benchmarks/output/site/trends.html
-          test -f benchmarks/output/site/waterfall.html
-          test -f benchmarks/output/site/load.html
-          test -f benchmarks/output/site/commits.html
-          test -f benchmarks/output/site/data/runs.json
-          test -f benchmarks/output/site/data/baseline.json
-          test -f benchmarks/output/site/data/metadata.json
+          test -f benchmarks/output/benchmark-data.json
+          test -f benchmarks/output/badge.svg
+          test -f benchmarks/output/gate-result.json
+
+      - name: Post PR regression comment
+        if: github.event_name == 'pull_request'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BENCHMARK_DATA_PATH: benchmarks/output/benchmark-data.json
+        run: node benchmarks/scripts/post-pr-comment.mjs
 
       - name: Stop proxy stack
         if: always()
         run: bash benchmarks/scripts/stop_proxy_stack.sh
 
-      - name: Upload benchmark site artifact
+      - name: Upload benchmark data artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: bench-marks-site
-          path: benchmarks/output/site/
+          name: benchmark-data
+          path: |
+            benchmarks/output/benchmark-data.json
+            benchmarks/output/badge.svg
+            benchmarks/output/gate-summary.md
+            benchmarks/output/gate-result.json
           if-no-files-found: error
 
-  publish-bench-marks-gh-pages:
-    name: publish-bench-marks-gh-pages
+  commit-benchmark-data:
+    name: commit-benchmark-data
     needs: collect-proxy-benchmarks
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    concurrency:
-      group: benchmark-gh-pages-publish
-      cancel-in-progress: false
+      contents: write
+      actions: write
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -228,40 +237,33 @@ jobs:
 
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          persist-credentials: false
+          persist-credentials: true
 
-      - name: Download benchmark site artifact
+      - name: Download benchmark data artifact
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: bench-marks-site
-          path: benchmarks/output/site
+          name: benchmark-data
+          path: benchmarks/output
 
-      - name: Verify publish payload is complete
+      - name: Copy published assets
         run: |
-          test -f benchmarks/output/site/index.html
-          test -f benchmarks/output/site/.nojekyll
-          test -f benchmarks/output/site/data/runs.json
-          test -f benchmarks/output/site/data/baseline.json
-          test -f benchmarks/output/site/data/metadata.json
+          mkdir -p docs/app/public/benchmarks
+          cp benchmarks/output/benchmark-data.json docs/app/public/benchmarks/
+          cp benchmarks/output/badge.svg docs/app/public/benchmarks/
 
-      - name: Upload GitHub Pages artifact
-        uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4.0.0
-        with:
-          path: benchmarks/output/site
-
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5
-
-      - name: Final bench-marks URL summary
-        if: always()
+      - name: Commit and push if changed
         run: |
-          cat <<EOF >> "$GITHUB_STEP_SUMMARY"
-          ## Benchmark dashboard URLs
-          - Root: https://${{ github.repository_owner }}.github.io/ibex-harness/
-          - Overview: https://${{ github.repository_owner }}.github.io/ibex-harness/index.html
-          - Trends: https://${{ github.repository_owner }}.github.io/ibex-harness/trends.html
-          - Waterfall: https://${{ github.repository_owner }}.github.io/ibex-harness/waterfall.html
-          - Load: https://${{ github.repository_owner }}.github.io/ibex-harness/load.html
-          - Commits: https://${{ github.repository_owner }}.github.io/ibex-harness/commits.html
-          EOF
+          git config user.name github-actions
+          git config user.email github-actions@users.noreply.github.com
+          git add docs/app/public/benchmarks/
+          if git diff --cached --quiet; then
+            echo "No benchmark data changes"
+            exit 0
+          fi
+          git commit -m "chore(bench): update published benchmark-data.json [skip ci]"
+          git push
+
+      - name: Trigger docs deploy
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run docs-deploy.yml --ref main

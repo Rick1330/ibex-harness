@@ -10,8 +10,9 @@ export function getSectionTree(
 
 export function getSectionPages(
   data: MobileNavData,
-  dataKey: "blogPosts" | "releasePages",
+  dataKey: "blogPosts" | "releasePages" | "benchmarkPages",
 ): ReadonlyArray<{ url: string; title: string }> {
   if (dataKey === "blogPosts") return data.blogPosts;
+  if (dataKey === "benchmarkPages") return data.benchmarkPages;
   return data.releasePages;
 }

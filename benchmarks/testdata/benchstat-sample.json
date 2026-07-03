@@ -1,0 +1,18 @@
+{
+  "Tables": [
+    {
+      "Benchmark": "BenchmarkProxyOverhead",
+      "Rows": [
+        {
+          "Metric": "ns/op",
+          "Values": [8500000, 8600000, 8400000, 8550000, 8450000],
+          "Center": 8500000,
+          "Percentile": {
+            "Low": 8200000,
+            "High": 8800000
+          }
+        }
+      ]
+    }
+  ]
+}

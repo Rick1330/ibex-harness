@@ -3,6 +3,7 @@
 import {
   BookOpen,
   ChevronsUpDown,
+  Gauge,
   Map,
   Newspaper,
   ScrollText,
@@ -27,6 +28,8 @@ function resolveSectionIcon(iconId: MobileSectionIconId): LucideIcon {
   switch (iconId) {
     case "docs":
       return BookOpen;
+    case "benchmarks":
+      return Gauge;
     case "blog":
       return Newspaper;
     case "releases":

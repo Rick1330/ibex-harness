@@ -2,6 +2,7 @@
   "version": 1,
   "baseline": {
     "target_commit": "unset",
+    "baseline_sha": "unset",
     "proxy_overhead_p99_ms": 20.0,
     "throughput_rps": 0.0,
     "allocs_per_op": 0.0,

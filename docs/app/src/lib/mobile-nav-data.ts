@@ -1,5 +1,7 @@
 import type { PageTree } from "fumadocs-core/server";
 
+import { BENCHMARK_NAV_PAGES } from "@/lib/benchmark-page-tree";
+import { pageTreeLabel } from "@/lib/page-tree-label";
 import { blogSource, releasesSource, roadmapSource, source } from "@/lib/source";
 
 export type MobileNavPage = Readonly<{
@@ -22,12 +24,13 @@ export type MobileNavData = Readonly<{
   roadmapTree: MobileNavNode[];
   blogPosts: ReadonlyArray<{ url: string; title: string }>;
   releasePages: ReadonlyArray<{ url: string; title: string }>;
+  benchmarkPages: ReadonlyArray<{ url: string; title: string }>;
 }>;
 
 function serializePageNode(node: PageTree.Item): MobileNavPage {
   return {
     kind: "page",
-    name: String(node.name),
+    name: pageTreeLabel(node.name),
     url: node.url,
     external: node.external,
   };
@@ -44,7 +47,7 @@ function serializeFolderNode(node: PageTree.Folder): MobileNavFolder {
 
   return {
     kind: "folder",
-    name: String(node.name),
+    name: pageTreeLabel(node.name),
     children,
   };
 }
@@ -103,6 +106,10 @@ export function getMobileNavData(): MobileNavData {
     roadmapTree: serializeNodes(roadmapSource.getPageTree().children),
     blogPosts,
     releasePages,
+    benchmarkPages: BENCHMARK_NAV_PAGES.map((page) => ({
+      url: page.url,
+      title: page.name,
+    })),
   };
 
   return cachedMobileNavData;
