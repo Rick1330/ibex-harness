@@ -17,7 +17,7 @@ type BenchmarkRunDetailPanelProps = Readonly<{
 }>;
 
 export function BenchmarkRunDetailPanel({ sha }: BenchmarkRunDetailPanelProps) {
-  const { runs, data, isLoading, isError, error } = useBenchmarkData();
+  const { runs, data, isLoading, isError, errorMessage } = useBenchmarkData();
 
   if (isLoading) {
     return <ChartSkeleton className="h-[220px]" />;
@@ -26,7 +26,7 @@ export function BenchmarkRunDetailPanel({ sha }: BenchmarkRunDetailPanelProps) {
   if (isError) {
     return (
       <BenchmarkErrorState
-        message={error instanceof Error ? error.message : "Failed to load benchmark data"}
+        message={errorMessage ?? "Failed to load benchmark data"}
       />
     );
   }

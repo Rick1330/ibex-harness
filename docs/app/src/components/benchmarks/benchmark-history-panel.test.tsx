@@ -25,6 +25,7 @@ describe("BenchmarkHistoryPanel", () => {
       isLoading: false,
       isError: false,
       error: null,
+      errorMessage: null,
       refresh: vi.fn(),
     });
     render(<BenchmarkHistoryPanel />);
@@ -39,6 +40,7 @@ describe("BenchmarkHistoryPanel", () => {
       isLoading: false,
       isError: false,
       error: null,
+      errorMessage: null,
       refresh: vi.fn(),
     });
     render(<BenchmarkHistoryPanel />);

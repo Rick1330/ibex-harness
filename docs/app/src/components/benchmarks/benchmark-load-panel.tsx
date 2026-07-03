@@ -11,7 +11,7 @@ import { formatMs, formatPercent, formatReqPerSec } from "@/lib/benchmarks/forma
 import { useBenchmarkData } from "@/hooks/use-benchmark-data";
 
 export function BenchmarkLoadPanel() {
-  const { latest, isLoading, isError, error } = useBenchmarkData();
+  const { latest, isLoading, isError, errorMessage } = useBenchmarkData();
 
   if (isLoading) {
     return <ChartSkeleton className="h-[200px]" />;
@@ -20,7 +20,7 @@ export function BenchmarkLoadPanel() {
   if (isError) {
     return (
       <BenchmarkErrorState
-        message={error instanceof Error ? error.message : "Failed to load benchmark data"}
+        message={errorMessage ?? "Failed to load benchmark data"}
       />
     );
   }

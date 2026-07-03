@@ -10,14 +10,14 @@ import { ChartSkeleton } from "@/components/benchmarks/skeleton";
 import { TimeRangePicker } from "@/components/benchmarks/time-range-picker";
 import { TrendChart } from "@/components/benchmarks/trend-chart";
 import { useBenchmarkData } from "@/hooks/use-benchmark-data";
-import { filterRunsByRange, type TimeRange } from "@/lib/benchmarks/plot";
+import { filterRunsByRange, parseTimeRange } from "@/lib/benchmarks/plot";
 import { Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 
 function LatencyContent() {
-  const { runs, latest, isLoading, isError, error } = useBenchmarkData();
+  const { runs, latest, isLoading, isError, errorMessage } = useBenchmarkData();
   const searchParams = useSearchParams();
-  const range = (searchParams.get("range") as TimeRange | null) ?? "14d";
+  const range = parseTimeRange(searchParams.get("range"));
   const filtered = filterRunsByRange(runs, range);
   const regressionRun = filtered.find((run) => run.status === "regression");
 
@@ -28,7 +28,7 @@ function LatencyContent() {
   if (isError) {
     return (
       <BenchmarkErrorState
-        message={error instanceof Error ? error.message : "Failed to load benchmark data"}
+        message={errorMessage ?? "Failed to load benchmark data"}
       />
     );
   }

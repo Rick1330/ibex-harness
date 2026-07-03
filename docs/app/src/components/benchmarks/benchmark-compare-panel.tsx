@@ -13,7 +13,7 @@ import { findRunBySha } from "@/lib/benchmarks/runs";
 import { useBenchmarkData } from "@/hooks/use-benchmark-data";
 
 function CompareContent() {
-  const { runs, isLoading, isError, error } = useBenchmarkData();
+  const { runs, isLoading, isError, errorMessage } = useBenchmarkData();
   const router = useRouter();
   const searchParams = useSearchParams();
   const baseSha = searchParams.get("base") ?? "";
@@ -26,7 +26,7 @@ function CompareContent() {
   if (isError) {
     return (
       <BenchmarkErrorState
-        message={error instanceof Error ? error.message : "Failed to load benchmark data"}
+        message={errorMessage ?? "Failed to load benchmark data"}
       />
     );
   }

@@ -28,6 +28,7 @@ describe("BenchmarkLoadPanel", () => {
       isLoading: false,
       isError: false,
       error: null,
+      errorMessage: null,
       refresh: vi.fn(),
     });
     render(<BenchmarkLoadPanel />);
@@ -42,6 +43,7 @@ describe("BenchmarkLoadPanel", () => {
       isLoading: false,
       isError: false,
       error: null,
+      errorMessage: null,
       refresh: vi.fn(),
     });
     render(<BenchmarkLoadPanel />);

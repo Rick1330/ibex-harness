@@ -17,7 +17,7 @@ import { useBenchmarkData } from "@/hooks/use-benchmark-data";
 const OVERVIEW_KPI_SKELETONS = ["proxy-p99", "throughput", "allocs", "error-rate"] as const;
 
 export function BenchmarkOverviewPanel() {
-  const { latest, runs, isLoading, isError, error } = useBenchmarkData();
+  const { latest, runs, isLoading, isError, errorMessage } = useBenchmarkData();
 
   if (isLoading) {
     return (
@@ -36,7 +36,7 @@ export function BenchmarkOverviewPanel() {
   if (isError) {
     return (
       <BenchmarkErrorState
-        message={error instanceof Error ? error.message : "Failed to load benchmark data"}
+        message={errorMessage ?? "Failed to load benchmark data"}
       />
     );
   }
