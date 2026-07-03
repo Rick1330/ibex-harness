@@ -22,6 +22,17 @@ const STATUS_ORDER: Record<RunStatus, number> = {
 type HistoryMetaSortKey = "run_number" | "short_sha" | "branch" | "status";
 type HistoryMetricsSortKey = "p99" | "req_per_s" | "delta" | "timestamp";
 
+const METRICS_SORT_KEYS = new Set<HistorySortKey>([
+  "p99",
+  "req_per_s",
+  "delta",
+  "timestamp",
+]);
+
+function isMetricsSortKey(key: HistorySortKey): key is HistoryMetricsSortKey {
+  return METRICS_SORT_KEYS.has(key);
+}
+
 function sortValueMeta(run: BenchmarkRun, key: HistoryMetaSortKey): string | number {
   switch (key) {
     case "run_number":
@@ -49,7 +60,7 @@ function sortValueMetrics(run: BenchmarkRun, key: HistoryMetricsSortKey): string
 }
 
 function sortValue(run: BenchmarkRun, key: HistorySortKey): string | number {
-  if (key === "p99" || key === "req_per_s" || key === "delta" || key === "timestamp") {
+  if (isMetricsSortKey(key)) {
     return sortValueMetrics(run, key);
   }
   return sortValueMeta(run, key);
