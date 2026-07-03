@@ -77,10 +77,16 @@ export function MobileDrawerSectionContent({
     );
   }
 
-  const pages = getSectionPages(
-    data,
-    section.dataKey === "blogPosts" ? "blogPosts" : "releasePages",
-  );
+  let pageDataKey: "blogPosts" | "releasePages" | "benchmarkPages" = "releasePages";
+  if (section.dataKey === "blogPosts") {
+    pageDataKey = "blogPosts";
+  } else if (section.dataKey === "benchmarkPages") {
+    pageDataKey = "benchmarkPages";
+  }
+
+  const pages = getSectionPages(data, pageDataKey).filter((page) => {
+    return page.url !== section.hub?.href;
+  });
 
   return (
     <>

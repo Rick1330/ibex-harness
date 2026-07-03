@@ -115,10 +115,11 @@ function MobilePageTreeNav({
 
         const isMilestone = node.url.includes("/milestones/");
         const isActive = navUrlsMatch(node.url, pathname);
+        const pageKey = parentKey ? `${parentKey}/${node.url}-${index}` : `${node.url}-${index}`;
 
         return (
           <Link
-            key={node.url}
+            key={pageKey}
             href={node.url}
             prefetch
             onClick={onNavigate}

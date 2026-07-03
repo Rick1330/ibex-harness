@@ -14,6 +14,7 @@ import {
   Flag,
   Gauge,
   GitBranch,
+  GitCompareArrows,
   History,
   Key,
   Layers,
@@ -53,6 +54,7 @@ export const LUCIDE_BY_NAME: Record<string, LucideIcon> = {
   Flag,
   Gauge,
   GitBranch,
+  GitCompareArrows,
   History,
   Key,
   Layers,
@@ -201,4 +203,14 @@ export const ROADMAP_PAGE_ICONS: Record<string, LucideIcon> = {
   "phase-1-5-docs-site/content-sources": ScrollText,
   "phase-1-5-docs-site/master-brief": ScrollText,
   "phase-1-5-docs-site/phase-1-5-docs-site-milestones": Flag,
+};
+
+/** Benchmark dashboard sidebar pages */
+export const BENCHMARK_PAGE_ICONS: Record<string, LucideIcon> = {
+  "/benchmarks": LayoutDashboard,
+  "/benchmarks/latency": Activity,
+  "/benchmarks/waterfall": Layers,
+  "/benchmarks/load": Zap,
+  "/benchmarks/history": History,
+  "/benchmarks/compare": GitCompareArrows,
 };

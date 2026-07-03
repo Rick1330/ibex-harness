@@ -1,6 +1,7 @@
 import {
   BookOpen,
   Circle,
+  Gauge,
   Map,
   type LucideIcon,
 } from "lucide-react";
@@ -9,16 +10,18 @@ import {
   ROADMAP_PHASE_ICONS,
   ROADMAP_SECTION_ICONS,
   ROADMAP_PAGE_ICONS,
+  BENCHMARK_PAGE_ICONS,
   SECTION_ICONS,
   SLUG_ICONS,
   PAGE_ICONS,
   LUCIDE_BY_NAME,
 } from "@/lib/sidebar-icon-maps";
 
-export type ContentBaseUrl = "/docs" | "/roadmap";
+export type ContentBaseUrl = "/docs" | "/roadmap" | "/benchmarks";
 
 export type DocsContentPath = string & { readonly __brand: "DocsContentPath" };
 export type RoadmapContentPath = string & { readonly __brand: "RoadmapContentPath" };
+export type BenchmarkContentPath = string & { readonly __brand: "BenchmarkContentPath" };
 export type NavIconName = string & { readonly __brand: "NavIconName" };
 export type NavUrl = string & { readonly __brand: "NavUrl" };
 export type SectionSlug = string & { readonly __brand: "SectionSlug" };
@@ -39,6 +42,7 @@ type IconLookupStep = (parsed: ParsedContentPath) => LucideIcon | undefined;
 const URL_PREFIX: Record<ContentBaseUrl, RegExp> = {
   "/docs": /^\/docs\/?/,
   "/roadmap": /^\/roadmap\/?/,
+  "/benchmarks": /^\/benchmarks\/?/,
 };
 
 const ROADMAP_SECTION_ICON_LOOKUP: Record<string, LucideIcon> = {
@@ -50,7 +54,9 @@ function brand<T extends string>(value: string): T {
   return value as T;
 }
 
-function parseContentPath(path: DocsContentPath | RoadmapContentPath): ParsedContentPath {
+function parseContentPath(
+  path: DocsContentPath | RoadmapContentPath | BenchmarkContentPath,
+): ParsedContentPath {
   const value = path as string;
   const segments = value.split("/");
   return { value, segments, leaf: segments.at(-1) ?? value };
@@ -186,11 +192,15 @@ export function lookupDocsPathIcon(path: DocsContentPath): LucideIcon | undefine
 export function contentPathFromUrl(
   url: NavUrl,
   baseUrl: ContentBaseUrl = "/docs",
-): DocsContentPath | RoadmapContentPath {
+): DocsContentPath | RoadmapContentPath | BenchmarkContentPath {
   const stripped = (url as string).replace(URL_PREFIX[baseUrl], "").replace(/\/$/, "");
-  return baseUrl === "/docs"
-    ? brand<DocsContentPath>(stripped)
-    : brand<RoadmapContentPath>(stripped);
+  if (baseUrl === "/roadmap") {
+    return brand<RoadmapContentPath>(stripped);
+  }
+  if (baseUrl === "/benchmarks") {
+    return brand<BenchmarkContentPath>(stripped);
+  }
+  return brand<DocsContentPath>(stripped);
 }
 
 export function createNavIconQuery(
@@ -207,7 +217,10 @@ export function docPathFromUrl(url: NavUrl): DocsContentPath {
 }
 
 export function baseUrlFromPathname(pathname: NavUrl): ContentBaseUrl {
-  return (pathname as string).startsWith("/roadmap") ? "/roadmap" : "/docs";
+  const value = pathname as string;
+  if (value.startsWith("/roadmap")) return "/roadmap";
+  if (value.startsWith("/benchmarks")) return "/benchmarks";
+  return "/docs";
 }
 
 export function folderSectionSlugFromUrl(url: NavUrl): SectionSlug {
@@ -237,14 +250,24 @@ export function resolveRoadmapNavIcon(query: NavIconQuery): LucideIcon | undefin
 }
 
 export function resolveNavIcon(query: NavIconQuery): LucideIcon | undefined {
+  if (query.url?.startsWith("/benchmarks")) {
+    return BENCHMARK_PAGE_ICONS[query.url as string] ?? Gauge;
+  }
   if (query.url?.startsWith("/roadmap")) {
     return SiteNavIconService.roadmap.resolve(query);
   }
   return SiteNavIconService.docs.resolve(query);
 }
 
+export function getBenchmarkIconForUrl(url: NavUrl): LucideIcon {
+  return BENCHMARK_PAGE_ICONS[url as string] ?? Gauge;
+}
+
 export function getNavIconForUrl(url: NavUrl): LucideIcon {
   const baseUrl = baseUrlFromPathname(url);
+  if (baseUrl === "/benchmarks") {
+    return getBenchmarkIconForUrl(url);
+  }
   return (
     resolveNavIcon(createNavIconQuery(undefined, url)) ??
     SECTION_ICONS[contentPathFromUrl(url, baseUrl).split("/")[0] ?? ""] ??

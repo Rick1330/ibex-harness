@@ -24,7 +24,14 @@ function toSitemapEntry(url: string): MetadataRoute.Sitemap[number] {
 }
 
 export default function sitemap(): MetadataRoute.Sitemap {
-  const staticBenchmarkPages = ["/benchmarks", "/benchmarks/load", "/benchmarks/history"];
+  const staticBenchmarkPages = [
+    "/benchmarks",
+    "/benchmarks/latency",
+    "/benchmarks/waterfall",
+    "/benchmarks/load",
+    "/benchmarks/history",
+    "/benchmarks/compare",
+  ];
   const pages = [
     ...source.getPages(),
     ...blogSource.getPages(),

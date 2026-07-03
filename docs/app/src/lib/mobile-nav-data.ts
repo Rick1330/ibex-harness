@@ -1,5 +1,6 @@
 import type { PageTree } from "fumadocs-core/server";
 
+import { pageTreeLabel } from "@/lib/page-tree-label";
 import { blogSource, releasesSource, roadmapSource, source } from "@/lib/source";
 
 export type MobileNavPage = Readonly<{
@@ -28,7 +29,7 @@ export type MobileNavData = Readonly<{
 function serializePageNode(node: PageTree.Item): MobileNavPage {
   return {
     kind: "page",
-    name: String(node.name),
+    name: pageTreeLabel(node.name),
     url: node.url,
     external: node.external,
   };
@@ -45,7 +46,7 @@ function serializeFolderNode(node: PageTree.Folder): MobileNavFolder {
 
   return {
     kind: "folder",
-    name: String(node.name),
+    name: pageTreeLabel(node.name),
     children,
   };
 }
@@ -106,8 +107,11 @@ export function getMobileNavData(): MobileNavData {
     releasePages,
     benchmarkPages: [
       { url: "/benchmarks", title: "Overview" },
+      { url: "/benchmarks/latency", title: "Latency" },
+      { url: "/benchmarks/waterfall", title: "Waterfall" },
       { url: "/benchmarks/load", title: "Load test" },
       { url: "/benchmarks/history", title: "History" },
+      { url: "/benchmarks/compare", title: "Compare" },
     ],
   };
 
