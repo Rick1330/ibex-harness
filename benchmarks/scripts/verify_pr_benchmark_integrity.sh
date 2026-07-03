@@ -31,11 +31,4 @@ if [[ "$diff_rc" -gt 1 ]]; then
   echo "verify_pr_benchmark_integrity: could not diff against origin/${BASE_REF}; checking artifact match."
 fi
 
-last_author="$(git log -1 --format='%ae' -- "$COMMITTED_PATH")"
-if [[ "$last_author" == "41898282+github-actions[bot]@users.noreply.github.com" ]] || \
-   [[ "$last_author" == "github-actions[bot]@users.noreply.github.com" ]]; then
-  echo "Benchmark data last updated by CI; publish may refresh it for this run."
-  exit 0
-fi
-
 python benchmarks/scripts/compare_pr_benchmark_json.py

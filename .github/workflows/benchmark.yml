@@ -29,8 +29,50 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  detect-benchmark-trigger:
+    name: detect-benchmark-trigger
+    runs-on: ubuntu-latest
+    outputs:
+      run_benchmarks: ${{ steps.decide.outputs.run_benchmarks }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        if: github.event_name == 'pull_request'
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v3.0.2
+        if: github.event_name == 'pull_request'
+        id: filter
+        with:
+          list-files: commit
+          filters: |
+            benchmark_code:
+              - '.github/workflows/benchmark.yml'
+              - 'benchmarks/**'
+              - 'packages/**'
+              - 'services/auth/**'
+              - 'services/proxy/**'
+              - 'go.mod'
+              - 'go.sum'
+
+      - name: Decide whether to run benchmarks
+        id: decide
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "run_benchmarks=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "${{ steps.filter.outputs.benchmark_code }}" = "true" ]; then
+            echo "run_benchmarks=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run_benchmarks=false" >> "$GITHUB_OUTPUT"
+          fi
+
   verify-benchmark-pipeline:
     name: verify-benchmark-pipeline
+    needs: detect-benchmark-trigger
+    if: needs.detect-benchmark-trigger.outputs.run_benchmarks == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -247,7 +289,7 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
-          persist-credentials: false
+          persist-credentials: true
           ref: ${{ github.event.pull_request.head.sha }}
 
       - name: Download benchmark data artifact
@@ -301,6 +343,8 @@ jobs:
           cp benchmarks/output/badge.svg docs/app/public/benchmarks/
 
       - name: Commit and push if changed
+        env:
+          BENCHMARK_PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           git config user.name github-actions[bot]
           git config user.email github-actions[bot]@users.noreply.github.com
@@ -309,7 +353,7 @@ jobs:
             echo "No benchmark data changes"
             exit 0
           fi
-          git commit -m "chore(bench): update benchmark data for PR #${{ github.event.pull_request.number }}"
+          git commit -m "chore(bench): update benchmark data for PR #${BENCHMARK_PR_NUMBER}"
           git push origin "HEAD:${BENCHMARK_HEAD_REF}"
 
   open-benchmark-data-pr:

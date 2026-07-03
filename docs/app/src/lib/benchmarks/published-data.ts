@@ -1,10 +1,26 @@
+import { flattenError } from "zod";
+
 import publishedBenchmarkData from "../../../public/benchmarks/benchmark-data.json";
 
-import { parseBenchmarkData } from "./schema";
+import { benchmarkDataSchema } from "./schema";
 import type { BenchmarkData } from "./types";
 
+const EMPTY_BENCHMARK_DATA: BenchmarkData = {
+  schema_version: 1,
+  baseline_sha: "",
+  runs: [],
+};
+
 export function loadPublishedBenchmarkData(): BenchmarkData {
-  return parseBenchmarkData(publishedBenchmarkData);
+  const parsed = benchmarkDataSchema.safeParse(publishedBenchmarkData);
+  if (!parsed.success) {
+    console.warn(
+      "loadPublishedBenchmarkData: benchmark data schema validation failed",
+      flattenError(parsed.error),
+    );
+    return EMPTY_BENCHMARK_DATA;
+  }
+  return parsed.data;
 }
 
 export function loadPublishedBenchmarkRuns(): { short_sha: string }[] {
