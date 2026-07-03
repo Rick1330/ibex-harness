@@ -59,6 +59,15 @@ jobs:
       - name: Run Python benchmark pipeline unit tests
         run: python benchmarks/scripts/test_pipeline.py
 
+      - name: Validate published benchmark data on main
+        run: |
+          path="docs/app/public/benchmarks/benchmark-data.json"
+          if [ -f "$path" ]; then
+            python benchmarks/scripts/validate_published_data.py "$path"
+          else
+            echo "No published benchmark data yet; skipping validation."
+          fi
+
   collect-proxy-benchmarks:
     name: collect-proxy-benchmarks
     needs: verify-benchmark-pipeline
@@ -176,6 +185,7 @@ jobs:
           GO_VERSION: ${{ steps.setup_go.outputs.go-version }}
           GITHUB_SHA: ${{ github.sha }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
+          GITHUB_EVENT_PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
         run: python benchmarks/scripts/aggregate_metrics.py > benchmarks/output/collector-summary.json
 
       - name: Run regression gates
@@ -196,6 +206,7 @@ jobs:
           test -f benchmarks/output/benchmark-data.json
           test -f benchmarks/output/badge.svg
           test -f benchmarks/output/gate-result.json
+          python benchmarks/scripts/validate_published_data.py benchmarks/output/benchmark-data.json
 
       - name: Post PR regression comment
         if: github.event_name == 'pull_request'
@@ -221,14 +232,124 @@ jobs:
             benchmarks/output/gate-result.json
           if-no-files-found: error
 
-  commit-benchmark-data:
-    name: commit-benchmark-data
+  verify-published-benchmark-data:
+    name: verify-published-benchmark-data
     needs: collect-proxy-benchmarks
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Download benchmark data artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: benchmark-data
+          path: benchmarks/output
+
+      - name: Validate workflow benchmark artifact
+        run: python benchmarks/scripts/validate_published_data.py benchmarks/output/benchmark-data.json
+
+      - name: Reject manual benchmark JSON edits on PR branches
+        run: |
+          git fetch origin "${{ github.base_ref }}"
+          if git diff --quiet "origin/${{ github.base_ref }}"...HEAD -- docs/app/public/benchmarks/benchmark-data.json; then
+            echo "benchmark-data.json unchanged on branch; publish will apply the workflow artifact."
+            exit 0
+          fi
+          last_author="$(git log -1 --format='%ae' -- docs/app/public/benchmarks/benchmark-data.json)"
+          if [ "$last_author" = "41898282+github-actions[bot]@users.noreply.github.com" ] || \
+             [ "$last_author" = "github-actions[bot]@users.noreply.github.com" ]; then
+            echo "Benchmark data last updated by CI; publish may refresh it for this run."
+            exit 0
+          fi
+          python - <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          committed = json.loads(
+              Path("docs/app/public/benchmarks/benchmark-data.json").read_text(encoding="utf-8")
+          )
+          artifact = json.loads(
+              Path("benchmarks/output/benchmark-data.json").read_text(encoding="utf-8")
+          )
+          if committed != artifact:
+              print(
+                  "docs/app/public/benchmarks/benchmark-data.json was edited on this PR "
+                  "but does not match the workflow artifact. Remove manual edits and let "
+                  "publish-benchmark-data update the file.",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+          print("Committed benchmark data matches workflow artifact.")
+          PY
+
+  publish-benchmark-data:
+    name: publish-benchmark-data
+    needs:
+      - collect-proxy-benchmarks
+      - verify-published-benchmark-data
+    if: |
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      actions: write
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.head_ref }}
+          persist-credentials: true
+
+      - name: Download benchmark data artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: benchmark-data
+          path: benchmarks/output
+
+      - name: Copy published assets
+        run: |
+          mkdir -p docs/app/public/benchmarks
+          cp benchmarks/output/benchmark-data.json docs/app/public/benchmarks/
+          cp benchmarks/output/badge.svg docs/app/public/benchmarks/
+
+      - name: Commit and push if changed
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email github-actions[bot]@users.noreply.github.com
+          git add docs/app/public/benchmarks/
+          if git diff --cached --quiet; then
+            echo "No benchmark data changes"
+            exit 0
+          fi
+          git commit -m "chore(bench): update benchmark data for PR #${{ github.event.pull_request.number }}"
+          git push origin "HEAD:${{ github.head_ref }}"
+
+  open-benchmark-data-pr:
+    name: open-benchmark-data-pr
+    needs: collect-proxy-benchmarks
+    if: |
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -251,19 +372,33 @@ jobs:
           cp benchmarks/output/benchmark-data.json docs/app/public/benchmarks/
           cp benchmarks/output/badge.svg docs/app/public/benchmarks/
 
-      - name: Commit and push if changed
-        run: |
-          git config user.name github-actions
-          git config user.email github-actions@users.noreply.github.com
-          git add docs/app/public/benchmarks/
-          if git diff --cached --quiet; then
-            echo "No benchmark data changes"
-            exit 0
-          fi
-          git commit -m "chore(bench): update published benchmark-data.json [skip ci]"
-          git push
+      - name: Open benchmark data pull request
+        uses: peter-evans/create-pull-request@271a8d034026d50dbb17063a163b544e3fdff44d # v7.0.0
+        with:
+          commit-message: "chore(bench): weekly benchmark data update"
+          title: "chore(bench): weekly benchmark data update"
+          branch: chore/bench-data-${{ github.run_id }}
+          delete-branch: true
+          body: |
+            Automated benchmark data update from workflow run ${{ github.run_id }}.
 
-      - name: Trigger docs deploy
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh workflow run docs-deploy.yml --ref main
+            - [Workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          add-paths: |
+            docs/app/public/benchmarks/benchmark-data.json
+            docs/app/public/benchmarks/badge.svg
+
+  record-fork-pr-benchmark:
+    name: record-fork-pr-benchmark
+    needs: collect-proxy-benchmarks
+    if: |
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Note fork PR publish limitation
+        run: |
+          cat <<'EOF' >> "$GITHUB_STEP_SUMMARY"
+          ## Benchmark publish skipped
+          Fork PRs cannot receive automated benchmark-data commits.
+          Download the `benchmark-data` artifact from this workflow run if needed.
+          EOF

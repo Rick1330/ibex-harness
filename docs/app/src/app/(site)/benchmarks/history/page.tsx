@@ -3,6 +3,8 @@ import type { Metadata } from "next";
 import { BenchmarkHistoryPanel } from "@/components/benchmarks/lazy-panels";
 import { BenchmarkPageShell } from "@/components/benchmarks/benchmark-page-shell";
 
+export const dynamic = "force-static";
+
 export const metadata: Metadata = {
   title: "Benchmarks — History",
   description: "Historical benchmark runs and regression status.",

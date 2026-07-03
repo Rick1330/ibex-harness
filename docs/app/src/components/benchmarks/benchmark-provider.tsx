@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import { SWRConfig } from "swr";
 
+import { BENCHMARK_DATA_URL } from "@/lib/benchmarks/constants";
 import { parseBenchmarkData } from "@/lib/benchmarks/schema";
 import type { BenchmarkData } from "@/lib/benchmarks/types";
 
@@ -17,13 +18,15 @@ async function fetchBenchmarkData(url: string): Promise<BenchmarkData> {
 
 type BenchmarkProviderProps = Readonly<{
   children: ReactNode;
+  fallbackData?: BenchmarkData;
 }>;
 
-export function BenchmarkProvider({ children }: BenchmarkProviderProps) {
+export function BenchmarkProvider({ children, fallbackData }: BenchmarkProviderProps) {
   return (
     <SWRConfig
       value={{
         fetcher: fetchBenchmarkData,
+        fallback: fallbackData ? { [BENCHMARK_DATA_URL]: fallbackData } : undefined,
         revalidateOnFocus: false,
         revalidateOnReconnect: false,
         dedupingInterval: 60_000,

@@ -3,6 +3,8 @@ import type { Metadata } from "next";
 import { BenchmarkLoadPanel } from "@/components/benchmarks/lazy-panels";
 import { BenchmarkPageShell } from "@/components/benchmarks/benchmark-page-shell";
 
+export const dynamic = "force-static";
+
 export const metadata: Metadata = {
   title: "Benchmarks — Load test",
   description: "k6 load test results and latency distribution.",

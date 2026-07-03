@@ -2,11 +2,13 @@ import type { Metadata } from "next";
 
 import { BenchmarkPageShell } from "@/components/benchmarks/benchmark-page-shell";
 import { BenchmarkRunDetailPanel } from "@/components/benchmarks/lazy-panels";
-import { loadPublishedBenchmarkRuns } from "@/lib/benchmarks/published-data-path";
+import { loadPublishedBenchmarkRuns } from "@/lib/benchmarks/published-data";
 
 type RunDetailPageProps = Readonly<{
   params: Promise<{ sha: string }>;
 }>;
+
+export const dynamic = "force-static";
 
 export async function generateStaticParams() {
   return loadPublishedBenchmarkRuns().map((run) => ({ sha: run.short_sha }));
