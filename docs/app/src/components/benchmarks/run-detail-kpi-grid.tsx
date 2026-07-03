@@ -23,7 +23,7 @@ export function RunDetailKpiGrid({ run }: RunDetailKpiGridProps) {
         higherIsBetter
       />
       <KpiCard
-        label="Allocs/op"
+        label="Bytes/op"
         value={overhead ? formatBytes(overhead.bytes_per_op) : "—"}
       />
       <KpiCard label="Error rate" value={formatPercent(run.k6.error_rate)} />
