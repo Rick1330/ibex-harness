@@ -7,11 +7,10 @@ import { useEffect, useMemo, useState } from "react";
 import { ExportCsvButton } from "@/components/benchmarks/export-csv-button";
 import { HistoryTableFilters } from "@/components/benchmarks/history-table-filters";
 import { HistoryTablePagination } from "@/components/benchmarks/history-table-pagination";
+import { HistoryTableRow } from "@/components/benchmarks/history-table-row";
 import { KeyboardHelpDialog } from "@/components/benchmarks/keyboard-help-dialog";
 import { useBenchmarkKeyboard } from "@/hooks/use-benchmark-keyboard";
 import { useCompareSelection } from "@/hooks/use-compare-selection";
-import { cn } from "@/lib/cn";
-import { formatBytes, formatDeltaPct, formatMs, formatReqPerSec } from "@/lib/benchmarks/format";
 import type { BenchmarkRun, RunStatus } from "@/lib/benchmarks/types";
 
 const STATUS_FILTER_ID = "history-status-filter";
@@ -108,7 +107,7 @@ function SortHeader({
     <th scope="col" className="px-4 py-3 font-medium text-muted-foreground">
       <button
         type="button"
-        onClick={() => onSort(column)}
+        onClick={() => { onSort(column); }}
         className="inline-flex items-center gap-1 hover:text-foreground"
       >
         {label}
@@ -162,7 +161,7 @@ export function HistoryTable({ runs }: HistoryTableProps) {
     selectedIndex,
     setSelectedIndex,
     onToggleCompare: compare.toggle,
-    onShowHelp: () => setHelpOpen((open) => !open),
+    onShowHelp: () => { setHelpOpen((open) => !open); },
     helpOpen,
     statusFilterId: STATUS_FILTER_ID,
   });
@@ -245,69 +244,16 @@ export function HistoryTable({ runs }: HistoryTableProps) {
           </thead>
           <tbody>
             {pageRuns.map((run, index) => (
-              <tr
+              <HistoryTableRow
                 key={run.sha}
-                className="history-row cursor-pointer border-b border-border/70 last:border-0"
-                data-selected={index === selectedIndex ? "true" : undefined}
-                aria-selected={index === selectedIndex}
-                onClick={() => router.push(`/benchmarks/history/${run.short_sha}`)}
-              >
-                <td className="px-4 py-3" onClick={(event) => event.stopPropagation()}>
-                  <input
-                    type="checkbox"
-                    checked={compare.isSelected(run.short_sha)}
-                    onChange={() => compare.toggle(run.short_sha)}
-                    aria-label={`Compare ${run.short_sha}`}
-                  />
-                </td>
-                <td className="px-4 py-3 font-mono text-xs tabular-nums">{run.run_number || "—"}</td>
-                <td className="px-4 py-3">
-                  <Link
-                    href={`/benchmarks/history/${run.short_sha}`}
-                    className="font-mono text-xs underline-offset-4 hover:underline"
-                  >
-                    {run.short_sha}
-                  </Link>
-                </td>
-                <td className="px-4 py-3">{run.branch}</td>
-                <td className={cn("px-4 py-3 font-mono text-xs uppercase", statusClass(run.status))}>
-                  {run.status}
-                </td>
-                <td className="px-4 py-3 font-mono tabular-nums">{formatMs(run.k6.p99_ms)}</td>
-                <td className="px-4 py-3 font-mono tabular-nums">
-                  {run.go_benchmarks.BenchmarkProxyOverhead
-                    ? formatBytes(run.go_benchmarks.BenchmarkProxyOverhead.bytes_per_op)
-                    : "—"}
-                </td>
-                <td className="px-4 py-3 font-mono tabular-nums">
-                  {formatReqPerSec(run.k6.req_per_s)}
-                </td>
-                <td className="px-4 py-3 font-mono tabular-nums">
-                  {formatDeltaPct(run.regression_vs_baseline_pct)}
-                </td>
-                <td className="px-4 py-3 text-muted-foreground">
-                  {run.run_url ? (
-                    <a
-                      href={run.run_url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="underline-offset-4 hover:underline"
-                    >
-                      {new Date(run.timestamp).toLocaleString()}
-                    </a>
-                  ) : (
-                    new Date(run.timestamp).toLocaleString()
-                  )}
-                </td>
-                <td className="px-4 py-3" onClick={(event) => event.stopPropagation()}>
-                  <Link
-                    href={`/benchmarks/compare?base=${run.baseline_sha ?? run.short_sha}&head=${run.short_sha}`}
-                    className="text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
-                  >
-                    Compare
-                  </Link>
-                </td>
-              </tr>
+                run={run}
+                index={index}
+                selectedIndex={selectedIndex}
+                isCompareSelected={compare.isSelected(run.short_sha)}
+                onRowClick={(shortSha) => { router.push(`/benchmarks/history/${shortSha}`); }}
+                onToggleCompare={compare.toggle}
+                statusClassName={statusClass}
+              />
             ))}
           </tbody>
         </table>
@@ -318,14 +264,14 @@ export function HistoryTable({ runs }: HistoryTableProps) {
         totalCount={sorted.length}
         currentPage={currentPage}
         totalPages={totalPages}
-        onPrev={() => setPage((value) => Math.max(1, value - 1))}
-        onNext={() => setPage((value) => Math.min(totalPages, value + 1))}
+        onPrev={() => { setPage((value) => Math.max(1, value - 1)); }}
+        onNext={() => { setPage((value) => Math.min(totalPages, value + 1)); }}
       />
       <p className="text-xs text-muted-foreground">
         Click any row to open run detail. Press <kbd className="font-mono">?</kbd> for keyboard
         shortcuts.
       </p>
-      <KeyboardHelpDialog open={helpOpen} onClose={() => setHelpOpen(false)} />
+      <KeyboardHelpDialog open={helpOpen} onClose={() => { setHelpOpen(false); }} />
     </div>
   );
 }

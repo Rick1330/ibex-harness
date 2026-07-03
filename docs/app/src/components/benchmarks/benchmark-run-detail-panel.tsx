@@ -4,19 +4,12 @@ import Link from "next/link";
 
 import { BenchmarkEmptyState } from "@/components/benchmarks/empty-state";
 import { BenchmarkErrorState } from "@/components/benchmarks/benchmark-error-state";
-import { KpiCard } from "@/components/benchmarks/kpi-card";
 import { ChartSkeleton } from "@/components/benchmarks/skeleton";
-import { PercentileChart } from "@/components/benchmarks/percentile-chart";
+import { RunDetailCharts } from "@/components/benchmarks/run-detail-charts";
+import { RunDetailKpiGrid } from "@/components/benchmarks/run-detail-kpi-grid";
 import { RunMeta } from "@/components/benchmarks/run-meta";
 import { BenchmarkStatusBadge } from "@/components/benchmarks/status-badge";
-import { WaterfallChart } from "@/components/benchmarks/waterfall-chart";
 import { useBenchmarkData } from "@/hooks/use-benchmark-data";
-import {
-  formatBytes,
-  formatMs,
-  formatPercent,
-  formatReqPerSec,
-} from "@/lib/benchmarks/format";
 import { findRunBySha } from "@/lib/benchmarks/runs";
 
 type BenchmarkRunDetailPanelProps = Readonly<{
@@ -44,7 +37,6 @@ export function BenchmarkRunDetailPanel({ sha }: BenchmarkRunDetailPanelProps) {
   }
 
   const baseline = data?.baseline_sha ? findRunBySha(runs, data.baseline_sha) : null;
-  const overhead = run.go_benchmarks.BenchmarkProxyOverhead;
 
   return (
     <div className="space-y-8">
@@ -68,38 +60,8 @@ export function BenchmarkRunDetailPanel({ sha }: BenchmarkRunDetailPanelProps) {
         <RunMeta run={run} />
       </div>
 
-      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <KpiCard
-          label="Proxy p99"
-          value={formatMs(run.k6.p99_ms)}
-          deltaPct={run.metric_deltas?.["k6.p99_ms"] ?? run.regression_vs_baseline_pct}
-        />
-        <KpiCard
-          label="Throughput"
-          value={formatReqPerSec(run.k6.req_per_s)}
-          deltaPct={run.metric_deltas?.["k6.req_per_s"] ?? null}
-          higherIsBetter
-        />
-        <KpiCard
-          label="Allocs/op"
-          value={overhead ? formatBytes(overhead.bytes_per_op) : "—"}
-        />
-        <KpiCard label="Error rate" value={formatPercent(run.k6.error_rate)} />
-      </section>
-
-      <section>
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-widest text-muted-foreground">
-          Stage breakdown
-        </h2>
-        <WaterfallChart stages={run.stages} />
-      </section>
-
-      <section>
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-widest text-muted-foreground">
-          Latency percentiles
-        </h2>
-        <PercentileChart run={run} />
-      </section>
+      <RunDetailKpiGrid run={run} />
+      <RunDetailCharts run={run} />
     </div>
   );
 }

@@ -28,6 +28,8 @@ type KeyboardDispatchContext = Readonly<{
   router: AppRouterInstance;
 }>;
 
+type KeyHandler = (ctx: KeyboardDispatchContext) => boolean;
+
 function isTypingTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) {
     return false;
@@ -55,7 +57,7 @@ function openSelectedRun(
   selectedIndex: number,
   router: AppRouterInstance,
 ): boolean {
-  const run = pageRuns[selectedIndex];
+  const run = pageRuns.at(selectedIndex);
   if (!run) {
     return false;
   }
@@ -70,7 +72,7 @@ function toggleSelectedCompare(
   selectedIndex: number,
   onToggleCompare: (sha: string) => void,
 ): boolean {
-  const run = pageRuns[selectedIndex];
+  const run = pageRuns.at(selectedIndex);
   if (!run) {
     return false;
   }
@@ -85,40 +87,38 @@ function focusStatusFilter(event: KeyboardEvent, statusFilterId: string): boolea
   return true;
 }
 
-function dispatchBenchmarkKey(ctx: KeyboardDispatchContext): boolean {
+function handleHelpKey(ctx: KeyboardDispatchContext): boolean {
   const { event } = ctx;
-
-  if (event.key === "?" && !event.metaKey && !event.ctrlKey) {
-    event.preventDefault();
-    ctx.onShowHelp();
-    return true;
+  if (event.metaKey || event.ctrlKey) {
+    return false;
   }
+  event.preventDefault();
+  ctx.onShowHelp();
+  return true;
+}
 
-  if (ctx.helpOpen) {
+const KEY_HANDLERS: Record<string, KeyHandler> = {
+  "?": handleHelpKey,
+  j: (ctx) => moveSelection(ctx.event, ctx.pageRuns, ctx.selectedIndex, ctx.setSelectedIndex, 1),
+  ArrowDown: (ctx) => moveSelection(ctx.event, ctx.pageRuns, ctx.selectedIndex, ctx.setSelectedIndex, 1),
+  k: (ctx) => moveSelection(ctx.event, ctx.pageRuns, ctx.selectedIndex, ctx.setSelectedIndex, -1),
+  ArrowUp: (ctx) => moveSelection(ctx.event, ctx.pageRuns, ctx.selectedIndex, ctx.setSelectedIndex, -1),
+  Enter: (ctx) => openSelectedRun(ctx.event, ctx.pageRuns, ctx.selectedIndex, ctx.router),
+  c: (ctx) => toggleSelectedCompare(ctx.event, ctx.pageRuns, ctx.selectedIndex, ctx.onToggleCompare),
+  "/": (ctx) => focusStatusFilter(ctx.event, ctx.statusFilterId),
+};
+
+function dispatchBenchmarkKey(ctx: KeyboardDispatchContext): boolean {
+  if (ctx.helpOpen && ctx.event.key !== "?") {
     return false;
   }
 
-  if (event.key === "j" || event.key === "ArrowDown") {
-    return moveSelection(event, ctx.pageRuns, ctx.selectedIndex, ctx.setSelectedIndex, 1);
+  const handler = KEY_HANDLERS[ctx.event.key];
+  if (!handler) {
+    return false;
   }
 
-  if (event.key === "k" || event.key === "ArrowUp") {
-    return moveSelection(event, ctx.pageRuns, ctx.selectedIndex, ctx.setSelectedIndex, -1);
-  }
-
-  if (event.key === "Enter") {
-    return openSelectedRun(event, ctx.pageRuns, ctx.selectedIndex, ctx.router);
-  }
-
-  if (event.key === "c") {
-    return toggleSelectedCompare(event, ctx.pageRuns, ctx.selectedIndex, ctx.onToggleCompare);
-  }
-
-  if (event.key === "/") {
-    return focusStatusFilter(event, ctx.statusFilterId);
-  }
-
-  return false;
+  return handler(ctx);
 }
 
 export function useBenchmarkKeyboard({
@@ -151,7 +151,7 @@ export function useBenchmarkKeyboard({
     };
 
     globalThis.addEventListener("keydown", handler);
-    return () => globalThis.removeEventListener("keydown", handler);
+    return () => { globalThis.removeEventListener("keydown", handler); };
   }, [
     onShowHelp,
     onToggleCompare,
