@@ -19,7 +19,10 @@ const STATUS_ORDER: Record<RunStatus, number> = {
   pass: 3,
 };
 
-function sortValue(run: BenchmarkRun, key: HistorySortKey): string | number {
+type HistoryMetaSortKey = "run_number" | "short_sha" | "branch" | "status";
+type HistoryMetricsSortKey = "p99" | "req_per_s" | "delta" | "timestamp";
+
+function sortValueMeta(run: BenchmarkRun, key: HistoryMetaSortKey): string | number {
   switch (key) {
     case "run_number":
       return run.run_number;
@@ -29,6 +32,11 @@ function sortValue(run: BenchmarkRun, key: HistorySortKey): string | number {
       return run.branch;
     case "status":
       return STATUS_ORDER[run.status];
+  }
+}
+
+function sortValueMetrics(run: BenchmarkRun, key: HistoryMetricsSortKey): string | number {
+  switch (key) {
     case "p99":
       return run.k6.p99_ms;
     case "req_per_s":
@@ -38,6 +46,13 @@ function sortValue(run: BenchmarkRun, key: HistorySortKey): string | number {
     case "timestamp":
       return new Date(run.timestamp).getTime();
   }
+}
+
+function sortValue(run: BenchmarkRun, key: HistorySortKey): string | number {
+  if (key === "p99" || key === "req_per_s" || key === "delta" || key === "timestamp") {
+    return sortValueMetrics(run, key);
+  }
+  return sortValueMeta(run, key);
 }
 
 export function compareHistoryRuns(
