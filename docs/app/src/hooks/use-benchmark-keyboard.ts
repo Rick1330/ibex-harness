@@ -28,8 +28,6 @@ type KeyboardDispatchContext = Readonly<{
   router: AppRouterInstance;
 }>;
 
-type KeyHandler = (ctx: KeyboardDispatchContext) => boolean;
-
 function isTypingTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) {
     return false;
@@ -97,28 +95,29 @@ function handleHelpKey(ctx: KeyboardDispatchContext): boolean {
   return true;
 }
 
-const KEY_HANDLERS: Record<string, KeyHandler> = {
-  "?": handleHelpKey,
-  j: (ctx) => moveSelection(ctx.event, ctx.pageRuns, ctx.selectedIndex, ctx.setSelectedIndex, 1),
-  ArrowDown: (ctx) => moveSelection(ctx.event, ctx.pageRuns, ctx.selectedIndex, ctx.setSelectedIndex, 1),
-  k: (ctx) => moveSelection(ctx.event, ctx.pageRuns, ctx.selectedIndex, ctx.setSelectedIndex, -1),
-  ArrowUp: (ctx) => moveSelection(ctx.event, ctx.pageRuns, ctx.selectedIndex, ctx.setSelectedIndex, -1),
-  Enter: (ctx) => openSelectedRun(ctx.event, ctx.pageRuns, ctx.selectedIndex, ctx.router),
-  c: (ctx) => toggleSelectedCompare(ctx.event, ctx.pageRuns, ctx.selectedIndex, ctx.onToggleCompare),
-  "/": (ctx) => focusStatusFilter(ctx.event, ctx.statusFilterId),
-};
-
 function dispatchBenchmarkKey(ctx: KeyboardDispatchContext): boolean {
   if (ctx.helpOpen && ctx.event.key !== "?") {
     return false;
   }
 
-  const handler = KEY_HANDLERS[ctx.event.key];
-  if (!handler) {
-    return false;
+  switch (ctx.event.key) {
+    case "?":
+      return handleHelpKey(ctx);
+    case "j":
+    case "ArrowDown":
+      return moveSelection(ctx.event, ctx.pageRuns, ctx.selectedIndex, ctx.setSelectedIndex, 1);
+    case "k":
+    case "ArrowUp":
+      return moveSelection(ctx.event, ctx.pageRuns, ctx.selectedIndex, ctx.setSelectedIndex, -1);
+    case "Enter":
+      return openSelectedRun(ctx.event, ctx.pageRuns, ctx.selectedIndex, ctx.router);
+    case "c":
+      return toggleSelectedCompare(ctx.event, ctx.pageRuns, ctx.selectedIndex, ctx.onToggleCompare);
+    case "/":
+      return focusStatusFilter(ctx.event, ctx.statusFilterId);
+    default:
+      return false;
   }
-
-  return handler(ctx);
 }
 
 export function useBenchmarkKeyboard({

@@ -1,26 +1,15 @@
-import fs from "node:fs";
-
 import type { Metadata } from "next";
 
 import { BenchmarkPageShell } from "@/components/benchmarks/benchmark-page-shell";
 import { BenchmarkRunDetailPanel } from "@/components/benchmarks/lazy-panels";
-import { resolvePublishedBenchmarkDataPath } from "@/lib/benchmarks/published-data-path";
+import { loadPublishedBenchmarkRuns } from "@/lib/benchmarks/published-data-path";
 
 type RunDetailPageProps = Readonly<{
   params: Promise<{ sha: string }>;
 }>;
 
 export async function generateStaticParams() {
-  const dataPath = resolvePublishedBenchmarkDataPath();
-  if (!fs.existsSync(dataPath)) {
-    return [];
-  }
-
-  const raw = fs.readFileSync(dataPath, "utf8");
-  const data = JSON.parse(raw) as { runs?: { short_sha: string }[] };
-  const runs = data.runs ?? [];
-
-  return runs.map((run) => ({ sha: run.short_sha }));
+  return loadPublishedBenchmarkRuns().map((run) => ({ sha: run.short_sha }));
 }
 
 export async function generateMetadata(props: RunDetailPageProps): Promise<Metadata> {
