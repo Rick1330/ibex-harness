@@ -184,9 +184,12 @@ jobs:
           python benchmarks/scripts/regression_gate.py | tee benchmarks/output/gate-summary.md
           status=${PIPESTATUS[0]}
           cat benchmarks/output/gate-summary.md >> "$GITHUB_STEP_SUMMARY"
+          if [ "$status" -ne 0 ]; then
+            exit "$status"
+          fi
+          set -e
           python benchmarks/scripts/build_benchmark_data.py
           python benchmarks/scripts/generate_badge.py
-          exit "$status"
 
       - name: Verify benchmark data payload
         run: |

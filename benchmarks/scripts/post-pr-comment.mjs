@@ -81,7 +81,7 @@ ${resultsTable}
 const [owner, name] = repo.split("/");
 const controller = new AbortController();
 const timeout = setTimeout(() => { controller.abort(); }, 10_000);
-let response;
+let response = null;
 try {
   response = await fetch(
     `https://api.github.com/repos/${owner}/${name}/issues/${prNumber}/comments`,
@@ -97,12 +97,15 @@ try {
       signal: controller.signal,
     },
   );
+} catch (error) {
+  console.error("post-pr-comment: fetch failed", error);
+  process.exit(1);
 } finally {
   clearTimeout(timeout);
 }
 
-if (!response.ok) {
-  console.error(`post-pr-comment: GitHub API request failed with status ${response.status}`);
+if (!response?.ok) {
+  console.error(`post-pr-comment: GitHub API request failed with status ${response?.status ?? "unknown"}`);
   process.exit(1);
 }
 
