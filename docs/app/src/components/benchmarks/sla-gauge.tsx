@@ -30,7 +30,10 @@ export function SlaGauge({ label, valueMs, targetMs }: SlaGaugeProps) {
       <div className="flex items-center gap-3">
         <div className="h-1.5 flex-1 rounded-full bg-muted">
           <div
-            className={cn("h-1.5 rounded-full transition-[width] duration-500", fillClass(ratio))}
+            className={cn(
+              "sla-bar-fill h-1.5 rounded-full transition-[width] duration-500",
+              fillClass(ratio),
+            )}
             style={{ width: `${widthPct}%` }}
           />
         </div>

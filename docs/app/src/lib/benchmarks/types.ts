@@ -1,5 +1,10 @@
 export type RunStatus = "pass" | "regression" | "fail" | "unknown";
 
+export interface ThroughputPoint {
+  t_s: number;
+  req_per_s: number;
+}
+
 export interface K6Result {
   vus: number;
   duration_s: number;
@@ -10,15 +15,34 @@ export interface K6Result {
   req_per_s: number;
   error_rate: number;
   check_rate: number;
+  throughput_series?: ThroughputPoint[];
 }
 
 export interface StageLatency {
   auth_lru_p99_ms: number;
+  auth_lru_p50_ms?: number;
+  auth_lru_p95_ms?: number;
+  auth_lru_p999_ms?: number;
   auth_grpc_p99_ms: number;
+  auth_grpc_p50_ms?: number;
+  auth_grpc_p95_ms?: number;
+  auth_grpc_p999_ms?: number;
   rate_limit_p99_ms: number;
+  rate_limit_p50_ms?: number;
+  rate_limit_p95_ms?: number;
+  rate_limit_p999_ms?: number;
   directive_resolve_p99_ms: number;
+  directive_resolve_p50_ms?: number;
+  directive_resolve_p95_ms?: number;
+  directive_resolve_p999_ms?: number;
   prompt_inject_p99_ms: number;
+  prompt_inject_p50_ms?: number;
+  prompt_inject_p95_ms?: number;
+  prompt_inject_p999_ms?: number;
   total_overhead_p99_ms: number;
+  total_overhead_p50_ms?: number;
+  total_overhead_p95_ms?: number;
+  total_overhead_p999_ms?: number;
 }
 
 export interface GoBenchmarkMetrics {

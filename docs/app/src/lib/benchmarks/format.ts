@@ -13,7 +13,14 @@ export function formatPercent(rate: number): string {
 }
 
 export function formatReqPerSec(value: number): string {
-  return `${value.toFixed(0)} req/s`;
+  return `${value.toLocaleString("en-US", { maximumFractionDigits: 0 })} req/s`;
+}
+
+export function formatBytes(value: number): string {
+  if (value < 1024) {
+    return `${value.toFixed(0)} B/op`;
+  }
+  return `${(value / 1024).toFixed(1)} KB/op`;
 }
 
 export function formatDeltaPct(value: number | null): string {

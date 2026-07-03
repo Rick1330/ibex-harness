@@ -1,5 +1,10 @@
 import { z } from "zod";
 
+const throughputPointSchema = z.object({
+  t_s: z.number(),
+  req_per_s: z.number(),
+});
+
 const k6ResultSchema = z.object({
   vus: z.number(),
   duration_s: z.number(),
@@ -10,16 +15,19 @@ const k6ResultSchema = z.object({
   req_per_s: z.number(),
   error_rate: z.number(),
   check_rate: z.number(),
+  throughput_series: z.array(throughputPointSchema).optional(),
 });
 
-const stageLatencySchema = z.object({
-  auth_lru_p99_ms: z.number(),
-  auth_grpc_p99_ms: z.number(),
-  rate_limit_p99_ms: z.number(),
-  directive_resolve_p99_ms: z.number(),
-  prompt_inject_p99_ms: z.number(),
-  total_overhead_p99_ms: z.number(),
-});
+const stageLatencySchema = z
+  .object({
+    auth_lru_p99_ms: z.number(),
+    auth_grpc_p99_ms: z.number(),
+    rate_limit_p99_ms: z.number(),
+    directive_resolve_p99_ms: z.number(),
+    prompt_inject_p99_ms: z.number(),
+    total_overhead_p99_ms: z.number(),
+  })
+  .catchall(z.number().optional());
 
 const goBenchmarkSchema = z.object({
   ns_per_op: z.number(),

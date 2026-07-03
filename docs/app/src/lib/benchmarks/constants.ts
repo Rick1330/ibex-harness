@@ -19,5 +19,6 @@ export const REGRESSION_THRESHOLD_PCT = 10;
 export const WARNING_THRESHOLD_PCT = 5;
 export const MAX_HISTORY_RUNS = 365;
 export const CHART_WINDOW_DEFAULT = 30;
+export const CHART_OVERVIEW_DAYS = 14;
 
 export const BENCHMARK_DATA_URL = "/benchmarks/benchmark-data.json";

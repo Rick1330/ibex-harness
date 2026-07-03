@@ -65,18 +65,18 @@ export function BenchmarkStatusBadge({ run }: StatusBadgeProps) {
         <span className={cn("font-mono text-sm font-semibold", config.accent)}>
           {config.label}
         </span>
-        {run.regression_vs_baseline_pct !== null ? (
+        {typeof run.regression_vs_baseline_pct === "number" && (
           <span className="font-mono text-xs text-muted-foreground">
             {regression} vs baseline
           </span>
-        ) : null}
+        )}
       </div>
       <p className="mt-2 font-mono text-xs text-muted-foreground">
-        Run {run.short_sha} · {run.branch} · {formatTimestamp(run.timestamp)}
+        Run #{run.run_number || "—"} · {run.short_sha} · {run.branch} · {formatTimestamp(run.timestamp)}
       </p>
       <p className="mt-1 font-mono text-xs text-muted-foreground">
-        {run.runner_os} · Go {run.go_version || "—"} · {run.runner_cpu} ·{" "}
-        {run.runner_vcpus} vCPU
+        {run.runner_os} · Go {run.go_version || "—"} · {run.runner_cpu} · {run.runner_vcpus} vCPU ·{" "}
+        {run.runner_ram_gb} GB RAM
       </p>
     </div>
   );

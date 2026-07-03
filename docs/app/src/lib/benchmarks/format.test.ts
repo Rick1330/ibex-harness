@@ -23,7 +23,7 @@ describe("formatPercent", () => {
 
 describe("formatReqPerSec", () => {
   it("formats throughput", () => {
-    expect(formatReqPerSec(8665.17)).toBe("8665 req/s");
+    expect(formatReqPerSec(8665.17)).toBe("8,665 req/s");
   });
 });
 
