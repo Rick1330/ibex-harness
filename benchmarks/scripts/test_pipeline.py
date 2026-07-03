@@ -121,6 +121,14 @@ class RegressionGateTests(unittest.TestCase):
 
 
 class BuildBenchmarkDataTests(unittest.TestCase):
+    def test_safe_int_preserves_zero_runner_vcpus(self) -> None:
+        self.assertEqual(build_benchmark_data.safe_int(0, 2), 0)
+        self.assertEqual(build_benchmark_data.safe_int(None, 2), 2)
+        self.assertEqual(
+            build_benchmark_data.build_runner_metadata({"runner_vcpus": 0})["runner_vcpus"],
+            0,
+        )
+
     def test_build_benchmark_data_includes_run_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

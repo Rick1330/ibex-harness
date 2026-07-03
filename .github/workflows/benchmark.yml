@@ -183,7 +183,6 @@ jobs:
           set +e
           python benchmarks/scripts/regression_gate.py | tee benchmarks/output/gate-summary.md
           status=${PIPESTATUS[0]}
-          set -e
           cat benchmarks/output/gate-summary.md >> "$GITHUB_STEP_SUMMARY"
           python benchmarks/scripts/build_benchmark_data.py
           python benchmarks/scripts/generate_badge.py

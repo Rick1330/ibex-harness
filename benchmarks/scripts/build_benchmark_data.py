@@ -25,7 +25,11 @@ DEFAULT_K6_DURATION_S = 120.0
 DEFAULT_RUNNER_VCPUS = 2
 
 
-def safe_int(value: str | None, default: int) -> int:
+def safe_int(value: str | int | None, default: int) -> int:
+    if value is None:
+        return default
+    if isinstance(value, int):
+        return value
     if not value:
         return default
     try:
@@ -241,7 +245,7 @@ def build_runner_metadata(latest: dict[str, Any]) -> dict[str, Any]:
         "go_version": str(latest.get("go_version") or ""),
         "runner_os": str(latest.get("runner") or latest.get("runner_os") or "unknown"),
         "runner_cpu": str(latest.get("runner_cpu") or ""),
-        "runner_vcpus": int(latest.get("runner_vcpus") or DEFAULT_RUNNER_VCPUS),
+        "runner_vcpus": safe_int(latest.get("runner_vcpus"), DEFAULT_RUNNER_VCPUS),
         "runner_ram_gb": safe_int(os.environ.get("RUNNER_RAM_GB"), 7),
         "k6_version": str(os.environ.get("K6_VERSION", "0.53.0")),
     }

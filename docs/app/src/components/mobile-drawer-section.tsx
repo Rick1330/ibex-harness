@@ -48,14 +48,16 @@ export function MobileDrawerSectionContent({
   pathname,
   onClose,
 }: MobileDrawerSectionContentProps) {
-  const hub = section.hub ? (
-    <HubLink
-      href={section.hub.href}
-      label={section.hub.label}
-      pathname={pathname}
-      onNavigate={onClose}
-    />
-  ) : null;
+  const skipHubLink = section.dataKey === "benchmarkPages";
+  const hub =
+    section.hub && !skipHubLink ? (
+      <HubLink
+        href={section.hub.href}
+        label={section.hub.label}
+        pathname={pathname}
+        onNavigate={onClose}
+      />
+    ) : null;
 
   if (section.kind === "tree") {
     if (!section.baseUrl) return null;
@@ -85,6 +87,9 @@ export function MobileDrawerSectionContent({
   }
 
   const pages = getSectionPages(data, pageDataKey).filter((page) => {
+    if (skipHubLink) {
+      return true;
+    }
     return page.url !== section.hub?.href;
   });
 
