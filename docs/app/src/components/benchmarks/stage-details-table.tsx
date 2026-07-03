@@ -42,10 +42,16 @@ export function StageDetailsTable({ stages }: StageDetailsTableProps) {
             return (
               <tr key={row.base} className="history-row border-b border-border last:border-0">
                 <td className="px-4 py-2">{row.label}</td>
-                <td className="px-4 py-2 font-mono tabular-nums">{formatMs(row.p50)}</td>
-                <td className="px-4 py-2 font-mono tabular-nums">{formatMs(row.p95)}</td>
+                <td className="px-4 py-2 font-mono tabular-nums">
+                  {row.p50 === undefined ? "—" : formatMs(row.p50)}
+                </td>
+                <td className="px-4 py-2 font-mono tabular-nums">
+                  {row.p95 === undefined ? "—" : formatMs(row.p95)}
+                </td>
                 <td className="px-4 py-2 font-mono tabular-nums">{formatMs(row.p99)}</td>
-                <td className="px-4 py-2 font-mono tabular-nums">{formatMs(row.p999)}</td>
+                <td className="px-4 py-2 font-mono tabular-nums">
+                  {row.p999 === undefined ? "—" : formatMs(row.p999)}
+                </td>
                 <td className="px-4 py-2 font-mono tabular-nums">{budget}</td>
               </tr>
             );

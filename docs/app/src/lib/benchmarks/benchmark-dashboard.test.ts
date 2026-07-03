@@ -29,4 +29,14 @@ describe("stagePercentileRows", () => {
     expect(row?.p50).toBe(0.5);
     expect(row?.p99).toBe(1);
   });
+
+  it("leaves missing percentiles undefined", () => {
+    const row = stagePercentileRows(stages, {
+      auth_grpc_p99_ms: "Auth gRPC",
+    }).find((entry) => entry.base === "auth_grpc");
+    expect(row?.p50).toBeUndefined();
+    expect(row?.p95).toBeUndefined();
+    expect(row?.p999).toBeUndefined();
+    expect(row?.p99).toBe(0.2);
+  });
 });
