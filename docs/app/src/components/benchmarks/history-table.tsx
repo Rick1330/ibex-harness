@@ -11,81 +11,22 @@ import { HistoryTableRow } from "@/components/benchmarks/history-table-row";
 import { KeyboardHelpDialog } from "@/components/benchmarks/keyboard-help-dialog";
 import { useBenchmarkKeyboard } from "@/hooks/use-benchmark-keyboard";
 import { useCompareSelection } from "@/hooks/use-compare-selection";
+import {
+  compareHistoryRuns,
+  defaultSortDirForKey,
+  sortIndicator,
+  statusClassName,
+  type HistorySortDir,
+  type HistorySortKey,
+} from "@/lib/benchmarks/history-table-utils";
 import type { BenchmarkRun, RunStatus } from "@/lib/benchmarks/types";
 
 const STATUS_FILTER_ID = "history-status-filter";
-
-type SortKey = "run_number" | "short_sha" | "branch" | "status" | "p99" | "req_per_s" | "delta" | "timestamp";
-type SortDir = "asc" | "desc";
+const PAGE_SIZE = 20;
 
 type HistoryTableProps = Readonly<{
   runs: BenchmarkRun[];
 }>;
-
-const PAGE_SIZE = 20;
-
-const STATUS_ORDER: Record<RunStatus, number> = {
-  fail: 0,
-  regression: 1,
-  unknown: 2,
-  pass: 3,
-};
-
-function sortValue(run: BenchmarkRun, key: SortKey): string | number {
-  switch (key) {
-    case "run_number":
-      return run.run_number;
-    case "short_sha":
-      return run.short_sha;
-    case "branch":
-      return run.branch;
-    case "status":
-      return STATUS_ORDER[run.status];
-    case "p99":
-      return run.k6.p99_ms;
-    case "req_per_s":
-      return run.k6.req_per_s;
-    case "delta":
-      return run.regression_vs_baseline_pct ?? Number.NEGATIVE_INFINITY;
-    case "timestamp":
-      return new Date(run.timestamp).getTime();
-    default:
-      return 0;
-  }
-}
-
-function compareRuns(a: BenchmarkRun, b: BenchmarkRun, key: SortKey, dir: SortDir): number {
-  const left = sortValue(a, key);
-  const right = sortValue(b, key);
-  const cmp =
-    typeof left === "string" && typeof right === "string"
-      ? left.localeCompare(right)
-      : Number(left) - Number(right);
-  return dir === "asc" ? cmp : -cmp;
-}
-
-function statusClass(status: RunStatus): string {
-  switch (status) {
-    case "pass":
-      return "text-success";
-    case "regression":
-      return "text-warning";
-    case "fail":
-      return "text-danger";
-    default:
-      return "text-muted-foreground";
-  }
-}
-
-function sortIndicator(active: boolean, sortDir: SortDir): string {
-  if (!active) {
-    return "";
-  }
-  if (sortDir === "asc") {
-    return " ↑";
-  }
-  return " ↓";
-}
 
 function SortHeader({
   label,
@@ -95,10 +36,10 @@ function SortHeader({
   onSort,
 }: Readonly<{
   label: string;
-  column: SortKey;
-  sortKey: SortKey;
-  sortDir: SortDir;
-  onSort: (key: SortKey) => void;
+  column: HistorySortKey;
+  sortKey: HistorySortKey;
+  sortDir: HistorySortDir;
+  onSort: (key: HistorySortKey) => void;
 }>) {
   const active = sortKey === column;
   const indicator = sortIndicator(active, sortDir);
@@ -121,8 +62,8 @@ function SortHeader({
 
 export function HistoryTable({ runs }: HistoryTableProps) {
   const router = useRouter();
-  const [sortKey, setSortKey] = useState<SortKey>("timestamp");
-  const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const [sortKey, setSortKey] = useState<HistorySortKey>("timestamp");
+  const [sortDir, setSortDir] = useState<HistorySortDir>("desc");
   const [statusFilter, setStatusFilter] = useState<RunStatus | "all">("all");
   const [branchFilter, setBranchFilter] = useState<string>("all");
   const [page, setPage] = useState(1);
@@ -145,7 +86,7 @@ export function HistoryTable({ runs }: HistoryTableProps) {
       }
       return true;
     });
-    return [...filtered].sort((a, b) => compareRuns(a, b, sortKey, sortDir));
+    return [...filtered].sort((a, b) => compareHistoryRuns(a, b, sortKey, sortDir));
   }, [runs, sortKey, sortDir, statusFilter, branchFilter]);
 
   const totalPages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
@@ -166,14 +107,14 @@ export function HistoryTable({ runs }: HistoryTableProps) {
     statusFilterId: STATUS_FILTER_ID,
   });
 
-  function toggleSort(key: SortKey) {
+  function toggleSort(key: HistorySortKey) {
     setPage(1);
     if (sortKey === key) {
       setSortDir((dir) => (dir === "asc" ? "desc" : "asc"));
       return;
     }
     setSortKey(key);
-    setSortDir(key === "timestamp" ? "desc" : "asc");
+    setSortDir(defaultSortDirForKey(key));
   }
 
   return (
@@ -252,7 +193,7 @@ export function HistoryTable({ runs }: HistoryTableProps) {
                 isCompareSelected={compare.isSelected(run.short_sha)}
                 onRowClick={(shortSha) => { router.push(`/benchmarks/history/${shortSha}`); }}
                 onToggleCompare={compare.toggle}
-                statusClassName={statusClass}
+                statusClassName={statusClassName}
               />
             ))}
           </tbody>

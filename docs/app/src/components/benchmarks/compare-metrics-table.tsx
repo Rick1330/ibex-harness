@@ -1,13 +1,7 @@
 import { cn } from "@/lib/cn";
+import type { CompareMetricRow } from "@/lib/benchmarks/compare-metrics";
 
-export type CompareMetricRow = Readonly<{
-  label: string;
-  base: string;
-  head: string;
-  delta: string;
-  deltaValue: number | null;
-  higherIsBetter?: boolean;
-}>;
+export type { CompareMetricRow };
 
 function isNeutralDelta(delta: number | null): boolean {
   if (delta === null) {
