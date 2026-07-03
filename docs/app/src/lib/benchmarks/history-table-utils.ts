@@ -19,17 +19,6 @@ const STATUS_ORDER: Record<RunStatus, number> = {
   pass: 3,
 };
 
-const SORT_ACCESSORS: Record<HistorySortKey, (run: BenchmarkRun) => string | number> = {
-  run_number: (run) => run.run_number,
-  short_sha: (run) => run.short_sha,
-  branch: (run) => run.branch,
-  status: (run) => STATUS_ORDER[run.status],
-  p99: (run) => run.k6.p99_ms,
-  req_per_s: (run) => run.k6.req_per_s,
-  delta: (run) => run.regression_vs_baseline_pct ?? Number.NEGATIVE_INFINITY,
-  timestamp: (run) => new Date(run.timestamp).getTime(),
-};
-
 type HistoryMetricsSortKey = "p99" | "req_per_s" | "delta" | "timestamp";
 type HistoryMetaSortKey = Exclude<HistorySortKey, HistoryMetricsSortKey>;
 
@@ -47,26 +36,26 @@ function isMetricsSortKey(key: HistorySortKey): key is HistoryMetricsSortKey {
 function sortValueMeta(run: BenchmarkRun, key: HistoryMetaSortKey): string | number {
   switch (key) {
     case "run_number":
-      return SORT_ACCESSORS.run_number(run);
+      return run.run_number;
     case "short_sha":
-      return SORT_ACCESSORS.short_sha(run);
+      return run.short_sha;
     case "branch":
-      return SORT_ACCESSORS.branch(run);
+      return run.branch;
     case "status":
-      return SORT_ACCESSORS.status(run);
+      return STATUS_ORDER[run.status];
   }
 }
 
 function sortValueMetrics(run: BenchmarkRun, key: HistoryMetricsSortKey): string | number {
   switch (key) {
     case "p99":
-      return SORT_ACCESSORS.p99(run);
+      return run.k6.p99_ms;
     case "req_per_s":
-      return SORT_ACCESSORS.req_per_s(run);
+      return run.k6.req_per_s;
     case "delta":
-      return SORT_ACCESSORS.delta(run);
+      return run.regression_vs_baseline_pct ?? Number.NEGATIVE_INFINITY;
     case "timestamp":
-      return SORT_ACCESSORS.timestamp(run);
+      return new Date(run.timestamp).getTime();
   }
 }
 
