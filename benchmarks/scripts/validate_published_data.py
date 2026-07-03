@@ -9,6 +9,7 @@ from typing import Any
 
 MAX_RUNS = 365
 MAX_P99_MS = 500.0
+BENCHMARK_DATA_NAME = "benchmark-data.json"
 VALID_STATUSES = frozenset({"pass", "regression", "fail", "unknown"})
 
 
@@ -35,6 +36,27 @@ def require_string(value: Any, label: str) -> str:
     return value
 
 
+def resolve_benchmark_data_path(raw: str) -> Path:
+    if not raw or raw != raw.strip():
+        fail("path must not be empty or whitespace")
+    candidate = Path(raw)
+    if candidate.is_absolute():
+        fail("absolute paths are not allowed")
+    if ".." in candidate.parts:
+        fail("path must not contain parent references")
+    if candidate.name != BENCHMARK_DATA_NAME:
+        fail(f"path must name {BENCHMARK_DATA_NAME}")
+    workspace = Path.cwd().resolve()
+    resolved = (workspace / candidate).resolve()
+    try:
+        resolved.relative_to(workspace)
+    except ValueError:
+        fail("path escapes workspace")
+    if not resolved.is_file():
+        fail(f"file not found: {candidate}")
+    return resolved
+
+
 def validate_k6(k6: Any, label: str) -> None:
     data = require_dict(k6, label)
     p99 = require_number(data.get("p99_ms"), f"{label}.p99_ms")
@@ -59,12 +81,25 @@ def validate_run(run: Any, index: int) -> None:
     validate_k6(data.get("k6"), f"{label}.k6")
 
 
-def validate_payload(payload: Any) -> None:
-    data = require_dict(payload, "root")
-    if data.get("schema_version") != 1:
-        fail("schema_version must be 1")
-    require_string(data.get("baseline_sha"), "baseline_sha")
-    runs = data.get("runs")
+def track_run_identity(
+    run_data: dict[str, Any],
+    index: int,
+    seen_sha: set[str],
+    seen_pr: set[int],
+) -> None:
+    sha = require_string(run_data.get("sha"), f"runs[{index}].sha")
+    if sha in seen_sha:
+        fail(f"duplicate sha: {sha}")
+    seen_sha.add(sha)
+    pr_number = run_data.get("pr_number")
+    if not isinstance(pr_number, int):
+        return
+    if pr_number in seen_pr:
+        fail(f"duplicate pr_number: {pr_number}")
+    seen_pr.add(pr_number)
+
+
+def validate_runs_list(runs: Any) -> None:
     if not isinstance(runs, list):
         fail("runs must be an array")
     if len(runs) > MAX_RUNS:
@@ -74,26 +109,33 @@ def validate_payload(payload: Any) -> None:
     for index, run in enumerate(runs):
         validate_run(run, index)
         run_data = require_dict(run, f"runs[{index}]")
-        sha = require_string(run_data.get("sha"), f"runs[{index}].sha")
-        if sha in seen_sha:
-            fail(f"duplicate sha: {sha}")
-        seen_sha.add(sha)
-        pr_number = run_data.get("pr_number")
-        if isinstance(pr_number, int):
-            if pr_number in seen_pr:
-                fail(f"duplicate pr_number: {pr_number}")
-            seen_pr.add(pr_number)
+        track_run_identity(run_data, index, seen_sha, seen_pr)
+
+
+def validate_payload(payload: Any) -> None:
+    data = require_dict(payload, "root")
+    if data.get("schema_version") != 1:
+        fail("schema_version must be 1")
+    require_string(data.get("baseline_sha"), "baseline_sha")
+    validate_runs_list(data.get("runs"))
+
+
+def load_payload(path: Path) -> dict[str, Any]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        fail("benchmark data root must be an object")
+    return payload
 
 
 def main() -> int:
     if len(sys.argv) != 2:
         fail("usage: validate_published_data.py <path-to-benchmark-data.json>")
-    path = Path(sys.argv[1])
-    if not path.exists():
-        fail(f"file not found: {path}")
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    path = resolve_benchmark_data_path(sys.argv[1])
+    payload = load_payload(path)
     validate_payload(payload)
-    print(json.dumps({"ok": True, "runs": len(payload.get("runs", []))}))
+    runs = payload.get("runs", [])
+    run_count = len(runs) if isinstance(runs, list) else 0
+    print(json.dumps({"ok": True, "runs": run_count}))
     return 0
 
 

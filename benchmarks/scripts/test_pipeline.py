@@ -275,6 +275,10 @@ class ValidatePublishedDataTests(unittest.TestCase):
             json.loads(seed.read_text(encoding="utf-8"))
         )
 
+    def test_validate_published_data_rejects_path_traversal(self) -> None:
+        with self.assertRaises(SystemExit):
+            validate_published_data.resolve_benchmark_data_path("../../etc/passwd")
+
     def test_validate_published_data_rejects_duplicate_pr_number(self) -> None:
         payload = {
             "schema_version": 1,

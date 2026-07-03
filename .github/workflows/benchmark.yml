@@ -24,9 +24,6 @@ on:
       - "go.mod"
       - "go.sum"
 
-permissions:
-  contents: read
-
 concurrency:
   group: benchmark-${{ github.ref }}
   cancel-in-progress: true
@@ -35,6 +32,8 @@ jobs:
   verify-benchmark-pipeline:
     name: verify-benchmark-pipeline
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -260,39 +259,9 @@ jobs:
         run: python benchmarks/scripts/validate_published_data.py benchmarks/output/benchmark-data.json
 
       - name: Reject manual benchmark JSON edits on PR branches
-        run: |
-          git fetch origin "${{ github.base_ref }}"
-          if git diff --quiet "origin/${{ github.base_ref }}"...HEAD -- docs/app/public/benchmarks/benchmark-data.json; then
-            echo "benchmark-data.json unchanged on branch; publish will apply the workflow artifact."
-            exit 0
-          fi
-          last_author="$(git log -1 --format='%ae' -- docs/app/public/benchmarks/benchmark-data.json)"
-          if [ "$last_author" = "41898282+github-actions[bot]@users.noreply.github.com" ] || \
-             [ "$last_author" = "github-actions[bot]@users.noreply.github.com" ]; then
-            echo "Benchmark data last updated by CI; publish may refresh it for this run."
-            exit 0
-          fi
-          python - <<'PY'
-          import json
-          import sys
-          from pathlib import Path
-
-          committed = json.loads(
-              Path("docs/app/public/benchmarks/benchmark-data.json").read_text(encoding="utf-8")
-          )
-          artifact = json.loads(
-              Path("benchmarks/output/benchmark-data.json").read_text(encoding="utf-8")
-          )
-          if committed != artifact:
-              print(
-                  "docs/app/public/benchmarks/benchmark-data.json was edited on this PR "
-                  "but does not match the workflow artifact. Remove manual edits and let "
-                  "publish-benchmark-data update the file.",
-                  file=sys.stderr,
-              )
-              sys.exit(1)
-          print("Committed benchmark data matches workflow artifact.")
-          PY
+        env:
+          BENCHMARK_BASE_REF: ${{ github.base_ref }}
+        run: python benchmarks/scripts/verify_pr_benchmark_integrity.py "$BENCHMARK_BASE_REF"
 
   publish-benchmark-data:
     name: publish-benchmark-data
@@ -305,6 +274,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      BENCHMARK_HEAD_REF: ${{ github.head_ref }}
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -313,7 +284,7 @@ jobs:
 
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          ref: ${{ github.head_ref }}
+          ref: ${{ env.BENCHMARK_HEAD_REF }}
           persist-credentials: true
 
       - name: Download benchmark data artifact
@@ -338,7 +309,7 @@ jobs:
             exit 0
           fi
           git commit -m "chore(bench): update benchmark data for PR #${{ github.event.pull_request.number }}"
-          git push origin "HEAD:${{ github.head_ref }}"
+          git push origin "HEAD:${BENCHMARK_HEAD_REF}"
 
   open-benchmark-data-pr:
     name: open-benchmark-data-pr
@@ -394,6 +365,8 @@ jobs:
       github.event_name == 'pull_request' &&
       github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Note fork PR publish limitation
         run: |
