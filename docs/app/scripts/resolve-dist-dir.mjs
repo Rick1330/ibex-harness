@@ -40,7 +40,10 @@ export function tryQuarantineStaleNext(distDirName = DEFAULT_DIST) {
     fs.renameSync(nextDir, quarantinePath);
     console.warn(`[dev] Quarantined locked ${distDirName} → ${quarantineName}`);
     return true;
-  } catch {
+  } catch (error) {
+    if (error.code !== "EPERM" && error.code !== "EACCES") {
+      throw error;
+    }
     return false;
   }
 }

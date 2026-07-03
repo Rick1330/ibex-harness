@@ -16,6 +16,11 @@ const child = spawn(process.execPath, [nextBin, "dev", ...extraArgs], {
   },
 });
 
+child.on("error", (error) => {
+  console.error(`[dev] Failed to start Next.js dev server: ${error.message}`);
+  process.exit(1);
+});
+
 child.on("exit", (code, signal) => {
   if (signal) {
     process.kill(process.pid, signal);
