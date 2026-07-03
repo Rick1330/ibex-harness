@@ -4,20 +4,35 @@
  * Requires: GITHUB_TOKEN, GITHUB_REPOSITORY, PR_NUMBER, BENCHMARK_DATA_PATH
  */
 import fs from "node:fs";
+import path from "node:path";
 import process from "node:process";
+
+const ALLOWED_OUTPUT_DIR = path.resolve("benchmarks/output");
+const DEFAULT_DATA_PATH = path.join(ALLOWED_OUTPUT_DIR, "benchmark-data.json");
 
 const token = process.env.GITHUB_TOKEN;
 const repo = process.env.GITHUB_REPOSITORY;
 const prNumber = process.env.PR_NUMBER;
-const dataPath = process.env.BENCHMARK_DATA_PATH ?? "benchmarks/output/benchmark-data.json";
+const dataPathEnv = process.env.BENCHMARK_DATA_PATH ?? DEFAULT_DATA_PATH;
+
+function resolveBenchmarkDataPath(inputPath) {
+  const resolved = path.resolve(inputPath);
+  if (!resolved.startsWith(ALLOWED_OUTPUT_DIR)) {
+    console.error("post-pr-comment: benchmark data path must stay under benchmarks/output");
+    process.exit(1);
+  }
+  return resolved;
+}
 
 if (!token || !repo || !prNumber) {
   console.error("post-pr-comment: missing GITHUB_TOKEN, GITHUB_REPOSITORY, or PR_NUMBER");
   process.exit(1);
 }
 
+const dataPath = resolveBenchmarkDataPath(dataPathEnv);
+
 if (!fs.existsSync(dataPath)) {
-  console.error(`post-pr-comment: data file not found: ${dataPath}`);
+  console.error("post-pr-comment: data file not found");
   process.exit(1);
 }
 

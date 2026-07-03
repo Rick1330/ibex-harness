@@ -24,7 +24,7 @@ export function CompareRunSelectors({
         <span className="text-muted-foreground">Base</span>
         <select
           value={baseSha}
-          onChange={(event) => onBaseChange(event.target.value)}
+          onChange={(event) => { onBaseChange(event.target.value); }}
           className={COMPARE_SELECT_CLASS}
         >
           {runs.map((run) => (
@@ -38,7 +38,7 @@ export function CompareRunSelectors({
         <span className="text-muted-foreground">Head</span>
         <select
           value={headSha}
-          onChange={(event) => onHeadChange(event.target.value)}
+          onChange={(event) => { onHeadChange(event.target.value); }}
           className={COMPARE_SELECT_CLASS}
         >
           {runs.map((run) => (

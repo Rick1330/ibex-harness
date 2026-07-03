@@ -36,7 +36,7 @@ export function TimeRangePicker({ className }: TimeRangePickerProps) {
         <button
           key={range.value}
           type="button"
-          onClick={() => setRange(range.value)}
+          onClick={() => { setRange(range.value); }}
           className={cn(
             "rounded-md border px-2.5 py-1 font-mono text-xs transition-colors",
             current === range.value

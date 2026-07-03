@@ -23,7 +23,8 @@ function deltaClass(delta: number | null, higherIsBetter = false): string {
   if (isNeutralDelta(delta)) {
     return "text-muted-foreground";
   }
-  const improved = higherIsBetter ? delta! > 0 : delta! < 0;
+  const value = delta as number;
+  const improved = higherIsBetter ? value > 0 : value < 0;
   return improved ? "text-success" : "text-danger";
 }
 

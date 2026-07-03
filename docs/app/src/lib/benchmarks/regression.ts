@@ -1,4 +1,4 @@
-import { REGRESSION_THRESHOLD_PCT, WARNING_THRESHOLD_PCT } from "./constants";
+import { REGRESSION_THRESHOLD_PCT } from "./constants";
 
 export function pctChange(
   baseline: number | null,
@@ -18,21 +18,15 @@ export function pctChange(
   return higherIsBetter ? -raw : raw;
 }
 
-export function isRegression(deltaPct: number | null, threshold = REGRESSION_THRESHOLD_PCT): boolean {
+function exceedsThreshold(deltaPct: number | null, threshold: number): boolean {
   if (deltaPct === null || !Number.isFinite(deltaPct)) {
     return false;
   }
   return deltaPct > threshold;
 }
 
-export function isRegressionWarning(
-  deltaPct: number | null,
-  threshold = WARNING_THRESHOLD_PCT,
-): boolean {
-  if (deltaPct === null || !Number.isFinite(deltaPct)) {
-    return false;
-  }
-  return deltaPct > threshold;
+export function isRegression(deltaPct: number | null, threshold = REGRESSION_THRESHOLD_PCT): boolean {
+  return exceedsThreshold(deltaPct, threshold);
 }
 
 export function deltaForRun(

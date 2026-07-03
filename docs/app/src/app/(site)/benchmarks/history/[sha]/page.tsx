@@ -1,17 +1,17 @@
 import fs from "node:fs";
-import path from "node:path";
 
 import type { Metadata } from "next";
 
 import { BenchmarkPageShell } from "@/components/benchmarks/benchmark-page-shell";
 import { BenchmarkRunDetailPanel } from "@/components/benchmarks/lazy-panels";
+import { resolvePublishedBenchmarkDataPath } from "@/lib/benchmarks/published-data-path";
 
 type RunDetailPageProps = Readonly<{
   params: Promise<{ sha: string }>;
 }>;
 
 export async function generateStaticParams() {
-  const dataPath = path.join(process.cwd(), "public/benchmarks/benchmark-data.json");
+  const dataPath = resolvePublishedBenchmarkDataPath();
   if (!fs.existsSync(dataPath)) {
     return [];
   }

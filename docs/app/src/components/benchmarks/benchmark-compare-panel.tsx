@@ -92,8 +92,8 @@ function CompareContent() {
         runs={runs}
         baseSha={baseRun.short_sha}
         headSha={headRun.short_sha}
-        onBaseChange={(value) => updateParam("base", value)}
-        onHeadChange={(value) => updateParam("head", value)}
+        onBaseChange={(value) => { updateParam("base", value); }}
+        onHeadChange={(value) => { updateParam("head", value); }}
       />
       <CompareMetricsTable
         baseSha={baseRun.short_sha}

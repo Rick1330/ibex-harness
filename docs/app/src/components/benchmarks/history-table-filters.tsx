@@ -27,7 +27,7 @@ export function HistoryTableFilters({
         <select
           id={statusFilterId}
           value={statusFilter}
-          onChange={(event) => onStatusChange(event.target.value as RunStatus | "all")}
+          onChange={(event) => { onStatusChange(event.target.value as RunStatus | "all"); }}
           className={FILTER_SELECT_CLASS}
         >
           <option value="all">All</option>
@@ -42,7 +42,7 @@ export function HistoryTableFilters({
         <select
           id="history-branch-filter"
           value={branchFilter}
-          onChange={(event) => onBranchChange(event.target.value)}
+          onChange={(event) => { onBranchChange(event.target.value); }}
           className={FILTER_SELECT_CLASS}
         >
           {branches.map((branch) => (

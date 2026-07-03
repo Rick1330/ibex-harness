@@ -181,15 +181,15 @@ export function buildTrendPlot(
   const showCiBand = options?.showCiBand ?? true;
   const marks = [
     ...trendAxisMarks(theme, yTickFormat),
-    ...(options?.targetMs !== undefined
-      ? [
+    ...(options?.targetMs === undefined
+      ? []
+      : [
           Plot.ruleY([options.targetMs], {
             stroke: theme.target,
             strokeDasharray: "4,4",
             strokeWidth: 1,
           }),
-        ]
-      : []),
+        ]),
     ...trendSeriesMarks(data, theme, showCiBand),
     Plot.tip(
       data,

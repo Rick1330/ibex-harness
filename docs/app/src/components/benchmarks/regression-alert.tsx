@@ -18,8 +18,7 @@ function findRevertRun(runs: BenchmarkRun[], regressionRun: BenchmarkRun): Bench
     return null;
   }
 
-  for (let i = index + 1; i < sorted.length; i += 1) {
-    const candidate = sorted[i];
+  for (const candidate of sorted.slice(index + 1)) {
     if (candidate.status === "pass" || candidate.status === "unknown") {
       return candidate;
     }

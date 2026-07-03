@@ -68,7 +68,7 @@ export function KpiCard({
 }: KpiCardProps) {
   const trend = trendMeta(deltaPct, higherIsBetter);
   const TrendIcon = trend.icon;
-  const showDelta = deltaPct !== null && deltaPct !== undefined;
+  const showDelta = deltaPct != null;
 
   return (
     <section
