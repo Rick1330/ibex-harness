@@ -78,8 +78,7 @@ const response = await fetch(
 );
 
 if (!response.ok) {
-  const text = await response.text();
-  console.error(`post-pr-comment: API ${response.status}: ${text}`);
+  console.error(`post-pr-comment: GitHub API request failed with status ${response.status}`);
   process.exit(1);
 }
 

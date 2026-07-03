@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 import os
 import math
+import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +18,11 @@ BENCHSTAT_PATH = OUT_DIR / "benchstat.json"
 OUTPUT_PATH = OUT_DIR / "benchmark-data.json"
 MAX_RUNS = 365
 DEFAULT_SAMPLES = 5
+AUTH_LRU_SHARE = 0.7
+AUTH_GRPC_SHARE = 0.3
+DEFAULT_K6_VUS = 100
+DEFAULT_K6_DURATION_S = 120.0
+DEFAULT_RUNNER_VCPUS = 2
 
 
 def safe_int(value: str | None, default: int) -> int:
@@ -42,8 +49,8 @@ def stage_percentile_fields(prefix: str, p99_ms: float) -> dict[str, float]:
 
 def map_stages(stage: dict[str, Any]) -> dict[str, float]:
     auth_us = float(stage.get("synthetic_auth_us", 0.0))
-    auth_lru = synthetic_us_to_ms(auth_us * 0.7)
-    auth_grpc = synthetic_us_to_ms(auth_us * 0.3)
+    auth_lru = synthetic_us_to_ms(auth_us * AUTH_LRU_SHARE)
+    auth_grpc = synthetic_us_to_ms(auth_us * AUTH_GRPC_SHARE)
     result: dict[str, float] = {}
     for prefix, p99 in (
         ("auth_lru", auth_lru),
@@ -70,8 +77,8 @@ def build_throughput_series(req_per_s: float, duration_s: float, points: int = 1
 
 
 def map_k6(k6_raw: dict[str, Any], k6_summary_path: Path) -> dict[str, Any]:
-    vus = 100
-    duration_s = 120.0
+    vus = DEFAULT_K6_VUS
+    duration_s = DEFAULT_K6_DURATION_S
     if k6_summary_path.exists():
         summary = json.loads(k6_summary_path.read_text(encoding="utf-8"))
         duration_ms = summary.get("state", {}).get("testRunDurationMs")
@@ -234,7 +241,7 @@ def build_runner_metadata(latest: dict[str, Any]) -> dict[str, Any]:
         "go_version": str(latest.get("go_version") or ""),
         "runner_os": str(latest.get("runner") or latest.get("runner_os") or "unknown"),
         "runner_cpu": str(latest.get("runner_cpu") or ""),
-        "runner_vcpus": int(latest.get("runner_vcpus") or 2),
+        "runner_vcpus": int(latest.get("runner_vcpus") or DEFAULT_RUNNER_VCPUS),
         "runner_ram_gb": safe_int(os.environ.get("RUNNER_RAM_GB"), 7),
         "k6_version": str(os.environ.get("K6_VERSION", "0.53.0")),
     }
@@ -259,21 +266,37 @@ def build_run_identity(
     }
 
 
-def build_run_record(
-    latest: dict[str, Any],
-    gate: dict[str, Any],
-    baseline_sha: str,
-    benchstat: dict[str, dict[str, float]],
-    prev_runs: list[dict[str, Any]],
-) -> dict[str, Any]:
+@dataclass(frozen=True)
+class RunBuildContext:
+    latest: dict[str, Any]
+    gate: dict[str, Any]
+    baseline_sha: str
+    benchstat: dict[str, dict[str, float]]
+    prev_runs: list[dict[str, Any]]
+
+
+def build_run_record(ctx: RunBuildContext) -> dict[str, Any]:
     return {
-        **build_run_identity(latest, gate, baseline_sha),
-        **build_runner_metadata(latest),
-        "k6": map_k6(latest.get("k6", {}), OUT_DIR / "k6-summary.json"),
-        "stages": map_stages(latest.get("stages", {})),
-        "metric_deltas": build_metric_deltas(latest, gate, baseline_sha, prev_runs),
-        "go_benchmarks": map_go_benchmarks(latest.get("go_benchmarks", {}), benchstat),
+        **build_run_identity(ctx.latest, ctx.gate, ctx.baseline_sha),
+        **build_runner_metadata(ctx.latest),
+        "k6": map_k6(ctx.latest.get("k6", {}), OUT_DIR / "k6-summary.json"),
+        "stages": map_stages(ctx.latest.get("stages", {})),
+        "metric_deltas": build_metric_deltas(
+            ctx.latest,
+            ctx.gate,
+            ctx.baseline_sha,
+            ctx.prev_runs,
+        ),
+        "go_benchmarks": map_go_benchmarks(ctx.latest.get("go_benchmarks", {}), ctx.benchstat),
     }
+
+
+def write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_fd, tmp_name = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+    with os.fdopen(tmp_fd, "w", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, indent=2))
+    os.replace(tmp_name, path)
 
 
 def load_previous_runs() -> list[dict[str, Any]]:
@@ -290,7 +313,14 @@ def main() -> int:
     baseline_sha = load_baseline_sha()
     benchstat = parse_benchstat_json(BENCHSTAT_PATH)
     prev_runs = load_previous_runs()
-    new_run = build_run_record(latest, gate, baseline_sha, benchstat, prev_runs)
+    ctx = RunBuildContext(
+        latest=latest,
+        gate=gate,
+        baseline_sha=baseline_sha,
+        benchstat=benchstat,
+        prev_runs=prev_runs,
+    )
+    new_run = build_run_record(ctx)
 
     runs = [new_run]
     for run in prev_runs:
@@ -304,7 +334,7 @@ def main() -> int:
         "baseline_sha": baseline_sha,
         "runs": runs,
     }
-    OUTPUT_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    write_json_atomic(OUTPUT_PATH, payload)
     print(json.dumps({"ok": True, "runs": len(runs), "status": new_run["status"]}))
     return 0
 
