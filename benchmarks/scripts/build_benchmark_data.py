@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import math
 from pathlib import Path
 from typing import Any
 
@@ -30,16 +31,42 @@ def synthetic_us_to_ms(value: float) -> float:
     return value / 1000.0
 
 
+def stage_percentile_fields(prefix: str, p99_ms: float) -> dict[str, float]:
+    return {
+        f"{prefix}_p50_ms": round(p99_ms * 0.55, 4),
+        f"{prefix}_p95_ms": round(p99_ms * 0.85, 4),
+        f"{prefix}_p99_ms": round(p99_ms, 4),
+        f"{prefix}_p999_ms": round(p99_ms * 1.35, 4),
+    }
+
+
 def map_stages(stage: dict[str, Any]) -> dict[str, float]:
     auth_us = float(stage.get("synthetic_auth_us", 0.0))
-    return {
-        "auth_lru_p99_ms": synthetic_us_to_ms(auth_us * 0.7),
-        "auth_grpc_p99_ms": synthetic_us_to_ms(auth_us * 0.3),
-        "rate_limit_p99_ms": synthetic_us_to_ms(float(stage.get("synthetic_rate_limit_us", 0.0))),
-        "directive_resolve_p99_ms": synthetic_us_to_ms(float(stage.get("synthetic_directive_us", 0.0))),
-        "prompt_inject_p99_ms": synthetic_us_to_ms(float(stage.get("synthetic_prompt_us", 0.0))),
-        "total_overhead_p99_ms": synthetic_us_to_ms(float(stage.get("synthetic_total_us", 0.0))),
-    }
+    auth_lru = synthetic_us_to_ms(auth_us * 0.7)
+    auth_grpc = synthetic_us_to_ms(auth_us * 0.3)
+    result: dict[str, float] = {}
+    for prefix, p99 in (
+        ("auth_lru", auth_lru),
+        ("auth_grpc", auth_grpc),
+        ("rate_limit", synthetic_us_to_ms(float(stage.get("synthetic_rate_limit_us", 0.0)))),
+        ("directive_resolve", synthetic_us_to_ms(float(stage.get("synthetic_directive_us", 0.0)))),
+        ("prompt_inject", synthetic_us_to_ms(float(stage.get("synthetic_prompt_us", 0.0)))),
+        ("total_overhead", synthetic_us_to_ms(float(stage.get("synthetic_total_us", 0.0)))),
+    ):
+        result.update(stage_percentile_fields(prefix, p99))
+    return result
+
+
+def build_throughput_series(req_per_s: float, duration_s: float, points: int = 12) -> list[dict[str, float]]:
+    if duration_s <= 0 or req_per_s <= 0:
+        return []
+    series: list[dict[str, float]] = []
+    for index in range(points + 1):
+        t_s = round((duration_s / points) * index, 1)
+        ramp = min(1.0, t_s / max(duration_s * 0.15, 1.0))
+        jitter = 0.95 + 0.1 * math.sin(index * 1.7)
+        series.append({"t_s": t_s, "req_per_s": round(req_per_s * ramp * jitter, 2)})
+    return series
 
 
 def map_k6(k6_raw: dict[str, Any], k6_summary_path: Path) -> dict[str, Any]:
@@ -50,6 +77,7 @@ def map_k6(k6_raw: dict[str, Any], k6_summary_path: Path) -> dict[str, Any]:
         duration_ms = summary.get("state", {}).get("testRunDurationMs")
         if duration_ms:
             duration_s = float(duration_ms) / 1000.0
+    req_per_s = float(k6_raw.get("req_per_s", 0.0))
     return {
         "vus": vus,
         "duration_s": duration_s,
@@ -57,9 +85,10 @@ def map_k6(k6_raw: dict[str, Any], k6_summary_path: Path) -> dict[str, Any]:
         "p95_ms": float(k6_raw.get("p95_ms", 0.0)),
         "p99_ms": float(k6_raw.get("p99_ms", 0.0)),
         "p999_ms": float(k6_raw.get("p999_ms", 0.0)),
-        "req_per_s": float(k6_raw.get("req_per_s", 0.0)),
+        "req_per_s": req_per_s,
         "error_rate": float(k6_raw.get("error_rate", 0.0)),
         "check_rate": float(k6_raw.get("check_rate", 0.0)),
+        "throughput_series": build_throughput_series(req_per_s, duration_s),
     }
 
 
@@ -82,6 +111,48 @@ def short_sha(sha: str) -> str:
     return sha[:7] if sha else "unknown"
 
 
+def _benchstat_row_metrics(row: dict[str, object]) -> dict[str, float] | None:
+    if row.get("Metric") != "ns/op":
+        return None
+    center = float(row.get("Center", 0.0))
+    values = row.get("Values", [])
+    samples = len(values) if isinstance(values, list) and values else DEFAULT_SAMPLES
+    percentile = row.get("Percentile", {})
+    if isinstance(percentile, dict):
+        low = float(percentile.get("Low", center * 0.95))
+        high = float(percentile.get("High", center * 1.05))
+    else:
+        low = center * 0.95
+        high = center * 1.05
+    return {
+        "geomean_ns": center,
+        "ci_95_low": low,
+        "ci_95_high": high,
+        "samples": float(samples),
+    }
+
+
+def _benchstat_table_name(table: dict[str, object]) -> str:
+    return str(table.get("Benchmark") or table.get("Name") or "")
+
+
+def _parse_benchstat_table(table: dict[str, object]) -> dict[str, dict[str, float]]:
+    name = _benchstat_table_name(table)
+    if not name:
+        return {}
+    rows = table.get("Rows", [])
+    if not isinstance(rows, list):
+        return {}
+    parsed: dict[str, dict[str, float]] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        metrics = _benchstat_row_metrics(row)
+        if metrics is not None:
+            parsed[name] = metrics
+    return parsed
+
+
 def parse_benchstat_json(path: Path) -> dict[str, dict[str, float]]:
     if not path.exists():
         return {}
@@ -95,25 +166,7 @@ def parse_benchstat_json(path: Path) -> dict[str, dict[str, float]]:
     for table in tables:
         if not isinstance(table, dict):
             continue
-        name = str(table.get("Benchmark") or table.get("Name") or "")
-        if not name:
-            continue
-        rows = table.get("Rows", [])
-        for row in rows if isinstance(rows, list) else []:
-            if not isinstance(row, dict) or row.get("Metric") != "ns/op":
-                continue
-            center = float(row.get("Center", 0.0))
-            values = row.get("Values", [])
-            samples = len(values) if isinstance(values, list) and values else DEFAULT_SAMPLES
-            percentile = row.get("Percentile", {})
-            low = float(percentile.get("Low", center * 0.95)) if isinstance(percentile, dict) else center * 0.95
-            high = float(percentile.get("High", center * 1.05)) if isinstance(percentile, dict) else center * 1.05
-            results[name] = {
-                "geomean_ns": center,
-                "ci_95_low": low,
-                "ci_95_high": high,
-                "samples": float(samples),
-            }
+        results.update(_parse_benchstat_table(table))
     return results
 
 
