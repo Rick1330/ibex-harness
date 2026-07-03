@@ -19,9 +19,10 @@ function SortHeader({
 }>) {
   const active = sortKey === column;
   const indicator = sortIndicator(active, sortDir);
+  const ariaSort = active ? (sortDir === "asc" ? "ascending" : "descending") : "none";
 
   return (
-    <th scope="col" className="px-4 py-3 font-medium text-muted-foreground">
+    <th scope="col" aria-sort={ariaSort} className="px-4 py-3 font-medium text-muted-foreground">
       <button
         type="button"
         onClick={() => { onSort(column); }}

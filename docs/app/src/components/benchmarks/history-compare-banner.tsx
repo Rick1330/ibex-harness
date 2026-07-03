@@ -24,7 +24,7 @@ export function HistoryCompareBanner({ selected, compareQuery, onClear }: Histor
           href={`/benchmarks/compare?${compareQuery}`}
           className="rounded-md border border-border bg-background px-2 py-1 text-xs font-medium hover:bg-panel-raised"
         >
-          Compare selected (2)
+          Compare selected ({selected.length})
         </Link>
       </div>
     </div>

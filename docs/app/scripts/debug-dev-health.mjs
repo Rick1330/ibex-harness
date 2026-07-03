@@ -1,13 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { listNodeProcesses, isDocsAppNextProcess } from "./node-process-utils.mjs";
-import { appRoot, DEFAULT_DIST, FALLBACK_DIST, isTraceWritable } from "./resolve-dist-dir.mjs";
+import { appRoot, DEFAULT_DIST, FALLBACK_DIST, harnessRoot, isTraceWritable } from "./resolve-dist-dir.mjs";
 
-const root = path.dirname(fileURLToPath(import.meta.url));
 const runId = process.env.DEBUG_RUN_ID ?? `dev-health-${Date.now()}`;
-const logPath = path.join(appRoot, "..", "..", "..", `debug-${runId}.log`);
+const logPath = path.join(harnessRoot, `debug-${runId}.log`);
 const nextDir = path.join(appRoot, DEFAULT_DIST);
 
 function log(hypothesisId, message, data) {

@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 export const appRoot = path.join(scriptDir, "..");
+export const harnessRoot = path.join(appRoot, "..", "..");
 
 export const DEFAULT_DIST = ".next";
 export const FALLBACK_DIST = ".next-dev";

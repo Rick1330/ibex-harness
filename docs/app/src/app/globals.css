@@ -1427,7 +1427,7 @@ header[data-site-nav] a[data-site-nav-github] {
 @media (min-width: 768px) {
   #nd-sidebar > div,
   [data-sidebar] > div {
-    border-inline-end: 1px solid hsl(var(--border-strong)) !important;
+    border-inline-end: 1px solid hsl(var(--border)) !important;
   }
 }
 

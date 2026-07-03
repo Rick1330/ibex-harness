@@ -1,18 +1,15 @@
 import { KpiCard } from "@/components/benchmarks/kpi-card";
 import { K6_TARGETS } from "@/lib/benchmarks/constants";
 import { formatBytes, formatMs, formatPercent, formatReqPerSec } from "@/lib/benchmarks/format";
+import { proxyOverheadBenchmark } from "@/lib/benchmarks/run-benchmarks";
 import type { BenchmarkRun } from "@/lib/benchmarks/types";
-
-function proxyOverhead(run: BenchmarkRun) {
-  return run.go_benchmarks.BenchmarkProxyOverhead;
-}
 
 type OverviewKpiGridProps = Readonly<{
   latest: BenchmarkRun;
 }>;
 
 export function OverviewKpiGrid({ latest }: OverviewKpiGridProps) {
-  const overhead = proxyOverhead(latest);
+  const overhead = proxyOverheadBenchmark(latest);
   const errorOk = latest.k6.error_rate <= K6_TARGETS.error_rate;
   const allocsDelta = latest.metric_deltas?.["go_benchmarks.BenchmarkProxyOverhead.bytes_per_op"];
 
