@@ -58,15 +58,23 @@ const statusEmoji = emojiForStatus(run.status);
 const delta = run.regression_vs_baseline_pct;
 const deltaText = formatDelta(delta);
 
+function markdownTableRow(cells) {
+  return `| ${cells.join(" | ")} |`;
+}
+
+const resultsTable = [
+  markdownTableRow(["Metric", "This run", "Delta vs baseline"]),
+  markdownTableRow(["---", "---", "---"]),
+  markdownTableRow(["Proxy p99", `${run.k6?.p99_ms ?? "—"}ms`, deltaText]),
+  markdownTableRow(["Throughput", `${run.k6?.req_per_s ?? "—"} req/s`, "—"]),
+  markdownTableRow(["Error rate", `${((run.k6?.error_rate ?? 0) * 100).toFixed(3)}%`, "—"]),
+].join("\n");
+
 const body = `## Benchmark Results — Run #${run.run_number ?? "?"}
 
 **Status:** ${statusEmoji} ${String(run.status).toUpperCase()} | Commit: \`${run.short_sha}\` | [View dashboard →](https://docs.ibexharness.com/benchmarks/history/${run.short_sha})
 
-| Metric | This run | Delta vs baseline |
-| --- | --- | --- |
-| Proxy p99 | ${run.k6?.p99_ms ?? "—"}ms | ${deltaText} |
-| Throughput | ${run.k6?.req_per_s ?? "—"} req/s | — |
-| Error rate | ${((run.k6?.error_rate ?? 0) * 100).toFixed(3)}% | — |
+${resultsTable}
 
 > Regression threshold: >10% degradation on proxy p99 fails CI.`;
 
