@@ -17,9 +17,18 @@ fi
 
 git fetch origin "$BASE_REF"
 
-if git diff --quiet "origin/${BASE_REF}...HEAD" -- "$COMMITTED_PATH"; then
+set +e
+git diff --quiet "origin/${BASE_REF}...HEAD" -- "$COMMITTED_PATH"
+diff_rc=$?
+set -e
+
+if [[ "$diff_rc" -eq 0 ]]; then
   echo "benchmark-data.json unchanged on branch; publish will apply the workflow artifact."
   exit 0
+fi
+
+if [[ "$diff_rc" -gt 1 ]]; then
+  echo "verify_pr_benchmark_integrity: could not diff against origin/${BASE_REF}; checking artifact match."
 fi
 
 last_author="$(git log -1 --format='%ae' -- "$COMMITTED_PATH")"
