@@ -71,19 +71,27 @@ const body = `## Benchmark Results — Run #${run.run_number ?? "?"}
 > Regression threshold: >10% degradation on proxy p99 fails CI.`;
 
 const [owner, name] = repo.split("/");
-const response = await fetch(
-  `https://api.github.com/repos/${owner}/${name}/issues/${prNumber}/comments`,
-  {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: "application/vnd.github+json",
-      "Content-Type": "application/json",
-      "X-GitHub-Api-Version": "2022-11-28",
+const controller = new AbortController();
+const timeout = setTimeout(() => { controller.abort(); }, 10_000);
+let response;
+try {
+  response = await fetch(
+    `https://api.github.com/repos/${owner}/${name}/issues/${prNumber}/comments`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json",
+        "Content-Type": "application/json",
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+      body: JSON.stringify({ body }),
+      signal: controller.signal,
     },
-    body: JSON.stringify({ body }),
-  },
-);
+  );
+} finally {
+  clearTimeout(timeout);
+}
 
 if (!response.ok) {
   console.error(`post-pr-comment: GitHub API request failed with status ${response.status}`);
