@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 import { ExportCsvButton } from "@/components/benchmarks/export-csv-button";
+import { HistoryTableFilters } from "@/components/benchmarks/history-table-filters";
+import { HistoryTablePagination } from "@/components/benchmarks/history-table-pagination";
 import { KeyboardHelpDialog } from "@/components/benchmarks/keyboard-help-dialog";
 import { useBenchmarkKeyboard } from "@/hooks/use-benchmark-keyboard";
 import { useCompareSelection } from "@/hooks/use-compare-selection";
@@ -13,9 +15,6 @@ import { formatBytes, formatDeltaPct, formatMs, formatReqPerSec } from "@/lib/be
 import type { BenchmarkRun, RunStatus } from "@/lib/benchmarks/types";
 
 const STATUS_FILTER_ID = "history-status-filter";
-
-const FILTER_SELECT_CLASS =
-  "rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground focus:border-border-strong focus:outline-none focus:ring-2 focus:ring-border-strong/40";
 
 type SortKey = "run_number" | "short_sha" | "branch" | "status" | "p99" | "req_per_s" | "delta" | "timestamp";
 type SortDir = "asc" | "desc";
@@ -181,44 +180,20 @@ export function HistoryTable({ runs }: HistoryTableProps) {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-3">
-          <label htmlFor={STATUS_FILTER_ID} className="text-xs text-muted-foreground">
-            <span className="mr-2">Status</span>
-            <select
-              id={STATUS_FILTER_ID}
-              value={statusFilter}
-              onChange={(event) => {
-                setPage(1);
-                setStatusFilter(event.target.value as RunStatus | "all");
-              }}
-              className={FILTER_SELECT_CLASS}
-            >
-              <option value="all">All</option>
-              <option value="pass">Pass</option>
-              <option value="regression">Regression</option>
-              <option value="fail">Fail</option>
-              <option value="unknown">Unknown</option>
-            </select>
-          </label>
-          <label htmlFor="history-branch-filter" className="text-xs text-muted-foreground">
-            <span className="mr-2">Branch</span>
-            <select
-              id="history-branch-filter"
-              value={branchFilter}
-              onChange={(event) => {
-                setPage(1);
-                setBranchFilter(event.target.value);
-              }}
-              className={FILTER_SELECT_CLASS}
-            >
-              {branches.map((branch) => (
-                <option key={branch} value={branch}>
-                  {branch === "all" ? "All" : branch}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
+        <HistoryTableFilters
+          statusFilterId={STATUS_FILTER_ID}
+          statusFilter={statusFilter}
+          branchFilter={branchFilter}
+          branches={branches}
+          onStatusChange={(value) => {
+            setPage(1);
+            setStatusFilter(value);
+          }}
+          onBranchChange={(value) => {
+            setPage(1);
+            setBranchFilter(value);
+          }}
+        />
         <ExportCsvButton runs={sorted} />
       </div>
 
@@ -338,32 +313,14 @@ export function HistoryTable({ runs }: HistoryTableProps) {
         </table>
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground">
-        <p>
-          Showing {pageRuns.length} of {sorted.length} runs
-        </p>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            disabled={currentPage <= 1}
-            onClick={() => setPage((value) => Math.max(1, value - 1))}
-            className="rounded-md border border-border px-2 py-1 disabled:opacity-40"
-          >
-            Prev
-          </button>
-          <span className="font-mono">
-            Page {currentPage} of {totalPages}
-          </span>
-          <button
-            type="button"
-            disabled={currentPage >= totalPages}
-            onClick={() => setPage((value) => Math.min(totalPages, value + 1))}
-            className="rounded-md border border-border px-2 py-1 disabled:opacity-40"
-          >
-            Next
-          </button>
-        </div>
-      </div>
+      <HistoryTablePagination
+        pageCount={pageRuns.length}
+        totalCount={sorted.length}
+        currentPage={currentPage}
+        totalPages={totalPages}
+        onPrev={() => setPage((value) => Math.max(1, value - 1))}
+        onNext={() => setPage((value) => Math.min(totalPages, value + 1))}
+      />
       <p className="text-xs text-muted-foreground">
         Click any row to open run detail. Press <kbd className="font-mono">?</kbd> for keyboard
         shortcuts.

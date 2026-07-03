@@ -5,7 +5,13 @@ export function pctChange(
   current: number,
   higherIsBetter = false,
 ): number | null {
-  if (baseline === null || !Number.isFinite(baseline) || baseline === 0) {
+  if (baseline === null) {
+    return null;
+  }
+  if (!Number.isFinite(baseline)) {
+    return null;
+  }
+  if (baseline === 0) {
     return null;
   }
   const raw = ((current - baseline) / baseline) * 100;

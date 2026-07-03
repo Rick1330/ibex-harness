@@ -21,11 +21,98 @@ import {
 } from "@/lib/benchmarks/format";
 import { useBenchmarkData } from "@/hooks/use-benchmark-data";
 import { filterRunsByDays } from "@/lib/benchmarks/plot";
+import type { BenchmarkRun } from "@/lib/benchmarks/types";
 
 const OVERVIEW_KPI_SKELETONS = ["proxy-p99", "throughput", "allocs", "error-rate"] as const;
 
-function proxyOverhead(run: NonNullable<ReturnType<typeof useBenchmarkData>["latest"]>) {
+function proxyOverhead(run: BenchmarkRun) {
   return run.go_benchmarks.BenchmarkProxyOverhead;
+}
+
+function OverviewKpiGrid({ latest }: Readonly<{ latest: BenchmarkRun }>) {
+  const overhead = proxyOverhead(latest);
+  const errorOk = latest.k6.error_rate <= K6_TARGETS.error_rate;
+  const allocsDelta = latest.metric_deltas?.["go_benchmarks.BenchmarkProxyOverhead.bytes_per_op"];
+
+  return (
+    <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <KpiCard
+        label="Proxy p99"
+        value={formatMs(latest.k6.p99_ms)}
+        deltaPct={latest.metric_deltas?.["k6.p99_ms"] ?? latest.regression_vs_baseline_pct}
+      />
+      <KpiCard
+        label="Throughput"
+        value={formatReqPerSec(latest.k6.req_per_s)}
+        deltaPct={latest.metric_deltas?.["k6.req_per_s"] ?? null}
+        higherIsBetter
+      />
+      <KpiCard
+        label="Allocs/op"
+        value={overhead ? formatBytes(overhead.bytes_per_op) : "—"}
+        deltaPct={allocsDelta ?? null}
+      />
+      <KpiCard
+        label="Error rate"
+        value={formatPercent(latest.k6.error_rate)}
+        hint={errorOk ? "✓ target < 0.1%" : "✗ above target"}
+      />
+    </section>
+  );
+}
+
+function OverviewSlaSection({ latest }: Readonly<{ latest: BenchmarkRun }>) {
+  return (
+    <div className="rounded-md border border-border bg-card p-5 lg:col-span-1">
+      <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-muted-foreground">
+        SLA targets
+      </h2>
+      <div className="space-y-4">
+        <SlaGauge label="Proxy overhead p99" valueMs={latest.k6.p99_ms} targetMs={K6_TARGETS.p99_ms} />
+        <SlaGauge
+          label="Auth LRU hit"
+          valueMs={latest.stages.auth_lru_p99_ms}
+          targetMs={SLA_TARGETS.auth_lru_hit_p99_ms}
+        />
+        <SlaGauge
+          label="Auth gRPC fallback"
+          valueMs={latest.stages.auth_grpc_p99_ms}
+          targetMs={SLA_TARGETS.auth_grpc_fallback_p99_ms}
+        />
+        <SlaGauge
+          label="Rate limit"
+          valueMs={latest.stages.rate_limit_p99_ms}
+          targetMs={SLA_TARGETS.rate_limit_p99_ms}
+        />
+        <SlaGauge
+          label="Directive resolve"
+          valueMs={latest.stages.directive_resolve_p99_ms}
+          targetMs={SLA_TARGETS.directive_resolve_p99_ms}
+        />
+        <SlaGauge
+          label="Error rate"
+          valueMs={latest.k6.error_rate * 1000}
+          targetMs={K6_TARGETS.error_rate * 1000}
+        />
+      </div>
+    </div>
+  );
+}
+
+function OverviewTrendSection({ runs }: Readonly<{ runs: BenchmarkRun[] }>) {
+  const trendRuns = filterRunsByDays(runs, CHART_OVERVIEW_DAYS);
+
+  return (
+    <div className="lg:col-span-2">
+      <h2 className="mb-3 text-sm font-semibold uppercase tracking-widest text-muted-foreground">
+        Proxy p99 — last {CHART_OVERVIEW_DAYS} days
+      </h2>
+      <TrendChart runs={trendRuns} />
+      <p className="mt-2 text-xs text-muted-foreground">
+        Dashed line = SLA target (20ms) · dots = data points · red dots = regression runs
+      </p>
+    </div>
+  );
 }
 
 export function BenchmarkOverviewPanel() {
@@ -57,84 +144,14 @@ export function BenchmarkOverviewPanel() {
     return <BenchmarkEmptyState />;
   }
 
-  const overhead = proxyOverhead(latest);
-  const trendRuns = filterRunsByDays(runs, CHART_OVERVIEW_DAYS);
-  const errorOk = latest.k6.error_rate <= K6_TARGETS.error_rate;
-  const allocsDelta = latest.metric_deltas?.["go_benchmarks.BenchmarkProxyOverhead.bytes_per_op"];
-
   return (
     <div className="space-y-8">
       <RegressionAlert run={latest} />
       <BenchmarkStatusBadge run={latest} />
-
-      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <KpiCard
-          label="Proxy p99"
-          value={formatMs(latest.k6.p99_ms)}
-          deltaPct={latest.metric_deltas?.["k6.p99_ms"] ?? latest.regression_vs_baseline_pct}
-        />
-        <KpiCard
-          label="Throughput"
-          value={formatReqPerSec(latest.k6.req_per_s)}
-          deltaPct={latest.metric_deltas?.["k6.req_per_s"] ?? null}
-          higherIsBetter
-        />
-        <KpiCard
-          label="Allocs/op"
-          value={overhead ? formatBytes(overhead.bytes_per_op) : "—"}
-          deltaPct={allocsDelta ?? null}
-        />
-        <KpiCard
-          label="Error rate"
-          value={formatPercent(latest.k6.error_rate)}
-          hint={errorOk ? "✓ target < 0.1%" : "✗ above target"}
-        />
-      </section>
-
+      <OverviewKpiGrid latest={latest} />
       <section className="grid gap-4 lg:grid-cols-3">
-        <div className="lg:col-span-2">
-          <h2 className="mb-3 text-sm font-semibold uppercase tracking-widest text-muted-foreground">
-            Proxy p99 — last {CHART_OVERVIEW_DAYS} days
-          </h2>
-          <TrendChart runs={trendRuns} />
-          <p className="mt-2 text-xs text-muted-foreground">
-            Dashed line = SLA target (20ms) · dots = data points · red dots = regression runs
-          </p>
-        </div>
-
-        <div className="rounded-md border border-border bg-card p-5 lg:col-span-1">
-          <h2 className="mb-4 text-sm font-semibold uppercase tracking-widest text-muted-foreground">
-            SLA targets
-          </h2>
-          <div className="space-y-4">
-            <SlaGauge label="Proxy overhead p99" valueMs={latest.k6.p99_ms} targetMs={K6_TARGETS.p99_ms} />
-            <SlaGauge
-              label="Auth LRU hit"
-              valueMs={latest.stages.auth_lru_p99_ms}
-              targetMs={SLA_TARGETS.auth_lru_hit_p99_ms}
-            />
-            <SlaGauge
-              label="Auth gRPC fallback"
-              valueMs={latest.stages.auth_grpc_p99_ms}
-              targetMs={SLA_TARGETS.auth_grpc_fallback_p99_ms}
-            />
-            <SlaGauge
-              label="Rate limit"
-              valueMs={latest.stages.rate_limit_p99_ms}
-              targetMs={SLA_TARGETS.rate_limit_p99_ms}
-            />
-            <SlaGauge
-              label="Directive resolve"
-              valueMs={latest.stages.directive_resolve_p99_ms}
-              targetMs={SLA_TARGETS.directive_resolve_p99_ms}
-            />
-            <SlaGauge
-              label="Error rate"
-              valueMs={latest.k6.error_rate * 1000}
-              targetMs={K6_TARGETS.error_rate * 1000}
-            />
-          </div>
-        </div>
+        <OverviewTrendSection runs={runs} />
+        <OverviewSlaSection latest={latest} />
       </section>
     </div>
   );

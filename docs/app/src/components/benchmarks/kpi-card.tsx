@@ -13,7 +13,10 @@ type KpiCardProps = Readonly<{
 }>;
 
 function trendMeta(deltaPct: number | null | undefined, higherIsBetter: boolean) {
-  if (deltaPct === null || deltaPct === undefined || !Number.isFinite(deltaPct)) {
+  if (deltaPct === null || deltaPct === undefined) {
+    return { icon: ArrowRight, className: "text-muted-foreground" };
+  }
+  if (!Number.isFinite(deltaPct)) {
     return { icon: ArrowRight, className: "text-muted-foreground" };
   }
   if (Math.abs(deltaPct) < 0.05) {

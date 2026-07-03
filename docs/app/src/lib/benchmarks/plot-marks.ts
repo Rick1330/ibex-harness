@@ -26,28 +26,19 @@ const STACK_STAGE_KEYS: StageKey[] = [
   "prompt_inject_p99_ms",
 ];
 
-export function buildTrendPlot(
-  data: TrendDatum[],
-  theme: ChartTheme,
-  options?: {
-    width?: number;
-    height?: number;
-    targetMs?: number;
-    yLabel?: string;
-    yTickFormat?: (value: number) => string;
-    showCiBand?: boolean;
-  },
-): Plot.PlotOptions {
-  const width = options?.width ?? 640;
-  const height = options?.height ?? 200;
-  const yTickFormat = options?.yTickFormat ?? ((value: number) => `${value}ms`);
-  const showCiBand = options?.showCiBand ?? true;
-  const regressionData = data.filter((point) => point.status === "regression");
-  const bandData = data.filter(
-    (point) => point.ciLow !== undefined && point.ciHigh !== undefined,
-  );
+function plotMonoStyle(theme: ChartTheme): NonNullable<Plot.PlotOptions["style"]> {
+  return {
+    color: theme.axis,
+    fontFamily: "var(--font-geist-mono), ui-monospace, monospace",
+    fontSize: "11px",
+  };
+}
 
-  const marks: Plot.Markish[] = [
+function trendAxisMarks(
+  theme: ChartTheme,
+  yTickFormat: (value: number) => string,
+): Plot.Markish[] {
+  return [
     Plot.gridY({ stroke: theme.grid, strokeOpacity: 1 }),
     Plot.axisX({
       tickSize: 0,
@@ -61,16 +52,18 @@ export function buildTrendPlot(
       label: null,
     }),
   ];
+}
 
-  if (options?.targetMs !== undefined) {
-    marks.push(
-      Plot.ruleY([options.targetMs], {
-        stroke: theme.target,
-        strokeDasharray: "4,4",
-        strokeWidth: 1,
-      }),
-    );
-  }
+function trendSeriesMarks(
+  data: TrendDatum[],
+  theme: ChartTheme,
+  showCiBand: boolean,
+): Plot.Markish[] {
+  const regressionData = data.filter((point) => point.status === "regression");
+  const bandData = data.filter(
+    (point) => point.ciLow !== undefined && point.ciHigh !== undefined,
+  );
+  const marks: Plot.Markish[] = [];
 
   if (showCiBand && bandData.length > 0) {
     marks.push(
@@ -111,7 +104,93 @@ export function buildTrendPlot(
     );
   }
 
+  return marks;
+}
+
+type SeriesTrendRow = Readonly<{
+  date: Date;
+  value: number;
+  series: string;
+}>;
+
+function buildDualSeriesTrendPlot(
+  data: SeriesTrendRow[],
+  theme: ChartTheme,
+  options: Readonly<{
+    width?: number;
+    height?: number;
+    targetMs?: number;
+    yLabel?: string;
+    legendDomain: string[];
+    legendRange: string[];
+  }>,
+): Plot.PlotOptions {
+  const width = options.width ?? 640;
+  const height = options.height ?? 200;
+  const marks: Plot.Markish[] = [];
+
+  if (options.targetMs !== undefined) {
+    marks.push(Plot.ruleY([options.targetMs], { stroke: theme.target, strokeDasharray: "4,4" }));
+  }
+
   marks.push(
+    Plot.line(data, {
+      x: "date",
+      y: "value",
+      stroke: "series",
+      strokeWidth: 2,
+      z: "series",
+    }),
+    Plot.dot(data, { x: "date", y: "value", fill: "series", r: 2 }),
+  );
+
+  return {
+    width,
+    height,
+    marginLeft: 48,
+    marginRight: options.legendDomain.length > 2 ? 48 : 16,
+    marginTop: 16,
+    marginBottom: 32,
+    x: { type: "time", label: null },
+    y: { label: options.yLabel ?? null, grid: true },
+    color: {
+      legend: true,
+      domain: options.legendDomain,
+      range: options.legendRange,
+    },
+    marks,
+    style: plotMonoStyle(theme),
+  };
+}
+
+export function buildTrendPlot(
+  data: TrendDatum[],
+  theme: ChartTheme,
+  options?: {
+    width?: number;
+    height?: number;
+    targetMs?: number;
+    yLabel?: string;
+    yTickFormat?: (value: number) => string;
+    showCiBand?: boolean;
+  },
+): Plot.PlotOptions {
+  const width = options?.width ?? 640;
+  const height = options?.height ?? 200;
+  const yTickFormat = options?.yTickFormat ?? ((value: number) => `${value}ms`);
+  const showCiBand = options?.showCiBand ?? true;
+  const marks = [
+    ...trendAxisMarks(theme, yTickFormat),
+    ...(options?.targetMs !== undefined
+      ? [
+          Plot.ruleY([options.targetMs], {
+            stroke: theme.target,
+            strokeDasharray: "4,4",
+            strokeWidth: 1,
+          }),
+        ]
+      : []),
+    ...trendSeriesMarks(data, theme, showCiBand),
     Plot.tip(
       data,
       Plot.pointer({
@@ -120,7 +199,7 @@ export function buildTrendPlot(
         title: (datum: TrendDatum) => formatTrendTipTitle(datum),
       }),
     ),
-  );
+  ];
 
   return {
     width,
@@ -132,11 +211,7 @@ export function buildTrendPlot(
     x: { type: "time", label: null },
     y: { label: options?.yLabel ?? null, grid: false },
     marks,
-    style: {
-      color: theme.axis,
-      fontFamily: "var(--font-geist-mono), ui-monospace, monospace",
-      fontSize: "11px",
-    },
+    style: plotMonoStyle(theme),
   };
 }
 
@@ -179,11 +254,7 @@ export function buildWaterfallPlot(
       }),
       Plot.ruleX([0], { stroke: theme.grid }),
     ],
-    style: {
-      color: theme.axis,
-      fontFamily: "var(--font-geist-mono), ui-monospace, monospace",
-      fontSize: "11px",
-    },
+    style: plotMonoStyle(theme),
   };
 }
 
@@ -225,11 +296,7 @@ export function buildPercentilePlot(
       }),
       Plot.ruleX([0], { stroke: theme.grid }),
     ],
-    style: {
-      color: theme.axis,
-      fontFamily: "var(--font-geist-mono), ui-monospace, monospace",
-      fontSize: "11px",
-    },
+    style: plotMonoStyle(theme),
   };
 }
 
@@ -239,37 +306,13 @@ export function buildPercentileTrendPlot(
   width = 640,
   targetMs = 20,
 ): Plot.PlotOptions {
-  return {
+  return buildDualSeriesTrendPlot(data, theme, {
     width,
     height: 220,
-    marginLeft: 48,
-    marginRight: 16,
-    marginTop: 16,
-    marginBottom: 32,
-    x: { type: "time", label: null },
-    y: { label: null, tickFormat: (value: number) => `${value}ms`, grid: true },
-    color: {
-      legend: true,
-      domain: ["p50", "p95", "p99", "p99.9"],
-      range: [...theme.series],
-    },
-    marks: [
-      Plot.ruleY([targetMs], { stroke: theme.target, strokeDasharray: "4,4" }),
-      Plot.line(data, {
-        x: "date",
-        y: "value",
-        stroke: "series",
-        strokeWidth: 2,
-        z: "series",
-      }),
-      Plot.dot(data, { x: "date", y: "value", fill: "series", r: 2 }),
-    ],
-    style: {
-      color: theme.axis,
-      fontFamily: "var(--font-geist-mono), ui-monospace, monospace",
-      fontSize: "11px",
-    },
-  };
+    targetMs,
+    legendDomain: ["p50", "p95", "p99", "p99.9"],
+    legendRange: [...theme.series],
+  });
 }
 
 export function buildAllocTrendPlot(
@@ -277,36 +320,12 @@ export function buildAllocTrendPlot(
   theme: ChartTheme,
   width = 640,
 ): Plot.PlotOptions {
-  return {
+  return buildDualSeriesTrendPlot(data, theme, {
     width,
-    height: 200,
-    marginLeft: 48,
-    marginRight: 48,
-    marginTop: 16,
-    marginBottom: 32,
-    x: { type: "time", label: null },
-    y: { label: "KB / allocs", grid: true },
-    color: {
-      legend: true,
-      domain: ["bytes/op", "allocs/op"],
-      range: [...theme.seriesDual],
-    },
-    marks: [
-      Plot.line(data, {
-        x: "date",
-        y: "value",
-        stroke: "series",
-        strokeWidth: 2,
-        z: "series",
-      }),
-      Plot.dot(data, { x: "date", y: "value", fill: "series", r: 2 }),
-    ],
-    style: {
-      color: theme.axis,
-      fontFamily: "var(--font-geist-mono), ui-monospace, monospace",
-      fontSize: "11px",
-    },
-  };
+    yLabel: "KB / allocs",
+    legendDomain: ["bytes/op", "allocs/op"],
+    legendRange: [...theme.seriesDual],
+  });
 }
 
 export function buildThroughputDurationPlot(
@@ -334,11 +353,7 @@ export function buildThroughputDurationPlot(
       Plot.dot(data, { x: "t_s", y: "req_per_s", fill: theme.primaryLine, r: 2 }),
       Plot.ruleY([0], { stroke: theme.grid }),
     ],
-    style: {
-      color: theme.axis,
-      fontFamily: "var(--font-geist-mono), ui-monospace, monospace",
-      fontSize: "11px",
-    },
+    style: plotMonoStyle(theme),
   };
 }
 
@@ -379,10 +394,6 @@ export function buildStageStackPlot(
         z: "stage",
       }),
     ],
-    style: {
-      color: theme.axis,
-      fontFamily: "var(--font-geist-mono), ui-monospace, monospace",
-      fontSize: "11px",
-    },
+    style: plotMonoStyle(theme),
   };
 }

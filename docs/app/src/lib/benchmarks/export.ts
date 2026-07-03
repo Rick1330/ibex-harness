@@ -3,11 +3,15 @@ import { formatMs, formatReqPerSec } from "@/lib/benchmarks/format";
 import type { TimeRange } from "@/lib/benchmarks/plot";
 import { filterRunsByRange } from "@/lib/benchmarks/plot";
 
+function needsCsvQuoting(value: string): boolean {
+  return value.includes(",") || value.includes('"') || value.includes("\n");
+}
+
 function csvEscape(value: string): string {
-  if (value.includes(",") || value.includes('"') || value.includes("\n")) {
-    return `"${value.replaceAll('"', '""')}"`;
+  if (!needsCsvQuoting(value)) {
+    return value;
   }
-  return value;
+  return `"${value.replaceAll('"', '""')}"`;
 }
 
 function overheadBytes(run: BenchmarkRun): string {
