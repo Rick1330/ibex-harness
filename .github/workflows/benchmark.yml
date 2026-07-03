@@ -373,7 +373,7 @@ jobs:
           cp benchmarks/output/badge.svg docs/app/public/benchmarks/
 
       - name: Open benchmark data pull request
-        uses: peter-evans/create-pull-request@271a8d034026d50dbb17063a163b544e3fdff44d # v7.0.0
+        uses: peter-evans/create-pull-request@d4f3be6ce6f4083b7ac7490ab98b48a62db1ee41 # v7.0.10
         with:
           commit-message: "chore(bench): weekly benchmark data update"
           title: "chore(bench): weekly benchmark data update"
