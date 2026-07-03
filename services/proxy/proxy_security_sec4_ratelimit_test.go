@@ -15,14 +15,13 @@ func TestSecurity_SEC4_1_RemainingDecrements(t *testing.T) {
 	firstRemaining := -1
 	lastRemaining := -1
 	for i := 0; i < 3; i++ {
-		if i > 0 {
-			time.Sleep(15 * time.Millisecond)
-		}
 		resp, _ := authProbeGET(t, orgAProbeOpts(env))
 		rem := int(parseHeaderInt(t, resp.Header.Get("X-RateLimit-Remaining"), "X-RateLimit-Remaining"))
 		resp.Body.Close()
 		if i == 0 {
 			firstRemaining = rem
+		} else if rem >= lastRemaining {
+			t.Fatalf("remaining did not strictly decrease at step %d: prev=%d cur=%d", i, lastRemaining, rem)
 		}
 		lastRemaining = rem
 	}
