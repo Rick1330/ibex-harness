@@ -3,7 +3,7 @@
 import Link from "next/link";
 
 import { cn } from "@/lib/cn";
-import { formatBytes, formatDeltaPct, formatMs, formatReqPerSec } from "@/lib/benchmarks/format";
+import { formatBytes, formatDeltaPct, formatMs, formatReqPerSec, formatTimestamp } from "@/lib/benchmarks/format";
 import type { BenchmarkRun, RunStatus } from "@/lib/benchmarks/types";
 
 type HistoryTableRowProps = Readonly<{
@@ -71,10 +71,10 @@ export function HistoryTableRow({
             rel="noreferrer"
             className="underline-offset-4 hover:underline"
           >
-            {new Date(run.timestamp).toLocaleString()}
+            {formatTimestamp(run.timestamp)}
           </a>
         ) : (
-          new Date(run.timestamp).toLocaleString()
+          formatTimestamp(run.timestamp)
         )}
       </td>
       <td className="px-4 py-3" onClick={(event) => { event.stopPropagation(); }}>

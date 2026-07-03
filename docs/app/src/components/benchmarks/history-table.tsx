@@ -1,11 +1,12 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 import { ExportCsvButton } from "@/components/benchmarks/export-csv-button";
+import { HistoryCompareBanner } from "@/components/benchmarks/history-compare-banner";
 import { HistoryTableFilters } from "@/components/benchmarks/history-table-filters";
+import { HistoryTableHead } from "@/components/benchmarks/history-table-head";
 import { HistoryTablePagination } from "@/components/benchmarks/history-table-pagination";
 import { HistoryTableRow } from "@/components/benchmarks/history-table-row";
 import { KeyboardHelpDialog } from "@/components/benchmarks/keyboard-help-dialog";
@@ -14,7 +15,6 @@ import { useCompareSelection } from "@/hooks/use-compare-selection";
 import {
   compareHistoryRuns,
   defaultSortDirForKey,
-  sortIndicator,
   statusClassName,
   type HistorySortDir,
   type HistorySortKey,
@@ -27,38 +27,6 @@ const PAGE_SIZE = 20;
 type HistoryTableProps = Readonly<{
   runs: BenchmarkRun[];
 }>;
-
-function SortHeader({
-  label,
-  column,
-  sortKey,
-  sortDir,
-  onSort,
-}: Readonly<{
-  label: string;
-  column: HistorySortKey;
-  sortKey: HistorySortKey;
-  sortDir: HistorySortDir;
-  onSort: (key: HistorySortKey) => void;
-}>) {
-  const active = sortKey === column;
-  const indicator = sortIndicator(active, sortDir);
-
-  return (
-    <th scope="col" className="px-4 py-3 font-medium text-muted-foreground">
-      <button
-        type="button"
-        onClick={() => { onSort(column); }}
-        className="inline-flex items-center gap-1 hover:text-foreground"
-      >
-        {label}
-        <span className="font-mono text-xs" aria-hidden>
-          {indicator}
-        </span>
-      </button>
-    </th>
-  );
-}
 
 export function HistoryTable({ runs }: HistoryTableProps) {
   const router = useRouter();
@@ -91,7 +59,10 @@ export function HistoryTable({ runs }: HistoryTableProps) {
 
   const totalPages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
-  const pageRuns = sorted.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+  const pageRuns = useMemo(
+    () => sorted.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE),
+    [sorted, currentPage],
+  );
 
   useEffect(() => {
     setSelectedIndex(0);
@@ -138,51 +109,16 @@ export function HistoryTable({ runs }: HistoryTableProps) {
       </div>
 
       {compare.canCompare ? (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border bg-panel px-4 py-3 text-sm">
-          <p className="font-mono text-xs text-muted-foreground">
-            Compare selected: {compare.selected.join(" vs ")}
-          </p>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={compare.clear}
-              className="rounded-md border border-border px-2 py-1 text-xs"
-            >
-              Clear
-            </button>
-            <Link
-              href={`/benchmarks/compare?${compare.compareQuery()}`}
-              className="rounded-md border border-border bg-background px-2 py-1 text-xs font-medium hover:bg-panel-raised"
-            >
-              Compare selected (2)
-            </Link>
-          </div>
-        </div>
+        <HistoryCompareBanner
+          selected={compare.selected}
+          compareQuery={compare.compareQuery() ?? ""}
+          onClear={compare.clear}
+        />
       ) : null}
 
       <div className="overflow-x-auto rounded-md border border-border">
         <table className="min-w-full text-left text-sm">
-          <thead className="border-b border-border bg-muted/40">
-            <tr>
-              <th scope="col" className="px-4 py-3 font-medium text-muted-foreground">
-                Cmp
-              </th>
-              <SortHeader label="Run #" column="run_number" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
-              <SortHeader label="SHA" column="short_sha" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
-              <SortHeader label="Branch" column="branch" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
-              <SortHeader label="Status" column="status" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
-              <SortHeader label="p99" column="p99" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
-              <th scope="col" className="px-4 py-3 font-medium text-muted-foreground">
-                Allocs
-              </th>
-              <SortHeader label="req/s" column="req_per_s" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
-              <SortHeader label="Delta" column="delta" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
-              <SortHeader label="When" column="timestamp" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
-              <th scope="col" className="px-4 py-3 font-medium text-muted-foreground">
-                Actions
-              </th>
-            </tr>
-          </thead>
+          <HistoryTableHead sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
           <tbody>
             {pageRuns.map((run, index) => (
               <HistoryTableRow

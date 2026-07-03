@@ -16,17 +16,21 @@ type UseBenchmarkKeyboardOptions = Readonly<{
   statusFilterId: string;
 }>;
 
-type KeyboardDispatchContext = Readonly<{
-  event: KeyboardEvent;
+type SelectionState = Readonly<{
   pageRuns: BenchmarkRun[];
   selectedIndex: number;
   setSelectedIndex: (index: number) => void;
-  onToggleCompare: (sha: string) => void;
-  onShowHelp: () => void;
-  helpOpen: boolean;
-  statusFilterId: string;
-  router: AppRouterInstance;
 }>;
+
+type KeyboardDispatchContext = SelectionState &
+  Readonly<{
+    event: KeyboardEvent;
+    onToggleCompare: (sha: string) => void;
+    onShowHelp: () => void;
+    helpOpen: boolean;
+    statusFilterId: string;
+    router: AppRouterInstance;
+  }>;
 
 function isTypingTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) {
@@ -38,44 +42,26 @@ function isTypingTarget(target: EventTarget | null): boolean {
 
 function moveSelection(
   event: KeyboardEvent,
-  pageRuns: BenchmarkRun[],
-  selectedIndex: number,
-  setSelectedIndex: (index: number) => void,
+  state: SelectionState,
   delta: number,
 ): boolean {
   event.preventDefault();
-  const next = Math.max(0, Math.min(pageRuns.length - 1, selectedIndex + delta));
-  setSelectedIndex(next);
+  const next = Math.max(0, Math.min(state.pageRuns.length - 1, state.selectedIndex + delta));
+  state.setSelectedIndex(next);
   return true;
 }
 
-function openSelectedRun(
+function withSelectedRun(
   event: KeyboardEvent,
-  pageRuns: BenchmarkRun[],
-  selectedIndex: number,
-  router: AppRouterInstance,
+  state: SelectionState,
+  action: (run: BenchmarkRun) => void,
 ): boolean {
-  const run = pageRuns.at(selectedIndex);
+  const run = state.pageRuns.at(state.selectedIndex);
   if (!run) {
     return false;
   }
   event.preventDefault();
-  router.push(`/benchmarks/history/${run.short_sha}`);
-  return true;
-}
-
-function toggleSelectedCompare(
-  event: KeyboardEvent,
-  pageRuns: BenchmarkRun[],
-  selectedIndex: number,
-  onToggleCompare: (sha: string) => void,
-): boolean {
-  const run = pageRuns.at(selectedIndex);
-  if (!run) {
-    return false;
-  }
-  event.preventDefault();
-  onToggleCompare(run.short_sha);
+  action(run);
   return true;
 }
 
@@ -95,29 +81,48 @@ function handleHelpKey(ctx: KeyboardDispatchContext): boolean {
   return true;
 }
 
+function handleArrowDown(ctx: KeyboardDispatchContext): boolean {
+  return moveSelection(ctx.event, ctx, 1);
+}
+
+function handleArrowUp(ctx: KeyboardDispatchContext): boolean {
+  return moveSelection(ctx.event, ctx, -1);
+}
+
+function handleEnter(ctx: KeyboardDispatchContext): boolean {
+  return withSelectedRun(ctx.event, ctx, (run) => {
+    ctx.router.push(`/benchmarks/history/${run.short_sha}`);
+  });
+}
+
+function handleCompare(ctx: KeyboardDispatchContext): boolean {
+  return withSelectedRun(ctx.event, ctx, (run) => {
+    ctx.onToggleCompare(run.short_sha);
+  });
+}
+
+const KEY_BINDINGS: ReadonlyArray<
+  readonly [readonly string[], (ctx: KeyboardDispatchContext) => boolean]
+> = [
+  [["?"], handleHelpKey],
+  [["j", "ArrowDown"], handleArrowDown],
+  [["k", "ArrowUp"], handleArrowUp],
+  [["Enter"], handleEnter],
+  [["c"], handleCompare],
+  [["/"], (ctx) => focusStatusFilter(ctx.event, ctx.statusFilterId)],
+];
+
 function dispatchBenchmarkKey(ctx: KeyboardDispatchContext): boolean {
   if (ctx.helpOpen && ctx.event.key !== "?") {
     return false;
   }
 
-  switch (ctx.event.key) {
-    case "?":
-      return handleHelpKey(ctx);
-    case "j":
-    case "ArrowDown":
-      return moveSelection(ctx.event, ctx.pageRuns, ctx.selectedIndex, ctx.setSelectedIndex, 1);
-    case "k":
-    case "ArrowUp":
-      return moveSelection(ctx.event, ctx.pageRuns, ctx.selectedIndex, ctx.setSelectedIndex, -1);
-    case "Enter":
-      return openSelectedRun(ctx.event, ctx.pageRuns, ctx.selectedIndex, ctx.router);
-    case "c":
-      return toggleSelectedCompare(ctx.event, ctx.pageRuns, ctx.selectedIndex, ctx.onToggleCompare);
-    case "/":
-      return focusStatusFilter(ctx.event, ctx.statusFilterId);
-    default:
-      return false;
+  for (const [keys, handler] of KEY_BINDINGS) {
+    if (keys.includes(ctx.event.key)) {
+      return handler(ctx);
+    }
   }
+  return false;
 }
 
 export function useBenchmarkKeyboard({

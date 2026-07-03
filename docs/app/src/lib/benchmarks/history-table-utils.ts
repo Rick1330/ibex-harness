@@ -19,27 +19,19 @@ const STATUS_ORDER: Record<RunStatus, number> = {
   pass: 3,
 };
 
+const SORT_VALUE_GETTERS: Record<HistorySortKey, (run: BenchmarkRun) => string | number> = {
+  run_number: (run) => run.run_number,
+  short_sha: (run) => run.short_sha,
+  branch: (run) => run.branch,
+  status: (run) => STATUS_ORDER[run.status],
+  p99: (run) => run.k6.p99_ms,
+  req_per_s: (run) => run.k6.req_per_s,
+  delta: (run) => run.regression_vs_baseline_pct ?? Number.NEGATIVE_INFINITY,
+  timestamp: (run) => new Date(run.timestamp).getTime(),
+};
+
 function sortValue(run: BenchmarkRun, key: HistorySortKey): string | number {
-  switch (key) {
-    case "run_number":
-      return run.run_number;
-    case "short_sha":
-      return run.short_sha;
-    case "branch":
-      return run.branch;
-    case "status":
-      return STATUS_ORDER[run.status];
-    case "p99":
-      return run.k6.p99_ms;
-    case "req_per_s":
-      return run.k6.req_per_s;
-    case "delta":
-      return run.regression_vs_baseline_pct ?? Number.NEGATIVE_INFINITY;
-    case "timestamp":
-      return new Date(run.timestamp).getTime();
-    default:
-      return 0;
-  }
+  return SORT_VALUE_GETTERS[key](run);
 }
 
 export function compareHistoryRuns(

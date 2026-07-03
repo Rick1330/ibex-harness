@@ -27,3 +27,18 @@ export function formatDeltaPct(value: number | null): string {
   const sign = value > 0 ? "+" : "";
   return `${sign}${value.toFixed(1)}%`;
 }
+
+const TIMESTAMP_LOCALE = "en-US";
+const TIMESTAMP_OPTIONS: Intl.DateTimeFormatOptions = {
+  year: "numeric",
+  month: "numeric",
+  day: "numeric",
+  hour: "numeric",
+  minute: "numeric",
+  second: "numeric",
+  hour12: false,
+};
+
+export function formatTimestamp(iso: string): string {
+  return new Date(iso).toLocaleString(TIMESTAMP_LOCALE, TIMESTAMP_OPTIONS);
+}
