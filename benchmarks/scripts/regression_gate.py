@@ -108,6 +108,23 @@ def build_checks(latest: dict[str, Any], baseline: dict[str, Any]) -> list[Check
     return checks
 
 
+def format_check_lines(checks: list[Check]) -> tuple[bool, list[str]]:
+    summary_lines = ["### Checks"]
+    ok = True
+    for name, cur, lim, passed in checks:
+        mark = "PASS" if passed else "FAIL"
+        summary_lines.append(f"- {mark}: {name} (value={cur:.6f}, limit={lim:.6f})")
+        ok = ok and passed
+    return ok, summary_lines
+
+
+def find_regression_pct(checks: list[Check]) -> float | None:
+    for name, cur, _, _ in checks:
+        if name == "regression vs baseline (%)":
+            return cur
+    return None
+
+
 def build_summary_lines(latest: dict[str, Any], checks: list[Check]) -> tuple[bool, list[str], float | None]:
     stage = latest["stages"]
     go_bench = latest["go_benchmarks"].get("BenchmarkProxyOverhead", {})
@@ -125,29 +142,23 @@ def build_summary_lines(latest: dict[str, Any], checks: list[Check]) -> tuple[bo
         f"- bytes/op: {bytes_op:.3f}",
         f"- stage synthetic total: {stage['synthetic_total_us']:.3f} µs",
         "",
-        "### Checks",
     ]
-    ok = True
-    for name, cur, lim, passed in checks:
-        mark = "PASS" if passed else "FAIL"
-        summary_lines.append(f"- {mark}: {name} (value={cur:.6f}, limit={lim:.6f})")
-        ok = ok and passed
+    ok, check_lines = format_check_lines(checks)
+    summary_lines.extend(check_lines)
+    return ok, summary_lines, find_regression_pct(checks)
 
-    regression_pct: float | None = None
-    for name, cur, _, _ in checks:
-        if name == "regression vs baseline (%)":
-            regression_pct = cur
-            break
 
-    return ok, summary_lines, regression_pct
+def resolve_gate_status(ok: bool, regression_pct: float | None) -> str:
+    if not ok:
+        return "fail"
+    if regression_pct is not None and regression_pct > 5.0:
+        return "regression"
+    return "pass"
 
 
 def write_gate_result(ok: bool, checks: list[Check], regression_pct: float | None) -> None:
-    status = "pass" if ok else "fail"
-    if ok and regression_pct is not None and regression_pct > 5.0:
-        status = "regression"
     payload = {
-        "status": status,
+        "status": resolve_gate_status(ok, regression_pct),
         "regression_pct": regression_pct,
         "checks": [
             {"name": name, "value": cur, "limit": lim, "ok": passed}

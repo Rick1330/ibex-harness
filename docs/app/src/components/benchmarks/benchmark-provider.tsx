@@ -7,7 +7,7 @@ import { parseBenchmarkData } from "@/lib/benchmarks/schema";
 import type { BenchmarkData } from "@/lib/benchmarks/types";
 
 async function fetchBenchmarkData(url: string): Promise<BenchmarkData> {
-  const response = await fetch(url);
+  const response = await fetch(url, { signal: AbortSignal.timeout(10_000) });
   if (!response.ok) {
     throw new Error(`Failed to load benchmark data (${response.status})`);
   }

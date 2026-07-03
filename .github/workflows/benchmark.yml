@@ -170,12 +170,12 @@ jobs:
         run: |
           set +e
           python benchmarks/scripts/regression_gate.py | tee benchmarks/output/gate-summary.md
-          status=$?
+          status=${PIPESTATUS[0]}
           set -e
           cat benchmarks/output/gate-summary.md >> "$GITHUB_STEP_SUMMARY"
           python benchmarks/scripts/build_benchmark_data.py
           python benchmarks/scripts/generate_badge.py
-          exit $status
+          exit "$status"
 
       - name: Verify benchmark data payload
         run: |
@@ -205,6 +205,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      actions: write
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4

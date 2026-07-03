@@ -12,13 +12,6 @@ type KpiCardProps = Readonly<{
   hint?: string;
 }>;
 
-function pickTrendIcon(improved: boolean, higherIsBetter: boolean): LucideIcon {
-  if (improved) {
-    return higherIsBetter ? ArrowUp : ArrowDown;
-  }
-  return higherIsBetter ? ArrowDown : ArrowUp;
-}
-
 function trendMeta(deltaPct: number | null | undefined, higherIsBetter: boolean) {
   if (deltaPct === null || deltaPct === undefined || !Number.isFinite(deltaPct)) {
     return { icon: ArrowRight, className: "text-muted-foreground" };
@@ -27,8 +20,9 @@ function trendMeta(deltaPct: number | null | undefined, higherIsBetter: boolean)
     return { icon: ArrowRight, className: "text-muted-foreground" };
   }
   const improved = higherIsBetter ? deltaPct > 0 : deltaPct < 0;
+  const icon = deltaPct > 0 ? ArrowUp : ArrowDown;
   return {
-    icon: pickTrendIcon(improved, higherIsBetter),
+    icon,
     className: improved ? "text-success" : "text-danger",
   };
 }
@@ -49,7 +43,7 @@ function KpiFooter({
   if (showDelta) {
     return (
       <p className={cn("mt-2 flex items-center gap-1 font-mono text-xs", trendClassName)}>
-        <TrendIcon className="h-3.5 w-3.5" aria-hidden />
+        <TrendIcon className="h-4 w-4" strokeWidth={1.5} aria-hidden />
         {formatDeltaPct(deltaPct ?? null)} vs baseline
       </p>
     );

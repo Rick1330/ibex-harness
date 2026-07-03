@@ -228,6 +228,37 @@ def build_metric_deltas(
     return deltas
 
 
+def build_runner_metadata(latest: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "run_number": safe_int(os.environ.get("GITHUB_RUN_NUMBER"), 0),
+        "go_version": str(latest.get("go_version") or ""),
+        "runner_os": str(latest.get("runner") or latest.get("runner_os") or "unknown"),
+        "runner_cpu": str(latest.get("runner_cpu") or ""),
+        "runner_vcpus": int(latest.get("runner_vcpus") or 2),
+        "runner_ram_gb": safe_int(os.environ.get("RUNNER_RAM_GB"), 7),
+        "k6_version": str(os.environ.get("K6_VERSION", "0.53.0")),
+    }
+
+
+def build_run_identity(
+    latest: dict[str, Any],
+    gate: dict[str, Any],
+    baseline_sha: str,
+) -> dict[str, Any]:
+    sha = str(latest.get("sha") or os.environ.get("GITHUB_SHA", "local"))
+    return {
+        "sha": sha,
+        "short_sha": short_sha(sha),
+        "timestamp": str(latest.get("timestamp") or ""),
+        "branch": str(latest.get("branch") or "local"),
+        "pr_number": latest.get("pr_number"),
+        "run_url": str(latest.get("run_url") or ""),
+        "status": str(gate.get("status") or "unknown"),
+        "regression_vs_baseline_pct": gate.get("regression_pct"),
+        "baseline_sha": baseline_sha or None,
+    }
+
+
 def build_run_record(
     latest: dict[str, Any],
     gate: dict[str, Any],
@@ -235,28 +266,11 @@ def build_run_record(
     benchstat: dict[str, dict[str, float]],
     prev_runs: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    sha = str(latest.get("sha") or os.environ.get("GITHUB_SHA", "local"))
-    status = str(gate.get("status") or "unknown")
-    regression_pct = gate.get("regression_pct")
     return {
-        "sha": sha,
-        "short_sha": short_sha(sha),
-        "timestamp": str(latest.get("timestamp") or ""),
-        "branch": str(latest.get("branch") or "local"),
-        "pr_number": latest.get("pr_number"),
-        "run_number": safe_int(os.environ.get("GITHUB_RUN_NUMBER"), 0),
-        "run_url": str(latest.get("run_url") or ""),
-        "go_version": str(latest.get("go_version") or ""),
-        "runner_os": str(latest.get("runner") or latest.get("runner_os") or "unknown"),
-        "runner_cpu": str(latest.get("runner_cpu") or ""),
-        "runner_vcpus": int(latest.get("runner_vcpus") or 2),
-        "runner_ram_gb": safe_int(os.environ.get("RUNNER_RAM_GB"), 7),
-        "k6_version": str(os.environ.get("K6_VERSION", "0.53.0")),
+        **build_run_identity(latest, gate, baseline_sha),
+        **build_runner_metadata(latest),
         "k6": map_k6(latest.get("k6", {}), OUT_DIR / "k6-summary.json"),
         "stages": map_stages(latest.get("stages", {})),
-        "status": status,
-        "regression_vs_baseline_pct": regression_pct,
-        "baseline_sha": baseline_sha or None,
         "metric_deltas": build_metric_deltas(latest, gate, baseline_sha, prev_runs),
         "go_benchmarks": map_go_benchmarks(latest.get("go_benchmarks", {}), benchstat),
     }

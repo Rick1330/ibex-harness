@@ -2,9 +2,6 @@ export function formatMs(value: number): string {
   if (!Number.isFinite(value)) {
     return "—";
   }
-  if (value < 1) {
-    return `${value.toFixed(2)} ms`;
-  }
   return `${value.toFixed(2)} ms`;
 }
 

@@ -1,5 +1,6 @@
 import type { MetadataRoute } from "next";
 
+import { BENCHMARK_NAV_PAGES } from "@/lib/benchmark-page-tree";
 import { blogSource, releasesSource, roadmapSource, source } from "@/lib/source";
 import { DOCS_SITE_URL } from "@/lib/site-seo";
 
@@ -24,14 +25,7 @@ function toSitemapEntry(url: string): MetadataRoute.Sitemap[number] {
 }
 
 export default function sitemap(): MetadataRoute.Sitemap {
-  const staticBenchmarkPages = [
-    "/benchmarks",
-    "/benchmarks/latency",
-    "/benchmarks/waterfall",
-    "/benchmarks/load",
-    "/benchmarks/history",
-    "/benchmarks/compare",
-  ];
+  const staticBenchmarkPages = BENCHMARK_NAV_PAGES.map((page) => page.url);
   const pages = [
     ...source.getPages(),
     ...blogSource.getPages(),
