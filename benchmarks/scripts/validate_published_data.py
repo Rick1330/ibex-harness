@@ -68,22 +68,33 @@ def validate_k6(k6: Any, label: str) -> None:
         fail(f"{label}.error_rate out of bounds: {error_rate}")
 
 
+def require_run_number_int(value: Any, label: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool):
+        fail(f"{label}.run_number must be an integer")
+    if value <= 0 or value > MAX_RUN_NUMBER:
+        fail(f"{label}.run_number out of bounds: {value}")
+    return value
+
+
+def run_id_from_actions_url(run_url: Any) -> int | None:
+    if not isinstance(run_url, str):
+        return None
+    marker = "/actions/runs/"
+    if marker not in run_url:
+        return None
+    run_id_text = run_url.rsplit(marker, maxsplit=1)[-1].strip("/")
+    if not run_id_text.isdigit():
+        return None
+    return int(run_id_text)
+
+
 def validate_run_number(run_data: dict[str, Any], label: str) -> None:
     run_number_value = run_data.get("run_number")
     if run_number_value is None:
         return
-    if not isinstance(run_number_value, int) or isinstance(run_number_value, bool):
-        fail(f"{label}.run_number must be an integer")
-    if run_number_value <= 0 or run_number_value > MAX_RUN_NUMBER:
-        fail(f"{label}.run_number out of bounds: {run_number_value}")
-    run_url = run_data.get("run_url")
-    if not isinstance(run_url, str):
-        return
-    marker = "/actions/runs/"
-    if marker not in run_url:
-        return
-    run_id_text = run_url.rsplit(marker, maxsplit=1)[-1].strip("/")
-    if run_id_text.isdigit() and run_number_value == int(run_id_text):
+    run_number = require_run_number_int(run_number_value, label)
+    run_id = run_id_from_actions_url(run_data.get("run_url"))
+    if run_id is not None and run_number == run_id:
         fail(f"{label}.run_number must be the workflow run number, not the run id")
 
 
