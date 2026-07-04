@@ -500,6 +500,20 @@ SENTRY_DSN=
 
 ---
 
+## 16.1) Benchmark bot integration (GitHub Actions / CI)
+
+Used by `.github/workflows/benchmark.yml` for cross-repo benchmark publishing and PR comments.
+
+| Variable | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `BENCHMARK_BOT_ENABLED` | repo variable | No | unset (disabled) | When `true`, `notify-benchmark-bot` dispatches to `ibexharness-benchmark-bot` after main benchmark runs |
+| `BENCHMARK_BOT_SHA` | repo variable | Yes when PR comments enabled | — | Pinned commit SHA of `ibexharness-benchmark-bot` for Rust `post-pr-comment` build (no `main` fallback) |
+| `BENCHMARK_BOT_DISPATCH_TOKEN` | repo secret | Yes when `BENCHMARK_BOT_ENABLED=true` | — | Fine-grained PAT with read access to bot repo for `repository_dispatch` |
+
+**Rotation:** Rotate `BENCHMARK_BOT_DISPATCH_TOKEN` quarterly. Update `BENCHMARK_BOT_SHA` only after security-reviewed bot releases (see bot repo `BOT_RELEASE_SHA`).
+
+---
+
 ## 17) Service-Specific `.env.example` Files (Recommended)
 
 Each service should also have its own `.env.example` in its directory, e.g.:

@@ -244,14 +244,44 @@ jobs:
           test -f benchmarks/output/gate-result.json
           python benchmarks/scripts/validate_published_data.py benchmarks/output/benchmark-data.json
 
-      - name: Post PR regression comment
-        if: github.event_name == 'pull_request'
+      - name: Require benchmark bot pin
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        run: test -n "${{ vars.BENCHMARK_BOT_SHA }}"
+
+      - name: Checkout benchmark bot
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: Rick1330/ibexharness-benchmark-bot
+          ref: ${{ vars.BENCHMARK_BOT_SHA }}
+          path: benchmark-bot
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # stable
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        with:
+          toolchain: stable
+
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2.8.2
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        with:
+          workspaces: benchmark-bot
+
+      - name: Build and post PR benchmark comment
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          BENCHMARK_DATA_PATH: benchmarks/output/benchmark-data.json
-        run: node benchmarks/scripts/post-pr-comment.mjs
+          BENCHMARK_DATA_PATH: ${{ github.workspace }}/benchmarks/output/benchmark-data.json
+          GATE_RESULT_PATH: ${{ github.workspace }}/benchmarks/output/gate-result.json
+        run: |
+          set -euo pipefail
+          cd benchmark-bot
+          cargo build --release
+          ./target/release/ibex-benchmark-bot post-pr-comment \
+            --benchmark-data "$BENCHMARK_DATA_PATH" \
+            --gate-result "$GATE_RESULT_PATH"
 
       - name: Stop proxy stack
         if: always()
@@ -310,52 +340,41 @@ jobs:
           BENCHMARK_PR_NUMBER: ${{ github.event.pull_request.number }}
         run: bash benchmarks/scripts/verify_pr_benchmark_integrity.sh "$BENCHMARK_BASE_REF"
 
-  open-benchmark-data-pr:
-    name: open-benchmark-data-pr
+  notify-benchmark-bot:
+    name: notify-benchmark-bot
     needs: collect-proxy-benchmarks
     if: |
-      github.event_name == 'schedule' ||
-      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+      vars.BENCHMARK_BOT_ENABLED == 'true' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'schedule' ||
+       github.event_name == 'workflow_dispatch' ||
+       github.event_name == 'push')
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: write
+    permissions: {}
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
         with:
           egress-policy: audit
 
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          persist-credentials: true
-
-      - name: Download benchmark data artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: benchmark-data
-          path: benchmarks/output
-
-      - name: Copy published assets
+      - name: Validate dispatch prerequisites
         run: |
-          mkdir -p docs/app/public/benchmarks
-          cp benchmarks/output/benchmark-data.json docs/app/public/benchmarks/
-          cp benchmarks/output/badge.svg docs/app/public/benchmarks/
+          set -euo pipefail
+          if [ -z "${{ secrets.BENCHMARK_BOT_DISPATCH_TOKEN }}" ]; then
+            echo "BENCHMARK_BOT_DISPATCH_TOKEN is required when BENCHMARK_BOT_ENABLED=true" >&2
+            exit 1
+          fi
 
-      - name: Open benchmark data pull request
-        uses: peter-evans/create-pull-request@d4f3be6ce6f4083b7ac7490ab98b48a62db1ee41 # v7.0.10
-        with:
-          commit-message: "chore(bench): weekly benchmark data update"
-          title: "chore(bench): weekly benchmark data update"
-          branch: chore/bench-data-${{ github.run_id }}
-          delete-branch: true
-          body: |
-            Automated benchmark data update from workflow run ${{ github.run_id }}.
-
-            - [Workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
-          add-paths: |
-            docs/app/public/benchmarks/benchmark-data.json
-            docs/app/public/benchmarks/badge.svg
+      - name: Dispatch benchmark publish to bot repo
+        env:
+          GH_TOKEN: ${{ secrets.BENCHMARK_BOT_DISPATCH_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh api repos/Rick1330/ibexharness-benchmark-bot/dispatches \
+            -f event_type=benchmark_main_complete \
+            -f "client_payload[run_id]=${{ github.run_id }}" \
+            -f "client_payload[head_sha]=${{ github.sha }}" \
+            -f "client_payload[run_number]=${{ github.run_number }}"
 
   record-fork-pr-benchmark:
     name: record-fork-pr-benchmark

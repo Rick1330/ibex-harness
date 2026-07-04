@@ -43,10 +43,11 @@ The docs site embeds benchmark JSON at build time (`docs/app/src/lib/benchmarks/
 
 - `detect-benchmark-trigger` in `.github/workflows/benchmark.yml` checks out `pull_request.head.sha` with `fetch-depth: 2` and diffs `HEAD~1..HEAD` so data-only commits do not re-run collection.
 
-### 4) Post-merge publishing via external GitHub App (follow-up)
+### 4) Post-merge publishing via external GitHub App
 
-- Long-term publishing to `main` moves to a **separate repository** ([`ibex-benchmark-bot`](https://github.com/Rick1330/ibex-benchmark-bot)) running a dedicated GitHub App.
-- Interim: `open-benchmark-data-pr` in `.github/workflows/benchmark.yml` on schedule / `workflow_dispatch` against `main` remains until the app replaces it.
+- Publishing to `main` is handled by [`ibexharness-benchmark-bot`](https://github.com/Rick1330/ibexharness-benchmark-bot) via `repository_dispatch` after main benchmark runs.
+- Harness `notify-benchmark-bot` job sends dispatch when `BENCHMARK_BOT_ENABLED=true`.
+- Interim `open-benchmark-data-pr` removed; bot opens data PRs with App identity.
 
 ### 5) `run_number` semantics
 
@@ -58,7 +59,7 @@ The docs site embeds benchmark JSON at build time (`docs/app/src/lib/benchmarks/
 - PR branches stay free of automated benchmark commits; CI runs once per human code push.
 - Docs preview on PRs depends on a successful Benchmarks workflow artifact (falls back to committed JSON if none yet).
 - Fork PRs continue to use artifact download only; no branch writes.
-- A follow-up milestone implements the external app for verified post-merge PRs to `main`.
+- Post-merge benchmark data PRs are opened by ibexharness-benchmark-bot (configure per bot repo APP_SETUP.md).
 
 ## Alternatives considered
 
@@ -72,4 +73,4 @@ The docs site embeds benchmark JSON at build time (`docs/app/src/lib/benchmarks/
 ## References
 
 - PR #177 benchmark pre-PR pipeline work
-- [`ibex-benchmark-bot`](https://github.com/Rick1330/ibex-benchmark-bot) — external app specification and implementation (follow-up)
+- [`ibexharness-benchmark-bot`](https://github.com/Rick1330/ibexharness-benchmark-bot) — external app specification and implementation
