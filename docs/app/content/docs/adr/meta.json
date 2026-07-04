@@ -23,6 +23,7 @@
     "0020-shared-package-boundaries",
     "0021-prometheus-metric-catalog",
     "0022-health-check-contract",
-    "0023-docs-site-architecture"
+    "0023-docs-site-architecture",
+    "0024-benchmark-data-publishing-model"
   ]
 }

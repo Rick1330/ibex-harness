@@ -8,7 +8,7 @@
       "timestamp": "2026-07-02T13:38:00+00:00",
       "branch": "main",
       "pr_number": null,
-      "run_number": 28594093144,
+      "run_number": 15,
       "run_url": "https://github.com/Rick1330/ibex-harness/actions/runs/28594093144",
       "go_version": "1.24.2",
       "runner_os": "Linux",

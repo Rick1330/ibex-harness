@@ -157,6 +157,16 @@ def load_runs(path: Path):
     return data.get("runs", [])
 
 
+def parse_pr_number() -> int | None:
+    raw = os.environ.get("GITHUB_EVENT_PULL_REQUEST_NUMBER")
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        return None
+
+
 def main():
     out_dir = Path("benchmarks/output")
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -174,6 +184,7 @@ def main():
         "sha": sha,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "branch": branch,
+        "pr_number": parse_pr_number(),
         "run_url": run_url,
         "go_version": go_ver,
         "runner": os.environ.get("RUNNER_OS", "unknown"),

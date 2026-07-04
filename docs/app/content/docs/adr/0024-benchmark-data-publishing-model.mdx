@@ -1,0 +1,75 @@
+---
+title: "ADR-0024: Benchmark data publishing model"
+description: "Architecture decision record 0024."
+adrId: "0024"
+status: "Accepted"
+date: "2026-07-04"
+authors: "IBEX Harness team"
+---
+
+# ADR-0024: Benchmark data publishing model
+
+- **Status:** Accepted
+- **Date:** 2026-07-04
+- **Authors:** IBEX Harness team
+
+## Context
+
+The benchmark workflow collects proxy load and Go microbenchmark results, validates them, and produces `benchmark-data.json` for the docs dashboard. An earlier design pushed benchmark JSON commits onto contributor PR branches using `GITHUB_TOKEN`. That caused:
+
+1. **CI cascade noise** — every bot push emitted `pull_request` `synchronize` and re-ran CI, CodeQL, Semgrep, and semantic PR checks.
+2. **Integrity bypass risk** — trusting git author email to skip comparison allowed spoofing via local commit metadata.
+3. **Token exposure** — `persist-credentials: true` on PR head checkouts left credentials available to later script steps.
+4. **Rerun loops** — cumulative PR path filters and merge-ref diffs re-triggered full benchmark collection after data-only commits.
+
+The docs site embeds benchmark JSON at build time (`docs/app/src/lib/benchmarks/published-data.ts`). Preview on PRs must show fresh benchmark results without mutating the PR branch.
+
+## Decision
+
+### 1) No in-PR branch writes from `ibex-harness` workflows
+
+- Remove `publish-benchmark-data` (PR branch commits) from `.github/workflows/benchmark.yml`.
+- PR benchmark results live in the **`benchmark-data` workflow artifact** and PR comments only.
+- `docs-build` in `.github/workflows/ci.yml` overlays the latest successful artifact for the PR head SHA before building docs.
+
+### 2) Integrity checks without spoofable trust
+
+- `verify_pr_benchmark_integrity.sh` fetches the base ref with an explicit one-shot token header; checkout uses `persist-credentials: false`.
+- If `benchmark-data.json` is **unchanged from base**, verification passes (artifact is the PR preview source).
+- If the branch **claims the current PR** in committed JSON (`pr_number` match), committed data **must equal** the workflow artifact (`compare_pr_benchmark_json.py`).
+- Do **not** trust git author email for bypass decisions.
+
+### 3) Latest-commit benchmark gate
+
+- `detect-benchmark-trigger` in `.github/workflows/benchmark.yml` checks out `pull_request.head.sha` with `fetch-depth: 2` and diffs `HEAD~1..HEAD` so data-only commits do not re-run collection.
+
+### 4) Post-merge publishing via external GitHub App (follow-up)
+
+- Long-term publishing to `main` moves to a **separate repository** ([`ibex-benchmark-bot`](https://github.com/Rick1330/ibex-benchmark-bot)) running a dedicated GitHub App.
+- Interim: `open-benchmark-data-pr` in `.github/workflows/benchmark.yml` on schedule / `workflow_dispatch` against `main` remains until the app replaces it.
+
+### 5) `run_number` semantics
+
+- `run_number` stores **`GITHUB_RUN_NUMBER`**, not the workflow run ID.
+- `validate_published_data.py` rejects rows where `run_number` equals the numeric ID embedded in `run_url`.
+
+## Consequences
+
+- PR branches stay free of automated benchmark commits; CI runs once per human code push.
+- Docs preview on PRs depends on a successful Benchmarks workflow artifact (falls back to committed JSON if none yet).
+- Fork PRs continue to use artifact download only; no branch writes.
+- A follow-up milestone implements the external app for verified post-merge PRs to `main`.
+
+## Alternatives considered
+
+| Alternative | Why rejected |
+| --- | --- |
+| In-PR publish with author-email bypass | Spoofable; caused rerun loops |
+| `[skip ci]` in bot commit messages | Does not stop all workflows; weak merge-gate story |
+| `ALLOW_PUBLISH_RECONCILE` on mismatch | Masks stale bot JSON; removed with in-PR publish |
+| Keep publishing with `github.actor` skip only | Still mutates PR branch; `github.actor` is forgeable (Sonar S8232) |
+
+## References
+
+- PR #177 benchmark pre-PR pipeline work
+- [`ibex-benchmark-bot`](https://github.com/Rick1330/ibex-benchmark-bot) — external app specification and implementation (follow-up)

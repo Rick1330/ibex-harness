@@ -28,6 +28,10 @@ aggregate_metrics = load_module("aggregate_metrics", SCRIPTS / "aggregate_metric
 regression_gate = load_module("regression_gate", SCRIPTS / "regression_gate.py")
 build_benchmark_data = load_module("build_benchmark_data", SCRIPTS / "build_benchmark_data.py")
 generate_badge = load_module("generate_badge", SCRIPTS / "generate_badge.py")
+validate_published_data = load_module(
+    "validate_published_data",
+    SCRIPTS / "validate_published_data.py",
+)
 
 
 class AggregateMetricsTests(unittest.TestCase):
@@ -73,6 +77,21 @@ class AggregateMetricsTests(unittest.TestCase):
         stages = aggregate_metrics.stage_breakdown(go_bench)
         self.assertGreater(stages["synthetic_total_us"], 0.0)
         self.assertGreater(stages["synthetic_auth_us"], 0.0)
+
+    def test_parse_pr_number_reads_env(self) -> None:
+        import os
+
+        prior = os.environ.get("GITHUB_EVENT_PULL_REQUEST_NUMBER")
+        try:
+            os.environ["GITHUB_EVENT_PULL_REQUEST_NUMBER"] = "176"
+            self.assertEqual(aggregate_metrics.parse_pr_number(), 176)
+            os.environ.pop("GITHUB_EVENT_PULL_REQUEST_NUMBER", None)
+            self.assertIsNone(aggregate_metrics.parse_pr_number())
+        finally:
+            if prior is None:
+                os.environ.pop("GITHUB_EVENT_PULL_REQUEST_NUMBER", None)
+            else:
+                os.environ["GITHUB_EVENT_PULL_REQUEST_NUMBER"] = prior
 
 
 class RegressionGateTests(unittest.TestCase):
@@ -121,6 +140,24 @@ class RegressionGateTests(unittest.TestCase):
 
 
 class BuildBenchmarkDataTests(unittest.TestCase):
+    def test_merge_runs_replaces_same_pr_number(self) -> None:
+        prev = [
+            {"sha": "aaa", "pr_number": 176, "branch": "feature"},
+            {"sha": "bbb", "pr_number": None, "branch": "main"},
+        ]
+        new_run = {"sha": "ccc", "pr_number": 176, "branch": "feature"}
+        merged = build_benchmark_data.merge_runs(prev, new_run)
+        self.assertEqual([run["sha"] for run in merged], ["ccc", "bbb"])
+
+    def test_merge_runs_drops_provisional_pr_rows_on_main(self) -> None:
+        prev = [
+            {"sha": "aaa", "pr_number": 176, "branch": "feature"},
+            {"sha": "bbb", "pr_number": None, "branch": "main"},
+        ]
+        new_run = {"sha": "ddd", "pr_number": None, "branch": "main"}
+        merged = build_benchmark_data.merge_runs(prev, new_run)
+        self.assertEqual([run["sha"] for run in merged], ["ddd", "bbb"])
+
     def test_safe_int_preserves_zero_runner_vcpus(self) -> None:
         self.assertEqual(build_benchmark_data.safe_int(0, 2), 0)
         self.assertEqual(build_benchmark_data.safe_int(None, 2), 2)
@@ -227,6 +264,91 @@ class BuildBenchmarkDataTests(unittest.TestCase):
             badge = out / "badge.svg"
             self.assertTrue(badge.exists())
             self.assertIn("pass", badge.read_text(encoding="utf-8").lower())
+
+
+class ValidatePublishedDataTests(unittest.TestCase):
+    def test_validate_published_data_accepts_seed_file(self) -> None:
+        seed = ROOT / "docs/app/public/benchmarks/benchmark-data.json"
+        if not seed.exists():
+            self.skipTest("published benchmark seed not available")
+        validate_published_data.validate_payload(
+            json.loads(seed.read_text(encoding="utf-8"))
+        )
+
+    def test_validate_published_data_rejects_path_traversal(self) -> None:
+        with self.assertRaises(SystemExit):
+            validate_published_data.resolve_benchmark_data_path("../../etc/passwd")
+
+    def test_compare_pr_benchmark_json_accepts_matching_payloads(self) -> None:
+        compare = load_module("compare_pr_benchmark_json", SCRIPTS / "compare_pr_benchmark_json.py")
+        seed = ROOT / "docs/app/public/benchmarks/benchmark-data.json"
+        if not seed.exists():
+            self.skipTest("published benchmark seed not available")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            committed = root / "docs/app/public/benchmarks"
+            artifact = root / "benchmarks/output"
+            committed.mkdir(parents=True)
+            artifact.mkdir(parents=True)
+            shutil.copy(seed, committed / "benchmark-data.json")
+            shutil.copy(seed, artifact / "benchmark-data.json")
+            cwd = Path.cwd()
+            try:
+                import os
+
+                os.chdir(root)
+                self.assertEqual(compare.main(), 0)
+            finally:
+                os.chdir(cwd)
+
+    def test_validate_published_data_rejects_duplicate_pr_number(self) -> None:
+        payload = {
+            "schema_version": 1,
+            "baseline_sha": "",
+            "runs": [
+                {
+                    "sha": "a" * 40,
+                    "short_sha": "aaaaaaa",
+                    "timestamp": "2026-01-01T00:00:00+00:00",
+                    "branch": "main",
+                    "pr_number": 1,
+                    "status": "pass",
+                    "k6": {"p99_ms": 4.0, "error_rate": 0.0},
+                },
+                {
+                    "sha": "b" * 40,
+                    "short_sha": "bbbbbbb",
+                    "timestamp": "2026-01-02T00:00:00+00:00",
+                    "branch": "main",
+                    "pr_number": 1,
+                    "status": "pass",
+                    "k6": {"p99_ms": 4.0, "error_rate": 0.0},
+                },
+            ],
+        }
+        with self.assertRaises(SystemExit):
+            validate_published_data.validate_payload(payload)
+
+    def test_validate_published_data_rejects_run_id_as_run_number(self) -> None:
+        payload = {
+            "schema_version": 1,
+            "baseline_sha": "",
+            "runs": [
+                {
+                    "sha": "a" * 40,
+                    "short_sha": "aaaaaaa",
+                    "timestamp": "2026-01-01T00:00:00+00:00",
+                    "branch": "main",
+                    "pr_number": None,
+                    "run_number": 28594093144,
+                    "run_url": "https://github.com/Rick1330/ibex-harness/actions/runs/28594093144",
+                    "status": "pass",
+                    "k6": {"p99_ms": 4.0, "error_rate": 0.0},
+                },
+            ],
+        }
+        with self.assertRaises(SystemExit):
+            validate_published_data.validate_payload(payload)
 
 
 if __name__ == "__main__":

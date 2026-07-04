@@ -310,6 +310,21 @@ def load_previous_runs() -> list[dict[str, Any]]:
     return list(data.get("runs", []))
 
 
+def merge_runs(prev_runs: list[dict[str, Any]], new_run: dict[str, Any]) -> list[dict[str, Any]]:
+    pr_number = new_run.get("pr_number")
+    is_main = new_run.get("branch") == "main"
+    runs = [new_run]
+    for run in prev_runs:
+        if run.get("sha") == new_run.get("sha"):
+            continue
+        if pr_number is not None and run.get("pr_number") == pr_number:
+            continue
+        if is_main and run.get("pr_number") is not None:
+            continue
+        runs.append(run)
+    return runs[:MAX_RUNS]
+
+
 def main() -> int:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     latest = json.loads(LATEST_PATH.read_text(encoding="utf-8"))
@@ -325,13 +340,7 @@ def main() -> int:
         prev_runs=prev_runs,
     )
     new_run = build_run_record(ctx)
-
-    runs = [new_run]
-    for run in prev_runs:
-        if run.get("sha") == new_run.get("sha"):
-            continue
-        runs.append(run)
-    runs = runs[:MAX_RUNS]
+    runs = merge_runs(prev_runs, new_run)
 
     payload = {
         "schema_version": 1,

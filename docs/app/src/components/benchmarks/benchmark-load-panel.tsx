@@ -39,7 +39,7 @@ export function BenchmarkLoadPanel() {
         k6 · {k6.vus} VUs · {Math.round(k6.duration_s)}s · mock provider (no real OpenAI calls)
       </p>
 
-      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <section className="grid min-h-[88px] gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <KpiCard
           label="p99 latency"
           value={formatMs(k6.p99_ms)}

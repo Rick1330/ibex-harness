@@ -24,17 +24,53 @@ on:
       - "go.mod"
       - "go.sum"
 
-permissions:
-  contents: read
-
 concurrency:
   group: benchmark-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  detect-benchmark-trigger:
+    name: detect-benchmark-trigger
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      run_benchmarks: ${{ steps.decide.outputs.run_benchmarks }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        if: github.event_name == 'pull_request'
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Decide whether to run benchmarks
+        id: decide
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "run_benchmarks=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          patterns='^\.github/workflows/benchmark\.yml$|^benchmarks/|^packages/|^services/auth/|^services/proxy/|^go\.mod$|^go\.sum$'
+          if git rev-parse HEAD~1 >/dev/null 2>&1; then
+            range='HEAD~1..HEAD'
+          else
+            echo "run_benchmarks=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git diff --name-only "$range" | grep -E "$patterns" >/dev/null; then
+            echo "run_benchmarks=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run_benchmarks=false" >> "$GITHUB_OUTPUT"
+          fi
+
   verify-benchmark-pipeline:
     name: verify-benchmark-pipeline
+    needs: detect-benchmark-trigger
+    if: needs.detect-benchmark-trigger.outputs.run_benchmarks == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -58,6 +94,15 @@ jobs:
 
       - name: Run Python benchmark pipeline unit tests
         run: python benchmarks/scripts/test_pipeline.py
+
+      - name: Validate published benchmark data on main
+        run: |
+          path="docs/app/public/benchmarks/benchmark-data.json"
+          if [ -f "$path" ]; then
+            python benchmarks/scripts/validate_published_data.py "$path"
+          else
+            echo "No published benchmark data yet; skipping validation."
+          fi
 
   collect-proxy-benchmarks:
     name: collect-proxy-benchmarks
@@ -176,6 +221,7 @@ jobs:
           GO_VERSION: ${{ steps.setup_go.outputs.go-version }}
           GITHUB_SHA: ${{ github.sha }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
+          GITHUB_EVENT_PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
         run: python benchmarks/scripts/aggregate_metrics.py > benchmarks/output/collector-summary.json
 
       - name: Run regression gates
@@ -196,6 +242,7 @@ jobs:
           test -f benchmarks/output/benchmark-data.json
           test -f benchmarks/output/badge.svg
           test -f benchmarks/output/gate-result.json
+          python benchmarks/scripts/validate_published_data.py benchmarks/output/benchmark-data.json
 
       - name: Post PR regression comment
         if: github.event_name == 'pull_request'
@@ -221,14 +268,58 @@ jobs:
             benchmarks/output/gate-result.json
           if-no-files-found: error
 
-  commit-benchmark-data:
-    name: commit-benchmark-data
+  verify-published-benchmark-data:
+    name: verify-published-benchmark-data
     needs: collect-proxy-benchmarks
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Fetch base ref for integrity diff
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BENCHMARK_BASE_REF: ${{ github.base_ref }}
+        run: |
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git fetch origin "${BENCHMARK_BASE_REF}"
+
+      - name: Download benchmark data artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: benchmark-data
+          path: benchmarks/output
+
+      - name: Validate workflow benchmark artifact
+        run: python benchmarks/scripts/validate_published_data.py benchmarks/output/benchmark-data.json
+
+      - name: Reject manual benchmark JSON edits on PR branches
+        env:
+          BENCHMARK_BASE_REF: ${{ github.base_ref }}
+          BENCHMARK_PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: bash benchmarks/scripts/verify_pr_benchmark_integrity.sh "$BENCHMARK_BASE_REF"
+
+  open-benchmark-data-pr:
+    name: open-benchmark-data-pr
+    needs: collect-proxy-benchmarks
+    if: |
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      actions: write
+      pull-requests: write
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -251,19 +342,36 @@ jobs:
           cp benchmarks/output/benchmark-data.json docs/app/public/benchmarks/
           cp benchmarks/output/badge.svg docs/app/public/benchmarks/
 
-      - name: Commit and push if changed
-        run: |
-          git config user.name github-actions
-          git config user.email github-actions@users.noreply.github.com
-          git add docs/app/public/benchmarks/
-          if git diff --cached --quiet; then
-            echo "No benchmark data changes"
-            exit 0
-          fi
-          git commit -m "chore(bench): update published benchmark-data.json [skip ci]"
-          git push
+      - name: Open benchmark data pull request
+        uses: peter-evans/create-pull-request@d4f3be6ce6f4083b7ac7490ab98b48a62db1ee41 # v7.0.10
+        with:
+          commit-message: "chore(bench): weekly benchmark data update"
+          title: "chore(bench): weekly benchmark data update"
+          branch: chore/bench-data-${{ github.run_id }}
+          delete-branch: true
+          body: |
+            Automated benchmark data update from workflow run ${{ github.run_id }}.
 
-      - name: Trigger docs deploy
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh workflow run docs-deploy.yml --ref main
+            - [Workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          add-paths: |
+            docs/app/public/benchmarks/benchmark-data.json
+            docs/app/public/benchmarks/badge.svg
+
+  record-fork-pr-benchmark:
+    name: record-fork-pr-benchmark
+    needs: collect-proxy-benchmarks
+    if: |
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Note fork PR publish limitation
+        run: |
+          cat <<'EOF' >> "$GITHUB_STEP_SUMMARY"
+          ## Benchmark publish skipped
+          Fork PRs cannot receive automated benchmark-data commits.
+          Download the `benchmark-data` artifact from this workflow run for preview and review.
+          Docs CI overlays the artifact on pull requests when a successful Benchmarks run exists.
+          EOF

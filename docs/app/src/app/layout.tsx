@@ -4,8 +4,6 @@ import { GeistMono } from "geist/font/mono";
 import { GeistSans } from "geist/font/sans";
 import type { ReactNode } from "react";
 
-import { BenchmarkDataPrefetch } from "@/components/benchmarks/benchmark-data-prefetch";
-import { BenchmarkProvider } from "@/components/benchmarks/benchmark-provider";
 import { ClearMermaidCache } from "@/components/clear-mermaid-cache";
 import {
   DocsRootProvider,
@@ -116,11 +114,8 @@ export default function RootLayout({ children }: RootLayoutProps) {
           <SearchIndexPrefetch indexUrl={STATIC_SEARCH_INDEX_URL} />
         ) : null}
         <DocsRootProvider>
-          <BenchmarkProvider>
-            <SiteNavShell />
-            <BenchmarkDataPrefetch />
-            {children}
-          </BenchmarkProvider>
+          <SiteNavShell />
+          {children}
         </DocsRootProvider>
       </body>
     </html>

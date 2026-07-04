@@ -38,7 +38,7 @@ function LatencyContent() {
   }
 
   return (
-    <div className="space-y-8">
+    <div className="min-h-[320px] space-y-8">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <TimeRangePicker />
         <ExportCsvButton runs={runs} range={range} />

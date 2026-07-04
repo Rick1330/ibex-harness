@@ -3,6 +3,8 @@ import type { Metadata } from "next";
 import { BenchmarkComparePanel } from "@/components/benchmarks/lazy-panels";
 import { BenchmarkPageShell } from "@/components/benchmarks/benchmark-page-shell";
 
+export const dynamic = "force-static";
+
 export const metadata: Metadata = {
   title: "Benchmarks — Compare",
   description: "Compare two benchmark runs side by side.",
