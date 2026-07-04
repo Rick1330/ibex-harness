@@ -329,6 +329,27 @@ class ValidatePublishedDataTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             validate_published_data.validate_payload(payload)
 
+    def test_validate_published_data_rejects_run_id_as_run_number(self) -> None:
+        payload = {
+            "schema_version": 1,
+            "baseline_sha": "",
+            "runs": [
+                {
+                    "sha": "a" * 40,
+                    "short_sha": "aaaaaaa",
+                    "timestamp": "2026-01-01T00:00:00+00:00",
+                    "branch": "main",
+                    "pr_number": None,
+                    "run_number": 28594093144,
+                    "run_url": "https://github.com/Rick1330/ibex-harness/actions/runs/28594093144",
+                    "status": "pass",
+                    "k6": {"p99_ms": 4.0, "error_rate": 0.0},
+                },
+            ],
+        }
+        with self.assertRaises(SystemExit):
+            validate_published_data.validate_payload(payload)
+
 
 if __name__ == "__main__":
     sys.exit(unittest.main())

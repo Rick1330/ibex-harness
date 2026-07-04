@@ -862,6 +862,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      actions: read
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -871,6 +872,34 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
+
+      - name: Overlay PR benchmark artifact
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          run_id="$(gh run list \
+            --repo "${GITHUB_REPOSITORY}" \
+            --workflow benchmark.yml \
+            --commit "${HEAD_SHA}" \
+            --json databaseId,conclusion \
+            --jq '[.[] | select(.conclusion == "success")] | first | .databaseId // empty')"
+          if [ -z "$run_id" ]; then
+            echo "No successful Benchmarks run for ${HEAD_SHA}; using committed benchmark JSON."
+            exit 0
+          fi
+          mkdir -p docs/app/public/benchmarks
+          gh run download "$run_id" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --name benchmark-data \
+            --dir /tmp/benchmark-data
+          cp /tmp/benchmark-data/benchmark-data.json docs/app/public/benchmarks/benchmark-data.json
+          if [ -f /tmp/benchmark-data/badge.svg ]; then
+            cp /tmp/benchmark-data/badge.svg docs/app/public/benchmarks/badge.svg
+          fi
+          echo "Overlaid benchmark artifact from run ${run_id}"
 
       - uses: ./.github/actions/setup-pnpm-docs
 

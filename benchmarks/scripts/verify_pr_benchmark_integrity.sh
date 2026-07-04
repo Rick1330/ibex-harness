@@ -15,15 +15,13 @@ if [[ ! "$BASE_REF" =~ ^[a-zA-Z0-9][a-zA-Z0-9._/-]{0,255}$ ]] || [[ "$BASE_REF" 
   exit 1
 fi
 
-git fetch origin "$BASE_REF"
-
 set +e
 git diff --quiet "origin/${BASE_REF}...HEAD" -- "$COMMITTED_PATH"
 diff_rc=$?
 set -e
 
 if [[ "$diff_rc" -eq 0 ]]; then
-  echo "benchmark-data.json unchanged on branch; publish will apply the workflow artifact."
+  echo "benchmark-data.json unchanged on branch; docs-build overlays the workflow artifact on PRs."
   exit 0
 fi
 
@@ -31,13 +29,26 @@ if [[ "$diff_rc" -gt 1 ]]; then
   echo "verify_pr_benchmark_integrity: could not diff against origin/${BASE_REF}; checking artifact match."
 fi
 
-if python benchmarks/scripts/compare_pr_benchmark_json.py; then
-  exit 0
+if python - "$BENCHMARK_PR_NUMBER" "$COMMITTED_PATH" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+pr_number = int(sys.argv[1])
+path = Path(sys.argv[2])
+payload = json.loads(path.read_text(encoding="utf-8"))
+runs = payload.get("runs", [])
+if not isinstance(runs, list):
+    sys.exit(1)
+for run in runs:
+    if isinstance(run, dict) and run.get("pr_number") == pr_number:
+        sys.exit(0)
+sys.exit(1)
+PY
+then
+  python benchmarks/scripts/compare_pr_benchmark_json.py
+  exit $?
 fi
 
-if [[ "${ALLOW_PUBLISH_RECONCILE:-}" == "true" ]]; then
-  echo "Committed benchmark data differs from the workflow artifact; publish-benchmark-data will update the branch."
-  exit 0
-fi
-
-exit 1
+echo "Branch does not claim this PR in benchmark-data.json; artifact is the PR preview source."
+exit 0

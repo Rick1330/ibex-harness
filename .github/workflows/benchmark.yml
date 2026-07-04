@@ -32,6 +32,8 @@ jobs:
   detect-benchmark-trigger:
     name: detect-benchmark-trigger
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       run_benchmarks: ${{ steps.decide.outputs.run_benchmarks }}
     steps:
@@ -282,8 +284,14 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
-          persist-credentials: true
+          persist-credentials: false
           ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Fetch base ref for integrity diff
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BENCHMARK_BASE_REF: ${{ github.base_ref }}
+        run: git -c http.extraheader="AUTHORIZATION: bearer ${GH_TOKEN}" fetch origin "${BENCHMARK_BASE_REF}"
 
       - name: Download benchmark data artifact
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -297,58 +305,8 @@ jobs:
       - name: Reject manual benchmark JSON edits on PR branches
         env:
           BENCHMARK_BASE_REF: ${{ github.base_ref }}
-          ALLOW_PUBLISH_RECONCILE: ${{ github.event.pull_request.head.repo.full_name == github.repository && 'true' || 'false' }}
-        run: bash benchmarks/scripts/verify_pr_benchmark_integrity.sh "$BENCHMARK_BASE_REF"
-
-  publish-benchmark-data:
-    name: publish-benchmark-data
-    needs:
-      - collect-proxy-benchmarks
-      - verify-published-benchmark-data
-    if: |
-      github.event_name == 'pull_request' &&
-      github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    env:
-      BENCHMARK_HEAD_REF: ${{ github.head_ref }}
-    steps:
-      - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
-        with:
-          egress-policy: audit
-
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          ref: ${{ env.BENCHMARK_HEAD_REF }}
-          persist-credentials: true
-
-      - name: Download benchmark data artifact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: benchmark-data
-          path: benchmarks/output
-
-      - name: Copy published assets
-        run: |
-          mkdir -p docs/app/public/benchmarks
-          cp benchmarks/output/benchmark-data.json docs/app/public/benchmarks/
-          cp benchmarks/output/badge.svg docs/app/public/benchmarks/
-
-      - name: Commit and push if changed
-        env:
           BENCHMARK_PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: |
-          git config user.name github-actions[bot]
-          git config user.email github-actions[bot]@users.noreply.github.com
-          git add docs/app/public/benchmarks/
-          if git diff --cached --quiet; then
-            echo "No benchmark data changes"
-            exit 0
-          fi
-          git commit -m "chore(bench): update benchmark data for PR #${BENCHMARK_PR_NUMBER}"
-          git push origin "HEAD:${BENCHMARK_HEAD_REF}"
+        run: bash benchmarks/scripts/verify_pr_benchmark_integrity.sh "$BENCHMARK_BASE_REF"
 
   open-benchmark-data-pr:
     name: open-benchmark-data-pr
@@ -412,5 +370,6 @@ jobs:
           cat <<'EOF' >> "$GITHUB_STEP_SUMMARY"
           ## Benchmark publish skipped
           Fork PRs cannot receive automated benchmark-data commits.
-          Download the `benchmark-data` artifact from this workflow run if needed.
+          Download the `benchmark-data` artifact from this workflow run for preview and review.
+          Docs CI overlays the artifact on pull requests when a successful Benchmarks run exists.
           EOF

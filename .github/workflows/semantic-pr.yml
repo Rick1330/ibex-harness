@@ -14,6 +14,7 @@ permissions:
 jobs:
   semantic-pr-title:
     name: semantic-pr-title
+    if: github.actor != 'github-actions[bot]'
     permissions:
       pull-requests: read
     runs-on: ubuntu-latest

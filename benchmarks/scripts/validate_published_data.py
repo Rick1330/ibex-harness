@@ -9,6 +9,7 @@ from typing import Any
 
 MAX_RUNS = 365
 MAX_P99_MS = 500.0
+MAX_RUN_NUMBER = 1_000_000
 BENCHMARK_DATA_NAME = "benchmark-data.json"
 VALID_STATUSES = frozenset({"pass", "regression", "fail", "unknown"})
 
@@ -67,6 +68,25 @@ def validate_k6(k6: Any, label: str) -> None:
         fail(f"{label}.error_rate out of bounds: {error_rate}")
 
 
+def validate_run_number(run_data: dict[str, Any], label: str) -> None:
+    run_number_value = run_data.get("run_number")
+    if run_number_value is None:
+        return
+    if not isinstance(run_number_value, int) or isinstance(run_number_value, bool):
+        fail(f"{label}.run_number must be an integer")
+    if run_number_value <= 0 or run_number_value > MAX_RUN_NUMBER:
+        fail(f"{label}.run_number out of bounds: {run_number_value}")
+    run_url = run_data.get("run_url")
+    if not isinstance(run_url, str):
+        return
+    marker = "/actions/runs/"
+    if marker not in run_url:
+        return
+    run_id_text = run_url.rsplit(marker, maxsplit=1)[-1].strip("/")
+    if run_id_text.isdigit() and run_number_value == int(run_id_text):
+        fail(f"{label}.run_number must be the workflow run number, not the run id")
+
+
 def validate_run(run: Any, index: int) -> None:
     label = f"runs[{index}]"
     data = require_dict(run, label)
@@ -78,6 +98,7 @@ def validate_run(run: Any, index: int) -> None:
     pr_number = data.get("pr_number")
     if pr_number is not None and not isinstance(pr_number, int):
         fail(f"{label}.pr_number must be an integer or null")
+    validate_run_number(data, label)
     validate_k6(data.get("k6"), f"{label}.k6")
 
 
