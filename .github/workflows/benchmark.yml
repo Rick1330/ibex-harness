@@ -1,5 +1,6 @@
 name: Benchmarks
 
+# Cross-repo publish: ibexharness-benchmark-bot (pinned via BENCHMARK_BOT_SHA).
 on:
   schedule:
     - cron: "0 4 * * 0"
