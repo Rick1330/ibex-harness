@@ -270,6 +270,9 @@ jobs:
       - name: Build and post PR benchmark comment
         if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
         env:
+          APP_ID: ${{ secrets.BENCHMARK_BOT_APP_ID }}
+          APP_PRIVATE_KEY: ${{ secrets.BENCHMARK_BOT_APP_PRIVATE_KEY }}
+          INSTALLATION_ID: ${{ secrets.BENCHMARK_BOT_INSTALLATION_ID }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}

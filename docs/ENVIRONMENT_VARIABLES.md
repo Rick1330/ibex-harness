@@ -509,8 +509,11 @@ Used by `.github/workflows/benchmark.yml` for cross-repo benchmark publishing an
 | `BENCHMARK_BOT_ENABLED` | repo variable | No | unset (disabled) | When `true`, `notify-benchmark-bot` dispatches to `ibexharness-benchmark-bot` after main benchmark runs |
 | `BENCHMARK_BOT_SHA` | repo variable | Yes when PR comments enabled | — | Pinned commit SHA of `ibexharness-benchmark-bot` for Rust `post-pr-comment` build (no `main` fallback) |
 | `BENCHMARK_BOT_DISPATCH_TOKEN` | repo secret | Yes when `BENCHMARK_BOT_ENABLED=true` | — | Fine-grained PAT with read access to bot repo for `repository_dispatch` |
+| `BENCHMARK_BOT_APP_ID` | repo secret | Yes when PR comments enabled | — | GitHub App ID (same as bot repo `APP_ID`; posts comments as App, not `github-actions[bot]`) |
+| `BENCHMARK_BOT_APP_PRIVATE_KEY` | repo secret | Yes when PR comments enabled | — | App PEM private key |
+| `BENCHMARK_BOT_INSTALLATION_ID` | repo secret | Yes when PR comments enabled | — | App installation ID on ibex-harness |
 
-**Rotation:** Rotate `BENCHMARK_BOT_DISPATCH_TOKEN` quarterly. Update `BENCHMARK_BOT_SHA` only after security-reviewed bot releases (see bot repo `BOT_RELEASE_SHA`).
+**Rotation:** Rotate `BENCHMARK_BOT_DISPATCH_TOKEN` quarterly. Rotate App private key per bot repo runbook. Update `BENCHMARK_BOT_SHA` and `BOT_RELEASE_SHA` only after security-reviewed bot releases.
 
 ---
 
