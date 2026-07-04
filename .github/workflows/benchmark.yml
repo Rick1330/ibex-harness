@@ -246,7 +246,18 @@ jobs:
 
       - name: Require benchmark bot pin
         if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
-        run: test -n "${{ vars.BENCHMARK_BOT_SHA }}"
+        env:
+          BENCHMARK_BOT_SHA: ${{ vars.BENCHMARK_BOT_SHA }}
+        run: test -n "$BENCHMARK_BOT_SHA"
+
+      - name: Require benchmark bot App credentials
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          APP_ID: ${{ secrets.BENCHMARK_BOT_APP_ID }}
+          APP_PRIVATE_KEY: ${{ secrets.BENCHMARK_BOT_APP_PRIVATE_KEY }}
+          INSTALLATION_ID: ${{ secrets.BENCHMARK_BOT_INSTALLATION_ID }}
+        run: |
+          test -n "$APP_ID" && test -n "$APP_PRIVATE_KEY" && test -n "$INSTALLATION_ID"
 
       - name: Checkout benchmark bot
         if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
@@ -361,9 +372,11 @@ jobs:
           egress-policy: audit
 
       - name: Validate dispatch prerequisites
+        env:
+          DISPATCH_TOKEN: ${{ secrets.BENCHMARK_BOT_DISPATCH_TOKEN }}
         run: |
           set -euo pipefail
-          if [ -z "${{ secrets.BENCHMARK_BOT_DISPATCH_TOKEN }}" ]; then
+          if [ -z "$DISPATCH_TOKEN" ]; then
             echo "BENCHMARK_BOT_DISPATCH_TOKEN is required when BENCHMARK_BOT_ENABLED=true" >&2
             exit 1
           fi
@@ -371,13 +384,16 @@ jobs:
       - name: Dispatch benchmark publish to bot repo
         env:
           GH_TOKEN: ${{ secrets.BENCHMARK_BOT_DISPATCH_TOKEN }}
+          DISPATCH_RUN_ID: ${{ github.run_id }}
+          DISPATCH_HEAD_SHA: ${{ github.sha }}
+          DISPATCH_RUN_NUMBER: ${{ github.run_number }}
         run: |
           set -euo pipefail
           gh api repos/Rick1330/ibexharness-benchmark-bot/dispatches \
             -f event_type=benchmark_main_complete \
-            -f "client_payload[run_id]=${{ github.run_id }}" \
-            -f "client_payload[head_sha]=${{ github.sha }}" \
-            -f "client_payload[run_number]=${{ github.run_number }}"
+            -f "client_payload[run_id]=${DISPATCH_RUN_ID}" \
+            -f "client_payload[head_sha]=${DISPATCH_HEAD_SHA}" \
+            -f "client_payload[run_number]=${DISPATCH_RUN_NUMBER}"
 
   record-fork-pr-benchmark:
     name: record-fork-pr-benchmark
