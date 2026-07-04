@@ -296,6 +296,7 @@ jobs:
       - name: Reject manual benchmark JSON edits on PR branches
         env:
           BENCHMARK_BASE_REF: ${{ github.base_ref }}
+          ALLOW_PUBLISH_RECONCILE: ${{ github.event.pull_request.head.repo.full_name == github.repository && 'true' || 'false' }}
         run: bash benchmarks/scripts/verify_pr_benchmark_integrity.sh "$BENCHMARK_BASE_REF"
 
   publish-benchmark-data:

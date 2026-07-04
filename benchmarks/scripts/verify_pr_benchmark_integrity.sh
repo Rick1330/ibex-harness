@@ -31,4 +31,13 @@ if [[ "$diff_rc" -gt 1 ]]; then
   echo "verify_pr_benchmark_integrity: could not diff against origin/${BASE_REF}; checking artifact match."
 fi
 
-python benchmarks/scripts/compare_pr_benchmark_json.py
+if python benchmarks/scripts/compare_pr_benchmark_json.py; then
+  exit 0
+fi
+
+if [[ "${ALLOW_PUBLISH_RECONCILE:-}" == "true" ]]; then
+  echo "Committed benchmark data differs from the workflow artifact; publish-benchmark-data will update the branch."
+  exit 0
+fi
+
+exit 1
