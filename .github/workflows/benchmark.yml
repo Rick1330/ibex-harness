@@ -291,7 +291,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           BENCHMARK_BASE_REF: ${{ github.base_ref }}
-        run: git -c http.extraheader="AUTHORIZATION: bearer ${GH_TOKEN}" fetch origin "${BENCHMARK_BASE_REF}"
+        run: |
+          git -c http.extraheader="AUTHORIZATION: bearer ${GH_TOKEN}" fetch origin "${BENCHMARK_BASE_REF}"
 
       - name: Download benchmark data artifact
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
