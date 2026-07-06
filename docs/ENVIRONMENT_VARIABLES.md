@@ -500,6 +500,25 @@ SENTRY_DSN=
 
 ---
 
+## 16.1) Benchmark bot integration (GitHub Actions / CI)
+
+Used by `.github/workflows/benchmark.yml` for cross-repo benchmark publishing and PR comments.
+
+| Variable | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `BENCHMARK_BOT_ENABLED` | repo variable | No | unset (disabled) | When `true`, `notify-benchmark-bot` dispatches to `ibexharness-benchmark-bot` after main benchmark runs |
+| `BENCHMARK_BOT_SHA` | repo variable | Yes when PR comments enabled | — | Pinned commit SHA of `ibexharness-benchmark-bot` for Rust `post-pr-comment` build (no `main` fallback) |
+| `BENCHMARK_BOT_DISPATCH_TOKEN` | repo secret | Yes when `BENCHMARK_BOT_ENABLED=true` | — | Fine-grained PAT with **Contents: Read and write** on `ibexharness-benchmark-bot` (required for `repository_dispatch`) |
+| `BENCHMARK_BOT_APP_ID` | repo secret | Yes when PR comments enabled | — | GitHub App ID (same as bot repo `APP_ID`; posts comments as App, not `github-actions[bot]`) |
+| `BENCHMARK_BOT_APP_PRIVATE_KEY` | repo secret | Yes when PR comments enabled | — | App PEM private key |
+| `BENCHMARK_BOT_INSTALLATION_ID` | repo secret | Yes when PR comments enabled | — | App installation ID on ibex-harness |
+
+**Pinning:** Set harness `BENCHMARK_BOT_SHA` to the same reviewed commit as bot repo variable `BOT_RELEASE_SHA` (defined in `ibexharness-benchmark-bot`, not in this repo). Legacy `BENCHMARK_COMMENT_RENDERER_SHA` is deprecated — use `BENCHMARK_BOT_SHA` only.
+
+**Rotation:** Rotate `BENCHMARK_BOT_DISPATCH_TOKEN` quarterly. Rotate App private key per bot repo runbook. Update `BENCHMARK_BOT_SHA` and bot `BOT_RELEASE_SHA` together after security-reviewed bot releases.
+
+---
+
 ## 17) Service-Specific `.env.example` Files (Recommended)
 
 Each service should also have its own `.env.example` in its directory, e.g.:
