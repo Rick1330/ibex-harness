@@ -2,13 +2,20 @@
 from __future__ import annotations
 
 import json
-import os
 import math
+import os
 import re
+import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+_SCRIPTS = Path(__file__).resolve().parent
+if str(_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS))
+
+from benchmark_constants import GO_MICROBENCH_SYNTHETIC_STAGE_MODEL
 
 OUT_DIR = Path("benchmarks/output")
 BASELINE_PATH = Path("benchmarks/data-schema/baseline.json")
@@ -338,7 +345,7 @@ def build_run_record(ctx: RunBuildContext) -> dict[str, Any]:
             ctx.prev_runs,
         ),
         "go_benchmarks": map_go_benchmarks(ctx.latest.get("go_benchmarks", {}), ctx.benchstat),
-        "stage_model": "go_microbench_synthetic",
+        "stage_model": GO_MICROBENCH_SYNTHETIC_STAGE_MODEL,
     }
 
 

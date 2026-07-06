@@ -8,6 +8,12 @@ import sys
 from pathlib import Path
 from typing import Any
 
+_SCRIPTS = Path(__file__).resolve().parent
+if str(_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS))
+
+from benchmark_constants import PROXY_OVERHEAD_BENCHMARK
+
 MAX_RUNS = 365
 MAX_P99_MS = 500.0
 MAX_RUN_NUMBER = 1_000_000
@@ -109,12 +115,12 @@ def validate_run_number(run_data: dict[str, Any], label: str) -> None:
 
 def validate_go_benchmarks(go_bench: Any, label: str) -> None:
     data = require_dict(go_bench, label)
-    overhead = data.get("BenchmarkProxyOverhead")
+    overhead = data.get(PROXY_OVERHEAD_BENCHMARK)
     if not isinstance(overhead, dict):
-        fail(f"{label} must include BenchmarkProxyOverhead")
-    ns = require_number(overhead.get("ns_per_op"), f"{label}.BenchmarkProxyOverhead.ns_per_op")
+        fail(f"{label} must include {PROXY_OVERHEAD_BENCHMARK}")
+    ns = require_number(overhead.get("ns_per_op"), f"{label}.{PROXY_OVERHEAD_BENCHMARK}.ns_per_op")
     if ns <= 0:
-        fail(f"{label}.BenchmarkProxyOverhead.ns_per_op must be positive")
+        fail(f"{label}.{PROXY_OVERHEAD_BENCHMARK}.ns_per_op must be positive")
 
 
 def validate_run(run: Any, index: int) -> None:
