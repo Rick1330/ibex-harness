@@ -178,7 +178,7 @@ class BuildBenchmarkDataTests(unittest.TestCase):
             shutil.copy(ROOT / "benchmarks/data-schema/baseline.json", out / "baseline.json")
             shutil.copy(TESTDATA / "benchstat-sample.json", out / "benchstat.json")
             (out / "prev-benchmark-data.json").write_text(
-                '{"schema_version":1,"baseline_sha":"","runs":[]}',
+                '{"schema_version":1,"baseline_sha":"bfc0a75","runs":[]}',
                 encoding="utf-8",
             )
             (out / "gate-result.json").write_text(
@@ -221,7 +221,7 @@ class BuildBenchmarkDataTests(unittest.TestCase):
             shutil.copy(ROOT / "benchmarks/data-schema/baseline.json", data_schema / "baseline.json")
             shutil.copy(ROOT / "benchmarks/data-schema/baseline.json", out / "baseline.json")
             (out / "prev-benchmark-data.json").write_text(
-                '{"schema_version":1,"baseline_sha":"","runs":[]}',
+                '{"schema_version":1,"baseline_sha":"bfc0a75","runs":[]}',
                 encoding="utf-8",
             )
             (out / "gate-result.json").write_text(
@@ -241,6 +241,7 @@ class BuildBenchmarkDataTests(unittest.TestCase):
                 self.assertTrue(target.exists(), target)
                 data = json.loads(target.read_text(encoding="utf-8"))
                 self.assertEqual(data["schema_version"], 1)
+                self.assertEqual(data["baseline_sha"], "bfc0a75")
                 self.assertEqual(len(data["runs"]), 1)
                 self.assertEqual(data["runs"][0]["status"], "pass")
             finally:
@@ -253,7 +254,7 @@ class BuildBenchmarkDataTests(unittest.TestCase):
                 json.dumps(
                     {
                         "schema_version": 1,
-                        "baseline_sha": "",
+                        "baseline_sha": "bfc0a75",
                         "runs": [{"status": "pass", "k6": {"p99_ms": 4.5}}],
                     }
                 ),
@@ -301,10 +302,53 @@ class ValidatePublishedDataTests(unittest.TestCase):
             finally:
                 os.chdir(cwd)
 
-    def test_validate_published_data_rejects_duplicate_pr_number(self) -> None:
+    def test_resolve_output_baseline_sha_inherits_from_prev_history(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "benchmarks" / "output"
+            data_schema = Path(tmp) / "benchmarks" / "data-schema"
+            out.mkdir(parents=True)
+            data_schema.mkdir(parents=True)
+            shutil.copy(TESTDATA / "latest-pass.json", out / "latest.json")
+            shutil.copy(ROOT / "benchmarks/data-schema/baseline.json", data_schema / "baseline.json")
+            (out / "prev-benchmark-data.json").write_text(
+                '{"schema_version":1,"baseline_sha":"bfc0a75","runs":[]}',
+                encoding="utf-8",
+            )
+            cwd = Path.cwd()
+            try:
+                import os
+
+                os.chdir(tmp)
+                build_benchmark_data.OUT_DIR = out
+                build_benchmark_data.BASELINE_PATH = data_schema / "baseline.json"
+                latest = json.loads((out / "latest.json").read_text(encoding="utf-8"))
+                resolved = build_benchmark_data.resolve_output_baseline_sha(latest, [])
+                self.assertEqual(resolved, "bfc0a75")
+            finally:
+                os.chdir(cwd)
+
+    def test_validate_published_data_rejects_empty_baseline_sha(self) -> None:
         payload = {
             "schema_version": 1,
             "baseline_sha": "",
+            "runs": [
+                {
+                    "sha": "a" * 40,
+                    "short_sha": "aaaaaaa",
+                    "timestamp": "2026-01-01T00:00:00+00:00",
+                    "branch": "main",
+                    "status": "pass",
+                    "k6": {"p99_ms": 4.0, "error_rate": 0.0},
+                },
+            ],
+        }
+        with self.assertRaises(SystemExit):
+            validate_published_data.validate_payload(payload)
+
+    def test_validate_published_data_rejects_duplicate_pr_number(self) -> None:
+        payload = {
+            "schema_version": 1,
+            "baseline_sha": "bfc0a75",
             "runs": [
                 {
                     "sha": "a" * 40,
@@ -332,7 +376,7 @@ class ValidatePublishedDataTests(unittest.TestCase):
     def test_validate_published_data_rejects_run_id_as_run_number(self) -> None:
         payload = {
             "schema_version": 1,
-            "baseline_sha": "",
+            "baseline_sha": "bfc0a75",
             "runs": [
                 {
                     "sha": "a" * 40,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -12,6 +13,7 @@ MAX_P99_MS = 500.0
 MAX_RUN_NUMBER = 1_000_000
 BENCHMARK_DATA_NAME = "benchmark-data.json"
 VALID_STATUSES = frozenset({"pass", "regression", "fail", "unknown"})
+_SHA_RE = re.compile(r"^[0-9a-f]{7,40}$", re.IGNORECASE)
 
 
 def fail(message: str) -> None:
@@ -35,6 +37,13 @@ def require_string(value: Any, label: str) -> str:
     if not isinstance(value, str):
         fail(f"{label} must be a string")
     return value
+
+
+def require_sha_ref(value: Any, label: str) -> str:
+    text = require_string(value, label)
+    if not text or not _SHA_RE.match(text):
+        fail(f"{label} must be hexadecimal sha")
+    return text.lower()
 
 
 def resolve_benchmark_data_path(raw: str) -> Path:
@@ -148,7 +157,7 @@ def validate_payload(payload: Any) -> None:
     data = require_dict(payload, "root")
     if data.get("schema_version") != 1:
         fail("schema_version must be 1")
-    require_string(data.get("baseline_sha"), "baseline_sha")
+    require_sha_ref(data.get("baseline_sha"), "baseline_sha")
     validate_runs_list(data.get("runs"))
 
 
