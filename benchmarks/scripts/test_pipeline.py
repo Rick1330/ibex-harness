@@ -414,6 +414,46 @@ class ValidatePublishedDataTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             validate_published_data.validate_payload(payload)
 
+    def test_validate_published_data_rejects_missing_proxy_overhead_bench(self) -> None:
+        payload = {
+            "schema_version": 1,
+            "baseline_sha": "bfc0a75",
+            "runs": [
+                {
+                    "sha": "a" * 40,
+                    "short_sha": "aaaaaaa",
+                    "timestamp": "2026-01-01T00:00:00+00:00",
+                    "branch": "main",
+                    "status": "pass",
+                    "k6": {"p99_ms": 4.0, "error_rate": 0.0},
+                    "go_benchmarks": {"BenchmarkOther": {"ns_per_op": 100.0}},
+                },
+            ],
+        }
+        with self.assertRaises(SystemExit):
+            validate_published_data.validate_payload(payload)
+
+    def test_validate_published_data_rejects_non_positive_ns_per_op(self) -> None:
+        payload = {
+            "schema_version": 1,
+            "baseline_sha": "bfc0a75",
+            "runs": [
+                {
+                    "sha": "a" * 40,
+                    "short_sha": "aaaaaaa",
+                    "timestamp": "2026-01-01T00:00:00+00:00",
+                    "branch": "main",
+                    "status": "pass",
+                    "k6": {"p99_ms": 4.0, "error_rate": 0.0},
+                    "go_benchmarks": {
+                        "BenchmarkProxyOverhead": {"ns_per_op": 0},
+                    },
+                },
+            ],
+        }
+        with self.assertRaises(SystemExit):
+            validate_published_data.validate_payload(payload)
+
 
 if __name__ == "__main__":
     sys.exit(unittest.main())

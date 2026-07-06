@@ -107,6 +107,16 @@ def validate_run_number(run_data: dict[str, Any], label: str) -> None:
         fail(f"{label}.run_number must be the workflow run number, not the run id")
 
 
+def validate_go_benchmarks(go_bench: Any, label: str) -> None:
+    data = require_dict(go_bench, label)
+    overhead = data.get("BenchmarkProxyOverhead")
+    if not isinstance(overhead, dict):
+        fail(f"{label} must include BenchmarkProxyOverhead")
+    ns = require_number(overhead.get("ns_per_op"), f"{label}.BenchmarkProxyOverhead.ns_per_op")
+    if ns <= 0:
+        fail(f"{label}.BenchmarkProxyOverhead.ns_per_op must be positive")
+
+
 def validate_run(run: Any, index: int) -> None:
     label = f"runs[{index}]"
     data = require_dict(run, label)
@@ -120,6 +130,9 @@ def validate_run(run: Any, index: int) -> None:
         fail(f"{label}.pr_number must be an integer or null")
     validate_run_number(data, label)
     validate_k6(data.get("k6"), f"{label}.k6")
+    go_bench = data.get("go_benchmarks")
+    if go_bench is not None:
+        validate_go_benchmarks(go_bench, f"{label}.go_benchmarks")
 
 
 def track_run_identity(

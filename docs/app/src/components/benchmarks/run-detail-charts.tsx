@@ -10,9 +10,12 @@ export function RunDetailCharts({ run }: RunDetailChartsProps) {
   return (
     <>
       <section>
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-widest text-muted-foreground">
+        <h2 className="mb-1 text-sm font-semibold uppercase tracking-widest text-muted-foreground">
           Stage breakdown
         </h2>
+        <p className="mb-3 text-sm text-muted-foreground">
+          Synthetic Go microbench decomposition. Authoritative end-to-end latency is k6 p99 above.
+        </p>
         <WaterfallChart stages={run.stages} />
       </section>
 

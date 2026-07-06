@@ -5,6 +5,38 @@ export function formatMs(value: number): string {
   return `${value.toFixed(2)} ms`;
 }
 
+/** Format sub-millisecond stage values without rounding to misleading 0.00 ms. */
+export function formatLatencyMs(value: number): string {
+  if (!Number.isFinite(value)) {
+    return "—";
+  }
+  if (value === 0) {
+    return "0 ms";
+  }
+  const abs = Math.abs(value);
+  if (abs < 0.01) {
+    const micros = value * 1000;
+    if (Math.abs(micros) < 0.1) {
+      return `${Math.round(value * 1_000_000)} ns`;
+    }
+    return `${micros.toFixed(2)} µs`;
+  }
+  return `${value.toFixed(2)} ms`;
+}
+
+export function formatNsPerOp(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) {
+    return "—";
+  }
+  if (value >= 1_000_000) {
+    return `${(value / 1_000_000).toFixed(2)} ms/op`;
+  }
+  if (value >= 1000) {
+    return `${(value / 1000).toFixed(2)} µs/op`;
+  }
+  return `${value.toFixed(1)} ns/op`;
+}
+
 export function formatPercent(rate: number): string {
   return `${(rate * 100).toFixed(2)}%`;
 }

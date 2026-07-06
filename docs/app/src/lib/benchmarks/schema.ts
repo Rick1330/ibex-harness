@@ -60,6 +60,7 @@ const benchmarkRunSchema = z.object({
   baseline_sha: z.string().nullable(),
   metric_deltas: z.record(z.string(), z.number().nullable()),
   go_benchmarks: z.record(z.string(), goBenchmarkSchema),
+  stage_model: z.string().nullable().optional(),
 });
 
 export const benchmarkDataSchema = z.object({

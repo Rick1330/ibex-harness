@@ -34,9 +34,12 @@ export function BenchmarkWaterfallPanel() {
       </p>
 
       <section>
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-widest text-muted-foreground">
+        <h2 className="mb-1 text-sm font-semibold uppercase tracking-widest text-muted-foreground">
           Stage waterfall (p99)
         </h2>
+        <p className="mb-3 text-sm text-muted-foreground">
+          Synthetic Go microbench decomposition. Authoritative end-to-end latency is k6 p99.
+        </p>
         <WaterfallChart stages={latest.stages} />
       </section>
 
@@ -51,7 +54,7 @@ export function BenchmarkWaterfallPanel() {
         <h2 className="mb-3 text-sm font-semibold uppercase tracking-widest text-muted-foreground">
           Stage details
         </h2>
-        <StageDetailsTable stages={latest.stages} />
+        <StageDetailsTable stages={latest.stages} stageModel={latest.stage_model} />
       </section>
     </div>
   );
