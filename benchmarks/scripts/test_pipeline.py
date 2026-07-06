@@ -309,7 +309,27 @@ class ValidatePublishedDataTests(unittest.TestCase):
             out.mkdir(parents=True)
             data_schema.mkdir(parents=True)
             shutil.copy(TESTDATA / "latest-pass.json", out / "latest.json")
-            shutil.copy(ROOT / "benchmarks/data-schema/baseline.json", data_schema / "baseline.json")
+            (data_schema / "baseline.json").write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "baseline": {
+                            "target_commit": "unset",
+                            "baseline_sha": "unset",
+                            "proxy_overhead_p99_ms": 20.0,
+                            "throughput_rps": 0.0,
+                            "allocs_per_op": 0.0,
+                            "bytes_per_op": 0.0,
+                        },
+                        "policy": {
+                            "max_regression_pct": 20.0,
+                            "max_proxy_overhead_p99_ms": 20.0,
+                            "max_error_rate": 0.001,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
             (out / "prev-benchmark-data.json").write_text(
                 '{"schema_version":1,"baseline_sha":"bfc0a75","runs":[]}',
                 encoding="utf-8",

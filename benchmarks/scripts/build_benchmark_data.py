@@ -135,24 +135,29 @@ def normalize_sha_ref(value: str) -> str:
     return value.lower()[:40]
 
 
+def _first_valid_sha(candidates: list[str]) -> str | None:
+    for candidate in candidates:
+        if is_valid_sha_ref(candidate):
+            return normalize_sha_ref(candidate)
+    return None
+
+
+def _baseline_candidates(latest: dict[str, Any], prev_runs: list[dict[str, Any]]) -> list[str]:
+    candidates = [load_baseline_sha(), load_baseline_sha_from_prev()]
+    for run in prev_runs:
+        candidates.extend([str(run.get("sha") or ""), str(run.get("short_sha") or "")])
+    latest_sha = str(latest.get("sha") or os.environ.get("GITHUB_SHA", ""))
+    candidates.extend([latest_sha, short_sha(latest_sha)])
+    return candidates
+
+
 def resolve_output_baseline_sha(
     latest: dict[str, Any],
     prev_runs: list[dict[str, Any]],
 ) -> str:
-    for candidate in (load_baseline_sha(), load_baseline_sha_from_prev()):
-        if is_valid_sha_ref(candidate):
-            return normalize_sha_ref(candidate)
-    for run in prev_runs:
-        for key in ("sha", "short_sha"):
-            value = str(run.get(key) or "")
-            if is_valid_sha_ref(value):
-                return normalize_sha_ref(value)
-    latest_sha = str(latest.get("sha") or os.environ.get("GITHUB_SHA", ""))
-    if is_valid_sha_ref(latest_sha):
-        return normalize_sha_ref(latest_sha)
-    short = short_sha(latest_sha)
-    if is_valid_sha_ref(short):
-        return normalize_sha_ref(short)
+    resolved = _first_valid_sha(_baseline_candidates(latest, prev_runs))
+    if resolved is not None:
+        return resolved
     raise ValueError(
         "unable to resolve baseline_sha: pin benchmarks/data-schema/baseline.json "
         "or ensure prev-benchmark-data.json includes a hexadecimal baseline_sha"
