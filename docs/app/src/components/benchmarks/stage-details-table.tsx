@@ -27,7 +27,13 @@ function formatStageBudget(
   p99: number | undefined,
   target: number | undefined,
 ): string {
-  if (isSynthetic || p99 === undefined || !target || target <= 0) {
+  if (isSynthetic) {
+    return "—";
+  }
+  if (p99 === undefined) {
+    return "—";
+  }
+  if (!target || target <= 0) {
     return "—";
   }
   return `${Math.round((p99 / target) * 100)}%`;
