@@ -56,6 +56,58 @@ def _assert_validate_rejects(payload: dict[str, object]) -> None:
     raise AssertionError("expected validate_payload to raise SystemExit")
 
 
+def _invalid_payload_cases() -> list[tuple[str, dict[str, object]]]:
+    proxy_bench = benchmark_constants.PROXY_OVERHEAD_BENCHMARK
+    return [
+        (
+            "empty baseline_sha",
+            {
+                "schema_version": 1,
+                "baseline_sha": "",
+                "runs": [_minimal_benchmark_run()],
+            },
+        ),
+        (
+            "run_id as run_number",
+            {
+                "schema_version": 1,
+                "baseline_sha": "bfc0a75",
+                "runs": [
+                    _minimal_benchmark_run(
+                        pr_number=None,
+                        run_number=28594093144,
+                        run_url="https://github.com/Rick1330/ibex-harness/actions/runs/28594093144",
+                    ),
+                ],
+            },
+        ),
+        (
+            f"missing {proxy_bench}",
+            {
+                "schema_version": 1,
+                "baseline_sha": "bfc0a75",
+                "runs": [
+                    _minimal_benchmark_run(
+                        go_benchmarks={"BenchmarkOther": {"ns_per_op": 100.0}},
+                    ),
+                ],
+            },
+        ),
+        (
+            "non-positive ns_per_op",
+            {
+                "schema_version": 1,
+                "baseline_sha": "bfc0a75",
+                "runs": [
+                    _minimal_benchmark_run(
+                        go_benchmarks={proxy_bench: {"ns_per_op": 0}},
+                    ),
+                ],
+            },
+        ),
+    ]
+
+
 class AggregateMetricsTests(unittest.TestCase):
     def test_parse_go_bench_line_extracts_metrics(self) -> None:
         line = "BenchmarkProxyOverhead-8   	  200000	      8500 ns/op	     512 B/op	       8 allocs/op"
@@ -370,56 +422,7 @@ class ValidatePublishedDataTests(unittest.TestCase):
                 os.chdir(cwd)
 
     def test_validate_published_data_rejects_invalid_payloads(self) -> None:
-        proxy_bench = benchmark_constants.PROXY_OVERHEAD_BENCHMARK
-        cases: list[tuple[str, dict[str, object]]] = [
-            (
-                "empty baseline_sha",
-                {
-                    "schema_version": 1,
-                    "baseline_sha": "",
-                    "runs": [_minimal_benchmark_run()],
-                },
-            ),
-            (
-                "run_id as run_number",
-                {
-                    "schema_version": 1,
-                    "baseline_sha": "bfc0a75",
-                    "runs": [
-                        _minimal_benchmark_run(
-                            pr_number=None,
-                            run_number=28594093144,
-                            run_url="https://github.com/Rick1330/ibex-harness/actions/runs/28594093144",
-                        ),
-                    ],
-                },
-            ),
-            (
-                f"missing {proxy_bench}",
-                {
-                    "schema_version": 1,
-                    "baseline_sha": "bfc0a75",
-                    "runs": [
-                        _minimal_benchmark_run(
-                            go_benchmarks={"BenchmarkOther": {"ns_per_op": 100.0}},
-                        ),
-                    ],
-                },
-            ),
-            (
-                "non-positive ns_per_op",
-                {
-                    "schema_version": 1,
-                    "baseline_sha": "bfc0a75",
-                    "runs": [
-                        _minimal_benchmark_run(
-                            go_benchmarks={proxy_bench: {"ns_per_op": 0}},
-                        ),
-                    ],
-                },
-            ),
-        ]
-        for name, payload in cases:
+        for name, payload in _invalid_payload_cases():
             with self.subTest(name=name):
                 _assert_validate_rejects(payload)
 
