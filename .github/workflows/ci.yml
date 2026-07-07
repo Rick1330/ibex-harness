@@ -880,21 +880,28 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          run_id="$(gh run list \
+          run_id=""
+          if ! run_id="$(gh run list \
             --repo "${GITHUB_REPOSITORY}" \
             --workflow benchmark.yml \
             --commit "${HEAD_SHA}" \
             --json databaseId,conclusion \
-            --jq '[.[] | select(.conclusion == "success")] | first | .databaseId // empty')"
+            --jq '[.[] | select(.conclusion == "success")] | first | .databaseId // empty' 2>/dev/null)"; then
+            echo "Benchmark overlay lookup failed for ${HEAD_SHA}; using committed benchmark JSON."
+            exit 0
+          fi
           if [ -z "$run_id" ]; then
             echo "No successful Benchmarks run for ${HEAD_SHA}; using committed benchmark JSON."
             exit 0
           fi
           mkdir -p docs/app/public/benchmarks
-          gh run download "$run_id" \
+          if ! gh run download "$run_id" \
             --repo "${GITHUB_REPOSITORY}" \
             --name benchmark-data \
-            --dir /tmp/benchmark-data
+            --dir /tmp/benchmark-data; then
+            echo "Benchmark artifact download failed for run ${run_id}; using committed benchmark JSON."
+            exit 0
+          fi
           cp /tmp/benchmark-data/benchmark-data.json docs/app/public/benchmarks/benchmark-data.json
           if [ -f /tmp/benchmark-data/badge.svg ]; then
             cp /tmp/benchmark-data/badge.svg docs/app/public/benchmarks/badge.svg
