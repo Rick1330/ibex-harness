@@ -18,11 +18,15 @@ export function useIbexVideoCrossfade() {
     const el = wrapRef.current;
     if (!el) return undefined;
     const observer = new IntersectionObserver(
-      ([entry]) => setInView(entry.isIntersecting),
+      ([entry]) => {
+        setInView(entry.isIntersecting);
+      },
       { threshold: 0.1 },
     );
     observer.observe(el);
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+    };
   }, []);
 
   useEffect(() => {
