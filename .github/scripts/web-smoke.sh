@@ -18,7 +18,7 @@ paths=(
 for path in "${paths[@]}"; do
   url="${BASE_URL}${path}"
   code="$(curl -fsS -o /dev/null -w '%{http_code}' "$url" || true)"
-  if [ "$code" != "200" ]; then
+  if [[ "$code" != "200" ]]; then
     echo "smoke failed: $url returned HTTP $code"
     exit 1
   fi

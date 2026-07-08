@@ -9,7 +9,7 @@ const BG = [233, 232, 228];
 const FG = [248, 248, 246];
 const SAFE_PATH =
   process.platform === "win32"
-    ? "C:\\Windows\\System32"
+    ? String.raw`C:\Windows\System32`
     : "/usr/bin:/bin";
 
 function pickChar(row, col) {
@@ -47,8 +47,8 @@ function resolveFfmpegPath() {
   const candidates =
     process.platform === "win32"
       ? [
-          "C:\\ffmpeg\\bin\\ffmpeg.exe",
-          "C:\\Program Files\\ffmpeg\\bin\\ffmpeg.exe",
+          String.raw`C:\ffmpeg\bin\ffmpeg.exe`,
+          String.raw`C:\Program Files\ffmpeg\bin\ffmpeg.exe`,
         ]
       : ["/usr/bin/ffmpeg", "/usr/local/bin/ffmpeg"];
   const found = candidates.find((candidate) => existsSync(candidate));
