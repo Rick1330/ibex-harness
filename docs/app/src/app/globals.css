@@ -1486,7 +1486,11 @@ header[data-site-nav] a[data-site-nav-github] {
     box-sizing: border-box;
   }
 
-  /* Collapsed desktop sidebar: icon rail (not full hide) — expand on hover */
+  /* Collapsed desktop sidebar: icon rail — icons only, no accent lines */
+  #nd-sidebar[data-collapsed="true"]:not(:hover) {
+    padding-inline: 0.5rem !important;
+  }
+
   #nd-sidebar[data-collapsed="true"] {
     --fd-sidebar-width: 3.25rem;
     --ibex-sidebar-aside-width: 3.25rem;
@@ -1508,9 +1512,23 @@ header[data-site-nav] a[data-site-nav-github] {
     box-shadow: 4px 0 24px hsl(var(--foreground) / 0.08);
   }
 
-  #nd-sidebar[data-collapsed="true"]:not(:hover) .sidebar-banner,
-  #nd-sidebar[data-collapsed="true"]:not(:hover) .sidebar-folder-children,
-  #nd-sidebar[data-collapsed="true"]:not(:hover) button.sidebar-nav-section [data-icon] {
+  #nd-sidebar[data-collapsed="true"]:not(:hover) .sidebar-banner {
+    display: none !important;
+  }
+
+  #nd-sidebar[data-collapsed="true"]:not(:hover) .sidebar-folder-children {
+    display: block !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  #nd-sidebar[data-collapsed="true"]:not(:hover) .sidebar-folder-children > div {
+    border-left: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  #nd-sidebar[data-collapsed="true"]:not(:hover) [data-icon] {
     display: none !important;
   }
 
@@ -1522,8 +1540,34 @@ header[data-site-nav] a[data-site-nav-github] {
   #nd-sidebar[data-collapsed="true"]:not(:hover) a.sidebar-nav-item,
   #nd-sidebar[data-collapsed="true"]:not(:hover) button.sidebar-nav-section {
     justify-content: center !important;
-    padding-inline: 0.5rem !important;
+    align-items: center !important;
+    gap: 0 !important;
+    width: 100% !important;
+    padding: 0.5rem !important;
     min-height: 2.25rem !important;
+    border-inline-start: 0 !important;
+    border-left: 0 !important;
+  }
+
+  #nd-sidebar[data-collapsed="true"]:not(:hover) a.sidebar-nav-item[data-active="true"],
+  #nd-sidebar[data-collapsed="true"]:not(:hover) a.sidebar-nav-item[aria-current="page"] {
+    padding-left: 0.5rem !important;
+    background-color: hsl(var(--panel-raised)) !important;
+    border-left: 0 !important;
+  }
+
+  #nd-sidebar[data-collapsed="true"]:not(:hover) .sidebar-section-icon,
+  #nd-sidebar[data-collapsed="true"]:not(:hover) a.sidebar-nav-item > svg:not([data-icon]),
+  #nd-sidebar[data-collapsed="true"]:not(:hover) button.sidebar-nav-section > svg:not([data-icon]),
+  #nd-sidebar[data-collapsed="true"]:not(:hover) button.sidebar-nav-section .sidebar-section-icon {
+    display: block !important;
+    width: 1.125rem !important;
+    height: 1.125rem !important;
+    min-width: 1.125rem !important;
+    min-height: 1.125rem !important;
+    flex-shrink: 0 !important;
+    opacity: 1 !important;
+    color: hsl(var(--text-primary)) !important;
   }
 
   #nd-sidebar[data-collapsed="true"]:not(:hover) > div {
@@ -1916,6 +1960,7 @@ html {
 .video-blend {
   mix-blend-mode: multiply;
   transition: filter 0.4s ease;
+  will-change: opacity;
   -webkit-mask-image:
     radial-gradient(ellipse 75% 75% at 50% 50%, #000 40%, transparent 68%),
     linear-gradient(to right, transparent 0%, #000 10%, #000 90%, transparent 100%),

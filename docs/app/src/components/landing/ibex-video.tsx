@@ -16,7 +16,7 @@ export function IbexVideo() {
   return (
     <div
       ref={wrapRef}
-      className="ibex-video-stage relative aspect-square w-[115%] max-w-none md:-ml-10 lg:w-[640px]"
+      className="ibex-video-stage animate-float relative aspect-square w-[115%] max-w-none md:-ml-10 lg:w-[640px]"
       aria-hidden
     >
       <video
@@ -25,7 +25,7 @@ export function IbexVideo() {
         poster={posterSrc}
         muted
         playsInline
-        preload="metadata"
+        preload="auto"
         tabIndex={-1}
       >
         <source src="/ibex-ascii.webm" type="video/webm" />
@@ -36,7 +36,7 @@ export function IbexVideo() {
         className={videoClass(isBActive)}
         muted
         playsInline
-        preload="none"
+        preload="auto"
         tabIndex={-1}
       >
         <source src="/ibex-ascii.webm" type="video/webm" />

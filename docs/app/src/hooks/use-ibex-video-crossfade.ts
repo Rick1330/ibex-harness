@@ -11,7 +11,6 @@ export function useIbexVideoCrossfade() {
   const bRef = useRef<HTMLVideoElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const activeRef = useRef<"a" | "b">("a");
-  const staggeredRef = useRef(false);
   const [activeClass, setActiveClass] = useState<"a" | "b">("a");
   const [inView, setInView] = useState(false);
 
@@ -41,13 +40,16 @@ export function useIbexVideoCrossfade() {
       return undefined;
     }
 
-    return wireCrossfadePlayback(a, b, activeRef, setActiveClass, staggeredRef);
+    a.preload = "auto";
+    b.preload = "auto";
+
+    return wireCrossfadePlayback(a, b, activeRef, setActiveClass);
   }, [inView]);
 
   const videoClass = (isActive: boolean) =>
     [
-      "video-blend animate-float absolute inset-0 h-full w-full object-contain",
-      "transition-opacity duration-1000",
+      "video-blend absolute inset-0 h-full w-full object-contain",
+      "transition-opacity duration-[1250ms] ease-linear",
       isActive ? "opacity-100" : "opacity-0",
     ].join(" ");
 
