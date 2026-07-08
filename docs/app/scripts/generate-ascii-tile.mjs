@@ -1,12 +1,16 @@
-import { writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawnSync } from "node:child_process";
 
 const CHARS = String.raw`wxuoi:.=+*%#WM/\<>vc^~ `;
 const TILE = 256;
 const BG = [233, 232, 228];
 const FG = [248, 248, 246];
+const SAFE_PATH =
+  process.platform === "win32"
+    ? "C:\\Windows\\System32"
+    : "/usr/bin:/bin";
 
 function pickChar(row, col) {
   const hash = Math.trunc((row * 374761393 + col * 668265263) % CHARS.length);
@@ -16,8 +20,6 @@ function pickChar(row, col) {
 
 function buildTilePixels() {
   const cell = 8;
-  const cols = TILE / cell;
-  const rows = TILE / cell;
   const pixels = Buffer.alloc(TILE * TILE * 3);
 
   for (let y = 0; y < TILE; y += 1) {
@@ -37,6 +39,27 @@ function buildTilePixels() {
   return pixels;
 }
 
+function resolveFfmpegPath() {
+  const override = process.env.IBEX_FFMPEG_PATH;
+  if (typeof override === "string" && override.length > 0) {
+    return override;
+  }
+  const candidates =
+    process.platform === "win32"
+      ? [
+          "C:\\ffmpeg\\bin\\ffmpeg.exe",
+          "C:\\Program Files\\ffmpeg\\bin\\ffmpeg.exe",
+        ]
+      : ["/usr/bin/ffmpeg", "/usr/local/bin/ffmpeg"];
+  const found = candidates.find((candidate) => existsSync(candidate));
+  if (!found) {
+    throw new Error(
+      "ffmpeg not found — set IBEX_FFMPEG_PATH or commit ascii-tile.webp manually",
+    );
+  }
+  return found;
+}
+
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const outDir = path.resolve(scriptDir, "../public/brand");
 const ppmPath = path.join(outDir, "ascii-tile.ppm");
@@ -46,15 +69,18 @@ const pixels = buildTilePixels();
 const header = `P6\n${TILE} ${TILE}\n255\n`;
 writeFileSync(ppmPath, Buffer.concat([Buffer.from(header), pixels]));
 
-const ffmpeg = spawnSync(
-  "ffmpeg",
-  ["-y", "-i", ppmPath, "-quality", "85", webpPath],
-  { stdio: "inherit" },
-);
-
-if (ffmpeg.status !== 0) {
+try {
+  execFileSync(
+    resolveFfmpegPath(),
+    ["-y", "-i", ppmPath, "-quality", "85", webpPath],
+    {
+      stdio: "inherit",
+      env: { ...process.env, PATH: SAFE_PATH },
+    },
+  );
+} catch {
   console.error("[ascii-tile] ffmpeg failed — install ffmpeg or commit ascii-tile.webp manually");
-  process.exit(ffmpeg.status ?? 1);
+  process.exit(1);
 }
 
-console.log(`[ascii-tile] wrote ${webpPath}`);
+console.log("[ascii-tile] wrote ascii-tile.webp");

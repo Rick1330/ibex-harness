@@ -24,7 +24,7 @@ const ZONE_NAME = "ibexharness.com";
 const LOG = "[apex-cutover]";
 
 async function main() {
-  console.log(`${LOG} attaching ${APEX_HOST} to Cloudflare Pages`);
+  console.log(`${LOG} attaching apex host to Cloudflare Pages`);
   const zoneId = await resolveZoneId(ZONE_NAME);
 
   await attachPagesDomain(APEX_HOST, LOG);

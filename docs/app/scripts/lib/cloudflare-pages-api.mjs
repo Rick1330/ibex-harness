@@ -144,7 +144,7 @@ export async function attachPagesDomain(hostname, logPrefix = "[cf]") {
 export async function detachPagesDomain(hostname, logPrefix = "[cf]") {
   assertAllowedHostname(hostname);
   const domains = await listPagesDomains();
-  const match = domains.find((entry) => entry.name === hostname);
+  const match = domains.some((entry) => entry.name === hostname);
   if (!match) {
     console.log(`${logPrefix} Pages domain not attached`);
     return;

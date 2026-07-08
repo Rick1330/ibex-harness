@@ -55,7 +55,7 @@ async function removeWorkerDomain(hostname) {
   const domains = await listWorkerDomains();
   const match = domains.find((entry) => entry.hostname === hostname);
   if (!match) {
-    console.log(`[cutover] no Worker custom domain for ${hostname}`);
+    console.log(`[cutover] no Worker custom domain for ${PRODUCTION_HOST}`);
     return null;
   }
   assertHostname(match.hostname, PRODUCTION_HOST);
@@ -66,7 +66,7 @@ async function removeWorkerDomain(hostname) {
   await cloudflareRequest(accountUrl(`/workers/domains/${domainId}`), {
     method: "DELETE",
   });
-  console.log(`[cutover] removed Worker custom domain ${hostname}`);
+  console.log(`[cutover] removed Worker custom domain ${PRODUCTION_HOST}`);
   return zoneId;
 }
 
