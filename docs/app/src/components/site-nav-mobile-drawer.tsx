@@ -57,19 +57,18 @@ export function SiteNavMobileDrawer({
         )}
         onClick={onClose}
       />
-      <nav
+      <dialog
         id={DRAWER_ID}
+        open={open}
         aria-label="Mobile navigation"
-        aria-modal={open ? true : undefined}
-        role="dialog"
-        aria-hidden={!open}
         className={cn(
-          "fixed left-0 top-[var(--site-nav-height)] z-50 flex md:hidden",
-          "h-[calc(100dvh-var(--site-nav-height))] w-full max-w-[20rem] flex-col",
+          "fixed left-0 top-[var(--site-nav-height)] z-50 m-0 flex max-h-none w-full max-w-[20rem] border-0 p-0 md:hidden",
+          "h-[calc(100dvh-var(--site-nav-height))] flex-col",
           "border-e border-border bg-canvas transition-transform",
           !open && "pointer-events-none invisible -translate-x-full",
         )}
       >
+        <nav aria-label="Mobile section links" className="flex min-h-0 flex-1 flex-col">
         <div className="shrink-0 space-y-3 border-b border-border/70 p-3">
           <Link
             href={LANDING_NAV_LINK.href}
@@ -93,7 +92,8 @@ export function SiteNavMobileDrawer({
             onClose={onClose}
           />
         </div>
-      </nav>
+        </nav>
+      </dialog>
     </>,
     document.body,
   );

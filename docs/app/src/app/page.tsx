@@ -73,6 +73,8 @@ const MARQUEE = [
   "MIT",
 ] as const;
 
+const MARQUEE_TRACKS = ["primary", "duplicate"] as const;
+
 export const metadata: Metadata = {
   title: "IBEX Harness — Agent memory at the proxy",
   description: SITE_DESCRIPTION,
@@ -136,7 +138,7 @@ export default function HomePage() {
               style={{ animationDelay: "0ms" }}
             >
               <span className="h-1.5 w-1.5 bg-accent" aria-hidden />
-              OPEN SOURCE · AI AGENT INFRASTRUCTURE
+              {" OPEN SOURCE · AI AGENT INFRASTRUCTURE"}
             </p>
             <h1
               className="animate-rise text-4xl font-extrabold leading-[1.05] tracking-tight sm:text-5xl lg:text-6xl"
@@ -176,8 +178,8 @@ export default function HomePage() {
               className="animate-rise mt-6 text-xs text-muted-foreground"
               style={{ animationDelay: "220ms" }}
             >
-              <span className="text-foreground">~ $</span> git clone
-              https://github.com/Rick1330/ibex-harness.git
+              <span className="text-foreground">~ $</span>
+              {" git clone https://github.com/Rick1330/ibex-harness.git"}
               <span className="caret ml-1">▊</span>
             </p>
           </div>
@@ -186,11 +188,15 @@ export default function HomePage() {
 
       <div className="overflow-hidden border-y border-border py-3">
         <div className="animate-marquee flex w-max whitespace-nowrap text-xs tracking-widest text-muted-foreground">
-          {Array.from({ length: 2 }).map((_, repeat) => (
-            <span key={repeat} className="flex">
+          {MARQUEE_TRACKS.map((track) => (
+            <span key={track} className="flex">
               {MARQUEE.map((word) => (
-                <span key={`${repeat}-${word}`} className="mx-6 flex items-center gap-6">
-                  {word} <span className="text-accent" aria-hidden>⩗</span>
+                <span key={`${track}-${word}`} className="mx-6 flex items-center gap-6">
+                  {word}
+                  {" "}
+                  <span className="text-accent" aria-hidden>
+                    ⩗
+                  </span>
                 </span>
               ))}
             </span>
@@ -201,7 +207,7 @@ export default function HomePage() {
       <section id="features" className="mx-auto max-w-7xl px-5 py-20 sm:px-8">
         <div className="mb-12 max-w-2xl">
           <p className="mb-3 text-xs tracking-widest text-muted-foreground">
-            // CAPABILITIES
+            {"// CAPABILITIES"}
           </p>
           <h2 className="text-3xl font-extrabold tracking-tight sm:text-4xl">
             Built for agents that cannot afford silent failure.
@@ -234,7 +240,7 @@ export default function HomePage() {
         <div className="mx-auto max-w-7xl px-5 py-20 sm:px-8">
           <div className="mb-12 max-w-2xl">
             <p className="mb-3 text-xs tracking-widest text-muted-foreground">
-              // REQUEST PATH
+              {"// REQUEST PATH"}
             </p>
             <h2 className="text-3xl font-extrabold tracking-tight sm:text-4xl">
               Every LLM call passes through one gate.
@@ -263,7 +269,7 @@ export default function HomePage() {
         <div className="grid items-center gap-10 lg:grid-cols-2">
           <div className="max-w-md">
             <p className="mb-3 text-xs tracking-widest text-muted-foreground">
-              // LOCAL STACK
+              {"// LOCAL STACK"}
             </p>
             <h2 className="text-3xl font-extrabold tracking-tight sm:text-4xl">
               Run the harness on your machine.
@@ -331,7 +337,7 @@ Authorization: Bearer <token>
       <section className="mx-auto max-w-7xl px-5 pb-24 sm:px-8">
         <div className="ascii-frame bg-primary px-8 py-16 text-center text-primary-foreground">
           <p className="mb-4 text-xs tracking-widest opacity-70">
-            // READY WHEN YOU ARE
+            {"// READY WHEN YOU ARE"}
           </p>
           <h2 className="mx-auto max-w-xl text-3xl font-extrabold tracking-tight sm:text-4xl">
             Put agent memory at the proxy.

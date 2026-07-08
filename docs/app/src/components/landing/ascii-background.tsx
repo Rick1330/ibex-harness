@@ -1,15 +1,21 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 
-const CHARS = "wxuoi:.=+*%#WM/\\<>vc^~ ";
+const CHARS = String.raw`wxuoi:.=+*%#WM/\<>vc^~ `;
+
+function pickChar(row: number, col: number): string {
+  const hash = Math.trunc((row * 374761393 + col * 668265263) % CHARS.length);
+  const index = hash < 0 ? hash + CHARS.length : hash;
+  return CHARS.charAt(index);
+}
 
 function buildField(cols: number, rows: number): string {
   let out = "";
   for (let r = 0; r < rows; r += 1) {
     let line = "";
     for (let c = 0; c < cols; c += 1) {
-      line += CHARS[(Math.random() * CHARS.length) | 0];
+      line += pickChar(r, c);
     }
     out += `${line}\n`;
   }
@@ -25,8 +31,8 @@ export function AsciiBackground() {
     let raf = 0;
 
     const generate = () => {
-      const cols = Math.ceil(window.innerWidth / charWidth) + 2;
-      const rows = Math.ceil(window.innerHeight / lineHeight) + 2;
+      const cols = Math.ceil(globalThis.innerWidth / charWidth) + 2;
+      const rows = Math.ceil(globalThis.innerHeight / lineHeight) + 2;
       setField(buildField(cols, rows));
     };
 
@@ -35,9 +41,9 @@ export function AsciiBackground() {
       cancelAnimationFrame(raf);
       raf = requestAnimationFrame(generate);
     };
-    window.addEventListener("resize", onResize);
+    globalThis.addEventListener("resize", onResize);
     return () => {
-      window.removeEventListener("resize", onResize);
+      globalThis.removeEventListener("resize", onResize);
       cancelAnimationFrame(raf);
     };
   }, []);

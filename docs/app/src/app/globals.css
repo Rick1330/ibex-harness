@@ -1835,11 +1835,17 @@ html {
   line-height: 13px;
   letter-spacing: 1px;
   white-space: pre;
-  opacity: 0.12;
+  opacity: 0.17;
   word-break: break-all;
+  color: var(--muted-foreground);
 }
 .dark .ascii-bg {
-  opacity: 0.1;
+  opacity: 0.14;
+}
+
+.ibex-video-stage {
+  isolation: isolate;
+  overflow: visible;
 }
 
 .ascii-frame {
@@ -1856,9 +1862,15 @@ html {
   mix-blend-mode: multiply;
   transition: filter 0.4s ease;
   -webkit-mask-image:
-    radial-gradient(ellipse 72% 72% at 50% 50%, #000 45%, transparent 78%);
+    radial-gradient(ellipse 75% 75% at 50% 50%, #000 40%, transparent 72%),
+    linear-gradient(to right, transparent 0%, #000 10%, #000 90%, transparent 100%),
+    linear-gradient(to bottom, transparent 0%, #000 10%, #000 90%, transparent 100%);
+  -webkit-mask-composite: source-in;
+  mask-composite: intersect;
   mask-image:
-    radial-gradient(ellipse 72% 72% at 50% 50%, #000 45%, transparent 78%);
+    radial-gradient(ellipse 75% 75% at 50% 50%, #000 40%, transparent 72%),
+    linear-gradient(to right, transparent 0%, #000 10%, #000 90%, transparent 100%),
+    linear-gradient(to bottom, transparent 0%, #000 10%, #000 90%, transparent 100%);
 }
 
 .dark .video-blend {

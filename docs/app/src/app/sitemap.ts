@@ -15,16 +15,27 @@ function shouldIndexPage(url: string): boolean {
   return true;
 }
 
+function resolveSitemapPriority(url: string, priority?: number): number {
+  if (priority !== undefined) {
+    return priority;
+  }
+  if (url === "/") {
+    return 1.0;
+  }
+  if (url.startsWith("/docs")) {
+    return 0.8;
+  }
+  return 0.6;
+}
+
 function toSitemapEntry(
   url: string,
   priority?: number,
 ): MetadataRoute.Sitemap[number] {
-  const resolvedPriority =
-    priority ?? (url === "/" ? 1.0 : url.startsWith("/docs") ? 0.8 : 0.6);
   return {
     url: `${SITE_URL}${url}`,
     changeFrequency: "weekly",
-    priority: resolvedPriority,
+    priority: resolveSitemapPriority(url, priority),
   };
 }
 

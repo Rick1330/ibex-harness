@@ -7,7 +7,6 @@
  * 1. Add a Cloudflare Redirect Rule: docs.ibexharness.com/* → https://ibexharness.com/$1 (301)
  * 2. Verify: curl -fsSI https://ibexharness.com/ && bash .github/scripts/docs-smoke.sh https://ibexharness.com
  */
-import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import path from "node:path";
 import process from "node:process";

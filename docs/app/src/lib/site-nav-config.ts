@@ -1,6 +1,5 @@
 import type { MobileNavData } from "@/lib/mobile-nav-data";
 import type { ContentBaseUrl } from "@/lib/sidebar-icon-resolvers";
-import { SITE_URL } from "@/lib/site-seo";
 
 export const LANDING_SITE_URL = "/";
 
@@ -141,4 +140,4 @@ export function getActiveMobileSection(
 }
 
 /** Absolute marketing URL for JSON-LD and external citations. */
-export const SITE_ABSOLUTE_URL = SITE_URL;
+export { SITE_URL as SITE_ABSOLUTE_URL } from "@/lib/site-seo";
