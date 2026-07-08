@@ -28,7 +28,7 @@ jobs:
       name: production
       url: https://ibexharness.com
     env:
-      NEXT_PUBLIC_SITE_URL: https://docs.ibexharness.com
+      NEXT_PUBLIC_SITE_URL: https://ibexharness.com
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4

@@ -26,7 +26,7 @@ Deploy credentials live in GitHub → **Settings** → **Environments** → **`p
 | `CLOUDFLARE_API_TOKEN` | Scoped API token (see permissions below) |
 | `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account ID |
 
-For local manual deploy, use the same values from gitignored `ibexdepo/.env` — never commit tokens.
+For local manual deploy, load `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` from the GitHub **production** environment secrets — never commit tokens.
 
 ### API token permissions
 
@@ -92,13 +92,13 @@ npx serve docs/app/out
 | CI success on `main` | The **CI** workflow calls this reusable workflow after required jobs pass, when docs paths changed |
 | `workflow_dispatch` | GitHub → Actions → **Docs Deploy** → **Run workflow** (from `main` only) |
 
-Docs Deploy runs typecheck, unit tests, `build:clean`, deploys `docs/app/out` via `wrangler pages deploy`, then smoke-tests the **Pages preview URL** (`*.pages.dev`). It does **not** HTTP-smoke the custom domain: Cloudflare WAF returns **403** to GitHub Actions datacenter IPs on `docs.ibexharness.com` while the preview URL is healthy. Verify production manually after deploy (see below). DNS cutover is also manual.
+Docs Deploy runs typecheck, unit tests, `build:clean`, deploys `docs/app/out` via `wrangler pages deploy`, then smoke-tests the **Pages preview URL** (`*.pages.dev`). It does **not** HTTP-smoke the custom domain: Cloudflare WAF may return **403** to GitHub Actions datacenter IPs on `ibexharness.com` while the preview URL is healthy. Verify production manually after deploy (see below). DNS cutover is manual.
 
 **Manual (local):**
 
 ```powershell
 cd ibex-harness
-$env:CLOUDFLARE_API_TOKEN = "..."   # from ibexdepo/.env
+$env:CLOUDFLARE_API_TOKEN = "..."   # GitHub production environment secret
 $env:CLOUDFLARE_ACCOUNT_ID = "..."
 pnpm --filter docs build:clean
 pnpm --filter docs deploy:pages
@@ -106,33 +106,37 @@ pnpm --filter docs deploy:pages
 
 ## Custom domain
 
-Production DNS: **`docs.ibexharness.com`** → Cloudflare Pages project **`ibex-harness-docs`** (proxied CNAME to `ibex-harness-docs.pages.dev`).
+Production DNS: **`ibexharness.com`** → Cloudflare Pages project **`ibex-harness-docs`** (proxied CNAME to `ibex-harness-docs.pages.dev`).
 
-### Manual cutover (one-time or recovery only)
+### Apex cutover (one-time)
 
-DNS cutover from the legacy OpenNext Worker is **not** part of CI. Run [`scripts/pages-domain-cutover.mjs`](scripts/pages-domain-cutover.mjs) manually when migrating or recovering:
+DNS cutover is **not** part of CI. Run [`scripts/apex-domain-cutover.mjs`](scripts/apex-domain-cutover.mjs) after merge to `main`:
 
-1. Remove `docs.ibexharness.com` from the legacy OpenNext Worker (if still attached)
-2. Attach the custom domain to the Pages project
-3. Ensure a proxied CNAME `docs.ibexharness.com` → `ibex-harness-docs.pages.dev` exists (Worker custom domains delete their DNS records on removal)
-4. Delete Worker script `ibex-harness-docs` (OpenNext only — not the Pages project)
+1. Attach `ibexharness.com` to the Pages project
+2. Ensure proxied CNAME `ibexharness.com` → `ibex-harness-docs.pages.dev`
+3. Detach and delete DNS for legacy `docs.ibexharness.com`
+4. Add a zone Redirect Rule: `docs.ibexharness.com/*` → `https://ibexharness.com/$1` (301) for bookmarked URLs
 
 ```bash
 cd docs/app
 export CLOUDFLARE_API_TOKEN=...
 export CLOUDFLARE_ACCOUNT_ID=...
-node scripts/pages-domain-cutover.mjs
+node scripts/apex-domain-cutover.mjs
 cd ../..
 ```
 
 Verify after cutover:
 
 ```bash
-curl -fsSI https://docs.ibexharness.com/docs/getting-started/introduction   # no x-opennext header
-curl -fsSI https://docs.ibexharness.com/search-index.json
-curl -fsSI https://docs.ibexharness.com/api/search   # 308 via public/_redirects → /search-index.json
-bash .github/scripts/docs-smoke.sh https://docs.ibexharness.com
+curl -fsSI https://ibexharness.com/
+curl -fsSI https://ibexharness.com/docs/getting-started/introduction
+curl -fsSI https://ibexharness.com/search-index.json
+bash .github/scripts/docs-smoke.sh https://ibexharness.com
 ```
+
+### Legacy subdomain migration (historical)
+
+The older [`scripts/pages-domain-cutover.mjs`](scripts/pages-domain-cutover.mjs) moved `docs.ibexharness.com` from OpenNext Worker to Pages. Use only when recovering that migration path — new deploys use apex cutover above.
 
 ### Search index URL
 

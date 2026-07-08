@@ -9,3 +9,15 @@
 
 /search-index.*.json
   Cache-Control: public, max-age=31536000, immutable
+
+/ibex-ascii.webm
+  Cache-Control: public, max-age=31536000, immutable
+
+/ibex-ascii.mp4
+  Cache-Control: public, max-age=31536000, immutable
+
+/ibex-ascii-poster.webp
+  Cache-Control: public, max-age=31536000, immutable
+
+/brand/ascii-tile.webp
+  Cache-Control: public, max-age=31536000, immutable

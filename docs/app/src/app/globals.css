@@ -1485,6 +1485,50 @@ header[data-site-nav] a[data-site-nav-github] {
     max-width: 100% !important;
     box-sizing: border-box;
   }
+
+  /* Collapsed desktop sidebar: icon rail (not full hide) — expand on hover */
+  #nd-sidebar[data-collapsed="true"] {
+    --fd-sidebar-width: 3.25rem;
+    --ibex-sidebar-aside-width: 3.25rem;
+    flex: 0 0 3.25rem !important;
+    max-width: 3.25rem !important;
+    opacity: 1 !important;
+    transform: none !important;
+    translate: none !important;
+    margin-inline-end: 0 !important;
+    z-index: 30;
+  }
+
+  #nd-sidebar[data-collapsed="true"]:hover {
+    --fd-sidebar-width: var(--ibex-sidebar-inner-width);
+    --ibex-sidebar-aside-width: 18.415625rem;
+    flex: 0 0 var(--ibex-sidebar-aside-width) !important;
+    max-width: var(--ibex-sidebar-aside-width) !important;
+    z-index: 50;
+    box-shadow: 4px 0 24px hsl(var(--foreground) / 0.08);
+  }
+
+  #nd-sidebar[data-collapsed="true"]:not(:hover) .sidebar-banner,
+  #nd-sidebar[data-collapsed="true"]:not(:hover) .sidebar-folder-children,
+  #nd-sidebar[data-collapsed="true"]:not(:hover) button.sidebar-nav-section [data-icon] {
+    display: none !important;
+  }
+
+  #nd-sidebar[data-collapsed="true"]:not(:hover) a.sidebar-nav-item span,
+  #nd-sidebar[data-collapsed="true"]:not(:hover) button.sidebar-nav-section > span {
+    display: none !important;
+  }
+
+  #nd-sidebar[data-collapsed="true"]:not(:hover) a.sidebar-nav-item,
+  #nd-sidebar[data-collapsed="true"]:not(:hover) button.sidebar-nav-section {
+    justify-content: center !important;
+    padding-inline: 0.5rem !important;
+    min-height: 2.25rem !important;
+  }
+
+  #nd-sidebar[data-collapsed="true"]:not(:hover) > div {
+    overflow-x: hidden !important;
+  }
 }
 
 #nd-sidebar a,
@@ -1829,6 +1873,17 @@ html {
   background-color: color-mix(in oklch, var(--muted-foreground) 50%, transparent);
 }
 
+.ascii-tile-bg {
+  background-color: var(--background);
+  background-image: url("/brand/ascii-tile.webp");
+  background-repeat: repeat;
+  background-size: 256px 256px;
+}
+
+.dark .ascii-tile-bg {
+  filter: brightness(0.42) contrast(1.05);
+}
+
 .ascii-bg {
   font-family: var(--font-mono), ui-monospace, monospace;
   font-size: 11px;
@@ -1862,13 +1917,13 @@ html {
   mix-blend-mode: multiply;
   transition: filter 0.4s ease;
   -webkit-mask-image:
-    radial-gradient(ellipse 75% 75% at 50% 50%, #000 40%, transparent 72%),
+    radial-gradient(ellipse 75% 75% at 50% 50%, #000 40%, transparent 68%),
     linear-gradient(to right, transparent 0%, #000 10%, #000 90%, transparent 100%),
     linear-gradient(to bottom, transparent 0%, #000 10%, #000 90%, transparent 100%);
   -webkit-mask-composite: source-in;
   mask-composite: intersect;
   mask-image:
-    radial-gradient(ellipse 75% 75% at 50% 50%, #000 40%, transparent 72%),
+    radial-gradient(ellipse 75% 75% at 50% 50%, #000 40%, transparent 68%),
     linear-gradient(to right, transparent 0%, #000 10%, #000 90%, transparent 100%),
     linear-gradient(to bottom, transparent 0%, #000 10%, #000 90%, transparent 100%);
 }
