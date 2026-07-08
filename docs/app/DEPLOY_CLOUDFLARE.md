@@ -1,6 +1,6 @@
-# Cloudflare deployment (docs.ibexharness.com)
+# Cloudflare deployment (ibexharness.com)
 
-The docs site deploys to **Cloudflare Pages** as a pure static export (`docs/app/out/`). HTML, search index, and OG images are served from the CDN — no Worker runtime on page loads.
+The product site deploys to **Cloudflare Pages** as a pure static export (`docs/app/out/`). Production serves **landing** at `https://ibexharness.com/` and **docs** at `https://ibexharness.com/docs/...` from one project (`ibex-harness-docs`). Legacy `docs.ibexharness.com` should 301 to the same paths on apex after cutover (see [apex-domain-cutover.mjs](scripts/apex-domain-cutover.mjs)).
 
 **Deploy pipeline:** GitHub Actions only — [`.github/workflows/docs-deploy.yml`](../../.github/workflows/docs-deploy.yml). Do **not** connect Cloudflare Workers Builds Git to this repo.
 
