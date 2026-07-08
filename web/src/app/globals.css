@@ -1909,7 +1909,7 @@ html {
   --primary-foreground: oklch(0.95 0.003 106);
   --muted: oklch(0.9 0.003 106);
   --muted-foreground: oklch(0.5 0.004 106);
-  --accent: oklch(0.62 0.17 41);
+  --accent: oklch(0.24 0.004 106);
   --accent-foreground: oklch(0.98 0.003 106);
   --destructive: oklch(0.55 0.2 27);
   --border: oklch(0.78 0.004 106);
@@ -1919,7 +1919,7 @@ html {
 
   background-color: var(--background);
   color: var(--foreground);
-  font-family: var(--font-mono), ui-monospace, monospace;
+  font-family: var(--font-geist-sans), ui-sans-serif, sans-serif;
 }
 
 .dark .ibex-landing {
@@ -1932,7 +1932,7 @@ html {
   --primary-foreground: oklch(0.19 0.004 106);
   --muted: oklch(0.27 0.004 106);
   --muted-foreground: oklch(0.62 0.004 106);
-  --accent: oklch(0.7 0.17 45);
+  --accent: oklch(0.92 0.003 106);
   --accent-foreground: oklch(0.15 0.004 106);
   --destructive: oklch(0.6 0.2 27);
   --border: oklch(0.34 0.004 106);
@@ -1989,7 +1989,7 @@ html {
 }
 
 .dark .ascii-tile-bg {
-  filter: brightness(0.42) contrast(1.05);
+  opacity: 0.42;
 }
 
 .ascii-bg {
@@ -2023,23 +2023,12 @@ html {
 
 .video-blend {
   mix-blend-mode: multiply;
-  transition: filter 0.4s ease;
+  transition: opacity 0.4s ease;
   will-change: opacity;
-  -webkit-mask-image:
-    radial-gradient(ellipse 75% 75% at 50% 50%, #000 40%, transparent 68%),
-    linear-gradient(to right, transparent 0%, #000 10%, #000 90%, transparent 100%),
-    linear-gradient(to bottom, transparent 0%, #000 10%, #000 90%, transparent 100%);
-  -webkit-mask-composite: source-in;
-  mask-composite: intersect;
-  mask-image:
-    radial-gradient(ellipse 75% 75% at 50% 50%, #000 40%, transparent 68%),
-    linear-gradient(to right, transparent 0%, #000 10%, #000 90%, transparent 100%),
-    linear-gradient(to bottom, transparent 0%, #000 10%, #000 90%, transparent 100%);
 }
 
 .dark .video-blend {
   mix-blend-mode: screen;
-  filter: invert(1);
 }
 
 @keyframes ibex-float {
