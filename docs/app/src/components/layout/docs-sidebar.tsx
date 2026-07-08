@@ -67,7 +67,7 @@ export function DocsSidebarItem({ item }: { item: PageTree.Item }) {
       href={item.url}
       icon={resolveLeafNavIcon(item.url, baseUrl)}
     >
-      {item.name}
+      <span className="sidebar-nav-item-label min-w-0 flex-1">{item.name}</span>
     </SidebarItem>
   );
 }

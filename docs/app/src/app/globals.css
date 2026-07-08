@@ -1544,6 +1544,13 @@ header[data-site-nav] a[data-site-nav-github] {
     min-height: 2.5rem !important;
     border-inline-start: 0 !important;
     border-left: 0 !important;
+    overflow: hidden !important;
+    white-space: nowrap !important;
+    overflow-wrap: normal !important;
+    word-break: normal !important;
+    font-size: 0 !important;
+    line-height: 0 !important;
+    color: transparent !important;
   }
 
   /* Top-level leaf pages (benchmarks, roadmap overview/hub links) */
@@ -1559,6 +1566,13 @@ header[data-site-nav] a[data-site-nav-github] {
     min-height: 2.5rem !important;
     border-inline-start: 0 !important;
     border-left: 0 !important;
+    overflow: hidden !important;
+    white-space: nowrap !important;
+    overflow-wrap: normal !important;
+    word-break: normal !important;
+    font-size: 0 !important;
+    line-height: 0 !important;
+    color: transparent !important;
   }
 
   #nd-sidebar[data-collapsed="true"]:not(:hover)
@@ -1568,7 +1582,8 @@ header[data-site-nav] a[data-site-nav-github] {
   }
 
   #nd-sidebar[data-collapsed="true"]:not(:hover) button.sidebar-nav-section > span,
-  #nd-sidebar[data-collapsed="true"]:not(:hover) a.sidebar-nav-item > span {
+  #nd-sidebar[data-collapsed="true"]:not(:hover) a.sidebar-nav-item > span,
+  #nd-sidebar[data-collapsed="true"]:not(:hover) .sidebar-nav-item-label {
     display: none !important;
   }
 
@@ -1633,7 +1648,8 @@ header[data-site-nav] a[data-site-nav-github] {
 /* Collapsed rail: re-assert hide rules after global span display */
 @media (min-width: 768px) {
   #nd-sidebar[data-collapsed="true"]:not(:hover) button.sidebar-nav-section > span,
-  #nd-sidebar[data-collapsed="true"]:not(:hover) a.sidebar-nav-item > span {
+  #nd-sidebar[data-collapsed="true"]:not(:hover) a.sidebar-nav-item > span,
+  #nd-sidebar[data-collapsed="true"]:not(:hover) .sidebar-nav-item-label {
     display: none !important;
   }
 }

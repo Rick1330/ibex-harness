@@ -9,7 +9,11 @@ const pageTree = source.getPageTree();
 
 export const dynamic = "force-static";
 
-export default function Layout({ children }: { children: ReactNode }) {
+type DocsLayoutWrapperProps = Readonly<{
+  children: ReactNode;
+}>;
+
+export default function Layout({ children }: DocsLayoutWrapperProps) {
   const options = baseOptions();
 
   return (
