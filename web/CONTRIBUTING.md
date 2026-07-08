@@ -56,4 +56,4 @@ Full rules: [MASTER_BRIEF §0.1](../roadmap/phase-1-5-docs-site/MASTER_BRIEF.md)
 
 ## Cloudflare deploy
 
-See [DEPLOY_CLOUDFLARE.md](./DEPLOY_CLOUDFLARE.md) for OpenNext build, GitHub Actions deploy, and token permissions.
+See `ibex-harness-workspace/ops/cloudflare/README.md` for the Cloudflare deploy runbook (local-only; not in git).

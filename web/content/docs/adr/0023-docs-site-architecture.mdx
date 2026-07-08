@@ -47,7 +47,7 @@ Public pages are authored as MDX; port/adapt from engineering sources per [CONTE
 - **Cloudflare Pages** — pure static export (`output: export` → `docs/app/out/`).
 - Pages project name: **`ibex-harness-docs`**.
 - Deploy **only** through GitHub Actions [docs-deploy workflow](https://github.com/Rick1330/ibex-harness/blob/main/.github/workflows/docs-deploy.yml).
-- Credentials in GitHub Environment **`production`** (`CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`); see [DEPLOY_CLOUDFLARE.md](https://github.com/Rick1330/ibex-harness/blob/main/docs/app/DEPLOY_CLOUDFLARE.md).
+- Credentials in GitHub Environment **`production`** (`CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`); see `ibex-harness-workspace/ops/cloudflare/README.md` (local-only operator runbook).
 - **Separate** from landing project `ibexdepo` — never attach `docs.ibexharness.com` to the landing Vercel project.
 - `NEXT_PUBLIC_SITE_URL=https://docs.ibexharness.com` in production.
 - Search: pre-built `/search-index.json` (Orama simple mode, ~272 KB); `/api/search` redirects to it in production.

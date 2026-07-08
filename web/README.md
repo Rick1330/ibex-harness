@@ -7,7 +7,7 @@ Next.js + Fumadocs application for [docs.ibexharness.com](https://docs.ibexharne
 | `content/docs/` | Public MDX pages (created in D.2.1+) |
 | `src/` | App Router, components, layout (D.2.1+) |
 
-Engineering documentation (ADRs, roadmap, audits) lives in the parent [`docs/`](../) tree — not in this app.
+Engineering documentation (ADRs, roadmap, audits) lives in `web/engineering/` in this repo (not in the published docs routes from this app).
 
 ## Run
 
