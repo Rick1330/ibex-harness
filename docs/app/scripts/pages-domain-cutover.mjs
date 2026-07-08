@@ -121,11 +121,7 @@ async function main() {
 
 try {
   await main();
-} catch (err) {
-  const message = err instanceof Error ? err.message : String(err);
-  console.error(`[cutover] failed: ${message}`);
-  console.error(
-    "[cutover] check Cloudflare dashboard for domain and Worker state",
-  );
+} catch {
+  console.error("[cutover] failed — check Cloudflare dashboard for domain and Worker state");
   process.exit(1);
 }

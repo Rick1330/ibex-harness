@@ -78,12 +78,7 @@ export async function cloudflareRequest(url, init = {}) {
     }
   }
   if (!response.ok || body.success === false) {
-    const detail = Array.isArray(body.errors)
-      ? body.errors.map((e) => e.message ?? JSON.stringify(e)).join("; ")
-      : response.statusText;
-    throw new Error(
-      `Cloudflare API ${url} failed (${response.status}): ${detail}`,
-    );
+    throw new Error(`Cloudflare API request failed (${response.status})`);
   }
   return body.result;
 }

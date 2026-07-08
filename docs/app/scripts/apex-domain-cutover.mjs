@@ -40,8 +40,7 @@ async function main() {
 
 try {
   await main();
-} catch (err) {
-  const message = err instanceof Error ? err.message : String(err);
-  console.error(`${LOG} failed: ${message}`);
+} catch {
+  console.error(`${LOG} failed — check Cloudflare dashboard for domain and DNS state`);
   process.exit(1);
 }
