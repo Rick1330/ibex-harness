@@ -23,6 +23,7 @@ export default function RoadmapContentLayout({
   return (
     <DocsLayout
       tree={pageTree}
+      containerProps={{ className: "roadmap-docs-layout" }}
       {...options}
       {...roadmapLayoutOptions()}
     >
