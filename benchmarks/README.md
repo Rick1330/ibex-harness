@@ -9,14 +9,14 @@ This directory contains the benchmark pipeline assets:
 - `data-schema/`: baseline policy, JSON schema, and benchmark data contracts.
 - `testdata/`: fixtures for pipeline verification tests.
 
-Published benchmark data is committed to `docs/app/public/benchmarks/` on successful `main` runs and served by the docs site at `/benchmarks/benchmark-data.json`. Phase 2 adds the Next.js `/benchmarks` dashboard UI.
+Published benchmark data is committed to `web/public/benchmarks/` on successful `main` runs and served by the docs site at `/benchmarks/benchmark-data.json`. Phase 2 adds the Next.js `/benchmarks` dashboard UI.
 
 ## Verification
 
 ```bash
 go test ./benchmarks/go/...
 python benchmarks/scripts/test_pipeline.py
-cd docs/app && npm test -- src/lib/benchmarks/ && npm run typecheck
+cd web && npm test -- src/lib/benchmarks/ && npm run typecheck
 ```
 
 ## Local quick run
@@ -48,4 +48,4 @@ python benchmarks/scripts/generate_badge.py
 2. `regression_gate.py` writes `gate-result.json` and enforces SLA/regression policy.
 3. `build_benchmark_data.py` merges the latest run into `benchmark-data.json` schema v1.
 4. `generate_badge.py` writes `badge.svg` from the latest run status.
-5. On `main`, CI commits `docs/app/public/benchmarks/*` and triggers docs deploy.
+5. On `main`, CI commits `web/public/benchmarks/*` and triggers docs deploy.

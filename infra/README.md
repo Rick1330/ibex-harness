@@ -2,7 +2,7 @@
 
 Deployment, local development infrastructure, and observability configuration.
 
-Planned layout (see [docs/FILE_STRUCTURE.md](../docs/FILE_STRUCTURE.md)):
+Planned layout (see [web/engineering/FILE_STRUCTURE.md](../web/engineering/FILE_STRUCTURE.md)):
 
 | Directory | Role |
 | --- | --- |

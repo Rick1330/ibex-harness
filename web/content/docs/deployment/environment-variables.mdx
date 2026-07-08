@@ -1,0 +1,140 @@
+---
+title: Environment variables
+description: Integrator-focused env vars for proxy, auth, Postgres, and Redis in Phase 1 local and staging deployments.
+---
+
+IBEX services load configuration from environment variables at startup via `packages/config`. Missing required values fail fast with a clear message — there are no checked-in `.env` files, only `.env.example` per service.
+
+<Callout type="tip" title="Full registry">
+  Operators and platform engineers should also read `web/engineering/ENVIRONMENT_VARIABLES.md` in the repository for ClickHouse, MinIO, Python services, and production profiles.
+</Callout>
+
+## Conventions
+
+- Prefix `IBEX_` for project-wide settings; `POSTGRES_` / `REDIS_` for infrastructure.
+- Secrets (DSNs, Redis passwords) never belong in git — inject via your secret manager.
+- Precedence: process env → `.env` file (local only) → documented defaults.
+
+## Proxy (Phase 1)
+
+<ParamTable
+  params={[
+    {
+      name: 'IBEX_AUTH_GRPC_ADDR',
+      type: 'string (host:port)',
+      required: true,
+      description: 'Auth gRPC target for ValidateToken and ValidateAgent.',
+      defaultValue: '127.0.0.1:9091',
+    },
+    {
+      name: 'REDIS_URL',
+      type: 'string (URL)',
+      description:
+        "Redis for rate limiting and proxy /ready. Empty uses Noop limiter (no RPM enforcement).",
+      defaultValue: '(empty)',
+    },
+    {
+      name: 'IBEX_PORT',
+      type: 'integer',
+      description: 'HTTP listen port for /health, /ready, /metrics, and /v1/* routes.',
+      defaultValue: '8080',
+    },
+    {
+      name: 'IBEX_AUTH_VALIDATE_TIMEOUT',
+      type: 'duration',
+      description:
+        'Per-request auth gRPC budget. Use 2s locally; production target is 50ms.',
+      defaultValue: '50ms (code); 2s in .env.example',
+    },
+    {
+      name: 'IBEX_RATE_LIMIT_DEFAULT_RPM',
+      type: 'integer',
+      description: 'Default org requests-per-minute when Redis is available.',
+      defaultValue: '60',
+    },
+    {
+      name: 'IBEX_MAX_REQUEST_BODY_BYTES',
+      type: 'integer',
+      description: 'Max chat POST body size (see ADR-0013).',
+      defaultValue: '1048576',
+    },
+    {
+      name: 'IBEX_ERROR_DOCS_BASE',
+      type: 'string (URL)',
+      description: 'Optional base for error envelope docs_url fields.',
+      defaultValue: '(omit in dev)',
+    },
+  ]}
+/>
+
+Copy `services/proxy/.env.example` and `services/auth/.env.example` before running services.
+
+## Auth (Phase 1)
+
+<ParamTable
+  params={[
+    {
+      name: 'POSTGRES_DSN',
+      type: 'string (postgres://…)',
+      required: true,
+      description:
+        `Postgres for tokens and agents. Compose: postgres://ibex:ibex@localhost:5432/ibex`,
+    },
+    {
+      name: 'IBEX_PORT',
+      type: 'integer',
+      description: 'HTTP port for /health, /ready, and /metrics.',
+      defaultValue: '8081',
+    },
+    {
+      name: 'IBEX_GRPC_PORT',
+      type: 'integer',
+      description: 'gRPC listen port for AuthService (internal only).',
+      defaultValue: '9091',
+    },
+    {
+      name: 'POSTGRES_TEST_DSN',
+      type: 'string',
+      description: 'Integration tests on compose test port 5433.',
+      defaultValue: `postgres://ibex:ibex@localhost:5433/ibex_test?sslmode=disable`,
+    },
+  ]}
+/>
+
+The proxy never reads `POSTGRES_DSN` in Phase 1 — identity access is gRPC-only. Run `make db-migrate` after compose is healthy.
+
+## Redis
+
+<ParamTable
+  params={[
+    {
+      name: 'REDIS_URL',
+      type: 'string (URL)',
+      description: 'Primary connection string, e.g. redis://localhost:6379/0.',
+      defaultValue: `redis://localhost:6379/0`,
+    },
+    {
+      name: 'REDIS_CONNECT_TIMEOUT_MS',
+      type: 'integer',
+      description: 'Connection timeout on the critical path.',
+      defaultValue: '200',
+    },
+    {
+      name: 'REDIS_TLS_ENABLED',
+      type: 'boolean',
+      description: 'Enable TLS for managed Redis in staging/production.',
+      defaultValue: 'false',
+    },
+  ]}
+/>
+
+<Callout type="warning" title="Fail-open rate limiting">
+  When Redis is unreachable, the proxy rate limiter fails open (requests proceed). Readiness still reports Redis as a critical check — see [Proxy health](/docs/api-reference/proxy-health).
+</Callout>
+
+## Local `.env` layout
+
+```bash
+cp services/proxy/.env.example services/proxy/.env
+cp services/auth/.env.example services/auth/.env
+```

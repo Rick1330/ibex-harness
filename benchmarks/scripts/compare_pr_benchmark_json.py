@@ -11,7 +11,7 @@ if str(SCRIPTS) not in sys.path:
 
 from validate_published_data import fail, load_payload, resolve_benchmark_data_path  # noqa: E402
 
-COMMITTED_PATH = "docs/app/public/benchmarks/benchmark-data.json"
+COMMITTED_PATH = "web/public/benchmarks/benchmark-data.json"
 ARTIFACT_PATH = "benchmarks/output/benchmark-data.json"
 
 
@@ -20,7 +20,7 @@ def main() -> int:
     artifact = load_payload(resolve_benchmark_data_path(ARTIFACT_PATH))
     if committed != artifact:
         fail(
-            "docs/app/public/benchmarks/benchmark-data.json was edited on this PR "
+            "web/public/benchmarks/benchmark-data.json was edited on this PR "
             "but does not match the workflow artifact. Remove manual edits and let "
             "publish-benchmark-data update the file."
         )

@@ -18,20 +18,20 @@ Thumbs.db
 !.vscode/settings.json.example
 
 # --- Docs site (Fumadocs / Next.js) ---
-docs/app/.next/
-docs/app/.next-dev/
-docs/app/.next.stale-*/
-docs/app/.open-next/
-docs/app/.wrangler/
-docs/app/.source/
-docs/app/out/
-docs/app/public/diagrams/
-docs/app/public/markdown/
-docs/app/public/search-index.json
-docs/app/public/search-index.*.json
-docs/app/public/docs/
-docs/app/.api-build-stash/
-docs/app/build-output.txt
+web/.next/
+web/.next-dev/
+web/.next.stale-*/
+web/.open-next/
+web/.wrangler/
+web/.source/
+web/out/
+web/public/diagrams/
+web/public/markdown/
+web/public/search-index.json
+web/public/search-index.*.json
+web/public/docs/
+web/.api-build-stash/
+web/build-output.txt
 
 # --- CI test reports (JUnit for Trunk; ephemeral) ---
 test-results/

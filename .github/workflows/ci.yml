@@ -78,7 +78,7 @@ jobs:
     permissions:
       contents: read
     outputs:
-      docs: ${{ steps.filter.outputs.docs }}
+      web: ${{ steps.filter.outputs.web }}
       go: ${{ steps.filter.outputs.go }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -89,16 +89,17 @@ jobs:
         id: filter
         with:
           filters: |
-            docs:
+            web:
               - 'docs/**'
+              - 'web/**'
               - 'package.json'
               - '.npmrc'
               - 'pnpm-lock.yaml'
               - 'pnpm-workspace.yaml'
               - 'turbo.json'
               - '.github/workflows/ci.yml'
-              - '.github/workflows/docs-deploy.yml'
-              - '.github/actions/setup-pnpm-docs/**'
+              - '.github/workflows/web-deploy.yml'
+              - '.github/actions/setup-pnpm-web/**'
               - '.github/actions/setup-buf/**'
             go:
               - 'services/**'
@@ -855,10 +856,10 @@ jobs:
         --recursive
         .
 
-  docs-build:
-    name: docs-build
+  web-build:
+    name: web-build
     needs: [changes, repo-guards]
-    if: needs.changes.outputs.docs == 'true'
+    if: needs.changes.outputs.web == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -894,7 +895,7 @@ jobs:
             echo "No successful Benchmarks run for ${HEAD_SHA}; using committed benchmark JSON."
             exit 0
           fi
-          mkdir -p docs/app/public/benchmarks
+          mkdir -p web/public/benchmarks
           if ! gh run download "$run_id" \
             --repo "${GITHUB_REPOSITORY}" \
             --name benchmark-data \
@@ -902,13 +903,13 @@ jobs:
             echo "Benchmark artifact download failed for run ${run_id}; using committed benchmark JSON."
             exit 0
           fi
-          cp /tmp/benchmark-data/benchmark-data.json docs/app/public/benchmarks/benchmark-data.json
+          cp /tmp/benchmark-data/benchmark-data.json web/public/benchmarks/benchmark-data.json
           if [ -f /tmp/benchmark-data/badge.svg ]; then
-            cp /tmp/benchmark-data/badge.svg docs/app/public/benchmarks/badge.svg
+            cp /tmp/benchmark-data/badge.svg web/public/benchmarks/badge.svg
           fi
           echo "Overlaid benchmark artifact from run ${run_id}"
 
-      - uses: ./.github/actions/setup-pnpm-docs
+      - uses: ./.github/actions/setup-pnpm-web
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -916,19 +917,19 @@ jobs:
       - name: Cache Next.js build
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: docs/app/.next/cache
-          key: ${{ runner.os }}-nextjs-${{ hashFiles('pnpm-lock.yaml', 'docs/app/**') }}
+          path: web/.next/cache
+          key: ${{ runner.os }}-nextjs-${{ hashFiles('pnpm-lock.yaml', 'web/**') }}
           restore-keys: |
             ${{ runner.os }}-nextjs-${{ hashFiles('pnpm-lock.yaml') }}-
 
-      - name: Typecheck docs app
-        run: pnpm --filter docs typecheck
+      - name: Typecheck web app
+        run: pnpm --filter web typecheck
 
-      - name: Test docs components
-        run: pnpm --filter docs test
+      - name: Test web components
+        run: pnpm --filter web test
 
-      - name: Build docs
-        run: pnpm docs:build:clean
+      - name: Build web app
+        run: pnpm web:build:clean
 
   hadolint:
     name: hadolint
@@ -947,7 +948,7 @@ jobs:
       - name: Hadolint all Dockerfiles
         run: |
           # Dockerfiles today: services/auth, services/proxy.
-          # Pending: services/memory, services/dashboard (see docs/DEPENDENCIES.md §10).
+          # Pending: services/memory, services/dashboard (see web/engineering/DEPENDENCIES.md §10).
           mapfile -t files < <(find . -name 'Dockerfile*' -not -path './.git/*' | sort)
           if [ ${#files[@]} -eq 0 ]; then
             echo "No Dockerfiles found"
@@ -1103,8 +1104,8 @@ jobs:
           sarif_file: bandit.sarif
           category: bandit
 
-  docs-go-quality-gate:
-    name: docs-go-quality-gate
+  web-go-quality-gate:
+    name: web-go-quality-gate
     needs:
       - changes
       - proto-contract
@@ -1120,32 +1121,32 @@ jobs:
     if: |
       github.event_name == 'push' &&
       github.ref == 'refs/heads/main' &&
-      needs.changes.outputs.docs == 'true' &&
+      needs.changes.outputs.web == 'true' &&
       needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
-      - run: echo "Go quality gates passed for docs deploy"
+      - run: echo "Go quality gates passed for web deploy"
 
-  docs-deploy:
-    name: docs-deploy
+  web-deploy:
+    name: web-deploy
     needs:
       - changes
       - repo-guards
-      - docs-build
-      - docs-go-quality-gate
+      - web-build
+      - web-go-quality-gate
     if: |
       always() &&
       github.event_name == 'push' &&
       github.ref == 'refs/heads/main' &&
-      needs.changes.outputs.docs == 'true' &&
+      needs.changes.outputs.web == 'true' &&
       needs.repo-guards.result == 'success' &&
-      needs.docs-build.result == 'success' &&
-      (needs.changes.outputs.go != 'true' || needs.docs-go-quality-gate.result == 'success')
+      needs.web-build.result == 'success' &&
+      (needs.changes.outputs.go != 'true' || needs.web-go-quality-gate.result == 'success')
     permissions:
       contents: read
-    uses: ./.github/workflows/docs-deploy.yml
+    uses: ./.github/workflows/web-deploy.yml
     secrets: inherit
 
   govulncheck:

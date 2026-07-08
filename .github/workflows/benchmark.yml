@@ -98,7 +98,7 @@ jobs:
 
       - name: Validate published benchmark data on main
         run: |
-          path="docs/app/public/benchmarks/benchmark-data.json"
+          path="web/public/benchmarks/benchmark-data.json"
           if [ -f "$path" ]; then
             python benchmarks/scripts/validate_published_data.py "$path"
           else
@@ -175,7 +175,7 @@ jobs:
 
       - name: Load previous benchmark history from repo
         run: |
-          src="docs/app/public/benchmarks/benchmark-data.json"
+          src="web/public/benchmarks/benchmark-data.json"
           if [ -f "$src" ]; then
             cp "$src" benchmarks/output/prev-benchmark-data.json
             echo "Loaded previous benchmark history from ${src}"

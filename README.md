@@ -14,8 +14,8 @@
 <p align="center">
   <a href="https://ibexharness.com">Docs</a>
   · <a href="https://ibexharness.com/benchmarks">Benchmarks</a>
-  · <a href="docs/DEVELOPMENT_GUIDE.md">Developer guide</a>
-  · <a href="docs/SECURITY.md">Security</a>
+  · <a href="web/engineering/DEVELOPMENT_GUIDE.md">Developer guide</a>
+  · <a href="web/engineering/SECURITY.md">Security</a>
 </p>
 
 <p align="center">
@@ -26,8 +26,8 @@
 
 ## Quick start
 
-- **Prerequisites**: Docker, Go, Buf, Make. See `docs/TOOLCHAIN.md`.
-- **Full setup and local workflow**: `docs/DEVELOPMENT_GUIDE.md`.
+- **Prerequisites**: Docker, Go, Buf, Make. See `web/engineering/TOOLCHAIN.md`.
+- **Full setup and local workflow**: `web/engineering/DEVELOPMENT_GUIDE.md`.
 
 ```bash
 git clone https://github.com/Rick1330/ibex-harness.git
@@ -40,6 +40,6 @@ make db-seed
 
 ## What to read next
 
-- **Architecture**: `docs/ARCHITECTURE.md`
-- **Environment variables**: `docs/ENVIRONMENT_VARIABLES.md`
+- **Architecture**: `web/engineering/ARCHITECTURE.md`
+- **Environment variables**: `web/engineering/ENVIRONMENT_VARIABLES.md`
 - **Contributing**: `CONTRIBUTING.md`

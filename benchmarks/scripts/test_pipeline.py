@@ -343,7 +343,7 @@ class BuildBenchmarkDataTests(unittest.TestCase):
 
 class ValidatePublishedDataTests(unittest.TestCase):
     def test_validate_published_data_accepts_seed_file(self) -> None:
-        seed = ROOT / "docs/app/public/benchmarks/benchmark-data.json"
+        seed = ROOT / "web/public/benchmarks/benchmark-data.json"
         if not seed.exists():
             self.skipTest("published benchmark seed not available")
         validate_published_data.validate_payload(
@@ -356,12 +356,12 @@ class ValidatePublishedDataTests(unittest.TestCase):
 
     def test_compare_pr_benchmark_json_accepts_matching_payloads(self) -> None:
         compare = load_module("compare_pr_benchmark_json", SCRIPTS / "compare_pr_benchmark_json.py")
-        seed = ROOT / "docs/app/public/benchmarks/benchmark-data.json"
+        seed = ROOT / "web/public/benchmarks/benchmark-data.json"
         if not seed.exists():
             self.skipTest("published benchmark seed not available")
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            committed = root / "docs/app/public/benchmarks"
+            committed = root / "web/public/benchmarks"
             artifact = root / "benchmarks/output"
             committed.mkdir(parents=True)
             artifact.mkdir(parents=True)

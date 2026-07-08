@@ -18,7 +18,7 @@ Emergency fixes use a short-lived `hotfix/*` branch and the same PR process—no
 
 ## Branch naming
 
-Use the conventions in [docs/DEVELOPMENT_GUIDE.md](docs/DEVELOPMENT_GUIDE.md) §6.1:
+Use the conventions in [web/engineering/DEVELOPMENT_GUIDE.md](web/engineering/DEVELOPMENT_GUIDE.md) §6.1:
 
 - `feature/IBEX-1234-short-description`
 - `fix/IBEX-1234-short-description`
@@ -41,7 +41,7 @@ Optional body with rationale, breaking changes, or ops notes.
 
 Examples: `feat(proxy): add request ID middleware`, `docs(adr): add branch protection policy`, `fix(ci): stabilize gitleaks scan`.
 
-Align with [docs/CODING_STANDARDS.md](docs/CODING_STANDARDS.md) where language-specific rules apply.
+Align with [web/engineering/CODING_STANDARDS.md](web/engineering/CODING_STANDARDS.md) where language-specific rules apply.
 
 ## Automated PR review (Copilot)
 
@@ -123,7 +123,7 @@ CI/security config changes: use [prompts/20-security-ci-audit.txt](prompts/20-se
 
 ## Pull request template
 
-Use [.github/pull_request_template.md](.github/pull_request_template.md). Include What/Why, How, Testing, Security, and Docs sections per [docs/DEVELOPMENT_GUIDE.md](docs/DEVELOPMENT_GUIDE.md) §7.
+Use [.github/pull_request_template.md](.github/pull_request_template.md). Include What/Why, How, Testing, Security, and Docs sections per [web/engineering/DEVELOPMENT_GUIDE.md](web/engineering/DEVELOPMENT_GUIDE.md) §7.
 
 ## Code ownership
 
@@ -135,7 +135,7 @@ See [.github/SECURITY.md](.github/SECURITY.md) for vulnerability reporting.
 
 ## Further reading
 
-- [docs/DEVELOPMENT_GUIDE.md](docs/DEVELOPMENT_GUIDE.md) — branching, PRs, CI expectations
-- [docs/CODING_STANDARDS.md](docs/CODING_STANDARDS.md) — style and quality bar
+- [web/engineering/DEVELOPMENT_GUIDE.md](web/engineering/DEVELOPMENT_GUIDE.md) — branching, PRs, CI expectations
+- [web/engineering/CODING_STANDARDS.md](web/engineering/CODING_STANDARDS.md) — style and quality bar
 - [docs/adr/ADR-0003-branch-protection-and-merge-policy.md](docs/adr/ADR-0003-branch-protection-and-merge-policy.md) — branch protection policy
 - [docs/adr/ADR-0008-security-ci-gates.md](docs/adr/ADR-0008-security-ci-gates.md) — security scanning CI gates

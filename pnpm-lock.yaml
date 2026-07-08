@@ -17,7 +17,7 @@ importers:
         specifier: ^2.5.4
         version: 2.9.18
 
-  docs/app:
+  web:
     dependencies:
       '@observablehq/plot':
         specifier: ^0.6.17

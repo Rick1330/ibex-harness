@@ -2,5 +2,5 @@
 # When teams grow, add path-specific rules, for example:
 # /services/proxy/     @org/proxy-team
 # /packages/proto/     @org/platform-team
-/docs/app/public/benchmarks/ @Rick1330
+/web/public/benchmarks/ @Rick1330
 * @Rick1330

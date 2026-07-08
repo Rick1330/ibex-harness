@@ -3,7 +3,7 @@
 set -euo pipefail
 
 BASE_REF="${1:-}"
-COMMITTED_PATH="docs/app/public/benchmarks/benchmark-data.json"
+COMMITTED_PATH="web/public/benchmarks/benchmark-data.json"
 
 if [[ -z "$BASE_REF" ]]; then
   echo "usage: verify_pr_benchmark_integrity.sh <base-ref>" >&2

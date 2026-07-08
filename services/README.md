@@ -2,7 +2,7 @@
 
 Deployable runtime components for IBEX Harness.
 
-Planned services (see [docs/FILE_STRUCTURE.md](../docs/FILE_STRUCTURE.md)):
+Planned services (see [web/engineering/FILE_STRUCTURE.md](../web/engineering/FILE_STRUCTURE.md)):
 
 | Directory | Role |
 | --- | --- |
@@ -20,4 +20,4 @@ Planned services (see [docs/FILE_STRUCTURE.md](../docs/FILE_STRUCTURE.md)):
 - `auth/` - Go skeleton with `/health`, `/ready`, and `/metrics`
 - `proxy/` - Go skeleton with `/health`, `/ready`, and `/metrics`
 
-Other services remain planned and should be bootstrapped via [docs/FILE_STRUCTURE.md](../docs/FILE_STRUCTURE.md) scaffolds.
+Other services remain planned and should be bootstrapped via [web/engineering/FILE_STRUCTURE.md](../web/engineering/FILE_STRUCTURE.md) scaffolds.
