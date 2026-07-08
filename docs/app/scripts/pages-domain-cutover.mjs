@@ -84,9 +84,7 @@ function runWranglerDeleteWorker() {
       },
     );
     child.stderr?.on("data", (chunk) => {
-      const text = chunk.toString();
-      stderr += text;
-      process.stderr.write(chunk);
+      stderr += chunk.toString();
     });
     child.once("error", reject);
     child.once("exit", (code) => {

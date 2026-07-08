@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  assertAllowedHostname,
   assertCloudflareId,
   buildAccountsApiUrl,
   buildZonesApiUrl,
@@ -28,6 +29,18 @@ describe("cloudflare-pages-api", () => {
     expect(() =>
       buildAccountsApiUrl("0123456789abcdef", "/pages/projects/other/domains"),
     ).toThrow("disallowed Cloudflare accounts API path");
+  });
+
+  it("allows detach path for allowlisted hostnames", () => {
+    assertAllowedHostname("ibexharness.com");
+    const url = buildAccountsApiUrl(
+      "0123456789abcdef",
+      "/pages/projects/ibex-harness-docs/domains/docs.ibexharness.com",
+    );
+    expect(url).toContain("docs.ibexharness.com");
+    expect(() => assertAllowedHostname("evil.example")).toThrow(
+      "disallowed hostname",
+    );
   });
 
   it("builds allowlisted zones API URLs", () => {

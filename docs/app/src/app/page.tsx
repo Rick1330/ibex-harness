@@ -56,10 +56,7 @@ export const metadata: Metadata = {
 export default function HomePage() {
   return (
     <div className="ibex-landing relative min-h-screen text-foreground pt-[var(--site-nav-height)]">
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(softwareJsonLd) }}
-      />
+      <script type="application/ld+json">{JSON.stringify(softwareJsonLd)}</script>
       <AsciiBackground />
       <LandingHero />
       <LandingMarquee />
