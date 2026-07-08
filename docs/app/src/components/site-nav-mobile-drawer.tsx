@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
@@ -70,12 +71,13 @@ export function SiteNavMobileDrawer({
         )}
       >
         <div className="shrink-0 space-y-3 border-b border-border/70 p-3">
-          <a
+          <Link
             href={LANDING_NAV_LINK.href}
+            onClick={onClose}
             className="inline-flex rounded-md px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted/30 hover:text-foreground"
           >
             {LANDING_NAV_LINK.text}
-          </a>
+          </Link>
           <NavSearch variant="full" className="w-full" />
           <MobileSectionSwitcher
             sections={MOBILE_NAV_SECTIONS}

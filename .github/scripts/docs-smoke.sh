@@ -7,6 +7,7 @@ BASE_URL="${BASE_URL%/}"
 SEARCH_INDEX_MAX_BYTES="${SEARCH_INDEX_MAX_BYTES:-5000000}"
 
 paths=(
+  "/"
   "/roadmap"
   "/roadmap/current-state"
   "/docs/getting-started/introduction"
@@ -47,8 +48,15 @@ if ! echo "$page_html" | grep -qF '/search-index.json'; then
 fi
 echo "ok: static search index URL baked in /roadmap"
 
+page_home="$(curl -fsS "${BASE_URL}/")"
+if ! echo "$page_home" | grep -qF 'ibex-landing'; then
+  echo "smoke failed: / does not include landing marker (ibex-landing)"
+  exit 1
+fi
+echo "ok: / includes landing marker"
+
 # Production must be Pages static CDN, not the legacy OpenNext Worker.
-if [[ "$BASE_URL" == *"docs.ibexharness.com"* ]]; then
+if [[ "$BASE_URL" == *"ibexharness.com"* ]]; then
   intro_headers="$(curl -fsSI "${BASE_URL}/docs/getting-started/introduction" || true)"
   if echo "$intro_headers" | grep -qi 'x-opennext'; then
     echo "smoke failed: ${BASE_URL} still served by OpenNext Worker (x-opennext header)"
