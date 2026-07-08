@@ -12,13 +12,11 @@ import { SearchIndexPrefetch } from "@/components/search-index-prefetch";
 import { SiteNavShell } from "@/components/site-nav-shell";
 import { STATIC_SEARCH_INDEX_URL } from "@/lib/search-index-url";
 import {
-  DOCS_AI_URL,
-  DOCS_LLMS_URL,
-  DOCS_SITE_URL,
-  MARKETING_AI_URL,
-  MARKETING_LLMS_URL,
+  SITE_AI_URL,
+  SITE_LLMS_URL,
   SITE_DESCRIPTION,
   SITE_KEYWORDS,
+  SITE_URL,
 } from "@/lib/site-seo";
 import "./globals.css";
 
@@ -31,11 +29,11 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  metadataBase: new URL(DOCS_SITE_URL),
-  title: { default: "IBEX Harness Docs", template: "%s — IBEX Harness" },
+  metadataBase: new URL(SITE_URL),
+  title: { default: "IBEX Harness", template: "%s — IBEX Harness" },
   description: SITE_DESCRIPTION,
   keywords: SITE_KEYWORDS,
-  applicationName: "IBEX Harness Docs",
+  applicationName: "IBEX Harness",
   manifest: "/site.webmanifest",
   alternates: {
     types: {
@@ -48,9 +46,9 @@ export const metadata: Metadata = {
   openGraph: {
     type: "website",
     locale: "en_US",
-    url: DOCS_SITE_URL,
-    siteName: "IBEX Harness Docs",
-    title: "IBEX Harness Docs",
+    url: SITE_URL,
+    siteName: "IBEX Harness",
+    title: "IBEX Harness",
     description: SITE_DESCRIPTION,
     images: [
       {
@@ -63,7 +61,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "IBEX Harness Docs",
+    title: "IBEX Harness",
     description: SITE_DESCRIPTION,
     images: ["/brand/android-chrome-512x512.png"],
   },
@@ -77,10 +75,8 @@ export const metadata: Metadata = {
     },
   },
   other: {
-    "llms-txt": DOCS_LLMS_URL,
-    "ai-txt": DOCS_AI_URL,
-    "marketing-llms-txt": MARKETING_LLMS_URL,
-    "marketing-ai-txt": MARKETING_AI_URL,
+    "llms-txt": SITE_LLMS_URL,
+    "ai-txt": SITE_AI_URL,
   },
   icons: {
     icon: [

@@ -12,8 +12,8 @@
 </p>
 
 <p align="center">
-  <a href="https://docs.ibexharness.com">Docs</a>
-  · <a href="https://docs.ibexharness.com/benchmarks">Benchmarks</a>
+  <a href="https://ibexharness.com">Docs</a>
+  · <a href="https://ibexharness.com/benchmarks">Benchmarks</a>
   · <a href="docs/DEVELOPMENT_GUIDE.md">Developer guide</a>
   · <a href="docs/SECURITY.md">Security</a>
 </p>

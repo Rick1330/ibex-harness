@@ -13,12 +13,12 @@ export default function NotFound() {
         The page you requested does not exist or may have moved.
       </p>
       <div className="flex flex-wrap items-center justify-center gap-3">
-        <a
+        <Link
           className="inline-flex h-9 items-center rounded-[4px] border border-border bg-transparent px-4 text-sm font-medium text-text-primary transition hover:bg-panel-raised"
-          href="https://ibexharness.com"
+          href="/"
         >
           Back to home
-        </a>
+        </Link>
         <Link
           className="inline-flex h-9 items-center rounded-[4px] border border-border bg-transparent px-4 text-sm font-medium text-text-primary transition hover:bg-panel-raised"
           href="/docs/getting-started/introduction"

@@ -1,13 +1,13 @@
 import type { MobileNavData } from "@/lib/mobile-nav-data";
 import type { ContentBaseUrl } from "@/lib/sidebar-icon-resolvers";
-import { MARKETING_SITE_URL } from "@/lib/site-seo";
+import { SITE_URL } from "@/lib/site-seo";
 
-export const LANDING_SITE_URL = MARKETING_SITE_URL;
+export const LANDING_SITE_URL = "/";
 
 export const LANDING_NAV_LINK = {
   text: "Home",
   href: LANDING_SITE_URL,
-  external: true,
+  external: false,
 } as const;
 
 export const NAV_LINKS = [
@@ -139,3 +139,6 @@ export function getActiveMobileSection(
   if (match) return match;
   return MOBILE_NAV_SECTIONS[0];
 }
+
+/** Absolute marketing URL for JSON-LD and external citations. */
+export const SITE_ABSOLUTE_URL = SITE_URL;

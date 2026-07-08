@@ -1,51 +1,44 @@
-# IBEX Harness — AI crawler policy (docs site)
+# IBEX Harness — AI crawler policy
 
-## Properties (two domains, one product)
+IBEX Harness is an open-source (MIT) AI agent infrastructure platform.
 
-| Domain | Role |
-|--------|------|
-| https://ibexharness.com | Marketing landing — product story, FAQ, links to docs |
-| https://docs.ibexharness.com | Documentation, blog, releases, roadmap, API reference |
+## Canonical site
 
-## Allowed to index and summarize
+| URL | Purpose |
+|-----|---------|
+| https://ibexharness.com | Unified site — landing, docs, blog, benchmarks, releases, roadmap |
 
-### docs.ibexharness.com
-- /docs/* (documentation)
-- /blog/* (engineering blog)
-- /releases/* (changelog)
-- /roadmap/* (public roadmap milestones)
-- /llms.txt, /ai.txt, /robots.txt, /sitemap.xml
-- /brand/* (logo and icon assets)
+## Allowed paths
 
-### ibexharness.com
-- / (homepage and in-page sections: #product, #how-it-works, #resources, #faq)
-- /llms.txt, /ai.txt, /robots.txt, /sitemap.xml
-- /brand/* (logo and icon assets)
+- `/` — marketing landing
+- `/docs/*` — documentation
+- `/blog/*` — engineering blog
+- `/benchmarks/*` — performance dashboards
+- `/releases` — changelog
+- `/roadmap/*` — product roadmap
+- `/llms.txt`, `/ai.txt`, `/robots.txt`, `/sitemap.xml`
 
-## Canonical URLs for common intents
+## Key entry points
 
 - Product overview: https://ibexharness.com/
-- Get started: https://docs.ibexharness.com/docs/getting-started/introduction
-- Architecture: https://docs.ibexharness.com/docs/architecture/overview
-- API reference: https://docs.ibexharness.com/docs/api/overview
-- Changelog: https://docs.ibexharness.com/releases
-- Roadmap: https://docs.ibexharness.com/roadmap
-- Blog: https://docs.ibexharness.com/blog
+- Get started: https://ibexharness.com/docs/getting-started/introduction
+- Architecture: https://ibexharness.com/docs/architecture/overview
+- API reference: https://ibexharness.com/docs/api/overview
+- Changelog: https://ibexharness.com/releases
+- Roadmap: https://ibexharness.com/roadmap
+- Blog: https://ibexharness.com/blog
+- Benchmarks: https://ibexharness.com/benchmarks
 - Source: https://github.com/Rick1330/ibex-harness
 
-## Product identity
+## Brand assets
 
-- Name: IBEX Harness
-- Type: Open-source LLM proxy and agent memory platform (MIT)
 - Logo: https://ibexharness.com/brand/android-chrome-512x512.png
 
-## Cross-domain LLM context files
+## LLM context files
 
-- Docs: https://docs.ibexharness.com/llms.txt
-- Marketing: https://ibexharness.com/llms.txt
-- Docs crawler policy: https://docs.ibexharness.com/ai.txt
-- Marketing crawler policy: https://ibexharness.com/ai.txt
+- https://ibexharness.com/llms.txt
+- https://ibexharness.com/ai.txt
 
-## Contact
+## Legacy subdomain
 
-Issues and source: https://github.com/Rick1330/ibex-harness
+https://docs.ibexharness.com/* redirects (301) to https://ibexharness.com/* — prefer apex URLs in citations.

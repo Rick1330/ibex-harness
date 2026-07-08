@@ -2,7 +2,7 @@ import type { MetadataRoute } from "next";
 
 import { BENCHMARK_NAV_PAGES } from "@/lib/benchmark-page-tree";
 import { blogSource, roadmapSource, source } from "@/lib/source";
-import { DOCS_SITE_URL } from "@/lib/site-seo";
+import { SITE_URL } from "@/lib/site-seo";
 
 export const dynamic = "force-static";
 
@@ -15,18 +15,22 @@ function shouldIndexPage(url: string): boolean {
   return true;
 }
 
-function toSitemapEntry(url: string): MetadataRoute.Sitemap[number] {
-  const priority = url.startsWith("/docs") ? 0.8 : 0.6;
+function toSitemapEntry(
+  url: string,
+  priority?: number,
+): MetadataRoute.Sitemap[number] {
+  const resolvedPriority =
+    priority ?? (url === "/" ? 1.0 : url.startsWith("/docs") ? 0.8 : 0.6);
   return {
-    url: `${DOCS_SITE_URL}${url}`,
+    url: `${SITE_URL}${url}`,
     changeFrequency: "weekly",
-    priority,
+    priority: resolvedPriority,
   };
 }
 
 export default function sitemap(): MetadataRoute.Sitemap {
   const staticBenchmarkPages = BENCHMARK_NAV_PAGES.map((page) => page.url);
-  const staticCorePages = ["/releases"];
+  const staticCorePages = ["/", "/releases"];
   const pages = [
     ...source.getPages(),
     ...blogSource.getPages(),

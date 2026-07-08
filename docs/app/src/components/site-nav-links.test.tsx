@@ -5,7 +5,7 @@ import { SiteNavLinks } from "@/components/site-nav-links";
 import { LANDING_SITE_URL } from "@/lib/site-nav-config";
 
 describe("SiteNavLinks", () => {
-  it("includes external link to ibexharness.com", () => {
+  it("includes internal home link", () => {
     render(<SiteNavLinks pathname="/docs/getting-started/introduction" variant="desktop" />);
 
     const home = screen.getByRole("link", { name: "Home" });
