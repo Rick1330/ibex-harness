@@ -15,4 +15,4 @@ When opening or updating a PR for this repository:
 6. No agent attribution in PR descriptions.
 7. Run local tests per `testing-verification.mdc` before push.
 
-See `docs/DEVELOPMENT_GUIDE.md` §7.2 and `CONTRIBUTING.md`.
+See `web/engineering/DEVELOPMENT_GUIDE.md` §7.2 and `CONTRIBUTING.md`.

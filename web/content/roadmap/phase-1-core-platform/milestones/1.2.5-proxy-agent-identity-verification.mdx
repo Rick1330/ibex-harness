@@ -1,0 +1,246 @@
+---
+title: "1.2.5 Proxy Agent"
+description: "Milestone M1.2.3 added extraction of `X-IBEX-Agent-ID` from the HTTP header and attaches the raw UUID to the request context. It performs no validation beyond \\\"is this a parseable UUID.\\\" The result is a concrete security gap: an authenticated token from Org A combined with the UUID of Org B's agent produces a request c"
+summary: "Milestone M1.2.3 added extraction of `X-IBEX-Agent-ID` from the HTTP header and attaches the raw UUID to the request context. It performs no validation beyond \\\"is this a parseable UUID.\\\" The result is a concrete security gap: an authenticated token from Org A combined with the UUID of Org B's agent produces a request c"
+status: "completed"
+milestoneId: "1.2.5"
+goal: "[1.2 — Proxy platform integration](/roadmap/phase-1-core-platform/goals#goal-12-proxy-platform-integration)"
+estimatedEffort: "2–3 days"
+phase: "phase-1-core-platform"
+fullTitle: "Milestone 1.2.5 — Agent Identity Verification in Proxy Middleware"
+---
+
+# Milestone 1.2.5 — Agent Identity Verification in Proxy Middleware
+
+**Status:** Complete  
+**Goal:** [1.2 — Proxy platform integration](/roadmap/phase-1-core-platform/goals#goal-12-proxy-platform-integration)  
+**Phase:** 1 — Core Platform  
+**Estimated effort:** 2–3 days  
+**ADR required:** ADR-0016 — Agent identity verification strategy
+
+---
+
+## Why This Milestone Exists
+
+Milestone M1.2.3 added extraction of `X-IBEX-Agent-ID` from the HTTP header and attaches the raw UUID to the request context. It performs no validation beyond "is this a parseable UUID." The result is a concrete security gap: an authenticated token from Org A combined with the UUID of Org B's agent produces a request context that downstream services will treat as belonging to Org B's agent. The proxy cannot distinguish this from a legitimate Org A request because it never checks whether the agent belongs to the authenticated org.
+
+This milestone closes that gap by adding a gRPC call to `AuthService.ValidateAgent` (introduced in M1.1.7) immediately after token validation in the proxy middleware chain. The check is:
+
+1. Parse `X-IBEX-Agent-ID` as a UUID (already done in M1.2.3)
+2. Call `auth.ValidateAgent(agent_id, org_id_from_token)` via gRPC
+3. If the agent does not exist, is not active, or belongs to a different org: return `403 Forbidden` with error code `AGENT_NOT_AUTHORIZED`
+4. If the header is absent: return `400 Bad Request` with error code `MISSING_AGENT_ID`
+5. On success: attach the verified `AgentRecord` to request context for downstream use
+
+The `ValidateAgent` RPC returns `PERMISSION_DENIED` (not `NOT_FOUND`) for all negative cases — this prevents leaking the existence of another org's agent to an attacker probing agent UUIDs.
+
+---
+
+## Non-Goals
+
+- Per-agent permission checks beyond "is this agent active and owned by this org" (Phase 4)
+- Agent creation, update, or deletion via proxy (management plane — Phase 3 API service)
+- Caching `ValidateAgent` responses (Phase 2 — auth cache bloom filter milestone)
+
+---
+
+## Branch
+
+`feature/m1-2-5-agent-identity-verification`
+
+## PR Title
+
+`feat(proxy): agent identity verification via gRPC ValidateAgent (m1.2.5)`
+
+---
+
+## Prerequisites
+
+- [1.1.7](/roadmap/phase-1-core-platform/milestones/1.1.7-users-and-agents-schema) merged — `agents` table exists, `ValidateAgent` gRPC implemented in auth service
+- [1.2.1](/roadmap/phase-1-core-platform/milestones/1.2.1-proxy-auth-client) merged — auth gRPC client pool exists in proxy
+- [1.2.3](/roadmap/phase-1-core-platform/milestones/1.2.3-proxy-input-validation-and-stable-error-envelope) merged — `X-IBEX-Agent-ID` extraction exists
+
+---
+
+## Deliverables
+
+### 1. ADR-0016 — Agent identity verification strategy
+
+Write `docs/adr/ADR-0016-agent-identity-verification.md` covering:
+
+- Why the proxy — not the downstream memory or context services — is the right place to verify agent ownership (single enforcement point, latency is already paid in the auth call)
+- Why `PERMISSION_DENIED` (not `NOT_FOUND`) is returned for cross-org lookups
+- Why the check is a gRPC call to auth (not a direct DB query from the proxy)
+- Why `X-IBEX-Agent-ID` is required (not optional) on all protected routes in Phase 1
+- The Phase 2 caching plan (bloom filter → LRU → gRPC, same pattern as token validation)
+
+---
+
+### 2. Error codes
+
+Add to `packages/apierror` (created in M1.4.2, or inline in the proxy for now):
+
+```go
+const (
+    // ErrCodeMissingAgentID is returned when X-IBEX-Agent-ID is absent
+    // on a route that requires an agent context.
+    ErrCodeMissingAgentID = "MISSING_AGENT_ID"
+
+    // ErrCodeAgentNotAuthorized is returned when the agent does not exist,
+    // is not active, or does not belong to the authenticated org.
+    // Returns 403 (not 404) to avoid leaking agent existence across orgs.
+    ErrCodeAgentNotAuthorized = "AGENT_NOT_AUTHORIZED"
+
+    // ErrCodeAgentSuspended is returned when the agent exists and belongs
+    // to the org, but its status is "paused", "suspended", or "archived".
+    ErrCodeAgentSuspended = "AGENT_SUSPENDED"
+)
+```
+
+---
+
+### 3. Middleware
+
+```go
+// AgentVerificationMiddleware validates that the agent identified by
+// X-IBEX-Agent-ID exists, is active, and belongs to the authenticated
+// org (extracted from token claims in the auth middleware).
+//
+// This middleware MUST be placed after AuthMiddleware (requires org_id
+// in context) and BEFORE RateLimitMiddleware (agent_id needed for
+// per-agent limits in Phase 4).
+//
+// Required middleware ordering:
+//   RequestID → Auth → AgentVerification → RateLimit → [handler]
+//
+// On gRPC timeout or transport error: fail CLOSED (return 503).
+// Rationale: agent identity is a security control; failing open would
+// allow cross-tenant agent confusion attacks during auth service downtime.
+// This differs from rate limiting, which fails open (cost control only).
+func AgentVerificationMiddleware(
+    authClient authv1connect.AuthServiceClient,
+    timeout time.Duration,
+    log *slog.Logger,
+) func(http.Handler) http.Handler
+```
+
+**`503` on auth downtime** (returned when gRPC call fails):
+
+```json
+{
+  "error": {
+    "code": "AUTH_UNAVAILABLE",
+    "message": "Authentication service unavailable. The request cannot be verified.",
+    "request_id": "01HXYZ..."
+  }
+}
+```
+
+**`403` on cross-org or inactive agent:**
+
+```json
+{
+  "error": {
+    "code": "AGENT_NOT_AUTHORIZED",
+    "message": "The agent is not authorized for this organization or is not active.",
+    "request_id": "01HXYZ..."
+  }
+}
+```
+
+**`400` on missing header:**
+
+```json
+{
+  "error": {
+    "code": "MISSING_AGENT_ID",
+    "message": "X-IBEX-Agent-ID header is required.",
+    "request_id": "01HXYZ..."
+  }
+}
+```
+
+---
+
+### 4. Context key
+
+```go
+// agentContextKey is the unexported context key for the verified agent record.
+// Use AgentFromContext to retrieve it.
+type agentContextKey struct{}
+
+// AgentRecord holds the verified, minimal agent fields injected into
+// request context by AgentVerificationMiddleware.
+type AgentRecord struct {
+    ID     uuid.UUID
+    OrgID  uuid.UUID
+    Status string
+}
+
+// AgentFromContext retrieves the verified agent record from ctx.
+// Returns (zero, false) if not set (middleware was not run).
+func AgentFromContext(ctx context.Context) (AgentRecord, bool) {
+    v, ok := ctx.Value(agentContextKey{}).(AgentRecord)
+    return v, ok
+}
+```
+
+---
+
+## Files Affected
+
+| Path | Action |
+|---|---|
+| `services/proxy/internal/middleware/agent_verify.go` | Add |
+| `services/proxy/internal/middleware/agent_verify_test.go` | Add |
+| `services/proxy/internal/middleware/context.go` | Add AgentFromContext |
+| `services/proxy/cmd/proxy/main.go` | Wire middleware after auth, before rate limit |
+| `docs/adr/ADR-0016-agent-identity-verification.md` | Add |
+| `web/engineering/SECURITY.md` | Document agent identity verification in auth flow |
+| `docs/app/content/roadmap/CURRENT_STATE` | Update after merge |
+
+---
+
+## Testing Requirements
+
+### Unit tests (httptest + mock gRPC)
+
+- **`TestAgentVerification_Valid`**: valid agent_id belonging to authenticated org → 200, agent in context
+- **`TestAgentVerification_MissingHeader`**: no `X-IBEX-Agent-ID` → 400 `MISSING_AGENT_ID`
+- **`TestAgentVerification_MalformedUUID`**: `X-IBEX-Agent-ID: not-a-uuid` → 400 (re-uses existing UUID parse error from M1.2.3, or new MISSING_AGENT_ID)
+- **`TestAgentVerification_WrongOrg`**: gRPC returns `PERMISSION_DENIED` → 403 `AGENT_NOT_AUTHORIZED`
+- **`TestAgentVerification_AgentSuspended`**: agent status is "paused" → 403 `AGENT_SUSPENDED`
+- **`TestAgentVerification_AuthServiceDown`**: gRPC returns transport error → 503 `AUTH_UNAVAILABLE`
+- **`TestAgentVerification_Timeout`**: gRPC call exceeds timeout → 503 `AUTH_UNAVAILABLE`
+
+### Integration tests (`-tags=integration`)
+
+- **`TestAgentVerification_CrossTenantRejected`**: Insert two orgs and one agent in org B. Use org A's token with agent B's UUID → 403
+- **`TestAgentVerification_OwnAgentAllowed`**: Insert org A and agent A. Use org A's token with agent A's UUID → continues to next middleware
+
+### CI gate
+
+`proxy-agent-verify-smoke` CI job: auth + proxy running, smoke test both allow and deny cases.
+
+---
+
+## Acceptance Criteria
+
+- [ ] `X-IBEX-Agent-ID` absent → `400 MISSING_AGENT_ID`
+- [ ] Agent belongs to different org → `403 AGENT_NOT_AUTHORIZED` (not 404)
+- [ ] Agent inactive (paused/suspended/archived) → `403 AGENT_SUSPENDED`
+- [ ] Auth gRPC unavailable → `503 AUTH_UNAVAILABLE` (fail closed, not open)
+- [ ] Valid agent → `AgentRecord` available via `AgentFromContext` in all downstream handlers
+- [ ] Middleware position documented and enforced: after auth, before rate limit
+- [ ] ADR-0016 written and indexed
+- [ ] Cross-tenant integration test passes
+
+---
+
+## Risks
+
+| Risk | Likelihood | Mitigation |
+|---|---|---|
+| Adds a second gRPC call per request, increasing proxy latency | Medium | Both calls share the same connection pool; Phase 2 (2.2.1) caches both token and agent validation |
+| Auth service becomes a larger single point of failure | Low | Already a SPOF in M1.2.1; fail-closed for agent verification mirrors existing fail-closed for token validation |
+| Test mocking gRPC is verbose | Low | Use `connectrpc.com/connect` test helpers or mingrpc mock pattern established in M1.2.1 |

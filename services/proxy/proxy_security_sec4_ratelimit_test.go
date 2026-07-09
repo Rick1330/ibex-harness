@@ -12,15 +12,21 @@ import (
 
 func TestSecurity_SEC4_1_RemainingDecrements(t *testing.T) {
 	env := rateLimitEnv(t)
-	prevRemaining := -1
+	firstRemaining := -1
+	lastRemaining := -1
 	for i := 0; i < 3; i++ {
 		resp, _ := authProbeGET(t, orgAProbeOpts(env))
 		rem := int(parseHeaderInt(t, resp.Header.Get("X-RateLimit-Remaining"), "X-RateLimit-Remaining"))
 		resp.Body.Close()
-		if prevRemaining >= 0 && rem >= prevRemaining {
-			t.Fatalf("remaining did not decrement: prev=%d cur=%d", prevRemaining, rem)
+		if i == 0 {
+			firstRemaining = rem
+		} else if rem >= lastRemaining {
+			t.Fatalf("remaining did not strictly decrease at step %d: prev=%d cur=%d", i, lastRemaining, rem)
 		}
-		prevRemaining = rem
+		lastRemaining = rem
+	}
+	if lastRemaining >= firstRemaining {
+		t.Fatalf("remaining did not decrease across burst: first=%d last=%d", firstRemaining, lastRemaining)
 	}
 }
 

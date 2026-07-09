@@ -38,7 +38,7 @@ updates:
     open-pull-requests-limit: 5
     labels: ["dependencies", "typescript"]
 
-# Enable when manifests exist (see docs/DEPENDENCIES.md §9 and prompts/05-new-service-bootstrap.txt):
+# Enable when manifests exist (see web/engineering/DEPENDENCIES.md §9 and prompts/05-new-service-bootstrap.txt):
 #
 #  - package-ecosystem: pip
 #    directory: "/services/memory"

@@ -13,7 +13,7 @@ const defaultComposeTestDSN = "postgres://ibex:ibex@localhost:5433/ibex_test?ssl
 
 // SetupPostgres returns a migrated Postgres DSN and a cleanup function.
 // Uses compose test stack (POSTGRES_TEST_DSN or port 5433). Set IBEX_USE_TESTCONTAINERS=1 only
-// after optional testcontainers module is wired (see docs/DEPENDENCIES.md §8.2.1); until then it skips.
+// after optional testcontainers module is wired (see web/engineering/DEPENDENCIES.md §8.2.1); until then it skips.
 func SetupPostgres(t testing.TB) (dsn string, cleanup func()) {
 	t.Helper()
 	if os.Getenv("IBEX_USE_TESTCONTAINERS") == "1" {

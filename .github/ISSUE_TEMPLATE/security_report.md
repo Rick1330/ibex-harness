@@ -8,7 +8,7 @@ labels: security
 ## Important
 
 - **Do not** paste API keys, tokens, passwords, JWTs, or customer data in this issue.
-- Review [docs/SECURITY.md](../../docs/SECURITY.md) for our security model and reporting expectations.
+- Review [web/engineering/SECURITY.md](../../web/engineering/SECURITY.md) for our security model and reporting expectations.
 
 If you have a sensitive report, use your organization's private security channel. If none exists yet, describe impact here without exploit details and ask maintainers for a secure contact path.
 

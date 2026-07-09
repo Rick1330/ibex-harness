@@ -1,0 +1,153 @@
+---
+title: "3.9.3 Phase3 Exit"
+description: "Phase 3 is the largest and most complex phase. A formal exit gate ensures nothing was shipped partially and that the system is ready for Phase 4 (multi-provider support, billing, and behavioural fingerprinting)."
+summary: "Phase 3 is the largest and most complex phase. A formal exit gate ensures nothing was shipped partially and that the system is ready for Phase 4 (multi-provider support, billing, and behavioural fingerprinting)."
+status: "planned"
+milestoneId: "3.9.3"
+goal: "[3.9 — Phase 3 quality gate](/roadmap/phase-3-memory-engine/goals#goal-39-phase-3-quality-gate)"
+estimatedEffort: "1–2 days"
+phase: "phase-3-memory-engine"
+fullTitle: "Milestone 3.9.3 — Phase 3 Exit Gate and Handoff Document"
+---
+
+# Milestone 3.9.3 — Phase 3 Exit Gate and Handoff Document
+
+**Status:** Planned  
+**Goal:** [3.9 — Phase 3 quality gate](/roadmap/phase-3-memory-engine/goals#goal-39-phase-3-quality-gate)  
+**Phase:** 3 — Memory Engine and Operator Platform  
+**Estimated effort:** 1–2 days
+
+---
+
+## Why This Milestone Exists
+
+Phase 3 is the largest and most complex phase. A formal exit gate ensures nothing was shipped partially and that the system is ready for Phase 4 (multi-provider support, billing, and behavioural fingerprinting).
+
+---
+
+## Phase 3 Exit Checklist
+
+### Functionality
+
+- [ ] A real conversation produces extractable memories within 30 seconds of session completion
+- [ ] Subsequent requests include injected memories verified via `X-IBEX-Memories-Injected` header
+- [ ] Context assembly fallback (service timeout) gracefully returns original messages without error
+- [ ] Dashboard shows real data for all main views (agents, memories, analytics, sessions)
+- [ ] Directive update propagates to proxy cache within 1 second
+- [ ] Session archive written to MinIO within 30 seconds of session completion
+- [ ] Memory export produces valid CSV/JSON for 1,000-memory dataset
+
+### Security
+
+- [ ] All Phase 1 and Phase 2 security integration tests (1.5.1) pass — zero regression
+- [ ] Cross-tenant memory isolation verified: Org A memories never in Org B context
+- [ ] GDPR deletion cascade removes all data (memories, sessions, archives) for a given org
+- [ ] Memory content is never logged, traced, or included in error messages
+- [ ] Directive content is never logged or included in error responses
+
+### Performance
+
+- [ ] Context assembly p95 < 50ms at 50 concurrent requests (3.9.2 load test passes)
+- [ ] Memory write p95 < 200ms (including embedding call) — measured in integration test
+- [ ] pgvector semantic search p95 < 30ms for 100,000 memories per agent
+- [ ] Proxy overhead p99 < 25ms (5ms over Phase 2 target; context assembly adds ~5ms via gRPC)
+- [ ] Embedding cache hit rate > 70% under sustained extraction load
+
+### Operations
+
+- [ ] `make e2e-smoke-p3` exits 0 with real OpenAI API key
+- [ ] All 6 new services start, pass health checks, and have working `/ready` endpoints
+- [ ] Celery workers process extraction queue with < 10s lag under normal load
+- [ ] All services have `.env.example` files documenting every env var
+
+### Documentation
+
+- [ ] `docs/roadmap/CURRENT_STATE.md` updated with Phase 3 completion
+- [ ] `web/engineering/DEVELOPMENT_GUIDE.md` updated with Phase 3 local setup (6 new services)
+- [ ] All ADRs (0032–0044) written and indexed in `web/engineering/adr/README.md`
+- [ ] OpenAPI spec for management API exported to `docs/api/openapi.json`
+- [ ] GitHub release tag `v0.3.0` created after this milestone merges
+
+---
+
+## `make e2e-smoke-p3`
+
+```bash
+#!/usr/bin/env bash
+# infra/scripts/e2e_smoke_p3.sh
+# Phase 3 end-to-end smoke: memory extraction + injection verified.
+# Prerequisites: full local stack (make compose-dev-up), all services running.
+
+set -euo pipefail
+
+: "${OPENAI_API_KEY:?Required}"
+
+PROXY="${IBEX_PROXY_ADDR:-http://localhost:8080}"
+TOKEN="${IBEX_DEV_TOKEN:-ibex_dev_sk_LOCALDEVELOPMENTONLY}"
+AGENT="${IBEX_DEV_AGENT_ID:-00000000-0000-0000-0000-000000000003}"
+
+echo "=== Phase 3 E2E Smoke Test ==="
+
+# ── Turn 1: Establish a fact ──────────────────────────────────────────────────
+echo "Turn 1: Establishing fact..."
+R1=$(curl -sf -X POST "$PROXY/v1/chat/completions" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "X-IBEX-Agent-ID: $AGENT" \
+    -H "Content-Type: application/json" \
+    -d '{"model":"gpt-4o-mini","messages":[
+        {"role":"user","content":"My database host is db.smoketest.example.com. Please confirm you noted that."}
+    ]}')
+SESSION_ID=$(curl -sI -X POST "$PROXY/v1/chat/completions" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "X-IBEX-Agent-ID: $AGENT" \
+    -H "Content-Type: application/json" \
+    -d '{}' 2>/dev/null | grep -i "x-ibex-session-id" | awk '{print $2}' | tr -d '\r')
+echo "Session ID: $SESSION_ID"
+echo "PASS: Turn 1 complete"
+
+# ── Wait for extraction (max 30s) ─────────────────────────────────────────────
+echo "Waiting for memory extraction..."
+EXTRACTED=0
+for i in $(seq 1 30); do
+    MEMORY_COUNT=$(curl -sf "$PROXY/../api/v1/agents/$AGENT/memories" \
+        -H "Authorization: Bearer $TOKEN" | python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d.get('items',[])))" 2>/dev/null || echo "0")
+    if [ "$MEMORY_COUNT" -gt 0 ]; then
+        EXTRACTED=1
+        echo "PASS: $MEMORY_COUNT memories extracted after ${i}s"
+        break
+    fi
+    sleep 1
+done
+[ "$EXTRACTED" = "1" ] || echo "WARN: No memories extracted within 30s — check worker logs"
+
+# ── Turn 2: Verify memory injection ──────────────────────────────────────────
+echo "Turn 2: Verifying memory injection..."
+HEADERS=$(curl -sI -X POST "$PROXY/v1/chat/completions" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "X-IBEX-Agent-ID: $AGENT" \
+    -H "X-IBEX-Session-ID: $SESSION_ID" \
+    -H "Content-Type: application/json" \
+    -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"What database host should I use?"}]}')
+
+INJECTED=$(echo "$HEADERS" | grep -i "x-ibex-memories-injected" | awk '{print $2}' | tr -d '\r' || echo "0")
+if [ "${INJECTED:-0}" -gt "0" ]; then
+    echo "PASS: $INJECTED memories injected in Turn 2"
+else
+    echo "WARN: 0 memories injected — extraction may not have completed"
+fi
+
+echo ""
+echo "=== Phase 3 E2E Smoke: COMPLETE ==="
+```
+
+---
+
+## Phase 4 Readiness Checklist
+
+Before Phase 4 begins, verify:
+
+- [ ] `ibex_core.behavioral_fingerprints` schema drafted (ADR written, migration in progress)
+- [ ] Rate limiter ready for Lua-script upgrade (interface unchanged since Phase 1)
+- [ ] Embedding service abstraction allows second model (ADR-0033 model upgrade path confirmed)
+- [ ] Dashboard extensible for multi-provider analytics without structural change
+- [ ] All 44 ADRs (0001–0044) indexed and linked from the architecture doc

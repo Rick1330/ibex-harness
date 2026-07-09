@@ -1,0 +1,44 @@
+# IBEX Harness — AI crawler policy
+
+IBEX Harness is an open-source (MIT) AI agent infrastructure platform.
+
+## Canonical site
+
+| URL | Purpose |
+|-----|---------|
+| https://ibexharness.com | Unified site — landing, docs, blog, benchmarks, releases, roadmap |
+
+## Allowed paths
+
+- `/` — marketing landing
+- `/docs/*` — documentation
+- `/blog/*` — engineering blog
+- `/benchmarks/*` — performance dashboards
+- `/releases` — changelog
+- `/roadmap/*` — product roadmap
+- `/llms.txt`, `/ai.txt`, `/robots.txt`, `/sitemap.xml`
+
+## Key entry points
+
+- Product overview: https://ibexharness.com/
+- Get started: https://ibexharness.com/docs/getting-started/introduction
+- Architecture: https://ibexharness.com/docs/architecture/overview
+- API reference: https://ibexharness.com/docs/api/overview
+- Changelog: https://ibexharness.com/releases
+- Roadmap: https://ibexharness.com/roadmap
+- Blog: https://ibexharness.com/blog
+- Benchmarks: https://ibexharness.com/benchmarks
+- Source: https://github.com/Rick1330/ibex-harness
+
+## Brand assets
+
+- Logo: https://ibexharness.com/brand/android-chrome-512x512.png
+
+## LLM context files
+
+- https://ibexharness.com/llms.txt
+- https://ibexharness.com/ai.txt
+
+## Legacy subdomain
+
+https://docs.ibexharness.com/* redirects (301) to https://ibexharness.com/* — prefer apex URLs in citations.

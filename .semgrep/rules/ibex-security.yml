@@ -4,7 +4,7 @@ rules:
     severity: ERROR
     message: >-
       ClickHouse query missing org_id filter — cross-tenant data leak risk.
-      See .cursorrules §4 and docs/SECURITY.md.
+      See .cursorrules §4 and web/engineering/SECURITY.md.
     patterns:
       - pattern-either:
           - pattern: |

@@ -34,8 +34,8 @@ What is explicitly out of scope?
 
 ## Docs / contracts
 
-- [ ] REST API (`docs/API_DOCUMENTATION.md`)
-- [ ] Database schema (`docs/DATABASE_SCHEMA.md`)
+- [ ] REST API (`web/engineering/API_DOCUMENTATION.md`)
+- [ ] Database schema (`web/engineering/DATABASE_SCHEMA.md`)
 - [ ] Proto / SDK
 - [ ] ADR required
 

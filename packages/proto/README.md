@@ -49,5 +49,5 @@ CI runs both in the `proto-contract` job (ephemeral `buf generate`; `gen/` must 
 
 | Package | Service | Source doc |
 |---------|---------|------------|
-| `ibex.context.v1` | `ContextAssemblyService` | [API_DOCUMENTATION.md](../../docs/API_DOCUMENTATION.md) (gRPC section) |
+| `ibex.context.v1` | `ContextAssemblyService` | [API_DOCUMENTATION.md](../../web/engineering/API_DOCUMENTATION.md) (gRPC section) |
 | `ibex.auth.v1` | `AuthService` (`ValidateToken`) | [ADR-0006](../../docs/adr/ADR-0006-auth-proto-contract.md) |

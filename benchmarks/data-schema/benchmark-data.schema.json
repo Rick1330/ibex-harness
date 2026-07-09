@@ -1,0 +1,103 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "BenchmarkData",
+  "type": "object",
+  "required": ["schema_version", "baseline_sha", "runs"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "baseline_sha": { "type": "string" },
+    "runs": {
+      "type": "array",
+      "maxItems": 365,
+      "items": { "$ref": "#/definitions/BenchmarkRun" }
+    }
+  },
+  "definitions": {
+    "BenchmarkRun": {
+      "type": "object",
+      "required": [
+        "sha",
+        "short_sha",
+        "timestamp",
+        "branch",
+        "pr_number",
+        "run_url",
+        "go_version",
+        "runner_os",
+        "runner_cpu",
+        "runner_vcpus",
+        "k6",
+        "stages",
+        "status",
+        "regression_vs_baseline_pct",
+        "baseline_sha",
+        "go_benchmarks"
+      ],
+      "properties": {
+        "sha": { "type": "string" },
+        "short_sha": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "branch": { "type": "string" },
+        "pr_number": { "type": ["number", "null"] },
+        "run_number": { "type": "integer" },
+        "run_url": { "type": "string" },
+        "go_version": { "type": "string" },
+        "runner_os": { "type": "string" },
+        "runner_cpu": { "type": "string" },
+        "runner_vcpus": { "type": "integer" },
+        "runner_ram_gb": { "type": "integer" },
+        "k6_version": { "type": "string" },
+        "status": {
+          "type": "string",
+          "enum": ["pass", "regression", "fail", "unknown"]
+        },
+        "regression_vs_baseline_pct": { "type": ["number", "null"] },
+        "baseline_sha": { "type": ["string", "null"] },
+        "metric_deltas": {
+          "type": "object",
+          "additionalProperties": { "type": ["number", "null"] }
+        },
+        "k6": {
+          "type": "object",
+          "required": [
+            "vus",
+            "duration_s",
+            "p50_ms",
+            "p95_ms",
+            "p99_ms",
+            "p999_ms",
+            "req_per_s",
+            "error_rate",
+            "check_rate"
+          ]
+        },
+        "stages": {
+          "type": "object",
+          "required": [
+            "auth_lru_p99_ms",
+            "auth_grpc_p99_ms",
+            "rate_limit_p99_ms",
+            "directive_resolve_p99_ms",
+            "prompt_inject_p99_ms",
+            "total_overhead_p99_ms"
+          ]
+        },
+        "go_benchmarks": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": [
+              "ns_per_op",
+              "allocs_per_op",
+              "bytes_per_op",
+              "samples",
+              "ci_95_low",
+              "ci_95_high",
+              "geomean_ns"
+            ]
+          }
+        }
+      }
+    }
+  }
+}
