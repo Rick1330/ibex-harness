@@ -1,0 +1,108 @@
+---
+title: "d6.3 Cross Site"
+description: "Landing, docs, blog, and benchmarks share one deploy at ibexharness.com. Legacy docs.ibexharness.com 301s to apex paths. Single sitemap and internal nav — no cross-domain dead ends."
+summary: "Unified product site at ibexharness.com with landing at / and docs at /docs. docs.ibexharness.com redirects to apex."
+status: "in-progress"
+milestoneId: "d6.3"
+goal: "[D.6](/roadmap/phase-1-5-docs-site/goals)"
+estimatedEffort: "1 hour"
+phase: "phase-1-5-docs-site"
+fullTitle: "Milestone D.6.3 — Cross-site nav + sitemaps"
+---
+
+# Milestone D.6.3 — Cross-site nav + sitemaps
+
+**Status:** In progress (unified-domain landing migration)  
+**Goal:** [D.6](/roadmap/phase-1-5-docs-site/goals)  
+**Phase:** 1.5 — Docs Site  
+**Wave:** 12  
+**Estimated effort:** 1 hour  
+**ADR required:** None
+
+Spec detail: [MASTER_BRIEF.md](/roadmap/phase-1-5-docs-site/master-brief) Part D (D.6.3).
+
+---
+
+## Why This Milestone Exists
+
+Product marketing and documentation now ship from a **single** Next.js static export at `https://ibexharness.com` (landing at `/`, docs at `/docs`, blog, benchmarks, releases, roadmap). The legacy host `docs.ibexharness.com` becomes a **301 redirect** to the same paths on apex after DNS cutover.
+
+`robots.ts` and `sitemap.ts` emit apex URLs only. Internal nav links Home → `/` and Docs → `/docs/...` — no external cross-domain hops.
+
+Final launch milestone before Phase 2.1.1 unblocks.
+
+---
+
+## Non-Goals
+
+- Separate ibexdepo TanStack landing deploy (retired after cutover)
+- Shared auth between marketing and docs (unchanged)
+- Blog or changelog duplicated on a second domain
+
+---
+
+## Branch
+
+`feature/m1-5-0-unified-landing-home`
+
+## PR Title
+
+`feat(docs): unified landing and docs on ibexharness.com`
+
+---
+
+## Prerequisites
+
+- [D.6.2](/roadmap/phase-1-5-docs-site/milestones/d6.2-dns-vercel-domain-attach) merged
+- [D.5.1](/roadmap/phase-1-5-docs-site/milestones/d5.1-visual-qa-sweep) merged
+
+---
+
+## Deliverables
+
+- ASCII/video landing page at `/` (guide implementation in `docs/app`)
+- Canonical `SITE_URL` = `https://ibexharness.com`; sitemap includes `/`
+- Home nav internal link to `/`; docs/blog/benchmarks unchanged
+- Private ops runbook (outside repo) for Cloudflare Pages apex attach
+- Cloudflare Redirect Rule: `docs.ibexharness.com/*` → `https://ibexharness.com/$1` (301)
+- Smoke script asserts `/` returns landing marker
+
+---
+
+## Files Affected
+
+| File Path | Action | Notes |
+| --- | --- | --- |
+| `docs/app/src/app/page.tsx` | Add | Unified homepage |
+| `docs/app/src/components/landing/*` | Add | Video, ASCII, reveal |
+| `docs/app/src/lib/site-seo.ts` | Modify | Apex canonical URL |
+| Ops runbook (private) | Add | Apex DNS attach |
+| `.github/scripts/docs-smoke.sh` | Modify | `/` landing check |
+
+---
+
+## Testing Requirements
+
+- **`docs-smoke.sh`**: `/` returns 200 and contains `ibex-landing`
+- **Unit**: `site-nav-links` Home href is `/`
+- **`pnpm build:clean`**: static export includes `/`
+
+---
+
+## Acceptance Criteria
+
+- [ ] `https://ibexharness.com/` serves landing page
+- [ ] `https://ibexharness.com/docs/...` serves docs (unchanged)
+- [ ] Nav Home/logo links to `/` (internal)
+- [ ] `docs.ibexharness.com/*` 301s to apex (post-cutover)
+- [ ] `verify_phase15.sh` / `docs-smoke.sh` pass against production
+
+---
+
+## Risks
+
+| Risk | Probability | Impact | Mitigation |
+| --- | --- | --- | --- |
+| Landing PR delayed blocks cross-nav | Medium | High | Coordinate ibexdepo PR before merge |
+| Sitemap includes stub noindex pages | Low | Medium | Only index pages with real content |
+| GSC verification not done | Low | Low | Manual GSC sitemap submit post-merge |

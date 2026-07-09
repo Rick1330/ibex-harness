@@ -16,8 +16,8 @@ while IFS= read -r ref; do
     fail=1
   fi
 done < <(
-  grep -rhoE 'uses:[[:space:]]*[^#[:space:]]+' .github/workflows/ \
-    | sed -E 's#^uses:[[:space:]]*##' \
+  grep -rhoE '(^|[[:space:]])uses:[[:space:]]*[^#[:space:]]+' .github/workflows/ \
+    | sed -E 's#(^|[[:space:]])uses:[[:space:]]*##' \
     | grep -v '^\./' \
     | grep -v '/\.github/workflows/' \
     | sed -E 's#^[^@]+@##' \
@@ -56,8 +56,8 @@ while IFS= read -r pinned; do
     fail=1
   fi
 done < <(
-  grep -rhoE 'uses:[[:space:]]*[^#[:space:]]+@[a-f0-9]{40}' .github/workflows/ \
-    | sed -E 's#^uses:[[:space:]]*##' \
+  grep -rhoE '(^|[[:space:]])uses:[[:space:]]*[^#[:space:]]+@[a-f0-9]{40}' .github/workflows/ \
+    | sed -E 's#(^|[[:space:]])uses:[[:space:]]*##' \
     | grep -v '^\./' \
     | grep -v '/\.github/workflows/' \
     | sed 's/[[:space:]]*$//' \

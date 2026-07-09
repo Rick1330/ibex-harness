@@ -14,7 +14,7 @@ Go service for IBEX Harness authentication. Exposes HTTP health/metrics and gRPC
 
 ## Configuration
 
-See [.env.example](.env.example) and [ENVIRONMENT_VARIABLES.md](../../docs/ENVIRONMENT_VARIABLES.md) §10.
+See [.env.example](.env.example) and [ENVIRONMENT_VARIABLES.md](../../web/engineering/ENVIRONMENT_VARIABLES.md) §10.
 
 | Variable | Required | Default |
 | --- | --- | --- |

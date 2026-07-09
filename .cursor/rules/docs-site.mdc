@@ -1,7 +1,7 @@
 ---
-description: IBEX Harness — Docs site build rules. Apply on every prompt touching docs/app.
+description: IBEX Harness — Docs site build rules. Apply on every prompt touching web.
 globs:
-  - "docs/app/**"
+  - "web/**"
 alwaysApply: false
 ---
 
@@ -28,8 +28,8 @@ You are building docs.ibexharness.com — a developer-tools documentation site t
 - Tailwind v3 (Fumadocs requires it). Use design tokens, never hex.
 - No `style={{ ... }}` inline color/font/spacing. Use Tailwind classes that reference CSS variables, or `cn()` for variants.
 - Server Components by default. Add `'use client'` only when a hook (`useState`, `useEffect`, `useTheme`) is genuinely required.
-- All new components live under `docs/app/src/components/` and are exported by name (no default exports except for Next.js route files).
-- MDX components are registered in `docs/app/src/mdx-components.tsx` and consumed everywhere via `useMDXComponents()` — never imported directly inside an `.mdx` file.
+- All new components live under `web/src/components/` and are exported by name (no default exports except for Next.js route files).
+- MDX components are registered in `web/src/mdx-components.tsx` and consumed everywhere via `useMDXComponents()` — never imported directly inside an `.mdx` file.
 
 ## When in doubt
 
@@ -46,4 +46,4 @@ Open the live [Vercel docs](https://vercel.com/docs) and ask: "would this exact 
 ## References
 
 - [MASTER_BRIEF.md](../../docs/roadmap/phase-1-5-docs-site/MASTER_BRIEF.md) — canonical design spec
-- [docs/app/CONTRIBUTING.md](../../docs/app/CONTRIBUTING.md) — branch naming and dev loop
+- [web/CONTRIBUTING.md](../../web/CONTRIBUTING.md) — branch naming and dev loop

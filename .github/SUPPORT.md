@@ -10,9 +10,9 @@ Do **not** open a public issue. Follow [.github/SECURITY.md](SECURITY.md).
 
 ## Development questions
 
-- [docs/DEVELOPMENT_GUIDE.md](../docs/DEVELOPMENT_GUIDE.md) — local setup, branches, PR workflow, CI
-- [docs/TOOLCHAIN.md](../docs/TOOLCHAIN.md) — required tools and sanity checks
-- [Roadmap current state](../docs/app/content/roadmap/current-state.mdx) — what is implemented vs planned (public `/roadmap/current-state`)
+- [web/engineering/DEVELOPMENT_GUIDE.md](../web/engineering/DEVELOPMENT_GUIDE.md) — local setup, branches, PR workflow, CI
+- [web/engineering/TOOLCHAIN.md](../web/engineering/TOOLCHAIN.md) — required tools and sanity checks
+- [Roadmap current state](../web/content/roadmap/current-state.mdx) — what is implemented vs planned (public `/roadmap/current-state`)
 
 ## Documentation
 

@@ -1,0 +1,58 @@
+---
+title: FAQ
+description: Answers to common setup, security, and Phase 1 scope questions.
+---
+
+Quick answers for the questions we hear most during local setup and security review.
+
+<Callout type="warning">
+  Never commit real PATs or provider API keys. Use `.env.example` as a template and keep secrets in your local `.env` files only.
+</Callout>
+
+## Setup
+
+### What do I need installed?
+
+Go 1.25+, Docker Desktop (or Docker Engine + Compose), `make`, and `pnpm` 9.x for the docs site. See [TOOLCHAIN.md](https://github.com/Rick1330/ibex-harness/blob/main/web/engineering/TOOLCHAIN.md) in the engineering docs.
+
+### Which ports does local dev use?
+
+| Service | Port |
+| --- | --- |
+| Proxy HTTP | 8080 |
+| Auth gRPC | 9091 |
+| Postgres | 5432 |
+| Redis | 6379 |
+
+Boot the stack:
+
+```bash
+git clone https://github.com/Rick1330/ibex-harness.git
+cd ibex-harness
+make compose-dev-up
+make db-migrate
+```
+
+## Security
+
+### Does the proxy fail open on rate limits?
+
+Yes — if Redis is unreachable, requests proceed without rate limiting. This is intentional for Phase 1 availability; see the security integration tests in `services/proxy`.
+
+### Does agent verification fail closed?
+
+Yes. A missing or cross-org `X-IBEX-Agent-ID` returns `403` before the request reaches provider logic.
+
+## Phase 1 scope
+
+### Why do chat completions return 501?
+
+No provider adapter is registered yet. Phase 2 adds OpenAI-compatible forwarding. The proxy still exercises auth, agent verify, validation, and rate limiting.
+
+### Where is the dashboard?
+
+The operator dashboard is planned for a later phase. Phase 1 is API-only: proxy + auth + docs.
+
+## Still stuck?
+
+Open a [GitHub issue](https://github.com/Rick1330/ibex-harness/issues) with your `request_id` from the error envelope.

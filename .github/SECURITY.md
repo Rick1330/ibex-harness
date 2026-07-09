@@ -17,7 +17,7 @@ Include: description, impact, reproduction steps, and affected components if kno
 
 Threat model, invariants, and engineering controls are documented in:
 
-- [docs/SECURITY.md](../docs/SECURITY.md)
+- [web/engineering/SECURITY.md](../web/engineering/SECURITY.md)
 
 ## Response expectations
 

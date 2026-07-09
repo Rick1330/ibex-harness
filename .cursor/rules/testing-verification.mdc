@@ -14,4 +14,4 @@ Before pushing or updating a PR:
 5. Ensure `gofmt -l` on touched `.go` files is empty (empty output = pass).
 6. Record what you ran in the PR Testing section (see `ibex-harness-workspace/pr-bodies/`).
 
-See `23-testing-strategy.mdc` and `docs/TESTING_STRATEGY.md`.
+See `23-testing-strategy.mdc` and `web/engineering/TESTING_STRATEGY.md`.

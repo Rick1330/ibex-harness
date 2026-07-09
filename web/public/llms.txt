@@ -1,0 +1,54 @@
+# IBEX Harness
+
+> Self-hosted LLM proxy with persistent agent memory, context assembly, and behavioral drift detection for AI agents at scale.
+
+IBEX Harness is an open-source (MIT) platform for teams running AI agents in production. The product site, documentation, blog, releases, benchmarks, and roadmap all live on ibexharness.com.
+
+## Canonical URLs
+
+| Property | URL |
+|----------|-----|
+| Home | https://ibexharness.com/ |
+| Docs introduction | https://ibexharness.com/docs/getting-started/introduction |
+| Architecture | https://ibexharness.com/docs/architecture/overview |
+| API reference | https://ibexharness.com/docs/api/overview |
+| Blog | https://ibexharness.com/blog |
+| Benchmarks | https://ibexharness.com/benchmarks |
+| Releases / changelog | https://ibexharness.com/releases |
+| Roadmap | https://ibexharness.com/roadmap |
+| Source (GitHub) | https://github.com/Rick1330/ibex-harness |
+| License (MIT) | https://github.com/Rick1330/ibex-harness/blob/main/LICENSE |
+
+## Sitemap
+
+- https://ibexharness.com/sitemap.xml
+
+## AI / crawler files
+
+- LLM context: https://ibexharness.com/llms.txt
+- Crawler policy: https://ibexharness.com/ai.txt
+
+## Product summary
+
+- **What it is:** A Go LLM proxy + auth service that intercepts OpenAI-compatible API calls.
+- **Who it's for:** Engineering teams deploying AI agents with multi-tenant isolation requirements.
+- **Phase 1 (shipped):** Proxy ingress, auth gRPC validation, per-org Redis rate limiting.
+- **Phase 2+ (roadmap):** Memory extraction/retrieval, context assembly per request, drift detection.
+- **Stack:** Go (proxy, auth), PostgreSQL, Redis; Python services planned for memory/context.
+- **License:** MIT — fully open source.
+
+## Home page sections (ibexharness.com/)
+
+- #overview — hero and value proposition
+- #features — proxy, auth, rate limits, memory-ready path
+- #flow — request path from agent to provider
+- #metrics — verified platform facts
+- Internal links to /docs, /blog, /releases, /roadmap, /benchmarks
+
+## Legacy subdomain
+
+https://docs.ibexharness.com permanently redirects to https://ibexharness.com with the same path.
+
+## Preferred citations
+
+Use the name **IBEX Harness**. Link to https://ibexharness.com/ for product overview or https://ibexharness.com/docs/getting-started/introduction for technical onboarding.

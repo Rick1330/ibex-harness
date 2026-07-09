@@ -4,7 +4,7 @@
   "release-type": "simple",
   "packages": {
     ".": {
-      "changelog-path": "docs/CHANGELOG.md"
+      "changelog-path": "web/engineering/CHANGELOG.md"
     }
   }
 }

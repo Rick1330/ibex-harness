@@ -1,0 +1,418 @@
+---
+title: "1.4.1 Developer Experience"
+description: "`CURRENT_STATE.md` explicitly notes: _\\\"`make db-seed` (dev seed data — future milestone)\\\"_. The README notes `.env.example` files \\\"to be created.\\\" These are not cosmetic issues — they are the difference between a new contributor being productive in 15 minutes versus spending half a day reverse-engineering environment v"
+summary: "`CURRENT_STATE.md` explicitly notes: _\\\"`make db-seed` (dev seed data — future milestone)\\\"_. The README notes `.env.example` files \\\"to be created.\\\" These are not cosmetic issues — they are the difference between a new contributor being productive in 15 minutes versus spending half a day reverse-engineering environment v"
+status: "planned"
+milestoneId: "1.4.1"
+goal: "[1.4 — Developer Experience Baseline](/roadmap/phase-1-core-platform/goals#goal-14-developer-experience-baseline)"
+estimatedEffort: "2–3 days"
+phase: "phase-1-core-platform"
+fullTitle: "Milestone 1.4.1 — Developer Experience Baseline: Seed Data, `.env.example`, and Local Smoke Test"
+---
+
+# Milestone 1.4.1 — Developer Experience Baseline: Seed Data, `.env.example`, and Local Smoke Test
+
+**Status:** Planned  
+**Goal:** [1.4 — Developer Experience Baseline](/roadmap/phase-1-core-platform/goals#goal-14-developer-experience-baseline)  
+**Phase:** 1 — Core Platform  
+**Estimated effort:** 2–3 days  
+**ADR required:** None
+
+---
+
+## Why This Milestone Exists
+
+`CURRENT_STATE.md` explicitly notes: _"`make db-seed` (dev seed data — future milestone)"_. The README notes `.env.example` files "to be created." These are not cosmetic issues — they are the difference between a new contributor being productive in 15 minutes versus spending half a day reverse-engineering environment variables from scattered `os.Getenv` calls, manually inserting seed rows, and wondering why every request returns 401.
+
+The compounding effect is worse: without seed data, every integration test that requires a valid PAT must either mock auth entirely (which reduces confidence) or insert its own org/user/agent/token before every test run (which is slow and duplicated). A canonical seed script solves both.
+
+**What is broken without this milestone:**
+1. A developer cloning the repo for the first time cannot obtain a working PAT without reading migration source code and manually crafting SQL `INSERT` statements.
+2. Without `.env.example`, there is no single source of truth for required environment variables. New contributors discover missing vars by running the service and reading crash messages — one variable at a time.
+3. There is no local end-to-end smoke test that validates auth → proxy → 200 without an LLM key. This means any environment setup error is only discovered when running slow integration tests, not immediately.
+
+---
+
+## Non-Goals
+
+- Automatic seeding in CI (CI uses its own fixtures; seed is for local dev only)
+- Seed data for Phase 3+ tables (memories, sessions, directives — seeded when those migrations land)
+- A UI or CLI wizard for onboarding
+- OAuth or SSO setup in seed (Phase 3+)
+
+---
+
+## Branch
+
+`chore/m1-4-1-developer-experience-baseline`
+
+## PR Title
+
+`chore(dx): db-seed, .env.example, and local smoke test (m1.4.1)`
+
+---
+
+## Prerequisites
+
+- [1.1.7](/roadmap/phase-1-core-platform/milestones/1.1.7-users-and-agents-schema) merged — `users` and `agents` tables exist
+- [1.2.7](/roadmap/phase-1-core-platform/milestones/1.2.7-graceful-shutdown) merged — services start and stop cleanly
+- [1.2.4](/roadmap/phase-1-core-platform/milestones/1.2.4-proxy-rate-limit-skeleton) merged — rate limit middleware wired
+
+---
+
+## Deliverables
+
+### 1. `make db-seed` — idempotent local seed script
+
+Create `infra/scripts/seed_dev.sql`:
+
+```sql
+-- infra/scripts/seed_dev.sql
+-- Idempotent development seed data.
+-- Safe to run multiple times: all inserts use ON CONFLICT DO NOTHING.
+-- Run via: make db-seed
+-- Produces: one test org, one test user, one test agent, one raw PAT.
+
+BEGIN;
+
+-- Org
+INSERT INTO ibex_core.organizations (id, name, slug, plan)
+VALUES (
+    '00000000-0000-0000-0000-000000000001',
+    'IBEX Dev Org',
+    'ibex-dev',
+    'developer'
+) ON CONFLICT (id) DO NOTHING;
+
+-- User (password auth not in Phase 1; password_hash is null)
+INSERT INTO ibex_core.users (id, org_id, email, name, role, status)
+VALUES (
+    '00000000-0000-0000-0000-000000000002',
+    '00000000-0000-0000-0000-000000000001',
+    'dev@ibex.local',
+    'Dev User',
+    'owner',
+    'active'
+) ON CONFLICT (id) DO NOTHING;
+
+-- Agent
+INSERT INTO ibex_core.agents (id, org_id, created_by, name, slug, status)
+VALUES (
+    '00000000-0000-0000-0000-000000000003',
+    '00000000-0000-0000-0000-000000000001',
+    '00000000-0000-0000-0000-000000000002',
+    'Dev Agent',
+    'dev-agent',
+    'active'
+) ON CONFLICT (id) DO NOTHING;
+
+-- PAT (ibex_dev_sk_...) — raw token stored in plaintext here for dev only.
+-- In production, only the Argon2id hash is stored.
+-- This token has all permissions (bitmap = 0x7FFFFFFFFFFFFFFF = all bits set).
+-- The prefix "ibex_dev_sk_" identifies it as a dev seed token.
+INSERT INTO ibex_core.tokens (
+    id, org_id, user_id, agent_id,
+    type, prefix, name,
+    token_hash,
+    permissions,
+    is_revoked
+) VALUES (
+    '00000000-0000-0000-0000-000000000004',
+    '00000000-0000-0000-0000-000000000001',
+    '00000000-0000-0000-0000-000000000002',
+    '00000000-0000-0000-0000-000000000003',
+    'service',
+    'ibex_dev_sk_',
+    'Dev Seed Token',
+    -- Argon2id hash of: ibex_dev_sk_LOCALDEVELOPMENTONLY
+    -- Run: go run ./tools/hashtoken ibex_dev_sk_LOCALDEVELOPMENTONLY
+    '$argon2id$v=19$m=65536,t=3,p=4$SEEDSALT000000==$SEEDHASH000000==',
+    9223372036854775807, -- all bits set
+    false
+) ON CONFLICT (id) DO NOTHING;
+
+COMMIT;
+```
+
+> **Security note:** The seed token value `ibex_dev_sk_LOCALDEVELOPMENTONLY` and its hash are public. This is intentional and acceptable for local development. The seed script must never be run against a staging or production database. CI explicitly checks `ENVIRONMENT != production` before permitting `make db-seed`.
+
+Add to `Makefile`:
+
+```bash
+.PHONY: db-seed
+db-seed: ## Seed the local development database with test org, user, agent, and PAT
+	@echo "Seeding development database..."
+	@psql "$$POSTGRES_DSN" -f infra/scripts/seed_dev.sql
+	@echo ""
+	@echo "  Dev org ID:    00000000-0000-0000-0000-000000000001"
+	@echo "  Dev agent ID:  00000000-0000-0000-0000-000000000003"
+	@echo "  Dev PAT:       ibex_dev_sk_LOCALDEVELOPMENTONLY"
+	@echo ""
+	@echo "Export the PAT before testing:"
+	@echo "  export IBEX_DEV_TOKEN=ibex_dev_sk_LOCALDEVELOPMENTONLY"
+```
+
+---
+
+### 2. `.env.example` files for every service
+
+**`services/proxy/.env.example`:**
+
+```bash
+# =============================================================================
+# IBEX Proxy Service — Environment Variables
+# Copy this file to .env before running the service locally:
+#   cp services/proxy/.env.example services/proxy/.env
+# =============================================================================
+
+# ── Required ─────────────────────────────────────────────────────────────────
+
+# gRPC address of the auth service
+IBEX_AUTH_ADDR=localhost:9090
+
+# Redis URL (used for rate limiting; in Phase 2 also for auth cache + directives)
+IBEX_REDIS_URL=redis://localhost:6379/0
+
+# ── Optional ─────────────────────────────────────────────────────────────────
+
+# HTTP listen address (default: :8080)
+IBEX_PROXY_ADDR=:8080
+
+# Graceful shutdown drain timeout (default: 30s)
+IBEX_SHUTDOWN_TIMEOUT=30s
+
+# Default rate limit in requests per minute per org (default: 60)
+IBEX_RATE_LIMIT_DEFAULT_RPM=60
+
+# Per-org rate limit overrides: comma-separated UUID=RPM pairs
+# Example: IBEX_RATE_LIMIT_ORG_OVERRIDES=00000000-...-0001=1000
+IBEX_RATE_LIMIT_ORG_OVERRIDES=
+
+# ── Observability ─────────────────────────────────────────────────────────────
+
+# OTel service name (required for tracing)
+OTEL_SERVICE_NAME=ibex-proxy
+
+# OTel service version (default: dev)
+OTEL_SERVICE_VERSION=dev
+
+# OTel deployment environment (default: development)
+OTEL_DEPLOYMENT_ENVIRONMENT=development
+
+# OTel OTLP exporter endpoint (leave empty to disable tracing in local dev)
+OTEL_EXPORTER_OTLP_ENDPOINT=
+
+# Sample ratio 0.0–1.0 (default: 0.01 in production; use 1.0 locally)
+OTEL_SAMPLE_RATIO=1.0
+
+# ── Development convenience ───────────────────────────────────────────────────
+
+# Set to 'debug' to enable verbose logging (default: info)
+IBEX_LOG_LEVEL=debug
+```
+
+**`services/auth/.env.example`:**
+
+```bash
+# =============================================================================
+# IBEX Auth Service — Environment Variables
+# Copy this file to .env before running the service locally:
+#   cp services/auth/.env.example services/auth/.env
+# =============================================================================
+
+# ── Required ─────────────────────────────────────────────────────────────────
+
+# PostgreSQL DSN
+POSTGRES_DSN=postgresql://ibex:ibex@localhost:5432/ibex_dev?sslmode=disable
+
+# ── Optional ─────────────────────────────────────────────────────────────────
+
+# gRPC listen address (default: :9090)
+IBEX_AUTH_GRPC_ADDR=:9090
+
+# HTTP listen address for /health, /ready, /metrics (default: :9091)
+IBEX_AUTH_HTTP_ADDR=:9091
+
+# Graceful shutdown drain timeout (default: 30s)
+IBEX_SHUTDOWN_TIMEOUT=30s
+
+# Maximum DB connections in the pool (default: 20)
+IBEX_DB_MAX_CONNS=20
+
+# DB connection idle timeout (default: 10m)
+IBEX_DB_IDLE_TIMEOUT=10m
+
+# ── Observability ─────────────────────────────────────────────────────────────
+
+OTEL_SERVICE_NAME=ibex-auth
+OTEL_SERVICE_VERSION=dev
+OTEL_DEPLOYMENT_ENVIRONMENT=development
+OTEL_EXPORTER_OTLP_ENDPOINT=
+OTEL_SAMPLE_RATIO=1.0
+IBEX_LOG_LEVEL=debug
+```
+
+---
+
+### 3. `make dev-smoke` — local end-to-end sanity check
+
+Create `infra/scripts/smoke_local.sh`:
+
+```bash
+#!/usr/bin/env bash
+# infra/scripts/smoke_local.sh
+# Local development smoke test: validates auth+proxy pipeline without an LLM key.
+# Usage: make dev-smoke
+# Prerequisites: make compose-dev-up && make db-migrate && make db-seed
+
+set -euo pipefail
+
+PROXY_ADDR="${IBEX_PROXY_ADDR:-http://localhost:8080}"
+DEV_TOKEN="${IBEX_DEV_TOKEN:-ibex_dev_sk_LOCALDEVELOPMENTONLY}"
+DEV_AGENT="${IBEX_DEV_AGENT_ID:-00000000-0000-0000-0000-000000000003}"
+
+fail() { echo "FAIL: $1" >&2; exit 1; }
+pass() { echo "PASS: $1"; }
+
+echo "=== IBEX Harness Local Smoke Test ==="
+echo "  Proxy: $PROXY_ADDR"
+echo ""
+
+# 1. Health check
+HTTP=$(curl -sf -o /dev/null -w "%{http_code}" "$PROXY_ADDR/health")
+[ "$HTTP" = "200" ] && pass "proxy /health → 200" || fail "proxy /health returned $HTTP"
+
+# 2. Ready check
+HTTP=$(curl -sf -o /dev/null -w "%{http_code}" "$PROXY_ADDR/ready")
+[ "$HTTP" = "200" ] && pass "proxy /ready → 200" || fail "proxy /ready returned $HTTP"
+
+# 3. Missing token → 401
+HTTP=$(curl -sf -o /dev/null -w "%{http_code}" \
+    -X POST "$PROXY_ADDR/v1/chat/completions" \
+    -H "Content-Type: application/json" \
+    -d '{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}')
+[ "$HTTP" = "401" ] && pass "no token → 401" || fail "no token returned $HTTP, want 401"
+
+# 4. Valid token, missing agent → 400
+HTTP=$(curl -sf -o /dev/null -w "%{http_code}" \
+    -X POST "$PROXY_ADDR/v1/chat/completions" \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $DEV_TOKEN" \
+    -d '{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}')
+[ "$HTTP" = "400" ] && pass "valid token + no agent header → 400" || fail "want 400, got $HTTP"
+
+# 5. Rate limit check (rapid fire 65 requests; expect at least one 429)
+# Note: requires IBEX_RATE_LIMIT_DEFAULT_RPM <= 60
+GOT_429=0
+for i in $(seq 1 65); do
+    HTTP=$(curl -sf -o /dev/null -w "%{http_code}" \
+        -X POST "$PROXY_ADDR/v1/chat/completions" \
+        -H "Authorization: Bearer $DEV_TOKEN" \
+        -H "X-IBEX-Agent-ID: $DEV_AGENT" \
+        -H "Content-Type: application/json" \
+        -d '{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}' 2>/dev/null || true)
+    [ "$HTTP" = "429" ] && GOT_429=1 && break
+done
+[ "$GOT_429" = "1" ] && pass "rate limit enforcement → at least one 429" \
+    || echo "WARN: 65 requests did not produce a 429 (check IBEX_RATE_LIMIT_DEFAULT_RPM)"
+
+echo ""
+echo "=== Smoke test complete ==="
+```
+
+Add to `Makefile`:
+
+```bash
+.PHONY: dev-smoke
+dev-smoke: ## Run local end-to-end smoke test (requires compose-dev-up + db-migrate + db-seed)
+	@bash infra/scripts/smoke_local.sh
+```
+
+---
+
+### 4. Update root README with "First 5 minutes" section
+
+Add a section to `README.md` above the architecture overview titled **Getting started in 5 minutes** with this workflow:
+
+```bash
+# 1. Start infrastructure
+make compose-dev-up
+
+# 2. Run all migrations
+make db-migrate
+
+# 3. Seed development data (creates test org, agent, and PAT)
+make db-seed
+
+# 4. Copy and edit .env files
+cp services/auth/.env.example services/auth/.env
+cp services/proxy/.env.example services/proxy/.env
+# Edit both files as needed (defaults work for local compose stack)
+
+# 5. Start services
+make dev-auth &   # starts auth on :9090 (gRPC) and :9091 (HTTP)
+make dev-proxy &  # starts proxy on :8080
+
+# 6. Verify everything works
+make dev-smoke
+```
+
+After `make dev-smoke` passes, document that the dev PAT can be used in tests:
+
+```bash
+export IBEX_DEV_TOKEN=ibex_dev_sk_LOCALDEVELOPMENTONLY
+curl -X POST http://localhost:8080/v1/chat/completions \
+  -H "Authorization: Bearer $IBEX_DEV_TOKEN" \
+  -H "X-IBEX-Agent-ID: 00000000-0000-0000-0000-000000000003" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"gpt-4o","messages":[{"role":"user","content":"hello"}]}'
+```
+
+Link to `web/engineering/DEVELOPMENT_GUIDE.md` for the full development workflow.
+
+---
+
+## Files Affected
+
+| Path | Action |
+|---|---|
+| `infra/scripts/seed_dev.sql` | Add |
+| `infra/scripts/smoke_local.sh` | Add |
+| `services/proxy/.env.example` | Add |
+| `services/auth/.env.example` | Add |
+| `Makefile` | Add `db-seed`, `dev-smoke` targets |
+| `README.md` | Add "Getting started in 5 minutes" section |
+| `web/engineering/DEVELOPMENT_GUIDE.md` | Add seed data section |
+| `docs/app/content/roadmap/CURRENT_STATE` | Update after merge |
+
+---
+
+## Testing Requirements
+
+- **`TestSeedScript_Idempotent`**: Run `make db-seed` twice against compose-test stack; assert no error on second run and row counts unchanged.
+- **`TestSeedPAT_Validates`**: Use the seed PAT against `ValidateToken` gRPC; assert it returns the correct org_id and permissions.
+- **`TestSmokeScript_AllChecks`**: Run `make dev-smoke` against the integration stack; assert exit code 0.
+
+---
+
+## Acceptance Criteria
+
+- [ ] `make db-seed` runs without error against a clean migrated database
+- [ ] `make db-seed` is idempotent (safe to run twice)
+- [ ] `services/proxy/.env.example` and `services/auth/.env.example` exist and document every env var used in the service
+- [ ] `make dev-smoke` exits 0 when auth and proxy are healthy
+- [ ] `make dev-smoke` detects and reports: 401 on missing token, 400 on missing agent header, 429 on rate limit
+- [ ] README "Getting started" section produces a working local stack in 5 minutes on a fresh clone
+- [ ] `CURRENT_STATE.md` updated to note seed data exists
+
+---
+
+## Risks
+
+| Risk | Likelihood | Mitigation |
+|---|---|---|
+| Seed token hash incorrect for given Argon2id parameters | Medium | `make db-seed` includes a step that validates the hash by running ValidateToken against it |
+| `.env.example` drifts from actual env var names | Medium | CI lint step: grep env vars in code and compare against .env.example |
+| `make dev-smoke` is too slow for regular use | Low | Smoke test completes in &lt;10s; it is not run in CI fast path |
+
+---

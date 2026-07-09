@@ -37,7 +37,7 @@ docker compose down -v
 | ClickHouse | `clickhouse/clickhouse-server:24.8.14.39` | 8123 (HTTP), **9002** (native) | Analytics |
 | MinIO | `minio/minio:RELEASE.2024-12-18T13-15-44Z` | 9000 (API), 9001 (console) | Object storage |
 
-ClickHouse **native** is mapped to host port **9002** so it does not conflict with MinIO on **9000**. Use HTTP (`8123`) for typical local DSNs — see [docs/ENVIRONMENT_VARIABLES.md](../../../docs/ENVIRONMENT_VARIABLES.md).
+ClickHouse **native** is mapped to host port **9002** so it does not conflict with MinIO on **9000**. Use HTTP (`8123`) for typical local DSNs — see [web/engineering/ENVIRONMENT_VARIABLES.md](../../../web/engineering/ENVIRONMENT_VARIABLES.md).
 
 ## Apply database migrations
 

@@ -3,11 +3,16 @@
   "private": true,
   "packageManager": "pnpm@9.15.9",
   "scripts": {
-    "docs:dev": "turbo dev --filter=docs",
-    "docs:dev:clean": "pnpm --filter docs dev:clean",
-    "docs:build": "turbo build --filter=docs",
-    "docs:build:clean": "pnpm --filter docs build:clean",
-    "docs:start": "pnpm --filter docs start"
+    "web:dev": "turbo dev --filter=web",
+    "web:dev:clean": "pnpm --filter web dev:clean",
+    "web:build": "turbo build --filter=web",
+    "web:build:clean": "pnpm --filter web build:clean",
+    "web:start": "pnpm --filter web start",
+    "docs:dev": "pnpm web:dev",
+    "docs:dev:clean": "pnpm web:dev:clean",
+    "docs:build": "pnpm web:build",
+    "docs:build:clean": "pnpm web:build:clean",
+    "docs:start": "pnpm web:start"
   },
   "devDependencies": {
     "turbo": "^2.5.4"
