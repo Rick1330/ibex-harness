@@ -1,7 +1,7 @@
 package crypto
 
 import (
-	"golang.org/x/crypto/argon2"
+	"github.com/Rick1330/ibex-harness/packages/crypto/internal/xcrypto/argon2"
 )
 
 // HashSecret returns a PHC-encoded Argon2id hash of plaintext using params.
