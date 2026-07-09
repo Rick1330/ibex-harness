@@ -1900,22 +1900,22 @@ html {
 /* ============ IbexHarness landing (scoped — docs tokens untouched) ============ */
 .ibex-landing {
   --radius: 0.25rem;
-  --background: oklch(0.926 0.003 106);
-  --paper: oklch(0.926 0.003 106);
-  --foreground: oklch(0.205 0.004 106);
-  --ink: oklch(0.18 0.004 106);
-  --card: oklch(0.948 0.003 106);
-  --primary: oklch(0.2 0.004 106);
-  --primary-foreground: oklch(0.95 0.003 106);
-  --muted: oklch(0.9 0.003 106);
-  --muted-foreground: oklch(0.5 0.004 106);
-  --accent: oklch(0.24 0.004 106);
-  --accent-foreground: oklch(0.98 0.003 106);
-  --destructive: oklch(0.55 0.2 27);
-  --border: oklch(0.78 0.004 106);
-  --input: oklch(0.82 0.004 106);
-  --ring: oklch(0.4 0.004 106);
-  --frame-shadow: oklch(0.2 0.004 106 / 0.12);
+  --background: hsl(var(--canvas));
+  --paper: hsl(var(--panel));
+  --foreground: hsl(var(--text-primary));
+  --ink: hsl(var(--text-primary));
+  --card: hsl(var(--panel));
+  --primary: hsl(var(--text-primary));
+  --primary-foreground: hsl(var(--canvas));
+  --muted: hsl(var(--panel-raised));
+  --muted-foreground: hsl(var(--text-secondary));
+  --accent: hsl(var(--accent));
+  --accent-foreground: hsl(var(--accent-fg));
+  --destructive: hsl(var(--danger));
+  --border: hsl(var(--border));
+  --input: hsl(var(--input));
+  --ring: hsl(var(--ring));
+  --frame-shadow: rgb(0 0 0 / 0.12);
 
   background-color: var(--background);
   color: var(--foreground);
@@ -1923,22 +1923,22 @@ html {
 }
 
 .dark .ibex-landing {
-  --background: oklch(0.19 0.004 106);
-  --paper: oklch(0.19 0.004 106);
-  --foreground: oklch(0.92 0.003 106);
-  --ink: oklch(0.95 0.003 106);
-  --card: oklch(0.23 0.004 106);
-  --primary: oklch(0.93 0.003 106);
-  --primary-foreground: oklch(0.19 0.004 106);
-  --muted: oklch(0.27 0.004 106);
-  --muted-foreground: oklch(0.62 0.004 106);
-  --accent: oklch(0.92 0.003 106);
-  --accent-foreground: oklch(0.15 0.004 106);
-  --destructive: oklch(0.6 0.2 27);
-  --border: oklch(0.34 0.004 106);
-  --input: oklch(0.34 0.004 106);
-  --ring: oklch(0.7 0.004 106);
-  --frame-shadow: oklch(0 0 0 / 0.45);
+  --background: hsl(var(--canvas));
+  --paper: hsl(var(--panel));
+  --foreground: hsl(var(--text-primary));
+  --ink: hsl(var(--text-primary));
+  --card: hsl(var(--panel));
+  --primary: hsl(var(--text-primary));
+  --primary-foreground: hsl(var(--canvas));
+  --muted: hsl(var(--panel-raised));
+  --muted-foreground: hsl(var(--text-secondary));
+  --accent: hsl(var(--accent));
+  --accent-foreground: hsl(var(--accent-fg));
+  --destructive: hsl(var(--danger));
+  --border: hsl(var(--border));
+  --input: hsl(var(--input));
+  --ring: hsl(var(--ring));
+  --frame-shadow: rgb(0 0 0 / 0.45);
 }
 
 .ibex-landing .bg-background {
@@ -2029,6 +2029,15 @@ html {
 
 .dark .video-blend {
   mix-blend-mode: screen;
+}
+
+.ibex-video-stage::after {
+  content: "";
+  position: absolute;
+  inset: 10% 10% 10% 10%;
+  border: 1px solid var(--border);
+  pointer-events: none;
+  opacity: 0.28;
 }
 
 @keyframes ibex-float {

@@ -42,14 +42,14 @@ echo "ok: /api/search redirects (${redirect_code})"
 
 # Static export bakes search config into the RSC payload on /roadmap.
 page_html="$(curl -fsS "${BASE_URL}/roadmap")"
-if ! echo "$page_html" | grep -qF '/search-index.json'; then
+if ! grep -qF '/search-index.json' <<<"$page_html"; then
   echo "smoke failed: /search-index.json not referenced in /roadmap HTML"
   exit 1
 fi
 echo "ok: static search index URL baked in /roadmap"
 
 page_home="$(curl -fsS "${BASE_URL}/")"
-if ! echo "$page_home" | grep -qF 'ibex-landing'; then
+if ! grep -qF 'ibex-landing' <<<"$page_home"; then
   echo "smoke failed: / does not include landing marker (ibex-landing)"
   exit 1
 fi
