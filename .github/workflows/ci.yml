@@ -852,9 +852,14 @@ jobs:
       actions: read
     uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@v2.3.8
     with:
+      # OSV scans JS lockfiles only. Go module vulnerabilities are enforced by
+      # the govulncheck job (reachable-code analysis). GO-2026-5932 is a
+      # module-level openpgp advisory with no fixed version; OSV flags
+      # golang.org/x/crypto even when only argon2 is imported and call analysis
+      # cannot mark it unexecuted. See ADR-0008.
       scan-args: |-
-        --recursive
-        .
+        --lockfile
+        pnpm-lock.yaml
 
   web-build:
     name: web-build

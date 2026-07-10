@@ -42,7 +42,16 @@ The repo has a single root `go.mod`, Go services `auth` and `proxy`, two Dockerf
 
 Weekly `schedule` on CI runs **only** `osv-scan` (other jobs use `if: github.event_name != 'schedule'`).
 
-CI uses `go-version-file: go.mod` so the runner Go version tracks `go.mod` (currently **1.25.11**; `golang.org/x/crypto` ≥ v0.52.0; golangci-lint **v2.4+** for Go 1.25).
+CI uses `go-version-file: go.mod` so the runner Go version tracks `go.mod` (currently **1.25.12**; `golang.org/x/crypto` ≥ v0.54.0; golangci-lint **v2.4+** for Go 1.25).
+
+### Go vs JavaScript vulnerability scanning
+
+| Ecosystem | Merge gate | Tool | Rationale |
+| --- | --- | --- | --- |
+| JavaScript | `osv-scan` | OSV on `pnpm-lock.yaml` | Lockfile advisories with fix versions |
+| Go | `govulncheck` | `govulncheck` on packages + auth + proxy | Reachable stdlib and module vulnerabilities only |
+
+`osv-scan` does **not** scan `go.mod` because advisory `GO-2026-5932` is module-level for the unmaintained `openpgp` subpackage (no fixed version). This repo imports only `golang.org/x/crypto/argon2` via `packages/crypto` (ADR-0010). OSV call-analysis cannot mark `GO-2026-5932` unexecuted; `govulncheck` confirms no reachable Go impact. This is not an ignore list — it is the correct tool split for module-level vs reachability advisories.
 
 ### CodeQL default vs advanced
 
