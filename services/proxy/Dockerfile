@@ -1,6 +1,5 @@
-FROM golang:1.25-alpine3.22@sha256:6c527152c9ad2fb220f17c02b9a79d76731aafb28302f4f3b40f1449f9892036 AS build
+FROM golang:1.26-alpine3.22@sha256:457d8584db11412777c4196146b8060fdaabe0b0ba7b62c553d08e07d8c22bd3 AS build
 WORKDIR /src
-ENV GOTOOLCHAIN=auto
 COPY go.mod go.sum ./
 RUN go mod download -x
 COPY packages ./packages
