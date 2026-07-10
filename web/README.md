@@ -1,6 +1,6 @@
 # Public docs site (Fumadocs)
 
-Next.js + Fumadocs application for [docs.ibexharness.com](https://docs.ibexharness.com).
+Next.js + Fumadocs application for [ibexharness.com](https://ibexharness.com) (docs at `/docs`).
 
 | Path | Purpose |
 | --- | --- |
