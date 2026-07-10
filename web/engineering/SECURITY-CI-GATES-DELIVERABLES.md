@@ -16,7 +16,7 @@ Reference for the DevSecOps hardening work on branch `chore/security-ci-gates`. 
 | Scanner | Merge gate? | Fail threshold |
 |---------|-------------|----------------|
 | Trivy (fs) | Yes | CRITICAL, HIGH (`ignore-unfixed: true`) |
-| OSV Scanner | Yes | Unfixed vulns in lockfiles; Go uses `--call-analysis=go` (reachable code only) |
+| OSV Scanner | Yes | Unfixed vulns in `pnpm-lock.yaml` (JS). Go enforced by `govulncheck` — see ADR-0008 |
 | Semgrep | Yes | `.semgrep/rules/` only (`--error`); community packs → SARIF only |
 | Grype (SBOM) | No | `--fail-on critical`; table/JSON artifacts only (not Code Scanning SARIF) |
 | golangci-lint | Yes | Lint errors on auth + proxy |
@@ -35,7 +35,7 @@ gh api --method PUT repos/Rick1330/ibex-harness/branches/main/protection \
 
 - `go.mod` **Go 1.25.12** with `go-version-file: go.mod` in CI.
 - `golang.org/x/crypto` **v0.54.0+** (direct require in `packages/crypto`; Argon2id per ADR-0010).
-- **Go vulnerability gates:** `govulncheck` (reachable stdlib/module vulns) plus OSV recursive scan with `--call-analysis=go` (module-level advisories such as unused `openpgp` are marked unexecuted when not imported).
+- **Go vulnerability gates:** `govulncheck` (reachable stdlib/module vulns). OSV scans JS lockfiles only — `GO-2026-5932` is a module-level `openpgp` advisory that OSV cannot mark unexecuted when only `argon2` is imported (ADR-0008).
 - Docker builder images: `golang:1.26-alpine3.22` (≥ `go.mod` minimum; no `GOTOOLCHAIN=auto` needed).
 
 ## Local verification
@@ -46,7 +46,7 @@ go test ./services/auth/... ./services/proxy/... ./packages/proto/...
 golangci-lint run ./services/auth/... ./services/proxy/...
 semgrep --config .semgrep/rules/ --error services/ packages/
 trivy fs --severity CRITICAL,HIGH --ignore-unfixed .
-osv-scanner --recursive . --call-analysis=go
+osv-scanner --lockfile pnpm-lock.yaml
 govulncheck ./packages/... ./services/auth/... ./services/proxy/...
 ```
 
