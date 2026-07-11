@@ -36,5 +36,8 @@ describe("sanitizeRscTxtFiles", () => {
 
     const llms = await readFile(path.join(tmpDir, "llms.txt"), "utf8");
     expect(llms).toBe("llm context");
+
+    const ai = await readFile(path.join(tmpDir, "ai.txt"), "utf8");
+    expect(ai).toBe("ai policy");
   });
 });
