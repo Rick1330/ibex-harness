@@ -55,6 +55,23 @@ if ! grep -qF 'ibex-landing' <<<"$page_home"; then
 fi
 echo "ok: / includes landing marker"
 
+# Benchmark pages must render HTML, not RSC flight payloads.
+benchmark_html="$(curl -fsS -H "Accept: text/html" "${BASE_URL}/benchmarks/latency")"
+if ! grep -qi '<html' <<<"$benchmark_html"; then
+  echo "smoke failed: /benchmarks/latency did not return HTML document"
+  exit 1
+fi
+echo "ok: /benchmarks/latency returns HTML"
+
+for rsc_txt in "/benchmarks/latency.txt" "/docs/getting-started/introduction.txt"; do
+  body="$(curl -fsS "${BASE_URL}${rsc_txt}" || true)"
+  if grep -qF '$Sreact' <<<"$body" || grep -qF 'react.fragment' <<<"$body"; then
+    echo "smoke failed: ${rsc_txt} still exposes RSC flight payload"
+    exit 1
+  fi
+  echo "ok: ${rsc_txt} does not leak RSC payload"
+done
+
 # Production must be Pages static CDN, not the legacy OpenNext Worker.
 if [[ "$BASE_URL" == *"ibexharness.com"* ]]; then
   intro_headers="$(curl -fsSI "${BASE_URL}/docs/getting-started/introduction" || true)"

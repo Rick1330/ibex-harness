@@ -27,3 +27,12 @@
 
 /brand/ascii-tile.webp
   Cache-Control: public, max-age=31536000, immutable
+
+/llms.txt
+  Content-Type: text/plain; charset=utf-8
+
+/ai.txt
+  Content-Type: text/plain; charset=utf-8
+
+/**/*.txt
+  Content-Type: text/x-component; charset=utf-8

@@ -5,6 +5,11 @@ test.describe("benchmark dashboard", () => {
     await page.goto("/benchmarks");
     await expect(page.getByRole("heading", { name: "Benchmarks", exact: true })).toBeVisible();
 
+    await page.getByRole("link", { name: "Latency" }).click();
+    await expect(page).toHaveURL(/\/benchmarks\/latency$/);
+    await expect(page.url()).not.toMatch(/\.txt$/);
+    await expect(page.getByRole("heading", { name: "Latency trends" })).toBeVisible();
+
     await page.getByRole("link", { name: "History" }).click();
     await expect(page).toHaveURL(/\/benchmarks\/history$/);
     await expect(page.getByRole("heading", { name: "Run history" })).toBeVisible();

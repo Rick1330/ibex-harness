@@ -7,7 +7,6 @@ import {
   benchmarkLayoutOptions,
 } from "@/lib/benchmark-layout.config";
 import { benchmarkPageTree } from "@/lib/benchmark-page-tree";
-import { loadPublishedBenchmarkData } from "@/lib/benchmarks/published-data";
 
 export const dynamic = "force-static";
 
@@ -16,11 +15,10 @@ type BenchmarksLayoutProps = Readonly<{
 }>;
 
 export default function BenchmarksLayout({ children }: BenchmarksLayoutProps) {
-  const benchmarkData = loadPublishedBenchmarkData();
   const options = benchmarkBaseOptions();
 
   return (
-    <BenchmarkProvider fallbackData={benchmarkData}>
+    <BenchmarkProvider>
       <DocsLayout
         tree={benchmarkPageTree}
         containerProps={{ className: "benchmark-docs-layout" }}

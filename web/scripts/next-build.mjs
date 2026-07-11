@@ -5,6 +5,7 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 import { renameIgnoreMissing } from "./build-script-utils.mjs";
+import { sanitizeRscTxtFiles } from "./sanitize-rsc-txt.mjs";
 
 const require = createRequire(import.meta.url);
 const nextBin = path.join(
@@ -78,6 +79,8 @@ async function main() {
   await stashApiRoutes();
   try {
     runNextBuild("phase 2/2 — static export to out/");
+    const { sanitized } = await sanitizeRscTxtFiles();
+    console.log(`[build] sanitized ${sanitized} RSC prefetch .txt file(s)`);
   } finally {
     await restoreApiRoutes();
   }

@@ -70,6 +70,9 @@ jobs:
       - name: Landing hero assets guard
         run: bash .github/scripts/check-landing-assets.sh
 
+      - name: Static export guards
+        run: bash .github/scripts/check-static-export.sh
+
       - name: Validate action pins
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -67,6 +67,7 @@ case "${1:-help}" in
     cd "$ROOT_DIR"
     bash .github/scripts/check-repo-layout.sh
     bash .github/scripts/check-landing-assets.sh
+    bash .github/scripts/check-static-export.sh
     bash .github/scripts/validate-action-pins.sh
     ;;
   proto-lint)
