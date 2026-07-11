@@ -1,5 +1,7 @@
 import Link from "next/link";
 
+import { LandingShell } from "@/components/landing/landing-shell";
+
 export function LandingCta() {
   return (
     <section className="mx-auto max-w-7xl px-5 pb-24 sm:px-8">
@@ -28,11 +30,11 @@ export function LandingCta() {
             View benchmarks
           </Link>
         </div>
-        <div className="mt-8 inline-flex items-center gap-2 border border-primary-foreground/30 px-5 py-3 text-sm">
+        <LandingShell surface="primary" className="mx-auto mt-8 max-w-2xl text-left">
           <span className="opacity-60">~ $</span>
           {" git clone https://github.com/Rick1330/ibex-harness.git && make compose-dev-up"}
           <span className="caret">▊</span>
-        </div>
+        </LandingShell>
       </div>
     </section>
   );

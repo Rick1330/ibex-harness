@@ -7,6 +7,8 @@ PUBLIC="$ROOT/web/public"
 REQUIRED=(
   "ibex-ascii.webm"
   "ibex-ascii.mp4"
+  "ibex-ascii-dark.webm"
+  "ibex-ascii-dark.mp4"
   "ibex-ascii-poster.webp"
   "brand/ascii-tile.webp"
 )

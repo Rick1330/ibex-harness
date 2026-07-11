@@ -30,8 +30,8 @@
   --text-primary: 55 6% 18%;
   --text-secondary: 55 4% 48%;
   --text-tertiary: 55 5% 62%;
-  --accent: 32 85% 48%;
-  --accent-fg: 55 7% 96%;
+  --accent: 240 10% 4%;
+  --accent-fg: 0 0% 98%;
   --frame-shadow: 55 6% 18% / 0.12;
 
   --success: 142 71% 35%;
@@ -91,8 +91,8 @@
   --text-primary: 55 5% 92%;
   --text-secondary: 55 4% 62%;
   --text-tertiary: 55 4% 48%;
-  --accent: 35 75% 58%;
-  --accent-fg: 55 4% 15%;
+  --accent: 0 0% 100%;
+  --accent-fg: 240 10% 4%;
   --frame-shadow: 0 0% 0% / 0.45;
 
   --success: 142 69% 58%;
@@ -1902,6 +1902,8 @@ html {
 /* ============ IbexHarness landing (scoped utilities) ============ */
 .ibex-landing {
   --radius: 0.25rem;
+  --landing-accent: 32 85% 48%;
+  --landing-accent-fg: 55 7% 96%;
   --background: hsl(var(--canvas));
   --paper: hsl(var(--panel));
   --foreground: hsl(var(--text-primary));
@@ -1911,8 +1913,8 @@ html {
   --primary-foreground: hsl(var(--canvas));
   --muted: hsl(var(--panel-raised));
   --muted-foreground: hsl(var(--text-secondary));
-  --accent: hsl(var(--accent));
-  --accent-foreground: hsl(var(--accent-fg));
+  --accent: hsl(var(--landing-accent));
+  --accent-foreground: hsl(var(--landing-accent-fg));
   --destructive: hsl(var(--danger));
   --border: hsl(var(--border));
   --input: hsl(var(--border));
@@ -1921,6 +1923,11 @@ html {
   background-color: var(--background);
   color: var(--foreground);
   font-family: var(--font-mono), ui-monospace, monospace;
+}
+
+.dark .ibex-landing {
+  --landing-accent: 35 75% 58%;
+  --landing-accent-fg: 55 4% 15%;
 }
 
 .ibex-landing .bg-background {
@@ -2021,7 +2028,6 @@ html {
 
 .dark .video-blend {
   mix-blend-mode: screen;
-  filter: invert(1);
 }
 
 .ibex-landing .landing-surface {

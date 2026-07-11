@@ -4,17 +4,24 @@ type LandingShellProps = Readonly<{
   children: ReactNode;
   className?: string;
   compact?: boolean;
+  surface?: "card" | "primary";
 }>;
+
+const surfaceClasses: Record<NonNullable<LandingShellProps["surface"]>, string> = {
+  card: "bg-card",
+  primary: "bg-primary-foreground/10 text-primary-foreground",
+};
 
 /** Monospace command block with ascii-frame depth (landing-guide shell pattern). */
 export function LandingShell({
   children,
   className = "",
   compact = false,
+  surface = "card",
 }: LandingShellProps) {
   return (
     <div
-      className={`ascii-frame overflow-x-auto bg-card ${className}`.trim()}
+      className={`ascii-frame overflow-x-auto ${surfaceClasses[surface]} ${className}`.trim()}
     >
       <pre
         className={`m-0 overflow-x-auto font-mono leading-relaxed ${

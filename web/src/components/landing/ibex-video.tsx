@@ -1,13 +1,34 @@
 "use client";
 
+import { useTheme } from "next-themes";
+import { useEffect, useState } from "react";
+
 import { useIbexVideoCrossfade } from "@/hooks/use-ibex-video-crossfade";
+import {
+  IBEX_VIDEO_POSTER,
+  ibexVideoSourcesForTheme,
+  type IbexVideoTheme,
+} from "@/lib/ibex-video-sources";
+
+function resolveVideoTheme(resolvedTheme: string | undefined): IbexVideoTheme {
+  return resolvedTheme === "dark" ? "dark" : "light";
+}
 
 export function IbexVideo() {
+  const { resolvedTheme } = useTheme();
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  const videoTheme = mounted ? resolveVideoTheme(resolvedTheme) : "light";
+  const sources = ibexVideoSourcesForTheme(videoTheme);
+
   const {
     aRef,
     bRef,
     wrapRef,
-    posterSrc,
     videoClass,
     isAActive,
     isBActive,
@@ -22,18 +43,20 @@ export function IbexVideo() {
       aria-hidden
     >
       <video
+        key={`a-${videoTheme}`}
         ref={aRef}
         className={videoClass(isAActive)}
-        poster={posterSrc}
+        poster={IBEX_VIDEO_POSTER}
         muted
         playsInline
         preload={aPreload}
         tabIndex={-1}
       >
-        <source src="/ibex-ascii.webm" type="video/webm" />
-        <source src="/ibex-ascii.mp4" type="video/mp4" />
+        <source src={sources.webm} type="video/webm" />
+        <source src={sources.mp4} type="video/mp4" />
       </video>
       <video
+        key={`b-${videoTheme}`}
         ref={bRef}
         className={videoClass(isBActive)}
         muted
@@ -41,8 +64,8 @@ export function IbexVideo() {
         preload={bPreload}
         tabIndex={-1}
       >
-        <source src="/ibex-ascii.webm" type="video/webm" />
-        <source src="/ibex-ascii.mp4" type="video/mp4" />
+        <source src={sources.webm} type="video/webm" />
+        <source src={sources.mp4} type="video/mp4" />
       </video>
     </div>
   );
