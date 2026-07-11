@@ -22,16 +22,17 @@
   --sidebar-top-offset: 3.75rem;
   --toc-top-offset: 3.75rem;
   --scroll-padding: 5rem;
-  --canvas: 0 0% 98%;
-  --panel: 240 5% 96%;
-  --panel-raised: 240 5% 90%;
-  --border: 240 5% 90%;
-  --border-strong: 240 5% 84%;
-  --text-primary: 240 10% 4%;
-  --text-secondary: 240 4% 34%;
-  --text-tertiary: 240 5% 65%;
+  --canvas: 55 7% 91%;
+  --panel: 55 7% 94%;
+  --panel-raised: 55 7% 88%;
+  --border: 55 5% 76%;
+  --border-strong: 55 5% 70%;
+  --text-primary: 55 6% 18%;
+  --text-secondary: 55 4% 48%;
+  --text-tertiary: 55 5% 62%;
   --accent: 240 10% 4%;
   --accent-fg: 0 0% 98%;
+  --frame-shadow: 55 6% 18% / 0.12;
 
   --success: 142 71% 35%;
   --warning: 32 95% 44%;
@@ -82,16 +83,17 @@
 }
 
 .dark {
-  --canvas: 240 10% 4%;
-  --panel: 240 6% 7%;
-  --panel-raised: 240 5% 11%;
-  --border: 240 5% 14%;
-  --border-strong: 240 4% 21%;
-  --text-primary: 0 0% 98%;
-  --text-secondary: 240 5% 65%;
-  --text-tertiary: 240 4% 46%;
+  --canvas: 55 4% 19%;
+  --panel: 55 4% 23%;
+  --panel-raised: 55 4% 27%;
+  --border: 55 4% 34%;
+  --border-strong: 55 4% 40%;
+  --text-primary: 55 5% 92%;
+  --text-secondary: 55 4% 62%;
+  --text-tertiary: 55 4% 48%;
   --accent: 0 0% 100%;
   --accent-fg: 240 10% 4%;
+  --frame-shadow: 0 0% 0% / 0.45;
 
   --success: 142 69% 58%;
   --warning: 38 92% 50%;
@@ -526,7 +528,6 @@ body {
 /* === Performance — instant collapsibles (no height keyframes / CLS) === */
 
 #nd-sidebar [class*="animate-fd-collapsible"],
-#nd-toc [class*="animate-fd-collapsible"],
 #nd-tocnav [class*="animate-fd-collapsible"] {
   animation: none !important;
 }
@@ -1897,48 +1898,61 @@ html {
 }
 
 
-/* ============ IbexHarness landing (scoped — docs tokens untouched) ============ */
+/* ============ IbexHarness landing (scoped utilities) ============ */
 .ibex-landing {
   --radius: 0.25rem;
+  --landing-accent: 32 85% 48%;
+  --landing-accent-fg: 55 7% 96%;
+  --landing-primary: 55 6% 18%;
+  --landing-primary-fg: 55 7% 91%;
   --background: hsl(var(--canvas));
   --paper: hsl(var(--panel));
   --foreground: hsl(var(--text-primary));
-  --ink: hsl(var(--text-primary));
+  --ink: hsl(var(--landing-primary));
   --card: hsl(var(--panel));
-  --primary: hsl(var(--text-primary));
-  --primary-foreground: hsl(var(--canvas));
+  --primary: hsl(var(--landing-primary));
+  --primary-foreground: hsl(var(--landing-primary-fg));
   --muted: hsl(var(--panel-raised));
   --muted-foreground: hsl(var(--text-secondary));
-  --accent: hsl(var(--accent));
-  --accent-foreground: hsl(var(--accent-fg));
+  --accent: hsl(var(--landing-accent));
+  --accent-foreground: hsl(var(--landing-accent-fg));
   --destructive: hsl(var(--danger));
   --border: hsl(var(--border));
-  --input: hsl(var(--input));
-  --ring: hsl(var(--ring));
-  --frame-shadow: rgb(0 0 0 / 0.12);
+  --input: hsl(var(--border));
+  --ring: hsl(var(--border-strong));
 
   background-color: var(--background);
   color: var(--foreground);
-  font-family: var(--font-geist-sans), ui-sans-serif, sans-serif;
+  font-family: var(--font-mono), ui-monospace, monospace;
 }
 
 .dark .ibex-landing {
-  --background: hsl(var(--canvas));
-  --paper: hsl(var(--panel));
-  --foreground: hsl(var(--text-primary));
-  --ink: hsl(var(--text-primary));
-  --card: hsl(var(--panel));
-  --primary: hsl(var(--text-primary));
-  --primary-foreground: hsl(var(--canvas));
-  --muted: hsl(var(--panel-raised));
-  --muted-foreground: hsl(var(--text-secondary));
-  --accent: hsl(var(--accent));
-  --accent-foreground: hsl(var(--accent-fg));
-  --destructive: hsl(var(--danger));
-  --border: hsl(var(--border));
-  --input: hsl(var(--input));
-  --ring: hsl(var(--ring));
-  --frame-shadow: rgb(0 0 0 / 0.45);
+  --landing-accent: 35 75% 58%;
+  --landing-accent-fg: 55 4% 15%;
+  --landing-primary: 55 4% 23%;
+  --landing-primary-fg: 55 5% 92%;
+}
+
+.ibex-landing .landing-cta-panel {
+  background-color: var(--paper);
+  color: var(--foreground);
+}
+
+.dark .ibex-landing .landing-cta-panel {
+  background-color: var(--primary);
+  color: var(--primary-foreground);
+}
+
+.ibex-landing .landing-shell-inset {
+  background-color: hsl(var(--panel-raised));
+  color: var(--foreground);
+  border-color: var(--border);
+}
+
+.dark .ibex-landing .landing-shell-inset {
+  background-color: rgb(0 0 0 / 0.22);
+  color: var(--primary-foreground);
+  border-color: color-mix(in oklch, var(--primary-foreground) 30%, transparent);
 }
 
 .ibex-landing .bg-background {
@@ -2008,12 +2022,33 @@ html {
 
 .ibex-video-stage {
   isolation: isolate;
-  overflow: visible;
+  overflow: hidden;
+  border-radius: 0.25rem;
+}
+
+.video-blend {
+  mix-blend-mode: multiply;
+  transition: opacity 0.4s ease;
+  will-change: opacity;
+  -webkit-mask-image:
+    radial-gradient(ellipse 75% 75% at 50% 50%, #000 40%, transparent 72%),
+    linear-gradient(to right, transparent 0%, #000 10%, #000 90%, transparent 100%),
+    linear-gradient(to bottom, transparent 0%, #000 10%, #000 90%, transparent 100%);
+  -webkit-mask-composite: source-in;
+  mask-image:
+    radial-gradient(ellipse 75% 75% at 50% 50%, #000 40%, transparent 72%),
+    linear-gradient(to right, transparent 0%, #000 10%, #000 90%, transparent 100%),
+    linear-gradient(to bottom, transparent 0%, #000 10%, #000 90%, transparent 100%);
+  mask-composite: intersect;
+}
+
+.dark .video-blend {
+  mix-blend-mode: screen;
 }
 
 .ascii-frame {
   border: 1px solid var(--border);
-  box-shadow: 4px 4px 0 0 var(--frame-shadow);
+  box-shadow: 4px 4px 0 0 hsl(var(--frame-shadow));
 }
 
 .text-outline {
@@ -2021,23 +2056,8 @@ html {
   color: transparent;
 }
 
-.video-blend {
-  mix-blend-mode: multiply;
-  transition: opacity 0.4s ease;
-  will-change: opacity;
-}
-
-.dark .video-blend {
-  mix-blend-mode: screen;
-}
-
-.ibex-video-stage::after {
-  content: "";
-  position: absolute;
-  inset: 10% 10% 10% 10%;
-  border: 1px solid var(--border);
-  pointer-events: none;
-  opacity: 0.28;
+.ibex-landing .landing-surface {
+  box-shadow: 4px 4px 0 0 hsl(var(--frame-shadow));
 }
 
 @keyframes ibex-float {
@@ -2074,10 +2094,10 @@ html {
 
 @keyframes ibex-marquee {
   from {
-    transform: translateX(0);
+    transform: translate3d(0, 0, 0);
   }
   to {
-    transform: translateX(-50%);
+    transform: translate3d(-50%, 0, 0);
   }
 }
 
@@ -2094,7 +2114,8 @@ html {
 }
 
 .ibex-landing .animate-marquee {
-  animation: ibex-marquee 26s linear infinite;
+  animation: ibex-marquee 32s linear infinite;
+  will-change: transform;
 }
 
 @media (prefers-reduced-motion: reduce) {
