@@ -1,4 +1,5 @@
 import { Reveal } from "@/components/landing/reveal";
+import { LandingShell } from "@/components/landing/landing-shell";
 import { STACK_COMMANDS } from "@/lib/landing-content";
 
 export function LandingTerminal() {
@@ -16,16 +17,16 @@ export function LandingTerminal() {
             Clone the monorepo, apply migrations, and bring up the Phase 1
             compose stack for proxy, auth, Postgres, and Redis.
           </p>
-          <ul className="mt-6 space-y-2 text-sm">
+          <LandingShell compact className="mt-6">
             {STACK_COMMANDS.map((item) => (
-              <li key={item} className="flex items-center gap-2">
+              <span key={item} className="block">
                 <span className="text-accent" aria-hidden>
-                  ▸
+                  ▸{" "}
                 </span>
                 {item}
-              </li>
+              </span>
             ))}
-          </ul>
+          </LandingShell>
         </div>
         <Reveal>
           <div className="ascii-frame overflow-hidden bg-card">

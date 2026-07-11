@@ -15,7 +15,7 @@ export function LandingFeatures() {
       <div className="grid gap-px border border-border bg-border sm:grid-cols-2">
         {FEATURES.map((feature, index) => (
           <Reveal key={feature.tag} delay={index * 80}>
-            <article className="group h-full bg-paper p-7 transition-colors hover:bg-card">
+            <article className="landing-surface group h-full bg-paper p-7 transition-colors hover:bg-card">
               <div className="flex items-start justify-between">
                 <span className="text-xs text-muted-foreground">{feature.tag}</span>
                 <pre

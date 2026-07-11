@@ -67,6 +67,9 @@ jobs:
       - name: Repo layout guard
         run: bash .github/scripts/check-repo-layout.sh
 
+      - name: Landing hero assets guard
+        run: bash .github/scripts/check-landing-assets.sh
+
       - name: Validate action pins
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

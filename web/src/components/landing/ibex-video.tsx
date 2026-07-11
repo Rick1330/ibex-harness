@@ -11,6 +11,8 @@ export function IbexVideo() {
     videoClass,
     isAActive,
     isBActive,
+    aPreload,
+    bPreload,
   } = useIbexVideoCrossfade();
 
   return (
@@ -25,7 +27,7 @@ export function IbexVideo() {
         poster={posterSrc}
         muted
         playsInline
-        preload="auto"
+        preload={aPreload}
         tabIndex={-1}
       >
         <source src="/ibex-ascii.webm" type="video/webm" />
@@ -36,7 +38,7 @@ export function IbexVideo() {
         className={videoClass(isBActive)}
         muted
         playsInline
-        preload="auto"
+        preload={bPreload}
         tabIndex={-1}
       >
         <source src="/ibex-ascii.webm" type="video/webm" />

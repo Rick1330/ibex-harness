@@ -44,10 +44,14 @@ export function useIbexVideoCrossfade() {
       return undefined;
     }
 
-    a.preload = "auto";
-    b.preload = "auto";
+    a.preload = activeRef.current === "a" ? "metadata" : "none";
+    b.preload = activeRef.current === "b" ? "metadata" : "none";
 
-    return wireCrossfadePlayback(a, b, activeRef, setActiveClass);
+    return wireCrossfadePlayback(a, b, activeRef, (next) => {
+      setActiveClass(next);
+      a.preload = next === "a" ? "metadata" : "none";
+      b.preload = next === "b" ? "metadata" : "none";
+    });
   }, [inView]);
 
   const videoClass = (isActive: boolean) =>
@@ -65,5 +69,7 @@ export function useIbexVideoCrossfade() {
     videoClass,
     isAActive: activeClass === "a",
     isBActive: activeClass === "b",
-  };
+    aPreload: activeClass === "a" ? "metadata" : "none",
+    bPreload: activeClass === "b" ? "metadata" : "none",
+  } as const;
 }
