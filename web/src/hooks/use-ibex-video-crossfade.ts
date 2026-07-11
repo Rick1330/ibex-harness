@@ -2,68 +2,54 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { wireCrossfadePlayback } from "@/lib/ibex-video-crossfade-logic";
+import { useInView } from "@/hooks/use-in-view";
+import {
+  bindCrossfadePlayback,
+  preloadForTrack,
+  type TrackId,
+  videoBlendClass,
+} from "@/lib/ibex-video-crossfade-logic";
+import type { IbexVideoSources } from "@/lib/ibex-video-sources";
 
 const POSTER_SRC = "/ibex-ascii-poster.webp";
 
-export function useIbexVideoCrossfade() {
+function setVideoSources(video: HTMLVideoElement, sources: IbexVideoSources) {
+  const webm = video.querySelector('source[type="video/webm"]');
+  const mp4 = video.querySelector('source[type="video/mp4"]');
+  if (webm) webm.setAttribute("src", sources.webm);
+  if (mp4) mp4.setAttribute("src", sources.mp4);
+  video.load();
+}
+
+export function useIbexVideoCrossfade(sources: IbexVideoSources) {
   const aRef = useRef<HTMLVideoElement>(null);
   const bRef = useRef<HTMLVideoElement>(null);
-  const wrapRef = useRef<HTMLDivElement>(null);
-  const activeRef = useRef<"a" | "b">("a");
-  const [activeClass, setActiveClass] = useState<"a" | "b">("a");
-  const [inView, setInView] = useState(false);
-
-  useEffect(() => {
-    const el = wrapRef.current;
-    if (!el) return undefined;
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        setInView(entry.isIntersecting);
-      },
-      { threshold: 0.1 },
-    );
-    observer.observe(el);
-    return () => {
-      observer.disconnect();
-    };
-  }, []);
+  const { ref: wrapRef, inView } = useInView<HTMLDivElement>();
+  const activeRef = useRef<TrackId>("a");
+  const [activeClass, setActiveClass] = useState<TrackId>("a");
 
   useEffect(() => {
     const a = aRef.current;
     const b = bRef.current;
     if (!a || !b) return undefined;
 
-    const reduceMotion = globalThis.matchMedia(
-      "(prefers-reduced-motion: reduce)",
-    ).matches;
+    setVideoSources(a, sources);
+    setVideoSources(b, sources);
+    activeRef.current = "a";
+    setActiveClass("a");
 
-    if (!inView || reduceMotion) {
-      a.pause();
-      b.pause();
-      return undefined;
-    }
-
-    a.preload = "auto";
-    b.preload = "auto";
-
-    return wireCrossfadePlayback(a, b, activeRef, setActiveClass);
-  }, [inView]);
-
-  const videoClass = (isActive: boolean) =>
-    [
-      "video-blend absolute inset-0 h-full w-full object-contain",
-      "transition-opacity duration-[1500ms] ease-linear",
-      isActive ? "opacity-100" : "opacity-0",
-    ].join(" ");
+    return bindCrossfadePlayback(a, b, inView, activeRef, setActiveClass);
+  }, [inView, sources.mp4, sources.webm]);
 
   return {
     aRef,
     bRef,
     wrapRef,
     posterSrc: POSTER_SRC,
-    videoClass,
+    videoClass: videoBlendClass,
     isAActive: activeClass === "a",
     isBActive: activeClass === "b",
-  };
+    aPreload: preloadForTrack(activeClass, "a"),
+    bPreload: preloadForTrack(activeClass, "b"),
+  } as const;
 }

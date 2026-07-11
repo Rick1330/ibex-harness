@@ -1,17 +1,43 @@
 "use client";
 
+import { useTheme } from "next-themes";
+import { useEffect, useMemo, useState } from "react";
+
 import { useIbexVideoCrossfade } from "@/hooks/use-ibex-video-crossfade";
+import {
+  IBEX_VIDEO_POSTER,
+  ibexVideoSourcesForTheme,
+  type IbexVideoTheme,
+} from "@/lib/ibex-video-sources";
+
+function resolveVideoTheme(resolvedTheme: string | undefined): IbexVideoTheme {
+  return resolvedTheme === "dark" ? "dark" : "light";
+}
 
 export function IbexVideo() {
+  const { resolvedTheme } = useTheme();
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  const videoTheme = mounted ? resolveVideoTheme(resolvedTheme) : "light";
+  const sources = useMemo(
+    () => ibexVideoSourcesForTheme(videoTheme),
+    [videoTheme],
+  );
+
   const {
     aRef,
     bRef,
     wrapRef,
-    posterSrc,
     videoClass,
     isAActive,
     isBActive,
-  } = useIbexVideoCrossfade();
+    aPreload,
+    bPreload,
+  } = useIbexVideoCrossfade(sources);
 
   return (
     <div
@@ -22,25 +48,25 @@ export function IbexVideo() {
       <video
         ref={aRef}
         className={videoClass(isAActive)}
-        poster={posterSrc}
+        poster={IBEX_VIDEO_POSTER}
         muted
         playsInline
-        preload="auto"
+        preload={aPreload}
         tabIndex={-1}
       >
-        <source src="/ibex-ascii.webm" type="video/webm" />
-        <source src="/ibex-ascii.mp4" type="video/mp4" />
+        <source src={sources.webm} type="video/webm" />
+        <source src={sources.mp4} type="video/mp4" />
       </video>
       <video
         ref={bRef}
         className={videoClass(isBActive)}
         muted
         playsInline
-        preload="auto"
+        preload={bPreload}
         tabIndex={-1}
       >
-        <source src="/ibex-ascii.webm" type="video/webm" />
-        <source src="/ibex-ascii.mp4" type="video/mp4" />
+        <source src={sources.webm} type="video/webm" />
+        <source src={sources.mp4} type="video/mp4" />
       </video>
     </div>
   );
