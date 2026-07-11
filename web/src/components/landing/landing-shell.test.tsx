@@ -34,15 +34,11 @@ describe("LandingShell", () => {
     );
   });
 
-  it("uses primary surface styling when requested", () => {
+  it("uses inset surface styling when requested", () => {
     const { container } = render(
-      <LandingShell surface="primary">primary command</LandingShell>,
+      <LandingShell surface="inset">inset command</LandingShell>,
     );
 
-    expect(container.firstElementChild).toHaveClass(
-      "bg-primary-foreground/5",
-      "text-primary-foreground",
-      "border-primary-foreground/30",
-    );
+    expect(container.firstElementChild).toHaveClass("landing-shell-inset");
   });
 });

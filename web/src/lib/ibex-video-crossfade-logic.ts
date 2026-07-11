@@ -33,7 +33,7 @@ export function videoBlendClass(isActive: boolean): string {
   return [
     "video-blend absolute inset-0 h-full w-full object-contain",
     "transition-opacity duration-[1500ms] ease-linear",
-    isActive ? "opacity-100" : "opacity-0",
+    isActive ? "z-10 opacity-100" : "z-0 opacity-0 pointer-events-none",
   ].join(" ");
 }
 

@@ -1933,6 +1933,28 @@ html {
   --landing-primary-fg: 55 5% 92%;
 }
 
+.ibex-landing .landing-cta-panel {
+  background-color: var(--paper);
+  color: var(--foreground);
+}
+
+.dark .ibex-landing .landing-cta-panel {
+  background-color: var(--primary);
+  color: var(--primary-foreground);
+}
+
+.ibex-landing .landing-shell-inset {
+  background-color: hsl(var(--panel-raised));
+  color: var(--foreground);
+  border-color: var(--border);
+}
+
+.dark .ibex-landing .landing-shell-inset {
+  background-color: rgb(0 0 0 / 0.22);
+  color: var(--primary-foreground);
+  border-color: color-mix(in oklch, var(--primary-foreground) 30%, transparent);
+}
+
 .ibex-landing .bg-background {
   background-color: var(--background);
 }

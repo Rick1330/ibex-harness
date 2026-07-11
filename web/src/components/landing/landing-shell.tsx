@@ -4,13 +4,12 @@ type LandingShellProps = Readonly<{
   children: ReactNode;
   className?: string;
   compact?: boolean;
-  surface?: "card" | "primary";
+  surface?: "card" | "inset";
 }>;
 
 const surfaceClasses: Record<NonNullable<LandingShellProps["surface"]>, string> = {
   card: "bg-card text-foreground",
-  primary:
-    "border-primary-foreground/30 bg-primary-foreground/5 text-primary-foreground",
+  inset: "landing-shell-inset",
 };
 
 /** Monospace command block with ascii-frame depth (landing-guide shell pattern). */

@@ -1,7 +1,7 @@
 "use client";
 
 import { useTheme } from "next-themes";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { useIbexVideoCrossfade } from "@/hooks/use-ibex-video-crossfade";
 import {
@@ -23,7 +23,10 @@ export function IbexVideo() {
   }, []);
 
   const videoTheme = mounted ? resolveVideoTheme(resolvedTheme) : "light";
-  const sources = ibexVideoSourcesForTheme(videoTheme);
+  const sources = useMemo(
+    () => ibexVideoSourcesForTheme(videoTheme),
+    [videoTheme],
+  );
 
   const {
     aRef,
@@ -34,7 +37,7 @@ export function IbexVideo() {
     isBActive,
     aPreload,
     bPreload,
-  } = useIbexVideoCrossfade();
+  } = useIbexVideoCrossfade(sources);
 
   return (
     <div
@@ -43,7 +46,6 @@ export function IbexVideo() {
       aria-hidden
     >
       <video
-        key={`a-${videoTheme}`}
         ref={aRef}
         className={videoClass(isAActive)}
         poster={IBEX_VIDEO_POSTER}
@@ -56,7 +58,6 @@ export function IbexVideo() {
         <source src={sources.mp4} type="video/mp4" />
       </video>
       <video
-        key={`b-${videoTheme}`}
         ref={bRef}
         className={videoClass(isBActive)}
         muted

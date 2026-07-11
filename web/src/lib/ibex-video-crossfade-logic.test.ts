@@ -38,6 +38,8 @@ describe("ibex-video-crossfade-logic", () => {
 
   it("builds blend classes for active and inactive videos", () => {
     expect(videoBlendClass(true)).toContain("opacity-100");
+    expect(videoBlendClass(true)).toContain("z-10");
     expect(videoBlendClass(false)).toContain("opacity-0");
+    expect(videoBlendClass(false)).toContain("pointer-events-none");
   });
 });
