@@ -31,8 +31,9 @@ concurrency:
   group: docker-publish-${{ github.workflow }}-${{ github.event.workflow_run.head_sha || github.sha }}
   cancel-in-progress: false
 
-# Default is explicit none; jobs set what they need.
-permissions: {}
+# Default read; jobs elevate only what they need.
+permissions:
+  contents: read
 
 jobs:
   resolve-tag:

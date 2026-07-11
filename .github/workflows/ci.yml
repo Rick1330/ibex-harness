@@ -856,7 +856,7 @@ jobs:
       security-events: write
       contents: read
       actions: read
-    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@v2.3.8
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@9a498708959aeaef5ef730655706c5a1df1edbc2 # v2.3.8
     with:
       # OSV scans JS lockfiles only. Go module vulnerabilities are enforced by
       # the govulncheck job (reachable-code analysis). GO-2026-5932 is a
@@ -1085,7 +1085,9 @@ jobs:
             echo "run=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          pip install bandit==1.8.3
+          pip install --disable-pip-version-check --no-cache-dir \
+            bandit==1.8.3 \
+            --hash=sha256:28f04dc0d258e1dd0f99dee8eefa13d1cb5e3fde1a5ab0c523971f97b289bcd8
           bandit -r services/memory/ -x tests/,test_ -f sarif -o bandit.sarif
           echo "run=true" >> "$GITHUB_OUTPUT"
       - name: Bandit skipped summary

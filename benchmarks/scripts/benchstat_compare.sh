@@ -12,7 +12,7 @@ fi
 if ! command -v benchstat >/dev/null 2>&1; then
   GOBIN="$(go env GOPATH)/bin"
   export PATH="${GOBIN}:${PATH}"
-  go install golang.org/x/perf/cmd/benchstat@latest
+  go install golang.org/x/perf/cmd/benchstat@v0.0.0-20240801233422-863df1f04912
 fi
 
 benchstat "${OUT_DIR}/prev-go-bench.txt" "${OUT_DIR}/go-bench.txt" > "${OUT_DIR}/benchstat.txt"
