@@ -31,9 +31,8 @@ concurrency:
   group: docker-publish-${{ github.workflow }}-${{ github.event.workflow_run.head_sha || github.sha }}
   cancel-in-progress: false
 
-# Default read; jobs elevate only what they need.
-permissions:
-  contents: read
+# Jobs declare permissions explicitly (SonarQube S8264: no workflow-level read).
+permissions: {}
 
 jobs:
   resolve-tag:
@@ -43,6 +42,8 @@ jobs:
       (github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       tag: ${{ steps.meta.outputs.tag }}
       push_latest: ${{ steps.meta.outputs.push_latest }}
