@@ -2,74 +2,39 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { wireCrossfadePlayback } from "@/lib/ibex-video-crossfade-logic";
+import { useInView } from "@/hooks/use-in-view";
+import {
+  bindCrossfadePlayback,
+  preloadForTrack,
+  type TrackId,
+  videoBlendClass,
+} from "@/lib/ibex-video-crossfade-logic";
 
 const POSTER_SRC = "/ibex-ascii-poster.webp";
 
 export function useIbexVideoCrossfade() {
   const aRef = useRef<HTMLVideoElement>(null);
   const bRef = useRef<HTMLVideoElement>(null);
-  const wrapRef = useRef<HTMLDivElement>(null);
-  const activeRef = useRef<"a" | "b">("a");
-  const [activeClass, setActiveClass] = useState<"a" | "b">("a");
-  const [inView, setInView] = useState(false);
-
-  useEffect(() => {
-    const el = wrapRef.current;
-    if (!el) return undefined;
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        setInView(entry.isIntersecting);
-      },
-      { threshold: 0.1 },
-    );
-    observer.observe(el);
-    return () => {
-      observer.disconnect();
-    };
-  }, []);
+  const { ref: wrapRef, inView } = useInView<HTMLDivElement>();
+  const activeRef = useRef<TrackId>("a");
+  const [activeClass, setActiveClass] = useState<TrackId>("a");
 
   useEffect(() => {
     const a = aRef.current;
     const b = bRef.current;
     if (!a || !b) return undefined;
-
-    const reduceMotion = globalThis.matchMedia(
-      "(prefers-reduced-motion: reduce)",
-    ).matches;
-
-    if (!inView || reduceMotion) {
-      a.pause();
-      b.pause();
-      return undefined;
-    }
-
-    a.preload = activeRef.current === "a" ? "metadata" : "none";
-    b.preload = activeRef.current === "b" ? "metadata" : "none";
-
-    return wireCrossfadePlayback(a, b, activeRef, (next) => {
-      setActiveClass(next);
-      a.preload = next === "a" ? "metadata" : "none";
-      b.preload = next === "b" ? "metadata" : "none";
-    });
+    return bindCrossfadePlayback(a, b, inView, activeRef, setActiveClass);
   }, [inView]);
-
-  const videoClass = (isActive: boolean) =>
-    [
-      "video-blend absolute inset-0 h-full w-full object-contain",
-      "transition-opacity duration-[1500ms] ease-linear",
-      isActive ? "opacity-100" : "opacity-0",
-    ].join(" ");
 
   return {
     aRef,
     bRef,
     wrapRef,
     posterSrc: POSTER_SRC,
-    videoClass,
+    videoClass: videoBlendClass,
     isAActive: activeClass === "a",
     isBActive: activeClass === "b",
-    aPreload: activeClass === "a" ? "metadata" : "none",
-    bPreload: activeClass === "b" ? "metadata" : "none",
+    aPreload: preloadForTrack(activeClass, "a"),
+    bPreload: preloadForTrack(activeClass, "b"),
   } as const;
 }
