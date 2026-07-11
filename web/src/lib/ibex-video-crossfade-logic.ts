@@ -16,6 +16,51 @@ type CrossfadeCtx = {
   fadeSeconds: number;
 };
 
+export function prefersReducedMotion(): boolean {
+  return globalThis.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+export function applyVideoPreload(
+  a: HTMLVideoElement,
+  b: HTMLVideoElement,
+  active: TrackId,
+) {
+  a.preload = active === "a" ? "metadata" : "none";
+  b.preload = active === "b" ? "metadata" : "none";
+}
+
+export function videoBlendClass(isActive: boolean): string {
+  return [
+    "video-blend absolute inset-0 h-full w-full object-contain",
+    "transition-opacity duration-[1500ms] ease-linear",
+    isActive ? "z-10 opacity-100" : "z-0 opacity-0 pointer-events-none",
+  ].join(" ");
+}
+
+export function preloadForTrack(active: TrackId, track: TrackId): "metadata" | "none" {
+  return active === track ? "metadata" : "none";
+}
+
+export function bindCrossfadePlayback(
+  a: HTMLVideoElement,
+  b: HTMLVideoElement,
+  inView: boolean,
+  activeRef: { current: TrackId },
+  setActiveClass: (next: TrackId) => void,
+): (() => void) | undefined {
+  if (!inView || prefersReducedMotion()) {
+    a.pause();
+    b.pause();
+    return undefined;
+  }
+
+  applyVideoPreload(a, b, activeRef.current);
+  return wireCrossfadePlayback(a, b, activeRef, (next) => {
+    setActiveClass(next);
+    applyVideoPreload(a, b, next);
+  });
+}
+
 export function playVideo(video: HTMLVideoElement) {
   if (video.paused) {
     void video.play().catch(() => {

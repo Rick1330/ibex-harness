@@ -28,7 +28,7 @@ Spec detail: [MASTER_BRIEF.md](/roadmap/phase-1-5-docs-site/master-brief) Part D
 This milestone is **superseded** (2026-06-22). Docs deploy via **GitHub Actions** + **Cloudflare Workers** instead of Vercel preview deploys:
 
 - [`.github/workflows/docs-deploy.yml`](../../../../../../.github/workflows/docs-deploy.yml) — production deploy on `main` push + `workflow_dispatch`
-- [`DEPLOY_CLOUDFLARE.md`](../../../../DEPLOY_CLOUDFLARE.md) — operator runbook
+- `ibex-harness-workspace/ops/cloudflare/README.md` — operator runbook (local-only; not in git)
 - PRs [#129](https://github.com/Rick1330/ibex-harness/pull/129)–[#133](https://github.com/Rick1330/ibex-harness/pull/133)
 
 Pre-merge validation: `docs-build` CI job (typecheck, test, build) + optional `workflow_dispatch` deploy with post-deploy smoke test on `*.workers.dev`.

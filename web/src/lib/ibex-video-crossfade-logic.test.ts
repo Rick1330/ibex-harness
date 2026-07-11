@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { loopEndSeconds, secondsUntilLoopEnd } from "./ibex-video-crossfade-logic";
+import {
+  loopEndSeconds,
+  preloadForTrack,
+  secondsUntilLoopEnd,
+  videoBlendClass,
+} from "./ibex-video-crossfade-logic";
 
 function mockVideo(duration: number, currentTime: number): HTMLVideoElement {
   return { duration, currentTime } as HTMLVideoElement;
@@ -23,5 +28,18 @@ describe("ibex-video-crossfade-logic", () => {
     const video = mockVideo(Number.NaN, 0);
     expect(loopEndSeconds(video)).toBe(0);
     expect(secondsUntilLoopEnd(video)).toBe(Number.POSITIVE_INFINITY);
+  });
+
+  it("selects metadata preload only for the active track", () => {
+    expect(preloadForTrack("a", "a")).toBe("metadata");
+    expect(preloadForTrack("a", "b")).toBe("none");
+    expect(preloadForTrack("b", "b")).toBe("metadata");
+  });
+
+  it("builds blend classes for active and inactive videos", () => {
+    expect(videoBlendClass(true)).toContain("opacity-100");
+    expect(videoBlendClass(true)).toContain("z-10");
+    expect(videoBlendClass(false)).toContain("opacity-0");
+    expect(videoBlendClass(false)).toContain("pointer-events-none");
   });
 });
