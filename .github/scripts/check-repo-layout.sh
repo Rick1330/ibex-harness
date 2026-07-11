@@ -15,7 +15,7 @@ for entry in *; do
     fi
   elif [[ -f "$entry" ]]; then
     case "$entry" in
-      .cursorrules|.editorconfig|.gitattributes|.gitignore|.markdownlint-cli2.jsonc|.gitleaks.toml|.golangci.yml|.pre-commit-config.yaml|codecov.yml|.codacy.yml|.codacy.yaml|Makefile|go.mod|go.sum|package.json|pnpm-lock.yaml|pnpm-workspace.yaml|turbo.json|.nvmrc|LICENSE|AGENTS.md|CODE_OF_CONDUCT.md|CONTRIBUTING.md|PROMPTS.md|README.md|node_modules|release-please-config.json|.release-please-manifest.json) ;;
+      .cursorrules|.editorconfig|.gitattributes|.gitignore|.markdownlint-cli2.jsonc|.gitleaks.toml|.golangci.yml|.pre-commit-config.yaml|codecov.yml|.codacy.yml|.codacy.yaml|Makefile|go.mod|go.sum|osv-scanner.toml|package.json|pnpm-lock.yaml|pnpm-workspace.yaml|turbo.json|.nvmrc|LICENSE|AGENTS.md|CODE_OF_CONDUCT.md|CONTRIBUTING.md|PROMPTS.md|README.md|node_modules|release-please-config.json|.release-please-manifest.json) ;;
       *)
         if [[ "$entry" =~ \.md$ ]] && ! [[ "$entry" =~ $ROOT_DOCS ]]; then
           echo "Markdown at repo root not allowed: $entry (use web/engineering/)"
