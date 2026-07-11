@@ -1,0 +1,7 @@
+# Scorecard/OSV: golang.org/x/crypto module-level openpgp advisory (GO-2026-5932).
+# This repo imports only argon2 via packages/crypto (ADR-0010). govulncheck
+# confirms no reachable impact; see ADR-0008.
+
+[[IgnoredVulns]]
+id = "GO-2026-5932"
+reason = "Unreachable openpgp subpackage; only golang.org/x/crypto/argon2 is used (ADR-0008, ADR-0010). Verified by govulncheck."
