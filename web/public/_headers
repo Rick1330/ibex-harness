@@ -36,3 +36,24 @@
 
 /**/*.txt
   Content-Type: text/x-component; charset=utf-8
+
+/benchmarks/benchmark-data.json
+  Cache-Control: public, max-age=300, stale-while-revalidate=3600
+
+/benchmarks/badge.svg
+  Cache-Control: public, max-age=300, stale-while-revalidate=3600
+
+/*.html
+  Cache-Control: public, max-age=3600, stale-while-revalidate=86400
+
+/
+  Cache-Control: public, max-age=3600, stale-while-revalidate=86400
+
+/docs/*
+  Cache-Control: public, max-age=3600, stale-while-revalidate=86400
+
+/benchmarks/*
+  Cache-Control: public, max-age=3600, stale-while-revalidate=86400
+
+/roadmap/*
+  Cache-Control: public, max-age=3600, stale-while-revalidate=86400

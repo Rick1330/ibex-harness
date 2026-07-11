@@ -29,6 +29,9 @@ concurrency:
   group: benchmark-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   detect-benchmark-trigger:
     name: detect-benchmark-trigger
@@ -111,8 +114,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: write
-      statuses: write
     env:
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       BENCH_PROXY_PORT: "18082"

@@ -37,7 +37,7 @@ The repo has a single root `go.mod`, Go services `auth` and `proxy`, two Dockerf
 | `trivy` | CRITICAL/HIGH filesystem CVEs; `ignore-unfixed: true` |
 | `osv-scan` | CRITICAL/HIGH via OSV reusable workflow |
 | `hadolint` | ≥ warning (`.hadolint.yaml`) |
-| `bandit` | HIGH+HIGH when `services/memory` exists; skip (success) until then |
+| `bandit` | HIGH+HIGH when `services/memory` exists; skip (success) until then; install via hash-pinned `.github/requirements/bandit.txt` |
 | `golangci-lint` | Any lint issue; single job for auth+proxy; no `continue-on-error` |
 
 Weekly `schedule` on CI runs **only** `osv-scan` (other jobs use `if: github.event_name != 'schedule'`).
@@ -51,7 +51,7 @@ CI uses `go-version-file: go.mod` so the runner Go version tracks `go.mod` (curr
 | JavaScript | `osv-scan` | OSV on `pnpm-lock.yaml` | Lockfile advisories with fix versions |
 | Go | `govulncheck` | `govulncheck` on packages + auth + proxy | Reachable stdlib and module vulnerabilities only |
 
-`osv-scan` does **not** scan `go.mod` because advisory `GO-2026-5932` is module-level for the unmaintained `openpgp` subpackage (no fixed version). This repo imports only `golang.org/x/crypto/argon2` via `packages/crypto` (ADR-0010). OSV call-analysis cannot mark `GO-2026-5932` unexecuted; `govulncheck` confirms no reachable Go impact. This is not an ignore list — it is the correct tool split for module-level vs reachability advisories.
+`osv-scan` does **not** scan `go.mod` because advisory `GO-2026-5932` is module-level for the unmaintained `openpgp` subpackage (no fixed version; use `github.com/ProtonMail/go-crypto/openpgp` only if OpenPGP is required). This repo imports only `golang.org/x/crypto/argon2` via `packages/crypto` (ADR-0010). OSV call-analysis cannot mark `GO-2026-5932` unexecuted; `govulncheck` confirms no reachable Go impact. This is not an ignore list — it is the correct tool split for module-level vs reachability advisories.
 
 ### CodeQL default vs advanced
 
