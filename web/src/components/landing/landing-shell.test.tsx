@@ -40,8 +40,9 @@ describe("LandingShell", () => {
     );
 
     expect(container.firstElementChild).toHaveClass(
-      "bg-primary-foreground/10",
+      "bg-primary-foreground/5",
       "text-primary-foreground",
+      "border-primary-foreground/30",
     );
   });
 });

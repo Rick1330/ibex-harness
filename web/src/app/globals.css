@@ -528,7 +528,6 @@ body {
 /* === Performance — instant collapsibles (no height keyframes / CLS) === */
 
 #nd-sidebar [class*="animate-fd-collapsible"],
-#nd-toc [class*="animate-fd-collapsible"],
 #nd-tocnav [class*="animate-fd-collapsible"] {
   animation: none !important;
 }
@@ -1904,13 +1903,15 @@ html {
   --radius: 0.25rem;
   --landing-accent: 32 85% 48%;
   --landing-accent-fg: 55 7% 96%;
+  --landing-primary: 55 6% 18%;
+  --landing-primary-fg: 55 7% 91%;
   --background: hsl(var(--canvas));
   --paper: hsl(var(--panel));
   --foreground: hsl(var(--text-primary));
-  --ink: hsl(var(--text-primary));
+  --ink: hsl(var(--landing-primary));
   --card: hsl(var(--panel));
-  --primary: hsl(var(--text-primary));
-  --primary-foreground: hsl(var(--canvas));
+  --primary: hsl(var(--landing-primary));
+  --primary-foreground: hsl(var(--landing-primary-fg));
   --muted: hsl(var(--panel-raised));
   --muted-foreground: hsl(var(--text-secondary));
   --accent: hsl(var(--landing-accent));
@@ -1928,6 +1929,8 @@ html {
 .dark .ibex-landing {
   --landing-accent: 35 75% 58%;
   --landing-accent-fg: 55 4% 15%;
+  --landing-primary: 55 4% 23%;
+  --landing-primary-fg: 55 5% 92%;
 }
 
 .ibex-landing .bg-background {
@@ -1997,7 +2000,28 @@ html {
 
 .ibex-video-stage {
   isolation: isolate;
-  overflow: visible;
+  overflow: hidden;
+  border-radius: 0.25rem;
+}
+
+.video-blend {
+  mix-blend-mode: multiply;
+  transition: opacity 0.4s ease;
+  will-change: opacity;
+  -webkit-mask-image:
+    radial-gradient(ellipse 75% 75% at 50% 50%, #000 40%, transparent 72%),
+    linear-gradient(to right, transparent 0%, #000 10%, #000 90%, transparent 100%),
+    linear-gradient(to bottom, transparent 0%, #000 10%, #000 90%, transparent 100%);
+  -webkit-mask-composite: source-in;
+  mask-image:
+    radial-gradient(ellipse 75% 75% at 50% 50%, #000 40%, transparent 72%),
+    linear-gradient(to right, transparent 0%, #000 10%, #000 90%, transparent 100%),
+    linear-gradient(to bottom, transparent 0%, #000 10%, #000 90%, transparent 100%);
+  mask-composite: intersect;
+}
+
+.dark .video-blend {
+  mix-blend-mode: screen;
 }
 
 .ascii-frame {
@@ -2008,26 +2032,6 @@ html {
 .text-outline {
   -webkit-text-stroke: 1px var(--ink);
   color: transparent;
-}
-
-.video-blend {
-  mix-blend-mode: multiply;
-  transition: opacity 0.4s ease;
-  will-change: opacity;
-  -webkit-mask-image: radial-gradient(
-    ellipse 72% 72% at 50% 50%,
-    #000 45%,
-    transparent 78%
-  );
-  mask-image: radial-gradient(
-    ellipse 72% 72% at 50% 50%,
-    #000 45%,
-    transparent 78%
-  );
-}
-
-.dark .video-blend {
-  mix-blend-mode: screen;
 }
 
 .ibex-landing .landing-surface {
@@ -2068,10 +2072,10 @@ html {
 
 @keyframes ibex-marquee {
   from {
-    transform: translateX(0);
+    transform: translate3d(0, 0, 0);
   }
   to {
-    transform: translateX(-50%);
+    transform: translate3d(-50%, 0, 0);
   }
 }
 
@@ -2088,7 +2092,8 @@ html {
 }
 
 .ibex-landing .animate-marquee {
-  animation: ibex-marquee 26s linear infinite;
+  animation: ibex-marquee 32s linear infinite;
+  will-change: transform;
 }
 
 @media (prefers-reduced-motion: reduce) {

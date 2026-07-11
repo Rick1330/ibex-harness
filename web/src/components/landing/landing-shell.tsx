@@ -8,8 +8,9 @@ type LandingShellProps = Readonly<{
 }>;
 
 const surfaceClasses: Record<NonNullable<LandingShellProps["surface"]>, string> = {
-  card: "bg-card",
-  primary: "bg-primary-foreground/10 text-primary-foreground",
+  card: "bg-card text-foreground",
+  primary:
+    "border-primary-foreground/30 bg-primary-foreground/5 text-primary-foreground",
 };
 
 /** Monospace command block with ascii-frame depth (landing-guide shell pattern). */

@@ -30,7 +30,11 @@ export function LandingCta() {
             View benchmarks
           </Link>
         </div>
-        <LandingShell surface="primary" className="mx-auto mt-8 max-w-2xl text-left">
+        <LandingShell
+          surface="primary"
+          compact
+          className="mx-auto mt-8 max-w-2xl text-left"
+        >
           <span className="opacity-60">~ $</span>
           {" git clone https://github.com/Rick1330/ibex-harness.git && make compose-dev-up"}
           <span className="caret">▊</span>
