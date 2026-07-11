@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { IbexVideo } from "@/components/landing/ibex-video";
+import { LandingShell } from "@/components/landing/landing-shell";
 import { REPO_URL } from "@/lib/landing-content";
 
 export function LandingHero() {
@@ -53,14 +54,16 @@ export function LandingHero() {
               View on GitHub →
             </a>
           </div>
-          <p
-            className="animate-rise mt-6 text-xs text-muted-foreground"
+          <div
+            className="animate-rise"
             style={{ animationDelay: "220ms" }}
           >
+            <LandingShell compact className="mt-6 max-w-lg">
             <span className="text-foreground">~ $</span>
             {" git clone https://github.com/Rick1330/ibex-harness.git"}
             <span className="caret ml-1">▊</span>
-          </p>
+          </LandingShell>
+          </div>
         </div>
       </div>
     </section>

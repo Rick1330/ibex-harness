@@ -16,6 +16,12 @@
 /ibex-ascii.mp4
   Cache-Control: public, max-age=31536000, immutable
 
+/ibex-ascii-dark.webm
+  Cache-Control: public, max-age=31536000, immutable
+
+/ibex-ascii-dark.mp4
+  Cache-Control: public, max-age=31536000, immutable
+
 /ibex-ascii-poster.webp
   Cache-Control: public, max-age=31536000, immutable
 

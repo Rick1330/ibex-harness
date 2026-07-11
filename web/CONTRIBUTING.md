@@ -1,8 +1,8 @@
 # Contributing to the public docs site
 
-Fumadocs app at `docs/app/` for [docs.ibexharness.com](https://docs.ibexharness.com).
+Next.js + Fumadocs app in `web/` for [ibexharness.com](https://ibexharness.com) (docs at `/docs`; legacy `docs.ibexharness.com` 301s to apex).
 
-Engineering documentation (ADRs, roadmap) lives in the parent [`docs/`](../) tree — do not mix corpora.
+Engineering documentation (ADRs, roadmap) lives in [`web/engineering/`](./engineering/) — do not mix corpora.
 
 ## Dev loop
 
@@ -46,7 +46,7 @@ Full rules: [MASTER_BRIEF §0.1](../roadmap/phase-1-5-docs-site/MASTER_BRIEF.md)
 
 ## PR checklist
 
-- [ ] Diff scoped to `docs/app/**` (or milestone docs)
+- [ ] Diff scoped to `web/**` (or milestone docs)
 - [ ] `pnpm docs:build` passes
 - [ ] `pnpm --filter docs test` passes (Vitest)
 - [ ] Dark + light checked on touched pages
@@ -56,4 +56,4 @@ Full rules: [MASTER_BRIEF §0.1](../roadmap/phase-1-5-docs-site/MASTER_BRIEF.md)
 
 ## Cloudflare deploy
 
-See [DEPLOY_CLOUDFLARE.md](./DEPLOY_CLOUDFLARE.md) for OpenNext build, GitHub Actions deploy, and token permissions.
+See `ibex-harness-workspace/ops/cloudflare/README.md` for the Cloudflare deploy runbook (local-only; not in git).

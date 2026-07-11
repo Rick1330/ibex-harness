@@ -1,13 +1,13 @@
 # Public docs site (Fumadocs)
 
-Next.js + Fumadocs application for [docs.ibexharness.com](https://docs.ibexharness.com).
+Next.js + Fumadocs application for [ibexharness.com](https://ibexharness.com) (docs at `/docs`).
 
 | Path | Purpose |
 | --- | --- |
 | `content/docs/` | Public MDX pages (created in D.2.1+) |
 | `src/` | App Router, components, layout (D.2.1+) |
 
-Engineering documentation (ADRs, roadmap, audits) lives in the parent [`docs/`](../) tree — not in this app.
+Engineering documentation (ADRs, roadmap, audits) lives in `web/engineering/` in this repo (not in the published docs routes from this app).
 
 ## Run
 
