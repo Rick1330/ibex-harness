@@ -12,6 +12,7 @@ export const IBEX_VIDEO_SOURCES = {
 } as const;
 
 export type IbexVideoTheme = keyof typeof IBEX_VIDEO_SOURCES;
+export type IbexVideoSources = (typeof IBEX_VIDEO_SOURCES)[IbexVideoTheme];
 
 export function ibexVideoSourcesForTheme(theme: IbexVideoTheme) {
   return IBEX_VIDEO_SOURCES[theme];
