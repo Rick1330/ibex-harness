@@ -4,6 +4,13 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      force_full:
+        description: Run scan regardless of path filters
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   security-events: write
@@ -15,12 +22,33 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: detect-changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      run_go: ${{ steps.detect.outputs.run_go }}
+      run_web: ${{ steps.detect.outputs.run_web }}
+      run_security: ${{ steps.detect.outputs.run_security }}
+    steps:
+      - id: detect
+        uses: ./.github/actions/detect-changes
+        with:
+          fetch-depth: ${{ github.event_name == 'push' && '2' || '0' }}
+          force-full: ${{ github.event_name == 'workflow_dispatch' && inputs.force_full == true }}
+
   semgrep:
     name: semgrep
+    needs: changes
     runs-on: ubuntu-latest
     container:
       image: semgrep/semgrep:1.103.0
-    if: github.actor != 'dependabot[bot]'
+    if: |
+      github.actor != 'dependabot[bot]' &&
+      (needs.changes.outputs.run_go == 'true' ||
+       needs.changes.outputs.run_web == 'true' ||
+       needs.changes.outputs.run_security == 'true')
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4

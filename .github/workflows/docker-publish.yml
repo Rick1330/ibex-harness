@@ -35,12 +35,33 @@ concurrency:
 permissions: {}
 
 jobs:
+  detect-docker-changes:
+    name: detect-docker-changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      run_docker: ${{ steps.detect.outputs.run_docker }}
+      run_go: ${{ steps.detect.outputs.run_go }}
+    steps:
+      - id: detect
+        uses: ./.github/actions/detect-changes
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || '' }}
+          fetch-depth: ${{ github.event_name == 'workflow_run' && '2' || '0' }}
+
   resolve-tag:
     name: resolve-tag
+    needs: detect-docker-changes
     if: |
-      github.event_name != 'workflow_run' ||
-      (github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.event == 'push')
+      (github.event_name == 'pull_request') ||
+      (github.event_name == 'workflow_call') ||
+      (github.event_name == 'workflow_dispatch') ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       (needs.detect-docker-changes.outputs.run_docker == 'true' ||
+        needs.detect-docker-changes.outputs.run_go == 'true'))
     runs-on: ubuntu-latest
     permissions:
       contents: read

@@ -5,6 +5,12 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      force_full:
+        description: Run the full CI matrix regardless of path filters
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -84,38 +90,27 @@ jobs:
     permissions:
       contents: read
     outputs:
-      web: ${{ steps.filter.outputs.web }}
-      go: ${{ steps.filter.outputs.go }}
+      go: ${{ steps.detect.outputs.go }}
+      web: ${{ steps.detect.outputs.web }}
+      proto: ${{ steps.detect.outputs.proto }}
+      docker: ${{ steps.detect.outputs.docker }}
+      workflows: ${{ steps.detect.outputs.workflows }}
+      deps: ${{ steps.detect.outputs.deps }}
+      benchmarks: ${{ steps.detect.outputs.benchmarks }}
+      docs: ${{ steps.detect.outputs.docs }}
+      compose: ${{ steps.detect.outputs.compose }}
+      full: ${{ steps.detect.outputs.full }}
+      run_go: ${{ steps.detect.outputs.run_go }}
+      run_web: ${{ steps.detect.outputs.run_web }}
+      run_security: ${{ steps.detect.outputs.run_security }}
+      run_docker: ${{ steps.detect.outputs.run_docker }}
+      run_compose: ${{ steps.detect.outputs.run_compose }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - id: detect
+        uses: ./.github/actions/detect-changes
         with:
-          # paths-filter needs the parent commit on push to detect file changes.
-          fetch-depth: ${{ github.event_name == 'push' && 2 || 0 }}
-          persist-credentials: false
-
-      - uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v3.0.2
-        id: filter
-        with:
-          filters: |
-            web:
-              - 'docs/**'
-              - 'web/**'
-              - 'package.json'
-              - '.npmrc'
-              - 'pnpm-lock.yaml'
-              - 'pnpm-workspace.yaml'
-              - 'turbo.json'
-              - '.github/workflows/ci.yml'
-              - '.github/workflows/web-deploy.yml'
-              - '.github/actions/setup-pnpm-web/**'
-              - '.github/actions/setup-buf/**'
-            go:
-              - 'services/**'
-              - 'packages/**'
-              - 'go.mod'
-              - 'go.sum'
-              - 'infra/migrations/**'
-              - '.golangci.yml'
+          fetch-depth: ${{ github.event_name == 'push' && '2' || '0' }}
+          force-full: ${{ github.event_name == 'workflow_dispatch' && inputs.force_full == true }}
 
   markdown:
     name: markdownlint
@@ -165,6 +160,8 @@ jobs:
 
   go-mod-tidy:
     name: go-mod-tidy
+    needs: changes
+    if: needs.changes.outputs.run_go == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -211,7 +208,8 @@ jobs:
 
   buf-lint:
     name: buf-lint
-    needs: repo-guards
+    needs: [changes, repo-guards]
+    if: needs.changes.outputs.run_go == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -232,7 +230,8 @@ jobs:
 
   buf-breaking:
     name: buf-breaking
-    needs: buf-lint
+    needs: [changes, buf-lint]
+    if: needs.changes.outputs.run_go == 'true'
     runs-on: ubuntu-latest
     continue-on-error: true
     permissions:
@@ -260,7 +259,8 @@ jobs:
 
   proto-contract:
     name: proto-contract
-    needs: buf-lint
+    needs: [changes, buf-lint]
+    if: needs.changes.outputs.run_go == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -324,6 +324,8 @@ jobs:
 
   compose-validate:
     name: compose-validate
+    needs: changes
+    if: needs.changes.outputs.run_compose == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -343,7 +345,8 @@ jobs:
 
   db-migrate-smoke:
     name: db-migrate-smoke
-    needs: repo-guards
+    needs: [changes, repo-guards]
+    if: needs.changes.outputs.run_go == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -414,7 +417,8 @@ jobs:
 
   auth-validate-smoke:
     name: auth-validate-smoke
-    needs: [proto-contract, db-migrate-smoke]
+    needs: [changes, proto-contract, db-migrate-smoke]
+    if: needs.changes.outputs.run_go == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -486,7 +490,8 @@ jobs:
 
   proxy-auth-smoke:
     name: proxy-auth-smoke
-    needs: [proto-contract, db-migrate-smoke]
+    needs: [changes, proto-contract, db-migrate-smoke]
+    if: needs.changes.outputs.run_go == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -558,7 +563,8 @@ jobs:
 
   proxy-agent-verify-smoke:
     name: proxy-agent-verify-smoke
-    needs: [proto-contract, db-migrate-smoke]
+    needs: [changes, proto-contract, db-migrate-smoke]
+    if: needs.changes.outputs.run_go == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -635,7 +641,8 @@ jobs:
 
   security-integration:
     name: security-integration
-    needs: [proto-contract, db-migrate-smoke]
+    needs: [changes, proto-contract, db-migrate-smoke]
+    if: needs.changes.outputs.run_go == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -698,7 +705,8 @@ jobs:
 
   go-race:
     name: go-race
-    needs: proto-contract
+    needs: [changes, proto-contract]
+    if: needs.changes.outputs.run_go == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -736,7 +744,8 @@ jobs:
 
   go-services:
     name: go-services
-    needs: proto-contract
+    needs: [changes, proto-contract]
+    if: needs.changes.outputs.run_go == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -790,7 +799,8 @@ jobs:
 
   golangci-lint:
     name: golangci-lint
-    needs: proto-contract
+    needs: [changes, proto-contract]
+    if: needs.changes.outputs.run_go == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -820,6 +830,8 @@ jobs:
 
   trivy:
     name: trivy
+    needs: changes
+    if: needs.changes.outputs.run_security == 'true'
     runs-on: ubuntu-latest
     permissions:
       security-events: write
@@ -853,7 +865,8 @@ jobs:
 
   osv-scan:
     name: osv-scan
-    if: github.event_name != 'schedule'
+    needs: changes
+    if: github.event_name != 'schedule' && needs.changes.outputs.run_security == 'true'
     permissions:
       security-events: write
       contents: read
@@ -872,7 +885,7 @@ jobs:
   web-build:
     name: web-build
     needs: [changes, repo-guards]
-    if: needs.changes.outputs.web == 'true'
+    if: needs.changes.outputs.run_web == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -946,6 +959,8 @@ jobs:
 
   hadolint:
     name: hadolint
+    needs: changes
+    if: needs.changes.outputs.run_docker == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -978,7 +993,8 @@ jobs:
 
   coverage:
     name: coverage
-    needs: [proto-contract, db-migrate-smoke]
+    needs: [changes, proto-contract, db-migrate-smoke]
+    if: needs.changes.outputs.run_go == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1062,6 +1078,8 @@ jobs:
 
   bandit:
     name: bandit
+    needs: changes
+    if: needs.changes.outputs.run_security == 'true'
     runs-on: ubuntu-latest
     permissions:
       security-events: write
@@ -1136,8 +1154,8 @@ jobs:
     if: |
       github.event_name == 'push' &&
       github.ref == 'refs/heads/main' &&
-      needs.changes.outputs.web == 'true' &&
-      needs.changes.outputs.go == 'true'
+      needs.changes.outputs.run_web == 'true' &&
+      needs.changes.outputs.run_go == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1155,10 +1173,10 @@ jobs:
       always() &&
       github.event_name == 'push' &&
       github.ref == 'refs/heads/main' &&
-      needs.changes.outputs.web == 'true' &&
+      needs.changes.outputs.run_web == 'true' &&
       needs.repo-guards.result == 'success' &&
       needs.web-build.result == 'success' &&
-      (needs.changes.outputs.go != 'true' || needs.web-go-quality-gate.result == 'success')
+      (needs.changes.outputs.run_go != 'true' || needs.web-go-quality-gate.result == 'success')
     permissions:
       contents: read
     uses: ./.github/workflows/web-deploy.yml
@@ -1166,7 +1184,8 @@ jobs:
 
   govulncheck:
     name: govulncheck
-    needs: proto-contract
+    needs: [changes, proto-contract]
+    if: needs.changes.outputs.run_go == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1194,6 +1213,8 @@ jobs:
 
   license-check:
     name: license-check
+    needs: changes
+    if: needs.changes.outputs.run_go == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1219,3 +1240,113 @@ jobs:
         run: |
           go-licenses check ./packages/... ./services/auth/... ./services/proxy/... \
             --allowed_licenses=MIT,Apache-2.0,BSD-2-Clause,BSD-3-Clause,ISC,Unicode-DFS-2016,MPL-2.0
+
+  ci-gate-repo:
+    name: ci-gate-repo
+    needs:
+      - changes
+      - repo-guards
+      - shellcheck
+      - markdown
+      - compose-validate
+      - go-mod-tidy
+      - license-check
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Evaluate repo gate
+        run: |
+          bash .github/scripts/evaluate-ci-gate.sh true \
+            "${{ needs.repo-guards.result }}" \
+            "${{ needs.shellcheck.result }}" \
+            "${{ needs.markdown.result }}" \
+            "${{ needs.compose-validate.result }}" \
+            "${{ needs.go-mod-tidy.result }}" \
+            "${{ needs.license-check.result }}"
+
+  ci-gate-go:
+    name: ci-gate-go
+    needs:
+      - changes
+      - buf-lint
+      - proto-contract
+      - db-migrate-smoke
+      - auth-validate-smoke
+      - proxy-auth-smoke
+      - proxy-agent-verify-smoke
+      - security-integration
+      - go-race
+      - go-services
+      - golangci-lint
+      - coverage
+      - govulncheck
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Evaluate Go gate
+        run: |
+          bash .github/scripts/evaluate-ci-gate.sh "${{ needs.changes.outputs.run_go }}" \
+            "${{ needs.buf-lint.result }}" \
+            "${{ needs.proto-contract.result }}" \
+            "${{ needs.db-migrate-smoke.result }}" \
+            "${{ needs.auth-validate-smoke.result }}" \
+            "${{ needs.proxy-auth-smoke.result }}" \
+            "${{ needs.proxy-agent-verify-smoke.result }}" \
+            "${{ needs.security-integration.result }}" \
+            "${{ needs.go-race.result }}" \
+            "${{ needs.go-services.result }}" \
+            "${{ needs.golangci-lint.result }}" \
+            "${{ needs.coverage.result }}" \
+            "${{ needs.govulncheck.result }}"
+
+  ci-gate-web:
+    name: ci-gate-web
+    needs:
+      - changes
+      - web-build
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Evaluate web gate
+        run: |
+          bash .github/scripts/evaluate-ci-gate.sh "${{ needs.changes.outputs.run_web }}" \
+            "${{ needs.web-build.result }}"
+
+  ci-gate-security:
+    name: ci-gate-security
+    needs:
+      - changes
+      - trivy
+      - osv-scan
+      - bandit
+      - hadolint
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Evaluate security gate
+        run: |
+          bash .github/scripts/evaluate-ci-gate.sh "${{ needs.changes.outputs.run_security }}" \
+            "${{ needs.trivy.result }}" \
+            "${{ needs.osv-scan.result }}" \
+            "${{ needs.bandit.result }}" \
+            "${{ needs.hadolint.result }}"

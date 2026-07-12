@@ -1,19 +1,33 @@
 # Dependency Review Action
 #
-# This Action will scan dependency manifest files that change as part of a Pull Request,
-# surfacing known-vulnerable versions of the packages declared or updated in the PR.
-# Once installed, if the workflow run is marked as required,
-# PRs introducing known-vulnerable packages will be blocked from merging.
-#
-# Source repository: https://github.com/actions/dependency-review-action
-name: 'Dependency Review'
-on: [pull_request]
+# Surfaces known-vulnerable dependency changes on PRs that touch lockfiles or go.mod.
+name: Dependency Review
+
+on:
+  pull_request:
 
 permissions:
   contents: read
 
 jobs:
+  changes:
+    name: detect-changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      deps: ${{ steps.detect.outputs.deps }}
+      run_security: ${{ steps.detect.outputs.run_security }}
+    steps:
+      - id: detect
+        uses: ./.github/actions/detect-changes
+        with:
+          fetch-depth: '0'
+
   dependency-review:
+    name: dependency-review
+    needs: changes
+    if: needs.changes.outputs.deps == 'true' || needs.changes.outputs.run_security == 'true'
     permissions:
       contents: read
     runs-on: ubuntu-latest
@@ -23,7 +37,7 @@ jobs:
         with:
           egress-policy: audit
 
-      - name: 'Checkout Repository'
+      - name: Checkout Repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - name: 'Dependency Review'
+      - name: Dependency Review
         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0

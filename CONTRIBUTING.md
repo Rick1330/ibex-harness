@@ -54,23 +54,39 @@ Repository hints for Copilot: [.github/instructions/ibex-harness.instructions.md
 
 ## Required CI checks
 
-Every PR must pass these status checks (stable names for branch protection; see [ADR-0008](docs/adr/ADR-0008-security-ci-gates.md)):
+Every PR must pass these **branch protection** status checks (stable gate names; see [ADR-0008](web/content/docs/adr/0008-security-ci-gates.mdx)):
 
 | Check | Purpose |
 |-------|---------|
-| `repo-guards` | Layout, no `.env`, no conflict markers, no large files |
-| `markdownlint` | Structural markdown lint |
-| `gitleaks` | Secret scan |
-| `CodeQL` | Dataflow SAST (Go, Python, JS/TS) |
-| `semgrep` | Community SAST + `.semgrep/rules/` IBEX invariants |
-| `trivy` | Filesystem CVE scan (CRITICAL/HIGH, unfixed ignored) |
-| `osv-scan` | Lockfile CVE scan (OSV database) |
-| `golangci-lint` | Go lint (packages + auth + proxy) |
-| `bandit` | Python security lint (skips until `services/memory` exists) |
-| `hadolint` | Dockerfile best practices |
-| `coverage` | Merged Go coverage ≥94% on hand-written code (excludes `packages/proto/gen/go`) |
+| `ci-gate-repo` | Fast repo checks: layout, shellcheck, markdownlint, compose (when infra changes), go-mod-tidy/license (when Go changes) |
+| `ci-gate-go` | Go/proto lint, tests, smokes, coverage, govulncheck (auto-passes when no Go changes) |
+| `ci-gate-web` | Web build and static export guards (auto-passes when no web changes) |
+| `ci-gate-security` | Trivy, OSV, bandit, hadolint (auto-passes when no Go/web/deps changes) |
+| `gitleaks` | Secret scan (always runs) |
+| `semantic-pr-title` | Conventional PR title format |
 
-Not required for merge (informational / supply chain): `scorecard`, `sbom` (Grype), `buf-lint`, `go-services`, smoke tests.
+Path-filtered jobs (Go smokes, `web-build`, `trivy`, etc.) may be **skipped** on docs-only or single-area PRs; gate jobs still run and pass. Cross-cutting changes (`.github/workflows/**`, lockfiles) trigger the full matrix.
+
+**Also run on many PRs (not merge-blocking):** `CodeQL`, `semgrep`, `dependency-review` (deps/lockfile PRs), individual job names under gates.
+
+**Not required for merge (informational / supply chain):** `scorecard`, `sbom` (Grype), `label-pr`.
+
+## PR labels (auto-labeler)
+
+On every PR, [`.github/workflows/labeler.yml`](.github/workflows/labeler.yml) applies labels from [`.github/labeler.yml`](.github/labeler.yml):
+
+| Label | When applied |
+|-------|----------------|
+| `area/go` | `services/**`, `packages/**`, `go.mod`, `go.sum` |
+| `area/web` | `web/**` |
+| `area/ci` | `.github/**` |
+| `area/benchmarks` | `benchmarks/**`, `web/public/benchmarks/**` |
+| `area/docs` | `**/*.md`, `**/*.mdx` |
+| `area/infra` | `infra/**`, `osv-scanner.toml` |
+| `dependencies` | `go.mod`, `go.sum`, `pnpm-lock.yaml` |
+
+Removed paths drop stale labels (`sync-labels: true`). Labels are informational for reviewers and release notes—not merge gates.
+
 
 ## Local validation (before pushing)
 

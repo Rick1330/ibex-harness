@@ -1,0 +1,153 @@
+name: Detect path changes
+description: >-
+  Runs dorny/paths-filter against .github/path-filters.yml and computes effective
+  run_* flags (full matrix on workflow_dispatch).
+inputs:
+  ref:
+    description: Optional git ref to checkout (workflow_run head SHA)
+    required: false
+    default: ''
+  fetch-depth:
+    description: Checkout depth (0 = full history for PRs)
+    required: false
+    default: '0'
+  force-full:
+    description: Run full matrix (workflow_dispatch / nightly)
+    required: false
+    default: 'false'
+outputs:
+  go:
+    description: Raw go path filter match
+    value: ${{ steps.filter.outputs.go }}
+  web:
+    description: Raw web path filter match
+    value: ${{ steps.filter.outputs.web }}
+  proto:
+    description: Raw proto path filter match
+    value: ${{ steps.filter.outputs.proto }}
+  docker:
+    description: Raw docker path filter match
+    value: ${{ steps.filter.outputs.docker }}
+  workflows:
+    description: Raw workflows path filter match
+    value: ${{ steps.filter.outputs.workflows }}
+  deps:
+    description: Raw deps path filter match
+    value: ${{ steps.filter.outputs.deps }}
+  benchmarks:
+    description: Raw benchmarks path filter match
+    value: ${{ steps.filter.outputs.benchmarks }}
+  docs:
+    description: Raw docs path filter match
+    value: ${{ steps.filter.outputs.docs }}
+  compose:
+    description: Raw compose path filter match
+    value: ${{ steps.filter.outputs.compose }}
+  full:
+    description: Force full CI (workflows or deps changed)
+    value: ${{ steps.effective.outputs.full }}
+  run_go:
+    description: Run Go lint, tests, and smokes
+    value: ${{ steps.effective.outputs.run_go }}
+  run_web:
+    description: Run web build and checks
+    value: ${{ steps.effective.outputs.run_web }}
+  run_security:
+    description: Run in-repo security scans (trivy, osv, bandit, hadolint)
+    value: ${{ steps.effective.outputs.run_security }}
+  run_docker:
+    description: Run docker lint and image publish paths
+    value: ${{ steps.effective.outputs.run_docker }}
+  run_compose:
+    description: Run compose validation
+    value: ${{ steps.effective.outputs.run_compose }}
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      if: inputs.ref == ''
+      with:
+        fetch-depth: ${{ inputs.fetch-depth }}
+        persist-credentials: false
+
+    - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      if: inputs.ref != ''
+      with:
+        ref: ${{ inputs.ref }}
+        fetch-depth: ${{ inputs.fetch-depth }}
+        persist-credentials: false
+
+    - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
+      id: filter
+      with:
+        filters: .github/path-filters.yml
+
+    - name: Compute effective run flags
+      id: effective
+      shell: bash
+      env:
+        FILTER_GO: ${{ steps.filter.outputs.go }}
+        FILTER_WEB: ${{ steps.filter.outputs.web }}
+        FILTER_DOCKER: ${{ steps.filter.outputs.docker }}
+        FILTER_WORKFLOWS: ${{ steps.filter.outputs.workflows }}
+        FILTER_DEPS: ${{ steps.filter.outputs.deps }}
+        FILTER_COMPOSE: ${{ steps.filter.outputs.compose }}
+        EVENT_NAME: ${{ github.event_name }}
+        FORCE_FULL: ${{ inputs.force-full }}
+      run: |
+        set -euo pipefail
+        full=false
+        run_go=false
+        run_web=false
+        run_security=false
+        run_docker=false
+        run_compose=false
+
+        if [ "${FORCE_FULL}" = "true" ]; then
+          full=true
+          run_go=true
+          run_web=true
+          run_security=true
+          run_docker=true
+          run_compose=true
+        fi
+
+        if [ "$FILTER_WORKFLOWS" = "true" ] || [ "$FILTER_DEPS" = "true" ]; then
+          full=true
+          run_go=true
+          run_web=true
+          run_security=true
+        fi
+
+        if [ "$FILTER_GO" = "true" ]; then
+          run_go=true
+          run_security=true
+          run_docker=true
+        fi
+
+        if [ "$FILTER_WEB" = "true" ]; then
+          run_web=true
+          run_security=true
+        fi
+
+        if [ "$FILTER_DEPS" = "true" ]; then
+          run_security=true
+        fi
+
+        if [ "$FILTER_DOCKER" = "true" ]; then
+          run_docker=true
+          run_security=true
+        fi
+
+        if [ "$FILTER_COMPOSE" = "true" ] || [ "$full" = "true" ]; then
+          run_compose=true
+        fi
+
+        {
+          echo "full=$full"
+          echo "run_go=$run_go"
+          echo "run_web=$run_web"
+          echo "run_security=$run_security"
+          echo "run_docker=$run_docker"
+          echo "run_compose=$run_compose"
+        } >> "$GITHUB_OUTPUT"

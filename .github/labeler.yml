@@ -1,0 +1,40 @@
+area/web:
+  - changed-files:
+      - any-glob-to-any-file: 'web/**'
+
+area/go:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'services/**'
+          - 'packages/**'
+          - 'go.mod'
+          - 'go.sum'
+
+area/ci:
+  - changed-files:
+      - any-glob-to-any-file: '.github/**'
+
+area/benchmarks:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'benchmarks/**'
+          - 'web/public/benchmarks/**'
+
+area/docs:
+  - changed-files:
+      - any-glob-to-any-file:
+          - '**/*.md'
+          - '**/*.mdx'
+
+dependencies:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'go.mod'
+          - 'go.sum'
+          - 'pnpm-lock.yaml'
+
+area/infra:
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'infra/**'
+          - 'osv-scanner.toml'

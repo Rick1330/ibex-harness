@@ -9,7 +9,6 @@ on:
     paths:
       - ".github/workflows/benchmark.yml"
       - "benchmarks/**"
-      - "packages/**"
       - "services/auth/**"
       - "services/proxy/**"
       - "go.mod"
@@ -19,7 +18,6 @@ on:
     paths:
       - ".github/workflows/benchmark.yml"
       - "benchmarks/**"
-      - "packages/**"
       - "services/auth/**"
       - "services/proxy/**"
       - "go.mod"
@@ -55,7 +53,7 @@ jobs:
             echo "run_benchmarks=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          patterns='^\.github/workflows/benchmark\.yml$|^benchmarks/|^packages/|^services/auth/|^services/proxy/|^go\.mod$|^go\.sum$'
+          patterns='^\.github/workflows/benchmark\.yml$|^benchmarks/|^services/auth/|^services/proxy/|^go\.mod$|^go\.sum$'
           if git rev-parse HEAD~1 >/dev/null 2>&1; then
             range='HEAD~1..HEAD'
           else

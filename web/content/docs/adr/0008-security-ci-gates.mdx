@@ -64,15 +64,71 @@ GitHub **Default** CodeQL setup conflicts with the advanced `.github/workflows/c
 
 ### Branch protection
 
-[`.github/branch-protection-main.json`](../../.github/branch-protection-main.json) adds: `CodeQL`, `trivy`, `osv-scan`, `semgrep`, `golangci-lint`, `bandit`, `hadolint`.
+[`.github/branch-protection-main.json`](../../.github/branch-protection-main.json) requires **area gate jobs** (stable merge contexts) instead of every individual CI job:
 
-Apply after the governance PR registers check names:
+| Required check | Covers |
+| --- | --- |
+| `ci-gate-repo` | `repo-guards`, `shellcheck`, `markdownlint`, `compose-validate`, `go-mod-tidy`, `license-check` |
+| `ci-gate-go` | Buf/proto, Go smokes, `go-services`, `golangci-lint`, `coverage`, `govulncheck` |
+| `ci-gate-web` | `web-build` |
+| `ci-gate-security` | `trivy`, `osv-scan`, `bandit`, `hadolint` |
+| `gitleaks` | Secret scan (always runs — secrets can appear in any path) |
+| `semantic-pr-title` | Conventional PR title (PRs only) |
+
+Gate jobs **always run** (`if: always()`). When an area did not change, the gate auto-passes even if child jobs were skipped (see `.github/scripts/evaluate-ci-gate.sh`). This avoids GitHub branch protection blocking merges when path-filtered jobs are skipped.
+
+**Not required for merge** (path-scoped or informational): `CodeQL`, `semgrep`, `dependency-review`, `scorecard`, `sbom`, individual smoke job names, `buf-lint`, `go-services`.
+
+Apply after gate job names have appeared on at least one PR (GitHub rejects unknown check names):
 
 ```bash
 gh api --method PUT \
   repos/Rick1330/ibex-harness/branches/main/protection \
   --input .github/branch-protection-main.json
 ```
+
+### Path-filtered CI (2026-07)
+
+Heavy jobs run only when their area changed. Filter definitions live in [`.github/path-filters.yml`](../../.github/path-filters.yml); all workflows reuse [`.github/actions/detect-changes`](../../.github/actions/detect-changes/action.yml).
+
+| Filter | Paths (summary) | Effective flags |
+| --- | --- | --- |
+| `go` | `services/**`, `packages/**`, `go.mod`, migrations, `.golangci.yml` | `run_go`, `run_security`, `run_docker` |
+| `web` | `web/**`, pnpm/turbo root files | `run_web`, `run_security` |
+| `proto` | `packages/proto/**` | (included in `go` via shared paths) |
+| `docker` | Dockerfiles, `.hadolint.yaml` | `run_docker`, `run_security` |
+| `workflows` | `.github/workflows/**`, actions, scripts | **`full`** → all areas |
+| `deps` | `go.mod`, `go.sum`, `pnpm-lock.yaml` | **`full`** + `run_security` |
+| `compose` | `infra/compose/**` | `run_compose` |
+| `benchmarks` | `benchmarks/**`, `web/public/benchmarks/**` | `benchmark.yml` workflow paths only |
+| `docs` | `**/*.md`, `**/*.mdx` | fast `markdownlint` only |
+
+**Cross-cutting rule:** `workflows` or `deps` changes set `full=true` and run Go, web, and security scans. `workflow_dispatch` with `force_full: true` (nightly, manual) runs the full matrix.
+
+**Sibling workflows:**
+
+| Workflow | PR behavior |
+| --- | --- |
+| `codeql.yml` | Runs when `run_go` or `run_security`; weekly schedule is full Go analysis |
+| `semgrep.yml` | Runs when `run_go` or `run_web` |
+| `dependency-review.yml` | Runs when `deps` or `run_security` |
+| `sbom.yml` | **No PR trigger** — `push: main` + weekly schedule only |
+| `docker-publish.yml` | `workflow_run` after CI on main skips publish when neither `run_docker` nor `run_go` |
+
+**Safety net (no missed coverage):** `nightly.yml` dispatches full `ci.yml` with `force_full: true` (Sun 03:00 UTC); CodeQL and Scorecard weekly schedules; any `.github/workflows/**` change forces full PR CI.
+
+**Validation matrix** (run after merge or on a dry-run PR branch):
+
+| Test PR | Expected heavy jobs | Gates |
+| --- | --- | --- |
+| `web/content` MDX only | `web-build`, `markdownlint`, `gitleaks` | All gates green; Go jobs skipped |
+| `services/proxy` Go change | Full Go matrix; no `web-build` | `ci-gate-go` exercises real jobs |
+| `.github/workflows/ci.yml` | Full matrix | All gates exercise real jobs |
+| `pnpm-lock.yaml` only | `web-build`, security scans | Go smokes skipped |
+| Dependabot `go.mod` PR | Go + security | No `web-build` unless lockfile also changes |
+
+**PR auto-labeler:** [`.github/workflows/labeler.yml`](../../.github/workflows/labeler.yml) applies `area/*`, `dependencies`, and `area/infra` labels from [`.github/labeler.yml`](../../.github/labeler.yml) (`sync-labels: true`).
+
 
 ### AI agent enforcement
 

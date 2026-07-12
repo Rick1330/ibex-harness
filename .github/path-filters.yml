@@ -1,0 +1,40 @@
+# Central path filters for dorny/paths-filter (see .github/actions/detect-changes).
+go:
+  - 'services/**'
+  - 'packages/**'
+  - 'go.mod'
+  - 'go.sum'
+  - 'infra/migrations/**'
+  - '.golangci.yml'
+web:
+  - 'web/**'
+  - 'package.json'
+  - '.npmrc'
+  - 'pnpm-lock.yaml'
+  - 'pnpm-workspace.yaml'
+  - 'turbo.json'
+  - '.github/workflows/ci.yml'
+  - '.github/workflows/web-deploy.yml'
+  - '.github/actions/setup-pnpm-web/**'
+proto:
+  - 'packages/proto/**'
+docker:
+  - 'services/**/Dockerfile'
+  - 'services/*/Dockerfile'
+  - '.hadolint.yaml'
+workflows:
+  - '.github/workflows/**'
+  - '.github/actions/**'
+  - '.github/scripts/**'
+deps:
+  - 'go.mod'
+  - 'go.sum'
+  - 'pnpm-lock.yaml'
+benchmarks:
+  - 'benchmarks/**'
+  - 'web/public/benchmarks/**'
+docs:
+  - '**/*.md'
+  - '**/*.mdx'
+compose:
+  - 'infra/compose/**'

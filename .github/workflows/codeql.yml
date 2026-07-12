@@ -6,6 +6,13 @@ on:
   pull_request:
   schedule:
     - cron: "0 2 * * 0"
+  workflow_dispatch:
+    inputs:
+      force_full:
+        description: Run analysis regardless of path filters
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -15,8 +22,28 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: detect-changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      run_go: ${{ steps.detect.outputs.run_go }}
+      run_security: ${{ steps.detect.outputs.run_security }}
+    steps:
+      - id: detect
+        uses: ./.github/actions/detect-changes
+        with:
+          fetch-depth: ${{ github.event_name == 'push' && '2' || '0' }}
+          force-full: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.force_full == true) }}
+
   analyze:
     name: CodeQL
+    needs: changes
+    if: |
+      github.event_name == 'schedule' ||
+      needs.changes.outputs.run_go == 'true' ||
+      needs.changes.outputs.run_security == 'true'
     permissions:
       security-events: write
       contents: read

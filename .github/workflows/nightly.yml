@@ -35,4 +35,7 @@ jobs:
               repo: context.repo.repo,
               workflow_id: 'ci.yml',
               ref: 'main',
+              inputs: {
+                force_full: true,
+              },
             });
