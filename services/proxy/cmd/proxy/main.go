@@ -36,6 +36,9 @@ func run(args []string) int {
 	return runBootstrap(args, nil)
 }
 
+// providerRegistryInit is overridden in tests to simulate startup registry failures.
+var providerRegistryInit = provider.NewRegistry
+
 func runBootstrap(_ []string, signalCh chan os.Signal) int {
 	cfg, err := config.Load()
 	if err != nil {
@@ -73,7 +76,7 @@ func runBootstrap(_ []string, signalCh chan os.Signal) int {
 		},
 	}
 
-	providerReg, err := provider.NewRegistry()
+	providerReg, err := providerRegistryInit()
 	if err != nil {
 		log.ErrorCtx(context.Background(), "provider registry init failed", "error", err)
 		return 1

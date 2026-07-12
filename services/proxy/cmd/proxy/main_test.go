@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -128,6 +129,20 @@ func TestRun_InvalidOTELSampleRatioReturns1(t *testing.T) {
 func TestRun_InvalidRedisURLReturns1(t *testing.T) {
 	t.Setenv("IBEX_ENV", "development")
 	t.Setenv("REDIS_URL", "not-a-redis-url")
+	if got := run(nil); got != 1 {
+		t.Fatalf("run() = %d, want 1", got)
+	}
+}
+
+func TestRun_ProviderRegistryInitFailureReturns1(t *testing.T) {
+	orig := providerRegistryInit
+	t.Cleanup(func() { providerRegistryInit = orig })
+	providerRegistryInit = func(...provider.Provider) (*provider.Registry, error) {
+		return nil, errors.New("registry init failed")
+	}
+	t.Setenv("IBEX_ENV", "development")
+	t.Setenv("REDIS_URL", "")
+	t.Setenv("IBEX_AUTH_GRPC_ADDR", "")
 	if got := run(nil); got != 1 {
 		t.Fatalf("run() = %d, want 1", got)
 	}
