@@ -136,6 +136,8 @@ func seedProxySamples(reg *ProxyRegistry) {
 		Route: "/health", Method: http.MethodGet, StatusCode: "200", Seconds: 0.001,
 	})
 	reg.IncRateLimitAllowed()
+	reg.IncProviderRequest("openai", "2xx")
+	reg.IncProviderRetry("openai")
 }
 
 func seedAuthSamples(reg *AuthRegistry) {

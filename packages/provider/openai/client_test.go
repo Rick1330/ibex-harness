@@ -50,51 +50,82 @@ func TestOpenAIClient_NonStreaming_Success(t *testing.T) {
 
 func TestOpenAIClient_Retry_onRetryableStatus(t *testing.T) {
 	t.Parallel()
-
-	tests := []struct {
-		name      string
-		failUntil int32
-		status    int
-		setHeader bool
-		wantCalls int32
-	}{
+	for _, tc := range []retryStatusCase{
 		{name: "503", failUntil: 2, status: http.StatusServiceUnavailable, wantCalls: 2},
 		{name: "429", failUntil: 3, status: http.StatusTooManyRequests, setHeader: true, wantCalls: 3},
-	}
-
-	for _, tc := range tests {
+	} {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			var calls atomic.Int32
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if calls.Add(1) < tc.failUntil {
-					if tc.setHeader {
-						w.Header().Set("Retry-After", "0")
-					}
-					w.WriteHeader(tc.status)
-					return
-				}
-				w.WriteHeader(http.StatusOK)
-				_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
-			}))
-			t.Cleanup(srv.Close)
-
-			client := testClient(t, srv.URL, "test-key", nil)
-			client.cfg.MaxRetries = 3
-			client.cfg.RetryBaseDelay = 1 * time.Millisecond
-
-			_, err := client.Complete(context.Background(), provider.Request{
-				Model:    "gpt-4o",
-				Messages: []provider.Message{{Role: "user", Content: "hi"}},
-			})
-			if err != nil {
-				t.Fatalf("Complete: %v", err)
-			}
-			if calls.Load() != tc.wantCalls {
-				t.Fatalf("calls: got %d want %d", calls.Load(), tc.wantCalls)
-			}
+			runRetryStatusCase(t, tc)
 		})
+	}
+}
+
+type retryStatusCase struct {
+	name      string
+	failUntil int32
+	status    int
+	setHeader bool
+	wantCalls int32
+}
+
+func runRetryStatusCase(t *testing.T, tc retryStatusCase) {
+	t.Helper()
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) < tc.failUntil {
+			if tc.setHeader {
+				w.Header().Set("Retry-After", "0")
+			}
+			w.WriteHeader(tc.status)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	client := testClient(t, srv.URL, "test-key", nil)
+	client.cfg.MaxRetries = 3
+	client.cfg.RetryBaseDelay = 1 * time.Millisecond
+
+	_, err := client.Complete(context.Background(), provider.Request{
+		Model:    "gpt-4o",
+		Messages: []provider.Message{{Role: "user", Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if calls.Load() != tc.wantCalls {
+		t.Fatalf("calls: got %d want %d", calls.Load(), tc.wantCalls)
+	}
+}
+
+func TestOpenAIClient_RetryableTransport_recordsErrorMetricPerAttempt(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+	url := srv.URL
+	srv.Close()
+
+	reg := metrics.NewProxy("test")
+	client := testClient(t, url, "test-key", reg)
+	client.cfg.MaxRetries = 2
+
+	_, err := client.Complete(context.Background(), provider.Request{
+		Model:    "gpt-4o",
+		Messages: []provider.Message{{Role: "user", Content: "hi"}},
+	})
+	if err == nil {
+		t.Fatal("expected transport error")
+	}
+
+	body := scrapeProviderMetrics(t, reg.Gatherer())
+	if got := countProviderMetric(body, "openai", "error"); got != 3 {
+		t.Fatalf("provider error attempts: got %d want 3; metrics:\n%s", got, body)
+	}
+	if got := countProviderRetryMetric(body, "openai"); got != 2 {
+		t.Fatalf("provider retries: got %d want 2; metrics:\n%s", got, body)
 	}
 }
 
@@ -247,6 +278,24 @@ func scrapeProviderMetrics(t *testing.T, gatherer prometheus.Gatherer) string {
 
 func countProviderMetric(body, provider, statusClass string) int {
 	needle := `ibex_proxy_provider_requests_total{provider="` + provider + `",status_class="` + statusClass + `"} `
+	idx := strings.Index(body, needle)
+	if idx < 0 {
+		return 0
+	}
+	rest := body[idx+len(needle):]
+	end := strings.IndexByte(rest, '\n')
+	if end < 0 {
+		end = len(rest)
+	}
+	val, err := strconv.Atoi(strings.TrimSpace(rest[:end]))
+	if err != nil {
+		return 0
+	}
+	return val
+}
+
+func countProviderRetryMetric(body, provider string) int {
+	needle := `ibex_proxy_provider_retries_total{provider="` + provider + `"} `
 	idx := strings.Index(body, needle)
 	if idx < 0 {
 		return 0

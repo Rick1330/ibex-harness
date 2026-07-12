@@ -112,6 +112,26 @@ func TestWaitBeforeRetry_contextCanceled(t *testing.T) {
 	}
 }
 
+func TestWaitBeforeRetry_honorsProviderRetryAfter(t *testing.T) {
+	t.Parallel()
+	client := testClient(t, "http://example.com", "k", nil)
+	err := client.waitBeforeRetry(context.Background(), 1, &provider.ProviderError{
+		StatusCode:   http.StatusTooManyRequests,
+		ProviderBody: []byte(`{"error":{"retry_after":0.001}}`),
+	})
+	if err != nil {
+		t.Fatalf("waitBeforeRetry: %v", err)
+	}
+}
+
+func TestRetryDelay_capsAtMaxBackoff(t *testing.T) {
+	t.Parallel()
+	got := retryDelay(time.Second, 20)
+	if got > maxRetryBackoff {
+		t.Fatalf("delay %v exceeds max %v", got, maxRetryBackoff)
+	}
+}
+
 func TestIsRetryableTransport_timeout(t *testing.T) {
 	t.Parallel()
 	var netErr timeoutNetError

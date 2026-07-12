@@ -49,10 +49,8 @@ func (c *Client) tryOnce(ctx context.Context, url string, body []byte, attempt i
 	start := time.Now()
 	resp, err := c.doRequest(ctx, url, body)
 	if err != nil {
+		c.metrics.IncProviderRequest(c.Name(), "error")
 		retry := isRetryableTransport(err) && attempt < c.cfg.MaxRetries
-		if !retry {
-			c.metrics.IncProviderRequest(c.Name(), "error")
-		}
 		return attemptResult{err: err, retry: retry}
 	}
 
