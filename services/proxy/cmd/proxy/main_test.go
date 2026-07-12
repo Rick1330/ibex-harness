@@ -8,6 +8,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/healthcheck"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	ibexmetrics "github.com/Rick1330/ibex-harness/packages/metrics"
+	"github.com/Rick1330/ibex-harness/packages/provider"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
 	proxyhttp "github.com/Rick1330/ibex-harness/services/proxy/internal/http"
@@ -94,6 +95,7 @@ func TestNewHTTPServer(t *testing.T) {
 	srv := newHTTPServer(proxyhttp.RouterDeps{
 		Config: cfg, Logger: logger.Discard("proxy"), Metrics: ibexmetrics.NewProxy("proxy"),
 		Limiter: ratelimit.Noop(), Health: &healthcheck.Server{},
+		ProviderRegistry: provider.NewRegistry(),
 	})
 	if srv.Addr != ":8080" {
 		t.Fatalf("addr: %s", srv.Addr)

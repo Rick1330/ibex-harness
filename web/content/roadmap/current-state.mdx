@@ -1,7 +1,7 @@
 ---
 title: "Current State"
-description: "Phase 0, Phase 1, and Phase 1.5 are complete. Phase 2 (Single Provider) is ready to start."
-summary: "Phase 0, Phase 1, and Phase 1.5 are complete. Phase 2 (Single Provider) is ready to start."
+description: "Phase 0, Phase 1, and Phase 1.5 are complete. Phase 2 (Single Provider) is in progress."
+summary: "Phase 0, Phase 1, and Phase 1.5 are complete. Phase 2 (Single Provider) is in progress."
 ---
 
 # Current State
@@ -17,11 +17,11 @@ summary: "Phase 0, Phase 1, and Phase 1.5 are complete. Phase 2 (Single Provider
 <StatusBadge status="stable" /> **Phase 0 — Foundation:** complete  
 <StatusBadge status="stable" /> **Phase 1 — Core Platform:** complete  
 <StatusBadge status="stable" /> **Phase 1.5 — Public Web Product:** complete  
-<StatusBadge status="new" /> **Phase 2 — Single Provider:** ready to start
+<StatusBadge status="new" /> **Phase 2 — Single Provider:** in progress (2.1.1 complete)
 
 **Last updated:** 2026-07-12  
-**Git SHA (`main`):** `8453d0f`  
-**Current focus:** [2.1.1 Provider interface and registry](/roadmap/phase-2-single-provider/milestones/2.1.1-provider-interface-and-registry)
+**Git SHA (`main`):** `2080c1d`  
+**Current focus:** [2.1.2 OpenAI non-streaming client](/roadmap/phase-2-single-provider/milestones/2.1.2-openai-non-streaming-client)
 
 <QuickLinks
   links={[
@@ -69,7 +69,7 @@ summary: "Phase 0, Phase 1, and Phase 1.5 are complete. Phase 2 (Single Provider
 - Auth gRPC (`ValidateToken`, `ValidateAgent`) with Argon2id-backed token validation
 - Proxy auth middleware, agent verification, request normalization, stable error envelopes, rate limiting
 - Security integration gate with 31-case cross-tenant denial matrix and CI enforcement
-- Shared packages (`logger`, `metrics`, `telemetry`, `config`, `apierror`, `shutdown`, `reqid`, `ratelimit`, `crypto`, `permissions`)
+- Shared packages (`logger`, `metrics`, `telemetry`, `config`, `apierror`, `shutdown`, `reqid`, `ratelimit`, `crypto`, `permissions`, `provider`)
 - Postgres migrations with RLS; integration smokes for auth, proxy, and security paths
 
 ### Public web product (Phase 1.5)
@@ -96,8 +96,9 @@ Legacy `docs.ibexharness.com` redirects to apex paths (301).
 
 <Callout type="warning" title="Phase 2 entry">
   No LLM provider forwarding in the production proxy path yet (`501
-  PROVIDER_NOT_CONFIGURED` is expected). Phase 2.1.1 is the first implementation
-  milestone.
+  PROVIDER_NOT_CONFIGURED` is expected). Milestone 2.1.1 shipped `packages/provider`
+  and registry wiring per [ADR-0025](/docs/adr/0025-llm-provider-abstraction); OpenAI
+  forwarding is milestone 2.1.2.
 </Callout>
 
 - Python services (memory, context, embedder, worker, api, dashboard) are not in shipping scope until Phase 3
@@ -106,14 +107,14 @@ Legacy `docs.ibexharness.com` redirects to apex paths (301).
 ## Next 3 Priorities
 
 <Steps>
-  <Step title="2.1.1 — Provider interface and registry">
-    Define the provider abstraction and registry in the proxy service.
-  </Step>
   <Step title="2.1.2 — OpenAI HTTP adapter">
     Implement OpenAI-compatible forwarding with error mapping.
   </Step>
   <Step title="2.1.3 — Streaming response path">
     SSE streaming through proxy with backpressure handling.
+  </Step>
+  <Step title="2.2.1 — Auth LRU + bloom cache">
+    Meet the &lt;20ms proxy overhead budget under load.
   </Step>
 </Steps>
 

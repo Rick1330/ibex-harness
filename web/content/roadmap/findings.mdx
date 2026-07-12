@@ -26,6 +26,20 @@ Unexpected discoveries, design pivots, and plan changes. Update this file when i
 
 ---
 
+## 2026-07-12 — Phase 2 ADR renumber and directive injection ownership
+
+**Context:** Phase 2 / Milestone 2.1.1 planning
+
+**Finding:** Phase 2 decision log assigned ADR-0022–0031 for provider/auth/directive topics, but ADR-0022–0024 were already consumed (health check, docs site, benchmark pipeline). Public docs claimed Phase 1 shipped the provider adapter skeleton; `packages/provider` did not exist. Milestone 2.1.2 pseudocode injects directives via `SystemDirective` on the provider request, while 2.3.3 assigns injection to proxy middleware.
+
+**Impact:** Broken ADR links if filed at 0022; duplicate injection logic if both 2.1.2 and 2.3.3 implement it.
+
+**Decision:** Renumber pending Phase 2 ADRs to **0025–0034** (provider abstraction = ADR-0025, accepted in 2.1.1). Implement messages-only `provider.Request`; directive injection exclusively in proxy middleware per ADR-0025 §5. Milestone 2.1.4 will extract registry lookup from handler into middleware without behavior change.
+
+**Updated:** `web/content/roadmap/phase-2-single-provider/decisions.mdx`, milestone frontmatter (2.1.x–2.6.x), `web/content/docs/proxy/provider-adapters.mdx`, `web/content/docs/adr/0025-llm-provider-abstraction.mdx`, `findings.mdx`
+
+---
+
 ## 2026-06-04 — Auth cache (bloom/LRU) deferred to Phase 2 optional 2.2.1
 
 **Context:** Milestone 1.2.1 / PR #51

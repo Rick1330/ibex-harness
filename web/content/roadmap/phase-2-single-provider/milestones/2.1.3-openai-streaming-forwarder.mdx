@@ -16,7 +16,7 @@ fullTitle: "Milestone 2.1.3 — OpenAI Streaming Forwarder (SSE Dual-Write)"
 **Goal:** [2.1 — LLM provider abstraction and OpenAI forwarding](/roadmap/phase-2-single-provider/goals#goal-21-llm-provider-abstraction-and-openai-forwarding)  
 **Phase:** 2 — Single Provider End-to-End  
 **Estimated effort:** 4–5 days  
-**ADR required:** ADR-0024 — Streaming response strategy and dual-write design
+**ADR required:** ADR-0027 — Streaming response strategy and dual-write design
 
 ---
 
@@ -52,9 +52,9 @@ Streaming in the proxy creates a unique technical challenge: the proxy must simu
 
 ---
 
-## ADR-0024 — Streaming strategy
+## ADR-0027 — Streaming strategy
 
-Write `docs/adr/ADR-0024-streaming-dual-write.md` covering:
+Write `web/content/docs/adr/0027-streaming-dual-write.mdx` covering:
 
 - **Why io.TeeReader over goroutine fan-out:** `io.TeeReader` copies bytes from the OpenAI connection to both the client writer and an accumulation buffer in a single read path. A goroutine fan-out would require a channel between goroutines and introduces ordering complexity.
 - **Why accumulation is best-effort:** The stream forward cannot be blocked by accumulation failures. A slow accumulation write causes the client to receive bytes late, which is worse than missing a trace.
@@ -147,6 +147,6 @@ for scanner.Scan() {
 - [ ] `StreamAccumulator` collects full content without blocking the forward path
 - [ ] Provider error mid-stream results in partial stream + trace with `is_complete=false` (not a server crash)
 - [ ] Client disconnect cancels context; proxy stops forwarding and cleans up (no goroutine leak)
-- [ ] ADR-0024 written and indexed
+- [ ] ADR-0027 written and indexed
 
 ---

@@ -6,20 +6,22 @@ import (
 
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/metrics"
+	"github.com/Rick1330/ibex-harness/packages/provider"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
 )
 
 type protectedRouteDeps struct {
-	mux           *http.ServeMux
-	cfg           config.Config
-	logger        *logger.Logger
-	reg           *metrics.ProxyRegistry
-	validator     auth.TokenValidator
-	agentVerifier auth.AgentVerifier
-	limiter       ratelimit.Limiter
-	docsBase      string
+	mux              *http.ServeMux
+	cfg              config.Config
+	logger           *logger.Logger
+	reg              *metrics.ProxyRegistry
+	validator        auth.TokenValidator
+	agentVerifier    auth.AgentVerifier
+	limiter          ratelimit.Limiter
+	docsBase         string
+	providerRegistry *provider.Registry
 }
 
 func registerProtectedRoutes(deps protectedRouteDeps) {
@@ -59,6 +61,6 @@ func registerProtectedRoutes(deps protectedRouteDeps) {
 		rateLimit,
 	)
 	deps.mux.Handle("/v1/chat/completions", chatChain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		handleChatCompletions(w, r, deps.logger, deps.docsBase)
+		handleChatCompletions(w, r, deps.logger, deps.docsBase, deps.providerRegistry)
 	})))
 }

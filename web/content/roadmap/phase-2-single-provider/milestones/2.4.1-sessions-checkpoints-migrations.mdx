@@ -16,7 +16,7 @@ fullTitle: "Milestone 2.4.1 — Session and Checkpoint Schema Migrations"
 **Goal:** [2.4 — Session tracking infrastructure](/roadmap/phase-2-single-provider/goals#goal-24-session-tracking-infrastructure)  
 **Phase:** 2 — Single Provider End-to-End  
 **Estimated effort:** 2 days  
-**ADR required:** ADR-0029 — Session data model and retention strategy
+**ADR required:** ADR-0032 — Session data model and retention strategy
 
 ---
 
@@ -129,6 +129,6 @@ CREATE TRIGGER sessions_updated_at
 - [ ] RLS enforced on both tables
 - [ ] `checkpoints` has `UNIQUE(session_id, turn_index)` — no duplicate turns
 - [ ] `idx_sessions_agent_extraction` index supports Phase 3 worker queries (EXPLAIN ANALYZE confirms)
-- [ ] ADR-0029 written covering session lifecycle, retention policy, and Phase 3 extraction model
+- [ ] ADR-0032 written covering session lifecycle, retention policy, and Phase 3 extraction model
 
 ---

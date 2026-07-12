@@ -16,7 +16,7 @@ fullTitle: "Milestone 2.1.5 — Provider Error Mapping and Stable Envelope"
 **Goal:** [2.1 — LLM provider abstraction and OpenAI forwarding](/roadmap/phase-2-single-provider/goals#goal-21-llm-provider-abstraction-and-openai-forwarding)  
 **Phase:** 2 — Single Provider End-to-End  
 **Estimated effort:** 1–2 days  
-**ADR required:** None (extends ADR-0013 envelope and ADR-0023 client policy)
+**ADR required:** None (extends ADR-0013 envelope and ADR-0026 client policy)
 
 ---
 
@@ -90,7 +90,7 @@ func MapProviderError(
 ### 3. Streaming behaviour
 
 - If provider returns non-2xx **before** first byte to client: map via `MapProviderError` and return JSON envelope (no SSE).
-- If error occurs **after** streaming started: terminate SSE with documented `data: [DONE]` pattern and optional terminal error event per ADR-0024.
+- If error occurs **after** streaming started: terminate SSE with documented `data: [DONE]` pattern and optional terminal error event per ADR-0027.
 
 ### 4. Wire into handlers
 
@@ -125,4 +125,4 @@ func MapProviderError(
 | --- | --- | --- |
 | OpenAI error JSON shape changes | Medium | Map by HTTP status first; parse message only when schema matches |
 | Double-retry storms (proxy + client) | Medium | Document in API docs that proxy retries are exhaustive for 5xx |
-| Mid-stream errors confuse SDK clients | Low | Follow OpenAI-compatible SSE error event pattern in ADR-0024 |
+| Mid-stream errors confuse SDK clients | Low | Follow OpenAI-compatible SSE error event pattern in ADR-0027 |

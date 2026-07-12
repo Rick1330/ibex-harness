@@ -1,0 +1,89 @@
+---
+title: "ADR-0025: LLM provider abstraction"
+description: "Architecture decision record 0025 — provider interface, registry, and package boundaries for Phase 2."
+adrId: "0025"
+status: "Accepted"
+date: "2026-07-12"
+authors: "IBEX Harness team"
+---
+
+# ADR-0025: LLM provider abstraction
+
+- **Status:** Accepted
+- **Date:** 2026-07-12
+- **Authors:** IBEX Harness team
+- **Milestone:** [2.1.1 Provider interface and registry](/roadmap/phase-2-single-provider/milestones/2.1.1-provider-interface-and-registry)
+
+## Context
+
+Phase 1 validates and authenticates every `POST /v1/chat/completions` request but returns `501 PROVIDER_NOT_CONFIGURED` — no upstream LLM call is made. Phase 2 must forward to OpenAI; Phase 4 adds Anthropic, Azure OpenAI, and AWS Bedrock. Hard-coding OpenAI HTTP calls in the proxy handler would require a large refactor when multi-provider support lands.
+
+The proxy already parses OpenAI-shaped JSON in `services/proxy/internal/llm` (Phase 1). Provider communication needs a shared abstraction in `packages/provider` with no service imports.
+
+## Decision
+
+### 1) Single `Provider` interface with one `Complete` method
+
+```go
+type Provider interface {
+    Complete(ctx context.Context, req Request) (Response, error)
+    Name() string
+    SupportedModels() []string
+}
+```
+
+`Request.Stream bool` selects streaming vs non-streaming inside the implementation. A split interface (`Streamer` + `Completer`) would force callers to type-assert on every request.
+
+### 2) Model routing lives in `Registry`, not providers
+
+Each provider declares `SupportedModels()`. `Registry.For(model)` returns the implementation. Phase 4 registers Anthropic/Azure without changing handlers or middleware contracts.
+
+`NewRegistry` panics on duplicate model IDs — fail fast at startup, not on first customer request.
+
+### 3) API keys are constructor details, not interface fields
+
+Provider credentials come from environment variables (Phase 2) or org-scoped config (later). The `Provider` interface is key-agnostic; `packages/provider/openai/` reads keys in its constructor.
+
+### 4) `Response.Body` is `io.ReadCloser`
+
+Streaming responses must not be fully buffered on the hot path. Non-streaming callers read the full body and decode JSON. The caller closes `Body`.
+
+### 5) Messages-only request contract; directive injection in proxy
+
+`provider.Request.Messages` is authoritative when `Complete` is called. Agent directive injection (milestone 2.3.3) runs in proxy middleware (`packages/injection`) and mutates `Messages` **before** the provider call. Provider implementations must not implement injection logic — this avoids duplicating injection between OpenAI client (2.1.2) and proxy middleware (2.3.3).
+
+### 6) Package boundary
+
+`packages/provider` imports only stdlib and other `packages/*` modules. No `services/*` imports. Concrete implementations live in subpackages (e.g. `packages/provider/openai/` in milestone 2.1.2).
+
+### 7) Registry lifecycle
+
+Built once at proxy startup via `provider.NewRegistry(...)`. Read-only after construction. Milestone 2.1.1 ships an empty registry (no providers registered); 2.1.2 registers OpenAI.
+
+### 8) Error types
+
+- `ErrNoProviderForModel` → proxy returns `501 PROVIDER_NOT_CONFIGURED`
+- `ProviderError` carries provider HTTP status and raw body for mapping in 2.1.5 — **never log `ProviderBody`**
+
+### 9) Phase 2 proxy Postgres exception (forward reference)
+
+Phase 1 rule: proxy has no Postgres (auth via gRPC only). Phase 2 milestones 2.3.2 and 2.4.x add a **read-only** `pgxpool` on the proxy for directive and session lookups with Redis cache fronting. Writes remain on auth/api services. A dedicated ADR will document this when 2.3.2 lands.
+
+## Consequences
+
+**Positive:**
+
+- Phase 4 multi-provider is registration-only
+- Shared package testable offline at ≥90% unit coverage
+- Handler stays provider-agnostic
+
+**Negative:**
+
+- Duplicate `Message` types in `llm` and `provider` — conversion function in 2.1.2 bridges them
+- Milestone 2.1.4 will extract registry lookup from handler into middleware (no behavior change)
+
+## References
+
+- [Provider adapters](/docs/proxy/provider-adapters)
+- [Phase 2 goals](/roadmap/phase-2-single-provider/goals)
+- [ADR-0013: Proxy input validation and error envelope](/docs/adr/0013-proxy-input-validation-and-error-envelope)

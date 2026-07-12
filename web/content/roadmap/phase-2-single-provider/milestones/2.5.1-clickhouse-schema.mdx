@@ -16,7 +16,7 @@ fullTitle: "Milestone 2.5.1 — ClickHouse Schema: `llm_traces` Table"
 **Goal:** [2.5 — Async trace emission to ClickHouse](/roadmap/phase-2-single-provider/goals#goal-25-async-trace-emission-to-clickhouse)  
 **Phase:** 2 — Single Provider End-to-End  
 **Estimated effort:** 1–2 days  
-**ADR required:** ADR-0030 — ClickHouse schema design and retention
+**ADR required:** ADR-0033 — ClickHouse schema design and retention
 
 ---
 
@@ -89,7 +89,7 @@ TTL event_date + INTERVAL 90 DAY   -- configurable; default 90-day retention
 SETTINGS index_granularity = 8192;
 ```
 
-**Design decisions documented in ADR-0030:**
+**Design decisions documented in ADR-0033:**
 - `LowCardinality(String)` for `model`, `provider`, `error_code` — ClickHouse dictionary compression reduces storage 5–10×
 - `ORDER BY (org_id, agent_id, requested_at)` — primary sort key supports the most common query pattern: "traces for this org's agent in time range"
 - No content fields — LLM request/response content is never stored in traces (privacy, storage cost)
@@ -104,6 +104,6 @@ SETTINGS index_granularity = 8192;
 - [ ] No content fields (prompt text, completion text)
 - [ ] TTL configured with default 90 days
 - [ ] `EXPLAIN` on common query patterns shows primary key usage
-- [ ] ADR-0030 written covering schema choices and retention policy
+- [ ] ADR-0033 written covering schema choices and retention policy
 
 ---

@@ -2,7 +2,7 @@
 title: "2.1.1 Provider Interface"
 description: "The proxy needs to forward requests to an LLM provider, but the provider must not be hardcoded. The ARCHITECTURE.md explicitly calls out multiple providers (OpenAI, Anthropic, Azure OpenAI, Bedrock) as Phase 4+ targets. Building the forwarding logic directly against the OpenAI HTTP API in Phase 2 would require a large,"
 summary: "The proxy needs to forward requests to an LLM provider, but the provider must not be hardcoded. The ARCHITECTURE.md explicitly calls out multiple providers (OpenAI, Anthropic, Azure OpenAI, Bedrock) as Phase 4+ targets. Building the forwarding logic directly against the OpenAI HTTP API in Phase 2 would require a large,"
-status: "planned"
+status: "completed"
 milestoneId: "2.1.1"
 goal: "[2.1 — LLM provider abstraction and OpenAI forwarding](/roadmap/phase-2-single-provider/goals#goal-21-llm-provider-abstraction-and-openai-forwarding)"
 estimatedEffort: "2 days"
@@ -12,11 +12,11 @@ fullTitle: "Milestone 2.1.1 — Provider Interface and Registry"
 
 # Milestone 2.1.1 — Provider Interface and Registry
 
-**Status:** Planned  
+**Status:** Complete  
 **Goal:** [2.1 — LLM provider abstraction and OpenAI forwarding](/roadmap/phase-2-single-provider/goals#goal-21-llm-provider-abstraction-and-openai-forwarding)  
 **Phase:** 2 — Single Provider End-to-End  
 **Estimated effort:** 2 days  
-**ADR required:** ADR-0022 — LLM provider abstraction design
+**ADR required:** ADR-0025 — LLM provider abstraction design
 
 ---
 
@@ -46,9 +46,9 @@ This is not premature abstraction. It is the correct design given the known road
 
 ---
 
-## ADR-0022 — Provider abstraction design
+## ADR-0025 — Provider abstraction design
 
-Write `docs/adr/ADR-0022-llm-provider-abstraction.md` documenting:
+Write `web/content/docs/adr/0025-llm-provider-abstraction.mdx` documenting:
 
 - **Why a single interface covers both streaming and non-streaming:** The `Provider` interface has one method: `Complete`. The `CompletionRequest` struct has an `Stream bool` field. The implementation decides how to handle it. This avoids a split interface that requires callers to do a type assertion.
 - **Why the interface does not include model routing:** Model routing is a cross-cutting concern handled by the provider registry, not individual providers. A provider implements a fixed set of supported models; the registry selects the right provider.
@@ -204,10 +204,31 @@ var ErrNoProviderForModel = errors.New("no provider configured for this model")
 
 ## Acceptance Criteria
 
-- [ ] `packages/provider.Provider` interface defined with `Complete`, `Name`, `SupportedModels`
-- [ ] `packages/provider.Registry` selects provider by model ID
-- [ ] `ErrNoProviderForModel` triggers `501 PROVIDER_NOT_CONFIGURED` response in proxy handler
-- [ ] ADR-0022 written and indexed
-- [ ] Interface has no concrete OpenAI imports (pure abstraction)
+- [x] `packages/provider.Provider` interface defined with `Complete`, `Name`, `SupportedModels`
+- [x] `packages/provider.Registry` selects provider by model ID
+- [x] `ErrNoProviderForModel` triggers `501 PROVIDER_NOT_CONFIGURED` response in proxy handler
+- [x] ADR-0025 written and indexed
+- [x] Interface has no concrete OpenAI imports (pure abstraction)
 
 ---
+
+## Prerequisites
+
+- Phase 1 + 1.5 exit (merged)
+- `packages/apierror` `CodeProviderNotConfigured` exists
+
+## Testing Requirements
+
+- `go test ./packages/provider/...` (unit, offline)
+- `go test ./services/proxy/internal/http/...` (handler still returns 501)
+- `gofmt -l` on touched `.go` files (empty = pass)
+- `make repo-guards`
+
+## Files affected
+
+| Path | Change |
+| --- | --- |
+| `packages/provider/*` | New |
+| `services/proxy/internal/http/router.go` | Registry lookup |
+| `services/proxy/cmd/proxy/main.go` | Empty registry init |
+| `web/content/docs/adr/0025-*` | New ADR |

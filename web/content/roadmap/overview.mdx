@@ -1,7 +1,7 @@
 ---
 title: "Phases Overview"
-description: "High-level roadmap from Foundation through production hardening. Phases 0–1.5 complete; Phase 2 ready."
-summary: "High-level roadmap from Foundation through production hardening. Phases 0–1.5 complete; Phase 2 ready."
+description: "High-level roadmap from Foundation through production hardening. Phases 0–1.5 complete; Phase 2 in progress."
+summary: "High-level roadmap from Foundation through production hardening. Phases 0–1.5 complete; Phase 2 in progress."
 status: "completed"
 ---
 
@@ -14,7 +14,7 @@ High-level roadmap from Foundation through production hardening. Detailed milest
 | [0](phase-0-foundation/) | Foundation | Done | **Complete** | Empty repo | CI, docs, compose, proto source, Go skeletons |
 | [1](phase-1-core-platform/) | Core Platform | 4–6 weeks | **Complete** | Phase 0 complete | Migrations, auth, proxy platform, security gate |
 | [1.5](phase-1-5-docs-site/) | Public Web Product | 2–3 weeks | **Complete** | Phase 1 complete | Unified site at ibexharness.com; verify_phase15.sh |
-| [2](phase-2-single-provider/) | Single Provider E2E | 3–5 weeks | **Ready** | Phase 1.5 exit | Authenticated OpenAI-compatible chat through proxy |
+| [2](phase-2-single-provider/) | Single Provider E2E | 3–5 weeks | **In progress** | Phase 1.5 exit | Authenticated OpenAI-compatible chat through proxy |
 | [3](phase-3-memory-engine/) | Memory Engine and Operator Platform | 6–8 weeks | Planned | Phase 2 exit | Memory graph, context assembly, operator API + dashboard |
 | [4](phase-4-multi-provider/) | Multi-Provider and Routing | 4–6 weeks | Planned | Phase 3 exit | Multiple providers, routing, Redis rate limits |
 | [5](phase-5-production-hardening/) | Production Hardening | 4–8 weeks | Planned | Phase 4 exit | SLOs, OTel pipeline, chaos/load, hardened CI |
@@ -60,7 +60,9 @@ See [phase-1-core-platform](/roadmap/phase-1-core-platform) and [phase1-exit-aud
 
 ## Phase 2: Single Provider E2E
 
-**Status:** Ready — Phase 1.5 exit complete
+**Status:** In progress — milestone 2.1.1 complete ([ADR-0025](/docs/adr/0025-llm-provider-abstraction))
+
+**Current milestone:** [2.1.2 OpenAI non-streaming client](/roadmap/phase-2-single-provider/milestones/2.1.2-openai-non-streaming-client)
 
 **Goals:** [goals](/roadmap/phase-2-single-provider/goals)
 

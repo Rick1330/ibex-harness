@@ -10,6 +10,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/healthcheck"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/metrics"
+	"github.com/Rick1330/ibex-harness/packages/provider"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
 	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
@@ -26,14 +27,15 @@ type authProbeResponse struct {
 
 // RouterDeps wires the proxy HTTP handler and middleware chain.
 type RouterDeps struct {
-	Config        config.Config
-	Logger        *logger.Logger
-	Metrics       *metrics.ProxyRegistry
-	Tracer        trace.Tracer
-	Validator     auth.TokenValidator
-	AgentVerifier auth.AgentVerifier
-	Limiter       ratelimit.Limiter
-	Health        *healthcheck.Server
+	Config           config.Config
+	Logger           *logger.Logger
+	Metrics          *metrics.ProxyRegistry
+	Tracer           trace.Tracer
+	Validator        auth.TokenValidator
+	AgentVerifier    auth.AgentVerifier
+	Limiter          ratelimit.Limiter
+	Health           *healthcheck.Server
+	ProviderRegistry *provider.Registry
 }
 
 // NewRouter builds the proxy HTTP handler with optional auth validator for protected routes.
@@ -47,6 +49,10 @@ func NewRouter(deps RouterDeps) http.Handler {
 	cfg.ApplyDefaults()
 	mux := http.NewServeMux()
 	docsBase := cfg.ErrorDocsBase
+	providerReg := deps.ProviderRegistry
+	if providerReg == nil {
+		providerReg = provider.NewRegistry()
+	}
 
 	healthSrv := deps.Health
 	if healthSrv == nil {
@@ -58,14 +64,15 @@ func NewRouter(deps RouterDeps) http.Handler {
 
 	if validator != nil {
 		registerProtectedRoutes(protectedRouteDeps{
-			mux:           mux,
-			cfg:           cfg,
-			logger:        logger,
-			reg:           reg,
-			validator:     validator,
-			agentVerifier: agentVerifier,
-			limiter:       limiter,
-			docsBase:      docsBase,
+			mux:              mux,
+			cfg:              cfg,
+			logger:           logger,
+			reg:              reg,
+			validator:        validator,
+			agentVerifier:    agentVerifier,
+			limiter:          limiter,
+			docsBase:         docsBase,
+			providerRegistry: providerReg,
 		})
 	}
 
@@ -120,7 +127,7 @@ func handleAuthProbe(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func handleChatCompletions(w http.ResponseWriter, r *http.Request, log *logger.Logger, docsBase string) {
+func handleChatCompletions(w http.ResponseWriter, r *http.Request, log *logger.Logger, docsBase string, providerReg *provider.Registry) {
 	if !requireMethod(w, r, http.MethodPost, docsBase) {
 		return
 	}
@@ -166,6 +173,13 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request, log *logger.L
 			"message_count", len(parsed.Messages),
 			"stream", parsed.Stream,
 		)
+	}
+
+	if _, err := providerReg.For(parsed.Model); errors.Is(err, provider.ErrNoProviderForModel) {
+		apierror.WriteStatus(w, http.StatusNotImplemented, apierror.CodeProviderNotConfigured,
+			"LLM provider not configured", requestID,
+			apierror.WriteOpts{Detail: "No provider registered for model " + parsed.Model, DocsBase: docsBase})
+		return
 	}
 
 	apierror.WriteStatus(w, http.StatusNotImplemented, apierror.CodeProviderNotConfigured,

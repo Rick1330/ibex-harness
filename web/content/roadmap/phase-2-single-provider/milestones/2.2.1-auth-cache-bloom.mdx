@@ -16,7 +16,7 @@ fullTitle: "Milestone 2.2.1 — Auth Cache: Bloom Filter + In-Process LRU (Perfo
 **Goal:** [2.2 — Auth performance cache](/roadmap/phase-2-single-provider/goals#goal-22-auth-performance-cache-critical-path)  
 **Phase:** 2 — Single Provider End-to-End  
 **Estimated effort:** 3–4 days  
-**ADR required:** ADR-0025 — Auth cache design and revocation SLA
+**ADR required:** ADR-0028 — Auth cache design and revocation SLA
 
 ---
 
@@ -54,9 +54,9 @@ The solution is a two-tier cache in front of the gRPC call:
 
 ---
 
-## ADR-0025 — Auth cache design
+## ADR-0028 — Auth cache design
 
-Write `docs/adr/ADR-0025-auth-cache-design.md` covering:
+Write `web/content/docs/adr/0028-auth-cache-design.mdx` covering:
 - Why two tiers (bloom + LRU) rather than Redis-only or LRU-only
 - Bloom filter parameters: expected items (10,000 tokens per instance), false positive rate (0.001)
 - LRU capacity: 5,000 entries (each entry ~200 bytes → ~1MB per instance)
@@ -163,6 +163,6 @@ ibex_auth_cache_bloom_fp_total      // false positives (bloom said invalid, gRPC
 - [ ] Cache metrics exported via `packages/metrics`
 - [ ] Bloom filter false positive rate ≤ 0.1% documented and measured in tests
 - [ ] Token hash (not raw token) is the cache key — raw token never stored in memory beyond validation
-- [ ] ADR-0025 written and indexed
+- [ ] ADR-0028 written and indexed
 
 ---

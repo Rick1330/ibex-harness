@@ -13,6 +13,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	ibexmetrics "github.com/Rick1330/ibex-harness/packages/metrics"
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
+	"github.com/Rick1330/ibex-harness/packages/provider"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
 	"github.com/Rick1330/ibex-harness/packages/shutdown"
 	"github.com/Rick1330/ibex-harness/packages/telemetry"
@@ -73,14 +74,15 @@ func runBootstrap(_ []string, signalCh chan os.Signal) int {
 	}
 
 	deps := proxyhttp.RouterDeps{
-		Config:        cfg,
-		Logger:        log,
-		Metrics:       reg,
-		Tracer:        tracer,
-		Validator:     validator,
-		AgentVerifier: agentVerifier,
-		Limiter:       limiter,
-		Health:        healthSrv,
+		Config:           cfg,
+		Logger:           log,
+		Metrics:          reg,
+		Tracer:           tracer,
+		Validator:        validator,
+		AgentVerifier:    agentVerifier,
+		Limiter:          limiter,
+		Health:           healthSrv,
+		ProviderRegistry: provider.NewRegistry(),
 	}
 	server := newHTTPServer(deps)
 	return runWithShutdown(shutdownOpts{

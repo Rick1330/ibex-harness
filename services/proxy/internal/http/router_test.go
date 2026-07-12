@@ -11,6 +11,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/healthcheck"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/metrics"
+	"github.com/Rick1330/ibex-harness/packages/provider"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
 	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
@@ -47,14 +48,15 @@ func newTestRouter(cfg config.Config, validator auth.TokenValidator, limiter rat
 		agentVerifier = passAgentVerifier{}
 	}
 	return NewRouter(RouterDeps{
-		Config:        cfg,
-		Logger:        logger.Discard("proxy"),
-		Metrics:       metrics.NewProxy("test"),
-		Tracer:        telemetry.NoopTracer("proxy"),
-		Validator:     validator,
-		AgentVerifier: agentVerifier,
-		Limiter:       limiter,
-		Health:        testHealthServer(),
+		Config:           cfg,
+		Logger:           logger.Discard("proxy"),
+		Metrics:          metrics.NewProxy("test"),
+		Tracer:           telemetry.NoopTracer("proxy"),
+		Validator:        validator,
+		AgentVerifier:    agentVerifier,
+		Limiter:          limiter,
+		Health:           testHealthServer(),
+		ProviderRegistry: provider.NewRegistry(),
 	})
 }
 

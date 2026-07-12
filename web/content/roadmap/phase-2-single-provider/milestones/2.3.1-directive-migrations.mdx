@@ -16,7 +16,7 @@ fullTitle: "Milestone 2.3.1 — Directive Schema Migrations (`directives` + `dir
 **Goal:** [2.3 — Directive resolution and prompt injection](/roadmap/phase-2-single-provider/goals#goal-23-directive-resolution-and-prompt-injection)  
 **Phase:** 2 — Single Provider End-to-End  
 **Estimated effort:** 2 days  
-**ADR required:** ADR-0027 — Directive versioning strategy
+**ADR required:** ADR-0030 — Directive versioning strategy
 
 ---
 
@@ -113,6 +113,6 @@ CREATE TRIGGER directives_updated_at
 - [ ] RLS enforced on both tables
 - [ ] `directive_versions.content` has ≤ 32KB constraint
 - [ ] `active_version_id` FK validated successfully
-- [ ] ADR-0027 written documenting immutable versioning strategy
+- [ ] ADR-0030 written documenting immutable versioning strategy
 
 ---

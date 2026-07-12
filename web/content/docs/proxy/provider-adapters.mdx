@@ -3,10 +3,10 @@ title: Provider adapters
 description: Pluggable adapters for OpenAI-compatible and other LLM providers.
 ---
 
-Provider adapters translate normalized IBEX chat requests into upstream LLM API calls and stream responses back to clients. Phase 1 ships the adapter **interface** and registry skeleton only — no adapter is registered at runtime, so every valid chat request stops with `501 PROVIDER_NOT_CONFIGURED`.
+Provider adapters translate normalized IBEX chat requests into upstream LLM API calls and stream responses back to clients. Phase 1 validates and authenticates requests only — no adapter is registered at runtime, so every valid chat request stops with `501 PROVIDER_NOT_CONFIGURED`.
 
-<Callout type="experimental" title="Phase 2 milestone">
-  The first OpenAI adapter lands in milestone [2.1.1 Provider interface and registry](/roadmap/phase-2-single-provider/milestones/2.1.1-provider-interface-and-registry), blocked until Phase 1.5 docs launch completes.
+<Callout type="info" title="Phase 2 progress">
+  Milestone [2.1.1 Provider interface and registry](/roadmap/phase-2-single-provider/milestones/2.1.1-provider-interface-and-registry) ships `packages/provider` (interface + registry) per [ADR-0025](/docs/adr/0025-llm-provider-abstraction). The first OpenAI adapter lands in milestone **2.1.2**.
 </Callout>
 
 ## Why adapters exist
