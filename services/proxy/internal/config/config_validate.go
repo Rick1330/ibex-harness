@@ -16,7 +16,23 @@ func (c Config) Validate() error {
 	if err := c.validateHTTPHeaders(); err != nil {
 		return err
 	}
-	return c.validateRateLimit()
+	if err := c.validateRateLimit(); err != nil {
+		return err
+	}
+	return c.validateLLMConfig()
+}
+
+func (c Config) validateLLMConfig() error {
+	mode := strings.ToLower(strings.TrimSpace(c.LLMMode))
+	switch mode {
+	case "mock", "live":
+	default:
+		return fmt.Errorf("IBEX_LLM_MODE must be mock or live")
+	}
+	if mode == "live" && strings.TrimSpace(c.OpenAI.APIKey) == "" {
+		return fmt.Errorf("OPENAI_API_KEY is required when IBEX_LLM_MODE=live")
+	}
+	return nil
 }
 
 func (c Config) validateEnvironment() error {

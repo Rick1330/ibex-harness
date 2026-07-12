@@ -139,6 +139,7 @@ type chatCompletionHandler struct {
 	log         *logger.Logger
 	docsBase    string
 	providerReg *provider.Registry
+	metrics     *metrics.ProxyRegistry
 }
 
 func (h chatCompletionHandler) serve(w http.ResponseWriter, r *http.Request) {
@@ -163,11 +164,18 @@ func (h chatCompletionHandler) serve(w http.ResponseWriter, r *http.Request) {
 		)
 	}
 
-	if h.providerMissing(w, parsed.Model, requestID) {
+	if parsed.Stream {
+		writeStreamingNotSupported(w, requestID, h.docsBase)
 		return
 	}
 
-	writeProviderNotConfigured(w, requestID, h.docsBase, "Phase 2 milestone required for upstream calls")
+	prov, err := h.providerReg.For(parsed.Model)
+	if errors.Is(err, provider.ErrNoProviderForModel) {
+		writeProviderNotConfigured(w, requestID, h.docsBase, "No provider registered for model "+parsed.Model)
+		return
+	}
+
+	h.forwardChatCompletion(w, r, parsed, prov, requestID)
 }
 
 // parseAndValidateChatRequest parses and validates the chat body.

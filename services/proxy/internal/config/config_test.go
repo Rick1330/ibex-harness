@@ -88,6 +88,14 @@ func TestValidate_rejectsInvalidConfig(t *testing.T) {
 				c.RateLimit.OrgOverrides = map[uuid.UUID]int{orgID: 0}
 			},
 		},
+		{
+			name:   "live mode missing openai key",
+			mutate: func(c *Config) { c.LLMMode = "live"; c.OpenAI.APIKey = "" },
+		},
+		{
+			name:   "invalid llm mode",
+			mutate: func(c *Config) { c.LLMMode = "invalid" },
+		},
 	}
 
 	for _, tc := range tests {

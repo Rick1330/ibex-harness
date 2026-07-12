@@ -26,6 +26,12 @@ type envConfig struct {
 	RateLimitDefaultRPM   int               `env:"IBEX_RATE_LIMIT_DEFAULT_RPM"`
 	RateLimitOrgOverrides string            `env:"IBEX_RATE_LIMIT_ORG_OVERRIDES"`
 	ShutdownTimeoutRaw    string            `env:"IBEX_SHUTDOWN_TIMEOUT"`
+	LLMMode               string            `env:"IBEX_LLM_MODE" envDefault:"mock"`
+	OpenAIAPIKey          ibexconfig.Secret `env:"OPENAI_API_KEY" secret:"true"`
+	OpenAIBaseURL         string            `env:"OPENAI_BASE_URL" envDefault:"https://api.openai.com/v1"`
+	OpenAIRequestTimeout  time.Duration     `env:"OPENAI_REQUEST_TIMEOUT"`
+	OpenAIMaxRetries      int               `env:"OPENAI_MAX_RETRIES"`
+	OpenAIRetryBaseDelay  time.Duration     `env:"OPENAI_RETRY_BASE_DELAY"`
 }
 
 func loadFromEnv() (Config, error) {
@@ -46,6 +52,16 @@ func loadFromEnv() (Config, error) {
 	return finalizeProxyConfig(cfg, envCfg)
 }
 
+func openAIConfigFromEnv(envCfg envConfig) OpenAIConfig {
+	return OpenAIConfig{
+		APIKey:         envCfg.OpenAIAPIKey.String(),
+		BaseURL:        envCfg.OpenAIBaseURL,
+		RequestTimeout: envCfg.OpenAIRequestTimeout,
+		MaxRetries:     envCfg.OpenAIMaxRetries,
+		RetryBaseDelay: envCfg.OpenAIRetryBaseDelay,
+	}
+}
+
 func baseProxyConfig(envCfg envConfig, level slog.Level) Config {
 	return Config{
 		Environment:     envCfg.Environment,
@@ -61,6 +77,8 @@ func baseProxyConfig(envCfg envConfig, level slog.Level) Config {
 			DefaultRPM:   defaultRateLimitRPM,
 			OrgOverrides: map[uuid.UUID]int{},
 		},
+		LLMMode: strings.TrimSpace(envCfg.LLMMode),
+		OpenAI:  openAIConfigFromEnv(envCfg),
 	}
 }
 

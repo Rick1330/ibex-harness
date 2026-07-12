@@ -15,6 +15,7 @@ import (
 	proxyhttp "github.com/Rick1330/ibex-harness/services/proxy/internal/http"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/trace"
 )
 
 func TestRun_InvalidConfigReturns1(t *testing.T) {
@@ -137,7 +138,7 @@ func TestRun_InvalidRedisURLReturns1(t *testing.T) {
 func TestRun_ProviderRegistryInitFailureReturns1(t *testing.T) {
 	orig := providerRegistryInit
 	t.Cleanup(func() { providerRegistryInit = orig })
-	providerRegistryInit = func(...provider.Provider) (*provider.Registry, error) {
+	providerRegistryInit = func(_ config.Config, _ *logger.Logger, _ trace.Tracer, _ *ibexmetrics.ProxyRegistry) (*provider.Registry, error) {
 		return nil, errors.New("registry init failed")
 	}
 	t.Setenv("IBEX_ENV", "development")

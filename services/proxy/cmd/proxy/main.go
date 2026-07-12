@@ -24,6 +24,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
+	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -37,7 +38,11 @@ func run(args []string) int {
 }
 
 // providerRegistryInit is overridden in tests to simulate startup registry failures.
-var providerRegistryInit = provider.NewRegistry
+var providerRegistryInit = defaultProviderRegistryInit
+
+func defaultProviderRegistryInit(cfg config.Config, log *logger.Logger, tracer trace.Tracer, reg *ibexmetrics.ProxyRegistry) (*provider.Registry, error) {
+	return buildProviderRegistry(cfg, log, tracer, reg)
+}
 
 func runBootstrap(_ []string, signalCh chan os.Signal) int {
 	cfg, err := config.Load()
@@ -76,7 +81,7 @@ func runBootstrap(_ []string, signalCh chan os.Signal) int {
 		},
 	}
 
-	providerReg, err := providerRegistryInit()
+	providerReg, err := providerRegistryInit(cfg, log, tracer, reg)
 	if err != nil {
 		log.ErrorCtx(context.Background(), "provider registry init failed", "error", err)
 		return 1
