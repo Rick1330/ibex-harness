@@ -3,6 +3,7 @@ package provider
 import (
 	"errors"
 	"fmt"
+	"time"
 )
 
 // ErrNoProviderForModel is returned when no registered provider supports a model.
@@ -17,6 +18,7 @@ type ProviderError struct {
 	StatusCode     int
 	ProviderBody   []byte
 	ProviderErrMsg string
+	RetryAfter     time.Duration
 }
 
 // Error returns a redacted, caller-safe message: provider name, HTTP status, and

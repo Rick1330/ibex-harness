@@ -32,6 +32,8 @@ func TestHTTPStatus_allRegisteredCodes(t *testing.T) {
 		{apierror.CodeInternalError, http.StatusInternalServerError},
 		{apierror.CodeServiceDegraded, http.StatusServiceUnavailable},
 		{apierror.CodeAuthUnavailable, http.StatusServiceUnavailable},
+		{apierror.CodeProviderUnavailable, http.StatusServiceUnavailable},
+		{apierror.CodeProviderTimeout, http.StatusGatewayTimeout},
 	}
 	for _, tc := range cases {
 		if got := apierror.HTTPStatus(tc.code); got != tc.status {
@@ -72,6 +74,8 @@ func TestGRPCCode_allRegisteredCodes(t *testing.T) {
 		{apierror.CodeInternalError, codes.Internal},
 		{apierror.CodeServiceDegraded, codes.Unavailable},
 		{apierror.CodeAuthUnavailable, codes.Unavailable},
+		{apierror.CodeProviderUnavailable, codes.Unavailable},
+		{apierror.CodeProviderTimeout, codes.DeadlineExceeded},
 	}
 	for _, tc := range cases {
 		if got := apierror.GRPCCode(tc.code); got != tc.grpc {

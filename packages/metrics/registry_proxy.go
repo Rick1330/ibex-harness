@@ -14,6 +14,8 @@ type ProxyRegistry struct {
 	activeConnections    prometheus.Gauge
 	rateLimitedTotal     *prometheus.CounterVec
 	rateLimitRedisErrors prometheus.Counter
+	providerRequests     *prometheus.CounterVec
+	providerRetries      *prometheus.CounterVec
 	processUp            prometheus.Gauge
 }
 
@@ -52,6 +54,16 @@ func (r *ProxyRegistry) register(serviceName string) {
 		Help: "Redis failures during rate limiting.",
 	})
 
+	r.providerRequests = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "ibex_proxy_provider_requests_total",
+		Help: "Upstream LLM provider HTTP outcomes.",
+	}, []string{"provider", "status_class"})
+
+	r.providerRetries = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "ibex_proxy_provider_retries_total",
+		Help: "Upstream LLM provider retry attempts.",
+	}, []string{"provider"})
+
 	r.processUp = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name:        "ibex_process_up",
 		Help:        "1 if the service process is running.",
@@ -64,6 +76,8 @@ func (r *ProxyRegistry) register(serviceName string) {
 		r.activeConnections,
 		r.rateLimitedTotal,
 		r.rateLimitRedisErrors,
+		r.providerRequests,
+		r.providerRetries,
 		r.processUp,
 	)
 	r.processUp.Set(1)
@@ -103,6 +117,16 @@ func (r *ProxyRegistry) IncRateLimitDenied() {
 // IncRateLimitRedisError records a Redis failure during rate limiting.
 func (r *ProxyRegistry) IncRateLimitRedisError() {
 	r.rateLimitRedisErrors.Inc()
+}
+
+// IncProviderRequest records an upstream provider HTTP outcome.
+func (r *ProxyRegistry) IncProviderRequest(provider, statusClass string) {
+	r.providerRequests.WithLabelValues(provider, statusClass).Inc()
+}
+
+// IncProviderRetry records an upstream provider retry attempt.
+func (r *ProxyRegistry) IncProviderRetry(provider string) {
+	r.providerRetries.WithLabelValues(provider).Inc()
 }
 
 func mustRegisterAll(reg prometheus.Registerer, collectors ...prometheus.Collector) {

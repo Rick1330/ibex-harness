@@ -41,6 +41,8 @@ var httpStatusByCode = map[Code]int{
 	CodeInternalError:           http.StatusInternalServerError,
 	CodeServiceDegraded:         http.StatusServiceUnavailable,
 	CodeAuthUnavailable:         http.StatusServiceUnavailable,
+	CodeProviderUnavailable:     http.StatusServiceUnavailable,
+	CodeProviderTimeout:         http.StatusGatewayTimeout,
 }
 
 var grpcCodeByCode = map[Code]codes.Code{
@@ -61,4 +63,6 @@ var grpcCodeByCode = map[Code]codes.Code{
 	CodeInternalError:           codes.Internal,
 	CodeServiceDegraded:         codes.Unavailable,
 	CodeAuthUnavailable:         codes.Unavailable,
+	CodeProviderUnavailable:     codes.Unavailable,
+	CodeProviderTimeout:         codes.DeadlineExceeded,
 }

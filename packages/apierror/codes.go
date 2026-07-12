@@ -44,4 +44,8 @@ const (
 	CodeServiceDegraded Code = "SERVICE_DEGRADED"
 	// CodeAuthUnavailable tells clients the auth service is unreachable; retry later.
 	CodeAuthUnavailable Code = "AUTH_UNAVAILABLE"
+	// CodeProviderUnavailable tells clients the upstream LLM provider is unreachable or errored.
+	CodeProviderUnavailable Code = "PROVIDER_UNAVAILABLE"
+	// CodeProviderTimeout tells clients the upstream LLM provider exceeded its deadline.
+	CodeProviderTimeout Code = "PROVIDER_TIMEOUT"
 )
