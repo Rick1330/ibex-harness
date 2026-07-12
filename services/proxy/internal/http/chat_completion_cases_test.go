@@ -22,7 +22,7 @@ func chatCompletionCases() []chatCompletionCase {
 		{
 			name: "valid JSON returns 501", validator: defaultChatValidator(), cfg: chatTestConfig(),
 			req: chatRequestOpts{
-				body: `{"model":"gpt-4","messages":[{"role":"user","content":"hi"}]}`,
+				body: `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`,
 				auth: true, agentID: testChatAgentID,
 			},
 			wantStatus: http.StatusNotImplemented,
@@ -42,7 +42,7 @@ func chatCompletionCases() []chatCompletionCase {
 		{
 			name: "missing agent ID returns 400", validator: defaultChatValidator(), cfg: chatTestConfig(),
 			req: chatRequestOpts{
-				body: `{"model":"gpt-4","messages":[{"role":"user","content":"hi"}]}`,
+				body: `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`,
 				auth: true,
 			},
 			wantStatus: http.StatusBadRequest,
@@ -56,7 +56,7 @@ func chatCompletionCases() []chatCompletionCase {
 		{
 			name: "unsupported media type returns 415", validator: defaultChatValidator(), cfg: chatTestConfig(),
 			req: chatRequestOpts{
-				body: `{"model":"gpt-4","messages":[{"role":"user","content":"hi"}]}`,
+				body: `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`,
 				auth: true, contentType: "text/plain", agentID: testChatAgentID,
 			},
 			wantStatus: http.StatusUnsupportedMediaType,
@@ -71,7 +71,7 @@ func chatCompletionCases() []chatCompletionCase {
 			name: "body too large returns 413", validator: defaultChatValidator(),
 			cfg: chatTestConfigSmallBody(),
 			req: chatRequestOpts{
-				body:    `{"model":"gpt-4","messages":[{"role":"user","content":"this body is definitely too large"}]}`,
+				body:    `{"model":"gpt-4o","messages":[{"role":"user","content":"this body is definitely too large"}]}`,
 				auth:    true,
 				agentID: testChatAgentID,
 			},

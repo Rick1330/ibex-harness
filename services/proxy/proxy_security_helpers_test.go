@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	minimalChatBody         = `{"model":"gpt-4","messages":[{"role":"user","content":"hi"}]}`
+	minimalChatBody         = `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
 	rateLimitBurstRPM       = int64(5)
 	timingParityThresholdMs = 50
 	defaultRevocationSLAMs  = 300

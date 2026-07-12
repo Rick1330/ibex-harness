@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Rick1330/ibex-harness/packages/provider"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/validation"
 )
 
@@ -30,7 +31,7 @@ func buildChatCases(fx proxyAuthFixture) []chatCase {
 		{
 			name: "chat stub with permission", bearer: fx.chatBearer, agentID: fx.agentA,
 			contentType: "application/json",
-			body:        `{"model":"gpt-4","messages":[{"role":"user","content":"hi"}]}`,
+			body:        `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`,
 			wantStatus:  http.StatusNotImplemented, wantBodyParts: []string{"PROVIDER_NOT_CONFIGURED"}, checkHeaders: true,
 		},
 		{
@@ -46,7 +47,7 @@ func buildChatCases(fx proxyAuthFixture) []chatCase {
 		{
 			name: "chat missing agent header", bearer: fx.chatBearer,
 			contentType: "application/json",
-			body:        `{"model":"gpt-4","messages":[{"role":"user","content":"hi"}]}`,
+			body:        `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`,
 			wantStatus:  http.StatusBadRequest, wantBodyParts: []string{"MISSING_AGENT_ID"},
 		},
 		{
@@ -86,6 +87,16 @@ func TestProxyAuthIntegration_Chat(t *testing.T) {
 			runChatCase(t, fx, tc)
 		})
 	}
+}
+
+func TestProxyAuthIntegration_ChatForwardsWithMockProvider(t *testing.T) {
+	fx := setupProxyAuthFixtureWithProviders(t, []provider.Provider{mockForwardingProvider{}})
+	runChatCase(t, fx, chatCase{
+		name: "chat forwards with mock provider", bearer: fx.chatBearer, agentID: fx.agentA,
+		contentType: "application/json",
+		body:        `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`,
+		wantStatus:  http.StatusOK, wantBodyParts: []string{"assistant"}, checkHeaders: true,
+	})
 }
 
 func TestProxyAuthIntegration_ChatBodyTooLarge(t *testing.T) {

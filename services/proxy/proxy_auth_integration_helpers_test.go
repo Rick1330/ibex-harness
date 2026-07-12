@@ -49,6 +49,10 @@ type proxyAuthFixture struct {
 }
 
 func setupProxyAuthFixture(t *testing.T) proxyAuthFixture {
+	return setupProxyAuthFixtureWithProviders(t, nil)
+}
+
+func setupProxyAuthFixtureWithProviders(t *testing.T, providers []provider.Provider) proxyAuthFixture {
 	t.Helper()
 	dsn, cleanup := testutil.SetupPostgres(t)
 	t.Cleanup(cleanup)
@@ -72,7 +76,7 @@ func setupProxyAuthFixture(t *testing.T) proxyAuthFixture {
 	orgBBearer, _ := testutil.SeedToken(t, db, orgB, 42)
 	lowPermsBearer, _ := testutil.SeedToken(t, db, orgA, permissions.ReadOnly)
 
-	srv := startProxyServer(t, authFx.Addr, proxyServerOpts{})
+	srv := startProxyServer(t, authFx.Addr, proxyServerOpts{providers: providers})
 	t.Cleanup(srv.Close)
 
 	return proxyAuthFixture{
@@ -108,6 +112,7 @@ type redisFixture struct {
 type proxyServerOpts struct {
 	defaultRPM   int64
 	orgOverrides map[uuid.UUID]int64
+	providers    []provider.Provider
 }
 
 func setupSecurityTestEnv(t *testing.T, srvOpts proxyServerOpts) securityTestEnv {
@@ -196,7 +201,7 @@ func startProxyServerRedis(t *testing.T, authAddr string, srvOpts proxyServerOpt
 		DefaultRPM:   defaultRPM,
 		OrgOverrides: orgOverrides,
 	})
-	providerReg, err := provider.NewRegistry()
+	providerReg, err := provider.NewRegistry(srvOpts.providers...)
 	if err != nil {
 		t.Fatalf("provider registry: %v", err)
 	}

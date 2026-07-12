@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -22,10 +23,18 @@ import (
 type stubLLMProvider struct {
 	name   string
 	models []string
+	body   string
 }
 
 func (s stubLLMProvider) Complete(_ context.Context, _ provider.Request) (provider.Response, error) {
-	return provider.Response{}, nil
+	body := s.body
+	if body == "" {
+		body = `{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`
+	}
+	return provider.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader(body)),
+	}, nil
 }
 
 func (s stubLLMProvider) Name() string { return s.name }
@@ -53,9 +62,12 @@ func TestUnit_NewRouter_nilProviderRegistryUsesEmptyRegistry(t *testing.T) {
 	if rec.Code != http.StatusNotImplemented {
 		t.Fatalf("status: %d body=%s", rec.Code, rec.Body.String())
 	}
+	if !strings.Contains(rec.Body.String(), string(apierror.CodeProviderNotConfigured)) {
+		t.Fatalf("body: %s", rec.Body.String())
+	}
 }
 
-func TestUnit_ChatCompletions_registeredProviderReturns501UntilForwarding(t *testing.T) {
+func TestUnit_ChatCompletions_registeredProviderForwardsResponse(t *testing.T) {
 	t.Parallel()
 	reg, err := provider.NewRegistry(stubLLMProvider{name: "openai", models: []string{"gpt-4o"}})
 	if err != nil {
@@ -79,14 +91,11 @@ func TestUnit_ChatCompletions_registeredProviderReturns501UntilForwarding(t *tes
 		auth:    true,
 		agentID: testChatAgentID,
 	})
-	if rec.Code != http.StatusNotImplemented {
+	if rec.Code != http.StatusOK {
 		t.Fatalf("status: %d body=%s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), string(apierror.CodeProviderNotConfigured)) {
+	if !strings.Contains(rec.Body.String(), "assistant") {
 		t.Fatalf("body: %s", rec.Body.String())
-	}
-	if !strings.Contains(rec.Body.String(), "Phase 2 milestone required for upstream calls") {
-		t.Fatalf("expected forwarding stub detail, body: %s", rec.Body.String())
 	}
 }
 
