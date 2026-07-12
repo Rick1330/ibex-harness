@@ -77,13 +77,13 @@ Final launch milestone before Phase 2.1.1 unblocks.
 | `web/src/components/landing/*` | Add | Video, ASCII, reveal |
 | `web/src/lib/site-seo.ts` | Modify | Apex canonical URL |
 | Ops runbook (private) | Add | Apex DNS attach |
-| `.github/scripts/docs-smoke.sh` | Modify | `/` landing check |
+| `.github/scripts/web-smoke.sh` | Modify | `/` landing check |
 
 ---
 
 ## Testing Requirements
 
-- **`docs-smoke.sh`**: `/` returns 200 and contains `ibex-landing`
+- **`web-smoke.sh`**: `/` returns 200 and contains `ibex-landing`
 - **Unit**: `site-nav-links` Home href is `/`
 - **`pnpm build:clean`**: static export includes `/`
 
