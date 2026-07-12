@@ -61,6 +61,10 @@ func registerProtectedRoutes(deps protectedRouteDeps) {
 		rateLimit,
 	)
 	deps.mux.Handle("/v1/chat/completions", chatChain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		handleChatCompletions(w, r, deps.logger, deps.docsBase, deps.providerRegistry)
+		handleChatCompletions(w, r, chatCompletionHandler{
+			log:         deps.logger,
+			docsBase:    deps.docsBase,
+			providerReg: deps.providerRegistry,
+		})
 	})))
 }

@@ -13,8 +13,10 @@ func TestUnit_ProviderError_Error(t *testing.T) {
 		ProviderBody:   []byte(`{"error":{"message":"secret details"}}`),
 		ProviderErrMsg: "rate limit exceeded",
 	}
+
 	got := err.Error()
 	want := "provider openai returned 429: rate limit exceeded"
+
 	if got != want {
 		t.Fatalf("Error() = %q, want %q", got, want)
 	}
