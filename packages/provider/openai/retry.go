@@ -20,7 +20,7 @@ type attemptResult struct {
 
 func (c *Client) executeWithRetry(ctx context.Context, span trace.Span, url string, body []byte) (provider.Response, error) {
 	var lastErr error
-	for attempt := 0; attempt <= c.cfg.MaxRetries; attempt++ {
+	for attempt := 0; attempt <= c.cfg.maxRetries(); attempt++ {
 		if attempt > 0 {
 			c.metrics.IncProviderRetry(c.Name())
 			if err := c.waitBeforeRetry(ctx, attempt, lastErr); err != nil {
@@ -50,7 +50,7 @@ func (c *Client) tryOnce(ctx context.Context, url string, body []byte, attempt i
 	resp, err := c.doRequest(ctx, url, body)
 	if err != nil {
 		c.metrics.IncProviderRequest(c.Name(), "error")
-		retry := isRetryableTransport(err) && attempt < c.cfg.MaxRetries
+		retry := isRetryableTransport(err) && attempt < c.cfg.maxRetries()
 		return attemptResult{err: err, retry: retry}
 	}
 
@@ -67,7 +67,7 @@ func (c *Client) tryOnce(ctx context.Context, url string, body []byte, attempt i
 
 	provErr := readProviderError(c.Name(), resp)
 	_ = resp.Body.Close()
-	retry := isRetryableStatus(resp.StatusCode) && attempt < c.cfg.MaxRetries
+	retry := isRetryableStatus(resp.StatusCode) && attempt < c.cfg.maxRetries()
 	return attemptResult{err: provErr, retry: retry, statusCode: resp.StatusCode}
 }
 

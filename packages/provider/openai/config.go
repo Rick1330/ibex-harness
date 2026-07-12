@@ -15,11 +15,12 @@ type Config struct {
 	APIKey         string
 	BaseURL        string
 	Timeout        time.Duration
-	MaxRetries     int
+	MaxRetries     *int
 	RetryBaseDelay time.Duration
 }
 
 // ApplyDefaults fills zero-valued fields with production defaults.
+// MaxRetries nil applies defaultMaxRetries; an explicit pointer to 0 disables retries.
 func (c *Config) ApplyDefaults() {
 	if c.BaseURL == "" {
 		c.BaseURL = defaultBaseURL
@@ -27,13 +28,23 @@ func (c *Config) ApplyDefaults() {
 	if c.Timeout <= 0 {
 		c.Timeout = defaultRequestTimeout
 	}
-	if c.MaxRetries < 0 {
-		c.MaxRetries = 0
-	}
-	if c.MaxRetries == 0 {
-		c.MaxRetries = defaultMaxRetries
+	if c.MaxRetries == nil {
+		c.MaxRetries = intPtr(defaultMaxRetries)
+	} else if *c.MaxRetries < 0 {
+		c.MaxRetries = intPtr(0)
 	}
 	if c.RetryBaseDelay <= 0 {
 		c.RetryBaseDelay = defaultRetryBaseDelay
 	}
+}
+
+func (c Config) maxRetries() int {
+	if c.MaxRetries == nil {
+		return defaultMaxRetries
+	}
+	return *c.MaxRetries
+}
+
+func intPtr(v int) *int {
+	return &v
 }

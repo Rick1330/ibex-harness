@@ -36,7 +36,10 @@ func TestSecurity_SEC5_3_FullPermissionsProceeds(t *testing.T) {
 		defaultRPM: 60,
 		providers:  []provider.Provider{mockForwardingProvider{}},
 	})
-	chatToken, _ := testutil.SeedToken(t, env.db, env.orgA.OrgID, permissions.ProxyChatCompletion)
+	chatToken, err := testutil.SeedToken(t, env.db, env.orgA.OrgID, permissions.ProxyChatCompletion)
+	if err != nil {
+		t.Fatalf("SeedToken: %v", err)
+	}
 	resp, body := chatPOST(t, chatRequestOpts{
 		srvURL: env.proxy.URL, bearer: chatToken, agentID: env.orgA.AgentID,
 		contentType: "application/json", body: minimalChatBody,

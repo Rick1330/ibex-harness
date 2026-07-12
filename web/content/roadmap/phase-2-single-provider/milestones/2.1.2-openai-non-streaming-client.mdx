@@ -98,7 +98,7 @@ type Client struct {
 
 // New constructs an OpenAI Client with a shared http.Client (connection pooling).
 // Call once at service startup; the Client is safe for concurrent use.
-func New(cfg Config, log *logger.Logger, tracer trace.Tracer) *Client
+func New(cfg Config, log *logger.Logger, tracer trace.Tracer, metrics Metrics) *Client
 
 func (c *Client) Name() string          { return "openai" }
 func (c *Client) SupportedModels() []string {
@@ -127,12 +127,11 @@ func (c *Client) SupportedModels() []string {
 
 ```go
 // toOpenAIRequest translates a provider.Request to the OpenAI chat completions format.
-// Directive injection: if req.SystemDirective is set, it is prepended as the first
-// system message. Existing system messages follow it.
-func toOpenAIRequest(req provider.Request) openAIRequest
+// Directive injection is deferred to milestone 2.3.3; see ADR-0025.
+func toOpenAIRequest(req provider.Request) (openAIRequest, error)
 
 // openAIRequest mirrors the OpenAI chat completions request schema.
-// Only fields supported in Phase 2 are included; PassthroughFields are merged in.
+// PassthroughFields merge permitted client fields; model/messages/stream cannot be overridden.
 type openAIRequest struct {
     Model       string           `json:"model"`
     Messages    []openAIMessage  `json:"messages"`
@@ -177,14 +176,14 @@ All tests use a mock HTTP server (`httptest.NewServer`) — no real OpenAI API c
 
 ## Acceptance Criteria
 
-- [ ] `packages/provider/openai.Client` implements `packages/provider.Provider`
-- [ ] Non-streaming requests return correct provider response
-- [ ] Directive is injected as first system message when set
-- [ ] Retry policy retries on 429/5xx with exponential backoff + jitter
-- [ ] No retry on 4xx client errors
-- [ ] API key is never logged (enforced by test)
-- [ ] Connection pooling: single shared `http.Client`, not one per request
-- [ ] All provider errors mapped to IBEX error codes before returning to handler
-- [ ] ADR-0026 written and indexed
+- [x] `packages/provider/openai.Client` implements `packages/provider.Provider`
+- [x] Non-streaming requests return correct provider response
+- [ ] Directive is injected as first system message when set (deferred to milestone 2.3.3)
+- [x] Retry policy retries on 429/5xx with exponential backoff + jitter
+- [x] No retry on 4xx client errors
+- [x] API key is never logged (enforced by test)
+- [x] Connection pooling: single shared `http.Client`, not one per request
+- [x] All provider errors mapped to IBEX error codes before returning to handler
+- [x] ADR-0026 written and indexed
 
 ---

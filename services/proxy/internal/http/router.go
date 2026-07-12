@@ -169,12 +169,20 @@ func (h chatCompletionHandler) serve(w http.ResponseWriter, r *http.Request) {
 	}
 
 	prov, err := h.providerReg.For(parsed.Model)
-	if errors.Is(err, provider.ErrNoProviderForModel) {
-		writeProviderNotConfigured(w, requestID, h.docsBase, "No provider registered for model "+parsed.Model)
+	if err != nil {
+		if errors.Is(err, provider.ErrNoProviderForModel) {
+			writeProviderNotConfigured(w, requestID, h.docsBase, "No provider registered for model "+parsed.Model)
+			return
+		}
+		apierror.WriteStatus(w, http.StatusInternalServerError, apierror.CodeServiceDegraded,
+			"Internal error", requestID,
+			apierror.WriteOpts{Detail: "provider registry lookup failed", DocsBase: h.docsBase})
 		return
 	}
 
-	h.forwardChatCompletion(w, r, parsed, prov)
+	h.forwardChatCompletion(chatForwardParams{
+		w: w, r: r, parsed: parsed, prov: prov,
+	})
 }
 
 // parseAndValidateChatRequest parses and validates the chat body.

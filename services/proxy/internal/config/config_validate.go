@@ -72,10 +72,7 @@ func validateTCPPort(port string) error {
 	if err != nil {
 		return fmt.Errorf("%s", errMsgInvalidTCPPort)
 	}
-	if portNum < 1 {
-		return fmt.Errorf("%s", errMsgInvalidTCPPort)
-	}
-	if portNum > 65535 {
+	if portNum < 1 || portNum > 65535 {
 		return fmt.Errorf("%s", errMsgInvalidTCPPort)
 	}
 	return nil

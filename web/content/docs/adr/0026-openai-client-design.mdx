@@ -47,7 +47,7 @@ Single shared `http.Client` per process with connection pooling (`MaxIdleConnsPe
 
 `services/proxy/internal/llm.ToProviderRequest` converts parsed chat bodies to `provider.Request`. OpenAI-specific JSON marshaling stays in `packages/provider/openai`. Directive injection is **not** in this client — see ADR-0025 §5 and milestone 2.3.3.
 
-Unknown top-level JSON fields are **not** forwarded in Phase 2 (parser ignores them). `PassthroughFields` support is deferred.
+Unknown top-level JSON fields from the chat parser are ignored. `provider.Request.PassthroughFields` merges permitted OpenAI fields (for example `top_p`) into the outbound body; `model`, `messages`, and `stream` cannot be overridden.
 
 ### 5) Streaming
 

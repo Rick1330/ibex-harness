@@ -3,6 +3,7 @@ package openai
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,18 +21,36 @@ func TestClient_SupportedModels(t *testing.T) {
 	}
 }
 
-func TestConfig_ApplyDefaults_negativeRetriesClamped(t *testing.T) {
+func TestConfig_ApplyDefaults_nilUsesDefaultRetries(t *testing.T) {
 	t.Parallel()
-	cfg := Config{MaxRetries: -1}
+	cfg := Config{}
 	cfg.ApplyDefaults()
-	if cfg.MaxRetries != defaultMaxRetries {
-		t.Fatalf("max retries: %d", cfg.MaxRetries)
+	if cfg.maxRetries() != defaultMaxRetries {
+		t.Fatalf("max retries: %d", cfg.maxRetries())
+	}
+}
+
+func TestConfig_ApplyDefaults_explicitZeroRetriesPreserved(t *testing.T) {
+	t.Parallel()
+	cfg := Config{MaxRetries: intPtr(0)}
+	cfg.ApplyDefaults()
+	if cfg.maxRetries() != 0 {
+		t.Fatalf("max retries: %d", cfg.maxRetries())
+	}
+}
+
+func TestConfig_ApplyDefaults_negativeRetriesClampedToZero(t *testing.T) {
+	t.Parallel()
+	cfg := Config{MaxRetries: intPtr(-1)}
+	cfg.ApplyDefaults()
+	if cfg.maxRetries() != 0 {
+		t.Fatalf("max retries: %d", cfg.maxRetries())
 	}
 }
 
 func TestToOpenAIRequest_passthroughFields(t *testing.T) {
 	t.Parallel()
-	out, err := toOpenAIRequest(provider.Request{
+	raw, err := marshalOpenAIRequestBody(provider.Request{
 		Model: "gpt-4o",
 		Messages: []provider.Message{
 			{Role: "user", Content: "hi"},
@@ -39,10 +58,37 @@ func TestToOpenAIRequest_passthroughFields(t *testing.T) {
 		PassthroughFields: map[string]any{"top_p": 0.9},
 	})
 	if err != nil {
-		t.Fatalf("toOpenAIRequest: %v", err)
+		t.Fatalf("marshalOpenAIRequestBody: %v", err)
 	}
-	if out.Model != "gpt-4o" {
-		t.Fatalf("model: %q", out.Model)
+	if !strings.Contains(string(raw), `"top_p":0.9`) {
+		t.Fatalf("body: %s", raw)
+	}
+}
+
+func TestToOpenAIRequest_deniesSecurityFieldOverrides(t *testing.T) {
+	t.Parallel()
+	raw, err := marshalOpenAIRequestBody(provider.Request{
+		Model:    "gpt-4o",
+		Messages: []provider.Message{{Role: "user", Content: "hi"}},
+		PassthroughFields: map[string]any{
+			"model":    "evil",
+			"messages": []any{},
+			"stream":   true,
+			"top_p":    0.9,
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshalOpenAIRequestBody: %v", err)
+	}
+	body := string(raw)
+	if !strings.Contains(body, `"model":"gpt-4o"`) {
+		t.Fatalf("model overridden: %s", body)
+	}
+	if strings.Contains(body, `"stream":true`) {
+		t.Fatal("stream must not be overridden by passthrough")
+	}
+	if !strings.Contains(body, `"top_p":0.9`) {
+		t.Fatalf("body: %s", body)
 	}
 }
 

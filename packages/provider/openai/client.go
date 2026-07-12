@@ -84,12 +84,11 @@ func (c *Client) Complete(ctx context.Context, req provider.Request) (provider.R
 }
 
 func (c *Client) marshalRequest(req provider.Request) ([]byte, error) {
-	openAIReq, err := toOpenAIRequest(req)
+	body, err := marshalOpenAIRequestBody(req)
 	if err != nil {
 		return nil, fmt.Errorf("openai request: %w", err)
 	}
-	openAIReq.Stream = req.Stream
-	return json.Marshal(openAIReq)
+	return body, nil
 }
 
 func (c *Client) doRequest(ctx context.Context, url string, body []byte) (*http.Response, error) {
@@ -154,7 +153,9 @@ func isRetryableTransport(err error) bool {
 func (c *Client) waitBeforeRetry(ctx context.Context, attempt int, lastErr error) error {
 	delay := retryDelay(c.cfg.RetryBaseDelay, attempt)
 	if pe, ok := lastErr.(*provider.ProviderError); ok && pe.StatusCode == http.StatusTooManyRequests {
-		if ra := retryAfterFromProvider(pe); ra > 0 {
+		if pe.RetryAfter > 0 {
+			delay = pe.RetryAfter
+		} else if ra := retryAfterFromProvider(pe); ra > 0 {
 			delay = ra
 		}
 	}

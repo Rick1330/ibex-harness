@@ -26,7 +26,7 @@ func TestOpenAIClient_NonStreaming_Success(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer test-key" {
-			t.Fatalf("auth header: %q", r.Header.Get("Authorization"))
+			t.Errorf("auth header: %q", r.Header.Get("Authorization"))
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"id":"cmpl-1","choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3}}`))
@@ -87,7 +87,7 @@ func runRetryStatusCase(t *testing.T, tc retryStatusCase) {
 	t.Cleanup(srv.Close)
 
 	client := testClient(t, srv.URL, "test-key", nil)
-	client.cfg.MaxRetries = 3
+	client.cfg.MaxRetries = intPtr(3)
 	client.cfg.RetryBaseDelay = 1 * time.Millisecond
 
 	_, err := client.Complete(context.Background(), provider.Request{
@@ -110,7 +110,7 @@ func TestOpenAIClient_RetryableTransport_recordsErrorMetricPerAttempt(t *testing
 
 	reg := metrics.NewProxy("test")
 	client := testClient(t, url, "test-key", reg)
-	client.cfg.MaxRetries = 2
+	client.cfg.MaxRetries = intPtr(2)
 
 	_, err := client.Complete(context.Background(), provider.Request{
 		Model:    "gpt-4o",
@@ -197,7 +197,7 @@ func TestOpenAIClient_NonRetryableTransport_recordsSingleErrorMetric(t *testing.
 	t.Parallel()
 	reg := metrics.NewProxy("test")
 	client := testClient(t, "http://127.0.0.1:1", "test-key", reg)
-	client.cfg.MaxRetries = 0
+	client.cfg.MaxRetries = intPtr(0)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -235,7 +235,7 @@ func TestOpenAIClient_APIKeyNotInLogs(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	secret := "sk-secret-key-not-in-logs"
-	client := New(Config{APIKey: secret, BaseURL: srv.URL, Timeout: 5 * time.Second, MaxRetries: 0}, log, telemetry.NoopTracer("openai"), nil)
+	client := New(Config{APIKey: secret, BaseURL: srv.URL, Timeout: 5 * time.Second, MaxRetries: intPtr(0)}, log, telemetry.NoopTracer("openai"), nil)
 	_, err = client.Complete(context.Background(), provider.Request{
 		Model:    "gpt-4o",
 		Messages: []provider.Message{{Role: "user", Content: "hi"}},
@@ -303,7 +303,7 @@ func testClient(t *testing.T, baseURL, apiKey string, reg *metrics.ProxyRegistry
 		APIKey:         apiKey,
 		BaseURL:        baseURL,
 		Timeout:        5 * time.Second,
-		MaxRetries:     3,
+		MaxRetries:     intPtr(3),
 		RetryBaseDelay: 1 * time.Millisecond,
 	}, logger.Discard("openai"), telemetry.NoopTracer("openai"), m)
 }

@@ -19,6 +19,10 @@ type openAIMessage struct {
 	Content string `json:"content"`
 }
 
+var deniedPassthroughKeys = map[string]struct{}{
+	"model": {}, "messages": {}, "stream": {},
+}
+
 func toOpenAIRequest(req provider.Request) (openAIRequest, error) {
 	out := openAIRequest{
 		Model:       req.Model,
@@ -30,26 +34,30 @@ func toOpenAIRequest(req provider.Request) (openAIRequest, error) {
 	for i, msg := range req.Messages {
 		out.Messages[i] = openAIMessage{Role: msg.Role, Content: msg.Content}
 	}
+	return out, nil
+}
+
+func marshalOpenAIRequestBody(req provider.Request) ([]byte, error) {
+	out, err := toOpenAIRequest(req)
+	if err != nil {
+		return nil, err
+	}
 	if len(req.PassthroughFields) == 0 {
-		return out, nil
+		return json.Marshal(out)
 	}
 	raw, err := json.Marshal(out)
 	if err != nil {
-		return openAIRequest{}, err
+		return nil, err
 	}
 	var merged map[string]any
 	if err := json.Unmarshal(raw, &merged); err != nil {
-		return openAIRequest{}, err
+		return nil, err
 	}
 	for k, v := range req.PassthroughFields {
+		if _, denied := deniedPassthroughKeys[k]; denied {
+			continue
+		}
 		merged[k] = v
 	}
-	raw, err = json.Marshal(merged)
-	if err != nil {
-		return openAIRequest{}, err
-	}
-	if err := json.Unmarshal(raw, &out); err != nil {
-		return openAIRequest{}, err
-	}
-	return out, nil
+	return json.Marshal(merged)
 }

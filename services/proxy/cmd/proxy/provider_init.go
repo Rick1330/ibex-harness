@@ -16,11 +16,12 @@ func buildProviderRegistry(cfg config.Config, log *logger.Logger, tracer trace.T
 	if strings.EqualFold(strings.TrimSpace(cfg.LLMMode), "mock") {
 		return provider.NewRegistry()
 	}
+	maxRetries := cfg.OpenAI.MaxRetries
 	client := openai.New(openai.Config{
 		APIKey:         cfg.OpenAI.APIKey,
 		BaseURL:        cfg.OpenAI.BaseURL,
 		Timeout:        cfg.OpenAI.RequestTimeout,
-		MaxRetries:     cfg.OpenAI.MaxRetries,
+		MaxRetries:     &maxRetries,
 		RetryBaseDelay: cfg.OpenAI.RetryBaseDelay,
 	}, log, tracer, reg)
 	out, err := provider.NewRegistry(client)
