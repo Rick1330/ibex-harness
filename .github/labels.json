@@ -1,0 +1,47 @@
+[
+  {
+    "name": "area/go",
+    "color": "0E8A16",
+    "description": "Go services, packages, go.mod"
+  },
+  {
+    "name": "area/web",
+    "color": "5319E7",
+    "description": "Next.js web app, public site, dashboard"
+  },
+  {
+    "name": "area/ci",
+    "color": "FBCA04",
+    "description": "GitHub Actions, workflows, branch protection"
+  },
+  {
+    "name": "area/docs",
+    "color": "0075CA",
+    "description": "Markdown, MDX, roadmap, ADRs"
+  },
+  {
+    "name": "area/benchmarks",
+    "color": "B60205",
+    "description": "Benchmark collection, dashboard, published data"
+  },
+  {
+    "name": "area/infra",
+    "color": "006B75",
+    "description": "Compose, migrations, infra scripts"
+  },
+  {
+    "name": "dependencies",
+    "color": "0366D6",
+    "description": "Dependency updates (Dependabot)"
+  },
+  {
+    "name": "benchmark-data",
+    "color": "C5DEF5",
+    "description": "Automated benchmark data commits"
+  },
+  {
+    "name": "automated",
+    "color": "BFDADC",
+    "description": "Bot-generated commits"
+  }
+]

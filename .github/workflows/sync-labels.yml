@@ -1,0 +1,27 @@
+name: Sync Labels
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/labels.json'
+      - '.github/scripts/sync-github-labels.sh'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    name: sync-labels
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Sync label colors and descriptions
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash .github/scripts/sync-github-labels.sh

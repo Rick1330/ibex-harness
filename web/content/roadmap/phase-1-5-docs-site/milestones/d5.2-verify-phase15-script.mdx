@@ -1,7 +1,7 @@
 ---
 title: "d5.2 Verify Phase15"
-description: "Launch gate (D.6) needs a single script operators run against preview or production to confirm redirects, key pages, 404, OG, and search API — not ad-hoc curl commands. Encodes acceptance criteria from D.2.8, D.2.4, D.2.5 into repeatable smoke."
-summary: "Launch gate (D.6) needs a single script operators run against preview or production to confirm redirects, key pages, 404, OG, and search API — not ad-hoc curl commands. Encodes acceptance criteria from D.2.8, D.2.4, D.2.5 into repeatable smoke."
+description: "Launch gate (D.6) needs a single script operators run against preview or production to confirm key pages, 404, and OG metadata — not ad-hoc curl commands. Encodes acceptance criteria from D.2.8 and D.2.4 into repeatable smoke via web-smoke.sh."
+summary: "Launch gate (D.6) needs a single script operators run against preview or production to confirm key pages, 404, and OG metadata — not ad-hoc curl commands. Encodes acceptance criteria from D.2.8 and D.2.4 into repeatable smoke via web-smoke.sh."
 status: "completed"
 milestoneId: "d5.2"
 goal: "[D.5](/roadmap/phase-1-5-docs-site/goals)"
@@ -25,9 +25,9 @@ Spec detail: [MASTER_BRIEF.md](/roadmap/phase-1-5-docs-site/master-brief) Part D
 
 ## Why This Milestone Exists
 
-Launch gate (D.6) needs a single script operators run against preview or production to confirm redirects, key pages, 404, OG, and search API — not ad-hoc curl commands.
+Launch gate (D.6) needs a single script operators run against preview or production to confirm key pages, 404, and OG metadata — not ad-hoc curl commands.
 
-Encodes acceptance criteria from D.2.8, D.2.4, D.2.5 into repeatable smoke.
+Encodes acceptance criteria from D.2.8 and D.2.4 into repeatable smoke (wraps `.github/scripts/web-smoke.sh`).
 
 Blocks Phase 2.1.1 until `verify_phase15.sh` passes against production.
 
@@ -53,15 +53,15 @@ Blocks Phase 2.1.1 until `verify_phase15.sh` passes against production.
 
 ## Prerequisites
 
-- [D.4.1](/roadmap/phase-1-5-docs-site/milestones/d4.1-vercel-preview-deploys) merged
+- [D.4.2](/roadmap/phase-1-5-docs-site/milestones/d4.2-github-actions-docs-checks) merged (Cloudflare Pages deploy via [`web-deploy.yml`](../../../../../.github/workflows/web-deploy.yml))
 
 ---
 
 ## Deliverables
 
-- `infra/scripts/verify_phase15.sh` per MASTER_BRIEF §D.5.2
-- Checks: root redirect, key pages 200, 404 status, OG PNG, search API
-- `IBEX_DOCS_URL` env override for preview vs production
+- `infra/scripts/verify_phase15.sh` per MASTER_BRIEF §D.5.2 (adapted for unified apex domain)
+- Wraps `.github/scripts/web-smoke.sh` plus key pages, 404, OG PNG checks
+- `IBEX_SITE_URL` env override (fallback: `IBEX_DOCS_URL`, default production)
 
 See MASTER_BRIEF Part D (D.5.2) for full acceptance detail.
 
@@ -77,18 +77,17 @@ See MASTER_BRIEF Part D (D.5.2) for full acceptance detail.
 
 ## Testing Requirements
 
-- **`test_script_root_redirect`**: Script passes redirect check against localhost
 - **`test_script_key_pages_200`**: All listed paths return 200
 - **`test_script_404_status`**: Unknown path returns 404 not 200
 - **`test_script_og_image`**: OG route returns image/png
-- **`test_script_search_api`**: `/api/search?query=auth` succeeds
+- **`test_script_web_smoke`**: Delegates to `.github/scripts/web-smoke.sh` (search index, redirect, landing marker)
 
 ---
 
 ## Acceptance Criteria
 
-- [ ] Script exits 0 against local dev server
-- [ ] Script exits 0 against Vercel preview URL
+- [x] Script exits 0 against local dev server (`IBEX_SITE_URL=http://localhost:3000`)
+- [x] Script exits 0 against production (`https://ibexharness.com`)
 
 ---
 

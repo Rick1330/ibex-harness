@@ -1,7 +1,7 @@
 ---
 title: "IBEX Harness"
-description: "> Single source of truth for designing, building and shipping > `ibexharness.com`. This document supersedes > `BRAND_LANDING_DOCS_DOMAIN_SETUP.md` for everything *docs-site* related. > The landing page is already built in a separate repository > (this Lovable project) and is referenced here only at the boundar"
-summary: "> Single source of truth for designing, building and shipping > `ibexharness.com`. This document supersedes > `BRAND_LANDING_DOCS_DOMAIN_SETUP.md` for everything *docs-site* related. > The landing page is already built in a separate repository > (this Lovable project) and is referenced here only at the boundar"
+description: "> Single source of truth for designing, building and shipping > `ibexharness.com`. This document supersedes > `BRAND_LANDING_DOCS_DOMAIN_SETUP.md` for everything *public web* related. > Part 0 documents the unified monorepo pivot; historical Part I boundary text is retained below for context."
+summary: "> Single source of truth for designing, building and shipping > `ibexharness.com`. This document supersedes > `BRAND_LANDING_DOCS_DOMAIN_SETUP.md` for everything *public web* related. > Part 0 documents the unified monorepo pivot; historical Part I boundary text is retained below for context."
 phase: "phase-1-5-docs-site"
 fullTitle: "IBEX Harness — Docs Site Master Brief"
 ---
@@ -453,7 +453,7 @@ without fighting the framework.
 - [@opennextjs/cloudflare](https://opennext.js.org/cloudflare) bundles Next.js 15 for Workers.
 - Deploy only via `.github/workflows/web-deploy.yml` (not Cloudflare Workers Builds Git).
 - Preview validation: `web-build` CI on PRs + optional `workflow_dispatch` deploy smoke test.
-- Landing site remains on Vercel (`ibexdepo`); docs are a separate Worker.
+- Landing, docs, benchmarks, blog, and releases ship from one Next.js static export in `web/` at `ibexharness.com`; legacy `docs.ibexharness.com` 301s to apex paths.
 
 ---
 
@@ -481,7 +481,7 @@ Each milestone has a **branch name**, **goal**, **deliverables**, and
 **Effort:** 2 hours
 
 **Deliverables**
-- `pnpm-workspace.yaml` with `web` and `packages/*` and `packages/*`.
+- `pnpm-workspace.yaml` with `web` and `packages/*`.
 - `turbo.json` with a `build`, `dev`, `lint`, `typecheck` pipeline.
 - Root `package.json` with workspace scripts:
   `"docs:dev": "turbo dev --filter=docs"`,
@@ -1444,7 +1444,7 @@ be honored on both sides:
    nav has an `ibexharness.com` link → landing.
 3. **Shared domain** — see Part H.
 4. **OG cards** — both sites must produce valid OG cards. Visiting
-   `ibexharness.com` and `ibexharness.com` in a Slack unfurl
+   `ibexharness.com/` and `ibexharness.com/docs/getting-started/introduction` in a Slack unfurl
    side-by-side should clearly show they are the same brand.
 
 That is the entire surface. No code is shared.

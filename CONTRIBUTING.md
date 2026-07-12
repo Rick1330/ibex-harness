@@ -87,6 +87,12 @@ On every PR, [`.github/workflows/labeler.yml`](.github/workflows/labeler.yml) ap
 
 Removed paths drop stale labels (`sync-labels: true`). Labels are informational for reviewers and release notes—not merge gates.
 
+Label colors and descriptions are defined in [`.github/labels.json`](.github/labels.json). Sync to GitHub with:
+
+```bash
+bash .github/scripts/sync-github-labels.sh
+```
+
 ## Local validation (before pushing)
 
 From the repository root:

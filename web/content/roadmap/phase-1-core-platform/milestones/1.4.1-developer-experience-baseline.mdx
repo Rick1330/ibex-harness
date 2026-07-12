@@ -1,7 +1,7 @@
 ---
 title: "1.4.1 Developer Experience"
-description: "`CURRENT_STATE.md` explicitly notes: _\\\"`make db-seed` (dev seed data — future milestone)\\\"_. The README notes `.env.example` files \\\"to be created.\\\" These are not cosmetic issues — they are the difference between a new contributor being productive in 15 minutes versus spending half a day reverse-engineering environment v"
-summary: "`CURRENT_STATE.md` explicitly notes: _\\\"`make db-seed` (dev seed data — future milestone)\\\"_. The README notes `.env.example` files \\\"to be created.\\\" These are not cosmetic issues — they are the difference between a new contributor being productive in 15 minutes versus spending half a day reverse-engineering environment v"
+description: "[current-state](/roadmap/current-state) previously noted: _\\\"`make db-seed` (dev seed data — future milestone)\\\"_. The README notes `.env.example` files \\\"to be created.\\\" These are not cosmetic issues — they are the difference between a new contributor being productive in 15 minutes versus spending half a day reverse-engineering environment v"
+summary: "[current-state](/roadmap/current-state) previously noted: _\\\"`make db-seed` (dev seed data — future milestone)\\\"_. The README notes `.env.example` files \\\"to be created.\\\" These are not cosmetic issues — they are the difference between a new contributor being productive in 15 minutes versus spending half a day reverse-engineering environment v"
 status: "completed"
 milestoneId: "1.4.1"
 goal: "[1.4 — Developer Experience Baseline](/roadmap/phase-1-core-platform/goals#goal-14-developer-experience-baseline)"
@@ -22,7 +22,7 @@ fullTitle: "Milestone 1.4.1 — Developer Experience Baseline: Seed Data, `.env.
 
 ## Why This Milestone Exists
 
-`CURRENT_STATE.md` explicitly notes: _"`make db-seed` (dev seed data — future milestone)"_. The README notes `.env.example` files "to be created." These are not cosmetic issues — they are the difference between a new contributor being productive in 15 minutes versus spending half a day reverse-engineering environment variables from scattered `os.Getenv` calls, manually inserting seed rows, and wondering why every request returns 401.
+[current-state](/roadmap/current-state) previously noted: _"`make db-seed` (dev seed data — future milestone)"_. The README notes `.env.example` files "to be created." These are not cosmetic issues — they are the difference between a new contributor being productive in 15 minutes versus spending half a day reverse-engineering environment variables from scattered `os.Getenv` calls, manually inserting seed rows, and wondering why every request returns 401.
 
 The compounding effect is worse: without seed data, every integration test that requires a valid PAT must either mock auth entirely (which reduces confidence) or insert its own org/user/agent/token before every test run (which is slow and duplicated). A canonical seed script solves both.
 
@@ -397,13 +397,13 @@ Link to `web/engineering/DEVELOPMENT_GUIDE.md` for the full development workflow
 
 ## Acceptance Criteria
 
-- [ ] `make db-seed` runs without error against a clean migrated database
-- [ ] `make db-seed` is idempotent (safe to run twice)
-- [ ] `services/proxy/.env.example` and `services/auth/.env.example` exist and document every env var used in the service
-- [ ] `make dev-smoke` exits 0 when auth and proxy are healthy
-- [ ] `make dev-smoke` detects and reports: 401 on missing token, 400 on missing agent header, 429 on rate limit
-- [ ] README "Getting started" section produces a working local stack in 5 minutes on a fresh clone
-- [ ] `CURRENT_STATE.md` updated to note seed data exists
+- [x] `make db-seed` runs without error against a clean migrated database
+- [x] `make db-seed` is idempotent (safe to run twice)
+- [x] `services/proxy/.env.example` and `services/auth/.env.example` exist and document every env var used in the service
+- [x] `make dev-smoke` exits 0 when auth and proxy are healthy
+- [x] `make dev-smoke` detects and reports: 401 on missing token, 400 on missing agent header, 429 on rate limit
+- [x] README "Getting started" section produces a working local stack in 5 minutes on a fresh clone
+- [x] [current-state](/roadmap/current-state) updated to note seed data exists
 
 ---
 
