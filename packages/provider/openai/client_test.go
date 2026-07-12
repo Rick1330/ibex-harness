@@ -121,10 +121,10 @@ func TestOpenAIClient_RetryableTransport_recordsErrorMetricPerAttempt(t *testing
 	}
 
 	body := scrapeProviderMetrics(t, reg.Gatherer())
-	if got := countProviderMetric(body, "openai", "error"); got != 3 {
+	if got := countPrometheusCounter(body, `ibex_proxy_provider_requests_total{provider="openai",status_class="error"} `); got != 3 {
 		t.Fatalf("provider error attempts: got %d want 3; metrics:\n%s", got, body)
 	}
-	if got := countProviderRetryMetric(body, "openai"); got != 2 {
+	if got := countPrometheusCounter(body, `ibex_proxy_provider_retries_total{provider="openai"} `); got != 2 {
 		t.Fatalf("provider retries: got %d want 2; metrics:\n%s", got, body)
 	}
 }
@@ -211,7 +211,7 @@ func TestOpenAIClient_NonRetryableTransport_recordsSingleErrorMetric(t *testing.
 	}
 
 	body := scrapeProviderMetrics(t, reg.Gatherer())
-	if got := countProviderMetric(body, "openai", "error"); got != 1 {
+	if got := countPrometheusCounter(body, `ibex_proxy_provider_requests_total{provider="openai",status_class="error"} `); got != 1 {
 		t.Fatalf("provider error metric count: got %d want 1; metrics:\n%s", got, body)
 	}
 }
@@ -276,26 +276,7 @@ func scrapeProviderMetrics(t *testing.T, gatherer prometheus.Gatherer) string {
 	return rec.Body.String()
 }
 
-func countProviderMetric(body, provider, statusClass string) int {
-	needle := `ibex_proxy_provider_requests_total{provider="` + provider + `",status_class="` + statusClass + `"} `
-	idx := strings.Index(body, needle)
-	if idx < 0 {
-		return 0
-	}
-	rest := body[idx+len(needle):]
-	end := strings.IndexByte(rest, '\n')
-	if end < 0 {
-		end = len(rest)
-	}
-	val, err := strconv.Atoi(strings.TrimSpace(rest[:end]))
-	if err != nil {
-		return 0
-	}
-	return val
-}
-
-func countProviderRetryMetric(body, provider string) int {
-	needle := `ibex_proxy_provider_retries_total{provider="` + provider + `"} `
+func countPrometheusCounter(body, needle string) int {
 	idx := strings.Index(body, needle)
 	if idx < 0 {
 		return 0
