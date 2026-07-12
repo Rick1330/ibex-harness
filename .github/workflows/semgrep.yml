@@ -12,10 +12,8 @@ on:
         default: false
         type: boolean
 
-permissions:
-  security-events: write
-  contents: read
-  actions: read
+# SonarQube S8264: declare permissions per job, not at workflow scope.
+permissions: {}
 
 concurrency:
   group: semgrep-${{ github.ref }}
@@ -41,6 +39,10 @@ jobs:
   semgrep:
     name: semgrep
     needs: changes
+    permissions:
+      security-events: write
+      contents: read
+      actions: read
     runs-on: ubuntu-latest
     container:
       image: semgrep/semgrep:1.103.0
