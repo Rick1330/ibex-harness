@@ -826,11 +826,38 @@ jobs:
         run: buf generate
       - name: Install golangci-lint
         run: |
-          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b /usr/local/bin v2.8.0
+          GOLANGCI_LINT_VERSION=2.8.0
+          curl -sSfL -o golangci-lint.tar.gz \
+            "https://github.com/golangci/golangci-lint/releases/download/v${GOLANGCI_LINT_VERSION}/golangci-lint-${GOLANGCI_LINT_VERSION}-linux-amd64.tar.gz"
+          tar -xzf golangci-lint.tar.gz -C /usr/local/bin --strip-components=1 \
+            "golangci-lint-${GOLANGCI_LINT_VERSION}-linux-amd64/golangci-lint"
           golangci-lint --version
       - name: Run golangci-lint
         run: |
           golangci-lint run ./packages/... ./services/auth/... ./services/proxy/...
+
+  go-fuzz:
+    name: go-fuzz
+    needs: changes
+    if: needs.changes.outputs.run_go == 'true'
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+      - name: Run Go fuzz smoke (chat request parser)
+        run: go test -fuzz=FuzzParseChatCompletionRequest -fuzztime=30s ./services/proxy/internal/llm/
 
   trivy:
     name: trivy
