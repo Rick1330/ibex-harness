@@ -85,23 +85,28 @@ func TestToOpenAIRequest_deniesSecurityFieldOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshalOpenAIRequestBody: %v", err)
 	}
-	assertJSONBody(t, string(raw),
-		[]string{`"model":"gpt-4o"`, `"max_tokens":100`, `"temperature":0.5`, `"top_p":0.9`},
-		[]string{`"stream":true`, `"max_tokens":9999`, `"temperature":2`},
-	)
-}
-
-func assertJSONBody(t *testing.T, body string, mustContain, mustNotContain []string) {
-	t.Helper()
-	for _, fragment := range mustNotContain {
-		if strings.Contains(body, fragment) {
-			t.Fatalf("forbidden %q in body: %s", fragment, body)
-		}
-	}
-	for _, fragment := range mustContain {
-		if !strings.Contains(body, fragment) {
-			t.Fatalf("missing %q in body: %s", fragment, body)
-		}
+	body := string(raw)
+	for _, tc := range []struct {
+		name      string
+		fragment  string
+		mustExist bool
+	}{
+		{name: "model preserved", fragment: `"model":"gpt-4o"`, mustExist: true},
+		{name: "max_tokens preserved", fragment: `"max_tokens":100`, mustExist: true},
+		{name: "temperature preserved", fragment: `"temperature":0.5`, mustExist: true},
+		{name: "top_p passthrough", fragment: `"top_p":0.9`, mustExist: true},
+		{name: "stream denied", fragment: `"stream":true`, mustExist: false},
+		{name: "max_tokens denied", fragment: `"max_tokens":9999`, mustExist: false},
+		{name: "temperature denied", fragment: `"temperature":2`, mustExist: false},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := strings.Contains(body, tc.fragment)
+			if got != tc.mustExist {
+				t.Fatalf("fragment %q exist=%v body=%s", tc.fragment, got, body)
+			}
+		})
 	}
 }
 
