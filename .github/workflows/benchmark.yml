@@ -37,34 +37,17 @@ jobs:
     permissions:
       contents: read
     outputs:
-      run_benchmarks: ${{ steps.decide.outputs.run_benchmarks }}
+      run_benchmarks: ${{ steps.detect.outputs.benchmarks == 'true' || github.event_name != 'pull_request' }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        if: github.event_name == 'pull_request'
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
-          fetch-depth: 2
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: ${{ (github.event_name == 'push' || github.event_name == 'pull_request') && '2' || '0' }}
           persist-credentials: false
-
-      - name: Decide whether to run benchmarks
-        id: decide
-        run: |
-          if [ "${{ github.event_name }}" != "pull_request" ]; then
-            echo "run_benchmarks=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          patterns='^\.github/workflows/benchmark\.yml$|^benchmarks/|^services/auth/|^services/proxy/|^go\.mod$|^go\.sum$'
-          if git rev-parse HEAD~1 >/dev/null 2>&1; then
-            range='HEAD~1..HEAD'
-          else
-            echo "run_benchmarks=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          if git diff --name-only "$range" | grep -E "$patterns" >/dev/null; then
-            echo "run_benchmarks=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "run_benchmarks=false" >> "$GITHUB_OUTPUT"
-          fi
+      - id: detect
+        uses: ./.github/actions/detect-changes
+        with:
+          fetch-depth: ${{ (github.event_name == 'push' || github.event_name == 'pull_request') && '2' || '0' }}
 
   verify-benchmark-pipeline:
     name: verify-benchmark-pipeline

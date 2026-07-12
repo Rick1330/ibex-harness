@@ -100,7 +100,7 @@ Heavy jobs run only when their area changed. Filter definitions live in [`.githu
 | `workflows` | `.github/workflows/**`, actions, scripts | **`full`** → all areas |
 | `deps` | `go.mod`, `go.sum`, `pnpm-lock.yaml` | **`full`** + `run_security` |
 | `compose` | `infra/compose/**` | `run_compose` |
-| `benchmarks` | `benchmarks/**`, `web/public/benchmarks/**` | `benchmark.yml` workflow paths only |
+| `benchmarks` | `benchmarks/**`, `web/public/benchmarks/**`, `benchmark.yml`, `services/auth/**`, `services/proxy/**`, `go.mod`, `go.sum` | `benchmark.yml` workflow trigger |
 | `docs` | `**/*.md`, `**/*.mdx` | fast `markdownlint` only |
 
 **Cross-cutting rule:** `workflows` or `deps` changes set `full=true` and run Go, web, and security scans. `workflow_dispatch` with `force_full: true` (nightly, manual) runs the full matrix.
@@ -125,7 +125,7 @@ Heavy jobs run only when their area changed. Filter definitions live in [`.githu
 | `services/proxy` Go change | Full Go matrix; no `web-build` | `ci-gate-go` exercises real jobs |
 | `.github/workflows/ci.yml` | Full matrix | All gates exercise real jobs |
 | `pnpm-lock.yaml` only | `web-build`, security scans | Go smokes skipped |
-| Dependabot `go.mod` PR | Go + security | No `web-build` unless lockfile also changes |
+| Dependabot `go.mod` PR | Go + security + `web-build` (`deps` sets `full=true`) | All gates green; `web-build` from deps cross-cut, not from go.mod path alone |
 
 **PR auto-labeler:** [`.github/workflows/labeler.yml`](../../.github/workflows/labeler.yml) applies `area/*`, `dependencies`, and `area/infra` labels from [`.github/labeler.yml`](../../.github/labeler.yml) (`sync-labels: true`).
 

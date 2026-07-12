@@ -33,6 +33,11 @@ deps:
 benchmarks:
   - 'benchmarks/**'
   - 'web/public/benchmarks/**'
+  - '.github/workflows/benchmark.yml'
+  - 'services/auth/**'
+  - 'services/proxy/**'
+  - 'go.mod'
+  - 'go.sum'
 docs:
   - '**/*.md'
   - '**/*.mdx'
