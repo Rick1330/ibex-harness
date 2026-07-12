@@ -85,27 +85,23 @@ func TestToOpenAIRequest_deniesSecurityFieldOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshalOpenAIRequestBody: %v", err)
 	}
-	body := string(raw)
-	if !strings.Contains(body, `"model":"gpt-4o"`) {
-		t.Fatalf("model overridden: %s", body)
+	assertJSONBody(t, string(raw),
+		[]string{`"model":"gpt-4o"`, `"max_tokens":100`, `"temperature":0.5`, `"top_p":0.9`},
+		[]string{`"stream":true`, `"max_tokens":9999`, `"temperature":2`},
+	)
+}
+
+func assertJSONBody(t *testing.T, body string, mustContain, mustNotContain []string) {
+	t.Helper()
+	for _, fragment := range mustNotContain {
+		if strings.Contains(body, fragment) {
+			t.Fatalf("forbidden %q in body: %s", fragment, body)
+		}
 	}
-	if strings.Contains(body, `"stream":true`) {
-		t.Fatal("stream must not be overridden by passthrough")
-	}
-	if strings.Contains(body, `"max_tokens":9999`) {
-		t.Fatal("max_tokens must not be overridden by passthrough")
-	}
-	if strings.Contains(body, `"temperature":2`) {
-		t.Fatal("temperature must not be overridden by passthrough")
-	}
-	if !strings.Contains(body, `"max_tokens":100`) {
-		t.Fatalf("max_tokens missing: %s", body)
-	}
-	if !strings.Contains(body, `"temperature":0.5`) {
-		t.Fatalf("temperature missing: %s", body)
-	}
-	if !strings.Contains(body, `"top_p":0.9`) {
-		t.Fatalf("body: %s", body)
+	for _, fragment := range mustContain {
+		if !strings.Contains(body, fragment) {
+			t.Fatalf("missing %q in body: %s", fragment, body)
+		}
 	}
 }
 
