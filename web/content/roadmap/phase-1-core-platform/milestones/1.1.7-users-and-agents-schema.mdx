@@ -2,7 +2,7 @@
 title: "1.1.7 Users Agents"
 description: "Milestone 1.1.1 intentionally deferred `ibex_core.users` and `ibex_core.agents` to keep the first migration minimal. That deferral was correct. The debt is now due for two reasons. Reason 1 — Referential integrity. `ibex_core.tokens` has nullable `user_id` and `agent_id` columns without foreign key constraints. The"
 summary: "Milestone 1.1.1 intentionally deferred `ibex_core.users` and `ibex_core.agents` to keep the first migration minimal. That deferral was correct. The debt is now due for two reasons. Reason 1 — Referential integrity. `ibex_core.tokens` has nullable `user_id` and `agent_id` columns without foreign key constraints. The"
-status: "planned"
+status: "completed"
 milestoneId: "1.1.7"
 goal: "[1.1 — Persistence and auth data plane](/roadmap/phase-1-core-platform/goals#goal-11-persistence-and-auth-data-plane)"
 estimatedEffort: "3–4 days"
@@ -12,7 +12,7 @@ fullTitle: "Milestone 1.1.7 — Core Domain Schema: `users` and `agents` Migrati
 
 # Milestone 1.1.7 — Core Domain Schema: `users` and `agents` Migrations
 
-**Status:** Planned  
+**Status:** Complete  
 **Goal:** [1.1 — Persistence and auth data plane](/roadmap/phase-1-core-platform/goals#goal-11-persistence-and-auth-data-plane)  
 **Phase:** 1 — Core Platform  
 **Estimated effort:** 3–4 days  
@@ -391,7 +391,7 @@ Write `docs/adr/ADR-0014-core-domain-migration-sequencing.md` covering:
 | `packages/proto/ibex/auth/v1/auth.proto` | Add ValidateAgent RPC |
 | `docs/adr/ADR-0014-core-domain-migration-sequencing.md` | Add |
 | `web/engineering/DATABASE_SCHEMA.md` | Annotate users/agents as "applied via M1.1.7" |
-| `docs/app/content/roadmap/CURRENT_STATE` | Update after merge |
+| `web/content/roadmap/current-state` | Update after merge |
 
 ---
 

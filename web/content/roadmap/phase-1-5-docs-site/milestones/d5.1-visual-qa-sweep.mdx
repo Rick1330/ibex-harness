@@ -2,7 +2,7 @@
 title: "d5.1 Visual QA"
 description: "Incremental PRs can introduce subtle layout regressions (horizontal scroll, overlapping TOC, missing copy buttons) that unit tests miss. Playwright screenshot baselines on representative pages lock Matte Graphite across dark/light before production launch."
 summary: "Incremental PRs can introduce subtle layout regressions (horizontal scroll, overlapping TOC, missing copy buttons) that unit tests miss. Playwright screenshot baselines on representative pages lock Matte Graphite across dark/light before production launch."
-status: "planned"
+status: "completed"
 milestoneId: "d5.1"
 goal: "[D.5](/roadmap/phase-1-5-docs-site/goals)"
 estimatedEffort: "0.5 day"
@@ -12,7 +12,7 @@ fullTitle: "Milestone D.5.1 — Visual QA sweep"
 
 # Milestone D.5.1 — Visual QA sweep
 
-**Status:** Planned  
+**Status:** Complete  
 **Goal:** [D.5](/roadmap/phase-1-5-docs-site/goals)  
 **Phase:** 1.5 — Docs Site  
 **Wave:** 12  
@@ -59,7 +59,7 @@ Manual sweep at 375/768/1440 catches issues automated tests omit.
 
 ## Deliverables
 
-- `docs/app/tests/visual.spec.ts` Playwright baseline
+- `web/tests/visual.spec.ts` Playwright baseline
 - Sample paths: introduction, proxy/overview, api-reference
 - Dark + light `toHaveScreenshot` per path
 - Manual QA checklist fixes from sweep
@@ -72,8 +72,8 @@ See MASTER_BRIEF Part D (D.5.1) for full acceptance detail.
 
 | File Path | Action | Notes |
 | --- | --- | --- |
-| `docs/app/tests/visual.spec.ts` | Add | Screenshot baseline tests |
-| `docs/app/playwright.config.ts` | Add | Playwright config |
+| `web/tests/visual.spec.ts` | Add | Screenshot baseline tests |
+| `web/playwright.config.ts` | Add | Playwright config |
 
 ---
 
@@ -88,7 +88,7 @@ See MASTER_BRIEF Part D (D.5.1) for full acceptance detail.
 ## Acceptance Criteria
 
 - [ ] Baseline screenshots committed
-- [ ] CI runs `playwright test` on PRs touching `docs/app/`
+- [ ] CI runs `playwright test` on PRs touching `web/`
 - [ ] Manual sweep finds no P0 layout bugs
 
 ---

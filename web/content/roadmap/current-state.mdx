@@ -1,26 +1,27 @@
 ---
 title: "Current State"
-description: "Phase 0 and Phase 1 are complete. Phase 1.5 is in progress with docs launch follow-through, and Phase 2 is queued behind final docs-site exit tasks."
-summary: "Phase 0 and Phase 1 are complete. Phase 1.5 is in progress with docs launch follow-through, and Phase 2 is queued behind final docs-site exit tasks."
+description: "Phase 0, Phase 1, and Phase 1.5 are complete. Phase 2 (Single Provider) is ready to start."
+summary: "Phase 0, Phase 1, and Phase 1.5 are complete. Phase 2 (Single Provider) is ready to start."
 ---
 
 # Current State
 
-<Callout type="success" title="Platform baseline complete">
-  Phase 0 and Phase 1 are complete. The platform layer (auth, proxy middleware,
-  security gates, observability baseline) is shipped and running.
+<Callout type="success" title="Platform and public site complete">
+  Phase 0, Phase 1, and Phase 1.5 are complete. The platform layer (auth, proxy,
+  security gates) and the unified public web product at ibexharness.com are
+  shipped and running.
 </Callout>
 
 ## Snapshot
 
 <StatusBadge status="stable" /> **Phase 0 — Foundation:** complete  
 <StatusBadge status="stable" /> **Phase 1 — Core Platform:** complete  
-<StatusBadge status="beta" /> **Phase 1.5 — Docs Site:** in progress  
-<StatusBadge status="new" /> **Phase 2 — Single Provider:** queued after docs exit tasks
+<StatusBadge status="stable" /> **Phase 1.5 — Public Web Product:** complete  
+<StatusBadge status="new" /> **Phase 2 — Single Provider:** ready to start
 
-**Last updated:** 2026-06-28  
-**Git SHA (`main`):** `06d0336`  
-**Current wave focus:** [D.3.3](/roadmap/phase-1-5-docs-site/milestones/d3.3-quickstart-five-minute-path), [D.5.1](/roadmap/phase-1-5-docs-site/milestones/d5.1-visual-qa-sweep) desktop remainder, [D.5.2](/roadmap/phase-1-5-docs-site/milestones/d5.2-verify-phase15-script)
+**Last updated:** 2026-07-12  
+**Git SHA (`main`):** `8453d0f`  
+**Current focus:** [2.1.1 Provider interface and registry](/roadmap/phase-2-single-provider/milestones/2.1.1-provider-interface-and-registry)
 
 <QuickLinks
   links={[
@@ -37,21 +38,23 @@ summary: "Phase 0 and Phase 1 are complete. Phase 1.5 is in progress with docs l
     {
       title: "CI audit",
       href: "/roadmap/phase-1-core-platform/ci-audit",
-      description: "Current CI gates and coverage posture.",
+      description: "CI gates, path filtering, and coverage posture.",
     },
     {
       title: "Architecture decisions",
       href: "/docs/adr",
-      description: "Accepted ADRs for auth, proxy, and docs architecture.",
+      description: "Accepted ADRs for auth, proxy, docs, and benchmarks.",
     },
   ]}
 />
 
 ## Shipped Since Last Update
 
-- Wave 14 shipped: mobile section switcher, unified nav drawer, blog mobile TOC, Mermaid ASCII ANSI fix, prod nav performance, Windows build scripts, brand lockup, favicon/PWA assets
-- Docs site on Cloudflare Pages static export at [docs.ibexharness.com](https://docs.ibexharness.com) — DNS cutover from OpenNext Worker ([#144](https://github.com/Rick1330/ibex-harness/pull/144))
-- Cross-section search via pre-built `/search-index.json` (~272 KB); Cmd+K prefetch on idle
+- Path-filtered CI with area gate jobs ([#206](https://github.com/Rick1330/ibex-harness/pull/206)): `ci-gate-repo`, `ci-gate-go`, `ci-gate-web`, `ci-gate-security`
+- Unified product site at [ibexharness.com](https://ibexharness.com) — landing, docs, blog, benchmarks, releases, roadmap (static export via Cloudflare Pages)
+- Benchmark pipeline + public dashboard + bot integration (ADR-0024); weekly `benchmark.yml` and PR overlays
+- OpenSSF Scorecard badge on README; `publish_results: true` on weekly schedule
+- Phase 1.5 exit gate: `infra/scripts/verify_phase15.sh` against production URL
 
 ## What Ships Today
 
@@ -61,34 +64,56 @@ summary: "Phase 0 and Phase 1 are complete. Phase 1.5 is in progress with docs l
   scope until Phase 2/3.
 </Callout>
 
+### Platform (Phase 1)
+
 - Auth gRPC (`ValidateToken`, `ValidateAgent`) with Argon2id-backed token validation
-- Proxy auth middleware, request normalization, stable error envelopes, and rate limiting skeleton
-- Security integration gate with cross-tenant denial coverage and CI enforcement
-- Shared packages (`logger`, `metrics`, `telemetry`, `config`, `apierror`, `shutdown`, `reqid`, `ratelimit`)
-- Full docs corpus and roadmap corpus published with ADR index, blog, releases, and search
+- Proxy auth middleware, agent verification, request normalization, stable error envelopes, rate limiting
+- Security integration gate with 31-case cross-tenant denial matrix and CI enforcement
+- Shared packages (`logger`, `metrics`, `telemetry`, `config`, `apierror`, `shutdown`, `reqid`, `ratelimit`, `crypto`, `permissions`)
+- Postgres migrations with RLS; integration smokes for auth, proxy, and security paths
+
+### Public web product (Phase 1.5)
+
+| Surface | Path | Notes |
+| --- | --- | --- |
+| Landing | `/` | Matte Graphite marketing page in `web/src/app/page.tsx` |
+| Docs | `/docs/*` | Fumadocs; 76+ MDX pages, ADR index, engineering corpus |
+| Benchmarks | `/benchmarks/*` | Latency, load, waterfall, history, compare dashboards |
+| Blog | `/blog` | MDX posts under `web/content/blog/` |
+| Releases | `/releases` | Parses root `CHANGELOG.md` |
+| Roadmap | `/roadmap/*` | Live phase and milestone corpus |
+| Search | Cmd+K | Static `/search-index.json` prefetch |
+
+Legacy `docs.ibexharness.com` redirects to apex paths (301).
+
+### Delivered beyond original Phase 1.5 milestone table
+
+- Benchmark data publishing (`web/public/benchmarks/`, `ibexharness-benchmark-bot` integration)
+- CI path filters (`.github/path-filters.yml`, `.github/actions/detect-changes`)
+- PR auto-labeler (`.github/workflows/labeler.yml`)
 
 ## Blockers And Risks
 
-<Callout type="warning" title="Current blocker">
-  Phase 2 milestone [2.1.1 Provider interface and registry](/roadmap/phase-2-single-provider/milestones/2.1.1-provider-interface-and-registry)
-  stays blocked until Phase 1.5 exits with docs QA + verification script completion.
+<Callout type="warning" title="Phase 2 entry">
+  No LLM provider forwarding in the production proxy path yet (`501
+  PROVIDER_NOT_CONFIGURED` is expected). Phase 2.1.1 is the first implementation
+  milestone.
 </Callout>
 
-- No LLM provider forwarding in production path yet (`501 PROVIDER_NOT_CONFIGURED` remains expected)
-- Python services (memory/context/embedder/worker/api/dashboard) are not yet in shipping scope
-- Phase 1.5 release quality still depends on visual QA completion and verify script gate
+- Python services (memory, context, embedder, worker, api, dashboard) are not in shipping scope until Phase 3
+- Phase 2.6.1 latency benchmark infrastructure exists (Phase 1.5 pre-work); Phase 2 middleware-complete baseline still required
 
 ## Next 3 Priorities
 
 <Steps>
-  <Step title="D.3.3 — Quickstart five-minute path">
-    Tighten the operator first-run flow and remove onboarding friction for the docs audience.
+  <Step title="2.1.1 — Provider interface and registry">
+    Define the provider abstraction and registry in the proxy service.
   </Step>
-  <Step title="D.5.1 — Visual QA sweep (desktop remainder)">
-    Mobile visual QA for Wave 14 is complete; finish desktop sweep and close remaining polish regressions.
+  <Step title="2.1.2 — OpenAI HTTP adapter">
+    Implement OpenAI-compatible forwarding with error mapping.
   </Step>
-  <Step title="D.5.2 — verify_phase15.sh">
-    Finalize and run the verification script against production URL as an exit gate.
+  <Step title="2.1.3 — Streaming response path">
+    SSE streaming through proxy with backpressure handling.
   </Step>
 </Steps>
 
@@ -107,10 +132,11 @@ make compose-test-up
 go test -tags=integration -run '^TestSecurity_' ./services/proxy
 make test-integration
 pnpm install
-pnpm docs:dev
-pnpm docs:build
+pnpm --filter web dev
+pnpm --filter web build
+make verify-phase15   # against https://ibexharness.com when online
 ```
 
-Windows: see [services/auth/README.md](/roadmap/services/auth) and [services/proxy/README.md](/roadmap/services/proxy) for PowerShell env syntax. Integration tests: `make compose-test-up` (Postgres 5433) or `$env:POSTGRES_TEST_DSN = "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable"` for dev Postgres.
+Windows: see [services/auth/README.md](/docs/services/auth) and [services/proxy/README.md](/docs/services/proxy) for PowerShell env syntax. Integration tests: `make compose-test-up` (Postgres 5433) or `$env:POSTGRES_TEST_DSN = "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable"` for dev Postgres.
 
-Expected: `security-integration` green in CI; all proxy integration tests pass with `compose-test-up`.
+Expected: `security-integration` and all four `ci-gate-*` jobs green in CI; `verify_phase15.sh` exits 0 against production.

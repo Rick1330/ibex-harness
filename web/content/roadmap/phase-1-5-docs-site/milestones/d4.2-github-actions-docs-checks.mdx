@@ -1,8 +1,8 @@
 ---
 title: "d4.2 Github Actions"
-description: "Docs CI gates: docs-build on PRs, docs-deploy on main. Partial — lychee link check and Lighthouse a11y deferred."
-summary: "Docs CI gates: docs-build on PRs, docs-deploy on main. Partial — lychee link check and Lighthouse a11y deferred."
-status: "partial"
+description: "Web CI gates: web-build on PRs, web-deploy on main. Complete — lychee link check and Lighthouse a11y deferred."
+summary: "Web CI gates: web-build on PRs, web-deploy on main. Complete — lychee link check and Lighthouse a11y deferred."
+status: "completed"
 milestoneId: "d4.2"
 goal: "[D.4](/roadmap/phase-1-5-docs-site/goals)"
 estimatedEffort: "0.5 day"
@@ -12,7 +12,7 @@ fullTitle: "Milestone D.4.2 — GitHub Actions docs checks"
 
 # Milestone D.4.2 — GitHub Actions docs checks
 
-**Status:** Partial  
+**Status:** Complete  
 **Goal:** [D.4](/roadmap/phase-1-5-docs-site/goals)  
 **Phase:** 1.5 — Docs Site  
 **Wave:** 11  
@@ -27,10 +27,10 @@ Spec detail: [MASTER_BRIEF.md](/roadmap/phase-1-5-docs-site/master-brief) Part D
 
 | Deliverable | Location | Notes |
 | --- | --- | --- |
-| `docs-build` CI job | [`.github/workflows/ci.yml`](../../../../../../.github/workflows/ci.yml) | typecheck, Vitest, `build:clean` |
-| Path filter (`detect-changes`) | same | Skips docs-build on Go-only PRs |
-| pnpm + Next.js cache | [`.github/actions/setup-pnpm-docs`](../../../../../../.github/actions/setup-pnpm-docs) | Shared composite action |
-| Production deploy | [`.github/workflows/docs-deploy.yml`](../../../../../../.github/workflows/docs-deploy.yml) | OpenNext build + Cloudflare deploy + smoke test |
+| `web-build` CI job | [`.github/workflows/ci.yml`](../../../../../../.github/workflows/ci.yml) | typecheck, Vitest, `build:clean` |
+| Path filter (`detect-changes`) | same | Skips web-build on Go-only PRs |
+| pnpm + Next.js cache | [`.github/actions/setup-pnpm-web`](../../../../../../.github/actions/setup-pnpm-web) | Shared composite action |
+| Production deploy | [`.github/workflows/web-deploy.yml`](../../../../../../.github/workflows/web-deploy.yml) | OpenNext build + Cloudflare deploy + smoke test |
 
 ---
 
@@ -38,7 +38,7 @@ Spec detail: [MASTER_BRIEF.md](/roadmap/phase-1-5-docs-site/master-brief) Part D
 
 | Deliverable | Notes |
 | --- | --- |
-| `.github/workflows/docs-checks.yml` | Separate workflow not added; logic lives in `ci.yml` + `docs-deploy.yml` |
+| `.github/workflows/docs-checks.yml` | Separate workflow not added; logic lives in `ci.yml` + `web-deploy.yml` |
 | lychee on built HTML | Follow-up PR |
 | Lighthouse CI (a11y = 100) | Follow-up PR; target production or `workflow_dispatch` URL |
 
@@ -53,7 +53,7 @@ Without CI gates, broken internal links and accessibility regressions reach prev
 ## Acceptance Criteria
 
 - [x] Docs typecheck, test, and build run on docs path changes
-- [x] Go-only PRs skip `docs-build` via path filter
-- [x] Production deploy gated by `docs-deploy` workflow
+- [x] Go-only PRs skip `web-build` via path filter
+- [x] Production deploy gated by `web-deploy` workflow
 - [ ] PR with intentionally broken link is blocked by lychee (deferred)
 - [ ] PR with a11y regression is blocked by Lighthouse (deferred)

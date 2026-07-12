@@ -37,11 +37,26 @@ PR #7 was superseded by PR #8 after rebase onto `main`.
 | `infra/compose/dev/` | Postgres, Redis, ClickHouse, MinIO |
 | `services/auth/`, `services/proxy/` | Go skeletons |
 | `go.mod`, `.golangci.yml` | Root module; advisory lint |
+| `.github/workflows/ci.yml` | Governance CI skeleton (evolved in Phase 1) |
+| `.github/branch-protection-main.json` | Branch protection contract |
+| `.github/scripts/check-repo-layout.sh` | Repo guards |
+| `infra/compose/test/` | Test compose validated in CI |
+| `.pre-commit-config.yaml` | Optional local hooks |
+
+## What Phase 0 enabled (forward to Phase 1)
+
+Phase 0 did **not** ship application business logic. It established the monorepo contract that Phase 1 built on:
+
+- **Governance:** protected `main`, secret scan, markdown lint, layout guards
+- **Contracts:** Buf proto source (`packages/proto`) with lint/breaking hooks
+- **Infra:** dev and test compose stacks; migration tooling path
+- **Toolchain:** `Makefile`, `dev-tool.sh`, `TOOLCHAIN.md` for reproducible local dev
+- **Service shells:** auth and proxy with health/readiness/metrics only
 
 ## Explicitly not delivered (by design)
 
-- Application business logic
-- Database migrations
-- Auth protobuf or validation
-- Python / Next.js services
+- Application business logic (Phase 1)
+- Database migrations (Phase 1.1)
+- Auth protobuf or validation RPCs (Phase 1.1.2+)
+- Python / Next.js application services (Phase 3+)
 - Committed protobuf generated code

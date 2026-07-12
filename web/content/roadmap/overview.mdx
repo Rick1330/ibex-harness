@@ -1,7 +1,7 @@
 ---
 title: "Phases Overview"
-description: "High-level roadmap from Foundation through production hardening. Detailed milestones for Phase 1 live under phase-1-core-platform/."
-summary: "High-level roadmap from Foundation through production hardening. Detailed milestones for Phase 1 live under phase-1-core-platform/."
+description: "High-level roadmap from Foundation through production hardening. Phases 0–1.5 complete; Phase 2 ready."
+summary: "High-level roadmap from Foundation through production hardening. Phases 0–1.5 complete; Phase 2 ready."
 status: "completed"
 ---
 
@@ -13,11 +13,11 @@ High-level roadmap from Foundation through production hardening. Detailed milest
 | --- | --- | --- | --- | --- | --- |
 | [0](phase-0-foundation/) | Foundation | Done | **Complete** | Empty repo | CI, docs, compose, proto source, Go skeletons |
 | [1](phase-1-core-platform/) | Core Platform | 4–6 weeks | **Complete** | Phase 0 complete | Migrations, auth, proxy platform, security gate |
-| [1.5](phase-1-5-docs-site/) | Docs Site | 2–3 weeks | **In progress** | Phase 1 complete | Public docs at docs.ibexharness.com |
-| [2](phase-2-single-provider/) | Single Provider E2E | 3–5 weeks | Planned | Phase 1.5 exit | Authenticated OpenAI-compatible chat through proxy |
+| [1.5](phase-1-5-docs-site/) | Public Web Product | 2–3 weeks | **Complete** | Phase 1 complete | Unified site at ibexharness.com; verify_phase15.sh |
+| [2](phase-2-single-provider/) | Single Provider E2E | 3–5 weeks | **Ready** | Phase 1.5 exit | Authenticated OpenAI-compatible chat through proxy |
 | [3](phase-3-memory-engine/) | Memory Engine and Operator Platform | 6–8 weeks | Planned | Phase 2 exit | Memory graph, context assembly, operator API + dashboard |
 | [4](phase-4-multi-provider/) | Multi-Provider and Routing | 4–6 weeks | Planned | Phase 3 exit | Multiple providers, routing, Redis rate limits |
-| [5](phase-5-production-hardening/) | Production Hardening | 4–8 weeks | Planned | Phase 4 exit | SLOs, OTel pipeline, chaos/load, required Go CI |
+| [5](phase-5-production-hardening/) | Production Hardening | 4–8 weeks | Planned | Phase 4 exit | SLOs, OTel pipeline, chaos/load, hardened CI |
 
 ---
 
@@ -29,7 +29,7 @@ High-level roadmap from Foundation through production hardening. Detailed milest
 
 **Merge commits:** `c4d302a` (toolchain), `5d0bfac` (Go skeletons).
 
-See [phase-0-foundation/README.md](/roadmap/phase-0-foundation).
+See [phase-0-foundation](/roadmap/phase-0-foundation).
 
 ---
 
@@ -37,31 +37,32 @@ See [phase-0-foundation/README.md](/roadmap/phase-0-foundation).
 
 **Status:** Complete
 
-**Goals:** [goals.md](/roadmap/phase-1-core-platform/goals)
+**Goals:** [goals](/roadmap/phase-1-core-platform/goals)
 
-See [phase-1-core-platform/README.md](/roadmap/phase-1-core-platform) and [PHASE1_EXIT_AUDIT.md](/roadmap/phase-1-core-platform/phase1-exit-audit).
+See [phase-1-core-platform](/roadmap/phase-1-core-platform) and [phase1-exit-audit](/roadmap/phase-1-core-platform/phase1-exit-audit).
 
 ---
 
-## Phase 1.5: Docs Site
+## Phase 1.5: Public Web Product
 
-**Status:** In progress — current milestone [D.3.2](/roadmap/phase-1-5-docs-site/milestones/d3.2-seed-pages-content-stubs)
+**Status:** Complete
 
-**Goals:** [phase-1-5-docs-site/goals.md](/roadmap/phase-1-5-docs-site/goals)
+**Goals:** [goals](/roadmap/phase-1-5-docs-site/goals)
 
-**Exit criteria:**
+**Exit criteria (met):**
 
-- Fumadocs site live at `https://docs.ibexharness.com`
-- Matte Graphite design system; `verify_phase15.sh` passes
-- Cross-links and sitemaps with landing site
+- Unified Next.js static export live at `https://ibexharness.com` (landing `/`, docs `/docs`, benchmarks, blog, releases, roadmap)
+- Matte Graphite design system; visual QA complete (Wave 14)
+- `infra/scripts/verify_phase15.sh` passes against production
+- Cross-site nav and sitemap on apex domain
 
 ---
 
 ## Phase 2: Single Provider E2E
 
-**Status:** Planned — blocked on Phase 1.5 exit
+**Status:** Ready — Phase 1.5 exit complete
 
-**Goals:** [phase-2-single-provider/goals.md](/roadmap/phase-2-single-provider/goals)
+**Goals:** [goals](/roadmap/phase-2-single-provider/goals)
 
 | Goal | Summary |
 | --- | --- |
@@ -70,7 +71,7 @@ See [phase-1-core-platform/README.md](/roadmap/phase-1-core-platform) and [PHASE
 | 2.3 | Directive resolution and system prompt injection |
 | 2.4 | Session tracking and checkpoints |
 | 2.5 | Async ClickHouse trace emission |
-| 2.6 | Latency benchmark and Phase 2 exit gate |
+| 2.6 | Latency benchmark and Phase 2 exit gate (infrastructure pre-delivered in Phase 1.5) |
 
 **Exit criteria:**
 
@@ -85,7 +86,7 @@ See [phase-1-core-platform/README.md](/roadmap/phase-1-core-platform) and [PHASE
 
 **Status:** Planned
 
-**Goals:** [phase-3-memory-engine/goals](/roadmap/phase-3-memory-engine/goals)
+**Goals:** [goals](/roadmap/phase-3-memory-engine/goals)
 
 **Milestones:** [45 milestones](/roadmap/phase-3-memory-engine/milestones) across memory schema, embedding, memory service, extraction worker, context assembly, management API, MinIO archives, operator dashboard, and exit gate.
 
@@ -104,7 +105,7 @@ See [phase-1-core-platform/README.md](/roadmap/phase-1-core-platform) and [PHASE
 
 **Status:** Planned
 
-**Goals:** [phase-4-multi-provider/goals.md](/roadmap/phase-4-multi-provider/goals)
+**Goals:** [goals](/roadmap/phase-4-multi-provider/goals)
 
 **Exit criteria:**
 
@@ -119,21 +120,21 @@ See [phase-1-core-platform/README.md](/roadmap/phase-1-core-platform) and [PHASE
 
 **Status:** Planned
 
-**Goals:** [phase-5-production-hardening/goals.md](/roadmap/phase-5-production-hardening/goals)
+**Goals:** [goals](/roadmap/phase-5-production-hardening/goals)
 
 **Exit criteria:**
 
 - OTel collectors and Grafana dashboards per MONITORING.md
 - Circuit breakers on external deps; documented fallbacks
 - Load/chaos tests on proxy path
-- Promote `go-services` / `golangci-lint` to required checks when stable
+- Required CI gates stable under path-filtered matrix (`ci-gate-*`)
 
 ---
 
 ## Critical path (dependency order)
 
 ```text
-Phase 0 → Phase 1 → Phase 1.5 (docs) → Phase 2 provider → Phase 3 memory/context → Phase 4 scale → Phase 5 harden
+Phase 0 → Phase 1 → Phase 1.5 (web product) → Phase 2 provider → Phase 3 memory/context → Phase 4 scale → Phase 5 harden
 ```
 
-Pivot triggers and discoveries: [FINDINGS.md](/roadmap/findings).
+Pivot triggers and discoveries: [findings](/roadmap/findings).

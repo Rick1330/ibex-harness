@@ -27,11 +27,11 @@ Spec detail: [MASTER_BRIEF.md](/roadmap/phase-1-5-docs-site/master-brief) Part D
 
 This milestone is **superseded** (2026-06-22). Docs deploy via **GitHub Actions** + **Cloudflare Workers** instead of Vercel preview deploys:
 
-- [`.github/workflows/docs-deploy.yml`](../../../../../../.github/workflows/docs-deploy.yml) — production deploy on `main` push + `workflow_dispatch`
+- [`.github/workflows/web-deploy.yml`](../../../../../../.github/workflows/web-deploy.yml) — production deploy on `main` push + `workflow_dispatch`
 - `ibex-harness-workspace/ops/cloudflare/README.md` — operator runbook (local-only; not in git)
 - PRs [#129](https://github.com/Rick1330/ibex-harness/pull/129)–[#133](https://github.com/Rick1330/ibex-harness/pull/133)
 
-Pre-merge validation: `docs-build` CI job (typecheck, test, build) + optional `workflow_dispatch` deploy with post-deploy smoke test on `*.workers.dev`.
+Pre-merge validation: `web-build` CI job (typecheck, test, build) + optional `workflow_dispatch` deploy with post-deploy smoke test on `*.workers.dev`.
 
 ---
 
@@ -41,13 +41,13 @@ Local `pnpm docs:dev` cannot catch Vercel-specific edge OG, search API, or build
 
 DNS `docs` CNAME exists but production attach waits until D.6.2 after visual QA.
 
-Vercel project `ibex-harness-docs` with root `docs/app` matches monorepo layout from D.1.1.
+Vercel project `ibex-harness-docs` with root `web` matches monorepo layout from D.1.1.
 
 ---
 
 ## Non-Goals
 
-- Production `docs.ibexharness.com` attach (D.6.2)
+- Production `ibexharness.com` attach (D.6.2)
 - Moving Go services to Vercel
 - Custom Vercel middleware for auth
 
@@ -71,9 +71,9 @@ Vercel project `ibex-harness-docs` with root `docs/app` matches monorepo layout 
 
 ## Deliverables
 
-- Vercel project `ibex-harness-docs`, root directory `docs/app`
+- Vercel project `ibex-harness-docs`, root directory `web`
 - Build: `pnpm --filter docs build`, install: `pnpm install --frozen-lockfile`
-- Env: `NEXT_PUBLIC_SITE_URL=https://docs.ibexharness.com`
+- Env: `NEXT_PUBLIC_SITE_URL=https://ibexharness.com/docs`
 - Preview deploy on every PR touching docs
 
 See MASTER_BRIEF Part D (D.4.1) for full acceptance detail.
@@ -84,7 +84,7 @@ See MASTER_BRIEF Part D (D.4.1) for full acceptance detail.
 
 | File Path | Action | Notes |
 | --- | --- | --- |
-| `docs/app/vercel.json` | Add | Optional Vercel config |
+| `web/vercel.json` | Add | Optional Vercel config |
 | `.github/workflows/docs-checks.yml` | Add | May stub until D.4.2 |
 
 ---
@@ -109,6 +109,6 @@ See MASTER_BRIEF Part D (D.4.1) for full acceptance detail.
 
 | Risk | Probability | Impact | Mitigation |
 | --- | --- | --- | --- |
-| Monorepo root directory misconfigured | Medium | High | Set Root Directory to `docs/app` in Vercel UI |
+| Monorepo root directory misconfigured | Medium | High | Set Root Directory to `web` in Vercel UI |
 | pnpm filter name mismatch | Low | High | Package name `docs` must match filter |
 | Preview URL leaks before content ready | Low | Low | Acceptable until D.6.2; noindex until launch |

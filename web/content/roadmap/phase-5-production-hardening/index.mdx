@@ -27,7 +27,7 @@ Make IBEX Harness **operable at production SLOs**: full observability stack, res
 - OTel collectors + Grafana dashboards per MONITORING.md
 - Runbooks exercised for top incidents
 - Load tests meet PERFORMANCE.md proxy budgets
-- `go-services` and `golangci-lint` promoted to required checks (if stable)
+- `ci-gate-go` promoted to required checks (replaces legacy `go-services` / `golangci-lint` job names; see [ADR-0008](/docs/adr/0008-security-ci-gates))
 - Security checklist pass for MVP scope
 - GDPR deletion flow designed or stubbed with fail-closed behavior
 

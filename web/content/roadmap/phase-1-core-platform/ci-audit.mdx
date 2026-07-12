@@ -8,34 +8,49 @@ fullTitle: "CI Job Audit — Pre-Phase 2 Verification"
 
 # CI Job Audit — Pre-Phase 2 Verification
 
-**Date:** 2026-06-10 (updated 2026-07-01)  
+**Date:** 2026-06-10 (updated 2026-07-12)  
 **Purpose:** Document what each CI job validates, false-positive risks, and mitigation status.
 
 ---
 
 ## Required checks (branch protection)
 
+As of PR #206, branch protection requires **area gate jobs** (always run; auto-pass when path area inactive):
+
+| Context | Aggregates | Notes |
+|---------|------------|-------|
+| `ci-gate-repo` | `repo-guards`, `shellcheck`, `markdownlint`, `compose-validate`, `go-mod-tidy`, `license-check` | Fast repo checks |
+| `ci-gate-go` | Buf/proto, Go smokes, `go-services`, `golangci-lint`, `coverage`, `govulncheck` | Skipped when `run_go=false` |
+| `ci-gate-web` | `web-build` | Skipped when `run_web=false` |
+| `ci-gate-security` | `trivy`, `osv-scan`, `bandit`, `hadolint` | Skipped when `run_security=false` |
+| `gitleaks` | Secret scan | Always runs |
+| `semantic-pr-title` | Conventional PR title | PRs only |
+
+Path filtering: [`.github/path-filters.yml`](../../../.github/path-filters.yml) via [`.github/actions/detect-changes`](../../../.github/actions/detect-changes/action.yml). Cross-cutting `workflows` or `deps` changes force full matrix.
+
+## Individual CI jobs (under gates)
+
 | Context | Workflow job | Validates | False-positive risk | Mitigation |
 |---------|--------------|-----------|---------------------|------------|
 | `repo-guards` | `repo-guards` | Layout, secrets, large files | Low | — |
 | `markdownlint` | `markdown` | Markdown style | Low | — |
 | `gitleaks` | `secrets` | Secret scan | Low | — |
-| `CodeQL` | `codeql.yml` | Static security analysis | Low | — |
+| `CodeQL` | `codeql.yml` | Static security analysis (path-scoped) | Low | Weekly schedule full run |
 | `trivy` | `trivy` | FS vulnerability scan | Low | — |
 | `osv-scan / osv-scan` | `osv-scan` | Dependency CVEs | Low | — |
-| `semgrep` | `semgrep.yml` | SAST rules | Low | — |
+| `semgrep` | `semgrep.yml` | SAST rules (path-scoped) | Low | — |
 | `golangci-lint` | `golangci-lint` | Go lint (packages + auth + proxy) | Medium: weaker than cursor rules | Incremental linter enablement deferred |
-| `security-integration` | `security-integration` | M1.5.1 `TestSecurity_*` matrix | **Was critical:** `-run` with 0 matches exits 0 | Pre-flight `-list` count ≥ 28 |
+| `security-integration` | `security-integration` | M1.5.1 `TestSecurity_*` matrix (31 cases) | **Was critical:** `-run` with 0 matches exits 0 | Pre-flight `-list` count guard |
 | `go-race` | `go-race` | Unit tests under `-race` | Medium: no integration + race | Nightly dispatch via `nightly.yml` |
 | `go-services (auth)` | `go-services` matrix | Unit tests + gofmt + build | Was informational | Promoted; `-count=1` |
 | `go-services (proxy)` | `go-services` matrix | Unit tests + gofmt + build | Was informational | Promoted; `-count=1` |
 | `proxy-auth-smoke` | `proxy-auth-smoke` | Full proxy unit + integration | Was informational | Promoted; `-count=1` |
 | `bandit` | `bandit` | Python SAST | **High until memory service:** exits 0 if missing | Not required until `services/memory` exists |
 | `hadolint` | `hadolint` | Dockerfile lint | Low (exits 0 if no Dockerfiles) | — |
-| `coverage` | `coverage` | Merged unit+integration Go coverage ≥80% on hand-written scope; Codecov upload | Medium: Postgres service required | `infra/scripts/coverage-gate.sh` filters `packages/proto/gen/go` |
+| `coverage` | `coverage` | Merged unit+integration Go coverage ≥94% on hand-written scope | Medium: Postgres service required | `infra/scripts/coverage-gate.sh` filters `packages/proto/gen/go` |
 | `go-mod-tidy` | `go-mod-tidy` | `go.mod` / `go.sum` tidy | Low | `go mod tidy` + `git diff --exit-code` |
 | `shellcheck` | `shellcheck` | Shell scripts in `.github/scripts` + `infra/scripts` | Low | Mirrors pre-commit hook |
-| `dependency-review` | `dependency-review.yml` | PR dependency policy | Low | Separate workflow |
+| `dependency-review` | `dependency-review.yml` | PR dependency policy (deps paths) | Low | Separate workflow |
 | `buf-lint` | `buf-lint` | `buf lint` on protos | Low | `buf breaking` moved to informational `buf-breaking` job |
 | `proto-contract` | `proto-contract` | Buf contract tests | Low | — |
 | `db-migrate-smoke` | `db-migrate-smoke` | Migration idempotency | Medium: Postgres required | — |
@@ -45,6 +60,7 @@ fullTitle: "CI Job Audit — Pre-Phase 2 Verification"
 | `govulncheck` | `govulncheck` | Reachable Go vulnerabilities | Low | Complements OSV/Trivy FS |
 | `semantic-pr-title` | `semantic-pr-title` | Conventional PR titles | Low | `semantic-pr.yml` |
 | `license-check` | `license-check` | Dependency license allowlist | Medium | MIT, Apache-2.0, BSD, ISC, Unicode-DFS-2016, MPL-2.0 allowed; AGPL/GPL denied |
+| `web-build` | `web-build` | Web typecheck, test, static export | Low | Path-filtered via `run_web` |
 
 ## Informational checks (not merge-blocking)
 
@@ -56,14 +72,14 @@ fullTitle: "CI Job Audit — Pre-Phase 2 Verification"
 | `stale` | Stale issue/PR hygiene (`stale.yml`) |
 | CodeScene | Advisory code health |
 
-## Docs deploy policy
+## Web deploy policy
 
 | Path | Trigger | Required upstream jobs |
 |------|---------|------------------------|
-| Docs-only push to `main` | `changes.docs=true`, `changes.go=false` | `repo-guards`, `docs-build` |
-| Docs + Go push to `main` | `changes.docs=true`, `changes.go=true` | `repo-guards`, `docs-build`, `docs-go-quality-gate` (full Go gate) |
+| Web-only push to `main` | `run_web=true`, `run_go=false` | `repo-guards`, `web-build` |
+| Web + Go push to `main` | `run_web=true`, `run_go=true` | `repo-guards`, `web-build`, `web-go-quality-gate` |
 
-A single `docs-deploy` job runs only on push to `main` after merge (never on pull requests).
+`web-deploy` runs only on push to `main` after merge (never on pull requests). Workflow: [`.github/workflows/web-deploy.yml`](../../../.github/workflows/web-deploy.yml).
 
 ## Docker image publish
 

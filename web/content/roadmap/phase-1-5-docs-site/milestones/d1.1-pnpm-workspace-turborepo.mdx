@@ -1,8 +1,8 @@
 ---
 title: "d1.1 Pnpm Workspace"
-description: "The ibex-harness repo is Go-first today: no JavaScript package manager, no workspace root, and no place to install Fumadocs without polluting the repository root or conflicting with existing CI. Without pnpm workspaces and Turborepo, we cannot add `docs/app/` in a way that matches the master brief, caches `next build`,"
-summary: "The ibex-harness repo is Go-first today: no JavaScript package manager, no workspace root, and no place to install Fumadocs without polluting the repository root or conflicting with existing CI. Without pnpm workspaces and Turborepo, we cannot add `docs/app/` in a way that matches the master brief, caches `next build`,"
-status: "planned"
+description: "The ibex-harness repo is Go-first today: no JavaScript package manager, no workspace root, and no place to install Fumadocs without polluting the repository root or conflicting with existing CI. Without pnpm workspaces and Turborepo, we cannot add `web/` in a way that matches the master brief, caches `next build`,"
+summary: "The ibex-harness repo is Go-first today: no JavaScript package manager, no workspace root, and no place to install Fumadocs without polluting the repository root or conflicting with existing CI. Without pnpm workspaces and Turborepo, we cannot add `web/` in a way that matches the master brief, caches `next build`,"
+status: "completed"
 milestoneId: "d1.1"
 goal: "[D.1](/roadmap/phase-1-5-docs-site/goals)"
 estimatedEffort: "2 hours"
@@ -12,7 +12,7 @@ fullTitle: "Milestone D.1.1 — pnpm workspace + Turborepo"
 
 # Milestone D.1.1 — pnpm workspace + Turborepo
 
-**Status:** Planned  
+**Status:** Complete  
 **Goal:** [D.1](/roadmap/phase-1-5-docs-site/goals)  
 **Phase:** 1.5 — Docs Site  
 **Wave:** 1  
@@ -27,7 +27,7 @@ Spec detail: [MASTER_BRIEF.md](/roadmap/phase-1-5-docs-site/master-brief) Part D
 
 The ibex-harness repo is Go-first today: no JavaScript package manager, no workspace root, and no place to install Fumadocs without polluting the repository root or conflicting with existing CI.
 
-Without pnpm workspaces and Turborepo, we cannot add `docs/app/` in a way that matches the master brief, caches `next build`, and exposes `pnpm docs:dev` / `pnpm docs:build` from the repo root.
+Without pnpm workspaces and Turborepo, we cannot add `web/` in a way that matches the master brief, caches `next build`, and exposes `pnpm docs:dev` / `pnpm docs:build` from the repo root.
 
 pnpm + Turborepo is the chosen stack (see ADR-0023 and MASTER_BRIEF Part B.2) because it matches Vercel/Next expectations, avoids phantom dependencies, and scales when additional JS apps arrive.
 
@@ -37,7 +37,7 @@ pnpm + Turborepo is the chosen stack (see ADR-0023 and MASTER_BRIEF Part B.2) be
 
 - Fumadocs bootstrap / Next.js app code (D.2.1)
 - npm or yarn lockfiles
-- Moving Go services into `docs/app/`
+- Moving Go services into `web/`
 
 ---
 
@@ -47,20 +47,20 @@ pnpm + Turborepo is the chosen stack (see ADR-0023 and MASTER_BRIEF Part B.2) be
 
 ## PR Title
 
-`chore(docs): pnpm workspace and Turborepo for docs/app (D.1.1)`
+`chore(docs): pnpm workspace and Turborepo for web (D.1.1)`
 
 ---
 
 ## Prerequisites
 
-- Wave 0 roadmap scaffold merged (repo-guards allows `docs/app/`, ADR-0023 accepted)
+- Wave 0 roadmap scaffold merged (repo-guards allows `web/`, ADR-0023 accepted)
 
 ---
 
 ## Deliverables
 
-- `pnpm-workspace.yaml` with `docs/app` and `packages/*`
-- `docs/app/package.json` workspace stub (name `docs`; full Fumadocs deps in D.2.1)
+- `pnpm-workspace.yaml` with `web` and `packages/*`
+- `web/package.json` workspace stub (name `docs`; full Fumadocs deps in D.2.1)
 - `turbo.json` pipelines: `build`, `dev`, `lint`, `typecheck`
 - Root `package.json` scripts: `docs:dev`, `docs:build`
 - `.gitignore` entries for `.next/`, `.source/`, `.turbo/`
@@ -77,9 +77,9 @@ See MASTER_BRIEF Part D (D.1.1) for full acceptance detail.
 | `turbo.json` | Add | Turborepo pipeline config |
 | `package.json` | Add | Root workspace scripts |
 | `.gitignore` | Modify | Node and Next.js artifacts |
-| `docs/adr/ADR-0023-docs-site-architecture.md` | Modify | `docs/app/` layout (not `apps/docs`) |
-| `docs/app/package.json` | Add | Workspace stub (`name: docs`) |
-| `docs/app/README.md` | Add | App location README |
+| `docs/adr/ADR-0023-docs-site-architecture.md` | Modify | `web/` layout (not `apps/docs`) |
+| `web/package.json` | Add | Workspace stub (`name: docs`) |
+| `web/README.md` | Add | App location README |
 
 ---
 

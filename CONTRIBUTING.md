@@ -127,6 +127,10 @@ python3 -c "import yaml; import pathlib; [yaml.safe_load(p.read_text()) for p in
 # Coverage (requires Postgres for merged profile; matches CI coverage job)
 make compose-test-up
 POSTGRES_TEST_DSN=postgres://ibex:ibex@localhost:5433/ibex_test?sslmode=disable make coverage-report
+
+# Phase 1.5 public site smoke (production default; override with IBEX_SITE_URL)
+make verify-phase15
+# IBEX_SITE_URL=http://localhost:3000 make verify-phase15   # local static export preview
 make coverage-gate
 ```
 

@@ -1,8 +1,8 @@
 ---
 title: "d6.2 DNS Production"
-description: "docs.ibexharness.com is live on Cloudflare Worker ibex-harness-docs. DNS CNAME points to Cloudflare; HTTPS valid."
-summary: "docs.ibexharness.com is live on Cloudflare Worker ibex-harness-docs. DNS CNAME points to Cloudflare; HTTPS valid."
-status: "complete"
+description: "ibexharness.com is live on Cloudflare Worker ibex-harness-docs. DNS CNAME points to Cloudflare; HTTPS valid."
+summary: "ibexharness.com is live on Cloudflare Worker ibex-harness-docs. DNS CNAME points to Cloudflare; HTTPS valid."
+status: "completed"
 milestoneId: "d6.2"
 goal: "[D.6](/roadmap/phase-1-5-docs-site/goals)"
 estimatedEffort: "1 hour"
@@ -27,8 +27,8 @@ Spec detail: [MASTER_BRIEF.md](/roadmap/phase-1-5-docs-site/master-brief) Part D
 
 ## What shipped
 
-- Cloudflare Worker **`ibex-harness-docs`** deployed via [`.github/workflows/docs-deploy.yml`](../../../../../../.github/workflows/docs-deploy.yml)
-- Custom domain **`docs.ibexharness.com`** attached in Cloudflare Workers dashboard
+- Cloudflare Worker **`ibex-harness-docs`** deployed via [`.github/workflows/web-deploy.yml`](../../../../../../.github/workflows/web-deploy.yml)
+- Custom domain **`ibexharness.com`** attached in Cloudflare Workers dashboard
 - DNS `docs` CNAME updated from Vercel to Cloudflare-assigned target (DNS-only / grey cloud)
 - HTTPS certificate issued; key paths return 200:
   - `/roadmap`
@@ -41,7 +41,7 @@ Operator runbook: `ibex-harness-workspace/ops/cloudflare/README.md` (local-only;
 
 ## Acceptance Criteria
 
-- [x] `docs.ibexharness.com` returns 200 with docs site
+- [x] `ibexharness.com` returns 200 with docs site
 - [x] DNS records point to Cloudflare Workers (not Vercel)
 - [x] HTTPS valid
 

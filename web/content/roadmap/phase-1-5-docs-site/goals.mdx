@@ -20,14 +20,14 @@ phase: "phase-1-5-docs-site"
 
 ## Goal D.1: Monorepo + tooling foundation
 
-**Description:** Add pnpm workspace, Turborepo pipelines, and Cursor/editor tooling so the docs app can live in `docs/app/` alongside existing Go services without package-manager conflicts.
+**Description:** Add pnpm workspace, Turborepo pipelines, and Cursor/editor tooling so the docs app can live in `web/` alongside existing Go services without package-manager conflicts.
 
 **Related milestones:**
 
 - [D.1.1](/roadmap/phase-1-5-docs-site/milestones/d1.1-pnpm-workspace-turborepo)
 - [D.1.2](/roadmap/phase-1-5-docs-site/milestones/d1.2-cursor-rules-editorconfig)
 
-**Validation:** `pnpm install` at repo root succeeds; `pnpm docs:dev` resolves to Turborepo; Cursor project rules active under `docs/app/`
+**Validation:** `pnpm install` at repo root succeeds; `pnpm docs:dev` resolves to Turborepo; Cursor project rules active under `web/`
 
 ---
 
@@ -83,7 +83,7 @@ phase: "phase-1-5-docs-site"
 
 ## Goal D.6: Domain, DNS, and cross-site nav
 
-**Description:** Attach `docs.ibexharness.com` to Vercel, configure DNS, and wire cross-links and sitemaps between landing and docs.
+**Description:** Attach `ibexharness.com` to Vercel, configure DNS, and wire cross-links and sitemaps between landing and docs.
 
 **Related milestones:**
 

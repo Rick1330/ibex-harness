@@ -1,21 +1,32 @@
 ---
-title: "Phase 1.5: Docs Site"
-description: "Phase 1.5: Docs Site — in progress."
-summary: "Phase 1.5: Docs Site — in progress."
-status: "in-progress"
+title: "Phase 1.5: Public Web Product"
+description: "Phase 1.5: Public Web Product — complete."
+summary: "Phase 1.5: Public Web Product — complete."
+status: "completed"
 phase: "phase-1-5-docs-site"
 ---
 
-# Phase 1.5: Docs Site
+# Phase 1.5: Public Web Product
 
-**Status:** In progress  
-**Target:** [docs.ibexharness.com](https://docs.ibexharness.com)  
-**Depends on:** Phase 1 complete; landing + DNS ready ([ibexdepo](https://github.com/Rick1330/marvel-scape))  
-**Blocks:** [Phase 2](/roadmap/phase-2-single-provider) entry (docs-first sequencing)
+**Status:** Complete  
+**Target:** [ibexharness.com](https://ibexharness.com) (unified static export)  
+**Depends on:** Phase 1 complete  
+**Unblocks:** [Phase 2](/roadmap/phase-2-single-provider) entry
 
 ## Purpose
 
-Ship a public Fumadocs documentation site at `docs.ibexharness.com` with the **Matte Graphite** design system, aligned with the marketing landing at `ibexharness.com`. Engineering docs remain in [`docs/`](../../) (ADRs, roadmap); the Fumadocs app lives in [`docs/app/`](../../app/); public MDX in [`docs/app/content/`](../../app/content/) (D.2.1+).
+Ship the public IBEX Harness web product from a single Next.js app in `web/`:
+
+| Section | Path |
+| --- | --- |
+| Landing | `/` |
+| Documentation | `/docs/*` |
+| Benchmarks | `/benchmarks/*` |
+| Blog | `/blog` |
+| Releases | `/releases` |
+| Roadmap | `/roadmap/*` |
+
+Engineering source docs live in `web/engineering/`; public MDX in `web/content/`. Deploy via [`.github/workflows/web-deploy.yml`](../../../.github/workflows/web-deploy.yml) to Cloudflare Pages.
 
 ## Wave-based delivery
 
@@ -25,38 +36,47 @@ One focused PR per wave. Do not batch milestones.
 | --- | --- | --- |
 | 0 | (scaffold) | Roadmap, ADR-0023, governance |
 | 1 | [D.1.1](/roadmap/phase-1-5-docs-site/milestones/d1.1-pnpm-workspace-turborepo), [D.1.2](/roadmap/phase-1-5-docs-site/milestones/d1.2-cursor-rules-editorconfig) | pnpm + Turborepo + Cursor rules |
-| 2 | [D.2.1](/roadmap/phase-1-5-docs-site/milestones/d2.1-bootstrap-fumadocs)–[D.2.2](/roadmap/phase-1-5-docs-site/milestones/d2.2-matte-graphite-tokens), [D.2.7](/roadmap/phase-1-5-docs-site/milestones/d2.7-sidebar-breadcrumbs-on-this-page) | Design shell (design gate after D.2.2) |
+| 2 | [D.2.1](/roadmap/phase-1-5-docs-site/milestones/d2.1-bootstrap-fumadocs)–[D.2.2](/roadmap/phase-1-5-docs-site/milestones/d2.2-matte-graphite-tokens), [D.2.7](/roadmap/phase-1-5-docs-site/milestones/d2.7-sidebar-breadcrumbs-on-this-page) | Design shell |
 | 3 | [D.2.3](/roadmap/phase-1-5-docs-site/milestones/d2.3-mdx-components-catalogue) | MDX component kit |
 | 4 | [D.2.4](/roadmap/phase-1-5-docs-site/milestones/d2.4-dynamic-og-images)–[D.2.6](/roadmap/phase-1-5-docs-site/milestones/d2.6-enhanced-code-blocks) | Search, code blocks, OG |
 | 5 | [D.3.1](/roadmap/phase-1-5-docs-site/milestones/d3.1-information-architecture-meta-json), [D.2.8](/roadmap/phase-1-5-docs-site/milestones/d2.8-not-found-home-redirect) | IA skeleton + 404 |
-| 6–8 | [D.3.2](/roadmap/phase-1-5-docs-site/milestones/d3.2-seed-pages-content-stubs) (sections) | Content by section |
+| 6–8 | [D.3.2](/roadmap/phase-1-5-docs-site/milestones/d3.2-seed-pages-content-stubs) | Content by section |
 | 9 | [D.3.3](/roadmap/phase-1-5-docs-site/milestones/d3.3-quickstart-five-minute-path), [D.3.4](/roadmap/phase-1-5-docs-site/milestones/d3.4-api-reference-manual-phase1) | Quickstart + manual API |
-| 10 | [D.4.1](/roadmap/phase-1-5-docs-site/milestones/d4.1-vercel-preview-deploys) | Superseded — Cloudflare Workers + GHA deploy |
-| 11 | [D.4.2](/roadmap/phase-1-5-docs-site/milestones/d4.2-github-actions-docs-checks), [D.5.2](/roadmap/phase-1-5-docs-site/milestones/d5.2-verify-phase15-script) | CI gates (partial) |
+| 10 | [D.4.1](/roadmap/phase-1-5-docs-site/milestones/d4.1-vercel-preview-deploys) | Superseded — Cloudflare Pages + GHA |
+| 11 | [D.4.2](/roadmap/phase-1-5-docs-site/milestones/d4.2-github-actions-docs-checks), [D.5.2](/roadmap/phase-1-5-docs-site/milestones/d5.2-verify-phase15-script) | CI gates + exit script |
 | 12 | [D.5.1](/roadmap/phase-1-5-docs-site/milestones/d5.1-visual-qa-sweep), [D.6.2](/roadmap/phase-1-5-docs-site/milestones/d6.2-dns-vercel-domain-attach)–[D.6.3](/roadmap/phase-1-5-docs-site/milestones/d6.3-cross-site-nav-sitemaps) | Production launch |
 
-**Current wave:** 11–12 — [D.3.3](/roadmap/phase-1-5-docs-site/milestones/d3.3-quickstart-five-minute-path) quickstart polish; production deploy complete (#129–#133)
+## Delivered beyond original milestone table
+
+| Capability | Evidence |
+| --- | --- |
+| Landing page (`/`) | `web/src/app/page.tsx`, `web/src/components/landing/` |
+| Benchmarks dashboard | `web/src/app/(site)/benchmarks/*`, `web/public/benchmarks/` |
+| Benchmark pipeline + bot | `.github/workflows/benchmark.yml`, ADR-0024 |
+| CI path-filter gates | PR #206, `.github/path-filters.yml`, `ci-gate-*` jobs |
+| PR auto-labeler | `.github/workflows/labeler.yml` |
+| Static search (Cmd+K) | `web/src/components/static-search-dialog.tsx`, `public/search-index.json` |
 
 ## Goals
 
-See [goals.md](/roadmap/phase-1-5-docs-site/goals). Milestone index: [PHASE_1_5_DOCS_SITE_MILESTONES.md](/roadmap/phase-1-5-docs-site/PHASE_1_5_DOCS_SITE_MILESTONES).
+See [goals](/roadmap/phase-1-5-docs-site/goals). Milestone index: [phase-1-5-docs-site-milestones](/roadmap/phase-1-5-docs-site/phase-1-5-docs-site-milestones).
 
 ## References
 
-- [MASTER_BRIEF.md](/roadmap/phase-1-5-docs-site/master-brief) — design and technical spec (canonical)
-- [CONTENT_SOURCES.md](/roadmap/phase-1-5-docs-site/content-sources) — engineering doc → public page mapping
+- [MASTER_BRIEF](/roadmap/phase-1-5-docs-site/master-brief) — design and technical spec (canonical; Part 0 documents pivot)
+- [CONTENT_SOURCES](/roadmap/phase-1-5-docs-site/content-sources) — engineering doc → public page mapping
 - [ADR-0023](/docs/adr/0023-docs-site-architecture)
 
 ## Entry criteria
 
 - [x] Phase 1 exit complete
-- [x] `ibexharness.com` live; `docs` CNAME in Cloudflare (DNS only)
+- [x] `ibexharness.com` live on Cloudflare Pages
 - [x] Phase 1.5 roadmap scaffold merged (Wave 0)
 
 ## Exit criteria
 
-- [x] `https://docs.ibexharness.com` serves the Fumadocs site (200)
-- [ ] Matte Graphite design passes visual QA ([D.5.1](/roadmap/phase-1-5-docs-site/milestones/d5.1-visual-qa-sweep))
-- [ ] `infra/scripts/verify_phase15.sh` passes against production
-- [ ] Cross-links: landing ↔ docs; both sitemaps in GSC
-- [ ] `docs-checks` CI green on PRs touching `docs/app/`
+- [x] `https://ibexharness.com` serves the unified static export (200)
+- [x] Matte Graphite design passes visual QA ([D.5.1](/roadmap/phase-1-5-docs-site/milestones/d5.1-visual-qa-sweep))
+- [x] `infra/scripts/verify_phase15.sh` passes against production
+- [x] Cross-site nav and sitemap on apex domain ([D.6.3](/roadmap/phase-1-5-docs-site/milestones/d6.3-cross-site-nav-sitemaps))
+- [x] `web-build` CI green on PRs touching `web/`

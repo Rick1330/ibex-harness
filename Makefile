@@ -6,7 +6,7 @@ endif
 
 DEV_TOOL := infra/scripts/dev-tool.sh
 
-.PHONY: help lint-docs security-scan repo-guards proto-lint proto-breaking proto-gen proto-test proto-test-integration test-integration coverage-report coverage-gate compose-dev-up compose-dev-down compose-dev-reset compose-dev-logs compose-dev-ps compose-test-up compose-test-down db-migrate db-migrate-down db-version db-seed db-repair-token-fks dev-smoke
+.PHONY: help lint-docs security-scan repo-guards proto-lint proto-breaking proto-gen proto-test proto-test-integration test-integration coverage-report coverage-gate compose-dev-up compose-dev-down compose-dev-reset compose-dev-logs compose-dev-ps compose-test-up compose-test-down db-migrate db-migrate-down db-version db-seed db-repair-token-fks dev-smoke verify-phase15
 
 help: ## Show available commands
 	@"$(BASH)" "$(DEV_TOOL)" help
@@ -82,3 +82,6 @@ db-repair-token-fks: ## Fix orphaned token FKs after failed migration 008
 
 dev-smoke: ## Run local end-to-end smoke test (auth+proxy)
 	@"$(BASH)" "$(DEV_TOOL)" dev-smoke
+
+verify-phase15: ## Verify unified public site (IBEX_SITE_URL, default production)
+	@"$(BASH)" "$(DEV_TOOL)" verify-phase15

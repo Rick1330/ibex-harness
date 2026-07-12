@@ -1,8 +1,8 @@
 ---
 title: "d2.1 Bootstrap Fumadocs"
-description: "We need a running Next.js + Fumadocs app before any custom design work. The landing site already links to `docs.ibexharness.com`, which 404s today. This milestone proves `pnpm docs:dev`, routing, and MDX compilation. Default Fumadocs styling is acceptable temporarily; Matte Graphite lands in D.2.2."
-summary: "We need a running Next.js + Fumadocs app before any custom design work. The landing site already links to `docs.ibexharness.com`, which 404s today. This milestone proves `pnpm docs:dev`, routing, and MDX compilation. Default Fumadocs styling is acceptable temporarily; Matte Graphite lands in D.2.2."
-status: "planned"
+description: "We need a running Next.js + Fumadocs app before any custom design work. The landing site already links to `ibexharness.com`, which 404s today. This milestone proves `pnpm docs:dev`, routing, and MDX compilation. Default Fumadocs styling is acceptable temporarily; Matte Graphite lands in D.2.2."
+summary: "We need a running Next.js + Fumadocs app before any custom design work. The landing site already links to `ibexharness.com`, which 404s today. This milestone proves `pnpm docs:dev`, routing, and MDX compilation. Default Fumadocs styling is acceptable temporarily; Matte Graphite lands in D.2.2."
+status: "completed"
 milestoneId: "d2.1"
 goal: "[D.2](/roadmap/phase-1-5-docs-site/goals)"
 estimatedEffort: "3 hours"
@@ -12,7 +12,7 @@ fullTitle: "Milestone D.2.1 — Bootstrap Fumadocs application"
 
 # Milestone D.2.1 — Bootstrap Fumadocs application
 
-**Status:** Planned  
+**Status:** Complete  
 **Goal:** [D.2](/roadmap/phase-1-5-docs-site/goals)  
 **Phase:** 1.5 — Docs Site  
 **Wave:** 2  
@@ -25,7 +25,7 @@ Spec detail: [MASTER_BRIEF.md](/roadmap/phase-1-5-docs-site/master-brief) Part D
 
 ## Why This Milestone Exists
 
-We need a running Next.js + Fumadocs app before any custom design work. The landing site already links to `docs.ibexharness.com`, which 404s today.
+We need a running Next.js + Fumadocs app before any custom design work. The landing site already links to `ibexharness.com`, which 404s today.
 
 This milestone proves `pnpm docs:dev`, routing, and MDX compilation. Default Fumadocs styling is acceptable temporarily; Matte Graphite lands in D.2.2.
 
@@ -47,7 +47,7 @@ Fumadocs on Next 15 App Router matches ADR-0023 and the master brief Part C.
 
 ## PR Title
 
-`feat(docs): bootstrap Fumadocs app at docs/app (D.2.1)`
+`feat(docs): bootstrap Fumadocs app at web (D.2.1)`
 
 ---
 
@@ -60,7 +60,7 @@ Fumadocs on Next 15 App Router matches ADR-0023 and the master brief Part C.
 
 ## Deliverables
 
-- `docs/app/` Fumadocs scaffold per MASTER_BRIEF D.2.1
+- `web/` Fumadocs scaffold per MASTER_BRIEF D.2.1
 - Seed `content/docs/getting-started/introduction.mdx`
 - `source.config.ts`, `next.config.mjs`, `src/lib/source.ts`
 
@@ -72,9 +72,9 @@ See MASTER_BRIEF Part D (D.2.1) for full acceptance detail.
 
 | File Path | Action | Notes |
 | --- | --- | --- |
-| `docs/app/package.json` | Add | Fumadocs dependencies |
-| `docs/app/content/docs/getting-started/introduction.mdx` | Add | Seed page |
-| `docs/app/src/app/docs/[[...slug]]/page.tsx` | Add | Doc route |
+| `web/package.json` | Add | Fumadocs dependencies |
+| `web/content/docs/getting-started/introduction.mdx` | Add | Seed page |
+| `web/src/app/docs/[[...slug]]/page.tsx` | Add | Doc route |
 
 ---
 
@@ -99,5 +99,5 @@ See MASTER_BRIEF Part D (D.2.1) for full acceptance detail.
 | Risk | Probability | Impact | Mitigation |
 | --- | --- | --- | --- |
 | Fumadocs version skew with Next 15 | Medium | High | Pin versions per MASTER_BRIEF §C.2 |
-| Buf/proto gen unrelated breakage | Low | Low | Docs app isolated under docs/app |
+| Buf/proto gen unrelated breakage | Low | Low | Docs app isolated under web |
 | Default theme misleads design review | Medium | Low | Document that D.2.2 replaces tokens |

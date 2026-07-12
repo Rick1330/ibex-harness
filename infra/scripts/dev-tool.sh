@@ -48,7 +48,8 @@ case "${1:-help}" in
       "  db-version             Show current Postgres migration version" \
       "  db-seed                Seed local dev database (org/user/agent/PAT)" \
       "  db-repair-token-fks    Fix orphaned token FKs after failed migration 008" \
-      "  dev-smoke              Run local auth+proxy smoke test"
+      "  dev-smoke              Run local auth+proxy smoke test" \
+      "  verify-phase15         Run Phase 1.5 public site verification (IBEX_SITE_URL)"
     ;;
   lint-docs)
     cd "$ROOT_DIR"
@@ -147,6 +148,9 @@ case "${1:-help}" in
     ;;
   dev-smoke)
     bash "$ROOT_DIR/infra/scripts/smoke_local.sh"
+    ;;
+  verify-phase15)
+    bash "$ROOT_DIR/infra/scripts/verify_phase15.sh"
     ;;
   *)
     echo "unknown command: $1"

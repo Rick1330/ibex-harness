@@ -2,7 +2,7 @@
 title: "d1.2 Cursor Rules"
 description: "AI-assisted development on the docs site without explicit design constraints produces generic UI (gradients, blur, pill buttons) that violates the Matte Graphite system. Cursor project rules must be in place before any Fumadocs UI code lands so every edit session inherits the non-negotiable visual rules from MASTER"
 summary: "AI-assisted development on the docs site without explicit design constraints produces generic UI (gradients, blur, pill buttons) that violates the Matte Graphite system. Cursor project rules must be in place before any Fumadocs UI code lands so every edit session inherits the non-negotiable visual rules from MASTER"
-status: "planned"
+status: "completed"
 milestoneId: "d1.2"
 goal: "[D.1](/roadmap/phase-1-5-docs-site/goals)"
 estimatedEffort: "30 minutes"
@@ -12,7 +12,7 @@ fullTitle: "Milestone D.1.2 — Cursor rules + EditorConfig"
 
 # Milestone D.1.2 — Cursor rules + EditorConfig
 
-**Status:** Planned  
+**Status:** Complete  
 **Goal:** [D.1](/roadmap/phase-1-5-docs-site/goals)  
 **Phase:** 1.5 — Docs Site  
 **Wave:** 1  
@@ -61,7 +61,7 @@ EditorConfig and `.nvmrc` keep LF, 2-space indent, and Node 20 aligned with Verc
 - `.cursor/rules/docs-site.mdc` (MASTER_BRIEF §0.1 content)
 - `.editorconfig` — 2-space, LF, trim trailing whitespace
 - `.nvmrc` — `20.18.0`
-- `docs/app/CONTRIBUTING.md` — branch naming, anti-patterns, `pnpm docs:dev`
+- `web/CONTRIBUTING.md` — branch naming, anti-patterns, `pnpm docs:dev`
 
 See MASTER_BRIEF Part D (D.1.2) for full acceptance detail.
 
@@ -74,22 +74,22 @@ See MASTER_BRIEF Part D (D.1.2) for full acceptance detail.
 | `.cursor/rules/docs-site.mdc` | Add | Matte Graphite Cursor rules |
 | `.editorconfig` | Add | Editor formatting |
 | `.nvmrc` | Add | Node version pin |
-| `docs/app/CONTRIBUTING.md` | Add | Contributor guide for docs app |
+| `web/CONTRIBUTING.md` | Add | Contributor guide for docs app |
 
 ---
 
 ## Testing Requirements
 
-- **`verifyCursorRules_ActiveForAppsDocs`**: Editing `docs/app/**` shows docs-site rule active
+- **`verifyCursorRules_ActiveForAppsDocs`**: Editing `web/**` shows docs-site rule active
 - **`verifyNvmrc_MatchesCI`**: `.nvmrc` matches docs-checks Node version (D.4.2)
 
 ---
 
 ## Acceptance Criteria
 
-- [ ] Cursor status shows project rules active under `docs/app/`
+- [ ] Cursor status shows project rules active under `web/`
 - [ ] `.editorconfig` present at repo root
-- [ ] `docs/app/CONTRIBUTING.md` documents no-gradient / no-blur rules
+- [ ] `web/CONTRIBUTING.md` documents no-gradient / no-blur rules
 
 ---
 
@@ -97,6 +97,6 @@ See MASTER_BRIEF Part D (D.1.2) for full acceptance detail.
 
 | Risk | Probability | Impact | Mitigation |
 | --- | --- | --- | --- |
-| Rules ignored on non-`docs/app` paths | Medium | Low | Scope globs to `docs/app/**` only |
+| Rules ignored on non-`web` paths | Medium | Low | Scope globs to `web/**` only |
 | Duplicate rules in parent `.cursor` mirror | Low | Low | Keep repo-local rule canonical; sync mirror if needed |
 | CONTRIBUTING drift from MASTER_BRIEF | Low | Medium | Link to MASTER_BRIEF.md in CONTRIBUTING |
