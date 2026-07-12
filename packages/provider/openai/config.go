@@ -10,7 +10,7 @@ const (
 	maxRetryBackoff       = 30 * time.Second
 )
 
-// Config holds OpenAI client configuration.
+// Config tunes upstream OpenAI HTTP behavior (timeouts, retries, endpoint) for the proxy provider client.
 type Config struct {
 	APIKey         string
 	BaseURL        string

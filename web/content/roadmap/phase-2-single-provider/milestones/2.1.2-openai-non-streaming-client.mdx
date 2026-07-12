@@ -165,7 +165,7 @@ httpClient := &http.Client{
 All tests use a mock HTTP server (`httptest.NewServer`) — no real OpenAI API calls in unit or integration tests.
 
 - **`TestOpenAIClient_NonStreaming_Success`**: mock returns 200 with valid completion JSON → `Response.Body` readable, `Usage` populated
-- **`TestOpenAIClient_DirectiveInjection`**: request with `SystemDirective` set → first message in outgoing body has `role="system"` with directive content
+- **`TestOpenAIClient_DirectiveInjection`** *(deferred to [milestone 2.3.3](/roadmap/phase-2-single-provider/milestones/2.3.3-system-prompt-injection))*: request with `SystemDirective` set → first message in outgoing body has `role="system"` with directive content
 - **`TestOpenAIClient_Retry_On429`**: mock returns 429 twice then 200 → client retries, final result is success, retry count metric incremented
 - **`TestOpenAIClient_NoRetry_On400`**: mock returns 400 → client does NOT retry, returns `INVALID_REQUEST` error immediately
 - **`TestOpenAIClient_Timeout`**: mock delays beyond `Timeout` → `PROVIDER_TIMEOUT` error

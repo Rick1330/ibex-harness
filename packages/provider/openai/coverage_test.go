@@ -67,14 +67,19 @@ func TestToOpenAIRequest_passthroughFields(t *testing.T) {
 
 func TestToOpenAIRequest_deniesSecurityFieldOverrides(t *testing.T) {
 	t.Parallel()
+	temp := 0.5
 	raw, err := marshalOpenAIRequestBody(provider.Request{
-		Model:    "gpt-4o",
-		Messages: []provider.Message{{Role: "user", Content: "hi"}},
+		Model:       "gpt-4o",
+		MaxTokens:   100,
+		Temperature: &temp,
+		Messages:    []provider.Message{{Role: "user", Content: "hi"}},
 		PassthroughFields: map[string]any{
-			"model":    "evil",
-			"messages": []any{},
-			"stream":   true,
-			"top_p":    0.9,
+			"model":       "evil",
+			"messages":    []any{},
+			"stream":      true,
+			"max_tokens":  9999,
+			"temperature": 2.0,
+			"top_p":       0.9,
 		},
 	})
 	if err != nil {
@@ -86,6 +91,18 @@ func TestToOpenAIRequest_deniesSecurityFieldOverrides(t *testing.T) {
 	}
 	if strings.Contains(body, `"stream":true`) {
 		t.Fatal("stream must not be overridden by passthrough")
+	}
+	if strings.Contains(body, `"max_tokens":9999`) {
+		t.Fatal("max_tokens must not be overridden by passthrough")
+	}
+	if strings.Contains(body, `"temperature":2`) {
+		t.Fatal("temperature must not be overridden by passthrough")
+	}
+	if !strings.Contains(body, `"max_tokens":100`) {
+		t.Fatalf("max_tokens missing: %s", body)
+	}
+	if !strings.Contains(body, `"temperature":0.5`) {
+		t.Fatalf("temperature missing: %s", body)
 	}
 	if !strings.Contains(body, `"top_p":0.9`) {
 		t.Fatalf("body: %s", body)

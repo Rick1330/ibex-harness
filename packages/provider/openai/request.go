@@ -21,6 +21,7 @@ type openAIMessage struct {
 
 var deniedPassthroughKeys = map[string]struct{}{
 	"model": {}, "messages": {}, "stream": {},
+	"max_tokens": {}, "temperature": {},
 }
 
 func toOpenAIRequest(req provider.Request) (openAIRequest, error) {
