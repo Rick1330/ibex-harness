@@ -28,7 +28,7 @@ on:
     branches: [main]
 
 concurrency:
-  group: docker-publish-${{ github.workflow }}-${{ github.event.workflow_run.head_sha || github.sha }}
+  group: docker-publish-${{ github.workflow }}-${{ github.sha }}
   cancel-in-progress: false
 
 # Jobs declare permissions explicitly (SonarQube S8264: no workflow-level read).
@@ -39,7 +39,8 @@ jobs:
     name: detect-docker-changes
     if: |
       github.event_name != 'workflow_run' ||
-      github.event.workflow_run.head_repository.full_name == github.repository
+      (github.event.workflow_run.head_repository.full_name == github.repository &&
+       github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -47,15 +48,20 @@ jobs:
       run_docker: ${{ steps.detect.outputs.run_docker }}
       run_go: ${{ steps.detect.outputs.run_go }}
     steps:
+      # workflow_run: default checkout uses the trusted triggering commit on main (no head_sha).
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        if: github.event_name == 'workflow_run'
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
-          fetch-depth: ${{ github.event_name == 'workflow_run' && '2' || '0' }}
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        if: github.event_name != 'workflow_run'
+        with:
+          fetch-depth: '0'
           persist-credentials: false
       - id: detect
         uses: ./.github/actions/detect-changes
         with:
-          ref: ${{ github.event.workflow_run.head_sha || '' }}
           fetch-depth: ${{ github.event_name == 'workflow_run' && '2' || '0' }}
 
   resolve-tag:
