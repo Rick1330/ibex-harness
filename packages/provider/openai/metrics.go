@@ -8,8 +8,10 @@ type Metrics interface {
 
 type noopMetrics struct{}
 
-// IncProviderRequest is intentionally empty when no metrics registry is wired.
-func (noopMetrics) IncProviderRequest(string, string) {}
+func (noopMetrics) IncProviderRequest(string, string) {
+	// No-op when no metrics registry is wired.
+}
 
-// IncProviderRetry is intentionally empty when no metrics registry is wired.
-func (noopMetrics) IncProviderRetry(string) {}
+func (noopMetrics) IncProviderRetry(string) {
+	// No-op when no metrics registry is wired.
+}

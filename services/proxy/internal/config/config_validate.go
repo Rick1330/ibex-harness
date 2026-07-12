@@ -9,6 +9,8 @@ import (
 	"github.com/google/uuid"
 )
 
+const errMsgInvalidTCPPort = "IBEX_PORT must be a valid TCP port"
+
 func (c Config) Validate() error {
 	if err := c.validateEnvironment(); err != nil {
 		return err
@@ -67,13 +69,13 @@ func (c Config) validatePort() error {
 func validateTCPPort(port string) error {
 	portNum, err := strconv.Atoi(port)
 	if err != nil {
-		return fmt.Errorf("IBEX_PORT must be a valid TCP port")
+		return fmt.Errorf("%s", errMsgInvalidTCPPort)
 	}
 	if portNum < 1 {
-		return fmt.Errorf("IBEX_PORT must be a valid TCP port")
+		return fmt.Errorf("%s", errMsgInvalidTCPPort)
 	}
 	if portNum > 65535 {
-		return fmt.Errorf("IBEX_PORT must be a valid TCP port")
+		return fmt.Errorf("%s", errMsgInvalidTCPPort)
 	}
 	return nil
 }
