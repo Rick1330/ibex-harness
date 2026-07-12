@@ -16,8 +16,10 @@ This repository uses **Release Please** to keep releases consistent and auditabl
    - Ensure `web/engineering/CHANGELOG.md` is correct and operationally useful.
 4. Merge the Release PR.
 5. Release Please creates a tag like `vX.Y.Z`, which triggers:
-   - `release.yml` (GitHub Release + SBOM)
+   - `release.yml` (GitHub Release + SBOM + cosign signature)
    - `docker-publish.yml` via the `release.yml` reusable call.
+
+Release assets include `sbom.spdx.json`, `sbom.spdx.json.sig`, and `sbom.spdx.json.pem` for OpenSSF Scorecard signed-release visibility. See [OPENSSF_BEST_PRACTICES.md](./OPENSSF_BEST_PRACTICES.md).
 
 ## Hotfix releases
 
