@@ -2,10 +2,26 @@ package crypto
 
 import (
 	"crypto/rand"
+	"encoding/binary"
 	"math"
+	"time"
 )
 
 const base62Alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+
+// RandomDuration returns a uniform random duration in [0, max).
+// Returns zero when max <= 0 or the system entropy source is unavailable.
+func RandomDuration(max time.Duration) time.Duration {
+	if max <= 0 {
+		return 0
+	}
+	var buf [8]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		return 0
+	}
+	n := binary.BigEndian.Uint64(buf[:]) % uint64(max)
+	return time.Duration(n)
+}
 
 // GenerateRandomBytes returns n cryptographically secure random bytes.
 // Panics if the system entropy source fails (should not happen).

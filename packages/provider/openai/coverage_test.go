@@ -90,8 +90,14 @@ func TestNoopMetrics(t *testing.T) {
 func TestNew_nilDepsUseDefaults(t *testing.T) {
 	t.Parallel()
 	c := New(Config{APIKey: "k", BaseURL: "http://example.com"}, logger.Discard("openai"), nil, nil)
-	if c == nil || c.tracer == nil || c.metrics == nil {
-		t.Fatal("expected defaults for nil tracer and metrics")
+	if c == nil {
+		t.Fatal("expected client")
+	}
+	if c.tracer == nil {
+		t.Fatal("expected default tracer")
+	}
+	if c.metrics == nil {
+		t.Fatal("expected default metrics")
 	}
 }
 

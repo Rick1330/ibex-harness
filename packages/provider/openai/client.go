@@ -7,17 +7,18 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math/rand"
 	"net"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/Rick1330/ibex-harness/packages/crypto"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/provider"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
+	"go.opentelemetry.io/otel/trace/noop"
 )
 
 // Client implements provider.Provider for the OpenAI API.
@@ -36,7 +37,7 @@ func New(cfg Config, log *logger.Logger, tracer trace.Tracer, metrics Metrics) *
 		metrics = noopMetrics{}
 	}
 	if tracer == nil {
-		tracer = trace.NewNoopTracerProvider().Tracer("openai")
+		tracer = noop.NewTracerProvider().Tracer("openai")
 	}
 	return &Client{
 		cfg: cfg,
@@ -139,14 +140,15 @@ func isRetryableTransport(err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, context.Canceled) {
-		return false
-	}
-	if errors.Is(err, context.DeadlineExceeded) {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
 	}
 	var netErr net.Error
-	return errors.As(err, &netErr) && (netErr.Timeout() || netErr.Temporary())
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	var opErr *net.OpError
+	return errors.As(err, &opErr)
 }
 
 func (c *Client) waitBeforeRetry(ctx context.Context, attempt int, lastErr error) error {
@@ -175,8 +177,7 @@ func retryDelay(base time.Duration, attempt int) time.Duration {
 		shift = 10
 	}
 	delay := base * time.Duration(1<<shift)
-	jitter := time.Duration(rand.Int63n(int64(base)))
-	delay += jitter
+	delay += crypto.RandomDuration(base)
 	if delay > maxRetryBackoff {
 		delay = maxRetryBackoff
 	}

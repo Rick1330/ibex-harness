@@ -23,16 +23,16 @@ func (h chatCompletionHandler) forwardChatCompletion(
 	r *http.Request,
 	parsed *llm.ChatCompletionRequest,
 	prov provider.Provider,
-	requestID string,
 ) {
 	ctx := r.Context()
+	requestID := requestIDFromContext(ctx)
 	provReq := llm.ToProviderRequest(parsed)
 	resp, err := prov.Complete(ctx, provReq)
 	if err != nil {
 		h.writeProviderFailure(w, err, requestID)
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	h.writeProviderSuccess(w, resp)
 }
 

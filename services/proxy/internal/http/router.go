@@ -174,7 +174,7 @@ func (h chatCompletionHandler) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.forwardChatCompletion(w, r, parsed, prov, requestID)
+	h.forwardChatCompletion(w, r, parsed, prov)
 }
 
 // parseAndValidateChatRequest parses and validates the chat body.
@@ -222,14 +222,6 @@ func writeProviderNotConfigured(w http.ResponseWriter, requestID, docsBase, deta
 	apierror.WriteStatus(w, http.StatusNotImplemented, apierror.CodeProviderNotConfigured,
 		"LLM provider not configured", requestID,
 		apierror.WriteOpts{Detail: detail, DocsBase: docsBase})
-}
-
-func (h chatCompletionHandler) providerMissing(w http.ResponseWriter, model, requestID string) bool {
-	if _, err := h.providerReg.For(model); !errors.Is(err, provider.ErrNoProviderForModel) {
-		return false
-	}
-	writeProviderNotConfigured(w, requestID, h.docsBase, "No provider registered for model "+model)
-	return true
 }
 
 func loggingMiddleware(log *logger.Logger, next http.Handler) http.Handler {

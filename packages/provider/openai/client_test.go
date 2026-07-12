@@ -41,67 +41,60 @@ func TestOpenAIClient_NonStreaming_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(resp.Body)
 	if !strings.Contains(string(body), "assistant") {
 		t.Fatalf("body: %s", body)
 	}
 }
 
-func TestOpenAIClient_Retry_On503(t *testing.T) {
+func TestOpenAIClient_Retry_onRetryableStatus(t *testing.T) {
 	t.Parallel()
-	var calls atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		if calls.Add(1) < 2 {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
-	}))
-	t.Cleanup(srv.Close)
 
-	client := testClient(t, srv.URL, "test-key", nil)
-	client.cfg.MaxRetries = 2
-	client.cfg.RetryBaseDelay = 1 * time.Millisecond
-
-	_, err := client.Complete(context.Background(), provider.Request{
-		Model:    "gpt-4o",
-		Messages: []provider.Message{{Role: "user", Content: "hi"}},
-	})
-	if err != nil {
-		t.Fatalf("Complete: %v", err)
+	tests := []struct {
+		name      string
+		failUntil int32
+		status    int
+		setHeader bool
+		wantCalls int32
+	}{
+		{name: "503", failUntil: 2, status: http.StatusServiceUnavailable, wantCalls: 2},
+		{name: "429", failUntil: 3, status: http.StatusTooManyRequests, setHeader: true, wantCalls: 3},
 	}
-}
 
-func TestOpenAIClient_Retry_On429(t *testing.T) {
-	t.Parallel()
-	var calls atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if calls.Add(1) < 3 {
-			w.Header().Set("Retry-After", "0")
-			w.WriteHeader(http.StatusTooManyRequests)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
-	}))
-	t.Cleanup(srv.Close)
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var calls atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if calls.Add(1) < tc.failUntil {
+					if tc.setHeader {
+						w.Header().Set("Retry-After", "0")
+					}
+					w.WriteHeader(tc.status)
+					return
+				}
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
+			}))
+			t.Cleanup(srv.Close)
 
-	reg := metrics.NewProxy("test")
-	client := testClient(t, srv.URL, "test-key", reg)
-	client.cfg.MaxRetries = 3
-	client.cfg.RetryBaseDelay = 1 * time.Millisecond
+			client := testClient(t, srv.URL, "test-key", nil)
+			client.cfg.MaxRetries = 3
+			client.cfg.RetryBaseDelay = 1 * time.Millisecond
 
-	_, err := client.Complete(context.Background(), provider.Request{
-		Model:    "gpt-4o",
-		Messages: []provider.Message{{Role: "user", Content: "hi"}},
-	})
-	if err != nil {
-		t.Fatalf("Complete: %v", err)
-	}
-	if calls.Load() != 3 {
-		t.Fatalf("calls: %d", calls.Load())
+			_, err := client.Complete(context.Background(), provider.Request{
+				Model:    "gpt-4o",
+				Messages: []provider.Message{{Role: "user", Content: "hi"}},
+			})
+			if err != nil {
+				t.Fatalf("Complete: %v", err)
+			}
+			if calls.Load() != tc.wantCalls {
+				t.Fatalf("calls: got %d want %d", calls.Load(), tc.wantCalls)
+			}
+		})
 	}
 }
 

@@ -11,49 +11,77 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/provider"
 )
 
-func TestMapProviderErr_providerError400(t *testing.T) {
+func TestMapProviderErr(t *testing.T) {
 	t.Parallel()
-	code, status, detail, retry := mapProviderErr(&provider.ProviderError{
-		StatusCode:     http.StatusBadRequest,
-		ProviderErrMsg: "bad field",
-	})
-	if code != apierror.CodeInvalidRequest || status != http.StatusBadRequest || detail != "bad field" || retry != 0 {
-		t.Fatalf("got code=%s status=%d detail=%q retry=%d", code, status, detail, retry)
-	}
-}
 
-func TestMapProviderErr_providerError429(t *testing.T) {
-	t.Parallel()
-	code, status, _, retry := mapProviderErr(&provider.ProviderError{
-		StatusCode: http.StatusTooManyRequests,
-		RetryAfter: 30 * time.Second,
-	})
-	if code != apierror.CodeRateLimited || status != http.StatusTooManyRequests || retry != 30 {
-		t.Fatalf("got code=%s status=%d retry=%d", code, status, retry)
+	tests := []struct {
+		name       string
+		err        error
+		wantCode   apierror.Code
+		wantStatus int
+		wantDetail string
+		wantRetry  int64
+	}{
+		{
+			name: "provider 400",
+			err: &provider.ProviderError{
+				StatusCode:     http.StatusBadRequest,
+				ProviderErrMsg: "bad field",
+			},
+			wantCode:   apierror.CodeInvalidRequest,
+			wantStatus: http.StatusBadRequest,
+			wantDetail: "bad field",
+		},
+		{
+			name: "provider 429",
+			err: &provider.ProviderError{
+				StatusCode: http.StatusTooManyRequests,
+				RetryAfter: 30 * time.Second,
+			},
+			wantCode:   apierror.CodeRateLimited,
+			wantStatus: http.StatusTooManyRequests,
+			wantRetry:  30,
+		},
+		{
+			name:       "provider 401",
+			err:        &provider.ProviderError{StatusCode: http.StatusUnauthorized},
+			wantCode:   apierror.CodeProviderUnavailable,
+			wantStatus: http.StatusServiceUnavailable,
+			wantDetail: msgProviderUnavailable,
+		},
+		{
+			name:       "timeout",
+			err:        context.DeadlineExceeded,
+			wantCode:   apierror.CodeProviderTimeout,
+			wantStatus: http.StatusGatewayTimeout,
+		},
+		{
+			name:       "transport",
+			err:        errors.New("dial tcp: connection refused"),
+			wantCode:   apierror.CodeProviderUnavailable,
+			wantStatus: http.StatusServiceUnavailable,
+			wantDetail: msgProviderUnavailable,
+		},
 	}
-}
 
-func TestMapProviderErr_providerError401(t *testing.T) {
-	t.Parallel()
-	code, status, detail, _ := mapProviderErr(&provider.ProviderError{StatusCode: http.StatusUnauthorized})
-	if code != apierror.CodeProviderUnavailable || status != http.StatusServiceUnavailable || detail != msgProviderUnavailable {
-		t.Fatalf("got code=%s status=%d detail=%q", code, status, detail)
-	}
-}
-
-func TestMapProviderErr_timeout(t *testing.T) {
-	t.Parallel()
-	code, status, _, _ := mapProviderErr(context.DeadlineExceeded)
-	if code != apierror.CodeProviderTimeout || status != http.StatusGatewayTimeout {
-		t.Fatalf("got code=%s status=%d", code, status)
-	}
-}
-
-func TestMapProviderErr_transport(t *testing.T) {
-	t.Parallel()
-	code, status, detail, _ := mapProviderErr(errors.New("dial tcp: connection refused"))
-	if code != apierror.CodeProviderUnavailable || status != http.StatusServiceUnavailable || detail != msgProviderUnavailable {
-		t.Fatalf("got code=%s status=%d detail=%q", code, status, detail)
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			code, status, detail, retry := mapProviderErr(tc.err)
+			if code != tc.wantCode {
+				t.Fatalf("code: got %s want %s", code, tc.wantCode)
+			}
+			if status != tc.wantStatus {
+				t.Fatalf("status: got %d want %d", status, tc.wantStatus)
+			}
+			if tc.wantDetail != "" && detail != tc.wantDetail {
+				t.Fatalf("detail: got %q want %q", detail, tc.wantDetail)
+			}
+			if retry != tc.wantRetry {
+				t.Fatalf("retry: got %d want %d", retry, tc.wantRetry)
+			}
+		})
 	}
 }
 

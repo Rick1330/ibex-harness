@@ -13,11 +13,20 @@ func TestToProviderRequest_mapsFields(t *testing.T) {
 		MaxTokens:   &maxTokens,
 		Messages:    []Message{{Role: "user", Content: "hi"}},
 	})
-	if got.Model != "gpt-4o" || got.MaxTokens != 42 || got.Stream {
-		t.Fatalf("unexpected request: %+v", got)
+	if got.Model != "gpt-4o" {
+		t.Fatalf("model: %q", got.Model)
 	}
-	if len(got.Messages) != 1 || got.Messages[0].Content != "hi" {
+	if got.MaxTokens != 42 {
+		t.Fatalf("max tokens: %d", got.MaxTokens)
+	}
+	if got.Stream {
+		t.Fatal("stream should be false")
+	}
+	if len(got.Messages) != 1 {
 		t.Fatalf("messages: %+v", got.Messages)
+	}
+	if got.Messages[0].Content != "hi" {
+		t.Fatalf("message content: %q", got.Messages[0].Content)
 	}
 }
 

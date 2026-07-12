@@ -11,17 +11,22 @@ import (
 
 const errMsgInvalidTCPPort = "IBEX_PORT must be a valid TCP port"
 
+func runValidationSteps(steps ...func() error) error {
+	for _, step := range steps {
+		if err := step(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (c Config) Validate() error {
-	if err := c.validateEnvironment(); err != nil {
-		return err
-	}
-	if err := c.validateHTTPHeaders(); err != nil {
-		return err
-	}
-	if err := c.validateRateLimit(); err != nil {
-		return err
-	}
-	return c.validateLLMConfig()
+	return runValidationSteps(
+		c.validateEnvironment,
+		c.validateHTTPHeaders,
+		c.validateRateLimit,
+		c.validateLLMConfig,
+	)
 }
 
 func (c Config) validateLLMConfig() error {
@@ -38,16 +43,12 @@ func (c Config) validateLLMConfig() error {
 }
 
 func (c Config) validateEnvironment() error {
-	if err := c.validateEnvName(); err != nil {
-		return err
-	}
-	if err := c.validatePort(); err != nil {
-		return err
-	}
-	if err := c.validateAuthConfig(); err != nil {
-		return err
-	}
-	return c.validateBodyLimit()
+	return runValidationSteps(
+		c.validateEnvName,
+		c.validatePort,
+		c.validateAuthConfig,
+		c.validateBodyLimit,
+	)
 }
 
 func (c Config) validateEnvName() error {
