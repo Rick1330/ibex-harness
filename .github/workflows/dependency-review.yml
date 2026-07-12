@@ -6,8 +6,8 @@ name: Dependency Review
 on:
   pull_request:
 
-permissions:
-  contents: read
+# SonarQube S8264: declare permissions per job, not at workflow scope.
+permissions: {}
 
 jobs:
   changes:

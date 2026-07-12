@@ -37,6 +37,9 @@ permissions: {}
 jobs:
   detect-docker-changes:
     name: detect-docker-changes
+    if: |
+      github.event_name != 'workflow_run' ||
+      github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -63,6 +66,7 @@ jobs:
       (github.event_name == 'workflow_call') ||
       (github.event_name == 'workflow_dispatch') ||
       (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.head_repository.full_name == github.repository &&
        github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.event == 'push' &&
        (needs.detect-docker-changes.outputs.run_docker == 'true' ||

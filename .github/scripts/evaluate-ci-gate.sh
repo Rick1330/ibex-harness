@@ -5,12 +5,12 @@ set -euo pipefail
 run_area="${1:?run_area required (true|false)}"
 shift
 
-if [ "$run_area" != "true" ]; then
+if [[ "$run_area" != "true" ]]; then
   echo "Area inactive; gate passes without running child jobs."
   exit 0
 fi
 
-if [ "$#" -eq 0 ]; then
+if [[ "$#" -eq 0 ]]; then
   echo "No child job results supplied"
   exit 1
 fi

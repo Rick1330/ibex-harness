@@ -12,8 +12,8 @@ on:
         default: false
         type: boolean
 
-permissions:
-  contents: read
+# SonarQube S8264: declare permissions per job, not at workflow scope.
+permissions: {}
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
