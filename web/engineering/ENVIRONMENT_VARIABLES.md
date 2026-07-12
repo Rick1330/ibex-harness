@@ -208,15 +208,19 @@ Used by: **proxy** (`services/proxy`)
 | `IBEX_AUTH_VALIDATE_TIMEOUT` | No | `50ms` (code); `2s` in `services/proxy/.env.example` for local dev | Per-request auth validate budget (`ValidateToken` / `ValidateAgent`) | Code default per [ADR-0011](adr/ADR-0011-proxy-auth-client.md); use `2s` locally when Argon2 verify exceeds 50ms — see [TROUBLESHOOTING.md](TROUBLESHOOTING.md) §3.3 |
 | `IBEX_MAX_REQUEST_BODY_BYTES` | No | `1048576` | Max chat request body (1 MiB) | See [ADR-0013](adr/ADR-0013-proxy-input-validation-and-error-envelope.md) |
 | `IBEX_ERROR_DOCS_BASE` | No | (empty) | Base URL for `docs_url` in error envelope | Omit in dev when unset |
-| `IBEX_LLM_MODE` | No | `live` | `live` \| `mock` | Mock recommended for dev |
-| `OPENAI_API_KEY` | Conditional | (none) | Required if using OpenAI in `live` mode | Secret |
-| `ANTHROPIC_API_KEY` | Conditional | (none) | Required if using Anthropic in `live` mode | Secret |
-| `IBEX_DEFAULT_PROVIDER` | No | `openai` | Default provider | |
-| `IBEX_PROVIDER_TIMEOUT_MS` | No | `60000` | Upstream provider timeout | Must be explicit |
-| `IBEX_PROVIDER_CONNECT_TIMEOUT_MS` | No | `2000` | Connect timeout | |
-| `IBEX_PROVIDER_MAX_RETRIES` | No | `1` | Retry on transient provider errors | Avoid double-billing |
-| `IBEX_PROVIDER_CIRCUIT_BREAKER_FAILURES` | No | `5` | Failures to open circuit | Per-provider |
-| `IBEX_PROVIDER_CIRCUIT_BREAKER_COOLDOWN_SECONDS` | No | `30` | Open duration | |
+| `IBEX_LLM_MODE` | No | `mock` | `mock` \| `live` — `mock` keeps an empty provider registry; `live` registers OpenAI per [ADR-0026](/docs/adr/0026-openai-client-design) | Default `mock` for CI/dev without API key |
+| `OPENAI_API_KEY` | When `live` | (none) | OpenAI API key | Secret; never logged |
+| `OPENAI_BASE_URL` | No | `https://api.openai.com/v1` | OpenAI API base URL | |
+| `OPENAI_REQUEST_TIMEOUT` | No | `120s` | Upstream request timeout | |
+| `OPENAI_MAX_RETRIES` | No | `3` | Retries on 429/5xx/network | |
+| `OPENAI_RETRY_BASE_DELAY` | No | `500ms` | Exponential backoff base | |
+| `ANTHROPIC_API_KEY` | Phase 4 | (none) | Not wired in Phase 2 | Secret |
+| `IBEX_DEFAULT_PROVIDER` | Phase 4 | `openai` | Deferred — single OpenAI registry in Phase 2 | |
+| `IBEX_PROVIDER_TIMEOUT_MS` | Phase 4 | — | Superseded by `OPENAI_REQUEST_TIMEOUT` in Phase 2 | |
+| `IBEX_PROVIDER_CONNECT_TIMEOUT_MS` | Phase 4 | — | Not wired | |
+| `IBEX_PROVIDER_MAX_RETRIES` | Phase 4 | — | Superseded by `OPENAI_MAX_RETRIES` in Phase 2 | |
+| `IBEX_PROVIDER_CIRCUIT_BREAKER_FAILURES` | Phase 4 | `5` | Not wired in Phase 2 | |
+| `IBEX_PROVIDER_CIRCUIT_BREAKER_COOLDOWN_SECONDS` | Phase 4 | `30` | Not wired in Phase 2 | |
 
 **BYOK (Bring your own key) variables (optional advanced):**
 
