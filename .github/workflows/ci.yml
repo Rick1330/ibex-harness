@@ -106,6 +106,10 @@ jobs:
       run_docker: ${{ steps.detect.outputs.run_docker }}
       run_compose: ${{ steps.detect.outputs.run_compose }}
     steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: ${{ github.event_name == 'push' && '2' || '0' }}
+          persist-credentials: false
       - id: detect
         uses: ./.github/actions/detect-changes
         with:
