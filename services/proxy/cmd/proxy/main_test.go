@@ -92,10 +92,14 @@ func TestNewHTTPServer(t *testing.T) {
 	t.Parallel()
 	cfg := config.Config{Port: "8080"}
 	cfg.ApplyDefaults()
+	providerReg, err := provider.NewRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
 	srv := newHTTPServer(proxyhttp.RouterDeps{
 		Config: cfg, Logger: logger.Discard("proxy"), Metrics: ibexmetrics.NewProxy("proxy"),
 		Limiter: ratelimit.Noop(), Health: &healthcheck.Server{},
-		ProviderRegistry: provider.NewRegistry(),
+		ProviderRegistry: providerReg,
 	})
 	if srv.Addr != ":8080" {
 		t.Fatalf("addr: %s", srv.Addr)

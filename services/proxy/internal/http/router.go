@@ -51,7 +51,11 @@ func NewRouter(deps RouterDeps) http.Handler {
 	docsBase := cfg.ErrorDocsBase
 	providerReg := deps.ProviderRegistry
 	if providerReg == nil {
-		providerReg = provider.NewRegistry()
+		var regErr error
+		providerReg, regErr = provider.NewRegistry()
+		if regErr != nil {
+			panic("provider registry: " + regErr.Error())
+		}
 	}
 
 	healthSrv := deps.Health
@@ -143,21 +147,8 @@ func (h chatCompletionHandler) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	requestID := requestIDFromContext(r.Context())
 
-	if fieldErrors := validation.ValidateChatHeaders(r.Header); len(fieldErrors) > 0 {
-		apierror.WriteStatus(w, http.StatusBadRequest, apierror.CodeValidationError,
-			"Request validation failed", requestID, apierror.WriteOpts{DocsBase: h.docsBase, FieldErrors: fieldErrors})
-		return
-	}
-
-	parsed, err := llm.ParseChatCompletionRequest(r.Body)
-	if err != nil {
-		writeChatParseError(w, requestID, h.docsBase, err)
-		return
-	}
-
-	if fieldErrors := validation.ValidateChatCompletionRequest(parsed); len(fieldErrors) > 0 {
-		apierror.WriteStatus(w, http.StatusBadRequest, apierror.CodeValidationError,
-			"Request validation failed", requestID, apierror.WriteOpts{DocsBase: h.docsBase, FieldErrors: fieldErrors})
+	parsed, ok := parseAndValidateChatRequest(w, r, requestID, h.docsBase)
+	if !ok {
 		return
 	}
 
@@ -177,6 +168,30 @@ func (h chatCompletionHandler) serve(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeProviderNotConfigured(w, requestID, h.docsBase, "Phase 2 milestone required for upstream calls")
+}
+
+// parseAndValidateChatRequest parses and validates the chat body.
+// Returns (parsed, true) on success; on failure it writes the appropriate error response and returns (_, false).
+func parseAndValidateChatRequest(w http.ResponseWriter, r *http.Request, requestID, docsBase string) (*llm.ChatCompletionRequest, bool) {
+	if fieldErrors := validation.ValidateChatHeaders(r.Header); len(fieldErrors) > 0 {
+		apierror.WriteStatus(w, http.StatusBadRequest, apierror.CodeValidationError,
+			"Request validation failed", requestID, apierror.WriteOpts{DocsBase: docsBase, FieldErrors: fieldErrors})
+		return nil, false
+	}
+
+	parsed, err := llm.ParseChatCompletionRequest(r.Body)
+	if err != nil {
+		writeChatParseError(w, requestID, docsBase, err)
+		return nil, false
+	}
+
+	if fieldErrors := validation.ValidateChatCompletionRequest(parsed); len(fieldErrors) > 0 {
+		apierror.WriteStatus(w, http.StatusBadRequest, apierror.CodeValidationError,
+			"Request validation failed", requestID, apierror.WriteOpts{DocsBase: docsBase, FieldErrors: fieldErrors})
+		return nil, false
+	}
+
+	return parsed, true
 }
 
 func writeChatParseError(w http.ResponseWriter, requestID, docsBase string, err error) {

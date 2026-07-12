@@ -1,6 +1,12 @@
 package provider
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
+
+// ErrDuplicateModel is returned by NewRegistry when two providers claim the same model ID.
+var ErrDuplicateModel = errors.New("provider model conflict")
 
 // Registry maps model IDs to provider implementations.
 // It is built once at service startup and is read-only thereafter.
@@ -9,19 +15,19 @@ type Registry struct {
 }
 
 // NewRegistry constructs a Registry from the given providers.
-// Panics if two providers claim the same model ID.
-func NewRegistry(providers ...Provider) *Registry {
+// Returns ErrDuplicateModel when two providers claim the same model ID.
+func NewRegistry(providers ...Provider) (*Registry, error) {
 	byModel := make(map[string]Provider)
 	for _, p := range providers {
 		for _, model := range p.SupportedModels() {
 			if existing, ok := byModel[model]; ok {
-				panic(fmt.Sprintf("provider model conflict: %q claimed by %q and %q",
-					model, existing.Name(), p.Name()))
+				return nil, fmt.Errorf("%w: %q claimed by %q and %q",
+					ErrDuplicateModel, model, existing.Name(), p.Name())
 			}
 			byModel[model] = p
 		}
 	}
-	return &Registry{providers: byModel}
+	return &Registry{providers: byModel}, nil
 }
 
 // For returns the provider for the given model ID.

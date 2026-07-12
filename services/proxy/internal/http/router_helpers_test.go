@@ -124,7 +124,7 @@ func TestProtectedRoutes_internalAuthProbe_missingAuthContext(t *testing.T) {
 		Environment: "test", ServiceName: "proxy", Port: "8080",
 		MaxRequestBodyBytes: 1 << 20, RequestIDHeader: "X-Request-ID", TraceIDHeader: "X-Trace-ID",
 	}
-	handler := newTestRouter(cfg, validator, ratelimit.Noop())
+	handler := newTestRouter(t, cfg, validator, ratelimit.Noop())
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/internal/auth-probe", nil)
 	req.Header.Set("Authorization", "Bearer ibex_pat_test")

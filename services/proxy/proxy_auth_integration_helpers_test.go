@@ -196,6 +196,10 @@ func startProxyServerRedis(t *testing.T, authAddr string, srvOpts proxyServerOpt
 		DefaultRPM:   defaultRPM,
 		OrgOverrides: orgOverrides,
 	})
+	providerReg, err := provider.NewRegistry()
+	if err != nil {
+		t.Fatalf("provider registry: %v", err)
+	}
 	handler := proxyhttp.NewRouter(proxyhttp.RouterDeps{
 		Config:        cfg,
 		Logger:        logger.Discard("proxy"),
@@ -210,7 +214,7 @@ func startProxyServerRedis(t *testing.T, authAddr string, srvOpts proxyServerOpt
 				"redis":     healthcheck.RedisPing(cfg.RedisURL),
 			},
 		},
-		ProviderRegistry: provider.NewRegistry(),
+		ProviderRegistry: providerReg,
 	})
 	return httptest.NewServer(handler)
 }

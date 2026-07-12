@@ -18,7 +18,7 @@ func TestChatCompletions(t *testing.T) {
 
 func runChatCompletionCase(t *testing.T, tc chatCompletionCase) {
 	t.Helper()
-	rec := postChat(t, chatTestHandler(tc.validator, tc.cfg), tc.req)
+	rec := postChat(t, chatTestHandler(t, tc.validator, tc.cfg), tc.req)
 	if rec.Code != tc.wantStatus {
 		t.Fatalf("status: %d body=%s", rec.Code, rec.Body.String())
 	}

@@ -21,7 +21,7 @@ func TestProtectedRoutes_internalAuthProbe_success(t *testing.T) {
 		Environment: "test", ServiceName: "proxy", Port: "8080",
 		MaxRequestBodyBytes: 1 << 20, RequestIDHeader: "X-Request-ID", TraceIDHeader: "X-Trace-ID",
 	}
-	handler := newTestRouter(cfg, validator, ratelimit.Noop())
+	handler := newTestRouter(t, cfg, validator, ratelimit.Noop())
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/internal/auth-probe", nil)
 	req.Header.Set("Authorization", "Bearer ibex_pat_test")
@@ -43,7 +43,7 @@ func TestProtectedRoutes_orgAuthProbe_success(t *testing.T) {
 		Environment: "test", ServiceName: "proxy", Port: "8080",
 		MaxRequestBodyBytes: 1 << 20, RequestIDHeader: "X-Request-ID", TraceIDHeader: "X-Trace-ID",
 	}
-	handler := newTestRouter(cfg, validator, ratelimit.Noop())
+	handler := newTestRouter(t, cfg, validator, ratelimit.Noop())
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/orgs/"+orgID+"/auth-probe", nil)
 	req.Header.Set("Authorization", "Bearer ibex_pat_test")
@@ -64,7 +64,7 @@ func TestProtectedRoutes_orgAuthProbe_orgMismatch(t *testing.T) {
 		Environment: "test", ServiceName: "proxy", Port: "8080",
 		MaxRequestBodyBytes: 1 << 20, RequestIDHeader: "X-Request-ID", TraceIDHeader: "X-Trace-ID",
 	}
-	handler := newTestRouter(cfg, validator, ratelimit.Noop())
+	handler := newTestRouter(t, cfg, validator, ratelimit.Noop())
 
 	otherOrg := "550e8400-e29b-41d4-a716-446655440099"
 	req := httptest.NewRequest(http.MethodGet, "/v1/orgs/"+otherOrg+"/auth-probe", nil)
@@ -90,7 +90,7 @@ func TestProtectedRoutes_orgAuthProbe_methodNotAllowed(t *testing.T) {
 		Environment: "test", ServiceName: "proxy", Port: "8080",
 		MaxRequestBodyBytes: 1 << 20, RequestIDHeader: "X-Request-ID", TraceIDHeader: "X-Trace-ID",
 	}
-	handler := newTestRouter(cfg, validator, ratelimit.Noop())
+	handler := newTestRouter(t, cfg, validator, ratelimit.Noop())
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/orgs/"+orgID+"/auth-probe", nil)
 	req.Header.Set("Authorization", "Bearer ibex_pat_test")

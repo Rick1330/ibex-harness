@@ -32,8 +32,9 @@ func chatTestConfig() config.Config {
 	}
 }
 
-func chatTestHandler(validator auth.TokenValidator, cfg config.Config) http.Handler {
-	return newTestRouter(cfg, validator, ratelimit.Noop())
+func chatTestHandler(t *testing.T, validator auth.TokenValidator, cfg config.Config) http.Handler {
+	t.Helper()
+	return newTestRouter(t, cfg, validator, ratelimit.Noop())
 }
 
 type chatRequestOpts struct {

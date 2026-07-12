@@ -73,6 +73,12 @@ func runBootstrap(_ []string, signalCh chan os.Signal) int {
 		},
 	}
 
+	providerReg, err := provider.NewRegistry()
+	if err != nil {
+		log.ErrorCtx(context.Background(), "provider registry init failed", "error", err)
+		return 1
+	}
+
 	deps := proxyhttp.RouterDeps{
 		Config:           cfg,
 		Logger:           log,
@@ -82,7 +88,7 @@ func runBootstrap(_ []string, signalCh chan os.Signal) int {
 		AgentVerifier:    agentVerifier,
 		Limiter:          limiter,
 		Health:           healthSrv,
-		ProviderRegistry: provider.NewRegistry(),
+		ProviderRegistry: providerReg,
 	}
 	server := newHTTPServer(deps)
 	return runWithShutdown(shutdownOpts{

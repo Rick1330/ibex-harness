@@ -19,6 +19,15 @@ import (
 	"github.com/google/uuid"
 )
 
+func mustEmptyProviderRegistry(tb testing.TB) *provider.Registry {
+	tb.Helper()
+	reg, err := provider.NewRegistry()
+	if err != nil {
+		tb.Fatal(err)
+	}
+	return reg
+}
+
 type passAgentVerifier struct{}
 
 func (passAgentVerifier) Verify(_ context.Context, _, agentID, orgID string) (*auth.AgentRecord, error) {
@@ -42,7 +51,8 @@ func testHealthServer() *healthcheck.Server {
 	}
 }
 
-func newTestRouter(cfg config.Config, validator auth.TokenValidator, limiter ratelimit.Limiter) http.Handler {
+func newTestRouter(tb testing.TB, cfg config.Config, validator auth.TokenValidator, limiter ratelimit.Limiter) http.Handler {
+	tb.Helper()
 	var agentVerifier auth.AgentVerifier
 	if validator != nil {
 		agentVerifier = passAgentVerifier{}
@@ -56,13 +66,13 @@ func newTestRouter(cfg config.Config, validator auth.TokenValidator, limiter rat
 		AgentVerifier:    agentVerifier,
 		Limiter:          limiter,
 		Health:           testHealthServer(),
-		ProviderRegistry: provider.NewRegistry(),
+		ProviderRegistry: mustEmptyProviderRegistry(tb),
 	})
 }
 
 func TestHealthReturnsOK(t *testing.T) {
 	t.Parallel()
-	router := newTestRouter(config.Config{ServiceName: "proxy"}, nil, nil)
+	router := newTestRouter(t, config.Config{ServiceName: "proxy"}, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	rec := httptest.NewRecorder()
@@ -78,7 +88,7 @@ func TestHealthReturnsOK(t *testing.T) {
 
 func TestReadyMissingDependencies(t *testing.T) {
 	t.Parallel()
-	router := newTestRouter(config.Config{ServiceName: "proxy"}, nil, nil)
+	router := newTestRouter(t, config.Config{ServiceName: "proxy"}, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/ready", nil)
 	rec := httptest.NewRecorder()

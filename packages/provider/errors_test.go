@@ -20,6 +20,7 @@ func TestUnit_ProviderError_Error(t *testing.T) {
 	if got != want {
 		t.Fatalf("Error() = %q, want %q", got, want)
 	}
+
 	if strings.Contains(got, "secret details") {
 		t.Fatal("Error() must not include raw provider body")
 	}

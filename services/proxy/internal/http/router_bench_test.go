@@ -9,7 +9,7 @@ import (
 )
 
 func BenchmarkProxyHealth(b *testing.B) {
-	router := newTestRouter(config.Config{ServiceName: "proxy"}, nil, nil)
+	router := newTestRouter(b, config.Config{ServiceName: "proxy"}, nil, nil)
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {

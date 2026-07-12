@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 )
@@ -22,7 +23,10 @@ func (s stubProvider) SupportedModels() []string { return s.models }
 func TestUnit_Registry_ForKnownModel(t *testing.T) {
 	t.Parallel()
 	openai := stubProvider{name: "openai", models: []string{"gpt-4o", "gpt-4o-mini"}}
-	reg := NewRegistry(openai)
+	reg, err := NewRegistry(openai)
+	if err != nil {
+		t.Fatalf("NewRegistry: %v", err)
+	}
 
 	got, err := reg.For("gpt-4o")
 	if err != nil {
@@ -35,9 +39,12 @@ func TestUnit_Registry_ForKnownModel(t *testing.T) {
 
 func TestUnit_Registry_ForUnknownModel(t *testing.T) {
 	t.Parallel()
-	reg := NewRegistry(stubProvider{name: "openai", models: []string{"gpt-4o"}})
+	reg, err := NewRegistry(stubProvider{name: "openai", models: []string{"gpt-4o"}})
+	if err != nil {
+		t.Fatalf("NewRegistry: %v", err)
+	}
 
-	_, err := reg.For("claude-3-5-sonnet-20241022")
+	_, err = reg.For("claude-3-5-sonnet-20241022")
 	if err != ErrNoProviderForModel {
 		t.Fatalf("err = %v, want ErrNoProviderForModel", err)
 	}
@@ -45,29 +52,35 @@ func TestUnit_Registry_ForUnknownModel(t *testing.T) {
 
 func TestUnit_Registry_EmptyRegistry(t *testing.T) {
 	t.Parallel()
-	reg := NewRegistry()
+	reg, err := NewRegistry()
+	if err != nil {
+		t.Fatalf("NewRegistry: %v", err)
+	}
 
-	_, err := reg.For("gpt-4o")
+	_, err = reg.For("gpt-4o")
 	if err != ErrNoProviderForModel {
 		t.Fatalf("err = %v, want ErrNoProviderForModel", err)
 	}
 }
 
-func TestUnit_Registry_DuplicateModelPanics(t *testing.T) {
+func TestUnit_Registry_DuplicateModelReturnsError(t *testing.T) {
 	t.Parallel()
-	defer func() {
-		if recover() == nil {
-			t.Fatal("expected panic for duplicate model registration")
-		}
-	}()
 	a := stubProvider{name: "openai", models: []string{"gpt-4o"}}
 	b := stubProvider{name: "azure", models: []string{"gpt-4o"}}
-	NewRegistry(a, b)
+
+	_, err := NewRegistry(a, b)
+	if !errors.Is(err, ErrDuplicateModel) {
+		t.Fatalf("err = %v, want ErrDuplicateModel", err)
+	}
 }
 
 func TestUnit_Registry_ConcurrentFor(t *testing.T) {
 	t.Parallel()
-	reg := NewRegistry(stubProvider{name: "openai", models: []string{"gpt-4o"}})
+	reg, err := NewRegistry(stubProvider{name: "openai", models: []string{"gpt-4o"}})
+	if err != nil {
+		t.Fatalf("NewRegistry: %v", err)
+	}
+
 	var wg sync.WaitGroup
 	for range 32 {
 		wg.Add(1)
@@ -89,6 +102,7 @@ func TestUnit_Registry_ConcurrentFor(t *testing.T) {
 func TestUnit_Registry_NilFor(t *testing.T) {
 	t.Parallel()
 	var reg *Registry
+
 	_, err := reg.For("gpt-4o")
 	if err != ErrNoProviderForModel {
 		t.Fatalf("err = %v, want ErrNoProviderForModel", err)
