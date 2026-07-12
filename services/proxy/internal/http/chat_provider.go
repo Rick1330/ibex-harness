@@ -29,7 +29,7 @@ func (h chatCompletionHandler) forwardChatCompletion(
 	provReq := llm.ToProviderRequest(parsed)
 	resp, err := prov.Complete(ctx, provReq)
 	if err != nil {
-		h.writeProviderFailure(w, r, err, requestID)
+		h.writeProviderFailure(w, err, requestID)
 		return
 	}
 	defer resp.Body.Close()
@@ -42,10 +42,7 @@ func (h chatCompletionHandler) writeProviderSuccess(w http.ResponseWriter, resp 
 	_, _ = io.Copy(w, resp.Body)
 }
 
-func (h chatCompletionHandler) writeProviderFailure(w http.ResponseWriter, r *http.Request, err error, requestID string) {
-	if h.metrics != nil {
-		h.metrics.IncProviderRequest(providerNameFromErr(err), "error")
-	}
+func (h chatCompletionHandler) writeProviderFailure(w http.ResponseWriter, err error, requestID string) {
 	code, status, detail, retryAfter := mapProviderErr(err)
 	opts := apierror.WriteOpts{Detail: detail, DocsBase: h.docsBase}
 	if retryAfter > 0 {
@@ -91,12 +88,4 @@ func providerClientMessage(code apierror.Code) string {
 	default:
 		return msgProviderUnavailable
 	}
-}
-
-func providerNameFromErr(err error) string {
-	var pe *provider.ProviderError
-	if errors.As(err, &pe) && pe.ProviderName != "" {
-		return pe.ProviderName
-	}
-	return "unknown"
 }

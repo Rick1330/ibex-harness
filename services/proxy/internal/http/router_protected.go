@@ -65,7 +65,6 @@ func registerProtectedRoutes(deps protectedRouteDeps) {
 			log:         deps.logger,
 			docsBase:    deps.docsBase,
 			providerReg: deps.providerRegistry,
-			metrics:     deps.reg,
 		})
 	})))
 }

@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -18,6 +19,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/packages/provider"
 	"github.com/Rick1330/ibex-harness/packages/telemetry"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 func TestOpenAIClient_NonStreaming_Success(t *testing.T) {
@@ -167,6 +169,29 @@ func TestOpenAIClient_NetworkError(t *testing.T) {
 	}
 }
 
+func TestOpenAIClient_NonRetryableTransport_recordsSingleErrorMetric(t *testing.T) {
+	t.Parallel()
+	reg := metrics.NewProxy("test")
+	client := testClient(t, "http://127.0.0.1:1", "test-key", reg)
+	client.cfg.MaxRetries = 0
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := client.Complete(ctx, provider.Request{
+		Model:    "gpt-4o",
+		Messages: []provider.Message{{Role: "user", Content: "hi"}},
+	})
+	if err == nil {
+		t.Fatal("expected transport error")
+	}
+
+	body := scrapeProviderMetrics(t, reg.Gatherer())
+	if got := countProviderMetric(body, "openai", "error"); got != 1 {
+		t.Fatalf("provider error metric count: got %d want 1; metrics:\n%s", got, body)
+	}
+}
+
 func TestOpenAIClient_APIKeyNotInLogs(t *testing.T) {
 	t.Parallel()
 	var logBuf bytes.Buffer
@@ -215,6 +240,34 @@ func TestToOpenAIRequest_marshalsMessages(t *testing.T) {
 	if !strings.Contains(string(raw), `"role":"user"`) {
 		t.Fatalf("body: %s", raw)
 	}
+}
+
+func scrapeProviderMetrics(t *testing.T, gatherer prometheus.Gatherer) string {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	metrics.Handler(gatherer).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("metrics status: %d", rec.Code)
+	}
+	return rec.Body.String()
+}
+
+func countProviderMetric(body, provider, statusClass string) int {
+	needle := `ibex_proxy_provider_requests_total{provider="` + provider + `",status_class="` + statusClass + `"} `
+	idx := strings.Index(body, needle)
+	if idx < 0 {
+		return 0
+	}
+	rest := body[idx+len(needle):]
+	end := strings.IndexByte(rest, '\n')
+	if end < 0 {
+		end = len(rest)
+	}
+	val, err := strconv.Atoi(strings.TrimSpace(rest[:end]))
+	if err != nil {
+		return 0
+	}
+	return val
 }
 
 func testClient(t *testing.T, baseURL, apiKey string, reg *metrics.ProxyRegistry) *Client {

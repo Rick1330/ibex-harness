@@ -139,7 +139,6 @@ type chatCompletionHandler struct {
 	log         *logger.Logger
 	docsBase    string
 	providerReg *provider.Registry
-	metrics     *metrics.ProxyRegistry
 }
 
 func (h chatCompletionHandler) serve(w http.ResponseWriter, r *http.Request) {
