@@ -4,7 +4,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
-if [ -n "${GITHUB_REPOSITORY:-}" ]; then
+if [[ -n "${GITHUB_REPOSITORY:-}" ]]; then
   REPO="${GITHUB_REPOSITORY}"
 elif command -v gh >/dev/null 2>&1; then
   REPO="$(gh repo view --json nameWithOwner -q .nameWithOwner)"
