@@ -54,7 +54,20 @@ jobs:
           grep " ${GRYPE_ARCHIVE}$" checksums.txt | sha256sum -c -
           tar -xzf "${GRYPE_ARCHIVE}" -C /usr/local/bin grype
           grype version
-          for i in 1 2 3; do grype db update && break || sleep 10; done
+          ok=0
+          for i in 1 2 3; do
+            if grype db update; then
+              ok=1
+              break
+            fi
+            if [ "$i" -lt 3 ]; then
+              sleep 10
+            fi
+          done
+          if [ "$ok" -ne 1 ]; then
+            echo "grype db update failed after 3 attempts" >&2
+            exit 1
+          fi
 
       - name: Scan SBOM with Grype
         run: |
