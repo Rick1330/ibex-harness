@@ -42,11 +42,20 @@ jobs:
           config-file: version-release.config.json
           manifest-file: .version-release-manifest.json
 
+      - name: Resolve version release PR number
+        id: release_pr
+        if: steps.version_release.outcome == 'success'
+        env:
+          PR_JSON: ${{ steps.version_release.outputs.pr }}
+          PRS_CREATED: ${{ steps.version_release.outputs.prs_created || 'false' }}
+          GH_TOKEN: ${{ secrets.VERSION_RELEASE_TOKEN || github.token }}
+        run: bash .github/scripts/resolve-version-release-pr-number.sh
+
       - name: Report semantic-pr-title check on release PR
-        if: steps.version_release.outcome == 'success' && steps.version_release.outputs.pr_number != ''
+        if: steps.version_release.outcome == 'success' && steps.release_pr.outputs.resolved == 'true'
         env:
           GH_TOKEN: ${{ secrets.VERSION_RELEASE_TOKEN || github.token }}
-          PR_NUMBER: ${{ steps.version_release.outputs.pr_number }}
+          PR_NUMBER: ${{ steps.release_pr.outputs.number }}
         run: bash .github/scripts/report-semantic-pr-title-check.sh "$PR_NUMBER"
 
       - name: Publish version release report
@@ -54,7 +63,7 @@ jobs:
         env:
           VERSION_RELEASE_STEP_OUTCOME: ${{ steps.version_release.outcome }}
           VERSION_RELEASE_PRS_CREATED: ${{ steps.version_release.outputs.prs_created || 'false' }}
-          VERSION_RELEASE_PR_NUMBER: ${{ steps.version_release.outputs.pr_number || '' }}
+          VERSION_RELEASE_PR_NUMBER: ${{ steps.release_pr.outputs.number || '' }}
           VERSION_RELEASE_RELEASES_CREATED: ${{ steps.version_release.outputs.releases_created || 'false' }}
           VERSION_RELEASE_TAG_NAME: ${{ steps.version_release.outputs.tag_name || '' }}
         run: |
