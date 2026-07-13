@@ -15,12 +15,15 @@ head_sha="$(jq -r '.headRefOid' <<<"$pr_json")"
 conclusion="success"
 summary="PR title satisfies the semantic title policy."
 
-if [[ ! "$title" =~ ^(feat|fix|chore|docs|test|perf|refactor|ci|build)(\([^)]+\))?:\ .+ ]]; then
+semantic_pattern='^(feat|fix|chore|docs|test|perf|refactor|ci|build)(\([^)]+\))?: .+'
+uppercase_subject_pattern='^[A-Z]'
+
+if [[ ! "$title" =~ $semantic_pattern ]]; then
   conclusion="failure"
   summary="PR title must use a conventional type prefix (feat, fix, chore, docs, test, perf, refactor, ci, build)."
 else
   subject="${title#*: }"
-  if [[ "$subject" =~ ^[A-Z] ]]; then
+  if [[ "$subject" =~ $uppercase_subject_pattern ]]; then
     conclusion="failure"
     summary="PR title subject must not start with an uppercase letter."
   fi
@@ -31,7 +34,7 @@ payload="$(jq -n \
   --arg head_sha "$head_sha" \
   --arg conclusion "$conclusion" \
   --arg summary "$summary" \
-  --arg details_url "${GITHUB_SERVER_URL}/${repo}/pull/${pr_number}" \
+  --arg details_url "${server}/${repo}/pull/${pr_number}" \
   '{
     name: $name,
     head_sha: $head_sha,
