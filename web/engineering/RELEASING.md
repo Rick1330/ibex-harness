@@ -42,8 +42,8 @@ The version release engine opens PRs from an internal branch named `release-plea
 
 | Trigger | Behavior |
 | --- | --- |
-| Push to `main` | Opens or updates the Version Release PR when there are releasable conventional commits. **Skipped** when the push is a merged release PR (`chore(release): prepare v…` squash commit) to avoid a release loop. |
-| `workflow_dispatch` | Manual run from **Actions → Version Release PR** when you want to refresh the release PR on demand. |
+| Push to `main` | Opens or updates the Version Release PR when there are releasable conventional commits, or **creates the release tag** when a Version Release PR was just merged. |
+| `workflow_dispatch` | Manual run from **Actions → Version Release PR** when you want to refresh the release PR or retry tagging. |
 
 Because release PRs are created by `github-actions[bot]`, the standalone **Semantic PR Title** workflow does not run on them (GitHub Actions token chaining). The Version Release workflow posts the required `semantic-pr-title` check directly on the release PR head commit.
 
