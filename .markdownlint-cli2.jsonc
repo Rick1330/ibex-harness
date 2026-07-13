@@ -14,5 +14,10 @@
     "MD010": false
   },
   "globs": ["**/*.md", "**/*.mdc"],
-  "ignores": ["node_modules/**", ".git/**", "docs/roadmap/phase-1-5-docs-site/MASTER_BRIEF.md"]
+  "ignores": [
+    "node_modules/**",
+    ".git/**",
+    "CHANGELOG.md",
+    "docs/roadmap/phase-1-5-docs-site/MASTER_BRIEF.md"
+  ]
 }

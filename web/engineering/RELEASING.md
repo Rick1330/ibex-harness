@@ -2,6 +2,18 @@
 
 This repository uses an **automated version release pipeline** to keep releases consistent and auditable. The pipeline opens a **Version Release PR** on each push to `main` (workflow: `.github/workflows/version-release-pr.yml`).
 
+## Versioning standard
+
+IBEX Harness is currently in **pre-1.0** maturity. We use Semantic Versioning with these rules:
+
+- `v0.x.y` while APIs and architecture are still evolving.
+- `v1.0.0` only after explicit production-readiness and compatibility sign-off.
+- During pre-1.0:
+  - New features typically bump **minor** (`0.x+1.0`).
+  - Fixes without feature/API changes bump **patch** (`0.x.y+1`).
+
+The release pipeline is configured for this policy in `version-release.config.json` and `.version-release-manifest.json`.
+
 ## Source of truth
 
 - **Releases are created by the pipeline**, not manually in the GitHub UI.
@@ -14,6 +26,7 @@ This repository uses an **automated version release pipeline** to keep releases 
 2. The **Version Release PR** workflow opens or updates a release PR (`chore(release): prepare vX.Y.Z`).
 3. Review the release PR:
    - Ensure `CHANGELOG.md` is correct and operationally useful.
+   - Confirm the proposed version matches pre-1.0 policy (`v0.x.y`).
 4. Merge the release PR.
 5. The pipeline creates a tag like `vX.Y.Z`, which triggers:
    - `release.yml` (GitHub Release + SBOM + cosign signature)
@@ -23,7 +36,7 @@ Release assets include `sbom.spdx.json`, `sbom.spdx.json.sig`, and `sbom.spdx.js
 
 ## Workflow permissions
 
-If the Version Release PR workflow cannot open PRs, enable **Settings → Actions → General → Workflow permissions → Allow GitHub Actions to create and approve pull requests**, or add a `VERSION_RELEASE_TOKEN` secret (`contents` + `pull-requests` scope). The legacy `RELEASE_PLEASE_TOKEN` secret name is also accepted during transition.
+If the Version Release PR workflow cannot open PRs, enable **Settings → Actions → General → Workflow permissions → Read and write permissions** and **Allow GitHub Actions to create and approve pull requests**, or add a `VERSION_RELEASE_TOKEN` secret (`contents` + `pull-requests` scope). The legacy `RELEASE_PLEASE_TOKEN` secret name is also accepted during transition.
 
 ## Hotfix releases
 
@@ -33,5 +46,5 @@ Hotfixes use the same flow: merge a `fix/*` branch to `main` quickly; the pipeli
 
 | File | Purpose |
 | --- | --- |
-| `version-release.config.json` | Changelog path, semver tags, PR title pattern |
-| `.version-release-manifest.json` | Current released version (managed by the pipeline) |
+| `version-release.config.json` | Versioning policy, changelog path, semver tags, PR title pattern |
+| `.version-release-manifest.json` | Current released version baseline (managed by the pipeline) |

@@ -42,14 +42,13 @@ jobs:
       - name: Report version release PR status
         if: always()
         run: |
-          if [ "${{ steps.version_release.outcome }}" = "success" ]; then
-            echo "Version release PR updated or created." >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ steps.version_release.outcome }}" = "success" ] && [ "${{ steps.version_release.outputs.prs_created || 'false' }}" = "true" ]; then
+            echo "Version release PR created/updated: ${{ steps.version_release.outputs.pr || 'see run logs' }}" >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           cat <<'EOF' >> "$GITHUB_STEP_SUMMARY"
           ## Version release PR not created
-          The version release workflow could not open or update the version bump PR.
-          Enable **Settings → Actions → General → Workflow permissions → Allow GitHub Actions to create and approve pull requests**,
-          or add a `VERSION_RELEASE_TOKEN` repository secret with `contents` and `pull-requests` scope.
+          The version release workflow completed but did not open a release PR.
+          Check that conventional commits exist since the previous release and that workflow permissions allow PR creation.
           EOF
           exit 0
