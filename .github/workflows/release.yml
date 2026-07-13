@@ -46,6 +46,7 @@ jobs:
             --output-certificate sbom.spdx.json.pem
 
       - name: Create GitHub Release
+        id: github_release
         uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1
         with:
           generate_release_notes: true
@@ -55,6 +56,22 @@ jobs:
             sbom.spdx.json.pem
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}
+
+      - name: Publish tagged release summary
+        if: success()
+        run: |
+          {
+            echo "## Tagged release ${GITHUB_REF_NAME}"
+            echo ""
+            echo "| Asset | Purpose |"
+            echo "| --- | --- |"
+            echo "| \`sbom.spdx.json\` | SPDX SBOM (Syft) |"
+            echo "| \`sbom.spdx.json.sig\` | cosign signature |"
+            echo "| \`sbom.spdx.json.pem\` | Sigstore certificate |"
+            echo ""
+            echo "Release URL: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/tag/${GITHUB_REF_NAME}"
+          } >>"$GITHUB_STEP_SUMMARY"
+          echo "::notice title=Tagged release published::${GITHUB_REF_NAME} with signed SBOM assets"
 
   tagged-docker-publish:
     name: tagged-docker-publish

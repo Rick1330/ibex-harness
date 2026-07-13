@@ -32,23 +32,18 @@ jobs:
 
       - name: Propose changelog and version bump PR
         id: version_release
-        continue-on-error: true
         uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4
         with:
-          token: ${{ secrets.VERSION_RELEASE_TOKEN || secrets.RELEASE_PLEASE_TOKEN || github.token }}
+          token: ${{ secrets.VERSION_RELEASE_TOKEN || github.token }}
           config-file: version-release.config.json
           manifest-file: .version-release-manifest.json
 
-      - name: Report version release PR status
+      - name: Publish version release report
         if: always()
         run: |
-          if [ "${{ steps.version_release.outcome }}" = "success" ] && [ "${{ steps.version_release.outputs.prs_created || 'false' }}" = "true" ]; then
-            echo "Version release PR created/updated: ${{ steps.version_release.outputs.pr || 'see run logs' }}" >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-          cat <<'EOF' >> "$GITHUB_STEP_SUMMARY"
-          ## Version release PR not created
-          The version release workflow completed but did not open a release PR.
-          Check that conventional commits exist since the previous release and that workflow permissions allow PR creation.
-          EOF
-          exit 0
+          bash .github/scripts/publish-version-release-report.sh \
+            "${{ steps.version_release.outcome }}" \
+            "${{ steps.version_release.outputs.prs_created || 'false' }}" \
+            "${{ steps.version_release.outputs.pr_number || '' }}" \
+            "${{ steps.version_release.outputs.releases_created || 'false' }}" \
+            "${{ steps.version_release.outputs.tag_name || '' }}"

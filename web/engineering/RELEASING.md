@@ -34,9 +34,13 @@ The release pipeline is configured for this policy in `version-release.config.js
 
 Release assets include `sbom.spdx.json`, `sbom.spdx.json.sig`, and `sbom.spdx.json.pem` for OpenSSF Scorecard signed-release visibility. See [OPENSSF_BEST_PRACTICES.md](./OPENSSF_BEST_PRACTICES.md).
 
+## Automation branch and labels
+
+The version release engine opens PRs from an internal branch named `release-please--branches--main`. That name is imposed by the upstream engine and is **not** user-facing branding — do not use it for feature work. Release PRs are labeled `version-release: pending` until merge, then `version-release: tagged`.
+
 ## Workflow permissions
 
-If the Version Release PR workflow cannot open PRs, enable **Settings → Actions → General → Workflow permissions → Read and write permissions** and **Allow GitHub Actions to create and approve pull requests**, or add a `VERSION_RELEASE_TOKEN` secret (`contents` + `pull-requests` scope). The legacy `RELEASE_PLEASE_TOKEN` secret name is also accepted during transition.
+If the Version Release PR workflow cannot open PRs, enable **Settings → Actions → General → Workflow permissions → Read and write permissions** and **Allow GitHub Actions to create and approve pull requests**, or add a `VERSION_RELEASE_TOKEN` secret (`contents` + `pull-requests` scope).
 
 ## Hotfix releases
 
