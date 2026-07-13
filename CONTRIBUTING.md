@@ -98,8 +98,8 @@ bash .github/scripts/sync-github-labels.sh
 From the repository root:
 
 ```bash
-# Markdown (matches CI markdownlint job)
-npx --yes markdownlint-cli2 "**/*.md" "#node_modules"
+# Markdown (matches CI markdownlint job; config is .markdownlint-cli2.jsonc)
+npx --yes markdownlint-cli2
 
 # Repo layout guard (matches CI repo-guards job)
 bash .github/scripts/check-repo-layout.sh
@@ -176,9 +176,14 @@ We treat compiler and linter warnings as defects. Merge-blocking and advisory to
 | CodeQL | Go, Python, JavaScript | [`codeql.yml`](.github/workflows/codeql.yml) |
 | `ruff` / `bandit` | Python (when present) | `ci-gate-security` |
 | ESLint / TypeScript | Dashboard and web | `ci-gate-web` |
+| `markdownlint-cli2` | Handwritten `*.md` / `*.mdc` (see exclusions below) | `ci-gate-repo` |
 | `govulncheck`, Trivy, OSV | Dependencies | `ci-gate-go` / `ci-gate-security` |
 
 **Policy:** New code must not introduce linter errors. Fix warnings or document false positives in code; do not disable rules without an ADR or security review.
+
+### Generated markdown exclusions
+
+Machine-generated markdown is excluded from `markdownlint-cli2` via [`.markdownlint-cli2.jsonc`](.markdownlint-cli2.jsonc) `ignores` — not by hand-editing each release or bot PR. Today that includes root `CHANGELOG.md` (version release pipeline). Handwritten docs must still pass lint locally and in CI.
 
 Dynamic analysis: Go race detector (`go test -race`) and fuzz smoke (`FuzzParseChatCompletionRequest`) run in CI when `run_go` is true. See [ADR-0008](web/content/docs/adr/0008-security-ci-gates.mdx).
 
