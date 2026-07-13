@@ -1,9 +1,21 @@
 name: Version Release PR
 
 on:
+  schedule:
+    # Sunday 08:00 UTC — weekly release PR proposal (not on every main merge)
+    - cron: "0 8 * * 0"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: propose = open/update release PR; publish = create tag after release PR merged
+        required: true
+        default: propose
+        type: choice
+        options:
+          - propose
+          - publish
   push:
     branches: [main]
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -13,13 +25,19 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  propose-version-release-pr:
-    name: propose-version-release-pr
+  version-release:
+    name: version-release
+    if: |
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch') ||
+      (github.event_name == 'push' && contains(github.event.head_commit.message, 'chore(release): prepare v'))
     runs-on: ubuntu-latest
     permissions:
       contents: write
       pull-requests: write
       checks: write
+    env:
+      RELEASE_MODE: ${{ github.event_name == 'schedule' && 'propose' || (github.event_name == 'workflow_dispatch' && github.event.inputs.mode) || (github.event_name == 'push' && 'publish') || 'propose' }}
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -31,7 +49,7 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
 
-      - name: Propose changelog and version bump PR
+      - name: Run version release engine
         id: version_release
         uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4
         with:
@@ -41,7 +59,7 @@ jobs:
 
       - name: Resolve version release PR number
         id: release_pr
-        if: steps.version_release.outcome == 'success'
+        if: steps.version_release.outcome == 'success' && env.RELEASE_MODE == 'propose'
         env:
           PR_JSON: ${{ steps.version_release.outputs.pr }}
           PRS_CREATED: ${{ steps.version_release.outputs.prs_created || 'false' }}
@@ -49,7 +67,7 @@ jobs:
         run: bash .github/scripts/resolve-version-release-pr-number.sh
 
       - name: Report semantic-pr-title check on release PR
-        if: steps.version_release.outcome == 'success' && steps.release_pr.outputs.resolved == 'true'
+        if: steps.version_release.outcome == 'success' && env.RELEASE_MODE == 'propose' && steps.release_pr.outputs.resolved == 'true'
         env:
           GH_TOKEN: ${{ secrets.VERSION_RELEASE_TOKEN || github.token }}
           PR_NUMBER: ${{ steps.release_pr.outputs.number }}

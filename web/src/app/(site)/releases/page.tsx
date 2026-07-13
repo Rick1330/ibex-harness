@@ -12,7 +12,8 @@ type ReleaseEntry = Readonly<{
   sections: ReleaseSection[];
 }>;
 
-const RELEASE_HEADER = /^## \[(\d+\.\d+\.\d+)\](?:\s+[-—]\s+(.+))?$/;
+const RELEASE_HEADER =
+  /^## \[?(\d+\.\d+\.\d+)\]?(?:\s+\(([^)]+)\)|(?:\s+[-—]\s+(.+)))?$/;
 const SECTION_HEADER = /^###\s+(.+)$/;
 
 const versionBadge = {
@@ -59,7 +60,7 @@ function flushCurrentRelease(list: ReleaseEntry[], current: MutableRelease | nul
 function createRelease(match: RegExpExecArray): MutableRelease {
   return {
     version: match[1],
-    date: normalizeDate(match[2] ?? null),
+    date: normalizeDate(match[2] ?? match[3] ?? null),
     type: parseReleaseType(match[1]),
     summary: null,
     sections: [],
@@ -73,8 +74,9 @@ function parseSection(line: string): MutableSection | null {
 }
 
 function appendBullet(line: string, section: MutableSection | null): boolean {
-  if (!line.startsWith("- ") || !section) return false;
-  const item = line.slice(2).trim();
+  const bulletMatch = /^[-*]\s+/.exec(line);
+  if (!bulletMatch || !section) return false;
+  const item = line.slice(bulletMatch[0].length).trim();
   if (item && !shouldIgnoreItem(item)) {
     section.items.push(item);
   }
