@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ALLOWED_TOP='^(web|prompts|services|packages|infra|reports|benchmarks|\.github|\.git|\.cursor|_report|node_modules)$'
-ROOT_DOCS='^(AGENTS\.md|PROMPTS\.md|README\.md|LICENSE|CONTRIBUTING\.md|CODE_OF_CONDUCT\.md)$'
+ROOT_DOCS='^(AGENTS\.md|PROMPTS\.md|README\.md|LICENSE|CONTRIBUTING\.md|CODE_OF_CONDUCT\.md|CHANGELOG\.md)$'
 
 fail=0
 
@@ -37,7 +37,7 @@ while IFS= read -r f; do
   if [[ "$f" == .github/* ]]; then
     continue
   fi
-  if [[ "$f" != web/* && "$f" != prompts/* && "$f" != benchmarks/* && "$f" != AGENTS.md && "$f" != PROMPTS.md && "$f" != README.md && "$f" != CONTRIBUTING.md && "$f" != CODE_OF_CONDUCT.md ]]; then
+  if [[ "$f" != web/* && "$f" != prompts/* && "$f" != benchmarks/* && "$f" != AGENTS.md && "$f" != PROMPTS.md && "$f" != README.md && "$f" != CONTRIBUTING.md && "$f" != CODE_OF_CONDUCT.md && "$f" != CHANGELOG.md ]]; then
     echo "Doc outside allowed paths: $f"
     fail=1
   fi
