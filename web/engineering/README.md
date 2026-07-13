@@ -62,7 +62,7 @@ Then use [DEVELOPMENT_GUIDE.md](DEVELOPMENT_GUIDE.md) for day-to-day workflow, P
 | [FILE_STRUCTURE.md](FILE_STRUCTURE.md) | Monorepo layout and service scaffolds |
 | [TROUBLESHOOTING.md](TROUBLESHOOTING.md) | Local/CI/staging triage and common failures |
 | [runbooks/RUNBOOKS.md](runbooks/RUNBOOKS.md) | P1/P2 incident runbooks (proxy, auth, Redis, DB, workers) |
-| [CHANGELOG.md](CHANGELOG.md) | Release history and changelog discipline |
+| [CHANGELOG.md](../../CHANGELOG.md) | Release history and changelog discipline |
 | [GLOSSARY.md](GLOSSARY.md) | Domain terminology (agent, memory, directive, trace, etc.) |
 | [UI_UX_GUIDELINES.md](UI_UX_GUIDELINES.md) | Dashboard UX, accessibility, and trace inspector |
 

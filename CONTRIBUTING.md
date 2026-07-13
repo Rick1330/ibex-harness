@@ -142,6 +142,46 @@ make coverage-gate
 
 CI/security config changes: use [prompts/20-security-ci-audit.txt](prompts/20-security-ci-audit.txt).
 
+## Testing policy
+
+IBEX Harness requires automated tests for behavior changes. This satisfies our [OpenSSF Best Practices](web/engineering/OPENSSF_BEST_PRACTICES.md) enrollment and is enforced in review.
+
+**Policy:** When you add or materially change production behavior (handlers, stores, auth, proxy routing, security boundaries), add or extend tests in the same PR. Prefer the test pyramid in [web/engineering/TESTING_STRATEGY.md](web/engineering/TESTING_STRATEGY.md): unit tests for logic, integration tests for DB/Redis contracts, E2E only for user journeys.
+
+**How to run tests locally:**
+
+```bash
+# Go unit tests (all packages)
+go test ./packages/... ./services/auth/... ./services/proxy/...
+
+# Integration tests (Postgres required)
+make compose-test-up
+go test -tags=integration ./services/auth/... ./services/proxy/...
+
+# Coverage gate (matches CI)
+POSTGRES_TEST_DSN=postgres://ibex:ibex@localhost:5433/ibex_test?sslmode=disable make coverage-report
+```
+
+CI runs tests on every PR via [`.github/workflows/ci.yml`](.github/workflows/ci.yml) (`ci-gate-go`, race detector, fuzz smoke). The PR template **Testing** section must list what you ran.
+
+## Linting and static analysis
+
+We treat compiler and linter warnings as defects. Merge-blocking and advisory tools:
+
+| Tool | Scope | CI |
+| --- | --- | --- |
+| `golangci-lint` | Go services and packages | `ci-gate-go` |
+| `buf lint` | Protobuf | `ci-gate-go` |
+| Semgrep (`.semgrep/rules/`) | Custom security rules | `ci-gate-security` / PR |
+| CodeQL | Go, Python, JavaScript | [`codeql.yml`](.github/workflows/codeql.yml) |
+| `ruff` / `bandit` | Python (when present) | `ci-gate-security` |
+| ESLint / TypeScript | Dashboard and web | `ci-gate-web` |
+| `govulncheck`, Trivy, OSV | Dependencies | `ci-gate-go` / `ci-gate-security` |
+
+**Policy:** New code must not introduce linter errors. Fix warnings or document false positives in code; do not disable rules without an ADR or security review.
+
+Dynamic analysis: Go race detector (`go test -race`) and fuzz smoke (`FuzzParseChatCompletionRequest`) run in CI. See [ADR-0008](web/content/docs/adr/0008-security-ci-gates.mdx).
+
 **CodeQL (one-time, repo admin):** Disable GitHub **Default** CodeQL setup so the advanced [`.github/workflows/codeql.yml`](.github/workflows/codeql.yml) can upload SARIF (Settings → Code security → Code scanning → CodeQL → use Advanced / disable Default).
 
 **Never commit personal access tokens** in chat, issues, or repository secrets; CI uses the built-in `GITHUB_TOKEN` only.

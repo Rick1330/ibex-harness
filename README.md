@@ -44,4 +44,5 @@ make db-seed
 - **Architecture**: `web/engineering/ARCHITECTURE.md`
 - **Environment variables**: `web/engineering/ENVIRONMENT_VARIABLES.md`
 - **Contributing**: `CONTRIBUTING.md`
+- **API reference**: [ibexharness.com/docs/api-reference](https://ibexharness.com/docs/api-reference) (REST + gRPC interfaces)
 - **OpenSSF Best Practices**: `web/engineering/OPENSSF_BEST_PRACTICES.md`

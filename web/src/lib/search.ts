@@ -39,7 +39,7 @@ function collectSearchPages(): SearchablePage[] {
       url: "/releases",
       data: {
         title: "Releases",
-        description: "Version history and release notes from web/engineering/CHANGELOG.md.",
+        description: "Version history and release notes from CHANGELOG.md.",
       },
     },
   ];

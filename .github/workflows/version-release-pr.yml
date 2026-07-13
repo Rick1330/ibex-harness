@@ -31,25 +31,25 @@ jobs:
           fetch-depth: 0
 
       - name: Propose changelog and version bump PR
-        id: release_please
+        id: version_release
         continue-on-error: true
         uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4
         with:
-          token: ${{ secrets.RELEASE_PLEASE_TOKEN || github.token }}
-          config-file: release-please-config.json
-          manifest-file: .release-please-manifest.json
+          token: ${{ secrets.VERSION_RELEASE_TOKEN || secrets.RELEASE_PLEASE_TOKEN || github.token }}
+          config-file: version-release.config.json
+          manifest-file: .version-release-manifest.json
 
       - name: Report version release PR status
         if: always()
         run: |
-          if [ "${{ steps.release_please.outcome }}" = "success" ]; then
-            echo "Release Please updated or created the version bump PR." >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ steps.version_release.outcome }}" = "success" ]; then
+            echo "Version release PR updated or created." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           cat <<'EOF' >> "$GITHUB_STEP_SUMMARY"
           ## Version release PR not created
-          Release Please could not open or update the version bump PR.
+          The version release workflow could not open or update the version bump PR.
           Enable **Settings → Actions → General → Workflow permissions → Allow GitHub Actions to create and approve pull requests**,
-          or add a `RELEASE_PLEASE_TOKEN` repository secret with `contents` and `pull-requests` scope.
+          or add a `VERSION_RELEASE_TOKEN` repository secret with `contents` and `pull-requests` scope.
           EOF
           exit 0

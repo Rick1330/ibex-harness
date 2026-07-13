@@ -88,7 +88,7 @@ function shouldIgnoreTextLine(line: string, hasSummary: boolean): boolean {
 }
 
 function readReleasesFromChangelog(): ReleaseEntry[] {
-  const changelogPath = path.resolve(process.cwd(), "../web/engineering/CHANGELOG.md");
+  const changelogPath = path.resolve(process.cwd(), "../CHANGELOG.md");
   const lines = fs.readFileSync(changelogPath, "utf8").split(/\r?\n/);
 
   const releases: ReleaseEntry[] = [];
@@ -131,7 +131,7 @@ function readReleasesFromChangelog(): ReleaseEntry[] {
 
 export const metadata: Metadata = {
   title: "Changelog",
-  description: "Version history and release notes generated from web/engineering/CHANGELOG.md.",
+  description: "Version history and release notes generated from CHANGELOG.md.",
 };
 
 export default function ReleasesPage() {
@@ -155,7 +155,7 @@ export default function ReleasesPage() {
         {allReleases.length === 0 ? (
           <div className="rounded-lg border border-border bg-panel p-6 text-sm text-text-secondary">
             No tagged releases yet. Release entries appear here automatically
-            when Release Please updates `web/engineering/CHANGELOG.md` for the first
+            when the version release pipeline updates `CHANGELOG.md` for the first
             published version.
           </div>
         ) : null}
