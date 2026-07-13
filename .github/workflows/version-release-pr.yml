@@ -40,10 +40,16 @@ jobs:
 
       - name: Publish version release report
         if: always()
+        env:
+          VERSION_RELEASE_STEP_OUTCOME: ${{ steps.version_release.outcome }}
+          VERSION_RELEASE_PRS_CREATED: ${{ steps.version_release.outputs.prs_created || 'false' }}
+          VERSION_RELEASE_PR_NUMBER: ${{ steps.version_release.outputs.pr_number || '' }}
+          VERSION_RELEASE_RELEASES_CREATED: ${{ steps.version_release.outputs.releases_created || 'false' }}
+          VERSION_RELEASE_TAG_NAME: ${{ steps.version_release.outputs.tag_name || '' }}
         run: |
           bash .github/scripts/publish-version-release-report.sh \
-            "${{ steps.version_release.outcome }}" \
-            "${{ steps.version_release.outputs.prs_created || 'false' }}" \
-            "${{ steps.version_release.outputs.pr_number || '' }}" \
-            "${{ steps.version_release.outputs.releases_created || 'false' }}" \
-            "${{ steps.version_release.outputs.tag_name || '' }}"
+            "$VERSION_RELEASE_STEP_OUTCOME" \
+            "$VERSION_RELEASE_PRS_CREATED" \
+            "$VERSION_RELEASE_PR_NUMBER" \
+            "$VERSION_RELEASE_RELEASES_CREATED" \
+            "$VERSION_RELEASE_TAG_NAME"
