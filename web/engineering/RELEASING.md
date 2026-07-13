@@ -38,6 +38,17 @@ Release assets include `sbom.spdx.json`, `sbom.spdx.json.sig`, and `sbom.spdx.js
 
 The version release engine opens PRs from an internal branch named `release-please--branches--main`. That name is imposed by the upstream engine and is **not** user-facing branding — do not use it for feature work. Release PRs are labeled `version-release: pending` until merge, then `version-release: tagged`.
 
+## When the workflow runs
+
+| Trigger | Behavior |
+| --- | --- |
+| Push to `main` | Opens or updates the Version Release PR when there are releasable conventional commits. **Skipped** when the push is a merged release PR (`chore(release): prepare v…` squash commit) to avoid a release loop. |
+| `workflow_dispatch` | Manual run from **Actions → Version Release PR** when you want to refresh the release PR on demand. |
+
+Because release PRs are created by `github-actions[bot]`, the standalone **Semantic PR Title** workflow does not run on them (GitHub Actions token chaining). The Version Release workflow posts the required `semantic-pr-title` check directly on the release PR head commit.
+
+**CodeScene** is advisory only (not a merge gate). If it stays queued, merge once required CI gates are green.
+
 ## Workflow permissions
 
 If the Version Release PR workflow cannot open PRs, enable **Settings → Actions → General → Workflow permissions → Read and write permissions** and **Allow GitHub Actions to create and approve pull requests**, or add a `VERSION_RELEASE_TOKEN` secret (`contents` + `pull-requests` scope).

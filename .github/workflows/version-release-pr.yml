@@ -15,10 +15,14 @@ concurrency:
 jobs:
   propose-version-release-pr:
     name: propose-version-release-pr
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && !contains(github.event.head_commit.message, 'chore(release): prepare v'))
     runs-on: ubuntu-latest
     permissions:
       contents: write
       pull-requests: write
+      checks: write
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -37,6 +41,13 @@ jobs:
           token: ${{ secrets.VERSION_RELEASE_TOKEN || github.token }}
           config-file: version-release.config.json
           manifest-file: .version-release-manifest.json
+
+      - name: Report semantic-pr-title check on release PR
+        if: steps.version_release.outcome == 'success' && steps.version_release.outputs.pr_number != ''
+        env:
+          GH_TOKEN: ${{ secrets.VERSION_RELEASE_TOKEN || github.token }}
+          PR_NUMBER: ${{ steps.version_release.outputs.pr_number }}
+        run: bash .github/scripts/report-semantic-pr-title-check.sh "$PR_NUMBER"
 
       - name: Publish version release report
         if: always()
