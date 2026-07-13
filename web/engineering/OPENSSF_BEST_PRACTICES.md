@@ -98,5 +98,11 @@ Copy each **Justification** into the matching criterion on the [passing edit for
 | Security | `know_secure_design`, `know_common_errors`, `crypto_*` (except keylength), `delivery_unsigned`, `vulnerabilities_*`, `no_leaked_credentials` | `crypto_keylength` |
 | Analysis | `static_analysis`, `dynamic_analysis` | `dynamic_analysis_unsafe`, `dynamic_analysis_fixed` |
 
-SHOULD criteria with low external traffic (`report_responses`, `enhancement_responses`, `test_most`, `crypto_weaknesses`, `crypto_pfs`): mark **Met** with a double-slash deferral prefix explaining pre-1.0 solo maintenance.
+### Reporting responses (dated evidence)
 
+| Criterion | Status | Justification |
+| --- | --- | --- |
+| `report_responses` | Met | Between 2025-07-01 and 2026-07-13, zero bug reports were filed in the public issue tracker ([issues](https://github.com/Rick1330/ibex-harness/issues)); the majority requirement is satisfied vacuously. Maintainer acknowledges any future reports on GitHub. |
+| `enhancement_responses` | Unmet | // No public enhancement requests filed in the last 12 months (issue tracker empty as of 2026-07-13). Pre-1.0 solo project; enhancements are tracked via pull requests and the public roadmap instead. |
+
+Other SHOULD criteria with low external traffic (`test_most`, `crypto_weaknesses`, `crypto_pfs`): mark **Met** with a double-slash deferral prefix explaining pre-1.0 solo maintenance.

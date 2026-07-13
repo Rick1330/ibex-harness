@@ -151,18 +151,18 @@ IBEX Harness requires automated tests for behavior changes. This satisfies our [
 **How to run tests locally:**
 
 ```bash
-# Go unit tests (all packages)
+# Go unit tests (core packages — same scope as CI unit coverage)
 go test ./packages/... ./services/auth/... ./services/proxy/...
 
-# Integration tests (Postgres required)
+# Integration tests (Postgres required; includes infra/migrations when tagged)
 make compose-test-up
-go test -tags=integration ./services/auth/... ./services/proxy/...
+go test -tags=integration ./packages/... ./services/auth/... ./services/proxy/... ./infra/migrations/postgres/...
 
 # Coverage gate (matches CI)
 POSTGRES_TEST_DSN=postgres://ibex:ibex@localhost:5433/ibex_test?sslmode=disable make coverage-report
 ```
 
-CI runs tests on every PR via [`.github/workflows/ci.yml`](.github/workflows/ci.yml) (`ci-gate-go`, race detector, fuzz smoke). The PR template **Testing** section must list what you ran.
+CI runs tests on every PR via [`.github/workflows/ci.yml`](.github/workflows/ci.yml) (`ci-gate-go` always runs; `go-race` and `go-fuzz` run when the workflow detects Go changes via `run_go`). The PR template **Testing** section must list what you ran.
 
 ## Linting and static analysis
 
@@ -180,7 +180,7 @@ We treat compiler and linter warnings as defects. Merge-blocking and advisory to
 
 **Policy:** New code must not introduce linter errors. Fix warnings or document false positives in code; do not disable rules without an ADR or security review.
 
-Dynamic analysis: Go race detector (`go test -race`) and fuzz smoke (`FuzzParseChatCompletionRequest`) run in CI. See [ADR-0008](web/content/docs/adr/0008-security-ci-gates.mdx).
+Dynamic analysis: Go race detector (`go test -race`) and fuzz smoke (`FuzzParseChatCompletionRequest`) run in CI when `run_go` is true. See [ADR-0008](web/content/docs/adr/0008-security-ci-gates.mdx).
 
 **CodeQL (one-time, repo admin):** Disable GitHub **Default** CodeQL setup so the advanced [`.github/workflows/codeql.yml`](.github/workflows/codeql.yml) can upload SARIF (Settings → Code security → Code scanning → CodeQL → use Advanced / disable Default).
 
