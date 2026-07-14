@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "node scripts/run-dev.mjs",
     "dev:clean": "node scripts/stop-next.mjs && node scripts/clean-next.mjs && node scripts/run-dev.mjs",
-    "dev:turbo": "next dev --turbo",
+    "dev:webpack": "node scripts/run-dev.mjs --webpack",
+    "dev:turbo": "node scripts/run-dev.mjs --turbopack",
     "prebuild": "node scripts/ensure-solo-build.mjs",
     "build": "node scripts/ensure-solo-build.mjs && node scripts/build-hint.mjs && node scripts/next-build.mjs",
     "build:fast": "node scripts/ensure-solo-build.mjs && node scripts/build-hint.mjs && node scripts/next-build.mjs --no-cache",

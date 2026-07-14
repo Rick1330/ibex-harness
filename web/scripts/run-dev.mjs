@@ -11,8 +11,20 @@ const nextBin = path.join(
 );
 const distDir = resolveDistDir();
 const extraArgs = process.argv.slice(2);
+const wantsTurbo =
+  extraArgs.includes("--turbopack") || extraArgs.includes("--turbo");
 
-const child = spawn(process.execPath, [nextBin, "dev", ...extraArgs], {
+const devArgs = ["dev"];
+// Turbopack's native lockfile binding is unreliable on Windows (Next 16.2.x).
+if (
+  process.platform === "win32" &&
+  !wantsTurbo &&
+  process.env.NEXT_USE_TURBOPACK !== "1"
+) {
+  devArgs.push("--webpack");
+}
+
+const child = spawn(process.execPath, [nextBin, ...devArgs, ...extraArgs], {
   cwd: appRoot,
   stdio: "inherit",
   env: {

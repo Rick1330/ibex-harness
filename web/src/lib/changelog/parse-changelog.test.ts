@@ -59,6 +59,21 @@ describe("parseChangeItem", () => {
     expect(item?.description).toBe("users and agents schema");
   });
 
+  it("strips multiple milestones and skips unrelated (m text", () => {
+    const item = parseChangeItem(
+      "* **auth:** login (m1.2.3) and (more info) (m2.0.1) flow ([#1](https://github.com/Rick1330/ibex-harness/issues/1)) ([abc1234](https://github.com/Rick1330/ibex-harness/commit/abc1234567890))",
+    );
+    expect(item?.description).toBe("login and (more info) flow");
+  });
+
+  it("finds issue link after skipping commit-only wrapped links", () => {
+    const item = parseChangeItem(
+      "* **proxy:** rate limit ([abc1234](https://github.com/Rick1330/ibex-harness/commit/abc1234567890)) ([#99](https://github.com/Rick1330/ibex-harness/issues/99)) ([def5678](https://github.com/Rick1330/ibex-harness/commit/def5678901234))",
+    );
+    expect(item?.issueNumber).toBe(99);
+    expect(item?.commitSha).toBe("def5678");
+  });
+
   it("marks internal scopes", () => {
     const item = parseChangeItem(
       "* **ci:** harden version release workflow reporting ([#230](https://github.com/Rick1330/ibex-harness/issues/230)) ([41d80e9](https://github.com/Rick1330/ibex-harness/commit/41d80e9))",

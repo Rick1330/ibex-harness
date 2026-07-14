@@ -1,3 +1,15 @@
+import {
+  ChangelogLine,
+  collapseWhitespace,
+  findDateDelimiterIndex,
+  findFirstDigitIndex,
+  isDecimalDigits,
+  isHexCommitLabel,
+  isMilestoneMarker,
+  isSemverChar,
+  splitLines,
+  takeWrappedMarkdownLink,
+} from "./changelog-text";
 import type {
   ChangeItem,
   ChangePriority,
@@ -36,145 +48,24 @@ type CapState = {
   docsCount: number;
 };
 
-function isAsciiDigit(ch: string): boolean {
-  if (ch.length !== 1) return false;
-  const code = ch.charCodeAt(0);
-  return code >= 48 && code <= 57;
-}
-
-function isDecimalDigits(value: string): boolean {
-  if (value.length === 0) return false;
-  for (let i = 0; i < value.length; i += 1) {
-    if (!isAsciiDigit(value.charAt(i))) return false;
-  }
-  return true;
-}
-
-function isSemverChar(ch: string): boolean {
-  return isAsciiDigit(ch) || ch === ".";
-}
-
-function isHexCommitLabel(label: string): boolean {
-  const len = label.length;
-  if (len < 7 || len > 40) return false;
-  for (let i = 0; i < len; i += 1) {
-    const ch = label.charAt(i).toLowerCase();
-    const isDigit = ch >= "0" && ch <= "9";
-    const isHex = isDigit || (ch >= "a" && ch <= "f");
-    if (!isHex) return false;
-  }
-  return true;
-}
-
-function isMilestoneMarker(marker: string): boolean {
-  if (marker.length === 0) return false;
-  for (let i = 0; i < marker.length; i += 1) {
-    const ch = marker.charAt(i);
-    if (!isAsciiDigit(ch) && ch !== ".") return false;
-  }
-  return true;
-}
-
-function findFirstDigitIndex(text: string): number {
-  for (let i = 0; i < text.length; i += 1) {
-    if (isAsciiDigit(text.charAt(i))) return i;
-  }
-  return -1;
-}
-
-function findDateDelimiterIndex(text: string): number {
-  const emDash = text.indexOf("— ");
-  if (emDash !== -1) return emDash;
-  return text.indexOf("- ");
-}
-
-function collapseWhitespace(text: string): string {
-  let result = "";
-  let pendingSpace = false;
-  for (let i = 0; i < text.length; i += 1) {
-    const ch = text.charAt(i);
-    const isSpace = ch === " " || ch === "\t" || ch === "\n" || ch === "\r";
-    if (isSpace) {
-      pendingSpace = result.length > 0;
-      continue;
-    }
-    if (pendingSpace) {
-      result += " ";
-      pendingSpace = false;
-    }
-    result += ch;
-  }
-  return result.trim();
-}
-
-function splitLines(content: string): string[] {
-  return content.split("\n").map((line) =>
-    line.endsWith("\r") ? line.slice(0, -1) : line,
-  );
-}
-
-/** Line wrapper to keep parser helpers free of bare string-arg surfaces. */
-class ChangelogLine {
-  constructor(readonly text: string) {}
-
-  trimmed(): ChangelogLine {
-    return new ChangelogLine(this.text.trim());
-  }
-
-  startsWith(prefix: string): boolean {
-    return this.text.startsWith(prefix);
-  }
-
-  equals(other: string): boolean {
-    return this.text === other;
-  }
-
-  includes(needle: string): boolean {
-    return this.text.includes(needle);
-  }
-
-  isEmpty(): boolean {
-    return this.text.length === 0;
-  }
-
-  bulletBody(): ChangelogLine | null {
-    if (this.text.startsWith("* ") || this.text.startsWith("- ")) {
-      return new ChangelogLine(this.text.slice(2).trim());
-    }
-    return null;
-  }
-
-  sectionTitle(): string | null {
-    if (!this.text.startsWith("### ")) return null;
-    return this.text.slice(4).trim() || null;
-  }
-
-  releaseHeader(): MutableRelease | null {
-    if (!this.startsWith("## ") || this.includes("[Unreleased]")) return null;
-    const version = extractSemver(this.text);
-    if (!version) return null;
-    return {
-      version,
-      date: extractReleaseDate(this.text),
-      type: parseReleaseType(version),
-      summary: null,
-      sections: [],
-    };
-  }
-}
-
-export function parseReleaseType(version: string): ReleaseType {
+function readSemverTriple(
+  version: string,
+): readonly [major: number, minor: number, patch: number] | null {
   const parts = version.split(".");
-  if (parts.length !== 3) return "patch";
+  if (parts.length !== 3) return null;
   const majorStr = parts.at(0) ?? "";
   const minorStr = parts.at(1) ?? "";
   const patchStr = parts.at(2) ?? "";
-  if (!isDecimalDigits(majorStr) || !isDecimalDigits(minorStr) || !isDecimalDigits(patchStr)) {
-    return "patch";
-  }
-  const major = Number(majorStr);
-  const minor = Number(minorStr);
-  const patch = Number(patchStr);
+  if (!isDecimalDigits(majorStr)) return null;
+  if (!isDecimalDigits(minorStr)) return null;
+  if (!isDecimalDigits(patchStr)) return null;
+  return [Number(majorStr), Number(minorStr), Number(patchStr)];
+}
+
+export function parseReleaseType(version: string): ReleaseType {
+  const triple = readSemverTriple(version);
+  if (!triple) return "patch";
+  const [major, minor, patch] = triple;
   if (patch > 0) return "patch";
   if (minor > 0) return "minor";
   if (major > 0) return "major";
@@ -220,25 +111,6 @@ function shouldIgnoreItem(body: ChangelogLine): boolean {
   );
 }
 
-function takeWrappedMarkdownLink(
-  text: string,
-): { label: string; url: string; before: string; after: string } | null {
-  const open = text.indexOf("([");
-  if (open === -1) return null;
-  const mid = text.indexOf("](", open);
-  if (mid === -1) return null;
-  const urlEnd = text.indexOf(")", mid + 2);
-  if (urlEnd === -1) return null;
-  // Engine wraps markdown links as ([label](url)) — consume the outer ')' when present.
-  const end = text.charAt(urlEnd + 1) === ")" ? urlEnd + 1 : urlEnd;
-  return {
-    label: text.slice(open + 2, mid),
-    url: text.slice(mid + 2, urlEnd),
-    before: text.slice(0, open),
-    after: text.slice(end + 1),
-  };
-}
-
 function issueNumberFromLabel(label: string): number | null {
   if (!label.startsWith("#")) return null;
   const digits = label.slice(1);
@@ -247,14 +119,13 @@ function issueNumberFromLabel(label: string): number | null {
 }
 
 function parseIssueLink(body: ChangelogLine): IssueRef | null {
-  let cursor = 0;
-  while (cursor < body.text.length) {
-    const slice = body.text.slice(cursor);
-    const link = takeWrappedMarkdownLink(slice);
+  let remaining = body.text;
+  while (remaining.length > 0) {
+    const link = takeWrappedMarkdownLink(remaining);
     if (!link) return null;
     const number = issueNumberFromLabel(link.label);
     if (number !== null) return { number, url: link.url };
-    cursor += link.before.length + 1;
+    remaining = link.after;
   }
   return null;
 }
@@ -301,16 +172,30 @@ function stripMarkdownLinks(body: ChangelogLine): ChangelogLine {
 
 function stripMilestoneMarkers(body: ChangelogLine): ChangelogLine {
   let text = body.text;
-  while (true) {
-    const start = text.lastIndexOf("(m");
-    if (start === -1) break;
+  let cursor = 0;
+  let built = "";
+  while (cursor < text.length) {
+    const start = text.indexOf("(m", cursor);
+    if (start === -1) {
+      built += text.slice(cursor);
+      break;
+    }
+    built += text.slice(cursor, start);
     const end = text.indexOf(")", start);
-    if (end === -1) break;
+    if (end === -1) {
+      built += text.slice(start);
+      break;
+    }
     const marker = text.slice(start + 2, end);
-    if (!isMilestoneMarker(marker)) break;
-    text = collapseWhitespace(`${text.slice(0, start)} ${text.slice(end + 1)}`);
+    if (isMilestoneMarker(marker)) {
+      built += " ";
+      cursor = end + 1;
+      continue;
+    }
+    built += "(m";
+    cursor = start + 2;
   }
-  return new ChangelogLine(text);
+  return new ChangelogLine(collapseWhitespace(built));
 }
 
 function classifyPriority(scope: string | null): ChangePriority {
@@ -419,6 +304,19 @@ function isSkippableHeader(line: ChangelogLine): boolean {
   );
 }
 
+function releaseHeaderFromLine(line: ChangelogLine): MutableRelease | null {
+  if (!line.startsWith("## ") || line.includes("[Unreleased]")) return null;
+  const version = extractSemver(line.text);
+  if (!version) return null;
+  return {
+    version,
+    date: extractReleaseDate(line.text),
+    type: parseReleaseType(version),
+    summary: null,
+    sections: [],
+  };
+}
+
 function applyLineToRelease(
   line: ChangelogLine,
   current: MutableRelease,
@@ -457,7 +355,7 @@ export function parseChangelogContent(content: string): ReleaseEntry[] {
       continue;
     }
 
-    const nextRelease = line.releaseHeader();
+    const nextRelease = releaseHeaderFromLine(line);
     if (nextRelease) {
       flushRelease(releases, current);
       current = nextRelease;
