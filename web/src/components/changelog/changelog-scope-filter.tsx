@@ -22,7 +22,9 @@ export function ChangelogScopeFilter({
       </span>
       <button
         type="button"
-        onClick={() => onChange(null)}
+        onClick={() => {
+          onChange(null);
+        }}
         className={cn(
           "shrink-0 rounded-[4px] border px-2.5 py-1.5 font-mono text-xs transition-colors",
           activeScope === null
@@ -36,7 +38,9 @@ export function ChangelogScopeFilter({
         <button
           key={scope}
           type="button"
-          onClick={() => onChange(scope === activeScope ? null : scope)}
+          onClick={() => {
+            onChange(scope === activeScope ? null : scope);
+          }}
           className={cn(
             "shrink-0 rounded-[4px] border px-2.5 py-1.5 font-mono text-xs transition-colors",
             activeScope === scope
