@@ -92,18 +92,3 @@ jobs:
             echo "Release URL: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/tag/${RELEASE_TAG}"
           } >>"$GITHUB_STEP_SUMMARY"
           echo "::notice title=Tagged release published::${RELEASE_TAG} with signed SBOM assets"
-
-  tagged-docker-publish:
-    name: tagged-docker-publish
-    if: github.event_name == 'push'
-    needs: tagged-github-release
-    permissions:
-      packages: write
-      id-token: write
-      attestations: write
-      security-events: write
-      contents: read
-    secrets: inherit
-    uses: ./.github/workflows/docker-publish.yml
-    with:
-      image_tag: ${{ needs.tagged-github-release.outputs.release_tag }}
