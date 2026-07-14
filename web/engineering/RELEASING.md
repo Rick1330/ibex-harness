@@ -10,7 +10,7 @@ This repository uses an **automated version release pipeline** to keep releases 
 | **You merge the release PR** | Push to `main` triggers **publish** mode: creates `vX.Y.Z` tag and GitHub Release. |
 | **`workflow_dispatch` → propose** | Manually refresh the release PR between Sundays if needed. |
 | **`workflow_dispatch` → publish** | Manually create the tag after merging a release PR (if the automatic publish step did not run). |
-| **Tagged Release workflow** | On tag publish / `workflow_dispatch`, attaches SBOM + cosign assets (`release.yml`). |
+| **Tagged Release workflow** | On tag push / `workflow_dispatch`, attaches SBOM + cosign assets (`release.yml`). Docker images publish separately on tag push (`release-docker.yml`). |
 
 Normal feature and fix PRs merge to `main` **without** opening a release PR each time.
 
@@ -39,7 +39,9 @@ Configured in `version-release.config.json` and `.version-release-manifest.json`
 2. **Sunday (or manual propose):** the pipeline opens/updates `chore(release): prepare vX.Y.Z`.
 3. Review the release PR — confirm `CHANGELOG.md` and semver.
 4. Merge the release PR (squash).
-5. **Publish** runs on the `chore(release): prepare v…` merge commit → tag `vX.Y.Z` → `release.yml` (SBOM + cosign) + docker publish on tag push.
+5. **Publish** runs on the `chore(release): prepare v…` merge commit → tag `vX.Y.Z` → `release.yml` (SBOM + cosign bundle) + `release-docker.yml` (container images on tag push).
+
+If a tag was created while `release.yml` was broken, re-attach assets with **Actions → Tagged Release → Run workflow** and `tag_name=vX.Y.Z` (no need to recreate the tag).
 
 ## Automation branch and labels
 

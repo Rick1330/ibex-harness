@@ -47,7 +47,7 @@ Solo mode keeps **0 required approving reviews** per [ADR-0003](../content/docs/
 
 The [Signed-Releases check](https://github.com/ossf/scorecard/blob/main/docs/checks.md#signed-releases) inspects the last releases for signature files (`*.sig`, `*.sigstore`, `*.intoto.jsonl`, etc.). Tagged releases (`v*.*.*`) attach a cosign signature for `sbom.spdx.json` (see `release.yml`). Container images use GitHub attestations in `docker-publish.yml`.
 
-After the first semver tag from the version release pipeline, confirm release assets include `sbom.spdx.json.sig`.
+After the first semver tag from the version release pipeline, confirm release assets include `sbom.spdx.json.sig` and `sbom.spdx.json.bundle.json`.
 
 ## Badge after passing
 
