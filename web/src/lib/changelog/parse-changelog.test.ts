@@ -44,6 +44,13 @@ describe("parseChangeItem", () => {
     expect(item?.commitSha).toBe("4de673c");
   });
 
+  it("strips milestone markers without regex ReDoS pattern", () => {
+    const item = parseChangeItem(
+      "* **db:** users and agents schema (m1.1.7) ([#57](https://github.com/Rick1330/ibex-harness/issues/57)) ([59e7e04](https://github.com/Rick1330/ibex-harness/commit/59e7e04))",
+    );
+    expect(item?.description).toBe("users and agents schema");
+  });
+
   it("marks internal scopes", () => {
     const item = parseChangeItem(
       "* **ci:** harden version release workflow reporting ([#230](https://github.com/Rick1330/ibex-harness/issues/230)) ([41d80e9](https://github.com/Rick1330/ibex-harness/commit/41d80e9))",

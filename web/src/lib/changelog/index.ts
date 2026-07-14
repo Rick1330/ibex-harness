@@ -12,5 +12,4 @@ export {
   parseChangeItem,
   parseChangelogContent,
   parseReleaseType,
-  readReleasesFromChangelog,
 } from "./parse-changelog";

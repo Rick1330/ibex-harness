@@ -6,7 +6,7 @@ import { ReleaseHeroCard } from "@/components/changelog/release-hero-card";
 import { ReleaseNotesPanel } from "@/components/changelog/release-notes-panel";
 import { ReleaseTimeline } from "@/components/changelog/release-timeline";
 import { PageIntro } from "@/components/layout/page-intro";
-import { readReleasesFromChangelog } from "@/lib/changelog";
+import { readReleasesFromChangelog } from "@/lib/changelog/read-changelog";
 
 export const metadata: Metadata = {
   title: "Changelog",

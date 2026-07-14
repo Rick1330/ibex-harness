@@ -1,6 +1,3 @@
-import fs from "node:fs";
-import path from "node:path";
-
 import type {
   ChangeItem,
   ChangePriority,
@@ -14,6 +11,9 @@ const DATE_PAREN_RE = /\(([^)]+)\)/;
 const DATE_DASH_RE = /[-—]\s+(.+)$/;
 const SECTION_HEADER = /^###\s+(.+)$/;
 const BULLET_PREFIX = /^[-*]\s+/;
+const ISSUE_LINK_RE = /\(\[#(\d+)\]\(([^)]+)\)\)/;
+const COMMIT_SHA_RE = /\(\[([a-f0-9]{7,40})\]\(([^)]+)\)\)/i;
+const SCOPE_PREFIX = "**";
 
 const INTERNAL_SCOPES = new Set(["ci", "test", "dx", "docker"]);
 const USER_FACING_SCOPES = new Set([
@@ -28,11 +28,6 @@ const USER_FACING_SCOPES = new Set([
 const HIGHLIGHT_CAP = 5;
 const DOCS_HIGHLIGHT_CAP = 2;
 
-const ISSUE_LINK_RE = /\(\[#(\d+)\]\(([^)]+)\)\)/;
-const COMMIT_LINK_RE = /\(\[([a-f0-9]{7,40})\]\(([^)]+)\)\)/gi;
-const SCOPE_RE = /^\*\*([^*]+):\*\*\s*/;
-const MILESTONE_RE = /\s*\(m[\d.]+(?:\.[\d.]+)*\)\s*/gi;
-
 type MutableSection = { title: string; items: ChangeItem[] };
 type MutableRelease = {
   version: string;
@@ -41,6 +36,10 @@ type MutableRelease = {
   summary: string | null;
   sections: MutableSection[];
 };
+
+type IssueRef = Readonly<{ number: number; url: string }>;
+type CommitRef = Readonly<{ sha: string; url: string }>;
+type ScopedText = Readonly<{ scope: string | null; rest: string }>;
 
 export function parseReleaseType(version: string): ReleaseType {
   const [major, minor] = version.split(".").map((part) => Number(part) || 0);
@@ -66,7 +65,11 @@ function shouldIgnoreItem(item: string): boolean {
 }
 
 function isReleaseHeader(line: string): boolean {
-  return line.startsWith("## ") && VERSION_RE.test(line) && !line.includes("[Unreleased]");
+  return (
+    line.startsWith("## ") &&
+    VERSION_RE.test(line) &&
+    !line.includes("[Unreleased]")
+  );
 }
 
 function parseReleaseHeader(line: string): MutableRelease | null {
@@ -77,46 +80,62 @@ function parseReleaseHeader(line: string): MutableRelease | null {
   const version = versionMatch[1];
   const parenDate = DATE_PAREN_RE.exec(line);
   const dashDate = parenDate ? null : DATE_DASH_RE.exec(line);
-  const date = normalizeDate(parenDate?.[1] ?? dashDate?.[1] ?? null);
 
   return {
     version,
-    date,
+    date: normalizeDate(parenDate?.[1] ?? dashDate?.[1] ?? null),
     type: parseReleaseType(version),
     summary: null,
     sections: [],
   };
 }
 
-function stripTrailingLinks(text: string): string {
-  let result = text;
-  result = result.replace(ISSUE_LINK_RE, "");
-  result = result.replace(COMMIT_LINK_RE, "");
+function stripMarkdownLinks(text: string): string {
+  let result = text.replace(ISSUE_LINK_RE, "");
+  result = result.replace(COMMIT_SHA_RE, "");
   return result.replace(/\s+/g, " ").trim();
 }
 
-function parseIssueLink(text: string): { number: number; url: string } | null {
+function parseIssueLink(text: string): IssueRef | null {
   const match = ISSUE_LINK_RE.exec(text);
   if (!match) return null;
   return { number: Number(match[1]), url: match[2] };
 }
 
-function parseCommitLink(text: string): { sha: string; url: string } | null {
-  const match = COMMIT_LINK_RE.exec(text);
-  COMMIT_LINK_RE.lastIndex = 0;
+function parseCommitLink(text: string): CommitRef | null {
+  const match = COMMIT_SHA_RE.exec(text);
   if (!match) return null;
   return { sha: match[1], url: match[2] };
 }
 
-function parseScope(text: string): { scope: string | null; rest: string } {
-  const match = SCOPE_RE.exec(text);
-  if (!match) return { scope: null, rest: text.trim() };
-  return { scope: match[1].trim(), rest: text.slice(match[0].length).trim() };
+function parseScope(text: string): ScopedText {
+  if (!text.startsWith(SCOPE_PREFIX)) {
+    return { scope: null, rest: text.trim() };
+  }
+  const close = text.indexOf(":**", 2);
+  if (close === -1) return { scope: null, rest: text.trim() };
+  const scope = text.slice(2, close).trim();
+  const rest = text.slice(close + 3).trim();
+  return { scope: scope || null, rest };
+}
+
+/** Strip trailing "(m1.2.3)" milestone markers without nested regex quantifiers. */
+function stripMilestoneMarkers(text: string): string {
+  let result = text;
+  while (true) {
+    const start = result.lastIndexOf("(m");
+    if (start === -1) break;
+    const end = result.indexOf(")", start);
+    if (end === -1) break;
+    const body = result.slice(start + 2, end);
+    if (!/^[\d.]+$/.test(body)) break;
+    result = `${result.slice(0, start)} ${result.slice(end + 1)}`;
+  }
+  return result.replace(/\s+/g, " ").trim();
 }
 
 function cleanDescription(raw: string): string {
-  const withoutLinks = stripTrailingLinks(raw);
-  return withoutLinks.replace(MILESTONE_RE, " ").replace(/\s+/g, " ").trim();
+  return stripMilestoneMarkers(stripMarkdownLinks(raw));
 }
 
 function classifyPriority(scope: string | null): ChangePriority {
@@ -124,29 +143,30 @@ function classifyPriority(scope: string | null): ChangePriority {
   return "standard";
 }
 
-export function parseChangeItem(line: string): ChangeItem | null {
-  const bulletMatch = BULLET_PREFIX.exec(line);
-  if (!bulletMatch) return null;
-
-  const raw = line.slice(bulletMatch[0].length).trim();
+function buildChangeItem(raw: string): ChangeItem | null {
   if (!raw || shouldIgnoreItem(raw)) return null;
 
   const issue = parseIssueLink(raw);
   const commit = parseCommitLink(raw);
-  const { scope, rest } = parseScope(raw);
-  const description = cleanDescription(rest);
-
+  const scoped = parseScope(raw);
+  const description = cleanDescription(scoped.rest);
   if (!description) return null;
 
   return {
-    scope,
+    scope: scoped.scope,
     description,
     issueNumber: issue?.number ?? null,
     issueUrl: issue?.url ?? null,
     commitSha: commit?.sha ?? null,
     commitUrl: commit?.url ?? null,
-    priority: classifyPriority(scope),
+    priority: classifyPriority(scoped.scope),
   };
+}
+
+export function parseChangeItem(line: string): ChangeItem | null {
+  const bulletMatch = BULLET_PREFIX.exec(line);
+  if (!bulletMatch) return null;
+  return buildChangeItem(line.slice(bulletMatch[0].length).trim());
 }
 
 function scoreHighlight(item: ChangeItem): number {
@@ -158,26 +178,26 @@ function scoreHighlight(item: ChangeItem): number {
   return score;
 }
 
-function shouldSkipForCaps(
-  item: ChangeItem,
-  internalCounts: Map<string, number>,
-  docsCount: number,
-): boolean {
+type CapState = {
+  internalCounts: Map<string, number>;
+  docsCount: number;
+};
+
+function shouldSkipForCaps(item: ChangeItem, caps: CapState): boolean {
   if (item.priority === "internal" && item.scope) {
-    if ((internalCounts.get(item.scope) ?? 0) >= 1) return true;
+    if ((caps.internalCounts.get(item.scope) ?? 0) >= 1) return true;
   }
-  if (item.scope === "docs" && docsCount >= DOCS_HIGHLIGHT_CAP) return true;
-  return false;
+  return item.scope === "docs" && caps.docsCount >= DOCS_HIGHLIGHT_CAP;
 }
 
-function recordCapUsage(
-  item: ChangeItem,
-  internalCounts: Map<string, number>,
-): number {
+function recordCapUsage(item: ChangeItem, caps: CapState): void {
   if (item.priority === "internal" && item.scope) {
-    internalCounts.set(item.scope, (internalCounts.get(item.scope) ?? 0) + 1);
+    caps.internalCounts.set(
+      item.scope,
+      (caps.internalCounts.get(item.scope) ?? 0) + 1,
+    );
   }
-  return item.scope === "docs" ? 1 : 0;
+  if (item.scope === "docs") caps.docsCount += 1;
 }
 
 function selectHighlights(items: ChangeItem[]): ChangeItem[] {
@@ -186,15 +206,13 @@ function selectHighlights(items: ChangeItem[]): ChangeItem[] {
   const ranked = [...items].sort(
     (a, b) => scoreHighlight(b) - scoreHighlight(a),
   );
-
   const highlights: ChangeItem[] = [];
-  const internalCounts = new Map<string, number>();
-  let docsCount = 0;
+  const caps: CapState = { internalCounts: new Map(), docsCount: 0 };
 
   for (const item of ranked) {
     if (highlights.length >= HIGHLIGHT_CAP) break;
-    if (shouldSkipForCaps(item, internalCounts, docsCount)) continue;
-    docsCount += recordCapUsage(item, internalCounts);
+    if (shouldSkipForCaps(item, caps)) continue;
+    recordCapUsage(item, caps);
     highlights.push({ ...item, priority: "highlight" });
   }
 
@@ -285,15 +303,6 @@ export function parseChangelogContent(content: string): ReleaseEntry[] {
 
   flushRelease(releases, current);
   return releases;
-}
-
-export function readReleasesFromChangelog(
-  changelogPath?: string,
-): ReleaseEntry[] {
-  const resolved =
-    changelogPath ?? path.resolve(process.cwd(), "../CHANGELOG.md");
-  const content = fs.readFileSync(resolved, "utf8");
-  return parseChangelogContent(content);
 }
 
 export function collectScopes(release: ReleaseEntry): string[] {
