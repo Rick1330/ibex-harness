@@ -26,7 +26,7 @@ export const NAV_LINKS = [
     match: "/blog",
   },
   {
-    text: "Releases",
+    text: "Changelog",
     href: "/releases",
     match: "/releases",
   },

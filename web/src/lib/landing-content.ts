@@ -80,7 +80,7 @@ export const FOOTER_LINKS = {
     { label: "Docs", href: "/docs/getting-started/introduction" },
     { label: "Blog", href: "/blog" },
     { label: "Benchmarks", href: "/benchmarks" },
-    { label: "Releases", href: "/releases" },
+    { label: "Changelog", href: "/releases" },
     { label: "Roadmap", href: "/roadmap" },
   ],
   project: [

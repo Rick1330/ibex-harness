@@ -31,7 +31,7 @@ Configured in `version-release.config.json` and `.version-release-manifest.json`
 - **Releases are created by the pipeline**, not manually in the GitHub UI.
 - Version tags follow **Semantic Versioning**: `vMAJOR.MINOR.PATCH`.
 - The canonical changelog lives at **`CHANGELOG.md`** (repository root) and is updated as part of a release PR.
-- The public changelog at [ibexharness.com/releases](https://ibexharness.com/releases) is generated from root `CHANGELOG.md` at web build time.
+- The public changelog at [ibexharness.com/releases](https://ibexharness.com/releases) is generated from root `CHANGELOG.md` at web build time. The site shows **curated highlights** per release (scoped badges, issue links, collapsible full lists). The complete machine-readable history remains on GitHub Releases and in `CHANGELOG.md`.
 
 ## Normal release flow
 
@@ -43,7 +43,9 @@ Configured in `version-release.config.json` and `.version-release-manifest.json`
 
 ## Automation branch and labels
 
-The version release engine opens PRs from an internal branch named `release-please--branches--main`. That name is imposed by the upstream engine — do not use it for feature work. Release PRs are labeled `version-release: pending` until merge, then `version-release: tagged`.
+The **version release engine** opens PRs from an internal automation branch named **`release--branches--main`**. Do not use this branch for feature work. If the engine recreates its legacy default branch name, the Version Release workflow renames it to `release--branches--main` automatically after each propose run.
+
+Release PRs are labeled `version-release: pending` until merge, then `version-release: tagged`. PR titles follow `chore(release): prepare vX.Y.Z`.
 
 Because release PRs are created by `github-actions[bot]`, the standalone **Semantic PR Title** workflow does not run on them. The Version Release workflow posts the required `semantic-pr-title` check on the release PR head commit.
 

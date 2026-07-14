@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Resolve the open version release PR number from release-please outputs.
-# release-please-action exposes `pr` JSON, not `pr_number`.
+# Resolve the open version release PR number from version release engine outputs.
+# The engine exposes `pr` JSON, not `pr_number`.
 set -euo pipefail
 
 pr_number=""
@@ -11,7 +11,17 @@ fi
 if [ -z "$pr_number" ] && [ "${PRS_CREATED:-false}" = "true" ]; then
   pr_number="$(gh pr list \
     --repo "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}" \
-    --head release-please--branches--main \
+    --label "version-release: pending" \
+    --state open \
+    --json number,title \
+    --jq '[.[] | select(.title | startswith("chore(release): prepare v"))] | first | .number // empty' 2>/dev/null || true)"
+fi
+
+if [ -z "$pr_number" ]; then
+  release_branch="${VERSION_RELEASE_BRANCH:-release--branches--main}"
+  pr_number="$(gh pr list \
+    --repo "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}" \
+    --head "$release_branch" \
     --base main \
     --state open \
     --json number \

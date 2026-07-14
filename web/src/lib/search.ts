@@ -38,8 +38,9 @@ function collectSearchPages(): SearchablePage[] {
     {
       url: "/releases",
       data: {
-        title: "Releases",
-        description: "Version history and release notes from CHANGELOG.md.",
+        title: "Changelog",
+        description:
+          "What shipped in each IBEX Harness release — curated highlights from CHANGELOG.md.",
       },
     },
   ];
