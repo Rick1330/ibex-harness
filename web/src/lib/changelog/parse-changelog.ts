@@ -1,36 +1,14 @@
+import { ChangelogLine, splitChangelogLines } from "./changelog-line";
 import {
-  ChangelogLine,
-  collapseWhitespace,
-  findDateDelimiterIndex,
-  findFirstDigitIndex,
-  isDecimalDigits,
-  isHexCommitLabel,
-  isMilestoneMarker,
-  isSemverChar,
-  splitLines,
-  takeWrappedMarkdownLink,
-} from "./changelog-text";
+  classifyChangePriority,
+  selectHighlights,
+} from "./highlight-ranking";
 import type {
   ChangeItem,
-  ChangePriority,
   ReleaseEntry,
   ReleaseSection,
   ReleaseType,
 } from "./types";
-
-const HIGHLIGHT_CAP = 5;
-const DOCS_HIGHLIGHT_CAP = 2;
-
-const INTERNAL_SCOPES = new Set(["ci", "test", "dx", "docker"]);
-const USER_FACING_SCOPES = new Set([
-  "auth",
-  "proxy",
-  "db",
-  "web",
-  "bench",
-  "infra",
-  "docs",
-]);
 
 type MutableSection = { title: string; items: ChangeItem[] };
 type MutableRelease = {
@@ -43,10 +21,6 @@ type MutableRelease = {
 
 type IssueRef = Readonly<{ number: number; url: string }>;
 type CommitRef = Readonly<{ sha: string; url: string }>;
-type CapState = {
-  internalCounts: Map<string, number>;
-  docsCount: number;
-};
 
 function readSemverTriple(
   version: string,
@@ -56,9 +30,9 @@ function readSemverTriple(
   const majorStr = parts.at(0) ?? "";
   const minorStr = parts.at(1) ?? "";
   const patchStr = parts.at(2) ?? "";
-  if (!isDecimalDigits(majorStr)) return null;
-  if (!isDecimalDigits(minorStr)) return null;
-  if (!isDecimalDigits(patchStr)) return null;
+  if (!new ChangelogLine(majorStr).isDecimalDigits()) return null;
+  if (!new ChangelogLine(minorStr).isDecimalDigits()) return null;
+  if (!new ChangelogLine(patchStr).isDecimalDigits()) return null;
   return [Number(majorStr), Number(minorStr), Number(patchStr)];
 }
 
@@ -72,15 +46,22 @@ export function parseReleaseType(version: string): ReleaseType {
   return "patch";
 }
 
-function extractSemver(text: string): string | null {
-  const start = findFirstDigitIndex(text);
+function extractSemver(line: ChangelogLine): string | null {
+  const start = line.findFirstDigitIndex();
   if (start === -1) return null;
   let end = start;
-  while (end < text.length && isSemverChar(text.charAt(end))) end += 1;
-  const candidate = text.slice(start, end);
+  while (end < line.text.length) {
+    const ch = line.text.charAt(end);
+    const digitLine = new ChangelogLine(ch);
+    if (!digitLine.isDecimalDigits() && ch !== ".") break;
+    end += 1;
+  }
+  const candidate = line.text.slice(start, end);
   const parts = candidate.split(".");
   if (parts.length !== 3) return null;
-  if (!parts.every((part) => part.length > 0 && isDecimalDigits(part))) return null;
+  if (!parts.every((part) => part.length > 0 && new ChangelogLine(part).isDecimalDigits())) {
+    return null;
+  }
   return candidate;
 }
 
@@ -91,15 +72,16 @@ function normalizeDate(raw: string | null): string | null {
   return trimmed;
 }
 
-function extractReleaseDate(text: string): string | null {
-  const open = text.lastIndexOf("(");
-  const close = text.lastIndexOf(")");
+function extractReleaseDate(line: ChangelogLine): string | null {
+  const open = line.text.lastIndexOf("(");
+  const close = line.text.lastIndexOf(")");
   if (open !== -1 && close > open) {
-    return normalizeDate(text.slice(open + 1, close));
+    return normalizeDate(line.text.slice(open + 1, close));
   }
-  const dash = findDateDelimiterIndex(text);
+  const emDash = line.text.indexOf("— ");
+  const dash = emDash === -1 ? line.text.indexOf("- ") : emDash;
   if (dash === -1) return null;
-  return normalizeDate(text.slice(dash + 1).trim());
+  return normalizeDate(line.text.slice(dash + 1).trim());
 }
 
 function shouldIgnoreItem(body: ChangelogLine): boolean {
@@ -111,35 +93,28 @@ function shouldIgnoreItem(body: ChangelogLine): boolean {
   );
 }
 
-function issueNumberFromLabel(label: string): number | null {
-  if (!label.startsWith("#")) return null;
-  const digits = label.slice(1);
-  if (!isDecimalDigits(digits)) return null;
-  return Number(digits);
-}
-
 function parseIssueLink(body: ChangelogLine): IssueRef | null {
-  let remaining = body.text;
-  while (remaining.length > 0) {
-    const link = takeWrappedMarkdownLink(remaining);
+  let remaining = body;
+  while (!remaining.isEmpty()) {
+    const link = remaining.takeWrappedMarkdownLink();
     if (!link) return null;
-    const number = issueNumberFromLabel(link.label);
+    const number = new ChangelogLine(link.label).issueNumberFromHashLabel();
     if (number !== null) return { number, url: link.url };
-    remaining = link.after;
+    remaining = new ChangelogLine(link.after);
   }
   return null;
 }
 
 function parseCommitLink(body: ChangelogLine): CommitRef | null {
   let found: CommitRef | null = null;
-  let remaining = body.text;
-  while (true) {
-    const link = takeWrappedMarkdownLink(remaining);
-    if (!link) break;
-    if (isHexCommitLabel(link.label)) {
+  let remaining = body;
+  let link = remaining.takeWrappedMarkdownLink();
+  while (link) {
+    if (new ChangelogLine(link.label).isHexCommitLabel()) {
       found = { sha: link.label, url: link.url };
     }
-    remaining = link.after;
+    remaining = new ChangelogLine(link.after);
+    link = remaining.takeWrappedMarkdownLink();
   }
   return found;
 }
@@ -160,58 +135,13 @@ function parseScope(body: ChangelogLine): {
   };
 }
 
-function stripMarkdownLinks(body: ChangelogLine): ChangelogLine {
-  let text = body.text;
-  while (true) {
-    const link = takeWrappedMarkdownLink(text);
-    if (!link) break;
-    text = collapseWhitespace(`${link.before}${link.after}`);
-  }
-  return new ChangelogLine(text);
-}
-
-function stripMilestoneMarkers(body: ChangelogLine): ChangelogLine {
-  let text = body.text;
-  let cursor = 0;
-  let built = "";
-  while (cursor < text.length) {
-    const start = text.indexOf("(m", cursor);
-    if (start === -1) {
-      built += text.slice(cursor);
-      break;
-    }
-    built += text.slice(cursor, start);
-    const end = text.indexOf(")", start);
-    if (end === -1) {
-      built += text.slice(start);
-      break;
-    }
-    const marker = text.slice(start + 2, end);
-    if (isMilestoneMarker(marker)) {
-      built += " ";
-      cursor = end + 1;
-      continue;
-    }
-    built += "(m";
-    cursor = start + 2;
-  }
-  return new ChangelogLine(collapseWhitespace(built));
-}
-
-function classifyPriority(scope: string | null): ChangePriority {
-  if (scope && INTERNAL_SCOPES.has(scope)) return "internal";
-  return "standard";
-}
-
 function buildChangeItem(body: ChangelogLine): ChangeItem | null {
   if (body.isEmpty() || shouldIgnoreItem(body)) return null;
 
   const issue = parseIssueLink(body);
   const commit = parseCommitLink(body);
   const scoped = parseScope(body);
-  const description = stripMilestoneMarkers(
-    stripMarkdownLinks(scoped.rest),
-  ).text;
+  const description = scoped.rest.stripMarkdownLinks().stripMilestoneMarkers().text;
   if (!description) return null;
 
   return {
@@ -221,7 +151,7 @@ function buildChangeItem(body: ChangelogLine): ChangeItem | null {
     issueUrl: issue?.url ?? null,
     commitSha: commit?.sha ?? null,
     commitUrl: commit?.url ?? null,
-    priority: classifyPriority(scoped.scope),
+    priority: classifyChangePriority(scoped.scope),
   };
 }
 
@@ -229,51 +159,6 @@ export function parseChangeItem(line: string): ChangeItem | null {
   const body = new ChangelogLine(line).trimmed().bulletBody();
   if (!body) return null;
   return buildChangeItem(body);
-}
-
-function scoreHighlight(item: ChangeItem): number {
-  let score = 0;
-  if (item.issueNumber !== null) score += 10;
-  if (item.scope && USER_FACING_SCOPES.has(item.scope)) score += 5;
-  if (item.priority === "internal") score -= 8;
-  if (item.scope === "docs") score -= 2;
-  return score;
-}
-
-function shouldSkipForCaps(item: ChangeItem, caps: CapState): boolean {
-  if (item.priority === "internal" && item.scope) {
-    if ((caps.internalCounts.get(item.scope) ?? 0) >= 1) return true;
-  }
-  return item.scope === "docs" && caps.docsCount >= DOCS_HIGHLIGHT_CAP;
-}
-
-function recordCapUsage(item: ChangeItem, caps: CapState): void {
-  if (item.priority === "internal" && item.scope) {
-    caps.internalCounts.set(
-      item.scope,
-      (caps.internalCounts.get(item.scope) ?? 0) + 1,
-    );
-  }
-  if (item.scope === "docs") caps.docsCount += 1;
-}
-
-function selectHighlights(items: ChangeItem[]): ChangeItem[] {
-  if (items.length === 0) return [];
-
-  const ranked = [...items].sort(
-    (a, b) => scoreHighlight(b) - scoreHighlight(a),
-  );
-  const highlights: ChangeItem[] = [];
-  const caps: CapState = { internalCounts: new Map(), docsCount: 0 };
-
-  for (const item of ranked) {
-    if (highlights.length >= HIGHLIGHT_CAP) break;
-    if (shouldSkipForCaps(item, caps)) continue;
-    recordCapUsage(item, caps);
-    highlights.push({ ...item, priority: "highlight" });
-  }
-
-  return highlights;
 }
 
 function finalizeSection(section: MutableSection): ReleaseSection {
@@ -306,11 +191,11 @@ function isSkippableHeader(line: ChangelogLine): boolean {
 
 function releaseHeaderFromLine(line: ChangelogLine): MutableRelease | null {
   if (!line.startsWith("## ") || line.includes("[Unreleased]")) return null;
-  const version = extractSemver(line.text);
+  const version = extractSemver(line);
   if (!version) return null;
   return {
     version,
-    date: extractReleaseDate(line.text),
+    date: extractReleaseDate(line),
     type: parseReleaseType(version),
     summary: null,
     sections: [],
@@ -345,8 +230,8 @@ export function parseChangelogContent(content: string): ReleaseEntry[] {
   let current: MutableRelease | null = null;
   let section: MutableSection | null = null;
 
-  for (const raw of splitLines(content)) {
-    const line = new ChangelogLine(raw).trimmed();
+  for (const raw of splitChangelogLines(content)) {
+    const line = raw.trimmed();
 
     if (isSkippableHeader(line)) {
       flushRelease(releases, current);
