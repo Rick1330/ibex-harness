@@ -14,11 +14,11 @@ import type { ReleaseEntry } from "@/lib/changelog";
 
 const versionBadge = {
   major:
-    "rounded-full bg-text-primary px-2.5 py-0.5 font-mono text-xs font-bold text-canvas",
+    "rounded-sm bg-text-primary px-2.5 py-0.5 font-mono text-xs font-bold text-canvas",
   minor:
-    "rounded-full border border-border bg-panel px-2.5 py-0.5 font-mono text-xs font-bold text-text-primary",
+    "rounded-sm border border-border bg-panel px-2.5 py-0.5 font-mono text-xs font-bold text-text-primary",
   patch:
-    "rounded-full border border-border bg-panel-raised px-2.5 py-0.5 font-mono text-xs font-bold text-text-secondary",
+    "rounded-sm border border-border bg-panel-raised px-2.5 py-0.5 font-mono text-xs font-bold text-text-secondary",
 } as const;
 
 type ReleaseTimelineProps = Readonly<{
@@ -31,6 +31,7 @@ function formatDate(date: string | null): string | null {
     year: "numeric",
     month: "long",
     day: "numeric",
+    timeZone: "UTC",
   });
 }
 
@@ -47,8 +48,8 @@ function OlderReleaseEntry({ release }: Readonly<{ release: ReleaseEntry }>) {
     <Collapsible open={open} onOpenChange={setOpen}>
       <div className="relative flex gap-3 sm:gap-6">
         <div className="relative z-10 mt-1 shrink-0">
-          <div className="flex size-6 items-center justify-center rounded-full border-2 border-border bg-canvas">
-            <div className="size-2 rounded-full bg-text-tertiary" />
+          <div className="flex size-6 items-center justify-center rounded-sm border-2 border-border bg-canvas">
+            <div className="size-2 rounded-sm bg-text-tertiary" />
           </div>
         </div>
 

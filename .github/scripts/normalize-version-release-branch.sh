@@ -8,22 +8,22 @@ canonical="${VERSION_RELEASE_BRANCH:-release--branches--main}"
 legacy="release-please--branches--main"
 repo="${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}"
 
-if [ "$canonical" = "$legacy" ]; then
+if [[ "$canonical" == "$legacy" ]]; then
   echo "Canonical branch matches legacy name; nothing to normalize."
   exit 0
 fi
 
 legacy_exists="$(gh api "repos/${repo}/git/ref/heads/${legacy}" --jq '.ref // empty' 2>/dev/null || true)"
-if [ -z "$legacy_exists" ]; then
+if [[ -z "$legacy_exists" ]]; then
   echo "Legacy engine branch ${legacy} not present; nothing to normalize."
   exit 0
 fi
 
 canonical_exists="$(gh api "repos/${repo}/git/ref/heads/${canonical}" --jq '.ref // empty' 2>/dev/null || true)"
-if [ -n "$canonical_exists" ]; then
+if [[ -n "$canonical_exists" ]]; then
   legacy_sha="$(gh api "repos/${repo}/git/ref/heads/${legacy}" --jq '.object.sha')"
   canonical_sha="$(gh api "repos/${repo}/git/ref/heads/${canonical}" --jq '.object.sha')"
-  if [ "$legacy_sha" = "$canonical_sha" ]; then
+  if [[ "$legacy_sha" == "$canonical_sha" ]]; then
     gh api --method DELETE "repos/${repo}/git/refs/heads/${legacy}" 2>/dev/null || true
     echo "Removed duplicate legacy branch ${legacy} (same SHA as ${canonical})."
     exit 0

@@ -90,8 +90,10 @@ export function parseReleaseType(version: string): ReleaseType {
   const parts = version.split(".");
   const major = Number(parts[0]) || 0;
   const minor = Number(parts[1]) || 0;
-  if (major > 0) return "major";
+  const patch = Number(parts[2]) || 0;
+  if (patch > 0) return "patch";
   if (minor > 0) return "minor";
+  if (major > 0) return "major";
   return "patch";
 }
 
@@ -153,18 +155,21 @@ function takeWrappedMarkdownLink(
   };
 }
 
+function issueNumberFromLabel(label: string): number | null {
+  if (!label.startsWith("#")) return null;
+  const digits = label.slice(1);
+  if (!/^\d+$/.test(digits)) return null;
+  return Number(digits);
+}
+
 function parseIssueLink(body: ChangelogLine): IssueRef | null {
   let cursor = 0;
   while (cursor < body.text.length) {
     const slice = body.text.slice(cursor);
     const link = takeWrappedMarkdownLink(slice);
     if (!link) return null;
-    if (link.label.startsWith("#")) {
-      const digits = link.label.slice(1);
-      if (/^\d+$/.test(digits)) {
-        return { number: Number(digits), url: link.url };
-      }
-    }
+    const number = issueNumberFromLabel(link.label);
+    if (number !== null) return { number, url: link.url };
     cursor += link.before.length + 1;
   }
   return null;
@@ -301,12 +306,7 @@ function selectHighlights(items: ChangeItem[]): ChangeItem[] {
     highlights.push({ ...item, priority: "highlight" });
   }
 
-  if (highlights.length > 0) return highlights;
-
-  return ranked.slice(0, Math.min(HIGHLIGHT_CAP, ranked.length)).map((item) => ({
-    ...item,
-    priority: "highlight" as const,
-  }));
+  return highlights;
 }
 
 function finalizeSection(section: MutableSection): ReleaseSection {

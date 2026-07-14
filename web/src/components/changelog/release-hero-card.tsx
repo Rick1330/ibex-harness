@@ -9,11 +9,11 @@ const GITHUB_REPO = "https://github.com/Rick1330/ibex-harness";
 
 const versionBadge = {
   major:
-    "rounded-full bg-text-primary px-2.5 py-0.5 font-mono text-xs font-bold text-canvas",
+    "rounded-sm bg-text-primary px-2.5 py-0.5 font-mono text-xs font-bold text-canvas",
   minor:
-    "rounded-full border border-border bg-panel px-2.5 py-0.5 font-mono text-xs font-bold text-text-primary",
+    "rounded-sm border border-border bg-panel px-2.5 py-0.5 font-mono text-xs font-bold text-text-primary",
   patch:
-    "rounded-full border border-border bg-panel-raised px-2.5 py-0.5 font-mono text-xs font-bold text-text-secondary",
+    "rounded-sm border border-border bg-panel-raised px-2.5 py-0.5 font-mono text-xs font-bold text-text-secondary",
 } as const;
 
 type ReleaseHeroCardProps = Readonly<{
@@ -26,6 +26,7 @@ function formatReleaseDate(date: string | null): string | null {
     year: "numeric",
     month: "long",
     day: "numeric",
+    timeZone: "UTC",
   });
 }
 
@@ -51,12 +52,12 @@ export function ReleaseHeroCard({ release }: ReleaseHeroCardProps) {
   const releaseUrl = `${GITHUB_REPO}/releases/tag/${tag}`;
 
   const ctaClass = cn(
-    "inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-md border border-border bg-canvas px-4 py-2 sm:w-auto",
+    "inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-sm border border-border bg-canvas px-4 py-2 sm:w-auto",
     "text-sm font-medium text-text-primary transition-colors hover:bg-panel-raised",
   );
 
   return (
-    <div className="rounded-xl border border-border-strong bg-panel p-4 sm:p-6 md:p-8">
+    <div className="rounded-md border border-border-strong bg-panel p-4 sm:p-6 md:p-8">
       <div className="mb-4 flex flex-wrap items-center gap-2 sm:gap-3">
         <span className="font-mono text-2xl font-bold tracking-tight text-text-primary sm:text-3xl md:text-4xl">
           {tag}
@@ -83,9 +84,9 @@ export function ReleaseHeroCard({ release }: ReleaseHeroCardProps) {
 
       <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:gap-3">
         <Link href={releaseUrl} className={ctaClass} target="_blank" rel="noopener noreferrer">
-          <Package className="size-4 shrink-0" strokeWidth={1.75} aria-hidden />
+          <Package className="size-4 shrink-0" strokeWidth={1.5} aria-hidden />
           GitHub Release
-          <ExternalLink className="size-3.5 shrink-0 text-text-tertiary" aria-hidden />
+          <ExternalLink className="size-4 shrink-0 text-text-tertiary" aria-hidden />
         </Link>
         <Link
           href={`${GITHUB_REPO}/tags`}
@@ -93,7 +94,7 @@ export function ReleaseHeroCard({ release }: ReleaseHeroCardProps) {
           target="_blank"
           rel="noopener noreferrer"
         >
-          <GitBranch className="size-4 shrink-0" strokeWidth={1.75} aria-hidden />
+          <GitBranch className="size-4 shrink-0" strokeWidth={1.5} aria-hidden />
           All tags
         </Link>
         <Link
@@ -103,7 +104,7 @@ export function ReleaseHeroCard({ release }: ReleaseHeroCardProps) {
           rel="noopener noreferrer"
         >
           SBOM assets
-          <ExternalLink className="size-3.5 shrink-0 text-text-tertiary" aria-hidden />
+          <ExternalLink className="size-4 shrink-0 text-text-tertiary" aria-hidden />
         </Link>
       </div>
     </div>

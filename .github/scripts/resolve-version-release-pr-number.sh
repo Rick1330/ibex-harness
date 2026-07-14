@@ -4,11 +4,11 @@
 set -euo pipefail
 
 pr_number=""
-if [ -n "${PR_JSON:-}" ] && [ "$PR_JSON" != "null" ]; then
+if [[ -n "${PR_JSON:-}" && "$PR_JSON" != "null" ]]; then
   pr_number="$(jq -r '.number // empty' <<<"$PR_JSON")"
 fi
 
-if [ -z "$pr_number" ] && [ "${PRS_CREATED:-false}" = "true" ]; then
+if [[ -z "$pr_number" && "${PRS_CREATED:-false}" == "true" ]]; then
   pr_number="$(gh pr list \
     --repo "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}" \
     --label "version-release: pending" \
@@ -17,7 +17,7 @@ if [ -z "$pr_number" ] && [ "${PRS_CREATED:-false}" = "true" ]; then
     --jq '[.[] | select(.title | startswith("chore(release): prepare v"))] | first | .number // empty' 2>/dev/null || true)"
 fi
 
-if [ -z "$pr_number" ]; then
+if [[ -z "$pr_number" ]]; then
   release_branch="${VERSION_RELEASE_BRANCH:-release--branches--main}"
   pr_number="$(gh pr list \
     --repo "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}" \
@@ -30,7 +30,7 @@ fi
 
 {
   echo "number=${pr_number}"
-  if [ -n "$pr_number" ]; then
+  if [[ -n "$pr_number" ]]; then
     echo "resolved=true"
   else
     echo "resolved=false"

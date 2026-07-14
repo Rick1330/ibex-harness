@@ -5,7 +5,7 @@ const GITHUB_REPO = "https://github.com/Rick1330/ibex-harness";
 
 export function ChangelogFooterStrip() {
   return (
-    <div className="mt-12 rounded-xl border border-border bg-panel p-5 text-sm text-text-secondary">
+    <div className="mt-12 rounded-md border border-border bg-panel p-5 text-sm text-text-secondary">
       <p className="mb-3 font-medium text-text-primary">
         Complete machine-readable history
       </p>

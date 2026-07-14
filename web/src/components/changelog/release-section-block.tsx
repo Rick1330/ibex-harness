@@ -66,7 +66,7 @@ export function ReleaseSectionBlock({
   if (totalCount === 0) return null;
 
   return (
-    <section className="rounded-xl border border-border bg-card p-4 sm:p-5">
+    <section className="rounded-md border border-border bg-card p-4 sm:p-5">
       <div className="mb-4 flex flex-wrap items-center gap-2 sm:gap-3">
         <div
           className={cn(
@@ -120,7 +120,7 @@ export function ReleaseSectionBlock({
           </CollapsibleTrigger>
           <CollapsibleContent className="mt-3 border-t border-border pt-3">
             <ul className="space-y-3">
-              {(expanded ? filteredItems : remainder).map((item) => (
+              {remainder.map((item) => (
                 <ChangeItemRow
                   key={`${section.title}-full-${item.scope ?? "none"}-${item.description}-${item.issueNumber ?? item.commitSha ?? ""}`}
                   item={item}

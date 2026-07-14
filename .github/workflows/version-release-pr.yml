@@ -71,7 +71,6 @@ jobs:
           PR_JSON: ${{ steps.version_release.outputs.pr }}
           PRS_CREATED: ${{ steps.version_release.outputs.prs_created || 'false' }}
           GH_TOKEN: ${{ secrets.VERSION_RELEASE_TOKEN || github.token }}
-          VERSION_RELEASE_BRANCH: release--branches--main
         run: bash .github/scripts/resolve-version-release-pr-number.sh
 
       - name: Report semantic-pr-title check on release PR

@@ -24,6 +24,14 @@ describe("parseReleaseType", () => {
   it("classifies major", () => {
     expect(parseReleaseType("1.0.0")).toBe("major");
   });
+
+  it("classifies 1.1.0 as minor (most-specific non-zero segment)", () => {
+    expect(parseReleaseType("1.1.0")).toBe("minor");
+  });
+
+  it("classifies 1.1.1 as patch (most-specific non-zero segment)", () => {
+    expect(parseReleaseType("1.1.1")).toBe("patch");
+  });
 });
 
 describe("parseChangeItem", () => {
