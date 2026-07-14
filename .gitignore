@@ -32,6 +32,7 @@ web/public/search-index.*.json
 web/public/docs/
 web/.api-build-stash/
 web/build-output.txt
+web/src/lib/changelog/changelog-content.generated.ts
 
 # --- CI test reports (JUnit for Trunk; ephemeral) ---
 test-results/
