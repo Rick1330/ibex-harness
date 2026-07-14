@@ -6,14 +6,8 @@ import type {
   ReleaseType,
 } from "./types";
 
-const VERSION_RE = /(\d+\.\d+\.\d+)/;
-const DATE_PAREN_RE = /\(([^)]+)\)/;
-const DATE_DASH_RE = /[-—]\s+(.+)$/;
-const SECTION_HEADER = /^###\s+(.+)$/;
-const BULLET_PREFIX = /^[-*]\s+/;
-const ISSUE_LINK_RE = /\(\[#(\d+)\]\(([^)]+)\)\)/;
-const COMMIT_SHA_RE = /\(\[([a-f0-9]{7,40})\]\(([^)]+)\)\)/i;
-const SCOPE_PREFIX = "**";
+const HIGHLIGHT_CAP = 5;
+const DOCS_HIGHLIGHT_CAP = 2;
 
 const INTERNAL_SCOPES = new Set(["ci", "test", "dx", "docker"]);
 const USER_FACING_SCOPES = new Set([
@@ -25,8 +19,6 @@ const USER_FACING_SCOPES = new Set([
   "infra",
   "docs",
 ]);
-const HIGHLIGHT_CAP = 5;
-const DOCS_HIGHLIGHT_CAP = 2;
 
 type MutableSection = { title: string; items: ChangeItem[] };
 type MutableRelease = {
@@ -39,13 +31,80 @@ type MutableRelease = {
 
 type IssueRef = Readonly<{ number: number; url: string }>;
 type CommitRef = Readonly<{ sha: string; url: string }>;
-type ScopedText = Readonly<{ scope: string | null; rest: string }>;
+type CapState = {
+  internalCounts: Map<string, number>;
+  docsCount: number;
+};
+
+/** Line wrapper to keep parser helpers free of bare string-arg surfaces. */
+class ChangelogLine {
+  constructor(readonly text: string) {}
+
+  trimmed(): ChangelogLine {
+    return new ChangelogLine(this.text.trim());
+  }
+
+  startsWith(prefix: string): boolean {
+    return this.text.startsWith(prefix);
+  }
+
+  equals(other: string): boolean {
+    return this.text === other;
+  }
+
+  includes(needle: string): boolean {
+    return this.text.includes(needle);
+  }
+
+  isEmpty(): boolean {
+    return this.text.length === 0;
+  }
+
+  bulletBody(): ChangelogLine | null {
+    if (this.text.startsWith("* ") || this.text.startsWith("- ")) {
+      return new ChangelogLine(this.text.slice(2).trim());
+    }
+    return null;
+  }
+
+  sectionTitle(): string | null {
+    if (!this.text.startsWith("### ")) return null;
+    return this.text.slice(4).trim() || null;
+  }
+
+  releaseHeader(): MutableRelease | null {
+    if (!this.startsWith("## ") || this.includes("[Unreleased]")) return null;
+    const version = extractSemver(this.text);
+    if (!version) return null;
+    return {
+      version,
+      date: extractReleaseDate(this.text),
+      type: parseReleaseType(version),
+      summary: null,
+      sections: [],
+    };
+  }
+}
 
 export function parseReleaseType(version: string): ReleaseType {
-  const [major, minor] = version.split(".").map((part) => Number(part) || 0);
+  const parts = version.split(".");
+  const major = Number(parts[0]) || 0;
+  const minor = Number(parts[1]) || 0;
   if (major > 0) return "major";
   if (minor > 0) return "minor";
   return "patch";
+}
+
+function extractSemver(text: string): string | null {
+  const start = text.search(/\d/);
+  if (start === -1) return null;
+  let end = start;
+  while (end < text.length && /[\d.]/.test(text[end])) end += 1;
+  const candidate = text.slice(start, end);
+  const parts = candidate.split(".");
+  if (parts.length !== 3) return null;
+  if (!parts.every((part) => part.length > 0 && /^\d+$/.test(part))) return null;
+  return candidate;
 }
 
 function normalizeDate(raw: string | null): string | null {
@@ -55,8 +114,19 @@ function normalizeDate(raw: string | null): string | null {
   return trimmed;
 }
 
-function shouldIgnoreItem(item: string): boolean {
-  const normalized = item.toLowerCase();
+function extractReleaseDate(text: string): string | null {
+  const open = text.lastIndexOf("(");
+  const close = text.lastIndexOf(")");
+  if (open !== -1 && close > open) {
+    return normalizeDate(text.slice(open + 1, close));
+  }
+  const dash = text.search(/[-—]\s/);
+  if (dash === -1) return null;
+  return normalizeDate(text.slice(dash + 1).trim());
+}
+
+function shouldIgnoreItem(body: ChangelogLine): boolean {
+  const normalized = body.text.toLowerCase();
   return (
     normalized === "_tbd_" ||
     normalized === "(example)" ||
@@ -64,78 +134,96 @@ function shouldIgnoreItem(item: string): boolean {
   );
 }
 
-function isReleaseHeader(line: string): boolean {
-  return (
-    line.startsWith("## ") &&
-    VERSION_RE.test(line) &&
-    !line.includes("[Unreleased]")
-  );
-}
-
-function parseReleaseHeader(line: string): MutableRelease | null {
-  if (!isReleaseHeader(line)) return null;
-  const versionMatch = VERSION_RE.exec(line);
-  if (!versionMatch) return null;
-
-  const version = versionMatch[1];
-  const parenDate = DATE_PAREN_RE.exec(line);
-  const dashDate = parenDate ? null : DATE_DASH_RE.exec(line);
-
+function takeWrappedMarkdownLink(
+  text: string,
+): { label: string; url: string; before: string; after: string } | null {
+  const open = text.indexOf("([");
+  if (open === -1) return null;
+  const mid = text.indexOf("](", open);
+  if (mid === -1) return null;
+  const urlEnd = text.indexOf(")", mid + 2);
+  if (urlEnd === -1) return null;
+  // Engine wraps markdown links as ([label](url)) — consume the outer ')' when present.
+  const end = text[urlEnd + 1] === ")" ? urlEnd + 1 : urlEnd;
   return {
-    version,
-    date: normalizeDate(parenDate?.[1] ?? dashDate?.[1] ?? null),
-    type: parseReleaseType(version),
-    summary: null,
-    sections: [],
+    label: text.slice(open + 2, mid),
+    url: text.slice(mid + 2, urlEnd),
+    before: text.slice(0, open),
+    after: text.slice(end + 1),
   };
 }
 
-function stripMarkdownLinks(text: string): string {
-  let result = text.replace(ISSUE_LINK_RE, "");
-  result = result.replace(COMMIT_SHA_RE, "");
-  return result.replace(/\s+/g, " ").trim();
-}
-
-function parseIssueLink(text: string): IssueRef | null {
-  const match = ISSUE_LINK_RE.exec(text);
-  if (!match) return null;
-  return { number: Number(match[1]), url: match[2] };
-}
-
-function parseCommitLink(text: string): CommitRef | null {
-  const match = COMMIT_SHA_RE.exec(text);
-  if (!match) return null;
-  return { sha: match[1], url: match[2] };
-}
-
-function parseScope(text: string): ScopedText {
-  if (!text.startsWith(SCOPE_PREFIX)) {
-    return { scope: null, rest: text.trim() };
+function parseIssueLink(body: ChangelogLine): IssueRef | null {
+  let cursor = 0;
+  while (cursor < body.text.length) {
+    const slice = body.text.slice(cursor);
+    const link = takeWrappedMarkdownLink(slice);
+    if (!link) return null;
+    if (link.label.startsWith("#")) {
+      const digits = link.label.slice(1);
+      if (/^\d+$/.test(digits)) {
+        return { number: Number(digits), url: link.url };
+      }
+    }
+    cursor += link.before.length + 1;
   }
-  const close = text.indexOf(":**", 2);
-  if (close === -1) return { scope: null, rest: text.trim() };
-  const scope = text.slice(2, close).trim();
-  const rest = text.slice(close + 3).trim();
-  return { scope: scope || null, rest };
+  return null;
 }
 
-/** Strip trailing "(m1.2.3)" milestone markers without nested regex quantifiers. */
-function stripMilestoneMarkers(text: string): string {
-  let result = text;
+function parseCommitLink(body: ChangelogLine): CommitRef | null {
+  let found: CommitRef | null = null;
+  let remaining = body.text;
   while (true) {
-    const start = result.lastIndexOf("(m");
-    if (start === -1) break;
-    const end = result.indexOf(")", start);
-    if (end === -1) break;
-    const body = result.slice(start + 2, end);
-    if (!/^[\d.]+$/.test(body)) break;
-    result = `${result.slice(0, start)} ${result.slice(end + 1)}`;
+    const link = takeWrappedMarkdownLink(remaining);
+    if (!link) break;
+    if (/^[a-f0-9]{7,40}$/i.test(link.label)) {
+      found = { sha: link.label, url: link.url };
+    }
+    remaining = link.after;
   }
-  return result.replace(/\s+/g, " ").trim();
+  return found;
 }
 
-function cleanDescription(raw: string): string {
-  return stripMilestoneMarkers(stripMarkdownLinks(raw));
+function parseScope(body: ChangelogLine): {
+  scope: string | null;
+  rest: ChangelogLine;
+} {
+  if (!body.startsWith("**")) {
+    return { scope: null, rest: body };
+  }
+  const close = body.text.indexOf(":**", 2);
+  if (close === -1) return { scope: null, rest: body };
+  const scope = body.text.slice(2, close).trim();
+  return {
+    scope: scope || null,
+    rest: new ChangelogLine(body.text.slice(close + 3).trim()),
+  };
+}
+
+function stripMarkdownLinks(body: ChangelogLine): ChangelogLine {
+  let text = body.text;
+  while (true) {
+    const link = takeWrappedMarkdownLink(text);
+    if (!link) break;
+    text = `${link.before}${link.after}`.replace(/\s+/g, " ").trim();
+  }
+  return new ChangelogLine(text);
+}
+
+function stripMilestoneMarkers(body: ChangelogLine): ChangelogLine {
+  let text = body.text;
+  while (true) {
+    const start = text.lastIndexOf("(m");
+    if (start === -1) break;
+    const end = text.indexOf(")", start);
+    if (end === -1) break;
+    const marker = text.slice(start + 2, end);
+    if (!/^[\d.]+$/.test(marker)) break;
+    text = `${text.slice(0, start)} ${text.slice(end + 1)}`
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+  return new ChangelogLine(text);
 }
 
 function classifyPriority(scope: string | null): ChangePriority {
@@ -143,13 +231,15 @@ function classifyPriority(scope: string | null): ChangePriority {
   return "standard";
 }
 
-function buildChangeItem(raw: string): ChangeItem | null {
-  if (!raw || shouldIgnoreItem(raw)) return null;
+function buildChangeItem(body: ChangelogLine): ChangeItem | null {
+  if (body.isEmpty() || shouldIgnoreItem(body)) return null;
 
-  const issue = parseIssueLink(raw);
-  const commit = parseCommitLink(raw);
-  const scoped = parseScope(raw);
-  const description = cleanDescription(scoped.rest);
+  const issue = parseIssueLink(body);
+  const commit = parseCommitLink(body);
+  const scoped = parseScope(body);
+  const description = stripMilestoneMarkers(
+    stripMarkdownLinks(scoped.rest),
+  ).text;
   if (!description) return null;
 
   return {
@@ -164,9 +254,9 @@ function buildChangeItem(raw: string): ChangeItem | null {
 }
 
 export function parseChangeItem(line: string): ChangeItem | null {
-  const bulletMatch = BULLET_PREFIX.exec(line);
-  if (!bulletMatch) return null;
-  return buildChangeItem(line.slice(bulletMatch[0].length).trim());
+  const body = new ChangelogLine(line).trimmed().bulletBody();
+  if (!body) return null;
+  return buildChangeItem(body);
 }
 
 function scoreHighlight(item: ChangeItem): number {
@@ -177,11 +267,6 @@ function scoreHighlight(item: ChangeItem): number {
   if (item.scope === "docs") score -= 2;
   return score;
 }
-
-type CapState = {
-  internalCounts: Map<string, number>;
-  docsCount: number;
-};
 
 function shouldSkipForCaps(item: ChangeItem, caps: CapState): boolean {
   if (item.priority === "internal" && item.scope) {
@@ -245,32 +330,33 @@ function flushRelease(
   });
 }
 
-function isSkippableHeader(line: string): boolean {
+function isSkippableHeader(line: ChangelogLine): boolean {
   return (
-    line.startsWith("## [Unreleased]") || line === "## Changelog discipline"
+    line.startsWith("## [Unreleased]") ||
+    line.equals("## Changelog discipline")
   );
 }
 
 function applyLineToRelease(
-  line: string,
+  line: ChangelogLine,
   current: MutableRelease,
   section: MutableSection | null,
 ): MutableSection | null {
-  const sectionMatch = SECTION_HEADER.exec(line);
-  if (sectionMatch) {
-    const next = { title: sectionMatch[1], items: [] as ChangeItem[] };
+  const sectionTitle = line.sectionTitle();
+  if (sectionTitle) {
+    const next = { title: sectionTitle, items: [] as ChangeItem[] };
     current.sections.push(next);
     return next;
   }
 
-  const item = parseChangeItem(line);
+  const item = parseChangeItem(line.text);
   if (item && section) {
     section.items.push(item);
     return section;
   }
 
-  if (!line || line.startsWith("---")) return section;
-  if (!section && !current.summary) current.summary = line;
+  if (line.isEmpty() || line.startsWith("---")) return section;
+  if (!section && !current.summary) current.summary = line.text;
   return section;
 }
 
@@ -280,7 +366,7 @@ export function parseChangelogContent(content: string): ReleaseEntry[] {
   let section: MutableSection | null = null;
 
   for (const raw of content.split(/\r?\n/)) {
-    const line = raw.trim();
+    const line = new ChangelogLine(raw).trimmed();
 
     if (isSkippableHeader(line)) {
       flushRelease(releases, current);
@@ -289,7 +375,7 @@ export function parseChangelogContent(content: string): ReleaseEntry[] {
       continue;
     }
 
-    const nextRelease = parseReleaseHeader(line);
+    const nextRelease = line.releaseHeader();
     if (nextRelease) {
       flushRelease(releases, current);
       current = nextRelease;
