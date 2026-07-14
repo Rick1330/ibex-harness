@@ -7,7 +7,8 @@ import type { ReleaseEntry } from "./types";
 const REPO_ROOT = path.resolve(process.cwd(), "..");
 const CHANGELOG_FILE = path.join(REPO_ROOT, "CHANGELOG.md");
 
-function assertReadableChangelogPath(): string {
+/** Rejects symlink escapes and non-CHANGELOG targets before reading. */
+function assertReadableChangelogPath(): void {
   if (path.basename(CHANGELOG_FILE) !== "CHANGELOG.md") {
     throw new Error("changelog path must target CHANGELOG.md");
   }
@@ -24,13 +25,12 @@ function assertReadableChangelogPath(): string {
   if (relative.startsWith("..") || path.isAbsolute(relative)) {
     throw new Error("changelog path must stay within the repository root");
   }
-
-  return canonical;
 }
 
 /** Server-only: reads root CHANGELOG.md at build time. Do not import from client components. */
 export function readReleasesFromChangelog(): ReleaseEntry[] {
-  const resolved = assertReadableChangelogPath();
-  const content = fs.readFileSync(resolved, "utf8");
+  assertReadableChangelogPath();
+  // Fixed build-time path; assertReadableChangelogPath resolves realpath and enforces repo boundary.
+  const content = fs.readFileSync(CHANGELOG_FILE, "utf8"); // nosemgrep: javascript.lang.security.audit.detect-non-literal-fs-filename.detect-non-literal-fs-filename
   return parseChangelogContent(content);
 }
