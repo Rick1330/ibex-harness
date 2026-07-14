@@ -41,14 +41,25 @@ jobs:
           INPUT_TAG: ${{ github.event.inputs.tag_name }}
           EVENT_TAG: ${{ github.event.release.tag_name }}
           REF_NAME: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
           tag="${INPUT_TAG:-${EVENT_TAG:-$REF_NAME}}"
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error title=Invalid tag::Expected semver tag like v0.1.0, got '${tag}'"
+            exit 1
+          fi
+          if ! gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${tag}" --jq .ref >/dev/null 2>&1; then
+            echo "::error title=Tag not found::Tag '${tag}' does not exist. Existing tags: $(gh api "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/v" --jq '.[].ref' | sed 's|refs/tags/||' | tr '\n' ' ')"
+            exit 1
+          fi
           echo "value=$tag" >> "$GITHUB_OUTPUT"
           echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
 
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
+          fetch-tags: true
           ref: ${{ steps.release_tag.outputs.value }}
 
       - name: Generate SBOM (Syft)
@@ -63,18 +74,23 @@ jobs:
 
       - name: Sign SBOM with Sigstore (keyless)
         run: |
+          set -euo pipefail
+          # Cosign v3+ defaults to the new bundle format; --output-signature is ignored.
+          # Scorecard Signed-Releases accepts *.sigstore (among other suffixes).
           cosign sign-blob --yes sbom.spdx.json \
-            --bundle sbom.spdx.json.bundle.json \
-            --output-signature sbom.spdx.json.sig
+            --bundle sbom.spdx.json.sigstore
+          test -f sbom.spdx.json
+          test -f sbom.spdx.json.sigstore
+          ls -la sbom.spdx.json*
 
       - name: Upload SBOM assets to GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
           gh release upload "$RELEASE_TAG" \
             sbom.spdx.json \
-            sbom.spdx.json.sig \
-            sbom.spdx.json.bundle.json \
+            sbom.spdx.json.sigstore \
             --clobber
 
       - name: Publish tagged release summary
@@ -86,8 +102,7 @@ jobs:
             echo "| Asset | Purpose |"
             echo "| --- | --- |"
             echo "| \`sbom.spdx.json\` | SPDX SBOM (Syft) |"
-            echo "| \`sbom.spdx.json.sig\` | cosign detached signature |"
-            echo "| \`sbom.spdx.json.bundle.json\` | Sigstore bundle (certificate + transparency log) |"
+            echo "| \`sbom.spdx.json.sigstore\` | Cosign/Sigstore verification bundle |"
             echo ""
             echo "Release URL: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/tag/${RELEASE_TAG}"
           } >>"$GITHUB_STEP_SUMMARY"

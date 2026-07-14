@@ -2,6 +2,19 @@
 
 This repository uses an **automated version release pipeline** to keep releases consistent and auditable. Workflow: `.github/workflows/version-release-pr.yml`.
 
+## Which workflows are which (read this first)
+
+These names look similar but do **different** jobs. You usually need only one at a time.
+
+| Workflow (Actions name) | File | What it does | When it runs | Do you need it? |
+| --- | --- | --- | --- | --- |
+| **Version Release PR** | `version-release-pr.yml` | Opens/updates the weekly `chore(release): prepare vX.Y.Z` PR; on merge **publish**, creates the git tag + GitHub Release notes | Sunday 08:00 UTC propose; publish on `chore(release): prepare v…` merge | **Yes** for cutting semver releases |
+| **Tagged Release** | `release.yml` | Builds SBOM, signs with cosign, **uploads** `sbom.spdx.json` + `.sigstore` onto an **existing** GitHub Release | Tag push `v*.*.*`, release published, or manual `workflow_dispatch` with `tag_name` | **Yes** for Scorecard signed-release assets. Input must be an **existing** tag (today: `v0.1.0`) |
+| **Tagged Release Docker** | `release-docker.yml` | Publishes **version-tagged** container images (`ghcr.io/.../auth:vX.Y.Z`) | Only on **tag push** `v*.*.*` | Automatic with new tags; not used for manual SBOM repair |
+| **Docker Publish** | `docker-publish.yml` | Builds/scans/pushes **`latest`** (and related) images after successful CI on `main` | `workflow_run` after CI, PRs (scan-only), manual, or called by Tagged Release Docker | **Unrelated to SBOM/releases.** A green Docker Publish does **not** attach release assets |
+
+**Confusion trap:** After a merge, **Docker Publish** often succeeds with `latest` images. That is **not** Tagged Release. To attach SBOM signatures to `v0.1.0`, run **Actions → Tagged Release → Run workflow** with `tag_name=v0.1.0`.
+
 ## Release cadence
 
 | When | What happens |
@@ -10,7 +23,7 @@ This repository uses an **automated version release pipeline** to keep releases 
 | **You merge the release PR** | Push to `main` triggers **publish** mode: creates `vX.Y.Z` tag and GitHub Release. |
 | **`workflow_dispatch` → propose** | Manually refresh the release PR between Sundays if needed. |
 | **`workflow_dispatch` → publish** | Manually create the tag after merging a release PR (if the automatic publish step did not run). |
-| **Tagged Release workflow** | On tag push / `workflow_dispatch`, attaches SBOM + cosign assets (`release.yml`). Docker images publish separately on tag push (`release-docker.yml`). |
+| **Tagged Release** | On tag push / manual, attaches SBOM + cosign assets (`release.yml`). Versioned images use `release-docker.yml` on tag push only. |
 
 Normal feature and fix PRs merge to `main` **without** opening a release PR each time.
 
@@ -39,9 +52,9 @@ Configured in `version-release.config.json` and `.version-release-manifest.json`
 2. **Sunday (or manual propose):** the pipeline opens/updates `chore(release): prepare vX.Y.Z`.
 3. Review the release PR — confirm `CHANGELOG.md` and semver.
 4. Merge the release PR (squash).
-5. **Publish** runs on the `chore(release): prepare v…` merge commit → tag `vX.Y.Z` → `release.yml` (SBOM + cosign bundle) + `release-docker.yml` (container images on tag push).
+5. **Publish** runs on the `chore(release): prepare v…` merge commit → tag `vX.Y.Z` → `release.yml` (SBOM + cosign bundle) + `release-docker.yml` (versioned images on tag push). Separately, **Docker Publish** may still push `latest` after ordinary CI on `main` — that is expected and independent.
 
-If a tag was created while `release.yml` was broken, re-attach assets with **Actions → Tagged Release → Run workflow** and `tag_name=vX.Y.Z` (no need to recreate the tag).
+If a tag was created while `release.yml` was broken, re-attach assets with **Actions → Tagged Release → Run workflow** and `tag_name=vX.Y.Z` (must already exist; no need to recreate the tag).
 
 ## Automation branch and labels
 
