@@ -9,17 +9,9 @@ import { ChevronDown } from "lucide-react";
 import { useState } from "react";
 
 import { ReleaseNotesPanel } from "@/components/changelog/release-notes-panel";
+import { releaseTypeBadgeClass } from "@/components/changelog/release-type-badge";
 import { cn } from "@/lib/cn";
 import type { ReleaseEntry } from "@/lib/changelog";
-
-const versionBadge = {
-  major:
-    "rounded-sm bg-text-primary px-2.5 py-0.5 font-mono text-xs font-bold text-canvas",
-  minor:
-    "rounded-sm border border-border bg-panel px-2.5 py-0.5 font-mono text-xs font-bold text-text-primary",
-  patch:
-    "rounded-sm border border-border bg-panel-raised px-2.5 py-0.5 font-mono text-xs font-bold text-text-secondary",
-} as const;
 
 type ReleaseTimelineProps = Readonly<{
   releases: ReleaseEntry[];
@@ -37,7 +29,7 @@ function formatDate(date: string | null): string | null {
 
 function OlderReleaseEntry({ release }: Readonly<{ release: ReleaseEntry }>) {
   const [open, setOpen] = useState(false);
-  const badgeClass = versionBadge[release.type] ?? versionBadge.minor;
+  const badgeClass = releaseTypeBadgeClass(release.type);
   const formattedDate = formatDate(release.date);
   const itemCount = release.sections.reduce(
     (sum, section) => sum + section.items.length,

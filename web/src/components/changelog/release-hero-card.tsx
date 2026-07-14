@@ -1,20 +1,12 @@
 import Link from "next/link";
 import { ExternalLink, GitBranch, Package } from "lucide-react";
 
+import { releaseTypeBadgeClass } from "@/components/changelog/release-type-badge";
 import { cn } from "@/lib/cn";
 import type { ReleaseEntry } from "@/lib/changelog";
 import { countBySectionTitle } from "@/lib/changelog";
 
 const GITHUB_REPO = "https://github.com/Rick1330/ibex-harness";
-
-const versionBadge = {
-  major:
-    "rounded-sm bg-text-primary px-2.5 py-0.5 font-mono text-xs font-bold text-canvas",
-  minor:
-    "rounded-sm border border-border bg-panel px-2.5 py-0.5 font-mono text-xs font-bold text-text-primary",
-  patch:
-    "rounded-sm border border-border bg-panel-raised px-2.5 py-0.5 font-mono text-xs font-bold text-text-secondary",
-} as const;
 
 type ReleaseHeroCardProps = Readonly<{
   release: ReleaseEntry;
@@ -30,21 +22,21 @@ function formatReleaseDate(date: string | null): string | null {
   });
 }
 
-function summaryLine(counts: Record<string, number>): string {
+function summaryLine(counts: ReadonlyMap<string, number>): string {
   const parts: string[] = [];
-  if (counts.Features) parts.push(`${counts.Features} features`);
-  if (counts["Bug Fixes"]) parts.push(`${counts["Bug Fixes"]} fixes`);
-  if (counts["Performance Improvements"]) {
-    parts.push(`${counts["Performance Improvements"]} performance`);
-  }
-  if (counts["Breaking Changes"]) {
-    parts.push(`${counts["Breaking Changes"]} breaking`);
-  }
+  const features = counts.get("Features");
+  const fixes = counts.get("Bug Fixes");
+  const performance = counts.get("Performance Improvements");
+  const breaking = counts.get("Breaking Changes");
+  if (features) parts.push(`${features} features`);
+  if (fixes) parts.push(`${fixes} fixes`);
+  if (performance) parts.push(`${performance} performance`);
+  if (breaking) parts.push(`${breaking} breaking`);
   return parts.join(" · ");
 }
 
 export function ReleaseHeroCard({ release }: ReleaseHeroCardProps) {
-  const badgeClass = versionBadge[release.type] ?? versionBadge.minor;
+  const badgeClass = releaseTypeBadgeClass(release.type);
   const counts = countBySectionTitle(release);
   const summary = summaryLine(counts);
   const formattedDate = formatReleaseDate(release.date);

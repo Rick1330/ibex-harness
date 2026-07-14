@@ -36,6 +36,83 @@ type CapState = {
   docsCount: number;
 };
 
+function isAsciiDigit(ch: string): boolean {
+  if (ch.length !== 1) return false;
+  const code = ch.charCodeAt(0);
+  return code >= 48 && code <= 57;
+}
+
+function isDecimalDigits(value: string): boolean {
+  if (value.length === 0) return false;
+  for (let i = 0; i < value.length; i += 1) {
+    if (!isAsciiDigit(value.charAt(i))) return false;
+  }
+  return true;
+}
+
+function isSemverChar(ch: string): boolean {
+  return isAsciiDigit(ch) || ch === ".";
+}
+
+function isHexCommitLabel(label: string): boolean {
+  const len = label.length;
+  if (len < 7 || len > 40) return false;
+  for (let i = 0; i < len; i += 1) {
+    const ch = label.charAt(i).toLowerCase();
+    const isDigit = ch >= "0" && ch <= "9";
+    const isHex = isDigit || (ch >= "a" && ch <= "f");
+    if (!isHex) return false;
+  }
+  return true;
+}
+
+function isMilestoneMarker(marker: string): boolean {
+  if (marker.length === 0) return false;
+  for (let i = 0; i < marker.length; i += 1) {
+    const ch = marker.charAt(i);
+    if (!isAsciiDigit(ch) && ch !== ".") return false;
+  }
+  return true;
+}
+
+function findFirstDigitIndex(text: string): number {
+  for (let i = 0; i < text.length; i += 1) {
+    if (isAsciiDigit(text.charAt(i))) return i;
+  }
+  return -1;
+}
+
+function findDateDelimiterIndex(text: string): number {
+  const emDash = text.indexOf("— ");
+  if (emDash !== -1) return emDash;
+  return text.indexOf("- ");
+}
+
+function collapseWhitespace(text: string): string {
+  let result = "";
+  let pendingSpace = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text.charAt(i);
+    const isSpace = ch === " " || ch === "\t" || ch === "\n" || ch === "\r";
+    if (isSpace) {
+      pendingSpace = result.length > 0;
+      continue;
+    }
+    if (pendingSpace) {
+      result += " ";
+      pendingSpace = false;
+    }
+    result += ch;
+  }
+  return result.trim();
+}
+
+function splitLines(content: string): string[] {
+  return content.split("\n").map((line) =>
+    line.endsWith("\r") ? line.slice(0, -1) : line,
+  );
+}
+
 /** Line wrapper to keep parser helpers free of bare string-arg surfaces. */
 class ChangelogLine {
   constructor(readonly text: string) {}
@@ -88,9 +165,16 @@ class ChangelogLine {
 
 export function parseReleaseType(version: string): ReleaseType {
   const parts = version.split(".");
-  const major = Number(parts[0]) || 0;
-  const minor = Number(parts[1]) || 0;
-  const patch = Number(parts[2]) || 0;
+  if (parts.length !== 3) return "patch";
+  const majorStr = parts.at(0) ?? "";
+  const minorStr = parts.at(1) ?? "";
+  const patchStr = parts.at(2) ?? "";
+  if (!isDecimalDigits(majorStr) || !isDecimalDigits(minorStr) || !isDecimalDigits(patchStr)) {
+    return "patch";
+  }
+  const major = Number(majorStr);
+  const minor = Number(minorStr);
+  const patch = Number(patchStr);
   if (patch > 0) return "patch";
   if (minor > 0) return "minor";
   if (major > 0) return "major";
@@ -98,14 +182,14 @@ export function parseReleaseType(version: string): ReleaseType {
 }
 
 function extractSemver(text: string): string | null {
-  const start = text.search(/\d/);
+  const start = findFirstDigitIndex(text);
   if (start === -1) return null;
   let end = start;
-  while (end < text.length && /[\d.]/.test(text[end])) end += 1;
+  while (end < text.length && isSemverChar(text.charAt(end))) end += 1;
   const candidate = text.slice(start, end);
   const parts = candidate.split(".");
   if (parts.length !== 3) return null;
-  if (!parts.every((part) => part.length > 0 && /^\d+$/.test(part))) return null;
+  if (!parts.every((part) => part.length > 0 && isDecimalDigits(part))) return null;
   return candidate;
 }
 
@@ -122,7 +206,7 @@ function extractReleaseDate(text: string): string | null {
   if (open !== -1 && close > open) {
     return normalizeDate(text.slice(open + 1, close));
   }
-  const dash = text.search(/[-—]\s/);
+  const dash = findDateDelimiterIndex(text);
   if (dash === -1) return null;
   return normalizeDate(text.slice(dash + 1).trim());
 }
@@ -146,7 +230,7 @@ function takeWrappedMarkdownLink(
   const urlEnd = text.indexOf(")", mid + 2);
   if (urlEnd === -1) return null;
   // Engine wraps markdown links as ([label](url)) — consume the outer ')' when present.
-  const end = text[urlEnd + 1] === ")" ? urlEnd + 1 : urlEnd;
+  const end = text.charAt(urlEnd + 1) === ")" ? urlEnd + 1 : urlEnd;
   return {
     label: text.slice(open + 2, mid),
     url: text.slice(mid + 2, urlEnd),
@@ -158,7 +242,7 @@ function takeWrappedMarkdownLink(
 function issueNumberFromLabel(label: string): number | null {
   if (!label.startsWith("#")) return null;
   const digits = label.slice(1);
-  if (!/^\d+$/.test(digits)) return null;
+  if (!isDecimalDigits(digits)) return null;
   return Number(digits);
 }
 
@@ -181,7 +265,7 @@ function parseCommitLink(body: ChangelogLine): CommitRef | null {
   while (true) {
     const link = takeWrappedMarkdownLink(remaining);
     if (!link) break;
-    if (/^[a-f0-9]{7,40}$/i.test(link.label)) {
+    if (isHexCommitLabel(link.label)) {
       found = { sha: link.label, url: link.url };
     }
     remaining = link.after;
@@ -210,7 +294,7 @@ function stripMarkdownLinks(body: ChangelogLine): ChangelogLine {
   while (true) {
     const link = takeWrappedMarkdownLink(text);
     if (!link) break;
-    text = `${link.before}${link.after}`.replace(/\s+/g, " ").trim();
+    text = collapseWhitespace(`${link.before}${link.after}`);
   }
   return new ChangelogLine(text);
 }
@@ -223,10 +307,8 @@ function stripMilestoneMarkers(body: ChangelogLine): ChangelogLine {
     const end = text.indexOf(")", start);
     if (end === -1) break;
     const marker = text.slice(start + 2, end);
-    if (!/^[\d.]+$/.test(marker)) break;
-    text = `${text.slice(0, start)} ${text.slice(end + 1)}`
-      .replace(/\s+/g, " ")
-      .trim();
+    if (!isMilestoneMarker(marker)) break;
+    text = collapseWhitespace(`${text.slice(0, start)} ${text.slice(end + 1)}`);
   }
   return new ChangelogLine(text);
 }
@@ -365,7 +447,7 @@ export function parseChangelogContent(content: string): ReleaseEntry[] {
   let current: MutableRelease | null = null;
   let section: MutableSection | null = null;
 
-  for (const raw of content.split(/\r?\n/)) {
+  for (const raw of splitLines(content)) {
     const line = new ChangelogLine(raw).trimmed();
 
     if (isSkippableHeader(line)) {
@@ -403,10 +485,10 @@ export function collectScopes(release: ReleaseEntry): string[] {
 
 export function countBySectionTitle(
   release: ReleaseEntry,
-): Record<string, number> {
-  const counts: Record<string, number> = {};
+): ReadonlyMap<string, number> {
+  const counts = new Map<string, number>();
   for (const section of release.sections) {
-    counts[section.title] = section.items.length;
+    counts.set(section.title, section.items.length);
   }
   return counts;
 }
