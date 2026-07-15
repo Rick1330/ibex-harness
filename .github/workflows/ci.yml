@@ -84,6 +84,10 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bash .github/scripts/validate-action-pins.sh
 
+      - name: Require DCO Signed-off-by on PR commits
+        if: github.event_name == 'pull_request'
+        run: bash .github/scripts/check-dco-signoff.sh "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}"
+
   changes:
     name: detect-changes
     runs-on: ubuntu-latest

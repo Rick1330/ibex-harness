@@ -43,6 +43,30 @@ Examples: `feat(proxy): add request ID middleware`, `docs(adr): add branch prote
 
 Align with [web/engineering/CODING_STANDARDS.md](web/engineering/CODING_STANDARDS.md) where language-specific rules apply.
 
+## Developer Certificate of Origin (DCO)
+
+Every commit must include a **Signed-off-by** line asserting you have the right to contribute under the project license ([MIT](LICENSE)). This satisfies [Developer Certificate of Origin](https://developercertificate.org/) requirements (OpenSSF OSPS-LE-01.01).
+
+Add to each commit message:
+
+```text
+Signed-off-by: Your Name <your.email@example.com>
+```
+
+Use the same name and email as your Git author. For squash merges, ensure the final commit includes `Signed-off-by` (GitHub preserves it from the PR branch when present on commits).
+
+CI enforces sign-off on pull requests via the `repo-guards` job ([`.github/scripts/check-dco-signoff.sh`](.github/scripts/check-dco-signoff.sh)). Automation commits from `github-actions[bot]` and `dependabot[bot]` are exempt.
+
+## Reporting defects
+
+Use the public issue tracker for non-security bugs:
+
+1. Open [New issue → Bug report](https://github.com/Rick1330/ibex-harness/issues/new?template=bug_report.md).
+2. Include reproduction steps, expected vs actual behavior, and environment (OS, Go/Node versions, compose stack).
+3. Redact tokens, passwords, and org identifiers from logs and screenshots.
+
+See also [.github/SUPPORT.md](.github/SUPPORT.md). **Do not** use public issues for security vulnerabilities — follow [.github/SECURITY.md](.github/SECURITY.md).
+
 ## Automated PR review (Copilot)
 
 **GitHub Copilot** (`copilot-pull-request-reviewer`) may comment on pull requests. Treat Copilot feedback as **advisory** only:
@@ -205,6 +229,7 @@ See [.github/SECURITY.md](.github/SECURITY.md) for vulnerability reporting.
 
 ## Further reading
 
+- [web/engineering/GOVERNANCE.md](web/engineering/GOVERNANCE.md) — maintainers, roles, access review
 - [web/engineering/DEVELOPMENT_GUIDE.md](web/engineering/DEVELOPMENT_GUIDE.md) — branching, PRs, CI expectations
 - [web/engineering/CODING_STANDARDS.md](web/engineering/CODING_STANDARDS.md) — style and quality bar
 - [docs/adr/ADR-0003-branch-protection-and-merge-policy.md](docs/adr/ADR-0003-branch-protection-and-merge-policy.md) — branch protection policy
