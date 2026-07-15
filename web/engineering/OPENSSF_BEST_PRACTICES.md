@@ -15,7 +15,7 @@ OpenSSF Scorecard’s [CII-Best-Practices check](https://github.com/ossf/scoreca
 
 **Maintainer-only working material (not in git, not primary evidence):** local `ibex-r/baseline-form-*.md`, `ibex-r/silver-form.md`, `ibex-r/gold-form.md`, and `ibex-r/scorecard-form.md`. Cite only repository files below when answering badge criteria.
 
-**Note:** Passing may still show ~99% on the BadgeApp API until the last Passing criterion / `achieve_passing` save is confirmed. Baseline L1–L2 show 100%; L3 is 100% on BadgeApp with intentional documented Unmet for solo approvals (OSPS-QA-07.01) and missing VEX (OSPS-VM-04.02) — see Level 3 table below. One README **Baseline** badge covers all baseline levels (`/projects/13590/baseline`).
+**Note:** Passing is **100%** on BadgeApp (earned 2026-07-15, including `enhancement_responses` — see Passing table below). Baseline L1–L2 show 100%; L3 is 100% on BadgeApp with intentional documented Unmet for solo approvals (OSPS-QA-07.01) and missing VEX (OSPS-VM-04.02) — see Level 3 table below. One README **Baseline** badge covers all baseline levels (`/projects/13590/baseline`).
 
 ## README badges
 
@@ -139,8 +139,8 @@ The passing badge is **earned**. Maintainer-only form playbooks (outside git) ma
 | Project URL | [ibexharness.com](https://ibexharness.com) |
 | Repo URL | [github.com/Rick1330/ibex-harness](https://github.com/Rick1330/ibex-harness) |
 
-### Intentional Unmet (Passing)
+### Passing criteria — enhancement responses
 
-| Criterion | Status | Justification |
+| Criterion | Status | Evidence |
 | --- | --- | --- |
-| `enhancement_responses` | Unmet | Pre-1.0 solo project; enhancements are tracked via pull requests and the public roadmap instead of a public enhancement-request tracker. |
+| `enhancement_responses` | **Met** | One community enhancement request in the last 12 months ([PR #261](https://github.com/Rick1330/ibex-harness/pull/261), label `enhancement`); maintainer responded 2026-07-15 (reviewed, closed with rationale). Tracker: [issues labeled enhancement](https://github.com/Rick1330/ibex-harness/issues?q=label%3Aenhancement). Feature requests: [feature_request.md](../../.github/ISSUE_TEMPLATE/feature_request.md). |
