@@ -92,12 +92,23 @@ After downloading release assets from [GitHub Releases](https://github.com/Rick1
 3. Verify the signature bundle:
 
 ```bash
+# Tag push / tag-associated signing (replace TAG, e.g. v0.1.0)
 cosign verify-blob \
   --bundle sbom.spdx.json.sigstore \
-  --certificate-oidc-issuer-regexp='https://token.actions.githubusercontent.com' \
-  --certificate-identity-regexp='https://github.com/Rick1330/ibex-harness/.+' \
+  --certificate-oidc-issuer-regexp='https://token\.actions\.githubusercontent\.com' \
+  --certificate-identity-regexp="https://github\.com/Rick1330/ibex-harness/\.github/workflows/release\.yml@refs/tags/${TAG}" \
+  sbom.spdx.json
+
+# Documented repair only: workflow_dispatch of release.yml from main
+# (use only when re-attaching assets to an existing tag)
+cosign verify-blob \
+  --bundle sbom.spdx.json.sigstore \
+  --certificate-oidc-issuer-regexp='https://token\.actions\.githubusercontent\.com' \
+  --certificate-identity-regexp='https://github\.com/Rick1330/ibex-harness/\.github/workflows/release\.yml@refs/heads/main' \
   sbom.spdx.json
 ```
+
+Signatures from other workflows or refs must not match. Replace `TAG` with the release tag under verification.
 
 4. Optionally compare the file SHA-256 with the digest listed in the GitHub Release asset metadata.
 
@@ -125,4 +136,4 @@ After **v1.0.0**, this section will be updated to a documented LTS window (minim
 
 ## License on releases
 
-The [MIT LICENSE](../../LICENSE) at the repository root applies to all tagged source releases. Release assets (SBOM, container images) are distributed under the same license unless noted otherwise in the release notes.
+Project-authored source for each tag remains under the repository [MIT LICENSE](../../LICENSE). That statement does **not** relicense third-party components listed in release SBOMs, nor the contents of container images: those materials remain under their own licenses. Use `sbom.spdx.json` (and image metadata) for third-party license notices and package identity.

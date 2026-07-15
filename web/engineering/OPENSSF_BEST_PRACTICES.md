@@ -11,7 +11,7 @@ OpenSSF Scorecard’s [CII-Best-Practices check](https://github.com/ossf/scoreca
 | **Baseline Level 2** | In progress | [baseline-2/edit](https://www.bestpractices.dev/en/projects/13590/baseline-2/edit) |
 | **Baseline Level 3** | In progress | [baseline-3/edit](https://www.bestpractices.dev/en/projects/13590/baseline-3/edit) |
 
-**Fill guides (parent workspace, not in git):** `ibex-r/baseline-form-1.md`, `baseline-form-2.md`, `baseline-form-3.md` — copy-paste Met/Unmet/N/A and justifications. Passing checklist: `ibex-r/scorecard-form.md`.
+**Maintainer-only working material (not in git, not primary evidence):** local `ibex-r/baseline-form-*.md` and `ibex-r/scorecard-form.md` are copy-paste helpers for filling bestpractices.dev. Cite only repository files below when answering badge criteria.
 
 ## README badges
 
@@ -27,7 +27,7 @@ Baseline badge (after baseline criteria are met):
 [![OpenSSF Baseline](https://www.bestpractices.dev/projects/13590/baseline)](https://www.bestpractices.dev/projects/13590)
 ```
 
-Re-run [Scorecard workflow](https://github.com/Rick1330/ibex-harness/actions/workflows/scorecard.yml) after badge level changes.
+After badge-level changes land on `main`, Scorecard refreshes on the next push to `main` or the weekly schedule in [`.github/workflows/scorecard.yml`](../../.github/workflows/scorecard.yml) (Monday 06:00 UTC). There is no `workflow_dispatch` trigger today.
 
 ---
 
@@ -88,10 +88,19 @@ Re-run [Scorecard workflow](https://github.com/Rick1330/ibex-harness/actions/wor
 
 | ID | Status | Notes |
 | --- | --- | --- |
-| OSPS-QA-07.01 | **Unmet** | Solo mode: 0 required approvals ([ADR-0003](../content/docs/adr/0003-branch-protection-and-merge-policy.mdx)) |
-| OSPS-VM-04.02 | **Unmet/defer** | VEX feed — Phase 5 |
-| OSPS-SA-03.02 | Partial | SECURITY.md threat model; formal workshop Phase 5 |
-| Others | Met | See `ibex-r/baseline-form-3.md` |
+| OSPS-AC-04.02 | Met | Per-job least privilege in [ci.yml](../../.github/workflows/ci.yml) |
+| OSPS-BR-01.04 | Met | Pinned actions + harden-runner in CI |
+| OSPS-BR-02.02, OSPS-QA-02.02 | Met | Tag-associated release assets + SBOM ([release.yml](../../.github/workflows/release.yml)) |
+| OSPS-BR-07.02 | Met | Secrets policy in [SECURITY.md §6](./SECURITY.md#6-data-protection-encryption-secrets-key-management) |
+| OSPS-DO-03.01, OSPS-DO-03.02 | Met | Cosign verify + OIDC identity in [RELEASING.md](./RELEASING.md#verify-release-integrity-and-authenticity) |
+| OSPS-DO-04.01, OSPS-DO-05.01 | Met | Support/EOL in [RELEASING.md](./RELEASING.md#support-scope-and-security-updates-osps-do-0401-osps-do-0501) |
+| OSPS-GV-04.01 | Met | [GOVERNANCE.md §3](./GOVERNANCE.md#3-permission-escalation-review-osps-gv-0401) |
+| OSPS-QA-04.02 | N/A | Single monorepo |
+| OSPS-QA-06.02, OSPS-QA-06.03 | Met | [CONTRIBUTING.md](../../CONTRIBUTING.md#required-ci-checks), [TESTING_STRATEGY.md](./TESTING_STRATEGY.md) |
+| OSPS-QA-07.01 | **Unmet** | Solo mode: 0 required approvals ([ADR-0003](../content/docs/adr/0003-branch-protection-and-merge-policy.mdx)); CI gates still mandatory |
+| OSPS-SA-03.02 | Met (documented) | Threat model [SECURITY.md §3](./SECURITY.md#3-threat-model-what-we-defend-against); formal workshop cadence Phase 5 |
+| OSPS-VM-04.02 | **Unmet/defer** | No VEX feed yet — Phase 5 ([GOVERNANCE.md §6](./GOVERNANCE.md#6-vulnerability-disclosure-and-publication-osps-vm-0401)) |
+| OSPS-VM-05.01–05.03, OSPS-VM-06.01–06.02 | Met | [DEPENDENCIES.md §9.0.1–9.0.2](./DEPENDENCIES.md#901-sca-remediation-thresholds-osps-vm-05010503) |
 
 ---
 
@@ -113,7 +122,7 @@ Tagged releases attach `sbom.spdx.json` + `sbom.spdx.json.sigstore` (cosign bund
 
 ## Passing level (CII) — completed
 
-The passing badge is **earned**. Historical form playbook remains in `ibex-r/scorecard-form.md`.
+The passing badge is **earned**. Maintainer-only form playbooks (outside git) may mirror the justifications below when filling bestpractices.dev.
 
 ### General project fields
 
@@ -129,4 +138,4 @@ The passing badge is **earned**. Historical form playbook remains in `ibex-r/sco
 
 | Criterion | Status | Justification |
 | --- | --- | --- |
-| `enhancement_responses` | Unmet | // Pre-1.0 solo project; enhancements tracked via PRs and roadmap |
+| `enhancement_responses` | Unmet | Pre-1.0 solo project; enhancements are tracked via pull requests and the public roadmap instead of a public enhancement-request tracker. |

@@ -23,6 +23,7 @@ while IFS= read -r sha; do
         continue
       fi
       ;;
+    *) ;;
   esac
   if ! git log -1 --format='%B' "$sha" | grep -qiE '^Signed-off-by:'; then
     echo "Missing Signed-off-by on commit ${sha:0:7} ($author_name <$author_email>)"

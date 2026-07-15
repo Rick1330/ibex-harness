@@ -354,7 +354,7 @@ Also add `services/memory` to the Bandit CI job and extend golangci-lint paths f
 | golangci-lint | Lint errors on touched Go packages | No blanket disables |
 | gitleaks | Any secret match | Never suppress without rotation |
 
-All PRs run at least one automated test suite (`ci-gate-go` / `ci-gate-web`); see [TESTING_STRATEGY.md](./TESTING_STRATEGY.md) and [CONTRIBUTING.md](../../CONTRIBUTING.md#testing-policy).
+All PRs run at least one automated test suite (`ci-gate-go` / `ci-gate-web`); see [TESTING_STRATEGY.md](./TESTING_STRATEGY.md) and [CONTRIBUTING.md](../../CONTRIBUTING.md#required-ci-checks).
 
 - OSV Scanner (replaces separate `govulncheck` in CI)
 - `golangci-lint` on `./services/auth/...` and `./services/proxy/...` (hard gate)
