@@ -433,14 +433,14 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Attest auth image provenance
-        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
           subject-name: ghcr.io/${{ steps.repo_meta.outputs.repo_lc }}/auth
           subject-digest: ${{ needs.push-auth.outputs.digest }}
           push-to-registry: true
 
       - name: Attest proxy image provenance
-        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
           subject-name: ghcr.io/${{ steps.repo_meta.outputs.repo_lc }}/proxy
           subject-digest: ${{ needs.push-proxy.outputs.digest }}
