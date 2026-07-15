@@ -7,7 +7,7 @@ OpenSSF Scorecard’s [CII-Best-Practices check](https://github.com/ossf/scoreca
 | Badge level | Status | Edit form |
 | --- | --- | --- |
 | **Passing** (CII) | **Earned** | [passing/edit](https://www.bestpractices.dev/en/projects/13590/passing/edit) |
-| **Baseline Level 1** | In progress | [baseline-1/edit](https://www.bestpractices.dev/en/projects/13590/baseline-1/edit) |
+| **Baseline Level 1** | **Earned** | [baseline-1/edit](https://www.bestpractices.dev/en/projects/13590/baseline-1/edit) |
 | **Baseline Level 2** | In progress | [baseline-2/edit](https://www.bestpractices.dev/en/projects/13590/baseline-2/edit) |
 | **Baseline Level 3** | In progress | [baseline-3/edit](https://www.bestpractices.dev/en/projects/13590/baseline-3/edit) |
 
@@ -21,10 +21,10 @@ Passing badge (merged):
 <a href="https://www.bestpractices.dev/projects/13590"><img alt="OpenSSF Best Practices" src="https://www.bestpractices.dev/projects/13590/badge"></a>
 ```
 
-Baseline badge (after baseline criteria are met):
+Baseline badge (merged):
 
-```markdown
-[![OpenSSF Baseline](https://www.bestpractices.dev/projects/13590/baseline)](https://www.bestpractices.dev/projects/13590)
+```html
+<a href="https://www.bestpractices.dev/projects/13590"><img alt="OpenSSF Baseline" src="https://www.bestpractices.dev/projects/13590/baseline"></a>
 ```
 
 After badge-level changes land on `main`, Scorecard refreshes on the next push to `main` or the weekly schedule in [`.github/workflows/scorecard.yml`](../../.github/workflows/scorecard.yml) (Monday 06:00 UTC). There is no `workflow_dispatch` trigger today.
