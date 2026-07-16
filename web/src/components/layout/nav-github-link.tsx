@@ -1,7 +1,8 @@
 "use client";
 
-import { Github } from "lucide-react";
 import Link from "next/link";
+
+import { GithubIcon } from "@/components/icons/github-icon";
 
 import { cn } from "@/lib/cn";
 import { GITHUB_OWNER, GITHUB_REPO } from "@/lib/github";
@@ -29,7 +30,7 @@ export function NavGithubLink({ className, showLabel = false }: NavGithubLinkPro
         className,
       )}
     >
-      <Github className="size-4 shrink-0" strokeWidth={1.5} />
+      <GithubIcon className="size-4 shrink-0" strokeWidth={1.5} />
       {showLabel ? (
         <span className="hidden text-sm font-medium lg:inline">GitHub</span>
       ) : null}

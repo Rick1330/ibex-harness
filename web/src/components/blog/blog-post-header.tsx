@@ -1,5 +1,6 @@
-import { Github } from "lucide-react";
 import Link from "next/link";
+
+import { GithubIcon } from "@/components/icons/github-icon";
 
 type BlogPostHeaderProps = Readonly<{
   title: string;
@@ -45,7 +46,7 @@ export function BlogPostHeader({
                 className="inline-flex items-center gap-1.5 font-medium text-foreground transition-opacity hover:opacity-80"
               >
                 {author}
-                <Github className="size-3.5" strokeWidth={2} />
+                <GithubIcon className="size-3.5" strokeWidth={2} />
               </Link>
             ) : (
               <span>{author}</span>
