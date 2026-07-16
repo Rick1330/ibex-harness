@@ -43,5 +43,15 @@
     "name": "automated",
     "color": "BFDADC",
     "description": "Bot-generated commits"
+  },
+  {
+    "name": "good first issue",
+    "color": "7057FF",
+    "description": "Good for newcomers"
+  },
+  {
+    "name": "help wanted",
+    "color": "008672",
+    "description": "Extra attention is needed"
   }
 ]

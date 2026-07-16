@@ -633,6 +633,12 @@ Never ignore flakes. Flakes create blind spots where real regressions slip throu
 
 ---
 
+## 11.1) Regression tests on bugfixes
+
+**Policy (OpenSSF Silver `regression_tests_added50`):** At least **50%** of bugfix pull requests that change production behavior must add or extend an automated regression test that would have failed before the fix. Prefer a unit or integration test at the failing boundary (auth, tenant isolation, proxy routing, parsing). Document exceptions in the PR Testing section with rationale (e.g. ops-only docs, flaky infra fixed by config).
+
+---
+
 ## 12) Coverage Policy
 
 Coverage is a signal, not a goal — but we still enforce minimums:

@@ -1,18 +1,12 @@
 name: Benchmarks
 
-# Cross-repo publish: ibexharness-benchmark-bot (pinned via BENCHMARK_BOT_SHA).
+# PR comments: every pull_request (useful review signal).
+# Bot PR to main: weekly Sunday cron or manual workflow_dispatch only.
 on:
   schedule:
     - cron: "0 4 * * 0"
   workflow_dispatch:
   pull_request:
-    paths:
-      - ".github/workflows/benchmark.yml"
-      - "benchmarks/**"
-      - "services/auth/**"
-      - "services/proxy/**"
-      - "go.mod"
-      - "go.sum"
   push:
     branches: [main]
     paths:
@@ -37,7 +31,8 @@ jobs:
     permissions:
       contents: read
     outputs:
-      run_benchmarks: ${{ steps.detect.outputs.benchmarks == 'true' || github.event_name != 'pull_request' }}
+      # Every PR gets collection + comment. Push/main stays path-gated; schedule/dispatch always run.
+      run_benchmarks: ${{ github.event_name == 'pull_request' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || steps.detect.outputs.benchmarks == 'true' }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -95,6 +90,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      pull-requests: write
+      issues: write
     env:
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       BENCH_PROXY_PORT: "18082"
@@ -345,8 +342,7 @@ jobs:
       vars.BENCHMARK_BOT_ENABLED == 'true' &&
       github.ref == 'refs/heads/main' &&
       (github.event_name == 'schedule' ||
-       github.event_name == 'workflow_dispatch' ||
-       github.event_name == 'push')
+       github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     permissions:
       contents: read

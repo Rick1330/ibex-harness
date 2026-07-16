@@ -2,6 +2,19 @@
 
 This repository uses an **automated version release pipeline** to keep releases consistent and auditable. Workflow: `.github/workflows/version-release-pr.yml`.
 
+## Which workflows are which (read this first)
+
+These names look similar but do **different** jobs. You usually need only one at a time.
+
+| Workflow (Actions name) | File | What it does | When it runs | Do you need it? |
+| --- | --- | --- | --- | --- |
+| **Version Release PR** | `version-release-pr.yml` | Opens/updates the weekly `chore(release): prepare vX.Y.Z` PR; on merge **publish**, creates the git tag + GitHub Release notes | Sunday 08:00 UTC propose; publish on `chore(release): prepare v…` merge | **Yes** for cutting semver releases |
+| **Tagged Release** | `release.yml` | Builds SBOM, signs with cosign, **uploads** `sbom.spdx.json` + `.sigstore` onto an **existing** GitHub Release | Tag push `v*.*.*`, release published, or manual `workflow_dispatch` with `tag_name` | **Yes** for Scorecard signed-release assets. Input must be an **existing** tag (today: `v0.1.0`) |
+| **Tagged Release Docker** | `release-docker.yml` | Publishes **version-tagged** container images (`ghcr.io/.../auth:vX.Y.Z`) | Only on **tag push** `v*.*.*` | Automatic with new tags; not used for manual SBOM repair |
+| **Docker Publish** | `docker-publish.yml` | Builds/scans/pushes **`latest`** (and related) images after successful CI on `main` | `workflow_run` after CI, PRs (scan-only), manual, or called by Tagged Release Docker | **Unrelated to SBOM/releases.** A green Docker Publish does **not** attach release assets |
+
+**Confusion trap:** After a merge, **Docker Publish** often succeeds with `latest` images. That is **not** Tagged Release. To attach SBOM signatures to `v0.1.0`, run **Actions → Tagged Release → Run workflow** with `tag_name=v0.1.0`.
+
 ## Release cadence
 
 | When | What happens |
@@ -10,7 +23,7 @@ This repository uses an **automated version release pipeline** to keep releases 
 | **You merge the release PR** | Push to `main` triggers **publish** mode: creates `vX.Y.Z` tag and GitHub Release. |
 | **`workflow_dispatch` → propose** | Manually refresh the release PR between Sundays if needed. |
 | **`workflow_dispatch` → publish** | Manually create the tag after merging a release PR (if the automatic publish step did not run). |
-| **Tagged Release workflow** | On tag publish / `workflow_dispatch`, attaches SBOM + cosign assets (`release.yml`). |
+| **Tagged Release** | On tag push / manual, attaches SBOM + cosign assets (`release.yml`). Versioned images use `release-docker.yml` on tag push only. |
 
 Normal feature and fix PRs merge to `main` **without** opening a release PR each time.
 
@@ -39,7 +52,9 @@ Configured in `version-release.config.json` and `.version-release-manifest.json`
 2. **Sunday (or manual propose):** the pipeline opens/updates `chore(release): prepare vX.Y.Z`.
 3. Review the release PR — confirm `CHANGELOG.md` and semver.
 4. Merge the release PR (squash).
-5. **Publish** runs on the `chore(release): prepare v…` merge commit → tag `vX.Y.Z` → `release.yml` (SBOM + cosign) + docker publish on tag push.
+5. **Publish** runs on the `chore(release): prepare v…` merge commit → tag `vX.Y.Z` → `release.yml` (SBOM + cosign bundle) + `release-docker.yml` (versioned images on tag push). Separately, **Docker Publish** may still push `latest` after ordinary CI on `main` — that is expected and independent.
+
+If a tag was created while `release.yml` was broken, re-attach assets with **Actions → Tagged Release → Run workflow** and `tag_name=vX.Y.Z` (must already exist; no need to recreate the tag).
 
 ## Automation branch and labels
 
@@ -65,3 +80,60 @@ For urgent patches: merge the fix to `main`, then either wait for the next Sunda
 | --- | --- |
 | `version-release.config.json` | Versioning policy, changelog path, semver tags, PR title pattern |
 | `.version-release-manifest.json` | Current released version baseline (managed by the pipeline) |
+
+## Verify release integrity and authenticity
+
+After downloading release assets from [GitHub Releases](https://github.com/Rick1330/ibex-harness/releases):
+
+### Integrity (OSPS-DO-03.01)
+
+1. Download `sbom.spdx.json` and `sbom.spdx.json.sigstore` for tag `vX.Y.Z`.
+2. Install [cosign](https://docs.sigstore.dev/cosign/system_install/) (v2+).
+3. Verify the signature bundle:
+
+```bash
+# Tag push / tag-associated signing (replace TAG, e.g. v0.1.0)
+cosign verify-blob \
+  --bundle sbom.spdx.json.sigstore \
+  --certificate-oidc-issuer-regexp='https://token\.actions\.githubusercontent\.com' \
+  --certificate-identity-regexp="https://github\.com/Rick1330/ibex-harness/\.github/workflows/release\.yml@refs/tags/${TAG}" \
+  sbom.spdx.json
+
+# Documented repair only: workflow_dispatch of release.yml from main
+# (use only when re-attaching assets to an existing tag)
+cosign verify-blob \
+  --bundle sbom.spdx.json.sigstore \
+  --certificate-oidc-issuer-regexp='https://token\.actions\.githubusercontent\.com' \
+  --certificate-identity-regexp='https://github\.com/Rick1330/ibex-harness/\.github/workflows/release\.yml@refs/heads/main' \
+  sbom.spdx.json
+```
+
+Signatures from other workflows or refs must not match. Replace `TAG` with the release tag under verification.
+
+4. Optionally compare the file SHA-256 with the digest listed in the GitHub Release asset metadata.
+
+Container images published to GHCR include GitHub artifact attestations (see `docker-publish.yml` / `release-docker.yml`).
+
+### Release author / process (OSPS-DO-03.02)
+
+- Tags `v*.*.*` are created only by the **Version Release PR** publish step or documented hotfix flow — not ad hoc in the GitHub UI.
+- SBOM signing runs in [`.github/workflows/release.yml`](../../.github/workflows/release.yml) using GitHub OIDC (`id-token: write`); cosign certificates identify the workflow and repository.
+- Branch protection on `main` blocks unreviewed direct pushes ([`.github/branch-protection-main.json`](../../.github/branch-protection-main.json)).
+
+## Support scope and security updates (OSPS-DO-04.01, OSPS-DO-05.01)
+
+**Pre-1.0 policy (current):**
+
+| Release line | Support |
+| --- | --- |
+| Latest minor on `main` (e.g. `v0.1.x`) | Active development; security fixes land on `main` and ship in the next patch release |
+| Previous minors (e.g. `v0.0.x`) | No guaranteed security backports after the next minor ships |
+| Pre-release tags | Unsupported |
+
+**Security update end-of-life:** When `v0.(n+1).0` is published, `v0.n.*` receives **no further security patches** unless explicitly announced in a GitHub Security Advisory.
+
+After **v1.0.0**, this section will be updated to a documented LTS window (minimum 12 months security support for the latest major).
+
+## License on releases
+
+Project-authored source for each tag remains under the repository [MIT LICENSE](../../LICENSE). That statement does **not** relicense third-party components listed in release SBOMs, nor the contents of container images: those materials remain under their own licenses. Use `sbom.spdx.json` (and image metadata) for third-party license notices and package identity.

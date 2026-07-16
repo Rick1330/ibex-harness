@@ -334,7 +334,27 @@ Avoid:
 
 Also add `services/memory` to the Bandit CI job and extend golangci-lint paths for new Go services (see `prompts/05-new-service-bootstrap.txt`).
 
-### 9.1 Go
+### 9.0.1 SCA remediation thresholds (OSPS-VM-05.01–05.03)
+
+| Severity | Policy | CI enforcement |
+| --- | --- | --- |
+| CRITICAL (known exploit) | Block merge; fix or documented waiver with ADR before release | OSV, Trivy, govulncheck fail PR |
+| HIGH | Block merge unless waived with issue + deadline | OSV, Trivy |
+| MEDIUM/LOW | Track via Dependabot; fix in normal sprint | Advisory only |
+| License violations | Block merge; replace dependency or obtain legal review | `license-check` job |
+
+**Pre-release:** No tagged release ships with open CRITICAL dependency findings in required scans. Waivers require a linked issue and expiry date in `DEPENDENCIES.md` or an ADR.
+
+### 9.0.2 SAST remediation thresholds (OSPS-VM-06.01–06.02)
+
+| Tool | Block merge when | Suppressions |
+| --- | --- | --- |
+| CodeQL | New error-severity findings on changed code | `.github/codeql/codeql-config.yml` + inline `lgtm` only with security review |
+| Semgrep (`.semgrep/rules/`) | Any ERROR rule match | Document in PR or rule comment |
+| golangci-lint | Lint errors on touched Go packages | No blanket disables |
+| gitleaks | Any secret match | Never suppress without rotation |
+
+All PRs run at least one automated test suite (`ci-gate-go` / `ci-gate-web`); see [TESTING_STRATEGY.md](./TESTING_STRATEGY.md) and [CONTRIBUTING.md](../../CONTRIBUTING.md#required-ci-checks).
 
 - OSV Scanner (replaces separate `govulncheck` in CI)
 - `golangci-lint` on `./services/auth/...` and `./services/proxy/...` (hard gate)

@@ -43,6 +43,30 @@ Examples: `feat(proxy): add request ID middleware`, `docs(adr): add branch prote
 
 Align with [web/engineering/CODING_STANDARDS.md](web/engineering/CODING_STANDARDS.md) where language-specific rules apply.
 
+## Developer Certificate of Origin (DCO)
+
+Every commit must include a **Signed-off-by** line asserting you have the right to contribute under the project license ([MIT](LICENSE)). This satisfies [Developer Certificate of Origin](https://developercertificate.org/) requirements (OpenSSF OSPS-LE-01.01).
+
+Add to each commit message:
+
+```text
+Signed-off-by: Your Name <your.email@example.com>
+```
+
+Use the same name and email as your Git author. For squash merges, ensure the final commit includes `Signed-off-by` (GitHub preserves it from the PR branch when present on commits).
+
+CI enforces sign-off on pull requests via the `repo-guards` job ([`.github/scripts/check-dco-signoff.sh`](.github/scripts/check-dco-signoff.sh)). Automation commits from `github-actions[bot]` and `dependabot[bot]` are exempt.
+
+## Reporting defects
+
+Use the public issue tracker for non-security bugs:
+
+1. Open [New issue → Bug report](https://github.com/Rick1330/ibex-harness/issues/new?template=bug_report.md).
+2. Include reproduction steps, expected vs actual behavior, and environment (OS, Go/Node versions, compose stack).
+3. Redact tokens, passwords, and org identifiers from logs and screenshots.
+
+See also [.github/SUPPORT.md](.github/SUPPORT.md). **Do not** use public issues for security vulnerabilities — follow [.github/SECURITY.md](.github/SECURITY.md).
+
 ## Automated PR review (Copilot)
 
 **GitHub Copilot** (`copilot-pull-request-reviewer`) may comment on pull requests. Treat Copilot feedback as **advisory** only:
@@ -142,11 +166,19 @@ make coverage-gate
 
 CI/security config changes: use [prompts/20-security-ci-audit.txt](prompts/20-security-ci-audit.txt).
 
+## Good first issues
+
+Want a small first contribution? Look for issues labeled [**good first issue**](https://github.com/Rick1330/ibex-harness/labels/good%20first%20issue) or [**help wanted**](https://github.com/Rick1330/ibex-harness/labels/help%20wanted).
+
+Typical starter work: docs typos, markdown/examples, small test additions, CONTRIBUTING clarifications. Follow the PR-only workflow and DCO sign-off above.
+
 ## Testing policy
 
 IBEX Harness requires automated tests for behavior changes. This satisfies our [OpenSSF Best Practices](web/engineering/OPENSSF_BEST_PRACTICES.md) enrollment and is enforced in review.
 
 **Policy:** When you add or materially change production behavior (handlers, stores, auth, proxy routing, security boundaries), add or extend tests in the same PR. Prefer the test pyramid in [web/engineering/TESTING_STRATEGY.md](web/engineering/TESTING_STRATEGY.md): unit tests for logic, integration tests for DB/Redis contracts, E2E only for user journeys.
+
+**Bugfixes:** At least half of production bugfix PRs must include a regression test ([TESTING_STRATEGY.md §11.1](web/engineering/TESTING_STRATEGY.md#111-regression-tests-on-bugfixes)).
 
 **How to run tests locally:**
 
@@ -205,6 +237,7 @@ See [.github/SECURITY.md](.github/SECURITY.md) for vulnerability reporting.
 
 ## Further reading
 
+- [web/engineering/GOVERNANCE.md](web/engineering/GOVERNANCE.md) — maintainers, roles, access review
 - [web/engineering/DEVELOPMENT_GUIDE.md](web/engineering/DEVELOPMENT_GUIDE.md) — branching, PRs, CI expectations
 - [web/engineering/CODING_STANDARDS.md](web/engineering/CODING_STANDARDS.md) — style and quality bar
 - [docs/adr/ADR-0003-branch-protection-and-merge-policy.md](docs/adr/ADR-0003-branch-protection-and-merge-policy.md) — branch protection policy

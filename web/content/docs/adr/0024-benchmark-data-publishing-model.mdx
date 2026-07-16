@@ -45,9 +45,10 @@ The docs site embeds benchmark JSON at build time (`docs/app/src/lib/benchmarks/
 
 ### 4) Post-merge publishing via external GitHub App
 
-- Publishing to `main` is handled by [`ibexharness-benchmark-bot`](https://github.com/Rick1330/ibexharness-benchmark-bot) via `repository_dispatch` after main benchmark runs.
-- Harness `notify-benchmark-bot` job sends dispatch when `BENCHMARK_BOT_ENABLED=true`.
+- Publishing to `main` is handled by [`ibexharness-benchmark-bot`](https://github.com/Rick1330/ibexharness-benchmark-bot) via `repository_dispatch` after **weekly** (Sunday) or **manual** main benchmark runs.
+- Harness `notify-benchmark-bot` job sends dispatch when `BENCHMARK_BOT_ENABLED=true` on `schedule` / `workflow_dispatch` only (not on every proxy push).
 - Interim `open-benchmark-data-pr` removed; bot opens data PRs with App identity.
+- **Every PR** still runs collection and posts a benchmark comment; that path never publishes JSON to `main`.
 
 ### 5) `run_number` semantics
 

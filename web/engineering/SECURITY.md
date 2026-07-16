@@ -584,6 +584,16 @@ Full matrix: [M1.5.1 milestone](roadmap/phase-1-core-platform/milestones/1.5.1-s
 
 ---
 
+## 17) Periodic security review
+
+| Date | Reviewer | Scope | Record |
+| --- | --- | --- | --- |
+| 2026-07-15 | Project lead | Threat model §3, objectives §2, CI gates ADR-0008, multi-tenant invariants Appendix A | [GOVERNANCE.md §5](./GOVERNANCE.md#5-security-assessment-osps-sa-0301); [ASSURANCE_CASE.md](./ASSURANCE_CASE.md) |
+
+Public site hardening headers (CSP, HSTS, `X-Content-Type-Options`, `X-Frame-Options`) live in [`web/public/_headers`](../public/_headers) for Cloudflare Pages.
+
+---
+
 **Security is a living system.** If you change behavior that affects security invariants, you must:
 
 1. Update this document
