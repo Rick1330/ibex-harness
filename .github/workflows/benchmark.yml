@@ -13,6 +13,7 @@ on:
       - '.github/workflows/benchmark.yml'
       - 'services/auth/**'
       - 'services/proxy/**'
+      - 'packages/**'
       - 'go.mod'
       - 'go.sum'
   push:
@@ -22,6 +23,7 @@ on:
       - "benchmarks/**"
       - "services/auth/**"
       - "services/proxy/**"
+      - "packages/**"
       - "go.mod"
       - "go.sum"
 
