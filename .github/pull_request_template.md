@@ -1,5 +1,11 @@
 ## What and Why
 
+## Tracking issue
+
+Closes #ISSUE_NUMBER
+
+Link the issue in both directions: the issue body or a comment must reference this PR (e.g. `Implementation PR: #123`).
+
 ## How
 
 ## Testing

@@ -8,11 +8,16 @@ Thank you for contributing. This repository is a production-grade, security-sens
 
 **Direct pushes to `main` are not allowed** once branch protection is enabled.
 
-1. Create a feature branch from `main`.
-2. Make your changes.
-3. Open a pull request against `main`.
-4. Ensure all required CI checks pass.
-5. Merge via GitHub (squash or merge commit per repo settings).
+1. **Open a tracker issue** using a repo template ([feature request](.github/ISSUE_TEMPLATE/feature_request.md) or [bug report](.github/ISSUE_TEMPLATE/bug_report.md)). Fill every section.
+2. Create a feature branch from `main`.
+3. Make your changes.
+4. Open a pull request against `main` using [.github/pull_request_template.md](.github/pull_request_template.md).
+5. In the PR body, include a close keyword: `Closes #123` (or `Fixes` / `Resolves`). Merging the PR **closes the issue**.
+6. In the issue body or a comment, reference the PR: `Implementation PR: #456` so the link is bidirectional.
+7. Ensure all required CI checks pass.
+8. Merge via GitHub (squash or merge commit per repo settings).
+
+CI enforces this contract in `repo-guards` ([`.github/scripts/check-pr-tracking.sh`](.github/scripts/check-pr-tracking.sh)). Dependabot and GitHub Actions automation PRs are exempt.
 
 Emergency fixes use a short-lived `hotfix/*` branch and the same PR process—no direct commits to `main`.
 
@@ -225,7 +230,7 @@ Dynamic analysis: Go race detector (`go test -race`) and fuzz smoke (`FuzzParseC
 
 ## Pull request template
 
-Use [.github/pull_request_template.md](.github/pull_request_template.md). Include What/Why, How, Testing, Security, and Docs sections per [web/engineering/DEVELOPMENT_GUIDE.md](web/engineering/DEVELOPMENT_GUIDE.md) §7.
+Use [.github/pull_request_template.md](.github/pull_request_template.md). Include **Tracking issue** (`Closes #N`), What/Why, How, Testing, Security, and Docs sections per [web/engineering/DEVELOPMENT_GUIDE.md](web/engineering/DEVELOPMENT_GUIDE.md) §7. The linked issue must reference the PR (`Implementation PR: #…`) so CI can verify bidirectional tracking.
 
 ## Code ownership
 
