@@ -1,10 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@/components/landing/reveal", () => ({
-  Reveal: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-}));
-
 beforeEach(() => {
   Object.defineProperty(globalThis, "matchMedia", {
     writable: true,
@@ -24,17 +20,26 @@ beforeEach(() => {
 import HomePage from "@/app/page";
 
 describe("HomePage", () => {
-  it("renders landing sections with hero copy and terminal card", async () => {
-    const Page = HomePage;
-    render(<Page />);
+  it("renders landing sections matching Paper/Ink structure", () => {
+    render(<HomePage />);
 
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
-      /in production/i,
+      /LLMs/i,
     );
     expect(document.querySelector(".ibex-landing")).toBeInTheDocument();
     expect(screen.getByTestId("hero-terminal-card")).toBeInTheDocument();
-    expect(screen.getByText(/Put agent memory at the proxy/i)).toBeInTheDocument();
-    expect(screen.getByText(/§02 · CAPABILITIES/i)).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: /silent failure/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: /one gate/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: /on your machine/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: /at the proxy/i }),
+    ).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Skip to content/i })).toHaveAttribute(
       "href",
       "#overview",

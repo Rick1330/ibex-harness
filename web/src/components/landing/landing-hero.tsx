@@ -1,58 +1,50 @@
 import Link from "next/link";
 
 import { HeroTerminalCard } from "@/components/landing/hero-terminal-card";
-import { REPO_URL, SITE_VERSION, TRUST_BADGES } from "@/lib/landing-content";
+import { REPO_URL, TRUST_BADGES } from "@/lib/landing-content";
 
 export function LandingHero() {
   return (
-    <section
-      id="overview"
-      className="mx-auto max-w-[var(--container)] px-5 pb-16 pt-10 sm:px-8 md:pb-24"
-    >
-      <div className="grid items-center gap-12 lg:grid-cols-12 lg:gap-10">
-        <div className="lg:col-span-7">
-          <p className="animate-entry mb-5 font-mono text-xs uppercase tracking-[0.14em] text-foreground-muted">
-            §01 · CONTROL PLANE
-          </p>
-          <h1 className="animate-entry font-display text-[clamp(2.75rem,2rem+3vw,4.25rem)] leading-[0.95] tracking-[-0.03em] [animation-delay:60ms]">
-            The control plane for agents that call LLMs{" "}
-            <em className="not-italic text-foreground">in production.</em>
-          </h1>
-          <p className="animate-entry mt-6 max-w-[52ch] text-lg leading-relaxed text-foreground-muted [animation-delay:120ms]">
-            Open-source OpenAI-compatible proxy. Intercept every model request,
-            validate tenant identity, enforce policy, and prepare memory context
-            — at the proxy, not in glue code.
-          </p>
-          <div className="animate-entry mt-8 flex flex-wrap items-center gap-3 [animation-delay:180ms]">
-            <Link
-              href="/docs/getting-started/introduction"
-              className="inline-flex h-10 items-center rounded-sm bg-foreground px-5 text-sm font-medium text-background transition-colors hover:bg-foreground/90"
-            >
-              Get started
-            </Link>
-            <Link
-              href="/docs/architecture/overview"
-              className="inline-flex h-10 items-center rounded-sm border border-border px-5 text-sm font-medium transition-colors hover:border-border-strong hover:bg-surface-1"
-            >
-              Read the spec →
-            </Link>
-            <p className="w-full font-mono text-xs text-foreground-subtle sm:w-auto">
-              curl -fsSL ibex.sh | sh
-            </p>
-          </div>
-          <p className="animate-entry mt-6 font-mono text-xs text-foreground-muted [animation-delay:220ms]">
-            {TRUST_BADGES.join(" · ")}
-          </p>
+    <section id="overview" className="landing-section border-b border-border">
+      <div className="landing-inner py-14 sm:py-20">
+        <p className="mb-5 font-mono text-xs uppercase tracking-[0.14em] text-foreground-muted">
+          <span className="mr-2 inline-block size-1.5 bg-accent align-middle" aria-hidden />
+          OPEN SOURCE · AI AGENT INFRASTRUCTURE
+        </p>
+
+        <h1 className="max-w-[18ch] font-display text-[length:var(--text-hero)] leading-[0.95] tracking-[-0.03em]">
+          The control plane for agents that call{" "}
+          <em className="italic">LLMs</em> in production.
+        </h1>
+
+        <p className="mt-6 max-w-[52ch] text-lg leading-relaxed text-foreground-muted">
+          Intercept every model request. Validate tenant identity. Enforce
+          policy. Prepare memory context — at the proxy, not in application glue
+          code.
+        </p>
+
+        <div className="mt-8 flex flex-wrap items-center gap-3">
+          <Link href="/docs/getting-started/introduction" className="btn-solid">
+            Read the docs →
+          </Link>
+          <a
+            href={REPO_URL}
+            className="btn-outline"
+            rel="noopener noreferrer"
+            target="_blank"
+          >
+            View on GitHub
+          </a>
         </div>
 
-        <div className="animate-entry lg:col-span-5 [animation-delay:140ms]">
+        <p className="mt-6 font-mono text-xs text-foreground-muted">
+          {TRUST_BADGES.join(" · ")}
+        </p>
+
+        <div className="mt-12 max-w-3xl">
           <HeroTerminalCard />
         </div>
       </div>
-      <p className="sr-only">
-        Version {SITE_VERSION}. Repository at{" "}
-        <a href={REPO_URL}>{REPO_URL}</a>.
-      </p>
     </section>
   );
 }

@@ -6,18 +6,22 @@ type WordmarkTextProps = Readonly<{
 }>;
 
 export function WordmarkText({ size = "nav", className }: WordmarkTextProps) {
-  const textSize = size === "footer" ? "text-base" : "text-sm";
+  const textSize = size === "footer" ? "text-xl" : "text-[20px]";
 
   return (
     <span
       className={cn(
-        "inline-flex items-baseline gap-0 font-semibold tracking-tight",
+        "inline-flex items-baseline gap-1.5 tracking-[-0.02em]",
         textSize,
         className,
       )}
     >
-      <span className="text-foreground">ibex</span>
-      <span className="text-muted-foreground">harness</span>
+      <span className="font-display italic text-foreground">ibex</span>
+      <span
+        className="size-1 shrink-0 rounded-full bg-accent"
+        aria-hidden
+      />
+      <span className="font-sans font-medium text-foreground">harness</span>
     </span>
   );
 }

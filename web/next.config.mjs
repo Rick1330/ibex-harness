@@ -1,6 +1,10 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { createMDX } from "fumadocs-mdx/next";
 
 const withMDX = createMDX();
+const appRoot = path.dirname(fileURLToPath(import.meta.url));
 
 const isStaticExport = process.env.NEXT_STATIC_EXPORT === "1";
 
@@ -16,6 +20,13 @@ const config = {
   experimental: {
     optimizePackageImports: ["lucide-react", "fumadocs-ui"],
     webpackMemoryOptimizations: true,
+  },
+  webpack: (webpackConfig) => {
+    webpackConfig.resolve.alias = {
+      ...webpackConfig.resolve.alias,
+      "@": path.join(appRoot, "src"),
+    };
+    return webpackConfig;
   },
   outputFileTracingExcludes: {
     "*": [

@@ -7,105 +7,77 @@ export const STATUS_STUB = "All systems operational";
 export const FEATURES = [
   {
     index: "01",
-    title: "Ingress Proxy",
-    body: "OpenAI-compatible endpoints on your domain. Drop-in swap for existing agent clients.",
-    snippet: "POST /v1/chat/completions",
+    tag: "INGRESS_PROXY",
+    title: "OpenAI-compatible proxy",
+    body: "Drop-in ingress for chat completions. Validate agents and org scope on every request before traffic reaches your model provider.",
   },
   {
     index: "02",
-    title: "Tenant Auth",
-    body: "Per-org keys, JWT claims, and RLS-safe request context on every call.",
-    snippet: "auth.ValidateAgent(org_id)",
+    tag: "TENANT_AUTH",
+    title: "Tenant auth + rate limits",
+    body: "gRPC auth validation, per-org Redis sliding windows, and defense-in-depth isolation so agents cannot cross tenant boundaries.",
   },
   {
     index: "03",
-    title: "Memory Path",
-    body: "Attach retrieved context at the proxy. Redis and pgvector adapters on the roadmap.",
-    snippet: "context.assemble(agent_id)",
+    tag: "MEMORY_PATH",
+    title: "Memory-ready request path",
+    body: "Phase 1 ships the proxy and auth foundation. Memory injection, context assembly, and drift detection land on the same ingress.",
   },
   {
     index: "04",
-    title: "Telemetry",
-    body: "OTLP traces, per-tenant cost and latency, and error taxonomy across the proxy path.",
-    snippet: "trace_id=7f3a…c21",
+    tag: "TELEMETRY",
+    title: "Observable by default",
+    body: "Structured logs, Prometheus metrics, and OpenTelemetry traces across proxy boundaries — built for operators running agents at scale.",
   },
 ] as const;
 
 export const FLOW = [
   {
     step: "01",
-    name: "authenticate",
-    desc: "JWT claims · org_id · agent_id",
-    snippet: `sub: agent-7f3a
-org: acme-prod
-scope: chat.write`,
+    name: "Agent request",
+    desc: "Your agent calls the proxy with OpenAI-compatible headers and tenant credentials.",
   },
   {
     step: "02",
-    name: "rate-limit",
-    desc: "Redis sliding window · per org",
-    snippet: `quota: 120 rpm
-remaining: 118
-window: 60s`,
+    name: "Validate + limit",
+    desc: "Auth service verifies the token and agent; Redis enforces per-org rate limits.",
   },
   {
     step: "03",
-    name: "retrieve memory",
-    desc: "Vector top-k · directive injection",
-    snippet: `top_k: 8
-latency: 4.2ms
-hits: 3`,
+    name: "Assemble context",
+    desc: "Phase 2+ injects memory and directives before the provider call (roadmap).",
   },
   {
     step: "04",
-    name: "forward upstream",
-    desc: "Provider host · trace export",
-    snippet: `host: api.openai.com
-status: 200
-p99: 17ms`,
+    name: "Forward + trace",
+    desc: "The proxy forwards to your LLM provider and records latency, org, and route metrics.",
   },
 ] as const;
 
-export const BENCHMARKS = [
-  { value: "17ms", label: "P99 overhead" },
-  { value: "12.4k rps", label: "Throughput" },
-  { value: "48 MiB", label: "Memory" },
-  { value: "120ms", label: "Cold start" },
-] as const;
-
-export const STACK_SERVICES = [
-  "Postgres + pgvector",
-  "Redis (auth cache + rate limits)",
-  "OTLP collector",
-  "Ibex proxy + auth (Go)",
-  "Admin UI (roadmap)",
+export const STACK_PORTS = [
+  { index: "01", label: "Proxy on :8080" },
+  { index: "02", label: "Auth gRPC on :50051" },
+  { index: "03", label: "Postgres + Redis" },
+  { index: "04", label: "OTLP collector" },
 ] as const;
 
 export const STACK_COMMANDS = [
-  "git clone https://github.com/Rick1330/ibex-harness.git",
   "make db-migrate && make db-seed",
   "docker compose -f infra/compose/docker-compose.yml up",
 ] as const;
 
-export const SPEC_QUOTES = [
-  {
-    quote:
-      "Every data access must satisfy org_id from the verified auth token — never from the request body.",
-    href: "/docs/architecture/multi-tenant-security",
-    label: "Multi-tenant security",
-  },
-  {
-    quote:
-      "The proxy's only external connections are Redis and Auth gRPC — stateless by design in Phase 1.",
-    href: "/docs/architecture/overview",
-    label: "Architecture overview",
-  },
-  {
-    quote:
-      "Full proxy overhead (excluding the LLM) targets under 20ms at p99.",
-    href: "/benchmarks",
-    label: "Benchmarks",
-  },
+export const STACK_LOGS = [
+  "ibex-proxy  | Listening on :8080",
+  "ibex-auth   | gRPC ready on :50051",
+  "postgres    | database system is ready",
+  "redis       | Ready to accept connections",
+] as const;
+
+export const METRICS = [
+  { value: "< 20ms", label: "P99 PROXY BUDGET" },
+  { value: "MIT", label: "OPEN SOURCE LICENSE" },
+  { value: "RLS", label: "TENANT ISOLATION MODEL" },
+  { value: "Go", label: "PROXY + AUTH SERVICES" },
 ] as const;
 
 export const TRUST_BADGES = [
@@ -119,16 +91,17 @@ export const FOOTER_LINKS = {
   product: [
     { label: "Docs", href: "/docs/getting-started/introduction" },
     { label: "Benchmarks", href: "/benchmarks" },
-    { label: "Changelog", href: "/releases" },
     { label: "Roadmap", href: "/roadmap" },
   ],
   community: [
     { label: "GitHub", href: REPO_URL, external: true },
     { label: "Blog", href: "/blog" },
+    { label: "Changelog", href: "/releases" },
   ],
-  project: [
-    { label: "llms.txt", href: "/llms.txt" },
-    { label: "Sitemap", href: "/sitemap.xml" },
+  legal: [
+    { label: "MIT license", href: `${REPO_URL}/blob/main/LICENSE`, external: true },
+    { label: "Security", href: `${REPO_URL}/security`, external: true },
+    { label: "Privacy", href: "/llms.txt" },
   ],
 } as const;
 
@@ -230,3 +203,10 @@ export const HERO_TERMINAL_PANELS: ReadonlyArray<TerminalPanel> = [
     ],
   },
 ];
+
+export const TRACE_STEPS = [
+  { name: "auth.ValidateAgent (gRPC)", ms: "2.1ms" },
+  { name: "ratelimit.Check (Redis)", ms: "0.4ms" },
+  { name: "forward to provider", ms: "12.8ms" },
+  { name: "200 OK · trace export", ms: "1.1ms" },
+] as const;
