@@ -80,7 +80,7 @@ git push --force-with-lease
 
 **My sign-off keeps getting rejected. What should I check?**
 
-The `Signed-off-by` name and email must match your Git `user.name` and `user.email`. Confirm them with `git config user.name` and `git config user.email`, then re-run the amend above.
+The CI check (`repo-guards`) requires a `Signed-off-by:` trailer on every non-bot commit — a missing trailer is what it rejects. Independently of CI, the DCO convention is that the trailer's name and email match your Git `user.name` and `user.email`, which is exactly what `git commit --signoff` writes. Confirm them with `git config user.name` and `git config user.email`, then re-run the amend above.
 
 ## Reporting defects
 
