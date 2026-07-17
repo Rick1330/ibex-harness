@@ -62,6 +62,26 @@ Use the same name and email as your Git author. For squash merges, ensure the fi
 
 CI enforces sign-off on pull requests via the `repo-guards` job ([`.github/scripts/check-dco-signoff.sh`](.github/scripts/check-dco-signoff.sh)). Automation commits from `github-actions[bot]` and `dependabot[bot]` are exempt.
 
+### DCO FAQ
+
+**I forgot to sign off my most recent commit. How do I fix it?**
+
+If the commit is unpushed (or lives only on your own topic branch), amend it to add the trailer—no need to recreate the commit:
+
+```bash
+# Add Signed-off-by to the latest commit, keeping its message unchanged
+git commit --amend --signoff --no-edit
+
+# Update your topic branch (only your own branch—never main)
+git push --force-with-lease
+```
+
+**Force-push is only ever appropriate on your own topic branch.** **Never** force-push `main` or any protected branch.
+
+**My sign-off keeps getting rejected. What should I check?**
+
+The `Signed-off-by` name and email must match your Git `user.name` and `user.email`. Confirm them with `git config user.name` and `git config user.email`, then re-run the amend above.
+
 ## Reporting defects
 
 Use the public issue tracker for non-security bugs:
