@@ -120,6 +120,28 @@ Path-filtered jobs (Go smokes, `web-build`, `trivy`, etc.) may be **skipped** on
 
 **Not required for merge (informational / supply chain):** `scorecard`, `sbom` (Grype), `label-pr`.
 
+## Fork pull request workflows
+
+PRs from **forks** use the `pull_request` event. GitHub may show **“Workflows awaiting approval”** before CI runs. This is a repository security control, not a failure in your branch.
+
+| Policy (repo setting) | Who needs maintainer approval |
+| --- | --- |
+| `first_time_contributors_new_to_github` | **Current** — only GitHub accounts with no prior contribution history |
+| `first_time_contributors` | First PR to this repository from a given GitHub user |
+| `all_external_contributors` | Every fork PR (slowest; avoid) |
+
+**Contributors:** After a maintainer approves workflows once, later PRs from the same account usually run automatically. Use **rebase** (`git rebase upstream/main`) instead of GitHub’s **Update branch** button when `main` moves ahead — see § Developer Certificate of Origin (DCO FAQ).
+
+**Maintainers:** On a fork PR, open the merge box → **Approve workflows to run** (or run `gh api --method POST repos/Rick1330/ibex-harness/actions/runs/<run_id>/approve` per workflow). Re-approve only when `.github/workflows/**` changes on a first-time contributor PR — inspect workflow diffs before approving.
+
+Re-apply the policy after org migration or repo transfer:
+
+```bash
+bash .github/scripts/configure-fork-pr-ci-policy.sh Rick1330/ibex-harness first_time_contributors_new_to_github
+```
+
+`pull_request_target` workflows (`label-pr`, `semantic-pr-title`) run without approval; they use read-only base-branch context.
+
 ## PR labels (auto-labeler)
 
 On every PR, [`.github/workflows/labeler.yml`](.github/workflows/labeler.yml) applies labels from [`.github/labeler.yml`](.github/labeler.yml):

@@ -1,12 +1,20 @@
 name: Benchmarks
 
-# PR comments: every pull_request (useful review signal).
-# Bot PR to main: weekly Sunday cron or manual workflow_dispatch only.
+# PR benchmark runs: path-gated on pull_request (proxy/auth/benchmarks only).
+# Weekly Sunday cron or manual workflow_dispatch always run the full pipeline.
 on:
   schedule:
     - cron: "0 4 * * 0"
   workflow_dispatch:
   pull_request:
+    paths:
+      - 'benchmarks/**'
+      - 'web/public/benchmarks/**'
+      - '.github/workflows/benchmark.yml'
+      - 'services/auth/**'
+      - 'services/proxy/**'
+      - 'go.mod'
+      - 'go.sum'
   push:
     branches: [main]
     paths:
@@ -31,8 +39,8 @@ jobs:
     permissions:
       contents: read
     outputs:
-      # Every PR gets collection + comment. Push/main stays path-gated; schedule/dispatch always run.
-      run_benchmarks: ${{ github.event_name == 'pull_request' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || steps.detect.outputs.benchmarks == 'true' }}
+      # PRs: only when proxy/auth or benchmark paths change (skip docs-only PRs).
+      run_benchmarks: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && (steps.detect.outputs.benchmarks == 'true' || steps.detect.outputs.go == 'true')) || (github.event_name == 'push' && steps.detect.outputs.benchmarks == 'true') }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:

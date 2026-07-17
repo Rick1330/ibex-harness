@@ -22,7 +22,7 @@ When additional maintainers join, this table must be updated in the same PR that
 
 | Role | Responsibilities |
 | --- | --- |
-| **Project lead** | Roadmap, release approval, security incident response, branch protection, CI policy, OpenSSF badge maintenance |
+| **Project lead** | Roadmap, release approval, security incident response, branch protection, CI policy (including fork PR workflow approval), OpenSSF badge maintenance |
 | **Contributor** | Open PRs from forks or branches; no direct push to `main`; no access to production secrets |
 | **Automation (`github-actions[bot]`)** | Version release PRs, SBOM/signing workflows, benchmark bot PRs — scoped tokens only (`GITHUB_TOKEN` or named secrets) |
 
