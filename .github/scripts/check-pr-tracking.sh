@@ -19,7 +19,7 @@ fi
 pr_json="$(gh pr view "$PR_NUMBER" --repo "$REPO" --json author,headRefName,body,title)"
 author_login="$(echo "$pr_json" | jq -r '.author.login')"
 head_ref="$(echo "$pr_json" | jq -r '.headRefName')"
-body="$(echo "$pr_json" | jq -r '.body // ""')"
+body="$(echo "$pr_json" | jq -r '.body // ""' | tr -d '\r')"
 
 if [[ "$author_login" == "dependabot[bot]" || "$author_login" == "github-actions[bot]" ]]; then
   echo "PR tracking check skipped for bot author: $author_login"
@@ -59,7 +59,7 @@ if [[ "$issue_state" == "CLOSED" ]]; then
   exit 1
 fi
 
-issue_body="$(gh issue view "$issue_num" --repo "$REPO" --json body -q .body)"
+issue_body="$(gh issue view "$issue_num" --repo "$REPO" --json body -q .body | tr -d '\r')"
 issue_comments="$(gh api "repos/${REPO}/issues/${issue_num}/comments" --jq '[.[].body] | join("\n")' 2>/dev/null || true)"
 issue_text="${issue_body}"$'\n'"${issue_comments}"
 
