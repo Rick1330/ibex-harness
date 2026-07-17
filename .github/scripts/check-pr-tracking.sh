@@ -21,19 +21,15 @@ author_login="$(echo "$pr_json" | jq -r '.author.login')"
 head_ref="$(echo "$pr_json" | jq -r '.headRefName')"
 body="$(echo "$pr_json" | jq -r '.body // ""')"
 
-case "$author_login" in
-  dependabot[bot]|github-actions[bot])
-    echo "PR tracking check skipped for bot author: $author_login"
-    exit 0
-    ;;
-esac
+if [[ "$author_login" == "dependabot[bot]" || "$author_login" == "github-actions[bot]" ]]; then
+  echo "PR tracking check skipped for bot author: $author_login"
+  exit 0
+fi
 
-case "$head_ref" in
-  release-please--*|dependabot/*)
-    echo "PR tracking check skipped for automation branch: $head_ref"
-    exit 0
-    ;;
-esac
+if [[ "$head_ref" == release-please--* || "$head_ref" == dependabot/* ]]; then
+  echo "PR tracking check skipped for automation branch: $head_ref"
+  exit 0
+fi
 
 if [[ -z "$body" ]]; then
   echo "PR #$PR_NUMBER has an empty body; fill .github/pull_request_template.md"
