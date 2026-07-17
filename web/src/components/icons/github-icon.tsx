@@ -3,7 +3,7 @@ import type { SVGProps } from "react";
 /** GitHub mark (lucide-react v1+ removed brand icons). */
 export function GithubIcon({
   className,
-  strokeWidth = 2,
+  strokeWidth = 1.5,
   ...props
 }: SVGProps<SVGSVGElement> & { strokeWidth?: number }) {
   return (
