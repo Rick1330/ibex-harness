@@ -2008,7 +2008,7 @@ html {
 
 .landing-inner {
   width: 100%;
-  max-width: var(--site-width, 72rem);
+  max-width: 1200px;
   margin-inline: auto;
   padding-inline: 1.25rem;
 }
@@ -2053,7 +2053,7 @@ html {
   font-size: 0.875rem;
   font-weight: 500;
   color: var(--background);
-  transition: background-color 150ms ease-out;
+  transition: background-color 160ms ease-out;
 }
 
 .btn-solid:hover {
@@ -2065,18 +2065,18 @@ html {
   height: 2.5rem;
   align-items: center;
   border-radius: var(--radius-sm);
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--border);
   padding-inline: 1.25rem;
   font-size: 0.875rem;
   font-weight: 500;
   color: var(--foreground);
   transition:
-    background-color 150ms ease-out,
-    border-color 150ms ease-out;
+    background-color 160ms ease-out,
+    border-color 160ms ease-out;
 }
 
 .btn-outline:hover {
-  border-color: var(--foreground);
+  border-color: var(--border-strong);
   background: var(--surface-1);
 }
 

@@ -1,61 +1,74 @@
+"use client";
+
+import { useEffect, useState } from "react";
+
 import { SectionShell } from "@/components/chrome/section-shell";
-import { FLOW, TRACE_STEPS } from "@/lib/landing-content";
+import { cn } from "@/lib/cn";
+import { REQUEST_PATH } from "@/lib/landing-content";
 
+/** §03 · Request Path — horizontal trace showpiece (design §6). */
 export function LandingFlow() {
+  const [active, setActive] = useState(0);
+  const [reducedMotion, setReducedMotion] = useState(false);
+
+  useEffect(() => {
+    if (typeof globalThis.matchMedia !== "function") return;
+    const media = globalThis.matchMedia("(prefers-reduced-motion: reduce)");
+    const apply = () => setReducedMotion(media.matches);
+    apply();
+    media.addEventListener("change", apply);
+    return () => media.removeEventListener("change", apply);
+  }, []);
+
+  useEffect(() => {
+    if (reducedMotion) return;
+    const timer = globalThis.setInterval(() => {
+      setActive((current) => (current + 1) % REQUEST_PATH.length);
+    }, 3000);
+    return () => globalThis.clearInterval(timer);
+  }, [reducedMotion]);
+
   return (
-    <SectionShell id="request-path" section="§03" label="REQUEST PATH" hideHeader>
-      <div className="py-14 sm:py-20">
-        <p className="mb-4 font-mono text-xs uppercase tracking-[0.14em] text-foreground-muted">
-          §03 · REQUEST PATH
-        </p>
-        <h2 className="max-w-[18ch] font-display text-[length:var(--text-4xl)] leading-[1.05] tracking-[-0.02em]">
-          Every LLM call passes through one gate.
-        </h2>
-
-        <div className="mt-10 grid items-start gap-8 lg:grid-cols-2 lg:gap-12">
-          <div className="overflow-hidden rounded-md border border-border bg-[var(--surface-2)] text-foreground dark:bg-[oklch(0.12_0.004_60)]">
-            <div className="flex items-center justify-between border-b border-border px-4 py-2.5">
-              <span className="font-mono text-[11px] uppercase tracking-[0.1em] text-foreground-muted">
-                IBEX-PROXY · REQUEST TRACE
-              </span>
-              <span className="font-mono text-[11px] text-foreground-subtle">
-                7f3a…c21
-              </span>
-            </div>
-            <pre className="overflow-x-auto p-4 font-mono text-[12px] leading-relaxed">
-              <span className="block text-accent">POST /v1/chat/completions</span>
-              <span className="mt-3 block text-foreground-muted">
-                X-IBEX-Agent-ID: &lt;uuid&gt;
-              </span>
-              <span className="block text-foreground-muted">
-                Authorization: Bearer &lt;token&gt;
-              </span>
-              <span className="mt-4 block">
-                {TRACE_STEPS.map((step) => (
-                  <span key={step.name} className="flex justify-between gap-4">
-                    <span>→ {step.name}</span>
-                    <span className="text-accent">{step.ms}</span>
-                  </span>
-                ))}
-              </span>
-            </pre>
-          </div>
-
-          <ol className="space-y-6">
-            {FLOW.map((step) => (
-              <li key={step.step} className="flex gap-4">
-                <span className="flex size-8 shrink-0 items-center justify-center border border-border font-mono text-xs">
-                  {step.step}
+    <SectionShell
+      id="request-path"
+      section="§03"
+      label="REQUEST PATH"
+      meta="trace_id  7f3a…c21   ·   duration  17.4ms   ·   status  200"
+      docHref="/docs/architecture/overview"
+    >
+      <div className="rounded-md border border-border bg-surface-1 p-6 sm:p-8">
+        <div className="grid gap-8 md:grid-cols-4">
+          {REQUEST_PATH.map((node, index) => (
+            <div key={node.step} className="relative min-w-0">
+              {index < REQUEST_PATH.length - 1 ? (
+                <span
+                  className="pointer-events-none absolute left-[calc(100%-0.25rem)] top-4 hidden h-px w-[calc(100%-1.5rem)] bg-border md:block"
+                  aria-hidden
+                >
+                  <span
+                    className={cn(
+                      "absolute top-1/2 size-1.5 -translate-y-1/2 rounded-full bg-accent transition-all duration-500",
+                      active === index ? "left-1/2 opacity-100" : "left-0 opacity-0",
+                    )}
+                  />
                 </span>
-                <div>
-                  <p className="font-medium">{step.name}</p>
-                  <p className="mt-1 text-sm leading-relaxed text-foreground-muted">
-                    {step.desc}
-                  </p>
-                </div>
-              </li>
-            ))}
-          </ol>
+              ) : null}
+              <div
+                className={cn(
+                  "mb-3 inline-flex size-8 items-center justify-center rounded-sm border font-mono text-xs transition-colors",
+                  active === index
+                    ? "border-accent text-accent"
+                    : "border-border text-foreground",
+                )}
+              >
+                {node.step}
+              </div>
+              <p className="font-medium">{node.name}</p>
+              <pre className="mt-3 whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-foreground-subtle">
+                {node.snippet}
+              </pre>
+            </div>
+          ))}
         </div>
       </div>
     </SectionShell>

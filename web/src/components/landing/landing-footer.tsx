@@ -45,33 +45,24 @@ function FooterLinkColumn({
   );
 }
 
+/** §09 · Footer — four columns + status strip (design §6). */
 export function LandingFooter() {
   const year = new Date().getFullYear();
 
   return (
-    <footer className="border-t border-border bg-surface-1">
+    <footer className="border-t border-border">
       <div className="landing-inner py-12 sm:py-14">
         <div className="grid gap-10 sm:grid-cols-2 lg:grid-cols-4">
-          <div>
-            <p className="font-display text-xl italic tracking-[-0.02em]">
-              Ibex Harness
-            </p>
-            <p className="mt-3 max-w-xs text-sm leading-relaxed text-foreground-muted">
-              An open-source control plane for production AI agents. Built by
-              engineers, for engineers.
-            </p>
-            <p className="mt-4 inline-flex items-center gap-2 font-mono text-xs text-foreground-muted">
-              <span className="size-1.5 rounded-full bg-success" aria-hidden />
-              {STATUS_STUB}
-            </p>
-          </div>
           <FooterLinkColumn title="Product" links={FOOTER_LINKS.product} />
           <FooterLinkColumn title="Community" links={FOOTER_LINKS.community} />
+          <FooterLinkColumn title="Company" links={FOOTER_LINKS.company} />
           <FooterLinkColumn title="Legal" links={FOOTER_LINKS.legal} />
         </div>
-        <div className="mt-10 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-6 font-mono text-xs text-foreground-muted">
-          <span>
-            © {year} IBEX HARNESS · MIT
+        <div className="mt-10 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-border pt-6 font-mono text-xs text-foreground-muted">
+          <span>© {year} IBEX Harness · MIT</span>
+          <span className="inline-flex items-center gap-2">
+            <span className="size-1.5 rounded-full bg-success" aria-hidden />
+            {STATUS_STUB}
           </span>
           <a
             href={REPO_URL}

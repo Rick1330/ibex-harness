@@ -1,83 +1,119 @@
 export const REPO_URL = "https://github.com/Rick1330/ibex-harness";
-
 export const SITE_VERSION = "v0.4.2";
 export const GITHUB_STARS_STUB = "2.3k";
 export const STATUS_STUB = "All systems operational";
 
+export const MARQUEE = [
+  "PROXY",
+  "AUTH",
+  "RATE-LIMITS",
+  "MULTI-TENANT",
+  "MEMORY-READY",
+  "OPENAI-COMPAT",
+  "GRPC",
+  "PROMETHEUS",
+  "OPENTELEMETRY",
+  "MIT",
+] as const;
+
 export const FEATURES = [
   {
     index: "01",
-    tag: "INGRESS_PROXY",
-    title: "OpenAI-compatible proxy",
-    body: "Drop-in ingress for chat completions. Validate agents and org scope on every request before traffic reaches your model provider.",
+    title: "Ingress Proxy",
+    body: "OpenAI-compatible endpoints on your domain. Drop-in swap for existing agent clients.",
+    snippet: "POST /v1/chat/completions",
   },
   {
     index: "02",
-    tag: "TENANT_AUTH",
-    title: "Tenant auth + rate limits",
-    body: "gRPC auth validation, per-org Redis sliding windows, and defense-in-depth isolation so agents cannot cross tenant boundaries.",
+    title: "Tenant Auth",
+    body: "Per-org keys, JWT claims, and RLS-safe request context on every call.",
+    snippet: "auth.ValidateAgent(org_id)",
   },
   {
     index: "03",
-    tag: "MEMORY_PATH",
-    title: "Memory-ready request path",
-    body: "Phase 1 ships the proxy and auth foundation. Memory injection, context assembly, and drift detection land on the same ingress.",
+    title: "Memory Path",
+    body: "Attach retrieved context at the proxy. Redis and pgvector adapters on the roadmap.",
+    snippet: "context.assemble(agent_id)",
   },
   {
     index: "04",
-    tag: "TELEMETRY",
-    title: "Observable by default",
-    body: "Structured logs, Prometheus metrics, and OpenTelemetry traces across proxy boundaries — built for operators running agents at scale.",
+    title: "Telemetry",
+    body: "OTLP traces, per-tenant cost and latency, and error taxonomy across the proxy path.",
+    snippet: "trace_id=7f3a…c21",
   },
 ] as const;
 
-export const FLOW = [
+export const REQUEST_PATH = [
   {
     step: "01",
-    name: "Agent request",
-    desc: "Your agent calls the proxy with OpenAI-compatible headers and tenant credentials.",
+    name: "authenticate",
+    snippet: `sub: agent-7f3a
+org: acme-prod
+scope: chat.write`,
   },
   {
     step: "02",
-    name: "Validate + limit",
-    desc: "Auth service verifies the token and agent; Redis enforces per-org rate limits.",
+    name: "rate-limit",
+    snippet: `quota: 120 rpm
+remaining: 118
+window: 60s`,
   },
   {
     step: "03",
-    name: "Assemble context",
-    desc: "Phase 2+ injects memory and directives before the provider call (roadmap).",
+    name: "retrieve memory",
+    snippet: `top_k: 8
+latency: 4.2ms
+hits: 3`,
   },
   {
     step: "04",
-    name: "Forward + trace",
-    desc: "The proxy forwards to your LLM provider and records latency, org, and route metrics.",
+    name: "forward upstream",
+    snippet: `host: api.openai.com
+status: 200
+p99: 17ms`,
   },
 ] as const;
 
-export const STACK_PORTS = [
-  { index: "01", label: "Proxy on :8080" },
-  { index: "02", label: "Auth gRPC on :50051" },
-  { index: "03", label: "Postgres + Redis" },
-  { index: "04", label: "OTLP collector" },
+export const BENCHMARKS = [
+  { value: "17ms", label: "P99 overhead" },
+  { value: "12.4k rps", label: "Throughput" },
+  { value: "48 MiB", label: "Memory" },
+  { value: "120ms", label: "Cold start" },
+] as const;
+
+export const STACK_SERVICES = [
+  "Postgres + pgvector",
+  "Redis (auth cache + rate limits)",
+  "OTLP collector",
+  "Ibex proxy + auth (Go)",
+  "Admin UI (roadmap)",
 ] as const;
 
 export const STACK_COMMANDS = [
+  "git clone https://github.com/Rick1330/ibex-harness.git",
   "make db-migrate && make db-seed",
   "docker compose -f infra/compose/docker-compose.yml up",
 ] as const;
 
-export const STACK_LOGS = [
-  "ibex-proxy  | Listening on :8080",
-  "ibex-auth   | gRPC ready on :50051",
-  "postgres    | database system is ready",
-  "redis       | Ready to accept connections",
-] as const;
-
-export const METRICS = [
-  { value: "< 20ms", label: "P99 PROXY BUDGET" },
-  { value: "MIT", label: "OPEN SOURCE LICENSE" },
-  { value: "RLS", label: "TENANT ISOLATION MODEL" },
-  { value: "Go", label: "PROXY + AUTH SERVICES" },
+export const SPEC_QUOTES = [
+  {
+    quote:
+      "Every data access must satisfy org_id from the verified auth token — never from the request body.",
+    href: "/docs/architecture/overview",
+    label: "Multi-tenant security",
+  },
+  {
+    quote:
+      "The proxy's only external connections are Redis and Auth gRPC — stateless by design in Phase 1.",
+    href: "/docs/architecture/overview",
+    label: "Architecture overview",
+  },
+  {
+    quote:
+      "Full proxy overhead (excluding the LLM) targets under 20ms at p99.",
+    href: "/benchmarks",
+    label: "Benchmarks",
+  },
 ] as const;
 
 export const TRUST_BADGES = [
@@ -91,15 +127,23 @@ export const FOOTER_LINKS = {
   product: [
     { label: "Docs", href: "/docs/getting-started/introduction" },
     { label: "Benchmarks", href: "/benchmarks" },
+    { label: "Changelog", href: "/releases" },
     { label: "Roadmap", href: "/roadmap" },
   ],
   community: [
     { label: "GitHub", href: REPO_URL, external: true },
     { label: "Blog", href: "/blog" },
-    { label: "Changelog", href: "/releases" },
+  ],
+  company: [
+    { label: "About", href: "/docs/getting-started/introduction" },
+    { label: "Contact", href: REPO_URL, external: true },
   ],
   legal: [
-    { label: "MIT license", href: `${REPO_URL}/blob/main/LICENSE`, external: true },
+    {
+      label: "License",
+      href: `${REPO_URL}/blob/main/LICENSE`,
+      external: true,
+    },
     { label: "Security", href: `${REPO_URL}/security`, external: true },
     { label: "Privacy", href: "/llms.txt" },
   ],
@@ -127,14 +171,14 @@ export const HERO_TERMINAL_PANELS: ReadonlyArray<TerminalPanel> = [
     id: "request",
     lines: [
       {
-        text: "POST /v1/chat/completions",
+        text: "post",
         parts: [
           { text: "POST ", tone: "accent" },
           { text: "/v1/chat/completions", tone: "default" },
         ],
       },
       {
-        text: "headers",
+        text: "auth",
         parts: [
           { text: "Authorization: ", tone: "muted" },
           { text: "Bearer ibex_…", tone: "accent" },
@@ -162,8 +206,8 @@ export const HERO_TERMINAL_PANELS: ReadonlyArray<TerminalPanel> = [
       {
         text: "body",
         parts: [
-          { text: '{ "id": "chatcmpl-…", ', tone: "muted" },
-          { text: '"model": "gpt-4o"', tone: "accent" },
+          { text: '{ "model": ', tone: "muted" },
+          { text: '"gpt-4o"', tone: "accent" },
           { text: " }", tone: "muted" },
         ],
       },
@@ -187,14 +231,14 @@ export const HERO_TERMINAL_PANELS: ReadonlyArray<TerminalPanel> = [
         ],
       },
       {
-        text: "spans",
+        text: "auth",
         parts: [
           { text: "auth.ValidateAgent ", tone: "default" },
           { text: "4ms", tone: "accent" },
         ],
       },
       {
-        text: "forward",
+        text: "fwd",
         parts: [
           { text: "proxy.forward ", tone: "default" },
           { text: "12ms", tone: "accent" },
@@ -203,10 +247,3 @@ export const HERO_TERMINAL_PANELS: ReadonlyArray<TerminalPanel> = [
     ],
   },
 ];
-
-export const TRACE_STEPS = [
-  { name: "auth.ValidateAgent (gRPC)", ms: "2.1ms" },
-  { name: "ratelimit.Check (Redis)", ms: "0.4ms" },
-  { name: "forward to provider", ms: "12.8ms" },
-  { name: "200 OK · trace export", ms: "1.1ms" },
-] as const;

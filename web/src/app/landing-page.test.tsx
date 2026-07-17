@@ -20,23 +20,19 @@ beforeEach(() => {
 import HomePage from "@/app/page";
 
 describe("HomePage", () => {
-  it("renders landing sections matching Paper/Ink structure", () => {
+  it("renders design-guide sections §01–§09", () => {
     render(<HomePage />);
 
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
-      /LLMs/i,
+      /in production/i,
     );
-    expect(document.querySelector(".ibex-landing")).toBeInTheDocument();
     expect(screen.getByTestId("hero-terminal-card")).toBeInTheDocument();
-    expect(
-      screen.getByRole("heading", { name: /silent failure/i }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("heading", { name: /one gate/i }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("heading", { name: /on your machine/i }),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/§02 · CAPABILITIES/i)).toBeInTheDocument();
+    expect(screen.getByText(/§03 · REQUEST PATH/i)).toBeInTheDocument();
+    expect(screen.getByText(/§04 · BENCHMARKS/i)).toBeInTheDocument();
+    expect(screen.getByText(/§05 · LOCAL STACK/i)).toBeInTheDocument();
+    expect(screen.getByText(/§06 · FROM THE SPEC/i)).toBeInTheDocument();
+    expect(screen.getByText(/§07 · CHANGELOG/i)).toBeInTheDocument();
     expect(
       screen.getByRole("heading", { name: /at the proxy/i }),
     ).toBeInTheDocument();
