@@ -14,6 +14,11 @@ fi
 missing=0
 while IFS= read -r sha; do
   [[ -z "$sha" ]] && continue
+  # GitHub "Update branch" merge commits are not contributor work; skip DCO on them.
+  parent_count="$(git rev-list --parents -n 1 "$sha" | awk '{print NF - 1}')"
+  if [[ "$parent_count" -gt 1 ]]; then
+    continue
+  fi
   author_email="$(git log -1 --format='%ae' "$sha")"
   author_name="$(git log -1 --format='%an' "$sha")"
   # Automation commits (release bot, dependabot) are exempt.
