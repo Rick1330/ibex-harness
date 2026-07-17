@@ -1,17 +1,41 @@
 "use client";
 
-import { Moon, Sun } from "lucide-react";
+import { Monitor, Moon, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useEffect, useState } from "react";
 
 import { cn } from "@/lib/cn";
 
+const THEME_CYCLE = ["system", "light", "dark"] as const;
+
+type ThemeCycle = (typeof THEME_CYCLE)[number];
+
 type ThemeToggleProps = Readonly<{
   className?: string;
 }>;
 
+function nextTheme(current: ThemeCycle): ThemeCycle {
+  const index = THEME_CYCLE.indexOf(current);
+  return THEME_CYCLE[(index + 1) % THEME_CYCLE.length];
+}
+
+function themeLabel(theme: ThemeCycle, resolved: string | undefined): string {
+  if (theme === "system") return "Theme: system";
+  if (theme === "light") return "Theme: light";
+  return "Theme: dark";
+}
+
+function resolveThemeIcon(
+  active: ThemeCycle,
+  resolvedTheme: string | undefined,
+): typeof Monitor {
+  if (active === "system") return Monitor;
+  if (resolvedTheme === "dark") return Moon;
+  return Sun;
+}
+
 export function ThemeToggle({ className }: ThemeToggleProps) {
-  const { resolvedTheme, setTheme } = useTheme();
+  const { theme, resolvedTheme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
@@ -23,32 +47,29 @@ export function ThemeToggle({ className }: ThemeToggleProps) {
       <div
         aria-hidden
         className={cn(
-          "size-8 animate-pulse rounded-[4px] border border-border bg-panel",
+          "size-8 animate-pulse rounded-sm border border-border bg-surface-1",
           className,
         )}
       />
     );
   }
 
-  const isDark = resolvedTheme === "dark";
+  const active = (theme ?? "system") as ThemeCycle;
+  const Icon = resolveThemeIcon(active, resolvedTheme);
 
   return (
     <button
       type="button"
-      aria-label="Toggle theme"
+      aria-label={themeLabel(active, resolvedTheme)}
       data-theme-toggle=""
       className={cn(
-        "inline-flex size-8 items-center justify-center rounded-[4px] border border-border",
-        "text-text-secondary transition-colors hover:bg-panel-raised hover:text-text-primary",
+        "inline-flex size-8 items-center justify-center rounded-sm border border-border",
+        "text-foreground-muted transition-colors hover:bg-surface-1 hover:text-foreground",
         className,
       )}
-      onClick={() => setTheme(isDark ? "light" : "dark")}
+      onClick={() => setTheme(nextTheme(active))}
     >
-      {isDark ? (
-        <Sun className="size-4" strokeWidth={2} />
-      ) : (
-        <Moon className="size-4" strokeWidth={2} />
-      )}
+      <Icon className="size-4" strokeWidth={2} />
     </button>
   );
 }

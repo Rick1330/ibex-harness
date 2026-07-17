@@ -1,15 +1,11 @@
 import type { Metadata } from "next";
-import { JetBrains_Mono } from "next/font/google";
-import { GeistMono } from "geist/font/mono";
-import { GeistSans } from "geist/font/sans";
 import type { ReactNode } from "react";
 
 import { ClearMermaidCache } from "@/components/clear-mermaid-cache";
-import {
-  DocsRootProvider,
-} from "@/components/docs-root-provider";
+import { DocsRootProvider } from "@/components/docs-root-provider";
 import { SearchIndexPrefetch } from "@/components/search-index-prefetch";
 import { SiteNavShell } from "@/components/site-nav-shell";
+import { ThemeNoFlashScript } from "@/components/theme-no-flash";
 import { STATIC_SEARCH_INDEX_URL } from "@/lib/search-index-url";
 import {
   SITE_AI_URL,
@@ -21,12 +17,6 @@ import {
 import "./globals.css";
 
 const isProd = process.env.NODE_ENV === "production";
-
-const jetbrainsMono = JetBrains_Mono({
-  subsets: ["latin"],
-  variable: "--font-mono",
-  display: "swap",
-});
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
@@ -98,13 +88,9 @@ type RootLayoutProps = Readonly<{
 
 export default function RootLayout({ children }: RootLayoutProps) {
   return (
-    <html
-      lang="en"
-      data-scroll-behavior="smooth"
-      suppressHydrationWarning
-      className={`${GeistSans.variable} ${GeistMono.variable} ${jetbrainsMono.variable}`}
-    >
-      <body className="bg-canvas text-text-primary antialiased">
+    <html lang="en" data-scroll-behavior="smooth" suppressHydrationWarning>
+      <body className="bg-background text-foreground antialiased">
+        <ThemeNoFlashScript />
         <ClearMermaidCache />
         {isProd ? (
           <SearchIndexPrefetch indexUrl={STATIC_SEARCH_INDEX_URL} />

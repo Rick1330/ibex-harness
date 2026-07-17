@@ -28,7 +28,7 @@ export function DocsRootProvider({ children }: DocsRootProviderProps) {
         ...(isProd ? { SearchDialog: StaticSearchDialog } : {}),
         options: searchOptions,
       }}
-      theme={{ enabled: true, attribute: "class", defaultTheme: "dark" }}
+      theme={{ enabled: true, attribute: "class", defaultTheme: "system", enableSystem: true }}
     >
       {children}
     </RootProvider>

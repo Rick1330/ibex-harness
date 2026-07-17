@@ -23,7 +23,7 @@ IBEX Harness is an open-source (MIT) AI agent infrastructure platform.
 - Product overview: https://ibexharness.com/
 - Get started: https://ibexharness.com/docs/getting-started/introduction
 - Architecture: https://ibexharness.com/docs/architecture/overview
-- API reference: https://ibexharness.com/docs/api/overview
+- API reference: https://ibexharness.com/docs/api-reference/chat-completions
 - Changelog: https://ibexharness.com/releases
 - Roadmap: https://ibexharness.com/roadmap
 - Blog: https://ibexharness.com/blog

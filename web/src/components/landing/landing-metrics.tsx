@@ -1,20 +1,40 @@
-import { METRICS } from "@/lib/landing-content";
+import Link from "next/link";
+
+import { SectionShell } from "@/components/chrome/section-shell";
+import { BENCHMARKS } from "@/lib/landing-content";
 
 export function LandingMetrics() {
   return (
-    <section id="metrics" className="mx-auto max-w-7xl px-5 py-20 sm:px-8">
+    <SectionShell
+      id="benchmarks"
+      section="§04"
+      label="BENCHMARKS"
+      docHref="/benchmarks"
+      docLabel="See full methodology"
+    >
       <div className="grid gap-px border border-border bg-border sm:grid-cols-2 lg:grid-cols-4">
-        {METRICS.map((metric) => (
-          <div key={metric.label} className="landing-surface bg-paper p-8 text-center">
-            <div className="text-4xl font-extrabold tracking-tight">
+        {BENCHMARKS.map((metric) => (
+          <div
+            key={metric.label}
+            className="bg-background px-6 py-8 text-center"
+          >
+            <div className="font-mono text-4xl tabular-nums tracking-tight">
               {metric.value}
             </div>
-            <div className="mt-2 text-xs tracking-widest text-muted-foreground">
-              {metric.label.toUpperCase()}
+            <div className="mt-2 font-mono text-xs uppercase tracking-[0.12em] text-foreground-muted">
+              {metric.label}
             </div>
           </div>
         ))}
       </div>
-    </section>
+      <p className="mt-6">
+        <Link
+          href="/benchmarks"
+          className="font-mono text-xs text-foreground-muted transition-colors hover:text-accent"
+        >
+          See full methodology →
+        </Link>
+      </p>
+    </SectionShell>
   );
 }

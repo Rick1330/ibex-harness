@@ -4,14 +4,14 @@ import { describe, expect, it } from "vitest";
 import { LandingShell } from "@/components/landing/landing-shell";
 
 describe("LandingShell", () => {
-  it("renders children inside ascii-frame wrapper and pre", () => {
+  it("renders children inside bordered wrapper and pre", () => {
     const { container } = render(
       <LandingShell>git clone ibex-harness</LandingShell>,
     );
 
     expect(screen.getByText("git clone ibex-harness")).toBeInTheDocument();
     const wrapper = container.firstElementChild;
-    expect(wrapper).toHaveClass("ascii-frame", "overflow-x-auto", "bg-card");
+    expect(wrapper).toHaveClass("overflow-x-auto", "border", "bg-surface-1");
     expect(wrapper?.querySelector("pre")).toHaveClass("font-mono", "p-4", "text-[12px]");
   });
 
@@ -32,13 +32,5 @@ describe("LandingShell", () => {
       "p-3",
       "text-[11px]",
     );
-  });
-
-  it("uses inset surface styling when requested", () => {
-    const { container } = render(
-      <LandingShell surface="inset">inset command</LandingShell>,
-    );
-
-    expect(container.firstElementChild).toHaveClass("landing-shell-inset");
   });
 });

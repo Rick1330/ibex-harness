@@ -1,71 +1,58 @@
 import Link from "next/link";
 
-import { IbexVideo } from "@/components/landing/ibex-video";
-import { LandingShell } from "@/components/landing/landing-shell";
-import { REPO_URL } from "@/lib/landing-content";
+import { HeroTerminalCard } from "@/components/landing/hero-terminal-card";
+import { REPO_URL, SITE_VERSION, TRUST_BADGES } from "@/lib/landing-content";
 
 export function LandingHero() {
   return (
-    <section id="overview" className="relative mx-auto max-w-7xl px-5 sm:px-8">
-      <div className="grid items-center gap-2 pb-16 pt-6 md:grid-cols-2 md:pb-24 md:pt-10">
-        <div className="relative order-2 flex items-center justify-center md:order-1 md:justify-start">
-          <IbexVideo />
-        </div>
-
-        <div className="order-1 md:order-2">
-          <p
-            className="animate-rise mb-5 inline-flex items-center gap-2 border border-border px-3 py-1 text-[11px] tracking-widest text-muted-foreground"
-            style={{ animationDelay: "0ms" }}
-          >
-            <span className="h-1.5 w-1.5 bg-accent" aria-hidden />
-            {" OPEN SOURCE · AI AGENT INFRASTRUCTURE"}
+    <section
+      id="overview"
+      className="mx-auto max-w-[var(--container)] px-5 pb-16 pt-10 sm:px-8 md:pb-24"
+    >
+      <div className="grid items-center gap-12 lg:grid-cols-12 lg:gap-10">
+        <div className="lg:col-span-7">
+          <p className="animate-entry mb-5 font-mono text-xs uppercase tracking-[0.14em] text-foreground-muted">
+            §01 · CONTROL PLANE
           </p>
-          <h1
-            className="animate-rise text-4xl font-extrabold leading-[1.05] tracking-tight sm:text-5xl lg:text-6xl"
-            style={{ animationDelay: "60ms" }}
-          >
-            The control plane for agents that call{" "}
-            <span className="text-outline">LLMs</span> in production.
+          <h1 className="animate-entry font-display text-[clamp(2.75rem,2rem+3vw,4.25rem)] leading-[0.95] tracking-[-0.03em] [animation-delay:60ms]">
+            The control plane for agents that call LLMs{" "}
+            <em className="not-italic text-foreground">in production.</em>
           </h1>
-          <p
-            className="animate-rise mt-6 max-w-md text-sm leading-relaxed text-muted-foreground"
-            style={{ animationDelay: "120ms" }}
-          >
-            Intercept every model request. Validate tenant identity. Enforce
-            policy. Prepare memory context — at the proxy, not in application
-            glue code.
+          <p className="animate-entry mt-6 max-w-[52ch] text-lg leading-relaxed text-foreground-muted [animation-delay:120ms]">
+            Open-source OpenAI-compatible proxy. Intercept every model request,
+            validate tenant identity, enforce policy, and prepare memory context
+            — at the proxy, not in glue code.
           </p>
-          <div
-            className="animate-rise mt-8 flex flex-wrap items-center gap-3"
-            style={{ animationDelay: "180ms" }}
-          >
+          <div className="animate-entry mt-8 flex flex-wrap items-center gap-3 [animation-delay:180ms]">
             <Link
               href="/docs/getting-started/introduction"
-              className="ascii-frame bg-primary px-5 py-3 text-sm font-bold text-primary-foreground transition-transform hover:-translate-y-0.5"
+              className="inline-flex h-10 items-center rounded-sm bg-foreground px-5 text-sm font-medium text-background transition-colors hover:bg-foreground/90"
             >
-              Read the docs
+              Get started
             </Link>
-            <a
-              href={REPO_URL}
-              className="ascii-frame bg-paper px-5 py-3 text-sm font-bold transition-transform hover:-translate-y-0.5"
-              rel="noopener noreferrer"
-              target="_blank"
+            <Link
+              href="/docs/architecture/overview"
+              className="inline-flex h-10 items-center rounded-sm border border-border px-5 text-sm font-medium transition-colors hover:border-border-strong hover:bg-surface-1"
             >
-              View on GitHub →
-            </a>
+              Read the spec →
+            </Link>
+            <p className="w-full font-mono text-xs text-foreground-subtle sm:w-auto">
+              curl -fsSL ibex.sh | sh
+            </p>
           </div>
-          <div
-            className="animate-rise"
-            style={{ animationDelay: "220ms" }}
-          >
-            <LandingShell compact className="mt-6 max-w-lg">
-            <span className="text-foreground">~ $</span>
-            {" git clone https://github.com/Rick1330/ibex-harness.git"}
-            <span className="caret ml-1">▊</span>
-          </LandingShell>
-          </div>
+          <p className="animate-entry mt-6 font-mono text-xs text-foreground-muted [animation-delay:220ms]">
+            {TRUST_BADGES.join(" · ")}
+          </p>
+        </div>
+
+        <div className="animate-entry lg:col-span-5 [animation-delay:140ms]">
+          <HeroTerminalCard />
         </div>
       </div>
+      <p className="sr-only">
+        Version {SITE_VERSION}. Repository at{" "}
+        <a href={REPO_URL}>{REPO_URL}</a>.
+      </p>
     </section>
   );
 }

@@ -1,13 +1,13 @@
 import type { Metadata } from "next";
 
-import { AsciiBackground } from "@/components/landing/ascii-background";
+import { LandingChangelogPeek } from "@/components/landing/landing-changelog-peek";
 import { LandingCta } from "@/components/landing/landing-cta";
 import { LandingFeatures } from "@/components/landing/landing-features";
 import { LandingFlow } from "@/components/landing/landing-flow";
 import { LandingFooter } from "@/components/landing/landing-footer";
 import { LandingHero } from "@/components/landing/landing-hero";
-import { LandingMarquee } from "@/components/landing/landing-marquee";
 import { LandingMetrics } from "@/components/landing/landing-metrics";
+import { LandingSpecQuotes } from "@/components/landing/landing-spec-quotes";
 import { LandingTerminal } from "@/components/landing/landing-terminal";
 import { SITE_DESCRIPTION, SITE_URL } from "@/lib/site-seo";
 
@@ -55,15 +55,21 @@ export const metadata: Metadata = {
 
 export default function HomePage() {
   return (
-    <div className="ibex-landing relative min-h-screen text-foreground pt-[var(--site-nav-height)]">
+    <div className="ibex-landing relative min-h-screen bg-background pt-[var(--site-nav-height)] text-foreground">
+      <a
+        href="#overview"
+        className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-[calc(var(--site-nav-height)+0.5rem)] focus:z-50 focus:rounded-sm focus:bg-foreground focus:px-3 focus:py-2 focus:text-background"
+      >
+        Skip to content
+      </a>
       <script type="application/ld+json">{JSON.stringify(SOFTWARE_JSON_LD)}</script>
-      <AsciiBackground />
       <LandingHero />
-      <LandingMarquee />
       <LandingFeatures />
       <LandingFlow />
-      <LandingTerminal />
       <LandingMetrics />
+      <LandingTerminal />
+      <LandingSpecQuotes />
+      <LandingChangelogPeek />
       <LandingCta />
       <LandingFooter />
     </div>
