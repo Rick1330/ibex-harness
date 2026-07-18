@@ -1,25 +1,26 @@
 import type { ReactNode } from "react";
 
+import { cn } from "@/lib/cn";
+
 type LandingShellProps = Readonly<{
   children: ReactNode;
   className?: string;
   compact?: boolean;
 }>;
 
-/** Monospace command block for landing stack snippets. */
+/** Compact command block — same shell tokens as CodeShell (both themes). */
 export function LandingShell({
   children,
   className = "",
   compact = false,
 }: LandingShellProps) {
   return (
-    <div
-      className={`overflow-x-auto rounded-md border border-border bg-surface-1 ${className}`.trim()}
-    >
+    <div className={cn("code-shell", className)}>
       <pre
-        className={`m-0 overflow-x-auto font-mono leading-relaxed ${
-          compact ? "p-3 text-[11px]" : "p-4 text-[12px]"
-        }`}
+        className={cn(
+          "code-shell-body m-0",
+          compact ? "min-h-0 p-3 text-[11px]" : "min-h-0 p-4 text-[12px]",
+        )}
       >
         {children}
       </pre>

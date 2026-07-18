@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 
 import { LandingBenchmarks } from "@/components/landing/landing-benchmarks";
-import { LandingChangelogPeek } from "@/components/landing/landing-changelog-peek";
 import { LandingCta } from "@/components/landing/landing-cta";
 import { LandingFeatures } from "@/components/landing/landing-features";
 import { LandingFlow } from "@/components/landing/landing-flow";
@@ -9,7 +8,6 @@ import { LandingFooter } from "@/components/landing/landing-footer";
 import { LandingFrame } from "@/components/landing/landing-frame";
 import { LandingHero } from "@/components/landing/landing-hero";
 import { LandingMarquee } from "@/components/landing/landing-marquee";
-import { LandingSpecQuotes } from "@/components/landing/landing-spec-quotes";
 import { LandingTerminal } from "@/components/landing/landing-terminal";
 import { SITE_DESCRIPTION, SITE_URL } from "@/lib/site-seo";
 
@@ -55,7 +53,7 @@ export const metadata: Metadata = {
   },
 };
 
-/** Landing §00–§09 per design guide. */
+/** Landing per the-whole.md — Lovable order, soft terminals, light CTA. */
 export default function HomePage() {
   return (
     <LandingFrame>
@@ -70,10 +68,8 @@ export default function HomePage() {
       <LandingMarquee />
       <LandingFeatures />
       <LandingFlow />
-      <LandingBenchmarks />
       <LandingTerminal />
-      <LandingSpecQuotes />
-      <LandingChangelogPeek />
+      <LandingBenchmarks />
       <LandingCta />
       <LandingFooter />
     </LandingFrame>

@@ -1,45 +1,43 @@
 import { SectionShell } from "@/components/chrome/section-shell";
-import { STACK_COMMANDS, STACK_SERVICES } from "@/lib/landing-content";
+import { CodeShell } from "@/components/site/code-shell";
+import { STACK_PORTS, STACK_SHELL_LINES } from "@/lib/landing-content";
 
-/** §05 · Local Stack — services + compose terminal (design §6). */
+/** §04 · Local Stack (DESIGN_GUIDE.md §12.5). */
 export function LandingTerminal() {
   return (
-    <SectionShell
-      id="local-stack"
-      section="§05"
-      label="LOCAL STACK"
-      docHref="/docs/getting-started/introduction"
-    >
-      <div className="grid items-start gap-10 lg:grid-cols-2">
-        <ul className="space-y-3 text-sm leading-relaxed text-foreground-muted">
-          {STACK_SERVICES.map((service) => (
-            <li key={service} className="flex gap-3">
-              <span className="font-mono text-accent" aria-hidden>
-                ▸
-              </span>
-              <span>{service}</span>
-            </li>
-          ))}
-        </ul>
-
-        <div className="overflow-hidden rounded-md border border-border bg-surface-2">
-          <div className="flex items-center gap-2 border-b border-border px-4 py-2.5">
-            <span className="size-2 rounded-full bg-foreground-subtle" aria-hidden />
-            <span className="size-2 rounded-full bg-foreground-subtle" aria-hidden />
-            <span className="size-2 rounded-full bg-foreground-subtle" aria-hidden />
-            <span className="ml-2 font-mono text-[11px] text-foreground-muted">
-              docker-compose.yml
-            </span>
-          </div>
-          <pre className="overflow-x-auto p-4 font-mono text-[12px] leading-relaxed">
-            {STACK_COMMANDS.map((cmd) => (
-              <span key={cmd} className="block">
-                <span className="text-foreground-muted">$ </span>
-                {cmd}
-              </span>
+    <SectionShell id="local-stack" section="§04" label="LOCAL STACK">
+      <div className="grid items-start gap-12 lg:grid-cols-2 lg:gap-14">
+        <div>
+          <h2 className="landing-h2 max-w-[14ch]">
+            Run the harness on your machine.
+          </h2>
+          <p className="landing-body mt-5 max-w-[42ch]">
+            Clone the monorepo, apply migrations, and bring up the Phase 1
+            compose stack for proxy, auth, Postgres, and Redis. No hosted
+            account required.
+          </p>
+          <ul className="landing-stack-ports mt-10">
+            {STACK_PORTS.map((port) => (
+              <li key={port.index} className="landing-stack-port">
+                <span className="landing-stack-port-index" aria-hidden>
+                  {port.index}
+                </span>
+                <span className="landing-body text-foreground">
+                  {port.label}
+                </span>
+              </li>
             ))}
-            <span className="caret-block" aria-hidden />
-          </pre>
+          </ul>
+        </div>
+
+        <div className="landing-flow-shell">
+          <CodeShell
+            title="docker-compose.yml"
+            tag="compose"
+            lines={STACK_SHELL_LINES}
+            statusRight="make up · phase 1"
+            testId="stack-shell"
+          />
         </div>
       </div>
     </SectionShell>

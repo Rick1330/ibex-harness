@@ -6,70 +6,70 @@ import { useEffect, useState } from "react";
 
 import { cn } from "@/lib/cn";
 
-const THEME_CYCLE = ["system", "light", "dark"] as const;
-
-type ThemeCycle = (typeof THEME_CYCLE)[number];
+const OPTS = [
+  { v: "system", icon: Monitor, label: "System" },
+  { v: "light", icon: Sun, label: "Light" },
+  { v: "dark", icon: Moon, label: "Dark" },
+] as const;
 
 type ThemeToggleProps = Readonly<{
   className?: string;
 }>;
 
-function nextTheme(current: ThemeCycle): ThemeCycle {
-  const index = THEME_CYCLE.indexOf(current);
-  return THEME_CYCLE[(index + 1) % THEME_CYCLE.length];
-}
-
-function themeLabel(theme: ThemeCycle, resolved: string | undefined): string {
-  if (theme === "system") return "Theme: system";
-  if (theme === "light") return "Theme: light";
-  return "Theme: dark";
-}
-
-function resolveThemeIcon(
-  active: ThemeCycle,
-  resolvedTheme: string | undefined,
-): typeof Monitor {
-  if (active === "system") return Monitor;
-  if (resolvedTheme === "dark") return Moon;
-  return Sun;
-}
-
+/** Three-state segmented theme control (DESIGN_GUIDE.md §9). */
 export function ThemeToggle({ className }: ThemeToggleProps) {
-  const { theme, resolvedTheme, setTheme } = useTheme();
+  const { theme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
     setMounted(true);
   }, []);
 
+  const current = mounted ? (theme ?? "system") : "system";
+
   if (!mounted) {
     return (
       <div
         aria-hidden
         className={cn(
-          "size-8 animate-pulse rounded-sm border border-border bg-surface-1",
+          "inline-flex h-8 w-[5.5rem] animate-pulse rounded-full border border-border bg-surface",
           className,
         )}
       />
     );
   }
 
-  const active = (theme ?? "system") as ThemeCycle;
-  const Icon = resolveThemeIcon(active, resolvedTheme);
-
   return (
-    <button
-      type="button"
-      aria-label={themeLabel(active, resolvedTheme)}
+    <div
+      role="radiogroup"
+      aria-label="Theme"
       data-theme-toggle=""
       className={cn(
-        "inline-flex size-8 items-center justify-center rounded-sm border border-border",
-        "text-foreground-muted transition-colors hover:bg-surface-1 hover:text-foreground",
+        "inline-flex items-center rounded-full border border-border bg-surface p-0.5",
         className,
       )}
-      onClick={() => setTheme(nextTheme(active))}
     >
-      <Icon className="size-4" strokeWidth={2} />
-    </button>
+      {OPTS.map(({ v, icon: Icon, label }) => {
+        const active = current === v;
+        return (
+          <button
+            key={v}
+            type="button"
+            role="radio"
+            aria-checked={active}
+            aria-label={label}
+            onClick={() => setTheme(v)}
+            className={cn(
+              "grid size-7 place-items-center rounded-full transition-colors",
+              active
+                ? "bg-background text-foreground shadow-[var(--shadow-1)]"
+                : "text-foreground-subtle hover:text-foreground",
+            )}
+          >
+            <Icon className="size-3.5" strokeWidth={1.75} />
+          </button>
+        );
+      })}
+    </div>
   );
 }

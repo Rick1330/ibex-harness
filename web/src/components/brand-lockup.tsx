@@ -15,18 +15,27 @@ function isExternalHref(href: string): boolean {
   return href.startsWith("http://") || href.startsWith("https://");
 }
 
+function wordmarkVisibilityClass(
+  showWordmark: "md" | "always" | "never",
+): string | undefined {
+  if (showWordmark === "always") return undefined;
+  if (showWordmark === "never") return "brand-wordmark-never";
+  return "brand-wordmark-md";
+}
+
+/**
+ * Brand mark + formal “IBEX Harness” wordmark.
+ * Light → ibex-mark-light.png (dark ink). Dark → ibex-mark-dark.png (light ink).
+ * Visibility uses CSS under `html.dark` — do NOT use Tailwind `hidden dark:block`
+ * (fumadocs unlayered `.hidden` wins and keeps the dark mark forever).
+ */
 export function BrandLockup({
   href = LANDING_SITE_URL,
   ariaLabel = "IBEX Harness home",
   showWordmark = "md",
   className,
 }: BrandLockupProps) {
-  const wordmarkClass =
-    showWordmark === "always"
-      ? "flex"
-      : showWordmark === "never"
-        ? "hidden"
-        : "hidden md:flex";
+  const wordmarkClass = wordmarkVisibilityClass(showWordmark);
 
   const linkClass = cn(
     "group flex min-w-0 items-center gap-2.5 transition-opacity hover:opacity-90",
@@ -35,8 +44,8 @@ export function BrandLockup({
 
   const content = (
     <>
-      <span className="relative size-7 shrink-0">
-        {/* eslint-disable-next-line @next/next/no-img-element -- static brand marks; avoids dev image optimizer latency */}
+      <span className="brand-mark relative size-7 shrink-0 overflow-hidden">
+        {/* eslint-disable-next-line @next/next/no-img-element -- static brand marks */}
         <img
           src="/brand/ibex-mark-light.png"
           alt=""
@@ -44,9 +53,9 @@ export function BrandLockup({
           height={28}
           decoding="async"
           fetchPriority="high"
-          className="size-7 object-contain dark:hidden"
+          className="brand-mark-light size-7 object-contain"
         />
-        {/* eslint-disable-next-line @next/next/no-img-element -- static brand marks; avoids dev image optimizer latency */}
+        {/* eslint-disable-next-line @next/next/no-img-element -- static brand marks */}
         <img
           src="/brand/ibex-mark-dark.png"
           alt=""
@@ -54,7 +63,7 @@ export function BrandLockup({
           height={28}
           decoding="async"
           fetchPriority="high"
-          className="hidden size-7 object-contain dark:block"
+          className="brand-mark-dark size-7 object-contain"
         />
       </span>
       <WordmarkText size="nav" className={wordmarkClass} />

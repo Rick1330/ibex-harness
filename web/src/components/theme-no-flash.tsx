@@ -1,6 +1,6 @@
 /** Inline script applied before paint to avoid theme flash on reload. */
 export function ThemeNoFlashScript() {
-  const script = `(function(){try{var t=localStorage.getItem("theme");var d=window.matchMedia("(prefers-color-scheme: dark)").matches;var dark=t==="dark"||(t!=="light"&&d);document.documentElement.classList.toggle("dark",dark);}catch(e){}})();`;
+  const script = `(function(){try{var t=localStorage.getItem("ibex-theme")||localStorage.getItem("theme");var d=window.matchMedia("(prefers-color-scheme: dark)").matches;var dark=t==="dark"||((!t||t==="system")&&d);if(t==="light")dark=false;document.documentElement.classList.toggle("dark",dark);}catch(e){}})();`;
 
   return (
     <script

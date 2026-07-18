@@ -28,7 +28,13 @@ export function DocsRootProvider({ children }: DocsRootProviderProps) {
         ...(isProd ? { SearchDialog: StaticSearchDialog } : {}),
         options: searchOptions,
       }}
-      theme={{ enabled: true, attribute: "class", defaultTheme: "system", enableSystem: true }}
+      theme={{
+        enabled: true,
+        attribute: "class",
+        defaultTheme: "system",
+        enableSystem: true,
+        storageKey: "ibex-theme",
+      }}
     >
       {children}
     </RootProvider>

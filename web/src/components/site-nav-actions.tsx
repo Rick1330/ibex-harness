@@ -11,22 +11,20 @@ type SiteNavActionsProps = Readonly<{
   onToggleMobile: () => void;
 }>;
 
+/** Right cluster: ⌘K · Theme · GitHub (DESIGN_GUIDE.md §8). */
 export function SiteNavActions({
   mobileOpen,
   onToggleMobile,
 }: SiteNavActionsProps) {
   return (
-    <div className="site-nav-actions flex shrink-0 items-center gap-1.5 sm:gap-2">
+    <div className="site-nav-actions flex shrink-0 items-center gap-3">
       <NavSearch variant="icon" className="lg:hidden" />
       <NavSearch variant="compact" className="hidden lg:inline-flex" />
-
-      <NavGithubLink showLabel />
-
       <ThemeToggle />
-
+      <NavGithubLink showLabel />
       <button
         type="button"
-        className="flex size-8 items-center justify-center rounded-md border border-border/80 text-muted-foreground transition-colors hover:bg-muted/35 hover:text-foreground md:hidden"
+        className="flex size-8 items-center justify-center rounded-sm border border-border text-foreground-muted transition-colors hover:bg-surface hover:text-foreground md:hidden"
         aria-expanded={mobileOpen}
         aria-controls="site-nav-mobile-drawer"
         aria-label={mobileOpen ? "Close menu" : "Open menu"}

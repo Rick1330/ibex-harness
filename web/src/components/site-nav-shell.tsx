@@ -8,7 +8,7 @@ export function SiteNavShell() {
   return (
     <SiteNavClient
       mobileNavData={mobileNavData}
-      brand={<BrandLockup showWordmark="md" />}
+      brand={<BrandLockup showWordmark="always" />}
     />
   );
 }

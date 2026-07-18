@@ -1,10 +1,8 @@
 export const REPO_URL = "https://github.com/Rick1330/ibex-harness";
-export const SITE_VERSION = "v0.4.2";
-export const GITHUB_STARS_STUB = "2.3k";
+export const SITE_VERSION = "v0.1";
 export const STATUS_STUB = "All systems operational";
 
 export const MARQUEE = [
-  "PROXY",
   "AUTH",
   "RATE-LIMITS",
   "MULTI-TENANT",
@@ -13,134 +11,132 @@ export const MARQUEE = [
   "GRPC",
   "PROMETHEUS",
   "OPENTELEMETRY",
-  "MIT",
+  "GIT",
+  "PROXY",
 ] as const;
 
 export const FEATURES = [
   {
     index: "01",
-    title: "Ingress Proxy",
-    body: "OpenAI-compatible endpoints on your domain. Drop-in swap for existing agent clients.",
-    snippet: "POST /v1/chat/completions",
+    slug: "INGRESS_PROXY",
+    title: "OpenAI-compatible proxy",
+    body: "Drop-in ingress for chat completions. Validate agents and org scope on every request before traffic reaches your model provider.",
   },
   {
     index: "02",
-    title: "Tenant Auth",
-    body: "Per-org keys, JWT claims, and RLS-safe request context on every call.",
-    snippet: "auth.ValidateAgent(org_id)",
+    slug: "TENANT_AUTH",
+    title: "Tenant auth + rate limits",
+    body: "gRPC auth validation, per-org Redis sliding windows, and defense-in-depth isolation so agents cannot cross tenant boundaries.",
   },
   {
     index: "03",
-    title: "Memory Path",
-    body: "Attach retrieved context at the proxy. Redis and pgvector adapters on the roadmap.",
-    snippet: "context.assemble(agent_id)",
+    slug: "MEMORY_PATH",
+    title: "Memory-ready request path",
+    body: "Phase 1 ships the proxy and auth foundation. Memory injection, context assembly, and drift detection land on the same ingress.",
   },
   {
     index: "04",
-    title: "Telemetry",
-    body: "OTLP traces, per-tenant cost and latency, and error taxonomy across the proxy path.",
-    snippet: "trace_id=7f3a…c21",
+    slug: "TELEMETRY",
+    title: "Observable by default",
+    body: "Structured logs, Prometheus metrics, and OpenTelemetry traces across proxy boundaries — built for operators running agents at scale.",
   },
 ] as const;
 
-export const REQUEST_PATH = [
+export const REQUEST_PATH_STEPS = [
   {
     step: "01",
-    name: "authenticate",
-    snippet: `sub: agent-7f3a
-org: acme-prod
-scope: chat.write`,
+    title: "Agent request",
+    body: "Your agent calls the proxy with OpenAI-compatible headers and an org-scoped token.",
   },
   {
     step: "02",
-    name: "rate-limit",
-    snippet: `quota: 120 rpm
-remaining: 118
-window: 60s`,
+    title: "Validate + limit",
+    body: "Auth verifies the token and agent. Redis enforces per-org rate limits before work continues.",
   },
   {
     step: "03",
-    name: "retrieve memory",
-    snippet: `top_k: 8
-latency: 4.2ms
-hits: 3`,
+    title: "Assemble context",
+    body: "Phase 2+ injects memory and directives on the same path — no glue code in your agent.",
   },
   {
     step: "04",
-    name: "forward upstream",
-    snippet: `host: api.openai.com
-status: 200
-p99: 17ms`,
+    title: "Forward + trace",
+    body: "The proxy forwards to your LLM provider and emits a full request trace for operators.",
   },
 ] as const;
 
 export const BENCHMARKS = [
-  { value: "17ms", label: "P99 overhead" },
-  { value: "12.4k rps", label: "Throughput" },
-  { value: "48 MiB", label: "Memory" },
-  { value: "120ms", label: "Cold start" },
+  { value: "< 20ms", label: "P99 PROXY BUDGET" },
+  { value: "MIT", label: "OPEN SOURCE LICENSE" },
+  { value: "RLS", label: "TENANT ISOLATION MODEL" },
+  { value: "Go", label: "PROXY + AUTH SERVICES" },
 ] as const;
 
-export const STACK_SERVICES = [
-  "Postgres + pgvector",
-  "Redis (auth cache + rate limits)",
-  "OTLP collector",
-  "Ibex proxy + auth (Go)",
-  "Admin UI (roadmap)",
+export const STACK_PORTS = [
+  { index: "01", label: "Proxy on :8080" },
+  { index: "02", label: "Auth gRPC on :50051" },
+  { index: "03", label: "Postgres with RLS — Redis for rate limits" },
+  { index: "04", label: "Prometheus + OTel exporters wired" },
 ] as const;
 
-export const STACK_COMMANDS = [
-  "git clone https://github.com/Rick1330/ibex-harness.git",
-  "make db-migrate && make db-seed",
-  "docker compose -f infra/compose/docker-compose.yml up",
+export const REQUEST_TRACE_SHELL = [
+  { k: "comment" as const, t: "inbound request" },
+  { k: "prompt" as const, t: "POST /v1/chat/completions" },
+  { k: "output" as const, t: "  X-IBEX-Agent-ID: 7f3a9c21-…" },
+  { k: "output" as const, t: "  Authorization: Bearer ibex_…" },
+  { k: "output" as const, t: "" },
+  { k: "comment" as const, t: "pipeline" },
+  { k: "output" as const, t: "auth.ValidateAgent (gRPC)      2.1ms" },
+  { k: "output" as const, t: "ratelimit.Check (Redis)        0.8ms" },
+  { k: "output" as const, t: "proxy.forward (upstream)      12.4ms" },
+  { k: "success" as const, t: "✓ status 200 · duration 17.4ms" },
 ] as const;
 
-export const SPEC_QUOTES = [
+export const HERO_SHELL_LINES = [
+  { k: "comment" as const, t: "bring up the phase-1 stack" },
   {
-    quote:
-      "Every data access must satisfy org_id from the verified auth token — never from the request body.",
-    href: "/docs/architecture/overview",
-    label: "Multi-tenant security",
+    k: "prompt" as const,
+    t: "git clone https://github.com/Rick1330/ibex-harness.git",
   },
-  {
-    quote:
-      "The proxy's only external connections are Redis and Auth gRPC — stateless by design in Phase 1.",
-    href: "/docs/architecture/overview",
-    label: "Architecture overview",
-  },
-  {
-    quote:
-      "Full proxy overhead (excluding the LLM) targets under 20ms at p99.",
-    href: "/benchmarks",
-    label: "Benchmarks",
-  },
+  { k: "prompt" as const, t: "cd ibex-harness && make up" },
+  { k: "output" as const, t: "" },
+  { k: "output" as const, t: "ibex-proxy   | listening on :8080" },
+  { k: "output" as const, t: "ibex-auth    | grpc on :50051" },
+  { k: "output" as const, t: "postgres     | ready for connections" },
+  { k: "success" as const, t: "redis        | ready ✓" },
+  { k: "output" as const, t: "" },
+  { k: "prompt" as const, t: "curl -s localhost:8080/v1/models" },
 ] as const;
 
-export const TRUST_BADGES = [
-  "MIT",
-  "Self-hostable",
-  "SOC 2 aligned",
-  "No vendor lock-in",
+export const STACK_SHELL_LINES = [
+  { k: "comment" as const, t: "compose the phase-1 stack" },
+  { k: "prompt" as const, t: "make db-migrate && make db-seed" },
+  {
+    k: "prompt" as const,
+    t: "docker compose -f infra/compose/docker-compose.yml up",
+  },
+  { k: "output" as const, t: "ibex-proxy  | Listening on :8080" },
+  { k: "output" as const, t: "ibex-auth   | grpc on :50051" },
+  { k: "output" as const, t: "postgres    | ready for connections" },
+  { k: "success" as const, t: "redis       | Ready to accept connections ✓" },
+  { k: "comment" as const, t: "Hit the proxy" },
+  { k: "prompt" as const, t: "curl -s localhost:8080/v1/models | jq ." },
 ] as const;
 
 export const FOOTER_LINKS = {
   product: [
     { label: "Docs", href: "/docs/getting-started/introduction" },
     { label: "Benchmarks", href: "/benchmarks" },
-    { label: "Changelog", href: "/releases" },
     { label: "Roadmap", href: "/roadmap" },
   ],
   community: [
     { label: "GitHub", href: REPO_URL, external: true },
     { label: "Blog", href: "/blog" },
-  ],
-  company: [
-    { label: "About", href: "/docs/getting-started/introduction" },
-    { label: "Contact", href: REPO_URL, external: true },
+    { label: "Changelog", href: "/releases" },
   ],
   legal: [
     {
-      label: "License",
+      label: "MIT license",
       href: `${REPO_URL}/blob/main/LICENSE`,
       external: true,
     },
@@ -148,102 +144,3 @@ export const FOOTER_LINKS = {
     { label: "Privacy", href: "/llms.txt" },
   ],
 } as const;
-
-type TerminalTone = "default" | "muted" | "accent" | "success";
-
-export type TerminalLinePart = Readonly<{
-  text: string;
-  tone?: TerminalTone;
-}>;
-
-export type TerminalPanel = Readonly<{
-  id: "request" | "response" | "trace";
-  lines: ReadonlyArray<
-    Readonly<{
-      text: string;
-      parts: ReadonlyArray<TerminalLinePart>;
-    }>
-  >;
-}>;
-
-export const HERO_TERMINAL_PANELS: ReadonlyArray<TerminalPanel> = [
-  {
-    id: "request",
-    lines: [
-      {
-        text: "post",
-        parts: [
-          { text: "POST ", tone: "accent" },
-          { text: "/v1/chat/completions", tone: "default" },
-        ],
-      },
-      {
-        text: "auth",
-        parts: [
-          { text: "Authorization: ", tone: "muted" },
-          { text: "Bearer ibex_…", tone: "accent" },
-        ],
-      },
-      {
-        text: "agent",
-        parts: [
-          { text: "X-IBEX-Agent-ID: ", tone: "muted" },
-          { text: "7f3a9c21-…", tone: "default" },
-        ],
-      },
-    ],
-  },
-  {
-    id: "response",
-    lines: [
-      {
-        text: "status",
-        parts: [
-          { text: "HTTP/1.1 ", tone: "muted" },
-          { text: "200 OK", tone: "success" },
-        ],
-      },
-      {
-        text: "body",
-        parts: [
-          { text: '{ "model": ', tone: "muted" },
-          { text: '"gpt-4o"', tone: "accent" },
-          { text: " }", tone: "muted" },
-        ],
-      },
-      {
-        text: "latency",
-        parts: [
-          { text: "x-ibex-latency-ms: ", tone: "muted" },
-          { text: "17", tone: "accent" },
-        ],
-      },
-    ],
-  },
-  {
-    id: "trace",
-    lines: [
-      {
-        text: "trace",
-        parts: [
-          { text: "trace_id=", tone: "muted" },
-          { text: "7f3a9c21c21", tone: "default" },
-        ],
-      },
-      {
-        text: "auth",
-        parts: [
-          { text: "auth.ValidateAgent ", tone: "default" },
-          { text: "4ms", tone: "accent" },
-        ],
-      },
-      {
-        text: "fwd",
-        parts: [
-          { text: "proxy.forward ", tone: "default" },
-          { text: "12ms", tone: "accent" },
-        ],
-      },
-    ],
-  },
-];

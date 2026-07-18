@@ -51,14 +51,14 @@ export function SiteNavClient({ mobileNavData, brand }: SiteNavClientProps) {
     <>
       <header
         data-site-nav
-        className="site-nav sticky top-0 z-50 w-full border-b border-border/80 bg-background"
+        className="site-nav sticky top-0 z-50 w-full border-b border-border bg-background/55 backdrop-blur-xl supports-[backdrop-filter]:bg-background/45"
       >
         <div className="site-nav-inner h-[var(--site-nav-height)] w-full">
           <div className="site-nav-brand">{brand}</div>
 
           <nav
             aria-label="Site sections"
-            className="site-nav-links hidden md:flex"
+            className="site-nav-links hidden items-center gap-7 md:flex"
           >
             <SiteNavLinks pathname={pathname} variant="desktop" />
           </nav>

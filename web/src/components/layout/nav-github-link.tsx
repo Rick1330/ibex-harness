@@ -3,7 +3,6 @@
 import Link from "next/link";
 
 import { GithubIcon } from "@/components/icons/github-icon";
-
 import { cn } from "@/lib/cn";
 import { GITHUB_OWNER, GITHUB_REPO } from "@/lib/github";
 
@@ -12,7 +11,11 @@ type NavGithubLinkProps = Readonly<{
   showLabel?: boolean;
 }>;
 
-export function NavGithubLink({ className, showLabel = false }: NavGithubLinkProps) {
+/** GitHub CTA — pill chip with icon + label. */
+export function NavGithubLink({
+  className,
+  showLabel = false,
+}: NavGithubLinkProps) {
   return (
     <Link
       href={`https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}`}
@@ -21,19 +24,20 @@ export function NavGithubLink({ className, showLabel = false }: NavGithubLinkPro
       aria-label="GitHub repository"
       data-site-nav-github=""
       className={cn(
-        "site-nav-github-link inline-flex h-8 shrink-0 items-center gap-2 rounded-md border border-border/80",
-        "bg-muted/25 text-muted-foreground transition-colors",
-        "hover:border-border hover:bg-muted/45 hover:text-foreground",
-        showLabel
-          ? "w-8 justify-center px-0 lg:w-auto lg:justify-start lg:px-3"
-          : "w-8 justify-center px-0",
+        "site-nav-github-link inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-full",
+        "font-sans text-[0.8125rem] font-medium tracking-tight",
+        "shadow-[0_1px_0_oklch(1_0_0_/_0.12)_inset,0_1px_2px_oklch(0_0_0_/_0.18)]",
+        "transition-[transform,opacity] duration-[var(--dur-1)] hover:opacity-92 active:translate-y-px",
+        showLabel ? "px-4" : "w-9 px-0",
         className,
       )}
+      style={{
+        background: "var(--primary)",
+        color: "var(--primary-fg)",
+      }}
     >
-      <GithubIcon className="size-4 shrink-0" strokeWidth={1.5} />
-      {showLabel ? (
-        <span className="hidden text-sm font-medium lg:inline">GitHub</span>
-      ) : null}
+      <GithubIcon className="size-3.5 shrink-0" strokeWidth={1.5} />
+      {showLabel ? <span>GitHub</span> : null}
     </Link>
   );
 }

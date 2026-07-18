@@ -15,30 +15,49 @@ beforeEach(() => {
       dispatchEvent: vi.fn(),
     })),
   });
+
+  class MockIntersectionObserver {
+    observe = vi.fn();
+    unobserve = vi.fn();
+    disconnect = vi.fn();
+  }
+  vi.stubGlobal("IntersectionObserver", MockIntersectionObserver);
 });
 
 import HomePage from "@/app/page";
 
 describe("HomePage", () => {
-  it("renders design-guide sections §01–§09", () => {
+  it("renders section rail, hero shell, and guide sections", () => {
     render(<HomePage />);
 
-    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
-      /in production/i,
-    );
-    expect(screen.getByTestId("hero-terminal-card")).toBeInTheDocument();
-    expect(screen.getByText(/§02 · CAPABILITIES/i)).toBeInTheDocument();
-    expect(screen.getByText(/§03 · REQUEST PATH/i)).toBeInTheDocument();
-    expect(screen.getByText(/§04 · BENCHMARKS/i)).toBeInTheDocument();
-    expect(screen.getByText(/§05 · LOCAL STACK/i)).toBeInTheDocument();
-    expect(screen.getByText(/§06 · FROM THE SPEC/i)).toBeInTheDocument();
-    expect(screen.getByText(/§07 · CHANGELOG/i)).toBeInTheDocument();
-    expect(
-      screen.getByRole("heading", { name: /at the proxy/i }),
-    ).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Skip to content/i })).toHaveAttribute(
+    expect(screen.getByLabelText(/Section rail/i)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /§01/i })).toHaveAttribute(
       "href",
       "#overview",
     );
+    expect(screen.getByRole("link", { name: /§02/i })).toHaveAttribute(
+      "href",
+      "#capabilities",
+    );
+    expect(screen.getByRole("link", { name: /§03/i })).toHaveAttribute(
+      "href",
+      "#request-path",
+    );
+    expect(screen.getByRole("link", { name: /§04/i })).toHaveAttribute(
+      "href",
+      "#local-stack",
+    );
+
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(/LLMs/i);
+    expect(screen.getByTestId("hero-terminal")).toBeInTheDocument();
+    expect(screen.getByTestId("hero-shell-column")).toBeInTheDocument();
+
+    expect(screen.getByText(/§02 · CAPABILITIES/i)).toBeInTheDocument();
+    expect(screen.getByText(/§03 · REQUEST PATH/i)).toBeInTheDocument();
+    expect(screen.getByText(/§04 · LOCAL STACK/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Key stats/i)).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: /at the proxy/i }),
+    ).toBeInTheDocument();
   });
 });
