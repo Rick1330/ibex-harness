@@ -20,12 +20,20 @@ const config = {
   experimental: {
     optimizePackageImports: ["lucide-react", "fumadocs-ui"],
     webpackMemoryOptimizations: true,
+    // Custom webpack config disables the build worker by default; re-enable so
+    // compilation heap stays isolated from the main Next process.
+    webpackBuildWorker: true,
   },
-  webpack: (webpackConfig) => {
+  webpack: (webpackConfig, { dev }) => {
     webpackConfig.resolve.alias = {
       ...webpackConfig.resolve.alias,
       "@": path.join(appRoot, "src"),
     };
+    // Serial compile modules on Windows — parallel jest-workers OOMs on
+    // /roadmap/[...slug] and other MDX-heavy routes.
+    if (dev && process.platform === "win32") {
+      webpackConfig.parallelism = 1;
+    }
     return webpackConfig;
   },
   outputFileTracingExcludes: {

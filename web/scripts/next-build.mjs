@@ -26,17 +26,30 @@ if (disableCache) {
 }
 
 const existingNodeOptions = process.env.NODE_OPTIONS ?? "";
-if (!existingNodeOptions.includes("max-old-space-size")) {
-  process.env.NODE_OPTIONS = `${existingNodeOptions} --max-old-space-size=8192`.trim();
-}
+const stripped = existingNodeOptions
+  .split(/\s+/)
+  .filter(Boolean)
+  .filter(
+    (flag) =>
+      !flag.includes("max-old-space-size") &&
+      !flag.includes("max_old_space_size"),
+  )
+  .join(" ");
+const heapMb = process.env.IBEX_NODE_HEAP_MB?.trim() || "8192";
+// Main process only — avoid NODE_OPTIONS inheritance into build workers.
+process.env.NODE_OPTIONS = stripped;
 
 function runNextBuild(phase) {
   console.log(`[build] ${phase}`);
-  const result = spawnSync(process.execPath, [nextBin, "build"], {
-    stdio: "inherit",
-    shell: false,
-    env: process.env,
-  });
+  const result = spawnSync(
+    process.execPath,
+    [`--max-old-space-size=${heapMb}`, nextBin, "build"],
+    {
+      stdio: "inherit",
+      shell: false,
+      env: process.env,
+    },
+  );
   if (result.status !== 0) {
     throw new Error(`${phase} failed with exit code ${result.status ?? 1}`);
   }

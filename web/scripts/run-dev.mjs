@@ -24,14 +24,41 @@ if (
   devArgs.push("--webpack");
 }
 
-const child = spawn(process.execPath, [nextBin, ...devArgs, ...extraArgs], {
-  cwd: appRoot,
-  stdio: "inherit",
-  env: {
-    ...process.env,
-    NEXT_DIST_DIR: distDir,
+/**
+ * Heap for the *main* Next process only (via node argv).
+ *
+ * Do NOT put `--max-old-space-size` in NODE_OPTIONS: jest-workers inherit it,
+ * each reserves that much address space, and Windows OOMs compiling heavy
+ * routes like /roadmap/[...slug] ("Zone Allocation failed").
+ */
+const heapMb = process.env.IBEX_NODE_HEAP_MB?.trim() || "8192";
+const strippedNodeOptions = (process.env.NODE_OPTIONS ?? "")
+  .split(/\s+/)
+  .filter(Boolean)
+  .filter(
+    (flag) =>
+      !flag.includes("max-old-space-size") &&
+      !flag.includes("max_old_space_size"),
+  )
+  .join(" ");
+
+const child = spawn(
+  process.execPath,
+  [`--max-old-space-size=${heapMb}`, nextBin, ...devArgs, ...extraArgs],
+  {
+    cwd: appRoot,
+    stdio: "inherit",
+    env: {
+      ...process.env,
+      NODE_OPTIONS: strippedNodeOptions,
+      NEXT_DIST_DIR: distDir,
+      // Keep compile workers lean on Windows (roadmap MDX + large CSS).
+      ...(process.platform === "win32"
+        ? { UV_THREADPOOL_SIZE: "2" }
+        : {}),
+    },
   },
-});
+);
 
 child.on("error", (error) => {
   console.error(`[dev] Failed to start Next.js dev server: ${error.message}`);
