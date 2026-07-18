@@ -12,6 +12,10 @@ function escapeXml(value: string): string {
     .replaceAll("'", "&apos;");
 }
 
+function normalizeSiteUrl(raw: string): string {
+  return raw.replace(/\/+$/, "");
+}
+
 function rssPubDate(date: string | null | undefined): string | null {
   if (!date) return null;
   const parsed = new Date(date);
@@ -55,7 +59,9 @@ function buildReleaseItem(
 }
 
 export async function GET() {
-  const site = process.env.NEXT_PUBLIC_SITE_URL ?? "https://ibexharness.com";
+  const site = normalizeSiteUrl(
+    process.env.NEXT_PUBLIC_SITE_URL ?? "https://ibexharness.com",
+  );
   const releasesUrl = `${site}/releases`;
   const releases = readReleasesFromChangelog();
   const items = releases.map((release) => buildReleaseItem(site, release)).join("\n");

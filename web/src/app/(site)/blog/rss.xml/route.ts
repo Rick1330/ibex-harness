@@ -12,8 +12,16 @@ function escapeXml(value: string): string {
     .replaceAll("'", "&apos;");
 }
 
+/** Strip trailing slashes so feed links/GUIDs stay canonical. */
+export function normalizeSiteUrl(raw: string): string {
+  return raw.replace(/\/+$/, "");
+}
+
 export async function GET() {
-  const site = process.env.NEXT_PUBLIC_SITE_URL ?? "https://ibexharness.com";
+  const site = normalizeSiteUrl(
+    process.env.NEXT_PUBLIC_SITE_URL ?? "https://ibexharness.com",
+  );
+  const blogUrl = `${site}/blog`;
   const posts = blogSource
     .getPages()
     .sort(
@@ -42,7 +50,7 @@ export async function GET() {
 <rss version="2.0">
   <channel>
     <title>IBEX Harness Blog</title>
-    <link>${escapeXml(`${site}/blog`)}</link>
+    <link>${escapeXml(blogUrl)}</link>
     <description>Long-form writing about agent infrastructure, memory, and running LLMs in production.</description>
 ${items}
   </channel>

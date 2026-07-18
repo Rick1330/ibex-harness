@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 
 /**
  * Track which section id is nearest the top of the viewport via IntersectionObserver.
+ * Keeps a persistent set of currently intersecting targets so leaving one section
+ * still selects another visible section (ordered by `ids`).
  */
 export function useActiveSection(
   ids: ReadonlyArray<string>,
@@ -19,16 +21,28 @@ export function useActiveSection(
       .filter((el): el is HTMLElement => el !== null);
     if (elements.length === 0) return;
 
+    const intersecting = new Set<Element>();
+
+    const pickActive = () => {
+      for (const id of ids) {
+        const el = document.getElementById(id);
+        if (el && intersecting.has(el)) {
+          setActive(id);
+          return;
+        }
+      }
+    };
+
     const observer = new IntersectionObserver(
       (entries) => {
-        const visible = entries
-          .filter((entry) => entry.isIntersecting)
-          .sort(
-            (a, b) =>
-              a.boundingClientRect.top - b.boundingClientRect.top,
-          );
-        const top = visible[0]?.target;
-        if (top && top.id) setActive(top.id);
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            intersecting.add(entry.target);
+          } else {
+            intersecting.delete(entry.target);
+          }
+        }
+        pickActive();
       },
       { rootMargin, threshold: [0, 0.25, 0.5] },
     );

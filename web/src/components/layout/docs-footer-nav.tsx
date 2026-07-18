@@ -6,7 +6,7 @@ import { usePathname } from "next/navigation";
 import { useMemo, type ReactNode } from "react";
 import { useTreeContext } from "fumadocs-ui/provider";
 
-import { SidebarIcon, getNavIconForUrl, toNavUrl } from "@/lib/sidebar-icons";
+import { getNavIconForUrl, toNavUrl } from "@/lib/sidebar-icons";
 import {
   adjacentNavPages,
   flattenPageTree,
@@ -25,7 +25,14 @@ const labelClassName =
 
 function PageIcon({ url }: Readonly<{ url: string }>): ReactNode {
   const Icon = getNavIconForUrl(toNavUrl(url));
-  return Icon ? <SidebarIcon icon={Icon} /> : null;
+  if (!Icon) return null;
+  return (
+    <Icon
+      aria-hidden
+      className="size-4 shrink-0 text-text-primary"
+      strokeWidth={1.5}
+    />
+  );
 }
 
 function PreviousCard({ page }: Readonly<{ page: NavPage }>) {

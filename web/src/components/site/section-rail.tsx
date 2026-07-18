@@ -32,7 +32,7 @@ export function SectionRail() {
           .filter((entry) => entry.isIntersecting)
           .sort((a, b) => b.intersectionRatio - a.intersectionRatio);
         const top = visible[0]?.target;
-        if (top && top.id) {
+        if (top) {
           setActive(top.id);
         }
       },
