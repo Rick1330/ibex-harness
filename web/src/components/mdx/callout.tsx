@@ -102,7 +102,8 @@ function resolveVariant(type: string): CalloutVariant {
 }
 
 type CalloutProps = Readonly<{
-  type?: CalloutType | string;
+  /** Known values in CalloutType; unknown MDX types fall back to note. */
+  type?: string;
   title?: string;
   children: ReactNode;
 }>;

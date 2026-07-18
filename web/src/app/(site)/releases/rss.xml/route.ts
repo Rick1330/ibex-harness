@@ -19,6 +19,14 @@ function rssPubDate(date: string | null | undefined): string | null {
   return parsed.toUTCString();
 }
 
+function releaseDescription(
+  release: ReturnType<typeof readReleasesFromChangelog>[number],
+): string {
+  if (release.summary) return release.summary;
+  if (!release.date) return `${release.type} release`;
+  return `${release.type} release on ${formatChangelogDate(release.date)}`;
+}
+
 function buildReleaseItem(
   site: string,
   release: ReturnType<typeof readReleasesFromChangelog>[number],
@@ -27,9 +35,7 @@ function buildReleaseItem(
   const title = release.summary
     ? `v${release.version} — ${release.summary}`
     : `v${release.version}`;
-  const description =
-    release.summary ??
-    `${release.type} release${release.date ? ` on ${formatChangelogDate(release.date)}` : ""}`;
+  const description = releaseDescription(release);
   const pubDate = rssPubDate(release.date);
   const lines = [
     "    <item>",
@@ -50,6 +56,7 @@ function buildReleaseItem(
 
 export async function GET() {
   const site = process.env.NEXT_PUBLIC_SITE_URL ?? "https://ibexharness.com";
+  const releasesUrl = `${site}/releases`;
   const releases = readReleasesFromChangelog();
   const items = releases.map((release) => buildReleaseItem(site, release)).join("\n");
 
@@ -58,7 +65,7 @@ export async function GET() {
     `<rss version="2.0">`,
     `  <channel>`,
     `    <title>IBEX Harness Changelog</title>`,
-    `    <link>${escapeXml(`${site}/releases`)}</link>`,
+    `    <link>${escapeXml(releasesUrl)}</link>`,
     `    <description>What shipped in each IBEX Harness release.</description>`,
     items,
     `  </channel>`,
