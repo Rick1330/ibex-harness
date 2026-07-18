@@ -84,7 +84,7 @@ Three families, one voice.
 
 **Type scale** (fluid, using `clamp`):
 
-```
+```css
 --text-xs:    0.75rem;                                    /* 12 */
 --text-sm:    0.875rem;                                   /* 14 */
 --text-base:  1rem;                                       /* 16 */
@@ -246,7 +246,7 @@ Four columns: **Product** (Docs, Benchmarks, Changelog, Roadmap) · **Community*
 
 Every section shares this chrome — this is what the user asked to upgrade:
 
-```
+```text
 ┌── §0X · SECTION LABEL ────────────────────────────────────  hh:mm UTC ──┐
 │                                                                          │
 │   [content]                                                              │
@@ -361,7 +361,7 @@ Dedicated `/benchmarks` route:
 
 ## 16. File Structure (Next.js 15 App Router)
 
-```
+```text
 app/
   (marketing)/
     page.tsx                 # landing
@@ -552,7 +552,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
 ## 19. Dependency List
 
-```
+```text
 next@15  react@19  react-dom@19
 tailwindcss@4  @tailwindcss/vite@4  (or PostCSS plugin for Next)
 next-themes
