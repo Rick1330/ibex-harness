@@ -31,10 +31,8 @@ export function SectionRail() {
         const visible = entries
           .filter((entry) => entry.isIntersecting)
           .sort((a, b) => b.intersectionRatio - a.intersectionRatio);
-        const top = visible[0]?.target;
-        if (top) {
-          setActive(top.id);
-        }
+        if (visible.length === 0) return;
+        setActive(visible[0].target.id);
       },
       {
         rootMargin: "-56px 0px -45% 0px",
