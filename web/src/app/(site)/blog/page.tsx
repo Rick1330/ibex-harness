@@ -1,17 +1,53 @@
 import type { Metadata } from "next";
 
-import { BlogHero } from "@/components/blog/blog-hero";
-import { BlogPostList } from "@/components/blog/blog-post-list";
+import { BlogIndex } from "@/components/blog/blog-index";
+import { resolveBlogCategory, type BlogIndexItem } from "@/lib/blog";
 import { blogSource } from "@/lib/source";
 
 export const metadata: Metadata = {
-  title: "Engineering Notes",
+  title: "Blog",
   description:
-    "Updates, guides, and deep-dives from the team building IBEX Harness.",
+    "Long-form writing about agent infrastructure, memory, and running LLMs in production.",
+  alternates: {
+    types: {
+      "application/rss+xml": "/blog/rss.xml",
+    },
+  },
 };
 
+function toIndexItem(post: {
+  url: string;
+  data: {
+    title: string;
+    date: string | Date;
+    excerpt?: string;
+    tags?: string[];
+    readingTime?: unknown;
+    author?: string;
+    authorUrl?: unknown;
+  };
+}): BlogIndexItem {
+  return {
+    url: post.url,
+    title: post.data.title,
+    date: String(post.data.date),
+    excerpt: post.data.excerpt,
+    tags: post.data.tags,
+    readingTime:
+      typeof post.data.readingTime === "string"
+        ? post.data.readingTime
+        : undefined,
+    author: post.data.author,
+    authorUrl:
+      typeof post.data.authorUrl === "string"
+        ? post.data.authorUrl
+        : undefined,
+    category: resolveBlogCategory(post.data.tags),
+  };
+}
+
 export default function BlogPage() {
-  const posts = blogSource
+  const pages = blogSource
     .getPages()
     .sort(
       (a, b) =>
@@ -19,29 +55,21 @@ export default function BlogPage() {
         new Date(String(a.data.date)).getTime(),
     );
 
-  const featured =
-    posts.find((p) => p.data.featured === true) ?? posts[0];
-  const rest = posts.filter(
-    (p) => featured === undefined || p.url !== featured.url,
-  );
+  const items = pages.map(toIndexItem);
+  const featuredPage =
+    pages.find((p) => p.data.featured === true) ?? pages[0];
+  const featured = featuredPage ? toIndexItem(featuredPage) : null;
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-12 md:px-6 md:py-16 lg:px-8">
-      <BlogHero featured={featured} />
-      <BlogPostList
-        posts={rest.map((post) => ({
-          url: post.url,
-          data: {
-            title: post.data.title,
-            date: String(post.data.date),
-            excerpt: post.data.excerpt,
-            tags: post.data.tags,
-            readingTime: post.data.readingTime as string | undefined,
-            author: post.data.author,
-            authorUrl: post.data.authorUrl as string | undefined,
-          },
-        }))}
-      />
+    <div className="blog-page">
+      <header className="blog-index-intro">
+        <h1 className="blog-index-title">Blog</h1>
+        <p className="blog-index-lede">
+          Long-form writing about agent infrastructure, memory, and running LLMs
+          in production.
+        </p>
+      </header>
+      <BlogIndex featured={featured} posts={items} />
     </div>
   );
 }

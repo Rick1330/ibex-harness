@@ -23,25 +23,41 @@ afterEach(() => {
 });
 
 describe("BlogPostHeader", () => {
-  it("links the author to GitHub and renders the Github icon", () => {
+  it("links back to blog and author to GitHub", () => {
     const { container } = render(
       <BlogPostHeader
-        title="Hello"
+        title="Hello world"
         date="2026-07-16"
+        category="Engineering"
         author="Rick1330"
         authorUrl="https://github.com/Rick1330"
+        readingTime="5 min read"
       />,
     );
 
-    const link = screen.getByRole("link", { name: /Rick1330/i });
-    expect(link).toHaveAttribute("href", "https://github.com/Rick1330");
+    expect(screen.getByRole("link", { name: /Back to blog/i })).toHaveAttribute(
+      "href",
+      "/blog",
+    );
+    const author = screen.getByRole("link", { name: /Rick1330/i });
+    expect(author).toHaveAttribute("href", "https://github.com/Rick1330");
     expect(container.querySelector("svg")).not.toBeNull();
+    expect(screen.getByText("Engineering")).toBeInTheDocument();
+    expect(screen.getByText("RI")).toBeInTheDocument();
   });
 
   it("renders author as plain text when authorUrl is missing", () => {
-    render(<BlogPostHeader title="Hello" date="2026-07-16" author="Rick1330" />);
+    render(
+      <BlogPostHeader
+        title="Hello"
+        date="2026-07-16"
+        category="Product"
+        author="Rick1330"
+      />,
+    );
 
-    expect(screen.queryByRole("link")).toBeNull();
+    expect(screen.getByRole("link", { name: /Back to blog/i })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Rick1330/i })).toBeNull();
     expect(screen.getByText("Rick1330")).toBeInTheDocument();
   });
 });

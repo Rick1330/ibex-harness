@@ -1,77 +1,85 @@
 import Link from "next/link";
 
 import { GithubIcon } from "@/components/icons/github-icon";
+import {
+  formatBlogDate,
+  titleWithItalicTail,
+  type BlogCategory,
+} from "@/lib/blog";
 
 type BlogPostHeaderProps = Readonly<{
   title: string;
   date: string;
+  category: BlogCategory;
   author?: string;
   authorUrl?: string;
-  tags?: string[];
   readingTime?: string;
 }>;
 
+function authorInitials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return `${parts[0][0] ?? ""}${parts[1][0] ?? ""}`.toUpperCase();
+}
+
+/** Post header per DESIGN_GUIDE §14.2 — back link, mono meta, display H1, byline. */
 export function BlogPostHeader({
   title,
   date,
+  category,
   author,
   authorUrl,
-  tags,
   readingTime,
 }: BlogPostHeaderProps) {
+  const { lead, italic } = titleWithItalicTail(title);
+
   return (
-    <header className="mb-10 border-b border-border pb-8">
-      <p className="mb-4 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
-        Engineering Notes
-      </p>
-      <h1 className="mb-5 text-3xl font-bold tracking-tight text-foreground md:text-4xl lg:text-[2.75rem] lg:leading-tight">
-        {title}
-      </h1>
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm text-muted-foreground">
-        <time className="tabular-nums">
-          {new Date(date).toLocaleDateString("en-US", {
-            year: "numeric",
-            month: "long",
-            day: "numeric",
-          })}
-        </time>
-        {author ? (
-          <>
-            <span>·</span>
-            {authorUrl ? (
-              <Link
-                href={authorUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 font-medium text-foreground transition-opacity hover:opacity-80"
-              >
-                {author}
-                <GithubIcon className="size-3.5" strokeWidth={1.5} />
-              </Link>
-            ) : (
-              <span>{author}</span>
-            )}
-          </>
-        ) : null}
+    <header className="blog-post-header">
+      <Link href="/blog" className="blog-back-link">
+        ← Back to blog
+      </Link>
+
+      <p className="blog-meta">
+        <time dateTime={date}>{formatBlogDate(date)}</time>
+        <span aria-hidden>·</span>
+        <span className="blog-meta-accent">{category}</span>
         {readingTime ? (
           <>
-            <span>·</span>
+            <span aria-hidden>·</span>
             <span>{readingTime}</span>
           </>
         ) : null}
-      </div>
-      {tags && tags.length > 0 ? (
-        <div className="mt-4 flex flex-wrap gap-2">
-          {tags.map((tag) => (
-            <span
-              key={tag}
-              className="rounded-full border border-border bg-muted/30 px-2.5 py-0.5 text-xs font-medium text-muted-foreground"
+      </p>
+
+      <h1 className="blog-post-title">
+        {lead ? <>{lead} </> : null}
+        <em className="italic">{italic}</em>
+      </h1>
+
+      {author ? (
+        <div className="blog-byline">
+          <span className="blog-byline-avatar" aria-hidden>
+            {authorInitials(author)}
+          </span>
+          <span className="blog-byline-prefix">by</span>
+          {authorUrl ? (
+            <Link
+              href={authorUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="blog-byline-author"
             >
-              {tag}
-            </span>
-          ))}
+              {author}
+              <GithubIcon className="size-3.5" strokeWidth={1.5} />
+            </Link>
+          ) : (
+            <span className="blog-byline-author-plain">{author}</span>
+          )}
         </div>
       ) : null}
+
+      <hr className="blog-hairline" />
     </header>
   );
 }
