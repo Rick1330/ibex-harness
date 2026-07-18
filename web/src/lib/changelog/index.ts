@@ -13,3 +13,11 @@ export {
   parseChangelogContent,
   parseReleaseType,
 } from "./parse-changelog";
+
+export {
+  buildChangelogNav,
+  editorialSectionLabel,
+  formatChangelogDate,
+  isNewRelease,
+  quarterAnchor,
+} from "./grouping";

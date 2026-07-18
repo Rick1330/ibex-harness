@@ -7,20 +7,13 @@ vi.mock("@/lib/changelog/read-changelog", () => ({
   readReleasesFromChangelog: vi.fn(),
 }));
 
-vi.mock("@/components/changelog/release-notes-panel", () => ({
-  ReleaseNotesPanel: ({ release }: { release: { version: string } }) => (
-    <div data-testid={`notes-${release.version}`}>notes for {release.version}</div>
-  ),
-}));
-
-vi.mock("@/components/changelog/release-timeline", () => ({
-  ReleaseTimeline: ({ releases }: { releases: { version: string }[] }) => (
-    <section>
-      <h2>Previous releases</h2>
-      <div data-testid="older-versions">
-        {releases.map((release) => release.version).join(",")}
-      </div>
-    </section>
+vi.mock("@/components/changelog/changelog-view", () => ({
+  ChangelogView: ({ releases }: { releases: { version: string }[] }) => (
+    <div data-testid="changelog-view">
+      {releases.length === 0
+        ? "No tagged releases yet"
+        : releases.map((r) => `v${r.version}`).join(",")}
+    </div>
   ),
 }));
 
@@ -39,41 +32,35 @@ describe("ReleasesPage", () => {
     mockRead.mockReturnValue([]);
     render(<ReleasesPage />);
 
-    expect(screen.getByText(/No tagged releases yet/i)).toBeInTheDocument();
-    expect(screen.queryByText("v0.1.0")).not.toBeInTheDocument();
-    expect(
-      screen.queryByText("Complete machine-readable history"),
-    ).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Changelog" })).toBeInTheDocument();
+    expect(screen.getByTestId("changelog-view")).toHaveTextContent(
+      /No tagged releases yet/i,
+    );
   });
 
-  it("renders latest release hero and notes without previous timeline", () => {
+  it("renders changelog intro and feed for latest release", () => {
     mockRead.mockReturnValue([makeRelease({ version: "0.1.0" })]);
     render(<ReleasesPage />);
 
-    expect(screen.getByText("Release history")).toBeInTheDocument();
-    expect(screen.getByText("v0.1.0")).toBeInTheDocument();
-    expect(screen.getByTestId("notes-0.1.0")).toBeInTheDocument();
-    expect(screen.queryByText("Previous releases")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Changelog" })).toBeInTheDocument();
+    expect(screen.getByTestId("changelog-view")).toHaveTextContent("v0.1.0");
     expect(
       screen.getByRole("link", { name: /RELEASING\.md/i }),
     ).toHaveAttribute(
       "href",
       "https://github.com/Rick1330/ibex-harness/blob/main/web/engineering/RELEASING.md",
     );
-    expect(
-      screen.getByText("Complete machine-readable history"),
-    ).toBeInTheDocument();
   });
 
-  it("renders older releases in the previous-releases timeline", () => {
+  it("passes older releases into the changelog view", () => {
     mockRead.mockReturnValue([
       makeRelease({ version: "0.2.0" }),
       makeRelease({ version: "0.1.0", type: "minor", date: "2026-07-01" }),
     ]);
     render(<ReleasesPage />);
 
-    expect(screen.getByText("v0.2.0")).toBeInTheDocument();
-    expect(screen.getByText("Previous releases")).toBeInTheDocument();
-    expect(screen.getByTestId("older-versions")).toHaveTextContent("0.1.0");
+    expect(screen.getByTestId("changelog-view")).toHaveTextContent(
+      "v0.2.0,v0.1.0",
+    );
   });
 });

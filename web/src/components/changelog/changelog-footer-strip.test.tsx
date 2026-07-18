@@ -9,9 +9,7 @@ describe("ChangelogFooterStrip", () => {
   it("links to GitHub Releases and CHANGELOG.md", () => {
     render(<ChangelogFooterStrip />);
 
-    expect(
-      screen.getByText("Complete machine-readable history"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("Machine-readable history")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /GitHub Releases/i })).toHaveAttribute(
       "href",
       "https://github.com/Rick1330/ibex-harness/releases",
@@ -19,6 +17,10 @@ describe("ChangelogFooterStrip", () => {
     expect(screen.getByRole("link", { name: /CHANGELOG\.md/i })).toHaveAttribute(
       "href",
       "https://github.com/Rick1330/ibex-harness/blob/main/CHANGELOG.md",
+    );
+    expect(screen.getByRole("link", { name: /RSS feed/i })).toHaveAttribute(
+      "href",
+      "/releases/rss.xml",
     );
   });
 });
