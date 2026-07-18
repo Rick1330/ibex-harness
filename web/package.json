@@ -20,8 +20,8 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "test:watch": "vitest",
+    "test": "vitest run --pool=threads --maxWorkers=2",
+    "test:watch": "vitest --pool=threads",
     "test:e2e": "playwright test",
     "deploy:pages": "wrangler pages deploy out --project-name=ibex-harness-docs --branch=main --commit-dirty=true",
     "postinstall": "fumadocs-mdx"

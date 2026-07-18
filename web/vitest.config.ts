@@ -14,5 +14,11 @@ export default defineConfig({
     environment: "jsdom",
     setupFiles: ["./vitest.setup.ts"],
     include: ["src/**/*.test.{ts,tsx}", "scripts/**/*.test.mjs"],
+    // Forks pool can hang indefinitely on GitHub-hosted runners with jsdom.
+    pool: "threads",
+    maxWorkers: 2,
+    testTimeout: 15_000,
+    hookTimeout: 15_000,
+    teardownTimeout: 5_000,
   },
 });

@@ -1001,6 +1001,7 @@ jobs:
         run: pnpm --filter web typecheck
 
       - name: Test web components
+        timeout-minutes: 3
         run: pnpm --filter web test
 
       - name: Build web app

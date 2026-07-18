@@ -55,7 +55,9 @@ jobs:
       - name: Typecheck web app
         run: pnpm --filter web typecheck
 
+      # Hard cap: Vitest forks-pool hangs have blocked deploy for 10+ minutes.
       - name: Test web components
+        timeout-minutes: 3
         run: pnpm --filter web test
 
       - name: Build web app (static export)
