@@ -1,4 +1,3 @@
-import type { LucideIcon } from "lucide-react";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -7,58 +6,103 @@ import {
   OctagonAlert,
   Sparkles,
   Zap,
+  type LucideIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { cn } from "@/lib/cn";
 
-const CALLOUT_VARIANTS = {
-  note: {
-    icon: Info,
-    border: "border-l-info",
-    iconClass: "text-info",
-  },
-  info: {
-    icon: Info,
-    border: "border-l-info",
-    iconClass: "text-info",
-  },
-  tip: {
-    icon: Lightbulb,
-    border: "border-l-success",
-    iconClass: "text-success",
-  },
-  success: {
-    icon: CheckCircle2,
-    border: "border-l-success",
-    iconClass: "text-success",
-  },
-  warning: {
-    icon: AlertTriangle,
-    border: "border-l-warning",
-    iconClass: "text-warning",
-  },
-  danger: {
-    icon: OctagonAlert,
-    border: "border-l-danger",
-    iconClass: "text-danger",
-  },
-  new: {
-    icon: Sparkles,
-    border: "border-l-info",
-    iconClass: "text-info",
-  },
-  experimental: {
-    icon: Zap,
-    border: "border-l-warning",
-    iconClass: "text-warning",
-  },
-} as const;
+type CalloutVariant = Readonly<{
+  icon: LucideIcon;
+  border: string;
+  iconClass: string;
+}>;
 
-export type CalloutType = keyof typeof CALLOUT_VARIANTS;
+const NOTE_VARIANT: CalloutVariant = {
+  icon: Info,
+  border: "border-l-info",
+  iconClass: "text-info",
+};
+
+const CALLOUT_VARIANTS = new Map<string, CalloutVariant>([
+  ["note", NOTE_VARIANT],
+  ["info", NOTE_VARIANT],
+  [
+    "tip",
+    {
+      icon: Lightbulb,
+      border: "border-l-success",
+      iconClass: "text-success",
+    },
+  ],
+  [
+    "success",
+    {
+      icon: CheckCircle2,
+      border: "border-l-success",
+      iconClass: "text-success",
+    },
+  ],
+  [
+    "warning",
+    {
+      icon: AlertTriangle,
+      border: "border-l-warning",
+      iconClass: "text-warning",
+    },
+  ],
+  // Alias used in older MDX content (e.g. master-brief).
+  [
+    "warn",
+    {
+      icon: AlertTriangle,
+      border: "border-l-warning",
+      iconClass: "text-warning",
+    },
+  ],
+  [
+    "danger",
+    {
+      icon: OctagonAlert,
+      border: "border-l-danger",
+      iconClass: "text-danger",
+    },
+  ],
+  [
+    "new",
+    {
+      icon: Sparkles,
+      border: "border-l-info",
+      iconClass: "text-info",
+    },
+  ],
+  [
+    "experimental",
+    {
+      icon: Zap,
+      border: "border-l-warning",
+      iconClass: "text-warning",
+    },
+  ],
+]);
+
+export type CalloutType =
+  | "note"
+  | "info"
+  | "tip"
+  | "success"
+  | "warning"
+  | "warn"
+  | "danger"
+  | "new"
+  | "experimental";
+
+function resolveVariant(type: string): CalloutVariant {
+  return CALLOUT_VARIANTS.get(type) ?? NOTE_VARIANT;
+}
 
 type CalloutProps = Readonly<{
-  type?: CalloutType;
+  type?: CalloutType | string;
   title?: string;
   children: ReactNode;
 }>;
@@ -68,7 +112,7 @@ export function Callout({
   title,
   children,
 }: CalloutProps) {
-  const variant = CALLOUT_VARIANTS[type];
+  const variant = resolveVariant(type);
   const Icon = variant.icon;
 
   return (

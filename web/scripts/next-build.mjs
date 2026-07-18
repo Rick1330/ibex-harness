@@ -5,6 +5,7 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 import { renameIgnoreMissing } from "./build-script-utils.mjs";
+import { resolveNodeHeapMb } from "./node-heap.mjs";
 import { sanitizeRscTxtFiles } from "./sanitize-rsc-txt.mjs";
 
 const require = createRequire(import.meta.url);
@@ -35,7 +36,7 @@ const stripped = existingNodeOptions
       !flag.includes("max_old_space_size"),
   )
   .join(" ");
-const heapMb = process.env.IBEX_NODE_HEAP_MB?.trim() || "8192";
+const heapMb = resolveNodeHeapMb(process.env.IBEX_NODE_HEAP_MB);
 // Main process only — avoid NODE_OPTIONS inheritance into build workers.
 process.env.NODE_OPTIONS = stripped;
 

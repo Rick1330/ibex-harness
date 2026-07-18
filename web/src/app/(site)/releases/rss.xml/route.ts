@@ -12,37 +12,58 @@ function escapeXml(value: string): string {
     .replaceAll("'", "&apos;");
 }
 
+function rssPubDate(date: string | null | undefined): string | null {
+  if (!date) return null;
+  const parsed = new Date(date);
+  if (!Number.isFinite(parsed.getTime())) return null;
+  return parsed.toUTCString();
+}
+
+function buildReleaseItem(
+  site: string,
+  release: ReturnType<typeof readReleasesFromChangelog>[number],
+): string {
+  const link = `${site}/releases#v${release.version}`;
+  const title = release.summary
+    ? `v${release.version} — ${release.summary}`
+    : `v${release.version}`;
+  const description =
+    release.summary ??
+    `${release.type} release${release.date ? ` on ${formatChangelogDate(release.date)}` : ""}`;
+  const pubDate = rssPubDate(release.date);
+  const lines = [
+    "    <item>",
+    `      <title>${escapeXml(title)}</title>`,
+    `      <link>${escapeXml(link)}</link>`,
+    `      <guid>${escapeXml(link)}</guid>`,
+  ];
+  if (pubDate) {
+    lines.push(`      <pubDate>${pubDate}</pubDate>`);
+  }
+  lines.push(
+    `      <category>${escapeXml(release.type)}</category>`,
+    `      <description>${escapeXml(description)}</description>`,
+    "    </item>",
+  );
+  return lines.join("\n");
+}
+
 export async function GET() {
   const site = process.env.NEXT_PUBLIC_SITE_URL ?? "https://ibexharness.com";
   const releases = readReleasesFromChangelog();
+  const items = releases.map((release) => buildReleaseItem(site, release)).join("\n");
 
-  const items = releases
-    .map((release) => {
-      const link = `${site}/releases#v${release.version}`;
-      const title = `v${release.version}${release.summary ? ` — ${release.summary}` : ""}`;
-      const description =
-        release.summary ??
-        `${release.type} release${release.date ? ` on ${formatChangelogDate(release.date)}` : ""}`;
-      return `    <item>
-      <title>${escapeXml(title)}</title>
-      <link>${escapeXml(link)}</link>
-      <guid>${escapeXml(link)}</guid>
-      <pubDate>${release.date ? new Date(release.date).toUTCString() : new Date().toUTCString()}</pubDate>
-      <category>${escapeXml(release.type)}</category>
-      <description>${escapeXml(description)}</description>
-    </item>`;
-    })
-    .join("\n");
-
-  const xml = `<?xml version="1.0" encoding="UTF-8"?>
-<rss version="2.0">
-  <channel>
-    <title>IBEX Harness Changelog</title>
-    <link>${escapeXml(`${site}/releases`)}</link>
-    <description>What shipped in each IBEX Harness release.</description>
-${items}
-  </channel>
-</rss>`;
+  const xml = [
+    `<?xml version="1.0" encoding="UTF-8"?>`,
+    `<rss version="2.0">`,
+    `  <channel>`,
+    `    <title>IBEX Harness Changelog</title>`,
+    `    <link>${escapeXml(`${site}/releases`)}</link>`,
+    `    <description>What shipped in each IBEX Harness release.</description>`,
+    items,
+    `  </channel>`,
+    `</rss>`,
+  ].join("\n");
 
   return new Response(xml, {
     headers: {

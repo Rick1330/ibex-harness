@@ -133,14 +133,15 @@ function stripPhaseTitlePrefix(title: string): string {
   return colon === -1 ? title : title.slice(colon + 1).trim();
 }
 
-function phaseDisplayIndex(slug: PhaseSlug, orderIndex: number): string {
+function phaseDisplayIndex(slug: PhaseSlug): string {
   if (slug === "phase-1-5-docs-site") return "1.5";
-  return String(orderIndex);
+  const match = /^phase-(\d+)/.exec(slug);
+  return match?.[1] ?? slug;
 }
 
 /** Timeline rows for the hub — status dots + milestone bullets (DESIGN_GUIDE §17). */
 export function getPhaseTimeline() {
-  return getPhaseCards().map((card, orderIndex) => {
+  return getPhaseCards().map((card) => {
     const stats = getPhaseStats(card.slug as PhaseSlug);
     const bullets = stats.milestones.slice(0, 5).map((page) => ({
       title:
@@ -152,7 +153,7 @@ export function getPhaseTimeline() {
 
     return {
       ...card,
-      phaseIndex: phaseDisplayIndex(card.slug as PhaseSlug, orderIndex),
+      phaseIndex: phaseDisplayIndex(card.slug as PhaseSlug),
       shortTitle: stripPhaseTitlePrefix(card.title),
       anchor: card.slug,
       bullets,

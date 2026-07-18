@@ -14,36 +14,38 @@ type BlogPostPageProps = Readonly<{
   params: Promise<{ slug: string }>;
 }>;
 
-export default async function BlogPostPage(props: BlogPostPageProps) {
-  const { slug } = await props.params;
-  const page = blogSource.getPage([slug]);
-  if (!page) notFound();
+type BlogPage = NonNullable<ReturnType<typeof blogSource.getPage>>;
 
-  const MdxContent = page.data.body;
-  const toc = page.data.toc ?? [];
+function adjacentPosts(page: BlogPage) {
   const allPosts = blogSource.getPages().sort(
     (a, b) =>
       new Date(String(b.data.date)).getTime() -
       new Date(String(a.data.date)).getTime(),
   );
-
   const index = allPosts.findIndex((p) => p.url === page.url);
-  const newer = index > 0 ? allPosts[index - 1] : undefined;
-  const older =
-    index >= 0 && index < allPosts.length - 1
-      ? allPosts[index + 1]
-      : undefined;
+  return {
+    newer: index > 0 ? allPosts[index - 1] : undefined,
+    older:
+      index >= 0 && index < allPosts.length - 1
+        ? allPosts[index + 1]
+        : undefined,
+  };
+}
 
+function continueCard(post: BlogPage | undefined) {
+  if (!post) return null;
+  return {
+    url: post.url,
+    title: post.data.title,
+    date: String(post.data.date),
+    category: resolveBlogCategory(post.data.tags),
+  };
+}
+
+function buildJsonLd(page: BlogPage) {
   const authorUrl =
     typeof page.data.authorUrl === "string" ? page.data.authorUrl : undefined;
-  const readingTime =
-    typeof page.data.readingTime === "string"
-      ? page.data.readingTime
-      : undefined;
-  const category = resolveBlogCategory(page.data.tags);
-  const description = page.data.excerpt ?? page.data.description;
-
-  const jsonLd = {
+  return {
     "@context": "https://schema.org",
     "@type": "BlogPosting",
     headline: page.data.title,
@@ -55,23 +57,45 @@ export default async function BlogPostPage(props: BlogPostPageProps) {
           url: authorUrl,
         }
       : undefined,
-    description,
+    description: page.data.excerpt ?? page.data.description,
     mainEntityOfPage: page.url,
   };
+}
+
+export default async function BlogPostPage(props: BlogPostPageProps) {
+  const { slug } = await props.params;
+  const page = blogSource.getPage([slug]);
+  if (!page) notFound();
+
+  const MdxContent = page.data.body;
+  const toc = page.data.toc ?? [];
+  const { newer, older } = adjacentPosts(page);
+  const authorUrl =
+    typeof page.data.authorUrl === "string" ? page.data.authorUrl : undefined;
+  const readingTime =
+    typeof page.data.readingTime === "string"
+      ? page.data.readingTime
+      : undefined;
 
   return (
     <>
       <ReadingProgress />
       <script
         type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+        dangerouslySetInnerHTML={{
+          // Escape `<` so frontmatter cannot terminate the script element.
+          __html: JSON.stringify(buildJsonLd(page)).replaceAll(
+            "<",
+            String.raw`\u003c`,
+          ),
+        }}
       />
       <div className="blog-page blog-post-page">
         <article className="blog-article">
           <BlogPostHeader
             title={page.data.title}
             date={String(page.data.date)}
-            category={category}
+            category={resolveBlogCategory(page.data.tags)}
             author={page.data.author}
             authorUrl={authorUrl}
             readingTime={readingTime}
@@ -84,26 +108,8 @@ export default async function BlogPostPage(props: BlogPostPageProps) {
             </div>
           </ArticleWithToc>
           <ContinueReading
-            prev={
-              older
-                ? {
-                    url: older.url,
-                    title: older.data.title,
-                    date: String(older.data.date),
-                    category: resolveBlogCategory(older.data.tags),
-                  }
-                : null
-            }
-            next={
-              newer
-                ? {
-                    url: newer.url,
-                    title: newer.data.title,
-                    date: String(newer.data.date),
-                    category: resolveBlogCategory(newer.data.tags),
-                  }
-                : null
-            }
+            prev={continueCard(older)}
+            next={continueCard(newer)}
           />
         </article>
       </div>

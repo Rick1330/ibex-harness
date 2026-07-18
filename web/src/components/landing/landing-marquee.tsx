@@ -1,19 +1,18 @@
 import { MARQUEE } from "@/lib/landing-content";
 
-/** Tag marquee under hero — 50s linear (DESIGN_GUIDE.md §3 / §20). */
+/** Static wrapping tag strip under hero (DESIGN_GUIDE.md §3 / §20 — no load motion). */
 export function LandingMarquee() {
-  const track = [...MARQUEE, ...MARQUEE];
-
   return (
-    <div className="overflow-hidden border-b border-border py-3.5" aria-hidden>
-      <div className="marquee-track flex w-max gap-10 whitespace-nowrap font-mono text-[11px] uppercase tracking-[0.25em] text-foreground-muted">
-        {track.map((tag, index) => (
-          <span key={`${tag}-${index}`} className="inline-flex items-center gap-10">
-            {tag}
-            <span className="text-foreground-subtle">·</span>
-          </span>
-        ))}
-      </div>
+    <div
+      className="flex flex-wrap items-center justify-center gap-x-8 gap-y-2 border-b border-border px-4 py-3.5 font-mono text-[11px] uppercase tracking-[0.25em] text-foreground-muted"
+      aria-hidden
+    >
+      {MARQUEE.map((tag) => (
+        <span key={tag} className="inline-flex items-center gap-8">
+          {tag}
+          <span className="text-foreground-subtle">·</span>
+        </span>
+      ))}
     </div>
   );
 }

@@ -21,10 +21,77 @@ type CodeShellProps = Readonly<{
   animate?: boolean;
 }>;
 
+function prefersReducedMotion(): boolean {
+  if (typeof globalThis.matchMedia !== "function") return false;
+  return globalThis.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+function useLineReveal(
+  animate: boolean,
+  lineCount: number,
+  replayKey: number,
+): { visible: number; runAnimation: boolean } {
+  const [visible, setVisible] = useState(() => (animate ? 0 : lineCount));
+  const [runAnimation, setRunAnimation] = useState(false);
+
+  useEffect(() => {
+    if (!animate || prefersReducedMotion()) {
+      setVisible(lineCount);
+      setRunAnimation(false);
+      return;
+    }
+    setVisible(0);
+    setRunAnimation(true);
+  }, [animate, lineCount, replayKey]);
+
+  useEffect(() => {
+    if (!runAnimation) return;
+    let cancelled = false;
+    let timeoutId = 0;
+
+    const tick = () => {
+      setVisible((current) => {
+        if (current >= lineCount) return current;
+        const next = current + 1;
+        if (next < lineCount && !cancelled) {
+          timeoutId = globalThis.setTimeout(tick, 90);
+        }
+        return next;
+      });
+    };
+
+    timeoutId = globalThis.setTimeout(tick, 90);
+    return () => {
+      cancelled = true;
+      globalThis.clearTimeout(timeoutId);
+    };
+  }, [runAnimation, lineCount, replayKey]);
+
+  return { visible, runAnimation };
+}
+
+function ShellLine({ line }: Readonly<{ line: CodeShellLine }>) {
+  if (line.k === "comment") {
+    return <span className="code-shell-comment"># {line.t}</span>;
+  }
+  if (line.k === "prompt") {
+    return (
+      <>
+        <span className="code-shell-prompt">$ </span>
+        <span className="code-shell-fg">{line.t}</span>
+      </>
+    );
+  }
+  if (line.k === "success") {
+    return <span className="code-shell-ok">{line.t}</span>;
+  }
+  return <span className="code-shell-fg">{line.t || "\u00A0"}</span>;
+}
+
 /**
  * Code shell (DESIGN_GUIDE.md §11).
  * Charcoal terminal — identical tokens in light and dark.
- * SSR renders all lines; line-reveal starts only after mount.
+ * SSR renders all lines; line-reveal starts only after mount when animate.
  */
 export function CodeShell({
   title = "~/ibex — zsh",
@@ -33,36 +100,14 @@ export function CodeShell({
   statusRight = "p99 · 18ms",
   className = "",
   testId = "code-shell",
-  animate = true,
+  animate = false,
 }: CodeShellProps) {
-  const [visible, setVisible] = useState(lines.length);
   const [replayKey, setReplayKey] = useState(0);
-  const [runAnimation, setRunAnimation] = useState(false);
-
-  useEffect(() => {
-    if (!animate) return;
-    if (typeof globalThis.matchMedia === "function") {
-      const media = globalThis.matchMedia("(prefers-reduced-motion: reduce)");
-      if (media.matches) return;
-    }
-    setVisible(0);
-    setRunAnimation(true);
-  }, [animate, lines.length, replayKey]);
-
-  useEffect(() => {
-    if (!runAnimation) return;
-    const id = globalThis.setInterval(() => {
-      setVisible((current) => {
-        if (current >= lines.length) {
-          globalThis.clearInterval(id);
-          return current;
-        }
-        return current + 1;
-      });
-    }, 90);
-    return () => globalThis.clearInterval(id);
-  }, [runAnimation, lines.length, replayKey]);
-
+  const { visible, runAnimation } = useLineReveal(
+    animate,
+    lines.length,
+    replayKey,
+  );
   const shown = lines.slice(0, visible);
 
   return (
@@ -81,21 +126,7 @@ export function CodeShell({
             key={`${line.k}-${line.t}-${index}`}
             className="code-shell-line"
           >
-            {line.k === "comment" ? (
-              <span className="code-shell-comment"># {line.t}</span>
-            ) : null}
-            {line.k === "prompt" ? (
-              <>
-                <span className="code-shell-prompt">$ </span>
-                <span className="code-shell-fg">{line.t}</span>
-              </>
-            ) : null}
-            {line.k === "output" ? (
-              <span className="code-shell-fg">{line.t || "\u00A0"}</span>
-            ) : null}
-            {line.k === "success" ? (
-              <span className="code-shell-ok">{line.t}</span>
-            ) : null}
+            <ShellLine line={line} />
           </div>
         ))}
         {runAnimation && visible < lines.length ? (
@@ -108,10 +139,7 @@ export function CodeShell({
         <button
           type="button"
           className="code-shell-replay"
-          onClick={() => {
-            setRunAnimation(false);
-            setReplayKey((key) => key + 1);
-          }}
+          onClick={() => setReplayKey((key) => key + 1)}
           aria-label="Replay shell animation"
         >
           <RotateCcw className="size-3" aria-hidden />

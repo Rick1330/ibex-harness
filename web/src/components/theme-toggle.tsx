@@ -32,7 +32,7 @@ export function ThemeToggle({ className }: ThemeToggleProps) {
       <div
         aria-hidden
         className={cn(
-          "inline-flex h-8 w-[5.5rem] animate-pulse rounded-full border border-border bg-surface",
+          "inline-flex h-8 w-[5.5rem] animate-pulse rounded-sm border border-border bg-surface",
           className,
         )}
       />
@@ -45,7 +45,7 @@ export function ThemeToggle({ className }: ThemeToggleProps) {
       aria-label="Theme"
       data-theme-toggle=""
       className={cn(
-        "inline-flex items-center rounded-full border border-border bg-surface p-0.5",
+        "inline-flex items-center rounded-sm border border-border bg-surface p-0.5",
         className,
       )}
     >
@@ -60,7 +60,7 @@ export function ThemeToggle({ className }: ThemeToggleProps) {
             aria-label={label}
             onClick={() => setTheme(v)}
             className={cn(
-              "grid size-7 place-items-center rounded-full transition-colors",
+              "grid size-7 place-items-center rounded-sm transition-colors",
               active
                 ? "bg-background text-foreground shadow-[var(--shadow-1)]"
                 : "text-foreground-subtle hover:text-foreground",

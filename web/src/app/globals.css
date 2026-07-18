@@ -1586,9 +1586,7 @@ header.site-nav {
   position: sticky !important;
   top: 0 !important;
   z-index: 50 !important;
-  background: color-mix(in oklch, var(--background) 55%, transparent) !important;
-  -webkit-backdrop-filter: blur(16px) saturate(1.2) !important;
-  backdrop-filter: blur(16px) saturate(1.2) !important;
+  background: var(--background) !important;
   border-bottom: 1px solid var(--border) !important;
 }
 
@@ -2496,20 +2494,14 @@ figure[data-rehype-pretty-code-figure],
   width: 0.625rem;
   height: 0.625rem;
   flex-shrink: 0;
-  border-radius: 999px;
+  border-radius: 4px;
   background: var(--shell-border);
 }
 
-.code-shell-dot-close {
-  background: #e06c60;
-}
-
-.code-shell-dot-min {
-  background: #e0b05c;
-}
-
+.code-shell-dot-close,
+.code-shell-dot-min,
 .code-shell-dot-max {
-  background: #6fbf7a;
+  background: var(--shell-border);
 }
 
 .code-shell-title {
@@ -2553,7 +2545,6 @@ figure[data-rehype-pretty-code-figure],
 
 .code-shell-line {
   min-height: 1.2em;
-  animation: fade-in-up 0.35s var(--ease-out-expo) both;
 }
 
 .code-shell-comment {
@@ -3109,11 +3100,7 @@ figure[data-rehype-pretty-code-figure],
 .blog-section-rule-line {
   flex: 1;
   height: 1px;
-  background: linear-gradient(
-    to right,
-    var(--border-strong),
-    color-mix(in oklch, var(--border) 20%, transparent)
-  );
+  background: var(--border);
 }
 
 .blog-meta {
@@ -3291,23 +3278,32 @@ figure[data-rehype-pretty-code-figure],
   inset-inline: 0;
   top: 0;
   z-index: 60;
+  display: block;
+  width: 100%;
   height: 2px;
+  margin: 0;
+  padding: 0;
+  border: 0;
   pointer-events: none;
+  appearance: none;
+  background: transparent;
+  accent-color: var(--accent);
+}
+
+.blog-reading-progress::-webkit-progress-bar {
   background: transparent;
 }
 
-.blog-reading-progress-bar {
-  height: 100%;
+.blog-reading-progress::-webkit-progress-value {
   background: var(--accent);
-  transition: width 80ms linear;
+}
+
+.blog-reading-progress::-moz-progress-bar {
+  background: var(--accent);
 }
 
 @media (prefers-reduced-motion: reduce) {
   .blog-reading-progress {
-    display: none;
-  }
-
-  .blog-reading-progress-bar {
     transition: none;
   }
 }
@@ -3446,6 +3442,29 @@ figure[data-rehype-pretty-code-figure],
 
 .blog-toc-progress {
   margin-top: 1rem;
+}
+
+.toc-reading-progress {
+  display: block;
+  height: 4px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  appearance: none;
+  background: var(--panel-raised, var(--border));
+  accent-color: var(--accent);
+}
+
+.toc-reading-progress::-webkit-progress-bar {
+  background: var(--panel-raised, var(--border));
+}
+
+.toc-reading-progress::-webkit-progress-value {
+  background: var(--accent);
+}
+
+.toc-reading-progress::-moz-progress-bar {
+  background: var(--accent);
 }
 
 .blog-post-page {
@@ -4273,15 +4292,27 @@ figure[data-rehype-pretty-code-figure],
 }
 
 .roadmap-progress-track {
+  display: block;
+  width: 100%;
   height: 2px;
-  overflow: hidden;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  appearance: none;
+  background: var(--border);
+  accent-color: var(--accent);
+}
+
+.roadmap-progress-track::-webkit-progress-bar {
   background: var(--border);
 }
 
-.roadmap-progress-fill {
-  height: 100%;
+.roadmap-progress-track::-webkit-progress-value {
   background: var(--accent);
-  transition: width 400ms ease-out;
+}
+
+.roadmap-progress-track::-moz-progress-bar {
+  background: var(--accent);
 }
 
 .roadmap-refs {
@@ -4426,11 +4457,7 @@ figure[data-rehype-pretty-code-figure],
 }
 
 .roadmap-dot-progress {
-  background: linear-gradient(
-    to right,
-    var(--accent) 50%,
-    transparent 50%
-  );
+  background: color-mix(in oklch, var(--accent) 55%, transparent);
   border: 1px solid var(--accent);
 }
 

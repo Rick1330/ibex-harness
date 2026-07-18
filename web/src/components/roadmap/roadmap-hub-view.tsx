@@ -47,19 +47,19 @@ export function RoadmapHubView({
           From foundation through memory, multi-provider, and production
           hardening — phases, milestones, and what ships next.
         </p>
-        <div className="roadmap-progress-strip" aria-label="Overall progress">
+        <div className="roadmap-progress-strip">
           <div className="roadmap-progress-meta">
             <span className="roadmap-progress-label">Overall</span>
             <span className="roadmap-progress-count">
               {completed} / {total} milestones · {progressPct}%
             </span>
           </div>
-          <div className="roadmap-progress-track">
-            <div
-              className="roadmap-progress-fill"
-              style={{ width: `${progressPct}%` }}
-            />
-          </div>
+          <progress
+            className="roadmap-progress-track"
+            max={Math.max(total, 1)}
+            value={completed}
+            aria-label="Overall roadmap progress"
+          />
         </div>
         <nav className="roadmap-refs" aria-label="Roadmap references">
           {REFERENCES.map((ref) => (

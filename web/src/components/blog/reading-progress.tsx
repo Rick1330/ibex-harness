@@ -7,9 +7,6 @@ export function ReadingProgress() {
   const [progress, setProgress] = useState(0);
 
   useEffect(() => {
-    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)");
-    if (reduced.matches) return;
-
     const onScroll = () => {
       const el = document.documentElement;
       const max = el.scrollHeight - el.clientHeight;
@@ -28,18 +25,11 @@ export function ReadingProgress() {
   }, []);
 
   return (
-    <div
+    <progress
       className="blog-reading-progress"
-      role="progressbar"
-      aria-valuemin={0}
-      aria-valuemax={100}
-      aria-valuenow={Math.round(progress)}
+      max={100}
+      value={progress}
       aria-label="Reading progress"
-    >
-      <div
-        className="blog-reading-progress-bar"
-        style={{ width: `${progress}%` }}
-      />
-    </div>
+    />
   );
 }

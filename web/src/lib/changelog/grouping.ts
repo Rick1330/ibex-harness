@@ -12,6 +12,20 @@ export type ChangelogNavGroup = Readonly<{
   }>;
 }>;
 
+const SECTION_LABELS: ReadonlyArray<Readonly<{ match: string; label: string }>> =
+  [
+    { match: "breaking", label: "Breaking" },
+    { match: "bug", label: "Fixed" },
+    { match: "fix", label: "Fixed" },
+    { match: "feature", label: "Added" },
+    { match: "added", label: "Added" },
+    { match: "deprecat", label: "Deprecated" },
+    { match: "security", label: "Security" },
+    { match: "change", label: "Changed" },
+    { match: "performance", label: "Changed" },
+    { match: "refactor", label: "Changed" },
+  ];
+
 export function releaseYear(date: string | null): number | null {
   if (!date) return null;
   const year = new Date(date).getUTCFullYear();
@@ -40,63 +54,62 @@ export function isNewRelease(date: string | null, now = new Date()): boolean {
 /** Map conventional-changelog section titles → editorial H4 labels. */
 export function editorialSectionLabel(title: string): string {
   const normalized = title.toLowerCase();
-  if (normalized.includes("breaking")) return "Breaking";
-  if (normalized.includes("bug") || normalized.includes("fix")) return "Fixed";
-  if (normalized.includes("feature") || normalized.includes("added")) {
-    return "Added";
-  }
-  if (normalized.includes("deprecat")) return "Deprecated";
-  if (normalized.includes("security")) return "Security";
-  if (
-    normalized.includes("change") ||
-    normalized.includes("performance") ||
-    normalized.includes("refactor")
-  ) {
-    return "Changed";
+  for (const rule of SECTION_LABELS) {
+    if (normalized.includes(rule.match)) return rule.label;
   }
   return title;
+}
+
+type QuarterMeta = { count: number };
+
+function tallyRelease(
+  map: Map<number, Map<ChangelogQuarter, QuarterMeta>>,
+  release: ReleaseEntry,
+): void {
+  const year = releaseYear(release.date);
+  const quarter = releaseQuarter(release.date);
+  if (year === null || quarter === null) return;
+
+  let yearMap = map.get(year);
+  if (!yearMap) {
+    yearMap = new Map();
+    map.set(year, yearMap);
+  }
+  const existing = yearMap.get(quarter);
+  if (existing) {
+    existing.count += 1;
+    return;
+  }
+  yearMap.set(quarter, { count: 1 });
+}
+
+function navGroupFromYear(
+  year: number,
+  quarters: Map<ChangelogQuarter, QuarterMeta>,
+): ChangelogNavGroup {
+  return {
+    year,
+    quarters: [...quarters.entries()]
+      .sort(([a], [b]) => b - a)
+      .map(([quarter, meta]) => ({
+        quarter,
+        label: `Q${quarter}`,
+        anchor: quarterAnchor(year, quarter),
+        count: meta.count,
+      })),
+  };
 }
 
 /** Build year → quarter nav from releases (newest first). */
 export function buildChangelogNav(
   releases: ReadonlyArray<ReleaseEntry>,
 ): ChangelogNavGroup[] {
-  const map = new Map<
-    number,
-    Map<ChangelogQuarter, { count: number; firstVersion: string }>
-  >();
-
-  for (const release of releases) {
-    const year = releaseYear(release.date);
-    const quarter = releaseQuarter(release.date);
-    if (year === null || quarter === null) continue;
-
-    let yearMap = map.get(year);
-    if (!yearMap) {
-      yearMap = new Map();
-      map.set(year, yearMap);
-    }
-    const existing = yearMap.get(quarter);
-    if (existing) {
-      existing.count += 1;
-    } else {
-      yearMap.set(quarter, { count: 1, firstVersion: release.version });
-    }
-  }
+  const map = new Map<number, Map<ChangelogQuarter, QuarterMeta>>();
+  for (const release of releases) tallyRelease(map, release);
 
   return [...map.entries()]
     .sort(([a], [b]) => b - a)
-    .map(([year, quarters]) => ({
-      year,
-      quarters: [...quarters.entries()]
-        .sort(([a], [b]) => b - a)
-        .map(([quarter, meta]) => ({
-          quarter,
-          label: `Q${quarter}`,
-          anchor: quarterAnchor(year, quarter),
-          count: meta.count,
-        })),
-    }));
+    .map(([year, quarters]) => navGroupFromYear(year, quarters));
 }
 
 export function formatChangelogDate(date: string | null): string {

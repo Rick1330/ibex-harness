@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import path from "node:path";
 
 import { appRoot, resolveDistDir } from "./resolve-dist-dir.mjs";
+import { resolveNodeHeapMb } from "./node-heap.mjs";
 
 const require = createRequire(import.meta.url);
 const nextBin = path.join(
@@ -31,7 +32,7 @@ if (
  * each reserves that much address space, and Windows OOMs compiling heavy
  * routes like /roadmap/[...slug] ("Zone Allocation failed").
  */
-const heapMb = process.env.IBEX_NODE_HEAP_MB?.trim() || "8192";
+const heapMb = resolveNodeHeapMb(process.env.IBEX_NODE_HEAP_MB);
 const strippedNodeOptions = (process.env.NODE_OPTIONS ?? "")
   .split(/\s+/)
   .filter(Boolean)

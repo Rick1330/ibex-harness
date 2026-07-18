@@ -51,7 +51,7 @@ export function SiteNavClient({ mobileNavData, brand }: SiteNavClientProps) {
     <>
       <header
         data-site-nav
-        className="site-nav sticky top-0 z-50 w-full border-b border-border bg-background/55 backdrop-blur-xl supports-[backdrop-filter]:bg-background/45"
+        className="site-nav sticky top-0 z-50 w-full border-b border-border bg-background"
       >
         <div className="site-nav-inner h-[var(--site-nav-height)] w-full">
           <div className="site-nav-brand">{brand}</div>

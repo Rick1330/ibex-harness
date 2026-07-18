@@ -15,6 +15,9 @@ export const metadata: Metadata = {
   },
 };
 
+/** Refresh daily so "New" badges stay accurate without redeploy. */
+export const revalidate = 86_400;
+
 export default function ReleasesPage() {
   const releases = readReleasesFromChangelog();
 

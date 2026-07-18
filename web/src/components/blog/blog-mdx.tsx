@@ -54,14 +54,9 @@ function BlogHeading({
 
 function BlogTable(props: ComponentPropsWithoutRef<"table">) {
   return (
-    <div
-      className="blog-table-wrap"
-      role="region"
-      aria-label="Data table"
-      tabIndex={0}
-    >
+    <section className="blog-table-wrap" aria-label="Data table">
       <table className="blog-table" {...props} />
-    </div>
+    </section>
   );
 }
 

@@ -23,7 +23,9 @@ export function useReadingProgress() {
 
     onScroll();
     window.addEventListener("scroll", onScroll, { passive: true });
-    return () => { window.removeEventListener("scroll", onScroll); };
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+    };
   }, []);
 
   return progress;
@@ -31,21 +33,19 @@ export function useReadingProgress() {
 
 export function TocReadingProgress({ className }: TocReadingProgressProps) {
   const progress = useReadingProgress();
+  const pct = Math.round(progress);
 
   return (
     <div className={cn("border-t border-border pt-3", className)}>
       <div className="flex items-center gap-2">
-        <div
-          aria-hidden
-          className="h-1 min-w-0 flex-1 overflow-hidden rounded-[4px] bg-panel-raised"
-        >
-          <div
-            className="h-full bg-accent transition-[width] duration-150 ease-out"
-            style={{ width: `${progress}%` }}
-          />
-        </div>
+        <progress
+          aria-label="Reading progress"
+          className="toc-reading-progress h-1 min-w-0 flex-1"
+          max={100}
+          value={pct}
+        />
         <span className="shrink-0 font-mono text-xs tabular-nums text-text-tertiary">
-          {Math.round(progress)}%
+          {pct}%
         </span>
       </div>
     </div>

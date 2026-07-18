@@ -19,11 +19,10 @@ export function CategoryFilter({
   className,
 }: CategoryFilterProps) {
   return (
-    <div className={cn("blog-category-filter", className)} role="tablist">
+    <div className={cn("blog-category-filter", className)}>
       <button
         type="button"
-        role="tab"
-        aria-selected={active === null}
+        aria-pressed={active === null}
         onClick={() => {
           onChange(null);
         }}
@@ -38,8 +37,7 @@ export function CategoryFilter({
         <button
           key={category}
           type="button"
-          role="tab"
-          aria-selected={active === category}
+          aria-pressed={active === category}
           onClick={() => {
             onChange(category === active ? null : category);
           }}

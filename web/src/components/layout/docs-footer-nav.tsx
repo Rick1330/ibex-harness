@@ -3,7 +3,7 @@
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useMemo } from "react";
+import { useMemo, type ReactNode } from "react";
 import { useTreeContext } from "fumadocs-ui/provider";
 
 import { SidebarIcon, getNavIconForUrl, toNavUrl } from "@/lib/sidebar-icons";
@@ -11,6 +11,7 @@ import {
   adjacentNavPages,
   flattenPageTree,
   navUrlsMatch,
+  type NavPage,
 } from "@/lib/sidebar-nav-pages";
 import { cn } from "@/lib/cn";
 
@@ -21,6 +22,46 @@ const cardClassName = cn(
 
 const labelClassName =
   "inline-flex items-center gap-1 text-xs font-medium text-text-tertiary";
+
+function PageIcon({ url }: Readonly<{ url: string }>): ReactNode {
+  const Icon = getNavIconForUrl(toNavUrl(url));
+  return Icon ? <SidebarIcon icon={Icon} /> : null;
+}
+
+function PreviousCard({ page }: Readonly<{ page: NavPage }>) {
+  return (
+    <Link className={cardClassName} href={page.url} prefetch scroll={false}>
+      <span className={labelClassName}>
+        <ChevronLeft className="size-4" strokeWidth={1.5} />
+        Previous
+      </span>
+      <span className="inline-flex items-center gap-2 font-medium text-text-primary">
+        <PageIcon url={page.url} />
+        {page.name}
+      </span>
+    </Link>
+  );
+}
+
+function NextCard({ page }: Readonly<{ page: NavPage }>) {
+  return (
+    <Link
+      className={cn(cardClassName, "sm:col-start-2 text-end")}
+      href={page.url}
+      prefetch
+      scroll={false}
+    >
+      <span className={cn(labelClassName, "justify-end")}>
+        Next
+        <ChevronRight className="size-4" strokeWidth={1.5} />
+      </span>
+      <span className="inline-flex items-center justify-end gap-2 font-medium text-text-primary">
+        {page.name}
+        <PageIcon url={page.url} />
+      </span>
+    </Link>
+  );
+}
 
 export function DocsFooterNav() {
   const { root } = useTreeContext();
@@ -36,35 +77,12 @@ export function DocsFooterNav() {
   return (
     <div className="not-prose grid grid-cols-1 gap-4 pb-6 sm:grid-cols-2">
       {previous && !navUrlsMatch(previous.url, pathname) ? (
-        <Link className={cardClassName} href={previous.url} prefetch scroll={false}>
-          <span className={labelClassName}>
-            <ChevronLeft className="size-4" strokeWidth={1.5} />
-            Previous
-          </span>
-          <span className="inline-flex items-center gap-2 font-medium text-text-primary">
-            <SidebarIcon icon={getNavIconForUrl(toNavUrl(previous.url))} />
-            {previous.name}
-          </span>
-        </Link>
+        <PreviousCard page={previous} />
       ) : (
         <div />
       )}
       {next && !navUrlsMatch(next.url, pathname) ? (
-        <Link
-          className={cn(cardClassName, "sm:col-start-2 text-end")}
-          href={next.url}
-          prefetch
-          scroll={false}
-        >
-          <span className={cn(labelClassName, "justify-end")}>
-            Next
-            <ChevronRight className="size-4" strokeWidth={1.5} />
-          </span>
-          <span className="inline-flex items-center justify-end gap-2 font-medium text-text-primary">
-            {next.name}
-            <SidebarIcon icon={getNavIconForUrl(toNavUrl(next.url))} />
-          </span>
-        </Link>
+        <NextCard page={next} />
       ) : null}
     </div>
   );

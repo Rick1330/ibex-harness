@@ -42,7 +42,7 @@ export function FeaturedPost({ post }: FeaturedPostProps) {
         <p className="blog-featured-excerpt">{post.excerpt}</p>
       ) : null}
       <Link href={post.url} className="blog-featured-cta">
-        Read the piece
+        Read the piece{" "}
         <span aria-hidden>→</span>
       </Link>
     </section>

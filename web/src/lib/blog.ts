@@ -35,6 +35,7 @@ export function formatBlogDate(date: string | Date): string {
     year: "numeric",
     month: "short",
     day: "2-digit",
+    timeZone: "UTC",
   });
 }
 
@@ -44,12 +45,13 @@ export function formatBlogDateLong(date: string | Date): string {
     year: "numeric",
     month: "long",
     day: "numeric",
+    timeZone: "UTC",
   });
 }
 
 export function blogYear(date: string | Date): number {
   const value = typeof date === "string" ? new Date(date) : date;
-  return value.getFullYear();
+  return value.getUTCFullYear();
 }
 
 export type BlogIndexItem = {
