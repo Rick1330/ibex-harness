@@ -30,12 +30,10 @@ export function SectionRail() {
       (entries) => {
         const visible = entries
           .filter((entry) => entry.isIntersecting)
-          .sort(
-            (a, b) =>
-              (b.intersectionRatio ?? 0) - (a.intersectionRatio ?? 0),
-          );
-        if (visible[0]?.target?.id) {
-          setActive(visible[0].target.id);
+          .sort((a, b) => b.intersectionRatio - a.intersectionRatio);
+        const top = visible[0]?.target;
+        if (top && top.id) {
+          setActive(top.id);
         }
       },
       {
@@ -45,7 +43,9 @@ export function SectionRail() {
     );
 
     for (const node of nodes) observer.observe(node);
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+    };
   }, []);
 
   return (

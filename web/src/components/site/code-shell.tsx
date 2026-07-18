@@ -47,23 +47,23 @@ function useLineReveal(
   useEffect(() => {
     if (!runAnimation) return;
     let cancelled = false;
-    let timeoutId = 0;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
     const tick = () => {
       setVisible((current) => {
         if (current >= lineCount) return current;
         const next = current + 1;
         if (next < lineCount && !cancelled) {
-          timeoutId = globalThis.setTimeout(tick, 90);
+          timeoutId = setTimeout(tick, 90);
         }
         return next;
       });
     };
 
-    timeoutId = globalThis.setTimeout(tick, 90);
+    timeoutId = setTimeout(tick, 90);
     return () => {
       cancelled = true;
-      globalThis.clearTimeout(timeoutId);
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
     };
   }, [runAnimation, lineCount, replayKey]);
 
@@ -139,7 +139,9 @@ export function CodeShell({
         <button
           type="button"
           className="code-shell-replay"
-          onClick={() => setReplayKey((key) => key + 1)}
+          onClick={() => {
+            setReplayKey((key) => key + 1);
+          }}
           aria-label="Replay shell animation"
         >
           <RotateCcw className="size-3" aria-hidden />

@@ -28,7 +28,7 @@ export function useActiveSection(
               a.boundingClientRect.top - b.boundingClientRect.top,
           );
         const top = visible[0]?.target;
-        if (top?.id) setActive(top.id);
+        if (top && top.id) setActive(top.id);
       },
       { rootMargin, threshold: [0, 0.25, 0.5] },
     );

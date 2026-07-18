@@ -62,6 +62,10 @@ function buildJsonLd(page: BlogPage) {
   };
 }
 
+function serializeJsonLd(data: object): string {
+  return JSON.stringify(data).replaceAll("<", String.raw`\u003c`);
+}
+
 export default async function BlogPostPage(props: BlogPostPageProps) {
   const { slug } = await props.params;
   const page = blogSource.getPage([slug]);
@@ -76,20 +80,12 @@ export default async function BlogPostPage(props: BlogPostPageProps) {
     typeof page.data.readingTime === "string"
       ? page.data.readingTime
       : undefined;
+  const jsonLd = serializeJsonLd(buildJsonLd(page));
 
   return (
     <>
       <ReadingProgress />
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{
-          // Escape `<` so frontmatter cannot terminate the script element.
-          __html: JSON.stringify(buildJsonLd(page)).replaceAll(
-            "<",
-            String.raw`\u003c`,
-          ),
-        }}
-      />
+      <script type="application/ld+json">{jsonLd}</script>
       <div className="blog-page blog-post-page">
         <article className="blog-article">
           <BlogPostHeader
