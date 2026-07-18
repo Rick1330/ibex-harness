@@ -61,7 +61,7 @@ export function Mermaid({ chart, caption, className, id: stableId }: MermaidProp
       data-mermaid-hash={chartHash}
     >
       <div
-        className="mermaid-container relative flex min-h-[200px] items-center justify-center overflow-x-auto rounded-[4px] border border-border bg-[hsl(220_14%_98%)] p-6 dark:bg-[#0d1117]"
+        className="mermaid-container relative flex min-h-[200px] items-center justify-center overflow-x-auto rounded-[4px] border border-border bg-surface-raised p-6"
         data-mermaid
       >
         <div
@@ -69,7 +69,7 @@ export function Mermaid({ chart, caption, className, id: stableId }: MermaidProp
           className="mermaid w-full max-w-full [&_svg]:mx-auto [&_svg]:h-auto [&_svg]:max-w-full"
         />
         {rendering ? (
-          <div className="absolute inset-0 flex items-center justify-center gap-2 bg-[hsl(220_14%_98%)]/90 text-sm text-text-secondary dark:bg-[#0d1117]/90">
+          <div className="absolute inset-0 flex items-center justify-center gap-2 bg-surface-raised/90 text-sm text-foreground-muted">
             <span
               aria-hidden
               className="size-4 animate-spin rounded-full border-2 border-current border-t-transparent"
