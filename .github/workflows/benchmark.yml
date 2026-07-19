@@ -1,8 +1,8 @@
 name: Benchmarks
 
-# PR / daily / main-push: fast profile (lighter k6 + fewer Go samples).
-# Sunday schedule + workflow_dispatch: full profile (current quality bar).
-# Successful main collects notify the benchmark bot so history is daily, not Sunday-only.
+# Profiles: smoke (PRs — lightest), fast (daily cron Mon–Sat + main push),
+# full (Sunday cron + workflow_dispatch). Successful main collects notify the
+# benchmark bot so published history is daily, not Sunday-only.
 on:
   schedule:
     - cron: "0 4 * * *"
