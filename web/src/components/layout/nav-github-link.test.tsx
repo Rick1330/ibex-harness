@@ -36,9 +36,15 @@ describe("NavGithubLink", () => {
     expect(screen.queryByText("GitHub")).toBeNull();
   });
 
-  it("renders the GitHub label when showLabel is set", () => {
+  it("renders a single labeled link with responsive label class", () => {
     render(<NavGithubLink showLabel />);
 
-    expect(screen.getByText("GitHub")).toBeInTheDocument();
+    const label = screen.getByText("GitHub");
+    expect(label).toHaveClass("site-nav-github-label");
+    expect(label).toHaveClass("hidden");
+    expect(label).toHaveClass("sm:inline");
+    expect(screen.getAllByRole("link", { name: "GitHub repository" })).toHaveLength(
+      1,
+    );
   });
 });
