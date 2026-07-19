@@ -1617,7 +1617,7 @@ header[data-site-nav] .site-nav-actions {
   flex-wrap: nowrap;
 }
 
-/* GitHub nav CTA — pill shape + primary fill */
+/* GitHub nav CTA — one pill; icon-only below sm, labeled from sm up */
 header[data-site-nav] .site-nav-github-link,
 header[data-site-nav] a[data-site-nav-github] {
   display: inline-flex !important;
@@ -1628,6 +1628,31 @@ header[data-site-nav] a[data-site-nav-github] {
   border: none !important;
   border-radius: 999px !important;
   min-height: 2.25rem !important;
+}
+
+@media (max-width: 639px) {
+  header[data-site-nav] .site-nav-github-link,
+  header[data-site-nav] a[data-site-nav-github] {
+    width: 2.25rem !important;
+    min-width: 2.25rem !important;
+    padding-inline: 0 !important;
+  }
+
+  header[data-site-nav] .site-nav-github-label {
+    display: none !important;
+  }
+}
+
+@media (min-width: 640px) {
+  header[data-site-nav] .site-nav-github-link,
+  header[data-site-nav] a[data-site-nav-github] {
+    width: auto !important;
+    padding-inline: 1rem !important;
+  }
+
+  header[data-site-nav] .site-nav-github-label {
+    display: inline !important;
+  }
 }
 
 @media (min-width: 768px) {

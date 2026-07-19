@@ -21,16 +21,14 @@ while IFS= read -r sha; do
   fi
   author_email="$(git log -1 --format='%ae' "$sha")"
   author_name="$(git log -1 --format='%an' "$sha")"
-  # Automation commits (release bot, dependabot, benchmark publisher) are exempt.
-  case "$author_email" in
-    *@users.noreply.github.com)
-      if [[ "$author_name" == "github-actions[bot]" \
-         || "$author_name" == "dependabot[bot]" \
-         || "$author_name" == "ibex-harness-benchmark[bot]" ]]; then
-        continue
-      fi
+  # Only known automation identities are exempt. Author fields are spoofable, so
+  # do not treat every "*[bot]" noreply commit as trusted automation.
+  case "$author_name" in
+    "github-actions[bot]" | "dependabot[bot]" | "ibex-harness-benchmark[bot]")
+      case "$author_email" in
+        *@users.noreply.github.com) continue ;;
+      esac
       ;;
-    *) ;;
   esac
   if ! git log -1 --format='%B' "$sha" | grep -qiE '^Signed-off-by:'; then
     echo "Missing Signed-off-by on commit ${sha:0:7} ($author_name <$author_email>)"

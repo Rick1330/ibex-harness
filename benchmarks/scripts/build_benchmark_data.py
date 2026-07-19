@@ -304,6 +304,14 @@ def build_runner_metadata(latest: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def resolve_bench_profile(latest: dict[str, Any]) -> str:
+    raw = latest.get("profile") or os.environ.get("BENCH_PROFILE") or "full"
+    profile = str(raw).strip().lower()
+    if profile in ("smoke", "fast", "full"):
+        return profile
+    return "full"
+
+
 def build_run_identity(
     latest: dict[str, Any],
     gate: dict[str, Any],
@@ -320,6 +328,7 @@ def build_run_identity(
         "status": str(gate.get("status") or "unknown"),
         "regression_vs_baseline_pct": gate.get("regression_pct"),
         "baseline_sha": baseline_sha or None,
+        "profile": resolve_bench_profile(latest),
     }
 
 

@@ -19,6 +19,7 @@ MAX_P99_MS = 500.0
 MAX_RUN_NUMBER = 1_000_000
 BENCHMARK_DATA_NAME = "benchmark-data.json"
 VALID_STATUSES = frozenset({"pass", "regression", "fail", "unknown"})
+VALID_PROFILES = frozenset({"smoke", "fast", "full"})
 _SHA_RE = re.compile(r"^[0-9a-f]{7,40}$", re.IGNORECASE)
 
 
@@ -131,6 +132,11 @@ def validate_run(run: Any, index: int) -> None:
     status = require_string(data.get("status"), f"{label}.status")
     if status not in VALID_STATUSES:
         fail(f"{label}.status invalid: {status}")
+    profile = data.get("profile")
+    if profile is not None:
+        profile_text = require_string(profile, f"{label}.profile")
+        if profile_text not in VALID_PROFILES:
+            fail(f"{label}.profile invalid: {profile_text}")
     pr_number = data.get("pr_number")
     if pr_number is not None and not isinstance(pr_number, int):
         fail(f"{label}.pr_number must be an integer or null")

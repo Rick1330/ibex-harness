@@ -1,8 +1,11 @@
 package gobench
 
 import (
+	"context"
 	"strings"
 	"testing"
+
+	"github.com/google/uuid"
 )
 
 func TestStageAuthProducesStablePrefix(t *testing.T) {
@@ -15,11 +18,15 @@ func TestStageAuthProducesStablePrefix(t *testing.T) {
 	}
 }
 
-func TestStageRateLimitScalesWithKeyMaterial(t *testing.T) {
-	short := stageRateLimit("ab")
-	long := stageRateLimit(strings.Repeat("x", 32))
-	if long <= short {
-		t.Fatalf("rate limit score short=%d long=%d", short, long)
+func TestStageRateLimitAllowsUnderCap(t *testing.T) {
+	limiter, cleanup := newTestRateLimiter(t)
+	defer cleanup()
+	res, err := limiter.Check(context.Background(), benchOrgID, uuid.Nil)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if !res.Allowed {
+		t.Fatal("expected rate limit allow under high RPM cap")
 	}
 }
 
@@ -38,10 +45,16 @@ func TestStagePromptInjectWrapsInput(t *testing.T) {
 }
 
 func TestBenchmarkProxyOverheadAllocates(t *testing.T) {
+	limiter, cleanup := newTestRateLimiter(t)
+	defer cleanup()
+	ctx := context.Background()
+
 	allocs := testing.AllocsPerRun(1, func() {
-		token := stageAuth()
-		limit := stageRateLimit(token)
-		dir := stageDirectiveResolve(limit)
+		_ = stageAuth()
+		if _, err := limiter.Check(ctx, benchOrgID, uuid.Nil); err != nil {
+			t.Fatalf("rate limit check: %v", err)
+		}
+		dir := stageDirectiveResolve(1)
 		_ = stagePromptInject(dir)
 	})
 	if allocs == 0 {

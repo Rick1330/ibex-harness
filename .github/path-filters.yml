@@ -8,6 +8,7 @@ go:
   - '.golangci.yml'
 web:
   - 'web/**'
+  - 'CHANGELOG.md'
   - 'package.json'
   - '.npmrc'
   - 'pnpm-lock.yaml'

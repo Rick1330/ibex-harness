@@ -17,12 +17,11 @@ export function SiteNavActions({
   onToggleMobile,
 }: SiteNavActionsProps) {
   return (
-    <div className="site-nav-actions flex shrink-0 items-center gap-3">
+    <div className="site-nav-actions flex shrink-0 items-center gap-2 sm:gap-3">
       <NavSearch variant="icon" className="lg:hidden" />
       <NavSearch variant="compact" className="hidden lg:inline-flex" />
       <ThemeToggle />
-      <NavGithubLink showLabel className="hidden sm:inline-flex" />
-      <NavGithubLink className="inline-flex sm:hidden" />
+      <NavGithubLink showLabel />
       <button
         type="button"
         className="flex size-8 items-center justify-center rounded-sm border border-border text-foreground-muted transition-colors hover:bg-surface hover:text-foreground md:hidden"

@@ -45,6 +45,7 @@ Configured in `version-release.config.json` and `.version-release-manifest.json`
 - Version tags follow **Semantic Versioning**: `vMAJOR.MINOR.PATCH`.
 - The canonical changelog lives at **`CHANGELOG.md`** (repository root) and is updated as part of a release PR.
 - The public changelog at [ibexharness.com/releases](https://ibexharness.com/releases) is generated from root `CHANGELOG.md` at web build time. The site shows **curated highlights** per release (scoped badges, issue links, collapsible full lists). The complete machine-readable history remains on GitHub Releases and in `CHANGELOG.md`.
+- Root `CHANGELOG.md` is included in the CI `web` path filter so merging a release PR always runs `web-build` / `web-deploy` (otherwise `/releases` would stay stale).
 
 ## Normal release flow
 
