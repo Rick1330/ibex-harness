@@ -21,12 +21,17 @@ author_login="$(echo "$pr_json" | jq -r '.author.login')"
 head_ref="$(echo "$pr_json" | jq -r '.headRefName')"
 body="$(echo "$pr_json" | jq -r '.body // ""' | tr -d '\r')"
 
-if [[ "$author_login" == "dependabot[bot]" || "$author_login" == "github-actions[bot]" ]]; then
+if [[ "$author_login" == "dependabot[bot]" \
+   || "$author_login" == "github-actions[bot]" \
+   || "$author_login" == "ibex-harness-benchmark[bot]" \
+   || "$author_login" == "app/ibex-harness-benchmark" ]]; then
   echo "PR tracking check skipped for bot author: $author_login"
   exit 0
 fi
 
-if [[ "$head_ref" == release-please--* || "$head_ref" == dependabot/* ]]; then
+if [[ "$head_ref" == release-please--* \
+   || "$head_ref" == dependabot/* \
+   || "$head_ref" == chore/bench-data-* ]]; then
   echo "PR tracking check skipped for automation branch: $head_ref"
   exit 0
 fi

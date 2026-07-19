@@ -202,6 +202,7 @@ jobs:
             -v "$PWD:/work" -w /work \
             -e BASE_URL="http://127.0.0.1:${BENCH_PROXY_PORT}" \
             -e K6_HEALTH_PATH=/health \
+            -e K6_USE_CHAT=0 \
             grafana/k6:0.53.0 \
             run benchmarks/k6/proxy_load.js \
             --summary-trend-stats="med,p(90),p(95),p(99),p(99.9),min,max" \
