@@ -100,10 +100,12 @@ The benchmark reports per-stage latency as Prometheus histograms:
 
 ## Acceptance Criteria
 
-- [ ] Benchmark runs with a mock provider (no real OpenAI calls)
+- [ ] **Hard prerequisite:** Synthetic stages in `benchmarks/go/proxy_overhead_test.go` are replaced with real package calls (`authcache`, `ratelimit`, directive resolve, prompt inject) before this gate is green — placeholder crypto/string stages do **not** count
+- [ ] Benchmark runs with a mock provider (no real OpenAI calls) through the **full** middleware chain
+- [ ] k6 defaults to `GET /health` (CI today); `K6_USE_CHAT=1` opts into `POST /v1/chat/completions` for the Phase 2 middleware-complete gate
 - [ ] p99 proxy overhead < 20ms at 100 concurrent requests
 - [ ] Stage breakdown metrics exported and visible
-- [ ] Regression baseline committed to `benchmarks/BASELINE.md`
+- [ ] Regression baseline committed: pin `target_commit` / `baseline_sha` in `benchmarks/data-schema/baseline.json` after the first **real** (non-synthetic) run
 - [ ] CI fails if p99 exceeds baseline by more than 20%
 - [ ] ADR-0034 written defining "proxy overhead" precisely
 

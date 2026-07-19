@@ -4,6 +4,7 @@
     "overview",
     "current-state",
     "findings",
+    "ROADMAP_CONVENTIONS",
     "reference",
     "phase-0-foundation",
     "phase-1-core-platform",
@@ -11,6 +12,7 @@
     "phase-2-single-provider",
     "phase-3-memory-engine",
     "phase-4-multi-provider",
-    "phase-5-production-hardening"
+    "phase-5-production-hardening",
+    "phase-6-intelligence-monetization"
   ]
 }

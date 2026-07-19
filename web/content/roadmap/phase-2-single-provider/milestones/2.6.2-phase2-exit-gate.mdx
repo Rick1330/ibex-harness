@@ -56,8 +56,13 @@ All of the following must be true before this milestone is marked complete:
 - [ ] Cross-tenant agent access rejected in all test cases
 
 **Performance:**
-- [ ] p99 proxy overhead < 20ms at 100 concurrent requests (benchmark milestone 2.6.1 green)
+- [ ] p99 proxy overhead < 20ms at 100 concurrent requests — **requires 2.6.1 with real (non-synthetic) package-wired benchmarks**, not placeholder stages
+- [ ] Streaming load-test line present and green (SSE / streaming chat path under k6 or equivalent; documents p99 and error rate separately from non-streaming)
 - [ ] Auth LRU cache hit rate > 90% under sustained load
+
+**Phase 2 applicable exit items:**
+- [ ] [2.1.6 Idempotency key](/roadmap/phase-2-single-provider/milestones/2.1.6-idempotency-key) complete (or explicitly waived with findings entry)
+- [ ] [2.4.4 Session idle-timeout sweeper](/roadmap/phase-2-single-provider/milestones/2.4.4-session-idle-timeout-sweeper) complete — required so Phase 3 extraction is not starved
 
 **Operations:**
 - [ ] `make e2e-smoke` exits 0 with `OPENAI_API_KEY` set
@@ -120,6 +125,8 @@ echo "=== Phase 2 E2E Smoke: PASSED ==="
 
 - [ ] `make e2e-smoke` exits 0 with a real OpenAI API key
 - [ ] Phase 2 exit checklist above is fully signed off
+- [ ] Streaming load-test line signed off (see Performance checklist)
+- [ ] 2.6.1 real (non-synthetic) benchmarks green; 2.1.6 and 2.4.4 checked as applicable exit items
 - [ ] `CURRENT_STATE.md` updated with Phase 2 completion summary
 - [ ] GitHub release tag `v0.2.0` created after this milestone merges
 

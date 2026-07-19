@@ -56,7 +56,27 @@ Proxy → Client: X-IBEX-Session-ID: <uuid> (always; the session UUID for this t
 5. [Async, after response] Update session stats
 ```
 
-The async post-response processing is done in a goroutine launched after the response writer is closed. It has its own context with a 5-second deadline (not the request context, which is cancelled when the response is sent).
+The async post-response processing uses a **service-owned context** (not the
+HTTP request context) with a **bounded worker pool** tracked by `sync.WaitGroup`.
+Each task gets its own 5-second deadline. Startup registers the pool with
+`packages/shutdown`; shutdown **drains queued tasks** (does not cancel in-flight
+work mid-write) then waits for the WaitGroup.
+
+### Backpressure (required)
+
+Unbounded post-response goroutines will OOM under load. Bound async work:
+
+- **Checkpoints (required):** fixed-concurrency worker pool **or** a non-dropping
+  durable queue / outbox. Checkpoint tasks must not be silently discarded; if the
+  queue is full, apply backpressure to the submitter or spill to durable outbox
+  and recover when capacity returns. Expired (5s) or processing errors must be
+  logged/metrics-reported — never swallowed without a signal.
+- **Telemetry / traces (advisory):** may use a fixed-capacity drop-oldest queue;
+  only non-critical telemetry may be dropped when full.
+- Emit metrics via `packages/metrics`:
+  - `ibex_proxy_async_queue_depth` — current queue depth (checkpoints + telemetry)
+  - `ibex_proxy_async_dropped_total` — tasks dropped when a *telemetry* queue is full
+    (checkpoint drops must be zero under the durable-queue contract)
 
 ---
 
@@ -68,5 +88,6 @@ The async post-response processing is done in a goroutine launched after the res
 - [ ] Session created automatically when `X-IBEX-Session-ID` absent from request
 - [ ] Session reused when `X-IBEX-Session-ID` matches existing session in same org/agent
 - [ ] Cross-org session ID reuse is impossible (session lookup always includes org_id)
+- [ ] Post-response work is bounded (service-owned pool + WaitGroup; drain on shutdown); checkpoints use durable/non-dropping path; metrics `ibex_proxy_async_queue_depth` and `ibex_proxy_async_dropped_total` registered via `packages/metrics`
 
 ---

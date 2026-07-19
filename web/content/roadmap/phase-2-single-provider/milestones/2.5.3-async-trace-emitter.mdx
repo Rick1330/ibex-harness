@@ -54,12 +54,14 @@ func assembleTrace(
 ) clickhouse.TraceRecord
 ```
 
-### Post-response goroutine
+### Post-response async (bounded)
 
 ```go
-// After response is written to client:
-go func() {
-    postCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+// After response is written to client — submit to bounded pool/queue (see Backpressure).
+// Do NOT spawn unbounded go func() per request.
+// WithoutCancel keeps request-scoped logger/trace values; timeout detaches cancel.
+asyncPool.Submit(func() {
+    postCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
     defer cancel()
 
     // 1. Append checkpoint (from 2.4.3)
@@ -73,8 +75,15 @@ go func() {
         log.WarnCtx(postCtx, "trace emit failed", "error", err)
         // Both failures are advisory; the LLM response was already sent successfully
     }
-}()
+})
 ```
+
+### Backpressure (required)
+
+Same contract as [2.4.3](/roadmap/phase-2-single-provider/milestones/2.4.3-proxy-session-lifecycle): bound post-response work with a worker pool or drop-oldest queue. Register via `packages/metrics`:
+
+- `ibex_proxy_async_queue_depth`
+- `ibex_proxy_async_dropped_total`
 
 ---
 
@@ -85,5 +94,6 @@ go func() {
 - [ ] Trace write failure does NOT affect LLM response (logged at WARN, not propagated)
 - [ ] No LLM content (prompt, completion text) in trace record
 - [ ] `proxy_overhead_ms` (total_latency_ms) in trace matches measured proxy overhead
+- [ ] Async emission uses bounded pool/queue; `ibex_proxy_async_queue_depth` and `ibex_proxy_async_dropped_total` metrics present
 
 ---

@@ -138,6 +138,24 @@ func seedProxySamples(reg *ProxyRegistry) {
 	reg.IncRateLimitAllowed()
 	reg.IncProviderRequest("openai", "2xx")
 	reg.IncProviderRetry("openai")
+	reg.SetAsyncQueueDepth(1)
+	reg.IncAsyncDropped()
+}
+
+func TestProxyRegistry_AsyncBackpressureMetricsRegistered(t *testing.T) {
+	t.Parallel()
+	reg := NewProxy("test-proxy")
+	reg.SetAsyncQueueDepth(2)
+	reg.IncAsyncDropped()
+	names := gatherMetricNames(t, reg.Gatherer())
+	for _, name := range []string{
+		"ibex_proxy_async_queue_depth",
+		"ibex_proxy_async_dropped_total",
+	} {
+		if _, ok := names[name]; !ok {
+			t.Fatalf("missing required metric %q", name)
+		}
+	}
 }
 
 func seedAuthSamples(reg *AuthRegistry) {

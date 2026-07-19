@@ -120,12 +120,23 @@ func (s *Subscriber) Run(ctx context.Context) {
 
 ---
 
+## Reconnect window (SLA vs LRU TTL)
+
+Steady-state path: revoke → Redis pub/sub → `Invalidate` ≈ **1s** (AC), well under the **5s** exit SLA.
+
+**Gap:** LRU max TTL is **30s**. If a proxy instance is disconnected from Redis (restart, network blip) and misses revocation messages, a revoked token may remain in that instance's LRU until TTL expiry — up to 30s. This is documented in **[ADR-0029](/docs/adr/0029-token-revocation-propagation)** and accepted for Phase 2.
+
+**Optional follow-up (not blocking 2.2.2):** On subscriber reconnect, fetch the full recent revocation set and bulk-invalidate (see ADR-0029).
+
+---
+
 ## Acceptance Criteria
 
 - [ ] Token revoked via `RevokeToken` gRPC → pub/sub event published within 100ms
 - [ ] All proxy instances subscribed to channel receive the event within 500ms
-- [ ] LRU entry invalidated within 1 second of revocation (end-to-end SLA)
+- [ ] LRU entry invalidated within 1 second of revocation (end-to-end SLA) under healthy pub/sub
 - [ ] Redis pub/sub failure does not fail `RevokeToken` (Postgres write is durable)
 - [ ] Subscriber goroutine terminates cleanly on SIGTERM (via `packages/shutdown`)
+- [ ] Reconnect window / 30s TTL gap documented (ADR-0029); test notes missed events fall back to TTL
 
 ---

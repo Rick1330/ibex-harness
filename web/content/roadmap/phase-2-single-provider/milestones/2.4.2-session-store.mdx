@@ -91,6 +91,10 @@ type CheckpointParams struct {
 func (s *SessionStore) Complete(ctx context.Context, sessionID, orgID uuid.UUID) error
 ```
 
+<Callout type="warn" title="Hard dependency — idle timeout is not optional">
+  Client-driven `Complete()` (via `X-IBEX-Session-End`) is insufficient for production: most clients never send end-of-session. The **idle-timeout abandoned path is mandatory** and is implemented by [milestone 2.4.4](/roadmap/phase-2-single-provider/milestones/2.4.4-session-idle-timeout-sweeper) — not an optional follow-up. `Complete()` may mark `status = 'completed'`; the sweeper marks idle sessions `status = 'abandoned'`. Phase 3 extraction treats both as eligible.
+</Callout>
+
 ---
 
 ## Acceptance Criteria
@@ -100,5 +104,6 @@ func (s *SessionStore) Complete(ctx context.Context, sessionID, orgID uuid.UUID)
 - [ ] `UNIQUE(session_id, turn_index)` prevents duplicate turns (tested)
 - [ ] All functions accept and propagate context (deadline, cancellation)
 - [ ] Integration tests with real Postgres via testcontainers
+- [ ] Idle-timeout / abandoned path documented as owned by [2.4.4](/roadmap/phase-2-single-provider/milestones/2.4.4-session-idle-timeout-sweeper) (hard dependency; not deferred)
 
 ---
