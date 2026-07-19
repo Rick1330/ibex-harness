@@ -1,0 +1,55 @@
+---
+title: "2.1.6 Idempotency-Key for provider retries"
+description: "Optional Idempotency-Key header with Redis dedupe so client retries after proxy-forwarded timeouts do not double-bill upstream completions."
+summary: "Client-supplied Idempotency-Key stored as idempotency:{org_id}:{key} in Redis with TTL; duplicate requests replay the first completion outcome."
+status: "planned"
+milestoneId: "2.1.6"
+goal: "[2.1 — Provider path](/roadmap/phase-2-single-provider/goals#goal-21-openai-compatible-proxy-path)"
+estimatedEffort: "2 days"
+phase: "phase-2-single-provider"
+fullTitle: "Milestone 2.1.6 — Idempotency-Key for Provider Retries"
+---
+
+# Milestone 2.1.6 — Idempotency-Key for Provider Retries
+
+**Status:** Planned  
+**Goal:** [2.1 — OpenAI-compatible proxy path](/roadmap/phase-2-single-provider/goals)  
+**Phase:** 2 — Single Provider End-to-End  
+**Estimated effort:** 2 days  
+**Depends on:** [2.1.5](/roadmap/phase-2-single-provider/milestones/2.1.5-provider-error-mapping)
+
+---
+
+## Why This Milestone Exists
+
+Milestone 2.1.5 names *double-retry storms (proxy + client)* as a Medium risk and mitigates it only with documentation. If a client times out after the proxy has already started an upstream completion, a naive retry creates a second billed request. Stripe and OpenAI solve this with `Idempotency-Key`.
+
+---
+
+## Deliverables
+
+- Optional request header `Idempotency-Key` (opaque string, max length documented).
+- Redis key: `idempotency:{org_id}:{key}` (org from verified token — never from body).
+- TTL window (e.g. 24h) storing first response fingerprint / status for replay or in-flight lock.
+- Streaming: document that idempotency applies to non-streaming first; streaming follow-up if needed.
+- API docs + OpenAPI note.
+
+---
+
+## Acceptance Criteria
+
+- [ ] Duplicate `Idempotency-Key` within TTL does not create a second upstream completion (integration test)
+- [ ] Missing header preserves current behavior
+- [ ] Cross-org key collision impossible (org_id in Redis key)
+- [ ] Metrics: hit / miss / conflict counters with bounded labels
+- [ ] Documented in API docs and `.env.example` (TTL env if configurable)
+
+---
+
+## Branch
+
+`feature/m2-1-6-idempotency-key`
+
+## PR Title
+
+`feat(proxy): Idempotency-Key Redis dedupe for provider retries (m2.1.6)`

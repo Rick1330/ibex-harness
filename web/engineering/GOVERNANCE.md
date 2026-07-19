@@ -61,6 +61,8 @@ Today the project has a **single human maintainer**. To reduce lockout risk if t
 4. **OpenSSF badge:** Project ownership on bestpractices.dev stays with the project lead; transfer via BadgeApp permissions when a co-maintainer joins.
 5. **Bus factor:** Pre-1.0, the intentional bus factor is 1. Team mode (≥1 required PR approval) is defined in ADR-0003 and will be enabled when a second maintainer is onboarded.
 
+**Roadmap duration banners:** Phase pages may show "N weeks" estimates. Under solo maintenance those banners are **planning guidance only** — not load-bearing calendar commitments. Actual calendar time is closer to the sum of `estimatedEffort` on milestone pages when work is sequential. See [Phases overview](/roadmap/overview) and [Findings](/roadmap/findings) (2026-07-19 duration honesty).
+
 ---
 
 ## 4) Public discussion and contribution

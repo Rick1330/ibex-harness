@@ -70,6 +70,7 @@ case "${1:-help}" in
     bash .github/scripts/check-landing-assets.sh
     bash .github/scripts/check-static-export.sh
     bash .github/scripts/validate-action-pins.sh
+    python3 infra/scripts/check_roadmap_status.py
     ;;
   proto-lint)
     require_tool buf "buf is required for proto-lint. Install Buf CLI: https://buf.build/docs/installation"

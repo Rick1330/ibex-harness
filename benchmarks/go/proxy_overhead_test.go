@@ -1,5 +1,27 @@
 package gobench
 
+// Package gobench — proxy overhead stage microbenchmarks.
+//
+// PLACEHOLDER NOTICE (milestone 2.6.1):
+// The stage* helpers below are SYNTHETIC stand-ins (hash / string work). They do
+// NOT exercise real IBEX packages. The Phase 2 latency gate is green only after
+// these are replaced with real calls. Do not implement full wiring here until
+// the packages below exist and are importable from benchmarks/; until then keep
+// this TODO matrix and leave placeholders.
+//
+// TODO matrix (replace synthetic stages → real packages):
+//
+//	| Synthetic          | Replace with                                      | Package / path              |
+//	|--------------------|---------------------------------------------------|-----------------------------|
+//	| stageAuth          | Auth cache hit path (LRU)                         | packages/authcache (2.2.1)  |
+//	| stageRateLimit     | Limiter.Check                                     | packages/ratelimit          |
+//	| stageDirectiveResolve | Directive resolve (Redis cache hit)            | proxy directive package     |
+//	| stagePromptInject  | System-prompt / messages inject                   | proxy prompt inject (2.3.x) |
+//	| BenchmarkProxyOverhead | Compose real stages + mock provider          | services/proxy + mock       |
+//
+// Also: k6 must hit POST /v1/chat/completions (full middleware), not /health.
+// Pin baseline.json target_commit/baseline_sha only after a real 2.6.1 run.
+
 import (
 	"crypto/sha256"
 	"encoding/hex"

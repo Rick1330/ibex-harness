@@ -56,7 +56,16 @@ Proxy → Client: X-IBEX-Session-ID: <uuid> (always; the session UUID for this t
 5. [Async, after response] Update session stats
 ```
 
-The async post-response processing is done in a goroutine launched after the response writer is closed. It has its own context with a 5-second deadline (not the request context, which is cancelled when the response is sent).
+The async post-response processing is done via a **bounded worker pool or drop-oldest queue** (not unbounded `go func()` per request). It has its own context with a 5-second deadline (not the request context, which is cancelled when the response is sent).
+
+### Backpressure (required)
+
+Unbounded post-response goroutines will OOM under load. Bound async work:
+
+- Worker pool with fixed concurrency **or** a fixed-capacity drop-oldest queue
+- Emit metrics via `packages/metrics`:
+  - `ibex_proxy_async_queue_depth` — current queue depth
+  - `ibex_proxy_async_dropped_total` — tasks dropped when the queue is full
 
 ---
 
@@ -68,5 +77,6 @@ The async post-response processing is done in a goroutine launched after the res
 - [ ] Session created automatically when `X-IBEX-Session-ID` absent from request
 - [ ] Session reused when `X-IBEX-Session-ID` matches existing session in same org/agent
 - [ ] Cross-org session ID reuse is impossible (session lookup always includes org_id)
+- [ ] Post-response work is bounded (worker pool or drop-oldest queue); metrics `ibex_proxy_async_queue_depth` and `ibex_proxy_async_dropped_total` registered via `packages/metrics`
 
 ---

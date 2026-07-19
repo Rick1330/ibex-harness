@@ -1,5 +1,6 @@
 {
   "version": 1,
+  "notes": "Pin target_commit/baseline_sha after first real 2.6.1 run; synthetic stages do not count.",
   "baseline": {
     "target_commit": "unset",
     "baseline_sha": "unset",

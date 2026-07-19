@@ -24,6 +24,10 @@
     "0021-prometheus-metric-catalog",
     "0022-health-check-contract",
     "0023-docs-site-architecture",
-    "0024-benchmark-data-publishing-model"
+    "0024-benchmark-data-publishing-model",
+    "0025-llm-provider-abstraction",
+    "0026-openai-client-design",
+    "0029-token-revocation-propagation",
+    "0038-context-assembly-service"
   ]
 }

@@ -1,0 +1,32 @@
+---
+title: "Roadmap conventions"
+description: "Closed status enum for milestone and phase frontmatter; how to validate with the repo guard script."
+---
+
+# Roadmap conventions
+
+## Frontmatter `status` enum (closed)
+
+Every roadmap MDX page that declares `status` in YAML frontmatter **must** use one of:
+
+| Value | Meaning |
+| --- | --- |
+| `completed` | Work merged and accepted (exit audits / PRs) |
+| `planned` | Specified; not started |
+| `in-progress` | Active implementation branch |
+| `superseded` | Replaced by another milestone or ADR; keep for history |
+
+Do **not** invent values such as `Complete`, `done`, `wip`, or `deferred` in the `status` field. Human-readable badges in the body may say "Complete" while frontmatter stays `completed`.
+
+## Validation
+
+```bash
+python infra/scripts/check_roadmap_status.py
+```
+
+Wired into `make repo-guards` (via `infra/scripts/dev-tool.sh`). The script scans `web/content/roadmap/**/*.mdx` for frontmatter `status:` and exits non-zero on unknown values. Pages without a `status` key are skipped.
+
+## Related
+
+- [Findings](/roadmap/findings) — plan pivots
+- [Benchmarking roadmap](/roadmap/reference/benchmarking-roadmap)
