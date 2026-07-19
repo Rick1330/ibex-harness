@@ -1617,6 +1617,29 @@ header[data-site-nav] .site-nav-actions {
   flex-wrap: nowrap;
 }
 
+/*
+ * Theme toggle visibility — same cascade trap as .landing-section-rail.
+ * fumadocs-ui ships unlayered `.hidden { display: none }` after Tailwind
+ * utilities, so `hidden md:inline-flex` never shows the desktop control.
+ */
+header[data-site-nav] [data-theme-toggle="compact"] {
+  display: inline-flex;
+}
+
+header[data-site-nav] [data-theme-toggle="segmented"] {
+  display: none;
+}
+
+@media (min-width: 768px) {
+  header[data-site-nav] [data-theme-toggle="compact"] {
+    display: none;
+  }
+
+  header[data-site-nav] [data-theme-toggle="segmented"] {
+    display: inline-flex;
+  }
+}
+
 /* GitHub nav CTA — one pill; icon-only below sm, labeled from sm up */
 header[data-site-nav] .site-nav-github-link,
 header[data-site-nav] a[data-site-nav-github] {
