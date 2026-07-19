@@ -1,8 +1,11 @@
 package gobench
 
 import (
+	"context"
 	"strings"
 	"testing"
+
+	"github.com/google/uuid"
 )
 
 func TestStageAuthProducesStablePrefix(t *testing.T) {
@@ -15,11 +18,16 @@ func TestStageAuthProducesStablePrefix(t *testing.T) {
 	}
 }
 
-func TestStageRateLimitScalesWithKeyMaterial(t *testing.T) {
-	short := stageRateLimit("ab")
-	long := stageRateLimit(strings.Repeat("x", 32))
-	if long <= short {
-		t.Fatalf("rate limit score short=%d long=%d", short, long)
+func TestStageRateLimitAllowsUnderCap(t *testing.T) {
+	limiter, cleanup := newTestRateLimiter(t)
+	defer cleanup()
+	orgID := uuid.MustParse("550e8400-e29b-41d4-a716-446655440000")
+	res, err := limiter.Check(context.Background(), orgID, uuid.Nil)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if !res.Allowed {
+		t.Fatal("expected rate limit allow under high RPM cap")
 	}
 }
 
@@ -38,10 +46,17 @@ func TestStagePromptInjectWrapsInput(t *testing.T) {
 }
 
 func TestBenchmarkProxyOverheadAllocates(t *testing.T) {
+	limiter, cleanup := newTestRateLimiter(t)
+	defer cleanup()
+	orgID := uuid.MustParse("550e8400-e29b-41d4-a716-446655440000")
+	ctx := context.Background()
+
 	allocs := testing.AllocsPerRun(1, func() {
-		token := stageAuth()
-		limit := stageRateLimit(token)
-		dir := stageDirectiveResolve(limit)
+		_ = stageAuth()
+		if _, err := limiter.Check(ctx, orgID, uuid.Nil); err != nil {
+			t.Fatalf("rate limit check: %v", err)
+		}
+		dir := stageDirectiveResolve(1)
 		_ = stagePromptInject(dir)
 	})
 	if allocs == 0 {

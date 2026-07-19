@@ -1,10 +1,11 @@
 name: Benchmarks
 
-# PR benchmark runs: path-gated on pull_request (proxy/auth/benchmarks only).
-# Weekly Sunday cron or manual workflow_dispatch always run the full pipeline.
+# PR / daily / main-push: fast profile (lighter k6 + fewer Go samples).
+# Sunday schedule + workflow_dispatch: full profile (current quality bar).
+# Successful main collects notify the benchmark bot so history is daily, not Sunday-only.
 on:
   schedule:
-    - cron: "0 4 * * 0"
+    - cron: "0 4 * * *"
   workflow_dispatch:
   pull_request:
     paths:
@@ -41,8 +42,9 @@ jobs:
     permissions:
       contents: read
     outputs:
-      # PRs: only when proxy/auth or benchmark paths change (skip docs-only PRs).
-      run_benchmarks: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && (steps.detect.outputs.benchmarks == 'true' || steps.detect.outputs.go == 'true')) || (github.event_name == 'push' && steps.detect.outputs.benchmarks == 'true') }}
+      # PRs and main pushes: proxy/auth/packages/benchmarks (skip docs-only).
+      run_benchmarks: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && (steps.detect.outputs.benchmarks == 'true' || steps.detect.outputs.go == 'true')) || (github.event_name == 'push' && (steps.detect.outputs.benchmarks == 'true' || steps.detect.outputs.go == 'true')) }}
+      bench_profile: ${{ steps.profile.outputs.bench_profile }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -53,6 +55,22 @@ jobs:
         uses: ./.github/actions/detect-changes
         with:
           fetch-depth: ${{ (github.event_name == 'push' || github.event_name == 'pull_request') && '2' || '0' }}
+      - id: profile
+        name: Resolve bench profile
+        run: |
+          set -euo pipefail
+          profile="fast"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            profile="full"
+          elif [ "${{ github.event_name }}" = "schedule" ]; then
+            # cron runs at 04:00 UTC daily; Sunday → full, other days → fast
+            dow="$(date -u +%u)" # 1=Mon … 7=Sun
+            if [ "$dow" = "7" ]; then
+              profile="full"
+            fi
+          fi
+          echo "bench_profile=$profile" >> "$GITHUB_OUTPUT"
+          echo "Resolved BENCH_PROFILE=$profile"
 
   verify-benchmark-pipeline:
     name: verify-benchmark-pipeline
@@ -96,7 +114,7 @@ jobs:
 
   collect-proxy-benchmarks:
     name: collect-proxy-benchmarks
-    needs: verify-benchmark-pipeline
+    needs: [verify-benchmark-pipeline, detect-benchmark-trigger]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -107,6 +125,7 @@ jobs:
       BENCH_PROXY_PORT: "18082"
       POSTGRES_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
       REDIS_URL: redis://127.0.0.1:6379/0
+      BENCH_PROFILE: ${{ needs.detect-benchmark-trigger.outputs.bench_profile }}
     services:
       postgres:
         image: postgres:16
@@ -151,12 +170,33 @@ jobs:
 
       - uses: ./.github/actions/setup-buf
 
+      - name: Resolve profile knobs
+        id: knobs
+        run: |
+          set -euo pipefail
+          profile="${{ needs.detect-benchmark-trigger.outputs.bench_profile }}"
+          if [ -z "$profile" ]; then
+            profile="fast"
+          fi
+          if [ "$profile" = "full" ]; then
+            echo "go_count=5" >> "$GITHUB_OUTPUT"
+            echo "k6_vus=100" >> "$GITHUB_OUTPUT"
+            echo "k6_duration=2m" >> "$GITHUB_OUTPUT"
+          else
+            echo "go_count=2" >> "$GITHUB_OUTPUT"
+            echo "k6_vus=25" >> "$GITHUB_OUTPUT"
+            echo "k6_duration=30s" >> "$GITHUB_OUTPUT"
+          fi
+          echo "profile=$profile" >> "$GITHUB_OUTPUT"
+          echo "BENCH_PROFILE=$profile" >> "$GITHUB_ENV"
+          echo "Using BENCH_PROFILE=$profile"
+
       - name: Record overlap policy
         run: |
-          cat <<'EOF' >> "$GITHUB_STEP_SUMMARY"
-          ## Concurrency policy
-          - This workflow uses `cancel-in-progress: true` to avoid benchmark noise from overlapping runs.
-          - If another run for this ref starts, the older run is canceled by design.
+          cat <<EOF >> "$GITHUB_STEP_SUMMARY"
+          ## Concurrency / profile
+          - Profile: \`${{ steps.knobs.outputs.profile }}\` (Go count=${{ steps.knobs.outputs.go_count }}, k6 ${{ steps.knobs.outputs.k6_vus }} VUs / ${{ steps.knobs.outputs.k6_duration }})
+          - \`cancel-in-progress: true\` avoids overlapping noise for the same ref.
           EOF
 
       - name: Prepare output directories
@@ -187,8 +227,8 @@ jobs:
 
       - name: Run Go microbenchmarks
         run: |
-          go test ./benchmarks/go -run=^$ -bench=. -benchmem -count=5 > benchmarks/output/go-bench.txt
-          go test ./services/proxy/internal/http -run=^$ -bench=BenchmarkProxy -benchmem -count=5 >> benchmarks/output/go-bench.txt
+          go test ./benchmarks/go -run=^$ -bench=. -benchmem -count=${{ steps.knobs.outputs.go_count }} > benchmarks/output/go-bench.txt
+          go test ./services/proxy/internal/http -run=^$ -bench=BenchmarkProxy -benchmem -count=${{ steps.knobs.outputs.go_count }} >> benchmarks/output/go-bench.txt
 
       - name: Compare against previous benchmark with benchstat
         run: bash benchmarks/scripts/benchstat_compare.sh
@@ -203,6 +243,8 @@ jobs:
             -e BASE_URL="http://127.0.0.1:${BENCH_PROXY_PORT}" \
             -e K6_HEALTH_PATH=/health \
             -e K6_USE_CHAT=0 \
+            -e K6_VUS="${{ steps.knobs.outputs.k6_vus }}" \
+            -e K6_DURATION="${{ steps.knobs.outputs.k6_duration }}" \
             grafana/k6:0.53.0 \
             run benchmarks/k6/proxy_load.js \
             --summary-trend-stats="med,p(90),p(95),p(99),p(99.9),min,max" \
@@ -214,9 +256,12 @@ jobs:
           GITHUB_SHA: ${{ github.sha }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
           GITHUB_EVENT_PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
+          BENCH_PROFILE: ${{ steps.knobs.outputs.profile }}
         run: python benchmarks/scripts/aggregate_metrics.py > benchmarks/output/collector-summary.json
 
       - name: Run regression gates
+        env:
+          BENCH_PROFILE: ${{ steps.knobs.outputs.profile }}
         run: |
           set +e
           python benchmarks/scripts/regression_gate.py | tee benchmarks/output/gate-summary.md
@@ -251,8 +296,35 @@ jobs:
         run: |
           test -n "$APP_ID" && test -n "$APP_PRIVATE_KEY" && test -n "$INSTALLATION_ID"
 
-      - name: Checkout benchmark bot
+      - name: Download pinned benchmark bot binary
+        id: bot_bin
         if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BENCHMARK_BOT_SHA: ${{ vars.BENCHMARK_BOT_SHA }}
+        run: |
+          set -euo pipefail
+          mkdir -p benchmark-bot-bin
+          asset="ibex-benchmark-bot-linux-amd64"
+          # Prefer a release asset tagged with the pin SHA short name, else fall back to build.
+          if gh release download "$BENCHMARK_BOT_SHA" \
+              --repo Rick1330/ibexharness-benchmark-bot \
+              --pattern "$asset" \
+              --dir benchmark-bot-bin 2>/dev/null; then
+            chmod +x "benchmark-bot-bin/$asset"
+            echo "path=benchmark-bot-bin/$asset" >> "$GITHUB_OUTPUT"
+            echo "source=release" >> "$GITHUB_OUTPUT"
+          else
+            echo "path=" >> "$GITHUB_OUTPUT"
+            echo "source=build" >> "$GITHUB_OUTPUT"
+            echo "No release asset for $BENCHMARK_BOT_SHA; will cargo build."
+          fi
+
+      - name: Checkout benchmark bot
+        if: >
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository &&
+          steps.bot_bin.outputs.source == 'build'
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           repository: Rick1330/ibexharness-benchmark-bot
@@ -261,14 +333,32 @@ jobs:
           persist-credentials: false
 
       - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # stable
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        if: >
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository &&
+          steps.bot_bin.outputs.source == 'build'
         with:
           toolchain: stable
 
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2.8.2
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        if: >
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository &&
+          steps.bot_bin.outputs.source == 'build'
         with:
           workspaces: benchmark-bot
+
+      - name: Build benchmark bot (fallback)
+        id: bot_build
+        if: >
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository &&
+          steps.bot_bin.outputs.source == 'build'
+        run: |
+          set -euo pipefail
+          cd benchmark-bot
+          cargo build --release
+          echo "path=${{ github.workspace }}/benchmark-bot/target/release/ibex-benchmark-bot" >> "$GITHUB_OUTPUT"
 
       - name: Build and post PR benchmark comment
         if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
@@ -281,11 +371,19 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           BENCHMARK_DATA_PATH: ${{ github.workspace }}/benchmarks/output/benchmark-data.json
           GATE_RESULT_PATH: ${{ github.workspace }}/benchmarks/output/gate-result.json
+          BOT_BIN_RELEASE: ${{ steps.bot_bin.outputs.path }}
+          BOT_BIN_BUILD: ${{ steps.bot_build.outputs.path }}
         run: |
           set -euo pipefail
-          cd benchmark-bot
-          cargo build --release
-          ./target/release/ibex-benchmark-bot post-pr-comment \
+          if [ -n "${BOT_BIN_RELEASE:-}" ] && [ -x "$BOT_BIN_RELEASE" ]; then
+            bot="$BOT_BIN_RELEASE"
+          elif [ -n "${BOT_BIN_BUILD:-}" ] && [ -x "$BOT_BIN_BUILD" ]; then
+            bot="$BOT_BIN_BUILD"
+          else
+            echo "benchmark bot binary not found" >&2
+            exit 1
+          fi
+          "$bot" post-pr-comment \
             --benchmark-data "$BENCHMARK_DATA_PATH" \
             --gate-result "$GATE_RESULT_PATH"
 
@@ -353,7 +451,8 @@ jobs:
       vars.BENCHMARK_BOT_ENABLED == 'true' &&
       github.ref == 'refs/heads/main' &&
       (github.event_name == 'schedule' ||
-       github.event_name == 'workflow_dispatch')
+       github.event_name == 'workflow_dispatch' ||
+       github.event_name == 'push')
     runs-on: ubuntu-latest
     permissions:
       contents: read

@@ -310,6 +310,13 @@ def build_run_identity(
     baseline_sha: str,
 ) -> dict[str, Any]:
     sha = str(latest.get("sha") or os.environ.get("GITHUB_SHA", "local"))
+    profile = str(
+        latest.get("profile")
+        or os.environ.get("BENCH_PROFILE")
+        or "full"
+    ).strip().lower()
+    if profile not in ("fast", "full"):
+        profile = "full"
     return {
         "sha": sha,
         "short_sha": short_sha(sha),
@@ -320,6 +327,7 @@ def build_run_identity(
         "status": str(gate.get("status") or "unknown"),
         "regression_vs_baseline_pct": gate.get("regression_pct"),
         "baseline_sha": baseline_sha or None,
+        "profile": profile,
     }
 
 

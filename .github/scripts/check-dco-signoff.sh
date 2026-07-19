@@ -21,12 +21,11 @@ while IFS= read -r sha; do
   fi
   author_email="$(git log -1 --format='%ae' "$sha")"
   author_name="$(git log -1 --format='%an' "$sha")"
-  # Automation commits (release bot, dependabot, benchmark publisher) are exempt.
+  # Automation commits (GitHub Apps / bots with noreply emails) are exempt.
+  # Human commits must still carry Signed-off-by.
   case "$author_email" in
     *@users.noreply.github.com)
-      if [[ "$author_name" == "github-actions[bot]" \
-         || "$author_name" == "dependabot[bot]" \
-         || "$author_name" == "ibex-harness-benchmark[bot]" ]]; then
+      if [[ "$author_name" == *"[bot]" ]]; then
         continue
       fi
       ;;
