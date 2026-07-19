@@ -19,22 +19,30 @@ if [[ -z "$legacy_exists" ]]; then
   exit 0
 fi
 
+legacy_sha="$(gh api "repos/${repo}/git/ref/heads/${legacy}" --jq '.object.sha')"
 canonical_exists="$(gh api "repos/${repo}/git/ref/heads/${canonical}" --jq '.ref // empty' 2>/dev/null || true)"
-if [[ -n "$canonical_exists" ]]; then
-  legacy_sha="$(gh api "repos/${repo}/git/ref/heads/${legacy}" --jq '.object.sha')"
-  canonical_sha="$(gh api "repos/${repo}/git/ref/heads/${canonical}" --jq '.object.sha')"
-  if [[ "$legacy_sha" == "$canonical_sha" ]]; then
-    gh api --method DELETE "repos/${repo}/git/refs/heads/${legacy}" 2>/dev/null || true
-    echo "Removed duplicate legacy branch ${legacy} (same SHA as ${canonical})."
-    exit 0
-  fi
-  echo "Both ${legacy} and ${canonical} exist with different SHAs; manual reconcile required."
-  exit 1
+
+if [[ -z "$canonical_exists" ]]; then
+  gh api \
+    --method POST \
+    "repos/${repo}/branches/${legacy}/rename" \
+    -f new_name="${canonical}"
+  echo "Renamed ${legacy} → ${canonical} (open release PRs retarget automatically)."
+  exit 0
 fi
 
+canonical_sha="$(gh api "repos/${repo}/git/ref/heads/${canonical}" --jq '.object.sha')"
+if [[ "$legacy_sha" == "$canonical_sha" ]]; then
+  gh api --method DELETE "repos/${repo}/git/refs/heads/${legacy}" 2>/dev/null || true
+  echo "Removed duplicate legacy branch ${legacy} (same SHA as ${canonical})."
+  exit 0
+fi
+
+# Divergent refs: prefer the engine (legacy) tip, drop stale canonical, rename.
+echo "Divergent SHAs (legacy=${legacy_sha:0:7} canonical=${canonical_sha:0:7}); reconciling to engine tip."
+gh api --method DELETE "repos/${repo}/git/refs/heads/${canonical}"
 gh api \
   --method POST \
   "repos/${repo}/branches/${legacy}/rename" \
   -f new_name="${canonical}"
-
-echo "Renamed ${legacy} → ${canonical} (open release PRs retarget automatically)."
+echo "Reconciled: ${legacy} → ${canonical} at ${legacy_sha:0:7}."
