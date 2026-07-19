@@ -30,7 +30,10 @@ if [[ "$author_login" == "dependabot[bot]" \
 fi
 
 if [[ "$head_ref" == release-please--* \
+<<<<<<< HEAD
    || "$head_ref" == release--* \
+=======
+>>>>>>> origin/main
    || "$head_ref" == dependabot/* \
    || "$head_ref" == chore/bench-data-* ]]; then
   echo "PR tracking check skipped for automation branch: $head_ref"
