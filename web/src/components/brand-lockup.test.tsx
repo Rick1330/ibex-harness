@@ -45,4 +45,14 @@ describe("BrandLockup", () => {
       screen.getByRole("link", { name: "IBEX Harness roadmap home" }),
     ).toHaveAttribute("href", "/roadmap");
   });
+
+  it("hides the wordmark below md by default", () => {
+    const { container } = render(<BrandLockup />);
+    expect(container.querySelector(".brand-wordmark-md")).toBeTruthy();
+  });
+
+  it("keeps the wordmark always visible when requested", () => {
+    const { container } = render(<BrandLockup showWordmark="always" />);
+    expect(container.querySelector(".brand-wordmark-md")).toBeNull();
+  });
 });
