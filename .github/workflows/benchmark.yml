@@ -319,22 +319,35 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           BENCHMARK_BOT_SHA: ${{ vars.BENCHMARK_BOT_SHA }}
+          BENCHMARK_BOT_RELEASE_TAG: ${{ vars.BENCHMARK_BOT_RELEASE_TAG }}
         run: |
           set -euo pipefail
           mkdir -p benchmark-bot-bin
           asset="ibex-benchmark-bot-linux-amd64"
-          # Prefer a release asset tagged with the pin SHA short name, else fall back to build.
-          if gh release download "$BENCHMARK_BOT_SHA" \
-              --repo Rick1330/ibexharness-benchmark-bot \
-              --pattern "$asset" \
-              --dir benchmark-bot-bin 2>/dev/null; then
-            chmod +x "benchmark-bot-bin/$asset"
-            echo "path=benchmark-bot-bin/$asset" >> "$GITHUB_OUTPUT"
-            echo "source=release" >> "$GITHUB_OUTPUT"
-          else
-            echo "path=" >> "$GITHUB_OUTPUT"
-            echo "source=build" >> "$GITHUB_OUTPUT"
-            echo "No release asset for $BENCHMARK_BOT_SHA; will cargo build."
+          short="${BENCHMARK_BOT_SHA:0:7}"
+          tags=()
+          if [ -n "${BENCHMARK_BOT_RELEASE_TAG:-}" ]; then
+            tags+=("$BENCHMARK_BOT_RELEASE_TAG")
+          fi
+          tags+=("bot-${short}" "v${short}")
+          source=build
+          path=""
+          for tag in "${tags[@]}"; do
+            if gh release download "$tag" \
+                --repo Rick1330/ibexharness-benchmark-bot \
+                --pattern "$asset" \
+                --dir benchmark-bot-bin 2>/dev/null; then
+              chmod +x "benchmark-bot-bin/$asset"
+              path="benchmark-bot-bin/$asset"
+              source=release
+              echo "Downloaded bot binary from release tag $tag"
+              break
+            fi
+          done
+          echo "path=$path" >> "$GITHUB_OUTPUT"
+          echo "source=$source" >> "$GITHUB_OUTPUT"
+          if [ "$source" = "build" ]; then
+            echo "No release asset for pin ${BENCHMARK_BOT_SHA}; will cargo build."
           fi
 
       - name: Checkout benchmark bot
