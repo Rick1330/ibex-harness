@@ -33,16 +33,13 @@ describe("BrandLockup", () => {
     );
   });
 
-  it("accepts a custom aria label for alternate destinations", () => {
-    render(
-      <BrandLockup
-        href="/roadmap"
-        ariaLabel="IBEX Harness roadmap home"
-      />,
-    );
+  it("hides the wordmark below md by default", () => {
+    const { container } = render(<BrandLockup />);
+    expect(container.querySelector(".brand-wordmark-md")).toBeTruthy();
+  });
 
-    expect(
-      screen.getByRole("link", { name: "IBEX Harness roadmap home" }),
-    ).toHaveAttribute("href", "/roadmap");
+  it("keeps the wordmark always visible when requested", () => {
+    const { container } = render(<BrandLockup showWordmark="always" />);
+    expect(container.querySelector(".brand-wordmark-md")).toBeNull();
   });
 });

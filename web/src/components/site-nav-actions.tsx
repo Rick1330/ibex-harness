@@ -21,7 +21,8 @@ export function SiteNavActions({
       <NavSearch variant="icon" className="lg:hidden" />
       <NavSearch variant="compact" className="hidden lg:inline-flex" />
       <ThemeToggle />
-      <NavGithubLink showLabel />
+      <NavGithubLink showLabel className="hidden sm:inline-flex" />
+      <NavGithubLink className="inline-flex sm:hidden" />
       <button
         type="button"
         className="flex size-8 items-center justify-center rounded-sm border border-border text-foreground-muted transition-colors hover:bg-surface hover:text-foreground md:hidden"
