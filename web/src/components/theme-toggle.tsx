@@ -23,20 +23,27 @@ function nextTheme(current: ThemeValue): ThemeValue {
   return OPTS[(index + 1) % OPTS.length]?.v ?? "system";
 }
 
+/**
+ * Visibility is owned by globals.css ([data-theme-toggle]).
+ * Do not use Tailwind `hidden` / `md:inline-flex` — fumadocs-ui ships an
+ * unlayered `.hidden { display: none }` that beats responsive show utilities.
+ */
 function ThemeToggleSkeleton({ className }: ThemeToggleProps) {
   return (
     <>
       <div
         aria-hidden
+        data-theme-toggle="compact"
         className={cn(
-          "size-8 animate-pulse rounded-full border border-border bg-surface md:hidden",
+          "size-8 animate-pulse rounded-full border border-border bg-surface",
           className,
         )}
       />
       <div
         aria-hidden
+        data-theme-toggle="segmented"
         className={cn(
-          "hidden h-8 w-[5.5rem] animate-pulse rounded-sm border border-border bg-surface md:inline-flex",
+          "h-8 w-[5.5rem] animate-pulse rounded-sm border border-border bg-surface",
           className,
         )}
       />
@@ -70,10 +77,9 @@ export function ThemeToggle({ className }: ThemeToggleProps) {
         title={`Theme: ${currentOpt.label}`}
         onClick={() => setTheme(nextTheme(current))}
         className={cn(
-          "inline-flex size-8 items-center justify-center rounded-full border border-border bg-surface",
+          "size-8 items-center justify-center rounded-full border border-border bg-surface",
           "text-foreground shadow-[var(--shadow-1)] transition-[transform,background-color,color]",
           "duration-[var(--dur-1)] hover:bg-background hover:text-foreground active:translate-y-px",
-          "md:hidden",
           className,
         )}
       >
@@ -85,7 +91,7 @@ export function ThemeToggle({ className }: ThemeToggleProps) {
         aria-label="Theme"
         data-theme-toggle="segmented"
         className={cn(
-          "hidden items-center rounded-sm border border-border bg-surface p-0.5 md:inline-flex",
+          "items-center rounded-sm border border-border bg-surface p-0.5",
           className,
         )}
       >
