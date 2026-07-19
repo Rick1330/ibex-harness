@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 ALLOWED = frozenset({"completed", "planned", "in-progress", "superseded"})
-STATUS_RE = re.compile(r'(?m)^status:\s*["\']?([^"\'\n]+)["\']?\s*$')
+STATUS_RE = re.compile(r'(?m)^status:\s*["\']?([\w-]+)["\']?\s*$')
 
 
 def frontmatter_block(text: str) -> str | None:
