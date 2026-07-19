@@ -26,9 +26,12 @@ describe("ThemeToggle", () => {
       name: /Theme: Light\. Click to switch/i,
     });
     expect(compact).toHaveAttribute("data-theme-toggle", "compact");
+    // Display is owned by CSS media queries — both nodes stay in the DOM.
+    expect(compact.className).not.toMatch(/\bhidden\b/);
 
     const group = screen.getByRole("radiogroup", { name: "Theme" });
     expect(group).toHaveAttribute("data-theme-toggle", "segmented");
+    expect(group.className).not.toMatch(/\bhidden\b/);
     expect(screen.getByRole("radio", { name: "System" })).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: "Light" })).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: "Dark" })).toBeInTheDocument();
