@@ -12,10 +12,10 @@ type LandingFrameProps = Readonly<{
  */
 export function LandingFrame({ children }: LandingFrameProps) {
   return (
-    <div className="ibex-landing min-h-screen min-w-0 max-w-[100vw] overflow-x-clip bg-background text-foreground">
+    <div className="ibex-landing min-h-screen min-w-0 bg-background text-foreground">
       <main className="relative flex w-full min-w-0">
         <SectionRail />
-        <div className="min-w-0 flex-1 overflow-x-clip">{children}</div>
+        <div className="min-w-0 flex-1">{children}</div>
       </main>
     </div>
   );
