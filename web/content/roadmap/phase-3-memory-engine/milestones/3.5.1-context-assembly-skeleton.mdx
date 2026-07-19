@@ -16,7 +16,7 @@ fullTitle: "Milestone 3.5.1 — Context Assembly Engine Skeleton (Python gRPC Se
 **Goal:** [3.5 — Context assembly engine](/roadmap/phase-3-memory-engine/goals#goal-35-context-assembly-engine)  
 **Phase:** 3 — Memory Engine and Operator Platform  
 **Estimated effort:** 3 days  
-**ADR required:** ADR-0038 — Context assembly service design and gRPC contract
+**ADR:** [ADR-0038](/docs/adr/0038-context-assembly-service) — **Accepted** (do not rewrite; adopt Phase 0 proto)
 
 ---
 
@@ -26,7 +26,7 @@ The context assembly engine is the most architecturally significant addition in 
 
 The correct architecture is a dedicated Python gRPC service. The proxy calls it with the agent ID, session ID, current messages, and target model. The service returns enriched messages ready to send to the LLM.
 
-This milestone establishes the service skeleton, protobuf contract, gRPC server, and the proxy-side Go client — without the domain logic (scoring, packing) which comes in later milestones.
+This milestone establishes the service skeleton, gRPC server (against the **existing** proto), and the proxy-side Go client — without the domain logic (scoring, packing) which comes in later milestones.
 
 ---
 
@@ -50,77 +50,29 @@ This milestone establishes the service skeleton, protobuf contract, gRPC server,
 
 ---
 
-## ADR-0038 — Context assembly service design
+## ADR-0038 — Already Accepted
 
-Write `ADR-0038` covering:
-
-- **Why a separate service (not inline in proxy):** Memory ranking requires NumPy vectorised operations; tiktoken for accurate token counting; complex caching logic. None of this belongs in a Go binary.
-- **Why gRPC (not HTTP):** The proxy already uses gRPC for auth. gRPC provides a typed contract, bidirectional streaming support for Phase 4, and lower per-call overhead than JSON/HTTP for a &lt;50ms latency target.
-- **Graceful degradation contract:** If the context assembly gRPC call exceeds 45ms (5ms before the proxy's 50ms budget for the full context path), the proxy cancels the call and continues with directive-only context. This is the most important failure mode to handle correctly.
-- **Why betterproto for Python gRPC:** betterproto generates Python dataclasses instead of protobuf message objects. This means standard type hints, mypy compatibility, and clean `async/await` syntax instead of callback-based gRPC stubs.
-- **The 40ms retrieval deadline:** The parallel retrieval phase (directive + hot cache + cold search) has a 40ms hard deadline enforced by `asyncio.wait_for`. If any retrieval component exceeds this, it returns partial results. The system never waits for all components before proceeding.
+Do **not** redefine or replace the protobuf contract in this milestone. Design rationale (separate Python service, gRPC, graceful degradation, betterproto, 40ms retrieval deadline) is recorded in **[ADR-0038](/docs/adr/0038-context-assembly-service)** (Accepted). This milestone **implements the skeleton against that decision**.
 
 ---
 
 ## Deliverables
 
-### 1. Proto definition
+### 1. Proto — adopt existing Phase 0 contract (do not redefine)
 
-```text
-// packages/proto/ibex/context/v1/context.proto
-syntax = "proto3";
-package ibex.context.v1;
+**Do not** invent a one-RPC skeleton proto. Use the existing file:
 
-option go_package = "github.com/Rick1330/ibex-harness/packages/proto/ibex/context/v1;contextv1";
-option python_package = "ibex_proto.context.v1";
+`packages/proto/proto/ibex/context/v1/context.proto`
 
-import "google/protobuf/timestamp.proto";
+That contract already defines **three** RPCs (enforced by `packages/proto/context_contract_test.go`):
 
-// AssembleContext is called by the proxy on every LLM request.
-// It returns the enriched messages array with memories and directive injected.
-service ContextAssemblyService {
-    rpc AssembleContext(AssembleContextRequest) returns (AssembleContextResponse);
-}
+| RPC | Phase 3.5.1 expectation |
+| --- | --- |
+| `AssembleContext` | Implement skeleton (may return empty / directive-only until later milestones) |
+| `SearchMemories` | Stub — return `UNIMPLEMENTED` until a later milestone wires it |
+| `RecordMemoryFeedback` | Stub — return `UNIMPLEMENTED` until a later milestone wires it |
 
-message AssembleContextRequest {
-    string org_id      = 1; // (required) UUID string
-    string agent_id    = 2; // (required) UUID string
-    string session_id  = 3; // (optional) UUID string; empty if new session
-    string model       = 4; // (required) e.g. "gpt-4o", "gpt-4o-mini"
-    string request_id  = 5; // (required) for tracing/logging
-
-    // The original messages from the client (before injection).
-    // The service returns an enriched version of this array.
-    repeated Message messages = 6;
-}
-
-message AssembleContextResponse {
-    // Enriched messages ready to send to the LLM provider.
-    // The service may add, reorder, or modify messages.
-    // The client's original messages are always preserved in order;
-    // only injected content (directive, memories) is prepended.
-    repeated Message messages = 1;
-
-    // Metadata about what was injected (for tracing and dashboard display).
-    InjectionMetadata metadata = 2;
-}
-
-message Message {
-    string role    = 1; // "system", "user", "assistant"
-    string content = 2;
-}
-
-message InjectionMetadata {
-    bool   directive_injected    = 1;
-    int32  memories_injected     = 2;  // count of memories included
-    int32  memories_available    = 3;  // count of memories found (before token truncation)
-    int32  total_tokens_injected = 4;  // approximate token count of injected content
-    int32  context_window_used   = 5;  // tokens used as % of context window
-    bool   was_truncated         = 6;  // true if memories were cut to fit token budget
-    string fallback_reason       = 7;  // non-empty if assembly fell back to directive-only
-    repeated string memory_ids   = 8;  // UUIDs of injected memories (for hot cache score update)
-}
-```
+See [ADR-0038](/docs/adr/0038-context-assembly-service). Preserve `AssemblyMetrics` / `MemoryUsed` fields — later ranking/packing milestones depend on them.
 
 ### 2. Service structure
 
@@ -356,12 +308,14 @@ func (c *Client) AssembleContext(
 
 ## Acceptance Criteria
 
-- [ ] Proto compiles cleanly with `buf lint` and `buf breaking` (no breaking changes)
+- [ ] Existing Phase 0 proto is used as-is (`packages/proto/proto/ibex/context/v1/context.proto`); no one-RPC rewrite
+- [ ] `buf lint` / `buf breaking` clean; `TestContextProtoContract` still expects 3 RPCs
 - [ ] `go proto-gen` and `make proto-gen-python` both succeed
 - [ ] gRPC server starts, registers `ContextAssemblyServicer`, accepts connections
 - [ ] `AssembleContext` RPC returns a valid response (even if empty — no memories in DB yet)
+- [ ] `SearchMemories` and `RecordMemoryFeedback` stubs return `UNIMPLEMENTED`
 - [ ] `asyncio.wait_for` enforces 48ms timeout on assembly; `TimeoutError` triggers directive-only fallback
 - [ ] Proxy-side Go client returns original messages on any gRPC error (never propagates context failure)
-- [ ] ADR-0038 written and indexed
+- [ ] ADR-0038 remains Accepted and linked (no competing proto ADR)
 
 ---

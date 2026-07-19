@@ -14,10 +14,17 @@ High-level roadmap from Foundation through production hardening. Detailed milest
 | [0](phase-0-foundation/) | Foundation | Done | **Complete** | Empty repo | CI, docs, compose, proto source, Go skeletons |
 | [1](phase-1-core-platform/) | Core Platform | 4–6 weeks | **Complete** | Phase 0 complete | Migrations, auth, proxy platform, security gate |
 | [1.5](phase-1-5-docs-site/) | Public Web Product | 2–3 weeks | **Complete** | Phase 1 complete | Unified site at ibexharness.com; verify_phase15.sh |
-| [2](phase-2-single-provider/) | Single Provider E2E | 3–5 weeks | **In progress** | Phase 1.5 exit | Authenticated OpenAI-compatible chat through proxy |
-| [3](phase-3-memory-engine/) | Memory Engine and Operator Platform | 6–8 weeks | Planned | Phase 2 exit | Memory graph, context assembly, operator API + dashboard |
+| [2](phase-2-single-provider/) | Single Provider E2E | Sum of milestone estimates (~3–5 wk calendar if sequential solo) | **In progress** | Phase 1.5 exit | Authenticated OpenAI-compatible chat through proxy |
+| [3](phase-3-memory-engine/) | Memory Engine and Operator Platform | Sum of milestone estimates (~6–8 wk calendar if sequential solo) | Planned | Phase 2 exit | Memory graph, context assembly, operator API + dashboard |
 | [4](phase-4-multi-provider/) | Multi-Provider and Routing | 4–6 weeks | Planned | Phase 3 exit | Multiple providers, routing, Redis rate limits |
 | [5](phase-5-production-hardening/) | Production Hardening | 4–8 weeks | Planned | Phase 4 exit | SLOs, OTel pipeline, chaos/load, hardened CI |
+| [6](phase-6-intelligence-monetization/) | Intelligence & Monetization | Stub (TBD) | Planned | Phase 5 exit | Fingerprints, drift, billing (deferred from Phase 4) |
+
+<Callout type="note" title="Phase week banners are not load-bearing">
+  For solo maintenance, phase "N weeks" banners are planning guidance only — not a commitment.
+  Calendar time ≈ the sum of `estimatedEffort` on each milestone page (sequential), which can exceed
+  the banner when interruptions or dependency wait times land. See [GOVERNANCE.md](/docs/engineering/GOVERNANCE).
+</Callout>
 
 ---
 
@@ -133,10 +140,20 @@ See [phase-1-core-platform](/roadmap/phase-1-core-platform) and [phase1-exit-aud
 
 ---
 
+## Phase 6: Intelligence & Monetization
+
+**Status:** Planned (stub)
+
+**Goals:** [goals](/roadmap/phase-6-intelligence-monetization/goals)
+
+Behavioural fingerprints, drift alerts, and billing — deferred from Phase 4. Detailed milestones TBD near Phase 5 exit.
+
+---
+
 ## Critical path (dependency order)
 
 ```text
-Phase 0 → Phase 1 → Phase 1.5 (web product) → Phase 2 provider → Phase 3 memory/context → Phase 4 scale → Phase 5 harden
+Phase 0 → Phase 1 → Phase 1.5 (web product) → Phase 2 provider → Phase 3 memory/context → Phase 4 scale → Phase 5 harden → Phase 6 intelligence/monetization
 ```
 
 Pivot triggers and discoveries: [findings](/roadmap/findings).

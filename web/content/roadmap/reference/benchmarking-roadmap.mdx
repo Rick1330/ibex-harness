@@ -1,0 +1,33 @@
+---
+title: "Benchmarking roadmap"
+description: "Condensed measurement plan: Phase 2 stage swap, k6 chat path, Phase 3 gRPC/corpus gates, Phase 4/5 matrix."
+---
+
+# Benchmarking roadmap
+
+Condensed from the workspace audit companion. Full detail: `ibex-harness-milestone-audit-and-benchmarking-roadmap.md` §3 (parent of this repo).
+
+## Phase 2 — real stages + chat path
+
+| Synthetic | Replace with |
+| --- | --- |
+| `stageAuth` | `authcache` LRU hit |
+| `stageRateLimit` | `packages/ratelimit` |
+| `stageDirectiveResolve` | directive Redis hit |
+| `stagePromptInject` | prompt inject |
+| Composite | mock provider + full middleware |
+
+- k6 default: `POST /v1/chat/completions` (token/agent env). Health optional via `K6_USE_HEALTH`.
+- Pin `baseline.json` only after a real 2.6.1 run. Streaming line required on 2.6.2.
+
+## Phase 3 — corpus / IVFFlat / cache
+
+- Context assembly: **gRPC-native** load (ghz / k6 gRPC), p95 &lt; 50ms @ 50 VU
+- Search: p95 &lt; 30ms @ 100k memories; IVFFlat confirmed via EXPLAIN
+- Embedding cache hit &gt; 70%; hot-cache in latency breakdown
+- Corpus fixtures at 1k / 10k / 100k
+
+## Phase 4 / 5
+
+- Phase 4: failover latency, Lua rate-limit p99, async queue depth/drops, per-adapter overhead vs baseline
+- Phase 5: SLO burn, chaos (Redis/auth/provider), full-path load; Critical Path Grafana from MONITORING.md §10.2 (pulled forward to late Phase 2 / early Phase 3)

@@ -504,6 +504,8 @@ Panels:
 
 ### 10.2 Dashboard: “Proxy — Critical Path”
 
+> **Pull-forward:** Do **not** wait for Phase 5 to ship this dashboard. A **minimal** Proxy Critical Path view (overhead p50/p95/p99, auth latency, rate-limit latency, fallbacks, inflight) should land in **late Phase 2 / early Phase 3** once ClickHouse traces and Prometheus middleware metrics exist. Phase 5 expands panels (context assembly, circuit breakers, SLO burn) and hardens alert routing — it does not invent the first critical-path view.
+
 Panels:
 
 - proxy overhead p50/p95/p99

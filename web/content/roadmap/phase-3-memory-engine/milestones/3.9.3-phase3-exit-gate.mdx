@@ -1,7 +1,7 @@
 ---
 title: "3.9.3 Phase3 Exit"
-description: "Phase 3 is the largest and most complex phase. A formal exit gate ensures nothing was shipped partially and that the system is ready for Phase 4 (multi-provider support, billing, and behavioural fingerprinting)."
-summary: "Phase 3 is the largest and most complex phase. A formal exit gate ensures nothing was shipped partially and that the system is ready for Phase 4 (multi-provider support, billing, and behavioural fingerprinting)."
+description: "Phase 3 is the largest and most complex phase. A formal exit gate ensures nothing was shipped partially and that the system is ready for Phase 4 (multi-provider) — fingerprints/billing live in Phase 6."
+summary: "Phase 3 is the largest and most complex phase. A formal exit gate ensures nothing was shipped partially and that the system is ready for Phase 4 (multi-provider) — fingerprints/billing live in Phase 6."
 status: "planned"
 milestoneId: "3.9.3"
 goal: "[3.9 — Phase 3 quality gate](/roadmap/phase-3-memory-engine/goals#goal-39-phase-3-quality-gate)"
@@ -21,7 +21,7 @@ fullTitle: "Milestone 3.9.3 — Phase 3 Exit Gate and Handoff Document"
 
 ## Why This Milestone Exists
 
-Phase 3 is the largest and most complex phase. A formal exit gate ensures nothing was shipped partially and that the system is ready for Phase 4 (multi-provider support, billing, and behavioural fingerprinting).
+Phase 3 is the largest and most complex phase. A formal exit gate ensures nothing was shipped partially and that the system is ready for Phase 4 (multi-provider support and routing). Behavioural fingerprinting, drift, and billing are **Phase 6** — not Phase 4 readiness.
 
 ---
 
@@ -83,6 +83,7 @@ set -euo pipefail
 : "${OPENAI_API_KEY:?Required}"
 
 PROXY="${IBEX_PROXY_ADDR:-http://localhost:8080}"
+API="${IBEX_API_ADDR:-http://localhost:8081}"
 TOKEN="${IBEX_DEV_TOKEN:-ibex_dev_sk_LOCALDEVELOPMENTONLY}"
 AGENT="${IBEX_DEV_AGENT_ID:-00000000-0000-0000-0000-000000000003}"
 
@@ -109,7 +110,7 @@ echo "PASS: Turn 1 complete"
 echo "Waiting for memory extraction..."
 EXTRACTED=0
 for i in $(seq 1 30); do
-    MEMORY_COUNT=$(curl -sf "$PROXY/../api/v1/agents/$AGENT/memories" \
+    MEMORY_COUNT=$(curl -sf "$API/v1/agents/$AGENT/memories" \
         -H "Authorization: Bearer $TOKEN" | python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d.get('items',[])))" 2>/dev/null || echo "0")
     if [ "$MEMORY_COUNT" -gt 0 ]; then
         EXTRACTED=1
@@ -146,8 +147,14 @@ echo "=== Phase 3 E2E Smoke: COMPLETE ==="
 
 Before Phase 4 begins, verify:
 
-- [ ] `ibex_core.behavioral_fingerprints` schema drafted (ADR written, migration in progress)
 - [ ] Rate limiter ready for Lua-script upgrade (interface unchanged since Phase 1)
 - [ ] Embedding service abstraction allows second model (ADR-0033 model upgrade path confirmed)
 - [ ] Dashboard extensible for multi-provider analytics without structural change
-- [ ] All 44 ADRs (0001–0044) indexed and linked from the architecture doc
+- [ ] All Phase 3 ADRs indexed and linked from the architecture doc
+
+## Phase 6 readiness (not Phase 4)
+
+Fingerprints, drift, and billing are **out of scope for Phase 4**. Track under [Phase 6](/roadmap/phase-6-intelligence-monetization):
+
+- [ ] `ibex_core.behavioral_fingerprints` schema drafted (ADR + migration when Phase 6 starts)
+- [ ] Drift alert pipeline and billing integrity dashboards deferred until Phase 6 goals are expanded

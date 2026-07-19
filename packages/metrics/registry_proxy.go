@@ -16,6 +16,8 @@ type ProxyRegistry struct {
 	rateLimitRedisErrors prometheus.Counter
 	providerRequests     *prometheus.CounterVec
 	providerRetries      *prometheus.CounterVec
+	asyncQueueDepth      prometheus.Gauge
+	asyncDroppedTotal    prometheus.Counter
 	processUp            prometheus.Gauge
 }
 
@@ -64,6 +66,16 @@ func (r *ProxyRegistry) register(serviceName string) {
 		Help: "Upstream LLM provider retry attempts.",
 	}, []string{"provider"})
 
+	r.asyncQueueDepth = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "ibex_proxy_async_queue_depth",
+		Help: "Current depth of the proxy post-response async work queue.",
+	})
+
+	r.asyncDroppedTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "ibex_proxy_async_dropped_total",
+		Help: "Post-response async tasks dropped when a telemetry queue is full.",
+	})
+
 	r.processUp = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name:        "ibex_process_up",
 		Help:        "1 if the service process is running.",
@@ -78,6 +90,8 @@ func (r *ProxyRegistry) register(serviceName string) {
 		r.rateLimitRedisErrors,
 		r.providerRequests,
 		r.providerRetries,
+		r.asyncQueueDepth,
+		r.asyncDroppedTotal,
 		r.processUp,
 	)
 	r.processUp.Set(1)
@@ -127,6 +141,16 @@ func (r *ProxyRegistry) IncProviderRequest(provider, statusClass string) {
 // IncProviderRetry records an upstream provider retry attempt.
 func (r *ProxyRegistry) IncProviderRetry(provider string) {
 	r.providerRetries.WithLabelValues(provider).Inc()
+}
+
+// SetAsyncQueueDepth records the current post-response async queue depth.
+func (r *ProxyRegistry) SetAsyncQueueDepth(depth float64) {
+	r.asyncQueueDepth.Set(depth)
+}
+
+// IncAsyncDropped records a dropped post-response telemetry task.
+func (r *ProxyRegistry) IncAsyncDropped() {
+	r.asyncDroppedTotal.Inc()
 }
 
 func mustRegisterAll(reg prometheus.Registerer, collectors ...prometheus.Collector) {

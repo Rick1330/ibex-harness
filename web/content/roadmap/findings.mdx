@@ -26,6 +26,76 @@ Unexpected discoveries, design pivots, and plan changes. Update this file when i
 
 ---
 
+## 2026-07-19 — Session idle sweeper required (→ 2.4.4)
+
+**Context:** Phase 2 / Goal 2.4; Phase 3 extraction (3.4.2)
+
+**Finding:** `SessionStore.Complete()` documents an idle-timeout path, but no milestone implemented a sweeper. Most clients never send `X-IBEX-Session-End`. Extraction only picks terminal sessions — without a sweeper, Phase 3 memory extraction is dead in production.
+
+**Impact:** Hard dependency between Phase 2 session lifecycle and Phase 3 extraction.
+
+**Decision:** Add milestone **[2.4.4](/roadmap/phase-2-single-provider/milestones/2.4.4-session-idle-timeout-sweeper)** (proxy ticker marks idle sessions `abandoned`). Update 2.4.2 and 3.4.2 so extraction uses `status IN ('completed','abandoned')`.
+
+**Updated:** `2.4.4-session-idle-timeout-sweeper.mdx`, `2.4.2-session-store.mdx`, `3.4.2-session-incremental-read.mdx`, `findings.mdx`
+
+---
+
+## 2026-07-19 — Context proto: adopt Phase 0 / ADR-0038
+
+**Context:** Phase 3 / Milestone 3.5.1
+
+**Finding:** Phase 0 already committed `packages/proto/proto/ibex/context/v1/context.proto` with three RPCs (`AssembleContext`, `SearchMemories`, `RecordMemoryFeedback`), enforced by CI. Milestone 3.5.1's draft proposed a conflicting one-RPC skeleton.
+
+**Impact:** Literal implementation would fail `TestContextProtoContract` and silently drop feedback/search.
+
+**Decision:** **[ADR-0038](/docs/adr/0038-context-assembly-service)** Accepted — adopt Phase 0 contract as-is; stubs return `UNIMPLEMENTED` for Search/Feedback until later milestones. Replace 3.5.1 proto snippet with a pointer to the existing file.
+
+**Updated:** `adr/0038-context-assembly-service.mdx`, `3.5.1-context-assembly-skeleton.mdx`, `adr/meta.json`, `findings.mdx`
+
+---
+
+## 2026-07-19 — Phase 4/6 honesty (fingerprints, drift, billing → Phase 6)
+
+**Context:** Phase 3 exit / Phase 4 goals vs vision docs
+
+**Finding:** Phase 3 exit and schema Non-Goals pointed fingerprints, drift alerts, and billing readiness at Phase 4. Phase 4 goals only cover providers, routing, and rate limits. Vision capabilities (fingerprinting, drift, billing) have no Phase 4 home.
+
+**Impact:** Readers expecting Phase 4 monetization/intelligence would be misled.
+
+**Decision:** Defer behavioural fingerprints, drift alerts, and billing to **[Phase 6 — Intelligence & Monetization](/roadmap/phase-6-intelligence-monetization)**. Update 3.1.1, 3.9.3, Phase 4 goals, and overview accordingly.
+
+**Updated:** `phase-6-intelligence-monetization/*`, `3.1.1`, `3.9.3`, `phase-4-multi-provider/goals.mdx`, `overview.mdx`, `findings.mdx`
+
+---
+
+## 2026-07-19 — Duration banners honesty (solo maintainer)
+
+**Context:** Roadmap overview phase week banners
+
+**Finding:** Phase "N weeks" banners imply team parallel calendars. Solo maintenance means calendar time ≈ sum of milestone `estimatedEffort` values, often longer than the banner.
+
+**Impact:** Planning and stakeholder expectations.
+
+**Decision:** Treat phase week banners as **planning guidance only**. Overview Phase 2/3 cells use milestone-sum language; [GOVERNANCE.md](/docs/engineering/GOVERNANCE) notes the same for solo maintenance.
+
+**Updated:** `overview.mdx`, `GOVERNANCE.md`, `findings.mdx`
+
+---
+
+## 2026-07-19 — Directive vision honesty (F7): Phase 2 scope narrow
+
+**Context:** Phase 2 / Goal 2.3 directives
+
+**Finding:** Vision docs imply A/B experiments, regression-gated promotion, and live session pin for directives. Phase 2 only delivers versioned directive config + rollback.
+
+**Impact:** Over-promising Phase 2 operator capabilities.
+
+**Decision:** Phase 2 = **versioned config + rollback only**. A/B, regression-gated promotion, and live session pin are **deferred** (document in goals/findings; not Phase 2 exit criteria).
+
+**Updated:** `findings.mdx` (and Phase 2 goals notes as applicable)
+
+---
+
 ## 2026-07-12 — Phase 2 ADR renumber and directive injection ownership
 
 **Context:** Phase 2 / Milestone 2.1.1 planning

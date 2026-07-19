@@ -1,0 +1,46 @@
+---
+title: "ADR-0038: Context assembly service design and gRPC contract"
+description: "Adopt the Phase 0 ContextAssemblyService proto (three RPCs) as the Phase 3 contract; do not replace it with a one-RPC skeleton."
+adrId: "0038"
+status: "Accepted"
+date: "2026-07-19"
+authors: "IBEX Harness team"
+---
+
+# ADR-0038: Context assembly service design and gRPC contract
+
+- **Status:** Accepted
+- **Date:** 2026-07-19
+- **Authors:** IBEX Harness team
+- **Milestone:** [3.5.1 Context assembly skeleton](/roadmap/phase-3-memory-engine/milestones/3.5.1-context-assembly-skeleton)
+
+## Context
+
+Phase 0 committed `packages/proto/proto/ibex/context/v1/context.proto` with **three** RPCs:
+
+1. `AssembleContext`
+2. `SearchMemories`
+3. `RecordMemoryFeedback`
+
+CI enforces this via `packages/proto/context_contract_test.go` (`Methods().Len() != 3`). Milestone 3.5.1's draft snippet proposed a **different** one-RPC contract (different field names, no metrics, no feedback). Implementing that draft literally would fail the contract test and silently drop the closed-loop ranking feedback described in PROJECT_CONTEXT.
+
+## Decision
+
+**Adopt the Phase 0 contract as-is** for Phase 3:
+
+- Path: `packages/proto/proto/ibex/context/v1/context.proto` (note the `proto/` module directory required by `buf.yaml`).
+- Keep all three RPCs; implement `AssembleContext` first in 3.5.x, with `SearchMemories` / `RecordMemoryFeedback` stubs returning `UNIMPLEMENTED` until their milestones wire them.
+- Preserve `AssemblyMetrics` and `MemoryUsed` scoring fields — they match the ranking / packing milestones.
+- Graceful degradation (proxy cancels context call near budget and continues directive-only) remains as previously planned for 3.5.7.
+- Python service may use betterproto; Go client uses generated `contextv1` package.
+
+## Consequences
+
+- Milestone **3.5.1** must not rewrite the proto to a one-RPC shape; update its deliverable section to reference the existing file.
+- `TestContextProtoContract` stays at **3** methods intentionally.
+- Deferring feedback/search requires an explicit future milestone + findings entry — not a silent proto shrink.
+
+## Alternatives considered
+
+1. **Supersede Phase 0 proto** — rejected: loses feedback loop and breaks CI without ADR.
+2. **Merged hybrid** — unnecessary complexity; Phase 0 contract already covers needed fields.

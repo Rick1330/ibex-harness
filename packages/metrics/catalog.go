@@ -7,6 +7,8 @@ var ProxyRequiredMetricNames = []string{
 	"ibex_proxy_active_connections",
 	"ibex_proxy_rate_limited_total",
 	"ibex_proxy_rate_limit_redis_errors_total",
+	"ibex_proxy_async_queue_depth",
+	"ibex_proxy_async_dropped_total",
 	"ibex_process_up",
 }
 

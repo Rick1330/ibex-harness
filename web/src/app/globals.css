@@ -2238,6 +2238,10 @@ html.dark .brand-mark-dark {
 .ibex-landing {
   background-color: var(--background);
   color: var(--foreground);
+  /* clip — not 100vw — avoids horizontal scroll from scrollbar gutter */
+  overflow-x: clip;
+  max-width: 100%;
+  min-width: 0;
 }
 
 /* §10 Section rail
@@ -2316,14 +2320,23 @@ html.dark .brand-mark-dark {
   width: 100%;
   max-width: 1400px;
   margin-inline: auto;
-  padding-inline: 1.5rem;
+  padding-inline: 1rem;
+  min-width: 0;
 }
 
 .landing-inner {
   width: 100%;
   max-width: 1200px;
   margin-inline: auto;
-  padding-inline: 1.5rem;
+  padding-inline: 1rem;
+  min-width: 0;
+}
+
+@media (min-width: 640px) {
+  .landing-hero-inner,
+  .landing-inner {
+    padding-inline: 1.5rem;
+  }
 }
 
 @media (min-width: 1024px) {

@@ -1,0 +1,45 @@
+---
+title: "ADR-0029: Token revocation propagation via Redis pub/sub"
+description: "Accepted planning ADR — Redis pub/sub invalidates proxy LRU entries on revoke; documents 30s LRU TTL vs 1s/5s SLA gap and reconnect follow-up."
+adrId: "0029"
+status: "Accepted"
+date: "2026-07-19"
+authors: "IBEX Harness team"
+---
+
+# ADR-0029: Token revocation propagation via Redis pub/sub
+
+- **Status:** Accepted (planning draft — implement in [2.2.2](/roadmap/phase-2-single-provider/milestones/2.2.2-token-revocation-propagation))
+- **Date:** 2026-07-19
+- **Authors:** IBEX Harness team
+- **Milestone:** [2.2.2 Token revocation propagation](/roadmap/phase-2-single-provider/milestones/2.2.2-token-revocation-propagation)
+
+## Context
+
+Milestone 2.2.1 introduces an auth LRU cache with a **30-second maximum TTL**. Without active invalidation, a revoked token can remain usable until natural expiry. Phase 2 SLAs require revoked tokens rejected within **5 seconds** (exit gate) and ideally within **1 second** end-to-end after pub/sub delivery.
+
+Redis is already required for rate limiting. Pub/sub fans out revoke events to all proxy instances without new infrastructure.
+
+## Decision
+
+1. **Channel:** `ibex:token:revocations` (global; not org-scoped — proxies may not know org from the raw token alone at invalidate time).
+2. **Event:** JSON `RevocationEvent` with schema version, SHA-256 token hash, `revoked_at`, and `org_id` (audit only).
+3. **Auth publisher:** After durable Postgres revoke, publish asynchronously. Redis failure must **not** fail `RevokeToken` — Postgres remains source of truth; LRU will expire naturally within 30s.
+4. **Proxy subscriber:** On message, call `CachingValidator.Invalidate(tokenHash)`. Lifecycle owned by `packages/shutdown`.
+5. **SLA vs TTL gap (documented):** Steady-state with healthy pub/sub meets ~1s invalidate / 5s exit SLA. If a proxy **misses messages** (disconnect, subscribe lag, process restart before resubscribe), the worst case is still the **30s LRU TTL** until natural expiry. That gap is accepted for Phase 2 with the follow-up below.
+
+## Optional follow-up (not Phase 2 blocking)
+
+On Redis reconnect (or subscriber start), optionally **fetch the full recent revocation set** (e.g. Redis SET / sorted set of hashes since `now - LRU_TTL`, or a short Postgres poll of recently revoked tokens) and bulk-invalidate the local LRU. Closes the reconnect window without waiting for TTL.
+
+## Consequences
+
+- Milestone 2.2.2 implements publisher + subscriber per this ADR.
+- Exit gate "revoked within 5s" assumes healthy pub/sub; reconnect window is explicitly tested and documented.
+- Metrics/alerts on subscriber disconnect and publish failures are recommended in Phase 5 observability, but Phase 2 should at least WARN-log.
+
+## Alternatives considered
+
+1. **Shorter LRU TTL (1–5s)** — increases auth gRPC load; rejected as primary fix.
+2. **gRPC streaming revoke channel** — extra coupling; Redis already present.
+3. **Ignore pub/sub; rely on TTL only** — fails 5s SLA.
