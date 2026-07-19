@@ -12,6 +12,26 @@ Release notes are human-readable summaries of user-visible changes, security fix
 
 ---
 
+## [0.1.1](https://github.com/Rick1330/ibex-harness/compare/v0.1.0...v0.1.1) (2026-07-19)
+
+
+### Features
+
+* **web:** paper/ink landing, blog, changelog, and roadmap redesign ([#280](https://github.com/Rick1330/ibex-harness/issues/280)) ([62ebbea](https://github.com/Rick1330/ibex-harness/commit/62ebbeacc1b9b61787f1895464631dc93de6403c))
+* **web:** redesign changelog page with curated release notes ([#243](https://github.com/Rick1330/ibex-harness/issues/243)) ([636bdd7](https://github.com/Rick1330/ibex-harness/commit/636bdd75f4050143362bae229cfbc939dd984b7b))
+
+
+### Bug Fixes
+
+* **ci:** repair Tagged Release workflow_dispatch startup ([#240](https://github.com/Rick1330/ibex-harness/issues/240)) ([3973c83](https://github.com/Rick1330/ibex-harness/commit/3973c839796f59370d36bcf95134f969e84af293))
+* **ci:** resolve tagged release job outputs from step context ([#242](https://github.com/Rick1330/ibex-harness/issues/242)) ([86f7f82](https://github.com/Rick1330/ibex-harness/commit/86f7f8284c29d29e42ab941bcce4e4dab48309b7))
+* **ci:** run version release on merge to create release tag ([#238](https://github.com/Rick1330/ibex-harness/issues/238)) ([b9cd249](https://github.com/Rick1330/ibex-harness/commit/b9cd249197c6d0cb940d9ce564b555d91d1c907c))
+* **ci:** skip DCO on merge commits; strip CR in PR tracking ([#275](https://github.com/Rick1330/ibex-harness/issues/275)) ([71026a3](https://github.com/Rick1330/ibex-harness/commit/71026a38f18b09368cab9a57fc257f65951df051))
+* **ci:** split tagged release docker job to fix workflow_dispatch ([#246](https://github.com/Rick1330/ibex-harness/issues/246)) ([0d47fac](https://github.com/Rick1330/ibex-harness/commit/0d47facdc17ac1761862b43b7bf4f45e4330a563))
+* **ci:** stop Vitest hang from blocking web deploy ([#282](https://github.com/Rick1330/ibex-harness/issues/282)) ([2e57189](https://github.com/Rick1330/ibex-harness/commit/2e571898f674b8672c80c215f6aa73d3398ba283))
+* **ci:** use cosign bundle format for SBOM signing ([#247](https://github.com/Rick1330/ibex-harness/issues/247)) ([769a998](https://github.com/Rick1330/ibex-harness/commit/769a9981c0f7aef705ba36dfc9911df0669544ff))
+* **ci:** weekly bench publish, every-PR comments, cosign sigstore upload ([#248](https://github.com/Rick1330/ibex-harness/issues/248)) ([06c8e8c](https://github.com/Rick1330/ibex-harness/commit/06c8e8c7507ba4a183668e1df230de56704618af))
+
 ## 0.1.0 (2026-07-13)
 
 
