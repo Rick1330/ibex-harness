@@ -21,8 +21,7 @@ func TestStageAuthProducesStablePrefix(t *testing.T) {
 func TestStageRateLimitAllowsUnderCap(t *testing.T) {
 	limiter, cleanup := newTestRateLimiter(t)
 	defer cleanup()
-	orgID := uuid.MustParse("550e8400-e29b-41d4-a716-446655440000")
-	res, err := limiter.Check(context.Background(), orgID, uuid.Nil)
+	res, err := limiter.Check(context.Background(), benchOrgID, uuid.Nil)
 	if err != nil {
 		t.Fatalf("Check: %v", err)
 	}
@@ -48,12 +47,11 @@ func TestStagePromptInjectWrapsInput(t *testing.T) {
 func TestBenchmarkProxyOverheadAllocates(t *testing.T) {
 	limiter, cleanup := newTestRateLimiter(t)
 	defer cleanup()
-	orgID := uuid.MustParse("550e8400-e29b-41d4-a716-446655440000")
 	ctx := context.Background()
 
 	allocs := testing.AllocsPerRun(1, func() {
 		_ = stageAuth()
-		if _, err := limiter.Check(ctx, orgID, uuid.Nil); err != nil {
+		if _, err := limiter.Check(ctx, benchOrgID, uuid.Nil); err != nil {
 			t.Fatalf("rate limit check: %v", err)
 		}
 		dir := stageDirectiveResolve(1)

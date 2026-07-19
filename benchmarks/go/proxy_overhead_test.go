@@ -36,6 +36,8 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
 )
 
+var benchOrgID = uuid.MustParse("550e8400-e29b-41d4-a716-446655440000")
+
 func stageAuth() string {
 	sum := sha256.Sum256([]byte("auth-token"))
 	return hex.EncodeToString(sum[:8])
@@ -65,6 +67,13 @@ func newTestRateLimiter(t testing.TB) (ratelimit.Limiter, func()) {
 	return limiter, cleanup
 }
 
+func mustRateLimitCheck(b *testing.B, limiter ratelimit.Limiter, ctx context.Context) {
+	b.Helper()
+	if _, err := limiter.Check(ctx, benchOrgID, uuid.Nil); err != nil {
+		b.Fatalf("rate limit check: %v", err)
+	}
+}
+
 func BenchmarkStageAuth(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
@@ -75,15 +84,12 @@ func BenchmarkStageAuth(b *testing.B) {
 func BenchmarkStageRateLimit(b *testing.B) {
 	limiter, cleanup := newTestRateLimiter(b)
 	defer cleanup()
-	orgID := uuid.MustParse("550e8400-e29b-41d4-a716-446655440000")
 	ctx := context.Background()
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, err := limiter.Check(ctx, orgID, uuid.Nil); err != nil {
-			b.Fatalf("rate limit check: %v", err)
-		}
+		mustRateLimitCheck(b, limiter, ctx)
 	}
 }
 
@@ -105,17 +111,13 @@ func BenchmarkStagePromptInject(b *testing.B) {
 func BenchmarkProxyOverhead(b *testing.B) {
 	limiter, cleanup := newTestRateLimiter(b)
 	defer cleanup()
-	orgID := uuid.MustParse("550e8400-e29b-41d4-a716-446655440000")
 	ctx := context.Background()
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = stageAuth()
-		if _, err := limiter.Check(ctx, orgID, uuid.Nil); err != nil {
-			b.Fatalf("rate limit check: %v", err)
-		}
-		dir := stageDirectiveResolve(i)
-		_ = stagePromptInject(dir)
+		mustRateLimitCheck(b, limiter, ctx)
+		_ = stagePromptInject(stageDirectiveResolve(i))
 	}
 }

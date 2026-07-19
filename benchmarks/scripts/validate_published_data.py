@@ -19,7 +19,7 @@ MAX_P99_MS = 500.0
 MAX_RUN_NUMBER = 1_000_000
 BENCHMARK_DATA_NAME = "benchmark-data.json"
 VALID_STATUSES = frozenset({"pass", "regression", "fail", "unknown"})
-VALID_PROFILES = frozenset({"fast", "full"})
+VALID_PROFILES = frozenset({"smoke", "fast", "full"})
 _SHA_RE = re.compile(r"^[0-9a-f]{7,40}$", re.IGNORECASE)
 
 

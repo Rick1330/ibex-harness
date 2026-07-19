@@ -13,12 +13,13 @@ Published benchmark data is committed to `web/public/benchmarks/` via the benchm
 
 ## Profiles (speed vs quality)
 
-| Profile | When | Go `-count` | k6 |
-| --- | --- | --- | --- |
-| `fast` | Daily cron (Mon–Sat), PRs, main pushes | 2 | 25 VUs / 30s |
-| `full` | Sunday cron, `workflow_dispatch` | 5 | 100 VUs / 2m |
+| Profile | When | Go `-count` | k6 | Proxy HTTP bench |
+| --- | --- | --- | --- | --- |
+| `smoke` | Pull requests | 1 | 15 VUs / 15s | skipped |
+| `fast` | Daily cron (Mon–Sat), main pushes | 2 | 25 VUs / 30s | yes |
+| `full` | Sunday cron, `workflow_dispatch` | 5 | 100 VUs / 2m | yes |
 
-Target wall-clock: **~5–10 min** for `fast`, current quality bar for `full`. Both keep Postgres + Redis + real proxy stack. Each published run records `profile: "fast" | "full"`.
+Target wall-clock: **~2–4 min** for `smoke` PRs, **~5–10 min** for `fast`, current quality bar for `full`. All keep Postgres + Redis + real proxy `/health` load. Go stage microbenches run before stack start. Each published run records `profile: "smoke" | "fast" | "full"`.
 
 CI defaults remain `GET /health`; set `K6_USE_CHAT=1` for chat-path load once Phase 2 middleware is complete.
 

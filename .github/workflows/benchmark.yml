@@ -59,11 +59,13 @@ jobs:
         name: Resolve bench profile
         run: |
           set -euo pipefail
+          # smoke = PRs (fast signal), fast = daily/main push, full = Sunday/dispatch
           profile="fast"
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            profile="smoke"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             profile="full"
           elif [ "${{ github.event_name }}" = "schedule" ]; then
-            # cron runs at 04:00 UTC daily; Sunday → full, other days → fast
             dow="$(date -u +%u)" # 1=Mon … 7=Sun
             if [ "$dow" = "7" ]; then
               profile="full"
@@ -178,15 +180,26 @@ jobs:
           if [ -z "$profile" ]; then
             profile="fast"
           fi
-          if [ "$profile" = "full" ]; then
-            echo "go_count=5" >> "$GITHUB_OUTPUT"
-            echo "k6_vus=100" >> "$GITHUB_OUTPUT"
-            echo "k6_duration=2m" >> "$GITHUB_OUTPUT"
-          else
-            echo "go_count=2" >> "$GITHUB_OUTPUT"
-            echo "k6_vus=25" >> "$GITHUB_OUTPUT"
-            echo "k6_duration=30s" >> "$GITHUB_OUTPUT"
-          fi
+          run_proxy_http_bench=1
+          case "$profile" in
+            full)
+              echo "go_count=5" >> "$GITHUB_OUTPUT"
+              echo "k6_vus=100" >> "$GITHUB_OUTPUT"
+              echo "k6_duration=2m" >> "$GITHUB_OUTPUT"
+              ;;
+            smoke)
+              echo "go_count=1" >> "$GITHUB_OUTPUT"
+              echo "k6_vus=15" >> "$GITHUB_OUTPUT"
+              echo "k6_duration=15s" >> "$GITHUB_OUTPUT"
+              run_proxy_http_bench=0
+              ;;
+            *)
+              echo "go_count=2" >> "$GITHUB_OUTPUT"
+              echo "k6_vus=25" >> "$GITHUB_OUTPUT"
+              echo "k6_duration=30s" >> "$GITHUB_OUTPUT"
+              ;;
+          esac
+          echo "run_proxy_http_bench=$run_proxy_http_bench" >> "$GITHUB_OUTPUT"
           echo "profile=$profile" >> "$GITHUB_OUTPUT"
           echo "BENCH_PROFILE=$profile" >> "$GITHUB_ENV"
           echo "Using BENCH_PROFILE=$profile"
@@ -217,6 +230,18 @@ jobs:
         working-directory: packages/proto
         run: buf generate
 
+      # Go stage microbenches do not need the live proxy stack — run them first.
+      - name: Run Go microbenchmarks
+        run: |
+          set -euo pipefail
+          go test ./benchmarks/go -run=^$ -bench=. -benchmem -count=${{ steps.knobs.outputs.go_count }} > benchmarks/output/go-bench.txt
+          if [ "${{ steps.knobs.outputs.run_proxy_http_bench }}" = "1" ]; then
+            go test ./services/proxy/internal/http -run=^$ -bench=BenchmarkProxy -benchmem -count=${{ steps.knobs.outputs.go_count }} >> benchmarks/output/go-bench.txt
+          fi
+
+      - name: Compare against previous benchmark with benchstat
+        run: bash benchmarks/scripts/benchstat_compare.sh
+
       - name: Migrate database for benchmark proxy stack
         env:
           POSTGRES_MIGRATE_DSN: ${{ env.POSTGRES_DSN }}
@@ -224,14 +249,6 @@ jobs:
 
       - name: Start real proxy stack for load benchmark
         run: bash benchmarks/scripts/start_proxy_stack.sh
-
-      - name: Run Go microbenchmarks
-        run: |
-          go test ./benchmarks/go -run=^$ -bench=. -benchmem -count=${{ steps.knobs.outputs.go_count }} > benchmarks/output/go-bench.txt
-          go test ./services/proxy/internal/http -run=^$ -bench=BenchmarkProxy -benchmem -count=${{ steps.knobs.outputs.go_count }} >> benchmarks/output/go-bench.txt
-
-      - name: Compare against previous benchmark with benchstat
-        run: bash benchmarks/scripts/benchstat_compare.sh
 
       - name: Run k6 load benchmark against proxy /health
         run: |
