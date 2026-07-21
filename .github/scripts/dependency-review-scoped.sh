@@ -40,6 +40,7 @@ failures=0
 
 while IFS= read -r dep; do
   [[ -z "$dep" ]] && continue
+  [[ "$(jq -r '.change_type' <<< "$dep")" == "added" ]] || continue
   manifest="$(jq -r '.manifest' <<< "$dep")"
   package="$(jq -r '.name' <<< "$dep")"
   version="$(normalize_version "$(jq -r '.version' <<< "$dep")")"
