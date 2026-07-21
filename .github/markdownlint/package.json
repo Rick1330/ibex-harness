@@ -1,0 +1,11 @@
+{
+  "name": "ibex-markdownlint-ci",
+  "private": true,
+  "devDependencies": {
+    "markdownlint-cli2": "0.19.1"
+  },
+  "overrides": {
+    "markdown-it": "14.2.0",
+    "js-yaml": "4.3.0"
+  }
+}

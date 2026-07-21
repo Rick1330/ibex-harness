@@ -46,4 +46,8 @@ jobs:
         with:
           persist-credentials: false
       - name: Dependency Review
-        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_EVENT_PULL_REQUEST_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          GITHUB_SHA: ${{ github.sha }}
+        run: bash .github/scripts/dependency-review-scoped.sh

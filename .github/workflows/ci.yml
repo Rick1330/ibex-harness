@@ -147,8 +147,10 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "20"
+      - name: Install markdownlint-cli2
+        run: npm ci --prefix .github/markdownlint --ignore-scripts
       - name: markdownlint-cli2
-        run: npx --yes markdownlint-cli2
+        run: .github/markdownlint/node_modules/.bin/markdownlint-cli2
 
   secrets:
     name: gitleaks
@@ -842,9 +844,9 @@ jobs:
         run: |
           GOLANGCI_LINT_VERSION=2.8.0
           GOLANGCI_LINT_ARCHIVE="golangci-lint-${GOLANGCI_LINT_VERSION}-linux-amd64.tar.gz"
-          curl -sSfL -o "${GOLANGCI_LINT_ARCHIVE}" \
+          curl --proto '=https' --tlsv1.2 -sSfL -o "${GOLANGCI_LINT_ARCHIVE}" \
             "https://github.com/golangci/golangci-lint/releases/download/v${GOLANGCI_LINT_VERSION}/${GOLANGCI_LINT_ARCHIVE}"
-          curl -sSfL -o checksums.txt \
+          curl --proto '=https' --tlsv1.2 -sSfL -o checksums.txt \
             "https://github.com/golangci/golangci-lint/releases/download/v${GOLANGCI_LINT_VERSION}/golangci-lint-${GOLANGCI_LINT_VERSION}-checksums.txt"
           grep " ${GOLANGCI_LINT_ARCHIVE}$" checksums.txt | sha256sum -c -
           tar -xzf "${GOLANGCI_LINT_ARCHIVE}" -C /usr/local/bin --strip-components=1 \
@@ -985,9 +987,6 @@ jobs:
           echo "Overlaid benchmark artifact from run ${run_id}"
 
       - uses: ./.github/actions/setup-pnpm-web
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
 
       - name: Cache Next.js build
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -1156,6 +1155,7 @@ jobs:
             exit 0
           fi
           pip install --disable-pip-version-check --no-cache-dir \
+            --only-binary :all: \
             --require-hashes \
             -r .github/requirements/bandit.txt
           bandit -r services/memory/ -x tests/,test_ -f sarif -o bandit.sarif
@@ -1258,7 +1258,7 @@ jobs:
         working-directory: packages/proto
         run: buf generate
       - name: Install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+        run: bash .github/scripts/install-go-ci-tool.sh golang.org/x/vuln/cmd/govulncheck
       - name: Run govulncheck
         run: |
           govulncheck ./packages/... ./services/auth/... ./services/proxy/...
@@ -1287,7 +1287,9 @@ jobs:
         working-directory: packages/proto
         run: buf generate
       - name: Install go-licenses
-        run: go install github.com/google/go-licenses@v1.6.0
+        env:
+          TOOLS_MOD_DIR: ${{ github.workspace }}/.github/tools/licenses
+        run: bash .github/scripts/install-go-ci-tool.sh github.com/google/go-licenses
       - name: Verify dependency licenses
         run: |
           go-licenses check ./packages/... ./services/auth/... ./services/proxy/... \
