@@ -144,17 +144,13 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
-      - uses: pnpm/action-setup@008330803749db0355799c700092d9a85fd074e9 # v6.0.9
-        with:
-          version: 9.15.9
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "20"
-          cache: pnpm
       - name: Install markdownlint-cli2
-        run: pnpm install --frozen-lockfile --ignore-scripts
+        run: npm ci --prefix .github/markdownlint --ignore-scripts
       - name: markdownlint-cli2
-        run: pnpm exec markdownlint-cli2
+        run: .github/markdownlint/node_modules/.bin/markdownlint-cli2
 
   secrets:
     name: gitleaks

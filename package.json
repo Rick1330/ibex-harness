@@ -15,7 +15,6 @@
     "docs:start": "pnpm web:start"
   },
   "devDependencies": {
-    "markdownlint-cli2": "^0.19.1",
     "turbo": "^2.10.5"
   },
   "pnpm": {
