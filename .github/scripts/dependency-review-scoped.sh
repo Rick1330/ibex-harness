@@ -2,7 +2,7 @@
 # Dependency review with manifest-scoped GHSA exceptions (not global allow-ghsas).
 set -euo pipefail
 
-allowlist_file="$(cd "$(dirname "$0")/../dependency-review" && pwd)/licenses-tools-allowlist.env"
+allowlist_file="$(cd "$(dirname "$0")/../dependency-review" && pwd)/licenses-tools-allowlist.conf"
 # shellcheck source=/dev/null
 source "$allowlist_file"
 
