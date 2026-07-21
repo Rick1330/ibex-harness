@@ -4,7 +4,6 @@
 package tools
 
 import (
-	_ "github.com/google/go-licenses"
 	_ "golang.org/x/vuln/cmd/govulncheck"
 	_ "gotest.tools/gotestsum"
 )

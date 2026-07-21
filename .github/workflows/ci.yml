@@ -1287,7 +1287,12 @@ jobs:
         working-directory: packages/proto
         run: buf generate
       - name: Install go-licenses
-        run: bash .github/scripts/install-go-ci-tool.sh github.com/google/go-licenses
+        # Not in .github/tools: go-licenses pulls unfixable gopkg.in/src-d/go-git.v4 (GHSA-449p).
+        run: |
+          install_dir="${RUNNER_TEMP}/go-ci-bin"
+          mkdir -p "$install_dir"
+          GOBIN="$install_dir" go install github.com/google/go-licenses@v1.6.0
+          echo "$install_dir" >> "$GITHUB_PATH"
       - name: Verify dependency licenses
         run: |
           go-licenses check ./packages/... ./services/auth/... ./services/proxy/... \
