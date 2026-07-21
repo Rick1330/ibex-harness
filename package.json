@@ -15,7 +15,7 @@
     "docs:start": "pnpm web:start"
   },
   "devDependencies": {
-    "turbo": "^2.5.4"
+    "turbo": "^2.10.5"
   },
   "pnpm": {
     "overrides": {
