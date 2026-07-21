@@ -252,7 +252,7 @@ jobs:
 
       - name: Run k6 load benchmark against proxy /health
         run: |
-          chmod -R a+rwX benchmarks/output
+          chmod -R u+rwX benchmarks/output
           docker run --rm \
             --user "$(id -u):$(id -g)" \
             --network host \
@@ -387,7 +387,7 @@ jobs:
         run: |
           set -euo pipefail
           cd benchmark-bot
-          cargo build --release
+          cargo build --release --locked
           echo "path=${{ github.workspace }}/benchmark-bot/target/release/ibex-benchmark-bot" >> "$GITHUB_OUTPUT"
 
       - name: Build and post PR benchmark comment

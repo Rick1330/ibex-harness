@@ -6,6 +6,7 @@ go:
   - 'go.sum'
   - 'infra/migrations/**'
   - '.golangci.yml'
+  - '.github/tools/**'
 web:
   - 'web/**'
   - 'CHANGELOG.md'
