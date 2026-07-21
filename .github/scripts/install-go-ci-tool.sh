@@ -7,7 +7,7 @@ if [[ "$#" -lt 1 ]]; then
   exit 1
 fi
 
-tools_dir="$(cd "$(dirname "$0")/../tools" && pwd)"
+tools_dir="$(cd "${TOOLS_MOD_DIR:-$(dirname "$0")/../tools}" && pwd)"
 install_dir="${GOBIN:-${RUNNER_TEMP:-/tmp}/go-ci-bin}"
 mkdir -p "$install_dir"
 export GOBIN="$install_dir"
