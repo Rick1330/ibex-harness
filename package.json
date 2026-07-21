@@ -15,12 +15,13 @@
     "docs:start": "pnpm web:start"
   },
   "devDependencies": {
-    "turbo": "^2.5.4"
+    "turbo": "^2.10.5"
   },
   "pnpm": {
     "overrides": {
       "dompurify": ">=3.4.11",
       "esbuild": ">=0.28.1",
+      "js-yaml": ">=4.3.0 <5",
       "postcss": ">=8.5.10"
     }
   }
