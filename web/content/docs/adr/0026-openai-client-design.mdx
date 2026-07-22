@@ -73,10 +73,10 @@ OTel span `openai.Complete` with `provider.name` and `llm.model` attributes. Pro
 
 - First end-to-end non-streaming forward with CI-safe `IBEX_LLM_MODE=mock`
 - Clear env contract for operators enabling live mode
+- Registry lookup lives in ProviderRoutingMiddleware (milestone 2.1.4); handler reads provider from context
 
 **Negative:**
 
-- Handler still performs inline registry lookup (extracted in 2.1.4)
 - Error mapping duplicated until 2.1.5 centralization
 
 ## References

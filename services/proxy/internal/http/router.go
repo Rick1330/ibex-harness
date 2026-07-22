@@ -20,6 +20,8 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+const msgInternalError = "Internal error"
+
 type authProbeResponse struct {
 	OrgID       string `json:"org_id"`
 	Permissions int64  `json:"permissions"`
@@ -119,7 +121,7 @@ func handleAuthProbe(w http.ResponseWriter, r *http.Request) {
 	res, ok := auth.FromContext(r.Context())
 	if !ok {
 		apierror.WriteStatus(w, http.StatusInternalServerError, apierror.CodeServiceDegraded,
-			"Internal error", requestIDFromContext(r.Context()),
+			msgInternalError, requestIDFromContext(r.Context()),
 			apierror.WriteOpts{Detail: "missing auth context", DocsBase: ErrorDocsBaseFromContext(r.Context())})
 		return
 	}
@@ -136,46 +138,31 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request, h chatComplet
 }
 
 type chatCompletionHandler struct {
-	log         *logger.Logger
-	docsBase    string
-	providerReg *provider.Registry
-	metrics     *metrics.ProxyRegistry
+	log      *logger.Logger
+	docsBase string
+	metrics  *metrics.ProxyRegistry
 }
 
 func (h chatCompletionHandler) serve(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodPost, h.docsBase) {
 		return
 	}
-	requestID := requestIDFromContext(r.Context())
-
-	parsed, ok := parseAndValidateChatRequest(w, r, requestID, h.docsBase)
+	parsed, ok := llm.ChatRequestFromContext(r.Context())
 	if !ok {
+		requestID := requestIDFromContext(r.Context())
+		apierror.WriteStatus(w, http.StatusInternalServerError, apierror.CodeInternalError,
+			msgInternalError, requestID,
+			apierror.WriteOpts{Detail: "chat request not parsed", DocsBase: h.docsBase})
 		return
 	}
-
-	ctx := llm.WithChatRequest(r.Context(), parsed)
-
-	if res, ok := auth.FromContext(ctx); ok {
-		h.log.InfoCtx(ctx, "chat completion parsed",
-			"org_id", res.OrgID,
-			"model", parsed.Model,
-			"message_count", len(parsed.Messages),
-			"stream", parsed.Stream,
-		)
-	}
-
-	prov, err := h.providerReg.For(parsed.Model)
-	if err != nil {
-		if errors.Is(err, provider.ErrNoProviderForModel) {
-			writeProviderNotConfigured(w, requestID, h.docsBase, "No provider registered for model "+parsed.Model)
-			return
-		}
-		apierror.WriteStatus(w, http.StatusInternalServerError, apierror.CodeServiceDegraded,
-			"Internal error", requestID,
-			apierror.WriteOpts{Detail: "provider registry lookup failed", DocsBase: h.docsBase})
+	prov, ok := provider.ProviderFromContext(r.Context())
+	if !ok {
+		requestID := requestIDFromContext(r.Context())
+		apierror.WriteStatus(w, http.StatusInternalServerError, apierror.CodeInternalError,
+			msgInternalError, requestID,
+			apierror.WriteOpts{Detail: "provider not selected", DocsBase: h.docsBase})
 		return
 	}
-
 	h.forwardChatCompletion(chatForwardParams{
 		w: w, r: r, parsed: parsed, prov: prov,
 	})

@@ -76,11 +76,11 @@ Phase 1 rule: proxy has no Postgres (auth via gRPC only). Phase 2 milestones 2.3
 - Phase 4 multi-provider is registration-only
 - Shared package testable offline at ≥90% unit coverage
 - Handler stays provider-agnostic
+- Milestone 2.1.4 extracted registry lookup from handler into ProviderRoutingMiddleware (no behavior change)
 
 **Negative:**
 
 - Duplicate `Message` types in `llm` and `provider` — conversion function in 2.1.2 bridges them
-- Milestone 2.1.4 will extract registry lookup from handler into middleware (no behavior change)
 
 ## References
 
