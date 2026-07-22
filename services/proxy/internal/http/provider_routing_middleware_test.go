@@ -14,10 +14,6 @@ import (
 
 func TestUnit_ProviderRouting_KnownModelAttachesProvider(t *testing.T) {
 	t.Parallel()
-	reg, err := provider.NewRegistry(stubLLMProvider{name: "openai", models: []string{"gpt-4o"}})
-	if err != nil {
-		t.Fatalf("NewRegistry: %v", err)
-	}
 	var gotName string
 	var called bool
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -25,18 +21,8 @@ func TestUnit_ProviderRouting_KnownModelAttachesProvider(t *testing.T) {
 		gotName = provider.MustProviderFromContext(r.Context()).Name()
 		w.WriteHeader(http.StatusOK)
 	})
-	h := ProviderRoutingMiddleware(providerRoutingOpts{
-		registry: reg,
-		log:      logger.Discard("proxy"),
-		docsBase: "",
-	})(next)
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
-	req = req.WithContext(llm.WithChatRequest(req.Context(), &llm.ChatCompletionRequest{
-		Model: "gpt-4o", Messages: []llm.Message{{Role: "user", Content: "hi"}},
-	}))
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
+	rec := serveProviderRouting(t, "gpt-4o", next)
 	if !called {
 		t.Fatal("handler not called")
 	}
@@ -50,26 +36,12 @@ func TestUnit_ProviderRouting_KnownModelAttachesProvider(t *testing.T) {
 
 func TestUnit_ProviderRouting_UnknownModel501(t *testing.T) {
 	t.Parallel()
-	reg, err := provider.NewRegistry(stubLLMProvider{name: "openai", models: []string{"gpt-4o"}})
-	if err != nil {
-		t.Fatalf("NewRegistry: %v", err)
-	}
 	called := false
 	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		called = true
 	})
-	h := ProviderRoutingMiddleware(providerRoutingOpts{
-		registry: reg,
-		log:      logger.Discard("proxy"),
-		docsBase: "",
-	})(next)
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
-	req = req.WithContext(llm.WithChatRequest(req.Context(), &llm.ChatCompletionRequest{
-		Model: "unknown-model", Messages: []llm.Message{{Role: "user", Content: "hi"}},
-	}))
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
+	rec := serveProviderRouting(t, "unknown-model", next)
 	if called {
 		t.Fatal("handler must not run for unknown model")
 	}
@@ -110,4 +82,24 @@ func TestUnit_ChatParse_MissingModel400(t *testing.T) {
 	if !strings.Contains(body, `"field":"model"`) {
 		t.Fatalf("expected field model error: %s", body)
 	}
+}
+
+func serveProviderRouting(t *testing.T, model string, next http.Handler) *httptest.ResponseRecorder {
+	t.Helper()
+	reg, err := provider.NewRegistry(stubLLMProvider{name: "openai", models: []string{"gpt-4o"}})
+	if err != nil {
+		t.Fatalf("NewRegistry: %v", err)
+	}
+	h := ProviderRoutingMiddleware(providerRoutingOpts{
+		registry: reg,
+		log:      logger.Discard("proxy"),
+		docsBase: "",
+	})(next)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	req = req.WithContext(llm.WithChatRequest(req.Context(), &llm.ChatCompletionRequest{
+		Model: model, Messages: []llm.Message{{Role: "user", Content: "hi"}},
+	}))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
 }

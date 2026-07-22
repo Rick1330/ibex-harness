@@ -32,7 +32,11 @@ func ProviderRoutingMiddleware(opts providerRoutingOpts) func(http.Handler) http
 			}
 			prov, err := opts.registry.For(parsed.Model)
 			if err != nil {
-				writeRegistryLookupError(w, requestID, opts.docsBase, parsed.Model, err)
+				writeRegistryLookupError(w, registryLookupWrite{
+					requestID: requestID,
+					docsBase:  opts.docsBase,
+					model:     parsed.Model,
+				}, err)
 				return
 			}
 			ctx := provider.WithProvider(r.Context(), prov)
@@ -41,12 +45,19 @@ func ProviderRoutingMiddleware(opts providerRoutingOpts) func(http.Handler) http
 	}
 }
 
-func writeRegistryLookupError(w http.ResponseWriter, requestID, docsBase, model string, err error) {
+type registryLookupWrite struct {
+	requestID string
+	docsBase  string
+	model     string
+}
+
+func writeRegistryLookupError(w http.ResponseWriter, meta registryLookupWrite, err error) {
 	if errors.Is(err, provider.ErrNoProviderForModel) {
-		writeProviderNotConfigured(w, requestID, docsBase, "No provider registered for model "+model)
+		writeProviderNotConfigured(w, meta.requestID, meta.docsBase,
+			"No provider registered for model "+meta.model)
 		return
 	}
 	apierror.WriteStatus(w, http.StatusInternalServerError, apierror.CodeServiceDegraded,
-		"Internal error", requestID,
-		apierror.WriteOpts{Detail: "provider registry lookup failed", DocsBase: docsBase})
+		"Internal error", meta.requestID,
+		apierror.WriteOpts{Detail: "provider registry lookup failed", DocsBase: meta.docsBase})
 }
