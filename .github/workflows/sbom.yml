@@ -34,6 +34,7 @@ jobs:
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:
           path: .
+          config: .github/syft.yaml
           format: spdx-json
           output-file: sbom.spdx.json
 

@@ -1,0 +1,7 @@
+# SPDX SBOM scope: runtime/shipped dependencies only.
+# CI-only lockfiles are excluded (not deployed artifacts):
+#   .github/tools/licenses — go-licenses transitive go-git v4 (no fix available)
+#   .github/markdownlint   — isolated markdownlint-cli2 for CI
+exclude:
+  - "./.github/tools/licenses/**"
+  - "./.github/markdownlint/**"
