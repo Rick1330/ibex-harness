@@ -80,10 +80,27 @@ Configurable via `IBEX_REQUEST_ID_HEADER` and `IBEX_TRACE_ID_HEADER`.
 
 | HTTP | Code | When |
 | --- | --- | --- |
-| 501 | `PROVIDER_NOT_CONFIGURED` | Valid request; no LLM provider wired (Phase 1 stub) |
+| 501 | `PROVIDER_NOT_CONFIGURED` | Valid request; no LLM provider wired for the model |
 | 503 | `SERVICE_DEGRADED` | Auth ValidateToken failed unexpectedly / deadline |
 | 503 | `AUTH_UNAVAILABLE` | Auth ValidateAgent transport failure |
 | 500 | `INTERNAL_ERROR` | Unhandled server fault |
+
+## Provider / upstream errors (Phase 2)
+
+Upstream LLM failures are mapped by `packages/provider.MapError` into the same envelope ([milestone 2.1.5](/roadmap/phase-2-single-provider/milestones/2.1.5-provider-error-mapping), [ADR-0026](/docs/adr/0026-openai-client-design)).
+
+| HTTP | Code | When |
+| --- | --- | --- |
+| 400 | `INVALID_REQUEST` | Upstream rejected the chat payload (sanitized detail only) |
+| 429 | `RATE_LIMITED` | Upstream provider throttled; `Retry-After` forwarded when present |
+| 503 | `PROVIDER_UNAVAILABLE` | Upstream 401/403/404/5xx or transport failure (provider key issues are **not** client PAT 401) |
+| 504 | `PROVIDER_TIMEOUT` | Upstream deadline exceeded |
+
+<Callout type="info" title="Proxy retries are exhaustive">
+  The OpenAI adapter retries transient 429/5xx (and some transport errors) before returning.
+  A client-visible `PROVIDER_UNAVAILABLE` / upstream `RATE_LIMITED` means those retries are already exhausted —
+  aggressive client re-retry of the same request can amplify load. Prefer backoff and `Retry-After` when present.
+</Callout>
 
 <Callout type="warning" title="Cross-tenant access">
   Cross-org resource access returns **403** `AGENT_NOT_AUTHORIZED` or `INSUFFICIENT_PERMISSIONS` — never **404** — to prevent enumeration attacks.
