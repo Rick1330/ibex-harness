@@ -32,6 +32,11 @@ func (w *rateLimitResponseWriter) Write(b []byte) (int, error) {
 	return w.ResponseWriter.Write(b)
 }
 
+// Flush implements http.Flusher for SSE streaming through middleware wrappers.
+func (w *rateLimitResponseWriter) Flush() {
+	flushIfSupported(w.ResponseWriter)
+}
+
 func (w *rateLimitResponseWriter) ensureHeaders() {
 	if w.wrote {
 		return

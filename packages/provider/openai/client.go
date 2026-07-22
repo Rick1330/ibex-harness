@@ -62,7 +62,8 @@ func (c *Client) SupportedModels() []string {
 	return []string{"gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"}
 }
 
-// Complete sends a non-streaming chat completion request to OpenAI.
+// Complete sends a chat completion request to OpenAI.
+// When req.Stream is true, Body is a live SSE stream (caller must close it).
 func (c *Client) Complete(ctx context.Context, req provider.Request) (provider.Response, error) {
 	ctx, span := c.tracer.Start(ctx, "openai.Complete",
 		trace.WithAttributes(
@@ -80,7 +81,7 @@ func (c *Client) Complete(ctx context.Context, req provider.Request) (provider.R
 	}
 
 	url := strings.TrimRight(c.cfg.BaseURL, "/") + "/chat/completions"
-	return c.executeWithRetry(ctx, span, url, body)
+	return c.executeWithRetry(ctx, span, upstreamCall{URL: url, Body: body, Stream: req.Stream})
 }
 
 func (c *Client) marshalRequest(req provider.Request) ([]byte, error) {
@@ -91,14 +92,73 @@ func (c *Client) marshalRequest(req provider.Request) ([]byte, error) {
 	return body, nil
 }
 
-func (c *Client) doRequest(ctx context.Context, url string, body []byte) (*http.Response, error) {
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+func (c *Client) doRequest(ctx context.Context, call upstreamCall) (*http.Response, error) {
+	reqCtx, cancel := c.streamRequestContext(ctx, call.Stream)
+	httpReq, err := c.newChatRequest(reqCtx, call)
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	resp, err := c.httpClientFor(call.Stream).Do(httpReq)
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	return attachStreamCancel(resp, call.Stream, cancel), nil
+}
+
+func (c *Client) streamRequestContext(ctx context.Context, stream bool) (context.Context, context.CancelFunc) {
+	if !stream {
+		return ctx, noopCancel
+	}
+	return context.WithTimeout(ctx, c.cfg.StreamTimeout)
+}
+
+// noopCancel is used for non-stream requests that share the caller's context.
+func noopCancel() {
+	// Intentionally empty: there is no derived deadline to cancel on the non-stream path.
+}
+
+func (c *Client) newChatRequest(ctx context.Context, call upstreamCall) (*http.Request, error) {
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, call.URL, bytes.NewReader(call.Body))
 	if err != nil {
 		return nil, err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+c.cfg.APIKey)
-	return c.httpClient.Do(httpReq)
+	if call.Stream {
+		httpReq.Header.Set("Accept", "text/event-stream")
+	}
+	return httpReq, nil
+}
+
+func (c *Client) httpClientFor(stream bool) *http.Client {
+	if !stream {
+		return c.httpClient
+	}
+	// Client.Timeout would abort long SSE streams; bound via request context instead.
+	return &http.Client{Transport: c.httpClient.Transport}
+}
+
+func attachStreamCancel(resp *http.Response, stream bool, cancel context.CancelFunc) *http.Response {
+	if !stream {
+		cancel()
+		return resp
+	}
+	resp.Body = &cancelOnClose{ReadCloser: resp.Body, cancel: cancel}
+	return resp
+}
+
+// cancelOnClose cancels the stream request context when the body is closed.
+type cancelOnClose struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (c *cancelOnClose) Close() error {
+	err := c.ReadCloser.Close()
+	c.cancel()
+	return err
 }
 
 func readProviderError(name string, resp *http.Response) *provider.ProviderError {

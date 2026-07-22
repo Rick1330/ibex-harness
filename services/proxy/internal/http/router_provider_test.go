@@ -260,6 +260,7 @@ func TestUnit_chatCompletionHandler_logsParsedRequest(t *testing.T) {
 		auth:    true,
 		agentID: testChatAgentID,
 	})
+	// Empty registry: stream requests still 501 when no provider matches the model.
 	if rec.Code != http.StatusNotImplemented {
 		t.Fatalf("status: %d body=%s", rec.Code, rec.Body.String())
 	}

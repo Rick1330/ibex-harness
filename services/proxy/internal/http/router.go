@@ -139,6 +139,7 @@ type chatCompletionHandler struct {
 	log         *logger.Logger
 	docsBase    string
 	providerReg *provider.Registry
+	metrics     *metrics.ProxyRegistry
 }
 
 func (h chatCompletionHandler) serve(w http.ResponseWriter, r *http.Request) {
@@ -161,11 +162,6 @@ func (h chatCompletionHandler) serve(w http.ResponseWriter, r *http.Request) {
 			"message_count", len(parsed.Messages),
 			"stream", parsed.Stream,
 		)
-	}
-
-	if parsed.Stream {
-		writeStreamingNotSupported(w, requestID, h.docsBase)
-		return
 	}
 
 	prov, err := h.providerReg.For(parsed.Model)
@@ -254,6 +250,11 @@ type statusRecorder struct {
 func (r *statusRecorder) WriteHeader(status int) {
 	r.status = status
 	r.ResponseWriter.WriteHeader(status)
+}
+
+// Flush implements http.Flusher for SSE streaming through middleware wrappers.
+func (r *statusRecorder) Flush() {
+	flushIfSupported(r.ResponseWriter)
 }
 
 func requireMethod(w http.ResponseWriter, r *http.Request, method, docsBase string) bool {

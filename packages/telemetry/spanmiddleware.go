@@ -35,3 +35,10 @@ func (r *spanStatusRecorder) WriteHeader(status int) {
 	r.status = status
 	r.ResponseWriter.WriteHeader(status)
 }
+
+// Flush implements http.Flusher for SSE streaming through middleware wrappers.
+func (r *spanStatusRecorder) Flush() {
+	if f, ok := r.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}

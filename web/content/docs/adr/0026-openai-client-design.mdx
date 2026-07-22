@@ -51,7 +51,7 @@ Unknown top-level JSON fields from the chat parser are ignored. `provider.Reques
 
 ### 5) Streaming
 
-`stream=true` is rejected in the proxy handler with `501 PROVIDER_NOT_CONFIGURED` and detail pointing to milestone 2.1.3. The OpenAI client may set `stream` on outbound requests when streaming lands.
+Streaming is implemented in milestone 2.1.3. See [ADR-0027](/docs/adr/0027-streaming-dual-write) for dual-write, flush, and no-retry-after-start rules. The OpenAI client sets `Accept: text/event-stream` when `Request.Stream` is true and returns the live SSE body to the proxy.
 
 ### 6) Error mapping split
 

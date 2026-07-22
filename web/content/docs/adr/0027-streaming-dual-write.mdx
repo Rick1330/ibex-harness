@@ -1,0 +1,116 @@
+---
+title: "ADR-0027: Streaming dual-write strategy"
+description: "Architecture decision record 0027 — SSE verbatim forward, TeeReader dual-write, accumulation limits, and disconnect semantics for OpenAI streaming."
+adrId: "0027"
+status: "Accepted"
+date: "2026-07-22"
+authors: "IBEX Harness team"
+---
+
+# ADR-0027: Streaming dual-write strategy
+
+- **Status:** Accepted
+- **Date:** 2026-07-22
+- **Authors:** IBEX Harness team
+- **Milestone:** [2.1.3 OpenAI streaming forwarder](/roadmap/phase-2-single-provider/milestones/2.1.3-openai-streaming-forwarder)
+
+## Context
+
+Production AI clients expect Server-Sent Events (SSE) token streaming. The proxy must:
+
+1. Forward upstream bytes to the caller with low time-to-first-byte (flush after each SSE event).
+2. Accumulate content and usage for later session checkpoints and traces (milestones 2.4 / 2.5).
+
+These two writes must not fight each other: forward failure loses the client stream; accumulation failure is a degraded telemetry state only.
+
+ADR-0025 already returns streaming bodies as `io.ReadCloser`. ADR-0026 deferred `stream=true` until this decision.
+
+## Decision
+
+### 1) Single-path dual-write (`io.TeeReader`), not goroutine fan-out
+
+The proxy reads the upstream body once. Bytes are copied to:
+
+- Primary: `http.ResponseWriter` (client forward), flushed at each SSE event boundary (`\n\n`).
+- Secondary: `openai.StreamAccumulator` (`io.Writer`) for content/usage extraction.
+
+`io.TeeReader` keeps ordering trivial and avoids a channel between goroutines. A fan-out design would add scheduling races and make backpressure harder to reason about.
+
+### 2) Verbatim SSE — no re-frame
+
+IBEX does not rewrite SSE framing, inject events, or transform provider-specific extensions (tool-call deltas, content filters). Clients parse OpenAI’s stream directly. Any transformation risks incompatibility.
+
+### 3) Accumulation is best-effort
+
+Parse errors in the accumulator must never fail `Write` or block the forward path. Incomplete accumulation is best-effort: JSON parse failures and soft-cap drops are silent in the accumulator (forward still receives full upstream bytes). The proxy logs a warning when the stream ends incomplete (`Complete() == false`). Prefer a missing or truncated trace over delayed TTFB.
+
+Soft content cap: **1 MiB** of accumulated completion text, truncated on a UTF-8 rune boundary. Beyond the cap, further content is dropped from the accumulator (forward still receives full upstream bytes).
+
+### 4) Termination and completeness
+
+- Stream ends with `data: [DONE]\n\n`. Seeing this sentinel marks the accumulator complete.
+- Upstream EOF without `[DONE]`, or mid-stream transport error after headers: `Complete() == false` for later emitters (`is_complete=false`).
+- After response headers and body have started toward the client, the proxy **must not** convert failures into a JSON error envelope (see also milestone 2.1.5).
+
+### 5) No retry after stream start
+
+The OpenAI client may retry transient failures **before** returning a successful streaming `200` body. Once a live SSE body is returned to the proxy, retries are forbidden — the client may already have received partial tokens.
+
+### 6) Client disconnect
+
+Request context cancellation (client gone) stops reading from upstream, closes the provider body, and increments `ibex_proxy_stream_client_disconnects_total`. No background goroutine may outlive the request without an explicit wait.
+
+### 7) Response headers (proxy)
+
+Before reading the body:
+
+| Header | Value |
+| --- | --- |
+| `Content-Type` | `text/event-stream` |
+| `Cache-Control` | `no-cache` |
+| `X-Accel-Buffering` | `no` |
+
+`http.Flusher` is required. If unavailable, return `500` before any stream starts.
+
+### 8) Layering
+
+| Layer | Responsibility |
+| --- | --- |
+| `packages/provider/openai` | Upstream SSE request; content-type check; `StreamAccumulator` |
+| `services/proxy/internal/http` | Flusher, client headers, TeeReader copy loop, disconnect metrics |
+| `packages/metrics` | Stream duration and disconnect/backpressure counters |
+
+### 9) Metrics
+
+| Metric | Labels |
+| --- | --- |
+| `ibex_proxy_stream_duration_seconds` | `provider`, `status` (`ok`, `incomplete`, `client_disconnect`, `error`) |
+| `ibex_proxy_stream_client_disconnects_total` | — |
+| `ibex_proxy_stream_upstream_disconnects_total` | — |
+| `ibex_proxy_stream_backpressure_events_total` | — |
+
+Backpressure: increment when a client write/flush for an event takes longer than 50ms (bounded signal; not per-token).
+
+## Consequences
+
+**Positive:**
+
+- Real-time SSE compatible with OpenAI clients
+- Clean hook for 2.4/2.5 without blocking the hot path
+- Clear no-retry / no-JSON-after-headers contract for 2.1.5
+
+**Negative:**
+
+- Accumulator may truncate under the soft cap
+- Mid-stream errors leave clients with a partial SSE stream (by design)
+
+**Follow-ups:**
+
+- Milestone 2.1.5: centralized `MapProviderError` for pre-stream failures
+- Milestones 2.4.3 / 2.5.3: consume accumulator after `[DONE]` for checkpoints and traces
+
+## References
+
+- [ADR-0025](/docs/adr/0025-llm-provider-abstraction)
+- [ADR-0026](/docs/adr/0026-openai-client-design)
+- [Milestone 2.1.3](/roadmap/phase-2-single-provider/milestones/2.1.3-openai-streaming-forwarder)

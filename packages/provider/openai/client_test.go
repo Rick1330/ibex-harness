@@ -33,17 +33,11 @@ func TestOpenAIClient_NonStreaming_Success(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	client := testClient(t, srv.URL, "test-key", nil)
-	resp, err := client.Complete(context.Background(), provider.Request{
+	body := completeAndRead(t, testClient(t, srv.URL, "test-key", nil), provider.Request{
 		Model:    "gpt-4o",
 		Messages: []provider.Message{{Role: "user", Content: "hi"}},
 	})
-	if err != nil {
-		t.Fatalf("Complete: %v", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	body, _ := io.ReadAll(resp.Body)
-	if !strings.Contains(string(body), "assistant") {
+	if !strings.Contains(body, "assistant") {
 		t.Fatalf("body: %s", body)
 	}
 }
@@ -306,4 +300,80 @@ func testClient(t *testing.T, baseURL, apiKey string, reg *metrics.ProxyRegistry
 		MaxRetries:     intPtr(3),
 		RetryBaseDelay: 1 * time.Millisecond,
 	}, logger.Discard("openai"), telemetry.NoopTracer("openai"), m)
+}
+
+func TestUnit_OpenAIClient_Streaming_AcceptAndBody(t *testing.T) {
+	t.Parallel()
+	var gotAccept string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAccept = r.Header.Get("Accept")
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\ndata: [DONE]\n\n"))
+	}))
+	t.Cleanup(srv.Close)
+
+	body := completeAndRead(t, testClient(t, srv.URL, "test-key", nil), provider.Request{
+		Model:    "gpt-4o",
+		Messages: []provider.Message{{Role: "user", Content: "hi"}},
+		Stream:   true,
+	})
+	if gotAccept != "text/event-stream" {
+		t.Fatalf("Accept: %q", gotAccept)
+	}
+	if !strings.Contains(body, "[DONE]") {
+		t.Fatalf("body: %s", body)
+	}
+}
+
+func completeAndRead(t *testing.T, client *Client, req provider.Request) string {
+	t.Helper()
+	resp, err := client.Complete(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+	return string(raw)
+}
+
+func TestUnit_OpenAIClient_Streaming_RejectsNonEventStream(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	client := testClient(t, srv.URL, "test-key", nil)
+	_, err := client.Complete(context.Background(), provider.Request{
+		Model:  "gpt-4o",
+		Stream: true,
+	})
+	var pe *provider.ProviderError
+	if !errors.As(err, &pe) {
+		t.Fatalf("want ProviderError, got %v", err)
+	}
+}
+
+func TestUnit_IsEventStream(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		in   string
+		want bool
+	}{
+		{"text/event-stream", true},
+		{"text/event-stream; charset=utf-8", true},
+		{"text/event-stream;", true},
+		{"TEXT/EVENT-STREAM", true},
+		{"application/json", false},
+		{"", false},
+	}
+	for _, tc := range cases {
+		if got := isEventStream(tc.in); got != tc.want {
+			t.Fatalf("isEventStream(%q)=%v want %v", tc.in, got, tc.want)
+		}
+	}
 }

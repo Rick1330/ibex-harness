@@ -6,7 +6,12 @@ description: Pluggable adapters for OpenAI-compatible and other LLM providers.
 Provider adapters translate normalized IBEX chat requests into upstream LLM API calls and stream responses back to clients. Phase 1 validates and authenticates requests only — no adapter is registered at runtime, so every valid chat request stops with `501 PROVIDER_NOT_CONFIGURED`.
 
 <Callout type="info" title="Phase 2 progress">
-  Milestones [2.1.1](/roadmap/phase-2-single-provider/milestones/2.1.1-provider-interface-and-registry) and [2.1.2](/roadmap/phase-2-single-provider/milestones/2.1.2-openai-non-streaming-client) ship `packages/provider` and the OpenAI non-streaming adapter per [ADR-0025](/docs/adr/0025-llm-provider-abstraction) and [ADR-0026](/docs/adr/0026-openai-client-design). Set `IBEX_LLM_MODE=live` and `OPENAI_API_KEY` to forward; default `mock` returns `501 PROVIDER_NOT_CONFIGURED`.
+  Milestones [2.1.1](/roadmap/phase-2-single-provider/milestones/2.1.1-provider-interface-and-registry),
+  [2.1.2](/roadmap/phase-2-single-provider/milestones/2.1.2-openai-non-streaming-client), and
+  [2.1.3](/roadmap/phase-2-single-provider/milestones/2.1.3-openai-streaming-forwarder) ship `packages/provider`,
+  the OpenAI adapter, and SSE dual-write forwarding per [ADR-0025](/docs/adr/0025-llm-provider-abstraction),
+  [ADR-0026](/docs/adr/0026-openai-client-design), and [ADR-0027](/docs/adr/0027-streaming-dual-write).
+  Set `IBEX_LLM_MODE=live` and `OPENAI_API_KEY` to forward; default `mock` returns `501 PROVIDER_NOT_CONFIGURED`.
 </Callout>
 
 ## Why adapters exist
@@ -113,7 +118,7 @@ This is distinct from `503` dependency failures — the proxy itself is healthy;
     Model-to-adapter resolution with org-level overrides.
   </Step>
   <Step title="OpenAI adapter">
-    First production adapter with streaming SSE support.
+    Non-streaming JSON and streaming SSE dual-write ([ADR-0027](/docs/adr/0027-streaming-dual-write)).
   </Step>
   <Step title="Circuit breaker">
     Provider 5xx triggers breaker; clients receive `503` with `Retry-After`.

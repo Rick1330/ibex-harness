@@ -21,10 +21,6 @@ type chatForwardParams struct {
 	prov   provider.Provider
 }
 
-func writeStreamingNotSupported(w http.ResponseWriter, requestID, docsBase string) {
-	writeProviderNotConfigured(w, requestID, docsBase, "Streaming not supported until milestone 2.1.3")
-}
-
 func (h chatCompletionHandler) forwardChatCompletion(p chatForwardParams) {
 	ctx := p.r.Context()
 	requestID := requestIDFromContext(ctx)
@@ -44,6 +40,18 @@ func (h chatCompletionHandler) forwardChatCompletion(p chatForwardParams) {
 		//nolint:errcheck // upstream body close after successful read; copy errors handled separately
 		_ = resp.Body.Close()
 	}()
+	if p.parsed.Stream {
+		forwardSSEStream(streamForwardParams{
+			w:        p.w,
+			r:        p.r,
+			resp:     resp,
+			provider: p.prov.Name(),
+			metrics:  h.metrics,
+			log:      h.log,
+			docsBase: h.docsBase,
+		})
+		return
+	}
 	h.writeProviderSuccess(p.w, resp)
 }
 
