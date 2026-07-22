@@ -59,13 +59,18 @@ func registerProtectedRoutes(deps protectedRouteDeps) {
 		AuthMiddleware(deps.validator, deps.logger, AuthOptions{RequireProxyChatCompletion: true}),
 		agentVerify,
 		rateLimit,
+		ChatParseMiddleware(chatParseOpts{log: deps.logger, docsBase: deps.docsBase}),
+		ProviderRoutingMiddleware(providerRoutingOpts{
+			registry: deps.providerRegistry,
+			log:      deps.logger,
+			docsBase: deps.docsBase,
+		}),
 	)
 	deps.mux.Handle("/v1/chat/completions", chatChain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		handleChatCompletions(w, r, chatCompletionHandler{
-			log:         deps.logger,
-			docsBase:    deps.docsBase,
-			providerReg: deps.providerRegistry,
-			metrics:     deps.reg,
+			log:      deps.logger,
+			docsBase: deps.docsBase,
+			metrics:  deps.reg,
 		})
 	})))
 }

@@ -136,46 +136,24 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request, h chatComplet
 }
 
 type chatCompletionHandler struct {
-	log         *logger.Logger
-	docsBase    string
-	providerReg *provider.Registry
-	metrics     *metrics.ProxyRegistry
+	log      *logger.Logger
+	docsBase string
+	metrics  *metrics.ProxyRegistry
 }
 
 func (h chatCompletionHandler) serve(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodPost, h.docsBase) {
 		return
 	}
-	requestID := requestIDFromContext(r.Context())
-
-	parsed, ok := parseAndValidateChatRequest(w, r, requestID, h.docsBase)
+	parsed, ok := llm.ChatRequestFromContext(r.Context())
 	if !ok {
-		return
-	}
-
-	ctx := llm.WithChatRequest(r.Context(), parsed)
-
-	if res, ok := auth.FromContext(ctx); ok {
-		h.log.InfoCtx(ctx, "chat completion parsed",
-			"org_id", res.OrgID,
-			"model", parsed.Model,
-			"message_count", len(parsed.Messages),
-			"stream", parsed.Stream,
-		)
-	}
-
-	prov, err := h.providerReg.For(parsed.Model)
-	if err != nil {
-		if errors.Is(err, provider.ErrNoProviderForModel) {
-			writeProviderNotConfigured(w, requestID, h.docsBase, "No provider registered for model "+parsed.Model)
-			return
-		}
-		apierror.WriteStatus(w, http.StatusInternalServerError, apierror.CodeServiceDegraded,
+		requestID := requestIDFromContext(r.Context())
+		apierror.WriteStatus(w, http.StatusInternalServerError, apierror.CodeInternalError,
 			"Internal error", requestID,
-			apierror.WriteOpts{Detail: "provider registry lookup failed", DocsBase: h.docsBase})
+			apierror.WriteOpts{Detail: "chat request not parsed", DocsBase: h.docsBase})
 		return
 	}
-
+	prov := provider.MustProviderFromContext(r.Context())
 	h.forwardChatCompletion(chatForwardParams{
 		w: w, r: r, parsed: parsed, prov: prov,
 	})

@@ -185,17 +185,11 @@ func TestUnit_ChatCompletions_providerErrorMapsToHTTPStatus(t *testing.T) {
 
 func TestUnit_HandleChatCompletions_delegatesToServe(t *testing.T) {
 	t.Parallel()
-	reg, err := provider.NewRegistry()
-	if err != nil {
-		t.Fatalf("NewRegistry: %v", err)
-	}
-
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/v1/chat/completions", nil)
 	handleChatCompletions(rec, req, chatCompletionHandler{
-		log:         logger.Discard("proxy"),
-		docsBase:    "",
-		providerReg: reg,
+		log:      logger.Discard("proxy"),
+		docsBase: "",
 	})
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("status: %d", rec.Code)

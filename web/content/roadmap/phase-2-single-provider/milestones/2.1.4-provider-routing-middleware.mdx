@@ -2,7 +2,7 @@
 title: "2.1.4 Provider Routing"
 description: "With the provider interface and OpenAI client in place, the proxy needs a middleware that selects the correct provider for each request and attaches it to the request context. The selection logic: read the `model` field from the request body (already parsed by M1.2.2), look up the provider registry, and attach the sele"
 summary: "With the provider interface and OpenAI client in place, the proxy needs a middleware that selects the correct provider for each request and attaches it to the request context. The selection logic: read the `model` field from the request body (already parsed by M1.2.2), look up the provider registry, and attach the sele"
-status: "planned"
+status: "completed"
 milestoneId: "2.1.4"
 goal: "[2.1 — LLM provider abstraction and OpenAI forwarding](/roadmap/phase-2-single-provider/goals#goal-21-llm-provider-abstraction-and-openai-forwarding)"
 estimatedEffort: "1–2 days"
@@ -12,7 +12,7 @@ fullTitle: "Milestone 2.1.4 — Provider Routing Middleware"
 
 # Milestone 2.1.4 — Provider Routing Middleware
 
-**Status:** Planned  
+**Status:** Completed  
 **Goal:** [2.1 — LLM provider abstraction and OpenAI forwarding](/roadmap/phase-2-single-provider/goals#goal-21-llm-provider-abstraction-and-openai-forwarding)  
 **Phase:** 2 — Single Provider End-to-End  
 **Estimated effort:** 1–2 days
@@ -37,25 +37,36 @@ This is a small but architecturally important milestone: it is the single place 
 
 ---
 
+## Non-Goals
+
+- DirectiveResolve middleware (later milestones)
+- Org-scoped provider overrides
+- Multi-provider registration beyond OpenAI (Phase 4)
+- Provider error-mapping package (2.1.5)
+- Changes to `IBEX_LLM_MODE` / `buildProviderRegistry`
+
+---
+
 ## Deliverables
 
 ### Middleware
 
 ```go
+// ChatParseMiddleware parses/validates the body and attaches llm.ChatCompletionRequest.
 // ProviderRoutingMiddleware selects the LLM provider for the request based on
-// the `model` field extracted during request normalisation (M1.2.2).
-// Attaches the selected provider.Provider to the request context.
+// the `model` field and attaches provider.Provider to context.
 //
 // Returns 501 PROVIDER_NOT_CONFIGURED if no provider supports the requested model.
-// Returns 400 INVALID_REQUEST if the model field is absent from the request.
+// Missing/invalid model returns 400 VALIDATION_ERROR from ChatParse (unchanged Phase 1 contract).
 //
 // Required position: AFTER RateLimitMiddleware, BEFORE the forwarding handler.
-//   RequestID → Span → Auth → AgentVerify → RateLimit → ProviderRouter → [handler]
-func ProviderRoutingMiddleware(registry *provider.Registry, log *logger.Logger) func(http.Handler) http.Handler
+//   … → RateLimit → ChatParse → ProviderRouter → [handler]
+func ChatParseMiddleware(opts chatParseOpts) func(http.Handler) http.Handler
+func ProviderRoutingMiddleware(opts providerRoutingOpts) func(http.Handler) http.Handler
 
-// ProviderFromContext retrieves the selected provider from ctx.
+// MustProviderFromContext retrieves the selected provider from ctx.
 // Panics if called outside a handler that ran ProviderRoutingMiddleware.
-func ProviderFromContext(ctx context.Context) provider.Provider
+func MustProviderFromContext(ctx context.Context) provider.Provider
 ```
 
 ### Full middleware chain (Phase 2)
@@ -64,13 +75,24 @@ func ProviderFromContext(ctx context.Context) provider.Provider
 RequestID → OTel Span → Auth (LRU+gRPC) → AgentVerify → RateLimit → DirectiveResolve → ProviderRouter → Handler
 ```
 
+(DirectiveResolve is not implemented in this milestone; ChatParse sits immediately before ProviderRouter today.)
+
+---
+
+## Testing Requirements
+
+- **`TestUnit_ProviderRouting_KnownModelAttachesProvider`**: known model → provider on context → next handler runs
+- **`TestUnit_ProviderRouting_UnknownModel501`**: unknown model → 501; handler spy not called
+- **`TestUnit_ChatParse_MissingModel400`**: empty model → 400 `VALIDATION_ERROR` with field `model`
+- **`TestUnit_MustProviderFromContext_PanicsWithout`**: panic when middleware skipped
+
 ---
 
 ## Acceptance Criteria
 
-- [ ] Known model (e.g. `gpt-4o`) → provider attached to context → handler executes
-- [ ] Unknown model → `501 PROVIDER_NOT_CONFIGURED` before reaching handler
-- [ ] Missing model field → `400 INVALID_REQUEST`
-- [ ] Phase 4: adding a new provider requires only registering it in `main.go` — no middleware changes
+- [x] Known model (e.g. `gpt-4o`) → provider attached to context → handler executes
+- [x] Unknown model → `501 PROVIDER_NOT_CONFIGURED` before reaching handler
+- [x] Missing model field → `400 VALIDATION_ERROR` (field `model`; unchanged Phase 1 contract)
+- [x] Phase 4: adding a new provider requires only registering it in `main.go` — no middleware changes
 
 ---

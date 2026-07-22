@@ -37,10 +37,12 @@ flowchart LR
   CT --> AU[auth]
   AU --> AG[agentVerify]
   AG --> RL[rateLimit]
-  RL --> H[handler]
+  RL --> CP[chatParse]
+  CP --> PR[providerRouter]
+  PR --> H[handler]
 ```
 
-Global middleware (metrics, request ID, logging) wraps all routes. Chat-specific middleware runs in the order above — auth never executes on oversize or wrong Content-Type bodies.
+Global middleware (metrics, request ID, logging) wraps all routes. Chat-specific middleware runs in the order above — auth never executes on oversize or wrong Content-Type bodies. `chatParse` attaches the validated body; `providerRouter` attaches the selected `provider.Provider` (or returns `501 PROVIDER_NOT_CONFIGURED`).
 
 ## Normalization pipeline
 
@@ -67,7 +69,8 @@ Global middleware (metrics, request ID, logging) wraps all routes. Chat-specific
     },
     {
       title: 'Provider handoff',
-      description: 'Phase 1 stub returns 501 PROVIDER_NOT_CONFIGURED.',
+      description:
+        'ProviderRoutingMiddleware resolves model → adapter; unknown models return 501 PROVIDER_NOT_CONFIGURED. Handler forwards via context provider.',
     },
   ]}
 />
