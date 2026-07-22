@@ -46,7 +46,7 @@ jobs:
       run_benchmarks: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && (steps.detect.outputs.benchmarks == 'true' || steps.detect.outputs.go == 'true')) || (github.event_name == 'push' && (steps.detect.outputs.benchmarks == 'true' || steps.detect.outputs.go == 'true')) }}
       bench_profile: ${{ steps.profile.outputs.bench_profile }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           fetch-depth: ${{ (github.event_name == 'push' || github.event_name == 'pull_request') && '2' || '0' }}
@@ -87,7 +87,7 @@ jobs:
         with:
           egress-policy: audit
 
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -157,7 +157,7 @@ jobs:
         with:
           egress-policy: audit
 
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -355,7 +355,7 @@ jobs:
           github.event_name == 'pull_request' &&
           github.event.pull_request.head.repo.full_name == github.repository &&
           steps.bot_bin.outputs.source == 'build'
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: Rick1330/ibexharness-benchmark-bot
           ref: ${{ vars.BENCHMARK_BOT_SHA }}
@@ -422,7 +422,7 @@ jobs:
         run: bash benchmarks/scripts/stop_proxy_stack.sh
 
       - name: Upload benchmark data artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: benchmark-data
           path: |
@@ -445,7 +445,7 @@ jobs:
         with:
           egress-policy: audit
 
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
