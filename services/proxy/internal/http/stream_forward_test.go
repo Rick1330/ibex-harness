@@ -101,33 +101,52 @@ func TestStreaming_ForwardsChunksInOrder(t *testing.T) {
 		"data: {\"choices\":[{\"delta\":{\"content\":\"E\"}}]}\n\n",
 		"data: [DONE]\n\n",
 	}
-	reg, err := provider.NewRegistry(streamStubProvider{
+	handler := newStreamTestHandler(t, streamStubProvider{
 		name: "openai", models: []string{"gpt-4o"}, chunks: chunks, delay: 5 * time.Millisecond,
 	})
+	rec := newFlushRecorder()
+	req := newStreamChatRequest(context.Background())
+	start := time.Now()
+	handler.ServeHTTP(rec, req)
+	assertForwardedSSE(t, rec, start)
+}
+
+func newStreamTestHandler(t *testing.T, stub streamStubProvider) http.Handler {
+	t.Helper()
+	return newStreamTestHandlerWithValidator(t, stub, defaultChatValidator())
+}
+
+func newStreamTestHandlerWithValidator(t *testing.T, stub streamStubProvider, validator auth.TokenValidator) http.Handler {
+	t.Helper()
+	reg, err := provider.NewRegistry(stub)
 	if err != nil {
 		t.Fatalf("NewRegistry: %v", err)
 	}
-	handler := NewRouter(RouterDeps{
+	return NewRouter(RouterDeps{
 		Config:           chatTestConfig(),
 		Logger:           logger.Discard("proxy"),
 		Metrics:          metrics.NewProxy("test"),
 		Tracer:           telemetry.NoopTracer("proxy"),
-		Validator:        defaultChatValidator(),
+		Validator:        validator,
 		AgentVerifier:    passAgentVerifier{},
 		Limiter:          ratelimit.Noop(),
 		Health:           testHealthServer(),
 		ProviderRegistry: reg,
 	})
+}
 
-	rec := newFlushRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
+func newStreamChatRequest(ctx context.Context) *http.Request {
+	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"stream":true}`,
 	))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer test-token")
 	req.Header.Set("X-IBEX-Agent-ID", testChatAgentID)
-	start := time.Now()
-	handler.ServeHTTP(rec, req)
+	return req
+}
+
+func assertForwardedSSE(t *testing.T, rec *flushRecorder, start time.Time) {
+	t.Helper()
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -143,40 +162,23 @@ func TestStreaming_ForwardsChunksInOrder(t *testing.T) {
 			t.Fatalf("body missing %q: %s", want, body)
 		}
 	}
-	snaps := rec.snapshots()
-	if len(snaps) < 5 {
-		t.Fatalf("expected multiple flushes, got %d", len(snaps))
+	if len(rec.snapshots()) < 5 {
+		t.Fatalf("expected multiple flushes, got %d", len(rec.snapshots()))
 	}
-	// First content should appear well before full stream duration.
 	if time.Since(start) > 2*time.Second {
 		t.Fatalf("stream took too long: %v", time.Since(start))
 	}
-	_ = snaps
 }
 
 func TestStreaming_ProviderErrorMidStream(t *testing.T) {
 	t.Parallel()
-	chunks := []string{
-		"data: {\"choices\":[{\"delta\":{\"content\":\"1\"}}]}\n\n",
-		"data: {\"choices\":[{\"delta\":{\"content\":\"2\"}}]}\n\n",
-		"data: {\"choices\":[{\"delta\":{\"content\":\"3\"}}]}\n\n",
-	}
-	reg, err := provider.NewRegistry(streamStubProvider{
-		name: "openai", models: []string{"gpt-4o"}, chunks: chunks,
-	})
-	if err != nil {
-		t.Fatalf("NewRegistry: %v", err)
-	}
-	handler := NewRouter(RouterDeps{
-		Config:           chatTestConfig(),
-		Logger:           logger.Discard("proxy"),
-		Metrics:          metrics.NewProxy("test"),
-		Tracer:           telemetry.NoopTracer("proxy"),
-		Validator:        defaultChatValidator(),
-		AgentVerifier:    passAgentVerifier{},
-		Limiter:          ratelimit.Noop(),
-		Health:           testHealthServer(),
-		ProviderRegistry: reg,
+	handler := newStreamTestHandler(t, streamStubProvider{
+		name: "openai", models: []string{"gpt-4o"},
+		chunks: []string{
+			"data: {\"choices\":[{\"delta\":{\"content\":\"1\"}}]}\n\n",
+			"data: {\"choices\":[{\"delta\":{\"content\":\"2\"}}]}\n\n",
+			"data: {\"choices\":[{\"delta\":{\"content\":\"3\"}}]}\n\n",
+		},
 	})
 	rec := postChat(t, handler, chatRequestOpts{
 		body:    `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"stream":true}`,
@@ -198,38 +200,17 @@ func TestStreaming_ProviderErrorMidStream(t *testing.T) {
 func TestStreaming_ClientDisconnect(t *testing.T) {
 	t.Parallel()
 	before := runtime.NumGoroutine()
-	reg, err := provider.NewRegistry(streamStubProvider{
+	handler := newStreamTestHandler(t, streamStubProvider{
 		name: "openai", models: []string{"gpt-4o"},
 		chunks: []string{"data: {\"choices\":[{\"delta\":{\"content\":\"x\"}}]}\n\n"},
 		hang:   true,
 	})
-	if err != nil {
-		t.Fatalf("NewRegistry: %v", err)
-	}
-	handler := NewRouter(RouterDeps{
-		Config:           chatTestConfig(),
-		Logger:           logger.Discard("proxy"),
-		Metrics:          metrics.NewProxy("test"),
-		Tracer:           telemetry.NoopTracer("proxy"),
-		Validator:        defaultChatValidator(),
-		AgentVerifier:    passAgentVerifier{},
-		Limiter:          ratelimit.Noop(),
-		Health:           testHealthServer(),
-		ProviderRegistry: reg,
-	})
 
 	ctx, cancel := context.WithCancel(context.Background())
-	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/v1/chat/completions", strings.NewReader(
-		`{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"stream":true}`,
-	))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer test-token")
-	req.Header.Set("X-IBEX-Agent-ID", testChatAgentID)
-
+	req := newStreamChatRequest(ctx)
 	done := make(chan struct{})
 	go func() {
-		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, req)
+		handler.ServeHTTP(httptest.NewRecorder(), req)
 		close(done)
 	}()
 	time.Sleep(30 * time.Millisecond)
@@ -248,27 +229,13 @@ func TestStreaming_ClientDisconnect(t *testing.T) {
 
 func TestUnit_ChatCompletions_streamTrueForwardsSSE(t *testing.T) {
 	t.Parallel()
-	reg, err := provider.NewRegistry(streamStubProvider{
+	handler := newStreamTestHandlerWithValidator(t, streamStubProvider{
 		name: "openai", models: []string{"gpt-4o"},
 		chunks: []string{
 			"data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n",
 			"data: [DONE]\n\n",
 		},
-	})
-	if err != nil {
-		t.Fatalf("NewRegistry: %v", err)
-	}
-	handler := NewRouter(RouterDeps{
-		Config:           chatTestConfig(),
-		Logger:           logger.Discard("proxy"),
-		Metrics:          metrics.NewProxy("test"),
-		Tracer:           telemetry.NoopTracer("proxy"),
-		Validator:        &chatMockValidator{res: &auth.ValidateResult{OrgID: testChatOrgID, Permissions: permissions.ProxyChatCompletion}},
-		AgentVerifier:    passAgentVerifier{},
-		Limiter:          ratelimit.Noop(),
-		Health:           testHealthServer(),
-		ProviderRegistry: reg,
-	})
+	}, &chatMockValidator{res: &auth.ValidateResult{OrgID: testChatOrgID, Permissions: permissions.ProxyChatCompletion}})
 	rec := postChat(t, handler, chatRequestOpts{
 		body:    `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"stream":true}`,
 		auth:    true,

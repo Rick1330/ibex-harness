@@ -27,6 +27,14 @@ type streamForwardParams struct {
 	docsBase string
 }
 
+type sseCopyParams struct {
+	ctx     context.Context
+	w       http.ResponseWriter
+	flusher http.Flusher
+	src     io.Reader
+	metrics *metrics.ProxyRegistry
+}
+
 func forwardSSEStream(p streamForwardParams) {
 	flusher, ok := p.w.(http.Flusher)
 	if !ok {
@@ -42,7 +50,11 @@ func forwardSSEStream(p streamForwardParams) {
 	start := time.Now()
 	status := writeSSEHeadersAndCopy(p, flusher, acc)
 	if p.metrics != nil {
-		p.metrics.ObserveStreamDuration(p.provider, status, time.Since(start).Seconds())
+		p.metrics.ObserveStreamDuration(metrics.StreamObservation{
+			Provider: p.provider,
+			Status:   status,
+			Seconds:  time.Since(start).Seconds(),
+		})
 	}
 	_, _ = drainAccumulator(p.r.Context(), acc)
 }
@@ -55,78 +67,103 @@ func writeSSEHeadersAndCopy(p streamForwardParams, flusher http.Flusher, acc *op
 	flusher.Flush()
 
 	tee := io.TeeReader(p.resp.Body, acc)
-	err := copySSEEvents(p.r.Context(), p.w, flusher, tee, p.metrics)
-	if errors.Is(err, context.Canceled) || errors.Is(p.r.Context().Err(), context.Canceled) {
-		if p.metrics != nil {
-			p.metrics.IncStreamClientDisconnect()
-		}
-		p.log.WarnCtx(p.r.Context(), "client disconnected mid-stream", "provider", p.provider)
-		if !acc.Complete() {
-			acc.MarkClosed()
-		}
+	err := copySSEEvents(sseCopyParams{
+		ctx: p.r.Context(), w: p.w, flusher: flusher, src: tee, metrics: p.metrics,
+	})
+	return classifyStreamEnd(p, acc, err)
+}
+
+func classifyStreamEnd(p streamForwardParams, acc *openai.StreamAccumulator, err error) string {
+	if isClientDisconnect(p.r.Context(), err) {
+		noteIncompleteStream(p, streamEndNote{acc: acc, clientSide: true, msg: "client disconnected mid-stream"})
 		return "client_disconnect"
 	}
 	if err != nil {
-		if p.metrics != nil {
-			p.metrics.IncStreamUpstreamDisconnect()
-		}
-		p.log.WarnCtx(p.r.Context(), "upstream stream ended with error", "provider", p.provider, "error", err.Error())
-		if !acc.Complete() {
-			acc.MarkClosed()
-		}
+		noteIncompleteStream(p, streamEndNote{acc: acc, msg: "upstream stream ended with error", err: err})
 		return "error"
 	}
 	if !acc.Complete() {
-		if p.metrics != nil {
-			p.metrics.IncStreamUpstreamDisconnect()
-		}
-		p.log.WarnCtx(p.r.Context(), "upstream stream ended without [DONE]", "provider", p.provider)
-		acc.MarkClosed()
+		noteIncompleteStream(p, streamEndNote{acc: acc, msg: "upstream stream ended without [DONE]"})
 		return "incomplete"
 	}
 	return "ok"
 }
 
-func copySSEEvents(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, src io.Reader, reg *metrics.ProxyRegistry) error {
-	reader := bufio.NewReader(src)
-	for {
-		if err := ctx.Err(); err != nil {
-			return err
+func isClientDisconnect(ctx context.Context, err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled)
+}
+
+type streamEndNote struct {
+	acc        *openai.StreamAccumulator
+	clientSide bool
+	msg        string
+	err        error
+}
+
+func noteIncompleteStream(p streamForwardParams, n streamEndNote) {
+	if p.metrics != nil {
+		if n.clientSide {
+			p.metrics.IncStreamClientDisconnect()
+		} else {
+			p.metrics.IncStreamUpstreamDisconnect()
 		}
-		line, err := reader.ReadBytes('\n')
-		if len(line) > 0 {
-			if writeErr := writeAndMaybeFlush(w, flusher, line, reg); writeErr != nil {
-				return writeErr
-			}
-		}
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				return nil
-			}
-			return err
-		}
+	}
+	if n.err != nil {
+		p.log.WarnCtx(p.r.Context(), n.msg, "provider", p.provider, "error", n.err.Error())
+	} else {
+		p.log.WarnCtx(p.r.Context(), n.msg, "provider", p.provider)
+	}
+	if !n.acc.Complete() {
+		n.acc.MarkClosed()
 	}
 }
 
-func writeAndMaybeFlush(w http.ResponseWriter, flusher http.Flusher, line []byte, reg *metrics.ProxyRegistry) error {
+func copySSEEvents(p sseCopyParams) error {
+	reader := bufio.NewReader(p.src)
+	for {
+		if err := p.ctx.Err(); err != nil {
+			return err
+		}
+		line, readErr := reader.ReadBytes('\n')
+		if writeErr := writeLineIfPresent(p, line); writeErr != nil {
+			return writeErr
+		}
+		if readErr == nil {
+			continue
+		}
+		if errors.Is(readErr, io.EOF) {
+			return nil
+		}
+		return readErr
+	}
+}
+
+func writeLineIfPresent(p sseCopyParams, line []byte) error {
+	if len(line) == 0 {
+		return nil
+	}
+	return writeAndMaybeFlush(p, line)
+}
+
+func writeAndMaybeFlush(p sseCopyParams, line []byte) error {
 	start := time.Now()
-	_, err := w.Write(line)
-	if err != nil {
+	if _, err := p.w.Write(line); err != nil {
 		return err
 	}
-	// Blank line (SSE event boundary): "\n" alone or "\r\n" after prior content ends event.
 	if isSSEEventBoundary(line) {
-		flusher.Flush()
+		p.flusher.Flush()
 	}
-	if reg != nil && time.Since(start) >= streamBackpressureThreshold {
-		reg.IncStreamBackpressure()
+	if p.metrics != nil && time.Since(start) >= streamBackpressureThreshold {
+		p.metrics.IncStreamBackpressure()
 	}
 	return nil
 }
 
 func isSSEEventBoundary(line []byte) bool {
-	return len(line) == 1 && line[0] == '\n' ||
-		len(line) == 2 && line[0] == '\r' && line[1] == '\n'
+	if len(line) == 1 && line[0] == '\n' {
+		return true
+	}
+	return len(line) == 2 && line[0] == '\r' && line[1] == '\n'
 }
 
 func drainAccumulator(ctx context.Context, acc *openai.StreamAccumulator) (string, *provider.Usage) {

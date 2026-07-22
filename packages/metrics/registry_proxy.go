@@ -173,8 +173,8 @@ func (r *ProxyRegistry) IncProviderRetry(provider string) {
 }
 
 // ObserveStreamDuration records SSE forward duration.
-func (r *ProxyRegistry) ObserveStreamDuration(provider, status string, seconds float64) {
-	r.streamDuration.WithLabelValues(provider, status).Observe(seconds)
+func (r *ProxyRegistry) ObserveStreamDuration(obs StreamObservation) {
+	r.streamDuration.WithLabelValues(obs.Provider, obs.Status).Observe(obs.Seconds)
 }
 
 // IncStreamClientDisconnect records a client disconnect mid-stream.

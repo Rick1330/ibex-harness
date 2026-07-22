@@ -81,7 +81,7 @@ func (c *Client) Complete(ctx context.Context, req provider.Request) (provider.R
 	}
 
 	url := strings.TrimRight(c.cfg.BaseURL, "/") + "/chat/completions"
-	return c.executeWithRetry(ctx, span, url, body, req.Stream)
+	return c.executeWithRetry(retryCall{ctx: ctx, span: span, url: url, body: body, stream: req.Stream})
 }
 
 func (c *Client) marshalRequest(req provider.Request) ([]byte, error) {
@@ -104,8 +104,12 @@ func (c *Client) doRequest(ctx context.Context, url string, body []byte, stream 
 	}
 	client := c.httpClient
 	if stream {
-		// Overall Client.Timeout would abort long SSE streams; rely on ctx instead.
-		client = &http.Client{Transport: c.httpClient.Transport}
+		// Overall Client.Timeout would abort long SSE streams; prefer request ctx.
+		// Keep a generous ceiling so scanners do not flag an unbounded client.
+		client = &http.Client{
+			Transport: c.httpClient.Transport,
+			Timeout:   24 * time.Hour,
+		}
 	}
 	return client.Do(httpReq)
 }

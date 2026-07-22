@@ -7,3 +7,10 @@ type HTTPRequestObservation struct {
 	StatusCode string
 	Seconds    float64
 }
+
+// StreamObservation labels SSE forward duration metrics.
+type StreamObservation struct {
+	Provider string
+	Status   string
+	Seconds  float64
+}

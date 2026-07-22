@@ -33,17 +33,11 @@ func TestOpenAIClient_NonStreaming_Success(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	client := testClient(t, srv.URL, "test-key", nil)
-	resp, err := client.Complete(context.Background(), provider.Request{
+	body := completeAndRead(t, testClient(t, srv.URL, "test-key", nil), provider.Request{
 		Model:    "gpt-4o",
 		Messages: []provider.Message{{Role: "user", Content: "hi"}},
 	})
-	if err != nil {
-		t.Fatalf("Complete: %v", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	body, _ := io.ReadAll(resp.Body)
-	if !strings.Contains(string(body), "assistant") {
+	if !strings.Contains(body, "assistant") {
 		t.Fatalf("body: %s", body)
 	}
 }
@@ -310,29 +304,39 @@ func testClient(t *testing.T, baseURL, apiKey string, reg *metrics.ProxyRegistry
 
 func TestOpenAIClient_Streaming_AcceptAndBody(t *testing.T) {
 	t.Parallel()
+	var gotAccept string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Accept") != "text/event-stream" {
-			t.Errorf("Accept: %q", r.Header.Get("Accept"))
-		}
+		gotAccept = r.Header.Get("Accept")
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\ndata: [DONE]\n\n"))
 	}))
 	t.Cleanup(srv.Close)
 
-	client := testClient(t, srv.URL, "test-key", nil)
-	resp, err := client.Complete(context.Background(), provider.Request{
+	body := completeAndRead(t, testClient(t, srv.URL, "test-key", nil), provider.Request{
 		Model:    "gpt-4o",
 		Messages: []provider.Message{{Role: "user", Content: "hi"}},
 		Stream:   true,
 	})
+	if gotAccept != "text/event-stream" {
+		t.Fatalf("Accept: %q", gotAccept)
+	}
+	if !strings.Contains(body, "[DONE]") {
+		t.Fatalf("body: %s", body)
+	}
+}
+
+func completeAndRead(t *testing.T, client *Client, req provider.Request) string {
+	t.Helper()
+	resp, err := client.Complete(context.Background(), req)
 	if err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	body, _ := io.ReadAll(resp.Body)
-	if !strings.Contains(string(body), "[DONE]") {
-		t.Fatalf("body: %s", body)
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("ReadAll: %v", err)
 	}
+	return string(raw)
 }
 
 func TestOpenAIClient_Streaming_RejectsNonEventStream(t *testing.T) {

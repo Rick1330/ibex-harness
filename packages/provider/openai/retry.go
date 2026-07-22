@@ -19,68 +19,90 @@ type attemptResult struct {
 	statusCode int
 }
 
-func (c *Client) executeWithRetry(ctx context.Context, span trace.Span, url string, body []byte, stream bool) (provider.Response, error) {
+type retryCall struct {
+	ctx    context.Context
+	span   trace.Span
+	url    string
+	body   []byte
+	stream bool
+}
+
+type tryOnceCall struct {
+	ctx     context.Context
+	url     string
+	body    []byte
+	attempt int
+	stream  bool
+}
+
+func (c *Client) executeWithRetry(call retryCall) (provider.Response, error) {
 	var lastErr error
 	for attempt := 0; attempt <= c.cfg.maxRetries(); attempt++ {
 		if attempt > 0 {
 			c.metrics.IncProviderRetry(c.Name())
-			if err := c.waitBeforeRetry(ctx, attempt, lastErr); err != nil {
-				recordSpanErr(span, err)
+			if err := c.waitBeforeRetry(call.ctx, attempt, lastErr); err != nil {
+				recordSpanErr(call.span, err)
 				return provider.Response{}, err
 			}
 		}
-		out := c.tryOnce(ctx, url, body, attempt, stream)
+		out := c.tryOnce(tryOnceCall{
+			ctx: call.ctx, url: call.url, body: call.body, attempt: attempt, stream: call.stream,
+		})
 		if out.err == nil {
 			return out.resp, nil
 		}
 		lastErr = out.err
 		if !out.retry {
-			recordSpanErr(span, lastErr)
+			recordSpanErr(call.span, lastErr)
 			return provider.Response{}, lastErr
 		}
 	}
 	if lastErr == nil {
 		lastErr = errors.New("openai request failed")
 	}
-	recordSpanErr(span, lastErr)
+	recordSpanErr(call.span, lastErr)
 	return provider.Response{}, lastErr
 }
 
-func (c *Client) tryOnce(ctx context.Context, url string, body []byte, attempt int, stream bool) attemptResult {
+func (c *Client) tryOnce(call tryOnceCall) attemptResult {
 	start := time.Now()
-	resp, err := c.doRequest(ctx, url, body, stream)
+	resp, err := c.doRequest(call.ctx, call.url, call.body, call.stream)
 	if err != nil {
 		c.metrics.IncProviderRequest(c.Name(), "error")
-		retry := isRetryableTransport(err) && attempt < c.cfg.maxRetries()
+		retry := isRetryableTransport(err) && call.attempt < c.cfg.maxRetries()
 		return attemptResult{err: err, retry: retry}
 	}
 
 	c.metrics.IncProviderRequest(c.Name(), statusClass(resp.StatusCode))
 	if resp.StatusCode == http.StatusOK {
-		if stream && !isEventStream(resp.Header.Get("Content-Type")) {
-			_ = resp.Body.Close()
-			return attemptResult{
-				err: &provider.ProviderError{
-					ProviderName:   c.Name(),
-					StatusCode:     http.StatusBadGateway,
-					ProviderErrMsg: "upstream did not return text/event-stream",
-				},
-			}
-		}
-		// Live SSE body: never retry after this point (ADR-0027).
-		return attemptResult{
-			resp: provider.Response{
-				Body:       resp.Body,
-				StatusCode: resp.StatusCode,
-				Latency:    time.Since(start),
-			},
-		}
+		return c.acceptOKBody(resp, call.stream, start)
 	}
 
 	provErr := readProviderError(c.Name(), resp)
 	_ = resp.Body.Close()
-	retry := isRetryableStatus(resp.StatusCode) && attempt < c.cfg.maxRetries()
+	retry := isRetryableStatus(resp.StatusCode) && call.attempt < c.cfg.maxRetries()
 	return attemptResult{err: provErr, retry: retry, statusCode: resp.StatusCode}
+}
+
+func (c *Client) acceptOKBody(resp *http.Response, stream bool, start time.Time) attemptResult {
+	if stream && !isEventStream(resp.Header.Get("Content-Type")) {
+		_ = resp.Body.Close()
+		return attemptResult{
+			err: &provider.ProviderError{
+				ProviderName:   c.Name(),
+				StatusCode:     http.StatusBadGateway,
+				ProviderErrMsg: "upstream did not return text/event-stream",
+			},
+		}
+	}
+	// Live SSE body: never retry after this point (ADR-0027).
+	return attemptResult{
+		resp: provider.Response{
+			Body:       resp.Body,
+			StatusCode: resp.StatusCode,
+			Latency:    time.Since(start),
+		},
+	}
 }
 
 func isEventStream(contentType string) bool {
