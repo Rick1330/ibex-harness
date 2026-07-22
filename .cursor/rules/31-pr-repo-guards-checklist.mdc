@@ -3,9 +3,13 @@ description: Mandatory pre-push checklist for repo-guards and ci-gate-repo (DCO,
 alwaysApply: true
 ---
 
-# PR repo-guards checklist — run before every `git push`
+# PR repo-guards checklist
 
-`repo-guards` blocks `ci-gate-repo`. **Do not push a PR branch until every item below passes locally.**
+`repo-guards` blocks `ci-gate-repo`.
+
+**Before every `git push`:** DCO sign-off (§1) and the local DCO command in §4.
+
+**Before `gh pr create` or `gh pr edit`:** tracked issue linkage and full PR template (§2–§3). You may push a feature branch before the issue/PR exist; add linkage when you open or update the PR.
 
 ## 1. DCO Signed-off-by (every commit)
 
@@ -32,7 +36,7 @@ Create the issue **first** using a repo template (`.github/ISSUE_TEMPLATE/`). Se
 
 **Not accepted:** `## Expected`, `## Actual`, `## Reproduction` — use full names above.
 
-Bidirectional link (both required before push):
+Bidirectional link (both required before creating or updating the PR):
 
 1. PR body: `Closes #NNN` (or Fixes/Resolves)
 2. Issue body or comment: `Implementation PR: #NNN`
@@ -53,22 +57,27 @@ From `.github/pull_request_template.md` — every section header must be present
 
 Store drafts in `ibex-harness-workspace/pr-bodies/` (outside git). Use `gh pr create --body-file`.
 
-## 4. Pre-push verification commands
+## 4. Pre-push verification (DCO)
 
 ```bash
-# DCO on commits in branch (replace BASE with main merge-base)
-git log --format='%B' $(git merge-base main HEAD)..HEAD | grep -qi '^Signed-off-by:' || echo "MISSING DCO"
-
-# Optional when gh is available and PR exists
-gh pr view --json body -q .body   # confirm close keyword + sections
-gh issue view NNN --json body -q .body   # confirm template sections + PR link
+# Same script CI runs — per-commit, with merge-commit and bot exemptions
+bash .github/scripts/check-dco-signoff.sh "$(git merge-base main HEAD)" HEAD
 ```
 
-## 5. After push
-
-Watch `repo-guards` and `ci-gate-repo` on the PR before declaring success:
+## 5. Before creating or updating the PR
 
 ```bash
+# Confirm close keyword, required PR sections, issue template sections, and PR link on issue
+gh pr view --json body -q .body
+gh issue view NNN --json body -q .body
+```
+
+## 6. After push
+
+Wait for `repo-guards` and `ci-gate-repo` to reach a terminal state before declaring success:
+
+```bash
+gh pr checks <PR_NUMBER> --watch
 gh pr checks <PR_NUMBER> | grep -E 'repo-guards|ci-gate-repo'
 ```
 
