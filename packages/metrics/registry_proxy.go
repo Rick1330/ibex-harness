@@ -16,6 +16,10 @@ type ProxyRegistry struct {
 	rateLimitRedisErrors prometheus.Counter
 	providerRequests     *prometheus.CounterVec
 	providerRetries      *prometheus.CounterVec
+	streamDuration       *prometheus.HistogramVec
+	streamClientDisc     prometheus.Counter
+	streamUpstreamDisc   prometheus.Counter
+	streamBackpressure   prometheus.Counter
 	asyncQueueDepth      prometheus.Gauge
 	asyncDroppedTotal    prometheus.Counter
 	processUp            prometheus.Gauge
@@ -66,6 +70,27 @@ func (r *ProxyRegistry) register(serviceName string) {
 		Help: "Upstream LLM provider retry attempts.",
 	}, []string{"provider"})
 
+	r.streamDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "ibex_proxy_stream_duration_seconds",
+		Help:    "Duration of SSE stream forward after first byte.",
+		Buckets: LatencyBuckets,
+	}, []string{"provider", "status"})
+
+	r.streamClientDisc = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "ibex_proxy_stream_client_disconnects_total",
+		Help: "Client disconnects mid-SSE stream.",
+	})
+
+	r.streamUpstreamDisc = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "ibex_proxy_stream_upstream_disconnects_total",
+		Help: "Upstream disconnects mid-SSE stream before [DONE].",
+	})
+
+	r.streamBackpressure = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "ibex_proxy_stream_backpressure_events_total",
+		Help: "Slow client write/flush events during SSE forward.",
+	})
+
 	r.asyncQueueDepth = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "ibex_proxy_async_queue_depth",
 		Help: "Current depth of the proxy post-response async work queue.",
@@ -90,6 +115,10 @@ func (r *ProxyRegistry) register(serviceName string) {
 		r.rateLimitRedisErrors,
 		r.providerRequests,
 		r.providerRetries,
+		r.streamDuration,
+		r.streamClientDisc,
+		r.streamUpstreamDisc,
+		r.streamBackpressure,
 		r.asyncQueueDepth,
 		r.asyncDroppedTotal,
 		r.processUp,
@@ -141,6 +170,26 @@ func (r *ProxyRegistry) IncProviderRequest(provider, statusClass string) {
 // IncProviderRetry records an upstream provider retry attempt.
 func (r *ProxyRegistry) IncProviderRetry(provider string) {
 	r.providerRetries.WithLabelValues(provider).Inc()
+}
+
+// ObserveStreamDuration records SSE forward duration.
+func (r *ProxyRegistry) ObserveStreamDuration(provider, status string, seconds float64) {
+	r.streamDuration.WithLabelValues(provider, status).Observe(seconds)
+}
+
+// IncStreamClientDisconnect records a client disconnect mid-stream.
+func (r *ProxyRegistry) IncStreamClientDisconnect() {
+	r.streamClientDisc.Inc()
+}
+
+// IncStreamUpstreamDisconnect records an upstream disconnect before [DONE].
+func (r *ProxyRegistry) IncStreamUpstreamDisconnect() {
+	r.streamUpstreamDisc.Inc()
+}
+
+// IncStreamBackpressure records a slow client write during SSE forward.
+func (r *ProxyRegistry) IncStreamBackpressure() {
+	r.streamBackpressure.Inc()
 }
 
 // SetAsyncQueueDepth records the current post-response async queue depth.

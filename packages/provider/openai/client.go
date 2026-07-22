@@ -62,7 +62,8 @@ func (c *Client) SupportedModels() []string {
 	return []string{"gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"}
 }
 
-// Complete sends a non-streaming chat completion request to OpenAI.
+// Complete sends a chat completion request to OpenAI.
+// When req.Stream is true, Body is a live SSE stream (caller must close it).
 func (c *Client) Complete(ctx context.Context, req provider.Request) (provider.Response, error) {
 	ctx, span := c.tracer.Start(ctx, "openai.Complete",
 		trace.WithAttributes(
@@ -80,7 +81,7 @@ func (c *Client) Complete(ctx context.Context, req provider.Request) (provider.R
 	}
 
 	url := strings.TrimRight(c.cfg.BaseURL, "/") + "/chat/completions"
-	return c.executeWithRetry(ctx, span, url, body)
+	return c.executeWithRetry(ctx, span, url, body, req.Stream)
 }
 
 func (c *Client) marshalRequest(req provider.Request) ([]byte, error) {
@@ -91,14 +92,22 @@ func (c *Client) marshalRequest(req provider.Request) ([]byte, error) {
 	return body, nil
 }
 
-func (c *Client) doRequest(ctx context.Context, url string, body []byte) (*http.Response, error) {
+func (c *Client) doRequest(ctx context.Context, url string, body []byte, stream bool) (*http.Response, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+c.cfg.APIKey)
-	return c.httpClient.Do(httpReq)
+	if stream {
+		httpReq.Header.Set("Accept", "text/event-stream")
+	}
+	client := c.httpClient
+	if stream {
+		// Overall Client.Timeout would abort long SSE streams; rely on ctx instead.
+		client = &http.Client{Transport: c.httpClient.Transport}
+	}
+	return client.Do(httpReq)
 }
 
 func readProviderError(name string, resp *http.Response) *provider.ProviderError {

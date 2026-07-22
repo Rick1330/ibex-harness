@@ -307,3 +307,49 @@ func testClient(t *testing.T, baseURL, apiKey string, reg *metrics.ProxyRegistry
 		RetryBaseDelay: 1 * time.Millisecond,
 	}, logger.Discard("openai"), telemetry.NoopTracer("openai"), m)
 }
+
+func TestOpenAIClient_Streaming_AcceptAndBody(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Accept") != "text/event-stream" {
+			t.Errorf("Accept: %q", r.Header.Get("Accept"))
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\ndata: [DONE]\n\n"))
+	}))
+	t.Cleanup(srv.Close)
+
+	client := testClient(t, srv.URL, "test-key", nil)
+	resp, err := client.Complete(context.Background(), provider.Request{
+		Model:    "gpt-4o",
+		Messages: []provider.Message{{Role: "user", Content: "hi"}},
+		Stream:   true,
+	})
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), "[DONE]") {
+		t.Fatalf("body: %s", body)
+	}
+}
+
+func TestOpenAIClient_Streaming_RejectsNonEventStream(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	client := testClient(t, srv.URL, "test-key", nil)
+	_, err := client.Complete(context.Background(), provider.Request{
+		Model:  "gpt-4o",
+		Stream: true,
+	})
+	var pe *provider.ProviderError
+	if !errors.As(err, &pe) {
+		t.Fatalf("want ProviderError, got %v", err)
+	}
+}

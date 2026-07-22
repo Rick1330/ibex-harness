@@ -16,6 +16,13 @@ func (r *statusRecorder) WriteHeader(status int) {
 	r.ResponseWriter.WriteHeader(status)
 }
 
+// Flush implements http.Flusher for SSE streaming through middleware wrappers.
+func (r *statusRecorder) Flush() {
+	if f, ok := r.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
 // HTTPMiddleware records proxy HTTP request metrics and active connections.
 func HTTPMiddleware(reg *ProxyRegistry) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {

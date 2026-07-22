@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/provider"
@@ -18,7 +19,7 @@ type attemptResult struct {
 	statusCode int
 }
 
-func (c *Client) executeWithRetry(ctx context.Context, span trace.Span, url string, body []byte) (provider.Response, error) {
+func (c *Client) executeWithRetry(ctx context.Context, span trace.Span, url string, body []byte, stream bool) (provider.Response, error) {
 	var lastErr error
 	for attempt := 0; attempt <= c.cfg.maxRetries(); attempt++ {
 		if attempt > 0 {
@@ -28,7 +29,7 @@ func (c *Client) executeWithRetry(ctx context.Context, span trace.Span, url stri
 				return provider.Response{}, err
 			}
 		}
-		out := c.tryOnce(ctx, url, body, attempt)
+		out := c.tryOnce(ctx, url, body, attempt, stream)
 		if out.err == nil {
 			return out.resp, nil
 		}
@@ -45,9 +46,9 @@ func (c *Client) executeWithRetry(ctx context.Context, span trace.Span, url stri
 	return provider.Response{}, lastErr
 }
 
-func (c *Client) tryOnce(ctx context.Context, url string, body []byte, attempt int) attemptResult {
+func (c *Client) tryOnce(ctx context.Context, url string, body []byte, attempt int, stream bool) attemptResult {
 	start := time.Now()
-	resp, err := c.doRequest(ctx, url, body)
+	resp, err := c.doRequest(ctx, url, body, stream)
 	if err != nil {
 		c.metrics.IncProviderRequest(c.Name(), "error")
 		retry := isRetryableTransport(err) && attempt < c.cfg.maxRetries()
@@ -56,6 +57,17 @@ func (c *Client) tryOnce(ctx context.Context, url string, body []byte, attempt i
 
 	c.metrics.IncProviderRequest(c.Name(), statusClass(resp.StatusCode))
 	if resp.StatusCode == http.StatusOK {
+		if stream && !isEventStream(resp.Header.Get("Content-Type")) {
+			_ = resp.Body.Close()
+			return attemptResult{
+				err: &provider.ProviderError{
+					ProviderName:   c.Name(),
+					StatusCode:     http.StatusBadGateway,
+					ProviderErrMsg: "upstream did not return text/event-stream",
+				},
+			}
+		}
+		// Live SSE body: never retry after this point (ADR-0027).
 		return attemptResult{
 			resp: provider.Response{
 				Body:       resp.Body,
@@ -69,6 +81,10 @@ func (c *Client) tryOnce(ctx context.Context, url string, body []byte, attempt i
 	_ = resp.Body.Close()
 	retry := isRetryableStatus(resp.StatusCode) && attempt < c.cfg.maxRetries()
 	return attemptResult{err: provErr, retry: retry, statusCode: resp.StatusCode}
+}
+
+func isEventStream(contentType string) bool {
+	return strings.Contains(strings.ToLower(contentType), "text/event-stream")
 }
 
 func recordSpanErr(span trace.Span, err error) {

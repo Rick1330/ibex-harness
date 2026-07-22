@@ -138,6 +138,10 @@ func seedProxySamples(reg *ProxyRegistry) {
 	reg.IncRateLimitAllowed()
 	reg.IncProviderRequest("openai", "2xx")
 	reg.IncProviderRetry("openai")
+	reg.ObserveStreamDuration("openai", "ok", 0.01)
+	reg.IncStreamClientDisconnect()
+	reg.IncStreamUpstreamDisconnect()
+	reg.IncStreamBackpressure()
 	reg.SetAsyncQueueDepth(1)
 	reg.IncAsyncDropped()
 }

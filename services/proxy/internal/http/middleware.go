@@ -51,6 +51,13 @@ func (h *headerResponseWriter) Write(b []byte) (int, error) {
 	return h.ResponseWriter.Write(b)
 }
 
+// Flush implements http.Flusher for SSE streaming through middleware wrappers.
+func (h *headerResponseWriter) Flush() {
+	if f, ok := h.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
 func (h *headerResponseWriter) ensureHeaders() {
 	if h.wroteHeaders {
 		return
