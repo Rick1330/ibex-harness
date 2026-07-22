@@ -18,12 +18,7 @@ func TestMapProviderError_OpenAI429(t *testing.T) {
 		StatusCode:   http.StatusTooManyRequests,
 		RetryAfter:   30 * time.Second,
 	})
-	if got == nil {
-		t.Fatal("expected mapped error")
-	}
-	if got.Code != apierror.CodeRateLimited || got.HTTPStatus != http.StatusTooManyRequests {
-		t.Fatalf("got code=%s status=%d", got.Code, got.HTTPStatus)
-	}
+	assertMapped(t, got, apierror.CodeRateLimited, http.StatusTooManyRequests)
 	if got.RetryAfter != 30*time.Second {
 		t.Fatalf("RetryAfter=%v", got.RetryAfter)
 	}
@@ -32,101 +27,37 @@ func TestMapProviderError_OpenAI429(t *testing.T) {
 func TestMapProviderError_OpenAI401(t *testing.T) {
 	t.Parallel()
 	got := MapProviderError(MapInput{ProviderName: "openai", StatusCode: http.StatusUnauthorized})
-	if got == nil || got.Code != apierror.CodeProviderUnavailable || got.HTTPStatus != http.StatusServiceUnavailable {
-		t.Fatalf("got %+v", got)
-	}
+	assertMapped(t, got, apierror.CodeProviderUnavailable, http.StatusServiceUnavailable)
 }
 
 func TestMapProviderError_Timeout(t *testing.T) {
 	t.Parallel()
 	got := MapProviderError(MapInput{TransportErr: context.DeadlineExceeded})
-	if got == nil || got.Code != apierror.CodeProviderTimeout || got.HTTPStatus != http.StatusGatewayTimeout {
-		t.Fatalf("got %+v", got)
-	}
+	assertMapped(t, got, apierror.CodeProviderTimeout, http.StatusGatewayTimeout)
 }
 
-func TestMapProviderError_table(t *testing.T) {
+func TestMapProviderError_clientErrors(t *testing.T) {
 	t.Parallel()
-	cases := []struct {
-		name       string
-		in         MapInput
-		wantNil    bool
-		wantCode   apierror.Code
-		wantStatus int
-	}{
-		{
-			name:       "400 with safe detail",
-			in:         MapInput{StatusCode: 400, SafeMessage: "missing messages"},
-			wantCode:   apierror.CodeInvalidRequest,
-			wantStatus: 400,
-		},
-		{
-			name:       "403",
-			in:         MapInput{StatusCode: 403},
-			wantCode:   apierror.CodeProviderUnavailable,
-			wantStatus: 503,
-		},
-		{
-			name:       "404",
-			in:         MapInput{StatusCode: 404},
-			wantCode:   apierror.CodeProviderUnavailable,
-			wantStatus: 503,
-		},
-		{
-			name:       "500",
-			in:         MapInput{StatusCode: 500},
-			wantCode:   apierror.CodeProviderUnavailable,
-			wantStatus: 503,
-		},
-		{
-			name:       "502",
-			in:         MapInput{StatusCode: 502},
-			wantCode:   apierror.CodeProviderUnavailable,
-			wantStatus: 503,
-		},
-		{
-			name:       "503",
-			in:         MapInput{StatusCode: 503},
-			wantCode:   apierror.CodeProviderUnavailable,
-			wantStatus: 503,
-		},
-		{
-			name:       "504",
-			in:         MapInput{StatusCode: 504},
-			wantCode:   apierror.CodeProviderUnavailable,
-			wantStatus: 503,
-		},
-		{
-			name:       "transport",
-			in:         MapInput{TransportErr: errors.New("dial tcp: connection refused")},
-			wantCode:   apierror.CodeProviderUnavailable,
-			wantStatus: 503,
-		},
-		{
-			name:    "canceled",
-			in:      MapInput{TransportErr: context.Canceled},
-			wantNil: true,
-		},
-	}
-	for _, tc := range cases {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			got := MapProviderError(tc.in)
-			if tc.wantNil {
-				if got != nil {
-					t.Fatalf("expected nil, got %+v", got)
-				}
-				return
-			}
-			if got == nil || got.Code != tc.wantCode || got.HTTPStatus != tc.wantStatus {
-				t.Fatalf("got %+v want code=%s status=%d", got, tc.wantCode, tc.wantStatus)
-			}
-		})
-	}
+	runMapCases(t, []mapCase{
+		{name: "400", in: MapInput{StatusCode: 400, SafeMessage: "missing messages"}, code: apierror.CodeInvalidRequest, status: 400},
+		{name: "403", in: MapInput{StatusCode: 403}, code: apierror.CodeProviderUnavailable, status: 503},
+		{name: "404", in: MapInput{StatusCode: 404}, code: apierror.CodeProviderUnavailable, status: 503},
+	})
 }
 
-func TestMapError_fromProviderErrorAndCancel(t *testing.T) {
+func TestMapProviderError_serverAndTransport(t *testing.T) {
+	t.Parallel()
+	runMapCases(t, []mapCase{
+		{name: "500", in: MapInput{StatusCode: 500}, code: apierror.CodeProviderUnavailable, status: 503},
+		{name: "502", in: MapInput{StatusCode: 502}, code: apierror.CodeProviderUnavailable, status: 503},
+		{name: "503", in: MapInput{StatusCode: 503}, code: apierror.CodeProviderUnavailable, status: 503},
+		{name: "504", in: MapInput{StatusCode: 504}, code: apierror.CodeProviderUnavailable, status: 503},
+		{name: "transport", in: MapInput{TransportErr: errors.New("dial tcp: connection refused")}, code: apierror.CodeProviderUnavailable, status: 503},
+		{name: "canceled", in: MapInput{TransportErr: context.Canceled}, wantNil: true},
+	})
+}
+
+func TestMapError_providerBadRequest(t *testing.T) {
 	t.Parallel()
 	mapped, write := MapError(&ProviderError{
 		ProviderName:   "openai",
@@ -134,17 +65,21 @@ func TestMapError_fromProviderErrorAndCancel(t *testing.T) {
 		ProviderErrMsg: "bad field",
 		ProviderBody:   []byte(`{"error":{"message":"secret sk-abc123 should not leak via body path"}}`),
 	})
-	if !write || mapped == nil || mapped.Code != apierror.CodeInvalidRequest {
-		t.Fatalf("mapped=%+v write=%v", mapped, write)
+	if !write {
+		t.Fatal("expected write")
 	}
+	assertMapped(t, mapped, apierror.CodeInvalidRequest, http.StatusBadRequest)
 	if mapped.Detail != "bad field" {
 		t.Fatalf("detail=%q", mapped.Detail)
 	}
 	if strings.Contains(mapped.Detail, "sk-") {
 		t.Fatal("detail must not contain secrets from body")
 	}
+}
 
-	_, write = MapError(context.Canceled)
+func TestMapError_canceledSuppressesWrite(t *testing.T) {
+	t.Parallel()
+	_, write := MapError(context.Canceled)
 	if write {
 		t.Fatal("canceled must suppress write")
 	}
@@ -164,5 +99,44 @@ func TestSanitizeProviderDetail(t *testing.T) {
 	long := strings.Repeat("a", 400)
 	if got := sanitizeProviderDetail(long); len([]rune(got)) != maxSafeDetailRunes {
 		t.Fatalf("truncate len=%d", len([]rune(got)))
+	}
+}
+
+type mapCase struct {
+	name    string
+	in      MapInput
+	code    apierror.Code
+	status  int
+	wantNil bool
+}
+
+func runMapCases(t *testing.T, cases []mapCase) {
+	t.Helper()
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := MapProviderError(tc.in)
+			if tc.wantNil {
+				if got != nil {
+					t.Fatalf("expected nil, got %+v", got)
+				}
+				return
+			}
+			assertMapped(t, got, tc.code, tc.status)
+		})
+	}
+}
+
+func assertMapped(t *testing.T, got *apierror.Error, code apierror.Code, status int) {
+	t.Helper()
+	if got == nil {
+		t.Fatal("expected mapped error")
+	}
+	if got.Code != code {
+		t.Fatalf("code: got %s want %s", got.Code, code)
+	}
+	if got.HTTPStatus != status {
+		t.Fatalf("status: got %d want %d", got.HTTPStatus, status)
 	}
 }

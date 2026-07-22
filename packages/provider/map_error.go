@@ -29,21 +29,8 @@ type MapInput struct {
 // the canonical IBEX apierror.Error. Never exposes API keys or raw bodies.
 // ProviderName is for caller logs only — not copied into the client envelope.
 func MapProviderError(in MapInput) *apierror.Error {
-	if in.TransportErr != nil {
-		if errors.Is(in.TransportErr, context.Canceled) {
-			return nil
-		}
-		if errors.Is(in.TransportErr, context.DeadlineExceeded) {
-			return &apierror.Error{
-				Code:       apierror.CodeProviderTimeout,
-				Message:    msgProviderTimeout,
-				Detail:     msgProviderTimeout,
-				HTTPStatus: apierror.HTTPStatus(apierror.CodeProviderTimeout),
-			}
-		}
-		if in.StatusCode == 0 {
-			return unavailable()
-		}
+	if mapped, handled := mapTransport(in); handled {
+		return mapped
 	}
 	return mapHTTPStatus(in.StatusCode, in.RetryAfter, in.SafeMessage)
 }
@@ -51,10 +38,7 @@ func MapProviderError(in MapInput) *apierror.Error {
 // MapError is the handler entrypoint: unwraps ProviderError / deadline / cancel.
 // write is false only for context.Canceled (caller must not write a response).
 func MapError(err error) (mapped *apierror.Error, write bool) {
-	if err == nil {
-		return nil, false
-	}
-	if errors.Is(err, context.Canceled) {
+	if err == nil || errors.Is(err, context.Canceled) {
 		return nil, false
 	}
 	var pe *ProviderError
@@ -70,6 +54,27 @@ func MapError(err error) (mapped *apierror.Error, write bool) {
 		return MapProviderError(MapInput{TransportErr: context.DeadlineExceeded}), true
 	}
 	return MapProviderError(MapInput{TransportErr: err}), true
+}
+
+func mapTransport(in MapInput) (*apierror.Error, bool) {
+	if in.TransportErr == nil {
+		return nil, false
+	}
+	if errors.Is(in.TransportErr, context.Canceled) {
+		return nil, true
+	}
+	if errors.Is(in.TransportErr, context.DeadlineExceeded) {
+		return &apierror.Error{
+			Code:       apierror.CodeProviderTimeout,
+			Message:    msgProviderTimeout,
+			Detail:     msgProviderTimeout,
+			HTTPStatus: apierror.HTTPStatus(apierror.CodeProviderTimeout),
+		}, true
+	}
+	if in.StatusCode == 0 {
+		return unavailable(), true
+	}
+	return nil, false
 }
 
 func mapHTTPStatus(status int, retryAfter time.Duration, safeMsg string) *apierror.Error {
@@ -93,13 +98,8 @@ func mapHTTPStatus(status int, retryAfter time.Duration, safeMsg string) *apierr
 			HTTPStatus: http.StatusTooManyRequests,
 			RetryAfter: retryAfter,
 		}
-	case http.StatusInternalServerError, http.StatusBadGateway,
-		http.StatusServiceUnavailable, http.StatusGatewayTimeout:
-		return unavailable()
-	case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound:
-		return unavailable()
 	default:
-		// Other 4xx/5xx from upstream: do not leak provider auth or not-found as client codes.
+		// 401/403/404/5xx and other upstream codes: never leak as client PAT 401/403/404.
 		return unavailable()
 	}
 }
