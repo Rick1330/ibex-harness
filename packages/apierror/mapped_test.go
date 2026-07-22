@@ -41,6 +41,31 @@ func TestWriteHTTP_setsRetryAfterAndEnvelope(t *testing.T) {
 	}
 }
 
+func TestWriteHTTP_retryAfterRoundsUpAndClamps(t *testing.T) {
+	t.Parallel()
+	rec := httptest.NewRecorder()
+	apierror.WriteHTTP(rec, "req", apierror.WriteOpts{}, &apierror.Error{
+		Code:       apierror.CodeRateLimited,
+		Message:    "Upstream LLM provider rate limited",
+		HTTPStatus: http.StatusTooManyRequests,
+		RetryAfter: 1500 * time.Millisecond,
+	})
+	if got := rec.Header().Get("Retry-After"); got != "2" {
+		t.Fatalf("expected ceil seconds, got %q", got)
+	}
+
+	rec2 := httptest.NewRecorder()
+	apierror.WriteHTTP(rec2, "req", apierror.WriteOpts{}, &apierror.Error{
+		Code:       apierror.CodeRateLimited,
+		Message:    "Upstream LLM provider rate limited",
+		HTTPStatus: http.StatusTooManyRequests,
+		RetryAfter: 10 * time.Hour,
+	})
+	if got := rec2.Header().Get("Retry-After"); got != "3600" {
+		t.Fatalf("expected clamp to 3600, got %q", got)
+	}
+}
+
 func TestWriteHTTP_nilNoOp(t *testing.T) {
 	t.Parallel()
 	rec := httptest.NewRecorder()

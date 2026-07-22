@@ -6,6 +6,12 @@ import (
 	"time"
 )
 
+// Retry-After bounds for mapped provider / rate-limit responses.
+const (
+	minRetryAfterSecs = int64(1)
+	maxRetryAfterSecs = int64(3600) // 1 hour cap — avoids pathological upstream values
+)
+
 // Error is a mapped IBEX client error ready to write as the stable envelope.
 // It is not a Go error value for wrapping; use packages/provider.MapError to build it.
 type Error struct {
@@ -23,10 +29,7 @@ func WriteHTTP(w http.ResponseWriter, requestID string, opts WriteOpts, err *Err
 		return
 	}
 	if err.RetryAfter > 0 {
-		secs := int64(err.RetryAfter.Seconds())
-		if secs < 1 {
-			secs = 1
-		}
+		secs := retryAfterSeconds(err.RetryAfter)
 		w.Header().Set("Retry-After", strconv.FormatInt(secs, 10))
 	}
 	writeOpts := opts
@@ -38,4 +41,16 @@ func WriteHTTP(w http.ResponseWriter, requestID string, opts WriteOpts, err *Err
 		status = HTTPStatus(err.Code)
 	}
 	WriteStatus(w, status, err.Code, err.Message, requestID, writeOpts)
+}
+
+// retryAfterSeconds rounds duration up to whole seconds and clamps to [1, maxRetryAfterSecs].
+func retryAfterSeconds(d time.Duration) int64 {
+	secs := int64((d + time.Second - 1) / time.Second)
+	if secs < minRetryAfterSecs {
+		return minRetryAfterSecs
+	}
+	if secs > maxRetryAfterSecs {
+		return maxRetryAfterSecs
+	}
+	return secs
 }

@@ -62,18 +62,33 @@ func TestMapError_providerBadRequest(t *testing.T) {
 	mapped, write := MapError(&ProviderError{
 		ProviderName:   "openai",
 		StatusCode:     http.StatusBadRequest,
-		ProviderErrMsg: "bad field",
+		ProviderErrMsg: "Invalid type for messages",
 		ProviderBody:   []byte(`{"error":{"message":"secret sk-abc123 should not leak via body path"}}`),
 	})
 	if !write {
 		t.Fatal("expected write")
 	}
 	assertMapped(t, mapped, apierror.CodeInvalidRequest, http.StatusBadRequest)
-	if mapped.Detail != "bad field" {
+	if mapped.Detail != "Invalid type for messages" {
 		t.Fatalf("detail=%q", mapped.Detail)
 	}
 	if strings.Contains(mapped.Detail, "sk-") {
 		t.Fatal("detail must not contain secrets from body")
+	}
+}
+
+func TestMapError_unsafeDetailDropped(t *testing.T) {
+	t.Parallel()
+	mapped, write := MapError(&ProviderError{
+		StatusCode:     http.StatusBadRequest,
+		ProviderErrMsg: "something weird with key material",
+	})
+	if !write {
+		t.Fatal("expected write")
+	}
+	assertMapped(t, mapped, apierror.CodeInvalidRequest, http.StatusBadRequest)
+	if mapped.Detail != msgInvalidRequest {
+		t.Fatalf("expected generic detail, got %q", mapped.Detail)
 	}
 }
 
@@ -87,8 +102,11 @@ func TestMapError_canceledSuppressesWrite(t *testing.T) {
 
 func TestSanitizeProviderDetail(t *testing.T) {
 	t.Parallel()
-	if got := sanitizeProviderDetail("  ok message  "); got != "ok message" {
-		t.Fatalf("trim: %q", got)
+	if got := sanitizeProviderDetail("  Invalid request parameter  "); got != "Invalid request parameter" {
+		t.Fatalf("allowlist: %q", got)
+	}
+	if got := sanitizeProviderDetail("missing messages field"); got != "missing messages field" {
+		t.Fatalf("missing: %q", got)
 	}
 	if got := sanitizeProviderDetail("key sk-live-abcdefg leaked"); got != "" {
 		t.Fatalf("secret: %q", got)
@@ -96,9 +114,11 @@ func TestSanitizeProviderDetail(t *testing.T) {
 	if got := sanitizeProviderDetail("Bearer tok123"); got != "" {
 		t.Fatalf("bearer: %q", got)
 	}
-	long := strings.Repeat("a", 400)
-	if got := sanitizeProviderDetail(long); len([]rune(got)) != maxSafeDetailRunes {
-		t.Fatalf("truncate len=%d", len([]rune(got)))
+	if got := sanitizeProviderDetail("ok message"); got != "" {
+		t.Fatalf("non-validation free text must be empty: %q", got)
+	}
+	if got := sanitizeProviderDetail(""); got != "" {
+		t.Fatalf("empty: %q", got)
 	}
 }
 
