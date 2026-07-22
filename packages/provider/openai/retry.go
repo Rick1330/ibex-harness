@@ -20,68 +20,57 @@ type attemptResult struct {
 	statusCode int
 }
 
-type retryCall struct {
-	ctx    context.Context
-	span   trace.Span
-	url    string
-	body   []byte
-	stream bool
+// upstreamCall holds the HTTP payload for an OpenAI chat completion attempt.
+type upstreamCall struct {
+	URL    string
+	Body   []byte
+	Stream bool
 }
 
-type tryOnceCall struct {
-	ctx     context.Context
-	url     string
-	body    []byte
-	attempt int
-	stream  bool
-}
-
-func (c *Client) executeWithRetry(call retryCall) (provider.Response, error) {
+func (c *Client) executeWithRetry(ctx context.Context, span trace.Span, call upstreamCall) (provider.Response, error) {
 	var lastErr error
 	for attempt := 0; attempt <= c.cfg.maxRetries(); attempt++ {
 		if attempt > 0 {
 			c.metrics.IncProviderRetry(c.Name())
-			if err := c.waitBeforeRetry(call.ctx, attempt, lastErr); err != nil {
-				recordSpanErr(call.span, err)
+			if err := c.waitBeforeRetry(ctx, attempt, lastErr); err != nil {
+				recordSpanErr(span, err)
 				return provider.Response{}, err
 			}
 		}
-		out := c.tryOnce(tryOnceCall{
-			ctx: call.ctx, url: call.url, body: call.body, attempt: attempt, stream: call.stream,
-		})
+		out := c.tryOnce(ctx, call, attempt)
 		if out.err == nil {
 			return out.resp, nil
 		}
 		lastErr = out.err
 		if !out.retry {
-			recordSpanErr(call.span, lastErr)
+			recordSpanErr(span, lastErr)
 			return provider.Response{}, lastErr
 		}
 	}
 	if lastErr == nil {
 		lastErr = errors.New("openai request failed")
 	}
-	recordSpanErr(call.span, lastErr)
+	recordSpanErr(span, lastErr)
 	return provider.Response{}, lastErr
 }
 
-func (c *Client) tryOnce(call tryOnceCall) attemptResult {
+func (c *Client) tryOnce(ctx context.Context, call upstreamCall, attempt int) attemptResult {
 	start := time.Now()
-	resp, err := c.doRequest(call.ctx, call.url, call.body, call.stream)
+	resp, err := c.doRequest(ctx, call)
 	if err != nil {
 		c.metrics.IncProviderRequest(c.Name(), "error")
-		retry := isRetryableTransport(err) && call.attempt < c.cfg.maxRetries()
+		retry := isRetryableTransport(err) && attempt < c.cfg.maxRetries()
 		return attemptResult{err: err, retry: retry}
 	}
 
 	c.metrics.IncProviderRequest(c.Name(), statusClass(resp.StatusCode))
 	if resp.StatusCode == http.StatusOK {
-		return c.acceptOKBody(resp, call.stream, start)
+		return c.acceptOKBody(resp, call.Stream, start)
 	}
 
 	provErr := readProviderError(c.Name(), resp)
 	_ = resp.Body.Close()
-	retry := isRetryableStatus(resp.StatusCode) && call.attempt < c.cfg.maxRetries()
+	retry := isRetryableStatus(resp.StatusCode) && attempt < c.cfg.maxRetries()
 	return attemptResult{err: provErr, retry: retry, statusCode: resp.StatusCode}
 }
 

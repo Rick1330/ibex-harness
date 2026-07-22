@@ -81,7 +81,7 @@ func (c *Client) Complete(ctx context.Context, req provider.Request) (provider.R
 	}
 
 	url := strings.TrimRight(c.cfg.BaseURL, "/") + "/chat/completions"
-	return c.executeWithRetry(retryCall{ctx: ctx, span: span, url: url, body: body, stream: req.Stream})
+	return c.executeWithRetry(ctx, span, upstreamCall{URL: url, Body: body, Stream: req.Stream})
 }
 
 func (c *Client) marshalRequest(req provider.Request) ([]byte, error) {
@@ -92,36 +92,41 @@ func (c *Client) marshalRequest(req provider.Request) ([]byte, error) {
 	return body, nil
 }
 
-func (c *Client) doRequest(ctx context.Context, url string, body []byte, stream bool) (*http.Response, error) {
-	reqCtx, cancel := c.streamRequestContext(ctx, stream)
-	httpReq, err := c.newChatRequest(reqCtx, url, body, stream)
+func (c *Client) doRequest(ctx context.Context, call upstreamCall) (*http.Response, error) {
+	reqCtx, cancel := c.streamRequestContext(ctx, call.Stream)
+	httpReq, err := c.newChatRequest(reqCtx, call)
 	if err != nil {
 		cancel()
 		return nil, err
 	}
-	resp, err := c.httpClientFor(stream).Do(httpReq)
+	resp, err := c.httpClientFor(call.Stream).Do(httpReq)
 	if err != nil {
 		cancel()
 		return nil, err
 	}
-	return attachStreamCancel(resp, stream, cancel), nil
+	return attachStreamCancel(resp, call.Stream, cancel), nil
 }
 
 func (c *Client) streamRequestContext(ctx context.Context, stream bool) (context.Context, context.CancelFunc) {
 	if !stream {
-		return ctx, func() {}
+		return ctx, noopCancel
 	}
 	return context.WithTimeout(ctx, c.cfg.StreamTimeout)
 }
 
-func (c *Client) newChatRequest(ctx context.Context, url string, body []byte, stream bool) (*http.Request, error) {
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+// noopCancel is used for non-stream requests that share the caller's context.
+func noopCancel() {
+	// Intentionally empty: there is no derived deadline to cancel on the non-stream path.
+}
+
+func (c *Client) newChatRequest(ctx context.Context, call upstreamCall) (*http.Request, error) {
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, call.URL, bytes.NewReader(call.Body))
 	if err != nil {
 		return nil, err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+c.cfg.APIKey)
-	if stream {
+	if call.Stream {
 		httpReq.Header.Set("Accept", "text/event-stream")
 	}
 	return httpReq, nil

@@ -33,8 +33,8 @@ type streamForwardParams struct {
 	docsBase string
 }
 
-type sseCopyParams struct {
-	ctx     context.Context
+// sseCopyDest groups writer-side dependencies for the SSE copy loop.
+type sseCopyDest struct {
 	w       http.ResponseWriter
 	flusher http.Flusher
 	src     io.Reader
@@ -73,8 +73,8 @@ func writeSSEHeadersAndCopy(p streamForwardParams, flusher http.Flusher, acc *op
 	flusher.Flush()
 
 	tee := io.TeeReader(p.resp.Body, acc)
-	err := copySSEEvents(sseCopyParams{
-		ctx: p.r.Context(), w: p.w, flusher: flusher, src: tee, metrics: p.metrics,
+	err := copySSEEvents(p.r.Context(), sseCopyDest{
+		w: p.w, flusher: flusher, src: tee, metrics: p.metrics,
 	})
 	return classifyStreamEnd(p, acc, err)
 }
@@ -127,44 +127,44 @@ func noteIncompleteStream(p streamForwardParams, n streamEndNote) {
 	}
 }
 
-func copySSEEvents(p sseCopyParams) error {
-	reader := bufio.NewReader(p.src)
+func copySSEEvents(ctx context.Context, dest sseCopyDest) error {
+	reader := bufio.NewReader(dest.src)
 	for {
-		if err := p.ctx.Err(); err != nil {
+		if err := ctx.Err(); err != nil {
 			return err
 		}
 		line, readErr := reader.ReadBytes('\n')
-		if writeErr := writeLineIfPresent(p, line); writeErr != nil {
+		if writeErr := writeLineIfPresent(dest, line); writeErr != nil {
 			return writeErr
 		}
 		if readErr == nil {
 			continue
 		}
 		if errors.Is(readErr, io.EOF) {
-			p.flusher.Flush()
+			dest.flusher.Flush()
 			return nil
 		}
 		return readErr
 	}
 }
 
-func writeLineIfPresent(p sseCopyParams, line []byte) error {
+func writeLineIfPresent(dest sseCopyDest, line []byte) error {
 	if len(line) == 0 {
 		return nil
 	}
-	return writeAndMaybeFlush(p, line)
+	return writeAndMaybeFlush(dest, line)
 }
 
-func writeAndMaybeFlush(p sseCopyParams, line []byte) error {
+func writeAndMaybeFlush(dest sseCopyDest, line []byte) error {
 	start := time.Now()
-	if _, err := p.w.Write(line); err != nil {
+	if _, err := dest.w.Write(line); err != nil {
 		return errors.Join(errClientWrite, err)
 	}
 	if isSSEEventBoundary(line) {
-		p.flusher.Flush()
+		dest.flusher.Flush()
 	}
-	if p.metrics != nil && time.Since(start) >= streamBackpressureThreshold {
-		p.metrics.IncStreamBackpressure()
+	if dest.metrics != nil && time.Since(start) >= streamBackpressureThreshold {
+		dest.metrics.IncStreamBackpressure()
 	}
 	return nil
 }
