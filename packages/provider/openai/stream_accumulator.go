@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/Rick1330/ibex-harness/packages/provider"
 )
@@ -37,12 +38,17 @@ func NewStreamAccumulator() *StreamAccumulator {
 // Write implements io.Writer. It always returns len(p), nil.
 func (a *StreamAccumulator) Write(p []byte) (int, error) {
 	a.mu.Lock()
-	defer a.mu.Unlock()
 	if a.closed {
+		a.mu.Unlock()
 		return len(p), nil
 	}
 	_, _ = a.buf.Write(p)
 	a.drainLocked()
+	sawDone := a.complete
+	a.mu.Unlock()
+	if sawDone {
+		a.signalDone()
+	}
 	return len(p), nil
 }
 
@@ -67,12 +73,14 @@ func (a *StreamAccumulator) Complete() bool {
 
 // MarkClosed signals end-of-stream without [DONE] (upstream EOF / error).
 func (a *StreamAccumulator) MarkClosed() {
-	a.closeOnce.Do(func() {
-		a.mu.Lock()
-		a.closed = true
-		a.mu.Unlock()
-		close(a.done)
-	})
+	a.mu.Lock()
+	a.closed = true
+	a.mu.Unlock()
+	a.signalDone()
+}
+
+func (a *StreamAccumulator) signalDone() {
+	a.closeOnce.Do(func() { close(a.done) })
 }
 
 func (a *StreamAccumulator) drainLocked() {
@@ -104,7 +112,6 @@ func (a *StreamAccumulator) handleLineLocked(line string) {
 	if payload == doneSentinel {
 		a.complete = true
 		a.closed = true
-		a.closeOnce.Do(func() { close(a.done) })
 		return
 	}
 	a.parseChunkLocked(payload)
@@ -136,12 +143,18 @@ func (a *StreamAccumulator) appendContentLocked(s string) {
 		a.capped = true
 		return
 	}
-	if len(s) > remaining {
-		a.content.WriteString(s[:remaining])
-		a.capped = true
+	if len(s) <= remaining {
+		a.content.WriteString(s)
 		return
 	}
-	a.content.WriteString(s)
+	trunc := s[:remaining]
+	for len(trunc) > 0 && !utf8.ValidString(trunc) {
+		trunc = trunc[:len(trunc)-1]
+	}
+	if len(trunc) > 0 {
+		a.content.WriteString(trunc)
+	}
+	a.capped = true
 }
 
 type streamChunk struct {

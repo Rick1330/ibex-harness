@@ -254,9 +254,7 @@ func (r *statusRecorder) WriteHeader(status int) {
 
 // Flush implements http.Flusher for SSE streaming through middleware wrappers.
 func (r *statusRecorder) Flush() {
-	if f, ok := r.ResponseWriter.(http.Flusher); ok {
-		f.Flush()
-	}
+	flushIfSupported(r.ResponseWriter)
 }
 
 func requireMethod(w http.ResponseWriter, r *http.Request, method, docsBase string) bool {

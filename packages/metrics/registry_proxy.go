@@ -72,7 +72,7 @@ func (r *ProxyRegistry) register(serviceName string) {
 
 	r.streamDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "ibex_proxy_stream_duration_seconds",
-		Help:    "Duration of SSE stream forward after first byte.",
+		Help:    "Duration of SSE stream forward from response headers through copy completion.",
 		Buckets: LatencyBuckets,
 	}, []string{"provider", "status"})
 

@@ -42,9 +42,9 @@ IBEX does not rewrite SSE framing, inject events, or transform provider-specific
 
 ### 3) Accumulation is best-effort
 
-Parse errors in the accumulator must never fail `Write` or block the forward path. Incomplete accumulation logs a warning and continues; the client still receives bytes. Prefer a missing trace over delayed TTFB.
+Parse errors in the accumulator must never fail `Write` or block the forward path. Incomplete accumulation is best-effort: JSON parse failures and soft-cap drops are silent in the accumulator (forward still receives full upstream bytes). The proxy logs a warning when the stream ends incomplete (`Complete() == false`). Prefer a missing or truncated trace over delayed TTFB.
 
-Soft content cap: **1 MiB** of accumulated completion text. Beyond the cap, further content is dropped from the accumulator (forward still receives full upstream bytes).
+Soft content cap: **1 MiB** of accumulated completion text, truncated on a UTF-8 rune boundary. Beyond the cap, further content is dropped from the accumulator (forward still receives full upstream bytes).
 
 ### 4) Termination and completeness
 
@@ -89,7 +89,7 @@ Before reading the body:
 | `ibex_proxy_stream_upstream_disconnects_total` | — |
 | `ibex_proxy_stream_backpressure_events_total` | — |
 
-Backpressure: increment when a client write returns a short write or takes longer than 50ms for an event (bounded signal; not per-token).
+Backpressure: increment when a client write/flush for an event takes longer than 50ms (bounded signal; not per-token).
 
 ## Consequences
 

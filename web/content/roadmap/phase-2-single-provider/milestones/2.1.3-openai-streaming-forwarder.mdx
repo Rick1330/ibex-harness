@@ -24,9 +24,9 @@ fullTitle: "Milestone 2.1.3 — OpenAI Streaming Forwarder (SSE Dual-Write)"
 
 Streaming is non-optional for production AI applications. Users expect to see tokens appear immediately — waiting for the full response before displaying anything (non-streaming) is a noticeably worse user experience. Every major AI product (ChatGPT, GitHub Copilot, Cursor) streams. Any proxy that doesn't support streaming cannot serve real production workloads.
 
-Streaming in the proxy creates a unique technical challenge: the proxy must simultaneously **forward** bytes to the caller (for low TTFB) and **accumulate** them (to extract token counts for session checkpoints and traces). This is the "dual-write" design. Both writes must be correct:
+Streaming in the proxy creates a unique technical challenge: the proxy must simultaneously **forward** bytes to the caller (for low TTFB) and **accumulate** them best-effort (for later session/trace hooks). This is the "dual-write" design. Both writes must be correct:
 - Forward must be byte-exact (SSE format must be preserved; clients parse it directly)
-- Accumulation must be complete (full response needed for post-request processing)
+- Accumulation is best-effort under a 1 MiB UTF-8-safe soft cap (full persistence is milestones 2.4/2.5)
 
 **Failure mode analysis:**
 - Forward failure: client loses the stream → error response (proxy retry is not possible for SSE)
@@ -132,11 +132,11 @@ for scanner.Scan() {
 
 ## Testing Requirements
 
-- **`TestStreaming_ForwardsChunksInOrder`**: mock provider sends 5 SSE chunks; client receives them in order and within 10ms of each being sent
-- **`TestStreaming_AccumulatorComplete`**: accumulator holds the full concatenated content after stream ends
-- **`TestStreaming_DoneSignalReached`**: `[DONE]` chunk triggers `StreamAccumulator.Wait()` to return
-- **`TestStreaming_ProviderErrorMidStream`**: provider closes connection after 3 chunks → client receives partial stream + error, trace emitter receives `is_complete=false`
-- **`TestStreaming_ClientDisconnect`**: client disconnects mid-stream → proxy stops reading from provider (context cancelled), no goroutine leak
+- **`TestUnit_Streaming_ForwardsChunksInOrder`**: mock provider sends 5 SSE chunks; client receives them in order with flush-per-event
+- **`TestUnit_StreamAccumulator_Complete`**: accumulator holds the concatenated content after `[DONE]`
+- **`TestUnit_StreamAccumulator_DoneSignalReached`**: `[DONE]` unblocks `StreamAccumulator.Wait()` (channel sync; no sleep-before-write)
+- **`TestUnit_Streaming_ProviderErrorMidStream`**: provider `CloseWithError` after 3 chunks → partial stream, no `[DONE]`, `Complete()==false`
+- **`TestUnit_Streaming_ClientDisconnect`**: hang stub signals entry via channel, then cancel; handler returns and writer WaitGroup joins (no goroutine leak)
 
 ---
 
@@ -144,8 +144,8 @@ for scanner.Scan() {
 
 - [x] Streaming completions forward SSE bytes to client in real time (flush after each event)
 - [x] `X-Accel-Buffering: no` header set to prevent Nginx buffering
-- [x] `StreamAccumulator` collects full content without blocking the forward path
-- [x] Provider error mid-stream results in partial stream + trace with `is_complete=false` (not a server crash)
+- [x] `StreamAccumulator` collects content best-effort without blocking the forward path (1 MiB UTF-8-safe soft cap)
+- [x] Provider error mid-stream results in partial stream + incomplete flag (not a server crash); trace emission is 2.4/2.5
 - [x] Client disconnect cancels context; proxy stops forwarding and cleans up (no goroutine leak)
 - [x] ADR-0027 written and indexed
 

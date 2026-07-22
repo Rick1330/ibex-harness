@@ -93,8 +93,16 @@ func (c *Client) marshalRequest(req provider.Request) ([]byte, error) {
 }
 
 func (c *Client) doRequest(ctx context.Context, url string, body []byte, stream bool) (*http.Response, error) {
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	reqCtx := ctx
+	var cancel context.CancelFunc
+	if stream {
+		reqCtx, cancel = context.WithTimeout(ctx, c.cfg.StreamTimeout)
+	}
+	httpReq, err := http.NewRequestWithContext(reqCtx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
+		if cancel != nil {
+			cancel()
+		}
 		return nil, err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
@@ -104,14 +112,32 @@ func (c *Client) doRequest(ctx context.Context, url string, body []byte, stream 
 	}
 	client := c.httpClient
 	if stream {
-		// Overall Client.Timeout would abort long SSE streams; prefer request ctx.
-		// Keep a generous ceiling so scanners do not flag an unbounded client.
-		client = &http.Client{
-			Transport: c.httpClient.Transport,
-			Timeout:   24 * time.Hour,
-		}
+		// Client.Timeout would abort long SSE streams; bound via request context instead.
+		client = &http.Client{Transport: c.httpClient.Transport}
 	}
-	return client.Do(httpReq)
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		if cancel != nil {
+			cancel()
+		}
+		return nil, err
+	}
+	if cancel != nil {
+		resp.Body = &cancelOnClose{ReadCloser: resp.Body, cancel: cancel}
+	}
+	return resp, nil
+}
+
+// cancelOnClose cancels the stream request context when the body is closed.
+type cancelOnClose struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (c *cancelOnClose) Close() error {
+	err := c.ReadCloser.Close()
+	c.cancel()
+	return err
 }
 
 func readProviderError(name string, resp *http.Response) *provider.ProviderError {

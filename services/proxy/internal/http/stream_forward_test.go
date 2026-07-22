@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -21,15 +22,18 @@ import (
 )
 
 type streamStubProvider struct {
-	name   string
-	models []string
-	body   string
-	chunks []string
-	delay  time.Duration
-	hang   bool
+	name      string
+	models    []string
+	body      string
+	chunks    []string
+	delay     time.Duration
+	hang      bool
+	failAfter int
+	entered   chan struct{}
+	wg        sync.WaitGroup
 }
 
-func (s streamStubProvider) Complete(ctx context.Context, req provider.Request) (provider.Response, error) {
+func (s *streamStubProvider) Complete(ctx context.Context, req provider.Request) (provider.Response, error) {
 	if !req.Stream {
 		return provider.Response{
 			StatusCode: http.StatusOK,
@@ -37,14 +41,23 @@ func (s streamStubProvider) Complete(ctx context.Context, req provider.Request) 
 		}, nil
 	}
 	pr, pw := io.Pipe()
+	s.wg.Add(1)
 	go s.writeChunks(ctx, pw)
 	return provider.Response{StatusCode: http.StatusOK, Body: pr}, nil
 }
 
-func (s streamStubProvider) writeChunks(ctx context.Context, pw *io.PipeWriter) {
+func (s *streamStubProvider) writeChunks(ctx context.Context, pw *io.PipeWriter) {
+	defer s.wg.Done()
 	defer func() { _ = pw.Close() }()
-	for _, chunk := range s.chunks {
+	for i, chunk := range s.chunks {
 		if s.hang {
+			if s.entered != nil {
+				select {
+				case <-s.entered:
+				default:
+					close(s.entered)
+				}
+			}
 			<-ctx.Done()
 			_ = pw.CloseWithError(ctx.Err())
 			return
@@ -60,12 +73,16 @@ func (s streamStubProvider) writeChunks(ctx context.Context, pw *io.PipeWriter) 
 		if _, err := pw.Write([]byte(chunk)); err != nil {
 			return
 		}
+		if s.failAfter > 0 && i+1 >= s.failAfter {
+			_ = pw.CloseWithError(errors.New("upstream mid-stream failure"))
+			return
+		}
 	}
 }
 
-func (s streamStubProvider) Name() string { return s.name }
+func (s *streamStubProvider) Name() string { return s.name }
 
-func (s streamStubProvider) SupportedModels() []string { return s.models }
+func (s *streamStubProvider) SupportedModels() []string { return s.models }
 
 type flushRecorder struct {
 	*httptest.ResponseRecorder
@@ -91,7 +108,7 @@ func (f *flushRecorder) snapshots() []string {
 	return out
 }
 
-func TestStreaming_ForwardsChunksInOrder(t *testing.T) {
+func TestUnit_Streaming_ForwardsChunksInOrder(t *testing.T) {
 	t.Parallel()
 	chunks := []string{
 		"data: {\"choices\":[{\"delta\":{\"content\":\"A\"}}]}\n\n",
@@ -101,22 +118,24 @@ func TestStreaming_ForwardsChunksInOrder(t *testing.T) {
 		"data: {\"choices\":[{\"delta\":{\"content\":\"E\"}}]}\n\n",
 		"data: [DONE]\n\n",
 	}
-	handler := newStreamTestHandler(t, streamStubProvider{
+	stub := &streamStubProvider{
 		name: "openai", models: []string{"gpt-4o"}, chunks: chunks, delay: 5 * time.Millisecond,
-	})
+	}
+	handler := newStreamTestHandler(t, stub)
 	rec := newFlushRecorder()
 	req := newStreamChatRequest(context.Background())
 	start := time.Now()
 	handler.ServeHTTP(rec, req)
+	stub.wg.Wait()
 	assertForwardedSSE(t, rec, start)
 }
 
-func newStreamTestHandler(t *testing.T, stub streamStubProvider) http.Handler {
+func newStreamTestHandler(t *testing.T, stub *streamStubProvider) http.Handler {
 	t.Helper()
 	return newStreamTestHandlerWithValidator(t, stub, defaultChatValidator())
 }
 
-func newStreamTestHandlerWithValidator(t *testing.T, stub streamStubProvider, validator auth.TokenValidator) http.Handler {
+func newStreamTestHandlerWithValidator(t *testing.T, stub *streamStubProvider, validator auth.TokenValidator) http.Handler {
 	t.Helper()
 	reg, err := provider.NewRegistry(stub)
 	if err != nil {
@@ -170,21 +189,24 @@ func assertForwardedSSE(t *testing.T, rec *flushRecorder, start time.Time) {
 	}
 }
 
-func TestStreaming_ProviderErrorMidStream(t *testing.T) {
+func TestUnit_Streaming_ProviderErrorMidStream(t *testing.T) {
 	t.Parallel()
-	handler := newStreamTestHandler(t, streamStubProvider{
+	stub := &streamStubProvider{
 		name: "openai", models: []string{"gpt-4o"},
 		chunks: []string{
 			"data: {\"choices\":[{\"delta\":{\"content\":\"1\"}}]}\n\n",
 			"data: {\"choices\":[{\"delta\":{\"content\":\"2\"}}]}\n\n",
 			"data: {\"choices\":[{\"delta\":{\"content\":\"3\"}}]}\n\n",
 		},
-	})
+		failAfter: 3,
+	}
+	handler := newStreamTestHandler(t, stub)
 	rec := postChat(t, handler, chatRequestOpts{
 		body:    `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"stream":true}`,
 		auth:    true,
 		agentID: testChatAgentID,
 	})
+	stub.wg.Wait()
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: %d", rec.Code)
 	}
@@ -197,14 +219,17 @@ func TestStreaming_ProviderErrorMidStream(t *testing.T) {
 	}
 }
 
-func TestStreaming_ClientDisconnect(t *testing.T) {
+func TestUnit_Streaming_ClientDisconnect(t *testing.T) {
 	t.Parallel()
 	before := runtime.NumGoroutine()
-	handler := newStreamTestHandler(t, streamStubProvider{
+	entered := make(chan struct{})
+	stub := &streamStubProvider{
 		name: "openai", models: []string{"gpt-4o"},
-		chunks: []string{"data: {\"choices\":[{\"delta\":{\"content\":\"x\"}}]}\n\n"},
-		hang:   true,
-	})
+		chunks:  []string{"data: {\"choices\":[{\"delta\":{\"content\":\"x\"}}]}\n\n"},
+		hang:    true,
+		entered: entered,
+	}
+	handler := newStreamTestHandler(t, stub)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	req := newStreamChatRequest(ctx)
@@ -213,14 +238,18 @@ func TestStreaming_ClientDisconnect(t *testing.T) {
 		handler.ServeHTTP(httptest.NewRecorder(), req)
 		close(done)
 	}()
-	time.Sleep(30 * time.Millisecond)
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("stub did not enter hang")
+	}
 	cancel()
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("handler did not return after client cancel")
 	}
-	time.Sleep(50 * time.Millisecond)
+	stub.wg.Wait()
 	after := runtime.NumGoroutine()
 	if after > before+20 {
 		t.Fatalf("possible goroutine leak: before=%d after=%d", before, after)
@@ -229,18 +258,21 @@ func TestStreaming_ClientDisconnect(t *testing.T) {
 
 func TestUnit_ChatCompletions_streamTrueForwardsSSE(t *testing.T) {
 	t.Parallel()
-	handler := newStreamTestHandlerWithValidator(t, streamStubProvider{
+	stub := &streamStubProvider{
 		name: "openai", models: []string{"gpt-4o"},
 		chunks: []string{
 			"data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n",
 			"data: [DONE]\n\n",
 		},
-	}, &chatMockValidator{res: &auth.ValidateResult{OrgID: testChatOrgID, Permissions: permissions.ProxyChatCompletion}})
+	}
+	handler := newStreamTestHandlerWithValidator(t, stub,
+		&chatMockValidator{res: &auth.ValidateResult{OrgID: testChatOrgID, Permissions: permissions.ProxyChatCompletion}})
 	rec := postChat(t, handler, chatRequestOpts{
 		body:    `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"stream":true}`,
 		auth:    true,
 		agentID: testChatAgentID,
 	})
+	stub.wg.Wait()
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: %d body=%s", rec.Code, rec.Body.String())
 	}

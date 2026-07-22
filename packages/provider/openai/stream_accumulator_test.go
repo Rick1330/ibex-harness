@@ -5,9 +5,10 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
-func TestStreaming_AccumulatorComplete(t *testing.T) {
+func TestUnit_StreamAccumulator_Complete(t *testing.T) {
 	t.Parallel()
 	acc := NewStreamAccumulator()
 	sse := "" +
@@ -35,29 +36,29 @@ func TestStreaming_AccumulatorComplete(t *testing.T) {
 	}
 }
 
-func TestStreaming_DoneSignalReached(t *testing.T) {
+func TestUnit_StreamAccumulator_DoneSignalReached(t *testing.T) {
 	t.Parallel()
 	acc := NewStreamAccumulator()
-	done := make(chan struct{})
+	finished := make(chan struct{})
 	go func() {
 		_, _, _ = acc.Wait(context.Background())
-		close(done)
+		close(finished)
 	}()
-	time.Sleep(20 * time.Millisecond)
+	_, _ = acc.Write([]byte(`data: {"choices":[{"delta":{"content":"x"}}]}` + "\n\n"))
 	select {
-	case <-done:
+	case <-finished:
 		t.Fatal("Wait returned before [DONE]")
 	default:
 	}
 	_, _ = acc.Write([]byte("data: [DONE]\n\n"))
 	select {
-	case <-done:
+	case <-finished:
 	case <-time.After(time.Second):
 		t.Fatal("Wait did not unblock on [DONE]")
 	}
 }
 
-func TestStreamAccumulator_ParseFailureDoesNotFailWrite(t *testing.T) {
+func TestUnit_StreamAccumulator_ParseFailureDoesNotFailWrite(t *testing.T) {
 	t.Parallel()
 	acc := NewStreamAccumulator()
 	n, err := acc.Write([]byte("data: {not-json}\n\ndata: [DONE]\n\n"))
@@ -69,7 +70,7 @@ func TestStreamAccumulator_ParseFailureDoesNotFailWrite(t *testing.T) {
 	}
 }
 
-func TestStreamAccumulator_SoftCap(t *testing.T) {
+func TestUnit_StreamAccumulator_SoftCap(t *testing.T) {
 	t.Parallel()
 	acc := NewStreamAccumulator()
 	chunk := strings.Repeat("x", 4096)
@@ -85,9 +86,31 @@ func TestStreamAccumulator_SoftCap(t *testing.T) {
 	if len(content) > MaxAccumulatedContentBytes {
 		t.Fatalf("content len %d exceeds cap", len(content))
 	}
+	if !utf8.ValidString(content) {
+		t.Fatal("soft-cap truncation left invalid UTF-8")
+	}
 }
 
-func TestStreamAccumulator_MarkClosed(t *testing.T) {
+func TestUnit_StreamAccumulator_SoftCapUTF8Boundary(t *testing.T) {
+	t.Parallel()
+	acc := NewStreamAccumulator()
+	pad := strings.Repeat("a", MaxAccumulatedContentBytes-1)
+	_, _ = acc.Write([]byte(`data: {"choices":[{"delta":{"content":"` + pad + `"}}]}` + "\n\n"))
+	_, _ = acc.Write([]byte(`data: {"choices":[{"delta":{"content":"\u20ac"}}]}` + "\n\n"))
+	_, _ = acc.Write([]byte("data: [DONE]\n\n"))
+	content, _, err := acc.Wait(context.Background())
+	if err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+	if !utf8.ValidString(content) {
+		t.Fatalf("invalid UTF-8 after rune-boundary soft cap: %q", content)
+	}
+	if strings.Contains(content, "€") {
+		t.Fatal("expected multi-byte rune to be dropped at cap boundary")
+	}
+}
+
+func TestUnit_StreamAccumulator_MarkClosed(t *testing.T) {
 	t.Parallel()
 	acc := NewStreamAccumulator()
 	_, _ = acc.Write([]byte(`data: {"choices":[{"delta":{"content":"hi"}}]}` + "\n\n"))

@@ -302,7 +302,7 @@ func testClient(t *testing.T, baseURL, apiKey string, reg *metrics.ProxyRegistry
 	}, logger.Discard("openai"), telemetry.NoopTracer("openai"), m)
 }
 
-func TestOpenAIClient_Streaming_AcceptAndBody(t *testing.T) {
+func TestUnit_OpenAIClient_Streaming_AcceptAndBody(t *testing.T) {
 	t.Parallel()
 	var gotAccept string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -339,7 +339,7 @@ func completeAndRead(t *testing.T, client *Client, req provider.Request) string 
 	return string(raw)
 }
 
-func TestOpenAIClient_Streaming_RejectsNonEventStream(t *testing.T) {
+func TestUnit_OpenAIClient_Streaming_RejectsNonEventStream(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

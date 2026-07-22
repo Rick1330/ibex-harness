@@ -5,6 +5,7 @@ import "time"
 const (
 	defaultBaseURL        = "https://api.openai.com/v1"
 	defaultRequestTimeout = 120 * time.Second
+	defaultStreamTimeout  = 30 * time.Minute
 	defaultMaxRetries     = 3
 	defaultRetryBaseDelay = 500 * time.Millisecond
 	maxRetryBackoff       = 30 * time.Second
@@ -15,6 +16,7 @@ type Config struct {
 	APIKey         string
 	BaseURL        string
 	Timeout        time.Duration
+	StreamTimeout  time.Duration
 	MaxRetries     *int
 	RetryBaseDelay time.Duration
 }
@@ -27,6 +29,9 @@ func (c *Config) ApplyDefaults() {
 	}
 	if c.Timeout <= 0 {
 		c.Timeout = defaultRequestTimeout
+	}
+	if c.StreamTimeout <= 0 {
+		c.StreamTimeout = defaultStreamTimeout
 	}
 	if c.MaxRetries == nil {
 		c.MaxRetries = intPtr(defaultMaxRetries)

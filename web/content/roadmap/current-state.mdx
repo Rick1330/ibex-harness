@@ -28,7 +28,7 @@ summary: "Phase 0, Phase 1, and Phase 1.5 are complete. Phase 2 (Single Provider
 <StatusBadge status="new" /> **Phase 2 — Single Provider:** in progress (2.1.3 complete)
 
 **Last updated:** 2026-07-22  
-**Git SHA (`main`):** pending merge (branch `feature/m2-1-3-openai-streaming-forwarder`)  
+**Branch (pending merge to `main`):** `feature/m2-1-3-openai-streaming-forwarder`  
 **Current focus:** [2.1.4 Provider routing middleware](/roadmap/phase-2-single-provider/milestones/2.1.4-provider-routing-middleware)
 
 <QuickLinks
@@ -67,9 +67,11 @@ summary: "Phase 0, Phase 1, and Phase 1.5 are complete. Phase 2 (Single Provider
 ## What Ships Today
 
 <Callout type="note" title="Current capability boundary">
-  The platform layer is production-ready for authenticated request handling and
-  governance. Provider forwarding and memory pipeline features remain out of
-  scope until Phase 2/3.
+  Authenticated request handling and governance are production-ready. OpenAI JSON
+  and SSE forwarding ship in Phase 2.1.3 when `IBEX_LLM_MODE=live` and
+  `OPENAI_API_KEY` are set (default `mock` keeps `501 PROVIDER_NOT_CONFIGURED`).
+  Later Phase 2/3 capabilities (routing middleware, memory pipeline, multi-provider)
+  remain out of scope until their milestones land.
 </Callout>
 
 ### Platform (Phase 1)

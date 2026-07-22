@@ -3,8 +3,8 @@ package openai
 import (
 	"context"
 	"errors"
+	"mime"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/provider"
@@ -106,7 +106,11 @@ func (c *Client) acceptOKBody(resp *http.Response, stream bool, start time.Time)
 }
 
 func isEventStream(contentType string) bool {
-	return strings.Contains(strings.ToLower(contentType), "text/event-stream")
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return false
+	}
+	return mediaType == "text/event-stream"
 }
 
 func recordSpanErr(span trace.Span, err error) {

@@ -15,7 +15,13 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/provider/openai"
 )
 
-const streamBackpressureThreshold = 50 * time.Millisecond
+const (
+	streamBackpressureThreshold = 50 * time.Millisecond
+	streamDrainTimeout          = 100 * time.Millisecond
+)
+
+// errClientWrite tags failures from ResponseWriter.Write (broken pipe, etc.).
+var errClientWrite = errors.New("client write failed")
 
 type streamForwardParams struct {
 	w        http.ResponseWriter
@@ -56,7 +62,7 @@ func forwardSSEStream(p streamForwardParams) {
 			Seconds:  time.Since(start).Seconds(),
 		})
 	}
-	_, _ = drainAccumulator(p.r.Context(), acc)
+	drainAccumulator(p, acc)
 }
 
 func writeSSEHeadersAndCopy(p streamForwardParams, flusher http.Flusher, acc *openai.StreamAccumulator) string {
@@ -90,6 +96,9 @@ func classifyStreamEnd(p streamForwardParams, acc *openai.StreamAccumulator, err
 }
 
 func isClientDisconnect(ctx context.Context, err error) bool {
+	if errors.Is(err, errClientWrite) {
+		return true
+	}
 	return errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled)
 }
 
@@ -132,6 +141,7 @@ func copySSEEvents(p sseCopyParams) error {
 			continue
 		}
 		if errors.Is(readErr, io.EOF) {
+			p.flusher.Flush()
 			return nil
 		}
 		return readErr
@@ -148,7 +158,7 @@ func writeLineIfPresent(p sseCopyParams, line []byte) error {
 func writeAndMaybeFlush(p sseCopyParams, line []byte) error {
 	start := time.Now()
 	if _, err := p.w.Write(line); err != nil {
-		return err
+		return errors.Join(errClientWrite, err)
 	}
 	if isSSEEventBoundary(line) {
 		p.flusher.Flush()
@@ -166,12 +176,12 @@ func isSSEEventBoundary(line []byte) bool {
 	return len(line) == 2 && line[0] == '\r' && line[1] == '\n'
 }
 
-func drainAccumulator(ctx context.Context, acc *openai.StreamAccumulator) (string, *provider.Usage) {
-	waitCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+func drainAccumulator(p streamForwardParams, acc *openai.StreamAccumulator) {
+	waitCtx, cancel := context.WithTimeout(p.r.Context(), streamDrainTimeout)
 	defer cancel()
-	content, usage, err := acc.Wait(waitCtx)
+	_, _, err := acc.Wait(waitCtx)
 	if err != nil {
-		return "", nil
+		p.log.WarnCtx(p.r.Context(), "stream accumulator drain incomplete",
+			"provider", p.provider, "error", err.Error())
 	}
-	return content, usage
 }
