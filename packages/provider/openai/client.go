@@ -93,29 +93,15 @@ func (c *Client) marshalRequest(req provider.Request) ([]byte, error) {
 }
 
 func (c *Client) doRequest(ctx context.Context, url string, body []byte, stream bool) (*http.Response, error) {
-	reqCtx := ctx
-	var cancel context.CancelFunc
-	if stream {
-		reqCtx, cancel = context.WithTimeout(ctx, c.cfg.StreamTimeout)
-	}
-	httpReq, err := http.NewRequestWithContext(reqCtx, http.MethodPost, url, bytes.NewReader(body))
+	reqCtx, cancel := c.streamRequestContext(ctx, stream)
+	httpReq, err := c.newChatRequest(reqCtx, url, body, stream)
 	if err != nil {
 		if cancel != nil {
 			cancel()
 		}
 		return nil, err
 	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+c.cfg.APIKey)
-	if stream {
-		httpReq.Header.Set("Accept", "text/event-stream")
-	}
-	client := c.httpClient
-	if stream {
-		// Client.Timeout would abort long SSE streams; bound via request context instead.
-		client = &http.Client{Transport: c.httpClient.Transport}
-	}
-	resp, err := client.Do(httpReq)
+	resp, err := c.httpClientFor(stream).Do(httpReq)
 	if err != nil {
 		if cancel != nil {
 			cancel()
@@ -126,6 +112,34 @@ func (c *Client) doRequest(ctx context.Context, url string, body []byte, stream 
 		resp.Body = &cancelOnClose{ReadCloser: resp.Body, cancel: cancel}
 	}
 	return resp, nil
+}
+
+func (c *Client) streamRequestContext(ctx context.Context, stream bool) (context.Context, context.CancelFunc) {
+	if !stream {
+		return ctx, nil
+	}
+	return context.WithTimeout(ctx, c.cfg.StreamTimeout)
+}
+
+func (c *Client) newChatRequest(ctx context.Context, url string, body []byte, stream bool) (*http.Request, error) {
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+c.cfg.APIKey)
+	if stream {
+		httpReq.Header.Set("Accept", "text/event-stream")
+	}
+	return httpReq, nil
+}
+
+func (c *Client) httpClientFor(stream bool) *http.Client {
+	if !stream {
+		return c.httpClient
+	}
+	// Client.Timeout would abort long SSE streams; bound via request context instead.
+	return &http.Client{Transport: c.httpClient.Transport}
 }
 
 // cancelOnClose cancels the stream request context when the body is closed.

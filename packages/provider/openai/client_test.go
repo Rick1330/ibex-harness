@@ -357,3 +357,23 @@ func TestUnit_OpenAIClient_Streaming_RejectsNonEventStream(t *testing.T) {
 		t.Fatalf("want ProviderError, got %v", err)
 	}
 }
+
+func TestUnit_IsEventStream(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		in   string
+		want bool
+	}{
+		{"text/event-stream", true},
+		{"text/event-stream; charset=utf-8", true},
+		{"text/event-stream;", true},
+		{"TEXT/EVENT-STREAM", true},
+		{"application/json", false},
+		{"", false},
+	}
+	for _, tc := range cases {
+		if got := isEventStream(tc.in); got != tc.want {
+			t.Fatalf("isEventStream(%q)=%v want %v", tc.in, got, tc.want)
+		}
+	}
+}

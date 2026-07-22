@@ -5,6 +5,7 @@ import (
 	"errors"
 	"mime"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/provider"
@@ -106,11 +107,12 @@ func (c *Client) acceptOKBody(resp *http.Response, stream bool, start time.Time)
 }
 
 func isEventStream(contentType string) bool {
-	mediaType, _, err := mime.ParseMediaType(contentType)
-	if err != nil {
-		return false
+	if mediaType, _, err := mime.ParseMediaType(contentType); err == nil {
+		return mediaType == "text/event-stream"
 	}
-	return mediaType == "text/event-stream"
+	// Fallback: base type before params, tolerate malformed parameters.
+	base := strings.TrimSpace(strings.SplitN(contentType, ";", 2)[0])
+	return strings.EqualFold(base, "text/event-stream")
 }
 
 func recordSpanErr(span trace.Span, err error) {

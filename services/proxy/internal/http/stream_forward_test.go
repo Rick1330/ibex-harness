@@ -49,34 +49,59 @@ func (s *streamStubProvider) Complete(ctx context.Context, req provider.Request)
 func (s *streamStubProvider) writeChunks(ctx context.Context, pw *io.PipeWriter) {
 	defer s.wg.Done()
 	defer func() { _ = pw.Close() }()
+	if s.hang {
+		s.waitHang(ctx, pw)
+		return
+	}
 	for i, chunk := range s.chunks {
-		if s.hang {
-			if s.entered != nil {
-				select {
-				case <-s.entered:
-				default:
-					close(s.entered)
-				}
-			}
-			<-ctx.Done()
-			_ = pw.CloseWithError(ctx.Err())
+		if err := s.writeOneChunk(ctx, pw, i, chunk); err != nil {
 			return
 		}
-		if s.delay > 0 {
-			select {
-			case <-ctx.Done():
-				_ = pw.CloseWithError(ctx.Err())
-				return
-			case <-time.After(s.delay):
-			}
-		}
-		if _, err := pw.Write([]byte(chunk)); err != nil {
-			return
-		}
-		if s.failAfter > 0 && i+1 >= s.failAfter {
-			_ = pw.CloseWithError(errors.New("upstream mid-stream failure"))
-			return
-		}
+	}
+}
+
+func (s *streamStubProvider) waitHang(ctx context.Context, pw *io.PipeWriter) {
+	s.signalEntered()
+	<-ctx.Done()
+	_ = pw.CloseWithError(ctx.Err())
+}
+
+func (s *streamStubProvider) signalEntered() {
+	if s.entered == nil {
+		return
+	}
+	select {
+	case <-s.entered:
+	default:
+		close(s.entered)
+	}
+}
+
+func (s *streamStubProvider) writeOneChunk(ctx context.Context, pw *io.PipeWriter, i int, chunk string) error {
+	if err := s.waitDelay(ctx, pw); err != nil {
+		return err
+	}
+	if _, err := pw.Write([]byte(chunk)); err != nil {
+		return err
+	}
+	if s.failAfter > 0 && i+1 >= s.failAfter {
+		err := errors.New("upstream mid-stream failure")
+		_ = pw.CloseWithError(err)
+		return err
+	}
+	return nil
+}
+
+func (s *streamStubProvider) waitDelay(ctx context.Context, pw *io.PipeWriter) error {
+	if s.delay <= 0 {
+		return nil
+	}
+	select {
+	case <-ctx.Done():
+		_ = pw.CloseWithError(ctx.Err())
+		return ctx.Err()
+	case <-time.After(s.delay):
+		return nil
 	}
 }
 
