@@ -84,9 +84,9 @@ Write `web/content/docs/adr/0027-streaming-dual-write.mdx` covering:
 ```
 
 ```go
-// StreamAccumulator collects the full content from a streaming response
+// StreamAccumulator collects completion text best-effort (1 MiB UTF-8-safe soft cap)
 // without blocking the stream forward path.
-// It is safe for concurrent read (from TeeReader) and post-stream read (by trace emitter).
+// Safe for concurrent Write (TeeReader) and post-stream Wait (later 2.4/2.5 hooks).
 type StreamAccumulator struct {
     mu      sync.Mutex
     chunks  []openAIStreamChunk

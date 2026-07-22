@@ -96,27 +96,20 @@ func (c *Client) doRequest(ctx context.Context, url string, body []byte, stream 
 	reqCtx, cancel := c.streamRequestContext(ctx, stream)
 	httpReq, err := c.newChatRequest(reqCtx, url, body, stream)
 	if err != nil {
-		if cancel != nil {
-			cancel()
-		}
+		cancel()
 		return nil, err
 	}
 	resp, err := c.httpClientFor(stream).Do(httpReq)
 	if err != nil {
-		if cancel != nil {
-			cancel()
-		}
+		cancel()
 		return nil, err
 	}
-	if cancel != nil {
-		resp.Body = &cancelOnClose{ReadCloser: resp.Body, cancel: cancel}
-	}
-	return resp, nil
+	return attachStreamCancel(resp, stream, cancel), nil
 }
 
 func (c *Client) streamRequestContext(ctx context.Context, stream bool) (context.Context, context.CancelFunc) {
 	if !stream {
-		return ctx, nil
+		return ctx, func() {}
 	}
 	return context.WithTimeout(ctx, c.cfg.StreamTimeout)
 }
@@ -140,6 +133,15 @@ func (c *Client) httpClientFor(stream bool) *http.Client {
 	}
 	// Client.Timeout would abort long SSE streams; bound via request context instead.
 	return &http.Client{Transport: c.httpClient.Transport}
+}
+
+func attachStreamCancel(resp *http.Response, stream bool, cancel context.CancelFunc) *http.Response {
+	if !stream {
+		cancel()
+		return resp
+	}
+	resp.Body = &cancelOnClose{ReadCloser: resp.Body, cancel: cancel}
+	return resp
 }
 
 // cancelOnClose cancels the stream request context when the body is closed.
