@@ -10,93 +10,111 @@ import (
 	apierror "github.com/Rick1330/ibex-harness/packages/apierror"
 )
 
-func TestMapProviderError_table(t *testing.T) {
+type mapCase struct {
+	name       string
+	in         MapInput
+	wantNil    bool
+	wantCode   apierror.Code
+	wantStatus int
+	wantRetry  time.Duration
+}
+
+// Case data lives outside test funcs so CodeScene does not count them as method size.
+var mapProviderCoreCases = []mapCase{
+	{
+		name: "OpenAI429",
+		in: MapInput{
+			ProviderName: "openai",
+			StatusCode:   http.StatusTooManyRequests,
+			RetryAfter:   30 * time.Second,
+		},
+		wantCode:   apierror.CodeRateLimited,
+		wantStatus: http.StatusTooManyRequests,
+		wantRetry:  30 * time.Second,
+	},
+	{
+		name:       "OpenAI401",
+		in:         MapInput{ProviderName: "openai", StatusCode: http.StatusUnauthorized},
+		wantCode:   apierror.CodeProviderUnavailable,
+		wantStatus: http.StatusServiceUnavailable,
+	},
+	{
+		name:       "Timeout",
+		in:         MapInput{TransportErr: context.DeadlineExceeded},
+		wantCode:   apierror.CodeProviderTimeout,
+		wantStatus: http.StatusGatewayTimeout,
+	},
+	{
+		name:       "400",
+		in:         MapInput{StatusCode: 400, SafeMessage: "missing messages"},
+		wantCode:   apierror.CodeInvalidRequest,
+		wantStatus: 400,
+	},
+	{
+		name:       "403",
+		in:         MapInput{StatusCode: 403},
+		wantCode:   apierror.CodeProviderUnavailable,
+		wantStatus: 503,
+	},
+	{
+		name:       "404",
+		in:         MapInput{StatusCode: 404},
+		wantCode:   apierror.CodeProviderUnavailable,
+		wantStatus: 503,
+	},
+}
+
+var mapProviderServerCases = []mapCase{
+	{name: "500", in: MapInput{StatusCode: 500}, wantCode: apierror.CodeProviderUnavailable, wantStatus: 503},
+	{name: "502", in: MapInput{StatusCode: 502}, wantCode: apierror.CodeProviderUnavailable, wantStatus: 503},
+	{name: "503", in: MapInput{StatusCode: 503}, wantCode: apierror.CodeProviderUnavailable, wantStatus: 503},
+	{name: "504", in: MapInput{StatusCode: 504}, wantCode: apierror.CodeProviderUnavailable, wantStatus: 503},
+	{
+		name:       "transport",
+		in:         MapInput{TransportErr: errors.New("dial tcp: connection refused")},
+		wantCode:   apierror.CodeProviderUnavailable,
+		wantStatus: 503,
+	},
+	{name: "canceled", in: MapInput{TransportErr: context.Canceled}, wantNil: true},
+}
+
+func TestMapProviderError_core(t *testing.T) {
+	t.Parallel()
+	runMapCases(t, mapProviderCoreCases)
+}
+
+func TestMapProviderError_serverAndTransport(t *testing.T) {
+	t.Parallel()
+	runMapCases(t, mapProviderServerCases)
+}
+
+func TestMapError_entrypoints(t *testing.T) {
+	t.Parallel()
+	runMapErrorCases(t)
+}
+
+func TestSanitizeProviderDetail(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		name       string
-		in         MapInput
-		wantNil    bool
-		wantCode   apierror.Code
-		wantStatus int
-		wantRetry  time.Duration
+		in, want string
 	}{
-		{
-			name: "OpenAI429",
-			in: MapInput{
-				ProviderName: "openai",
-				StatusCode:   http.StatusTooManyRequests,
-				RetryAfter:   30 * time.Second,
-			},
-			wantCode:   apierror.CodeRateLimited,
-			wantStatus: http.StatusTooManyRequests,
-			wantRetry:  30 * time.Second,
-		},
-		{
-			name:       "OpenAI401",
-			in:         MapInput{ProviderName: "openai", StatusCode: http.StatusUnauthorized},
-			wantCode:   apierror.CodeProviderUnavailable,
-			wantStatus: http.StatusServiceUnavailable,
-		},
-		{
-			name:       "Timeout",
-			in:         MapInput{TransportErr: context.DeadlineExceeded},
-			wantCode:   apierror.CodeProviderTimeout,
-			wantStatus: http.StatusGatewayTimeout,
-		},
-		{
-			name:       "400",
-			in:         MapInput{StatusCode: 400, SafeMessage: "missing messages"},
-			wantCode:   apierror.CodeInvalidRequest,
-			wantStatus: 400,
-		},
-		{
-			name:       "403",
-			in:         MapInput{StatusCode: 403},
-			wantCode:   apierror.CodeProviderUnavailable,
-			wantStatus: 503,
-		},
-		{
-			name:       "404",
-			in:         MapInput{StatusCode: 404},
-			wantCode:   apierror.CodeProviderUnavailable,
-			wantStatus: 503,
-		},
-		{
-			name:       "500",
-			in:         MapInput{StatusCode: 500},
-			wantCode:   apierror.CodeProviderUnavailable,
-			wantStatus: 503,
-		},
-		{
-			name:       "502",
-			in:         MapInput{StatusCode: 502},
-			wantCode:   apierror.CodeProviderUnavailable,
-			wantStatus: 503,
-		},
-		{
-			name:       "503",
-			in:         MapInput{StatusCode: 503},
-			wantCode:   apierror.CodeProviderUnavailable,
-			wantStatus: 503,
-		},
-		{
-			name:       "504",
-			in:         MapInput{StatusCode: 504},
-			wantCode:   apierror.CodeProviderUnavailable,
-			wantStatus: 503,
-		},
-		{
-			name:       "transport",
-			in:         MapInput{TransportErr: errors.New("dial tcp: connection refused")},
-			wantCode:   apierror.CodeProviderUnavailable,
-			wantStatus: 503,
-		},
-		{
-			name:    "canceled",
-			in:      MapInput{TransportErr: context.Canceled},
-			wantNil: true,
-		},
+		{"  Invalid request parameter  ", "Invalid request parameter"},
+		{"missing messages field", "missing messages field"},
+		{"Invalid API key sk-live-abcdefg", ""},
+		{"key sk-live-abcdefg leaked", ""},
+		{"Bearer tok123", ""},
+		{"ok message", ""},
+		{"", ""},
 	}
+	for _, tc := range cases {
+		if got := sanitizeProviderDetail(tc.in); got != tc.want {
+			t.Fatalf("in=%q got=%q want=%q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func runMapCases(t *testing.T, cases []mapCase) {
+	t.Helper()
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
@@ -116,8 +134,8 @@ func TestMapProviderError_table(t *testing.T) {
 	}
 }
 
-func TestMapError_entrypoints(t *testing.T) {
-	t.Parallel()
+func runMapErrorCases(t *testing.T) {
+	t.Helper()
 	cases := []struct {
 		name       string
 		err        error
@@ -172,25 +190,6 @@ func TestMapError_entrypoints(t *testing.T) {
 				t.Fatalf("detail=%q want %q", mapped.Detail, tc.wantDetail)
 			}
 		})
-	}
-}
-
-func TestSanitizeProviderDetail(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		in, want string
-	}{
-		{"  Invalid request parameter  ", "Invalid request parameter"},
-		{"missing messages field", "missing messages field"},
-		{"key sk-live-abcdefg leaked", ""},
-		{"Bearer tok123", ""},
-		{"ok message", ""},
-		{"", ""},
-	}
-	for _, tc := range cases {
-		if got := sanitizeProviderDetail(tc.in); got != tc.want {
-			t.Fatalf("in=%q got=%q want=%q", tc.in, got, tc.want)
-		}
 	}
 }
 

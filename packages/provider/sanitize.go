@@ -8,9 +8,7 @@ import (
 
 const maxSafeDetailRunes = 256
 
-// safeDetailShapes is an allowlist of validation-like upstream messages safe to
-// surface as envelope detail. Anything else (including free-form / credential-
-// bearing text) is dropped.
+// safeDetailShapes is an allowlist of validation-like upstream messages.
 var safeDetailShapes = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)^invalid\b[\p{L}\p{N} _.,:;'"()\[\]\-/+]{0,200}$`),
 	regexp.MustCompile(`(?i)^missing\b[\p{L}\p{N} _.,:;'"()\[\]\-/+]{0,200}$`),
@@ -21,15 +19,28 @@ var safeDetailShapes = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)^'[^']{1,64}'\sis\s(a\s)?required\b[\p{L}\p{N} _.,:;'"()\[\]\-/+]{0,120}$`),
 }
 
+// credentialReject catches secrets even when the message otherwise matches a
+// validation-like allowlist shape (e.g. "Invalid API key sk-…").
+var credentialReject = regexp.MustCompile(`(?i)(` +
+	`sk-[a-z0-9_-]+|` +
+	`bearer\s+\S+|` +
+	`api[_-]?key|` +
+	`password\s*[:=]|` +
+	`secret\s*[:=]|` +
+	`\btoken\s*[:=]|` +
+	`eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+` +
+	`)`)
+
 // sanitizeProviderDetail returns a client-safe detail string, or empty if the
-// message is not an allowlisted validation shape. Never pass ProviderBody.
+// message is not an allowlisted validation shape or contains credentials.
+// Never pass ProviderBody.
 func sanitizeProviderDetail(msg string) string {
 	msg = strings.TrimSpace(msg)
 	if msg == "" {
 		return ""
 	}
 	cleaned := stripUnsafeRunes(msg)
-	if cleaned == "" || !matchesSafeDetailShape(cleaned) {
+	if cleaned == "" || credentialReject.MatchString(cleaned) || !matchesSafeDetailShape(cleaned) {
 		return ""
 	}
 	return cleaned
