@@ -35,6 +35,7 @@ Rules with `alwaysApply: false` and no `globs` are dead — never ship that.
 | [23-testing-strategy.mdc](.cursor/rules/23-testing-strategy.mdc) | Test pyramid, coverage |
 | [26-pr-git-workflow.mdc](.cursor/rules/26-pr-git-workflow.mdc) | Branches, commits, PRs |
 | [30-pre-push-ci-gates.mdc](.cursor/rules/30-pre-push-ci-gates.mdc) | Local CI gates before push |
+| [31-pr-repo-guards-checklist.mdc](.cursor/rules/31-pr-repo-guards-checklist.mdc) | DCO, issue tracking, PR template before push |
 | [28-multitenant-security.mdc](.cursor/rules/28-multitenant-security.mdc) | org_id isolation |
 | [29-ibex-packages.mdc](.cursor/rules/29-ibex-packages.mdc) | Shared packages |
 | [pr-template.mdc](.cursor/rules/pr-template.mdc) | Full PR template sections |

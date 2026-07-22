@@ -1,0 +1,84 @@
+---
+description: Mandatory pre-push checklist for repo-guards and ci-gate-repo (DCO, issue tracking, PR template)
+alwaysApply: true
+---
+
+# PR repo-guards checklist
+
+`repo-guards` blocks `ci-gate-repo`.
+
+**Before every `git push`:** DCO sign-off (§1) and the local DCO command in §4.
+
+**Before `gh pr create` or `gh pr edit`:** tracked issue linkage and full PR template (§2–§3). You may push a feature branch before the issue/PR exist; add linkage when you open or update the PR.
+
+## 1. DCO Signed-off-by (every commit)
+
+Every non-bot commit in the PR must contain a `Signed-off-by:` line.
+
+```bash
+# Preferred: sign at commit time
+git commit -s -m "fix(scope): message"
+
+# If amending the latest commit only (branch not shared yet):
+git commit --amend -s --no-edit
+```
+
+PowerShell has no heredoc — use `git commit -s -m "title" -m "body" -m "Signed-off-by: ..."` or amend with `-s`.
+
+## 2. Tracked issue (before opening the PR)
+
+Create the issue **first** using a repo template (`.github/ISSUE_TEMPLATE/`). Section headers must match **exactly** (case and wording):
+
+| Template | Required `##` sections |
+| --- | --- |
+| Bug report | `Summary`, `Expected behavior`, `Actual behavior`, `Reproduction steps` |
+| Feature request | `Problem`, `Proposed solution`, `Acceptance criteria` |
+
+**Not accepted:** `## Expected`, `## Actual`, `## Reproduction` — use full names above.
+
+Bidirectional link (both required before creating or updating the PR):
+
+1. PR body: `Closes #NNN` (or Fixes/Resolves)
+2. Issue body or comment: `Implementation PR: #NNN`
+
+Issue must be **open** when the PR is opened.
+
+## 3. PR body template (all sections required)
+
+From `.github/pull_request_template.md` — every section header must be present:
+
+- `## What and Why`
+- `## How`
+- `## Testing`
+- `## Performance`
+- `## Security`
+- `## Migrations / Ops`
+- `## Docs`
+
+Store drafts in `ibex-harness-workspace/pr-bodies/` (outside git). Use `gh pr create --body-file`.
+
+## 4. Pre-push verification (DCO)
+
+```bash
+# Same script CI runs — per-commit, with merge-commit and bot exemptions
+bash .github/scripts/check-dco-signoff.sh "$(git merge-base main HEAD)" HEAD
+```
+
+## 5. Before creating or updating the PR
+
+```bash
+# Confirm close keyword, required PR sections, issue template sections, and PR link on issue
+gh pr view --json body -q .body
+gh issue view NNN --json body -q .body
+```
+
+## 6. After push
+
+Wait for `repo-guards` and `ci-gate-repo` to reach a terminal state before declaring success:
+
+```bash
+gh pr checks <PR_NUMBER> --watch
+gh pr checks <PR_NUMBER> | grep -E 'repo-guards|ci-gate-repo'
+```
+
+If `repo-guards` fails, read the log step name — fix DCO or issue/PR tracking, then re-run (do not stack blind retries).
