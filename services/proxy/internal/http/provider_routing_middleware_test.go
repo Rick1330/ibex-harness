@@ -18,7 +18,11 @@ func TestUnit_ProviderRouting_KnownModelAttachesProvider(t *testing.T) {
 	var called bool
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
-		gotName = provider.MustProviderFromContext(r.Context()).Name()
+		p, ok := provider.ProviderFromContext(r.Context())
+		if !ok {
+			t.Fatal("provider missing from context")
+		}
+		gotName = p.Name()
 		w.WriteHeader(http.StatusOK)
 	})
 
@@ -59,10 +63,7 @@ func TestUnit_ChatParse_MissingModel400(t *testing.T) {
 	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		called = true
 	})
-	h := ChatParseMiddleware(chatParseOpts{
-		log:      logger.Discard("proxy"),
-		docsBase: "",
-	})(next)
+	h := ChatParseMiddleware(chatParseOpts{docsBase: ""})(next)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
 		strings.NewReader(`{"model":"","messages":[{"role":"user","content":"hi"}]}`))

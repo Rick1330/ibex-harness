@@ -16,8 +16,10 @@ type providerRoutingOpts struct {
 	docsBase string
 }
 
-// ProviderRoutingMiddleware selects the LLM provider for the request model and
-// attaches it to context. Required after ChatParseMiddleware.
+// ProviderRoutingMiddleware selects the LLM provider for the request model.
+// On lookup failure it short-circuits with 501 PROVIDER_NOT_CONFIGURED (or an
+// internal error). After a successful lookup it attaches provider.Provider so
+// the handler can forward without touching the registry. Required after ChatParseMiddleware.
 func ProviderRoutingMiddleware(opts providerRoutingOpts) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

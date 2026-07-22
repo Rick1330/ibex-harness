@@ -59,7 +59,7 @@ func registerProtectedRoutes(deps protectedRouteDeps) {
 		AuthMiddleware(deps.validator, deps.logger, AuthOptions{RequireProxyChatCompletion: true}),
 		agentVerify,
 		rateLimit,
-		ChatParseMiddleware(chatParseOpts{log: deps.logger, docsBase: deps.docsBase}),
+		ChatParseMiddleware(chatParseOpts{docsBase: deps.docsBase}),
 		ProviderRoutingMiddleware(providerRoutingOpts{
 			registry: deps.providerRegistry,
 			log:      deps.logger,

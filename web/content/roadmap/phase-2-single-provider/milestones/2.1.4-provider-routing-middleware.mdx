@@ -21,7 +21,7 @@ fullTitle: "Milestone 2.1.4 — Provider Routing Middleware"
 
 ## Why This Milestone Exists
 
-With the provider interface and OpenAI client in place, the proxy needs a middleware that selects the correct provider for each request and attaches it to the request context. The selection logic: read the `model` field from the request body (already parsed by M1.2.2), look up the provider registry, and attach the selected provider to context. If no provider is registered for the model, return `501 PROVIDER_NOT_CONFIGURED`.
+With the provider interface and OpenAI client in place, the proxy needs middleware that selects the correct provider for each request and attaches it to context. M1.2.2 already enforces body-level gates (size, Content-Type). This milestone adds ChatParseMiddleware for typed chat JSON parse/validation onto context, then ProviderRoutingMiddleware for registry lookup. If no provider is registered for the model, return `501 PROVIDER_NOT_CONFIGURED`.
 
 This is a small but architecturally important milestone: it is the single place where the model-to-provider mapping is enforced. Phase 4 adds Anthropic and Azure providers by registering them in the registry — this middleware requires no changes.
 
@@ -52,7 +52,7 @@ This is a small but architecturally important milestone: it is the single place 
 ### Middleware
 
 ```go
-// ChatParseMiddleware parses/validates the body and attaches llm.ChatCompletionRequest.
+// ChatParseMiddleware parses/validates chat JSON once and attaches llm.ChatCompletionRequest.
 // ProviderRoutingMiddleware selects the LLM provider for the request based on
 // the `model` field and attaches provider.Provider to context.
 //
@@ -64,18 +64,17 @@ This is a small but architecturally important milestone: it is the single place 
 func ChatParseMiddleware(opts chatParseOpts) func(http.Handler) http.Handler
 func ProviderRoutingMiddleware(opts providerRoutingOpts) func(http.Handler) http.Handler
 
-// MustProviderFromContext retrieves the selected provider from ctx.
-// Panics if called outside a handler that ran ProviderRoutingMiddleware.
-func MustProviderFromContext(ctx context.Context) provider.Provider
+// ProviderFromContext returns the selected provider when routing succeeded.
+func ProviderFromContext(ctx context.Context) (provider.Provider, bool)
 ```
 
 ### Full middleware chain (Phase 2)
 
 ```text
-RequestID → OTel Span → Auth (LRU+gRPC) → AgentVerify → RateLimit → DirectiveResolve → ProviderRouter → Handler
+RequestID → OTel Span → Auth (LRU+gRPC) → AgentVerify → RateLimit → ChatParse → ProviderRouter → Handler
 ```
 
-(DirectiveResolve is not implemented in this milestone; ChatParse sits immediately before ProviderRouter today.)
+DirectiveResolve is a future insertion (between RateLimit and ChatParse/ProviderRouter) — not implemented in this milestone.
 
 ---
 
@@ -84,7 +83,7 @@ RequestID → OTel Span → Auth (LRU+gRPC) → AgentVerify → RateLimit → Di
 - **`TestUnit_ProviderRouting_KnownModelAttachesProvider`**: known model → provider on context → next handler runs
 - **`TestUnit_ProviderRouting_UnknownModel501`**: unknown model → 501; handler spy not called
 - **`TestUnit_ChatParse_MissingModel400`**: empty model → 400 `VALIDATION_ERROR` with field `model`
-- **`TestUnit_MustProviderFromContext_PanicsWithout`**: panic when middleware skipped
+- **`TestUnit_ChatCompletions_missingProviderReturnsInternalError`**: handler without provider context → 500 `INTERNAL_ERROR`
 
 ---
 

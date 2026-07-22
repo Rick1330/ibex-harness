@@ -19,6 +19,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
+	"github.com/Rick1330/ibex-harness/services/proxy/internal/llm"
 )
 
 type stubLLMProvider struct {
@@ -193,6 +194,25 @@ func TestUnit_HandleChatCompletions_delegatesToServe(t *testing.T) {
 	})
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("status: %d", rec.Code)
+	}
+}
+
+func TestUnit_ChatCompletions_missingProviderReturnsInternalError(t *testing.T) {
+	t.Parallel()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	req = req.WithContext(llm.WithChatRequest(req.Context(), &llm.ChatCompletionRequest{
+		Model: "gpt-4o", Messages: []llm.Message{{Role: "user", Content: "hi"}},
+	}))
+	handleChatCompletions(rec, req, chatCompletionHandler{
+		log:      logger.Discard("proxy"),
+		docsBase: "",
+	})
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status: %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), string(apierror.CodeInternalError)) {
+		t.Fatalf("body: %s", rec.Body.String())
 	}
 }
 

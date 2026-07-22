@@ -24,9 +24,6 @@ func TestUnit_ProviderContext_RoundTrip(t *testing.T) {
 	if got.Name() != "openai" {
 		t.Fatalf("name=%q", got.Name())
 	}
-	if MustProviderFromContext(ctx).Name() != "openai" {
-		t.Fatal("MustProviderFromContext mismatch")
-	}
 }
 
 func TestUnit_ProviderFromContext_Missing(t *testing.T) {
@@ -35,14 +32,4 @@ func TestUnit_ProviderFromContext_Missing(t *testing.T) {
 	if ok {
 		t.Fatal("expected missing")
 	}
-}
-
-func TestUnit_MustProviderFromContext_PanicsWithout(t *testing.T) {
-	t.Parallel()
-	defer func() {
-		if recover() == nil {
-			t.Fatal("expected panic")
-		}
-	}()
-	_ = MustProviderFromContext(context.Background())
 }

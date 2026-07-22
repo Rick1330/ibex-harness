@@ -20,6 +20,8 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+const msgInternalError = "Internal error"
+
 type authProbeResponse struct {
 	OrgID       string `json:"org_id"`
 	Permissions int64  `json:"permissions"`
@@ -119,7 +121,7 @@ func handleAuthProbe(w http.ResponseWriter, r *http.Request) {
 	res, ok := auth.FromContext(r.Context())
 	if !ok {
 		apierror.WriteStatus(w, http.StatusInternalServerError, apierror.CodeServiceDegraded,
-			"Internal error", requestIDFromContext(r.Context()),
+			msgInternalError, requestIDFromContext(r.Context()),
 			apierror.WriteOpts{Detail: "missing auth context", DocsBase: ErrorDocsBaseFromContext(r.Context())})
 		return
 	}
@@ -149,11 +151,18 @@ func (h chatCompletionHandler) serve(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		requestID := requestIDFromContext(r.Context())
 		apierror.WriteStatus(w, http.StatusInternalServerError, apierror.CodeInternalError,
-			"Internal error", requestID,
+			msgInternalError, requestID,
 			apierror.WriteOpts{Detail: "chat request not parsed", DocsBase: h.docsBase})
 		return
 	}
-	prov := provider.MustProviderFromContext(r.Context())
+	prov, ok := provider.ProviderFromContext(r.Context())
+	if !ok {
+		requestID := requestIDFromContext(r.Context())
+		apierror.WriteStatus(w, http.StatusInternalServerError, apierror.CodeInternalError,
+			msgInternalError, requestID,
+			apierror.WriteOpts{Detail: "provider not selected", DocsBase: h.docsBase})
+		return
+	}
 	h.forwardChatCompletion(chatForwardParams{
 		w: w, r: r, parsed: parsed, prov: prov,
 	})
