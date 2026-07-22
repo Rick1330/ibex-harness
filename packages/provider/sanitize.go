@@ -40,7 +40,13 @@ func sanitizeProviderDetail(msg string) string {
 		return ""
 	}
 	cleaned := stripUnsafeRunes(msg)
-	if cleaned == "" || credentialReject.MatchString(cleaned) || !matchesSafeDetailShape(cleaned) {
+	if cleaned == "" {
+		return ""
+	}
+	if credentialReject.MatchString(cleaned) {
+		return ""
+	}
+	if !matchesSafeDetailShape(cleaned) {
 		return ""
 	}
 	return cleaned
