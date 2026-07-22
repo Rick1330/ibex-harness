@@ -236,7 +236,7 @@ jobs:
             --exit-code 1
       - name: Upload Trivy auth SARIF
         if: always() && hashFiles('trivy-image-auth.sarif') != ''
-        uses: github/codeql-action/upload-sarif@7188fc363630916deb702c7fdcf4e481b751f97a # v4.37.1
+        uses: github/codeql-action/upload-sarif@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4.37.3
         with:
           sarif_file: trivy-image-auth.sarif
           category: trivy-image-auth
@@ -272,7 +272,7 @@ jobs:
             --exit-code 1
       - name: Upload Trivy proxy SARIF
         if: always() && hashFiles('trivy-image-proxy.sarif') != ''
-        uses: github/codeql-action/upload-sarif@7188fc363630916deb702c7fdcf4e481b751f97a # v4.37.1
+        uses: github/codeql-action/upload-sarif@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4.37.3
         with:
           sarif_file: trivy-image-proxy.sarif
           category: trivy-image-proxy
