@@ -228,6 +228,7 @@ Every service must publish these metrics:
 - `ibex_proxy_auth_cache_lru_size`
 - `ibex_proxy_auth_cache_lru_evictions_total`
 - `ibex_proxy_auth_cache_bloom_fp_total`
+- `ibex_proxy_revocation_invalidate_total` — LRU invalidations from Redis pub/sub
 - `ibex_proxy_fallbacks_total{reason}`
   - reasons: `context_timeout|redis_down|auth_down|memory_timeout|provider_circuit_open`
 - `ibex_proxy_circuit_breaker_state_current{provider,state}`
@@ -260,6 +261,7 @@ Every service must publish these metrics:
   - result: `verified|failed|expired`
 - `ibex_auth_revocations_total{type}`
   - type: `pat|org_token|service_token`
+- `ibex_auth_revocation_publish_total{result}` — Redis PUBLISH outcomes (`ok|error`) for token revocation pub/sub
 
 ### 7.3 Memory Service (Python)
 

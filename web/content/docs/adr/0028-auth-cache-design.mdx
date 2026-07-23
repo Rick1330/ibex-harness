@@ -51,7 +51,7 @@ If `ttl <= 0`, skip caching. Keys are **token hashes only** — raw tokens are n
 ### 4) Revocation SLA (aligned with ADR-0029)
 
 - **2.2.1 alone:** max stale window = `LRUMaxTTL` (**30 seconds**). Goal 2.2 “revoke ≤5s” is **not** met by TTL alone.
-- **2.2.2:** Redis pub/sub calls `CachingValidator.Invalidate(tokenHash)` to shrink lag toward the 5s exit gate / ~1s ideal path.
+- **2.2.2:** Redis pub/sub calls `CachingValidator.InvalidateByTokenID(tokenID)` to shrink lag toward the 5s exit gate / ~1s ideal path.
 
 ### 5) Failure mode — fail closed
 

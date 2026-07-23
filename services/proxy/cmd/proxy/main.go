@@ -16,6 +16,7 @@ import (
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	"github.com/Rick1330/ibex-harness/packages/provider"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
+	"github.com/Rick1330/ibex-harness/packages/revocation"
 	"github.com/Rick1330/ibex-harness/packages/shutdown"
 	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
@@ -100,9 +101,14 @@ func runBootstrap(_ []string, signalCh chan os.Signal) int {
 		ProviderRegistry: providerReg,
 	}
 	server := newHTTPServer(deps)
+	revSub, err := startRevocationSubscriber(redisClient, validator, log, reg)
+	if err != nil {
+		log.ErrorCtx(context.Background(), "revocation subscriber setup failed", "error", err)
+		return 1
+	}
 	return runWithShutdown(shutdownOpts{
 		cfg: cfg, logger: log, providers: providers, server: server,
-		grpcConn: grpcConn, redisClient: redisClient, signalCh: signalCh,
+		grpcConn: grpcConn, redisClient: redisClient, revSub: revSub, signalCh: signalCh,
 	})
 }
 
@@ -113,6 +119,7 @@ type shutdownOpts struct {
 	providers   *telemetry.Providers
 	grpcConn    *grpc.ClientConn
 	redisClient redis.UniversalClient
+	revSub      *revocation.Subscriber
 	signalCh    chan os.Signal
 }
 
@@ -185,6 +192,29 @@ func maybeWrapAuthCache(
 	return wrapped, nil
 }
 
+func startRevocationSubscriber(
+	redisClient redis.UniversalClient,
+	validator auth.TokenValidator,
+	log *logger.Logger,
+	reg *ibexmetrics.ProxyRegistry,
+) (*revocation.Subscriber, error) {
+	if redisClient == nil {
+		return nil, nil
+	}
+	inv, ok := validator.(auth.CacheInvalidator)
+	if !ok {
+		log.InfoCtx(context.Background(), "revocation subscriber skipped; auth cache disabled")
+		return nil, nil
+	}
+	sub, err := revocation.NewSubscriber(redisClient, inv, log, reg)
+	if err != nil {
+		return nil, err
+	}
+	go sub.Run(context.Background())
+	log.InfoCtx(context.Background(), "revocation subscriber started", "channel", revocation.Channel)
+	return sub, nil
+}
+
 func newHTTPServer(deps proxyhttp.RouterDeps) *http.Server {
 	return &http.Server{
 		Addr:              ":" + deps.Config.Port,
@@ -236,6 +266,12 @@ func registerShutdownHooks(sd *shutdown.Coordinator, opts shutdownOpts) {
 	sd.Register(opts.providers.Shutdown)
 	sd.Register(func(ctx context.Context) error {
 		return opts.server.Shutdown(ctx)
+	})
+	sd.Register(func(ctx context.Context) error {
+		if opts.revSub != nil {
+			opts.revSub.Stop()
+		}
+		return nil
 	})
 	sd.Register(func(ctx context.Context) error {
 		if opts.grpcConn != nil {

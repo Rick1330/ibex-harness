@@ -9,9 +9,10 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/logger"
 )
 
-// CacheInvalidator removes a token hash from the auth claims LRU (milestone 2.2.2).
+// CacheInvalidator removes cached claims (by hash or token UUID).
 type CacheInvalidator interface {
 	Invalidate(tokenHash string)
+	InvalidateByTokenID(tokenID string)
 }
 
 type grpcUpstream struct {
@@ -49,6 +50,7 @@ type cachingTokenValidator struct {
 }
 
 // WrapWithCache decorates a TokenValidator with bloom + LRU caching.
+// The returned validator also implements CacheInvalidator.
 func WrapWithCache(
 	inner TokenValidator,
 	cfg authcache.Config,
@@ -83,6 +85,10 @@ func (c *cachingTokenValidator) Validate(ctx context.Context, accessToken string
 
 func (c *cachingTokenValidator) Invalidate(tokenHash string) {
 	c.inner.Invalidate(tokenHash)
+}
+
+func (c *cachingTokenValidator) InvalidateByTokenID(tokenID string) {
+	c.inner.InvalidateByTokenID(tokenID)
 }
 
 func mapFromAuthcacheErr(err error) error {

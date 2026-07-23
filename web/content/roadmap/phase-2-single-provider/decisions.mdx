@@ -15,7 +15,7 @@ Quick decisions during Phase 2. Promote durable choices to `docs/adr/` when they
 | 2026-07-12 | OpenAI HTTP client, pooling, retry policy | Production-grade forwarding for first provider | [ADR-0026](/docs/adr/0026-openai-client-design) — **Accepted** |
 | 2026-07-22 | Streaming dual-write and backpressure | Real-time SSE without buffering full body on hot path | [ADR-0027](/docs/adr/0027-streaming-dual-write) — **Accepted** |
 | ADR-0028 | Auth LRU + bloom filter cache | Meet &lt;20ms proxy overhead under load | [ADR-0028](/docs/adr/0028-auth-cache-design) — **Accepted** |
-| TBD | Token revocation propagation SLA | Cache correctness vs performance (5s Phase 2 target) | [ADR-0029](/docs/adr/0029-revocation-propagation) — **Pending** |
+| 2026-07-23 | Token revocation via Redis pub/sub (`token_id` events) | Meet 5s revoke exit gate without migration | [ADR-0029](/docs/adr/0029-token-revocation-propagation) — **Accepted** |
 | TBD | Directive immutable versioning | Safe cache invalidation without lost updates | [ADR-0030](/docs/adr/0030-directive-versioning) — **Pending** |
 | TBD | System prompt injection ordering | Directive precedes caller system message | [ADR-0031](/docs/adr/0031-system-prompt-injection) — **Pending** |
 | TBD | Session and checkpoint data model | Foundation for Phase 3 memory extraction | [ADR-0032](/docs/adr/0032-session-data-model) — **Pending** |
