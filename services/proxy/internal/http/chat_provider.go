@@ -5,14 +5,11 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"strconv"
 
 	apierror "github.com/Rick1330/ibex-harness/packages/apierror"
 	"github.com/Rick1330/ibex-harness/packages/provider"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/llm"
 )
-
-const msgProviderUnavailable = "Upstream LLM provider is unavailable"
 
 type chatForwardParams struct {
 	w      http.ResponseWriter
@@ -33,7 +30,7 @@ func (h chatCompletionHandler) forwardChatCompletion(p chatForwardParams) {
 		if errors.Is(err, context.Canceled) {
 			return
 		}
-		h.writeProviderFailure(p.w, err, requestID)
+		h.writeProviderFailure(p.w, p.r, err, requestID)
 		return
 	}
 	defer func() {
@@ -62,57 +59,29 @@ func (h chatCompletionHandler) writeProviderSuccess(w http.ResponseWriter, resp 
 	_, _ = io.Copy(w, resp.Body)
 }
 
-func (h chatCompletionHandler) writeProviderFailure(w http.ResponseWriter, err error, requestID string) {
-	code, status, detail, retryAfter, ok := mapProviderErr(err)
-	if !ok {
+func (h chatCompletionHandler) writeProviderFailure(w http.ResponseWriter, r *http.Request, err error, requestID string) {
+	mapped, write := provider.MapError(err)
+	if !write || mapped == nil {
 		return
 	}
-	opts := apierror.WriteOpts{Detail: detail, DocsBase: h.docsBase}
-	if retryAfter > 0 {
-		w.Header().Set("Retry-After", strconv.FormatInt(retryAfter, 10))
-	}
-	apierror.WriteStatus(w, status, code, providerClientMessage(code), requestID, opts)
+	logMappedProviderError(h, r, err, mapped)
+	apierror.WriteHTTP(w, requestID, apierror.WriteOpts{DocsBase: h.docsBase}, mapped)
 }
 
-func mapProviderErr(err error) (apierror.Code, int, string, int64, bool) {
-	if errors.Is(err, context.Canceled) {
-		return "", 0, "", 0, false
+func logMappedProviderError(h chatCompletionHandler, r *http.Request, err error, mapped *apierror.Error) {
+	if h.log == nil || mapped == nil {
+		return
 	}
+	providerName := ""
+	providerStatus := 0
 	var pe *provider.ProviderError
-	if errors.As(err, &pe) {
-		code, status, detail, retry := mapProviderHTTPError(pe)
-		return code, status, detail, retry, true
+	if errors.As(err, &pe) && pe != nil {
+		providerName = pe.ProviderName
+		providerStatus = pe.StatusCode
 	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		return apierror.CodeProviderTimeout, apierror.HTTPStatus(apierror.CodeProviderTimeout),
-			"Upstream LLM provider timed out", 0, true
-	}
-	return apierror.CodeProviderUnavailable, apierror.HTTPStatus(apierror.CodeProviderUnavailable),
-		msgProviderUnavailable, 0, true
-}
-
-func mapProviderHTTPError(pe *provider.ProviderError) (apierror.Code, int, string, int64) {
-	retrySecs := int64(pe.RetryAfter.Seconds())
-	switch pe.StatusCode {
-	case http.StatusBadRequest:
-		return apierror.CodeInvalidRequest, http.StatusBadRequest, pe.ProviderErrMsg, 0
-	case http.StatusTooManyRequests:
-		return apierror.CodeRateLimited, http.StatusTooManyRequests, "Upstream LLM provider rate limited", retrySecs
-	default:
-		return apierror.CodeProviderUnavailable, apierror.HTTPStatus(apierror.CodeProviderUnavailable),
-			msgProviderUnavailable, 0
-	}
-}
-
-func providerClientMessage(code apierror.Code) string {
-	switch code {
-	case apierror.CodeInvalidRequest:
-		return "Invalid request to LLM provider"
-	case apierror.CodeRateLimited:
-		return "Upstream LLM provider rate limited"
-	case apierror.CodeProviderTimeout:
-		return "Upstream LLM provider timed out"
-	default:
-		return msgProviderUnavailable
-	}
+	h.log.WarnCtx(r.Context(), "provider request failed",
+		"provider", providerName,
+		"provider_status", providerStatus,
+		"ibex_code", string(mapped.Code),
+	)
 }

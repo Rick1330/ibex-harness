@@ -53,11 +53,11 @@ Unknown top-level JSON fields from the chat parser are ignored. `provider.Reques
 
 Streaming is implemented in milestone 2.1.3. See [ADR-0027](/docs/adr/0027-streaming-dual-write) for dual-write, flush, and no-retry-after-start rules. The OpenAI client sets `Accept: text/event-stream` when `Request.Stream` is true and returns the live SSE body to the proxy.
 
-### 6) Error mapping split
+### 6) Error mapping
 
 - **Client:** returns `provider.ProviderError` for non-2xx HTTP responses; transport errors as wrapped errors.
-- **Handler (2.1.2):** maps to IBEX envelope (`INVALID_REQUEST`, `RATE_LIMITED`, `PROVIDER_UNAVAILABLE`, `PROVIDER_TIMEOUT`).
-- **Milestone 2.1.5:** centralizes mapping in `MapProviderError` for streaming parity.
+- **Shared mapper (2.1.5):** `provider.MapError` / `MapProviderError` → `apierror.Error`; proxy writes via `apierror.WriteHTTP`.
+- Pre-stream failures (including `stream=true` before first SSE byte) use the same mapper; mid-stream failures follow [ADR-0027](/docs/adr/0027-streaming-dual-write) verbatim close (no JSON swap).
 
 ### 7) Observability
 
@@ -74,11 +74,11 @@ OTel span `openai.Complete` with `provider.name` and `llm.model` attributes. Pro
 - First end-to-end non-streaming forward with CI-safe `IBEX_LLM_MODE=mock`
 - Clear env contract for operators enabling live mode
 - Registry lookup lives in ProviderRoutingMiddleware (milestone 2.1.4); handler reads provider from context
+- Provider → IBEX envelope mapping centralized in `packages/provider` (milestone 2.1.5)
 
 **Negative:**
 
-- Error mapping duplicated until 2.1.5 centralization
-
+- (none outstanding for error mapping; Phase 4 may add provider-specific nuance without changing the shared table)
 ## References
 
 - [ADR-0025: LLM provider abstraction](/docs/adr/0025-llm-provider-abstraction)

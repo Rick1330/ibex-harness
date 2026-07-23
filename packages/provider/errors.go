@@ -12,7 +12,8 @@ import (
 var ErrNoProviderForModel = errors.New("no provider configured for this model")
 
 // ProviderError is returned by Complete when the provider returns a non-2xx response.
-// ProviderBody is for downstream error mapping only (milestone 2.1.5) — never log it.
+// ProviderBody may be inspected by MapError sanitizers for retry metadata only —
+// never log it or copy it into client envelopes.
 type ProviderError struct {
 	ProviderName   string
 	StatusCode     int

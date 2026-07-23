@@ -125,6 +125,7 @@ Release notes are human-readable summaries of user-visible changes, security fix
 
 ### Added
 
+- Provider error mapping (`provider.MapError` / `MapProviderError` → `apierror.Error`) with sanitized details and `Retry-After` on upstream 429 ([ADR-0026](web/content/docs/adr/0026-openai-client-design.mdx))
 - Provider routing middleware (`ChatParse` + `ProviderRouting`) extracts model→provider lookup from the chat handler ([ADR-0025](web/content/docs/adr/0025-llm-provider-abstraction.mdx))
 - OpenAI streaming SSE dual-write forwarder (`stream=true`) with `StreamAccumulator`, flush-per-event, and stream metrics ([ADR-0027](web/content/docs/adr/0027-streaming-dual-write.mdx))
 - OpenAI non-streaming provider adapter (`packages/provider/openai`) and proxy wiring for `POST /v1/chat/completions`
