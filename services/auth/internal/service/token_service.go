@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -127,7 +128,7 @@ func (s *TokenService) RevokeToken(ctx context.Context, p RevokeTokenParams) err
 		OrgID: p.OrgID, TokenID: p.TokenID, RevokedBy: p.RevokedBy, Reason: p.Reason,
 	})
 	if err != nil {
-		return err
+		return fmt.Errorf("RevokeToken org_id=%s token_id=%s: %w", p.OrgID, p.TokenID, err)
 	}
 	s.logger.InfoCtx(ctx, "token_revoked",
 		"token_id", p.TokenID,
@@ -143,12 +144,6 @@ func (s *TokenService) publishRevocationAsync(p RevokeTokenParams) {
 		defer s.publishWG.Done()
 		ctx, cancel := s.newPublishContext()
 		defer cancel()
-		defer func() {
-			if rec := recover(); rec != nil {
-				s.logger.WarnCtx(ctx, "revocation publish panic recovered",
-					"recover", rec, "token_id", p.TokenID)
-			}
-		}()
 		event := revocation.RevocationEvent{
 			Version:   revocation.CurrentSchemaVersion,
 			TokenID:   p.TokenID,

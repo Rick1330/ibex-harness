@@ -175,10 +175,17 @@ func TestUnit_RedisPublisherRejectsBadEvent(t *testing.T) {
 
 func TestUnit_RedisPublisherRedisFailure(t *testing.T) {
 	t.Parallel()
-	mr, client := newTestRedis(t)
+	// Unreachable addr (not mr.Close()): Close()+Publish can race under -race.
+	client := redis.NewClient(&redis.Options{
+		Addr:         "127.0.0.1:1",
+		DialTimeout:  50 * time.Millisecond,
+		ReadTimeout:  50 * time.Millisecond,
+		WriteTimeout: 50 * time.Millisecond,
+		MaxRetries:   0,
+	})
+	t.Cleanup(func() { _ = client.Close() })
 	metrics := &countingPublishMetrics{}
 	pub := mustPublisher(t, client, metrics)
-	mr.Close()
 	err := pub.Publish(context.Background(), sampleEvent("tok-fail"))
 	if err == nil {
 		t.Fatal("expected publish error")
