@@ -26,12 +26,26 @@ const (
 	defaultOpenAIRequestTimeout = 120 * time.Second
 	defaultOpenAIMaxRetries     = 3
 	defaultOpenAIRetryBaseDelay = 500 * time.Millisecond
+	defaultAuthCacheLRUCapacity = 5000
+	defaultAuthCacheLRUMaxTTL   = 30 * time.Second
+	defaultAuthCacheBloomItems  = 10000
+	defaultAuthCacheBloomFPRate = 0.001
+	maxAuthCacheLRUMaxTTL       = 30 * time.Second
 )
 
 // RateLimitConfig holds org-level rate limit settings (Phase 1; no DB).
 type RateLimitConfig struct {
 	DefaultRPM   int
 	OrgOverrides map[uuid.UUID]int
+}
+
+// AuthCacheConfig holds in-process bloom + LRU settings for token validation.
+type AuthCacheConfig struct {
+	Enabled            bool
+	LRUCapacity        int
+	LRUMaxTTL          time.Duration
+	BloomExpectedItems uint
+	BloomFPRate        float64
 }
 
 // OpenAIConfig holds OpenAI provider settings for the proxy process.
@@ -51,6 +65,7 @@ type Config struct {
 	RedisURL            string
 	AuthGRPCAddr        string
 	AuthValidateTimeout time.Duration
+	AuthCache           AuthCacheConfig
 	MaxRequestBodyBytes int64
 	RequestIDHeader     string
 	TraceIDHeader       string
@@ -100,7 +115,23 @@ func (c *Config) ApplyDefaults() {
 	if c.ShutdownTimeout <= 0 {
 		c.ShutdownTimeout = defaultShutdownTimeout
 	}
+	c.applyAuthCacheDefaults()
 	c.applyLLMDefaults()
+}
+
+func (c *Config) applyAuthCacheDefaults() {
+	if c.AuthCache.LRUCapacity < 1 {
+		c.AuthCache.LRUCapacity = defaultAuthCacheLRUCapacity
+	}
+	if c.AuthCache.LRUMaxTTL <= 0 {
+		c.AuthCache.LRUMaxTTL = defaultAuthCacheLRUMaxTTL
+	}
+	if c.AuthCache.BloomExpectedItems < 1 {
+		c.AuthCache.BloomExpectedItems = defaultAuthCacheBloomItems
+	}
+	if c.AuthCache.BloomFPRate <= 0 || c.AuthCache.BloomFPRate >= 1 {
+		c.AuthCache.BloomFPRate = defaultAuthCacheBloomFPRate
+	}
 }
 
 func (c *Config) applyLLMDefaults() {

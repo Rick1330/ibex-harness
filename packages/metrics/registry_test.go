@@ -144,6 +144,12 @@ func seedProxySamples(reg *ProxyRegistry) {
 	reg.IncStreamBackpressure()
 	reg.SetAsyncQueueDepth(1)
 	reg.IncAsyncDropped()
+	reg.IncAuthCacheHit("lru")
+	reg.IncAuthCacheMiss("lru")
+	reg.IncAuthCacheMiss("bloom")
+	reg.SetAuthCacheLRUSize(1)
+	reg.IncAuthCacheLRUEviction()
+	reg.IncAuthCacheBloomFP()
 }
 
 func TestProxyRegistry_AsyncBackpressureMetricsRegistered(t *testing.T) {
@@ -158,6 +164,21 @@ func TestProxyRegistry_AsyncBackpressureMetricsRegistered(t *testing.T) {
 	} {
 		if _, ok := names[name]; !ok {
 			t.Fatalf("missing required metric %q", name)
+		}
+	}
+}
+
+func TestProxyRegistry_AuthCacheSeriesMaterializedUnseeded(t *testing.T) {
+	t.Parallel()
+	reg := NewProxy("test-proxy")
+	body := scrapeMetrics(t, reg.Gatherer())
+	for _, want := range []string{
+		`ibex_proxy_auth_cache_hits_total{tier="lru"}`,
+		`ibex_proxy_auth_cache_misses_total{tier="lru"}`,
+		`ibex_proxy_auth_cache_misses_total{tier="bloom"}`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("missing series %q in:\n%s", want, body)
 		}
 	}
 }

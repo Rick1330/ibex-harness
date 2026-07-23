@@ -56,7 +56,7 @@ func TestSetupAuthClients_WithGRPCServer(t *testing.T) {
 	log := logger.Discard("proxy")
 	validator, agentVerifier, client, conn, err := setupAuthClients(config.Config{
 		AuthGRPCAddr: lis.Addr().String(), AuthValidateTimeout: time.Second,
-	}, log)
+	}, log, nil)
 	if err != nil {
 		t.Fatalf("setupAuthClients: %v", err)
 	}
@@ -64,9 +64,34 @@ func TestSetupAuthClients_WithGRPCServer(t *testing.T) {
 	assertAuthClientsPresent(t, authClientBundle{validator, agentVerifier, client, conn})
 }
 
+func TestSetupAuthClients_WithAuthCacheEnabled(t *testing.T) {
+	lis := grpctest.StartUnimplementedAuthServer(t)
+	log := logger.Discard("proxy")
+	cfg := config.Config{
+		AuthGRPCAddr:        lis.Addr().String(),
+		AuthValidateTimeout: time.Second,
+		AuthCache: config.AuthCacheConfig{
+			Enabled:            true,
+			LRUCapacity:        100,
+			LRUMaxTTL:          30 * time.Second,
+			BloomExpectedItems: 1000,
+			BloomFPRate:        0.001,
+		},
+	}
+	validator, agentVerifier, client, conn, err := setupAuthClients(cfg, log, nil)
+	if err != nil {
+		t.Fatalf("setupAuthClients: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	assertAuthClientsPresent(t, authClientBundle{validator, agentVerifier, client, conn})
+	if _, ok := validator.(auth.CacheInvalidator); !ok {
+		t.Fatal("expected caching validator implementing CacheInvalidator")
+	}
+}
+
 func TestSetupAuthClients_EmptyAddr(t *testing.T) {
 	log := logger.Discard("proxy")
-	validator, agentVerifier, client, conn, err := setupAuthClients(config.Config{AuthGRPCAddr: ""}, log)
+	validator, agentVerifier, client, conn, err := setupAuthClients(config.Config{AuthGRPCAddr: ""}, log, nil)
 	if err != nil {
 		t.Fatalf("setupAuthClients: %v", err)
 	}

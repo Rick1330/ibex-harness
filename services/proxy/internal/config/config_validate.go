@@ -91,6 +91,25 @@ func (c Config) validateAuthConfig() error {
 	if c.AuthValidateTimeout <= 0 {
 		return fmt.Errorf("IBEX_AUTH_VALIDATE_TIMEOUT must be positive")
 	}
+	return c.validateAuthCache()
+}
+
+func (c Config) validateAuthCache() error {
+	if c.AuthCache.LRUCapacity < 1 {
+		return fmt.Errorf("IBEX_AUTH_CACHE_LRU_CAPACITY must be positive")
+	}
+	if c.AuthCache.LRUMaxTTL <= 0 {
+		return fmt.Errorf("IBEX_AUTH_CACHE_LRU_MAX_TTL must be positive")
+	}
+	if c.AuthCache.LRUMaxTTL > maxAuthCacheLRUMaxTTL {
+		return fmt.Errorf("IBEX_AUTH_CACHE_LRU_MAX_TTL must be <= %s", maxAuthCacheLRUMaxTTL)
+	}
+	if c.AuthCache.BloomExpectedItems < 1 {
+		return fmt.Errorf("IBEX_AUTH_CACHE_BLOOM_EXPECTED_ITEMS must be positive")
+	}
+	if c.AuthCache.BloomFPRate <= 0 || c.AuthCache.BloomFPRate >= 1 {
+		return fmt.Errorf("IBEX_AUTH_CACHE_BLOOM_FP_RATE must be in (0,1)")
+	}
 	return nil
 }
 

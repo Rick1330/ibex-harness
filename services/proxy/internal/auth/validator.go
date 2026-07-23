@@ -2,7 +2,7 @@ package auth
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"time"
 
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
@@ -31,25 +31,19 @@ func (v *GRPCValidator) Validate(ctx context.Context, accessToken string) (*Vali
 
 	resp, err := v.client.ValidateToken(callCtx, &authv1.ValidateTokenRequest{AccessToken: accessToken})
 	if err != nil {
-		if st, ok := status.FromError(err); ok {
-			switch st.Code() {
-			case codes.Unauthenticated:
-				return nil, ErrInvalidToken
-			case codes.DeadlineExceeded, codes.Unavailable, codes.Canceled:
-				return nil, ErrAuthUnavailable
-			default:
-				if errors.Is(callCtx.Err(), context.DeadlineExceeded) {
-					return nil, ErrAuthUnavailable
-				}
-				return nil, ErrAuthUnavailable
-			}
-		}
-		if errors.Is(callCtx.Err(), context.DeadlineExceeded) {
-			return nil, ErrAuthUnavailable
-		}
-		return nil, ErrAuthUnavailable
+		return nil, mapValidateTokenError(err)
 	}
+	return mapValidateTokenResponse(resp), nil
+}
 
+func mapValidateTokenError(err error) error {
+	if st, ok := status.FromError(err); ok && st.Code() == codes.Unauthenticated {
+		return ErrInvalidToken
+	}
+	return fmt.Errorf("%w: %v", ErrAuthUnavailable, err)
+}
+
+func mapValidateTokenResponse(resp *authv1.ValidateTokenResponse) *ValidateResult {
 	result := &ValidateResult{
 		OrgID:       resp.GetOrgId(),
 		Permissions: resp.GetPermissions(),
@@ -63,5 +57,8 @@ func (v *GRPCValidator) Validate(ctx context.Context, accessToken string) (*Vali
 	if resp.TokenId != nil {
 		result.TokenID = resp.GetTokenId()
 	}
-	return result, nil
+	if resp.ExpiresAt != nil {
+		result.ExpiresAt = resp.ExpiresAt.AsTime()
+	}
+	return result
 }

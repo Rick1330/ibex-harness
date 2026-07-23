@@ -206,6 +206,11 @@ Used by: **proxy** (`services/proxy`)
 | `IBEX_REQUEST_ID_HEADER` | No | `X-Request-ID` | Inbound request ID header | |
 | `IBEX_TRACE_ID_HEADER` | No | `X-Trace-ID` | Trace ID response header | |
 | `IBEX_AUTH_VALIDATE_TIMEOUT` | No | `50ms` (code); `2s` in `services/proxy/.env.example` for local dev | Per-request auth validate budget (`ValidateToken` / `ValidateAgent`) | Code default per [ADR-0011](adr/ADR-0011-proxy-auth-client.md); use `2s` locally when Argon2 verify exceeds 50ms — see [TROUBLESHOOTING.md](TROUBLESHOOTING.md) §3.3 |
+| `IBEX_AUTH_CACHE_ENABLED` | No | `true` | Wrap ValidateToken with bloom + LRU ([ADR-0028](/docs/adr/0028-auth-cache-design)) | Set `false` to force every request through gRPC |
+| `IBEX_AUTH_CACHE_LRU_CAPACITY` | No | `5000` | Max claims entries per proxy process | |
+| `IBEX_AUTH_CACHE_LRU_MAX_TTL` | No | `30s` | Max cache TTL (also max revoke lag without 2.2.2) | |
+| `IBEX_AUTH_CACHE_BLOOM_EXPECTED_ITEMS` | No | `10000` | Bloom sizing for invalid token hashes | |
+| `IBEX_AUTH_CACHE_BLOOM_FP_RATE` | No | `0.001` | Target false-positive rate (0.1%) | |
 | `IBEX_MAX_REQUEST_BODY_BYTES` | No | `1048576` | Max chat request body (1 MiB) | See [ADR-0013](adr/ADR-0013-proxy-input-validation-and-error-envelope.md) |
 | `IBEX_ERROR_DOCS_BASE` | No | (empty) | Base URL for `docs_url` in error envelope | Omit in dev when unset |
 | `IBEX_LLM_MODE` | No | `mock` | `mock` \| `live` — `mock` keeps an empty provider registry; `live` registers OpenAI per [ADR-0026](/docs/adr/0026-openai-client-design) | Default `mock` for CI/dev without API key |
