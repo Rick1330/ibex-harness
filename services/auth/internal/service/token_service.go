@@ -7,6 +7,7 @@ import (
 
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
+	"github.com/Rick1330/ibex-harness/packages/revocation"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/repository"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/token"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -21,13 +22,18 @@ type tokenRepo interface {
 
 // TokenService manages PAT creation, revocation, and listing.
 type TokenService struct {
-	repo   tokenRepo
-	argon2 token.Argon2Params
-	logger *logger.Logger
+	repo      tokenRepo
+	argon2    token.Argon2Params
+	logger    *logger.Logger
+	publisher revocation.Publisher
 }
 
-func NewTokenService(repo tokenRepo, argon2 token.Argon2Params, log *logger.Logger) *TokenService {
-	return &TokenService{repo: repo, argon2: argon2, logger: log}
+// NewTokenService constructs a TokenService. publisher may be nil (NoopPublisher).
+func NewTokenService(repo tokenRepo, argon2 token.Argon2Params, log *logger.Logger, publisher revocation.Publisher) *TokenService {
+	if publisher == nil {
+		publisher = revocation.NoopPublisher{}
+	}
+	return &TokenService{repo: repo, argon2: argon2, logger: log, publisher: publisher}
 }
 
 // CreateTokenResult holds the one-time plaintext response fields.
@@ -99,7 +105,7 @@ func (s *TokenService) CreateToken(ctx context.Context, req *authv1.CreateTokenR
 	}, nil
 }
 
-// RevokeToken revokes a token in org scope.
+// RevokeToken revokes a token in org scope, then best-effort publishes a pub/sub event.
 func (s *TokenService) RevokeToken(ctx context.Context, orgID, tokenID, revokedBy string, reason *string) error {
 	err := s.repo.RevokeToken(ctx, repository.RevokeTokenInput{
 		OrgID: orgID, TokenID: tokenID, RevokedBy: revokedBy, Reason: reason,
@@ -111,7 +117,31 @@ func (s *TokenService) RevokeToken(ctx context.Context, orgID, tokenID, revokedB
 		"token_id", tokenID,
 		"org_id", orgID,
 	)
+	s.publishRevocationAsync(orgID, tokenID)
 	return nil
+}
+
+func (s *TokenService) publishRevocationAsync(orgID, tokenID string) {
+	go func() {
+		defer func() {
+			if rec := recover(); rec != nil {
+				s.logger.WarnCtx(context.Background(), "revocation publish panic recovered",
+					"recover", rec, "token_id", tokenID)
+			}
+		}()
+		ctx, cancel := context.WithTimeout(context.Background(), revocation.PublishTimeout)
+		defer cancel()
+		event := revocation.RevocationEvent{
+			Version:   revocation.CurrentSchemaVersion,
+			TokenID:   tokenID,
+			OrgID:     orgID,
+			RevokedAt: time.Now().UTC(),
+		}
+		if err := s.publisher.Publish(ctx, event); err != nil {
+			s.logger.WarnCtx(ctx, "revocation event publish failed; LRU will expire naturally",
+				"error", err, "token_id", tokenID, "org_id", orgID)
+		}
+	}()
 }
 
 // ListTokens returns metadata rows for an org.

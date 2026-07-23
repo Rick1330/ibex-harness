@@ -34,7 +34,7 @@ func StartAuthGRPC(t testing.TB, dbDSN string) *AuthGRPCFixture {
 	agentsRepo := repository.NewAgentsRepository(db, reg)
 	argon2 := token.DefaultArgon2Params()
 	validator := token.NewValidator(repo, argon2)
-	tokenSvc := service.NewTokenService(repo, argon2, logger.Discard("auth"))
+	tokenSvc := service.NewTokenService(repo, argon2, logger.Discard("auth"), nil)
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

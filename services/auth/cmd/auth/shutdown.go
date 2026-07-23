@@ -12,18 +12,20 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/shutdown"
 	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/config"
+	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 )
 
 type shutdownOpts struct {
-	cfg        config.Config
-	logger     *logger.Logger
-	providers  *telemetry.Providers
-	grpcSrv    *grpc.Server
-	grpcLis    net.Listener
-	httpServer *http.Server
-	db         *sql.DB
-	signalCh   chan os.Signal
+	cfg         config.Config
+	logger      *logger.Logger
+	providers   *telemetry.Providers
+	grpcSrv     *grpc.Server
+	grpcLis     net.Listener
+	httpServer  *http.Server
+	db          *sql.DB
+	redisClient redis.UniversalClient
+	signalCh    chan os.Signal
 }
 
 func runWithShutdown(opts shutdownOpts) int {
@@ -104,5 +106,11 @@ func registerAuthShutdownHooks(sd *shutdown.Coordinator, opts shutdownOpts) {
 	})
 	sd.Register(func(ctx context.Context) error {
 		return opts.db.Close()
+	})
+	sd.Register(func(ctx context.Context) error {
+		if opts.redisClient != nil {
+			return opts.redisClient.Close()
+		}
+		return nil
 	})
 }

@@ -57,7 +57,7 @@ type serviceTokenRepo interface {
 }
 
 func newTestServer(validator tokenValidator, tokenRepo serviceTokenRepo, agents AgentStore) *Server {
-	tokenSvc := service.NewTokenService(tokenRepo, token.DefaultArgon2Params(), logger.Discard("auth"))
+	tokenSvc := service.NewTokenService(tokenRepo, token.DefaultArgon2Params(), logger.Discard("auth"), nil)
 	return NewServer(validator, tokenSvc, agents, testAuthRegistry())
 }
 
