@@ -248,6 +248,28 @@ func TestRLSDirectivesIsolation(t *testing.T) {
 	assertTableCount(t, tableCountCheck{ctx: ctx, db: db, table: "directives", orgID: orgB, want: 1})
 }
 
+func TestDirectiveVersionsAppendOnly(t *testing.T) {
+	dsn := testDSN()
+	db := openTestDB(t)
+	defer db.Close()
+	resetSchema(t, db)
+	if err := Up(dsn); err != nil {
+		t.Fatalf("up: %v", err)
+	}
+
+	ctx := context.Background()
+	orgA, _ := seedTwoOrgsWithAgents(t, ctx, db)
+	seedDirectiveForOrg(t, directiveSeed{ctx: ctx, db: db, orgID: orgA, agentSlug: "agent-a", content: "v1"})
+
+	err := withServiceAccount(ctx, db, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `UPDATE ibex_core.directive_versions SET content = 'mutated'`)
+		return err
+	})
+	if err == nil {
+		t.Fatal("expected append-only update to fail")
+	}
+}
+
 type directiveSeed struct {
 	ctx                       context.Context
 	db                        *sql.DB
