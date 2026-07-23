@@ -100,32 +100,37 @@ CREATE INDEX idx_directives_agent_id
 CREATE INDEX idx_directive_versions_directive_id
     ON ibex_core.directive_versions(directive_id);
 
+-- Shared RLS predicate (matches agents/tokens service-account pattern).
+CREATE OR REPLACE FUNCTION ibex_core.rls_org_visible(row_org_id UUID)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SET search_path = ibex_core, pg_temp
+AS $$
+    SELECT (
+        NULLIF(current_setting('app.current_org_id', true), '') IS NOT NULL
+        AND row_org_id = current_setting('app.current_org_id', true)::UUID
+    )
+    OR current_setting('app.is_service_account', true) = 'true';
+$$;
+
+REVOKE ALL ON FUNCTION ibex_core.rls_org_visible(UUID) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION ibex_core.rls_org_visible(UUID) TO ibex_app;
+
 ALTER TABLE ibex_core.directives ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ibex_core.directives FORCE ROW LEVEL SECURITY;
 ALTER TABLE ibex_core.directive_versions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ibex_core.directive_versions FORCE ROW LEVEL SECURITY;
 
 CREATE POLICY directives_isolation ON ibex_core.directives
-    USING (
-        (
-            NULLIF(current_setting('app.current_org_id', true), '') IS NOT NULL
-            AND org_id = current_setting('app.current_org_id', true)::UUID
-        )
-        OR current_setting('app.is_service_account', true) = 'true'
-    );
+    USING (ibex_core.rls_org_visible(org_id));
 
 CREATE POLICY directive_versions_isolation ON ibex_core.directive_versions
-    USING (
-        (
-            NULLIF(current_setting('app.current_org_id', true), '') IS NOT NULL
-            AND org_id = current_setting('app.current_org_id', true)::UUID
-        )
-        OR current_setting('app.is_service_account', true) = 'true'
-    );
+    USING (ibex_core.rls_org_visible(org_id));
 
 GRANT SELECT, INSERT, UPDATE, DELETE ON ibex_core.directives TO ibex_app;
--- Append-only versions: no UPDATE (DELETE retained for parent CASCADE cleanup).
-GRANT SELECT, INSERT, DELETE ON ibex_core.directive_versions TO ibex_app;
+-- Append-only versions: SELECT+INSERT only. Parent CASCADE DELETE runs as table owner.
+GRANT SELECT, INSERT ON ibex_core.directive_versions TO ibex_app;
 GRANT USAGE ON SCHEMA ibex_core TO ibex_app;
 
 CREATE OR REPLACE FUNCTION ibex_core.reject_directive_version_update()
