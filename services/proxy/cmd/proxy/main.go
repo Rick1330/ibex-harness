@@ -9,6 +9,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/Rick1330/ibex-harness/packages/authcache"
 	"github.com/Rick1330/ibex-harness/packages/healthcheck"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	ibexmetrics "github.com/Rick1330/ibex-harness/packages/metrics"
@@ -68,7 +69,7 @@ func runBootstrap(_ []string, signalCh chan os.Signal) int {
 		log.ErrorCtx(context.Background(), "rate limiter setup failed", "error", err)
 		return 1
 	}
-	validator, agentVerifier, authClient, grpcConn, err := setupAuthClients(cfg, log)
+	validator, agentVerifier, authClient, grpcConn, err := setupAuthClients(cfg, log, reg)
 	if err != nil {
 		log.ErrorCtx(context.Background(), "auth client setup failed", "error", err)
 		return 1
@@ -131,7 +132,7 @@ func setupRateLimiter(cfg config.Config, log *logger.Logger) (redis.UniversalCli
 	return client, limiter, nil
 }
 
-func setupAuthClients(cfg config.Config, log *logger.Logger) (auth.TokenValidator, auth.AgentVerifier, authv1.AuthServiceClient, *grpc.ClientConn, error) {
+func setupAuthClients(cfg config.Config, log *logger.Logger, m *ibexmetrics.ProxyRegistry) (auth.TokenValidator, auth.AgentVerifier, authv1.AuthServiceClient, *grpc.ClientConn, error) {
 	if cfg.AuthGRPCAddr == "" {
 		return nil, nil, nil, nil, nil
 	}
@@ -144,10 +145,44 @@ func setupAuthClients(cfg config.Config, log *logger.Logger) (auth.TokenValidato
 		return nil, nil, nil, nil, fmt.Errorf("auth grpc dial addr=%s: %w", cfg.AuthGRPCAddr, err)
 	}
 	client := authv1.NewAuthServiceClient(conn)
-	validator := auth.NewGRPCValidator(client, cfg.AuthValidateTimeout)
+	var validator auth.TokenValidator = auth.NewGRPCValidator(client, cfg.AuthValidateTimeout)
+	validator, err = maybeWrapAuthCache(validator, cfg, log, m)
+	if err != nil {
+		_ = conn.Close()
+		return nil, nil, nil, nil, err
+	}
 	agentVerifier := auth.NewGRPCAgentVerifier(client, cfg.AuthValidateTimeout)
-	log.InfoCtx(context.Background(), "auth grpc client configured", "addr", cfg.AuthGRPCAddr, "timeout", cfg.AuthValidateTimeout.String())
+	log.InfoCtx(context.Background(), "auth grpc client configured",
+		"addr", cfg.AuthGRPCAddr,
+		"timeout", cfg.AuthValidateTimeout.String(),
+		"auth_cache_enabled", cfg.AuthCache.Enabled,
+	)
 	return validator, agentVerifier, client, conn, nil
+}
+
+func maybeWrapAuthCache(
+	validator auth.TokenValidator,
+	cfg config.Config,
+	log *logger.Logger,
+	m *ibexmetrics.ProxyRegistry,
+) (auth.TokenValidator, error) {
+	if !cfg.AuthCache.Enabled {
+		return validator, nil
+	}
+	var metrics authcache.Metrics = authcache.NoopMetrics{}
+	if m != nil {
+		metrics = m
+	}
+	wrapped, err := auth.WrapWithCache(validator, authcache.Config{
+		LRUCapacity:        cfg.AuthCache.LRUCapacity,
+		LRUMaxTTL:          cfg.AuthCache.LRUMaxTTL,
+		BloomExpectedItems: cfg.AuthCache.BloomExpectedItems,
+		BloomFPRate:        cfg.AuthCache.BloomFPRate,
+	}, log, metrics)
+	if err != nil {
+		return nil, fmt.Errorf("auth cache: %w", err)
+	}
+	return wrapped, nil
 }
 
 func newHTTPServer(deps proxyhttp.RouterDeps) *http.Server {

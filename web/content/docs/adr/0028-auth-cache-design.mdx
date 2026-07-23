@@ -1,0 +1,83 @@
+---
+title: "ADR-0028: Auth cache design"
+description: "Accepted ADR — in-process invalid-token bloom + claims LRU for proxy ValidateToken; 30s revoke lag until 2.2.2 pub/sub."
+adrId: "0028"
+status: "Accepted"
+date: "2026-07-23"
+authors: "IBEX Harness team"
+---
+
+# ADR-0028: Auth cache design
+
+- **Status:** Accepted
+- **Date:** 2026-07-23
+- **Authors:** IBEX Harness team
+- **Milestone:** [2.2.1 Auth cache bloom + LRU](/roadmap/phase-2-single-provider/milestones/2.2.1-auth-cache-bloom)
+
+## Context
+
+Every protected proxy request paid a full auth gRPC `ValidateToken` (Postgres + Argon2). That consumes a large fraction of the **&lt;20ms p99** proxy overhead budget. Milestone 2.2.1 inserts a cache decorator on `auth.TokenValidator` without changing middleware contracts.
+
+Docs previously drifted between RedisBloom, a 5s revoke SLA via TTL alone, and serving stale LRU during auth downtime. This ADR locks the Phase 2 design; [ADR-0029](/docs/adr/0029-token-revocation-propagation) owns active invalidation.
+
+## Decision
+
+### 1) Two tiers, in-process only
+
+| Tier | Role |
+| --- | --- |
+| **Invalid-token bloom** (`bits-and-blooms/bloom/v3`) | Probabilistic set of hashes rejected by upstream. `Test==true` → **skip LRU**, call gRPC. False positive (bloom bad, gRPC good) → FP metric + populate LRU. Valid tokens are **never** added to the bloom. |
+| **Claims LRU** (`hashicorp/golang-lru/v2`) | Bounded map of validated claims keyed by SHA-256 hex of the raw token. Hot-path hits skip gRPC. |
+
+Redis is **not** used for bloom or claims in 2.2.1 (rate limit + future 2.2.2 pub/sub only). Distributed RedisBloom remains deferred.
+
+### 2) Sizing defaults
+
+| Parameter | Default | Rationale |
+| --- | --- | --- |
+| Bloom expected items | 10,000 | Recent invalids per proxy process |
+| Bloom FP rate | 0.001 (0.1%) | Bounded extra gRPC on FP |
+| LRU capacity | 5,000 | ~1MB claims footprint per instance |
+| LRU max TTL | **30s** | Hard upper bound on revoke lag without pub/sub |
+
+### 3) TTL formula
+
+```text
+ttl = min(LRUMaxTTL, token.expires_at - now - 5s)
+```
+
+If `ttl <= 0`, skip caching. Keys are **token hashes only** — raw tokens are never stored in bloom/LRU.
+
+### 4) Revocation SLA (aligned with ADR-0029)
+
+- **2.2.1 alone:** max stale window = `LRUMaxTTL` (**30 seconds**). Goal 2.2 “revoke ≤5s” is **not** met by TTL alone.
+- **2.2.2:** Redis pub/sub calls `CachingValidator.Invalidate(tokenHash)` to shrink lag toward the 5s exit gate / ~1s ideal path.
+
+### 5) Failure mode — fail closed
+
+On upstream transport / timeout when not serving a **fresh** LRU hit: return unavailable (proxy → 503). Do **not** serve expired LRU claims when auth is down.
+
+### 6) Package boundary and wire-up
+
+- `packages/authcache` owns `Upstream`, `Result`, `CachingValidator`, `TokenHash`, `Invalidate`.
+- Proxy adapter maps ↔ `ValidateResult` (including `ExpiresAt`, `FromCache`).
+- Metrics: `ibex_proxy_auth_cache_*` in `packages/metrics` (no `org_id` / token labels).
+- Observability header: `X-IBEX-Auth-Cached: true` on LRU hits.
+
+### 7) Config
+
+`IBEX_AUTH_CACHE_ENABLED` (default `true`), `IBEX_AUTH_CACHE_LRU_CAPACITY`, `IBEX_AUTH_CACHE_LRU_MAX_TTL`, `IBEX_AUTH_CACHE_BLOOM_EXPECTED_ITEMS`, `IBEX_AUTH_CACHE_BLOOM_FP_RATE`.
+
+## Consequences
+
+- Hot-path LRU hits avoid gRPC; miss path matches Phase 1 semantics.
+- Revoke lag is explicitly **30s** until 2.2.2; roadmap exit gate “5s” depends on pub/sub.
+- `Invalidate` is synchronous and ready for the 2.2.2 subscriber.
+- Each proxy process has an independent cache (no cross-instance coherence without pub/sub).
+
+## Alternatives considered
+
+1. **RedisBloom + Redis claims** — extra hop and ops complexity for Phase 2; deferred.
+2. **LRU-only** — replay of known-bad tokens still hits gRPC every time; bloom cheaply short-circuits after first reject.
+3. **Shorter TTL (1–5s) to meet 5s SLA** — spikes auth load; rejected in favor of pub/sub (ADR-0029).
+4. **Serve stale LRU when auth is down** — violates fail-closed security posture.

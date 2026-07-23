@@ -119,6 +119,28 @@ func TestAuthMiddlewareSuccess(t *testing.T) {
 	}
 }
 
+func TestAuthMiddleware_SetsAuthCachedHeader(t *testing.T) {
+	t.Parallel()
+
+	handler := AuthMiddleware(&mockValidator{res: &auth.ValidateResult{
+		OrgID: "org-a", Permissions: 42, FromCache: true,
+	}}, logger.Discard("proxy"), AuthOptions{})(
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}),
+	)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/internal/auth-probe", nil)
+	req.Header.Set("Authorization", "Bearer ibex_pat_x")
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: %d", rec.Code)
+	}
+	if got := rec.Header().Get("X-IBEX-Auth-Cached"); got != "true" {
+		t.Fatalf("X-IBEX-Auth-Cached=%q want true", got)
+	}
+}
+
 func TestAuthMiddlewareMalformedBearerScheme(t *testing.T) {
 	t.Parallel()
 

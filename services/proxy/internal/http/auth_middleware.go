@@ -17,66 +17,90 @@ type AuthOptions struct {
 	PathOrgID                  string
 }
 
+type authWriteCtx struct {
+	w         http.ResponseWriter
+	requestID string
+	docsBase  string
+}
+
 // AuthMiddleware validates bearer tokens and attaches auth context.
 func AuthMiddleware(validator auth.TokenValidator, log *logger.Logger, opts AuthOptions) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			requestID := RequestIDFromContext(r.Context())
-			if requestID == "" {
-				requestID = reqid.New()
-				r = r.WithContext(WithRequestID(r.Context(), requestID))
-			}
-			docsBase := ErrorDocsBaseFromContext(r.Context())
-			ctx := r.Context()
+			requestID, r := ensureAuthRequestID(r)
+			awc := authWriteCtx{w: w, requestID: requestID, docsBase: ErrorDocsBaseFromContext(r.Context())}
 
 			token, err := auth.ParseAuthorizationHeader(r.Header.Get("Authorization"))
 			if err != nil {
-				if errors.Is(err, auth.ErrMissingToken) {
-					apierror.WriteStatus(w, http.StatusUnauthorized, apierror.CodeMissingToken,
-						"Authorization header required", requestID, apierror.WriteOpts{DocsBase: docsBase})
-					return
-				}
-				apierror.WriteStatus(w, http.StatusUnauthorized, apierror.CodeInvalidToken,
-					"Invalid Authorization header", requestID,
-					apierror.WriteOpts{Detail: err.Error(), DocsBase: docsBase})
+				writeAuthParseError(awc, err)
 				return
 			}
 
-			res, err := validator.Validate(ctx, token)
+			res, err := validator.Validate(r.Context(), token)
 			if err != nil {
-				switch {
-				case errors.Is(err, auth.ErrInvalidToken):
-					apierror.WriteStatus(w, http.StatusUnauthorized, apierror.CodeInvalidToken,
-						"Invalid or expired token", requestID, apierror.WriteOpts{DocsBase: docsBase})
-					return
-				case errors.Is(err, auth.ErrAuthUnavailable):
-					log.WarnCtx(r.Context(), "auth validate unavailable")
-					apierror.WriteStatus(w, http.StatusServiceUnavailable, apierror.CodeServiceDegraded,
-						"Authentication service unavailable", requestID, apierror.WriteOpts{DocsBase: docsBase})
-					return
-				default:
-					log.ErrorCtx(r.Context(), "unexpected auth validation error", "error", err)
-					apierror.WriteStatus(w, http.StatusServiceUnavailable, apierror.CodeServiceDegraded,
-						"Authentication service unavailable", requestID, apierror.WriteOpts{DocsBase: docsBase})
-					return
-				}
-			}
-
-			if opts.PathOrgID != "" && res.OrgID != opts.PathOrgID {
-				apierror.WriteStatus(w, http.StatusForbidden, apierror.CodeInsufficientPermissions,
-					"Insufficient permissions", requestID,
-					apierror.WriteOpts{Detail: "organization scope mismatch", DocsBase: docsBase})
+				writeAuthValidateError(awc, r, log, err)
 				return
 			}
-			if opts.RequireProxyChatCompletion && !permissions.Has(res.Permissions, permissions.ProxyChatCompletion) {
-				apierror.WriteStatus(w, http.StatusForbidden, apierror.CodeInsufficientPermissions,
-					"Insufficient permissions", requestID,
-					apierror.WriteOpts{Detail: "token lacks proxy chat completion permissions", DocsBase: docsBase})
+			if res.FromCache {
+				w.Header().Set("X-IBEX-Auth-Cached", "true")
+			}
+			if !authorizeAuthResult(awc, res, opts) {
 				return
 			}
 
-			ctx = auth.WithContext(ctx, res)
-			next.ServeHTTP(w, r.WithContext(ctx))
+			next.ServeHTTP(w, r.WithContext(auth.WithContext(r.Context(), res)))
 		})
 	}
+}
+
+func ensureAuthRequestID(r *http.Request) (string, *http.Request) {
+	requestID := RequestIDFromContext(r.Context())
+	if requestID != "" {
+		return requestID, r
+	}
+	requestID = reqid.New()
+	return requestID, r.WithContext(WithRequestID(r.Context(), requestID))
+}
+
+func writeAuthParseError(awc authWriteCtx, err error) {
+	if errors.Is(err, auth.ErrMissingToken) {
+		apierror.WriteStatus(awc.w, http.StatusUnauthorized, apierror.CodeMissingToken,
+			"Authorization header required", awc.requestID, apierror.WriteOpts{DocsBase: awc.docsBase})
+		return
+	}
+	apierror.WriteStatus(awc.w, http.StatusUnauthorized, apierror.CodeInvalidToken,
+		"Invalid Authorization header", awc.requestID,
+		apierror.WriteOpts{Detail: err.Error(), DocsBase: awc.docsBase})
+}
+
+func writeAuthValidateError(awc authWriteCtx, r *http.Request, log *logger.Logger, err error) {
+	switch {
+	case errors.Is(err, auth.ErrInvalidToken):
+		apierror.WriteStatus(awc.w, http.StatusUnauthorized, apierror.CodeInvalidToken,
+			"Invalid or expired token", awc.requestID, apierror.WriteOpts{DocsBase: awc.docsBase})
+	case errors.Is(err, auth.ErrAuthUnavailable):
+		log.WarnCtx(r.Context(), "auth validate unavailable")
+		apierror.WriteStatus(awc.w, http.StatusServiceUnavailable, apierror.CodeServiceDegraded,
+			"Authentication service unavailable", awc.requestID, apierror.WriteOpts{DocsBase: awc.docsBase})
+	default:
+		log.ErrorCtx(r.Context(), "unexpected auth validation error", "error", err)
+		apierror.WriteStatus(awc.w, http.StatusServiceUnavailable, apierror.CodeServiceDegraded,
+			"Authentication service unavailable", awc.requestID, apierror.WriteOpts{DocsBase: awc.docsBase})
+	}
+}
+
+func authorizeAuthResult(awc authWriteCtx, res *auth.ValidateResult, opts AuthOptions) bool {
+	if opts.PathOrgID != "" && res.OrgID != opts.PathOrgID {
+		apierror.WriteStatus(awc.w, http.StatusForbidden, apierror.CodeInsufficientPermissions,
+			"Insufficient permissions", awc.requestID,
+			apierror.WriteOpts{Detail: "organization scope mismatch", DocsBase: awc.docsBase})
+		return false
+	}
+	if opts.RequireProxyChatCompletion && !permissions.Has(res.Permissions, permissions.ProxyChatCompletion) {
+		apierror.WriteStatus(awc.w, http.StatusForbidden, apierror.CodeInsufficientPermissions,
+			"Insufficient permissions", awc.requestID,
+			apierror.WriteOpts{Detail: "token lacks proxy chat completion permissions", DocsBase: awc.docsBase})
+		return false
+	}
+	return true
 }

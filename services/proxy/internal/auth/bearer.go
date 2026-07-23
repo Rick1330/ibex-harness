@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 var (
@@ -25,6 +26,9 @@ type ValidateResult struct {
 	AgentID     string
 	UserID      string
 	TokenID     string
+	ExpiresAt   time.Time
+	// FromCache is set by the auth cache adapter on LRU hits; never set by gRPC.
+	FromCache bool
 }
 
 // TokenValidator validates bearer tokens. A cache decorator may wrap GRPCValidator in Phase 2.

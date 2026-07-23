@@ -13,6 +13,11 @@ var ProxyRequiredMetricNames = []string{
 	"ibex_proxy_stream_backpressure_events_total",
 	"ibex_proxy_async_queue_depth",
 	"ibex_proxy_async_dropped_total",
+	"ibex_proxy_auth_cache_hits_total",
+	"ibex_proxy_auth_cache_misses_total",
+	"ibex_proxy_auth_cache_lru_size",
+	"ibex_proxy_auth_cache_lru_evictions_total",
+	"ibex_proxy_auth_cache_bloom_fp_total",
 	"ibex_process_up",
 }
 

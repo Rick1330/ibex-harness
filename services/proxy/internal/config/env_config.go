@@ -32,6 +32,11 @@ type envConfig struct {
 	OpenAIRequestTimeout  time.Duration     `env:"OPENAI_REQUEST_TIMEOUT"`
 	OpenAIMaxRetries      int               `env:"OPENAI_MAX_RETRIES"`
 	OpenAIRetryBaseDelay  time.Duration     `env:"OPENAI_RETRY_BASE_DELAY"`
+	AuthCacheEnabled      string            `env:"IBEX_AUTH_CACHE_ENABLED" envDefault:"true"`
+	AuthCacheLRUCapacity  int               `env:"IBEX_AUTH_CACHE_LRU_CAPACITY"`
+	AuthCacheLRUMaxTTL    time.Duration     `env:"IBEX_AUTH_CACHE_LRU_MAX_TTL"`
+	AuthCacheBloomItems   uint              `env:"IBEX_AUTH_CACHE_BLOOM_EXPECTED_ITEMS"`
+	AuthCacheBloomFPRate  float64           `env:"IBEX_AUTH_CACHE_BLOOM_FP_RATE"`
 }
 
 func loadFromEnv() (Config, error) {
@@ -79,6 +84,9 @@ func baseProxyConfig(envCfg envConfig, level slog.Level) Config {
 		},
 		LLMMode: strings.TrimSpace(envCfg.LLMMode),
 		OpenAI:  openAIConfigFromEnv(envCfg),
+		AuthCache: AuthCacheConfig{
+			Enabled: true,
+		},
 	}
 }
 
@@ -99,7 +107,46 @@ func applyProxyEnvOverrides(cfg *Config, envCfg envConfig) error {
 	if timeout > 0 {
 		cfg.ShutdownTimeout = timeout
 	}
+	if err := applyAuthCacheEnv(cfg, envCfg); err != nil {
+		return err
+	}
 	return applyRateLimitOverrides(cfg, envCfg.RateLimitOrgOverrides)
+}
+
+func applyAuthCacheEnv(cfg *Config, envCfg envConfig) error {
+	enabled, err := parseEnabledFlag(envCfg.AuthCacheEnabled, true)
+	if err != nil {
+		return fmt.Errorf("IBEX_AUTH_CACHE_ENABLED: %w", err)
+	}
+	cfg.AuthCache.Enabled = enabled
+	if envCfg.AuthCacheLRUCapacity > 0 {
+		cfg.AuthCache.LRUCapacity = envCfg.AuthCacheLRUCapacity
+	}
+	if envCfg.AuthCacheLRUMaxTTL > 0 {
+		cfg.AuthCache.LRUMaxTTL = envCfg.AuthCacheLRUMaxTTL
+	}
+	if envCfg.AuthCacheBloomItems > 0 {
+		cfg.AuthCache.BloomExpectedItems = envCfg.AuthCacheBloomItems
+	}
+	if envCfg.AuthCacheBloomFPRate > 0 {
+		cfg.AuthCache.BloomFPRate = envCfg.AuthCacheBloomFPRate
+	}
+	return nil
+}
+
+func parseEnabledFlag(raw string, defaultVal bool) (bool, error) {
+	v := strings.TrimSpace(strings.ToLower(raw))
+	if v == "" {
+		return defaultVal, nil
+	}
+	switch v {
+	case "1", "true", "yes", "on":
+		return true, nil
+	case "0", "false", "no", "off":
+		return false, nil
+	default:
+		return false, fmt.Errorf("must be true or false")
+	}
 }
 
 func applyRateLimitOverrides(cfg *Config, raw string) error {

@@ -56,7 +56,7 @@ func TestSetupAuthClients_WithGRPCServer(t *testing.T) {
 	log := logger.Discard("proxy")
 	validator, agentVerifier, client, conn, err := setupAuthClients(config.Config{
 		AuthGRPCAddr: lis.Addr().String(), AuthValidateTimeout: time.Second,
-	}, log)
+	}, log, nil)
 	if err != nil {
 		t.Fatalf("setupAuthClients: %v", err)
 	}
@@ -66,7 +66,7 @@ func TestSetupAuthClients_WithGRPCServer(t *testing.T) {
 
 func TestSetupAuthClients_EmptyAddr(t *testing.T) {
 	log := logger.Discard("proxy")
-	validator, agentVerifier, client, conn, err := setupAuthClients(config.Config{AuthGRPCAddr: ""}, log)
+	validator, agentVerifier, client, conn, err := setupAuthClients(config.Config{AuthGRPCAddr: ""}, log, nil)
 	if err != nil {
 		t.Fatalf("setupAuthClients: %v", err)
 	}

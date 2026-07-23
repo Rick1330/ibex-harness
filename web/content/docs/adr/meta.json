@@ -28,6 +28,7 @@
     "0025-llm-provider-abstraction",
     "0026-openai-client-design",
     "0027-streaming-dual-write",
+    "0028-auth-cache-design",
     "0029-token-revocation-propagation",
     "0038-context-assembly-service"
   ]

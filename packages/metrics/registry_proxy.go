@@ -22,6 +22,11 @@ type ProxyRegistry struct {
 	streamBackpressure   prometheus.Counter
 	asyncQueueDepth      prometheus.Gauge
 	asyncDroppedTotal    prometheus.Counter
+	authCacheHits        *prometheus.CounterVec
+	authCacheMisses      *prometheus.CounterVec
+	authCacheLRUSize     prometheus.Gauge
+	authCacheLRUEvict    prometheus.Counter
+	authCacheBloomFP     prometheus.Counter
 	processUp            prometheus.Gauge
 }
 
@@ -101,6 +106,31 @@ func (r *ProxyRegistry) register(serviceName string) {
 		Help: "Post-response async tasks dropped when a telemetry queue is full.",
 	})
 
+	r.authCacheHits = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "ibex_proxy_auth_cache_hits_total",
+		Help: "Auth cache hits by tier.",
+	}, []string{"tier"})
+
+	r.authCacheMisses = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "ibex_proxy_auth_cache_misses_total",
+		Help: "Auth cache misses by tier.",
+	}, []string{"tier"})
+
+	r.authCacheLRUSize = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "ibex_proxy_auth_cache_lru_size",
+		Help: "Current number of entries in the auth claims LRU.",
+	})
+
+	r.authCacheLRUEvict = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "ibex_proxy_auth_cache_lru_evictions_total",
+		Help: "Auth claims LRU evictions.",
+	})
+
+	r.authCacheBloomFP = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "ibex_proxy_auth_cache_bloom_fp_total",
+		Help: "Invalid-token bloom false positives (bloom said invalid, upstream said valid).",
+	})
+
 	r.processUp = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name:        "ibex_process_up",
 		Help:        "1 if the service process is running.",
@@ -121,6 +151,11 @@ func (r *ProxyRegistry) register(serviceName string) {
 		r.streamBackpressure,
 		r.asyncQueueDepth,
 		r.asyncDroppedTotal,
+		r.authCacheHits,
+		r.authCacheMisses,
+		r.authCacheLRUSize,
+		r.authCacheLRUEvict,
+		r.authCacheBloomFP,
 		r.processUp,
 	)
 	r.processUp.Set(1)
@@ -200,6 +235,31 @@ func (r *ProxyRegistry) SetAsyncQueueDepth(depth float64) {
 // IncAsyncDropped records a dropped post-response telemetry task.
 func (r *ProxyRegistry) IncAsyncDropped() {
 	r.asyncDroppedTotal.Inc()
+}
+
+// IncAuthCacheHit records an auth cache hit for the given tier.
+func (r *ProxyRegistry) IncAuthCacheHit(tier string) {
+	r.authCacheHits.WithLabelValues(tier).Inc()
+}
+
+// IncAuthCacheMiss records an auth cache miss for the given tier.
+func (r *ProxyRegistry) IncAuthCacheMiss(tier string) {
+	r.authCacheMisses.WithLabelValues(tier).Inc()
+}
+
+// SetAuthCacheLRUSize records the current auth claims LRU size.
+func (r *ProxyRegistry) SetAuthCacheLRUSize(n float64) {
+	r.authCacheLRUSize.Set(n)
+}
+
+// IncAuthCacheLRUEviction records an auth claims LRU eviction.
+func (r *ProxyRegistry) IncAuthCacheLRUEviction() {
+	r.authCacheLRUEvict.Inc()
+}
+
+// IncAuthCacheBloomFP records an invalid-token bloom false positive.
+func (r *ProxyRegistry) IncAuthCacheBloomFP() {
+	r.authCacheBloomFP.Inc()
 }
 
 func mustRegisterAll(reg prometheus.Registerer, collectors ...prometheus.Collector) {

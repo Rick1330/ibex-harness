@@ -223,9 +223,11 @@ Every service must publish these metrics:
 
 #### Cache and fallback behavior
 
-- `ibex_proxy_auth_cache_hits_total`
-- `ibex_proxy_auth_cache_misses_total`
-- `ibex_proxy_auth_bloom_negatives_total`
+- `ibex_proxy_auth_cache_hits_total{tier}` — `tier=lru`
+- `ibex_proxy_auth_cache_misses_total{tier}` — `tier=lru|bloom`
+- `ibex_proxy_auth_cache_lru_size`
+- `ibex_proxy_auth_cache_lru_evictions_total`
+- `ibex_proxy_auth_cache_bloom_fp_total`
 - `ibex_proxy_fallbacks_total{reason}`
   - reasons: `context_timeout|redis_down|auth_down|memory_timeout|provider_circuit_open`
 - `ibex_proxy_circuit_breaker_state_current{provider,state}`

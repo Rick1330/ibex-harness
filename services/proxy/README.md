@@ -52,6 +52,7 @@ See [.env.example](.env.example).
 | `REDIS_URL` | (empty) | Required for `/ready` when set |
 | `IBEX_AUTH_GRPC_ADDR` | `127.0.0.1:9091` | Auth gRPC target |
 | `IBEX_AUTH_VALIDATE_TIMEOUT` | `50ms` | Per-request validate budget |
+| `IBEX_AUTH_CACHE_ENABLED` | `true` | Bloom + LRU in front of ValidateToken |
 | `IBEX_MAX_REQUEST_BODY_BYTES` | `1048576` | Chat body cap (1 MiB) |
 | `IBEX_REQUEST_ID_HEADER` | `X-Request-ID` | Incoming/outgoing request ID |
 | `IBEX_TRACE_ID_HEADER` | `X-Trace-ID` | Trace ID header |
