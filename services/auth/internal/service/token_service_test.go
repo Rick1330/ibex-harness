@@ -80,13 +80,17 @@ func TestTokenService_RevokeToken(t *testing.T) {
 	repo := newMemTokenRepo()
 	repo.tokens[tokenID] = repository.CreateTokenParams{ID: tokenID, OrgID: orgID}
 	svc := testTokenService(repo)
-	if err := svc.RevokeToken(context.Background(), orgID, tokenID, "", nil); err != nil {
+	if err := svc.RevokeToken(context.Background(), RevokeTokenParams{
+		OrgID: orgID, TokenID: tokenID,
+	}); err != nil {
 		t.Fatalf("RevokeToken: %v", err)
 	}
 	if !repo.revoked[tokenID] {
 		t.Fatal("token not marked revoked")
 	}
-	err := svc.RevokeToken(context.Background(), orgID, uuid.NewString(), "", nil)
+	err := svc.RevokeToken(context.Background(), RevokeTokenParams{
+		OrgID: orgID, TokenID: uuid.NewString(),
+	})
 	if !errors.Is(err, repository.ErrNotFound) {
 		t.Fatalf("expected ErrNotFound, got %v", err)
 	}

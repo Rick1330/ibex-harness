@@ -68,16 +68,42 @@ func newRevokeFixture(t *testing.T, pubErr error) revokeFixture {
 
 func TestUnit_RevokeTokenPublishesEvent(t *testing.T) {
 	t.Parallel()
+	f := revokeAndAwaitPublish(t, nil)
+	assertRevokeEvent(t, f.pub.last(), f.tokenID, f.orgID)
+}
+
+func TestUnit_RevokeTokenPublishFailureDoesNotFailRevoke(t *testing.T) {
+	t.Parallel()
+	f := revokeAndAwaitPublish(t, context.DeadlineExceeded)
+	if !f.repo.revoked[f.tokenID] {
+		t.Fatal("token not revoked")
+	}
+}
+
+func TestUnit_DrainPublishesCancelsInFlight(t *testing.T) {
+	t.Parallel()
 	f := newRevokeFixture(t, nil)
+	mustRevokeToken(t, f)
+	f.svc.DrainPublishes()
+	if f.pub.count() < 1 {
+		t.Fatal("expected publish before drain completed")
+	}
+}
+
+func revokeAndAwaitPublish(t *testing.T, pubErr error) revokeFixture {
+	t.Helper()
+	f := newRevokeFixture(t, pubErr)
 	mustRevokeToken(t, f)
 	waitPublish(t, f.pub, 1)
 	f.svc.WaitPendingPublishes()
-	assertRevokeEvent(t, f.pub.last(), f.tokenID, f.orgID)
+	return f
 }
 
 func mustRevokeToken(t *testing.T, f revokeFixture) {
 	t.Helper()
-	err := f.svc.RevokeToken(context.Background(), f.orgID, f.tokenID, "", nil)
+	err := f.svc.RevokeToken(context.Background(), RevokeTokenParams{
+		OrgID: f.orgID, TokenID: f.tokenID,
+	})
 	if err != nil {
 		t.Fatalf("RevokeToken: %v", err)
 	}
@@ -101,32 +127,6 @@ func assertVersionEQ(t *testing.T, got, want int) {
 	t.Helper()
 	if got != want {
 		t.Fatalf("version=%d want %d", got, want)
-	}
-}
-
-func TestUnit_RevokeTokenPublishFailureDoesNotFailRevoke(t *testing.T) {
-	t.Parallel()
-	f := newRevokeFixture(t, context.DeadlineExceeded)
-	mustRevokeToken(t, f)
-	assertTokenRevoked(t, f)
-	waitPublish(t, f.pub, 1)
-	f.svc.WaitPendingPublishes()
-}
-
-func assertTokenRevoked(t *testing.T, f revokeFixture) {
-	t.Helper()
-	if !f.repo.revoked[f.tokenID] {
-		t.Fatal("token not revoked")
-	}
-}
-
-func TestUnit_DrainPublishesCancelsInFlight(t *testing.T) {
-	t.Parallel()
-	f := newRevokeFixture(t, nil)
-	mustRevokeToken(t, f)
-	f.svc.DrainPublishes()
-	if f.pub.count() < 1 {
-		t.Fatal("expected publish before drain completed")
 	}
 }
 

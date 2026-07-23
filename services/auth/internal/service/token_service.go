@@ -113,43 +113,51 @@ func (s *TokenService) CreateToken(ctx context.Context, req *authv1.CreateTokenR
 	}, nil
 }
 
+// RevokeTokenParams scopes a durable revoke plus optional async pub/sub publish.
+type RevokeTokenParams struct {
+	OrgID     string
+	TokenID   string
+	RevokedBy string
+	Reason    *string
+}
+
 // RevokeToken revokes a token in org scope, then best-effort publishes a pub/sub event.
-func (s *TokenService) RevokeToken(ctx context.Context, orgID, tokenID, revokedBy string, reason *string) error {
+func (s *TokenService) RevokeToken(ctx context.Context, p RevokeTokenParams) error {
 	err := s.repo.RevokeToken(ctx, repository.RevokeTokenInput{
-		OrgID: orgID, TokenID: tokenID, RevokedBy: revokedBy, Reason: reason,
+		OrgID: p.OrgID, TokenID: p.TokenID, RevokedBy: p.RevokedBy, Reason: p.Reason,
 	})
 	if err != nil {
 		return err
 	}
 	s.logger.InfoCtx(ctx, "token_revoked",
-		"token_id", tokenID,
-		"org_id", orgID,
+		"token_id", p.TokenID,
+		"org_id", p.OrgID,
 	)
-	s.publishRevocationAsync(orgID, tokenID)
+	s.publishRevocationAsync(p)
 	return nil
 }
 
-func (s *TokenService) publishRevocationAsync(orgID, tokenID string) {
+func (s *TokenService) publishRevocationAsync(p RevokeTokenParams) {
 	s.publishWG.Add(1)
 	go func() {
 		defer s.publishWG.Done()
 		defer func() {
 			if rec := recover(); rec != nil {
 				s.logger.WarnCtx(s.publishCtx, "revocation publish panic recovered",
-					"recover", rec, "token_id", tokenID)
+					"recover", rec, "token_id", p.TokenID)
 			}
 		}()
 		ctx, cancel := context.WithTimeout(s.publishCtx, revocation.PublishTimeout)
 		defer cancel()
 		event := revocation.RevocationEvent{
 			Version:   revocation.CurrentSchemaVersion,
-			TokenID:   tokenID,
-			OrgID:     orgID,
+			TokenID:   p.TokenID,
+			OrgID:     p.OrgID,
 			RevokedAt: time.Now().UTC(),
 		}
 		if err := s.publisher.Publish(ctx, event); err != nil {
 			s.logger.WarnCtx(ctx, "revocation event publish failed; LRU will expire naturally",
-				"error", err, "token_id", tokenID, "org_id", orgID)
+				"error", err, "token_id", p.TokenID, "org_id", p.OrgID)
 		}
 	}()
 }
