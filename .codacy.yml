@@ -7,3 +7,8 @@ exclude_paths:
   - "**/*.test.ts"
   - "**/*.test.tsx"
   - "**/*.test.mjs"
+
+# Postgres migrations are not T-SQL; disable the T-SQL-only engine.
+engines:
+  tsqllint:
+    enabled: false

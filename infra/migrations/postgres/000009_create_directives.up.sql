@@ -50,22 +50,48 @@ CREATE TABLE ibex_core.directive_versions (
         ON DELETE CASCADE
 );
 
+-- Single-column SET NULL keeps active_version_id nullable-only; ownership of the
+-- pointed-to version is enforced by validate_directive_active_version (below).
 ALTER TABLE ibex_core.directives
-    ADD CONSTRAINT directives_active_version_org_fk
-    FOREIGN KEY (active_version_id, org_id)
-    REFERENCES ibex_core.directive_versions (id, org_id)
-    ON DELETE SET NULL (active_version_id)
+    ADD CONSTRAINT directives_active_version_id_fk
+    FOREIGN KEY (active_version_id)
+    REFERENCES ibex_core.directive_versions (id)
+    ON DELETE SET NULL
     NOT VALID;
 
-ALTER TABLE ibex_core.directives
-    ADD CONSTRAINT directives_active_version_directive_fk
-    FOREIGN KEY (active_version_id, id)
-    REFERENCES ibex_core.directive_versions (id, directive_id)
-    ON DELETE SET NULL (active_version_id)
-    NOT VALID;
+ALTER TABLE ibex_core.directives VALIDATE CONSTRAINT directives_active_version_id_fk;
 
-ALTER TABLE ibex_core.directives VALIDATE CONSTRAINT directives_active_version_org_fk;
-ALTER TABLE ibex_core.directives VALIDATE CONSTRAINT directives_active_version_directive_fk;
+CREATE OR REPLACE FUNCTION ibex_core.validate_directive_active_version()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = ibex_core, pg_temp
+AS $$
+DECLARE
+    ver_org UUID;
+    ver_directive UUID;
+BEGIN
+    IF NEW.active_version_id IS NULL THEN
+        RETURN NEW;
+    END IF;
+    SELECT org_id, directive_id INTO ver_org, ver_directive
+    FROM ibex_core.directive_versions
+    WHERE id = NEW.active_version_id;
+    IF ver_org IS NULL THEN
+        RAISE EXCEPTION 'active_version_id not found';
+    END IF;
+    IF ver_org <> NEW.org_id OR ver_directive <> NEW.id THEN
+        RAISE EXCEPTION 'active_version_id must belong to this directive and org';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION ibex_core.validate_directive_active_version() FROM PUBLIC;
+
+CREATE TRIGGER directives_active_version_owned
+    BEFORE INSERT OR UPDATE OF active_version_id, org_id, id
+    ON ibex_core.directives
+    FOR EACH ROW EXECUTE FUNCTION ibex_core.validate_directive_active_version();
 
 CREATE INDEX idx_directives_agent_id
     ON ibex_core.directives(agent_id)

@@ -290,11 +290,12 @@ func seedDirectiveForOrg(t *testing.T, seed directiveSeed) {
 			VALUES ($1::uuid, $2::uuid) RETURNING id::text`, seed.orgID, agentID).Scan(&directiveID); err != nil {
 			return err
 		}
+		contentHash := "hash-" + seed.content
 		_, err := tx.ExecContext(seed.ctx, `
 			INSERT INTO ibex_core.directive_versions
 				(directive_id, org_id, version_num, content, content_hash)
 			VALUES ($1::uuid, $2::uuid, 1, $3, $4)`,
-			directiveID, seed.orgID, seed.content, "hash-"+seed.content)
+			directiveID, seed.orgID, seed.content, contentHash)
 		return err
 	})
 	if err != nil {
