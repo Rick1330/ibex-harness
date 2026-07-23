@@ -16,14 +16,14 @@ CREATE TABLE ibex_core.directives (
     is_active         BOOLEAN NOT NULL DEFAULT true,
     created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE (agent_id)
+    UNIQUE (agent_id),
+    -- Supports composite FK from directive_versions so org_id cannot diverge.
+    UNIQUE (id, org_id)
 );
 
 CREATE TABLE ibex_core.directive_versions (
     id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    directive_id  UUID NOT NULL
-                  REFERENCES ibex_core.directives(id)
-                  ON DELETE CASCADE,
+    directive_id  UUID NOT NULL,
     org_id        UUID NOT NULL
                   REFERENCES ibex_core.organizations(id)
                   ON DELETE CASCADE,
@@ -36,7 +36,11 @@ CREATE TABLE ibex_core.directive_versions (
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (directive_id, version_num),
     CONSTRAINT directive_versions_content_not_empty CHECK (length(content) > 0),
-    CONSTRAINT directive_versions_content_max CHECK (length(content) <= 32768)
+    CONSTRAINT directive_versions_content_max CHECK (length(content) <= 32768),
+    CONSTRAINT directive_versions_directive_org_fk
+        FOREIGN KEY (directive_id, org_id)
+        REFERENCES ibex_core.directives (id, org_id)
+        ON DELETE CASCADE
 );
 
 ALTER TABLE ibex_core.directives

@@ -26,7 +26,7 @@ Phase 2 needs a minimal agent-scoped schema. A fuller marketplace-oriented model
 2. **One config per agent:** `UNIQUE(agent_id)` on `directives`. Each agent has at most one directive configuration row; version history hangs off that row.
 3. **Injection mode:** `injection_mode` enum (`system_first`, `system_append`, `user_prepend`) stored on `directives`. Behavior is implemented in 2.3.3.
 4. **Content integrity:** `content_hash` is SHA-256 of `content` (application-computed). CHECKs enforce non-empty content and `length(content) <= 32768` (32KB).
-5. **Tenant isolation:** Both tables have `org_id`, `ENABLE` + `FORCE ROW LEVEL SECURITY`, NULLIF-safe org setting, and service-account bypass — matching the agents pattern.
+5. **Tenant isolation:** Both tables have `org_id`, `ENABLE` + `FORCE ROW LEVEL SECURITY`, NULLIF-safe org setting, and service-account bypass — matching the agents pattern. `directive_versions` uses a composite FK `(directive_id, org_id) → directives(id, org_id)` so a version cannot attach to another org's directive.
 6. **Deferred circular FK:** `active_version_id` is added `NOT VALID` then `VALIDATE` after `directive_versions` exists.
 7. **Proxy read path:** Deferred to [2.3.2](/roadmap/phase-2-single-provider/milestones/2.3.2-directive-resolver). This ADR covers persistence only.
 

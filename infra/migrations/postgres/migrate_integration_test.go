@@ -129,9 +129,9 @@ func TestRLSUsersAndAgentsIsolation(t *testing.T) {
 
 	ctx := context.Background()
 	orgA, orgB := seedTwoOrgsWithAgents(t, ctx, db)
-	assertAgentCount(t, agentCountCheck{ctx: ctx, db: db, orgID: "", want: 0})
-	assertAgentCount(t, agentCountCheck{ctx: ctx, db: db, orgID: orgA, want: 1})
-	assertAgentCount(t, agentCountCheck{ctx: ctx, db: db, orgID: orgB, want: 1})
+	assertTableCount(t, tableCountCheck{ctx: ctx, db: db, table: "agents", orgID: "", want: 0})
+	assertTableCount(t, tableCountCheck{ctx: ctx, db: db, table: "agents", orgID: orgA, want: 1})
+	assertTableCount(t, tableCountCheck{ctx: ctx, db: db, table: "agents", orgID: orgB, want: 1})
 }
 
 func seedTwoOrgsWithAgents(t *testing.T, ctx context.Context, db *sql.DB) (orgA, orgB string) {
@@ -187,15 +187,20 @@ func insertUserAndAgent(ctx context.Context, tx *sql.Tx, orgID string, seed user
 	return err
 }
 
-type agentCountCheck struct {
+type tableCountCheck struct {
 	ctx   context.Context
 	db    *sql.DB
+	table string
 	orgID string
 	want  int
 }
 
-func assertAgentCount(t *testing.T, check agentCountCheck) {
+func assertTableCount(t *testing.T, check tableCountCheck) {
 	t.Helper()
+	q, ok := ibexCoreCountQuery(check.table)
+	if !ok {
+		t.Fatalf("unsupported table %q", check.table)
+	}
 	var count int
 	err := withAppRole(check.ctx, check.db, func(tx *sql.Tx) error {
 		if check.orgID != "" {
@@ -203,13 +208,75 @@ func assertAgentCount(t *testing.T, check agentCountCheck) {
 				return err
 			}
 		}
-		return tx.QueryRowContext(check.ctx, `SELECT COUNT(*) FROM ibex_core.agents`).Scan(&count)
+		return tx.QueryRowContext(check.ctx, q).Scan(&count)
 	})
 	if err != nil {
-		t.Fatalf("count agents (org=%q): %v", check.orgID, err)
+		t.Fatalf("count %s (org=%q): %v", check.table, check.orgID, err)
 	}
 	if count != check.want {
-		t.Fatalf("expected %d agents (org=%q), got %d", check.want, check.orgID, count)
+		t.Fatalf("expected %d %s (org=%q), got %d", check.want, check.table, check.orgID, count)
+	}
+}
+
+func ibexCoreCountQuery(table string) (string, bool) {
+	switch table {
+	case "agents":
+		return `SELECT COUNT(*) FROM ibex_core.agents`, true
+	case "directives":
+		return `SELECT COUNT(*) FROM ibex_core.directives`, true
+	default:
+		return "", false
+	}
+}
+
+func TestRLSDirectivesIsolation(t *testing.T) {
+	dsn := testDSN()
+	db := openTestDB(t)
+	defer db.Close()
+	resetSchema(t, db)
+	if err := Up(dsn); err != nil {
+		t.Fatalf("up: %v", err)
+	}
+
+	ctx := context.Background()
+	orgA, orgB := seedTwoOrgsWithAgents(t, ctx, db)
+	seedDirectiveForOrg(t, directiveSeed{ctx: ctx, db: db, orgID: orgA, agentSlug: "agent-a", content: "directive-a"})
+	seedDirectiveForOrg(t, directiveSeed{ctx: ctx, db: db, orgID: orgB, agentSlug: "agent-b", content: "directive-b"})
+
+	assertTableCount(t, tableCountCheck{ctx: ctx, db: db, table: "directives", orgID: "", want: 0})
+	assertTableCount(t, tableCountCheck{ctx: ctx, db: db, table: "directives", orgID: orgA, want: 1})
+	assertTableCount(t, tableCountCheck{ctx: ctx, db: db, table: "directives", orgID: orgB, want: 1})
+}
+
+type directiveSeed struct {
+	ctx                       context.Context
+	db                        *sql.DB
+	orgID, agentSlug, content string
+}
+
+func seedDirectiveForOrg(t *testing.T, seed directiveSeed) {
+	t.Helper()
+	err := withServiceAccount(seed.ctx, seed.db, func(tx *sql.Tx) error {
+		var agentID, directiveID string
+		if err := tx.QueryRowContext(seed.ctx, `
+			SELECT id::text FROM ibex_core.agents
+			WHERE org_id = $1::uuid AND slug = $2`, seed.orgID, seed.agentSlug).Scan(&agentID); err != nil {
+			return err
+		}
+		if err := tx.QueryRowContext(seed.ctx, `
+			INSERT INTO ibex_core.directives (org_id, agent_id)
+			VALUES ($1::uuid, $2::uuid) RETURNING id::text`, seed.orgID, agentID).Scan(&directiveID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(seed.ctx, `
+			INSERT INTO ibex_core.directive_versions
+				(directive_id, org_id, version_num, content, content_hash)
+			VALUES ($1::uuid, $2::uuid, 1, $3, $4)`,
+			directiveID, seed.orgID, seed.content, "hash-"+seed.content)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("seed directive org=%s: %v", seed.orgID, err)
 	}
 }
 
