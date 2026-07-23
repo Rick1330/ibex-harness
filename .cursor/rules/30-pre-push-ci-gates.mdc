@@ -61,3 +61,5 @@ Only after:
 3. No known failing CI checks on the branch
 
 If CI fails after push, fix locally, re-run the gate, then push the fix — do not iterate blindly on CI.
+
+Also follow [32-pr-push-hygiene.mdc](32-pr-push-hygiene.mdc): serial edit→test→commit, verify PR `headRefOid == HEAD` after push, CodeScene-safe tests, SCA on `pnpm-lock.yaml`, and resolve review threads before merge.

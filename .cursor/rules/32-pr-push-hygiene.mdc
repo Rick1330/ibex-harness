@@ -1,0 +1,63 @@
+---
+description: Prevent recurring PR/CI failures (PR-head sync, CodeScene tests, SCA lockfile, serial edit-commit, conversation resolution). Always apply.
+alwaysApply: true
+---
+
+# PR / Push Hygiene (lessons from #350)
+
+Hard gates in [30-pre-push-ci-gates.mdc](30-pre-push-ci-gates.mdc) and
+[31-pr-repo-guards-checklist.mdc](31-pr-repo-guards-checklist.mdc) still apply.
+This rule adds failure modes that repeatedly blocked merge.
+
+## 1. Serial edit → format → test → commit
+
+Never commit while parallel file edits on the same package are unfinished.
+
+```text
+Edit → gofmt → go test ./touched/... → commit -s → push
+```
+
+A missing import pushed mid-edit wastes a CI cycle.
+
+## 2. After every push: PR head must equal branch tip
+
+```powershell
+git rev-parse HEAD
+gh pr view <N> --json headRefOid -q .headRefOid
+# if mismatch: close/reopen the PR (or empty signed commit), then re-check
+```
+
+Do not watch CI until `headRefOid == HEAD`.
+
+## 3. CodeScene scores `*_test.go` too
+
+- No near-duplicate assert helpers (>~10 similar lines) — one parameterized helper
+- No multi-clause `if a || b || c` in tests — extract single-condition helpers
+- Same limits as prod: ≤40 lines/fn, nesting ≤3, ≤4 params (`21-complexity-management.mdc`)
+
+## 4. SCA even on Go-only PRs
+
+`ci-gate-security` still scans `pnpm-lock.yaml`. Before opening/updating a PR:
+
+```powershell
+# preferred if installed:
+osv-scanner --lockfile pnpm-lock.yaml
+# or avoid drive-by web dep churn; bump next if advisory hits
+```
+
+## 5. Resolve conversations before merge
+
+Branch protection requires conversation resolution. Green checks ≠ mergeable.
+
+```powershell
+# unresolved threads must be 0; then:
+gh pr view <N> --json mergeStateStatus -q .mergeStateStatus   # want CLEAN
+```
+
+## 6. Design self-review before first push (auth / cache / security)
+
+- Fail closed on ambiguous upstream results
+- Concurrent structures race-tested
+- Metrics series materialized at init (no first-hit registration)
+- No raw tokens / secrets in logs
+- Redis / pub-sub failures must not fail durable Postgres mutations
