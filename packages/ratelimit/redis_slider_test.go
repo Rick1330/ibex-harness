@@ -3,6 +3,7 @@ package ratelimit
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
@@ -117,9 +118,15 @@ func TestNewRedisSlider_defaultRPMWhenZero(t *testing.T) {
 
 func TestRedisSlider_Check_redisError(t *testing.T) {
 	t.Parallel()
-	mr := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	mr.Close()
+	// Use an unreachable address instead of closing miniredis: Close()+Check can
+	// race under -race in CI and occasionally return a nil error.
+	client := redis.NewClient(&redis.Options{
+		Addr:         "127.0.0.1:1",
+		DialTimeout:  50 * time.Millisecond,
+		ReadTimeout:  50 * time.Millisecond,
+		WriteTimeout: 50 * time.Millisecond,
+		MaxRetries:   0,
+	})
 	t.Cleanup(func() { _ = client.Close() })
 
 	slider := NewRedisSlider(client, RedisSliderConfig{DefaultRPM: 60})
