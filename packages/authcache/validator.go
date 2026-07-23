@@ -23,6 +23,7 @@ type CachingValidator struct {
 	metrics  Metrics
 	bloom    *bloomFilter
 	lru      *lru.Cache[digest, *cachedEntry]
+	tokenIdx *tokenIndex
 	now      func() time.Time
 }
 
@@ -47,10 +48,14 @@ func New(upstream Validator, cfg Config, log *logger.Logger, m Metrics) (*Cachin
 		log:      log,
 		metrics:  m,
 		bloom:    newBloomFilter(cfg.BloomExpectedItems, cfg.BloomFPRate),
+		tokenIdx: newTokenIndex(),
 		now:      time.Now,
 	}
-	cache, err := lru.NewWithEvict[digest, *cachedEntry](cfg.LRUCapacity, func(digest, *cachedEntry) {
+	cache, err := lru.NewWithEvict[digest, *cachedEntry](cfg.LRUCapacity, func(hash digest, entry *cachedEntry) {
 		m.IncAuthCacheLRUEviction()
+		if entry != nil {
+			v.tokenIdx.removeDigest(hash, entry.result.TokenID)
+		}
 	})
 	if err != nil {
 		return nil, fmt.Errorf("authcache: lru: %w", err)
@@ -74,12 +79,26 @@ func (v *CachingValidator) Validate(ctx context.Context, token string) (*Result,
 	return v.fetchUpstream(ctx, call)
 }
 
-// Invalidate removes a token hash from the LRU synchronously (2.2.2 pub/sub).
+// Invalidate removes a token hash from the LRU synchronously.
 func (v *CachingValidator) Invalidate(tokenHash string) {
 	if tokenHash == "" {
 		return
 	}
-	v.lru.Remove(digestFromHex(tokenHash))
+	hash := digestFromHex(tokenHash)
+	if entry, ok := v.lru.Get(hash); ok && entry != nil {
+		v.tokenIdx.removeDigest(hash, entry.result.TokenID)
+	}
+	v.lru.Remove(hash)
+	v.metrics.SetAuthCacheLRUSize(float64(v.lru.Len()))
+}
+
+// InvalidateByTokenID removes a cached claims entry by token UUID (2.2.2 pub/sub).
+func (v *CachingValidator) InvalidateByTokenID(tokenID string) {
+	hash, ok := v.tokenIdx.removeID(tokenID)
+	if !ok {
+		return
+	}
+	v.lru.Remove(hash)
 	v.metrics.SetAuthCacheLRUSize(float64(v.lru.Len()))
 }
 
@@ -89,6 +108,7 @@ func (v *CachingValidator) lookupLRU(hash digest) (*Result, bool) {
 		return nil, false
 	}
 	if !v.now().Before(entry.expiresAt) {
+		v.tokenIdx.removeDigest(hash, entry.result.TokenID)
 		v.lru.Remove(hash)
 		v.metrics.SetAuthCacheLRUSize(float64(v.lru.Len()))
 		return nil, false
@@ -141,6 +161,7 @@ func (v *CachingValidator) putLRU(hash digest, res *Result) {
 		expiresAt: v.now().Add(ttl),
 	}
 	v.lru.Add(hash, entry)
+	v.tokenIdx.put(res.TokenID, hash)
 	v.metrics.SetAuthCacheLRUSize(float64(v.lru.Len()))
 }
 

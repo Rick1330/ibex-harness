@@ -15,6 +15,7 @@ type AuthRegistry struct {
 	dbQueryDuration       *prometheus.HistogramVec
 	httpRequestDuration   *prometheus.HistogramVec
 	httpRequestsTotal     *prometheus.CounterVec
+	revocationPublish     *prometheus.CounterVec
 	processUp             prometheus.Gauge
 }
 
@@ -32,6 +33,7 @@ func NewAuth(cfg AuthConfig) *AuthRegistry {
 		dbQueryDuration:       set.dbQueryDuration,
 		httpRequestDuration:   set.httpRequestDuration,
 		httpRequestsTotal:     set.httpRequestsTotal,
+		revocationPublish:     set.revocationPublish,
 		processUp:             set.processUp,
 	}
 	r.processUp.Set(1)
@@ -67,4 +69,9 @@ func (r *AuthRegistry) ObserveDBQuery(obs DBQueryObservation) {
 func (r *AuthRegistry) ObserveHTTPRequest(obs HTTPRequestObservation) {
 	r.httpRequestsTotal.WithLabelValues(obs.Route, obs.Method, obs.StatusCode).Inc()
 	r.httpRequestDuration.WithLabelValues(obs.Route, obs.Method, obs.StatusCode).Observe(obs.Seconds)
+}
+
+// IncRevocationPublish records a Redis PUBLISH outcome (result: ok|error).
+func (r *AuthRegistry) IncRevocationPublish(result string) {
+	r.revocationPublish.WithLabelValues(result).Inc()
 }

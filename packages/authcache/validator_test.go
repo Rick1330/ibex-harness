@@ -260,6 +260,66 @@ func (d *dualUpstream) Validate(_ context.Context, token string) (*Result, error
 	return &Result{OrgID: "org-1"}, nil
 }
 
+func TestUnit_CachingValidatorInvalidateByTokenID(t *testing.T) {
+	t.Parallel()
+	up := &spyUpstream{res: &Result{OrgID: "org-1", TokenID: "tok-uuid-1"}}
+	v := testValidator(t, up, Config{}, NoopMetrics{})
+	if _, err := v.Validate(context.Background(), "bearer-1"); err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	assertUpstreamCalls(t, up, 1)
+	v.InvalidateByTokenID("tok-uuid-1")
+	res, err := v.Validate(context.Background(), "bearer-1")
+	if err != nil {
+		t.Fatalf("second: %v", err)
+	}
+	if res.FromCache {
+		t.Fatal("expected miss after InvalidateByTokenID")
+	}
+	assertUpstreamCalls(t, up, 2)
+}
+
+func TestUnit_CachingValidatorInvalidateByTokenIDEmptyNoop(t *testing.T) {
+	t.Parallel()
+	up := &spyUpstream{res: &Result{OrgID: "org-1", TokenID: "tok-2"}}
+	v := testValidator(t, up, Config{}, NoopMetrics{})
+	if _, err := v.Validate(context.Background(), "bearer-2"); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	v.InvalidateByTokenID("")
+	v.InvalidateByTokenID("missing")
+	res, err := v.Validate(context.Background(), "bearer-2")
+	if err != nil || !res.FromCache {
+		t.Fatalf("expected cache hit err=%v fromCache=%v", err, res != nil && res.FromCache)
+	}
+	assertUpstreamCalls(t, up, 1)
+}
+
+func TestUnit_CachingValidatorConcurrentInvalidateByTokenID(t *testing.T) {
+	t.Parallel()
+	up := &spyUpstream{res: &Result{OrgID: "org-1", TokenID: "tok-conc"}}
+	v := testValidator(t, up, Config{LRUCapacity: 64}, NoopMetrics{})
+	if _, err := v.Validate(context.Background(), "bearer-conc"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 32; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			v.InvalidateByTokenID("tok-conc")
+		}()
+	}
+	wg.Wait()
+	res, err := v.Validate(context.Background(), "bearer-conc")
+	if err != nil {
+		t.Fatalf("after: %v", err)
+	}
+	if res.FromCache {
+		t.Fatal("expected miss after concurrent invalidate")
+	}
+}
+
 func TestUnit_CachingValidatorNilResultFailsClosed(t *testing.T) {
 	t.Parallel()
 	up := &spyUpstream{res: nil}

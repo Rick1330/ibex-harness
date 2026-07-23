@@ -13,19 +13,24 @@ type authMetricSet struct {
 	dbQueryDuration       *prometheus.HistogramVec
 	httpRequestDuration   *prometheus.HistogramVec
 	httpRequestsTotal     *prometheus.CounterVec
+	revocationPublish     *prometheus.CounterVec
 	processUp             prometheus.Gauge
 }
 
 func buildAuthMetricSet(serviceName string) authMetricSet {
-	return authMetricSet{
+	set := authMetricSet{
 		validateTokenDuration: newValidateTokenHistogram(),
 		validateAgentDuration: newValidateAgentHistogram(),
 		grpcRequestsTotal:     newGRPCRequestsCounter(),
 		dbQueryDuration:       newDBQueryHistogram(),
 		httpRequestDuration:   newAuthHTTPRequestHistogram(),
 		httpRequestsTotal:     newAuthHTTPRequestsCounter(),
+		revocationPublish:     newAuthRevocationPublishCounter(),
 		processUp:             newProcessUpGauge(serviceName),
 	}
+	set.revocationPublish.WithLabelValues("ok")
+	set.revocationPublish.WithLabelValues("error")
+	return set
 }
 
 func authCollectors(set authMetricSet, db *sql.DB) []prometheus.Collector {
@@ -36,6 +41,7 @@ func authCollectors(set authMetricSet, db *sql.DB) []prometheus.Collector {
 		set.dbQueryDuration,
 		set.httpRequestDuration,
 		set.httpRequestsTotal,
+		set.revocationPublish,
 		set.processUp,
 	}
 	if db != nil {
@@ -88,6 +94,13 @@ func newAuthHTTPRequestsCounter() *prometheus.CounterVec {
 		Name: "ibex_auth_http_requests_total",
 		Help: "Total HTTP requests to auth service.",
 	}, []string{"route", "method", "status_code"})
+}
+
+func newAuthRevocationPublishCounter() *prometheus.CounterVec {
+	return prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "ibex_auth_revocation_publish_total",
+		Help: "Token revocation Redis PUBLISH outcomes.",
+	}, []string{"result"})
 }
 
 func newProcessUpGauge(serviceName string) prometheus.Gauge {
