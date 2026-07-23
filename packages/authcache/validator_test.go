@@ -207,16 +207,14 @@ func TestUnit_CachingValidatorConcurrentBloomAccess(t *testing.T) {
 		wg.Add(2)
 		go func(i int) {
 			defer wg.Done()
-			res, err := v.Validate(context.Background(), fmt.Sprintf("ok-%d", i))
-			if err != nil || res == nil || res.OrgID != "org-1" {
-				errCh <- fmt.Errorf("ok-%d: res=%v err=%v", i, res, err)
+			if err := assertConcurrentOK(v, i); err != nil {
+				errCh <- err
 			}
 		}(i)
 		go func(i int) {
 			defer wg.Done()
-			_, err := v.Validate(context.Background(), fmt.Sprintf("bad-%d", i))
-			if !errors.Is(err, ErrInvalidToken) {
-				errCh <- fmt.Errorf("bad-%d: err=%v want ErrInvalidToken", i, err)
+			if err := assertConcurrentInvalid(v, i); err != nil {
+				errCh <- err
 			}
 		}(i)
 	}
@@ -227,13 +225,35 @@ func TestUnit_CachingValidatorConcurrentBloomAccess(t *testing.T) {
 	}
 }
 
+func assertConcurrentOK(v *CachingValidator, i int) error {
+	res, err := v.Validate(context.Background(), fmt.Sprintf("ok-%d", i))
+	if err != nil {
+		return fmt.Errorf("ok-%d: %w", i, err)
+	}
+	if res == nil {
+		return fmt.Errorf("ok-%d: nil result", i)
+	}
+	if res.OrgID != "org-1" {
+		return fmt.Errorf("ok-%d: org=%q", i, res.OrgID)
+	}
+	return nil
+}
+
+func assertConcurrentInvalid(v *CachingValidator, i int) error {
+	_, err := v.Validate(context.Background(), fmt.Sprintf("bad-%d", i))
+	if errors.Is(err, ErrInvalidToken) {
+		return nil
+	}
+	return fmt.Errorf("bad-%d: err=%v want ErrInvalidToken", i, err)
+}
+
 type dualUpstream struct {
 	calls atomic.Int64
 }
 
 func (d *dualUpstream) Validate(_ context.Context, token string) (*Result, error) {
 	d.calls.Add(1)
-	if len(token) >= 4 && token[:4] == "bad-" {
+	if strings.HasPrefix(token, "bad-") {
 		return nil, ErrInvalidToken
 	}
 	return &Result{OrgID: "org-1"}, nil
