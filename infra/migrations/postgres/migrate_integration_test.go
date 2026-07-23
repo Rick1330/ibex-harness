@@ -129,9 +129,9 @@ func TestRLSUsersAndAgentsIsolation(t *testing.T) {
 
 	ctx := context.Background()
 	orgA, orgB := seedTwoOrgsWithAgents(t, ctx, db)
-	assertAgentCount(t, ctx, db, "", 0)
-	assertAgentCount(t, ctx, db, orgA, 1)
-	assertAgentCount(t, ctx, db, orgB, 1)
+	assertAgentCount(t, agentCountCheck{ctx: ctx, db: db, orgID: "", want: 0})
+	assertAgentCount(t, agentCountCheck{ctx: ctx, db: db, orgID: orgA, want: 1})
+	assertAgentCount(t, agentCountCheck{ctx: ctx, db: db, orgID: orgB, want: 1})
 }
 
 func seedTwoOrgsWithAgents(t *testing.T, ctx context.Context, db *sql.DB) (orgA, orgB string) {
@@ -187,22 +187,29 @@ func insertUserAndAgent(ctx context.Context, tx *sql.Tx, orgID string, seed user
 	return err
 }
 
-func assertAgentCount(t *testing.T, ctx context.Context, db *sql.DB, orgID string, want int) {
+type agentCountCheck struct {
+	ctx   context.Context
+	db    *sql.DB
+	orgID string
+	want  int
+}
+
+func assertAgentCount(t *testing.T, check agentCountCheck) {
 	t.Helper()
 	var count int
-	err := withAppRole(ctx, db, func(tx *sql.Tx) error {
-		if orgID != "" {
-			if _, err := tx.ExecContext(ctx, `SELECT set_config('app.current_org_id', $1, true)`, orgID); err != nil {
+	err := withAppRole(check.ctx, check.db, func(tx *sql.Tx) error {
+		if check.orgID != "" {
+			if _, err := tx.ExecContext(check.ctx, `SELECT set_config('app.current_org_id', $1, true)`, check.orgID); err != nil {
 				return err
 			}
 		}
-		return tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM ibex_core.agents`).Scan(&count)
+		return tx.QueryRowContext(check.ctx, `SELECT COUNT(*) FROM ibex_core.agents`).Scan(&count)
 	})
 	if err != nil {
-		t.Fatalf("count agents (org=%q): %v", orgID, err)
+		t.Fatalf("count agents (org=%q): %v", check.orgID, err)
 	}
-	if count != want {
-		t.Fatalf("expected %d agents (org=%q), got %d", want, orgID, count)
+	if count != check.want {
+		t.Fatalf("expected %d agents (org=%q), got %d", check.want, check.orgID, count)
 	}
 }
 
