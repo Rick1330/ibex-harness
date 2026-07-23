@@ -54,14 +54,14 @@ ALTER TABLE ibex_core.directives
     ADD CONSTRAINT directives_active_version_org_fk
     FOREIGN KEY (active_version_id, org_id)
     REFERENCES ibex_core.directive_versions (id, org_id)
-    ON DELETE SET NULL
+    ON DELETE SET NULL (active_version_id)
     NOT VALID;
 
 ALTER TABLE ibex_core.directives
     ADD CONSTRAINT directives_active_version_directive_fk
     FOREIGN KEY (active_version_id, id)
     REFERENCES ibex_core.directive_versions (id, directive_id)
-    ON DELETE SET NULL
+    ON DELETE SET NULL (active_version_id)
     NOT VALID;
 
 ALTER TABLE ibex_core.directives VALIDATE CONSTRAINT directives_active_version_org_fk;
