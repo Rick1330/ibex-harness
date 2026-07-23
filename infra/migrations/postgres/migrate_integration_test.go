@@ -70,8 +70,8 @@ func TestMigrateUpIdempotent(t *testing.T) {
 	if dirty {
 		t.Fatal("expected clean migration state")
 	}
-	if v != 8 {
-		t.Fatalf("expected version 8, got %d", v)
+	if v != 9 {
+		t.Fatalf("expected version 9, got %d", v)
 	}
 }
 
