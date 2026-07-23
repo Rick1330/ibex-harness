@@ -260,6 +260,158 @@ func (d *dualUpstream) Validate(_ context.Context, token string) (*Result, error
 	return &Result{OrgID: "org-1"}, nil
 }
 
+func TestUnit_CachingValidatorInvalidateByTokenID(t *testing.T) {
+	t.Parallel()
+	up := &spyUpstream{res: &Result{OrgID: "org-1", TokenID: "tok-uuid-1"}}
+	v := testValidator(t, up, Config{}, NoopMetrics{})
+	if _, err := v.Validate(context.Background(), "bearer-1"); err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	assertUpstreamCalls(t, up, 1)
+	v.InvalidateByTokenID("tok-uuid-1")
+	res, err := v.Validate(context.Background(), "bearer-1")
+	if err != nil {
+		t.Fatalf("second: %v", err)
+	}
+	if res.FromCache {
+		t.Fatal("expected miss after InvalidateByTokenID")
+	}
+	assertUpstreamCalls(t, up, 2)
+}
+
+func TestUnit_CachingValidatorInvalidateByTokenIDEmptyNoop(t *testing.T) {
+	t.Parallel()
+	up := &spyUpstream{res: &Result{OrgID: "org-1", TokenID: "tok-2"}}
+	v := testValidator(t, up, Config{}, NoopMetrics{})
+	if _, err := v.Validate(context.Background(), "bearer-2"); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	v.InvalidateByTokenID("")
+	v.InvalidateByTokenID("missing")
+	res, err := v.Validate(context.Background(), "bearer-2")
+	if err != nil || !res.FromCache {
+		t.Fatalf("expected cache hit err=%v fromCache=%v", err, res != nil && res.FromCache)
+	}
+	assertUpstreamCalls(t, up, 1)
+}
+
+func TestUnit_CachingValidatorConcurrentInvalidateByTokenID(t *testing.T) {
+	t.Parallel()
+	up := &spyUpstream{res: &Result{OrgID: "org-1", TokenID: "tok-conc"}}
+	v := testValidator(t, up, Config{LRUCapacity: 64}, NoopMetrics{})
+	if _, err := v.Validate(context.Background(), "bearer-conc"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 32; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			v.InvalidateByTokenID("tok-conc")
+		}()
+	}
+	wg.Wait()
+	res, err := v.Validate(context.Background(), "bearer-conc")
+	if err != nil {
+		t.Fatalf("after: %v", err)
+	}
+	if res.FromCache {
+		t.Fatal("expected miss after concurrent invalidate")
+	}
+}
+
+type blockingUpstream struct {
+	release chan struct{}
+	started chan struct{}
+	res     *Result
+	calls   atomic.Int64
+}
+
+func (b *blockingUpstream) Validate(context.Context, string) (*Result, error) {
+	b.calls.Add(1)
+	select {
+	case b.started <- struct{}{}:
+	default:
+	}
+	<-b.release
+	return cloneResult(b.res, false), nil
+}
+
+func TestUnit_CachingValidatorTombstoneBlocksStalePut(t *testing.T) {
+	t.Parallel()
+	up := &blockingUpstream{
+		release: make(chan struct{}),
+		started: make(chan struct{}, 1),
+		res:     &Result{OrgID: "org-1", TokenID: "tok-race"},
+	}
+	v := testValidator(t, up, Config{LRUMaxTTL: time.Minute}, NoopMetrics{})
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := v.Validate(context.Background(), "bearer-race")
+		errCh <- err
+	}()
+	select {
+	case <-up.started:
+	case <-time.After(time.Second):
+		t.Fatal("upstream did not start")
+	}
+	v.InvalidateByTokenID("tok-race")
+	close(up.release)
+	if err := <-errCh; err != nil {
+		t.Fatalf("in-flight validate: %v", err)
+	}
+
+	res, err := v.Validate(context.Background(), "bearer-race")
+	if err != nil {
+		t.Fatalf("second validate: %v", err)
+	}
+	if res.FromCache {
+		t.Fatal("stale in-flight result must not populate cache after revoke")
+	}
+	if up.calls.Load() < 2 {
+		t.Fatalf("upstream calls=%d want >= 2", up.calls.Load())
+	}
+}
+
+func TestUnit_CachingValidatorRevokeBetweenPutAndAdd(t *testing.T) {
+	t.Parallel()
+	up := &spyUpstream{res: &Result{OrgID: "org-1", TokenID: "tok-gap"}}
+	v := testValidator(t, up, Config{LRUMaxTTL: time.Minute}, NoopMetrics{})
+
+	indexed := make(chan struct{})
+	resume := make(chan struct{})
+	v.afterTokenIndexPut = func() {
+		close(indexed)
+		<-resume
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := v.Validate(context.Background(), "bearer-gap")
+		errCh <- err
+	}()
+	select {
+	case <-indexed:
+	case <-time.After(time.Second):
+		t.Fatal("index put did not run")
+	}
+	v.InvalidateByTokenID("tok-gap")
+	close(resume)
+	if err := <-errCh; err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+
+	res, err := v.Validate(context.Background(), "bearer-gap")
+	if err != nil {
+		t.Fatalf("second: %v", err)
+	}
+	if res.FromCache {
+		t.Fatal("stale LRU add after revoke must not serve from cache")
+	}
+	assertUpstreamCalls(t, up, 2)
+}
+
 func TestUnit_CachingValidatorNilResultFailsClosed(t *testing.T) {
 	t.Parallel()
 	up := &spyUpstream{res: nil}

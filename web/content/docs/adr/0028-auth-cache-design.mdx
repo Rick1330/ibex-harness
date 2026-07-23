@@ -51,7 +51,7 @@ If `ttl <= 0`, skip caching. Keys are **token hashes only** — raw tokens are n
 ### 4) Revocation SLA (aligned with ADR-0029)
 
 - **2.2.1 alone:** max stale window = `LRUMaxTTL` (**30 seconds**). Goal 2.2 “revoke ≤5s” is **not** met by TTL alone.
-- **2.2.2:** Redis pub/sub calls `CachingValidator.Invalidate(tokenHash)` to shrink lag toward the 5s exit gate / ~1s ideal path.
+- **2.2.2:** Redis pub/sub calls `CachingValidator.InvalidateByTokenID(tokenID)` to shrink lag toward the 5s exit gate / ~1s ideal path.
 
 ### 5) Failure mode — fail closed
 
@@ -59,7 +59,7 @@ On upstream transport / timeout when not serving a **fresh** LRU hit: return una
 
 ### 6) Package boundary and wire-up
 
-- `packages/authcache` owns `Validator`, `Result`, `CachingValidator`, `TokenHash`, `Invalidate`.
+- `packages/authcache` owns `Validator`, `Result`, `CachingValidator`, `TokenHash`, `Invalidate`, and `InvalidateByTokenID`. The validator owns the secondary token-ID index (and revocation tombstones) required for the InvalidateByTokenID path.
 - Invalid-token bloom uses an `RWMutex` and **two-generation rotation** when adds reach `BloomExpectedItems`, keeping the FP rate bounded on long-lived processes. Each generation is sized at half the configured FP rate so the OR of active+previous stays near the documented target.
 - Proxy adapter maps ↔ `ValidateResult` (including `ExpiresAt`, `FromCache`).
 - Metrics: `ibex_proxy_auth_cache_*` in `packages/metrics` (no `org_id` / token labels).

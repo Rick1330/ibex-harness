@@ -29,6 +29,7 @@ type Config struct {
 	Port            string
 	GRPCPort        string
 	PostgresDSN     string
+	RedisURL        string
 	Argon2          token.Argon2Params
 	ShutdownTimeout time.Duration
 	Telemetry       telemetry.Config

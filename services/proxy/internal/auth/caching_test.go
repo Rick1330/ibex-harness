@@ -43,9 +43,7 @@ func TestUnit_WrapWithCacheFromCacheOnSecondCall(t *testing.T) {
 	wrapped := mustWrap(t, inner)
 	assertCacheHit(t, wrapped, "tok", false)
 	assertCacheHit(t, wrapped, "tok", true)
-	if inner.calls != 1 {
-		t.Fatalf("inner calls=%d want 1", inner.calls)
-	}
+	assertInnerCalls(t, inner, 1)
 }
 
 func assertCacheHit(t *testing.T, v TokenValidator, token string, wantHit bool) {
@@ -59,20 +57,50 @@ func assertCacheHit(t *testing.T, v TokenValidator, token string, wantHit bool) 
 	}
 }
 
+func assertInnerCalls(t *testing.T, inner *stubValidator, want int) {
+	t.Helper()
+	if inner.calls != want {
+		t.Fatalf("inner calls=%d want %d", inner.calls, want)
+	}
+}
+
 func TestUnit_WrapWithCacheInvalidate(t *testing.T) {
 	t.Parallel()
-	inner := &stubValidator{res: &ValidateResult{OrgID: "org-a"}}
+	runInvalidateMiss(t, invalidateByHash)
+}
+
+func TestUnit_WrapWithCacheInvalidateByTokenID(t *testing.T) {
+	t.Parallel()
+	runInvalidateMiss(t, invalidateByTokenID)
+}
+
+type invalidateFn func(CacheInvalidator)
+
+func invalidateByHash(inv CacheInvalidator) {
+	inv.Invalidate(authcache.TokenHash("tok"))
+}
+
+func invalidateByTokenID(inv CacheInvalidator) {
+	inv.InvalidateByTokenID("tok-uuid")
+}
+
+func runInvalidateMiss(t *testing.T, invalidate invalidateFn) {
+	t.Helper()
+	inner := &stubValidator{res: &ValidateResult{OrgID: "org-a", TokenID: "tok-uuid"}}
 	wrapped := mustWrap(t, inner)
 	assertCacheHit(t, wrapped, "tok", false)
-	inv, ok := wrapped.(CacheInvalidator)
+	invalidate(mustInvalidator(t, wrapped))
+	assertCacheHit(t, wrapped, "tok", false)
+	assertInnerCalls(t, inner, 2)
+}
+
+func mustInvalidator(t *testing.T, v TokenValidator) CacheInvalidator {
+	t.Helper()
+	inv, ok := v.(CacheInvalidator)
 	if !ok {
 		t.Fatal("expected CacheInvalidator")
 	}
-	inv.Invalidate(authcache.TokenHash("tok"))
-	assertCacheHit(t, wrapped, "tok", false)
-	if inner.calls != 2 {
-		t.Fatalf("inner calls=%d want 2", inner.calls)
-	}
+	return inv
 }
 
 func TestUnit_WrapWithCacheNilInner(t *testing.T) {
@@ -98,8 +126,11 @@ func TestUnit_WrapWithCacheMapsOther(t *testing.T) {
 	inner := &stubValidator{err: errors.New("boom")}
 	wrapped := mustWrap(t, inner)
 	_, got := wrapped.Validate(context.Background(), "tok")
-	if got == nil || got.Error() == "boom" {
-		t.Fatalf("got=%v want wrapped boom", got)
+	if got == nil {
+		t.Fatal("expected error")
+	}
+	if got.Error() == "boom" {
+		t.Fatal("want wrapped boom error")
 	}
 }
 
@@ -110,18 +141,5 @@ func assertMappedErr(t *testing.T, upstream, want error) {
 	_, got := wrapped.Validate(context.Background(), "tok")
 	if !errors.Is(got, want) {
 		t.Fatalf("got=%v want %v", got, want)
-	}
-}
-
-func TestUnit_MapToAuthcacheErr(t *testing.T) {
-	t.Parallel()
-	if !errors.Is(mapToAuthcacheErr(ErrInvalidToken), authcache.ErrInvalidToken) {
-		t.Fatal("invalid")
-	}
-	if !errors.Is(mapToAuthcacheErr(ErrAuthUnavailable), authcache.ErrUnavailable) {
-		t.Fatal("unavailable")
-	}
-	if mapToAuthcacheErr(errors.New("x")).Error() != "x" {
-		t.Fatal("passthrough")
 	}
 }

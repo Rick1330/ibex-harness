@@ -18,6 +18,7 @@ var ProxyRequiredMetricNames = []string{
 	"ibex_proxy_auth_cache_lru_size",
 	"ibex_proxy_auth_cache_lru_evictions_total",
 	"ibex_proxy_auth_cache_bloom_fp_total",
+	"ibex_proxy_revocation_invalidate_total",
 	"ibex_process_up",
 }
 
@@ -30,6 +31,7 @@ var AuthRequiredMetricNames = []string{
 	"ibex_db_pool_open_connections",
 	"ibex_auth_http_request_duration_seconds",
 	"ibex_auth_http_requests_total",
+	"ibex_auth_revocation_publish_total",
 	"ibex_process_up",
 }
 

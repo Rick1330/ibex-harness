@@ -15,6 +15,7 @@ type AuthRegistry struct {
 	dbQueryDuration       *prometheus.HistogramVec
 	httpRequestDuration   *prometheus.HistogramVec
 	httpRequestsTotal     *prometheus.CounterVec
+	revocationPublish     *prometheus.CounterVec
 	processUp             prometheus.Gauge
 }
 
@@ -32,6 +33,7 @@ func NewAuth(cfg AuthConfig) *AuthRegistry {
 		dbQueryDuration:       set.dbQueryDuration,
 		httpRequestDuration:   set.httpRequestDuration,
 		httpRequestsTotal:     set.httpRequestsTotal,
+		revocationPublish:     set.revocationPublish,
 		processUp:             set.processUp,
 	}
 	r.processUp.Set(1)
@@ -67,4 +69,23 @@ func (r *AuthRegistry) ObserveDBQuery(obs DBQueryObservation) {
 func (r *AuthRegistry) ObserveHTTPRequest(obs HTTPRequestObservation) {
 	r.httpRequestsTotal.WithLabelValues(obs.Route, obs.Method, obs.StatusCode).Inc()
 	r.httpRequestDuration.WithLabelValues(obs.Route, obs.Method, obs.StatusCode).Observe(obs.Seconds)
+}
+
+// Revocation publish result label values (Prometheus cardinality bound).
+const (
+	RevocationPublishOK    = "ok"
+	RevocationPublishError = "error"
+)
+
+// IncRevocationPublish records a Redis PUBLISH outcome.
+// Callers must pass RevocationPublishOK or RevocationPublishError; any other
+// value is normalized to RevocationPublishError so arbitrary labels cannot
+// reach WithLabelValues.
+func (r *AuthRegistry) IncRevocationPublish(result string) {
+	switch result {
+	case RevocationPublishOK:
+		r.revocationPublish.WithLabelValues(RevocationPublishOK).Inc()
+	default:
+		r.revocationPublish.WithLabelValues(RevocationPublishError).Inc()
+	}
 }

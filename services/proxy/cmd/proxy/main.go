@@ -16,6 +16,7 @@ import (
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	"github.com/Rick1330/ibex-harness/packages/provider"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
+	"github.com/Rick1330/ibex-harness/packages/revocation"
 	"github.com/Rick1330/ibex-harness/packages/shutdown"
 	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
@@ -100,9 +101,15 @@ func runBootstrap(_ []string, signalCh chan os.Signal) int {
 		ProviderRegistry: providerReg,
 	}
 	server := newHTTPServer(deps)
+	revSub, revCancel, err := startRevocationSubscriber(redisClient, validator, log, reg)
+	if err != nil {
+		log.ErrorCtx(context.Background(), "revocation subscriber setup failed", "error", err)
+		return 1
+	}
 	return runWithShutdown(shutdownOpts{
 		cfg: cfg, logger: log, providers: providers, server: server,
-		grpcConn: grpcConn, redisClient: redisClient, signalCh: signalCh,
+		grpcConn: grpcConn, redisClient: redisClient,
+		revSub: revSub, revCancel: revCancel, signalCh: signalCh,
 	})
 }
 
@@ -113,6 +120,8 @@ type shutdownOpts struct {
 	providers   *telemetry.Providers
 	grpcConn    *grpc.ClientConn
 	redisClient redis.UniversalClient
+	revSub      *revocation.Subscriber
+	revCancel   context.CancelFunc
 	signalCh    chan os.Signal
 }
 
@@ -185,6 +194,30 @@ func maybeWrapAuthCache(
 	return wrapped, nil
 }
 
+func startRevocationSubscriber(
+	redisClient redis.UniversalClient,
+	validator auth.TokenValidator,
+	log *logger.Logger,
+	reg *ibexmetrics.ProxyRegistry,
+) (*revocation.Subscriber, context.CancelFunc, error) {
+	if redisClient == nil {
+		return nil, nil, nil
+	}
+	inv, ok := validator.(auth.CacheInvalidator)
+	if !ok {
+		log.InfoCtx(context.Background(), "revocation subscriber skipped; auth cache disabled")
+		return nil, nil, nil
+	}
+	sub, err := revocation.NewSubscriber(redisClient, inv, log, reg)
+	if err != nil {
+		return nil, nil, err
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	go sub.Run(ctx)
+	log.InfoCtx(context.Background(), "revocation subscriber started", "channel", revocation.Channel)
+	return sub, cancel, nil
+}
+
 func newHTTPServer(deps proxyhttp.RouterDeps) *http.Server {
 	return &http.Server{
 		Addr:              ":" + deps.Config.Port,
@@ -194,6 +227,8 @@ func newHTTPServer(deps proxyhttp.RouterDeps) *http.Server {
 }
 
 func runWithShutdown(opts shutdownOpts) int {
+	defer stopRevocationSubscriber(opts)
+
 	errCh := make(chan error, 1)
 	go func() {
 		opts.logger.InfoCtx(context.Background(), "service starting", "addr", opts.server.Addr)
@@ -232,10 +267,23 @@ func runWithShutdown(opts shutdownOpts) int {
 	return 0
 }
 
+func stopRevocationSubscriber(opts shutdownOpts) {
+	if opts.revCancel != nil {
+		opts.revCancel()
+	}
+	if opts.revSub != nil {
+		opts.revSub.Stop()
+	}
+}
+
 func registerShutdownHooks(sd *shutdown.Coordinator, opts shutdownOpts) {
 	sd.Register(opts.providers.Shutdown)
 	sd.Register(func(ctx context.Context) error {
 		return opts.server.Shutdown(ctx)
+	})
+	sd.Register(func(ctx context.Context) error {
+		stopRevocationSubscriber(opts)
+		return nil
 	})
 	sd.Register(func(ctx context.Context) error {
 		if opts.grpcConn != nil {

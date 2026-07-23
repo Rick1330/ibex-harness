@@ -18,6 +18,7 @@ type envConfig struct {
 	Port               string            `env:"IBEX_PORT" envDefault:"8081"`
 	GRPCPort           string            `env:"IBEX_GRPC_PORT" envDefault:"9091"`
 	PostgresDSN        ibexconfig.Secret `env:"POSTGRES_DSN,required" secret:"true"`
+	RedisURL           ibexconfig.Secret `env:"REDIS_URL" secret:"true"`
 	ShutdownTimeoutRaw string            `env:"IBEX_SHUTDOWN_TIMEOUT"`
 	Argon2MemoryKiB    uint32            `env:"IBEX_ARGON2_MEMORY_KIB"`
 	Argon2Time         uint32            `env:"IBEX_ARGON2_TIME"`
@@ -50,6 +51,7 @@ func baseAuthConfig(envCfg envConfig, level slog.Level) (Config, error) {
 		Port:        envCfg.Port,
 		GRPCPort:    envCfg.GRPCPort,
 		PostgresDSN: envCfg.PostgresDSN.String(),
+		RedisURL:    envCfg.RedisURL.String(),
 		Argon2:      crypto.ProductionParams(),
 	}
 	if err := applyAuthEnvOverrides(&cfg, envCfg); err != nil {

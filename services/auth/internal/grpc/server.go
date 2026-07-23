@@ -106,7 +106,9 @@ func (s *Server) RevokeToken(ctx context.Context, req *authv1.RevokeTokenRequest
 	if req.RevokeReason != nil {
 		reason = req.RevokeReason
 	}
-	err := s.tokenService.RevokeToken(ctx, req.GetOrgId(), req.GetTokenId(), caller.UserID, reason)
+	err := s.tokenService.RevokeToken(ctx, service.RevokeTokenParams{
+		OrgID: req.GetOrgId(), TokenID: req.GetTokenId(), RevokedBy: caller.UserID, Reason: reason,
+	})
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return nil, status.Error(codes.NotFound, "token not found")

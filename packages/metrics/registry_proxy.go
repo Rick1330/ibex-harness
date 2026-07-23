@@ -27,6 +27,7 @@ type ProxyRegistry struct {
 	authCacheLRUSize     prometheus.Gauge
 	authCacheLRUEvict    prometheus.Counter
 	authCacheBloomFP     prometheus.Counter
+	revocationInvalidate prometheus.Counter
 	processUp            prometheus.Gauge
 }
 

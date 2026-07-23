@@ -240,6 +240,7 @@ Used by: **auth** (`services/auth`)
 | Variable | Required | Default | Description | Security Notes |
 |----------|----------|---------|-------------|----------------|
 | `POSTGRES_DSN` | Yes | (none) | Postgres DSN (`postgres://...`) | Secret |
+| `REDIS_URL` | No | (empty) | Redis for token-revocation PUBLISH (`ibex:token:revocations`). Empty → Noop publisher (proxies rely on LRU TTL ≤30s). Must match proxy Redis when auth cache is enabled. | Secret if password present |
 | `IBEX_PORT` | No | `8081` | HTTP port for `/health`, `/ready`, `/metrics` | |
 | `IBEX_GRPC_PORT` | No | `9091` | gRPC listen port for `AuthService` | Internal only; use mTLS in production |
 | `IBEX_SHUTDOWN_TIMEOUT` | No | `30s` | Graceful shutdown drain | |

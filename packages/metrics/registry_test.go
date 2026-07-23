@@ -150,6 +150,7 @@ func seedProxySamples(reg *ProxyRegistry) {
 	reg.SetAuthCacheLRUSize(1)
 	reg.IncAuthCacheLRUEviction()
 	reg.IncAuthCacheBloomFP()
+	reg.IncRevocationInvalidate()
 }
 
 func TestProxyRegistry_AsyncBackpressureMetricsRegistered(t *testing.T) {
@@ -191,6 +192,9 @@ func seedAuthSamples(reg *AuthRegistry) {
 	reg.ObserveHTTPRequest(HTTPRequestObservation{
 		Route: "/health", Method: http.MethodGet, StatusCode: "200", Seconds: 0.001,
 	})
+	reg.IncRevocationPublish(RevocationPublishOK)
+	reg.IncRevocationPublish(RevocationPublishError)
+	reg.IncRevocationPublish("unexpected-label") // normalized to error
 }
 
 func TestNopQueryObserver_ObserveDBQuery(t *testing.T) {

@@ -53,3 +53,16 @@ func (r *ProxyRegistry) IncAuthCacheLRUEviction() {
 func (r *ProxyRegistry) IncAuthCacheBloomFP() {
 	r.authCacheBloomFP.Inc()
 }
+
+func (r *ProxyRegistry) initRevocationMetrics() {
+	r.revocationInvalidate = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "ibex_proxy_revocation_invalidate_total",
+		Help: "Auth cache invalidations applied from Redis revocation pub/sub.",
+	})
+}
+
+// IncRevocationInvalidate records that the local auth cache applied an
+// invalidation in response to a Redis revocation pub/sub event.
+func (r *ProxyRegistry) IncRevocationInvalidate() {
+	r.revocationInvalidate.Inc()
+}

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -13,6 +14,8 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	ibexmetrics "github.com/Rick1330/ibex-harness/packages/metrics"
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
+	"github.com/Rick1330/ibex-harness/packages/ratelimit"
+	"github.com/Rick1330/ibex-harness/packages/revocation"
 	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/config"
 	grpcserver "github.com/Rick1330/ibex-harness/services/auth/internal/grpc"
@@ -21,6 +24,7 @@ import (
 	"github.com/Rick1330/ibex-harness/services/auth/internal/service"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/token"
 	_ "github.com/lib/pq"
+	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 )
 
@@ -56,7 +60,13 @@ func runBootstrap(_ []string, signalCh chan os.Signal) int {
 	repo := repository.NewTokensRepository(db, reg)
 	agentsRepo := repository.NewAgentsRepository(db, reg)
 	validator := token.NewValidator(repo, cfg.Argon2)
-	tokenSvc := service.NewTokenService(repo, cfg.Argon2, log)
+
+	redisClient, publisher, err := setupRevocationPublisher(cfg, log, reg)
+	if err != nil {
+		log.ErrorCtx(context.Background(), "revocation publisher setup failed", "error", err)
+		return 1
+	}
+	tokenSvc := service.NewTokenService(repo, cfg.Argon2, log, publisher)
 
 	providers, tracer, err := telemetry.InitTracer(context.Background(), cfg.Telemetry, "ibex-auth")
 	if err != nil {
@@ -93,8 +103,30 @@ func runBootstrap(_ []string, signalCh chan os.Signal) int {
 
 	return runWithShutdown(shutdownOpts{
 		cfg: cfg, logger: log, providers: providers, grpcSrv: grpcSrv, grpcLis: grpcLis,
-		httpServer: httpServer, db: db, signalCh: signalCh,
+		httpServer: httpServer, db: db, redisClient: redisClient, tokenSvc: tokenSvc, signalCh: signalCh,
 	})
+}
+
+func setupRevocationPublisher(
+	cfg config.Config,
+	log *logger.Logger,
+	reg *ibexmetrics.AuthRegistry,
+) (redis.UniversalClient, revocation.Publisher, error) {
+	if cfg.RedisURL == "" {
+		log.InfoCtx(context.Background(), "revocation publisher disabled; REDIS_URL empty")
+		return nil, revocation.NoopPublisher{}, nil
+	}
+	client, err := ratelimit.ParseRedisURL(cfg.RedisURL)
+	if err != nil {
+		return nil, nil, fmt.Errorf("redis client init: %w", err)
+	}
+	pub, err := revocation.NewRedisPublisher(client, log, reg)
+	if err != nil {
+		_ = client.Close()
+		return nil, nil, err
+	}
+	log.InfoCtx(context.Background(), "revocation publisher configured", "channel", revocation.Channel)
+	return client, pub, nil
 }
 
 func configurePostgresPool(db *sql.DB) {
