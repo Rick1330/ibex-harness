@@ -54,19 +54,6 @@ func (idx *tokenIndex) isRevoked(tokenID string) bool {
 	return ok && idx.now().Before(until)
 }
 
-func (idx *tokenIndex) removeID(tokenID string) (digest, bool) {
-	if tokenID == "" {
-		return "", false
-	}
-	idx.mu.Lock()
-	defer idx.mu.Unlock()
-	hash, ok := idx.byID[tokenID]
-	if ok {
-		delete(idx.byID, tokenID)
-	}
-	return hash, ok
-}
-
 func (idx *tokenIndex) removeDigest(hash digest, tokenID string) {
 	if tokenID == "" {
 		return
