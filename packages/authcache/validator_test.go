@@ -182,7 +182,10 @@ func TestUnit_CachingValidatorBloomRotates(t *testing.T) {
 	up := &spyUpstream{err: ErrInvalidToken}
 	v := testValidator(t, up, Config{BloomExpectedItems: 2}, NoopMetrics{})
 	for i := 0; i < 3; i++ {
-		_, _ = v.Validate(context.Background(), fmt.Sprintf("bad-%d", i))
+		_, err := v.Validate(context.Background(), fmt.Sprintf("bad-%d", i))
+		if !errors.Is(err, ErrInvalidToken) {
+			t.Fatalf("i=%d err=%v want ErrInvalidToken", i, err)
+		}
 	}
 	v.bloom.mu.RLock()
 	defer v.bloom.mu.RUnlock()
@@ -199,18 +202,29 @@ func TestUnit_CachingValidatorConcurrentBloomAccess(t *testing.T) {
 	up := &dualUpstream{}
 	v := testValidator(t, up, Config{BloomExpectedItems: 64}, NoopMetrics{})
 	var wg sync.WaitGroup
+	errCh := make(chan error, 64)
 	for i := 0; i < 32; i++ {
 		wg.Add(2)
 		go func(i int) {
 			defer wg.Done()
-			_, _ = v.Validate(context.Background(), fmt.Sprintf("ok-%d", i))
+			res, err := v.Validate(context.Background(), fmt.Sprintf("ok-%d", i))
+			if err != nil || res == nil || res.OrgID != "org-1" {
+				errCh <- fmt.Errorf("ok-%d: res=%v err=%v", i, res, err)
+			}
 		}(i)
 		go func(i int) {
 			defer wg.Done()
-			_, _ = v.Validate(context.Background(), fmt.Sprintf("bad-%d", i))
+			_, err := v.Validate(context.Background(), fmt.Sprintf("bad-%d", i))
+			if !errors.Is(err, ErrInvalidToken) {
+				errCh <- fmt.Errorf("bad-%d: err=%v want ErrInvalidToken", i, err)
+			}
 		}(i)
 	}
 	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Error(err)
+	}
 }
 
 type dualUpstream struct {

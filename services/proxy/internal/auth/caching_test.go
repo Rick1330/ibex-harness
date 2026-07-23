@@ -41,32 +41,21 @@ func TestUnit_WrapWithCacheFromCacheOnSecondCall(t *testing.T) {
 		AgentID: "agent-1", UserID: "user-1", TokenID: "tok-1",
 	}}
 	wrapped := mustWrap(t, inner)
-	assertNotFromCache(t, wrapped, "tok")
-	assertFromCache(t, wrapped, "tok")
+	assertCacheHit(t, wrapped, "tok", false)
+	assertCacheHit(t, wrapped, "tok", true)
 	if inner.calls != 1 {
 		t.Fatalf("inner calls=%d want 1", inner.calls)
 	}
 }
 
-func assertNotFromCache(t *testing.T, v TokenValidator, token string) {
+func assertCacheHit(t *testing.T, v TokenValidator, token string, wantHit bool) {
 	t.Helper()
 	res, err := v.Validate(context.Background(), token)
 	if err != nil {
 		t.Fatalf("validate: %v", err)
 	}
-	if res.FromCache {
-		t.Fatal("expected miss")
-	}
-}
-
-func assertFromCache(t *testing.T, v TokenValidator, token string) {
-	t.Helper()
-	res, err := v.Validate(context.Background(), token)
-	if err != nil {
-		t.Fatalf("validate: %v", err)
-	}
-	if !res.FromCache {
-		t.Fatal("expected hit")
+	if res.FromCache != wantHit {
+		t.Fatalf("FromCache=%v want %v", res.FromCache, wantHit)
 	}
 }
 
@@ -74,13 +63,13 @@ func TestUnit_WrapWithCacheInvalidate(t *testing.T) {
 	t.Parallel()
 	inner := &stubValidator{res: &ValidateResult{OrgID: "org-a"}}
 	wrapped := mustWrap(t, inner)
-	assertNotFromCache(t, wrapped, "tok")
+	assertCacheHit(t, wrapped, "tok", false)
 	inv, ok := wrapped.(CacheInvalidator)
 	if !ok {
 		t.Fatal("expected CacheInvalidator")
 	}
 	inv.Invalidate(authcache.TokenHash("tok"))
-	assertNotFromCache(t, wrapped, "tok")
+	assertCacheHit(t, wrapped, "tok", false)
 	if inner.calls != 2 {
 		t.Fatalf("inner calls=%d want 2", inner.calls)
 	}
