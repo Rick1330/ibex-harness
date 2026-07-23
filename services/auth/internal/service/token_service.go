@@ -144,6 +144,12 @@ func (s *TokenService) publishRevocationAsync(p RevokeTokenParams) {
 		defer s.publishWG.Done()
 		ctx, cancel := s.newPublishContext()
 		defer cancel()
+		defer func() {
+			if rec := recover(); rec != nil {
+				s.logger.WarnCtx(ctx, "revocation publish panic recovered",
+					"recover", rec, "token_id", p.TokenID)
+			}
+		}()
 		event := revocation.RevocationEvent{
 			Version:   revocation.CurrentSchemaVersion,
 			TokenID:   p.TokenID,

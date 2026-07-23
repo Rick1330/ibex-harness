@@ -102,8 +102,7 @@ func (v *CachingValidator) InvalidateByTokenID(tokenID string) {
 	if tokenID == "" {
 		return
 	}
-	hash, ok := v.tokenIdx.removeID(tokenID)
-	v.tokenIdx.markRevoked(tokenID)
+	hash, ok := v.tokenIdx.revoke(tokenID)
 	if ok {
 		v.lru.Remove(hash)
 		v.metrics.SetAuthCacheLRUSize(float64(v.lru.Len()))

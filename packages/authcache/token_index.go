@@ -78,15 +78,20 @@ func (idx *tokenIndex) removeDigest(hash digest, tokenID string) {
 	}
 }
 
-// markRevoked installs a tombstone for tokenID lasting tombTTL.
-func (idx *tokenIndex) markRevoked(tokenID string) {
+// revoke installs a tombstone and removes any index entry under one lock,
+// returning the prior digest (if any) so the caller can evict the LRU entry.
+func (idx *tokenIndex) revoke(tokenID string) (digest, bool) {
 	if tokenID == "" {
-		return
+		return "", false
 	}
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
+	hash, ok := idx.byID[tokenID]
+	if ok {
+		delete(idx.byID, tokenID)
+	}
 	idx.tomb[tokenID] = idx.now().Add(idx.tombTTL)
-	delete(idx.byID, tokenID)
+	return hash, ok
 }
 
 func (idx *tokenIndex) tombLiveLocked(tokenID string) bool {
