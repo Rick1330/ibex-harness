@@ -112,6 +112,8 @@ BEGIN
 END;
 $$;
 
+REVOKE ALL ON FUNCTION ibex_core.reject_directive_version_update() FROM PUBLIC;
+
 CREATE TRIGGER directive_versions_immutable
     BEFORE UPDATE ON ibex_core.directive_versions
     FOR EACH ROW EXECUTE FUNCTION ibex_core.reject_directive_version_update();
