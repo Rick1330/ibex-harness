@@ -26,6 +26,11 @@ const (
 	defaultOpenAIRequestTimeout = 120 * time.Second
 	defaultOpenAIMaxRetries     = 3
 	defaultOpenAIRetryBaseDelay = 500 * time.Millisecond
+	defaultAuthCacheLRUCapacity = 5000
+	defaultAuthCacheLRUMaxTTL   = 30 * time.Second
+	defaultAuthCacheBloomItems  = 10000
+	defaultAuthCacheBloomFPRate = 0.001
+	maxAuthCacheLRUMaxTTL       = 30 * time.Second
 )
 
 // RateLimitConfig holds org-level rate limit settings (Phase 1; no DB).
@@ -116,16 +121,16 @@ func (c *Config) ApplyDefaults() {
 
 func (c *Config) applyAuthCacheDefaults() {
 	if c.AuthCache.LRUCapacity < 1 {
-		c.AuthCache.LRUCapacity = 5000
+		c.AuthCache.LRUCapacity = defaultAuthCacheLRUCapacity
 	}
 	if c.AuthCache.LRUMaxTTL <= 0 {
-		c.AuthCache.LRUMaxTTL = 30 * time.Second
+		c.AuthCache.LRUMaxTTL = defaultAuthCacheLRUMaxTTL
 	}
 	if c.AuthCache.BloomExpectedItems < 1 {
-		c.AuthCache.BloomExpectedItems = 10000
+		c.AuthCache.BloomExpectedItems = defaultAuthCacheBloomItems
 	}
 	if c.AuthCache.BloomFPRate <= 0 || c.AuthCache.BloomFPRate >= 1 {
-		c.AuthCache.BloomFPRate = 0.001
+		c.AuthCache.BloomFPRate = defaultAuthCacheBloomFPRate
 	}
 }
 

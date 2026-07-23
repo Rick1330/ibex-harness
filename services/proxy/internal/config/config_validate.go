@@ -101,6 +101,9 @@ func (c Config) validateAuthCache() error {
 	if c.AuthCache.LRUMaxTTL <= 0 {
 		return fmt.Errorf("IBEX_AUTH_CACHE_LRU_MAX_TTL must be positive")
 	}
+	if c.AuthCache.LRUMaxTTL > maxAuthCacheLRUMaxTTL {
+		return fmt.Errorf("IBEX_AUTH_CACHE_LRU_MAX_TTL must be <= %s", maxAuthCacheLRUMaxTTL)
+	}
 	if c.AuthCache.BloomExpectedItems < 1 {
 		return fmt.Errorf("IBEX_AUTH_CACHE_BLOOM_EXPECTED_ITEMS must be positive")
 	}

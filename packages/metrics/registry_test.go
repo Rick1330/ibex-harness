@@ -168,6 +168,21 @@ func TestProxyRegistry_AsyncBackpressureMetricsRegistered(t *testing.T) {
 	}
 }
 
+func TestProxyRegistry_AuthCacheSeriesMaterializedUnseeded(t *testing.T) {
+	t.Parallel()
+	reg := NewProxy("test-proxy")
+	body := scrapeMetrics(t, reg.Gatherer())
+	for _, want := range []string{
+		`ibex_proxy_auth_cache_hits_total{tier="lru"}`,
+		`ibex_proxy_auth_cache_misses_total{tier="lru"}`,
+		`ibex_proxy_auth_cache_misses_total{tier="bloom"}`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("missing series %q in:\n%s", want, body)
+		}
+	}
+}
+
 func seedAuthSamples(reg *AuthRegistry) {
 	reg.ObserveValidateToken(ValidateTokenObservation{Result: TokenResultOK, Seconds: 0.001})
 	reg.ObserveValidateAgent(ValidateAgentObservation{Result: AgentResultOK, Seconds: 0.001})

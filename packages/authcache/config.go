@@ -21,18 +21,19 @@ type Config struct {
 	BloomFPRate        float64
 }
 
-// ApplyDefaults fills zero-valued fields with production defaults.
+// ApplyDefaults fills only zero-valued fields with production defaults.
+// Explicitly invalid non-zero values are preserved so Validate can reject them.
 func (c *Config) ApplyDefaults() {
-	if c.LRUCapacity < 1 {
+	if c.LRUCapacity == 0 {
 		c.LRUCapacity = defaultLRUCapacity
 	}
-	if c.LRUMaxTTL <= 0 {
+	if c.LRUMaxTTL == 0 {
 		c.LRUMaxTTL = defaultLRUMaxTTL
 	}
-	if c.BloomExpectedItems < 1 {
+	if c.BloomExpectedItems == 0 {
 		c.BloomExpectedItems = defaultBloomExpectedItems
 	}
-	if c.BloomFPRate <= 0 || c.BloomFPRate >= 1 {
+	if c.BloomFPRate == 0 {
 		c.BloomFPRate = defaultBloomFPRate
 	}
 }

@@ -59,7 +59,8 @@ On upstream transport / timeout when not serving a **fresh** LRU hit: return una
 
 ### 6) Package boundary and wire-up
 
-- `packages/authcache` owns `Upstream`, `Result`, `CachingValidator`, `TokenHash`, `Invalidate`.
+- `packages/authcache` owns `Validator`, `Result`, `CachingValidator`, `TokenHash`, `Invalidate`.
+- Invalid-token bloom uses an `RWMutex` and **two-generation rotation** when adds reach `BloomExpectedItems`, keeping the FP rate bounded on long-lived processes.
 - Proxy adapter maps ↔ `ValidateResult` (including `ExpiresAt`, `FromCache`).
 - Metrics: `ibex_proxy_auth_cache_*` in `packages/metrics` (no `org_id` / token labels).
 - Observability header: `X-IBEX-Auth-Cached: true` on LRU hits.
@@ -78,6 +79,6 @@ On upstream transport / timeout when not serving a **fresh** LRU hit: return una
 ## Alternatives considered
 
 1. **RedisBloom + Redis claims** — extra hop and ops complexity for Phase 2; deferred.
-2. **LRU-only** — replay of known-bad tokens still hits gRPC every time; bloom cheaply short-circuits after first reject.
+2. **LRU-only** — bloom-positive tokens bypass LRU lookup (avoid stale claims) and fall through to gRPC; without the bloom, known-bad hashes can still hit a fresh LRU entry until TTL/Invalidate.
 3. **Shorter TTL (1–5s) to meet 5s SLA** — spikes auth load; rejected in favor of pub/sub (ADR-0029).
 4. **Serve stale LRU when auth is down** — violates fail-closed security posture.

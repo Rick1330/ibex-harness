@@ -79,7 +79,7 @@ func writeAuthValidateError(awc authWriteCtx, r *http.Request, log *logger.Logge
 		apierror.WriteStatus(awc.w, http.StatusUnauthorized, apierror.CodeInvalidToken,
 			"Invalid or expired token", awc.requestID, apierror.WriteOpts{DocsBase: awc.docsBase})
 	case errors.Is(err, auth.ErrAuthUnavailable):
-		log.WarnCtx(r.Context(), "auth validate unavailable")
+		log.WarnCtx(r.Context(), "auth validate unavailable", "error", err)
 		apierror.WriteStatus(awc.w, http.StatusServiceUnavailable, apierror.CodeServiceDegraded,
 			"Authentication service unavailable", awc.requestID, apierror.WriteOpts{DocsBase: awc.docsBase})
 	default:

@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
@@ -39,7 +40,7 @@ func mapValidateTokenError(err error) error {
 	if st, ok := status.FromError(err); ok && st.Code() == codes.Unauthenticated {
 		return ErrInvalidToken
 	}
-	return ErrAuthUnavailable
+	return fmt.Errorf("%w: %v", ErrAuthUnavailable, err)
 }
 
 func mapValidateTokenResponse(resp *authv1.ValidateTokenResponse) *ValidateResult {

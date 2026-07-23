@@ -17,8 +17,8 @@ type Result struct {
 	FromCache bool
 }
 
-// Upstream validates tokens with the authoritative auth service.
-type Upstream interface {
+// Validator validates tokens with the authoritative auth service.
+type Validator interface {
 	Validate(ctx context.Context, accessToken string) (*Result, error)
 }
 

@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/logger"
-	"github.com/bits-and-blooms/bloom/v3"
 	lru "github.com/hashicorp/golang-lru/v2"
 )
 
@@ -16,19 +15,19 @@ type cachedEntry struct {
 	expiresAt time.Time
 }
 
-// CachingValidator is a two-tier invalid-token bloom + claims LRU in front of Upstream.
+// CachingValidator is a two-tier invalid-token bloom + claims LRU in front of Validator.
 type CachingValidator struct {
-	upstream Upstream
+	upstream Validator
 	cfg      Config
 	log      *logger.Logger
 	metrics  Metrics
-	bloom    *bloom.BloomFilter
-	lru      *lru.Cache[string, *cachedEntry]
+	bloom    *bloomFilter
+	lru      *lru.Cache[digest, *cachedEntry]
 	now      func() time.Time
 }
 
 // New constructs a CachingValidator. cfg defaults are applied before validate.
-func New(upstream Upstream, cfg Config, log *logger.Logger, m Metrics) (*CachingValidator, error) {
+func New(upstream Validator, cfg Config, log *logger.Logger, m Metrics) (*CachingValidator, error) {
 	if upstream == nil {
 		return nil, errors.New("authcache: upstream is required")
 	}
@@ -47,10 +46,10 @@ func New(upstream Upstream, cfg Config, log *logger.Logger, m Metrics) (*Caching
 		cfg:      cfg,
 		log:      log,
 		metrics:  m,
-		bloom:    bloom.NewWithEstimates(cfg.BloomExpectedItems, cfg.BloomFPRate),
+		bloom:    newBloomFilter(cfg.BloomExpectedItems, cfg.BloomFPRate),
 		now:      time.Now,
 	}
-	cache, err := lru.NewWithEvict[string, *cachedEntry](cfg.LRUCapacity, func(string, *cachedEntry) {
+	cache, err := lru.NewWithEvict[digest, *cachedEntry](cfg.LRUCapacity, func(digest, *cachedEntry) {
 		m.IncAuthCacheLRUEviction()
 	})
 	if err != nil {
@@ -62,16 +61,17 @@ func New(upstream Upstream, cfg Config, log *logger.Logger, m Metrics) (*Caching
 
 // Validate resolves claims via bloom → LRU → upstream (fail closed on upstream error).
 func (v *CachingValidator) Validate(ctx context.Context, token string) (*Result, error) {
-	hash := TokenHash(token)
-	if v.bloom.TestString(hash) {
-		return v.validateViaUpstream(ctx, token, hash, true)
+	call := upstreamCall{token: token, hash: hashToken(token)}
+	if v.bloom.test(call.hash) {
+		call.bloomSaidInvalid = true
+		return v.fetchUpstream(ctx, call)
 	}
-	if res, ok := v.lookupLRU(hash); ok {
+	if res, ok := v.lookupLRU(call.hash); ok {
 		v.metrics.IncAuthCacheHit("lru")
 		return res, nil
 	}
 	v.metrics.IncAuthCacheMiss("lru")
-	return v.validateViaUpstream(ctx, token, hash, false)
+	return v.fetchUpstream(ctx, call)
 }
 
 // Invalidate removes a token hash from the LRU synchronously (2.2.2 pub/sub).
@@ -79,11 +79,11 @@ func (v *CachingValidator) Invalidate(tokenHash string) {
 	if tokenHash == "" {
 		return
 	}
-	v.lru.Remove(tokenHash)
+	v.lru.Remove(digestFromHex(tokenHash))
 	v.metrics.SetAuthCacheLRUSize(float64(v.lru.Len()))
 }
 
-func (v *CachingValidator) lookupLRU(hash string) (*Result, bool) {
+func (v *CachingValidator) lookupLRU(hash digest) (*Result, bool) {
 	entry, ok := v.lru.Get(hash)
 	if !ok || entry == nil {
 		return nil, false
@@ -96,35 +96,42 @@ func (v *CachingValidator) lookupLRU(hash string) (*Result, bool) {
 	return cloneResult(&entry.result, true), true
 }
 
-func (v *CachingValidator) validateViaUpstream(
-	ctx context.Context, token, hash string, bloomSaidInvalid bool,
-) (*Result, error) {
-	if bloomSaidInvalid {
+type upstreamCall struct {
+	token            string
+	hash             digest
+	bloomSaidInvalid bool
+}
+
+func (v *CachingValidator) fetchUpstream(ctx context.Context, call upstreamCall) (*Result, error) {
+	if call.bloomSaidInvalid {
 		v.metrics.IncAuthCacheMiss("bloom")
 	}
-	res, err := v.upstream.Validate(ctx, token)
+	res, err := v.upstream.Validate(ctx, call.token)
 	if err != nil {
-		return nil, v.handleUpstreamError(hash, err)
+		return nil, v.mapUpstreamErr(call.hash, err)
 	}
-	if bloomSaidInvalid {
+	if res == nil {
+		return nil, ErrUnavailable
+	}
+	if call.bloomSaidInvalid {
 		v.metrics.IncAuthCacheBloomFP()
 	}
-	v.putLRU(hash, res)
+	v.putLRU(call.hash, res)
 	return cloneResult(res, false), nil
 }
 
-func (v *CachingValidator) handleUpstreamError(hash string, err error) error {
+func (v *CachingValidator) mapUpstreamErr(hash digest, err error) error {
 	if errors.Is(err, ErrInvalidToken) {
-		v.bloom.AddString(hash)
+		v.bloom.add(hash)
 		return ErrInvalidToken
 	}
 	if errors.Is(err, ErrUnavailable) {
 		return ErrUnavailable
 	}
-	return err
+	return fmt.Errorf("authcache: upstream validate: %w", err)
 }
 
-func (v *CachingValidator) putLRU(hash string, res *Result) {
+func (v *CachingValidator) putLRU(hash digest, res *Result) {
 	ttl := v.cacheTTL(res)
 	if ttl <= 0 {
 		return
