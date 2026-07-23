@@ -257,11 +257,22 @@ func TestUnit_ConfigApplyDefaultsPreservesInvalid(t *testing.T) {
 	t.Parallel()
 	cfg := Config{LRUCapacity: -1, LRUMaxTTL: -time.Second, BloomFPRate: 1.5}
 	cfg.ApplyDefaults()
-	if cfg.LRUCapacity != -1 || cfg.LRUMaxTTL != -time.Second || cfg.BloomFPRate != 1.5 {
-		t.Fatalf("ApplyDefaults overwrote invalid values: %+v", cfg)
-	}
+	assertPreservedInvalidConfig(t, cfg)
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("expected Validate error")
+	}
+}
+
+func assertPreservedInvalidConfig(t *testing.T, cfg Config) {
+	t.Helper()
+	if cfg.LRUCapacity != -1 {
+		t.Fatalf("LRUCapacity=%d", cfg.LRUCapacity)
+	}
+	if cfg.LRUMaxTTL != -time.Second {
+		t.Fatalf("LRUMaxTTL=%s", cfg.LRUMaxTTL)
+	}
+	if cfg.BloomFPRate != 1.5 {
+		t.Fatalf("BloomFPRate=%v", cfg.BloomFPRate)
 	}
 }
 

@@ -3,7 +3,6 @@ package auth
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 	"time"
 
@@ -26,89 +25,107 @@ func (s *stubValidator) Validate(context.Context, string) (*ValidateResult, erro
 	return &out, nil
 }
 
-func TestWrapWithCache_FromCacheOnSecondCall(t *testing.T) {
-	inner := &stubValidator{res: &ValidateResult{
-		OrgID: "org-a", Permissions: 3, ExpiresAt: time.Now().Add(time.Hour),
-		AgentID: "agent-1", UserID: "user-1", TokenID: "tok-1",
-	}}
+func mustWrap(t *testing.T, inner TokenValidator) TokenValidator {
+	t.Helper()
 	wrapped, err := WrapWithCache(inner, authcache.Config{}, logger.Discard("proxy"), authcache.NoopMetrics{})
 	if err != nil {
 		t.Fatalf("WrapWithCache: %v", err)
 	}
-	r1, err := wrapped.Validate(context.Background(), "tok")
-	if err != nil || r1.FromCache {
-		t.Fatalf("first: err=%v fromCache=%v", err, r1 != nil && r1.FromCache)
-	}
-	r2, err := wrapped.Validate(context.Background(), "tok")
-	if err != nil || !r2.FromCache {
-		t.Fatalf("second: err=%v fromCache=%v", err, r2 != nil && r2.FromCache)
-	}
+	return wrapped
+}
+
+func TestUnit_WrapWithCacheFromCacheOnSecondCall(t *testing.T) {
+	t.Parallel()
+	inner := &stubValidator{res: &ValidateResult{
+		OrgID: "org-a", Permissions: 3, ExpiresAt: time.Now().Add(time.Hour),
+		AgentID: "agent-1", UserID: "user-1", TokenID: "tok-1",
+	}}
+	wrapped := mustWrap(t, inner)
+	assertNotFromCache(t, wrapped, "tok")
+	assertFromCache(t, wrapped, "tok")
 	if inner.calls != 1 {
 		t.Fatalf("inner calls=%d want 1", inner.calls)
 	}
 }
 
-func TestWrapWithCache_Invalidate(t *testing.T) {
-	inner := &stubValidator{res: &ValidateResult{OrgID: "org-a"}}
-	wrapped, err := WrapWithCache(inner, authcache.Config{}, logger.Discard("proxy"), authcache.NoopMetrics{})
+func assertNotFromCache(t *testing.T, v TokenValidator, token string) {
+	t.Helper()
+	res, err := v.Validate(context.Background(), token)
 	if err != nil {
-		t.Fatalf("WrapWithCache: %v", err)
+		t.Fatalf("validate: %v", err)
 	}
-	if _, err := wrapped.Validate(context.Background(), "tok"); err != nil {
-		t.Fatalf("first: %v", err)
+	if res.FromCache {
+		t.Fatal("expected miss")
 	}
+}
+
+func assertFromCache(t *testing.T, v TokenValidator, token string) {
+	t.Helper()
+	res, err := v.Validate(context.Background(), token)
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	if !res.FromCache {
+		t.Fatal("expected hit")
+	}
+}
+
+func TestUnit_WrapWithCacheInvalidate(t *testing.T) {
+	t.Parallel()
+	inner := &stubValidator{res: &ValidateResult{OrgID: "org-a"}}
+	wrapped := mustWrap(t, inner)
+	assertNotFromCache(t, wrapped, "tok")
 	inv, ok := wrapped.(CacheInvalidator)
 	if !ok {
-		t.Fatal("wrapped validator must implement CacheInvalidator")
+		t.Fatal("expected CacheInvalidator")
 	}
 	inv.Invalidate(authcache.TokenHash("tok"))
-	if _, err := wrapped.Validate(context.Background(), "tok"); err != nil {
-		t.Fatalf("after invalidate: %v", err)
-	}
+	assertNotFromCache(t, wrapped, "tok")
 	if inner.calls != 2 {
 		t.Fatalf("inner calls=%d want 2", inner.calls)
 	}
 }
 
-func TestWrapWithCache_NilInner(t *testing.T) {
+func TestUnit_WrapWithCacheNilInner(t *testing.T) {
+	t.Parallel()
 	_, err := WrapWithCache(nil, authcache.Config{}, logger.Discard("proxy"), authcache.NoopMetrics{})
 	if err == nil {
 		t.Fatal("expected error")
 	}
 }
 
-func TestWrapWithCache_MapsInvalidAndUnavailable(t *testing.T) {
-	cases := []struct {
-		name string
-		err  error
-		want error
-	}{
-		{name: "invalid", err: ErrInvalidToken, want: ErrInvalidToken},
-		{name: "unavailable", err: ErrAuthUnavailable, want: ErrAuthUnavailable},
-		{name: "other", err: errors.New("boom"), want: nil},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			inner := &stubValidator{err: tc.err}
-			wrapped, err := WrapWithCache(inner, authcache.Config{}, logger.Discard("proxy"), nil)
-			if err != nil {
-				t.Fatalf("WrapWithCache: %v", err)
-			}
-			_, got := wrapped.Validate(context.Background(), "tok")
-			if tc.name == "other" {
-				if got == nil || !strings.Contains(got.Error(), "boom") {
-					t.Fatalf("got=%v", got)
-				}
-				return
-			}
-			if !errors.Is(got, tc.want) {
-				t.Fatalf("got=%v want %v", got, tc.want)
-			}
-		})
+func TestUnit_WrapWithCacheMapsInvalid(t *testing.T) {
+	t.Parallel()
+	assertMappedErr(t, ErrInvalidToken, ErrInvalidToken)
+}
+
+func TestUnit_WrapWithCacheMapsUnavailable(t *testing.T) {
+	t.Parallel()
+	assertMappedErr(t, ErrAuthUnavailable, ErrAuthUnavailable)
+}
+
+func TestUnit_WrapWithCacheMapsOther(t *testing.T) {
+	t.Parallel()
+	inner := &stubValidator{err: errors.New("boom")}
+	wrapped := mustWrap(t, inner)
+	_, got := wrapped.Validate(context.Background(), "tok")
+	if got == nil || got.Error() == "boom" {
+		t.Fatalf("got=%v want wrapped boom", got)
 	}
 }
 
-func TestMapToAuthcacheErr(t *testing.T) {
+func assertMappedErr(t *testing.T, upstream, want error) {
+	t.Helper()
+	inner := &stubValidator{err: upstream}
+	wrapped := mustWrap(t, inner)
+	_, got := wrapped.Validate(context.Background(), "tok")
+	if !errors.Is(got, want) {
+		t.Fatalf("got=%v want %v", got, want)
+	}
+}
+
+func TestUnit_MapToAuthcacheErr(t *testing.T) {
+	t.Parallel()
 	if !errors.Is(mapToAuthcacheErr(ErrInvalidToken), authcache.ErrInvalidToken) {
 		t.Fatal("invalid")
 	}

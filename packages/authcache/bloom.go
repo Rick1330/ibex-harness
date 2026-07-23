@@ -19,11 +19,20 @@ type bloomFilter struct {
 }
 
 func newBloomFilter(expected uint, fpRate float64) *bloomFilter {
+	// OR of two generations ≈ 2p; size each generation for p/2 to keep combined FP near cfg.
 	return &bloomFilter{
-		active:   bloom.NewWithEstimates(expected, fpRate),
+		active:   bloom.NewWithEstimates(expected, halfFPRate(fpRate)),
 		expected: expected,
-		fpRate:   fpRate,
+		fpRate:   halfFPRate(fpRate),
 	}
+}
+
+func halfFPRate(fpRate float64) float64 {
+	half := fpRate / 2
+	if half <= 0 || half >= 1 {
+		return fpRate
+	}
+	return half
 }
 
 func (b *bloomFilter) test(hash digest) bool {
