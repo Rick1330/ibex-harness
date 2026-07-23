@@ -101,14 +101,15 @@ func runBootstrap(_ []string, signalCh chan os.Signal) int {
 		ProviderRegistry: providerReg,
 	}
 	server := newHTTPServer(deps)
-	revSub, err := startRevocationSubscriber(redisClient, validator, log, reg)
+	revSub, revCancel, err := startRevocationSubscriber(redisClient, validator, log, reg)
 	if err != nil {
 		log.ErrorCtx(context.Background(), "revocation subscriber setup failed", "error", err)
 		return 1
 	}
 	return runWithShutdown(shutdownOpts{
 		cfg: cfg, logger: log, providers: providers, server: server,
-		grpcConn: grpcConn, redisClient: redisClient, revSub: revSub, signalCh: signalCh,
+		grpcConn: grpcConn, redisClient: redisClient,
+		revSub: revSub, revCancel: revCancel, signalCh: signalCh,
 	})
 }
 
@@ -120,6 +121,7 @@ type shutdownOpts struct {
 	grpcConn    *grpc.ClientConn
 	redisClient redis.UniversalClient
 	revSub      *revocation.Subscriber
+	revCancel   context.CancelFunc
 	signalCh    chan os.Signal
 }
 
@@ -197,22 +199,23 @@ func startRevocationSubscriber(
 	validator auth.TokenValidator,
 	log *logger.Logger,
 	reg *ibexmetrics.ProxyRegistry,
-) (*revocation.Subscriber, error) {
+) (*revocation.Subscriber, context.CancelFunc, error) {
 	if redisClient == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	inv, ok := validator.(auth.CacheInvalidator)
 	if !ok {
 		log.InfoCtx(context.Background(), "revocation subscriber skipped; auth cache disabled")
-		return nil, nil
+		return nil, nil, nil
 	}
 	sub, err := revocation.NewSubscriber(redisClient, inv, log, reg)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	go sub.Run(context.Background())
+	ctx, cancel := context.WithCancel(context.Background())
+	go sub.Run(ctx)
 	log.InfoCtx(context.Background(), "revocation subscriber started", "channel", revocation.Channel)
-	return sub, nil
+	return sub, cancel, nil
 }
 
 func newHTTPServer(deps proxyhttp.RouterDeps) *http.Server {
@@ -224,6 +227,8 @@ func newHTTPServer(deps proxyhttp.RouterDeps) *http.Server {
 }
 
 func runWithShutdown(opts shutdownOpts) int {
+	defer stopRevocationSubscriber(opts)
+
 	errCh := make(chan error, 1)
 	go func() {
 		opts.logger.InfoCtx(context.Background(), "service starting", "addr", opts.server.Addr)
@@ -262,15 +267,22 @@ func runWithShutdown(opts shutdownOpts) int {
 	return 0
 }
 
+func stopRevocationSubscriber(opts shutdownOpts) {
+	if opts.revCancel != nil {
+		opts.revCancel()
+	}
+	if opts.revSub != nil {
+		opts.revSub.Stop()
+	}
+}
+
 func registerShutdownHooks(sd *shutdown.Coordinator, opts shutdownOpts) {
 	sd.Register(opts.providers.Shutdown)
 	sd.Register(func(ctx context.Context) error {
 		return opts.server.Shutdown(ctx)
 	})
 	sd.Register(func(ctx context.Context) error {
-		if opts.revSub != nil {
-			opts.revSub.Stop()
-		}
+		stopRevocationSubscriber(opts)
 		return nil
 	})
 	sd.Register(func(ctx context.Context) error {

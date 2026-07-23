@@ -14,7 +14,16 @@ This rule adds failure modes that repeatedly blocked merge.
 Never commit while parallel file edits on the same package are unfinished.
 
 ```text
-Edit → gofmt → go test ./touched/... → commit -s → push
+Edit → gofmt → go test <actual touched packages> → commit -s → push
+```
+
+Example (substitute the packages you changed):
+
+```powershell
+gofmt -w packages/revocation services/proxy/internal/auth
+go test ./packages/revocation/... ./services/proxy/internal/auth/...
+git commit -s -m "..."
+git push origin HEAD
 ```
 
 A missing import pushed mid-edit wastes a CI cycle.
@@ -22,9 +31,13 @@ A missing import pushed mid-edit wastes a CI cycle.
 ## 2. After every push: PR head must equal branch tip
 
 ```powershell
-git rev-parse HEAD
-gh pr view <N> --json headRefOid -q .headRefOid
-# if mismatch: close/reopen the PR (or empty signed commit), then re-check
+git branch --show-current
+git status -sb   # confirm upstream tracking
+git push -u origin HEAD
+$tip = git rev-parse HEAD
+$head = gh pr view <N> --json headRefOid -q .headRefOid
+# require $tip -eq $head before watching CI
+# if still mismatched after a successful push: escalate (do not invent close/reopen workarounds first)
 ```
 
 Do not watch CI until `headRefOid == HEAD`.
@@ -50,7 +63,16 @@ osv-scanner --lockfile pnpm-lock.yaml
 Branch protection requires conversation resolution. Green checks ≠ mergeable.
 
 ```powershell
-# unresolved threads must be 0; then:
+# unresolved review threads must be 0:
+gh api graphql -f query='
+query($n:Int!) {
+  repository(owner:"Rick1330", name:"ibex-harness") {
+    pullRequest(number:$n) {
+      reviewThreads(first:100) { nodes { isResolved } }
+    }
+  }
+}' -F n=<N> --jq '[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved==false)] | length'
+# want 0; then:
 gh pr view <N> --json mergeStateStatus -q .mergeStateStatus   # want CLEAN
 ```
 

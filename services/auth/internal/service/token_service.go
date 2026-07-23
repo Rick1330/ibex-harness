@@ -23,11 +23,13 @@ type tokenRepo interface {
 
 // TokenService manages PAT creation, revocation, and listing.
 type TokenService struct {
-	repo      tokenRepo
-	argon2    token.Argon2Params
-	logger    *logger.Logger
-	publisher revocation.Publisher
-	publishWG sync.WaitGroup
+	repo          tokenRepo
+	argon2        token.Argon2Params
+	logger        *logger.Logger
+	publisher     revocation.Publisher
+	publishWG     sync.WaitGroup
+	publishCtx    context.Context
+	publishCancel context.CancelFunc
 }
 
 // NewTokenService constructs a TokenService. publisher may be nil (NoopPublisher).
@@ -35,7 +37,11 @@ func NewTokenService(repo tokenRepo, argon2 token.Argon2Params, log *logger.Logg
 	if publisher == nil {
 		publisher = revocation.NoopPublisher{}
 	}
-	return &TokenService{repo: repo, argon2: argon2, logger: log, publisher: publisher}
+	ctx, cancel := context.WithCancel(context.Background())
+	return &TokenService{
+		repo: repo, argon2: argon2, logger: log, publisher: publisher,
+		publishCtx: ctx, publishCancel: cancel,
+	}
 }
 
 // CreateTokenResult holds the one-time plaintext response fields.
@@ -129,11 +135,11 @@ func (s *TokenService) publishRevocationAsync(orgID, tokenID string) {
 		defer s.publishWG.Done()
 		defer func() {
 			if rec := recover(); rec != nil {
-				s.logger.WarnCtx(context.Background(), "revocation publish panic recovered",
+				s.logger.WarnCtx(s.publishCtx, "revocation publish panic recovered",
 					"recover", rec, "token_id", tokenID)
 			}
 		}()
-		ctx, cancel := context.WithTimeout(context.Background(), revocation.PublishTimeout)
+		ctx, cancel := context.WithTimeout(s.publishCtx, revocation.PublishTimeout)
 		defer cancel()
 		event := revocation.RevocationEvent{
 			Version:   revocation.CurrentSchemaVersion,
@@ -150,6 +156,13 @@ func (s *TokenService) publishRevocationAsync(orgID, tokenID string) {
 
 // WaitPendingPublishes blocks until in-flight revocation publishes finish.
 func (s *TokenService) WaitPendingPublishes() {
+	s.publishWG.Wait()
+}
+
+// DrainPublishes cancels the service publish context and waits for in-flight
+// revocation publishes to finish. Call before closing Redis on shutdown.
+func (s *TokenService) DrainPublishes() {
+	s.publishCancel()
 	s.publishWG.Wait()
 }
 

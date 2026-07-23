@@ -42,14 +42,15 @@ func New(upstream Validator, cfg Config, log *logger.Logger, m Metrics) (*Cachin
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
+	now := time.Now
 	v := &CachingValidator{
 		upstream: upstream,
 		cfg:      cfg,
 		log:      log,
 		metrics:  m,
 		bloom:    newBloomFilter(cfg.BloomExpectedItems, cfg.BloomFPRate),
-		tokenIdx: newTokenIndex(),
-		now:      time.Now,
+		tokenIdx: newTokenIndex(cfg.LRUMaxTTL, now),
+		now:      now,
 	}
 	cache, err := lru.NewWithEvict[digest, *cachedEntry](cfg.LRUCapacity, func(hash digest, entry *cachedEntry) {
 		m.IncAuthCacheLRUEviction()
@@ -92,14 +93,18 @@ func (v *CachingValidator) Invalidate(tokenHash string) {
 	v.metrics.SetAuthCacheLRUSize(float64(v.lru.Len()))
 }
 
-// InvalidateByTokenID removes a cached claims entry by token UUID (2.2.2 pub/sub).
+// InvalidateByTokenID removes a cached claims entry by token UUID (2.2.2 pub/sub)
+// and installs a bounded tombstone so in-flight upstream results cannot repopulate.
 func (v *CachingValidator) InvalidateByTokenID(tokenID string) {
-	hash, ok := v.tokenIdx.removeID(tokenID)
-	if !ok {
+	if tokenID == "" {
 		return
 	}
-	v.lru.Remove(hash)
-	v.metrics.SetAuthCacheLRUSize(float64(v.lru.Len()))
+	hash, ok := v.tokenIdx.removeID(tokenID)
+	v.tokenIdx.markRevoked(tokenID)
+	if ok {
+		v.lru.Remove(hash)
+		v.metrics.SetAuthCacheLRUSize(float64(v.lru.Len()))
+	}
 }
 
 func (v *CachingValidator) lookupLRU(hash digest) (*Result, bool) {
@@ -156,12 +161,14 @@ func (v *CachingValidator) putLRU(hash digest, res *Result) {
 	if ttl <= 0 {
 		return
 	}
+	if !v.tokenIdx.put(res.TokenID, hash) {
+		return
+	}
 	entry := &cachedEntry{
 		result:    *cloneResult(res, false),
 		expiresAt: v.now().Add(ttl),
 	}
 	v.lru.Add(hash, entry)
-	v.tokenIdx.put(res.TokenID, hash)
 	v.metrics.SetAuthCacheLRUSize(float64(v.lru.Len()))
 }
 

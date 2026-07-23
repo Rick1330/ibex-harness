@@ -64,15 +64,33 @@ func TestUnit_WrapWithCacheInvalidate(t *testing.T) {
 	inner := &stubValidator{res: &ValidateResult{OrgID: "org-a"}}
 	wrapped := mustWrap(t, inner)
 	assertCacheHit(t, wrapped, "tok", false)
-	inv, ok := wrapped.(CacheInvalidator)
-	if !ok {
-		t.Fatal("expected CacheInvalidator")
-	}
+	inv := mustInvalidator(t, wrapped)
 	inv.Invalidate(authcache.TokenHash("tok"))
 	assertCacheHit(t, wrapped, "tok", false)
 	if inner.calls != 2 {
 		t.Fatalf("inner calls=%d want 2", inner.calls)
 	}
+}
+
+func TestUnit_WrapWithCacheInvalidateByTokenID(t *testing.T) {
+	t.Parallel()
+	inner := &stubValidator{res: &ValidateResult{OrgID: "org-a", TokenID: "tok-uuid"}}
+	wrapped := mustWrap(t, inner)
+	assertCacheHit(t, wrapped, "tok", false)
+	mustInvalidator(t, wrapped).InvalidateByTokenID("tok-uuid")
+	assertCacheHit(t, wrapped, "tok", false)
+	if inner.calls != 2 {
+		t.Fatalf("inner calls=%d want 2", inner.calls)
+	}
+}
+
+func mustInvalidator(t *testing.T, v TokenValidator) CacheInvalidator {
+	t.Helper()
+	inv, ok := v.(CacheInvalidator)
+	if !ok {
+		t.Fatal("expected CacheInvalidator")
+	}
+	return inv
 }
 
 func TestUnit_WrapWithCacheNilInner(t *testing.T) {

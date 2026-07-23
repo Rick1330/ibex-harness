@@ -71,7 +71,21 @@ func (r *AuthRegistry) ObserveHTTPRequest(obs HTTPRequestObservation) {
 	r.httpRequestDuration.WithLabelValues(obs.Route, obs.Method, obs.StatusCode).Observe(obs.Seconds)
 }
 
-// IncRevocationPublish records a Redis PUBLISH outcome (result: ok|error).
+// Revocation publish result label values (Prometheus cardinality bound).
+const (
+	RevocationPublishOK    = "ok"
+	RevocationPublishError = "error"
+)
+
+// IncRevocationPublish records a Redis PUBLISH outcome.
+// Callers must pass RevocationPublishOK or RevocationPublishError; any other
+// value is normalized to RevocationPublishError so arbitrary labels cannot
+// reach WithLabelValues.
 func (r *AuthRegistry) IncRevocationPublish(result string) {
-	r.revocationPublish.WithLabelValues(result).Inc()
+	switch result {
+	case RevocationPublishOK:
+		r.revocationPublish.WithLabelValues(RevocationPublishOK).Inc()
+	default:
+		r.revocationPublish.WithLabelValues(RevocationPublishError).Inc()
+	}
 }

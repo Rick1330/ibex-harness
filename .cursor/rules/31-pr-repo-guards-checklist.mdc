@@ -83,4 +83,4 @@ gh pr checks <PR_NUMBER> | grep -E 'repo-guards|ci-gate-repo'
 
 If `repo-guards` fails, read the log step name — fix DCO or issue/PR tracking, then re-run (do not stack blind retries).
 
-Also follow [32-pr-push-hygiene.mdc](32-pr-push-hygiene.mdc): after push verify PR `headRefOid == HEAD`, resolve all review threads before merge (`mergeStateStatus=CLEAN`).
+Also follow [32-pr-push-hygiene.mdc](32-pr-push-hygiene.mdc): after push verify PR `headRefOid == HEAD`, confirm unresolved review threads are 0 (GraphQL `reviewThreads`), then `mergeStateStatus=CLEAN`.

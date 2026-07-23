@@ -108,7 +108,7 @@ func registerAuthShutdownHooks(sd *shutdown.Coordinator, opts shutdownOpts) {
 	})
 	sd.Register(func(ctx context.Context) error {
 		if opts.tokenSvc != nil {
-			opts.tokenSvc.WaitPendingPublishes()
+			opts.tokenSvc.DrainPublishes()
 		}
 		return nil
 	})

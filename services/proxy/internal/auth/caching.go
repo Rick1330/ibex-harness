@@ -19,11 +19,7 @@ type grpcUpstream struct {
 }
 
 func (u *grpcUpstream) Validate(ctx context.Context, accessToken string) (*authcache.Result, error) {
-	res, err := u.inner.Validate(ctx, accessToken)
-	if err != nil {
-		return nil, mapToAuthcacheErr(err)
-	}
-	return proxyResultToAuthcache(res), nil
+	return toAuthcacheResult(u.inner.Validate(ctx, accessToken))
 }
 
 type cachingTokenValidator struct {
@@ -49,11 +45,7 @@ func WrapWithCache(
 }
 
 func (c *cachingTokenValidator) Validate(ctx context.Context, accessToken string) (*ValidateResult, error) {
-	res, err := c.inner.Validate(ctx, accessToken)
-	if err != nil {
-		return nil, mapFromAuthcacheErr(err)
-	}
-	return authcacheResultToProxy(res), nil
+	return toProxyResult(c.inner.Validate(ctx, accessToken))
 }
 
 func (c *cachingTokenValidator) Invalidate(tokenHash string) {

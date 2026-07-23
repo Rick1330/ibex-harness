@@ -61,7 +61,8 @@ func (r *ProxyRegistry) initRevocationMetrics() {
 	})
 }
 
-// IncRevocationInvalidate records a revocation pub/sub invalidate delivery.
+// IncRevocationInvalidate records that the local auth cache applied an
+// invalidation in response to a Redis revocation pub/sub event.
 func (r *ProxyRegistry) IncRevocationInvalidate() {
 	r.revocationInvalidate.Inc()
 }

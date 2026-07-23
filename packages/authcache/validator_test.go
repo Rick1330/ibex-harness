@@ -320,6 +320,60 @@ func TestUnit_CachingValidatorConcurrentInvalidateByTokenID(t *testing.T) {
 	}
 }
 
+type blockingUpstream struct {
+	release chan struct{}
+	started chan struct{}
+	res     *Result
+	calls   atomic.Int64
+}
+
+func (b *blockingUpstream) Validate(context.Context, string) (*Result, error) {
+	b.calls.Add(1)
+	select {
+	case b.started <- struct{}{}:
+	default:
+	}
+	<-b.release
+	return cloneResult(b.res, false), nil
+}
+
+func TestUnit_CachingValidatorTombstoneBlocksStalePut(t *testing.T) {
+	t.Parallel()
+	up := &blockingUpstream{
+		release: make(chan struct{}),
+		started: make(chan struct{}, 1),
+		res:     &Result{OrgID: "org-1", TokenID: "tok-race"},
+	}
+	v := testValidator(t, up, Config{LRUMaxTTL: time.Minute}, NoopMetrics{})
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := v.Validate(context.Background(), "bearer-race")
+		errCh <- err
+	}()
+	select {
+	case <-up.started:
+	case <-time.After(time.Second):
+		t.Fatal("upstream did not start")
+	}
+	v.InvalidateByTokenID("tok-race")
+	close(up.release)
+	if err := <-errCh; err != nil {
+		t.Fatalf("in-flight validate: %v", err)
+	}
+
+	res, err := v.Validate(context.Background(), "bearer-race")
+	if err != nil {
+		t.Fatalf("second validate: %v", err)
+	}
+	if res.FromCache {
+		t.Fatal("stale in-flight result must not populate cache after revoke")
+	}
+	if up.calls.Load() < 2 {
+		t.Fatalf("upstream calls=%d want >= 2", up.calls.Load())
+	}
+}
+
 func TestUnit_CachingValidatorNilResultFailsClosed(t *testing.T) {
 	t.Parallel()
 	up := &spyUpstream{res: nil}

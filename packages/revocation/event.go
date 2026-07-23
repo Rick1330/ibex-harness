@@ -31,6 +31,12 @@ func (e RevocationEvent) Validate() error {
 	if strings.TrimSpace(e.TokenID) == "" {
 		return fmt.Errorf("revocation: token_id is required")
 	}
+	if strings.TrimSpace(e.OrgID) == "" {
+		return fmt.Errorf("revocation: org_id is required")
+	}
+	if e.RevokedAt.IsZero() {
+		return fmt.Errorf("revocation: revoked_at is required")
+	}
 	return nil
 }
 

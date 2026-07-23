@@ -15,15 +15,30 @@ import (
 
 func TestUnit_RevocationEventValidate(t *testing.T) {
 	t.Parallel()
-	ok := revocation.RevocationEvent{Version: 1, TokenID: "tok-1"}
-	if err := ok.Validate(); err != nil {
+	assertEventValid(t, sampleEvent("tok-1"))
+	assertEventInvalid(t, revocation.RevocationEvent{Version: 2, TokenID: "x", OrgID: "o", RevokedAt: time.Now()})
+	assertEventInvalid(t, revocation.RevocationEvent{Version: 1, OrgID: "o", RevokedAt: time.Now()})
+	assertEventInvalid(t, revocation.RevocationEvent{Version: 1, TokenID: "t", RevokedAt: time.Now()})
+	assertEventInvalid(t, revocation.RevocationEvent{Version: 1, TokenID: "t", OrgID: "o"})
+}
+
+func assertEventValid(t *testing.T, e revocation.RevocationEvent) {
+	t.Helper()
+	if err := e.Validate(); err != nil {
 		t.Fatalf("valid: %v", err)
 	}
-	if err := (revocation.RevocationEvent{Version: 2, TokenID: "x"}).Validate(); err == nil {
-		t.Fatal("expected version error")
+}
+
+func assertEventInvalid(t *testing.T, e revocation.RevocationEvent) {
+	t.Helper()
+	if err := e.Validate(); err == nil {
+		t.Fatal("expected validation error")
 	}
-	if err := (revocation.RevocationEvent{Version: 1}).Validate(); err == nil {
-		t.Fatal("expected token_id error")
+}
+
+func sampleEvent(tokenID string) revocation.RevocationEvent {
+	return revocation.RevocationEvent{
+		Version: 1, TokenID: tokenID, OrgID: "org-1", RevokedAt: time.Now().UTC(),
 	}
 }
 
@@ -75,12 +90,12 @@ func (m *countingPublishMetrics) IncRevocationPublish(result string) {
 	m.fail.Add(1)
 }
 
-func newTestRedis(t *testing.T) *redis.Client {
+func newTestRedis(t *testing.T) (*miniredis.Miniredis, *redis.Client) {
 	t.Helper()
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
-	return client
+	return mr, client
 }
 
 func subscribeChannel(t *testing.T, client *redis.Client) *redis.PubSub {
@@ -95,22 +110,35 @@ func subscribeChannel(t *testing.T, client *redis.Client) *redis.PubSub {
 
 func TestUnit_RedisPublisherPublish(t *testing.T) {
 	t.Parallel()
-	client := newTestRedis(t)
+	_, client := newTestRedis(t)
 	metrics := &countingPublishMetrics{}
-	pub, err := revocation.NewRedisPublisher(client, logger.Discard("revocation"), metrics)
+	pub := mustPublisher(t, client, metrics)
+	sub := subscribeChannel(t, client)
+	mustPublish(t, pub, sampleEvent("tok-1"))
+	assertPublishedToken(t, sub, "tok-1")
+	assertPublishOKMetric(t, metrics)
+}
+
+func mustPublisher(t *testing.T, client *redis.Client, m revocation.PublishMetrics) *revocation.RedisPublisher {
+	t.Helper()
+	pub, err := revocation.NewRedisPublisher(client, logger.Discard("revocation"), m)
 	if err != nil {
 		t.Fatalf("NewRedisPublisher: %v", err)
 	}
-	sub := subscribeChannel(t, client)
-	event := revocation.RevocationEvent{
-		Version: 1, TokenID: "tok-1", OrgID: "org-1", RevokedAt: time.Now().UTC(),
-	}
+	return pub
+}
+
+func mustPublish(t *testing.T, pub *revocation.RedisPublisher, event revocation.RevocationEvent) {
+	t.Helper()
 	if err := pub.Publish(context.Background(), event); err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
-	assertPublishedToken(t, sub, "tok-1")
-	if metrics.ok.Load() != 1 {
-		t.Fatalf("ok metric=%d", metrics.ok.Load())
+}
+
+func assertPublishOKMetric(t *testing.T, m *countingPublishMetrics) {
+	t.Helper()
+	if m.ok.Load() != 1 {
+		t.Fatalf("ok metric=%d", m.ok.Load())
 	}
 }
 
@@ -118,35 +146,57 @@ func assertPublishedToken(t *testing.T, sub *redis.PubSub, wantID string) {
 	t.Helper()
 	select {
 	case msg := <-sub.Channel():
-		got, err := revocation.ParseEvent(msg.Payload)
-		if err != nil {
-			t.Fatalf("parse payload: %v", err)
-		}
-		if got.TokenID != wantID {
-			t.Fatalf("token_id=%q", got.TokenID)
-		}
+		assertPayloadTokenID(t, msg.Payload, wantID)
 	case <-time.After(time.Second):
 		t.Fatal("timeout waiting for publish")
 	}
 }
 
+func assertPayloadTokenID(t *testing.T, payload, wantID string) {
+	t.Helper()
+	got, err := revocation.ParseEvent(payload)
+	if err != nil {
+		t.Fatalf("parse payload: %v", err)
+	}
+	if got.TokenID != wantID {
+		t.Fatalf("token_id=%q", got.TokenID)
+	}
+}
+
 func TestUnit_RedisPublisherRejectsBadEvent(t *testing.T) {
 	t.Parallel()
-	client := newTestRedis(t)
-	pub, err := revocation.NewRedisPublisher(client, logger.Discard("revocation"), nil)
-	if err != nil {
-		t.Fatalf("NewRedisPublisher: %v", err)
-	}
-	err = pub.Publish(context.Background(), revocation.RevocationEvent{Version: 1})
+	_, client := newTestRedis(t)
+	pub := mustPublisher(t, client, nil)
+	err := pub.Publish(context.Background(), revocation.RevocationEvent{Version: 1})
 	if err == nil {
 		t.Fatal("expected validation error")
 	}
 }
 
+func TestUnit_RedisPublisherRedisFailure(t *testing.T) {
+	t.Parallel()
+	mr, client := newTestRedis(t)
+	metrics := &countingPublishMetrics{}
+	pub := mustPublisher(t, client, metrics)
+	mr.Close()
+	err := pub.Publish(context.Background(), sampleEvent("tok-fail"))
+	if err == nil {
+		t.Fatal("expected publish error")
+	}
+	if metrics.fail.Load() != 1 {
+		t.Fatalf("fail metric=%d", metrics.fail.Load())
+	}
+}
+
 type spyInvalidator struct {
-	mu   sync.Mutex
-	ids  []string
-	hits atomic.Int64
+	mu     sync.Mutex
+	ids    []string
+	hits   atomic.Int64
+	signal chan string
+}
+
+func newSpyInvalidator() *spyInvalidator {
+	return &spyInvalidator{signal: make(chan string, 8)}
 }
 
 func (s *spyInvalidator) InvalidateByTokenID(tokenID string) {
@@ -154,6 +204,10 @@ func (s *spyInvalidator) InvalidateByTokenID(tokenID string) {
 	s.mu.Lock()
 	s.ids = append(s.ids, tokenID)
 	s.mu.Unlock()
+	select {
+	case s.signal <- tokenID:
+	default:
+	}
 }
 
 type countingInvalidateMetrics struct {
@@ -177,14 +231,20 @@ func startSubscriber(t *testing.T, client *redis.Client, inv revocation.Invalida
 
 func TestUnit_SubscriberInvalidatesOnMessage(t *testing.T) {
 	t.Parallel()
-	client := newTestRedis(t)
-	inv := &spyInvalidator{}
+	_, client := newTestRedis(t)
+	inv := newSpyInvalidator()
 	metrics := &countingInvalidateMetrics{}
 	sub := startSubscriber(t, client, inv, metrics)
-
-	event := revocation.RevocationEvent{
-		Version: 1, TokenID: "tok-xyz", OrgID: "org", RevokedAt: time.Now().UTC(),
+	publishRaw(t, client, sampleEvent("tok-xyz"))
+	waitInvalidate(t, inv, "tok-xyz")
+	sub.Stop()
+	if metrics.n.Load() < 1 {
+		t.Fatal("expected invalidate metric")
 	}
+}
+
+func publishRaw(t *testing.T, client *redis.Client, event revocation.RevocationEvent) {
+	t.Helper()
 	raw, err := event.Marshal()
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
@@ -192,44 +252,90 @@ func TestUnit_SubscriberInvalidatesOnMessage(t *testing.T) {
 	if err := client.Publish(context.Background(), revocation.Channel, raw).Err(); err != nil {
 		t.Fatalf("publish: %v", err)
 	}
-	waitHits(t, inv, 1)
-	sub.Stop()
-	if metrics.n.Load() < 1 {
-		t.Fatal("expected invalidate metric")
-	}
 }
 
-func waitHits(t *testing.T, inv *spyInvalidator, want int64) {
+func waitInvalidate(t *testing.T, inv *spyInvalidator, wantID string) {
 	t.Helper()
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
-		if inv.hits.Load() >= want {
-			return
+	select {
+	case got := <-inv.signal:
+		if got != wantID {
+			t.Fatalf("token_id=%q want %q", got, wantID)
 		}
-		time.Sleep(5 * time.Millisecond)
+	case <-time.After(time.Second):
+		t.Fatalf("timeout waiting for invalidate; hits=%d", inv.hits.Load())
 	}
-	t.Fatalf("hits=%d want >= %d", inv.hits.Load(), want)
 }
 
 func TestUnit_SubscriberSkipsMalformed(t *testing.T) {
 	t.Parallel()
-	client := newTestRedis(t)
-	inv := &spyInvalidator{}
+	_, client := newTestRedis(t)
+	inv := newSpyInvalidator()
 	sub := startSubscriber(t, client, inv, nil)
 	if err := client.Publish(context.Background(), revocation.Channel, "{").Err(); err != nil {
 		t.Fatalf("publish: %v", err)
 	}
-	time.Sleep(50 * time.Millisecond)
+	publishRaw(t, client, sampleEvent("sentinel"))
+	waitInvalidate(t, inv, "sentinel")
 	sub.Stop()
-	if inv.hits.Load() != 0 {
-		t.Fatalf("hits=%d want 0", inv.hits.Load())
+	if inv.hits.Load() != 1 {
+		t.Fatalf("hits=%d want 1 (malformed skipped)", inv.hits.Load())
 	}
+}
+
+func TestUnit_SubscriberStopsOnContextCancel(t *testing.T) {
+	t.Parallel()
+	_, client := newTestRedis(t)
+	inv := newSpyInvalidator()
+	sub, err := revocation.NewSubscriber(client, inv, logger.Discard("revocation"), nil)
+	if err != nil {
+		t.Fatalf("NewSubscriber: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	go sub.Run(ctx)
+	waitForSubscribe(t, client)
+	cancel()
+	waitSubscriberDone(t, sub)
+}
+
+func TestUnit_SubscriberStopAfterRun(t *testing.T) {
+	t.Parallel()
+	_, client := newTestRedis(t)
+	sub := startSubscriber(t, client, newSpyInvalidator(), nil)
+	sub.Stop()
+	waitSubscriberDone(t, sub)
+}
+
+func waitSubscriberDone(t *testing.T, sub *revocation.Subscriber) {
+	t.Helper()
+	select {
+	case <-sub.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("subscriber did not exit")
+	}
+}
+
+func TestUnit_SubscriberReconnectAfterDisconnect(t *testing.T) {
+	t.Parallel()
+	mr, client := newTestRedis(t)
+	inv := newSpyInvalidator()
+	sub, err := revocation.NewSubscriber(client, inv, logger.Discard("revocation"), nil)
+	if err != nil {
+		t.Fatalf("NewSubscriber: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go sub.Run(ctx)
+	waitForSubscribe(t, client)
+	mr.Close()
+	// Force reconnect path; cancel soon so sleepBackoff exits without long wait.
+	time.AfterFunc(50*time.Millisecond, cancel)
+	waitSubscriberDone(t, sub)
 }
 
 func TestUnit_NewSubscriberRequiresDeps(t *testing.T) {
 	t.Parallel()
-	client := newTestRedis(t)
-	inv := &spyInvalidator{}
+	_, client := newTestRedis(t)
+	inv := newSpyInvalidator()
 	log := logger.Discard("revocation")
 	if _, err := revocation.NewSubscriber(nil, inv, log, nil); err == nil {
 		t.Fatal("expected client error")
@@ -244,19 +350,20 @@ func TestUnit_NewSubscriberRequiresDeps(t *testing.T) {
 
 func waitForSubscribe(t *testing.T, client *redis.Client) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		n, err := client.PubSubNumSub(context.Background(), revocation.Channel).Result()
-		if err != nil {
-			time.Sleep(10 * time.Millisecond)
-			continue
+	deadline := time.After(2 * time.Second)
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-deadline:
+			t.Fatal("subscriber did not attach in time")
+		case <-ticker.C:
+			n, err := client.PubSubNumSub(context.Background(), revocation.Channel).Result()
+			if err == nil && n[revocation.Channel] > 0 {
+				return
+			}
 		}
-		if n[revocation.Channel] > 0 {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatal("subscriber did not attach in time")
 }
 
 func TestUnit_NoopPublisher(t *testing.T) {
@@ -272,7 +379,7 @@ func TestUnit_NewRedisPublisherRequiresDeps(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	client := newTestRedis(t)
+	_, client := newTestRedis(t)
 	_, err = revocation.NewRedisPublisher(client, nil, nil)
 	if err == nil {
 		t.Fatal("expected logger error")

@@ -120,7 +120,7 @@ func TestRunWithShutdown_serverFailureReturns1(t *testing.T) {
 
 func TestRunWithShutdown_StopsOnSignal(t *testing.T) {
 	log := logger.Discard("auth")
-	providers, err := telemetry.Init(context.Background(), telemetry.Config{ServiceName: "auth"})
+	providers, err := telemetry.Init(context.Background(), telemetry.Config{ServiceName: "auth-shutdown-signal"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,8 +135,15 @@ func TestRunWithShutdown_StopsOnSignal(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	httpLis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	httpAddr := httpLis.Addr().String()
+	_ = httpLis.Close()
+
 	httpServer := &http.Server{
-		Addr:              "127.0.0.1:0",
+		Addr:              httpAddr,
 		Handler:           http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
@@ -162,6 +169,7 @@ func TestRunWithShutdown_StopsOnSignal(t *testing.T) {
 	}()
 
 	waitForTCP(t, grpcLis.Addr().String())
+	waitForTCP(t, httpAddr)
 	sigCh <- syscall.SIGTERM
 
 	select {

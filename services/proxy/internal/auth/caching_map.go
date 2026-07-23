@@ -6,6 +6,20 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/authcache"
 )
 
+func toAuthcacheResult(res *ValidateResult, err error) (*authcache.Result, error) {
+	if err != nil {
+		return nil, mapToAuthcacheErr(err)
+	}
+	return proxyResultToAuthcache(res), nil
+}
+
+func toProxyResult(res *authcache.Result, err error) (*ValidateResult, error) {
+	if err != nil {
+		return nil, mapFromAuthcacheErr(err)
+	}
+	return authcacheResultToProxy(res), nil
+}
+
 func mapToAuthcacheErr(err error) error {
 	if errors.Is(err, ErrInvalidToken) {
 		return authcache.ErrInvalidToken

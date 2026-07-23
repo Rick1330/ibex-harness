@@ -17,12 +17,21 @@ type recordingPublisher struct {
 	mu     sync.Mutex
 	events []revocation.RevocationEvent
 	err    error
+	notify chan struct{}
+}
+
+func newRecordingPublisher(err error) *recordingPublisher {
+	return &recordingPublisher{err: err, notify: make(chan struct{}, 8)}
 }
 
 func (p *recordingPublisher) Publish(_ context.Context, event revocation.RevocationEvent) error {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	p.events = append(p.events, event)
+	p.mu.Unlock()
+	select {
+	case p.notify <- struct{}{}:
+	default:
+	}
 	return p.err
 }
 
@@ -38,63 +47,97 @@ func (p *recordingPublisher) last() revocation.RevocationEvent {
 	return p.events[len(p.events)-1]
 }
 
-func TestUnit_RevokeTokenPublishesEvent(t *testing.T) {
-	t.Parallel()
+type revokeFixture struct {
+	orgID   string
+	tokenID string
+	repo    *memTokenRepo
+	pub     *recordingPublisher
+	svc     *TokenService
+}
+
+func newRevokeFixture(t *testing.T, pubErr error) revokeFixture {
+	t.Helper()
 	orgID := uuid.New().String()
 	tokenID := uuid.New().String()
 	repo := newMemTokenRepo()
 	repo.tokens[tokenID] = repository.CreateTokenParams{ID: tokenID, OrgID: orgID}
-	pub := &recordingPublisher{}
+	pub := newRecordingPublisher(pubErr)
 	svc := NewTokenService(repo, token.DefaultArgon2Params(), logger.Discard("auth"), pub)
+	return revokeFixture{orgID: orgID, tokenID: tokenID, repo: repo, pub: pub, svc: svc}
+}
 
-	if err := svc.RevokeToken(context.Background(), orgID, tokenID, "", nil); err != nil {
+func TestUnit_RevokeTokenPublishesEvent(t *testing.T) {
+	t.Parallel()
+	f := newRevokeFixture(t, nil)
+	mustRevokeToken(t, f)
+	waitPublish(t, f.pub, 1)
+	f.svc.WaitPendingPublishes()
+	assertRevokeEvent(t, f.pub.last(), f.tokenID, f.orgID)
+}
+
+func mustRevokeToken(t *testing.T, f revokeFixture) {
+	t.Helper()
+	err := f.svc.RevokeToken(context.Background(), f.orgID, f.tokenID, "", nil)
+	if err != nil {
 		t.Fatalf("RevokeToken: %v", err)
 	}
-	waitPublish(t, pub, 1)
-	svc.WaitPendingPublishes()
-	assertRevokeEvent(t, pub.last(), tokenID, orgID)
 }
 
 func assertRevokeEvent(t *testing.T, got revocation.RevocationEvent, tokenID, orgID string) {
 	t.Helper()
-	if got.TokenID != tokenID {
-		t.Fatalf("token_id=%q want %q", got.TokenID, tokenID)
+	assertFieldEQ(t, "token_id", got.TokenID, tokenID)
+	assertFieldEQ(t, "org_id", got.OrgID, orgID)
+	assertVersionEQ(t, got.Version, 1)
+}
+
+func assertFieldEQ(t *testing.T, name, got, want string) {
+	t.Helper()
+	if got != want {
+		t.Fatalf("%s=%q want %q", name, got, want)
 	}
-	if got.OrgID != orgID {
-		t.Fatalf("org_id=%q want %q", got.OrgID, orgID)
-	}
-	if got.Version != 1 {
-		t.Fatalf("version=%d want 1", got.Version)
+}
+
+func assertVersionEQ(t *testing.T, got, want int) {
+	t.Helper()
+	if got != want {
+		t.Fatalf("version=%d want %d", got, want)
 	}
 }
 
 func TestUnit_RevokeTokenPublishFailureDoesNotFailRevoke(t *testing.T) {
 	t.Parallel()
-	orgID := uuid.New().String()
-	tokenID := uuid.New().String()
-	repo := newMemTokenRepo()
-	repo.tokens[tokenID] = repository.CreateTokenParams{ID: tokenID, OrgID: orgID}
-	pub := &recordingPublisher{err: context.DeadlineExceeded}
-	svc := NewTokenService(repo, token.DefaultArgon2Params(), logger.Discard("auth"), pub)
+	f := newRevokeFixture(t, context.DeadlineExceeded)
+	mustRevokeToken(t, f)
+	assertTokenRevoked(t, f)
+	waitPublish(t, f.pub, 1)
+	f.svc.WaitPendingPublishes()
+}
 
-	if err := svc.RevokeToken(context.Background(), orgID, tokenID, "", nil); err != nil {
-		t.Fatalf("RevokeToken must succeed: %v", err)
-	}
-	if !repo.revoked[tokenID] {
+func assertTokenRevoked(t *testing.T, f revokeFixture) {
+	t.Helper()
+	if !f.repo.revoked[f.tokenID] {
 		t.Fatal("token not revoked")
 	}
-	waitPublish(t, pub, 1)
-	svc.WaitPendingPublishes()
+}
+
+func TestUnit_DrainPublishesCancelsInFlight(t *testing.T) {
+	t.Parallel()
+	f := newRevokeFixture(t, nil)
+	mustRevokeToken(t, f)
+	f.svc.DrainPublishes()
+	if f.pub.count() < 1 {
+		t.Fatal("expected publish before drain completed")
+	}
 }
 
 func waitPublish(t *testing.T, pub *recordingPublisher, want int) {
 	t.Helper()
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
-		if pub.count() >= want {
-			return
+	deadline := time.After(time.Second)
+	for pub.count() < want {
+		select {
+		case <-pub.notify:
+		case <-deadline:
+			t.Fatalf("publish count=%d want %d", pub.count(), want)
 		}
-		time.Sleep(5 * time.Millisecond)
 	}
-	t.Fatalf("publish count=%d want %d", pub.count(), want)
 }

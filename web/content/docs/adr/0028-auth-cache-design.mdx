@@ -59,7 +59,7 @@ On upstream transport / timeout when not serving a **fresh** LRU hit: return una
 
 ### 6) Package boundary and wire-up
 
-- `packages/authcache` owns `Validator`, `Result`, `CachingValidator`, `TokenHash`, `Invalidate`.
+- `packages/authcache` owns `Validator`, `Result`, `CachingValidator`, `TokenHash`, `Invalidate`, and `InvalidateByTokenID`. The validator owns the secondary token-ID index (and revocation tombstones) required for the InvalidateByTokenID path.
 - Invalid-token bloom uses an `RWMutex` and **two-generation rotation** when adds reach `BloomExpectedItems`, keeping the FP rate bounded on long-lived processes. Each generation is sized at half the configured FP rate so the OR of active+previous stays near the documented target.
 - Proxy adapter maps ↔ `ValidateResult` (including `ExpiresAt`, `FromCache`).
 - Metrics: `ibex_proxy_auth_cache_*` in `packages/metrics` (no `org_id` / token labels).

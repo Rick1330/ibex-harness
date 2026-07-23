@@ -112,6 +112,11 @@ func (s *Subscriber) Stop() {
 	}
 }
 
+// Done is closed when Run returns.
+func (s *Subscriber) Done() <-chan struct{} {
+	return s.doneCh
+}
+
 func (s *Subscriber) stoppedOrDone(ctx context.Context) bool {
 	select {
 	case <-s.stopCh:
