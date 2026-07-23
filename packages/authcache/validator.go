@@ -28,6 +28,9 @@ type CachingValidator struct {
 	// afterTokenIndexPut is an optional test hook invoked after a successful
 	// tokenIdx.put and before lru.Add (nil in production).
 	afterTokenIndexPut func()
+	// afterLRUClone is an optional test hook invoked after cloning an LRU hit
+	// and before the second isRevoked check (nil in production).
+	afterLRUClone func()
 }
 
 // New constructs a CachingValidator. cfg defaults are applied before validate.
@@ -124,6 +127,9 @@ func (v *CachingValidator) lookupLRU(hash digest) (*Result, bool) {
 	}
 	// Re-check after clone: InvalidateByTokenID may race between isRevoked and return.
 	out := cloneResult(&entry.result, true)
+	if v.afterLRUClone != nil {
+		v.afterLRUClone()
+	}
 	if v.tokenIdx.isRevoked(entry.result.TokenID) {
 		v.evictRevoked(hash, entry.result.TokenID)
 		return nil, false
