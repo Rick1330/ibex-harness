@@ -86,7 +86,7 @@ func TestSchemaObjectsExist(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	for _, table := range []string{"organizations", "tokens", "users", "agents"} {
+	for _, table := range []string{"organizations", "tokens", "users", "agents", "directives", "directive_versions"} {
 		var exists bool
 		err := db.QueryRowContext(ctx, `
 			SELECT EXISTS (
@@ -101,7 +101,7 @@ func TestSchemaObjectsExist(t *testing.T) {
 		}
 	}
 
-	for _, table := range []string{"organizations", "tokens", "users", "agents"} {
+	for _, table := range []string{"organizations", "tokens", "users", "agents", "directives", "directive_versions"} {
 		var rls bool
 		err := db.QueryRowContext(ctx, `
 			SELECT c.relrowsecurity
@@ -128,97 +128,82 @@ func TestRLSUsersAndAgentsIsolation(t *testing.T) {
 	}
 
 	ctx := context.Background()
+	orgA, orgB := seedTwoOrgsWithAgents(t, ctx, db)
+	assertAgentCount(t, ctx, db, "", 0)
+	assertAgentCount(t, ctx, db, orgA, 1)
+	assertAgentCount(t, ctx, db, orgB, 1)
+}
 
-	var orgA, orgB string
-	var userA, agentA string
-	var userB, agentB string
+func seedTwoOrgsWithAgents(t *testing.T, ctx context.Context, db *sql.DB) (orgA, orgB string) {
+	t.Helper()
 	err := withServiceAccount(ctx, db, func(tx *sql.Tx) error {
-		if err := tx.QueryRowContext(ctx, `
-			INSERT INTO ibex_core.organizations (name, slug)
-			VALUES ('Org A', 'org-a') RETURNING id::text`).Scan(&orgA); err != nil {
+		var err error
+		orgA, err = insertOrg(ctx, tx, "Org A", "org-a")
+		if err != nil {
 			return err
 		}
-		if err := tx.QueryRowContext(ctx, `
-			INSERT INTO ibex_core.organizations (name, slug)
-			VALUES ('Org B', 'org-b') RETURNING id::text`).Scan(&orgB); err != nil {
+		orgB, err = insertOrg(ctx, tx, "Org B", "org-b")
+		if err != nil {
 			return err
 		}
-
-		// Seed one user + agent per org.
-		if err := tx.QueryRowContext(ctx, `
-			INSERT INTO ibex_core.users (org_id, email, name)
-			VALUES ($1::uuid, 'user-a@example.com', 'User A')
-			RETURNING id::text`, orgA).Scan(&userA); err != nil {
+		if err := insertUserAndAgent(ctx, tx, orgA, userAgentSeed{
+			email: "user-a@example.com", name: "User A", agent: "Agent A", slug: "agent-a",
+		}); err != nil {
 			return err
 		}
-		if err := tx.QueryRowContext(ctx, `
-			INSERT INTO ibex_core.agents (org_id, created_by, name, slug)
-			VALUES ($1::uuid, $2::uuid, 'Agent A', 'agent-a')
-			RETURNING id::text`, orgA, userA).Scan(&agentA); err != nil {
-			return err
-		}
-
-		if err := tx.QueryRowContext(ctx, `
-			INSERT INTO ibex_core.users (org_id, email, name)
-			VALUES ($1::uuid, 'user-b@example.com', 'User B')
-			RETURNING id::text`, orgB).Scan(&userB); err != nil {
-			return err
-		}
-		if err := tx.QueryRowContext(ctx, `
-			INSERT INTO ibex_core.agents (org_id, created_by, name, slug)
-			VALUES ($1::uuid, $2::uuid, 'Agent B', 'agent-b')
-			RETURNING id::text`, orgB, userB).Scan(&agentB); err != nil {
-			return err
-		}
-
-		return nil
+		return insertUserAndAgent(ctx, tx, orgB, userAgentSeed{
+			email: "user-b@example.com", name: "User B", agent: "Agent B", slug: "agent-b",
+		})
 	})
 	if err != nil {
 		t.Fatalf("seed: %v", err)
 	}
+	return orgA, orgB
+}
 
-	// No org context: fail closed.
+func insertOrg(ctx context.Context, tx *sql.Tx, name, slug string) (string, error) {
+	var id string
+	err := tx.QueryRowContext(ctx, `
+		INSERT INTO ibex_core.organizations (name, slug)
+		VALUES ($1, $2) RETURNING id::text`, name, slug).Scan(&id)
+	return id, err
+}
+
+type userAgentSeed struct {
+	email, name, agent, slug string
+}
+
+func insertUserAndAgent(ctx context.Context, tx *sql.Tx, orgID string, seed userAgentSeed) error {
+	var userID string
+	if err := tx.QueryRowContext(ctx, `
+		INSERT INTO ibex_core.users (org_id, email, name)
+		VALUES ($1::uuid, $2, $3)
+		RETURNING id::text`, orgID, seed.email, seed.name).Scan(&userID); err != nil {
+		return err
+	}
+	_, err := tx.ExecContext(ctx, `
+		INSERT INTO ibex_core.agents (org_id, created_by, name, slug)
+		VALUES ($1::uuid, $2::uuid, $3, $4)`, orgID, userID, seed.agent, seed.slug)
+	return err
+}
+
+func assertAgentCount(t *testing.T, ctx context.Context, db *sql.DB, orgID string, want int) {
+	t.Helper()
 	var count int
-	err = withAppRole(ctx, db, func(tx *sql.Tx) error {
-		return tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM ibex_core.agents`).Scan(&count)
-	})
-	if err != nil {
-		t.Fatalf("count without context: %v", err)
-	}
-	if count != 0 {
-		t.Fatalf("expected 0 agents without context, got %d", count)
-	}
-
-	// Org A context: only Org A visible.
-	err = withAppRole(ctx, db, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `SELECT set_config('app.current_org_id', $1, true)`, orgA); err != nil {
-			return err
+	err := withAppRole(ctx, db, func(tx *sql.Tx) error {
+		if orgID != "" {
+			if _, err := tx.ExecContext(ctx, `SELECT set_config('app.current_org_id', $1, true)`, orgID); err != nil {
+				return err
+			}
 		}
 		return tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM ibex_core.agents`).Scan(&count)
 	})
 	if err != nil {
-		t.Fatalf("count with org A context: %v", err)
+		t.Fatalf("count agents (org=%q): %v", orgID, err)
 	}
-	if count != 1 {
-		t.Fatalf("expected 1 agent for org A context, got %d", count)
+	if count != want {
+		t.Fatalf("expected %d agents (org=%q), got %d", want, orgID, count)
 	}
-
-	// Cross-org must not be visible.
-	err = withAppRole(ctx, db, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `SELECT set_config('app.current_org_id', $1, true)`, orgB); err != nil {
-			return err
-		}
-		return tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM ibex_core.agents`).Scan(&count)
-	})
-	if err != nil {
-		t.Fatalf("count with org B context: %v", err)
-	}
-	if count != 1 {
-		t.Fatalf("expected 1 agent for org B context, got %d", count)
-	}
-
-	_ = agentA
-	_ = agentB
 }
 
 func TestTokenForeignKeysEnforced(t *testing.T) {

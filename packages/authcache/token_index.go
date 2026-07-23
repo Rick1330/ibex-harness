@@ -65,19 +65,21 @@ func (idx *tokenIndex) removeDigest(hash digest, tokenID string) {
 	}
 }
 
-// revoke installs a tombstone and removes any index entry under one lock,
-// returning the prior digest (if any) so the caller can evict the LRU entry.
+// revoke installs a tombstone first, then removes any index entry, under one
+// lock. Tombstone-before-delete closes the window where a concurrent
+// isRevoked/put could miss the revocation while the index entry is already gone.
+// Returns the prior digest (if any) so the caller can evict the LRU entry.
 func (idx *tokenIndex) revoke(tokenID string) (digest, bool) {
 	if tokenID == "" {
 		return "", false
 	}
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
+	idx.tomb[tokenID] = idx.now().Add(idx.tombTTL)
 	hash, ok := idx.byID[tokenID]
 	if ok {
 		delete(idx.byID, tokenID)
 	}
-	idx.tomb[tokenID] = idx.now().Add(idx.tombTTL)
 	return hash, ok
 }
 
