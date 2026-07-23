@@ -119,7 +119,7 @@ func TestUnit_RedisPublisherPublish(t *testing.T) {
 	assertPublishOKMetric(t, metrics)
 }
 
-func mustPublisher(t *testing.T, client *redis.Client, m revocation.PublishMetrics) *revocation.RedisPublisher {
+func mustPublisher(t *testing.T, client *redis.Client, m revocation.IncRevocationPublisher) *revocation.RedisPublisher {
 	t.Helper()
 	pub, err := revocation.NewRedisPublisher(client, logger.Discard("revocation"), m)
 	if err != nil {
@@ -216,7 +216,7 @@ type countingInvalidateMetrics struct {
 
 func (m *countingInvalidateMetrics) IncRevocationInvalidate() { m.n.Add(1) }
 
-func startSubscriber(t *testing.T, client *redis.Client, inv revocation.Invalidator, metrics revocation.InvalidateMetrics) *revocation.Subscriber {
+func startSubscriber(t *testing.T, client *redis.Client, inv revocation.Invalidator, metrics revocation.IncRevocationInvalidater) *revocation.Subscriber {
 	t.Helper()
 	sub, err := revocation.NewSubscriber(client, inv, logger.Discard("revocation"), metrics)
 	if err != nil {

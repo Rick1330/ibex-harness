@@ -17,16 +17,16 @@ type Publisher interface {
 	Publish(ctx context.Context, event RevocationEvent) error
 }
 
-// PublishMetrics records publish outcomes (result is "ok" or "error").
-type PublishMetrics interface {
+// IncRevocationPublisher records publish outcomes (result is "ok" or "error").
+type IncRevocationPublisher interface {
 	IncRevocationPublish(result string)
 }
 
-// NoopPublishMetrics discards publish metric updates.
-type NoopPublishMetrics struct{}
+// NoopIncRevocationPublisher discards publish metric updates.
+type NoopIncRevocationPublisher struct{}
 
-// IncRevocationPublish implements PublishMetrics.
-func (NoopPublishMetrics) IncRevocationPublish(string) {
+// IncRevocationPublish implements IncRevocationPublisher.
+func (NoopIncRevocationPublisher) IncRevocationPublish(string) {
 	// Intentionally empty: no-op metrics sink when Prometheus is not wired.
 }
 
@@ -34,11 +34,11 @@ func (NoopPublishMetrics) IncRevocationPublish(string) {
 type RedisPublisher struct {
 	client  redis.UniversalClient
 	log     *logger.Logger
-	metrics PublishMetrics
+	metrics IncRevocationPublisher
 }
 
 // NewRedisPublisher constructs a RedisPublisher. metrics may be nil.
-func NewRedisPublisher(client redis.UniversalClient, log *logger.Logger, metrics PublishMetrics) (*RedisPublisher, error) {
+func NewRedisPublisher(client redis.UniversalClient, log *logger.Logger, metrics IncRevocationPublisher) (*RedisPublisher, error) {
 	if client == nil {
 		return nil, fmt.Errorf("revocation: redis client is required")
 	}
@@ -46,7 +46,7 @@ func NewRedisPublisher(client redis.UniversalClient, log *logger.Logger, metrics
 		return nil, fmt.Errorf("revocation: logger is required")
 	}
 	if metrics == nil {
-		metrics = NoopPublishMetrics{}
+		metrics = NoopIncRevocationPublisher{}
 	}
 	return &RedisPublisher{client: client, log: log, metrics: metrics}, nil
 }

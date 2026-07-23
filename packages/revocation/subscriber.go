@@ -15,16 +15,16 @@ type Invalidator interface {
 	InvalidateByTokenID(tokenID string)
 }
 
-// InvalidateMetrics records successful invalidate deliveries.
-type InvalidateMetrics interface {
+// IncRevocationInvalidater records successful invalidate deliveries.
+type IncRevocationInvalidater interface {
 	IncRevocationInvalidate()
 }
 
-// NoopInvalidateMetrics discards invalidate metric updates.
-type NoopInvalidateMetrics struct{}
+// NoopIncRevocationInvalidater discards invalidate metric updates.
+type NoopIncRevocationInvalidater struct{}
 
-// IncRevocationInvalidate implements InvalidateMetrics.
-func (NoopInvalidateMetrics) IncRevocationInvalidate() {
+// IncRevocationInvalidate implements IncRevocationInvalidater.
+func (NoopIncRevocationInvalidater) IncRevocationInvalidate() {
 	// Intentionally empty: no-op metrics sink when Prometheus is not wired.
 }
 
@@ -33,7 +33,7 @@ type Subscriber struct {
 	client  redis.UniversalClient
 	cache   Invalidator
 	log     *logger.Logger
-	metrics InvalidateMetrics
+	metrics IncRevocationInvalidater
 
 	stopOnce sync.Once
 	stopCh   chan struct{}
@@ -45,7 +45,7 @@ func NewSubscriber(
 	client redis.UniversalClient,
 	cache Invalidator,
 	log *logger.Logger,
-	metrics InvalidateMetrics,
+	metrics IncRevocationInvalidater,
 ) (*Subscriber, error) {
 	if client == nil {
 		return nil, fmt.Errorf("revocation: redis client is required")
@@ -57,7 +57,7 @@ func NewSubscriber(
 		return nil, fmt.Errorf("revocation: logger is required")
 	}
 	if metrics == nil {
-		metrics = NoopInvalidateMetrics{}
+		metrics = NoopIncRevocationInvalidater{}
 	}
 	return &Subscriber{
 		client:  client,

@@ -28,8 +28,8 @@ type TokenService struct {
 	logger        *logger.Logger
 	publisher     revocation.Publisher
 	publishWG     sync.WaitGroup
-	publishCtx    context.Context
 	publishCancel context.CancelFunc
+	publishDone   <-chan struct{}
 }
 
 // NewTokenService constructs a TokenService. publisher may be nil (NoopPublisher).
@@ -40,7 +40,7 @@ func NewTokenService(repo tokenRepo, argon2 token.Argon2Params, log *logger.Logg
 	ctx, cancel := context.WithCancel(context.Background())
 	return &TokenService{
 		repo: repo, argon2: argon2, logger: log, publisher: publisher,
-		publishCtx: ctx, publishCancel: cancel,
+		publishCancel: cancel, publishDone: ctx.Done(),
 	}
 }
 
@@ -141,14 +141,14 @@ func (s *TokenService) publishRevocationAsync(p RevokeTokenParams) {
 	s.publishWG.Add(1)
 	go func() {
 		defer s.publishWG.Done()
+		ctx, cancel := s.newPublishContext()
+		defer cancel()
 		defer func() {
 			if rec := recover(); rec != nil {
-				s.logger.WarnCtx(s.publishCtx, "revocation publish panic recovered",
+				s.logger.WarnCtx(ctx, "revocation publish panic recovered",
 					"recover", rec, "token_id", p.TokenID)
 			}
 		}()
-		ctx, cancel := context.WithTimeout(s.publishCtx, revocation.PublishTimeout)
-		defer cancel()
 		event := revocation.RevocationEvent{
 			Version:   revocation.CurrentSchemaVersion,
 			TokenID:   p.TokenID,
@@ -160,6 +160,21 @@ func (s *TokenService) publishRevocationAsync(p RevokeTokenParams) {
 				"error", err, "token_id", p.TokenID, "org_id", p.OrgID)
 		}
 	}()
+}
+
+// newPublishContext returns a timeout context that also cancels on DrainPublishes.
+func (s *TokenService) newPublishContext() (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithTimeout(context.Background(), revocation.PublishTimeout)
+	go s.cancelOnDrain(ctx, cancel)
+	return ctx, cancel
+}
+
+func (s *TokenService) cancelOnDrain(ctx context.Context, cancel context.CancelFunc) {
+	select {
+	case <-s.publishDone:
+		cancel()
+	case <-ctx.Done():
+	}
 }
 
 // WaitPendingPublishes blocks until in-flight revocation publishes finish.
