@@ -51,9 +51,20 @@ func TestUnit_RevokeTokenPublishesEvent(t *testing.T) {
 		t.Fatalf("RevokeToken: %v", err)
 	}
 	waitPublish(t, pub, 1)
-	got := pub.last()
-	if got.TokenID != tokenID || got.OrgID != orgID || got.Version != 1 {
-		t.Fatalf("event=%+v", got)
+	svc.WaitPendingPublishes()
+	assertRevokeEvent(t, pub.last(), tokenID, orgID)
+}
+
+func assertRevokeEvent(t *testing.T, got revocation.RevocationEvent, tokenID, orgID string) {
+	t.Helper()
+	if got.TokenID != tokenID {
+		t.Fatalf("token_id=%q want %q", got.TokenID, tokenID)
+	}
+	if got.OrgID != orgID {
+		t.Fatalf("org_id=%q want %q", got.OrgID, orgID)
+	}
+	if got.Version != 1 {
+		t.Fatalf("version=%d want 1", got.Version)
 	}
 }
 
@@ -73,6 +84,7 @@ func TestUnit_RevokeTokenPublishFailureDoesNotFailRevoke(t *testing.T) {
 		t.Fatal("token not revoked")
 	}
 	waitPublish(t, pub, 1)
+	svc.WaitPendingPublishes()
 }
 
 func waitPublish(t *testing.T, pub *recordingPublisher, want int) {

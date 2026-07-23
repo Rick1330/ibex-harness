@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"sync"
 	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/logger"
@@ -26,6 +27,7 @@ type TokenService struct {
 	argon2    token.Argon2Params
 	logger    *logger.Logger
 	publisher revocation.Publisher
+	publishWG sync.WaitGroup
 }
 
 // NewTokenService constructs a TokenService. publisher may be nil (NoopPublisher).
@@ -122,7 +124,9 @@ func (s *TokenService) RevokeToken(ctx context.Context, orgID, tokenID, revokedB
 }
 
 func (s *TokenService) publishRevocationAsync(orgID, tokenID string) {
+	s.publishWG.Add(1)
 	go func() {
+		defer s.publishWG.Done()
 		defer func() {
 			if rec := recover(); rec != nil {
 				s.logger.WarnCtx(context.Background(), "revocation publish panic recovered",
@@ -142,6 +146,11 @@ func (s *TokenService) publishRevocationAsync(orgID, tokenID string) {
 				"error", err, "token_id", tokenID, "org_id", orgID)
 		}
 	}()
+}
+
+// WaitPendingPublishes blocks until in-flight revocation publishes finish.
+func (s *TokenService) WaitPendingPublishes() {
+	s.publishWG.Wait()
 }
 
 // ListTokens returns metadata rows for an org.

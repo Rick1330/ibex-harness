@@ -103,7 +103,7 @@ func runBootstrap(_ []string, signalCh chan os.Signal) int {
 
 	return runWithShutdown(shutdownOpts{
 		cfg: cfg, logger: log, providers: providers, grpcSrv: grpcSrv, grpcLis: grpcLis,
-		httpServer: httpServer, db: db, redisClient: redisClient, signalCh: signalCh,
+		httpServer: httpServer, db: db, redisClient: redisClient, tokenSvc: tokenSvc, signalCh: signalCh,
 	})
 }
 

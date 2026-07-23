@@ -69,17 +69,26 @@ func NewSubscriber(
 	}, nil
 }
 
+const (
+	initialBackoff = time.Second
+	maxBackoff     = 30 * time.Second
+)
+
 // Run blocks until Stop or ctx cancellation. Reconnects with backoff on errors.
+// Backoff resets to 1s after any session that successfully subscribed.
 func (s *Subscriber) Run(ctx context.Context) {
 	defer close(s.doneCh)
-	backoff := time.Second
+	backoff := initialBackoff
 	for {
 		if s.stoppedOrDone(ctx) {
 			return
 		}
-		err := s.listenOnce(ctx)
+		established, err := s.listenOnce(ctx)
 		if s.stoppedOrDone(ctx) {
 			return
+		}
+		if established {
+			backoff = initialBackoff
 		}
 		if err != nil {
 			s.log.WarnCtx(ctx, "revocation subscriber disconnected; reconnecting",
@@ -88,7 +97,7 @@ func (s *Subscriber) Run(ctx context.Context) {
 		if !s.sleepBackoff(ctx, backoff) {
 			return
 		}
-		if backoff < 30*time.Second {
+		if backoff < maxBackoff {
 			backoff *= 2
 		}
 	}
@@ -127,23 +136,24 @@ func (s *Subscriber) sleepBackoff(ctx context.Context, d time.Duration) bool {
 	}
 }
 
-func (s *Subscriber) listenOnce(ctx context.Context) error {
+// listenOnce returns established=true once Subscribe/Receive succeeded.
+func (s *Subscriber) listenOnce(ctx context.Context) (bool, error) {
 	pubsub := s.client.Subscribe(ctx, Channel)
 	defer func() { _ = pubsub.Close() }()
 
 	if _, err := pubsub.Receive(ctx); err != nil {
-		return err
+		return false, err
 	}
 	ch := pubsub.Channel()
 	for {
 		select {
 		case <-s.stopCh:
-			return nil
+			return true, nil
 		case <-ctx.Done():
-			return nil
+			return true, nil
 		case msg, ok := <-ch:
 			if !ok {
-				return fmt.Errorf("revocation: pubsub channel closed")
+				return true, fmt.Errorf("revocation: pubsub channel closed")
 			}
 			s.handleMessage(ctx, msg.Payload)
 		}

@@ -2,7 +2,6 @@ package auth
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/Rick1330/ibex-harness/packages/authcache"
@@ -24,25 +23,7 @@ func (u *grpcUpstream) Validate(ctx context.Context, accessToken string) (*authc
 	if err != nil {
 		return nil, mapToAuthcacheErr(err)
 	}
-	return &authcache.Result{
-		OrgID:       res.OrgID,
-		Permissions: res.Permissions,
-		AgentID:     res.AgentID,
-		UserID:      res.UserID,
-		TokenID:     res.TokenID,
-		ExpiresAt:   res.ExpiresAt,
-	}, nil
-}
-
-func mapToAuthcacheErr(err error) error {
-	switch {
-	case errors.Is(err, ErrInvalidToken):
-		return authcache.ErrInvalidToken
-	case errors.Is(err, ErrAuthUnavailable):
-		return authcache.ErrUnavailable
-	default:
-		return err
-	}
+	return proxyResultToAuthcache(res), nil
 }
 
 type cachingTokenValidator struct {
@@ -72,15 +53,7 @@ func (c *cachingTokenValidator) Validate(ctx context.Context, accessToken string
 	if err != nil {
 		return nil, mapFromAuthcacheErr(err)
 	}
-	return &ValidateResult{
-		OrgID:       res.OrgID,
-		Permissions: res.Permissions,
-		AgentID:     res.AgentID,
-		UserID:      res.UserID,
-		TokenID:     res.TokenID,
-		ExpiresAt:   res.ExpiresAt,
-		FromCache:   res.FromCache,
-	}, nil
+	return authcacheResultToProxy(res), nil
 }
 
 func (c *cachingTokenValidator) Invalidate(tokenHash string) {
@@ -89,15 +62,4 @@ func (c *cachingTokenValidator) Invalidate(tokenHash string) {
 
 func (c *cachingTokenValidator) InvalidateByTokenID(tokenID string) {
 	c.inner.InvalidateByTokenID(tokenID)
-}
-
-func mapFromAuthcacheErr(err error) error {
-	switch {
-	case errors.Is(err, authcache.ErrInvalidToken):
-		return ErrInvalidToken
-	case errors.Is(err, authcache.ErrUnavailable):
-		return ErrAuthUnavailable
-	default:
-		return err
-	}
 }
