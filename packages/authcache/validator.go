@@ -25,6 +25,9 @@ type CachingValidator struct {
 	lru      *lru.Cache[digest, *cachedEntry]
 	tokenIdx *tokenIndex
 	now      func() time.Time
+	// afterTokenIndexPut is an optional test hook invoked after a successful
+	// tokenIdx.put and before lru.Add (nil in production).
+	afterTokenIndexPut func()
 }
 
 // New constructs a CachingValidator. cfg defaults are applied before validate.
@@ -118,6 +121,12 @@ func (v *CachingValidator) lookupLRU(hash digest) (*Result, bool) {
 		v.metrics.SetAuthCacheLRUSize(float64(v.lru.Len()))
 		return nil, false
 	}
+	if v.tokenIdx.isRevoked(entry.result.TokenID) {
+		v.tokenIdx.removeDigest(hash, entry.result.TokenID)
+		v.lru.Remove(hash)
+		v.metrics.SetAuthCacheLRUSize(float64(v.lru.Len()))
+		return nil, false
+	}
 	return cloneResult(&entry.result, true), true
 }
 
@@ -164,11 +173,20 @@ func (v *CachingValidator) putLRU(hash digest, res *Result) {
 	if !v.tokenIdx.put(res.TokenID, hash) {
 		return
 	}
+	if v.afterTokenIndexPut != nil {
+		v.afterTokenIndexPut()
+	}
 	entry := &cachedEntry{
 		result:    *cloneResult(res, false),
 		expiresAt: v.now().Add(ttl),
 	}
 	v.lru.Add(hash, entry)
+	// A concurrent InvalidateByTokenID may have run between put and Add,
+	// leaving an unindexed stale entry — re-check and evict if revoked.
+	if v.tokenIdx.isRevoked(res.TokenID) {
+		v.lru.Remove(hash)
+		v.tokenIdx.removeDigest(hash, res.TokenID)
+	}
 	v.metrics.SetAuthCacheLRUSize(float64(v.lru.Len()))
 }
 

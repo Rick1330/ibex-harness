@@ -374,6 +374,44 @@ func TestUnit_CachingValidatorTombstoneBlocksStalePut(t *testing.T) {
 	}
 }
 
+func TestUnit_CachingValidatorRevokeBetweenPutAndAdd(t *testing.T) {
+	t.Parallel()
+	up := &spyUpstream{res: &Result{OrgID: "org-1", TokenID: "tok-gap"}}
+	v := testValidator(t, up, Config{LRUMaxTTL: time.Minute}, NoopMetrics{})
+
+	indexed := make(chan struct{})
+	resume := make(chan struct{})
+	v.afterTokenIndexPut = func() {
+		close(indexed)
+		<-resume
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := v.Validate(context.Background(), "bearer-gap")
+		errCh <- err
+	}()
+	select {
+	case <-indexed:
+	case <-time.After(time.Second):
+		t.Fatal("index put did not run")
+	}
+	v.InvalidateByTokenID("tok-gap")
+	close(resume)
+	if err := <-errCh; err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+
+	res, err := v.Validate(context.Background(), "bearer-gap")
+	if err != nil {
+		t.Fatalf("second: %v", err)
+	}
+	if res.FromCache {
+		t.Fatal("stale LRU add after revoke must not serve from cache")
+	}
+	assertUpstreamCalls(t, up, 2)
+}
+
 func TestUnit_CachingValidatorNilResultFailsClosed(t *testing.T) {
 	t.Parallel()
 	up := &spyUpstream{res: nil}

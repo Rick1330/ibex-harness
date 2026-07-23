@@ -36,12 +36,22 @@ func (idx *tokenIndex) put(tokenID string, hash digest) bool {
 	}
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
-	idx.expireTombsLocked()
-	if until, ok := idx.tomb[tokenID]; ok && idx.now().Before(until) {
+	if idx.tombLiveLocked(tokenID) {
 		return false
 	}
 	idx.byID[tokenID] = hash
 	return true
+}
+
+// isRevoked reports whether tokenID has a live revocation tombstone.
+func (idx *tokenIndex) isRevoked(tokenID string) bool {
+	if tokenID == "" {
+		return false
+	}
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+	until, ok := idx.tomb[tokenID]
+	return ok && idx.now().Before(until)
 }
 
 func (idx *tokenIndex) removeID(tokenID string) (digest, bool) {
@@ -75,16 +85,18 @@ func (idx *tokenIndex) markRevoked(tokenID string) {
 	}
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
-	idx.expireTombsLocked()
 	idx.tomb[tokenID] = idx.now().Add(idx.tombTTL)
 	delete(idx.byID, tokenID)
 }
 
-func (idx *tokenIndex) expireTombsLocked() {
-	now := idx.now()
-	for id, until := range idx.tomb {
-		if !now.Before(until) {
-			delete(idx.tomb, id)
-		}
+func (idx *tokenIndex) tombLiveLocked(tokenID string) bool {
+	until, ok := idx.tomb[tokenID]
+	if !ok {
+		return false
 	}
+	if idx.now().Before(until) {
+		return true
+	}
+	delete(idx.tomb, tokenID)
+	return false
 }
