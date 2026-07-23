@@ -105,6 +105,7 @@ GRANT USAGE ON SCHEMA ibex_core TO ibex_app;
 CREATE OR REPLACE FUNCTION ibex_core.reject_directive_version_update()
 RETURNS trigger
 LANGUAGE plpgsql
+SET search_path = ibex_core, pg_temp
 AS $$
 BEGIN
     RAISE EXCEPTION 'directive_versions is append-only';
