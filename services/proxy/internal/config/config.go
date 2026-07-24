@@ -31,6 +31,7 @@ const (
 	defaultAuthCacheBloomItems  = 10000
 	defaultAuthCacheBloomFPRate = 0.001
 	maxAuthCacheLRUMaxTTL       = 30 * time.Second
+	defaultDirectiveCacheTTL    = 60 * time.Second
 )
 
 // RateLimitConfig holds org-level rate limit settings (Phase 1; no DB).
@@ -75,6 +76,8 @@ type Config struct {
 	Telemetry           telemetry.Config
 	LLMMode             string
 	OpenAI              OpenAIConfig
+	PostgresDSN         string
+	DirectiveCacheTTL   time.Duration
 }
 
 // ApplyDefaults fills zero-valued fields so httptest and partial Config literals behave like Load().
@@ -117,6 +120,9 @@ func (c *Config) ApplyDefaults() {
 	}
 	c.applyAuthCacheDefaults()
 	c.applyLLMDefaults()
+	if c.DirectiveCacheTTL <= 0 {
+		c.DirectiveCacheTTL = defaultDirectiveCacheTTL
+	}
 }
 
 func (c *Config) applyAuthCacheDefaults() {

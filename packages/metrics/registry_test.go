@@ -151,6 +151,11 @@ func seedProxySamples(reg *ProxyRegistry) {
 	reg.IncAuthCacheLRUEviction()
 	reg.IncAuthCacheBloomFP()
 	reg.IncRevocationInvalidate()
+	reg.IncDirectiveCacheHit()
+	reg.IncDirectiveCacheMiss()
+	reg.IncDirectiveResolveError()
+	reg.ObserveDirectiveResolveSeconds(0.001)
+	reg.IncDirectiveInvalidate()
 }
 
 func TestProxyRegistry_AsyncBackpressureMetricsRegistered(t *testing.T) {

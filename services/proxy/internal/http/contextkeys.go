@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/Rick1330/ibex-harness/packages/directive"
 	"github.com/Rick1330/ibex-harness/packages/reqid"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 )
@@ -15,6 +16,7 @@ const (
 	ctxKeyRequestStart
 	ctxKeyErrorDocsBase
 	ctxKeyAgent
+	ctxKeyResolvedDirective
 )
 
 // WithRequestID stores the request ID on the context.
@@ -78,4 +80,18 @@ func WithAgent(ctx context.Context, rec auth.AgentRecord) context.Context {
 func AgentFromContext(ctx context.Context) (auth.AgentRecord, bool) {
 	rec, ok := ctx.Value(ctxKeyAgent).(auth.AgentRecord)
 	return rec, ok
+}
+
+// WithResolvedDirective stores a successfully resolved directive on the request
+// context for downstream injection (2.3.3). Call only after Resolve succeeds.
+func WithResolvedDirective(ctx context.Context, resolved directive.Resolved) context.Context {
+	return context.WithValue(ctx, ctxKeyResolvedDirective, resolved)
+}
+
+// ResolvedDirectiveFromContext returns the resolved directive when present.
+// Absence is expected on fail-open resolve errors; injection must treat missing
+// as "no directive" rather than an error.
+func ResolvedDirectiveFromContext(ctx context.Context) (directive.Resolved, bool) {
+	resolved, ok := ctx.Value(ctxKeyResolvedDirective).(directive.Resolved)
+	return resolved, ok
 }

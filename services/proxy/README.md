@@ -5,7 +5,7 @@ Go service for the IBEX Harness LLM proxy.
 ## Platform endpoints (no auth)
 
 - `GET /health` — liveness (`{"status":"ok","checks":{}}`; [ADR-0022](../../docs/adr/ADR-0022-health-check-contract.md))
-- `GET /ready` — readiness; critical: `auth_grpc` (ValidateToken probe), `redis` (`PING`)
+- `GET /ready` — readiness; critical: `auth_grpc` (ValidateToken probe), `redis` (`PING`); advisory: `postgres` (`SELECT 1` when `POSTGRES_DSN` set)
 - `GET /metrics` — Prometheus text metrics
 
 ## Protected endpoints (Bearer PAT + agent header required)
@@ -19,7 +19,7 @@ All protected routes require:
 - `GET /v1/orgs/{org_id}/auth-probe` — same; path `org_id` must be UUID; **403** if path org ≠ token org
 - `POST /v1/chat/completions` — auth + agent verify + `ProxyChatCompletion`; body limit + JSON Content-Type; semantic validation; rate limit; **501** when valid; **429** `RATE_LIMITED`; **400** `MISSING_AGENT_ID` / `VALIDATION_ERROR` / `INVALID_JSON`; **403** `AGENT_NOT_AUTHORIZED` / `AGENT_SUSPENDED`; **413** / **415** per [ADR-0013](../../docs/adr/ADR-0013-proxy-input-validation-and-error-envelope.md)
 
-Auth validates via gRPC `ValidateToken` ([ADR-0011](../../docs/adr/ADR-0011-proxy-auth-client.md)). Agent ownership via gRPC `ValidateAgent` ([ADR-0016](../../docs/adr/ADR-0016-agent-identity-verification.md)). Parse: [ADR-0012](../../docs/adr/ADR-0012-proxy-request-normalization.md). Validation + envelope: [ADR-0013](../../docs/adr/ADR-0013-proxy-input-validation-and-error-envelope.md). Rate limit: [ADR-0015](../../docs/adr/ADR-0015-proxy-rate-limit-skeleton.md). Fail closed: token auth outage → **503** `SERVICE_DEGRADED`; agent verify outage → **503** `AUTH_UNAVAILABLE`. Rate limit Redis outage → fail open (request allowed).
+Auth validates via gRPC `ValidateToken` ([ADR-0011](../../docs/adr/ADR-0011-proxy-auth-client.md)). Agent ownership via gRPC `ValidateAgent` ([ADR-0016](../../docs/adr/ADR-0016-agent-identity-verification.md)). Parse: [ADR-0012](../../docs/adr/ADR-0012-proxy-request-normalization.md). Validation + envelope: [ADR-0013](../../docs/adr/ADR-0013-proxy-input-validation-and-error-envelope.md). Rate limit: [ADR-0015](../../docs/adr/ADR-0015-proxy-rate-limit-skeleton.md). Directive resolve (m2.3.2): Redis cache with **approved read-only Postgres fallback** via `POSTGRES_DSN` (`openProxyPostgres` / `PostgresStore.Load`) when Redis is also configured — an intentional exception to the Phase-1 “proxy talks to identity only through auth gRPC” boundary, limited to directive reads and advisory `/ready` postgres checks (`buildProxyHealth`). Fail open on resolve infra errors. Fail closed: token auth outage → **503** `SERVICE_DEGRADED`; agent verify outage → **503** `AUTH_UNAVAILABLE`. Rate limit Redis outage → fail open (request allowed).
 
 ## Middleware order
 
@@ -27,7 +27,7 @@ Auth validates via gRPC `ValidateToken` ([ADR-0011](../../docs/adr/ADR-0011-prox
 metrics → requestContext → responseHeaders → logging → mux
 
 POST /v1/chat/completions:
-  bodyLimit → contentType → auth → agentVerify → rateLimit → handler
+  bodyLimit → contentType → auth → agentVerify → rateLimit → directiveResolve → chatParse → providerRouting → handler
 
 GET /v1/internal/auth-probe:
   auth → agentVerify → rateLimit → handler
@@ -59,6 +59,8 @@ See [.env.example](.env.example).
 | `IBEX_ERROR_DOCS_BASE` | (empty) | Optional `docs_url` prefix |
 | `IBEX_RATE_LIMIT_DEFAULT_RPM` | `60` | Org requests per minute |
 | `IBEX_RATE_LIMIT_ORG_OVERRIDES` | (empty) | `uuid=rpm,uuid2=rpm2` |
+| `POSTGRES_DSN` | (empty) | Read-only Postgres for directive resolution; enables `packages/directive` when set with Redis |
+| `IBEX_DIRECTIVE_CACHE_TTL` | `60s` | Redis TTL for directive cache keys `{org_id}:directive:{agent_id}` |
 
 ## Run locally
 
@@ -78,6 +80,7 @@ Terminal 2 — proxy:
 
 ```bash
 IBEX_AUTH_GRPC_ADDR=127.0.0.1:9091 REDIS_URL=redis://localhost:6379/0 \
+  POSTGRES_DSN=postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable \
   go run ./services/proxy/cmd/proxy
 ```
 
@@ -100,6 +103,7 @@ Terminal 2 — proxy (new window; auth must stay running):
 cd D:\ibex-r\ibex-harness
 $env:IBEX_AUTH_GRPC_ADDR = "127.0.0.1:9091"
 $env:REDIS_URL = "redis://localhost:6379/0"
+$env:POSTGRES_DSN = "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable"
 go run ./services/proxy/cmd/proxy
 ```
 

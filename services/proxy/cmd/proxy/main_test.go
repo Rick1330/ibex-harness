@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"testing"
 	"time"
 
+	"github.com/Rick1330/ibex-harness/packages/directive"
 	"github.com/Rick1330/ibex-harness/packages/healthcheck"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	ibexmetrics "github.com/Rick1330/ibex-harness/packages/metrics"
@@ -16,6 +18,9 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/trace"
+
+	// Register the lib/pq "postgres" driver for sql.Open in proxy unit tests.
+	_ "github.com/lib/pq"
 )
 
 func TestRun_InvalidConfigReturns1(t *testing.T) {
@@ -90,6 +95,63 @@ func TestSetupRateLimiter_InvalidURL(t *testing.T) {
 	}
 }
 
+func TestSetupDirectiveResolver_NoopWithoutDSNOrRedis(t *testing.T) {
+	log := logger.Discard("proxy")
+	db, resolver, err := setupDirectiveResolver(config.Config{}, nil, log, nil)
+	if err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	if db != nil {
+		t.Fatal("expected nil db")
+	}
+	got, err := resolver.Resolve(context.Background(), uuid.Nil, uuid.Nil)
+	if err != nil || got.HasContent() {
+		t.Fatalf("noop resolve: %+v err=%v", got, err)
+	}
+
+	mr := miniredis.RunT(t)
+	client, err := ratelimit.ParseRedisURL("redis://" + mr.Addr() + "/0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	db, resolver, err = setupDirectiveResolver(config.Config{RedisURL: "redis://" + mr.Addr()}, client, log, nil)
+	if err != nil {
+		t.Fatalf("setup with redis only: %v", err)
+	}
+	if db != nil {
+		t.Fatal("expected nil db without POSTGRES_DSN")
+	}
+	_, _ = resolver.Resolve(context.Background(), uuid.Nil, uuid.Nil)
+}
+
+func TestStartDirectiveSubscriber_SkippedForNoop(t *testing.T) {
+	log := logger.Discard("proxy")
+	sub, cancel, err := startDirectiveSubscriber(nil, directive.NoopResolver{}, log, nil)
+	assertSubscriberSkipped(t, sub, cancel, err)
+	mr := miniredis.RunT(t)
+	client, err := ratelimit.ParseRedisURL("redis://" + mr.Addr() + "/0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	sub, cancel, err = startDirectiveSubscriber(client, directive.NoopResolver{}, log, nil)
+	assertSubscriberSkipped(t, sub, cancel, err)
+}
+
+func assertSubscriberSkipped(t *testing.T, sub *directive.Subscriber, cancel context.CancelFunc, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if sub != nil {
+		t.Fatal("expected nil subscriber")
+	}
+	if cancel != nil {
+		t.Fatal("expected nil cancel")
+	}
+}
+
 func TestNewHTTPServer(t *testing.T) {
 	t.Parallel()
 	cfg := config.Config{Port: "8080"}
@@ -147,4 +209,92 @@ func TestRun_ProviderRegistryInitFailureReturns1(t *testing.T) {
 	if got := run(nil); got != 1 {
 		t.Fatalf("run() = %d, want 1", got)
 	}
+}
+
+func TestUnit_OpenProxyPostgres_BadDSN(t *testing.T) {
+	t.Parallel()
+	_, err := openProxyPostgres("postgres://127.0.0.1:1/nope?sslmode=disable&connect_timeout=1")
+	if err == nil {
+		t.Fatal("expected ping error")
+	}
+}
+
+func TestUnit_BuildProxyHealth_WithAndWithoutPostgres(t *testing.T) {
+	t.Parallel()
+	cfg := config.Config{}
+	cfg.ApplyDefaults()
+	without := buildProxyHealth(cfg, nil, nil)
+	if without.AdvisoryCheckers != nil {
+		t.Fatal("expected no advisory checkers")
+	}
+	if _, ok := without.CriticalCheckers["auth_grpc"]; !ok {
+		t.Fatal("missing auth_grpc checker")
+	}
+	db, err := sql.Open("postgres", "postgres://127.0.0.1:1/nope?sslmode=disable")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	with := buildProxyHealth(cfg, nil, db)
+	if _, ok := with.AdvisoryCheckers["postgres"]; !ok {
+		t.Fatal("missing postgres advisory checker")
+	}
+}
+
+func TestUnit_NewCachedDirectiveResolver_NilDB(t *testing.T) {
+	t.Parallel()
+	log := logger.Discard("proxy")
+	_, err := newCachedDirectiveResolver(cachedDirectiveInputs{
+		DB: nil, Redis: nil, Config: config.Config{}, Log: log,
+	})
+	if err == nil {
+		t.Fatal("expected loader error")
+	}
+}
+
+func TestUnit_StartDirectiveSubscriber_StartsForCachedResolver(t *testing.T) {
+	t.Parallel()
+	log := logger.Discard("proxy")
+	mr := miniredis.RunT(t)
+	client, err := ratelimit.ParseRedisURL("redis://" + mr.Addr() + "/0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	store := &staticDirectiveLoader{}
+	resolver, err := directive.NewCachedResolver(directive.CachedResolverDeps{
+		Client: client, Loader: store, Config: directive.Config{CacheTTL: time.Minute}, Log: log,
+	})
+	if err != nil {
+		t.Fatalf("resolver: %v", err)
+	}
+	sub, cancel, err := startDirectiveSubscriber(client, resolver, log, nil)
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if sub == nil || cancel == nil {
+		t.Fatal("expected subscriber")
+	}
+	cancel()
+	sub.Stop()
+	<-sub.Done()
+}
+
+func TestUnit_StopPubSubSubscribers_NilSafe(t *testing.T) {
+	t.Parallel()
+	stopPubSubSubscribers(shutdownOpts{})
+	called := false
+	stopPubSubSubscribers(shutdownOpts{
+		revCancel: func() { called = true },
+		dirCancel: func() { called = true },
+	})
+	if !called {
+		t.Fatal("expected cancel hooks")
+	}
+}
+
+type staticDirectiveLoader struct{}
+
+func (staticDirectiveLoader) Load(context.Context, uuid.UUID, uuid.UUID) (directive.Resolved, error) {
+	return directive.Resolved{}, nil
 }

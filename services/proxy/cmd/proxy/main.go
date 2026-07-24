@@ -2,14 +2,17 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/authcache"
+	"github.com/Rick1330/ibex-harness/packages/directive"
 	"github.com/Rick1330/ibex-harness/packages/healthcheck"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	ibexmetrics "github.com/Rick1330/ibex-harness/packages/metrics"
@@ -29,6 +32,9 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+
+	// Register the lib/pq "postgres" driver used by sql.Open for directive reads.
+	_ "github.com/lib/pq"
 )
 
 func main() {
@@ -47,70 +53,109 @@ func defaultProviderRegistryInit(cfg config.Config, log *logger.Logger, tracer t
 }
 
 func runBootstrap(_ []string, signalCh chan os.Signal) int {
-	cfg, err := config.Load()
+	cfg, log, err := loadProxyRuntime()
 	if err != nil {
-		slog.New(slog.NewJSONHandler(os.Stderr, nil)).Error("invalid configuration", "error", err)
 		return 1
 	}
-
-	log, err := logger.New(logger.Config{Service: cfg.ServiceName, Level: cfg.LogLevel})
-	if err != nil {
-		slog.New(slog.NewJSONHandler(os.Stderr, nil)).Error("logger init failed", "error", err)
-		return 1
-	}
-
 	providers, tracer, err := telemetry.InitTracer(context.Background(), cfg.Telemetry, "ibex-proxy")
 	if err != nil {
 		log.ErrorCtx(context.Background(), "telemetry init failed", "error", err)
 		return 1
 	}
 	reg := ibexmetrics.NewProxy(cfg.ServiceName)
+	core, err := setupProxyCore(cfg, log, reg, tracer)
+	if err != nil {
+		log.ErrorCtx(context.Background(), "proxy core setup failed", "error", err)
+		return 1
+	}
+	return runWithShutdown(shutdownOpts{
+		cfg: cfg, logger: log, providers: providers, server: core.server,
+		grpcConn: core.grpcConn, redisClient: core.redisClient, pgDB: core.pgDB,
+		revSub: core.revSub, revCancel: core.revCancel,
+		dirSub: core.dirSub, dirCancel: core.dirCancel, signalCh: signalCh,
+	})
+}
+
+func loadProxyRuntime() (config.Config, *logger.Logger, error) {
+	cfg, err := config.Load()
+	if err != nil {
+		slog.New(slog.NewJSONHandler(os.Stderr, nil)).Error("invalid configuration", "error", err)
+		return config.Config{}, nil, err
+	}
+	log, err := logger.New(logger.Config{Service: cfg.ServiceName, Level: cfg.LogLevel})
+	if err != nil {
+		slog.New(slog.NewJSONHandler(os.Stderr, nil)).Error("logger init failed", "error", err)
+		return config.Config{}, nil, err
+	}
+	return cfg, log, nil
+}
+
+type proxyCore struct {
+	server      *http.Server
+	grpcConn    *grpc.ClientConn
+	redisClient redis.UniversalClient
+	pgDB        *sql.DB
+	revSub      *revocation.Subscriber
+	revCancel   context.CancelFunc
+	dirSub      *directive.Subscriber
+	dirCancel   context.CancelFunc
+}
+
+func setupProxyCore(
+	cfg config.Config,
+	log *logger.Logger,
+	reg *ibexmetrics.ProxyRegistry,
+	tracer trace.Tracer,
+) (*proxyCore, error) {
 	redisClient, limiter, err := setupRateLimiter(cfg, log)
 	if err != nil {
-		log.ErrorCtx(context.Background(), "rate limiter setup failed", "error", err)
-		return 1
+		return nil, fmt.Errorf("rate limiter: %w", err)
 	}
 	validator, agentVerifier, authClient, grpcConn, err := setupAuthClients(cfg, log, reg)
 	if err != nil {
-		log.ErrorCtx(context.Background(), "auth client setup failed", "error", err)
-		return 1
+		return nil, fmt.Errorf("auth clients: %w", err)
 	}
+	pgDB, directiveResolver, err := setupDirectiveResolver(cfg, redisClient, log, reg)
+	if err != nil {
+		return nil, fmt.Errorf("directive resolver: %w", err)
+	}
+	healthSrv := buildProxyHealth(cfg, authClient, pgDB)
+	providerReg, err := providerRegistryInit(cfg, log, tracer, reg)
+	if err != nil {
+		return nil, fmt.Errorf("provider registry: %w", err)
+	}
+	server := newHTTPServer(proxyhttp.RouterDeps{
+		Config: cfg, Logger: log, Metrics: reg, Tracer: tracer,
+		Validator: validator, AgentVerifier: agentVerifier, Limiter: limiter,
+		DirectiveResolver: directiveResolver, Health: healthSrv, ProviderRegistry: providerReg,
+	})
+	revSub, revCancel, err := startRevocationSubscriber(redisClient, validator, log, reg)
+	if err != nil {
+		return nil, fmt.Errorf("revocation subscriber: %w", err)
+	}
+	dirSub, dirCancel, err := startDirectiveSubscriber(redisClient, directiveResolver, log, reg)
+	if err != nil {
+		return nil, fmt.Errorf("directive subscriber: %w", err)
+	}
+	return &proxyCore{
+		server: server, grpcConn: grpcConn, redisClient: redisClient, pgDB: pgDB,
+		revSub: revSub, revCancel: revCancel, dirSub: dirSub, dirCancel: dirCancel,
+	}, nil
+}
 
+func buildProxyHealth(cfg config.Config, authClient authv1.AuthServiceClient, pgDB *sql.DB) *healthcheck.Server {
 	healthSrv := &healthcheck.Server{
 		CriticalCheckers: map[string]healthcheck.Checker{
 			"auth_grpc": healthcheck.AuthGRPC(authClient, cfg.AuthValidateTimeout),
 			"redis":     healthcheck.RedisPing(cfg.RedisURL),
 		},
 	}
-
-	providerReg, err := providerRegistryInit(cfg, log, tracer, reg)
-	if err != nil {
-		log.ErrorCtx(context.Background(), "provider registry init failed", "error", err)
-		return 1
+	if pgDB != nil {
+		healthSrv.AdvisoryCheckers = map[string]healthcheck.Checker{
+			"postgres": healthcheck.PostgresSelect1(pgDB),
+		}
 	}
-
-	deps := proxyhttp.RouterDeps{
-		Config:           cfg,
-		Logger:           log,
-		Metrics:          reg,
-		Tracer:           tracer,
-		Validator:        validator,
-		AgentVerifier:    agentVerifier,
-		Limiter:          limiter,
-		Health:           healthSrv,
-		ProviderRegistry: providerReg,
-	}
-	server := newHTTPServer(deps)
-	revSub, revCancel, err := startRevocationSubscriber(redisClient, validator, log, reg)
-	if err != nil {
-		log.ErrorCtx(context.Background(), "revocation subscriber setup failed", "error", err)
-		return 1
-	}
-	return runWithShutdown(shutdownOpts{
-		cfg: cfg, logger: log, providers: providers, server: server,
-		grpcConn: grpcConn, redisClient: redisClient,
-		revSub: revSub, revCancel: revCancel, signalCh: signalCh,
-	})
+	return healthSrv
 }
 
 type shutdownOpts struct {
@@ -120,8 +165,11 @@ type shutdownOpts struct {
 	providers   *telemetry.Providers
 	grpcConn    *grpc.ClientConn
 	redisClient redis.UniversalClient
+	pgDB        *sql.DB
 	revSub      *revocation.Subscriber
 	revCancel   context.CancelFunc
+	dirSub      *directive.Subscriber
+	dirCancel   context.CancelFunc
 	signalCh    chan os.Signal
 }
 
@@ -218,6 +266,105 @@ func startRevocationSubscriber(
 	return sub, cancel, nil
 }
 
+func setupDirectiveResolver(
+	cfg config.Config,
+	redisClient redis.UniversalClient,
+	log *logger.Logger,
+	reg *ibexmetrics.ProxyRegistry,
+) (*sql.DB, directive.Resolver, error) {
+	dsn := strings.TrimSpace(cfg.PostgresDSN)
+	if dsn == "" || redisClient == nil {
+		log.InfoCtx(context.Background(), "directive resolver noop; needs POSTGRES_DSN and REDIS_URL")
+		return nil, directive.NoopResolver{}, nil
+	}
+	db, err := openProxyPostgres(dsn)
+	if err != nil {
+		return nil, nil, err
+	}
+	resolver, err := newCachedDirectiveResolver(cachedDirectiveInputs{
+		DB: db, Redis: redisClient, Config: cfg, Log: log, Reg: reg,
+	})
+	if err != nil {
+		// Close best-effort: pool is unusable after construction failure.
+		_ = db.Close()
+		return nil, nil, fmt.Errorf("directive resolver: %w", err)
+	}
+	log.InfoCtx(context.Background(), "directive resolver configured",
+		"cache_ttl", cfg.DirectiveCacheTTL.String())
+	return db, resolver, nil
+}
+
+func openProxyPostgres(dsn string) (*sql.DB, error) {
+	db, err := sql.Open("postgres", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("postgres open: %w", err)
+	}
+	db.SetMaxOpenConns(10)
+	db.SetMaxIdleConns(5)
+	db.SetConnMaxLifetime(time.Hour)
+	pingCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := db.PingContext(pingCtx); err != nil {
+		_ = db.Close() // best-effort close after failed ping
+		return nil, fmt.Errorf("postgres ping: %w", err)
+	}
+	return db, nil
+}
+
+type cachedDirectiveInputs struct {
+	DB     *sql.DB
+	Redis  redis.UniversalClient
+	Config config.Config
+	Log    *logger.Logger
+	Reg    *ibexmetrics.ProxyRegistry
+}
+
+func newCachedDirectiveResolver(in cachedDirectiveInputs) (directive.Resolver, error) {
+	loader, err := directive.NewPostgresStore(in.DB)
+	if err != nil {
+		return nil, fmt.Errorf("directive loader: %w", err)
+	}
+	var metrics directive.Metrics = directive.NoopMetrics{}
+	if in.Reg != nil {
+		metrics = in.Reg
+	}
+	resolver, err := directive.NewCachedResolver(directive.CachedResolverDeps{
+		Client: in.Redis, Loader: loader,
+		Config: directive.Config{CacheTTL: in.Config.DirectiveCacheTTL},
+		Log:    in.Log, Metrics: metrics,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("directive cached resolver: %w", err)
+	}
+	return resolver, nil
+}
+
+func startDirectiveSubscriber(
+	redisClient redis.UniversalClient,
+	resolver directive.Resolver,
+	log *logger.Logger,
+	reg *ibexmetrics.ProxyRegistry,
+) (*directive.Subscriber, context.CancelFunc, error) {
+	if redisClient == nil {
+		return nil, nil, nil
+	}
+	if _, ok := resolver.(*directive.CachedResolver); !ok {
+		return nil, nil, nil
+	}
+	var metrics directive.Metrics = directive.NoopMetrics{}
+	if reg != nil {
+		metrics = reg
+	}
+	sub, err := directive.NewSubscriber(redisClient, resolver, log, metrics)
+	if err != nil {
+		return nil, nil, err
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	go sub.Run(ctx)
+	log.InfoCtx(context.Background(), "directive subscriber started", "pattern", directive.ChannelPattern)
+	return sub, cancel, nil
+}
+
 func newHTTPServer(deps proxyhttp.RouterDeps) *http.Server {
 	return &http.Server{
 		Addr:              ":" + deps.Config.Port,
@@ -227,7 +374,7 @@ func newHTTPServer(deps proxyhttp.RouterDeps) *http.Server {
 }
 
 func runWithShutdown(opts shutdownOpts) int {
-	defer stopRevocationSubscriber(opts)
+	defer stopPubSubSubscribers(opts)
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -267,12 +414,18 @@ func runWithShutdown(opts shutdownOpts) int {
 	return 0
 }
 
-func stopRevocationSubscriber(opts shutdownOpts) {
+func stopPubSubSubscribers(opts shutdownOpts) {
 	if opts.revCancel != nil {
 		opts.revCancel()
 	}
 	if opts.revSub != nil {
 		opts.revSub.Stop()
+	}
+	if opts.dirCancel != nil {
+		opts.dirCancel()
+	}
+	if opts.dirSub != nil {
+		opts.dirSub.Stop()
 	}
 }
 
@@ -282,7 +435,7 @@ func registerShutdownHooks(sd *shutdown.Coordinator, opts shutdownOpts) {
 		return opts.server.Shutdown(ctx)
 	})
 	sd.Register(func(ctx context.Context) error {
-		stopRevocationSubscriber(opts)
+		stopPubSubSubscribers(opts)
 		return nil
 	})
 	sd.Register(func(ctx context.Context) error {
@@ -294,6 +447,12 @@ func registerShutdownHooks(sd *shutdown.Coordinator, opts shutdownOpts) {
 	sd.Register(func(ctx context.Context) error {
 		if opts.redisClient != nil {
 			return opts.redisClient.Close()
+		}
+		return nil
+	})
+	sd.Register(func(ctx context.Context) error {
+		if opts.pgDB != nil {
+			return opts.pgDB.Close()
 		}
 		return nil
 	})
