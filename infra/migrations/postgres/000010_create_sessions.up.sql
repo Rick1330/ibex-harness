@@ -12,9 +12,9 @@ CREATE TABLE ibex_core.sessions (
                          CHECK (status IN ('active', 'completed', 'abandoned', 'error')),
     model                TEXT NOT NULL,
     provider             TEXT NOT NULL,
-    directive_version_id UUID
-                         REFERENCES ibex_core.directive_versions(id)
-                         ON DELETE SET NULL,
+    -- Composite FK (id, org_id) — SET NULL is impossible while org_id is NOT NULL;
+    -- clear_session_directive_version() nulls the pointer before version DELETE.
+    directive_version_id UUID,
 
     turn_count           INTEGER NOT NULL DEFAULT 0,
     total_input_tokens   BIGINT NOT NULL DEFAULT 0,
@@ -32,7 +32,11 @@ CREATE TABLE ibex_core.sessions (
     CONSTRAINT sessions_agent_org_fk
         FOREIGN KEY (agent_id, org_id)
         REFERENCES ibex_core.agents (id, org_id)
-        ON DELETE CASCADE
+        ON DELETE CASCADE,
+    CONSTRAINT sessions_directive_version_org_fk
+        FOREIGN KEY (directive_version_id, org_id)
+        REFERENCES ibex_core.directive_versions (id, org_id)
+        ON DELETE RESTRICT
 );
 
 -- Client-supplied X-IBEX-Session-ID lookup (nullable; multiple NULLs allowed).
@@ -78,10 +82,13 @@ CREATE TABLE ibex_core.checkpoints (
     CONSTRAINT checkpoints_latency_nonneg CHECK (latency_ms >= 0)
 );
 
--- Phase 3 memory extraction worker.
+-- Phase 3 memory extraction worker: partial predicate encodes "has unextracted turns"
+-- so the index only contains rows the worker needs (column-vs-column range scan is not used).
 CREATE INDEX idx_sessions_agent_extraction
-    ON ibex_core.sessions (agent_id, last_extracted_turn, turn_count)
-    WHERE status = 'completed' AND deleted_at IS NULL;
+    ON ibex_core.sessions (agent_id, last_extracted_turn)
+    WHERE status = 'completed'
+      AND deleted_at IS NULL
+      AND last_extracted_turn < turn_count;
 
 CREATE INDEX idx_checkpoints_session_turn
     ON ibex_core.checkpoints (session_id, turn_index);
@@ -129,3 +136,23 @@ CREATE TRIGGER checkpoints_immutable
 CREATE TRIGGER sessions_updated_at
     BEFORE UPDATE ON ibex_core.sessions
     FOR EACH ROW EXECUTE FUNCTION ibex_core.set_updated_at();
+
+-- Preserve SET NULL semantics for directive_version_id while using a composite org-scoped FK.
+CREATE OR REPLACE FUNCTION ibex_core.clear_session_directive_version()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = ibex_core, pg_temp
+AS $$
+BEGIN
+    UPDATE ibex_core.sessions
+    SET directive_version_id = NULL
+    WHERE directive_version_id = OLD.id;
+    RETURN OLD;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION ibex_core.clear_session_directive_version() FROM PUBLIC;
+
+CREATE TRIGGER directive_versions_clear_sessions
+    BEFORE DELETE ON ibex_core.directive_versions
+    FOR EACH ROW EXECUTE FUNCTION ibex_core.clear_session_directive_version();

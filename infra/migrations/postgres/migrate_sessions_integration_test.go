@@ -115,7 +115,7 @@ func TestSessionsCompositeFKOwnership(t *testing.T) {
 
 	ctx := context.Background()
 	orgA, orgB := seedTwoOrgsWithAgents(t, ctx, db)
-	agentB := lookupAgentID(t, ctx, db, orgB, "agent-b")
+	agentB := lookupAgentID(t, ctx, agentLookup{db: db, orgID: orgB, slug: "agent-b"})
 
 	err := withServiceAccount(ctx, db, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, insertSessionSQL, orgA, agentB, "cross-org")
@@ -135,6 +135,35 @@ func TestSessionsCompositeFKOwnership(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected cross-org session checkpoint FK to fail")
+	}
+}
+
+func TestSessionsDirectiveVersionOrgScoped(t *testing.T) {
+	dsn := testDSN()
+	db := openTestDB(t)
+	defer db.Close()
+	resetSchema(t, db)
+	if err := Up(dsn); err != nil {
+		t.Fatalf("up: %v", err)
+	}
+
+	ctx := context.Background()
+	orgA, orgB := seedTwoOrgsWithAgents(t, ctx, db)
+	dirB := seedDirectiveForOrg(t, ctx, directiveSeed{
+		db: db, orgID: orgB, agentSlug: "agent-b", content: "b-dir",
+	})
+	agentA := lookupAgentID(t, ctx, agentLookup{db: db, orgID: orgA, slug: "agent-a"})
+
+	err := withServiceAccount(ctx, db, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO ibex_core.sessions
+				(org_id, agent_id, model, provider, directive_version_id)
+			VALUES ($1::uuid, $2::uuid, 'gpt-4o', 'openai', $3::uuid)`,
+			orgA, agentA, dirB.versionID)
+		return err
+	})
+	if err == nil {
+		t.Fatal("expected cross-org directive_version_id FK to fail")
 	}
 }
 
@@ -173,6 +202,11 @@ type seededSession struct {
 	agentID   string
 }
 
+type agentLookup struct {
+	db          *sql.DB
+	orgID, slug string
+}
+
 func seedSessionWithCheckpoint(t *testing.T, ctx context.Context, seed sessionSeed) seededSession {
 	t.Helper()
 	var out seededSession
@@ -196,13 +230,13 @@ func seedSessionWithCheckpoint(t *testing.T, ctx context.Context, seed sessionSe
 	return out
 }
 
-func lookupAgentID(t *testing.T, ctx context.Context, db *sql.DB, orgID, slug string) string {
+func lookupAgentID(t *testing.T, ctx context.Context, q agentLookup) string {
 	t.Helper()
 	var agentID string
-	err := withServiceAccount(ctx, db, func(tx *sql.Tx) error {
+	err := withServiceAccount(ctx, q.db, func(tx *sql.Tx) error {
 		return tx.QueryRowContext(ctx, `
 			SELECT id::text FROM ibex_core.agents
-			WHERE org_id = $1::uuid AND slug = $2`, orgID, slug).Scan(&agentID)
+			WHERE org_id = $1::uuid AND slug = $2`, q.orgID, q.slug).Scan(&agentID)
 	})
 	if err != nil {
 		t.Fatalf("lookup agent: %v", err)

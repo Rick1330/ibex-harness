@@ -1,3 +1,5 @@
+DROP TRIGGER IF EXISTS directive_versions_clear_sessions ON ibex_core.directive_versions;
+DROP FUNCTION IF EXISTS ibex_core.clear_session_directive_version();
 DROP TRIGGER IF EXISTS sessions_updated_at ON ibex_core.sessions;
 DROP TRIGGER IF EXISTS checkpoints_immutable ON ibex_core.checkpoints;
 DROP FUNCTION IF EXISTS ibex_core.reject_checkpoint_update();

@@ -178,3 +178,49 @@ func activateDirectiveVersion(ctx context.Context, tx *sql.Tx, args activateVers
 	}
 	return nil
 }
+
+func assertCoreTablesExist(t *testing.T, ctx context.Context, db *sql.DB, tables []string) {
+	t.Helper()
+	for _, table := range tables {
+		assertCoreTableExists(t, ctx, db, table)
+	}
+}
+
+func assertCoreTableExists(t *testing.T, ctx context.Context, db *sql.DB, table string) {
+	t.Helper()
+	var exists bool
+	err := db.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM information_schema.tables
+			WHERE table_schema = 'ibex_core' AND table_name = $1
+		)`, table).Scan(&exists)
+	if err != nil {
+		t.Fatalf("check table %s: %v", table, err)
+	}
+	if !exists {
+		t.Errorf("missing table ibex_core.%s", table)
+	}
+}
+
+func assertCoreTablesRLSEnabled(t *testing.T, ctx context.Context, db *sql.DB, tables []string) {
+	t.Helper()
+	for _, table := range tables {
+		assertCoreTableRLSEnabled(t, ctx, db, table)
+	}
+}
+
+func assertCoreTableRLSEnabled(t *testing.T, ctx context.Context, db *sql.DB, table string) {
+	t.Helper()
+	var rls bool
+	err := db.QueryRowContext(ctx, `
+		SELECT c.relrowsecurity
+		FROM pg_class c
+		JOIN pg_namespace n ON n.oid = c.relnamespace
+		WHERE n.nspname = 'ibex_core' AND c.relname = $1`, table).Scan(&rls)
+	if err != nil {
+		t.Fatalf("check rls %s: %v", table, err)
+	}
+	if !rls {
+		t.Errorf("RLS not enabled on ibex_core.%s", table)
+	}
+}
