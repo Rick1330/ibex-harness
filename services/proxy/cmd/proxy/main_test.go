@@ -211,6 +211,28 @@ func TestRun_ProviderRegistryInitFailureReturns1(t *testing.T) {
 	}
 }
 
+func TestUnit_NewSessionStore(t *testing.T) {
+	t.Parallel()
+	got, err := newSessionStore(nil, nil)
+	if err != nil || got != nil {
+		t.Fatalf("nil db: store=%v err=%v", got, err)
+	}
+	db, err := sql.Open("postgres", "postgres://127.0.0.1:1/nope?sslmode=disable")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	store, err := newSessionStore(db, nil)
+	if err != nil || store == nil {
+		t.Fatalf("noop metrics: store=%v err=%v", store, err)
+	}
+	reg := ibexmetrics.NewProxy("proxy-session-test")
+	store, err = newSessionStore(db, reg)
+	if err != nil || store == nil {
+		t.Fatalf("registry metrics: store=%v err=%v", store, err)
+	}
+}
+
 func TestUnit_OpenProxyPostgres_BadDSN(t *testing.T) {
 	t.Parallel()
 	_, err := openProxyPostgres("postgres://127.0.0.1:1/nope?sslmode=disable&connect_timeout=1")

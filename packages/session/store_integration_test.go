@@ -129,6 +129,41 @@ func TestStore_Complete_TerminalNoop(t *testing.T) {
 	}
 }
 
+func TestStore_GetOrCreate_UniqueRaceResolvesExisting(t *testing.T) {
+	ids := setupStore(t)
+	const workers = 8
+	ext := "ext-race-" + uuid.NewString()
+	type result struct {
+		id  uuid.UUID
+		err error
+	}
+	out := make(chan result, workers)
+	for i := 0; i < workers; i++ {
+		go func() {
+			sess, err := ids.store.GetOrCreate(context.Background(), baseParams(ids, ext))
+			if err != nil {
+				out <- result{err: err}
+				return
+			}
+			out <- result{id: sess.ID}
+		}()
+	}
+	var first uuid.UUID
+	for i := 0; i < workers; i++ {
+		got := <-out
+		if got.err != nil {
+			t.Fatalf("worker: %v", got.err)
+		}
+		if first == uuid.Nil {
+			first = got.id
+			continue
+		}
+		if got.id != first {
+			t.Fatalf("expected single session id, got %s and %s", first, got.id)
+		}
+	}
+}
+
 func TestStore_RLS_CrossOrg(t *testing.T) {
 	db, store := openStore(t)
 	orgA, agentA := seedOrgAgent(t, db, "Org A", "org-a")
@@ -210,17 +245,18 @@ func resetSchema(t *testing.T, db *sql.DB) {
 func seedOrgAgent(t *testing.T, db *sql.DB, name, slug string) (uuid.UUID, uuid.UUID) {
 	t.Helper()
 	ctx := context.Background()
+	email := slug + "@example.com"
+	agentName := name + " Agent"
+	agentSlug := "agent-" + slug
 	var orgID, userID, agentID string
 	err := withServiceAccount(ctx, db, func(tx *sql.Tx) error {
 		if err := tx.QueryRowContext(ctx, seedInsertOrgSQL, name, slug).Scan(&orgID); err != nil {
 			return err
 		}
-		if err := tx.QueryRowContext(ctx, seedInsertUserSQL,
-			orgID, slug+"@example.com", name).Scan(&userID); err != nil {
+		if err := tx.QueryRowContext(ctx, seedInsertUserSQL, orgID, email, name).Scan(&userID); err != nil {
 			return err
 		}
-		return tx.QueryRowContext(ctx, seedInsertAgentSQL,
-			orgID, userID, name+" Agent", "agent-"+slug).Scan(&agentID)
+		return tx.QueryRowContext(ctx, seedInsertAgentSQL, orgID, userID, agentName, agentSlug).Scan(&agentID)
 	})
 	if err != nil {
 		t.Fatalf("seed: %v", err)
