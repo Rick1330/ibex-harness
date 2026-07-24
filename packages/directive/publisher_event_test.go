@@ -90,9 +90,7 @@ func TestUnit_PublisherClosedRedis(t *testing.T) {
 	err = pub.Publish(context.Background(), directive.UpdateEvent{
 		Version: 1, OrgID: uuid.New().String(), AgentID: uuid.New().String(),
 	})
-	if err == nil || !strings.Contains(err.Error(), "publish") {
-		t.Fatalf("want publish error, got %v", err)
-	}
+	assertPublishErr(t, err)
 }
 
 func TestUnit_NewSubscriberValidation(t *testing.T) {
@@ -148,9 +146,8 @@ func TestUnit_SubscriberIgnoresMalformedEvents(t *testing.T) {
 	_ = client.Publish(ctx, channel, `{"v":1,"org_id":"`+otherOrg.String()+`","agent_id":"`+agentID.String()+`"}`).Err()
 
 	got, err := r.Resolve(context.Background(), orgID, agentID)
-	if err != nil || got.Content != "v1" || store.loads != 1 {
-		t.Fatalf("cache polluted: got=%+v loads=%d err=%v", got, store.loads, err)
-	}
+	assertResolveOK(t, got, err, "v1")
+	assertStoreLoads(t, store, 1)
 	sub.Stop()
 	cancel()
 	<-sub.Done()
@@ -197,9 +194,8 @@ func TestUnit_CorruptCacheTreatedAsMiss(t *testing.T) {
 		t.Fatalf("resolver: %v", err)
 	}
 	got, err := r.Resolve(context.Background(), orgID, agentID)
-	if err != nil || got.Content != "ok" || store.loads != 1 {
-		t.Fatalf("got=%+v loads=%d err=%v", got, store.loads, err)
-	}
+	assertResolveOK(t, got, err, "ok")
+	assertStoreLoads(t, store, 1)
 }
 
 func TestUnit_PopulateCacheSetFailure(t *testing.T) {
@@ -216,8 +212,33 @@ func TestUnit_PopulateCacheSetFailure(t *testing.T) {
 	}
 	mr.Close()
 	got, err := r.Resolve(context.Background(), orgID, agentID)
-	if err != nil || got.Content != "x" {
-		t.Fatalf("resolve: %+v err=%v", got, err)
-	}
+	assertResolveOK(t, got, err, "x")
 	r.Invalidate(context.Background(), orgID, agentID)
+}
+
+func assertResolveOK(t *testing.T, got directive.Resolved, err error, want string) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if got.Content != want {
+		t.Fatalf("content=%q want %q", got.Content, want)
+	}
+}
+
+func assertStoreLoads(t *testing.T, store *fakeStore, want int) {
+	t.Helper()
+	if store.loads != want {
+		t.Fatalf("loads=%d want %d", store.loads, want)
+	}
+}
+
+func assertPublishErr(t *testing.T, err error) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("expected publish error")
+	}
+	if !strings.Contains(err.Error(), "publish") {
+		t.Fatalf("want publish error, got %v", err)
+	}
 }
