@@ -12,8 +12,6 @@ CREATE TABLE ibex_core.sessions (
                          CHECK (status IN ('active', 'completed', 'abandoned', 'error')),
     model                TEXT NOT NULL,
     provider             TEXT NOT NULL,
-    -- Composite FK (id, org_id) — SET NULL is impossible while org_id is NOT NULL;
-    -- clear_session_directive_version() nulls the pointer before version DELETE.
     directive_version_id UUID,
 
     turn_count           INTEGER NOT NULL DEFAULT 0,
@@ -93,6 +91,9 @@ CREATE INDEX idx_sessions_agent_extraction
 CREATE INDEX idx_checkpoints_session_turn
     ON ibex_core.checkpoints (session_id, turn_index);
 
+CREATE INDEX idx_checkpoints_agent_id
+    ON ibex_core.checkpoints (agent_id);
+
 CREATE INDEX idx_sessions_org_agent
     ON ibex_core.sessions (org_id, agent_id)
     WHERE deleted_at IS NULL;
@@ -100,6 +101,10 @@ CREATE INDEX idx_sessions_org_agent
 CREATE INDEX idx_sessions_org_status
     ON ibex_core.sessions (org_id, status)
     WHERE deleted_at IS NULL;
+
+CREATE INDEX idx_sessions_directive_version_id
+    ON ibex_core.sessions (directive_version_id)
+    WHERE directive_version_id IS NOT NULL;
 
 ALTER TABLE ibex_core.sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ibex_core.sessions FORCE ROW LEVEL SECURITY;

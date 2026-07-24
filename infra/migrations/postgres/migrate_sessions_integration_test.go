@@ -25,7 +25,13 @@ const insertCheckpointSQL = `
 	)
 	RETURNING id::text`
 
-func TestRLSSessionsIsolation(t *testing.T) {
+const insertSessionWithDirectiveSQL = `
+	INSERT INTO ibex_core.sessions
+		(org_id, agent_id, model, provider, directive_version_id)
+	VALUES ($1::uuid, $2::uuid, 'gpt-4o', 'openai', $3::uuid)
+	RETURNING id::text`
+
+func TestRLSSessions_Isolation(t *testing.T) {
 	dsn := testDSN()
 	db := openTestDB(t)
 	defer db.Close()
@@ -47,7 +53,7 @@ func TestRLSSessionsIsolation(t *testing.T) {
 	assertTableCount(t, ctx, tableCountCheck{db: db, table: "checkpoints", orgID: orgB, want: 1})
 }
 
-func TestCheckpointsUniqueTurnIndex(t *testing.T) {
+func TestCheckpoints_UniqueTurnIndex(t *testing.T) {
 	dsn := testDSN()
 	db := openTestDB(t)
 	defer db.Close()
@@ -72,7 +78,7 @@ func TestCheckpointsUniqueTurnIndex(t *testing.T) {
 	}
 }
 
-func TestCheckpointsAppendOnly(t *testing.T) {
+func TestCheckpoints_AppendOnly(t *testing.T) {
 	dsn := testDSN()
 	db := openTestDB(t)
 	defer db.Close()
@@ -104,7 +110,7 @@ func TestCheckpointsAppendOnly(t *testing.T) {
 	}
 }
 
-func TestSessionsCompositeFKOwnership(t *testing.T) {
+func TestSessions_CompositeFKOwnership(t *testing.T) {
 	dsn := testDSN()
 	db := openTestDB(t)
 	defer db.Close()
@@ -138,7 +144,7 @@ func TestSessionsCompositeFKOwnership(t *testing.T) {
 	}
 }
 
-func TestSessionsDirectiveVersionOrgScoped(t *testing.T) {
+func TestSessions_DirectiveVersionOrgScoped(t *testing.T) {
 	dsn := testDSN()
 	db := openTestDB(t)
 	defer db.Close()
@@ -155,11 +161,7 @@ func TestSessionsDirectiveVersionOrgScoped(t *testing.T) {
 	agentA := lookupAgentID(t, ctx, agentLookup{db: db, orgID: orgA, slug: "agent-a"})
 
 	err := withServiceAccount(ctx, db, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `
-			INSERT INTO ibex_core.sessions
-				(org_id, agent_id, model, provider, directive_version_id)
-			VALUES ($1::uuid, $2::uuid, 'gpt-4o', 'openai', $3::uuid)`,
-			orgA, agentA, dirB.versionID)
+		_, err := tx.ExecContext(ctx, insertSessionWithDirectiveSQL, orgA, agentA, dirB.versionID)
 		return err
 	})
 	if err == nil {
@@ -167,7 +169,55 @@ func TestSessionsDirectiveVersionOrgScoped(t *testing.T) {
 	}
 }
 
-func TestSessionsExtractionIndexExists(t *testing.T) {
+func TestSessions_ClearDirectiveVersionOnDelete(t *testing.T) {
+	dsn := testDSN()
+	db := openTestDB(t)
+	defer db.Close()
+	resetSchema(t, db)
+	if err := Up(dsn); err != nil {
+		t.Fatalf("up: %v", err)
+	}
+
+	ctx := context.Background()
+	orgA, _ := seedTwoOrgsWithAgents(t, ctx, db)
+	dir := seedDirectiveForOrg(t, ctx, directiveSeed{
+		db: db, orgID: orgA, agentSlug: "agent-a", content: "clear-me",
+	})
+	agentA := lookupAgentID(t, ctx, agentLookup{db: db, orgID: orgA, slug: "agent-a"})
+
+	var sessionID string
+	err := withServiceAccount(ctx, db, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, insertSessionWithDirectiveSQL,
+			orgA, agentA, dir.versionID).Scan(&sessionID)
+	})
+	if err != nil {
+		t.Fatalf("insert session with directive: %v", err)
+	}
+
+	err = withServiceAccount(ctx, db, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
+			DELETE FROM ibex_core.directive_versions WHERE id = $1::uuid`, dir.versionID)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("delete directive version: %v", err)
+	}
+
+	var pointed sql.NullString
+	err = withServiceAccount(ctx, db, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, `
+			SELECT directive_version_id::text FROM ibex_core.sessions WHERE id = $1::uuid`,
+			sessionID).Scan(&pointed)
+	})
+	if err != nil {
+		t.Fatalf("read session pointer: %v", err)
+	}
+	if pointed.Valid {
+		t.Fatalf("expected directive_version_id NULL after version delete, got %q", pointed.String)
+	}
+}
+
+func TestSessions_ExtractionIndexExists(t *testing.T) {
 	dsn := testDSN()
 	db := openTestDB(t)
 	defer db.Close()
