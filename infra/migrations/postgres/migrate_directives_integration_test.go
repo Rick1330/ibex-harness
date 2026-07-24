@@ -159,22 +159,21 @@ func seedSecondAgentDirective(t *testing.T, ctx context.Context, db *sql.DB, org
 
 func assertActiveVersionUpdateFails(t *testing.T, ctx context.Context, point activeVersionPoint) {
 	t.Helper()
-	err := withServiceAccount(ctx, point.db, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, updateActiveVersionSQL, point.versionID, point.directiveID)
-		return err
-	})
-	if err == nil {
+	if err := execActiveVersionUpdate(ctx, point); err == nil {
 		t.Fatal("expected active_version ownership check to fail")
 	}
 }
 
 func assertActiveVersionUpdateOK(t *testing.T, ctx context.Context, point activeVersionPoint) {
 	t.Helper()
-	err := withServiceAccount(ctx, point.db, func(tx *sql.Tx) error {
+	if err := execActiveVersionUpdate(ctx, point); err != nil {
+		t.Fatalf("expected active_version update to succeed: %v", err)
+	}
+}
+
+func execActiveVersionUpdate(ctx context.Context, point activeVersionPoint) error {
+	return withServiceAccount(ctx, point.db, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, updateActiveVersionSQL, point.versionID, point.directiveID)
 		return err
 	})
-	if err != nil {
-		t.Fatalf("expected active_version update to succeed: %v", err)
-	}
 }
