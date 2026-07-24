@@ -1,0 +1,45 @@
+---
+title: "ADR-0032: Session data model and retention"
+description: "Accepted — Phase 2 sessions + append-only checkpoints (hashes/metadata); FORCE RLS; soft delete; extraction cursor for Phase 3; fuller DATABASE_SCHEMA.md model deferred."
+adrId: "0032"
+status: "Accepted"
+date: "2026-07-24"
+authors: "IBEX Harness team"
+---
+
+# ADR-0032: Session data model and retention strategy
+
+- **Status:** Accepted (schema in [2.4.1](/roadmap/phase-2-single-provider/milestones/2.4.1-sessions-checkpoints-migrations); store in 2.4.2)
+- **Date:** 2026-07-24
+- **Authors:** IBEX Harness team
+- **Milestone:** [2.4.1 Sessions and checkpoints migrations](/roadmap/phase-2-single-provider/milestones/2.4.1-sessions-checkpoints-migrations)
+
+## Context
+
+A session is one conversation between a client and an agent (shared context across LLM turns). A checkpoint is an immutable record of a single turn: operational metadata plus content hashes for later memory dedup. Phase 3 memory extraction reads completed sessions' checkpoints; without this schema there is nothing to extract.
+
+`DATABASE_SCHEMA.md` describes a richer sessions model (heartbeat, loop fingerprints, recovery fields). Phase 2 needs a minimal subset that the proxy can write on the chat path and that Phase 3 can query incrementally.
+
+## Decision
+
+1. **Session vs checkpoint:** `sessions` holds conversation aggregate state (status, model/provider from first turn, token/latency totals, `last_extracted_turn`). `checkpoints` holds one row per turn with `UNIQUE(session_id, turn_index)`.
+2. **Phase 2 column subset:** Hashes and metadata only — `messages_hash`, optional `completion_hash`, tokens, latency, streaming flags. Full message/completion JSON is **not** stored in these tables in Phase 2 (payload archival is a later concern).
+3. **Lifecycle:** Status enum is `active` | `completed` | `abandoned` | `error`. Soft delete via `deleted_at`. Idle abandonment is implemented in [2.4.4](/roadmap/phase-2-single-provider/milestones/2.4.4-session-idle-timeout-sweeper); this ADR only reserves the `abandoned` status.
+4. **Client session key:** Optional `external_id` (from `X-IBEX-Session-ID`) with partial unique `(org_id, agent_id, external_id) WHERE external_id IS NOT NULL` for lookup in 2.4.2+.
+5. **Tenant isolation:** Both tables have `org_id`, `ENABLE` + `FORCE ROW LEVEL SECURITY`, and `ibex_core.rls_org_visible` (same as directives). Ownership is structural via composite FKs `(agent_id, org_id) → agents` and `(session_id, org_id) → sessions`.
+6. **Append-only checkpoints:** `ibex_app` has `SELECT, INSERT` only on `checkpoints`; a `BEFORE UPDATE` trigger rejects mutations. Session parent `ON DELETE CASCADE` cleanup runs as table owner.
+7. **Directive pointer:** Nullable `directive_version_id` → `directive_versions(id)` `ON DELETE SET NULL` records which directive version was active when the session started.
+8. **Phase 3 extraction:** Worker selects completed, non-deleted sessions via `idx_sessions_agent_extraction` on `(agent_id, last_extracted_turn, turn_count)` and advances `last_extracted_turn` after processing. Dedup uses `messages_hash` / `completion_hash`.
+9. **Retention:** Soft-deleted sessions are excluded from the extraction index. Org-scoped retention days and hard-delete GC are deferred to a later ADR; until then soft delete is the operator-facing delete path.
+
+## Consequences
+
+- Migration `000010_create_sessions` applies the Phase 2 subset under `ibex_core`.
+- [2.4.2](/roadmap/phase-2-single-provider/milestones/2.4.2-session-store) can implement typed CRUD without schema churn for the hot path.
+- Expanding toward the full `DATABASE_SCHEMA.md` sessions model requires an explicit follow-on ADR and additive migrations.
+
+## Alternatives considered
+
+1. **Store full messages JSON in checkpoints now** — simplifies Phase 3; balloons storage and privacy surface on the hot path. Rejected for Phase 2; hashes only.
+2. **Implement full DATABASE_SCHEMA.md sessions table** — heartbeat/loop/recovery fields unused until later goals. Deferred.
+3. **Mutable checkpoints** — allows correcting token counts after stream end; risks silent corruption of extraction inputs. Rejected; finalize metadata on insert (or insert incomplete then never update — stream incomplete is `is_complete=false` at insert time).

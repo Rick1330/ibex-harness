@@ -70,8 +70,8 @@ func TestMigrateUpIdempotent(t *testing.T) {
 	if dirty {
 		t.Fatal("expected clean migration state")
 	}
-	if v != 9 {
-		t.Fatalf("expected version 9, got %d", v)
+	if v != 10 {
+		t.Fatalf("expected version 10, got %d", v)
 	}
 }
 
@@ -86,7 +86,11 @@ func TestSchemaObjectsExist(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	for _, table := range []string{"organizations", "tokens", "users", "agents", "directives", "directive_versions"} {
+	tables := []string{
+		"organizations", "tokens", "users", "agents",
+		"directives", "directive_versions", "sessions", "checkpoints",
+	}
+	for _, table := range tables {
 		var exists bool
 		err := db.QueryRowContext(ctx, `
 			SELECT EXISTS (
@@ -101,7 +105,7 @@ func TestSchemaObjectsExist(t *testing.T) {
 		}
 	}
 
-	for _, table := range []string{"organizations", "tokens", "users", "agents", "directives", "directive_versions"} {
+	for _, table := range tables {
 		var rls bool
 		err := db.QueryRowContext(ctx, `
 			SELECT c.relrowsecurity

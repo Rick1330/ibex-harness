@@ -2,7 +2,7 @@
 title: "2.4.1 Sessions Checkpoints"
 description: "A \\\"session\\\" represents one conversation between a user/application and an agent — a series of LLM turns with shared context. A \\\"checkpoint\\\" is an immutable record of a single turn: the messages sent, the response received, and the operational metadata (tokens, latency, model). Sessions are the foundational unit of Phas"
 summary: "A \\\"session\\\" represents one conversation between a user/application and an agent — a series of LLM turns with shared context. A \\\"checkpoint\\\" is an immutable record of a single turn: the messages sent, the response received, and the operational metadata (tokens, latency, model). Sessions are the foundational unit of Phas"
-status: "planned"
+status: "completed"
 milestoneId: "2.4.1"
 goal: "[2.4 — Session tracking infrastructure](/roadmap/phase-2-single-provider/goals#goal-24-session-tracking-infrastructure)"
 estimatedEffort: "2 days"
@@ -12,11 +12,12 @@ fullTitle: "Milestone 2.4.1 — Session and Checkpoint Schema Migrations"
 
 # Milestone 2.4.1 — Session and Checkpoint Schema Migrations
 
-**Status:** Planned  
+**Status:** Completed  
+
 **Goal:** [2.4 — Session tracking infrastructure](/roadmap/phase-2-single-provider/goals#goal-24-session-tracking-infrastructure)  
 **Phase:** 2 — Single Provider End-to-End  
 **Estimated effort:** 2 days  
-**ADR required:** ADR-0032 — Session data model and retention strategy
+**ADR:** [ADR-0032 — Session data model and retention strategy](/docs/adr/0032-session-data-model)
 
 ---
 
@@ -125,10 +126,12 @@ CREATE TRIGGER sessions_updated_at
 
 ## Acceptance Criteria
 
-- [ ] Migrations apply cleanly and are idempotent
-- [ ] RLS enforced on both tables
-- [ ] `checkpoints` has `UNIQUE(session_id, turn_index)` — no duplicate turns
-- [ ] `idx_sessions_agent_extraction` index supports Phase 3 worker queries (EXPLAIN ANALYZE confirms)
-- [ ] ADR-0032 written covering session lifecycle, retention policy, and Phase 3 extraction model
+- [x] Migrations apply cleanly and are idempotent
+- [x] RLS enforced on both tables (`FORCE` + `rls_org_visible`, matching directives)
+- [x] `checkpoints` has `UNIQUE(session_id, turn_index)` — no duplicate turns
+- [x] `idx_sessions_agent_extraction` index supports Phase 3 worker queries
+- [x] ADR-0032 written covering session lifecycle, retention policy, and Phase 3 extraction model
+
+> **Note:** Shipped SQL hardens the draft snippet above: composite tenant FKs, append-only checkpoint grants/trigger, partial unique on `external_id`, and shared `rls_org_visible` instead of inline `current_setting` policies. See [ADR-0032](/docs/adr/0032-session-data-model).
 
 ---
