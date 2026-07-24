@@ -25,6 +25,9 @@ func TestRLSDirectivesIsolation(t *testing.T) {
 	assertTableCount(t, ctx, tableCountCheck{db: db, table: "directives", orgID: "", want: 0})
 	assertTableCount(t, ctx, tableCountCheck{db: db, table: "directives", orgID: orgA, want: 1})
 	assertTableCount(t, ctx, tableCountCheck{db: db, table: "directives", orgID: orgB, want: 1})
+	assertTableCount(t, ctx, tableCountCheck{db: db, table: "directive_versions", orgID: "", want: 0})
+	assertTableCount(t, ctx, tableCountCheck{db: db, table: "directive_versions", orgID: orgA, want: 1})
+	assertTableCount(t, ctx, tableCountCheck{db: db, table: "directive_versions", orgID: orgB, want: 1})
 }
 
 func TestDirectiveVersionsAppendOnly(t *testing.T) {
@@ -77,6 +80,34 @@ func TestDirectiveActiveVersionOwnership(t *testing.T) {
 	assertActiveVersionUpdateFails(t, ctx, activeVersionPoint{db: db, directiveID: a.directiveID, versionID: other.versionID})
 	assertActiveVersionUpdateOK(t, ctx, activeVersionPoint{db: db, directiveID: a.directiveID, versionID: a.versionID})
 	assertActiveVersionUpdateOK(t, ctx, activeVersionPoint{db: db, directiveID: a.directiveID, versionID: a2})
+}
+
+func TestDirectiveDeleteCascadesVersions(t *testing.T) {
+	dsn := testDSN()
+	db := openTestDB(t)
+	defer db.Close()
+	resetSchema(t, db)
+	if err := Up(dsn); err != nil {
+		t.Fatalf("up: %v", err)
+	}
+
+	ctx := context.Background()
+	orgA, _ := seedTwoOrgsWithAgents(t, ctx, db)
+	seeded := seedDirectiveForOrg(t, ctx, directiveSeed{db: db, orgID: orgA, agentSlug: "agent-a", content: "cascade-v1"})
+
+	err := withAppRole(ctx, db, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `SELECT set_config('app.current_org_id', $1, true)`, orgA); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `DELETE FROM ibex_core.directives WHERE id = $1::uuid`, seeded.directiveID)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("ibex_app delete directive: %v", err)
+	}
+
+	assertTableCount(t, ctx, tableCountCheck{db: db, table: "directives", orgID: orgA, want: 0})
+	assertTableCount(t, ctx, tableCountCheck{db: db, table: "directive_versions", orgID: orgA, want: 0})
 }
 
 type versionSeed struct {

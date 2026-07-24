@@ -3,10 +3,11 @@ DROP TRIGGER IF EXISTS directive_versions_immutable ON ibex_core.directive_versi
 DROP TRIGGER IF EXISTS directives_active_version_owned ON ibex_core.directives;
 DROP FUNCTION IF EXISTS ibex_core.reject_directive_version_update();
 DROP FUNCTION IF EXISTS ibex_core.validate_directive_active_version();
-DROP FUNCTION IF EXISTS ibex_core.rls_org_visible(UUID);
 
 DROP POLICY IF EXISTS directive_versions_isolation ON ibex_core.directive_versions;
 DROP POLICY IF EXISTS directives_isolation ON ibex_core.directives;
+
+DROP FUNCTION IF EXISTS ibex_core.rls_org_visible(UUID);
 
 ALTER TABLE ibex_core.directive_versions DISABLE ROW LEVEL SECURITY;
 ALTER TABLE ibex_core.directives DISABLE ROW LEVEL SECURITY;

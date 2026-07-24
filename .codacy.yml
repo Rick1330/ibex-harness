@@ -7,6 +7,11 @@ exclude_paths:
   - "**/*.test.ts"
   - "**/*.test.tsx"
   - "**/*.test.mjs"
+  # Integration tests use parameterized QueryRowContext/ExecContext; Opengrep SQLi
+  # rules false-positive on package-level SQL consts.
+  - "infra/migrations/postgres/*_test.go"
+  # Postgres SQL is not T-SQL; TSQLLint QUOTED_IDENTIFIER is inapplicable.
+  - "infra/migrations/postgres/**"
 
 # Postgres migrations are not T-SQL; disable the T-SQL-only engine.
 engines:
