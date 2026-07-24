@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 
+	// Register the lib/pq "postgres" driver for sql.Open in integration tests.
 	_ "github.com/lib/pq"
 )
 
@@ -83,12 +84,17 @@ type seededAgentDirective struct {
 	content string
 }
 
-func seedAgentDirective(t *testing.T, db *sql.DB, orgName, orgSlug, content string) seededAgentDirective {
+type agentDirectiveSeed struct {
+	db                        *sql.DB
+	orgName, orgSlug, content string
+}
+
+func seedAgentDirective(t *testing.T, seed agentDirectiveSeed) seededAgentDirective {
 	t.Helper()
 	ctx := context.Background()
 	var ids seedIDs
-	err := withServiceAccount(ctx, db, func(tx *sql.Tx) error {
-		return insertSeededDirective(ctx, tx, orgName, orgSlug, content, &ids)
+	err := withServiceAccount(ctx, seed.db, func(tx *sql.Tx) error {
+		return insertSeededDirective(ctx, tx, seed, &ids)
 	})
 	if err != nil {
 		t.Fatalf("seed: %v", err)
@@ -96,7 +102,7 @@ func seedAgentDirective(t *testing.T, db *sql.DB, orgName, orgSlug, content stri
 	return seededAgentDirective{
 		orgID:   uuid.MustParse(ids.orgID),
 		agentID: uuid.MustParse(ids.agentID),
-		content: content,
+		content: seed.content,
 	}
 }
 
@@ -104,23 +110,23 @@ type seedIDs struct {
 	orgID, userID, agentID, directiveID, versionID string
 }
 
-func insertSeededDirective(ctx context.Context, tx *sql.Tx, orgName, orgSlug, content string, ids *seedIDs) error {
-	if err := tx.QueryRowContext(ctx, seedInsertOrgSQL, orgName, orgSlug).Scan(&ids.orgID); err != nil {
+func insertSeededDirective(ctx context.Context, tx *sql.Tx, seed agentDirectiveSeed, ids *seedIDs) error {
+	if err := tx.QueryRowContext(ctx, seedInsertOrgSQL, seed.orgName, seed.orgSlug).Scan(&ids.orgID); err != nil {
 		return err
 	}
 	if err := tx.QueryRowContext(ctx, seedInsertUserSQL,
-		ids.orgID, orgSlug+"@example.com", orgName+" User").Scan(&ids.userID); err != nil {
+		ids.orgID, seed.orgSlug+"@example.com", seed.orgName+" User").Scan(&ids.userID); err != nil {
 		return err
 	}
 	if err := tx.QueryRowContext(ctx, seedInsertAgentSQL,
-		ids.orgID, ids.userID, orgName+" Agent", orgSlug+"-agent").Scan(&ids.agentID); err != nil {
+		ids.orgID, ids.userID, seed.orgName+" Agent", seed.orgSlug+"-agent").Scan(&ids.agentID); err != nil {
 		return err
 	}
 	if err := tx.QueryRowContext(ctx, seedInsertDirectiveSQL, ids.orgID, ids.agentID).Scan(&ids.directiveID); err != nil {
 		return err
 	}
 	if err := tx.QueryRowContext(ctx, seedInsertVersionSQL,
-		ids.directiveID, ids.orgID, content, "hash-"+content).Scan(&ids.versionID); err != nil {
+		ids.directiveID, ids.orgID, seed.content, "hash-"+seed.content).Scan(&ids.versionID); err != nil {
 		return err
 	}
 	return activateSeededVersion(ctx, tx, ids)
@@ -160,7 +166,7 @@ func TestIntegration_PostgresStore_Load(t *testing.T) {
 	db, _ := openIntegrationDB(t)
 	defer db.Close()
 
-	seeded := seedAgentDirective(t, db, "Org A", "org-a", "Be concise and safe.")
+	seeded := seedAgentDirective(t, agentDirectiveSeed{db: db, orgName: "Org A", orgSlug: "org-a", content: "Be concise and safe."})
 	store, err := directive.NewPostgresStore(db)
 	if err != nil {
 		t.Fatalf("store: %v", err)
@@ -193,8 +199,8 @@ func TestIntegration_PostgresStore_CrossTenantDenied(t *testing.T) {
 	db, _ := openIntegrationDB(t)
 	defer db.Close()
 
-	orgA := seedAgentDirective(t, db, "Org A", "org-a", "directive-a")
-	orgB := seedAgentDirective(t, db, "Org B", "org-b", "directive-b")
+	orgA := seedAgentDirective(t, agentDirectiveSeed{db: db, orgName: "Org A", orgSlug: "org-a", content: "directive-a"})
+	orgB := seedAgentDirective(t, agentDirectiveSeed{db: db, orgName: "Org B", orgSlug: "org-b", content: "directive-b"})
 	store, err := directive.NewPostgresStore(db)
 	if err != nil {
 		t.Fatalf("store: %v", err)
@@ -222,7 +228,7 @@ func TestIntegration_CachedResolver_PostgresFallback(t *testing.T) {
 	db, _ := openIntegrationDB(t)
 	defer db.Close()
 
-	seeded := seedAgentDirective(t, db, "Org A", "org-a", "Follow org policy.")
+	seeded := seedAgentDirective(t, agentDirectiveSeed{db: db, orgName: "Org A", orgSlug: "org-a", content: "Follow org policy."})
 	store, err := directive.NewPostgresStore(db)
 	if err != nil {
 		t.Fatalf("store: %v", err)
@@ -233,7 +239,7 @@ func TestIntegration_CachedResolver_PostgresFallback(t *testing.T) {
 	log := mustLogger(t)
 
 	resolver, err := directive.NewCachedResolver(directive.CachedResolverDeps{
-		Client: client, Store: store, Config: directive.Config{CacheTTL: time.Minute}, Log: log,
+		Client: client, Loader: store, Config: directive.Config{CacheTTL: time.Minute}, Log: log,
 	})
 	if err != nil {
 		t.Fatalf("resolver: %v", err)

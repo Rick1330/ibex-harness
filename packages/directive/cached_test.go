@@ -96,7 +96,7 @@ func TestUnit_RedisErrorTreatedAsMiss(t *testing.T) {
 	mr, client := newTestRedis(t)
 	log := mustLogger(t)
 	r, err := directive.NewCachedResolver(directive.CachedResolverDeps{
-		Client: client, Store: store, Config: directive.Config{CacheTTL: time.Minute}, Log: log,
+		Client: client, Loader: store, Config: directive.Config{CacheTTL: time.Minute}, Log: log,
 	})
 	if err != nil {
 		t.Fatalf("new: %v", err)
@@ -180,11 +180,11 @@ func TestUnit_NewCachedResolverValidation(t *testing.T) {
 	if _, err := directive.NewCachedResolver(directive.CachedResolverDeps{Client: client}); err == nil {
 		t.Fatal("expected store required")
 	}
-	if _, err := directive.NewCachedResolver(directive.CachedResolverDeps{Client: client, Store: store}); err == nil {
+	if _, err := directive.NewCachedResolver(directive.CachedResolverDeps{Client: client, Loader: store}); err == nil {
 		t.Fatal("expected logger required")
 	}
 	if _, err := directive.NewCachedResolver(directive.CachedResolverDeps{
-		Client: client, Store: store, Log: log,
+		Client: client, Loader: store, Log: log,
 	}); err != nil {
 		t.Fatalf("valid deps: %v", err)
 	}
@@ -199,7 +199,7 @@ func TestUnit_PubSubInvalidate(t *testing.T) {
 	mr, client := newTestRedis(t)
 	log := mustLogger(t)
 	r, err := directive.NewCachedResolver(directive.CachedResolverDeps{
-		Client: client, Store: store, Config: directive.Config{CacheTTL: time.Minute}, Log: log,
+		Client: client, Loader: store, Config: directive.Config{CacheTTL: time.Minute}, Log: log,
 	})
 	if err != nil {
 		t.Fatalf("resolver: %v", err)
@@ -282,7 +282,7 @@ func BenchmarkCachedResolver_ResolveHit(b *testing.B) {
 		b.Fatal(err)
 	}
 	r, err := directive.NewCachedResolver(directive.CachedResolverDeps{
-		Client: client, Store: store, Config: directive.Config{CacheTTL: time.Minute}, Log: log,
+		Client: client, Loader: store, Config: directive.Config{CacheTTL: time.Minute}, Log: log,
 	})
 	if err != nil {
 		b.Fatal(err)
@@ -331,11 +331,11 @@ func (s *errStore) Load(context.Context, uuid.UUID, uuid.UUID) (directive.Resolv
 	return directive.Resolved{}, s.err
 }
 
-func mustNewResolver(t *testing.T, store directive.Store, ttl time.Duration) *directive.CachedResolver {
+func mustNewResolver(t *testing.T, store directive.Loader, ttl time.Duration) *directive.CachedResolver {
 	t.Helper()
 	_, client := newTestRedis(t)
 	r, err := directive.NewCachedResolver(directive.CachedResolverDeps{
-		Client: client, Store: store, Config: directive.Config{CacheTTL: ttl}, Log: mustLogger(t),
+		Client: client, Loader: store, Config: directive.Config{CacheTTL: ttl}, Log: mustLogger(t),
 	})
 	if err != nil {
 		t.Fatalf("NewCachedResolver: %v", err)

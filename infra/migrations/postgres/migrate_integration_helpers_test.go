@@ -141,7 +141,9 @@ func seedDirectiveForOrg(t *testing.T, ctx context.Context, seed directiveSeed) 
 			out.directiveID, seed.orgID, seed.content, contentHash).Scan(&out.versionID); err != nil {
 			return err
 		}
-		return activateDirectiveVersion(ctx, tx, seed.orgID, out.directiveID, out.versionID)
+		return activateDirectiveVersion(ctx, tx, activateVersionArgs{
+			orgID: seed.orgID, directiveID: out.directiveID, versionID: out.versionID,
+		})
 	})
 	if err != nil {
 		t.Fatalf("seed directive org=%s: %v", seed.orgID, err)
@@ -154,8 +156,12 @@ const activateDirectiveVersionSQL = `
 	SET active_version_id = $1::uuid
 	WHERE id = $2::uuid AND org_id = $3::uuid`
 
-func activateDirectiveVersion(ctx context.Context, tx *sql.Tx, orgID, directiveID, versionID string) error {
-	res, err := tx.ExecContext(ctx, activateDirectiveVersionSQL, versionID, directiveID, orgID)
+type activateVersionArgs struct {
+	orgID, directiveID, versionID string
+}
+
+func activateDirectiveVersion(ctx context.Context, tx *sql.Tx, args activateVersionArgs) error {
+	res, err := tx.ExecContext(ctx, activateDirectiveVersionSQL, args.versionID, args.directiveID, args.orgID)
 	if err != nil {
 		return fmt.Errorf("activate directive version: %w", err)
 	}

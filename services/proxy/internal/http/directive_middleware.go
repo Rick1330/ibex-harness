@@ -9,8 +9,9 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/logger"
 )
 
-// ResolveTimeout bounds a single directive Resolve on the chat hot path.
-const ResolveTimeout = 50 * time.Millisecond
+// ResolveTimeout budgets Redis GET plus a Postgres miss on the chat hot path.
+// Cache SET after a miss uses a detached context so it is not starved by this deadline.
+const ResolveTimeout = 100 * time.Millisecond
 
 type directiveResolveHandler struct {
 	resolver directive.Resolver

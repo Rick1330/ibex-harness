@@ -28,8 +28,8 @@ type Resolver interface {
 	Invalidate(ctx context.Context, orgID, agentID uuid.UUID)
 }
 
-// Store loads the active directive from durable storage.
-type Store interface {
+// Loader loads the active directive from durable storage.
+type Loader interface {
 	Load(ctx context.Context, orgID, agentID uuid.UUID) (Resolved, error)
 }
 

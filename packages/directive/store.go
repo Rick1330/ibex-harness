@@ -28,7 +28,7 @@ type PostgresStore struct {
 	tracer trace.Tracer
 }
 
-// NewPostgresStore constructs a Store backed by Postgres.
+// NewPostgresStore constructs a Loader backed by Postgres.
 func NewPostgresStore(db *sql.DB) (*PostgresStore, error) {
 	if db == nil {
 		return nil, fmt.Errorf("directive: db is required")

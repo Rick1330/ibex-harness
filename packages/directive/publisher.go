@@ -16,12 +16,6 @@ import (
 // PublishTimeout bounds a single Redis PUBLISH attempt.
 const PublishTimeout = 2 * time.Second
 
-// Publisher publishes directive update events (may be a no-op).
-// Kept in this package so Phase 3 API can depend on the same contract.
-type Publisher interface {
-	Publish(ctx context.Context, event UpdateEvent) error
-}
-
 // RedisPublisher PUBLISHes JSON events to directive_updates:{org_id}.
 type RedisPublisher struct {
 	client redis.UniversalClient
@@ -72,5 +66,8 @@ func (p *RedisPublisher) Publish(ctx context.Context, event UpdateEvent) error {
 // NoopPublisher discards events when Redis is not configured.
 type NoopPublisher struct{}
 
-// Publish implements Publisher by discarding the event (intentional no-op).
-func (NoopPublisher) Publish(context.Context, UpdateEvent) error { return nil }
+// Publish discards the event (intentional no-op when Redis is unset).
+func (NoopPublisher) Publish(context.Context, UpdateEvent) error {
+	// No-op: publisher unused when Redis is not configured.
+	return nil
+}

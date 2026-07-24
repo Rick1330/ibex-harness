@@ -19,7 +19,7 @@ const InvalidateTimeout = 2 * time.Second
 // CachedResolverDeps groups construction dependencies (≤4 ctor params).
 type CachedResolverDeps struct {
 	Client  redis.UniversalClient
-	Store   Store
+	Loader  Loader
 	Config  Config
 	Log     *logger.Logger
 	Metrics Metrics
@@ -29,7 +29,7 @@ type CachedResolverDeps struct {
 // CachedResolver resolves directives via Redis with Postgres fallback.
 type CachedResolver struct {
 	client  redis.UniversalClient
-	store   Store
+	loader  Loader
 	cfg     Config
 	log     *logger.Logger
 	metrics Metrics
@@ -41,8 +41,8 @@ func NewCachedResolver(deps CachedResolverDeps) (*CachedResolver, error) {
 	if deps.Client == nil {
 		return nil, fmt.Errorf("directive: redis client is required")
 	}
-	if deps.Store == nil {
-		return nil, fmt.Errorf("directive: store is required")
+	if deps.Loader == nil {
+		return nil, fmt.Errorf("directive: loader is required")
 	}
 	if deps.Log == nil {
 		return nil, fmt.Errorf("directive: logger is required")
@@ -56,7 +56,7 @@ func NewCachedResolver(deps CachedResolverDeps) (*CachedResolver, error) {
 	}
 	return &CachedResolver{
 		client:  deps.Client,
-		store:   deps.Store,
+		loader:  deps.Loader,
 		cfg:     deps.Config,
 		log:     deps.Log,
 		metrics: deps.Metrics,
@@ -78,12 +78,12 @@ func (r *CachedResolver) Resolve(ctx context.Context, orgID, agentID uuid.UUID) 
 	}
 	r.metrics.IncDirectiveCacheMiss()
 
-	resolved, err := r.store.Load(ctx, orgID, agentID)
+	resolved, err := r.loader.Load(ctx, orgID, agentID)
 	if err != nil {
 		r.metrics.IncDirectiveResolveError()
 		return Resolved{}, err
 	}
-	r.populateCache(ctx, key, resolved)
+	r.populateCache(key, resolved)
 	return resolved, nil
 }
 
@@ -128,12 +128,16 @@ func (r *CachedResolver) getCached(ctx context.Context, key string) (Resolved, b
 	return resolved, true
 }
 
-func (r *CachedResolver) populateCache(ctx context.Context, key string, resolved Resolved) {
+func (r *CachedResolver) populateCache(key string, resolved Resolved) {
 	payload, err := marshalEnvelope(resolved)
 	if err != nil {
-		r.log.WarnCtx(ctx, "directive cache marshal failed", "error", err)
+		r.log.WarnCtx(context.Background(), "directive cache marshal failed", "error", err)
 		return
 	}
+	// Detach from the request deadline so a miss-path SET is not cancelled when
+	// ResolveTimeout expires after a slow Postgres Load.
+	ctx, cancel := context.WithTimeout(context.Background(), InvalidateTimeout)
+	defer cancel()
 	ctx, span := r.tracer.Start(ctx, "directive.RedisSet",
 		trace.WithAttributes(redisSpanAttrs("SET")...))
 	defer span.End()

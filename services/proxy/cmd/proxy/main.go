@@ -281,11 +281,13 @@ func setupDirectiveResolver(
 	if err != nil {
 		return nil, nil, err
 	}
-	resolver, err := newCachedDirectiveResolver(db, redisClient, cfg, log, reg)
+	resolver, err := newCachedDirectiveResolver(cachedDirectiveInputs{
+		DB: db, Redis: redisClient, Config: cfg, Log: log, Reg: reg,
+	})
 	if err != nil {
 		// Close best-effort: pool is unusable after construction failure.
 		_ = db.Close()
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("directive resolver: %w", err)
 	}
 	log.InfoCtx(context.Background(), "directive resolver configured",
 		"cache_ttl", cfg.DirectiveCacheTTL.String())
@@ -309,25 +311,27 @@ func openProxyPostgres(dsn string) (*sql.DB, error) {
 	return db, nil
 }
 
-func newCachedDirectiveResolver(
-	db *sql.DB,
-	redisClient redis.UniversalClient,
-	cfg config.Config,
-	log *logger.Logger,
-	reg *ibexmetrics.ProxyRegistry,
-) (directive.Resolver, error) {
-	store, err := directive.NewPostgresStore(db)
+type cachedDirectiveInputs struct {
+	DB     *sql.DB
+	Redis  redis.UniversalClient
+	Config config.Config
+	Log    *logger.Logger
+	Reg    *ibexmetrics.ProxyRegistry
+}
+
+func newCachedDirectiveResolver(in cachedDirectiveInputs) (directive.Resolver, error) {
+	loader, err := directive.NewPostgresStore(in.DB)
 	if err != nil {
-		return nil, fmt.Errorf("directive store: %w", err)
+		return nil, fmt.Errorf("directive loader: %w", err)
 	}
 	var metrics directive.Metrics = directive.NoopMetrics{}
-	if reg != nil {
-		metrics = reg
+	if in.Reg != nil {
+		metrics = in.Reg
 	}
 	resolver, err := directive.NewCachedResolver(directive.CachedResolverDeps{
-		Client: redisClient, Store: store,
-		Config: directive.Config{CacheTTL: cfg.DirectiveCacheTTL},
-		Log:    log, Metrics: metrics,
+		Client: in.Redis, Loader: loader,
+		Config: directive.Config{CacheTTL: in.Config.DirectiveCacheTTL},
+		Log:    in.Log, Metrics: metrics,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("directive cached resolver: %w", err)
