@@ -70,8 +70,8 @@ func TestMigrateUpIdempotent(t *testing.T) {
 	if dirty {
 		t.Fatal("expected clean migration state")
 	}
-	if v != 9 {
-		t.Fatalf("expected version 9, got %d", v)
+	if v != 10 {
+		t.Fatalf("expected version 10, got %d", v)
 	}
 }
 
@@ -86,35 +86,12 @@ func TestSchemaObjectsExist(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	for _, table := range []string{"organizations", "tokens", "users", "agents", "directives", "directive_versions"} {
-		var exists bool
-		err := db.QueryRowContext(ctx, `
-			SELECT EXISTS (
-				SELECT 1 FROM information_schema.tables
-				WHERE table_schema = 'ibex_core' AND table_name = $1
-			)`, table).Scan(&exists)
-		if err != nil {
-			t.Fatalf("check table %s: %v", table, err)
-		}
-		if !exists {
-			t.Errorf("missing table ibex_core.%s", table)
-		}
+	tables := []string{
+		"organizations", "tokens", "users", "agents",
+		"directives", "directive_versions", "sessions", "checkpoints",
 	}
-
-	for _, table := range []string{"organizations", "tokens", "users", "agents", "directives", "directive_versions"} {
-		var rls bool
-		err := db.QueryRowContext(ctx, `
-			SELECT c.relrowsecurity
-			FROM pg_class c
-			JOIN pg_namespace n ON n.oid = c.relnamespace
-			WHERE n.nspname = 'ibex_core' AND c.relname = $1`, table).Scan(&rls)
-		if err != nil {
-			t.Fatalf("check rls %s: %v", table, err)
-		}
-		if !rls {
-			t.Errorf("RLS not enabled on ibex_core.%s", table)
-		}
-	}
+	assertCoreTablesExist(t, ctx, db, tables)
+	assertCoreTablesRLSEnabled(t, ctx, db, tables)
 }
 
 func TestRLSUsersAndAgentsIsolation(t *testing.T) {

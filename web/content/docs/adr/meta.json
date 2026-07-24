@@ -32,6 +32,7 @@
     "0029-token-revocation-propagation",
     "0030-directive-versioning",
     "0031-system-prompt-injection",
+    "0032-session-data-model",
     "0038-context-assembly-service"
   ]
 }

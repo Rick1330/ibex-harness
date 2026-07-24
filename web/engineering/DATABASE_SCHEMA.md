@@ -746,6 +746,8 @@ CREATE INDEX idx_memory_versions_memory_id
 
 #### Session Management
 
+> **Milestone 2.4.1:** `ibex_core.sessions` and `ibex_core.checkpoints` are applied as the Phase-2 subset (`000010`; see [ADR-0032](../content/docs/adr/0032-session-data-model.mdx)): hashes/metadata, soft delete, append-only checkpoints, FORCE RLS. Heartbeat, loop detection, and other fuller columns documented below are not yet migrated.
+
 ```sql
 -- ================================================================
 -- SESSIONS
