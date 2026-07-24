@@ -252,6 +252,11 @@ func TestIntegration_CachedResolver_PostgresFallback(t *testing.T) {
 	if first.Content != seeded.content {
 		t.Fatalf("first content=%q", first.Content)
 	}
+	key := seeded.orgID.String() + ":directive:" + seeded.agentID.String()
+	waitUntil(t, 2*time.Second, func() bool {
+		n, err := client.Exists(context.Background(), key).Result()
+		return err == nil && n == 1
+	})
 
 	second, err := resolver.Resolve(context.Background(), seeded.orgID, seeded.agentID)
 	if err != nil {

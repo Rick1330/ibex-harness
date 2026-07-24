@@ -23,25 +23,22 @@ func TestUnit_ResolveHitMissEmpty(t *testing.T) {
 	store := newFakeStore(directive.Resolved{
 		Content: content, InjectionMode: "system_first", VersionID: uuid.New(),
 	})
-	r := mustNewResolver(t, store, time.Minute)
+	r, client := mustNewResolver(t, store, time.Minute)
 
 	first, err := r.Resolve(context.Background(), orgID, agentID)
 	if err != nil {
 		t.Fatalf("first resolve: %v", err)
 	}
 	assertResolvedContent(t, first, content)
-	if store.loads != 1 {
-		t.Fatalf("loads=%d want 1", store.loads)
-	}
+	assertStoreLoads(t, store, 1)
 
+	waitRedisDirective(t, client, orgID, agentID)
 	second, err := r.Resolve(context.Background(), orgID, agentID)
 	if err != nil {
 		t.Fatalf("second resolve: %v", err)
 	}
 	assertResolvedContent(t, second, content)
-	if store.loads != 1 {
-		t.Fatalf("loads=%d want 1 after hit", store.loads)
-	}
+	assertStoreLoads(t, store, 1)
 }
 
 func TestUnit_ResolveNegativeCache(t *testing.T) {
@@ -50,9 +47,17 @@ func TestUnit_ResolveNegativeCache(t *testing.T) {
 	orgID := uuid.New()
 	agentID := uuid.New()
 	store := newFakeStore(directive.Resolved{})
-	r := mustNewResolver(t, store, time.Minute)
+	r, client := mustNewResolver(t, store, time.Minute)
 
-	for i := 0; i < 3; i++ {
+	got, err := r.Resolve(context.Background(), orgID, agentID)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if got.HasContent() {
+		t.Fatal("expected empty")
+	}
+	waitRedisDirective(t, client, orgID, agentID)
+	for i := 0; i < 2; i++ {
 		got, err := r.Resolve(context.Background(), orgID, agentID)
 		if err != nil {
 			t.Fatalf("resolve %d: %v", i, err)
@@ -61,9 +66,7 @@ func TestUnit_ResolveNegativeCache(t *testing.T) {
 			t.Fatal("expected empty")
 		}
 	}
-	if store.loads != 1 {
-		t.Fatalf("loads=%d want 1 (negative cache)", store.loads)
-	}
+	assertStoreLoads(t, store, 1)
 }
 
 func TestUnit_InvalidateClearsCache(t *testing.T) {
@@ -72,9 +75,10 @@ func TestUnit_InvalidateClearsCache(t *testing.T) {
 	orgID := uuid.New()
 	agentID := uuid.New()
 	store := newFakeStore(directive.Resolved{Content: "v1", InjectionMode: "system_first"})
-	r := mustNewResolver(t, store, time.Minute)
+	r, client := mustNewResolver(t, store, time.Minute)
 
 	_, _ = r.Resolve(context.Background(), orgID, agentID)
+	waitRedisDirective(t, client, orgID, agentID)
 	store.set(directive.Resolved{Content: "v2", InjectionMode: "system_append"})
 	r.Invalidate(context.Background(), orgID, agentID)
 	got, err := r.Resolve(context.Background(), orgID, agentID)
@@ -82,9 +86,7 @@ func TestUnit_InvalidateClearsCache(t *testing.T) {
 		t.Fatalf("resolve: %v", err)
 	}
 	assertResolvedContent(t, got, "v2")
-	if store.loads != 2 {
-		t.Fatalf("loads=%d want 2", store.loads)
-	}
+	assertStoreLoads(t, store, 2)
 }
 
 func TestUnit_RedisErrorTreatedAsMiss(t *testing.T) {
@@ -117,7 +119,7 @@ func TestUnit_StoreErrorSurfaces(t *testing.T) {
 	t.Parallel()
 
 	store := &errStore{err: errors.New("db down")}
-	r := mustNewResolver(t, store, time.Minute)
+	r, _ := mustNewResolver(t, store, time.Minute)
 	_, err := r.Resolve(context.Background(), uuid.New(), uuid.New())
 	if err == nil {
 		t.Fatal("expected error")
@@ -205,9 +207,8 @@ func TestUnit_PubSubInvalidate(t *testing.T) {
 		t.Fatalf("resolver: %v", err)
 	}
 	_, _ = r.Resolve(context.Background(), orgID, agentID)
-	if store.loads != 1 {
-		t.Fatalf("loads=%d", store.loads)
-	}
+	waitRedisDirective(t, client, orgID, agentID)
+	assertStoreLoads(t, store, 1)
 
 	sub, err := directive.NewSubscriber(client, r, log, nil)
 	if err != nil {
@@ -246,17 +247,24 @@ func TestUnit_EnvelopeRoundTrip(t *testing.T) {
 	store := newFakeStore(directive.Resolved{
 		Content: "x", InjectionMode: "system_append", VersionID: versionID,
 	})
-	r := mustNewResolver(t, store, time.Minute)
+	r, client := mustNewResolver(t, store, time.Minute)
 	got, err := r.Resolve(context.Background(), orgID, agentID)
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
-	if got.VersionID != versionID || got.InjectionMode != "system_append" {
-		t.Fatalf("envelope: %+v", got)
+	if got.VersionID != versionID {
+		t.Fatalf("version_id=%s", got.VersionID)
 	}
+	if got.InjectionMode != "system_append" {
+		t.Fatalf("mode=%q", got.InjectionMode)
+	}
+	waitRedisDirective(t, client, orgID, agentID)
 	hit, err := r.Resolve(context.Background(), orgID, agentID)
-	if err != nil || hit.VersionID != versionID {
-		t.Fatalf("cache hit: %+v err=%v", hit, err)
+	if err != nil {
+		t.Fatalf("cache hit: %v", err)
+	}
+	if hit.VersionID != versionID {
+		t.Fatalf("cache hit version_id=%s", hit.VersionID)
 	}
 }
 
@@ -289,6 +297,13 @@ func BenchmarkCachedResolver_ResolveHit(b *testing.B) {
 	}
 	if _, err := r.Resolve(context.Background(), orgID, agentID); err != nil {
 		b.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if n, err := client.Exists(context.Background(), orgID.String()+":directive:"+agentID.String()).Result(); err == nil && n == 1 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -331,7 +346,7 @@ func (s *errStore) Load(context.Context, uuid.UUID, uuid.UUID) (directive.Resolv
 	return directive.Resolved{}, s.err
 }
 
-func mustNewResolver(t *testing.T, store directive.Loader, ttl time.Duration) *directive.CachedResolver {
+func mustNewResolver(t *testing.T, store directive.Loader, ttl time.Duration) (*directive.CachedResolver, *redis.Client) {
 	t.Helper()
 	_, client := newTestRedis(t)
 	r, err := directive.NewCachedResolver(directive.CachedResolverDeps{
@@ -340,7 +355,7 @@ func mustNewResolver(t *testing.T, store directive.Loader, ttl time.Duration) *d
 	if err != nil {
 		t.Fatalf("NewCachedResolver: %v", err)
 	}
-	return r
+	return r, client
 }
 
 func newTestRedis(t *testing.T) (*miniredis.Miniredis, *redis.Client) {
@@ -365,6 +380,15 @@ func assertResolvedContent(t *testing.T, got directive.Resolved, want string) {
 	if got.Content != want {
 		t.Fatalf("content=%q want %q", got.Content, want)
 	}
+}
+
+func waitRedisDirective(t *testing.T, client redis.UniversalClient, orgID, agentID uuid.UUID) {
+	t.Helper()
+	key := orgID.String() + ":directive:" + agentID.String()
+	waitUntil(t, 2*time.Second, func() bool {
+		n, err := client.Exists(context.Background(), key).Result()
+		return err == nil && n == 1
+	})
 }
 
 func waitSubscribed(t *testing.T, mr *miniredis.Miniredis) {

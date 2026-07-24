@@ -19,6 +19,7 @@ import (
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/trace"
 
+	// Register the lib/pq "postgres" driver for sql.Open in proxy unit tests.
 	_ "github.com/lib/pq"
 )
 
@@ -210,7 +211,7 @@ func TestRun_ProviderRegistryInitFailureReturns1(t *testing.T) {
 	}
 }
 
-func TestOpenProxyPostgres_BadDSN(t *testing.T) {
+func TestUnit_OpenProxyPostgres_BadDSN(t *testing.T) {
 	t.Parallel()
 	_, err := openProxyPostgres("postgres://127.0.0.1:1/nope?sslmode=disable&connect_timeout=1")
 	if err == nil {
@@ -218,7 +219,7 @@ func TestOpenProxyPostgres_BadDSN(t *testing.T) {
 	}
 }
 
-func TestBuildProxyHealth_WithAndWithoutPostgres(t *testing.T) {
+func TestUnit_BuildProxyHealth_WithAndWithoutPostgres(t *testing.T) {
 	t.Parallel()
 	cfg := config.Config{}
 	cfg.ApplyDefaults()
@@ -240,7 +241,7 @@ func TestBuildProxyHealth_WithAndWithoutPostgres(t *testing.T) {
 	}
 }
 
-func TestNewCachedDirectiveResolver_NilDB(t *testing.T) {
+func TestUnit_NewCachedDirectiveResolver_NilDB(t *testing.T) {
 	t.Parallel()
 	log := logger.Discard("proxy")
 	_, err := newCachedDirectiveResolver(cachedDirectiveInputs{
@@ -251,7 +252,8 @@ func TestNewCachedDirectiveResolver_NilDB(t *testing.T) {
 	}
 }
 
-func TestStartDirectiveSubscriber_StartsForCachedResolver(t *testing.T) {
+func TestUnit_StartDirectiveSubscriber_StartsForCachedResolver(t *testing.T) {
+	t.Parallel()
 	log := logger.Discard("proxy")
 	mr := miniredis.RunT(t)
 	client, err := ratelimit.ParseRedisURL("redis://" + mr.Addr() + "/0")
@@ -278,7 +280,7 @@ func TestStartDirectiveSubscriber_StartsForCachedResolver(t *testing.T) {
 	<-sub.Done()
 }
 
-func TestStopPubSubSubscribers_NilSafe(t *testing.T) {
+func TestUnit_StopPubSubSubscribers_NilSafe(t *testing.T) {
 	t.Parallel()
 	stopPubSubSubscribers(shutdownOpts{})
 	called := false

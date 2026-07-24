@@ -5,6 +5,7 @@ package redissub
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/logger"
@@ -25,6 +26,7 @@ type Loop struct {
 	stopOnce sync.Once
 	stopCh   chan struct{}
 	doneCh   chan struct{}
+	started  atomic.Bool
 }
 
 // NewLoop constructs a Loop ready for Run.
@@ -42,8 +44,12 @@ func (l *Loop) StopCh() <-chan struct{} { return l.stopCh }
 func (l *Loop) Done() <-chan struct{} { return l.doneCh }
 
 // Stop signals Run to exit and waits briefly for Done.
+// If Run never started, returns immediately (doneCh would never close).
 func (l *Loop) Stop() {
 	l.stopOnce.Do(func() { close(l.stopCh) })
+	if !l.started.Load() {
+		return
+	}
 	select {
 	case <-l.doneCh:
 	case <-time.After(stopWait):
@@ -65,6 +71,7 @@ func (l *Loop) Stopped(ctx context.Context) bool {
 // Run blocks until Stop or ctx cancellation. Reconnects with exponential backoff.
 // name is used only in reconnect warning logs (e.g. "directive", "revocation").
 func (l *Loop) Run(ctx context.Context, log *logger.Logger, name string, listen ListenOnce) {
+	l.started.Store(true)
 	defer close(l.doneCh)
 	backoff := initialBackoff
 	for {

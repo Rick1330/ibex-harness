@@ -83,7 +83,8 @@ func (r *CachedResolver) Resolve(ctx context.Context, orgID, agentID uuid.UUID) 
 		r.metrics.IncDirectiveResolveError()
 		return Resolved{}, err
 	}
-	r.populateCache(key, resolved)
+	// Write-behind: never block the hot path on Redis SET (own 2s budget).
+	go r.populateCache(key, resolved)
 	return resolved, nil
 }
 
@@ -134,8 +135,7 @@ func (r *CachedResolver) populateCache(key string, resolved Resolved) {
 		r.log.WarnCtx(context.Background(), "directive cache marshal failed", "error", err)
 		return
 	}
-	// Detach from the request deadline so a miss-path SET is not cancelled when
-	// ResolveTimeout expires after a slow Postgres Load.
+	// Detached from the request: slow SET must not extend ResolveTimeout.
 	ctx, cancel := context.WithTimeout(context.Background(), InvalidateTimeout)
 	defer cancel()
 	ctx, span := r.tracer.Start(ctx, "directive.RedisSet",

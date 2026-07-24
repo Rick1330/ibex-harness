@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 
+	// Register the lib/pq "postgres" driver for sql.Open in unit tests.
 	_ "github.com/lib/pq"
 )
 
@@ -130,6 +131,7 @@ func TestUnit_SubscriberIgnoresMalformedEvents(t *testing.T) {
 		t.Fatalf("resolver: %v", err)
 	}
 	_, _ = r.Resolve(context.Background(), orgID, agentID)
+	waitRedisDirective(t, client, orgID, agentID)
 	sub, err := directive.NewSubscriber(client, r, log, nil)
 	if err != nil {
 		t.Fatalf("subscriber: %v", err)
