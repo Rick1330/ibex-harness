@@ -22,79 +22,86 @@ func (s *stubDirectiveResolver) Resolve(context.Context, uuid.UUID, uuid.UUID) (
 	return s.resolved, s.err
 }
 
-func (s *stubDirectiveResolver) Invalidate(uuid.UUID, uuid.UUID) {}
+func (s *stubDirectiveResolver) Invalidate(context.Context, uuid.UUID, uuid.UUID) {
+	// No-op stub.
+}
 
-func TestDirectiveResolveMiddleware_SetsContext(t *testing.T) {
+type directiveMWCase struct {
+	name        string
+	withAgent   bool
+	resolver    *stubDirectiveResolver
+	wantStatus  int
+	wantCtx     bool
+	wantContent string
+}
+
+func TestUnit_DirectiveResolveMiddleware(t *testing.T) {
+	t.Parallel()
+
 	orgID := uuid.MustParse("550e8400-e29b-41d4-a716-446655440001")
 	agentID := uuid.MustParse("550e8400-e29b-41d4-a716-446655440000")
 	want := directive.Resolved{Content: "Be helpful.", InjectionMode: "system_first"}
 
-	handler := DirectiveResolveMiddleware(&stubDirectiveResolver{resolved: want}, logger.Discard("proxy"))(
+	cases := []directiveMWCase{
+		{
+			name: "sets_context", withAgent: true,
+			resolver:   &stubDirectiveResolver{resolved: want},
+			wantStatus: http.StatusOK, wantCtx: true, wantContent: want.Content,
+		},
+		{
+			name: "fail_open_on_error", withAgent: true,
+			resolver:   &stubDirectiveResolver{err: errors.New("postgres down")},
+			wantStatus: http.StatusOK, wantCtx: false,
+		},
+		{
+			name: "skips_without_agent", withAgent: false,
+			resolver:   &stubDirectiveResolver{resolved: directive.Resolved{Content: "should not run"}},
+			wantStatus: http.StatusOK, wantCtx: false,
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			runDirectiveMWCase(t, tc, orgID, agentID)
+		})
+	}
+}
+
+func runDirectiveMWCase(t *testing.T, tc directiveMWCase, orgID, agentID uuid.UUID) {
+	t.Helper()
+	handler := DirectiveResolveMiddleware(tc.resolver, logger.Discard("proxy"))(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			got, ok := ResolvedDirectiveFromContext(r.Context())
-			if !ok {
-				http.Error(w, "missing directive", http.StatusInternalServerError)
-				return
-			}
-			if got.Content != want.Content {
-				http.Error(w, "wrong content", http.StatusInternalServerError)
-				return
-			}
-			w.WriteHeader(http.StatusOK)
+			assertDirectiveContext(w, r, tc)
 		}),
 	)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
-	req = req.WithContext(WithAgent(req.Context(), auth.AgentRecord{ID: agentID, OrgID: orgID, Status: "active"}))
+	if tc.withAgent {
+		req = req.WithContext(WithAgent(req.Context(), auth.AgentRecord{
+			ID: agentID, OrgID: orgID, Status: "active",
+		}))
+	}
 	handler.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
+	if rec.Code != tc.wantStatus {
 		t.Fatalf("status=%d body=%q", rec.Code, rec.Body.String())
 	}
 }
 
-func TestDirectiveResolveMiddleware_FailOpenOnError(t *testing.T) {
-	orgID := uuid.MustParse("550e8400-e29b-41d4-a716-446655440001")
-	agentID := uuid.MustParse("550e8400-e29b-41d4-a716-446655440000")
-
-	handler := DirectiveResolveMiddleware(
-		&stubDirectiveResolver{err: errors.New("postgres down")},
-		logger.Discard("proxy"),
-	)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if _, ok := ResolvedDirectiveFromContext(r.Context()); ok {
-			http.Error(w, "unexpected directive", http.StatusInternalServerError)
+func assertDirectiveContext(w http.ResponseWriter, r *http.Request, tc directiveMWCase) {
+	got, ok := ResolvedDirectiveFromContext(r.Context())
+	if tc.wantCtx {
+		if !ok || got.Content != tc.wantContent {
+			http.Error(w, "missing or wrong directive", http.StatusInternalServerError)
 			return
 		}
 		w.WriteHeader(http.StatusOK)
-	}))
-
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
-	req = req.WithContext(WithAgent(req.Context(), auth.AgentRecord{ID: agentID, OrgID: orgID, Status: "active"}))
-	handler.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status=%d want fail-open 200", rec.Code)
+		return
 	}
-}
-
-func TestDirectiveResolveMiddleware_SkipsWithoutAgent(t *testing.T) {
-	handler := DirectiveResolveMiddleware(
-		&stubDirectiveResolver{resolved: directive.Resolved{Content: "should not run"}},
-		logger.Discard("proxy"),
-	)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if _, ok := ResolvedDirectiveFromContext(r.Context()); ok {
-			http.Error(w, "unexpected directive", http.StatusInternalServerError)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-	}))
-
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
-	handler.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status=%d", rec.Code)
+	if ok {
+		http.Error(w, "unexpected directive", http.StatusInternalServerError)
+		return
 	}
+	w.WriteHeader(http.StatusOK)
 }

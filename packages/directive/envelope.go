@@ -7,13 +7,14 @@ import (
 	"github.com/google/uuid"
 )
 
-// CurrentEnvelopeVersion is the cache envelope schema version.
+// CurrentEnvelopeVersion is the Redis cache envelope schema version.
+// Bump when cached JSON fields change incompatibly.
 const CurrentEnvelopeVersion = 1
 
-// DefaultInjectionMode matches directives.injection_mode DEFAULT.
+// DefaultInjectionMode matches directives.injection_mode DEFAULT in Postgres.
 const DefaultInjectionMode = "system_first"
 
-// envelope is the typed Redis cache value.
+// envelope is the typed Redis cache value (forward-compatible via Version).
 type envelope struct {
 	Version       int    `json:"v"`
 	Content       string `json:"content"`

@@ -82,12 +82,15 @@ func AgentFromContext(ctx context.Context) (auth.AgentRecord, bool) {
 	return rec, ok
 }
 
-// WithResolvedDirective stores the resolved directive on the context.
+// WithResolvedDirective stores a successfully resolved directive on the request
+// context for downstream injection (2.3.3). Call only after Resolve succeeds.
 func WithResolvedDirective(ctx context.Context, resolved directive.Resolved) context.Context {
 	return context.WithValue(ctx, ctxKeyResolvedDirective, resolved)
 }
 
 // ResolvedDirectiveFromContext returns the resolved directive when present.
+// Absence is expected on fail-open resolve errors; injection must treat missing
+// as "no directive" rather than an error.
 func ResolvedDirectiveFromContext(ctx context.Context) (directive.Resolved, bool) {
 	resolved, ok := ctx.Value(ctxKeyResolvedDirective).(directive.Resolved)
 	return resolved, ok

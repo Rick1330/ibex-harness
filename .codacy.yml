@@ -10,6 +10,7 @@ exclude_paths:
   # Integration tests use parameterized QueryRowContext/ExecContext; Opengrep SQLi
   # rules false-positive on package-level SQL consts.
   - "infra/migrations/postgres/*_test.go"
+  - "packages/directive/*_test.go"
   # Postgres down migrations are not T-SQL. Codacy still runs TSQLLint on *.sql
   # despite engines.tsqllint.enabled=false below; SET QUOTED_IDENTIFIER would break
   # golang-migrate on Postgres, so exclude down scripts only (up.sql still scanned).

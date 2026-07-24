@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Rick1330/ibex-harness/packages/directive"
 	"github.com/Rick1330/ibex-harness/packages/healthcheck"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	ibexmetrics "github.com/Rick1330/ibex-harness/packages/metrics"
@@ -87,6 +88,54 @@ func TestSetupRateLimiter_InvalidURL(t *testing.T) {
 	_, _, err := setupRateLimiter(config.Config{RedisURL: "not-a-redis-url"}, log)
 	if err == nil {
 		t.Fatal("expected error for invalid redis URL")
+	}
+}
+
+func TestSetupDirectiveResolver_NoopWithoutDSNOrRedis(t *testing.T) {
+	log := logger.Discard("proxy")
+	db, resolver, err := setupDirectiveResolver(config.Config{}, nil, log, nil)
+	if err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	if db != nil {
+		t.Fatal("expected nil db")
+	}
+	got, err := resolver.Resolve(context.Background(), uuid.Nil, uuid.Nil)
+	if err != nil || got.HasContent() {
+		t.Fatalf("noop resolve: %+v err=%v", got, err)
+	}
+
+	mr := miniredis.RunT(t)
+	client, err := ratelimit.ParseRedisURL("redis://" + mr.Addr() + "/0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	db, resolver, err = setupDirectiveResolver(config.Config{RedisURL: "redis://" + mr.Addr()}, client, log, nil)
+	if err != nil {
+		t.Fatalf("setup with redis only: %v", err)
+	}
+	if db != nil {
+		t.Fatal("expected nil db without POSTGRES_DSN")
+	}
+	_, _ = resolver.Resolve(context.Background(), uuid.Nil, uuid.Nil)
+}
+
+func TestStartDirectiveSubscriber_SkippedForNoop(t *testing.T) {
+	log := logger.Discard("proxy")
+	sub, cancel, err := startDirectiveSubscriber(nil, directive.NoopResolver{}, log, nil)
+	if err != nil || sub != nil || cancel != nil {
+		t.Fatalf("nil redis: sub=%v cancel=%v err=%v", sub, cancel, err)
+	}
+	mr := miniredis.RunT(t)
+	client, err := ratelimit.ParseRedisURL("redis://" + mr.Addr() + "/0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	sub, cancel, err = startDirectiveSubscriber(client, directive.NoopResolver{}, log, nil)
+	if err != nil || sub != nil || cancel != nil {
+		t.Fatalf("noop resolver: sub=%v cancel=%v err=%v", sub, cancel, err)
 	}
 }
 

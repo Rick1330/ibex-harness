@@ -1936,9 +1936,13 @@ Hot Memory Cache:
 
 Directive Cache:
   Key:   {org_id}:directive:{agent_id}
-  Type:  String (JSON envelope: content, injection_mode, version_id)
+  Type:  String (typed JSON envelope)
   TTL:   60 seconds (default; configurable via IBEX_DIRECTIVE_CACHE_TTL)
-  Value: Active directive payload for hot-path resolve
+  Value: {"v":1,"content":"...","injection_mode":"system_first","version_id":"<uuid>"}
+         - v: serialization envelope version (forward-compat; not the directive revision)
+         - content: active directive text
+         - injection_mode: system_first | system_append | user_prepend
+         - version_id: directive_versions.id of the active revision
   Use:   Hot path: directive retrieved on every request
 
   Key:   {org_id}:directive_version:{agent_id}

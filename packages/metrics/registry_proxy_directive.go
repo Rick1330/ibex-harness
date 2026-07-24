@@ -27,26 +27,31 @@ func (r *ProxyRegistry) initDirectiveMetrics() {
 }
 
 // IncDirectiveCacheHit records a directive Redis cache hit.
+// Aggregate proxy metric only — never label by org/agent/content.
 func (r *ProxyRegistry) IncDirectiveCacheHit() {
 	r.directiveCacheHits.Inc()
 }
 
 // IncDirectiveCacheMiss records a directive Redis cache miss.
+// Aggregate proxy metric only — never label by org/agent/content.
 func (r *ProxyRegistry) IncDirectiveCacheMiss() {
 	r.directiveCacheMisses.Inc()
 }
 
 // IncDirectiveResolveError records a Postgres/store failure during resolve.
+// Aggregate proxy metric only — never label by org/agent/content.
 func (r *ProxyRegistry) IncDirectiveResolveError() {
 	r.directiveResolveErrs.Inc()
 }
 
 // ObserveDirectiveResolveSeconds records Resolve wall time.
+// Aggregate proxy metric only — never label by org/agent/content.
 func (r *ProxyRegistry) ObserveDirectiveResolveSeconds(seconds float64) {
 	r.directiveResolveSec.Observe(seconds)
 }
 
 // IncDirectiveInvalidate records a pub/sub-driven cache invalidation.
+// Aggregate proxy metric only — never label by org/agent/content.
 func (r *ProxyRegistry) IncDirectiveInvalidate() {
 	r.directiveInvalidate.Inc()
 }

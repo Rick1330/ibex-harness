@@ -27,7 +27,7 @@ Auth validates via gRPC `ValidateToken` ([ADR-0011](../../docs/adr/ADR-0011-prox
 metrics → requestContext → responseHeaders → logging → mux
 
 POST /v1/chat/completions:
-  bodyLimit → contentType → auth → agentVerify → directiveResolve → rateLimit → chatParse → providerRouting → handler
+  bodyLimit → contentType → auth → agentVerify → rateLimit → directiveResolve → chatParse → providerRouting → handler
 
 GET /v1/internal/auth-probe:
   auth → agentVerify → rateLimit → handler

@@ -13,6 +13,7 @@ func cacheKey(orgID, agentID uuid.UUID) string {
 }
 
 // ChannelPrefix is the Redis pub/sub channel prefix for directive updates.
+// Full channel: directive_updates:{org_id} (tenant-scoped fan-out).
 const ChannelPrefix = "directive_updates:"
 
 // ChannelPattern is the PSUBSCRIBE pattern for all org directive channels.
@@ -24,6 +25,7 @@ func ChannelForOrg(orgID uuid.UUID) string {
 }
 
 // OrgIDFromChannel extracts the org UUID from a directive_updates:{org_id} channel.
+// Returns an error when the channel prefix is wrong or the UUID is malformed.
 func OrgIDFromChannel(channel string) (uuid.UUID, error) {
 	if len(channel) <= len(ChannelPrefix) || channel[:len(ChannelPrefix)] != ChannelPrefix {
 		return uuid.Nil, fmt.Errorf("directive: unexpected channel %q", channel)

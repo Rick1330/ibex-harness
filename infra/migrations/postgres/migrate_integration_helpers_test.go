@@ -5,6 +5,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"testing"
 )
 
@@ -140,14 +141,30 @@ func seedDirectiveForOrg(t *testing.T, ctx context.Context, seed directiveSeed) 
 			out.directiveID, seed.orgID, seed.content, contentHash).Scan(&out.versionID); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, `
-			UPDATE ibex_core.directives
-			SET active_version_id = $1::uuid
-			WHERE id = $2::uuid`, out.versionID, out.directiveID)
-		return err
+		return activateDirectiveVersion(ctx, tx, seed.orgID, out.directiveID, out.versionID)
 	})
 	if err != nil {
 		t.Fatalf("seed directive org=%s: %v", seed.orgID, err)
 	}
 	return out
+}
+
+const activateDirectiveVersionSQL = `
+	UPDATE ibex_core.directives
+	SET active_version_id = $1::uuid
+	WHERE id = $2::uuid AND org_id = $3::uuid`
+
+func activateDirectiveVersion(ctx context.Context, tx *sql.Tx, orgID, directiveID, versionID string) error {
+	res, err := tx.ExecContext(ctx, activateDirectiveVersionSQL, versionID, directiveID, orgID)
+	if err != nil {
+		return fmt.Errorf("activate directive version: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("activate directive version rows: %w", err)
+	}
+	if n != 1 {
+		return fmt.Errorf("activate directive version: affected %d rows, want 1", n)
+	}
+	return nil
 }

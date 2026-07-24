@@ -8,12 +8,16 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // PublishTimeout bounds a single Redis PUBLISH attempt.
 const PublishTimeout = 2 * time.Second
 
 // Publisher publishes directive update events (may be a no-op).
+// Kept in this package so Phase 3 API can depend on the same contract.
 type Publisher interface {
 	Publish(ctx context.Context, event UpdateEvent) error
 }
@@ -22,6 +26,7 @@ type Publisher interface {
 type RedisPublisher struct {
 	client redis.UniversalClient
 	log    *logger.Logger
+	tracer trace.Tracer
 }
 
 // NewRedisPublisher constructs a RedisPublisher.
@@ -32,7 +37,11 @@ func NewRedisPublisher(client redis.UniversalClient, log *logger.Logger) (*Redis
 	if log == nil {
 		return nil, fmt.Errorf("directive: logger is required")
 	}
-	return &RedisPublisher{client: client, log: log}, nil
+	return &RedisPublisher{
+		client: client,
+		log:    log,
+		tracer: otel.Tracer("ibex-directive"),
+	}, nil
 }
 
 // Publish encodes and PUBLISHes the event to the org channel.
@@ -48,14 +57,20 @@ func (p *RedisPublisher) Publish(ctx context.Context, event UpdateEvent) error {
 	pubCtx, cancel := context.WithTimeout(ctx, PublishTimeout)
 	defer cancel()
 	channel := ChannelForOrg(orgID)
+	pubCtx, span := p.tracer.Start(pubCtx, "directive.RedisPublish",
+		trace.WithAttributes(redisSpanAttrs("PUBLISH")...),
+	)
+	defer span.End()
 	if err := p.client.Publish(pubCtx, channel, payload).Err(); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return fmt.Errorf("directive: publish: %w", err)
 	}
 	return nil
 }
 
-// NoopPublisher discards events.
+// NoopPublisher discards events when Redis is not configured.
 type NoopPublisher struct{}
 
-// Publish implements Publisher.
+// Publish implements Publisher by discarding the event (intentional no-op).
 func (NoopPublisher) Publish(context.Context, UpdateEvent) error { return nil }

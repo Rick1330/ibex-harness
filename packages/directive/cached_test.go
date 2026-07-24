@@ -16,6 +16,7 @@ import (
 
 func TestUnit_ResolveHitMissEmpty(t *testing.T) {
 	t.Parallel()
+
 	orgID := uuid.New()
 	agentID := uuid.New()
 	content := "Be concise."
@@ -45,6 +46,7 @@ func TestUnit_ResolveHitMissEmpty(t *testing.T) {
 
 func TestUnit_ResolveNegativeCache(t *testing.T) {
 	t.Parallel()
+
 	orgID := uuid.New()
 	agentID := uuid.New()
 	store := newFakeStore(directive.Resolved{})
@@ -66,6 +68,7 @@ func TestUnit_ResolveNegativeCache(t *testing.T) {
 
 func TestUnit_InvalidateClearsCache(t *testing.T) {
 	t.Parallel()
+
 	orgID := uuid.New()
 	agentID := uuid.New()
 	store := newFakeStore(directive.Resolved{Content: "v1", InjectionMode: "system_first"})
@@ -73,7 +76,7 @@ func TestUnit_InvalidateClearsCache(t *testing.T) {
 
 	_, _ = r.Resolve(context.Background(), orgID, agentID)
 	store.set(directive.Resolved{Content: "v2", InjectionMode: "system_append"})
-	r.Invalidate(orgID, agentID)
+	r.Invalidate(context.Background(), orgID, agentID)
 	got, err := r.Resolve(context.Background(), orgID, agentID)
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
@@ -86,12 +89,15 @@ func TestUnit_InvalidateClearsCache(t *testing.T) {
 
 func TestUnit_RedisErrorTreatedAsMiss(t *testing.T) {
 	t.Parallel()
+
 	orgID := uuid.New()
 	agentID := uuid.New()
 	store := newFakeStore(directive.Resolved{Content: "from-db", InjectionMode: "system_first"})
 	mr, client := newTestRedis(t)
 	log := mustLogger(t)
-	r, err := directive.NewCachedResolver(client, store, directive.Config{CacheTTL: time.Minute}, log, nil)
+	r, err := directive.NewCachedResolver(directive.CachedResolverDeps{
+		Client: client, Store: store, Config: directive.Config{CacheTTL: time.Minute}, Log: log,
+	})
 	if err != nil {
 		t.Fatalf("new: %v", err)
 	}
@@ -109,6 +115,7 @@ func TestUnit_RedisErrorTreatedAsMiss(t *testing.T) {
 
 func TestUnit_StoreErrorSurfaces(t *testing.T) {
 	t.Parallel()
+
 	store := &errStore{err: errors.New("db down")}
 	r := mustNewResolver(t, store, time.Minute)
 	_, err := r.Resolve(context.Background(), uuid.New(), uuid.New())
@@ -119,6 +126,7 @@ func TestUnit_StoreErrorSurfaces(t *testing.T) {
 
 func TestUnit_UpdateEventRoundTrip(t *testing.T) {
 	t.Parallel()
+
 	in := directive.UpdateEvent{
 		Version: 1, OrgID: uuid.New().String(), AgentID: uuid.New().String(),
 		NewVersionID: uuid.New().String(),
@@ -136,24 +144,63 @@ func TestUnit_UpdateEventRoundTrip(t *testing.T) {
 	}
 }
 
+func TestUnit_UpdateEventRejectsNonUUID(t *testing.T) {
+	t.Parallel()
+
+	err := directive.UpdateEvent{Version: 1, OrgID: "not-a-uuid", AgentID: uuid.New().String()}.Validate()
+	if err == nil {
+		t.Fatal("expected org_id uuid error")
+	}
+	err = directive.UpdateEvent{Version: 1, OrgID: uuid.New().String(), AgentID: "bad"}.Validate()
+	if err == nil {
+		t.Fatal("expected agent_id uuid error")
+	}
+}
+
 func TestUnit_NoopResolver(t *testing.T) {
 	t.Parallel()
+
 	var n directive.NoopResolver
 	got, err := n.Resolve(context.Background(), uuid.New(), uuid.New())
 	if err != nil || got.HasContent() {
 		t.Fatalf("noop: got=%+v err=%v", got, err)
 	}
-	n.Invalidate(uuid.New(), uuid.New())
+	n.Invalidate(context.Background(), uuid.New(), uuid.New())
+}
+
+func TestUnit_NewCachedResolverValidation(t *testing.T) {
+	t.Parallel()
+
+	_, client := newTestRedis(t)
+	log := mustLogger(t)
+	store := newFakeStore(directive.Resolved{})
+	if _, err := directive.NewCachedResolver(directive.CachedResolverDeps{}); err == nil {
+		t.Fatal("expected error for empty deps")
+	}
+	if _, err := directive.NewCachedResolver(directive.CachedResolverDeps{Client: client}); err == nil {
+		t.Fatal("expected store required")
+	}
+	if _, err := directive.NewCachedResolver(directive.CachedResolverDeps{Client: client, Store: store}); err == nil {
+		t.Fatal("expected logger required")
+	}
+	if _, err := directive.NewCachedResolver(directive.CachedResolverDeps{
+		Client: client, Store: store, Log: log,
+	}); err != nil {
+		t.Fatalf("valid deps: %v", err)
+	}
 }
 
 func TestUnit_PubSubInvalidate(t *testing.T) {
 	t.Parallel()
+
 	orgID := uuid.New()
 	agentID := uuid.New()
 	store := newFakeStore(directive.Resolved{Content: "cached", InjectionMode: "system_first"})
 	mr, client := newTestRedis(t)
 	log := mustLogger(t)
-	r, err := directive.NewCachedResolver(client, store, directive.Config{CacheTTL: time.Minute}, log, nil)
+	r, err := directive.NewCachedResolver(directive.CachedResolverDeps{
+		Client: client, Store: store, Config: directive.Config{CacheTTL: time.Minute}, Log: log,
+	})
 	if err != nil {
 		t.Fatalf("resolver: %v", err)
 	}
@@ -188,6 +235,67 @@ func TestUnit_PubSubInvalidate(t *testing.T) {
 	sub.Stop()
 	cancel()
 	<-sub.Done()
+}
+
+func TestUnit_EnvelopeRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	orgID := uuid.New()
+	agentID := uuid.New()
+	versionID := uuid.New()
+	store := newFakeStore(directive.Resolved{
+		Content: "x", InjectionMode: "system_append", VersionID: versionID,
+	})
+	r := mustNewResolver(t, store, time.Minute)
+	got, err := r.Resolve(context.Background(), orgID, agentID)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if got.VersionID != versionID || got.InjectionMode != "system_append" {
+		t.Fatalf("envelope: %+v", got)
+	}
+	hit, err := r.Resolve(context.Background(), orgID, agentID)
+	if err != nil || hit.VersionID != versionID {
+		t.Fatalf("cache hit: %+v err=%v", hit, err)
+	}
+}
+
+func TestUnit_ConfigApplyDefaults(t *testing.T) {
+	t.Parallel()
+
+	var cfg directive.Config
+	cfg.ApplyDefaults()
+	if cfg.CacheTTL != 60*time.Second {
+		t.Fatalf("ttl=%v", cfg.CacheTTL)
+	}
+}
+
+func BenchmarkCachedResolver_ResolveHit(b *testing.B) {
+	orgID := uuid.MustParse("11111111-1111-1111-1111-111111111111")
+	agentID := uuid.MustParse("22222222-2222-2222-2222-222222222222")
+	store := newFakeStore(directive.Resolved{Content: "bench", InjectionMode: "system_first"})
+	mr := miniredis.RunT(b)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	b.Cleanup(func() { _ = client.Close() })
+	log, err := logger.New(logger.Config{Service: "directive-bench"})
+	if err != nil {
+		b.Fatal(err)
+	}
+	r, err := directive.NewCachedResolver(directive.CachedResolverDeps{
+		Client: client, Store: store, Config: directive.Config{CacheTTL: time.Minute}, Log: log,
+	})
+	if err != nil {
+		b.Fatal(err)
+	}
+	if _, err := r.Resolve(context.Background(), orgID, agentID); err != nil {
+		b.Fatal(err)
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := r.Resolve(context.Background(), orgID, agentID); err != nil {
+			b.Fatal(err)
+		}
+	}
 }
 
 type fakeStore struct {
@@ -226,7 +334,9 @@ func (s *errStore) Load(context.Context, uuid.UUID, uuid.UUID) (directive.Resolv
 func mustNewResolver(t *testing.T, store directive.Store, ttl time.Duration) *directive.CachedResolver {
 	t.Helper()
 	_, client := newTestRedis(t)
-	r, err := directive.NewCachedResolver(client, store, directive.Config{CacheTTL: ttl}, mustLogger(t), nil)
+	r, err := directive.NewCachedResolver(directive.CachedResolverDeps{
+		Client: client, Store: store, Config: directive.Config{CacheTTL: ttl}, Log: mustLogger(t),
+	})
 	if err != nil {
 		t.Fatalf("NewCachedResolver: %v", err)
 	}

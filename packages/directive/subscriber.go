@@ -3,17 +3,11 @@ package directive
 import (
 	"context"
 	"fmt"
-	"sync"
-	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/logger"
+	"github.com/Rick1330/ibex-harness/packages/redissub"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
-)
-
-const (
-	initialBackoff = time.Second
-	maxBackoff     = 30 * time.Second
 )
 
 // Subscriber listens for directive update events and invalidates the cache.
@@ -22,10 +16,7 @@ type Subscriber struct {
 	cache   Resolver
 	log     *logger.Logger
 	metrics Metrics
-
-	stopOnce sync.Once
-	stopCh   chan struct{}
-	doneCh   chan struct{}
+	loop    *redissub.Loop
 }
 
 // NewSubscriber constructs a Subscriber. metrics may be nil.
@@ -52,76 +43,20 @@ func NewSubscriber(
 		cache:   cache,
 		log:     log,
 		metrics: metrics,
-		stopCh:  make(chan struct{}),
-		doneCh:  make(chan struct{}),
+		loop:    redissub.NewLoop(),
 	}, nil
 }
 
 // Run blocks until Stop or ctx cancellation. Reconnects with backoff on errors.
 func (s *Subscriber) Run(ctx context.Context) {
-	defer close(s.doneCh)
-	backoff := initialBackoff
-	for {
-		if s.stoppedOrDone(ctx) {
-			return
-		}
-		established, err := s.listenOnce(ctx)
-		if s.stoppedOrDone(ctx) {
-			return
-		}
-		if established {
-			backoff = initialBackoff
-		}
-		if err != nil {
-			s.log.WarnCtx(ctx, "directive subscriber disconnected; reconnecting",
-				"error", err, "backoff", backoff.String())
-		}
-		if !s.sleepBackoff(ctx, backoff) {
-			return
-		}
-		if backoff < maxBackoff {
-			backoff *= 2
-		}
-	}
+	s.loop.Run(ctx, s.log, "directive", s.listenOnce)
 }
 
 // Stop signals the subscriber to exit. Safe if Run was never started.
-func (s *Subscriber) Stop() {
-	s.stopOnce.Do(func() { close(s.stopCh) })
-	select {
-	case <-s.doneCh:
-	case <-time.After(5 * time.Second):
-	}
-}
+func (s *Subscriber) Stop() { s.loop.Stop() }
 
 // Done is closed when Run returns.
-func (s *Subscriber) Done() <-chan struct{} {
-	return s.doneCh
-}
-
-func (s *Subscriber) stoppedOrDone(ctx context.Context) bool {
-	select {
-	case <-s.stopCh:
-		return true
-	case <-ctx.Done():
-		return true
-	default:
-		return false
-	}
-}
-
-func (s *Subscriber) sleepBackoff(ctx context.Context, d time.Duration) bool {
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-t.C:
-		return true
-	case <-s.stopCh:
-		return false
-	case <-ctx.Done():
-		return false
-	}
-}
+func (s *Subscriber) Done() <-chan struct{} { return s.loop.Done() }
 
 func (s *Subscriber) listenOnce(ctx context.Context) (bool, error) {
 	pubsub := s.client.PSubscribe(ctx, ChannelPattern)
@@ -133,7 +68,7 @@ func (s *Subscriber) listenOnce(ctx context.Context) (bool, error) {
 	ch := pubsub.Channel()
 	for {
 		select {
-		case <-s.stopCh:
+		case <-s.loop.StopCh():
 			return true, nil
 		case <-ctx.Done():
 			return true, nil
@@ -157,7 +92,7 @@ func (s *Subscriber) handleMessage(ctx context.Context, channel, payload string)
 		s.log.WarnCtx(ctx, "directive update event ids invalid", "error", err)
 		return
 	}
-	s.cache.Invalidate(orgID, agentID)
+	s.cache.Invalidate(ctx, orgID, agentID)
 	s.metrics.IncDirectiveInvalidate()
 }
 

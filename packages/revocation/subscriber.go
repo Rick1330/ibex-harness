@@ -3,10 +3,9 @@ package revocation
 import (
 	"context"
 	"fmt"
-	"sync"
-	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/logger"
+	"github.com/Rick1330/ibex-harness/packages/redissub"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -24,8 +23,9 @@ type IncRevocationInvalidater interface {
 type NoopIncRevocationInvalidater struct{}
 
 // IncRevocationInvalidate implements IncRevocationInvalidater.
+// Intentionally empty: used when Prometheus is not wired (unit tests, Noop sinks).
 func (NoopIncRevocationInvalidater) IncRevocationInvalidate() {
-	// Intentionally empty: no-op metrics sink when Prometheus is not wired.
+	// No-op: metrics sink unused when Prometheus is not wired.
 }
 
 // Subscriber listens on Channel and invalidates the local auth cache.
@@ -34,10 +34,7 @@ type Subscriber struct {
 	cache   Invalidator
 	log     *logger.Logger
 	metrics IncRevocationInvalidater
-
-	stopOnce sync.Once
-	stopCh   chan struct{}
-	doneCh   chan struct{}
+	loop    *redissub.Loop
 }
 
 // NewSubscriber constructs a Subscriber. metrics may be nil.
@@ -64,82 +61,20 @@ func NewSubscriber(
 		cache:   cache,
 		log:     log,
 		metrics: metrics,
-		stopCh:  make(chan struct{}),
-		doneCh:  make(chan struct{}),
+		loop:    redissub.NewLoop(),
 	}, nil
 }
 
-const (
-	initialBackoff = time.Second
-	maxBackoff     = 30 * time.Second
-)
-
 // Run blocks until Stop or ctx cancellation. Reconnects with backoff on errors.
-// Backoff resets to 1s after any session that successfully subscribed.
 func (s *Subscriber) Run(ctx context.Context) {
-	defer close(s.doneCh)
-	backoff := initialBackoff
-	for {
-		if s.stoppedOrDone(ctx) {
-			return
-		}
-		established, err := s.listenOnce(ctx)
-		if s.stoppedOrDone(ctx) {
-			return
-		}
-		if established {
-			backoff = initialBackoff
-		}
-		if err != nil {
-			s.log.WarnCtx(ctx, "revocation subscriber disconnected; reconnecting",
-				"error", err, "backoff", backoff.String())
-		}
-		if !s.sleepBackoff(ctx, backoff) {
-			return
-		}
-		if backoff < maxBackoff {
-			backoff *= 2
-		}
-	}
+	s.loop.Run(ctx, s.log, "revocation", s.listenOnce)
 }
 
 // Stop signals the subscriber to exit. Safe if Run was never started.
-func (s *Subscriber) Stop() {
-	s.stopOnce.Do(func() { close(s.stopCh) })
-	select {
-	case <-s.doneCh:
-	case <-time.After(5 * time.Second):
-	}
-}
+func (s *Subscriber) Stop() { s.loop.Stop() }
 
 // Done is closed when Run returns.
-func (s *Subscriber) Done() <-chan struct{} {
-	return s.doneCh
-}
-
-func (s *Subscriber) stoppedOrDone(ctx context.Context) bool {
-	select {
-	case <-s.stopCh:
-		return true
-	case <-ctx.Done():
-		return true
-	default:
-		return false
-	}
-}
-
-func (s *Subscriber) sleepBackoff(ctx context.Context, d time.Duration) bool {
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-t.C:
-		return true
-	case <-s.stopCh:
-		return false
-	case <-ctx.Done():
-		return false
-	}
-}
+func (s *Subscriber) Done() <-chan struct{} { return s.loop.Done() }
 
 // listenOnce returns established=true once Subscribe/Receive succeeded.
 func (s *Subscriber) listenOnce(ctx context.Context) (bool, error) {
@@ -152,7 +87,7 @@ func (s *Subscriber) listenOnce(ctx context.Context) (bool, error) {
 	ch := pubsub.Channel()
 	for {
 		select {
-		case <-s.stopCh:
+		case <-s.loop.StopCh():
 			return true, nil
 		case <-ctx.Done():
 			return true, nil

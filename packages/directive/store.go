@@ -7,6 +7,10 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const resolveDirectiveQuery = `
@@ -20,7 +24,8 @@ LIMIT 1`
 
 // PostgresStore loads directives via a read pool with RLS org context.
 type PostgresStore struct {
-	db *sql.DB
+	db     *sql.DB
+	tracer trace.Tracer
 }
 
 // NewPostgresStore constructs a Store backed by Postgres.
@@ -28,28 +33,46 @@ func NewPostgresStore(db *sql.DB) (*PostgresStore, error) {
 	if db == nil {
 		return nil, fmt.Errorf("directive: db is required")
 	}
-	return &PostgresStore{db: db}, nil
+	return &PostgresStore{db: db, tracer: otel.Tracer("ibex-directive")}, nil
 }
 
 // Load returns the active directive for the agent, or empty Resolved on miss.
 func (s *PostgresStore) Load(ctx context.Context, orgID, agentID uuid.UUID) (Resolved, error) {
+	ctx, span := s.tracer.Start(ctx, "PostgresStore.Load",
+		trace.WithAttributes(
+			attribute.String(attrDBSystem, "postgresql"),
+			attribute.String("db.table", "ibex_core.directives"),
+			attribute.String(attrDBOperation, "SELECT"),
+		),
+	)
+	defer span.End()
+
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
-		return Resolved{}, fmt.Errorf("directive: begin: %w", err)
+		return Resolved{}, recordStoreErr(span, fmt.Errorf(
+			"directive: begin org=%s agent=%s: %w", orgID, agentID, err))
 	}
 	defer func() { _ = tx.Rollback() }()
 
 	if err := setOrgRLS(ctx, tx, orgID); err != nil {
-		return Resolved{}, err
+		return Resolved{}, recordStoreErr(span, fmt.Errorf(
+			"directive: set rls org=%s agent=%s: %w", orgID, agentID, err))
 	}
 	resolved, err := queryResolved(ctx, tx, orgID, agentID)
 	if err != nil {
-		return Resolved{}, err
+		return Resolved{}, recordStoreErr(span, err)
 	}
 	if err := tx.Commit(); err != nil {
-		return Resolved{}, fmt.Errorf("directive: commit: %w", err)
+		return Resolved{}, recordStoreErr(span, fmt.Errorf(
+			"directive: commit org=%s agent=%s: %w", orgID, agentID, err))
 	}
 	return resolved, nil
+}
+
+func recordStoreErr(span trace.Span, err error) error {
+	span.RecordError(err)
+	span.SetStatus(codes.Error, err.Error())
+	return err
 }
 
 func setOrgRLS(ctx context.Context, tx *sql.Tx, orgID uuid.UUID) error {
@@ -70,7 +93,7 @@ func queryResolved(ctx context.Context, tx *sql.Tx, orgID, agentID uuid.UUID) (R
 		return Resolved{}, nil
 	}
 	if err != nil {
-		return Resolved{}, fmt.Errorf("directive: query: %w", err)
+		return Resolved{}, fmt.Errorf("directive: query org=%s agent=%s: %w", orgID, agentID, err)
 	}
 	if mode == "" {
 		mode = DefaultInjectionMode

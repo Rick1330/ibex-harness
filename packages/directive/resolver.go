@@ -25,7 +25,7 @@ func (r Resolved) HasContent() bool {
 // Returns an error only for infrastructure failures (DB/Redis down).
 type Resolver interface {
 	Resolve(ctx context.Context, orgID, agentID uuid.UUID) (Resolved, error)
-	Invalidate(orgID, agentID uuid.UUID)
+	Invalidate(ctx context.Context, orgID, agentID uuid.UUID)
 }
 
 // Store loads the active directive from durable storage.
@@ -34,12 +34,16 @@ type Store interface {
 }
 
 // NoopResolver always returns an empty Resolved (no directive).
+// Used when POSTGRES_DSN or REDIS_URL is unset so chat continues without injection.
 type NoopResolver struct{}
 
-// Resolve implements Resolver.
+// Resolve returns empty content without consulting Redis or Postgres.
+// Intentionally a no-op: represents "directive resolution disabled".
 func (NoopResolver) Resolve(context.Context, uuid.UUID, uuid.UUID) (Resolved, error) {
 	return Resolved{}, nil
 }
 
-// Invalidate implements Resolver.
-func (NoopResolver) Invalidate(uuid.UUID, uuid.UUID) {}
+// Invalidate is a no-op because NoopResolver holds no cache entries.
+func (NoopResolver) Invalidate(context.Context, uuid.UUID, uuid.UUID) {
+	// No-op: resolution disabled — nothing to invalidate.
+}

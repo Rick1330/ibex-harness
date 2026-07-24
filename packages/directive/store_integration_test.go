@@ -20,6 +20,29 @@ import (
 
 const defaultTestDSN = "postgres://ibex:ibex@localhost:5433/ibex_test?sslmode=disable"
 
+const (
+	seedInsertOrgSQL = `
+		INSERT INTO ibex_core.organizations (name, slug)
+		VALUES ($1, $2) RETURNING id::text`
+	seedInsertUserSQL = `
+		INSERT INTO ibex_core.users (org_id, email, name)
+		VALUES ($1::uuid, $2, $3) RETURNING id::text`
+	seedInsertAgentSQL = `
+		INSERT INTO ibex_core.agents (org_id, created_by, name, slug)
+		VALUES ($1::uuid, $2::uuid, $3, $4) RETURNING id::text`
+	seedInsertDirectiveSQL = `
+		INSERT INTO ibex_core.directives (org_id, agent_id)
+		VALUES ($1::uuid, $2::uuid) RETURNING id::text`
+	seedInsertVersionSQL = `
+		INSERT INTO ibex_core.directive_versions
+			(directive_id, org_id, version_num, content, content_hash)
+		VALUES ($1::uuid, $2::uuid, 1, $3, $4) RETURNING id::text`
+	seedActivateVersionSQL = `
+		UPDATE ibex_core.directives
+		SET active_version_id = $1::uuid
+		WHERE id = $2::uuid AND org_id = $3::uuid`
+)
+
 func integrationDSN() string {
 	if dsn := os.Getenv("POSTGRES_TEST_DSN"); dsn != "" {
 		return dsn
@@ -30,9 +53,6 @@ func integrationDSN() string {
 func openIntegrationDB(t *testing.T) (*sql.DB, string) {
 	t.Helper()
 	dsn := integrationDSN()
-	if os.Getenv("POSTGRES_TEST_DSN") != "" {
-		dsn = os.Getenv("POSTGRES_TEST_DSN")
-	}
 	db, err := sql.Open("postgres", dsn)
 	if err != nil {
 		t.Fatalf("open db: %v", err)
@@ -63,51 +83,62 @@ type seededAgentDirective struct {
 	content string
 }
 
-func seedAgentDirective(t *testing.T, db *sql.DB, content string) seededAgentDirective {
+func seedAgentDirective(t *testing.T, db *sql.DB, orgName, orgSlug, content string) seededAgentDirective {
 	t.Helper()
 	ctx := context.Background()
-	var orgID, userID, agentID, directiveID, versionID string
+	var ids seedIDs
 	err := withServiceAccount(ctx, db, func(tx *sql.Tx) error {
-		if err := tx.QueryRowContext(ctx, `
-			INSERT INTO ibex_core.organizations (name, slug)
-			VALUES ('Org A', 'org-a') RETURNING id::text`).Scan(&orgID); err != nil {
-			return err
-		}
-		if err := tx.QueryRowContext(ctx, `
-			INSERT INTO ibex_core.users (org_id, email, name)
-			VALUES ($1::uuid, 'user-a@example.com', 'User A') RETURNING id::text`, orgID).Scan(&userID); err != nil {
-			return err
-		}
-		if err := tx.QueryRowContext(ctx, `
-			INSERT INTO ibex_core.agents (org_id, created_by, name, slug)
-			VALUES ($1::uuid, $2::uuid, 'Agent A', 'agent-a') RETURNING id::text`, orgID, userID).Scan(&agentID); err != nil {
-			return err
-		}
-		if err := tx.QueryRowContext(ctx, `
-			INSERT INTO ibex_core.directives (org_id, agent_id)
-			VALUES ($1::uuid, $2::uuid) RETURNING id::text`, orgID, agentID).Scan(&directiveID); err != nil {
-			return err
-		}
-		if err := tx.QueryRowContext(ctx, `
-			INSERT INTO ibex_core.directive_versions
-				(directive_id, org_id, version_num, content, content_hash)
-			VALUES ($1::uuid, $2::uuid, 1, $3, $4) RETURNING id::text`,
-			directiveID, orgID, content, "hash-"+content).Scan(&versionID); err != nil {
-			return err
-		}
-		_, err := tx.ExecContext(ctx, `
-			UPDATE ibex_core.directives SET active_version_id = $1::uuid WHERE id = $2::uuid`,
-			versionID, directiveID)
-		return err
+		return insertSeededDirective(ctx, tx, orgName, orgSlug, content, &ids)
 	})
 	if err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	return seededAgentDirective{
-		orgID:   uuid.MustParse(orgID),
-		agentID: uuid.MustParse(agentID),
+		orgID:   uuid.MustParse(ids.orgID),
+		agentID: uuid.MustParse(ids.agentID),
 		content: content,
 	}
+}
+
+type seedIDs struct {
+	orgID, userID, agentID, directiveID, versionID string
+}
+
+func insertSeededDirective(ctx context.Context, tx *sql.Tx, orgName, orgSlug, content string, ids *seedIDs) error {
+	if err := tx.QueryRowContext(ctx, seedInsertOrgSQL, orgName, orgSlug).Scan(&ids.orgID); err != nil {
+		return err
+	}
+	if err := tx.QueryRowContext(ctx, seedInsertUserSQL,
+		ids.orgID, orgSlug+"@example.com", orgName+" User").Scan(&ids.userID); err != nil {
+		return err
+	}
+	if err := tx.QueryRowContext(ctx, seedInsertAgentSQL,
+		ids.orgID, ids.userID, orgName+" Agent", orgSlug+"-agent").Scan(&ids.agentID); err != nil {
+		return err
+	}
+	if err := tx.QueryRowContext(ctx, seedInsertDirectiveSQL, ids.orgID, ids.agentID).Scan(&ids.directiveID); err != nil {
+		return err
+	}
+	if err := tx.QueryRowContext(ctx, seedInsertVersionSQL,
+		ids.directiveID, ids.orgID, content, "hash-"+content).Scan(&ids.versionID); err != nil {
+		return err
+	}
+	return activateSeededVersion(ctx, tx, ids)
+}
+
+func activateSeededVersion(ctx context.Context, tx *sql.Tx, ids *seedIDs) error {
+	res, err := tx.ExecContext(ctx, seedActivateVersionSQL, ids.versionID, ids.directiveID, ids.orgID)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 func withServiceAccount(ctx context.Context, db *sql.DB, fn func(*sql.Tx) error) error {
@@ -129,7 +160,7 @@ func TestIntegration_PostgresStore_Load(t *testing.T) {
 	db, _ := openIntegrationDB(t)
 	defer db.Close()
 
-	seeded := seedAgentDirective(t, db, "Be concise and safe.")
+	seeded := seedAgentDirective(t, db, "Org A", "org-a", "Be concise and safe.")
 	store, err := directive.NewPostgresStore(db)
 	if err != nil {
 		t.Fatalf("store: %v", err)
@@ -158,11 +189,40 @@ func TestIntegration_PostgresStore_Load(t *testing.T) {
 	}
 }
 
+func TestIntegration_PostgresStore_CrossTenantDenied(t *testing.T) {
+	db, _ := openIntegrationDB(t)
+	defer db.Close()
+
+	orgA := seedAgentDirective(t, db, "Org A", "org-a", "directive-a")
+	orgB := seedAgentDirective(t, db, "Org B", "org-b", "directive-b")
+	store, err := directive.NewPostgresStore(db)
+	if err != nil {
+		t.Fatalf("store: %v", err)
+	}
+
+	// Org B credentials must not resolve Org A's agent directive.
+	cross, err := store.Load(context.Background(), orgB.orgID, orgA.agentID)
+	if err != nil {
+		t.Fatalf("cross load: %v", err)
+	}
+	if cross.HasContent() {
+		t.Fatalf("cross-tenant leak: %+v", cross)
+	}
+
+	own, err := store.Load(context.Background(), orgB.orgID, orgB.agentID)
+	if err != nil {
+		t.Fatalf("own load: %v", err)
+	}
+	if own.Content != orgB.content {
+		t.Fatalf("own content=%q want %q", own.Content, orgB.content)
+	}
+}
+
 func TestIntegration_CachedResolver_PostgresFallback(t *testing.T) {
 	db, _ := openIntegrationDB(t)
 	defer db.Close()
 
-	seeded := seedAgentDirective(t, db, "Follow org policy.")
+	seeded := seedAgentDirective(t, db, "Org A", "org-a", "Follow org policy.")
 	store, err := directive.NewPostgresStore(db)
 	if err != nil {
 		t.Fatalf("store: %v", err)
@@ -172,7 +232,9 @@ func TestIntegration_CachedResolver_PostgresFallback(t *testing.T) {
 	t.Cleanup(func() { _ = client.Close() })
 	log := mustLogger(t)
 
-	resolver, err := directive.NewCachedResolver(client, store, directive.Config{CacheTTL: time.Minute}, log, nil)
+	resolver, err := directive.NewCachedResolver(directive.CachedResolverDeps{
+		Client: client, Store: store, Config: directive.Config{CacheTTL: time.Minute}, Log: log,
+	})
 	if err != nil {
 		t.Fatalf("resolver: %v", err)
 	}

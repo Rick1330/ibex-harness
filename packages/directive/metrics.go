@@ -9,20 +9,30 @@ type Metrics interface {
 	IncDirectiveInvalidate()
 }
 
-// NoopMetrics discards metric updates.
+// NoopMetrics discards metric updates when Prometheus is not wired.
 type NoopMetrics struct{}
 
-// IncDirectiveCacheHit implements Metrics.
-func (NoopMetrics) IncDirectiveCacheHit() {}
+// IncDirectiveCacheHit is intentionally empty: no Prometheus registry attached.
+func (NoopMetrics) IncDirectiveCacheHit() {
+	// No-op: metrics sink unused in tests / when registry is nil.
+}
 
-// IncDirectiveCacheMiss implements Metrics.
-func (NoopMetrics) IncDirectiveCacheMiss() {}
+// IncDirectiveCacheMiss is intentionally empty: no Prometheus registry attached.
+func (NoopMetrics) IncDirectiveCacheMiss() {
+	// No-op: metrics sink unused in tests / when registry is nil.
+}
 
-// IncDirectiveResolveError implements Metrics.
-func (NoopMetrics) IncDirectiveResolveError() {}
+// IncDirectiveResolveError is intentionally empty: no Prometheus registry attached.
+func (NoopMetrics) IncDirectiveResolveError() {
+	// No-op: metrics sink unused in tests / when registry is nil.
+}
 
-// ObserveDirectiveResolveSeconds implements Metrics.
-func (NoopMetrics) ObserveDirectiveResolveSeconds(float64) {}
+// ObserveDirectiveResolveSeconds is intentionally empty: no Prometheus registry attached.
+func (NoopMetrics) ObserveDirectiveResolveSeconds(float64) {
+	// No-op: metrics sink unused in tests / when registry is nil.
+}
 
-// IncDirectiveInvalidate implements Metrics.
-func (NoopMetrics) IncDirectiveInvalidate() {}
+// IncDirectiveInvalidate is intentionally empty: no Prometheus registry attached.
+func (NoopMetrics) IncDirectiveInvalidate() {
+	// No-op: metrics sink unused in tests / when registry is nil.
+}

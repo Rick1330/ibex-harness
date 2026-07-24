@@ -1,11 +1,16 @@
 package http
 
 import (
+	"context"
 	"net/http"
+	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/directive"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 )
+
+// ResolveTimeout bounds a single directive Resolve on the chat hot path.
+const ResolveTimeout = 50 * time.Millisecond
 
 type directiveResolveHandler struct {
 	resolver directive.Resolver
@@ -14,7 +19,7 @@ type directiveResolveHandler struct {
 }
 
 // DirectiveResolveMiddleware resolves the agent directive after verification.
-// On infrastructure failure: fail open (continue without directive) with a warning.
+// On infrastructure failure (including timeout): fail open with a warning.
 // Does not mutate the LLM messages array (injection is milestone 2.3.3).
 func DirectiveResolveMiddleware(
 	resolver directive.Resolver,
@@ -34,7 +39,9 @@ func (h *directiveResolveHandler) ServeHTTP(w http.ResponseWriter, r *http.Reque
 		h.next.ServeHTTP(w, r)
 		return
 	}
-	resolved, err := h.resolver.Resolve(r.Context(), agent.OrgID, agent.ID)
+	resolveCtx, cancel := context.WithTimeout(r.Context(), ResolveTimeout)
+	defer cancel()
+	resolved, err := h.resolver.Resolve(resolveCtx, agent.OrgID, agent.ID)
 	if err != nil {
 		h.logger.WarnCtx(r.Context(), "directive resolve failed; continuing without directive",
 			"org_id", agent.OrgID.String(),
