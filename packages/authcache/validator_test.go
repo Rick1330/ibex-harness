@@ -279,6 +279,28 @@ func TestUnit_CachingValidatorInvalidateByTokenID(t *testing.T) {
 	assertUpstreamCalls(t, up, 2)
 }
 
+func TestUnit_CachingValidatorRevokeBetweenLRUCloneAndReturn(t *testing.T) {
+	t.Parallel()
+	up := &spyUpstream{res: &Result{OrgID: "org-1", TokenID: "tok-clone"}}
+	v := testValidator(t, up, Config{LRUMaxTTL: time.Minute}, NoopMetrics{})
+	if _, err := v.Validate(context.Background(), "bearer-clone"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	assertUpstreamCalls(t, up, 1)
+
+	v.afterLRUClone = func() {
+		v.InvalidateByTokenID("tok-clone")
+	}
+	res, err := v.Validate(context.Background(), "bearer-clone")
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	if res.FromCache {
+		t.Fatal("revoked during LRU clone must not serve cached claims")
+	}
+	assertUpstreamCalls(t, up, 2)
+}
+
 func TestUnit_CachingValidatorInvalidateByTokenIDEmptyNoop(t *testing.T) {
 	t.Parallel()
 	up := &spyUpstream{res: &Result{OrgID: "org-1", TokenID: "tok-2"}}

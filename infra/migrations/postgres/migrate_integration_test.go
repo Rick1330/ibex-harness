@@ -70,8 +70,8 @@ func TestMigrateUpIdempotent(t *testing.T) {
 	if dirty {
 		t.Fatal("expected clean migration state")
 	}
-	if v != 8 {
-		t.Fatalf("expected version 8, got %d", v)
+	if v != 9 {
+		t.Fatalf("expected version 9, got %d", v)
 	}
 }
 
@@ -86,7 +86,7 @@ func TestSchemaObjectsExist(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	for _, table := range []string{"organizations", "tokens", "users", "agents"} {
+	for _, table := range []string{"organizations", "tokens", "users", "agents", "directives", "directive_versions"} {
 		var exists bool
 		err := db.QueryRowContext(ctx, `
 			SELECT EXISTS (
@@ -101,7 +101,7 @@ func TestSchemaObjectsExist(t *testing.T) {
 		}
 	}
 
-	for _, table := range []string{"organizations", "tokens", "users", "agents"} {
+	for _, table := range []string{"organizations", "tokens", "users", "agents", "directives", "directive_versions"} {
 		var rls bool
 		err := db.QueryRowContext(ctx, `
 			SELECT c.relrowsecurity
@@ -128,97 +128,10 @@ func TestRLSUsersAndAgentsIsolation(t *testing.T) {
 	}
 
 	ctx := context.Background()
-
-	var orgA, orgB string
-	var userA, agentA string
-	var userB, agentB string
-	err := withServiceAccount(ctx, db, func(tx *sql.Tx) error {
-		if err := tx.QueryRowContext(ctx, `
-			INSERT INTO ibex_core.organizations (name, slug)
-			VALUES ('Org A', 'org-a') RETURNING id::text`).Scan(&orgA); err != nil {
-			return err
-		}
-		if err := tx.QueryRowContext(ctx, `
-			INSERT INTO ibex_core.organizations (name, slug)
-			VALUES ('Org B', 'org-b') RETURNING id::text`).Scan(&orgB); err != nil {
-			return err
-		}
-
-		// Seed one user + agent per org.
-		if err := tx.QueryRowContext(ctx, `
-			INSERT INTO ibex_core.users (org_id, email, name)
-			VALUES ($1::uuid, 'user-a@example.com', 'User A')
-			RETURNING id::text`, orgA).Scan(&userA); err != nil {
-			return err
-		}
-		if err := tx.QueryRowContext(ctx, `
-			INSERT INTO ibex_core.agents (org_id, created_by, name, slug)
-			VALUES ($1::uuid, $2::uuid, 'Agent A', 'agent-a')
-			RETURNING id::text`, orgA, userA).Scan(&agentA); err != nil {
-			return err
-		}
-
-		if err := tx.QueryRowContext(ctx, `
-			INSERT INTO ibex_core.users (org_id, email, name)
-			VALUES ($1::uuid, 'user-b@example.com', 'User B')
-			RETURNING id::text`, orgB).Scan(&userB); err != nil {
-			return err
-		}
-		if err := tx.QueryRowContext(ctx, `
-			INSERT INTO ibex_core.agents (org_id, created_by, name, slug)
-			VALUES ($1::uuid, $2::uuid, 'Agent B', 'agent-b')
-			RETURNING id::text`, orgB, userB).Scan(&agentB); err != nil {
-			return err
-		}
-
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("seed: %v", err)
-	}
-
-	// No org context: fail closed.
-	var count int
-	err = withAppRole(ctx, db, func(tx *sql.Tx) error {
-		return tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM ibex_core.agents`).Scan(&count)
-	})
-	if err != nil {
-		t.Fatalf("count without context: %v", err)
-	}
-	if count != 0 {
-		t.Fatalf("expected 0 agents without context, got %d", count)
-	}
-
-	// Org A context: only Org A visible.
-	err = withAppRole(ctx, db, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `SELECT set_config('app.current_org_id', $1, true)`, orgA); err != nil {
-			return err
-		}
-		return tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM ibex_core.agents`).Scan(&count)
-	})
-	if err != nil {
-		t.Fatalf("count with org A context: %v", err)
-	}
-	if count != 1 {
-		t.Fatalf("expected 1 agent for org A context, got %d", count)
-	}
-
-	// Cross-org must not be visible.
-	err = withAppRole(ctx, db, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `SELECT set_config('app.current_org_id', $1, true)`, orgB); err != nil {
-			return err
-		}
-		return tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM ibex_core.agents`).Scan(&count)
-	})
-	if err != nil {
-		t.Fatalf("count with org B context: %v", err)
-	}
-	if count != 1 {
-		t.Fatalf("expected 1 agent for org B context, got %d", count)
-	}
-
-	_ = agentA
-	_ = agentB
+	orgA, orgB := seedTwoOrgsWithAgents(t, ctx, db)
+	assertTableCount(t, ctx, tableCountCheck{db: db, table: "agents", orgID: "", want: 0})
+	assertTableCount(t, ctx, tableCountCheck{db: db, table: "agents", orgID: orgA, want: 1})
+	assertTableCount(t, ctx, tableCountCheck{db: db, table: "agents", orgID: orgB, want: 1})
 }
 
 func TestTokenForeignKeysEnforced(t *testing.T) {

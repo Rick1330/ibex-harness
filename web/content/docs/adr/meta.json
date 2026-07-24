@@ -30,6 +30,7 @@
     "0027-streaming-dual-write",
     "0028-auth-cache-design",
     "0029-token-revocation-propagation",
+    "0030-directive-versioning",
     "0038-context-assembly-service"
   ]
 }

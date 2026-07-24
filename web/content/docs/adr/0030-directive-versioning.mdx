@@ -1,0 +1,44 @@
+---
+title: "ADR-0030: Directive versioning strategy"
+description: "Accepted — immutable directive_versions with active_version_id pointer; one config per agent; SHA-256 content_hash; 32KB cap; org RLS."
+adrId: "0030"
+status: "Accepted"
+date: "2026-07-23"
+authors: "IBEX Harness team"
+---
+
+# ADR-0030: Directive versioning strategy
+
+- **Status:** Accepted (schema in [2.3.1](/roadmap/phase-2-single-provider/milestones/2.3.1-directive-migrations); read path in 2.3.2)
+- **Date:** 2026-07-23
+- **Authors:** IBEX Harness team
+- **Milestone:** [2.3.1 Directive migrations](/roadmap/phase-2-single-provider/milestones/2.3.1-directive-migrations)
+
+## Context
+
+An agent directive is the system-level instruction IBEX injects into every LLM request for that agent. Operators need safe updates with rollback and an audit trail. Mutable in-place edits lose history and complicate cache invalidation on the proxy hot path.
+
+Phase 2 needs a minimal agent-scoped schema. A fuller marketplace-oriented model (named org-level directives, installs, tags) remains documented in `DATABASE_SCHEMA.md` but is out of scope until later phases.
+
+## Decision
+
+1. **Immutable versions:** `directive_versions` rows are append-only. Content is never updated after insert. Rollback = repoint `directives.active_version_id` to a prior version.
+2. **One config per agent:** `UNIQUE(agent_id)` on `directives`. Each agent has at most one directive configuration row; version history hangs off that row.
+3. **Injection mode:** `injection_mode` enum (`system_first`, `system_append`, `user_prepend`) stored on `directives`. Behavior is implemented in 2.3.3.
+4. **Content integrity:** `content_hash` is SHA-256 of `content` (application-computed). CHECKs enforce non-empty content and `octet_length(content) <= 32768` (32KB byte cap).
+5. **Tenant isolation:** Both tables have `org_id`, `ENABLE` + `FORCE ROW LEVEL SECURITY`, NULLIF-safe org setting, and service-account bypass via `ibex_core.rls_org_visible` — matching the agents pattern. Ownership is structural via composite FKs `(agent_id, org_id)` and `(directive_id, org_id)`, plus a trigger ensuring `active_version_id` belongs to the same directive and org (single-column FK with `ON DELETE SET NULL` for cascade-safe cleanup).
+6. **Append-only versions:** `ibex_app` has only `SELECT, INSERT` on `directive_versions` (no `UPDATE`/`DELETE`); a BEFORE UPDATE trigger rejects mutations. Parent `ON DELETE CASCADE` cleanup runs as table owner.
+7. **Deferred circular FK:** `active_version_id` FK is added `NOT VALID` then `VALIDATE` after `directive_versions` exists.
+8. **Proxy read path:** Deferred to [2.3.2](/roadmap/phase-2-single-provider/milestones/2.3.2-directive-resolver). This ADR covers persistence only.
+
+## Consequences
+
+- Migration `000009_create_directives` applies the Phase 2 subset under `ibex_core`.
+- Cache keys in 2.3.2 can key on `(org_id, agent_id, active_version_id)` / `content_hash` without worrying about silent content mutation.
+- Marketplace / multi-directive-per-org features require a later expand migration; they must not break the one-config-per-agent contract without an explicit ADR.
+
+## Alternatives considered
+
+1. **Mutable single-row directive** — simpler schema; no rollback/audit. Rejected.
+2. **Git-like parent_version_id DAG** — useful for forks; unnecessary for Phase 2 linear history. Deferred with marketplace schema.
+3. **Org-level named directives with agent installs** — matches long-term `DATABASE_SCHEMA.md`; too large for Goal 2.3. Deferred.

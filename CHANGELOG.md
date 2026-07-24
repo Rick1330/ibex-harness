@@ -125,6 +125,8 @@ Release notes are human-readable summaries of user-visible changes, security fix
 
 ### Added
 
+- Directive schema (`ibex_core.directives` + `directive_versions`): immutable versions with `active_version_id` pointer, org RLS, 32KB content cap ([ADR-0030](web/content/docs/adr/0030-directive-versioning.mdx); migration `000009`)
+- Auth cache revoke hardening: tombstone installed before index removal; LRU lookup re-checks revocation before serving cached claims
 - Token revocation propagation (`packages/revocation`): auth PUBLISH + proxy SUBSCRIBE on `ibex:token:revocations` with `token_id` events and `InvalidateByTokenID` ([ADR-0029](web/content/docs/adr/0029-token-revocation-propagation.mdx)); metrics `ibex_auth_revocation_publish_total`, `ibex_proxy_revocation_invalidate_total`
 - Auth cache (`packages/authcache`): in-process invalid-token bloom + claims LRU for proxy `ValidateToken` ([ADR-0028](web/content/docs/adr/0028-auth-cache-design.mdx)); metrics `ibex_proxy_auth_cache_*`; header `X-IBEX-Auth-Cached` on LRU hits
 - PR push hygiene Cursor rule (`.cursor/rules/32-pr-push-hygiene.mdc`) encoding #350 CI/merge lessons
