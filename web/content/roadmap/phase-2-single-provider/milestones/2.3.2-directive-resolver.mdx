@@ -2,7 +2,7 @@
 title: "2.3.2 Directive Resolver"
 description: "The proxy needs the agent's active directive content on every request. It cannot query Postgres on every request without adding 2–10ms to the proxy overhead. The solution is a Redis cache of directive content, keyed by agent_id, with a 60-second TTL. On a miss, the proxy queries Postgres directly (the proxy gets its ow"
 summary: "The proxy needs the agent's active directive content on every request. It cannot query Postgres on every request without adding 2–10ms to the proxy overhead. The solution is a Redis cache of directive content, keyed by agent_id, with a 60-second TTL. On a miss, the proxy queries Postgres directly (the proxy gets its ow"
-status: "planned"
+status: "completed"
 milestoneId: "2.3.2"
 goal: "[2.3 — Directive resolution and prompt injection](/roadmap/phase-2-single-provider/goals#goal-23-directive-resolution-and-prompt-injection)"
 estimatedEffort: "2–3 days"
@@ -12,7 +12,7 @@ fullTitle: "Milestone 2.3.2 — Directive Resolver (Redis Cache → Postgres Fal
 
 # Milestone 2.3.2 — Directive Resolver (Redis Cache → Postgres Fallback)
 
-**Status:** Planned  
+**Status:** Complete  
 **Goal:** [2.3 — Directive resolution and prompt injection](/roadmap/phase-2-single-provider/goals#goal-23-directive-resolution-and-prompt-injection)  
 **Phase:** 2 — Single Provider End-to-End  
 **Estimated effort:** 2–3 days  
@@ -22,7 +22,7 @@ fullTitle: "Milestone 2.3.2 — Directive Resolver (Redis Cache → Postgres Fal
 
 ## Why This Milestone Exists
 
-The proxy needs the agent's active directive content on every request. It cannot query Postgres on every request without adding 2–10ms to the proxy overhead. The solution is a Redis cache of directive content, keyed by agent_id, with a 60-second TTL. On a miss, the proxy queries Postgres directly (the proxy gets its own read-only Postgres connection for directive and session data — distinct from the auth service's pool). On a directive update, the cache entry is invalidated via pub/sub (same pattern as 2.2.2).
+The proxy needs the agent's active directive content on every request. It cannot query Postgres on every request without adding 2–10ms to the proxy overhead. The solution is a Redis cache of directive content, keyed `{org_id}:directive:{agent_id}`, with a 60-second TTL (configurable via `IBEX_DIRECTIVE_CACHE_TTL`). On a miss, the proxy queries Postgres directly (read-only `sql.DB` pool — distinct from the auth service's pool). On a directive update, the cache entry is invalidated via pub/sub on `directive_updates:{org_id}` (same pattern as 2.2.2).
 
 ---
 
@@ -52,44 +52,44 @@ The proxy needs the agent's active directive content on every request. It cannot
 package directive
 
 // Resolver resolves the active directive for an agent.
-// Returns ("", nil) when the agent has no active directive.
+// Returns zero Resolved (empty Content) when the agent has no active directive.
 // Returns an error only for infrastructure failures (DB/Redis down).
 type Resolver interface {
-    Resolve(ctx context.Context, agentID uuid.UUID) (content string, err error)
-    Invalidate(agentID uuid.UUID) // called by cache invalidation subscriber
+    Resolve(ctx context.Context, orgID, agentID uuid.UUID) (Resolved, error)
+    Invalidate(orgID, agentID uuid.UUID)
 }
 
-// Redis key format: directive:{agent_id} (agent_id is already org-scoped via the agents table)
-// TTL: 60 seconds (configurable)
-// On miss: query Postgres for active directive content and populate cache
+// Redis key format: {org_id}:directive:{agent_id}
+// TTL: IBEX_DIRECTIVE_CACHE_TTL (default 60s)
+// On miss: query Postgres with org_id in WHERE + RLS app.current_org_id
 ```
 
 ### 2. Postgres query for directive resolution
 
 ```go
 const resolveDirectiveQuery = `
-    SELECT dv.content
+    SELECT dv.content, d.injection_mode, dv.id
     FROM ibex_core.directives d
     JOIN ibex_core.directive_versions dv ON dv.id = d.active_version_id
-    WHERE d.agent_id   = $1
-      AND d.is_active  = true
-      AND dv.id IS NOT NULL
+    WHERE d.agent_id = $1
+      AND d.org_id   = $2
+      AND d.is_active = true
     LIMIT 1`
-// Returns pgx.ErrNoRows when agent has no active directive — resolved to ("", nil)
+// Returns sql.ErrNoRows when agent has no active directive — resolved to empty Resolved
 ```
 
 ### 3. Cache invalidation subscriber
 
-When a directive is updated (via Phase 3 API service), publish to `ibex:directive:updates:{agent_id}`. The proxy subscriber calls `Resolver.Invalidate(agentID)` which deletes the Redis key and clears any in-process pointer.
+When a directive is updated (via Phase 3 API service), publish to `directive_updates:{org_id}`. The proxy subscriber calls `Resolver.Invalidate(orgID, agentID)` which deletes the Redis key.
 
 ---
 
 ## Acceptance Criteria
 
-- [ ] Directive resolved from Redis on cache hit in < 2ms
-- [ ] Postgres fallback on Redis miss populates cache for subsequent requests
-- [ ] Agent with no directive returns `("", nil)` — not an error
-- [ ] Directive content is NOT logged (privacy)
-- [ ] Cache TTL is configurable via `IBEX_DIRECTIVE_CACHE_TTL` (default: 60s)
+- [x] Directive resolved from Redis on cache hit in < 2ms
+- [x] Postgres fallback on Redis miss populates cache for subsequent requests
+- [x] Agent with no directive returns empty content — not an error
+- [x] Directive content is NOT logged (privacy)
+- [x] Cache TTL is configurable via `IBEX_DIRECTIVE_CACHE_TTL` (default: 60s)
 
 ---

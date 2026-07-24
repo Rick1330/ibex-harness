@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/Rick1330/ibex-harness/packages/directive"
 	"github.com/Rick1330/ibex-harness/packages/reqid"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 )
@@ -15,6 +16,7 @@ const (
 	ctxKeyRequestStart
 	ctxKeyErrorDocsBase
 	ctxKeyAgent
+	ctxKeyResolvedDirective
 )
 
 // WithRequestID stores the request ID on the context.
@@ -78,4 +80,15 @@ func WithAgent(ctx context.Context, rec auth.AgentRecord) context.Context {
 func AgentFromContext(ctx context.Context) (auth.AgentRecord, bool) {
 	rec, ok := ctx.Value(ctxKeyAgent).(auth.AgentRecord)
 	return rec, ok
+}
+
+// WithResolvedDirective stores the resolved directive on the context.
+func WithResolvedDirective(ctx context.Context, resolved directive.Resolved) context.Context {
+	return context.WithValue(ctx, ctxKeyResolvedDirective, resolved)
+}
+
+// ResolvedDirectiveFromContext returns the resolved directive when present.
+func ResolvedDirectiveFromContext(ctx context.Context) (directive.Resolved, bool) {
+	resolved, ok := ctx.Value(ctxKeyResolvedDirective).(directive.Resolved)
+	return resolved, ok
 }

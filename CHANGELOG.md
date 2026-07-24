@@ -125,6 +125,7 @@ Release notes are human-readable summaries of user-visible changes, security fix
 
 ### Added
 
+- Directive resolver (`packages/directive`): Redis cache keyed `{org_id}:directive:{agent_id}` with Postgres fallback and pub/sub invalidation on `directive_updates:{org_id}`; proxy middleware resolves after agent verify (content stashed on context for 2.3.3 injection); metrics `ibex_proxy_directive_*`
 - Directive schema (`ibex_core.directives` + `directive_versions`): immutable versions with `active_version_id` pointer, org RLS, 32KB content cap ([ADR-0030](web/content/docs/adr/0030-directive-versioning.mdx); migration `000009`)
 - Auth cache revoke hardening: tombstone installed before index removal; LRU lookup re-checks revocation before serving cached claims
 - Token revocation propagation (`packages/revocation`): auth PUBLISH + proxy SUBSCRIBE on `ibex:token:revocations` with `token_id` events and `InvalidateByTokenID` ([ADR-0029](web/content/docs/adr/0029-token-revocation-propagation.mdx)); metrics `ibex_auth_revocation_publish_total`, `ibex_proxy_revocation_invalidate_total`

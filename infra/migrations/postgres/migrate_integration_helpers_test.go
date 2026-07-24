@@ -136,8 +136,15 @@ func seedDirectiveForOrg(t *testing.T, ctx context.Context, seed directiveSeed) 
 			return err
 		}
 		contentHash := "hash-" + seed.content
-		return tx.QueryRowContext(ctx, insertDirectiveVersionSQL,
-			out.directiveID, seed.orgID, seed.content, contentHash).Scan(&out.versionID)
+		if err := tx.QueryRowContext(ctx, insertDirectiveVersionSQL,
+			out.directiveID, seed.orgID, seed.content, contentHash).Scan(&out.versionID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `
+			UPDATE ibex_core.directives
+			SET active_version_id = $1::uuid
+			WHERE id = $2::uuid`, out.versionID, out.directiveID)
+		return err
 	})
 	if err != nil {
 		t.Fatalf("seed directive org=%s: %v", seed.orgID, err)

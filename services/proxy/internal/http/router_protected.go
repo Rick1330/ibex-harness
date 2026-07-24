@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/Rick1330/ibex-harness/packages/directive"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/packages/provider"
@@ -13,15 +14,16 @@ import (
 )
 
 type protectedRouteDeps struct {
-	mux              *http.ServeMux
-	cfg              config.Config
-	logger           *logger.Logger
-	reg              *metrics.ProxyRegistry
-	validator        auth.TokenValidator
-	agentVerifier    auth.AgentVerifier
-	limiter          ratelimit.Limiter
-	docsBase         string
-	providerRegistry *provider.Registry
+	mux               *http.ServeMux
+	cfg               config.Config
+	logger            *logger.Logger
+	reg               *metrics.ProxyRegistry
+	validator         auth.TokenValidator
+	agentVerifier     auth.AgentVerifier
+	limiter           ratelimit.Limiter
+	directiveResolver directive.Resolver
+	docsBase          string
+	providerRegistry  *provider.Registry
 }
 
 func registerProtectedRoutes(deps protectedRouteDeps) {
@@ -58,6 +60,7 @@ func registerProtectedRoutes(deps protectedRouteDeps) {
 		ContentTypeMiddleware(deps.docsBase),
 		AuthMiddleware(deps.validator, deps.logger, AuthOptions{RequireProxyChatCompletion: true}),
 		agentVerify,
+		DirectiveResolveMiddleware(deps.directiveResolver, deps.logger),
 		rateLimit,
 		ChatParseMiddleware(chatParseOpts{docsBase: deps.docsBase}),
 		ProviderRoutingMiddleware(providerRoutingOpts{

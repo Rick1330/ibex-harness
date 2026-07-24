@@ -7,6 +7,7 @@ import (
 	"time"
 
 	apierror "github.com/Rick1330/ibex-harness/packages/apierror"
+	"github.com/Rick1330/ibex-harness/packages/directive"
 	"github.com/Rick1330/ibex-harness/packages/healthcheck"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/metrics"
@@ -29,15 +30,16 @@ type authProbeResponse struct {
 
 // RouterDeps wires the proxy HTTP handler and middleware chain.
 type RouterDeps struct {
-	Config           config.Config
-	Logger           *logger.Logger
-	Metrics          *metrics.ProxyRegistry
-	Tracer           trace.Tracer
-	Validator        auth.TokenValidator
-	AgentVerifier    auth.AgentVerifier
-	Limiter          ratelimit.Limiter
-	Health           *healthcheck.Server
-	ProviderRegistry *provider.Registry
+	Config            config.Config
+	Logger            *logger.Logger
+	Metrics           *metrics.ProxyRegistry
+	Tracer            trace.Tracer
+	Validator         auth.TokenValidator
+	AgentVerifier     auth.AgentVerifier
+	Limiter           ratelimit.Limiter
+	DirectiveResolver directive.Resolver
+	Health            *healthcheck.Server
+	ProviderRegistry  *provider.Registry
 }
 
 // NewRouter builds the proxy HTTP handler with optional auth validator for protected routes.
@@ -70,15 +72,16 @@ func NewRouter(deps RouterDeps) http.Handler {
 
 	if validator != nil {
 		registerProtectedRoutes(protectedRouteDeps{
-			mux:              mux,
-			cfg:              cfg,
-			logger:           logger,
-			reg:              reg,
-			validator:        validator,
-			agentVerifier:    agentVerifier,
-			limiter:          limiter,
-			docsBase:         docsBase,
-			providerRegistry: providerReg,
+			mux:               mux,
+			cfg:               cfg,
+			logger:            logger,
+			reg:               reg,
+			validator:         validator,
+			agentVerifier:     agentVerifier,
+			limiter:           limiter,
+			directiveResolver: deps.DirectiveResolver,
+			docsBase:          docsBase,
+			providerRegistry:  providerReg,
 		})
 	}
 

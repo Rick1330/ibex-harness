@@ -28,6 +28,11 @@ type ProxyRegistry struct {
 	authCacheLRUEvict    prometheus.Counter
 	authCacheBloomFP     prometheus.Counter
 	revocationInvalidate prometheus.Counter
+	directiveCacheHits   prometheus.Counter
+	directiveCacheMisses prometheus.Counter
+	directiveResolveErrs prometheus.Counter
+	directiveResolveSec  prometheus.Histogram
+	directiveInvalidate  prometheus.Counter
 	processUp            prometheus.Gauge
 }
 

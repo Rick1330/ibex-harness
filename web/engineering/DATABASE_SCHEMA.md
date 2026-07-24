@@ -1936,14 +1936,14 @@ Hot Memory Cache:
 
 Directive Cache:
   Key:   {org_id}:directive:{agent_id}
-  Type:  String (text content)
-  TTL:   300 seconds (5 minutes)
-  Value: Full directive content text
+  Type:  String (JSON envelope: content, injection_mode, version_id)
+  TTL:   60 seconds (default; configurable via IBEX_DIRECTIVE_CACHE_TTL)
+  Value: Active directive payload for hot-path resolve
   Use:   Hot path: directive retrieved on every request
 
   Key:   {org_id}:directive_version:{agent_id}
   Type:  String (UUID)
-  TTL:   300 seconds
+  TTL:   60 seconds (default; same TTL as directive cache when used)
   Value: Current active directive version ID
   Use:   Version tracking for cache invalidation
 

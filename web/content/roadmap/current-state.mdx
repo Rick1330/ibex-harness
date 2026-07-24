@@ -25,11 +25,11 @@ summary: "Phase 0, Phase 1, and Phase 1.5 are complete. Phase 2 (Single Provider
 <StatusBadge status="stable" /> **Phase 0 — Foundation:** complete  
 <StatusBadge status="stable" /> **Phase 1 — Core Platform:** complete  
 <StatusBadge status="stable" /> **Phase 1.5 — Public Web Product:** complete  
-<StatusBadge status="new" /> **Phase 2 — Single Provider:** in progress (2.3.1 complete; 2.3.2 next)
+<StatusBadge status="new" /> **Phase 2 — Single Provider:** in progress (2.3.2 complete; 2.3.3 next)
 
-**Last updated:** 2026-07-23  
+**Last updated:** 2026-07-24  
 **Branch:** `main`  
-**Current focus:** [2.3.2 Directive resolver](/roadmap/phase-2-single-provider/milestones/2.3.2-directive-resolver)  
+**Current focus:** [2.3.3 System prompt injection](/roadmap/phase-2-single-provider/milestones/2.3.3-system-prompt-injection)  
 **Deferred:** [2.1.6 Idempotency-Key](/roadmap/phase-2-single-provider/milestones/2.1.6-idempotency-key) until after Goal 2.3 (waivable at 2.6.2)
 
 <QuickLinks
@@ -59,6 +59,7 @@ summary: "Phase 0, Phase 1, and Phase 1.5 are complete. Phase 2 (Single Provider
 
 ## Shipped Since Last Update
 
+- Directive resolver (`packages/directive`): Redis cache with Postgres fallback, pub/sub invalidation, proxy hot-path middleware (milestone 2.3.2)
 - Path-filtered CI with area gate jobs ([#206](https://github.com/Rick1330/ibex-harness/pull/206)): `ci-gate-repo`, `ci-gate-go`, `ci-gate-web`, `ci-gate-security`
 - Unified product site at [ibexharness.com](https://ibexharness.com) — landing, docs, blog, benchmarks, releases, roadmap (static export via Cloudflare Pages)
 - Benchmark pipeline + public dashboard + bot integration (ADR-0024); weekly `benchmark.yml` and PR overlays
@@ -119,14 +120,14 @@ Legacy `docs.ibexharness.com` redirects to apex paths (301).
 ## Next 3 Priorities
 
 <Steps>
-  <Step title="2.3.2 — Directive resolver">
-    Resolve directives on the hot path for prompt injection.
-  </Step>
   <Step title="2.3.3 — System prompt injection">
     Inject resolved directives into chat completions requests.
   </Step>
   <Step title="2.4.1 — Sessions and checkpoints migrations">
     Persist session and checkpoint schema for proxy lifecycle.
+  </Step>
+  <Step title="2.4.2 — Session store">
+    Proxy session read/write store with Redis cache.
   </Step>
 </Steps>
 

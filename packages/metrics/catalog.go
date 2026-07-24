@@ -19,6 +19,11 @@ var ProxyRequiredMetricNames = []string{
 	"ibex_proxy_auth_cache_lru_evictions_total",
 	"ibex_proxy_auth_cache_bloom_fp_total",
 	"ibex_proxy_revocation_invalidate_total",
+	"ibex_proxy_directive_cache_hits_total",
+	"ibex_proxy_directive_cache_misses_total",
+	"ibex_proxy_directive_resolve_errors_total",
+	"ibex_proxy_directive_resolve_duration_seconds",
+	"ibex_proxy_directive_invalidate_total",
 	"ibex_process_up",
 }
 

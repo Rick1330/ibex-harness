@@ -37,6 +37,8 @@ type envConfig struct {
 	AuthCacheLRUMaxTTL    time.Duration     `env:"IBEX_AUTH_CACHE_LRU_MAX_TTL"`
 	AuthCacheBloomItems   uint              `env:"IBEX_AUTH_CACHE_BLOOM_EXPECTED_ITEMS"`
 	AuthCacheBloomFPRate  float64           `env:"IBEX_AUTH_CACHE_BLOOM_FP_RATE"`
+	PostgresDSN           ibexconfig.Secret `env:"POSTGRES_DSN" secret:"true"`
+	DirectiveCacheTTL     time.Duration     `env:"IBEX_DIRECTIVE_CACHE_TTL"`
 }
 
 func loadFromEnv() (Config, error) {
@@ -87,6 +89,8 @@ func baseProxyConfig(envCfg envConfig, level slog.Level) Config {
 		AuthCache: AuthCacheConfig{
 			Enabled: true,
 		},
+		PostgresDSN:       envCfg.PostgresDSN.String(),
+		DirectiveCacheTTL: envCfg.DirectiveCacheTTL,
 	}
 }
 
