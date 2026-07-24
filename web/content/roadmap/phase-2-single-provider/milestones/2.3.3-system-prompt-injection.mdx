@@ -82,7 +82,7 @@ func Inject(messages []provider.Message, directive string, mode InjectionMode) [
 ## Acceptance Criteria
 
 - [x] `system_first` mode: directive is first message; `role="system"`; original messages follow
-- [x] `system_append` mode: directive is last system message; user messages follow
+- [x] `system_append` mode: directive is inserted after the leading contiguous system block; subsequent messages retain their order
 - [x] `user_prepend` mode: directive is prepended to the first user message content
 - [x] Empty directive: messages returned unchanged
 - [x] Input slice is never mutated (pure function — safe for concurrent use)

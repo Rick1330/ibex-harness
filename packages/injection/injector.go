@@ -7,15 +7,20 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/provider"
 )
 
-// InjectionMode controls how the directive is inserted into the messages array.
+// InjectionMode selects how Inject places directive text in the messages array.
+// Values match directives.injection_mode in Postgres (ADR-0030 / ADR-0031).
 type InjectionMode string
 
 const (
-	// ModeSystemFirst inserts the directive as the first system message.
+	// ModeSystemFirst places the directive as the first system message.
+	// Existing messages (including other system messages) follow it.
 	ModeSystemFirst InjectionMode = "system_first"
-	// ModeSystemAppend inserts the directive after leading system messages.
+	// ModeSystemAppend places the directive after the leading contiguous
+	// system block. If there is no leading system message, it becomes first.
 	ModeSystemAppend InjectionMode = "system_append"
-	// ModeUserPrepend prepends the directive to the first user message.
+	// ModeUserPrepend rewrites the first user message as
+	// [DIRECTIVE]: <content>\n\n<original>. If no user message exists, Inject
+	// returns an independent shallow copy and leaves content unchanged.
 	ModeUserPrepend InjectionMode = "user_prepend"
 
 	roleSystem = "system"
@@ -24,8 +29,9 @@ const (
 	userPrependPrefix = "[DIRECTIVE]: "
 )
 
-// ParseMode maps a stored / resolved mode string to InjectionMode.
-// Unknown or empty values become ModeSystemFirst.
+// ParseMode maps a stored or resolved mode string to InjectionMode.
+// Empty or unknown values fall back to ModeSystemFirst so the hot path never
+// rejects a request for a misspelled or newly introduced enum value.
 func ParseMode(raw string) InjectionMode {
 	mode := InjectionMode(strings.TrimSpace(raw))
 	switch mode {
@@ -36,8 +42,10 @@ func ParseMode(raw string) InjectionMode {
 	}
 }
 
-// Inject returns a new messages slice with the directive applied.
-// Empty directive returns a shallow copy of messages (input never mutated).
+// Inject returns a new messages slice with the directive applied per mode.
+// The input slice is never mutated. Whitespace-only directive content is treated
+// as empty and yields an independent shallow copy (nil stays nil). Unknown modes
+// are normalized via ParseMode to ModeSystemFirst.
 func Inject(messages []provider.Message, directive string, mode InjectionMode) []provider.Message {
 	if strings.TrimSpace(directive) == "" {
 		return copyMessages(messages)
@@ -97,6 +105,9 @@ func firstUserIndex(messages []provider.Message) int {
 }
 
 func copyMessages(messages []provider.Message) []provider.Message {
+	if messages == nil {
+		return nil
+	}
 	out := make([]provider.Message, len(messages))
 	copy(out, messages)
 	return out
