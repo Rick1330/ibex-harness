@@ -14,22 +14,36 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/session"
 	"github.com/google/uuid"
 
+	// Register the lib/pq "postgres" driver for sql.Open in integration tests.
 	_ "github.com/lib/pq"
 )
 
 const defaultTestDSN = "postgres://ibex:ibex@localhost:5433/ibex_test?sslmode=disable"
 
+const seedInsertOrgSQL = `
+INSERT INTO ibex_core.organizations (name, slug) VALUES ($1, $2)
+RETURNING id::text`
+
+const seedInsertUserSQL = `
+INSERT INTO ibex_core.users (org_id, email, name)
+VALUES ($1::uuid, $2, $3) RETURNING id::text`
+
+const seedInsertAgentSQL = `
+INSERT INTO ibex_core.agents (org_id, created_by, name, slug)
+VALUES ($1::uuid, $2::uuid, $3, $4) RETURNING id::text`
+
+const seedSetStatusSQL = `
+UPDATE ibex_core.sessions SET status = $1
+WHERE id = $2::uuid AND org_id = $3::uuid`
+
 func TestStore_GetOrCreate_IdempotentExternalID(t *testing.T) {
-	store, orgID, agentID := setupStore(t)
-	p := session.GetOrCreateParams{
-		OrgID: orgID, AgentID: agentID, ExternalID: "ext-idem",
-		Model: "gpt-4o", Provider: "openai",
-	}
-	a, err := store.GetOrCreate(context.Background(), p)
+	ids := setupStore(t)
+	p := baseParams(ids, "ext-idem")
+	a, err := ids.store.GetOrCreate(context.Background(), p)
 	if err != nil {
 		t.Fatalf("first: %v", err)
 	}
-	b, err := store.GetOrCreate(context.Background(), p)
+	b, err := ids.store.GetOrCreate(context.Background(), p)
 	if err != nil {
 		t.Fatalf("second: %v", err)
 	}
@@ -39,15 +53,13 @@ func TestStore_GetOrCreate_IdempotentExternalID(t *testing.T) {
 }
 
 func TestStore_GetOrCreate_EmptyExternalID_AlwaysNew(t *testing.T) {
-	store, orgID, agentID := setupStore(t)
-	p := session.GetOrCreateParams{
-		OrgID: orgID, AgentID: agentID, Model: "gpt-4o", Provider: "openai",
-	}
-	a, err := store.GetOrCreate(context.Background(), p)
+	ids := setupStore(t)
+	p := baseParams(ids, "")
+	a, err := ids.store.GetOrCreate(context.Background(), p)
 	if err != nil {
 		t.Fatalf("first: %v", err)
 	}
-	b, err := store.GetOrCreate(context.Background(), p)
+	b, err := ids.store.GetOrCreate(context.Background(), p)
 	if err != nil {
 		t.Fatalf("second: %v", err)
 	}
@@ -57,51 +69,63 @@ func TestStore_GetOrCreate_EmptyExternalID_AlwaysNew(t *testing.T) {
 }
 
 func TestStore_AppendCheckpoint_AtomicStats(t *testing.T) {
-	store, orgID, agentID := setupStore(t)
-	sess := mustCreate(t, store, orgID, agentID, "ext-stats")
-	err := store.AppendCheckpoint(context.Background(), session.CheckpointParams{
-		SessionID: sess.ID, OrgID: orgID, AgentID: agentID, TurnIndex: 0,
+	ids := setupStore(t)
+	sess := mustCreate(t, ids, "ext-stats")
+	err := ids.store.AppendCheckpoint(context.Background(), session.CheckpointParams{
+		SessionID: sess.ID, OrgID: ids.orgID, AgentID: ids.agentID, TurnIndex: 0,
 		RequestID: "req-1", MessagesHash: "mh1", InputTokens: 10, OutputTokens: 20,
 		Model: "gpt-4o", Provider: "openai", LatencyMs: 100, IsComplete: true,
 	})
 	if err != nil {
 		t.Fatalf("append: %v", err)
 	}
-	got := mustReload(t, store, orgID, agentID, "ext-stats")
-	if got.TurnCount != 1 || got.TotalInputTokens != 10 || got.TotalOutputTokens != 20 || got.TotalLatencyMs != 100 {
-		t.Fatalf("stats mismatch: %+v", got)
-	}
+	assertSessionStats(t, mustReload(t, ids, "ext-stats"), sessionStatsWant{
+		turns: 1, input: 10, output: 20, latency: 100,
+	})
 }
 
 func TestStore_AppendCheckpoint_DuplicateTurn(t *testing.T) {
-	store, orgID, agentID := setupStore(t)
-	sess := mustCreate(t, store, orgID, agentID, "ext-dup")
+	ids := setupStore(t)
+	sess := mustCreate(t, ids, "ext-dup")
 	p := session.CheckpointParams{
-		SessionID: sess.ID, OrgID: orgID, AgentID: agentID, TurnIndex: 0,
+		SessionID: sess.ID, OrgID: ids.orgID, AgentID: ids.agentID, TurnIndex: 0,
 		RequestID: "req-1", MessagesHash: "mh1", Model: "gpt-4o", Provider: "openai",
 		LatencyMs: 1, IsComplete: true,
 	}
-	if err := store.AppendCheckpoint(context.Background(), p); err != nil {
+	if err := ids.store.AppendCheckpoint(context.Background(), p); err != nil {
 		t.Fatalf("first: %v", err)
 	}
-	err := store.AppendCheckpoint(context.Background(), p)
+	err := ids.store.AppendCheckpoint(context.Background(), p)
 	if !errors.Is(err, session.ErrDuplicateTurn) {
 		t.Fatalf("expected ErrDuplicateTurn, got %v", err)
 	}
 }
 
 func TestStore_Complete(t *testing.T) {
-	store, orgID, agentID := setupStore(t)
-	sess := mustCreate(t, store, orgID, agentID, "ext-done")
-	if err := store.Complete(context.Background(), sess.ID, orgID); err != nil {
+	ids := setupStore(t)
+	sess := mustCreate(t, ids, "ext-done")
+	if err := ids.store.Complete(context.Background(), sess.ID, ids.orgID); err != nil {
 		t.Fatalf("complete: %v", err)
 	}
-	got := mustReload(t, store, orgID, agentID, "ext-done")
+	got := mustReload(t, ids, "ext-done")
 	if got.Status != session.StatusCompleted {
 		t.Fatalf("status=%s", got.Status)
 	}
-	if err := store.Complete(context.Background(), sess.ID, orgID); err != nil {
+	if err := ids.store.Complete(context.Background(), sess.ID, ids.orgID); err != nil {
 		t.Fatalf("noop complete: %v", err)
+	}
+}
+
+func TestStore_Complete_TerminalNoop(t *testing.T) {
+	ids := setupStore(t)
+	sess := mustCreate(t, ids, "ext-abandon")
+	forceStatus(t, ids, sess.ID, session.StatusAbandoned)
+	if err := ids.store.Complete(context.Background(), sess.ID, ids.orgID); err != nil {
+		t.Fatalf("complete abandoned: %v", err)
+	}
+	got := mustReload(t, ids, "ext-abandon")
+	if got.Status != session.StatusAbandoned {
+		t.Fatalf("expected abandoned preserved, got %s", got.Status)
 	}
 }
 
@@ -109,7 +133,8 @@ func TestStore_RLS_CrossOrg(t *testing.T) {
 	db, store := openStore(t)
 	orgA, agentA := seedOrgAgent(t, db, "Org A", "org-a")
 	orgB, _ := seedOrgAgent(t, db, "Org B", "org-b")
-	sess := mustCreate(t, store, orgA, agentA, "ext-rls")
+	ids := storeIDs{db: db, store: store, orgID: orgA, agentID: agentA}
+	sess := mustCreate(t, ids, "ext-rls")
 
 	err := store.AppendCheckpoint(context.Background(), session.CheckpointParams{
 		SessionID: sess.ID, OrgID: orgB, AgentID: agentA, TurnIndex: 0,
@@ -125,11 +150,22 @@ func TestStore_RLS_CrossOrg(t *testing.T) {
 	}
 }
 
-func setupStore(t *testing.T) (*session.PostgresStore, uuid.UUID, uuid.UUID) {
+type storeIDs struct {
+	db             *sql.DB
+	store          *session.PostgresStore
+	orgID, agentID uuid.UUID
+}
+
+type sessionStatsWant struct {
+	turns                  int
+	input, output, latency int64
+}
+
+func setupStore(t *testing.T) storeIDs {
 	t.Helper()
 	db, store := openStore(t)
 	orgID, agentID := seedOrgAgent(t, db, "Org S", "org-s-"+uuid.NewString()[:8])
-	return store, orgID, agentID
+	return storeIDs{db: db, store: store, orgID: orgID, agentID: agentID}
 }
 
 func openStore(t *testing.T) (*sql.DB, *session.PostgresStore) {
@@ -176,20 +212,14 @@ func seedOrgAgent(t *testing.T, db *sql.DB, name, slug string) (uuid.UUID, uuid.
 	ctx := context.Background()
 	var orgID, userID, agentID string
 	err := withServiceAccount(ctx, db, func(tx *sql.Tx) error {
-		if err := tx.QueryRowContext(ctx, `
-			INSERT INTO ibex_core.organizations (name, slug) VALUES ($1, $2)
-			RETURNING id::text`, name, slug).Scan(&orgID); err != nil {
+		if err := tx.QueryRowContext(ctx, seedInsertOrgSQL, name, slug).Scan(&orgID); err != nil {
 			return err
 		}
-		if err := tx.QueryRowContext(ctx, `
-			INSERT INTO ibex_core.users (org_id, email, name)
-			VALUES ($1::uuid, $2, $3) RETURNING id::text`,
+		if err := tx.QueryRowContext(ctx, seedInsertUserSQL,
 			orgID, slug+"@example.com", name).Scan(&userID); err != nil {
 			return err
 		}
-		return tx.QueryRowContext(ctx, `
-			INSERT INTO ibex_core.agents (org_id, created_by, name, slug)
-			VALUES ($1::uuid, $2::uuid, $3, $4) RETURNING id::text`,
+		return tx.QueryRowContext(ctx, seedInsertAgentSQL,
 			orgID, userID, name+" Agent", "agent-"+slug).Scan(&agentID)
 	})
 	if err != nil {
@@ -213,24 +243,55 @@ func withServiceAccount(ctx context.Context, db *sql.DB, fn func(*sql.Tx) error)
 	return tx.Commit()
 }
 
-func mustCreate(t *testing.T, store *session.PostgresStore, orgID, agentID uuid.UUID, ext string) *session.Session {
+func baseParams(ids storeIDs, ext string) session.GetOrCreateParams {
+	return session.GetOrCreateParams{
+		OrgID: ids.orgID, AgentID: ids.agentID, ExternalID: ext,
+		Model: "gpt-4o", Provider: "openai",
+	}
+}
+
+func mustCreate(t *testing.T, ids storeIDs, ext string) *session.Session {
 	t.Helper()
-	sess, err := store.GetOrCreate(context.Background(), session.GetOrCreateParams{
-		OrgID: orgID, AgentID: agentID, ExternalID: ext, Model: "gpt-4o", Provider: "openai",
-	})
+	sess, err := ids.store.GetOrCreate(context.Background(), baseParams(ids, ext))
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	return sess
 }
 
-func mustReload(t *testing.T, store *session.PostgresStore, orgID, agentID uuid.UUID, ext string) *session.Session {
+func mustReload(t *testing.T, ids storeIDs, ext string) *session.Session {
 	t.Helper()
-	sess, err := store.GetOrCreate(context.Background(), session.GetOrCreateParams{
-		OrgID: orgID, AgentID: agentID, ExternalID: ext, Model: "gpt-4o", Provider: "openai",
-	})
+	sess, err := ids.store.GetOrCreate(context.Background(), baseParams(ids, ext))
 	if err != nil {
 		t.Fatalf("reload: %v", err)
 	}
 	return sess
+}
+
+func assertSessionStats(t *testing.T, got *session.Session, want sessionStatsWant) {
+	t.Helper()
+	if got.TurnCount != want.turns {
+		t.Fatalf("turn_count=%d want %d", got.TurnCount, want.turns)
+	}
+	if got.TotalInputTokens != want.input {
+		t.Fatalf("input_tokens=%d want %d", got.TotalInputTokens, want.input)
+	}
+	if got.TotalOutputTokens != want.output {
+		t.Fatalf("output_tokens=%d want %d", got.TotalOutputTokens, want.output)
+	}
+	if got.TotalLatencyMs != want.latency {
+		t.Fatalf("latency_ms=%d want %d", got.TotalLatencyMs, want.latency)
+	}
+}
+
+func forceStatus(t *testing.T, ids storeIDs, sessionID uuid.UUID, status string) {
+	t.Helper()
+	ctx := context.Background()
+	err := withServiceAccount(ctx, ids.db, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, seedSetStatusSQL, status, sessionID, ids.orgID)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("force status: %v", err)
+	}
 }

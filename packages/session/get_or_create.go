@@ -55,16 +55,29 @@ func (s *PostgresStore) GetOrCreate(ctx context.Context, p GetOrCreateParams) (*
 
 func (s *PostgresStore) getOrCreate(ctx context.Context, p GetOrCreateParams) (*Session, string, error) {
 	sess, result, err := s.tryGetOrCreate(ctx, p)
-	if err == nil || p.ExternalID == "" || !isUniqueViolation(err) {
+	if !shouldRetryUniqueRace(err, p.ExternalID) {
 		return sess, result, err
 	}
-	// Unique race aborts the prior tx; look up the winner in a fresh transaction.
+	return s.resolveUniqueRace(ctx, p, err)
+}
+
+func shouldRetryUniqueRace(err error, externalID string) bool {
+	if err == nil {
+		return false
+	}
+	if externalID == "" {
+		return false
+	}
+	return isUniqueViolation(err)
+}
+
+func (s *PostgresStore) resolveUniqueRace(ctx context.Context, p GetOrCreateParams, cause error) (*Session, string, error) {
 	existing, lookupErr := s.lookupExternalFresh(ctx, p)
 	if lookupErr != nil {
 		return nil, "", lookupErr
 	}
 	if existing == nil {
-		return nil, "", fmt.Errorf("session: unique race but row missing: %w", err)
+		return nil, "", fmt.Errorf("session: unique race but row missing: %w", cause)
 	}
 	return existing, ResultExisting, nil
 }
@@ -79,18 +92,31 @@ func (s *PostgresStore) tryGetOrCreate(ctx context.Context, p GetOrCreateParams)
 	if err := setOrgRLS(ctx, tx, p.OrgID); err != nil {
 		return nil, "", err
 	}
-	if p.ExternalID != "" {
-		existing, err := lookupByExternalID(ctx, tx, p)
-		if err != nil {
-			return nil, "", err
-		}
-		if existing != nil {
-			if err := tx.Commit(); err != nil {
-				return nil, "", fmt.Errorf("session: commit existing: %w", err)
-			}
-			return existing, ResultExisting, nil
-		}
+	existing, err := findExistingByExternal(ctx, tx, p)
+	if err != nil {
+		return nil, "", err
 	}
+	if existing != nil {
+		return commitExisting(tx, existing)
+	}
+	return insertAndCommit(ctx, tx, p)
+}
+
+func findExistingByExternal(ctx context.Context, tx *sql.Tx, p GetOrCreateParams) (*Session, error) {
+	if p.ExternalID == "" {
+		return nil, nil
+	}
+	return lookupByExternalID(ctx, tx, p)
+}
+
+func commitExisting(tx *sql.Tx, existing *Session) (*Session, string, error) {
+	if err := tx.Commit(); err != nil {
+		return nil, "", fmt.Errorf("session: commit existing: %w", err)
+	}
+	return existing, ResultExisting, nil
+}
+
+func insertAndCommit(ctx context.Context, tx *sql.Tx, p GetOrCreateParams) (*Session, string, error) {
 	created, err := insertSession(ctx, tx, p)
 	if err != nil {
 		return nil, "", err
