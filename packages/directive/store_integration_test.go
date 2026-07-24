@@ -229,6 +229,20 @@ func TestIntegration_CachedResolver_PostgresFallback(t *testing.T) {
 	defer db.Close()
 
 	seeded := seedAgentDirective(t, agentDirectiveSeed{db: db, orgName: "Org A", orgSlug: "org-a", content: "Follow org policy."})
+	client, resolver := newIntegrationCachedResolver(t, db)
+	key := seeded.orgID.String() + ":directive:" + seeded.agentID.String()
+	expect := resolveExpect{resolver: resolver, orgID: seeded.orgID, agentID: seeded.agentID, want: seeded.content}
+
+	assertResolveContent(t, expect)
+	waitUntil(t, 2*time.Second, func() bool { return redisKeyExists(client, key) })
+	assertResolveContent(t, expect)
+	if !redisKeyExists(client, key) {
+		t.Fatalf("expected redis key %q", key)
+	}
+}
+
+func newIntegrationCachedResolver(t *testing.T, db *sql.DB) (*redis.Client, *directive.CachedResolver) {
+	t.Helper()
 	store, err := directive.NewPostgresStore(db)
 	if err != nil {
 		t.Fatalf("store: %v", err)
@@ -236,38 +250,32 @@ func TestIntegration_CachedResolver_PostgresFallback(t *testing.T) {
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
-	log := mustLogger(t)
-
 	resolver, err := directive.NewCachedResolver(directive.CachedResolverDeps{
-		Client: client, Loader: store, Config: directive.Config{CacheTTL: time.Minute}, Log: log,
+		Client: client, Loader: store, Config: directive.Config{CacheTTL: time.Minute}, Log: mustLogger(t),
 	})
 	if err != nil {
 		t.Fatalf("resolver: %v", err)
 	}
+	return client, resolver
+}
 
-	first, err := resolver.Resolve(context.Background(), seeded.orgID, seeded.agentID)
+type resolveExpect struct {
+	resolver       directive.Resolver
+	orgID, agentID uuid.UUID
+	want           string
+}
+
+func assertResolveContent(t *testing.T, e resolveExpect) {
+	t.Helper()
+	got, err := e.resolver.Resolve(context.Background(), e.orgID, e.agentID)
 	if err != nil {
-		t.Fatalf("first resolve: %v", err)
+		t.Fatalf("resolve: %v", err)
 	}
-	if first.Content != seeded.content {
-		t.Fatalf("first content=%q", first.Content)
+	if got.Content != e.want {
+		t.Fatalf("content=%q want %q", got.Content, e.want)
 	}
-	key := seeded.orgID.String() + ":directive:" + seeded.agentID.String()
-	waitUntil(t, 2*time.Second, func() bool {
-		n, err := client.Exists(context.Background(), key).Result()
-		return err == nil && n == 1
-	})
+}
 
-	second, err := resolver.Resolve(context.Background(), seeded.orgID, seeded.agentID)
-	if err != nil {
-		t.Fatalf("second resolve: %v", err)
-	}
-	if second.Content != seeded.content {
-		t.Fatalf("cache hit content=%q", second.Content)
-	}
-
-	key := seeded.orgID.String() + ":directive:" + seeded.agentID.String()
-	if !mr.Exists(key) {
-		t.Fatalf("expected redis key %q", key)
-	}
+func redisKeyExists(client *redis.Client, key string) bool {
+	return client.Exists(context.Background(), key).Val() == 1
 }

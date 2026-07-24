@@ -279,8 +279,19 @@ func TestUnit_ConfigApplyDefaults(t *testing.T) {
 }
 
 func BenchmarkCachedResolver_ResolveHit(b *testing.B) {
-	orgID := uuid.MustParse("11111111-1111-1111-1111-111111111111")
-	agentID := uuid.MustParse("22222222-2222-2222-2222-222222222222")
+	r, ids := newBenchCachedResolver(b)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		mustBenchResolve(b, r, ids)
+	}
+}
+
+func newBenchCachedResolver(b *testing.B) (*directive.CachedResolver, [2]uuid.UUID) {
+	b.Helper()
+	ids := [2]uuid.UUID{
+		uuid.MustParse("11111111-1111-1111-1111-111111111111"),
+		uuid.MustParse("22222222-2222-2222-2222-222222222222"),
+	}
 	store := newFakeStore(directive.Resolved{Content: "bench", InjectionMode: "system_first"})
 	mr := miniredis.RunT(b)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -295,22 +306,29 @@ func BenchmarkCachedResolver_ResolveHit(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	if _, err := r.Resolve(context.Background(), orgID, agentID); err != nil {
+	mustBenchResolve(b, r, ids)
+	waitRedisDirectiveB(b, client, ids)
+	return r, ids
+}
+
+func mustBenchResolve(b *testing.B, r *directive.CachedResolver, ids [2]uuid.UUID) {
+	b.Helper()
+	if _, err := r.Resolve(context.Background(), ids[0], ids[1]); err != nil {
 		b.Fatal(err)
 	}
+}
+
+func waitRedisDirectiveB(b *testing.B, client *redis.Client, ids [2]uuid.UUID) {
+	b.Helper()
+	key := ids[0].String() + ":directive:" + ids[1].String()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if n, err := client.Exists(context.Background(), orgID.String()+":directive:"+agentID.String()).Result(); err == nil && n == 1 {
-			break
+		if client.Exists(context.Background(), key).Val() == 1 {
+			return
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if _, err := r.Resolve(context.Background(), orgID, agentID); err != nil {
-			b.Fatal(err)
-		}
-	}
+	b.Fatal("timeout waiting for redis key")
 }
 
 type fakeStore struct {
@@ -386,8 +404,7 @@ func waitRedisDirective(t *testing.T, client redis.UniversalClient, orgID, agent
 	t.Helper()
 	key := orgID.String() + ":directive:" + agentID.String()
 	waitUntil(t, 2*time.Second, func() bool {
-		n, err := client.Exists(context.Background(), key).Result()
-		return err == nil && n == 1
+		return client.Exists(context.Background(), key).Val() == 1
 	})
 }
 
