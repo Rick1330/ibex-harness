@@ -9,31 +9,35 @@ type ProxyRegistry struct {
 	reg    prometheus.Registerer
 	gather prometheus.Gatherer
 
-	requestDuration      *prometheus.HistogramVec
-	requestsTotal        *prometheus.CounterVec
-	activeConnections    prometheus.Gauge
-	rateLimitedTotal     *prometheus.CounterVec
-	rateLimitRedisErrors prometheus.Counter
-	providerRequests     *prometheus.CounterVec
-	providerRetries      *prometheus.CounterVec
-	streamDuration       *prometheus.HistogramVec
-	streamClientDisc     prometheus.Counter
-	streamUpstreamDisc   prometheus.Counter
-	streamBackpressure   prometheus.Counter
-	asyncQueueDepth      prometheus.Gauge
-	asyncDroppedTotal    prometheus.Counter
-	authCacheHits        *prometheus.CounterVec
-	authCacheMisses      *prometheus.CounterVec
-	authCacheLRUSize     prometheus.Gauge
-	authCacheLRUEvict    prometheus.Counter
-	authCacheBloomFP     prometheus.Counter
-	revocationInvalidate prometheus.Counter
-	directiveCacheHits   prometheus.Counter
-	directiveCacheMisses prometheus.Counter
-	directiveResolveErrs prometheus.Counter
-	directiveResolveSec  prometheus.Histogram
-	directiveInvalidate  prometheus.Counter
-	processUp            prometheus.Gauge
+	requestDuration       *prometheus.HistogramVec
+	requestsTotal         *prometheus.CounterVec
+	activeConnections     prometheus.Gauge
+	rateLimitedTotal      *prometheus.CounterVec
+	rateLimitRedisErrors  prometheus.Counter
+	providerRequests      *prometheus.CounterVec
+	providerRetries       *prometheus.CounterVec
+	streamDuration        *prometheus.HistogramVec
+	streamClientDisc      prometheus.Counter
+	streamUpstreamDisc    prometheus.Counter
+	streamBackpressure    prometheus.Counter
+	asyncQueueDepth       prometheus.Gauge
+	asyncDroppedTotal     prometheus.Counter
+	authCacheHits         *prometheus.CounterVec
+	authCacheMisses       *prometheus.CounterVec
+	authCacheLRUSize      prometheus.Gauge
+	authCacheLRUEvict     prometheus.Counter
+	authCacheBloomFP      prometheus.Counter
+	revocationInvalidate  prometheus.Counter
+	directiveCacheHits    prometheus.Counter
+	directiveCacheMisses  prometheus.Counter
+	directiveResolveErrs  prometheus.Counter
+	directiveResolveSec   prometheus.Histogram
+	directiveInvalidate   prometheus.Counter
+	sessionGetOrCreate    *prometheus.CounterVec
+	sessionGetOrCreateSec prometheus.Histogram
+	sessionCheckpoint     *prometheus.CounterVec
+	sessionComplete       *prometheus.CounterVec
+	processUp             prometheus.Gauge
 }
 
 // NewProxy creates and registers proxy metrics.

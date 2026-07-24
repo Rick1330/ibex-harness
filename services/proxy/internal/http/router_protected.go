@@ -9,6 +9,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/packages/provider"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
+	"github.com/Rick1330/ibex-harness/packages/session"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
 )
@@ -22,6 +23,7 @@ type protectedRouteDeps struct {
 	agentVerifier     auth.AgentVerifier
 	limiter           ratelimit.Limiter
 	directiveResolver directive.Resolver
+	sessionStore      session.Store
 	docsBase          string
 	providerRegistry  *provider.Registry
 }
@@ -71,9 +73,10 @@ func registerProtectedRoutes(deps protectedRouteDeps) {
 	)
 	deps.mux.Handle("/v1/chat/completions", chatChain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		handleChatCompletions(w, r, chatCompletionHandler{
-			log:      deps.logger,
-			docsBase: deps.docsBase,
-			metrics:  deps.reg,
+			log:          deps.logger,
+			docsBase:     deps.docsBase,
+			metrics:      deps.reg,
+			sessionStore: deps.sessionStore,
 		})
 	})))
 }

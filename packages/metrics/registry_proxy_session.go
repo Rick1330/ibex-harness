@@ -1,0 +1,53 @@
+package metrics
+
+import "github.com/prometheus/client_golang/prometheus"
+
+func (r *ProxyRegistry) initSessionMetrics() {
+	r.sessionGetOrCreate = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "ibex_proxy_session_get_or_create_total",
+		Help: "Session GetOrCreate outcomes.",
+	}, []string{"result"})
+	r.sessionGetOrCreateSec = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    "ibex_proxy_session_get_or_create_duration_seconds",
+		Help:    "Session GetOrCreate latency.",
+		Buckets: LatencyBuckets,
+	})
+	r.sessionCheckpoint = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "ibex_proxy_session_checkpoint_total",
+		Help: "Session AppendCheckpoint outcomes.",
+	}, []string{"result"})
+	r.sessionComplete = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "ibex_proxy_session_complete_total",
+		Help: "Session Complete outcomes.",
+	}, []string{"result"})
+	// Materialize bounded result series at init (no first-hit registration).
+	for _, result := range []string{"created", "existing", "error"} {
+		r.sessionGetOrCreate.WithLabelValues(result)
+	}
+	for _, result := range []string{"ok", "duplicate", "error"} {
+		r.sessionCheckpoint.WithLabelValues(result)
+	}
+	for _, result := range []string{"ok", "noop", "error"} {
+		r.sessionComplete.WithLabelValues(result)
+	}
+}
+
+// IncSessionGetOrCreate records a GetOrCreate outcome (created|existing|error).
+func (r *ProxyRegistry) IncSessionGetOrCreate(result string) {
+	r.sessionGetOrCreate.WithLabelValues(result).Inc()
+}
+
+// ObserveSessionGetOrCreateSeconds records GetOrCreate wall time.
+func (r *ProxyRegistry) ObserveSessionGetOrCreateSeconds(seconds float64) {
+	r.sessionGetOrCreateSec.Observe(seconds)
+}
+
+// IncSessionCheckpoint records an AppendCheckpoint outcome (ok|duplicate|error).
+func (r *ProxyRegistry) IncSessionCheckpoint(result string) {
+	r.sessionCheckpoint.WithLabelValues(result).Inc()
+}
+
+// IncSessionComplete records a Complete outcome (ok|noop|error).
+func (r *ProxyRegistry) IncSessionComplete(result string) {
+	r.sessionComplete.WithLabelValues(result).Inc()
+}

@@ -156,6 +156,10 @@ func seedProxySamples(reg *ProxyRegistry) {
 	reg.IncDirectiveResolveError()
 	reg.ObserveDirectiveResolveSeconds(0.001)
 	reg.IncDirectiveInvalidate()
+	reg.IncSessionGetOrCreate("created")
+	reg.ObserveSessionGetOrCreateSeconds(0.001)
+	reg.IncSessionCheckpoint("ok")
+	reg.IncSessionComplete("ok")
 }
 
 func TestProxyRegistry_AsyncBackpressureMetricsRegistered(t *testing.T) {
