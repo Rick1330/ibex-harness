@@ -19,7 +19,7 @@ All protected routes require:
 - `GET /v1/orgs/{org_id}/auth-probe` — same; path `org_id` must be UUID; **403** if path org ≠ token org
 - `POST /v1/chat/completions` — auth + agent verify + `ProxyChatCompletion`; body limit + JSON Content-Type; semantic validation; rate limit; **501** when valid; **429** `RATE_LIMITED`; **400** `MISSING_AGENT_ID` / `VALIDATION_ERROR` / `INVALID_JSON`; **403** `AGENT_NOT_AUTHORIZED` / `AGENT_SUSPENDED`; **413** / **415** per [ADR-0013](../../docs/adr/ADR-0013-proxy-input-validation-and-error-envelope.md)
 
-Auth validates via gRPC `ValidateToken` ([ADR-0011](../../docs/adr/ADR-0011-proxy-auth-client.md)). Agent ownership via gRPC `ValidateAgent` ([ADR-0016](../../docs/adr/ADR-0016-agent-identity-verification.md)). Parse: [ADR-0012](../../docs/adr/ADR-0012-proxy-request-normalization.md). Validation + envelope: [ADR-0013](../../docs/adr/ADR-0013-proxy-input-validation-and-error-envelope.md). Rate limit: [ADR-0015](../../docs/adr/ADR-0015-proxy-rate-limit-skeleton.md). Directive resolve (m2.3.2): Redis cache with **approved read-only Postgres fallback** via `POSTGRES_DSN` (`openProxyPostgres` / `PostgresStore.Load`) when Redis is also configured — an intentional exception to the Phase-1 “proxy talks to identity only through auth gRPC” boundary, limited to directive reads and advisory `/ready` postgres checks (`buildProxyHealth`). Fail open on resolve infra errors. Fail closed: token auth outage → **503** `SERVICE_DEGRADED`; agent verify outage → **503** `AUTH_UNAVAILABLE`. Rate limit Redis outage → fail open (request allowed).
+Auth validates via gRPC `ValidateToken` ([ADR-0011](../../docs/adr/ADR-0011-proxy-auth-client.md)). Agent ownership via gRPC `ValidateAgent` ([ADR-0016](../../docs/adr/ADR-0016-agent-identity-verification.md)). Parse: [ADR-0012](../../docs/adr/ADR-0012-proxy-request-normalization.md). Validation + envelope: [ADR-0013](../../docs/adr/ADR-0013-proxy-input-validation-and-error-envelope.md). Rate limit: [ADR-0015](../../docs/adr/ADR-0015-proxy-rate-limit-skeleton.md). Directive resolve (m2.3.2): Redis cache with **approved read-only Postgres fallback** via `POSTGRES_DSN` (`openProxyPostgres` / `PostgresStore.Load`) when Redis is also configured — an intentional exception to the Phase-1 “proxy talks to identity only through auth gRPC” boundary, limited to directive reads and advisory `/ready` postgres checks (`buildProxyHealth`). Fail open on resolve infra errors. Directive injection (m2.3.3): handler applies `packages/injection.Inject` (`system_first` / `system_append` / `user_prepend`) to `provider.Request.Messages` before `Complete` ([ADR-0031](../../web/content/docs/adr/0031-system-prompt-injection.mdx)); directive content is never logged. Fail closed: token auth outage → **503** `SERVICE_DEGRADED`; agent verify outage → **503** `AUTH_UNAVAILABLE`. Rate limit Redis outage → fail open (request allowed).
 
 ## Middleware order
 
@@ -27,7 +27,7 @@ Auth validates via gRPC `ValidateToken` ([ADR-0011](../../docs/adr/ADR-0011-prox
 metrics → requestContext → responseHeaders → logging → mux
 
 POST /v1/chat/completions:
-  bodyLimit → contentType → auth → agentVerify → rateLimit → directiveResolve → chatParse → providerRouting → handler
+  bodyLimit → contentType → auth → agentVerify → rateLimit → directiveResolve → chatParse → providerRouting → handler (inject + Complete)
 
 GET /v1/internal/auth-probe:
   auth → agentVerify → rateLimit → handler

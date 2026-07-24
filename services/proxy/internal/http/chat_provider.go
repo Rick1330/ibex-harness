@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	apierror "github.com/Rick1330/ibex-harness/packages/apierror"
+	"github.com/Rick1330/ibex-harness/packages/injection"
 	"github.com/Rick1330/ibex-harness/packages/provider"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/llm"
 )
@@ -25,6 +26,7 @@ func (h chatCompletionHandler) forwardChatCompletion(p chatForwardParams) {
 		return
 	}
 	provReq := llm.ToProviderRequest(p.parsed)
+	provReq.Messages = applyDirectiveInjection(ctx, provReq.Messages)
 	resp, err := p.prov.Complete(ctx, provReq)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
@@ -50,6 +52,17 @@ func (h chatCompletionHandler) forwardChatCompletion(p chatForwardParams) {
 		return
 	}
 	h.writeProviderSuccess(p.w, resp)
+}
+
+// applyDirectiveInjection splices the resolved agent directive into messages.
+// Missing context or empty content leaves messages unchanged (fail-open).
+func applyDirectiveInjection(ctx context.Context, messages []provider.Message) []provider.Message {
+	resolved, ok := ResolvedDirectiveFromContext(ctx)
+	if !ok || !resolved.HasContent() {
+		return messages
+	}
+	mode := injection.ParseMode(resolved.InjectionMode)
+	return injection.Inject(messages, resolved.Content, mode)
 }
 
 func (h chatCompletionHandler) writeProviderSuccess(w http.ResponseWriter, resp provider.Response) {

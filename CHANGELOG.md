@@ -125,6 +125,7 @@ Release notes are human-readable summaries of user-visible changes, security fix
 
 ### Added
 
+- System prompt injection (`packages/injection`): pure `Inject` for `system_first` / `system_append` / `user_prepend`; proxy applies resolved directive to `provider.Request.Messages` before `Complete` ([ADR-0031](web/content/docs/adr/0031-system-prompt-injection.mdx); milestone 2.3.3)
 - Directive resolver (`packages/directive`): Redis cache keyed `{org_id}:directive:{agent_id}` with Postgres fallback and pub/sub invalidation on `directive_updates:{org_id}`; proxy middleware resolves after agent verify (content stashed on context for 2.3.3 injection); metrics `ibex_proxy_directive_*`
 - Directive schema (`ibex_core.directives` + `directive_versions`): immutable versions with `active_version_id` pointer, org RLS, 32KB content cap ([ADR-0030](web/content/docs/adr/0030-directive-versioning.mdx); migration `000009`)
 - Auth cache revoke hardening: tombstone installed before index removal; LRU lookup re-checks revocation before serving cached claims
