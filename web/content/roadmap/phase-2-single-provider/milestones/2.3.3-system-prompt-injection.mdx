@@ -2,7 +2,7 @@
 title: "2.3.3 System Prompt"
 description: "The directive content must be injected into the LLM request's messages array. This sounds trivial, but it is not — different injection strategies have different effects on model behaviour, and different models have different rules about system message placement and count. The three injection modes (from the `directiv"
 summary: "The directive content must be injected into the LLM request's messages array. This sounds trivial, but it is not — different injection strategies have different effects on model behaviour, and different models have different rules about system message placement and count. The three injection modes (from the `directiv"
-status: "planned"
+status: "completed"
 milestoneId: "2.3.3"
 goal: "[2.3 — Directive resolution and prompt injection](/roadmap/phase-2-single-provider/goals#goal-23-directive-resolution-and-prompt-injection)"
 estimatedEffort: "2 days"
@@ -12,11 +12,11 @@ fullTitle: "Milestone 2.3.3 — System Prompt Injection Strategy"
 
 # Milestone 2.3.3 — System Prompt Injection Strategy
 
-**Status:** Planned  
+**Status:** Completed  
 **Goal:** [2.3 — Directive resolution and prompt injection](/roadmap/phase-2-single-provider/goals#goal-23-directive-resolution-and-prompt-injection)  
 **Phase:** 2 — Single Provider End-to-End  
 **Estimated effort:** 2 days  
-**ADR required:** ADR-0031 — System prompt injection strategy
+**ADR:** [ADR-0031 — System prompt injection strategy](/docs/adr/0031-system-prompt-injection)
 
 ---
 
@@ -81,11 +81,11 @@ func Inject(messages []provider.Message, directive string, mode InjectionMode) [
 
 ## Acceptance Criteria
 
-- [ ] `system_first` mode: directive is first message; `role="system"`; original messages follow
-- [ ] `system_append` mode: directive is last system message; user messages follow
-- [ ] `user_prepend` mode: directive is prepended to the first user message content
-- [ ] Empty directive: messages returned unchanged
-- [ ] Input slice is never mutated (pure function — safe for concurrent use)
-- [ ] Injection is tested with realistic GPT-4o message arrays including multi-turn history
+- [x] `system_first` mode: directive is first message; `role="system"`; original messages follow
+- [x] `system_append` mode: directive is inserted after the leading contiguous system block; subsequent messages retain their order
+- [x] `user_prepend` mode: directive is prepended to the first user message content
+- [x] Empty directive: messages returned unchanged
+- [x] Input slice is never mutated (pure function — safe for concurrent use)
+- [x] Injection is tested with realistic GPT-4o message arrays including multi-turn history
 
 ---

@@ -1,0 +1,49 @@
+---
+title: "ADR-0031: System prompt injection strategy"
+description: "Accepted — proxy-owned Inject with system_first, system_append, and user_prepend; pure packages/injection; no directive content in logs."
+adrId: "0031"
+status: "Accepted"
+date: "2026-07-24"
+authors: "IBEX Harness team"
+---
+
+# ADR-0031: System prompt injection strategy
+
+- **Status:** Accepted
+- **Date:** 2026-07-24
+- **Authors:** IBEX Harness team
+- **Milestone:** [2.3.3 System prompt injection](/roadmap/phase-2-single-provider/milestones/2.3.3-system-prompt-injection)
+
+## Context
+
+Milestone [2.3.2](/roadmap/phase-2-single-provider/milestones/2.3.2-directive-resolver) resolves an agent's active directive and stashes `content` + `injection_mode` on the request context. Without writing that content into the LLM messages array, directives have no effect on model behaviour.
+
+Injection strategy is agent-level configuration (`directives.injection_mode` from [ADR-0030](./0030-directive-versioning.mdx)). Different modes change how strongly the directive competes with client-supplied system messages. OpenAI models accept multiple system messages; some other providers historically preferred a single system or instruction channel — `user_prepend` exists for that compatibility path.
+
+[ADR-0025](./0025-llm-provider-abstraction.mdx) and [ADR-0026](./0026-openai-client-design.mdx) already require that provider clients do **not** implement directive injection. The proxy owns the messages array before `provider.Complete`.
+
+## Decision
+
+1. **Proxy owns injection:** Apply injection in the chat forward path after `llm.ToProviderRequest`, using `ResolvedDirectiveFromContext`. Provider clients receive already-injected `[]provider.Message`.
+2. **Shared pure package:** `packages/injection.Inject(messages, directive, mode)` returns a **new** slice and never mutates the input. Safe for concurrent use. Latency budget &lt;0.5ms (in-memory only).
+3. **Three modes** (aligned with Postgres enum):
+   - `system_first` — directive is the first message with `role=system`; originals follow (strongest enforcement; default).
+   - `system_append` — directive is inserted after the leading contiguous system block; if none, insert as first system message.
+   - `user_prepend` — first `user` message content becomes `[DIRECTIVE]: <content>\n\n<original>`. If no user message exists, leave messages unchanged (no-op copy).
+4. **Empty content:** If directive content is empty (or resolve fail-open left no context), return messages unchanged (still allocate a defensive copy when calling Inject with empty content, or skip Inject entirely in the proxy).
+5. **Unknown / empty mode:** Treat as `system_first` (matches DB default and `directive.DefaultInjectionMode`).
+6. **Privacy:** Never log or trace directive **content**. Metrics/logs may record mode or presence only.
+7. **Phase 3 reuse:** Memory / context assembly should call the same `Inject` (or a thin wrapper) rather than re-implementing message splicing inside provider clients.
+
+## Consequences
+
+- Chat path order remains: auth → agent verify → rate limit → directive resolve → parse → provider routing → **inject** → `Complete`.
+- OpenAI multi-system guidance: multiple system messages are valid for GPT-4o-class models; `system_first` / `system_append` rely on that.
+- Clients that already send system prompts keep them; IBEX never silently drops client system messages.
+- Benchmark synthetic `stagePromptInject` remains a follow-on for Goal 2.6 (real wiring), not a blocker for 2.3.3.
+
+## Alternatives considered
+
+1. **Inject inside OpenAI client** — couples one provider to agent config; rejected by ADR-0025/0026.
+2. **Middleware that mutates `llm.ChatCompletionRequest` before conversion** — possible, but the public Inject API is defined on `provider.Message`; converting then injecting keeps one splice implementation.
+3. **Single forced system message only** — simpler; loses append / prepend strategies required by the schema enum.
