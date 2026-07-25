@@ -115,7 +115,7 @@ func sessionLifecycleRouter(t *testing.T, store session.Store, pool *asyncpool.P
 		}},
 		AgentVerifier: passAgentVerifier{}, Limiter: ratelimit.Noop(),
 		SessionStore: store, SessionCache: cache, CheckpointPool: pool,
-		Health: testHealthServer(),
+		Health:           testHealthServer(),
 		ProviderRegistry: reg,
 	})
 }
@@ -339,6 +339,7 @@ func TestUnit_StickyExternalID(t *testing.T) {
 	}
 }
 
+func TestUnit_ResolveSession_NilStore(t *testing.T) {
 	t.Parallel()
 	h := chatCompletionHandler{log: logger.Discard("proxy")}
 	req := httptest.NewRequest(http.MethodPost, "/", nil)
