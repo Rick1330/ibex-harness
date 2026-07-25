@@ -1,7 +1,6 @@
 package http
 
 import (
-	"context"
 	"net/http"
 	"strings"
 	"time"
@@ -30,7 +29,6 @@ type protectedRouteDeps struct {
 	sessionStore       session.Store
 	sessionCache       *sessioncache.Cache
 	checkpointPool     *asyncpool.Pool
-	serviceCtx         context.Context
 	getOrCreateTimeout time.Duration
 	docsBase           string
 	providerRegistry   *provider.Registry
@@ -87,7 +85,6 @@ func registerProtectedRoutes(deps protectedRouteDeps) {
 			sessionStore:       deps.sessionStore,
 			sessionCache:       deps.sessionCache,
 			checkpointPool:     deps.checkpointPool,
-			serviceCtx:         deps.serviceCtx,
 			getOrCreateTimeout: deps.getOrCreateTimeout,
 		})
 	})))

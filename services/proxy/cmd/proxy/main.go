@@ -76,8 +76,8 @@ func runBootstrap(_ []string, signalCh chan os.Signal) int {
 		grpcConn: core.grpcConn, redisClient: core.redisClient, pgDB: core.pgDB,
 		revSub: core.revSub, revCancel: core.revCancel,
 		dirSub: core.dirSub, dirCancel: core.dirCancel,
-		checkpointPool: core.checkpointPool, serviceCancel: core.serviceCancel,
-		signalCh: signalCh,
+		checkpointPool: core.checkpointPool,
+		signalCh:       signalCh,
 	})
 }
 
@@ -105,7 +105,6 @@ type proxyCore struct {
 	dirSub         *directive.Subscriber
 	dirCancel      context.CancelFunc
 	checkpointPool *asyncpool.Pool
-	serviceCancel  context.CancelFunc
 }
 
 func setupProxyCore(
@@ -132,43 +131,35 @@ func setupProxyCore(
 	if err != nil {
 		return nil, fmt.Errorf("session store: %w", err)
 	}
-	sessionCache, err := newSessionCache(redisClient, cfg)
+	sessionParts, err := setupSessionHotPath(redisClient, cfg, reg)
 	if err != nil {
-		return nil, fmt.Errorf("session cache: %w", err)
+		return nil, err
 	}
-	checkpointPool, err := newCheckpointPool(cfg, reg)
-	if err != nil {
-		return nil, fmt.Errorf("checkpoint pool: %w", err)
-	}
-	serviceCtx, serviceCancel := context.WithCancel(context.Background())
 	healthSrv := buildProxyHealth(cfg, authClient, pgDB)
 	providerReg, err := providerRegistryInit(cfg, log, tracer, reg)
 	if err != nil {
-		serviceCancel()
 		return nil, fmt.Errorf("provider registry: %w", err)
 	}
 	server := newHTTPServer(proxyhttp.RouterDeps{
 		Config: cfg, Logger: log, Metrics: reg, Tracer: tracer,
 		Validator: validator, AgentVerifier: agentVerifier, Limiter: limiter,
 		DirectiveResolver: directiveResolver, SessionStore: sessionStore,
-		SessionCache: sessionCache, CheckpointPool: checkpointPool,
-		ServiceCtx: serviceCtx, GetOrCreateTimeout: cfg.SessionGetOrCreateTO,
-		Health: healthSrv, ProviderRegistry: providerReg,
+		SessionCache: sessionParts.cache, CheckpointPool: sessionParts.pool,
+		GetOrCreateTimeout: cfg.SessionGetOrCreateTO,
+		Health:             healthSrv, ProviderRegistry: providerReg,
 	})
 	revSub, revCancel, err := startRevocationSubscriber(redisClient, validator, log, reg)
 	if err != nil {
-		serviceCancel()
 		return nil, fmt.Errorf("revocation subscriber: %w", err)
 	}
 	dirSub, dirCancel, err := startDirectiveSubscriber(redisClient, directiveResolver, log, reg)
 	if err != nil {
-		serviceCancel()
 		return nil, fmt.Errorf("directive subscriber: %w", err)
 	}
 	return &proxyCore{
 		server: server, grpcConn: grpcConn, redisClient: redisClient, pgDB: pgDB,
 		revSub: revSub, revCancel: revCancel, dirSub: dirSub, dirCancel: dirCancel,
-		checkpointPool: checkpointPool, serviceCancel: serviceCancel,
+		checkpointPool: sessionParts.pool,
 	}, nil
 }
 
@@ -200,7 +191,6 @@ type shutdownOpts struct {
 	dirSub         *directive.Subscriber
 	dirCancel      context.CancelFunc
 	checkpointPool *asyncpool.Pool
-	serviceCancel  context.CancelFunc
 	signalCh       chan os.Signal
 }
 
@@ -367,6 +357,27 @@ func newCheckpointPool(cfg config.Config, reg *ibexmetrics.ProxyRegistry) (*asyn
 	return asyncpool.New(cfg.CheckpointWorkers, cfg.CheckpointQueue, depth)
 }
 
+type sessionHotPath struct {
+	cache *sessioncache.Cache
+	pool  *asyncpool.Pool
+}
+
+func setupSessionHotPath(
+	redisClient redis.UniversalClient,
+	cfg config.Config,
+	reg *ibexmetrics.ProxyRegistry,
+) (sessionHotPath, error) {
+	cache, err := newSessionCache(redisClient, cfg)
+	if err != nil {
+		return sessionHotPath{}, fmt.Errorf("session cache: %w", err)
+	}
+	pool, err := newCheckpointPool(cfg, reg)
+	if err != nil {
+		return sessionHotPath{}, fmt.Errorf("checkpoint pool: %w", err)
+	}
+	return sessionHotPath{cache: cache, pool: pool}, nil
+}
+
 func openProxyPostgres(dsn string) (*sql.DB, error) {
 	db, err := sql.Open("postgres", dsn)
 	if err != nil {
@@ -514,12 +525,6 @@ func registerShutdownHooks(sd *shutdown.Coordinator, opts shutdownOpts) {
 	sd.Register(func(ctx context.Context) error {
 		if opts.checkpointPool != nil {
 			return opts.checkpointPool.Shutdown(ctx)
-		}
-		return nil
-	})
-	sd.Register(func(ctx context.Context) error {
-		if opts.serviceCancel != nil {
-			opts.serviceCancel()
 		}
 		return nil
 	})

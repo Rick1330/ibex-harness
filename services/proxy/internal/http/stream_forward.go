@@ -24,7 +24,6 @@ const (
 var errClientWrite = errors.New("client write failed")
 
 type streamCheckpointResult struct {
-	ctx      context.Context
 	content  string
 	usage    *provider.Usage
 	latency  time.Duration
@@ -74,7 +73,7 @@ func forwardSSEStream(p streamForwardParams) {
 	content, usage := drainAccumulator(p, acc)
 	if p.onComplete != nil {
 		p.onComplete(streamCheckpointResult{
-			ctx: p.r.Context(), content: content, usage: usage,
+			content: content, usage: usage,
 			latency: time.Since(start), complete: status == "ok",
 		})
 	}

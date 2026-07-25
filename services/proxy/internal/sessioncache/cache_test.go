@@ -11,88 +11,99 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-func TestUnit_Cache_HitMissError(t *testing.T) {
-	t.Parallel()
+func testCache(t *testing.T) (*sessioncache.Cache, *miniredis.Miniredis) {
+	t.Helper()
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
-
 	cache, err := sessioncache.New(client, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
-	org := uuid.MustParse("11111111-1111-1111-1111-111111111111")
-	agent := uuid.MustParse("22222222-2222-2222-2222-222222222222")
-	ext := "33333333-3333-3333-3333-333333333333"
+	return cache, mr
+}
+
+func TestUnit_Cache_MissThenHit(t *testing.T) {
+	t.Parallel()
+	cache, _ := testCache(t)
+	key := sessioncache.LookupKey{
+		OrgID:      uuid.MustParse("11111111-1111-1111-1111-111111111111"),
+		AgentID:    uuid.MustParse("22222222-2222-2222-2222-222222222222"),
+		ExternalID: "33333333-3333-3333-3333-333333333333",
+	}
 	sid := uuid.MustParse("44444444-4444-4444-4444-444444444444")
 
-	if _, ok := cache.Get(context.Background(), org, agent, ext); ok {
+	if _, ok := cache.Get(context.Background(), key); ok {
 		t.Fatal("expected miss")
 	}
-
-	cache.Set(context.Background(), org, agent, ext, sessioncache.Entry{
-		SessionID: sid, TurnCount: 3,
-	})
-	got, ok := cache.Get(context.Background(), org, agent, ext)
+	cache.Set(context.Background(), key, sessioncache.Entry{SessionID: sid, TurnCount: 3})
+	got, ok := cache.Get(context.Background(), key)
 	if !ok {
 		t.Fatal("expected hit")
 	}
-	if got.SessionID != sid || got.TurnCount != 3 {
-		t.Fatalf("got=%+v", got)
+	if got.SessionID != sid {
+		t.Fatalf("session_id=%s", got.SessionID)
 	}
-
-	wantKey := org.String() + ":session:" + agent.String() + ":" + ext
-	if sessioncache.Key(org, agent, ext) != wantKey {
-		t.Fatalf("key=%s", sessioncache.Key(org, agent, ext))
+	if got.TurnCount != 3 {
+		t.Fatalf("turn_count=%d", got.TurnCount)
 	}
+	wantKey := key.OrgID.String() + ":session:" + key.AgentID.String() + ":" + key.ExternalID
+	if sessioncache.Key(key) != wantKey {
+		t.Fatalf("key=%s", sessioncache.Key(key))
+	}
+}
 
-	mr.Set(wantKey, "{")
-	if _, ok := cache.Get(context.Background(), org, agent, ext); ok {
+func TestUnit_Cache_CorruptAndDownMiss(t *testing.T) {
+	t.Parallel()
+	cache, mr := testCache(t)
+	key := sessioncache.LookupKey{
+		OrgID: uuid.New(), AgentID: uuid.New(), ExternalID: uuid.New().String(),
+	}
+	mr.Set(sessioncache.Key(key), "{")
+	if _, ok := cache.Get(context.Background(), key); ok {
 		t.Fatal("corrupt should miss")
 	}
-
 	mr.Close()
-	if _, ok := cache.Get(context.Background(), org, agent, ext); ok {
+	if _, ok := cache.Get(context.Background(), key); ok {
 		t.Fatal("redis down should miss")
 	}
 }
 
 func TestUnit_Cache_Invalidate(t *testing.T) {
 	t.Parallel()
-	mr := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	t.Cleanup(func() { _ = client.Close() })
-	cache, err := sessioncache.New(client, time.Minute)
-	if err != nil {
-		t.Fatal(err)
+	cache, _ := testCache(t)
+	key := sessioncache.LookupKey{
+		OrgID: uuid.New(), AgentID: uuid.New(), ExternalID: uuid.New().String(),
 	}
-	org, agent := uuid.New(), uuid.New()
-	ext := uuid.New().String()
-	cache.Set(context.Background(), org, agent, ext, sessioncache.Entry{
+	cache.Set(context.Background(), key, sessioncache.Entry{
 		SessionID: uuid.New(), TurnCount: 1,
 	})
-	cache.Invalidate(context.Background(), org, agent, ext)
-	if _, ok := cache.Get(context.Background(), org, agent, ext); ok {
+	cache.Invalidate(context.Background(), key)
+	if _, ok := cache.Get(context.Background(), key); ok {
 		t.Fatal("expected miss after invalidate")
 	}
 }
 
 func TestUnit_Cache_SetGuards(t *testing.T) {
 	t.Parallel()
-	mr := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	t.Cleanup(func() { _ = client.Close() })
-	cache, err := sessioncache.New(client, time.Minute)
-	if err != nil {
-		t.Fatal(err)
-	}
+	cache, _ := testCache(t)
 	org, agent := uuid.New(), uuid.New()
-	cache.Set(context.Background(), org, agent, "", sessioncache.Entry{SessionID: uuid.New()})
-	cache.Set(context.Background(), org, agent, "e", sessioncache.Entry{})
+	cache.Set(context.Background(), sessioncache.LookupKey{
+		OrgID: org, AgentID: agent, ExternalID: "",
+	}, sessioncache.Entry{SessionID: uuid.New()})
+	cache.Set(context.Background(), sessioncache.LookupKey{
+		OrgID: org, AgentID: agent, ExternalID: "e",
+	}, sessioncache.Entry{})
 	var nilCache *sessioncache.Cache
-	nilCache.Set(context.Background(), org, agent, "e", sessioncache.Entry{SessionID: uuid.New()})
-	nilCache.Invalidate(context.Background(), org, agent, "e")
-	if _, ok := nilCache.Get(context.Background(), org, agent, "e"); ok {
+	nilCache.Set(context.Background(), sessioncache.LookupKey{
+		OrgID: org, AgentID: agent, ExternalID: "e",
+	}, sessioncache.Entry{SessionID: uuid.New()})
+	nilCache.Invalidate(context.Background(), sessioncache.LookupKey{
+		OrgID: org, AgentID: agent, ExternalID: "e",
+	})
+	if _, ok := nilCache.Get(context.Background(), sessioncache.LookupKey{
+		OrgID: org, AgentID: agent, ExternalID: "e",
+	}); ok {
 		t.Fatal("nil cache get")
 	}
 }

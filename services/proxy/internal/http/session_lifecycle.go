@@ -23,6 +23,8 @@ const (
 	headerSessionID       = "X-IBEX-Session-ID"
 	checkpointTaskTimeout = 5 * time.Second
 	defaultGetOrCreateTO  = 50 * time.Millisecond
+	// maxExternalIDLen bounds sticky keys (UUID header max 36; pad for defense).
+	maxExternalIDLen = 64
 )
 
 // resolvedSession holds hot-path session identity for response headers + checkpoint.
@@ -38,9 +40,16 @@ type sessionLifecycleDeps struct {
 	store         session.Store
 	cache         *sessioncache.Cache
 	pool          *asyncpool.Pool
-	serviceCtx    context.Context
 	getOrCreateTO time.Duration
 	log           *logger.Logger
+}
+
+type getOrCreateInput struct {
+	orgID        uuid.UUID
+	agentID      uuid.UUID
+	externalID   string
+	parsed       *llm.ChatCompletionRequest
+	providerName string
 }
 
 func (h chatCompletionHandler) lifecycle() sessionLifecycleDeps {
@@ -48,13 +57,9 @@ func (h chatCompletionHandler) lifecycle() sessionLifecycleDeps {
 	if to <= 0 {
 		to = defaultGetOrCreateTO
 	}
-	svc := h.serviceCtx
-	if svc == nil {
-		svc = context.Background()
-	}
 	return sessionLifecycleDeps{
 		store: h.sessionStore, cache: h.sessionCache, pool: h.checkpointPool,
-		serviceCtx: svc, getOrCreateTO: to, log: h.log,
+		getOrCreateTO: to, log: h.log,
 	}
 }
 
@@ -86,14 +91,29 @@ func (d sessionLifecycleDeps) resolve(
 	if !ok {
 		return nil, nil
 	}
-	externalID := strings.TrimSpace(rawHeader)
-	if externalID == "" {
-		externalID = uuid.New().String()
+	externalID, ok := stickyExternalID(rawHeader)
+	if !ok {
+		return nil, nil
 	}
-	if hit, ok := d.cacheLookup(ctx, orgID, agentID, externalID); ok {
+	lookup := sessioncache.LookupKey{OrgID: orgID, AgentID: agentID, ExternalID: externalID}
+	if hit, ok := d.cacheLookup(ctx, lookup); ok {
 		return hit, nil
 	}
-	return d.getOrCreateSession(ctx, orgID, agentID, externalID, parsed, providerName)
+	return d.getOrCreateSession(ctx, getOrCreateInput{
+		orgID: orgID, agentID: agentID, externalID: externalID,
+		parsed: parsed, providerName: providerName,
+	})
+}
+
+func stickyExternalID(rawHeader string) (string, bool) {
+	externalID := strings.TrimSpace(rawHeader)
+	if externalID == "" {
+		return uuid.New().String(), true
+	}
+	if len(externalID) > maxExternalIDLen {
+		return "", false
+	}
+	return externalID, true
 }
 
 func tenantIDsFromContext(ctx context.Context) (uuid.UUID, uuid.UUID, bool) {
@@ -114,34 +134,30 @@ func tenantIDsFromContext(ctx context.Context) (uuid.UUID, uuid.UUID, bool) {
 
 func (d sessionLifecycleDeps) cacheLookup(
 	ctx context.Context,
-	orgID, agentID uuid.UUID,
-	externalID string,
+	key sessioncache.LookupKey,
 ) (*resolvedSession, bool) {
 	if d.cache == nil {
 		return nil, false
 	}
-	e, ok := d.cache.Get(ctx, orgID, agentID, externalID)
+	e, ok := d.cache.Get(ctx, key)
 	if !ok {
 		return nil, false
 	}
 	return &resolvedSession{
-		SessionID: e.SessionID, ExternalID: externalID,
-		TurnIndex: e.TurnCount, OrgID: orgID, AgentID: agentID,
+		SessionID: e.SessionID, ExternalID: key.ExternalID,
+		TurnIndex: e.TurnCount, OrgID: key.OrgID, AgentID: key.AgentID,
 	}, true
 }
 
 func (d sessionLifecycleDeps) getOrCreateSession(
 	ctx context.Context,
-	orgID, agentID uuid.UUID,
-	externalID string,
-	parsed *llm.ChatCompletionRequest,
-	providerName string,
+	in getOrCreateInput,
 ) (*resolvedSession, error) {
 	goCtx, cancel := context.WithTimeout(ctx, d.getOrCreateTO)
 	defer cancel()
 	params := session.GetOrCreateParams{
-		OrgID: orgID, AgentID: agentID, ExternalID: externalID,
-		Model: parsed.Model, Provider: providerName,
+		OrgID: in.orgID, AgentID: in.agentID, ExternalID: in.externalID,
+		Model: in.parsed.Model, Provider: in.providerName,
 		DirectiveVersionID: directiveVersionPtr(ctx),
 	}
 	sess, err := d.store.GetOrCreate(goCtx, params)
@@ -149,10 +165,12 @@ func (d sessionLifecycleDeps) getOrCreateSession(
 		d.warnGetOrCreate(ctx, err)
 		return nil, err
 	}
-	d.cacheSet(ctx, orgID, agentID, externalID, sess.ID, sess.TurnCount)
+	d.cacheSet(ctx, sessioncache.LookupKey{
+		OrgID: in.orgID, AgentID: in.agentID, ExternalID: in.externalID,
+	}, sessioncache.Entry{SessionID: sess.ID, TurnCount: sess.TurnCount})
 	return &resolvedSession{
-		SessionID: sess.ID, ExternalID: externalID,
-		TurnIndex: sess.TurnCount, OrgID: orgID, AgentID: agentID,
+		SessionID: sess.ID, ExternalID: in.externalID,
+		TurnIndex: sess.TurnCount, OrgID: in.orgID, AgentID: in.agentID,
 	}, nil
 }
 
@@ -167,17 +185,13 @@ func directiveVersionPtr(ctx context.Context) *uuid.UUID {
 
 func (d sessionLifecycleDeps) cacheSet(
 	ctx context.Context,
-	orgID, agentID uuid.UUID,
-	externalID string,
-	sessionID uuid.UUID,
-	turnCount int,
+	key sessioncache.LookupKey,
+	entry sessioncache.Entry,
 ) {
 	if d.cache == nil {
 		return
 	}
-	d.cache.Set(ctx, orgID, agentID, externalID, sessioncache.Entry{
-		SessionID: sessionID, TurnCount: turnCount,
-	})
+	d.cache.Set(ctx, key, entry)
 }
 
 func (d sessionLifecycleDeps) warnGetOrCreate(ctx context.Context, err error) {
@@ -218,8 +232,9 @@ func (h chatCompletionHandler) enqueueCheckpoint(ctx context.Context, in checkpo
 		return
 	}
 	params := buildCheckpointParams(rs, in, RequestIDFromContext(ctx))
+	externalID := rs.ExternalID
 	deps.pool.Submit(func() {
-		deps.runCheckpoint(params, rs.ExternalID)
+		deps.runCheckpoint(params, externalID)
 	})
 }
 
@@ -254,16 +269,22 @@ func hashLLMMessages(msgs []llm.Message) string {
 }
 
 func (d sessionLifecycleDeps) runCheckpoint(params session.CheckpointParams, externalID string) {
-	ctx, cancel := context.WithTimeout(d.serviceCtx, checkpointTaskTimeout)
+	// Detached from the HTTP request context so client disconnect cannot cancel
+	// durable checkpoint writes (5s deadline per task).
+	ctx, cancel := context.WithTimeout(context.Background(), checkpointTaskTimeout)
 	defer cancel()
 	err := d.store.AppendCheckpoint(ctx, params)
 	if err == nil {
-		d.cacheSet(ctx, params.OrgID, params.AgentID, externalID, params.SessionID, params.TurnIndex+1)
+		d.cacheSet(ctx, sessioncache.LookupKey{
+			OrgID: params.OrgID, AgentID: params.AgentID, ExternalID: externalID,
+		}, sessioncache.Entry{SessionID: params.SessionID, TurnCount: params.TurnIndex + 1})
 		return
 	}
 	if errors.Is(err, session.ErrDuplicateTurn) {
 		if d.cache != nil {
-			d.cache.Invalidate(ctx, params.OrgID, params.AgentID, externalID)
+			d.cache.Invalidate(ctx, sessioncache.LookupKey{
+				OrgID: params.OrgID, AgentID: params.AgentID, ExternalID: externalID,
+			})
 		}
 		return
 	}

@@ -1,7 +1,6 @@
 package http
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -45,7 +44,6 @@ type RouterDeps struct {
 	SessionStore       session.Store
 	SessionCache       *sessioncache.Cache
 	CheckpointPool     *asyncpool.Pool
-	ServiceCtx         context.Context
 	GetOrCreateTimeout time.Duration
 	Health             *healthcheck.Server
 	ProviderRegistry   *provider.Registry
@@ -92,7 +90,6 @@ func NewRouter(deps RouterDeps) http.Handler {
 			sessionStore:       deps.SessionStore,
 			sessionCache:       deps.SessionCache,
 			checkpointPool:     deps.CheckpointPool,
-			serviceCtx:         deps.ServiceCtx,
 			getOrCreateTimeout: deps.GetOrCreateTimeout,
 			docsBase:           docsBase,
 			providerRegistry:   providerReg,
@@ -161,7 +158,6 @@ type chatCompletionHandler struct {
 	sessionStore       session.Store
 	sessionCache       *sessioncache.Cache
 	checkpointPool     *asyncpool.Pool
-	serviceCtx         context.Context
 	getOrCreateTimeout time.Duration
 }
 

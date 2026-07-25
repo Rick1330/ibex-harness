@@ -115,7 +115,7 @@ func sessionLifecycleRouter(t *testing.T, store session.Store, pool *asyncpool.P
 		}},
 		AgentVerifier: passAgentVerifier{}, Limiter: ratelimit.Noop(),
 		SessionStore: store, SessionCache: cache, CheckpointPool: pool,
-		ServiceCtx: context.Background(), Health: testHealthServer(),
+		Health: testHealthServer(),
 		ProviderRegistry: reg,
 	})
 }
@@ -222,7 +222,7 @@ func TestUnit_SessionLifecycle_StreamSetsHeaderBeforeBody(t *testing.T) {
 			OrgID: testChatOrgID, Permissions: permissions.ProxyChatCompletion,
 		}},
 		AgentVerifier: passAgentVerifier{}, Limiter: ratelimit.Noop(),
-		SessionStore: store, CheckpointPool: pool, ServiceCtx: context.Background(),
+		SessionStore: store, CheckpointPool: pool,
 		Health: testHealthServer(), ProviderRegistry: reg,
 	})
 	rec := postChat(t, handler, chatRequestOpts{
@@ -262,7 +262,9 @@ func TestUnit_SessionLifecycle_CacheHitSkipsStore(t *testing.T) {
 	agent := uuid.MustParse(testChatAgentID)
 	ext := uuid.New().String()
 	sid := uuid.New()
-	cache.Set(context.Background(), org, agent, ext, sessioncache.Entry{
+	cache.Set(context.Background(), sessioncache.LookupKey{
+		OrgID: org, AgentID: agent, ExternalID: ext,
+	}, sessioncache.Entry{
 		SessionID: sid, TurnCount: 2,
 	})
 
@@ -318,7 +320,25 @@ func TestUnit_SessionLifecycle_CrossOrgUsesTokenOrg(t *testing.T) {
 	}
 }
 
-func TestUnit_ResolveSession_NilStore(t *testing.T) {
+func TestUnit_StickyExternalID(t *testing.T) {
+	t.Parallel()
+	minted, ok := stickyExternalID("")
+	if !ok || minted == "" {
+		t.Fatal("expected mint")
+	}
+	if _, err := uuid.Parse(minted); err != nil {
+		t.Fatalf("mint uuid: %v", err)
+	}
+	got, ok := stickyExternalID("  abc  ")
+	if !ok || got != "abc" {
+		t.Fatalf("got=%q ok=%v", got, ok)
+	}
+	tooLong := strings.Repeat("x", maxExternalIDLen+1)
+	if _, ok := stickyExternalID(tooLong); ok {
+		t.Fatal("expected reject oversized")
+	}
+}
+
 	t.Parallel()
 	h := chatCompletionHandler{log: logger.Discard("proxy")}
 	req := httptest.NewRequest(http.MethodPost, "/", nil)
@@ -352,11 +372,23 @@ func TestUnit_BuildCheckpointParams(t *testing.T) {
 		Usage:   &provider.Usage{InputTokens: 1, OutputTokens: 2},
 		Latency: 1500 * time.Millisecond, IsStreaming: true, IsComplete: true,
 	}, "req-1")
-	if p.TurnIndex != 3 || p.InputTokens != 1 || p.OutputTokens != 2 || p.LatencyMs != 1500 {
-		t.Fatalf("%+v", p)
+	if p.TurnIndex != 3 {
+		t.Fatalf("turn=%d", p.TurnIndex)
 	}
-	if p.MessagesHash == "" || p.CompletionHash == "" {
-		t.Fatal("expected hashes")
+	if p.InputTokens != 1 {
+		t.Fatalf("in=%d", p.InputTokens)
+	}
+	if p.OutputTokens != 2 {
+		t.Fatalf("out=%d", p.OutputTokens)
+	}
+	if p.LatencyMs != 1500 {
+		t.Fatalf("latency=%d", p.LatencyMs)
+	}
+	if p.MessagesHash == "" {
+		t.Fatal("expected messages hash")
+	}
+	if p.CompletionHash == "" {
+		t.Fatal("expected completion hash")
 	}
 }
 
@@ -374,15 +406,18 @@ func TestUnit_RunCheckpoint_DuplicateInvalidatesCache(t *testing.T) {
 	org, agent := uuid.New(), uuid.New()
 	ext := "ext"
 	sid := uuid.New()
-	cache.Set(context.Background(), org, agent, ext, sessioncache.Entry{SessionID: sid, TurnCount: 1})
+	cache.Set(context.Background(), sessioncache.LookupKey{
+		OrgID: org, AgentID: agent, ExternalID: ext,
+	}, sessioncache.Entry{SessionID: sid, TurnCount: 1})
 	deps := sessionLifecycleDeps{
-		store: store, cache: cache, serviceCtx: context.Background(),
-		log: logger.Discard("proxy"),
+		store: store, cache: cache, log: logger.Discard("proxy"),
 	}
 	deps.runCheckpoint(session.CheckpointParams{
 		SessionID: sid, OrgID: org, AgentID: agent, TurnIndex: 1,
 	}, ext)
-	if _, ok := cache.Get(context.Background(), org, agent, ext); ok {
+	if _, ok := cache.Get(context.Background(), sessioncache.LookupKey{
+		OrgID: org, AgentID: agent, ExternalID: ext,
+	}); ok {
 		t.Fatal("expected invalidate")
 	}
 }
