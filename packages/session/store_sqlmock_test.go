@@ -71,9 +71,7 @@ func beginWithRLS(mock sqlmock.Sqlmock, orgID uuid.UUID) {
 
 func expectCreateSession(mock sqlmock.Sqlmock, ids mockIDs) {
 	beginWithRLS(mock, ids.orgID)
-	mock.ExpectQuery("FROM ibex_core.sessions").
-		WithArgs(ids.orgID, ids.agentID, "ext").
-		WillReturnError(sql.ErrNoRows)
+	expectSelectByExternal(mock, ids, nil, sql.ErrNoRows)
 	mock.ExpectQuery("INSERT INTO ibex_core.sessions").
 		WithArgs(ids.orgID, ids.agentID, "ext", "gpt-4o", "openai", nil, StatusActive).
 		WillReturnRows(sessionRows(ids))
@@ -82,9 +80,7 @@ func expectCreateSession(mock sqlmock.Sqlmock, ids mockIDs) {
 
 func expectExistingSession(mock sqlmock.Sqlmock, ids mockIDs) {
 	beginWithRLS(mock, ids.orgID)
-	mock.ExpectQuery("FROM ibex_core.sessions").
-		WithArgs(ids.orgID, ids.agentID, "ext").
-		WillReturnRows(sessionRows(ids))
+	expectSelectByExternal(mock, ids, sessionRows(ids), nil)
 	mock.ExpectCommit()
 }
 
@@ -97,18 +93,9 @@ func expectEmptyExternalInsert(mock sqlmock.Sqlmock, ids mockIDs) {
 }
 
 func expectUniqueRace(mock sqlmock.Sqlmock, ids mockIDs) {
+	expectConflictInsert(mock, ids)
 	beginWithRLS(mock, ids.orgID)
-	mock.ExpectQuery("FROM ibex_core.sessions").
-		WithArgs(ids.orgID, ids.agentID, "ext").
-		WillReturnError(sql.ErrNoRows)
-	mock.ExpectQuery("INSERT INTO ibex_core.sessions").
-		WithArgs(ids.orgID, ids.agentID, "ext", "gpt-4o", "openai", nil, StatusActive).
-		WillReturnError(&pq.Error{Code: "23505"})
-	mock.ExpectRollback()
-	beginWithRLS(mock, ids.orgID)
-	mock.ExpectQuery("FROM ibex_core.sessions").
-		WithArgs(ids.orgID, ids.agentID, "ext").
-		WillReturnRows(sessionRows(ids))
+	expectSelectByExternal(mock, ids, sessionRows(ids), nil)
 	mock.ExpectCommit()
 }
 
@@ -122,34 +109,39 @@ func expectRLSFail(mock sqlmock.Sqlmock, ids mockIDs) {
 
 func expectLookupFail(mock sqlmock.Sqlmock, ids mockIDs) {
 	beginWithRLS(mock, ids.orgID)
-	mock.ExpectQuery("FROM ibex_core.sessions").
-		WithArgs(ids.orgID, ids.agentID, "ext").
-		WillReturnError(errors.New("lookup boom"))
+	expectSelectByExternal(mock, ids, nil, errors.New("lookup boom"))
 	mock.ExpectRollback()
 }
 
 func expectExistingCommitFail(mock sqlmock.Sqlmock, ids mockIDs) {
 	beginWithRLS(mock, ids.orgID)
-	mock.ExpectQuery("FROM ibex_core.sessions").
-		WithArgs(ids.orgID, ids.agentID, "ext").
-		WillReturnRows(sessionRows(ids))
+	expectSelectByExternal(mock, ids, sessionRows(ids), nil)
 	mock.ExpectCommit().WillReturnError(errors.New("commit boom"))
 }
 
 func expectUniqueRaceMissing(mock sqlmock.Sqlmock, ids mockIDs) {
+	expectConflictInsert(mock, ids)
 	beginWithRLS(mock, ids.orgID)
-	mock.ExpectQuery("FROM ibex_core.sessions").
-		WithArgs(ids.orgID, ids.agentID, "ext").
-		WillReturnError(sql.ErrNoRows)
+	expectSelectByExternal(mock, ids, nil, sql.ErrNoRows)
+	mock.ExpectCommit()
+}
+
+func expectConflictInsert(mock sqlmock.Sqlmock, ids mockIDs) {
+	beginWithRLS(mock, ids.orgID)
+	expectSelectByExternal(mock, ids, nil, sql.ErrNoRows)
 	mock.ExpectQuery("INSERT INTO ibex_core.sessions").
 		WithArgs(ids.orgID, ids.agentID, "ext", "gpt-4o", "openai", nil, StatusActive).
 		WillReturnError(&pq.Error{Code: "23505"})
 	mock.ExpectRollback()
-	beginWithRLS(mock, ids.orgID)
-	mock.ExpectQuery("FROM ibex_core.sessions").
-		WithArgs(ids.orgID, ids.agentID, "ext").
-		WillReturnError(sql.ErrNoRows)
-	mock.ExpectCommit()
+}
+
+func expectSelectByExternal(mock sqlmock.Sqlmock, ids mockIDs, rows *sqlmock.Rows, err error) {
+	q := mock.ExpectQuery("FROM ibex_core.sessions").WithArgs(ids.orgID, ids.agentID, "ext")
+	if err != nil {
+		q.WillReturnError(err)
+		return
+	}
+	q.WillReturnRows(rows)
 }
 
 func expectCheckpointOK(mock sqlmock.Sqlmock, ids mockIDs) {
@@ -186,9 +178,7 @@ func expectCheckpointInsertErr(mock sqlmock.Sqlmock, ids mockIDs) {
 
 func expectCompleteActive(mock sqlmock.Sqlmock, ids mockIDs) {
 	beginWithRLS(mock, ids.orgID)
-	mock.ExpectQuery("SELECT status FROM ibex_core.sessions").
-		WithArgs(ids.sessionID, ids.orgID).
-		WillReturnRows(statusRows(StatusActive))
+	expectSessionStatus(mock, ids, StatusActive, nil)
 	mock.ExpectExec("UPDATE ibex_core.sessions").
 		WithArgs(StatusCompleted, ids.sessionID, ids.orgID, StatusActive).
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -197,46 +187,44 @@ func expectCompleteActive(mock sqlmock.Sqlmock, ids mockIDs) {
 
 func expectCompleteNoop(mock sqlmock.Sqlmock, ids mockIDs) {
 	beginWithRLS(mock, ids.orgID)
-	mock.ExpectQuery("SELECT status FROM ibex_core.sessions").
-		WithArgs(ids.sessionID, ids.orgID).
-		WillReturnRows(statusRows(StatusAbandoned))
+	expectSessionStatus(mock, ids, StatusAbandoned, nil)
 	mock.ExpectCommit()
 }
 
 func expectCompleteRaceNoop(mock sqlmock.Sqlmock, ids mockIDs) {
-	beginWithRLS(mock, ids.orgID)
-	mock.ExpectQuery("SELECT status FROM ibex_core.sessions").
-		WithArgs(ids.sessionID, ids.orgID).
-		WillReturnRows(statusRows(StatusActive))
-	mock.ExpectExec("UPDATE ibex_core.sessions").
-		WithArgs(StatusCompleted, ids.sessionID, ids.orgID, StatusActive).
-		WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectQuery("SELECT status FROM ibex_core.sessions").
-		WithArgs(ids.sessionID, ids.orgID).
-		WillReturnRows(statusRows(StatusCompleted))
+	expectCompleteZeroRowUpdate(mock, ids)
+	expectSessionStatus(mock, ids, StatusCompleted, nil)
 	mock.ExpectCommit()
 }
 
 func expectCompleteNotFound(mock sqlmock.Sqlmock, ids mockIDs) {
 	beginWithRLS(mock, ids.orgID)
-	mock.ExpectQuery("SELECT status FROM ibex_core.sessions").
-		WithArgs(ids.sessionID, ids.orgID).
-		WillReturnError(sql.ErrNoRows)
+	expectSessionStatus(mock, ids, "", sql.ErrNoRows)
 	mock.ExpectRollback()
 }
 
 func expectCompleteStillActive(mock sqlmock.Sqlmock, ids mockIDs) {
+	expectCompleteZeroRowUpdate(mock, ids)
+	expectSessionStatus(mock, ids, StatusActive, nil)
+	mock.ExpectRollback()
+}
+
+func expectCompleteZeroRowUpdate(mock sqlmock.Sqlmock, ids mockIDs) {
 	beginWithRLS(mock, ids.orgID)
-	mock.ExpectQuery("SELECT status FROM ibex_core.sessions").
-		WithArgs(ids.sessionID, ids.orgID).
-		WillReturnRows(statusRows(StatusActive))
+	expectSessionStatus(mock, ids, StatusActive, nil)
 	mock.ExpectExec("UPDATE ibex_core.sessions").
 		WithArgs(StatusCompleted, ids.sessionID, ids.orgID, StatusActive).
 		WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectQuery("SELECT status FROM ibex_core.sessions").
-		WithArgs(ids.sessionID, ids.orgID).
-		WillReturnRows(statusRows(StatusActive))
-	mock.ExpectRollback()
+}
+
+func expectSessionStatus(mock sqlmock.Sqlmock, ids mockIDs, status string, err error) {
+	q := mock.ExpectQuery("SELECT status FROM ibex_core.sessions").
+		WithArgs(ids.sessionID, ids.orgID)
+	if err != nil {
+		q.WillReturnError(err)
+		return
+	}
+	q.WillReturnRows(statusRows(status))
 }
 
 func runGetOrCreateOK(t *testing.T, store *PostgresStore, ids mockIDs) {

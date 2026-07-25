@@ -131,32 +131,45 @@ func TestStore_GetOrCreate_UniqueRaceResolvesExisting(t *testing.T) {
 	}
 }
 
+type getOrCreateResult struct {
+	id  uuid.UUID
+	err error
+}
+
 func fanoutGetOrCreate(t *testing.T, ids storeIDs, ext string, workers int) []uuid.UUID {
 	t.Helper()
-	type result struct {
-		id  uuid.UUID
-		err error
-	}
-	out := make(chan result, workers)
+	out := make(chan getOrCreateResult, workers)
+	params := baseParams(ids, ext)
 	for i := 0; i < workers; i++ {
-		go func() {
-			sess, err := ids.store.GetOrCreate(context.Background(), baseParams(ids, ext))
-			if err != nil {
-				out <- result{err: err}
-				return
-			}
-			out <- result{id: sess.ID}
-		}()
+		go publishGetOrCreate(ids.store, params, out)
 	}
-	idsOut := make([]uuid.UUID, 0, workers)
-	for i := 0; i < workers; i++ {
-		got := <-out
-		if got.err != nil {
-			t.Fatalf("worker: %v", got.err)
-		}
-		idsOut = append(idsOut, got.id)
+	return collectSessionIDs(t, out, workers)
+}
+
+func publishGetOrCreate(store *session.PostgresStore, params session.GetOrCreateParams, out chan<- getOrCreateResult) {
+	sess, err := store.GetOrCreate(context.Background(), params)
+	var id uuid.UUID
+	if sess != nil {
+		id = sess.ID
+	}
+	out <- getOrCreateResult{id: id, err: err}
+}
+
+func collectSessionIDs(t *testing.T, out <-chan getOrCreateResult, n int) []uuid.UUID {
+	t.Helper()
+	idsOut := make([]uuid.UUID, 0, n)
+	for i := 0; i < n; i++ {
+		idsOut = append(idsOut, mustSessionID(t, <-out))
 	}
 	return idsOut
+}
+
+func mustSessionID(t *testing.T, got getOrCreateResult) uuid.UUID {
+	t.Helper()
+	if got.err != nil {
+		t.Fatalf("worker: %v", got.err)
+	}
+	return got.id
 }
 
 func TestStore_RLS_CrossOrg(t *testing.T) {

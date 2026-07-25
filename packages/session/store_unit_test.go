@@ -59,7 +59,7 @@ func TestUnit_ScanSession_Populated(t *testing.T) {
 	if err != nil {
 		t.Fatalf("scan: %v", err)
 	}
-	assertSessionScan(t, got, id, &ext, &dv)
+	assertSessionScan(t, got, scanWant{id: id, ext: &ext, dv: &dv})
 }
 
 func TestUnit_ScanSession_NullOptionals(t *testing.T) {
@@ -71,7 +71,7 @@ func TestUnit_ScanSession_NullOptionals(t *testing.T) {
 	if err != nil {
 		t.Fatalf("scan: %v", err)
 	}
-	assertSessionScan(t, got, id, nil, nil)
+	assertSessionScan(t, got, scanWant{id: id})
 }
 
 func TestUnit_ScanSession_Error(t *testing.T) {
@@ -116,22 +116,43 @@ func TestUnit_NoopMetrics_Callable(t *testing.T) {
 	m.IncSessionComplete(ResultNoop)
 }
 
-func assertSessionScan(t *testing.T, got *Session, id uuid.UUID, ext *string, dv *uuid.UUID) {
+type scanWant struct {
+	id  uuid.UUID
+	ext *string
+	dv  *uuid.UUID
+}
+
+func assertSessionScan(t *testing.T, got *Session, want scanWant) {
 	t.Helper()
-	if got.ID != id {
-		t.Fatalf("id=%s want %s", got.ID, id)
+	assertSessionID(t, got, want.id)
+	assertOptionalString(t, got.ExternalID, want.ext, "external_id")
+	assertOptionalUUID(t, got.DirectiveVersionID, want.dv, "directive")
+}
+
+func assertSessionID(t *testing.T, got *Session, want uuid.UUID) {
+	t.Helper()
+	if got.ID != want {
+		t.Fatalf("id=%s want %s", got.ID, want)
 	}
-	if (got.ExternalID == nil) != (ext == nil) {
-		t.Fatalf("external_id=%v want %v", got.ExternalID, ext)
+}
+
+func assertOptionalString(t *testing.T, got, want *string, field string) {
+	t.Helper()
+	if (got == nil) != (want == nil) {
+		t.Fatalf("%s=%v want %v", field, got, want)
 	}
-	if ext != nil && *got.ExternalID != *ext {
-		t.Fatalf("external_id=%s want %s", *got.ExternalID, *ext)
+	if want != nil && *got != *want {
+		t.Fatalf("%s=%s want %s", field, *got, *want)
 	}
-	if (got.DirectiveVersionID == nil) != (dv == nil) {
-		t.Fatalf("directive=%v want %v", got.DirectiveVersionID, dv)
+}
+
+func assertOptionalUUID(t *testing.T, got, want *uuid.UUID, field string) {
+	t.Helper()
+	if (got == nil) != (want == nil) {
+		t.Fatalf("%s=%v want %v", field, got, want)
 	}
-	if dv != nil && *got.DirectiveVersionID != *dv {
-		t.Fatalf("directive=%s want %s", *got.DirectiveVersionID, *dv)
+	if want != nil && *got != *want {
+		t.Fatalf("%s=%s want %s", field, *got, *want)
 	}
 }
 
