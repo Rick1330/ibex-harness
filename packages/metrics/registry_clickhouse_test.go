@@ -10,7 +10,15 @@ import (
 func TestUnit_ProxyRegistry_ClickHouseMetrics(t *testing.T) {
 	t.Parallel()
 	reg := NewProxy("test-proxy-ch")
+	seedClickHouseSamples(reg)
 
+	assertClickHouseMetricNames(t, scrapeMetrics(t, reg.Gatherer()))
+	families := gatherFamilies(t, reg.Gatherer())
+	assertClickHouseCounters(t, families)
+	assertClickHouseFlushDuration(t, families)
+}
+
+func seedClickHouseSamples(reg *ProxyRegistry) {
 	reg.IncClickHouseFlush("ok")
 	reg.IncClickHouseFlush("error")
 	reg.IncClickHouseFlush("weird") // coerced to error
@@ -21,8 +29,10 @@ func TestUnit_ProxyRegistry_ClickHouseMetrics(t *testing.T) {
 	reg.AddClickHouseDroppedRows(0)
 	reg.AddClickHouseDroppedRows(-1) // ignored
 	reg.ObserveClickHouseFlushSeconds(0.012)
+}
 
-	body := scrapeMetrics(t, reg.Gatherer())
+func assertClickHouseMetricNames(t *testing.T, body string) {
+	t.Helper()
 	for _, name := range []string{
 		"ibex_clickhouse_flush_total",
 		"ibex_clickhouse_flush_rows_total",
@@ -33,19 +43,19 @@ func TestUnit_ProxyRegistry_ClickHouseMetrics(t *testing.T) {
 			t.Fatalf("missing %s in:\n%s", name, body)
 		}
 	}
+}
 
-	families := gatherFamilies(t, reg.Gatherer())
+func assertClickHouseCounters(t *testing.T, families map[string]*dto.MetricFamily) {
+	t.Helper()
 	flush := families["ibex_clickhouse_flush_total"]
 	if flush == nil {
 		t.Fatal("missing flush_total family")
 	}
-	okCount := counterByLabel(flush, "result", "ok")
-	errCount := counterByLabel(flush, "result", "error")
-	if okCount != 1 {
-		t.Fatalf("ok count=%v", okCount)
+	if got := counterByLabel(flush, "result", "ok"); got != 1 {
+		t.Fatalf("ok count=%v", got)
 	}
-	if errCount != 2 { // explicit error + coerced weird
-		t.Fatalf("error count=%v", errCount)
+	if got := counterByLabel(flush, "result", "error"); got != 2 {
+		t.Fatalf("error count=%v", got)
 	}
 	if rows := counterValue(families["ibex_clickhouse_flush_rows_total"]); rows != 3 {
 		t.Fatalf("rows=%v", rows)
@@ -53,6 +63,10 @@ func TestUnit_ProxyRegistry_ClickHouseMetrics(t *testing.T) {
 	if dropped := counterValue(families["ibex_clickhouse_dropped_rows_total"]); dropped != 2 {
 		t.Fatalf("dropped=%v want 2 (negatives ignored)", dropped)
 	}
+}
+
+func assertClickHouseFlushDuration(t *testing.T, families map[string]*dto.MetricFamily) {
+	t.Helper()
 	hist := families["ibex_clickhouse_flush_duration_seconds"]
 	if hist == nil || len(hist.GetMetric()) == 0 {
 		t.Fatal("missing flush duration histogram")
@@ -61,8 +75,9 @@ func TestUnit_ProxyRegistry_ClickHouseMetrics(t *testing.T) {
 	if h.GetSampleCount() != 1 {
 		t.Fatalf("histogram samples=%d want 1", h.GetSampleCount())
 	}
-	if h.GetSampleSum() < 0.011 || h.GetSampleSum() > 0.013 {
-		t.Fatalf("histogram sum=%v want ~0.012", h.GetSampleSum())
+	sum := h.GetSampleSum()
+	if sum < 0.011 || sum > 0.013 {
+		t.Fatalf("histogram sum=%v want ~0.012", sum)
 	}
 }
 

@@ -18,35 +18,31 @@ import (
 	"github.com/google/uuid"
 )
 
-func TestUnit_SetupTraceWriter_DisabledWhenDSNUnset(t *testing.T) {
+func TestUnit_SetupTraceWriter_DisabledWhenDSNEmpty(t *testing.T) {
 	t.Parallel()
-
-	log := logger.Discard("proxy")
-	reg := ibexmetrics.NewProxy("proxy")
-
-	w, err := setupTraceWriter(config.Config{}, log, reg)
-
-	if err != nil {
-		t.Fatal(err)
+	cases := []struct {
+		name string
+		dsn  string
+	}{
+		{name: "unset", dsn: ""},
+		{name: "blank", dsn: "   "},
 	}
-	if w != nil {
-		t.Fatal("expected nil writer when DSN unset")
-	}
-}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-func TestUnit_SetupTraceWriter_DisabledWhenDSNBlank(t *testing.T) {
-	t.Parallel()
+			log := logger.Discard("proxy")
+			reg := ibexmetrics.NewProxy("proxy-" + tc.name)
 
-	log := logger.Discard("proxy")
-	reg := ibexmetrics.NewProxy("proxy")
+			w, err := setupTraceWriter(config.Config{ClickHouseDSN: tc.dsn}, log, reg)
 
-	w, err := setupTraceWriter(config.Config{ClickHouseDSN: "   "}, log, reg)
-
-	if err != nil {
-		t.Fatal(err)
-	}
-	if w != nil {
-		t.Fatal("expected nil writer when DSN blank")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if w != nil {
+				t.Fatal("expected nil writer when DSN empty")
+			}
+		})
 	}
 }
 
