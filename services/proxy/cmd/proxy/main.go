@@ -137,7 +137,7 @@ func setupProxyCore(
 	startSessionSweeper(assembled.sessionSweeper, cfg, log)
 	traceWriter, err := setupTraceWriter(cfg, log, reg)
 	if err != nil {
-		return nil, fmt.Errorf("clickhouse writer: %w", err)
+		return nil, err
 	}
 	return &proxyCore{
 		server: assembled.server, grpcConn: assembled.grpcConn,

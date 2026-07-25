@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	ibexch "github.com/Rick1330/ibex-harness/packages/clickhouse"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
 	"github.com/Rick1330/ibex-harness/packages/telemetry"
@@ -87,8 +88,28 @@ func shutdownSignalCases(t *testing.T) []shutdownSignalCase {
 				}, func() { sigCh <- syscall.SIGTERM }
 			},
 		},
+		{
+			name: "drains clickhouse trace writer",
+			opts: func(t *testing.T) (shutdownOpts, func()) {
+				w := ibexch.NewWriterWithInserter(noopTraceInserter{}, ibexch.Config{
+					MaxBatchSize:  10,
+					FlushInterval: time.Hour,
+				})
+				sigCh := make(chan os.Signal, 1)
+				return shutdownOpts{
+					cfg: baseCfg, logger: logger.Discard("proxy"),
+					providers: shutdownTestProviders(t), server: baseServer(),
+					traceWriter: w, signalCh: sigCh,
+				}, func() { sigCh <- syscall.SIGTERM }
+			},
+		},
 	}
 }
+
+type noopTraceInserter struct{}
+
+func (noopTraceInserter) InsertTraces(context.Context, []ibexch.TraceRecord) error { return nil }
+func (noopTraceInserter) Close() error                                             { return nil }
 
 func TestRunWithShutdown_serverFailureReturns1(t *testing.T) {
 	badPort, _ := strconv.Atoi("99999")

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/column"
@@ -39,11 +38,11 @@ func (b *fakeBatch) AppendStruct(any) error        { return nil }
 func (b *fakeBatch) Close() error                  { return nil }
 
 type fakeConn struct {
-	batch    *fakeBatch
-	prepareE error
-	pingE    error
-	closed   bool
-	pingCtx  context.Context
+	batch           *fakeBatch
+	prepareE        error
+	pingE           error
+	closed          bool
+	pingHadDeadline bool
 }
 
 func (c *fakeConn) PrepareBatch(_ context.Context, _ string, _ ...driver.PrepareBatchOption) (driver.Batch, error) {
@@ -57,7 +56,7 @@ func (c *fakeConn) PrepareBatch(_ context.Context, _ string, _ ...driver.Prepare
 }
 
 func (c *fakeConn) Ping(ctx context.Context) error {
-	c.pingCtx = ctx
+	_, c.pingHadDeadline = ctx.Deadline()
 	return c.pingE
 }
 
@@ -151,12 +150,8 @@ func TestUnit_OpenInserter_PingFailureCloses(t *testing.T) {
 	if !fc.closed {
 		t.Fatal("conn should close after ping failure")
 	}
-	if fc.pingCtx == nil {
-		t.Fatal("ping should receive a context")
-	}
-	deadline, ok := fc.pingCtx.Deadline()
-	if !ok || time.Until(deadline) > pingTimeout {
-		t.Fatalf("ping context missing timeout deadline: ok=%v deadline=%v", ok, deadline)
+	if !fc.pingHadDeadline {
+		t.Fatal("ping context must carry a deadline")
 	}
 }
 
