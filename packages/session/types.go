@@ -1,6 +1,10 @@
 package session
 
-import "github.com/google/uuid"
+import (
+	"time"
+
+	"github.com/google/uuid"
+)
 
 // Session status values stored in ibex_core.sessions.status.
 const (
@@ -53,4 +57,29 @@ type CheckpointParams struct {
 	ProviderRequestID string
 	IsStreaming       bool
 	IsComplete        bool
+}
+
+// AbandonIdleParams selects active sessions idle before IdleBefore (exclusive).
+type AbandonIdleParams struct {
+	IdleBefore time.Time
+	Limit      int
+}
+
+// AbandonedSession is one row marked abandoned by AbandonIdle.
+type AbandonedSession struct {
+	SessionID  uuid.UUID
+	OrgID      uuid.UUID
+	AgentID    uuid.UUID
+	ExternalID *string
+}
+
+// AbandonIdleResult is the outcome of a sweeper batch.
+type AbandonIdleResult struct {
+	Abandoned   []AbandonedSession
+	SkippedLock bool
+}
+
+// Count returns how many sessions were abandoned in this batch.
+func (r AbandonIdleResult) Count() int {
+	return len(r.Abandoned)
 }

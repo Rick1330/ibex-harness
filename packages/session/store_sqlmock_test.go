@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/Rick1330/ibex-harness/packages/telemetry"
@@ -60,6 +61,17 @@ func storeSQLMockCases() []storeSQLMockCase {
 		{name: "complete_race_noop", setup: expectCompleteRaceNoop, run: runCompleteOK},
 		{name: "complete_not_found", setup: expectCompleteNotFound, run: runCompleteNotFound},
 		{name: "complete_still_active", setup: expectCompleteStillActive, run: runCompleteNotFound},
+		{name: "abandon_idle_ok", setup: expectAbandonIdleOK, run: runAbandonIdleOK},
+		{name: "abandon_idle_skip_lock", setup: expectAbandonIdleSkipLock, run: runAbandonIdleSkipLock},
+		{name: "abandon_idle_empty", setup: expectAbandonIdleEmpty, run: runAbandonIdleEmpty},
+		{name: "abandon_idle_sa_fail", setup: expectAbandonIdleSAFail, run: runAbandonIdleErr},
+		{name: "abandon_idle_begin_fail", setup: expectAbandonIdleBeginFail, run: runAbandonIdleErr},
+		{name: "abandon_idle_lock_fail", setup: expectAbandonIdleLockFail, run: runAbandonIdleErr},
+		{name: "abandon_idle_query_fail", setup: expectAbandonIdleQueryFail, run: runAbandonIdleErr},
+		{name: "abandon_idle_commit_fail", setup: expectAbandonIdleCommitFail, run: runAbandonIdleErr},
+		{name: "abandon_idle_null_ext", setup: expectAbandonIdleNullExt, run: runAbandonIdleOK},
+		{name: "abandon_idle_zero_idle", setup: expectNoop, run: runAbandonIdleZeroIdle},
+		{name: "abandon_idle_limit_clamp", setup: expectAbandonIdleLimitClamp, run: runAbandonIdleLimitClamp},
 	}
 }
 
@@ -302,6 +314,160 @@ func runCompleteNotFound(t *testing.T, store *PostgresStore, ids mockIDs) {
 	err := store.Complete(context.Background(), ids.sessionID, ids.orgID)
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("got %v", err)
+	}
+}
+
+func beginWithServiceAccount(mock sqlmock.Sqlmock) {
+	mock.ExpectBegin()
+	mock.ExpectExec("set_config\\('app.is_service_account'").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+}
+
+func expectAbandonIdleLock(mock sqlmock.Sqlmock, acquired bool) {
+	beginWithServiceAccount(mock)
+	mock.ExpectQuery("pg_try_advisory_xact_lock").
+		WithArgs(SweepAdvisoryLockKey).
+		WillReturnRows(sqlmock.NewRows([]string{"pg_try_advisory_xact_lock"}).AddRow(acquired))
+}
+
+func expectAbandonIdleVictims(mock sqlmock.Sqlmock, ids mockIDs, rows *sqlmock.Rows) {
+	mock.ExpectQuery("WITH victims AS").
+		WithArgs(StatusActive, sqlmock.AnyArg(), defaultAbandonIdleLimit, StatusAbandoned).
+		WillReturnRows(rows)
+}
+
+func expectAbandonIdleOK(mock sqlmock.Sqlmock, ids mockIDs) {
+	expectAbandonIdleLock(mock, true)
+	ext := "ext"
+	expectAbandonIdleVictims(mock, ids, sqlmock.NewRows([]string{"id", "org_id", "agent_id", "external_id"}).
+		AddRow(ids.sessionID, ids.orgID, ids.agentID, ext))
+	mock.ExpectCommit()
+}
+
+func expectAbandonIdleSkipLock(mock sqlmock.Sqlmock, ids mockIDs) {
+	expectAbandonIdleLock(mock, false)
+	mock.ExpectCommit()
+}
+
+func expectAbandonIdleEmpty(mock sqlmock.Sqlmock, ids mockIDs) {
+	expectAbandonIdleLock(mock, true)
+	expectAbandonIdleVictims(mock, ids, sqlmock.NewRows([]string{"id", "org_id", "agent_id", "external_id"}))
+	mock.ExpectCommit()
+}
+
+func expectAbandonIdleSAFail(mock sqlmock.Sqlmock, ids mockIDs) {
+	mock.ExpectBegin()
+	mock.ExpectExec("set_config\\('app.is_service_account'").
+		WillReturnError(errors.New("sa boom"))
+	mock.ExpectRollback()
+}
+
+func expectAbandonIdleBeginFail(mock sqlmock.Sqlmock, ids mockIDs) {
+	mock.ExpectBegin().WillReturnError(errors.New("begin boom"))
+}
+
+func expectAbandonIdleLockFail(mock sqlmock.Sqlmock, ids mockIDs) {
+	beginWithServiceAccount(mock)
+	mock.ExpectQuery("pg_try_advisory_xact_lock").
+		WithArgs(SweepAdvisoryLockKey).
+		WillReturnError(errors.New("lock boom"))
+	mock.ExpectRollback()
+}
+
+func expectAbandonIdleQueryFail(mock sqlmock.Sqlmock, ids mockIDs) {
+	expectAbandonIdleLock(mock, true)
+	mock.ExpectQuery("WITH victims AS").
+		WithArgs(StatusActive, sqlmock.AnyArg(), defaultAbandonIdleLimit, StatusAbandoned).
+		WillReturnError(errors.New("query boom"))
+	mock.ExpectRollback()
+}
+
+func expectAbandonIdleCommitFail(mock sqlmock.Sqlmock, ids mockIDs) {
+	expectAbandonIdleLock(mock, true)
+	expectAbandonIdleVictims(mock, ids, sqlmock.NewRows([]string{"id", "org_id", "agent_id", "external_id"}))
+	mock.ExpectCommit().WillReturnError(errors.New("commit boom"))
+}
+
+func expectAbandonIdleNullExt(mock sqlmock.Sqlmock, ids mockIDs) {
+	expectAbandonIdleLock(mock, true)
+	expectAbandonIdleVictims(mock, ids, sqlmock.NewRows([]string{"id", "org_id", "agent_id", "external_id"}).
+		AddRow(ids.sessionID, ids.orgID, ids.agentID, nil))
+	mock.ExpectCommit()
+}
+
+func expectAbandonIdleLimitClamp(mock sqlmock.Sqlmock, ids mockIDs) {
+	expectAbandonIdleLock(mock, true)
+	mock.ExpectQuery("WITH victims AS").
+		WithArgs(StatusActive, sqlmock.AnyArg(), maxAbandonIdleLimit, StatusAbandoned).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "org_id", "agent_id", "external_id"}))
+	mock.ExpectCommit()
+}
+
+func expectNoop(sqlmock.Sqlmock, mockIDs) {}
+
+type abandonIdleExpect struct {
+	skipped bool
+	count   int
+	wantErr bool
+	checkID bool
+}
+
+func runAbandonIdleCase(t *testing.T, store *PostgresStore, ids mockIDs, want abandonIdleExpect) {
+	t.Helper()
+	res, err := store.AbandonIdle(context.Background(), AbandonIdleParams{
+		IdleBefore: time.Now().UTC(),
+	})
+	if want.wantErr {
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		return
+	}
+	if err != nil {
+		t.Fatalf("AbandonIdle: %v", err)
+	}
+	if res.SkippedLock != want.skipped || res.Count() != want.count {
+		t.Fatalf("res=%+v want skipped=%v count=%d", res, want.skipped, want.count)
+	}
+	if want.checkID && res.Abandoned[0].SessionID != ids.sessionID {
+		t.Fatalf("id=%s", res.Abandoned[0].SessionID)
+	}
+}
+
+func runAbandonIdleOK(t *testing.T, store *PostgresStore, ids mockIDs) {
+	runAbandonIdleCase(t, store, ids, abandonIdleExpect{count: 1, checkID: true})
+}
+
+func runAbandonIdleSkipLock(t *testing.T, store *PostgresStore, ids mockIDs) {
+	runAbandonIdleCase(t, store, ids, abandonIdleExpect{skipped: true})
+}
+
+func runAbandonIdleEmpty(t *testing.T, store *PostgresStore, ids mockIDs) {
+	runAbandonIdleCase(t, store, ids, abandonIdleExpect{})
+}
+
+func runAbandonIdleErr(t *testing.T, store *PostgresStore, ids mockIDs) {
+	runAbandonIdleCase(t, store, ids, abandonIdleExpect{wantErr: true})
+}
+
+func runAbandonIdleZeroIdle(t *testing.T, store *PostgresStore, _ mockIDs) {
+	t.Helper()
+	if _, err := store.AbandonIdle(context.Background(), AbandonIdleParams{}); err == nil {
+		t.Fatal("expected IdleBefore error")
+	}
+}
+
+func runAbandonIdleLimitClamp(t *testing.T, store *PostgresStore, _ mockIDs) {
+	t.Helper()
+	res, err := store.AbandonIdle(context.Background(), AbandonIdleParams{
+		IdleBefore: time.Now().UTC(),
+		Limit:      maxAbandonIdleLimit + 100,
+	})
+	if err != nil {
+		t.Fatalf("AbandonIdle: %v", err)
+	}
+	if res.Count() != 0 {
+		t.Fatalf("count=%d", res.Count())
 	}
 }
 

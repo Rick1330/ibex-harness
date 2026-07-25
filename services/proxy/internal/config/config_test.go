@@ -69,7 +69,7 @@ func TestValidate_acceptsValidConfig(t *testing.T) {
 	}
 }
 
-func TestApplyDefaults(t *testing.T) {
+func TestUnit_Config_ApplyDefaults(t *testing.T) {
 	t.Parallel()
 
 	var cfg Config
@@ -90,6 +90,47 @@ func TestApplyDefaults(t *testing.T) {
 	}
 	if cfg.SessionGetOrCreateTO != defaultSessionGetOrCreateTO {
 		t.Fatalf("SessionGetOrCreateTO: %s", cfg.SessionGetOrCreateTO)
+	}
+	if cfg.SessionIdleTimeout != defaultSessionIdleTimeout {
+		t.Fatalf("SessionIdleTimeout: %s", cfg.SessionIdleTimeout)
+	}
+	if cfg.SessionSweepInterval != defaultSessionSweepInterval {
+		t.Fatalf("SessionSweepInterval: %s", cfg.SessionSweepInterval)
+	}
+}
+
+func TestUnit_Config_NegativeDurationNotDefaulted(t *testing.T) {
+	t.Parallel()
+	cfg := validProxyConfig()
+	cfg.SessionIdleTimeout = -time.Minute
+	cfg.SessionSweepInterval = -time.Second
+	cfg.ApplyDefaults()
+	if cfg.SessionIdleTimeout != -time.Minute {
+		t.Fatalf("idle defaulted: %s", cfg.SessionIdleTimeout)
+	}
+	if cfg.SessionSweepInterval != -time.Second {
+		t.Fatalf("interval defaulted: %s", cfg.SessionSweepInterval)
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected validation error for negative durations")
+	}
+}
+
+func TestUnit_Config_NegativeCacheTTLSanitized(t *testing.T) {
+	t.Parallel()
+	cfg := validProxyConfig()
+	cfg.SessionCacheTTL = -time.Second
+	cfg.SessionGetOrCreateTO = -time.Millisecond
+	cfg.DirectiveCacheTTL = -time.Minute
+	cfg.ApplyDefaults()
+	if cfg.SessionCacheTTL != defaultSessionCacheTTL {
+		t.Fatalf("SessionCacheTTL: %s", cfg.SessionCacheTTL)
+	}
+	if cfg.SessionGetOrCreateTO != defaultSessionGetOrCreateTO {
+		t.Fatalf("SessionGetOrCreateTO: %s", cfg.SessionGetOrCreateTO)
+	}
+	if cfg.DirectiveCacheTTL != defaultDirectiveCacheTTL {
+		t.Fatalf("DirectiveCacheTTL: %s", cfg.DirectiveCacheTTL)
 	}
 }
 

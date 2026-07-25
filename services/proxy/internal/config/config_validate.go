@@ -26,7 +26,21 @@ func (c Config) Validate() error {
 		c.validateHTTPHeaders,
 		c.validateRateLimit,
 		c.validateLLMConfig,
+		c.validateSessionSweeper,
 	)
+}
+
+func (c Config) validateSessionSweeper() error {
+	if c.SessionIdleTimeout <= 0 {
+		return fmt.Errorf("IBEX_SESSION_IDLE_TIMEOUT must be positive")
+	}
+	if c.SessionSweepInterval <= 0 {
+		return fmt.Errorf("IBEX_SESSION_SWEEP_INTERVAL must be positive")
+	}
+	if c.SessionIdleTimeout < c.SessionSweepInterval {
+		return fmt.Errorf("IBEX_SESSION_IDLE_TIMEOUT must be >= IBEX_SESSION_SWEEP_INTERVAL")
+	}
+	return nil
 }
 
 func (c Config) validateLLMConfig() error {

@@ -1,71 +1,26 @@
 ---
-title: "2.4.4 Session Idle Timeout Sweeper"
-description: "Marks idle active sessions abandoned so Phase 3 memory extraction can run without requiring every client to send X-IBEX-Session-End."
-summary: "Scheduled sweeper (Go proxy ticker) marks sessions abandoned after IBEX_SESSION_IDLE_TIMEOUT with no new checkpoints; extraction treats abandoned like completed."
-status: "planned"
-milestoneId: "2.4.4"
-goal: "[2.4 — Session tracking infrastructure](/roadmap/phase-2-single-provider/goals#goal-24-session-tracking-infrastructure)"
-estimatedEffort: "1–2 days"
-phase: "phase-2-single-provider"
-fullTitle: "Milestone 2.4.4 — Session Idle-Timeout Sweeper"
+title: 2.4.4 Session Idle-Timeout Sweeper
+status: completed
+phase: 2
+milestone: "2.4.4"
 ---
 
-# Milestone 2.4.4 — Session Idle-Timeout Sweeper
+# 2.4.4 — Session Idle-Timeout Sweeper
 
-**Status:** Planned  
-**Goal:** [2.4 — Session tracking infrastructure](/roadmap/phase-2-single-provider/goals#goal-24-session-tracking-infrastructure)  
-**Phase:** 2 — Single Provider End-to-End  
-**Estimated effort:** 1–2 days  
-**Depends on:** [2.4.1](/roadmap/phase-2-single-provider/milestones/2.4.1-sessions-checkpoints-migrations), [2.4.2](/roadmap/phase-2-single-provider/milestones/2.4.2-session-store)  
-**Blocks:** [3.4.2](/roadmap/phase-3-memory-engine/milestones/3.4.2-session-incremental-read) (extraction queries completed/abandoned sessions)
+## Goal
 
----
+Automatically mark sessions as `abandoned` after a configurable idle period so Phase 3 extraction can process them. Without this, sessions stay `active` forever and never enter the extraction pipeline.
 
-## Why This Milestone Exists
+## Acceptance criteria
 
-[2.4.2](/roadmap/phase-2-single-provider/milestones/2.4.2-session-store) defines `SessionStore.Complete()` when the client sends `X-IBEX-Session-End: true` **or** after a configurable idle timeout. No milestone implemented the idle path. Real clients rarely send end-of-session headers. Without a sweeper, sessions stay `active` forever and Phase 3 extraction (`WHERE status = 'completed'`) never runs — shipping all of Phase 3 would still leave memory extraction dead in production.
+- [x] Background sweeper runs periodically (configurable interval, default 1 minute)
+- [x] Sessions with `status = 'active'` and `updated_at` older than idle timeout (default 45 minutes) are marked `abandoned`
+- [x] Sweeper is org-scoped (RLS-aware / service-account privileged job; rows retain `org_id`)
+- [x] Metric: `ibex_proxy_session_sweeper_marked_total{status="abandoned"}`
+- [x] Config: `IBEX_SESSION_IDLE_TIMEOUT` (default `45m`), `IBEX_SESSION_SWEEP_INTERVAL` (default `1m`)
+- [x] Documented: `X-IBEX-Session-End` may still mark `completed` when wired; idle path marks `abandoned`
+- [x] Phase 3.4.2 already documents `status IN ('completed', 'abandoned')` for the extraction query
 
-This is the concrete form of the missing **Garbage Collection Worker** in [ARCHITECTURE.md](/docs/engineering/ARCHITECTURE) (background workers).
+## Design notes
 
----
-
-## Decision
-
-Implement a **lightweight ticker in the Go proxy** (no Celery required at Phase 2/3 scale):
-
-1. Every `IBEX_SESSION_SWEEP_INTERVAL` (default 1m), query sessions with `status = 'active'` and `updated_at < now() - IBEX_SESSION_IDLE_TIMEOUT` (default 45m).
-2. Mark them `status = 'abandoned'` via `SessionStore` (org-scoped updates).
-3. Treat `abandoned` the same as `completed` for extraction eligibility in 3.4.2.
-
-Env vars (document in `.env.example` + ENVIRONMENT_VARIABLES.md when implemented):
-
-- `IBEX_SESSION_IDLE_TIMEOUT` — duration string, default `45m`
-- `IBEX_SESSION_SWEEP_INTERVAL` — duration string, default `1m`
-
----
-
-## Branch
-
-`feature/m2-4-4-session-idle-sweeper`
-
-## PR Title
-
-`feat(proxy): session idle-timeout sweeper marks abandoned sessions (m2.4.4)`
-
----
-
-## Acceptance Criteria
-
-- [ ] Ticker runs in proxy process and is registered with graceful shutdown
-- [ ] Idle `active` sessions become `abandoned` after configured timeout
-- [ ] Integration test: insert active session with old `updated_at` → sweeper marks abandoned
-- [ ] Metrics: `ibex_proxy_session_sweeper_marked_total{status="abandoned"}`
-- [ ] Docs: env vars + note that clients may still send `X-IBEX-Session-End` for prompt completion
-- [ ] Cross-link from 3.4.2: extraction includes `status IN ('completed','abandoned')`
-
----
-
-## Non-Goals
-
-- Full ARCHITECTURE.md daily GC (expired archives, hard deletes) — Phase 5 / later GC worker
-- Celery beat / Python worker for this path
+Idle means no checkpoint activity: checkpoints bump `sessions.updated_at`, so never-checkpointed sessions age from create time. Multi-replica proxies coordinate with `pg_try_advisory_xact_lock`. Batch limit + `SKIP LOCKED` drain backlogs safely. Redis session cache keys are invalidated on abandon.

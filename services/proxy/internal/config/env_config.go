@@ -43,6 +43,8 @@ type envConfig struct {
 	CheckpointWorkers     int               `env:"IBEX_SESSION_CHECKPOINT_WORKERS"`
 	CheckpointQueue       int               `env:"IBEX_SESSION_CHECKPOINT_QUEUE"`
 	SessionGetOrCreateTO  time.Duration     `env:"IBEX_SESSION_GETORCREATE_TIMEOUT"`
+	SessionIdleTimeout    time.Duration     `env:"IBEX_SESSION_IDLE_TIMEOUT"`
+	SessionSweepInterval  time.Duration     `env:"IBEX_SESSION_SWEEP_INTERVAL"`
 }
 
 func loadFromEnv() (Config, error) {
@@ -99,6 +101,8 @@ func baseProxyConfig(envCfg envConfig, level slog.Level) Config {
 		CheckpointWorkers:    envCfg.CheckpointWorkers,
 		CheckpointQueue:      envCfg.CheckpointQueue,
 		SessionGetOrCreateTO: envCfg.SessionGetOrCreateTO,
+		SessionIdleTimeout:   envCfg.SessionIdleTimeout,
+		SessionSweepInterval: envCfg.SessionSweepInterval,
 	}
 }
 

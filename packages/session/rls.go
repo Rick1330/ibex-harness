@@ -16,3 +16,12 @@ func setOrgRLS(ctx context.Context, tx *sql.Tx, orgID uuid.UUID) error {
 	}
 	return nil
 }
+
+func setServiceAccountRLS(ctx context.Context, tx *sql.Tx) error {
+	_, err := tx.ExecContext(ctx,
+		`SELECT set_config('app.is_service_account', 'true', true)`)
+	if err != nil {
+		return fmt.Errorf("session: set service account rls: %w", err)
+	}
+	return nil
+}

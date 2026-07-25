@@ -36,6 +36,8 @@ const (
 	defaultCheckpointWorkers    = 8
 	defaultCheckpointQueue      = 256
 	defaultSessionGetOrCreateTO = 50 * time.Millisecond
+	defaultSessionIdleTimeout   = 45 * time.Minute
+	defaultSessionSweepInterval = time.Minute
 )
 
 // RateLimitConfig holds org-level rate limit settings (Phase 1; no DB).
@@ -86,6 +88,8 @@ type Config struct {
 	CheckpointWorkers    int
 	CheckpointQueue      int
 	SessionGetOrCreateTO time.Duration
+	SessionIdleTimeout   time.Duration
+	SessionSweepInterval time.Duration
 }
 
 // ApplyDefaults fills zero-valued fields so httptest and partial Config literals behave like Load().
@@ -144,20 +148,33 @@ func (c *Config) applyRateLimitDefaults() {
 }
 
 func (c *Config) applySessionDefaults() {
-	if c.DirectiveCacheTTL <= 0 {
-		c.DirectiveCacheTTL = defaultDirectiveCacheTTL
+	applyDurationDefault(&c.DirectiveCacheTTL, defaultDirectiveCacheTTL)
+	applyDurationDefault(&c.SessionCacheTTL, defaultSessionCacheTTL)
+	applyIntDefault(&c.CheckpointWorkers, defaultCheckpointWorkers)
+	applyIntDefault(&c.CheckpointQueue, defaultCheckpointQueue)
+	applyDurationDefault(&c.SessionGetOrCreateTO, defaultSessionGetOrCreateTO)
+	applyDurationDefaultZeroOnly(&c.SessionIdleTimeout, defaultSessionIdleTimeout)
+	applyDurationDefaultZeroOnly(&c.SessionSweepInterval, defaultSessionSweepInterval)
+}
+
+// applyDurationDefault replaces non-positive durations with def (cache/timeout sanitization).
+func applyDurationDefault(dst *time.Duration, def time.Duration) {
+	if *dst <= 0 {
+		*dst = def
 	}
-	if c.SessionCacheTTL <= 0 {
-		c.SessionCacheTTL = defaultSessionCacheTTL
+}
+
+// applyDurationDefaultZeroOnly defaults only unset (zero) values so negative
+// sweeper durations survive to Validate() and fail closed.
+func applyDurationDefaultZeroOnly(dst *time.Duration, def time.Duration) {
+	if *dst == 0 {
+		*dst = def
 	}
-	if c.CheckpointWorkers < 1 {
-		c.CheckpointWorkers = defaultCheckpointWorkers
-	}
-	if c.CheckpointQueue < 1 {
-		c.CheckpointQueue = defaultCheckpointQueue
-	}
-	if c.SessionGetOrCreateTO <= 0 {
-		c.SessionGetOrCreateTO = defaultSessionGetOrCreateTO
+}
+
+func applyIntDefault(dst *int, def int) {
+	if *dst < 1 {
+		*dst = def
 	}
 }
 

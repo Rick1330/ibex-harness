@@ -29,6 +29,7 @@ import (
 	proxygrpc "github.com/Rick1330/ibex-harness/services/proxy/internal/grpc"
 	proxyhttp "github.com/Rick1330/ibex-harness/services/proxy/internal/http"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/sessioncache"
+	"github.com/Rick1330/ibex-harness/services/proxy/internal/sessionsweeper"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
@@ -76,8 +77,8 @@ func runBootstrap(_ []string, signalCh chan os.Signal) int {
 		grpcConn: core.grpcConn, redisClient: core.redisClient, pgDB: core.pgDB,
 		revSub: core.revSub, revCancel: core.revCancel,
 		dirSub: core.dirSub, dirCancel: core.dirCancel,
-		checkpointPool: core.checkpointPool,
-		signalCh:       signalCh,
+		checkpointPool: core.checkpointPool, sessionSweeper: core.sessionSweeper,
+		signalCh: signalCh,
 	})
 }
 
@@ -105,6 +106,7 @@ type proxyCore struct {
 	dirSub         *directive.Subscriber
 	dirCancel      context.CancelFunc
 	checkpointPool *asyncpool.Pool
+	sessionSweeper *sessionsweeper.Sweeper
 }
 
 func setupProxyCore(
@@ -129,11 +131,12 @@ func setupProxyCore(
 	if err != nil {
 		return nil, fmt.Errorf("directive subscriber: %w", err)
 	}
+	startSessionSweeper(assembled.sessionSweeper, cfg, log)
 	return &proxyCore{
 		server: assembled.server, grpcConn: assembled.grpcConn,
 		redisClient: assembled.redisClient, pgDB: assembled.pgDB,
 		revSub: revSub, revCancel: revCancel, dirSub: dirSub, dirCancel: dirCancel,
-		checkpointPool: assembled.checkpointPool,
+		checkpointPool: assembled.checkpointPool, sessionSweeper: assembled.sessionSweeper,
 	}, nil
 }
 
@@ -145,6 +148,7 @@ type assembledProxyCore struct {
 	validator         auth.TokenValidator
 	directiveResolver directive.Resolver
 	checkpointPool    *asyncpool.Pool
+	sessionSweeper    *sessionsweeper.Sweeper
 }
 
 func assembleProxyCore(
@@ -167,11 +171,9 @@ func assembleProxyCore(
 	if err != nil {
 		return assembledProxyCore{}, fmt.Errorf("directive resolver: %w", err)
 	}
-	sessionStore, err := newSessionStore(pgDB, reg, tracer)
-	if err != nil {
-		return assembledProxyCore{}, fmt.Errorf("session store: %w", err)
-	}
-	sessionParts, err := setupSessionHotPath(redisClient, cfg, reg)
+	sessionStack, err := setupSessionStack(sessionStackSetup{
+		DB: pgDB, Redis: redisClient, Config: cfg, Log: log, Reg: reg, Tracer: tracer,
+	})
 	if err != nil {
 		return assembledProxyCore{}, err
 	}
@@ -182,8 +184,8 @@ func assembleProxyCore(
 	server := newHTTPServer(proxyhttp.RouterDeps{
 		Config: cfg, Logger: log, Metrics: reg, Tracer: tracer,
 		Validator: validator, AgentVerifier: agentVerifier, Limiter: limiter,
-		DirectiveResolver: directiveResolver, SessionStore: sessionStore,
-		SessionCache: sessionParts.cache, CheckpointPool: sessionParts.pool,
+		DirectiveResolver: directiveResolver, SessionStore: sessionStack.store,
+		SessionCache: sessionStack.cache, CheckpointPool: sessionStack.pool,
 		GetOrCreateTimeout: cfg.SessionGetOrCreateTO,
 		Health:             buildProxyHealth(cfg, authClient, pgDB),
 		ProviderRegistry:   providerReg,
@@ -191,7 +193,7 @@ func assembleProxyCore(
 	return assembledProxyCore{
 		server: server, grpcConn: grpcConn, redisClient: redisClient, pgDB: pgDB,
 		validator: validator, directiveResolver: directiveResolver,
-		checkpointPool: sessionParts.pool,
+		checkpointPool: sessionStack.pool, sessionSweeper: sessionStack.sweeper,
 	}, nil
 }
 
@@ -223,6 +225,7 @@ type shutdownOpts struct {
 	dirSub         *directive.Subscriber
 	dirCancel      context.CancelFunc
 	checkpointPool *asyncpool.Pool
+	sessionSweeper *sessionsweeper.Sweeper
 	signalCh       chan os.Signal
 }
 
@@ -394,6 +397,40 @@ type sessionHotPath struct {
 	pool  *asyncpool.Pool
 }
 
+type sessionStackSetup struct {
+	DB     *sql.DB
+	Redis  redis.UniversalClient
+	Config config.Config
+	Log    *logger.Logger
+	Reg    *ibexmetrics.ProxyRegistry
+	Tracer trace.Tracer
+}
+
+type sessionStack struct {
+	store   session.Store
+	cache   *sessioncache.Cache
+	pool    *asyncpool.Pool
+	sweeper *sessionsweeper.Sweeper
+}
+
+func setupSessionStack(in sessionStackSetup) (sessionStack, error) {
+	store, err := newSessionStore(in.DB, in.Reg, in.Tracer)
+	if err != nil {
+		return sessionStack{}, fmt.Errorf("session store: %w", err)
+	}
+	parts, err := setupSessionHotPath(in.Redis, in.Config, in.Reg)
+	if err != nil {
+		return sessionStack{}, err
+	}
+	sweeper, err := newSessionSweeper(sessionSweeperSetup{
+		Store: store, Cache: parts.cache, Config: in.Config, Log: in.Log, Reg: in.Reg,
+	})
+	if err != nil {
+		return sessionStack{}, err
+	}
+	return sessionStack{store: store, cache: parts.cache, pool: parts.pool, sweeper: sweeper}, nil
+}
+
 func setupSessionHotPath(
 	redisClient redis.UniversalClient,
 	cfg config.Config,
@@ -408,6 +445,48 @@ func setupSessionHotPath(
 		return sessionHotPath{}, fmt.Errorf("checkpoint pool: %w", err)
 	}
 	return sessionHotPath{cache: cache, pool: pool}, nil
+}
+
+type sessionSweeperSetup struct {
+	Store  session.Store
+	Cache  *sessioncache.Cache
+	Config config.Config
+	Log    *logger.Logger
+	Reg    *ibexmetrics.ProxyRegistry
+}
+
+func newSessionSweeper(in sessionSweeperSetup) (*sessionsweeper.Sweeper, error) {
+	if in.Store == nil {
+		return nil, nil
+	}
+	var metrics sessionsweeper.Metrics
+	if in.Reg != nil {
+		metrics = in.Reg
+	}
+	sw, err := sessionsweeper.New(sessionsweeper.Config{
+		IdleTimeout: in.Config.SessionIdleTimeout,
+		Interval:    in.Config.SessionSweepInterval,
+	}, sessionsweeper.Deps{
+		Store: in.Store, Cache: in.Cache, Log: in.Log, Metrics: metrics,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("session sweeper: %w", err)
+	}
+	return sw, nil
+}
+
+func startSessionSweeper(sw *sessionsweeper.Sweeper, cfg config.Config, log *logger.Logger) {
+	if sw == nil {
+		return
+	}
+	sw.Start()
+	if log == nil {
+		return
+	}
+	log.InfoCtx(context.Background(), "session idle sweeper started",
+		"idle_timeout", cfg.SessionIdleTimeout.String(),
+		"interval", cfg.SessionSweepInterval.String(),
+	)
 }
 
 func openProxyPostgres(dsn string) (*sql.DB, error) {
@@ -557,6 +636,12 @@ func registerShutdownHooks(sd *shutdown.Coordinator, opts shutdownOpts) {
 	sd.Register(func(ctx context.Context) error {
 		if opts.checkpointPool != nil {
 			return opts.checkpointPool.Shutdown(ctx)
+		}
+		return nil
+	})
+	sd.Register(func(ctx context.Context) error {
+		if opts.sessionSweeper != nil {
+			return opts.sessionSweeper.Stop(ctx)
 		}
 		return nil
 	})

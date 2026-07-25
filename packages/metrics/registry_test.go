@@ -160,9 +160,13 @@ func seedProxySamples(reg *ProxyRegistry) {
 	reg.ObserveSessionGetOrCreateSeconds(0.001)
 	reg.IncSessionCheckpoint("ok")
 	reg.IncSessionComplete("ok")
+	reg.IncSessionSweeperMarked("abandoned")
+	reg.IncSessionSweeperRun("ok")
 	reg.IncSessionGetOrCreate("not-a-real-result")
 	reg.IncSessionCheckpoint("also-invalid")
 	reg.IncSessionComplete("nope")
+	reg.IncSessionSweeperMarked("weird")
+	reg.IncSessionSweeperRun("weird")
 }
 
 func TestUnit_BoundSessionResult(t *testing.T) {

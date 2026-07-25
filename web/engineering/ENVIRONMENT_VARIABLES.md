@@ -218,6 +218,8 @@ Used by: **proxy** (`services/proxy`)
 | `IBEX_SESSION_CHECKPOINT_WORKERS` | No | `8` | Async checkpoint worker count (non-dropping pool) | |
 | `IBEX_SESSION_CHECKPOINT_QUEUE` | No | `256` | Buffered checkpoint queue depth; full queue blocks submitter after response flush | |
 | `IBEX_SESSION_GETORCREATE_TIMEOUT` | No | `50ms` | Hot-path GetOrCreate deadline; timeout fails open (omit session header, skip checkpoint) | |
+| `IBEX_SESSION_IDLE_TIMEOUT` | No | `45m` | Mark `active` sessions `abandoned` when `updated_at` is older than this | Requires `POSTGRES_DSN`; proxy ticker |
+| `IBEX_SESSION_SWEEP_INTERVAL` | No | `1m` | How often the idle sweeper runs; must be ≤ idle timeout | Multi-replica safe via advisory lock |
 | `IBEX_ERROR_DOCS_BASE` | No | (empty) | Base URL for `docs_url` in error envelope | Omit in dev when unset |
 | `IBEX_LLM_MODE` | No | `mock` | `mock` \| `live` — `mock` keeps an empty provider registry; `live` registers OpenAI per [ADR-0026](/docs/adr/0026-openai-client-design) | Default `mock` for CI/dev without API key |
 | `OPENAI_API_KEY` | When `live` | (none) | OpenAI API key | Secret; never logged |
