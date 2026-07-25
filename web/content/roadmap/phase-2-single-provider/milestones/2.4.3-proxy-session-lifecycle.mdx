@@ -2,7 +2,7 @@
 title: "2.4.3 Proxy Session"
 description: "With the session store in place (2.4.2), the proxy needs to wire session lifecycle into the request handler — after authentication and before LLM forwarding for session creation, and after the LLM response for checkpoint creation. Session writes are non-blocking (async after response) to avoid adding to proxy overhead."
 summary: "With the session store in place (2.4.2), the proxy needs to wire session lifecycle into the request handler — after authentication and before LLM forwarding for session creation, and after the LLM response for checkpoint creation. Session writes are non-blocking (async after response) to avoid adding to proxy overhead."
-status: "planned"
+status: "completed"
 milestoneId: "2.4.3"
 goal: "[2.4 — Session tracking infrastructure](/roadmap/phase-2-single-provider/goals#goal-24-session-tracking-infrastructure)"
 estimatedEffort: "2–3 days"
@@ -12,10 +12,12 @@ fullTitle: "Milestone 2.4.3 — Proxy Session Lifecycle Management"
 
 # Milestone 2.4.3 — Proxy Session Lifecycle Management
 
-**Status:** Planned  
+**Status:** Completed  
 **Goal:** [2.4 — Session tracking infrastructure](/roadmap/phase-2-single-provider/goals#goal-24-session-tracking-infrastructure)  
 **Phase:** 2 — Single Provider End-to-End  
 **Estimated effort:** 2–3 days
+
+> **Contract note:** Response `X-IBEX-Session-ID` echoes the sticky client key stored as `sessions.external_id` (minted UUID when absent). It is **not** `sessions.id`. Multi-turn reuse sends that same external id back on subsequent requests.
 
 ---
 
@@ -37,11 +39,11 @@ With the session store in place (2.4.2), the proxy needs to wire session lifecyc
 
 ## Session ID propagation
 
-The client optionally sends `X-IBEX-Session-ID` to associate a request with an existing session. The proxy also returns `X-IBEX-Session-ID` in every response so the client can track it.
+The client optionally sends `X-IBEX-Session-ID` (sticky `external_id`) to associate a request with an existing session. The proxy returns `X-IBEX-Session-ID` on every LLM response when session lifecycle is active — including GetOrCreate fail-open (minted or client-supplied sticky id echoed for reuse). Oversized client values are discarded and replaced with a minted sticky id. Fail-open cases are surfaced via warn logs (`session get_or_create failed`) and `ibex_proxy_session_get_or_create_total{result="error"}`.
 
 ```text
 Client → Proxy: X-IBEX-Session-ID: <uuid> (optional)
-Proxy → Client: X-IBEX-Session-ID: <uuid> (always; the session UUID for this turn)
+Proxy → Client: X-IBEX-Session-ID: <external_id sticky key> (when resolved/sticky; not sessions.id)
 ```
 
 ---
@@ -82,12 +84,12 @@ Unbounded post-response goroutines will OOM under load. Bound async work:
 
 ## Acceptance Criteria
 
-- [ ] `X-IBEX-Session-ID` returned in every LLM response header
-- [ ] Checkpoint written after every completed turn (both streaming and non-streaming)
-- [ ] Checkpoint write failure does NOT affect LLM response (async)
-- [ ] Session created automatically when `X-IBEX-Session-ID` absent from request
-- [ ] Session reused when `X-IBEX-Session-ID` matches existing session in same org/agent
-- [ ] Cross-org session ID reuse is impossible (session lookup always includes org_id)
-- [ ] Post-response work is bounded (service-owned pool + WaitGroup; drain on shutdown); checkpoints use durable/non-dropping path; metrics `ibex_proxy_async_queue_depth` and `ibex_proxy_async_dropped_total` registered via `packages/metrics`
+- [x] `X-IBEX-Session-ID` returned when a sticky external id is available (minted or client-supplied), including GetOrCreate fail-open; oversized client values are discarded and replaced with a minted sticky id
+- [x] Checkpoint written after every completed turn with a durable session (streaming and non-streaming); skipped on sticky-only fail-open (no SessionID)
+- [x] Checkpoint write failure does NOT affect LLM response (async)
+- [x] Session created automatically when `X-IBEX-Session-ID` absent from request
+- [x] Session reused when `X-IBEX-Session-ID` matches existing session in same org/agent
+- [x] Cross-org session ID reuse is impossible (session lookup always includes org_id)
+- [x] Post-response work is bounded (service-owned pool + WaitGroup; drain on shutdown); checkpoints use non-dropping path; metrics `ibex_proxy_async_queue_depth` and `ibex_proxy_async_dropped_total` registered via `packages/metrics`; fail-open surfaced via warn logs + `ibex_proxy_session_get_or_create_total{result="error"}`
 
 ---

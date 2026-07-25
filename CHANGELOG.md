@@ -125,7 +125,8 @@ Release notes are human-readable summaries of user-visible changes, security fix
 
 ### Added
 
-- Session store (`packages/session`): Postgres `GetOrCreate` / `AppendCheckpoint` / `Complete` with org RLS; proxy constructs store when `POSTGRES_DSN` is set (hot-path lifecycle deferred to 2.4.3); metrics `ibex_proxy_session_*` (milestone 2.4.2)
+- Proxy session lifecycle (m2.4.3): resolve/mint `X-IBEX-Session-ID` as sticky `external_id` before LLM forward; Redis session-state cache; response header on stream + non-stream; async non-dropping `AppendCheckpoint` pool drained on shutdown
+- Session store (`packages/session`): Postgres `GetOrCreate` / `AppendCheckpoint` / `Complete` with org RLS; proxy constructs store when `POSTGRES_DSN` is set; metrics `ibex_proxy_session_*` (milestone 2.4.2)
 - Sessions and checkpoints schema (`ibex_core.sessions` + `checkpoints`): Phase 2 subset with FORCE RLS, composite tenant FKs, append-only checkpoints, and extraction index ([ADR-0032](web/content/docs/adr/0032-session-data-model.mdx); migration `000010`; milestone 2.4.1)
 - System prompt injection (`packages/injection`): pure `Inject` for `system_first` / `system_append` / `user_prepend`; proxy applies resolved directive to `provider.Request.Messages` before `Complete` ([ADR-0031](web/content/docs/adr/0031-system-prompt-injection.mdx); milestone 2.3.3)
 - Directive resolver (`packages/directive`): Redis cache keyed `{org_id}:directive:{agent_id}` with Postgres fallback and pub/sub invalidation on `directive_updates:{org_id}`; proxy middleware resolves after agent verify (content stashed on context for 2.3.3 injection); metrics `ibex_proxy_directive_*`

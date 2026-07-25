@@ -17,6 +17,7 @@ const (
 	ctxKeyErrorDocsBase
 	ctxKeyAgent
 	ctxKeyResolvedDirective
+	ctxKeyResolvedSession
 )
 
 // WithRequestID stores the request ID on the context.
@@ -94,4 +95,17 @@ func WithResolvedDirective(ctx context.Context, resolved directive.Resolved) con
 func ResolvedDirectiveFromContext(ctx context.Context) (directive.Resolved, bool) {
 	resolved, ok := ctx.Value(ctxKeyResolvedDirective).(directive.Resolved)
 	return resolved, ok
+}
+
+func withResolvedSession(ctx context.Context, rs resolvedSession) context.Context {
+	return context.WithValue(ctx, ctxKeyResolvedSession, rs)
+}
+
+// ResolvedSessionFromContext returns the session resolved for this request.
+// Lifecycle sets it after sticky external_id mint/lookup (and upgrades it when
+// GetOrCreate succeeds). Absence means session features are off or sticky id
+// was rejected; callers must not assume a durable SessionID is present.
+func ResolvedSessionFromContext(ctx context.Context) (resolvedSession, bool) {
+	rs, ok := ctx.Value(ctxKeyResolvedSession).(resolvedSession)
+	return rs, ok
 }

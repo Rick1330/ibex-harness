@@ -23,10 +23,12 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/session"
 	"github.com/Rick1330/ibex-harness/packages/shutdown"
 	"github.com/Rick1330/ibex-harness/packages/telemetry"
+	"github.com/Rick1330/ibex-harness/services/proxy/internal/asyncpool"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
 	proxygrpc "github.com/Rick1330/ibex-harness/services/proxy/internal/grpc"
 	proxyhttp "github.com/Rick1330/ibex-harness/services/proxy/internal/http"
+	"github.com/Rick1330/ibex-harness/services/proxy/internal/sessioncache"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
@@ -73,7 +75,9 @@ func runBootstrap(_ []string, signalCh chan os.Signal) int {
 		cfg: cfg, logger: log, providers: providers, server: core.server,
 		grpcConn: core.grpcConn, redisClient: core.redisClient, pgDB: core.pgDB,
 		revSub: core.revSub, revCancel: core.revCancel,
-		dirSub: core.dirSub, dirCancel: core.dirCancel, signalCh: signalCh,
+		dirSub: core.dirSub, dirCancel: core.dirCancel,
+		checkpointPool: core.checkpointPool,
+		signalCh:       signalCh,
 	})
 }
 
@@ -92,14 +96,15 @@ func loadProxyRuntime() (config.Config, *logger.Logger, error) {
 }
 
 type proxyCore struct {
-	server      *http.Server
-	grpcConn    *grpc.ClientConn
-	redisClient redis.UniversalClient
-	pgDB        *sql.DB
-	revSub      *revocation.Subscriber
-	revCancel   context.CancelFunc
-	dirSub      *directive.Subscriber
-	dirCancel   context.CancelFunc
+	server         *http.Server
+	grpcConn       *grpc.ClientConn
+	redisClient    redis.UniversalClient
+	pgDB           *sql.DB
+	revSub         *revocation.Subscriber
+	revCancel      context.CancelFunc
+	dirSub         *directive.Subscriber
+	dirCancel      context.CancelFunc
+	checkpointPool *asyncpool.Pool
 }
 
 func setupProxyCore(
@@ -108,46 +113,85 @@ func setupProxyCore(
 	reg *ibexmetrics.ProxyRegistry,
 	tracer trace.Tracer,
 ) (*proxyCore, error) {
+	assembled, err := assembleProxyCore(cfg, log, reg, tracer)
+	if err != nil {
+		return nil, err
+	}
+	revSub, revCancel, err := startRevocationSubscriber(
+		assembled.redisClient, assembled.validator, log, reg,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("revocation subscriber: %w", err)
+	}
+	dirSub, dirCancel, err := startDirectiveSubscriber(
+		assembled.redisClient, assembled.directiveResolver, log, reg,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("directive subscriber: %w", err)
+	}
+	return &proxyCore{
+		server: assembled.server, grpcConn: assembled.grpcConn,
+		redisClient: assembled.redisClient, pgDB: assembled.pgDB,
+		revSub: revSub, revCancel: revCancel, dirSub: dirSub, dirCancel: dirCancel,
+		checkpointPool: assembled.checkpointPool,
+	}, nil
+}
+
+type assembledProxyCore struct {
+	server            *http.Server
+	grpcConn          *grpc.ClientConn
+	redisClient       redis.UniversalClient
+	pgDB              *sql.DB
+	validator         auth.TokenValidator
+	directiveResolver directive.Resolver
+	checkpointPool    *asyncpool.Pool
+}
+
+func assembleProxyCore(
+	cfg config.Config,
+	log *logger.Logger,
+	reg *ibexmetrics.ProxyRegistry,
+	tracer trace.Tracer,
+) (assembledProxyCore, error) {
 	redisClient, limiter, err := setupRateLimiter(cfg, log)
 	if err != nil {
-		return nil, fmt.Errorf("rate limiter: %w", err)
+		return assembledProxyCore{}, fmt.Errorf("rate limiter: %w", err)
 	}
 	validator, agentVerifier, authClient, grpcConn, err := setupAuthClients(cfg, log, reg)
 	if err != nil {
-		return nil, fmt.Errorf("auth clients: %w", err)
+		return assembledProxyCore{}, fmt.Errorf("auth clients: %w", err)
 	}
 	pgDB, directiveResolver, err := setupDirectiveResolver(directiveResolverSetup{
 		Config: cfg, Redis: redisClient, Log: log, Reg: reg, OpenDB: openProxyPostgres,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("directive resolver: %w", err)
+		return assembledProxyCore{}, fmt.Errorf("directive resolver: %w", err)
 	}
 	sessionStore, err := newSessionStore(pgDB, reg, tracer)
 	if err != nil {
-		return nil, fmt.Errorf("session store: %w", err)
+		return assembledProxyCore{}, fmt.Errorf("session store: %w", err)
 	}
-	healthSrv := buildProxyHealth(cfg, authClient, pgDB)
+	sessionParts, err := setupSessionHotPath(redisClient, cfg, reg)
+	if err != nil {
+		return assembledProxyCore{}, err
+	}
 	providerReg, err := providerRegistryInit(cfg, log, tracer, reg)
 	if err != nil {
-		return nil, fmt.Errorf("provider registry: %w", err)
+		return assembledProxyCore{}, fmt.Errorf("provider registry: %w", err)
 	}
 	server := newHTTPServer(proxyhttp.RouterDeps{
 		Config: cfg, Logger: log, Metrics: reg, Tracer: tracer,
 		Validator: validator, AgentVerifier: agentVerifier, Limiter: limiter,
 		DirectiveResolver: directiveResolver, SessionStore: sessionStore,
-		Health: healthSrv, ProviderRegistry: providerReg,
+		SessionCache: sessionParts.cache, CheckpointPool: sessionParts.pool,
+		GetOrCreateTimeout: cfg.SessionGetOrCreateTO,
+		Health:             buildProxyHealth(cfg, authClient, pgDB),
+		ProviderRegistry:   providerReg,
 	})
-	revSub, revCancel, err := startRevocationSubscriber(redisClient, validator, log, reg)
-	if err != nil {
-		return nil, fmt.Errorf("revocation subscriber: %w", err)
-	}
-	dirSub, dirCancel, err := startDirectiveSubscriber(redisClient, directiveResolver, log, reg)
-	if err != nil {
-		return nil, fmt.Errorf("directive subscriber: %w", err)
-	}
-	return &proxyCore{
+	return assembledProxyCore{
 		server: server, grpcConn: grpcConn, redisClient: redisClient, pgDB: pgDB,
-		revSub: revSub, revCancel: revCancel, dirSub: dirSub, dirCancel: dirCancel,
+		validator: validator, directiveResolver: directiveResolver,
+		checkpointPool: sessionParts.pool,
 	}, nil
 }
 
@@ -167,18 +211,19 @@ func buildProxyHealth(cfg config.Config, authClient authv1.AuthServiceClient, pg
 }
 
 type shutdownOpts struct {
-	cfg         config.Config
-	logger      *logger.Logger
-	server      *http.Server
-	providers   *telemetry.Providers
-	grpcConn    *grpc.ClientConn
-	redisClient redis.UniversalClient
-	pgDB        *sql.DB
-	revSub      *revocation.Subscriber
-	revCancel   context.CancelFunc
-	dirSub      *directive.Subscriber
-	dirCancel   context.CancelFunc
-	signalCh    chan os.Signal
+	cfg            config.Config
+	logger         *logger.Logger
+	server         *http.Server
+	providers      *telemetry.Providers
+	grpcConn       *grpc.ClientConn
+	redisClient    redis.UniversalClient
+	pgDB           *sql.DB
+	revSub         *revocation.Subscriber
+	revCancel      context.CancelFunc
+	dirSub         *directive.Subscriber
+	dirCancel      context.CancelFunc
+	checkpointPool *asyncpool.Pool
+	signalCh       chan os.Signal
 }
 
 func setupRateLimiter(cfg config.Config, log *logger.Logger) (redis.UniversalClient, ratelimit.Limiter, error) {
@@ -329,6 +374,42 @@ func newSessionStore(db *sql.DB, reg *ibexmetrics.ProxyRegistry, tracer trace.Tr
 	})
 }
 
+func newSessionCache(redisClient redis.UniversalClient, cfg config.Config) (*sessioncache.Cache, error) {
+	if redisClient == nil {
+		return nil, nil
+	}
+	return sessioncache.New(redisClient, cfg.SessionCacheTTL)
+}
+
+func newCheckpointPool(cfg config.Config, reg *ibexmetrics.ProxyRegistry) (*asyncpool.Pool, error) {
+	var depth asyncpool.DepthFunc
+	if reg != nil {
+		depth = reg.SetAsyncQueueDepth
+	}
+	return asyncpool.New(cfg.CheckpointWorkers, cfg.CheckpointQueue, depth)
+}
+
+type sessionHotPath struct {
+	cache *sessioncache.Cache
+	pool  *asyncpool.Pool
+}
+
+func setupSessionHotPath(
+	redisClient redis.UniversalClient,
+	cfg config.Config,
+	reg *ibexmetrics.ProxyRegistry,
+) (sessionHotPath, error) {
+	cache, err := newSessionCache(redisClient, cfg)
+	if err != nil {
+		return sessionHotPath{}, fmt.Errorf("session cache: %w", err)
+	}
+	pool, err := newCheckpointPool(cfg, reg)
+	if err != nil {
+		return sessionHotPath{}, fmt.Errorf("checkpoint pool: %w", err)
+	}
+	return sessionHotPath{cache: cache, pool: pool}, nil
+}
+
 func openProxyPostgres(dsn string) (*sql.DB, error) {
 	db, err := sql.Open("postgres", dsn)
 	if err != nil {
@@ -471,6 +552,12 @@ func registerShutdownHooks(sd *shutdown.Coordinator, opts shutdownOpts) {
 	})
 	sd.Register(func(ctx context.Context) error {
 		stopPubSubSubscribers(opts)
+		return nil
+	})
+	sd.Register(func(ctx context.Context) error {
+		if opts.checkpointPool != nil {
+			return opts.checkpointPool.Shutdown(ctx)
+		}
 		return nil
 	})
 	sd.Register(func(ctx context.Context) error {

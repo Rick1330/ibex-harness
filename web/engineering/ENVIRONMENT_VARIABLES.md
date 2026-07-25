@@ -212,8 +212,12 @@ Used by: **proxy** (`services/proxy`)
 | `IBEX_AUTH_CACHE_BLOOM_EXPECTED_ITEMS` | No | `10000` | Bloom sizing for invalid token hashes | |
 | `IBEX_AUTH_CACHE_BLOOM_FP_RATE` | No | `0.001` | Target false-positive rate (0.1%) | |
 | `IBEX_MAX_REQUEST_BODY_BYTES` | No | `1048576` | Max chat request body (1 MiB) | See [ADR-0013](adr/ADR-0013-proxy-input-validation-and-error-envelope.md) |
-| `POSTGRES_DSN` | Conditional | (empty) | Postgres for directive reads; when set, also constructs the session store for upcoming lifecycle wiring (not on the chat hot path yet). Empty → session store disabled; with Redis enables cached directive resolver | Secret; must match migrated schema |
+| `POSTGRES_DSN` | Conditional | (empty) | Postgres for directive reads and session store. When set, enables chat hot-path session lifecycle (GetOrCreate + async checkpoints). Empty → session features disabled; with Redis enables cached directive resolver | Secret; must match migrated schema |
 | `IBEX_DIRECTIVE_CACHE_TTL` | No | `60s` | Redis TTL for `{org_id}:directive:{agent_id}` cache entries | Requires `POSTGRES_DSN` + `REDIS_URL` |
+| `IBEX_SESSION_CACHE_TTL` | No | `60s` | Redis TTL for `session:{org_id}:{agent_id}:{external_id}` hot-path cache | Requires `REDIS_URL`; fail-open to Postgres |
+| `IBEX_SESSION_CHECKPOINT_WORKERS` | No | `8` | Async checkpoint worker count (non-dropping pool) | |
+| `IBEX_SESSION_CHECKPOINT_QUEUE` | No | `256` | Buffered checkpoint queue depth; full queue blocks submitter after response flush | |
+| `IBEX_SESSION_GETORCREATE_TIMEOUT` | No | `50ms` | Hot-path GetOrCreate deadline; timeout fails open (omit session header, skip checkpoint) | |
 | `IBEX_ERROR_DOCS_BASE` | No | (empty) | Base URL for `docs_url` in error envelope | Omit in dev when unset |
 | `IBEX_LLM_MODE` | No | `mock` | `mock` \| `live` — `mock` keeps an empty provider registry; `live` registers OpenAI per [ADR-0026](/docs/adr/0026-openai-client-design) | Default `mock` for CI/dev without API key |
 | `OPENAI_API_KEY` | When `live` | (none) | OpenAI API key | Secret; never logged |

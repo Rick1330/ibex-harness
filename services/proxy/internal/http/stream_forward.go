@@ -23,14 +23,22 @@ const (
 // errClientWrite tags failures from ResponseWriter.Write (broken pipe, etc.).
 var errClientWrite = errors.New("client write failed")
 
+type streamCheckpointResult struct {
+	content  string
+	usage    *provider.Usage
+	latency  time.Duration
+	complete bool
+}
+
 type streamForwardParams struct {
-	w        http.ResponseWriter
-	r        *http.Request
-	resp     provider.Response
-	provider string
-	metrics  *metrics.ProxyRegistry
-	log      *logger.Logger
-	docsBase string
+	w          http.ResponseWriter
+	r          *http.Request
+	resp       provider.Response
+	provider   string
+	metrics    *metrics.ProxyRegistry
+	log        *logger.Logger
+	docsBase   string
+	onComplete func(context.Context, streamCheckpointResult)
 }
 
 // sseCopyDest groups writer-side dependencies for the SSE copy loop.
@@ -62,10 +70,17 @@ func forwardSSEStream(p streamForwardParams) {
 			Seconds:  time.Since(start).Seconds(),
 		})
 	}
-	drainAccumulator(p, acc)
+	content, usage := drainAccumulator(p, acc)
+	if p.onComplete != nil {
+		p.onComplete(p.r.Context(), streamCheckpointResult{
+			content: content, usage: usage,
+			latency: time.Since(start), complete: status == "ok",
+		})
+	}
 }
 
 func writeSSEHeadersAndCopy(p streamForwardParams, flusher http.Flusher, acc *openai.StreamAccumulator) string {
+	setSessionResponseHeader(p.w, p.r.Context())
 	p.w.Header().Set("Content-Type", "text/event-stream")
 	p.w.Header().Set("Cache-Control", "no-cache")
 	p.w.Header().Set("X-Accel-Buffering", "no")
@@ -176,12 +191,14 @@ func isSSEEventBoundary(line []byte) bool {
 	return len(line) == 2 && line[0] == '\r' && line[1] == '\n'
 }
 
-func drainAccumulator(p streamForwardParams, acc *openai.StreamAccumulator) {
+func drainAccumulator(p streamForwardParams, acc *openai.StreamAccumulator) (string, *provider.Usage) {
 	waitCtx, cancel := context.WithTimeout(p.r.Context(), streamDrainTimeout)
 	defer cancel()
-	_, _, err := acc.Wait(waitCtx)
+	content, usage, err := acc.Wait(waitCtx)
 	if err != nil {
 		p.log.WarnCtx(p.r.Context(), "stream accumulator drain incomplete",
 			"provider", p.provider, "error", err.Error())
+		return "", nil
 	}
+	return content, usage
 }

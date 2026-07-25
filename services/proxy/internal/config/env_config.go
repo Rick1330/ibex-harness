@@ -39,6 +39,10 @@ type envConfig struct {
 	AuthCacheBloomFPRate  float64           `env:"IBEX_AUTH_CACHE_BLOOM_FP_RATE"`
 	PostgresDSN           ibexconfig.Secret `env:"POSTGRES_DSN" secret:"true"`
 	DirectiveCacheTTL     time.Duration     `env:"IBEX_DIRECTIVE_CACHE_TTL"`
+	SessionCacheTTL       time.Duration     `env:"IBEX_SESSION_CACHE_TTL"`
+	CheckpointWorkers     int               `env:"IBEX_SESSION_CHECKPOINT_WORKERS"`
+	CheckpointQueue       int               `env:"IBEX_SESSION_CHECKPOINT_QUEUE"`
+	SessionGetOrCreateTO  time.Duration     `env:"IBEX_SESSION_GETORCREATE_TIMEOUT"`
 }
 
 func loadFromEnv() (Config, error) {
@@ -89,8 +93,12 @@ func baseProxyConfig(envCfg envConfig, level slog.Level) Config {
 		AuthCache: AuthCacheConfig{
 			Enabled: true,
 		},
-		PostgresDSN:       envCfg.PostgresDSN.String(),
-		DirectiveCacheTTL: envCfg.DirectiveCacheTTL,
+		PostgresDSN:          envCfg.PostgresDSN.String(),
+		DirectiveCacheTTL:    envCfg.DirectiveCacheTTL,
+		SessionCacheTTL:      envCfg.SessionCacheTTL,
+		CheckpointWorkers:    envCfg.CheckpointWorkers,
+		CheckpointQueue:      envCfg.CheckpointQueue,
+		SessionGetOrCreateTO: envCfg.SessionGetOrCreateTO,
 	}
 }
 

@@ -71,10 +71,25 @@ func TestValidate_acceptsValidConfig(t *testing.T) {
 
 func TestApplyDefaults(t *testing.T) {
 	t.Parallel()
+
 	var cfg Config
+
 	cfg.ApplyDefaults()
+
 	if cfg.ShutdownTimeout != 30*time.Second {
 		t.Fatalf("ShutdownTimeout: %s", cfg.ShutdownTimeout)
+	}
+	if cfg.SessionCacheTTL != defaultSessionCacheTTL {
+		t.Fatalf("SessionCacheTTL: %s", cfg.SessionCacheTTL)
+	}
+	if cfg.CheckpointWorkers != defaultCheckpointWorkers {
+		t.Fatalf("CheckpointWorkers: %d", cfg.CheckpointWorkers)
+	}
+	if cfg.CheckpointQueue != defaultCheckpointQueue {
+		t.Fatalf("CheckpointQueue: %d", cfg.CheckpointQueue)
+	}
+	if cfg.SessionGetOrCreateTO != defaultSessionGetOrCreateTO {
+		t.Fatalf("SessionGetOrCreateTO: %s", cfg.SessionGetOrCreateTO)
 	}
 }
 

@@ -78,7 +78,9 @@ func writeProviderFailureRec(t *testing.T, err error) *httptest.ResponseRecorder
 	h := chatCompletionHandler{log: logger.Discard("proxy"), docsBase: ""}
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
-	h.writeProviderFailure(rec, req, err, "req-1")
+	h.writeProviderFailure(providerFailureParams{
+		w: rec, r: req, err: err, requestID: "req-1",
+	})
 	return rec
 }
 
