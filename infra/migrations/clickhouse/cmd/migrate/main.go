@@ -9,52 +9,70 @@ import (
 )
 
 func main() {
-	command := flag.String("command", "", "migration command: up, down, version, force")
-	version := flag.Int("version", 0, "target version for force")
-	flag.Parse()
+	os.Exit(run(os.Args[1:]))
+}
 
-	if *command == "" && flag.NArg() > 0 {
-		*command = flag.Arg(0)
+func run(args []string) int {
+	fs := flag.NewFlagSet("clickhouse-migrate", flag.ContinueOnError)
+	command := fs.String("command", "", "migration command: up, down, version, force")
+	version := fs.Int("version", 0, "target version for force")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *command == "" && fs.NArg() > 0 {
+		*command = fs.Arg(0)
 	}
 	if *command == "" {
 		fmt.Fprintln(os.Stderr, "usage: migrate -command up|down|version|force [-version N]")
-		os.Exit(2)
+		return 2
 	}
+	return runCommand(*command, *version, chmigrate.ResolveDSN())
+}
 
-	dsn := chmigrate.ResolveDSN()
-
-	switch *command {
+func runCommand(command string, version int, dsn string) int {
+	switch command {
 	case "up":
-		if err := chmigrate.Up(dsn); err != nil {
-			fmt.Fprintf(os.Stderr, "clickhouse migrate up: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Println("clickhouse migrate up: ok")
+		return printMigrateErr("up", chmigrate.Up(dsn))
 	case "down":
-		if err := chmigrate.Down(dsn); err != nil {
-			fmt.Fprintf(os.Stderr, "clickhouse migrate down: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Println("clickhouse migrate down: ok")
+		return printMigrateErr("down", chmigrate.Down(dsn))
 	case "version":
-		v, dirty, err := chmigrate.Version(dsn)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "clickhouse migrate version: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Printf("version=%d dirty=%v\n", v, dirty)
+		return printVersion(dsn)
 	case "force":
-		if *version <= 0 {
-			fmt.Fprintln(os.Stderr, "clickhouse migrate force requires -version N")
-			os.Exit(2)
-		}
-		if err := chmigrate.Force(dsn, *version); err != nil {
-			fmt.Fprintf(os.Stderr, "clickhouse migrate force: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Printf("clickhouse migrate force: ok (version=%d)\n", *version)
+		return runForce(dsn, version)
 	default:
-		fmt.Fprintf(os.Stderr, "unknown command: %s\n", *command)
-		os.Exit(2)
+		fmt.Fprintf(os.Stderr, "unknown command: %s\n", command)
+		return 2
 	}
+}
+
+func printMigrateErr(op string, err error) int {
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "clickhouse migrate %s: %v\n", op, err)
+		return 1
+	}
+	fmt.Printf("clickhouse migrate %s: ok\n", op)
+	return 0
+}
+
+func printVersion(dsn string) int {
+	v, dirty, err := chmigrate.Version(dsn)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "clickhouse migrate version: %v\n", err)
+		return 1
+	}
+	fmt.Printf("version=%d dirty=%v\n", v, dirty)
+	return 0
+}
+
+func runForce(dsn string, version int) int {
+	if version <= 0 {
+		fmt.Fprintln(os.Stderr, "clickhouse migrate force requires -version N")
+		return 2
+	}
+	if err := chmigrate.Force(dsn, version); err != nil {
+		fmt.Fprintf(os.Stderr, "clickhouse migrate force: %v\n", err)
+		return 1
+	}
+	fmt.Printf("clickhouse migrate force: ok (version=%d)\n", version)
+	return 0
 }

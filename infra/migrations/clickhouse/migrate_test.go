@@ -1,7 +1,7 @@
 package clickhouse
 
 import (
-	"os"
+	"io/fs"
 	"regexp"
 	"sort"
 	"strconv"
@@ -9,39 +9,48 @@ import (
 	"testing"
 )
 
-func TestMigrationFileNaming(t *testing.T) {
+func TestUnit_Migrations_Naming(t *testing.T) {
+	t.Parallel()
 	entries, err := migrationFiles.ReadDir(".")
 	if err != nil {
 		t.Fatalf("read migrations: %v", err)
 	}
+	versions := collectUpVersions(t, entries)
+	if len(versions) == 0 {
+		t.Fatal("no up migrations found")
+	}
+	assertStrictlyIncreasing(t, versions)
+}
 
-	upPattern := regexp.MustCompile(`^(\d+)_(.+)\.up\.sql$`)
+func collectUpVersions(t *testing.T, entries []fs.DirEntry) []int {
+	t.Helper()
+	upPattern := regexp.MustCompile(`^(\d{6})_(.+)\.up\.sql$`)
 	var versions []int
-
 	for _, e := range entries {
-		if e.IsDir() {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".up.sql") {
 			continue
 		}
-		name := e.Name()
-		if !strings.HasSuffix(name, ".up.sql") {
-			continue
-		}
-		m := upPattern.FindStringSubmatch(name)
+		m := upPattern.FindStringSubmatch(e.Name())
 		if m == nil {
-			t.Errorf("invalid up migration filename: %s", name)
+			t.Errorf("invalid up migration filename: %s", e.Name())
 			continue
 		}
 		v, _ := strconv.Atoi(m[1])
 		versions = append(versions, v)
-		downName := m[1] + "_" + m[2] + ".down.sql"
-		if _, err := migrationFiles.Open(downName); err != nil {
-			t.Errorf("missing down migration for %s", name)
-		}
+		assertDownExists(t, m[1]+"_"+m[2]+".down.sql")
 	}
+	return versions
+}
 
-	if len(versions) == 0 {
-		t.Fatal("no up migrations found")
+func assertDownExists(t *testing.T, downName string) {
+	t.Helper()
+	if _, err := fs.Stat(migrationFiles, downName); err != nil {
+		t.Errorf("missing down migration: %s", downName)
 	}
+}
+
+func assertStrictlyIncreasing(t *testing.T, versions []int) {
+	t.Helper()
 	sort.Ints(versions)
 	for i := 1; i < len(versions); i++ {
 		if versions[i] <= versions[i-1] {
@@ -50,45 +59,36 @@ func TestMigrationFileNaming(t *testing.T) {
 	}
 }
 
-func TestNormalizeMigrateDSN(t *testing.T) {
-	tests := []struct {
-		in       string
-		wantHost string
-		wantMS   string
+func TestUnit_MigrateDSN_Normalize(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		in, wantHost string
+		remap        bool
 	}{
-		{
-			in:       "clickhouse://default:@localhost:9002/ibex",
-			wantHost: "localhost:9002",
-			wantMS:   "true",
-		},
-		{
-			in:       "clickhouse://default:@localhost:8123/ibex",
-			wantHost: "localhost:9002",
-			wantMS:   "true",
-		},
+		{in: "clickhouse://default:@localhost:9002/ibex", wantHost: "localhost:9002", remap: false},
+		{in: "clickhouse://default:@localhost:8123/ibex", wantHost: "localhost:9002", remap: true},
+		{in: "clickhouse://default:@ch.example.com:8123/ibex", wantHost: "ch.example.com:8123", remap: false},
 	}
-	for _, tc := range tests {
+	for _, tc := range cases {
 		got := normalizeMigrateDSN(tc.in)
 		if !strings.Contains(got, tc.wantHost) {
-			t.Errorf("normalizeMigrateDSN(%q) host = %q, want %s", tc.in, got, tc.wantHost)
+			t.Errorf("normalizeMigrateDSN(%q) = %q, want host %s", tc.in, got, tc.wantHost)
 		}
-		if !strings.Contains(got, "x-multi-statement="+tc.wantMS) {
-			t.Errorf("normalizeMigrateDSN(%q) missing multi-statement: %q", tc.in, got)
-		}
-		if !strings.Contains(got, "database=ibex") {
-			t.Errorf("normalizeMigrateDSN(%q) missing database: %q", tc.in, got)
+		if !strings.Contains(got, "x-multi-statement=true") || !strings.Contains(got, "database=ibex") {
+			t.Errorf("normalizeMigrateDSN(%q) missing query defaults: %q", tc.in, got)
 		}
 	}
 }
 
-func TestRedactedDSN(t *testing.T) {
+func TestUnit_MigrateDSN_Redacted(t *testing.T) {
+	t.Parallel()
 	got := RedactedDSN("clickhouse://default:secret@localhost:9002?database=ibex")
 	if strings.Contains(got, "secret") {
-		t.Errorf("expected redacted password, got %q", got)
+		t.Errorf("expected password stripped, got %q", got)
 	}
 }
 
-func TestResolveDSN_prefersMigrateDSN(t *testing.T) {
+func TestUnit_MigrateDSN_PrefersMigrateEnv(t *testing.T) {
 	t.Setenv("CLICKHOUSE_MIGRATE_DSN", "clickhouse://a:b@ch:9002?database=ibex")
 	t.Setenv("CLICKHOUSE_DSN", "clickhouse://x:y@other:8123/ibex")
 	got := ResolveDSN()
@@ -97,9 +97,9 @@ func TestResolveDSN_prefersMigrateDSN(t *testing.T) {
 	}
 }
 
-func TestResolveDSN_defaultWhenUnset(t *testing.T) {
-	os.Unsetenv("CLICKHOUSE_MIGRATE_DSN")
-	os.Unsetenv("CLICKHOUSE_DSN")
+func TestUnit_MigrateDSN_DefaultWhenUnset(t *testing.T) {
+	t.Setenv("CLICKHOUSE_MIGRATE_DSN", "")
+	t.Setenv("CLICKHOUSE_DSN", "")
 	got := ResolveDSN()
 	if !strings.Contains(got, "localhost:9002") {
 		t.Errorf("ResolveDSN() = %q, want default native port", got)

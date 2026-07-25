@@ -16,11 +16,17 @@ import (
 // Test compose maps native 9000 → host 9003 (dev uses 9002).
 const defaultTestMigrateDSN = "clickhouse://default:@localhost:9003?database=ibex&x-multi-statement=true&x-migrations-table-engine=MergeTree"
 
+var requiredLLMTraceColumns = []string{
+	"request_id", "org_id", "agent_id", "session_id", "checkpoint_id",
+	"model", "provider", "is_streaming",
+	"input_tokens", "output_tokens", "total_tokens",
+	"auth_latency_ms", "directive_latency_ms", "provider_ttfb_ms", "total_latency_ms",
+	"status_code", "is_complete", "error_code",
+	"requested_at", "completed_at", "event_date",
+}
+
 func testMigrateDSN() string {
 	if dsn := strings.TrimSpace(os.Getenv("CLICKHOUSE_TEST_DSN")); dsn != "" {
-		return normalizeMigrateDSN(dsn)
-	}
-	if dsn := strings.TrimSpace(os.Getenv("CLICKHOUSE_MIGRATE_DSN")); dsn != "" {
 		return normalizeMigrateDSN(dsn)
 	}
 	return defaultTestMigrateDSN
@@ -45,13 +51,20 @@ func openTestCH(t *testing.T) *sql.DB {
 func resetClickHouse(t *testing.T, db *sql.DB) {
 	t.Helper()
 	ctx := context.Background()
-	_, _ = db.ExecContext(ctx, `DROP TABLE IF EXISTS ibex.llm_traces`)
-	_, _ = db.ExecContext(ctx, `DROP TABLE IF EXISTS ibex.schema_migrations`)
-	_, _ = db.ExecContext(ctx, `DROP TABLE IF EXISTS default.schema_migrations`)
-	_, _ = db.ExecContext(ctx, `DROP TABLE IF EXISTS schema_migrations`)
+	drops := []string{
+		`DROP TABLE IF EXISTS ibex.llm_traces`,
+		`DROP TABLE IF EXISTS ibex.schema_migrations`,
+		`DROP TABLE IF EXISTS default.schema_migrations`,
+		`DROP TABLE IF EXISTS schema_migrations`,
+	}
+	for _, q := range drops {
+		if _, err := db.ExecContext(ctx, q); err != nil {
+			t.Fatalf("reset %q: %v", q, err)
+		}
+	}
 }
 
-func TestMigrateUpIdempotent(t *testing.T) {
+func TestUnit_Migrate_UpIsIdempotent(t *testing.T) {
 	dsn := testMigrateDSN()
 	db := openTestCH(t)
 	defer db.Close()
@@ -67,15 +80,12 @@ func TestMigrateUpIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("version: %v", err)
 	}
-	if dirty {
-		t.Fatal("expected clean")
-	}
-	if v != 1 {
-		t.Fatalf("version=%d want 1", v)
+	if dirty || v != 1 {
+		t.Fatalf("version=%d dirty=%v want 1/clean", v, dirty)
 	}
 }
 
-func TestLLMTracesSchemaAndTTL(t *testing.T) {
+func TestUnit_Migrate_SchemaAndTTL(t *testing.T) {
 	dsn := testMigrateDSN()
 	db := openTestCH(t)
 	defer db.Close()
@@ -83,17 +93,69 @@ func TestLLMTracesSchemaAndTTL(t *testing.T) {
 	if err := Up(dsn); err != nil {
 		t.Fatalf("up: %v", err)
 	}
+	assertRequiredColumns(t, db)
+	assertNoContentColumns(t, db)
+	assertCreateTableDDL(t, db)
+}
 
-	ctx := context.Background()
-	rows, err := db.QueryContext(ctx, `
+func assertRequiredColumns(t *testing.T, db *sql.DB) {
+	t.Helper()
+	cols := loadColumnNames(t, db)
+	for _, c := range requiredLLMTraceColumns {
+		if _, ok := cols[c]; !ok {
+			t.Errorf("missing column %s", c)
+		}
+	}
+	for name := range cols {
+		if !isRequiredColumn(name) {
+			t.Errorf("unexpected column %s", name)
+		}
+	}
+}
+
+func isRequiredColumn(name string) bool {
+	for _, c := range requiredLLMTraceColumns {
+		if c == name {
+			return true
+		}
+	}
+	return false
+}
+
+func assertNoContentColumns(t *testing.T, db *sql.DB) {
+	t.Helper()
+	cols := loadColumnNames(t, db)
+	for _, forbidden := range []string{"prompt", "completion", "prompt_text", "completion_text", "messages", "content", "prompt_payload"} {
+		if _, ok := cols[forbidden]; ok {
+			t.Errorf("content column must not exist: %s", forbidden)
+		}
+	}
+}
+
+func assertCreateTableDDL(t *testing.T, db *sql.DB) {
+	t.Helper()
+	var createSQL string
+	if err := db.QueryRowContext(context.Background(), `SHOW CREATE TABLE ibex.llm_traces`).Scan(&createSQL); err != nil {
+		t.Fatalf("show create: %v", err)
+	}
+	if !strings.Contains(createSQL, "event_date + toIntervalDay(90)") &&
+		!strings.Contains(createSQL, "event_date + INTERVAL 90 DAY") {
+		t.Fatalf("expected event_date 90-day TTL, got: %s", createSQL)
+	}
+	if !strings.Contains(createSQL, "org_id") || !strings.Contains(createSQL, "ORDER BY") {
+		t.Fatalf("expected ORDER BY org_id, got: %s", createSQL)
+	}
+}
+
+func loadColumnNames(t *testing.T, db *sql.DB) map[string]struct{} {
+	t.Helper()
+	rows, err := db.QueryContext(context.Background(), `
 		SELECT name FROM system.columns
-		WHERE database = 'ibex' AND table = 'llm_traces'
-		ORDER BY name`)
+		WHERE database = 'ibex' AND table = 'llm_traces'`)
 	if err != nil {
 		t.Fatalf("columns: %v", err)
 	}
 	defer func() { _ = rows.Close() }()
-
 	cols := map[string]struct{}{}
 	for rows.Next() {
 		var name string
@@ -105,42 +167,10 @@ func TestLLMTracesSchemaAndTTL(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatal(err)
 	}
-
-	required := []string{
-		"request_id", "org_id", "agent_id", "session_id", "checkpoint_id",
-		"model", "provider", "is_streaming",
-		"input_tokens", "output_tokens", "total_tokens",
-		"auth_latency_ms", "directive_latency_ms", "provider_ttfb_ms", "total_latency_ms",
-		"status_code", "is_complete", "error_code",
-		"requested_at", "completed_at", "event_date",
-	}
-	for _, c := range required {
-		if _, ok := cols[c]; !ok {
-			t.Errorf("missing column %s", c)
-		}
-	}
-	for forbidden := range map[string]struct{}{
-		"prompt": {}, "completion": {}, "prompt_text": {}, "completion_text": {},
-		"messages": {}, "content": {},
-	} {
-		if _, ok := cols[forbidden]; ok {
-			t.Errorf("content column must not exist: %s", forbidden)
-		}
-	}
-
-	var createSQL string
-	if err := db.QueryRowContext(ctx, `SHOW CREATE TABLE ibex.llm_traces`).Scan(&createSQL); err != nil {
-		t.Fatalf("show create: %v", err)
-	}
-	if !strings.Contains(createSQL, "TTL") || !strings.Contains(createSQL, "90") {
-		t.Fatalf("expected 90-day TTL in CREATE TABLE, got: %s", createSQL)
-	}
-	if !strings.Contains(createSQL, "ORDER BY") || !strings.Contains(createSQL, "org_id") {
-		t.Fatalf("expected ORDER BY org_id in CREATE TABLE: %s", createSQL)
-	}
+	return cols
 }
 
-func TestExplainUsesPrimaryKey(t *testing.T) {
+func TestUnit_Migrate_ExplainUsesPrimaryKey(t *testing.T) {
 	dsn := testMigrateDSN()
 	db := openTestCH(t)
 	defer db.Close()
@@ -148,9 +178,16 @@ func TestExplainUsesPrimaryKey(t *testing.T) {
 	if err := Up(dsn); err != nil {
 		t.Fatalf("up: %v", err)
 	}
+	insertSampleTrace(t, db)
+	out := strings.ToLower(explainOrgAgentQuery(t, db))
+	if !strings.Contains(out, "org_id") {
+		t.Fatalf("EXPLAIN did not indicate org_id key usage: %s", out)
+	}
+}
 
-	ctx := context.Background()
-	_, err := db.ExecContext(ctx, `
+func insertSampleTrace(t *testing.T, db *sql.DB) {
+	t.Helper()
+	_, err := db.ExecContext(context.Background(), `
 		INSERT INTO ibex.llm_traces (
 			request_id, org_id, agent_id, session_id, checkpoint_id,
 			model, provider, is_streaming,
@@ -170,8 +207,11 @@ func TestExplainUsesPrimaryKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("insert: %v", err)
 	}
+}
 
-	explainRows, err := db.QueryContext(ctx, `
+func explainOrgAgentQuery(t *testing.T, db *sql.DB) string {
+	t.Helper()
+	rows, err := db.QueryContext(context.Background(), `
 		EXPLAIN indexes = 1
 		SELECT count()
 		FROM ibex.llm_traces
@@ -181,12 +221,8 @@ func TestExplainUsesPrimaryKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("explain: %v", err)
 	}
-	defer func() { _ = explainRows.Close() }()
-
-	out := strings.ToLower(scanExplainText(t, explainRows))
-	if !strings.Contains(out, "org_id") {
-		t.Fatalf("EXPLAIN did not indicate org_id key usage: %s", out)
-	}
+	defer func() { _ = rows.Close() }()
+	return scanExplainText(t, rows)
 }
 
 func scanExplainText(t *testing.T, rows *sql.Rows) string {
@@ -229,7 +265,7 @@ func stringifyScan(v any) string {
 	}
 }
 
-func TestMigrateDownUpRoundTrip(t *testing.T) {
+func TestUnit_Migrate_DownUpRoundTrip(t *testing.T) {
 	dsn := testMigrateDSN()
 	db := openTestCH(t)
 	defer db.Close()

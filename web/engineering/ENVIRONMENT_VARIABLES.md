@@ -170,7 +170,7 @@ Used by: **proxy (trace writes), api (analytics), worker (billing/analytics), da
 | `CLICKHOUSE_QUERY_TIMEOUT_MS` | No | `5000` | Query timeout | Prevent stuck analytics |
 | `CLICKHOUSE_ORG_FILTER_ENFORCEMENT` | No | `true` | Reject queries without org filter | Must remain true in prod |
 
-**Important:** ClickHouse has no RLS. Code must enforce org filters. Schema: Phase 2 `ibex.llm_traces` ([ADR-0033](../content/docs/adr/0033-clickhouse-schema.mdx)); apply with `make clickhouse-migrate`.
+**Important:** ClickHouse has no RLS. Code must enforce org filters. Schema: Phase 2 `ibex.llm_traces` ([ADR-0033](/docs/adr/0033-clickhouse-schema)); apply with `make clickhouse-migrate`.
 
 ---
 

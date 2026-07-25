@@ -2,16 +2,22 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-DEV_ENV="$ROOT_DIR/infra/compose/dev/.env.example"
+DEV_DIR="$ROOT_DIR/infra/compose/dev"
 CMD="${1:-up}"
 
 load_dev_defaults() {
-  if [[ -f "$DEV_ENV" ]]; then
-    # shellcheck disable=SC1090
-    set -a
-    source "$DEV_ENV"
-    set +a
+  local env_file=""
+  if [[ -f "$DEV_DIR/.env" ]]; then
+    env_file="$DEV_DIR/.env"
+  elif [[ -f "$DEV_DIR/.env.example" ]]; then
+    env_file="$DEV_DIR/.env.example"
+  else
+    return 0
   fi
+  # shellcheck disable=SC1090
+  set -a
+  source "$env_file"
+  set +a
 }
 
 if [[ -z "${CLICKHOUSE_MIGRATE_DSN:-}" && -z "${CLICKHOUSE_DSN:-}" ]]; then
