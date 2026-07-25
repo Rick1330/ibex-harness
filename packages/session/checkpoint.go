@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -45,7 +46,7 @@ func (s *PostgresStore) AppendCheckpoint(ctx context.Context, p CheckpointParams
 		s.metrics.IncSessionCheckpoint(ResultOK)
 		return nil
 	}
-	if err == ErrDuplicateTurn {
+	if errors.Is(err, ErrDuplicateTurn) {
 		s.metrics.IncSessionCheckpoint(ResultDuplicate)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
@@ -60,8 +61,10 @@ func (s *PostgresStore) AppendCheckpoint(ctx context.Context, p CheckpointParams
 func (s *PostgresStore) appendCheckpoint(ctx context.Context, p CheckpointParams) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("session: begin checkpoint: %w", err)
+		return fmt.Errorf("session: begin checkpoint session_id=%s org_id=%s turn_index=%d: %w",
+			p.SessionID, p.OrgID, p.TurnIndex, err)
 	}
+	//nolint:errcheck // rollback after successful commit is a no-op; discard is intentional
 	defer func() { _ = tx.Rollback() }()
 
 	if err := setOrgRLS(ctx, tx, p.OrgID); err != nil {
@@ -74,7 +77,8 @@ func (s *PostgresStore) appendCheckpoint(ctx context.Context, p CheckpointParams
 		return err
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("session: commit checkpoint: %w", err)
+		return fmt.Errorf("session: commit checkpoint session_id=%s org_id=%s turn_index=%d: %w",
+			p.SessionID, p.OrgID, p.TurnIndex, err)
 	}
 	return nil
 }
@@ -97,23 +101,37 @@ func insertCheckpoint(ctx context.Context, tx *sql.Tx, p CheckpointParams) error
 		return ErrDuplicateTurn
 	}
 	if err != nil {
-		return fmt.Errorf("session: insert checkpoint: %w", err)
+		return fmt.Errorf("session: insert checkpoint session_id=%s org_id=%s turn_index=%d: %w",
+			p.SessionID, p.OrgID, p.TurnIndex, err)
 	}
 	return nil
 }
 
 func bumpSessionStats(ctx context.Context, tx *sql.Tx, p CheckpointParams) error {
+	if err := validateCheckpointStats(p); err != nil {
+		return err
+	}
 	res, err := tx.ExecContext(ctx, updateSessionStatsSQL,
 		p.InputTokens, p.OutputTokens, p.LatencyMs, p.SessionID, p.OrgID)
 	if err != nil {
-		return fmt.Errorf("session: update stats: %w", err)
+		return fmt.Errorf("session: update stats session_id=%s org_id=%s turn_index=%d: %w",
+			p.SessionID, p.OrgID, p.TurnIndex, err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("session: update stats rows: %w", err)
+		return fmt.Errorf("session: update stats rows session_id=%s org_id=%s turn_index=%d: %w",
+			p.SessionID, p.OrgID, p.TurnIndex, err)
 	}
 	if n == 0 {
 		return ErrNotFound
+	}
+	return nil
+}
+
+func validateCheckpointStats(p CheckpointParams) error {
+	if p.InputTokens < 0 || p.OutputTokens < 0 || p.LatencyMs < 0 {
+		return fmt.Errorf("session: invalid checkpoint stats session_id=%s org_id=%s turn_index=%d: negative token or latency",
+			p.SessionID, p.OrgID, p.TurnIndex)
 	}
 	return nil
 }

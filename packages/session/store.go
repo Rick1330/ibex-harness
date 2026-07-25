@@ -6,7 +6,6 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -36,13 +35,12 @@ func NewPostgresStore(deps PostgresStoreDeps) (*PostgresStore, error) {
 	if deps.DB == nil {
 		return nil, fmt.Errorf("session: db is required")
 	}
+	if deps.Tracer == nil {
+		return nil, fmt.Errorf("session: tracer is required")
+	}
 	metrics := deps.Metrics
 	if metrics == nil {
 		metrics = NoopMetrics{}
 	}
-	tracer := deps.Tracer
-	if tracer == nil {
-		tracer = otel.Tracer("ibex-session")
-	}
-	return &PostgresStore{db: deps.DB, metrics: metrics, tracer: tracer}, nil
+	return &PostgresStore{db: deps.DB, metrics: metrics, tracer: deps.Tracer}, nil
 }

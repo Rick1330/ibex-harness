@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"github.com/google/uuid"
 	"github.com/lib/pq"
 )
@@ -73,7 +74,8 @@ func expectCreateSession(mock sqlmock.Sqlmock, ids mockIDs) {
 	beginWithRLS(mock, ids.orgID)
 	expectSelectByExternal(mock, ids, nil, sql.ErrNoRows)
 	mock.ExpectQuery("INSERT INTO ibex_core.sessions").
-		WithArgs(ids.orgID, ids.agentID, "ext", "gpt-4o", "openai", nil, StatusActive).
+		WithArgs(ids.orgID, ids.agentID, sql.NullString{String: "ext", Valid: true},
+			"gpt-4o", "openai", nil, StatusActive).
 		WillReturnRows(sessionRows(ids))
 	mock.ExpectCommit()
 }
@@ -87,7 +89,8 @@ func expectExistingSession(mock sqlmock.Sqlmock, ids mockIDs) {
 func expectEmptyExternalInsert(mock sqlmock.Sqlmock, ids mockIDs) {
 	beginWithRLS(mock, ids.orgID)
 	mock.ExpectQuery("INSERT INTO ibex_core.sessions").
-		WithArgs(ids.orgID, ids.agentID, nil, "gpt-4o", "openai", nil, StatusActive).
+		WithArgs(ids.orgID, ids.agentID, sql.NullString{},
+			"gpt-4o", "openai", nil, StatusActive).
 		WillReturnRows(sessionRows(ids))
 	mock.ExpectCommit()
 }
@@ -130,7 +133,8 @@ func expectConflictInsert(mock sqlmock.Sqlmock, ids mockIDs) {
 	beginWithRLS(mock, ids.orgID)
 	expectSelectByExternal(mock, ids, nil, sql.ErrNoRows)
 	mock.ExpectQuery("INSERT INTO ibex_core.sessions").
-		WithArgs(ids.orgID, ids.agentID, "ext", "gpt-4o", "openai", nil, StatusActive).
+		WithArgs(ids.orgID, ids.agentID, sql.NullString{String: "ext", Valid: true},
+			"gpt-4o", "openai", nil, StatusActive).
 		WillReturnError(&pq.Error{Code: "23505"})
 	mock.ExpectRollback()
 }
@@ -265,14 +269,16 @@ func runCheckpointOK(t *testing.T, store *PostgresStore, ids mockIDs) {
 
 func runCheckpointDup(t *testing.T, store *PostgresStore, ids mockIDs) {
 	t.Helper()
-	if err := store.AppendCheckpoint(context.Background(), baseCheckpoint(ids)); err != ErrDuplicateTurn {
+	err := store.AppendCheckpoint(context.Background(), baseCheckpoint(ids))
+	if !errors.Is(err, ErrDuplicateTurn) {
 		t.Fatalf("got %v", err)
 	}
 }
 
 func runCheckpointMissing(t *testing.T, store *PostgresStore, ids mockIDs) {
 	t.Helper()
-	if err := store.AppendCheckpoint(context.Background(), baseCheckpoint(ids)); err != ErrNotFound {
+	err := store.AppendCheckpoint(context.Background(), baseCheckpoint(ids))
+	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("got %v", err)
 	}
 }
@@ -293,7 +299,8 @@ func runCompleteOK(t *testing.T, store *PostgresStore, ids mockIDs) {
 
 func runCompleteNotFound(t *testing.T, store *PostgresStore, ids mockIDs) {
 	t.Helper()
-	if err := store.Complete(context.Background(), ids.sessionID, ids.orgID); err != ErrNotFound {
+	err := store.Complete(context.Background(), ids.sessionID, ids.orgID)
+	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("got %v", err)
 	}
 }
@@ -320,7 +327,9 @@ func newSQLMockStore(t *testing.T) (*sql.DB, sqlmock.Sqlmock, *PostgresStore) {
 	if err != nil {
 		t.Fatalf("sqlmock: %v", err)
 	}
-	store, err := NewPostgresStore(PostgresStoreDeps{DB: db})
+	store, err := NewPostgresStore(PostgresStoreDeps{
+		DB: db, Tracer: telemetry.NoopTracer("ibex-session"),
+	})
 	if err != nil {
 		t.Fatalf("store: %v", err)
 	}

@@ -59,7 +59,7 @@ See [.env.example](.env.example).
 | `IBEX_ERROR_DOCS_BASE` | (empty) | Optional `docs_url` prefix |
 | `IBEX_RATE_LIMIT_DEFAULT_RPM` | `60` | Org requests per minute |
 | `IBEX_RATE_LIMIT_ORG_OVERRIDES` | (empty) | `uuid=rpm,uuid2=rpm2` |
-| `POSTGRES_DSN` | (empty) | Postgres for directive reads + session store; enables `packages/directive` when set with Redis; enables `packages/session` when set |
+| `POSTGRES_DSN` | (empty) | Postgres for directive reads; enables `packages/directive` when set with Redis; constructs `packages/session` for upcoming lifecycle wiring when set |
 | `IBEX_DIRECTIVE_CACHE_TTL` | `60s` | Redis TTL for directive cache keys `{org_id}:directive:{agent_id}` |
 
 ## Run locally

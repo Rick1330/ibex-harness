@@ -34,7 +34,7 @@ func (r *ProxyRegistry) initSessionMetrics() {
 
 // IncSessionGetOrCreate records a GetOrCreate outcome (created|existing|error).
 func (r *ProxyRegistry) IncSessionGetOrCreate(result string) {
-	r.sessionGetOrCreate.WithLabelValues(result).Inc()
+	r.sessionGetOrCreate.WithLabelValues(boundSessionResult(result, sessionGetOrCreateResults)).Inc()
 }
 
 // ObserveSessionGetOrCreateSeconds records GetOrCreate wall time.
@@ -44,10 +44,29 @@ func (r *ProxyRegistry) ObserveSessionGetOrCreateSeconds(seconds float64) {
 
 // IncSessionCheckpoint records an AppendCheckpoint outcome (ok|duplicate|error).
 func (r *ProxyRegistry) IncSessionCheckpoint(result string) {
-	r.sessionCheckpoint.WithLabelValues(result).Inc()
+	r.sessionCheckpoint.WithLabelValues(boundSessionResult(result, sessionCheckpointResults)).Inc()
 }
 
 // IncSessionComplete records a Complete outcome (ok|noop|error).
 func (r *ProxyRegistry) IncSessionComplete(result string) {
-	r.sessionComplete.WithLabelValues(result).Inc()
+	r.sessionComplete.WithLabelValues(boundSessionResult(result, sessionCompleteResults)).Inc()
+}
+
+var (
+	sessionGetOrCreateResults = map[string]struct{}{
+		"created": {}, "existing": {}, "error": {},
+	}
+	sessionCheckpointResults = map[string]struct{}{
+		"ok": {}, "duplicate": {}, "error": {},
+	}
+	sessionCompleteResults = map[string]struct{}{
+		"ok": {}, "noop": {}, "error": {},
+	}
+)
+
+func boundSessionResult(result string, allowed map[string]struct{}) string {
+	if _, ok := allowed[result]; ok {
+		return result
+	}
+	return "error"
 }

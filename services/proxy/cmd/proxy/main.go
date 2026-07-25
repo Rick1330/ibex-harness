@@ -49,9 +49,6 @@ func run(args []string) int {
 // providerRegistryInit is overridden in tests to simulate startup registry failures.
 var providerRegistryInit = defaultProviderRegistryInit
 
-// openPostgresFn is overridden in tests to avoid a live Postgres dependency.
-var openPostgresFn = openProxyPostgres
-
 func defaultProviderRegistryInit(cfg config.Config, log *logger.Logger, tracer trace.Tracer, reg *ibexmetrics.ProxyRegistry) (*provider.Registry, error) {
 	return buildProviderRegistry(cfg, log, tracer, reg)
 }
@@ -119,11 +116,11 @@ func setupProxyCore(
 	if err != nil {
 		return nil, fmt.Errorf("auth clients: %w", err)
 	}
-	pgDB, directiveResolver, err := setupDirectiveResolver(cfg, redisClient, log, reg)
+	pgDB, directiveResolver, err := setupDirectiveResolver(cfg, redisClient, log, reg, openProxyPostgres)
 	if err != nil {
 		return nil, fmt.Errorf("directive resolver: %w", err)
 	}
-	sessionStore, err := newSessionStore(pgDB, reg)
+	sessionStore, err := newSessionStore(pgDB, reg, tracer)
 	if err != nil {
 		return nil, fmt.Errorf("session store: %w", err)
 	}
@@ -275,18 +272,24 @@ func startRevocationSubscriber(
 	return sub, cancel, nil
 }
 
+type postgresOpener func(dsn string) (*sql.DB, error)
+
 func setupDirectiveResolver(
 	cfg config.Config,
 	redisClient redis.UniversalClient,
 	log *logger.Logger,
 	reg *ibexmetrics.ProxyRegistry,
+	openDB postgresOpener,
 ) (*sql.DB, directive.Resolver, error) {
 	dsn := strings.TrimSpace(cfg.PostgresDSN)
 	if dsn == "" {
 		log.InfoCtx(context.Background(), "postgres unset; directive noop and session store disabled")
 		return nil, directive.NoopResolver{}, nil
 	}
-	db, err := openPostgresFn(dsn)
+	if openDB == nil {
+		openDB = openProxyPostgres
+	}
+	db, err := openDB(dsn)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -307,7 +310,7 @@ func setupDirectiveResolver(
 	return db, resolver, nil
 }
 
-func newSessionStore(db *sql.DB, reg *ibexmetrics.ProxyRegistry) (session.Store, error) {
+func newSessionStore(db *sql.DB, reg *ibexmetrics.ProxyRegistry, tracer trace.Tracer) (session.Store, error) {
 	if db == nil {
 		return nil, nil
 	}
@@ -315,7 +318,9 @@ func newSessionStore(db *sql.DB, reg *ibexmetrics.ProxyRegistry) (session.Store,
 	if reg != nil {
 		metrics = reg
 	}
-	return session.NewPostgresStore(session.PostgresStoreDeps{DB: db, Metrics: metrics})
+	return session.NewPostgresStore(session.PostgresStoreDeps{
+		DB: db, Metrics: metrics, Tracer: tracer,
+	})
 }
 
 func openProxyPostgres(dsn string) (*sql.DB, error) {

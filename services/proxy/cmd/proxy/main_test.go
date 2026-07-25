@@ -13,6 +13,7 @@ import (
 	ibexmetrics "github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/packages/provider"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
+	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
 	proxyhttp "github.com/Rick1330/ibex-harness/services/proxy/internal/http"
 	"github.com/alicebob/miniredis/v2"
@@ -97,7 +98,7 @@ func TestSetupRateLimiter_InvalidURL(t *testing.T) {
 
 func TestSetupDirectiveResolver_NoopWithoutDSNOrRedis(t *testing.T) {
 	log := logger.Discard("proxy")
-	db, resolver, err := setupDirectiveResolver(config.Config{}, nil, log, nil)
+	db, resolver, err := setupDirectiveResolver(config.Config{}, nil, log, nil, openProxyPostgres)
 	if err != nil {
 		t.Fatalf("setup: %v", err)
 	}
@@ -115,7 +116,7 @@ func TestSetupDirectiveResolver_NoopWithoutDSNOrRedis(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = client.Close() })
-	db, resolver, err = setupDirectiveResolver(config.Config{RedisURL: "redis://" + mr.Addr()}, client, log, nil)
+	db, resolver, err = setupDirectiveResolver(config.Config{RedisURL: "redis://" + mr.Addr()}, client, log, nil, openProxyPostgres)
 	if err != nil {
 		t.Fatalf("setup with redis only: %v", err)
 	}
@@ -213,49 +214,73 @@ func TestRun_ProviderRegistryInitFailureReturns1(t *testing.T) {
 
 func TestUnit_NewSessionStore(t *testing.T) {
 	t.Parallel()
-	got, err := newSessionStore(nil, nil)
-	if err != nil || got != nil {
-		t.Fatalf("nil db: store=%v err=%v", got, err)
+
+	tracer := telemetry.NoopTracer("ibex-session")
+
+	got, err := newSessionStore(nil, nil, tracer)
+	if err != nil {
+		t.Fatalf("nil db err: %v", err)
 	}
+	if got != nil {
+		t.Fatal("expected nil store without db")
+	}
+
 	db, err := sql.Open("postgres", "postgres://127.0.0.1:1/nope?sslmode=disable")
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	store, err := newSessionStore(db, nil)
-	if err != nil || store == nil {
-		t.Fatalf("noop metrics: store=%v err=%v", store, err)
+
+	store, err := newSessionStore(db, nil, tracer)
+	if err != nil {
+		t.Fatalf("noop metrics err: %v", err)
 	}
+	if store == nil {
+		t.Fatal("expected store")
+	}
+
 	reg := ibexmetrics.NewProxy("proxy-session-test")
-	store, err = newSessionStore(db, reg)
-	if err != nil || store == nil {
-		t.Fatalf("registry metrics: store=%v err=%v", store, err)
+	store, err = newSessionStore(db, reg, tracer)
+	if err != nil {
+		t.Fatalf("registry metrics err: %v", err)
+	}
+	if store == nil {
+		t.Fatal("expected store with registry")
 	}
 }
 
 func TestUnit_SetupDirectiveResolver_PostgresWithoutRedis(t *testing.T) {
-	orig := openPostgresFn
-	t.Cleanup(func() { openPostgresFn = orig })
 	db, err := sql.Open("postgres", "postgres://127.0.0.1:1/nope?sslmode=disable")
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	openPostgresFn = func(string) (*sql.DB, error) { return db, nil }
+	openDB := func(string) (*sql.DB, error) { return db, nil }
 
 	log := logger.Discard("proxy")
 	gotDB, resolver, err := setupDirectiveResolver(
-		config.Config{PostgresDSN: "postgres://example/ibex"}, nil, log, nil)
+		config.Config{PostgresDSN: "postgres://example/ibex"}, nil, log, nil, openDB)
 	if err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 	if gotDB != db {
 		t.Fatal("expected stubbed postgres db")
 	}
-	store, err := newSessionStore(gotDB, nil)
-	if err != nil || store == nil {
-		t.Fatalf("session store: %v err=%v", store, err)
+
+	tracer := telemetry.NoopTracer("ibex-session")
+	store, err := newSessionStore(gotDB, nil, tracer)
+	if err != nil {
+		t.Fatalf("session store err: %v", err)
 	}
+	if store == nil {
+		t.Fatal("expected session store from DSN path")
+	}
+
+	deps := proxyhttp.RouterDeps{SessionStore: store}
+	if deps.SessionStore == nil {
+		t.Fatal("expected RouterDeps to receive SessionStore")
+	}
+
 	got, err := resolver.Resolve(context.Background(), uuid.Nil, uuid.Nil)
 	if err != nil || got.HasContent() {
 		t.Fatalf("noop resolve: %+v err=%v", got, err)
@@ -263,12 +288,11 @@ func TestUnit_SetupDirectiveResolver_PostgresWithoutRedis(t *testing.T) {
 }
 
 func TestUnit_SetupDirectiveResolver_PostgresOpenError(t *testing.T) {
-	orig := openPostgresFn
-	t.Cleanup(func() { openPostgresFn = orig })
-	openPostgresFn = func(string) (*sql.DB, error) { return nil, errors.New("open boom") }
+	openDB := func(string) (*sql.DB, error) { return nil, errors.New("open boom") }
 	log := logger.Discard("proxy")
+
 	_, _, err := setupDirectiveResolver(
-		config.Config{PostgresDSN: "postgres://example/ibex"}, nil, log, nil)
+		config.Config{PostgresDSN: "postgres://example/ibex"}, nil, log, nil, openDB)
 	if err == nil {
 		t.Fatal("expected open error")
 	}

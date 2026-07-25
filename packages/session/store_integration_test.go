@@ -12,6 +12,7 @@ import (
 
 	migratepg "github.com/Rick1330/ibex-harness/infra/migrations/postgres"
 	"github.com/Rick1330/ibex-harness/packages/session"
+	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"github.com/google/uuid"
 
 	// Register the lib/pq "postgres" driver for sql.Open in integration tests.
@@ -228,7 +229,9 @@ func openStore(t *testing.T) (*sql.DB, *session.PostgresStore) {
 	if err := migratepg.Up(dsn); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	store, err := session.NewPostgresStore(session.PostgresStoreDeps{DB: db})
+	store, err := session.NewPostgresStore(session.PostgresStoreDeps{
+		DB: db, Tracer: telemetry.NoopTracer("ibex-session"),
+	})
 	if err != nil {
 		t.Fatalf("store: %v", err)
 	}

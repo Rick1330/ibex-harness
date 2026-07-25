@@ -6,48 +6,97 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"github.com/google/uuid"
 	"github.com/lib/pq"
 )
 
 func TestUnit_NewPostgresStore(t *testing.T) {
 	t.Parallel()
+
 	if _, err := NewPostgresStore(PostgresStoreDeps{}); err == nil {
 		t.Fatal("expected error for nil db")
 	}
+
 	db := openClosedPostgres(t)
-	store, err := NewPostgresStore(PostgresStoreDeps{DB: db, Metrics: recordingMetrics{}})
-	if err != nil || store == nil {
-		t.Fatalf("store=%v err=%v", store, err)
+	tracer := telemetry.NoopTracer("ibex-session")
+
+	store, err := NewPostgresStore(PostgresStoreDeps{
+		DB: db, Metrics: recordingMetrics{}, Tracer: tracer,
+	})
+	if err != nil {
+		t.Fatalf("NewPostgresStore: %v", err)
 	}
-	if _, err := NewPostgresStore(PostgresStoreDeps{DB: db}); err != nil {
+	if store == nil {
+		t.Fatal("expected store")
+	}
+
+	if _, err := NewPostgresStore(PostgresStoreDeps{DB: db, Tracer: tracer}); err != nil {
 		t.Fatalf("noop metrics: %v", err)
+	}
+
+	if _, err := NewPostgresStore(PostgresStoreDeps{DB: db}); err == nil {
+		t.Fatal("expected error for nil tracer")
 	}
 }
 
 func TestUnit_ClosedDB_SurfaceBeginErrors(t *testing.T) {
 	t.Parallel()
+
 	store := mustClosedStore(t)
 	ctx := context.Background()
 	orgID, agentID, sessionID := uuid.New(), uuid.New(), uuid.New()
+
 	if _, err := store.GetOrCreate(ctx, GetOrCreateParams{
 		OrgID: orgID, AgentID: agentID, ExternalID: "ext", Model: "m", Provider: "p",
 	}); err == nil {
 		t.Fatal("GetOrCreate: expected begin error")
 	}
+
 	if err := store.AppendCheckpoint(ctx, CheckpointParams{
 		SessionID: sessionID, OrgID: orgID, AgentID: agentID, TurnIndex: 0,
 		RequestID: "r", MessagesHash: "h", Model: "m", Provider: "p", LatencyMs: 1,
 	}); err == nil {
 		t.Fatal("AppendCheckpoint: expected begin error")
 	}
+
 	if err := store.Complete(ctx, sessionID, orgID); err == nil {
 		t.Fatal("Complete: expected begin error")
 	}
 }
 
+func TestUnit_ValidateCheckpointStats(t *testing.T) {
+	t.Parallel()
+
+	p := CheckpointParams{
+		SessionID: uuid.New(), OrgID: uuid.New(), TurnIndex: 1,
+		InputTokens: -1, OutputTokens: 0, LatencyMs: 0,
+	}
+	if err := validateCheckpointStats(p); err == nil {
+		t.Fatal("expected negative input validation error")
+	}
+
+	p.InputTokens = 0
+	p.OutputTokens = -1
+	if err := validateCheckpointStats(p); err == nil {
+		t.Fatal("expected negative output validation error")
+	}
+
+	p.OutputTokens = 0
+	p.LatencyMs = -1
+	if err := validateCheckpointStats(p); err == nil {
+		t.Fatal("expected negative latency validation error")
+	}
+
+	p.LatencyMs = 0
+	if err := validateCheckpointStats(p); err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+}
+
 func TestUnit_ScanSession_Populated(t *testing.T) {
 	t.Parallel()
+
 	id, orgID, agentID, dv := uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	ext := "ext-1"
 	got, err := scanSession(fixedScanRow{
@@ -59,11 +108,13 @@ func TestUnit_ScanSession_Populated(t *testing.T) {
 	if err != nil {
 		t.Fatalf("scan: %v", err)
 	}
+
 	assertSessionScan(t, got, scanWant{id: id, ext: &ext, dv: &dv})
 }
 
 func TestUnit_ScanSession_NullOptionals(t *testing.T) {
 	t.Parallel()
+
 	id, orgID, agentID := uuid.New(), uuid.New(), uuid.New()
 	got, err := scanSession(fixedScanRow{
 		id: id, orgID: orgID, agentID: agentID, status: StatusActive, model: "m", provider: "p",
@@ -71,11 +122,13 @@ func TestUnit_ScanSession_NullOptionals(t *testing.T) {
 	if err != nil {
 		t.Fatalf("scan: %v", err)
 	}
+
 	assertSessionScan(t, got, scanWant{id: id})
 }
 
 func TestUnit_ScanSession_Error(t *testing.T) {
 	t.Parallel()
+
 	_, err := scanSession(errScanRow{err: errors.New("scan fail")})
 	if err == nil {
 		t.Fatal("expected scan error")
@@ -84,7 +137,8 @@ func TestUnit_ScanSession_Error(t *testing.T) {
 
 func TestUnit_ShouldRetryUniqueRace_PQ(t *testing.T) {
 	t.Parallel()
-	pqErr := &pq.Error{Code: "23505"}
+
+	pqErr := &pq.Error{Code: uniqueViolationSQLState}
 	if !shouldRetryUniqueRace(pqErr, "ext") {
 		t.Fatal("expected retry on unique violation with external_id")
 	}
@@ -98,10 +152,11 @@ func TestUnit_ShouldRetryUniqueRace_PQ(t *testing.T) {
 
 func TestUnit_ResolveUniqueRace_MissingRow(t *testing.T) {
 	t.Parallel()
+
 	store := mustClosedStore(t)
 	_, _, err := store.resolveUniqueRace(context.Background(), GetOrCreateParams{
 		OrgID: uuid.New(), AgentID: uuid.New(), ExternalID: "ext",
-	}, &pq.Error{Code: "23505"})
+	}, &pq.Error{Code: uniqueViolationSQLState})
 	if err == nil {
 		t.Fatal("expected lookup/begin error")
 	}
@@ -109,6 +164,7 @@ func TestUnit_ResolveUniqueRace_MissingRow(t *testing.T) {
 
 func TestUnit_NoopMetrics_Callable(t *testing.T) {
 	t.Parallel()
+
 	var m NoopMetrics
 	m.IncSessionGetOrCreate(ResultCreated)
 	m.ObserveSessionGetOrCreateSeconds(0.01)
@@ -212,7 +268,9 @@ func (r errScanRow) Scan(...any) error { return r.err }
 func mustClosedStore(t *testing.T) *PostgresStore {
 	t.Helper()
 	db := openClosedPostgres(t)
-	store, err := NewPostgresStore(PostgresStoreDeps{DB: db})
+	store, err := NewPostgresStore(PostgresStoreDeps{
+		DB: db, Tracer: telemetry.NoopTracer("ibex-session"),
+	})
 	if err != nil {
 		t.Fatalf("store: %v", err)
 	}
@@ -225,7 +283,8 @@ func openClosedPostgres(t *testing.T) *sql.DB {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	t.Cleanup(func() { _ = db.Close() })
+	// Close immediately so BeginTx fails; skip Cleanup to avoid double-close.
+	//nolint:errcheck // intentional close of unused handle for closed-DB tests
 	_ = db.Close()
 	return db
 }

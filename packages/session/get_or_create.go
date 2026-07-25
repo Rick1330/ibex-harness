@@ -87,6 +87,7 @@ func (s *PostgresStore) tryGetOrCreate(ctx context.Context, p GetOrCreateParams)
 	if err != nil {
 		return nil, "", fmt.Errorf("session: begin get_or_create: %w", err)
 	}
+	//nolint:errcheck // rollback after successful commit is a no-op; discard is intentional
 	defer func() { _ = tx.Rollback() }()
 
 	if err := setOrgRLS(ctx, tx, p.OrgID); err != nil {
@@ -132,6 +133,7 @@ func (s *PostgresStore) lookupExternalFresh(ctx context.Context, p GetOrCreatePa
 	if err != nil {
 		return nil, fmt.Errorf("session: begin race lookup: %w", err)
 	}
+	//nolint:errcheck // rollback after successful commit is a no-op; discard is intentional
 	defer func() { _ = tx.Rollback() }()
 	if err := setOrgRLS(ctx, tx, p.OrgID); err != nil {
 		return nil, err
@@ -159,10 +161,7 @@ func lookupByExternalID(ctx context.Context, tx *sql.Tx, p GetOrCreateParams) (*
 }
 
 func insertSession(ctx context.Context, tx *sql.Tx, p GetOrCreateParams) (*Session, error) {
-	var ext any
-	if p.ExternalID != "" {
-		ext = p.ExternalID
-	}
+	ext := sql.NullString{String: p.ExternalID, Valid: p.ExternalID != ""}
 	row := tx.QueryRowContext(ctx, insertSessionSQL,
 		p.OrgID, p.AgentID, ext, p.Model, p.Provider, p.DirectiveVersionID, StatusActive)
 	sess, err := scanSession(row)

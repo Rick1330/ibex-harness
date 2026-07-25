@@ -48,8 +48,9 @@ func (s *PostgresStore) Complete(ctx context.Context, sessionID, orgID uuid.UUID
 func (s *PostgresStore) complete(ctx context.Context, sessionID, orgID uuid.UUID) (string, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return "", fmt.Errorf("session: begin complete: %w", err)
+		return "", fmt.Errorf("session: begin complete session_id=%s org_id=%s: %w", sessionID, orgID, err)
 	}
+	//nolint:errcheck // rollback after successful commit is a no-op; discard is intentional
 	defer func() { _ = tx.Rollback() }()
 
 	if err := setOrgRLS(ctx, tx, orgID); err != nil {
@@ -61,7 +62,7 @@ func (s *PostgresStore) complete(ctx context.Context, sessionID, orgID uuid.UUID
 		return "", err
 	}
 	if err := tx.Commit(); err != nil {
-		return "", fmt.Errorf("session: commit complete: %w", err)
+		return "", fmt.Errorf("session: commit complete session_id=%s org_id=%s: %w", sessionID, orgID, err)
 	}
 	return result, nil
 }
@@ -99,7 +100,7 @@ func loadSessionStatus(ctx context.Context, tx *sql.Tx, sessionID, orgID uuid.UU
 		return "", ErrNotFound
 	}
 	if err != nil {
-		return "", fmt.Errorf("session: load status: %w", err)
+		return "", fmt.Errorf("session: load status session_id=%s org_id=%s: %w", sessionID, orgID, err)
 	}
 	return status, nil
 }
@@ -108,11 +109,11 @@ func markCompleted(ctx context.Context, tx *sql.Tx, sessionID, orgID uuid.UUID) 
 	res, err := tx.ExecContext(ctx, completeSessionSQL,
 		StatusCompleted, sessionID, orgID, StatusActive)
 	if err != nil {
-		return fmt.Errorf("session: mark completed: %w", err)
+		return fmt.Errorf("session: mark completed session_id=%s org_id=%s: %w", sessionID, orgID, err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("session: mark completed rows: %w", err)
+		return fmt.Errorf("session: mark completed rows session_id=%s org_id=%s: %w", sessionID, orgID, err)
 	}
 	if n == 0 {
 		return ErrNotFound
