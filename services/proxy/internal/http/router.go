@@ -47,6 +47,7 @@ type RouterDeps struct {
 	GetOrCreateTimeout time.Duration
 	Health             *healthcheck.Server
 	ProviderRegistry   *provider.Registry
+	TraceWriter        TraceWriter
 }
 
 // NewRouter builds the proxy HTTP handler with optional auth validator for protected routes.
@@ -93,6 +94,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 			getOrCreateTimeout: deps.GetOrCreateTimeout,
 			docsBase:           docsBase,
 			providerRegistry:   providerReg,
+			traceWriter:        deps.TraceWriter,
 		})
 	}
 
@@ -159,6 +161,7 @@ type chatCompletionHandler struct {
 	sessionCache       *sessioncache.Cache
 	checkpointPool     *asyncpool.Pool
 	getOrCreateTimeout time.Duration
+	traceWriter        TraceWriter
 }
 
 func (h chatCompletionHandler) serve(w http.ResponseWriter, r *http.Request) {

@@ -18,6 +18,8 @@ const (
 	ctxKeyAgent
 	ctxKeyResolvedDirective
 	ctxKeyResolvedSession
+	ctxKeyAuthLatencyMs
+	ctxKeyDirectiveLatencyMs
 )
 
 // WithRequestID stores the request ID on the context.
@@ -108,4 +110,26 @@ func withResolvedSession(ctx context.Context, rs resolvedSession) context.Contex
 func ResolvedSessionFromContext(ctx context.Context) (resolvedSession, bool) {
 	rs, ok := ctx.Value(ctxKeyResolvedSession).(resolvedSession)
 	return rs, ok
+}
+
+// WithAuthLatencyMs stores auth middleware wall time in milliseconds.
+func WithAuthLatencyMs(ctx context.Context, ms uint16) context.Context {
+	return context.WithValue(ctx, ctxKeyAuthLatencyMs, ms)
+}
+
+// AuthLatencyMsFromContext returns auth stage latency when recorded.
+func AuthLatencyMsFromContext(ctx context.Context) uint16 {
+	ms, _ := ctx.Value(ctxKeyAuthLatencyMs).(uint16)
+	return ms
+}
+
+// WithDirectiveLatencyMs stores directive resolve wall time in milliseconds.
+func WithDirectiveLatencyMs(ctx context.Context, ms uint16) context.Context {
+	return context.WithValue(ctx, ctxKeyDirectiveLatencyMs, ms)
+}
+
+// DirectiveLatencyMsFromContext returns directive stage latency when recorded.
+func DirectiveLatencyMsFromContext(ctx context.Context) uint16 {
+	ms, _ := ctx.Value(ctxKeyDirectiveLatencyMs).(uint16)
+	return ms
 }

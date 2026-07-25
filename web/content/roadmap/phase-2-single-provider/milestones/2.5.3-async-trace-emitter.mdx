@@ -2,7 +2,7 @@
 title: "2.5.3 Async Trace"
 description: "With the ClickHouse schema (2.5.1) and typed writer (2.5.2) in place, this milestone wires trace emission into the proxy request handler. The trace is assembled after the LLM response is complete (token counts are only known then) and submitted to the ClickHouse writer's non-blocking queue. The key constraint: trace"
 summary: "With the ClickHouse schema (2.5.1) and typed writer (2.5.2) in place, this milestone wires trace emission into the proxy request handler. The trace is assembled after the LLM response is complete (token counts are only known then) and submitted to the ClickHouse writer's non-blocking queue. The key constraint: trace"
-status: "planned"
+status: "completed"
 milestoneId: "2.5.3"
 goal: "[2.5 — Async trace emission to ClickHouse](/roadmap/phase-2-single-provider/goals#goal-25-async-trace-emission-to-clickhouse)"
 estimatedEffort: "2 days"
@@ -12,7 +12,7 @@ fullTitle: "Milestone 2.5.3 — Async Trace Emitter and Handler Integration"
 
 # Milestone 2.5.3 — Async Trace Emitter and Handler Integration
 
-**Status:** Planned  
+**Status:** Complete  
 **Goal:** [2.5 — Async trace emission to ClickHouse](/roadmap/phase-2-single-provider/goals#goal-25-async-trace-emission-to-clickhouse)  
 **Phase:** 2 — Single Provider End-to-End  
 **Estimated effort:** 2 days
@@ -89,11 +89,18 @@ Same contract as [2.4.3](/roadmap/phase-2-single-provider/milestones/2.4.3-proxy
 
 ## Acceptance Criteria
 
-- [ ] Trace record in ClickHouse for every completed LLM request within 500ms of response
-- [ ] Trace includes all fields from the schema (no nil/zero fields for non-optional data)
-- [ ] Trace write failure does NOT affect LLM response (logged at WARN, not propagated)
-- [ ] No LLM content (prompt, completion text) in trace record
-- [ ] `proxy_overhead_ms` (total_latency_ms) in trace matches measured proxy overhead
-- [ ] Async emission uses bounded pool/queue; `ibex_proxy_async_queue_depth` and `ibex_proxy_async_dropped_total` metrics present
+- [x] Trace record in ClickHouse for every completed LLM request within 500ms of response
+- [x] Trace includes all fields from the schema (no nil/zero fields for non-optional data)
+- [x] Trace write failure does NOT affect LLM response (logged at WARN, not propagated)
+- [x] No LLM content (prompt, completion text) in trace record
+- [x] `proxy_overhead_ms` (total_latency_ms) in trace matches measured proxy overhead
+- [x] Async emission uses bounded pool/queue; `ibex_proxy_async_queue_depth` and `ibex_proxy_async_dropped_total` metrics present
 
 ---
+
+## Implementation notes (complete)
+
+- `assembleTrace` + post-response `enqueuePostResponse` on the existing non-dropping checkpoint `asyncpool`
+- Success (stream/non-stream), incomplete stream, and provider-failure emit paths
+- Auth/directive stage latencies on context; `checkpoint_id` left nil (store does not return IDs yet)
+- Optional when `CLICKHOUSE_DSN` unset (`TraceWriter` nil)

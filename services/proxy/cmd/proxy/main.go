@@ -139,7 +139,7 @@ func setupProxyCore(
 		assembled: assembled,
 		revSub:    revSub, revCancel: revCancel,
 		dirSub: dirSub, dirCancel: dirCancel,
-	}, cfg, log, reg)
+	}), nil
 }
 
 type proxyCoreParts struct {
@@ -150,16 +150,7 @@ type proxyCoreParts struct {
 	dirCancel context.CancelFunc
 }
 
-func finishProxyCore(
-	parts proxyCoreParts,
-	cfg config.Config,
-	log *logger.Logger,
-	reg *ibexmetrics.ProxyRegistry,
-) (*proxyCore, error) {
-	traceWriter, err := setupTraceWriter(cfg, log, reg)
-	if err != nil {
-		return nil, err
-	}
+func finishProxyCore(parts proxyCoreParts) *proxyCore {
 	return &proxyCore{
 		server: parts.assembled.server, grpcConn: parts.assembled.grpcConn,
 		redisClient: parts.assembled.redisClient, pgDB: parts.assembled.pgDB,
@@ -167,8 +158,8 @@ func finishProxyCore(
 		dirSub: parts.dirSub, dirCancel: parts.dirCancel,
 		checkpointPool: parts.assembled.checkpointPool,
 		sessionSweeper: parts.assembled.sessionSweeper,
-		traceWriter:    traceWriter,
-	}, nil
+		traceWriter:    parts.assembled.traceWriter,
+	}
 }
 
 type assembledProxyCore struct {
@@ -180,6 +171,7 @@ type assembledProxyCore struct {
 	directiveResolver directive.Resolver
 	checkpointPool    *asyncpool.Pool
 	sessionSweeper    *sessionsweeper.Sweeper
+	traceWriter       *ibexch.Writer
 }
 
 func assembleProxyCore(
@@ -212,6 +204,10 @@ func assembleProxyCore(
 	if err != nil {
 		return assembledProxyCore{}, fmt.Errorf("provider registry: %w", err)
 	}
+	traceWriter, err := setupTraceWriter(cfg, log, reg)
+	if err != nil {
+		return assembledProxyCore{}, err
+	}
 	server := newHTTPServer(proxyhttp.RouterDeps{
 		Config: cfg, Logger: log, Metrics: reg, Tracer: tracer,
 		Validator: validator, AgentVerifier: agentVerifier, Limiter: limiter,
@@ -220,11 +216,13 @@ func assembleProxyCore(
 		GetOrCreateTimeout: cfg.SessionGetOrCreateTO,
 		Health:             buildProxyHealth(cfg, authClient, pgDB),
 		ProviderRegistry:   providerReg,
+		TraceWriter:        traceWriter,
 	})
 	return assembledProxyCore{
 		server: server, grpcConn: grpcConn, redisClient: redisClient, pgDB: pgDB,
 		validator: validator, directiveResolver: directiveResolver,
 		checkpointPool: sessionStack.pool, sessionSweeper: sessionStack.sweeper,
+		traceWriter: traceWriter,
 	}, nil
 }
 

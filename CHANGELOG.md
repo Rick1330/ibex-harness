@@ -125,6 +125,7 @@ Release notes are human-readable summaries of user-visible changes, security fix
 
 ### Added
 
+- Async trace emitter (m2.5.3): proxy `assembleTrace` + post-response bounded-pool emit into ClickHouse `Writer` (success, incomplete stream, provider failure); auth/directive stage latency on context; never blocks LLM response on CH errors
 - ClickHouse client (`packages/clickhouse`, m2.5.2): concurrent batched `Writer` for `ibex.llm_traces` (clickhouse-go/v2, defaults batch 500 / flush 200ms), flush metrics, optional proxy shutdown drain when `CLICKHOUSE_DSN` is set
 - ClickHouse `ibex.llm_traces` schema (m2.5.1): golang-migrate runner under `infra/migrations/clickhouse`, 90-day TTL MergeTree, ADR-0033, compose-test ClickHouse, `make clickhouse-migrate`
 - Session idle-timeout sweeper (m2.4.4): proxy ticker marks stale `active` sessions `abandoned` under service-account RLS with advisory-lock multi-replica safety, Redis cache invalidation, metrics `ibex_proxy_session_sweeper_*`, and partial index `idx_sessions_active_updated_at` (migration `000011`)

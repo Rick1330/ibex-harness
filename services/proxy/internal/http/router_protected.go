@@ -32,6 +32,7 @@ type protectedRouteDeps struct {
 	getOrCreateTimeout time.Duration
 	docsBase           string
 	providerRegistry   *provider.Registry
+	traceWriter        TraceWriter
 }
 
 func registerProtectedRoutes(deps protectedRouteDeps) {
@@ -86,6 +87,7 @@ func registerProtectedRoutes(deps protectedRouteDeps) {
 			sessionCache:       deps.sessionCache,
 			checkpointPool:     deps.checkpointPool,
 			getOrCreateTimeout: deps.getOrCreateTimeout,
+			traceWriter:        deps.traceWriter,
 		})
 	})))
 }

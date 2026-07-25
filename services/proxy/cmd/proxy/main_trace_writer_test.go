@@ -140,23 +140,13 @@ func TestUnit_SetupTraceWriter_LogUsesRedactedDSN(t *testing.T) {
 	}
 }
 
-func TestUnit_FinishProxyCore_TraceWriterError(t *testing.T) {
-	prev := newTraceWriter
-	t.Cleanup(func() { newTraceWriter = prev })
-	wantErr := errors.New("dial failed")
-	newTraceWriter = func(ibexch.Config) (*ibexch.Writer, error) {
-		return nil, wantErr
-	}
-
-	log := logger.Discard("proxy")
-	reg := ibexmetrics.NewProxy("proxy-finish-ch")
-	_, err := finishProxyCore(
-		proxyCoreParts{},
-		config.Config{ClickHouseDSN: "clickhouse://default:@localhost:8123/ibex"},
-		log, reg,
-	)
-	if err == nil || !errors.Is(err, wantErr) {
-		t.Fatalf("got %v", err)
+func TestUnit_FinishProxyCore_PassesTraceWriter(t *testing.T) {
+	w := &ibexch.Writer{}
+	core := finishProxyCore(proxyCoreParts{
+		assembled: assembledProxyCore{traceWriter: w},
+	})
+	if core.traceWriter != w {
+		t.Fatal("traceWriter not wired from assembled core")
 	}
 }
 

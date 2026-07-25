@@ -27,10 +27,12 @@ type providerSuccessParams struct {
 }
 
 type providerFailureParams struct {
-	w         http.ResponseWriter
-	r         *http.Request
-	err       error
-	requestID string
+	w            http.ResponseWriter
+	r            *http.Request
+	err          error
+	requestID    string
+	parsed       *llm.ChatCompletionRequest
+	providerName string
 }
 
 func (h chatCompletionHandler) forwardChatCompletion(p chatForwardParams) {
@@ -49,6 +51,7 @@ func (h chatCompletionHandler) forwardChatCompletion(p chatForwardParams) {
 		}
 		h.writeProviderFailure(providerFailureParams{
 			w: p.w, r: p.r, err: err, requestID: requestID,
+			parsed: p.parsed, providerName: p.prov.Name(),
 		})
 		return
 	}
@@ -92,6 +95,7 @@ func (h chatCompletionHandler) writeProviderSuccess(p providerSuccessParams) {
 		}
 		h.writeProviderFailure(providerFailureParams{
 			w: p.w, r: p.r, err: err, requestID: requestIDFromContext(p.r.Context()),
+			parsed: p.parsed, providerName: p.providerName,
 		})
 		return
 	}
@@ -102,11 +106,14 @@ func (h chatCompletionHandler) writeProviderSuccess(p providerSuccessParams) {
 	writeJSONBody(p.w, body)
 	// Flush before Submit may block on a full non-dropping checkpoint queue.
 	flushIfSupported(p.w)
-	h.enqueueCheckpoint(p.r.Context(), checkpointInput{
+	h.enqueuePostResponse(p.r.Context(), checkpointInput{
 		Messages: p.parsed.Messages, CompletionText: completionTextFromJSON(body),
 		Model: p.parsed.Model, Provider: p.providerName, Usage: p.resp.Usage,
 		Latency: p.resp.Latency, ProviderReqID: p.resp.ProviderRequestID,
 		IsStreaming: false, IsComplete: true,
+	}, requestOutcome{
+		StatusCode: uint16(p.resp.StatusCode),
+		IsComplete: true,
 	})
 }
 
@@ -116,10 +123,19 @@ func (h chatCompletionHandler) streamCheckpointHook(
 	providerName string,
 ) func(context.Context, streamCheckpointResult) {
 	return func(ctx context.Context, res streamCheckpointResult) {
-		h.enqueueCheckpoint(ctx, checkpointInput{
+		status := uint16(http.StatusOK)
+		errCode := ""
+		if !res.complete {
+			errCode = "STREAM_INCOMPLETE"
+		}
+		h.enqueuePostResponse(ctx, checkpointInput{
 			Messages: parsed.Messages, CompletionText: res.content,
 			Model: parsed.Model, Provider: providerName, Usage: res.usage,
 			Latency: res.latency, IsStreaming: true, IsComplete: res.complete,
+		}, requestOutcome{
+			StatusCode: status,
+			IsComplete: res.complete,
+			ErrorCode:  errCode,
 		})
 	}
 }
@@ -131,6 +147,27 @@ func (h chatCompletionHandler) writeProviderFailure(p providerFailureParams) {
 	}
 	logMappedProviderError(h, p.r, p.err, mapped)
 	apierror.WriteHTTP(p.w, p.requestID, apierror.WriteOpts{DocsBase: h.docsBase}, mapped)
+
+	model, providerName := "", ""
+	if p.parsed != nil {
+		model = p.parsed.Model
+	}
+	if p.providerName != "" {
+		providerName = p.providerName
+	} else {
+		var pe *provider.ProviderError
+		if errors.As(p.err, &pe) && pe != nil {
+			providerName = pe.ProviderName
+		}
+	}
+	h.enqueuePostResponse(p.r.Context(), checkpointInput{
+		Model: model, Provider: providerName,
+		IsStreaming: false, IsComplete: false,
+	}, requestOutcome{
+		StatusCode: uint16(mapped.HTTPStatus),
+		IsComplete: false,
+		ErrorCode:  string(mapped.Code),
+	})
 }
 
 func logMappedProviderError(h chatCompletionHandler, r *http.Request, err error, mapped *apierror.Error) {

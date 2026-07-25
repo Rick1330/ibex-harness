@@ -3,6 +3,7 @@ package http
 import (
 	"errors"
 	"net/http"
+	"time"
 
 	apierror "github.com/Rick1330/ibex-harness/packages/apierror"
 	"github.com/Rick1330/ibex-harness/packages/logger"
@@ -27,6 +28,7 @@ type authWriteCtx struct {
 func AuthMiddleware(validator auth.TokenValidator, log *logger.Logger, opts AuthOptions) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			start := time.Now()
 			requestID, r := ensureAuthRequestID(r)
 			awc := authWriteCtx{w: w, requestID: requestID, docsBase: ErrorDocsBaseFromContext(r.Context())}
 
@@ -48,7 +50,9 @@ func AuthMiddleware(validator auth.TokenValidator, log *logger.Logger, opts Auth
 				return
 			}
 
-			next.ServeHTTP(w, r.WithContext(auth.WithContext(r.Context(), res)))
+			ctx := auth.WithContext(r.Context(), res)
+			ctx = WithAuthLatencyMs(ctx, clampUint16Ms(time.Since(start)))
+			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
 }
