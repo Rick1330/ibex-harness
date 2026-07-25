@@ -1,0 +1,44 @@
+---
+title: "ADR-0033: ClickHouse llm_traces schema and retention"
+description: "Accepted — Phase 2 append-only llm_traces MergeTree; ORDER BY org/agent/time; 90-day TTL; no content; app-level org filter."
+adrId: "0033"
+status: "Accepted"
+date: "2026-07-25"
+authors: "IBEX Harness team"
+---
+
+# ADR-0033: ClickHouse `llm_traces` schema and retention
+
+- **Status:** Accepted (schema in [2.5.1](/roadmap/phase-2-single-provider/milestones/2.5.1-clickhouse-schema); client in 2.5.2; emitter in 2.5.3)
+- **Date:** 2026-07-25
+- **Authors:** IBEX Harness team
+- **Milestone:** [2.5.1 ClickHouse schema](/roadmap/phase-2-single-provider/milestones/2.5.1-clickhouse-schema)
+
+## Context
+
+Proxy chat already authenticates, injects directives, and records sessions/checkpoints. Phase 2 still needs an append-only analytics sink for per-request operational traces (tokens, latency breakdown, outcome) without blocking the LLM hot path. ClickHouse is already present in local compose (`clickhouse/clickhouse-server:24.8.x`).
+
+`DATABASE_SCHEMA.md` historically sketched a richer `inference_traces` table (memory IDs, billing MVs). Phase 2 needs a minimal, privacy-safe table the async emitter can write immediately.
+
+## Decision
+
+1. **Table:** `ibex.llm_traces` — Phase-2 canonical analytics table. Richer `inference_traces` / billing MVs remain **future / Phase 3+**.
+2. **Engine:** `MergeTree()`, `PARTITION BY toYYYYMM(event_date)`, `ORDER BY (org_id, agent_id, requested_at)`, `index_granularity = 8192`. Primary sort key matches the dominant query: “traces for this org’s agent in a time range.”
+3. **Types:** `LowCardinality(String)` for `model`, `provider`, `error_code`. Latency fields are integer milliseconds. `event_date` is `Date MATERIALIZED toDate(requested_at)` for partition/TTL.
+4. **No content:** Never store prompt text, completion text, or message bodies. Hashes/metadata belong on Postgres checkpoints; traces stay operational.
+5. **Retention:** `TTL event_date + INTERVAL 90 DAY` default. Deployments may alter TTL via follow-on migration; enterprise longer retention is an ops decision, not a Phase-2 schema fork.
+6. **Tenancy:** ClickHouse has no Postgres-style RLS. Writers/readers **must** scope by `org_id` (enforced in 2.5.2/2.5.3 and `CLICKHOUSE_ORG_FILTER_ENFORCEMENT`).
+7. **Migrations:** golang-migrate ClickHouse driver under `infra/migrations/clickhouse/`, native TCP DSN (compose host port **9002**; HTTP **8123** is for application clients). Multi-statement enabled; migrations table engine `MergeTree`.
+8. **Dev topology:** ClickHouse runs in compose-dev (resolved). External CH is supported via `CLICKHOUSE_MIGRATE_DSN` / `CLICKHOUSE_DSN`.
+
+## Consequences
+
+- Migration `000001_create_llm_traces` creates the table; `make clickhouse-migrate` applies it.
+- [2.5.2](/roadmap/phase-2-single-provider/milestones/2.5.2-clickhouse-client) can implement a batched Writer against this schema without churn.
+- Phase 3 embedding / other ADRs must **not** reuse ADR-0033; pick the next free number.
+
+## Alternatives considered
+
+1. **Use Postgres for traces** — simpler ops; fails write volume and aggregation latency targets. Rejected.
+2. **Ship full `inference_traces` now** — unused memory/billing columns increase privacy surface. Deferred.
+3. **ReplacingMergeTree / updates** — traces are immutable; reject updates. MergeTree append-only wins.

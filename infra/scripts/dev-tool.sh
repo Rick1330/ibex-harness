@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 DB_MIGRATE="$ROOT_DIR/infra/scripts/db-migrate.sh"
+CH_MIGRATE="$ROOT_DIR/infra/scripts/clickhouse-migrate.sh"
 PROTO_DIR="$ROOT_DIR/packages/proto"
 DEV_COMPOSE="$ROOT_DIR/infra/compose/dev/docker-compose.yml"
 DEV_ENV="$ROOT_DIR/infra/compose/dev/.env.example"
@@ -48,6 +49,9 @@ case "${1:-help}" in
       "  db-version             Show current Postgres migration version" \
       "  db-seed                Seed local dev database (org/user/agent/PAT)" \
       "  db-repair-token-fks    Fix orphaned token FKs after failed migration 008" \
+      "  clickhouse-migrate     Apply all pending ClickHouse migrations" \
+      "  clickhouse-migrate-down Roll back one ClickHouse migration step" \
+      "  clickhouse-version     Show current ClickHouse migration version" \
       "  dev-smoke              Run local auth+proxy smoke test" \
       "  verify-phase15         Run Phase 1.5 public site verification (IBEX_SITE_URL)"
     ;;
@@ -146,6 +150,15 @@ case "${1:-help}" in
     ;;
   db-repair-token-fks)
     bash "$ROOT_DIR/infra/scripts/db-repair-token-fks.sh"
+    ;;
+  clickhouse-migrate)
+    bash "$CH_MIGRATE" up
+    ;;
+  clickhouse-migrate-down)
+    bash "$CH_MIGRATE" down
+    ;;
+  clickhouse-version)
+    bash "$CH_MIGRATE" version
     ;;
   dev-smoke)
     bash "$ROOT_DIR/infra/scripts/smoke_local.sh"

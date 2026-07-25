@@ -1,4 +1,4 @@
-# Minimal stack for future integration tests (Postgres + Redis only).
+# Minimal stack for integration tests (Postgres + Redis + ClickHouse).
 services:
   postgres:
     image: pgvector/pgvector:pg16
@@ -23,3 +23,19 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8.14.39
+    environment:
+      CLICKHOUSE_DB: ibex
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: ""
+    ports:
+      - "8124:8123"
+      - "9003:9000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8123/ping | grep -q Ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s

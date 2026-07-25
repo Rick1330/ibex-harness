@@ -785,7 +785,7 @@ All keys prefixed with org_id for isolation:
 
 **Purpose**: Append-only event storage for traces, analytics, billing
 
-**Version**: ClickHouse 23.x
+**Version**: ClickHouse 24.8.x (compose pin `clickhouse/clickhouse-server:24.8.14.39`)
 
 **Why ClickHouse**:
 
@@ -798,70 +798,21 @@ All keys prefixed with org_id for isolation:
 **Major Tables**:
 
 ```sql
--- Inference Traces
-CREATE TABLE inference_traces (
-  trace_id UUID,
+-- Phase 2 canonical (ADR-0033 / migration 000001)
+CREATE TABLE ibex.llm_traces (
+  request_id String,
   org_id UUID,
   agent_id UUID,
-  session_id UUID,
+  -- ... tokens, latency breakdown, outcome; no prompt/completion content
+  requested_at DateTime64(3, 'UTC'),
+  event_date Date MATERIALIZED toDate(requested_at)
+) ENGINE = MergeTree()
+PARTITION BY toYYYYMM(event_date)
+ORDER BY (org_id, agent_id, requested_at)
+TTL event_date + INTERVAL 90 DAY;
 
-  -- Request
-  model String,
-  prompt_tokens UInt32,
-  prompt_hash String,
-
-  -- Response
-  completion_tokens UInt32,
-  response_length UInt32,
-
-  -- Performance
-  total_latency_ms UInt32,
-  provider_latency_ms UInt32,
-  proxy_overhead_ms UInt16,
-
-  -- Memory
-  memories_retrieved UInt8,
-  memory_ids Array(UUID),
-
-  -- Status
-  status Enum8('success' = 1, 'error' = 2, 'timeout' = 3),
-  error_type Nullable(String),
-
-  created_at DateTime64(3)
-)
-ENGINE = MergeTree()
-PARTITION BY toYYYYMM(created_at)
-ORDER BY (org_id, agent_id, created_at)
-TTL created_at + INTERVAL 90 DAY;
-
--- Billing Events
-CREATE TABLE billing_events (
-  org_id UUID,
-  event_type String, -- token_usage, memory_write, embedding_generated
-  quantity UInt64,
-  unit_cost_cents Decimal(10,2),
-  total_cost_cents Decimal(10,2),
-  metadata String, -- JSON
-  created_at DateTime64(3)
-)
-ENGINE = MergeTree()
-PARTITION BY toYYYYMM(created_at)
-ORDER BY (org_id, created_at);
-
--- Behavioral Fingerprints
-CREATE TABLE behavioral_fingerprints (
-  agent_id UUID,
-  computed_at DateTime64(3),
-  avg_prompt_tokens Float32,
-  avg_completion_tokens Float32,
-  tool_call_rate Float32,
-  error_rate Float32,
-  -- ... more features
-  embedding_centroid Array(Float32),
-  PRIMARY KEY (agent_id, computed_at)
-)
-ENGINE = MergeTree()
-ORDER BY (agent_id, computed_at);
+-- Future / Phase 3+ (not applied in Phase 2): richer inference_traces + billing MVs
+-- See DATABASE_SCHEMA.md "Future ClickHouse tables"
 ```
 
 **Partitioning Strategy**:

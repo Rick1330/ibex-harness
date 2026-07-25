@@ -6,7 +6,7 @@ endif
 
 DEV_TOOL := infra/scripts/dev-tool.sh
 
-.PHONY: help lint-docs security-scan repo-guards proto-lint proto-breaking proto-gen proto-test proto-test-integration test-integration coverage-report coverage-gate compose-dev-up compose-dev-down compose-dev-reset compose-dev-logs compose-dev-ps compose-test-up compose-test-down db-migrate db-migrate-down db-version db-seed db-repair-token-fks dev-smoke verify-phase15
+.PHONY: help lint-docs security-scan repo-guards proto-lint proto-breaking proto-gen proto-test proto-test-integration test-integration coverage-report coverage-gate compose-dev-up compose-dev-down compose-dev-reset compose-dev-logs compose-dev-ps compose-test-up compose-test-down db-migrate db-migrate-down db-version db-seed db-repair-token-fks clickhouse-migrate clickhouse-migrate-down clickhouse-version dev-smoke verify-phase15
 
 help: ## Show available commands
 	@"$(BASH)" "$(DEV_TOOL)" help
@@ -79,6 +79,15 @@ db-seed: ## Seed local dev database with test org, user, agent, and PAT
 
 db-repair-token-fks: ## Fix orphaned token FKs after failed migration 008
 	@"$(BASH)" "$(DEV_TOOL)" db-repair-token-fks
+
+clickhouse-migrate: ## Apply all pending ClickHouse migrations
+	@"$(BASH)" "$(DEV_TOOL)" clickhouse-migrate
+
+clickhouse-migrate-down: ## Roll back one ClickHouse migration step
+	@"$(BASH)" "$(DEV_TOOL)" clickhouse-migrate-down
+
+clickhouse-version: ## Show current ClickHouse migration version
+	@"$(BASH)" "$(DEV_TOOL)" clickhouse-version
 
 dev-smoke: ## Run local end-to-end smoke test (auth+proxy)
 	@"$(BASH)" "$(DEV_TOOL)" dev-smoke

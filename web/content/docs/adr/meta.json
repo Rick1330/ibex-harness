@@ -33,6 +33,7 @@
     "0030-directive-versioning",
     "0031-system-prompt-injection",
     "0032-session-data-model",
+    "0033-clickhouse-schema",
     "0038-context-assembly-service"
   ]
 }

@@ -25,11 +25,11 @@ summary: "Phase 0, Phase 1, and Phase 1.5 are complete. Phase 2 (Single Provider
 <StatusBadge status="stable" /> **Phase 0 — Foundation:** complete  
 <StatusBadge status="stable" /> **Phase 1 — Core Platform:** complete  
 <StatusBadge status="stable" /> **Phase 1.5 — Public Web Product:** complete  
-<StatusBadge status="new" /> **Phase 2 — Single Provider:** in progress (2.4.4 complete; 2.5.1 next)
+<StatusBadge status="new" /> **Phase 2 — Single Provider:** in progress (2.5.1 complete; 2.5.2 next)
 
 **Last updated:** 2026-07-25  
 **Branch:** `main`  
-**Current focus:** [2.5.1 ClickHouse schema](/roadmap/phase-2-single-provider/milestones/2.5.1-clickhouse-schema)  
+**Current focus:** [2.5.2 ClickHouse client](/roadmap/phase-2-single-provider/milestones/2.5.2-clickhouse-client)  
 **Deferred:** [2.1.6 Idempotency-Key](/roadmap/phase-2-single-provider/milestones/2.1.6-idempotency-key) until after Goal 2.3 (waivable at 2.6.2)
 
 <QuickLinks
@@ -121,14 +121,14 @@ Legacy `docs.ibexharness.com` redirects to apex paths (301).
 ## Next 3 Priorities
 
 <Steps>
-  <Step title="2.5.1 — ClickHouse schema">
-    Trace analytics schema for Phase 2 exit telemetry.
-  </Step>
   <Step title="2.5.2 — ClickHouse client">
     Shared ClickHouse writer for async traces.
   </Step>
   <Step title="2.5.3 — Async trace emitter">
     Emit LLM traces to ClickHouse after each proxy turn.
+  </Step>
+  <Step title="2.6.1 — Latency benchmark">
+    Phase 2 middleware-complete p99 overhead baseline.
   </Step>
 </Steps>
 
