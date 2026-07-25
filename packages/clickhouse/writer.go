@@ -60,11 +60,23 @@ func (w *Writer) Write(record TraceRecord) error {
 	if w.closed {
 		return ErrWriterClosed
 	}
-	w.buf = append(w.buf, record)
+	w.enqueueLocked(record)
 	if len(w.buf) >= w.cfg.MaxBatchSize {
 		w.signalFlush()
 	}
 	return nil
+}
+
+func (w *Writer) enqueueLocked(record TraceRecord) {
+	if len(w.buf) >= w.cfg.MaxBufferSize {
+		drop := len(w.buf) - w.cfg.MaxBufferSize + 1
+		if drop > len(w.buf) {
+			drop = len(w.buf)
+		}
+		w.buf = w.buf[drop:]
+		w.observeDropped(drop)
+	}
+	w.buf = append(w.buf, record)
 }
 
 // Flush forces an immediate batch insert of all queued records.
@@ -73,8 +85,15 @@ func (w *Writer) Flush(ctx context.Context) error {
 	return w.insertRows(ctx, rows)
 }
 
-// Close stops the background flush goroutine and flushes remaining records.
+// Close stops the flush loop and drains with ShutdownFlushTimeout.
 func (w *Writer) Close() error {
+	ctx, cancel := context.WithTimeout(context.Background(), w.cfg.ShutdownFlushTimeout)
+	defer cancel()
+	return w.Shutdown(ctx)
+}
+
+// Shutdown stops the flush loop and drains remaining rows using ctx's deadline.
+func (w *Writer) Shutdown(ctx context.Context) error {
 	w.mu.Lock()
 	if w.closed {
 		w.mu.Unlock()
@@ -85,8 +104,6 @@ func (w *Writer) Close() error {
 	w.mu.Unlock()
 
 	w.wg.Wait()
-	ctx, cancel := context.WithTimeout(context.Background(), w.cfg.ShutdownFlushTimeout)
-	defer cancel()
 	flushErr := w.Flush(ctx)
 	closeErr := w.ins.Close()
 	if flushErr != nil {
@@ -123,7 +140,7 @@ func (w *Writer) flushBestEffort() {
 	if len(rows) == 0 {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), w.cfg.ShutdownFlushTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), w.cfg.FlushTimeout)
 	defer cancel()
 	_ = w.insertRows(ctx, rows) // best-effort: never surfaces to Write
 }
@@ -164,6 +181,13 @@ func (w *Writer) observeFlush(n int, d time.Duration, err error) {
 	w.cfg.Metrics.IncClickHouseFlush(result)
 	w.cfg.Metrics.AddClickHouseFlushRows(n)
 	w.cfg.Metrics.ObserveClickHouseFlushSeconds(d.Seconds())
+}
+
+func (w *Writer) observeDropped(n int) {
+	if n <= 0 || w.cfg.Metrics == nil {
+		return
+	}
+	w.cfg.Metrics.AddClickHouseDroppedRows(n)
 }
 
 func (w *Writer) logFlushError(err error, n int) {

@@ -107,8 +107,8 @@ func (c *Config) ApplyDefaults() {
 }
 
 func (c *Config) applyClickHouseDefaults() {
-	applyIntDefault(&c.ClickHouseBatchSize, 500)
-	applyIntDefault(&c.ClickHouseFlushMS, 200)
+	applyIntDefaultZeroOnly(&c.ClickHouseBatchSize, 500)
+	applyIntDefaultZeroOnly(&c.ClickHouseFlushMS, 200)
 }
 
 func (c *Config) applyIdentityDefaults() {
@@ -183,6 +183,14 @@ func applyDurationDefaultZeroOnly(dst *time.Duration, def time.Duration) {
 
 func applyIntDefault(dst *int, def int) {
 	if *dst < 1 {
+		*dst = def
+	}
+}
+
+// applyIntDefaultZeroOnly defaults only unset (zero) values so explicit
+// negatives survive to Validate() and fail closed.
+func applyIntDefaultZeroOnly(dst *int, def int) {
+	if *dst == 0 {
 		*dst = def
 	}
 }

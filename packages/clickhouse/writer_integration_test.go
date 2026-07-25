@@ -51,8 +51,9 @@ func TestIntegration_Writer_InsertAndSelect(t *testing.T) {
 
 	var n uint64
 	err = conn.QueryRow(context.Background(), `
-		SELECT count() FROM ibex.llm_traces WHERE request_id = {id:String}`,
-		rec.RequestID).Scan(&n)
+		SELECT count() FROM ibex.llm_traces
+		WHERE org_id = {org:UUID} AND request_id = {id:String}`,
+		rec.OrgID, rec.RequestID).Scan(&n)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,6 +84,7 @@ func openAssertConn(t *testing.T, dsn string) driver.Conn {
 
 func resetTraces(t *testing.T, conn driver.Conn) {
 	t.Helper()
+	// nosemgrep: ibex-clickhouse-missing-org-filter -- test-only DDL; TRUNCATE has no tenant predicate
 	if err := conn.Exec(context.Background(), `TRUNCATE TABLE IF EXISTS ibex.llm_traces`); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
@@ -90,6 +92,7 @@ func resetTraces(t *testing.T, conn driver.Conn) {
 
 func assertNoContentColumns(t *testing.T, conn driver.Conn) {
 	t.Helper()
+	// nosemgrep: ibex-clickhouse-missing-org-filter -- system.columns is schema metadata, not tenant data
 	rows, err := conn.Query(context.Background(), `
 		SELECT name FROM system.columns
 		WHERE database = 'ibex' AND table = 'llm_traces'`)

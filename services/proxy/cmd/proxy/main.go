@@ -656,7 +656,7 @@ func registerShutdownHooks(sd *shutdown.Coordinator, opts shutdownOpts) {
 	})
 	sd.Register(func(ctx context.Context) error {
 		if opts.traceWriter != nil {
-			return opts.traceWriter.Close()
+			return opts.traceWriter.Shutdown(ctx)
 		}
 		return nil
 	})

@@ -105,6 +105,32 @@ func TestUnit_Config_ApplyDefaults(t *testing.T) {
 	}
 }
 
+func TestUnit_Config_ClickHouseZeroDefaultsNegativeRejected(t *testing.T) {
+	t.Parallel()
+	cfg := Config{}
+	cfg.ApplyDefaults()
+	if cfg.ClickHouseBatchSize != 500 || cfg.ClickHouseFlushMS != 200 {
+		t.Fatalf("zero defaults: batch=%d flush=%d", cfg.ClickHouseBatchSize, cfg.ClickHouseFlushMS)
+	}
+
+	neg := validProxyConfig()
+	neg.ClickHouseBatchSize = -10
+	neg.ApplyDefaults()
+	if neg.ClickHouseBatchSize != -10 {
+		t.Fatalf("negative batch should survive defaults, got %d", neg.ClickHouseBatchSize)
+	}
+	if err := neg.Validate(); err == nil {
+		t.Fatal("expected validate error for negative batch")
+	}
+
+	negFlush := validProxyConfig()
+	negFlush.ClickHouseFlushMS = -1
+	negFlush.ApplyDefaults()
+	if err := negFlush.Validate(); err == nil {
+		t.Fatal("expected validate error for negative flush")
+	}
+}
+
 func TestUnit_Config_NegativeDurationNotDefaulted(t *testing.T) {
 	t.Parallel()
 	cfg := validProxyConfig()

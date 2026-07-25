@@ -51,6 +51,7 @@ func (r *ProxyRegistry) register(serviceName string) {
 		r.sessionSweeperRuns,
 		r.clickhouseFlushTotal,
 		r.clickhouseFlushRows,
+		r.clickhouseDroppedRows,
 		r.clickhouseFlushSec,
 		r.processUp,
 	)
