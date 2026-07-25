@@ -113,13 +113,23 @@ func (s *Sweeper) Start() {
 }
 
 // Stop cancels the ticker and waits for the loop (and in-flight tick) to exit.
-func (s *Sweeper) Stop(context.Context) error {
+// Returns ctx.Err() if the caller's deadline or cancellation wins first.
+func (s *Sweeper) Stop(ctx context.Context) error {
 	if s.cancel == nil {
 		return nil
 	}
 	s.cancel()
-	s.wg.Wait()
-	return nil
+	done := make(chan struct{})
+	go func() {
+		s.wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (s *Sweeper) loop(ctx context.Context) {

@@ -121,14 +121,14 @@ Legacy `docs.ibexharness.com` redirects to apex paths (301).
 ## Next 3 Priorities
 
 <Steps>
-  <Step title="2.4.4 — Session idle-timeout sweeper">
-    Abandon idle sessions; required at Phase 2 exit.
-  </Step>
   <Step title="2.5.1 — ClickHouse schema">
     Trace analytics schema for Phase 2 exit telemetry.
   </Step>
   <Step title="2.5.2 — ClickHouse client">
     Shared ClickHouse writer for async traces.
+  </Step>
+  <Step title="2.5.3 — Async trace emitter">
+    Emit LLM traces to ClickHouse after each proxy turn.
   </Step>
 </Steps>
 

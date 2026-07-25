@@ -50,4 +50,10 @@ var invalidProxyConfigCases = []struct {
 		c.SessionIdleTimeout = time.Second
 		c.SessionSweepInterval = time.Minute
 	}},
+	{name: "session idle negative", mutate: func(c *Config) {
+		c.SessionIdleTimeout = -time.Minute
+	}},
+	{name: "session sweep interval negative", mutate: func(c *Config) {
+		c.SessionSweepInterval = -time.Second
+	}},
 }

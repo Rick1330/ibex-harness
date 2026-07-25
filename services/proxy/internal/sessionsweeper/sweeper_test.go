@@ -133,7 +133,9 @@ func TestUnit_Sweeper_TickAbandonsAndInvalidates(t *testing.T) {
 
 	waitForSweeperRun(t, metrics, "ok")
 	assertSweeperAbandonMetrics(t, metrics)
-	assertCacheInvalidated(t, cache, org, agent, ext)
+	assertCacheInvalidated(t, cache, sessioncache.LookupKey{
+		OrgID: org, AgentID: agent, ExternalID: ext,
+	})
 	assertSweeperIdleCutoff(t, store, fixed.Add(-time.Hour))
 }
 
@@ -146,11 +148,9 @@ func assertSweeperAbandonMetrics(t *testing.T, metrics *fakeMetrics) {
 	}
 }
 
-func assertCacheInvalidated(t *testing.T, cache *sessioncache.Cache, org, agent uuid.UUID, ext string) {
+func assertCacheInvalidated(t *testing.T, cache *sessioncache.Cache, key sessioncache.LookupKey) {
 	t.Helper()
-	if _, hit := cache.Get(context.Background(), sessioncache.LookupKey{
-		OrgID: org, AgentID: agent, ExternalID: ext,
-	}); hit {
+	if _, hit := cache.Get(context.Background(), key); hit {
 		t.Fatal("expected cache invalidate")
 	}
 }
@@ -198,4 +198,111 @@ func TestUnit_Sweeper_NewValidation(t *testing.T) {
 	}, sessionsweeper.Deps{Store: &fakeStore{}}); err == nil {
 		t.Fatal("expected idle < interval error")
 	}
+}
+
+func TestUnit_Sweeper_StopHonorsContext(t *testing.T) {
+	t.Parallel()
+	entered := make(chan struct{}, 1)
+	release := make(chan struct{})
+	store := &blockingStore{entered: entered, release: release}
+	sw, err := sessionsweeper.New(sessionsweeper.Config{
+		IdleTimeout: time.Hour, Interval: time.Hour,
+	}, sessionsweeper.Deps{Store: store})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sw.Stop(context.Background()); err != nil {
+		t.Fatalf("stop before start: %v", err)
+	}
+	sw.Start()
+	sw.Start() // second start is a no-op
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("tick did not enter store")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	err = sw.Stop(ctx)
+	if err == nil {
+		t.Fatal("expected context error while tick blocked")
+	}
+	close(release)
+	if err := sw.Stop(context.Background()); err != nil {
+		t.Fatalf("final stop: %v", err)
+	}
+}
+
+type blockingStore struct {
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (b *blockingStore) GetOrCreate(context.Context, session.GetOrCreateParams) (*session.Session, error) {
+	return nil, errors.New("unused")
+}
+func (b *blockingStore) AppendCheckpoint(context.Context, session.CheckpointParams) error {
+	return errors.New("unused")
+}
+func (b *blockingStore) Complete(context.Context, uuid.UUID, uuid.UUID) error {
+	return errors.New("unused")
+}
+func (b *blockingStore) AbandonIdle(context.Context, session.AbandonIdleParams) (session.AbandonIdleResult, error) {
+	select {
+	case b.entered <- struct{}{}:
+	default:
+	}
+	<-b.release
+	return session.AbandonIdleResult{}, nil
+}
+
+func TestUnit_Sweeper_EmptyExternalSkipsInvalidate(t *testing.T) {
+	t.Parallel()
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	cache, err := sessioncache.New(client, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	empty := ""
+	store := &fakeStore{result: session.AbandonIdleResult{
+		Abandoned: []session.AbandonedSession{{
+			SessionID: uuid.New(), OrgID: uuid.New(), AgentID: uuid.New(), ExternalID: &empty,
+		}},
+	}}
+	metrics := &fakeMetrics{}
+	sw, err := sessionsweeper.New(sessionsweeper.Config{
+		IdleTimeout: time.Hour, Interval: time.Hour,
+	}, sessionsweeper.Deps{
+		Store: store, Cache: cache, Metrics: metrics, Log: logger.Discard("proxy"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sw.Start()
+	t.Cleanup(func() { _ = sw.Stop(context.Background()) })
+	waitForSweeperRun(t, metrics, "ok")
+}
+
+func TestUnit_Sweeper_DefaultsAndNilMetrics(t *testing.T) {
+	t.Parallel()
+	store := &fakeStore{result: session.AbandonIdleResult{}}
+	sw, err := sessionsweeper.New(sessionsweeper.Config{}, sessionsweeper.Deps{Store: store})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sw.Start()
+	t.Cleanup(func() { _ = sw.Stop(context.Background()) })
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		store.mu.Lock()
+		n := store.calls
+		store.mu.Unlock()
+		if n > 0 {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("expected tick with default interval")
 }

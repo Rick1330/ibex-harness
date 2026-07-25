@@ -65,6 +65,13 @@ func storeSQLMockCases() []storeSQLMockCase {
 		{name: "abandon_idle_skip_lock", setup: expectAbandonIdleSkipLock, run: runAbandonIdleSkipLock},
 		{name: "abandon_idle_empty", setup: expectAbandonIdleEmpty, run: runAbandonIdleEmpty},
 		{name: "abandon_idle_sa_fail", setup: expectAbandonIdleSAFail, run: runAbandonIdleErr},
+		{name: "abandon_idle_begin_fail", setup: expectAbandonIdleBeginFail, run: runAbandonIdleErr},
+		{name: "abandon_idle_lock_fail", setup: expectAbandonIdleLockFail, run: runAbandonIdleErr},
+		{name: "abandon_idle_query_fail", setup: expectAbandonIdleQueryFail, run: runAbandonIdleErr},
+		{name: "abandon_idle_commit_fail", setup: expectAbandonIdleCommitFail, run: runAbandonIdleErr},
+		{name: "abandon_idle_null_ext", setup: expectAbandonIdleNullExt, run: runAbandonIdleOK},
+		{name: "abandon_idle_zero_idle", setup: expectNoop, run: runAbandonIdleZeroIdle},
+		{name: "abandon_idle_limit_clamp", setup: expectAbandonIdleLimitClamp, run: runAbandonIdleLimitClamp},
 	}
 }
 
@@ -355,6 +362,49 @@ func expectAbandonIdleSAFail(mock sqlmock.Sqlmock, ids mockIDs) {
 	mock.ExpectRollback()
 }
 
+func expectAbandonIdleBeginFail(mock sqlmock.Sqlmock, ids mockIDs) {
+	mock.ExpectBegin().WillReturnError(errors.New("begin boom"))
+}
+
+func expectAbandonIdleLockFail(mock sqlmock.Sqlmock, ids mockIDs) {
+	beginWithServiceAccount(mock)
+	mock.ExpectQuery("pg_try_advisory_xact_lock").
+		WithArgs(SweepAdvisoryLockKey).
+		WillReturnError(errors.New("lock boom"))
+	mock.ExpectRollback()
+}
+
+func expectAbandonIdleQueryFail(mock sqlmock.Sqlmock, ids mockIDs) {
+	expectAbandonIdleLock(mock, true)
+	mock.ExpectQuery("WITH victims AS").
+		WithArgs(StatusActive, sqlmock.AnyArg(), defaultAbandonIdleLimit, StatusAbandoned).
+		WillReturnError(errors.New("query boom"))
+	mock.ExpectRollback()
+}
+
+func expectAbandonIdleCommitFail(mock sqlmock.Sqlmock, ids mockIDs) {
+	expectAbandonIdleLock(mock, true)
+	expectAbandonIdleVictims(mock, ids, sqlmock.NewRows([]string{"id", "org_id", "agent_id", "external_id"}))
+	mock.ExpectCommit().WillReturnError(errors.New("commit boom"))
+}
+
+func expectAbandonIdleNullExt(mock sqlmock.Sqlmock, ids mockIDs) {
+	expectAbandonIdleLock(mock, true)
+	expectAbandonIdleVictims(mock, ids, sqlmock.NewRows([]string{"id", "org_id", "agent_id", "external_id"}).
+		AddRow(ids.sessionID, ids.orgID, ids.agentID, nil))
+	mock.ExpectCommit()
+}
+
+func expectAbandonIdleLimitClamp(mock sqlmock.Sqlmock, ids mockIDs) {
+	expectAbandonIdleLock(mock, true)
+	mock.ExpectQuery("WITH victims AS").
+		WithArgs(StatusActive, sqlmock.AnyArg(), maxAbandonIdleLimit, StatusAbandoned).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "org_id", "agent_id", "external_id"}))
+	mock.ExpectCommit()
+}
+
+func expectNoop(sqlmock.Sqlmock, mockIDs) {}
+
 type abandonIdleExpect struct {
 	skipped bool
 	count   int
@@ -398,6 +448,27 @@ func runAbandonIdleEmpty(t *testing.T, store *PostgresStore, ids mockIDs) {
 
 func runAbandonIdleErr(t *testing.T, store *PostgresStore, ids mockIDs) {
 	runAbandonIdleCase(t, store, ids, abandonIdleExpect{wantErr: true})
+}
+
+func runAbandonIdleZeroIdle(t *testing.T, store *PostgresStore, _ mockIDs) {
+	t.Helper()
+	if _, err := store.AbandonIdle(context.Background(), AbandonIdleParams{}); err == nil {
+		t.Fatal("expected IdleBefore error")
+	}
+}
+
+func runAbandonIdleLimitClamp(t *testing.T, store *PostgresStore, _ mockIDs) {
+	t.Helper()
+	res, err := store.AbandonIdle(context.Background(), AbandonIdleParams{
+		IdleBefore: time.Now().UTC(),
+		Limit:      maxAbandonIdleLimit + 100,
+	})
+	if err != nil {
+		t.Fatalf("AbandonIdle: %v", err)
+	}
+	if res.Count() != 0 {
+		t.Fatalf("count=%d", res.Count())
+	}
 }
 
 func baseGetParams(ids mockIDs, ext string) GetOrCreateParams {

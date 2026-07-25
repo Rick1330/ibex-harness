@@ -13,6 +13,7 @@ import (
 	ibexmetrics "github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/packages/provider"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
+	"github.com/Rick1330/ibex-harness/packages/session"
 	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
 	proxyhttp "github.com/Rick1330/ibex-harness/services/proxy/internal/http"
@@ -413,4 +414,44 @@ type staticDirectiveLoader struct{}
 
 func (staticDirectiveLoader) Load(context.Context, uuid.UUID, uuid.UUID) (directive.Resolved, error) {
 	return directive.Resolved{}, nil
+}
+
+func TestUnit_NewSessionSweeper(t *testing.T) {
+	t.Parallel()
+	got, err := newSessionSweeper(sessionSweeperSetup{})
+	if err != nil || got != nil {
+		t.Fatalf("nil store: got=%v err=%v", got, err)
+	}
+
+	cfg := config.Config{SessionIdleTimeout: time.Hour, SessionSweepInterval: time.Minute}
+	cfg.ApplyDefaults()
+	store := stubSessionStore{}
+	sw, err := newSessionSweeper(sessionSweeperSetup{Store: store, Config: cfg})
+	if err != nil || sw == nil {
+		t.Fatalf("construct: sw=%v err=%v", sw, err)
+	}
+
+	bad := config.Config{SessionIdleTimeout: time.Second, SessionSweepInterval: time.Minute}
+	if _, err := newSessionSweeper(sessionSweeperSetup{Store: store, Config: bad}); err == nil {
+		t.Fatal("expected idle < interval error")
+	}
+
+	startSessionSweeper(nil, cfg, nil)
+	startSessionSweeper(sw, cfg, logger.Discard("proxy"))
+	t.Cleanup(func() { _ = sw.Stop(context.Background()) })
+}
+
+type stubSessionStore struct{}
+
+func (stubSessionStore) GetOrCreate(context.Context, session.GetOrCreateParams) (*session.Session, error) {
+	return nil, errors.New("unused")
+}
+func (stubSessionStore) AppendCheckpoint(context.Context, session.CheckpointParams) error {
+	return errors.New("unused")
+}
+func (stubSessionStore) Complete(context.Context, uuid.UUID, uuid.UUID) error {
+	return errors.New("unused")
+}
+func (stubSessionStore) AbandonIdle(context.Context, session.AbandonIdleParams) (session.AbandonIdleResult, error) {
+	return session.AbandonIdleResult{SkippedLock: true}, nil
 }

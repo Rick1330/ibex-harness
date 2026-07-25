@@ -66,11 +66,15 @@ func (r *ProxyRegistry) IncSessionComplete(result string) {
 }
 
 // IncSessionSweeperMarked records a session marked by the idle sweeper.
+// Unsupported status values are normalized to "error" before recording;
+// callers should use the bounded label set (e.g. "abandoned").
 func (r *ProxyRegistry) IncSessionSweeperMarked(status string) {
 	r.sessionSweeperMarked.WithLabelValues(boundSessionResult(status, sessionSweeperMarkedStatuses)).Inc()
 }
 
 // IncSessionSweeperRun records a sweeper tick outcome.
+// Unsupported result values are normalized to "error" before recording;
+// callers should use ok|error|skipped_lock|noop.
 func (r *ProxyRegistry) IncSessionSweeperRun(result string) {
 	r.sessionSweeperRuns.WithLabelValues(boundSessionResult(result, sessionSweeperRunResults)).Inc()
 }

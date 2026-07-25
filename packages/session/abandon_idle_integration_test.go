@@ -75,18 +75,13 @@ func backdateSessionUpdatedAt(t *testing.T, db *sql.DB, sessionID uuid.UUID, whe
 	t.Helper()
 	ctx := context.Background()
 	err := withServiceAccount(ctx, db, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx,
-			`ALTER TABLE ibex_core.sessions DISABLE TRIGGER sessions_updated_at`); err != nil {
+		// Avoid DISABLE TRIGGER (ACCESS EXCLUSIVE). Replica role skips user triggers.
+		if _, err := tx.ExecContext(ctx, `SELECT set_config('session_replication_role', 'replica', true)`); err != nil {
 			return err
 		}
 		_, err := tx.ExecContext(ctx,
 			`UPDATE ibex_core.sessions SET updated_at = $1 WHERE id = $2::uuid`,
 			when.UTC(), sessionID)
-		if err != nil {
-			return err
-		}
-		_, err = tx.ExecContext(ctx,
-			`ALTER TABLE ibex_core.sessions ENABLE TRIGGER sessions_updated_at`)
 		return err
 	})
 	if err != nil {

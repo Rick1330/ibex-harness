@@ -137,7 +137,7 @@ func abandonIdleInTx(ctx context.Context, tx *sql.Tx, idleBefore time.Time, limi
 	if err != nil {
 		return nil, fmt.Errorf("session: abandon idle query: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	out := make([]AbandonedSession, 0, limit)
 	for rows.Next() {

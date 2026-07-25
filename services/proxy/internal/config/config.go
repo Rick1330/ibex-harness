@@ -158,7 +158,7 @@ func (c *Config) applySessionDefaults() {
 }
 
 func applyDurationDefault(dst *time.Duration, def time.Duration) {
-	if *dst <= 0 {
+	if *dst == 0 {
 		*dst = def
 	}
 }
