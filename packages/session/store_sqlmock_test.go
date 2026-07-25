@@ -316,35 +316,35 @@ func beginWithServiceAccount(mock sqlmock.Sqlmock) {
 		WillReturnResult(sqlmock.NewResult(0, 0))
 }
 
-func expectAbandonIdleOK(mock sqlmock.Sqlmock, ids mockIDs) {
+func expectAbandonIdleLock(mock sqlmock.Sqlmock, acquired bool) {
 	beginWithServiceAccount(mock)
 	mock.ExpectQuery("pg_try_advisory_xact_lock").
 		WithArgs(SweepAdvisoryLockKey).
-		WillReturnRows(sqlmock.NewRows([]string{"pg_try_advisory_xact_lock"}).AddRow(true))
-	ext := "ext"
+		WillReturnRows(sqlmock.NewRows([]string{"pg_try_advisory_xact_lock"}).AddRow(acquired))
+}
+
+func expectAbandonIdleVictims(mock sqlmock.Sqlmock, ids mockIDs, rows *sqlmock.Rows) {
 	mock.ExpectQuery("WITH victims AS").
 		WithArgs(StatusActive, sqlmock.AnyArg(), defaultAbandonIdleLimit, StatusAbandoned).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "org_id", "agent_id", "external_id"}).
-			AddRow(ids.sessionID, ids.orgID, ids.agentID, ext))
+		WillReturnRows(rows)
+}
+
+func expectAbandonIdleOK(mock sqlmock.Sqlmock, ids mockIDs) {
+	expectAbandonIdleLock(mock, true)
+	ext := "ext"
+	expectAbandonIdleVictims(mock, ids, sqlmock.NewRows([]string{"id", "org_id", "agent_id", "external_id"}).
+		AddRow(ids.sessionID, ids.orgID, ids.agentID, ext))
 	mock.ExpectCommit()
 }
 
 func expectAbandonIdleSkipLock(mock sqlmock.Sqlmock, ids mockIDs) {
-	beginWithServiceAccount(mock)
-	mock.ExpectQuery("pg_try_advisory_xact_lock").
-		WithArgs(SweepAdvisoryLockKey).
-		WillReturnRows(sqlmock.NewRows([]string{"pg_try_advisory_xact_lock"}).AddRow(false))
+	expectAbandonIdleLock(mock, false)
 	mock.ExpectCommit()
 }
 
 func expectAbandonIdleEmpty(mock sqlmock.Sqlmock, ids mockIDs) {
-	beginWithServiceAccount(mock)
-	mock.ExpectQuery("pg_try_advisory_xact_lock").
-		WithArgs(SweepAdvisoryLockKey).
-		WillReturnRows(sqlmock.NewRows([]string{"pg_try_advisory_xact_lock"}).AddRow(true))
-	mock.ExpectQuery("WITH victims AS").
-		WithArgs(StatusActive, sqlmock.AnyArg(), defaultAbandonIdleLimit, StatusAbandoned).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "org_id", "agent_id", "external_id"}))
+	expectAbandonIdleLock(mock, true)
+	expectAbandonIdleVictims(mock, ids, sqlmock.NewRows([]string{"id", "org_id", "agent_id", "external_id"}))
 	mock.ExpectCommit()
 }
 
@@ -355,55 +355,49 @@ func expectAbandonIdleSAFail(mock sqlmock.Sqlmock, ids mockIDs) {
 	mock.ExpectRollback()
 }
 
-func runAbandonIdleOK(t *testing.T, store *PostgresStore, ids mockIDs) {
+type abandonIdleExpect struct {
+	skipped bool
+	count   int
+	wantErr bool
+	checkID bool
+}
+
+func runAbandonIdleCase(t *testing.T, store *PostgresStore, ids mockIDs, want abandonIdleExpect) {
 	t.Helper()
 	res, err := store.AbandonIdle(context.Background(), AbandonIdleParams{
 		IdleBefore: time.Now().UTC(),
 	})
+	if want.wantErr {
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		return
+	}
 	if err != nil {
 		t.Fatalf("AbandonIdle: %v", err)
 	}
-	if res.SkippedLock || res.Count() != 1 {
-		t.Fatalf("res=%+v", res)
+	if res.SkippedLock != want.skipped || res.Count() != want.count {
+		t.Fatalf("res=%+v want skipped=%v count=%d", res, want.skipped, want.count)
 	}
-	if res.Abandoned[0].SessionID != ids.sessionID {
+	if want.checkID && res.Abandoned[0].SessionID != ids.sessionID {
 		t.Fatalf("id=%s", res.Abandoned[0].SessionID)
 	}
 }
 
+func runAbandonIdleOK(t *testing.T, store *PostgresStore, ids mockIDs) {
+	runAbandonIdleCase(t, store, ids, abandonIdleExpect{count: 1, checkID: true})
+}
+
 func runAbandonIdleSkipLock(t *testing.T, store *PostgresStore, ids mockIDs) {
-	t.Helper()
-	res, err := store.AbandonIdle(context.Background(), AbandonIdleParams{
-		IdleBefore: time.Now().UTC(),
-	})
-	if err != nil {
-		t.Fatalf("AbandonIdle: %v", err)
-	}
-	if !res.SkippedLock || res.Count() != 0 {
-		t.Fatalf("res=%+v", res)
-	}
+	runAbandonIdleCase(t, store, ids, abandonIdleExpect{skipped: true})
 }
 
 func runAbandonIdleEmpty(t *testing.T, store *PostgresStore, ids mockIDs) {
-	t.Helper()
-	res, err := store.AbandonIdle(context.Background(), AbandonIdleParams{
-		IdleBefore: time.Now().UTC(),
-	})
-	if err != nil {
-		t.Fatalf("AbandonIdle: %v", err)
-	}
-	if res.SkippedLock || res.Count() != 0 {
-		t.Fatalf("res=%+v", res)
-	}
+	runAbandonIdleCase(t, store, ids, abandonIdleExpect{})
 }
 
 func runAbandonIdleErr(t *testing.T, store *PostgresStore, ids mockIDs) {
-	t.Helper()
-	if _, err := store.AbandonIdle(context.Background(), AbandonIdleParams{
-		IdleBefore: time.Now().UTC(),
-	}); err == nil {
-		t.Fatal("expected error")
-	}
+	runAbandonIdleCase(t, store, ids, abandonIdleExpect{wantErr: true})
 }
 
 func baseGetParams(ids mockIDs, ext string) GetOrCreateParams {

@@ -148,26 +148,24 @@ func (c *Config) applyRateLimitDefaults() {
 }
 
 func (c *Config) applySessionDefaults() {
-	if c.DirectiveCacheTTL <= 0 {
-		c.DirectiveCacheTTL = defaultDirectiveCacheTTL
+	applyDurationDefault(&c.DirectiveCacheTTL, defaultDirectiveCacheTTL)
+	applyDurationDefault(&c.SessionCacheTTL, defaultSessionCacheTTL)
+	applyIntDefault(&c.CheckpointWorkers, defaultCheckpointWorkers)
+	applyIntDefault(&c.CheckpointQueue, defaultCheckpointQueue)
+	applyDurationDefault(&c.SessionGetOrCreateTO, defaultSessionGetOrCreateTO)
+	applyDurationDefault(&c.SessionIdleTimeout, defaultSessionIdleTimeout)
+	applyDurationDefault(&c.SessionSweepInterval, defaultSessionSweepInterval)
+}
+
+func applyDurationDefault(dst *time.Duration, def time.Duration) {
+	if *dst <= 0 {
+		*dst = def
 	}
-	if c.SessionCacheTTL <= 0 {
-		c.SessionCacheTTL = defaultSessionCacheTTL
-	}
-	if c.CheckpointWorkers < 1 {
-		c.CheckpointWorkers = defaultCheckpointWorkers
-	}
-	if c.CheckpointQueue < 1 {
-		c.CheckpointQueue = defaultCheckpointQueue
-	}
-	if c.SessionGetOrCreateTO <= 0 {
-		c.SessionGetOrCreateTO = defaultSessionGetOrCreateTO
-	}
-	if c.SessionIdleTimeout <= 0 {
-		c.SessionIdleTimeout = defaultSessionIdleTimeout
-	}
-	if c.SessionSweepInterval <= 0 {
-		c.SessionSweepInterval = defaultSessionSweepInterval
+}
+
+func applyIntDefault(dst *int, def int) {
+	if *dst < 1 {
+		*dst = def
 	}
 }
 

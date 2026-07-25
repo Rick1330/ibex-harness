@@ -73,6 +73,10 @@ func (s *PostgresStore) abandonIdle(ctx context.Context, p AbandonIdleParams) (A
 	//nolint:errcheck // rollback after commit is a no-op
 	defer func() { _ = tx.Rollback() }()
 
+	return abandonIdleTx(ctx, tx, p.IdleBefore, limit)
+}
+
+func abandonIdleTx(ctx context.Context, tx *sql.Tx, idleBefore time.Time, limit int) (AbandonIdleResult, error) {
 	if err := setServiceAccountRLS(ctx, tx); err != nil {
 		return AbandonIdleResult{}, err
 	}
@@ -81,13 +85,10 @@ func (s *PostgresStore) abandonIdle(ctx context.Context, p AbandonIdleParams) (A
 		return AbandonIdleResult{}, err
 	}
 	if !acquired {
-		if err := tx.Commit(); err != nil {
-			return AbandonIdleResult{}, fmt.Errorf("session: commit abandon idle skip: %w", err)
-		}
-		return AbandonIdleResult{SkippedLock: true}, nil
+		return commitSkippedSweepLock(tx)
 	}
 
-	abandoned, err := abandonIdleInTx(ctx, tx, p.IdleBefore, limit)
+	abandoned, err := abandonIdleInTx(ctx, tx, idleBefore, limit)
 	if err != nil {
 		return AbandonIdleResult{}, err
 	}
@@ -95,6 +96,13 @@ func (s *PostgresStore) abandonIdle(ctx context.Context, p AbandonIdleParams) (A
 		return AbandonIdleResult{}, fmt.Errorf("session: commit abandon idle: %w", err)
 	}
 	return AbandonIdleResult{Abandoned: abandoned}, nil
+}
+
+func commitSkippedSweepLock(tx *sql.Tx) (AbandonIdleResult, error) {
+	if err := tx.Commit(); err != nil {
+		return AbandonIdleResult{}, fmt.Errorf("session: commit abandon idle skip: %w", err)
+	}
+	return AbandonIdleResult{SkippedLock: true}, nil
 }
 
 func validateAbandonIdleParams(p AbandonIdleParams) error {

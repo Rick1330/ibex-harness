@@ -65,6 +65,34 @@ func (m *fakeMetrics) IncSessionSweeperRun(result string) {
 	m.runs[result]++
 }
 
+func waitForSweeperRun(t *testing.T, metrics *fakeMetrics, result string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		metrics.mu.Lock()
+		n := metrics.runs[result]
+		metrics.mu.Unlock()
+		if n > 0 {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("want run result %s", result)
+}
+
+func newTestSweeper(t *testing.T, store *fakeStore, metrics *fakeMetrics, interval time.Duration) *sessionsweeper.Sweeper {
+	t.Helper()
+	sw, err := sessionsweeper.New(sessionsweeper.Config{
+		IdleTimeout: time.Hour, Interval: interval,
+	}, sessionsweeper.Deps{Store: store, Metrics: metrics})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sw.Start()
+	t.Cleanup(func() { _ = sw.Stop(context.Background()) })
+	return sw
+}
+
 func TestUnit_Sweeper_TickAbandonsAndInvalidates(t *testing.T) {
 	t.Parallel()
 
@@ -100,36 +128,39 @@ func TestUnit_Sweeper_TickAbandonsAndInvalidates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-
 	sw.Start()
 	t.Cleanup(func() { _ = sw.Stop(context.Background()) })
 
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		metrics.mu.Lock()
-		ok := metrics.runs["ok"] > 0
-		metrics.mu.Unlock()
-		if ok {
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
+	waitForSweeperRun(t, metrics, "ok")
+	assertSweeperAbandonMetrics(t, metrics)
+	assertCacheInvalidated(t, cache, org, agent, ext)
+	assertSweeperIdleCutoff(t, store, fixed.Add(-time.Hour))
+}
 
+func assertSweeperAbandonMetrics(t *testing.T, metrics *fakeMetrics) {
+	t.Helper()
 	metrics.mu.Lock()
 	defer metrics.mu.Unlock()
 	if metrics.runs["ok"] < 1 || metrics.marked < 1 {
 		t.Fatalf("metrics=%+v", metrics)
 	}
+}
+
+func assertCacheInvalidated(t *testing.T, cache *sessioncache.Cache, org, agent uuid.UUID, ext string) {
+	t.Helper()
 	if _, hit := cache.Get(context.Background(), sessioncache.LookupKey{
 		OrgID: org, AgentID: agent, ExternalID: ext,
 	}); hit {
 		t.Fatal("expected cache invalidate")
 	}
+}
+
+func assertSweeperIdleCutoff(t *testing.T, store *fakeStore, want time.Time) {
+	t.Helper()
 	store.mu.Lock()
 	defer store.mu.Unlock()
-	wantCutoff := fixed.Add(-time.Hour)
-	if !store.lastIdle.Equal(wantCutoff) {
-		t.Fatalf("idleBefore=%s want %s", store.lastIdle, wantCutoff)
+	if !store.lastIdle.Equal(want) {
+		t.Fatalf("idleBefore=%s want %s", store.lastIdle, want)
 	}
 }
 
@@ -151,26 +182,8 @@ func TestUnit_Sweeper_SkipLockAndError(t *testing.T) {
 			t.Parallel()
 			store := &fakeStore{result: tc.result, err: tc.err}
 			metrics := &fakeMetrics{}
-			sw, err := sessionsweeper.New(sessionsweeper.Config{
-				IdleTimeout: time.Hour, Interval: time.Hour,
-			}, sessionsweeper.Deps{Store: store, Metrics: metrics})
-			if err != nil {
-				t.Fatal(err)
-			}
-			sw.Start()
-			t.Cleanup(func() { _ = sw.Stop(context.Background()) })
-
-			deadline := time.Now().Add(2 * time.Second)
-			for time.Now().Before(deadline) {
-				metrics.mu.Lock()
-				n := metrics.runs[tc.want]
-				metrics.mu.Unlock()
-				if n > 0 {
-					return
-				}
-				time.Sleep(5 * time.Millisecond)
-			}
-			t.Fatalf("want run result %s", tc.want)
+			newTestSweeper(t, store, metrics, time.Hour)
+			waitForSweeperRun(t, metrics, tc.want)
 		})
 	}
 }

@@ -89,6 +89,10 @@ func (m *memSessionStore) AppendCheckpoint(_ context.Context, p session.Checkpoi
 
 func (m *memSessionStore) Complete(context.Context, uuid.UUID, uuid.UUID) error { return nil }
 
+func (m *memSessionStore) AbandonIdle(context.Context, session.AbandonIdleParams) (session.AbandonIdleResult, error) {
+	return session.AbandonIdleResult{}, nil
+}
+
 func (m *memSessionStore) waitAppends(t *testing.T, n int) {
 	t.Helper()
 	if !waitUntil(2*time.Second, 5*time.Millisecond, func() bool {
