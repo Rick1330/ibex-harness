@@ -64,7 +64,7 @@ func resetClickHouse(t *testing.T, db *sql.DB) {
 	}
 }
 
-func TestUnit_Migrate_UpIsIdempotent(t *testing.T) {
+func TestIntegration_Migrate_UpIsIdempotent(t *testing.T) {
 	conn := testMigrateConn()
 	db := openTestCH(t)
 	defer db.Close()
@@ -85,7 +85,7 @@ func TestUnit_Migrate_UpIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestUnit_Migrate_SchemaAndTTL(t *testing.T) {
+func TestIntegration_Migrate_SchemaAndTTL(t *testing.T) {
 	conn := testMigrateConn()
 	db := openTestCH(t)
 	defer db.Close()
@@ -180,7 +180,7 @@ func loadColumnNames(t *testing.T, db *sql.DB) map[string]struct{} {
 	return cols
 }
 
-func TestUnit_Migrate_ExplainUsesPrimaryKey(t *testing.T) {
+func TestIntegration_Migrate_ExplainUsesPrimaryKey(t *testing.T) {
 	conn := testMigrateConn()
 	db := openTestCH(t)
 	defer db.Close()
@@ -275,7 +275,7 @@ func stringifyScan(v any) string {
 	}
 }
 
-func TestUnit_Migrate_DownUpRoundTrip(t *testing.T) {
+func TestIntegration_Migrate_DownUpRoundTrip(t *testing.T) {
 	conn := testMigrateConn()
 	db := openTestCH(t)
 	defer db.Close()
