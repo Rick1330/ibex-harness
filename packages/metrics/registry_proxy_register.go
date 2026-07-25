@@ -12,6 +12,7 @@ func (r *ProxyRegistry) register(serviceName string) {
 	r.initRevocationMetrics()
 	r.initDirectiveMetrics()
 	r.initSessionMetrics()
+	r.initClickHouseMetrics()
 	r.processUp = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name:        "ibex_process_up",
 		Help:        "1 if the service process is running.",
@@ -48,6 +49,10 @@ func (r *ProxyRegistry) register(serviceName string) {
 		r.sessionComplete,
 		r.sessionSweeperMarked,
 		r.sessionSweeperRuns,
+		r.clickhouseFlushTotal,
+		r.clickhouseFlushRows,
+		r.clickhouseDroppedRows,
+		r.clickhouseFlushSec,
 		r.processUp,
 	)
 	r.processUp.Set(1)

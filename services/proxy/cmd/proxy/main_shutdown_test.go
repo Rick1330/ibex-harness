@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	ibexch "github.com/Rick1330/ibex-harness/packages/clickhouse"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
 	"github.com/Rick1330/ibex-harness/packages/telemetry"
@@ -110,5 +111,38 @@ func TestRunWithShutdown_onSignal(t *testing.T) {
 			opts, trigger := tc.opts(t)
 			runShutdownTest(t, opts, 0, trigger)
 		})
+	}
+}
+
+func TestRunWithShutdown_drainsClickHouseWriter(t *testing.T) {
+	ins := &recordingTraceInserter{}
+	w := ibexch.NewWriterWithInserter(ins, ibexch.Config{
+		MaxBatchSize:  10,
+		FlushInterval: time.Hour,
+	})
+	if err := w.Write(sampleTrace("drain-1")); err != nil {
+		t.Fatal(err)
+	}
+
+	sigCh := make(chan os.Signal, 1)
+	server := &http.Server{
+		Addr:              "127.0.0.1:0",
+		Handler:           http.HandlerFunc(func(rw http.ResponseWriter, _ *http.Request) { rw.WriteHeader(http.StatusOK) }),
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	runShutdownTest(t, shutdownOpts{
+		cfg:         config.Config{Environment: "development", ShutdownTimeout: 2 * time.Second},
+		logger:      logger.Discard("proxy"),
+		providers:   shutdownTestProviders(t),
+		server:      server,
+		traceWriter: w,
+		signalCh:    sigCh,
+	}, 0, func() { sigCh <- syscall.SIGTERM })
+
+	if ins.rowCount() != 1 {
+		t.Fatalf("inserted rows=%d want 1", ins.rowCount())
+	}
+	if !ins.closed.Load() {
+		t.Fatal("expected inserter Close after shutdown drain")
 	}
 }

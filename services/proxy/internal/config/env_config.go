@@ -45,6 +45,9 @@ type envConfig struct {
 	SessionGetOrCreateTO  time.Duration     `env:"IBEX_SESSION_GETORCREATE_TIMEOUT"`
 	SessionIdleTimeout    time.Duration     `env:"IBEX_SESSION_IDLE_TIMEOUT"`
 	SessionSweepInterval  time.Duration     `env:"IBEX_SESSION_SWEEP_INTERVAL"`
+	ClickHouseDSN         ibexconfig.Secret `env:"CLICKHOUSE_DSN" secret:"true"`
+	ClickHouseBatchSize   int               `env:"CLICKHOUSE_INSERT_BATCH_SIZE"`
+	ClickHouseFlushMS     int               `env:"CLICKHOUSE_INSERT_FLUSH_MS"`
 }
 
 func loadFromEnv() (Config, error) {
@@ -103,6 +106,9 @@ func baseProxyConfig(envCfg envConfig, level slog.Level) Config {
 		SessionGetOrCreateTO: envCfg.SessionGetOrCreateTO,
 		SessionIdleTimeout:   envCfg.SessionIdleTimeout,
 		SessionSweepInterval: envCfg.SessionSweepInterval,
+		ClickHouseDSN:        envCfg.ClickHouseDSN.String(),
+		ClickHouseBatchSize:  envCfg.ClickHouseBatchSize,
+		ClickHouseFlushMS:    envCfg.ClickHouseFlushMS,
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/authcache"
+	ibexch "github.com/Rick1330/ibex-harness/packages/clickhouse"
 	"github.com/Rick1330/ibex-harness/packages/directive"
 	"github.com/Rick1330/ibex-harness/packages/healthcheck"
 	"github.com/Rick1330/ibex-harness/packages/logger"
@@ -78,7 +79,8 @@ func runBootstrap(_ []string, signalCh chan os.Signal) int {
 		revSub: core.revSub, revCancel: core.revCancel,
 		dirSub: core.dirSub, dirCancel: core.dirCancel,
 		checkpointPool: core.checkpointPool, sessionSweeper: core.sessionSweeper,
-		signalCh: signalCh,
+		traceWriter: core.traceWriter,
+		signalCh:    signalCh,
 	})
 }
 
@@ -107,6 +109,7 @@ type proxyCore struct {
 	dirCancel      context.CancelFunc
 	checkpointPool *asyncpool.Pool
 	sessionSweeper *sessionsweeper.Sweeper
+	traceWriter    *ibexch.Writer
 }
 
 func setupProxyCore(
@@ -132,11 +135,39 @@ func setupProxyCore(
 		return nil, fmt.Errorf("directive subscriber: %w", err)
 	}
 	startSessionSweeper(assembled.sessionSweeper, cfg, log)
+	return finishProxyCore(proxyCoreParts{
+		assembled: assembled,
+		revSub:    revSub, revCancel: revCancel,
+		dirSub: dirSub, dirCancel: dirCancel,
+	}, cfg, log, reg)
+}
+
+type proxyCoreParts struct {
+	assembled assembledProxyCore
+	revSub    *revocation.Subscriber
+	revCancel context.CancelFunc
+	dirSub    *directive.Subscriber
+	dirCancel context.CancelFunc
+}
+
+func finishProxyCore(
+	parts proxyCoreParts,
+	cfg config.Config,
+	log *logger.Logger,
+	reg *ibexmetrics.ProxyRegistry,
+) (*proxyCore, error) {
+	traceWriter, err := setupTraceWriter(cfg, log, reg)
+	if err != nil {
+		return nil, err
+	}
 	return &proxyCore{
-		server: assembled.server, grpcConn: assembled.grpcConn,
-		redisClient: assembled.redisClient, pgDB: assembled.pgDB,
-		revSub: revSub, revCancel: revCancel, dirSub: dirSub, dirCancel: dirCancel,
-		checkpointPool: assembled.checkpointPool, sessionSweeper: assembled.sessionSweeper,
+		server: parts.assembled.server, grpcConn: parts.assembled.grpcConn,
+		redisClient: parts.assembled.redisClient, pgDB: parts.assembled.pgDB,
+		revSub: parts.revSub, revCancel: parts.revCancel,
+		dirSub: parts.dirSub, dirCancel: parts.dirCancel,
+		checkpointPool: parts.assembled.checkpointPool,
+		sessionSweeper: parts.assembled.sessionSweeper,
+		traceWriter:    traceWriter,
 	}, nil
 }
 
@@ -226,6 +257,7 @@ type shutdownOpts struct {
 	dirCancel      context.CancelFunc
 	checkpointPool *asyncpool.Pool
 	sessionSweeper *sessionsweeper.Sweeper
+	traceWriter    *ibexch.Writer
 	signalCh       chan os.Signal
 }
 
@@ -646,6 +678,12 @@ func registerShutdownHooks(sd *shutdown.Coordinator, opts shutdownOpts) {
 		return nil
 	})
 	sd.Register(func(ctx context.Context) error {
+		if opts.traceWriter != nil {
+			return opts.traceWriter.Shutdown(ctx)
+		}
+		return nil
+	})
+	sd.Register(func(ctx context.Context) error {
 		if opts.grpcConn != nil {
 			return opts.grpcConn.Close()
 		}
@@ -663,6 +701,37 @@ func registerShutdownHooks(sd *shutdown.Coordinator, opts shutdownOpts) {
 		}
 		return nil
 	})
+}
+
+// newTraceWriter constructs the ClickHouse writer; overridden in tests.
+var newTraceWriter = ibexch.NewWriter
+
+func setupTraceWriter(
+	cfg config.Config,
+	log *logger.Logger,
+	reg *ibexmetrics.ProxyRegistry,
+) (*ibexch.Writer, error) {
+	dsn := strings.TrimSpace(cfg.ClickHouseDSN)
+	if dsn == "" {
+		log.InfoCtx(context.Background(), "CLICKHOUSE_DSN unset; trace writer disabled")
+		return nil, nil
+	}
+	w, err := newTraceWriter(ibexch.Config{
+		DSN:           dsn,
+		MaxBatchSize:  cfg.ClickHouseBatchSize,
+		FlushInterval: time.Duration(cfg.ClickHouseFlushMS) * time.Millisecond,
+		Logger:        log,
+		Metrics:       reg,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("clickhouse writer: %w", err)
+	}
+	log.InfoCtx(context.Background(), "clickhouse trace writer started",
+		"dsn", ibexch.RedactedDSN(dsn),
+		"batch_size", cfg.ClickHouseBatchSize,
+		"flush_ms", cfg.ClickHouseFlushMS,
+	)
+	return w, nil
 }
 
 func rateLimitSliderConfig(cfg config.Config) ratelimit.RedisSliderConfig {

@@ -56,4 +56,10 @@ var invalidProxyConfigCases = []struct {
 	{name: "session sweep interval negative", mutate: func(c *Config) {
 		c.SessionSweepInterval = -time.Second
 	}},
+	{name: "clickhouse batch size negative", mutate: func(c *Config) {
+		c.ClickHouseBatchSize = -1
+	}},
+	{name: "clickhouse flush ms negative", mutate: func(c *Config) {
+		c.ClickHouseFlushMS = -5
+	}},
 }

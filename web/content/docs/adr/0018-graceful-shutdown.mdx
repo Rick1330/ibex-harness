@@ -48,15 +48,19 @@ Canonical name per [24-config-management.mdc](../.cursor/rules/24-config-managem
 **Proxy:**
 
 ```text
-SIGTERM/SIGINT → http.Server.Shutdown → auth gRPC conn Close → Redis Close → exit
+SIGTERM → drain=IBEX_SHUTDOWN_TIMEOUT → http.Server.Shutdown → pub/sub stop → checkpoint pool → session sweeper → ClickHouse writer drain → auth gRPC Close → Redis Close → Postgres Close → exit
+
+SIGINT  → drain=0 (immediate) → same handler order, best-effort only → exit
+         (does not wait for ClickHouse writer drain / other handlers to finish)
 ```
 
 **Auth:**
 
 ```text
-SIGTERM/SIGINT → gRPC GracefulStop (with Stop fallback on timeout) → http.Server.Shutdown → db.Close → exit
-```
+SIGTERM → drain=IBEX_SHUTDOWN_TIMEOUT → gRPC GracefulStop (Stop fallback on timeout) → http.Server.Shutdown → db.Close → exit
 
+SIGINT  → drain=0 (immediate) → same handler order, best-effort only → exit
+```
 gRPC `GracefulStop` runs in a goroutine; if the drain context expires, `grpc.Server.Stop()` forces termination.
 
 ### 5) Exit codes
@@ -70,8 +74,8 @@ Handler errors are logged but do not change exit code unless the drain deadline 
 
 ### 6) Deferred
 
-- OTel `Providers.Shutdown` registration (M1.3.1)
-- ClickHouse writer flush (Phase 2)
+- OTel `Providers.Shutdown` registration (M1.3.1) — **done**
+- ClickHouse writer flush (Phase 2) — **done in [2.5.2](/roadmap/phase-2-single-provider/milestones/2.5.2-clickhouse-client)** (`packages/clickhouse.Writer` registered on proxy shutdown)
 - WebSocket / hijacked connection drain (Phase 2 — note in risks)
 
 ## Consequences

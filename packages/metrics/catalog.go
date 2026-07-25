@@ -30,6 +30,10 @@ var ProxyRequiredMetricNames = []string{
 	"ibex_proxy_session_complete_total",
 	"ibex_proxy_session_sweeper_marked_total",
 	"ibex_proxy_session_sweeper_runs_total",
+	"ibex_clickhouse_flush_total",
+	"ibex_clickhouse_flush_rows_total",
+	"ibex_clickhouse_dropped_rows_total",
+	"ibex_clickhouse_flush_duration_seconds",
 	"ibex_process_up",
 }
 

@@ -39,6 +39,10 @@ type ProxyRegistry struct {
 	sessionComplete       *prometheus.CounterVec
 	sessionSweeperMarked  *prometheus.CounterVec
 	sessionSweeperRuns    *prometheus.CounterVec
+	clickhouseFlushTotal  *prometheus.CounterVec
+	clickhouseFlushRows   prometheus.Counter
+	clickhouseDroppedRows prometheus.Counter
+	clickhouseFlushSec    prometheus.Histogram
 	processUp             prometheus.Gauge
 }
 

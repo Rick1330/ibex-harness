@@ -90,6 +90,9 @@ type Config struct {
 	SessionGetOrCreateTO time.Duration
 	SessionIdleTimeout   time.Duration
 	SessionSweepInterval time.Duration
+	ClickHouseDSN        string
+	ClickHouseBatchSize  int
+	ClickHouseFlushMS    int
 }
 
 // ApplyDefaults fills zero-valued fields so httptest and partial Config literals behave like Load().
@@ -100,6 +103,12 @@ func (c *Config) ApplyDefaults() {
 	c.applyAuthCacheDefaults()
 	c.applyLLMDefaults()
 	c.applySessionDefaults()
+	c.applyClickHouseDefaults()
+}
+
+func (c *Config) applyClickHouseDefaults() {
+	applyIntDefaultZeroOnly(&c.ClickHouseBatchSize, 500)
+	applyIntDefaultZeroOnly(&c.ClickHouseFlushMS, 200)
 }
 
 func (c *Config) applyIdentityDefaults() {
@@ -174,6 +183,14 @@ func applyDurationDefaultZeroOnly(dst *time.Duration, def time.Duration) {
 
 func applyIntDefault(dst *int, def int) {
 	if *dst < 1 {
+		*dst = def
+	}
+}
+
+// applyIntDefaultZeroOnly defaults only unset (zero) values so explicit
+// negatives survive to Validate() and fail closed.
+func applyIntDefaultZeroOnly(dst *int, def int) {
+	if *dst == 0 {
 		*dst = def
 	}
 }
