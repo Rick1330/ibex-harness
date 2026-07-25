@@ -8,8 +8,10 @@ import (
 	"os"
 	"strings"
 
+	// Registers the ClickHouse database/sql driver used by golang-migrate.
 	_ "github.com/ClickHouse/clickhouse-go"
 	"github.com/golang-migrate/migrate/v4"
+	// Registers the ClickHouse database driver with golang-migrate.
 	_ "github.com/golang-migrate/migrate/v4/database/clickhouse"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 )

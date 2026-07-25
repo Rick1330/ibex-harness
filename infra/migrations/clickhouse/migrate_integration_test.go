@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	// Registers the ClickHouse database/sql driver for integration tests.
 	_ "github.com/ClickHouse/clickhouse-go"
 )
 
