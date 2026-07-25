@@ -53,9 +53,7 @@ type sessionLifecycleDeps struct {
 }
 
 type getOrCreateInput struct {
-	orgID        uuid.UUID
-	agentID      uuid.UUID
-	externalID   string
+	key          sessioncache.LookupKey
 	parsed       *llm.ChatCompletionRequest
 	providerName string
 }
@@ -79,10 +77,7 @@ func (h chatCompletionHandler) resolveSessionForRequest(
 	parsed *llm.ChatCompletionRequest,
 	providerName string,
 ) *http.Request {
-	externalID, ok := stickyExternalID(r.Header.Get(headerSessionID))
-	if !ok {
-		return r
-	}
+	externalID := stickyExternalID(r.Header.Get(headerSessionID))
 	sticky := resolvedSession{ExternalID: externalID}
 	ctx := withResolvedSession(r.Context(), sticky)
 	r = r.WithContext(ctx)
@@ -113,20 +108,18 @@ func (d sessionLifecycleDeps) resolve(
 		return hit, nil
 	}
 	return d.getOrCreateSession(ctx, getOrCreateInput{
-		orgID: orgID, agentID: agentID, externalID: externalID,
-		parsed: parsed, providerName: providerName,
+		key: lookup, parsed: parsed, providerName: providerName,
 	})
 }
 
-func stickyExternalID(rawHeader string) (string, bool) {
+// stickyExternalID returns a bounded sticky key. Empty or oversized client
+// values mint a fresh UUID so every request can still emit X-IBEX-Session-ID.
+func stickyExternalID(rawHeader string) string {
 	externalID := strings.TrimSpace(rawHeader)
-	if externalID == "" {
-		return uuid.New().String(), true
+	if externalID == "" || len(externalID) > maxExternalIDLen {
+		return uuid.New().String()
 	}
-	if len(externalID) > maxExternalIDLen {
-		return "", false
-	}
-	return externalID, true
+	return externalID
 }
 
 func tenantIDsFromContext(ctx context.Context) (uuid.UUID, uuid.UUID, bool) {
@@ -156,7 +149,8 @@ func (d sessionLifecycleDeps) cacheLookup(
 	if !ok {
 		return nil, false
 	}
-	// Reserve the next index in cache so concurrent hits prefer distinct turns.
+	// Reserve next turn optimistically. Gaps after failed turns are acceptable;
+	// ErrDuplicateTurn + retryCheckpoint handles concurrent double-reads.
 	d.cache.Set(ctx, key, sessioncache.Entry{
 		SessionID: e.SessionID, TurnCount: e.TurnCount + 1,
 	})
@@ -172,23 +166,30 @@ func (d sessionLifecycleDeps) getOrCreateSession(
 ) (*resolvedSession, error) {
 	goCtx, cancel := context.WithTimeout(ctx, d.getOrCreateTO)
 	defer cancel()
-	params := session.GetOrCreateParams{
-		OrgID: in.orgID, AgentID: in.agentID, ExternalID: in.externalID,
-		Model: in.parsed.Model, Provider: in.providerName,
-		DirectiveVersionID: directiveVersionPtr(ctx),
-	}
-	sess, err := d.store.GetOrCreate(goCtx, params)
+	sess, err := d.store.GetOrCreate(goCtx, in.toParams(ctx))
 	if err != nil {
 		d.warnGetOrCreate(ctx, err)
 		return nil, err
 	}
-	d.cacheSet(ctx, sessioncache.LookupKey{
-		OrgID: in.orgID, AgentID: in.agentID, ExternalID: in.externalID,
-	}, sessioncache.Entry{SessionID: sess.ID, TurnCount: sess.TurnCount + 1})
+	d.cacheSet(ctx, in.key, sessioncache.Entry{
+		SessionID: sess.ID, TurnCount: sess.TurnCount + 1,
+	})
+	return in.toResolved(sess), nil
+}
+
+func (in getOrCreateInput) toParams(ctx context.Context) session.GetOrCreateParams {
+	return session.GetOrCreateParams{
+		OrgID: in.key.OrgID, AgentID: in.key.AgentID, ExternalID: in.key.ExternalID,
+		Model: in.parsed.Model, Provider: in.providerName,
+		DirectiveVersionID: directiveVersionPtr(ctx),
+	}
+}
+
+func (in getOrCreateInput) toResolved(sess *session.Session) *resolvedSession {
 	return &resolvedSession{
-		SessionID: sess.ID, ExternalID: in.externalID,
-		TurnIndex: sess.TurnCount, OrgID: in.orgID, AgentID: in.agentID,
-	}, nil
+		SessionID: sess.ID, ExternalID: in.key.ExternalID,
+		TurnIndex: sess.TurnCount, OrgID: in.key.OrgID, AgentID: in.key.AgentID,
+	}
 }
 
 func directiveVersionPtr(ctx context.Context) *uuid.UUID {
@@ -374,7 +375,7 @@ func readLimitedBody(r io.Reader, limit int64) ([]byte, error) {
 var errProviderResponseTooLarge = errors.New("provider response exceeds size limit")
 
 func readAllBody(r io.Reader) ([]byte, error) {
-	return readLimitedBody(r, validation.MaxRequestBodyBytes)
+	return readLimitedBody(r, validation.MaxProviderResponseBytes)
 }
 
 func writeJSONBody(w http.ResponseWriter, body []byte) {

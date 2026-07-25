@@ -8,6 +8,9 @@ func TestValidationLimits_saneDefaults(t *testing.T) {
 	if MaxRequestBodyBytes < 1 {
 		t.Fatalf("MaxRequestBodyBytes: %d", MaxRequestBodyBytes)
 	}
+	if MaxProviderResponseBytes < MaxRequestBodyBytes {
+		t.Fatalf("MaxProviderResponseBytes: %d", MaxProviderResponseBytes)
+	}
 	if MaxMessagesPerRequest < 1 {
 		t.Fatalf("MaxMessagesPerRequest: %d", MaxMessagesPerRequest)
 	}

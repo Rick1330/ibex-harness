@@ -113,32 +113,71 @@ func setupProxyCore(
 	reg *ibexmetrics.ProxyRegistry,
 	tracer trace.Tracer,
 ) (*proxyCore, error) {
+	assembled, err := assembleProxyCore(cfg, log, reg, tracer)
+	if err != nil {
+		return nil, err
+	}
+	revSub, revCancel, err := startRevocationSubscriber(
+		assembled.redisClient, assembled.validator, log, reg,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("revocation subscriber: %w", err)
+	}
+	dirSub, dirCancel, err := startDirectiveSubscriber(
+		assembled.redisClient, assembled.directiveResolver, log, reg,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("directive subscriber: %w", err)
+	}
+	return &proxyCore{
+		server: assembled.server, grpcConn: assembled.grpcConn,
+		redisClient: assembled.redisClient, pgDB: assembled.pgDB,
+		revSub: revSub, revCancel: revCancel, dirSub: dirSub, dirCancel: dirCancel,
+		checkpointPool: assembled.checkpointPool,
+	}, nil
+}
+
+type assembledProxyCore struct {
+	server            *http.Server
+	grpcConn          *grpc.ClientConn
+	redisClient       redis.UniversalClient
+	pgDB              *sql.DB
+	validator         auth.TokenValidator
+	directiveResolver directive.Resolver
+	checkpointPool    *asyncpool.Pool
+}
+
+func assembleProxyCore(
+	cfg config.Config,
+	log *logger.Logger,
+	reg *ibexmetrics.ProxyRegistry,
+	tracer trace.Tracer,
+) (assembledProxyCore, error) {
 	redisClient, limiter, err := setupRateLimiter(cfg, log)
 	if err != nil {
-		return nil, fmt.Errorf("rate limiter: %w", err)
+		return assembledProxyCore{}, fmt.Errorf("rate limiter: %w", err)
 	}
 	validator, agentVerifier, authClient, grpcConn, err := setupAuthClients(cfg, log, reg)
 	if err != nil {
-		return nil, fmt.Errorf("auth clients: %w", err)
+		return assembledProxyCore{}, fmt.Errorf("auth clients: %w", err)
 	}
 	pgDB, directiveResolver, err := setupDirectiveResolver(directiveResolverSetup{
 		Config: cfg, Redis: redisClient, Log: log, Reg: reg, OpenDB: openProxyPostgres,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("directive resolver: %w", err)
+		return assembledProxyCore{}, fmt.Errorf("directive resolver: %w", err)
 	}
 	sessionStore, err := newSessionStore(pgDB, reg, tracer)
 	if err != nil {
-		return nil, fmt.Errorf("session store: %w", err)
+		return assembledProxyCore{}, fmt.Errorf("session store: %w", err)
 	}
 	sessionParts, err := setupSessionHotPath(redisClient, cfg, reg)
 	if err != nil {
-		return nil, err
+		return assembledProxyCore{}, err
 	}
-	healthSrv := buildProxyHealth(cfg, authClient, pgDB)
 	providerReg, err := providerRegistryInit(cfg, log, tracer, reg)
 	if err != nil {
-		return nil, fmt.Errorf("provider registry: %w", err)
+		return assembledProxyCore{}, fmt.Errorf("provider registry: %w", err)
 	}
 	server := newHTTPServer(proxyhttp.RouterDeps{
 		Config: cfg, Logger: log, Metrics: reg, Tracer: tracer,
@@ -146,19 +185,12 @@ func setupProxyCore(
 		DirectiveResolver: directiveResolver, SessionStore: sessionStore,
 		SessionCache: sessionParts.cache, CheckpointPool: sessionParts.pool,
 		GetOrCreateTimeout: cfg.SessionGetOrCreateTO,
-		Health:             healthSrv, ProviderRegistry: providerReg,
+		Health:             buildProxyHealth(cfg, authClient, pgDB),
+		ProviderRegistry:   providerReg,
 	})
-	revSub, revCancel, err := startRevocationSubscriber(redisClient, validator, log, reg)
-	if err != nil {
-		return nil, fmt.Errorf("revocation subscriber: %w", err)
-	}
-	dirSub, dirCancel, err := startDirectiveSubscriber(redisClient, directiveResolver, log, reg)
-	if err != nil {
-		return nil, fmt.Errorf("directive subscriber: %w", err)
-	}
-	return &proxyCore{
+	return assembledProxyCore{
 		server: server, grpcConn: grpcConn, redisClient: redisClient, pgDB: pgDB,
-		revSub: revSub, revCancel: revCancel, dirSub: dirSub, dirCancel: dirCancel,
+		validator: validator, directiveResolver: directiveResolver,
 		checkpointPool: sessionParts.pool,
 	}, nil
 }

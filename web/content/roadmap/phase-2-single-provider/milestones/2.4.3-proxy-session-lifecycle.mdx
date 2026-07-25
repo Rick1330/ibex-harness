@@ -39,7 +39,7 @@ With the session store in place (2.4.2), the proxy needs to wire session lifecyc
 
 ## Session ID propagation
 
-The client optionally sends `X-IBEX-Session-ID` (sticky `external_id`) to associate a request with an existing session. The proxy returns `X-IBEX-Session-ID` when a sticky id is available — including GetOrCreate fail-open (minted or client-supplied sticky id echoed for reuse). The header may be omitted only when the sticky id is rejected (e.g. oversized). Fail-open cases are surfaced via warn logs (`session get_or_create failed`) and `ibex_proxy_session_get_or_create_total{result="error"}`.
+The client optionally sends `X-IBEX-Session-ID` (sticky `external_id`) to associate a request with an existing session. The proxy returns `X-IBEX-Session-ID` on every LLM response when session lifecycle is active — including GetOrCreate fail-open (minted or client-supplied sticky id echoed for reuse). Oversized client values are discarded and replaced with a minted sticky id. Fail-open cases are surfaced via warn logs (`session get_or_create failed`) and `ibex_proxy_session_get_or_create_total{result="error"}`.
 
 ```text
 Client → Proxy: X-IBEX-Session-ID: <uuid> (optional)
@@ -84,7 +84,7 @@ Unbounded post-response goroutines will OOM under load. Bound async work:
 
 ## Acceptance Criteria
 
-- [x] `X-IBEX-Session-ID` returned when a sticky external id is available (minted or client-supplied), including GetOrCreate fail-open; omitted only when the sticky id is rejected (e.g. oversized)
+- [x] `X-IBEX-Session-ID` returned when a sticky external id is available (minted or client-supplied), including GetOrCreate fail-open; oversized client values are discarded and replaced with a minted sticky id
 - [x] Checkpoint written after every completed turn with a durable session (streaming and non-streaming); skipped on sticky-only fail-open (no SessionID)
 - [x] Checkpoint write failure does NOT affect LLM response (async)
 - [x] Session created automatically when `X-IBEX-Session-ID` absent from request

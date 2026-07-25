@@ -54,13 +54,24 @@ func Key(k LookupKey) string {
 // Get returns a cache entry on hit. Miss, corrupt payload, version mismatch, or
 // Redis errors return ok=false (fail-open).
 func (c *Cache) Get(ctx context.Context, k LookupKey) (Entry, bool) {
-	if c == nil || k.ExternalID == "" {
+	if !c.readable(k) {
 		return Entry{}, false
 	}
 	raw, err := c.client.Get(ctx, Key(k)).Bytes()
 	if err != nil {
 		return Entry{}, false
 	}
+	return decodeEntry(raw)
+}
+
+func (c *Cache) readable(k LookupKey) bool {
+	if c == nil {
+		return false
+	}
+	return k.ExternalID != ""
+}
+
+func decodeEntry(raw []byte) (Entry, bool) {
 	var e Entry
 	if err := json.Unmarshal(raw, &e); err != nil {
 		return Entry{}, false
@@ -75,9 +86,8 @@ func (e Entry) valid() bool {
 	if e.SessionID == uuid.Nil {
 		return false
 	}
-	// Accept legacy payloads that omitted v (treated as current).
 	if e.Version == 0 {
-		return true
+		return true // legacy payloads omitted v
 	}
 	return e.Version == EntryVersion
 }
@@ -87,14 +97,19 @@ func (c *Cache) Set(ctx context.Context, k LookupKey, e Entry) {
 	if !c.canWrite(k, e) {
 		return
 	}
-	if e.Version == 0 {
-		e.Version = EntryVersion
-	}
+	e = e.withVersion()
 	payload, err := json.Marshal(e)
 	if err != nil {
 		return
 	}
 	_ = c.client.Set(ctx, Key(k), payload, c.ttl).Err()
+}
+
+func (e Entry) withVersion() Entry {
+	if e.Version == 0 {
+		e.Version = EntryVersion
+	}
+	return e
 }
 
 func (c *Cache) canWrite(k LookupKey, e Entry) bool {
@@ -109,7 +124,7 @@ func (c *Cache) canWrite(k LookupKey, e Entry) bool {
 
 // Invalidate deletes a cache key best-effort (e.g. after ErrDuplicateTurn).
 func (c *Cache) Invalidate(ctx context.Context, k LookupKey) {
-	if c == nil || k.ExternalID == "" {
+	if !c.readable(k) {
 		return
 	}
 	_ = c.client.Del(ctx, Key(k)).Err()

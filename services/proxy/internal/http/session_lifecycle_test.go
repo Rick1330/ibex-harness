@@ -107,25 +107,22 @@ func (m *memSessionStore) appendCount() int {
 }
 
 func waitUntil(timeout, interval time.Duration, cond func() bool) bool {
+	return pollCond(timeout, interval, true, cond)
+}
+
+func neverTrue(timeout, interval time.Duration, cond func() bool) bool {
+	return pollCond(timeout, interval, false, cond)
+}
+
+func pollCond(timeout, interval time.Duration, want bool, cond func() bool) bool {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		if cond() {
+		if cond() == want {
 			return true
 		}
 		time.Sleep(interval)
 	}
-	return cond()
-}
-
-func neverTrue(timeout, interval time.Duration, cond func() bool) bool {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if cond() {
-			return false
-		}
-		time.Sleep(interval)
-	}
-	return !cond()
+	return cond() == want
 }
 
 func sessionLifecycleRouter(t *testing.T, store session.Store, pool *asyncpool.Pool, cache *sessioncache.Cache) http.Handler {
@@ -360,20 +357,24 @@ func TestUnit_SessionLifecycle_CrossOrgUsesTokenOrg(t *testing.T) {
 
 func TestUnit_StickyExternalID(t *testing.T) {
 	t.Parallel()
-	minted, ok := stickyExternalID("")
-	if !ok || minted == "" {
+	minted := stickyExternalID("")
+	if minted == "" {
 		t.Fatal("expected mint")
 	}
 	if _, err := uuid.Parse(minted); err != nil {
 		t.Fatalf("mint uuid: %v", err)
 	}
-	got, ok := stickyExternalID("  abc  ")
-	if !ok || got != "abc" {
-		t.Fatalf("got=%q ok=%v", got, ok)
+	got := stickyExternalID("  abc  ")
+	if got != "abc" {
+		t.Fatalf("got=%q", got)
 	}
 	tooLong := strings.Repeat("x", maxExternalIDLen+1)
-	if _, ok := stickyExternalID(tooLong); ok {
-		t.Fatal("expected reject oversized")
+	replaced := stickyExternalID(tooLong)
+	if replaced == tooLong || replaced == "" {
+		t.Fatal("expected mint replacing oversized")
+	}
+	if _, err := uuid.Parse(replaced); err != nil {
+		t.Fatalf("replacement uuid: %v", err)
 	}
 }
 
@@ -440,37 +441,46 @@ func TestUnit_BuildCheckpointParams(t *testing.T) {
 
 func TestUnit_RunCheckpoint_DuplicateInvalidatesCache(t *testing.T) {
 	t.Parallel()
-	mr := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	t.Cleanup(func() { _ = client.Close() })
-	cache, err := sessioncache.New(client, time.Minute)
-	if err != nil {
-		t.Fatal(err)
-	}
-	store := newMemSessionStore()
-	store.appendErr = session.ErrDuplicateTurn
-	org, agent := uuid.New(), uuid.New()
-	ext := "ext"
-	sid := uuid.New()
-	cache.Set(context.Background(), sessioncache.LookupKey{
-		OrgID: org, AgentID: agent, ExternalID: ext,
-	}, sessioncache.Entry{SessionID: sid, TurnCount: 1})
-	deps := sessionLifecycleDeps{
-		store: store, cache: cache, log: logger.Discard("proxy"),
-	}
-	deps.runCheckpoint(session.CheckpointParams{
-		SessionID: sid, OrgID: org, AgentID: agent, TurnIndex: 1,
-	}, ext)
-	if _, ok := cache.Get(context.Background(), sessioncache.LookupKey{
-		OrgID: org, AgentID: agent, ExternalID: ext,
-	}); ok {
+	fx := newCheckpointFixture(t)
+	fx.store.appendErr = session.ErrDuplicateTurn
+	fx.seedCache(1)
+	fx.deps.runCheckpoint(fx.params(1), fx.ext)
+	if _, ok := fx.cache.Get(context.Background(), fx.key()); ok {
 		t.Fatal("expected invalidate")
 	}
 }
 
 func TestUnit_RunCheckpoint_RetrySucceeds(t *testing.T) {
 	t.Parallel()
+	fx := newCheckpointFixture(t)
+	fx.store.appendFailOnce = session.ErrDuplicateTurn
+	fx.seedCache(1)
+	fx.deps.runCheckpoint(fx.params(0), fx.ext)
 
+	if fx.store.appendCount() < 2 {
+		t.Fatalf("appendCalls=%d want >=2", fx.store.appendCount())
+	}
+	got, ok := fx.cache.Get(context.Background(), fx.key())
+	if !ok {
+		t.Fatal("expected cache refresh after retry")
+	}
+	if got.TurnCount < 1 {
+		t.Fatalf("turn_count=%d", got.TurnCount)
+	}
+}
+
+type checkpointFixture struct {
+	store *memSessionStore
+	cache *sessioncache.Cache
+	org   uuid.UUID
+	agent uuid.UUID
+	ext   string
+	sid   uuid.UUID
+	deps  sessionLifecycleDeps
+}
+
+func newCheckpointFixture(t *testing.T) checkpointFixture {
+	t.Helper()
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
@@ -478,35 +488,33 @@ func TestUnit_RunCheckpoint_RetrySucceeds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-
 	store := newMemSessionStore()
-	store.appendFailOnce = session.ErrDuplicateTurn
 	org, agent := uuid.New(), uuid.New()
-	ext := "retry-ext"
-	sid := uuid.New()
-	cache.Set(context.Background(), sessioncache.LookupKey{
-		OrgID: org, AgentID: agent, ExternalID: ext,
-	}, sessioncache.Entry{SessionID: sid, TurnCount: 1})
-
-	deps := sessionLifecycleDeps{
-		store: store, cache: cache, log: logger.Discard("proxy"),
+	return checkpointFixture{
+		store: store, cache: cache, org: org, agent: agent,
+		ext: "ext-" + uuid.New().String()[:8], sid: uuid.New(),
+		deps: sessionLifecycleDeps{
+			store: store, cache: cache, log: logger.Discard("proxy"),
+		},
 	}
-	deps.runCheckpoint(session.CheckpointParams{
-		SessionID: sid, OrgID: org, AgentID: agent, TurnIndex: 0,
-		Model: "m", Provider: "p",
-	}, ext)
+}
 
-	if store.appendCount() < 2 {
-		t.Fatalf("appendCalls=%d want >=2", store.appendCount())
+func (fx checkpointFixture) key() sessioncache.LookupKey {
+	return sessioncache.LookupKey{
+		OrgID: fx.org, AgentID: fx.agent, ExternalID: fx.ext,
 	}
-	got, ok := cache.Get(context.Background(), sessioncache.LookupKey{
-		OrgID: org, AgentID: agent, ExternalID: ext,
+}
+
+func (fx checkpointFixture) seedCache(turnCount int) {
+	fx.cache.Set(context.Background(), fx.key(), sessioncache.Entry{
+		SessionID: fx.sid, TurnCount: turnCount,
 	})
-	if !ok {
-		t.Fatal("expected cache refresh after retry")
-	}
-	if got.TurnCount < 1 {
-		t.Fatalf("turn_count=%d", got.TurnCount)
+}
+
+func (fx checkpointFixture) params(turnIndex int) session.CheckpointParams {
+	return session.CheckpointParams{
+		SessionID: fx.sid, OrgID: fx.org, AgentID: fx.agent, TurnIndex: turnIndex,
+		Model: "m", Provider: "p",
 	}
 }
 
