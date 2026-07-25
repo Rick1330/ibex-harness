@@ -38,7 +38,7 @@ type streamForwardParams struct {
 	metrics    *metrics.ProxyRegistry
 	log        *logger.Logger
 	docsBase   string
-	onComplete func(streamCheckpointResult)
+	onComplete func(context.Context, streamCheckpointResult)
 }
 
 // sseCopyDest groups writer-side dependencies for the SSE copy loop.
@@ -72,7 +72,7 @@ func forwardSSEStream(p streamForwardParams) {
 	}
 	content, usage := drainAccumulator(p, acc)
 	if p.onComplete != nil {
-		p.onComplete(streamCheckpointResult{
+		p.onComplete(p.r.Context(), streamCheckpointResult{
 			content: content, usage: usage,
 			latency: time.Since(start), complete: status == "ok",
 		})

@@ -71,8 +71,11 @@ func TestValidate_acceptsValidConfig(t *testing.T) {
 
 func TestApplyDefaults(t *testing.T) {
 	t.Parallel()
+
 	var cfg Config
+
 	cfg.ApplyDefaults()
+
 	if cfg.ShutdownTimeout != 30*time.Second {
 		t.Fatalf("ShutdownTimeout: %s", cfg.ShutdownTimeout)
 	}

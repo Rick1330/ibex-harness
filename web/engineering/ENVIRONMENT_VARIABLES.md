@@ -214,7 +214,7 @@ Used by: **proxy** (`services/proxy`)
 | `IBEX_MAX_REQUEST_BODY_BYTES` | No | `1048576` | Max chat request body (1 MiB) | See [ADR-0013](adr/ADR-0013-proxy-input-validation-and-error-envelope.md) |
 | `POSTGRES_DSN` | Conditional | (empty) | Postgres for directive reads and session store. When set, enables chat hot-path session lifecycle (GetOrCreate + async checkpoints). Empty → session features disabled; with Redis enables cached directive resolver | Secret; must match migrated schema |
 | `IBEX_DIRECTIVE_CACHE_TTL` | No | `60s` | Redis TTL for `{org_id}:directive:{agent_id}` cache entries | Requires `POSTGRES_DSN` + `REDIS_URL` |
-| `IBEX_SESSION_CACHE_TTL` | No | `60s` | Redis TTL for `{org_id}:session:{agent_id}:{external_id}` hot-path cache | Requires `REDIS_URL`; fail-open to Postgres |
+| `IBEX_SESSION_CACHE_TTL` | No | `60s` | Redis TTL for `session:{org_id}:{agent_id}:{external_id}` hot-path cache | Requires `REDIS_URL`; fail-open to Postgres |
 | `IBEX_SESSION_CHECKPOINT_WORKERS` | No | `8` | Async checkpoint worker count (non-dropping pool) | |
 | `IBEX_SESSION_CHECKPOINT_QUEUE` | No | `256` | Buffered checkpoint queue depth; full queue blocks submitter after response flush | |
 | `IBEX_SESSION_GETORCREATE_TIMEOUT` | No | `50ms` | Hot-path GetOrCreate deadline; timeout fails open (omit session header, skip checkpoint) | |

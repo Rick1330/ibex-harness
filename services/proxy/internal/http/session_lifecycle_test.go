@@ -27,14 +27,15 @@ import (
 )
 
 type memSessionStore struct {
-	mu          sync.Mutex
-	sessions    map[string]*session.Session
-	checkpoints []session.CheckpointParams
-	getErr      error
-	appendErr   error
-	getCalls    int
-	appendCalls int
-	getDelay    time.Duration
+	mu             sync.Mutex
+	sessions       map[string]*session.Session
+	checkpoints    []session.CheckpointParams
+	getErr         error
+	appendErr      error
+	appendFailOnce error
+	getCalls       int
+	appendCalls    int
+	getDelay       time.Duration
 }
 
 func newMemSessionStore() *memSessionStore {
@@ -74,6 +75,11 @@ func (m *memSessionStore) AppendCheckpoint(_ context.Context, p session.Checkpoi
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.appendCalls++
+	if m.appendFailOnce != nil {
+		err := m.appendFailOnce
+		m.appendFailOnce = nil
+		return err
+	}
 	if m.appendErr != nil {
 		return m.appendErr
 	}
@@ -85,17 +91,41 @@ func (m *memSessionStore) Complete(context.Context, uuid.UUID, uuid.UUID) error 
 
 func (m *memSessionStore) waitAppends(t *testing.T, n int) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
+	if !waitUntil(2*time.Second, 5*time.Millisecond, func() bool {
 		m.mu.Lock()
-		got := m.appendCalls
-		m.mu.Unlock()
-		if got >= n {
-			return
-		}
-		time.Sleep(5 * time.Millisecond)
+		defer m.mu.Unlock()
+		return m.appendCalls >= n
+	}) {
+		t.Fatalf("expected >=%d appends", n)
 	}
-	t.Fatalf("expected >=%d appends", n)
+}
+
+func (m *memSessionStore) appendCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.appendCalls
+}
+
+func waitUntil(timeout, interval time.Duration, cond func() bool) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return true
+		}
+		time.Sleep(interval)
+	}
+	return cond()
+}
+
+func neverTrue(timeout, interval time.Duration, cond func() bool) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return false
+		}
+		time.Sleep(interval)
+	}
+	return !cond()
 }
 
 func sessionLifecycleRouter(t *testing.T, store session.Store, pool *asyncpool.Pool, cache *sessioncache.Cache) http.Handler {
@@ -120,6 +150,15 @@ func sessionLifecycleRouter(t *testing.T, store session.Store, pool *asyncpool.P
 	})
 }
 
+func cleanupPool(t *testing.T, pool *asyncpool.Pool) {
+	t.Helper()
+	t.Cleanup(func() {
+		if err := pool.Shutdown(context.Background()); err != nil {
+			t.Errorf("shutdown: %v", err)
+		}
+	})
+}
+
 func TestUnit_SessionLifecycle_MintAndReuse(t *testing.T) {
 	t.Parallel()
 	store := newMemSessionStore()
@@ -127,7 +166,7 @@ func TestUnit_SessionLifecycle_MintAndReuse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = pool.Shutdown(context.Background()) })
+	cleanupPool(t, pool)
 	handler := sessionLifecycleRouter(t, store, pool, nil)
 
 	rec1 := postChat(t, handler, chatRequestOpts{
@@ -168,7 +207,7 @@ func TestUnit_SessionLifecycle_MintAndReuse(t *testing.T) {
 	}
 }
 
-func TestUnit_SessionLifecycle_FailOpenOmitsHeader(t *testing.T) {
+func TestUnit_SessionLifecycle_FailOpenKeepsStickyHeader(t *testing.T) {
 	t.Parallel()
 	store := newMemSessionStore()
 	store.getErr = errors.New("db down")
@@ -176,7 +215,7 @@ func TestUnit_SessionLifecycle_FailOpenOmitsHeader(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = pool.Shutdown(context.Background()) })
+	cleanupPool(t, pool)
 	handler := sessionLifecycleRouter(t, store, pool, nil)
 	rec := postChat(t, handler, chatRequestOpts{
 		body: `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`,
@@ -185,14 +224,13 @@ func TestUnit_SessionLifecycle_FailOpenOmitsHeader(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d", rec.Code)
 	}
-	if rec.Header().Get(headerSessionID) != "" {
-		t.Fatal("expected no session header on fail-open")
+	if rec.Header().Get(headerSessionID) == "" {
+		t.Fatal("expected sticky session header on fail-open")
 	}
-	time.Sleep(50 * time.Millisecond)
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	if store.appendCalls != 0 {
-		t.Fatalf("appendCalls=%d", store.appendCalls)
+	if !neverTrue(80*time.Millisecond, 5*time.Millisecond, func() bool {
+		return store.appendCount() > 0
+	}) {
+		t.Fatalf("appendCalls=%d", store.appendCount())
 	}
 }
 
@@ -203,7 +241,7 @@ func TestUnit_SessionLifecycle_StreamSetsHeaderBeforeBody(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = pool.Shutdown(context.Background()) })
+	cleanupPool(t, pool)
 
 	reg, err := provider.NewRegistry(&streamStubProvider{
 		name: "openai", models: []string{"gpt-4o"},
@@ -256,7 +294,7 @@ func TestUnit_SessionLifecycle_CacheHitSkipsStore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = pool.Shutdown(context.Background()) })
+	cleanupPool(t, pool)
 
 	org := uuid.MustParse(testChatOrgID)
 	agent := uuid.MustParse(testChatAgentID)
@@ -298,7 +336,7 @@ func TestUnit_SessionLifecycle_CrossOrgUsesTokenOrg(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = pool.Shutdown(context.Background()) })
+	cleanupPool(t, pool)
 	handler := sessionLifecycleRouter(t, store, pool, nil)
 	ext := uuid.New().String()
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
@@ -341,12 +379,19 @@ func TestUnit_StickyExternalID(t *testing.T) {
 
 func TestUnit_ResolveSession_NilStore(t *testing.T) {
 	t.Parallel()
+
 	h := chatCompletionHandler{log: logger.Discard("proxy")}
 	req := httptest.NewRequest(http.MethodPost, "/", nil)
 	parsed := &llm.ChatCompletionRequest{Model: "m"}
+
 	out := h.resolveSessionForRequest(req, parsed, "openai")
-	if out != req {
-		t.Fatal("expected unchanged request")
+
+	rs, ok := ResolvedSessionFromContext(out.Context())
+	if !ok || rs.ExternalID == "" {
+		t.Fatal("expected sticky external id without store")
+	}
+	if rs.durable() {
+		t.Fatal("expected non-durable sticky-only session")
 	}
 }
 
@@ -420,5 +465,84 @@ func TestUnit_RunCheckpoint_DuplicateInvalidatesCache(t *testing.T) {
 		OrgID: org, AgentID: agent, ExternalID: ext,
 	}); ok {
 		t.Fatal("expected invalidate")
+	}
+}
+
+func TestUnit_RunCheckpoint_RetrySucceeds(t *testing.T) {
+	t.Parallel()
+
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	cache, err := sessioncache.New(client, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	store := newMemSessionStore()
+	store.appendFailOnce = session.ErrDuplicateTurn
+	org, agent := uuid.New(), uuid.New()
+	ext := "retry-ext"
+	sid := uuid.New()
+	cache.Set(context.Background(), sessioncache.LookupKey{
+		OrgID: org, AgentID: agent, ExternalID: ext,
+	}, sessioncache.Entry{SessionID: sid, TurnCount: 1})
+
+	deps := sessionLifecycleDeps{
+		store: store, cache: cache, log: logger.Discard("proxy"),
+	}
+	deps.runCheckpoint(session.CheckpointParams{
+		SessionID: sid, OrgID: org, AgentID: agent, TurnIndex: 0,
+		Model: "m", Provider: "p",
+	}, ext)
+
+	if store.appendCount() < 2 {
+		t.Fatalf("appendCalls=%d want >=2", store.appendCount())
+	}
+	got, ok := cache.Get(context.Background(), sessioncache.LookupKey{
+		OrgID: org, AgentID: agent, ExternalID: ext,
+	})
+	if !ok {
+		t.Fatal("expected cache refresh after retry")
+	}
+	if got.TurnCount < 1 {
+		t.Fatalf("turn_count=%d", got.TurnCount)
+	}
+}
+
+func TestUnit_ReadLimitedBody(t *testing.T) {
+	t.Parallel()
+
+	ok, err := readLimitedBody(strings.NewReader("abc"), 3)
+	if err != nil || string(ok) != "abc" {
+		t.Fatalf("ok=%q err=%v", ok, err)
+	}
+
+	_, err = readLimitedBody(strings.NewReader("abcd"), 3)
+	if !errors.Is(err, errProviderResponseTooLarge) {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestUnit_EnqueueCheckpoint_SkipsStickyOnly(t *testing.T) {
+	t.Parallel()
+
+	store := newMemSessionStore()
+	pool, err := asyncpool.New(1, 2, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleanupPool(t, pool)
+
+	h := chatCompletionHandler{
+		sessionStore: store, checkpointPool: pool, log: logger.Discard("proxy"),
+	}
+	ctx := withResolvedSession(context.Background(), resolvedSession{ExternalID: "sticky"})
+	h.enqueueCheckpoint(ctx, checkpointInput{CompletionText: "x", Model: "m", Provider: "p"})
+
+	if !neverTrue(50*time.Millisecond, 5*time.Millisecond, func() bool {
+		return store.appendCount() > 0
+	}) {
+		t.Fatal("expected no checkpoint for sticky-only session")
 	}
 }

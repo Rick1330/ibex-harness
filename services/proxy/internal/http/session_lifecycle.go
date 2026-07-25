@@ -1,6 +1,7 @@
 package http
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,11 +12,13 @@ import (
 
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/provider"
+	"github.com/Rick1330/ibex-harness/packages/reqid"
 	"github.com/Rick1330/ibex-harness/packages/session"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/asyncpool"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/llm"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/sessioncache"
+	"github.com/Rick1330/ibex-harness/services/proxy/internal/validation"
 	"github.com/google/uuid"
 )
 
@@ -28,12 +31,17 @@ const (
 )
 
 // resolvedSession holds hot-path session identity for response headers + checkpoint.
+// SessionID == uuid.Nil means sticky-only (fail-open): emit response header, skip checkpoint.
 type resolvedSession struct {
 	SessionID  uuid.UUID
 	ExternalID string
 	TurnIndex  int
 	OrgID      uuid.UUID
 	AgentID    uuid.UUID
+}
+
+func (rs resolvedSession) durable() bool {
+	return rs.SessionID != uuid.Nil
 }
 
 type sessionLifecycleDeps struct {
@@ -64,34 +72,39 @@ func (h chatCompletionHandler) lifecycle() sessionLifecycleDeps {
 }
 
 // resolveSessionForRequest mints/looks up a session before LLM forward.
-// Fail-open: returns nil and leaves the request unchanged on any error.
+// On store miss/error it still attaches a sticky external_id so the response
+// can echo X-IBEX-Session-ID; checkpoints are skipped until SessionID is set.
 func (h chatCompletionHandler) resolveSessionForRequest(
 	r *http.Request,
 	parsed *llm.ChatCompletionRequest,
 	providerName string,
 ) *http.Request {
+	externalID, ok := stickyExternalID(r.Header.Get(headerSessionID))
+	if !ok {
+		return r
+	}
+	sticky := resolvedSession{ExternalID: externalID}
+	ctx := withResolvedSession(r.Context(), sticky)
+	r = r.WithContext(ctx)
+
 	deps := h.lifecycle()
 	if deps.store == nil {
 		return r
 	}
-	resolved, err := deps.resolve(r.Context(), r.Header.Get(headerSessionID), parsed, providerName)
+	resolved, err := deps.resolve(ctx, externalID, parsed, providerName)
 	if err != nil || resolved == nil {
 		return r
 	}
-	return r.WithContext(withResolvedSession(r.Context(), *resolved))
+	return r.WithContext(withResolvedSession(ctx, *resolved))
 }
 
 func (d sessionLifecycleDeps) resolve(
 	ctx context.Context,
-	rawHeader string,
+	externalID string,
 	parsed *llm.ChatCompletionRequest,
 	providerName string,
 ) (*resolvedSession, error) {
 	orgID, agentID, ok := tenantIDsFromContext(ctx)
-	if !ok {
-		return nil, nil
-	}
-	externalID, ok := stickyExternalID(rawHeader)
 	if !ok {
 		return nil, nil
 	}
@@ -143,6 +156,10 @@ func (d sessionLifecycleDeps) cacheLookup(
 	if !ok {
 		return nil, false
 	}
+	// Reserve the next index in cache so concurrent hits prefer distinct turns.
+	d.cache.Set(ctx, key, sessioncache.Entry{
+		SessionID: e.SessionID, TurnCount: e.TurnCount + 1,
+	})
 	return &resolvedSession{
 		SessionID: e.SessionID, ExternalID: key.ExternalID,
 		TurnIndex: e.TurnCount, OrgID: key.OrgID, AgentID: key.AgentID,
@@ -167,7 +184,7 @@ func (d sessionLifecycleDeps) getOrCreateSession(
 	}
 	d.cacheSet(ctx, sessioncache.LookupKey{
 		OrgID: in.orgID, AgentID: in.agentID, ExternalID: in.externalID,
-	}, sessioncache.Entry{SessionID: sess.ID, TurnCount: sess.TurnCount})
+	}, sessioncache.Entry{SessionID: sess.ID, TurnCount: sess.TurnCount + 1})
 	return &resolvedSession{
 		SessionID: sess.ID, ExternalID: in.externalID,
 		TurnIndex: sess.TurnCount, OrgID: in.orgID, AgentID: in.agentID,
@@ -204,7 +221,7 @@ func (d sessionLifecycleDeps) warnGetOrCreate(ctx context.Context, err error) {
 
 func setSessionResponseHeader(w http.ResponseWriter, ctx context.Context) {
 	rs, ok := ResolvedSessionFromContext(ctx)
-	if !ok {
+	if !ok || rs.ExternalID == "" {
 		return
 	}
 	w.Header().Set(headerSessionID, rs.ExternalID)
@@ -224,7 +241,7 @@ type checkpointInput struct {
 
 func (h chatCompletionHandler) enqueueCheckpoint(ctx context.Context, in checkpointInput) {
 	rs, ok := ResolvedSessionFromContext(ctx)
-	if !ok {
+	if !ok || !rs.durable() {
 		return
 	}
 	deps := h.lifecycle()
@@ -269,10 +286,11 @@ func hashLLMMessages(msgs []llm.Message) string {
 }
 
 func (d sessionLifecycleDeps) runCheckpoint(params session.CheckpointParams, externalID string) {
-	// Detached from the HTTP request context so client disconnect cannot cancel
-	// durable checkpoint writes (5s deadline per task).
 	ctx, cancel := context.WithTimeout(context.Background(), checkpointTaskTimeout)
 	defer cancel()
+	if params.RequestID != "" {
+		ctx = reqid.WithRequestID(ctx, params.RequestID)
+	}
 	err := d.store.AppendCheckpoint(ctx, params)
 	if err == nil {
 		d.cacheSet(ctx, sessioncache.LookupKey{
@@ -281,20 +299,50 @@ func (d sessionLifecycleDeps) runCheckpoint(params session.CheckpointParams, ext
 		return
 	}
 	if errors.Is(err, session.ErrDuplicateTurn) {
-		if d.cache != nil {
-			d.cache.Invalidate(ctx, sessioncache.LookupKey{
-				OrgID: params.OrgID, AgentID: params.AgentID, ExternalID: externalID,
-			})
-		}
+		d.retryCheckpoint(ctx, params, externalID)
 		return
 	}
-	if d.log != nil {
-		d.log.WarnCtx(ctx, "session checkpoint failed",
-			"error", err.Error(),
-			"session_id", params.SessionID.String(),
-			"turn_index", params.TurnIndex,
-		)
+	d.warnCheckpoint(ctx, params, err)
+}
+
+func (d sessionLifecycleDeps) retryCheckpoint(
+	ctx context.Context,
+	params session.CheckpointParams,
+	externalID string,
+) {
+	if d.cache != nil {
+		d.cache.Invalidate(ctx, sessioncache.LookupKey{
+			OrgID: params.OrgID, AgentID: params.AgentID, ExternalID: externalID,
+		})
 	}
+	sess, err := d.store.GetOrCreate(ctx, session.GetOrCreateParams{
+		OrgID: params.OrgID, AgentID: params.AgentID, ExternalID: externalID,
+		Model: params.Model, Provider: params.Provider,
+	})
+	if err != nil {
+		d.warnCheckpoint(ctx, params, err)
+		return
+	}
+	params.SessionID = sess.ID
+	params.TurnIndex = sess.TurnCount
+	if err := d.store.AppendCheckpoint(ctx, params); err != nil {
+		d.warnCheckpoint(ctx, params, err)
+		return
+	}
+	d.cacheSet(ctx, sessioncache.LookupKey{
+		OrgID: params.OrgID, AgentID: params.AgentID, ExternalID: externalID,
+	}, sessioncache.Entry{SessionID: sess.ID, TurnCount: params.TurnIndex + 1})
+}
+
+func (d sessionLifecycleDeps) warnCheckpoint(ctx context.Context, params session.CheckpointParams, err error) {
+	if d.log == nil {
+		return
+	}
+	d.log.WarnCtx(ctx, "session checkpoint failed",
+		"error", err.Error(),
+		"session_id", params.SessionID.String(),
+		"turn_index", params.TurnIndex,
+	)
 }
 
 func completionTextFromJSON(body []byte) string {
@@ -311,6 +359,26 @@ func completionTextFromJSON(body []byte) string {
 	return wire.Choices[0].Message.Content
 }
 
+func readLimitedBody(r io.Reader, limit int64) ([]byte, error) {
+	limited := io.LimitReader(r, limit+1)
+	body, err := io.ReadAll(limited)
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(body)) > limit {
+		return nil, errProviderResponseTooLarge
+	}
+	return body, nil
+}
+
+var errProviderResponseTooLarge = errors.New("provider response exceeds size limit")
+
 func readAllBody(r io.Reader) ([]byte, error) {
-	return io.ReadAll(r)
+	return readLimitedBody(r, validation.MaxRequestBodyBytes)
+}
+
+func writeJSONBody(w http.ResponseWriter, body []byte) {
+	// Opaque OpenAI-compatible JSON passthrough (Content-Type: application/json).
+	// Not an HTML response; Codacy/Opengrep XSS on ResponseWriter is a false positive.
+	_, _ = io.Copy(w, bytes.NewReader(body)) // nosemgrep: go.lang.security.audit.xss.no-direct-write-to-responsewriter.no-direct-write-to-responsewriter
 }

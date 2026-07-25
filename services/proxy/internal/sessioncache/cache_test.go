@@ -13,9 +13,11 @@ import (
 
 func testCache(t *testing.T) (*sessioncache.Cache, *miniredis.Miniredis) {
 	t.Helper()
+
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
+
 	cache, err := sessioncache.New(client, time.Minute)
 	if err != nil {
 		t.Fatal(err)
@@ -25,6 +27,7 @@ func testCache(t *testing.T) (*sessioncache.Cache, *miniredis.Miniredis) {
 
 func TestUnit_Cache_MissThenHit(t *testing.T) {
 	t.Parallel()
+
 	cache, _ := testCache(t)
 	key := sessioncache.LookupKey{
 		OrgID:      uuid.MustParse("11111111-1111-1111-1111-111111111111"),
@@ -36,7 +39,9 @@ func TestUnit_Cache_MissThenHit(t *testing.T) {
 	if _, ok := cache.Get(context.Background(), key); ok {
 		t.Fatal("expected miss")
 	}
+
 	cache.Set(context.Background(), key, sessioncache.Entry{SessionID: sid, TurnCount: 3})
+
 	got, ok := cache.Get(context.Background(), key)
 	if !ok {
 		t.Fatal("expected hit")
@@ -47,7 +52,11 @@ func TestUnit_Cache_MissThenHit(t *testing.T) {
 	if got.TurnCount != 3 {
 		t.Fatalf("turn_count=%d", got.TurnCount)
 	}
-	wantKey := key.OrgID.String() + ":session:" + key.AgentID.String() + ":" + key.ExternalID
+	if got.Version != sessioncache.EntryVersion {
+		t.Fatalf("version=%d", got.Version)
+	}
+
+	wantKey := "session:" + key.OrgID.String() + ":" + key.AgentID.String() + ":" + key.ExternalID
 	if sessioncache.Key(key) != wantKey {
 		t.Fatalf("key=%s", sessioncache.Key(key))
 	}
@@ -55,30 +64,53 @@ func TestUnit_Cache_MissThenHit(t *testing.T) {
 
 func TestUnit_Cache_CorruptAndDownMiss(t *testing.T) {
 	t.Parallel()
+
 	cache, mr := testCache(t)
 	key := sessioncache.LookupKey{
 		OrgID: uuid.New(), AgentID: uuid.New(), ExternalID: uuid.New().String(),
 	}
-	mr.Set(sessioncache.Key(key), "{")
+
+	if err := mr.Set(sessioncache.Key(key), "{"); err != nil {
+		t.Fatal(err)
+	}
 	if _, ok := cache.Get(context.Background(), key); ok {
 		t.Fatal("corrupt should miss")
 	}
+
 	mr.Close()
 	if _, ok := cache.Get(context.Background(), key); ok {
 		t.Fatal("redis down should miss")
 	}
 }
 
+func TestUnit_Cache_VersionMismatchMiss(t *testing.T) {
+	t.Parallel()
+
+	cache, mr := testCache(t)
+	key := sessioncache.LookupKey{
+		OrgID: uuid.New(), AgentID: uuid.New(), ExternalID: "e",
+	}
+	if err := mr.Set(sessioncache.Key(key), `{"v":99,"session_id":"44444444-4444-4444-4444-444444444444","turn_count":1}`); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := cache.Get(context.Background(), key); ok {
+		t.Fatal("bad version should miss")
+	}
+}
+
 func TestUnit_Cache_Invalidate(t *testing.T) {
 	t.Parallel()
+
 	cache, _ := testCache(t)
 	key := sessioncache.LookupKey{
 		OrgID: uuid.New(), AgentID: uuid.New(), ExternalID: uuid.New().String(),
 	}
+
 	cache.Set(context.Background(), key, sessioncache.Entry{
 		SessionID: uuid.New(), TurnCount: 1,
 	})
 	cache.Invalidate(context.Background(), key)
+
 	if _, ok := cache.Get(context.Background(), key); ok {
 		t.Fatal("expected miss after invalidate")
 	}
@@ -86,14 +118,17 @@ func TestUnit_Cache_Invalidate(t *testing.T) {
 
 func TestUnit_Cache_SetGuards(t *testing.T) {
 	t.Parallel()
+
 	cache, _ := testCache(t)
 	org, agent := uuid.New(), uuid.New()
+
 	cache.Set(context.Background(), sessioncache.LookupKey{
 		OrgID: org, AgentID: agent, ExternalID: "",
 	}, sessioncache.Entry{SessionID: uuid.New()})
 	cache.Set(context.Background(), sessioncache.LookupKey{
 		OrgID: org, AgentID: agent, ExternalID: "e",
 	}, sessioncache.Entry{})
+
 	var nilCache *sessioncache.Cache
 	nilCache.Set(context.Background(), sessioncache.LookupKey{
 		OrgID: org, AgentID: agent, ExternalID: "e",
@@ -110,12 +145,15 @@ func TestUnit_Cache_SetGuards(t *testing.T) {
 
 func TestUnit_Cache_NewValidation(t *testing.T) {
 	t.Parallel()
+
 	if _, err := sessioncache.New(nil, time.Second); err == nil {
 		t.Fatal("expected nil client error")
 	}
+
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
+
 	if _, err := sessioncache.New(client, 0); err == nil {
 		t.Fatal("expected ttl error")
 	}

@@ -8,12 +8,15 @@ import (
 
 func TestUnit_HashMessages_Stable(t *testing.T) {
 	t.Parallel()
+
 	msgs := []session.MessageForHash{
 		{Role: "user", Content: "hi"},
 		{Role: "assistant", Content: "yo"},
 	}
+
 	a := session.HashMessages(msgs)
 	b := session.HashMessages(msgs)
+
 	if a != b || len(a) != 64 {
 		t.Fatalf("hash=%q", a)
 	}
@@ -25,7 +28,9 @@ func TestUnit_HashMessages_Stable(t *testing.T) {
 
 func TestUnit_HashText(t *testing.T) {
 	t.Parallel()
+
 	empty := session.HashText("")
+
 	if len(empty) != 64 {
 		t.Fatalf("len=%d", len(empty))
 	}

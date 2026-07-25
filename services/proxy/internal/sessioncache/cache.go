@@ -12,8 +12,12 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// EntryVersion is the JSON schema version for cached session payloads.
+const EntryVersion = 1
+
 // Entry is the cached session identity used to skip Postgres on hit.
 type Entry struct {
+	Version   int       `json:"v"`
 	SessionID uuid.UUID `json:"session_id"`
 	TurnCount int       `json:"turn_count"`
 }
@@ -42,13 +46,13 @@ func New(client redis.UniversalClient, ttl time.Duration) (*Cache, error) {
 	return &Cache{client: client, ttl: ttl}, nil
 }
 
-// KeyFormat is {org_id}:session:{agent_id}:{external_id}.
+// Key returns session:{org_id}:{agent_id}:{external_id} (org_id is the second segment).
 func Key(k LookupKey) string {
-	return fmt.Sprintf("%s:session:%s:%s", k.OrgID.String(), k.AgentID.String(), k.ExternalID)
+	return fmt.Sprintf("session:%s:%s:%s", k.OrgID.String(), k.AgentID.String(), k.ExternalID)
 }
 
-// Get returns a cache entry on hit. Miss, corrupt payload, or Redis errors
-// return ok=false (fail-open).
+// Get returns a cache entry on hit. Miss, corrupt payload, version mismatch, or
+// Redis errors return ok=false (fail-open).
 func (c *Cache) Get(ctx context.Context, k LookupKey) (Entry, bool) {
 	if c == nil || k.ExternalID == "" {
 		return Entry{}, false
@@ -61,16 +65,30 @@ func (c *Cache) Get(ctx context.Context, k LookupKey) (Entry, bool) {
 	if err := json.Unmarshal(raw, &e); err != nil {
 		return Entry{}, false
 	}
-	if e.SessionID == uuid.Nil {
+	if !e.valid() {
 		return Entry{}, false
 	}
 	return e, true
+}
+
+func (e Entry) valid() bool {
+	if e.SessionID == uuid.Nil {
+		return false
+	}
+	// Accept legacy payloads that omitted v (treated as current).
+	if e.Version == 0 {
+		return true
+	}
+	return e.Version == EntryVersion
 }
 
 // Set stores entry best-effort. Redis errors are ignored (fail-open).
 func (c *Cache) Set(ctx context.Context, k LookupKey, e Entry) {
 	if !c.canWrite(k, e) {
 		return
+	}
+	if e.Version == 0 {
+		e.Version = EntryVersion
 	}
 	payload, err := json.Marshal(e)
 	if err != nil {
