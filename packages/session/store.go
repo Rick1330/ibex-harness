@@ -10,12 +10,13 @@ import (
 )
 
 // Store is the durable session/checkpoint data-access API used by proxy lifecycle
-// wiring (m2.4.3) and any caller that needs create/checkpoint/complete semantics
-// with org-scoped RLS applied on every write transaction.
+// wiring (m2.4.3+) and any caller that needs create/checkpoint/complete/abandon
+// semantics with RLS applied on every write transaction.
 type Store interface {
 	GetOrCreate(ctx context.Context, p GetOrCreateParams) (*Session, error)
 	AppendCheckpoint(ctx context.Context, p CheckpointParams) error
 	Complete(ctx context.Context, sessionID, orgID uuid.UUID) error
+	AbandonIdle(ctx context.Context, p AbandonIdleParams) (AbandonIdleResult, error)
 }
 
 // PostgresStore is the Postgres-backed Store implementation. Callers obtain it via

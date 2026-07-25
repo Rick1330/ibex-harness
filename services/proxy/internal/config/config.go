@@ -36,6 +36,8 @@ const (
 	defaultCheckpointWorkers    = 8
 	defaultCheckpointQueue      = 256
 	defaultSessionGetOrCreateTO = 50 * time.Millisecond
+	defaultSessionIdleTimeout   = 45 * time.Minute
+	defaultSessionSweepInterval = time.Minute
 )
 
 // RateLimitConfig holds org-level rate limit settings (Phase 1; no DB).
@@ -86,6 +88,8 @@ type Config struct {
 	CheckpointWorkers    int
 	CheckpointQueue      int
 	SessionGetOrCreateTO time.Duration
+	SessionIdleTimeout   time.Duration
+	SessionSweepInterval time.Duration
 }
 
 // ApplyDefaults fills zero-valued fields so httptest and partial Config literals behave like Load().
@@ -158,6 +162,12 @@ func (c *Config) applySessionDefaults() {
 	}
 	if c.SessionGetOrCreateTO <= 0 {
 		c.SessionGetOrCreateTO = defaultSessionGetOrCreateTO
+	}
+	if c.SessionIdleTimeout <= 0 {
+		c.SessionIdleTimeout = defaultSessionIdleTimeout
+	}
+	if c.SessionSweepInterval <= 0 {
+		c.SessionSweepInterval = defaultSessionSweepInterval
 	}
 }
 

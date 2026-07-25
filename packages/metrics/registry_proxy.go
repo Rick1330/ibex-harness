@@ -37,6 +37,8 @@ type ProxyRegistry struct {
 	sessionGetOrCreateSec prometheus.Histogram
 	sessionCheckpoint     *prometheus.CounterVec
 	sessionComplete       *prometheus.CounterVec
+	sessionSweeperMarked  *prometheus.CounterVec
+	sessionSweeperRuns    *prometheus.CounterVec
 	processUp             prometheus.Gauge
 }
 

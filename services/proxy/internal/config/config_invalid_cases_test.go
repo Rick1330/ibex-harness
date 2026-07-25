@@ -46,4 +46,8 @@ var invalidProxyConfigCases = []struct {
 	{name: "auth cache zero capacity", mutate: func(c *Config) { c.AuthCache.LRUCapacity = 0 }},
 	{name: "auth cache bad fp rate", mutate: func(c *Config) { c.AuthCache.BloomFPRate = 1.5 }},
 	{name: "auth cache ttl above ceiling", mutate: func(c *Config) { c.AuthCache.LRUMaxTTL = 31 * time.Second }},
+	{name: "session idle below sweep interval", mutate: func(c *Config) {
+		c.SessionIdleTimeout = time.Second
+		c.SessionSweepInterval = time.Minute
+	}},
 }

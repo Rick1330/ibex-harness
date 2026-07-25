@@ -91,6 +91,12 @@ func TestApplyDefaults(t *testing.T) {
 	if cfg.SessionGetOrCreateTO != defaultSessionGetOrCreateTO {
 		t.Fatalf("SessionGetOrCreateTO: %s", cfg.SessionGetOrCreateTO)
 	}
+	if cfg.SessionIdleTimeout != defaultSessionIdleTimeout {
+		t.Fatalf("SessionIdleTimeout: %s", cfg.SessionIdleTimeout)
+	}
+	if cfg.SessionSweepInterval != defaultSessionSweepInterval {
+		t.Fatalf("SessionSweepInterval: %s", cfg.SessionSweepInterval)
+	}
 }
 
 func TestParseOrgRPMOverrides(t *testing.T) {

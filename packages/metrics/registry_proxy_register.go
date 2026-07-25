@@ -46,6 +46,8 @@ func (r *ProxyRegistry) register(serviceName string) {
 		r.sessionGetOrCreateSec,
 		r.sessionCheckpoint,
 		r.sessionComplete,
+		r.sessionSweeperMarked,
+		r.sessionSweeperRuns,
 		r.processUp,
 	)
 	r.processUp.Set(1)

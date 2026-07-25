@@ -20,6 +20,14 @@ func (r *ProxyRegistry) initSessionMetrics() {
 		Name: "ibex_proxy_session_complete_total",
 		Help: "Session Complete outcomes.",
 	}, []string{"result"})
+	r.sessionSweeperMarked = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "ibex_proxy_session_sweeper_marked_total",
+		Help: "Sessions marked by the idle-timeout sweeper.",
+	}, []string{"status"})
+	r.sessionSweeperRuns = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "ibex_proxy_session_sweeper_runs_total",
+		Help: "Idle-timeout sweeper tick outcomes.",
+	}, []string{"result"})
 	// Materialize bounded result series at init (no first-hit registration).
 	for _, result := range []string{"created", "existing", "error"} {
 		r.sessionGetOrCreate.WithLabelValues(result)
@@ -29,6 +37,11 @@ func (r *ProxyRegistry) initSessionMetrics() {
 	}
 	for _, result := range []string{"ok", "noop", "error"} {
 		r.sessionComplete.WithLabelValues(result)
+	}
+	r.sessionSweeperMarked.WithLabelValues("abandoned")
+	r.sessionSweeperMarked.WithLabelValues("error")
+	for _, result := range []string{"ok", "error", "skipped_lock", "noop"} {
+		r.sessionSweeperRuns.WithLabelValues(result)
 	}
 }
 
@@ -52,6 +65,16 @@ func (r *ProxyRegistry) IncSessionComplete(result string) {
 	r.sessionComplete.WithLabelValues(boundSessionResult(result, sessionCompleteResults)).Inc()
 }
 
+// IncSessionSweeperMarked records a session marked by the idle sweeper.
+func (r *ProxyRegistry) IncSessionSweeperMarked(status string) {
+	r.sessionSweeperMarked.WithLabelValues(boundSessionResult(status, sessionSweeperMarkedStatuses)).Inc()
+}
+
+// IncSessionSweeperRun records a sweeper tick outcome.
+func (r *ProxyRegistry) IncSessionSweeperRun(result string) {
+	r.sessionSweeperRuns.WithLabelValues(boundSessionResult(result, sessionSweeperRunResults)).Inc()
+}
+
 var (
 	sessionGetOrCreateResults = map[string]struct{}{
 		"created": {}, "existing": {}, "error": {},
@@ -61,6 +84,12 @@ var (
 	}
 	sessionCompleteResults = map[string]struct{}{
 		"ok": {}, "noop": {}, "error": {},
+	}
+	sessionSweeperMarkedStatuses = map[string]struct{}{
+		"abandoned": {}, "error": {},
+	}
+	sessionSweeperRunResults = map[string]struct{}{
+		"ok": {}, "error": {}, "skipped_lock": {}, "noop": {},
 	}
 )
 

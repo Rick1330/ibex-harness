@@ -28,6 +28,8 @@ var ProxyRequiredMetricNames = []string{
 	"ibex_proxy_session_get_or_create_duration_seconds",
 	"ibex_proxy_session_checkpoint_total",
 	"ibex_proxy_session_complete_total",
+	"ibex_proxy_session_sweeper_marked_total",
+	"ibex_proxy_session_sweeper_runs_total",
 	"ibex_process_up",
 }
 
