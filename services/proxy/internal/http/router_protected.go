@@ -1,8 +1,10 @@
 package http
 
 import (
+	"context"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/directive"
 	"github.com/Rick1330/ibex-harness/packages/logger"
@@ -10,22 +12,28 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/provider"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
 	"github.com/Rick1330/ibex-harness/packages/session"
+	"github.com/Rick1330/ibex-harness/services/proxy/internal/asyncpool"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
+	"github.com/Rick1330/ibex-harness/services/proxy/internal/sessioncache"
 )
 
 type protectedRouteDeps struct {
-	mux               *http.ServeMux
-	cfg               config.Config
-	logger            *logger.Logger
-	reg               *metrics.ProxyRegistry
-	validator         auth.TokenValidator
-	agentVerifier     auth.AgentVerifier
-	limiter           ratelimit.Limiter
-	directiveResolver directive.Resolver
-	sessionStore      session.Store
-	docsBase          string
-	providerRegistry  *provider.Registry
+	mux                *http.ServeMux
+	cfg                config.Config
+	logger             *logger.Logger
+	reg                *metrics.ProxyRegistry
+	validator          auth.TokenValidator
+	agentVerifier      auth.AgentVerifier
+	limiter            ratelimit.Limiter
+	directiveResolver  directive.Resolver
+	sessionStore       session.Store
+	sessionCache       *sessioncache.Cache
+	checkpointPool     *asyncpool.Pool
+	serviceCtx         context.Context
+	getOrCreateTimeout time.Duration
+	docsBase           string
+	providerRegistry   *provider.Registry
 }
 
 func registerProtectedRoutes(deps protectedRouteDeps) {
@@ -73,10 +81,14 @@ func registerProtectedRoutes(deps protectedRouteDeps) {
 	)
 	deps.mux.Handle("/v1/chat/completions", chatChain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		handleChatCompletions(w, r, chatCompletionHandler{
-			log:          deps.logger,
-			docsBase:     deps.docsBase,
-			metrics:      deps.reg,
-			sessionStore: deps.sessionStore,
+			log:                deps.logger,
+			docsBase:           deps.docsBase,
+			metrics:            deps.reg,
+			sessionStore:       deps.sessionStore,
+			sessionCache:       deps.sessionCache,
+			checkpointPool:     deps.checkpointPool,
+			serviceCtx:         deps.serviceCtx,
+			getOrCreateTimeout: deps.getOrCreateTimeout,
 		})
 	})))
 }

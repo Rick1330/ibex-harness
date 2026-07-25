@@ -32,6 +32,10 @@ const (
 	defaultAuthCacheBloomFPRate = 0.001
 	maxAuthCacheLRUMaxTTL       = 30 * time.Second
 	defaultDirectiveCacheTTL    = 60 * time.Second
+	defaultSessionCacheTTL      = 60 * time.Second
+	defaultCheckpointWorkers    = 8
+	defaultCheckpointQueue      = 256
+	defaultSessionGetOrCreateTO = 50 * time.Millisecond
 )
 
 // RateLimitConfig holds org-level rate limit settings (Phase 1; no DB).
@@ -59,29 +63,42 @@ type OpenAIConfig struct {
 }
 
 type Config struct {
-	Environment         string
-	ServiceName         string
-	LogLevel            slog.Level
-	Port                string
-	RedisURL            string
-	AuthGRPCAddr        string
-	AuthValidateTimeout time.Duration
-	AuthCache           AuthCacheConfig
-	MaxRequestBodyBytes int64
-	RequestIDHeader     string
-	TraceIDHeader       string
-	ErrorDocsBase       string
-	RateLimit           RateLimitConfig
-	ShutdownTimeout     time.Duration
-	Telemetry           telemetry.Config
-	LLMMode             string
-	OpenAI              OpenAIConfig
-	PostgresDSN         string
-	DirectiveCacheTTL   time.Duration
+	Environment          string
+	ServiceName          string
+	LogLevel             slog.Level
+	Port                 string
+	RedisURL             string
+	AuthGRPCAddr         string
+	AuthValidateTimeout  time.Duration
+	AuthCache            AuthCacheConfig
+	MaxRequestBodyBytes  int64
+	RequestIDHeader      string
+	TraceIDHeader        string
+	ErrorDocsBase        string
+	RateLimit            RateLimitConfig
+	ShutdownTimeout      time.Duration
+	Telemetry            telemetry.Config
+	LLMMode              string
+	OpenAI               OpenAIConfig
+	PostgresDSN          string
+	DirectiveCacheTTL    time.Duration
+	SessionCacheTTL      time.Duration
+	CheckpointWorkers    int
+	CheckpointQueue      int
+	SessionGetOrCreateTO time.Duration
 }
 
 // ApplyDefaults fills zero-valued fields so httptest and partial Config literals behave like Load().
 func (c *Config) ApplyDefaults() {
+	c.applyIdentityDefaults()
+	c.applyTransportDefaults()
+	c.applyRateLimitDefaults()
+	c.applyAuthCacheDefaults()
+	c.applyLLMDefaults()
+	c.applySessionDefaults()
+}
+
+func (c *Config) applyIdentityDefaults() {
 	if strings.TrimSpace(c.Environment) == "" {
 		c.Environment = defaultEnvironment
 	}
@@ -91,6 +108,9 @@ func (c *Config) ApplyDefaults() {
 	if c.LogLevel == 0 {
 		c.LogLevel = defaultLogLevel
 	}
+}
+
+func (c *Config) applyTransportDefaults() {
 	if strings.TrimSpace(c.Port) == "" {
 		c.Port = defaultPort
 	}
@@ -109,19 +129,35 @@ func (c *Config) ApplyDefaults() {
 	if strings.TrimSpace(c.TraceIDHeader) == "" {
 		c.TraceIDHeader = defaultTraceIDHeader
 	}
+	if c.ShutdownTimeout <= 0 {
+		c.ShutdownTimeout = defaultShutdownTimeout
+	}
+}
+
+func (c *Config) applyRateLimitDefaults() {
 	if c.RateLimit.DefaultRPM < 1 {
 		c.RateLimit.DefaultRPM = defaultRateLimitRPM
 	}
 	if c.RateLimit.OrgOverrides == nil {
 		c.RateLimit.OrgOverrides = map[uuid.UUID]int{}
 	}
-	if c.ShutdownTimeout <= 0 {
-		c.ShutdownTimeout = defaultShutdownTimeout
-	}
-	c.applyAuthCacheDefaults()
-	c.applyLLMDefaults()
+}
+
+func (c *Config) applySessionDefaults() {
 	if c.DirectiveCacheTTL <= 0 {
 		c.DirectiveCacheTTL = defaultDirectiveCacheTTL
+	}
+	if c.SessionCacheTTL <= 0 {
+		c.SessionCacheTTL = defaultSessionCacheTTL
+	}
+	if c.CheckpointWorkers < 1 {
+		c.CheckpointWorkers = defaultCheckpointWorkers
+	}
+	if c.CheckpointQueue < 1 {
+		c.CheckpointQueue = defaultCheckpointQueue
+	}
+	if c.SessionGetOrCreateTO <= 0 {
+		c.SessionGetOrCreateTO = defaultSessionGetOrCreateTO
 	}
 }
 

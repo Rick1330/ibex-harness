@@ -3,7 +3,6 @@ package http
 import (
 	"context"
 	"errors"
-	"io"
 	"net/http"
 
 	apierror "github.com/Rick1330/ibex-harness/packages/apierror"
@@ -20,6 +19,7 @@ type chatForwardParams struct {
 }
 
 func (h chatCompletionHandler) forwardChatCompletion(p chatForwardParams) {
+	p.r = h.resolveSessionForRequest(p.r, p.parsed, p.prov.Name())
 	ctx := p.r.Context()
 	requestID := requestIDFromContext(ctx)
 	if errors.Is(ctx.Err(), context.Canceled) {
@@ -41,17 +41,13 @@ func (h chatCompletionHandler) forwardChatCompletion(p chatForwardParams) {
 	}()
 	if p.parsed.Stream {
 		forwardSSEStream(streamForwardParams{
-			w:        p.w,
-			r:        p.r,
-			resp:     resp,
-			provider: p.prov.Name(),
-			metrics:  h.metrics,
-			log:      h.log,
-			docsBase: h.docsBase,
+			w: p.w, r: p.r, resp: resp, provider: p.prov.Name(),
+			metrics: h.metrics, log: h.log, docsBase: h.docsBase,
+			onComplete: h.streamCheckpointHook(p.parsed, p.prov.Name()),
 		})
 		return
 	}
-	h.writeProviderSuccess(p.w, resp)
+	h.writeProviderSuccess(p.w, p.r, p.parsed, p.prov.Name(), resp)
 }
 
 // applyDirectiveInjection splices the resolved agent directive into messages.
@@ -65,11 +61,42 @@ func applyDirectiveInjection(ctx context.Context, messages []provider.Message) [
 	return injection.Inject(messages, resolved.Content, mode)
 }
 
-func (h chatCompletionHandler) writeProviderSuccess(w http.ResponseWriter, resp provider.Response) {
+func (h chatCompletionHandler) writeProviderSuccess(
+	w http.ResponseWriter,
+	r *http.Request,
+	parsed *llm.ChatCompletionRequest,
+	providerName string,
+	resp provider.Response,
+) {
+	body, err := readAllBody(resp.Body)
+	if err != nil {
+		h.writeProviderFailure(w, r, err, requestIDFromContext(r.Context()))
+		return
+	}
+	setSessionResponseHeader(w, r.Context())
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
 	//nolint:errcheck // best-effort forward of upstream body; client disconnect is acceptable
-	_, _ = io.Copy(w, resp.Body)
+	_, _ = w.Write(body)
+	h.enqueueCheckpoint(r.Context(), checkpointInput{
+		Messages: parsed.Messages, CompletionText: completionTextFromJSON(body),
+		Model: parsed.Model, Provider: providerName, Usage: resp.Usage,
+		Latency: resp.Latency, ProviderReqID: resp.ProviderRequestID,
+		IsStreaming: false, IsComplete: true,
+	})
+}
+
+func (h chatCompletionHandler) streamCheckpointHook(
+	parsed *llm.ChatCompletionRequest,
+	providerName string,
+) func(streamCheckpointResult) {
+	return func(res streamCheckpointResult) {
+		h.enqueueCheckpoint(res.ctx, checkpointInput{
+			Messages: parsed.Messages, CompletionText: res.content,
+			Model: parsed.Model, Provider: providerName, Usage: res.usage,
+			Latency: res.latency, IsStreaming: true, IsComplete: res.complete,
+		})
+	}
 }
 
 func (h chatCompletionHandler) writeProviderFailure(w http.ResponseWriter, r *http.Request, err error, requestID string) {

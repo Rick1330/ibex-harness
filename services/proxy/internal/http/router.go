@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -15,9 +16,11 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
 	"github.com/Rick1330/ibex-harness/packages/session"
 	"github.com/Rick1330/ibex-harness/packages/telemetry"
+	"github.com/Rick1330/ibex-harness/services/proxy/internal/asyncpool"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/llm"
+	"github.com/Rick1330/ibex-harness/services/proxy/internal/sessioncache"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/validation"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -31,17 +34,21 @@ type authProbeResponse struct {
 
 // RouterDeps wires the proxy HTTP handler and middleware chain.
 type RouterDeps struct {
-	Config            config.Config
-	Logger            *logger.Logger
-	Metrics           *metrics.ProxyRegistry
-	Tracer            trace.Tracer
-	Validator         auth.TokenValidator
-	AgentVerifier     auth.AgentVerifier
-	Limiter           ratelimit.Limiter
-	DirectiveResolver directive.Resolver
-	SessionStore      session.Store
-	Health            *healthcheck.Server
-	ProviderRegistry  *provider.Registry
+	Config             config.Config
+	Logger             *logger.Logger
+	Metrics            *metrics.ProxyRegistry
+	Tracer             trace.Tracer
+	Validator          auth.TokenValidator
+	AgentVerifier      auth.AgentVerifier
+	Limiter            ratelimit.Limiter
+	DirectiveResolver  directive.Resolver
+	SessionStore       session.Store
+	SessionCache       *sessioncache.Cache
+	CheckpointPool     *asyncpool.Pool
+	ServiceCtx         context.Context
+	GetOrCreateTimeout time.Duration
+	Health             *healthcheck.Server
+	ProviderRegistry   *provider.Registry
 }
 
 // NewRouter builds the proxy HTTP handler with optional auth validator for protected routes.
@@ -74,17 +81,21 @@ func NewRouter(deps RouterDeps) http.Handler {
 
 	if validator != nil {
 		registerProtectedRoutes(protectedRouteDeps{
-			mux:               mux,
-			cfg:               cfg,
-			logger:            logger,
-			reg:               reg,
-			validator:         validator,
-			agentVerifier:     agentVerifier,
-			limiter:           limiter,
-			directiveResolver: deps.DirectiveResolver,
-			sessionStore:      deps.SessionStore,
-			docsBase:          docsBase,
-			providerRegistry:  providerReg,
+			mux:                mux,
+			cfg:                cfg,
+			logger:             logger,
+			reg:                reg,
+			validator:          validator,
+			agentVerifier:      agentVerifier,
+			limiter:            limiter,
+			directiveResolver:  deps.DirectiveResolver,
+			sessionStore:       deps.SessionStore,
+			sessionCache:       deps.SessionCache,
+			checkpointPool:     deps.CheckpointPool,
+			serviceCtx:         deps.ServiceCtx,
+			getOrCreateTimeout: deps.GetOrCreateTimeout,
+			docsBase:           docsBase,
+			providerRegistry:   providerReg,
 		})
 	}
 
@@ -144,10 +155,14 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request, h chatComplet
 }
 
 type chatCompletionHandler struct {
-	log          *logger.Logger
-	docsBase     string
-	metrics      *metrics.ProxyRegistry
-	sessionStore session.Store // wired for 2.4.3 lifecycle; unused on hot path yet
+	log                *logger.Logger
+	docsBase           string
+	metrics            *metrics.ProxyRegistry
+	sessionStore       session.Store
+	sessionCache       *sessioncache.Cache
+	checkpointPool     *asyncpool.Pool
+	serviceCtx         context.Context
+	getOrCreateTimeout time.Duration
 }
 
 func (h chatCompletionHandler) serve(w http.ResponseWriter, r *http.Request) {

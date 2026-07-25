@@ -17,6 +17,7 @@ const (
 	ctxKeyErrorDocsBase
 	ctxKeyAgent
 	ctxKeyResolvedDirective
+	ctxKeyResolvedSession
 )
 
 // WithRequestID stores the request ID on the context.
@@ -94,4 +95,14 @@ func WithResolvedDirective(ctx context.Context, resolved directive.Resolved) con
 func ResolvedDirectiveFromContext(ctx context.Context) (directive.Resolved, bool) {
 	resolved, ok := ctx.Value(ctxKeyResolvedDirective).(directive.Resolved)
 	return resolved, ok
+}
+
+func withResolvedSession(ctx context.Context, rs resolvedSession) context.Context {
+	return context.WithValue(ctx, ctxKeyResolvedSession, rs)
+}
+
+// ResolvedSessionFromContext returns the session resolved for this request.
+func ResolvedSessionFromContext(ctx context.Context) (resolvedSession, bool) {
+	rs, ok := ctx.Value(ctxKeyResolvedSession).(resolvedSession)
+	return rs, ok
 }
