@@ -12,10 +12,10 @@ exclude_paths:
   - "infra/migrations/postgres/*_test.go"
   - "packages/directive/store_integration_test.go"
   - "packages/session/store_integration_test.go"
-  # Postgres down migrations are not T-SQL. Codacy still runs TSQLLint on *.sql
-  # despite engines.tsqllint.enabled=false below; SET QUOTED_IDENTIFIER would break
-  # golang-migrate on Postgres, so exclude down scripts only (up.sql still scanned).
-  - "infra/migrations/postgres/*.down.sql"
+  # Postgres migrations are not T-SQL. Codacy still runs TSQLLint on *.sql
+  # despite engines.tsqllint.enabled=false below; SET QUOTED_IDENTIFIER would
+  # break golang-migrate on Postgres, so exclude all postgres migration SQL.
+  - "infra/migrations/postgres/*.sql"
 
 # Postgres migrations are not T-SQL; disable the T-SQL-only engine.
 engines:

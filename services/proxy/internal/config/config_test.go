@@ -116,6 +116,24 @@ func TestUnit_Config_NegativeDurationNotDefaulted(t *testing.T) {
 	}
 }
 
+func TestUnit_Config_NegativeCacheTTLSanitized(t *testing.T) {
+	t.Parallel()
+	cfg := validProxyConfig()
+	cfg.SessionCacheTTL = -time.Second
+	cfg.SessionGetOrCreateTO = -time.Millisecond
+	cfg.DirectiveCacheTTL = -time.Minute
+	cfg.ApplyDefaults()
+	if cfg.SessionCacheTTL != defaultSessionCacheTTL {
+		t.Fatalf("SessionCacheTTL: %s", cfg.SessionCacheTTL)
+	}
+	if cfg.SessionGetOrCreateTO != defaultSessionGetOrCreateTO {
+		t.Fatalf("SessionGetOrCreateTO: %s", cfg.SessionGetOrCreateTO)
+	}
+	if cfg.DirectiveCacheTTL != defaultDirectiveCacheTTL {
+		t.Fatalf("DirectiveCacheTTL: %s", cfg.DirectiveCacheTTL)
+	}
+}
+
 func TestParseOrgRPMOverrides(t *testing.T) {
 	t.Parallel()
 	orgID := uuid.MustParse("550e8400-e29b-41d4-a716-446655440000")

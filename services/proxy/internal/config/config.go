@@ -153,11 +153,20 @@ func (c *Config) applySessionDefaults() {
 	applyIntDefault(&c.CheckpointWorkers, defaultCheckpointWorkers)
 	applyIntDefault(&c.CheckpointQueue, defaultCheckpointQueue)
 	applyDurationDefault(&c.SessionGetOrCreateTO, defaultSessionGetOrCreateTO)
-	applyDurationDefault(&c.SessionIdleTimeout, defaultSessionIdleTimeout)
-	applyDurationDefault(&c.SessionSweepInterval, defaultSessionSweepInterval)
+	applyDurationDefaultZeroOnly(&c.SessionIdleTimeout, defaultSessionIdleTimeout)
+	applyDurationDefaultZeroOnly(&c.SessionSweepInterval, defaultSessionSweepInterval)
 }
 
+// applyDurationDefault replaces non-positive durations with def (cache/timeout sanitization).
 func applyDurationDefault(dst *time.Duration, def time.Duration) {
+	if *dst <= 0 {
+		*dst = def
+	}
+}
+
+// applyDurationDefaultZeroOnly defaults only unset (zero) values so negative
+// sweeper durations survive to Validate() and fail closed.
+func applyDurationDefaultZeroOnly(dst *time.Duration, def time.Duration) {
 	if *dst == 0 {
 		*dst = def
 	}
