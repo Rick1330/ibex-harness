@@ -19,6 +19,7 @@ func TestUnit_ProxyRegistry_ClickHouseMetrics(t *testing.T) {
 	reg.AddClickHouseFlushRows(-1)
 	reg.AddClickHouseDroppedRows(2)
 	reg.AddClickHouseDroppedRows(0)
+	reg.AddClickHouseDroppedRows(-1) // ignored
 	reg.ObserveClickHouseFlushSeconds(0.012)
 
 	body := scrapeMetrics(t, reg.Gatherer())
@@ -50,7 +51,18 @@ func TestUnit_ProxyRegistry_ClickHouseMetrics(t *testing.T) {
 		t.Fatalf("rows=%v", rows)
 	}
 	if dropped := counterValue(families["ibex_clickhouse_dropped_rows_total"]); dropped != 2 {
-		t.Fatalf("dropped=%v", dropped)
+		t.Fatalf("dropped=%v want 2 (negatives ignored)", dropped)
+	}
+	hist := families["ibex_clickhouse_flush_duration_seconds"]
+	if hist == nil || len(hist.GetMetric()) == 0 {
+		t.Fatal("missing flush duration histogram")
+	}
+	h := hist.GetMetric()[0].GetHistogram()
+	if h.GetSampleCount() != 1 {
+		t.Fatalf("histogram samples=%d want 1", h.GetSampleCount())
+	}
+	if h.GetSampleSum() < 0.011 || h.GetSampleSum() > 0.013 {
+		t.Fatalf("histogram sum=%v want ~0.012", h.GetSampleSum())
 	}
 }
 

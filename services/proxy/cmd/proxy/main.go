@@ -135,16 +135,39 @@ func setupProxyCore(
 		return nil, fmt.Errorf("directive subscriber: %w", err)
 	}
 	startSessionSweeper(assembled.sessionSweeper, cfg, log)
+	return finishProxyCore(proxyCoreParts{
+		assembled: assembled,
+		revSub:    revSub, revCancel: revCancel,
+		dirSub: dirSub, dirCancel: dirCancel,
+	}, cfg, log, reg)
+}
+
+type proxyCoreParts struct {
+	assembled assembledProxyCore
+	revSub    *revocation.Subscriber
+	revCancel context.CancelFunc
+	dirSub    *directive.Subscriber
+	dirCancel context.CancelFunc
+}
+
+func finishProxyCore(
+	parts proxyCoreParts,
+	cfg config.Config,
+	log *logger.Logger,
+	reg *ibexmetrics.ProxyRegistry,
+) (*proxyCore, error) {
 	traceWriter, err := setupTraceWriter(cfg, log, reg)
 	if err != nil {
 		return nil, err
 	}
 	return &proxyCore{
-		server: assembled.server, grpcConn: assembled.grpcConn,
-		redisClient: assembled.redisClient, pgDB: assembled.pgDB,
-		revSub: revSub, revCancel: revCancel, dirSub: dirSub, dirCancel: dirCancel,
-		checkpointPool: assembled.checkpointPool, sessionSweeper: assembled.sessionSweeper,
-		traceWriter: traceWriter,
+		server: parts.assembled.server, grpcConn: parts.assembled.grpcConn,
+		redisClient: parts.assembled.redisClient, pgDB: parts.assembled.pgDB,
+		revSub: parts.revSub, revCancel: parts.revCancel,
+		dirSub: parts.dirSub, dirCancel: parts.dirCancel,
+		checkpointPool: parts.assembled.checkpointPool,
+		sessionSweeper: parts.assembled.sessionSweeper,
+		traceWriter:    traceWriter,
 	}, nil
 }
 

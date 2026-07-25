@@ -363,14 +363,20 @@ func TestUnit_Writer_NewWriter_Success(t *testing.T) {
 
 func TestUnit_Writer_FlushEmptyAndIdleTick(t *testing.T) {
 	t.Parallel()
-	ins := &fakeInserter{}
-	w := NewWriterWithInserter(ins, Config{MaxBatchSize: 10, FlushInterval: 20 * time.Millisecond})
+	ins := &fakeInserter{insertCh: make(chan struct{}, 4)}
+	interval := 20 * time.Millisecond
+	w := NewWriterWithInserter(ins, Config{MaxBatchSize: 10, FlushInterval: interval})
 	defer func() { _ = w.Close() }()
 
 	if err := w.Flush(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(60 * time.Millisecond) // idle tick -> flushBestEffort empty path
+	// Idle window: ticks may run, but empty buffer must not call InsertTraces.
+	select {
+	case <-ins.insertCh:
+		t.Fatal("unexpected insert during empty idle window")
+	case <-time.After(3 * interval):
+	}
 	if ins.totalRows() != 0 {
 		t.Fatalf("rows=%d", ins.totalRows())
 	}
@@ -412,16 +418,22 @@ func TestUnit_Writer_MetricsAndLoggerOnFlushError(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("flush wait")
 	}
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
+	waitEventually(t, time.Second, func() bool {
 		errN, rowsN := m.snapshot()
-		if errN >= 1 && rowsN >= 1 {
+		return errN >= 1 && rowsN >= 1
+	}, "flush error metrics not observed")
+}
+
+func waitEventually(t *testing.T, timeout time.Duration, cond func() bool, failMsg string) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if cond() {
 			return
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	errN, rowsN := m.snapshot()
-	t.Fatalf("flush error metric=%d rows=%d", errN, rowsN)
+	t.Fatal(failMsg)
 }
 
 func TestUnit_Writer_NewWriter_BadDSN(t *testing.T) {

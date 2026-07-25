@@ -88,28 +88,8 @@ func shutdownSignalCases(t *testing.T) []shutdownSignalCase {
 				}, func() { sigCh <- syscall.SIGTERM }
 			},
 		},
-		{
-			name: "drains clickhouse trace writer",
-			opts: func(t *testing.T) (shutdownOpts, func()) {
-				w := ibexch.NewWriterWithInserter(noopTraceInserter{}, ibexch.Config{
-					MaxBatchSize:  10,
-					FlushInterval: time.Hour,
-				})
-				sigCh := make(chan os.Signal, 1)
-				return shutdownOpts{
-					cfg: baseCfg, logger: logger.Discard("proxy"),
-					providers: shutdownTestProviders(t), server: baseServer(),
-					traceWriter: w, signalCh: sigCh,
-				}, func() { sigCh <- syscall.SIGTERM }
-			},
-		},
 	}
 }
-
-type noopTraceInserter struct{}
-
-func (noopTraceInserter) InsertTraces(context.Context, []ibexch.TraceRecord) error { return nil }
-func (noopTraceInserter) Close() error                                             { return nil }
 
 func TestRunWithShutdown_serverFailureReturns1(t *testing.T) {
 	badPort, _ := strconv.Atoi("99999")
@@ -131,5 +111,38 @@ func TestRunWithShutdown_onSignal(t *testing.T) {
 			opts, trigger := tc.opts(t)
 			runShutdownTest(t, opts, 0, trigger)
 		})
+	}
+}
+
+func TestRunWithShutdown_drainsClickHouseWriter(t *testing.T) {
+	ins := &recordingTraceInserter{}
+	w := ibexch.NewWriterWithInserter(ins, ibexch.Config{
+		MaxBatchSize:  10,
+		FlushInterval: time.Hour,
+	})
+	if err := w.Write(sampleTrace("drain-1")); err != nil {
+		t.Fatal(err)
+	}
+
+	sigCh := make(chan os.Signal, 1)
+	server := &http.Server{
+		Addr:              "127.0.0.1:0",
+		Handler:           http.HandlerFunc(func(rw http.ResponseWriter, _ *http.Request) { rw.WriteHeader(http.StatusOK) }),
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	runShutdownTest(t, shutdownOpts{
+		cfg:         config.Config{Environment: "development", ShutdownTimeout: 2 * time.Second},
+		logger:      logger.Discard("proxy"),
+		providers:   shutdownTestProviders(t),
+		server:      server,
+		traceWriter: w,
+		signalCh:    sigCh,
+	}, 0, func() { sigCh <- syscall.SIGTERM })
+
+	if ins.rowCount() != 1 {
+		t.Fatalf("inserted rows=%d want 1", ins.rowCount())
+	}
+	if !ins.closed.Load() {
+		t.Fatal("expected inserter Close after shutdown drain")
 	}
 }

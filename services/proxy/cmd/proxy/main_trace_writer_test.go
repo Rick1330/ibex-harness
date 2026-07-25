@@ -1,8 +1,13 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"errors"
+	"log/slog"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -10,12 +15,17 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	ibexmetrics "github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
+	"github.com/google/uuid"
 )
 
 func TestUnit_SetupTraceWriter_DisabledWhenDSNUnset(t *testing.T) {
+	t.Parallel()
+
 	log := logger.Discard("proxy")
 	reg := ibexmetrics.NewProxy("proxy")
+
 	w, err := setupTraceWriter(config.Config{}, log, reg)
+
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -25,9 +35,13 @@ func TestUnit_SetupTraceWriter_DisabledWhenDSNUnset(t *testing.T) {
 }
 
 func TestUnit_SetupTraceWriter_DisabledWhenDSNBlank(t *testing.T) {
+	t.Parallel()
+
 	log := logger.Discard("proxy")
 	reg := ibexmetrics.NewProxy("proxy")
+
 	w, err := setupTraceWriter(config.Config{ClickHouseDSN: "   "}, log, reg)
+
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,8 +95,9 @@ func TestUnit_SetupTraceWriter_PropagatesConfig(t *testing.T) {
 func TestUnit_SetupTraceWriter_WrapsStartError(t *testing.T) {
 	prev := newTraceWriter
 	t.Cleanup(func() { newTraceWriter = prev })
+	wantErr := errors.New("boom")
 	newTraceWriter = func(ibexch.Config) (*ibexch.Writer, error) {
-		return nil, errors.New("boom")
+		return nil, wantErr
 	}
 
 	log := logger.Discard("proxy")
@@ -91,15 +106,100 @@ func TestUnit_SetupTraceWriter_WrapsStartError(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "clickhouse writer") {
 		t.Fatalf("got %v", err)
 	}
-	if !strings.Contains(err.Error(), "boom") {
+	if !errors.Is(err, wantErr) {
 		t.Fatalf("want wrapped cause, got %v", err)
 	}
 }
 
 func TestUnit_SetupTraceWriter_LogUsesRedactedDSN(t *testing.T) {
-	raw := "clickhouse://default:s3cret@localhost:8123/ibex"
-	got := ibexch.RedactedDSN(raw)
-	if strings.Contains(got, "s3cret") {
-		t.Fatalf("got %q", got)
+	prev := newTraceWriter
+	t.Cleanup(func() { newTraceWriter = prev })
+	newTraceWriter = func(ibexch.Config) (*ibexch.Writer, error) {
+		return &ibexch.Writer{}, nil
 	}
+
+	var buf bytes.Buffer
+	log, err := logger.New(logger.Config{
+		Service: "proxy",
+		Level:   slog.LevelInfo,
+		Writer:  &buf,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := ibexmetrics.NewProxy("proxy-ch-redact")
+	secret := "s3cret-password"
+	dsn := "clickhouse://default:" + secret + "@localhost:8123/ibex"
+
+	_, err = setupTraceWriter(config.Config{ClickHouseDSN: dsn}, log, reg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "clickhouse trace writer started") {
+		t.Fatalf("missing startup log: %q", out)
+	}
+	if strings.Contains(out, secret) {
+		t.Fatalf("password leaked in log: %q", out)
+	}
+}
+
+func TestUnit_FinishProxyCore_TraceWriterError(t *testing.T) {
+	prev := newTraceWriter
+	t.Cleanup(func() { newTraceWriter = prev })
+	wantErr := errors.New("dial failed")
+	newTraceWriter = func(ibexch.Config) (*ibexch.Writer, error) {
+		return nil, wantErr
+	}
+
+	log := logger.Discard("proxy")
+	reg := ibexmetrics.NewProxy("proxy-finish-ch")
+	_, err := finishProxyCore(
+		proxyCoreParts{},
+		config.Config{ClickHouseDSN: "clickhouse://default:@localhost:8123/ibex"},
+		log, reg,
+	)
+	if err == nil || !errors.Is(err, wantErr) {
+		t.Fatalf("got %v", err)
+	}
+}
+
+// sampleTrace for shutdown drain assertions (valid TraceRecord).
+func sampleTrace(id string) ibexch.TraceRecord {
+	now := time.Now().UTC()
+	return ibexch.TraceRecord{
+		RequestID:   id,
+		OrgID:       uuid.MustParse("11111111-1111-1111-1111-111111111111"),
+		AgentID:     uuid.MustParse("22222222-2222-2222-2222-222222222222"),
+		Model:       "gpt-4o",
+		Provider:    "openai",
+		StatusCode:  200,
+		IsComplete:  true,
+		RequestedAt: now,
+		CompletedAt: now,
+	}
+}
+
+type recordingTraceInserter struct {
+	mu     sync.Mutex
+	rows   []ibexch.TraceRecord
+	closed atomic.Bool
+}
+
+func (r *recordingTraceInserter) InsertTraces(_ context.Context, rows []ibexch.TraceRecord) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.rows = append(r.rows, rows...)
+	return nil
+}
+
+func (r *recordingTraceInserter) Close() error {
+	r.closed.Store(true)
+	return nil
+}
+
+func (r *recordingTraceInserter) rowCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.rows)
 }

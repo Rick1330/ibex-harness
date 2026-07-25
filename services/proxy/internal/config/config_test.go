@@ -121,9 +121,7 @@ func TestUnit_Config_ClickHouseZeroDefaultsNegativeRejected(t *testing.T) {
 	t.Parallel()
 	cfg := Config{}
 	cfg.ApplyDefaults()
-	if cfg.ClickHouseBatchSize != 500 || cfg.ClickHouseFlushMS != 200 {
-		t.Fatalf("zero defaults: batch=%d flush=%d", cfg.ClickHouseBatchSize, cfg.ClickHouseFlushMS)
-	}
+	assertApplyDefaultsClickHouse(t, cfg)
 
 	neg := validProxyConfig()
 	neg.ClickHouseBatchSize = -10
