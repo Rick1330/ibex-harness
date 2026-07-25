@@ -27,7 +27,18 @@ func (c Config) Validate() error {
 		c.validateRateLimit,
 		c.validateLLMConfig,
 		c.validateSessionSweeper,
+		c.validateClickHouse,
 	)
+}
+
+func (c Config) validateClickHouse() error {
+	if c.ClickHouseBatchSize < 1 {
+		return fmt.Errorf("CLICKHOUSE_INSERT_BATCH_SIZE must be positive")
+	}
+	if c.ClickHouseFlushMS < 1 {
+		return fmt.Errorf("CLICKHOUSE_INSERT_FLUSH_MS must be positive")
+	}
+	return nil
 }
 
 func (c Config) validateSessionSweeper() error {

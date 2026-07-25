@@ -70,8 +70,8 @@ Handler errors are logged but do not change exit code unless the drain deadline 
 
 ### 6) Deferred
 
-- OTel `Providers.Shutdown` registration (M1.3.1)
-- ClickHouse writer flush (Phase 2)
+- OTel `Providers.Shutdown` registration (M1.3.1) — **done**
+- ClickHouse writer flush (Phase 2) — **done in [2.5.2](/roadmap/phase-2-single-provider/milestones/2.5.2-clickhouse-client)** (`packages/clickhouse.Writer` registered on proxy shutdown)
 - WebSocket / hijacked connection drain (Phase 2 — note in risks)
 
 ## Consequences

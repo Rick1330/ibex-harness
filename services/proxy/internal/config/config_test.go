@@ -97,6 +97,12 @@ func TestUnit_Config_ApplyDefaults(t *testing.T) {
 	if cfg.SessionSweepInterval != defaultSessionSweepInterval {
 		t.Fatalf("SessionSweepInterval: %s", cfg.SessionSweepInterval)
 	}
+	if cfg.ClickHouseBatchSize != 500 {
+		t.Fatalf("ClickHouseBatchSize: %d", cfg.ClickHouseBatchSize)
+	}
+	if cfg.ClickHouseFlushMS != 200 {
+		t.Fatalf("ClickHouseFlushMS: %d", cfg.ClickHouseFlushMS)
+	}
 }
 
 func TestUnit_Config_NegativeDurationNotDefaulted(t *testing.T) {
