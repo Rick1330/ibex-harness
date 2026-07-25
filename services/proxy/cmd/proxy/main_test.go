@@ -233,6 +233,47 @@ func TestUnit_NewSessionStore(t *testing.T) {
 	}
 }
 
+func TestUnit_SetupDirectiveResolver_PostgresWithoutRedis(t *testing.T) {
+	orig := openPostgresFn
+	t.Cleanup(func() { openPostgresFn = orig })
+	db, err := sql.Open("postgres", "postgres://127.0.0.1:1/nope?sslmode=disable")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	openPostgresFn = func(string) (*sql.DB, error) { return db, nil }
+
+	log := logger.Discard("proxy")
+	gotDB, resolver, err := setupDirectiveResolver(
+		config.Config{PostgresDSN: "postgres://example/ibex"}, nil, log, nil)
+	if err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	if gotDB != db {
+		t.Fatal("expected stubbed postgres db")
+	}
+	store, err := newSessionStore(gotDB, nil)
+	if err != nil || store == nil {
+		t.Fatalf("session store: %v err=%v", store, err)
+	}
+	got, err := resolver.Resolve(context.Background(), uuid.Nil, uuid.Nil)
+	if err != nil || got.HasContent() {
+		t.Fatalf("noop resolve: %+v err=%v", got, err)
+	}
+}
+
+func TestUnit_SetupDirectiveResolver_PostgresOpenError(t *testing.T) {
+	orig := openPostgresFn
+	t.Cleanup(func() { openPostgresFn = orig })
+	openPostgresFn = func(string) (*sql.DB, error) { return nil, errors.New("open boom") }
+	log := logger.Discard("proxy")
+	_, _, err := setupDirectiveResolver(
+		config.Config{PostgresDSN: "postgres://example/ibex"}, nil, log, nil)
+	if err == nil {
+		t.Fatal("expected open error")
+	}
+}
+
 func TestUnit_OpenProxyPostgres_BadDSN(t *testing.T) {
 	t.Parallel()
 	_, err := openProxyPostgres("postgres://127.0.0.1:1/nope?sslmode=disable&connect_timeout=1")

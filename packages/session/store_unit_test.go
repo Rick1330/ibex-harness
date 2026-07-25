@@ -17,14 +17,11 @@ func TestUnit_NewPostgresStore(t *testing.T) {
 	}
 	db := openClosedPostgres(t)
 	store, err := NewPostgresStore(PostgresStoreDeps{DB: db, Metrics: recordingMetrics{}})
-	if err != nil {
-		t.Fatalf("NewPostgresStore: %v", err)
-	}
-	if store == nil || store.db == nil {
-		t.Fatal("expected store")
+	if err != nil || store == nil {
+		t.Fatalf("store=%v err=%v", store, err)
 	}
 	if _, err := NewPostgresStore(PostgresStoreDeps{DB: db}); err != nil {
-		t.Fatalf("noop metrics store: %v", err)
+		t.Fatalf("noop metrics: %v", err)
 	}
 }
 
@@ -32,68 +29,54 @@ func TestUnit_ClosedDB_SurfaceBeginErrors(t *testing.T) {
 	t.Parallel()
 	store := mustClosedStore(t)
 	ctx := context.Background()
-	orgID := uuid.New()
-	agentID := uuid.New()
-	sessionID := uuid.New()
-
-	_, err := store.GetOrCreate(ctx, GetOrCreateParams{
-		OrgID: orgID, AgentID: agentID, ExternalID: "ext",
-		Model: "gpt-4o", Provider: "openai",
-	})
-	if err == nil {
+	orgID, agentID, sessionID := uuid.New(), uuid.New(), uuid.New()
+	if _, err := store.GetOrCreate(ctx, GetOrCreateParams{
+		OrgID: orgID, AgentID: agentID, ExternalID: "ext", Model: "m", Provider: "p",
+	}); err == nil {
 		t.Fatal("GetOrCreate: expected begin error")
 	}
-
-	err = store.AppendCheckpoint(ctx, CheckpointParams{
+	if err := store.AppendCheckpoint(ctx, CheckpointParams{
 		SessionID: sessionID, OrgID: orgID, AgentID: agentID, TurnIndex: 0,
-		RequestID: "r", MessagesHash: "h", Model: "gpt-4o", Provider: "openai",
-		LatencyMs: 1, IsComplete: true, CompletionHash: "c", ProviderRequestID: "p",
-	})
-	if err == nil {
+		RequestID: "r", MessagesHash: "h", Model: "m", Provider: "p", LatencyMs: 1,
+	}); err == nil {
 		t.Fatal("AppendCheckpoint: expected begin error")
 	}
-
-	err = store.Complete(ctx, sessionID, orgID)
-	if err == nil {
+	if err := store.Complete(ctx, sessionID, orgID); err == nil {
 		t.Fatal("Complete: expected begin error")
 	}
 }
 
-func TestUnit_ScanSession(t *testing.T) {
+func TestUnit_ScanSession_Populated(t *testing.T) {
 	t.Parallel()
-	id := uuid.New()
-	orgID := uuid.New()
-	agentID := uuid.New()
-	dv := uuid.New()
+	id, orgID, agentID, dv := uuid.New(), uuid.New(), uuid.New(), uuid.New()
 	ext := "ext-1"
-
-	got, err := scanSession(fakeSessionRow{
-		values: []any{id, orgID, agentID, sql.NullString{String: ext, Valid: true},
-			StatusActive, "gpt-4o", "openai", uuid.NullUUID{UUID: dv, Valid: true},
-			3, int64(10), int64(20), int64(30)},
+	got, err := scanSession(fixedScanRow{
+		id: id, orgID: orgID, agentID: agentID, ext: sql.NullString{String: ext, Valid: true},
+		status: StatusActive, model: "gpt-4o", provider: "openai",
+		directive: uuid.NullUUID{UUID: dv, Valid: true},
+		turns:     3, inTok: 10, outTok: 20, latency: 30,
 	})
 	if err != nil {
 		t.Fatalf("scan: %v", err)
 	}
-	if got.ID != id || got.ExternalID == nil || *got.ExternalID != ext {
-		t.Fatalf("session: %+v", got)
-	}
-	if got.DirectiveVersionID == nil || *got.DirectiveVersionID != dv {
-		t.Fatalf("directive: %+v", got.DirectiveVersionID)
-	}
+	assertSessionScan(t, got, id, &ext, &dv)
+}
 
-	got, err = scanSession(fakeSessionRow{
-		values: []any{id, orgID, agentID, sql.NullString{}, StatusActive, "m", "p",
-			uuid.NullUUID{}, 0, int64(0), int64(0), int64(0)},
+func TestUnit_ScanSession_NullOptionals(t *testing.T) {
+	t.Parallel()
+	id, orgID, agentID := uuid.New(), uuid.New(), uuid.New()
+	got, err := scanSession(fixedScanRow{
+		id: id, orgID: orgID, agentID: agentID, status: StatusActive, model: "m", provider: "p",
 	})
 	if err != nil {
-		t.Fatalf("scan nulls: %v", err)
+		t.Fatalf("scan: %v", err)
 	}
-	if got.ExternalID != nil || got.DirectiveVersionID != nil {
-		t.Fatalf("expected null optionals: %+v", got)
-	}
+	assertSessionScan(t, got, id, nil, nil)
+}
 
-	_, err = scanSession(fakeSessionRow{err: errors.New("scan fail")})
+func TestUnit_ScanSession_Error(t *testing.T) {
+	t.Parallel()
+	_, err := scanSession(errScanRow{err: errors.New("scan fail")})
 	if err == nil {
 		t.Fatal("expected scan error")
 	}
@@ -133,6 +116,25 @@ func TestUnit_NoopMetrics_Callable(t *testing.T) {
 	m.IncSessionComplete(ResultNoop)
 }
 
+func assertSessionScan(t *testing.T, got *Session, id uuid.UUID, ext *string, dv *uuid.UUID) {
+	t.Helper()
+	if got.ID != id {
+		t.Fatalf("id=%s want %s", got.ID, id)
+	}
+	if (got.ExternalID == nil) != (ext == nil) {
+		t.Fatalf("external_id=%v want %v", got.ExternalID, ext)
+	}
+	if ext != nil && *got.ExternalID != *ext {
+		t.Fatalf("external_id=%s want %s", *got.ExternalID, *ext)
+	}
+	if (got.DirectiveVersionID == nil) != (dv == nil) {
+		t.Fatalf("directive=%v want %v", got.DirectiveVersionID, dv)
+	}
+	if dv != nil && *got.DirectiveVersionID != *dv {
+		t.Fatalf("directive=%s want %s", *got.DirectiveVersionID, *dv)
+	}
+}
+
 type recordingMetrics struct{}
 
 func (recordingMetrics) IncSessionGetOrCreate(string)             {}
@@ -140,35 +142,51 @@ func (recordingMetrics) ObserveSessionGetOrCreateSeconds(float64) {}
 func (recordingMetrics) IncSessionCheckpoint(string)              {}
 func (recordingMetrics) IncSessionComplete(string)                {}
 
-type fakeSessionRow struct {
-	values []any
-	err    error
+type fixedScanRow struct {
+	id, orgID, agentID      uuid.UUID
+	ext                     sql.NullString
+	status, model, provider string
+	directive               uuid.NullUUID
+	turns                   int
+	inTok, outTok, latency  int64
 }
 
-func (r fakeSessionRow) Scan(dest ...any) error {
-	if r.err != nil {
-		return r.err
+func (r fixedScanRow) Scan(dest ...any) error {
+	ptrs := []any{
+		&r.id, &r.orgID, &r.agentID, &r.ext, &r.status, &r.model, &r.provider,
+		&r.directive, &r.turns, &r.inTok, &r.outTok, &r.latency,
 	}
 	for i := range dest {
-		switch d := dest[i].(type) {
-		case *uuid.UUID:
-			*d = r.values[i].(uuid.UUID)
-		case *string:
-			*d = r.values[i].(string)
-		case *int:
-			*d = r.values[i].(int)
-		case *int64:
-			*d = r.values[i].(int64)
-		case *sql.NullString:
-			*d = r.values[i].(sql.NullString)
-		case *uuid.NullUUID:
-			*d = r.values[i].(uuid.NullUUID)
-		default:
-			return errors.New("unsupported dest")
+		if err := assignScan(dest[i], ptrs[i]); err != nil {
+			return err
 		}
 	}
 	return nil
 }
+
+func assignScan(dest, src any) error {
+	switch d := dest.(type) {
+	case *uuid.UUID:
+		*d = *src.(*uuid.UUID)
+	case *string:
+		*d = *src.(*string)
+	case *int:
+		*d = *src.(*int)
+	case *int64:
+		*d = *src.(*int64)
+	case *sql.NullString:
+		*d = *src.(*sql.NullString)
+	case *uuid.NullUUID:
+		*d = *src.(*uuid.NullUUID)
+	default:
+		return errors.New("unsupported dest")
+	}
+	return nil
+}
+
+type errScanRow struct{ err error }
+
+func (r errScanRow) Scan(...any) error { return r.err }
 
 func mustClosedStore(t *testing.T) *PostgresStore {
 	t.Helper()

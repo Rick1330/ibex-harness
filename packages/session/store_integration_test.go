@@ -36,35 +36,25 @@ const seedSetStatusSQL = `
 UPDATE ibex_core.sessions SET status = $1
 WHERE id = $2::uuid AND org_id = $3::uuid`
 
-func TestStore_GetOrCreate_IdempotentExternalID(t *testing.T) {
-	ids := setupStore(t)
-	p := baseParams(ids, "ext-idem")
-	a, err := ids.store.GetOrCreate(context.Background(), p)
-	if err != nil {
-		t.Fatalf("first: %v", err)
+func TestStore_GetOrCreate_ExternalIDSemantics(t *testing.T) {
+	cases := []struct {
+		name     string
+		ext      string
+		wantSame bool
+	}{
+		{name: "idempotent", ext: "ext-idem", wantSame: true},
+		{name: "empty_always_new", ext: "", wantSame: false},
 	}
-	b, err := ids.store.GetOrCreate(context.Background(), p)
-	if err != nil {
-		t.Fatalf("second: %v", err)
-	}
-	if a.ID != b.ID {
-		t.Fatalf("expected same session id, got %s vs %s", a.ID, b.ID)
-	}
-}
-
-func TestStore_GetOrCreate_EmptyExternalID_AlwaysNew(t *testing.T) {
-	ids := setupStore(t)
-	p := baseParams(ids, "")
-	a, err := ids.store.GetOrCreate(context.Background(), p)
-	if err != nil {
-		t.Fatalf("first: %v", err)
-	}
-	b, err := ids.store.GetOrCreate(context.Background(), p)
-	if err != nil {
-		t.Fatalf("second: %v", err)
-	}
-	if a.ID == b.ID {
-		t.Fatal("expected distinct sessions for empty external_id")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ids := setupStore(t)
+			a := mustCreate(t, ids, tc.ext)
+			b := mustCreate(t, ids, tc.ext)
+			same := a.ID == b.ID
+			if same != tc.wantSame {
+				t.Fatalf("same=%v want %v (%s vs %s)", same, tc.wantSame, a.ID, b.ID)
+			}
+		})
 	}
 }
 
@@ -131,8 +121,18 @@ func TestStore_Complete_TerminalNoop(t *testing.T) {
 
 func TestStore_GetOrCreate_UniqueRaceResolvesExisting(t *testing.T) {
 	ids := setupStore(t)
-	const workers = 8
 	ext := "ext-race-" + uuid.NewString()
+	idsOut := fanoutGetOrCreate(t, ids, ext, 8)
+	first := idsOut[0]
+	for _, got := range idsOut[1:] {
+		if got != first {
+			t.Fatalf("expected single session id, got %s and %s", first, got)
+		}
+	}
+}
+
+func fanoutGetOrCreate(t *testing.T, ids storeIDs, ext string, workers int) []uuid.UUID {
+	t.Helper()
 	type result struct {
 		id  uuid.UUID
 		err error
@@ -148,20 +148,15 @@ func TestStore_GetOrCreate_UniqueRaceResolvesExisting(t *testing.T) {
 			out <- result{id: sess.ID}
 		}()
 	}
-	var first uuid.UUID
+	idsOut := make([]uuid.UUID, 0, workers)
 	for i := 0; i < workers; i++ {
 		got := <-out
 		if got.err != nil {
 			t.Fatalf("worker: %v", got.err)
 		}
-		if first == uuid.Nil {
-			first = got.id
-			continue
-		}
-		if got.id != first {
-			t.Fatalf("expected single session id, got %s and %s", first, got.id)
-		}
+		idsOut = append(idsOut, got.id)
 	}
+	return idsOut
 }
 
 func TestStore_RLS_CrossOrg(t *testing.T) {

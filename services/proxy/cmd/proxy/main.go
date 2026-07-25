@@ -49,6 +49,9 @@ func run(args []string) int {
 // providerRegistryInit is overridden in tests to simulate startup registry failures.
 var providerRegistryInit = defaultProviderRegistryInit
 
+// openPostgresFn is overridden in tests to avoid a live Postgres dependency.
+var openPostgresFn = openProxyPostgres
+
 func defaultProviderRegistryInit(cfg config.Config, log *logger.Logger, tracer trace.Tracer, reg *ibexmetrics.ProxyRegistry) (*provider.Registry, error) {
 	return buildProviderRegistry(cfg, log, tracer, reg)
 }
@@ -283,7 +286,7 @@ func setupDirectiveResolver(
 		log.InfoCtx(context.Background(), "postgres unset; directive noop and session store disabled")
 		return nil, directive.NoopResolver{}, nil
 	}
-	db, err := openProxyPostgres(dsn)
+	db, err := openPostgresFn(dsn)
 	if err != nil {
 		return nil, nil, err
 	}
