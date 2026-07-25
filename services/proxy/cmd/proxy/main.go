@@ -116,7 +116,9 @@ func setupProxyCore(
 	if err != nil {
 		return nil, fmt.Errorf("auth clients: %w", err)
 	}
-	pgDB, directiveResolver, err := setupDirectiveResolver(cfg, redisClient, log, reg, openProxyPostgres)
+	pgDB, directiveResolver, err := setupDirectiveResolver(directiveResolverSetup{
+		Config: cfg, Redis: redisClient, Log: log, Reg: reg, OpenDB: openProxyPostgres,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("directive resolver: %w", err)
 	}
@@ -274,18 +276,22 @@ func startRevocationSubscriber(
 
 type postgresOpener func(dsn string) (*sql.DB, error)
 
-func setupDirectiveResolver(
-	cfg config.Config,
-	redisClient redis.UniversalClient,
-	log *logger.Logger,
-	reg *ibexmetrics.ProxyRegistry,
-	openDB postgresOpener,
-) (*sql.DB, directive.Resolver, error) {
-	dsn := strings.TrimSpace(cfg.PostgresDSN)
+// directiveResolverSetup bundles Postgres/directive wiring inputs for setupDirectiveResolver.
+type directiveResolverSetup struct {
+	Config config.Config
+	Redis  redis.UniversalClient
+	Log    *logger.Logger
+	Reg    *ibexmetrics.ProxyRegistry
+	OpenDB postgresOpener
+}
+
+func setupDirectiveResolver(in directiveResolverSetup) (*sql.DB, directive.Resolver, error) {
+	dsn := strings.TrimSpace(in.Config.PostgresDSN)
 	if dsn == "" {
-		log.InfoCtx(context.Background(), "postgres unset; directive noop and session store disabled")
+		in.Log.InfoCtx(context.Background(), "postgres unset; directive noop and session store disabled")
 		return nil, directive.NoopResolver{}, nil
 	}
+	openDB := in.OpenDB
 	if openDB == nil {
 		openDB = openProxyPostgres
 	}
@@ -293,20 +299,20 @@ func setupDirectiveResolver(
 	if err != nil {
 		return nil, nil, err
 	}
-	if redisClient == nil {
-		log.InfoCtx(context.Background(), "directive resolver noop; needs REDIS_URL with POSTGRES_DSN")
+	if in.Redis == nil {
+		in.Log.InfoCtx(context.Background(), "directive resolver noop; needs REDIS_URL with POSTGRES_DSN")
 		return db, directive.NoopResolver{}, nil
 	}
 	resolver, err := newCachedDirectiveResolver(cachedDirectiveInputs{
-		DB: db, Redis: redisClient, Config: cfg, Log: log, Reg: reg,
+		DB: db, Redis: in.Redis, Config: in.Config, Log: in.Log, Reg: in.Reg,
 	})
 	if err != nil {
 		// Close best-effort: pool is unusable after construction failure.
 		_ = db.Close()
 		return nil, nil, fmt.Errorf("directive resolver: %w", err)
 	}
-	log.InfoCtx(context.Background(), "directive resolver configured",
-		"cache_ttl", cfg.DirectiveCacheTTL.String())
+	in.Log.InfoCtx(context.Background(), "directive resolver configured",
+		"cache_ttl", in.Config.DirectiveCacheTTL.String())
 	return db, resolver, nil
 }
 

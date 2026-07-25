@@ -68,29 +68,46 @@ func TestUnit_ClosedDB_SurfaceBeginErrors(t *testing.T) {
 func TestUnit_ValidateCheckpointStats(t *testing.T) {
 	t.Parallel()
 
-	p := CheckpointParams{
+	base := CheckpointParams{
 		SessionID: uuid.New(), OrgID: uuid.New(), TurnIndex: 1,
-		InputTokens: -1, OutputTokens: 0, LatencyMs: 0,
 	}
-	if err := validateCheckpointStats(p); err == nil {
-		t.Fatal("expected negative input validation error")
+	cases := []struct {
+		name    string
+		mutate  func(*CheckpointParams)
+		wantErr bool
+	}{
+		{name: "negative_input", mutate: func(p *CheckpointParams) { p.InputTokens = -1 }, wantErr: true},
+		{name: "negative_output", mutate: func(p *CheckpointParams) { p.OutputTokens = -1 }, wantErr: true},
+		{name: "negative_latency", mutate: func(p *CheckpointParams) { p.LatencyMs = -1 }, wantErr: true},
+		{name: "valid_zeros", mutate: func(*CheckpointParams) {}, wantErr: false},
 	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			p := base
+			tc.mutate(&p)
+			err := validateCheckpointStats(p)
+			if tc.wantErr && err == nil {
+				t.Fatal("expected error")
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("unexpected: %v", err)
+			}
+		})
+	}
+}
 
-	p.InputTokens = 0
-	p.OutputTokens = -1
-	if err := validateCheckpointStats(p); err == nil {
-		t.Fatal("expected negative output validation error")
-	}
+func TestUnit_AppendCheckpoint_RejectsNegativeStats(t *testing.T) {
+	t.Parallel()
 
-	p.OutputTokens = 0
-	p.LatencyMs = -1
-	if err := validateCheckpointStats(p); err == nil {
-		t.Fatal("expected negative latency validation error")
-	}
-
-	p.LatencyMs = 0
-	if err := validateCheckpointStats(p); err != nil {
-		t.Fatalf("unexpected: %v", err)
+	store := mustClosedStore(t)
+	err := store.AppendCheckpoint(context.Background(), CheckpointParams{
+		SessionID: uuid.New(), OrgID: uuid.New(), AgentID: uuid.New(), TurnIndex: 0,
+		RequestID: "r", MessagesHash: "h", Model: "m", Provider: "p",
+		InputTokens: -1, LatencyMs: 1,
+	})
+	if err == nil {
+		t.Fatal("expected validation error before DB begin")
 	}
 }
 
@@ -109,7 +126,11 @@ func TestUnit_ScanSession_Populated(t *testing.T) {
 		t.Fatalf("scan: %v", err)
 	}
 
-	assertSessionScan(t, got, scanWant{id: id, ext: &ext, dv: &dv})
+	assertSessionScan(t, got, scanWant{
+		id: id, orgID: orgID, agentID: agentID, ext: &ext, status: StatusActive,
+		model: "gpt-4o", provider: "openai", dv: &dv,
+		turns: 3, input: 10, output: 20, latency: 30,
+	})
 }
 
 func TestUnit_ScanSession_NullOptionals(t *testing.T) {
@@ -123,7 +144,9 @@ func TestUnit_ScanSession_NullOptionals(t *testing.T) {
 		t.Fatalf("scan: %v", err)
 	}
 
-	assertSessionScan(t, got, scanWant{id: id})
+	assertSessionScan(t, got, scanWant{
+		id: id, orgID: orgID, agentID: agentID, status: StatusActive, model: "m", provider: "p",
+	})
 }
 
 func TestUnit_ScanSession_Error(t *testing.T) {
@@ -173,16 +196,56 @@ func TestUnit_NoopMetrics_Callable(t *testing.T) {
 }
 
 type scanWant struct {
-	id  uuid.UUID
-	ext *string
-	dv  *uuid.UUID
+	id, orgID, agentID      uuid.UUID
+	ext                     *string
+	status, model, provider string
+	dv                      *uuid.UUID
+	turns                   int
+	input, output, latency  int64
 }
 
 func assertSessionScan(t *testing.T, got *Session, want scanWant) {
 	t.Helper()
-	assertSessionID(t, got, want.id)
+	assertSessionIdentity(t, got, want)
+	assertSessionCounters(t, got, want)
 	assertOptionalString(t, got.ExternalID, want.ext, "external_id")
 	assertOptionalUUID(t, got.DirectiveVersionID, want.dv, "directive")
+}
+
+func assertSessionIdentity(t *testing.T, got *Session, want scanWant) {
+	t.Helper()
+	assertSessionID(t, got, want.id)
+	if got.OrgID != want.orgID {
+		t.Fatalf("org_id=%s want %s", got.OrgID, want.orgID)
+	}
+	if got.AgentID != want.agentID {
+		t.Fatalf("agent_id=%s want %s", got.AgentID, want.agentID)
+	}
+	if got.Status != want.status {
+		t.Fatalf("status=%s want %s", got.Status, want.status)
+	}
+	if got.Model != want.model {
+		t.Fatalf("model=%s want %s", got.Model, want.model)
+	}
+	if got.Provider != want.provider {
+		t.Fatalf("provider=%s want %s", got.Provider, want.provider)
+	}
+}
+
+func assertSessionCounters(t *testing.T, got *Session, want scanWant) {
+	t.Helper()
+	if got.TurnCount != want.turns {
+		t.Fatalf("turns=%d want %d", got.TurnCount, want.turns)
+	}
+	if got.TotalInputTokens != want.input {
+		t.Fatalf("input=%d want %d", got.TotalInputTokens, want.input)
+	}
+	if got.TotalOutputTokens != want.output {
+		t.Fatalf("output=%d want %d", got.TotalOutputTokens, want.output)
+	}
+	if got.TotalLatencyMs != want.latency {
+		t.Fatalf("latency=%d want %d", got.TotalLatencyMs, want.latency)
+	}
 }
 
 func assertSessionID(t *testing.T, got *Session, want uuid.UUID) {

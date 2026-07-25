@@ -98,7 +98,9 @@ func TestSetupRateLimiter_InvalidURL(t *testing.T) {
 
 func TestSetupDirectiveResolver_NoopWithoutDSNOrRedis(t *testing.T) {
 	log := logger.Discard("proxy")
-	db, resolver, err := setupDirectiveResolver(config.Config{}, nil, log, nil, openProxyPostgres)
+	db, resolver, err := setupDirectiveResolver(directiveResolverSetup{
+		Config: config.Config{}, Log: log, OpenDB: openProxyPostgres,
+	})
 	if err != nil {
 		t.Fatalf("setup: %v", err)
 	}
@@ -116,7 +118,10 @@ func TestSetupDirectiveResolver_NoopWithoutDSNOrRedis(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = client.Close() })
-	db, resolver, err = setupDirectiveResolver(config.Config{RedisURL: "redis://" + mr.Addr()}, client, log, nil, openProxyPostgres)
+	db, resolver, err = setupDirectiveResolver(directiveResolverSetup{
+		Config: config.Config{RedisURL: "redis://" + mr.Addr()},
+		Redis:  client, Log: log, OpenDB: openProxyPostgres,
+	})
 	if err != nil {
 		t.Fatalf("setup with redis only: %v", err)
 	}
@@ -250,51 +255,75 @@ func TestUnit_NewSessionStore(t *testing.T) {
 }
 
 func TestUnit_SetupDirectiveResolver_PostgresWithoutRedis(t *testing.T) {
-	db, err := sql.Open("postgres", "postgres://127.0.0.1:1/nope?sslmode=disable")
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
+	db := mustStubPostgres(t)
 	openDB := func(string) (*sql.DB, error) { return db, nil }
 
-	log := logger.Discard("proxy")
-	gotDB, resolver, err := setupDirectiveResolver(
-		config.Config{PostgresDSN: "postgres://example/ibex"}, nil, log, nil, openDB)
-	if err != nil {
-		t.Fatalf("setup: %v", err)
-	}
+	gotDB, resolver := mustSetupDirectiveWithDSN(t, openDB)
 	if gotDB != db {
 		t.Fatal("expected stubbed postgres db")
 	}
-
-	tracer := telemetry.NoopTracer("ibex-session")
-	store, err := newSessionStore(gotDB, nil, tracer)
-	if err != nil {
-		t.Fatalf("session store err: %v", err)
-	}
-	if store == nil {
-		t.Fatal("expected session store from DSN path")
-	}
-
-	deps := proxyhttp.RouterDeps{SessionStore: store}
-	if deps.SessionStore == nil {
-		t.Fatal("expected RouterDeps to receive SessionStore")
-	}
-
-	got, err := resolver.Resolve(context.Background(), uuid.Nil, uuid.Nil)
-	if err != nil || got.HasContent() {
-		t.Fatalf("noop resolve: %+v err=%v", got, err)
-	}
+	assertSessionStoreWired(t, gotDB)
+	assertNoopDirectiveResolve(t, resolver)
 }
 
 func TestUnit_SetupDirectiveResolver_PostgresOpenError(t *testing.T) {
 	openDB := func(string) (*sql.DB, error) { return nil, errors.New("open boom") }
 	log := logger.Discard("proxy")
 
-	_, _, err := setupDirectiveResolver(
-		config.Config{PostgresDSN: "postgres://example/ibex"}, nil, log, nil, openDB)
+	_, _, err := setupDirectiveResolver(directiveResolverSetup{
+		Config: config.Config{PostgresDSN: "postgres://example/ibex"},
+		Log:    log, OpenDB: openDB,
+	})
 	if err == nil {
 		t.Fatal("expected open error")
+	}
+}
+
+func mustStubPostgres(t *testing.T) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("postgres", "postgres://127.0.0.1:1/nope?sslmode=disable")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	return db
+}
+
+func mustSetupDirectiveWithDSN(t *testing.T, openDB postgresOpener) (*sql.DB, directive.Resolver) {
+	t.Helper()
+	gotDB, resolver, err := setupDirectiveResolver(directiveResolverSetup{
+		Config: config.Config{PostgresDSN: "postgres://example/ibex"},
+		Log:    logger.Discard("proxy"), OpenDB: openDB,
+	})
+	if err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	return gotDB, resolver
+}
+
+func assertSessionStoreWired(t *testing.T, db *sql.DB) {
+	t.Helper()
+	store, err := newSessionStore(db, nil, telemetry.NoopTracer("ibex-session"))
+	if err != nil {
+		t.Fatalf("session store err: %v", err)
+	}
+	if store == nil {
+		t.Fatal("expected session store from DSN path")
+	}
+	deps := proxyhttp.RouterDeps{SessionStore: store}
+	if deps.SessionStore == nil {
+		t.Fatal("expected RouterDeps to receive SessionStore")
+	}
+}
+
+func assertNoopDirectiveResolve(t *testing.T, resolver directive.Resolver) {
+	t.Helper()
+	got, err := resolver.Resolve(context.Background(), uuid.Nil, uuid.Nil)
+	if err != nil {
+		t.Fatalf("resolve err: %v", err)
+	}
+	if got.HasContent() {
+		t.Fatalf("expected noop resolve, got %+v", got)
 	}
 }
 

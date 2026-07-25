@@ -41,6 +41,13 @@ func (s *PostgresStore) AppendCheckpoint(ctx context.Context, p CheckpointParams
 	)
 	defer span.End()
 
+	if err := validateCheckpointStats(p); err != nil {
+		s.metrics.IncSessionCheckpoint(ResultError)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return err
+	}
+
 	err := s.appendCheckpoint(ctx, p)
 	if err == nil {
 		s.metrics.IncSessionCheckpoint(ResultOK)
@@ -108,9 +115,6 @@ func insertCheckpoint(ctx context.Context, tx *sql.Tx, p CheckpointParams) error
 }
 
 func bumpSessionStats(ctx context.Context, tx *sql.Tx, p CheckpointParams) error {
-	if err := validateCheckpointStats(p); err != nil {
-		return err
-	}
 	res, err := tx.ExecContext(ctx, updateSessionStatsSQL,
 		p.InputTokens, p.OutputTokens, p.LatencyMs, p.SessionID, p.OrgID)
 	if err != nil {
@@ -129,9 +133,19 @@ func bumpSessionStats(ctx context.Context, tx *sql.Tx, p CheckpointParams) error
 }
 
 func validateCheckpointStats(p CheckpointParams) error {
-	if p.InputTokens < 0 || p.OutputTokens < 0 || p.LatencyMs < 0 {
-		return fmt.Errorf("session: invalid checkpoint stats session_id=%s org_id=%s turn_index=%d: negative token or latency",
-			p.SessionID, p.OrgID, p.TurnIndex)
+	if p.InputTokens < 0 {
+		return invalidCheckpointStats(p)
+	}
+	if p.OutputTokens < 0 {
+		return invalidCheckpointStats(p)
+	}
+	if p.LatencyMs < 0 {
+		return invalidCheckpointStats(p)
 	}
 	return nil
+}
+
+func invalidCheckpointStats(p CheckpointParams) error {
+	return fmt.Errorf("session: invalid checkpoint stats session_id=%s org_id=%s turn_index=%d: negative token or latency",
+		p.SessionID, p.OrgID, p.TurnIndex)
 }
