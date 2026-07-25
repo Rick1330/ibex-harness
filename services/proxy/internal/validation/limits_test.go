@@ -5,25 +5,39 @@ import "testing"
 func TestValidationLimits_saneDefaults(t *testing.T) {
 	t.Parallel()
 
-	if MaxRequestBodyBytes < 1 {
-		t.Fatalf("MaxRequestBodyBytes: %d", MaxRequestBodyBytes)
+	for _, tc := range []struct {
+		name string
+		got  int
+	}{
+		{"MaxRequestBodyBytes", MaxRequestBodyBytes},
+		{"MaxProviderResponseBytes", MaxProviderResponseBytes},
+		{"MaxMessagesPerRequest", MaxMessagesPerRequest},
+		{"MaxMessageContentBytes", MaxMessageContentBytes},
+		{"MaxModelNameLength", MaxModelNameLength},
+		{"MaxChatMaxTokens", MaxChatMaxTokens},
+	} {
+		if tc.got < 1 {
+			t.Fatalf("%s: %d", tc.name, tc.got)
+		}
 	}
+
+	assertProviderResponseAboveRequest(t)
+	assertTemperatureRange(t)
+}
+
+func assertProviderResponseAboveRequest(t *testing.T) {
+	t.Helper()
 	if MaxProviderResponseBytes < MaxRequestBodyBytes {
 		t.Fatalf("MaxProviderResponseBytes: %d", MaxProviderResponseBytes)
 	}
-	if MaxMessagesPerRequest < 1 {
-		t.Fatalf("MaxMessagesPerRequest: %d", MaxMessagesPerRequest)
+}
+
+func assertTemperatureRange(t *testing.T) {
+	t.Helper()
+	if MinTemperature < 0 {
+		t.Fatalf("MinTemperature: %f", MinTemperature)
 	}
-	if MaxMessageContentBytes < 1 {
-		t.Fatalf("MaxMessageContentBytes: %d", MaxMessageContentBytes)
-	}
-	if MaxModelNameLength < 1 {
-		t.Fatalf("MaxModelNameLength: %d", MaxModelNameLength)
-	}
-	if MaxChatMaxTokens < 1 {
-		t.Fatalf("MaxChatMaxTokens: %d", MaxChatMaxTokens)
-	}
-	if MinTemperature < 0 || MaxTemperature <= MinTemperature {
+	if MaxTemperature <= MinTemperature {
 		t.Fatalf("temperature range: %f..%f", MinTemperature, MaxTemperature)
 	}
 }
