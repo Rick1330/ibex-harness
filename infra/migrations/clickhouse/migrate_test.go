@@ -63,26 +63,25 @@ func TestUnit_MigrateDSN_Normalize(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		in, wantHost string
-		remap        bool
 	}{
-		{in: "clickhouse://default:@localhost:9002/ibex", wantHost: "localhost:9002", remap: false},
-		{in: "clickhouse://default:@localhost:8123/ibex", wantHost: "localhost:9002", remap: true},
-		{in: "clickhouse://default:@ch.example.com:8123/ibex", wantHost: "ch.example.com:8123", remap: false},
+		{in: "clickhouse://default:@localhost:9002/ibex", wantHost: "localhost:9002"},
+		{in: "clickhouse://default:@localhost:8123/ibex", wantHost: "localhost:9002"},
+		{in: "clickhouse://default:@ch.example.com:8123/ibex", wantHost: "ch.example.com:8123"},
 	}
 	for _, tc := range cases {
-		got := normalizeMigrateDSN(tc.in)
+		got := ParseConn(tc.in).String()
 		if !strings.Contains(got, tc.wantHost) {
-			t.Errorf("normalizeMigrateDSN(%q) = %q, want host %s", tc.in, got, tc.wantHost)
+			t.Errorf("ParseConn(%q) = %q, want host %s", tc.in, got, tc.wantHost)
 		}
 		if !strings.Contains(got, "x-multi-statement=true") || !strings.Contains(got, "database=ibex") {
-			t.Errorf("normalizeMigrateDSN(%q) missing query defaults: %q", tc.in, got)
+			t.Errorf("ParseConn(%q) missing query defaults: %q", tc.in, got)
 		}
 	}
 }
 
 func TestUnit_MigrateDSN_Redacted(t *testing.T) {
 	t.Parallel()
-	got := RedactedDSN("clickhouse://default:secret@localhost:9002?database=ibex")
+	got := ParseConn("clickhouse://default:secret@localhost:9002?database=ibex").Redacted()
 	if strings.Contains(got, "secret") {
 		t.Errorf("expected password stripped, got %q", got)
 	}

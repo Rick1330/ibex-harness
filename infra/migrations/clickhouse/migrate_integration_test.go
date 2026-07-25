@@ -25,16 +25,16 @@ var requiredLLMTraceColumns = []string{
 	"requested_at", "completed_at", "event_date",
 }
 
-func testMigrateDSN() string {
+func testMigrateConn() Conn {
 	if dsn := strings.TrimSpace(os.Getenv("CLICKHOUSE_TEST_DSN")); dsn != "" {
-		return normalizeMigrateDSN(dsn)
+		return ParseConn(dsn)
 	}
-	return defaultTestMigrateDSN
+	return ParseConn(defaultTestMigrateDSN)
 }
 
 func openTestCH(t *testing.T) *sql.DB {
 	t.Helper()
-	dsn := testMigrateDSN()
+	dsn := testMigrateConn().String()
 	u := strings.Replace(dsn, "clickhouse://", "tcp://", 1)
 	db, err := sql.Open("clickhouse", u)
 	if err != nil {
@@ -65,18 +65,18 @@ func resetClickHouse(t *testing.T, db *sql.DB) {
 }
 
 func TestUnit_Migrate_UpIsIdempotent(t *testing.T) {
-	dsn := testMigrateDSN()
+	conn := testMigrateConn()
 	db := openTestCH(t)
 	defer db.Close()
 	resetClickHouse(t, db)
 
-	if err := Up(dsn); err != nil {
+	if err := Up(conn); err != nil {
 		t.Fatalf("first up: %v", err)
 	}
-	if err := Up(dsn); err != nil {
+	if err := Up(conn); err != nil {
 		t.Fatalf("second up: %v", err)
 	}
-	v, dirty, err := Version(dsn)
+	v, dirty, err := Version(conn)
 	if err != nil {
 		t.Fatalf("version: %v", err)
 	}
@@ -86,11 +86,11 @@ func TestUnit_Migrate_UpIsIdempotent(t *testing.T) {
 }
 
 func TestUnit_Migrate_SchemaAndTTL(t *testing.T) {
-	dsn := testMigrateDSN()
+	conn := testMigrateConn()
 	db := openTestCH(t)
 	defer db.Close()
 	resetClickHouse(t, db)
-	if err := Up(dsn); err != nil {
+	if err := Up(conn); err != nil {
 		t.Fatalf("up: %v", err)
 	}
 	assertRequiredColumns(t, db)
@@ -101,25 +101,35 @@ func TestUnit_Migrate_SchemaAndTTL(t *testing.T) {
 func assertRequiredColumns(t *testing.T, db *sql.DB) {
 	t.Helper()
 	cols := loadColumnNames(t, db)
+	assertMissingColumns(t, cols)
+	assertExtraColumns(t, cols)
+}
+
+func assertMissingColumns(t *testing.T, cols map[string]struct{}) {
+	t.Helper()
 	for _, c := range requiredLLMTraceColumns {
 		if _, ok := cols[c]; !ok {
 			t.Errorf("missing column %s", c)
 		}
 	}
+}
+
+func assertExtraColumns(t *testing.T, cols map[string]struct{}) {
+	t.Helper()
+	required := requiredColumnSet()
 	for name := range cols {
-		if !isRequiredColumn(name) {
+		if !required[name] {
 			t.Errorf("unexpected column %s", name)
 		}
 	}
 }
 
-func isRequiredColumn(name string) bool {
+func requiredColumnSet() map[string]bool {
+	out := make(map[string]bool, len(requiredLLMTraceColumns))
 	for _, c := range requiredLLMTraceColumns {
-		if c == name {
-			return true
-		}
+		out[c] = true
 	}
-	return false
+	return out
 }
 
 func assertNoContentColumns(t *testing.T, db *sql.DB) {
@@ -171,11 +181,11 @@ func loadColumnNames(t *testing.T, db *sql.DB) map[string]struct{} {
 }
 
 func TestUnit_Migrate_ExplainUsesPrimaryKey(t *testing.T) {
-	dsn := testMigrateDSN()
+	conn := testMigrateConn()
 	db := openTestCH(t)
 	defer db.Close()
 	resetClickHouse(t, db)
-	if err := Up(dsn); err != nil {
+	if err := Up(conn); err != nil {
 		t.Fatalf("up: %v", err)
 	}
 	insertSampleTrace(t, db)
@@ -266,15 +276,15 @@ func stringifyScan(v any) string {
 }
 
 func TestUnit_Migrate_DownUpRoundTrip(t *testing.T) {
-	dsn := testMigrateDSN()
+	conn := testMigrateConn()
 	db := openTestCH(t)
 	defer db.Close()
 	resetClickHouse(t, db)
 
-	if err := Up(dsn); err != nil {
+	if err := Up(conn); err != nil {
 		t.Fatalf("up: %v", err)
 	}
-	if err := Down(dsn); err != nil {
+	if err := Down(conn); err != nil {
 		t.Fatalf("down: %v", err)
 	}
 	var n uint64
@@ -287,7 +297,7 @@ func TestUnit_Migrate_DownUpRoundTrip(t *testing.T) {
 	if n != 0 {
 		t.Fatalf("table still present after down, count=%d", n)
 	}
-	if err := Up(dsn); err != nil {
+	if err := Up(conn); err != nil {
 		t.Fatalf("up after down: %v", err)
 	}
 }

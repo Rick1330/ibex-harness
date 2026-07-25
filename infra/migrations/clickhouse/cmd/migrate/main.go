@@ -19,26 +19,34 @@ func run(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	if *command == "" && fs.NArg() > 0 {
-		*command = fs.Arg(0)
-	}
-	if *command == "" {
+	cmd := resolveCommand(*command, fs)
+	if cmd == "" {
 		fmt.Fprintln(os.Stderr, "usage: migrate -command up|down|version|force [-version N]")
 		return 2
 	}
-	return runCommand(*command, *version, chmigrate.ResolveDSN())
+	return dispatch(cmd, *version, chmigrate.ResolveConn())
 }
 
-func runCommand(command string, version int, dsn string) int {
+func resolveCommand(flagCmd string, fs *flag.FlagSet) string {
+	if flagCmd != "" {
+		return flagCmd
+	}
+	if fs.NArg() > 0 {
+		return fs.Arg(0)
+	}
+	return ""
+}
+
+func dispatch(command string, version int, conn chmigrate.Conn) int {
 	switch command {
 	case "up":
-		return printMigrateErr("up", chmigrate.Up(dsn))
+		return printMigrateErr("up", chmigrate.Up(conn))
 	case "down":
-		return printMigrateErr("down", chmigrate.Down(dsn))
+		return printMigrateErr("down", chmigrate.Down(conn))
 	case "version":
-		return printVersion(dsn)
+		return printVersion(conn)
 	case "force":
-		return runForce(dsn, version)
+		return runForce(conn, version)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", command)
 		return 2
@@ -54,8 +62,8 @@ func printMigrateErr(op string, err error) int {
 	return 0
 }
 
-func printVersion(dsn string) int {
-	v, dirty, err := chmigrate.Version(dsn)
+func printVersion(conn chmigrate.Conn) int {
+	v, dirty, err := chmigrate.Version(conn)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "clickhouse migrate version: %v\n", err)
 		return 1
@@ -64,12 +72,12 @@ func printVersion(dsn string) int {
 	return 0
 }
 
-func runForce(dsn string, version int) int {
+func runForce(conn chmigrate.Conn, version int) int {
 	if version <= 0 {
 		fmt.Fprintln(os.Stderr, "clickhouse migrate force requires -version N")
 		return 2
 	}
-	if err := chmigrate.Force(dsn, version); err != nil {
+	if err := chmigrate.Force(conn, version); err != nil {
 		fmt.Fprintf(os.Stderr, "clickhouse migrate force: %v\n", err)
 		return 1
 	}
