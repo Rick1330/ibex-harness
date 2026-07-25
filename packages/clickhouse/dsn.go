@@ -2,6 +2,7 @@ package clickhouse
 
 import (
 	"fmt"
+	"net"
 	"net/url"
 	"strings"
 
@@ -33,23 +34,31 @@ func shouldUseHTTP(opts *clickhouse.Options) bool {
 		return true
 	}
 	for _, addr := range opts.Addr {
-		host, port, ok := strings.Cut(addr, ":")
-		_ = host
-		if !ok {
-			continue
-		}
-		switch port {
-		case "8123", "8124", "8443":
+		if httpAppPort(addr) {
 			return true
 		}
 	}
 	return false
 }
 
+func httpAppPort(addr string) bool {
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		// Bare host without port — not an HTTP app endpoint we remap.
+		return false
+	}
+	switch port {
+	case "8123", "8124", "8443":
+		return true
+	default:
+		return false
+	}
+}
+
 // RedactedDSN returns a DSN safe for logging (password stripped from userinfo and query).
 func RedactedDSN(dsn string) string {
 	u, err := url.Parse(dsn)
-	if err != nil {
+	if err != nil || u.Scheme == "" {
 		return "(invalid dsn)"
 	}
 	if u.User != nil {
@@ -58,7 +67,7 @@ func RedactedDSN(dsn string) string {
 	q := u.Query()
 	for _, key := range []string{"password", "passwd"} {
 		if q.Has(key) {
-			q.Set(key, "")
+			q.Del(key)
 		}
 	}
 	u.RawQuery = q.Encode()

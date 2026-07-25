@@ -69,12 +69,9 @@ func (w *Writer) Write(record TraceRecord) error {
 
 func (w *Writer) enqueueLocked(record TraceRecord) {
 	if len(w.buf) >= w.cfg.MaxBufferSize {
-		drop := len(w.buf) - w.cfg.MaxBufferSize + 1
-		if drop > len(w.buf) {
-			drop = len(w.buf)
-		}
-		w.buf = w.buf[drop:]
-		w.observeDropped(drop)
+		// Drop oldest row to make room (bounded memory under slow ClickHouse).
+		w.buf = w.buf[1:]
+		w.observeDropped(1)
 	}
 	w.buf = append(w.buf, record)
 }

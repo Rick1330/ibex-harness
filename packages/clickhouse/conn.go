@@ -10,8 +10,7 @@ import (
 	"github.com/google/uuid"
 )
 
-const (
-	insertSQL = `INSERT INTO ibex.llm_traces (
+const insertSQL = `INSERT INTO ibex.llm_traces (
 	request_id, org_id, agent_id, session_id, checkpoint_id,
 	model, provider, is_streaming,
 	input_tokens, output_tokens, total_tokens,
@@ -19,12 +18,25 @@ const (
 	status_code, is_complete, error_code,
 	requested_at, completed_at
 )`
-	// pingTimeout bounds startup connectivity checks so proxy boot cannot hang.
-	pingTimeout = 5 * time.Second
-)
+
+// pingTimeout bounds startup connectivity checks so proxy boot cannot hang.
+// Overridable in tests.
+var pingTimeout = 5 * time.Second
+
+// batchConn is the narrow CH surface used by the inserter (testable).
+type batchConn interface {
+	PrepareBatch(ctx context.Context, query string, opts ...driver.PrepareBatchOption) (driver.Batch, error)
+	Ping(ctx context.Context) error
+	Close() error
+}
 
 type chInserter struct {
-	conn driver.Conn
+	conn batchConn
+}
+
+// openConn dials ClickHouse; overridden in tests.
+var openConn = func(opts *clickhouse.Options) (batchConn, error) {
+	return clickhouse.Open(opts)
 }
 
 // OpenInserter dials ClickHouse using CLICKHOUSE_DSN (HTTP for app ports).
@@ -33,7 +45,7 @@ func OpenInserter(dsn string) (Inserter, error) {
 	if err != nil {
 		return nil, err
 	}
-	conn, err := clickhouse.Open(opts)
+	conn, err := openConn(opts)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse open: %w", err)
 	}
@@ -43,7 +55,11 @@ func OpenInserter(dsn string) (Inserter, error) {
 		_ = conn.Close()
 		return nil, fmt.Errorf("clickhouse ping (timeout=%s) dsn=%s: %w", pingTimeout, RedactedDSN(dsn), err)
 	}
-	return &chInserter{conn: conn}, nil
+	return newCHInserter(conn), nil
+}
+
+func newCHInserter(conn batchConn) *chInserter {
+	return &chInserter{conn: conn}
 }
 
 func (c *chInserter) InsertTraces(ctx context.Context, rows []TraceRecord) error {

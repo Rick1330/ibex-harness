@@ -11,6 +11,7 @@ import (
 	"time"
 
 	ch "github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/google/uuid"
 )
 
@@ -312,6 +313,112 @@ func TestUnit_Config_ApplyDefaults(t *testing.T) {
 	if c.FlushTimeout != 5*time.Second || c.MaxBufferSize != 2000 {
 		t.Fatalf("%+v", c)
 	}
+	if c.ShutdownFlushTimeout != 10*time.Second {
+		t.Fatalf("%+v", c)
+	}
+}
+
+func TestUnit_Config_BufferFloorAtBatchSize(t *testing.T) {
+	t.Parallel()
+	c := Config{MaxBatchSize: 100, MaxBufferSize: 10}
+	c.ApplyDefaults()
+	if c.MaxBufferSize != 100 {
+		t.Fatalf("buffer floor=%d want 100", c.MaxBufferSize)
+	}
+}
+
+func TestUnit_Writer_ShutdownIdempotent(t *testing.T) {
+	t.Parallel()
+	ins := &fakeInserter{}
+	w := NewWriterWithInserter(ins, Config{MaxBatchSize: 10, FlushInterval: time.Hour})
+	if err := w.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Shutdown(context.Background()); err != nil {
+		t.Fatalf("second shutdown: %v", err)
+	}
+	if !ins.closed.Load() {
+		t.Fatal("inserter not closed")
+	}
+}
+
+func TestUnit_Writer_ShutdownFlushError(t *testing.T) {
+	t.Parallel()
+	ins := &fakeInserter{errOn: 1}
+	w := NewWriterWithInserter(ins, Config{MaxBatchSize: 100, FlushInterval: time.Hour})
+	if err := w.Write(sampleRecord("x")); err != nil {
+		t.Fatal(err)
+	}
+	err := w.Shutdown(context.Background())
+	if err == nil {
+		t.Fatal("expected flush error on shutdown")
+	}
+}
+
+func TestUnit_Writer_MetricsAndLoggerOnFlushError(t *testing.T) {
+	t.Parallel()
+	ins := &fakeInserter{errOn: 1, insertCh: make(chan struct{}, 1)}
+	m := &trackingMetrics{}
+	log := logger.Discard("clickhouse-test")
+	w := NewWriterWithInserter(ins, Config{
+		DSN:           "clickhouse://default:secret@localhost:8123/ibex",
+		MaxBatchSize:  1,
+		FlushInterval: time.Hour,
+		Metrics:       m,
+		Logger:        log,
+	})
+	defer func() { _ = w.Close() }()
+
+	if err := w.Write(sampleRecord("m")); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-ins.insertCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("flush wait")
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		errN, rowsN := m.snapshot()
+		if errN >= 1 && rowsN >= 1 {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	errN, rowsN := m.snapshot()
+	t.Fatalf("flush error metric=%d rows=%d", errN, rowsN)
+}
+
+func TestUnit_Writer_NewWriter_BadDSN(t *testing.T) {
+	t.Parallel()
+	_, err := NewWriter(Config{DSN: ""})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestUnit_Writer_ValidateRejectsWrite(t *testing.T) {
+	t.Parallel()
+	ins := &fakeInserter{}
+	w := NewWriterWithInserter(ins, Config{MaxBatchSize: 10, FlushInterval: time.Hour})
+	defer func() { _ = w.Close() }()
+	bad := sampleRecord("x")
+	bad.AgentID = uuid.Nil
+	if err := w.Write(bad); !errors.Is(err, ErrInvalidRecord) {
+		t.Fatalf("got %v", err)
+	}
+	if ins.totalRows() != 0 {
+		t.Fatal("invalid record should not enqueue")
+	}
+}
+
+func TestUnit_ValidateRecord_EmptyAgent(t *testing.T) {
+	t.Parallel()
+	bad := sampleRecord("x")
+	bad.AgentID = uuid.Nil
+	if err := validateRecord(bad); !errors.Is(err, ErrInvalidRecord) {
+		t.Fatalf("got %v", err)
+	}
 }
 
 func TestUnit_DSN_ProtocolHTTPOn8123(t *testing.T) {
@@ -322,6 +429,39 @@ func TestUnit_DSN_ProtocolHTTPOn8123(t *testing.T) {
 	}
 	if opts.Protocol != ch.HTTP {
 		t.Fatalf("protocol=%v want HTTP", opts.Protocol)
+	}
+	if opts.Auth.Database != "ibex" {
+		t.Fatalf("db=%s", opts.Auth.Database)
+	}
+}
+
+func TestUnit_DSN_IPv6HTTPPort(t *testing.T) {
+	t.Parallel()
+	opts, err := parseOptions("clickhouse://default:@[::1]:8123/ibex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opts.Protocol != ch.HTTP {
+		t.Fatalf("protocol=%v want HTTP for IPv6 :8123", opts.Protocol)
+	}
+}
+
+func TestUnit_DSN_NativePortStaysNative(t *testing.T) {
+	t.Parallel()
+	opts, err := parseOptions("clickhouse://default:@localhost:9000/ibex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opts.Protocol == ch.HTTP {
+		t.Fatal("native 9000 must not force HTTP")
+	}
+}
+
+func TestUnit_DSN_DefaultDatabase(t *testing.T) {
+	t.Parallel()
+	opts, err := parseOptions("clickhouse://default:@localhost:8123")
+	if err != nil {
+		t.Fatal(err)
 	}
 	if opts.Auth.Database != "ibex" {
 		t.Fatalf("db=%s", opts.Auth.Database)
@@ -346,13 +486,65 @@ func TestUnit_DSN_HTTPScheme(t *testing.T) {
 	}
 }
 
+func TestUnit_DSN_HTTPAltPorts(t *testing.T) {
+	t.Parallel()
+	for _, port := range []string{"8124", "8443"} {
+		opts, err := parseOptions("clickhouse://default:@localhost:" + port + "/ibex")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if opts.Protocol != ch.HTTP {
+			t.Fatalf("port %s protocol=%v", port, opts.Protocol)
+		}
+	}
+}
+
 func TestUnit_RedactedDSN(t *testing.T) {
 	t.Parallel()
 	got := RedactedDSN("clickhouse://default:secret@localhost:8123/ibex?password=also")
 	if strings.Contains(got, "secret") || strings.Contains(got, "also") {
 		t.Fatalf("got %q", got)
 	}
-	if RedactedDSN("://") == "" {
+	got2 := RedactedDSN("clickhouse://u@h:8123/ibex?passwd=hidden")
+	if strings.Contains(got2, "hidden") {
+		t.Fatalf("passwd query leaked: %q", got2)
+	}
+	if RedactedDSN("://") != "(invalid dsn)" {
 		t.Fatal("invalid dsn sentinel")
 	}
+	if RedactedDSN("not-a-url") != "(invalid dsn)" {
+		t.Fatal("schemeless sentinel")
+	}
+}
+
+type trackingMetrics struct {
+	mu                                    sync.Mutex
+	flushOK, flushErr, flushRows, dropped int
+}
+
+func (m *trackingMetrics) IncClickHouseFlush(result string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if result == "ok" {
+		m.flushOK++
+		return
+	}
+	m.flushErr++
+}
+func (m *trackingMetrics) AddClickHouseFlushRows(n int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.flushRows += n
+}
+func (m *trackingMetrics) ObserveClickHouseFlushSeconds(float64) {}
+func (m *trackingMetrics) AddClickHouseDroppedRows(n int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.dropped += n
+}
+
+func (m *trackingMetrics) snapshot() (flushErr, flushRows int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.flushErr, m.flushRows
 }

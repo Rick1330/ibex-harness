@@ -167,6 +167,11 @@ func seedProxySamples(reg *ProxyRegistry) {
 	reg.IncSessionComplete("nope")
 	reg.IncSessionSweeperMarked("weird")
 	reg.IncSessionSweeperRun("weird")
+	reg.IncClickHouseFlush("ok")
+	reg.IncClickHouseFlush("error")
+	reg.AddClickHouseFlushRows(1)
+	reg.AddClickHouseDroppedRows(1)
+	reg.ObserveClickHouseFlushSeconds(0.001)
 }
 
 func TestUnit_BoundSessionResult(t *testing.T) {

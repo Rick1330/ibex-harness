@@ -680,6 +680,9 @@ func registerShutdownHooks(sd *shutdown.Coordinator, opts shutdownOpts) {
 	})
 }
 
+// newTraceWriter constructs the ClickHouse writer; overridden in tests.
+var newTraceWriter = ibexch.NewWriter
+
 func setupTraceWriter(
 	cfg config.Config,
 	log *logger.Logger,
@@ -690,7 +693,7 @@ func setupTraceWriter(
 		log.InfoCtx(context.Background(), "CLICKHOUSE_DSN unset; trace writer disabled")
 		return nil, nil
 	}
-	w, err := ibexch.NewWriter(ibexch.Config{
+	w, err := newTraceWriter(ibexch.Config{
 		DSN:           dsn,
 		MaxBatchSize:  cfg.ClickHouseBatchSize,
 		FlushInterval: time.Duration(cfg.ClickHouseFlushMS) * time.Millisecond,
@@ -698,7 +701,7 @@ func setupTraceWriter(
 		Metrics:       reg,
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("clickhouse writer: %w", err)
 	}
 	log.InfoCtx(context.Background(), "clickhouse trace writer started",
 		"dsn", ibexch.RedactedDSN(dsn),

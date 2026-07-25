@@ -71,22 +71,20 @@ func TestValidate_acceptsValidConfig(t *testing.T) {
 
 func TestUnit_Config_ApplyDefaults(t *testing.T) {
 	t.Parallel()
-
 	var cfg Config
-
 	cfg.ApplyDefaults()
+	assertApplyDefaultsSession(t, cfg)
+	assertApplyDefaultsCheckpoint(t, cfg)
+	assertApplyDefaultsClickHouse(t, cfg)
+}
 
+func assertApplyDefaultsSession(t *testing.T, cfg Config) {
+	t.Helper()
 	if cfg.ShutdownTimeout != 30*time.Second {
 		t.Fatalf("ShutdownTimeout: %s", cfg.ShutdownTimeout)
 	}
 	if cfg.SessionCacheTTL != defaultSessionCacheTTL {
 		t.Fatalf("SessionCacheTTL: %s", cfg.SessionCacheTTL)
-	}
-	if cfg.CheckpointWorkers != defaultCheckpointWorkers {
-		t.Fatalf("CheckpointWorkers: %d", cfg.CheckpointWorkers)
-	}
-	if cfg.CheckpointQueue != defaultCheckpointQueue {
-		t.Fatalf("CheckpointQueue: %d", cfg.CheckpointQueue)
 	}
 	if cfg.SessionGetOrCreateTO != defaultSessionGetOrCreateTO {
 		t.Fatalf("SessionGetOrCreateTO: %s", cfg.SessionGetOrCreateTO)
@@ -97,6 +95,20 @@ func TestUnit_Config_ApplyDefaults(t *testing.T) {
 	if cfg.SessionSweepInterval != defaultSessionSweepInterval {
 		t.Fatalf("SessionSweepInterval: %s", cfg.SessionSweepInterval)
 	}
+}
+
+func assertApplyDefaultsCheckpoint(t *testing.T, cfg Config) {
+	t.Helper()
+	if cfg.CheckpointWorkers != defaultCheckpointWorkers {
+		t.Fatalf("CheckpointWorkers: %d", cfg.CheckpointWorkers)
+	}
+	if cfg.CheckpointQueue != defaultCheckpointQueue {
+		t.Fatalf("CheckpointQueue: %d", cfg.CheckpointQueue)
+	}
+}
+
+func assertApplyDefaultsClickHouse(t *testing.T, cfg Config) {
+	t.Helper()
 	if cfg.ClickHouseBatchSize != 500 {
 		t.Fatalf("ClickHouseBatchSize: %d", cfg.ClickHouseBatchSize)
 	}
