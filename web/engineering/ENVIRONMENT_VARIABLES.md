@@ -160,16 +160,17 @@ Used by: **proxy (trace writes), api (analytics), worker (billing/analytics), da
 
 | Variable | Required | Default | Description | Security Notes |
 |----------|----------|---------|-------------|----------------|
-| `CLICKHOUSE_DSN` | Yes | (none) | e.g. `clickhouse://user:pass@host:8123/db` | Secret if password present |
+| `CLICKHOUSE_DSN` | Yes (apps) | (none) | HTTP-oriented app DSN, e.g. `clickhouse://user:pass@host:8123/db` | Secret if password present |
+| `CLICKHOUSE_MIGRATE_DSN` | No | native `localhost:9002` | golang-migrate native TCP DSN; HTTP `8123` is remapped to `9002` when used as fallback | Prefer explicit migrate DSN |
 | `CLICKHOUSE_DATABASE` | No | `ibex` | DB name | |
 | `CLICKHOUSE_HTTP_PORT` | No | `8123` | HTTP API port | |
-| `CLICKHOUSE_NATIVE_PORT` | No | `9000` | Native protocol port | |
+| `CLICKHOUSE_NATIVE_PORT` | No | `9000` | Native protocol port (compose host map often `9002`) | |
 | `CLICKHOUSE_INSERT_BATCH_SIZE` | No | `500` | Batch size for inserts | Trade latency vs throughput |
 | `CLICKHOUSE_INSERT_FLUSH_MS` | No | `200` | Flush interval | Ensure bounded buffering |
 | `CLICKHOUSE_QUERY_TIMEOUT_MS` | No | `5000` | Query timeout | Prevent stuck analytics |
 | `CLICKHOUSE_ORG_FILTER_ENFORCEMENT` | No | `true` | Reject queries without org filter | Must remain true in prod |
 
-**Important:** ClickHouse has no RLS. Code must enforce org filters.
+**Important:** ClickHouse has no RLS. Code must enforce org filters. Schema: Phase 2 `ibex.llm_traces` ([ADR-0033](/docs/adr/0033-clickhouse-schema)); apply with `make clickhouse-migrate`.
 
 ---
 

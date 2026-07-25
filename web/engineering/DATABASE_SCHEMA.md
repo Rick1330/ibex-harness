@@ -1671,10 +1671,49 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 ### ClickHouse Schema
 
+#### Phase 2 — `ibex.llm_traces` (canonical)
+
+Applied by migration `infra/migrations/clickhouse/000001_create_llm_traces` ([ADR-0033](../content/docs/adr/0033-clickhouse-schema.mdx)). No prompt/completion content.
+
+```sql
+CREATE TABLE IF NOT EXISTS ibex.llm_traces
+(
+    request_id           String,
+    org_id               UUID,
+    agent_id             UUID,
+    session_id           Nullable(UUID),
+    checkpoint_id        Nullable(UUID),
+    model                LowCardinality(String),
+    provider             LowCardinality(String),
+    is_streaming         Bool,
+    input_tokens         UInt32,
+    output_tokens        UInt32,
+    total_tokens         UInt32,
+    auth_latency_ms      UInt16,
+    directive_latency_ms UInt16,
+    provider_ttfb_ms     UInt32,
+    total_latency_ms     UInt32,
+    status_code          UInt16,
+    is_complete          Bool,
+    error_code           LowCardinality(String),
+    requested_at         DateTime64(3, 'UTC'),
+    completed_at         DateTime64(3, 'UTC'),
+    event_date           Date MATERIALIZED toDate(requested_at)
+)
+ENGINE = MergeTree()
+PARTITION BY toYYYYMM(event_date)
+ORDER BY (org_id, agent_id, requested_at)
+TTL event_date + INTERVAL 90 DAY
+SETTINGS index_granularity = 8192;
+```
+
+#### Future ClickHouse tables (Phase 3+)
+
+The following sketches (`inference_traces`, billing MVs, etc.) are **not** applied in Phase 2. Kept for planning only.
+
 ```sql
 -- ================================================================
--- INFERENCE TRACES
--- Every LLM call proxied through IBEX Harness
+-- INFERENCE TRACES (future — richer than Phase 2 llm_traces)
 -- ================================================================
 CREATE TABLE inference_traces (
     -- Identifiers

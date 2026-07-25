@@ -125,6 +125,7 @@ Release notes are human-readable summaries of user-visible changes, security fix
 
 ### Added
 
+- ClickHouse `ibex.llm_traces` schema (m2.5.1): golang-migrate runner under `infra/migrations/clickhouse`, 90-day TTL MergeTree, ADR-0033, compose-test ClickHouse, `make clickhouse-migrate`
 - Session idle-timeout sweeper (m2.4.4): proxy ticker marks stale `active` sessions `abandoned` under service-account RLS with advisory-lock multi-replica safety, Redis cache invalidation, metrics `ibex_proxy_session_sweeper_*`, and partial index `idx_sessions_active_updated_at` (migration `000011`)
 - Proxy session lifecycle (m2.4.3): resolve/mint `X-IBEX-Session-ID` as sticky `external_id` before LLM forward; Redis session-state cache; response header on stream + non-stream; async non-dropping `AppendCheckpoint` pool drained on shutdown
 - Session store (`packages/session`): Postgres `GetOrCreate` / `AppendCheckpoint` / `Complete` with org RLS; proxy constructs store when `POSTGRES_DSN` is set; metrics `ibex_proxy_session_*` (milestone 2.4.2)
