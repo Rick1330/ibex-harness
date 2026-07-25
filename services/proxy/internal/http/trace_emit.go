@@ -86,10 +86,10 @@ func usageTokenCounts(u *provider.Usage) (in, out, total uint32) {
 	in = intToUint32(u.InputTokens)
 	out = intToUint32(u.OutputTokens)
 	total = intToUint32(u.TotalTokens)
-	if total == 0 && (in > 0 || out > 0) {
-		total = in + out
+	if total != 0 {
+		return in, out, total
 	}
-	return in, out, total
+	return in, out, in + out
 }
 
 func durationToUint32(d time.Duration) uint32 {

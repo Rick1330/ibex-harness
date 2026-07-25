@@ -147,19 +147,10 @@ func (h chatCompletionHandler) writeProviderFailure(p providerFailureParams) {
 	}
 	logMappedProviderError(h, p.r, p.err, mapped)
 	apierror.WriteHTTP(p.w, p.requestID, apierror.WriteOpts{DocsBase: h.docsBase}, mapped)
+	// Flush before Submit may block on a full non-dropping checkpoint queue.
+	flushIfSupported(p.w)
 
-	model, providerName := "", ""
-	if p.parsed != nil {
-		model = p.parsed.Model
-	}
-	if p.providerName != "" {
-		providerName = p.providerName
-	} else {
-		var pe *provider.ProviderError
-		if errors.As(p.err, &pe) && pe != nil {
-			providerName = pe.ProviderName
-		}
-	}
+	model, providerName := failureTraceIdentity(p)
 	h.enqueuePostResponse(p.r.Context(), checkpointInput{
 		Model: model, Provider: providerName,
 		IsStreaming: false, IsComplete: false,
@@ -168,6 +159,20 @@ func (h chatCompletionHandler) writeProviderFailure(p providerFailureParams) {
 		IsComplete: false,
 		ErrorCode:  string(mapped.Code),
 	})
+}
+
+func failureTraceIdentity(p providerFailureParams) (model, providerName string) {
+	if p.parsed != nil {
+		model = p.parsed.Model
+	}
+	if p.providerName != "" {
+		return model, p.providerName
+	}
+	var pe *provider.ProviderError
+	if errors.As(p.err, &pe) && pe != nil {
+		return model, pe.ProviderName
+	}
+	return model, ""
 }
 
 func logMappedProviderError(h chatCompletionHandler, r *http.Request, err error, mapped *apierror.Error) {
