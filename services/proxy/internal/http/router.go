@@ -13,6 +13,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/packages/provider"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
+	"github.com/Rick1330/ibex-harness/packages/session"
 	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
@@ -38,6 +39,7 @@ type RouterDeps struct {
 	AgentVerifier     auth.AgentVerifier
 	Limiter           ratelimit.Limiter
 	DirectiveResolver directive.Resolver
+	SessionStore      session.Store
 	Health            *healthcheck.Server
 	ProviderRegistry  *provider.Registry
 }
@@ -80,6 +82,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 			agentVerifier:     agentVerifier,
 			limiter:           limiter,
 			directiveResolver: deps.DirectiveResolver,
+			sessionStore:      deps.SessionStore,
 			docsBase:          docsBase,
 			providerRegistry:  providerReg,
 		})
@@ -141,9 +144,10 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request, h chatComplet
 }
 
 type chatCompletionHandler struct {
-	log      *logger.Logger
-	docsBase string
-	metrics  *metrics.ProxyRegistry
+	log          *logger.Logger
+	docsBase     string
+	metrics      *metrics.ProxyRegistry
+	sessionStore session.Store // wired for 2.4.3 lifecycle; unused on hot path yet
 }
 
 func (h chatCompletionHandler) serve(w http.ResponseWriter, r *http.Request) {

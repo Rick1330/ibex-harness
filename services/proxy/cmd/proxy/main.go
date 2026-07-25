@@ -20,6 +20,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/provider"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
 	"github.com/Rick1330/ibex-harness/packages/revocation"
+	"github.com/Rick1330/ibex-harness/packages/session"
 	"github.com/Rick1330/ibex-harness/packages/shutdown"
 	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
@@ -33,7 +34,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	// Register the lib/pq "postgres" driver used by sql.Open for directive reads.
+	// Register the lib/pq "postgres" driver used by sql.Open for directives + sessions.
 	_ "github.com/lib/pq"
 )
 
@@ -115,9 +116,15 @@ func setupProxyCore(
 	if err != nil {
 		return nil, fmt.Errorf("auth clients: %w", err)
 	}
-	pgDB, directiveResolver, err := setupDirectiveResolver(cfg, redisClient, log, reg)
+	pgDB, directiveResolver, err := setupDirectiveResolver(directiveResolverSetup{
+		Config: cfg, Redis: redisClient, Log: log, Reg: reg, OpenDB: openProxyPostgres,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("directive resolver: %w", err)
+	}
+	sessionStore, err := newSessionStore(pgDB, reg, tracer)
+	if err != nil {
+		return nil, fmt.Errorf("session store: %w", err)
 	}
 	healthSrv := buildProxyHealth(cfg, authClient, pgDB)
 	providerReg, err := providerRegistryInit(cfg, log, tracer, reg)
@@ -127,7 +134,8 @@ func setupProxyCore(
 	server := newHTTPServer(proxyhttp.RouterDeps{
 		Config: cfg, Logger: log, Metrics: reg, Tracer: tracer,
 		Validator: validator, AgentVerifier: agentVerifier, Limiter: limiter,
-		DirectiveResolver: directiveResolver, Health: healthSrv, ProviderRegistry: providerReg,
+		DirectiveResolver: directiveResolver, SessionStore: sessionStore,
+		Health: healthSrv, ProviderRegistry: providerReg,
 	})
 	revSub, revCancel, err := startRevocationSubscriber(redisClient, validator, log, reg)
 	if err != nil {
@@ -266,32 +274,59 @@ func startRevocationSubscriber(
 	return sub, cancel, nil
 }
 
-func setupDirectiveResolver(
-	cfg config.Config,
-	redisClient redis.UniversalClient,
-	log *logger.Logger,
-	reg *ibexmetrics.ProxyRegistry,
-) (*sql.DB, directive.Resolver, error) {
-	dsn := strings.TrimSpace(cfg.PostgresDSN)
-	if dsn == "" || redisClient == nil {
-		log.InfoCtx(context.Background(), "directive resolver noop; needs POSTGRES_DSN and REDIS_URL")
+type postgresOpener func(dsn string) (*sql.DB, error)
+
+// directiveResolverSetup bundles Postgres/directive wiring inputs for setupDirectiveResolver.
+type directiveResolverSetup struct {
+	Config config.Config
+	Redis  redis.UniversalClient
+	Log    *logger.Logger
+	Reg    *ibexmetrics.ProxyRegistry
+	OpenDB postgresOpener
+}
+
+func setupDirectiveResolver(in directiveResolverSetup) (*sql.DB, directive.Resolver, error) {
+	dsn := strings.TrimSpace(in.Config.PostgresDSN)
+	if dsn == "" {
+		in.Log.InfoCtx(context.Background(), "postgres unset; directive noop and session store disabled")
 		return nil, directive.NoopResolver{}, nil
 	}
-	db, err := openProxyPostgres(dsn)
+	openDB := in.OpenDB
+	if openDB == nil {
+		openDB = openProxyPostgres
+	}
+	db, err := openDB(dsn)
 	if err != nil {
 		return nil, nil, err
 	}
+	if in.Redis == nil {
+		in.Log.InfoCtx(context.Background(), "directive resolver noop; needs REDIS_URL with POSTGRES_DSN")
+		return db, directive.NoopResolver{}, nil
+	}
 	resolver, err := newCachedDirectiveResolver(cachedDirectiveInputs{
-		DB: db, Redis: redisClient, Config: cfg, Log: log, Reg: reg,
+		DB: db, Redis: in.Redis, Config: in.Config, Log: in.Log, Reg: in.Reg,
 	})
 	if err != nil {
 		// Close best-effort: pool is unusable after construction failure.
 		_ = db.Close()
 		return nil, nil, fmt.Errorf("directive resolver: %w", err)
 	}
-	log.InfoCtx(context.Background(), "directive resolver configured",
-		"cache_ttl", cfg.DirectiveCacheTTL.String())
+	in.Log.InfoCtx(context.Background(), "directive resolver configured",
+		"cache_ttl", in.Config.DirectiveCacheTTL.String())
 	return db, resolver, nil
+}
+
+func newSessionStore(db *sql.DB, reg *ibexmetrics.ProxyRegistry, tracer trace.Tracer) (session.Store, error) {
+	if db == nil {
+		return nil, nil
+	}
+	var metrics session.Metrics = session.NoopMetrics{}
+	if reg != nil {
+		metrics = reg
+	}
+	return session.NewPostgresStore(session.PostgresStoreDeps{
+		DB: db, Metrics: metrics, Tracer: tracer,
+	})
 }
 
 func openProxyPostgres(dsn string) (*sql.DB, error) {

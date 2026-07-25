@@ -2,7 +2,7 @@
 title: "2.4.2 Session Store"
 description: "The session store is the Go data access layer for the `sessions` and `checkpoints` tables introduced in 2.4.1. It provides typed, tested functions for the proxy to create sessions, record checkpoints, and close sessions."
 summary: "The session store is the Go data access layer for the `sessions` and `checkpoints` tables introduced in 2.4.1. It provides typed, tested functions for the proxy to create sessions, record checkpoints, and close sessions."
-status: "planned"
+status: "completed"
 milestoneId: "2.4.2"
 goal: "[2.4 — Session tracking infrastructure](/roadmap/phase-2-single-provider/goals#goal-24-session-tracking-infrastructure)"
 estimatedEffort: "2–3 days"
@@ -12,16 +12,19 @@ fullTitle: "Milestone 2.4.2 — Session Store"
 
 # Milestone 2.4.2 — Session Store
 
-**Status:** Planned  
+**Status:** Completed  
 **Goal:** [2.4 — Session tracking infrastructure](/roadmap/phase-2-single-provider/goals#goal-24-session-tracking-infrastructure)  
 **Phase:** 2 — Single Provider End-to-End  
-**Estimated effort:** 2–3 days
+**Estimated effort:** 2–3 days  
+**Package:** `packages/session` (shared; not `services/proxy/internal/store`)
 
 ---
 
 ## Why This Milestone Exists
 
 The session store is the Go data access layer for the `sessions` and `checkpoints` tables introduced in 2.4.1. It provides typed, tested functions for the proxy to create sessions, record checkpoints, and close sessions.
+
+> **Note:** Shipped as `packages/session` with `*sql.DB` + `set_config('app.current_org_id')` RLS (matching `packages/directive`). The draft sketch below (`pgxpool`, skip RLS, proxy-internal path) is outdated relative to repo patterns.
 
 ---
 
@@ -99,11 +102,11 @@ func (s *SessionStore) Complete(ctx context.Context, sessionID, orgID uuid.UUID)
 
 ## Acceptance Criteria
 
-- [ ] `GetOrCreate` is idempotent for the same `external_id` within an org/agent
-- [ ] `AppendCheckpoint` atomically updates session stats in the same transaction
-- [ ] `UNIQUE(session_id, turn_index)` prevents duplicate turns (tested)
-- [ ] All functions accept and propagate context (deadline, cancellation)
-- [ ] Integration tests with real Postgres via testcontainers
-- [ ] Idle-timeout / abandoned path documented as owned by [2.4.4](/roadmap/phase-2-single-provider/milestones/2.4.4-session-idle-timeout-sweeper) (hard dependency; not deferred)
+- [x] `GetOrCreate` is idempotent for the same `external_id` within an org/agent
+- [x] `AppendCheckpoint` atomically updates session stats in the same transaction
+- [x] `UNIQUE(session_id, turn_index)` prevents duplicate turns (tested)
+- [x] All functions accept and propagate context (deadline, cancellation)
+- [x] Integration tests with real Postgres (`POSTGRES_TEST_DSN` / compose-test; not testcontainers)
+- [x] Idle-timeout / abandoned path documented as owned by [2.4.4](/roadmap/phase-2-single-provider/milestones/2.4.4-session-idle-timeout-sweeper) (hard dependency; not deferred)
 
 ---

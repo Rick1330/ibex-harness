@@ -212,7 +212,7 @@ Used by: **proxy** (`services/proxy`)
 | `IBEX_AUTH_CACHE_BLOOM_EXPECTED_ITEMS` | No | `10000` | Bloom sizing for invalid token hashes | |
 | `IBEX_AUTH_CACHE_BLOOM_FP_RATE` | No | `0.001` | Target false-positive rate (0.1%) | |
 | `IBEX_MAX_REQUEST_BODY_BYTES` | No | `1048576` | Max chat request body (1 MiB) | See [ADR-0013](adr/ADR-0013-proxy-input-validation-and-error-envelope.md) |
-| `POSTGRES_DSN` | Conditional | (empty) | Read-only Postgres for directive resolution; empty with Redis → Noop resolver | Secret; must match migrated schema |
+| `POSTGRES_DSN` | Conditional | (empty) | Postgres for directive reads; when set, also constructs the session store for upcoming lifecycle wiring (not on the chat hot path yet). Empty → session store disabled; with Redis enables cached directive resolver | Secret; must match migrated schema |
 | `IBEX_DIRECTIVE_CACHE_TTL` | No | `60s` | Redis TTL for `{org_id}:directive:{agent_id}` cache entries | Requires `POSTGRES_DSN` + `REDIS_URL` |
 | `IBEX_ERROR_DOCS_BASE` | No | (empty) | Base URL for `docs_url` in error envelope | Omit in dev when unset |
 | `IBEX_LLM_MODE` | No | `mock` | `mock` \| `live` — `mock` keeps an empty provider registry; `live` registers OpenAI per [ADR-0026](/docs/adr/0026-openai-client-design) | Default `mock` for CI/dev without API key |

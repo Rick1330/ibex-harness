@@ -24,6 +24,10 @@ var ProxyRequiredMetricNames = []string{
 	"ibex_proxy_directive_resolve_errors_total",
 	"ibex_proxy_directive_resolve_duration_seconds",
 	"ibex_proxy_directive_invalidate_total",
+	"ibex_proxy_session_get_or_create_total",
+	"ibex_proxy_session_get_or_create_duration_seconds",
+	"ibex_proxy_session_checkpoint_total",
+	"ibex_proxy_session_complete_total",
 	"ibex_process_up",
 }
 

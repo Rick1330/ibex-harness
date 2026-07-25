@@ -156,6 +156,23 @@ func seedProxySamples(reg *ProxyRegistry) {
 	reg.IncDirectiveResolveError()
 	reg.ObserveDirectiveResolveSeconds(0.001)
 	reg.IncDirectiveInvalidate()
+	reg.IncSessionGetOrCreate("created")
+	reg.ObserveSessionGetOrCreateSeconds(0.001)
+	reg.IncSessionCheckpoint("ok")
+	reg.IncSessionComplete("ok")
+	reg.IncSessionGetOrCreate("not-a-real-result")
+	reg.IncSessionCheckpoint("also-invalid")
+	reg.IncSessionComplete("nope")
+}
+
+func TestUnit_BoundSessionResult(t *testing.T) {
+	t.Parallel()
+	if got := boundSessionResult("created", sessionGetOrCreateResults); got != "created" {
+		t.Fatalf("got %q", got)
+	}
+	if got := boundSessionResult("weird", sessionGetOrCreateResults); got != "error" {
+		t.Fatalf("fallback got %q", got)
+	}
 }
 
 func TestProxyRegistry_AsyncBackpressureMetricsRegistered(t *testing.T) {

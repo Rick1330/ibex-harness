@@ -13,6 +13,7 @@ import (
 	ibexmetrics "github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/packages/provider"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
+	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
 	proxyhttp "github.com/Rick1330/ibex-harness/services/proxy/internal/http"
 	"github.com/alicebob/miniredis/v2"
@@ -97,7 +98,9 @@ func TestSetupRateLimiter_InvalidURL(t *testing.T) {
 
 func TestSetupDirectiveResolver_NoopWithoutDSNOrRedis(t *testing.T) {
 	log := logger.Discard("proxy")
-	db, resolver, err := setupDirectiveResolver(config.Config{}, nil, log, nil)
+	db, resolver, err := setupDirectiveResolver(directiveResolverSetup{
+		Config: config.Config{}, Log: log, OpenDB: openProxyPostgres,
+	})
 	if err != nil {
 		t.Fatalf("setup: %v", err)
 	}
@@ -115,7 +118,10 @@ func TestSetupDirectiveResolver_NoopWithoutDSNOrRedis(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = client.Close() })
-	db, resolver, err = setupDirectiveResolver(config.Config{RedisURL: "redis://" + mr.Addr()}, client, log, nil)
+	db, resolver, err = setupDirectiveResolver(directiveResolverSetup{
+		Config: config.Config{RedisURL: "redis://" + mr.Addr()},
+		Redis:  client, Log: log, OpenDB: openProxyPostgres,
+	})
 	if err != nil {
 		t.Fatalf("setup with redis only: %v", err)
 	}
@@ -208,6 +214,116 @@ func TestRun_ProviderRegistryInitFailureReturns1(t *testing.T) {
 	t.Setenv("IBEX_AUTH_GRPC_ADDR", "")
 	if got := run(nil); got != 1 {
 		t.Fatalf("run() = %d, want 1", got)
+	}
+}
+
+func TestUnit_NewSessionStore(t *testing.T) {
+	t.Parallel()
+
+	tracer := telemetry.NoopTracer("ibex-session")
+
+	got, err := newSessionStore(nil, nil, tracer)
+	if err != nil {
+		t.Fatalf("nil db err: %v", err)
+	}
+	if got != nil {
+		t.Fatal("expected nil store without db")
+	}
+
+	db, err := sql.Open("postgres", "postgres://127.0.0.1:1/nope?sslmode=disable")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	store, err := newSessionStore(db, nil, tracer)
+	if err != nil {
+		t.Fatalf("noop metrics err: %v", err)
+	}
+	if store == nil {
+		t.Fatal("expected store")
+	}
+
+	reg := ibexmetrics.NewProxy("proxy-session-test")
+	store, err = newSessionStore(db, reg, tracer)
+	if err != nil {
+		t.Fatalf("registry metrics err: %v", err)
+	}
+	if store == nil {
+		t.Fatal("expected store with registry")
+	}
+}
+
+func TestUnit_SetupDirectiveResolver_PostgresWithoutRedis(t *testing.T) {
+	db := mustStubPostgres(t)
+	openDB := func(string) (*sql.DB, error) { return db, nil }
+
+	gotDB, resolver := mustSetupDirectiveWithDSN(t, openDB)
+	if gotDB != db {
+		t.Fatal("expected stubbed postgres db")
+	}
+	assertSessionStoreWired(t, gotDB)
+	assertNoopDirectiveResolve(t, resolver)
+}
+
+func TestUnit_SetupDirectiveResolver_PostgresOpenError(t *testing.T) {
+	openDB := func(string) (*sql.DB, error) { return nil, errors.New("open boom") }
+	log := logger.Discard("proxy")
+
+	_, _, err := setupDirectiveResolver(directiveResolverSetup{
+		Config: config.Config{PostgresDSN: "postgres://example/ibex"},
+		Log:    log, OpenDB: openDB,
+	})
+	if err == nil {
+		t.Fatal("expected open error")
+	}
+}
+
+func mustStubPostgres(t *testing.T) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("postgres", "postgres://127.0.0.1:1/nope?sslmode=disable")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	return db
+}
+
+func mustSetupDirectiveWithDSN(t *testing.T, openDB postgresOpener) (*sql.DB, directive.Resolver) {
+	t.Helper()
+	gotDB, resolver, err := setupDirectiveResolver(directiveResolverSetup{
+		Config: config.Config{PostgresDSN: "postgres://example/ibex"},
+		Log:    logger.Discard("proxy"), OpenDB: openDB,
+	})
+	if err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	return gotDB, resolver
+}
+
+func assertSessionStoreWired(t *testing.T, db *sql.DB) {
+	t.Helper()
+	store, err := newSessionStore(db, nil, telemetry.NoopTracer("ibex-session"))
+	if err != nil {
+		t.Fatalf("session store err: %v", err)
+	}
+	if store == nil {
+		t.Fatal("expected session store from DSN path")
+	}
+	deps := proxyhttp.RouterDeps{SessionStore: store}
+	if deps.SessionStore == nil {
+		t.Fatal("expected RouterDeps to receive SessionStore")
+	}
+}
+
+func assertNoopDirectiveResolve(t *testing.T, resolver directive.Resolver) {
+	t.Helper()
+	got, err := resolver.Resolve(context.Background(), uuid.Nil, uuid.Nil)
+	if err != nil {
+		t.Fatalf("resolve err: %v", err)
+	}
+	if got.HasContent() {
+		t.Fatalf("expected noop resolve, got %+v", got)
 	}
 }
 
