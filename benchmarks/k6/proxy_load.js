@@ -2,9 +2,9 @@
 import http from "k6/http";
 import { check, sleep } from "k6";
 
-// CI (benchmark.yml) probes /health until Phase 2 middleware is complete.
-// Phase 2 gate (2.6.1 / 2.6.2): set K6_USE_CHAT=1 to POST /v1/chat/completions
-// through the full proxy chain. Health alone does not satisfy that gate.
+// CI smoke/fast profiles probe /health. The full profile sets K6_USE_CHAT=1
+// for POST /v1/chat/completions through the Phase 2 middleware + mock provider
+// (ADR-0034 / milestone 2.6.1). Requires seeded IBEX_DEV_TOKEN + IBEX_DEV_AGENT_ID.
 
 export const options = {
   vus: Number(__ENV.K6_VUS || 100),
@@ -47,7 +47,7 @@ function probeChat() {
   }
   const res = http.post(`${BASE_URL}${CHAT_PATH}`, chatBody, { headers });
   check(res, {
-    "chat status ok": (r) => r.status === 200 || r.status === 501,
+    "chat status 200": (r) => r.status === 200,
   });
 }
 

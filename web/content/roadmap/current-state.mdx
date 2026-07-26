@@ -25,11 +25,11 @@ summary: "Phase 0, Phase 1, and Phase 1.5 are complete. Phase 2 (Single Provider
 <StatusBadge status="stable" /> **Phase 0 — Foundation:** complete  
 <StatusBadge status="stable" /> **Phase 1 — Core Platform:** complete  
 <StatusBadge status="stable" /> **Phase 1.5 — Public Web Product:** complete  
-<StatusBadge status="new" /> **Phase 2 — Single Provider:** in progress (2.5.3 complete; 2.6.1 next)
+<StatusBadge status="new" /> **Phase 2 — Single Provider:** in progress (2.6.1 complete; 2.6.2 next)
 
 **Last updated:** 2026-07-26  
 **Branch:** `main`  
-**Current focus:** [2.6.1 Latency benchmark](/roadmap/phase-2-single-provider/milestones/2.6.1-latency-benchmark)  
+**Current focus:** [2.6.2 Phase 2 exit gate](/roadmap/phase-2-single-provider/milestones/2.6.2-phase2-exit-gate)  
 **Deferred:** [2.1.6 Idempotency-Key](/roadmap/phase-2-single-provider/milestones/2.1.6-idempotency-key) until after Goal 2.3 (waivable at 2.6.2)
 
 <QuickLinks
@@ -59,6 +59,8 @@ summary: "Phase 0, Phase 1, and Phase 1.5 are complete. Phase 2 (Single Provider
 
 ## Shipped Since Last Update
 
+- Proxy overhead latency benchmark (milestone 2.6.1; [ADR-0034](/docs/adr/0034-performance-methodology)): real warm-path Go stages, full-middleware chat httptest bench, mockllm provider, k6 full-profile chat path, pinned baseline
+- Async LLM trace emitter to ClickHouse (milestone 2.5.3)
 - Directive injection (`packages/injection`) and proxy wire-up before `Complete` (milestone 2.3.3; ADR-0031)
 - Directive resolver (`packages/directive`): Redis cache with Postgres fallback, pub/sub invalidation, proxy hot-path middleware (milestone 2.3.2)
 - Path-filtered CI with area gate jobs ([#206](https://github.com/Rick1330/ibex-harness/pull/206)): `ci-gate-repo`, `ci-gate-go`, `ci-gate-web`, `ci-gate-security`
@@ -72,7 +74,8 @@ summary: "Phase 0, Phase 1, and Phase 1.5 are complete. Phase 2 (Single Provider
 <Callout type="note" title="Current capability boundary">
   Authenticated request handling and governance are production-ready. OpenAI JSON
   and SSE forwarding ship when `IBEX_LLM_MODE=live` and `OPENAI_API_KEY` are set
-  (default `mock` keeps `501 PROVIDER_NOT_CONFIGURED`). Provider routing middleware
+  (default `mock` uses an in-process stub provider for smoke and latency gates —
+  [ADR-0034](/docs/adr/0034-performance-methodology)). Provider routing middleware
   (2.1.4) selects the adapter from the request model; provider failures map to the
   stable IBEX envelope (2.1.5). The memory pipeline is
   deferred until Phase 3; multi-provider routing remains out of scope until Phase 4.
@@ -111,24 +114,23 @@ Legacy `docs.ibexharness.com` redirects to apex paths (301).
 <Callout type="warning" title="Phase 2 entry">
   Non-streaming and streaming OpenAI forwarding ship when `IBEX_LLM_MODE=live` and `OPENAI_API_KEY` are set
   (`stream=false` JSON or `stream=true` SSE per [ADR-0026](/docs/adr/0026-openai-client-design) and
-  [ADR-0027](/docs/adr/0027-streaming-dual-write)). Default `IBEX_LLM_MODE=mock` keeps
-  `501 PROVIDER_NOT_CONFIGURED` for CI and local dev without a provider key.
+  [ADR-0027](/docs/adr/0027-streaming-dual-write)). Default `IBEX_LLM_MODE=mock` registers an in-process
+  stub provider (immediate JSON) for CI, local smoke, and the 2.6.1 latency gate ([ADR-0034](/docs/adr/0034-performance-methodology)).
 </Callout>
 
 - Python services (memory, context, embedder, worker, api, dashboard) are not in shipping scope until Phase 3
-- Phase 2.6.1 latency benchmark infrastructure exists (Phase 1.5 pre-work); Phase 2 middleware-complete baseline still required
 
 ## Next 3 Priorities
 
 <Steps>
-  <Step title="2.6.1 — Latency benchmark">
-    Phase 2 middleware-complete p99 overhead baseline.
-  </Step>
   <Step title="2.6.2 — Phase 2 exit gate">
-    Latency, load, and AC verification for Phase 2 exit.
+    Latency, load, and AC verification for Phase 2 exit (2.1.6 do or waive).
   </Step>
   <Step title="Phase 3 kickoff">
     Memory engine after Phase 2 exit.
+  </Step>
+  <Step title="2.1.6 — Idempotency-Key (deferred)">
+    Complete or waive before 2.6.2 merge.
   </Step>
 </Steps>
 

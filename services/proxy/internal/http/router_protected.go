@@ -45,11 +45,11 @@ func registerProtectedRoutes(deps protectedRouteDeps) {
 		agentVerify = AgentVerificationMiddleware(deps.agentVerifier, deps.logger)
 	}
 
-	authNone := AuthMiddleware(deps.validator, deps.logger, AuthOptions{})
+	authNone := AuthMiddleware(deps.validator, deps.logger, AuthOptions{Metrics: deps.reg})
 	deps.mux.Handle("/v1/internal/auth-probe", chain(authNone, agentVerify, rateLimit)(http.HandlerFunc(handleAuthProbe)))
 
 	authOrg := func(orgID string) func(http.Handler) http.Handler {
-		return AuthMiddleware(deps.validator, deps.logger, AuthOptions{PathOrgID: orgID})
+		return AuthMiddleware(deps.validator, deps.logger, AuthOptions{PathOrgID: orgID, Metrics: deps.reg})
 	}
 	deps.mux.HandleFunc("/v1/orgs/{org_id}/auth-probe", func(w http.ResponseWriter, r *http.Request) {
 		if !requireMethod(w, r, http.MethodGet, deps.docsBase) {
@@ -67,7 +67,10 @@ func registerProtectedRoutes(deps protectedRouteDeps) {
 	chatChain := chain(
 		BodySizeLimitMiddleware(deps.cfg.MaxRequestBodyBytes, deps.docsBase),
 		ContentTypeMiddleware(deps.docsBase),
-		AuthMiddleware(deps.validator, deps.logger, AuthOptions{RequireProxyChatCompletion: true}),
+		AuthMiddleware(deps.validator, deps.logger, AuthOptions{
+			RequireProxyChatCompletion: true,
+			Metrics:                    deps.reg,
+		}),
 		agentVerify,
 		rateLimit,
 		DirectiveResolveMiddleware(deps.directiveResolver, deps.logger),

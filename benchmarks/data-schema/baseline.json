@@ -1,9 +1,9 @@
 {
   "version": 1,
-  "notes": "Pin target_commit/baseline_sha after first real 2.6.1 run; synthetic stages do not count.",
+  "notes": "Pinned after first real 2.6.1 warm-path run (authcache/ratelimit/directive/injection + BenchmarkProxyChatOverhead). Local serial chat overhead ~0.17ms; p99 SLA remains 20ms. Update baseline_sha to the merge commit of the 2.6.1 PR if it differs from this tip.",
   "baseline": {
-    "target_commit": "unset",
-    "baseline_sha": "unset",
+    "target_commit": "95783d74b302641e9ab5fc5f47a3634324b36b12",
+    "baseline_sha": "95783d74b302641e9ab5fc5f47a3634324b36b12",
     "proxy_overhead_p99_ms": 20.0,
     "throughput_rps": 0.0,
     "allocs_per_op": 0.0,

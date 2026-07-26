@@ -1,0 +1,93 @@
+---
+title: "ADR-0034: Proxy overhead performance measurement methodology"
+description: "Accepted — Define proxy overhead as mock-provider TTFB; warm-path assumptions; p99 < 20ms SLA; real package-wired benchmarks only."
+adrId: "0034"
+status: "Accepted"
+date: "2026-07-26"
+authors: "IBEX Harness team"
+---
+
+# ADR-0034: Proxy overhead performance measurement methodology
+
+- **Status:** Accepted
+- **Date:** 2026-07-26
+- **Authors:** IBEX Harness team
+- **Milestone:** [2.6.1 Latency benchmark](/roadmap/phase-2-single-provider/milestones/2.6.1-latency-benchmark)
+
+## Context
+
+ARCHITECTURE.md commits to **p99 proxy overhead &lt; 20ms**. Phase 1.5 shipped benchmark infrastructure (workflow, aggregation, public dashboard, [ADR-0024](/docs/adr/0024-benchmark-data-publishing-model)), but Go stage microbenchmarks still used synthetic crypto/string helpers. A green CI gate on those stages cannot detect real middleware regressions.
+
+Phase 2 middleware (auth cache, rate limit, directive resolve, prompt injection, mock/live providers) is now complete enough to measure an honest warm-path baseline.
+
+**Numbering note:** Phase 3 milestone pages previously reserved “ADR-0034” for memory write + PII. **This ADR owns 0034** (Phase 2 performance). Phase 3 must use the next free ID (**ADR-0039**) when that decision is written.
+
+## Decision
+
+### 1) Definition of proxy overhead
+
+**Proxy overhead** is the elapsed time from accepting the client HTTP request until the first response header byte is written, with the upstream LLM replaced by an **immediate mock provider** (no network RTT to OpenAI).
+
+Upstream LLM latency is explicitly **excluded**. Streaming body time after headers is excluded from the overhead SLA (tracked separately if needed).
+
+### 2) Warm-path assumptions (what the gate measures)
+
+The Phase 2 latency gate measures the **steady-state hot path**:
+
+| Stage | Assumption |
+| --- | --- |
+| Auth | LRU cache **hit** (`packages/authcache`) |
+| Agent verify | Cache / verifier hit (no slow-path thrash) |
+| Rate limit | Redis `Limiter.Check` allow |
+| Directive | Redis cache **hit** (`packages/directive` CachedResolver) |
+| Inject | In-process `packages/injection.Inject` |
+| Provider | Mock adapter returns immediately |
+
+**Non-goals for this SLA:** cold auth/directive caches, Postgres directive miss, real provider RTT, ClickHouse flush, session checkpoint durability latency.
+
+### 3) Measurement layers
+
+1. **In-process Go microbenchmarks** (`benchmarks/go`) — real package stage attribution (`authcache`, `ratelimit`, `directive`, `injection`) plus composed `BenchmarkProxyOverhead`.
+2. **Full-middleware httptest bench** — `POST /v1/chat/completions` through `NewRouter` with mock provider (complements microbenches; proves middleware wiring).
+3. **k6 load** — `full` profile uses `K6_USE_CHAT=1` against a mock-configured stack at 100 VUs / 2m. Smoke/fast may keep `GET /health` for cheap PR signal. Health alone does **not** satisfy the Phase 2 exit gate.
+
+### 4) SLA and regression policy
+
+- **Absolute:** p99 proxy overhead &lt; **20ms** (also encoded in `benchmarks/data-schema/baseline.json` → `policy.max_proxy_overhead_p99_ms`).
+- **Relative:** CI fails if measured p99 exceeds the pinned baseline by more than **20%** (`max_regression_pct`).
+- **Error rate:** k6 `http_req_failed` rate &lt; **0.001** on the gated profile.
+- Pin `target_commit` / `baseline_sha` only after the first **real** (non-synthetic) run.
+
+### 5) Metrics (bounded cardinality)
+
+Stage visibility uses existing and new Prometheus series (no `org_id` labels):
+
+| Stage | Metric |
+| --- | --- |
+| Auth (total) | `ibex_proxy_auth_duration_seconds` |
+| Auth cache hit | `ibex_proxy_auth_cache_hits_total{tier="lru"}` (existing) |
+| Directive resolve | `ibex_proxy_directive_resolve_duration_seconds` (existing) |
+| Provider (mock/live) | `ibex_proxy_provider_duration_seconds` |
+| Total request | `ibex_proxy_request_duration_seconds` (existing) |
+
+## Consequences
+
+- Synthetic stage helpers are removed from `benchmarks/go/proxy_overhead_test.go`.
+- Milestone 2.6.2 may claim the &lt;20ms exit AC only when 2.6.1 real benchmarks and a pinned baseline are green.
+- Operators interpret dashboard p99 as **proxy overhead**, not end-user chat latency including the LLM.
+
+## Alternatives considered
+
+| Alternative | Why rejected |
+| --- | --- |
+| Keep synthetic stages + absolute 20ms gate | Does not measure production code |
+| Include real OpenAI RTT in the SLA | Outside IBEX control; unstable CI |
+| Gate only on `/health` k6 | Misses auth/directive/inject/provider path |
+| Per-org metric labels | Cardinality explosion |
+
+## References
+
+- [2.6.1 Latency benchmark](/roadmap/phase-2-single-provider/milestones/2.6.1-latency-benchmark)
+- [ADR-0024](/docs/adr/0024-benchmark-data-publishing-model) — publishing model
+- [ADR-0021](/docs/adr/0021-prometheus-metric-catalog) — metric naming
+- Issue [#291](https://github.com/Rick1330/ibex-harness/issues/291)

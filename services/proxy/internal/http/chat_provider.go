@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"time"
 
 	apierror "github.com/Rick1330/ibex-harness/packages/apierror"
 	"github.com/Rick1330/ibex-harness/packages/injection"
@@ -44,7 +45,9 @@ func (h chatCompletionHandler) forwardChatCompletion(p chatForwardParams) {
 	}
 	provReq := llm.ToProviderRequest(p.parsed)
 	provReq.Messages = applyDirectiveInjection(ctx, provReq.Messages)
+	start := time.Now()
 	resp, err := p.prov.Complete(ctx, provReq)
+	h.metrics.ObserveProviderDurationSeconds(p.prov.Name(), time.Since(start).Seconds())
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return

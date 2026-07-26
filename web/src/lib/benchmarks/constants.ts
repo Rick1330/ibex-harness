@@ -22,5 +22,7 @@ export const CHART_WINDOW_DEFAULT = 30;
 export const CHART_OVERVIEW_DAYS = 14;
 
 export const GO_MICROBENCH_SYNTHETIC_STAGE_MODEL = "go_microbench_synthetic" as const;
+export const GO_MICROBENCH_WARM_PATH_STAGE_MODEL = "go_microbench_warm_path" as const;
+export const GO_MICROBENCH_STAGE_MODEL = GO_MICROBENCH_WARM_PATH_STAGE_MODEL;
 
 export const BENCHMARK_DATA_URL = "/benchmarks/benchmark-data.json";

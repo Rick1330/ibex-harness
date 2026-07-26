@@ -315,7 +315,9 @@ class BuildBenchmarkDataTests(unittest.TestCase):
                 self.assertTrue(target.exists(), target)
                 data = json.loads(target.read_text(encoding="utf-8"))
                 self.assertEqual(data["schema_version"], 1)
-                self.assertEqual(data["baseline_sha"], "bfc0a75")
+                pinned = json.loads((data_schema / "baseline.json").read_text(encoding="utf-8"))
+                want_sha = pinned["baseline"]["baseline_sha"]
+                self.assertEqual(data["baseline_sha"], want_sha)
                 self.assertEqual(len(data["runs"]), 1)
                 self.assertEqual(data["runs"][0]["status"], "pass")
             finally:

@@ -7,6 +7,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/packages/provider"
+	"github.com/Rick1330/ibex-harness/packages/provider/mockllm"
 	"github.com/Rick1330/ibex-harness/packages/provider/openai"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
 	"go.opentelemetry.io/otel/trace"
@@ -14,7 +15,11 @@ import (
 
 func buildProviderRegistry(cfg config.Config, log *logger.Logger, tracer trace.Tracer, reg *metrics.ProxyRegistry) (*provider.Registry, error) {
 	if strings.EqualFold(strings.TrimSpace(cfg.LLMMode), "mock") {
-		return provider.NewRegistry()
+		out, err := provider.NewRegistry(mockllm.Provider{})
+		if err != nil {
+			return nil, fmt.Errorf("mock provider registry: %w", err)
+		}
+		return out, nil
 	}
 	maxRetries := cfg.OpenAI.MaxRetries
 	client := openai.New(openai.Config{

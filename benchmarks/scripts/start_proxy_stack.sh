@@ -11,6 +11,24 @@ export IBEX_LOG_LEVEL=ERROR
 export POSTGRES_DSN
 export IBEX_GRPC_PORT="${AUTH_GRPC_PORT}"
 export IBEX_PORT=18081
+export IBEX_LLM_MODE="${IBEX_LLM_MODE:-mock}"
+
+# Dev seed PAT + agent for k6 chat path (IBEX_LLM_MODE=mock → 200).
+export IBEX_DEV_TOKEN="${IBEX_DEV_TOKEN:-ibex_pat_00000000-0000-0000-0000-000000000004_LOCALDEVELOPMENTONLY}"
+export IBEX_DEV_AGENT_ID="${IBEX_DEV_AGENT_ID:-00000000-0000-0000-0000-000000000003}"
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+if [[ "${BENCH_SKIP_SEED:-0}" != "1" ]]; then
+  echo "seeding benchmark database..."
+  bash "$ROOT_DIR/infra/scripts/db-seed.sh"
+fi
+
+# Persist token/agent for the k6 step (sourced by workflow env or docker -e).
+cat > /tmp/bench-proxy.env <<EOF
+IBEX_DEV_TOKEN=${IBEX_DEV_TOKEN}
+IBEX_DEV_AGENT_ID=${IBEX_DEV_AGENT_ID}
+IBEX_LLM_MODE=${IBEX_LLM_MODE}
+EOF
 
 go run ./services/auth/cmd/auth >/tmp/bench-auth.log 2>&1 &
 echo $! >/tmp/bench-auth.pid

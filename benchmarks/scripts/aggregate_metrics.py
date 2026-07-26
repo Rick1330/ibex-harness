@@ -147,6 +147,9 @@ def stage_breakdown(go_bench):
         "synthetic_prompt_us": ns_to_us(go_bench.get("BenchmarkStagePromptInject", {}).get("ns_per_op", 0.0)),
         "synthetic_total_us": ns_to_us(go_bench.get("BenchmarkProxyOverhead", {}).get("ns_per_op", 0.0)),
         "proxy_health_us": ns_to_us(go_bench.get("BenchmarkProxyHealth", {}).get("ns_per_op", 0.0)),
+        "proxy_chat_overhead_us": ns_to_us(
+            go_bench.get("BenchmarkProxyChatOverhead", {}).get("ns_per_op", 0.0)
+        ),
     }
 
 

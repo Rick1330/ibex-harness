@@ -76,7 +76,7 @@ export interface BenchmarkRun {
   baseline_sha: string | null;
   metric_deltas: Record<string, number | null>;
   go_benchmarks: Record<string, GoBenchmarkMetrics>;
-  stage_model?: "go_microbench_synthetic" | null;
+  stage_model?: "go_microbench_synthetic" | "go_microbench_warm_path" | null;
 }
 
 export interface BenchmarkData {
