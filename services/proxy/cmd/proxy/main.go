@@ -204,10 +204,7 @@ func assembleProxyCore(
 	if err != nil {
 		return assembledProxyCore{}, fmt.Errorf("provider registry: %w", err)
 	}
-	traceWriter, err := setupTraceWriter(cfg, log, reg)
-	if err != nil {
-		return assembledProxyCore{}, err
-	}
+	traceWriter := optionalTraceWriter(cfg, log, reg)
 	server := newHTTPServer(proxyhttp.RouterDeps{
 		Config: cfg, Logger: log, Metrics: reg, Tracer: tracer,
 		Validator: validator, AgentVerifier: agentVerifier, Limiter: limiter,
@@ -624,18 +621,32 @@ func runWithShutdown(opts shutdownOpts) int {
 		shutdownErrCh <- sd.Wait()
 	}()
 
+	return awaitProxyShutdown(opts, errCh, shutdownErrCh)
+}
+
+// awaitProxyShutdown waits for both ListenAndServe exit and coordinator drain.
+// server.Shutdown unblocks ListenAndServe before later hooks (e.g. ClickHouse flush)
+// finish; returning on errCh alone would drop buffered traces.
+func awaitProxyShutdown(opts shutdownOpts, errCh, shutdownErrCh <-chan error) int {
 	select {
 	case err := <-errCh:
 		if err != nil {
 			opts.logger.ErrorCtx(context.Background(), "server failed", "error", err)
 			return 1
 		}
+		if err := <-shutdownErrCh; err != nil {
+			return 1
+		}
 	case err := <-shutdownErrCh:
 		if err != nil {
 			return 1
 		}
-		opts.logger.InfoCtx(context.Background(), "service stopped")
+		if err := <-errCh; err != nil {
+			opts.logger.ErrorCtx(context.Background(), "server failed", "error", err)
+			return 1
+		}
 	}
+	opts.logger.InfoCtx(context.Background(), "service stopped")
 	return 0
 }
 
@@ -703,6 +714,21 @@ func registerShutdownHooks(sd *shutdown.Coordinator, opts shutdownOpts) {
 
 // newTraceWriter constructs the ClickHouse writer; overridden in tests.
 var newTraceWriter = ibexch.NewWriter
+
+// optionalTraceWriter starts the ClickHouse writer or returns nil (fail-open).
+func optionalTraceWriter(
+	cfg config.Config,
+	log *logger.Logger,
+	reg *ibexmetrics.ProxyRegistry,
+) *ibexch.Writer {
+	w, err := setupTraceWriter(cfg, log, reg)
+	if err != nil {
+		log.WarnCtx(context.Background(), "clickhouse writer disabled; continuing without traces",
+			"error", err)
+		return nil
+	}
+	return w
+}
 
 func setupTraceWriter(
 	cfg config.Config,

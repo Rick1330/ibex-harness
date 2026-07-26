@@ -27,6 +27,9 @@ type requestOutcome struct {
 	StatusCode uint16
 	IsComplete bool
 	ErrorCode  string
+	// StreamRequested is the client stream flag when checkpoint IsStreaming
+	// must stay false (e.g. provider failure before a stream body starts).
+	StreamRequested bool
 }
 
 // traceAssembleInput is the immutable snapshot for assembleTrace (≤4 logical groups).

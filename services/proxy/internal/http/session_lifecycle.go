@@ -261,7 +261,10 @@ func (h chatCompletionHandler) enqueuePostResponse(
 	if !doCheckpoint && !doTrace {
 		return
 	}
-	h.submitPostResponse(ctx, deps, in, snap, doCheckpoint, doTrace)
+	h.submitPostResponse(ctx, postResponseJob{
+		deps: deps, in: in, snap: snap,
+		doCheckpoint: doCheckpoint, doTrace: doTrace,
+	})
 }
 
 // wantSessionCheckpoint is true for successful or streaming turns with a durable session.
@@ -276,36 +279,42 @@ func wantSessionCheckpoint(
 		return false
 	}
 	rs, ok := ResolvedSessionFromContext(ctx)
-	if !ok || !rs.durable() {
+	if !ok {
+		return false
+	}
+	if !rs.durable() {
 		return false
 	}
 	return outcome.IsComplete || in.IsStreaming
 }
 
-func (h chatCompletionHandler) submitPostResponse(
-	ctx context.Context,
-	deps sessionLifecycleDeps,
-	in checkpointInput,
-	snap traceAssembleInput,
-	doCheckpoint, doTrace bool,
-) {
+// postResponseJob bundles checkpoint/trace work for the bounded pool Submit.
+type postResponseJob struct {
+	deps         sessionLifecycleDeps
+	in           checkpointInput
+	snap         traceAssembleInput
+	doCheckpoint bool
+	doTrace      bool
+}
+
+func (h chatCompletionHandler) submitPostResponse(ctx context.Context, job postResponseJob) {
 	var params session.CheckpointParams
 	var externalID string
-	if doCheckpoint {
+	if job.doCheckpoint {
 		rs, _ := ResolvedSessionFromContext(ctx)
-		params = buildCheckpointParams(rs, in, RequestIDFromContext(ctx))
+		params = buildCheckpointParams(rs, job.in, RequestIDFromContext(ctx))
 		externalID = rs.ExternalID
 	}
 	run := func() {
-		if doCheckpoint {
-			deps.runCheckpoint(params, externalID)
+		if job.doCheckpoint {
+			job.deps.runCheckpoint(params, externalID)
 		}
-		if doTrace {
-			h.emitTrace(snap)
+		if job.doTrace {
+			h.emitTrace(job.snap)
 		}
 	}
-	if deps.pool != nil {
-		deps.pool.Submit(run)
+	if job.deps.pool != nil {
+		job.deps.pool.Submit(run)
 		return
 	}
 	run()
@@ -339,6 +348,10 @@ func (h chatCompletionHandler) captureTraceSnapshot(
 			status = 200
 		}
 	}
+	streaming := in.IsStreaming
+	if outcome.StreamRequested {
+		streaming = true
+	}
 	return traceAssembleInput{
 		RequestID: reqID,
 		OrgID:     orgID,
@@ -346,7 +359,7 @@ func (h chatCompletionHandler) captureTraceSnapshot(
 		SessionID: sessionID,
 		Model:     in.Model,
 		Provider:  in.Provider,
-		Streaming: in.IsStreaming,
+		Streaming: streaming,
 		Usage:     in.Usage,
 		Timings: requestTimings{
 			AuthMs:       AuthLatencyMsFromContext(ctx),

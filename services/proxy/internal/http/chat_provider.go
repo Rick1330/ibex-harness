@@ -153,12 +153,18 @@ func (h chatCompletionHandler) writeProviderFailure(p providerFailureParams) {
 	model, providerName := failureTraceIdentity(p)
 	h.enqueuePostResponse(p.r.Context(), checkpointInput{
 		Model: model, Provider: providerName,
+		// Keep false so wantSessionCheckpoint skips empty failure checkpoints.
 		IsStreaming: false, IsComplete: false,
 	}, requestOutcome{
-		StatusCode: uint16(mapped.HTTPStatus),
-		IsComplete: false,
-		ErrorCode:  string(mapped.Code),
+		StatusCode:      uint16(mapped.HTTPStatus),
+		IsComplete:      false,
+		ErrorCode:       string(mapped.Code),
+		StreamRequested: failureStreamRequested(p),
 	})
+}
+
+func failureStreamRequested(p providerFailureParams) bool {
+	return p.parsed != nil && p.parsed.Stream
 }
 
 func failureTraceIdentity(p providerFailureParams) (model, providerName string) {
@@ -169,10 +175,13 @@ func failureTraceIdentity(p providerFailureParams) (model, providerName string) 
 		return model, p.providerName
 	}
 	var pe *provider.ProviderError
-	if errors.As(p.err, &pe) && pe != nil {
-		return model, pe.ProviderName
+	if !errors.As(p.err, &pe) {
+		return model, ""
 	}
-	return model, ""
+	if pe == nil {
+		return model, ""
+	}
+	return model, pe.ProviderName
 }
 
 func logMappedProviderError(h chatCompletionHandler, r *http.Request, err error, mapped *apierror.Error) {

@@ -140,6 +140,31 @@ func TestUnit_SetupTraceWriter_LogUsesRedactedDSN(t *testing.T) {
 	}
 }
 
+func TestUnit_OptionalTraceWriter_FailOpenOnStartError(t *testing.T) {
+	prev := newTraceWriter
+	t.Cleanup(func() { newTraceWriter = prev })
+	newTraceWriter = func(ibexch.Config) (*ibexch.Writer, error) {
+		return nil, errors.New("boom")
+	}
+
+	var buf bytes.Buffer
+	log, err := logger.New(logger.Config{
+		Service: "proxy",
+		Level:   slog.LevelWarn,
+		Writer:  &buf,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := optionalTraceWriter(config.Config{ClickHouseDSN: "clickhouse://x"}, log, ibexmetrics.NewProxy("proxy"))
+	if w != nil {
+		t.Fatal("expected nil writer on start failure")
+	}
+	if !strings.Contains(buf.String(), "clickhouse writer disabled") {
+		t.Fatalf("missing fail-open log: %q", buf.String())
+	}
+}
+
 func TestUnit_FinishProxyCore_PassesTraceWriter(t *testing.T) {
 	w := &ibexch.Writer{}
 	core := finishProxyCore(proxyCoreParts{
