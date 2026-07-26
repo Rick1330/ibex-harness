@@ -16,12 +16,14 @@ type ProxyRegistry struct {
 	rateLimitRedisErrors  prometheus.Counter
 	providerRequests      *prometheus.CounterVec
 	providerRetries       *prometheus.CounterVec
+	providerDuration      *prometheus.HistogramVec
 	streamDuration        *prometheus.HistogramVec
 	streamClientDisc      prometheus.Counter
 	streamUpstreamDisc    prometheus.Counter
 	streamBackpressure    prometheus.Counter
 	asyncQueueDepth       prometheus.Gauge
 	asyncDroppedTotal     prometheus.Counter
+	authDuration          prometheus.Histogram
 	authCacheHits         *prometheus.CounterVec
 	authCacheMisses       *prometheus.CounterVec
 	authCacheLRUSize      prometheus.Gauge
@@ -98,6 +100,15 @@ func (r *ProxyRegistry) IncProviderRequest(provider, statusClass string) {
 // IncProviderRetry records an upstream provider retry attempt.
 func (r *ProxyRegistry) IncProviderRetry(provider string) {
 	r.providerRetries.WithLabelValues(provider).Inc()
+}
+
+// ObserveProviderDurationSeconds records Complete wall time in seconds for the
+// given provider label. A nil receiver or uninitialized registry is a no-op.
+func (r *ProxyRegistry) ObserveProviderDurationSeconds(provider string, seconds float64) {
+	if r == nil || r.providerDuration == nil {
+		return
+	}
+	r.providerDuration.WithLabelValues(provider).Observe(seconds)
 }
 
 // ObserveStreamDuration records SSE forward duration.

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/Rick1330/ibex-harness/packages/logger"
@@ -9,25 +10,58 @@ import (
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
 )
 
-func TestBuildProviderRegistry_MockModeEmpty(t *testing.T) {
+func TestBuildProviderRegistry_MockModeRegistersMock(t *testing.T) {
 	t.Parallel()
-	reg, err := buildProviderRegistry(config.Config{LLMMode: "mock"}, logger.Discard("proxy"), telemetry.NoopTracer("proxy"), metrics.NewProxy("test"))
+
+	cfg := config.Config{
+		Environment: "development",
+		LLMMode:     "mock",
+	}
+
+	reg, err := buildProviderRegistry(cfg, logger.Discard("proxy"), telemetry.NoopTracer("proxy"), metrics.NewProxy("test"))
+
 	if err != nil {
 		t.Fatalf("buildProviderRegistry: %v", err)
 	}
-	if _, err := reg.For("gpt-4o"); err == nil {
-		t.Fatal("expected no provider in mock mode")
+	p, err := reg.For("gpt-4o")
+	if err != nil {
+		t.Fatalf("For: %v", err)
+	}
+	if p.Name() != "mock" {
+		t.Fatalf("provider=%q", p.Name())
+	}
+}
+
+func TestBuildProviderRegistry_MockModeRejectedInProduction(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Config{
+		Environment: "production",
+		LLMMode:     "mock",
+	}
+
+	_, err := buildProviderRegistry(cfg, logger.Discard("proxy"), telemetry.NoopTracer("proxy"), metrics.NewProxy("test"))
+
+	if err == nil {
+		t.Fatal("expected error for mock mode in production")
+	}
+	if !strings.Contains(err.Error(), "production") {
+		t.Fatalf("err=%v", err)
 	}
 }
 
 func TestBuildProviderRegistry_LiveModeRegistersOpenAI(t *testing.T) {
 	t.Parallel()
-	reg, err := buildProviderRegistry(config.Config{
+
+	cfg := config.Config{
 		LLMMode: "live",
 		OpenAI: config.OpenAIConfig{
 			APIKey: "test-key",
 		},
-	}, logger.Discard("proxy"), telemetry.NoopTracer("proxy"), metrics.NewProxy("test"))
+	}
+
+	reg, err := buildProviderRegistry(cfg, logger.Discard("proxy"), telemetry.NoopTracer("proxy"), metrics.NewProxy("test"))
+
 	if err != nil {
 		t.Fatalf("buildProviderRegistry: %v", err)
 	}

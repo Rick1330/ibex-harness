@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { GO_MICROBENCH_SYNTHETIC_STAGE_MODEL } from "./constants";
+import { GO_MICROBENCH_SYNTHETIC_STAGE_MODEL, GO_MICROBENCH_WARM_PATH_STAGE_MODEL } from "./constants";
 
 const throughputPointSchema = z.object({
   t_s: z.number(),
@@ -62,7 +62,13 @@ const benchmarkRunSchema = z.object({
   baseline_sha: z.string().nullable(),
   metric_deltas: z.record(z.string(), z.number().nullable()),
   go_benchmarks: z.record(z.string(), goBenchmarkSchema),
-  stage_model: z.literal(GO_MICROBENCH_SYNTHETIC_STAGE_MODEL).nullable().optional(),
+  stage_model: z
+    .union([
+      z.literal(GO_MICROBENCH_SYNTHETIC_STAGE_MODEL),
+      z.literal(GO_MICROBENCH_WARM_PATH_STAGE_MODEL),
+    ])
+    .nullable()
+    .optional(),
 });
 
 export const benchmarkDataSchema = z.object({

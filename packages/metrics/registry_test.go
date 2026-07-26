@@ -138,6 +138,8 @@ func seedProxySamples(reg *ProxyRegistry) {
 	reg.IncRateLimitAllowed()
 	reg.IncProviderRequest("openai", "2xx")
 	reg.IncProviderRetry("openai")
+	reg.ObserveProviderDurationSeconds("openai", 0.001)
+	reg.ObserveAuthDurationSeconds(0.001)
 	reg.ObserveStreamDuration(StreamObservation{Provider: "openai", Status: "ok", Seconds: 0.01})
 	reg.IncStreamClientDisconnect()
 	reg.IncStreamUpstreamDisconnect()
@@ -198,6 +200,37 @@ func TestProxyRegistry_AsyncBackpressureMetricsRegistered(t *testing.T) {
 			t.Fatalf("missing required metric %q", name)
 		}
 	}
+}
+
+func TestProxyRegistry_AuthAndProviderDurationRegistered(t *testing.T) {
+	t.Parallel()
+
+	reg := NewProxy("test-proxy")
+
+	reg.ObserveAuthDurationSeconds(0.001)
+	reg.ObserveProviderDurationSeconds("mock", 0.002)
+
+	names := gatherMetricNames(t, reg.Gatherer())
+	for _, name := range []string{
+		"ibex_proxy_auth_duration_seconds",
+		"ibex_proxy_provider_duration_seconds",
+	} {
+		if _, ok := names[name]; !ok {
+			t.Fatalf("missing required metric %q", name)
+		}
+	}
+}
+
+func TestProxyRegistry_ObserveDurationNilSafe(t *testing.T) {
+	t.Parallel()
+
+	var nilReg *ProxyRegistry
+	empty := &ProxyRegistry{}
+
+	nilReg.ObserveAuthDurationSeconds(0.001)
+	nilReg.ObserveProviderDurationSeconds("mock", 0.001)
+	empty.ObserveAuthDurationSeconds(0.001)
+	empty.ObserveProviderDurationSeconds("mock", 0.001)
 }
 
 func TestProxyRegistry_AuthCacheSeriesMaterializedUnseeded(t *testing.T) {

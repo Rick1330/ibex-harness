@@ -70,8 +70,8 @@ HTTP="$(http_code -X POST "$PROXY_ADDR/v1/chat/completions" \
   -H "Authorization: Bearer $DEV_TOKEN" \
   -H "X-IBEX-Agent-ID: $DEV_AGENT" \
   -d "$CHAT_BODY")"
-[[ "$HTTP" == "501" ]] && pass "valid request → 501 (expected: no upstream LLM)" \
-  || fail "valid chat returned $HTTP, want 501 PROVIDER_NOT_CONFIGURED"
+[[ "$HTTP" == "200" ]] && pass "valid request → 200 (mock provider)" \
+  || fail "valid chat returned $HTTP, want 200 under IBEX_LLM_MODE=mock"
 
 HTTP="$(http_code -H "Authorization: Bearer $DEV_TOKEN" \
   -H "X-IBEX-Agent-ID: $DEV_AGENT" \

@@ -2,7 +2,7 @@
 title: "2.6.1 Latency Benchmark"
 description: "ARCHITECTURE.md commits to a <20ms proxy overhead target at p99. This commitment is meaningless without a measurement methodology and a benchmark that CI can run to detect regressions. This milestone defines what \\\"proxy overhead\\\" means precisely, how it is measured, and what the Phase 2 baseline is. Definition of pro"
 summary: "ARCHITECTURE.md commits to a <20ms proxy overhead target at p99. This commitment is meaningless without a measurement methodology and a benchmark that CI can run to detect regressions. This milestone defines what \\\"proxy overhead\\\" means precisely, how it is measured, and what the Phase 2 baseline is. Definition of pro"
-status: "planned"
+status: "completed"
 milestoneId: "2.6.1"
 goal: "[2.6 — Phase 2 quality gate](/roadmap/phase-2-single-provider/goals#goal-26-phase-2-quality-gate-latency-and-load)"
 estimatedEffort: "2–3 days"
@@ -20,11 +20,11 @@ fullTitle: "Milestone 2.6.1 — Proxy Overhead Latency Benchmark and Load Test"
   baseline (mock provider, p99 gate in CI).
 </Callout>
 
-**Status:** Planned  
+**Status:** Completed  
 **Goal:** [2.6 — Phase 2 quality gate](/roadmap/phase-2-single-provider/goals#goal-26-phase-2-quality-gate-latency-and-load)  
 **Phase:** 2 — Single Provider End-to-End  
 **Estimated effort:** 2–3 days  
-**ADR required:** ADR-0034 — Performance measurement methodology
+**ADR required:** [ADR-0034](/docs/adr/0034-performance-methodology) — Performance measurement methodology
 
 ---
 
@@ -100,13 +100,13 @@ The benchmark reports per-stage latency as Prometheus histograms:
 
 ## Acceptance Criteria
 
-- [ ] **Hard prerequisite:** Synthetic stages in `benchmarks/go/proxy_overhead_test.go` are replaced with real package calls (`authcache`, `ratelimit`, directive resolve, prompt inject) before this gate is green — placeholder crypto/string stages do **not** count
-- [ ] Benchmark runs with a mock provider (no real OpenAI calls) through the **full** middleware chain
-- [ ] k6 defaults to `GET /health` (CI today); `K6_USE_CHAT=1` opts into `POST /v1/chat/completions` for the Phase 2 middleware-complete gate
-- [ ] p99 proxy overhead < 20ms at 100 concurrent requests
-- [ ] Stage breakdown metrics exported and visible
-- [ ] Regression baseline committed: pin `target_commit` / `baseline_sha` in `benchmarks/data-schema/baseline.json` after the first **real** (non-synthetic) run
-- [ ] CI fails if p99 exceeds baseline by more than 20%
-- [ ] ADR-0034 written defining "proxy overhead" precisely
+- [x] **Hard prerequisite:** Synthetic stages in `benchmarks/go/proxy_overhead_test.go` are replaced with real package calls (`authcache`, `ratelimit`, directive resolve, prompt inject) before this gate is green — placeholder crypto/string stages do **not** count
+- [x] Benchmark runs with a mock provider (no real OpenAI calls) through the **full** middleware chain
+- [x] k6 defaults to `GET /health` (CI smoke/fast); `K6_USE_CHAT=1` on the **full** profile for `POST /v1/chat/completions`
+- [x] p99 proxy overhead < 20ms at 100 concurrent requests (k6 full profile + Go parallel chat bench)
+- [x] Stage breakdown metrics exported and visible (`ibex_proxy_auth_duration_seconds`, `ibex_proxy_provider_duration_seconds`, existing request/directive histograms)
+- [x] Regression baseline committed: pin `target_commit` / `baseline_sha` in `benchmarks/data-schema/baseline.json` after the first **real** (non-synthetic) run
+- [x] CI fails if p99 exceeds baseline by more than 20%
+- [x] ADR-0034 written defining "proxy overhead" precisely
 
 ---

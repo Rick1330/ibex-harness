@@ -583,8 +583,8 @@ Scenarios:
 
 Pass/fail examples:
 
-- p95 total overhead < 20ms (proxy-only)
-- p99 overhead < 60ms
+- p95 total overhead < 10ms (proxy-only distribution guidance) — see [ADR-0034](../content/docs/adr/0034-performance-methodology.mdx)
+- p99 overhead < 20ms (Phase 2 gate; mock provider)
 - error rate < 0.5% (excluding deliberate throttling tests)
 
 ### 9.2 Context assembly perf

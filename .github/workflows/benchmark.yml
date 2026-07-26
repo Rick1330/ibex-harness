@@ -181,11 +181,13 @@ jobs:
             profile="fast"
           fi
           run_proxy_http_bench=1
+          k6_use_chat=0
           case "$profile" in
             full)
               echo "go_count=5" >> "$GITHUB_OUTPUT"
               echo "k6_vus=100" >> "$GITHUB_OUTPUT"
               echo "k6_duration=2m" >> "$GITHUB_OUTPUT"
+              k6_use_chat=1
               ;;
             smoke)
               echo "go_count=1" >> "$GITHUB_OUTPUT"
@@ -200,6 +202,7 @@ jobs:
               ;;
           esac
           echo "run_proxy_http_bench=$run_proxy_http_bench" >> "$GITHUB_OUTPUT"
+          echo "k6_use_chat=$k6_use_chat" >> "$GITHUB_OUTPUT"
           echo "profile=$profile" >> "$GITHUB_OUTPUT"
           echo "BENCH_PROFILE=$profile" >> "$GITHUB_ENV"
           echo "Using BENCH_PROFILE=$profile"
@@ -250,16 +253,30 @@ jobs:
       - name: Start real proxy stack for load benchmark
         run: bash benchmarks/scripts/start_proxy_stack.sh
 
-      - name: Run k6 load benchmark against proxy /health
+      - name: Run k6 load benchmark against proxy
+        env:
+          IBEX_DEV_TOKEN: ibex_pat_00000000-0000-0000-0000-000000000004_LOCALDEVELOPMENTONLY
+          IBEX_DEV_AGENT_ID: "00000000-0000-0000-0000-000000000003"
         run: |
           chmod -R u+rwX benchmarks/output
+          env_path_file="benchmarks/output/bench-proxy.env.path"
+          docker_env_args=()
+          if [ -f "$env_path_file" ]; then
+            bench_env_file="$(tr -d '\r\n' < "$env_path_file")"
+            if [ -n "$bench_env_file" ] && [ -f "$bench_env_file" ]; then
+              docker_env_args+=(--env-file "$bench_env_file")
+            fi
+          fi
           docker run --rm \
             --user "$(id -u):$(id -g)" \
             --network host \
             -v "$PWD:/work" -w /work \
             -e BASE_URL="http://127.0.0.1:${BENCH_PROXY_PORT}" \
             -e K6_HEALTH_PATH=/health \
-            -e K6_USE_CHAT=0 \
+            -e K6_USE_CHAT="${{ steps.knobs.outputs.k6_use_chat }}" \
+            -e IBEX_DEV_TOKEN="${IBEX_DEV_TOKEN}" \
+            -e IBEX_DEV_AGENT_ID="${IBEX_DEV_AGENT_ID}" \
+            "${docker_env_args[@]}" \
             -e K6_VUS="${{ steps.knobs.outputs.k6_vus }}" \
             -e K6_DURATION="${{ steps.knobs.outputs.k6_duration }}" \
             grafana/k6:0.53.0 \

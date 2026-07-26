@@ -8,6 +8,7 @@ func (r *ProxyRegistry) register(serviceName string) {
 	r.initProviderMetrics()
 	r.initStreamMetrics()
 	r.initAsyncMetrics()
+	r.initAuthDurationMetrics()
 	r.initAuthCacheMetrics()
 	r.initRevocationMetrics()
 	r.initDirectiveMetrics()
@@ -26,12 +27,14 @@ func (r *ProxyRegistry) register(serviceName string) {
 		r.rateLimitRedisErrors,
 		r.providerRequests,
 		r.providerRetries,
+		r.providerDuration,
 		r.streamDuration,
 		r.streamClientDisc,
 		r.streamUpstreamDisc,
 		r.streamBackpressure,
 		r.asyncQueueDepth,
 		r.asyncDroppedTotal,
+		r.authDuration,
 		r.authCacheHits,
 		r.authCacheMisses,
 		r.authCacheLRUSize,
@@ -93,6 +96,11 @@ func (r *ProxyRegistry) initProviderMetrics() {
 	r.providerRetries = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "ibex_proxy_provider_retries_total",
 		Help: "Upstream LLM provider retry attempts.",
+	}, []string{"provider"})
+	r.providerDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "ibex_proxy_provider_duration_seconds",
+		Help:    "Upstream LLM provider Complete wall time (mock or live).",
+		Buckets: LatencyBuckets,
 	}, []string{"provider"})
 }
 

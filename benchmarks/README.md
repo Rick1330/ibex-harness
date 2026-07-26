@@ -2,9 +2,9 @@
 
 This directory contains the benchmark pipeline assets:
 
-- `go/`: proxy overhead stage microbenchmarks (ratelimit is real; other stages still synthetic until 2.6.1 / issue #291).
-- `services/proxy/internal/http`: real `/health` handler benchmarks (`BenchmarkProxyHealth`).
-- `k6/`: load test script against the real proxy `/health` endpoint.
+- `go/`: warm-path proxy overhead stage microbenchmarks (authcache, ratelimit, directive, injection).
+- `services/proxy/internal/http`: `/health` (`BenchmarkProxyHealth`) and full chat overhead (`BenchmarkProxyChatOverhead`) with mockllm.
+- `k6/`: load test script — `/health` for smoke/fast; chat path when `K6_USE_CHAT=1`.
 - `scripts/`: aggregation, regression gate, published data builders, and proxy stack helpers.
 - `data-schema/`: baseline policy, JSON schema, and benchmark data contracts.
 - `testdata/`: fixtures for pipeline verification tests.
@@ -13,15 +13,15 @@ Published benchmark data is committed to `web/public/benchmarks/` via the benchm
 
 ## Profiles (speed vs quality)
 
-| Profile | When | Go `-count` | k6 | Proxy HTTP bench |
-| --- | --- | --- | --- | --- |
-| `smoke` | Pull requests | 1 | 15 VUs / 15s | skipped |
-| `fast` | Daily cron (Mon–Sat), main pushes | 2 | 25 VUs / 30s | yes |
-| `full` | Sunday cron, `workflow_dispatch` | 5 | 100 VUs / 2m | yes |
+| Profile | When | Go `-count` | k6 | Path | Proxy HTTP bench |
+| --- | --- | --- | --- | --- | --- |
+| `smoke` | Pull requests | 1 | 15 VUs / 15s | `GET /health` | skipped |
+| `fast` | Daily cron (Mon–Sat), main pushes | 2 | 25 VUs / 30s | `GET /health` | yes |
+| `full` | Sunday cron, `workflow_dispatch` | 5 | 100 VUs / 2m | `POST /v1/chat/completions` (`K6_USE_CHAT=1`) | yes |
 
-Target wall-clock: **~2–4 min** for `smoke` PRs, **~5–10 min** for `fast`, current quality bar for `full`. All keep Postgres + Redis + real proxy `/health` load. Go stage microbenches run before stack start. Each published run records `profile: "smoke" | "fast" | "full"`.
+Target wall-clock: **~2–4 min** for `smoke` PRs, **~5–10 min** for `fast`, current quality bar for `full`. All keep Postgres + Redis + real proxy. Go stage microbenches run before stack start. Each published run records `profile: "smoke" | "fast" | "full"`.
 
-CI defaults remain `GET /health`; set `K6_USE_CHAT=1` for chat-path load once Phase 2 middleware is complete.
+Methodology: [ADR-0034](/docs/adr/0034-performance-methodology). Stack helper seeds the DB and exports `IBEX_DEV_TOKEN` / `IBEX_DEV_AGENT_ID`; `IBEX_LLM_MODE=mock` registers an immediate stub provider so chat returns **200**.
 
 ## Verification
 
@@ -44,6 +44,9 @@ Load benchmarks require a running proxy stack:
 bash benchmarks/scripts/start_proxy_stack.sh
 docker run --rm --network host -v "$PWD:/work" -w /work \
   -e BASE_URL=http://127.0.0.1:18082 -e K6_HEALTH_PATH=/health \
+  -e K6_USE_CHAT=1 \
+  -e IBEX_DEV_TOKEN=ibex_pat_00000000-0000-0000-0000-000000000004_LOCALDEVELOPMENTONLY \
+  -e IBEX_DEV_AGENT_ID=00000000-0000-0000-0000-000000000003 \
   -e K6_VUS=25 -e K6_DURATION=30s \
   grafana/k6:0.53.0 run benchmarks/k6/proxy_load.js \
   --summary-trend-stats="med,p(90),p(95),p(99),p(99.9),min,max" \

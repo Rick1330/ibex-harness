@@ -125,6 +125,8 @@ Release notes are human-readable summaries of user-visible changes, security fix
 
 ### Added
 
+- Proxy overhead latency benchmark (m2.6.1): real warm-path Go stage microbenches, `BenchmarkProxyChatOverhead` with mockllm, ADR-0034, auth/provider duration histograms, k6 `full` profile chat path (`K6_USE_CHAT=1`), pinned `baseline.json`
+- In-process mock LLM provider (`packages/provider/mockllm`): `IBEX_LLM_MODE=mock` returns immediate OpenAI-shaped JSON (smoke/chat 200 without OpenAI)
 - Async trace emitter (m2.5.3): proxy `assembleTrace` + post-response bounded-pool emit into ClickHouse `Writer` (success, incomplete stream, provider failure); auth/directive stage latency on context; never blocks LLM response on CH errors
 - ClickHouse client (`packages/clickhouse`, m2.5.2): concurrent batched `Writer` for `ibex.llm_traces` (clickhouse-go/v2, defaults batch 500 / flush 200ms), flush metrics, optional proxy shutdown drain when `CLICKHOUSE_DSN` is set
 - ClickHouse `ibex.llm_traces` schema (m2.5.1): golang-migrate runner under `infra/migrations/clickhouse`, 90-day TTL MergeTree, ADR-0033, compose-test ClickHouse, `make clickhouse-migrate`

@@ -7,6 +7,7 @@ import (
 
 	apierror "github.com/Rick1330/ibex-harness/packages/apierror"
 	"github.com/Rick1330/ibex-harness/packages/logger"
+	"github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/packages/permissions"
 	"github.com/Rick1330/ibex-harness/packages/reqid"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
@@ -16,6 +17,7 @@ import (
 type AuthOptions struct {
 	RequireProxyChatCompletion bool
 	PathOrgID                  string
+	Metrics                    *metrics.ProxyRegistry
 }
 
 type authWriteCtx struct {
@@ -34,12 +36,14 @@ func AuthMiddleware(validator auth.TokenValidator, log *logger.Logger, opts Auth
 
 			token, err := auth.ParseAuthorizationHeader(r.Header.Get("Authorization"))
 			if err != nil {
+				observeAuthDuration(opts.Metrics, start)
 				writeAuthParseError(awc, err)
 				return
 			}
 
 			res, err := validator.Validate(r.Context(), token)
 			if err != nil {
+				observeAuthDuration(opts.Metrics, start)
 				writeAuthValidateError(awc, r, log, err)
 				return
 			}
@@ -47,14 +51,21 @@ func AuthMiddleware(validator auth.TokenValidator, log *logger.Logger, opts Auth
 				w.Header().Set("X-IBEX-Auth-Cached", "true")
 			}
 			if !authorizeAuthResult(awc, res, opts) {
+				observeAuthDuration(opts.Metrics, start)
 				return
 			}
 
+			elapsed := time.Since(start)
+			observeAuthDuration(opts.Metrics, start)
 			ctx := auth.WithContext(r.Context(), res)
-			ctx = WithAuthLatencyMs(ctx, clampUint16Ms(time.Since(start)))
+			ctx = WithAuthLatencyMs(ctx, clampUint16Ms(elapsed))
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+func observeAuthDuration(reg *metrics.ProxyRegistry, start time.Time) {
+	reg.ObserveAuthDurationSeconds(time.Since(start).Seconds())
 }
 
 func ensureAuthRequestID(r *http.Request) (string, *http.Request) {

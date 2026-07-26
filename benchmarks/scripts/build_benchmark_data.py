@@ -15,7 +15,7 @@ _SCRIPTS = Path(__file__).resolve().parent
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
-from benchmark_constants import GO_MICROBENCH_SYNTHETIC_STAGE_MODEL
+from benchmark_constants import GO_MICROBENCH_STAGE_MODEL
 
 OUT_DIR = Path("benchmarks/output")
 BASELINE_PATH = Path("benchmarks/data-schema/baseline.json")
@@ -354,7 +354,7 @@ def build_run_record(ctx: RunBuildContext) -> dict[str, Any]:
             ctx.prev_runs,
         ),
         "go_benchmarks": map_go_benchmarks(ctx.latest.get("go_benchmarks", {}), ctx.benchstat),
-        "stage_model": GO_MICROBENCH_SYNTHETIC_STAGE_MODEL,
+        "stage_model": GO_MICROBENCH_STAGE_MODEL,
     }
 
 

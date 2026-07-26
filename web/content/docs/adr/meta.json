@@ -34,6 +34,7 @@
     "0031-system-prompt-injection",
     "0032-session-data-model",
     "0033-clickhouse-schema",
+    "0034-performance-methodology",
     "0038-context-assembly-service"
   ]
 }
