@@ -218,6 +218,16 @@ func TestProxyRegistry_AuthAndProviderDurationRegistered(t *testing.T) {
 	}
 }
 
+func TestProxyRegistry_ObserveDurationNilSafe(t *testing.T) {
+	t.Parallel()
+	var nilReg *ProxyRegistry
+	nilReg.ObserveAuthDurationSeconds(0.001)
+	nilReg.ObserveProviderDurationSeconds("mock", 0.001)
+	empty := &ProxyRegistry{}
+	empty.ObserveAuthDurationSeconds(0.001)
+	empty.ObserveProviderDurationSeconds("mock", 0.001)
+}
+
 func TestProxyRegistry_AuthCacheSeriesMaterializedUnseeded(t *testing.T) {
 	t.Parallel()
 	reg := NewProxy("test-proxy")

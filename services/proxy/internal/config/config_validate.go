@@ -61,6 +61,9 @@ func (c Config) validateLLMConfig() error {
 	default:
 		return fmt.Errorf("IBEX_LLM_MODE must be mock or live")
 	}
+	if mode == "mock" && c.Environment == "production" {
+		return fmt.Errorf("IBEX_LLM_MODE=mock is not allowed when IBEX_ENV=production")
+	}
 	if mode == "live" && strings.TrimSpace(c.OpenAI.APIKey) == "" {
 		return fmt.Errorf("OPENAI_API_KEY is required when IBEX_LLM_MODE=live")
 	}

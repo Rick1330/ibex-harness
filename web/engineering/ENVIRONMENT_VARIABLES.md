@@ -222,7 +222,7 @@ Used by: **proxy** (`services/proxy`)
 | `IBEX_SESSION_IDLE_TIMEOUT` | No | `45m` | Mark `active` sessions `abandoned` when `updated_at` is older than this | Requires `POSTGRES_DSN`; proxy ticker |
 | `IBEX_SESSION_SWEEP_INTERVAL` | No | `1m` | How often the idle sweeper runs; must be ≤ idle timeout | Multi-replica safe via advisory lock |
 | `IBEX_ERROR_DOCS_BASE` | No | (empty) | Base URL for `docs_url` in error envelope | Omit in dev when unset |
-| `IBEX_LLM_MODE` | No | `mock` | `mock` \| `live` — `mock` registers an in-process stub provider (immediate JSON, no OpenAI); `live` registers OpenAI per [ADR-0026](/docs/adr/0026-openai-client-design) | Default `mock` for CI/dev without API key |
+| `IBEX_LLM_MODE` | No | `mock` | `mock` \| `live` — `mock` registers an in-process stub provider (immediate JSON/SSE, no OpenAI); `live` registers OpenAI per [ADR-0026](/docs/adr/0026-openai-client-design). **Rejected when `IBEX_ENV=production`** | Default `mock` for CI/dev without API key; production must use `live` |
 | `OPENAI_API_KEY` | When `live` | (none) | OpenAI API key | Secret; never logged |
 | `OPENAI_BASE_URL` | No | `https://api.openai.com/v1` | OpenAI API base URL | |
 | `OPENAI_REQUEST_TIMEOUT` | No | `120s` | Upstream request timeout | |

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/Rick1330/ibex-harness/packages/logger"
@@ -11,7 +12,10 @@ import (
 
 func TestBuildProviderRegistry_MockModeRegistersMock(t *testing.T) {
 	t.Parallel()
-	reg, err := buildProviderRegistry(config.Config{LLMMode: "mock"}, logger.Discard("proxy"), telemetry.NoopTracer("proxy"), metrics.NewProxy("test"))
+	reg, err := buildProviderRegistry(config.Config{
+		Environment: "development",
+		LLMMode:     "mock",
+	}, logger.Discard("proxy"), telemetry.NoopTracer("proxy"), metrics.NewProxy("test"))
 	if err != nil {
 		t.Fatalf("buildProviderRegistry: %v", err)
 	}
@@ -21,6 +25,20 @@ func TestBuildProviderRegistry_MockModeRegistersMock(t *testing.T) {
 	}
 	if p.Name() != "mock" {
 		t.Fatalf("provider=%q", p.Name())
+	}
+}
+
+func TestBuildProviderRegistry_MockModeRejectedInProduction(t *testing.T) {
+	t.Parallel()
+	_, err := buildProviderRegistry(config.Config{
+		Environment: "production",
+		LLMMode:     "mock",
+	}, logger.Discard("proxy"), telemetry.NoopTracer("proxy"), metrics.NewProxy("test"))
+	if err == nil {
+		t.Fatal("expected error for mock mode in production")
+	}
+	if !strings.Contains(err.Error(), "production") {
+		t.Fatalf("err=%v", err)
 	}
 }
 

@@ -25,53 +25,52 @@ import (
 )
 
 const chatOverheadBody = `{"model":"gpt-4o","messages":[{"role":"user","content":"ping"}]}`
+const chatOverheadToken = "bench-chat-overhead-token"
 
 // BenchmarkProxyChatOverhead measures POST /v1/chat/completions through the full
 // middleware chain with a warmed auth LRU, Redis rate limit, warmed directive
 // cache, and an immediate mockllm provider (ADR-0034).
 func BenchmarkProxyChatOverhead(b *testing.B) {
-	handler := newChatOverheadHandler(b)
-	body := []byte(chatOverheadBody)
-	req := newChatOverheadRequest(body)
-
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		b.Fatalf("setup status=%d body=%s", rec.Code, rec.Body.String())
-	}
-
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, newChatOverheadRequest(body))
-		if rec.Code != http.StatusOK {
-			b.Fatalf("status=%d", rec.Code)
-		}
-	}
+	runChatOverheadBench(b, false)
 }
 
 // BenchmarkProxyChatOverheadParallel is complementary to k6's 100-VU gate.
 func BenchmarkProxyChatOverheadParallel(b *testing.B) {
+	runChatOverheadBench(b, true)
+}
+
+func runChatOverheadBench(b *testing.B, parallel bool) {
+	handler, body := warmChatOverhead(b)
+	b.ReportAllocs()
+	b.ResetTimer()
+	if parallel {
+		b.RunParallel(func(pb *testing.PB) {
+			for pb.Next() {
+				mustChatOverheadOK(b, handler, body)
+			}
+		})
+		return
+	}
+	for i := 0; i < b.N; i++ {
+		mustChatOverheadOK(b, handler, body)
+	}
+}
+
+func warmChatOverhead(b *testing.B) (http.Handler, []byte) {
+	b.Helper()
 	handler := newChatOverheadHandler(b)
 	body := []byte(chatOverheadBody)
+	mustChatOverheadOK(b, handler, body)
+	return handler, body
+}
+
+func mustChatOverheadOK(b *testing.B, handler http.Handler, body []byte) {
+	b.Helper()
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, newChatOverheadRequest(body))
 	if rec.Code != http.StatusOK {
-		b.Fatalf("setup status=%d body=%s", rec.Code, rec.Body.String())
+		b.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-
-	b.ReportAllocs()
-	b.ResetTimer()
-	b.RunParallel(func(pb *testing.PB) {
-		for pb.Next() {
-			rec := httptest.NewRecorder()
-			handler.ServeHTTP(rec, newChatOverheadRequest(body))
-			if rec.Code != http.StatusOK {
-				b.Fatalf("status=%d", rec.Code)
-			}
-		}
-	})
 }
 
 func newChatOverheadRequest(body []byte) *http.Request {
@@ -82,16 +81,10 @@ func newChatOverheadRequest(body []byte) *http.Request {
 	return req
 }
 
-const chatOverheadToken = "bench-chat-overhead-token"
-
 func newChatOverheadHandler(b *testing.B) http.Handler {
 	b.Helper()
 	orgUUID := uuid.MustParse(testChatOrgID)
 	agentUUID := uuid.MustParse(testChatAgentID)
-
-	validator := newWarmedChatValidator(b, orgUUID)
-	limiter := newBenchRedisLimiter(b)
-	resolver := newWarmedBenchDirective(b, orgUUID, agentUUID)
 	reg, err := provider.NewRegistry(mockllm.Provider{})
 	if err != nil {
 		b.Fatalf("registry: %v", err)
@@ -101,10 +94,10 @@ func newChatOverheadHandler(b *testing.B) http.Handler {
 		Logger:            logger.Discard("proxy"),
 		Metrics:           metrics.NewProxy("chat-overhead"),
 		Tracer:            telemetry.NoopTracer("proxy"),
-		Validator:         validator,
+		Validator:         newWarmedChatValidator(b, orgUUID),
 		AgentVerifier:     passAgentVerifier{},
-		Limiter:           limiter,
-		DirectiveResolver: resolver,
+		Limiter:           newBenchRedisLimiter(b),
+		DirectiveResolver: newWarmedBenchDirective(b, orgUUID, agentUUID),
 		Health:            testHealthServer(),
 		ProviderRegistry:  reg,
 	})

@@ -43,6 +43,11 @@ var invalidProxyConfigCases = []struct {
 	},
 	{name: "live mode missing openai key", mutate: func(c *Config) { c.LLMMode = "live"; c.OpenAI.APIKey = "" }},
 	{name: "invalid llm mode", mutate: func(c *Config) { c.LLMMode = "invalid" }},
+	{name: "mock mode in production", mutate: func(c *Config) {
+		c.Environment = "production"
+		c.AuthGRPCAddr = "127.0.0.1:9091"
+		c.LLMMode = "mock"
+	}},
 	{name: "auth cache zero capacity", mutate: func(c *Config) { c.AuthCache.LRUCapacity = 0 }},
 	{name: "auth cache bad fp rate", mutate: func(c *Config) { c.AuthCache.BloomFPRate = 1.5 }},
 	{name: "auth cache ttl above ceiling", mutate: func(c *Config) { c.AuthCache.LRUMaxTTL = 31 * time.Second }},
