@@ -214,10 +214,7 @@ func assembleProxyCore(
 		Health:             buildProxyHealth(cfg, authClient, pgDB),
 		ProviderRegistry:   providerReg,
 	}
-	// Avoid boxing a nil *Writer into a non-nil TraceWriter interface.
-	if traceWriter != nil {
-		deps.TraceWriter = traceWriter
-	}
+	assignTraceWriter(&deps, traceWriter)
 	server := newHTTPServer(deps)
 	return assembledProxyCore{
 		server: server, grpcConn: grpcConn, redisClient: redisClient, pgDB: pgDB,
@@ -225,6 +222,15 @@ func assembleProxyCore(
 		checkpointPool: sessionStack.pool, sessionSweeper: sessionStack.sweeper,
 		traceWriter: traceWriter,
 	}, nil
+}
+
+// assignTraceWriter sets TraceWriter only when w is non-nil so a nil *Writer
+// is not boxed into a non-nil interface value.
+func assignTraceWriter(deps *proxyhttp.RouterDeps, w *ibexch.Writer) {
+	if w == nil {
+		return
+	}
+	deps.TraceWriter = w
 }
 
 func buildProxyHealth(cfg config.Config, authClient authv1.AuthServiceClient, pgDB *sql.DB) *healthcheck.Server {
@@ -728,7 +734,7 @@ func optionalTraceWriter(
 	w, err := setupTraceWriter(cfg, log, reg)
 	if err != nil {
 		log.WarnCtx(context.Background(), "clickhouse writer disabled; continuing without traces",
-			"error", err)
+			"reason", "writer_start_failed")
 		return nil
 	}
 	return w

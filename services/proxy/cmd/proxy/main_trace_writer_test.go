@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -164,17 +165,52 @@ func TestUnit_OptionalTraceWriter_FailOpenOnStartError(t *testing.T) {
 	if !strings.Contains(buf.String(), "clickhouse writer disabled") {
 		t.Fatalf("missing fail-open log: %q", buf.String())
 	}
+	if !strings.Contains(buf.String(), "writer_start_failed") {
+		t.Fatalf("missing sanitized reason: %q", buf.String())
+	}
 }
 
-func TestUnit_RouterDeps_TraceWriterSkipsNilConcrete(t *testing.T) {
+func TestUnit_AssignTraceWriter_SkipsNilConcrete(t *testing.T) {
 	t.Parallel()
-	var w *ibexch.Writer // nil concrete
 	deps := proxyhttp.RouterDeps{}
-	if w != nil {
-		deps.TraceWriter = w
-	}
+	assignTraceWriter(&deps, nil)
 	if deps.TraceWriter != nil {
 		t.Fatal("nil *Writer must not be boxed into TraceWriter")
+	}
+	w := &ibexch.Writer{}
+	assignTraceWriter(&deps, w)
+	if deps.TraceWriter != w {
+		t.Fatal("non-nil writer not assigned")
+	}
+}
+
+func TestUnit_OptionalTraceWriter_FailOpenOmitsSensitiveError(t *testing.T) {
+	prev := newTraceWriter
+	t.Cleanup(func() { newTraceWriter = prev })
+	secret := "clickhouse://default:super-secret-pass@localhost:8123/ibex"
+	newTraceWriter = func(ibexch.Config) (*ibexch.Writer, error) {
+		return nil, fmt.Errorf("dial failed for %s", secret)
+	}
+
+	var buf bytes.Buffer
+	log, err := logger.New(logger.Config{
+		Service: "proxy",
+		Level:   slog.LevelWarn,
+		Writer:  &buf,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := optionalTraceWriter(config.Config{ClickHouseDSN: secret}, log, ibexmetrics.NewProxy("proxy"))
+	if w != nil {
+		t.Fatal("expected nil writer on start failure")
+	}
+	out := buf.String()
+	if !strings.Contains(out, "writer_start_failed") {
+		t.Fatalf("missing sanitized reason: %q", out)
+	}
+	if strings.Contains(out, "super-secret-pass") || strings.Contains(out, secret) {
+		t.Fatalf("sensitive error leaked into log: %q", out)
 	}
 }
 

@@ -25,14 +25,24 @@ type recordingTraceWriter struct {
 	records []ibexch.TraceRecord
 	err     error
 	writes  atomic.Int32
+	notify  chan struct{}
 }
 
 func (r *recordingTraceWriter) Write(rec ibexch.TraceRecord) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	if r.notify == nil {
+		r.notify = make(chan struct{}, 64)
+	}
 	r.records = append(r.records, rec)
 	r.writes.Add(1)
-	return r.err
+	ch := r.notify
+	err := r.err
+	r.mu.Unlock()
+	select {
+	case ch <- struct{}{}:
+	default:
+	}
+	return err
 }
 
 func (r *recordingTraceWriter) last() (ibexch.TraceRecord, bool) {
@@ -46,14 +56,24 @@ func (r *recordingTraceWriter) last() (ibexch.TraceRecord, bool) {
 
 func (r *recordingTraceWriter) waitWrites(t *testing.T, n int32) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
+	timer := time.NewTimer(2 * time.Second)
+	defer timer.Stop()
+	for {
 		if r.writes.Load() >= n {
 			return
 		}
-		time.Sleep(5 * time.Millisecond)
+		r.mu.Lock()
+		if r.notify == nil {
+			r.notify = make(chan struct{}, 64)
+		}
+		ch := r.notify
+		r.mu.Unlock()
+		select {
+		case <-ch:
+		case <-timer.C:
+			t.Fatalf("writes=%d want >=%d", r.writes.Load(), n)
+		}
 	}
-	t.Fatalf("writes=%d want >=%d", r.writes.Load(), n)
 }
 
 func assertStatusOK(t *testing.T, code int) {
