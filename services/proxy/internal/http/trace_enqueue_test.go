@@ -58,12 +58,8 @@ func TestUnit_EnqueuePostResponse_Cases(t *testing.T) {
 
 func TestUnit_EffectiveTraceWriter_TypedNil(t *testing.T) {
 	t.Parallel()
-	var ptr *recordingTraceWriter
-	var iface TraceWriter = ptr
-	if iface == nil {
-		t.Fatal("precondition: boxed typed-nil must be non-nil interface")
-	}
-	if effectiveTraceWriter(iface) != nil {
+	var ptr *recordingTraceWriter // typed-nil; boxing happens at the call boundary
+	if effectiveTraceWriter(ptr) != nil {
 		t.Fatal("expected true nil after normalize")
 	}
 	if effectiveTraceWriter(nil) != nil {
