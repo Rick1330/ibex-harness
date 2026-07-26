@@ -257,7 +257,7 @@ func (h chatCompletionHandler) enqueuePostResponse(
 	snap, snapOK := h.captureTraceSnapshot(ctx, in, outcome)
 	deps := h.lifecycle()
 	doCheckpoint := wantSessionCheckpoint(ctx, deps, in, outcome)
-	doTrace := h.traceWriter != nil && snapOK
+	doTrace := snapOK && effectiveTraceWriter(h.traceWriter) != nil
 	if !doCheckpoint && !doTrace {
 		return
 	}

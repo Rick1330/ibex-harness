@@ -56,9 +56,31 @@ func TestUnit_EnqueuePostResponse_Cases(t *testing.T) {
 	}
 }
 
-func TestUnit_EnqueuePostResponse_NilWriterNoop(t *testing.T) {
+func TestUnit_EffectiveTraceWriter_TypedNil(t *testing.T) {
 	t.Parallel()
-	h := chatCompletionHandler{log: logger.Discard("proxy")}
+	var ptr *recordingTraceWriter
+	var iface TraceWriter = ptr
+	if iface == nil {
+		t.Fatal("precondition: boxed typed-nil must be non-nil interface")
+	}
+	if effectiveTraceWriter(iface) != nil {
+		t.Fatal("expected true nil after normalize")
+	}
+	if effectiveTraceWriter(nil) != nil {
+		t.Fatal("nil stays nil")
+	}
+	live := &recordingTraceWriter{}
+	if effectiveTraceWriter(live) == nil {
+		t.Fatal("non-nil writer preserved")
+	}
+}
+
+func TestUnit_EnqueuePostResponse_TypedNilWriterNoop(t *testing.T) {
+	t.Parallel()
+	var ptr *recordingTraceWriter
+	h := chatCompletionHandler{
+		log: logger.Discard("proxy"), traceWriter: ptr, // typed nil boxed
+	}
 	h.enqueuePostResponse(authedTraceContext(t), checkpointInput{
 		Model: "m", Provider: "openai", IsComplete: true,
 	}, requestOutcome{StatusCode: 200, IsComplete: true})

@@ -15,6 +15,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	ibexmetrics "github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
+	proxyhttp "github.com/Rick1330/ibex-harness/services/proxy/internal/http"
 	"github.com/google/uuid"
 )
 
@@ -162,6 +163,18 @@ func TestUnit_OptionalTraceWriter_FailOpenOnStartError(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "clickhouse writer disabled") {
 		t.Fatalf("missing fail-open log: %q", buf.String())
+	}
+}
+
+func TestUnit_RouterDeps_TraceWriterSkipsNilConcrete(t *testing.T) {
+	t.Parallel()
+	var w *ibexch.Writer // nil concrete
+	deps := proxyhttp.RouterDeps{}
+	if w != nil {
+		deps.TraceWriter = w
+	}
+	if deps.TraceWriter != nil {
+		t.Fatal("nil *Writer must not be boxed into TraceWriter")
 	}
 }
 

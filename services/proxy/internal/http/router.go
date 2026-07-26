@@ -94,7 +94,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 			getOrCreateTimeout: deps.GetOrCreateTimeout,
 			docsBase:           docsBase,
 			providerRegistry:   providerReg,
-			traceWriter:        deps.TraceWriter,
+			traceWriter:        effectiveTraceWriter(deps.TraceWriter),
 		})
 	}
 

@@ -205,7 +205,7 @@ func assembleProxyCore(
 		return assembledProxyCore{}, fmt.Errorf("provider registry: %w", err)
 	}
 	traceWriter := optionalTraceWriter(cfg, log, reg)
-	server := newHTTPServer(proxyhttp.RouterDeps{
+	deps := proxyhttp.RouterDeps{
 		Config: cfg, Logger: log, Metrics: reg, Tracer: tracer,
 		Validator: validator, AgentVerifier: agentVerifier, Limiter: limiter,
 		DirectiveResolver: directiveResolver, SessionStore: sessionStack.store,
@@ -213,8 +213,12 @@ func assembleProxyCore(
 		GetOrCreateTimeout: cfg.SessionGetOrCreateTO,
 		Health:             buildProxyHealth(cfg, authClient, pgDB),
 		ProviderRegistry:   providerReg,
-		TraceWriter:        traceWriter,
-	})
+	}
+	// Avoid boxing a nil *Writer into a non-nil TraceWriter interface.
+	if traceWriter != nil {
+		deps.TraceWriter = traceWriter
+	}
+	server := newHTTPServer(deps)
 	return assembledProxyCore{
 		server: server, grpcConn: grpcConn, redisClient: redisClient, pgDB: pgDB,
 		validator: validator, directiveResolver: directiveResolver,
