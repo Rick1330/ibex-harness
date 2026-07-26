@@ -15,6 +15,7 @@ import (
 	ibexch "github.com/Rick1330/ibex-harness/packages/clickhouse"
 	"github.com/Rick1330/ibex-harness/packages/directive"
 	"github.com/Rick1330/ibex-harness/packages/healthcheck"
+	"github.com/Rick1330/ibex-harness/packages/idempotency"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	ibexmetrics "github.com/Rick1330/ibex-harness/packages/metrics"
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
@@ -213,6 +214,7 @@ func assembleProxyCore(
 		GetOrCreateTimeout: cfg.SessionGetOrCreateTO,
 		Health:             buildProxyHealth(cfg, authClient, pgDB),
 		ProviderRegistry:   providerReg,
+		IdempotencyStore:   newIdempotencyStore(redisClient, cfg),
 	}
 	assignTraceWriter(&deps, traceWriter)
 	server := newHTTPServer(deps)
@@ -280,6 +282,13 @@ func setupRateLimiter(cfg config.Config, log *logger.Logger) (redis.UniversalCli
 		"org_overrides", len(cfg.RateLimit.OrgOverrides),
 	)
 	return client, limiter, nil
+}
+
+func newIdempotencyStore(redisClient redis.UniversalClient, cfg config.Config) idempotency.Store {
+	if redisClient == nil {
+		return idempotency.Noop()
+	}
+	return idempotency.NewRedisStore(redisClient, idempotency.Config{TTL: cfg.IdempotencyTTL})
 }
 
 func setupAuthClients(cfg config.Config, log *logger.Logger, m *ibexmetrics.ProxyRegistry) (auth.TokenValidator, auth.AgentVerifier, authv1.AuthServiceClient, *grpc.ClientConn, error) {

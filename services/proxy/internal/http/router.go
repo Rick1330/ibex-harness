@@ -9,6 +9,7 @@ import (
 	apierror "github.com/Rick1330/ibex-harness/packages/apierror"
 	"github.com/Rick1330/ibex-harness/packages/directive"
 	"github.com/Rick1330/ibex-harness/packages/healthcheck"
+	"github.com/Rick1330/ibex-harness/packages/idempotency"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/packages/provider"
@@ -48,6 +49,7 @@ type RouterDeps struct {
 	Health             *healthcheck.Server
 	ProviderRegistry   *provider.Registry
 	TraceWriter        TraceWriter
+	IdempotencyStore   idempotency.Store
 }
 
 // NewRouter builds the proxy HTTP handler with optional auth validator for protected routes.
@@ -95,6 +97,8 @@ func NewRouter(deps RouterDeps) http.Handler {
 			docsBase:           docsBase,
 			providerRegistry:   providerReg,
 			traceWriter:        effectiveTraceWriter(deps.TraceWriter),
+			idempotencyStore:   deps.IdempotencyStore,
+			idempotencyTimeout: cfg.IdempotencyRedisTimeout,
 		})
 	}
 
@@ -162,6 +166,8 @@ type chatCompletionHandler struct {
 	checkpointPool     *asyncpool.Pool
 	getOrCreateTimeout time.Duration
 	traceWriter        TraceWriter
+	idempotencyStore   idempotency.Store
+	idempotencyTimeout time.Duration
 }
 
 func (h chatCompletionHandler) serve(w http.ResponseWriter, r *http.Request) {

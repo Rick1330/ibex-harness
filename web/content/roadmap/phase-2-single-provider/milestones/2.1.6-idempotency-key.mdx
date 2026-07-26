@@ -2,7 +2,7 @@
 title: "2.1.6 Idempotency-Key for provider retries"
 description: "Optional Idempotency-Key header with Redis dedupe so client retries after proxy-forwarded timeouts do not double-bill upstream completions."
 summary: "Client-supplied Idempotency-Key stored as idempotency:{org_id}:{key} in Redis with TTL; duplicate requests replay the first completion outcome."
-status: "planned"
+status: "completed"
 milestoneId: "2.1.6"
 goal: "[2.1 — Provider path](/roadmap/phase-2-single-provider/goals#goal-21-openai-compatible-proxy-path)"
 estimatedEffort: "2 days"
@@ -12,11 +12,12 @@ fullTitle: "Milestone 2.1.6 — Idempotency-Key for Provider Retries"
 
 # Milestone 2.1.6 — Idempotency-Key for Provider Retries
 
-**Status:** Deferred (return after Goal 2.3 / before [2.6.2](/roadmap/phase-2-single-provider/milestones/2.6.2-phase2-exit-gate); waivable with findings)  
+**Status:** Complete  
 **Goal:** [2.1 — OpenAI-compatible proxy path](/roadmap/phase-2-single-provider/goals)  
 **Phase:** 2 — Single Provider End-to-End  
 **Estimated effort:** 2 days  
-**Depends on:** [2.1.5](/roadmap/phase-2-single-provider/milestones/2.1.5-provider-error-mapping)
+**Depends on:** [2.1.5](/roadmap/phase-2-single-provider/milestones/2.1.5-provider-error-mapping)  
+**ADR:** [ADR-0035](/docs/adr/0035-chat-idempotency-key)
 
 ---
 
@@ -38,11 +39,11 @@ Milestone 2.1.5 names *double-retry storms (proxy + client)* as a Medium risk an
 
 ## Acceptance Criteria
 
-- [ ] Duplicate `Idempotency-Key` within TTL does not create a second upstream completion (integration test)
-- [ ] Missing header preserves current behavior
-- [ ] Cross-org key collision impossible (org_id in Redis key)
-- [ ] Metrics: hit / miss / conflict counters with bounded labels
-- [ ] Documented in API docs and `.env.example` (TTL env if configurable)
+- [x] Duplicate `Idempotency-Key` within TTL does not create a second upstream completion (integration test)
+- [x] Missing header preserves current behavior
+- [x] Cross-org key collision impossible (org_id in Redis key)
+- [x] Metrics: hit / miss / conflict counters with bounded labels
+- [x] Documented in API docs and `.env.example` (TTL env if configurable)
 
 ---
 

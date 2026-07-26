@@ -1,0 +1,37 @@
+---
+title: "ADR-0035: Chat Idempotency-Key Redis dedupe"
+description: "Accepted — Optional Idempotency-Key on non-streaming chat completions; Redis claim/commit with fail-open; fingerprint conflict and in-progress 409s."
+adrId: "0035"
+status: "Accepted"
+date: "2026-07-26"
+authors: "IBEX Harness team"
+---
+
+# ADR-0035: Chat Idempotency-Key Redis dedupe
+
+- **Status:** Accepted
+- **Date:** 2026-07-26
+- **Authors:** IBEX Harness team
+- **Milestone:** [2.1.6 Idempotency-Key](/roadmap/phase-2-single-provider/milestones/2.1.6-idempotency-key)
+
+## Context
+
+Clients that time out after the proxy has already started (or finished) an upstream completion often retry. Without dedupe, each retry bills a second OpenAI completion. Stripe and OpenAI solve this with `Idempotency-Key`. OpenAI client retries inside the proxy ([ADR-0026](/docs/adr/0026-openai-client-design)) are orthogonal — this ADR covers **client → proxy** retries.
+
+## Decision
+
+1. **Header:** Optional `Idempotency-Key` (opaque, max 256 characters). Empty/whitespace is treated as absent.
+2. **Scope:** Non-streaming `POST /v1/chat/completions` only. `stream=true` + header → `400 VALIDATION_ERROR`.
+3. **Redis key:** `idempotency:{org_id}:{key}` with `org_id` from verified auth context only. TTL default **24h** (`IBEX_IDEMPOTENCY_TTL`).
+4. **Protocol:** SETNX `pending` on first claim; on terminal client-visible response, overwrite with `completed` + status + body. Same key + same request fingerprint → replay. Same key + different fingerprint → `409 IDEMPOTENCY_KEY_REUSE`. Concurrent pending → `409 IDEMPOTENCY_IN_PROGRESS` (no long-poll).
+5. **Fingerprint:** SHA-256 over normalized parsed fields (`model`, `messages`, `stream`, `temperature`, `max_tokens`). Unknown JSON keys ignored per [ADR-0012](/docs/adr/0012-proxy-request-normalization).
+6. **Fail-open:** Redis errors or claim/commit timeout (`IBEX_IDEMPOTENCY_REDIS_TIMEOUT`, default 5ms) proceed without dedupe (WARN + `redis_error` metric). Availability beats perfect billing protection when Redis is down — same class as rate limiting.
+7. **Replay side effects:** Hits do not call the provider and do not re-enqueue session checkpoint / ClickHouse trace.
+8. **Upstream:** Do not forward `Idempotency-Key` to OpenAI; proxy owns dedupe.
+
+## Consequences
+
+- Clients can safely retry non-streaming chat after timeouts when they send a stable key.
+- Streaming idempotency remains a follow-up.
+- Redis outages can allow double-billing; operators should alert on `ibex_proxy_idempotency_total{result="redis_error"}`.
+- Package: `packages/idempotency` (shared, no `services/` imports).

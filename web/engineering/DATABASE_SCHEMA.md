@@ -1956,6 +1956,12 @@ Rate Limiting:
   TTL:   Expires at end of billing month
   Use:   Monthly token quota tracking
 
+Chat Idempotency (m2.1.6):
+  Key:   idempotency:{org_id}:{key}
+  Type:  String (JSON: state, fingerprint, status, body)
+  TTL:   24 hours (IBEX_IDEMPOTENCY_TTL)
+  Use:   Client Idempotency-Key claim/commit for non-streaming chat; org from verified token
+
 Hot Memory Cache:
   Key:   {org_id}:hot_memories:{agent_id}
   Type:  Sorted set

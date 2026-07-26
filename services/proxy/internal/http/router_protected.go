@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/directive"
+	"github.com/Rick1330/ibex-harness/packages/idempotency"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/packages/provider"
@@ -33,6 +34,8 @@ type protectedRouteDeps struct {
 	docsBase           string
 	providerRegistry   *provider.Registry
 	traceWriter        TraceWriter
+	idempotencyStore   idempotency.Store
+	idempotencyTimeout time.Duration
 }
 
 func registerProtectedRoutes(deps protectedRouteDeps) {
@@ -91,6 +94,8 @@ func registerProtectedRoutes(deps protectedRouteDeps) {
 			checkpointPool:     deps.checkpointPool,
 			getOrCreateTimeout: deps.getOrCreateTimeout,
 			traceWriter:        deps.traceWriter,
+			idempotencyStore:   deps.idempotencyStore,
+			idempotencyTimeout: deps.idempotencyTimeout,
 		})
 	})))
 }

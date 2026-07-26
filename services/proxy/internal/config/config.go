@@ -38,6 +38,8 @@ const (
 	defaultSessionGetOrCreateTO = 50 * time.Millisecond
 	defaultSessionIdleTimeout   = 45 * time.Minute
 	defaultSessionSweepInterval = time.Minute
+	defaultIdempotencyTTL       = 24 * time.Hour
+	defaultIdempotencyRedisTO   = 5 * time.Millisecond
 
 	envDevelopment = "development"
 	envStaging     = "staging"
@@ -71,34 +73,36 @@ type OpenAIConfig struct {
 }
 
 type Config struct {
-	Environment          string
-	ServiceName          string
-	LogLevel             slog.Level
-	Port                 string
-	RedisURL             string
-	AuthGRPCAddr         string
-	AuthValidateTimeout  time.Duration
-	AuthCache            AuthCacheConfig
-	MaxRequestBodyBytes  int64
-	RequestIDHeader      string
-	TraceIDHeader        string
-	ErrorDocsBase        string
-	RateLimit            RateLimitConfig
-	ShutdownTimeout      time.Duration
-	Telemetry            telemetry.Config
-	LLMMode              string
-	OpenAI               OpenAIConfig
-	PostgresDSN          string
-	DirectiveCacheTTL    time.Duration
-	SessionCacheTTL      time.Duration
-	CheckpointWorkers    int
-	CheckpointQueue      int
-	SessionGetOrCreateTO time.Duration
-	SessionIdleTimeout   time.Duration
-	SessionSweepInterval time.Duration
-	ClickHouseDSN        string
-	ClickHouseBatchSize  int
-	ClickHouseFlushMS    int
+	Environment             string
+	ServiceName             string
+	LogLevel                slog.Level
+	Port                    string
+	RedisURL                string
+	AuthGRPCAddr            string
+	AuthValidateTimeout     time.Duration
+	AuthCache               AuthCacheConfig
+	MaxRequestBodyBytes     int64
+	RequestIDHeader         string
+	TraceIDHeader           string
+	ErrorDocsBase           string
+	RateLimit               RateLimitConfig
+	ShutdownTimeout         time.Duration
+	Telemetry               telemetry.Config
+	LLMMode                 string
+	OpenAI                  OpenAIConfig
+	PostgresDSN             string
+	DirectiveCacheTTL       time.Duration
+	SessionCacheTTL         time.Duration
+	CheckpointWorkers       int
+	CheckpointQueue         int
+	SessionGetOrCreateTO    time.Duration
+	SessionIdleTimeout      time.Duration
+	SessionSweepInterval    time.Duration
+	ClickHouseDSN           string
+	ClickHouseBatchSize     int
+	ClickHouseFlushMS       int
+	IdempotencyTTL          time.Duration
+	IdempotencyRedisTimeout time.Duration
 }
 
 // ApplyDefaults fills zero-valued fields so httptest and partial Config literals behave like Load().
@@ -110,6 +114,12 @@ func (c *Config) ApplyDefaults() {
 	c.applyLLMDefaults()
 	c.applySessionDefaults()
 	c.applyClickHouseDefaults()
+	c.applyIdempotencyDefaults()
+}
+
+func (c *Config) applyIdempotencyDefaults() {
+	applyDurationDefault(&c.IdempotencyTTL, defaultIdempotencyTTL)
+	applyDurationDefault(&c.IdempotencyRedisTimeout, defaultIdempotencyRedisTO)
 }
 
 func (c *Config) applyClickHouseDefaults() {

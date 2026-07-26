@@ -23,6 +23,7 @@ Hot memory cache: {org_id}:hot_memories:{agent_id}
 Memory object:    {org_id}:memory:{memory_id}
 Directive cache:  {org_id}:directive:{agent_id}
 Session state:    session:{session_id}:state
+Idempotency:      idempotency:{org_id}:{key}
 ```
 
 ```go

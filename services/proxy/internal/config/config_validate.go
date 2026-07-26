@@ -28,7 +28,18 @@ func (c Config) Validate() error {
 		c.validateLLMConfig,
 		c.validateSessionSweeper,
 		c.validateClickHouse,
+		c.validateIdempotency,
 	)
+}
+
+func (c Config) validateIdempotency() error {
+	if c.IdempotencyTTL <= 0 {
+		return fmt.Errorf("IBEX_IDEMPOTENCY_TTL must be positive")
+	}
+	if c.IdempotencyRedisTimeout <= 0 {
+		return fmt.Errorf("IBEX_IDEMPOTENCY_REDIS_TIMEOUT must be positive")
+	}
+	return nil
 }
 
 func (c Config) validateClickHouse() error {

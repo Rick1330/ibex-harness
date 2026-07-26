@@ -1,13 +1,9 @@
 ---
-title: Chat completions (Phase 1 stub)
-description: OpenAI-compatible POST /v1/chat/completions — auth and validation succeed; provider forwarding returns 501 until Phase 2.
+title: Chat completions
+description: OpenAI-compatible POST /v1/chat/completions — auth, validation, provider forward, and optional Idempotency-Key replay.
 ---
 
-The proxy exposes an OpenAI-shaped chat endpoint for SDK drop-in compatibility. Phase 1 parses and validates the request, runs auth and agent verification, applies rate limits, then stops with **501 Not Implemented** — no upstream LLM call is made.
-
-<Callout type="experimental" title="501 is expected in Phase 1">
-  A **501** with `PROVIDER_NOT_CONFIGURED` means token validation, agent verification, body normalization, and routing succeeded. Provider adapters ship in Phase 2 — see [Provider adapters](/docs/proxy/provider-adapters).
-</Callout>
+The proxy exposes an OpenAI-shaped chat endpoint for SDK drop-in compatibility. After auth, agent verification, rate limits, and request normalization, the proxy forwards to the configured LLM provider (mock or live).
 
 ## Endpoint
 
@@ -17,7 +13,7 @@ The proxy exposes an OpenAI-shaped chat endpoint for SDK drop-in compatibility. 
   description="OpenAI-compatible chat completions. Gateway alias: POST /proxy/v1/chat/completions (same handler)."
 />
 
-Decision record: [ADR-0012](/docs/adr/0012-proxy-request-normalization). Quickstart also probes org-scoped paths — path `org_id` must match the token org.
+Decision records: [ADR-0012](/docs/adr/0012-proxy-request-normalization) (normalization), [ADR-0035](/docs/adr/0035-chat-idempotency-key) (Idempotency-Key). Path `org_id` on org-scoped probes must match the token org.
 
 ## Required headers
 
@@ -44,6 +40,30 @@ Decision record: [ADR-0012](/docs/adr/0012-proxy-request-normalization). Quickst
   ]}
 />
 
+## Optional headers
+
+<ParamTable
+  params={[
+    {
+      name: 'Idempotency-Key',
+      type: 'string',
+      required: false,
+      description:
+        'Opaque client key (max 256 chars). Within TTL (default 24h), the same key + same request fingerprint replays the first completion without a second upstream call. Redis key: idempotency:{org_id}:{key} (org from token). See ADR-0035.',
+    },
+  ]}
+/>
+
+### Idempotency behavior
+
+- **Missing header:** unchanged — every request calls the provider.
+- **Hit (same key + fingerprint):** replay stored HTTP status and body; no provider call; no second session checkpoint / trace.
+- **Conflict (same key, different body):** `409` with `IDEMPOTENCY_KEY_REUSE`.
+- **In progress:** `409` with `IDEMPOTENCY_IN_PROGRESS` — retry after a short backoff.
+- **Streaming:** `stream=true` with `Idempotency-Key` → `400 VALIDATION_ERROR` (non-streaming only in this milestone).
+- **Redis down / timeout:** fail-open — request proceeds without dedupe (billing risk under Redis outage).
+- The key is **not** forwarded to OpenAI.
+
 ## Request body (parsed fields)
 
 Per ADR-0012, the proxy decodes OpenAI-shaped JSON and ignores unknown top-level keys:
@@ -65,29 +85,18 @@ Per ADR-0012, the proxy decodes OpenAI-shaped JSON and ignores unknown top-level
     {
       name: 'stream',
       type: 'boolean',
-      description: 'Optional OpenAI fields (temperature, max_tokens) also parsed.',
+      description: 'Optional OpenAI fields (temperature, max_tokens) also parsed. Idempotency-Key requires stream=false.',
     },
   ]}
 />
 
 After successful parse, the proxy logs **metadata only** (`org_id`, `request_id`, `model`, `message_count`, `stream`) — never message content.
 
-## Phase 1 response
+## Response
 
-### 501 Not Implemented (success path)
+Successful non-streaming completions return the upstream OpenAI-shaped JSON with status from the provider. Response headers include `X-Request-ID`, `X-Trace-ID`, and `X-Response-Time` per [ADR-0013](/docs/adr/0013-proxy-input-validation-and-error-envelope). Session sticky header `X-IBEX-Session-ID` may be set when session lifecycle is enabled.
 
-```json
-{
-  "error": {
-    "code": "PROVIDER_NOT_CONFIGURED",
-    "message": "No LLM provider is configured for this request",
-    "request_id": "019abc…",
-    "timestamp": "2026-06-14T12:00:00.000Z"
-  }
-}
-```
-
-Response headers include `X-Request-ID`, `X-Trace-ID`, and `X-Response-Time` per [ADR-0013](/docs/adr/0013-proxy-input-validation-and-error-envelope).
+Mapped provider failures use the stable error envelope (`PROVIDER_TIMEOUT`, `RATE_LIMITED`, etc.).
 
 ## Try it locally
 
@@ -99,27 +108,29 @@ curl -s -w "\nHTTP %{http_code}\n" \
   -H "Authorization: Bearer ${IBEX_DEV_TOKEN}" \
   -H "X-IBEX-Agent-ID: ${IBEX_DEV_AGENT_ID}" \
   -H "Content-Type: application/json" \
+  -H "Idempotency-Key: $(uuidgen)" \
   -d '{"model":"gpt-4o","messages":[{"role":"user","content":"hello"}]}'
 ```
   </CodeTab>
   <CodeTab label="python">
 ```python
-import os, requests
+import os, uuid, requests
 r = requests.post(
     "http://localhost:8080/v1/chat/completions",
     headers={
         "Authorization": f"Bearer {os.environ['IBEX_DEV_TOKEN']}",
         "X-IBEX-Agent-ID": os.environ["IBEX_DEV_AGENT_ID"],
         "Content-Type": "application/json",
+        "Idempotency-Key": str(uuid.uuid4()),
     },
     json={"model": "gpt-4o", "messages": [{"role": "user", "content": "hello"}]},
 )
-print(r.status_code, r.json()["error"]["code"])  # 501 PROVIDER_NOT_CONFIGURED
+print(r.status_code, r.headers.get("X-Request-ID"))
 ```
   </CodeTab>
 </CodeTabs>
 
-Expected: HTTP **501** and `"PROVIDER_NOT_CONFIGURED"`.
+With `IBEX_LLM_MODE=mock`, expect HTTP **200** and an OpenAI-shaped JSON body. Retry the same `Idempotency-Key` + body to confirm replay without a second upstream completion.
 
 <ProcessSteps
   steps={[
@@ -132,8 +143,12 @@ Expected: HTTP **501** and `"PROVIDER_NOT_CONFIGURED"`.
       description: 'OpenAI-shaped body normalized per ADR-0012/0013.',
     },
     {
-      title: '501 stub',
-      description: 'No upstream LLM call — PROVIDER_NOT_CONFIGURED until Phase 2.',
+      title: 'Idempotency claim (optional)',
+      description: 'When Idempotency-Key is set, claim or replay via Redis (ADR-0035).',
+    },
+    {
+      title: 'Provider forward',
+      description: 'Mock or live Complete; commit idempotency record on terminal response.',
     },
   ]}
 />
@@ -142,3 +157,4 @@ Expected: HTTP **501** and `"PROVIDER_NOT_CONFIGURED"`.
 
 - [Quickstart](/docs/getting-started/quickstart) — five-minute local path
 - [Authentication](/docs/proxy/authentication) — header requirements
+- [ADR-0035](/docs/adr/0035-chat-idempotency-key) — Idempotency-Key design

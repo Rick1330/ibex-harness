@@ -34,6 +34,10 @@ const (
 	CodeAgentSuspended Code = "AGENT_SUSPENDED"
 	// CodeRateLimited tells clients to back off and retry after the rate-limit window.
 	CodeRateLimited Code = "RATE_LIMITED"
+	// CodeIdempotencyKeyReuse tells clients the Idempotency-Key was already used with a different request body.
+	CodeIdempotencyKeyReuse Code = "IDEMPOTENCY_KEY_REUSE"
+	// CodeIdempotencyInProgress tells clients a request with this Idempotency-Key is still in flight.
+	CodeIdempotencyInProgress Code = "IDEMPOTENCY_IN_PROGRESS"
 )
 
 // Server / dependency error codes (5xx).
