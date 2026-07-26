@@ -92,14 +92,31 @@ func TestSecurity_SEC6_EnvelopeSweep(t *testing.T) {
 
 func TestSecurity_SEC6_5_NoTokenLeak(t *testing.T) {
 	env := securityEnv(t)
-	cases := []authProbeOpts{
-		{srvURL: env.proxy.URL, bearer: env.orgA.Token, agentID: env.orgB.AgentID},
-		{srvURL: env.proxy.URL, bearer: env.orgA.Token},
-		{srvURL: env.proxy.URL, bearer: "bad"},
+	// Use a long sentinel so short substrings (e.g. "bad") cannot false-positive
+	// against unrelated response text.
+	const leakSentinel = "ibex_pat_leak-check-sentinel-9f3c2a1b0e8d"
+	cases := []struct {
+		name string
+		opts authProbeOpts
+	}{
+		{
+			name: "cross_org_agent",
+			opts: authProbeOpts{srvURL: env.proxy.URL, bearer: env.orgA.Token, agentID: env.orgB.AgentID},
+		},
+		{
+			name: "missing_agent",
+			opts: authProbeOpts{srvURL: env.proxy.URL, bearer: env.orgA.Token},
+		},
+		{
+			name: "unknown_token",
+			opts: authProbeOpts{srvURL: env.proxy.URL, bearer: leakSentinel},
+		},
 	}
-	for _, opts := range cases {
-		resp, body := authProbeGET(t, opts)
-		assertNoTokenLeak(t, body, opts.bearer)
-		resp.Body.Close()
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp, body := authProbeGET(t, tc.opts)
+			defer resp.Body.Close()
+			assertNoTokenLeak(t, body, tc.opts.bearer)
+		})
 	}
 }

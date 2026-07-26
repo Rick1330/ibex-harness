@@ -85,8 +85,13 @@ func assertRequestIDCorrelation(t *testing.T, resp *http.Response, envelope apie
 
 func assertNoSecretInBody(t *testing.T, body, secret string) {
 	t.Helper()
-	if secret != "" && strings.Contains(body, secret) {
-		t.Fatalf("response body leaks secret token")
+	// Ignore short secrets: they collide with ordinary English in error copy
+	// (e.g. bearer "bad" vs unrelated response text) and are not realistic PATs.
+	if secret == "" || len(secret) < 8 {
+		return
+	}
+	if strings.Contains(body, secret) {
+		t.Fatalf("response body leaks secret token (len=%d)", len(secret))
 	}
 }
 

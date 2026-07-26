@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -15,6 +16,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	ibexmetrics "github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
+	proxyhttp "github.com/Rick1330/ibex-harness/services/proxy/internal/http"
 	"github.com/google/uuid"
 )
 
@@ -140,23 +142,85 @@ func TestUnit_SetupTraceWriter_LogUsesRedactedDSN(t *testing.T) {
 	}
 }
 
-func TestUnit_FinishProxyCore_TraceWriterError(t *testing.T) {
+func TestUnit_OptionalTraceWriter_FailOpenOnStartError(t *testing.T) {
 	prev := newTraceWriter
 	t.Cleanup(func() { newTraceWriter = prev })
-	wantErr := errors.New("dial failed")
 	newTraceWriter = func(ibexch.Config) (*ibexch.Writer, error) {
-		return nil, wantErr
+		return nil, errors.New("boom")
 	}
 
-	log := logger.Discard("proxy")
-	reg := ibexmetrics.NewProxy("proxy-finish-ch")
-	_, err := finishProxyCore(
-		proxyCoreParts{},
-		config.Config{ClickHouseDSN: "clickhouse://default:@localhost:8123/ibex"},
-		log, reg,
-	)
-	if err == nil || !errors.Is(err, wantErr) {
-		t.Fatalf("got %v", err)
+	var buf bytes.Buffer
+	log, err := logger.New(logger.Config{
+		Service: "proxy",
+		Level:   slog.LevelWarn,
+		Writer:  &buf,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := optionalTraceWriter(config.Config{ClickHouseDSN: "clickhouse://x"}, log, ibexmetrics.NewProxy("proxy"))
+	if w != nil {
+		t.Fatal("expected nil writer on start failure")
+	}
+	if !strings.Contains(buf.String(), "clickhouse writer disabled") {
+		t.Fatalf("missing fail-open log: %q", buf.String())
+	}
+	if !strings.Contains(buf.String(), "writer_start_failed") {
+		t.Fatalf("missing sanitized reason: %q", buf.String())
+	}
+}
+
+func TestUnit_AssignTraceWriter_SkipsNilConcrete(t *testing.T) {
+	t.Parallel()
+	deps := proxyhttp.RouterDeps{}
+	assignTraceWriter(&deps, nil)
+	if deps.TraceWriter != nil {
+		t.Fatal("nil *Writer must not be boxed into TraceWriter")
+	}
+	w := &ibexch.Writer{}
+	assignTraceWriter(&deps, w)
+	if deps.TraceWriter != w {
+		t.Fatal("non-nil writer not assigned")
+	}
+}
+
+func TestUnit_OptionalTraceWriter_FailOpenOmitsSensitiveError(t *testing.T) {
+	prev := newTraceWriter
+	t.Cleanup(func() { newTraceWriter = prev })
+	secret := "clickhouse://default:super-secret-pass@localhost:8123/ibex"
+	newTraceWriter = func(ibexch.Config) (*ibexch.Writer, error) {
+		return nil, fmt.Errorf("dial failed for %s", secret)
+	}
+
+	var buf bytes.Buffer
+	log, err := logger.New(logger.Config{
+		Service: "proxy",
+		Level:   slog.LevelWarn,
+		Writer:  &buf,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := optionalTraceWriter(config.Config{ClickHouseDSN: secret}, log, ibexmetrics.NewProxy("proxy"))
+	if w != nil {
+		t.Fatal("expected nil writer on start failure")
+	}
+	out := buf.String()
+	if !strings.Contains(out, "writer_start_failed") {
+		t.Fatalf("missing sanitized reason: %q", out)
+	}
+	if strings.Contains(out, "super-secret-pass") || strings.Contains(out, secret) {
+		t.Fatalf("sensitive error leaked into log: %q", out)
+	}
+}
+
+func TestUnit_FinishProxyCore_PassesTraceWriter(t *testing.T) {
+	w := &ibexch.Writer{}
+	core := finishProxyCore(proxyCoreParts{
+		assembled: assembledProxyCore{traceWriter: w},
+	})
+	if core.traceWriter != w {
+		t.Fatal("traceWriter not wired from assembled core")
 	}
 }
 

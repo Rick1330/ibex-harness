@@ -40,18 +40,22 @@ func (h *directiveResolveHandler) ServeHTTP(w http.ResponseWriter, r *http.Reque
 		h.next.ServeHTTP(w, r)
 		return
 	}
+	start := time.Now()
 	resolveCtx, cancel := context.WithTimeout(r.Context(), ResolveTimeout)
 	defer cancel()
 	resolved, err := h.resolver.Resolve(resolveCtx, agent.OrgID, agent.ID)
+	elapsed := clampUint16Ms(time.Since(start))
 	if err != nil {
 		h.logger.WarnCtx(r.Context(), "directive resolve failed; continuing without directive",
 			"org_id", agent.OrgID.String(),
 			"agent_id", agent.ID.String(),
 			"error", err,
 		)
-		h.next.ServeHTTP(w, r)
+		ctx := WithDirectiveLatencyMs(r.Context(), elapsed)
+		h.next.ServeHTTP(w, r.WithContext(ctx))
 		return
 	}
 	ctx := WithResolvedDirective(r.Context(), resolved)
+	ctx = WithDirectiveLatencyMs(ctx, elapsed)
 	h.next.ServeHTTP(w, r.WithContext(ctx))
 }

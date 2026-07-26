@@ -241,19 +241,166 @@ type checkpointInput struct {
 }
 
 func (h chatCompletionHandler) enqueueCheckpoint(ctx context.Context, in checkpointInput) {
-	rs, ok := ResolvedSessionFromContext(ctx)
-	if !ok || !rs.durable() {
-		return
-	}
-	deps := h.lifecycle()
-	if deps.store == nil || deps.pool == nil {
-		return
-	}
-	params := buildCheckpointParams(rs, in, RequestIDFromContext(ctx))
-	externalID := rs.ExternalID
-	deps.pool.Submit(func() {
-		deps.runCheckpoint(params, externalID)
+	h.enqueuePostResponse(ctx, in, requestOutcome{
+		StatusCode: 200,
+		IsComplete: in.IsComplete,
 	})
+}
+
+// enqueuePostResponse runs optional checkpoint + trace emit on the bounded pool.
+// Never blocks the LLM response path longer than Submit queue wait; Write is non-blocking.
+func (h chatCompletionHandler) enqueuePostResponse(
+	ctx context.Context,
+	in checkpointInput,
+	outcome requestOutcome,
+) {
+	snap, snapOK := h.captureTraceSnapshot(ctx, in, outcome)
+	deps := h.lifecycle()
+	doCheckpoint := wantSessionCheckpoint(ctx, deps, in, outcome)
+	doTrace := snapOK && effectiveTraceWriter(h.traceWriter) != nil
+	if !doCheckpoint && !doTrace {
+		return
+	}
+	h.submitPostResponse(ctx, postResponseJob{
+		deps: deps, in: in, snap: snap,
+		doCheckpoint: doCheckpoint, doTrace: doTrace,
+	})
+}
+
+// wantSessionCheckpoint is true for successful or streaming turns with a durable session.
+// Provider-failure traces (non-stream, incomplete) must not append empty checkpoints.
+func wantSessionCheckpoint(
+	ctx context.Context,
+	deps sessionLifecycleDeps,
+	in checkpointInput,
+	outcome requestOutcome,
+) bool {
+	if deps.store == nil {
+		return false
+	}
+	rs, ok := ResolvedSessionFromContext(ctx)
+	if !ok {
+		return false
+	}
+	if !rs.durable() {
+		return false
+	}
+	return outcome.IsComplete || in.IsStreaming
+}
+
+// postResponseJob bundles checkpoint/trace work for the bounded pool Submit.
+type postResponseJob struct {
+	deps         sessionLifecycleDeps
+	in           checkpointInput
+	snap         traceAssembleInput
+	doCheckpoint bool
+	doTrace      bool
+}
+
+func (h chatCompletionHandler) submitPostResponse(ctx context.Context, job postResponseJob) {
+	var params session.CheckpointParams
+	var externalID string
+	if job.doCheckpoint {
+		rs, _ := ResolvedSessionFromContext(ctx)
+		params = buildCheckpointParams(rs, job.in, RequestIDFromContext(ctx))
+		externalID = rs.ExternalID
+	}
+	run := func() {
+		if job.doCheckpoint {
+			job.deps.runCheckpoint(params, externalID)
+		}
+		if job.doTrace {
+			h.emitTrace(job.snap)
+		}
+	}
+	if job.deps.pool != nil {
+		job.deps.pool.Submit(run)
+		return
+	}
+	run()
+}
+
+func (h chatCompletionHandler) captureTraceSnapshot(
+	ctx context.Context,
+	in checkpointInput,
+	outcome requestOutcome,
+) (traceAssembleInput, bool) {
+	orgID, agentID, ok := tenantIDsFromContext(ctx)
+	if !ok {
+		return traceAssembleInput{}, false
+	}
+	reqID := RequestIDFromContext(ctx)
+	if reqID == "" {
+		return traceAssembleInput{}, false
+	}
+	completed := time.Now().UTC()
+	requested := completed
+	if start, ok := RequestStartFromContext(ctx); ok {
+		requested = start.UTC()
+	}
+	var sessionID *uuid.UUID
+	if id, ok := durableSessionID(ctx); ok {
+		sessionID = &id
+	}
+	status := outcome.StatusCode
+	if status == 0 {
+		if outcome.IsComplete {
+			status = 200
+		}
+	}
+	streaming := in.IsStreaming
+	if outcome.StreamRequested {
+		streaming = true
+	}
+	return traceAssembleInput{
+		RequestID: reqID,
+		OrgID:     orgID,
+		AgentID:   agentID,
+		SessionID: sessionID,
+		Model:     in.Model,
+		Provider:  in.Provider,
+		Streaming: streaming,
+		Usage:     in.Usage,
+		Timings: requestTimings{
+			AuthMs:       AuthLatencyMsFromContext(ctx),
+			DirectiveMs:  DirectiveLatencyMsFromContext(ctx),
+			ProviderTTFB: in.Latency,
+			RequestedAt:  requested,
+			CompletedAt:  completed,
+		},
+		Outcome: requestOutcome{
+			StatusCode: status,
+			IsComplete: outcome.IsComplete,
+			ErrorCode:  outcome.ErrorCode,
+		},
+	}, true
+}
+
+func durableSessionID(ctx context.Context) (uuid.UUID, bool) {
+	rs, ok := ResolvedSessionFromContext(ctx)
+	if !ok {
+		return uuid.Nil, false
+	}
+	if !rs.durable() {
+		return uuid.Nil, false
+	}
+	return rs.SessionID, true
+}
+
+func (h chatCompletionHandler) emitTrace(snap traceAssembleInput) {
+	rec := assembleTrace(snap)
+	err := h.traceWriter.Write(rec)
+	if err == nil {
+		return
+	}
+	if h.log == nil {
+		return
+	}
+	h.log.WarnCtx(context.Background(), "trace emit failed",
+		"error", err,
+		"request_id", snap.RequestID,
+		"org_id", snap.OrgID.String(),
+	)
 }
 
 func buildCheckpointParams(rs resolvedSession, in checkpointInput, requestID string) session.CheckpointParams {

@@ -139,7 +139,7 @@ func setupProxyCore(
 		assembled: assembled,
 		revSub:    revSub, revCancel: revCancel,
 		dirSub: dirSub, dirCancel: dirCancel,
-	}, cfg, log, reg)
+	}), nil
 }
 
 type proxyCoreParts struct {
@@ -150,16 +150,7 @@ type proxyCoreParts struct {
 	dirCancel context.CancelFunc
 }
 
-func finishProxyCore(
-	parts proxyCoreParts,
-	cfg config.Config,
-	log *logger.Logger,
-	reg *ibexmetrics.ProxyRegistry,
-) (*proxyCore, error) {
-	traceWriter, err := setupTraceWriter(cfg, log, reg)
-	if err != nil {
-		return nil, err
-	}
+func finishProxyCore(parts proxyCoreParts) *proxyCore {
 	return &proxyCore{
 		server: parts.assembled.server, grpcConn: parts.assembled.grpcConn,
 		redisClient: parts.assembled.redisClient, pgDB: parts.assembled.pgDB,
@@ -167,8 +158,8 @@ func finishProxyCore(
 		dirSub: parts.dirSub, dirCancel: parts.dirCancel,
 		checkpointPool: parts.assembled.checkpointPool,
 		sessionSweeper: parts.assembled.sessionSweeper,
-		traceWriter:    traceWriter,
-	}, nil
+		traceWriter:    parts.assembled.traceWriter,
+	}
 }
 
 type assembledProxyCore struct {
@@ -180,6 +171,7 @@ type assembledProxyCore struct {
 	directiveResolver directive.Resolver
 	checkpointPool    *asyncpool.Pool
 	sessionSweeper    *sessionsweeper.Sweeper
+	traceWriter       *ibexch.Writer
 }
 
 func assembleProxyCore(
@@ -212,7 +204,8 @@ func assembleProxyCore(
 	if err != nil {
 		return assembledProxyCore{}, fmt.Errorf("provider registry: %w", err)
 	}
-	server := newHTTPServer(proxyhttp.RouterDeps{
+	traceWriter := optionalTraceWriter(cfg, log, reg)
+	deps := proxyhttp.RouterDeps{
 		Config: cfg, Logger: log, Metrics: reg, Tracer: tracer,
 		Validator: validator, AgentVerifier: agentVerifier, Limiter: limiter,
 		DirectiveResolver: directiveResolver, SessionStore: sessionStack.store,
@@ -220,12 +213,24 @@ func assembleProxyCore(
 		GetOrCreateTimeout: cfg.SessionGetOrCreateTO,
 		Health:             buildProxyHealth(cfg, authClient, pgDB),
 		ProviderRegistry:   providerReg,
-	})
+	}
+	assignTraceWriter(&deps, traceWriter)
+	server := newHTTPServer(deps)
 	return assembledProxyCore{
 		server: server, grpcConn: grpcConn, redisClient: redisClient, pgDB: pgDB,
 		validator: validator, directiveResolver: directiveResolver,
 		checkpointPool: sessionStack.pool, sessionSweeper: sessionStack.sweeper,
+		traceWriter: traceWriter,
 	}, nil
+}
+
+// assignTraceWriter sets TraceWriter only when w is non-nil so a nil *Writer
+// is not boxed into a non-nil interface value.
+func assignTraceWriter(deps *proxyhttp.RouterDeps, w *ibexch.Writer) {
+	if w == nil {
+		return
+	}
+	deps.TraceWriter = w
 }
 
 func buildProxyHealth(cfg config.Config, authClient authv1.AuthServiceClient, pgDB *sql.DB) *healthcheck.Server {
@@ -626,18 +631,32 @@ func runWithShutdown(opts shutdownOpts) int {
 		shutdownErrCh <- sd.Wait()
 	}()
 
+	return awaitProxyShutdown(opts, errCh, shutdownErrCh)
+}
+
+// awaitProxyShutdown waits for both ListenAndServe exit and coordinator drain.
+// server.Shutdown unblocks ListenAndServe before later hooks (e.g. ClickHouse flush)
+// finish; returning on errCh alone would drop buffered traces.
+func awaitProxyShutdown(opts shutdownOpts, errCh, shutdownErrCh <-chan error) int {
 	select {
 	case err := <-errCh:
 		if err != nil {
 			opts.logger.ErrorCtx(context.Background(), "server failed", "error", err)
 			return 1
 		}
+		if err := <-shutdownErrCh; err != nil {
+			return 1
+		}
 	case err := <-shutdownErrCh:
 		if err != nil {
 			return 1
 		}
-		opts.logger.InfoCtx(context.Background(), "service stopped")
+		if err := <-errCh; err != nil {
+			opts.logger.ErrorCtx(context.Background(), "server failed", "error", err)
+			return 1
+		}
 	}
+	opts.logger.InfoCtx(context.Background(), "service stopped")
 	return 0
 }
 
@@ -705,6 +724,21 @@ func registerShutdownHooks(sd *shutdown.Coordinator, opts shutdownOpts) {
 
 // newTraceWriter constructs the ClickHouse writer; overridden in tests.
 var newTraceWriter = ibexch.NewWriter
+
+// optionalTraceWriter starts the ClickHouse writer or returns nil (fail-open).
+func optionalTraceWriter(
+	cfg config.Config,
+	log *logger.Logger,
+	reg *ibexmetrics.ProxyRegistry,
+) *ibexch.Writer {
+	w, err := setupTraceWriter(cfg, log, reg)
+	if err != nil {
+		log.WarnCtx(context.Background(), "clickhouse writer disabled; continuing without traces",
+			"reason", "writer_start_failed")
+		return nil
+	}
+	return w
+}
 
 func setupTraceWriter(
 	cfg config.Config,
