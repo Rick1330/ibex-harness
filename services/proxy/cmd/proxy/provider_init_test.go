@@ -12,10 +12,14 @@ import (
 
 func TestBuildProviderRegistry_MockModeRegistersMock(t *testing.T) {
 	t.Parallel()
-	reg, err := buildProviderRegistry(config.Config{
+
+	cfg := config.Config{
 		Environment: "development",
 		LLMMode:     "mock",
-	}, logger.Discard("proxy"), telemetry.NoopTracer("proxy"), metrics.NewProxy("test"))
+	}
+
+	reg, err := buildProviderRegistry(cfg, logger.Discard("proxy"), telemetry.NoopTracer("proxy"), metrics.NewProxy("test"))
+
 	if err != nil {
 		t.Fatalf("buildProviderRegistry: %v", err)
 	}
@@ -30,10 +34,14 @@ func TestBuildProviderRegistry_MockModeRegistersMock(t *testing.T) {
 
 func TestBuildProviderRegistry_MockModeRejectedInProduction(t *testing.T) {
 	t.Parallel()
-	_, err := buildProviderRegistry(config.Config{
+
+	cfg := config.Config{
 		Environment: "production",
 		LLMMode:     "mock",
-	}, logger.Discard("proxy"), telemetry.NoopTracer("proxy"), metrics.NewProxy("test"))
+	}
+
+	_, err := buildProviderRegistry(cfg, logger.Discard("proxy"), telemetry.NoopTracer("proxy"), metrics.NewProxy("test"))
+
 	if err == nil {
 		t.Fatal("expected error for mock mode in production")
 	}
@@ -44,12 +52,16 @@ func TestBuildProviderRegistry_MockModeRejectedInProduction(t *testing.T) {
 
 func TestBuildProviderRegistry_LiveModeRegistersOpenAI(t *testing.T) {
 	t.Parallel()
-	reg, err := buildProviderRegistry(config.Config{
+
+	cfg := config.Config{
 		LLMMode: "live",
 		OpenAI: config.OpenAIConfig{
 			APIKey: "test-key",
 		},
-	}, logger.Discard("proxy"), telemetry.NoopTracer("proxy"), metrics.NewProxy("test"))
+	}
+
+	reg, err := buildProviderRegistry(cfg, logger.Discard("proxy"), telemetry.NoopTracer("proxy"), metrics.NewProxy("test"))
+
 	if err != nil {
 		t.Fatalf("buildProviderRegistry: %v", err)
 	}

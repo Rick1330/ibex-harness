@@ -204,9 +204,12 @@ func TestProxyRegistry_AsyncBackpressureMetricsRegistered(t *testing.T) {
 
 func TestProxyRegistry_AuthAndProviderDurationRegistered(t *testing.T) {
 	t.Parallel()
+
 	reg := NewProxy("test-proxy")
+
 	reg.ObserveAuthDurationSeconds(0.001)
 	reg.ObserveProviderDurationSeconds("mock", 0.002)
+
 	names := gatherMetricNames(t, reg.Gatherer())
 	for _, name := range []string{
 		"ibex_proxy_auth_duration_seconds",
@@ -220,10 +223,12 @@ func TestProxyRegistry_AuthAndProviderDurationRegistered(t *testing.T) {
 
 func TestProxyRegistry_ObserveDurationNilSafe(t *testing.T) {
 	t.Parallel()
+
 	var nilReg *ProxyRegistry
+	empty := &ProxyRegistry{}
+
 	nilReg.ObserveAuthDurationSeconds(0.001)
 	nilReg.ObserveProviderDurationSeconds("mock", 0.001)
-	empty := &ProxyRegistry{}
 	empty.ObserveAuthDurationSeconds(0.001)
 	empty.ObserveProviderDurationSeconds("mock", 0.001)
 }

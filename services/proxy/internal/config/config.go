@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	defaultEnvironment          = "development"
+	defaultEnvironment          = envDevelopment
 	defaultServiceName          = "proxy"
 	defaultLogLevel             = slog.LevelInfo
 	defaultPort                 = "8080"
@@ -21,7 +21,7 @@ const (
 	defaultMaxRequestBodyBytes  = 1 * 1024 * 1024
 	defaultRateLimitRPM         = 60
 	defaultShutdownTimeout      = 30 * time.Second
-	defaultLLMMode              = "mock"
+	defaultLLMMode              = envLLMModeMock
 	defaultOpenAIBaseURL        = "https://api.openai.com/v1"
 	defaultOpenAIRequestTimeout = 120 * time.Second
 	defaultOpenAIMaxRetries     = 3
@@ -38,6 +38,12 @@ const (
 	defaultSessionGetOrCreateTO = 50 * time.Millisecond
 	defaultSessionIdleTimeout   = 45 * time.Minute
 	defaultSessionSweepInterval = time.Minute
+
+	envDevelopment = "development"
+	envStaging     = "staging"
+	envProduction  = "production"
+	envLLMModeMock = "mock"
+	envLLMModeLive = "live"
 )
 
 // RateLimitConfig holds org-level rate limit settings (Phase 1; no DB).

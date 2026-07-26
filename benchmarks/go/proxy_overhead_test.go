@@ -79,8 +79,7 @@ func newWarmStages(tb testing.TB) *warmStages {
 		tb.Fatalf("auth warm: %v", err)
 	}
 
-	limiter, cleanupRL := newTestRateLimiter(tb)
-	tb.Cleanup(cleanupRL)
+	limiter := newTestRateLimiter(tb)
 
 	resolver, orgID, agentID := newWarmDirectiveResolver(tb)
 	msgs := []provider.Message{
@@ -93,18 +92,12 @@ func newWarmStages(tb testing.TB) *warmStages {
 	}
 }
 
-func newTestRateLimiter(tb testing.TB) (ratelimit.Limiter, func()) {
+func newTestRateLimiter(tb testing.TB) ratelimit.Limiter {
 	tb.Helper()
-	mr, err := miniredis.Run()
-	if err != nil {
-		tb.Fatalf("miniredis: %v", err)
-	}
+	mr := miniredis.RunT(tb)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	limiter := ratelimit.NewRedisSlider(client, ratelimit.RedisSliderConfig{DefaultRPM: 1_000_000})
-	return limiter, func() {
-		_ = client.Close()
-		mr.Close()
-	}
+	tb.Cleanup(func() { _ = client.Close() })
+	return ratelimit.NewRedisSlider(client, ratelimit.RedisSliderConfig{DefaultRPM: 1_000_000})
 }
 
 func newWarmDirectiveResolver(tb testing.TB) (*directive.CachedResolver, uuid.UUID, uuid.UUID) {
@@ -133,7 +126,7 @@ func newWarmDirectiveResolver(tb testing.TB) (*directive.CachedResolver, uuid.UU
 
 func waitRedisDirective(tb testing.TB, client *redis.Client, orgID, agentID uuid.UUID) {
 	tb.Helper()
-	key := orgID.String() + ":directive:" + agentID.String()
+	key := directive.CacheKey(orgID, agentID)
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		if client.Exists(context.Background(), key).Val() == 1 {
@@ -188,8 +181,7 @@ func BenchmarkStageAuth(b *testing.B) {
 }
 
 func BenchmarkStageRateLimit(b *testing.B) {
-	limiter, cleanup := newTestRateLimiter(b)
-	defer cleanup()
+	limiter := newTestRateLimiter(b)
 	ctx := context.Background()
 	b.ReportAllocs()
 	b.ResetTimer()

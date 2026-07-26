@@ -6,10 +6,14 @@ import (
 	"github.com/google/uuid"
 )
 
-// cacheKey returns the org-scoped Redis key for an agent's directive.
+// CacheKey returns the org-scoped Redis key for an agent's directive.
 // Format: {org_id}:directive:{agent_id}
-func cacheKey(orgID, agentID uuid.UUID) string {
+func CacheKey(orgID, agentID uuid.UUID) string {
 	return fmt.Sprintf("%s:directive:%s", orgID.String(), agentID.String())
+}
+
+func cacheKey(orgID, agentID uuid.UUID) string {
+	return CacheKey(orgID, agentID)
 }
 
 // ChannelPrefix is the Redis pub/sub channel prefix for directive updates.

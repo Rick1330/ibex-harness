@@ -259,9 +259,13 @@ jobs:
           IBEX_DEV_AGENT_ID: "00000000-0000-0000-0000-000000000003"
         run: |
           chmod -R u+rwX benchmarks/output
-          if [ -f /tmp/bench-proxy.env ]; then
-            # shellcheck disable=SC1091
-            set -a && source /tmp/bench-proxy.env && set +a
+          env_path_file="benchmarks/output/bench-proxy.env.path"
+          docker_env_args=()
+          if [ -f "$env_path_file" ]; then
+            bench_env_file="$(tr -d '\r\n' < "$env_path_file")"
+            if [ -n "$bench_env_file" ] && [ -f "$bench_env_file" ]; then
+              docker_env_args+=(--env-file "$bench_env_file")
+            fi
           fi
           docker run --rm \
             --user "$(id -u):$(id -g)" \
@@ -272,6 +276,7 @@ jobs:
             -e K6_USE_CHAT="${{ steps.knobs.outputs.k6_use_chat }}" \
             -e IBEX_DEV_TOKEN="${IBEX_DEV_TOKEN}" \
             -e IBEX_DEV_AGENT_ID="${IBEX_DEV_AGENT_ID}" \
+            "${docker_env_args[@]}" \
             -e K6_VUS="${{ steps.knobs.outputs.k6_vus }}" \
             -e K6_DURATION="${{ steps.knobs.outputs.k6_duration }}" \
             grafana/k6:0.53.0 \

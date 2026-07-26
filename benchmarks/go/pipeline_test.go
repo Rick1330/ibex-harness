@@ -7,13 +7,10 @@ import (
 	"github.com/google/uuid"
 )
 
-func TestStageAuthLRUHit(t *testing.T) {
+func TestUnit_StageAuth_LRUHit(t *testing.T) {
 	s := newWarmStages(t)
+	// newWarmStages already warms the LRU; one more Validate should be a hit.
 	res, err := s.auth.Validate(context.Background(), s.token)
-	if err != nil {
-		t.Fatalf("warm Validate: %v", err)
-	}
-	res, err = s.auth.Validate(context.Background(), s.token)
 	if err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
@@ -22,9 +19,8 @@ func TestStageAuthLRUHit(t *testing.T) {
 	}
 }
 
-func TestStageRateLimitAllowsUnderCap(t *testing.T) {
-	limiter, cleanup := newTestRateLimiter(t)
-	defer cleanup()
+func TestUnit_StageRateLimit_AllowsUnderCap(t *testing.T) {
+	limiter := newTestRateLimiter(t)
 	res, err := limiter.Check(context.Background(), benchOrgID, uuid.Nil)
 	if err != nil {
 		t.Fatalf("Check: %v", err)
@@ -34,7 +30,7 @@ func TestStageRateLimitAllowsUnderCap(t *testing.T) {
 	}
 }
 
-func TestStageDirectiveResolveHasContent(t *testing.T) {
+func TestUnit_StageDirectiveResolve_HasContentOnWarmHit(t *testing.T) {
 	s := newWarmStages(t)
 	got, err := s.resolver.Resolve(context.Background(), s.orgID, s.agentID)
 	if err != nil {
@@ -45,7 +41,7 @@ func TestStageDirectiveResolveHasContent(t *testing.T) {
 	}
 }
 
-func TestStagePromptInjectAddsSystem(t *testing.T) {
+func TestUnit_StagePromptInject_AddsSystemMessage(t *testing.T) {
 	s := newWarmStages(t)
 	got := stagePromptInject(s)
 	if len(got) < 2 {
@@ -56,7 +52,8 @@ func TestStagePromptInjectAddsSystem(t *testing.T) {
 	}
 }
 
-func TestBenchmarkProxyOverheadAllocates(t *testing.T) {
+func TestUnit_ProxyOverhead_Allocates(t *testing.T) {
+	// AllocsPerRun cannot run alongside t.Parallel tests in the same package.
 	s := newWarmStages(t)
 	allocs := testing.AllocsPerRun(1, func() {
 		if _, err := s.auth.Validate(context.Background(), s.token); err != nil {

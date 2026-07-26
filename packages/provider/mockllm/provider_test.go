@@ -9,17 +9,30 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/provider"
 )
 
+func closeBody(t *testing.T, body io.Closer) {
+	t.Helper()
+	t.Cleanup(func() {
+		if err := body.Close(); err != nil {
+			t.Errorf("Body.Close: %v", err)
+		}
+	})
+}
+
 func TestUnit_CompleteReturnsOK(t *testing.T) {
 	t.Parallel()
+
 	var p Provider
-	resp, err := p.Complete(context.Background(), provider.Request{Model: "gpt-4o-mini"})
+	req := provider.Request{Model: "gpt-4o-mini"}
+
+	resp, err := p.Complete(context.Background(), req)
+
 	if err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
 	if resp.StatusCode != 200 {
 		t.Fatalf("status=%d", resp.StatusCode)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	closeBody(t, resp.Body)
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatalf("read: %v", err)
@@ -37,12 +50,16 @@ func TestUnit_CompleteReturnsOK(t *testing.T) {
 
 func TestUnit_CompleteStreamReturnsSSE(t *testing.T) {
 	t.Parallel()
+
 	var p Provider
-	resp, err := p.Complete(context.Background(), provider.Request{Model: "gpt-4o", Stream: true})
+	req := provider.Request{Model: "gpt-4o", Stream: true}
+
+	resp, err := p.Complete(context.Background(), req)
+
 	if err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	closeBody(t, resp.Body)
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatalf("read: %v", err)

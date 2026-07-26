@@ -44,15 +44,34 @@ func runChatOverheadBench(b *testing.B, parallel bool) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	if parallel {
-		b.RunParallel(func(pb *testing.PB) {
-			for pb.Next() {
-				mustChatOverheadOK(b, handler, body)
-			}
-		})
+		runChatOverheadParallel(b, handler, body)
 		return
 	}
 	for i := 0; i < b.N; i++ {
-		mustChatOverheadOK(b, handler, body)
+		if code := chatOverheadStatus(handler, body); code != http.StatusOK {
+			b.Fatalf("status=%d", code)
+		}
+	}
+}
+
+func runChatOverheadParallel(b *testing.B, handler http.Handler, body []byte) {
+	b.Helper()
+	errCh := make(chan int, 1)
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			if code := chatOverheadStatus(handler, body); code != http.StatusOK {
+				select {
+				case errCh <- code:
+				default:
+				}
+				return
+			}
+		}
+	})
+	select {
+	case code := <-errCh:
+		b.Fatalf("status=%d", code)
+	default:
 	}
 }
 
@@ -60,17 +79,16 @@ func warmChatOverhead(b *testing.B) (http.Handler, []byte) {
 	b.Helper()
 	handler := newChatOverheadHandler(b)
 	body := []byte(chatOverheadBody)
-	mustChatOverheadOK(b, handler, body)
+	if code := chatOverheadStatus(handler, body); code != http.StatusOK {
+		b.Fatalf("setup status=%d", code)
+	}
 	return handler, body
 }
 
-func mustChatOverheadOK(b *testing.B, handler http.Handler, body []byte) {
-	b.Helper()
+func chatOverheadStatus(handler http.Handler, body []byte) int {
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, newChatOverheadRequest(body))
-	if rec.Code != http.StatusOK {
-		b.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
-	}
+	return rec.Code
 }
 
 func newChatOverheadRequest(body []byte) *http.Request {
@@ -159,7 +177,7 @@ func newWarmedBenchDirective(b *testing.B, orgID, agentID uuid.UUID) directive.R
 
 func waitBenchDirectiveKey(b *testing.B, client *redis.Client, orgID, agentID uuid.UUID) {
 	b.Helper()
-	key := orgID.String() + ":directive:" + agentID.String()
+	key := directive.CacheKey(orgID, agentID)
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		if client.Exists(context.Background(), key).Val() == 1 {

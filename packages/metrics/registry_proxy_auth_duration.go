@@ -10,7 +10,9 @@ func (r *ProxyRegistry) initAuthDurationMetrics() {
 	})
 }
 
-// ObserveAuthDurationSeconds records auth middleware wall time.
+// ObserveAuthDurationSeconds records auth middleware wall time in seconds
+// (parse + validate + authorize, excluding downstream handlers). A nil
+// receiver or uninitialized registry is a no-op.
 func (r *ProxyRegistry) ObserveAuthDurationSeconds(seconds float64) {
 	if r == nil || r.authDuration == nil {
 		return

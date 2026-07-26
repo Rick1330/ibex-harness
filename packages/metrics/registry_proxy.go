@@ -102,7 +102,8 @@ func (r *ProxyRegistry) IncProviderRetry(provider string) {
 	r.providerRetries.WithLabelValues(provider).Inc()
 }
 
-// ObserveProviderDurationSeconds records provider Complete wall time.
+// ObserveProviderDurationSeconds records Complete wall time in seconds for the
+// given provider label. A nil receiver or uninitialized registry is a no-op.
 func (r *ProxyRegistry) ObserveProviderDurationSeconds(provider string, seconds float64) {
 	if r == nil || r.providerDuration == nil {
 		return

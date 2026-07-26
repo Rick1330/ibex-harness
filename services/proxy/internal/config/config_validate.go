@@ -57,14 +57,14 @@ func (c Config) validateSessionSweeper() error {
 func (c Config) validateLLMConfig() error {
 	mode := strings.ToLower(strings.TrimSpace(c.LLMMode))
 	switch mode {
-	case "mock", "live":
+	case envLLMModeMock, envLLMModeLive:
 	default:
 		return fmt.Errorf("IBEX_LLM_MODE must be mock or live")
 	}
-	if mode == "mock" && c.Environment == "production" {
+	if mode == envLLMModeMock && c.Environment == envProduction {
 		return fmt.Errorf("IBEX_LLM_MODE=mock is not allowed when IBEX_ENV=production")
 	}
-	if mode == "live" && strings.TrimSpace(c.OpenAI.APIKey) == "" {
+	if mode == envLLMModeLive && strings.TrimSpace(c.OpenAI.APIKey) == "" {
 		return fmt.Errorf("OPENAI_API_KEY is required when IBEX_LLM_MODE=live")
 	}
 	return nil
@@ -81,7 +81,7 @@ func (c Config) validateEnvironment() error {
 
 func (c Config) validateEnvName() error {
 	switch c.Environment {
-	case "development", "staging", "production":
+	case envDevelopment, envStaging, envProduction:
 		return nil
 	default:
 		return fmt.Errorf("IBEX_ENV must be one of development, staging, production")
@@ -107,7 +107,7 @@ func validateTCPPort(port string) error {
 }
 
 func (c Config) validateAuthConfig() error {
-	if c.Environment != "development" && strings.TrimSpace(c.AuthGRPCAddr) == "" {
+	if c.Environment != envDevelopment && strings.TrimSpace(c.AuthGRPCAddr) == "" {
 		return fmt.Errorf("IBEX_AUTH_GRPC_ADDR is required outside development")
 	}
 	if strings.TrimSpace(c.AuthGRPCAddr) == "" {

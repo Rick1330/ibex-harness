@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "notes": "Pinned to 2.6.1 implementation commit after warm-path + BenchmarkProxyChatOverhead local run (~0.17ms serial chat overhead). SLA p99 < 20ms; regression policy 20%.",
+  "notes": "Policy-only pin for m2.6.1 warm-path gates. proxy_overhead_p99_ms mirrors policy.max_proxy_overhead_p99_ms (SLA ceiling), not a measured run percentile. target_commit/baseline_sha track the 2.6.1 implementation tip.",
   "baseline": {
     "target_commit": "48ea560b8e757aa7114a84c103dacdbef8ee8d34",
     "baseline_sha": "48ea560b8e757aa7114a84c103dacdbef8ee8d34",
