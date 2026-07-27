@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -26,21 +27,33 @@ import (
 )
 
 type countingLLMProvider struct {
-	name    string
-	models  []string
-	body    string
-	calls   atomic.Int64
-	blockCh chan struct{} // optional: hold Complete until closed
+	name      string
+	models    []string
+	body      string
+	err       error
+	calls     atomic.Int64
+	blockCh   chan struct{} // optional: hold Complete until closed
+	startedCh chan struct{} // optional: closed once on first Complete entry
 }
 
 func (s *countingLLMProvider) Complete(ctx context.Context, _ provider.Request) (provider.Response, error) {
 	s.calls.Add(1)
+	if s.startedCh != nil {
+		select {
+		case <-s.startedCh:
+		default:
+			close(s.startedCh)
+		}
+	}
 	if s.blockCh != nil {
 		select {
 		case <-s.blockCh:
 		case <-ctx.Done():
 			return provider.Response{}, ctx.Err()
 		}
+	}
+	if s.err != nil {
+		return provider.Response{}, s.err
 	}
 	body := s.body
 	if body == "" {
@@ -155,7 +168,10 @@ func TestUnit_Idempotency_InProgressConflict(t *testing.T) {
 	t.Parallel()
 	store, _ := testRedisIdempotencyStore(t)
 	block := make(chan struct{})
-	prov := &countingLLMProvider{name: "openai", models: []string{"gpt-4o"}, blockCh: block}
+	started := make(chan struct{})
+	prov := &countingLLMProvider{
+		name: "openai", models: []string{"gpt-4o"}, blockCh: block, startedCh: started,
+	}
 	handler := idempotencyTestRouter(t, store, prov, nil)
 
 	done := make(chan *httptest.ResponseRecorder, 1)
@@ -164,7 +180,7 @@ func TestUnit_Idempotency_InProgressConflict(t *testing.T) {
 			body: chatBodyA, auth: true, agentID: testChatAgentID, idempotencyKey: "inflight",
 		})
 	}()
-	waitForCompleteCalls(t, prov, 1)
+	waitForProviderStarted(t, started)
 	rec2 := postChat(t, handler, chatRequestOpts{
 		body: chatBodyA, auth: true, agentID: testChatAgentID, idempotencyKey: "inflight",
 	})
@@ -175,6 +191,28 @@ func TestUnit_Idempotency_InProgressConflict(t *testing.T) {
 	assertStatus(t, rec1, http.StatusOK)
 	if prov.calls.Load() != 1 {
 		t.Fatalf("Complete calls=%d want 1", prov.calls.Load())
+	}
+}
+
+func TestUnit_Idempotency_TransientFailureAllowsRetry(t *testing.T) {
+	t.Parallel()
+	store, _ := testRedisIdempotencyStore(t)
+	prov := &countingLLMProvider{
+		name: "openai", models: []string{"gpt-4o"},
+		err: errors.New("connection refused"),
+	}
+	handler := idempotencyTestRouter(t, store, prov, nil)
+	opts := chatRequestOpts{
+		body: chatBodyA, auth: true, agentID: testChatAgentID, idempotencyKey: "retry-me",
+	}
+	rec1 := postChat(t, handler, opts)
+	assertStatus(t, rec1, http.StatusServiceUnavailable)
+
+	prov.err = nil
+	rec2 := postChat(t, handler, opts)
+	assertStatus(t, rec2, http.StatusOK)
+	if prov.calls.Load() != 2 {
+		t.Fatalf("Complete calls=%d want 2 after transient release", prov.calls.Load())
 	}
 }
 
@@ -221,23 +259,29 @@ func TestUnit_Idempotency_StreamWithKeyRejected(t *testing.T) {
 	}
 }
 
-func TestUnit_Idempotency_KeyTooLong(t *testing.T) {
+func TestUnit_Idempotency_KeyRuneLengthBoundary(t *testing.T) {
 	t.Parallel()
 	store, _ := testRedisIdempotencyStore(t)
 	prov := &countingLLMProvider{name: "openai", models: []string{"gpt-4o"}}
 	handler := idempotencyTestRouter(t, store, prov, nil)
 
-	longKey := strings.Repeat("a", maxIdempotencyKeyLen+1)
-	if utf8.RuneCountInString(longKey) <= maxIdempotencyKeyLen {
-		t.Fatal("test key not long enough")
+	okKey := strings.Repeat("字", maxIdempotencyKeyLen)
+	if utf8.RuneCountInString(okKey) != maxIdempotencyKeyLen {
+		t.Fatalf("okKey runes=%d", utf8.RuneCountInString(okKey))
 	}
-	rec := postChat(t, handler, chatRequestOpts{
+	recOK := postChat(t, handler, chatRequestOpts{
+		body: chatBodyA, auth: true, agentID: testChatAgentID, idempotencyKey: okKey,
+	})
+	assertStatus(t, recOK, http.StatusOK)
+
+	longKey := strings.Repeat("字", maxIdempotencyKeyLen+1)
+	recBad := postChat(t, handler, chatRequestOpts{
 		body: chatBodyA, auth: true, agentID: testChatAgentID, idempotencyKey: longKey,
 	})
-	assertStatus(t, rec, http.StatusBadRequest)
-	assertBodyCode(t, rec, apierror.CodeValidationError)
-	if prov.calls.Load() != 0 {
-		t.Fatalf("Complete calls=%d want 0", prov.calls.Load())
+	assertStatus(t, recBad, http.StatusBadRequest)
+	assertBodyCode(t, recBad, apierror.CodeValidationError)
+	if prov.calls.Load() != 1 {
+		t.Fatalf("Complete calls=%d want 1 (only accepted key)", prov.calls.Load())
 	}
 }
 
@@ -247,7 +291,7 @@ func TestUnit_Idempotency_RedisFailOpen(t *testing.T) {
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
 	store := idempotency.NewRedisStore(client, idempotency.Config{TTL: time.Hour})
-	mr.Close() // fail Redis after store construction
+	mr.Close()
 
 	prov := &countingLLMProvider{name: "openai", models: []string{"gpt-4o"}}
 	handler := idempotencyTestRouter(t, store, prov, nil)
@@ -298,6 +342,27 @@ func TestUnit_FingerprintChatRequest_Stable(t *testing.T) {
 	}
 }
 
+func TestUnit_ShouldCommitIdempotency(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		status int
+		want   bool
+	}{
+		{200, true},
+		{400, true},
+		{409, true},
+		{429, false},
+		{500, false},
+		{504, false},
+		{100, false},
+	}
+	for _, tc := range cases {
+		if got := shouldCommitIdempotency(tc.status); got != tc.want {
+			t.Fatalf("status %d: got %v want %v", tc.status, got, tc.want)
+		}
+	}
+}
+
 func assertStatus(t *testing.T, rec *httptest.ResponseRecorder, want int) {
 	t.Helper()
 	if rec.Code != want {
@@ -312,16 +377,13 @@ func assertBodyCode(t *testing.T, rec *httptest.ResponseRecorder, code apierror.
 	}
 }
 
-func waitForCompleteCalls(t *testing.T, prov *countingLLMProvider, want int64) {
+func waitForProviderStarted(t *testing.T, started <-chan struct{}) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if prov.calls.Load() >= want {
-			return
-		}
-		time.Sleep(5 * time.Millisecond)
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for provider Complete to start")
 	}
-	t.Fatalf("timed out waiting for Complete calls=%d want %d", prov.calls.Load(), want)
 }
 
 func mustParseChatBody(t *testing.T, body string) *llm.ChatCompletionRequest {

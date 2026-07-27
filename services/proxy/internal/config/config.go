@@ -39,7 +39,7 @@ const (
 	defaultSessionIdleTimeout   = 45 * time.Minute
 	defaultSessionSweepInterval = time.Minute
 	defaultIdempotencyTTL       = 24 * time.Hour
-	defaultIdempotencyRedisTO   = 5 * time.Millisecond
+	defaultIdempotencyRedisTO   = 50 * time.Millisecond
 
 	envDevelopment = "development"
 	envStaging     = "staging"

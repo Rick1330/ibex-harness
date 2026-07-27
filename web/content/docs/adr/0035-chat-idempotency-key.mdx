@@ -22,12 +22,14 @@ Clients that time out after the proxy has already started (or finished) an upstr
 
 1. **Header:** Optional `Idempotency-Key` (opaque, max 256 characters). Empty/whitespace is treated as absent.
 2. **Scope:** Non-streaming `POST /v1/chat/completions` only. `stream=true` + header → `400 VALIDATION_ERROR`.
-3. **Redis key:** `idempotency:{org_id}:{key}` with `org_id` from verified auth context only. TTL default **24h** (`IBEX_IDEMPOTENCY_TTL`).
-4. **Protocol:** SETNX `pending` on first claim; on terminal client-visible response, overwrite with `completed` + status + body. Same key + same request fingerprint → replay. Same key + different fingerprint → `409 IDEMPOTENCY_KEY_REUSE`. Concurrent pending → `409 IDEMPOTENCY_IN_PROGRESS` (no long-poll).
-5. **Fingerprint:** SHA-256 over normalized parsed fields (`model`, `messages`, `stream`, `temperature`, `max_tokens`). Unknown JSON keys ignored per [ADR-0012](/docs/adr/0012-proxy-request-normalization).
-6. **Fail-open:** Redis errors or claim/commit timeout (`IBEX_IDEMPOTENCY_REDIS_TIMEOUT`, default 5ms) proceed without dedupe (WARN + `redis_error` metric). Availability beats perfect billing protection when Redis is down — same class as rate limiting.
-7. **Replay side effects:** Hits do not call the provider and do not re-enqueue session checkpoint / ClickHouse trace.
-8. **Upstream:** Do not forward `Idempotency-Key` to OpenAI; proxy owns dedupe.
+3. **Redis key:** `idempotency:{org_id}:{key}` with `org_id` from verified auth context only.
+4. **TTLs:** In-flight `pending` claims use a short TTL (default **130s**, above the OpenAI request timeout). Completed records use **24h** (`IBEX_IDEMPOTENCY_TTL`). Orphaned pending keys self-heal instead of blocking retries for a day.
+5. **Protocol:** SETNX `pending` on first claim; on terminal success / deterministic 4xx (not 429), overwrite with `completed` + status + body. Transient **429** and **5xx** release the pending claim so the same key can retry. Same key + same fingerprint → replay. Same key + different fingerprint → `409 IDEMPOTENCY_KEY_REUSE`. Concurrent pending → `409 IDEMPOTENCY_IN_PROGRESS` (no long-poll).
+6. **Fingerprint:** SHA-256 over normalized parsed fields (`model`, `messages`, `stream`, `temperature`, `max_tokens`). Unknown JSON keys ignored per [ADR-0012](/docs/adr/0012-proxy-request-normalization).
+7. **Fail-open:** Redis errors or claim/commit timeout (`IBEX_IDEMPOTENCY_REDIS_TIMEOUT`, default **50ms**) proceed without dedupe (WARN + `redis_error` metric). Availability beats perfect billing protection when Redis is down — same class as rate limiting.
+8. **Replay side effects:** Hits do not call the provider and do not re-enqueue session checkpoint / ClickHouse trace.
+9. **Upstream:** Do not forward `Idempotency-Key` to OpenAI; proxy owns dedupe.
+10. **Schema:** Redis JSON includes `v` (record version); unknown versions are rejected.
 
 ## Consequences
 

@@ -39,7 +39,7 @@ Milestone 2.1.5 names *double-retry storms (proxy + client)* as a Medium risk an
 
 ## Acceptance Criteria
 
-- [x] Duplicate `Idempotency-Key` within TTL does not create a second upstream completion (integration test)
+- [x] Duplicate `Idempotency-Key` within TTL does not create a second upstream completion when the first request successfully claimed and committed (integration test)
 - [x] Missing header preserves current behavior
 - [x] Cross-org key collision impossible (org_id in Redis key)
 - [x] Metrics: hit / miss / conflict counters with bounded labels

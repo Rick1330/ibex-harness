@@ -60,6 +60,7 @@ Decision records: [ADR-0012](/docs/adr/0012-proxy-request-normalization) (normal
 - **Hit (same key + fingerprint):** replay stored HTTP status and body; no provider call; no second session checkpoint / trace.
 - **Conflict (same key, different body):** `409` with `IDEMPOTENCY_KEY_REUSE`.
 - **In progress:** `409` with `IDEMPOTENCY_IN_PROGRESS` — retry after a short backoff.
+- **Transient upstream errors (429 / 5xx):** pending claim is released so the same key can retry.
 - **Streaming:** `stream=true` with `Idempotency-Key` → `400 VALIDATION_ERROR` (non-streaming only in this milestone).
 - **Redis down / timeout:** fail-open — request proceeds without dedupe (billing risk under Redis outage).
 - The key is **not** forwarded to OpenAI.
@@ -103,34 +104,45 @@ Mapped provider failures use the stable error envelope (`PROVIDER_TIMEOUT`, `RAT
 <CodeTabs>
   <CodeTab label="curl">
 ```bash
+IDEM_KEY="$(uuidgen)"
+BODY='{"model":"gpt-4o","messages":[{"role":"user","content":"hello"}]}'
 curl -s -w "\nHTTP %{http_code}\n" \
   -X POST http://localhost:8080/v1/chat/completions \
   -H "Authorization: Bearer ${IBEX_DEV_TOKEN}" \
   -H "X-IBEX-Agent-ID: ${IBEX_DEV_AGENT_ID}" \
   -H "Content-Type: application/json" \
-  -H "Idempotency-Key: $(uuidgen)" \
-  -d '{"model":"gpt-4o","messages":[{"role":"user","content":"hello"}]}'
+  -H "Idempotency-Key: ${IDEM_KEY}" \
+  -d "${BODY}"
+# Retry with the same key + body to verify replay (no second upstream completion):
+curl -s -w "\nHTTP %{http_code}\n" \
+  -X POST http://localhost:8080/v1/chat/completions \
+  -H "Authorization: Bearer ${IBEX_DEV_TOKEN}" \
+  -H "X-IBEX-Agent-ID: ${IBEX_DEV_AGENT_ID}" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: ${IDEM_KEY}" \
+  -d "${BODY}"
 ```
   </CodeTab>
   <CodeTab label="python">
 ```python
 import os, uuid, requests
-r = requests.post(
-    "http://localhost:8080/v1/chat/completions",
-    headers={
-        "Authorization": f"Bearer {os.environ['IBEX_DEV_TOKEN']}",
-        "X-IBEX-Agent-ID": os.environ["IBEX_DEV_AGENT_ID"],
-        "Content-Type": "application/json",
-        "Idempotency-Key": str(uuid.uuid4()),
-    },
-    json={"model": "gpt-4o", "messages": [{"role": "user", "content": "hello"}]},
-)
-print(r.status_code, r.headers.get("X-Request-ID"))
+
+idem_key = str(uuid.uuid4())
+payload = {"model": "gpt-4o", "messages": [{"role": "user", "content": "hello"}]}
+headers = {
+    "Authorization": f"Bearer {os.environ['IBEX_DEV_TOKEN']}",
+    "X-IBEX-Agent-ID": os.environ["IBEX_DEV_AGENT_ID"],
+    "Content-Type": "application/json",
+    "Idempotency-Key": idem_key,
+}
+r1 = requests.post("http://localhost:8080/v1/chat/completions", headers=headers, json=payload)
+r2 = requests.post("http://localhost:8080/v1/chat/completions", headers=headers, json=payload)
+print(r1.status_code, r2.status_code, r1.headers.get("X-Request-ID"))
 ```
   </CodeTab>
 </CodeTabs>
 
-With `IBEX_LLM_MODE=mock`, expect HTTP **200** and an OpenAI-shaped JSON body. Retry the same `Idempotency-Key` + body to confirm replay without a second upstream completion.
+With `IBEX_LLM_MODE=mock`, expect HTTP **200** and an OpenAI-shaped JSON body. The second request reuses the same `Idempotency-Key` and body so replay can be verified without a second upstream completion.
 
 <ProcessSteps
   steps={[

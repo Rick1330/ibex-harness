@@ -2,15 +2,23 @@ package metrics
 
 import "github.com/prometheus/client_golang/prometheus"
 
-// Idempotency result labels for ibex_proxy_idempotency_total.
-const (
-	IdempotencyHit        = "hit"
-	IdempotencyMiss       = "miss"
-	IdempotencyConflict   = "conflict"
-	IdempotencyInProgress = "in_progress"
-	IdempotencyRedisError = "redis_error"
-	IdempotencySkipped    = "skipped"
-)
+// IdempotencyHit counts completed-key replays (no second provider call).
+const IdempotencyHit = "hit"
+
+// IdempotencyMiss counts first claims that own the in-flight key.
+const IdempotencyMiss = "miss"
+
+// IdempotencyConflict counts same-key requests with a different fingerprint.
+const IdempotencyConflict = "conflict"
+
+// IdempotencyInProgress counts requests rejected while another claim is pending.
+const IdempotencyInProgress = "in_progress"
+
+// IdempotencyRedisError counts Redis failures or unknown result labels (fail-open path).
+const IdempotencyRedisError = "redis_error"
+
+// IdempotencySkipped counts requests with no Idempotency-Key or no store configured.
+const IdempotencySkipped = "skipped"
 
 func (r *ProxyRegistry) initIdempotencyMetrics() {
 	r.idempotencyTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
@@ -47,14 +55,12 @@ func (r *ProxyRegistry) ObserveIdempotencyDurationSeconds(seconds float64) {
 	r.idempotencyDuration.Observe(seconds)
 }
 
-var idempotencyResults = map[string]struct{}{
-	IdempotencyHit: {}, IdempotencyMiss: {}, IdempotencyConflict: {},
-	IdempotencyInProgress: {}, IdempotencyRedisError: {}, IdempotencySkipped: {},
-}
-
 func boundIdempotencyResult(result string) string {
-	if _, ok := idempotencyResults[result]; ok {
+	switch result {
+	case IdempotencyHit, IdempotencyMiss, IdempotencyConflict,
+		IdempotencyInProgress, IdempotencyRedisError, IdempotencySkipped:
 		return result
+	default:
+		return IdempotencyRedisError
 	}
-	return IdempotencyRedisError
 }

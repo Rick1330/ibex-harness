@@ -67,4 +67,10 @@ var invalidProxyConfigCases = []struct {
 	{name: "clickhouse flush ms negative", mutate: func(c *Config) {
 		c.ClickHouseFlushMS = -5
 	}},
+	{name: "idempotency ttl zero", mutate: func(c *Config) {
+		c.IdempotencyTTL = 0
+	}},
+	{name: "idempotency redis timeout zero", mutate: func(c *Config) {
+		c.IdempotencyRedisTimeout = 0
+	}},
 }

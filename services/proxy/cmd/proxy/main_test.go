@@ -9,6 +9,7 @@ import (
 
 	"github.com/Rick1330/ibex-harness/packages/directive"
 	"github.com/Rick1330/ibex-harness/packages/healthcheck"
+	"github.com/Rick1330/ibex-harness/packages/idempotency"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	ibexmetrics "github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/packages/provider"
@@ -19,6 +20,7 @@ import (
 	proxyhttp "github.com/Rick1330/ibex-harness/services/proxy/internal/http"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/otel/trace"
 
 	// Register the lib/pq "postgres" driver for sql.Open in proxy unit tests.
@@ -94,6 +96,23 @@ func TestSetupRateLimiter_InvalidURL(t *testing.T) {
 	_, _, err := setupRateLimiter(config.Config{RedisURL: "not-a-redis-url"}, log)
 	if err == nil {
 		t.Fatal("expected error for invalid redis URL")
+	}
+}
+
+func TestNewIdempotencyStore_NilAndRedis(t *testing.T) {
+	t.Parallel()
+	noop := newIdempotencyStore(nil, config.Config{IdempotencyTTL: time.Hour})
+	out, err := noop.Claim(context.Background(), uuid.New(), "k", "fp")
+	if err != nil || out.Kind != idempotency.KindMiss {
+		t.Fatalf("noop: %+v %v", out, err)
+	}
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	store := newIdempotencyStore(client, config.Config{IdempotencyTTL: time.Hour})
+	out, err = store.Claim(context.Background(), uuid.New(), "k2", "fp")
+	if err != nil || out.Kind != idempotency.KindMiss {
+		t.Fatalf("redis store: %+v %v", out, err)
 	}
 }
 

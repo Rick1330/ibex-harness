@@ -44,10 +44,14 @@ func (h chatCompletionHandler) forwardChatCompletion(p chatForwardParams) {
 	if !cont {
 		return
 	}
-	if claim != nil && claim.hit != nil {
-		replayIdempotency(p.w, *claim.hit)
+	if claim != nil && claim.replay {
+		replayIdempotency(p.w, claim.hit)
 		return
 	}
+	h.dispatchProviderCompletion(p, claim)
+}
+
+func (h chatCompletionHandler) dispatchProviderCompletion(p chatForwardParams, claim *idempotencyClaim) {
 	ctx := p.r.Context()
 	requestID := requestIDFromContext(ctx)
 	if errors.Is(ctx.Err(), context.Canceled) {
@@ -64,8 +68,7 @@ func (h chatCompletionHandler) forwardChatCompletion(p chatForwardParams) {
 		}
 		h.writeProviderFailure(providerFailureParams{
 			w: p.w, r: p.r, err: err, requestID: requestID,
-			parsed: p.parsed, providerName: p.prov.Name(),
-			claim: claim,
+			parsed: p.parsed, providerName: p.prov.Name(), claim: claim,
 		})
 		return
 	}
@@ -121,7 +124,7 @@ func (h chatCompletionHandler) writeProviderSuccess(p providerSuccessParams) {
 	writeJSONBody(p.w, body)
 	// Flush before Submit may block on a full non-dropping checkpoint queue.
 	flushIfSupported(p.w)
-	h.commitIdempotency(p.r.Context(), p.claim, p.resp.StatusCode, body)
+	h.finishIdempotency(p.claim, p.resp.StatusCode, body)
 	h.enqueuePostResponse(p.r.Context(), checkpointInput{
 		Messages: p.parsed.Messages, CompletionText: completionTextFromJSON(body),
 		Model: p.parsed.Model, Provider: p.providerName, Usage: p.resp.Usage,
@@ -166,7 +169,7 @@ func (h chatCompletionHandler) writeProviderFailure(p providerFailureParams) {
 	apierror.WriteHTTP(cw, p.requestID, apierror.WriteOpts{DocsBase: h.docsBase}, mapped)
 	// Flush before Submit may block on a full non-dropping checkpoint queue.
 	flushIfSupported(cw)
-	h.commitIdempotency(p.r.Context(), p.claim, cw.status, cw.body.Bytes())
+	h.finishIdempotency(p.claim, cw.status, cw.capturedBody())
 
 	model, providerName := failureTraceIdentity(p)
 	h.enqueuePostResponse(p.r.Context(), checkpointInput{

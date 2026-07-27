@@ -3,6 +3,7 @@ package idempotency
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -32,8 +33,12 @@ const (
 	StateCompleted State = "completed"
 )
 
+// CurrentRecordVersion is the JSON schema version written by this package.
+const CurrentRecordVersion = 1
+
 // Record is the Redis value for an idempotency key.
 type Record struct {
+	Version     int    `json:"v"`
 	State       State  `json:"state"`
 	Fingerprint string `json:"fp"`
 	Status      int    `json:"status,omitempty"`
@@ -53,6 +58,8 @@ type Store interface {
 	Claim(ctx context.Context, orgID uuid.UUID, key, fingerprint string) (Outcome, error)
 	// Commit stores a completed record over a pending claim (same fingerprint).
 	Commit(ctx context.Context, orgID uuid.UUID, key string, rec Record) error
+	// Release deletes a pending claim so a later retry can reclaim the key.
+	Release(ctx context.Context, orgID uuid.UUID, key string) error
 }
 
 type noopStore struct{}
@@ -65,14 +72,35 @@ func (noopStore) Commit(_ context.Context, _ uuid.UUID, _ string, _ Record) erro
 	return nil
 }
 
-// Noop returns a store that always reports Miss and ignores Commit (tests / disabled).
+func (noopStore) Release(_ context.Context, _ uuid.UUID, _ string) error {
+	return nil
+}
+
+// Noop returns a store that always reports Miss and ignores Commit/Release.
 func Noop() Store {
 	return noopStore{}
 }
 
 // Config configures the Redis-backed store.
 type Config struct {
-	TTL time.Duration
+	TTL        time.Duration // completed-record TTL (default 24h)
+	PendingTTL time.Duration // in-flight claim TTL (default 130s)
 }
 
-const defaultTTL = 24 * time.Hour
+const (
+	defaultTTL        = 24 * time.Hour
+	defaultPendingTTL = 130 * time.Second
+)
+
+func (c Config) withDefaults() Config {
+	if c.TTL <= 0 {
+		c.TTL = defaultTTL
+	}
+	if c.PendingTTL <= 0 {
+		c.PendingTTL = defaultPendingTTL
+	}
+	return c
+}
+
+// ErrUnsupportedVersion is returned when a Redis value has an unknown schema version.
+var ErrUnsupportedVersion = fmt.Errorf("idempotency: unsupported record version")
