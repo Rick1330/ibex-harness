@@ -12,6 +12,13 @@ Release notes are human-readable summaries of user-visible changes, security fix
 
 ---
 
+## [0.1.3](https://github.com/Rick1330/ibex-harness/compare/v0.1.2...v0.1.3) (2026-07-27)
+
+
+### Bug Fixes
+
+* **ci:** unblock semantic-pr-title on release PRs ([#404](https://github.com/Rick1330/ibex-harness/issues/404)) ([7e93d5f](https://github.com/Rick1330/ibex-harness/commit/7e93d5f31708975e010f0a44924bd0b42e903480))
+
 ## [0.1.2](https://github.com/Rick1330/ibex-harness/compare/v0.1.1...v0.1.2) (2026-07-27)
 
 
