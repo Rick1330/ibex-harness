@@ -14,6 +14,7 @@ import (
 	apierror "github.com/Rick1330/ibex-harness/packages/apierror"
 	"github.com/Rick1330/ibex-harness/packages/idempotency"
 	"github.com/Rick1330/ibex-harness/packages/metrics"
+	"github.com/Rick1330/ibex-harness/packages/reqid"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/llm"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/validation"
@@ -27,11 +28,12 @@ const (
 
 // idempotencyClaim holds state for a request that owns (or replays) a key.
 type idempotencyClaim struct {
-	orgID  uuid.UUID
-	key    string
-	fp     string
-	hit    idempotency.Record
-	replay bool
+	orgID     uuid.UUID
+	key       string
+	fp        string
+	requestID string
+	hit       idempotency.Record
+	replay    bool
 }
 
 func parseIdempotencyKey(h http.Header) (key string, present bool, fieldErr *apierror.FieldError) {
@@ -78,14 +80,21 @@ func (h chatCompletionHandler) resolveIdempotency(
 		return nil, true
 	}
 	if fieldErr != nil {
-		writeIdempotencyValidation(w, r, h.docsBase, []apierror.FieldError{*fieldErr}, "")
+		writeIdempotencyValidation(idempotencyValidationWrite{
+			w: w, r: r, docsBase: h.docsBase,
+			fields: []apierror.FieldError{*fieldErr},
+		})
 		return nil, false
 	}
 	if parsed.Stream {
-		writeIdempotencyValidation(w, r, h.docsBase, []apierror.FieldError{{
-			Field: "stream", Code: "UNSUPPORTED_WITH_IDEMPOTENCY",
-			Message: "Idempotency-Key requires stream=false",
-		}}, "Idempotency-Key is not supported for streaming requests")
+		writeIdempotencyValidation(idempotencyValidationWrite{
+			w: w, r: r, docsBase: h.docsBase,
+			fields: []apierror.FieldError{{
+				Field: "stream", Code: "UNSUPPORTED_WITH_IDEMPOTENCY",
+				Message: "Idempotency-Key requires stream=false",
+			}},
+			detail: "Idempotency-Key is not supported for streaming requests",
+		})
 		return nil, false
 	}
 	if h.idempotencyStore == nil {
@@ -95,10 +104,18 @@ func (h chatCompletionHandler) resolveIdempotency(
 	return h.claimIdempotency(w, r, parsed, key)
 }
 
-func writeIdempotencyValidation(w http.ResponseWriter, r *http.Request, docsBase string, fields []apierror.FieldError, detail string) {
-	apierror.WriteStatus(w, http.StatusBadRequest, apierror.CodeValidationError,
-		"Request validation failed", requestIDFromContext(r.Context()),
-		apierror.WriteOpts{DocsBase: docsBase, FieldErrors: fields, Detail: detail})
+type idempotencyValidationWrite struct {
+	w        http.ResponseWriter
+	r        *http.Request
+	docsBase string
+	fields   []apierror.FieldError
+	detail   string
+}
+
+func writeIdempotencyValidation(p idempotencyValidationWrite) {
+	apierror.WriteStatus(p.w, http.StatusBadRequest, apierror.CodeValidationError,
+		"Request validation failed", requestIDFromContext(p.r.Context()),
+		apierror.WriteOpts{DocsBase: p.docsBase, FieldErrors: p.fields, Detail: p.detail})
 }
 
 func (h chatCompletionHandler) claimIdempotency(
@@ -147,7 +164,7 @@ func (h chatCompletionHandler) claimWithTimeout(parent context.Context, orgID uu
 	ctx, cancel := context.WithTimeout(parent, h.idempotencyTimeout)
 	defer cancel()
 	start := time.Now()
-	out, err := h.idempotencyStore.Claim(ctx, orgID, key, fp)
+	out, err := h.idempotencyStore.Claim(ctx, idempotency.Token{OrgID: orgID, Key: key}, fp)
 	h.metrics.ObserveIdempotencyDurationSeconds(time.Since(start).Seconds())
 	return out, err
 }
@@ -161,13 +178,19 @@ type claimOutcomeParams struct {
 }
 
 func (h chatCompletionHandler) handleClaimOutcome(p claimOutcomeParams) (*idempotencyClaim, bool) {
+	base := &idempotencyClaim{
+		orgID: p.orgID, key: p.key, fp: p.fp,
+		requestID: requestIDFromContext(p.r.Context()),
+	}
 	switch p.out.Kind {
 	case idempotency.KindMiss:
 		h.metrics.IncIdempotency(metrics.IdempotencyMiss)
-		return &idempotencyClaim{orgID: p.orgID, key: p.key, fp: p.fp}, true
+		return base, true
 	case idempotency.KindHit:
 		h.metrics.IncIdempotency(metrics.IdempotencyHit)
-		return &idempotencyClaim{orgID: p.orgID, key: p.key, fp: p.fp, hit: p.out.Record, replay: true}, true
+		base.hit = p.out.Record
+		base.replay = true
+		return base, true
 	case idempotency.KindConflict:
 		h.metrics.IncIdempotency(metrics.IdempotencyConflict)
 		apierror.WriteStatus(p.w, http.StatusConflict, apierror.CodeIdempotencyKeyReuse,
@@ -217,11 +240,19 @@ func (h chatCompletionHandler) finishIdempotency(claim *idempotencyClaim, status
 	h.commitIdempotency(claim, status, body)
 }
 
+func (h chatCompletionHandler) redisOpContext(claim *idempotencyClaim) (context.Context, context.CancelFunc) {
+	base := context.Background()
+	if claim.requestID != "" {
+		base = reqid.WithRequestID(base, claim.requestID)
+	}
+	return context.WithTimeout(base, h.idempotencyTimeout)
+}
+
 func (h chatCompletionHandler) commitIdempotency(claim *idempotencyClaim, status int, body []byte) {
-	cctx, cancel := context.WithTimeout(context.Background(), h.idempotencyTimeout)
+	cctx, cancel := h.redisOpContext(claim)
 	defer cancel()
 	start := time.Now()
-	err := h.idempotencyStore.Commit(cctx, claim.orgID, claim.key, idempotency.Record{
+	err := h.idempotencyStore.Commit(cctx, idempotency.Token{OrgID: claim.orgID, Key: claim.key}, idempotency.Record{
 		Fingerprint: claim.fp, Status: status, Body: body,
 	})
 	h.metrics.ObserveIdempotencyDurationSeconds(time.Since(start).Seconds())
@@ -233,9 +264,10 @@ func (h chatCompletionHandler) commitIdempotency(claim *idempotencyClaim, status
 }
 
 func (h chatCompletionHandler) releaseIdempotency(claim *idempotencyClaim) {
-	cctx, cancel := context.WithTimeout(context.Background(), h.idempotencyTimeout)
+	cctx, cancel := h.redisOpContext(claim)
 	defer cancel()
-	if err := h.idempotencyStore.Release(cctx, claim.orgID, claim.key); err != nil {
+	err := h.idempotencyStore.Release(cctx, idempotency.Token{OrgID: claim.orgID, Key: claim.key}, claim.fp)
+	if err != nil {
 		h.log.WarnCtx(cctx, "idempotency release failed",
 			"org_id", claim.orgID.String(), "key_len", len(claim.key), "error", err.Error())
 		h.metrics.IncIdempotency(metrics.IdempotencyRedisError)

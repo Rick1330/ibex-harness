@@ -24,140 +24,127 @@ func testStorePending(t *testing.T, ttl, pendingTTL time.Duration) (*RedisStore,
 	return NewRedisStore(client, Config{TTL: ttl, PendingTTL: pendingTTL}), mr
 }
 
+func tok(org uuid.UUID, key string) Token {
+	return Token{OrgID: org, Key: key}
+}
+
+func mustEncode(t *testing.T, rec Record) string {
+	t.Helper()
+	raw, err := encodeRecord(rec)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	return raw
+}
+
+func mustClaim(t *testing.T, store Store, ctx context.Context, tkn Token, fp string) Outcome {
+	t.Helper()
+	out, err := store.Claim(ctx, tkn, fp)
+	if err != nil {
+		t.Fatalf("Claim: %v", err)
+	}
+	return out
+}
+
+func requireKind(t *testing.T, got, want Kind) {
+	t.Helper()
+	if got != want {
+		t.Fatalf("Kind=%v want %v", got, want)
+	}
+}
+
 func TestRedisStore_ClaimMissThenCommitHit(t *testing.T) {
 	t.Parallel()
 	store, mr := testStore(t, time.Hour)
 	org := uuid.MustParse("550e8400-e29b-41d4-a716-446655440000")
 	ctx := context.Background()
+	tkn := tok(org, "k1")
 
-	out, err := store.Claim(ctx, org, "k1", "fp-a")
-	if err != nil {
-		t.Fatalf("Claim: %v", err)
-	}
-	if out.Kind != KindMiss {
-		t.Fatalf("Kind=%v want Miss", out.Kind)
-	}
-	if !mr.Exists(RedisKey(org, "k1")) {
-		t.Fatal("expected pending key")
-	}
-	pendingTTL := mr.TTL(RedisKey(org, "k1"))
-	if pendingTTL <= 0 || pendingTTL > store.PendingTTL()+time.Second {
-		t.Fatalf("pending TTL=%v want ~= %v", pendingTTL, store.PendingTTL())
-	}
+	out := mustClaim(t, store, ctx, tkn, "fp-a")
+	requireKind(t, out.Kind, KindMiss)
+	assertPendingTTL(t, mr, tkn, store.PendingTTL())
 
 	rec := Record{Fingerprint: "fp-a", Status: 200, Body: []byte(`{"ok":true}`)}
-	if err := store.Commit(ctx, org, "k1", rec); err != nil {
+	if err := store.Commit(ctx, tkn, rec); err != nil {
 		t.Fatalf("Commit: %v", err)
 	}
-	completedTTL := mr.TTL(RedisKey(org, "k1"))
-	if completedTTL < time.Minute {
-		t.Fatalf("completed TTL=%v want long", completedTTL)
-	}
+	assertLongTTL(t, mr, tkn)
 
-	out, err = store.Claim(ctx, org, "k1", "fp-a")
-	if err != nil {
-		t.Fatalf("Claim after commit: %v", err)
-	}
-	if out.Kind != KindHit {
-		t.Fatalf("Kind=%v want Hit", out.Kind)
-	}
+	out = mustClaim(t, store, ctx, tkn, "fp-a")
+	requireKind(t, out.Kind, KindHit)
 	if out.Record.Status != 200 || string(out.Record.Body) != `{"ok":true}` {
 		t.Fatalf("record=%+v", out.Record)
+	}
+}
+
+func assertPendingTTL(t *testing.T, mr *miniredis.Miniredis, tkn Token, want time.Duration) {
+	t.Helper()
+	if !mr.Exists(RedisKey(tkn)) {
+		t.Fatal("expected pending key")
+	}
+	got := mr.TTL(RedisKey(tkn))
+	if got <= 0 || got > want+time.Second {
+		t.Fatalf("pending TTL=%v want ~= %v", got, want)
+	}
+}
+
+func assertLongTTL(t *testing.T, mr *miniredis.Miniredis, tkn Token) {
+	t.Helper()
+	if mr.TTL(RedisKey(tkn)) < time.Minute {
+		t.Fatalf("completed TTL=%v want long", mr.TTL(RedisKey(tkn)))
 	}
 }
 
 func TestRedisStore_SameKeyDifferentFingerprintConflict(t *testing.T) {
 	t.Parallel()
 	store, _ := testStore(t, time.Hour)
-	org := uuid.New()
 	ctx := context.Background()
-
-	if _, err := store.Claim(ctx, org, "same", "fp-1"); err != nil {
-		t.Fatalf("Claim: %v", err)
-	}
-	if err := store.Commit(ctx, org, "same", Record{Fingerprint: "fp-1", Status: 200, Body: []byte(`a`)}); err != nil {
+	tkn := tok(uuid.New(), "same")
+	_ = mustClaim(t, store, ctx, tkn, "fp-1")
+	if err := store.Commit(ctx, tkn, Record{Fingerprint: "fp-1", Status: 200, Body: []byte(`a`)}); err != nil {
 		t.Fatalf("Commit: %v", err)
 	}
-	out, err := store.Claim(ctx, org, "same", "fp-2")
-	if err != nil {
-		t.Fatalf("Claim: %v", err)
-	}
-	if out.Kind != KindConflict {
-		t.Fatalf("Kind=%v want Conflict", out.Kind)
-	}
+	requireKind(t, mustClaim(t, store, ctx, tkn, "fp-2").Kind, KindConflict)
 }
 
 func TestRedisStore_InProgress(t *testing.T) {
 	t.Parallel()
 	store, _ := testStore(t, time.Hour)
-	org := uuid.New()
 	ctx := context.Background()
-
-	if _, err := store.Claim(ctx, org, "inflight", "fp"); err != nil {
-		t.Fatalf("Claim: %v", err)
-	}
-	out, err := store.Claim(ctx, org, "inflight", "fp")
-	if err != nil {
-		t.Fatalf("second Claim: %v", err)
-	}
-	if out.Kind != KindInProgress {
-		t.Fatalf("Kind=%v want InProgress", out.Kind)
-	}
+	tkn := tok(uuid.New(), "inflight")
+	_ = mustClaim(t, store, ctx, tkn, "fp")
+	requireKind(t, mustClaim(t, store, ctx, tkn, "fp").Kind, KindInProgress)
 }
 
 func TestRedisStore_CrossOrgIsolation(t *testing.T) {
 	t.Parallel()
 	store, _ := testStore(t, time.Hour)
-	orgA, orgB := uuid.New(), uuid.New()
 	ctx := context.Background()
+	_ = mustClaim(t, store, ctx, tok(uuid.New(), "shared-key"), "fp")
+	requireKind(t, mustClaim(t, store, ctx, tok(uuid.New(), "shared-key"), "fp").Kind, KindMiss)
+}
 
-	if _, err := store.Claim(ctx, orgA, "shared-key", "fp"); err != nil {
-		t.Fatalf("Claim A: %v", err)
+func TestRedisStore_ReleaseAllowsReclaim(t *testing.T) {
+	t.Parallel()
+	store, _ := testStore(t, time.Hour)
+	ctx := context.Background()
+	tkn := tok(uuid.New(), "rel")
+	_ = mustClaim(t, store, ctx, tkn, "fp")
+	if err := store.Release(ctx, tkn, "fp"); err != nil {
+		t.Fatalf("Release: %v", err)
 	}
-	out, err := store.Claim(ctx, orgB, "shared-key", "fp")
-	if err != nil {
-		t.Fatalf("Claim B: %v", err)
-	}
-	if out.Kind != KindMiss {
-		t.Fatalf("org B Kind=%v want Miss", out.Kind)
-	}
+	requireKind(t, mustClaim(t, store, ctx, tkn, "fp").Kind, KindMiss)
 }
 
 func TestRedisStore_ConcurrentClaim(t *testing.T) {
 	t.Parallel()
 	store, _ := testStore(t, time.Hour)
-	org := uuid.New()
 	ctx := context.Background()
+	tkn := tok(uuid.New(), "race")
 
 	const n = 20
-	kinds := make([]Kind, n)
-	var wg sync.WaitGroup
-	wg.Add(n)
-	for i := 0; i < n; i++ {
-		i := i
-		go func() {
-			defer wg.Done()
-			out, err := store.Claim(ctx, org, "race", "fp")
-			if err != nil {
-				t.Errorf("Claim: %v", err)
-				return
-			}
-			kinds[i] = out.Kind
-		}()
-	}
-	wg.Wait()
-
-	misses, inProg := 0, 0
-	for _, k := range kinds {
-		switch k {
-		case KindMiss:
-			misses++
-		case KindInProgress:
-			inProg++
-		default:
-			t.Fatalf("unexpected kind %v", k)
-		}
-	}
+	kinds := concurrentClaimKinds(t, store, ctx, tkn, n)
+	misses, inProg := countKinds(kinds)
 	if misses != 1 {
 		t.Fatalf("misses=%d want 1", misses)
 	}
@@ -166,12 +153,47 @@ func TestRedisStore_ConcurrentClaim(t *testing.T) {
 	}
 }
 
+func concurrentClaimKinds(t *testing.T, store *RedisStore, ctx context.Context, tkn Token, n int) []Kind {
+	t.Helper()
+	kinds := make([]Kind, n)
+	var wg sync.WaitGroup
+	wg.Add(n)
+	for i := 0; i < n; i++ {
+		i := i
+		go func() {
+			defer wg.Done()
+			out, err := store.Claim(ctx, tkn, "fp")
+			if err != nil {
+				t.Errorf("Claim: %v", err)
+				return
+			}
+			kinds[i] = out.Kind
+		}()
+	}
+	wg.Wait()
+	return kinds
+}
+
+func countKinds(kinds []Kind) (misses, inProg int) {
+	for _, k := range kinds {
+		switch k {
+		case KindMiss:
+			misses++
+		case KindInProgress:
+			inProg++
+		default:
+			// Zero values from failed goroutines are ignored by the caller asserts.
+		}
+	}
+	return misses, inProg
+}
+
 func TestRedisStore_ClaimCanceledContext(t *testing.T) {
 	t.Parallel()
 	store, _ := testStore(t, time.Hour)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err := store.Claim(ctx, uuid.New(), "k", "fp")
+	_, err := store.Claim(ctx, tok(uuid.New(), "k"), "fp")
 	if err == nil {
 		t.Fatal("expected error on canceled ctx")
 	}
@@ -180,14 +202,15 @@ func TestRedisStore_ClaimCanceledContext(t *testing.T) {
 func TestNoop_AlwaysMiss(t *testing.T) {
 	t.Parallel()
 	s := Noop()
-	out, err := s.Claim(context.Background(), uuid.New(), "k", "fp")
+	tkn := tok(uuid.New(), "k")
+	out, err := s.Claim(context.Background(), tkn, "fp")
 	if err != nil || out.Kind != KindMiss {
 		t.Fatalf("Noop Claim: %+v %v", out, err)
 	}
-	if err := s.Commit(context.Background(), uuid.New(), "k", Record{}); err != nil {
+	if err := s.Commit(context.Background(), tkn, Record{}); err != nil {
 		t.Fatalf("Noop Commit: %v", err)
 	}
-	if err := s.Release(context.Background(), uuid.New(), "k"); err != nil {
+	if err := s.Release(context.Background(), tkn, "fp"); err != nil {
 		t.Fatalf("Noop Release: %v", err)
 	}
 }
@@ -195,37 +218,65 @@ func TestNoop_AlwaysMiss(t *testing.T) {
 func TestRedisStore_PendingTTLExpiresThenReclaim(t *testing.T) {
 	t.Parallel()
 	store, mr := testStorePending(t, time.Hour, 50*time.Millisecond)
-	org := uuid.New()
 	ctx := context.Background()
-	if _, err := store.Claim(ctx, org, "orphan", "fp"); err != nil {
-		t.Fatalf("Claim: %v", err)
-	}
+	tkn := tok(uuid.New(), "orphan")
+	_ = mustClaim(t, store, ctx, tkn, "fp")
 	mr.FastForward(100 * time.Millisecond)
-	out, err := store.Claim(ctx, org, "orphan", "fp")
-	if err != nil {
-		t.Fatalf("Claim after expiry: %v", err)
+	requireKind(t, mustClaim(t, store, ctx, tkn, "fp").Kind, KindMiss)
+}
+
+func TestRedisStore_CommitDoesNotClobberNewerOwner(t *testing.T) {
+	t.Parallel()
+	store, mr := testStorePending(t, time.Hour, 50*time.Millisecond)
+	ctx := context.Background()
+	tkn := tok(uuid.New(), "stale")
+
+	_ = mustClaim(t, store, ctx, tkn, "fp-old")
+	mr.FastForward(100 * time.Millisecond)
+	_ = mustClaim(t, store, ctx, tkn, "fp-new")
+	if err := store.Commit(ctx, tkn, Record{Fingerprint: "fp-new", Status: 200, Body: []byte(`new`)}); err != nil {
+		t.Fatalf("Commit new: %v", err)
 	}
-	if out.Kind != KindMiss {
-		t.Fatalf("Kind=%v want Miss after pending TTL", out.Kind)
+	// Stale original claimant must not overwrite the newer completed record.
+	if err := store.Commit(ctx, tkn, Record{Fingerprint: "fp-old", Status: 200, Body: []byte(`old`)}); err != nil {
+		t.Fatalf("Commit old: %v", err)
+	}
+	out := mustClaim(t, store, ctx, tkn, "fp-new")
+	requireKind(t, out.Kind, KindHit)
+	if string(out.Record.Body) != "new" {
+		t.Fatalf("body=%q want new", out.Record.Body)
+	}
+}
+
+func TestRedisStore_ReleaseWrongFingerprintNoOp(t *testing.T) {
+	t.Parallel()
+	store, mr := testStore(t, time.Hour)
+	ctx := context.Background()
+	tkn := tok(uuid.New(), "own")
+	_ = mustClaim(t, store, ctx, tkn, "fp-a")
+	if err := store.Release(ctx, tkn, "fp-other"); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+	if !mr.Exists(RedisKey(tkn)) {
+		t.Fatal("expected key retained for wrong fingerprint release")
 	}
 }
 
 func TestRedisStore_inspectExisting_reclaimAfterExpiry(t *testing.T) {
 	t.Parallel()
 	store, mr := testStorePending(t, time.Hour, time.Second)
-	org := uuid.New()
-	redisKey := RedisKey(org, "race")
-	pending := mustEncodeRecord(pendingRecord("fp"))
-	mr.Set(redisKey, pending)
+	tkn := tok(uuid.New(), "race")
+	redisKey := RedisKey(tkn)
+	if err := mr.Set(redisKey, mustEncode(t, pendingRecord("fp"))); err != nil {
+		t.Fatal(err)
+	}
 	mr.SetTTL(redisKey, time.Millisecond)
 	mr.FastForward(10 * time.Millisecond)
 	out, err := store.inspectExisting(context.Background(), redisKey, "fp")
 	if err != nil {
 		t.Fatalf("inspectExisting: %v", err)
 	}
-	if out.Kind != KindMiss {
-		t.Fatalf("Kind=%v want Miss via reclaim", out.Kind)
-	}
+	requireKind(t, out.Kind, KindMiss)
 }
 
 func TestRedisStore_withDefaults(t *testing.T) {
@@ -241,15 +292,15 @@ func TestRedisStore_RedisDownErrors(t *testing.T) {
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	store := NewRedisStore(client, Config{TTL: time.Hour})
-	org := uuid.New()
+	tkn := tok(uuid.New(), "k")
 	mr.Close()
-	if _, err := store.Claim(context.Background(), org, "k", "fp"); err == nil {
+	if _, err := store.Claim(context.Background(), tkn, "fp"); err == nil {
 		t.Fatal("expected Claim error")
 	}
-	if err := store.Commit(context.Background(), org, "k", Record{Fingerprint: "fp", Status: 200}); err == nil {
+	if err := store.Commit(context.Background(), tkn, Record{Fingerprint: "fp", Status: 200}); err == nil {
 		t.Fatal("expected Commit error")
 	}
-	if err := store.Release(context.Background(), org, "k"); err == nil {
+	if err := store.Release(context.Background(), tkn, "fp"); err == nil {
 		t.Fatal("expected Release error")
 	}
 }
@@ -257,22 +308,21 @@ func TestRedisStore_RedisDownErrors(t *testing.T) {
 func TestRedisStore_reclaimWhenKeyExists(t *testing.T) {
 	t.Parallel()
 	store, mr := testStore(t, time.Hour)
-	org := uuid.New()
-	redisKey := RedisKey(org, "taken")
-	pending := mustEncodeRecord(pendingRecord("fp"))
-	mr.Set(redisKey, pending)
+	tkn := tok(uuid.New(), "taken")
+	redisKey := RedisKey(tkn)
+	if err := mr.Set(redisKey, mustEncode(t, pendingRecord("fp"))); err != nil {
+		t.Fatal(err)
+	}
 	out, err := store.reclaim(context.Background(), redisKey, "fp")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.Kind != KindInProgress {
-		t.Fatalf("Kind=%v want InProgress", out.Kind)
-	}
+	requireKind(t, out.Kind, KindInProgress)
 }
 
 func TestEncodeRecord_ZeroVersionDefaults(t *testing.T) {
 	t.Parallel()
-	raw := mustEncodeRecord(Record{State: StatePending, Fingerprint: "x"})
+	raw := mustEncode(t, Record{State: StatePending, Fingerprint: "x"})
 	rec, err := decodeRecord([]byte(raw))
 	if err != nil {
 		t.Fatal(err)
@@ -296,7 +346,7 @@ func TestRedisStore_reclaimRedisDown(t *testing.T) {
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	store := NewRedisStore(client, Config{TTL: time.Hour})
 	mr.Close()
-	_, err := store.reclaim(context.Background(), "idempotency:"+uuid.New().String()+":k", "fp")
+	_, err := store.reclaim(context.Background(), RedisKey(tok(uuid.New(), "k")), "fp")
 	if err == nil {
 		t.Fatal("expected reclaim error")
 	}
@@ -307,45 +357,25 @@ func TestRedisStore_inspectExistingGetError(t *testing.T) {
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	store := NewRedisStore(client, Config{TTL: time.Hour})
-	org := uuid.New()
-	key := "geterr"
-	if _, err := store.Claim(context.Background(), org, key, "fp"); err != nil {
+	tkn := tok(uuid.New(), "geterr")
+	if _, err := store.Claim(context.Background(), tkn, "fp"); err != nil {
 		t.Fatal(err)
 	}
 	mr.Close()
-	_, err := store.Claim(context.Background(), org, key, "fp")
+	_, err := store.Claim(context.Background(), tkn, "fp")
 	if err == nil {
 		t.Fatal("expected Claim error on second attempt with redis down")
-	}
-}
-
-func TestRedisStore_ReleaseAllowsReclaim(t *testing.T) {
-	t.Parallel()
-	store, _ := testStore(t, time.Hour)
-	org := uuid.New()
-	ctx := context.Background()
-	if _, err := store.Claim(ctx, org, "rel", "fp"); err != nil {
-		t.Fatalf("Claim: %v", err)
-	}
-	if err := store.Release(ctx, org, "rel"); err != nil {
-		t.Fatalf("Release: %v", err)
-	}
-	out, err := store.Claim(ctx, org, "rel", "fp")
-	if err != nil {
-		t.Fatalf("Claim after release: %v", err)
-	}
-	if out.Kind != KindMiss {
-		t.Fatalf("Kind=%v want Miss", out.Kind)
 	}
 }
 
 func TestRedisStore_RejectUnsupportedVersion(t *testing.T) {
 	t.Parallel()
 	store, mr := testStore(t, time.Hour)
-	org := uuid.New()
-	key := RedisKey(org, "badver")
-	mr.Set(key, `{"v":99,"state":"completed","fp":"fp"}`)
-	_, err := store.Claim(context.Background(), org, "badver", "fp")
+	tkn := tok(uuid.New(), "badver")
+	if err := mr.Set(RedisKey(tkn), `{"v":99,"state":"completed","fp":"fp"}`); err != nil {
+		t.Fatal(err)
+	}
+	_, err := store.Claim(context.Background(), tkn, "fp")
 	if err == nil {
 		t.Fatal("expected unsupported version error")
 	}
@@ -362,7 +392,7 @@ func TestDecodeRecord_UnsupportedVersion(t *testing.T) {
 func TestRedisKey_Format(t *testing.T) {
 	t.Parallel()
 	org := uuid.MustParse("550e8400-e29b-41d4-a716-446655440000")
-	got := RedisKey(org, "abc")
+	got := RedisKey(tok(org, "abc"))
 	want := "idempotency:550e8400-e29b-41d4-a716-446655440000:abc"
 	if got != want {
 		t.Fatalf("got %q want %q", got, want)

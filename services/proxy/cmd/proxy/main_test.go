@@ -102,7 +102,7 @@ func TestSetupRateLimiter_InvalidURL(t *testing.T) {
 func TestNewIdempotencyStore_NilAndRedis(t *testing.T) {
 	t.Parallel()
 	noop := newIdempotencyStore(nil, config.Config{IdempotencyTTL: time.Hour})
-	out, err := noop.Claim(context.Background(), uuid.New(), "k", "fp")
+	out, err := noop.Claim(context.Background(), idempotency.Token{OrgID: uuid.New(), Key: "k"}, "fp")
 	if err != nil || out.Kind != idempotency.KindMiss {
 		t.Fatalf("noop: %+v %v", out, err)
 	}
@@ -110,7 +110,7 @@ func TestNewIdempotencyStore_NilAndRedis(t *testing.T) {
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
 	store := newIdempotencyStore(client, config.Config{IdempotencyTTL: time.Hour})
-	out, err = store.Claim(context.Background(), uuid.New(), "k2", "fp")
+	out, err = store.Claim(context.Background(), idempotency.Token{OrgID: uuid.New(), Key: "k2"}, "fp")
 	if err != nil || out.Kind != idempotency.KindMiss {
 		t.Fatalf("redis store: %+v %v", out, err)
 	}

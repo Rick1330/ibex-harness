@@ -24,18 +24,18 @@ type errIdempotencyStore struct {
 	claimOut   idempotency.Outcome
 }
 
-func (e errIdempotencyStore) Claim(context.Context, uuid.UUID, string, string) (idempotency.Outcome, error) {
+func (e errIdempotencyStore) Claim(context.Context, idempotency.Token, string) (idempotency.Outcome, error) {
 	if e.claimErr != nil {
 		return idempotency.Outcome{}, e.claimErr
 	}
 	return e.claimOut, nil
 }
 
-func (e errIdempotencyStore) Commit(context.Context, uuid.UUID, string, idempotency.Record) error {
+func (e errIdempotencyStore) Commit(context.Context, idempotency.Token, idempotency.Record) error {
 	return e.commitErr
 }
 
-func (e errIdempotencyStore) Release(context.Context, uuid.UUID, string) error {
+func (e errIdempotencyStore) Release(context.Context, idempotency.Token, string) error {
 	return e.releaseErr
 }
 
@@ -82,13 +82,14 @@ func TestUnit_FinishIdempotency_OversizedReleases(t *testing.T) {
 		log:                logger.Discard("t"),
 	}
 	org := uuid.MustParse(testChatOrgID)
+	tkn := idempotency.Token{OrgID: org, Key: "big"}
 	claim := &idempotencyClaim{orgID: org, key: "big", fp: "fp"}
-	if _, err := mrStore.Claim(context.Background(), org, "big", "fp"); err != nil {
+	if _, err := mrStore.Claim(context.Background(), tkn, "fp"); err != nil {
 		t.Fatal(err)
 	}
 	body := make([]byte, validation.MaxProviderResponseBytes+1)
 	h.finishIdempotency(claim, http.StatusOK, body)
-	out, err := mrStore.Claim(context.Background(), org, "big", "fp")
+	out, err := mrStore.Claim(context.Background(), tkn, "fp")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,8 +147,14 @@ func TestUnit_CapturingWriter_CapAndStatus(t *testing.T) {
 	inner := httptest.NewRecorder()
 	cw := &capturingWriter{ResponseWriter: inner}
 	n, err := cw.Write([]byte("hi"))
-	if err != nil || n != 2 || cw.status != http.StatusOK {
-		t.Fatalf("write: n=%d err=%v status=%d", n, err, cw.status)
+	if err != nil {
+		t.Fatalf("write err=%v", err)
+	}
+	if n != 2 {
+		t.Fatalf("write n=%d want 2", n)
+	}
+	if cw.status != http.StatusOK {
+		t.Fatalf("status=%d want %d", cw.status, http.StatusOK)
 	}
 	if string(cw.capturedBody()) != "hi" {
 		t.Fatalf("body=%q", cw.capturedBody())
@@ -156,8 +163,11 @@ func TestUnit_CapturingWriter_CapAndStatus(t *testing.T) {
 	cw2 := &capturingWriter{ResponseWriter: httptest.NewRecorder()}
 	_, _ = cw2.Write(big)
 	_, _ = cw2.Write([]byte("y"))
-	if !cw2.capped || cw2.capturedBody() != nil {
-		t.Fatal("expected capped capture skip")
+	if !cw2.capped {
+		t.Fatal("expected capped=true")
+	}
+	if cw2.capturedBody() != nil {
+		t.Fatal("expected captured body to be nil after cap")
 	}
 }
 

@@ -221,7 +221,7 @@ Used by: **proxy** (`services/proxy`)
 | `IBEX_SESSION_GETORCREATE_TIMEOUT` | No | `50ms` | Hot-path GetOrCreate deadline; timeout fails open (omit session header, skip checkpoint) | |
 | `IBEX_SESSION_IDLE_TIMEOUT` | No | `45m` | Mark `active` sessions `abandoned` when `updated_at` is older than this | Requires `POSTGRES_DSN`; proxy ticker |
 | `IBEX_SESSION_SWEEP_INTERVAL` | No | `1m` | How often the idle sweeper runs; must be ≤ idle timeout | Multi-replica safe via advisory lock |
-| `IBEX_IDEMPOTENCY_TTL` | No | `24h` | Redis TTL for `idempotency:{org_id}:{key}` chat Idempotency-Key records ([ADR-0035](/docs/adr/0035-chat-idempotency-key)) | Requires `REDIS_URL`; empty Redis → Noop (no dedupe) |
+| `IBEX_IDEMPOTENCY_TTL` | No | `24h` | Redis TTL for completed `idempotency:{org_id}:{key}` chat Idempotency-Key records ([ADR-0035](/docs/adr/0035-chat-idempotency-key)). Pending claims use a separate ~9m package default. | Requires `REDIS_URL`; empty Redis → Noop (no dedupe) |
 | `IBEX_IDEMPOTENCY_REDIS_TIMEOUT` | No | `50ms` | Per claim/commit Redis budget; timeout fail-opens without dedupe | Aligns with auth validate budget class |
 | `IBEX_ERROR_DOCS_BASE` | No | (empty) | Base URL for `docs_url` in error envelope | Omit in dev when unset |
 | `IBEX_LLM_MODE` | No | `mock` | `mock` \| `live` — `mock` registers an in-process stub provider (immediate JSON/SSE, no OpenAI); `live` registers OpenAI per [ADR-0026](/docs/adr/0026-openai-client-design). **Rejected when `IBEX_ENV=production`** | Default `mock` for CI/dev without API key; production must use `live` |

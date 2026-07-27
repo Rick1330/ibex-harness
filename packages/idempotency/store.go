@@ -36,6 +36,12 @@ const (
 // CurrentRecordVersion is the JSON schema version written by this package.
 const CurrentRecordVersion = 1
 
+// Token identifies an org-scoped idempotency key.
+type Token struct {
+	OrgID uuid.UUID
+	Key   string
+}
+
 // Record is the Redis value for an idempotency key.
 type Record struct {
 	Version     int    `json:"v"`
@@ -53,26 +59,26 @@ type Outcome struct {
 
 // Store claims and commits org-scoped idempotency keys.
 type Store interface {
-	// Claim reserves or inspects the key for orgID.
+	// Claim reserves or inspects the key for tok.
 	// A non-nil error is an infrastructure failure (caller should fail-open).
-	Claim(ctx context.Context, orgID uuid.UUID, key, fingerprint string) (Outcome, error)
-	// Commit stores a completed record over a pending claim (same fingerprint).
-	Commit(ctx context.Context, orgID uuid.UUID, key string, rec Record) error
-	// Release deletes a pending claim so a later retry can reclaim the key.
-	Release(ctx context.Context, orgID uuid.UUID, key string) error
+	Claim(ctx context.Context, tok Token, fingerprint string) (Outcome, error)
+	// Commit stores a completed record only when the key is still pending with the same fingerprint.
+	Commit(ctx context.Context, tok Token, rec Record) error
+	// Release deletes a pending claim with matching fingerprint so a later retry can reclaim.
+	Release(ctx context.Context, tok Token, fingerprint string) error
 }
 
 type noopStore struct{}
 
-func (noopStore) Claim(_ context.Context, _ uuid.UUID, _, _ string) (Outcome, error) {
+func (noopStore) Claim(_ context.Context, _ Token, _ string) (Outcome, error) {
 	return Outcome{Kind: KindMiss}, nil
 }
 
-func (noopStore) Commit(_ context.Context, _ uuid.UUID, _ string, _ Record) error {
+func (noopStore) Commit(_ context.Context, _ Token, _ Record) error {
 	return nil
 }
 
-func (noopStore) Release(_ context.Context, _ uuid.UUID, _ string) error {
+func (noopStore) Release(_ context.Context, _ Token, _ string) error {
 	return nil
 }
 
@@ -84,12 +90,14 @@ func Noop() Store {
 // Config configures the Redis-backed store.
 type Config struct {
 	TTL        time.Duration // completed-record TTL (default 24h)
-	PendingTTL time.Duration // in-flight claim TTL (default 130s)
+	PendingTTL time.Duration // in-flight claim TTL (default 9m)
 }
 
 const (
-	defaultTTL        = 24 * time.Hour
-	defaultPendingTTL = 130 * time.Second
+	defaultTTL = 24 * time.Hour
+	// defaultPendingTTL covers worst-case OpenAI Complete with retries:
+	// RequestTimeout 120s × (MaxRetries 3 + 1) plus backoff headroom.
+	defaultPendingTTL = 9 * time.Minute
 )
 
 func (c Config) withDefaults() Config {
@@ -104,3 +112,9 @@ func (c Config) withDefaults() Config {
 
 // ErrUnsupportedVersion is returned when a Redis value has an unknown schema version.
 var ErrUnsupportedVersion = fmt.Errorf("idempotency: unsupported record version")
+
+// RedisKey returns the org-scoped Redis key for tok.
+// Format: idempotency:{org_id}:{key}
+func RedisKey(tok Token) string {
+	return fmt.Sprintf("idempotency:%s:%s", tok.OrgID.String(), tok.Key)
+}

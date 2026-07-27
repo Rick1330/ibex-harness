@@ -3,14 +3,17 @@ package idempotency
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 )
 
-// RedisStore implements Store with Redis SETNX + GET.
+// errCASSkip means the key is no longer owned by this claim (no-op success).
+var errCASSkip = errors.New("idempotency: cas skip")
+
+// RedisStore implements Store with Redis SETNX + optimistic CAS.
 type RedisStore struct {
 	client     redis.UniversalClient
 	ttl        time.Duration
@@ -24,9 +27,12 @@ func NewRedisStore(client redis.UniversalClient, cfg Config) *RedisStore {
 }
 
 // Claim implements Store.
-func (s *RedisStore) Claim(ctx context.Context, orgID uuid.UUID, key, fingerprint string) (Outcome, error) {
-	redisKey := RedisKey(orgID, key)
-	pending := mustEncodeRecord(pendingRecord(fingerprint))
+func (s *RedisStore) Claim(ctx context.Context, tok Token, fingerprint string) (Outcome, error) {
+	redisKey := RedisKey(tok)
+	pending, err := encodeRecord(pendingRecord(fingerprint))
+	if err != nil {
+		return Outcome{}, fmt.Errorf("idempotency.Claim encode: %w", err)
+	}
 	ok, err := s.client.SetNX(ctx, redisKey, pending, s.pendingTTL).Result()
 	if err != nil {
 		return Outcome{}, fmt.Errorf("idempotency.Claim SETNX: %w", err)
@@ -59,7 +65,10 @@ func (s *RedisStore) inspectExisting(ctx context.Context, redisKey, fingerprint 
 }
 
 func (s *RedisStore) reclaim(ctx context.Context, redisKey, fingerprint string) (Outcome, error) {
-	pending := mustEncodeRecord(pendingRecord(fingerprint))
+	pending, err := encodeRecord(pendingRecord(fingerprint))
+	if err != nil {
+		return Outcome{}, fmt.Errorf("idempotency.Claim reclaim encode: %w", err)
+	}
 	ok, err := s.client.SetNX(ctx, redisKey, pending, s.pendingTTL).Result()
 	if err != nil {
 		return Outcome{}, fmt.Errorf("idempotency.Claim reclaim SETNX: %w", err)
@@ -71,22 +80,85 @@ func (s *RedisStore) reclaim(ctx context.Context, redisKey, fingerprint string) 
 }
 
 // Commit implements Store.
-func (s *RedisStore) Commit(ctx context.Context, orgID uuid.UUID, key string, rec Record) error {
+func (s *RedisStore) Commit(ctx context.Context, tok Token, rec Record) error {
 	rec.Version = CurrentRecordVersion
 	rec.State = StateCompleted
-	raw := mustEncodeRecord(rec)
-	if err := s.client.Set(ctx, RedisKey(orgID, key), raw, s.ttl).Err(); err != nil {
-		return fmt.Errorf("idempotency.Commit SET: %w", err)
+	raw, err := encodeRecord(rec)
+	if err != nil {
+		return fmt.Errorf("idempotency.Commit encode: %w", err)
+	}
+	redisKey := RedisKey(tok)
+	err = s.casPending(ctx, redisKey, rec.Fingerprint, func(pipe redis.Pipeliner) error {
+		pipe.Set(ctx, redisKey, raw, s.ttl)
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("idempotency.Commit: %w", err)
 	}
 	return nil
 }
 
 // Release implements Store.
-func (s *RedisStore) Release(ctx context.Context, orgID uuid.UUID, key string) error {
-	if err := s.client.Del(ctx, RedisKey(orgID, key)).Err(); err != nil {
-		return fmt.Errorf("idempotency.Release DEL: %w", err)
+func (s *RedisStore) Release(ctx context.Context, tok Token, fingerprint string) error {
+	redisKey := RedisKey(tok)
+	err := s.casPending(ctx, redisKey, fingerprint, func(pipe redis.Pipeliner) error {
+		pipe.Del(ctx, redisKey)
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("idempotency.Release: %w", err)
 	}
 	return nil
+}
+
+func (s *RedisStore) casPending(
+	ctx context.Context,
+	redisKey, fingerprint string,
+	mutate func(redis.Pipeliner) error,
+) error {
+	const maxTries = 3
+	own := pendingOwner{redisKey: redisKey, fingerprint: fingerprint}
+	for try := 0; try < maxTries; try++ {
+		err := s.client.Watch(ctx, func(tx *redis.Tx) error {
+			return s.casPendingTx(ctx, tx, own, mutate)
+		}, redisKey)
+		if err == nil || errors.Is(err, errCASSkip) {
+			return nil
+		}
+		if err == redis.TxFailedErr {
+			continue
+		}
+		return err
+	}
+	return redis.TxFailedErr
+}
+
+type pendingOwner struct {
+	redisKey, fingerprint string
+}
+
+func (s *RedisStore) casPendingTx(
+	ctx context.Context,
+	tx *redis.Tx,
+	own pendingOwner,
+	mutate func(redis.Pipeliner) error,
+) error {
+	cur, err := tx.Get(ctx, own.redisKey).Bytes()
+	if err == redis.Nil {
+		return errCASSkip
+	}
+	if err != nil {
+		return err
+	}
+	existing, err := decodeRecord(cur)
+	if err != nil {
+		return err
+	}
+	if existing.State != StatePending || existing.Fingerprint != own.fingerprint {
+		return errCASSkip
+	}
+	_, err = tx.TxPipelined(ctx, mutate)
+	return err
 }
 
 func pendingRecord(fingerprint string) Record {
@@ -97,16 +169,15 @@ func pendingRecord(fingerprint string) Record {
 	}
 }
 
-func mustEncodeRecord(rec Record) string {
+func encodeRecord(rec Record) (string, error) {
 	if rec.Version == 0 {
 		rec.Version = CurrentRecordVersion
 	}
 	b, err := json.Marshal(rec)
 	if err != nil {
-		// Record is a closed schema; marshal failures indicate programmer error.
-		panic("idempotency: encode record: " + err.Error())
+		return "", err
 	}
-	return string(b)
+	return string(b), nil
 }
 
 func decodeRecord(raw []byte) (Record, error) {
