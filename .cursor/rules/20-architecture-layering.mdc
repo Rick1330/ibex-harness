@@ -17,7 +17,7 @@ Repository / Store
 Infrastructure (DB, Redis, gRPC)
 ```
 
-A lower layer must never import or depend on a higher layer. Violations are detected by `go-arch-lint` in CI.
+A lower layer must never import or depend on a higher layer. Violations are detected by `depguard` in `golangci-lint` CI (see `.golangci.yml` rule `packages-no-services` and `.golangci-grandfather.md`).
 
 ```go
 // WRONG — store calls service; inverts dependency

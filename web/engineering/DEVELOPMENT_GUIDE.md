@@ -405,6 +405,16 @@ On PR:
 
 - Go: `golangci-lint`, `go test ./...`
 - Python: `ruff`, `mypy`, `pytest`
+
+#### Go architecture lint (`depguard`)
+
+Import boundaries are enforced in CI via `golangci-lint` (not a separate `go-arch-lint` job):
+
+- **Rule:** `packages/**` must not import `github.com/Rick1330/ibex-harness/services/**` (see `.golangci.yml` → `depguard.rules.packages-no-services`).
+- **Complexity:** `funlen` and `gocognit` are enabled; existing production hotspots are grandfathered via `issues.new` (documented in `.golangci-grandfather.md`).
+- **Local run:** `make lint-go` or `golangci-lint run ./packages/... ./services/auth/... ./services/proxy/...` (install v2.4+; CI uses v2.8.0).
+
+Proxy `database/sql` usage in `cmd/proxy/main.go` remains a documented MF-001 exception until an ADR or migration.
 - TypeScript: `eslint`, `tsc`, `vitest`
 - Security: secret scan, dependency scan, container scan
 - Contract checks: protobuf compilation + generated code consistency

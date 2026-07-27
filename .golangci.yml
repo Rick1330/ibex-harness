@@ -1,6 +1,7 @@
 version: "2"
 run:
   timeout: 3m
+  relative-path-mode: gomod
 formatters:
   enable:
     - gofmt
@@ -11,6 +12,9 @@ linters:
     - staticcheck
     - revive
     - errcheck
+    - depguard
+    - funlen
+    - gocognit
   disable:
     - gocyclo
     - prealloc
@@ -21,6 +25,32 @@ linters:
           disabled: true
         - name: exported
           disabled: true
+    depguard:
+      rules:
+        packages-no-services:
+          list-mode: lax
+          files:
+            - "!$all"
+            - "packages/**"
+          deny:
+            - pkg: github.com/Rick1330/ibex-harness/services
+              desc: packages/* must not import services/* (20-architecture-layering)
+    funlen:
+      lines: 40
+      statements: 30
+    gocognit:
+      min-complexity: 10
+  exclusions:
+    warn-unused: true
+    rules:
+      # Table-driven tests routinely exceed funlen; Wave 2+ shrinks prod hotspots (MF-016).
+      - path: _test\.go
+        linters:
+          - funlen
+          - gocognit
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0
+  # Grandfather existing prod complexity; fail only on new violations vs main (MF-002).
+  new: true
+  new-from-merge-base: main
