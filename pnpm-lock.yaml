@@ -47,16 +47,16 @@ importers:
         version: 12.42.2(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       fumadocs-core:
         specifier: ^14.0.0
-        version: 14.7.7(@types/react@19.2.17)(next@16.2.11(@playwright/test@1.61.1)(@types/node@22.19.21)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+        version: 14.7.7(@types/react@19.2.17)(next@16.2.11(@playwright/test@1.62.0)(@types/node@22.19.21)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       fumadocs-mdx:
         specifier: ^11.0.0
-        version: 11.10.1(fumadocs-core@14.7.7(@types/react@19.2.17)(next@16.2.11(@playwright/test@1.61.1)(@types/node@22.19.21)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(next@16.2.11(@playwright/test@1.61.1)(@types/node@22.19.21)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react@19.2.8)(vite@8.1.5(@types/node@22.19.21)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))
+        version: 11.10.1(fumadocs-core@14.7.7(@types/react@19.2.17)(next@16.2.11(@playwright/test@1.62.0)(@types/node@22.19.21)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(next@16.2.11(@playwright/test@1.62.0)(@types/node@22.19.21)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react@19.2.8)(vite@8.1.5(@types/node@22.19.21)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))
       fumadocs-ui:
         specifier: ^14.0.0
-        version: 14.7.7(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(fumadocs-core@14.7.7(@types/react@19.2.17)(next@16.2.11(@playwright/test@1.61.1)(@types/node@22.19.21)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(next@16.2.11(@playwright/test@1.61.1)(@types/node@22.19.21)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.2)
+        version: 14.7.7(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(fumadocs-core@14.7.7(@types/react@19.2.17)(next@16.2.11(@playwright/test@1.62.0)(@types/node@22.19.21)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(next@16.2.11(@playwright/test@1.62.0)(@types/node@22.19.21)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.2)
       geist:
         specifier: ^1.3.0
-        version: 1.7.2(next@16.2.11(@playwright/test@1.61.1)(@types/node@22.19.21)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))
+        version: 1.7.2(next@16.2.11(@playwright/test@1.62.0)(@types/node@22.19.21)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))
       lucide-react:
         specifier: ^1.24.0
         version: 1.24.0(react@19.2.8)
@@ -65,7 +65,7 @@ importers:
         version: 11.16.0
       next:
         specifier: 16.2.11
-        version: 16.2.11(@playwright/test@1.61.1)(@types/node@22.19.21)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+        version: 16.2.11(@playwright/test@1.62.0)(@types/node@22.19.21)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       next-themes:
         specifier: ^0.4.0
         version: 0.4.6(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -89,8 +89,8 @@ importers:
         version: 4.4.3
     devDependencies:
       '@playwright/test':
-        specifier: ^1.61.1
-        version: 1.61.1
+        specifier: ^1.62.0
+        version: 1.62.0
       '@tailwindcss/postcss':
         specifier: ^4.3.2
         version: 4.3.2
@@ -724,9 +724,9 @@ packages:
   '@oxc-project/types@0.139.0':
     resolution: {integrity: sha512-r9gHphtCs+1M7J0pw6Sn/hh/Wpa/iQrOOkrNAlVLF/gHq+/CJmHIWKKUUhdWjcD6CIa8idarspCsASiXCXvFUw==}
 
-  '@playwright/test@1.61.1':
-    resolution: {integrity: sha512-8nKv6+0RJSL9FE4jYOEGXnPeM/Hg12qZpmqzZjRh3qM0Y7c3z1mrOTfFLids72RDQYVh9WpLEfR5WdpNX4fkig==}
-    engines: {node: '>=18'}
+  '@playwright/test@1.62.0':
+    resolution: {integrity: sha512-9zOJ6ZQRAena31MpOH9VSzIz8Ou3YJ/wtY/eQm5T2uhfhG7/U3COrMS8xOtUrZrp9OgdmzEnIYODye3nY1VqzA==}
+    engines: {node: '>=20'}
     hasBin: true
 
   '@poppinss/colors@4.1.6':
@@ -2940,14 +2940,14 @@ packages:
     resolution: {integrity: sha512-RvwwcruNjI1ncT5xRakeyS9Lf8lcItv34KD+aif+VH9kduAyfYBipGh12274xtenIPZ119/R9BdTBa8gAwSh0A==}
     engines: {node: '>=12'}
 
-  playwright-core@1.61.1:
-    resolution: {integrity: sha512-h7Qlt6m4REp25qvIdvbDtVmD4LqVXfpRxhORv9L0jzETM05p4fuPJ3dKyuSXQxDSbXnmS79HAgi9589lGSpLkg==}
-    engines: {node: '>=18'}
+  playwright-core@1.62.0:
+    resolution: {integrity: sha512-nsNRyq0r2zsG8AcRHWknc9QRA5XCueC7gWMrs+Gx2tlZn9hcl8zudfh00lhJPY1DE7NmZ6bDsT9g2yey8mXljA==}
+    engines: {node: '>=20'}
     hasBin: true
 
-  playwright@1.61.1:
-    resolution: {integrity: sha512-DWnY5o3YbLWK4GovuAVwpqL+1VwGNdUGrRr++8j8PtQQzvAVZUIMjKQ90fY689sEJZJBbZVw1rXaOKSTitkzPQ==}
-    engines: {node: '>=18'}
+  playwright@1.62.0:
+    resolution: {integrity: sha512-Z14dG305dgaLu6foB1TXQagFiW8JfSUIUaUuPaKQ6NtBPKF1P/qXcqfh6c6K/icPqdy37JmjbiBXf6JNg6Sylw==}
+    engines: {node: '>=20'}
     hasBin: true
 
   points-on-curve@0.2.0:
@@ -3930,9 +3930,9 @@ snapshots:
 
   '@oxc-project/types@0.139.0': {}
 
-  '@playwright/test@1.61.1':
+  '@playwright/test@1.62.0':
     dependencies:
-      playwright: 1.61.1
+      playwright: 1.62.0
 
   '@poppinss/colors@4.1.6':
     dependencies:
@@ -5413,7 +5413,7 @@ snapshots:
   fsevents@2.3.3:
     optional: true
 
-  fumadocs-core@14.7.7(@types/react@19.2.17)(next@16.2.11(@playwright/test@1.61.1)(@types/node@22.19.21)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8):
+  fumadocs-core@14.7.7(@types/react@19.2.17)(next@16.2.11(@playwright/test@1.62.0)(@types/node@22.19.21)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8):
     dependencies:
       '@formatjs/intl-localematcher': 0.5.10
       '@orama/orama': 2.1.1
@@ -5431,21 +5431,21 @@ snapshots:
       shiki: 2.5.0
       unist-util-visit: 5.1.0
     optionalDependencies:
-      next: 16.2.11(@playwright/test@1.61.1)(@types/node@22.19.21)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      next: 16.2.11(@playwright/test@1.62.0)(@types/node@22.19.21)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       react: 19.2.8
       react-dom: 19.2.8(react@19.2.8)
     transitivePeerDependencies:
       - '@types/react'
       - supports-color
 
-  fumadocs-mdx@11.10.1(fumadocs-core@14.7.7(@types/react@19.2.17)(next@16.2.11(@playwright/test@1.61.1)(@types/node@22.19.21)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(next@16.2.11(@playwright/test@1.61.1)(@types/node@22.19.21)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react@19.2.8)(vite@8.1.5(@types/node@22.19.21)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0)):
+  fumadocs-mdx@11.10.1(fumadocs-core@14.7.7(@types/react@19.2.17)(next@16.2.11(@playwright/test@1.62.0)(@types/node@22.19.21)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(next@16.2.11(@playwright/test@1.62.0)(@types/node@22.19.21)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react@19.2.8)(vite@8.1.5(@types/node@22.19.21)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0)):
     dependencies:
       '@mdx-js/mdx': 3.1.1
       '@standard-schema/spec': 1.1.0
       chokidar: 4.0.3
       esbuild: 0.28.1
       estree-util-value-to-estree: 3.5.0
-      fumadocs-core: 14.7.7(@types/react@19.2.17)(next@16.2.11(@playwright/test@1.61.1)(@types/node@22.19.21)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      fumadocs-core: 14.7.7(@types/react@19.2.17)(next@16.2.11(@playwright/test@1.62.0)(@types/node@22.19.21)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       js-yaml: 4.3.0
       lru-cache: 11.5.1
       picocolors: 1.1.1
@@ -5457,13 +5457,13 @@ snapshots:
       unist-util-visit: 5.1.0
       zod: 4.4.3
     optionalDependencies:
-      next: 16.2.11(@playwright/test@1.61.1)(@types/node@22.19.21)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      next: 16.2.11(@playwright/test@1.62.0)(@types/node@22.19.21)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       react: 19.2.8
       vite: 8.1.5(@types/node@22.19.21)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0)
     transitivePeerDependencies:
       - supports-color
 
-  fumadocs-ui@14.7.7(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(fumadocs-core@14.7.7(@types/react@19.2.17)(next@16.2.11(@playwright/test@1.61.1)(@types/node@22.19.21)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(next@16.2.11(@playwright/test@1.61.1)(@types/node@22.19.21)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.2):
+  fumadocs-ui@14.7.7(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(fumadocs-core@14.7.7(@types/react@19.2.17)(next@16.2.11(@playwright/test@1.62.0)(@types/node@22.19.21)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(next@16.2.11(@playwright/test@1.62.0)(@types/node@22.19.21)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.2):
     dependencies:
       '@radix-ui/react-accordion': 1.2.13(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       '@radix-ui/react-collapsible': 1.1.13(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -5475,10 +5475,10 @@ snapshots:
       '@radix-ui/react-slot': 1.2.5(@types/react@19.2.17)(react@19.2.8)
       '@radix-ui/react-tabs': 1.1.18(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       class-variance-authority: 0.7.1
-      fumadocs-core: 14.7.7(@types/react@19.2.17)(next@16.2.11(@playwright/test@1.61.1)(@types/node@22.19.21)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      fumadocs-core: 14.7.7(@types/react@19.2.17)(next@16.2.11(@playwright/test@1.62.0)(@types/node@22.19.21)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       lodash.merge: 4.6.2
       lucide-react: 0.473.0(react@19.2.8)
-      next: 16.2.11(@playwright/test@1.61.1)(@types/node@22.19.21)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      next: 16.2.11(@playwright/test@1.62.0)(@types/node@22.19.21)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       next-themes: 0.4.6(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       postcss-selector-parser: 7.1.4
       react: 19.2.8
@@ -5491,9 +5491,9 @@ snapshots:
       - '@types/react'
       - '@types/react-dom'
 
-  geist@1.7.2(next@16.2.11(@playwright/test@1.61.1)(@types/node@22.19.21)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)):
+  geist@1.7.2(next@16.2.11(@playwright/test@1.62.0)(@types/node@22.19.21)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)):
     dependencies:
-      next: 16.2.11(@playwright/test@1.61.1)(@types/node@22.19.21)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      next: 16.2.11(@playwright/test@1.62.0)(@types/node@22.19.21)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
 
   get-nonce@1.0.1: {}
 
@@ -6274,7 +6274,7 @@ snapshots:
       react: 19.2.8
       react-dom: 19.2.8(react@19.2.8)
 
-  next@16.2.11(@playwright/test@1.61.1)(@types/node@22.19.21)(react-dom@19.2.8(react@19.2.8))(react@19.2.8):
+  next@16.2.11(@playwright/test@1.62.0)(@types/node@22.19.21)(react-dom@19.2.8(react@19.2.8))(react@19.2.8):
     dependencies:
       '@next/env': 16.2.11
       '@swc/helpers': 0.5.15
@@ -6293,7 +6293,7 @@ snapshots:
       '@next/swc-linux-x64-musl': 16.2.11
       '@next/swc-win32-arm64-msvc': 16.2.11
       '@next/swc-win32-x64-msvc': 16.2.11
-      '@playwright/test': 1.61.1
+      '@playwright/test': 1.62.0
       sharp: 0.35.3(@types/node@22.19.21)
     transitivePeerDependencies:
       - '@babel/core'
@@ -6346,11 +6346,11 @@ snapshots:
 
   picomatch@4.0.5: {}
 
-  playwright-core@1.61.1: {}
+  playwright-core@1.62.0: {}
 
-  playwright@1.61.1:
+  playwright@1.62.0:
     dependencies:
-      playwright-core: 1.61.1
+      playwright-core: 1.62.0
     optionalDependencies:
       fsevents: 2.3.2
 
