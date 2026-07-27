@@ -30,7 +30,7 @@ const (
 type idempotencyClaim struct {
 	orgID     uuid.UUID
 	key       string
-	fp        string
+	fp        idempotency.Fingerprint
 	requestID string
 	hit       idempotency.Record
 	replay    bool
@@ -50,7 +50,7 @@ func parseIdempotencyKey(h http.Header) (key string, present bool, fieldErr *api
 	return raw, true, nil
 }
 
-func fingerprintChatRequest(parsed *llm.ChatCompletionRequest) (string, error) {
+func fingerprintChatRequest(parsed *llm.ChatCompletionRequest) (idempotency.Fingerprint, error) {
 	payload := struct {
 		Model       string        `json:"model"`
 		Messages    []llm.Message `json:"messages"`
@@ -66,7 +66,7 @@ func fingerprintChatRequest(parsed *llm.ChatCompletionRequest) (string, error) {
 		return "", err
 	}
 	sum := sha256.Sum256(raw)
-	return hex.EncodeToString(sum[:]), nil
+	return idempotency.Fingerprint(hex.EncodeToString(sum[:])), nil
 }
 
 func (h chatCompletionHandler) resolveIdempotency(
@@ -160,7 +160,7 @@ func orgIDFromAuth(r *http.Request) (uuid.UUID, bool) {
 	return orgID, true
 }
 
-func (h chatCompletionHandler) claimWithTimeout(parent context.Context, orgID uuid.UUID, key, fp string) (idempotency.Outcome, error) {
+func (h chatCompletionHandler) claimWithTimeout(parent context.Context, orgID uuid.UUID, key string, fp idempotency.Fingerprint) (idempotency.Outcome, error) {
 	ctx, cancel := context.WithTimeout(parent, h.idempotencyTimeout)
 	defer cancel()
 	start := time.Now()
@@ -170,11 +170,12 @@ func (h chatCompletionHandler) claimWithTimeout(parent context.Context, orgID uu
 }
 
 type claimOutcomeParams struct {
-	w       http.ResponseWriter
-	r       *http.Request
-	orgID   uuid.UUID
-	key, fp string
-	out     idempotency.Outcome
+	w     http.ResponseWriter
+	r     *http.Request
+	orgID uuid.UUID
+	key   string
+	fp    idempotency.Fingerprint
+	out   idempotency.Outcome
 }
 
 func (h chatCompletionHandler) handleClaimOutcome(p claimOutcomeParams) (*idempotencyClaim, bool) {

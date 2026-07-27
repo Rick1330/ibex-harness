@@ -24,7 +24,7 @@ type errIdempotencyStore struct {
 	claimOut   idempotency.Outcome
 }
 
-func (e errIdempotencyStore) Claim(context.Context, idempotency.Token, string) (idempotency.Outcome, error) {
+func (e errIdempotencyStore) Claim(context.Context, idempotency.Token, idempotency.Fingerprint) (idempotency.Outcome, error) {
 	if e.claimErr != nil {
 		return idempotency.Outcome{}, e.claimErr
 	}
@@ -35,7 +35,7 @@ func (e errIdempotencyStore) Commit(context.Context, idempotency.Token, idempote
 	return e.commitErr
 }
 
-func (e errIdempotencyStore) Release(context.Context, idempotency.Token, string) error {
+func (e errIdempotencyStore) Release(context.Context, idempotency.Token, idempotency.Fingerprint) error {
 	return e.releaseErr
 }
 

@@ -42,13 +42,16 @@ type Token struct {
 	Key   string
 }
 
+// Fingerprint is the normalized request fingerprint bound to an idempotency key.
+type Fingerprint string
+
 // Record is the Redis value for an idempotency key.
 type Record struct {
-	Version     int    `json:"v"`
-	State       State  `json:"state"`
-	Fingerprint string `json:"fp"`
-	Status      int    `json:"status,omitempty"`
-	Body        []byte `json:"body,omitempty"`
+	Version     int         `json:"v"`
+	State       State       `json:"state"`
+	Fingerprint Fingerprint `json:"fp"`
+	Status      int         `json:"status,omitempty"`
+	Body        []byte      `json:"body,omitempty"`
 }
 
 // Outcome is returned by Claim.
@@ -61,16 +64,16 @@ type Outcome struct {
 type Store interface {
 	// Claim reserves or inspects the key for tok.
 	// A non-nil error is an infrastructure failure (caller should fail-open).
-	Claim(ctx context.Context, tok Token, fingerprint string) (Outcome, error)
+	Claim(ctx context.Context, tok Token, fingerprint Fingerprint) (Outcome, error)
 	// Commit stores a completed record only when the key is still pending with the same fingerprint.
 	Commit(ctx context.Context, tok Token, rec Record) error
 	// Release deletes a pending claim with matching fingerprint so a later retry can reclaim.
-	Release(ctx context.Context, tok Token, fingerprint string) error
+	Release(ctx context.Context, tok Token, fingerprint Fingerprint) error
 }
 
 type noopStore struct{}
 
-func (noopStore) Claim(_ context.Context, _ Token, _ string) (Outcome, error) {
+func (noopStore) Claim(_ context.Context, _ Token, _ Fingerprint) (Outcome, error) {
 	return Outcome{Kind: KindMiss}, nil
 }
 
@@ -78,7 +81,7 @@ func (noopStore) Commit(_ context.Context, _ Token, _ Record) error {
 	return nil
 }
 
-func (noopStore) Release(_ context.Context, _ Token, _ string) error {
+func (noopStore) Release(_ context.Context, _ Token, _ Fingerprint) error {
 	return nil
 }
 

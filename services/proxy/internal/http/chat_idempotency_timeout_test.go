@@ -5,12 +5,22 @@ import (
 	"time"
 )
 
-func TestUnit_idempotencyCASHTimeout(t *testing.T) {
+func TestUnit_idempotencyCASHTimeout_BudgetsFloorAndScaling(t *testing.T) {
 	t.Parallel()
-	if got := idempotencyCASHTimeout(50 * time.Millisecond); got != 500*time.Millisecond {
-		t.Fatalf("floor: got %v want 500ms", got)
+	tests := []struct {
+		name string
+		in   time.Duration
+		want time.Duration
+	}{
+		{name: "floor", in: 50 * time.Millisecond, want: 500 * time.Millisecond},
+		{name: "scaled", in: 100 * time.Millisecond, want: 900 * time.Millisecond},
 	}
-	if got := idempotencyCASHTimeout(100 * time.Millisecond); got != 900*time.Millisecond {
-		t.Fatalf("scaled: got %v want 900ms", got)
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			if got := idempotencyCASHTimeout(tc.in); got != tc.want {
+				t.Fatalf("idempotencyCASHTimeout(%v)=%v want %v", tc.in, got, tc.want)
+			}
+		})
 	}
 }

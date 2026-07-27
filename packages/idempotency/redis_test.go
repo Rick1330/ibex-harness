@@ -40,7 +40,7 @@ func mustEncode(t *testing.T, rec Record) string {
 type claimCall struct {
 	store Store
 	tkn   Token
-	fp    string
+	fp    Fingerprint
 }
 
 func mustClaim(t *testing.T, ctx context.Context, call claimCall) Outcome {
@@ -330,6 +330,9 @@ func TestRedisStore_reclaimWhenKeyExists(t *testing.T) {
 		t.Fatal(err)
 	}
 	requireKind(t, out.Kind, KindInProgress)
+	if out.Record.State != StatePending || out.Record.Fingerprint != "fp" {
+		t.Fatalf("record=%+v want pending/fp", out.Record)
+	}
 }
 
 func TestEncodeRecord_ZeroVersionDefaults(t *testing.T) {
