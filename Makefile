@@ -14,9 +14,11 @@ help: ## Show available commands
 lint-docs: ## Run markdownlint using the repo configuration
 	@"$(BASH)" "$(DEV_TOOL)" lint-docs
 
-lint-go: ## Run golangci-lint on packages and Go services (depguard + complexity)
+lint-go: ## Run golangci-lint on packages and Go services (depguard + base + complexity)
+	@"$(BASH)" infra/scripts/ensure-origin-main.sh
 	golangci-lint run --config .golangci.depguard.yml ./packages/...
 	golangci-lint run --config .golangci.yml ./packages/... ./services/auth/... ./services/proxy/...
+	golangci-lint run --config .golangci.complexity.yml ./packages/... ./services/auth/... ./services/proxy/...
 
 security-scan: ## Run gitleaks locally if installed
 	@"$(BASH)" "$(DEV_TOOL)" security-scan

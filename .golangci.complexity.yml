@@ -1,0 +1,34 @@
+# Complexity-only lint (MF-002). Separate so issues.whole-files does not
+# expand govet/staticcheck/revive/errcheck findings on touched files.
+version: "2"
+run:
+  timeout: 3m
+  relative-path-mode: gomod
+linters:
+  default: none
+  enable:
+    - funlen
+    - gocognit
+  settings:
+    funlen:
+      lines: 40
+      statements: 30
+    gocognit:
+      min-complexity: 10
+  exclusions:
+    warn-unused: true
+    rules:
+      # Table-driven tests routinely exceed funlen; Wave 2+ shrinks prod hotspots (MF-016).
+      - path: _test\.go
+        linters:
+          - funlen
+          - gocognit
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  # Grandfather existing prod complexity; fail on new/changed files vs origin/main.
+  # whole-files requires new-from-rev: any edit re-evaluates the entire file so
+  # body-only complexity regressions still fail; untouched hotspots stay grandfathered.
+  new: true
+  new-from-rev: origin/main
+  whole-files: true

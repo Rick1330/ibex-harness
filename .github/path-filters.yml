@@ -7,6 +7,7 @@ go:
   - 'infra/migrations/**'
   - '.golangci.yml'
   - '.golangci.depguard.yml'
+  - '.golangci.complexity.yml'
   - '.github/tools/**'
 web:
   - 'web/**'

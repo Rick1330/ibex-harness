@@ -12,8 +12,6 @@ linters:
     - staticcheck
     - revive
     - errcheck
-    - funlen
-    - gocognit
   disable:
     - gocyclo
     - prealloc
@@ -24,26 +22,6 @@ linters:
           disabled: true
         - name: exported
           disabled: true
-    funlen:
-      lines: 40
-      statements: 30
-    gocognit:
-      min-complexity: 10
-  exclusions:
-    warn-unused: true
-    rules:
-      # Table-driven tests routinely exceed funlen; Wave 2+ shrinks prod hotspots (MF-016).
-      - path: _test\.go
-        linters:
-          - funlen
-          - gocognit
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0
-  # Grandfather existing prod complexity; fail on new/changed files vs origin/main (MF-002).
-  # whole-files requires new-from-rev (not new-from-merge-base): any edit in a file
-  # re-evaluates the entire file so body-only complexity regressions still fail, while
-  # untouched hotspots stay grandfathered.
-  new: true
-  new-from-rev: origin/main
-  whole-files: true
