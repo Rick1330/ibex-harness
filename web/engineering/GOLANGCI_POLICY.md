@@ -35,8 +35,9 @@ Config: `.golangci.complexity.yml` (`funlen` ≤40 lines / ≤30 statements,
   (`whole-files` requires `new-from-rev`; incompatible with
   `new-from-merge-base` in golangci-lint v2.8.)
 - `_test.go` files are excluded from both complexity linters.
-- `make lint-go` and CI fetch/verify `origin/main` before this run
-  (`infra/scripts/ensure-origin-main.sh`).
+- `make lint-go` and CI refresh `origin/main` before this run
+  (`infra/scripts/ensure-origin-main.sh` always fetches; fails only if the
+  ref is still missing after a failed/offline fetch).
 Local/CI entrypoint: `make lint-go` (or the `golangci-lint` workflow job).
 
 ## Removing grandfathered complexity
