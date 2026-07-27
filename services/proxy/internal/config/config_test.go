@@ -115,6 +115,12 @@ func assertApplyDefaultsClickHouse(t *testing.T, cfg Config) {
 	if cfg.ClickHouseFlushMS != 200 {
 		t.Fatalf("ClickHouseFlushMS: %d", cfg.ClickHouseFlushMS)
 	}
+	if cfg.IdempotencyTTL != defaultIdempotencyTTL {
+		t.Fatalf("IdempotencyTTL: %v", cfg.IdempotencyTTL)
+	}
+	if cfg.IdempotencyRedisTimeout != defaultIdempotencyRedisTO {
+		t.Fatalf("IdempotencyRedisTimeout: %v", cfg.IdempotencyRedisTimeout)
+	}
 }
 
 func TestUnit_Config_ClickHouseZeroDefaultsNegativeRejected(t *testing.T) {

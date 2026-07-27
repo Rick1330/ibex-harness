@@ -25,6 +25,7 @@ type providerSuccessParams struct {
 	parsed       *llm.ChatCompletionRequest
 	providerName string
 	resp         provider.Response
+	claim        *idempotencyClaim
 }
 
 type providerFailureParams struct {
@@ -34,10 +35,23 @@ type providerFailureParams struct {
 	requestID    string
 	parsed       *llm.ChatCompletionRequest
 	providerName string
+	claim        *idempotencyClaim
 }
 
 func (h chatCompletionHandler) forwardChatCompletion(p chatForwardParams) {
 	p.r = h.resolveSessionForRequest(p.r, p.parsed, p.prov.Name())
+	claim, cont := h.resolveIdempotency(p.w, p.r, p.parsed)
+	if !cont {
+		return
+	}
+	if claim != nil && claim.replay {
+		replayIdempotency(p.w, claim.hit)
+		return
+	}
+	h.dispatchProviderCompletion(p, claim)
+}
+
+func (h chatCompletionHandler) dispatchProviderCompletion(p chatForwardParams, claim *idempotencyClaim) {
 	ctx := p.r.Context()
 	requestID := requestIDFromContext(ctx)
 	if errors.Is(ctx.Err(), context.Canceled) {
@@ -54,7 +68,7 @@ func (h chatCompletionHandler) forwardChatCompletion(p chatForwardParams) {
 		}
 		h.writeProviderFailure(providerFailureParams{
 			w: p.w, r: p.r, err: err, requestID: requestID,
-			parsed: p.parsed, providerName: p.prov.Name(),
+			parsed: p.parsed, providerName: p.prov.Name(), claim: claim,
 		})
 		return
 	}
@@ -72,6 +86,7 @@ func (h chatCompletionHandler) forwardChatCompletion(p chatForwardParams) {
 	}
 	h.writeProviderSuccess(providerSuccessParams{
 		w: p.w, r: p.r, parsed: p.parsed, providerName: p.prov.Name(), resp: resp,
+		claim: claim,
 	})
 }
 
@@ -98,7 +113,7 @@ func (h chatCompletionHandler) writeProviderSuccess(p providerSuccessParams) {
 		}
 		h.writeProviderFailure(providerFailureParams{
 			w: p.w, r: p.r, err: err, requestID: requestIDFromContext(p.r.Context()),
-			parsed: p.parsed, providerName: p.providerName,
+			parsed: p.parsed, providerName: p.providerName, claim: p.claim,
 		})
 		return
 	}
@@ -109,6 +124,7 @@ func (h chatCompletionHandler) writeProviderSuccess(p providerSuccessParams) {
 	writeJSONBody(p.w, body)
 	// Flush before Submit may block on a full non-dropping checkpoint queue.
 	flushIfSupported(p.w)
+	h.finishIdempotency(p.claim, p.resp.StatusCode, body)
 	h.enqueuePostResponse(p.r.Context(), checkpointInput{
 		Messages: p.parsed.Messages, CompletionText: completionTextFromJSON(body),
 		Model: p.parsed.Model, Provider: p.providerName, Usage: p.resp.Usage,
@@ -149,9 +165,11 @@ func (h chatCompletionHandler) writeProviderFailure(p providerFailureParams) {
 		return
 	}
 	logMappedProviderError(h, p.r, p.err, mapped)
-	apierror.WriteHTTP(p.w, p.requestID, apierror.WriteOpts{DocsBase: h.docsBase}, mapped)
+	cw := &capturingWriter{ResponseWriter: p.w, status: mapped.HTTPStatus}
+	apierror.WriteHTTP(cw, p.requestID, apierror.WriteOpts{DocsBase: h.docsBase}, mapped)
 	// Flush before Submit may block on a full non-dropping checkpoint queue.
-	flushIfSupported(p.w)
+	flushIfSupported(cw)
+	h.finishIdempotency(p.claim, cw.status, cw.capturedBody())
 
 	model, providerName := failureTraceIdentity(p)
 	h.enqueuePostResponse(p.r.Context(), checkpointInput{

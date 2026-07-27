@@ -48,6 +48,8 @@ type envConfig struct {
 	ClickHouseDSN         ibexconfig.Secret `env:"CLICKHOUSE_DSN" secret:"true"`
 	ClickHouseBatchSize   int               `env:"CLICKHOUSE_INSERT_BATCH_SIZE"`
 	ClickHouseFlushMS     int               `env:"CLICKHOUSE_INSERT_FLUSH_MS"`
+	IdempotencyTTL        time.Duration     `env:"IBEX_IDEMPOTENCY_TTL"`
+	IdempotencyRedisTO    time.Duration     `env:"IBEX_IDEMPOTENCY_REDIS_TIMEOUT"`
 }
 
 func loadFromEnv() (Config, error) {
@@ -98,17 +100,19 @@ func baseProxyConfig(envCfg envConfig, level slog.Level) Config {
 		AuthCache: AuthCacheConfig{
 			Enabled: true,
 		},
-		PostgresDSN:          envCfg.PostgresDSN.String(),
-		DirectiveCacheTTL:    envCfg.DirectiveCacheTTL,
-		SessionCacheTTL:      envCfg.SessionCacheTTL,
-		CheckpointWorkers:    envCfg.CheckpointWorkers,
-		CheckpointQueue:      envCfg.CheckpointQueue,
-		SessionGetOrCreateTO: envCfg.SessionGetOrCreateTO,
-		SessionIdleTimeout:   envCfg.SessionIdleTimeout,
-		SessionSweepInterval: envCfg.SessionSweepInterval,
-		ClickHouseDSN:        envCfg.ClickHouseDSN.String(),
-		ClickHouseBatchSize:  envCfg.ClickHouseBatchSize,
-		ClickHouseFlushMS:    envCfg.ClickHouseFlushMS,
+		PostgresDSN:             envCfg.PostgresDSN.String(),
+		DirectiveCacheTTL:       envCfg.DirectiveCacheTTL,
+		SessionCacheTTL:         envCfg.SessionCacheTTL,
+		CheckpointWorkers:       envCfg.CheckpointWorkers,
+		CheckpointQueue:         envCfg.CheckpointQueue,
+		SessionGetOrCreateTO:    envCfg.SessionGetOrCreateTO,
+		SessionIdleTimeout:      envCfg.SessionIdleTimeout,
+		SessionSweepInterval:    envCfg.SessionSweepInterval,
+		ClickHouseDSN:           envCfg.ClickHouseDSN.String(),
+		ClickHouseBatchSize:     envCfg.ClickHouseBatchSize,
+		ClickHouseFlushMS:       envCfg.ClickHouseFlushMS,
+		IdempotencyTTL:          envCfg.IdempotencyTTL,
+		IdempotencyRedisTimeout: envCfg.IdempotencyRedisTO,
 	}
 }
 

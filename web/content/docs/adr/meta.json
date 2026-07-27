@@ -35,6 +35,7 @@
     "0032-session-data-model",
     "0033-clickhouse-schema",
     "0034-performance-methodology",
+    "0035-chat-idempotency-key",
     "0038-context-assembly-service"
   ]
 }

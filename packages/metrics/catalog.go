@@ -38,6 +38,8 @@ var ProxyRequiredMetricNames = []string{
 	"ibex_clickhouse_flush_rows_total",
 	"ibex_clickhouse_dropped_rows_total",
 	"ibex_clickhouse_flush_duration_seconds",
+	"ibex_proxy_idempotency_total",
+	"ibex_proxy_idempotency_duration_seconds",
 	"ibex_process_up",
 }
 

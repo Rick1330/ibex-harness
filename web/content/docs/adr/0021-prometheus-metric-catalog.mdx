@@ -37,6 +37,8 @@ All Prometheus metrics are defined and registered in `packages/metrics`. Service
 | `ibex_proxy_active_connections` | Gauge | — | proxy |
 | `ibex_proxy_rate_limited_total` | Counter | `result` (`allowed`/`denied`) | proxy |
 | `ibex_proxy_rate_limit_redis_errors_total` | Counter | — | proxy |
+| `ibex_proxy_idempotency_total` | Counter | `result` (`hit`/`miss`/`conflict`/`in_progress`/`redis_error`/`skipped`) | proxy |
+| `ibex_proxy_idempotency_duration_seconds` | Histogram | — | proxy |
 | `ibex_auth_validate_token_duration_seconds` | Histogram | `result` (`ok`/`error`/`revoked`) | auth |
 | `ibex_auth_validate_agent_duration_seconds` | Histogram | `result` (`ok`/`error`/`not_found`) | auth |
 | `ibex_auth_grpc_requests_total` | Counter | `method`, `status` | auth |

@@ -38,11 +38,12 @@ func chatTestHandler(t *testing.T, validator auth.TokenValidator, cfg config.Con
 }
 
 type chatRequestOpts struct {
-	method      string
-	body        string
-	contentType string
-	auth        bool
-	agentID     string
+	method         string
+	body           string
+	contentType    string
+	auth           bool
+	agentID        string
+	idempotencyKey string
 }
 
 func postChat(t *testing.T, handler http.Handler, opts chatRequestOpts) *httptest.ResponseRecorder {
@@ -55,6 +56,9 @@ func postChat(t *testing.T, handler http.Handler, opts chatRequestOpts) *httptes
 	httptestx.ApplyChatHeaders(req, httptestx.ChatHeaders{
 		Auth: opts.auth, ContentType: opts.contentType, AgentID: opts.agentID, HasBody: opts.body != "",
 	})
+	if opts.idempotencyKey != "" {
+		req.Header.Set("Idempotency-Key", opts.idempotencyKey)
+	}
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	return rec
