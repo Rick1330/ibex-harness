@@ -19,13 +19,19 @@ fi
 
 if [[ -z "$pr_number" ]]; then
   release_branch="${VERSION_RELEASE_BRANCH:-release--branches--main}"
-  pr_number="$(gh pr list \
-    --repo "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}" \
-    --head "$release_branch" \
-    --base main \
-    --state open \
-    --json number \
-    -q '.[0].number // empty' 2>/dev/null || true)"
+  legacy_branch="release-please--branches--main"
+  for branch in "$release_branch" "$legacy_branch"; do
+    pr_number="$(gh pr list \
+      --repo "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY required}" \
+      --head "$branch" \
+      --base main \
+      --state open \
+      --json number \
+      -q '.[0].number // empty' 2>/dev/null || true)"
+    if [[ -n "$pr_number" ]]; then
+      break
+    fi
+  done
 fi
 
 {
