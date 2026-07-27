@@ -12,6 +12,38 @@ Release notes are human-readable summaries of user-visible changes, security fix
 
 ---
 
+## [0.1.2](https://github.com/Rick1330/ibex-harness/compare/v0.1.1...v0.1.2) (2026-07-27)
+
+
+### Features
+
+* **clickhouse:** typed batch writer for llm_traces (m2.5.2) ([#381](https://github.com/Rick1330/ibex-harness/issues/381)) ([f883e79](https://github.com/Rick1330/ibex-harness/commit/f883e79d3ae12bbb9163812d3813499883188c8e))
+* **db:** directives and directive_versions schema (m2.3.1) ([#356](https://github.com/Rick1330/ibex-harness/issues/356)) ([0a4f366](https://github.com/Rick1330/ibex-harness/commit/0a4f36693ff3e662898bfe3319923a2e2e6f3fc0))
+* **db:** sessions and checkpoints schema (m2.4.1) ([#366](https://github.com/Rick1330/ibex-harness/issues/366)) ([cc85307](https://github.com/Rick1330/ibex-harness/commit/cc85307a8629bdf521d7eea0f4c3d006a45f6a6b))
+* **infra:** clickhouse llm_traces table schema (m2.5.1) ([#378](https://github.com/Rick1330/ibex-harness/issues/378)) ([3536d1e](https://github.com/Rick1330/ibex-harness/commit/3536d1ee8646dabdd866f09d51964209f08eeec7))
+* **proxy,auth:** token revocation propagation via Redis pub/sub (m2.2.2) ([#353](https://github.com/Rick1330/ibex-harness/issues/353)) ([3434a08](https://github.com/Rick1330/ibex-harness/commit/3434a0873042b4daf0c3bc1d0781e490d340fbb7))
+* **proxy:** async trace emitter — ClickHouse integration in LLM handler (m2.5.3) ([#383](https://github.com/Rick1330/ibex-harness/issues/383)) ([95783d7](https://github.com/Rick1330/ibex-harness/commit/95783d74b302641e9ab5fc5f47a3634324b36b12))
+* **proxy:** auth cache — bloom filter + in-process LRU for token validation (m2.2.1) ([#350](https://github.com/Rick1330/ibex-harness/issues/350)) ([fe8b3b0](https://github.com/Rick1330/ibex-harness/commit/fe8b3b076f875df3fbe097e57322ee68ded30cca))
+* **proxy:** centralise provider error mapping to stable envelope (m2.1.5) ([#348](https://github.com/Rick1330/ibex-harness/issues/348)) ([086ad61](https://github.com/Rick1330/ibex-harness/commit/086ad61cca3f52a1828e358185a1af4f629d2f79))
+* **proxy:** directive resolver with Redis cache and Postgres fallback (m2.3.2) ([#360](https://github.com/Rick1330/ibex-harness/issues/360)) ([2bf5dcb](https://github.com/Rick1330/ibex-harness/commit/2bf5dcb84f890bce001801ec32756a42d34d3448))
+* **proxy:** idempotency-key Redis dedupe for provider retries (m2.1.6) ([#388](https://github.com/Rick1330/ibex-harness/issues/388)) ([985dc90](https://github.com/Rick1330/ibex-harness/commit/985dc9098a84355ee56060bdb1c0b347c11362ec))
+* **proxy:** m2.1.3 OpenAI SSE streaming dual-write forwarder ([#342](https://github.com/Rick1330/ibex-harness/issues/342)) ([e94d3b0](https://github.com/Rick1330/ibex-harness/commit/e94d3b00c4552b18209f29e3fed8545c685b48b7))
+* **proxy:** provider routing middleware — selects provider by model (m2.1.4) ([#345](https://github.com/Rick1330/ibex-harness/issues/345)) ([d38acab](https://github.com/Rick1330/ibex-harness/commit/d38acabed5d36fdfd8d9a07ee97675d4601c2c3e))
+* **proxy:** session idle-timeout sweeper marks abandoned sessions (m2.4.4) ([#375](https://github.com/Rick1330/ibex-harness/issues/375)) ([6fe142c](https://github.com/Rick1330/ibex-harness/commit/6fe142c83779b83d29f2553d46c7c25a7963d54c))
+* **proxy:** session lifecycle management in LLM request handler (m2.4.3) ([#372](https://github.com/Rick1330/ibex-harness/issues/372)) ([a754dc9](https://github.com/Rick1330/ibex-harness/commit/a754dc977450a5af66a7e096b7801ad6a8c81af3))
+* **proxy:** session store — create, checkpoint, close (m2.4.2) ([#368](https://github.com/Rick1330/ibex-harness/issues/368)) ([67fa0da](https://github.com/Rick1330/ibex-harness/commit/67fa0da4118184d7e08fb42f4c551123781216ca))
+* **proxy:** system prompt injection with configurable strategy (m2.3.3) ([#363](https://github.com/Rick1330/ibex-harness/issues/363)) ([fb43000](https://github.com/Rick1330/ibex-harness/commit/fb43000f221cb64d97be57c62c81bc9ed77ed937))
+
+
+### Bug Fixes
+
+* **ci:** changelog deploy, daily benches, faster profiles ([#294](https://github.com/Rick1330/ibex-harness/issues/294)) ([a431a49](https://github.com/Rick1330/ibex-harness/commit/a431a4941d094861db030535435071a0802e935d))
+* **ci:** exclude CI-only lockfiles from Syft SBOM for Grype ([#324](https://github.com/Rick1330/ibex-harness/issues/324)) ([28bb255](https://github.com/Rick1330/ibex-harness/commit/28bb255169678dfd94f8b27dfe1a94119e81675d))
+* **ci:** resolve SonarQube workflow security hotspots ([#320](https://github.com/Rick1330/ibex-harness/issues/320)) ([808799e](https://github.com/Rick1330/ibex-harness/commit/808799ef8217295d90a569b6c50ab99566a4898f))
+* **deps:** override js-yaml to clear GHSA-52cp-r559-cp3m ([#311](https://github.com/Rick1330/ibex-harness/issues/311)) ([7206f73](https://github.com/Rick1330/ibex-harness/commit/7206f73f85c655d34d50906d381a4f3c817a3e11))
+* **security:** grpc bump, CodeQL alignment, dependabot go-git ignore ([#326](https://github.com/Rick1330/ibex-harness/issues/326)) ([977685e](https://github.com/Rick1330/ibex-harness/commit/977685ec06c90bde6724821198d5de752ec9661c))
+* **web:** show desktop theme segmented control on cold load ([#297](https://github.com/Rick1330/ibex-harness/issues/297)) ([c8f0ffa](https://github.com/Rick1330/ibex-harness/commit/c8f0ffa206d4cc62cd424492b6b59e1edcfdbcdc))
+
 ## [0.1.1](https://github.com/Rick1330/ibex-harness/compare/v0.1.0...v0.1.1) (2026-07-19)
 
 
