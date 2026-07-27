@@ -12,7 +12,6 @@ linters:
     - staticcheck
     - revive
     - errcheck
-    - depguard
     - funlen
     - gocognit
   disable:
@@ -25,16 +24,6 @@ linters:
           disabled: true
         - name: exported
           disabled: true
-    depguard:
-      rules:
-        packages-no-services:
-          list-mode: lax
-          files:
-            - "!$all"
-            - "packages/**"
-          deny:
-            - pkg: github.com/Rick1330/ibex-harness/services
-              desc: packages/* must not import services/* (20-architecture-layering)
     funlen:
       lines: 40
       statements: 30
@@ -51,6 +40,9 @@ linters:
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0
-  # Grandfather existing prod complexity; fail only on new violations vs main (MF-002).
+  # Grandfather existing prod complexity; fail on new/changed files vs main (MF-002).
+  # whole-files: any edit in a file re-evaluates the entire file so body-only
+  # complexity regressions are not skipped by line-diff filtering.
   new: true
   new-from-merge-base: main
+  whole-files: true

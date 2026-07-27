@@ -833,6 +833,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # Full history so issues.new-from-merge-base: main can compute the merge base.
+          fetch-depth: 0
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -852,9 +854,12 @@ jobs:
           tar -xzf "${GOLANGCI_LINT_ARCHIVE}" -C /usr/local/bin --strip-components=1 \
             "golangci-lint-${GOLANGCI_LINT_VERSION}-linux-amd64/golangci-lint"
           golangci-lint --version
-      - name: Run golangci-lint
+      - name: Run golangci-lint (depguard — no grandfathering)
         run: |
-          golangci-lint run ./packages/... ./services/auth/... ./services/proxy/...
+          golangci-lint run --config .golangci.depguard.yml ./packages/...
+      - name: Run golangci-lint (complexity + base linters)
+        run: |
+          golangci-lint run --config .golangci.yml ./packages/... ./services/auth/... ./services/proxy/...
 
   go-fuzz:
     name: go-fuzz
