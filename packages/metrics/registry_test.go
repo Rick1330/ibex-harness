@@ -174,6 +174,10 @@ func seedProxySamples(reg *ProxyRegistry) {
 	reg.AddClickHouseFlushRows(1)
 	reg.AddClickHouseDroppedRows(1)
 	reg.ObserveClickHouseFlushSeconds(0.001)
+	reg.IncIdempotency(IdempotencyMiss)
+	reg.IncIdempotency(IdempotencyHit)
+	reg.IncIdempotency("not-a-real-result")
+	reg.ObserveIdempotencyDurationSeconds(0.001)
 }
 
 func TestUnit_BoundSessionResult(t *testing.T) {

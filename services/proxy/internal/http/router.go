@@ -9,6 +9,7 @@ import (
 	apierror "github.com/Rick1330/ibex-harness/packages/apierror"
 	"github.com/Rick1330/ibex-harness/packages/directive"
 	"github.com/Rick1330/ibex-harness/packages/healthcheck"
+	"github.com/Rick1330/ibex-harness/packages/idempotency"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/packages/provider"
@@ -48,6 +49,7 @@ type RouterDeps struct {
 	Health             *healthcheck.Server
 	ProviderRegistry   *provider.Registry
 	TraceWriter        TraceWriter
+	IdempotencyStore   idempotency.Store
 }
 
 // NewRouter builds the proxy HTTP handler with optional auth validator for protected routes.
@@ -80,21 +82,24 @@ func NewRouter(deps RouterDeps) http.Handler {
 
 	if validator != nil {
 		registerProtectedRoutes(protectedRouteDeps{
-			mux:                mux,
-			cfg:                cfg,
-			logger:             logger,
-			reg:                reg,
-			validator:          validator,
-			agentVerifier:      agentVerifier,
-			limiter:            limiter,
-			directiveResolver:  deps.DirectiveResolver,
-			sessionStore:       deps.SessionStore,
-			sessionCache:       deps.SessionCache,
-			checkpointPool:     deps.CheckpointPool,
-			getOrCreateTimeout: deps.GetOrCreateTimeout,
-			docsBase:           docsBase,
-			providerRegistry:   providerReg,
-			traceWriter:        effectiveTraceWriter(deps.TraceWriter),
+			mux:                      mux,
+			cfg:                      cfg,
+			logger:                   logger,
+			reg:                      reg,
+			validator:                validator,
+			agentVerifier:            agentVerifier,
+			limiter:                  limiter,
+			directiveResolver:        deps.DirectiveResolver,
+			sessionStore:             deps.SessionStore,
+			sessionCache:             deps.SessionCache,
+			checkpointPool:           deps.CheckpointPool,
+			getOrCreateTimeout:       deps.GetOrCreateTimeout,
+			docsBase:                 docsBase,
+			providerRegistry:         providerReg,
+			traceWriter:              effectiveTraceWriter(deps.TraceWriter),
+			idempotencyStore:         deps.IdempotencyStore,
+			idempotencyTimeout:       cfg.IdempotencyRedisTimeout,
+			idempotencyCommitTimeout: idempotencyCASHTimeout(cfg.IdempotencyRedisTimeout),
 		})
 	}
 
@@ -154,14 +159,17 @@ func handleChatCompletions(w http.ResponseWriter, r *http.Request, h chatComplet
 }
 
 type chatCompletionHandler struct {
-	log                *logger.Logger
-	docsBase           string
-	metrics            *metrics.ProxyRegistry
-	sessionStore       session.Store
-	sessionCache       *sessioncache.Cache
-	checkpointPool     *asyncpool.Pool
-	getOrCreateTimeout time.Duration
-	traceWriter        TraceWriter
+	log                      *logger.Logger
+	docsBase                 string
+	metrics                  *metrics.ProxyRegistry
+	sessionStore             session.Store
+	sessionCache             *sessioncache.Cache
+	checkpointPool           *asyncpool.Pool
+	getOrCreateTimeout       time.Duration
+	traceWriter              TraceWriter
+	idempotencyStore         idempotency.Store
+	idempotencyTimeout       time.Duration
+	idempotencyCommitTimeout time.Duration
 }
 
 func (h chatCompletionHandler) serve(w http.ResponseWriter, r *http.Request) {

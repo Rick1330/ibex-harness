@@ -125,6 +125,7 @@ Release notes are human-readable summaries of user-visible changes, security fix
 
 ### Added
 
+- Idempotency-Key Redis dedupe for non-streaming chat (m2.1.6): optional `Idempotency-Key` header, `idempotency:{org_id}:{key}` claim/commit in `packages/idempotency`, replay on hit, `409 IDEMPOTENCY_KEY_REUSE` / `IDEMPOTENCY_IN_PROGRESS`, fail-open on Redis errors ([ADR-0035](web/content/docs/adr/0035-chat-idempotency-key.mdx))
 - Proxy overhead latency benchmark (m2.6.1): real warm-path Go stage microbenches, `BenchmarkProxyChatOverhead` with mockllm, ADR-0034, auth/provider duration histograms, k6 `full` profile chat path (`K6_USE_CHAT=1`), pinned `baseline.json`
 - In-process mock LLM provider (`packages/provider/mockllm`): `IBEX_LLM_MODE=mock` returns immediate OpenAI-shaped JSON (smoke/chat 200 without OpenAI)
 - Async trace emitter (m2.5.3): proxy `assembleTrace` + post-response bounded-pool emit into ClickHouse `Writer` (success, incomplete stream, provider failure); auth/directive stage latency on context; never blocks LLM response on CH errors
