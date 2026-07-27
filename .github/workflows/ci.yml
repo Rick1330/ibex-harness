@@ -833,8 +833,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          # Full history so issues.new-from-merge-base: main can compute the merge base.
+          # Full history + origin/main for issues.new-from-rev / whole-files.
           fetch-depth: 0
+      - name: Ensure origin/main for complexity new-from-rev
+        run: git fetch --no-tags origin main:refs/remotes/origin/main
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -860,7 +862,6 @@ jobs:
       - name: Run golangci-lint (complexity + base linters)
         run: |
           golangci-lint run --config .golangci.yml ./packages/... ./services/auth/... ./services/proxy/...
-
   go-fuzz:
     name: go-fuzz
     needs: changes

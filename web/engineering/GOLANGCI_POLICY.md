@@ -13,12 +13,14 @@ Local/CI entrypoint: `make lint-go` (or the `golangci-lint` workflow job).
 
 `funlen` (≤40 lines, ≤30 statements) and `gocognit` (≤10) live in `.golangci.yml`:
 
-- `issues.new: true` with `new-from-merge-base: main` suppresses **unchanged**
+- `issues.new: true` with `new-from-rev: origin/main` suppresses **unchanged**
   production hotspots.
 - `issues.whole-files: true` re-evaluates the **entire** file when any part of
   it changes, so body-only edits that worsen complexity still fail.
+  (`whole-files` requires `new-from-rev`; it is incompatible with
+  `new-from-merge-base` in golangci-lint v2.8.)
 - `_test.go` files are excluded from both linters (table-driven tests).
-
+- CI fetches `origin/main` before lint so `new-from-rev` resolves.
 ## Removing grandfathered complexity
 
 As Waves 2–4 shrink hotspots (MF-003, MF-016), new code in those areas must

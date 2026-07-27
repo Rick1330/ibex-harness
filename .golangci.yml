@@ -40,9 +40,10 @@ linters:
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0
-  # Grandfather existing prod complexity; fail on new/changed files vs main (MF-002).
-  # whole-files: any edit in a file re-evaluates the entire file so body-only
-  # complexity regressions are not skipped by line-diff filtering.
+  # Grandfather existing prod complexity; fail on new/changed files vs origin/main (MF-002).
+  # whole-files requires new-from-rev (not new-from-merge-base): any edit in a file
+  # re-evaluates the entire file so body-only complexity regressions still fail, while
+  # untouched hotspots stay grandfathered.
   new: true
-  new-from-merge-base: main
+  new-from-rev: origin/main
   whole-files: true
