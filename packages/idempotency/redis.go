@@ -29,23 +29,19 @@ func NewRedisStore(client redis.UniversalClient, cfg Config) *RedisStore {
 // Claim implements Store.
 func (s *RedisStore) Claim(ctx context.Context, tok Token, fingerprint string) (Outcome, error) {
 	redisKey := RedisKey(tok)
-	pending, err := encodeRecord(pendingRecord(fingerprint))
-	if err != nil {
-		return Outcome{}, fmt.Errorf("idempotency.Claim encode: %w", err)
-	}
-	ok, err := s.client.SetNX(ctx, redisKey, pending, s.pendingTTL).Result()
+	out, err := s.tryClaimPending(ctx, redisKey, fingerprint)
 	if err != nil {
 		return Outcome{}, fmt.Errorf("idempotency.Claim SETNX: %w", err)
 	}
-	if ok {
-		return Outcome{Kind: KindMiss, Record: pendingRecord(fingerprint)}, nil
+	if out.Kind == KindMiss {
+		return out, nil
 	}
 	return s.inspectExisting(ctx, redisKey, fingerprint)
 }
 
 func (s *RedisStore) inspectExisting(ctx context.Context, redisKey, fingerprint string) (Outcome, error) {
 	raw, err := s.client.Get(ctx, redisKey).Bytes()
-	if err == redis.Nil {
+	if errors.Is(err, redis.Nil) {
 		return s.reclaim(ctx, redisKey, fingerprint)
 	}
 	if err != nil {
@@ -65,13 +61,21 @@ func (s *RedisStore) inspectExisting(ctx context.Context, redisKey, fingerprint 
 }
 
 func (s *RedisStore) reclaim(ctx context.Context, redisKey, fingerprint string) (Outcome, error) {
+	out, err := s.tryClaimPending(ctx, redisKey, fingerprint)
+	if err != nil {
+		return Outcome{}, fmt.Errorf("idempotency.Claim reclaim SETNX: %w", err)
+	}
+	return out, nil
+}
+
+func (s *RedisStore) tryClaimPending(ctx context.Context, redisKey, fingerprint string) (Outcome, error) {
 	pending, err := encodeRecord(pendingRecord(fingerprint))
 	if err != nil {
-		return Outcome{}, fmt.Errorf("idempotency.Claim reclaim encode: %w", err)
+		return Outcome{}, err
 	}
 	ok, err := s.client.SetNX(ctx, redisKey, pending, s.pendingTTL).Result()
 	if err != nil {
-		return Outcome{}, fmt.Errorf("idempotency.Claim reclaim SETNX: %w", err)
+		return Outcome{}, err
 	}
 	if ok {
 		return Outcome{Kind: KindMiss, Record: pendingRecord(fingerprint)}, nil
@@ -125,7 +129,7 @@ func (s *RedisStore) casPending(
 		if err == nil || errors.Is(err, errCASSkip) {
 			return nil
 		}
-		if err == redis.TxFailedErr {
+		if errors.Is(err, redis.TxFailedErr) {
 			continue
 		}
 		return err
@@ -144,7 +148,7 @@ func (s *RedisStore) casPendingTx(
 	mutate func(redis.Pipeliner) error,
 ) error {
 	cur, err := tx.Get(ctx, own.redisKey).Bytes()
-	if err == redis.Nil {
+	if errors.Is(err, redis.Nil) {
 		return errCASSkip
 	}
 	if err != nil {

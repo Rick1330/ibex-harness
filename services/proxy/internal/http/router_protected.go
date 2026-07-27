@@ -19,23 +19,24 @@ import (
 )
 
 type protectedRouteDeps struct {
-	mux                *http.ServeMux
-	cfg                config.Config
-	logger             *logger.Logger
-	reg                *metrics.ProxyRegistry
-	validator          auth.TokenValidator
-	agentVerifier      auth.AgentVerifier
-	limiter            ratelimit.Limiter
-	directiveResolver  directive.Resolver
-	sessionStore       session.Store
-	sessionCache       *sessioncache.Cache
-	checkpointPool     *asyncpool.Pool
-	getOrCreateTimeout time.Duration
-	docsBase           string
-	providerRegistry   *provider.Registry
-	traceWriter        TraceWriter
-	idempotencyStore   idempotency.Store
-	idempotencyTimeout time.Duration
+	mux                      *http.ServeMux
+	cfg                      config.Config
+	logger                   *logger.Logger
+	reg                      *metrics.ProxyRegistry
+	validator                auth.TokenValidator
+	agentVerifier            auth.AgentVerifier
+	limiter                  ratelimit.Limiter
+	directiveResolver        directive.Resolver
+	sessionStore             session.Store
+	sessionCache             *sessioncache.Cache
+	checkpointPool           *asyncpool.Pool
+	getOrCreateTimeout       time.Duration
+	docsBase                 string
+	providerRegistry         *provider.Registry
+	traceWriter              TraceWriter
+	idempotencyStore         idempotency.Store
+	idempotencyTimeout       time.Duration
+	idempotencyCommitTimeout time.Duration
 }
 
 func registerProtectedRoutes(deps protectedRouteDeps) {
@@ -86,16 +87,17 @@ func registerProtectedRoutes(deps protectedRouteDeps) {
 	)
 	deps.mux.Handle("/v1/chat/completions", chatChain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		handleChatCompletions(w, r, chatCompletionHandler{
-			log:                deps.logger,
-			docsBase:           deps.docsBase,
-			metrics:            deps.reg,
-			sessionStore:       deps.sessionStore,
-			sessionCache:       deps.sessionCache,
-			checkpointPool:     deps.checkpointPool,
-			getOrCreateTimeout: deps.getOrCreateTimeout,
-			traceWriter:        deps.traceWriter,
-			idempotencyStore:   deps.idempotencyStore,
-			idempotencyTimeout: deps.idempotencyTimeout,
+			log:                      deps.logger,
+			docsBase:                 deps.docsBase,
+			metrics:                  deps.reg,
+			sessionStore:             deps.sessionStore,
+			sessionCache:             deps.sessionCache,
+			checkpointPool:           deps.checkpointPool,
+			getOrCreateTimeout:       deps.getOrCreateTimeout,
+			traceWriter:              deps.traceWriter,
+			idempotencyStore:         deps.idempotencyStore,
+			idempotencyTimeout:       deps.idempotencyTimeout,
+			idempotencyCommitTimeout: idempotencyCASHTimeout(deps.idempotencyTimeout),
 		})
 	})))
 }

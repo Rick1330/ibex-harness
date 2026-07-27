@@ -245,7 +245,25 @@ func (h chatCompletionHandler) redisOpContext(claim *idempotencyClaim) (context.
 	if claim.requestID != "" {
 		base = reqid.WithRequestID(base, claim.requestID)
 	}
-	return context.WithTimeout(base, h.idempotencyTimeout)
+	timeout := h.idempotencyCommitTimeout
+	if timeout <= 0 {
+		timeout = idempotencyCASHTimeout(h.idempotencyTimeout)
+	}
+	return context.WithTimeout(base, timeout)
+}
+
+// idempotencyCASHTimeout budgets WATCH+GET+MULTI retries for commit/release (off hot path).
+func idempotencyCASHTimeout(claimBudget time.Duration) time.Duration {
+	const (
+		casMaxTries   = 3
+		rttsPerTry    = 3
+		minCASHBudget = 500 * time.Millisecond
+	)
+	budget := claimBudget * casMaxTries * rttsPerTry
+	if budget < minCASHBudget {
+		return minCASHBudget
+	}
+	return budget
 }
 
 func (h chatCompletionHandler) commitIdempotency(claim *idempotencyClaim, status int, body []byte) {
