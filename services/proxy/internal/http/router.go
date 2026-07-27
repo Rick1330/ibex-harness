@@ -3,6 +3,7 @@ package http
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/asyncpool"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
+	httptrace "github.com/Rick1330/ibex-harness/services/proxy/internal/http/trace"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/llm"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/sessioncache"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/validation"
@@ -53,7 +55,7 @@ type RouterDeps struct {
 }
 
 // NewRouter builds the proxy HTTP handler with optional auth validator for protected routes.
-func NewRouter(deps RouterDeps) http.Handler {
+func NewRouter(deps RouterDeps) (http.Handler, error) {
 	cfg := deps.Config
 	logger := deps.Logger
 	reg := deps.Metrics
@@ -68,7 +70,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 		var regErr error
 		providerReg, regErr = provider.NewRegistry()
 		if regErr != nil {
-			panic("provider registry: " + regErr.Error())
+			return nil, fmt.Errorf("provider registry: %w", regErr)
 		}
 	}
 
@@ -96,7 +98,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 			getOrCreateTimeout:       deps.GetOrCreateTimeout,
 			docsBase:                 docsBase,
 			providerRegistry:         providerReg,
-			traceWriter:              effectiveTraceWriter(deps.TraceWriter),
+			traceWriter:              httptrace.EffectiveWriter(deps.TraceWriter),
 			idempotencyStore:         deps.IdempotencyStore,
 			idempotencyTimeout:       cfg.IdempotencyRedisTimeout,
 			idempotencyCommitTimeout: idempotencyCASHTimeout(cfg.IdempotencyRedisTimeout),
@@ -112,7 +114,7 @@ func NewRouter(deps RouterDeps) http.Handler {
 			),
 		),
 	)
-	return handler
+	return handler, nil
 }
 
 func readyWithLog(log *logger.Logger, next http.HandlerFunc) http.HandlerFunc {

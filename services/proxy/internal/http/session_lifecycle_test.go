@@ -19,6 +19,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/asyncpool"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
+	httpsession "github.com/Rick1330/ibex-harness/services/proxy/internal/http/session"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/llm"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/sessioncache"
 	"github.com/alicebob/miniredis/v2"
@@ -138,7 +139,7 @@ func sessionLifecycleRouter(t *testing.T, store session.Store, pool *asyncpool.P
 	if err != nil {
 		t.Fatal(err)
 	}
-	return NewRouter(RouterDeps{
+	return mustNewRouter(t, RouterDeps{
 		Config: chatTestConfig(), Logger: logger.Discard("proxy"),
 		Metrics: metrics.NewProxy("test"), Tracer: telemetry.NoopTracer("proxy"),
 		Validator: &chatMockValidator{res: &auth.ValidateResult{
@@ -177,7 +178,7 @@ func TestUnit_SessionLifecycle_MintAndReuse(t *testing.T) {
 	if rec1.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec1.Code, rec1.Body.String())
 	}
-	ext := rec1.Header().Get(headerSessionID)
+	ext := rec1.Header().Get(httpsession.HeaderSessionID)
 	if ext == "" {
 		t.Fatal("expected minted X-IBEX-Session-ID")
 	}
@@ -191,11 +192,11 @@ func TestUnit_SessionLifecycle_MintAndReuse(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer t")
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-IBEX-Agent-ID", testChatAgentID)
-	req.Header.Set(headerSessionID, ext)
+	req.Header.Set(httpsession.HeaderSessionID, ext)
 	rec2 := httptest.NewRecorder()
 	handler.ServeHTTP(rec2, req)
-	if rec2.Header().Get(headerSessionID) != ext {
-		t.Fatalf("reuse header=%q want %q", rec2.Header().Get(headerSessionID), ext)
+	if rec2.Header().Get(httpsession.HeaderSessionID) != ext {
+		t.Fatalf("reuse header=%q want %q", rec2.Header().Get(httpsession.HeaderSessionID), ext)
 	}
 	store.waitAppends(t, 2)
 	store.mu.Lock()
@@ -225,7 +226,7 @@ func TestUnit_SessionLifecycle_FailOpenKeepsStickyHeader(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d", rec.Code)
 	}
-	if rec.Header().Get(headerSessionID) == "" {
+	if rec.Header().Get(httpsession.HeaderSessionID) == "" {
 		t.Fatal("expected sticky session header on fail-open")
 	}
 	if !neverTrue(80*time.Millisecond, 5*time.Millisecond, func() bool {
@@ -254,7 +255,7 @@ func TestUnit_SessionLifecycle_StreamSetsHeaderBeforeBody(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler := NewRouter(RouterDeps{
+	handler := mustNewRouter(t, RouterDeps{
 		Config: chatTestConfig(), Logger: logger.Discard("proxy"),
 		Metrics: metrics.NewProxy("test"), Tracer: telemetry.NoopTracer("proxy"),
 		Validator: &chatMockValidator{res: &auth.ValidateResult{
@@ -272,7 +273,7 @@ func TestUnit_SessionLifecycle_StreamSetsHeaderBeforeBody(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d", rec.Code)
 	}
-	if rec.Header().Get(headerSessionID) == "" {
+	if rec.Header().Get(httpsession.HeaderSessionID) == "" {
 		t.Fatal("expected session header on stream")
 	}
 	if !strings.Contains(rec.Header().Get("Content-Type"), "text/event-stream") {
@@ -313,11 +314,11 @@ func TestUnit_SessionLifecycle_CacheHitSkipsStore(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer t")
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-IBEX-Agent-ID", testChatAgentID)
-	req.Header.Set(headerSessionID, ext)
+	req.Header.Set(httpsession.HeaderSessionID, ext)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
-	if rec.Header().Get(headerSessionID) != ext {
-		t.Fatalf("header=%q", rec.Header().Get(headerSessionID))
+	if rec.Header().Get(httpsession.HeaderSessionID) != ext {
+		t.Fatalf("header=%q", rec.Header().Get(httpsession.HeaderSessionID))
 	}
 	store.waitAppends(t, 1)
 	store.mu.Lock()
@@ -345,7 +346,7 @@ func TestUnit_SessionLifecycle_CrossOrgUsesTokenOrg(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer t")
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-IBEX-Agent-ID", testChatAgentID)
-	req.Header.Set(headerSessionID, ext)
+	req.Header.Set(httpsession.HeaderSessionID, ext)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	store.waitAppends(t, 1)
@@ -361,19 +362,19 @@ func TestUnit_SessionLifecycle_CrossOrgUsesTokenOrg(t *testing.T) {
 
 func TestUnit_StickyExternalID(t *testing.T) {
 	t.Parallel()
-	minted := stickyExternalID("")
+	minted := httpsession.StickyExternalID("")
 	if minted == "" {
 		t.Fatal("expected mint")
 	}
 	if _, err := uuid.Parse(minted); err != nil {
 		t.Fatalf("mint uuid: %v", err)
 	}
-	got := stickyExternalID("  abc  ")
+	got := httpsession.StickyExternalID("  abc  ")
 	if got != "abc" {
 		t.Fatalf("got=%q", got)
 	}
-	tooLong := strings.Repeat("x", maxExternalIDLen+1)
-	replaced := stickyExternalID(tooLong)
+	tooLong := strings.Repeat("x", 64+1)
+	replaced := httpsession.StickyExternalID(tooLong)
 	if replaced == tooLong || replaced == "" {
 		t.Fatal("expected mint replacing oversized")
 	}
@@ -395,29 +396,29 @@ func TestUnit_ResolveSession_NilStore(t *testing.T) {
 	if !ok || rs.ExternalID == "" {
 		t.Fatal("expected sticky external id without store")
 	}
-	if rs.durable() {
+	if rs.Durable() {
 		t.Fatal("expected non-durable sticky-only session")
 	}
 }
 
 func TestUnit_CompletionTextFromJSON(t *testing.T) {
 	t.Parallel()
-	got := completionTextFromJSON([]byte(`{"choices":[{"message":{"content":"hi"}}]}`))
+	got := httpsession.CompletionTextFromJSON([]byte(`{"choices":[{"message":{"content":"hi"}}]}`))
 	if got != "hi" {
 		t.Fatalf("got=%q", got)
 	}
-	if completionTextFromJSON([]byte(`{`)) != "" {
+	if httpsession.CompletionTextFromJSON([]byte(`{`)) != "" {
 		t.Fatal("expected empty on bad json")
 	}
 }
 
 func TestUnit_BuildCheckpointParams(t *testing.T) {
 	t.Parallel()
-	rs := resolvedSession{
+	rs := httpsession.Resolved{
 		SessionID: uuid.New(), ExternalID: "e", TurnIndex: 3,
 		OrgID: uuid.New(), AgentID: uuid.New(),
 	}
-	p := buildCheckpointParams(rs, checkpointInput{
+	p := httpsession.BuildCheckpointParams(rs, checkpointInput{
 		Messages:       []llm.Message{{Role: "user", Content: "x"}},
 		CompletionText: "y", Model: "m", Provider: "p",
 		Usage:   &provider.Usage{InputTokens: 1, OutputTokens: 2},
@@ -448,7 +449,7 @@ func TestUnit_RunCheckpoint_DuplicateInvalidatesCache(t *testing.T) {
 	fx := newCheckpointFixture(t)
 	fx.store.appendErr = session.ErrDuplicateTurn
 	fx.seedCache(1)
-	fx.deps.runCheckpoint(fx.params(1), fx.ext)
+	fx.deps.RunCheckpoint(fx.params(1), fx.ext)
 	if _, ok := fx.cache.Get(context.Background(), fx.key()); ok {
 		t.Fatal("expected invalidate")
 	}
@@ -459,7 +460,7 @@ func TestUnit_RunCheckpoint_RetrySucceeds(t *testing.T) {
 	fx := newCheckpointFixture(t)
 	fx.store.appendFailOnce = session.ErrDuplicateTurn
 	fx.seedCache(1)
-	fx.deps.runCheckpoint(fx.params(0), fx.ext)
+	fx.deps.RunCheckpoint(fx.params(0), fx.ext)
 
 	if fx.store.appendCount() < 2 {
 		t.Fatalf("appendCalls=%d want >=2", fx.store.appendCount())
@@ -480,7 +481,7 @@ type checkpointFixture struct {
 	agent uuid.UUID
 	ext   string
 	sid   uuid.UUID
-	deps  sessionLifecycleDeps
+	deps  httpsession.LifecycleDeps
 }
 
 func newCheckpointFixture(t *testing.T) checkpointFixture {
@@ -497,9 +498,7 @@ func newCheckpointFixture(t *testing.T) checkpointFixture {
 	return checkpointFixture{
 		store: store, cache: cache, org: org, agent: agent,
 		ext: "ext-" + uuid.New().String()[:8], sid: uuid.New(),
-		deps: sessionLifecycleDeps{
-			store: store, cache: cache, log: logger.Discard("proxy"),
-		},
+		deps: httpsession.LifecycleDeps{Store: store, Cache: cache, Log: logger.Discard("proxy")},
 	}
 }
 
@@ -522,20 +521,6 @@ func (fx checkpointFixture) params(turnIndex int) session.CheckpointParams {
 	}
 }
 
-func TestUnit_ReadLimitedBody(t *testing.T) {
-	t.Parallel()
-
-	ok, err := readLimitedBody(strings.NewReader("abc"), 3)
-	if err != nil || string(ok) != "abc" {
-		t.Fatalf("ok=%q err=%v", ok, err)
-	}
-
-	_, err = readLimitedBody(strings.NewReader("abcd"), 3)
-	if !errors.Is(err, errProviderResponseTooLarge) {
-		t.Fatalf("err=%v", err)
-	}
-}
-
 func TestUnit_EnqueueCheckpoint_SkipsStickyOnly(t *testing.T) {
 	t.Parallel()
 
@@ -549,7 +534,7 @@ func TestUnit_EnqueueCheckpoint_SkipsStickyOnly(t *testing.T) {
 	h := chatCompletionHandler{
 		sessionStore: store, checkpointPool: pool, log: logger.Discard("proxy"),
 	}
-	ctx := withResolvedSession(context.Background(), resolvedSession{ExternalID: "sticky"})
+	ctx := withResolvedSession(context.Background(), httpsession.Resolved{ExternalID: "sticky"})
 	h.enqueueCheckpoint(ctx, checkpointInput{CompletionText: "x", Model: "m", Provider: "p"})
 
 	if !neverTrue(50*time.Millisecond, 5*time.Millisecond, func() bool {

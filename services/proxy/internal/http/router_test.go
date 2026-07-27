@@ -57,7 +57,7 @@ func newTestRouter(tb testing.TB, cfg config.Config, validator auth.TokenValidat
 	if validator != nil {
 		agentVerifier = passAgentVerifier{}
 	}
-	return NewRouter(RouterDeps{
+	return mustNewRouter(tb, RouterDeps{
 		Config:           cfg,
 		Logger:           logger.Discard("proxy"),
 		Metrics:          metrics.NewProxy("test"),

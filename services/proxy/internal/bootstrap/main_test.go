@@ -1,4 +1,4 @@
-package main
+package bootstrap
 
 import (
 	"context"
@@ -29,8 +29,8 @@ import (
 
 func TestRun_InvalidConfigReturns1(t *testing.T) {
 	t.Setenv("IBEX_ENV", "not-valid")
-	if got := run(nil); got != 1 {
-		t.Fatalf("run() = %d, want 1", got)
+	if got := Run(nil); got != 1 {
+		t.Fatalf("Run() = %d, want 1", got)
 	}
 }
 
@@ -186,11 +186,14 @@ func TestNewHTTPServer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := newHTTPServer(proxyhttp.RouterDeps{
+	srv, err := newHTTPServer(proxyhttp.RouterDeps{
 		Config: cfg, Logger: logger.Discard("proxy"), Metrics: ibexmetrics.NewProxy("proxy"),
 		Limiter: ratelimit.Noop(), Health: &healthcheck.Server{},
 		ProviderRegistry: providerReg,
 	})
+	if err != nil {
+		t.Fatalf("newHTTPServer: %v", err)
+	}
 	if srv.Addr != ":8080" {
 		t.Fatalf("addr: %s", srv.Addr)
 	}
@@ -202,24 +205,24 @@ func TestNewHTTPServer(t *testing.T) {
 func TestRun_InvalidLoggerLevelReturns1(t *testing.T) {
 	t.Setenv("IBEX_ENV", "development")
 	t.Setenv("IBEX_LOG_LEVEL", "not-a-level")
-	if got := run(nil); got != 1 {
-		t.Fatalf("run() = %d, want 1", got)
+	if got := Run(nil); got != 1 {
+		t.Fatalf("Run() = %d, want 1", got)
 	}
 }
 
 func TestRun_InvalidOTELSampleRatioReturns1(t *testing.T) {
 	t.Setenv("IBEX_ENV", "development")
 	t.Setenv("OTEL_SAMPLE_RATIO", "2")
-	if got := run(nil); got != 1 {
-		t.Fatalf("run() = %d, want 1", got)
+	if got := Run(nil); got != 1 {
+		t.Fatalf("Run() = %d, want 1", got)
 	}
 }
 
 func TestRun_InvalidRedisURLReturns1(t *testing.T) {
 	t.Setenv("IBEX_ENV", "development")
 	t.Setenv("REDIS_URL", "not-a-redis-url")
-	if got := run(nil); got != 1 {
-		t.Fatalf("run() = %d, want 1", got)
+	if got := Run(nil); got != 1 {
+		t.Fatalf("Run() = %d, want 1", got)
 	}
 }
 
@@ -232,8 +235,8 @@ func TestRun_ProviderRegistryInitFailureReturns1(t *testing.T) {
 	t.Setenv("IBEX_ENV", "development")
 	t.Setenv("REDIS_URL", "")
 	t.Setenv("IBEX_AUTH_GRPC_ADDR", "")
-	if got := run(nil); got != 1 {
-		t.Fatalf("run() = %d, want 1", got)
+	if got := Run(nil); got != 1 {
+		t.Fatalf("Run() = %d, want 1", got)
 	}
 }
 

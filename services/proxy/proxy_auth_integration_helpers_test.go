@@ -205,7 +205,7 @@ func startProxyServerRedis(t *testing.T, authAddr string, srvOpts proxyServerOpt
 	if err != nil {
 		t.Fatalf("provider registry: %v", err)
 	}
-	handler := proxyhttp.NewRouter(proxyhttp.RouterDeps{
+	handler, err := proxyhttp.NewRouter(proxyhttp.RouterDeps{
 		Config:        cfg,
 		Logger:        logger.Discard("proxy"),
 		Metrics:       metrics.NewProxy("test"),
@@ -221,6 +221,9 @@ func startProxyServerRedis(t *testing.T, authAddr string, srvOpts proxyServerOpt
 		},
 		ProviderRegistry: providerReg,
 	})
+	if err != nil {
+		t.Fatalf("NewRouter: %v", err)
+	}
 	return httptest.NewServer(handler)
 }
 

@@ -117,7 +117,7 @@ func chatRouterWithTrace(t *testing.T, tw TraceWriter, pool *asyncpool.Pool) htt
 	if err != nil {
 		t.Fatal(err)
 	}
-	return NewRouter(RouterDeps{
+	return mustNewRouter(t, RouterDeps{
 		Config: chatTestConfig(), Logger: logger.Discard("proxy"),
 		Metrics: metrics.NewProxy("test"), Tracer: telemetry.NoopTracer("proxy"),
 		Validator: &chatMockValidator{res: &auth.ValidateResult{

@@ -11,6 +11,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/permissions"
 	"github.com/Rick1330/ibex-harness/packages/reqid"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
+	httptrace "github.com/Rick1330/ibex-harness/services/proxy/internal/http/trace"
 )
 
 // AuthOptions configures auth middleware behavior per route.
@@ -58,7 +59,7 @@ func AuthMiddleware(validator auth.TokenValidator, log *logger.Logger, opts Auth
 			elapsed := time.Since(start)
 			observeAuthDuration(opts.Metrics, start)
 			ctx := auth.WithContext(r.Context(), res)
-			ctx = WithAuthLatencyMs(ctx, clampUint16Ms(elapsed))
+			ctx = WithAuthLatencyMs(ctx, httptrace.ClampUint16Ms(elapsed))
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

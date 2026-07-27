@@ -9,6 +9,7 @@ import (
 	apierror "github.com/Rick1330/ibex-harness/packages/apierror"
 	"github.com/Rick1330/ibex-harness/packages/injection"
 	"github.com/Rick1330/ibex-harness/packages/provider"
+	httpsession "github.com/Rick1330/ibex-harness/services/proxy/internal/http/session"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/llm"
 )
 
@@ -44,8 +45,8 @@ func (h chatCompletionHandler) forwardChatCompletion(p chatForwardParams) {
 	if !cont {
 		return
 	}
-	if claim != nil && claim.replay {
-		replayIdempotency(p.w, claim.hit)
+	if claim != nil && claim.Replay {
+		replayIdempotency(p.w, claim.Hit)
 		return
 	}
 	h.dispatchProviderCompletion(p, claim)
@@ -102,9 +103,9 @@ func applyDirectiveInjection(ctx context.Context, messages []provider.Message) [
 }
 
 func (h chatCompletionHandler) writeProviderSuccess(p providerSuccessParams) {
-	body, err := readAllBody(p.resp.Body)
+	body, err := httpsession.ReadAllBody(p.resp.Body)
 	if err != nil {
-		if errors.Is(err, errProviderResponseTooLarge) {
+		if errors.Is(err, httpsession.ErrProviderResponseTooLarge) {
 			err = &provider.ProviderError{
 				ProviderName:   p.providerName,
 				StatusCode:     http.StatusBadGateway,
@@ -121,12 +122,12 @@ func (h chatCompletionHandler) writeProviderSuccess(p providerSuccessParams) {
 	p.w.Header().Set("Content-Type", "application/json")
 	p.w.WriteHeader(p.resp.StatusCode)
 	//nolint:errcheck // best-effort forward of upstream JSON body; client disconnect is acceptable
-	writeJSONBody(p.w, body)
+	httpsession.WriteJSONBody(p.w, body)
 	// Flush before Submit may block on a full non-dropping checkpoint queue.
 	flushIfSupported(p.w)
 	h.finishIdempotency(p.claim, p.resp.StatusCode, body)
 	h.enqueuePostResponse(p.r.Context(), checkpointInput{
-		Messages: p.parsed.Messages, CompletionText: completionTextFromJSON(body),
+		Messages: p.parsed.Messages, CompletionText: httpsession.CompletionTextFromJSON(body),
 		Model: p.parsed.Model, Provider: p.providerName, Usage: p.resp.Usage,
 		Latency: p.resp.Latency, ProviderReqID: p.resp.ProviderRequestID,
 		IsStreaming: false, IsComplete: true,
@@ -165,11 +166,11 @@ func (h chatCompletionHandler) writeProviderFailure(p providerFailureParams) {
 		return
 	}
 	logMappedProviderError(h, p.r, p.err, mapped)
-	cw := &capturingWriter{ResponseWriter: p.w, status: mapped.HTTPStatus}
+	cw := &capturingWriter{ResponseWriter: p.w, Status: mapped.HTTPStatus}
 	apierror.WriteHTTP(cw, p.requestID, apierror.WriteOpts{DocsBase: h.docsBase}, mapped)
 	// Flush before Submit may block on a full non-dropping checkpoint queue.
 	flushIfSupported(cw)
-	h.finishIdempotency(p.claim, cw.status, cw.capturedBody())
+	h.finishIdempotency(p.claim, cw.Status, cw.CapturedBody())
 
 	model, providerName := failureTraceIdentity(p)
 	h.enqueuePostResponse(p.r.Context(), checkpointInput{
