@@ -1,0 +1,25 @@
+# Architecture import-boundary lint (MF-002).
+# Intentionally separate from .golangci.yml so issues.new / new-from-merge-base
+# never grandfather packages/* → services/* violations.
+version: "2"
+run:
+  timeout: 3m
+  relative-path-mode: gomod
+linters:
+  default: none
+  enable:
+    - depguard
+  settings:
+    depguard:
+      rules:
+        packages-no-services:
+          list-mode: lax
+          files:
+            - "!$all"
+            - "packages/**"
+          deny:
+            - pkg: github.com/Rick1330/ibex-harness/services
+              desc: packages/* must not import services/* (20-architecture-layering)
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

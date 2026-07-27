@@ -1,6 +1,7 @@
 version: "2"
 run:
   timeout: 3m
+  relative-path-mode: gomod
 formatters:
   enable:
     - gofmt

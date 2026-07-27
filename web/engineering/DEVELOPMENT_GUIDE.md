@@ -405,6 +405,16 @@ On PR:
 
 - Go: `golangci-lint`, `go test ./...`
 - Python: `ruff`, `mypy`, `pytest`
+
+#### Go architecture lint (`depguard`)
+
+Import boundaries and complexity are enforced in CI via `golangci-lint` (not a separate `go-arch-lint` job). Full policy: [`GOLANGCI_POLICY.md`](./GOLANGCI_POLICY.md).
+
+- **Import boundary (always, no grandfathering):** `packages/**` must not import `github.com/Rick1330/ibex-harness/services/**` via `.golangci.depguard.yml` rule `packages-no-services` (runs without `issues.new`).
+- **Base linters:** `.golangci.yml` (`govet` / `staticcheck` / `revive` / `errcheck`) — full tree, no `whole-files`.
+- **Complexity:** `.golangci.complexity.yml` (`funlen` / `gocognit`) with `issues.new` + `new-from-rev: origin/main` + `whole-files: true` (scoped so touching a file does not re-surface non-complexity findings).
+- **Local run:** `make lint-go` fetches/verifies `origin/main`, then runs all three configs (golangci-lint v2.4+; CI uses v2.8.0).
+**MF-001 / Phase 1 proxy DB:** Identity stays on auth gRPC (no proxy `pgxpool` for tokens/agents). Current exception: `services/proxy/cmd/proxy/main.go` still opens Postgres for **session and directive** stores only — same wording as `.cursor/rules/20-architecture-layering.mdc` and `GOLANGCI_POLICY.md`; `database/sql` depguard under proxy is deferred until ADR/migration.
 - TypeScript: `eslint`, `tsc`, `vitest`
 - Security: secret scan, dependency scan, container scan
 - Contract checks: protobuf compilation + generated code consistency

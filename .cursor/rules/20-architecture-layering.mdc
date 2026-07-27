@@ -17,7 +17,7 @@ Repository / Store
 Infrastructure (DB, Redis, gRPC)
 ```
 
-A lower layer must never import or depend on a higher layer. Violations are detected by `go-arch-lint` in CI.
+A lower layer must never import or depend on a higher layer. Review and CodeScene enforce the Handler → Service → Repository → Infrastructure chain in service code. CI additionally runs `depguard` (`.golangci.depguard.yml` rule `packages-no-services`) to block `packages/**` from importing `services/**` — see `web/engineering/GOLANGCI_POLICY.md`.
 
 ```go
 // WRONG — store calls service; inverts dependency
@@ -80,16 +80,19 @@ func (h *Handler) CreateToken(w http.ResponseWriter, r *http.Request) {
 
 ## No direct database access from proxy service in Phase 1
 
-The proxy service communicates with the database ONLY through the auth service gRPC API. It does not have its own `pgxpool.Pool`. This keeps the proxy stateless and eliminates a class of multi-master write issues.
+**Identity path:** the proxy communicates with Postgres for auth/identity ONLY through the auth service gRPC API. It must not own a `pgxpool.Pool` for token/agent validation.
+
+**MF-001 exception (documented, deferred):** `services/proxy/cmd/proxy/main.go` currently opens Postgres for **session and directive** stores only. That is a temporary deviation until an ADR or migration removes proxy DB ownership. See `web/engineering/GOLANGCI_POLICY.md` (same wording). A `depguard` deny on `database/sql` under proxy is deferred with that decision.
 
 ```go
-// WRONG — proxy has its own DB connection
+// WRONG — proxy DB for identity / token validation
 func init() {
     proxyDB, _ = pgxpool.New(ctx, os.Getenv("DATABASE_URL"))
+    // use proxyDB for ValidateToken — must stay on auth gRPC
 }
 
-// RIGHT — proxy calls auth gRPC for all identity operations
-// The proxy's only external connections are: Redis (rate limit + cache) + Auth gRPC
+// RIGHT — identity via auth gRPC; Redis for rate limit + cache
+// MF-001: session/directive Postgres in proxy is the documented exception until migrated
 ```
 
 ## Shared packages (`packages/*`) have no service-specific imports

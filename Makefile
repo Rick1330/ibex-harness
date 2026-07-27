@@ -6,13 +6,19 @@ endif
 
 DEV_TOOL := infra/scripts/dev-tool.sh
 
-.PHONY: help lint-docs security-scan repo-guards proto-lint proto-breaking proto-gen proto-test proto-test-integration test-integration coverage-report coverage-gate compose-dev-up compose-dev-down compose-dev-reset compose-dev-logs compose-dev-ps compose-test-up compose-test-down db-migrate db-migrate-down db-version db-seed db-repair-token-fks clickhouse-migrate clickhouse-migrate-down clickhouse-version dev-smoke verify-phase15
+.PHONY: help lint-docs lint-go security-scan repo-guards proto-lint proto-breaking proto-gen proto-test proto-test-integration test-integration coverage-report coverage-gate compose-dev-up compose-dev-down compose-dev-reset compose-dev-logs compose-dev-ps compose-test-up compose-test-down db-migrate db-migrate-down db-version db-seed db-repair-token-fks clickhouse-migrate clickhouse-migrate-down clickhouse-version dev-smoke verify-phase15
 
 help: ## Show available commands
 	@"$(BASH)" "$(DEV_TOOL)" help
 
 lint-docs: ## Run markdownlint using the repo configuration
 	@"$(BASH)" "$(DEV_TOOL)" lint-docs
+
+lint-go: ## Run golangci-lint on packages and Go services (depguard + base + complexity)
+	@"$(BASH)" infra/scripts/ensure-origin-main.sh
+	golangci-lint run --config .golangci.depguard.yml ./packages/...
+	golangci-lint run --config .golangci.yml ./packages/... ./services/auth/... ./services/proxy/...
+	golangci-lint run --config .golangci.complexity.yml ./packages/... ./services/auth/... ./services/proxy/...
 
 security-scan: ## Run gitleaks locally if installed
 	@"$(BASH)" "$(DEV_TOOL)" security-scan

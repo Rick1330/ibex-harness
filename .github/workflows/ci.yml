@@ -833,6 +833,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # Full history + origin/main for issues.new-from-rev / whole-files.
+          fetch-depth: 0
+      - name: Ensure origin/main for complexity new-from-rev
+        run: bash infra/scripts/ensure-origin-main.sh
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -852,10 +856,15 @@ jobs:
           tar -xzf "${GOLANGCI_LINT_ARCHIVE}" -C /usr/local/bin --strip-components=1 \
             "golangci-lint-${GOLANGCI_LINT_VERSION}-linux-amd64/golangci-lint"
           golangci-lint --version
-      - name: Run golangci-lint
+      - name: Run golangci-lint (depguard — no grandfathering)
         run: |
-          golangci-lint run ./packages/... ./services/auth/... ./services/proxy/...
-
+          golangci-lint run --config .golangci.depguard.yml ./packages/...
+      - name: Run golangci-lint (base linters)
+        run: |
+          golangci-lint run --config .golangci.yml ./packages/... ./services/auth/... ./services/proxy/...
+      - name: Run golangci-lint (complexity — whole-files scoped)
+        run: |
+          golangci-lint run --config .golangci.complexity.yml ./packages/... ./services/auth/... ./services/proxy/...
   go-fuzz:
     name: go-fuzz
     needs: changes
