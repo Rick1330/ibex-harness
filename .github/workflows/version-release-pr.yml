@@ -60,6 +60,7 @@ jobs:
 
       - name: Normalize version release branch name
         if: steps.version_release.outcome == 'success' && env.RELEASE_MODE == 'propose'
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.VERSION_RELEASE_TOKEN || github.token }}
         run: bash .github/scripts/normalize-version-release-branch.sh

@@ -23,11 +23,14 @@ legacy_sha="$(gh api "repos/${repo}/git/ref/heads/${legacy}" --jq '.object.sha')
 canonical_exists="$(gh api "repos/${repo}/git/ref/heads/${canonical}" --jq '.ref // empty' 2>/dev/null || true)"
 
 if [[ -z "$canonical_exists" ]]; then
-  gh api \
+  if gh api \
     --method POST \
     "repos/${repo}/branches/${legacy}/rename" \
-    -f new_name="${canonical}"
-  echo "Renamed ${legacy} → ${canonical} (open release PRs retarget automatically)."
+    -f new_name="${canonical}" >/dev/null 2>&1; then
+    echo "Renamed ${legacy} → ${canonical} (open release PRs retarget automatically)."
+  else
+    echo "::warning title=Branch rename skipped::Could not rename ${legacy} to ${canonical}; release PR checks will still run."
+  fi
   exit 0
 fi
 
@@ -40,9 +43,12 @@ fi
 
 # Divergent refs: prefer the engine (legacy) tip, drop stale canonical, rename.
 echo "Divergent SHAs (legacy=${legacy_sha:0:7} canonical=${canonical_sha:0:7}); reconciling to engine tip."
-gh api --method DELETE "repos/${repo}/git/refs/heads/${canonical}"
-gh api \
-  --method POST \
-  "repos/${repo}/branches/${legacy}/rename" \
-  -f new_name="${canonical}"
-echo "Reconciled: ${legacy} → ${canonical} at ${legacy_sha:0:7}."
+if gh api --method DELETE "repos/${repo}/git/refs/heads/${canonical}" >/dev/null 2>&1 \
+  && gh api \
+    --method POST \
+    "repos/${repo}/branches/${legacy}/rename" \
+    -f new_name="${canonical}" >/dev/null 2>&1; then
+  echo "Reconciled: ${legacy} → ${canonical} at ${legacy_sha:0:7}."
+else
+  echo "::warning title=Branch reconcile skipped::Could not reconcile ${legacy} and ${canonical}; release PR checks will still run."
+fi
