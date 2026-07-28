@@ -151,13 +151,16 @@ func TestUnit_EnqueuePostResponse_IncompleteStreamStillCheckpoints(t *testing.T)
 
 func TestUnit_CaptureTraceSnapshot_Guards(t *testing.T) {
 	t.Parallel()
-	_, ok := httpsession.CaptureTraceSnapshot(httpsession.SnapshotMeta{}, checkpointInput{}, requestOutcome{})
+	_, ok := httpsession.CaptureTraceSnapshot(httpsession.CaptureTraceArgs{})
 	if ok {
 		t.Fatal("expected empty meta skip")
 	}
-	_, ok = httpsession.CaptureTraceSnapshot(httpsession.SnapshotMeta{
-		OrgID: uuid.MustParse(testChatOrgID), AgentID: uuid.MustParse(testChatAgentID),
-	}, checkpointInput{}, requestOutcome{IsComplete: true})
+	_, ok = httpsession.CaptureTraceSnapshot(httpsession.CaptureTraceArgs{
+		Meta: httpsession.SnapshotMeta{
+			OrgID: uuid.MustParse(testChatOrgID), AgentID: uuid.MustParse(testChatAgentID),
+		},
+		Outcome: requestOutcome{IsComplete: true},
+	})
 	if ok {
 		t.Fatal("expected empty request_id skip")
 	}
@@ -165,9 +168,11 @@ func TestUnit_CaptureTraceSnapshot_Guards(t *testing.T) {
 
 func TestUnit_CaptureTraceSnapshot_DefaultStatus(t *testing.T) {
 	t.Parallel()
-	snap, ok := httpsession.CaptureTraceSnapshot(snapshotMetaFromContext(authedTraceContext(t)), checkpointInput{
-		Model: "m", Provider: "openai",
-	}, requestOutcome{StatusCode: 0, IsComplete: true})
+	snap, ok := httpsession.CaptureTraceSnapshot(httpsession.CaptureTraceArgs{
+		Meta:    snapshotMetaFromContext(authedTraceContext(t)),
+		In:      checkpointInput{Model: "m", Provider: "openai"},
+		Outcome: requestOutcome{StatusCode: 0, IsComplete: true},
+	})
 	if !ok {
 		t.Fatal("snap")
 	}
@@ -184,7 +189,11 @@ func TestUnit_CaptureTraceSnapshot_DurableSession(t *testing.T) {
 		SessionID: sid, OrgID: uuid.MustParse(testChatOrgID),
 		AgentID: uuid.MustParse(testChatAgentID), ExternalID: "ext",
 	})
-	snap, ok := httpsession.CaptureTraceSnapshot(snapshotMetaFromContext(ctx), checkpointInput{Model: "m"}, requestOutcome{StatusCode: 200, IsComplete: true})
+	snap, ok := httpsession.CaptureTraceSnapshot(httpsession.CaptureTraceArgs{
+		Meta:    snapshotMetaFromContext(ctx),
+		In:      checkpointInput{Model: "m"},
+		Outcome: requestOutcome{StatusCode: 200, IsComplete: true},
+	})
 	if !ok {
 		t.Fatal("snap")
 	}

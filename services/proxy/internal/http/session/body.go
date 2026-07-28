@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 
@@ -14,6 +15,8 @@ import (
 var ErrProviderResponseTooLarge = errors.New("provider response exceeds size limit")
 
 // WriteJSONBody writes opaque OpenAI-compatible JSON to the response writer.
+// The io.Copy error is intentionally discarded once headers/body streaming to
+// the client has begun; the peer already received a partial response.
 func WriteJSONBody(w http.ResponseWriter, body []byte) {
 	// Opaque OpenAI-compatible JSON passthrough (Content-Type: application/json).
 	// Not an HTML response; Codacy/Opengrep XSS on ResponseWriter is a false positive.
@@ -29,7 +32,7 @@ func readLimitedBody(r io.Reader, limit int64) ([]byte, error) {
 	limited := io.LimitReader(r, limit+1)
 	body, err := io.ReadAll(limited)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read provider body: %w", err)
 	}
 	if int64(len(body)) > limit {
 		return nil, ErrProviderResponseTooLarge

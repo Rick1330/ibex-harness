@@ -13,6 +13,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	ibexmetrics "github.com/Rick1330/ibex-harness/packages/metrics"
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
+	"github.com/Rick1330/ibex-harness/packages/ratelimit"
 	"github.com/Rick1330/ibex-harness/packages/revocation"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/asyncpool"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
@@ -25,6 +26,13 @@ import (
 
 	// Register the lib/pq "postgres" driver used by sql.Open for directives + sessions.
 	_ "github.com/lib/pq"
+)
+
+const (
+	httpReadHeaderTimeout = 5 * time.Second
+	httpReadTimeout       = 30 * time.Second
+	httpWriteTimeout      = 120 * time.Second
+	httpIdleTimeout       = 90 * time.Second
 )
 
 type proxyCore struct {
@@ -61,6 +69,7 @@ func setupProxyCore(
 		assembled.redisClient, assembled.directiveResolver, log, reg,
 	)
 	if err != nil {
+		stopRevocationOnFailure(revSub, revCancel)
 		return nil, fmt.Errorf("directive subscriber: %w", err)
 	}
 	startSessionSweeper(assembled.sessionSweeper, cfg, log)
@@ -69,6 +78,15 @@ func setupProxyCore(
 		revSub:    revSub, revCancel: revCancel,
 		dirSub: dirSub, dirCancel: dirCancel,
 	}), nil
+}
+
+func stopRevocationOnFailure(sub *revocation.Subscriber, cancel context.CancelFunc) {
+	if cancel != nil {
+		cancel()
+	}
+	if sub != nil {
+		sub.Stop()
+	}
 }
 
 type proxyCoreParts struct {
@@ -103,46 +121,81 @@ type assembledProxyCore struct {
 	traceWriter       *ibexch.Writer
 }
 
+type proxyInfra struct {
+	redisClient       redis.UniversalClient
+	limiter           ratelimit.Limiter
+	auth              authClients
+	pgDB              *sql.DB
+	directiveResolver directive.Resolver
+	sessionStack      sessionStack
+}
+
 func assembleProxyCore(
 	cfg config.Config,
 	log *logger.Logger,
 	reg *ibexmetrics.ProxyRegistry,
 	tracer trace.Tracer,
 ) (assembledProxyCore, error) {
+	infra, err := assembleProxyInfra(cfg, log, reg, tracer)
+	if err != nil {
+		return assembledProxyCore{}, err
+	}
+	return finishAssembledCore(cfg, log, reg, tracer, infra)
+}
+
+func assembleProxyInfra(
+	cfg config.Config,
+	log *logger.Logger,
+	reg *ibexmetrics.ProxyRegistry,
+	tracer trace.Tracer,
+) (proxyInfra, error) {
 	redisClient, limiter, err := setupRateLimiter(cfg, log)
 	if err != nil {
-		return assembledProxyCore{}, fmt.Errorf("rate limiter: %w", err)
+		return proxyInfra{}, fmt.Errorf("rate limiter: %w", err)
 	}
-	validator, agentVerifier, authClient, grpcConn, err := setupAuthClients(cfg, log, reg)
+	authBundle, err := setupAuthClients(cfg, log, reg)
 	if err != nil {
-		return assembledProxyCore{}, fmt.Errorf("auth clients: %w", err)
+		return proxyInfra{}, fmt.Errorf("auth clients: %w", err)
 	}
 	pgDB, directiveResolver, err := setupDirectiveResolver(directiveResolverSetup{
 		Config: cfg, Redis: redisClient, Log: log, Reg: reg, OpenDB: openProxyPostgres,
 	})
 	if err != nil {
-		return assembledProxyCore{}, fmt.Errorf("directive resolver: %w", err)
+		return proxyInfra{}, fmt.Errorf("directive resolver: %w", err)
 	}
-	sessionStack, err := setupSessionStack(sessionStackSetup{
+	stack, err := setupSessionStack(sessionStackSetup{
 		DB: pgDB, Redis: redisClient, Config: cfg, Log: log, Reg: reg, Tracer: tracer,
 	})
 	if err != nil {
-		return assembledProxyCore{}, err
+		return proxyInfra{}, fmt.Errorf("session stack: %w", err)
 	}
+	return proxyInfra{
+		redisClient: redisClient, limiter: limiter, auth: authBundle,
+		pgDB: pgDB, directiveResolver: directiveResolver, sessionStack: stack,
+	}, nil
+}
+
+func finishAssembledCore(
+	cfg config.Config,
+	log *logger.Logger,
+	reg *ibexmetrics.ProxyRegistry,
+	tracer trace.Tracer,
+	infra proxyInfra,
+) (assembledProxyCore, error) {
 	providerReg, err := providerRegistryInit(cfg, log, tracer, reg)
 	if err != nil {
 		return assembledProxyCore{}, fmt.Errorf("provider registry: %w", err)
 	}
-	traceWriter := optionalTraceWriter(cfg, log, reg)
+	traceWriter := optionalTraceWriter(cfg, log, reg, ibexch.NewWriter)
 	deps := proxyhttp.RouterDeps{
 		Config: cfg, Logger: log, Metrics: reg, Tracer: tracer,
-		Validator: validator, AgentVerifier: agentVerifier, Limiter: limiter,
-		DirectiveResolver: directiveResolver, SessionStore: sessionStack.store,
-		SessionCache: sessionStack.cache, CheckpointPool: sessionStack.pool,
-		GetOrCreateTimeout: cfg.SessionGetOrCreateTO,
-		Health:             buildProxyHealth(cfg, authClient, pgDB),
-		ProviderRegistry:   providerReg,
-		IdempotencyStore:   newIdempotencyStore(redisClient, cfg),
+		Validator: infra.auth.validator, AgentVerifier: infra.auth.agentVerifier,
+		Limiter: infra.limiter, DirectiveResolver: infra.directiveResolver,
+		SessionStore: infra.sessionStack.store, SessionCache: infra.sessionStack.cache,
+		CheckpointPool: infra.sessionStack.pool, GetOrCreateTimeout: cfg.SessionGetOrCreateTO,
+		Health:           buildProxyHealth(cfg, infra.auth.client, infra.pgDB),
+		ProviderRegistry: providerReg,
+		IdempotencyStore: newIdempotencyStore(infra.redisClient, cfg),
 	}
 	assignTraceWriter(&deps, traceWriter)
 	server, err := newHTTPServer(deps)
@@ -150,9 +203,9 @@ func assembleProxyCore(
 		return assembledProxyCore{}, fmt.Errorf("http router: %w", err)
 	}
 	return assembledProxyCore{
-		server: server, grpcConn: grpcConn, redisClient: redisClient, pgDB: pgDB,
-		validator: validator, directiveResolver: directiveResolver,
-		checkpointPool: sessionStack.pool, sessionSweeper: sessionStack.sweeper,
+		server: server, grpcConn: infra.auth.conn, redisClient: infra.redisClient, pgDB: infra.pgDB,
+		validator: infra.auth.validator, directiveResolver: infra.directiveResolver,
+		checkpointPool: infra.sessionStack.pool, sessionSweeper: infra.sessionStack.sweeper,
 		traceWriter: traceWriter,
 	}, nil
 }
@@ -189,6 +242,9 @@ func newHTTPServer(deps proxyhttp.RouterDeps) (*http.Server, error) {
 	return &http.Server{
 		Addr:              ":" + deps.Config.Port,
 		Handler:           handler,
-		ReadHeaderTimeout: 5 * time.Second,
+		ReadHeaderTimeout: httpReadHeaderTimeout,
+		ReadTimeout:       httpReadTimeout,
+		WriteTimeout:      httpWriteTimeout,
+		IdleTimeout:       httpIdleTimeout,
 	}, nil
 }

@@ -29,7 +29,9 @@ const (
 	msgInternalError     = "Internal error"
 )
 
-// Claim holds state for a request that owns (or replays) a key.
+// Claim holds ownership or replay state for an Idempotency-Key.
+// Replay=true means the caller must short-circuit and return Hit; otherwise
+// the caller owns the key until Finish/FinishCapture commits or releases it.
 type Claim struct {
 	OrgID     uuid.UUID
 	Key       string
@@ -40,6 +42,8 @@ type Claim struct {
 }
 
 // Idempotency wires Redis claim/commit/release for chat completions.
+// Redis errors fail open (request proceeds without a claim) so availability
+// is preferred over strict dedupe when the store is unreachable.
 type Idempotency struct {
 	Store         idempotency.Store
 	Metrics       *metrics.ProxyRegistry
@@ -248,6 +252,7 @@ func ShouldCommit(status int) bool {
 }
 
 // Finish commits or releases after the provider response.
+// Transient 429/5xx and oversize bodies release so clients can retry the same key.
 func (id Idempotency) Finish(claim *Claim, status int, body []byte) {
 	if claim == nil || id.Store == nil {
 		return
@@ -261,6 +266,21 @@ func (id Idempotency) Finish(claim *Claim, status int, body []byte) {
 		return
 	}
 	id.commit(claim, status, body)
+}
+
+// FinishCapture commits a captured response, or releases when the capture was
+// capped (nil body is not treated as an empty successful body).
+func (id Idempotency) FinishCapture(claim *Claim, cw *CapturingWriter) {
+	if cw == nil {
+		return
+	}
+	if cw.ExceededLimit() {
+		if claim != nil && id.Store != nil {
+			id.release(claim)
+		}
+		return
+	}
+	id.Finish(claim, cw.Status, cw.CapturedBody())
 }
 
 func (id Idempotency) redisOpContext(claim *Claim) (context.Context, context.CancelFunc) {
@@ -353,6 +373,11 @@ func (c *CapturingWriter) Flush() {
 	if f, ok := c.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	}
+}
+
+// ExceededLimit reports whether the capture was discarded for size.
+func (c *CapturingWriter) ExceededLimit() bool {
+	return c.capped
 }
 
 // CapturedBody returns the buffered body, or nil when capped.

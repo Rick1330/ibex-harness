@@ -15,15 +15,16 @@ import (
 	_ "github.com/lib/pq"
 )
 
-var newTraceWriter = ibexch.NewWriter
+type traceWriterFactory func(ibexch.Config) (*ibexch.Writer, error)
 
 // optionalTraceWriter starts the ClickHouse writer or returns nil (fail-open).
 func optionalTraceWriter(
 	cfg config.Config,
 	log *logger.Logger,
 	reg *ibexmetrics.ProxyRegistry,
+	newWriter traceWriterFactory,
 ) *ibexch.Writer {
-	w, err := setupTraceWriter(cfg, log, reg)
+	w, err := setupTraceWriter(cfg, log, reg, newWriter)
 	if err != nil {
 		log.WarnCtx(context.Background(), "clickhouse writer disabled; continuing without traces",
 			"reason", "writer_start_failed")
@@ -36,13 +37,17 @@ func setupTraceWriter(
 	cfg config.Config,
 	log *logger.Logger,
 	reg *ibexmetrics.ProxyRegistry,
+	newWriter traceWriterFactory,
 ) (*ibexch.Writer, error) {
 	dsn := strings.TrimSpace(cfg.ClickHouseDSN)
 	if dsn == "" {
 		log.InfoCtx(context.Background(), "CLICKHOUSE_DSN unset; trace writer disabled")
 		return nil, nil
 	}
-	w, err := newTraceWriter(ibexch.Config{
+	if newWriter == nil {
+		newWriter = ibexch.NewWriter
+	}
+	w, err := newWriter(ibexch.Config{
 		DSN:           dsn,
 		MaxBatchSize:  cfg.ClickHouseBatchSize,
 		FlushInterval: time.Duration(cfg.ClickHouseFlushMS) * time.Millisecond,

@@ -30,42 +30,57 @@ type authWriteCtx struct {
 // AuthMiddleware validates bearer tokens and attaches auth context.
 func AuthMiddleware(validator auth.TokenValidator, log *logger.Logger, opts AuthOptions) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
+		deps := authServeDeps{validator: validator, log: log, opts: opts, next: next}
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			start := time.Now()
-			requestID, r := ensureAuthRequestID(r)
-			awc := authWriteCtx{w: w, requestID: requestID, docsBase: ErrorDocsBaseFromContext(r.Context())}
-
-			token, err := auth.ParseAuthorizationHeader(r.Header.Get("Authorization"))
-			if err != nil {
-				observeAuthDuration(opts.Metrics, start)
-				writeAuthParseError(awc, err)
-				return
-			}
-
-			res, err := validator.Validate(r.Context(), token)
-			if err != nil {
-				observeAuthDuration(opts.Metrics, start)
-				writeAuthValidateError(awc, r, log, err)
-				return
-			}
-			if res.FromCache {
-				w.Header().Set("X-IBEX-Auth-Cached", "true")
-			}
-			if !authorizeAuthResult(awc, res, opts) {
-				observeAuthDuration(opts.Metrics, start)
-				return
-			}
-
-			elapsed := time.Since(start)
-			observeAuthDuration(opts.Metrics, start)
-			ctx := auth.WithContext(r.Context(), res)
-			ctx = WithAuthLatencyMs(ctx, httptrace.ClampUint16Ms(elapsed))
-			next.ServeHTTP(w, r.WithContext(ctx))
+			serveAuthRequest(w, r, deps)
 		})
 	}
 }
 
+type authServeDeps struct {
+	validator auth.TokenValidator
+	log       *logger.Logger
+	opts      AuthOptions
+	next      http.Handler
+}
+
+func serveAuthRequest(w http.ResponseWriter, r *http.Request, deps authServeDeps) {
+	start := time.Now()
+	requestID, r := ensureAuthRequestID(r)
+	awc := authWriteCtx{w: w, requestID: requestID, docsBase: ErrorDocsBaseFromContext(r.Context())}
+
+	token, err := auth.ParseAuthorizationHeader(r.Header.Get("Authorization"))
+	if err != nil {
+		observeAuthDuration(deps.opts.Metrics, start)
+		writeAuthParseError(awc, err)
+		return
+	}
+
+	res, err := deps.validator.Validate(r.Context(), token)
+	if err != nil {
+		observeAuthDuration(deps.opts.Metrics, start)
+		writeAuthValidateError(awc, r, deps.log, err)
+		return
+	}
+	if res.FromCache {
+		w.Header().Set("X-IBEX-Auth-Cached", "true")
+	}
+	if !authorizeAuthResult(awc, res, deps.opts) {
+		observeAuthDuration(deps.opts.Metrics, start)
+		return
+	}
+
+	elapsed := time.Since(start)
+	observeAuthDuration(deps.opts.Metrics, start)
+	ctx := auth.WithContext(r.Context(), res)
+	ctx = WithAuthLatencyMs(ctx, httptrace.ClampUint16Ms(elapsed))
+	deps.next.ServeHTTP(w, r.WithContext(ctx))
+}
+
 func observeAuthDuration(reg *metrics.ProxyRegistry, start time.Time) {
+	if reg == nil {
+		return
+	}
 	reg.ObserveAuthDurationSeconds(time.Since(start).Seconds())
 }
 

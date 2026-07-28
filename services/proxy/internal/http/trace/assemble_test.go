@@ -58,21 +58,36 @@ func assertAssembleIDs(t *testing.T, rec ibexch.TraceRecord, ids assembleWantIDs
 
 func assertAssembleTokens(t *testing.T, rec ibexch.TraceRecord) {
 	t.Helper()
-	if rec.InputTokens != 10 || rec.OutputTokens != 20 || rec.TotalTokens != 30 {
-		t.Fatalf("tokens in=%d out=%d total=%d", rec.InputTokens, rec.OutputTokens, rec.TotalTokens)
+	if rec.InputTokens != 10 {
+		t.Fatalf("input tokens=%d", rec.InputTokens)
 	}
-	if !rec.IsStreaming || !rec.IsComplete {
-		t.Fatal("streaming/complete flags")
+	if rec.OutputTokens != 20 {
+		t.Fatalf("output tokens=%d", rec.OutputTokens)
 	}
-	if rec.Model != "gpt-4o" || rec.Provider != "openai" {
-		t.Fatalf("model/provider %s/%s", rec.Model, rec.Provider)
+	if rec.TotalTokens != 30 {
+		t.Fatalf("total tokens=%d", rec.TotalTokens)
+	}
+	if !rec.IsStreaming {
+		t.Fatal("expected streaming")
+	}
+	if !rec.IsComplete {
+		t.Fatal("expected complete")
+	}
+	if rec.Model != "gpt-4o" {
+		t.Fatalf("model=%s", rec.Model)
+	}
+	if rec.Provider != "openai" {
+		t.Fatalf("provider=%s", rec.Provider)
 	}
 }
 
 func assertAssembleLatencies(t *testing.T, rec ibexch.TraceRecord) {
 	t.Helper()
-	if rec.AuthLatencyMs != 5 || rec.DirectiveLatencyMs != 7 {
-		t.Fatalf("stage ms auth=%d dir=%d", rec.AuthLatencyMs, rec.DirectiveLatencyMs)
+	if rec.AuthLatencyMs != 5 {
+		t.Fatalf("auth ms=%d", rec.AuthLatencyMs)
+	}
+	if rec.DirectiveLatencyMs != 7 {
+		t.Fatalf("directive ms=%d", rec.DirectiveLatencyMs)
 	}
 	if rec.ProviderTTFBMs != 40 {
 		t.Fatalf("ttfb=%d", rec.ProviderTTFBMs)
@@ -111,8 +126,22 @@ func TestUnit_Assemble_DefaultsAndUsageSum(t *testing.T) {
 	if rec.TotalTokens != 7 {
 		t.Fatalf("sum total=%d", rec.TotalTokens)
 	}
-	if rec.RequestedAt.IsZero() || rec.CompletedAt.IsZero() {
-		t.Fatal("timestamps")
+	if rec.RequestedAt.IsZero() {
+		t.Fatal("requested_at")
+	}
+	if rec.CompletedAt.IsZero() {
+		t.Fatal("completed_at")
+	}
+}
+
+func TestUnit_AddUint32Sat_Overflow(t *testing.T) {
+	t.Parallel()
+	got := addUint32Sat(^uint32(0), ^uint32(0))
+	if got != ^uint32(0) {
+		t.Fatalf("got=%d", got)
+	}
+	if addUint32Sat(1, 2) != 3 {
+		t.Fatal("sum")
 	}
 }
 

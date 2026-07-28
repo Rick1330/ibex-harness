@@ -170,7 +170,7 @@ func (h chatCompletionHandler) writeProviderFailure(p providerFailureParams) {
 	apierror.WriteHTTP(cw, p.requestID, apierror.WriteOpts{DocsBase: h.docsBase}, mapped)
 	// Flush before Submit may block on a full non-dropping checkpoint queue.
 	flushIfSupported(cw)
-	h.finishIdempotency(p.claim, cw.Status, cw.CapturedBody())
+	h.finishIdempotencyCapture(p.claim, cw)
 
 	model, providerName := failureTraceIdentity(p)
 	h.enqueuePostResponse(p.r.Context(), checkpointInput{

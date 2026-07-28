@@ -8,6 +8,8 @@ import (
 )
 
 // Assemble builds a TraceRecord with no prompt/completion content.
+// Zero timestamps default to now/completed; negative durations and token
+// counts clamp to zero and saturate at uint32 max so analytics stay bounded.
 func Assemble(in AssembleInput) ibexch.TraceRecord {
 	completed := in.Timings.CompletedAt
 	if completed.IsZero() {
@@ -53,7 +55,15 @@ func usageTokenCounts(u *provider.Usage) (in, out, total uint32) {
 	if total != 0 {
 		return in, out, total
 	}
-	return in, out, in + out
+	return in, out, addUint32Sat(in, out)
+}
+
+func addUint32Sat(a, b uint32) uint32 {
+	sum := a + b
+	if sum < a {
+		return ^uint32(0)
+	}
+	return sum
 }
 
 func durationToUint32(d time.Duration) uint32 {

@@ -6,7 +6,8 @@ import (
 	ibexch "github.com/Rick1330/ibex-harness/packages/clickhouse"
 )
 
-// TraceWriter accepts assembled llm_traces rows (implemented by packages/clickhouse.Writer).
+// TraceWriter decouples HTTP trace emit from the ClickHouse writer so handlers
+// and tests can inject a narrow Write contract without importing storage details.
 type TraceWriter interface {
 	Write(record ibexch.TraceRecord) error
 }

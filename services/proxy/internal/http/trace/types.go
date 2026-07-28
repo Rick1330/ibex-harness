@@ -8,6 +8,8 @@ import (
 )
 
 // RequestTimings holds proxy-measured stage and wall-clock latencies.
+// Zero RequestedAt/CompletedAt are filled by Assemble so callers need not
+// invent clocks on early-exit paths.
 type RequestTimings struct {
 	AuthMs       uint16
 	DirectiveMs  uint16
@@ -17,6 +19,7 @@ type RequestTimings struct {
 }
 
 // RequestOutcome is the HTTP/completion result for a trace row.
+// StreamRequested lets failure paths mark streaming without appending a checkpoint.
 type RequestOutcome struct {
 	StatusCode uint16
 	IsComplete bool
@@ -26,7 +29,9 @@ type RequestOutcome struct {
 	StreamRequested bool
 }
 
-// AssembleInput is the immutable snapshot for Assemble (≤4 logical groups).
+// AssembleInput is the immutable snapshot for Assemble.
+// RequestID, OrgID, and AgentID are required identity; SessionID/Usage are optional.
+// Prompt and completion content are intentionally omitted for privacy.
 type AssembleInput struct {
 	RequestID string
 	OrgID     uuid.UUID

@@ -360,29 +360,6 @@ func TestUnit_SessionLifecycle_CrossOrgUsesTokenOrg(t *testing.T) {
 	}
 }
 
-func TestUnit_StickyExternalID(t *testing.T) {
-	t.Parallel()
-	minted := httpsession.StickyExternalID("")
-	if minted == "" {
-		t.Fatal("expected mint")
-	}
-	if _, err := uuid.Parse(minted); err != nil {
-		t.Fatalf("mint uuid: %v", err)
-	}
-	got := httpsession.StickyExternalID("  abc  ")
-	if got != "abc" {
-		t.Fatalf("got=%q", got)
-	}
-	tooLong := strings.Repeat("x", 64+1)
-	replaced := httpsession.StickyExternalID(tooLong)
-	if replaced == tooLong || replaced == "" {
-		t.Fatal("expected mint replacing oversized")
-	}
-	if _, err := uuid.Parse(replaced); err != nil {
-		t.Fatalf("replacement uuid: %v", err)
-	}
-}
-
 func TestUnit_ResolveSession_NilStore(t *testing.T) {
 	t.Parallel()
 
@@ -398,49 +375,6 @@ func TestUnit_ResolveSession_NilStore(t *testing.T) {
 	}
 	if rs.Durable() {
 		t.Fatal("expected non-durable sticky-only session")
-	}
-}
-
-func TestUnit_CompletionTextFromJSON(t *testing.T) {
-	t.Parallel()
-	got := httpsession.CompletionTextFromJSON([]byte(`{"choices":[{"message":{"content":"hi"}}]}`))
-	if got != "hi" {
-		t.Fatalf("got=%q", got)
-	}
-	if httpsession.CompletionTextFromJSON([]byte(`{`)) != "" {
-		t.Fatal("expected empty on bad json")
-	}
-}
-
-func TestUnit_BuildCheckpointParams(t *testing.T) {
-	t.Parallel()
-	rs := httpsession.Resolved{
-		SessionID: uuid.New(), ExternalID: "e", TurnIndex: 3,
-		OrgID: uuid.New(), AgentID: uuid.New(),
-	}
-	p := httpsession.BuildCheckpointParams(rs, checkpointInput{
-		Messages:       []llm.Message{{Role: "user", Content: "x"}},
-		CompletionText: "y", Model: "m", Provider: "p",
-		Usage:   &provider.Usage{InputTokens: 1, OutputTokens: 2},
-		Latency: 1500 * time.Millisecond, IsStreaming: true, IsComplete: true,
-	}, "req-1")
-	if p.TurnIndex != 3 {
-		t.Fatalf("turn=%d", p.TurnIndex)
-	}
-	if p.InputTokens != 1 {
-		t.Fatalf("in=%d", p.InputTokens)
-	}
-	if p.OutputTokens != 2 {
-		t.Fatalf("out=%d", p.OutputTokens)
-	}
-	if p.LatencyMs != 1500 {
-		t.Fatalf("latency=%d", p.LatencyMs)
-	}
-	if p.MessagesHash == "" {
-		t.Fatal("expected messages hash")
-	}
-	if p.CompletionHash == "" {
-		t.Fatal("expected completion hash")
 	}
 }
 

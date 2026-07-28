@@ -21,11 +21,6 @@ func Run(args []string) int {
 	return runBootstrap(args, nil)
 }
 
-// RunWithSignalChan is used by tests to inject a signal channel.
-func RunWithSignalChan(args []string, signalCh chan os.Signal) int {
-	return runBootstrap(args, signalCh)
-}
-
 // providerRegistryInit is overridden in tests to simulate startup registry failures.
 var providerRegistryInit = defaultProviderRegistryInit
 
@@ -63,11 +58,13 @@ func runBootstrap(_ []string, signalCh chan os.Signal) int {
 func loadProxyRuntime() (config.Config, *logger.Logger, error) {
 	cfg, err := config.Load()
 	if err != nil {
+		// packages/logger is not available yet; stdlib slog is intentional here.
 		slog.New(slog.NewJSONHandler(os.Stderr, nil)).Error("invalid configuration", "error", err)
 		return config.Config{}, nil, err
 	}
 	log, err := logger.New(logger.Config{Service: cfg.ServiceName, Level: cfg.LogLevel})
 	if err != nil {
+		// packages/logger failed to init; fall back to stdlib slog for the fatal.
 		slog.New(slog.NewJSONHandler(os.Stderr, nil)).Error("logger init failed", "error", err)
 		return config.Config{}, nil, err
 	}

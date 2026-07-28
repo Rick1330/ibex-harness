@@ -189,15 +189,22 @@ func startSessionSweeper(sw *sessionsweeper.Sweeper, cfg config.Config, log *log
 	)
 }
 
+const (
+	pgMaxOpenConns    = 10
+	pgMaxIdleConns    = 5
+	pgConnMaxLifetime = time.Hour
+	pgPingTimeout     = 5 * time.Second
+)
+
 func openProxyPostgres(dsn string) (*sql.DB, error) {
 	db, err := sql.Open("postgres", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("postgres open: %w", err)
 	}
-	db.SetMaxOpenConns(10)
-	db.SetMaxIdleConns(5)
-	db.SetConnMaxLifetime(time.Hour)
-	pingCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	db.SetMaxOpenConns(pgMaxOpenConns)
+	db.SetMaxIdleConns(pgMaxIdleConns)
+	db.SetConnMaxLifetime(pgConnMaxLifetime)
+	pingCtx, cancel := context.WithTimeout(context.Background(), pgPingTimeout)
 	defer cancel()
 	if err := db.PingContext(pingCtx); err != nil {
 		_ = db.Close() // best-effort close after failed ping
@@ -256,6 +263,8 @@ func startDirectiveSubscriber(
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	go sub.Run(ctx)
-	log.InfoCtx(context.Background(), "directive subscriber started", "pattern", directive.ChannelPattern)
+	if log != nil {
+		log.InfoCtx(context.Background(), "directive subscriber started", "pattern", directive.ChannelPattern)
+	}
 	return sub, cancel, nil
 }

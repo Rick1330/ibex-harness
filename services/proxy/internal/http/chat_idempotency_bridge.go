@@ -42,3 +42,7 @@ func idempotencyCASHTimeout(claimBudget time.Duration) time.Duration {
 func (h chatCompletionHandler) finishIdempotency(claim *idempotencyClaim, status int, body []byte) {
 	h.idemp().Finish(claim, status, body)
 }
+
+func (h chatCompletionHandler) finishIdempotencyCapture(claim *idempotencyClaim, cw *capturingWriter) {
+	h.idemp().FinishCapture(claim, cw)
+}

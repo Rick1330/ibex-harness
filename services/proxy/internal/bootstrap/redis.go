@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 
 	"github.com/Rick1330/ibex-harness/packages/authcache"
@@ -18,6 +19,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 
 	// Register the lib/pq "postgres" driver used by sql.Open for directives + sessions.
@@ -47,32 +49,49 @@ func newIdempotencyStore(redisClient redis.UniversalClient, cfg config.Config) i
 	return idempotency.NewRedisStore(redisClient, idempotency.Config{TTL: cfg.IdempotencyTTL})
 }
 
-func setupAuthClients(cfg config.Config, log *logger.Logger, m *ibexmetrics.ProxyRegistry) (auth.TokenValidator, auth.AgentVerifier, authv1.AuthServiceClient, *grpc.ClientConn, error) {
+type authClients struct {
+	validator     auth.TokenValidator
+	agentVerifier auth.AgentVerifier
+	client        authv1.AuthServiceClient
+	conn          *grpc.ClientConn
+}
+
+func setupAuthClients(cfg config.Config, log *logger.Logger, m *ibexmetrics.ProxyRegistry) (authClients, error) {
 	if cfg.AuthGRPCAddr == "" {
-		return nil, nil, nil, nil, nil
+		return authClients{}, nil
 	}
 	conn, err := grpc.NewClient(cfg.AuthGRPCAddr,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithTransportCredentials(authTransportCredentials(cfg.Environment)),
 		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
 		grpc.WithChainUnaryInterceptor(proxygrpc.RequestIDUnaryInterceptor()),
 	)
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("auth grpc dial addr=%s: %w", cfg.AuthGRPCAddr, err)
+		return authClients{}, fmt.Errorf("auth grpc dial addr=%s: %w", cfg.AuthGRPCAddr, err)
 	}
 	client := authv1.NewAuthServiceClient(conn)
 	var validator auth.TokenValidator = auth.NewGRPCValidator(client, cfg.AuthValidateTimeout)
 	validator, err = maybeWrapAuthCache(validator, cfg, log, m)
 	if err != nil {
 		_ = conn.Close()
-		return nil, nil, nil, nil, err
+		return authClients{}, err
 	}
 	agentVerifier := auth.NewGRPCAgentVerifier(client, cfg.AuthValidateTimeout)
 	log.InfoCtx(context.Background(), "auth grpc client configured",
 		"addr", cfg.AuthGRPCAddr,
 		"timeout", cfg.AuthValidateTimeout.String(),
 		"auth_cache_enabled", cfg.AuthCache.Enabled,
+		"tls", cfg.Environment != "development",
 	)
-	return validator, agentVerifier, client, conn, nil
+	return authClients{
+		validator: validator, agentVerifier: agentVerifier, client: client, conn: conn,
+	}, nil
+}
+
+func authTransportCredentials(environment string) credentials.TransportCredentials {
+	if environment == "" || environment == "development" {
+		return insecure.NewCredentials()
+	}
+	return credentials.NewTLS(&tls.Config{MinVersion: tls.VersionTLS12})
 }
 
 func maybeWrapAuthCache(

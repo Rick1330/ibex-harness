@@ -79,7 +79,11 @@ func testRedisStore(t *testing.T) (idempotency.Store, *miniredis.Miniredis) {
 	t.Helper()
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	t.Cleanup(func() { _ = client.Close() })
+	t.Cleanup(func() {
+		if err := client.Close(); err != nil {
+			t.Errorf("redis close: %v", err)
+		}
+	})
 	return idempotency.NewRedisStore(client, idempotency.Config{TTL: time.Hour}), mr
 }
 
@@ -172,11 +176,37 @@ func TestUnit_CapturingWriter_CapAndStatus(t *testing.T) {
 	cw2 := &CapturingWriter{ResponseWriter: httptest.NewRecorder()}
 	_, _ = cw2.Write(big)
 	_, _ = cw2.Write([]byte("y"))
-	if !cw2.capped {
-		t.Fatal("expected capped=true")
+	if !cw2.ExceededLimit() {
+		t.Fatal("expected ExceededLimit")
 	}
 	if cw2.CapturedBody() != nil {
 		t.Fatal("expected captured body to be nil after cap")
+	}
+}
+
+func TestUnit_FinishCapture_CappedReleases(t *testing.T) {
+	t.Parallel()
+	mrStore, _ := testRedisStore(t)
+	id := Idempotency{
+		Store: mrStore, Timeout: time.Second,
+		Metrics: metrics.NewProxy("t"), Log: logger.Discard("t"),
+	}
+	org := uuid.MustParse(testChatOrgID)
+	tkn := idempotency.Token{OrgID: org, Key: "cap"}
+	claim := &Claim{OrgID: org, Key: "cap", FP: "fp"}
+	if _, err := mrStore.Claim(context.Background(), tkn, "fp"); err != nil {
+		t.Fatal(err)
+	}
+	cw := &CapturingWriter{ResponseWriter: httptest.NewRecorder(), Status: http.StatusBadRequest}
+	big := []byte(strings.Repeat("x", int(validation.MaxProviderResponseBytes)+1))
+	_, _ = cw.Write(big)
+	id.FinishCapture(claim, cw)
+	out, err := mrStore.Claim(context.Background(), tkn, "fp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Kind != idempotency.KindMiss {
+		t.Fatalf("kind=%v want miss after release", out.Kind)
 	}
 }
 

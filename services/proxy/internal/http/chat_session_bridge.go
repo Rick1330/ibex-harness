@@ -104,15 +104,15 @@ func (h chatCompletionHandler) enqueuePostResponse(
 	outcome requestOutcome,
 ) {
 	rs, _ := ResolvedSessionFromContext(ctx)
-	job := httpsession.PreparePostResponse(
-		h.lifecycle(),
-		httptrace.EffectiveWriter(h.traceWriter),
-		h.log,
-		rs,
-		snapshotMetaFromContext(ctx),
-		in,
-		outcome,
-	)
+	job := httpsession.PreparePostResponse(httpsession.PreparePostResponseInput{
+		Deps:     h.lifecycle(),
+		Writer:   httptrace.EffectiveWriter(h.traceWriter),
+		Log:      h.log,
+		Resolved: rs,
+		Meta:     snapshotMetaFromContext(ctx),
+		In:       in,
+		Outcome:  outcome,
+	})
 	httpsession.EnqueuePostResponse(job)
 }
 
