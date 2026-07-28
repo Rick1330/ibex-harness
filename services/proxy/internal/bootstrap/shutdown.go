@@ -100,17 +100,24 @@ func awaitProxyShutdown(opts shutdownOpts, errCh, shutdownErrCh <-chan error) in
 func immediateCleanup(opts shutdownOpts) {
 	ctx, cancel := context.WithTimeout(context.Background(), opts.cfg.ShutdownTimeout)
 	defer cancel()
-	_ = opts.server.Close()
+	logImmediateCleanupErr(opts.logger, "server close", opts.server.Close())
 	stopPubSubSubscribers(opts)
-	shutdownCheckpointPool(ctx, opts)
-	shutdownSessionSweeper(ctx, opts)
-	shutdownTraceWriter(ctx, opts)
-	closeGRPCConn(opts)
-	closeRedisClient(opts)
-	closePgDB(opts)
+	logImmediateCleanupErr(opts.logger, "checkpoint pool shutdown", shutdownCheckpointPool(ctx, opts))
+	logImmediateCleanupErr(opts.logger, "session sweeper shutdown", shutdownSessionSweeper(ctx, opts))
+	logImmediateCleanupErr(opts.logger, "trace writer shutdown", shutdownTraceWriter(ctx, opts))
+	logImmediateCleanupErr(opts.logger, "grpc conn close", closeGRPCConn(opts))
+	logImmediateCleanupErr(opts.logger, "redis client close", closeRedisClient(opts))
+	logImmediateCleanupErr(opts.logger, "postgres close", closePgDB(opts))
 	if opts.providers != nil {
-		_ = opts.providers.Shutdown(ctx)
+		logImmediateCleanupErr(opts.logger, "providers shutdown", opts.providers.Shutdown(ctx))
 	}
+}
+
+func logImmediateCleanupErr(log *logger.Logger, op string, err error) {
+	if err == nil || log == nil {
+		return
+	}
+	log.ErrorCtx(context.Background(), "immediate cleanup failed", "operation", op, "error", err)
 }
 
 func stopPubSubSubscribers(opts shutdownOpts) {
