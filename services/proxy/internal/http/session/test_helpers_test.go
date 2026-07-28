@@ -10,7 +10,11 @@ import (
 	ibexch "github.com/Rick1330/ibex-harness/packages/clickhouse"
 	pkgsession "github.com/Rick1330/ibex-harness/packages/session"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/llm"
+	"github.com/Rick1330/ibex-harness/services/proxy/internal/sessioncache"
+	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/require"
 )
 
 type memSessionStore struct {
@@ -82,13 +86,11 @@ func (m *memSessionStore) AbandonIdle(context.Context, pkgsession.AbandonIdlePar
 
 func (m *memSessionStore) waitAppends(t *testing.T, n int) {
 	t.Helper()
-	if !waitUntil(2*time.Second, 5*time.Millisecond, func() bool {
+	waitUntilT(t, 2*time.Second, 5*time.Millisecond, func() bool {
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		return m.appendCalls >= n
-	}) {
-		t.Fatalf("expected >=%d appends", n)
-	}
+	})
 }
 
 func (m *memSessionStore) appendCount() int {
@@ -97,23 +99,9 @@ func (m *memSessionStore) appendCount() int {
 	return m.appendCalls
 }
 
-func waitUntil(timeout, interval time.Duration, cond func() bool) bool {
-	return pollCond(timeout, interval, true, cond)
-}
-
-func neverTrue(timeout, interval time.Duration, cond func() bool) bool {
-	return pollCond(timeout, interval, false, cond)
-}
-
-func pollCond(timeout, interval time.Duration, want bool, cond func() bool) bool {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if cond() == want {
-			return true
-		}
-		time.Sleep(interval)
-	}
-	return cond() == want
+func waitUntilT(t *testing.T, timeout, interval time.Duration, cond func() bool) {
+	t.Helper()
+	require.Eventually(t, cond, timeout, interval)
 }
 
 type recordingTraceWriter struct {
@@ -155,4 +143,20 @@ func testCheckpointInput() CheckpointInput {
 		Provider:       "openai",
 		IsComplete:     true,
 	}
+}
+
+func newTestCache(t *testing.T) *sessioncache.Cache {
+	t.Helper()
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() {
+		if err := client.Close(); err != nil {
+			t.Errorf("redis close: %v", err)
+		}
+	})
+	cache, err := sessioncache.New(client, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cache
 }

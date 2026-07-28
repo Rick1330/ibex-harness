@@ -302,3 +302,27 @@ func TestUnit_ChatCompletions_streamTrueForwardsSSE(t *testing.T) {
 		t.Fatalf("status: %d body=%s", rec.Code, rec.Body.String())
 	}
 }
+
+type deadlineRecorder struct {
+	*httptest.ResponseRecorder
+	deadline time.Time
+	called   bool
+}
+
+func (d *deadlineRecorder) SetWriteDeadline(t time.Time) error {
+	d.called = true
+	d.deadline = t
+	return nil
+}
+
+func TestUnit_ClearSSEWriteDeadline(t *testing.T) {
+	t.Parallel()
+	rec := &deadlineRecorder{ResponseRecorder: httptest.NewRecorder()}
+	clearSSEWriteDeadline(rec)
+	if !rec.called {
+		t.Fatal("expected SetWriteDeadline call")
+	}
+	if !rec.deadline.IsZero() {
+		t.Fatalf("deadline=%v want zero", rec.deadline)
+	}
+}

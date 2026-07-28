@@ -50,7 +50,7 @@ func waitForTCP(t *testing.T, addr string) {
 func TestRun_StopsOnSignal(t *testing.T) {
 	sigCh, portStr := proxyBootstrapSmokeEnv(t)
 	done := make(chan int, 1)
-	go func() { done <- runBootstrap(nil, sigCh) }()
+	go func() { done <- runBootstrap(nil, sigCh, defaultBootstrapDeps()) }()
 	waitForTCP(t, net.JoinHostPort("127.0.0.1", portStr))
 	sigCh <- syscall.SIGTERM
 	select {

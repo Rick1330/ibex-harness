@@ -12,9 +12,7 @@ import (
 	httptrace "github.com/Rick1330/ibex-harness/services/proxy/internal/http/trace"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/llm"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/sessioncache"
-	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
-	"github.com/redis/go-redis/v9"
 )
 
 func TestUnit_WantCheckpoint(t *testing.T) {
@@ -143,13 +141,7 @@ type checkpointFixture struct {
 
 func newCheckpointFixture(t *testing.T) checkpointFixture {
 	t.Helper()
-	mr := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	t.Cleanup(func() { _ = client.Close() })
-	cache, err := sessioncache.New(client, time.Minute)
-	if err != nil {
-		t.Fatal(err)
-	}
+	cache := newTestCache(t)
 	store := newMemSessionStore()
 	org, agent := uuid.New(), uuid.New()
 	return checkpointFixture{

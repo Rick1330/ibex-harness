@@ -1,6 +1,7 @@
 package session
 
 import (
+	"bytes"
 	"errors"
 	"testing"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/asyncpool"
 	httptrace "github.com/Rick1330/ibex-harness/services/proxy/internal/http/trace"
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
 )
 
 func TestUnit_CaptureTraceSnapshot_Guards(t *testing.T) {
@@ -54,45 +56,16 @@ func TestUnit_CaptureTraceSnapshot_Fields(t *testing.T) {
 	}
 
 	snap, ok := CaptureTraceSnapshot(CaptureTraceArgs{Meta: meta, In: in, Outcome: outcome})
-	if !ok {
-		t.Fatal("expected snap ok")
-	}
-	assertCaptureTraceSnapshotIdentity(t, snap, meta, sid)
-	assertCaptureTraceSnapshotOutcomeAndStreaming(t, snap, outcome)
-	assertCaptureTraceSnapshotTimings(t, snap, meta, in)
-}
-
-func assertCaptureTraceSnapshotIdentity(t *testing.T, snap httptrace.AssembleInput, meta SnapshotMeta, sid uuid.UUID) {
-	t.Helper()
-	if snap.RequestID != meta.RequestID {
-		t.Fatalf("request_id=%q", snap.RequestID)
-	}
-	if snap.SessionID == nil || *snap.SessionID != sid {
-		t.Fatal("session id")
-	}
-}
-
-func assertCaptureTraceSnapshotOutcomeAndStreaming(t *testing.T, snap httptrace.AssembleInput, outcome httptrace.RequestOutcome) {
-	t.Helper()
-	if !snap.Streaming {
-		t.Fatal("stream requested should set streaming")
-	}
-	if snap.Outcome.StatusCode != outcome.StatusCode {
-		t.Fatalf("status=%d", snap.Outcome.StatusCode)
-	}
-}
-
-func assertCaptureTraceSnapshotTimings(t *testing.T, snap httptrace.AssembleInput, meta SnapshotMeta, in CheckpointInput) {
-	t.Helper()
-	if snap.Timings.AuthMs != meta.AuthMs {
-		t.Fatalf("auth_ms=%d", snap.Timings.AuthMs)
-	}
-	if snap.Timings.ProviderTTFB != in.Latency {
-		t.Fatalf("ttfb=%v", snap.Timings.ProviderTTFB)
-	}
-	if snap.Timings.RequestedAt.IsZero() {
-		t.Fatal("requested_at")
-	}
+	require.True(t, ok, "expected snap ok")
+	require.Equal(t, meta.RequestID, snap.RequestID, "request_id")
+	require.NotNil(t, snap.SessionID, "session id")
+	require.Equal(t, sid, *snap.SessionID, "session id")
+	require.True(t, snap.Streaming, "stream requested should set streaming")
+	require.Equal(t, outcome.StatusCode, snap.Outcome.StatusCode, "status")
+	require.False(t, snap.Outcome.IsComplete, "is_complete")
+	require.Equal(t, meta.AuthMs, snap.Timings.AuthMs, "auth_ms")
+	require.Equal(t, in.Latency, snap.Timings.ProviderTTFB, "ttfb")
+	require.False(t, snap.Timings.RequestedAt.IsZero(), "requested_at")
 }
 
 func TestUnit_CaptureTraceSnapshot_DefaultStatus(t *testing.T) {
@@ -123,10 +96,12 @@ func TestUnit_EmitTrace(t *testing.T) {
 		writer    httptrace.TraceWriter
 		log       *logger.Logger
 		wantWrite int32
+		logBuf    *bytes.Buffer
 	}{
 		{name: "nil writer noop", writer: nil, log: logger.Discard("t"), wantWrite: 0},
 		{name: "success", writer: &recordingTraceWriter{}, log: logger.Discard("t"), wantWrite: 1},
 		{name: "write error nil logger", writer: &recordingTraceWriter{err: errors.New("ch down")}, log: nil, wantWrite: 1},
+		{name: "write error with logger", writer: &recordingTraceWriter{err: errors.New("ch down")}, log: testBufferedLogger(t), wantWrite: 1},
 	}
 	for _, tc := range tests {
 		tc := tc
@@ -142,6 +117,15 @@ func TestUnit_EmitTrace(t *testing.T) {
 			}
 		})
 	}
+}
+
+func testBufferedLogger(t *testing.T) *logger.Logger {
+	t.Helper()
+	log, err := logger.New(logger.Config{Service: "proxy", Writer: &bytes.Buffer{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return log
 }
 
 func TestUnit_EnqueuePostResponse(t *testing.T) {

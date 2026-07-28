@@ -43,6 +43,7 @@ func assertAuthClientsAbsent(t *testing.T, b authClients) {
 }
 
 func TestSetupAuthClients_WithGRPCServer(t *testing.T) {
+	t.Parallel()
 	lis := grpctest.StartUnimplementedAuthServer(t)
 	log := logger.Discard("proxy")
 	clients, err := setupAuthClients(config.Config{
@@ -51,11 +52,16 @@ func TestSetupAuthClients_WithGRPCServer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("setupAuthClients: %v", err)
 	}
-	t.Cleanup(func() { _ = clients.conn.Close() })
+	t.Cleanup(func() {
+		if err := clients.conn.Close(); err != nil {
+			t.Errorf("close conn: %v", err)
+		}
+	})
 	assertAuthClientsPresent(t, clients)
 }
 
 func TestSetupAuthClients_WithAuthCacheEnabled(t *testing.T) {
+	t.Parallel()
 	lis := grpctest.StartUnimplementedAuthServer(t)
 	log := logger.Discard("proxy")
 	cfg := config.Config{
@@ -74,7 +80,11 @@ func TestSetupAuthClients_WithAuthCacheEnabled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("setupAuthClients: %v", err)
 	}
-	t.Cleanup(func() { _ = clients.conn.Close() })
+	t.Cleanup(func() {
+		if err := clients.conn.Close(); err != nil {
+			t.Errorf("close conn: %v", err)
+		}
+	})
 	assertAuthClientsPresent(t, clients)
 	if _, ok := clients.validator.(auth.CacheInvalidator); !ok {
 		t.Fatal("expected caching validator implementing CacheInvalidator")
@@ -82,6 +92,7 @@ func TestSetupAuthClients_WithAuthCacheEnabled(t *testing.T) {
 }
 
 func TestSetupAuthClients_EmptyAddr(t *testing.T) {
+	t.Parallel()
 	log := logger.Discard("proxy")
 	clients, err := setupAuthClients(config.Config{AuthGRPCAddr: ""}, log, nil)
 	if err != nil {

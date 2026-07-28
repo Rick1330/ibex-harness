@@ -2,7 +2,6 @@ package bootstrap
 
 import (
 	"context"
-	"log/slog"
 	"os"
 
 	"github.com/Rick1330/ibex-harness/packages/logger"
@@ -16,19 +15,30 @@ import (
 	_ "github.com/lib/pq"
 )
 
+type providerRegistryBuilder func(config.Config, *logger.Logger, trace.Tracer, *ibexmetrics.ProxyRegistry) (*provider.Registry, error)
+
+type bootstrapDeps struct {
+	buildProviderRegistry providerRegistryBuilder
+}
+
 // Run loads config, wires dependencies, and serves until shutdown.
 func Run(args []string) int {
-	return runBootstrap(args, nil)
+	return runBootstrap(args, nil, defaultBootstrapDeps())
 }
 
-// providerRegistryInit is overridden in tests to simulate startup registry failures.
-var providerRegistryInit = defaultProviderRegistryInit
-
-func defaultProviderRegistryInit(cfg config.Config, log *logger.Logger, tracer trace.Tracer, reg *ibexmetrics.ProxyRegistry) (*provider.Registry, error) {
-	return buildProviderRegistry(cfg, log, tracer, reg)
+func defaultBootstrapDeps() bootstrapDeps {
+	return bootstrapDeps{buildProviderRegistry: buildProviderRegistry}
 }
 
-func runBootstrap(_ []string, signalCh chan os.Signal) int {
+func (d bootstrapDeps) withDefaults() bootstrapDeps {
+	if d.buildProviderRegistry == nil {
+		d.buildProviderRegistry = buildProviderRegistry
+	}
+	return d
+}
+
+func runBootstrap(_ []string, signalCh chan os.Signal, deps bootstrapDeps) int {
+	deps = deps.withDefaults()
 	cfg, log, err := loadProxyRuntime()
 	if err != nil {
 		return 1
@@ -39,7 +49,7 @@ func runBootstrap(_ []string, signalCh chan os.Signal) int {
 		return 1
 	}
 	reg := ibexmetrics.NewProxy(cfg.ServiceName)
-	core, err := setupProxyCore(cfg, log, reg, tracer)
+	core, err := setupProxyCore(cfg, log, reg, tracer, deps)
 	if err != nil {
 		log.ErrorCtx(context.Background(), "proxy core setup failed", "error", err)
 		return 1
@@ -58,15 +68,21 @@ func runBootstrap(_ []string, signalCh chan os.Signal) int {
 func loadProxyRuntime() (config.Config, *logger.Logger, error) {
 	cfg, err := config.Load()
 	if err != nil {
-		// packages/logger is not available yet; stdlib slog is intentional here.
-		slog.New(slog.NewJSONHandler(os.Stderr, nil)).Error("invalid configuration", "error", err)
+		fallbackBootstrapLogger().ErrorCtx(context.Background(), "invalid configuration", "error", err)
 		return config.Config{}, nil, err
 	}
 	log, err := logger.New(logger.Config{Service: cfg.ServiceName, Level: cfg.LogLevel})
 	if err != nil {
-		// packages/logger failed to init; fall back to stdlib slog for the fatal.
-		slog.New(slog.NewJSONHandler(os.Stderr, nil)).Error("logger init failed", "error", err)
+		fallbackBootstrapLogger().ErrorCtx(context.Background(), "logger init failed", "error", err)
 		return config.Config{}, nil, err
 	}
 	return cfg, log, nil
+}
+
+func fallbackBootstrapLogger() *logger.Logger {
+	log, err := logger.New(logger.Config{Service: "ibex-proxy", Writer: os.Stderr})
+	if err == nil {
+		return log
+	}
+	return logger.Discard("ibex-proxy")
 }

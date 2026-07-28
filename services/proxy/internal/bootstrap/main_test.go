@@ -227,15 +227,15 @@ func TestRun_InvalidRedisURLReturns1(t *testing.T) {
 }
 
 func TestRun_ProviderRegistryInitFailureReturns1(t *testing.T) {
-	orig := providerRegistryInit
-	t.Cleanup(func() { providerRegistryInit = orig })
-	providerRegistryInit = func(_ config.Config, _ *logger.Logger, _ trace.Tracer, _ *ibexmetrics.ProxyRegistry) (*provider.Registry, error) {
-		return nil, errors.New("registry init failed")
-	}
 	t.Setenv("IBEX_ENV", "development")
 	t.Setenv("REDIS_URL", "")
 	t.Setenv("IBEX_AUTH_GRPC_ADDR", "")
-	if got := Run(nil); got != 1 {
+	deps := bootstrapDeps{
+		buildProviderRegistry: func(_ config.Config, _ *logger.Logger, _ trace.Tracer, _ *ibexmetrics.ProxyRegistry) (*provider.Registry, error) {
+			return nil, errors.New("registry init failed")
+		},
+	}
+	if got := runBootstrap(nil, nil, deps); got != 1 {
 		t.Fatalf("Run() = %d, want 1", got)
 	}
 }

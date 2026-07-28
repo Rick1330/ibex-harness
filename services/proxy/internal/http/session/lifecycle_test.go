@@ -9,9 +9,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/llm"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/sessioncache"
-	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
-	"github.com/redis/go-redis/v9"
 )
 
 func TestUnit_Resolved_Durable(t *testing.T) {
@@ -99,13 +97,7 @@ func TestUnit_Resolve_GetOrCreateError(t *testing.T) {
 
 func TestUnit_Resolve_CacheHitSkipsStore(t *testing.T) {
 	t.Parallel()
-	mr := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	t.Cleanup(func() { _ = client.Close() })
-	cache, err := sessioncache.New(client, time.Minute)
-	if err != nil {
-		t.Fatal(err)
-	}
+	cache := newTestCache(t)
 	store := newMemSessionStore()
 	deps := LifecycleDeps{Store: store, Cache: cache, Log: logger.Discard("t")}
 

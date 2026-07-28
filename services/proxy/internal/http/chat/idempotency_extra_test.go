@@ -94,17 +94,18 @@ func newIdForStore(store idempotency.Store) Idempotency {
 	}
 }
 
-func seedClaimForKey(
-	t *testing.T,
-	store idempotency.Store,
-	org uuid.UUID,
-	key string,
-	fp idempotency.Fingerprint,
-) (idempotency.Token, *Claim) {
+type claimSeed struct {
+	store idempotency.Store
+	org   uuid.UUID
+	key   string
+	fp    idempotency.Fingerprint
+}
+
+func seedClaimForKey(t *testing.T, in claimSeed) (idempotency.Token, *Claim) {
 	t.Helper()
-	tkn := idempotency.Token{OrgID: org, Key: key}
-	claim := &Claim{OrgID: org, Key: key, FP: fp}
-	if _, err := store.Claim(context.Background(), tkn, fp); err != nil {
+	tkn := idempotency.Token{OrgID: in.org, Key: in.key}
+	claim := &Claim{OrgID: in.org, Key: in.key, FP: in.fp}
+	if _, err := in.store.Claim(context.Background(), tkn, in.fp); err != nil {
 		t.Fatal(err)
 	}
 	return tkn, claim
@@ -116,7 +117,7 @@ func TestUnit_FinishIdempotency_OversizedReleases(t *testing.T) {
 	id := newIdForStore(mrStore)
 	org := uuid.MustParse(testChatOrgID)
 	fp := idempotency.Fingerprint("fp")
-	tkn, claim := seedClaimForKey(t, mrStore, org, "big", fp)
+	tkn, claim := seedClaimForKey(t, claimSeed{store: mrStore, org: org, key: "big", fp: fp})
 	body := make([]byte, validation.MaxProviderResponseBytes+1)
 	id.Finish(claim, http.StatusOK, body)
 	out, err := mrStore.Claim(context.Background(), tkn, fp)
@@ -207,7 +208,7 @@ func TestUnit_FinishCapture_CappedReleases(t *testing.T) {
 	id := newIdForStore(mrStore)
 	org := uuid.MustParse(testChatOrgID)
 	fp := idempotency.Fingerprint("fp")
-	tkn, claim := seedClaimForKey(t, mrStore, org, "cap", fp)
+	tkn, claim := seedClaimForKey(t, claimSeed{store: mrStore, org: org, key: "cap", fp: fp})
 	cw := &CapturingWriter{ResponseWriter: httptest.NewRecorder(), Status: http.StatusBadRequest}
 	big := []byte(strings.Repeat("x", int(validation.MaxProviderResponseBytes)+1))
 	_, _ = cw.Write(big)

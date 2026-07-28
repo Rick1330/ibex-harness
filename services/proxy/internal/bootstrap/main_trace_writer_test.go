@@ -49,6 +49,7 @@ func TestUnit_SetupTraceWriter_DisabledWhenDSNEmpty(t *testing.T) {
 }
 
 func TestUnit_SetupTraceWriter_PropagatesConfig(t *testing.T) {
+	t.Parallel()
 	var got ibexch.Config
 	stub := &ibexch.Writer{}
 	factory := func(cfg ibexch.Config) (*ibexch.Writer, error) {
@@ -88,6 +89,7 @@ func TestUnit_SetupTraceWriter_PropagatesConfig(t *testing.T) {
 }
 
 func TestUnit_SetupTraceWriter_WrapsStartError(t *testing.T) {
+	t.Parallel()
 	wantErr := errors.New("boom")
 	factory := func(ibexch.Config) (*ibexch.Writer, error) {
 		return nil, wantErr
@@ -105,6 +107,7 @@ func TestUnit_SetupTraceWriter_WrapsStartError(t *testing.T) {
 }
 
 func TestUnit_SetupTraceWriter_LogUsesRedactedDSN(t *testing.T) {
+	t.Parallel()
 	factory := func(ibexch.Config) (*ibexch.Writer, error) {
 		return &ibexch.Writer{}, nil
 	}
@@ -136,6 +139,7 @@ func TestUnit_SetupTraceWriter_LogUsesRedactedDSN(t *testing.T) {
 }
 
 func TestUnit_OptionalTraceWriter_FailOpenOnStartError(t *testing.T) {
+	t.Parallel()
 	factory := func(ibexch.Config) (*ibexch.Writer, error) {
 		return nil, errors.New("boom")
 	}
@@ -176,6 +180,7 @@ func TestUnit_AssignTraceWriter_SkipsNilConcrete(t *testing.T) {
 }
 
 func TestUnit_OptionalTraceWriter_FailOpenOmitsSensitiveError(t *testing.T) {
+	t.Parallel()
 	secret := "clickhouse://default:super-secret-pass@localhost:8123/ibex"
 	factory := func(ibexch.Config) (*ibexch.Writer, error) {
 		return nil, fmt.Errorf("dial failed for %s", secret)

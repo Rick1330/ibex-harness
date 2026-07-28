@@ -54,8 +54,9 @@ func setupProxyCore(
 	log *logger.Logger,
 	reg *ibexmetrics.ProxyRegistry,
 	tracer trace.Tracer,
+	deps bootstrapDeps,
 ) (*proxyCore, error) {
-	assembled, err := assembleProxyCore(cfg, log, reg, tracer)
+	assembled, err := assembleProxyCore(cfg, log, reg, tracer, deps)
 	if err != nil {
 		return nil, err
 	}
@@ -135,6 +136,7 @@ func assembleProxyCore(
 	log *logger.Logger,
 	reg *ibexmetrics.ProxyRegistry,
 	tracer trace.Tracer,
+	deps bootstrapDeps,
 ) (assembledProxyCore, error) {
 	infra, err := assembleProxyInfra(cfg, log, reg, tracer)
 	if err != nil {
@@ -146,6 +148,7 @@ func assembleProxyCore(
 		reg:    reg,
 		tracer: tracer,
 		infra:  infra,
+		deps:   deps,
 	})
 }
 
@@ -187,10 +190,11 @@ type finishAssembledCoreInput struct {
 	reg    *ibexmetrics.ProxyRegistry
 	tracer trace.Tracer
 	infra  proxyInfra
+	deps   bootstrapDeps
 }
 
 func finishAssembledCore(in finishAssembledCoreInput) (assembledProxyCore, error) {
-	providerReg, err := providerRegistryInit(in.cfg, in.log, in.tracer, in.reg)
+	providerReg, err := in.deps.buildProviderRegistry(in.cfg, in.log, in.tracer, in.reg)
 	if err != nil {
 		return assembledProxyCore{}, fmt.Errorf("provider registry: %w", err)
 	}
