@@ -6,7 +6,6 @@ import (
 	"errors"
 	"net/http"
 	"os"
-	"syscall"
 
 	ibexch "github.com/Rick1330/ibex-harness/packages/clickhouse"
 	"github.com/Rick1330/ibex-harness/packages/directive"
@@ -79,7 +78,7 @@ func awaitProxyShutdown(opts shutdownOpts, errCh, shutdownErrCh <-chan error) in
 	case err := <-errCh:
 		if err != nil {
 			opts.logger.ErrorCtx(context.Background(), "server failed", "error", err)
-			triggerShutdownSignal(opts)
+			immediateCleanup(opts)
 			return 1
 		}
 		if err := <-shutdownErrCh; err != nil {
@@ -98,15 +97,19 @@ func awaitProxyShutdown(opts shutdownOpts, errCh, shutdownErrCh <-chan error) in
 	return 0
 }
 
-// triggerShutdownSignal nudges an injected test signal channel so Wait can drain.
-// Production coordinators listen on OS signals; process exit still reaps resources.
-func triggerShutdownSignal(opts shutdownOpts) {
-	if opts.signalCh == nil {
-		return
-	}
-	select {
-	case opts.signalCh <- syscall.SIGTERM:
-	default:
+func immediateCleanup(opts shutdownOpts) {
+	ctx, cancel := context.WithTimeout(context.Background(), opts.cfg.ShutdownTimeout)
+	defer cancel()
+	_ = opts.server.Close()
+	stopPubSubSubscribers(opts)
+	shutdownCheckpointPool(ctx, opts)
+	shutdownSessionSweeper(ctx, opts)
+	shutdownTraceWriter(ctx, opts)
+	closeGRPCConn(opts)
+	closeRedisClient(opts)
+	closePgDB(opts)
+	if opts.providers != nil {
+		_ = opts.providers.Shutdown(ctx)
 	}
 }
 
@@ -149,54 +152,78 @@ func registerOptionalShutdownHooks(sd *shutdown.Coordinator, opts shutdownOpts) 
 
 func registerCheckpointPoolShutdown(sd *shutdown.Coordinator, opts shutdownOpts) {
 	sd.Register(func(ctx context.Context) error {
-		if opts.checkpointPool == nil {
-			return nil
-		}
-		return opts.checkpointPool.Shutdown(ctx)
+		return shutdownCheckpointPool(ctx, opts)
 	})
 }
 
 func registerSessionSweeperShutdown(sd *shutdown.Coordinator, opts shutdownOpts) {
 	sd.Register(func(ctx context.Context) error {
-		if opts.sessionSweeper == nil {
-			return nil
-		}
-		return opts.sessionSweeper.Stop(ctx)
+		return shutdownSessionSweeper(ctx, opts)
 	})
 }
 
 func registerTraceWriterShutdown(sd *shutdown.Coordinator, opts shutdownOpts) {
 	sd.Register(func(ctx context.Context) error {
-		if opts.traceWriter == nil {
-			return nil
-		}
-		return opts.traceWriter.Shutdown(ctx)
+		return shutdownTraceWriter(ctx, opts)
 	})
 }
 
 func registerGRPCConnShutdown(sd *shutdown.Coordinator, opts shutdownOpts) {
 	sd.Register(func(ctx context.Context) error {
-		if opts.grpcConn == nil {
-			return nil
-		}
-		return opts.grpcConn.Close()
+		return closeGRPCConn(opts)
 	})
 }
 
 func registerRedisClientShutdown(sd *shutdown.Coordinator, opts shutdownOpts) {
 	sd.Register(func(ctx context.Context) error {
-		if opts.redisClient == nil {
-			return nil
-		}
-		return opts.redisClient.Close()
+		return closeRedisClient(opts)
 	})
 }
 
 func registerPgDBShutdown(sd *shutdown.Coordinator, opts shutdownOpts) {
 	sd.Register(func(ctx context.Context) error {
-		if opts.pgDB == nil {
-			return nil
-		}
-		return opts.pgDB.Close()
+		return closePgDB(opts)
 	})
+}
+
+func shutdownCheckpointPool(ctx context.Context, opts shutdownOpts) error {
+	if opts.checkpointPool == nil {
+		return nil
+	}
+	return opts.checkpointPool.Shutdown(ctx)
+}
+
+func shutdownSessionSweeper(ctx context.Context, opts shutdownOpts) error {
+	if opts.sessionSweeper == nil {
+		return nil
+	}
+	return opts.sessionSweeper.Stop(ctx)
+}
+
+func shutdownTraceWriter(ctx context.Context, opts shutdownOpts) error {
+	if opts.traceWriter == nil {
+		return nil
+	}
+	return opts.traceWriter.Shutdown(ctx)
+}
+
+func closeGRPCConn(opts shutdownOpts) error {
+	if opts.grpcConn == nil {
+		return nil
+	}
+	return opts.grpcConn.Close()
+}
+
+func closeRedisClient(opts shutdownOpts) error {
+	if opts.redisClient == nil {
+		return nil
+	}
+	return opts.redisClient.Close()
+}
+
+func closePgDB(opts shutdownOpts) error {
+	if opts.pgDB == nil {
+		return nil
+	}
+	return opts.pgDB.Close()
 }

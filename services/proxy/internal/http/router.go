@@ -285,6 +285,10 @@ func (r *statusRecorder) Flush() {
 	flushIfSupported(r.ResponseWriter)
 }
 
+func (r *statusRecorder) Unwrap() http.ResponseWriter {
+	return r.ResponseWriter
+}
+
 func requireMethod(w http.ResponseWriter, r *http.Request, method, docsBase string) bool {
 	if r.Method == method {
 		return true

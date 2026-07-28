@@ -56,6 +56,10 @@ func (h *headerResponseWriter) Flush() {
 	flushIfSupported(h.ResponseWriter)
 }
 
+func (h *headerResponseWriter) Unwrap() http.ResponseWriter {
+	return h.ResponseWriter
+}
+
 func (h *headerResponseWriter) ensureHeaders() {
 	if h.wroteHeaders {
 		return

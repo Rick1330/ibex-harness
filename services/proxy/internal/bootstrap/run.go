@@ -21,6 +21,8 @@ type bootstrapDeps struct {
 	buildProviderRegistry providerRegistryBuilder
 }
 
+const bootstrapServiceName = "ibex-proxy"
+
 // Run loads config, wires dependencies, and serves until shutdown.
 func Run(args []string) int {
 	return runBootstrap(args, nil, defaultBootstrapDeps())
@@ -43,13 +45,19 @@ func runBootstrap(_ []string, signalCh chan os.Signal, deps bootstrapDeps) int {
 	if err != nil {
 		return 1
 	}
-	providers, tracer, err := telemetry.InitTracer(context.Background(), cfg.Telemetry, "ibex-proxy")
+	providers, tracer, err := telemetry.InitTracer(context.Background(), cfg.Telemetry, bootstrapServiceName)
 	if err != nil {
 		log.ErrorCtx(context.Background(), "telemetry init failed", "error", err)
 		return 1
 	}
 	reg := ibexmetrics.NewProxy(cfg.ServiceName)
-	core, err := setupProxyCore(cfg, log, reg, tracer, deps)
+	core, err := setupProxyCore(setupProxyCoreInput{
+		cfg:    cfg,
+		log:    log,
+		reg:    reg,
+		tracer: tracer,
+		deps:   deps,
+	})
 	if err != nil {
 		log.ErrorCtx(context.Background(), "proxy core setup failed", "error", err)
 		return 1
@@ -80,9 +88,9 @@ func loadProxyRuntime() (config.Config, *logger.Logger, error) {
 }
 
 func fallbackBootstrapLogger() *logger.Logger {
-	log, err := logger.New(logger.Config{Service: "ibex-proxy", Writer: os.Stderr})
+	log, err := logger.New(logger.Config{Service: bootstrapServiceName, Writer: os.Stderr})
 	if err == nil {
 		return log
 	}
-	return logger.Discard("ibex-proxy")
+	return logger.Discard(bootstrapServiceName)
 }

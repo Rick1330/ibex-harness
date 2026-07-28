@@ -37,6 +37,10 @@ func (w *rateLimitResponseWriter) Flush() {
 	flushIfSupported(w.ResponseWriter)
 }
 
+func (w *rateLimitResponseWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
+}
+
 func (w *rateLimitResponseWriter) ensureHeaders() {
 	if w.wrote {
 		return

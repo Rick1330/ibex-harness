@@ -42,3 +42,7 @@ func (r *spanStatusRecorder) Flush() {
 		f.Flush()
 	}
 }
+
+func (r *spanStatusRecorder) Unwrap() http.ResponseWriter {
+	return r.ResponseWriter
+}

@@ -49,31 +49,33 @@ type proxyCore struct {
 	traceWriter    *ibexch.Writer
 }
 
-func setupProxyCore(
-	cfg config.Config,
-	log *logger.Logger,
-	reg *ibexmetrics.ProxyRegistry,
-	tracer trace.Tracer,
-	deps bootstrapDeps,
-) (*proxyCore, error) {
-	assembled, err := assembleProxyCore(cfg, log, reg, tracer, deps)
+type setupProxyCoreInput struct {
+	cfg    config.Config
+	log    *logger.Logger
+	reg    *ibexmetrics.ProxyRegistry
+	tracer trace.Tracer
+	deps   bootstrapDeps
+}
+
+func setupProxyCore(in setupProxyCoreInput) (*proxyCore, error) {
+	assembled, err := assembleProxyCore(assembleProxyCoreInput(in))
 	if err != nil {
 		return nil, err
 	}
 	revSub, revCancel, err := startRevocationSubscriber(
-		assembled.redisClient, assembled.validator, log, reg,
+		assembled.redisClient, assembled.validator, in.log, in.reg,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("revocation subscriber: %w", err)
 	}
 	dirSub, dirCancel, err := startDirectiveSubscriber(
-		assembled.redisClient, assembled.directiveResolver, log, reg,
+		assembled.redisClient, assembled.directiveResolver, in.log, in.reg,
 	)
 	if err != nil {
 		stopRevocationOnFailure(revSub, revCancel)
 		return nil, fmt.Errorf("directive subscriber: %w", err)
 	}
-	startSessionSweeper(assembled.sessionSweeper, cfg, log)
+	startSessionSweeper(assembled.sessionSweeper, in.cfg, in.log)
 	return finishProxyCore(proxyCoreParts{
 		assembled: assembled,
 		revSub:    revSub, revCancel: revCancel,
@@ -131,24 +133,20 @@ type proxyInfra struct {
 	sessionStack      sessionStack
 }
 
-func assembleProxyCore(
-	cfg config.Config,
-	log *logger.Logger,
-	reg *ibexmetrics.ProxyRegistry,
-	tracer trace.Tracer,
-	deps bootstrapDeps,
-) (assembledProxyCore, error) {
-	infra, err := assembleProxyInfra(cfg, log, reg, tracer)
+type assembleProxyCoreInput setupProxyCoreInput
+
+func assembleProxyCore(in assembleProxyCoreInput) (assembledProxyCore, error) {
+	infra, err := assembleProxyInfra(in.cfg, in.log, in.reg, in.tracer)
 	if err != nil {
 		return assembledProxyCore{}, err
 	}
 	return finishAssembledCore(finishAssembledCoreInput{
-		cfg:    cfg,
-		log:    log,
-		reg:    reg,
-		tracer: tracer,
+		cfg:    in.cfg,
+		log:    in.log,
+		reg:    in.reg,
+		tracer: in.tracer,
 		infra:  infra,
-		deps:   deps,
+		deps:   in.deps,
 	})
 }
 
