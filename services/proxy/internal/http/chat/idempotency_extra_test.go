@@ -87,22 +87,39 @@ func testRedisStore(t *testing.T) (idempotency.Store, *miniredis.Miniredis) {
 	return idempotency.NewRedisStore(client, idempotency.Config{TTL: time.Hour}), mr
 }
 
+func newIdForStore(store idempotency.Store) Idempotency {
+	return Idempotency{
+		Store: store, Timeout: time.Second,
+		Metrics: metrics.NewProxy("t"), Log: logger.Discard("t"),
+	}
+}
+
+func seedClaimForKey(
+	t *testing.T,
+	store idempotency.Store,
+	org uuid.UUID,
+	key string,
+	fp idempotency.Fingerprint,
+) (idempotency.Token, *Claim) {
+	t.Helper()
+	tkn := idempotency.Token{OrgID: org, Key: key}
+	claim := &Claim{OrgID: org, Key: key, FP: fp}
+	if _, err := store.Claim(context.Background(), tkn, fp); err != nil {
+		t.Fatal(err)
+	}
+	return tkn, claim
+}
+
 func TestUnit_FinishIdempotency_OversizedReleases(t *testing.T) {
 	t.Parallel()
 	mrStore, _ := testRedisStore(t)
-	id := Idempotency{
-		Store: mrStore, Timeout: time.Second,
-		Metrics: metrics.NewProxy("t"), Log: logger.Discard("t"),
-	}
+	id := newIdForStore(mrStore)
 	org := uuid.MustParse(testChatOrgID)
-	tkn := idempotency.Token{OrgID: org, Key: "big"}
-	claim := &Claim{OrgID: org, Key: "big", FP: "fp"}
-	if _, err := mrStore.Claim(context.Background(), tkn, "fp"); err != nil {
-		t.Fatal(err)
-	}
+	fp := idempotency.Fingerprint("fp")
+	tkn, claim := seedClaimForKey(t, mrStore, org, "big", fp)
 	body := make([]byte, validation.MaxProviderResponseBytes+1)
 	id.Finish(claim, http.StatusOK, body)
-	out, err := mrStore.Claim(context.Background(), tkn, "fp")
+	out, err := mrStore.Claim(context.Background(), tkn, fp)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,21 +204,15 @@ func TestUnit_CapturingWriter_CapAndStatus(t *testing.T) {
 func TestUnit_FinishCapture_CappedReleases(t *testing.T) {
 	t.Parallel()
 	mrStore, _ := testRedisStore(t)
-	id := Idempotency{
-		Store: mrStore, Timeout: time.Second,
-		Metrics: metrics.NewProxy("t"), Log: logger.Discard("t"),
-	}
+	id := newIdForStore(mrStore)
 	org := uuid.MustParse(testChatOrgID)
-	tkn := idempotency.Token{OrgID: org, Key: "cap"}
-	claim := &Claim{OrgID: org, Key: "cap", FP: "fp"}
-	if _, err := mrStore.Claim(context.Background(), tkn, "fp"); err != nil {
-		t.Fatal(err)
-	}
+	fp := idempotency.Fingerprint("fp")
+	tkn, claim := seedClaimForKey(t, mrStore, org, "cap", fp)
 	cw := &CapturingWriter{ResponseWriter: httptest.NewRecorder(), Status: http.StatusBadRequest}
 	big := []byte(strings.Repeat("x", int(validation.MaxProviderResponseBytes)+1))
 	_, _ = cw.Write(big)
 	id.FinishCapture(claim, cw)
-	out, err := mrStore.Claim(context.Background(), tkn, "fp")
+	out, err := mrStore.Claim(context.Background(), tkn, fp)
 	if err != nil {
 		t.Fatal(err)
 	}

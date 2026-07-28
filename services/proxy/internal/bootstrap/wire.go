@@ -140,7 +140,13 @@ func assembleProxyCore(
 	if err != nil {
 		return assembledProxyCore{}, err
 	}
-	return finishAssembledCore(cfg, log, reg, tracer, infra)
+	return finishAssembledCore(finishAssembledCoreInput{
+		cfg:    cfg,
+		log:    log,
+		reg:    reg,
+		tracer: tracer,
+		infra:  infra,
+	})
 }
 
 func assembleProxyInfra(
@@ -175,27 +181,29 @@ func assembleProxyInfra(
 	}, nil
 }
 
-func finishAssembledCore(
-	cfg config.Config,
-	log *logger.Logger,
-	reg *ibexmetrics.ProxyRegistry,
-	tracer trace.Tracer,
-	infra proxyInfra,
-) (assembledProxyCore, error) {
-	providerReg, err := providerRegistryInit(cfg, log, tracer, reg)
+type finishAssembledCoreInput struct {
+	cfg    config.Config
+	log    *logger.Logger
+	reg    *ibexmetrics.ProxyRegistry
+	tracer trace.Tracer
+	infra  proxyInfra
+}
+
+func finishAssembledCore(in finishAssembledCoreInput) (assembledProxyCore, error) {
+	providerReg, err := providerRegistryInit(in.cfg, in.log, in.tracer, in.reg)
 	if err != nil {
 		return assembledProxyCore{}, fmt.Errorf("provider registry: %w", err)
 	}
-	traceWriter := optionalTraceWriter(cfg, log, reg, ibexch.NewWriter)
+	traceWriter := optionalTraceWriter(in.cfg, in.log, in.reg, ibexch.NewWriter)
 	deps := proxyhttp.RouterDeps{
-		Config: cfg, Logger: log, Metrics: reg, Tracer: tracer,
-		Validator: infra.auth.validator, AgentVerifier: infra.auth.agentVerifier,
-		Limiter: infra.limiter, DirectiveResolver: infra.directiveResolver,
-		SessionStore: infra.sessionStack.store, SessionCache: infra.sessionStack.cache,
-		CheckpointPool: infra.sessionStack.pool, GetOrCreateTimeout: cfg.SessionGetOrCreateTO,
-		Health:           buildProxyHealth(cfg, infra.auth.client, infra.pgDB),
+		Config: in.cfg, Logger: in.log, Metrics: in.reg, Tracer: in.tracer,
+		Validator: in.infra.auth.validator, AgentVerifier: in.infra.auth.agentVerifier,
+		Limiter: in.infra.limiter, DirectiveResolver: in.infra.directiveResolver,
+		SessionStore: in.infra.sessionStack.store, SessionCache: in.infra.sessionStack.cache,
+		CheckpointPool: in.infra.sessionStack.pool, GetOrCreateTimeout: in.cfg.SessionGetOrCreateTO,
+		Health:           buildProxyHealth(in.cfg, in.infra.auth.client, in.infra.pgDB),
 		ProviderRegistry: providerReg,
-		IdempotencyStore: newIdempotencyStore(infra.redisClient, cfg),
+		IdempotencyStore: newIdempotencyStore(in.infra.redisClient, in.cfg),
 	}
 	assignTraceWriter(&deps, traceWriter)
 	server, err := newHTTPServer(deps)
@@ -203,9 +211,9 @@ func finishAssembledCore(
 		return assembledProxyCore{}, fmt.Errorf("http router: %w", err)
 	}
 	return assembledProxyCore{
-		server: server, grpcConn: infra.auth.conn, redisClient: infra.redisClient, pgDB: infra.pgDB,
-		validator: infra.auth.validator, directiveResolver: infra.directiveResolver,
-		checkpointPool: infra.sessionStack.pool, sessionSweeper: infra.sessionStack.sweeper,
+		server: server, grpcConn: in.infra.auth.conn, redisClient: in.infra.redisClient, pgDB: in.infra.pgDB,
+		validator: in.infra.auth.validator, directiveResolver: in.infra.directiveResolver,
+		checkpointPool: in.infra.sessionStack.pool, sessionSweeper: in.infra.sessionStack.sweeper,
 		traceWriter: traceWriter,
 	}, nil
 }

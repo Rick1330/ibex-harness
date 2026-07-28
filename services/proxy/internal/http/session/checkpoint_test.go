@@ -85,8 +85,7 @@ func TestUnit_BuildCheckpointParams(t *testing.T) {
 
 func TestUnit_RunCheckpoint_Success(t *testing.T) {
 	t.Parallel()
-	fx := newCheckpointFixture(t)
-	fx.deps.RunCheckpoint(fx.params(0), fx.ext)
+	fx := runCheckpoint(t, 0, nil)
 	if fx.store.appendCount() != 1 {
 		t.Fatalf("appends=%d", fx.store.appendCount())
 	}
@@ -98,10 +97,10 @@ func TestUnit_RunCheckpoint_Success(t *testing.T) {
 
 func TestUnit_RunCheckpoint_DuplicateInvalidatesCache(t *testing.T) {
 	t.Parallel()
-	fx := newCheckpointFixture(t)
-	fx.store.appendErr = pkgsession.ErrDuplicateTurn
-	fx.seedCache(1)
-	fx.deps.RunCheckpoint(fx.params(1), fx.ext)
+	fx := runCheckpoint(t, 1, func(fx *checkpointFixture) {
+		fx.store.appendErr = pkgsession.ErrDuplicateTurn
+		fx.seedCache(1)
+	})
 	if _, ok := fx.cache.Get(context.Background(), fx.key()); ok {
 		t.Fatal("expected invalidate")
 	}
@@ -109,10 +108,10 @@ func TestUnit_RunCheckpoint_DuplicateInvalidatesCache(t *testing.T) {
 
 func TestUnit_RunCheckpoint_RetrySucceeds(t *testing.T) {
 	t.Parallel()
-	fx := newCheckpointFixture(t)
-	fx.store.appendFailOnce = pkgsession.ErrDuplicateTurn
-	fx.seedCache(1)
-	fx.deps.RunCheckpoint(fx.params(0), fx.ext)
+	fx := runCheckpoint(t, 0, func(fx *checkpointFixture) {
+		fx.store.appendFailOnce = pkgsession.ErrDuplicateTurn
+		fx.seedCache(1)
+	})
 	if fx.store.appendCount() < 2 {
 		t.Fatalf("appendCalls=%d want >=2", fx.store.appendCount())
 	}
@@ -124,9 +123,9 @@ func TestUnit_RunCheckpoint_RetrySucceeds(t *testing.T) {
 
 func TestUnit_RunCheckpoint_AppendError(t *testing.T) {
 	t.Parallel()
-	fx := newCheckpointFixture(t)
-	fx.store.appendErr = errors.New("db down")
-	fx.deps.RunCheckpoint(fx.params(0), fx.ext)
+	fx := runCheckpoint(t, 0, func(fx *checkpointFixture) {
+		fx.store.appendErr = errors.New("db down")
+	})
 	if fx.store.appendCount() != 1 {
 		t.Fatalf("appends=%d", fx.store.appendCount())
 	}
@@ -158,6 +157,16 @@ func newCheckpointFixture(t *testing.T) checkpointFixture {
 		ext: "ext-" + uuid.New().String()[:8], sid: uuid.New(),
 		deps: LifecycleDeps{Store: store, Cache: cache, Log: logger.Discard("proxy")},
 	}
+}
+
+func runCheckpoint(t *testing.T, turnIndex int, setup func(*checkpointFixture)) checkpointFixture {
+	t.Helper()
+	fx := newCheckpointFixture(t)
+	if setup != nil {
+		setup(&fx)
+	}
+	fx.deps.RunCheckpoint(fx.params(turnIndex), fx.ext)
+	return fx
 }
 
 func (fx checkpointFixture) key() sessioncache.LookupKey {

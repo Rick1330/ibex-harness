@@ -57,18 +57,33 @@ func TestUnit_CaptureTraceSnapshot_Fields(t *testing.T) {
 	if !ok {
 		t.Fatal("expected snap ok")
 	}
+	assertCaptureTraceSnapshotIdentity(t, snap, meta, sid)
+	assertCaptureTraceSnapshotOutcomeAndStreaming(t, snap, outcome)
+	assertCaptureTraceSnapshotTimings(t, snap, meta, in)
+}
+
+func assertCaptureTraceSnapshotIdentity(t *testing.T, snap httptrace.AssembleInput, meta SnapshotMeta, sid uuid.UUID) {
+	t.Helper()
 	if snap.RequestID != meta.RequestID {
 		t.Fatalf("request_id=%q", snap.RequestID)
 	}
 	if snap.SessionID == nil || *snap.SessionID != sid {
 		t.Fatal("session id")
 	}
+}
+
+func assertCaptureTraceSnapshotOutcomeAndStreaming(t *testing.T, snap httptrace.AssembleInput, outcome httptrace.RequestOutcome) {
+	t.Helper()
 	if !snap.Streaming {
 		t.Fatal("stream requested should set streaming")
 	}
-	if snap.Outcome.StatusCode != 502 {
+	if snap.Outcome.StatusCode != outcome.StatusCode {
 		t.Fatalf("status=%d", snap.Outcome.StatusCode)
 	}
+}
+
+func assertCaptureTraceSnapshotTimings(t *testing.T, snap httptrace.AssembleInput, meta SnapshotMeta, in CheckpointInput) {
+	t.Helper()
 	if snap.Timings.AuthMs != meta.AuthMs {
 		t.Fatalf("auth_ms=%d", snap.Timings.AuthMs)
 	}
