@@ -66,8 +66,14 @@ func TestUnit_TenantIDsFromContext(t *testing.T) {
 			if ok != tc.wantOK {
 				t.Fatalf("ok=%v want %v", ok, tc.wantOK)
 			}
-			if tc.wantOK && (gotOrg != tc.wantOrg || gotAgt != tc.wantAgt) {
-				t.Fatalf("org=%s agent=%s", gotOrg, gotAgt)
+			if !tc.wantOK {
+				return
+			}
+			if gotOrg != tc.wantOrg {
+				t.Fatalf("org=%s want %s", gotOrg, tc.wantOrg)
+			}
+			if gotAgt != tc.wantAgt {
+				t.Fatalf("agent=%s want %s", gotAgt, tc.wantAgt)
 			}
 		})
 	}
