@@ -32,73 +32,79 @@ func assertAuthClients(t *testing.T, b authClients, present bool) {
 	}
 }
 
-func TestSetupAuthClients_success(t *testing.T) {
-	t.Parallel()
-
-	cases := []struct {
-		name       string
-		authCache  config.AuthCacheConfig
-		checkCache bool
-	}{
-		{name: "grpc only"},
-		{
-			name: "auth cache",
-			authCache: config.AuthCacheConfig{
-				Enabled:            true,
-				LRUCapacity:        100,
-				LRUMaxTTL:          30 * time.Second,
-				BloomExpectedItems: 1000,
-				BloomFPRate:        0.001,
-			},
-			checkCache: true,
-		},
-	}
-
-	for _, tc := range cases {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			lis := grpctest.StartUnimplementedAuthServer(t)
-			log := logger.Discard("proxy")
-			cfg := config.Config{
-				Environment:         "development",
-				AuthGRPCAddr:        lis.Addr().String(),
-				AuthValidateTimeout: time.Second,
-				AuthCache:           tc.authCache,
-			}
-			clients, err := setupAuthClients(cfg, log, nil)
-			if err != nil {
-				t.Fatalf("setupAuthClients: %v", err)
-			}
-			t.Cleanup(func() {
-				if err := clients.conn.Close(); err != nil {
-					t.Errorf("close conn: %v", err)
-				}
-			})
-			assertAuthClients(t, clients, true)
-			if tc.checkCache {
-				if _, ok := clients.validator.(auth.CacheInvalidator); !ok {
-					t.Fatal("expected caching validator implementing CacheInvalidator")
-				}
-			}
-		})
+func assertCachingValidator(t *testing.T, v auth.TokenValidator) {
+	t.Helper()
+	if _, ok := v.(auth.CacheInvalidator); !ok {
+		t.Fatal("expected caching validator implementing CacheInvalidator")
 	}
 }
 
-func TestSetupAuthClients_EmptyAddr(t *testing.T) {
-	t.Parallel()
+func setupAuthClientsForTest(t *testing.T, cache config.AuthCacheConfig) authClients {
+	t.Helper()
+	lis := grpctest.StartUnimplementedAuthServer(t)
 	log := logger.Discard("proxy")
+	cfg := config.Config{
+		Environment:         "development",
+		AuthGRPCAddr:        lis.Addr().String(),
+		AuthValidateTimeout: time.Second,
+		AuthCache:           cache,
+	}
+
+	clients, err := setupAuthClients(cfg, log, nil)
+
+	if err != nil {
+		t.Fatalf("setupAuthClients: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := clients.conn.Close(); err != nil {
+			t.Errorf("close conn: %v", err)
+		}
+	})
+	return clients
+}
+
+func TestUnit_SetupAuthClients_GRPCOnly(t *testing.T) {
+	t.Parallel()
+
+	clients := setupAuthClientsForTest(t, config.AuthCacheConfig{})
+
+	assertAuthClients(t, clients, true)
+}
+
+func TestUnit_SetupAuthClients_WithAuthCache(t *testing.T) {
+	t.Parallel()
+
+	clients := setupAuthClientsForTest(t, config.AuthCacheConfig{
+		Enabled:            true,
+		LRUCapacity:        100,
+		LRUMaxTTL:          30 * time.Second,
+		BloomExpectedItems: 1000,
+		BloomFPRate:        0.001,
+	})
+
+	assertAuthClients(t, clients, true)
+	assertCachingValidator(t, clients.validator)
+}
+
+func TestUnit_SetupAuthClients_EmptyAddr(t *testing.T) {
+	t.Parallel()
+
+	log := logger.Discard("proxy")
+
 	clients, err := setupAuthClients(config.Config{AuthGRPCAddr: ""}, log, nil)
+
 	if err != nil {
 		t.Fatalf("setupAuthClients: %v", err)
 	}
 	assertAuthClients(t, clients, false)
 }
 
-func TestSetupAuthClients_InvalidAuthCacheConfig(t *testing.T) {
+func TestUnit_SetupAuthClients_InvalidAuthCacheConfig(t *testing.T) {
 	t.Parallel()
+
 	lis := grpctest.StartUnimplementedAuthServer(t)
 	log := logger.Discard("proxy")
+
 	_, err := setupAuthClients(config.Config{
 		Environment:         "development",
 		AuthGRPCAddr:        lis.Addr().String(),
@@ -108,6 +114,7 @@ func TestSetupAuthClients_InvalidAuthCacheConfig(t *testing.T) {
 			LRUCapacity: -1,
 		},
 	}, log, nil)
+
 	if err == nil {
 		t.Fatal("expected auth cache config error")
 	}
@@ -115,7 +122,9 @@ func TestSetupAuthClients_InvalidAuthCacheConfig(t *testing.T) {
 
 func TestUnit_AuthTransportCredentials_DevelopmentInsecure(t *testing.T) {
 	t.Parallel()
+
 	creds := authTransportCredentials("development")
+
 	if creds.Info().SecurityProtocol != "insecure" {
 		t.Fatalf("protocol=%q", creds.Info().SecurityProtocol)
 	}

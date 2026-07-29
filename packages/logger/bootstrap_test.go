@@ -16,13 +16,14 @@ func captureStderr(t *testing.T, fn func()) string {
 	}
 	old := os.Stderr
 	os.Stderr = w
-	defer func() {
+	t.Cleanup(func() {
 		os.Stderr = old
-		_ = r.Close()
-	}()
+		_ = w.Close() //nolint:errcheck // test teardown restores stderr
+		_ = r.Close() //nolint:errcheck // drain pipe after capture
+	})
 
 	fn()
-	_ = w.Close()
+	_ = w.Close() //nolint:errcheck // signal EOF to reader
 	out, err := io.ReadAll(r)
 	if err != nil {
 		t.Fatalf("read stderr: %v", err)
@@ -30,11 +31,12 @@ func captureStderr(t *testing.T, fn func()) string {
 	return string(out)
 }
 
-func TestBootstrapError_WritesStructuredLog(t *testing.T) {
-	t.Parallel()
+func TestUnit_BootstrapError_WritesStructuredLog(t *testing.T) {
+	// Must not run in parallel: captureStderr mutates process-wide os.Stderr.
 	out := captureStderr(t, func() {
 		BootstrapError("boom", errors.New("bad"))
 	})
+
 	if !strings.Contains(out, `"msg":"boom"`) {
 		t.Fatalf("missing message: %s", out)
 	}
@@ -43,11 +45,12 @@ func TestBootstrapError_WritesStructuredLog(t *testing.T) {
 	}
 }
 
-func TestBootstrapDebug_WritesStructuredLog(t *testing.T) {
-	t.Parallel()
+func TestUnit_BootstrapDebug_WritesStructuredLog(t *testing.T) {
+	// Must not run in parallel: captureStderr mutates process-wide os.Stderr.
 	out := captureStderr(t, func() {
 		BootstrapDebug("dbg", "k", "v")
 	})
+
 	if !strings.Contains(out, `"msg":"dbg"`) {
 		t.Fatalf("missing message: %s", out)
 	}

@@ -13,15 +13,37 @@ import (
 	"github.com/Rick1330/ibex-harness/services/auth/internal/repository"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/service"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/token"
+	"github.com/alicebob/miniredis/v2"
 )
 
-func TestBootstrapResources_cleanupNoPanic(t *testing.T) {
-	t.Parallel()
-
+func openTestDB(t *testing.T) *sql.DB {
+	t.Helper()
 	db, err := sql.Open("postgres", "postgres://127.0.0.1:5432/test?sslmode=disable")
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = db.Close() })
+	return db
+}
+
+func newTestAuthRegistry(t *testing.T, db *sql.DB) *ibexmetrics.AuthRegistry {
+	t.Helper()
+	return ibexmetrics.NewAuth(ibexmetrics.AuthConfig{ServiceName: "auth", DB: db})
+}
+
+func newTestAuthServiceDeps(t *testing.T, db *sql.DB, reg *ibexmetrics.AuthRegistry) authServiceDeps {
+	t.Helper()
+	repo := repository.NewTokensRepository(db, reg)
+	agentsRepo := repository.NewAgentsRepository(db, reg)
+	validator := token.NewValidator(repo, token.DefaultArgon2Params())
+	tokenSvc := service.NewTokenService(repo, token.DefaultArgon2Params(), logger.Discard("auth"), nil)
+	return authServiceDeps{validator: validator, tokenSvc: tokenSvc, agentsRepo: agentsRepo}
+}
+
+func TestUnit_BootstrapResources_CleanupNoPanic(t *testing.T) {
+	t.Parallel()
+
+	db := openTestDB(t)
 	providers, _, err := telemetry.InitTracer(context.Background(), telemetry.Config{ServiceName: "auth-cleanup"}, "ibex-auth")
 	if err != nil {
 		t.Fatal(err)
@@ -39,7 +61,7 @@ func TestBootstrapResources_cleanupNoPanic(t *testing.T) {
 	res.cleanup()
 }
 
-func TestInitAuthRuntime_telemetryFailureCleansUp(t *testing.T) {
+func TestUnit_InitAuthRuntime_TelemetryFailureCleansUp(t *testing.T) {
 	cfg := config.Config{
 		Environment: "development",
 		ServiceName: "auth",
@@ -51,6 +73,7 @@ func TestInitAuthRuntime_telemetryFailureCleansUp(t *testing.T) {
 	defer res.cleanup()
 
 	_, err := initAuthRuntime(cfg, log, res)
+
 	if err == nil {
 		t.Fatal("expected telemetry init failure")
 	}
@@ -59,16 +82,12 @@ func TestInitAuthRuntime_telemetryFailureCleansUp(t *testing.T) {
 	}
 }
 
-func TestNewAuthHTTPServer_buildsServer(t *testing.T) {
+func TestUnit_NewAuthHTTPServer_BuildsServer(t *testing.T) {
 	t.Parallel()
 
-	db, err := sql.Open("postgres", "postgres://127.0.0.1:5432/test?sslmode=disable")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
+	db := openTestDB(t)
+	reg := newTestAuthRegistry(t, db)
 
-	reg := ibexmetrics.NewAuth(ibexmetrics.AuthConfig{ServiceName: "auth", DB: db})
 	srv := newAuthHTTPServer(authHTTPServerOpts{
 		Config: config.Config{Port: "0", GRPCPort: "0"},
 		Log:    logger.Discard("auth"),
@@ -76,12 +95,13 @@ func TestNewAuthHTTPServer_buildsServer(t *testing.T) {
 		Tracer: telemetry.NoopTracer("auth"),
 		DB:     db,
 	})
+
 	if srv == nil || srv.Handler == nil {
 		t.Fatal("expected configured http server")
 	}
 }
 
-func TestStartAuthGRPC_portInUse(t *testing.T) {
+func TestUnit_StartAuthGRPC_PortInUse(t *testing.T) {
 	ln, err := net.Listen("tcp", config.ListenAddress("0"))
 	if err != nil {
 		t.Fatal(err)
@@ -92,36 +112,26 @@ func TestStartAuthGRPC_portInUse(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	db, err := sql.Open("postgres", "postgres://127.0.0.1:5432/test?sslmode=disable")
-	if err != nil {
-		t.Fatal(err)
-	}
-	reg := ibexmetrics.NewAuth(ibexmetrics.AuthConfig{ServiceName: "auth", DB: db})
-	repo := repository.NewTokensRepository(db, reg)
-	agentsRepo := repository.NewAgentsRepository(db, reg)
-	validator := token.NewValidator(repo, token.DefaultArgon2Params())
-	tokenSvc := service.NewTokenService(repo, token.DefaultArgon2Params(), logger.Discard("auth"), nil)
-	deps := authServiceDeps{validator: validator, tokenSvc: tokenSvc, agentsRepo: agentsRepo}
+	db := openTestDB(t)
+	reg := newTestAuthRegistry(t, db)
+	deps := newTestAuthServiceDeps(t, db, reg)
 
 	_, _, err = startAuthGRPC(config.Config{GRPCPort: port}, deps, reg)
+
 	if err == nil {
 		t.Fatal("expected listen error when grpc port is in use")
 	}
 }
 
-func TestSetupRevocationPublisher_emptyRedisURL(t *testing.T) {
+func TestUnit_SetupRevocationPublisher_EmptyRedisURL(t *testing.T) {
 	t.Parallel()
 
-	db, err := sql.Open("postgres", "postgres://127.0.0.1:5432/test?sslmode=disable")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-
-	reg := ibexmetrics.NewAuth(ibexmetrics.AuthConfig{ServiceName: "auth", DB: db})
+	db := openTestDB(t)
+	reg := newTestAuthRegistry(t, db)
 	log := logger.Discard("auth")
 
 	client, pub, err := setupRevocationPublisher(config.Config{RedisURL: ""}, log, reg)
+
 	if err != nil {
 		t.Fatalf("setupRevocationPublisher: %v", err)
 	}
@@ -133,63 +143,124 @@ func TestSetupRevocationPublisher_emptyRedisURL(t *testing.T) {
 	}
 }
 
-func TestSetupRevocationPublisher_invalidRedisURL(t *testing.T) {
+func TestUnit_InvalidRedisURL_Rejects(t *testing.T) {
 	t.Parallel()
 
-	db, err := sql.Open("postgres", "postgres://127.0.0.1:5432/test?sslmode=disable")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-
-	reg := ibexmetrics.NewAuth(ibexmetrics.AuthConfig{ServiceName: "auth", DB: db})
+	db := openTestDB(t)
+	reg := newTestAuthRegistry(t, db)
 	log := logger.Discard("auth")
+	badURL := "not-a-redis-url"
 
-	_, _, err = setupRevocationPublisher(config.Config{RedisURL: "not-a-redis-url"}, log, reg)
-	if err == nil {
-		t.Fatal("expected redis URL parse error")
+	cases := []struct {
+		name string
+		run  func() error
+	}{
+		{
+			name: "revocation publisher",
+			run: func() error {
+				_, _, err := setupRevocationPublisher(config.Config{RedisURL: badURL}, log, reg)
+				return err
+			},
+		},
+		{
+			name: "auth services",
+			run: func() error {
+				_, err := initAuthServices(config.Config{
+					RedisURL: badURL,
+					Argon2:   token.DefaultArgon2Params(),
+				}, db, log, reg)
+				return err
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if err := tc.run(); err == nil {
+				t.Fatal("expected redis URL parse error")
+			}
+		})
 	}
 }
 
-func TestInitAuthServices_invalidRedisURL(t *testing.T) {
+func TestUnit_NewAuthGRPCServer_RejectsInvalidDeps(t *testing.T) {
 	t.Parallel()
 
-	db, err := sql.Open("postgres", "postgres://127.0.0.1:5432/test?sslmode=disable")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
+	db := openTestDB(t)
+	reg := newTestAuthRegistry(t, db)
+	deps := newTestAuthServiceDeps(t, db, reg)
 
-	reg := ibexmetrics.NewAuth(ibexmetrics.AuthConfig{ServiceName: "auth", DB: db})
-	log := logger.Discard("auth")
+	_, err := newAuthGRPCServer(deps, nil)
 
-	_, err = initAuthServices(config.Config{
-		RedisURL: "not-a-redis-url",
-		Argon2:   token.DefaultArgon2Params(),
-	}, db, log, reg)
-	if err == nil {
-		t.Fatal("expected init failure for invalid redis URL")
-	}
-}
-
-func TestNewAuthGRPCServer_rejectsInvalidDeps(t *testing.T) {
-	t.Parallel()
-
-	db, err := sql.Open("postgres", "postgres://127.0.0.1:5432/test?sslmode=disable")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = db.Close() })
-
-	reg := ibexmetrics.NewAuth(ibexmetrics.AuthConfig{ServiceName: "auth", DB: db})
-	repo := repository.NewTokensRepository(db, reg)
-	agentsRepo := repository.NewAgentsRepository(db, reg)
-	validator := token.NewValidator(repo, token.DefaultArgon2Params())
-	tokenSvc := service.NewTokenService(repo, token.DefaultArgon2Params(), logger.Discard("auth"), nil)
-	deps := authServiceDeps{validator: validator, tokenSvc: tokenSvc, agentsRepo: agentsRepo}
-
-	_, err = newAuthGRPCServer(deps, nil)
 	if err == nil {
 		t.Fatal("expected grpc server construction error")
 	}
+}
+
+func TestUnit_InitAuthServices_EmptyRedisURL(t *testing.T) {
+	t.Parallel()
+
+	db := openTestDB(t)
+	reg := newTestAuthRegistry(t, db)
+	log := logger.Discard("auth")
+
+	deps, err := initAuthServices(config.Config{
+		RedisURL: "",
+		Argon2:   token.DefaultArgon2Params(),
+	}, db, log, reg)
+
+	if err != nil {
+		t.Fatalf("initAuthServices: %v", err)
+	}
+	if deps.tokenSvc == nil || deps.validator == nil || deps.agentsRepo == nil {
+		t.Fatal("expected auth service deps")
+	}
+	if deps.redisClient != nil {
+		t.Fatal("expected nil redis when REDIS_URL empty")
+	}
+}
+
+func TestUnit_SetupRevocationPublisher_WithMiniredis(t *testing.T) {
+	t.Parallel()
+
+	db := openTestDB(t)
+	reg := newTestAuthRegistry(t, db)
+	log := logger.Discard("auth")
+	mr := miniredis.RunT(t)
+
+	client, pub, err := setupRevocationPublisher(config.Config{
+		RedisURL: "redis://" + mr.Addr() + "/0",
+	}, log, reg)
+
+	if err != nil {
+		t.Fatalf("setupRevocationPublisher: %v", err)
+	}
+	t.Cleanup(func() {
+		if client != nil {
+			_ = client.Close()
+		}
+	})
+	if client == nil || pub == nil {
+		t.Fatal("expected redis client and publisher")
+	}
+}
+
+func TestUnit_NewAuthGRPCServer_BuildsServer(t *testing.T) {
+	t.Parallel()
+
+	db := openTestDB(t)
+	reg := newTestAuthRegistry(t, db)
+	deps := newTestAuthServiceDeps(t, db, reg)
+
+	srv, err := newAuthGRPCServer(deps, reg)
+
+	if err != nil {
+		t.Fatalf("newAuthGRPCServer: %v", err)
+	}
+	if srv == nil {
+		t.Fatal("expected grpc server")
+	}
+	srv.Stop()
 }

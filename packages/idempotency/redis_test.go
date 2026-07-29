@@ -427,9 +427,11 @@ func TestRedisKey_Format(t *testing.T) {
 	}
 }
 
-func TestNewRedisStore_nilClient(t *testing.T) {
+func TestUnit_NewRedisStore_RejectsNilClient(t *testing.T) {
 	t.Parallel()
+
 	_, err := NewRedisStore(nil, Config{TTL: time.Hour})
+
 	if err == nil {
 		t.Fatal("expected error for nil client")
 	}

@@ -116,7 +116,7 @@ func assertCheckAllowed(t *testing.T, slider Limiter, orgID uuid.UUID, wantAllow
 	}
 }
 
-func TestNewRedisSlider_nilClient(t *testing.T) {
+func TestUnit_NewRedisSlider_RejectsNilClient(t *testing.T) {
 	t.Parallel()
 	_, err := NewRedisSlider(nil, RedisSliderConfig{DefaultRPM: 60})
 	if err == nil {

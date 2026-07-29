@@ -9,7 +9,7 @@ import (
 	"github.com/Rick1330/ibex-harness/services/auth/internal/token"
 )
 
-func TestNewServer_rejectsNilDeps(t *testing.T) {
+func TestUnit_NewServer_RejectsNilDependencies(t *testing.T) {
 	t.Parallel()
 
 	tokenSvc := service.NewTokenService(
