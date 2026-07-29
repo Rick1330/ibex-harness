@@ -98,3 +98,13 @@ func TestNewGRPCAgentVerifier_defaultTimeout(t *testing.T) {
 		t.Fatalf("timeout: %s", v.timeout)
 	}
 }
+
+func TestNewGRPCAgentVerifier_nilClient(t *testing.T) {
+	t.Parallel()
+
+	var client authv1.AuthServiceClient
+	_, err := NewGRPCAgentVerifier(client, time.Second)
+	if err == nil {
+		t.Fatal("expected error for nil client")
+	}
+}

@@ -101,6 +101,24 @@ func TestSetupAuthClients_EmptyAddr(t *testing.T) {
 	assertAuthClientsAbsent(t, clients)
 }
 
+func TestSetupAuthClients_InvalidAuthCacheConfig(t *testing.T) {
+	t.Parallel()
+	lis := grpctest.StartUnimplementedAuthServer(t)
+	log := logger.Discard("proxy")
+	_, err := setupAuthClients(config.Config{
+		Environment:         "development",
+		AuthGRPCAddr:        lis.Addr().String(),
+		AuthValidateTimeout: time.Second,
+		AuthCache: config.AuthCacheConfig{
+			Enabled:     true,
+			LRUCapacity: -1,
+		},
+	}, log, nil)
+	if err == nil {
+		t.Fatal("expected auth cache config error")
+	}
+}
+
 func TestUnit_AuthTransportCredentials_DevelopmentInsecure(t *testing.T) {
 	t.Parallel()
 	creds := authTransportCredentials("development")

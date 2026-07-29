@@ -426,3 +426,11 @@ func TestRedisKey_Format(t *testing.T) {
 		t.Fatalf("got %q want %q", got, want)
 	}
 }
+
+func TestNewRedisStore_nilClient(t *testing.T) {
+	t.Parallel()
+	_, err := NewRedisStore(nil, Config{TTL: time.Hour})
+	if err == nil {
+		t.Fatal("expected error for nil client")
+	}
+}

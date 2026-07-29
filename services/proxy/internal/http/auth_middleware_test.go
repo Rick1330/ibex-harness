@@ -177,3 +177,20 @@ func TestAuthMiddlewareUnexpectedError(t *testing.T) {
 		t.Fatalf("status: %d", rec.Code)
 	}
 }
+
+func TestAuthMiddlewareNilOrgIDFailsClosed(t *testing.T) {
+	t.Parallel()
+	handler := AuthMiddleware(&mockValidator{res: &auth.ValidateResult{OrgID: uuid.Nil, Permissions: 42}}, logger.Discard("proxy"), AuthOptions{})(
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }),
+	)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/internal/auth-probe", nil)
+	req.Header.Set("Authorization", "Bearer ibex_pat_x")
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status: %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "missing organization context") {
+		t.Fatalf("body: %s", rec.Body.String())
+	}
+}
