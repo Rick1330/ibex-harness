@@ -17,11 +17,20 @@ func TestSecurity_SEC4_1_RemainingDecrements(t *testing.T) {
 	// Calendar-minute Redis windows can roll mid-test; restart the baseline
 	// on rollover and require two strict decreases within one window.
 	for attempts := 0; attempts < 12 && decreases < 2; attempts++ {
-		resp, _ := authProbeGET(t, orgAProbeOpts(env))
+		resp, body := authProbeGET(t, orgAProbeOpts(env))
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("auth probe status=%d body=%s", resp.StatusCode, body)
+		}
 		rem := int(parseHeaderInt(t, resp.Header.Get("X-RateLimit-Remaining"), "X-RateLimit-Remaining"))
 		resp.Body.Close()
-		if lastRemaining < 0 || rem > lastRemaining {
+		if lastRemaining < 0 {
 			lastRemaining = rem
+			continue
+		}
+		if rem > lastRemaining {
+			// New minute window: restart with a fresh decrement count.
+			lastRemaining = rem
+			decreases = 0
 			continue
 		}
 		if rem >= lastRemaining {

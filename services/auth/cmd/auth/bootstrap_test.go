@@ -22,8 +22,25 @@ func openTestDB(t *testing.T) *sql.DB {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = db.Close() })
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("close db: %v", err)
+		}
+	})
 	return db
+}
+
+func assertAuthServiceDeps(t *testing.T, deps authServiceDeps) {
+	t.Helper()
+	if deps.tokenSvc == nil {
+		t.Fatal("expected token service")
+	}
+	if deps.validator == nil {
+		t.Fatal("expected validator")
+	}
+	if deps.agentsRepo == nil {
+		t.Fatal("expected agents repo")
+	}
 }
 
 func newTestAuthRegistry(t *testing.T, db *sql.DB) *ibexmetrics.AuthRegistry {
@@ -43,7 +60,11 @@ func newTestAuthServiceDeps(t *testing.T, db *sql.DB, reg *ibexmetrics.AuthRegis
 func TestUnit_BootstrapResources_CleanupNoPanic(t *testing.T) {
 	t.Parallel()
 
-	db := openTestDB(t)
+	// Open without openTestDB cleanup: ownership transfers to res.cleanup().
+	db, err := sql.Open("postgres", "postgres://127.0.0.1:5432/test?sslmode=disable")
+	if err != nil {
+		t.Fatal(err)
+	}
 	providers, _, err := telemetry.InitTracer(context.Background(), telemetry.Config{ServiceName: "auth-cleanup"}, "ibex-auth")
 	if err != nil {
 		t.Fatal(err)
@@ -214,9 +235,7 @@ func TestUnit_InitAuthServices_EmptyRedisURL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("initAuthServices: %v", err)
 	}
-	if deps.tokenSvc == nil || deps.validator == nil || deps.agentsRepo == nil {
-		t.Fatal("expected auth service deps")
-	}
+	assertAuthServiceDeps(t, deps)
 	if deps.redisClient != nil {
 		t.Fatal("expected nil redis when REDIS_URL empty")
 	}
@@ -238,12 +257,18 @@ func TestUnit_SetupRevocationPublisher_WithMiniredis(t *testing.T) {
 		t.Fatalf("setupRevocationPublisher: %v", err)
 	}
 	t.Cleanup(func() {
-		if client != nil {
-			_ = client.Close()
+		if client == nil {
+			return
+		}
+		if err := client.Close(); err != nil {
+			t.Errorf("close redis client: %v", err)
 		}
 	})
-	if client == nil || pub == nil {
-		t.Fatal("expected redis client and publisher")
+	if client == nil {
+		t.Fatal("expected redis client")
+	}
+	if pub == nil {
+		t.Fatal("expected publisher")
 	}
 }
 
