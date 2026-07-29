@@ -12,6 +12,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/reqid"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	httptrace "github.com/Rick1330/ibex-harness/services/proxy/internal/http/trace"
+	"github.com/google/uuid"
 )
 
 // AuthOptions configures auth middleware behavior per route.
@@ -121,6 +122,12 @@ func writeAuthValidateError(awc authWriteCtx, r *http.Request, log *logger.Logge
 }
 
 func authorizeAuthResult(awc authWriteCtx, res *auth.ValidateResult, opts AuthOptions) bool {
+	if res.OrgID == uuid.Nil {
+		apierror.WriteStatus(awc.w, http.StatusServiceUnavailable, apierror.CodeServiceDegraded,
+			"Authentication service unavailable", awc.requestID,
+			apierror.WriteOpts{Detail: "missing organization context", DocsBase: awc.docsBase})
+		return false
+	}
 	if opts.PathOrgID != "" && res.OrgID.String() != opts.PathOrgID {
 		apierror.WriteStatus(awc.w, http.StatusForbidden, apierror.CodeInsufficientPermissions,
 			"Insufficient permissions", awc.requestID,

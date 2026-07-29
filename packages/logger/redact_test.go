@@ -12,6 +12,8 @@ func TestRedactAttr_forbiddenKeys(t *testing.T) {
 		"token", "password", "hash", "content", "email", "ip",
 		"secret", "key", "credential", "bearer", "authorization",
 		"access_token", "refresh_token", "api_key", "private_key", "session_token",
+		// Normalized forms (case / hyphen → underscore)
+		"Authorization", "Bearer", "Access-Token",
 	} {
 		attr := redactAttr(slog.String(key, "leak-value"))
 		if attr.Value.String() != "[REDACTED]" {

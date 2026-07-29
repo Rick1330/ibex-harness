@@ -66,6 +66,9 @@ func tenantIDsFromContext(ctx context.Context) (uuid.UUID, uuid.UUID, bool) {
 	if !ok {
 		return uuid.Nil, uuid.Nil, false
 	}
+	if authRes.OrgID == uuid.Nil {
+		return uuid.Nil, uuid.Nil, false
+	}
 	return authRes.OrgID, agent.ID, true
 }
 

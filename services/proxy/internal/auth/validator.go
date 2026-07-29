@@ -19,7 +19,7 @@ type GRPCValidator struct {
 
 // NewGRPCValidator creates a validator using the given client and per-call timeout.
 func NewGRPCValidator(client authv1.AuthServiceClient, timeout time.Duration) (*GRPCValidator, error) {
-	if client == nil {
+	if isNilAuthClient(client) {
 		return nil, fmt.Errorf("auth: nil AuthServiceClient for validator")
 	}
 	if timeout <= 0 {
@@ -37,7 +37,7 @@ func (v *GRPCValidator) Validate(ctx context.Context, accessToken string) (*Vali
 	if err != nil {
 		return nil, mapValidateTokenError(err)
 	}
-	return mapValidateTokenResponse(resp), nil
+	return mapValidateTokenResponse(resp)
 }
 
 func mapValidateTokenError(err error) error {
@@ -47,14 +47,21 @@ func mapValidateTokenError(err error) error {
 	return fmt.Errorf("%w: %v", ErrAuthUnavailable, err)
 }
 
-func mapValidateTokenResponse(resp *authv1.ValidateTokenResponse) *ValidateResult {
-	orgID, _ := uuid.Parse(resp.GetOrgId())
+func mapValidateTokenResponse(resp *authv1.ValidateTokenResponse) (*ValidateResult, error) {
+	orgID, err := uuid.Parse(resp.GetOrgId())
+	if err != nil {
+		return nil, fmt.Errorf("%w: invalid org_id: %v", ErrAuthUnavailable, err)
+	}
 	result := &ValidateResult{
 		OrgID:       orgID,
 		Permissions: resp.GetPermissions(),
 	}
 	if resp.AgentId != nil {
-		result.AgentID, _ = uuid.Parse(resp.GetAgentId())
+		agentID, err := uuid.Parse(resp.GetAgentId())
+		if err != nil {
+			return nil, fmt.Errorf("%w: invalid agent_id: %v", ErrAuthUnavailable, err)
+		}
+		result.AgentID = agentID
 	}
 	if resp.UserId != nil {
 		result.UserID = resp.GetUserId()
@@ -65,5 +72,5 @@ func mapValidateTokenResponse(resp *authv1.ValidateTokenResponse) *ValidateResul
 	if resp.ExpiresAt != nil {
 		result.ExpiresAt = resp.ExpiresAt.AsTime()
 	}
-	return result
+	return result, nil
 }

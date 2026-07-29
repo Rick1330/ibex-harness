@@ -23,16 +23,11 @@ func runValidateTokenCase(t *testing.T, tc validateTokenCase) {
 
 	s := newTestServer(t, &fakeTokenValidator{fn: tc.fn}, &fakeTokenRepo{}, &fakeAgentsStore{})
 	resp, err := s.ValidateToken(context.Background(), &authv1.ValidateTokenRequest{AccessToken: "tok"})
-	if tc.wantCode == codes.OK {
-		if err != nil {
-			t.Fatalf("ValidateToken: %v", err)
-		}
+	assertOKOrGRPCCode(t, err, tc.wantCode, func() {
 		if resp.GetOrgId() != "org-1" || resp.GetPermissions() != 7 {
 			t.Fatalf("response: %+v", resp)
 		}
-		return
-	}
-	assertGRPCCode(t, err, tc.wantCode)
+	})
 }
 
 func TestServer_ValidateToken(t *testing.T) {
@@ -80,16 +75,11 @@ func runCreateTokenCase(t *testing.T, tc createTokenCase) {
 
 	s := newTestServer(t, &fakeTokenValidator{}, &fakeTokenRepo{}, &fakeAgentsStore{})
 	resp, err := s.CreateToken(tc.ctx, tc.req)
-	if tc.wantCode == codes.OK {
-		if err != nil {
-			t.Fatalf("CreateToken: %v", err)
-		}
+	assertOKOrGRPCCode(t, err, tc.wantCode, func() {
 		if resp.GetTokenId() == "" || resp.GetPlaintext() == "" {
 			t.Fatalf("incomplete response: %+v", resp)
 		}
-		return
-	}
-	assertGRPCCode(t, err, tc.wantCode)
+	})
 }
 
 func TestServer_CreateToken(t *testing.T) {

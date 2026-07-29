@@ -420,9 +420,13 @@ func TestUnit_Writer_MetricsAndLoggerOnFlushError(t *testing.T) {
 		t.Fatal("flush wait")
 	}
 	require.Eventually(t, func() bool {
-		errN, rowsN := m.snapshot()
-		return errN >= 1 && rowsN >= 1
-	}, time.Second, 5*time.Millisecond, "flush error metrics not observed")
+		errN, _ := m.snapshot()
+		return errN >= 1
+	}, time.Second, 5*time.Millisecond, "flush error metric not observed")
+	require.Eventually(t, func() bool {
+		_, rowsN := m.snapshot()
+		return rowsN >= 1
+	}, time.Second, 5*time.Millisecond, "flush rows metric not observed")
 }
 
 func TestUnit_Writer_NewWriter_BadDSN(t *testing.T) {

@@ -66,7 +66,9 @@ func runBootstrap(_ []string, signalCh chan os.Signal) int {
 		return 1
 	}
 
-	httpServer := newAuthHTTPServer(cfg, log, reg, tracer, db)
+	httpServer := newAuthHTTPServer(cfg, authHTTPDeps{
+		Log: log, Reg: reg, Tracer: tracer, DB: db,
+	})
 
 	return runWithShutdown(shutdownOpts{
 		cfg: cfg, logger: log, providers: providers, grpcSrv: grpcSrv, grpcLis: grpcLis,
@@ -115,19 +117,14 @@ func initAuthServices(
 	}, nil
 }
 
-func newAuthGRPCServer(
-	validator *token.Validator,
-	tokenSvc *service.TokenService,
-	agentsRepo *repository.AgentsRepository,
-	reg *ibexmetrics.AuthRegistry,
-) (*grpc.Server, error) {
+func newAuthGRPCServer(deps authServiceDeps, reg *ibexmetrics.AuthRegistry) (*grpc.Server, error) {
 	grpcSrv := grpc.NewServer(
 		grpc.ChainUnaryInterceptor(
 			grpcserver.MetricsUnaryInterceptor(reg),
-			grpcserver.AuthzUnaryInterceptor(validator),
+			grpcserver.AuthzUnaryInterceptor(deps.validator),
 		),
 	)
-	if err := registerAuthGRPC(grpcSrv, validator, tokenSvc, agentsRepo, reg); err != nil {
+	if err := registerAuthGRPC(grpcSrv, deps, reg); err != nil {
 		return nil, err
 	}
 	return grpcSrv, nil
@@ -166,7 +163,7 @@ func startAuthGRPC(
 	deps authServiceDeps,
 	reg *ibexmetrics.AuthRegistry,
 ) (*grpc.Server, net.Listener, error) {
-	grpcSrv, err := newAuthGRPCServer(deps.validator, deps.tokenSvc, deps.agentsRepo, reg)
+	grpcSrv, err := newAuthGRPCServer(deps, reg)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -195,34 +192,32 @@ func openAuthPostgres(cfg config.Config) (*sql.DB, error) {
 	return db, nil
 }
 
-func newAuthHTTPServer(
-	cfg config.Config,
-	log *logger.Logger,
-	reg *ibexmetrics.AuthRegistry,
-	tracer trace.Tracer,
-	db *sql.DB,
-) *http.Server {
+type authHTTPDeps struct {
+	Log    *logger.Logger
+	Reg    *ibexmetrics.AuthRegistry
+	Tracer trace.Tracer
+	DB     *sql.DB
+}
+
+func newAuthHTTPServer(cfg config.Config, deps authHTTPDeps) *http.Server {
 	healthSrv := &healthcheck.Server{
 		CriticalCheckers: map[string]healthcheck.Checker{
-			"postgres": healthcheck.PostgresSelect1(db),
+			"postgres": healthcheck.PostgresSelect1(deps.DB),
 			"grpc":     healthcheck.TCPReachable(config.ListenAddress(cfg.GRPCPort)),
 		},
 	}
 	return &http.Server{
 		Addr:              config.ListenAddress(cfg.Port),
-		Handler:           authhttp.NewRouter(log, reg, tracer, healthSrv),
+		Handler:           authhttp.NewRouter(deps.Log, deps.Reg, deps.Tracer, healthSrv),
 		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      120 * time.Second,
+		IdleTimeout:       90 * time.Second,
 	}
 }
 
-func registerAuthGRPC(
-	grpcSrv *grpc.Server,
-	validator *token.Validator,
-	tokenSvc *service.TokenService,
-	agentsRepo *repository.AgentsRepository,
-	reg *ibexmetrics.AuthRegistry,
-) error {
-	srv, err := grpcserver.NewServer(validator, tokenSvc, agentsRepo, reg)
+func registerAuthGRPC(grpcSrv *grpc.Server, deps authServiceDeps, reg *ibexmetrics.AuthRegistry) error {
+	srv, err := grpcserver.NewServer(deps.validator, deps.tokenSvc, deps.agentsRepo, reg)
 	if err != nil {
 		return err
 	}

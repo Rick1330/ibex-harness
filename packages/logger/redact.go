@@ -1,6 +1,9 @@
 package logger
 
-import "log/slog"
+import (
+	"log/slog"
+	"strings"
+)
 
 var forbiddenKeys = map[string]bool{
 	"token":         true,
@@ -22,7 +25,8 @@ var forbiddenKeys = map[string]bool{
 }
 
 func redactAttr(a slog.Attr) slog.Attr {
-	if !forbiddenKeys[a.Key] {
+	key := strings.ToLower(strings.ReplaceAll(a.Key, "-", "_"))
+	if !forbiddenKeys[key] {
 		return a
 	}
 	return slog.String(a.Key, "[REDACTED]")

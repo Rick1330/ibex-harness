@@ -83,3 +83,15 @@ func assertGRPCCode(t *testing.T, err error, want codes.Code) {
 		t.Fatalf("code: got %v want %v err=%v", status.Code(err), want, err)
 	}
 }
+
+func assertOKOrGRPCCode(t *testing.T, err error, want codes.Code, onOK func()) {
+	t.Helper()
+	if want == codes.OK {
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		onOK()
+		return
+	}
+	assertGRPCCode(t, err, want)
+}

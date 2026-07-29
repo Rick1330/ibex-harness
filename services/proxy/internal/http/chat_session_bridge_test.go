@@ -45,9 +45,7 @@ func TestUnit_TenantIDsFromContext(t *testing.T) {
 				ctx := WithAgent(context.Background(), auth.AgentRecord{ID: agentID})
 				return auth.WithContext(ctx, &auth.ValidateResult{OrgID: uuid.Nil})
 			},
-			wantOK:  true,
-			wantOrg: uuid.Nil,
-			wantAgt: agentID,
+			wantOK: false,
 		},
 		{
 			name: "valid tenant ids",

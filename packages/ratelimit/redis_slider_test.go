@@ -14,7 +14,6 @@ func TestRedisSlider_underAtOverLimit(t *testing.T) {
 	t.Parallel()
 
 	testOrgID := uuid.MustParse("550e8400-e29b-41d4-a716-446655440000")
-
 	tests := []struct {
 		name        string
 		requests    int
@@ -31,34 +30,9 @@ func TestRedisSlider_underAtOverLimit(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			mr := miniredis.RunT(t)
-			client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-			t.Cleanup(func() { _ = client.Close() })
-
-			slider, sErr := NewRedisSlider(client, RedisSliderConfig{DefaultRPM: tc.limit})
-			if sErr != nil {
-				t.Fatalf("NewRedisSlider: %v", sErr)
-			}
-			var result Result
-			var err error
-			for i := 0; i < tc.requests; i++ {
-				result, err = slider.Check(context.Background(), testOrgID, uuid.Nil)
-				if err != nil {
-					t.Fatalf("Check: %v", err)
-				}
-			}
-			if result.Allowed != tc.wantAllowed {
-				t.Errorf("Allowed = %v, want %v", result.Allowed, tc.wantAllowed)
-			}
-			if result.Remaining != tc.wantRemain {
-				t.Errorf("Remaining = %d, want %d", result.Remaining, tc.wantRemain)
-			}
-			if result.Limit != int(tc.limit) {
-				t.Errorf("Limit = %d, want %d", result.Limit, tc.limit)
-			}
-			if result.ResetUnix <= 0 {
-				t.Error("ResetUnix should be positive")
-			}
+			slider := newTestSlider(t, RedisSliderConfig{DefaultRPM: tc.limit})
+			result := checkN(t, slider, testOrgID, tc.requests)
+			assertLimitResult(t, result, tc.wantAllowed, tc.wantRemain, tc.limit)
 		})
 	}
 }
@@ -68,54 +42,89 @@ func TestRedisSlider_orgOverride(t *testing.T) {
 
 	orgA := uuid.MustParse("550e8400-e29b-41d4-a716-446655440001")
 	orgB := uuid.MustParse("550e8400-e29b-41d4-a716-446655440002")
+	slider := newTestSlider(t, RedisSliderConfig{
+		DefaultRPM:   60,
+		OrgOverrides: map[uuid.UUID]int64{orgA: 2},
+	})
 
+	assertAllowedN(t, slider, orgA, 2)
+	assertDenied(t, slider, orgA)
+	assertAllowed(t, slider, orgB)
+}
+
+func newTestSlider(t *testing.T, cfg RedisSliderConfig) Limiter {
+	t.Helper()
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
-
-	slider, err := NewRedisSlider(client, RedisSliderConfig{
-		DefaultRPM: 60,
-		OrgOverrides: map[uuid.UUID]int64{
-			orgA: 2,
-		},
-	})
+	slider, err := NewRedisSlider(client, cfg)
 	if err != nil {
 		t.Fatalf("NewRedisSlider: %v", err)
 	}
+	return slider
+}
 
-	for i := 0; i < 2; i++ {
-		res, err := slider.Check(context.Background(), orgA, uuid.Nil)
+func checkN(t *testing.T, slider Limiter, orgID uuid.UUID, n int) Result {
+	t.Helper()
+	var result Result
+	for i := 0; i < n; i++ {
+		var err error
+		result, err = slider.Check(context.Background(), orgID, uuid.Nil)
 		if err != nil {
-			t.Fatalf("Check orgA: %v", err)
-		}
-		if !res.Allowed {
-			t.Fatalf("request %d should be allowed", i+1)
+			t.Fatalf("Check: %v", err)
 		}
 	}
-	res, err := slider.Check(context.Background(), orgA, uuid.Nil)
-	if err != nil {
-		t.Fatalf("Check orgA third: %v", err)
-	}
-	if res.Allowed {
-		t.Fatal("third request for orgA should be denied")
-	}
+	return result
+}
 
-	res, err = slider.Check(context.Background(), orgB, uuid.Nil)
+func assertLimitResult(t *testing.T, result Result, wantAllowed bool, wantRemain int, wantLimit int64) {
+	t.Helper()
+	if result.Allowed != wantAllowed {
+		t.Errorf("Allowed = %v, want %v", result.Allowed, wantAllowed)
+	}
+	if result.Remaining != wantRemain {
+		t.Errorf("Remaining = %d, want %d", result.Remaining, wantRemain)
+	}
+	if result.Limit != int(wantLimit) {
+		t.Errorf("Limit = %d, want %d", result.Limit, wantLimit)
+	}
+	if result.ResetUnix <= 0 {
+		t.Error("ResetUnix should be positive")
+	}
+}
+
+func assertAllowedN(t *testing.T, slider Limiter, orgID uuid.UUID, n int) {
+	t.Helper()
+	for i := 0; i < n; i++ {
+		assertAllowed(t, slider, orgID)
+	}
+}
+
+func assertAllowed(t *testing.T, slider Limiter, orgID uuid.UUID) {
+	t.Helper()
+	res, err := slider.Check(context.Background(), orgID, uuid.Nil)
 	if err != nil {
-		t.Fatalf("Check orgB: %v", err)
+		t.Fatalf("Check: %v", err)
 	}
 	if !res.Allowed {
-		t.Fatal("orgB should use default limit and remain allowed")
+		t.Fatal("expected allowed")
+	}
+}
+
+func assertDenied(t *testing.T, slider Limiter, orgID uuid.UUID) {
+	t.Helper()
+	res, err := slider.Check(context.Background(), orgID, uuid.Nil)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	if res.Allowed {
+		t.Fatal("expected denied")
 	}
 }
 
 func TestNewRedisSlider_defaultRPMWhenZero(t *testing.T) {
 	t.Parallel()
-	mr := miniredis.RunT(t)
-	slider, sErr := NewRedisSlider(redis.NewClient(&redis.Options{Addr: mr.Addr()}), RedisSliderConfig{DefaultRPM: 0})
-	if sErr != nil {
-		t.Fatalf("NewRedisSlider: %v", sErr)
-	}
+	slider := newTestSlider(t, RedisSliderConfig{DefaultRPM: 0})
 	res, err := slider.Check(context.Background(), uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"), uuid.Nil)
 	if err != nil {
 		t.Fatal(err)
@@ -151,17 +160,10 @@ func TestRedisSlider_Check_redisError(t *testing.T) {
 func TestRedisSlider_orgOverrideZeroUsesDefault(t *testing.T) {
 	t.Parallel()
 	orgID := uuid.MustParse("550e8400-e29b-41d4-a716-446655440003")
-	mr := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	t.Cleanup(func() { _ = client.Close() })
-
-	slider, sErr := NewRedisSlider(client, RedisSliderConfig{
+	slider := newTestSlider(t, RedisSliderConfig{
 		DefaultRPM:   60,
 		OrgOverrides: map[uuid.UUID]int64{orgID: 0},
 	})
-	if sErr != nil {
-		t.Fatalf("NewRedisSlider: %v", sErr)
-	}
 	res, err := slider.Check(context.Background(), orgID, uuid.Nil)
 	if err != nil {
 		t.Fatal(err)

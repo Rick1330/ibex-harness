@@ -11,3 +11,10 @@ import (
 func BootstrapError(msg string, err error) {
 	slog.New(slog.NewJSONHandler(os.Stderr, nil)).Error(msg, "error", err)
 }
+
+// BootstrapDebug logs a structured DEBUG message to stderr for use before
+// the application logger is initialized (same bootstrap exception as BootstrapError).
+func BootstrapDebug(msg string, args ...any) {
+	h := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})
+	slog.New(h).Debug(msg, args...)
+}

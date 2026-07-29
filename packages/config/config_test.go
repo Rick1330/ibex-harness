@@ -1,7 +1,7 @@
 package config_test
 
 import (
-	"log/slog"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -54,11 +54,20 @@ type nestedConfig struct {
 
 func withDebugLogger(t *testing.T, logFn func(), assertFn func(out string)) {
 	t.Helper()
-	var buf strings.Builder
-	old := slog.Default()
-	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	t.Cleanup(func() { slog.SetDefault(old) })
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := os.Stderr
+	os.Stderr = w
 	logFn()
+	_ = w.Close()
+	os.Stderr = old
+	var buf strings.Builder
+	if _, copyErr := io.Copy(&buf, r); copyErr != nil {
+		t.Fatalf("read stderr: %v", copyErr)
+	}
+	_ = r.Close()
 	assertFn(buf.String())
 }
 

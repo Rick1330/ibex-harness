@@ -25,19 +25,24 @@ func runGRPCValidatorCase(t *testing.T, tc grpcValidatorCase, accessToken string
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got.OrgID != tc.want.OrgID {
+	assertValidateResult(t, got, tc.want)
+}
+
+func assertValidateResult(t *testing.T, got, want *ValidateResult) {
+	t.Helper()
+	if got.OrgID != want.OrgID {
 		t.Fatalf("org: %s", got.OrgID)
 	}
-	if got.Permissions != tc.want.Permissions {
+	if got.Permissions != want.Permissions {
 		t.Fatalf("perms: %d", got.Permissions)
 	}
-	if got.AgentID != tc.want.AgentID {
+	if got.AgentID != want.AgentID {
 		t.Fatalf("agent: %s", got.AgentID)
 	}
-	if got.UserID != tc.want.UserID {
+	if got.UserID != want.UserID {
 		t.Fatalf("user: %s", got.UserID)
 	}
-	if got.TokenID != tc.want.TokenID {
+	if got.TokenID != want.TokenID {
 		t.Fatalf("token: %s", got.TokenID)
 	}
 }
@@ -58,7 +63,9 @@ func TestNewGRPCValidator_defaultTimeout(t *testing.T) {
 	t.Parallel()
 	client := &mockAuthServiceClient{
 		validateTokenFn: func(context.Context, *authv1.ValidateTokenRequest, ...grpc.CallOption) (*authv1.ValidateTokenResponse, error) {
-			return &authv1.ValidateTokenResponse{OrgId: "org", Permissions: 1}, nil
+			return &authv1.ValidateTokenResponse{
+				OrgId: "550e8400-e29b-41d4-a716-446655440099", Permissions: 1,
+			}, nil
 		},
 	}
 	v, err := NewGRPCValidator(client, 0)

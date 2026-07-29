@@ -64,12 +64,11 @@ func (p *Pool) Submit(fn func()) bool {
 // Shutdown stops accepting new work, drains the queue, and waits for workers.
 // The context deadline bounds how long to wait for in-flight jobs.
 func (p *Pool) Shutdown(ctx context.Context) error {
-	if !p.closed.Swap(true) {
-		p.submitWG.Wait()
-		close(p.jobs)
-	}
+	p.closed.Store(true)
 	p.drainOnce.Do(func() {
 		go func() {
+			p.submitWG.Wait()
+			close(p.jobs)
 			p.wg.Wait()
 			close(p.drained)
 		}()

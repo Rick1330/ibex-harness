@@ -74,18 +74,18 @@ func setupAuthClients(cfg config.Config, log *logger.Logger, m *ibexmetrics.Prox
 	client := authv1.NewAuthServiceClient(conn)
 	grpcValidator, err := auth.NewGRPCValidator(client, cfg.AuthValidateTimeout)
 	if err != nil {
-		_ = conn.Close()
+		_ = conn.Close() //nolint:errcheck // best-effort cleanup; preserve constructor error
 		return authClients{}, fmt.Errorf("auth validator: %w", err)
 	}
 	var validator auth.TokenValidator = grpcValidator
 	validator, err = maybeWrapAuthCache(validator, cfg, log, m)
 	if err != nil {
-		_ = conn.Close()
+		_ = conn.Close() //nolint:errcheck // best-effort cleanup; preserve constructor error
 		return authClients{}, err
 	}
 	agentVerifier, err := auth.NewGRPCAgentVerifier(client, cfg.AuthValidateTimeout)
 	if err != nil {
-		_ = conn.Close()
+		_ = conn.Close() //nolint:errcheck // best-effort cleanup; preserve constructor error
 		return authClients{}, fmt.Errorf("agent verifier: %w", err)
 	}
 	log.InfoCtx(context.Background(), "auth grpc client configured",

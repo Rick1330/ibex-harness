@@ -23,12 +23,17 @@ func serveRateLimitProbe(t *testing.T, limiter ratelimit.Limiter, req *http.Requ
 	return rec
 }
 
-func rateLimitProbeRequest(orgID uuid.UUID) *http.Request {
+type rateLimitProbeOpts struct {
+	withAuth bool
+	orgID    uuid.UUID
+}
+
+func rateLimitProbeRequest(opts rateLimitProbeOpts) *http.Request {
 	req := httptest.NewRequest(http.MethodGet, "/v1/internal/auth-probe", nil)
-	if orgID == uuid.Nil {
+	if !opts.withAuth {
 		return req
 	}
-	return req.WithContext(auth.WithContext(req.Context(), &auth.ValidateResult{OrgID: orgID}))
+	return req.WithContext(auth.WithContext(req.Context(), &auth.ValidateResult{OrgID: opts.orgID}))
 }
 
 func TestRateLimitMiddleware_errorPaths(t *testing.T) {
@@ -38,7 +43,7 @@ func TestRateLimitMiddleware_errorPaths(t *testing.T) {
 	cases := []struct {
 		name       string
 		limiter    ratelimit.Limiter
-		orgID      uuid.UUID
+		opts       rateLimitProbeOpts
 		wantStatus int
 	}{
 		{
@@ -46,12 +51,13 @@ func TestRateLimitMiddleware_errorPaths(t *testing.T) {
 			wantStatus: http.StatusInternalServerError,
 		},
 		{
-			name: "invalid org id", limiter: &mockLimiter{}, orgID: uuid.Nil,
+			name: "invalid org id", limiter: &mockLimiter{},
+			opts:       rateLimitProbeOpts{withAuth: true, orgID: uuid.Nil},
 			wantStatus: http.StatusInternalServerError,
 		},
 		{
 			name: "fail open", limiter: &mockLimiter{err: errors.New("redis down")},
-			orgID: orgID, wantStatus: http.StatusOK,
+			opts: rateLimitProbeOpts{withAuth: true, orgID: orgID}, wantStatus: http.StatusOK,
 		},
 	}
 
@@ -59,7 +65,7 @@ func TestRateLimitMiddleware_errorPaths(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			rec := serveRateLimitProbe(t, tc.limiter, rateLimitProbeRequest(tc.orgID))
+			rec := serveRateLimitProbe(t, tc.limiter, rateLimitProbeRequest(tc.opts))
 			if rec.Code != tc.wantStatus {
 				t.Fatalf("status: %d body=%s", rec.Code, rec.Body.String())
 			}

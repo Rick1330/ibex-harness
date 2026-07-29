@@ -56,6 +56,7 @@ func TestUnit_ResultConverters(t *testing.T) {
 	ac := proxyResultToAuthcache(proxy)
 	back := authcacheResultToProxy(ac)
 	assertResultField(t, "org_id", back.OrgID.String(), "11111111-1111-4111-8111-111111111111")
+	assertResultField(t, "agent_id", back.AgentID.String(), "22222222-2222-4222-8222-222222222222")
 	assertResultField(t, "token_id", back.TokenID, "t")
 	assertResultPerms(t, back.Permissions, 3)
 	assertFromCacheRoundTrip(t, ac)

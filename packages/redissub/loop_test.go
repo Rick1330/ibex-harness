@@ -65,13 +65,24 @@ func TestUnit_LoopCtxCancelExits(t *testing.T) {
 	}
 	loop := redissub.NewLoop()
 	ctx, cancel := context.WithCancel(context.Background())
+	entered := make(chan struct{})
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		loop.Run(ctx, log, "test", func(context.Context) (bool, error) {
+			select {
+			case <-entered:
+			default:
+				close(entered)
+			}
 			return true, errors.New("session end")
 		})
 	}()
+	select {
+	case <-entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("callback did not enter")
+	}
 	cancel()
 	select {
 	case <-done:

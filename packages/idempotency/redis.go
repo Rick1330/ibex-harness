@@ -12,6 +12,10 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// ErrNilClient is returned when NewRedisStore is given a nil Redis client.
+// A client is required because Claim/Complete perform network I/O against Redis.
+var ErrNilClient = errors.New("idempotency: nil redis client")
+
 // errCASSkip means the key is no longer owned by this claim (no-op success).
 var errCASSkip = errors.New("idempotency: cas skip")
 
@@ -29,9 +33,10 @@ type RedisStore struct {
 }
 
 // NewRedisStore returns an org-scoped idempotency store backed by Redis.
+// client must be non-nil; the store has no fallback transport.
 func NewRedisStore(client redis.UniversalClient, cfg Config) (*RedisStore, error) {
 	if client == nil {
-		return nil, fmt.Errorf("idempotency: nil redis client")
+		return nil, ErrNilClient
 	}
 	cfg = cfg.withDefaults()
 	return &RedisStore{client: client, ttl: cfg.TTL, pendingTTL: cfg.PendingTTL}, nil

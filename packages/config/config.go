@@ -3,7 +3,6 @@ package config
 
 import (
 	"fmt"
-	"log/slog"
 	"os"
 	"reflect"
 	"strings"
@@ -40,7 +39,7 @@ func MustLoad[T any]() T {
 
 // LogDebug logs resolved config at DEBUG level, redacting secret-tagged fields.
 func LogDebug[T any](cfg T) {
-	slog.Default().Debug("resolved configuration", "config", redactConfig(cfg)) // bootstrap exception: logger not yet available
+	logger.BootstrapDebug("resolved configuration", "config", redactConfig(cfg))
 }
 
 func redactConfig(v any) map[string]any {

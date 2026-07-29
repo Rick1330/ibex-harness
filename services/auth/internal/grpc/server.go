@@ -51,6 +51,9 @@ func NewServer(
 	if agentsStore == nil {
 		return nil, fmt.Errorf("grpcserver: nil agentsStore")
 	}
+	if reg == nil {
+		return nil, fmt.Errorf("grpcserver: nil metrics registry")
+	}
 	return &Server{
 		validator:    validator,
 		tokenService: tokenSvc,
@@ -149,13 +152,13 @@ func (s *Server) ValidateAgent(ctx context.Context, req *authv1.ValidateAgentReq
 	if !ok {
 		return nil, s.agentValidateErr(start, metrics.AgentResultError, codes.Unauthenticated, "missing caller context")
 	}
-	if caller.OrgID != req.GetOrgId() {
-		return nil, s.agentValidateErr(start, metrics.AgentResultError, codes.PermissionDenied, "forbidden")
-	}
 
 	orgID, agentID, err := parseValidateAgentIDs(req)
 	if err != nil {
 		return nil, s.agentValidateErr(start, metrics.AgentResultError, codes.InvalidArgument, err.Error())
+	}
+	if caller.OrgID != req.GetOrgId() {
+		return nil, s.agentValidateErr(start, metrics.AgentResultError, codes.PermissionDenied, "forbidden")
 	}
 
 	rec, result, stErr := s.lookupAgentForValidate(ctx, agentID, orgID)

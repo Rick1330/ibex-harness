@@ -14,6 +14,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/require"
 
 	// Register the lib/pq "postgres" driver for sql.Open in integration tests.
 	_ "github.com/lib/pq"
@@ -234,7 +235,7 @@ func TestIntegration_CachedResolver_PostgresFallback(t *testing.T) {
 	expect := resolveExpect{resolver: resolver, orgID: seeded.orgID, agentID: seeded.agentID, want: seeded.content}
 
 	assertResolveContent(t, expect)
-	waitUntil(t, 2*time.Second, func() bool { return redisKeyExists(client, key) })
+	require.Eventually(t, func() bool { return redisKeyExists(client, key) }, 2*time.Second, 20*time.Millisecond)
 	assertResolveContent(t, expect)
 	if !redisKeyExists(client, key) {
 		t.Fatalf("expected redis key %q", key)
