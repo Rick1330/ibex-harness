@@ -89,7 +89,7 @@ func TestUnit_RunCheckpoint_Success(t *testing.T) {
 	fx.deps.RunCheckpoint(fx.params(0), fx.ext)
 
 	assertAppendCount(t, fx, 1)
-	assertCacheTurnCount(t, fx, 1)
+	assertCacheTurn(t, fx, 1, false)
 }
 
 func TestUnit_RunCheckpoint_DuplicateInvalidatesCache(t *testing.T) {
@@ -116,7 +116,7 @@ func TestUnit_RunCheckpoint_RetrySucceeds(t *testing.T) {
 	fx.deps.RunCheckpoint(fx.params(0), fx.ext)
 
 	assertMinAppendCount(t, fx, 2)
-	assertCacheTurnAtLeast(t, fx, 1)
+	assertCacheTurn(t, fx, 1, true)
 }
 
 func TestUnit_RunCheckpoint_AppendError(t *testing.T) {
@@ -144,25 +144,20 @@ func assertMinAppendCount(t *testing.T, fx checkpointFixture, want int) {
 	}
 }
 
-func assertCacheTurnCount(t *testing.T, fx checkpointFixture, want int) {
+func assertCacheTurn(t *testing.T, fx checkpointFixture, want int, atLeast bool) {
 	t.Helper()
 	got, ok := fx.cache.Get(context.Background(), fx.key())
 	if !ok {
 		t.Fatal("expected cache hit")
+	}
+	if atLeast {
+		if got.TurnCount < want {
+			t.Fatalf("turnCount=%d want >=%d", got.TurnCount, want)
+		}
+		return
 	}
 	if got.TurnCount != want {
 		t.Fatalf("turnCount=%d want %d", got.TurnCount, want)
-	}
-}
-
-func assertCacheTurnAtLeast(t *testing.T, fx checkpointFixture, want int) {
-	t.Helper()
-	got, ok := fx.cache.Get(context.Background(), fx.key())
-	if !ok {
-		t.Fatal("expected cache hit")
-	}
-	if got.TurnCount < want {
-		t.Fatalf("turnCount=%d want >=%d", got.TurnCount, want)
 	}
 }
 

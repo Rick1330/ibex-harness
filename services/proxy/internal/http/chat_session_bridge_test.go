@@ -63,12 +63,12 @@ func TestUnit_TenantIDsFromContext(t *testing.T) {
 func TestUnit_DirectiveVersionPtr(t *testing.T) {
 	t.Parallel()
 
-	if got := directiveVersionPtr(context.Background()); got != nil {
+	if directiveVersionPtr(context.Background()) != nil {
 		t.Fatal("expected nil without directive")
 	}
 
 	ctx := WithResolvedDirective(context.Background(), directive.Resolved{VersionID: uuid.Nil})
-	if got := directiveVersionPtr(ctx); got != nil {
+	if directiveVersionPtr(ctx) != nil {
 		t.Fatal("expected nil for zero version")
 	}
 

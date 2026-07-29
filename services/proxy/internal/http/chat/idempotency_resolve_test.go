@@ -41,6 +41,12 @@ type parseKeyCase struct {
 	errCode string
 }
 
+type parseKeyResult struct {
+	key      string
+	present  bool
+	fieldErr *apierror.FieldError
+}
+
 func TestUnit_ParseKey(t *testing.T) {
 	t.Parallel()
 
@@ -63,21 +69,21 @@ func TestUnit_ParseKey(t *testing.T) {
 
 			key, present, fieldErr := ParseKey(h)
 
-			assertParseKey(t, tc, key, present, fieldErr)
+			assertParseKey(t, tc, parseKeyResult{key: key, present: present, fieldErr: fieldErr})
 		})
 	}
 }
 
-func assertParseKey(t *testing.T, tc parseKeyCase, key string, present bool, fieldErr *apierror.FieldError) {
+func assertParseKey(t *testing.T, tc parseKeyCase, got parseKeyResult) {
 	t.Helper()
-	if present != tc.present {
-		t.Fatalf("present=%v want %v", present, tc.present)
+	if got.present != tc.present {
+		t.Fatalf("present=%v want %v", got.present, tc.present)
 	}
 	if tc.errCode != "" {
-		assertParseKeyError(t, fieldErr, tc.errCode)
+		assertParseKeyError(t, got.fieldErr, tc.errCode)
 		return
 	}
-	assertParseKeyOK(t, key, present, fieldErr)
+	assertParseKeyOK(t, got.key, got.present, got.fieldErr)
 }
 
 func assertParseKeyError(t *testing.T, fieldErr *apierror.FieldError, wantCode string) {
@@ -139,6 +145,16 @@ func TestUnit_FingerprintRequest(t *testing.T) {
 	}
 }
 
+type claimContWant struct {
+	wantClaim bool
+	wantCont  bool
+}
+
+type claimContResult struct {
+	claim *Claim
+	cont  bool
+}
+
 func TestUnit_Resolve_MissingKeyContinues(t *testing.T) {
 	t.Parallel()
 
@@ -148,7 +164,7 @@ func TestUnit_Resolve_MissingKeyContinues(t *testing.T) {
 
 	claim, cont := id.Resolve(rec, req, &llm.ChatCompletionRequest{Model: "m"})
 
-	assertClaimCont(t, claim, cont, false, true)
+	assertClaimCont(t, claimContResult{claim: claim, cont: cont}, claimContWant{wantCont: true})
 }
 
 func TestUnit_Resolve_TooLongKeyRejects(t *testing.T) {
@@ -161,7 +177,7 @@ func TestUnit_Resolve_TooLongKeyRejects(t *testing.T) {
 
 	claim, cont := id.Resolve(rec, req, &llm.ChatCompletionRequest{Model: "m"})
 
-	assertClaimCont(t, claim, cont, false, false)
+	assertClaimCont(t, claimContResult{claim: claim, cont: cont}, claimContWant{})
 	assertHTTPStatus(t, rec, http.StatusBadRequest)
 }
 
@@ -176,7 +192,7 @@ func TestUnit_Resolve_StreamRejects(t *testing.T) {
 
 	claim, cont := id.Resolve(rec, req, &llm.ChatCompletionRequest{Model: "m", Stream: true})
 
-	assertClaimCont(t, claim, cont, false, false)
+	assertClaimCont(t, claimContResult{claim: claim, cont: cont}, claimContWant{})
 	assertHTTPStatus(t, rec, http.StatusBadRequest)
 }
 
@@ -218,23 +234,29 @@ func TestUnit_HandleOutcome_Kinds(t *testing.T) {
 				out: idempotency.Outcome{Kind: tc.kind, Record: tc.record},
 			})
 
-			assertOutcome(t, tc, claim, cont, rec.Code)
+			assertOutcome(t, tc, outcomeResult{claim: claim, cont: cont, status: rec.Code})
 		})
 	}
 }
 
-func assertOutcome(t *testing.T, tc outcomeCase, claim *Claim, cont bool, status int) {
+type outcomeResult struct {
+	claim  *Claim
+	cont   bool
+	status int
+}
+
+func assertOutcome(t *testing.T, tc outcomeCase, got outcomeResult) {
 	t.Helper()
-	assertClaimPresent(t, claim, tc.wantClaim)
-	if cont != tc.wantCont {
-		t.Fatalf("cont=%v want %v", cont, tc.wantCont)
+	assertClaimPresent(t, got.claim, tc.wantClaim)
+	if got.cont != tc.wantCont {
+		t.Fatalf("cont=%v want %v", got.cont, tc.wantCont)
 	}
-	assertClaimReplay(t, claim, tc.wantReplay)
+	assertClaimReplay(t, got.claim, tc.wantReplay)
 	if tc.wantStatus == 0 {
 		return
 	}
-	if status != tc.wantStatus {
-		t.Fatalf("status=%d want %d", status, tc.wantStatus)
+	if got.status != tc.wantStatus {
+		t.Fatalf("status=%d want %d", got.status, tc.wantStatus)
 	}
 }
 
@@ -259,11 +281,11 @@ func assertClaimReplay(t *testing.T, claim *Claim, want bool) {
 	}
 }
 
-func assertClaimCont(t *testing.T, claim *Claim, cont, wantClaim, wantCont bool) {
+func assertClaimCont(t *testing.T, got claimContResult, want claimContWant) {
 	t.Helper()
-	assertClaimPresent(t, claim, wantClaim)
-	if cont != wantCont {
-		t.Fatalf("cont=%v want %v", cont, wantCont)
+	assertClaimPresent(t, got.claim, want.wantClaim)
+	if got.cont != want.wantCont {
+		t.Fatalf("cont=%v want %v", got.cont, want.wantCont)
 	}
 }
 
@@ -284,7 +306,7 @@ func TestUnit_Claim_RedisErrorFailOpen(t *testing.T) {
 
 	claim, cont := id.claim(rec, req, &llm.ChatCompletionRequest{Model: "m"}, "k")
 
-	assertClaimCont(t, claim, cont, false, true)
+	assertClaimCont(t, claimContResult{claim: claim, cont: cont}, claimContWant{wantCont: true})
 }
 
 func TestUnit_Claim_MissViaStore(t *testing.T) {
@@ -299,7 +321,7 @@ func TestUnit_Claim_MissViaStore(t *testing.T) {
 		Model: "m", Messages: []llm.Message{{Role: "user", Content: "hi"}},
 	}, "fresh-key")
 
-	assertClaimCont(t, claim, cont, true, true)
+	assertClaimCont(t, claimContResult{claim: claim, cont: cont}, claimContWant{wantClaim: true, wantCont: true})
 	assertClaimReplay(t, claim, false)
 }
 
@@ -346,7 +368,7 @@ func TestUnit_Finish_TransientReleases(t *testing.T) {
 
 	id.Finish(claim, http.StatusTooManyRequests, []byte(`{}`))
 
-	assertStoreKind(t, store, tkn, fp, idempotency.KindMiss)
+	assertStoreKind(t, storeKindCheck{store: store, tkn: tkn, fp: fp, want: idempotency.KindMiss})
 }
 
 func TestUnit_Finish_Commits(t *testing.T) {
@@ -360,7 +382,7 @@ func TestUnit_Finish_Commits(t *testing.T) {
 
 	id.Finish(claim, http.StatusOK, []byte(`{"a":1}`))
 
-	out := assertStoreKind(t, store, tkn, fp, idempotency.KindHit)
+	out := assertStoreKind(t, storeKindCheck{store: store, tkn: tkn, fp: fp, want: idempotency.KindHit})
 	if out.Record.Status != http.StatusOK {
 		t.Fatalf("status=%d", out.Record.Status)
 	}
@@ -369,20 +391,21 @@ func TestUnit_Finish_Commits(t *testing.T) {
 	}
 }
 
-func assertStoreKind(
-	t *testing.T,
-	store idempotency.Store,
-	tkn idempotency.Token,
-	fp idempotency.Fingerprint,
-	want idempotency.Kind,
-) idempotency.Outcome {
+type storeKindCheck struct {
+	store idempotency.Store
+	tkn   idempotency.Token
+	fp    idempotency.Fingerprint
+	want  idempotency.Kind
+}
+
+func assertStoreKind(t *testing.T, in storeKindCheck) idempotency.Outcome {
 	t.Helper()
-	out, err := store.Claim(context.Background(), tkn, fp)
+	out, err := in.store.Claim(context.Background(), in.tkn, in.fp)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.Kind != want {
-		t.Fatalf("kind=%v want %v", out.Kind, want)
+	if out.Kind != in.want {
+		t.Fatalf("kind=%v want %v", out.Kind, in.want)
 	}
 	return out
 }
@@ -404,7 +427,7 @@ func TestUnit_FinishCapture_NilAndSuccess(t *testing.T) {
 
 	id.FinishCapture(claim, cw)
 
-	assertStoreKind(t, store, tkn, fp, idempotency.KindHit)
+	assertStoreKind(t, storeKindCheck{store: store, tkn: tkn, fp: fp, want: idempotency.KindHit})
 }
 
 func TestUnit_CASTimeout(t *testing.T) {
