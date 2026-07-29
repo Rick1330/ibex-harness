@@ -10,17 +10,34 @@ import (
 	"github.com/Rick1330/ibex-harness/services/auth/internal/token"
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
+
+type validateTokenCase struct {
+	name     string
+	fn       func(context.Context, string) (*authv1.ValidateTokenResponse, error)
+	wantCode codes.Code
+}
+
+func runValidateTokenCase(t *testing.T, tc validateTokenCase) {
+	t.Helper()
+
+	s := newTestServer(t, &fakeTokenValidator{fn: tc.fn}, &fakeTokenRepo{}, &fakeAgentsStore{})
+	resp, err := s.ValidateToken(context.Background(), &authv1.ValidateTokenRequest{AccessToken: "tok"})
+	if tc.wantCode == codes.OK {
+		if err != nil {
+			t.Fatalf("ValidateToken: %v", err)
+		}
+		if resp.GetOrgId() != "org-1" || resp.GetPermissions() != 7 {
+			t.Fatalf("response: %+v", resp)
+		}
+		return
+	}
+	assertGRPCCode(t, err, tc.wantCode)
+}
 
 func TestServer_ValidateToken(t *testing.T) {
 	t.Parallel()
-
-	tests := []struct {
-		name     string
-		fn       func(context.Context, string) (*authv1.ValidateTokenResponse, error)
-		wantCode codes.Code
-	}{
+	for _, tc := range []validateTokenCase{
 		{
 			name: "unauthenticated",
 			fn: func(context.Context, string) (*authv1.ValidateTokenResponse, error) {
@@ -42,44 +59,44 @@ func TestServer_ValidateToken(t *testing.T) {
 			},
 			wantCode: codes.OK,
 		},
-	}
-
-	for _, tc := range tests {
+	} {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-
-			s := newTestServer(t, &fakeTokenValidator{fn: tc.fn}, &fakeTokenRepo{}, &fakeAgentsStore{})
-
-			resp, err := s.ValidateToken(context.Background(), &authv1.ValidateTokenRequest{AccessToken: "tok"})
-
-			if tc.wantCode == codes.OK {
-				if err != nil {
-					t.Fatalf("ValidateToken: %v", err)
-				}
-				if resp.GetOrgId() != "org-1" || resp.GetPermissions() != 7 {
-					t.Fatalf("response: %+v", resp)
-				}
-				return
-			}
-			if status.Code(err) != tc.wantCode {
-				t.Fatalf("code: got %v want %v", status.Code(err), tc.wantCode)
-			}
+			runValidateTokenCase(t, tc)
 		})
 	}
+}
+
+type createTokenCase struct {
+	name     string
+	ctx      context.Context
+	req      *authv1.CreateTokenRequest
+	wantCode codes.Code
+}
+
+func runCreateTokenCase(t *testing.T, tc createTokenCase) {
+	t.Helper()
+
+	s := newTestServer(t, &fakeTokenValidator{}, &fakeTokenRepo{}, &fakeAgentsStore{})
+	resp, err := s.CreateToken(tc.ctx, tc.req)
+	if tc.wantCode == codes.OK {
+		if err != nil {
+			t.Fatalf("CreateToken: %v", err)
+		}
+		if resp.GetTokenId() == "" || resp.GetPlaintext() == "" {
+			t.Fatalf("incomplete response: %+v", resp)
+		}
+		return
+	}
+	assertGRPCCode(t, err, tc.wantCode)
 }
 
 func TestServer_CreateToken(t *testing.T) {
 	t.Parallel()
 
 	orgID := uuid.NewString()
-
-	tests := []struct {
-		name     string
-		ctx      context.Context
-		req      *authv1.CreateTokenRequest
-		wantCode codes.Code
-	}{
+	for _, tc := range []createTokenCase{
 		{
 			name:     "unauthenticated",
 			ctx:      context.Background(),
@@ -108,33 +125,11 @@ func TestServer_CreateToken(t *testing.T) {
 			},
 			wantCode: codes.OK,
 		},
-	}
-
-	for _, tc := range tests {
+	} {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-
-			s := newTestServer(t,
-				&fakeTokenValidator{},
-				&fakeTokenRepo{},
-				&fakeAgentsStore{},
-			)
-
-			resp, err := s.CreateToken(tc.ctx, tc.req)
-
-			if tc.wantCode == codes.OK {
-				if err != nil {
-					t.Fatalf("CreateToken: %v", err)
-				}
-				if resp.GetTokenId() == "" || resp.GetPlaintext() == "" {
-					t.Fatalf("incomplete response: %+v", resp)
-				}
-				return
-			}
-			if status.Code(err) != tc.wantCode {
-				t.Fatalf("code: got %v want %v err=%v", status.Code(err), tc.wantCode, err)
-			}
+			runCreateTokenCase(t, tc)
 		})
 	}
 }
