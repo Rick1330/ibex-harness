@@ -9,19 +9,28 @@ import (
 func TestUnit_EffectiveWriter(t *testing.T) {
 	t.Parallel()
 
+	concrete := &stubTraceWriter{}
 	var nilWriter TraceWriter
-	if EffectiveWriter(nilWriter) != nil {
-		t.Fatal("expected nil interface to stay nil")
-	}
-
 	var typedNil *stubTraceWriter
-	if EffectiveWriter(typedNil) != nil {
-		t.Fatal("expected typed nil to become nil")
-	}
 
-	w := &stubTraceWriter{}
-	if EffectiveWriter(w) != w {
-		t.Fatal("expected concrete writer passthrough")
+	tests := []struct {
+		name string
+		in   TraceWriter
+		want TraceWriter
+	}{
+		{name: "nil interface", in: nilWriter, want: nil},
+		{name: "typed nil", in: typedNil, want: nil},
+		{name: "concrete", in: concrete, want: concrete},
+	}
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := EffectiveWriter(tc.in)
+			if got != tc.want {
+				t.Fatalf("EffectiveWriter() = %v want %v", got, tc.want)
+			}
+		})
 	}
 }
 

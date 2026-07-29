@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"net"
 	"os"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -50,7 +51,21 @@ func waitForTCP(t *testing.T, addr string) {
 func TestRun_StopsOnSignal(t *testing.T) {
 	sigCh, portStr := proxyBootstrapSmokeEnv(t)
 	done := make(chan int, 1)
-	go func() { done <- runBootstrap(nil, sigCh, defaultBootstrapDeps()) }()
+	var wg sync.WaitGroup
+	wg.Add(1)
+	t.Cleanup(func() {
+		select {
+		case sigCh <- syscall.SIGTERM:
+		default:
+		}
+		wg.Wait()
+	})
+
+	go func() {
+		defer wg.Done()
+		done <- runBootstrap(nil, sigCh, defaultBootstrapDeps())
+	}()
+
 	waitForTCP(t, net.JoinHostPort("127.0.0.1", portStr))
 	sigCh <- syscall.SIGTERM
 	select {

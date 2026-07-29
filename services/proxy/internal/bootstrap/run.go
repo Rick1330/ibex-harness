@@ -23,7 +23,7 @@ type bootstrapDeps struct {
 
 const bootstrapServiceName = "ibex-proxy"
 
-// Run loads config, wires dependencies, and serves until shutdown.
+// Run is the command-facing process lifecycle entrypoint; it returns the process exit code.
 func Run(args []string) int {
 	return runBootstrap(args, nil, defaultBootstrapDeps())
 }

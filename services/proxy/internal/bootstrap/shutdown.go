@@ -4,8 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
+	"sync"
 
 	ibexch "github.com/Rick1330/ibex-harness/packages/clickhouse"
 	"github.com/Rick1330/ibex-harness/packages/directive"
@@ -39,9 +41,14 @@ type shutdownOpts struct {
 	sessionSweeper *sessionsweeper.Sweeper
 	traceWriter    *ibexch.Writer
 	signalCh       chan os.Signal
+	// stopPubSubOnce makes stopPubSubSubscribers safe under immediateCleanup + defer.
+	stopPubSubOnce *sync.Once
 }
 
 func runWithShutdown(opts shutdownOpts) int {
+	if opts.stopPubSubOnce == nil {
+		opts.stopPubSubOnce = &sync.Once{}
+	}
 	defer stopPubSubSubscribers(opts)
 
 	errCh := make(chan error, 1)
@@ -121,18 +128,25 @@ func logImmediateCleanupErr(log *logger.Logger, op string, err error) {
 }
 
 func stopPubSubSubscribers(opts shutdownOpts) {
-	if opts.revCancel != nil {
-		opts.revCancel()
+	run := func() {
+		if opts.revCancel != nil {
+			opts.revCancel()
+		}
+		if opts.revSub != nil {
+			opts.revSub.Stop()
+		}
+		if opts.dirCancel != nil {
+			opts.dirCancel()
+		}
+		if opts.dirSub != nil {
+			opts.dirSub.Stop()
+		}
 	}
-	if opts.revSub != nil {
-		opts.revSub.Stop()
+	if opts.stopPubSubOnce != nil {
+		opts.stopPubSubOnce.Do(run)
+		return
 	}
-	if opts.dirCancel != nil {
-		opts.dirCancel()
-	}
-	if opts.dirSub != nil {
-		opts.dirSub.Stop()
-	}
+	run()
 }
 
 func registerShutdownHooks(sd *shutdown.Coordinator, opts shutdownOpts) {
@@ -197,40 +211,58 @@ func shutdownCheckpointPool(ctx context.Context, opts shutdownOpts) error {
 	if opts.checkpointPool == nil {
 		return nil
 	}
-	return opts.checkpointPool.Shutdown(ctx)
+	if err := opts.checkpointPool.Shutdown(ctx); err != nil {
+		return fmt.Errorf("shutdown checkpoint pool: %w", err)
+	}
+	return nil
 }
 
 func shutdownSessionSweeper(ctx context.Context, opts shutdownOpts) error {
 	if opts.sessionSweeper == nil {
 		return nil
 	}
-	return opts.sessionSweeper.Stop(ctx)
+	if err := opts.sessionSweeper.Stop(ctx); err != nil {
+		return fmt.Errorf("shutdown session sweeper: %w", err)
+	}
+	return nil
 }
 
 func shutdownTraceWriter(ctx context.Context, opts shutdownOpts) error {
 	if opts.traceWriter == nil {
 		return nil
 	}
-	return opts.traceWriter.Shutdown(ctx)
+	if err := opts.traceWriter.Shutdown(ctx); err != nil {
+		return fmt.Errorf("shutdown trace writer: %w", err)
+	}
+	return nil
 }
 
 func closeGRPCConn(opts shutdownOpts) error {
 	if opts.grpcConn == nil {
 		return nil
 	}
-	return opts.grpcConn.Close()
+	if err := opts.grpcConn.Close(); err != nil {
+		return fmt.Errorf("close grpc conn: %w", err)
+	}
+	return nil
 }
 
 func closeRedisClient(opts shutdownOpts) error {
 	if opts.redisClient == nil {
 		return nil
 	}
-	return opts.redisClient.Close()
+	if err := opts.redisClient.Close(); err != nil {
+		return fmt.Errorf("close redis client: %w", err)
+	}
+	return nil
 }
 
 func closePgDB(opts shutdownOpts) error {
 	if opts.pgDB == nil {
 		return nil
 	}
-	return opts.pgDB.Close()
+	if err := opts.pgDB.Close(); err != nil {
+		return fmt.Errorf("close postgres: %w", err)
+	}
+	return nil
 }

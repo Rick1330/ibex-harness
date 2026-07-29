@@ -317,12 +317,39 @@ func (d *deadlineRecorder) SetWriteDeadline(t time.Time) error {
 
 func TestUnit_ClearSSEWriteDeadline(t *testing.T) {
 	t.Parallel()
+
 	rec := &deadlineRecorder{ResponseRecorder: httptest.NewRecorder()}
-	clearSSEWriteDeadline(rec)
+
+	clearSSEWriteDeadline(context.Background(), rec, logger.Discard("proxy"))
+
 	if !rec.called {
 		t.Fatal("expected SetWriteDeadline call")
 	}
 	if !rec.deadline.IsZero() {
 		t.Fatalf("deadline=%v want zero", rec.deadline)
 	}
+}
+
+func TestUnit_ClearSSEWriteDeadline_Unsupported(t *testing.T) {
+	t.Parallel()
+
+	rec := httptest.NewRecorder()
+
+	clearSSEWriteDeadline(context.Background(), rec, logger.Discard("proxy"))
+}
+
+type errDeadlineRecorder struct {
+	*httptest.ResponseRecorder
+}
+
+func (e *errDeadlineRecorder) SetWriteDeadline(time.Time) error {
+	return errors.New("deadline boom")
+}
+
+func TestUnit_ClearSSEWriteDeadline_UnexpectedError(t *testing.T) {
+	t.Parallel()
+
+	rec := &errDeadlineRecorder{ResponseRecorder: httptest.NewRecorder()}
+
+	clearSSEWriteDeadline(context.Background(), rec, logger.Discard("proxy"))
 }
