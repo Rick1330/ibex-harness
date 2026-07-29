@@ -18,11 +18,12 @@ func TestShutdownDrainsSlowHandler(t *testing.T) {
 	log := logger.Discard("proxy")
 	var handlerDone atomic.Bool
 	handlerStarted := make(chan struct{})
+	release := make(chan struct{})
 
 	server := &http.Server{
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			close(handlerStarted)
-			time.Sleep(150 * time.Millisecond)
+			<-release
 			handlerDone.Store(true)
 			w.WriteHeader(http.StatusOK)
 		}),
@@ -41,6 +42,7 @@ func TestShutdownDrainsSlowHandler(t *testing.T) {
 	sigCh := make(chan os.Signal, 1)
 	coord := shutdown.NewWithSignalChan(5*time.Second, log, sigCh)
 	coord.Register(func(ctx context.Context) error {
+		close(release) // allow in-flight handler once drain begins
 		return server.Shutdown(ctx)
 	})
 

@@ -1,7 +1,7 @@
 package config_test
 
 import (
-	"log/slog"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -54,12 +54,32 @@ type nestedConfig struct {
 
 func withDebugLogger(t *testing.T, logFn func(), assertFn func(out string)) {
 	t.Helper()
-	var buf strings.Builder
-	old := slog.Default()
-	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	t.Cleanup(func() { slog.SetDefault(old) })
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := os.Stderr
+	os.Stderr = w
+	t.Cleanup(func() {
+		os.Stderr = old
+		_ = w.Close() //nolint:errcheck // test teardown restores stderr
+	})
+
+	outCh := make(chan string, 1)
+	go func() {
+		var buf strings.Builder
+		_, copyErr := io.Copy(&buf, r)
+		_ = r.Close() //nolint:errcheck // drain pipe after copy
+		if copyErr != nil {
+			outCh <- ""
+			return
+		}
+		outCh <- buf.String()
+	}()
+
 	logFn()
-	assertFn(buf.String())
+	_ = w.Close() //nolint:errcheck // signal EOF to reader goroutine
+	assertFn(<-outCh)
 }
 
 func TestLogDebug_redactsSecretsAndNestedStructs(t *testing.T) {

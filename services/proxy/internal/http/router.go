@@ -161,7 +161,7 @@ func handleAuthProbe(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(authProbeResponse{
-		OrgID:       res.OrgID,
+		OrgID:       res.OrgID.String(),
 		Permissions: res.Permissions,
 	})
 }

@@ -101,7 +101,10 @@ func TestSetupRateLimiter_InvalidURL(t *testing.T) {
 
 func TestNewIdempotencyStore_NilAndRedis(t *testing.T) {
 	t.Parallel()
-	noop := newIdempotencyStore(nil, config.Config{IdempotencyTTL: time.Hour})
+	noop, err := newIdempotencyStore(nil, config.Config{IdempotencyTTL: time.Hour})
+	if err != nil {
+		t.Fatalf("newIdempotencyStore: %v", err)
+	}
 	out, err := noop.Claim(context.Background(), idempotency.Token{OrgID: uuid.New(), Key: "k"}, "fp")
 	if err != nil || out.Kind != idempotency.KindMiss {
 		t.Fatalf("noop: %+v %v", out, err)
@@ -109,7 +112,10 @@ func TestNewIdempotencyStore_NilAndRedis(t *testing.T) {
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
-	store := newIdempotencyStore(client, config.Config{IdempotencyTTL: time.Hour})
+	store, err := newIdempotencyStore(client, config.Config{IdempotencyTTL: time.Hour})
+	if err != nil {
+		t.Fatalf("newIdempotencyStore: %v", err)
+	}
 	out, err = store.Claim(context.Background(), idempotency.Token{OrgID: uuid.New(), Key: "k2"}, "fp")
 	if err != nil || out.Kind != idempotency.KindMiss {
 		t.Fatalf("redis store: %+v %v", out, err)

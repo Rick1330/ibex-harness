@@ -8,6 +8,7 @@ import (
 
 	"github.com/Rick1330/ibex-harness/packages/authcache"
 	"github.com/Rick1330/ibex-harness/packages/logger"
+	"github.com/google/uuid"
 )
 
 type stubValidator struct {
@@ -37,8 +38,12 @@ func mustWrap(t *testing.T, inner TokenValidator) TokenValidator {
 func TestUnit_WrapWithCacheFromCacheOnSecondCall(t *testing.T) {
 	t.Parallel()
 	inner := &stubValidator{res: &ValidateResult{
-		OrgID: "org-a", Permissions: 3, ExpiresAt: time.Now().Add(time.Hour),
-		AgentID: "agent-1", UserID: "user-1", TokenID: "tok-1",
+		OrgID:       uuid.MustParse("11111111-1111-4111-8111-111111111111"),
+		Permissions: 3,
+		ExpiresAt:   time.Now().Add(time.Hour),
+		AgentID:     uuid.MustParse("22222222-2222-4222-8222-222222222222"),
+		UserID:      "user-1",
+		TokenID:     "tok-1",
 	}}
 	wrapped := mustWrap(t, inner)
 	assertCacheHit(t, wrapped, "tok", false)
@@ -86,7 +91,10 @@ func invalidateByTokenID(inv CacheInvalidator) {
 
 func runInvalidateMiss(t *testing.T, invalidate invalidateFn) {
 	t.Helper()
-	inner := &stubValidator{res: &ValidateResult{OrgID: "org-a", TokenID: "tok-uuid"}}
+	inner := &stubValidator{res: &ValidateResult{
+		OrgID:   uuid.MustParse("11111111-1111-4111-8111-111111111111"),
+		TokenID: "tok-uuid",
+	}}
 	wrapped := mustWrap(t, inner)
 	assertCacheHit(t, wrapped, "tok", false)
 	invalidate(mustInvalidator(t, wrapped))

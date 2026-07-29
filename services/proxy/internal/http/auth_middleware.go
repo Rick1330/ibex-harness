@@ -12,6 +12,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/reqid"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	httptrace "github.com/Rick1330/ibex-harness/services/proxy/internal/http/trace"
+	"github.com/google/uuid"
 )
 
 // AuthOptions configures auth middleware behavior per route.
@@ -26,6 +27,8 @@ type authWriteCtx struct {
 	requestID string
 	docsBase  string
 }
+
+const authUnavailableMsg = "Authentication service unavailable"
 
 // AuthMiddleware validates bearer tokens and attaches auth context.
 func AuthMiddleware(validator auth.TokenValidator, log *logger.Logger, opts AuthOptions) func(http.Handler) http.Handler {
@@ -112,16 +115,22 @@ func writeAuthValidateError(awc authWriteCtx, r *http.Request, log *logger.Logge
 	case errors.Is(err, auth.ErrAuthUnavailable):
 		log.WarnCtx(r.Context(), "auth validate unavailable", "error", err)
 		apierror.WriteStatus(awc.w, http.StatusServiceUnavailable, apierror.CodeServiceDegraded,
-			"Authentication service unavailable", awc.requestID, apierror.WriteOpts{DocsBase: awc.docsBase})
+			authUnavailableMsg, awc.requestID, apierror.WriteOpts{DocsBase: awc.docsBase})
 	default:
 		log.ErrorCtx(r.Context(), "unexpected auth validation error", "error", err)
 		apierror.WriteStatus(awc.w, http.StatusServiceUnavailable, apierror.CodeServiceDegraded,
-			"Authentication service unavailable", awc.requestID, apierror.WriteOpts{DocsBase: awc.docsBase})
+			authUnavailableMsg, awc.requestID, apierror.WriteOpts{DocsBase: awc.docsBase})
 	}
 }
 
 func authorizeAuthResult(awc authWriteCtx, res *auth.ValidateResult, opts AuthOptions) bool {
-	if opts.PathOrgID != "" && res.OrgID != opts.PathOrgID {
+	if res.OrgID == uuid.Nil {
+		apierror.WriteStatus(awc.w, http.StatusServiceUnavailable, apierror.CodeServiceDegraded,
+			authUnavailableMsg, awc.requestID,
+			apierror.WriteOpts{Detail: "missing organization context", DocsBase: awc.docsBase})
+		return false
+	}
+	if opts.PathOrgID != "" && res.OrgID.String() != opts.PathOrgID {
 		apierror.WriteStatus(awc.w, http.StatusForbidden, apierror.CodeInsufficientPermissions,
 			"Insufficient permissions", awc.requestID,
 			apierror.WriteOpts{Detail: "organization scope mismatch", DocsBase: awc.docsBase})

@@ -171,19 +171,20 @@ func startProxyServerRedis(t *testing.T, authAddr string, srvOpts proxyServerOpt
 	}
 	t.Cleanup(func() { _ = conn.Close() })
 
-	redisURL := redis.url
-	redisClient := redis.client
+	cfg := proxyIntegrationConfig(authAddr, redis.url, srvOpts)
+	client := authv1.NewAuthServiceClient(conn)
+	handler := newProxyIntegrationHandler(t, proxyIntegrationHandlerOpts{
+		cfg: cfg, client: client, redisClient: redis.client, srvOpts: srvOpts,
+	})
+	return httptest.NewServer(handler)
+}
 
+func proxyIntegrationConfig(authAddr, redisURL string, srvOpts proxyServerOpts) config.Config {
 	defaultRPM := srvOpts.defaultRPM
 	if defaultRPM < 1 {
 		defaultRPM = 60
 	}
-	orgOverrides := srvOpts.orgOverrides
-	if orgOverrides == nil {
-		orgOverrides = map[uuid.UUID]int64{}
-	}
-
-	cfg := config.Config{
+	return config.Config{
 		Environment:         "development",
 		ServiceName:         "proxy",
 		Port:                "8080",
@@ -194,19 +195,32 @@ func startProxyServerRedis(t *testing.T, authAddr string, srvOpts proxyServerOpt
 			DefaultRPM: int(defaultRPM),
 		},
 	}
-	client := authv1.NewAuthServiceClient(conn)
-	validator := auth.NewGRPCValidator(client, cfg.AuthValidateTimeout)
-	agentVerifier := auth.NewGRPCAgentVerifier(client, cfg.AuthValidateTimeout)
-	limiter := ratelimit.NewRedisSlider(redisClient, ratelimit.RedisSliderConfig{
-		DefaultRPM:   defaultRPM,
-		OrgOverrides: orgOverrides,
-	})
-	providerReg, err := provider.NewRegistry(srvOpts.providers...)
-	if err != nil {
-		t.Fatalf("provider registry: %v", err)
+}
+
+type proxyIntegrationHandlerOpts struct {
+	cfg         config.Config
+	client      authv1.AuthServiceClient
+	redisClient redis.UniversalClient
+	srvOpts     proxyServerOpts
+}
+
+func newProxyIntegrationHandler(t *testing.T, opts proxyIntegrationHandlerOpts) http.Handler {
+	t.Helper()
+	defaultRPM := opts.srvOpts.defaultRPM
+	if defaultRPM < 1 {
+		defaultRPM = 60
 	}
+	orgOverrides := opts.srvOpts.orgOverrides
+	if orgOverrides == nil {
+		orgOverrides = map[uuid.UUID]int64{}
+	}
+
+	validator := mustGRPCValidator(t, opts.client, opts.cfg.AuthValidateTimeout)
+	agentVerifier := mustGRPCAgentVerifier(t, opts.client, opts.cfg.AuthValidateTimeout)
+	limiter := mustRedisSlider(t, opts.redisClient, defaultRPM, orgOverrides)
+	providerReg := mustProviderRegistry(t, opts.srvOpts.providers...)
 	handler, err := proxyhttp.NewRouter(proxyhttp.RouterDeps{
-		Config:        cfg,
+		Config:        opts.cfg,
 		Logger:        logger.Discard("proxy"),
 		Metrics:       metrics.NewProxy("test"),
 		Tracer:        telemetry.NoopTracer("proxy"),
@@ -215,8 +229,8 @@ func startProxyServerRedis(t *testing.T, authAddr string, srvOpts proxyServerOpt
 		Limiter:       limiter,
 		Health: &healthcheck.Server{
 			CriticalCheckers: map[string]healthcheck.Checker{
-				"auth_grpc": healthcheck.AuthGRPC(client, cfg.AuthValidateTimeout),
-				"redis":     healthcheck.RedisPing(cfg.RedisURL),
+				"auth_grpc": healthcheck.AuthGRPC(opts.client, opts.cfg.AuthValidateTimeout),
+				"redis":     healthcheck.RedisPing(opts.cfg.RedisURL),
 			},
 		},
 		ProviderRegistry: providerReg,
@@ -224,7 +238,46 @@ func startProxyServerRedis(t *testing.T, authAddr string, srvOpts proxyServerOpt
 	if err != nil {
 		t.Fatalf("NewRouter: %v", err)
 	}
-	return httptest.NewServer(handler)
+	return handler
+}
+
+func mustGRPCValidator(t *testing.T, client authv1.AuthServiceClient, timeout time.Duration) auth.TokenValidator {
+	t.Helper()
+	v, err := auth.NewGRPCValidator(client, timeout)
+	if err != nil {
+		t.Fatalf("NewGRPCValidator: %v", err)
+	}
+	return v
+}
+
+func mustGRPCAgentVerifier(t *testing.T, client authv1.AuthServiceClient, timeout time.Duration) auth.AgentVerifier {
+	t.Helper()
+	v, err := auth.NewGRPCAgentVerifier(client, timeout)
+	if err != nil {
+		t.Fatalf("NewGRPCAgentVerifier: %v", err)
+	}
+	return v
+}
+
+func mustRedisSlider(t *testing.T, client redis.UniversalClient, defaultRPM int64, orgOverrides map[uuid.UUID]int64) ratelimit.Limiter {
+	t.Helper()
+	limiter, err := ratelimit.NewRedisSlider(client, ratelimit.RedisSliderConfig{
+		DefaultRPM:   defaultRPM,
+		OrgOverrides: orgOverrides,
+	})
+	if err != nil {
+		t.Fatalf("NewRedisSlider: %v", err)
+	}
+	return limiter
+}
+
+func mustProviderRegistry(t *testing.T, providers ...provider.Provider) *provider.Registry {
+	t.Helper()
+	reg, err := provider.NewRegistry(providers...)
+	if err != nil {
+		t.Fatalf("provider registry: %v", err)
+	}
+	return reg
 }
 
 type authProbeOpts struct {

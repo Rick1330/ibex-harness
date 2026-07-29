@@ -49,12 +49,12 @@ func TestUnit_OrgIDFromAuth(t *testing.T) {
 	if _, ok := orgIDFromAuth(req); ok {
 		t.Fatal("expected missing auth")
 	}
-	req = req.WithContext(auth.WithContext(req.Context(), &auth.ValidateResult{OrgID: "not-a-uuid"}))
+	req = req.WithContext(auth.WithContext(req.Context(), &auth.ValidateResult{OrgID: uuid.Nil}))
 	if _, ok := orgIDFromAuth(req); ok {
 		t.Fatal("expected invalid uuid")
 	}
 	org := uuid.MustParse(testChatOrgID)
-	req = req.WithContext(auth.WithContext(context.Background(), &auth.ValidateResult{OrgID: org.String()}))
+	req = req.WithContext(auth.WithContext(context.Background(), &auth.ValidateResult{OrgID: org}))
 	got, ok := orgIDFromAuth(req)
 	if !ok || got != org {
 		t.Fatalf("got %v ok=%v", got, ok)
@@ -84,7 +84,11 @@ func testRedisStore(t *testing.T) (idempotency.Store, *miniredis.Miniredis) {
 			t.Errorf("redis close: %v", err)
 		}
 	})
-	return idempotency.NewRedisStore(client, idempotency.Config{TTL: time.Hour}), mr
+	store, err := idempotency.NewRedisStore(client, idempotency.Config{TTL: time.Hour})
+	if err != nil {
+		t.Fatalf("NewRedisStore: %v", err)
+	}
+	return store, mr
 }
 
 func newIdForStore(store idempotency.Store) Idempotency {
@@ -154,7 +158,7 @@ func TestUnit_ClaimIdempotency_InvalidOrgSkips(t *testing.T) {
 	}
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/", nil)
-	req = req.WithContext(auth.WithContext(req.Context(), &auth.ValidateResult{OrgID: "bad"}))
+	req = req.WithContext(auth.WithContext(req.Context(), &auth.ValidateResult{OrgID: uuid.Nil}))
 	claim, cont := id.claim(rec, req, &llm.ChatCompletionRequest{Model: "m"}, "k")
 	if claim != nil || !cont {
 		t.Fatalf("claim=%v cont=%v", claim, cont)

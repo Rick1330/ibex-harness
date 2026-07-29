@@ -119,13 +119,8 @@ func (s *Sweeper) Stop(ctx context.Context) error {
 		return nil
 	}
 	s.cancel()
-	done := make(chan struct{})
-	go func() {
-		s.wg.Wait()
-		close(done)
-	}()
 	select {
-	case <-done:
+	case <-s.done:
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()

@@ -66,11 +66,10 @@ func tenantIDsFromContext(ctx context.Context) (uuid.UUID, uuid.UUID, bool) {
 	if !ok {
 		return uuid.Nil, uuid.Nil, false
 	}
-	orgID, err := uuid.Parse(authRes.OrgID)
-	if err != nil {
+	if authRes.OrgID == uuid.Nil {
 		return uuid.Nil, uuid.Nil, false
 	}
-	return orgID, agent.ID, true
+	return authRes.OrgID, agent.ID, true
 }
 
 func directiveVersionPtr(ctx context.Context) *uuid.UUID {

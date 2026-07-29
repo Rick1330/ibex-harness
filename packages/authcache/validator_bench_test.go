@@ -5,10 +5,14 @@ import (
 	"testing"
 
 	"github.com/Rick1330/ibex-harness/packages/logger"
+	"github.com/google/uuid"
 )
 
 func BenchmarkCachingValidator_LRUHit(b *testing.B) {
-	up := &spyUpstream{res: &Result{OrgID: "org-bench", Permissions: 1}}
+	up := &spyUpstream{res: &Result{
+		OrgID:       uuid.MustParse("11111111-1111-4111-8111-111111111111"),
+		Permissions: 1,
+	}}
 	v, err := New(up, Config{}, logger.Discard("authcache"), NoopMetrics{})
 	if err != nil {
 		b.Fatalf("New: %v", err)

@@ -3,11 +3,11 @@ package config
 
 import (
 	"fmt"
-	"log/slog"
 	"os"
 	"reflect"
 	"strings"
 
+	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/caarlos0/env/v11"
 )
 
@@ -31,7 +31,7 @@ func Load[T any]() (T, error) {
 func MustLoad[T any]() T {
 	cfg, err := Load[T]()
 	if err != nil {
-		slog.New(slog.NewJSONHandler(os.Stderr, nil)).Error("configuration error", "error", err)
+		logger.BootstrapError("configuration error", err)
 		os.Exit(1)
 	}
 	return cfg
@@ -39,7 +39,7 @@ func MustLoad[T any]() T {
 
 // LogDebug logs resolved config at DEBUG level, redacting secret-tagged fields.
 func LogDebug[T any](cfg T) {
-	slog.Default().Debug("resolved configuration", "config", redactConfig(cfg))
+	logger.BootstrapDebug("resolved configuration", "config", redactConfig(cfg))
 }
 
 func redactConfig(v any) map[string]any {

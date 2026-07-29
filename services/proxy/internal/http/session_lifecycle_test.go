@@ -123,7 +123,7 @@ func sessionLifecycleRouter(t *testing.T, store session.Store, pool *asyncpool.P
 		Config: chatTestConfig(), Logger: logger.Discard("proxy"),
 		Metrics: metrics.NewProxy("test"), Tracer: telemetry.NoopTracer("proxy"),
 		Validator: &chatMockValidator{res: &auth.ValidateResult{
-			OrgID: testChatOrgID, Permissions: permissions.ProxyChatCompletion,
+			OrgID: uuid.MustParse(testChatOrgID), Permissions: permissions.ProxyChatCompletion,
 		}},
 		AgentVerifier: passAgentVerifier{}, Limiter: ratelimit.Noop(),
 		SessionStore: store, SessionCache: cache, CheckpointPool: pool,
@@ -237,7 +237,7 @@ func TestUnit_SessionLifecycle_StreamSetsHeaderBeforeBody(t *testing.T) {
 		Config: chatTestConfig(), Logger: logger.Discard("proxy"),
 		Metrics: metrics.NewProxy("test"), Tracer: telemetry.NoopTracer("proxy"),
 		Validator: &chatMockValidator{res: &auth.ValidateResult{
-			OrgID: testChatOrgID, Permissions: permissions.ProxyChatCompletion,
+			OrgID: uuid.MustParse(testChatOrgID), Permissions: permissions.ProxyChatCompletion,
 		}},
 		AgentVerifier: passAgentVerifier{}, Limiter: ratelimit.Noop(),
 		SessionStore: store, CheckpointPool: pool,

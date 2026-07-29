@@ -3,12 +3,14 @@ package auth
 import (
 	"context"
 	"testing"
+
+	"github.com/google/uuid"
 )
 
 func TestAuthContext_roundTrip(t *testing.T) {
 	t.Parallel()
 
-	res := &ValidateResult{OrgID: "org-a", Permissions: 99}
+	res := &ValidateResult{OrgID: uuid.MustParse("11111111-1111-4111-8111-111111111111"), Permissions: 99}
 	ctx := WithContext(context.Background(), res)
 
 	got, ok := FromContext(ctx)

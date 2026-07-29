@@ -123,7 +123,7 @@ func (r *CachedResolver) getCached(ctx context.Context, key string) (Resolved, b
 	if err != nil {
 		span.RecordError(err)
 		r.log.WarnCtx(ctx, "directive cache envelope invalid; treating as miss", "error", err)
-		_ = r.client.Del(ctx, key).Err()
+		_ = r.client.Del(ctx, key).Err() //nolint:errcheck // best-effort: stale cache entry expires naturally via TTL
 		return Resolved{}, false
 	}
 	return resolved, true

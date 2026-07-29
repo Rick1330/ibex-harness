@@ -21,7 +21,11 @@ func testStorePending(t *testing.T, ttl, pendingTTL time.Duration) (*RedisStore,
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
-	return NewRedisStore(client, Config{TTL: ttl, PendingTTL: pendingTTL}), mr
+	store, err := NewRedisStore(client, Config{TTL: ttl, PendingTTL: pendingTTL})
+	if err != nil {
+		t.Fatalf("NewRedisStore: %v", err)
+	}
+	return store, mr
 }
 
 func tok(org uuid.UUID, key string) Token {
@@ -303,7 +307,10 @@ func TestRedisStore_RedisDownErrors(t *testing.T) {
 	t.Parallel()
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	store := NewRedisStore(client, Config{TTL: time.Hour})
+	store, err := NewRedisStore(client, Config{TTL: time.Hour})
+	if err != nil {
+		t.Fatalf("NewRedisStore: %v", err)
+	}
 	tkn := tok(uuid.New(), "k")
 	mr.Close()
 	if _, err := store.Claim(context.Background(), tkn, "fp"); err == nil {
@@ -359,9 +366,12 @@ func TestRedisStore_reclaimRedisDown(t *testing.T) {
 	t.Parallel()
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	store := NewRedisStore(client, Config{TTL: time.Hour})
+	store, err := NewRedisStore(client, Config{TTL: time.Hour})
+	if err != nil {
+		t.Fatalf("NewRedisStore: %v", err)
+	}
 	mr.Close()
-	_, err := store.reclaim(context.Background(), pendingOwner{redisKey: RedisKey(tok(uuid.New(), "k")), fingerprint: "fp"})
+	_, err = store.reclaim(context.Background(), pendingOwner{redisKey: RedisKey(tok(uuid.New(), "k")), fingerprint: "fp"})
 	if err == nil {
 		t.Fatal("expected reclaim error")
 	}
@@ -371,13 +381,16 @@ func TestRedisStore_inspectExistingGetError(t *testing.T) {
 	t.Parallel()
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	store := NewRedisStore(client, Config{TTL: time.Hour})
+	store, err := NewRedisStore(client, Config{TTL: time.Hour})
+	if err != nil {
+		t.Fatalf("NewRedisStore: %v", err)
+	}
 	tkn := tok(uuid.New(), "geterr")
 	if _, err := store.Claim(context.Background(), tkn, "fp"); err != nil {
 		t.Fatal(err)
 	}
 	mr.Close()
-	_, err := store.Claim(context.Background(), tkn, "fp")
+	_, err = store.Claim(context.Background(), tkn, "fp")
 	if err == nil {
 		t.Fatal("expected Claim error on second attempt with redis down")
 	}
@@ -411,5 +424,15 @@ func TestRedisKey_Format(t *testing.T) {
 	want := "idempotency:550e8400-e29b-41d4-a716-446655440000:abc"
 	if got != want {
 		t.Fatalf("got %q want %q", got, want)
+	}
+}
+
+func TestUnit_NewRedisStore_RejectsNilClient(t *testing.T) {
+	t.Parallel()
+
+	_, err := NewRedisStore(nil, Config{TTL: time.Hour})
+
+	if err == nil {
+		t.Fatal("expected error for nil client")
 	}
 }

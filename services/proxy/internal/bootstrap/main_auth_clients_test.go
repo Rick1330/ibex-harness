@@ -10,73 +10,48 @@ import (
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
 )
 
-func assertAuthClientsPresent(t *testing.T, b authClients) {
+func assertAuthClients(t *testing.T, b authClients, present bool) {
 	t.Helper()
-	if b.validator == nil {
-		t.Fatal("validator nil")
+	checks := []struct {
+		name string
+		ok   bool
+	}{
+		{"validator", b.validator != nil},
+		{"agentVerifier", b.agentVerifier != nil},
+		{"client", b.client != nil},
+		{"conn", b.conn != nil},
 	}
-	if b.agentVerifier == nil {
-		t.Fatal("agentVerifier nil")
-	}
-	if b.client == nil {
-		t.Fatal("client nil")
-	}
-	if b.conn == nil {
-		t.Fatal("conn nil")
-	}
-}
-
-func assertAuthClientsAbsent(t *testing.T, b authClients) {
-	t.Helper()
-	if b.validator != nil {
-		t.Fatal("validator should be nil")
-	}
-	if b.agentVerifier != nil {
-		t.Fatal("agentVerifier should be nil")
-	}
-	if b.client != nil {
-		t.Fatal("client should be nil")
-	}
-	if b.conn != nil {
-		t.Fatal("conn should be nil")
-	}
-}
-
-func TestSetupAuthClients_WithGRPCServer(t *testing.T) {
-	t.Parallel()
-	lis := grpctest.StartUnimplementedAuthServer(t)
-	log := logger.Discard("proxy")
-	clients, err := setupAuthClients(config.Config{
-		Environment: "development", AuthGRPCAddr: lis.Addr().String(), AuthValidateTimeout: time.Second,
-	}, log, nil)
-	if err != nil {
-		t.Fatalf("setupAuthClients: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := clients.conn.Close(); err != nil {
-			t.Errorf("close conn: %v", err)
+	for _, c := range checks {
+		if c.ok != present {
+			want := "absent"
+			if present {
+				want = "present"
+			}
+			t.Fatalf("%s should be %s", c.name, want)
 		}
-	})
-	assertAuthClientsPresent(t, clients)
+	}
 }
 
-func TestSetupAuthClients_WithAuthCacheEnabled(t *testing.T) {
-	t.Parallel()
+func assertCachingValidator(t *testing.T, v auth.TokenValidator) {
+	t.Helper()
+	if _, ok := v.(auth.CacheInvalidator); !ok {
+		t.Fatal("expected caching validator implementing CacheInvalidator")
+	}
+}
+
+func setupAuthClientsForTest(t *testing.T, cache config.AuthCacheConfig) authClients {
+	t.Helper()
 	lis := grpctest.StartUnimplementedAuthServer(t)
 	log := logger.Discard("proxy")
 	cfg := config.Config{
 		Environment:         "development",
 		AuthGRPCAddr:        lis.Addr().String(),
 		AuthValidateTimeout: time.Second,
-		AuthCache: config.AuthCacheConfig{
-			Enabled:            true,
-			LRUCapacity:        100,
-			LRUMaxTTL:          30 * time.Second,
-			BloomExpectedItems: 1000,
-			BloomFPRate:        0.001,
-		},
+		AuthCache:           cache,
 	}
+
 	clients, err := setupAuthClients(cfg, log, nil)
+
 	if err != nil {
 		t.Fatalf("setupAuthClients: %v", err)
 	}
@@ -85,25 +60,71 @@ func TestSetupAuthClients_WithAuthCacheEnabled(t *testing.T) {
 			t.Errorf("close conn: %v", err)
 		}
 	})
-	assertAuthClientsPresent(t, clients)
-	if _, ok := clients.validator.(auth.CacheInvalidator); !ok {
-		t.Fatal("expected caching validator implementing CacheInvalidator")
-	}
+	return clients
 }
 
-func TestSetupAuthClients_EmptyAddr(t *testing.T) {
+func TestUnit_SetupAuthClients_GRPCOnly(t *testing.T) {
 	t.Parallel()
+
+	clients := setupAuthClientsForTest(t, config.AuthCacheConfig{})
+
+	assertAuthClients(t, clients, true)
+}
+
+func TestUnit_SetupAuthClients_WithAuthCache(t *testing.T) {
+	t.Parallel()
+
+	clients := setupAuthClientsForTest(t, config.AuthCacheConfig{
+		Enabled:            true,
+		LRUCapacity:        100,
+		LRUMaxTTL:          30 * time.Second,
+		BloomExpectedItems: 1000,
+		BloomFPRate:        0.001,
+	})
+
+	assertAuthClients(t, clients, true)
+	assertCachingValidator(t, clients.validator)
+}
+
+func TestUnit_SetupAuthClients_EmptyAddr(t *testing.T) {
+	t.Parallel()
+
 	log := logger.Discard("proxy")
+
 	clients, err := setupAuthClients(config.Config{AuthGRPCAddr: ""}, log, nil)
+
 	if err != nil {
 		t.Fatalf("setupAuthClients: %v", err)
 	}
-	assertAuthClientsAbsent(t, clients)
+	assertAuthClients(t, clients, false)
+}
+
+func TestUnit_SetupAuthClients_InvalidAuthCacheConfig(t *testing.T) {
+	t.Parallel()
+
+	lis := grpctest.StartUnimplementedAuthServer(t)
+	log := logger.Discard("proxy")
+
+	_, err := setupAuthClients(config.Config{
+		Environment:         "development",
+		AuthGRPCAddr:        lis.Addr().String(),
+		AuthValidateTimeout: time.Second,
+		AuthCache: config.AuthCacheConfig{
+			Enabled:     true,
+			LRUCapacity: -1,
+		},
+	}, log, nil)
+
+	if err == nil {
+		t.Fatal("expected auth cache config error")
+	}
 }
 
 func TestUnit_AuthTransportCredentials_DevelopmentInsecure(t *testing.T) {
 	t.Parallel()
+
 	creds := authTransportCredentials("development")
+
 	if creds.Info().SecurityProtocol != "insecure" {
 		t.Fatalf("protocol=%q", creds.Info().SecurityProtocol)
 	}

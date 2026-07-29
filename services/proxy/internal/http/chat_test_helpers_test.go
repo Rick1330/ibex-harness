@@ -11,6 +11,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
+	"github.com/google/uuid"
 )
 
 const testChatOrgID = "550e8400-e29b-41d4-a716-446655440001"
@@ -66,6 +67,6 @@ func postChat(t *testing.T, handler http.Handler, opts chatRequestOpts) *httptes
 
 func defaultChatValidator() *chatMockValidator {
 	return &chatMockValidator{res: &auth.ValidateResult{
-		OrgID: testChatOrgID, Permissions: permissions.ProxyChatCompletion,
+		OrgID: uuid.MustParse(testChatOrgID), Permissions: permissions.ProxyChatCompletion,
 	}}
 }

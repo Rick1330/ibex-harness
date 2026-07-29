@@ -2,12 +2,17 @@ package ratelimit
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 )
+
+// ErrNilClient is returned when NewRedisSlider is given a nil Redis client.
+// A client is required because Check performs network I/O against Redis.
+var ErrNilClient = errors.New("ratelimit: nil redis client")
 
 const keyTTL = 90 * time.Second
 
@@ -32,11 +37,15 @@ type RedisSlider struct {
 }
 
 // NewRedisSlider returns an org-level rate limiter backed by Redis.
-func NewRedisSlider(client redis.UniversalClient, cfg RedisSliderConfig) Limiter {
+// client must be non-nil; the limiter has no fallback transport.
+func NewRedisSlider(client redis.UniversalClient, cfg RedisSliderConfig) (Limiter, error) {
+	if client == nil {
+		return nil, ErrNilClient
+	}
 	if cfg.DefaultRPM < 1 {
 		cfg.DefaultRPM = 60
 	}
-	return &RedisSlider{client: client, cfg: cfg}
+	return &RedisSlider{client: client, cfg: cfg}, nil
 }
 
 func (r *RedisSlider) Check(ctx context.Context, orgID, _ uuid.UUID) (Result, error) {

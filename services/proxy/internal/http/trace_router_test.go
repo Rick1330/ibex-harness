@@ -12,6 +12,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
 	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
+	"github.com/google/uuid"
 )
 
 func TestUnit_ChatCompletions_EmitsTraceOnSuccess(t *testing.T) {
@@ -50,7 +51,7 @@ func TestUnit_ChatCompletions_EmitsTraceOnProviderFailure(t *testing.T) {
 		Config: chatTestConfig(), Logger: logger.Discard("proxy"),
 		Metrics: metrics.NewProxy("test"), Tracer: telemetry.NoopTracer("proxy"),
 		Validator: &chatMockValidator{res: &auth.ValidateResult{
-			OrgID: testChatOrgID, Permissions: permissions.ProxyChatCompletion,
+			OrgID: uuid.MustParse(testChatOrgID), Permissions: permissions.ProxyChatCompletion,
 		}},
 		AgentVerifier: passAgentVerifier{}, Limiter: ratelimit.Noop(),
 		CheckpointPool: mustPool(t), TraceWriter: tw,

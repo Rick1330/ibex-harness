@@ -16,6 +16,8 @@ import (
 	"github.com/google/uuid"
 )
 
+var agentTestOrgUUID = uuid.MustParse("550e8400-e29b-41d4-a716-446655440001")
+
 type mockAgentVerifier struct {
 	rec *auth.AgentRecord
 	err error
@@ -61,7 +63,7 @@ func runAgentVerification(t *testing.T, verifier auth.AgentVerifier, agentID str
 		req.Header.Set(validation.HeaderAgentID, agentID)
 	}
 	if withAuth {
-		req = req.WithContext(auth.WithContext(req.Context(), &auth.ValidateResult{OrgID: agentTestOrgID()}))
+		req = req.WithContext(auth.WithContext(req.Context(), &auth.ValidateResult{OrgID: agentTestOrgUUID}))
 	}
 	handler.ServeHTTP(rec, req)
 	return rec

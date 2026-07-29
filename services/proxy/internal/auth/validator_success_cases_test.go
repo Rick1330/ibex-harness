@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
+	"github.com/google/uuid"
 	"google.golang.org/grpc"
 )
 
@@ -28,7 +29,7 @@ func grpcValidatorSuccessCases(t *testing.T) []grpcValidatorCase {
 					return &authv1.ValidateTokenResponse{OrgId: orgID, Permissions: 42}, nil
 				},
 			},
-			want: &ValidateResult{OrgID: orgID, Permissions: 42},
+			want: &ValidateResult{OrgID: uuid.MustParse(orgID), Permissions: 42},
 		},
 		{
 			name: "ok optional fields",
@@ -40,7 +41,10 @@ func grpcValidatorSuccessCases(t *testing.T) []grpcValidatorCase {
 					}, nil
 				},
 			},
-			want: &ValidateResult{OrgID: orgID, Permissions: 7, AgentID: agentID, UserID: userID, TokenID: fixtureRef},
+			want: &ValidateResult{
+				OrgID: uuid.MustParse(orgID), Permissions: 7,
+				AgentID: uuid.MustParse(agentID), UserID: userID, TokenID: fixtureRef,
+			},
 		},
 	}
 }

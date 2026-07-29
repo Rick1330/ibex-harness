@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/logger"
+	"github.com/google/uuid"
 )
 
 type spyUpstream struct {
@@ -49,6 +50,8 @@ func testValidator(t *testing.T, up Validator, cfg Config, m Metrics) *CachingVa
 	return v
 }
 
+var testOrgID = uuid.MustParse("11111111-1111-4111-8111-111111111111")
+
 func assertUpstreamCalls(t *testing.T, up *spyUpstream, want int64) {
 	t.Helper()
 	if got := up.calls.Load(); got != want {
@@ -70,7 +73,7 @@ func TestUnit_TokenHashStable(t *testing.T) {
 
 func TestUnit_CachingValidatorLRUHit(t *testing.T) {
 	t.Parallel()
-	up := &spyUpstream{res: &Result{OrgID: "org-1", Permissions: 7}}
+	up := &spyUpstream{res: &Result{OrgID: testOrgID, Permissions: 7}}
 	m := &countingMetrics{}
 	v := testValidator(t, up, Config{LRUMaxTTL: time.Minute}, m)
 
@@ -114,7 +117,7 @@ func TestUnit_CachingValidatorRequiresSecondUpstream(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			up := &spyUpstream{res: &Result{OrgID: "org-1"}}
+			up := &spyUpstream{res: &Result{OrgID: testOrgID}}
 			v := testValidator(t, up, tc.cfg, NoopMetrics{})
 			now := time.Now()
 			v.now = func() time.Time { return now }
@@ -138,7 +141,7 @@ func TestUnit_CachingValidatorRequiresSecondUpstream(t *testing.T) {
 
 func TestUnit_CachingValidatorBloomFalsePositive(t *testing.T) {
 	t.Parallel()
-	up := &spyUpstream{res: &Result{OrgID: "org-1"}}
+	up := &spyUpstream{res: &Result{OrgID: testOrgID}}
 	m := &countingMetrics{}
 	v := testValidator(t, up, Config{}, m)
 	token := "token-fp"
@@ -234,7 +237,7 @@ func assertConcurrentOK(v *CachingValidator, i int) error {
 	if res == nil {
 		return fmt.Errorf("ok-%d: nil result", i)
 	}
-	if res.OrgID != "org-1" {
+	if res.OrgID != testOrgID {
 		return fmt.Errorf("ok-%d: org=%q", i, res.OrgID)
 	}
 	return nil
@@ -257,12 +260,12 @@ func (d *dualUpstream) Validate(_ context.Context, token string) (*Result, error
 	if strings.HasPrefix(token, "bad-") {
 		return nil, ErrInvalidToken
 	}
-	return &Result{OrgID: "org-1"}, nil
+	return &Result{OrgID: testOrgID}, nil
 }
 
 func TestUnit_CachingValidatorInvalidateByTokenID(t *testing.T) {
 	t.Parallel()
-	up := &spyUpstream{res: &Result{OrgID: "org-1", TokenID: "tok-uuid-1"}}
+	up := &spyUpstream{res: &Result{OrgID: testOrgID, TokenID: "tok-uuid-1"}}
 	v := testValidator(t, up, Config{}, NoopMetrics{})
 	if _, err := v.Validate(context.Background(), "bearer-1"); err != nil {
 		t.Fatalf("first: %v", err)
@@ -281,7 +284,7 @@ func TestUnit_CachingValidatorInvalidateByTokenID(t *testing.T) {
 
 func TestUnit_CachingValidatorRevokeBetweenLRUCloneAndReturn(t *testing.T) {
 	t.Parallel()
-	up := &spyUpstream{res: &Result{OrgID: "org-1", TokenID: "tok-clone"}}
+	up := &spyUpstream{res: &Result{OrgID: testOrgID, TokenID: "tok-clone"}}
 	v := testValidator(t, up, Config{LRUMaxTTL: time.Minute}, NoopMetrics{})
 	if _, err := v.Validate(context.Background(), "bearer-clone"); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -303,7 +306,7 @@ func TestUnit_CachingValidatorRevokeBetweenLRUCloneAndReturn(t *testing.T) {
 
 func TestUnit_CachingValidatorInvalidateByTokenIDEmptyNoop(t *testing.T) {
 	t.Parallel()
-	up := &spyUpstream{res: &Result{OrgID: "org-1", TokenID: "tok-2"}}
+	up := &spyUpstream{res: &Result{OrgID: testOrgID, TokenID: "tok-2"}}
 	v := testValidator(t, up, Config{}, NoopMetrics{})
 	if _, err := v.Validate(context.Background(), "bearer-2"); err != nil {
 		t.Fatalf("validate: %v", err)
@@ -319,7 +322,7 @@ func TestUnit_CachingValidatorInvalidateByTokenIDEmptyNoop(t *testing.T) {
 
 func TestUnit_CachingValidatorConcurrentInvalidateByTokenID(t *testing.T) {
 	t.Parallel()
-	up := &spyUpstream{res: &Result{OrgID: "org-1", TokenID: "tok-conc"}}
+	up := &spyUpstream{res: &Result{OrgID: testOrgID, TokenID: "tok-conc"}}
 	v := testValidator(t, up, Config{LRUCapacity: 64}, NoopMetrics{})
 	if _, err := v.Validate(context.Background(), "bearer-conc"); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -364,7 +367,7 @@ func TestUnit_CachingValidatorTombstoneBlocksStalePut(t *testing.T) {
 	up := &blockingUpstream{
 		release: make(chan struct{}),
 		started: make(chan struct{}, 1),
-		res:     &Result{OrgID: "org-1", TokenID: "tok-race"},
+		res:     &Result{OrgID: testOrgID, TokenID: "tok-race"},
 	}
 	v := testValidator(t, up, Config{LRUMaxTTL: time.Minute}, NoopMetrics{})
 
@@ -398,7 +401,7 @@ func TestUnit_CachingValidatorTombstoneBlocksStalePut(t *testing.T) {
 
 func TestUnit_CachingValidatorRevokeBetweenPutAndAdd(t *testing.T) {
 	t.Parallel()
-	up := &spyUpstream{res: &Result{OrgID: "org-1", TokenID: "tok-gap"}}
+	up := &spyUpstream{res: &Result{OrgID: testOrgID, TokenID: "tok-gap"}}
 	v := testValidator(t, up, Config{LRUMaxTTL: time.Minute}, NoopMetrics{})
 
 	indexed := make(chan struct{})
@@ -506,7 +509,7 @@ func TestUnit_NewNilUpstream(t *testing.T) {
 func TestUnit_CacheTTLSkipsNearExpiryToken(t *testing.T) {
 	t.Parallel()
 	up := &spyUpstream{res: &Result{
-		OrgID:     "org-1",
+		OrgID:     testOrgID,
 		ExpiresAt: time.Now().Add(2 * time.Second),
 	}}
 	v := testValidator(t, up, Config{LRUMaxTTL: time.Minute}, NoopMetrics{})

@@ -13,6 +13,7 @@ import (
 	ch "github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
 )
 
 type fakeInserter struct {
@@ -418,22 +419,14 @@ func TestUnit_Writer_MetricsAndLoggerOnFlushError(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("flush wait")
 	}
-	waitEventually(t, time.Second, func() bool {
-		errN, rowsN := m.snapshot()
-		return errN >= 1 && rowsN >= 1
-	}, "flush error metrics not observed")
-}
-
-func waitEventually(t *testing.T, timeout time.Duration, cond func() bool, failMsg string) {
-	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if cond() {
-			return
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	t.Fatal(failMsg)
+	require.Eventually(t, func() bool {
+		errN, _ := m.snapshot()
+		return errN >= 1
+	}, time.Second, 5*time.Millisecond, "flush error metric not observed")
+	require.Eventually(t, func() bool {
+		_, rowsN := m.snapshot()
+		return rowsN >= 1
+	}, time.Second, 5*time.Millisecond, "flush rows metric not observed")
 }
 
 func TestUnit_Writer_NewWriter_BadDSN(t *testing.T) {

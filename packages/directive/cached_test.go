@@ -12,6 +12,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/require"
 )
 
 func TestUnit_ResolveHitMissEmpty(t *testing.T) {
@@ -229,10 +230,10 @@ func TestUnit_PubSubInvalidate(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("publish: %v", err)
 	}
-	waitUntil(t, 2*time.Second, func() bool {
+	require.Eventually(t, func() bool {
 		got, err := r.Resolve(context.Background(), orgID, agentID)
 		return err == nil && got.Content == "fresh" && store.loads >= 2
-	})
+	}, 2*time.Second, 20*time.Millisecond)
 	sub.Stop()
 	cancel()
 	<-sub.Done()
@@ -326,7 +327,7 @@ func waitRedisDirectiveB(b *testing.B, client *redis.Client, ids [2]uuid.UUID) {
 		if client.Exists(context.Background(), key).Val() == 1 {
 			return
 		}
-		time.Sleep(5 * time.Millisecond)
+		time.Sleep(5 * time.Millisecond) // benchmark pacing, not test synchronization
 	}
 	b.Fatal("timeout waiting for redis key")
 }
@@ -403,26 +404,14 @@ func assertResolvedContent(t *testing.T, got directive.Resolved, want string) {
 func waitRedisDirective(t *testing.T, client redis.UniversalClient, orgID, agentID uuid.UUID) {
 	t.Helper()
 	key := orgID.String() + ":directive:" + agentID.String()
-	waitUntil(t, 2*time.Second, func() bool {
+	require.Eventually(t, func() bool {
 		return client.Exists(context.Background(), key).Val() == 1
-	})
+	}, 2*time.Second, 20*time.Millisecond)
 }
 
 func waitSubscribed(t *testing.T, mr *miniredis.Miniredis) {
 	t.Helper()
-	waitUntil(t, 2*time.Second, func() bool {
+	require.Eventually(t, func() bool {
 		return mr.PubSubNumPat() > 0
-	})
-}
-
-func waitUntil(t *testing.T, d time.Duration, ok func() bool) {
-	t.Helper()
-	deadline := time.Now().Add(d)
-	for time.Now().Before(deadline) {
-		if ok() {
-			return
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	t.Fatal("timeout waiting for condition")
+	}, 2*time.Second, 20*time.Millisecond)
 }

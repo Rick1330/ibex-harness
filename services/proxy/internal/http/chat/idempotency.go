@@ -173,11 +173,10 @@ func orgIDFromAuth(r *http.Request) (uuid.UUID, bool) {
 	if !ok {
 		return uuid.Nil, false
 	}
-	orgID, err := uuid.Parse(res.OrgID)
-	if err != nil {
+	if res.OrgID == uuid.Nil {
 		return uuid.Nil, false
 	}
-	return orgID, true
+	return res.OrgID, true
 }
 
 func (id Idempotency) claimWithTimeout(
@@ -283,6 +282,10 @@ func (id Idempotency) FinishCapture(claim *Claim, cw *CapturingWriter) {
 	id.Finish(claim, cw.Status, cw.CapturedBody())
 }
 
+// redisOpContext builds a detached context for post-response Redis commit/release.
+// context.Background is intentional: the request context is already cancelled at
+// this point, but the Redis CAS operation must complete to avoid stuck pending keys.
+// request_id is propagated for log correlation.
 func (id Idempotency) redisOpContext(claim *Claim) (context.Context, context.CancelFunc) {
 	base := context.Background()
 	if claim.RequestID != "" {

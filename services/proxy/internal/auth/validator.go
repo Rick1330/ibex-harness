@@ -6,6 +6,7 @@ import (
 	"time"
 
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
+	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -17,11 +18,14 @@ type GRPCValidator struct {
 }
 
 // NewGRPCValidator creates a validator using the given client and per-call timeout.
-func NewGRPCValidator(client authv1.AuthServiceClient, timeout time.Duration) *GRPCValidator {
+func NewGRPCValidator(client authv1.AuthServiceClient, timeout time.Duration) (*GRPCValidator, error) {
+	if isNilAuthClient(client) {
+		return nil, fmt.Errorf("auth: nil AuthServiceClient for validator")
+	}
 	if timeout <= 0 {
 		timeout = 50 * time.Millisecond
 	}
-	return &GRPCValidator{client: client, timeout: timeout}
+	return &GRPCValidator{client: client, timeout: timeout}, nil
 }
 
 // Validate calls auth ValidateToken with a bounded deadline.
@@ -33,7 +37,7 @@ func (v *GRPCValidator) Validate(ctx context.Context, accessToken string) (*Vali
 	if err != nil {
 		return nil, mapValidateTokenError(err)
 	}
-	return mapValidateTokenResponse(resp), nil
+	return mapValidateTokenResponse(resp)
 }
 
 func mapValidateTokenError(err error) error {
@@ -43,13 +47,21 @@ func mapValidateTokenError(err error) error {
 	return fmt.Errorf("%w: %v", ErrAuthUnavailable, err)
 }
 
-func mapValidateTokenResponse(resp *authv1.ValidateTokenResponse) *ValidateResult {
+func mapValidateTokenResponse(resp *authv1.ValidateTokenResponse) (*ValidateResult, error) {
+	orgID, err := uuid.Parse(resp.GetOrgId())
+	if err != nil {
+		return nil, fmt.Errorf("%w: invalid org_id: %w", ErrAuthUnavailable, err)
+	}
 	result := &ValidateResult{
-		OrgID:       resp.GetOrgId(),
+		OrgID:       orgID,
 		Permissions: resp.GetPermissions(),
 	}
 	if resp.AgentId != nil {
-		result.AgentID = resp.GetAgentId()
+		agentID, err := uuid.Parse(resp.GetAgentId())
+		if err != nil {
+			return nil, fmt.Errorf("%w: invalid agent_id: %w", ErrAuthUnavailable, err)
+		}
+		result.AgentID = agentID
 	}
 	if resp.UserId != nil {
 		result.UserID = resp.GetUserId()
@@ -60,5 +72,5 @@ func mapValidateTokenResponse(resp *authv1.ValidateTokenResponse) *ValidateResul
 	if resp.ExpiresAt != nil {
 		result.ExpiresAt = resp.ExpiresAt.AsTime()
 	}
-	return result
+	return result, nil
 }

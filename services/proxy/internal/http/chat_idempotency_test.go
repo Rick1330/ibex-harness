@@ -24,6 +24,7 @@ import (
 	httpchat "github.com/Rick1330/ibex-harness/services/proxy/internal/http/chat"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/llm"
 	"github.com/alicebob/miniredis/v2"
+	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -100,7 +101,11 @@ func testRedisIdempotencyStore(t *testing.T) (idempotency.Store, *miniredis.Mini
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
-	return idempotency.NewRedisStore(client, idempotency.Config{TTL: time.Hour}), mr
+	store, err := idempotency.NewRedisStore(client, idempotency.Config{TTL: time.Hour})
+	if err != nil {
+		t.Fatalf("NewRedisStore: %v", err)
+	}
+	return store, mr
 }
 
 const chatBodyA = `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`
@@ -221,7 +226,7 @@ func TestUnit_Idempotency_CrossOrgIsolation(t *testing.T) {
 	t.Parallel()
 	store, _ := testRedisIdempotencyStore(t)
 	prov := &countingLLMProvider{name: "openai", models: []string{"gpt-4o"}}
-	orgB := "550e8400-e29b-41d4-a716-446655440099"
+	orgB := uuid.MustParse("550e8400-e29b-41d4-a716-446655440099")
 
 	handlerA := idempotencyTestRouter(t, store, prov, defaultChatValidator())
 	handlerB := idempotencyTestRouter(t, store, prov, &chatMockValidator{
@@ -291,7 +296,10 @@ func TestUnit_Idempotency_RedisFailOpen(t *testing.T) {
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
-	store := idempotency.NewRedisStore(client, idempotency.Config{TTL: time.Hour})
+	store, err := idempotency.NewRedisStore(client, idempotency.Config{TTL: time.Hour})
+	if err != nil {
+		t.Fatalf("NewRedisStore: %v", err)
+	}
 	mr.Close()
 
 	prov := &countingLLMProvider{name: "openai", models: []string{"gpt-4o"}}

@@ -12,7 +12,11 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/permissions"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
+	"github.com/google/uuid"
 )
+
+var authMiddlewareOrgID = uuid.MustParse("11111111-1111-4111-8111-111111111111")
+var authMiddlewarePathOrgID = uuid.MustParse("22222222-2222-4222-8222-222222222222")
 
 type mockValidator struct {
 	res *auth.ValidateResult
@@ -69,7 +73,7 @@ func TestAuthMiddlewareAuthUnavailable(t *testing.T) {
 func TestAuthMiddlewareInsufficientPermissions(t *testing.T) {
 	t.Parallel()
 
-	handler := AuthMiddleware(&mockValidator{res: &auth.ValidateResult{OrgID: "org-a", Permissions: 0}}, logger.Discard("proxy"), AuthOptions{RequireProxyChatCompletion: true})(
+	handler := AuthMiddleware(&mockValidator{res: &auth.ValidateResult{OrgID: authMiddlewareOrgID, Permissions: 0}}, logger.Discard("proxy"), AuthOptions{RequireProxyChatCompletion: true})(
 		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }),
 	)
 	rec := httptest.NewRecorder()
@@ -84,7 +88,7 @@ func TestAuthMiddlewareInsufficientPermissions(t *testing.T) {
 func TestAuthMiddlewareOrgMismatch(t *testing.T) {
 	t.Parallel()
 
-	handler := AuthMiddleware(&mockValidator{res: &auth.ValidateResult{OrgID: "org-a", Permissions: permissions.Admin}}, logger.Discard("proxy"), AuthOptions{PathOrgID: "org-b"})(
+	handler := AuthMiddleware(&mockValidator{res: &auth.ValidateResult{OrgID: authMiddlewareOrgID, Permissions: permissions.Admin}}, logger.Discard("proxy"), AuthOptions{PathOrgID: authMiddlewarePathOrgID.String()})(
 		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }),
 	)
 	rec := httptest.NewRecorder()
@@ -100,13 +104,13 @@ func TestAuthMiddlewareSuccess(t *testing.T) {
 	t.Parallel()
 
 	var gotOrg string
-	handler := AuthMiddleware(&mockValidator{res: &auth.ValidateResult{OrgID: "org-a", Permissions: 42}}, logger.Discard("proxy"), AuthOptions{})(
+	handler := AuthMiddleware(&mockValidator{res: &auth.ValidateResult{OrgID: authMiddlewareOrgID, Permissions: 42}}, logger.Discard("proxy"), AuthOptions{})(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			res, ok := auth.FromContext(r.Context())
 			if !ok {
 				t.Fatal("missing auth context")
 			}
-			gotOrg = res.OrgID
+			gotOrg = res.OrgID.String()
 			w.WriteHeader(http.StatusOK)
 		}),
 	)
@@ -114,7 +118,7 @@ func TestAuthMiddlewareSuccess(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/v1/internal/auth-probe", nil)
 	req.Header.Set("Authorization", "Bearer ibex_pat_x")
 	handler.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK || gotOrg != "org-a" {
+	if rec.Code != http.StatusOK || gotOrg != authMiddlewareOrgID.String() {
 		t.Fatalf("status=%d org=%s", rec.Code, gotOrg)
 	}
 }
@@ -123,7 +127,7 @@ func TestAuthMiddleware_SetsAuthCachedHeader(t *testing.T) {
 	t.Parallel()
 
 	handler := AuthMiddleware(&mockValidator{res: &auth.ValidateResult{
-		OrgID: "org-a", Permissions: 42, FromCache: true,
+		OrgID: authMiddlewareOrgID, Permissions: 42, FromCache: true,
 	}}, logger.Discard("proxy"), AuthOptions{})(
 		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusOK)
@@ -171,5 +175,22 @@ func TestAuthMiddlewareUnexpectedError(t *testing.T) {
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status: %d", rec.Code)
+	}
+}
+
+func TestAuthMiddlewareNilOrgIDFailsClosed(t *testing.T) {
+	t.Parallel()
+	handler := AuthMiddleware(&mockValidator{res: &auth.ValidateResult{OrgID: uuid.Nil, Permissions: 42}}, logger.Discard("proxy"), AuthOptions{})(
+		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }),
+	)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/internal/auth-probe", nil)
+	req.Header.Set("Authorization", "Bearer ibex_pat_x")
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status: %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "missing organization context") {
+		t.Fatalf("body: %s", rec.Body.String())
 	}
 }

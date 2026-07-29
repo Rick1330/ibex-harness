@@ -9,6 +9,7 @@ import (
 
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/redissub"
+	"github.com/stretchr/testify/require"
 )
 
 func TestUnit_LoopStopBeforeRun(t *testing.T) {
@@ -46,7 +47,7 @@ func TestUnit_LoopRunReconnectThenStop(t *testing.T) {
 		})
 	}()
 
-	waitUntil(t, 2*time.Second, func() bool { return calls.Load() >= 1 })
+	require.Eventually(t, func() bool { return calls.Load() >= 1 }, 2*time.Second, 10*time.Millisecond)
 	loop.Stop()
 	cancel()
 	select {
@@ -64,14 +65,24 @@ func TestUnit_LoopCtxCancelExits(t *testing.T) {
 	}
 	loop := redissub.NewLoop()
 	ctx, cancel := context.WithCancel(context.Background())
+	entered := make(chan struct{})
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		loop.Run(ctx, log, "test", func(context.Context) (bool, error) {
+			select {
+			case <-entered:
+			default:
+				close(entered)
+			}
 			return true, errors.New("session end")
 		})
 	}()
-	time.Sleep(20 * time.Millisecond)
+	select {
+	case <-entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("callback did not enter")
+	}
 	cancel()
 	select {
 	case <-done:
@@ -103,7 +114,7 @@ func TestUnit_LoopStoppedAndSleepBackoff(t *testing.T) {
 			return false, errors.New("fail")
 		})
 	}()
-	waitUntil(t, 2*time.Second, func() bool { return calls.Load() >= 1 })
+	require.Eventually(t, func() bool { return calls.Load() >= 1 }, 2*time.Second, 10*time.Millisecond)
 	loop.Stop()
 	select {
 	case <-done:
@@ -113,16 +124,4 @@ func TestUnit_LoopStoppedAndSleepBackoff(t *testing.T) {
 	if !loop.Stopped(ctx) {
 		t.Fatal("expected stopped")
 	}
-}
-
-func waitUntil(t *testing.T, d time.Duration, ok func() bool) {
-	t.Helper()
-	deadline := time.Now().Add(d)
-	for time.Now().Before(deadline) {
-		if ok() {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatal("timeout")
 }

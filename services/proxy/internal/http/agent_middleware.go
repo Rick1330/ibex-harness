@@ -46,18 +46,9 @@ func (h *agentVerifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	agentHeader := strings.TrimSpace(r.Header.Get(validation.HeaderAgentID))
-	if agentHeader == "" {
-		apierror.WriteStatus(w, http.StatusBadRequest, apierror.CodeMissingAgentID,
-			"X-IBEX-Agent-ID header is required.", requestID,
-			apierror.WriteOpts{DocsBase: docsBase})
-		return
-	}
-
-	if fe := validation.ValidateUUIDField("header."+validation.HeaderAgentID, agentHeader); fe != nil {
-		apierror.WriteStatus(w, http.StatusBadRequest, apierror.CodeValidationError,
-			"Request validation failed.", requestID,
-			apierror.WriteOpts{DocsBase: docsBase, FieldErrors: []apierror.FieldError{*fe}})
+	agentHeader, fe, ok := validatedAgentHeader(r.Header, requestID, docsBase)
+	if !ok {
+		writeAgentHeaderError(w, fe, requestID, docsBase)
 		return
 	}
 
@@ -69,18 +60,39 @@ func (h *agentVerifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rec, err := h.verifier.Verify(r.Context(), bearer, agentHeader, authRes.OrgID)
+	rec, err := h.verifier.Verify(r.Context(), bearer, agentHeader, authRes.OrgID.String())
 	if err != nil {
 		h.writeAgentVerifyError(w, err, agentVerifyErrorOpts{
-			ctx:       r.Context(),
-			requestID: requestID,
-			docsBase:  docsBase,
+			ctx: r.Context(), requestID: requestID, docsBase: docsBase,
 		})
 		return
 	}
 
 	ctx := WithAgent(r.Context(), *rec)
 	h.next.ServeHTTP(w, r.WithContext(ctx))
+}
+
+func validatedAgentHeader(h http.Header, requestID, docsBase string) (string, *apierror.FieldError, bool) {
+	agentHeader := strings.TrimSpace(h.Get(validation.HeaderAgentID))
+	if agentHeader == "" {
+		return "", nil, false
+	}
+	if fe := validation.ValidateUUIDField("header."+validation.HeaderAgentID, agentHeader); fe != nil {
+		return "", fe, false
+	}
+	return agentHeader, nil, true
+}
+
+func writeAgentHeaderError(w http.ResponseWriter, fe *apierror.FieldError, requestID, docsBase string) {
+	if fe == nil {
+		apierror.WriteStatus(w, http.StatusBadRequest, apierror.CodeMissingAgentID,
+			"X-IBEX-Agent-ID header is required.", requestID,
+			apierror.WriteOpts{DocsBase: docsBase})
+		return
+	}
+	apierror.WriteStatus(w, http.StatusBadRequest, apierror.CodeValidationError,
+		"Request validation failed.", requestID,
+		apierror.WriteOpts{DocsBase: docsBase, FieldErrors: []apierror.FieldError{*fe}})
 }
 
 type agentVerifyErrorOpts struct {

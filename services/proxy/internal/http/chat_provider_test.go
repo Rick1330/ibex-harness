@@ -17,6 +17,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
 	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
+	"github.com/google/uuid"
 )
 
 func TestUnit_writeProviderFailure_mapsViaProviderPackage(t *testing.T) {
@@ -102,7 +103,7 @@ func preStreamErrorHandler(t *testing.T) http.Handler {
 		Logger:           logger.Discard("proxy"),
 		Metrics:          metrics.NewProxy("test"),
 		Tracer:           telemetry.NoopTracer("proxy"),
-		Validator:        &chatMockValidator{res: &auth.ValidateResult{OrgID: testChatOrgID, Permissions: permissions.ProxyChatCompletion}},
+		Validator:        &chatMockValidator{res: &auth.ValidateResult{OrgID: uuid.MustParse(testChatOrgID), Permissions: permissions.ProxyChatCompletion}},
 		AgentVerifier:    passAgentVerifier{},
 		Limiter:          ratelimit.Noop(),
 		Health:           testHealthServer(),

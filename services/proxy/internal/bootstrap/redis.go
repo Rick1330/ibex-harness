@@ -34,7 +34,10 @@ func setupRateLimiter(cfg config.Config, log *logger.Logger) (redis.UniversalCli
 	if err != nil {
 		return nil, nil, fmt.Errorf("redis client init: %w", err)
 	}
-	limiter := ratelimit.NewRedisSlider(client, rateLimitSliderConfig(cfg))
+	limiter, err := ratelimit.NewRedisSlider(client, rateLimitSliderConfig(cfg))
+	if err != nil {
+		return nil, nil, fmt.Errorf("redis slider: %w", err)
+	}
 	log.InfoCtx(context.Background(), "rate limiter configured",
 		"default_rpm", cfg.RateLimit.DefaultRPM,
 		"org_overrides", len(cfg.RateLimit.OrgOverrides),
@@ -42,9 +45,9 @@ func setupRateLimiter(cfg config.Config, log *logger.Logger) (redis.UniversalCli
 	return client, limiter, nil
 }
 
-func newIdempotencyStore(redisClient redis.UniversalClient, cfg config.Config) idempotency.Store {
+func newIdempotencyStore(redisClient redis.UniversalClient, cfg config.Config) (idempotency.Store, error) {
 	if redisClient == nil {
-		return idempotency.Noop()
+		return idempotency.Noop(), nil
 	}
 	return idempotency.NewRedisStore(redisClient, idempotency.Config{TTL: cfg.IdempotencyTTL})
 }
@@ -69,13 +72,22 @@ func setupAuthClients(cfg config.Config, log *logger.Logger, m *ibexmetrics.Prox
 		return authClients{}, fmt.Errorf("auth grpc dial addr=%s: %w", cfg.AuthGRPCAddr, err)
 	}
 	client := authv1.NewAuthServiceClient(conn)
-	var validator auth.TokenValidator = auth.NewGRPCValidator(client, cfg.AuthValidateTimeout)
+	grpcValidator, err := auth.NewGRPCValidator(client, cfg.AuthValidateTimeout)
+	if err != nil {
+		_ = conn.Close() //nolint:errcheck // best-effort cleanup; preserve constructor error
+		return authClients{}, fmt.Errorf("auth validator: %w", err)
+	}
+	var validator auth.TokenValidator = grpcValidator
 	validator, err = maybeWrapAuthCache(validator, cfg, log, m)
 	if err != nil {
-		_ = conn.Close()
+		_ = conn.Close() //nolint:errcheck // best-effort cleanup; preserve constructor error
 		return authClients{}, err
 	}
-	agentVerifier := auth.NewGRPCAgentVerifier(client, cfg.AuthValidateTimeout)
+	agentVerifier, err := auth.NewGRPCAgentVerifier(client, cfg.AuthValidateTimeout)
+	if err != nil {
+		_ = conn.Close() //nolint:errcheck // best-effort cleanup; preserve constructor error
+		return authClients{}, fmt.Errorf("agent verifier: %w", err)
+	}
 	log.InfoCtx(context.Background(), "auth grpc client configured",
 		"addr", cfg.AuthGRPCAddr,
 		"timeout", cfg.AuthValidateTimeout.String(),

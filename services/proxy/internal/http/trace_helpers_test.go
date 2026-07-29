@@ -100,7 +100,7 @@ func authedTraceContext(t *testing.T) context.Context {
 	ctx := WithRequestID(context.Background(), "req-trace-1")
 	ctx = WithRequestStart(ctx, time.Now().UTC().Add(-100*time.Millisecond))
 	ctx = auth.WithContext(ctx, &auth.ValidateResult{
-		OrgID: org.String(), Permissions: permissions.ProxyChatCompletion,
+		OrgID: org, Permissions: permissions.ProxyChatCompletion,
 	})
 	ctx = WithAgent(ctx, auth.AgentRecord{ID: agent, OrgID: org})
 	ctx = WithAuthLatencyMs(ctx, 3)
@@ -121,7 +121,7 @@ func chatRouterWithTrace(t *testing.T, tw TraceWriter, pool *asyncpool.Pool) htt
 		Config: chatTestConfig(), Logger: logger.Discard("proxy"),
 		Metrics: metrics.NewProxy("test"), Tracer: telemetry.NoopTracer("proxy"),
 		Validator: &chatMockValidator{res: &auth.ValidateResult{
-			OrgID: testChatOrgID, Permissions: permissions.ProxyChatCompletion,
+			OrgID: uuid.MustParse(testChatOrgID), Permissions: permissions.ProxyChatCompletion,
 		}},
 		AgentVerifier: passAgentVerifier{}, Limiter: ratelimit.Noop(),
 		CheckpointPool: pool, TraceWriter: tw,

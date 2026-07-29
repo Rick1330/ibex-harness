@@ -119,7 +119,7 @@ func TestChain_skipsNilMiddleware(t *testing.T) {
 func TestProtectedRoutes_internalAuthProbe_missingAuthContext(t *testing.T) {
 	t.Parallel()
 
-	validator := &mockValidator{res: &auth.ValidateResult{OrgID: agentTestOrgID(), Permissions: permissions.Admin}}
+	validator := &mockValidator{res: &auth.ValidateResult{OrgID: agentTestOrgUUID, Permissions: permissions.Admin}}
 	cfg := config.Config{
 		Environment: "test", ServiceName: "proxy", Port: "8080",
 		MaxRequestBodyBytes: 1 << 20, RequestIDHeader: "X-Request-ID", TraceIDHeader: "X-Trace-ID",

@@ -40,10 +40,10 @@ func TestUnit_TenantIDsFromContext(t *testing.T) {
 			wantOK: false,
 		},
 		{
-			name: "invalid org uuid",
+			name: "zero org uuid",
 			ctx: func() context.Context {
 				ctx := WithAgent(context.Background(), auth.AgentRecord{ID: agentID})
-				return auth.WithContext(ctx, &auth.ValidateResult{OrgID: "bad"})
+				return auth.WithContext(ctx, &auth.ValidateResult{OrgID: uuid.Nil})
 			},
 			wantOK: false,
 		},
@@ -51,7 +51,7 @@ func TestUnit_TenantIDsFromContext(t *testing.T) {
 			name: "valid tenant ids",
 			ctx: func() context.Context {
 				ctx := WithAgent(context.Background(), auth.AgentRecord{ID: agentID})
-				return auth.WithContext(ctx, &auth.ValidateResult{OrgID: orgID.String()})
+				return auth.WithContext(ctx, &auth.ValidateResult{OrgID: orgID})
 			},
 			wantOK:  true,
 			wantOrg: orgID,

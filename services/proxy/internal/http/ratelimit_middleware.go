@@ -110,10 +110,7 @@ func rateLimitScopeFromRequest(r *http.Request) (orgUUID, agentUUID uuid.UUID, o
 	if !ok {
 		return uuid.Nil, uuid.Nil, false
 	}
-	orgUUID, err := uuid.Parse(res.OrgID)
-	if err != nil {
-		return uuid.Nil, uuid.Nil, true
-	}
+	orgUUID = res.OrgID
 	if rec, ok := AgentFromContext(r.Context()); ok {
 		return orgUUID, rec.ID, true
 	}
