@@ -28,6 +28,8 @@ type authWriteCtx struct {
 	docsBase  string
 }
 
+const authUnavailableMsg = "Authentication service unavailable"
+
 // AuthMiddleware validates bearer tokens and attaches auth context.
 func AuthMiddleware(validator auth.TokenValidator, log *logger.Logger, opts AuthOptions) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
@@ -113,18 +115,18 @@ func writeAuthValidateError(awc authWriteCtx, r *http.Request, log *logger.Logge
 	case errors.Is(err, auth.ErrAuthUnavailable):
 		log.WarnCtx(r.Context(), "auth validate unavailable", "error", err)
 		apierror.WriteStatus(awc.w, http.StatusServiceUnavailable, apierror.CodeServiceDegraded,
-			"Authentication service unavailable", awc.requestID, apierror.WriteOpts{DocsBase: awc.docsBase})
+			authUnavailableMsg, awc.requestID, apierror.WriteOpts{DocsBase: awc.docsBase})
 	default:
 		log.ErrorCtx(r.Context(), "unexpected auth validation error", "error", err)
 		apierror.WriteStatus(awc.w, http.StatusServiceUnavailable, apierror.CodeServiceDegraded,
-			"Authentication service unavailable", awc.requestID, apierror.WriteOpts{DocsBase: awc.docsBase})
+			authUnavailableMsg, awc.requestID, apierror.WriteOpts{DocsBase: awc.docsBase})
 	}
 }
 
 func authorizeAuthResult(awc authWriteCtx, res *auth.ValidateResult, opts AuthOptions) bool {
 	if res.OrgID == uuid.Nil {
 		apierror.WriteStatus(awc.w, http.StatusServiceUnavailable, apierror.CodeServiceDegraded,
-			"Authentication service unavailable", awc.requestID,
+			authUnavailableMsg, awc.requestID,
 			apierror.WriteOpts{Detail: "missing organization context", DocsBase: awc.docsBase})
 		return false
 	}
