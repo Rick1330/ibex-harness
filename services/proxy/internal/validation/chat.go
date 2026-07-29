@@ -21,7 +21,11 @@ var allowedRoles = map[string]struct{}{
 	"tool":      {},
 }
 
-// ValidateChatCompletionRequest returns all semantic validation failures.
+// ValidateChatCompletionRequest collects all semantic field errors for a chat
+// completion request before any downstream work begins, so callers receive a
+// complete list of problems in a single pass rather than one error at a time.
+// Returns a non-nil slice when validation fails; returns nil when the request
+// is valid.
 func ValidateChatCompletionRequest(req *llm.ChatCompletionRequest) []apierror.FieldError {
 	if req == nil {
 		return []apierror.FieldError{{
@@ -58,6 +62,7 @@ func validateMessages(msgs []llm.Message) []apierror.FieldError {
 		out = append(out, apierror.FieldError{
 			Field: "messages", Code: fieldCodeTooMany, Message: "messages exceeds maximum count",
 		})
+		return out
 	}
 	for i, msg := range msgs {
 		out = append(out, validateMessage(i, msg)...)

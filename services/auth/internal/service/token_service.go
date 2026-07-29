@@ -54,7 +54,11 @@ type CreateTokenResult struct {
 	CreatedAt time.Time
 }
 
-// CreateToken generates, hashes, and persists a PAT.
+// CreateToken validates the request, generates a secure random PAT, hashes it,
+// and persists the token row. It returns ErrInvalidArgument for request
+// validation failures, a wrapped error if generation or hashing fails (without
+// persisting anything), and a wrapped repository error if the write fails.
+// The plaintext token in the result is only available at creation time.
 func (s *TokenService) CreateToken(ctx context.Context, req *authv1.CreateTokenRequest) (CreateTokenResult, error) {
 	if err := validateCreateTokenRequest(req); err != nil {
 		return CreateTokenResult{}, err
@@ -80,11 +84,12 @@ func buildCreateTokenParams(req *authv1.CreateTokenRequest, argon2 token.Argon2P
 	var rowID uuid.UUID
 	plaintext, prefix, rowID, err = token.GeneratePAT()
 	if err != nil {
+		err = fmt.Errorf("generate PAT: %w", err)
 		return
 	}
 	hash, herr := token.HashBearer(plaintext, argon2)
 	if herr != nil {
-		err = herr
+		err = fmt.Errorf("hash bearer: %w", herr)
 		return
 	}
 	var expiresAt *time.Time
@@ -114,7 +119,7 @@ func buildCreateTokenParams(req *authv1.CreateTokenRequest, argon2 token.Argon2P
 func (s *TokenService) persistToken(ctx context.Context, params repository.CreateTokenParams, plaintext, prefix string) (CreateTokenResult, error) {
 	id, err := s.repo.CreateToken(ctx, params)
 	if err != nil {
-		return CreateTokenResult{}, err
+		return CreateTokenResult{}, fmt.Errorf("create token org_id=%s: %w", params.OrgID, err)
 	}
 	s.logger.InfoCtx(ctx, "token_created",
 		"token_id", id,
