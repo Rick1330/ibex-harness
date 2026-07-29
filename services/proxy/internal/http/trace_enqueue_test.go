@@ -10,7 +10,8 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/provider"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/asyncpool"
-	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
+	httpsession "github.com/Rick1330/ibex-harness/services/proxy/internal/http/session"
+	httptrace "github.com/Rick1330/ibex-harness/services/proxy/internal/http/trace"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/llm"
 	"github.com/google/uuid"
 )
@@ -59,14 +60,14 @@ func TestUnit_EnqueuePostResponse_Cases(t *testing.T) {
 func TestUnit_EffectiveTraceWriter_TypedNil(t *testing.T) {
 	t.Parallel()
 	var ptr *recordingTraceWriter // typed-nil; boxing happens at the call boundary
-	if effectiveTraceWriter(ptr) != nil {
+	if httptrace.EffectiveWriter(ptr) != nil {
 		t.Fatal("expected true nil after normalize")
 	}
-	if effectiveTraceWriter(nil) != nil {
+	if httptrace.EffectiveWriter(nil) != nil {
 		t.Fatal("nil stays nil")
 	}
 	live := &recordingTraceWriter{}
-	if effectiveTraceWriter(live) == nil {
+	if httptrace.EffectiveWriter(live) == nil {
 		t.Fatal("non-nil writer preserved")
 	}
 }
@@ -90,7 +91,7 @@ func TestUnit_EnqueuePostResponse_FailureSkipsCheckpoint(t *testing.T) {
 	agent := uuid.MustParse(testChatAgentID)
 	sid := uuid.New()
 	ctx := authedTraceContext(t)
-	ctx = withResolvedSession(ctx, resolvedSession{
+	ctx = withResolvedSession(ctx, httpsession.Resolved{
 		SessionID: sid, OrgID: org, AgentID: agent, ExternalID: "ext-1", TurnIndex: 0,
 	})
 
@@ -135,7 +136,7 @@ func TestUnit_EnqueuePostResponse_IncompleteStreamStillCheckpoints(t *testing.T)
 	agent := uuid.MustParse(testChatAgentID)
 	sid := uuid.New()
 	ctx := authedTraceContext(t)
-	ctx = withResolvedSession(ctx, resolvedSession{
+	ctx = withResolvedSession(ctx, httpsession.Resolved{
 		SessionID: sid, OrgID: org, AgentID: agent, ExternalID: "ext-2", TurnIndex: 0,
 	})
 	h := chatCompletionHandler{
@@ -150,16 +151,16 @@ func TestUnit_EnqueuePostResponse_IncompleteStreamStillCheckpoints(t *testing.T)
 
 func TestUnit_CaptureTraceSnapshot_Guards(t *testing.T) {
 	t.Parallel()
-	h := chatCompletionHandler{}
-	_, ok := h.captureTraceSnapshot(context.Background(), checkpointInput{}, requestOutcome{})
+	_, ok := httpsession.CaptureTraceSnapshot(httpsession.CaptureTraceArgs{})
 	if ok {
-		t.Fatal("expected no tenant")
+		t.Fatal("expected empty meta skip")
 	}
-	ctx := WithAgent(context.Background(), auth.AgentRecord{
-		ID: uuid.MustParse(testChatAgentID), OrgID: uuid.MustParse(testChatOrgID),
+	_, ok = httpsession.CaptureTraceSnapshot(httpsession.CaptureTraceArgs{
+		Meta: httpsession.SnapshotMeta{
+			OrgID: uuid.MustParse(testChatOrgID), AgentID: uuid.MustParse(testChatAgentID),
+		},
+		Outcome: requestOutcome{IsComplete: true},
 	})
-	ctx = auth.WithContext(ctx, &auth.ValidateResult{OrgID: testChatOrgID})
-	_, ok = h.captureTraceSnapshot(ctx, checkpointInput{}, requestOutcome{IsComplete: true})
 	if ok {
 		t.Fatal("expected empty request_id skip")
 	}
@@ -167,10 +168,11 @@ func TestUnit_CaptureTraceSnapshot_Guards(t *testing.T) {
 
 func TestUnit_CaptureTraceSnapshot_DefaultStatus(t *testing.T) {
 	t.Parallel()
-	h := chatCompletionHandler{}
-	snap, ok := h.captureTraceSnapshot(authedTraceContext(t), checkpointInput{
-		Model: "m", Provider: "openai",
-	}, requestOutcome{StatusCode: 0, IsComplete: true})
+	snap, ok := httpsession.CaptureTraceSnapshot(httpsession.CaptureTraceArgs{
+		Meta:    snapshotMetaFromContext(authedTraceContext(t)),
+		In:      checkpointInput{Model: "m", Provider: "openai"},
+		Outcome: requestOutcome{StatusCode: 0, IsComplete: true},
+	})
 	if !ok {
 		t.Fatal("snap")
 	}
@@ -183,12 +185,15 @@ func TestUnit_CaptureTraceSnapshot_DurableSession(t *testing.T) {
 	t.Parallel()
 	sid := uuid.New()
 	ctx := authedTraceContext(t)
-	ctx = withResolvedSession(ctx, resolvedSession{
+	ctx = withResolvedSession(ctx, httpsession.Resolved{
 		SessionID: sid, OrgID: uuid.MustParse(testChatOrgID),
 		AgentID: uuid.MustParse(testChatAgentID), ExternalID: "ext",
 	})
-	h := chatCompletionHandler{}
-	snap, ok := h.captureTraceSnapshot(ctx, checkpointInput{Model: "m"}, requestOutcome{StatusCode: 200, IsComplete: true})
+	snap, ok := httpsession.CaptureTraceSnapshot(httpsession.CaptureTraceArgs{
+		Meta:    snapshotMetaFromContext(ctx),
+		In:      checkpointInput{Model: "m"},
+		Outcome: requestOutcome{StatusCode: 200, IsComplete: true},
+	})
 	if !ok {
 		t.Fatal("snap")
 	}
@@ -203,11 +208,10 @@ func TestUnit_CaptureTraceSnapshot_DurableSession(t *testing.T) {
 func TestUnit_EnqueuePostResponse_EmitTrace_NilLogger(t *testing.T) {
 	t.Parallel()
 	tw := &recordingTraceWriter{err: errors.New("x")}
-	h := chatCompletionHandler{traceWriter: tw}
-	h.emitTrace(traceAssembleInput{
+	httpsession.EmitTrace(tw, nil, httptrace.AssembleInput{
 		RequestID: "r", OrgID: uuid.New(), AgentID: uuid.New(),
-		Timings: requestTimings{CompletedAt: time.Now().UTC()},
-		Outcome: requestOutcome{StatusCode: 200, IsComplete: true},
+		Timings: httptrace.RequestTimings{CompletedAt: time.Now().UTC()},
+		Outcome: httptrace.RequestOutcome{StatusCode: 200, IsComplete: true},
 	})
 	if tw.writes.Load() != 1 {
 		t.Fatal("write")

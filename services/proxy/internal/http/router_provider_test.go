@@ -49,7 +49,7 @@ func (s stubLLMProvider) SupportedModels() []string { return s.models }
 
 func TestUnit_NewRouter_nilProviderRegistryUsesEmptyRegistry(t *testing.T) {
 	t.Parallel()
-	handler := NewRouter(RouterDeps{
+	handler := mustNewRouter(t, RouterDeps{
 		Config:        config.Config{ServiceName: "proxy"},
 		Logger:        logger.Discard("proxy"),
 		Metrics:       metrics.NewProxy("test"),
@@ -80,7 +80,7 @@ func TestUnit_ChatCompletions_registeredProviderForwardsResponse(t *testing.T) {
 		t.Fatalf("NewRegistry: %v", err)
 	}
 
-	handler := NewRouter(RouterDeps{
+	handler := mustNewRouter(t, RouterDeps{
 		Config:           chatTestConfig(),
 		Logger:           logger.Discard("proxy"),
 		Metrics:          metrics.NewProxy("test"),
@@ -154,7 +154,7 @@ func TestUnit_ChatCompletions_providerErrorMapsToHTTPStatus(t *testing.T) {
 				t.Fatalf("NewRegistry: %v", err)
 			}
 
-			handler := NewRouter(RouterDeps{
+			handler := mustNewRouter(t, RouterDeps{
 				Config:           chatTestConfig(),
 				Logger:           logger.Discard("proxy"),
 				Metrics:          metrics.NewProxy("test"),
@@ -257,7 +257,7 @@ func TestUnit_chatCompletionHandler_logsParsedRequest(t *testing.T) {
 		t.Fatalf("NewRegistry: %v", err)
 	}
 
-	handler := NewRouter(RouterDeps{
+	handler := mustNewRouter(t, RouterDeps{
 		Config:           chatTestConfig(),
 		Logger:           logger.Discard("proxy"),
 		Metrics:          metrics.NewProxy("test"),

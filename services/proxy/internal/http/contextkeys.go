@@ -7,6 +7,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/directive"
 	"github.com/Rick1330/ibex-harness/packages/reqid"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
+	httpsession "github.com/Rick1330/ibex-harness/services/proxy/internal/http/session"
 )
 
 type contextKey int
@@ -99,7 +100,7 @@ func ResolvedDirectiveFromContext(ctx context.Context) (directive.Resolved, bool
 	return resolved, ok
 }
 
-func withResolvedSession(ctx context.Context, rs resolvedSession) context.Context {
+func withResolvedSession(ctx context.Context, rs httpsession.Resolved) context.Context {
 	return context.WithValue(ctx, ctxKeyResolvedSession, rs)
 }
 
@@ -107,8 +108,8 @@ func withResolvedSession(ctx context.Context, rs resolvedSession) context.Contex
 // Lifecycle sets it after sticky external_id mint/lookup (and upgrades it when
 // GetOrCreate succeeds). Absence means session features are off or sticky id
 // was rejected; callers must not assume a durable SessionID is present.
-func ResolvedSessionFromContext(ctx context.Context) (resolvedSession, bool) {
-	rs, ok := ctx.Value(ctxKeyResolvedSession).(resolvedSession)
+func ResolvedSessionFromContext(ctx context.Context) (httpsession.Resolved, bool) {
+	rs, ok := ctx.Value(ctxKeyResolvedSession).(httpsession.Resolved)
 	return rs, ok
 }
 

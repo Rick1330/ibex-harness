@@ -1,4 +1,4 @@
-package http
+package chat
 
 import (
 	"context"
@@ -14,8 +14,12 @@ import (
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/llm"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/validation"
+	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 )
+
+const testChatOrgID = "11111111-1111-4111-8111-111111111111"
 
 type errIdempotencyStore struct {
 	claimErr   error
@@ -59,10 +63,10 @@ func TestUnit_OrgIDFromAuth(t *testing.T) {
 
 func TestUnit_HandleClaimOutcome_Default(t *testing.T) {
 	t.Parallel()
-	h := chatCompletionHandler{metrics: metrics.NewProxy("t"), docsBase: "", log: logger.Discard("t")}
+	id := Idempotency{Metrics: metrics.NewProxy("t"), DocsBase: "", Log: logger.Discard("t")}
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/", nil)
-	claim, cont := h.handleClaimOutcome(claimOutcomeParams{
+	claim, cont := id.handleOutcome(claimOutcomeParams{
 		w: rec, r: req, orgID: uuid.New(), key: "k", fp: "fp",
 		out: idempotency.Outcome{Kind: idempotency.Kind(99)},
 	})
@@ -71,25 +75,52 @@ func TestUnit_HandleClaimOutcome_Default(t *testing.T) {
 	}
 }
 
-func TestUnit_FinishIdempotency_OversizedReleases(t *testing.T) {
-	t.Parallel()
-	mrStore, mr := testRedisIdempotencyStore(t)
-	_ = mr
-	h := chatCompletionHandler{
-		idempotencyStore:   mrStore,
-		idempotencyTimeout: time.Second,
-		metrics:            metrics.NewProxy("t"),
-		log:                logger.Discard("t"),
+func testRedisStore(t *testing.T) (idempotency.Store, *miniredis.Miniredis) {
+	t.Helper()
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() {
+		if err := client.Close(); err != nil {
+			t.Errorf("redis close: %v", err)
+		}
+	})
+	return idempotency.NewRedisStore(client, idempotency.Config{TTL: time.Hour}), mr
+}
+
+func newIdForStore(store idempotency.Store) Idempotency {
+	return Idempotency{
+		Store: store, Timeout: time.Second,
+		Metrics: metrics.NewProxy("t"), Log: logger.Discard("t"),
 	}
-	org := uuid.MustParse(testChatOrgID)
-	tkn := idempotency.Token{OrgID: org, Key: "big"}
-	claim := &idempotencyClaim{orgID: org, key: "big", fp: "fp"}
-	if _, err := mrStore.Claim(context.Background(), tkn, "fp"); err != nil {
+}
+
+type claimSeed struct {
+	store idempotency.Store
+	org   uuid.UUID
+	key   string
+	fp    idempotency.Fingerprint
+}
+
+func seedClaimForKey(t *testing.T, in claimSeed) (idempotency.Token, *Claim) {
+	t.Helper()
+	tkn := idempotency.Token{OrgID: in.org, Key: in.key}
+	claim := &Claim{OrgID: in.org, Key: in.key, FP: in.fp}
+	if _, err := in.store.Claim(context.Background(), tkn, in.fp); err != nil {
 		t.Fatal(err)
 	}
+	return tkn, claim
+}
+
+func TestUnit_FinishIdempotency_OversizedReleases(t *testing.T) {
+	t.Parallel()
+	mrStore, _ := testRedisStore(t)
+	id := newIdForStore(mrStore)
+	org := uuid.MustParse(testChatOrgID)
+	fp := idempotency.Fingerprint("fp")
+	tkn, claim := seedClaimForKey(t, claimSeed{store: mrStore, org: org, key: "big", fp: fp})
 	body := make([]byte, validation.MaxProviderResponseBytes+1)
-	h.finishIdempotency(claim, http.StatusOK, body)
-	out, err := mrStore.Claim(context.Background(), tkn, "fp")
+	id.Finish(claim, http.StatusOK, body)
+	out, err := mrStore.Claim(context.Background(), tkn, fp)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,31 +131,31 @@ func TestUnit_FinishIdempotency_OversizedReleases(t *testing.T) {
 
 func TestUnit_CommitAndRelease_ErrorPaths(t *testing.T) {
 	t.Parallel()
-	h := chatCompletionHandler{
-		idempotencyStore: errIdempotencyStore{
+	id := Idempotency{
+		Store: errIdempotencyStore{
 			commitErr:  context.DeadlineExceeded,
 			releaseErr: context.DeadlineExceeded,
 		},
-		idempotencyTimeout: time.Millisecond,
-		metrics:            metrics.NewProxy("t"),
-		log:                logger.Discard("t"),
+		Timeout: time.Millisecond,
+		Metrics: metrics.NewProxy("t"),
+		Log:     logger.Discard("t"),
 	}
-	claim := &idempotencyClaim{orgID: uuid.New(), key: "k", fp: "fp"}
-	h.commitIdempotency(claim, 200, []byte(`{}`))
-	h.releaseIdempotency(claim)
+	claim := &Claim{OrgID: uuid.New(), Key: "k", FP: "fp"}
+	id.commit(claim, 200, []byte(`{}`))
+	id.release(claim)
 }
 
 func TestUnit_ClaimIdempotency_InvalidOrgSkips(t *testing.T) {
 	t.Parallel()
-	h := chatCompletionHandler{
-		idempotencyStore: idempotency.Noop(),
-		metrics:          metrics.NewProxy("t"),
-		log:              logger.Discard("t"),
+	id := Idempotency{
+		Store:   idempotency.Noop(),
+		Metrics: metrics.NewProxy("t"),
+		Log:     logger.Discard("t"),
 	}
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/", nil)
 	req = req.WithContext(auth.WithContext(req.Context(), &auth.ValidateResult{OrgID: "bad"}))
-	claim, cont := h.claimIdempotency(rec, req, &llm.ChatCompletionRequest{Model: "m"}, "k")
+	claim, cont := id.claim(rec, req, &llm.ChatCompletionRequest{Model: "m"}, "k")
 	if claim != nil || !cont {
 		t.Fatalf("claim=%v cont=%v", claim, cont)
 	}
@@ -132,11 +163,11 @@ func TestUnit_ClaimIdempotency_InvalidOrgSkips(t *testing.T) {
 
 func TestUnit_ResolveIdempotency_NilStore(t *testing.T) {
 	t.Parallel()
-	h := chatCompletionHandler{metrics: metrics.NewProxy("t"), log: logger.Discard("t")}
+	id := Idempotency{Metrics: metrics.NewProxy("t"), Log: logger.Discard("t")}
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/", nil)
 	req.Header.Set(idempotencyHeader, "k")
-	claim, cont := h.resolveIdempotency(rec, req, &llm.ChatCompletionRequest{Model: "m"})
+	claim, cont := id.Resolve(rec, req, &llm.ChatCompletionRequest{Model: "m"})
 	if claim != nil || !cont {
 		t.Fatalf("nil store: claim=%v cont=%v", claim, cont)
 	}
@@ -145,7 +176,7 @@ func TestUnit_ResolveIdempotency_NilStore(t *testing.T) {
 func TestUnit_CapturingWriter_CapAndStatus(t *testing.T) {
 	t.Parallel()
 	inner := httptest.NewRecorder()
-	cw := &capturingWriter{ResponseWriter: inner}
+	cw := &CapturingWriter{ResponseWriter: inner}
 	n, err := cw.Write([]byte("hi"))
 	if err != nil {
 		t.Fatalf("write err=%v", err)
@@ -153,26 +184,46 @@ func TestUnit_CapturingWriter_CapAndStatus(t *testing.T) {
 	if n != 2 {
 		t.Fatalf("write n=%d want 2", n)
 	}
-	if cw.status != http.StatusOK {
-		t.Fatalf("status=%d want %d", cw.status, http.StatusOK)
+	if cw.Status != http.StatusOK {
+		t.Fatalf("status=%d want %d", cw.Status, http.StatusOK)
 	}
-	if string(cw.capturedBody()) != "hi" {
-		t.Fatalf("body=%q", cw.capturedBody())
+	if string(cw.CapturedBody()) != "hi" {
+		t.Fatalf("body=%q", cw.CapturedBody())
 	}
 	big := []byte(strings.Repeat("x", int(validation.MaxProviderResponseBytes)))
-	cw2 := &capturingWriter{ResponseWriter: httptest.NewRecorder()}
+	cw2 := &CapturingWriter{ResponseWriter: httptest.NewRecorder()}
 	_, _ = cw2.Write(big)
 	_, _ = cw2.Write([]byte("y"))
-	if !cw2.capped {
-		t.Fatal("expected capped=true")
+	if !cw2.ExceededLimit() {
+		t.Fatal("expected ExceededLimit")
 	}
-	if cw2.capturedBody() != nil {
+	if cw2.CapturedBody() != nil {
 		t.Fatal("expected captured body to be nil after cap")
+	}
+}
+
+func TestUnit_FinishCapture_CappedReleases(t *testing.T) {
+	t.Parallel()
+	mrStore, _ := testRedisStore(t)
+	id := newIdForStore(mrStore)
+	org := uuid.MustParse(testChatOrgID)
+	fp := idempotency.Fingerprint("fp")
+	tkn, claim := seedClaimForKey(t, claimSeed{store: mrStore, org: org, key: "cap", fp: fp})
+	cw := &CapturingWriter{ResponseWriter: httptest.NewRecorder(), Status: http.StatusBadRequest}
+	big := []byte(strings.Repeat("x", int(validation.MaxProviderResponseBytes)+1))
+	_, _ = cw.Write(big)
+	id.FinishCapture(claim, cw)
+	out, err := mrStore.Claim(context.Background(), tkn, fp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Kind != idempotency.KindMiss {
+		t.Fatalf("kind=%v want miss after release", out.Kind)
 	}
 }
 
 func TestUnit_FinishIdempotency_NilClaim(t *testing.T) {
 	t.Parallel()
-	h := chatCompletionHandler{idempotencyStore: idempotency.Noop()}
-	h.finishIdempotency(nil, 200, []byte(`{}`))
+	id := Idempotency{Store: idempotency.Noop()}
+	id.Finish(nil, 200, []byte(`{}`))
 }

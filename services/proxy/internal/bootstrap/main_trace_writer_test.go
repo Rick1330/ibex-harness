@@ -1,4 +1,4 @@
-package main
+package bootstrap
 
 import (
 	"bytes"
@@ -36,7 +36,7 @@ func TestUnit_SetupTraceWriter_DisabledWhenDSNEmpty(t *testing.T) {
 			log := logger.Discard("proxy")
 			reg := ibexmetrics.NewProxy("proxy-" + tc.name)
 
-			w, err := setupTraceWriter(config.Config{ClickHouseDSN: tc.dsn}, log, reg)
+			w, err := setupTraceWriter(config.Config{ClickHouseDSN: tc.dsn}, log, reg, nil)
 
 			if err != nil {
 				t.Fatal(err)
@@ -49,12 +49,10 @@ func TestUnit_SetupTraceWriter_DisabledWhenDSNEmpty(t *testing.T) {
 }
 
 func TestUnit_SetupTraceWriter_PropagatesConfig(t *testing.T) {
-	prev := newTraceWriter
-	t.Cleanup(func() { newTraceWriter = prev })
-
+	t.Parallel()
 	var got ibexch.Config
 	stub := &ibexch.Writer{}
-	newTraceWriter = func(cfg ibexch.Config) (*ibexch.Writer, error) {
+	factory := func(cfg ibexch.Config) (*ibexch.Writer, error) {
 		got = cfg
 		return stub, nil
 	}
@@ -66,7 +64,7 @@ func TestUnit_SetupTraceWriter_PropagatesConfig(t *testing.T) {
 		ClickHouseDSN:       dsn,
 		ClickHouseBatchSize: 42,
 		ClickHouseFlushMS:   77,
-	}, log, reg)
+	}, log, reg, factory)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,16 +89,15 @@ func TestUnit_SetupTraceWriter_PropagatesConfig(t *testing.T) {
 }
 
 func TestUnit_SetupTraceWriter_WrapsStartError(t *testing.T) {
-	prev := newTraceWriter
-	t.Cleanup(func() { newTraceWriter = prev })
+	t.Parallel()
 	wantErr := errors.New("boom")
-	newTraceWriter = func(ibexch.Config) (*ibexch.Writer, error) {
+	factory := func(ibexch.Config) (*ibexch.Writer, error) {
 		return nil, wantErr
 	}
 
 	log := logger.Discard("proxy")
 	reg := ibexmetrics.NewProxy("proxy")
-	_, err := setupTraceWriter(config.Config{ClickHouseDSN: "clickhouse://x"}, log, reg)
+	_, err := setupTraceWriter(config.Config{ClickHouseDSN: "clickhouse://x"}, log, reg, factory)
 	if err == nil || !strings.Contains(err.Error(), "clickhouse writer") {
 		t.Fatalf("got %v", err)
 	}
@@ -110,9 +107,8 @@ func TestUnit_SetupTraceWriter_WrapsStartError(t *testing.T) {
 }
 
 func TestUnit_SetupTraceWriter_LogUsesRedactedDSN(t *testing.T) {
-	prev := newTraceWriter
-	t.Cleanup(func() { newTraceWriter = prev })
-	newTraceWriter = func(ibexch.Config) (*ibexch.Writer, error) {
+	t.Parallel()
+	factory := func(ibexch.Config) (*ibexch.Writer, error) {
 		return &ibexch.Writer{}, nil
 	}
 
@@ -129,7 +125,7 @@ func TestUnit_SetupTraceWriter_LogUsesRedactedDSN(t *testing.T) {
 	secret := "s3cret-password"
 	dsn := "clickhouse://default:" + secret + "@localhost:8123/ibex"
 
-	_, err = setupTraceWriter(config.Config{ClickHouseDSN: dsn}, log, reg)
+	_, err = setupTraceWriter(config.Config{ClickHouseDSN: dsn}, log, reg, factory)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,9 +139,8 @@ func TestUnit_SetupTraceWriter_LogUsesRedactedDSN(t *testing.T) {
 }
 
 func TestUnit_OptionalTraceWriter_FailOpenOnStartError(t *testing.T) {
-	prev := newTraceWriter
-	t.Cleanup(func() { newTraceWriter = prev })
-	newTraceWriter = func(ibexch.Config) (*ibexch.Writer, error) {
+	t.Parallel()
+	factory := func(ibexch.Config) (*ibexch.Writer, error) {
 		return nil, errors.New("boom")
 	}
 
@@ -158,7 +153,7 @@ func TestUnit_OptionalTraceWriter_FailOpenOnStartError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	w := optionalTraceWriter(config.Config{ClickHouseDSN: "clickhouse://x"}, log, ibexmetrics.NewProxy("proxy"))
+	w := optionalTraceWriter(config.Config{ClickHouseDSN: "clickhouse://x"}, log, ibexmetrics.NewProxy("proxy"), factory)
 	if w != nil {
 		t.Fatal("expected nil writer on start failure")
 	}
@@ -185,10 +180,9 @@ func TestUnit_AssignTraceWriter_SkipsNilConcrete(t *testing.T) {
 }
 
 func TestUnit_OptionalTraceWriter_FailOpenOmitsSensitiveError(t *testing.T) {
-	prev := newTraceWriter
-	t.Cleanup(func() { newTraceWriter = prev })
+	t.Parallel()
 	secret := "clickhouse://default:super-secret-pass@localhost:8123/ibex"
-	newTraceWriter = func(ibexch.Config) (*ibexch.Writer, error) {
+	factory := func(ibexch.Config) (*ibexch.Writer, error) {
 		return nil, fmt.Errorf("dial failed for %s", secret)
 	}
 
@@ -201,7 +195,7 @@ func TestUnit_OptionalTraceWriter_FailOpenOmitsSensitiveError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	w := optionalTraceWriter(config.Config{ClickHouseDSN: secret}, log, ibexmetrics.NewProxy("proxy"))
+	w := optionalTraceWriter(config.Config{ClickHouseDSN: secret}, log, ibexmetrics.NewProxy("proxy"), factory)
 	if w != nil {
 		t.Fatal("expected nil writer on start failure")
 	}

@@ -59,6 +59,7 @@ func forwardSSEStream(p streamForwardParams) {
 			apierror.WriteOpts{DocsBase: p.docsBase})
 		return
 	}
+	clearSSEWriteDeadline(p.r.Context(), p.w, p.log)
 
 	acc := openai.NewStreamAccumulator()
 	start := time.Now()
@@ -76,6 +77,17 @@ func forwardSSEStream(p streamForwardParams) {
 			content: content, usage: usage,
 			latency: time.Since(start), complete: status == "ok",
 		})
+	}
+}
+
+func clearSSEWriteDeadline(ctx context.Context, w http.ResponseWriter, log *logger.Logger) {
+	// Streaming responses may exceed the server WriteTimeout.
+	err := http.NewResponseController(w).SetWriteDeadline(time.Time{})
+	if err == nil || errors.Is(err, http.ErrNotSupported) {
+		return
+	}
+	if log != nil {
+		log.DebugCtx(ctx, "clear SSE write deadline failed", "error", err)
 	}
 }
 

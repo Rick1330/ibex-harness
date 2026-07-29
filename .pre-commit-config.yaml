@@ -18,6 +18,16 @@ repos:
         entry: bash -c 'if command -v gitleaks >/dev/null 2>&1; then gitleaks detect --source . --config .gitleaks.toml --redact; else echo "gitleaks not installed; skipping local secret scan (CI still runs gitleaks)"; fi'
         language: system
         pass_filenames: false
+
+      # This hook is a reminder only. The golangci-lint mirror below uses a single
+      # implicit config and does NOT run the three-config split (base + complexity +
+      # depguard) used by `make lint-go`. Run `make lint-go` before push to catch
+      # funlen, gocognit, and import-boundary violations. See DEVELOPMENT_GUIDE.md §8.3.
+      - id: lint-go-reminder
+        name: reminder - run make lint-go before push (complexity + depguard not covered by hook alone)
+        entry: bash -c "echo 'NOTE: pre-commit golangci-lint does not run complexity or depguard configs; run make lint-go before push'"
+        language: system
+        pass_filenames: false
   - repo: https://github.com/gitleaks/gitleaks
     rev: v8.16.3
     hooks:

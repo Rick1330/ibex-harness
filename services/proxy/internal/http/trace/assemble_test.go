@@ -1,7 +1,6 @@
-package http
+package trace
 
 import (
-	"context"
 	"reflect"
 	"testing"
 	"time"
@@ -11,7 +10,7 @@ import (
 	"github.com/google/uuid"
 )
 
-func TestUnit_AssembleTrace_MapsFields(t *testing.T) {
+func TestUnit_Assemble_MapsFields(t *testing.T) {
 	t.Parallel()
 	ids := assembleWantIDs{
 		org:   uuid.MustParse("11111111-1111-1111-1111-111111111111"),
@@ -21,15 +20,15 @@ func TestUnit_AssembleTrace_MapsFields(t *testing.T) {
 	start := time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC)
 	end := start.Add(150 * time.Millisecond)
 
-	rec := assembleTrace(traceAssembleInput{
+	rec := Assemble(AssembleInput{
 		RequestID: "req-1", OrgID: ids.org, AgentID: ids.agent, SessionID: &ids.sid,
 		Model: "gpt-4o", Provider: "openai", Streaming: true,
 		Usage: &provider.Usage{InputTokens: 10, OutputTokens: 20, TotalTokens: 30},
-		Timings: requestTimings{
+		Timings: RequestTimings{
 			AuthMs: 5, DirectiveMs: 7, ProviderTTFB: 40 * time.Millisecond,
 			RequestedAt: start, CompletedAt: end,
 		},
-		Outcome: requestOutcome{StatusCode: 200, IsComplete: true},
+		Outcome: RequestOutcome{StatusCode: 200, IsComplete: true},
 	})
 	assertAssembleIDs(t, rec, ids)
 	assertAssembleTokens(t, rec)
@@ -52,37 +51,43 @@ func assertAssembleIDs(t *testing.T, rec ibexch.TraceRecord, ids assembleWantIDs
 	if rec.AgentID != ids.agent {
 		t.Fatalf("agent=%s", rec.AgentID)
 	}
-	if rec.SessionID == nil {
-		t.Fatal("session nil")
-	}
-	if *rec.SessionID != ids.sid {
-		t.Fatalf("session=%s", *rec.SessionID)
-	}
-	if rec.CheckpointID != nil {
-		t.Fatal("checkpoint_id must be nil")
+	if rec.SessionID == nil || *rec.SessionID != ids.sid {
+		t.Fatalf("session=%v", rec.SessionID)
 	}
 }
 
 func assertAssembleTokens(t *testing.T, rec ibexch.TraceRecord) {
 	t.Helper()
 	if rec.InputTokens != 10 {
-		t.Fatalf("input=%d", rec.InputTokens)
+		t.Fatalf("input tokens=%d", rec.InputTokens)
 	}
 	if rec.OutputTokens != 20 {
-		t.Fatalf("output=%d", rec.OutputTokens)
+		t.Fatalf("output tokens=%d", rec.OutputTokens)
 	}
 	if rec.TotalTokens != 30 {
-		t.Fatalf("total=%d", rec.TotalTokens)
+		t.Fatalf("total tokens=%d", rec.TotalTokens)
+	}
+	if !rec.IsStreaming {
+		t.Fatal("expected streaming")
+	}
+	if !rec.IsComplete {
+		t.Fatal("expected complete")
+	}
+	if rec.Model != "gpt-4o" {
+		t.Fatalf("model=%s", rec.Model)
+	}
+	if rec.Provider != "openai" {
+		t.Fatalf("provider=%s", rec.Provider)
 	}
 }
 
 func assertAssembleLatencies(t *testing.T, rec ibexch.TraceRecord) {
 	t.Helper()
 	if rec.AuthLatencyMs != 5 {
-		t.Fatalf("auth=%d", rec.AuthLatencyMs)
+		t.Fatalf("auth ms=%d", rec.AuthLatencyMs)
 	}
 	if rec.DirectiveLatencyMs != 7 {
-		t.Fatalf("directive=%d", rec.DirectiveLatencyMs)
+		t.Fatalf("directive ms=%d", rec.DirectiveLatencyMs)
 	}
 	if rec.ProviderTTFBMs != 40 {
 		t.Fatalf("ttfb=%d", rec.ProviderTTFBMs)
@@ -92,12 +97,12 @@ func assertAssembleLatencies(t *testing.T, rec ibexch.TraceRecord) {
 	}
 }
 
-func TestUnit_AssembleTrace_NilUsageZeros(t *testing.T) {
+func TestUnit_Assemble_NilUsageZeros(t *testing.T) {
 	t.Parallel()
-	rec := assembleTrace(traceAssembleInput{
+	rec := Assemble(AssembleInput{
 		RequestID: "r", OrgID: uuid.New(), AgentID: uuid.New(),
-		Timings: requestTimings{CompletedAt: time.Now().UTC()},
-		Outcome: requestOutcome{StatusCode: 502, IsComplete: false, ErrorCode: "PROVIDER_UNAVAILABLE"},
+		Timings: RequestTimings{CompletedAt: time.Now().UTC()},
+		Outcome: RequestOutcome{StatusCode: 502, IsComplete: false, ErrorCode: "PROVIDER_UNAVAILABLE"},
 	})
 	if rec.TotalTokens != 0 {
 		t.Fatalf("tokens=%d", rec.TotalTokens)
@@ -110,13 +115,13 @@ func TestUnit_AssembleTrace_NilUsageZeros(t *testing.T) {
 	}
 }
 
-func TestUnit_AssembleTrace_DefaultsAndUsageSum(t *testing.T) {
+func TestUnit_Assemble_DefaultsAndUsageSum(t *testing.T) {
 	t.Parallel()
-	rec := assembleTrace(traceAssembleInput{
+	rec := Assemble(AssembleInput{
 		RequestID: "r", OrgID: uuid.New(), AgentID: uuid.New(),
 		Usage:   &provider.Usage{InputTokens: 3, OutputTokens: 4},
-		Timings: requestTimings{},
-		Outcome: requestOutcome{StatusCode: 0, IsComplete: true},
+		Timings: RequestTimings{},
+		Outcome: RequestOutcome{StatusCode: 0, IsComplete: true},
 	})
 	if rec.TotalTokens != 7 {
 		t.Fatalf("sum total=%d", rec.TotalTokens)
@@ -129,7 +134,18 @@ func TestUnit_AssembleTrace_DefaultsAndUsageSum(t *testing.T) {
 	}
 }
 
-func TestUnit_TraceHelpers_Clamp(t *testing.T) {
+func TestUnit_AddUint32Sat_Overflow(t *testing.T) {
+	t.Parallel()
+	got := addUint32Sat(^uint32(0), ^uint32(0))
+	if got != ^uint32(0) {
+		t.Fatalf("got=%d", got)
+	}
+	if addUint32Sat(1, 2) != 3 {
+		t.Fatal("sum")
+	}
+}
+
+func TestUnit_ClampHelpers(t *testing.T) {
 	t.Parallel()
 	if durationToUint32(-time.Second) != 0 {
 		t.Fatal("neg duration")
@@ -144,11 +160,11 @@ func TestUnit_TraceHelpers_Clamp(t *testing.T) {
 	if intToUint32(int(^uint32(0))+1) != ^uint32(0) {
 		t.Fatal("int overflow")
 	}
-	if clampUint16Ms(-time.Millisecond) != 0 {
+	if ClampUint16Ms(-time.Millisecond) != 0 {
 		t.Fatal("neg clamp")
 	}
 	overU16 := (time.Duration(^uint16(0)) + 1) * time.Millisecond
-	if clampUint16Ms(overU16) != ^uint16(0) {
+	if ClampUint16Ms(overU16) != ^uint16(0) {
 		t.Fatal("clamp overflow")
 	}
 }
@@ -164,17 +180,5 @@ func assertNoContentFields(t *testing.T, rec ibexch.TraceRecord) {
 		if _, ok := forbidden[name]; ok {
 			t.Fatalf("forbidden field %s", name)
 		}
-	}
-}
-
-func TestUnit_StageLatencyContext(t *testing.T) {
-	t.Parallel()
-	ctx := WithAuthLatencyMs(context.Background(), 9)
-	ctx = WithDirectiveLatencyMs(ctx, 11)
-	if AuthLatencyMsFromContext(ctx) != 9 {
-		t.Fatal("auth")
-	}
-	if DirectiveLatencyMsFromContext(ctx) != 11 {
-		t.Fatal("directive")
 	}
 }

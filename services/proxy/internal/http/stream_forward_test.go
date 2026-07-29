@@ -166,7 +166,7 @@ func newStreamTestHandlerWithValidator(t *testing.T, stub *streamStubProvider, v
 	if err != nil {
 		t.Fatalf("NewRegistry: %v", err)
 	}
-	return NewRouter(RouterDeps{
+	return mustNewRouter(t, RouterDeps{
 		Config:           chatTestConfig(),
 		Logger:           logger.Discard("proxy"),
 		Metrics:          metrics.NewProxy("test"),
@@ -301,4 +301,55 @@ func TestUnit_ChatCompletions_streamTrueForwardsSSE(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: %d body=%s", rec.Code, rec.Body.String())
 	}
+}
+
+type deadlineRecorder struct {
+	*httptest.ResponseRecorder
+	deadline time.Time
+	called   bool
+}
+
+func (d *deadlineRecorder) SetWriteDeadline(t time.Time) error {
+	d.called = true
+	d.deadline = t
+	return nil
+}
+
+func TestUnit_ClearSSEWriteDeadline(t *testing.T) {
+	t.Parallel()
+
+	rec := &deadlineRecorder{ResponseRecorder: httptest.NewRecorder()}
+
+	clearSSEWriteDeadline(context.Background(), rec, logger.Discard("proxy"))
+
+	if !rec.called {
+		t.Fatal("expected SetWriteDeadline call")
+	}
+	if !rec.deadline.IsZero() {
+		t.Fatalf("deadline=%v want zero", rec.deadline)
+	}
+}
+
+func TestUnit_ClearSSEWriteDeadline_Unsupported(t *testing.T) {
+	t.Parallel()
+
+	rec := httptest.NewRecorder()
+
+	clearSSEWriteDeadline(context.Background(), rec, logger.Discard("proxy"))
+}
+
+type errDeadlineRecorder struct {
+	*httptest.ResponseRecorder
+}
+
+func (e *errDeadlineRecorder) SetWriteDeadline(time.Time) error {
+	return errors.New("deadline boom")
+}
+
+func TestUnit_ClearSSEWriteDeadline_UnexpectedError(t *testing.T) {
+	t.Parallel()
+
+	rec := &errDeadlineRecorder{ResponseRecorder: httptest.NewRecorder()}
+
+	clearSSEWriteDeadline(context.Background(), rec, logger.Discard("proxy"))
 }

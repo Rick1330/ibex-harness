@@ -1,4 +1,4 @@
-package main
+package bootstrap
 
 import (
 	"testing"
@@ -6,20 +6,11 @@ import (
 
 	"github.com/Rick1330/ibex-harness/infra/testing/grpctest"
 	"github.com/Rick1330/ibex-harness/packages/logger"
-	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
-	"google.golang.org/grpc"
 )
 
-type authClientBundle struct {
-	validator     auth.TokenValidator
-	agentVerifier auth.AgentVerifier
-	client        authv1.AuthServiceClient
-	conn          *grpc.ClientConn
-}
-
-func assertAuthClientsPresent(t *testing.T, b authClientBundle) {
+func assertAuthClientsPresent(t *testing.T, b authClients) {
 	t.Helper()
 	if b.validator == nil {
 		t.Fatal("validator nil")
@@ -35,7 +26,7 @@ func assertAuthClientsPresent(t *testing.T, b authClientBundle) {
 	}
 }
 
-func assertAuthClientsAbsent(t *testing.T, b authClientBundle) {
+func assertAuthClientsAbsent(t *testing.T, b authClients) {
 	t.Helper()
 	if b.validator != nil {
 		t.Fatal("validator should be nil")
@@ -52,22 +43,29 @@ func assertAuthClientsAbsent(t *testing.T, b authClientBundle) {
 }
 
 func TestSetupAuthClients_WithGRPCServer(t *testing.T) {
+	t.Parallel()
 	lis := grpctest.StartUnimplementedAuthServer(t)
 	log := logger.Discard("proxy")
-	validator, agentVerifier, client, conn, err := setupAuthClients(config.Config{
-		AuthGRPCAddr: lis.Addr().String(), AuthValidateTimeout: time.Second,
+	clients, err := setupAuthClients(config.Config{
+		Environment: "development", AuthGRPCAddr: lis.Addr().String(), AuthValidateTimeout: time.Second,
 	}, log, nil)
 	if err != nil {
 		t.Fatalf("setupAuthClients: %v", err)
 	}
-	t.Cleanup(func() { _ = conn.Close() })
-	assertAuthClientsPresent(t, authClientBundle{validator, agentVerifier, client, conn})
+	t.Cleanup(func() {
+		if err := clients.conn.Close(); err != nil {
+			t.Errorf("close conn: %v", err)
+		}
+	})
+	assertAuthClientsPresent(t, clients)
 }
 
 func TestSetupAuthClients_WithAuthCacheEnabled(t *testing.T) {
+	t.Parallel()
 	lis := grpctest.StartUnimplementedAuthServer(t)
 	log := logger.Discard("proxy")
 	cfg := config.Config{
+		Environment:         "development",
 		AuthGRPCAddr:        lis.Addr().String(),
 		AuthValidateTimeout: time.Second,
 		AuthCache: config.AuthCacheConfig{
@@ -78,22 +76,39 @@ func TestSetupAuthClients_WithAuthCacheEnabled(t *testing.T) {
 			BloomFPRate:        0.001,
 		},
 	}
-	validator, agentVerifier, client, conn, err := setupAuthClients(cfg, log, nil)
+	clients, err := setupAuthClients(cfg, log, nil)
 	if err != nil {
 		t.Fatalf("setupAuthClients: %v", err)
 	}
-	t.Cleanup(func() { _ = conn.Close() })
-	assertAuthClientsPresent(t, authClientBundle{validator, agentVerifier, client, conn})
-	if _, ok := validator.(auth.CacheInvalidator); !ok {
+	t.Cleanup(func() {
+		if err := clients.conn.Close(); err != nil {
+			t.Errorf("close conn: %v", err)
+		}
+	})
+	assertAuthClientsPresent(t, clients)
+	if _, ok := clients.validator.(auth.CacheInvalidator); !ok {
 		t.Fatal("expected caching validator implementing CacheInvalidator")
 	}
 }
 
 func TestSetupAuthClients_EmptyAddr(t *testing.T) {
+	t.Parallel()
 	log := logger.Discard("proxy")
-	validator, agentVerifier, client, conn, err := setupAuthClients(config.Config{AuthGRPCAddr: ""}, log, nil)
+	clients, err := setupAuthClients(config.Config{AuthGRPCAddr: ""}, log, nil)
 	if err != nil {
 		t.Fatalf("setupAuthClients: %v", err)
 	}
-	assertAuthClientsAbsent(t, authClientBundle{validator, agentVerifier, client, conn})
+	assertAuthClientsAbsent(t, clients)
+}
+
+func TestUnit_AuthTransportCredentials_DevelopmentInsecure(t *testing.T) {
+	t.Parallel()
+	creds := authTransportCredentials("development")
+	if creds.Info().SecurityProtocol != "insecure" {
+		t.Fatalf("protocol=%q", creds.Info().SecurityProtocol)
+	}
+	tlsCreds := authTransportCredentials("production")
+	if tlsCreds.Info().SecurityProtocol == "insecure" {
+		t.Fatal("production must use TLS")
+	}
 }

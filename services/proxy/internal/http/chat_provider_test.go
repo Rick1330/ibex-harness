@@ -97,7 +97,7 @@ func preStreamErrorHandler(t *testing.T) http.Handler {
 	if err != nil {
 		t.Fatalf("NewRegistry: %v", err)
 	}
-	return NewRouter(RouterDeps{
+	return mustNewRouter(t, RouterDeps{
 		Config:           chatTestConfig(),
 		Logger:           logger.Discard("proxy"),
 		Metrics:          metrics.NewProxy("test"),

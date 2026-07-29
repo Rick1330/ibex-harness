@@ -3,6 +3,7 @@ package http
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/asyncpool"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
+	httptrace "github.com/Rick1330/ibex-harness/services/proxy/internal/http/trace"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/llm"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/sessioncache"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/validation"
@@ -52,67 +54,77 @@ type RouterDeps struct {
 	IdempotencyStore   idempotency.Store
 }
 
-// NewRouter builds the proxy HTTP handler with optional auth validator for protected routes.
-func NewRouter(deps RouterDeps) http.Handler {
-	cfg := deps.Config
-	logger := deps.Logger
-	reg := deps.Metrics
-	validator := deps.Validator
-	agentVerifier := deps.AgentVerifier
-	limiter := deps.Limiter
-	cfg.ApplyDefaults()
+// NewRouter builds the proxy HTTP handler. A non-nil error means the router
+// was not fully initialized and must not be served.
+func NewRouter(deps RouterDeps) (http.Handler, error) {
+	deps.Config.ApplyDefaults()
 	mux := http.NewServeMux()
-	docsBase := cfg.ErrorDocsBase
-	providerReg := deps.ProviderRegistry
-	if providerReg == nil {
-		var regErr error
-		providerReg, regErr = provider.NewRegistry()
-		if regErr != nil {
-			panic("provider registry: " + regErr.Error())
-		}
+	providerReg, err := resolveProviderRegistry(deps.ProviderRegistry)
+	if err != nil {
+		return nil, err
 	}
+	mountPublicRoutes(mux, deps)
+	if deps.Validator != nil {
+		prd := buildProtectedRouteDeps(deps, providerReg)
+		prd.mux = mux
+		registerProtectedRoutes(prd)
+	}
+	return wrapRouterHandler(deps, mux), nil
+}
 
+func resolveProviderRegistry(reg *provider.Registry) (*provider.Registry, error) {
+	if reg != nil {
+		return reg, nil
+	}
+	providerReg, err := provider.NewRegistry()
+	if err != nil {
+		return nil, fmt.Errorf("provider registry: %w", err)
+	}
+	return providerReg, nil
+}
+
+func mountPublicRoutes(mux *http.ServeMux, deps RouterDeps) {
 	healthSrv := deps.Health
 	if healthSrv == nil {
 		healthSrv = &healthcheck.Server{}
 	}
 	mux.HandleFunc("/health", healthSrv.HealthHandler())
-	mux.HandleFunc("/ready", readyWithLog(logger, healthSrv.ReadyHandler()))
-	mux.Handle("/metrics", metrics.Handler(reg.Gatherer()))
+	mux.HandleFunc("/ready", readyWithLog(deps.Logger, healthSrv.ReadyHandler()))
+	mux.Handle("/metrics", metrics.Handler(deps.Metrics.Gatherer()))
+}
 
-	if validator != nil {
-		registerProtectedRoutes(protectedRouteDeps{
-			mux:                      mux,
-			cfg:                      cfg,
-			logger:                   logger,
-			reg:                      reg,
-			validator:                validator,
-			agentVerifier:            agentVerifier,
-			limiter:                  limiter,
-			directiveResolver:        deps.DirectiveResolver,
-			sessionStore:             deps.SessionStore,
-			sessionCache:             deps.SessionCache,
-			checkpointPool:           deps.CheckpointPool,
-			getOrCreateTimeout:       deps.GetOrCreateTimeout,
-			docsBase:                 docsBase,
-			providerRegistry:         providerReg,
-			traceWriter:              effectiveTraceWriter(deps.TraceWriter),
-			idempotencyStore:         deps.IdempotencyStore,
-			idempotencyTimeout:       cfg.IdempotencyRedisTimeout,
-			idempotencyCommitTimeout: idempotencyCASHTimeout(cfg.IdempotencyRedisTimeout),
-		})
+func buildProtectedRouteDeps(deps RouterDeps, providerReg *provider.Registry) protectedRouteDeps {
+	return protectedRouteDeps{
+		cfg:                      deps.Config,
+		logger:                   deps.Logger,
+		reg:                      deps.Metrics,
+		validator:                deps.Validator,
+		agentVerifier:            deps.AgentVerifier,
+		limiter:                  deps.Limiter,
+		directiveResolver:        deps.DirectiveResolver,
+		sessionStore:             deps.SessionStore,
+		sessionCache:             deps.SessionCache,
+		checkpointPool:           deps.CheckpointPool,
+		getOrCreateTimeout:       deps.GetOrCreateTimeout,
+		docsBase:                 deps.Config.ErrorDocsBase,
+		providerRegistry:         providerReg,
+		traceWriter:              httptrace.EffectiveWriter(deps.TraceWriter),
+		idempotencyStore:         deps.IdempotencyStore,
+		idempotencyTimeout:       deps.Config.IdempotencyRedisTimeout,
+		idempotencyCommitTimeout: idempotencyCASHTimeout(deps.Config.IdempotencyRedisTimeout),
 	}
+}
 
-	handler := RequestContextMiddleware(cfg)(
+func wrapRouterHandler(deps RouterDeps, mux *http.ServeMux) http.Handler {
+	return RequestContextMiddleware(deps.Config)(
 		telemetry.SpanMiddleware(deps.Tracer)(
-			metrics.HTTPMiddleware(reg)(
-				ResponseHeadersMiddleware(cfg)(
-					loggingMiddleware(logger, mux),
+			metrics.HTTPMiddleware(deps.Metrics)(
+				ResponseHeadersMiddleware(deps.Config)(
+					loggingMiddleware(deps.Logger, mux),
 				),
 			),
 		),
 	)
-	return handler
 }
 
 func readyWithLog(log *logger.Logger, next http.HandlerFunc) http.HandlerFunc {
@@ -271,6 +283,10 @@ func (r *statusRecorder) WriteHeader(status int) {
 // Flush implements http.Flusher for SSE streaming through middleware wrappers.
 func (r *statusRecorder) Flush() {
 	flushIfSupported(r.ResponseWriter)
+}
+
+func (r *statusRecorder) Unwrap() http.ResponseWriter {
+	return r.ResponseWriter
 }
 
 func requireMethod(w http.ResponseWriter, r *http.Request, method, docsBase string) bool {

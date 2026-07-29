@@ -46,7 +46,7 @@ func TestUnit_ChatCompletions_EmitsTraceOnProviderFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler := NewRouter(RouterDeps{
+	handler := mustNewRouter(t, RouterDeps{
 		Config: chatTestConfig(), Logger: logger.Discard("proxy"),
 		Metrics: metrics.NewProxy("test"), Tracer: telemetry.NoopTracer("proxy"),
 		Validator: &chatMockValidator{res: &auth.ValidateResult{

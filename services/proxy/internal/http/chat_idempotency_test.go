@@ -21,6 +21,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
 	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
+	httpchat "github.com/Rick1330/ibex-harness/services/proxy/internal/http/chat"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/llm"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
@@ -80,7 +81,7 @@ func idempotencyTestRouter(t *testing.T, store idempotency.Store, prov provider.
 	cfg := chatTestConfig()
 	cfg.IdempotencyTTL = time.Hour
 	cfg.IdempotencyRedisTimeout = time.Second
-	return NewRouter(RouterDeps{
+	return mustNewRouter(t, RouterDeps{
 		Config:           cfg,
 		Logger:           logger.Discard("proxy"),
 		Metrics:          metrics.NewProxy("test"),
@@ -265,8 +266,8 @@ func TestUnit_Idempotency_KeyRuneLengthBoundary(t *testing.T) {
 	prov := &countingLLMProvider{name: "openai", models: []string{"gpt-4o"}}
 	handler := idempotencyTestRouter(t, store, prov, nil)
 
-	okKey := strings.Repeat("字", maxIdempotencyKeyLen)
-	if utf8.RuneCountInString(okKey) != maxIdempotencyKeyLen {
+	okKey := strings.Repeat("字", 256)
+	if utf8.RuneCountInString(okKey) != 256 {
 		t.Fatalf("okKey runes=%d", utf8.RuneCountInString(okKey))
 	}
 	recOK := postChat(t, handler, chatRequestOpts{
@@ -274,7 +275,7 @@ func TestUnit_Idempotency_KeyRuneLengthBoundary(t *testing.T) {
 	})
 	assertStatus(t, recOK, http.StatusOK)
 
-	longKey := strings.Repeat("字", maxIdempotencyKeyLen+1)
+	longKey := strings.Repeat("字", 256+1)
 	recBad := postChat(t, handler, chatRequestOpts{
 		body: chatBodyA, auth: true, agentID: testChatAgentID, idempotencyKey: longKey,
 	})
@@ -321,11 +322,11 @@ func TestUnit_Idempotency_NoopStoreNoDedupe(t *testing.T) {
 func TestUnit_FingerprintChatRequest_Stable(t *testing.T) {
 	t.Parallel()
 	parsed := mustParseChatBody(t, chatBodyA)
-	fp1, err := fingerprintChatRequest(parsed)
+	fp1, err := httpchat.FingerprintRequest(parsed)
 	if err != nil {
 		t.Fatal(err)
 	}
-	fp2, err := fingerprintChatRequest(parsed)
+	fp2, err := httpchat.FingerprintRequest(parsed)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -333,7 +334,7 @@ func TestUnit_FingerprintChatRequest_Stable(t *testing.T) {
 		t.Fatalf("fingerprint unstable: %q %q", fp1, fp2)
 	}
 	other := mustParseChatBody(t, chatBodyB)
-	fp3, err := fingerprintChatRequest(other)
+	fp3, err := httpchat.FingerprintRequest(other)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -357,7 +358,7 @@ func TestUnit_ShouldCommitIdempotency(t *testing.T) {
 		{100, false},
 	}
 	for _, tc := range cases {
-		if got := shouldCommitIdempotency(tc.status); got != tc.want {
+		if got := httpchat.ShouldCommit(tc.status); got != tc.want {
 			t.Fatalf("status %d: got %v want %v", tc.status, got, tc.want)
 		}
 	}

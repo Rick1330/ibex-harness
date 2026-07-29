@@ -12,6 +12,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/revocation"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/repository"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/token"
+	"github.com/google/uuid"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -53,31 +54,50 @@ type CreateTokenResult struct {
 	CreatedAt time.Time
 }
 
-// CreateToken generates, hashes, and persists a PAT.
+// CreateToken validates the request, generates a secure random PAT, hashes it,
+// and persists the token row. It returns ErrInvalidArgument for request
+// validation failures, a wrapped error if generation or hashing fails (without
+// persisting anything), and a wrapped repository error if the write fails.
+// The plaintext token in the result is only available at creation time.
 func (s *TokenService) CreateToken(ctx context.Context, req *authv1.CreateTokenRequest) (CreateTokenResult, error) {
+	if err := validateCreateTokenRequest(req); err != nil {
+		return CreateTokenResult{}, err
+	}
+	plaintext, prefix, params, err := buildCreateTokenParams(req, s.argon2)
+	if err != nil {
+		return CreateTokenResult{}, err
+	}
+	return s.persistToken(ctx, params, plaintext, prefix)
+}
+
+func validateCreateTokenRequest(req *authv1.CreateTokenRequest) error {
 	if req.GetOrgId() == "" || req.GetName() == "" {
-		return CreateTokenResult{}, ErrInvalidArgument
+		return ErrInvalidArgument
 	}
 	if req.GetType() != authv1.TokenType_TOKEN_TYPE_PAT && req.GetType() != authv1.TokenType_TOKEN_TYPE_UNSPECIFIED {
-		return CreateTokenResult{}, ErrInvalidArgument
+		return ErrInvalidArgument
 	}
+	return nil
+}
 
-	plaintext, prefix, rowID, err := token.GeneratePAT()
+func buildCreateTokenParams(req *authv1.CreateTokenRequest, argon2 token.Argon2Params) (plaintext, prefix string, params repository.CreateTokenParams, err error) {
+	var rowID uuid.UUID
+	plaintext, prefix, rowID, err = token.GeneratePAT()
 	if err != nil {
-		return CreateTokenResult{}, err
+		err = fmt.Errorf("generate PAT: %w", err)
+		return
 	}
-	hash, err := token.HashBearer(plaintext, s.argon2)
-	if err != nil {
-		return CreateTokenResult{}, err
+	hash, herr := token.HashBearer(plaintext, argon2)
+	if herr != nil {
+		err = fmt.Errorf("hash bearer: %w", herr)
+		return
 	}
-
 	var expiresAt *time.Time
 	if req.GetExpiresAt() != nil {
 		t := req.GetExpiresAt().AsTime()
 		expiresAt = &t
 	}
-
-	params := repository.CreateTokenParams{
+	params = repository.CreateTokenParams{
 		ID:          rowID.String(),
 		OrgID:       req.GetOrgId(),
 		Name:        req.GetName(),
@@ -93,19 +113,20 @@ func (s *TokenService) CreateToken(ctx context.Context, req *authv1.CreateTokenR
 	if req.AgentId != nil {
 		params.AgentID = req.AgentId
 	}
+	return
+}
 
+func (s *TokenService) persistToken(ctx context.Context, params repository.CreateTokenParams, plaintext, prefix string) (CreateTokenResult, error) {
 	id, err := s.repo.CreateToken(ctx, params)
 	if err != nil {
-		return CreateTokenResult{}, err
+		return CreateTokenResult{}, fmt.Errorf("create token org_id=%s: %w", params.OrgID, err)
 	}
-
 	s.logger.InfoCtx(ctx, "token_created",
 		"token_id", id,
-		"org_id", req.GetOrgId(),
+		"org_id", params.OrgID,
 		"type", "pat",
 		"prefix", prefix,
 	)
-
 	return CreateTokenResult{
 		TokenID:   id,
 		Plaintext: plaintext,

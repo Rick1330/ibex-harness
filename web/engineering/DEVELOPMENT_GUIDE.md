@@ -452,6 +452,20 @@ git commit --no-verify
 
 Only skip hooks for urgent or tooling-related cases. The PR description must explain what was skipped and how the equivalent CI checks were verified.
 
+#### Pre-commit / CI golangci-lint parity
+
+The pre-commit `golangci-lint` hook (from the upstream mirror) runs a **single implicit
+config** and is pinned to an older minor version. It does **not** replicate the three-config
+split that `make lint-go` executes (base + complexity + depguard). Consequences:
+
+- Complexity findings (`funlen`, `gocognit`) and depguard boundary checks **are not caught
+  by pre-commit alone**.
+- Before every push, run `make lint-go` in addition to (or instead of) `pre-commit run`.
+
+The gap will be closed in a future chore PR that upgrades the pre-commit mirror to
+`golangci-lint v2.8.0` (matching CI) and adds explicit `--config` flags for each of the
+three lint configs.
+
 ---
 
 ## 9) Contract & Schema Change Process

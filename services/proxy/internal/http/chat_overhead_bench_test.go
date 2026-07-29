@@ -107,7 +107,7 @@ func newChatOverheadHandler(b *testing.B) http.Handler {
 	if err != nil {
 		b.Fatalf("registry: %v", err)
 	}
-	return NewRouter(RouterDeps{
+	return mustNewRouter(b, RouterDeps{
 		Config:            chatTestConfig(),
 		Logger:            logger.Discard("proxy"),
 		Metrics:           metrics.NewProxy("chat-overhead"),

@@ -23,6 +23,10 @@ func (r *statusRecorder) Flush() {
 	}
 }
 
+func (r *statusRecorder) Unwrap() http.ResponseWriter {
+	return r.ResponseWriter
+}
+
 // HTTPMiddleware records proxy HTTP request metrics and active connections.
 func HTTPMiddleware(reg *ProxyRegistry) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {

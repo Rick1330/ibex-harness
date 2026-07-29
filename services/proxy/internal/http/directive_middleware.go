@@ -7,6 +7,7 @@ import (
 
 	"github.com/Rick1330/ibex-harness/packages/directive"
 	"github.com/Rick1330/ibex-harness/packages/logger"
+	httptrace "github.com/Rick1330/ibex-harness/services/proxy/internal/http/trace"
 )
 
 // ResolveTimeout budgets Redis GET plus a Postgres miss on the chat hot path.
@@ -44,7 +45,7 @@ func (h *directiveResolveHandler) ServeHTTP(w http.ResponseWriter, r *http.Reque
 	resolveCtx, cancel := context.WithTimeout(r.Context(), ResolveTimeout)
 	defer cancel()
 	resolved, err := h.resolver.Resolve(resolveCtx, agent.OrgID, agent.ID)
-	elapsed := clampUint16Ms(time.Since(start))
+	elapsed := httptrace.ClampUint16Ms(time.Since(start))
 	if err != nil {
 		h.logger.WarnCtx(r.Context(), "directive resolve failed; continuing without directive",
 			"org_id", agent.OrgID.String(),
