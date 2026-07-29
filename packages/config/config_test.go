@@ -60,15 +60,26 @@ func withDebugLogger(t *testing.T, logFn func(), assertFn func(out string)) {
 	}
 	old := os.Stderr
 	os.Stderr = w
+	t.Cleanup(func() {
+		os.Stderr = old
+		_ = w.Close() //nolint:errcheck // test teardown restores stderr
+	})
+
+	outCh := make(chan string, 1)
+	go func() {
+		var buf strings.Builder
+		_, copyErr := io.Copy(&buf, r)
+		_ = r.Close() //nolint:errcheck // drain pipe after copy
+		if copyErr != nil {
+			outCh <- ""
+			return
+		}
+		outCh <- buf.String()
+	}()
+
 	logFn()
-	_ = w.Close()
-	os.Stderr = old
-	var buf strings.Builder
-	if _, copyErr := io.Copy(&buf, r); copyErr != nil {
-		t.Fatalf("read stderr: %v", copyErr)
-	}
-	_ = r.Close()
-	assertFn(buf.String())
+	_ = w.Close() //nolint:errcheck // signal EOF to reader goroutine
+	assertFn(<-outCh)
 }
 
 func TestLogDebug_redactsSecretsAndNestedStructs(t *testing.T) {

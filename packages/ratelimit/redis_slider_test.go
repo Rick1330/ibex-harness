@@ -10,20 +10,25 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+type limitExpect struct {
+	allowed bool
+	remain  int
+	limit   int64
+}
+
 func TestRedisSlider_underAtOverLimit(t *testing.T) {
 	t.Parallel()
 
 	testOrgID := uuid.MustParse("550e8400-e29b-41d4-a716-446655440000")
 	tests := []struct {
-		name        string
-		requests    int
-		limit       int64
-		wantAllowed bool
-		wantRemain  int
+		name     string
+		requests int
+		limit    int64
+		want     limitExpect
 	}{
-		{name: "under limit", requests: 10, limit: 60, wantAllowed: true, wantRemain: 50},
-		{name: "at limit", requests: 60, limit: 60, wantAllowed: true, wantRemain: 0},
-		{name: "over limit", requests: 61, limit: 60, wantAllowed: false, wantRemain: 0},
+		{name: "under limit", requests: 10, limit: 60, want: limitExpect{allowed: true, remain: 50, limit: 60}},
+		{name: "at limit", requests: 60, limit: 60, want: limitExpect{allowed: true, remain: 0, limit: 60}},
+		{name: "over limit", requests: 61, limit: 60, want: limitExpect{allowed: false, remain: 0, limit: 60}},
 	}
 
 	for _, tc := range tests {
@@ -32,7 +37,7 @@ func TestRedisSlider_underAtOverLimit(t *testing.T) {
 			t.Parallel()
 			slider := newTestSlider(t, RedisSliderConfig{DefaultRPM: tc.limit})
 			result := checkN(t, slider, testOrgID, tc.requests)
-			assertLimitResult(t, result, tc.wantAllowed, tc.wantRemain, tc.limit)
+			assertLimitResult(t, result, tc.want)
 		})
 	}
 }
@@ -48,8 +53,8 @@ func TestRedisSlider_orgOverride(t *testing.T) {
 	})
 
 	assertAllowedN(t, slider, orgA, 2)
-	assertDenied(t, slider, orgA)
-	assertAllowed(t, slider, orgB)
+	assertCheckAllowed(t, slider, orgA, false)
+	assertCheckAllowed(t, slider, orgB, true)
 }
 
 func newTestSlider(t *testing.T, cfg RedisSliderConfig) Limiter {
@@ -77,16 +82,16 @@ func checkN(t *testing.T, slider Limiter, orgID uuid.UUID, n int) Result {
 	return result
 }
 
-func assertLimitResult(t *testing.T, result Result, wantAllowed bool, wantRemain int, wantLimit int64) {
+func assertLimitResult(t *testing.T, result Result, want limitExpect) {
 	t.Helper()
-	if result.Allowed != wantAllowed {
-		t.Errorf("Allowed = %v, want %v", result.Allowed, wantAllowed)
+	if result.Allowed != want.allowed {
+		t.Errorf("Allowed = %v, want %v", result.Allowed, want.allowed)
 	}
-	if result.Remaining != wantRemain {
-		t.Errorf("Remaining = %d, want %d", result.Remaining, wantRemain)
+	if result.Remaining != want.remain {
+		t.Errorf("Remaining = %d, want %d", result.Remaining, want.remain)
 	}
-	if result.Limit != int(wantLimit) {
-		t.Errorf("Limit = %d, want %d", result.Limit, wantLimit)
+	if result.Limit != int(want.limit) {
+		t.Errorf("Limit = %d, want %d", result.Limit, want.limit)
 	}
 	if result.ResetUnix <= 0 {
 		t.Error("ResetUnix should be positive")
@@ -96,29 +101,18 @@ func assertLimitResult(t *testing.T, result Result, wantAllowed bool, wantRemain
 func assertAllowedN(t *testing.T, slider Limiter, orgID uuid.UUID, n int) {
 	t.Helper()
 	for i := 0; i < n; i++ {
-		assertAllowed(t, slider, orgID)
+		assertCheckAllowed(t, slider, orgID, true)
 	}
 }
 
-func assertAllowed(t *testing.T, slider Limiter, orgID uuid.UUID) {
+func assertCheckAllowed(t *testing.T, slider Limiter, orgID uuid.UUID, wantAllowed bool) {
 	t.Helper()
 	res, err := slider.Check(context.Background(), orgID, uuid.Nil)
 	if err != nil {
 		t.Fatalf("Check: %v", err)
 	}
-	if !res.Allowed {
-		t.Fatal("expected allowed")
-	}
-}
-
-func assertDenied(t *testing.T, slider Limiter, orgID uuid.UUID) {
-	t.Helper()
-	res, err := slider.Check(context.Background(), orgID, uuid.Nil)
-	if err != nil {
-		t.Fatalf("Check: %v", err)
-	}
-	if res.Allowed {
-		t.Fatal("expected denied")
+	if res.Allowed != wantAllowed {
+		t.Fatalf("allowed = %v, want %v", res.Allowed, wantAllowed)
 	}
 }
 

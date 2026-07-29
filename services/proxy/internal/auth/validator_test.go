@@ -68,10 +68,12 @@ func TestNewGRPCValidator_defaultTimeout(t *testing.T) {
 			}, nil
 		},
 	}
+
 	v, err := NewGRPCValidator(client, 0)
 	if err != nil {
 		t.Fatalf("NewGRPCValidator: %v", err)
 	}
+
 	if v.timeout != 50*time.Millisecond {
 		t.Fatalf("timeout: %s", v.timeout)
 	}

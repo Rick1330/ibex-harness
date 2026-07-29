@@ -50,7 +50,7 @@ func mapValidateTokenError(err error) error {
 func mapValidateTokenResponse(resp *authv1.ValidateTokenResponse) (*ValidateResult, error) {
 	orgID, err := uuid.Parse(resp.GetOrgId())
 	if err != nil {
-		return nil, fmt.Errorf("%w: invalid org_id: %v", ErrAuthUnavailable, err)
+		return nil, fmt.Errorf("%w: invalid org_id: %w", ErrAuthUnavailable, err)
 	}
 	result := &ValidateResult{
 		OrgID:       orgID,
@@ -59,7 +59,7 @@ func mapValidateTokenResponse(resp *authv1.ValidateTokenResponse) (*ValidateResu
 	if resp.AgentId != nil {
 		agentID, err := uuid.Parse(resp.GetAgentId())
 		if err != nil {
-			return nil, fmt.Errorf("%w: invalid agent_id: %v", ErrAuthUnavailable, err)
+			return nil, fmt.Errorf("%w: invalid agent_id: %w", ErrAuthUnavailable, err)
 		}
 		result.AgentID = agentID
 	}
