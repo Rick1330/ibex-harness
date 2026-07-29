@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	apierror "github.com/Rick1330/ibex-harness/packages/apierror"
 	"github.com/Rick1330/ibex-harness/packages/idempotency"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/metrics"
@@ -33,15 +34,17 @@ func authReq(orgID string) *http.Request {
 	return req
 }
 
+type parseKeyCase struct {
+	name    string
+	raw     string
+	present bool
+	errCode string
+}
+
 func TestUnit_ParseKey(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name    string
-		raw     string
-		present bool
-		errCode string
-	}{
+	tests := []parseKeyCase{
 		{name: "missing", raw: "", present: false},
 		{name: "whitespace only", raw: "   ", present: false},
 		{name: "valid", raw: "abc", present: true},
@@ -52,27 +55,51 @@ func TestUnit_ParseKey(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+
 			h := http.Header{}
 			if tc.raw != "" {
 				h.Set(idempotencyHeader, tc.raw)
 			}
+
 			key, present, fieldErr := ParseKey(h)
-			if present != tc.present {
-				t.Fatalf("present=%v want %v", present, tc.present)
-			}
-			if tc.errCode == "" {
-				if fieldErr != nil {
-					t.Fatalf("unexpected field err: %+v", fieldErr)
-				}
-				if present && key == "" {
-					t.Fatal("expected non-empty key")
-				}
-				return
-			}
-			if fieldErr == nil || fieldErr.Code != tc.errCode {
-				t.Fatalf("fieldErr=%+v want code %s", fieldErr, tc.errCode)
-			}
+
+			assertParseKey(t, tc, key, present, fieldErr)
 		})
+	}
+}
+
+func assertParseKey(t *testing.T, tc parseKeyCase, key string, present bool, fieldErr *apierror.FieldError) {
+	t.Helper()
+	if present != tc.present {
+		t.Fatalf("present=%v want %v", present, tc.present)
+	}
+	if tc.errCode != "" {
+		assertParseKeyError(t, fieldErr, tc.errCode)
+		return
+	}
+	assertParseKeyOK(t, key, present, fieldErr)
+}
+
+func assertParseKeyError(t *testing.T, fieldErr *apierror.FieldError, wantCode string) {
+	t.Helper()
+	if fieldErr == nil {
+		t.Fatal("expected field error")
+	}
+	if fieldErr.Code != wantCode {
+		t.Fatalf("code=%s want %s", fieldErr.Code, wantCode)
+	}
+}
+
+func assertParseKeyOK(t *testing.T, key string, present bool, fieldErr *apierror.FieldError) {
+	t.Helper()
+	if fieldErr != nil {
+		t.Fatalf("unexpected field err: %+v", fieldErr)
+	}
+	if !present {
+		return
+	}
+	if key == "" {
+		t.Fatal("expected non-empty key")
 	}
 }
 
@@ -85,14 +112,23 @@ func TestUnit_FingerprintRequest(t *testing.T) {
 		Model: "m", Messages: []llm.Message{{Role: "user", Content: "hi"}},
 		Temperature: &temp, MaxTokens: &maxTok,
 	}
+
 	fp1, err := FingerprintRequest(parsed)
-	if err != nil || fp1 == "" {
-		t.Fatalf("fp1=%q err=%v", fp1, err)
+	if err != nil {
+		t.Fatal(err)
 	}
+	if fp1 == "" {
+		t.Fatal("empty fingerprint")
+	}
+
 	fp2, err := FingerprintRequest(parsed)
-	if err != nil || fp2 != fp1 {
-		t.Fatalf("unstable fingerprint: %q %q err=%v", fp1, fp2, err)
+	if err != nil {
+		t.Fatal(err)
 	}
+	if fp2 != fp1 {
+		t.Fatalf("unstable fingerprint: %q %q", fp1, fp2)
+	}
+
 	parsed.Stream = true
 	fp3, err := FingerprintRequest(parsed)
 	if err != nil {
@@ -103,50 +139,55 @@ func TestUnit_FingerprintRequest(t *testing.T) {
 	}
 }
 
-func TestUnit_Resolve_Paths(t *testing.T) {
+func TestUnit_Resolve_MissingKeyContinues(t *testing.T) {
 	t.Parallel()
 
-	t.Run("missing key continues", func(t *testing.T) {
-		t.Parallel()
-		id := testIdempotency()
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodPost, "/", nil)
-		claim, cont := id.Resolve(rec, req, &llm.ChatCompletionRequest{Model: "m"})
-		if claim != nil || !cont {
-			t.Fatalf("claim=%v cont=%v", claim, cont)
-		}
-	})
+	id := testIdempotency()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
 
-	t.Run("too long key rejects", func(t *testing.T) {
-		t.Parallel()
-		id := testIdempotency()
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodPost, "/", nil)
-		req.Header.Set(idempotencyHeader, strings.Repeat("k", maxIdempotencyKeyLen+1))
-		claim, cont := id.Resolve(rec, req, &llm.ChatCompletionRequest{Model: "m"})
-		if claim != nil || cont {
-			t.Fatalf("claim=%v cont=%v", claim, cont)
-		}
-		if rec.Code != http.StatusBadRequest {
-			t.Fatalf("status=%d", rec.Code)
-		}
-	})
+	claim, cont := id.Resolve(rec, req, &llm.ChatCompletionRequest{Model: "m"})
 
-	t.Run("stream rejects", func(t *testing.T) {
-		t.Parallel()
-		id := testIdempotency()
-		id.Store = idempotency.Noop()
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodPost, "/", nil)
-		req.Header.Set(idempotencyHeader, "k")
-		claim, cont := id.Resolve(rec, req, &llm.ChatCompletionRequest{Model: "m", Stream: true})
-		if claim != nil || cont {
-			t.Fatalf("claim=%v cont=%v", claim, cont)
-		}
-		if rec.Code != http.StatusBadRequest {
-			t.Fatalf("status=%d", rec.Code)
-		}
-	})
+	assertClaimCont(t, claim, cont, false, true)
+}
+
+func TestUnit_Resolve_TooLongKeyRejects(t *testing.T) {
+	t.Parallel()
+
+	id := testIdempotency()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	req.Header.Set(idempotencyHeader, strings.Repeat("k", maxIdempotencyKeyLen+1))
+
+	claim, cont := id.Resolve(rec, req, &llm.ChatCompletionRequest{Model: "m"})
+
+	assertClaimCont(t, claim, cont, false, false)
+	assertHTTPStatus(t, rec, http.StatusBadRequest)
+}
+
+func TestUnit_Resolve_StreamRejects(t *testing.T) {
+	t.Parallel()
+
+	id := testIdempotency()
+	id.Store = idempotency.Noop()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	req.Header.Set(idempotencyHeader, "k")
+
+	claim, cont := id.Resolve(rec, req, &llm.ChatCompletionRequest{Model: "m", Stream: true})
+
+	assertClaimCont(t, claim, cont, false, false)
+	assertHTTPStatus(t, rec, http.StatusBadRequest)
+}
+
+type outcomeCase struct {
+	name       string
+	kind       idempotency.Kind
+	record     idempotency.Record
+	wantClaim  bool
+	wantCont   bool
+	wantReplay bool
+	wantStatus int
 }
 
 func TestUnit_HandleOutcome_Kinds(t *testing.T) {
@@ -155,57 +196,82 @@ func TestUnit_HandleOutcome_Kinds(t *testing.T) {
 	id := testIdempotency()
 	org := uuid.MustParse(testChatOrgID)
 	req := authReq(org.String())
+	tests := []outcomeCase{
+		{name: "miss", kind: idempotency.KindMiss, wantClaim: true, wantCont: true},
+		{
+			name: "hit", kind: idempotency.KindHit,
+			record:    idempotency.Record{Status: 200, Body: []byte(`{}`)},
+			wantClaim: true, wantCont: true, wantReplay: true,
+		},
+		{name: "conflict", kind: idempotency.KindConflict, wantStatus: http.StatusConflict},
+		{name: "in progress", kind: idempotency.KindInProgress, wantStatus: http.StatusConflict},
+	}
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-	t.Run("miss", func(t *testing.T) {
-		t.Parallel()
-		rec := httptest.NewRecorder()
-		claim, cont := id.handleOutcome(claimOutcomeParams{
-			w: rec, r: req, orgID: org, key: "k", fp: "fp",
-			out: idempotency.Outcome{Kind: idempotency.KindMiss},
-		})
-		if !cont || claim == nil || claim.Replay {
-			t.Fatalf("claim=%+v cont=%v", claim, cont)
-		}
-	})
+			rec := httptest.NewRecorder()
 
-	t.Run("hit", func(t *testing.T) {
-		t.Parallel()
-		rec := httptest.NewRecorder()
-		claim, cont := id.handleOutcome(claimOutcomeParams{
-			w: rec, r: req, orgID: org, key: "k", fp: "fp",
-			out: idempotency.Outcome{
-				Kind:   idempotency.KindHit,
-				Record: idempotency.Record{Status: 200, Body: []byte(`{}`)},
-			},
-		})
-		if !cont || claim == nil || !claim.Replay {
-			t.Fatalf("claim=%+v cont=%v", claim, cont)
-		}
-	})
+			claim, cont := id.handleOutcome(claimOutcomeParams{
+				w: rec, r: req, orgID: org, key: "k", fp: "fp",
+				out: idempotency.Outcome{Kind: tc.kind, Record: tc.record},
+			})
 
-	t.Run("conflict", func(t *testing.T) {
-		t.Parallel()
-		rec := httptest.NewRecorder()
-		claim, cont := id.handleOutcome(claimOutcomeParams{
-			w: rec, r: req, orgID: org, key: "k", fp: "fp",
-			out: idempotency.Outcome{Kind: idempotency.KindConflict},
+			assertOutcome(t, tc, claim, cont, rec.Code)
 		})
-		if claim != nil || cont || rec.Code != http.StatusConflict {
-			t.Fatalf("claim=%v cont=%v status=%d", claim, cont, rec.Code)
-		}
-	})
+	}
+}
 
-	t.Run("in progress", func(t *testing.T) {
-		t.Parallel()
-		rec := httptest.NewRecorder()
-		claim, cont := id.handleOutcome(claimOutcomeParams{
-			w: rec, r: req, orgID: org, key: "k", fp: "fp",
-			out: idempotency.Outcome{Kind: idempotency.KindInProgress},
-		})
-		if claim != nil || cont || rec.Code != http.StatusConflict {
-			t.Fatalf("claim=%v cont=%v status=%d", claim, cont, rec.Code)
+func assertOutcome(t *testing.T, tc outcomeCase, claim *Claim, cont bool, status int) {
+	t.Helper()
+	assertClaimPresent(t, claim, tc.wantClaim)
+	if cont != tc.wantCont {
+		t.Fatalf("cont=%v want %v", cont, tc.wantCont)
+	}
+	assertClaimReplay(t, claim, tc.wantReplay)
+	if tc.wantStatus == 0 {
+		return
+	}
+	if status != tc.wantStatus {
+		t.Fatalf("status=%d want %d", status, tc.wantStatus)
+	}
+}
+
+func assertClaimPresent(t *testing.T, claim *Claim, want bool) {
+	t.Helper()
+	got := claim != nil
+	if got != want {
+		t.Fatalf("claim present=%v want %v", got, want)
+	}
+}
+
+func assertClaimReplay(t *testing.T, claim *Claim, want bool) {
+	t.Helper()
+	if claim == nil {
+		if want {
+			t.Fatal("expected replay claim")
 		}
-	})
+		return
+	}
+	if claim.Replay != want {
+		t.Fatalf("replay=%v want %v", claim.Replay, want)
+	}
+}
+
+func assertClaimCont(t *testing.T, claim *Claim, cont, wantClaim, wantCont bool) {
+	t.Helper()
+	assertClaimPresent(t, claim, wantClaim)
+	if cont != wantCont {
+		t.Fatalf("cont=%v want %v", cont, wantCont)
+	}
+}
+
+func assertHTTPStatus(t *testing.T, rec *httptest.ResponseRecorder, want int) {
+	t.Helper()
+	if rec.Code != want {
+		t.Fatalf("status=%d want %d", rec.Code, want)
+	}
 }
 
 func TestUnit_Claim_RedisErrorFailOpen(t *testing.T) {
@@ -215,10 +281,10 @@ func TestUnit_Claim_RedisErrorFailOpen(t *testing.T) {
 	id.Store = errIdempotencyStore{claimErr: errors.New("redis down")}
 	rec := httptest.NewRecorder()
 	req := authReq(testChatOrgID)
+
 	claim, cont := id.claim(rec, req, &llm.ChatCompletionRequest{Model: "m"}, "k")
-	if claim != nil || !cont {
-		t.Fatalf("claim=%v cont=%v", claim, cont)
-	}
+
+	assertClaimCont(t, claim, cont, false, true)
 }
 
 func TestUnit_Claim_MissViaStore(t *testing.T) {
@@ -228,22 +294,23 @@ func TestUnit_Claim_MissViaStore(t *testing.T) {
 	id := newIdForStore(store)
 	rec := httptest.NewRecorder()
 	req := authReq(testChatOrgID)
+
 	claim, cont := id.claim(rec, req, &llm.ChatCompletionRequest{
 		Model: "m", Messages: []llm.Message{{Role: "user", Content: "hi"}},
 	}, "fresh-key")
-	if !cont || claim == nil || claim.Replay {
-		t.Fatalf("claim=%+v cont=%v", claim, cont)
-	}
+
+	assertClaimCont(t, claim, cont, true, true)
+	assertClaimReplay(t, claim, false)
 }
 
 func TestUnit_Replay(t *testing.T) {
 	t.Parallel()
 
 	rec := httptest.NewRecorder()
+
 	Replay(rec, idempotency.Record{Status: http.StatusCreated, Body: []byte(`{"ok":true}`)})
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("status=%d", rec.Code)
-	}
+
+	assertHTTPStatus(t, rec, http.StatusCreated)
 	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
 		t.Fatalf("content-type=%q", ct)
 	}
@@ -276,14 +343,10 @@ func TestUnit_Finish_TransientReleases(t *testing.T) {
 	org := uuid.MustParse(testChatOrgID)
 	fp := idempotency.Fingerprint("fp")
 	tkn, claim := seedClaimForKey(t, claimSeed{store: store, org: org, key: "transient", fp: fp})
+
 	id.Finish(claim, http.StatusTooManyRequests, []byte(`{}`))
-	out, err := store.Claim(context.Background(), tkn, fp)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if out.Kind != idempotency.KindMiss {
-		t.Fatalf("kind=%v want miss", out.Kind)
-	}
+
+	assertStoreKind(t, store, tkn, fp, idempotency.KindMiss)
 }
 
 func TestUnit_Finish_Commits(t *testing.T) {
@@ -294,17 +357,34 @@ func TestUnit_Finish_Commits(t *testing.T) {
 	org := uuid.MustParse(testChatOrgID)
 	fp := idempotency.Fingerprint("fp-commit")
 	tkn, claim := seedClaimForKey(t, claimSeed{store: store, org: org, key: "commit", fp: fp})
+
 	id.Finish(claim, http.StatusOK, []byte(`{"a":1}`))
+
+	out := assertStoreKind(t, store, tkn, fp, idempotency.KindHit)
+	if out.Record.Status != http.StatusOK {
+		t.Fatalf("status=%d", out.Record.Status)
+	}
+	if string(out.Record.Body) != `{"a":1}` {
+		t.Fatalf("body=%q", out.Record.Body)
+	}
+}
+
+func assertStoreKind(
+	t *testing.T,
+	store idempotency.Store,
+	tkn idempotency.Token,
+	fp idempotency.Fingerprint,
+	want idempotency.Kind,
+) idempotency.Outcome {
+	t.Helper()
 	out, err := store.Claim(context.Background(), tkn, fp)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out.Kind != idempotency.KindHit {
-		t.Fatalf("kind=%v want hit", out.Kind)
+	if out.Kind != want {
+		t.Fatalf("kind=%v want %v", out.Kind, want)
 	}
-	if out.Record.Status != http.StatusOK || string(out.Record.Body) != `{"a":1}` {
-		t.Fatalf("record=%+v", out.Record)
-	}
+	return out
 }
 
 func TestUnit_FinishCapture_NilAndSuccess(t *testing.T) {
@@ -321,14 +401,10 @@ func TestUnit_FinishCapture_NilAndSuccess(t *testing.T) {
 	cw := &CapturingWriter{ResponseWriter: httptest.NewRecorder()}
 	cw.WriteHeader(http.StatusOK)
 	_, _ = cw.Write([]byte(`{"ok":1}`))
+
 	id.FinishCapture(claim, cw)
-	out, err := store.Claim(context.Background(), tkn, fp)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if out.Kind != idempotency.KindHit {
-		t.Fatalf("kind=%v want hit", out.Kind)
-	}
+
+	assertStoreKind(t, store, tkn, fp, idempotency.KindHit)
 }
 
 func TestUnit_CASTimeout(t *testing.T) {
@@ -347,15 +423,23 @@ func TestUnit_RedisOpContext_UsesRequestIDAndCommitTimeout(t *testing.T) {
 
 	id := Idempotency{CommitTimeout: 50 * time.Millisecond, Timeout: time.Second}
 	claim := &Claim{RequestID: "req-123"}
+
 	ctx, cancel := id.redisOpContext(claim)
 	defer cancel()
+
 	got, ok := reqid.FromContext(ctx)
-	if !ok || got != "req-123" {
-		t.Fatalf("request id=%q ok=%v", got, ok)
+	if !ok {
+		t.Fatal("missing request id")
+	}
+	if got != "req-123" {
+		t.Fatalf("request id=%q", got)
 	}
 	deadline, ok := ctx.Deadline()
-	if !ok || time.Until(deadline) > 100*time.Millisecond {
-		t.Fatalf("deadline not using CommitTimeout")
+	if !ok {
+		t.Fatal("missing deadline")
+	}
+	if time.Until(deadline) > 100*time.Millisecond {
+		t.Fatal("deadline not using CommitTimeout")
 	}
 }
 
@@ -364,7 +448,9 @@ func TestUnit_CapturingWriter_Flush(t *testing.T) {
 
 	inner := &flushableRecorder{ResponseRecorder: httptest.NewRecorder()}
 	cw := &CapturingWriter{ResponseWriter: inner}
+
 	cw.Flush()
+
 	if !inner.flushed {
 		t.Fatal("expected flush forwarded")
 	}

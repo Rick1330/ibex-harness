@@ -88,13 +88,8 @@ func TestUnit_RunCheckpoint_Success(t *testing.T) {
 
 	fx.deps.RunCheckpoint(fx.params(0), fx.ext)
 
-	if fx.store.appendCount() != 1 {
-		t.Fatalf("appends=%d", fx.store.appendCount())
-	}
-	got, ok := fx.cache.Get(context.Background(), fx.key())
-	if !ok || got.TurnCount != 1 {
-		t.Fatalf("cache=%+v ok=%v", got, ok)
-	}
+	assertAppendCount(t, fx, 1)
+	assertCacheTurnCount(t, fx, 1)
 }
 
 func TestUnit_RunCheckpoint_DuplicateInvalidatesCache(t *testing.T) {
@@ -120,13 +115,8 @@ func TestUnit_RunCheckpoint_RetrySucceeds(t *testing.T) {
 
 	fx.deps.RunCheckpoint(fx.params(0), fx.ext)
 
-	if fx.store.appendCount() < 2 {
-		t.Fatalf("appendCalls=%d want >=2", fx.store.appendCount())
-	}
-	got, ok := fx.cache.Get(context.Background(), fx.key())
-	if !ok || got.TurnCount < 1 {
-		t.Fatalf("cache=%+v ok=%v", got, ok)
-	}
+	assertMinAppendCount(t, fx, 2)
+	assertCacheTurnAtLeast(t, fx, 1)
 }
 
 func TestUnit_RunCheckpoint_AppendError(t *testing.T) {
@@ -137,8 +127,42 @@ func TestUnit_RunCheckpoint_AppendError(t *testing.T) {
 
 	fx.deps.RunCheckpoint(fx.params(0), fx.ext)
 
-	if fx.store.appendCount() != 1 {
-		t.Fatalf("appends=%d", fx.store.appendCount())
+	assertAppendCount(t, fx, 1)
+}
+
+func assertAppendCount(t *testing.T, fx checkpointFixture, want int) {
+	t.Helper()
+	if fx.store.appendCount() != want {
+		t.Fatalf("appends=%d want %d", fx.store.appendCount(), want)
+	}
+}
+
+func assertMinAppendCount(t *testing.T, fx checkpointFixture, want int) {
+	t.Helper()
+	if fx.store.appendCount() < want {
+		t.Fatalf("appendCalls=%d want >=%d", fx.store.appendCount(), want)
+	}
+}
+
+func assertCacheTurnCount(t *testing.T, fx checkpointFixture, want int) {
+	t.Helper()
+	got, ok := fx.cache.Get(context.Background(), fx.key())
+	if !ok {
+		t.Fatal("expected cache hit")
+	}
+	if got.TurnCount != want {
+		t.Fatalf("turnCount=%d want %d", got.TurnCount, want)
+	}
+}
+
+func assertCacheTurnAtLeast(t *testing.T, fx checkpointFixture, want int) {
+	t.Helper()
+	got, ok := fx.cache.Get(context.Background(), fx.key())
+	if !ok {
+		t.Fatal("expected cache hit")
+	}
+	if got.TurnCount < want {
+		t.Fatalf("turnCount=%d want >=%d", got.TurnCount, want)
 	}
 }
 
