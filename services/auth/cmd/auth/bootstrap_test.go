@@ -13,7 +13,6 @@ import (
 	"github.com/Rick1330/ibex-harness/services/auth/internal/repository"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/service"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/token"
-	"google.golang.org/grpc"
 )
 
 func TestBootstrapResources_cleanupNoPanic(t *testing.T) {
@@ -35,7 +34,6 @@ func TestBootstrapResources_cleanupNoPanic(t *testing.T) {
 	res := &bootstrapResources{
 		db:        db,
 		providers: providers,
-		grpcSrv:   grpc.NewServer(), // nosemgrep: go.grpc.security.grpc-server-insecure-connection
 		grpcLis:   lis,
 	}
 	res.cleanup()
@@ -108,5 +106,90 @@ func TestStartAuthGRPC_portInUse(t *testing.T) {
 	_, _, err = startAuthGRPC(config.Config{GRPCPort: port}, deps, reg)
 	if err == nil {
 		t.Fatal("expected listen error when grpc port is in use")
+	}
+}
+
+func TestSetupRevocationPublisher_emptyRedisURL(t *testing.T) {
+	t.Parallel()
+
+	db, err := sql.Open("postgres", "postgres://127.0.0.1:5432/test?sslmode=disable")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	reg := ibexmetrics.NewAuth(ibexmetrics.AuthConfig{ServiceName: "auth", DB: db})
+	log := logger.Discard("auth")
+
+	client, pub, err := setupRevocationPublisher(config.Config{RedisURL: ""}, log, reg)
+	if err != nil {
+		t.Fatalf("setupRevocationPublisher: %v", err)
+	}
+	if client != nil {
+		t.Fatal("expected nil redis client when REDIS_URL empty")
+	}
+	if pub == nil {
+		t.Fatal("expected noop publisher")
+	}
+}
+
+func TestSetupRevocationPublisher_invalidRedisURL(t *testing.T) {
+	t.Parallel()
+
+	db, err := sql.Open("postgres", "postgres://127.0.0.1:5432/test?sslmode=disable")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	reg := ibexmetrics.NewAuth(ibexmetrics.AuthConfig{ServiceName: "auth", DB: db})
+	log := logger.Discard("auth")
+
+	_, _, err = setupRevocationPublisher(config.Config{RedisURL: "not-a-redis-url"}, log, reg)
+	if err == nil {
+		t.Fatal("expected redis URL parse error")
+	}
+}
+
+func TestInitAuthServices_invalidRedisURL(t *testing.T) {
+	t.Parallel()
+
+	db, err := sql.Open("postgres", "postgres://127.0.0.1:5432/test?sslmode=disable")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	reg := ibexmetrics.NewAuth(ibexmetrics.AuthConfig{ServiceName: "auth", DB: db})
+	log := logger.Discard("auth")
+
+	_, err = initAuthServices(config.Config{
+		RedisURL: "not-a-redis-url",
+		Argon2:   token.DefaultArgon2Params(),
+	}, db, log, reg)
+	if err == nil {
+		t.Fatal("expected init failure for invalid redis URL")
+	}
+}
+
+func TestNewAuthGRPCServer_rejectsInvalidDeps(t *testing.T) {
+	t.Parallel()
+
+	db, err := sql.Open("postgres", "postgres://127.0.0.1:5432/test?sslmode=disable")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	reg := ibexmetrics.NewAuth(ibexmetrics.AuthConfig{ServiceName: "auth", DB: db})
+	repo := repository.NewTokensRepository(db, reg)
+	agentsRepo := repository.NewAgentsRepository(db, reg)
+	validator := token.NewValidator(repo, token.DefaultArgon2Params())
+	tokenSvc := service.NewTokenService(repo, token.DefaultArgon2Params(), logger.Discard("auth"), nil)
+	deps := authServiceDeps{validator: validator, tokenSvc: tokenSvc, agentsRepo: agentsRepo}
+
+	_, err = newAuthGRPCServer(deps, nil)
+	if err == nil {
+		t.Fatal("expected grpc server construction error")
 	}
 }

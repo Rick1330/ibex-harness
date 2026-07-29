@@ -10,84 +10,78 @@ import (
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
 )
 
-func assertAuthClientsPresent(t *testing.T, b authClients) {
+func assertAuthClients(t *testing.T, b authClients, present bool) {
 	t.Helper()
-	if b.validator == nil {
-		t.Fatal("validator nil")
+	checks := []struct {
+		name string
+		ok   bool
+	}{
+		{"validator", b.validator != nil},
+		{"agentVerifier", b.agentVerifier != nil},
+		{"client", b.client != nil},
+		{"conn", b.conn != nil},
 	}
-	if b.agentVerifier == nil {
-		t.Fatal("agentVerifier nil")
-	}
-	if b.client == nil {
-		t.Fatal("client nil")
-	}
-	if b.conn == nil {
-		t.Fatal("conn nil")
-	}
-}
-
-func assertAuthClientsAbsent(t *testing.T, b authClients) {
-	t.Helper()
-	if b.validator != nil {
-		t.Fatal("validator should be nil")
-	}
-	if b.agentVerifier != nil {
-		t.Fatal("agentVerifier should be nil")
-	}
-	if b.client != nil {
-		t.Fatal("client should be nil")
-	}
-	if b.conn != nil {
-		t.Fatal("conn should be nil")
-	}
-}
-
-func TestSetupAuthClients_WithGRPCServer(t *testing.T) {
-	t.Parallel()
-	lis := grpctest.StartUnimplementedAuthServer(t)
-	log := logger.Discard("proxy")
-	clients, err := setupAuthClients(config.Config{
-		Environment: "development", AuthGRPCAddr: lis.Addr().String(), AuthValidateTimeout: time.Second,
-	}, log, nil)
-	if err != nil {
-		t.Fatalf("setupAuthClients: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := clients.conn.Close(); err != nil {
-			t.Errorf("close conn: %v", err)
+	for _, c := range checks {
+		if c.ok != present {
+			want := "absent"
+			if present {
+				want = "present"
+			}
+			t.Fatalf("%s should be %s", c.name, want)
 		}
-	})
-	assertAuthClientsPresent(t, clients)
+	}
 }
 
-func TestSetupAuthClients_WithAuthCacheEnabled(t *testing.T) {
+func TestSetupAuthClients_success(t *testing.T) {
 	t.Parallel()
-	lis := grpctest.StartUnimplementedAuthServer(t)
-	log := logger.Discard("proxy")
-	cfg := config.Config{
-		Environment:         "development",
-		AuthGRPCAddr:        lis.Addr().String(),
-		AuthValidateTimeout: time.Second,
-		AuthCache: config.AuthCacheConfig{
-			Enabled:            true,
-			LRUCapacity:        100,
-			LRUMaxTTL:          30 * time.Second,
-			BloomExpectedItems: 1000,
-			BloomFPRate:        0.001,
+
+	cases := []struct {
+		name       string
+		authCache  config.AuthCacheConfig
+		checkCache bool
+	}{
+		{name: "grpc only"},
+		{
+			name: "auth cache",
+			authCache: config.AuthCacheConfig{
+				Enabled:            true,
+				LRUCapacity:        100,
+				LRUMaxTTL:          30 * time.Second,
+				BloomExpectedItems: 1000,
+				BloomFPRate:        0.001,
+			},
+			checkCache: true,
 		},
 	}
-	clients, err := setupAuthClients(cfg, log, nil)
-	if err != nil {
-		t.Fatalf("setupAuthClients: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := clients.conn.Close(); err != nil {
-			t.Errorf("close conn: %v", err)
-		}
-	})
-	assertAuthClientsPresent(t, clients)
-	if _, ok := clients.validator.(auth.CacheInvalidator); !ok {
-		t.Fatal("expected caching validator implementing CacheInvalidator")
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			lis := grpctest.StartUnimplementedAuthServer(t)
+			log := logger.Discard("proxy")
+			cfg := config.Config{
+				Environment:         "development",
+				AuthGRPCAddr:        lis.Addr().String(),
+				AuthValidateTimeout: time.Second,
+				AuthCache:           tc.authCache,
+			}
+			clients, err := setupAuthClients(cfg, log, nil)
+			if err != nil {
+				t.Fatalf("setupAuthClients: %v", err)
+			}
+			t.Cleanup(func() {
+				if err := clients.conn.Close(); err != nil {
+					t.Errorf("close conn: %v", err)
+				}
+			})
+			assertAuthClients(t, clients, true)
+			if tc.checkCache {
+				if _, ok := clients.validator.(auth.CacheInvalidator); !ok {
+					t.Fatal("expected caching validator implementing CacheInvalidator")
+				}
+			}
+		})
 	}
 }
 
@@ -98,7 +92,7 @@ func TestSetupAuthClients_EmptyAddr(t *testing.T) {
 	if err != nil {
 		t.Fatalf("setupAuthClients: %v", err)
 	}
-	assertAuthClientsAbsent(t, clients)
+	assertAuthClients(t, clients, false)
 }
 
 func TestSetupAuthClients_InvalidAuthCacheConfig(t *testing.T) {
