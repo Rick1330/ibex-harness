@@ -25,6 +25,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/require"
 )
 
 type memSessionStore struct {
@@ -96,38 +97,17 @@ func (m *memSessionStore) AbandonIdle(context.Context, session.AbandonIdleParams
 
 func (m *memSessionStore) waitAppends(t *testing.T, n int) {
 	t.Helper()
-	if !waitUntil(2*time.Second, 5*time.Millisecond, func() bool {
+	require.Eventually(t, func() bool {
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		return m.appendCalls >= n
-	}) {
-		t.Fatalf("expected >=%d appends", n)
-	}
+	}, 2*time.Second, 5*time.Millisecond, "expected >=%d appends", n)
 }
 
 func (m *memSessionStore) appendCount() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.appendCalls
-}
-
-func waitUntil(timeout, interval time.Duration, cond func() bool) bool {
-	return pollCond(timeout, interval, true, cond)
-}
-
-func neverTrue(timeout, interval time.Duration, cond func() bool) bool {
-	return pollCond(timeout, interval, false, cond)
-}
-
-func pollCond(timeout, interval time.Duration, want bool, cond func() bool) bool {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if cond() == want {
-			return true
-		}
-		time.Sleep(interval)
-	}
-	return cond() == want
 }
 
 func sessionLifecycleRouter(t *testing.T, store session.Store, pool *asyncpool.Pool, cache *sessioncache.Cache) http.Handler {
@@ -229,11 +209,9 @@ func TestUnit_SessionLifecycle_FailOpenKeepsStickyHeader(t *testing.T) {
 	if rec.Header().Get(httpsession.HeaderSessionID) == "" {
 		t.Fatal("expected sticky session header on fail-open")
 	}
-	if !neverTrue(80*time.Millisecond, 5*time.Millisecond, func() bool {
+	require.Never(t, func() bool {
 		return store.appendCount() > 0
-	}) {
-		t.Fatalf("appendCalls=%d", store.appendCount())
-	}
+	}, 80*time.Millisecond, 5*time.Millisecond, "appendCalls=%d", store.appendCount())
 }
 
 func TestUnit_SessionLifecycle_StreamSetsHeaderBeforeBody(t *testing.T) {
@@ -471,9 +449,7 @@ func TestUnit_EnqueueCheckpoint_SkipsStickyOnly(t *testing.T) {
 	ctx := withResolvedSession(context.Background(), httpsession.Resolved{ExternalID: "sticky"})
 	h.enqueueCheckpoint(ctx, checkpointInput{CompletionText: "x", Model: "m", Provider: "p"})
 
-	if !neverTrue(50*time.Millisecond, 5*time.Millisecond, func() bool {
+	require.Never(t, func() bool {
 		return store.appendCount() > 0
-	}) {
-		t.Fatal("expected no checkpoint for sticky-only session")
-	}
+	}, 50*time.Millisecond, 5*time.Millisecond, "expected no checkpoint for sticky-only session")
 }
