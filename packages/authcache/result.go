@@ -3,13 +3,15 @@ package authcache
 import (
 	"context"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // Result holds validated token claims suitable for caching.
 type Result struct {
-	OrgID       string
+	OrgID       uuid.UUID
 	Permissions int64
-	AgentID     string
+	AgentID     uuid.UUID
 	UserID      string
 	TokenID     string
 	ExpiresAt   time.Time

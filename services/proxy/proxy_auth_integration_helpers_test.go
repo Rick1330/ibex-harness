@@ -195,12 +195,21 @@ func startProxyServerRedis(t *testing.T, authAddr string, srvOpts proxyServerOpt
 		},
 	}
 	client := authv1.NewAuthServiceClient(conn)
-	validator := auth.NewGRPCValidator(client, cfg.AuthValidateTimeout)
-	agentVerifier := auth.NewGRPCAgentVerifier(client, cfg.AuthValidateTimeout)
-	limiter := ratelimit.NewRedisSlider(redisClient, ratelimit.RedisSliderConfig{
+	validator, err := auth.NewGRPCValidator(client, cfg.AuthValidateTimeout)
+	if err != nil {
+		t.Fatalf("NewGRPCValidator: %v", err)
+	}
+	agentVerifier, err := auth.NewGRPCAgentVerifier(client, cfg.AuthValidateTimeout)
+	if err != nil {
+		t.Fatalf("NewGRPCAgentVerifier: %v", err)
+	}
+	limiter, err := ratelimit.NewRedisSlider(redisClient, ratelimit.RedisSliderConfig{
 		DefaultRPM:   defaultRPM,
 		OrgOverrides: orgOverrides,
 	})
+	if err != nil {
+		t.Fatalf("NewRedisSlider: %v", err)
+	}
 	providerReg, err := provider.NewRegistry(srvOpts.providers...)
 	if err != nil {
 		t.Fatalf("provider registry: %v", err)

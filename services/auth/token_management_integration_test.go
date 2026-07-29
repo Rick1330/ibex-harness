@@ -18,6 +18,7 @@ import (
 	"github.com/Rick1330/ibex-harness/services/auth/internal/service"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/token"
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -44,7 +45,9 @@ func startAuthGRPC(t *testing.T, dbDSN string) (authv1.AuthServiceClient, func()
 			grpcserver.MetricsUnaryInterceptor(reg),
 			grpcserver.AuthzUnaryInterceptor(validator),
 		))
-	authv1.RegisterAuthServiceServer(grpcSrv, grpcserver.NewServer(validator, tokenSvc, agentsRepo, reg))
+	srv, err := grpcserver.NewServer(validator, tokenSvc, agentsRepo, reg)
+	require.NoError(t, err)
+	authv1.RegisterAuthServiceServer(grpcSrv, srv)
 	go func() { _ = grpcSrv.Serve(lis) }()
 
 	conn, err := grpc.NewClient(lis.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))

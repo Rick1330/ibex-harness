@@ -15,11 +15,13 @@ type DepthFunc func(depth float64)
 
 // Pool is a fixed-worker, buffered-queue executor.
 type Pool struct {
-	jobs     chan func()
-	wg       sync.WaitGroup
-	submitWG sync.WaitGroup
-	depth    DepthFunc
-	closed   atomic.Bool
+	jobs      chan func()
+	wg        sync.WaitGroup
+	submitWG  sync.WaitGroup
+	depth     DepthFunc
+	closed    atomic.Bool
+	drained   chan struct{}
+	drainOnce sync.Once
 }
 
 // New constructs a pool with the given worker count and queue capacity.
@@ -32,8 +34,9 @@ func New(workers, queueSize int, depth DepthFunc) (*Pool, error) {
 		return nil, fmt.Errorf("asyncpool: queueSize must be >= 1")
 	}
 	p := &Pool{
-		jobs:  make(chan func(), queueSize),
-		depth: depth,
+		jobs:    make(chan func(), queueSize),
+		depth:   depth,
+		drained: make(chan struct{}),
 	}
 	for i := 0; i < workers; i++ {
 		p.wg.Add(1)
@@ -65,14 +68,14 @@ func (p *Pool) Shutdown(ctx context.Context) error {
 		p.submitWG.Wait()
 		close(p.jobs)
 	}
-
-	done := make(chan struct{})
-	go func() {
-		p.wg.Wait()
-		close(done)
-	}()
+	p.drainOnce.Do(func() {
+		go func() {
+			p.wg.Wait()
+			close(p.drained)
+		}()
+	})
 	select {
-	case <-done:
+	case <-p.drained:
 		p.reportDepth()
 		return nil
 	case <-ctx.Done():

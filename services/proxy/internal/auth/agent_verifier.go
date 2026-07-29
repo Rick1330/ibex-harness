@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -43,11 +44,14 @@ type GRPCAgentVerifier struct {
 }
 
 // NewGRPCAgentVerifier creates an agent verifier using the given client and per-call timeout.
-func NewGRPCAgentVerifier(client authv1.AuthServiceClient, timeout time.Duration) *GRPCAgentVerifier {
+func NewGRPCAgentVerifier(client authv1.AuthServiceClient, timeout time.Duration) (*GRPCAgentVerifier, error) {
+	if client == nil {
+		return nil, fmt.Errorf("auth: nil AuthServiceClient for agent verifier")
+	}
 	if timeout <= 0 {
 		timeout = 50 * time.Millisecond
 	}
-	return &GRPCAgentVerifier{client: client, timeout: timeout}
+	return &GRPCAgentVerifier{client: client, timeout: timeout}, nil
 }
 
 // Verify calls auth ValidateAgent with a bounded deadline and forwarded bearer token.

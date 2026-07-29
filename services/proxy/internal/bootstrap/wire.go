@@ -196,6 +196,10 @@ func finishAssembledCore(in finishAssembledCoreInput) (assembledProxyCore, error
 	if err != nil {
 		return assembledProxyCore{}, fmt.Errorf("provider registry: %w", err)
 	}
+	idempStore, err := newIdempotencyStore(in.infra.redisClient, in.cfg)
+	if err != nil {
+		return assembledProxyCore{}, fmt.Errorf("idempotency store: %w", err)
+	}
 	traceWriter := optionalTraceWriter(in.cfg, in.log, in.reg, ibexch.NewWriter)
 	deps := proxyhttp.RouterDeps{
 		Config: in.cfg, Logger: in.log, Metrics: in.reg, Tracer: in.tracer,
@@ -205,7 +209,7 @@ func finishAssembledCore(in finishAssembledCoreInput) (assembledProxyCore, error
 		CheckpointPool: in.infra.sessionStack.pool, GetOrCreateTimeout: in.cfg.SessionGetOrCreateTO,
 		Health:           buildProxyHealth(in.cfg, in.infra.auth.client, in.infra.pgDB),
 		ProviderRegistry: providerReg,
-		IdempotencyStore: newIdempotencyStore(in.infra.redisClient, in.cfg),
+		IdempotencyStore: idempStore,
 	}
 	assignTraceWriter(&deps, traceWriter)
 	server, err := newHTTPServer(deps)

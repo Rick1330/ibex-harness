@@ -11,12 +11,13 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
+	"github.com/google/uuid"
 )
 
 func TestProtectedRoutes_internalAuthProbe_success(t *testing.T) {
 	t.Parallel()
 
-	validator := &mockValidator{res: &auth.ValidateResult{OrgID: agentTestOrgID(), Permissions: permissions.Admin}}
+	validator := &mockValidator{res: &auth.ValidateResult{OrgID: agentTestOrgUUID, Permissions: permissions.Admin}}
 	cfg := config.Config{
 		Environment: "test", ServiceName: "proxy", Port: "8080",
 		MaxRequestBodyBytes: 1 << 20, RequestIDHeader: "X-Request-ID", TraceIDHeader: "X-Trace-ID",
@@ -38,7 +39,7 @@ func TestProtectedRoutes_orgAuthProbe_success(t *testing.T) {
 	t.Parallel()
 
 	orgID := agentTestOrgID()
-	validator := &mockValidator{res: &auth.ValidateResult{OrgID: orgID, Permissions: permissions.Admin}}
+	validator := &mockValidator{res: &auth.ValidateResult{OrgID: uuid.MustParse(orgID), Permissions: permissions.Admin}}
 	cfg := config.Config{
 		Environment: "test", ServiceName: "proxy", Port: "8080",
 		MaxRequestBodyBytes: 1 << 20, RequestIDHeader: "X-Request-ID", TraceIDHeader: "X-Trace-ID",
@@ -59,7 +60,7 @@ func TestProtectedRoutes_orgAuthProbe_success(t *testing.T) {
 func TestProtectedRoutes_orgAuthProbe_orgMismatch(t *testing.T) {
 	t.Parallel()
 
-	validator := &mockValidator{res: &auth.ValidateResult{OrgID: agentTestOrgID(), Permissions: permissions.Admin}}
+	validator := &mockValidator{res: &auth.ValidateResult{OrgID: agentTestOrgUUID, Permissions: permissions.Admin}}
 	cfg := config.Config{
 		Environment: "test", ServiceName: "proxy", Port: "8080",
 		MaxRequestBodyBytes: 1 << 20, RequestIDHeader: "X-Request-ID", TraceIDHeader: "X-Trace-ID",
@@ -85,7 +86,7 @@ func TestProtectedRoutes_orgAuthProbe_methodNotAllowed(t *testing.T) {
 	t.Parallel()
 
 	orgID := agentTestOrgID()
-	validator := &mockValidator{res: &auth.ValidateResult{OrgID: orgID, Permissions: permissions.Admin}}
+	validator := &mockValidator{res: &auth.ValidateResult{OrgID: uuid.MustParse(orgID), Permissions: permissions.Admin}}
 	cfg := config.Config{
 		Environment: "test", ServiceName: "proxy", Port: "8080",
 		MaxRequestBodyBytes: 1 << 20, RequestIDHeader: "X-Request-ID", TraceIDHeader: "X-Trace-ID",

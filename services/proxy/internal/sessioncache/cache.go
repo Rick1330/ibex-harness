@@ -102,7 +102,7 @@ func (c *Cache) Set(ctx context.Context, k LookupKey, e Entry) {
 	if err != nil {
 		return
 	}
-	_ = c.client.Set(ctx, Key(k), payload, c.ttl).Err()
+	_ = c.client.Set(ctx, Key(k), payload, c.ttl).Err() // fail-open: cache miss is acceptable; session will be fetched from Postgres
 }
 
 func (e Entry) withVersion() Entry {
@@ -127,5 +127,5 @@ func (c *Cache) Invalidate(ctx context.Context, k LookupKey) {
 	if !c.readable(k) {
 		return
 	}
-	_ = c.client.Del(ctx, Key(k)).Err()
+	_ = c.client.Del(ctx, Key(k)).Err() // fail-open: cache miss is acceptable; session will be fetched from Postgres
 }

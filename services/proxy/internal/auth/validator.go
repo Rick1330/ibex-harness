@@ -6,6 +6,7 @@ import (
 	"time"
 
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
+	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -17,11 +18,14 @@ type GRPCValidator struct {
 }
 
 // NewGRPCValidator creates a validator using the given client and per-call timeout.
-func NewGRPCValidator(client authv1.AuthServiceClient, timeout time.Duration) *GRPCValidator {
+func NewGRPCValidator(client authv1.AuthServiceClient, timeout time.Duration) (*GRPCValidator, error) {
+	if client == nil {
+		return nil, fmt.Errorf("auth: nil AuthServiceClient for validator")
+	}
 	if timeout <= 0 {
 		timeout = 50 * time.Millisecond
 	}
-	return &GRPCValidator{client: client, timeout: timeout}
+	return &GRPCValidator{client: client, timeout: timeout}, nil
 }
 
 // Validate calls auth ValidateToken with a bounded deadline.
@@ -44,12 +48,13 @@ func mapValidateTokenError(err error) error {
 }
 
 func mapValidateTokenResponse(resp *authv1.ValidateTokenResponse) *ValidateResult {
+	orgID, _ := uuid.Parse(resp.GetOrgId())
 	result := &ValidateResult{
-		OrgID:       resp.GetOrgId(),
+		OrgID:       orgID,
 		Permissions: resp.GetPermissions(),
 	}
 	if resp.AgentId != nil {
-		result.AgentID = resp.GetAgentId()
+		result.AgentID, _ = uuid.Parse(resp.GetAgentId())
 	}
 	if resp.UserId != nil {
 		result.UserID = resp.GetUserId()

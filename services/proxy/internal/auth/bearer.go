@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 var (
@@ -21,9 +23,9 @@ var (
 
 // ValidateResult holds tenant context from a successful ValidateToken call.
 type ValidateResult struct {
-	OrgID       string
+	OrgID       uuid.UUID
 	Permissions int64
-	AgentID     string
+	AgentID     uuid.UUID
 	UserID      string
 	TokenID     string
 	ExpiresAt   time.Time

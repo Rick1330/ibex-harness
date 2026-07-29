@@ -70,7 +70,7 @@ type warmStages struct {
 func newWarmStages(tb testing.TB) *warmStages {
 	tb.Helper()
 	token := "bench-warm-token"
-	up := &fixedAuthUpstream{res: &authcache.Result{OrgID: benchOrgID.String(), Permissions: 1}}
+	up := &fixedAuthUpstream{res: &authcache.Result{OrgID: benchOrgID, Permissions: 1}}
 	authV, err := authcache.New(up, authcache.Config{}, logger.Discard("bench"), authcache.NoopMetrics{})
 	if err != nil {
 		tb.Fatalf("authcache: %v", err)
@@ -97,7 +97,11 @@ func newTestRateLimiter(tb testing.TB) ratelimit.Limiter {
 	mr := miniredis.RunT(tb)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	tb.Cleanup(func() { _ = client.Close() })
-	return ratelimit.NewRedisSlider(client, ratelimit.RedisSliderConfig{DefaultRPM: 1_000_000})
+	limiter, err := ratelimit.NewRedisSlider(client, ratelimit.RedisSliderConfig{DefaultRPM: 1_000_000})
+	if err != nil {
+		tb.Fatalf("NewRedisSlider: %v", err)
+	}
+	return limiter
 }
 
 func newWarmDirectiveResolver(tb testing.TB) (*directive.CachedResolver, uuid.UUID, uuid.UUID) {

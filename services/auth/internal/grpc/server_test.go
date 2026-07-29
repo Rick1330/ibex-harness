@@ -49,7 +49,7 @@ func TestServer_ValidateToken(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			s := newTestServer(&fakeTokenValidator{fn: tc.fn}, &fakeTokenRepo{}, &fakeAgentsStore{})
+			s := newTestServer(t, &fakeTokenValidator{fn: tc.fn}, &fakeTokenRepo{}, &fakeAgentsStore{})
 
 			resp, err := s.ValidateToken(context.Background(), &authv1.ValidateTokenRequest{AccessToken: "tok"})
 
@@ -115,7 +115,7 @@ func TestServer_CreateToken(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			s := newTestServer(
+			s := newTestServer(t,
 				&fakeTokenValidator{},
 				&fakeTokenRepo{},
 				&fakeAgentsStore{},
@@ -154,7 +154,7 @@ func runRevokeTokenCase(t *testing.T, tc revokeTokenCase) {
 	if repo == nil {
 		repo = &fakeTokenRepo{}
 	}
-	s := newTestServer(&fakeTokenValidator{}, repo, &fakeAgentsStore{})
+	s := newTestServer(t, &fakeTokenValidator{}, repo, &fakeAgentsStore{})
 
 	_, err := s.RevokeToken(tc.ctx, tc.req)
 	if tc.wantCode == codes.OK {

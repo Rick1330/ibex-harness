@@ -20,6 +20,7 @@ import (
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/llm"
+	"github.com/google/uuid"
 )
 
 type stubLLMProvider struct {
@@ -262,7 +263,7 @@ func TestUnit_chatCompletionHandler_logsParsedRequest(t *testing.T) {
 		Logger:           logger.Discard("proxy"),
 		Metrics:          metrics.NewProxy("test"),
 		Tracer:           telemetry.NoopTracer("proxy"),
-		Validator:        &chatMockValidator{res: &auth.ValidateResult{OrgID: testChatOrgID, Permissions: permissions.ProxyChatCompletion}},
+		Validator:        &chatMockValidator{res: &auth.ValidateResult{OrgID: uuid.MustParse(testChatOrgID), Permissions: permissions.ProxyChatCompletion}},
 		AgentVerifier:    passAgentVerifier{},
 		Limiter:          ratelimit.Noop(),
 		Health:           testHealthServer(),

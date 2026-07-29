@@ -35,7 +35,10 @@ func TestRedisSlider_underAtOverLimit(t *testing.T) {
 			client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 			t.Cleanup(func() { _ = client.Close() })
 
-			slider := NewRedisSlider(client, RedisSliderConfig{DefaultRPM: tc.limit})
+			slider, sErr := NewRedisSlider(client, RedisSliderConfig{DefaultRPM: tc.limit})
+			if sErr != nil {
+				t.Fatalf("NewRedisSlider: %v", sErr)
+			}
 			var result Result
 			var err error
 			for i := 0; i < tc.requests; i++ {
@@ -70,12 +73,15 @@ func TestRedisSlider_orgOverride(t *testing.T) {
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
 
-	slider := NewRedisSlider(client, RedisSliderConfig{
+	slider, err := NewRedisSlider(client, RedisSliderConfig{
 		DefaultRPM: 60,
 		OrgOverrides: map[uuid.UUID]int64{
 			orgA: 2,
 		},
 	})
+	if err != nil {
+		t.Fatalf("NewRedisSlider: %v", err)
+	}
 
 	for i := 0; i < 2; i++ {
 		res, err := slider.Check(context.Background(), orgA, uuid.Nil)
@@ -106,7 +112,10 @@ func TestRedisSlider_orgOverride(t *testing.T) {
 func TestNewRedisSlider_defaultRPMWhenZero(t *testing.T) {
 	t.Parallel()
 	mr := miniredis.RunT(t)
-	slider := NewRedisSlider(redis.NewClient(&redis.Options{Addr: mr.Addr()}), RedisSliderConfig{DefaultRPM: 0})
+	slider, sErr := NewRedisSlider(redis.NewClient(&redis.Options{Addr: mr.Addr()}), RedisSliderConfig{DefaultRPM: 0})
+	if sErr != nil {
+		t.Fatalf("NewRedisSlider: %v", sErr)
+	}
 	res, err := slider.Check(context.Background(), uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"), uuid.Nil)
 	if err != nil {
 		t.Fatal(err)
@@ -129,7 +138,10 @@ func TestRedisSlider_Check_redisError(t *testing.T) {
 	})
 	t.Cleanup(func() { _ = client.Close() })
 
-	slider := NewRedisSlider(client, RedisSliderConfig{DefaultRPM: 60})
+	slider, sErr := NewRedisSlider(client, RedisSliderConfig{DefaultRPM: 60})
+	if sErr != nil {
+		t.Fatalf("NewRedisSlider: %v", sErr)
+	}
 	_, err := slider.Check(context.Background(), uuid.MustParse("550e8400-e29b-41d4-a716-446655440000"), uuid.Nil)
 	if err == nil {
 		t.Fatal("expected redis infrastructure error")
@@ -143,10 +155,13 @@ func TestRedisSlider_orgOverrideZeroUsesDefault(t *testing.T) {
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
 
-	slider := NewRedisSlider(client, RedisSliderConfig{
+	slider, sErr := NewRedisSlider(client, RedisSliderConfig{
 		DefaultRPM:   60,
 		OrgOverrides: map[uuid.UUID]int64{orgID: 0},
 	})
+	if sErr != nil {
+		t.Fatalf("NewRedisSlider: %v", sErr)
+	}
 	res, err := slider.Check(context.Background(), orgID, uuid.Nil)
 	if err != nil {
 		t.Fatal(err)

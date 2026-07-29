@@ -124,7 +124,7 @@ func newChatOverheadHandler(b *testing.B) http.Handler {
 func newWarmedChatValidator(b *testing.B, orgUUID uuid.UUID) auth.TokenValidator {
 	b.Helper()
 	inner := &chatMockValidator{res: &auth.ValidateResult{
-		OrgID: orgUUID.String(), Permissions: permissions.ProxyChatCompletion,
+		OrgID: orgUUID, Permissions: permissions.ProxyChatCompletion,
 	}}
 	wrapped, err := auth.WrapWithCache(inner, authcache.Config{}, logger.Discard("proxy"), authcache.NoopMetrics{})
 	if err != nil {
@@ -141,7 +141,11 @@ func newBenchRedisLimiter(b *testing.B) ratelimit.Limiter {
 	mr := miniredis.RunT(b)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	b.Cleanup(func() { _ = client.Close() })
-	return ratelimit.NewRedisSlider(client, ratelimit.RedisSliderConfig{DefaultRPM: 1_000_000})
+	limiter, err := ratelimit.NewRedisSlider(client, ratelimit.RedisSliderConfig{DefaultRPM: 1_000_000})
+	if err != nil {
+		b.Fatalf("NewRedisSlider: %v", err)
+	}
+	return limiter
 }
 
 type benchDirectiveLoader struct {

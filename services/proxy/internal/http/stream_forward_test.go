@@ -19,6 +19,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
 	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
+	"github.com/google/uuid"
 )
 
 type streamStubProvider struct {
@@ -291,7 +292,7 @@ func TestUnit_ChatCompletions_streamTrueForwardsSSE(t *testing.T) {
 		},
 	}
 	handler := newStreamTestHandlerWithValidator(t, stub,
-		&chatMockValidator{res: &auth.ValidateResult{OrgID: testChatOrgID, Permissions: permissions.ProxyChatCompletion}})
+		&chatMockValidator{res: &auth.ValidateResult{OrgID: uuid.MustParse(testChatOrgID), Permissions: permissions.ProxyChatCompletion}})
 	rec := postChat(t, handler, chatRequestOpts{
 		body:    `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"stream":true}`,
 		auth:    true,

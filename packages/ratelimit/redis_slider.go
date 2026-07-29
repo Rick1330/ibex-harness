@@ -32,11 +32,14 @@ type RedisSlider struct {
 }
 
 // NewRedisSlider returns an org-level rate limiter backed by Redis.
-func NewRedisSlider(client redis.UniversalClient, cfg RedisSliderConfig) Limiter {
+func NewRedisSlider(client redis.UniversalClient, cfg RedisSliderConfig) (Limiter, error) {
+	if client == nil {
+		return nil, fmt.Errorf("ratelimit: nil redis client")
+	}
 	if cfg.DefaultRPM < 1 {
 		cfg.DefaultRPM = 60
 	}
-	return &RedisSlider{client: client, cfg: cfg}
+	return &RedisSlider{client: client, cfg: cfg}, nil
 }
 
 func (r *RedisSlider) Check(ctx context.Context, orgID, _ uuid.UUID) (Result, error) {

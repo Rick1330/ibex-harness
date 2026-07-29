@@ -45,7 +45,11 @@ func StartAuthGRPC(t testing.TB, dbDSN string) *AuthGRPCFixture {
 			grpcserver.MetricsUnaryInterceptor(reg),
 			grpcserver.AuthzUnaryInterceptor(validator),
 		))
-	authv1.RegisterAuthServiceServer(grpcSrv, grpcserver.NewServer(validator, tokenSvc, agentsRepo, reg))
+	srv, err := grpcserver.NewServer(validator, tokenSvc, agentsRepo, reg)
+	if err != nil {
+		t.Fatalf("grpc server init: %v", err)
+	}
+	authv1.RegisterAuthServiceServer(grpcSrv, srv)
 	go func() { _ = grpcSrv.Serve(lis) }()
 
 	conn, err := grpc.NewClient(lis.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))

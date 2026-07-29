@@ -121,7 +121,7 @@ func writeAuthValidateError(awc authWriteCtx, r *http.Request, log *logger.Logge
 }
 
 func authorizeAuthResult(awc authWriteCtx, res *auth.ValidateResult, opts AuthOptions) bool {
-	if opts.PathOrgID != "" && res.OrgID != opts.PathOrgID {
+	if opts.PathOrgID != "" && res.OrgID.String() != opts.PathOrgID {
 		apierror.WriteStatus(awc.w, http.StatusForbidden, apierror.CodeInsufficientPermissions,
 			"Insufficient permissions", awc.requestID,
 			apierror.WriteOpts{Detail: "organization scope mismatch", DocsBase: awc.docsBase})

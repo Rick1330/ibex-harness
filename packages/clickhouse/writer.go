@@ -139,7 +139,7 @@ func (w *Writer) flushBestEffort() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), w.cfg.FlushTimeout)
 	defer cancel()
-	_ = w.insertRows(ctx, rows) // best-effort: never surfaces to Write
+	_ = w.insertRows(ctx, rows) // best-effort: trace data loss is acceptable; retrying would block the hot path
 }
 
 func (w *Writer) takeBuffer() []TraceRecord {

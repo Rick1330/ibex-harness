@@ -19,7 +19,11 @@ func runAgentVerifierCase(t *testing.T, tc agentVerifierCase) {
 		agentID = "550e8400-e29b-41d4-a716-446655440000"
 		orgID   = "550e8400-e29b-41d4-a716-446655440001"
 	)
-	got, err := NewGRPCAgentVerifier(tc.client, time.Second).Verify(context.Background(), bearer, agentID, orgID)
+	v, vErr := NewGRPCAgentVerifier(tc.client, time.Second)
+	if vErr != nil {
+		t.Fatalf("NewGRPCAgentVerifier: %v", vErr)
+	}
+	got, err := v.Verify(context.Background(), bearer, agentID, orgID)
 	if tc.wantErr != nil {
 		assertWantError(t, err, tc.wantErr)
 		return
@@ -54,11 +58,15 @@ func TestGRPCAgentVerifier_contextDeadline(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
 	defer cancel()
-	_, err := NewGRPCAgentVerifier(&mockAuthServiceClient{
+	av, avErr := NewGRPCAgentVerifier(&mockAuthServiceClient{
 		validateAgentFn: func(context.Context, *authv1.ValidateAgentRequest, ...grpc.CallOption) (*authv1.ValidateAgentResponse, error) {
 			return nil, errors.New("transport error")
 		},
-	}, time.Second).Verify(ctx, "ibex_pat_test", "550e8400-e29b-41d4-a716-446655440000", "550e8400-e29b-41d4-a716-446655440001")
+	}, time.Second)
+	if avErr != nil {
+		t.Fatalf("NewGRPCAgentVerifier: %v", avErr)
+	}
+	_, err := av.Verify(ctx, "ibex_pat_test", "550e8400-e29b-41d4-a716-446655440000", "550e8400-e29b-41d4-a716-446655440001")
 	if !errors.Is(err, ErrAgentVerifyUnavailable) {
 		t.Fatalf("err = %v", err)
 	}
@@ -66,11 +74,15 @@ func TestGRPCAgentVerifier_contextDeadline(t *testing.T) {
 
 func TestGRPCAgentVerifier_unknownGRPCCode(t *testing.T) {
 	t.Parallel()
-	_, err := NewGRPCAgentVerifier(&mockAuthServiceClient{
+	av, avErr := NewGRPCAgentVerifier(&mockAuthServiceClient{
 		validateAgentFn: func(context.Context, *authv1.ValidateAgentRequest, ...grpc.CallOption) (*authv1.ValidateAgentResponse, error) {
 			return nil, status.Error(codes.Unknown, "unexpected")
 		},
-	}, time.Second).Verify(context.Background(), "ibex_pat_test", "550e8400-e29b-41d4-a716-446655440000", "550e8400-e29b-41d4-a716-446655440001")
+	}, time.Second)
+	if avErr != nil {
+		t.Fatalf("NewGRPCAgentVerifier: %v", avErr)
+	}
+	_, err := av.Verify(context.Background(), "ibex_pat_test", "550e8400-e29b-41d4-a716-446655440000", "550e8400-e29b-41d4-a716-446655440001")
 	if !errors.Is(err, ErrAgentVerifyUnavailable) {
 		t.Fatalf("err = %v", err)
 	}
@@ -78,7 +90,10 @@ func TestGRPCAgentVerifier_unknownGRPCCode(t *testing.T) {
 
 func TestNewGRPCAgentVerifier_defaultTimeout(t *testing.T) {
 	t.Parallel()
-	v := NewGRPCAgentVerifier(&mockAuthServiceClient{}, 0)
+	v, err := NewGRPCAgentVerifier(&mockAuthServiceClient{}, 0)
+	if err != nil {
+		t.Fatalf("NewGRPCAgentVerifier: %v", err)
+	}
 	if v.timeout != 50*time.Millisecond {
 		t.Fatalf("timeout: %s", v.timeout)
 	}

@@ -22,7 +22,7 @@ func TestShutdownDrainsSlowHandler(t *testing.T) {
 	server := &http.Server{
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			close(handlerStarted)
-			time.Sleep(150 * time.Millisecond)
+			time.Sleep(150 * time.Millisecond) // intentional: simulates in-flight slow handler
 			handlerDone.Store(true)
 			w.WriteHeader(http.StatusOK)
 		}),

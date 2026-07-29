@@ -30,7 +30,7 @@ func testIdempotency() Idempotency {
 
 func authReq(orgID string) *http.Request {
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
-	req = req.WithContext(auth.WithContext(req.Context(), &auth.ValidateResult{OrgID: orgID}))
+	req = req.WithContext(auth.WithContext(req.Context(), &auth.ValidateResult{OrgID: uuid.MustParse(orgID)}))
 	return req
 }
 

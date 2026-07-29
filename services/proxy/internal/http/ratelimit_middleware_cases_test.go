@@ -23,9 +23,9 @@ func serveRateLimitProbe(t *testing.T, limiter ratelimit.Limiter, req *http.Requ
 	return rec
 }
 
-func rateLimitProbeRequest(orgID string) *http.Request {
+func rateLimitProbeRequest(orgID uuid.UUID) *http.Request {
 	req := httptest.NewRequest(http.MethodGet, "/v1/internal/auth-probe", nil)
-	if orgID == "" {
+	if orgID == uuid.Nil {
 		return req
 	}
 	return req.WithContext(auth.WithContext(req.Context(), &auth.ValidateResult{OrgID: orgID}))
@@ -33,12 +33,12 @@ func rateLimitProbeRequest(orgID string) *http.Request {
 
 func TestRateLimitMiddleware_errorPaths(t *testing.T) {
 	t.Parallel()
-	orgID := uuid.MustParse("550e8400-e29b-41d4-a716-446655440000").String()
+	orgID := uuid.MustParse("550e8400-e29b-41d4-a716-446655440000")
 
 	cases := []struct {
 		name       string
 		limiter    ratelimit.Limiter
-		orgID      string
+		orgID      uuid.UUID
 		wantStatus int
 	}{
 		{
@@ -46,7 +46,7 @@ func TestRateLimitMiddleware_errorPaths(t *testing.T) {
 			wantStatus: http.StatusInternalServerError,
 		},
 		{
-			name: "invalid org id", limiter: &mockLimiter{}, orgID: "not-a-uuid",
+			name: "invalid org id", limiter: &mockLimiter{}, orgID: uuid.Nil,
 			wantStatus: http.StatusInternalServerError,
 		},
 		{

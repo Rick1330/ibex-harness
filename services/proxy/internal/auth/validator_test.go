@@ -13,7 +13,11 @@ func strPtr(s string) *string { return &s }
 
 func runGRPCValidatorCase(t *testing.T, tc grpcValidatorCase, accessToken string) {
 	t.Helper()
-	got, err := NewGRPCValidator(tc.client, time.Second).Validate(context.Background(), accessToken)
+	v, vErr := NewGRPCValidator(tc.client, time.Second)
+	if vErr != nil {
+		t.Fatalf("NewGRPCValidator: %v", vErr)
+	}
+	got, err := v.Validate(context.Background(), accessToken)
 	if tc.wantErr != nil {
 		assertWantError(t, err, tc.wantErr)
 		return
@@ -57,7 +61,10 @@ func TestNewGRPCValidator_defaultTimeout(t *testing.T) {
 			return &authv1.ValidateTokenResponse{OrgId: "org", Permissions: 1}, nil
 		},
 	}
-	v := NewGRPCValidator(client, 0)
+	v, err := NewGRPCValidator(client, 0)
+	if err != nil {
+		t.Fatalf("NewGRPCValidator: %v", err)
+	}
 	if v.timeout != 50*time.Millisecond {
 		t.Fatalf("timeout: %s", v.timeout)
 	}

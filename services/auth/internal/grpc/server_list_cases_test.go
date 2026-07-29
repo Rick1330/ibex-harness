@@ -62,7 +62,7 @@ func runListTokensCase(t *testing.T, orgID string, tc listTokensCase) {
 	if repo == nil {
 		repo = &fakeTokenRepo{}
 	}
-	s := newTestServer(&fakeTokenValidator{}, repo, &fakeAgentsStore{})
+	s := newTestServer(t, &fakeTokenValidator{}, repo, &fakeAgentsStore{})
 	resp, err := s.ListTokens(tc.ctx, &authv1.ListTokensRequest{OrgId: orgID, Limit: 10})
 	if tc.wantCode == codes.OK {
 		if err != nil {

@@ -3,6 +3,7 @@ package grpcserver
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/metrics"
@@ -40,13 +41,22 @@ func NewServer(
 	tokenSvc *service.TokenService,
 	agentsStore AgentStore,
 	reg *metrics.AuthRegistry,
-) *Server {
+) (*Server, error) {
+	if validator == nil {
+		return nil, fmt.Errorf("grpcserver: nil validator")
+	}
+	if tokenSvc == nil {
+		return nil, fmt.Errorf("grpcserver: nil tokenService")
+	}
+	if agentsStore == nil {
+		return nil, fmt.Errorf("grpcserver: nil agentsStore")
+	}
 	return &Server{
 		validator:    validator,
 		tokenService: tokenSvc,
 		metrics:      reg,
 		agentsStore:  agentsStore,
-	}
+	}, nil
 }
 
 func (s *Server) ValidateToken(ctx context.Context, req *authv1.ValidateTokenRequest) (*authv1.ValidateTokenResponse, error) {
@@ -137,38 +147,20 @@ func (s *Server) ValidateAgent(ctx context.Context, req *authv1.ValidateAgentReq
 
 	caller, ok := CallerFromContext(ctx)
 	if !ok {
-		s.observeValidateAgent(start, metrics.AgentResultError)
-		return nil, status.Error(codes.Unauthenticated, "missing caller context")
+		return nil, s.agentValidateErr(start, metrics.AgentResultError, codes.Unauthenticated, "missing caller context")
 	}
-
 	if caller.OrgID != req.GetOrgId() {
-		s.observeValidateAgent(start, metrics.AgentResultError)
-		return nil, status.Error(codes.PermissionDenied, "forbidden")
+		return nil, s.agentValidateErr(start, metrics.AgentResultError, codes.PermissionDenied, "forbidden")
 	}
 
-	orgID, err := uuid.Parse(req.GetOrgId())
+	orgID, agentID, err := parseValidateAgentIDs(req)
 	if err != nil {
-		s.observeValidateAgent(start, metrics.AgentResultError)
-		return nil, status.Error(codes.InvalidArgument, "invalid org_id")
-	}
-	agentID, err := uuid.Parse(req.GetAgentId())
-	if err != nil {
-		s.observeValidateAgent(start, metrics.AgentResultError)
-		return nil, status.Error(codes.InvalidArgument, "invalid agent_id")
+		return nil, s.agentValidateErr(start, metrics.AgentResultError, codes.InvalidArgument, err.Error())
 	}
 
-	rec, err := s.agentsStore.GetByIDAndOrg(ctx, agentID, orgID)
-	if err != nil {
-		s.observeValidateAgent(start, metrics.AgentResultError)
-		return nil, status.Error(codes.Internal, "agent lookup failed")
-	}
-	if rec == nil {
-		s.observeValidateAgent(start, metrics.AgentResultNotFound)
-		return nil, status.Error(codes.PermissionDenied, "agent not found")
-	}
-	if rec.Status != "active" {
-		s.observeValidateAgent(start, metrics.AgentResultError)
-		return nil, status.Error(codes.PermissionDenied, "agent is not active")
+	rec, result, stErr := s.lookupAgentForValidate(ctx, agentID, orgID)
+	if stErr != nil {
+		return nil, s.agentValidateErr(start, result, stErr.code, stErr.msg)
 	}
 
 	s.observeValidateAgent(start, metrics.AgentResultOK)
@@ -177,6 +169,45 @@ func (s *Server) ValidateAgent(ctx context.Context, req *authv1.ValidateAgentReq
 		OrgId:   rec.OrgID,
 		Status:  rec.Status,
 	}, nil
+}
+
+type agentValidateStatusError struct {
+	code codes.Code
+	msg  string
+}
+
+func parseValidateAgentIDs(req *authv1.ValidateAgentRequest) (uuid.UUID, uuid.UUID, error) {
+	orgID, err := uuid.Parse(req.GetOrgId())
+	if err != nil {
+		return uuid.Nil, uuid.Nil, errors.New("invalid org_id")
+	}
+	agentID, err := uuid.Parse(req.GetAgentId())
+	if err != nil {
+		return uuid.Nil, uuid.Nil, errors.New("invalid agent_id")
+	}
+	return orgID, agentID, nil
+}
+
+func (s *Server) lookupAgentForValidate(
+	ctx context.Context,
+	agentID, orgID uuid.UUID,
+) (*repository.AgentRecord, metrics.AgentValidateResult, *agentValidateStatusError) {
+	rec, err := s.agentsStore.GetByIDAndOrg(ctx, agentID, orgID)
+	if err != nil {
+		return nil, metrics.AgentResultError, &agentValidateStatusError{codes.Internal, "agent lookup failed"}
+	}
+	if rec == nil {
+		return nil, metrics.AgentResultNotFound, &agentValidateStatusError{codes.PermissionDenied, "agent not found"}
+	}
+	if rec.Status != "active" {
+		return nil, metrics.AgentResultError, &agentValidateStatusError{codes.PermissionDenied, "agent is not active"}
+	}
+	return rec, metrics.AgentResultOK, nil
+}
+
+func (s *Server) agentValidateErr(start time.Time, result metrics.AgentValidateResult, code codes.Code, msg string) error {
+	s.observeValidateAgent(start, result)
+	return status.Error(code, msg)
 }
 
 func (s *Server) observeValidateAgent(start time.Time, result metrics.AgentValidateResult) {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -25,6 +24,7 @@ import (
 	"github.com/Rick1330/ibex-harness/services/auth/internal/token"
 	_ "github.com/lib/pq"
 	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc"
 )
 
@@ -37,74 +37,100 @@ func run(args []string) int {
 }
 
 func runBootstrap(_ []string, signalCh chan os.Signal) int {
-	cfg, err := config.Load()
-	if err != nil {
-		slog.New(slog.NewJSONHandler(os.Stderr, nil)).Error("invalid configuration", "error", err)
+	cfg, log, ok := loadAuthBootstrap()
+	if !ok {
 		return 1
 	}
 
-	log, err := logger.New(logger.Config{Service: cfg.ServiceName, Level: cfg.LogLevel})
-	if err != nil {
-		slog.New(slog.NewJSONHandler(os.Stderr, nil)).Error("logger init failed", "error", err)
-		return 1
-	}
-
-	db, err := sql.Open("postgres", cfg.PostgresDSN)
+	db, err := openAuthPostgres(cfg)
 	if err != nil {
 		log.ErrorCtx(context.Background(), "postgres open failed", "error", err)
 		return 1
 	}
-	configurePostgresPool(db)
 
 	reg := ibexmetrics.NewAuth(ibexmetrics.AuthConfig{ServiceName: cfg.ServiceName, DB: db})
+	deps, err := initAuthServices(cfg, db, log, reg)
+	if err != nil {
+		log.ErrorCtx(context.Background(), "auth services init failed", "error", err)
+		return 1
+	}
+
+	providers, tracer, ok := initAuthTelemetry(cfg, log)
+	if !ok {
+		return 1
+	}
+
+	grpcSrv, grpcLis, err := startAuthGRPC(cfg, deps, reg)
+	if err != nil {
+		log.ErrorCtx(context.Background(), "grpc startup failed", "error", err)
+		return 1
+	}
+
+	httpServer := newAuthHTTPServer(cfg, log, reg, tracer, db)
+
+	return runWithShutdown(shutdownOpts{
+		cfg: cfg, logger: log, providers: providers, grpcSrv: grpcSrv, grpcLis: grpcLis,
+		httpServer: httpServer, db: db, redisClient: deps.redisClient, tokenSvc: deps.tokenSvc, signalCh: signalCh,
+	})
+}
+
+func loadAuthBootstrap() (config.Config, *logger.Logger, bool) {
+	cfg, err := config.Load()
+	if err != nil {
+		logger.BootstrapError("invalid configuration", err)
+		return config.Config{}, nil, false
+	}
+	log, err := logger.New(logger.Config{Service: cfg.ServiceName, Level: cfg.LogLevel})
+	if err != nil {
+		logger.BootstrapError("logger init failed", err)
+		return config.Config{}, nil, false
+	}
+	return cfg, log, true
+}
+
+type authServiceDeps struct {
+	validator   *token.Validator
+	tokenSvc    *service.TokenService
+	agentsRepo  *repository.AgentsRepository
+	redisClient redis.UniversalClient
+}
+
+func initAuthServices(
+	cfg config.Config,
+	db *sql.DB,
+	log *logger.Logger,
+	reg *ibexmetrics.AuthRegistry,
+) (authServiceDeps, error) {
 	repo := repository.NewTokensRepository(db, reg)
 	agentsRepo := repository.NewAgentsRepository(db, reg)
 	validator := token.NewValidator(repo, cfg.Argon2)
 
 	redisClient, publisher, err := setupRevocationPublisher(cfg, log, reg)
 	if err != nil {
-		log.ErrorCtx(context.Background(), "revocation publisher setup failed", "error", err)
-		return 1
+		return authServiceDeps{}, err
 	}
 	tokenSvc := service.NewTokenService(repo, cfg.Argon2, log, publisher)
+	return authServiceDeps{
+		validator: validator, tokenSvc: tokenSvc, agentsRepo: agentsRepo, redisClient: redisClient,
+	}, nil
+}
 
-	providers, tracer, err := telemetry.InitTracer(context.Background(), cfg.Telemetry, "ibex-auth")
-	if err != nil {
-		log.ErrorCtx(context.Background(), "telemetry init failed", "error", err)
-		return 1
-	}
-
+func newAuthGRPCServer(
+	validator *token.Validator,
+	tokenSvc *service.TokenService,
+	agentsRepo *repository.AgentsRepository,
+	reg *ibexmetrics.AuthRegistry,
+) (*grpc.Server, error) {
 	grpcSrv := grpc.NewServer(
 		grpc.ChainUnaryInterceptor(
 			grpcserver.MetricsUnaryInterceptor(reg),
 			grpcserver.AuthzUnaryInterceptor(validator),
 		),
 	)
-	authv1.RegisterAuthServiceServer(grpcSrv, grpcserver.NewServer(validator, tokenSvc, agentsRepo, reg))
-
-	grpcLis, err := net.Listen("tcp", config.ListenAddress(cfg.GRPCPort))
-	if err != nil {
-		log.ErrorCtx(context.Background(), "grpc listen failed", "error", err)
-		return 1
+	if err := registerAuthGRPC(grpcSrv, validator, tokenSvc, agentsRepo, reg); err != nil {
+		return nil, err
 	}
-
-	healthSrv := &healthcheck.Server{
-		CriticalCheckers: map[string]healthcheck.Checker{
-			"postgres": healthcheck.PostgresSelect1(db),
-			"grpc":     healthcheck.TCPReachable(config.ListenAddress(cfg.GRPCPort)),
-		},
-	}
-
-	httpServer := &http.Server{
-		Addr:              config.ListenAddress(cfg.Port),
-		Handler:           authhttp.NewRouter(log, reg, tracer, healthSrv),
-		ReadHeaderTimeout: 5 * time.Second,
-	}
-
-	return runWithShutdown(shutdownOpts{
-		cfg: cfg, logger: log, providers: providers, grpcSrv: grpcSrv, grpcLis: grpcLis,
-		httpServer: httpServer, db: db, redisClient: redisClient, tokenSvc: tokenSvc, signalCh: signalCh,
-	})
+	return grpcSrv, nil
 }
 
 func setupRevocationPublisher(
@@ -133,4 +159,73 @@ func configurePostgresPool(db *sql.DB) {
 	db.SetMaxOpenConns(10)
 	db.SetMaxIdleConns(5)
 	db.SetConnMaxLifetime(30 * time.Minute)
+}
+
+func startAuthGRPC(
+	cfg config.Config,
+	deps authServiceDeps,
+	reg *ibexmetrics.AuthRegistry,
+) (*grpc.Server, net.Listener, error) {
+	grpcSrv, err := newAuthGRPCServer(deps.validator, deps.tokenSvc, deps.agentsRepo, reg)
+	if err != nil {
+		return nil, nil, err
+	}
+	lis, err := net.Listen("tcp", config.ListenAddress(cfg.GRPCPort))
+	if err != nil {
+		return nil, nil, err
+	}
+	return grpcSrv, lis, nil
+}
+
+func initAuthTelemetry(cfg config.Config, log *logger.Logger) (*telemetry.Providers, trace.Tracer, bool) {
+	providers, tracer, err := telemetry.InitTracer(context.Background(), cfg.Telemetry, "ibex-auth")
+	if err != nil {
+		log.ErrorCtx(context.Background(), "telemetry init failed", "error", err)
+		return nil, nil, false
+	}
+	return providers, tracer, true
+}
+
+func openAuthPostgres(cfg config.Config) (*sql.DB, error) {
+	db, err := sql.Open("postgres", cfg.PostgresDSN)
+	if err != nil {
+		return nil, err
+	}
+	configurePostgresPool(db)
+	return db, nil
+}
+
+func newAuthHTTPServer(
+	cfg config.Config,
+	log *logger.Logger,
+	reg *ibexmetrics.AuthRegistry,
+	tracer trace.Tracer,
+	db *sql.DB,
+) *http.Server {
+	healthSrv := &healthcheck.Server{
+		CriticalCheckers: map[string]healthcheck.Checker{
+			"postgres": healthcheck.PostgresSelect1(db),
+			"grpc":     healthcheck.TCPReachable(config.ListenAddress(cfg.GRPCPort)),
+		},
+	}
+	return &http.Server{
+		Addr:              config.ListenAddress(cfg.Port),
+		Handler:           authhttp.NewRouter(log, reg, tracer, healthSrv),
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+}
+
+func registerAuthGRPC(
+	grpcSrv *grpc.Server,
+	validator *token.Validator,
+	tokenSvc *service.TokenService,
+	agentsRepo *repository.AgentsRepository,
+	reg *ibexmetrics.AuthRegistry,
+) error {
+	srv, err := grpcserver.NewServer(validator, tokenSvc, agentsRepo, reg)
+	if err != nil {
+		return err
+	}
+	authv1.RegisterAuthServiceServer(grpcSrv, srv)
+	return nil
 }

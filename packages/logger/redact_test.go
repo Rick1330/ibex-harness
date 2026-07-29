@@ -8,7 +8,11 @@ import (
 func TestRedactAttr_forbiddenKeys(t *testing.T) {
 	t.Parallel()
 
-	for _, key := range []string{"token", "password", "hash", "content", "email", "ip", "secret", "key", "credential"} {
+	for _, key := range []string{
+		"token", "password", "hash", "content", "email", "ip",
+		"secret", "key", "credential", "bearer", "authorization",
+		"access_token", "refresh_token", "api_key", "private_key", "session_token",
+	} {
 		attr := redactAttr(slog.String(key, "leak-value"))
 		if attr.Value.String() != "[REDACTED]" {
 			t.Fatalf("%s: got %q", key, attr.Value.String())

@@ -14,6 +14,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/require"
 )
 
 type fakeStore struct {
@@ -67,17 +68,11 @@ func (m *fakeMetrics) IncSessionSweeperRun(result string) {
 
 func waitForSweeperRun(t *testing.T, metrics *fakeMetrics, result string) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
+	require.Eventually(t, func() bool {
 		metrics.mu.Lock()
-		n := metrics.runs[result]
-		metrics.mu.Unlock()
-		if n > 0 {
-			return
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	t.Fatalf("want run result %s", result)
+		defer metrics.mu.Unlock()
+		return metrics.runs[result] > 0
+	}, 2*time.Second, 5*time.Millisecond, "want run result %s", result)
 }
 
 func newTestSweeper(t *testing.T, store *fakeStore, metrics *fakeMetrics, interval time.Duration) *sessionsweeper.Sweeper {
@@ -294,15 +289,9 @@ func TestUnit_Sweeper_DefaultsAndNilMetrics(t *testing.T) {
 	}
 	sw.Start()
 	t.Cleanup(func() { _ = sw.Stop(context.Background()) })
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
+	require.Eventually(t, func() bool {
 		store.mu.Lock()
-		n := store.calls
-		store.mu.Unlock()
-		if n > 0 {
-			return
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	t.Fatal("expected tick with default interval")
+		defer store.mu.Unlock()
+		return store.calls > 0
+	}, 2*time.Second, 5*time.Millisecond, "expected tick with default interval")
 }
