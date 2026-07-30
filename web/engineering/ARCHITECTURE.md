@@ -1,5 +1,8 @@
 # IBEX Harness - System Architecture
 
+Go interface placement (consumer ports vs shared package APIs):
+[ARCHITECTURE_LAYERING.md](./ARCHITECTURE_LAYERING.md).
+
 ## 🏗️ Architecture Overview
 
 IBEX Harness is a distributed system designed for high performance, reliability, and scalability. The architecture follows microservices principles with clear service boundaries, while maintaining tight latency requirements for the critical path.

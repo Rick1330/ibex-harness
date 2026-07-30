@@ -13,7 +13,6 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
 	"github.com/Rick1330/ibex-harness/packages/session"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/asyncpool"
-	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/sessioncache"
 )
@@ -23,8 +22,8 @@ type protectedRouteDeps struct {
 	cfg                      config.Config
 	logger                   *logger.Logger
 	reg                      *metrics.ProxyRegistry
-	validator                auth.TokenValidator
-	agentVerifier            auth.AgentVerifier
+	validator                TokenValidator
+	agentVerifier            AgentVerifier
 	limiter                  ratelimit.Limiter
 	directiveResolver        directive.Resolver
 	sessionStore             session.Store

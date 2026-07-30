@@ -14,7 +14,7 @@ import (
 )
 
 type agentVerifyHandler struct {
-	verifier auth.AgentVerifier
+	verifier AgentVerifier
 	logger   *logger.Logger
 	next     http.Handler
 }
@@ -22,7 +22,7 @@ type agentVerifyHandler struct {
 // AgentVerificationMiddleware validates X-IBEX-Agent-ID against the authenticated org.
 // Must run after AuthMiddleware and before RateLimitMiddleware.
 func AgentVerificationMiddleware(
-	verifier auth.AgentVerifier,
+	verifier AgentVerifier,
 	log *logger.Logger,
 ) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {

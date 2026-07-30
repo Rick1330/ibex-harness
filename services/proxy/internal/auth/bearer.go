@@ -33,7 +33,9 @@ type ValidateResult struct {
 	FromCache bool
 }
 
-// TokenValidator validates bearer tokens. A cache decorator may wrap GRPCValidator in Phase 2.
+// TokenValidator validates bearer tokens. Prefer the HTTP consumer port
+// (services/proxy/internal/http.TokenValidator) at middleware boundaries;
+// this producer-side interface remains for auth package adapters and wiring.
 type TokenValidator interface {
 	Validate(ctx context.Context, accessToken string) (*ValidateResult, error)
 }
