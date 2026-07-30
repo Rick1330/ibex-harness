@@ -57,4 +57,4 @@ a `database/sql` pool for **session and directive** stores (not identity). See
 
 **Enforcement:** `.golangci.depguard.yml` rule `proxy-no-database-sql` denies
 `database/sql` under `services/proxy/**` except `services/proxy/internal/bootstrap/**`
-and test files. Identity queries must never appear outside that grandfather.
+and test files. Identity queries must never appear outside that exception.

@@ -84,8 +84,9 @@ func (h *Handler) CreateToken(w http.ResponseWriter, r *http.Request) {
 
 **MF-001 exception (Accepted — ADR-0039):** `services/proxy/internal/bootstrap`
 may open Postgres (`database/sql`) for **session and directive** stores only.
-Identity stays on auth gRPC. Depguard denies `database/sql` elsewhere under
-`services/proxy/**` (see `GOLANGCI_POLICY.md` and `.golangci.depguard.yml`).
+Identity stays on auth gRPC. Depguard denies `database/sql` in non-test files
+under `services/proxy/**` outside `services/proxy/internal/bootstrap`
+(see `GOLANGCI_POLICY.md` and `.golangci.depguard.yml`).
 
 ```go
 // WRONG — proxy DB for identity / token validation
