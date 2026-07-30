@@ -1,8 +1,9 @@
-name: Integration Race (Nightly)
+name: Integration Race (Weekly)
 
-# Scheduled race detector run with integration tags for packages that use
-# real Postgres (MF-023). PR CI keeps unit-only `go-race`; this job catches
-# races that only appear under integration build tags.
+# Weekly race detector run with integration tags for packages that use
+# real Postgres (MF-023). Cron is Mondays 04:00 UTC (not every night).
+# PR CI keeps unit-only `go-race`; this job catches races that only appear
+# under integration build tags.
 
 on:
   schedule:

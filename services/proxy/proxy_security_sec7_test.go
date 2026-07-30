@@ -48,9 +48,9 @@ func TestSecurity_SEC7_2_AuthCacheWarmThenRevoke(t *testing.T) {
 	plain := createResp.GetPlaintext()
 	opts := authProbeOpts{srvURL: env.proxy.URL, bearer: plain, agentID: env.orgA.AgentID}
 
-	// Warm auth cache with two successful probes (miss then hit).
-	requireProbeOK(t, opts)
-	requireProbeOK(t, opts)
+	// Miss then hit: second response must advertise cache via X-IBEX-Auth-Cached.
+	requireProbeOKCached(t, opts, false)
+	requireProbeOKCached(t, opts, true)
 
 	start := time.Now()
 	if _, err = env.authFx.Client.RevokeToken(ctx, &authv1.RevokeTokenRequest{

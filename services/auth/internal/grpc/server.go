@@ -100,6 +100,14 @@ func (s *Server) ValidateToken(ctx context.Context, req *authv1.ValidateTokenReq
 }
 
 func (s *Server) CreateToken(ctx context.Context, req *authv1.CreateTokenRequest) (*authv1.CreateTokenResponse, error) {
+	caller, ok := CallerFromContext(ctx)
+	if !ok {
+		return nil, status.Error(codes.Unauthenticated, "missing caller context")
+	}
+	if caller.OrgID != req.GetOrgId() {
+		s.auditCrossTenant(ctx, caller.OrgID, "token", "")
+		return nil, status.Error(codes.PermissionDenied, "forbidden")
+	}
 	if err := RequireOrgAndPermission(ctx, req.GetOrgId(), permissions.TokenCreate); err != nil {
 		return nil, err
 	}
@@ -179,9 +187,6 @@ func (s *Server) ValidateAgent(ctx context.Context, req *authv1.ValidateAgentReq
 
 	rec, result, stErr := s.lookupAgentForValidate(ctx, agentID, orgID)
 	if stErr != nil {
-		if stErr.code == codes.PermissionDenied && result == metrics.AgentResultNotFound {
-			s.auditCrossTenant(ctx, caller.OrgID, "agent", agentID.String())
-		}
 		return nil, s.agentValidateErr(start, result, stErr.code, stErr.msg)
 	}
 

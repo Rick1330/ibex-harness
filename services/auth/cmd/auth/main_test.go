@@ -139,11 +139,9 @@ func TestRunWithShutdown_StopsOnSignal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	httpAddr := httpLis.Addr().String()
-	_ = httpLis.Close()
+	t.Cleanup(func() { _ = httpLis.Close() })
 
 	httpServer := &http.Server{
-		Addr:              httpAddr,
 		Handler:           http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
@@ -163,13 +161,14 @@ func TestRunWithShutdown_StopsOnSignal(t *testing.T) {
 			grpcSrv:    grpc.NewServer(), // nosemgrep: go.grpc.security.grpc-server-insecure-connection
 			grpcLis:    grpcLis,
 			httpServer: httpServer,
+			httpLis:    httpLis,
 			db:         db,
 			signalCh:   sigCh,
 		})
 	}()
 
 	waitForTCP(t, grpcLis.Addr().String())
-	waitForTCP(t, httpAddr)
+	waitForTCP(t, httpLis.Addr().String())
 	sigCh <- syscall.SIGTERM
 
 	select {

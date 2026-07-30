@@ -90,7 +90,7 @@ func (r *CachedResolver) Resolve(ctx context.Context, orgID, agentID uuid.UUID) 
 		return Resolved{}, err
 	}
 	// Write-behind: never block the hot path on Redis SET (own 2s budget).
-	r.schedulePopulate(key, resolved)
+	r.schedulePopulate(ctx, key, resolved)
 	return resolved, nil
 }
 
@@ -118,11 +118,11 @@ func (r *CachedResolver) Shutdown(ctx context.Context) error {
 	return r.pool.shutdown(ctx)
 }
 
-func (r *CachedResolver) schedulePopulate(key string, resolved Resolved) {
+func (r *CachedResolver) schedulePopulate(ctx context.Context, key string, resolved Resolved) {
 	if r.pool.trySubmit(cacheWriteJob{key: key, resolved: resolved}) {
 		return
 	}
-	r.log.WarnCtx(context.Background(), "directive cache populate dropped",
+	r.log.WarnCtx(ctx, "directive cache populate dropped",
 		"reason", "queue_full_or_shutdown")
 }
 

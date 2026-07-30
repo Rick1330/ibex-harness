@@ -133,7 +133,16 @@ go test -tags=integration ./services/auth/...
 Do not add sqlmock-based repository unit tests. Cover constructors, pure helpers, and
 error mapping in unit tests; cover SELECT/INSERT/UPDATE/RLS paths under `-tags=integration`.
 
-Nightly (or scheduled) CI also runs `go test -race -tags=integration` for proxy/auth/
+#### Session store coverage after sqlmock removal (MF-006)
+
+`packages/session` no longer uses go-sqlmock. Happy-path and tenant isolation scenarios live
+in `//go:build integration` tests against real Postgres. Fine-grained SQL error branches that
+sqlmock previously forced (commit fail mid-tx, lock query fail, etc.) are **not** all mirrored
+as unit tests — unit coverage keeps constructor/validation/`begin` failures via a closed DB
+(`store_unit_test.go`). Prefer extending integration tests when a new error branch is
+security- or correctness-critical.
+
+Weekly (Monday) CI also runs `go test -race -tags=integration` for proxy/auth/
 session/directive (see `.github/workflows/integration-race.yml`).
 
 ### Python (FastAPI services, workers, algorithms)

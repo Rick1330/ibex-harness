@@ -62,6 +62,42 @@ func TestUnit_WritePool_ShutdownRejectsSubmit(t *testing.T) {
 	}
 }
 
+func TestUnit_WritePool_ConcurrentSubmitDuringShutdown(t *testing.T) {
+	t.Parallel()
+
+	p := newWritePool(2, 8, func(cacheWriteJob) {
+		time.Sleep(time.Millisecond)
+	})
+
+	var wg sync.WaitGroup
+	for i := 0; i < 32; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 100; j++ {
+				_ = p.trySubmit(cacheWriteJob{key: "k"})
+			}
+		}()
+	}
+
+	go func() {
+		time.Sleep(5 * time.Millisecond)
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		_ = p.shutdown(ctx)
+	}()
+
+	wg.Wait()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := p.shutdown(ctx); err != nil {
+		t.Fatalf("idempotent shutdown: %v", err)
+	}
+	if p.trySubmit(cacheWriteJob{key: "after"}) {
+		t.Fatal("submit after shutdown should fail")
+	}
+}
+
 func waitClosed(t *testing.T, ch <-chan struct{}) {
 	t.Helper()
 	select {

@@ -111,7 +111,7 @@ func (h *agentVerifyHandler) writeAgentVerifyError(w http.ResponseWriter, err er
 			"The agent is not active for this organization.", opts.requestID,
 			apierror.WriteOpts{DocsBase: opts.docsBase})
 	case errors.Is(err, auth.ErrAgentNotAuthorized):
-		h.auditCrossTenantAgent(opts)
+		h.auditAgentAuthorizationDenied(opts)
 		apierror.WriteStatus(w, http.StatusForbidden, apierror.CodeAgentNotAuthorized,
 			"The agent is not authorized for this organization or is not active.", opts.requestID,
 			apierror.WriteOpts{DocsBase: opts.docsBase})
@@ -128,11 +128,13 @@ func (h *agentVerifyHandler) writeAgentVerifyError(w http.ResponseWriter, err er
 	}
 }
 
-func (h *agentVerifyHandler) auditCrossTenantAgent(opts agentVerifyErrorOpts) {
+func (h *agentVerifyHandler) auditAgentAuthorizationDenied(opts agentVerifyErrorOpts) {
 	if h.logger == nil {
 		return
 	}
-	h.logger.WarnCtx(opts.ctx, "cross-tenant access attempt",
+	// Proxy cannot distinguish same-org miss from cross-org without leaking
+	// existence; both map to ErrAgentNotAuthorized. Audit all denials for forensics.
+	h.logger.WarnCtx(opts.ctx, "agent authorization denied",
 		"requesting_org_id", opts.requestingOrg,
 		"target_resource_type", "agent",
 		"target_resource_id", opts.agentID,

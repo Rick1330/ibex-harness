@@ -71,30 +71,64 @@ func TestStore_AbandonIdle_RequiresIdleBefore(t *testing.T) {
 	}
 }
 
-func TestStore_AbandonIdle_EmptyWhenNoVictims(t *testing.T) {
-	ids := setupStore(t)
-	res, err := ids.store.AbandonIdle(context.Background(), session.AbandonIdleParams{
-		IdleBefore: time.Now().UTC().Add(-time.Hour),
-	})
-	if err != nil {
-		t.Fatalf("AbandonIdle: %v", err)
+func TestStore_AbandonIdle_EmptySkipAndClamp(t *testing.T) {
+	cases := []struct {
+		name     string
+		params   session.AbandonIdleParams
+		prep     func(*testing.T, *sql.DB)
+		wantSkip bool
+	}{
+		{
+			name: "empty_when_no_victims",
+			params: session.AbandonIdleParams{
+				IdleBefore: time.Now().UTC().Add(-time.Hour),
+			},
+		},
+		{
+			name: "skips_when_lock_held",
+			params: session.AbandonIdleParams{
+				IdleBefore: time.Now().UTC(),
+			},
+			prep:     holdSweepLock,
+			wantSkip: true,
+		},
+		{
+			name: "clamps_high_limit",
+			params: session.AbandonIdleParams{
+				IdleBefore: time.Now().UTC(),
+				Limit:      100_000,
+			},
+		},
 	}
-	if res.SkippedLock || res.Count() != 0 {
-		t.Fatalf("res=%+v want empty non-skip", res)
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			ids := setupStore(t)
+			if tc.prep != nil {
+				tc.prep(t, ids.db)
+			}
+			assertAbandonIdleOutcome(t, ids.store, tc.params, tc.wantSkip)
+		})
 	}
 }
 
-func TestStore_AbandonIdle_SkipsWhenLockHeld(t *testing.T) {
-	ids := setupStore(t)
-	holdSweepLock(t, ids.db)
-	res, err := ids.store.AbandonIdle(context.Background(), session.AbandonIdleParams{
-		IdleBefore: time.Now().UTC(),
-	})
+func assertAbandonIdleOutcome(
+	t *testing.T,
+	store *session.PostgresStore,
+	params session.AbandonIdleParams,
+	wantSkip bool,
+) {
+	t.Helper()
+	res, err := store.AbandonIdle(context.Background(), params)
 	if err != nil {
 		t.Fatalf("AbandonIdle: %v", err)
 	}
-	if !res.SkippedLock || res.Count() != 0 {
-		t.Fatalf("res=%+v want SkippedLock", res)
+	if res.SkippedLock != wantSkip {
+		t.Fatalf("SkippedLock=%v want %v", res.SkippedLock, wantSkip)
+	}
+	if res.Count() != 0 {
+		t.Fatalf("Count=%d want 0", res.Count())
 	}
 }
 
@@ -111,20 +145,6 @@ func TestStore_AbandonIdle_NullExternalID(t *testing.T) {
 	row := mustFindAbandoned(t, res.Abandoned, sess.ID)
 	if row.ExternalID != nil {
 		t.Fatalf("expected nil external_id, got %q", *row.ExternalID)
-	}
-}
-
-func TestStore_AbandonIdle_ClampsHighLimit(t *testing.T) {
-	ids := setupStore(t)
-	res, err := ids.store.AbandonIdle(context.Background(), session.AbandonIdleParams{
-		IdleBefore: time.Now().UTC(),
-		Limit:      100_000,
-	})
-	if err != nil {
-		t.Fatalf("AbandonIdle: %v", err)
-	}
-	if res.SkippedLock || res.Count() != 0 {
-		t.Fatalf("res=%+v want empty non-skip", res)
 	}
 }
 

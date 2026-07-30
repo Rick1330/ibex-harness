@@ -162,10 +162,26 @@ func requireChat(t *testing.T, opts chatRequestOpts, exp probeExpect, secret str
 
 func requireProbeOK(t *testing.T, opts authProbeOpts) {
 	t.Helper()
-	resp, _ := authProbeGET(t, opts)
+	resp, body := authProbeGET(t, opts)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status=%d", resp.StatusCode)
+		t.Fatalf("status=%d body=%s", resp.StatusCode, body)
+	}
+}
+
+func requireProbeOKCached(t *testing.T, opts authProbeOpts, wantCached bool) {
+	t.Helper()
+	resp, body := authProbeGET(t, opts)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d body=%s", resp.StatusCode, body)
+	}
+	got := resp.Header.Get("X-IBEX-Auth-Cached")
+	if wantCached && got != "true" {
+		t.Fatalf("X-IBEX-Auth-Cached=%q want true", got)
+	}
+	if !wantCached && got == "true" {
+		t.Fatalf("X-IBEX-Auth-Cached unexpectedly true on cold miss")
 	}
 }
 
