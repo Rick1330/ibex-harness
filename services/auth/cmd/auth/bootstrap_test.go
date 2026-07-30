@@ -52,7 +52,7 @@ func newTestAuthServiceDeps(t *testing.T, db *sql.DB, reg *ibexmetrics.AuthRegis
 	t.Helper()
 	repo := repository.NewTokensRepository(db, reg)
 	agentsRepo := repository.NewAgentsRepository(db, reg)
-	validator := token.NewValidator(repo, token.DefaultArgon2Params())
+	validator := token.NewValidator(token.RepoLookup{Inner: repo}, token.DefaultArgon2Params())
 	tokenSvc := service.NewTokenService(repo, token.DefaultArgon2Params(), logger.Discard("auth"), nil)
 	return authServiceDeps{
 		validator: validator, tokenSvc: tokenSvc, agentsRepo: agentsRepo,
