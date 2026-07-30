@@ -49,7 +49,9 @@ type AgentStore interface {
 	GetByIDAndOrg(ctx context.Context, agentID, orgID uuid.UUID) (*repository.AgentRecord, error)
 }
 
-// NewServer constructs an AuthService server. Log may be nil (uses Discard).
+var errInvalidOrgID = errors.New("invalid org_id")
+
+// NewServer constructs an AuthService server.
 func NewServer(deps ServerDeps) (*Server, error) {
 	if deps.Validator == nil {
 		return nil, fmt.Errorf("grpcserver: nil validator")
@@ -63,16 +65,15 @@ func NewServer(deps ServerDeps) (*Server, error) {
 	if deps.Metrics == nil {
 		return nil, fmt.Errorf("grpcserver: nil metrics registry")
 	}
-	log := deps.Log
-	if log == nil {
-		log = logger.Discard("auth")
+	if deps.Log == nil {
+		return nil, fmt.Errorf("grpcserver: nil log")
 	}
 	return &Server{
 		validator:    deps.Validator,
 		tokenService: deps.TokenService,
 		metrics:      deps.Metrics,
 		agentsStore:  deps.AgentsStore,
-		log:          log,
+		log:          deps.Log,
 	}, nil
 }
 
@@ -215,12 +216,15 @@ func (s *Server) auditCrossTenant(ctx context.Context, requestingOrg, resourceTy
 }
 
 func withIncomingRequestID(ctx context.Context) context.Context {
+	if _, ok := reqid.FromContext(ctx); ok {
+		return ctx
+	}
 	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
 		return ctx
 	}
 	vals := md.Get(reqid.GRPCMetadataKey)
-	if len(vals) == 0 || vals[0] == "" {
+	if len(vals) != 1 || vals[0] == "" {
 		return ctx
 	}
 	return reqid.WithRequestID(ctx, vals[0])
@@ -246,7 +250,7 @@ func parseValidateAgentIDs(req *authv1.ValidateAgentRequest) (uuid.UUID, uuid.UU
 func parseOrgID(raw string) (uuid.UUID, error) {
 	orgID, err := uuid.Parse(raw)
 	if err != nil {
-		return uuid.Nil, errors.New("invalid org_id")
+		return uuid.Nil, errInvalidOrgID
 	}
 	return orgID, nil
 }

@@ -19,22 +19,26 @@ func TestUnit_NewServer_RejectsNilDependencies(t *testing.T) {
 	)
 	agents := &fakeAgentsStore{}
 	reg := testAuthRegistry()
+	log := logger.Discard("auth")
 
 	cases := []struct {
 		name string
 		deps ServerDeps
 	}{
 		{name: "nil validator", deps: ServerDeps{
-			Validator: nil, TokenService: tokenSvc, AgentsStore: agents, Metrics: reg,
+			Validator: nil, TokenService: tokenSvc, AgentsStore: agents, Metrics: reg, Log: log,
 		}},
 		{name: "nil token service", deps: ServerDeps{
-			Validator: &fakeTokenValidator{}, TokenService: nil, AgentsStore: agents, Metrics: reg,
+			Validator: &fakeTokenValidator{}, TokenService: nil, AgentsStore: agents, Metrics: reg, Log: log,
 		}},
 		{name: "nil agents store", deps: ServerDeps{
-			Validator: &fakeTokenValidator{}, TokenService: tokenSvc, AgentsStore: nil, Metrics: reg,
+			Validator: &fakeTokenValidator{}, TokenService: tokenSvc, AgentsStore: nil, Metrics: reg, Log: log,
 		}},
 		{name: "nil metrics registry", deps: ServerDeps{
-			Validator: &fakeTokenValidator{}, TokenService: tokenSvc, AgentsStore: agents, Metrics: nil,
+			Validator: &fakeTokenValidator{}, TokenService: tokenSvc, AgentsStore: agents, Metrics: nil, Log: log,
+		}},
+		{name: "nil log", deps: ServerDeps{
+			Validator: &fakeTokenValidator{}, TokenService: tokenSvc, AgentsStore: agents, Metrics: reg, Log: nil,
 		}},
 	}
 

@@ -61,6 +61,7 @@ func newTestServer(t testing.TB, validator tokenValidator, tokenRepo serviceToke
 	tokenSvc := service.NewTokenService(tokenRepo, token.DefaultArgon2Params(), logger.Discard("auth"), nil)
 	srv, err := NewServer(ServerDeps{
 		Validator: validator, TokenService: tokenSvc, AgentsStore: agents, Metrics: testAuthRegistry(),
+		Log: logger.Discard("auth"),
 	})
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)

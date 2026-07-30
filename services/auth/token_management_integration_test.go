@@ -47,6 +47,7 @@ func startAuthGRPC(t *testing.T, dbDSN string) (authv1.AuthServiceClient, func()
 		))
 	srv, err := grpcserver.NewServer(grpcserver.ServerDeps{
 		Validator: validator, TokenService: tokenSvc, AgentsStore: agentsRepo, Metrics: reg,
+		Log: logger.Discard("auth"),
 	})
 	require.NoError(t, err)
 	authv1.RegisterAuthServiceServer(grpcSrv, srv)

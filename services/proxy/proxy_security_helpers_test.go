@@ -197,14 +197,15 @@ func requireProbeUnauthorizedEventually(t *testing.T, opts authProbeOpts, secret
 	t.Helper()
 	var lastStatus int
 	var lastBody string
+	var unauthorizedResp *http.Response
+	var unauthorizedBody string
 	require.Eventually(t, func() bool {
 		resp, body := authProbeGET(t, opts)
 		lastStatus = resp.StatusCode
 		lastBody = body
 		if resp.StatusCode == http.StatusUnauthorized {
-			requireErrorCode(t, body, apierror.CodeInvalidToken)
-			assertSecurityErrorEnvelope(t, resp, body, secret)
-			resp.Body.Close()
+			unauthorizedResp = resp
+			unauthorizedBody = body
 			return true
 		}
 		resp.Body.Close()
@@ -212,6 +213,9 @@ func requireProbeUnauthorizedEventually(t *testing.T, opts authProbeOpts, secret
 	}, within, 10*time.Millisecond,
 		"expected unauthorized within %v; last status=%d body=%s",
 		within, lastStatus, redactBearer(lastBody, opts.bearer))
+	defer unauthorizedResp.Body.Close()
+	requireErrorCode(t, unauthorizedBody, apierror.CodeInvalidToken)
+	assertSecurityErrorEnvelope(t, unauthorizedResp, unauthorizedBody, secret)
 }
 
 func exhaustOrgARateLimit(t *testing.T, env securityTestEnv) {

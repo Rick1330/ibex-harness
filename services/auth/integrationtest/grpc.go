@@ -74,6 +74,7 @@ func startAuthGRPC(t testing.TB, dbDSN string, redisClient redis.UniversalClient
 		))
 	srv, err := grpcserver.NewServer(grpcserver.ServerDeps{
 		Validator: validator, TokenService: tokenSvc, AgentsStore: agentsRepo, Metrics: reg,
+		Log: logger.Discard("auth"),
 	})
 	if err != nil {
 		t.Fatalf("grpc server init: %v", err)

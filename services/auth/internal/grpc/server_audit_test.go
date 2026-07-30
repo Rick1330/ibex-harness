@@ -52,6 +52,14 @@ func TestUnit_WithIncomingRequestID(t *testing.T) {
 	if !ok || id != "rid-123" {
 		t.Fatalf("id=%q ok=%v", id, ok)
 	}
+
+	existing := reqid.WithRequestID(base, "ctx-rid")
+	mdOverride := metadata.NewIncomingContext(existing, metadata.Pairs(reqid.GRPCMetadataKey, "md-rid"))
+	got = withIncomingRequestID(mdOverride)
+	id, ok = reqid.FromContext(got)
+	if !ok || id != "ctx-rid" {
+		t.Fatalf("existing request_id=%q ok=%v want ctx-rid preserved", id, ok)
+	}
 }
 
 func TestUnit_AuditsCrossTenant(t *testing.T) {

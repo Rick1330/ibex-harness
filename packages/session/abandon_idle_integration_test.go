@@ -108,21 +108,6 @@ func TestStore_AbandonIdle_EmptySkipAndClamp(t *testing.T) {
 			},
 			want: abandonIdleExpect{skip: true},
 		},
-		{
-			name: "clamps_high_limit",
-			params: session.AbandonIdleParams{
-				IdleBefore: time.Now().UTC().Add(-30 * time.Minute),
-				Limit:      100_000,
-			},
-			prep: func(t *testing.T, ids storeIDs) {
-				t.Helper()
-				for i := 0; i < maxAbandonIdleLimit+5; i++ {
-					sess := mustCreate(t, ids, "ext-clamp-"+uuid.NewString()[:8])
-					backdateSessionUpdatedAt(t, ids.db, sess.ID, time.Now().UTC().Add(-2*time.Hour))
-				}
-			},
-			want: abandonIdleExpect{count: maxAbandonIdleLimit},
-		},
 	}
 
 	for _, tc := range cases {
@@ -135,6 +120,18 @@ func TestStore_AbandonIdle_EmptySkipAndClamp(t *testing.T) {
 			assertAbandonIdleOutcome(t, ids.store, tc.params, tc.want)
 		})
 	}
+}
+
+func TestStore_AbandonIdle_ClampHighLimit(t *testing.T) {
+	ids := setupStore(t)
+	for i := 0; i < maxAbandonIdleLimit+5; i++ {
+		sess := mustCreate(t, ids, "ext-clamp-"+uuid.NewString())
+		backdateSessionUpdatedAt(t, ids.db, sess.ID, time.Now().UTC().Add(-2*time.Hour))
+	}
+	assertAbandonIdleOutcome(t, ids.store, session.AbandonIdleParams{
+		IdleBefore: time.Now().UTC().Add(-30 * time.Minute),
+		Limit:      100_000,
+	}, abandonIdleExpect{count: maxAbandonIdleLimit})
 }
 
 func assertAbandonIdleOutcome(
