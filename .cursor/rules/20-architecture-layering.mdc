@@ -82,7 +82,10 @@ func (h *Handler) CreateToken(w http.ResponseWriter, r *http.Request) {
 
 **Identity path:** the proxy communicates with Postgres for auth/identity ONLY through the auth service gRPC API. It must not own a `pgxpool.Pool` for token/agent validation.
 
-**MF-001 exception (documented, deferred):** `services/proxy/cmd/proxy/main.go` currently opens Postgres for **session and directive** stores only. That is a temporary deviation until an ADR or migration removes proxy DB ownership. See `web/engineering/GOLANGCI_POLICY.md` (same wording). A `depguard` deny on `database/sql` under proxy is deferred with that decision.
+**MF-001 exception (Accepted — ADR-0039):** `services/proxy/internal/bootstrap`
+may open Postgres (`database/sql`) for **session and directive** stores only.
+Identity stays on auth gRPC. Depguard denies `database/sql` elsewhere under
+`services/proxy/**` (see `GOLANGCI_POLICY.md` and `.golangci.depguard.yml`).
 
 ```go
 // WRONG — proxy DB for identity / token validation
@@ -92,7 +95,7 @@ func init() {
 }
 
 // RIGHT — identity via auth gRPC; Redis for rate limit + cache
-// MF-001: session/directive Postgres in proxy is the documented exception until migrated
+// ADR-0039: session/directive Postgres only in services/proxy/internal/bootstrap
 ```
 
 ## Shared packages (`packages/*`) have no service-specific imports

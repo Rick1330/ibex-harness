@@ -49,10 +49,12 @@ shrink them below thresholds when practical.
 ## Proxy Postgres / `database/sql` (MF-001)
 
 **Phase 1 rule** (always applied in `.cursor/rules/20-architecture-layering.mdc`):
-the proxy must not own a `pgxpool.Pool` for identity; auth stays on gRPC.
+the proxy must not use Postgres for identity; auth stays on gRPC.
 
-**Current exception (MF-001):** `services/proxy/cmd/proxy/main.go` still opens
-Postgres for **session and directive** stores (not identity). This is a
-documented deviation from the Phase 1 “no proxy DB” wording until an ADR or
-migration removes it. A `depguard` deny on `database/sql` under `services/proxy`
-is **deferred** until that decision.
+**Accepted exception (ADR-0039):** `services/proxy/internal/bootstrap` may open
+a `database/sql` pool for **session and directive** stores (not identity). See
+`web/content/docs/adr/0039-proxy-postgres-session-directive.mdx`.
+
+**Enforcement:** `.golangci.depguard.yml` rule `proxy-no-database-sql` denies
+`database/sql` under `services/proxy/**` except `services/proxy/internal/bootstrap/**`
+and test files. Identity queries must never appear outside that grandfather.

@@ -65,9 +65,9 @@ Built once at proxy startup via `provider.NewRegistry(...)`. Read-only after con
 - `ErrNoProviderForModel` → proxy returns `501 PROVIDER_NOT_CONFIGURED`
 - `ProviderError` carries provider HTTP status and raw body for mapping in 2.1.5 — **never log `ProviderBody`**
 
-### 9) Phase 2 proxy Postgres exception (forward reference)
+### 9) Phase 2 proxy Postgres exception
 
-Phase 1 rule: proxy has no Postgres (auth via gRPC only). Phase 2 milestones 2.3.2 and 2.4.x add a **read-only** `pgxpool` on the proxy for directive and session lookups with Redis cache fronting. Writes remain on auth/api services. A dedicated ADR will document this when 2.3.2 lands.
+Phase 1 rule: proxy has no Postgres for **identity** (auth via gRPC only). Phase 2 milestones 2.3.2 and 2.4.x add a proxy-owned `database/sql` pool for directive and session stores (including session writes), opened in bootstrap only. Formal decision: [ADR-0039](/docs/adr/0039-proxy-postgres-session-directive).
 
 ## Consequences
 
