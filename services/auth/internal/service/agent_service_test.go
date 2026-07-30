@@ -25,67 +25,67 @@ func TestUnit_NewAgentService_RejectsNilRepo(t *testing.T) {
 	}
 }
 
-func TestUnit_AgentService_ValidateForOrg(t *testing.T) {
+func TestUnit_AgentService_ValidateForOrg_OK(t *testing.T) {
 	t.Parallel()
-
-	orgID := uuid.New()
-	agentID := uuid.New()
-	cases := []struct {
-		name    string
-		repo    *fakeAgentRepo
-		wantErr error
-		wantOK  bool
-	}{
-		{
-			name: "ok",
-			repo: &fakeAgentRepo{rec: &repository.AgentRecord{
-				ID: agentID.String(), OrgID: orgID.String(), Status: "active",
-			}},
-			wantOK: true,
-		},
-		{
-			name:    "missing",
-			repo:    &fakeAgentRepo{},
-			wantErr: ErrAgentNotAuthorized,
-		},
-		{
-			name: "inactive",
-			repo: &fakeAgentRepo{rec: &repository.AgentRecord{
-				ID: agentID.String(), OrgID: orgID.String(), Status: "paused",
-			}},
-			wantErr: ErrAgentNotAuthorized,
-		},
-		{
-			name:    "store error",
-			repo:    &fakeAgentRepo{err: errors.New("db down")},
-			wantErr: ErrAgentLookup,
-		},
+	orgID, agentID := uuid.New(), uuid.New()
+	view, err := mustValidateForOrg(t, &fakeAgentRepo{rec: &repository.AgentRecord{
+		ID: agentID.String(), OrgID: orgID.String(), Status: "active",
+	}}, orgID, agentID)
+	if err != nil {
+		t.Fatalf("ValidateForOrg: %v", err)
 	}
+	if view.ID != agentID.String() || view.OrgID != orgID.String() || view.Status != "active" {
+		t.Fatalf("view=%+v", view)
+	}
+}
 
-	for _, tc := range cases {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			svc, err := NewAgentService(tc.repo)
-			if err != nil {
-				t.Fatalf("NewAgentService: %v", err)
-			}
-			view, err := svc.ValidateForOrg(context.Background(), orgID, agentID)
-			if tc.wantErr != nil {
-				if !errors.Is(err, tc.wantErr) {
-					t.Fatalf("err=%v want %v", err, tc.wantErr)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("ValidateForOrg: %v", err)
-			}
-			if !tc.wantOK {
-				t.Fatal("expected ok")
-			}
-			if view.ID != agentID.String() || view.OrgID != orgID.String() || view.Status != "active" {
-				t.Fatalf("view=%+v", view)
-			}
-		})
+func TestUnit_AgentService_ValidateForOrg_Missing(t *testing.T) {
+	t.Parallel()
+	assertValidateForOrgErr(t, &fakeAgentRepo{}, ErrAgentNotAuthorized)
+}
+
+func TestUnit_AgentService_ValidateForOrg_Inactive(t *testing.T) {
+	t.Parallel()
+	orgID, agentID := uuid.New(), uuid.New()
+	repo := &fakeAgentRepo{rec: &repository.AgentRecord{
+		ID: agentID.String(), OrgID: orgID.String(), Status: "paused",
+	}}
+	_, err := mustValidateForOrg(t, repo, orgID, agentID)
+	if !errors.Is(err, ErrAgentInactive) {
+		t.Fatalf("err=%v want %v", err, ErrAgentInactive)
+	}
+}
+
+func TestUnit_AgentService_ValidateForOrg_StoreError(t *testing.T) {
+	t.Parallel()
+	assertValidateForOrgErr(t, &fakeAgentRepo{err: errors.New("db down")}, ErrAgentLookup)
+}
+
+func TestUnit_AgentService_ValidateForOrg_UnwrapsCause(t *testing.T) {
+	t.Parallel()
+	cause := context.Canceled
+	_, err := mustValidateForOrg(t, &fakeAgentRepo{err: cause}, uuid.New(), uuid.New())
+	if !errors.Is(err, ErrAgentLookup) {
+		t.Fatalf("err=%v want ErrAgentLookup", err)
+	}
+	if !errors.Is(err, cause) {
+		t.Fatalf("err=%v want unwrap %v", err, cause)
+	}
+}
+
+func mustValidateForOrg(t *testing.T, repo *fakeAgentRepo, orgID, agentID uuid.UUID) (AgentView, error) {
+	t.Helper()
+	svc, err := NewAgentService(repo)
+	if err != nil {
+		t.Fatalf("NewAgentService: %v", err)
+	}
+	return svc.ValidateForOrg(context.Background(), orgID, agentID)
+}
+
+func assertValidateForOrgErr(t *testing.T, repo *fakeAgentRepo, want error) {
+	t.Helper()
+	_, err := mustValidateForOrg(t, repo, uuid.New(), uuid.New())
+	if !errors.Is(err, want) {
+		t.Fatalf("err=%v want %v", err, want)
 	}
 }

@@ -247,13 +247,19 @@ func parseOrgID(raw string) (uuid.UUID, error) {
 }
 
 func (s *Server) mapValidateAgentErr(start time.Time, err error) error {
-	if errors.Is(err, service.ErrAgentNotAuthorized) {
+	switch {
+	case errors.Is(err, service.ErrAgentNotAuthorized):
 		return s.agentValidateErr(start, metrics.AgentResultNotFound, codes.PermissionDenied, "agent not found")
-	}
-	if errors.Is(err, service.ErrAgentLookup) {
+	case errors.Is(err, service.ErrAgentInactive):
+		// Preserve pre-MF-010 metric label for inactive agents; keep client message existence-safe.
+		return s.agentValidateErr(start, metrics.AgentResultError, codes.PermissionDenied, "agent not found")
+	case errors.Is(err, context.Canceled):
+		return s.agentValidateErr(start, metrics.AgentResultError, codes.Canceled, "request canceled")
+	case errors.Is(err, context.DeadlineExceeded):
+		return s.agentValidateErr(start, metrics.AgentResultError, codes.DeadlineExceeded, "deadline exceeded")
+	default:
 		return s.agentValidateErr(start, metrics.AgentResultError, codes.Internal, "agent lookup failed")
 	}
-	return s.agentValidateErr(start, metrics.AgentResultError, codes.Internal, "agent lookup failed")
 }
 
 func (s *Server) agentValidateErr(start time.Time, result metrics.AgentValidateResult, code codes.Code, msg string) error {
