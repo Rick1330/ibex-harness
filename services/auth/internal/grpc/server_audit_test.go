@@ -19,6 +19,7 @@ import (
 )
 
 type auditCase struct {
+	name         string
 	resourceType string
 	resourceID   string
 	requestID    string
@@ -36,12 +37,12 @@ func TestUnit_WithIncomingRequestID(t *testing.T) {
 	t.Parallel()
 
 	base := context.Background()
-	if got := withIncomingRequestID(base); got != base {
+	if withIncomingRequestID(base) != base {
 		t.Fatal("expected same ctx without metadata")
 	}
 
 	empty := metadata.NewIncomingContext(base, metadata.Pairs(reqid.GRPCMetadataKey, ""))
-	if got := withIncomingRequestID(empty); got != empty {
+	if withIncomingRequestID(empty) != empty {
 		t.Fatal("expected same ctx for empty request id")
 	}
 
@@ -53,37 +54,41 @@ func TestUnit_WithIncomingRequestID(t *testing.T) {
 	}
 }
 
-func TestUnit_AuditsCrossTenant_CreateToken(t *testing.T) {
+func TestUnit_AuditsCrossTenant(t *testing.T) {
 	t.Parallel()
 
 	callerOrg := uuid.NewString()
 	targetOrg := uuid.NewString()
-	assertCrossTenantAudit(t, callerOrg, auditCase{
-		resourceType: "token",
-		requestID:    "req-create-xt",
-		invoke: func(ctx context.Context, s *Server) error {
-			_, err := s.CreateToken(ctx, &authv1.CreateTokenRequest{OrgId: targetOrg, Name: "x"})
-			return err
-		},
-	})
-}
-
-func TestUnit_AuditsCrossTenant_ValidateAgent(t *testing.T) {
-	t.Parallel()
-
-	callerOrg := uuid.NewString()
 	agentID := uuid.NewString()
-	assertCrossTenantAudit(t, callerOrg, auditCase{
-		resourceType: "agent",
-		resourceID:   agentID,
-		requestID:    "req-agent-xt",
-		invoke: func(ctx context.Context, s *Server) error {
-			_, err := s.ValidateAgent(ctx, &authv1.ValidateAgentRequest{
-				OrgId: uuid.NewString(), AgentId: agentID,
-			})
-			return err
+	for _, tc := range []auditCase{
+		{
+			name:         "create token",
+			resourceType: "token",
+			requestID:    "req-create-xt",
+			invoke: func(ctx context.Context, s *Server) error {
+				_, err := s.CreateToken(ctx, &authv1.CreateTokenRequest{OrgId: targetOrg, Name: "x"})
+				return err
+			},
 		},
-	})
+		{
+			name:         "validate agent",
+			resourceType: "agent",
+			resourceID:   agentID,
+			requestID:    "req-agent-xt",
+			invoke: func(ctx context.Context, s *Server) error {
+				_, err := s.ValidateAgent(ctx, &authv1.ValidateAgentRequest{
+					OrgId: uuid.NewString(), AgentId: agentID,
+				})
+				return err
+			},
+		},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assertCrossTenantAudit(t, callerOrg, tc)
+		})
+	}
 }
 
 func TestUnit_CreateToken_InvalidOrgDoesNotAuditCrossTenant(t *testing.T) {

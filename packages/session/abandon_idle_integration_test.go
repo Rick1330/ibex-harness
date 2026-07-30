@@ -15,6 +15,11 @@ import (
 
 const maxAbandonIdleLimit = 5000
 
+type abandonIdleExpect struct {
+	skip  bool
+	count int
+}
+
 func TestStore_AbandonIdle_MarksStaleActive(t *testing.T) {
 	ids := setupStore(t)
 	stale := mustCreate(t, ids, "ext-stale")
@@ -82,11 +87,10 @@ func TestStore_AbandonIdle_RequiresIdleBefore(t *testing.T) {
 
 func TestStore_AbandonIdle_EmptySkipAndClamp(t *testing.T) {
 	cases := []struct {
-		name      string
-		params    session.AbandonIdleParams
-		prep      func(*testing.T, storeIDs)
-		wantSkip  bool
-		wantCount int
+		name   string
+		params session.AbandonIdleParams
+		prep   func(*testing.T, storeIDs)
+		want   abandonIdleExpect
 	}{
 		{
 			name: "empty_when_no_victims",
@@ -102,7 +106,7 @@ func TestStore_AbandonIdle_EmptySkipAndClamp(t *testing.T) {
 			prep: func(t *testing.T, ids storeIDs) {
 				holdSweepLock(t, ids.db)
 			},
-			wantSkip: true,
+			want: abandonIdleExpect{skip: true},
 		},
 		{
 			name: "clamps_high_limit",
@@ -117,7 +121,7 @@ func TestStore_AbandonIdle_EmptySkipAndClamp(t *testing.T) {
 					backdateSessionUpdatedAt(t, ids.db, sess.ID, time.Now().UTC().Add(-2*time.Hour))
 				}
 			},
-			wantCount: maxAbandonIdleLimit,
+			want: abandonIdleExpect{count: maxAbandonIdleLimit},
 		},
 	}
 
@@ -128,7 +132,7 @@ func TestStore_AbandonIdle_EmptySkipAndClamp(t *testing.T) {
 			if tc.prep != nil {
 				tc.prep(t, ids)
 			}
-			assertAbandonIdleOutcome(t, ids.store, tc.params, tc.wantSkip, tc.wantCount)
+			assertAbandonIdleOutcome(t, ids.store, tc.params, tc.want)
 		})
 	}
 }
@@ -137,8 +141,7 @@ func assertAbandonIdleOutcome(
 	t *testing.T,
 	store *session.PostgresStore,
 	params session.AbandonIdleParams,
-	wantSkip bool,
-	wantCount int,
+	want abandonIdleExpect,
 ) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -147,11 +150,11 @@ func assertAbandonIdleOutcome(
 	if err != nil {
 		t.Fatalf("AbandonIdle: %v", err)
 	}
-	if res.SkippedLock != wantSkip {
-		t.Fatalf("SkippedLock=%v want %v", res.SkippedLock, wantSkip)
+	if res.SkippedLock != want.skip {
+		t.Fatalf("SkippedLock=%v want %v", res.SkippedLock, want.skip)
 	}
-	if res.Count() != wantCount {
-		t.Fatalf("Count=%d want %d", res.Count(), wantCount)
+	if res.Count() != want.count {
+		t.Fatalf("Count=%d want %d", res.Count(), want.count)
 	}
 }
 

@@ -66,29 +66,47 @@ func TestUnit_WritePool_ShutdownRejectsSubmit(t *testing.T) {
 func TestUnit_WritePool_ConcurrentSubmitDuringShutdown(t *testing.T) {
 	t.Parallel()
 
+	releaseWorkers := make(chan struct{})
+	workerStarted := make(chan struct{}, 1)
 	p := newWritePool(2, 8, func(cacheWriteJob) {
-		time.Sleep(time.Millisecond)
+		select {
+		case workerStarted <- struct{}{}:
+		default:
+		}
+		<-releaseWorkers
 	})
 
+	if !p.trySubmit(cacheWriteJob{key: "seed"}) {
+		t.Fatal("seed submit should succeed")
+	}
+	waitClosed(t, workerStarted)
+
 	var wg sync.WaitGroup
+	start := make(chan struct{})
 	for i := 0; i < 32; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			<-start
 			for j := 0; j < 100; j++ {
 				_ = p.trySubmit(cacheWriteJob{key: "k"})
 			}
 		}()
 	}
 
+	shutdownDone := make(chan error, 1)
 	go func() {
-		time.Sleep(5 * time.Millisecond)
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
-		_ = p.shutdown(ctx)
+		shutdownDone <- p.shutdown(ctx)
 	}()
 
+	close(start)
 	wg.Wait()
+	close(releaseWorkers)
+	if err := <-shutdownDone; err != nil {
+		t.Fatalf("shutdown: %v", err)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	if err := p.shutdown(ctx); err != nil {
