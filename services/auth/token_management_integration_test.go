@@ -35,6 +35,8 @@ func startAuthGRPC(t *testing.T, dbDSN string) (authv1.AuthServiceClient, func()
 	argon2 := token.DefaultArgon2Params()
 	validator := token.NewValidator(repo, argon2)
 	tokenSvc := service.NewTokenService(repo, argon2, logger.Discard("auth"), nil)
+	agentSvc, err := service.NewAgentService(agentsRepo)
+	require.NoError(t, err)
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -46,7 +48,7 @@ func startAuthGRPC(t *testing.T, dbDSN string) (authv1.AuthServiceClient, func()
 			grpcserver.AuthzUnaryInterceptor(validator),
 		))
 	srv, err := grpcserver.NewServer(grpcserver.ServerDeps{
-		Validator: validator, TokenService: tokenSvc, AgentsStore: agentsRepo, Metrics: reg,
+		Validator: validator, TokenService: tokenSvc, AgentService: agentSvc, Metrics: reg,
 		Log: logger.Discard("auth"),
 	})
 	require.NoError(t, err)

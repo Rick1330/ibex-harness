@@ -20,25 +20,29 @@ func TestUnit_NewServer_RejectsNilDependencies(t *testing.T) {
 	agents := &fakeAgentsStore{}
 	reg := testAuthRegistry()
 	log := logger.Discard("auth")
+	agentSvc, err := service.NewAgentService(agents)
+	if err != nil {
+		t.Fatalf("NewAgentService: %v", err)
+	}
 
 	cases := []struct {
 		name string
 		deps ServerDeps
 	}{
 		{name: "nil validator", deps: ServerDeps{
-			Validator: nil, TokenService: tokenSvc, AgentsStore: agents, Metrics: reg, Log: log,
+			Validator: nil, TokenService: tokenSvc, AgentService: agentSvc, Metrics: reg, Log: log,
 		}},
 		{name: "nil token service", deps: ServerDeps{
-			Validator: &fakeTokenValidator{}, TokenService: nil, AgentsStore: agents, Metrics: reg, Log: log,
+			Validator: &fakeTokenValidator{}, TokenService: nil, AgentService: agentSvc, Metrics: reg, Log: log,
 		}},
-		{name: "nil agents store", deps: ServerDeps{
-			Validator: &fakeTokenValidator{}, TokenService: tokenSvc, AgentsStore: nil, Metrics: reg, Log: log,
+		{name: "nil agent service", deps: ServerDeps{
+			Validator: &fakeTokenValidator{}, TokenService: tokenSvc, AgentService: nil, Metrics: reg, Log: log,
 		}},
 		{name: "nil metrics registry", deps: ServerDeps{
-			Validator: &fakeTokenValidator{}, TokenService: tokenSvc, AgentsStore: agents, Metrics: nil, Log: log,
+			Validator: &fakeTokenValidator{}, TokenService: tokenSvc, AgentService: agentSvc, Metrics: nil, Log: log,
 		}},
 		{name: "nil log", deps: ServerDeps{
-			Validator: &fakeTokenValidator{}, TokenService: tokenSvc, AgentsStore: agents, Metrics: reg, Log: nil,
+			Validator: &fakeTokenValidator{}, TokenService: tokenSvc, AgentService: agentSvc, Metrics: reg, Log: nil,
 		}},
 	}
 

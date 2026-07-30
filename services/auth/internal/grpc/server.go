@@ -30,7 +30,7 @@ type tokenValidator interface {
 type ServerDeps struct {
 	Validator    tokenValidator
 	TokenService *service.TokenService
-	AgentsStore  AgentStore
+	AgentService *service.AgentService
 	Metrics      *metrics.AuthRegistry
 	Log          *logger.Logger
 }
@@ -41,12 +41,8 @@ type Server struct {
 	validator    tokenValidator
 	tokenService *service.TokenService
 	metrics      *metrics.AuthRegistry
-	agentsStore  AgentStore
+	agentService *service.AgentService
 	log          *logger.Logger
-}
-
-type AgentStore interface {
-	GetByIDAndOrg(ctx context.Context, agentID, orgID uuid.UUID) (*repository.AgentRecord, error)
 }
 
 var errInvalidOrgID = errors.New("invalid org_id")
@@ -59,8 +55,8 @@ func NewServer(deps ServerDeps) (*Server, error) {
 	if deps.TokenService == nil {
 		return nil, fmt.Errorf("grpcserver: nil tokenService")
 	}
-	if deps.AgentsStore == nil {
-		return nil, fmt.Errorf("grpcserver: nil agentsStore")
+	if deps.AgentService == nil {
+		return nil, fmt.Errorf("grpcserver: nil agentService")
 	}
 	if deps.Metrics == nil {
 		return nil, fmt.Errorf("grpcserver: nil metrics registry")
@@ -72,7 +68,7 @@ func NewServer(deps ServerDeps) (*Server, error) {
 		validator:    deps.Validator,
 		tokenService: deps.TokenService,
 		metrics:      deps.Metrics,
-		agentsStore:  deps.AgentsStore,
+		agentService: deps.AgentService,
 		log:          deps.Log,
 	}, nil
 }
@@ -190,16 +186,16 @@ func (s *Server) ValidateAgent(ctx context.Context, req *authv1.ValidateAgentReq
 		return nil, s.agentValidateErr(start, metrics.AgentResultError, codes.PermissionDenied, "forbidden")
 	}
 
-	rec, result, stErr := s.lookupAgentForValidate(ctx, agentID, orgID)
-	if stErr != nil {
-		return nil, s.agentValidateErr(start, result, stErr.code, stErr.msg)
+	view, err := s.agentService.ValidateForOrg(ctx, orgID, agentID)
+	if err != nil {
+		return nil, s.mapValidateAgentErr(start, err)
 	}
 
 	s.observeValidateAgent(start, metrics.AgentResultOK)
 	return &authv1.ValidateAgentResponse{
-		AgentId: rec.ID,
-		OrgId:   rec.OrgID,
-		Status:  rec.Status,
+		AgentId: view.ID,
+		OrgId:   view.OrgID,
+		Status:  view.Status,
 	}, nil
 }
 
@@ -230,11 +226,6 @@ func withIncomingRequestID(ctx context.Context) context.Context {
 	return reqid.WithRequestID(ctx, vals[0])
 }
 
-type agentValidateStatusError struct {
-	code codes.Code
-	msg  string
-}
-
 func parseValidateAgentIDs(req *authv1.ValidateAgentRequest) (uuid.UUID, uuid.UUID, error) {
 	orgID, err := parseOrgID(req.GetOrgId())
 	if err != nil {
@@ -255,21 +246,21 @@ func parseOrgID(raw string) (uuid.UUID, error) {
 	return orgID, nil
 }
 
-func (s *Server) lookupAgentForValidate(
-	ctx context.Context,
-	agentID, orgID uuid.UUID,
-) (*repository.AgentRecord, metrics.AgentValidateResult, *agentValidateStatusError) {
-	rec, err := s.agentsStore.GetByIDAndOrg(ctx, agentID, orgID)
-	if err != nil {
-		return nil, metrics.AgentResultError, &agentValidateStatusError{codes.Internal, "agent lookup failed"}
+func (s *Server) mapValidateAgentErr(start time.Time, err error) error {
+	switch {
+	case errors.Is(err, service.ErrAgentNotAuthorized):
+		return s.agentValidateErr(start, metrics.AgentResultNotFound, codes.PermissionDenied, "agent not found")
+	case errors.Is(err, service.ErrAgentInactive):
+		// Metric label stays error (pre-MF-010). Message must be "agent is not active"
+		// so proxy maps PermissionDenied → AGENT_SUSPENDED (ADR-0016).
+		return s.agentValidateErr(start, metrics.AgentResultError, codes.PermissionDenied, "agent is not active")
+	case errors.Is(err, context.Canceled):
+		return s.agentValidateErr(start, metrics.AgentResultError, codes.Canceled, "request canceled")
+	case errors.Is(err, context.DeadlineExceeded):
+		return s.agentValidateErr(start, metrics.AgentResultError, codes.DeadlineExceeded, "deadline exceeded")
+	default:
+		return s.agentValidateErr(start, metrics.AgentResultError, codes.Internal, "agent lookup failed")
 	}
-	if rec == nil {
-		return nil, metrics.AgentResultNotFound, &agentValidateStatusError{codes.PermissionDenied, "agent not found"}
-	}
-	if rec.Status != "active" {
-		return nil, metrics.AgentResultError, &agentValidateStatusError{codes.PermissionDenied, "agent is not active"}
-	}
-	return rec, metrics.AgentResultOK, nil
 }
 
 func (s *Server) agentValidateErr(start time.Time, result metrics.AgentValidateResult, code codes.Code, msg string) error {

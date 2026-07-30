@@ -164,7 +164,7 @@ func newServerWithLog(t *testing.T, buf *bytes.Buffer) *Server {
 	return newServerWithLogAndAgents(t, buf, &fakeAgentsStore{})
 }
 
-func newServerWithLogAndAgents(t *testing.T, buf *bytes.Buffer, agents AgentStore) *Server {
+func newServerWithLogAndAgents(t *testing.T, buf *bytes.Buffer, agents *fakeAgentsStore) *Server {
 	t.Helper()
 	log, err := logger.New(logger.Config{
 		Service: "auth", Level: slog.LevelWarn, Writer: buf,
@@ -173,10 +173,14 @@ func newServerWithLogAndAgents(t *testing.T, buf *bytes.Buffer, agents AgentStor
 		t.Fatalf("logger: %v", err)
 	}
 	tokenSvc := service.NewTokenService(&fakeTokenRepo{}, token.DefaultArgon2Params(), logger.Discard("auth"), nil)
+	agentSvc, err := service.NewAgentService(agents)
+	if err != nil {
+		t.Fatalf("NewAgentService: %v", err)
+	}
 	srv, err := NewServer(ServerDeps{
 		Validator:    &fakeTokenValidator{},
 		TokenService: tokenSvc,
-		AgentsStore:  agents,
+		AgentService: agentSvc,
 		Metrics:      testAuthRegistry(),
 		Log:          log,
 	})

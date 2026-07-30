@@ -56,11 +56,15 @@ type serviceTokenRepo interface {
 	ListTokens(ctx context.Context, orgID, cursor string, limit int) ([]repository.TokenMetadata, string, error)
 }
 
-func newTestServer(t testing.TB, validator tokenValidator, tokenRepo serviceTokenRepo, agents AgentStore) *Server {
+func newTestServer(t testing.TB, validator tokenValidator, tokenRepo serviceTokenRepo, agents *fakeAgentsStore) *Server {
 	t.Helper()
 	tokenSvc := service.NewTokenService(tokenRepo, token.DefaultArgon2Params(), logger.Discard("auth"), nil)
+	agentSvc, err := service.NewAgentService(agents)
+	if err != nil {
+		t.Fatalf("NewAgentService: %v", err)
+	}
 	srv, err := NewServer(ServerDeps{
-		Validator: validator, TokenService: tokenSvc, AgentsStore: agents, Metrics: testAuthRegistry(),
+		Validator: validator, TokenService: tokenSvc, AgentService: agentSvc, Metrics: testAuthRegistry(),
 		Log: logger.Discard("auth"),
 	})
 	if err != nil {
