@@ -208,7 +208,7 @@ func (s *TokenService) DrainPublishes() {
 func (s *TokenService) ListTokens(ctx context.Context, orgID, cursor string, limit int32) ([]TokenListItem, string, error) {
 	rows, next, err := s.repo.ListTokens(ctx, orgID, cursor, int(limit))
 	if err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("ListTokens org_id=%s: %w", orgID, err)
 	}
 	return mapTokenMetadata(rows), next, nil
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/logger"
@@ -60,13 +61,13 @@ var errInvalidOrgID = errors.New("invalid org_id")
 
 // NewServer constructs an AuthService server.
 func NewServer(deps ServerDeps) (*Server, error) {
-	if deps.Validator == nil {
+	if isNilDep(deps.Validator) {
 		return nil, fmt.Errorf("grpcserver: nil validator")
 	}
-	if deps.TokenService == nil {
+	if isNilDep(deps.TokenService) {
 		return nil, fmt.Errorf("grpcserver: nil tokenService")
 	}
-	if deps.AgentService == nil {
+	if isNilDep(deps.AgentService) {
 		return nil, fmt.Errorf("grpcserver: nil agentService")
 	}
 	if deps.Metrics == nil {
@@ -82,6 +83,20 @@ func NewServer(deps ServerDeps) (*Server, error) {
 		agentService: deps.AgentService,
 		log:          deps.Log,
 	}, nil
+}
+
+// isNilDep reports whether v is a nil interface or holds a typed-nil value.
+func isNilDep(v any) bool {
+	if v == nil {
+		return true
+	}
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Ptr, reflect.Slice:
+		return rv.IsNil()
+	default:
+		return false
+	}
 }
 
 func (s *Server) ValidateToken(ctx context.Context, req *authv1.ValidateTokenRequest) (*authv1.ValidateTokenResponse, error) {

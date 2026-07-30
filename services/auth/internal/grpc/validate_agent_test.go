@@ -131,7 +131,7 @@ func TestValidateAgent_InactiveAgentPermissionDenied(t *testing.T) {
 	s := &Server{
 		metrics: testAuthRegistry(),
 		agentService: &fakeAgentAPI{
-			err: service.ErrAgentNotAuthorized,
+			err: service.ErrAgentInactive,
 		},
 	}
 
