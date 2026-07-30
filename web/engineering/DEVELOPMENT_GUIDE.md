@@ -414,7 +414,7 @@ Import boundaries and complexity are enforced in CI via `golangci-lint` (not a s
 - **Base linters:** `.golangci.yml` (`govet` / `staticcheck` / `revive` / `errcheck`) — full tree, no `whole-files`.
 - **Complexity:** `.golangci.complexity.yml` (`funlen` / `gocognit`) with `issues.new` + `new-from-rev: origin/main` + `whole-files: true` (scoped so touching a file does not re-surface non-complexity findings).
 - **Local run:** `make lint-go` fetches/verifies `origin/main`, then runs all three configs (golangci-lint v2.4+; CI uses v2.8.0).
-**MF-001 / Phase 1 proxy DB:** Identity stays on auth gRPC (no proxy `pgxpool` for tokens/agents). Current exception: `services/proxy/cmd/proxy/main.go` still opens Postgres for **session and directive** stores only — same wording as `.cursor/rules/20-architecture-layering.mdc` and `GOLANGCI_POLICY.md`; `database/sql` depguard under proxy is deferred until ADR/migration.
+**MF-001 / Phase 1 proxy DB:** Identity stays on auth gRPC (no proxy DB for tokens/agents). Accepted exception ([ADR-0039](../content/docs/adr/0039-proxy-postgres-session-directive.mdx)): `services/proxy/internal/bootstrap` may open Postgres for **session and directive** stores only — same wording as `.cursor/rules/20-architecture-layering.mdc` and `GOLANGCI_POLICY.md`. Depguard rule `proxy-no-database-sql` enforces the boundary.
 - TypeScript: `eslint`, `tsc`, `vitest`
 - Security: secret scan, dependency scan, container scan
 - Contract checks: protobuf compilation + generated code consistency

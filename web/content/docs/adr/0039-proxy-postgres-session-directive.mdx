@@ -1,0 +1,66 @@
+---
+title: "ADR-0039: Proxy Postgres ownership for session and directive stores"
+description: "Accept proxy-owned database/sql for session and directive hot paths only; identity remains on auth gRPC. Enforce with depguard."
+adrId: "0039"
+status: "Accepted"
+date: "2026-07-30"
+authors: "IBEX Harness team"
+---
+
+# ADR-0039: Proxy Postgres ownership for session and directive stores
+
+- **Status:** Accepted
+- **Date:** 2026-07-30
+- **Authors:** IBEX Harness team
+- **Milestone:** Phase 2 quality closeout (MF-001 / issue #417)
+- **Supersedes forward reference in:** [ADR-0025 §9](/docs/adr/0025-llm-provider-abstraction)
+
+## Context
+
+Phase 1 required the proxy to avoid owning Postgres for **identity** — token and agent validation stay on the auth service gRPC API. That rule remains.
+
+Phase 2 milestones 2.3.2 and 2.4.x intentionally placed **directive** and **session** stores on the proxy request path (`packages/directive`, `packages/session`), wired from `services/proxy/internal/bootstrap`. Today the proxy opens a `database/sql` pool via `sql.Open("postgres", …)` in `services/proxy/internal/bootstrap/postgres.go` for:
+
+- Directive Postgres fallback behind Redis cache
+- Session create / checkpoint / complete / abandon-idle (+ sweeper)
+- Advisory Postgres readiness when `POSTGRES_DSN` is set
+- Coordinated pool close on shutdown
+
+There is no session or directive service under `services/` to migrate into. ADR-0025 §9 foresaw a dedicated ADR and incorrectly described a **read-only `pgxpool`** with writes only on auth/api — reality is `database/sql` and **session writes from the proxy**.
+
+## Decision
+
+**Keep the Phase 2 exception and make it explicit:**
+
+1. The proxy **may** own a `database/sql` (`lib/pq`) pool opened **only** in `services/proxy/internal/bootstrap` for session store, directive loader/cache wiring, health, and shutdown.
+2. The proxy **must not** use that pool (or any other DB) for token/agent identity validation — identity remains auth gRPC only.
+3. RLS and `org_id` checks stay in `packages/session` and `packages/directive` SQL; bootstrap must not introduce identity queries.
+4. Lint enforces the boundary: `database/sql` is denied under `services/proxy/**` except `services/proxy/internal/bootstrap/**` (and test files). See `.golangci.depguard.yml` rule `proxy-no-database-sql`.
+5. Moving session/directive ownership behind a dedicated service requires a **new ADR**, a real service boundary, and a latency plan that preserves the &lt;20ms proxy overhead budget.
+
+## Consequences
+
+**Positive:**
+
+- Architectural honesty: exception is decided, not tribal knowledge
+- Depguard prevents accidental `database/sql` in HTTP handlers / middleware
+- Hot-path session and directive latency stay in-process
+
+**Negative / follow-ons:**
+
+- Proxy remains stateful w.r.t. Postgres until a future service extraction
+- Docs that still say “Phase 1 proxy has no Postgres” must cite this ADR for Phase 2+
+
+## Alternatives considered
+
+1. **Migrate session/directive to a new service now** — rejected: no existing service/proto/client; multi-milestone product work; risks proxy SLA.
+2. **Remove Postgres from proxy** — rejected: breaks directive miss path and session lifecycle / sweeper.
+3. **Leave undocumented exception** — rejected: MF-001 High finding and stale `main.go` / `pgxpool` wording.
+
+## References
+
+- Issue [#417](https://github.com/Rick1330/ibex-harness/issues/417)
+- [GOLANGCI_POLICY.md](/engineering/GOLANGCI_POLICY) § Proxy Postgres
+- [ADR-0025: LLM provider abstraction](/docs/adr/0025-llm-provider-abstraction) §9 (updated to point here)
+- [ADR-0032: Session data model](/docs/adr/0032-session-data-model)
+- [ADR-0030: Directive versioning](/docs/adr/0030-directive-versioning)

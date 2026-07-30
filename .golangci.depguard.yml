@@ -20,6 +20,17 @@ linters:
           deny:
             - pkg: github.com/Rick1330/ibex-harness/services
               desc: packages/* must not import services/* (20-architecture-layering)
+        # ADR-0039 / MF-001: session+directive sql.DB only in proxy bootstrap.
+        proxy-no-database-sql:
+          list-mode: lax
+          files:
+            - "!$all"
+            - "services/proxy/**"
+            - "!services/proxy/internal/bootstrap/**"
+            - "!$test"
+          deny:
+            - pkg: database/sql
+              desc: proxy must not import database/sql outside internal/bootstrap (ADR-0039)
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0
