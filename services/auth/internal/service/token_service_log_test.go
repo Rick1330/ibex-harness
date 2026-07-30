@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/Rick1330/ibex-harness/packages/logger"
-	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/token"
 )
 
@@ -49,7 +48,7 @@ func TestTokenServiceLogsOmitPlaintext(t *testing.T) {
 
 func TestCreateTokenRejectsEmptyOrg(t *testing.T) {
 	svc := NewTokenService(nil, token.Argon2Params{}, logger.Discard("auth"), nil)
-	_, err := svc.CreateToken(context.Background(), &authv1.CreateTokenRequest{Name: "x"})
+	_, err := svc.CreateToken(context.Background(), CreateTokenInput{Name: "x"})
 	if err != ErrInvalidArgument {
 		t.Fatalf("got %v", err)
 	}

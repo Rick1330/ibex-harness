@@ -3,13 +3,13 @@ package grpcserver
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/logger"
+	"github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/packages/permissions"
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
-	"github.com/Rick1330/ibex-harness/services/auth/internal/repository"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/service"
-	"github.com/Rick1330/ibex-harness/services/auth/internal/token"
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -23,49 +23,72 @@ func (f *fakeTokenValidator) Validate(ctx context.Context, accessToken string) (
 	return f.fn(ctx, accessToken)
 }
 
-type fakeTokenRepo struct {
-	createFn func(context.Context, repository.CreateTokenParams) (string, error)
-	revokeFn func(context.Context, repository.RevokeTokenInput) error
-	listFn   func(context.Context, string, string, int) ([]repository.TokenMetadata, string, error)
+type fakeTokenAPI struct {
+	createFn func(context.Context, service.CreateTokenInput) (service.CreateTokenResult, error)
+	revokeFn func(context.Context, service.RevokeTokenParams) error
+	listFn   func(context.Context, string, string, int32) ([]service.TokenListItem, string, error)
 }
 
-func (f *fakeTokenRepo) CreateToken(ctx context.Context, p repository.CreateTokenParams) (string, error) {
+func (f *fakeTokenAPI) CreateToken(ctx context.Context, in service.CreateTokenInput) (service.CreateTokenResult, error) {
 	if f.createFn != nil {
-		return f.createFn(ctx, p)
+		return f.createFn(ctx, in)
 	}
-	return p.ID, nil
+	if in.OrgID == "" || in.Name == "" {
+		return service.CreateTokenResult{}, service.ErrInvalidArgument
+	}
+	return service.CreateTokenResult{
+		TokenID: uuid.NewString(), Plaintext: "ibex_pat_test", Prefix: "ibex_pat_",
+		CreatedAt: time.Now().UTC(),
+	}, nil
 }
 
-func (f *fakeTokenRepo) RevokeToken(ctx context.Context, in repository.RevokeTokenInput) error {
+func (f *fakeTokenAPI) RevokeToken(ctx context.Context, p service.RevokeTokenParams) error {
 	if f.revokeFn != nil {
-		return f.revokeFn(ctx, in)
+		return f.revokeFn(ctx, p)
 	}
 	return nil
 }
 
-func (f *fakeTokenRepo) ListTokens(ctx context.Context, orgID, cursor string, limit int) ([]repository.TokenMetadata, string, error) {
+func (f *fakeTokenAPI) ListTokens(ctx context.Context, orgID, cursor string, limit int32) ([]service.TokenListItem, string, error) {
 	if f.listFn != nil {
 		return f.listFn(ctx, orgID, cursor, limit)
 	}
 	return nil, "", nil
 }
 
-type serviceTokenRepo interface {
-	CreateToken(ctx context.Context, p repository.CreateTokenParams) (string, error)
-	RevokeToken(ctx context.Context, in repository.RevokeTokenInput) error
-	ListTokens(ctx context.Context, orgID, cursor string, limit int) ([]repository.TokenMetadata, string, error)
+type fakeAgentAPI struct {
+	view service.AgentView
+	err  error
 }
 
-func newTestServer(t testing.TB, validator tokenValidator, tokenRepo serviceTokenRepo, agents *fakeAgentsStore) *Server {
+func (f *fakeAgentAPI) ValidateForOrg(ctx context.Context, orgID, agentID uuid.UUID) (service.AgentView, error) {
+	_ = ctx
+	_ = orgID
+	_ = agentID
+	if f.err != nil {
+		return service.AgentView{}, f.err
+	}
+	if f.view.ID == "" {
+		return service.AgentView{}, service.ErrAgentNotAuthorized
+	}
+	return f.view, nil
+}
+
+func testAuthRegistry() *metrics.AuthRegistry {
+	return metrics.NewAuth(metrics.AuthConfig{ServiceName: "test"})
+}
+
+func newTestServer(t testing.TB, validator tokenValidator, tokens tokenAPI, agents agentAPI) *Server {
 	t.Helper()
-	tokenSvc := service.NewTokenService(tokenRepo, token.DefaultArgon2Params(), logger.Discard("auth"), nil)
-	agentSvc, err := service.NewAgentService(agents)
-	if err != nil {
-		t.Fatalf("NewAgentService: %v", err)
+	if tokens == nil {
+		tokens = &fakeTokenAPI{}
+	}
+	if agents == nil {
+		agents = &fakeAgentAPI{}
 	}
 	srv, err := NewServer(ServerDeps{
-		Validator: validator, TokenService: tokenSvc, AgentService: agentSvc, Metrics: testAuthRegistry(),
-		Log: logger.Discard("auth"),
+		Validator: validator, TokenService: tokens, AgentService: agents,
+		Metrics: testAuthRegistry(), Log: logger.Discard("auth"),
 	})
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)

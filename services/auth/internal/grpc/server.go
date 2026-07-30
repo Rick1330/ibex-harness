@@ -11,7 +11,6 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/permissions"
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	"github.com/Rick1330/ibex-harness/packages/reqid"
-	"github.com/Rick1330/ibex-harness/services/auth/internal/repository"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/service"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/token"
 	"github.com/google/uuid"
@@ -26,11 +25,23 @@ type tokenValidator interface {
 	Validate(ctx context.Context, accessToken string) (*authv1.ValidateTokenResponse, error)
 }
 
+// tokenAPI is the service port used by token management RPCs.
+type tokenAPI interface {
+	CreateToken(ctx context.Context, in service.CreateTokenInput) (service.CreateTokenResult, error)
+	RevokeToken(ctx context.Context, p service.RevokeTokenParams) error
+	ListTokens(ctx context.Context, orgID, cursor string, limit int32) ([]service.TokenListItem, string, error)
+}
+
+// agentAPI is the service port used by ValidateAgent.
+type agentAPI interface {
+	ValidateForOrg(ctx context.Context, orgID, agentID uuid.UUID) (service.AgentView, error)
+}
+
 // ServerDeps groups AuthService construction dependencies.
 type ServerDeps struct {
 	Validator    tokenValidator
-	TokenService *service.TokenService
-	AgentService *service.AgentService
+	TokenService tokenAPI
+	AgentService agentAPI
 	Metrics      *metrics.AuthRegistry
 	Log          *logger.Logger
 }
@@ -39,9 +50,9 @@ type ServerDeps struct {
 type Server struct {
 	authv1.UnimplementedAuthServiceServer
 	validator    tokenValidator
-	tokenService *service.TokenService
+	tokenService tokenAPI
 	metrics      *metrics.AuthRegistry
-	agentService *service.AgentService
+	agentService agentAPI
 	log          *logger.Logger
 }
 
@@ -112,7 +123,8 @@ func (s *Server) CreateToken(ctx context.Context, req *authv1.CreateTokenRequest
 	if err := RequireOrgAndPermission(ctx, req.GetOrgId(), permissions.TokenCreate); err != nil {
 		return nil, err
 	}
-	result, err := s.tokenService.CreateToken(ctx, req)
+	in := createTokenInputFromProto(req)
+	result, err := s.tokenService.CreateToken(ctx, in)
 	if err != nil {
 		if errors.Is(err, service.ErrInvalidArgument) {
 			return nil, status.Error(codes.InvalidArgument, "invalid request")
@@ -125,6 +137,19 @@ func (s *Server) CreateToken(ctx context.Context, req *authv1.CreateTokenRequest
 		Prefix:    result.Prefix,
 		CreatedAt: timestamppb.New(result.CreatedAt),
 	}, nil
+}
+
+func createTokenInputFromProto(req *authv1.CreateTokenRequest) service.CreateTokenInput {
+	in := service.CreateTokenInput{
+		OrgID: req.GetOrgId(), Name: req.GetName(), Description: req.GetDescription(),
+		Permissions: req.GetPermissions(), TokenType: req.GetType(),
+		UserID: req.UserId, AgentID: req.AgentId,
+	}
+	if req.GetExpiresAt() != nil {
+		t := req.GetExpiresAt().AsTime()
+		in.ExpiresAt = &t
+	}
+	return in
 }
 
 func (s *Server) RevokeToken(ctx context.Context, req *authv1.RevokeTokenRequest) (*authv1.RevokeTokenResponse, error) {
@@ -147,7 +172,7 @@ func (s *Server) RevokeToken(ctx context.Context, req *authv1.RevokeTokenRequest
 		OrgID: req.GetOrgId(), TokenID: req.GetTokenId(), RevokedBy: caller.UserID, Reason: reason,
 	})
 	if err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
+		if errors.Is(err, service.ErrTokenNotFound) {
 			return nil, status.Error(codes.NotFound, "token not found")
 		}
 		return nil, status.Errorf(codes.Internal, "revoke token failed")

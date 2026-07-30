@@ -13,7 +13,6 @@ import (
 	"github.com/Rick1330/ibex-harness/services/auth/internal/repository"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/token"
 	"github.com/google/uuid"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // tokenRepo persists token rows for TokenService.
@@ -54,33 +53,33 @@ type CreateTokenResult struct {
 	CreatedAt time.Time
 }
 
-// CreateToken validates the request, generates a secure random PAT, hashes it,
+// CreateToken validates the input, generates a secure random PAT, hashes it,
 // and persists the token row. It returns ErrInvalidArgument for request
 // validation failures, a wrapped error if generation or hashing fails (without
 // persisting anything), and a wrapped repository error if the write fails.
 // The plaintext token in the result is only available at creation time.
-func (s *TokenService) CreateToken(ctx context.Context, req *authv1.CreateTokenRequest) (CreateTokenResult, error) {
-	if err := validateCreateTokenRequest(req); err != nil {
+func (s *TokenService) CreateToken(ctx context.Context, in CreateTokenInput) (CreateTokenResult, error) {
+	if err := validateCreateTokenInput(in); err != nil {
 		return CreateTokenResult{}, err
 	}
-	plaintext, prefix, params, err := buildCreateTokenParams(req, s.argon2)
+	plaintext, prefix, params, err := buildCreateTokenParams(in, s.argon2)
 	if err != nil {
 		return CreateTokenResult{}, err
 	}
 	return s.persistToken(ctx, params, plaintext, prefix)
 }
 
-func validateCreateTokenRequest(req *authv1.CreateTokenRequest) error {
-	if req.GetOrgId() == "" || req.GetName() == "" {
+func validateCreateTokenInput(in CreateTokenInput) error {
+	if in.OrgID == "" || in.Name == "" {
 		return ErrInvalidArgument
 	}
-	if req.GetType() != authv1.TokenType_TOKEN_TYPE_PAT && req.GetType() != authv1.TokenType_TOKEN_TYPE_UNSPECIFIED {
+	if in.TokenType != authv1.TokenType_TOKEN_TYPE_PAT && in.TokenType != authv1.TokenType_TOKEN_TYPE_UNSPECIFIED {
 		return ErrInvalidArgument
 	}
 	return nil
 }
 
-func buildCreateTokenParams(req *authv1.CreateTokenRequest, argon2 token.Argon2Params) (plaintext, prefix string, params repository.CreateTokenParams, err error) {
+func buildCreateTokenParams(in CreateTokenInput, argon2 token.Argon2Params) (plaintext, prefix string, params repository.CreateTokenParams, err error) {
 	var rowID uuid.UUID
 	plaintext, prefix, rowID, err = token.GeneratePAT()
 	if err != nil {
@@ -92,26 +91,17 @@ func buildCreateTokenParams(req *authv1.CreateTokenRequest, argon2 token.Argon2P
 		err = fmt.Errorf("hash bearer: %w", herr)
 		return
 	}
-	var expiresAt *time.Time
-	if req.GetExpiresAt() != nil {
-		t := req.GetExpiresAt().AsTime()
-		expiresAt = &t
-	}
 	params = repository.CreateTokenParams{
 		ID:          rowID.String(),
-		OrgID:       req.GetOrgId(),
-		Name:        req.GetName(),
-		Description: req.GetDescription(),
+		OrgID:       in.OrgID,
+		Name:        in.Name,
+		Description: in.Description,
 		Hash:        hash,
 		Prefix:      prefix,
-		Permissions: req.GetPermissions(),
-		ExpiresAt:   expiresAt,
-	}
-	if req.UserId != nil {
-		params.UserID = req.UserId
-	}
-	if req.AgentId != nil {
-		params.AgentID = req.AgentId
+		Permissions: in.Permissions,
+		ExpiresAt:   in.ExpiresAt,
+		UserID:      in.UserID,
+		AgentID:     in.AgentID,
 	}
 	return
 }
@@ -149,6 +139,9 @@ func (s *TokenService) RevokeToken(ctx context.Context, p RevokeTokenParams) err
 		OrgID: p.OrgID, TokenID: p.TokenID, RevokedBy: p.RevokedBy, Reason: p.Reason,
 	})
 	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return ErrTokenNotFound
+		}
 		return fmt.Errorf("RevokeToken org_id=%s token_id=%s: %w", p.OrgID, p.TokenID, err)
 	}
 	s.logger.InfoCtx(ctx, "token_revoked",
@@ -212,29 +205,30 @@ func (s *TokenService) DrainPublishes() {
 }
 
 // ListTokens returns metadata rows for an org.
-func (s *TokenService) ListTokens(ctx context.Context, orgID, cursor string, limit int32) ([]repository.TokenMetadata, string, error) {
-	return s.repo.ListTokens(ctx, orgID, cursor, int(limit))
+func (s *TokenService) ListTokens(ctx context.Context, orgID, cursor string, limit int32) ([]TokenListItem, string, error) {
+	rows, next, err := s.repo.ListTokens(ctx, orgID, cursor, int(limit))
+	if err != nil {
+		return nil, "", err
+	}
+	return mapTokenMetadata(rows), next, nil
 }
 
-// ToProtoList maps repository metadata to proto messages.
-func ToProtoList(rows []repository.TokenMetadata) []*authv1.TokenMetadata {
-	out := make([]*authv1.TokenMetadata, 0, len(rows))
+func mapTokenMetadata(rows []repository.TokenMetadata) []TokenListItem {
+	out := make([]TokenListItem, 0, len(rows))
 	for _, row := range rows {
-		m := &authv1.TokenMetadata{
-			TokenId:     row.ID,
-			Name:        row.Name,
-			Prefix:      row.Prefix,
-			Permissions: row.Permissions,
-			CreatedAt:   timestamppb.New(row.CreatedAt.UTC()),
-			IsRevoked:   row.IsRevoked,
+		item := TokenListItem{
+			ID: row.ID, Name: row.Name, Prefix: row.Prefix,
+			Permissions: row.Permissions, CreatedAt: row.CreatedAt, IsRevoked: row.IsRevoked,
 		}
 		if row.ExpiresAt.Valid {
-			m.ExpiresAt = timestamppb.New(row.ExpiresAt.Time.UTC())
+			t := row.ExpiresAt.Time
+			item.ExpiresAt = &t
 		}
 		if row.RevokedAt.Valid {
-			m.RevokedAt = timestamppb.New(row.RevokedAt.Time.UTC())
+			t := row.RevokedAt.Time
+			item.RevokedAt = &t
 		}
-		out = append(out, m)
+		out = append(out, item)
 	}
 	return out
 }

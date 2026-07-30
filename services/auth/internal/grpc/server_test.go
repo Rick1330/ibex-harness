@@ -21,7 +21,7 @@ type validateTokenCase struct {
 func runValidateTokenCase(t *testing.T, tc validateTokenCase) {
 	t.Helper()
 
-	s := newTestServer(t, &fakeTokenValidator{fn: tc.fn}, &fakeTokenRepo{}, &fakeAgentsStore{})
+	s := newTestServer(t, &fakeTokenValidator{fn: tc.fn}, &fakeTokenAPI{}, &fakeAgentAPI{})
 	resp, err := s.ValidateToken(context.Background(), &authv1.ValidateTokenRequest{AccessToken: "tok"})
 	assertOKOrGRPCCode(t, err, tc.wantCode, func() {
 		if resp.GetOrgId() != "org-1" || resp.GetPermissions() != 7 {
@@ -73,7 +73,7 @@ type createTokenCase struct {
 func runCreateTokenCase(t *testing.T, tc createTokenCase) {
 	t.Helper()
 
-	s := newTestServer(t, &fakeTokenValidator{}, &fakeTokenRepo{}, &fakeAgentsStore{})
+	s := newTestServer(t, &fakeTokenValidator{}, &fakeTokenAPI{}, &fakeAgentAPI{})
 	resp, err := s.CreateToken(tc.ctx, tc.req)
 	assertOKOrGRPCCode(t, err, tc.wantCode, func() {
 		if resp.GetTokenId() == "" || resp.GetPlaintext() == "" {
@@ -128,18 +128,18 @@ type revokeTokenCase struct {
 	name     string
 	ctx      context.Context
 	req      *authv1.RevokeTokenRequest
-	repo     *fakeTokenRepo
+	tokens   *fakeTokenAPI
 	wantCode codes.Code
 }
 
 func runRevokeTokenCase(t *testing.T, tc revokeTokenCase) {
 	t.Helper()
 
-	repo := tc.repo
-	if repo == nil {
-		repo = &fakeTokenRepo{}
+	tokens := tc.tokens
+	if tokens == nil {
+		tokens = &fakeTokenAPI{}
 	}
-	s := newTestServer(t, &fakeTokenValidator{}, repo, &fakeAgentsStore{})
+	s := newTestServer(t, &fakeTokenValidator{}, tokens, &fakeAgentAPI{})
 
 	_, err := s.RevokeToken(tc.ctx, tc.req)
 	if tc.wantCode == codes.OK {

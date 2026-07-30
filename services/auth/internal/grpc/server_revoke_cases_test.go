@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/Rick1330/ibex-harness/packages/permissions"
-	"github.com/Rick1330/ibex-harness/services/auth/internal/repository"
+	"github.com/Rick1330/ibex-harness/services/auth/internal/service"
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
 )
@@ -37,9 +37,9 @@ func revokeTokenCases(t *testing.T) []revokeTokenCase {
 		{
 			name: "not found in repo", ctx: adminCtx(t, orgID),
 			req: revokeTokenRequest(orgID, tokenID),
-			repo: &fakeTokenRepo{
-				revokeFn: func(context.Context, repository.RevokeTokenInput) error {
-					return repository.ErrNotFound
+			tokens: &fakeTokenAPI{
+				revokeFn: func(context.Context, service.RevokeTokenParams) error {
+					return service.ErrTokenNotFound
 				},
 			},
 			wantCode: codes.NotFound,
@@ -47,8 +47,8 @@ func revokeTokenCases(t *testing.T) []revokeTokenCase {
 		{
 			name: "internal error", ctx: adminCtx(t, orgID),
 			req: revokeTokenRequest(orgID, tokenID),
-			repo: &fakeTokenRepo{
-				revokeFn: func(context.Context, repository.RevokeTokenInput) error {
+			tokens: &fakeTokenAPI{
+				revokeFn: func(context.Context, service.RevokeTokenParams) error {
 					return errors.New("db down")
 				},
 			},
@@ -59,12 +59,12 @@ func revokeTokenCases(t *testing.T) []revokeTokenCase {
 			ctx: ContextWithCaller(context.Background(), CallerContext{
 				OrgID: orgID, TokenID: selfTokenID, Permissions: permissions.ReadOnly,
 			}),
-			req: revokeTokenRequest(orgID, selfTokenID), repo: &fakeTokenRepo{},
+			req: revokeTokenRequest(orgID, selfTokenID), tokens: &fakeTokenAPI{},
 			wantCode: codes.OK,
 		},
 		{
 			name: "admin revoke ok", ctx: adminCtx(t, orgID),
-			req: revokeTokenRequest(orgID, tokenID), repo: &fakeTokenRepo{},
+			req: revokeTokenRequest(orgID, tokenID), tokens: &fakeTokenAPI{},
 			wantCode: codes.OK,
 		},
 	}

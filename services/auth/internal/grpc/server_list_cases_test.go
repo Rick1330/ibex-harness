@@ -8,7 +8,7 @@ import (
 
 	"github.com/Rick1330/ibex-harness/packages/permissions"
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
-	"github.com/Rick1330/ibex-harness/services/auth/internal/repository"
+	"github.com/Rick1330/ibex-harness/services/auth/internal/service"
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
 )
@@ -16,7 +16,7 @@ import (
 type listTokensCase struct {
 	name     string
 	ctx      context.Context
-	repo     *fakeTokenRepo
+	tokens   *fakeTokenAPI
 	wantCode codes.Code
 	wantLen  int
 }
@@ -35,8 +35,8 @@ func listTokensCases(t *testing.T, orgID string) []listTokensCase {
 		},
 		{
 			name: "internal error", ctx: adminCtx(t, orgID),
-			repo: &fakeTokenRepo{
-				listFn: func(context.Context, string, string, int) ([]repository.TokenMetadata, string, error) {
+			tokens: &fakeTokenAPI{
+				listFn: func(context.Context, string, string, int32) ([]service.TokenListItem, string, error) {
 					return nil, "", errors.New("db down")
 				},
 			},
@@ -44,9 +44,9 @@ func listTokensCases(t *testing.T, orgID string) []listTokensCase {
 		},
 		{
 			name: "ok", ctx: adminCtx(t, orgID),
-			repo: &fakeTokenRepo{
-				listFn: func(context.Context, string, string, int) ([]repository.TokenMetadata, string, error) {
-					return []repository.TokenMetadata{
+			tokens: &fakeTokenAPI{
+				listFn: func(context.Context, string, string, int32) ([]service.TokenListItem, string, error) {
+					return []service.TokenListItem{
 						{ID: "t1", Name: "a", Prefix: "p1", Permissions: 1, CreatedAt: created},
 					}, "next-cursor", nil
 				},
@@ -58,11 +58,11 @@ func listTokensCases(t *testing.T, orgID string) []listTokensCase {
 
 func runListTokensCase(t *testing.T, orgID string, tc listTokensCase) {
 	t.Helper()
-	repo := tc.repo
-	if repo == nil {
-		repo = &fakeTokenRepo{}
+	tokens := tc.tokens
+	if tokens == nil {
+		tokens = &fakeTokenAPI{}
 	}
-	s := newTestServer(t, &fakeTokenValidator{}, repo, &fakeAgentsStore{})
+	s := newTestServer(t, &fakeTokenValidator{}, tokens, &fakeAgentAPI{})
 	resp, err := s.ListTokens(tc.ctx, &authv1.ListTokensRequest{OrgId: orgID, Limit: 10})
 	if tc.wantCode == codes.OK {
 		if err != nil {

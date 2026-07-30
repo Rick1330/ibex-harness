@@ -11,8 +11,6 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/permissions"
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	"github.com/Rick1330/ibex-harness/packages/reqid"
-	"github.com/Rick1330/ibex-harness/services/auth/internal/service"
-	"github.com/Rick1330/ibex-harness/services/auth/internal/token"
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -121,7 +119,7 @@ func TestUnit_ValidateAgent_SameOrgMissDoesNotAuditCrossTenant(t *testing.T) {
 
 	var buf bytes.Buffer
 	orgID := uuid.NewString()
-	s := newServerWithLogAndAgents(t, &buf, &fakeAgentsStore{})
+	s := newServerWithLogAndAgents(t, &buf, &fakeAgentAPI{})
 	ctx := ContextWithCaller(context.Background(), CallerContext{
 		OrgID: orgID, Permissions: permissions.Admin,
 	})
@@ -161,10 +159,10 @@ func assertCrossTenantAudit(t *testing.T, callerOrg string, tc auditCase) {
 
 func newServerWithLog(t *testing.T, buf *bytes.Buffer) *Server {
 	t.Helper()
-	return newServerWithLogAndAgents(t, buf, &fakeAgentsStore{})
+	return newServerWithLogAndAgents(t, buf, &fakeAgentAPI{})
 }
 
-func newServerWithLogAndAgents(t *testing.T, buf *bytes.Buffer, agents *fakeAgentsStore) *Server {
+func newServerWithLogAndAgents(t *testing.T, buf *bytes.Buffer, agents agentAPI) *Server {
 	t.Helper()
 	log, err := logger.New(logger.Config{
 		Service: "auth", Level: slog.LevelWarn, Writer: buf,
@@ -172,15 +170,10 @@ func newServerWithLogAndAgents(t *testing.T, buf *bytes.Buffer, agents *fakeAgen
 	if err != nil {
 		t.Fatalf("logger: %v", err)
 	}
-	tokenSvc := service.NewTokenService(&fakeTokenRepo{}, token.DefaultArgon2Params(), logger.Discard("auth"), nil)
-	agentSvc, err := service.NewAgentService(agents)
-	if err != nil {
-		t.Fatalf("NewAgentService: %v", err)
-	}
 	srv, err := NewServer(ServerDeps{
 		Validator:    &fakeTokenValidator{},
-		TokenService: tokenSvc,
-		AgentService: agentSvc,
+		TokenService: &fakeTokenAPI{},
+		AgentService: agents,
 		Metrics:      testAuthRegistry(),
 		Log:          log,
 	})

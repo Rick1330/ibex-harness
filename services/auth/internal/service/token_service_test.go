@@ -38,7 +38,7 @@ func assertCreateTokenOK(t *testing.T, repo *memTokenRepo, result CreateTokenRes
 func runCreateTokenCase(t *testing.T, tc createTokenCase) {
 	t.Helper()
 	repo := newMemTokenRepo()
-	result, err := testTokenService(repo).CreateToken(context.Background(), tc.req)
+	result, err := testTokenService(repo).CreateToken(context.Background(), tc.in)
 	if tc.wantErr != nil {
 		assertCreateTokenError(t, err, tc.wantErr)
 		return
@@ -65,8 +65,8 @@ func TestTokenService_CreateToken(t *testing.T) {
 func TestTokenService_CreateToken_repoError(t *testing.T) {
 	t.Parallel()
 	svc := testTokenService(errTokenRepo{})
-	_, err := svc.CreateToken(context.Background(), &authv1.CreateTokenRequest{
-		OrgId: uuid.NewString(), Name: "x", Type: authv1.TokenType_TOKEN_TYPE_PAT,
+	_, err := svc.CreateToken(context.Background(), CreateTokenInput{
+		OrgID: uuid.NewString(), Name: "x", TokenType: authv1.TokenType_TOKEN_TYPE_PAT,
 	})
 	if err == nil {
 		t.Fatal("expected error")
@@ -91,8 +91,8 @@ func TestTokenService_RevokeToken(t *testing.T) {
 	err := svc.RevokeToken(context.Background(), RevokeTokenParams{
 		OrgID: orgID, TokenID: uuid.NewString(),
 	})
-	if !errors.Is(err, repository.ErrNotFound) {
-		t.Fatalf("expected ErrNotFound, got %v", err)
+	if !errors.Is(err, ErrTokenNotFound) {
+		t.Fatalf("expected ErrTokenNotFound, got %v", err)
 	}
 }
 
