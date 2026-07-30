@@ -62,6 +62,10 @@ func startAuthGRPC(t testing.TB, dbDSN string, redisClient redis.UniversalClient
 		publisher = pub
 	}
 	tokenSvc := service.NewTokenService(repo, argon2, logger.Discard("auth"), publisher)
+	agentSvc, err := service.NewAgentService(agentsRepo)
+	if err != nil {
+		t.Fatalf("agent service: %v", err)
+	}
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -73,7 +77,7 @@ func startAuthGRPC(t testing.TB, dbDSN string, redisClient redis.UniversalClient
 			grpcserver.AuthzUnaryInterceptor(validator),
 		))
 	srv, err := grpcserver.NewServer(grpcserver.ServerDeps{
-		Validator: validator, TokenService: tokenSvc, AgentsStore: agentsRepo, Metrics: reg,
+		Validator: validator, TokenService: tokenSvc, AgentService: agentSvc, Metrics: reg,
 		Log: logger.Discard("auth"),
 	})
 	if err != nil {

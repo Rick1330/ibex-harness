@@ -276,10 +276,14 @@ func newAuthHTTPServer(opts authHTTPServerOpts) *http.Server {
 }
 
 func registerAuthGRPC(grpcSrv *grpc.Server, deps authServiceDeps, reg *ibexmetrics.AuthRegistry) error {
+	agentSvc, err := service.NewAgentService(deps.agentsRepo)
+	if err != nil {
+		return fmt.Errorf("agent service: %w", err)
+	}
 	srv, err := grpcserver.NewServer(grpcserver.ServerDeps{
 		Validator:    deps.validator,
 		TokenService: deps.tokenSvc,
-		AgentsStore:  deps.agentsRepo,
+		AgentService: agentSvc,
 		Metrics:      reg,
 		Log:          deps.log,
 	})

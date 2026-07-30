@@ -8,6 +8,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/metrics"
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/repository"
+	"github.com/Rick1330/ibex-harness/services/auth/internal/service"
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -29,12 +30,21 @@ func (f *fakeAgentsStore) GetByIDAndOrg(ctx context.Context, agentID, orgID uuid
 	return f.rec, f.err
 }
 
+func mustAgentService(t *testing.T, store *fakeAgentsStore) *service.AgentService {
+	t.Helper()
+	svc, err := service.NewAgentService(store)
+	if err != nil {
+		t.Fatalf("NewAgentService: %v", err)
+	}
+	return svc
+}
+
 func TestValidateAgent_MissingCallerContext(t *testing.T) {
 	t.Parallel()
 
 	s := &Server{
-		metrics:     testAuthRegistry(),
-		agentsStore: &fakeAgentsStore{rec: nil},
+		metrics:      testAuthRegistry(),
+		agentService: mustAgentService(t, &fakeAgentsStore{}),
 	}
 
 	_, err := s.ValidateAgent(context.Background(), &authv1.ValidateAgentRequest{
@@ -54,8 +64,10 @@ func TestValidateAgent_ForbiddenOrgMismatch(t *testing.T) {
 		TokenID: "t",
 	})
 	s := &Server{
-		metrics:     testAuthRegistry(),
-		agentsStore: &fakeAgentsStore{rec: &repository.AgentRecord{ID: "a", OrgID: "x", Status: "active"}},
+		metrics: testAuthRegistry(),
+		agentService: mustAgentService(t, &fakeAgentsStore{
+			rec: &repository.AgentRecord{ID: "a", OrgID: "x", Status: "active"},
+		}),
 	}
 
 	_, err := s.ValidateAgent(callerCtx, &authv1.ValidateAgentRequest{
@@ -70,14 +82,13 @@ func TestValidateAgent_ForbiddenOrgMismatch(t *testing.T) {
 func TestValidateAgent_InvalidOrgId(t *testing.T) {
 	t.Parallel()
 
-	// Make caller.OrgID match request.OrgID so we reach uuid.Parse failure.
 	callerCtx := ContextWithCaller(context.Background(), CallerContext{
 		OrgID:   "not-a-uuid",
 		TokenID: "t",
 	})
 	s := &Server{
-		metrics:     testAuthRegistry(),
-		agentsStore: &fakeAgentsStore{rec: nil},
+		metrics:      testAuthRegistry(),
+		agentService: mustAgentService(t, &fakeAgentsStore{}),
 	}
 
 	_, err := s.ValidateAgent(callerCtx, &authv1.ValidateAgentRequest{
@@ -98,8 +109,8 @@ func TestValidateAgent_InvalidAgentId(t *testing.T) {
 		TokenID: "t",
 	})
 	s := &Server{
-		metrics:     testAuthRegistry(),
-		agentsStore: &fakeAgentsStore{rec: nil},
+		metrics:      testAuthRegistry(),
+		agentService: mustAgentService(t, &fakeAgentsStore{}),
 	}
 
 	_, err := s.ValidateAgent(callerCtx, &authv1.ValidateAgentRequest{
@@ -122,8 +133,8 @@ func TestValidateAgent_NotFoundBecomesPermissionDenied(t *testing.T) {
 	})
 
 	s := &Server{
-		metrics:     testAuthRegistry(),
-		agentsStore: &fakeAgentsStore{rec: nil, err: nil},
+		metrics:      testAuthRegistry(),
+		agentService: mustAgentService(t, &fakeAgentsStore{}),
 	}
 
 	_, err := s.ValidateAgent(callerCtx, &authv1.ValidateAgentRequest{
@@ -147,11 +158,9 @@ func TestValidateAgent_InactiveAgentPermissionDenied(t *testing.T) {
 
 	s := &Server{
 		metrics: testAuthRegistry(),
-		agentsStore: &fakeAgentsStore{rec: &repository.AgentRecord{
-			ID:     agentID,
-			OrgID:  orgID,
-			Status: "paused",
-		}},
+		agentService: mustAgentService(t, &fakeAgentsStore{rec: &repository.AgentRecord{
+			ID: agentID, OrgID: orgID, Status: "paused",
+		}}),
 	}
 
 	_, err := s.ValidateAgent(callerCtx, &authv1.ValidateAgentRequest{
@@ -175,9 +184,9 @@ func TestValidateAgent_StoreError(t *testing.T) {
 
 	s := &Server{
 		metrics: testAuthRegistry(),
-		agentsStore: &fakeAgentsStore{
+		agentService: mustAgentService(t, &fakeAgentsStore{
 			err: errors.New("db down"),
-		},
+		}),
 	}
 
 	_, err := s.ValidateAgent(callerCtx, &authv1.ValidateAgentRequest{
@@ -201,11 +210,9 @@ func TestValidateAgent_OK(t *testing.T) {
 
 	s := &Server{
 		metrics: testAuthRegistry(),
-		agentsStore: &fakeAgentsStore{rec: &repository.AgentRecord{
-			ID:     agentID,
-			OrgID:  orgID,
-			Status: "active",
-		}},
+		agentService: mustAgentService(t, &fakeAgentsStore{rec: &repository.AgentRecord{
+			ID: agentID, OrgID: orgID, Status: "active",
+		}}),
 	}
 
 	resp, err := s.ValidateAgent(callerCtx, &authv1.ValidateAgentRequest{
