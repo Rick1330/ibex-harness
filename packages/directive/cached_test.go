@@ -1,8 +1,10 @@
 package directive_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"sync"
 	"testing"
 	"time"
@@ -374,6 +376,13 @@ func mustNewResolver(t *testing.T, store directive.Loader, ttl time.Duration) (*
 	if err != nil {
 		t.Fatalf("NewCachedResolver: %v", err)
 	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		if err := r.Shutdown(ctx); err != nil {
+			t.Errorf("resolver shutdown: %v", err)
+		}
+	})
 	return r, client
 }
 
@@ -388,6 +397,17 @@ func newTestRedis(t *testing.T) (*miniredis.Miniredis, *redis.Client) {
 func mustLogger(t *testing.T) *logger.Logger {
 	t.Helper()
 	log, err := logger.New(logger.Config{Service: "directive-test"})
+	if err != nil {
+		t.Fatalf("logger: %v", err)
+	}
+	return log
+}
+
+func mustBufferedLogger(t *testing.T, buf *bytes.Buffer) *logger.Logger {
+	t.Helper()
+	log, err := logger.New(logger.Config{
+		Service: "directive-test", Level: slog.LevelWarn, Writer: buf,
+	})
 	if err != nil {
 		t.Fatalf("logger: %v", err)
 	}

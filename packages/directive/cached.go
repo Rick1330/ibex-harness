@@ -24,6 +24,9 @@ type CachedResolverDeps struct {
 	Log     *logger.Logger
 	Metrics Metrics
 	Tracer  trace.Tracer
+	// WriteWorkers / WriteQueue size the populate pool (defaults applied when ≤0).
+	WriteWorkers int
+	WriteQueue   int
 }
 
 // CachedResolver resolves directives via Redis with Postgres fallback.
@@ -34,6 +37,7 @@ type CachedResolver struct {
 	log     *logger.Logger
 	metrics Metrics
 	tracer  trace.Tracer
+	pool    *writePool
 }
 
 // NewCachedResolver constructs a CachedResolver. Metrics/Tracer may be nil.
@@ -54,14 +58,16 @@ func NewCachedResolver(deps CachedResolverDeps) (*CachedResolver, error) {
 	if deps.Tracer == nil {
 		deps.Tracer = otel.Tracer("ibex-directive")
 	}
-	return &CachedResolver{
+	r := &CachedResolver{
 		client:  deps.Client,
 		loader:  deps.Loader,
 		cfg:     deps.Config,
 		log:     deps.Log,
 		metrics: deps.Metrics,
 		tracer:  deps.Tracer,
-	}, nil
+	}
+	r.pool = newWritePool(deps.WriteWorkers, deps.WriteQueue, r.handlePopulateJob)
+	return r, nil
 }
 
 // Resolve loads from Redis, falling back to Postgres on miss or Redis error.
@@ -84,7 +90,7 @@ func (r *CachedResolver) Resolve(ctx context.Context, orgID, agentID uuid.UUID) 
 		return Resolved{}, err
 	}
 	// Write-behind: never block the hot path on Redis SET (own 2s budget).
-	go r.populateCache(key, resolved)
+	r.schedulePopulate(ctx, key, resolved)
 	return resolved, nil
 }
 
@@ -102,6 +108,26 @@ func (r *CachedResolver) Invalidate(ctx context.Context, orgID, agentID uuid.UUI
 		r.log.WarnCtx(ctx, "directive cache invalidate failed",
 			"org_id", orgID.String(), "agent_id", agentID.String(), "error", err)
 	}
+}
+
+// Shutdown drains queued populate jobs and stops workers.
+func (r *CachedResolver) Shutdown(ctx context.Context) error {
+	if r == nil || r.pool == nil {
+		return nil
+	}
+	return r.pool.shutdown(ctx)
+}
+
+func (r *CachedResolver) schedulePopulate(ctx context.Context, key string, resolved Resolved) {
+	if r.pool.trySubmit(cacheWriteJob{key: key, resolved: resolved}) {
+		return
+	}
+	r.log.WarnCtx(ctx, "directive cache populate dropped",
+		"reason", "queue_full_or_shutdown")
+}
+
+func (r *CachedResolver) handlePopulateJob(job cacheWriteJob) {
+	r.populateCache(job.key, job.resolved)
 }
 
 func (r *CachedResolver) getCached(ctx context.Context, key string) (Resolved, bool) {

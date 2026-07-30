@@ -150,6 +150,7 @@ type authServiceDeps struct {
 	tokenSvc    *service.TokenService
 	agentsRepo  *repository.AgentsRepository
 	redisClient redis.UniversalClient
+	log         *logger.Logger
 }
 
 func initAuthServices(
@@ -168,7 +169,8 @@ func initAuthServices(
 	}
 	tokenSvc := service.NewTokenService(repo, cfg.Argon2, log, publisher)
 	return authServiceDeps{
-		validator: validator, tokenSvc: tokenSvc, agentsRepo: agentsRepo, redisClient: redisClient,
+		validator: validator, tokenSvc: tokenSvc, agentsRepo: agentsRepo,
+		redisClient: redisClient, log: log,
 	}, nil
 }
 
@@ -274,7 +276,13 @@ func newAuthHTTPServer(opts authHTTPServerOpts) *http.Server {
 }
 
 func registerAuthGRPC(grpcSrv *grpc.Server, deps authServiceDeps, reg *ibexmetrics.AuthRegistry) error {
-	srv, err := grpcserver.NewServer(deps.validator, deps.tokenSvc, deps.agentsRepo, reg)
+	srv, err := grpcserver.NewServer(grpcserver.ServerDeps{
+		Validator:    deps.validator,
+		TokenService: deps.tokenSvc,
+		AgentsStore:  deps.agentsRepo,
+		Metrics:      reg,
+		Log:          deps.log,
+	})
 	if err != nil {
 		return fmt.Errorf("grpc auth service: %w", err)
 	}

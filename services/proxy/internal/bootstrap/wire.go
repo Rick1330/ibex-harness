@@ -36,17 +36,18 @@ const (
 )
 
 type proxyCore struct {
-	server         *http.Server
-	grpcConn       *grpc.ClientConn
-	redisClient    redis.UniversalClient
-	pgDB           *sql.DB
-	revSub         *revocation.Subscriber
-	revCancel      context.CancelFunc
-	dirSub         *directive.Subscriber
-	dirCancel      context.CancelFunc
-	checkpointPool *asyncpool.Pool
-	sessionSweeper *sessionsweeper.Sweeper
-	traceWriter    *ibexch.Writer
+	server            *http.Server
+	grpcConn          *grpc.ClientConn
+	redisClient       redis.UniversalClient
+	pgDB              *sql.DB
+	directiveResolver directive.Resolver
+	revSub            *revocation.Subscriber
+	revCancel         context.CancelFunc
+	dirSub            *directive.Subscriber
+	dirCancel         context.CancelFunc
+	checkpointPool    *asyncpool.Pool
+	sessionSweeper    *sessionsweeper.Sweeper
+	traceWriter       *ibexch.Writer
 }
 
 type setupProxyCoreInput struct {
@@ -104,7 +105,8 @@ func finishProxyCore(parts proxyCoreParts) *proxyCore {
 	return &proxyCore{
 		server: parts.assembled.server, grpcConn: parts.assembled.grpcConn,
 		redisClient: parts.assembled.redisClient, pgDB: parts.assembled.pgDB,
-		revSub: parts.revSub, revCancel: parts.revCancel,
+		directiveResolver: parts.assembled.directiveResolver,
+		revSub:            parts.revSub, revCancel: parts.revCancel,
 		dirSub: parts.dirSub, dirCancel: parts.dirCancel,
 		checkpointPool: parts.assembled.checkpointPool,
 		sessionSweeper: parts.assembled.sessionSweeper,

@@ -1,0 +1,87 @@
+name: Integration Race (Weekly)
+
+# Weekly race detector run with integration tags for packages that use
+# real Postgres (MF-023). Cron is Mondays 04:00 UTC (not every night).
+# PR CI keeps unit-only `go-race`; this job catches races that only appear
+# under integration build tags.
+
+on:
+  schedule:
+    - cron: "0 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: integration-race-${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  integration-race:
+    name: integration-race
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:16@sha256:be01cf82fc7dbba824acf0a82e150b4b360f3ff93c6631d7844af431e841a95c
+        env:
+          POSTGRES_USER: ibex
+          POSTGRES_PASSWORD: ibex
+          POSTGRES_DB: ibex
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ibex -d ibex"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - uses: ./.github/actions/setup-gotestsum
+      - uses: ./.github/actions/setup-buf
+
+      - name: Generate protobuf stubs
+        working-directory: packages/proto
+        run: buf generate
+
+      - name: Migrate up
+        env:
+          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+        run: go run ./infra/migrations/postgres/cmd/migrate -command up
+
+      - name: Race + integration (proxy, auth, session, directive)
+        env:
+          POSTGRES_TEST_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+        run: |
+          bash infra/scripts/go-test-gotestsum.sh test-results/junit/integration-race.xml -- \
+            -race -tags=integration -timeout=20m -count=1 \
+            ./packages/session/... \
+            ./packages/directive/... \
+            ./services/auth/... \
+            ./services/proxy/...
+
+      - name: Upload test results to Trunk (integration-race)
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        uses: ./.github/actions/trunk-upload-junit
+        with:
+          junit-paths: test-results/junit/integration-race.xml
+          variant: integration-race
+          org-slug: ${{ secrets.TRUNK_ORG_URL_SLUG }}
+        env:
+          TRUNK_API_TOKEN: ${{ secrets.TRUNK_API_TOKEN }}

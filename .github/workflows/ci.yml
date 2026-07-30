@@ -706,8 +706,8 @@ jobs:
           POSTGRES_TEST_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
         run: |
           count=$(go test -tags=integration -list '^TestSecurity_' ./services/proxy | grep -c '^TestSecurity_' || true)
-          if [ "$count" -lt 28 ]; then
-            echo "expected at least 28 TestSecurity_* tests, found $count"
+          if [ "$count" -lt 30 ]; then
+            echo "expected at least 30 TestSecurity_* tests, found $count"
             exit 1
           fi
           bash infra/scripts/go-test-gotestsum.sh test-results/junit/security-integration.xml -- \

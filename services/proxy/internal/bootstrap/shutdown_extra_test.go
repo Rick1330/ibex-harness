@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Rick1330/ibex-harness/packages/directive"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	ibexmetrics "github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/packages/telemetry"
@@ -21,6 +22,38 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 )
+
+func TestUnit_ShutdownDirectiveCache(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	if err := shutdownDirectiveCache(ctx, shutdownOpts{}); err != nil {
+		t.Fatalf("nil resolver: %v", err)
+	}
+	if err := shutdownDirectiveCache(ctx, shutdownOpts{directiveResolver: directive.NoopResolver{}}); err != nil {
+		t.Fatalf("noop resolver: %v", err)
+	}
+
+	log := logger.Discard("proxy")
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() {
+		if err := client.Close(); err != nil {
+			t.Errorf("close redis client: %v", err)
+		}
+	})
+	resolver, err := directive.NewCachedResolver(directive.CachedResolverDeps{
+		Client: client, Loader: staticDirectiveLoader{}, Config: directive.Config{CacheTTL: time.Minute}, Log: log,
+	})
+	if err != nil {
+		t.Fatalf("resolver: %v", err)
+	}
+	if err := shutdownDirectiveCache(ctx, shutdownOpts{directiveResolver: resolver}); err != nil {
+		t.Fatalf("cached resolver: %v", err)
+	}
+}
 
 func TestUnit_StopPubSubSubscribers_Idempotent(t *testing.T) {
 	t.Parallel()

@@ -9,10 +9,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/Rick1330/ibex-harness/infra/testing/testutil"
+	"github.com/Rick1330/ibex-harness/packages/authcache"
 	"github.com/Rick1330/ibex-harness/packages/healthcheck"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/metrics"
@@ -20,6 +22,7 @@ import (
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	"github.com/Rick1330/ibex-harness/packages/provider"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
+	"github.com/Rick1330/ibex-harness/packages/revocation"
 	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"github.com/Rick1330/ibex-harness/services/auth/integrationtest"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
@@ -29,6 +32,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -110,9 +114,10 @@ type redisFixture struct {
 }
 
 type proxyServerOpts struct {
-	defaultRPM   int64
-	orgOverrides map[uuid.UUID]int64
-	providers    []provider.Provider
+	defaultRPM    int64
+	orgOverrides  map[uuid.UUID]int64
+	providers     []provider.Provider
+	withAuthCache bool // bloom+LRU validator + revocation subscriber (SEC7)
 }
 
 func setupSecurityTestEnv(t *testing.T, srvOpts proxyServerOpts) securityTestEnv {
@@ -123,7 +128,13 @@ func setupSecurityTestEnv(t *testing.T, srvOpts proxyServerOpts) securityTestEnv
 	db := testutil.OpenDB(t, dsn)
 	t.Cleanup(func() { _ = db.Close() })
 
-	authFx := integrationtest.StartAuthGRPC(t, dsn)
+	redis := setupTestRedis(t)
+	var authFx *integrationtest.AuthGRPCFixture
+	if srvOpts.withAuthCache {
+		authFx = integrationtest.StartAuthGRPCWithRedis(t, dsn, redis.client)
+	} else {
+		authFx = integrationtest.StartAuthGRPC(t, dsn)
+	}
 	t.Cleanup(authFx.Close)
 
 	orgAID := testutil.SeedOrganization(t, db, "Org A", "org-a-sec-"+uuid.NewString()[:8])
@@ -135,7 +146,6 @@ func setupSecurityTestEnv(t *testing.T, srvOpts proxyServerOpts) securityTestEnv
 	tokenA, _ := testutil.SeedToken(t, db, orgAID, 42)
 	tokenB, _ := testutil.SeedToken(t, db, orgBID, 42)
 
-	redis := setupTestRedis(t)
 	proxy := startProxyServerRedis(t, authFx.Addr, srvOpts, redis)
 	t.Cleanup(proxy.Close)
 
@@ -216,6 +226,12 @@ func newProxyIntegrationHandler(t *testing.T, opts proxyIntegrationHandlerOpts) 
 	}
 
 	validator := mustGRPCValidator(t, opts.client, opts.cfg.AuthValidateTimeout)
+	if opts.srvOpts.withAuthCache {
+		validator = mustCachedValidator(t, validator)
+		revokeCtx, revokeCancel := context.WithCancel(context.Background())
+		t.Cleanup(revokeCancel)
+		startTestRevocationSubscriber(t, revokeCtx, opts.redisClient, validator)
+	}
 	agentVerifier := mustGRPCAgentVerifier(t, opts.client, opts.cfg.AuthValidateTimeout)
 	limiter := mustRedisSlider(t, opts.redisClient, defaultRPM, orgOverrides)
 	providerReg := mustProviderRegistry(t, opts.srvOpts.providers...)
@@ -239,6 +255,53 @@ func newProxyIntegrationHandler(t *testing.T, opts proxyIntegrationHandlerOpts) 
 		t.Fatalf("NewRouter: %v", err)
 	}
 	return handler
+}
+
+func mustCachedValidator(t *testing.T, inner auth.TokenValidator) auth.TokenValidator {
+	t.Helper()
+	wrapped, err := auth.WrapWithCache(inner, authcache.Config{
+		LRUCapacity:        256,
+		LRUMaxTTL:          30 * time.Second,
+		BloomExpectedItems: 1000,
+		BloomFPRate:        0.01,
+	}, logger.Discard("proxy"), authcache.NoopMetrics{})
+	if err != nil {
+		t.Fatalf("WrapWithCache: %v", err)
+	}
+	return wrapped
+}
+
+func startTestRevocationSubscriber(t *testing.T, ctx context.Context, client redis.UniversalClient, validator auth.TokenValidator) {
+	t.Helper()
+	inv, ok := validator.(auth.CacheInvalidator)
+	if !ok {
+		t.Fatal("cached validator must implement CacheInvalidator")
+	}
+	sub, err := revocation.NewSubscriber(client, inv, logger.Discard("proxy"), nil)
+	if err != nil {
+		t.Fatalf("revocation subscriber: %v", err)
+	}
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		sub.Run(ctx)
+	}()
+	t.Cleanup(func() {
+		sub.Stop()
+		select {
+		case <-sub.Done():
+		case <-time.After(2 * time.Second):
+			t.Error("timeout waiting for revocation subscriber shutdown")
+		}
+		wg.Wait()
+	})
+	require.Eventually(t, func() bool {
+		inspectCtx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
+		defer cancel()
+		n, err := client.PubSubNumSub(inspectCtx, revocation.Channel).Result()
+		return err == nil && n[revocation.Channel] > 0
+	}, 2*time.Second, 10*time.Millisecond, "timeout waiting for revocation subscriber")
 }
 
 func mustGRPCValidator(t *testing.T, client authv1.AuthServiceClient, timeout time.Duration) auth.TokenValidator {

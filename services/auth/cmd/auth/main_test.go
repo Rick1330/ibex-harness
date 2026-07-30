@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"net"
 	"net/http"
 	"os"
@@ -120,35 +121,79 @@ func TestRunWithShutdown_serverFailureReturns1(t *testing.T) {
 
 func TestRunWithShutdown_StopsOnSignal(t *testing.T) {
 	log := logger.Discard("auth")
-	providers, err := telemetry.Init(context.Background(), telemetry.Config{ServiceName: "auth-shutdown-signal"})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	db, err := sql.Open("postgres", "postgres://127.0.0.1:5432/test?sslmode=disable")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	grpcLis, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	httpLis, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	httpAddr := httpLis.Addr().String()
-	_ = httpLis.Close()
+	providers := mustInitProviders(t)
+	db := mustOpenTestDB(t)
+	grpcLis := mustListenTCP(t)
+	httpLis := mustListenTCP(t)
+	registerListenerCleanup(t, httpLis)
 
 	httpServer := &http.Server{
-		Addr:              httpAddr,
 		Handler:           http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
 	sigCh := make(chan os.Signal, 1)
+	done := runWithShutdownAsync(log, providers, db, grpcLis, httpLis, httpServer, sigCh)
+
+	waitForTCP(t, grpcLis.Addr().String())
+	waitForTCP(t, httpLis.Addr().String())
+	sigCh <- syscall.SIGTERM
+
+	select {
+	case code := <-done:
+		if code != 0 {
+			t.Fatalf("runWithShutdown() = %d, want 0", code)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for shutdown")
+	}
+}
+
+func mustInitProviders(t *testing.T) *telemetry.Providers {
+	t.Helper()
+	providers, err := telemetry.Init(context.Background(), telemetry.Config{ServiceName: "auth-shutdown-signal"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return providers
+}
+
+func mustOpenTestDB(t *testing.T) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("postgres", "postgres://127.0.0.1:5432/test?sslmode=disable")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return db
+}
+
+func mustListenTCP(t *testing.T) net.Listener {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ln
+}
+
+func registerListenerCleanup(t *testing.T, ln net.Listener) {
+	t.Helper()
+	t.Cleanup(func() {
+		if err := ln.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Errorf("close listener: %v", err)
+		}
+	})
+}
+
+func runWithShutdownAsync(
+	log *logger.Logger,
+	providers *telemetry.Providers,
+	db *sql.DB,
+	grpcLis net.Listener,
+	httpLis net.Listener,
+	httpServer *http.Server,
+	sigCh chan os.Signal,
+) <-chan int {
 	done := make(chan int, 1)
 	go func() {
 		done <- runWithShutdown(shutdownOpts{
@@ -163,23 +208,12 @@ func TestRunWithShutdown_StopsOnSignal(t *testing.T) {
 			grpcSrv:    grpc.NewServer(), // nosemgrep: go.grpc.security.grpc-server-insecure-connection
 			grpcLis:    grpcLis,
 			httpServer: httpServer,
+			httpLis:    httpLis,
 			db:         db,
 			signalCh:   sigCh,
 		})
 	}()
-
-	waitForTCP(t, grpcLis.Addr().String())
-	waitForTCP(t, httpAddr)
-	sigCh <- syscall.SIGTERM
-
-	select {
-	case code := <-done:
-		if code != 0 {
-			t.Fatalf("runWithShutdown() = %d, want 0", code)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("timed out waiting for shutdown")
-	}
+	return done
 }
 
 func TestConfigurePostgresPool(t *testing.T) {

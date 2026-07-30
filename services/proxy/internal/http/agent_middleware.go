@@ -64,6 +64,7 @@ func (h *agentVerifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.writeAgentVerifyError(w, err, agentVerifyErrorOpts{
 			ctx: r.Context(), requestID: requestID, docsBase: docsBase,
+			requestingOrg: authRes.OrgID.String(), agentID: agentHeader,
 		})
 		return
 	}
@@ -96,9 +97,11 @@ func writeAgentHeaderError(w http.ResponseWriter, fe *apierror.FieldError, reque
 }
 
 type agentVerifyErrorOpts struct {
-	ctx       context.Context
-	requestID string
-	docsBase  string
+	ctx           context.Context
+	requestID     string
+	docsBase      string
+	requestingOrg string
+	agentID       string
 }
 
 func (h *agentVerifyHandler) writeAgentVerifyError(w http.ResponseWriter, err error, opts agentVerifyErrorOpts) {
@@ -108,6 +111,7 @@ func (h *agentVerifyHandler) writeAgentVerifyError(w http.ResponseWriter, err er
 			"The agent is not active for this organization.", opts.requestID,
 			apierror.WriteOpts{DocsBase: opts.docsBase})
 	case errors.Is(err, auth.ErrAgentNotAuthorized):
+		h.auditAgentAuthorizationDenied(opts)
 		apierror.WriteStatus(w, http.StatusForbidden, apierror.CodeAgentNotAuthorized,
 			"The agent is not authorized for this organization or is not active.", opts.requestID,
 			apierror.WriteOpts{DocsBase: opts.docsBase})
@@ -122,6 +126,20 @@ func (h *agentVerifyHandler) writeAgentVerifyError(w http.ResponseWriter, err er
 			"Authentication service unavailable. The request cannot be verified.", opts.requestID,
 			apierror.WriteOpts{DocsBase: opts.docsBase})
 	}
+}
+
+func (h *agentVerifyHandler) auditAgentAuthorizationDenied(opts agentVerifyErrorOpts) {
+	if h.logger == nil {
+		return
+	}
+	// Proxy cannot distinguish same-org miss from cross-org without leaking
+	// existence; both map to ErrAgentNotAuthorized. Audit all denials for forensics.
+	h.logger.WarnCtx(opts.ctx, "agent authorization denied",
+		"requesting_org_id", opts.requestingOrg,
+		"target_resource_type", "agent",
+		"target_resource_id", opts.agentID,
+		"request_id", opts.requestID,
+	)
 }
 
 // parseAgentIDHeader parses X-IBEX-Agent-ID when present (used by rate limit scope).

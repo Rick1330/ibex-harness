@@ -119,6 +119,32 @@ Only critical flows; E2E tests are the slowest and most fragile.
 - Benchmarks: `go test -bench . -benchmem` for hot paths
 - Integration: `testcontainers-go` (Postgres, Redis)
 
+#### Auth repository coverage (MF-019)
+
+`services/auth/internal/repository/` is SQL against Postgres with RLS. **Unit coverage on
+that package is expected to stay low** because faking `database/sql` (sqlmock) does not
+exercise real queries, indexes, or tenant isolation. Treat repository correctness as an
+**integration-test requirement**:
+
+```bash
+go test -tags=integration ./services/auth/...
+```
+
+Do not add sqlmock-based repository unit tests. Cover constructors, pure helpers, and
+error mapping in unit tests; cover SELECT/INSERT/UPDATE/RLS paths under `-tags=integration`.
+
+#### Session store coverage after sqlmock removal (MF-006)
+
+`packages/session` no longer uses go-sqlmock. Happy-path and tenant isolation scenarios live
+in `//go:build integration` tests against real Postgres. Fine-grained SQL error branches that
+sqlmock previously forced (commit fail mid-tx, lock query fail, etc.) are **not** all mirrored
+as unit tests — unit coverage keeps constructor/validation/`begin` failures via a closed DB
+(`store_unit_test.go`). Prefer extending integration tests when a new error branch is
+security- or correctness-critical.
+
+Weekly (Monday) CI also runs `go test -race -tags=integration` for proxy/auth/
+session/directive (see `.github/workflows/integration-race.yml`).
+
 ### Python (FastAPI services, workers, algorithms)
 
 - Unit tests: `pytest`
@@ -687,6 +713,9 @@ You may mock:
 - upstream LLM provider responses (OpenAI/Anthropic)
 - third-party webhooks (GitHub/Slack)
 - optional external notifications (email/SMS)
+
+Do **not** use sqlmock for `packages/session` or `services/auth/internal/repository`
+store paths — prefer `//go:build integration` with real Postgres (see §4 Go / MF-019).
 
 ---
 

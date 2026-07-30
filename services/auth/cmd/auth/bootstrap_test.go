@@ -54,7 +54,10 @@ func newTestAuthServiceDeps(t *testing.T, db *sql.DB, reg *ibexmetrics.AuthRegis
 	agentsRepo := repository.NewAgentsRepository(db, reg)
 	validator := token.NewValidator(repo, token.DefaultArgon2Params())
 	tokenSvc := service.NewTokenService(repo, token.DefaultArgon2Params(), logger.Discard("auth"), nil)
-	return authServiceDeps{validator: validator, tokenSvc: tokenSvc, agentsRepo: agentsRepo}
+	return authServiceDeps{
+		validator: validator, tokenSvc: tokenSvc, agentsRepo: agentsRepo,
+		log: logger.Discard("auth"),
+	}
 }
 
 func TestUnit_BootstrapResources_CleanupNoPanic(t *testing.T) {

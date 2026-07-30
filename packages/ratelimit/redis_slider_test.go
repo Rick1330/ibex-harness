@@ -2,12 +2,24 @@ package ratelimit
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
+)
+
+// Soft-limit race bound for RedisSlider (ADR-0015 / MF-007).
+// Redis INCR is atomic, so post-increment admit decisions never exceed DefaultRPM
+// under concurrency (maxAdmitOvershoot = 0). The non-atomic INCR+EXPIRE gap can
+// only affect key TTL, not the allowed count. Phase 4 Lua replaces both.
+const maxAdmitOvershoot = 0
+
+const (
+	concurrentBurstWorkers = 80
+	concurrentBurstRPM     = 20
 )
 
 type limitExpect struct {
@@ -57,7 +69,21 @@ func TestRedisSlider_orgOverride(t *testing.T) {
 	assertCheckAllowed(t, slider, orgB, true)
 }
 
-func newTestSlider(t *testing.T, cfg RedisSliderConfig) Limiter {
+// TestRedisSlider_ConcurrentBurst verifies concurrent Check calls for one org
+// do not admit more than DefaultRPM + maxAdmitOvershoot (documented race bound).
+func TestRedisSlider_ConcurrentBurst(t *testing.T) {
+	t.Parallel()
+
+	orgID := uuid.MustParse("550e8400-e29b-41d4-a716-446655440010")
+	slider := newTestSlider(t, RedisSliderConfig{DefaultRPM: concurrentBurstRPM})
+
+	results := burstCheck(t, slider, orgID, concurrentBurstWorkers)
+	allowed := countAllowed(results)
+	assertAdmitWithinRaceBound(t, allowed, concurrentBurstRPM, maxAdmitOvershoot)
+	assertSomeDenied(t, allowed, concurrentBurstWorkers)
+}
+
+func newTestSlider(t testing.TB, cfg RedisSliderConfig) Limiter {
 	t.Helper()
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -67,6 +93,63 @@ func newTestSlider(t *testing.T, cfg RedisSliderConfig) Limiter {
 		t.Fatalf("NewRedisSlider: %v", err)
 	}
 	return slider
+}
+
+func burstCheck(t *testing.T, slider Limiter, orgID uuid.UUID, n int) []Result {
+	t.Helper()
+	results := make([]Result, n)
+	errs := make([]error, n)
+	var wg sync.WaitGroup
+	wg.Add(n)
+	for i := 0; i < n; i++ {
+		i := i
+		go func() {
+			defer wg.Done()
+			res, err := slider.Check(context.Background(), orgID, uuid.Nil)
+			results[i] = res
+			errs[i] = err
+		}()
+	}
+	wg.Wait()
+	assertNoCheckErrors(t, errs)
+	return results
+}
+
+func assertNoCheckErrors(t *testing.T, errs []error) {
+	t.Helper()
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("Check[%d]: %v", i, err)
+		}
+	}
+}
+
+func countAllowed(results []Result) int {
+	n := 0
+	for _, r := range results {
+		if r.Allowed {
+			n++
+		}
+	}
+	return n
+}
+
+func assertAdmitWithinRaceBound(t *testing.T, allowed int, limit int64, overshoot int) {
+	t.Helper()
+	maxAllowed := int(limit) + overshoot
+	if allowed > maxAllowed {
+		t.Fatalf("allowed=%d exceeds RPM=%d + overshoot=%d", allowed, limit, overshoot)
+	}
+	if allowed < 1 {
+		t.Fatal("expected at least one allowed request")
+	}
+}
+
+func assertSomeDenied(t *testing.T, allowed, workers int) {
+	t.Helper()
+	if allowed >= workers {
+		t.Fatalf("allowed=%d workers=%d: expected denials when workers exceed RPM", allowed, workers)
+	}
 }
 
 func checkN(t *testing.T, slider Limiter, orgID uuid.UUID, n int) Result {

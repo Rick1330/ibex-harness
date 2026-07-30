@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"os"
@@ -24,6 +25,7 @@ type shutdownOpts struct {
 	grpcSrv     *grpc.Server
 	grpcLis     net.Listener
 	httpServer  *http.Server
+	httpLis     net.Listener // optional; when set, Serve(lis) instead of ListenAndServe
 	db          *sql.DB
 	redisClient redis.UniversalClient
 	tokenSvc    *service.TokenService
@@ -58,8 +60,14 @@ func startAuthGRPCServer(opts shutdownOpts, errCh chan<- error) {
 func startAuthHTTPServer(opts shutdownOpts, errCh chan<- error) {
 	go func() {
 		opts.logger.InfoCtx(context.Background(), "http starting", "port", opts.cfg.Port, "env", opts.cfg.Environment)
-		if err := opts.httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errCh <- err
+		var err error
+		if opts.httpLis != nil {
+			err = opts.httpServer.Serve(opts.httpLis)
+		} else {
+			err = opts.httpServer.ListenAndServe()
+		}
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- fmt.Errorf("serve auth HTTP server: %w", err)
 			return
 		}
 		errCh <- nil
@@ -74,20 +82,18 @@ func newAuthShutdownCoordinator(opts shutdownOpts) *shutdown.Coordinator {
 }
 
 func awaitAuthShutdown(errCh, shutdownErrCh <-chan error, log *logger.Logger) int {
-	select {
-	case err := <-errCh:
-		return exitCodeForServerErr(err, log)
-	case err := <-shutdownErrCh:
-		return exitCodeForShutdownComplete(err, log)
+	for {
+		select {
+		case err := <-errCh:
+			if err != nil {
+				log.ErrorCtx(context.Background(), "server failed", "error", err)
+				return 1
+			}
+			// Server exited cleanly (typically after Shutdown); wait for coordinator.
+		case err := <-shutdownErrCh:
+			return exitCodeForShutdownComplete(err, log)
+		}
 	}
-}
-
-func exitCodeForServerErr(err error, log *logger.Logger) int {
-	if err != nil {
-		log.ErrorCtx(context.Background(), "server failed", "error", err)
-		return 1
-	}
-	return 0
 }
 
 func exitCodeForShutdownComplete(err error, log *logger.Logger) int {

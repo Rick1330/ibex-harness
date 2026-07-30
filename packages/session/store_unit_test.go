@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"github.com/google/uuid"
@@ -62,6 +63,30 @@ func TestUnit_ClosedDB_SurfaceBeginErrors(t *testing.T) {
 
 	if err := store.Complete(ctx, sessionID, orgID); err == nil {
 		t.Fatal("Complete: expected begin error")
+	}
+
+	if _, err := store.AbandonIdle(ctx, AbandonIdleParams{
+		IdleBefore: time.Now().UTC(),
+	}); err == nil {
+		t.Fatal("AbandonIdle: expected begin error")
+	}
+}
+
+func TestUnit_ClampAbandonLimit(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		in, want int
+	}{
+		{in: 0, want: defaultAbandonIdleLimit},
+		{in: -1, want: defaultAbandonIdleLimit},
+		{in: 10, want: 10},
+		{in: maxAbandonIdleLimit, want: maxAbandonIdleLimit},
+		{in: maxAbandonIdleLimit + 100, want: maxAbandonIdleLimit},
+	}
+	for _, tc := range cases {
+		if got := clampAbandonLimit(tc.in); got != tc.want {
+			t.Fatalf("clampAbandonLimit(%d)=%d want %d", tc.in, got, tc.want)
+		}
 	}
 }
 
