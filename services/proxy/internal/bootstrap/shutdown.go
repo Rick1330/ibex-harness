@@ -26,21 +26,22 @@ import (
 )
 
 type shutdownOpts struct {
-	cfg            config.Config
-	logger         *logger.Logger
-	server         *http.Server
-	providers      *telemetry.Providers
-	grpcConn       *grpc.ClientConn
-	redisClient    redis.UniversalClient
-	pgDB           *sql.DB
-	revSub         *revocation.Subscriber
-	revCancel      context.CancelFunc
-	dirSub         *directive.Subscriber
-	dirCancel      context.CancelFunc
-	checkpointPool *asyncpool.Pool
-	sessionSweeper *sessionsweeper.Sweeper
-	traceWriter    *ibexch.Writer
-	signalCh       chan os.Signal
+	cfg               config.Config
+	logger            *logger.Logger
+	server            *http.Server
+	providers         *telemetry.Providers
+	grpcConn          *grpc.ClientConn
+	redisClient       redis.UniversalClient
+	pgDB              *sql.DB
+	directiveResolver directive.Resolver
+	revSub            *revocation.Subscriber
+	revCancel         context.CancelFunc
+	dirSub            *directive.Subscriber
+	dirCancel         context.CancelFunc
+	checkpointPool    *asyncpool.Pool
+	sessionSweeper    *sessionsweeper.Sweeper
+	traceWriter       *ibexch.Writer
+	signalCh          chan os.Signal
 	// stopPubSubOnce makes stopPubSubSubscribers safe under immediateCleanup + defer.
 	stopPubSubOnce *sync.Once
 }
@@ -109,6 +110,7 @@ func immediateCleanup(opts shutdownOpts) {
 	defer cancel()
 	logImmediateCleanupErr(opts.logger, "server close", opts.server.Close())
 	stopPubSubSubscribers(opts)
+	logImmediateCleanupErr(opts.logger, "directive cache shutdown", shutdownDirectiveCache(ctx, opts))
 	logImmediateCleanupErr(opts.logger, "checkpoint pool shutdown", shutdownCheckpointPool(ctx, opts))
 	logImmediateCleanupErr(opts.logger, "session sweeper shutdown", shutdownSessionSweeper(ctx, opts))
 	logImmediateCleanupErr(opts.logger, "trace writer shutdown", shutdownTraceWriter(ctx, opts))
@@ -163,12 +165,30 @@ func registerShutdownHooks(sd *shutdown.Coordinator, opts shutdownOpts) {
 }
 
 func registerOptionalShutdownHooks(sd *shutdown.Coordinator, opts shutdownOpts) {
+	registerDirectiveCacheShutdown(sd, opts)
 	registerCheckpointPoolShutdown(sd, opts)
 	registerSessionSweeperShutdown(sd, opts)
 	registerTraceWriterShutdown(sd, opts)
 	registerGRPCConnShutdown(sd, opts)
 	registerRedisClientShutdown(sd, opts)
 	registerPgDBShutdown(sd, opts)
+}
+
+func registerDirectiveCacheShutdown(sd *shutdown.Coordinator, opts shutdownOpts) {
+	sd.Register(func(ctx context.Context) error {
+		return shutdownDirectiveCache(ctx, opts)
+	})
+}
+
+func shutdownDirectiveCache(ctx context.Context, opts shutdownOpts) error {
+	cr, ok := opts.directiveResolver.(*directive.CachedResolver)
+	if !ok || cr == nil {
+		return nil
+	}
+	if err := cr.Shutdown(ctx); err != nil {
+		return fmt.Errorf("shutdown directive cache: %w", err)
+	}
+	return nil
 }
 
 func registerCheckpointPoolShutdown(sd *shutdown.Coordinator, opts shutdownOpts) {

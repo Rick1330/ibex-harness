@@ -21,11 +21,11 @@ func revokeTokenCases(t *testing.T) []revokeTokenCase {
 			req: revokeTokenRequest(orgID, tokenID), wantCode: codes.Unauthenticated,
 		},
 		{
-			name: "cross tenant not found",
+			name: "cross tenant forbidden",
 			ctx: ContextWithCaller(context.Background(), CallerContext{
 				OrgID: uuid.NewString(), Permissions: permissions.Admin,
 			}),
-			req: revokeTokenRequest(orgID, tokenID), wantCode: codes.NotFound,
+			req: revokeTokenRequest(orgID, tokenID), wantCode: codes.PermissionDenied,
 		},
 		{
 			name: "permission denied",

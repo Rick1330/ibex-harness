@@ -120,6 +120,49 @@ func TestStore_Complete_TerminalNoop(t *testing.T) {
 	}
 }
 
+func TestStore_AppendCheckpoint_MissingSession(t *testing.T) {
+	ids := setupStore(t)
+	sess := mustCreate(t, ids, "ext-soft-del")
+	softDeleteSession(t, ids, sess.ID)
+	err := ids.store.AppendCheckpoint(context.Background(), session.CheckpointParams{
+		SessionID: sess.ID, OrgID: ids.orgID, AgentID: ids.agentID, TurnIndex: 0,
+		RequestID: "req", MessagesHash: "mh", Model: "gpt-4o", Provider: "openai",
+		LatencyMs: 1, IsComplete: true,
+	})
+	if !errors.Is(err, session.ErrNotFound) {
+		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestStore_Complete_NotFound(t *testing.T) {
+	ids := setupStore(t)
+	err := ids.store.Complete(context.Background(), uuid.New(), ids.orgID)
+	if !errors.Is(err, session.ErrNotFound) {
+		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestStore_Complete_ConcurrentRace(t *testing.T) {
+	ids := setupStore(t)
+	sess := mustCreate(t, ids, "ext-complete-race")
+	const workers = 8
+	errs := make(chan error, workers)
+	for i := 0; i < workers; i++ {
+		go func() {
+			errs <- ids.store.Complete(context.Background(), sess.ID, ids.orgID)
+		}()
+	}
+	for i := 0; i < workers; i++ {
+		if err := <-errs; err != nil {
+			t.Fatalf("worker: %v", err)
+		}
+	}
+	got := mustReload(t, ids, "ext-complete-race")
+	if got.Status != session.StatusCompleted {
+		t.Fatalf("status=%s", got.Status)
+	}
+}
+
 func TestStore_GetOrCreate_UniqueRaceResolvesExisting(t *testing.T) {
 	ids := setupStore(t)
 	ext := "ext-race-" + uuid.NewString()
@@ -340,5 +383,21 @@ func forceStatus(t *testing.T, ids storeIDs, sessionID uuid.UUID, status string)
 	})
 	if err != nil {
 		t.Fatalf("force status: %v", err)
+	}
+}
+
+const softDeleteSessionSQL = `
+UPDATE ibex_core.sessions SET deleted_at = NOW()
+WHERE id = $1::uuid AND org_id = $2::uuid`
+
+func softDeleteSession(t *testing.T, ids storeIDs, sessionID uuid.UUID) {
+	t.Helper()
+	ctx := context.Background()
+	err := withServiceAccount(ctx, ids.db, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, softDeleteSessionSQL, sessionID, ids.orgID)
+		return err
+	})
+	if err != nil {
+		t.Fatalf("soft delete: %v", err)
 	}
 }

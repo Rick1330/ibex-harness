@@ -45,7 +45,9 @@ func startAuthGRPC(t *testing.T, dbDSN string) (authv1.AuthServiceClient, func()
 			grpcserver.MetricsUnaryInterceptor(reg),
 			grpcserver.AuthzUnaryInterceptor(validator),
 		))
-	srv, err := grpcserver.NewServer(validator, tokenSvc, agentsRepo, reg)
+	srv, err := grpcserver.NewServer(grpcserver.ServerDeps{
+		Validator: validator, TokenService: tokenSvc, AgentsStore: agentsRepo, Metrics: reg,
+	})
 	require.NoError(t, err)
 	authv1.RegisterAuthServiceServer(grpcSrv, srv)
 	go func() { _ = grpcSrv.Serve(lis) }()
@@ -184,7 +186,31 @@ func TestRevokeTokenCrossTenant(t *testing.T) {
 		OrgId:   orgB,
 		TokenId: idB,
 	})
-	if status.Code(err) != codes.NotFound {
+	if status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("cross-tenant revoke: code=%v err=%v", status.Code(err), err)
+	}
+}
+
+func TestCreateTokenCrossTenant(t *testing.T) {
+	dsn, cleanupPG := testutil.SetupPostgres(t)
+	defer cleanupPG()
+
+	db := testutil.OpenDB(t, dsn)
+	orgA := testutil.SeedOrganization(t, db, "Org A", "ca-"+uuid.NewString()[:8])
+	orgB := testutil.SeedOrganization(t, db, "Org B", "cb-"+uuid.NewString()[:8])
+	adminA := testutil.SeedBootstrapAdminToken(t, db, orgA)
+	_ = db.Close()
+
+	client, cleanup := startAuthGRPC(t, dsn)
+	defer cleanup()
+
+	_, err := client.CreateToken(authCtx(adminA), &authv1.CreateTokenRequest{
+		OrgId:       orgB,
+		Name:        "cross-tenant",
+		Type:        authv1.TokenType_TOKEN_TYPE_PAT,
+		Permissions: permissions.AgentDefault,
+	})
+	if status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("cross-tenant create: code=%v err=%v", status.Code(err), err)
 	}
 }

@@ -59,7 +59,9 @@ type serviceTokenRepo interface {
 func newTestServer(t testing.TB, validator tokenValidator, tokenRepo serviceTokenRepo, agents AgentStore) *Server {
 	t.Helper()
 	tokenSvc := service.NewTokenService(tokenRepo, token.DefaultArgon2Params(), logger.Discard("auth"), nil)
-	srv, err := NewServer(validator, tokenSvc, agents, testAuthRegistry())
+	srv, err := NewServer(ServerDeps{
+		Validator: validator, TokenService: tokenSvc, AgentsStore: agents, Metrics: testAuthRegistry(),
+	})
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}

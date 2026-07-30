@@ -6,14 +6,17 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/packages/permissions"
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
+	"github.com/Rick1330/ibex-harness/packages/reqid"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/repository"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/service"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/token"
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -23,6 +26,15 @@ type tokenValidator interface {
 	Validate(ctx context.Context, accessToken string) (*authv1.ValidateTokenResponse, error)
 }
 
+// ServerDeps groups AuthService construction dependencies.
+type ServerDeps struct {
+	Validator    tokenValidator
+	TokenService *service.TokenService
+	AgentsStore  AgentStore
+	Metrics      *metrics.AuthRegistry
+	Log          *logger.Logger
+}
+
 // Server implements ibex.auth.v1.AuthService.
 type Server struct {
 	authv1.UnimplementedAuthServiceServer
@@ -30,35 +42,37 @@ type Server struct {
 	tokenService *service.TokenService
 	metrics      *metrics.AuthRegistry
 	agentsStore  AgentStore
+	log          *logger.Logger
 }
 
 type AgentStore interface {
 	GetByIDAndOrg(ctx context.Context, agentID, orgID uuid.UUID) (*repository.AgentRecord, error)
 }
 
-func NewServer(
-	validator tokenValidator,
-	tokenSvc *service.TokenService,
-	agentsStore AgentStore,
-	reg *metrics.AuthRegistry,
-) (*Server, error) {
-	if validator == nil {
+// NewServer constructs an AuthService server. Log may be nil (uses Discard).
+func NewServer(deps ServerDeps) (*Server, error) {
+	if deps.Validator == nil {
 		return nil, fmt.Errorf("grpcserver: nil validator")
 	}
-	if tokenSvc == nil {
+	if deps.TokenService == nil {
 		return nil, fmt.Errorf("grpcserver: nil tokenService")
 	}
-	if agentsStore == nil {
+	if deps.AgentsStore == nil {
 		return nil, fmt.Errorf("grpcserver: nil agentsStore")
 	}
-	if reg == nil {
+	if deps.Metrics == nil {
 		return nil, fmt.Errorf("grpcserver: nil metrics registry")
 	}
+	log := deps.Log
+	if log == nil {
+		log = logger.Discard("auth")
+	}
 	return &Server{
-		validator:    validator,
-		tokenService: tokenSvc,
-		metrics:      reg,
-		agentsStore:  agentsStore,
+		validator:    deps.Validator,
+		tokenService: deps.TokenService,
+		metrics:      deps.Metrics,
+		agentsStore:  deps.AgentsStore,
+		log:          log,
 	}, nil
 }
 
@@ -110,7 +124,8 @@ func (s *Server) RevokeToken(ctx context.Context, req *authv1.RevokeTokenRequest
 		return nil, status.Error(codes.Unauthenticated, "missing caller context")
 	}
 	if caller.OrgID != req.GetOrgId() {
-		return nil, status.Error(codes.NotFound, "token not found")
+		s.auditCrossTenant(ctx, caller.OrgID, "token", req.GetTokenId())
+		return nil, status.Error(codes.PermissionDenied, "forbidden")
 	}
 	if !CanRevoke(caller, req.GetOrgId(), req.GetTokenId()) {
 		return nil, status.Error(codes.PermissionDenied, "forbidden")
@@ -158,11 +173,15 @@ func (s *Server) ValidateAgent(ctx context.Context, req *authv1.ValidateAgentReq
 		return nil, s.agentValidateErr(start, metrics.AgentResultError, codes.InvalidArgument, err.Error())
 	}
 	if caller.OrgID != req.GetOrgId() {
+		s.auditCrossTenant(ctx, caller.OrgID, "agent", req.GetAgentId())
 		return nil, s.agentValidateErr(start, metrics.AgentResultError, codes.PermissionDenied, "forbidden")
 	}
 
 	rec, result, stErr := s.lookupAgentForValidate(ctx, agentID, orgID)
 	if stErr != nil {
+		if stErr.code == codes.PermissionDenied && result == metrics.AgentResultNotFound {
+			s.auditCrossTenant(ctx, caller.OrgID, "agent", agentID.String())
+		}
 		return nil, s.agentValidateErr(start, result, stErr.code, stErr.msg)
 	}
 
@@ -172,6 +191,30 @@ func (s *Server) ValidateAgent(ctx context.Context, req *authv1.ValidateAgentReq
 		OrgId:   rec.OrgID,
 		Status:  rec.Status,
 	}, nil
+}
+
+func (s *Server) auditCrossTenant(ctx context.Context, requestingOrg, resourceType, resourceID string) {
+	if s.log == nil {
+		return
+	}
+	ctx = withIncomingRequestID(ctx)
+	s.log.WarnCtx(ctx, "cross-tenant access attempt",
+		"requesting_org_id", requestingOrg,
+		"target_resource_type", resourceType,
+		"target_resource_id", resourceID,
+	)
+}
+
+func withIncomingRequestID(ctx context.Context) context.Context {
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return ctx
+	}
+	vals := md.Get(reqid.GRPCMetadataKey)
+	if len(vals) == 0 || vals[0] == "" {
+		return ctx
+	}
+	return reqid.WithRequestID(ctx, vals[0])
 }
 
 type agentValidateStatusError struct {

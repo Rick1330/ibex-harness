@@ -71,6 +71,96 @@ func TestStore_AbandonIdle_RequiresIdleBefore(t *testing.T) {
 	}
 }
 
+func TestStore_AbandonIdle_EmptyWhenNoVictims(t *testing.T) {
+	ids := setupStore(t)
+	res, err := ids.store.AbandonIdle(context.Background(), session.AbandonIdleParams{
+		IdleBefore: time.Now().UTC().Add(-time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("AbandonIdle: %v", err)
+	}
+	if res.SkippedLock || res.Count() != 0 {
+		t.Fatalf("res=%+v want empty non-skip", res)
+	}
+}
+
+func TestStore_AbandonIdle_SkipsWhenLockHeld(t *testing.T) {
+	ids := setupStore(t)
+	holdSweepLock(t, ids.db)
+	res, err := ids.store.AbandonIdle(context.Background(), session.AbandonIdleParams{
+		IdleBefore: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("AbandonIdle: %v", err)
+	}
+	if !res.SkippedLock || res.Count() != 0 {
+		t.Fatalf("res=%+v want SkippedLock", res)
+	}
+}
+
+func TestStore_AbandonIdle_NullExternalID(t *testing.T) {
+	ids := setupStore(t)
+	sess := mustCreate(t, ids, "")
+	backdateSessionUpdatedAt(t, ids.db, sess.ID, time.Now().UTC().Add(-2*time.Hour))
+	res, err := ids.store.AbandonIdle(context.Background(), session.AbandonIdleParams{
+		IdleBefore: time.Now().UTC().Add(-30 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("AbandonIdle: %v", err)
+	}
+	row := mustFindAbandoned(t, res.Abandoned, sess.ID)
+	if row.ExternalID != nil {
+		t.Fatalf("expected nil external_id, got %q", *row.ExternalID)
+	}
+}
+
+func TestStore_AbandonIdle_ClampsHighLimit(t *testing.T) {
+	ids := setupStore(t)
+	res, err := ids.store.AbandonIdle(context.Background(), session.AbandonIdleParams{
+		IdleBefore: time.Now().UTC(),
+		Limit:      100_000,
+	})
+	if err != nil {
+		t.Fatalf("AbandonIdle: %v", err)
+	}
+	if res.SkippedLock || res.Count() != 0 {
+		t.Fatalf("res=%+v want empty non-skip", res)
+	}
+}
+
+func holdSweepLock(t *testing.T, db *sql.DB) {
+	t.Helper()
+	ctx := context.Background()
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	t.Cleanup(func() { _ = tx.Rollback() })
+	if _, err := tx.ExecContext(ctx, `SELECT set_config('app.is_service_account', 'true', true)`); err != nil {
+		t.Fatalf("sa: %v", err)
+	}
+	var acquired bool
+	err = tx.QueryRowContext(ctx, `SELECT pg_try_advisory_xact_lock($1)`,
+		session.SweepAdvisoryLockKey).Scan(&acquired)
+	if err != nil {
+		t.Fatalf("lock: %v", err)
+	}
+	if !acquired {
+		t.Fatal("failed to acquire sweep lock")
+	}
+}
+
+func mustFindAbandoned(t *testing.T, rows []session.AbandonedSession, id uuid.UUID) session.AbandonedSession {
+	t.Helper()
+	for _, r := range rows {
+		if r.SessionID == id {
+			return r
+		}
+	}
+	t.Fatalf("missing abandoned session %s in %+v", id, rows)
+	return session.AbandonedSession{}
+}
+
 func backdateSessionUpdatedAt(t *testing.T, db *sql.DB, sessionID uuid.UUID, when time.Time) {
 	t.Helper()
 	ctx := context.Background()

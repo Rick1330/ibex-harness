@@ -374,6 +374,9 @@ func mustNewResolver(t *testing.T, store directive.Loader, ttl time.Duration) (*
 	if err != nil {
 		t.Fatalf("NewCachedResolver: %v", err)
 	}
+	t.Cleanup(func() {
+		_ = r.Shutdown(context.Background())
+	})
 	return r, client
 }
 

@@ -579,6 +579,13 @@ The following invariants are enforced by the `security-integration` CI job (`Tes
 | Rate limiter fails open when Redis unavailable (ADR-0015) | SEC-4.6 |
 | Permission bitmap enforced on protected routes | SEC-5.1–SEC-5.3 |
 | All error responses use stable JSON envelope | SEC-6.1–SEC-6.5 (parametrized sweep) |
+| Oversized chat body returns 413 `PAYLOAD_TOO_LARGE` with envelope | SEC-7.1 |
+| Auth cache warm path still rejects revoked tokens within SLA | SEC-7.2 |
+
+**Auth gRPC token management (companion to SEC matrix):**
+
+- `CreateToken` / `RevokeToken` with caller org ≠ request org → gRPC `PERMISSION_DENIED` (never `NOT_FOUND` for org mismatch)
+- Same-org missing token on revoke → `NOT_FOUND`
 
 Full matrix: [M1.5.1 milestone](roadmap/phase-1-core-platform/milestones/1.5.1-security-integration-test-suite.md). Exit audit: [PHASE1_EXIT_AUDIT.md](roadmap/phase-1-core-platform/PHASE1_EXIT_AUDIT.md).
 

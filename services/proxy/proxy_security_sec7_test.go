@@ -1,0 +1,65 @@
+//go:build integration
+
+package proxy_test
+
+import (
+	"context"
+	"net/http"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/Rick1330/ibex-harness/infra/testing/testutil"
+	apierror "github.com/Rick1330/ibex-harness/packages/apierror"
+	"github.com/Rick1330/ibex-harness/packages/permissions"
+	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
+	"github.com/Rick1330/ibex-harness/services/proxy/internal/validation"
+	"google.golang.org/grpc/metadata"
+)
+
+func TestSecurity_SEC7_1_ChatBodyTooLarge(t *testing.T) {
+	env := securityEnv(t)
+	chatToken, _ := testutil.SeedToken(t, env.db, env.orgA.OrgID, permissions.ProxyChatCompletion)
+	oversized := strings.Repeat("x", int(validation.MaxRequestBodyBytes+1))
+
+	resp, body := chatPOST(t, chatRequestOpts{
+		srvURL: env.proxy.URL, bearer: chatToken, agentID: env.orgA.AgentID,
+		contentType: "application/json", body: oversized,
+	})
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status=%d body=%s", resp.StatusCode, body)
+	}
+	requireErrorCode(t, body, apierror.CodePayloadTooLarge)
+	assertSecurityErrorEnvelope(t, resp, body, chatToken)
+}
+
+func TestSecurity_SEC7_2_AuthCacheWarmThenRevoke(t *testing.T) {
+	env := securityEnv(t)
+	admin := testutil.SeedBootstrapAdminToken(t, env.db, env.orgA.OrgID)
+	ctx := metadata.NewOutgoingContext(context.Background(), metadata.Pairs("authorization", "Bearer "+admin))
+	createResp, err := env.authFx.Client.CreateToken(ctx, &authv1.CreateTokenRequest{
+		OrgId: env.orgA.OrgID, Name: "sec7-cache", Type: authv1.TokenType_TOKEN_TYPE_PAT, Permissions: 42,
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	plain := createResp.GetPlaintext()
+	opts := authProbeOpts{srvURL: env.proxy.URL, bearer: plain, agentID: env.orgA.AgentID}
+
+	// Warm auth cache with two successful probes (miss then hit).
+	requireProbeOK(t, opts)
+	requireProbeOK(t, opts)
+
+	start := time.Now()
+	if _, err = env.authFx.Client.RevokeToken(ctx, &authv1.RevokeTokenRequest{
+		OrgId: env.orgA.OrgID, TokenId: createResp.GetTokenId(),
+	}); err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+	requireProbe(t, opts, probeExpect{http.StatusUnauthorized, apierror.CodeInvalidToken}, plain)
+	if elapsed := time.Since(start); elapsed > revocationSLA(t) {
+		t.Fatalf("revocation SLA exceeded: %v (limit %v)", elapsed, revocationSLA(t))
+	}
+}
