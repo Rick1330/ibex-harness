@@ -104,7 +104,7 @@ func writeAuthParseError(awc authWriteCtx, err error) {
 	}
 	apierror.WriteStatus(awc.w, http.StatusUnauthorized, apierror.CodeInvalidToken,
 		"Invalid Authorization header", awc.requestID,
-		apierror.WriteOpts{Detail: err.Error(), DocsBase: awc.docsBase})
+		apierror.WriteOpts{DocsBase: awc.docsBase})
 }
 
 func writeAuthValidateError(awc authWriteCtx, r *http.Request, log *logger.Logger, err error) {

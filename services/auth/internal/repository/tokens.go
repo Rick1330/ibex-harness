@@ -31,8 +31,11 @@ type TokensRepository struct {
 	obs metrics.QueryObserver
 }
 
-func NewTokensRepository(db *sql.DB, obs metrics.QueryObserver) *TokensRepository {
-	return &TokensRepository{db: db, obs: obs}
+func NewTokensRepository(db *sql.DB, obs metrics.QueryObserver) (*TokensRepository, error) {
+	if db == nil {
+		return nil, errors.New("repository: nil db")
+	}
+	return &TokensRepository{db: db, obs: obs}, nil
 }
 
 // FindActiveByPrefix returns a non-revoked, non-expired token with the given prefix.

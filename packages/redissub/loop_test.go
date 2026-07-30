@@ -125,3 +125,26 @@ func TestUnit_LoopStoppedAndSleepBackoff(t *testing.T) {
 		t.Fatal("expected stopped")
 	}
 }
+
+func TestUnit_LoopStopIdempotent(t *testing.T) {
+	t.Parallel()
+	loop := redissub.NewLoop()
+	loop.Stop()
+	loop.Stop() // second Stop must not panic
+	if !loop.Stopped(context.Background()) {
+		t.Fatal("expected stopped after Stop")
+	}
+}
+
+func TestUnit_LoopStoppedOnCtxCancel(t *testing.T) {
+	t.Parallel()
+	loop := redissub.NewLoop()
+	ctx, cancel := context.WithCancel(context.Background())
+	if loop.Stopped(ctx) {
+		t.Fatal("unexpected stopped before cancel")
+	}
+	cancel()
+	if !loop.Stopped(ctx) {
+		t.Fatal("expected stopped after ctx cancel")
+	}
+}
