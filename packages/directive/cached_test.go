@@ -410,6 +410,18 @@ func (s *errStore) Load(context.Context, uuid.UUID, uuid.UUID) (directive.Resolv
 	return directive.Resolved{}, s.err
 }
 
+func TestUnit_CachedResolver_ShutdownNilSafe(t *testing.T) {
+	t.Parallel()
+
+	var r *directive.CachedResolver
+	if err := r.Shutdown(context.Background()); err != nil {
+		t.Fatalf("nil receiver: %v", err)
+	}
+	if err := (&directive.CachedResolver{}).Shutdown(context.Background()); err != nil {
+		t.Fatalf("nil pool: %v", err)
+	}
+}
+
 func mustNewResolver(t *testing.T, store directive.Loader, ttl time.Duration) (*directive.CachedResolver, *redis.Client) {
 	t.Helper()
 	_, client := newTestRedis(t)

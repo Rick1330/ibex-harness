@@ -18,6 +18,34 @@ import (
 	"google.golang.org/grpc/metadata"
 )
 
+func TestUnit_AuditCrossTenant_NilLogNoop(t *testing.T) {
+	t.Parallel()
+
+	s := &Server{log: nil}
+	s.auditCrossTenant(context.Background(), "org-a", "token", "id-1")
+}
+
+func TestUnit_WithIncomingRequestID(t *testing.T) {
+	t.Parallel()
+
+	base := context.Background()
+	if got := withIncomingRequestID(base); got != base {
+		t.Fatal("expected same ctx without metadata")
+	}
+
+	empty := metadata.NewIncomingContext(base, metadata.Pairs(reqid.GRPCMetadataKey, ""))
+	if got := withIncomingRequestID(empty); got != empty {
+		t.Fatal("expected same ctx for empty request id")
+	}
+
+	withID := metadata.NewIncomingContext(base, metadata.Pairs(reqid.GRPCMetadataKey, "rid-123"))
+	got := withIncomingRequestID(withID)
+	id, ok := reqid.FromContext(got)
+	if !ok || id != "rid-123" {
+		t.Fatalf("id=%q ok=%v", id, ok)
+	}
+}
+
 func TestUnit_CreateToken_AuditsCrossTenant(t *testing.T) {
 	t.Parallel()
 

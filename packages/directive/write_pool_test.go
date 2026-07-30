@@ -98,6 +98,68 @@ func TestUnit_WritePool_ConcurrentSubmitDuringShutdown(t *testing.T) {
 	}
 }
 
+func TestUnit_WritePool_NilReceiver(t *testing.T) {
+	t.Parallel()
+
+	var p *writePool
+	if p.trySubmit(cacheWriteJob{key: "x"}) {
+		t.Fatal("nil pool should reject submit")
+	}
+	if err := p.shutdown(context.Background()); err != nil {
+		t.Fatalf("nil shutdown: %v", err)
+	}
+}
+
+func TestUnit_WritePool_DefaultsAndNilHandler(t *testing.T) {
+	t.Parallel()
+
+	var ran atomic.Int32
+	p := newWritePool(0, 0, func(cacheWriteJob) { ran.Add(1) })
+	if !p.trySubmit(cacheWriteJob{key: "a"}) {
+		t.Fatal("expected submit with default queue")
+	}
+
+	nilHandler := newWritePool(1, 1, nil)
+	if !nilHandler.trySubmit(cacheWriteJob{key: "b"}) {
+		t.Fatal("expected submit with nil handler")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := p.shutdown(ctx); err != nil {
+		t.Fatalf("shutdown p: %v", err)
+	}
+	if err := nilHandler.shutdown(ctx); err != nil {
+		t.Fatalf("shutdown nilHandler: %v", err)
+	}
+	if got := ran.Load(); got != 1 {
+		t.Fatalf("ran=%d want 1", got)
+	}
+}
+
+func TestUnit_WritePool_ShutdownTimeout(t *testing.T) {
+	t.Parallel()
+
+	release := make(chan struct{})
+	p := newWritePool(1, 1, func(cacheWriteJob) { <-release })
+	if !p.trySubmit(cacheWriteJob{key: "block"}) {
+		t.Fatal("expected submit")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if err := p.shutdown(ctx); err != context.DeadlineExceeded {
+		t.Fatalf("err=%v want deadline exceeded", err)
+	}
+	close(release)
+
+	drainCtx, drainCancel := context.WithTimeout(context.Background(), time.Second)
+	defer drainCancel()
+	if err := p.shutdown(drainCtx); err != nil {
+		t.Fatalf("drain shutdown: %v", err)
+	}
+}
+
 func waitClosed(t *testing.T, ch <-chan struct{}) {
 	t.Helper()
 	select {

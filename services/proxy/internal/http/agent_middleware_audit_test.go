@@ -2,6 +2,7 @@ package http
 
 import (
 	"bytes"
+	"context"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,18 @@ import (
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/validation"
 )
+
+func TestUnit_AuditAgentAuthorizationDenied_NilLogger(t *testing.T) {
+	t.Parallel()
+
+	h := &agentVerifyHandler{logger: nil}
+	h.auditAgentAuthorizationDenied(agentVerifyErrorOpts{
+		ctx:           context.Background(),
+		requestingOrg: "org-a",
+		agentID:       "agent-b",
+		requestID:     "req-nil-log",
+	})
+}
 
 func TestUnit_AgentVerification_AuditsAuthorizationDenied(t *testing.T) {
 	t.Parallel()
