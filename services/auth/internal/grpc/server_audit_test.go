@@ -18,6 +18,13 @@ import (
 	"google.golang.org/grpc/metadata"
 )
 
+type auditCase struct {
+	resourceType string
+	resourceID   string
+	requestID    string
+	invoke       func(context.Context, *Server) error
+}
+
 func TestUnit_AuditCrossTenant_NilLogNoop(t *testing.T) {
 	t.Parallel()
 
@@ -46,51 +53,54 @@ func TestUnit_WithIncomingRequestID(t *testing.T) {
 	}
 }
 
-func TestUnit_CreateToken_AuditsCrossTenant(t *testing.T) {
+func TestUnit_AuditsCrossTenant_CreateToken(t *testing.T) {
 	t.Parallel()
 
-	var buf bytes.Buffer
-	s := newServerWithLog(t, &buf)
 	callerOrg := uuid.NewString()
 	targetOrg := uuid.NewString()
-	ctx := ContextWithCaller(context.Background(), CallerContext{
-		OrgID: callerOrg, Permissions: permissions.Admin,
+	assertCrossTenantAudit(t, callerOrg, auditCase{
+		resourceType: "token",
+		requestID:    "req-create-xt",
+		invoke: func(ctx context.Context, s *Server) error {
+			_, err := s.CreateToken(ctx, &authv1.CreateTokenRequest{OrgId: targetOrg, Name: "x"})
+			return err
+		},
 	})
-	ctx = metadata.NewIncomingContext(ctx, metadata.Pairs(reqid.GRPCMetadataKey, "req-create-xt"))
-
-	_, err := s.CreateToken(ctx, &authv1.CreateTokenRequest{OrgId: targetOrg, Name: "x"})
-	assertGRPCCode(t, err, codes.PermissionDenied)
-
-	logged := buf.String()
-	assertLogContains(t, logged, "cross-tenant access attempt")
-	assertLogContains(t, logged, `"requesting_org_id":"`+callerOrg+`"`)
-	assertLogContains(t, logged, `"target_resource_type":"token"`)
-	assertLogContains(t, logged, "req-create-xt")
 }
 
-func TestUnit_ValidateAgent_AuditsCrossTenantOnly(t *testing.T) {
+func TestUnit_AuditsCrossTenant_ValidateAgent(t *testing.T) {
+	t.Parallel()
+
+	callerOrg := uuid.NewString()
+	agentID := uuid.NewString()
+	assertCrossTenantAudit(t, callerOrg, auditCase{
+		resourceType: "agent",
+		resourceID:   agentID,
+		requestID:    "req-agent-xt",
+		invoke: func(ctx context.Context, s *Server) error {
+			_, err := s.ValidateAgent(ctx, &authv1.ValidateAgentRequest{
+				OrgId: uuid.NewString(), AgentId: agentID,
+			})
+			return err
+		},
+	})
+}
+
+func TestUnit_CreateToken_InvalidOrgDoesNotAuditCrossTenant(t *testing.T) {
 	t.Parallel()
 
 	var buf bytes.Buffer
 	s := newServerWithLog(t, &buf)
-	callerOrg := uuid.NewString()
-	agentID := uuid.NewString()
 	ctx := ContextWithCaller(context.Background(), CallerContext{
-		OrgID: callerOrg, Permissions: permissions.Admin,
+		OrgID: uuid.NewString(), Permissions: permissions.Admin,
 	})
-	ctx = metadata.NewIncomingContext(ctx, metadata.Pairs(reqid.GRPCMetadataKey, "req-agent-xt"))
 
-	_, err := s.ValidateAgent(ctx, &authv1.ValidateAgentRequest{
-		OrgId: uuid.NewString(), AgentId: agentID,
-	})
-	assertGRPCCode(t, err, codes.PermissionDenied)
+	_, err := s.CreateToken(ctx, &authv1.CreateTokenRequest{OrgId: "bad-org-id", Name: "x"})
+	assertGRPCCode(t, err, codes.InvalidArgument)
 
-	logged := buf.String()
-	assertLogContains(t, logged, "cross-tenant access attempt")
-	assertLogContains(t, logged, `"requesting_org_id":"`+callerOrg+`"`)
-	assertLogContains(t, logged, `"target_resource_type":"agent"`)
-	assertLogContains(t, logged, `"target_resource_id":"`+agentID+`"`)
-	assertLogContains(t, logged, "req-agent-xt")
+	if strings.Contains(buf.String(), "cross-tenant access attempt") {
+		t.Fatalf("invalid org must not emit cross-tenant audit: %s", buf.String())
+	}
 }
 
 func TestUnit_ValidateAgent_SameOrgMissDoesNotAuditCrossTenant(t *testing.T) {
@@ -111,6 +121,29 @@ func TestUnit_ValidateAgent_SameOrgMissDoesNotAuditCrossTenant(t *testing.T) {
 	if strings.Contains(buf.String(), "cross-tenant access attempt") {
 		t.Fatalf("same-org miss must not emit cross-tenant audit: %s", buf.String())
 	}
+}
+
+func assertCrossTenantAudit(t *testing.T, callerOrg string, tc auditCase) {
+	t.Helper()
+
+	var buf bytes.Buffer
+	s := newServerWithLog(t, &buf)
+	ctx := ContextWithCaller(context.Background(), CallerContext{
+		OrgID: callerOrg, Permissions: permissions.Admin,
+	})
+	ctx = metadata.NewIncomingContext(ctx, metadata.Pairs(reqid.GRPCMetadataKey, tc.requestID))
+
+	err := tc.invoke(ctx, s)
+	assertGRPCCode(t, err, codes.PermissionDenied)
+
+	logged := buf.String()
+	assertLogContains(t, logged, "cross-tenant access attempt")
+	assertLogContains(t, logged, `"requesting_org_id":"`+callerOrg+`"`)
+	assertLogContains(t, logged, `"target_resource_type":"`+tc.resourceType+`"`)
+	if tc.resourceID != "" {
+		assertLogContains(t, logged, `"target_resource_id":"`+tc.resourceID+`"`)
+	}
+	assertLogContains(t, logged, tc.requestID)
 }
 
 func newServerWithLog(t *testing.T, buf *bytes.Buffer) *Server {

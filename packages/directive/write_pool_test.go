@@ -2,6 +2,7 @@ package directive
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -148,7 +149,7 @@ func TestUnit_WritePool_ShutdownTimeout(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
-	if err := p.shutdown(ctx); err != context.DeadlineExceeded {
+	if err := p.shutdown(ctx); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("err=%v want deadline exceeded", err)
 	}
 	close(release)

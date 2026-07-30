@@ -12,6 +12,7 @@ import (
 	"time"
 
 	apierror "github.com/Rick1330/ibex-harness/packages/apierror"
+	"github.com/stretchr/testify/require"
 )
 
 const (
@@ -103,6 +104,13 @@ func assertNoTokenLeak(t *testing.T, body, secret string) {
 	}
 }
 
+func redactBearer(body, bearer string) string {
+	if bearer == "" {
+		return body
+	}
+	return strings.ReplaceAll(body, bearer, "[REDACTED]")
+}
+
 func securityEnv(t *testing.T) securityTestEnv {
 	t.Helper()
 	return setupSecurityTestEnv(t, proxyServerOpts{defaultRPM: 60})
@@ -165,7 +173,7 @@ func requireProbeOK(t *testing.T, opts authProbeOpts) {
 	resp, body := authProbeGET(t, opts)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status=%d body=%s", resp.StatusCode, body)
+		t.Fatalf("status=%d body=%s", resp.StatusCode, redactBearer(body, opts.bearer))
 	}
 }
 
@@ -174,7 +182,7 @@ func requireProbeOKCached(t *testing.T, opts authProbeOpts, wantCached bool) {
 	resp, body := authProbeGET(t, opts)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status=%d body=%s", resp.StatusCode, body)
+		t.Fatalf("status=%d body=%s", resp.StatusCode, redactBearer(body, opts.bearer))
 	}
 	got := resp.Header.Get("X-IBEX-Auth-Cached")
 	if wantCached && got != "true" {
@@ -187,10 +195,9 @@ func requireProbeOKCached(t *testing.T, opts authProbeOpts, wantCached bool) {
 
 func requireProbeUnauthorizedEventually(t *testing.T, opts authProbeOpts, secret string, within time.Duration) {
 	t.Helper()
-	deadline := time.Now().Add(within)
 	var lastStatus int
 	var lastBody string
-	for time.Now().Before(deadline) {
+	require.Eventually(t, func() bool {
 		resp, body := authProbeGET(t, opts)
 		lastStatus = resp.StatusCode
 		lastBody = body
@@ -198,12 +205,13 @@ func requireProbeUnauthorizedEventually(t *testing.T, opts authProbeOpts, secret
 			requireErrorCode(t, body, apierror.CodeInvalidToken)
 			assertSecurityErrorEnvelope(t, resp, body, secret)
 			resp.Body.Close()
-			return
+			return true
 		}
 		resp.Body.Close()
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatalf("expected unauthorized within %v; last status=%d body=%s", within, lastStatus, lastBody)
+		return false
+	}, within, 10*time.Millisecond,
+		"expected unauthorized within %v; last status=%d body=%s",
+		within, lastStatus, redactBearer(lastBody, opts.bearer))
 }
 
 func exhaustOrgARateLimit(t *testing.T, env securityTestEnv) {

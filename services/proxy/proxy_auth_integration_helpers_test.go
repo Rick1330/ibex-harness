@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -31,6 +32,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -279,17 +281,27 @@ func startTestRevocationSubscriber(t *testing.T, ctx context.Context, client red
 	if err != nil {
 		t.Fatalf("revocation subscriber: %v", err)
 	}
-	go sub.Run(ctx)
-	t.Cleanup(func() { sub.Stop() })
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		n, err := client.PubSubNumSub(context.Background(), revocation.Channel).Result()
-		if err == nil && n[revocation.Channel] > 0 {
-			return
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		sub.Run(ctx)
+	}()
+	t.Cleanup(func() {
+		sub.Stop()
+		select {
+		case <-sub.Done():
+		case <-time.After(2 * time.Second):
+			t.Error("timeout waiting for revocation subscriber shutdown")
 		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatal("timeout waiting for revocation subscriber")
+		wg.Wait()
+	})
+	require.Eventually(t, func() bool {
+		inspectCtx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
+		defer cancel()
+		n, err := client.PubSubNumSub(inspectCtx, revocation.Channel).Result()
+		return err == nil && n[revocation.Channel] > 0
+	}, 2*time.Second, 10*time.Millisecond, "timeout waiting for revocation subscriber")
 }
 
 func mustGRPCValidator(t *testing.T, client authv1.AuthServiceClient, timeout time.Duration) auth.TokenValidator {

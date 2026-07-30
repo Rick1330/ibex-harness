@@ -26,7 +26,7 @@ jobs:
       contents: read
     services:
       postgres:
-        image: postgres:16
+        image: postgres:16@sha256:be01cf82fc7dbba824acf0a82e150b4b360f3ff93c6631d7844af431e841a95c
         env:
           POSTGRES_USER: ibex
           POSTGRES_PASSWORD: ibex

@@ -5,12 +5,15 @@ package session_test
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/session"
 	"github.com/google/uuid"
 )
+
+const maxAbandonIdleLimit = 5000
 
 func TestStore_AbandonIdle_MarksStaleActive(t *testing.T) {
 	ids := setupStore(t)
@@ -79,10 +82,11 @@ func TestStore_AbandonIdle_RequiresIdleBefore(t *testing.T) {
 
 func TestStore_AbandonIdle_EmptySkipAndClamp(t *testing.T) {
 	cases := []struct {
-		name     string
-		params   session.AbandonIdleParams
-		prep     func(*testing.T, *sql.DB)
-		wantSkip bool
+		name      string
+		params    session.AbandonIdleParams
+		prep      func(*testing.T, storeIDs)
+		wantSkip  bool
+		wantCount int
 	}{
 		{
 			name: "empty_when_no_victims",
@@ -95,15 +99,25 @@ func TestStore_AbandonIdle_EmptySkipAndClamp(t *testing.T) {
 			params: session.AbandonIdleParams{
 				IdleBefore: time.Now().UTC(),
 			},
-			prep:     holdSweepLock,
+			prep: func(t *testing.T, ids storeIDs) {
+				holdSweepLock(t, ids.db)
+			},
 			wantSkip: true,
 		},
 		{
 			name: "clamps_high_limit",
 			params: session.AbandonIdleParams{
-				IdleBefore: time.Now().UTC(),
+				IdleBefore: time.Now().UTC().Add(-30 * time.Minute),
 				Limit:      100_000,
 			},
+			prep: func(t *testing.T, ids storeIDs) {
+				t.Helper()
+				for i := 0; i < maxAbandonIdleLimit+5; i++ {
+					sess := mustCreate(t, ids, "ext-clamp-"+uuid.NewString()[:8])
+					backdateSessionUpdatedAt(t, ids.db, sess.ID, time.Now().UTC().Add(-2*time.Hour))
+				}
+			},
+			wantCount: maxAbandonIdleLimit,
 		},
 	}
 
@@ -112,9 +126,9 @@ func TestStore_AbandonIdle_EmptySkipAndClamp(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ids := setupStore(t)
 			if tc.prep != nil {
-				tc.prep(t, ids.db)
+				tc.prep(t, ids)
 			}
-			assertAbandonIdleOutcome(t, ids.store, tc.params, tc.wantSkip)
+			assertAbandonIdleOutcome(t, ids.store, tc.params, tc.wantSkip, tc.wantCount)
 		})
 	}
 }
@@ -124,6 +138,7 @@ func assertAbandonIdleOutcome(
 	store *session.PostgresStore,
 	params session.AbandonIdleParams,
 	wantSkip bool,
+	wantCount int,
 ) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -135,8 +150,8 @@ func assertAbandonIdleOutcome(
 	if res.SkippedLock != wantSkip {
 		t.Fatalf("SkippedLock=%v want %v", res.SkippedLock, wantSkip)
 	}
-	if res.Count() != 0 {
-		t.Fatalf("Count=%d want 0", res.Count())
+	if res.Count() != wantCount {
+		t.Fatalf("Count=%d want %d", res.Count(), wantCount)
 	}
 }
 
@@ -167,7 +182,7 @@ func holdSweepLock(t *testing.T, db *sql.DB) {
 		t.Fatalf("begin: %v", err)
 	}
 	t.Cleanup(func() {
-		if err := tx.Rollback(); err != nil && err != sql.ErrTxDone {
+		if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
 			t.Errorf("rollback sweep-lock transaction: %v", err)
 		}
 	})

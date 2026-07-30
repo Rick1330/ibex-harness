@@ -22,8 +22,12 @@ func BenchmarkIdempotency_Claim(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, err := store.Claim(ctx, Token{OrgID: org, Key: keys[i]}, "bench-fp"); err != nil {
+		out, err := store.Claim(ctx, Token{OrgID: org, Key: keys[i]}, "bench-fp")
+		if err != nil {
 			b.Fatal(err)
+		}
+		if out.Kind != KindMiss {
+			b.Fatalf("kind=%v want KindMiss", out.Kind)
 		}
 	}
 }

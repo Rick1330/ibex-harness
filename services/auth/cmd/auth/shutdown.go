@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"os"
@@ -66,7 +67,7 @@ func startAuthHTTPServer(opts shutdownOpts, errCh chan<- error) {
 			err = opts.httpServer.ListenAndServe()
 		}
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errCh <- err
+			errCh <- fmt.Errorf("serve auth HTTP server: %w", err)
 			return
 		}
 		errCh <- nil

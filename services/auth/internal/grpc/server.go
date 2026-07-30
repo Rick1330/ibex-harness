@@ -104,7 +104,11 @@ func (s *Server) CreateToken(ctx context.Context, req *authv1.CreateTokenRequest
 	if !ok {
 		return nil, status.Error(codes.Unauthenticated, errMsgMissingCallerContext)
 	}
-	if caller.OrgID != req.GetOrgId() {
+	orgID, err := parseOrgID(req.GetOrgId())
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	if caller.OrgID != orgID.String() {
 		s.auditCrossTenant(ctx, caller.OrgID, "token", "")
 		return nil, status.Error(codes.PermissionDenied, "forbidden")
 	}
@@ -180,7 +184,7 @@ func (s *Server) ValidateAgent(ctx context.Context, req *authv1.ValidateAgentReq
 	if err != nil {
 		return nil, s.agentValidateErr(start, metrics.AgentResultError, codes.InvalidArgument, err.Error())
 	}
-	if caller.OrgID != req.GetOrgId() {
+	if caller.OrgID != orgID.String() {
 		s.auditCrossTenant(ctx, caller.OrgID, "agent", req.GetAgentId())
 		return nil, s.agentValidateErr(start, metrics.AgentResultError, codes.PermissionDenied, "forbidden")
 	}
@@ -228,15 +232,23 @@ type agentValidateStatusError struct {
 }
 
 func parseValidateAgentIDs(req *authv1.ValidateAgentRequest) (uuid.UUID, uuid.UUID, error) {
-	orgID, err := uuid.Parse(req.GetOrgId())
+	orgID, err := parseOrgID(req.GetOrgId())
 	if err != nil {
-		return uuid.Nil, uuid.Nil, errors.New("invalid org_id")
+		return uuid.Nil, uuid.Nil, err
 	}
 	agentID, err := uuid.Parse(req.GetAgentId())
 	if err != nil {
 		return uuid.Nil, uuid.Nil, errors.New("invalid agent_id")
 	}
 	return orgID, agentID, nil
+}
+
+func parseOrgID(raw string) (uuid.UUID, error) {
+	orgID, err := uuid.Parse(raw)
+	if err != nil {
+		return uuid.Nil, errors.New("invalid org_id")
+	}
+	return orgID, nil
 }
 
 func (s *Server) lookupAgentForValidate(

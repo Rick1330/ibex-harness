@@ -39,7 +39,11 @@ func TestUnit_ShutdownDirectiveCache(t *testing.T) {
 	log := logger.Discard("proxy")
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	t.Cleanup(func() { _ = client.Close() })
+	t.Cleanup(func() {
+		if err := client.Close(); err != nil {
+			t.Errorf("close redis client: %v", err)
+		}
+	})
 	resolver, err := directive.NewCachedResolver(directive.CachedResolverDeps{
 		Client: client, Loader: staticDirectiveLoader{}, Config: directive.Config{CacheTTL: time.Minute}, Log: log,
 	})

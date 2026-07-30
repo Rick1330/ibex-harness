@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"net"
 	"net/http"
 	"os"
@@ -139,7 +140,11 @@ func TestRunWithShutdown_StopsOnSignal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = httpLis.Close() })
+	t.Cleanup(func() {
+		if err := httpLis.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Errorf("close http listener: %v", err)
+		}
+	})
 
 	httpServer := &http.Server{
 		Handler:           http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }),

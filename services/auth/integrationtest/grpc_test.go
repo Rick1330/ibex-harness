@@ -10,14 +10,25 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+func assertAuthGRPCFixture(t *testing.T, fx *AuthGRPCFixture, wantTokenSvc bool) {
+	t.Helper()
+	if fx.Addr == "" {
+		t.Fatal("fixture Addr must be set")
+	}
+	if fx.Client == nil {
+		t.Fatal("fixture Client must be set")
+	}
+	if wantTokenSvc && fx.tokenSvc == nil {
+		t.Fatal("fixture tokenSvc must be set")
+	}
+}
+
 func TestIntegration_StartAuthGRPC(t *testing.T) {
 	dsn, cleanup := testutil.SetupPostgres(t)
 	defer cleanup()
 
 	fx := StartAuthGRPC(t, dsn)
-	if fx.Addr == "" || fx.Client == nil {
-		t.Fatal("incomplete fixture")
-	}
+	assertAuthGRPCFixture(t, fx, false)
 
 	var nilFx *AuthGRPCFixture
 	nilFx.WaitPendingPublishes()
@@ -31,12 +42,14 @@ func TestIntegration_StartAuthGRPCWithRedis(t *testing.T) {
 
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	defer func() { _ = client.Close() }()
+	t.Cleanup(func() {
+		if err := client.Close(); err != nil {
+			t.Errorf("close redis client: %v", err)
+		}
+	})
 
 	fx := StartAuthGRPCWithRedis(t, dsn, client)
-	if fx.Addr == "" || fx.Client == nil || fx.tokenSvc == nil {
-		t.Fatal("incomplete fixture")
-	}
+	assertAuthGRPCFixture(t, fx, true)
 	fx.WaitPendingPublishes()
 	fx.Close()
 }
