@@ -226,7 +226,9 @@ func newProxyIntegrationHandler(t *testing.T, opts proxyIntegrationHandlerOpts) 
 	validator := mustGRPCValidator(t, opts.client, opts.cfg.AuthValidateTimeout)
 	if opts.srvOpts.withAuthCache {
 		validator = mustCachedValidator(t, validator)
-		startTestRevocationSubscriber(t, opts.redisClient, validator)
+		revokeCtx, revokeCancel := context.WithCancel(context.Background())
+		t.Cleanup(revokeCancel)
+		startTestRevocationSubscriber(t, revokeCtx, opts.redisClient, validator)
 	}
 	agentVerifier := mustGRPCAgentVerifier(t, opts.client, opts.cfg.AuthValidateTimeout)
 	limiter := mustRedisSlider(t, opts.redisClient, defaultRPM, orgOverrides)
@@ -267,7 +269,7 @@ func mustCachedValidator(t *testing.T, inner auth.TokenValidator) auth.TokenVali
 	return wrapped
 }
 
-func startTestRevocationSubscriber(t *testing.T, client redis.UniversalClient, validator auth.TokenValidator) {
+func startTestRevocationSubscriber(t *testing.T, ctx context.Context, client redis.UniversalClient, validator auth.TokenValidator) {
 	t.Helper()
 	inv, ok := validator.(auth.CacheInvalidator)
 	if !ok {
@@ -277,12 +279,8 @@ func startTestRevocationSubscriber(t *testing.T, client redis.UniversalClient, v
 	if err != nil {
 		t.Fatalf("revocation subscriber: %v", err)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
 	go sub.Run(ctx)
-	t.Cleanup(func() {
-		cancel()
-		sub.Stop()
-	})
+	t.Cleanup(func() { sub.Stop() })
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		n, err := client.PubSubNumSub(context.Background(), revocation.Channel).Result()

@@ -102,7 +102,7 @@ func (s *Server) ValidateToken(ctx context.Context, req *authv1.ValidateTokenReq
 func (s *Server) CreateToken(ctx context.Context, req *authv1.CreateTokenRequest) (*authv1.CreateTokenResponse, error) {
 	caller, ok := CallerFromContext(ctx)
 	if !ok {
-		return nil, status.Error(codes.Unauthenticated, "missing caller context")
+		return nil, status.Error(codes.Unauthenticated, errMsgMissingCallerContext)
 	}
 	if caller.OrgID != req.GetOrgId() {
 		s.auditCrossTenant(ctx, caller.OrgID, "token", "")
@@ -129,7 +129,7 @@ func (s *Server) CreateToken(ctx context.Context, req *authv1.CreateTokenRequest
 func (s *Server) RevokeToken(ctx context.Context, req *authv1.RevokeTokenRequest) (*authv1.RevokeTokenResponse, error) {
 	caller, ok := CallerFromContext(ctx)
 	if !ok {
-		return nil, status.Error(codes.Unauthenticated, "missing caller context")
+		return nil, status.Error(codes.Unauthenticated, errMsgMissingCallerContext)
 	}
 	if caller.OrgID != req.GetOrgId() {
 		s.auditCrossTenant(ctx, caller.OrgID, "token", req.GetTokenId())
@@ -173,7 +173,7 @@ func (s *Server) ValidateAgent(ctx context.Context, req *authv1.ValidateAgentReq
 
 	caller, ok := CallerFromContext(ctx)
 	if !ok {
-		return nil, s.agentValidateErr(start, metrics.AgentResultError, codes.Unauthenticated, "missing caller context")
+		return nil, s.agentValidateErr(start, metrics.AgentResultError, codes.Unauthenticated, errMsgMissingCallerContext)
 	}
 
 	orgID, agentID, err := parseValidateAgentIDs(req)

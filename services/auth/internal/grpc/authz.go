@@ -13,6 +13,8 @@ import (
 
 type callerContextKey struct{}
 
+const errMsgMissingCallerContext = "missing caller context"
+
 // CallerContext is the authenticated PAT used for management RPCs.
 type CallerContext struct {
 	OrgID       string
@@ -91,7 +93,7 @@ func bearerFromMetadata(ctx context.Context) (string, error) {
 func RequireOrgAndPermission(ctx context.Context, orgID string, required int64) error {
 	caller, ok := CallerFromContext(ctx)
 	if !ok {
-		return status.Error(codes.Unauthenticated, "missing caller context")
+		return status.Error(codes.Unauthenticated, errMsgMissingCallerContext)
 	}
 	if caller.OrgID != orgID {
 		return status.Error(codes.PermissionDenied, "forbidden")
