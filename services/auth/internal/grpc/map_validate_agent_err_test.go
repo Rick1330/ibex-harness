@@ -30,9 +30,9 @@ func TestUnit_MapValidateAgentErr(t *testing.T) {
 			wantResult: metrics.AgentResultNotFound,
 		},
 		{
-			name:     "inactive error metric existence-safe msg",
+			name:     "inactive error metric suspended msg",
 			err:      service.ErrAgentInactive,
-			wantCode: codes.PermissionDenied, wantMsg: "agent not found",
+			wantCode: codes.PermissionDenied, wantMsg: "agent is not active",
 			wantResult: metrics.AgentResultError,
 		},
 		{
@@ -66,14 +66,22 @@ func TestUnit_MapValidateAgentErr(t *testing.T) {
 			if !ok {
 				t.Fatalf("not status: %v", err)
 			}
-			if st.Code() != tc.wantCode || st.Message() != tc.wantMsg {
-				t.Fatalf("got %v %q want %v %q", st.Code(), st.Message(), tc.wantCode, tc.wantMsg)
-			}
+			assertStatusCodeMsg(t, st, tc.wantCode, tc.wantMsg)
 			after := agentResultSampleCount(t, reg, tc.wantResult)
 			if after != before+1 {
 				t.Fatalf("metric %s count: before=%d after=%d", tc.wantResult, before, after)
 			}
 		})
+	}
+}
+
+func assertStatusCodeMsg(t *testing.T, st *status.Status, wantCode codes.Code, wantMsg string) {
+	t.Helper()
+	if st.Code() != wantCode {
+		t.Fatalf("code=%v want %v", st.Code(), wantCode)
+	}
+	if st.Message() != wantMsg {
+		t.Fatalf("msg=%q want %q", st.Message(), wantMsg)
 	}
 }
 
@@ -83,14 +91,26 @@ func agentResultSampleCount(t *testing.T, reg *metrics.AuthRegistry, result metr
 	if err != nil {
 		t.Fatalf("gather: %v", err)
 	}
+	mf := findValidateAgentDurationFamily(mfs)
+	if mf == nil {
+		return 0
+	}
+	return sampleCountForAgentResult(mf, string(result))
+}
+
+func findValidateAgentDurationFamily(mfs []*dto.MetricFamily) *dto.MetricFamily {
 	for _, mf := range mfs {
-		if mf.GetName() != "ibex_auth_validate_agent_duration_seconds" {
-			continue
+		if mf.GetName() == "ibex_auth_validate_agent_duration_seconds" {
+			return mf
 		}
-		for _, m := range mf.GetMetric() {
-			if metricHasResultLabel(m, string(result)) {
-				return m.GetHistogram().GetSampleCount()
-			}
+	}
+	return nil
+}
+
+func sampleCountForAgentResult(mf *dto.MetricFamily, wantResult string) uint64 {
+	for _, m := range mf.GetMetric() {
+		if metricHasResultLabel(m, wantResult) {
+			return m.GetHistogram().GetSampleCount()
 		}
 	}
 	return 0

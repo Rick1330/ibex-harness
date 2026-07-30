@@ -34,8 +34,19 @@ func TestUnit_AgentService_ValidateForOrg_OK(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ValidateForOrg: %v", err)
 	}
-	if view.ID != agentID.String() || view.OrgID != orgID.String() || view.Status != "active" {
-		t.Fatalf("view=%+v", view)
+	assertActiveAgentView(t, view, agentID, orgID)
+}
+
+func assertActiveAgentView(t *testing.T, view AgentView, agentID, orgID uuid.UUID) {
+	t.Helper()
+	if view.ID != agentID.String() {
+		t.Fatalf("id=%q want %s", view.ID, agentID)
+	}
+	if view.OrgID != orgID.String() {
+		t.Fatalf("org_id=%q want %s", view.OrgID, orgID)
+	}
+	if view.Status != "active" {
+		t.Fatalf("status=%q want active", view.Status)
 	}
 }
 

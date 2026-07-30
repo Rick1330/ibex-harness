@@ -170,8 +170,8 @@ func TestValidateAgent_InactiveAgentPermissionDenied(t *testing.T) {
 	if status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("code: %v", status.Code(err))
 	}
-	if status.Convert(err).Message() != "agent not found" {
-		t.Fatalf("msg=%q want existence-safe agent not found", status.Convert(err).Message())
+	if status.Convert(err).Message() != "agent is not active" {
+		t.Fatalf("msg=%q want agent is not active", status.Convert(err).Message())
 	}
 }
 
