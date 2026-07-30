@@ -185,6 +185,27 @@ func requireProbeOKCached(t *testing.T, opts authProbeOpts, wantCached bool) {
 	}
 }
 
+func requireProbeUnauthorizedEventually(t *testing.T, opts authProbeOpts, secret string, within time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(within)
+	var lastStatus int
+	var lastBody string
+	for time.Now().Before(deadline) {
+		resp, body := authProbeGET(t, opts)
+		lastStatus = resp.StatusCode
+		lastBody = body
+		if resp.StatusCode == http.StatusUnauthorized {
+			requireErrorCode(t, body, apierror.CodeInvalidToken)
+			assertSecurityErrorEnvelope(t, resp, body, secret)
+			resp.Body.Close()
+			return
+		}
+		resp.Body.Close()
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("expected unauthorized within %v; last status=%d body=%s", within, lastStatus, lastBody)
+}
+
 func exhaustOrgARateLimit(t *testing.T, env securityTestEnv) {
 	t.Helper()
 	opts := orgAProbeOpts(env)

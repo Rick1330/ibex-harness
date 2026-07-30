@@ -19,7 +19,7 @@ type cacheWriteJob struct {
 // writePool runs cache populate jobs on a fixed worker set.
 // trySubmit never blocks the request path: a full queue drops the job.
 type writePool struct {
-	mu        sync.Mutex
+	submitMu  sync.RWMutex // serializes send vs close (no send-on-closed)
 	jobs      chan cacheWriteJob
 	wg        sync.WaitGroup
 	closed    atomic.Bool
@@ -52,8 +52,8 @@ func (p *writePool) trySubmit(job cacheWriteJob) bool {
 	if p == nil {
 		return false
 	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
+	p.submitMu.RLock()
+	defer p.submitMu.RUnlock()
 	if p.closed.Load() {
 		return false
 	}
@@ -71,10 +71,10 @@ func (p *writePool) shutdown(ctx context.Context) error {
 		return nil
 	}
 	p.drainOnce.Do(func() {
-		p.mu.Lock()
+		p.submitMu.Lock()
 		p.closed.Store(true)
 		close(p.jobs)
-		p.mu.Unlock()
+		p.submitMu.Unlock()
 		go func() {
 			p.wg.Wait()
 			close(p.drained)

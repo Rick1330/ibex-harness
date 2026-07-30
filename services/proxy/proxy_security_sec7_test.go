@@ -36,9 +36,13 @@ func TestSecurity_SEC7_1_ChatBodyTooLarge(t *testing.T) {
 }
 
 func TestSecurity_SEC7_2_AuthCacheWarmThenRevoke(t *testing.T) {
-	env := securityEnv(t)
+	env := setupSecurityTestEnv(t, proxyServerOpts{defaultRPM: 60, withAuthCache: true})
 	admin := testutil.SeedBootstrapAdminToken(t, env.db, env.orgA.OrgID)
-	ctx := metadata.NewOutgoingContext(context.Background(), metadata.Pairs("authorization", "Bearer "+admin))
+
+	rpcCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	ctx := metadata.NewOutgoingContext(rpcCtx, metadata.Pairs("authorization", "Bearer "+admin))
+
 	createResp, err := env.authFx.Client.CreateToken(ctx, &authv1.CreateTokenRequest{
 		OrgId: env.orgA.OrgID, Name: "sec7-cache", Type: authv1.TokenType_TOKEN_TYPE_PAT, Permissions: 42,
 	})
@@ -58,7 +62,8 @@ func TestSecurity_SEC7_2_AuthCacheWarmThenRevoke(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("revoke: %v", err)
 	}
-	requireProbe(t, opts, probeExpect{http.StatusUnauthorized, apierror.CodeInvalidToken}, plain)
+	env.authFx.WaitPendingPublishes()
+	requireProbeUnauthorizedEventually(t, opts, plain, revocationSLA(t))
 	if elapsed := time.Since(start); elapsed > revocationSLA(t) {
 		t.Fatalf("revocation SLA exceeded: %v (limit %v)", elapsed, revocationSLA(t))
 	}
