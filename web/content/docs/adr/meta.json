@@ -36,6 +36,7 @@
     "0033-clickhouse-schema",
     "0034-performance-methodology",
     "0035-chat-idempotency-key",
-    "0038-context-assembly-service"
+    "0038-context-assembly-service",
+    "0039-proxy-postgres-session-directive"
   ]
 }
