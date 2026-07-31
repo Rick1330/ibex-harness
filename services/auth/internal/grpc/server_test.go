@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
-	"github.com/Rick1330/ibex-harness/packages/permissions"
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
+	"github.com/Rick1330/ibex-harness/services/auth/internal/service"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/token"
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 type validateTokenCase struct {
@@ -21,7 +23,7 @@ type validateTokenCase struct {
 func runValidateTokenCase(t *testing.T, tc validateTokenCase) {
 	t.Helper()
 
-	s := newTestServer(t, &fakeTokenValidator{fn: tc.fn}, &fakeTokenRepo{}, &fakeAgentsStore{})
+	s := newTestServer(t, &fakeTokenValidator{fn: tc.fn}, &fakeTokenAPI{}, &fakeAgentAPI{})
 	resp, err := s.ValidateToken(context.Background(), &authv1.ValidateTokenRequest{AccessToken: "tok"})
 	assertOKOrGRPCCode(t, err, tc.wantCode, func() {
 		if resp.GetOrgId() != "org-1" || resp.GetPermissions() != 7 {
@@ -67,13 +69,29 @@ type createTokenCase struct {
 	name     string
 	ctx      context.Context
 	req      *authv1.CreateTokenRequest
+	tokens   *fakeTokenAPI
 	wantCode codes.Code
+	checkIn  func(*testing.T, service.CreateTokenInput)
 }
 
 func runCreateTokenCase(t *testing.T, tc createTokenCase) {
 	t.Helper()
 
-	s := newTestServer(t, &fakeTokenValidator{}, &fakeTokenRepo{}, &fakeAgentsStore{})
+	tokens := tc.tokens
+	if tokens == nil {
+		tokens = &fakeTokenAPI{}
+	}
+	if tc.checkIn != nil {
+		baseCreate := tokens.createFn
+		tokens.createFn = func(ctx context.Context, in service.CreateTokenInput) (service.CreateTokenResult, error) {
+			tc.checkIn(t, in)
+			if baseCreate != nil {
+				return baseCreate(ctx, in)
+			}
+			return (&fakeTokenAPI{}).CreateToken(ctx, in)
+		}
+	}
+	s := newTestServer(t, &fakeTokenValidator{}, tokens, &fakeAgentAPI{})
 	resp, err := s.CreateToken(tc.ctx, tc.req)
 	assertOKOrGRPCCode(t, err, tc.wantCode, func() {
 		if resp.GetTokenId() == "" || resp.GetPlaintext() == "" {
@@ -86,36 +104,8 @@ func TestServer_CreateToken(t *testing.T) {
 	t.Parallel()
 
 	orgID := uuid.NewString()
-	for _, tc := range []createTokenCase{
-		{
-			name:     "unauthenticated",
-			ctx:      context.Background(),
-			req:      &authv1.CreateTokenRequest{OrgId: orgID, Name: "x"},
-			wantCode: codes.Unauthenticated,
-		},
-		{
-			name: "permission denied wrong org",
-			ctx: ContextWithCaller(context.Background(), CallerContext{
-				OrgID: uuid.NewString(), Permissions: permissions.Admin,
-			}),
-			req:      &authv1.CreateTokenRequest{OrgId: orgID, Name: "x"},
-			wantCode: codes.PermissionDenied,
-		},
-		{
-			name:     "invalid argument",
-			ctx:      adminCtx(t, orgID),
-			req:      &authv1.CreateTokenRequest{OrgId: orgID},
-			wantCode: codes.InvalidArgument,
-		},
-		{
-			name: "ok",
-			ctx:  adminCtx(t, orgID),
-			req: &authv1.CreateTokenRequest{
-				OrgId: orgID, Name: "pat", Permissions: permissions.AgentDefault,
-			},
-			wantCode: codes.OK,
-		},
-	} {
+	expires := timestamppb.New(time.Now().UTC().Add(time.Hour))
+	for _, tc := range createTokenCases(t, orgID, expires) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -128,18 +118,18 @@ type revokeTokenCase struct {
 	name     string
 	ctx      context.Context
 	req      *authv1.RevokeTokenRequest
-	repo     *fakeTokenRepo
+	tokens   *fakeTokenAPI
 	wantCode codes.Code
 }
 
 func runRevokeTokenCase(t *testing.T, tc revokeTokenCase) {
 	t.Helper()
 
-	repo := tc.repo
-	if repo == nil {
-		repo = &fakeTokenRepo{}
+	tokens := tc.tokens
+	if tokens == nil {
+		tokens = &fakeTokenAPI{}
 	}
-	s := newTestServer(t, &fakeTokenValidator{}, repo, &fakeAgentsStore{})
+	s := newTestServer(t, &fakeTokenValidator{}, tokens, &fakeAgentAPI{})
 
 	_, err := s.RevokeToken(tc.ctx, tc.req)
 	if tc.wantCode == codes.OK {

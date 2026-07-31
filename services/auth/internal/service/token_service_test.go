@@ -4,10 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
-	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/repository"
 	"github.com/google/uuid"
 )
@@ -19,7 +19,7 @@ func assertCreateTokenError(t *testing.T, err, want error) {
 	}
 }
 
-func assertCreateTokenOK(t *testing.T, repo *memTokenRepo, result CreateTokenResult) {
+func assertCreateTokenOK(t *testing.T, repo *memTokenRepo, in CreateTokenInput, result CreateTokenResult) {
 	t.Helper()
 	if result.TokenID == "" {
 		t.Fatalf("incomplete result: %+v", result)
@@ -30,15 +30,50 @@ func assertCreateTokenOK(t *testing.T, repo *memTokenRepo, result CreateTokenRes
 	if result.Prefix == "" {
 		t.Fatalf("incomplete result: %+v", result)
 	}
-	if _, ok := repo.tokens[result.TokenID]; !ok {
+	p, ok := repo.tokens[result.TokenID]
+	if !ok {
 		t.Fatal("token not persisted in repo")
 	}
+	assertCreateTokenParams(t, in, p)
+}
+
+func assertCreateTokenParams(t *testing.T, in CreateTokenInput, p repository.CreateTokenParams) {
+	t.Helper()
+	if p.Description != in.Description {
+		t.Fatalf("description=%q want %q", p.Description, in.Description)
+	}
+	if p.Permissions != in.Permissions {
+		t.Fatalf("permissions=%d want %d", p.Permissions, in.Permissions)
+	}
+	if !sameOptionalString(p.UserID, in.UserID) {
+		t.Fatalf("user_id=%v want %v", p.UserID, in.UserID)
+	}
+	if !sameOptionalString(p.AgentID, in.AgentID) {
+		t.Fatalf("agent_id=%v want %v", p.AgentID, in.AgentID)
+	}
+	if !sameOptionalTime(p.ExpiresAt, in.ExpiresAt) {
+		t.Fatalf("expires_at=%v want %v", p.ExpiresAt, in.ExpiresAt)
+	}
+}
+
+func sameOptionalString(got, want *string) bool {
+	if got == nil || want == nil {
+		return got == nil && want == nil
+	}
+	return *got == *want
+}
+
+func sameOptionalTime(got, want *time.Time) bool {
+	if got == nil || want == nil {
+		return got == nil && want == nil
+	}
+	return got.Equal(*want)
 }
 
 func runCreateTokenCase(t *testing.T, tc createTokenCase) {
 	t.Helper()
 	repo := newMemTokenRepo()
-	result, err := testTokenService(repo).CreateToken(context.Background(), tc.req)
+	result, err := testTokenService(repo).CreateToken(context.Background(), tc.in)
 	if tc.wantErr != nil {
 		assertCreateTokenError(t, err, tc.wantErr)
 		return
@@ -46,7 +81,7 @@ func runCreateTokenCase(t *testing.T, tc createTokenCase) {
 	if err != nil {
 		t.Fatalf("CreateToken: %v", err)
 	}
-	assertCreateTokenOK(t, repo, result)
+	assertCreateTokenOK(t, repo, tc.in, result)
 }
 
 func TestTokenService_CreateToken(t *testing.T) {
@@ -65,8 +100,8 @@ func TestTokenService_CreateToken(t *testing.T) {
 func TestTokenService_CreateToken_repoError(t *testing.T) {
 	t.Parallel()
 	svc := testTokenService(errTokenRepo{})
-	_, err := svc.CreateToken(context.Background(), &authv1.CreateTokenRequest{
-		OrgId: uuid.NewString(), Name: "x", Type: authv1.TokenType_TOKEN_TYPE_PAT,
+	_, err := svc.CreateToken(context.Background(), CreateTokenInput{
+		OrgID: uuid.NewString(), Name: "x", TokenType: TokenTypePAT,
 	})
 	if err == nil {
 		t.Fatal("expected error")
@@ -91,8 +126,8 @@ func TestTokenService_RevokeToken(t *testing.T) {
 	err := svc.RevokeToken(context.Background(), RevokeTokenParams{
 		OrgID: orgID, TokenID: uuid.NewString(),
 	})
-	if !errors.Is(err, repository.ErrNotFound) {
-		t.Fatalf("expected ErrNotFound, got %v", err)
+	if !errors.Is(err, ErrTokenNotFound) {
+		t.Fatalf("expected ErrTokenNotFound, got %v", err)
 	}
 }
 
@@ -101,16 +136,18 @@ func TestTokenService_ListTokens(t *testing.T) {
 	orgID := uuid.New().String()
 	expires := time.Now().UTC().Add(time.Hour)
 	revokedAt := time.Now().UTC().Add(-time.Minute)
+	created1 := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	created2 := time.Date(2026, 3, 2, 12, 0, 0, 0, time.UTC)
 	repo := newMemTokenRepo()
 	repo.list = []repository.TokenMetadata{
 		{
 			ID: "t1", Name: "a", Prefix: "ibex_pat_a", Permissions: 1,
-			CreatedAt: time.Now().UTC(),
+			CreatedAt: created1,
 			ExpiresAt: sql.NullTime{Time: expires, Valid: true},
 		},
 		{
 			ID: "t2", Name: "b", Prefix: "ibex_pat_b", Permissions: 2,
-			CreatedAt: time.Now().UTC(), IsRevoked: true,
+			CreatedAt: created2, IsRevoked: true,
 			RevokedAt: sql.NullTime{Time: revokedAt, Valid: true},
 		},
 	}
@@ -120,5 +157,67 @@ func TestTokenService_ListTokens(t *testing.T) {
 	}
 	if len(rows) != 2 || next != "" {
 		t.Fatalf("list: len=%d next=%q", len(rows), next)
+	}
+	assertTokenListItem(t, rows[0], TokenListItem{
+		ID: "t1", Name: "a", Prefix: "ibex_pat_a", Permissions: 1,
+		CreatedAt: created1, ExpiresAt: &expires,
+	})
+	assertTokenListItem(t, rows[1], TokenListItem{
+		ID: "t2", Name: "b", Prefix: "ibex_pat_b", Permissions: 2,
+		CreatedAt: created2, IsRevoked: true, RevokedAt: &revokedAt,
+	})
+}
+
+func assertTokenListItem(t *testing.T, got, want TokenListItem) {
+	t.Helper()
+	assertTokenListIdentity(t, got, want)
+	assertTokenListTimes(t, got, want)
+}
+
+func assertTokenListIdentity(t *testing.T, got, want TokenListItem) {
+	t.Helper()
+	if got.ID != want.ID {
+		t.Fatalf("id=%q want %q", got.ID, want.ID)
+	}
+	if got.Name != want.Name {
+		t.Fatalf("name=%q want %q", got.Name, want.Name)
+	}
+	if got.Prefix != want.Prefix {
+		t.Fatalf("prefix=%q want %q", got.Prefix, want.Prefix)
+	}
+	if got.Permissions != want.Permissions {
+		t.Fatalf("permissions=%d want %d", got.Permissions, want.Permissions)
+	}
+	if got.IsRevoked != want.IsRevoked {
+		t.Fatalf("is_revoked=%v want %v", got.IsRevoked, want.IsRevoked)
+	}
+}
+
+func assertTokenListTimes(t *testing.T, got, want TokenListItem) {
+	t.Helper()
+	if !got.CreatedAt.Equal(want.CreatedAt) {
+		t.Fatalf("created_at=%v want %v", got.CreatedAt, want.CreatedAt)
+	}
+	if !sameOptionalTime(got.ExpiresAt, want.ExpiresAt) {
+		t.Fatalf("expires_at=%v want %v", got.ExpiresAt, want.ExpiresAt)
+	}
+	if !sameOptionalTime(got.RevokedAt, want.RevokedAt) {
+		t.Fatalf("revoked_at=%v want %v", got.RevokedAt, want.RevokedAt)
+	}
+}
+
+func TestTokenService_ListTokens_RepoErrorWrapped(t *testing.T) {
+	t.Parallel()
+	orgID := uuid.New().String()
+	_, _, err := testTokenService(errTokenRepo{}).ListTokens(context.Background(), orgID, "", 10)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "ListTokens org_id="+orgID) {
+		t.Fatalf("err=%q want ListTokens org_id wrap", msg)
+	}
+	if !strings.Contains(msg, "db down") {
+		t.Fatalf("err=%q want wrapped repo cause", msg)
 	}
 }
