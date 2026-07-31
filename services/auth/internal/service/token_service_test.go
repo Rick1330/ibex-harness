@@ -136,16 +136,18 @@ func TestTokenService_ListTokens(t *testing.T) {
 	orgID := uuid.New().String()
 	expires := time.Now().UTC().Add(time.Hour)
 	revokedAt := time.Now().UTC().Add(-time.Minute)
+	created1 := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	created2 := time.Date(2026, 3, 2, 12, 0, 0, 0, time.UTC)
 	repo := newMemTokenRepo()
 	repo.list = []repository.TokenMetadata{
 		{
 			ID: "t1", Name: "a", Prefix: "ibex_pat_a", Permissions: 1,
-			CreatedAt: time.Now().UTC(),
+			CreatedAt: created1,
 			ExpiresAt: sql.NullTime{Time: expires, Valid: true},
 		},
 		{
 			ID: "t2", Name: "b", Prefix: "ibex_pat_b", Permissions: 2,
-			CreatedAt: time.Now().UTC(), IsRevoked: true,
+			CreatedAt: created2, IsRevoked: true,
 			RevokedAt: sql.NullTime{Time: revokedAt, Valid: true},
 		},
 	}
@@ -156,26 +158,51 @@ func TestTokenService_ListTokens(t *testing.T) {
 	if len(rows) != 2 || next != "" {
 		t.Fatalf("list: len=%d next=%q", len(rows), next)
 	}
-	assertTokenListItem(t, rows[0], "t1", 1, false, &expires, nil)
-	assertTokenListItem(t, rows[1], "t2", 2, true, nil, &revokedAt)
+	assertTokenListItem(t, rows[0], TokenListItem{
+		ID: "t1", Name: "a", Prefix: "ibex_pat_a", Permissions: 1,
+		CreatedAt: created1, ExpiresAt: &expires,
+	})
+	assertTokenListItem(t, rows[1], TokenListItem{
+		ID: "t2", Name: "b", Prefix: "ibex_pat_b", Permissions: 2,
+		CreatedAt: created2, IsRevoked: true, RevokedAt: &revokedAt,
+	})
 }
 
-func assertTokenListItem(t *testing.T, got TokenListItem, id string, perms int64, revoked bool, expires, revokedAt *time.Time) {
+func assertTokenListItem(t *testing.T, got, want TokenListItem) {
 	t.Helper()
-	if got.ID != id {
-		t.Fatalf("id=%q want %q", got.ID, id)
+	assertTokenListIdentity(t, got, want)
+	assertTokenListTimes(t, got, want)
+}
+
+func assertTokenListIdentity(t *testing.T, got, want TokenListItem) {
+	t.Helper()
+	if got.ID != want.ID {
+		t.Fatalf("id=%q want %q", got.ID, want.ID)
 	}
-	if got.Permissions != perms {
-		t.Fatalf("permissions=%d want %d", got.Permissions, perms)
+	if got.Name != want.Name {
+		t.Fatalf("name=%q want %q", got.Name, want.Name)
 	}
-	if got.IsRevoked != revoked {
-		t.Fatalf("is_revoked=%v want %v", got.IsRevoked, revoked)
+	if got.Prefix != want.Prefix {
+		t.Fatalf("prefix=%q want %q", got.Prefix, want.Prefix)
 	}
-	if !sameOptionalTime(got.ExpiresAt, expires) {
-		t.Fatalf("expires_at=%v want %v", got.ExpiresAt, expires)
+	if got.Permissions != want.Permissions {
+		t.Fatalf("permissions=%d want %d", got.Permissions, want.Permissions)
 	}
-	if !sameOptionalTime(got.RevokedAt, revokedAt) {
-		t.Fatalf("revoked_at=%v want %v", got.RevokedAt, revokedAt)
+	if got.IsRevoked != want.IsRevoked {
+		t.Fatalf("is_revoked=%v want %v", got.IsRevoked, want.IsRevoked)
+	}
+}
+
+func assertTokenListTimes(t *testing.T, got, want TokenListItem) {
+	t.Helper()
+	if !got.CreatedAt.Equal(want.CreatedAt) {
+		t.Fatalf("created_at=%v want %v", got.CreatedAt, want.CreatedAt)
+	}
+	if !sameOptionalTime(got.ExpiresAt, want.ExpiresAt) {
+		t.Fatalf("expires_at=%v want %v", got.ExpiresAt, want.ExpiresAt)
+	}
+	if !sameOptionalTime(got.RevokedAt, want.RevokedAt) {
+		t.Fatalf("revoked_at=%v want %v", got.RevokedAt, want.RevokedAt)
 	}
 }
 

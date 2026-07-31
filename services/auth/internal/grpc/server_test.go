@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Rick1330/ibex-harness/packages/permissions"
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/service"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/token"
@@ -106,83 +105,7 @@ func TestServer_CreateToken(t *testing.T) {
 
 	orgID := uuid.NewString()
 	expires := timestamppb.New(time.Now().UTC().Add(time.Hour))
-	for _, tc := range []createTokenCase{
-		{
-			name:     "unauthenticated",
-			ctx:      context.Background(),
-			req:      &authv1.CreateTokenRequest{OrgId: orgID, Name: "x"},
-			wantCode: codes.Unauthenticated,
-		},
-		{
-			name: "permission denied wrong org",
-			ctx: ContextWithCaller(context.Background(), CallerContext{
-				OrgID: uuid.NewString(), Permissions: permissions.Admin,
-			}),
-			req:      &authv1.CreateTokenRequest{OrgId: orgID, Name: "x"},
-			wantCode: codes.PermissionDenied,
-		},
-		{
-			name: "permission denied missing TokenCreate",
-			ctx: ContextWithCaller(context.Background(), CallerContext{
-				OrgID: orgID, Permissions: permissions.AgentDefault,
-			}),
-			req:      &authv1.CreateTokenRequest{OrgId: orgID, Name: "x"},
-			wantCode: codes.PermissionDenied,
-		},
-		{
-			name:     "invalid argument",
-			ctx:      adminCtx(t, orgID),
-			req:      &authv1.CreateTokenRequest{OrgId: orgID},
-			wantCode: codes.InvalidArgument,
-		},
-		{
-			name: "invalid expires_at",
-			ctx:  adminCtx(t, orgID),
-			req: &authv1.CreateTokenRequest{
-				OrgId: orgID, Name: "pat",
-				ExpiresAt: &timestamppb.Timestamp{Seconds: 0, Nanos: 1_000_000_000},
-			},
-			wantCode: codes.InvalidArgument,
-		},
-		{
-			name: "internal error",
-			ctx:  adminCtx(t, orgID),
-			req:  &authv1.CreateTokenRequest{OrgId: orgID, Name: "pat"},
-			tokens: &fakeTokenAPI{
-				createFn: func(context.Context, service.CreateTokenInput) (service.CreateTokenResult, error) {
-					return service.CreateTokenResult{}, errors.New("db down")
-				},
-			},
-			wantCode: codes.Internal,
-		},
-		{
-			name: "ok with expires_at",
-			ctx:  adminCtx(t, orgID),
-			req: &authv1.CreateTokenRequest{
-				OrgId: orgID, Name: "pat", Permissions: permissions.AgentDefault,
-				ExpiresAt: expires,
-			},
-			wantCode: codes.OK,
-			checkIn: func(t *testing.T, in service.CreateTokenInput) {
-				t.Helper()
-				if in.ExpiresAt == nil {
-					t.Fatal("ExpiresAt nil")
-				}
-				want := expires.AsTime()
-				if !in.ExpiresAt.Equal(want) {
-					t.Fatalf("ExpiresAt=%v want %v", in.ExpiresAt, want)
-				}
-			},
-		},
-		{
-			name: "ok",
-			ctx:  adminCtx(t, orgID),
-			req: &authv1.CreateTokenRequest{
-				OrgId: orgID, Name: "pat", Permissions: permissions.AgentDefault,
-			},
-			wantCode: codes.OK,
-		},
-	} {
+	for _, tc := range createTokenCases(t, orgID, expires) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

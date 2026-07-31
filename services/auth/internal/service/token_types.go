@@ -18,7 +18,11 @@ const (
 	TokenTypePAT TokenType = 1
 )
 
-// CreateTokenInput is the service-layer create-token request.
+// CreateTokenInput is the service-boundary DTO for TokenService.CreateToken.
+// Callers must supply OrgID and Name; TokenType must be TokenTypePAT or
+// TokenTypeUnspecified. Invalid inputs return ErrInvalidArgument before any
+// persistence. Optional UserID, AgentID, ExpiresAt, Description, and Permissions
+// are forwarded to the repository when set.
 type CreateTokenInput struct {
 	OrgID       string
 	Name        string
