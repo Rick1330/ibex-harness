@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -120,5 +121,21 @@ func TestTokenService_ListTokens(t *testing.T) {
 	}
 	if len(rows) != 2 || next != "" {
 		t.Fatalf("list: len=%d next=%q", len(rows), next)
+	}
+}
+
+func TestTokenService_ListTokens_RepoErrorWrapped(t *testing.T) {
+	t.Parallel()
+	orgID := uuid.New().String()
+	_, _, err := testTokenService(errTokenRepo{}).ListTokens(context.Background(), orgID, "", 10)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "ListTokens org_id="+orgID) {
+		t.Fatalf("err=%q want ListTokens org_id wrap", msg)
+	}
+	if !strings.Contains(msg, "db down") {
+		t.Fatalf("err=%q want wrapped repo cause", msg)
 	}
 }

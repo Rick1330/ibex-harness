@@ -55,3 +55,20 @@ func TestUnit_NewServer_RejectsNilDependencies(t *testing.T) {
 		})
 	}
 }
+
+func TestUnit_IsNilDep(t *testing.T) {
+	t.Parallel()
+	if !isNilDep(nil) {
+		t.Fatal("nil interface should be nil")
+	}
+	var typedNil *service.TokenService
+	if !isNilDep(typedNil) {
+		t.Fatal("typed-nil pointer should be nil")
+	}
+	if isNilDep(&fakeTokenAPI{}) {
+		t.Fatal("non-nil pointer should not be nil")
+	}
+	if isNilDep(42) {
+		t.Fatal("non-nillable value should not be nil")
+	}
+}

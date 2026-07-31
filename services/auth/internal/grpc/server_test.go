@@ -4,12 +4,15 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/permissions"
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
+	"github.com/Rick1330/ibex-harness/services/auth/internal/service"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/token"
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 type validateTokenCase struct {
@@ -67,13 +70,18 @@ type createTokenCase struct {
 	name     string
 	ctx      context.Context
 	req      *authv1.CreateTokenRequest
+	tokens   *fakeTokenAPI
 	wantCode codes.Code
 }
 
 func runCreateTokenCase(t *testing.T, tc createTokenCase) {
 	t.Helper()
 
-	s := newTestServer(t, &fakeTokenValidator{}, &fakeTokenAPI{}, &fakeAgentAPI{})
+	tokens := tc.tokens
+	if tokens == nil {
+		tokens = &fakeTokenAPI{}
+	}
+	s := newTestServer(t, &fakeTokenValidator{}, tokens, &fakeAgentAPI{})
 	resp, err := s.CreateToken(tc.ctx, tc.req)
 	assertOKOrGRPCCode(t, err, tc.wantCode, func() {
 		if resp.GetTokenId() == "" || resp.GetPlaintext() == "" {
@@ -86,6 +94,7 @@ func TestServer_CreateToken(t *testing.T) {
 	t.Parallel()
 
 	orgID := uuid.NewString()
+	expires := timestamppb.New(time.Now().UTC().Add(time.Hour))
 	for _, tc := range []createTokenCase{
 		{
 			name:     "unauthenticated",
@@ -102,10 +111,38 @@ func TestServer_CreateToken(t *testing.T) {
 			wantCode: codes.PermissionDenied,
 		},
 		{
+			name: "permission denied missing TokenCreate",
+			ctx: ContextWithCaller(context.Background(), CallerContext{
+				OrgID: orgID, Permissions: permissions.AgentDefault,
+			}),
+			req:      &authv1.CreateTokenRequest{OrgId: orgID, Name: "x"},
+			wantCode: codes.PermissionDenied,
+		},
+		{
 			name:     "invalid argument",
 			ctx:      adminCtx(t, orgID),
 			req:      &authv1.CreateTokenRequest{OrgId: orgID},
 			wantCode: codes.InvalidArgument,
+		},
+		{
+			name: "internal error",
+			ctx:  adminCtx(t, orgID),
+			req:  &authv1.CreateTokenRequest{OrgId: orgID, Name: "pat"},
+			tokens: &fakeTokenAPI{
+				createFn: func(context.Context, service.CreateTokenInput) (service.CreateTokenResult, error) {
+					return service.CreateTokenResult{}, errors.New("db down")
+				},
+			},
+			wantCode: codes.Internal,
+		},
+		{
+			name: "ok with expires_at",
+			ctx:  adminCtx(t, orgID),
+			req: &authv1.CreateTokenRequest{
+				OrgId: orgID, Name: "pat", Permissions: permissions.AgentDefault,
+				ExpiresAt: expires,
+			},
+			wantCode: codes.OK,
 		},
 		{
 			name: "ok",

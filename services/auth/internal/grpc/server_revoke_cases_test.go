@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/Rick1330/ibex-harness/packages/permissions"
+	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/service"
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
@@ -60,6 +61,24 @@ func revokeTokenCases(t *testing.T) []revokeTokenCase {
 				OrgID: orgID, TokenID: selfTokenID, Permissions: permissions.ReadOnly,
 			}),
 			req: revokeTokenRequest(orgID, selfTokenID), tokens: &fakeTokenAPI{},
+			wantCode: codes.OK,
+		},
+		{
+			name: "admin revoke with reason ok", ctx: adminCtx(t, orgID),
+			req: func() *authv1.RevokeTokenRequest {
+				r := revokeTokenRequest(orgID, tokenID)
+				reason := "rotated"
+				r.RevokeReason = &reason
+				return r
+			}(),
+			tokens: &fakeTokenAPI{
+				revokeFn: func(_ context.Context, p service.RevokeTokenParams) error {
+					if p.Reason == nil || *p.Reason != "rotated" {
+						t.Fatalf("reason=%v want rotated", p.Reason)
+					}
+					return nil
+				},
+			},
 			wantCode: codes.OK,
 		},
 		{
