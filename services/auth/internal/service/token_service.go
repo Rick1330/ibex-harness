@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/logger"
-	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	"github.com/Rick1330/ibex-harness/packages/revocation"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/repository"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/token"
@@ -73,7 +72,7 @@ func validateCreateTokenInput(in CreateTokenInput) error {
 	if in.OrgID == "" || in.Name == "" {
 		return ErrInvalidArgument
 	}
-	if in.TokenType != authv1.TokenType_TOKEN_TYPE_PAT && in.TokenType != authv1.TokenType_TOKEN_TYPE_UNSPECIFIED {
+	if in.TokenType != TokenTypePAT && in.TokenType != TokenTypeUnspecified {
 		return ErrInvalidArgument
 	}
 	return nil

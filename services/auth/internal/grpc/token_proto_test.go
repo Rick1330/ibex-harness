@@ -1,24 +1,26 @@
-package service
+package grpcserver
 
 import (
 	"testing"
 	"time"
+
+	"github.com/Rick1330/ibex-harness/services/auth/internal/service"
 )
 
-func sampleTokenListItem() TokenListItem {
+func sampleTokenListItem() service.TokenListItem {
 	created := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 	expires := created.Add(24 * time.Hour)
 	revoked := created.Add(time.Hour)
-	return TokenListItem{
+	return service.TokenListItem{
 		ID: "tid", Name: "n", Prefix: "ibex_pat_x", Permissions: 99, CreatedAt: created,
 		ExpiresAt: &expires, RevokedAt: &revoked, IsRevoked: true,
 	}
 }
 
-func TestToProtoList_identity(t *testing.T) {
+func TestUnit_TokenListToProto_identity(t *testing.T) {
 	t.Parallel()
 	row := sampleTokenListItem()
-	out := ToProtoList([]TokenListItem{row})
+	out := tokenListToProto([]service.TokenListItem{row})
 	if len(out) != 1 {
 		t.Fatalf("len=%d", len(out))
 	}
@@ -28,18 +30,18 @@ func TestToProtoList_identity(t *testing.T) {
 	}
 }
 
-func TestToProtoList_revoked(t *testing.T) {
+func TestUnit_TokenListToProto_revoked(t *testing.T) {
 	t.Parallel()
-	out := ToProtoList([]TokenListItem{sampleTokenListItem()})
+	out := tokenListToProto([]service.TokenListItem{sampleTokenListItem()})
 	if !out[0].GetIsRevoked() {
 		t.Fatal("expected is_revoked true")
 	}
 }
 
-func TestToProtoList_timestamps(t *testing.T) {
+func TestUnit_TokenListToProto_timestamps(t *testing.T) {
 	t.Parallel()
 	row := sampleTokenListItem()
-	m := ToProtoList([]TokenListItem{row})[0]
+	m := tokenListToProto([]service.TokenListItem{row})[0]
 	if m.GetCreatedAt().AsTime() != row.CreatedAt {
 		t.Fatalf("created_at: %v", m.GetCreatedAt().AsTime())
 	}

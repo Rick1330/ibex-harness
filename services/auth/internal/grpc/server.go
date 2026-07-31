@@ -39,6 +39,8 @@ type agentAPI interface {
 }
 
 // ServerDeps groups AuthService construction dependencies.
+// Validator, TokenService, AgentService, Metrics, and Log are required;
+// NewServer rejects nil interfaces and typed-nil service pointers.
 type ServerDeps struct {
 	Validator    tokenValidator
 	TokenService tokenAPI
@@ -60,6 +62,8 @@ type Server struct {
 var errInvalidOrgID = errors.New("invalid org_id")
 
 // NewServer constructs an AuthService server.
+// It fails when any required ServerDeps field is missing, including typed-nil
+// TokenService or AgentService values stored in the interface fields.
 func NewServer(deps ServerDeps) (*Server, error) {
 	if isNilDep(deps.Validator) {
 		return nil, fmt.Errorf("grpcserver: nil validator")
@@ -138,7 +142,10 @@ func (s *Server) CreateToken(ctx context.Context, req *authv1.CreateTokenRequest
 	if err := RequireOrgAndPermission(ctx, req.GetOrgId(), permissions.TokenCreate); err != nil {
 		return nil, err
 	}
-	in := createTokenInputFromProto(req)
+	in, err := createTokenInputFromProto(req)
+	if err != nil {
+		return nil, err
+	}
 	result, err := s.tokenService.CreateToken(ctx, in)
 	if err != nil {
 		if errors.Is(err, service.ErrInvalidArgument) {
@@ -154,17 +161,20 @@ func (s *Server) CreateToken(ctx context.Context, req *authv1.CreateTokenRequest
 	}, nil
 }
 
-func createTokenInputFromProto(req *authv1.CreateTokenRequest) service.CreateTokenInput {
+func createTokenInputFromProto(req *authv1.CreateTokenRequest) (service.CreateTokenInput, error) {
 	in := service.CreateTokenInput{
 		OrgID: req.GetOrgId(), Name: req.GetName(), Description: req.GetDescription(),
-		Permissions: req.GetPermissions(), TokenType: req.GetType(),
+		Permissions: req.GetPermissions(), TokenType: service.TokenType(req.GetType()),
 		UserID: req.UserId, AgentID: req.AgentId,
 	}
-	if req.GetExpiresAt() != nil {
-		t := req.GetExpiresAt().AsTime()
+	if ts := req.GetExpiresAt(); ts != nil {
+		if err := ts.CheckValid(); err != nil {
+			return service.CreateTokenInput{}, status.Error(codes.InvalidArgument, "invalid request")
+		}
+		t := ts.AsTime()
 		in.ExpiresAt = &t
 	}
-	return in
+	return in, nil
 }
 
 func (s *Server) RevokeToken(ctx context.Context, req *authv1.RevokeTokenRequest) (*authv1.RevokeTokenResponse, error) {
@@ -204,7 +214,7 @@ func (s *Server) ListTokens(ctx context.Context, req *authv1.ListTokensRequest) 
 		return nil, status.Errorf(codes.Internal, "list tokens failed")
 	}
 	return &authv1.ListTokensResponse{
-		Tokens:     service.ToProtoList(rows),
+		Tokens:     tokenListToProto(rows),
 		NextCursor: next,
 	}, nil
 }

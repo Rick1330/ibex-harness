@@ -2,8 +2,6 @@ package service
 
 import (
 	"time"
-
-	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 )
 
 type createTokenCase struct {
@@ -18,14 +16,14 @@ func createTokenCases(orgID, userID, agentID string, expires time.Time) []create
 		{name: "invalid empty name", in: CreateTokenInput{OrgID: orgID}, wantErr: ErrInvalidArgument},
 		{
 			name:    "invalid token type",
-			in:      CreateTokenInput{OrgID: orgID, Name: "bad-type", TokenType: authv1.TokenType(99)},
+			in:      CreateTokenInput{OrgID: orgID, Name: "bad-type", TokenType: TokenType(99)},
 			wantErr: ErrInvalidArgument,
 		},
 		{
 			name: "happy path",
 			in: CreateTokenInput{
 				OrgID: orgID, Name: "ci-pat", Description: "desc", Permissions: 42,
-				UserID: &userID, AgentID: &agentID, ExpiresAt: &expires,
+				UserID: &userID, AgentID: &agentID, ExpiresAt: &expires, TokenType: TokenTypePAT,
 			},
 		},
 	}

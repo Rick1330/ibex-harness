@@ -3,15 +3,22 @@ package service
 import (
 	"errors"
 	"time"
-
-	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // ErrTokenNotFound indicates a token row does not exist in org scope.
 var ErrTokenNotFound = errors.New("token not found")
 
-// CreateTokenInput is the service-layer create-token request (no proto).
+// TokenType is the transport-independent token kind accepted by TokenService.
+type TokenType int32
+
+const (
+	// TokenTypeUnspecified means the client omitted an explicit type (treated as PAT).
+	TokenTypeUnspecified TokenType = 0
+	// TokenTypePAT is a personal access token.
+	TokenTypePAT TokenType = 1
+)
+
+// CreateTokenInput is the service-layer create-token request.
 type CreateTokenInput struct {
 	OrgID       string
 	Name        string
@@ -20,7 +27,7 @@ type CreateTokenInput struct {
 	UserID      *string
 	AgentID     *string
 	ExpiresAt   *time.Time
-	TokenType   authv1.TokenType
+	TokenType   TokenType
 }
 
 // TokenListItem is a safe token metadata view without hash or sql.Null*.
@@ -33,27 +40,4 @@ type TokenListItem struct {
 	CreatedAt   time.Time
 	RevokedAt   *time.Time
 	IsRevoked   bool
-}
-
-// ToProtoList maps service metadata to proto messages.
-func ToProtoList(rows []TokenListItem) []*authv1.TokenMetadata {
-	out := make([]*authv1.TokenMetadata, 0, len(rows))
-	for _, row := range rows {
-		m := &authv1.TokenMetadata{
-			TokenId:     row.ID,
-			Name:        row.Name,
-			Prefix:      row.Prefix,
-			Permissions: row.Permissions,
-			CreatedAt:   timestamppb.New(row.CreatedAt.UTC()),
-			IsRevoked:   row.IsRevoked,
-		}
-		if row.ExpiresAt != nil {
-			m.ExpiresAt = timestamppb.New(row.ExpiresAt.UTC())
-		}
-		if row.RevokedAt != nil {
-			m.RevokedAt = timestamppb.New(row.RevokedAt.UTC())
-		}
-		out = append(out, m)
-	}
-	return out
 }

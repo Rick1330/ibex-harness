@@ -58,17 +58,24 @@ func TestUnit_NewServer_RejectsNilDependencies(t *testing.T) {
 
 func TestUnit_IsNilDep(t *testing.T) {
 	t.Parallel()
-	if !isNilDep(nil) {
-		t.Fatal("nil interface should be nil")
-	}
 	var typedNil *service.TokenService
-	if !isNilDep(typedNil) {
-		t.Fatal("typed-nil pointer should be nil")
+	cases := []struct {
+		name string
+		v    any
+		want bool
+	}{
+		{name: "nil interface", v: nil, want: true},
+		{name: "typed-nil pointer", v: typedNil, want: true},
+		{name: "non-nil pointer", v: &fakeTokenAPI{}, want: false},
+		{name: "non-nillable value", v: 42, want: false},
 	}
-	if isNilDep(&fakeTokenAPI{}) {
-		t.Fatal("non-nil pointer should not be nil")
-	}
-	if isNilDep(42) {
-		t.Fatal("non-nillable value should not be nil")
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := isNilDep(tc.v); got != tc.want {
+				t.Fatalf("isNilDep(%v)=%v want %v", tc.v, got, tc.want)
+			}
+		})
 	}
 }

@@ -47,6 +47,7 @@ func TestTokenServiceLogsOmitPlaintext(t *testing.T) {
 }
 
 func TestCreateTokenRejectsEmptyOrg(t *testing.T) {
+	t.Parallel()
 	svc := NewTokenService(nil, token.Argon2Params{}, logger.Discard("auth"), nil)
 	_, err := svc.CreateToken(context.Background(), CreateTokenInput{Name: "x"})
 	if err != ErrInvalidArgument {

@@ -72,6 +72,7 @@ type createTokenCase struct {
 	req      *authv1.CreateTokenRequest
 	tokens   *fakeTokenAPI
 	wantCode codes.Code
+	checkIn  func(*testing.T, service.CreateTokenInput)
 }
 
 func runCreateTokenCase(t *testing.T, tc createTokenCase) {
@@ -80,6 +81,16 @@ func runCreateTokenCase(t *testing.T, tc createTokenCase) {
 	tokens := tc.tokens
 	if tokens == nil {
 		tokens = &fakeTokenAPI{}
+	}
+	if tc.checkIn != nil {
+		baseCreate := tokens.createFn
+		tokens.createFn = func(ctx context.Context, in service.CreateTokenInput) (service.CreateTokenResult, error) {
+			tc.checkIn(t, in)
+			if baseCreate != nil {
+				return baseCreate(ctx, in)
+			}
+			return (&fakeTokenAPI{}).CreateToken(ctx, in)
+		}
 	}
 	s := newTestServer(t, &fakeTokenValidator{}, tokens, &fakeAgentAPI{})
 	resp, err := s.CreateToken(tc.ctx, tc.req)
@@ -125,6 +136,15 @@ func TestServer_CreateToken(t *testing.T) {
 			wantCode: codes.InvalidArgument,
 		},
 		{
+			name: "invalid expires_at",
+			ctx:  adminCtx(t, orgID),
+			req: &authv1.CreateTokenRequest{
+				OrgId: orgID, Name: "pat",
+				ExpiresAt: &timestamppb.Timestamp{Seconds: 0, Nanos: 1_000_000_000},
+			},
+			wantCode: codes.InvalidArgument,
+		},
+		{
 			name: "internal error",
 			ctx:  adminCtx(t, orgID),
 			req:  &authv1.CreateTokenRequest{OrgId: orgID, Name: "pat"},
@@ -143,6 +163,16 @@ func TestServer_CreateToken(t *testing.T) {
 				ExpiresAt: expires,
 			},
 			wantCode: codes.OK,
+			checkIn: func(t *testing.T, in service.CreateTokenInput) {
+				t.Helper()
+				if in.ExpiresAt == nil {
+					t.Fatal("ExpiresAt nil")
+				}
+				want := expires.AsTime()
+				if !in.ExpiresAt.Equal(want) {
+					t.Fatalf("ExpiresAt=%v want %v", in.ExpiresAt, want)
+				}
+			},
 		},
 		{
 			name: "ok",
