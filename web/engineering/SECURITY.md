@@ -585,6 +585,10 @@ The following invariants are enforced by the `security-integration` CI job (`Tes
 **Auth gRPC token management (companion to SEC matrix):**
 
 - `CreateToken` / `RevokeToken` with caller org ≠ request org → gRPC `PERMISSION_DENIED` (never `NOT_FOUND` for org mismatch)
+- `CreateToken` requested permissions must be a subset of the caller bitmap; reserved high bits → `INVALID_ARGUMENT`
+- `CreateToken` optional `agent_id` / `user_id` must belong to the request `org_id` → else `PERMISSION_DENIED` (opaque; never `NOT_FOUND`)
+- `CreateToken` malformed `agent_id` / `user_id` UUIDs → `INVALID_ARGUMENT`
+- `CreateToken` with binds when subject lookup is not wired → `INTERNAL` (misconfiguration; not a tenant denial)
 - Same-org missing token on revoke → `NOT_FOUND`
 
 Full matrix: [M1.5.1 milestone](roadmap/phase-1-core-platform/milestones/1.5.1-security-integration-test-suite.md). Exit audit: [PHASE1_EXIT_AUDIT.md](roadmap/phase-1-core-platform/PHASE1_EXIT_AUDIT.md).

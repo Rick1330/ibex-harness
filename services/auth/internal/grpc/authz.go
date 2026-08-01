@@ -17,6 +17,7 @@ const (
 	errMsgMissingCallerContext = "missing caller context"
 	errMsgInvalidRequest       = "invalid request"
 	errMsgForbidden            = "forbidden"
+	errMsgCreateTokenFailed    = "create token failed"
 )
 
 // CallerContext is the authenticated PAT used for management RPCs.

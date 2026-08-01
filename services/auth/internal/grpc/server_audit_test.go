@@ -11,6 +11,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/permissions"
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	"github.com/Rick1330/ibex-harness/packages/reqid"
+	"github.com/Rick1330/ibex-harness/services/auth/internal/service"
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -119,7 +120,7 @@ func TestUnit_ValidateAgent_SameOrgMissDoesNotAuditCrossTenant(t *testing.T) {
 
 	var buf bytes.Buffer
 	orgID := uuid.NewString()
-	s := newServerWithLogAndAgents(t, &buf, &fakeAgentAPI{})
+	s := newServerWithDeps(t, &buf, serverLogDeps{agents: &fakeAgentAPI{}})
 	ctx := ContextWithCaller(context.Background(), CallerContext{
 		OrgID: orgID, Permissions: permissions.Admin,
 	})
@@ -132,6 +133,68 @@ func TestUnit_ValidateAgent_SameOrgMissDoesNotAuditCrossTenant(t *testing.T) {
 	if strings.Contains(buf.String(), "cross-tenant access attempt") {
 		t.Fatalf("same-org miss must not emit cross-tenant audit: %s", buf.String())
 	}
+}
+
+func TestUnit_CreateToken_SubjectBindDeniedAudit(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	orgID := uuid.NewString()
+	agentID := uuid.NewString()
+	userID := uuid.NewString()
+	tokens := &fakeTokenAPI{
+		createFn: func(context.Context, service.CreateTokenInput) (service.CreateTokenResult, error) {
+			return service.CreateTokenResult{}, service.ErrTokenSubjectForbidden
+		},
+	}
+	s := newServerWithDeps(t, &buf, serverLogDeps{tokens: tokens})
+	ctx := ContextWithCaller(context.Background(), CallerContext{
+		OrgID: orgID, Permissions: permissions.Admin,
+	})
+	ctx = metadata.NewIncomingContext(ctx, metadata.Pairs(reqid.GRPCMetadataKey, "req-bind"))
+
+	_, err := s.CreateToken(ctx, &authv1.CreateTokenRequest{
+		OrgId: orgID, Name: "bind", Permissions: permissions.AgentDefault,
+		AgentId: &agentID, UserId: &userID,
+	})
+	assertGRPCCode(t, err, codes.PermissionDenied)
+
+	logged := buf.String()
+	if strings.Contains(logged, "cross-tenant access attempt") {
+		t.Fatalf("bind deny must not use cross-tenant audit: %s", logged)
+	}
+	assertLogContains(t, logged, "token subject bind denied")
+	assertLogContains(t, logged, `"target_resource_type":"token_bind"`)
+	assertLogContains(t, logged, "agent:"+agentID+",user:"+userID)
+	assertLogContains(t, logged, "req-bind")
+}
+
+func TestUnit_CreateToken_SubjectUnavailableNoBindAudit(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	orgID := uuid.NewString()
+	agentID := uuid.NewString()
+	tokens := &fakeTokenAPI{
+		createFn: func(context.Context, service.CreateTokenInput) (service.CreateTokenResult, error) {
+			return service.CreateTokenResult{}, service.ErrTokenSubjectUnavailable
+		},
+	}
+	s := newServerWithDeps(t, &buf, serverLogDeps{tokens: tokens})
+	ctx := ContextWithCaller(context.Background(), CallerContext{
+		OrgID: orgID, Permissions: permissions.Admin,
+	})
+
+	_, err := s.CreateToken(ctx, &authv1.CreateTokenRequest{
+		OrgId: orgID, Name: "misconfig", Permissions: permissions.AgentDefault, AgentId: &agentID,
+	})
+	assertGRPCCode(t, err, codes.Internal)
+
+	logged := buf.String()
+	if strings.Contains(logged, "token subject bind denied") || strings.Contains(logged, "cross-tenant access attempt") {
+		t.Fatalf("unavailable must not audit bind/cross-tenant: %s", logged)
+	}
+	assertLogContains(t, logged, "create token subject lookup unavailable")
 }
 
 func assertCrossTenantAudit(t *testing.T, callerOrg string, tc auditCase) {
@@ -159,10 +222,15 @@ func assertCrossTenantAudit(t *testing.T, callerOrg string, tc auditCase) {
 
 func newServerWithLog(t *testing.T, buf *bytes.Buffer) *Server {
 	t.Helper()
-	return newServerWithLogAndAgents(t, buf, &fakeAgentAPI{})
+	return newServerWithDeps(t, buf, serverLogDeps{})
 }
 
-func newServerWithLogAndAgents(t *testing.T, buf *bytes.Buffer, agents agentAPI) *Server {
+type serverLogDeps struct {
+	tokens tokenAPI
+	agents agentAPI
+}
+
+func newServerWithDeps(t *testing.T, buf *bytes.Buffer, d serverLogDeps) *Server {
 	t.Helper()
 	log, err := logger.New(logger.Config{
 		Service: "auth", Level: slog.LevelWarn, Writer: buf,
@@ -170,9 +238,17 @@ func newServerWithLogAndAgents(t *testing.T, buf *bytes.Buffer, agents agentAPI)
 	if err != nil {
 		t.Fatalf("logger: %v", err)
 	}
+	tokens := tokenAPI(&fakeTokenAPI{})
+	if d.tokens != nil {
+		tokens = d.tokens
+	}
+	agents := agentAPI(&fakeAgentAPI{})
+	if d.agents != nil {
+		agents = d.agents
+	}
 	srv, err := NewServer(ServerDeps{
 		Validator:    &fakeTokenValidator{},
-		TokenService: &fakeTokenAPI{},
+		TokenService: tokens,
 		AgentService: agents,
 		Metrics:      testAuthRegistry(),
 		Log:          log,

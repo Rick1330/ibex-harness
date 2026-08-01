@@ -11,6 +11,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/repository"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/token"
+	"github.com/google/uuid"
 )
 
 func sortTokenRows(rows []repository.TokenMetadata) {
@@ -74,7 +75,18 @@ func decodeMemTokenCursor(cursor string) (time.Time, string, error) {
 }
 
 func testTokenService(repo tokenRepo) *TokenService {
-	return NewTokenService(repo, token.DefaultArgon2Params(), logger.Discard("auth"), nil)
+	return NewTokenService(repo, token.DefaultArgon2Params(), logger.Discard("auth"), nil).
+		WithSubjectLookup(allowAllSubjects{})
+}
+
+type allowAllSubjects struct{}
+
+func (allowAllSubjects) AgentBelongsToOrg(context.Context, uuid.UUID, uuid.UUID) (bool, error) {
+	return true, nil
+}
+
+func (allowAllSubjects) UserBelongsToOrg(context.Context, uuid.UUID, uuid.UUID) (bool, error) {
+	return true, nil
 }
 
 type errTokenRepo struct{}

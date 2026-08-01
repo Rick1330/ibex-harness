@@ -40,6 +40,7 @@ const (
 	DBOpRevokeToken       DBOperation = "revoke_token"
 	DBOpListTokens        DBOperation = "list_tokens"
 	DBOpGetAgentByID      DBOperation = "get_agent_by_id"
+	DBOpGetUserByID       DBOperation = "get_user_by_id"
 )
 
 // ValidateToken results for ibex_auth_validate_token_duration_seconds.

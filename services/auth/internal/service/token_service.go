@@ -27,6 +27,7 @@ type TokenService struct {
 	argon2        token.Argon2Params
 	logger        *logger.Logger
 	publisher     revocation.Publisher
+	subjects      tokenSubjectLookup
 	publishWG     sync.WaitGroup
 	publishCancel context.CancelFunc
 	publishDone   <-chan struct{}
@@ -44,6 +45,12 @@ func NewTokenService(repo tokenRepo, argon2 token.Argon2Params, log *logger.Logg
 	}
 }
 
+// WithSubjectLookup enables same-org checks for optional agent_id/user_id binds.
+func (s *TokenService) WithSubjectLookup(lookup tokenSubjectLookup) *TokenService {
+	s.subjects = lookup
+	return s
+}
+
 // CreateTokenResult holds the one-time plaintext response fields.
 type CreateTokenResult struct {
 	TokenID   string
@@ -59,6 +66,9 @@ type CreateTokenResult struct {
 // The plaintext token in the result is only available at creation time.
 func (s *TokenService) CreateToken(ctx context.Context, in CreateTokenInput) (CreateTokenResult, error) {
 	if err := validateCreateTokenInput(in); err != nil {
+		return CreateTokenResult{}, err
+	}
+	if err := s.validateCreateTokenSubjects(ctx, in); err != nil {
 		return CreateTokenResult{}, err
 	}
 	plaintext, prefix, params, err := buildCreateTokenParams(in, s.argon2)
