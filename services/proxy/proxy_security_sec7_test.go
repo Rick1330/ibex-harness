@@ -44,7 +44,8 @@ func TestSecurity_SEC7_2_AuthCacheWarmThenRevoke(t *testing.T) {
 	ctx := metadata.NewOutgoingContext(rpcCtx, metadata.Pairs("authorization", "Bearer "+admin))
 
 	createResp, err := env.authFx.Client.CreateToken(ctx, &authv1.CreateTokenRequest{
-		OrgId: env.orgA.OrgID, Name: "sec7-cache", Type: authv1.TokenType_TOKEN_TYPE_PAT, Permissions: 42,
+		OrgId: env.orgA.OrgID, Name: "sec7-cache", Type: authv1.TokenType_TOKEN_TYPE_PAT,
+		Permissions: permissions.ProxyChatCompletion,
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)

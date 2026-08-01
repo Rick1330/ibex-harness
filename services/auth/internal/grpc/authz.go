@@ -13,7 +13,11 @@ import (
 
 type callerContextKey struct{}
 
-const errMsgMissingCallerContext = "missing caller context"
+const (
+	errMsgMissingCallerContext = "missing caller context"
+	errMsgInvalidRequest       = "invalid request"
+	errMsgForbidden            = "forbidden"
+)
 
 // CallerContext is the authenticated PAT used for management RPCs.
 type CallerContext struct {
@@ -96,10 +100,10 @@ func RequireOrgAndPermission(ctx context.Context, orgID string, required int64) 
 		return status.Error(codes.Unauthenticated, errMsgMissingCallerContext)
 	}
 	if caller.OrgID != orgID {
-		return status.Error(codes.PermissionDenied, "forbidden")
+		return status.Error(codes.PermissionDenied, errMsgForbidden)
 	}
 	if !permissions.Has(caller.Permissions, required) {
-		return status.Error(codes.PermissionDenied, "forbidden")
+		return status.Error(codes.PermissionDenied, errMsgForbidden)
 	}
 	return nil
 }

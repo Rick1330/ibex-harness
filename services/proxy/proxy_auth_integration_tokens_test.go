@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/Rick1330/ibex-harness/infra/testing/testutil"
+	"github.com/Rick1330/ibex-harness/packages/permissions"
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	"google.golang.org/grpc/metadata"
 )
@@ -81,7 +82,7 @@ func TestProxyAuthIntegration_RevokeViaGRPC(t *testing.T) {
 		OrgId:       fx.orgA,
 		Name:        "revoke-me",
 		Type:        authv1.TokenType_TOKEN_TYPE_PAT,
-		Permissions: 42,
+		Permissions: permissions.ProxyChatCompletion,
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)

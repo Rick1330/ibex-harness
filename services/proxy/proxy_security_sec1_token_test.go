@@ -10,6 +10,7 @@ import (
 
 	"github.com/Rick1330/ibex-harness/infra/testing/testutil"
 	apierror "github.com/Rick1330/ibex-harness/packages/apierror"
+	"github.com/Rick1330/ibex-harness/packages/permissions"
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	"google.golang.org/grpc/metadata"
 )
@@ -60,7 +61,8 @@ func TestSecurity_SEC1_5_RevokedTokenSLA(t *testing.T) {
 	admin := testutil.SeedBootstrapAdminToken(t, env.db, env.orgA.OrgID)
 	ctx := metadata.NewOutgoingContext(context.Background(), metadata.Pairs("authorization", "Bearer "+admin))
 	createResp, err := env.authFx.Client.CreateToken(ctx, &authv1.CreateTokenRequest{
-		OrgId: env.orgA.OrgID, Name: "revoke-sec", Type: authv1.TokenType_TOKEN_TYPE_PAT, Permissions: 42,
+		OrgId: env.orgA.OrgID, Name: "revoke-sec", Type: authv1.TokenType_TOKEN_TYPE_PAT,
+		Permissions: permissions.ProxyChatCompletion,
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
