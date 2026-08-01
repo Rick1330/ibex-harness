@@ -24,23 +24,21 @@ func TestUsersRepository_GetByIDAndOrg(t *testing.T) {
 	orgB := testutil.SeedOrganization(t, db, "User Org B "+label, "user-b-"+label)
 	userA := testutil.SeedUser(t, db, orgA, "user-a-"+label+"@test.local", "User A")
 
-	fx := userLookupFixture{
-		t: t, repo: repository.NewUsersRepository(db, nil), ctx: context.Background(),
-	}
-	fx.assertSameOrg(userA, orgA)
-	fx.assertMiss(userA, orgB, "cross-org")
-	fx.assertMiss(uuid.NewString(), orgA, "unknown-user")
+	fx := userLookupFixture{t: t, repo: repository.NewUsersRepository(db, nil)}
+	ctx := context.Background()
+	fx.assertSameOrg(ctx, userA, orgA)
+	fx.assertMiss(ctx, userA, orgB, "cross-org")
+	fx.assertMiss(ctx, uuid.NewString(), orgA, "unknown-user")
 }
 
 type userLookupFixture struct {
 	t    *testing.T
 	repo *repository.UsersRepository
-	ctx  context.Context
 }
 
-func (f userLookupFixture) assertSameOrg(userID, orgID string) {
+func (f userLookupFixture) assertSameOrg(ctx context.Context, userID, orgID string) {
 	f.t.Helper()
-	rec, err := f.repo.GetByIDAndOrg(f.ctx, uuid.MustParse(userID), uuid.MustParse(orgID))
+	rec, err := f.repo.GetByIDAndOrg(ctx, uuid.MustParse(userID), uuid.MustParse(orgID))
 	if err != nil {
 		f.t.Fatalf("same-org: %v", err)
 	}
@@ -55,9 +53,9 @@ func (f userLookupFixture) assertSameOrg(userID, orgID string) {
 	}
 }
 
-func (f userLookupFixture) assertMiss(userID, orgID, label string) {
+func (f userLookupFixture) assertMiss(ctx context.Context, userID, orgID, label string) {
 	f.t.Helper()
-	miss, err := f.repo.GetByIDAndOrg(f.ctx, uuid.MustParse(userID), uuid.MustParse(orgID))
+	miss, err := f.repo.GetByIDAndOrg(ctx, uuid.MustParse(userID), uuid.MustParse(orgID))
 	if err != nil {
 		f.t.Fatalf("%s: %v", label, err)
 	}
