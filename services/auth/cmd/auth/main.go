@@ -159,7 +159,10 @@ func initAuthServices(
 	log *logger.Logger,
 	reg *ibexmetrics.AuthRegistry,
 ) (authServiceDeps, error) {
-	repo := repository.NewTokensRepository(db, reg)
+	repo, err := repository.NewTokensRepository(db, reg)
+	if err != nil {
+		return authServiceDeps{}, err
+	}
 	agentsRepo := repository.NewAgentsRepository(db, reg)
 	lookup, err := token.NewRepoLookup(repo)
 	if err != nil {

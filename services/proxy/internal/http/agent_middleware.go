@@ -56,7 +56,7 @@ func (h *agentVerifyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		apierror.WriteStatus(w, http.StatusUnauthorized, apierror.CodeInvalidToken,
 			"Invalid Authorization header", requestID,
-			apierror.WriteOpts{Detail: err.Error(), DocsBase: docsBase})
+			apierror.WriteOpts{DocsBase: docsBase})
 		return
 	}
 

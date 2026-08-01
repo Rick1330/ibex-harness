@@ -117,6 +117,29 @@ func TestUnit_NewSubscriberValidation(t *testing.T) {
 	sub.Stop()
 }
 
+func TestUnit_SubscriberStopWithoutRun(t *testing.T) {
+	t.Parallel()
+	log := mustLogger(t)
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	sub, err := directive.NewSubscriber(client, directive.NoopResolver{}, log, nil)
+	if err != nil {
+		t.Fatalf("subscriber: %v", err)
+	}
+	// Stop before Run must not block waiting on Done.
+	done := make(chan struct{})
+	go func() {
+		sub.Stop()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Stop blocked without Run")
+	}
+}
+
 func TestUnit_SubscriberIgnoresMalformedEvents(t *testing.T) {
 	t.Parallel()
 	orgID := uuid.New()

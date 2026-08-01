@@ -43,9 +43,24 @@ func agentTestAgentID() string {
 	return "550e8400-e29b-41d4-a716-446655440000"
 }
 
+type agentVerifyCase struct {
+	verifier      AgentVerifier
+	agentID       string
+	withAuth      bool
+	authorization string
+}
+
 func runAgentVerification(t *testing.T, verifier AgentVerifier, agentID string, withAuth bool) *httptest.ResponseRecorder {
 	t.Helper()
-	handler := AgentVerificationMiddleware(verifier, logger.Discard("proxy"))(
+	return runAgentVerificationCase(t, agentVerifyCase{
+		verifier: verifier, agentID: agentID, withAuth: withAuth,
+		authorization: "Bearer ibex_pat_test",
+	})
+}
+
+func runAgentVerificationCase(t *testing.T, tc agentVerifyCase) *httptest.ResponseRecorder {
+	t.Helper()
+	handler := AgentVerificationMiddleware(tc.verifier, logger.Discard("proxy"))(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			rec, ok := AgentFromContext(r.Context())
 			if !ok {
@@ -58,11 +73,13 @@ func runAgentVerification(t *testing.T, verifier AgentVerifier, agentID string, 
 	)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/v1/internal/auth-probe", nil)
-	req.Header.Set("Authorization", "Bearer ibex_pat_test")
-	if agentID != "" {
-		req.Header.Set(validation.HeaderAgentID, agentID)
+	if tc.authorization != "" {
+		req.Header.Set("Authorization", tc.authorization)
 	}
-	if withAuth {
+	if tc.agentID != "" {
+		req.Header.Set(validation.HeaderAgentID, tc.agentID)
+	}
+	if tc.withAuth {
 		req = req.WithContext(auth.WithContext(req.Context(), &auth.ValidateResult{OrgID: agentTestOrgUUID}))
 	}
 	handler.ServeHTTP(rec, req)
@@ -98,5 +115,23 @@ func TestUnit_AgentVerification(t *testing.T) {
 				t.Fatalf("body: %s", rec.Body.String())
 			}
 		})
+	}
+}
+
+func TestUnit_AgentVerification_InvalidAuthorization(t *testing.T) {
+	t.Parallel()
+	rec := runAgentVerificationCase(t, agentVerifyCase{
+		verifier: &mockAgentVerifier{}, agentID: agentTestAgentID(), withAuth: true,
+		authorization: "Basic not-bearer",
+	})
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status: %d body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, string(apierror.CodeInvalidToken)) {
+		t.Fatalf("body missing code: %s", body)
+	}
+	if strings.Contains(body, "must use Bearer") {
+		t.Fatalf("raw parse detail leaked: %s", body)
 	}
 }

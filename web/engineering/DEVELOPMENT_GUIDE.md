@@ -455,17 +455,13 @@ Only skip hooks for urgent or tooling-related cases. The PR description must exp
 
 #### Pre-commit / CI golangci-lint parity
 
-The pre-commit `golangci-lint` hook (from the upstream mirror) runs a **single implicit
-config** and is pinned to an older minor version. It does **not** replicate the three-config
-split that `make lint-go` executes (base + complexity + depguard). Consequences:
+The local pre-commit hook `lint-go` runs **`make lint-go`**, the same three-config
+entrypoint used in CI (`.golangci.depguard.yml` + `.golangci.yml` +
+`.golangci.complexity.yml`). Contributors do not need a separate manual
+`make lint-go` step when pre-commit is installed and hooks are enabled.
 
-- Complexity findings (`funlen`, `gocognit`) and depguard boundary checks **are not caught
-  by pre-commit alone**.
-- Before every push, run `make lint-go` in addition to (or instead of) `pre-commit run`.
-
-The gap will be closed in a future chore PR that upgrades the pre-commit mirror to
-`golangci-lint v2.8.0` (matching CI) and adds explicit `--config` flags for each of the
-three lint configs.
+The upstream `golangci-lint` pre-commit mirror (single implicit config, older
+pin) was removed so local hooks cannot silently diverge from CI.
 
 ---
 
