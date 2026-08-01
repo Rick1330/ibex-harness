@@ -53,6 +53,7 @@ case "${1:-help}" in
       "  clickhouse-migrate-down Roll back one ClickHouse migration step" \
       "  clickhouse-version     Show current ClickHouse migration version" \
       "  dev-smoke              Run local auth+proxy smoke test" \
+      "  dev-smoke-live         Run live OpenRouter auth+proxy smoke test" \
       "  verify-phase15         Run Phase 1.5 public site verification (IBEX_SITE_URL)"
     ;;
   lint-docs)
@@ -162,6 +163,9 @@ case "${1:-help}" in
     ;;
   dev-smoke)
     bash "$ROOT_DIR/infra/scripts/smoke_local.sh"
+    ;;
+  dev-smoke-live)
+    bash "$ROOT_DIR/infra/scripts/smoke_live_openrouter.sh"
     ;;
   verify-phase15)
     bash "$ROOT_DIR/infra/scripts/verify_phase15.sh"

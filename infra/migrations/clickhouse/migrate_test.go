@@ -87,6 +87,21 @@ func TestUnit_MigrateDSN_Redacted(t *testing.T) {
 	}
 }
 
+func TestUnit_MigrateDSN_FlattensPasswordToQuery(t *testing.T) {
+	t.Parallel()
+
+	dsn := "clickhouse://default:ibexdev@localhost:9002?database=ibex"
+
+	got := ParseConn(dsn).String()
+
+	if strings.Contains(got, "ibexdev@") {
+		t.Fatalf("userinfo password should be flattened: %q", got)
+	}
+	if !strings.Contains(got, "password=ibexdev") || !strings.Contains(got, "username=default") {
+		t.Fatalf("want username/password query: %q", got)
+	}
+}
+
 func TestUnit_MigrateDSN_PrefersMigrateEnv(t *testing.T) {
 	t.Setenv("CLICKHOUSE_MIGRATE_DSN", "clickhouse://a:b@ch:9002?database=ibex")
 	t.Setenv("CLICKHOUSE_DSN", "clickhouse://x:y@other:8123/ibex")

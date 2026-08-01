@@ -7,7 +7,39 @@ import (
 	"strings"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/Rick1330/ibex-harness/packages/chdsn"
 )
+
+func normalizeAppDSN(dsn string) string {
+	u, err := url.Parse(dsn)
+	if err != nil || u.Scheme == "" {
+		return dsn
+	}
+	chdsn.FlattenUserinfoToQuery(u)
+	// clickhouse-go HTTP mode POSTs using the DSN scheme; "clickhouse://" is
+	// rejected by net/http. Rewrite app HTTP ports to http(s) before ParseDSN.
+	rewriteHTTPScheme(u)
+	return u.String()
+}
+
+func rewriteHTTPScheme(u *url.URL) {
+	hostport := u.Host
+	if hostport == "" {
+		return
+	}
+	_, port, err := net.SplitHostPort(hostport)
+	if err != nil {
+		return
+	}
+	// App HTTP ports (ADR-0033). Do not rewrite :8443 to https — clickhouse-go
+	// requires explicit TLS config for https DSNs ("https without TLS").
+	switch port {
+	case "8123", "8124":
+		if u.Scheme == "clickhouse" || u.Scheme == "tcp" {
+			u.Scheme = "http"
+		}
+	}
+}
 
 // parseOptions builds clickhouse-go Options from an app CLICKHOUSE_DSN.
 // HTTP (8123) is the app protocol per ADR-0033; native is migrate-only.
@@ -16,6 +48,7 @@ func parseOptions(dsn string) (*clickhouse.Options, error) {
 	if dsn == "" {
 		return nil, fmt.Errorf("clickhouse: empty DSN")
 	}
+	dsn = normalizeAppDSN(dsn)
 	opts, err := clickhouse.ParseDSN(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: parse DSN: %w", err)

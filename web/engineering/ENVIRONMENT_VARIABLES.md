@@ -225,8 +225,9 @@ Used by: **proxy** (`services/proxy`)
 | `IBEX_IDEMPOTENCY_REDIS_TIMEOUT` | No | `50ms` | Per claim/commit Redis budget; timeout fail-opens without dedupe | Aligns with auth validate budget class |
 | `IBEX_ERROR_DOCS_BASE` | No | (empty) | Base URL for `docs_url` in error envelope | Omit in dev when unset |
 | `IBEX_LLM_MODE` | No | `mock` | `mock` \| `live` — `mock` registers an in-process stub provider (immediate JSON/SSE, no OpenAI); `live` registers OpenAI per [ADR-0026](/docs/adr/0026-openai-client-design). **Rejected when `IBEX_ENV=production`** | Default `mock` for CI/dev without API key; production must use `live` |
-| `OPENAI_API_KEY` | When `live` | (none) | OpenAI API key | Secret; never logged |
-| `OPENAI_BASE_URL` | No | `https://api.openai.com/v1` | OpenAI API base URL | |
+| `OPENAI_API_KEY` | When `live` | (none) | OpenAI API key (or OpenAI-compatible provider key) | Secret; never logged |
+| `OPENAI_BASE_URL` | No | `https://api.openai.com/v1` | OpenAI API base URL | Use `https://openrouter.ai/api/v1` for OpenRouter |
+| `IBEX_LLM_EXTRA_MODELS` | No | (none) | Comma-separated extra live-mode model IDs beyond the default OpenAI allowlist | e.g. `openai/gpt-oss-20b:free` for OpenRouter |
 | `OPENAI_REQUEST_TIMEOUT` | No | `120s` | Upstream request timeout | |
 | `OPENAI_MAX_RETRIES` | No | `3` | Retries on 429/5xx/network | |
 | `OPENAI_RETRY_BASE_DELAY` | No | `500ms` | Exponential backoff base | |

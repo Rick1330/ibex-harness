@@ -40,6 +40,7 @@ func buildLiveProviderRegistry(cfg config.Config, log *logger.Logger, tracer tra
 		Timeout:        cfg.OpenAI.RequestTimeout,
 		MaxRetries:     &maxRetries,
 		RetryBaseDelay: cfg.OpenAI.RetryBaseDelay,
+		ExtraModels:    cfg.OpenAI.ExtraModels,
 	}, log, tracer, reg)
 	out, err := provider.NewRegistry(client)
 	if err != nil {
