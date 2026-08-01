@@ -33,6 +33,8 @@ func TestUnit_OrgIDFromChannel(t *testing.T) {
 		{name: "valid", channel: ChannelForOrg(orgID), want: orgID},
 		{name: "wrong_prefix", channel: "other:" + orgID.String(), wantErr: true},
 		{name: "malformed_uuid", channel: ChannelPrefix + "not-a-uuid", wantErr: true},
+		{name: "empty", channel: "", wantErr: true},
+		{name: "prefix_only", channel: ChannelPrefix, wantErr: true},
 	}
 	for _, tc := range tests {
 		tc := tc

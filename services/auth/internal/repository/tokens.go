@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/metrics"
@@ -29,10 +28,6 @@ type TokenRow struct {
 type TokensRepository struct {
 	db  *sql.DB
 	obs metrics.QueryObserver
-}
-
-func NewTokensRepository(db *sql.DB, obs metrics.QueryObserver) *TokensRepository {
-	return &TokensRepository{db: db, obs: obs}
 }
 
 // FindActiveByPrefix returns a non-revoked, non-expired token with the given prefix.
@@ -188,95 +183,6 @@ func (r *TokensRepository) RevokeToken(ctx context.Context, in RevokeTokenInput)
 		}
 		return nil
 	})
-}
-
-// ListTokens returns token metadata for an org with cursor pagination.
-func (r *TokensRepository) ListTokens(ctx context.Context, orgID, cursor string, limit int) ([]TokenMetadata, string, error) {
-	start := time.Now()
-	defer observeQuery(r.obs, metrics.DBOpListTokens, start)
-
-	if limit <= 0 || limit > 100 {
-		limit = 50
-	}
-	cursorTS, cursorID, err := decodeTokenCursor(cursor)
-	if err != nil {
-		return nil, "", fmt.Errorf("ListTokens cursor: %w", err)
-	}
-
-	var rows []TokenMetadata
-	err = r.withServiceAccount(ctx, func(tx *sql.Tx) error {
-		query := `
-			SELECT id::text, name, prefix, permissions, expires_at, created_at, revoked_at, is_revoked
-			FROM ibex_core.tokens
-			WHERE org_id = $1::uuid`
-		args := []any{orgID}
-		argN := 2
-		if cursor != "" {
-			query += fmt.Sprintf(` AND (created_at < $%d OR (created_at = $%d AND id < $%d::uuid))`, argN, argN, argN+1)
-			args = append(args, cursorTS, cursorID)
-			argN += 2
-		}
-		query += fmt.Sprintf(` ORDER BY created_at DESC, id DESC LIMIT $%d`, argN)
-		args = append(args, limit+1)
-
-		result, err := tx.QueryContext(ctx, query, args...)
-		if err != nil {
-			return err
-		}
-		defer func() { _ = result.Close() }()
-		for result.Next() {
-			var m TokenMetadata
-			if err := result.Scan(
-				&m.ID, &m.Name, &m.Prefix, &m.Permissions, &m.ExpiresAt, &m.CreatedAt, &m.RevokedAt, &m.IsRevoked,
-			); err != nil {
-				return err
-			}
-			rows = append(rows, m)
-		}
-		return result.Err()
-	})
-	if err != nil {
-		return nil, "", err
-	}
-	var next string
-	if len(rows) > limit {
-		last := rows[limit-1]
-		next = encodeTokenCursor(last.CreatedAt, last.ID)
-		rows = rows[:limit]
-	}
-	return rows, next, nil
-}
-
-func encodeTokenCursor(createdAt time.Time, id string) string {
-	return fmt.Sprintf("%d|%s", createdAt.UTC().UnixNano(), id)
-}
-
-func decodeTokenCursor(cursor string) (time.Time, string, error) {
-	if cursor == "" {
-		return time.Time{}, "", nil
-	}
-	nano, id, err := parseTokenCursorParts(cursor)
-	if err != nil {
-		return time.Time{}, "", err
-	}
-	return time.Unix(0, nano).UTC(), id, nil
-}
-
-func parseTokenCursorParts(cursor string) (nano int64, id string, err error) {
-	parts := strings.SplitN(cursor, "|", 2)
-	if len(parts) != 2 {
-		return 0, "", fmt.Errorf("invalid cursor %q", cursor)
-	}
-	if parts[0] == "" {
-		return 0, "", fmt.Errorf("invalid cursor %q", cursor)
-	}
-	if parts[1] == "" {
-		return 0, "", fmt.Errorf("invalid cursor %q", cursor)
-	}
-	if _, err := fmt.Sscanf(parts[0], "%d", &nano); err != nil {
-		return 0, "", fmt.Errorf("invalid cursor timestamp: %w", err)
-	}
-	return nano, parts[1], nil
 }
 
 // InsertTestOrganization inserts an organization (integration tests only).

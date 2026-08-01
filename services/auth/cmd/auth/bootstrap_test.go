@@ -50,7 +50,7 @@ func newTestAuthRegistry(t *testing.T, db *sql.DB) *ibexmetrics.AuthRegistry {
 
 func newTestAuthServiceDeps(t *testing.T, db *sql.DB, reg *ibexmetrics.AuthRegistry) authServiceDeps {
 	t.Helper()
-	repo := repository.NewTokensRepository(db, reg)
+	repo := repository.RequireTokensRepository(t, db, reg)
 	agentsRepo := repository.NewAgentsRepository(db, reg)
 	lookup, err := token.NewRepoLookup(repo)
 	if err != nil {
@@ -295,4 +295,38 @@ func TestUnit_NewAuthGRPCServer_BuildsServer(t *testing.T) {
 		t.Fatal("expected grpc server")
 	}
 	srv.Stop()
+}
+
+func TestUnit_InitAuthServices_NilDB(t *testing.T) {
+	t.Parallel()
+
+	reg := ibexmetrics.NewAuth(ibexmetrics.AuthConfig{ServiceName: "auth"})
+	_, err := initAuthServices(config.Config{
+		RedisURL: "",
+		Argon2:   token.DefaultArgon2Params(),
+	}, nil, logger.Discard("auth"), reg)
+	if err == nil {
+		t.Fatal("expected nil db error from NewTokensRepository")
+	}
+}
+
+func TestUnit_OpenAuthPostgres_OpensHandle(t *testing.T) {
+	t.Parallel()
+
+	db, err := openAuthPostgres(config.Config{
+		PostgresDSN: "postgres://127.0.0.1:5432/test?sslmode=disable",
+	})
+	if err != nil {
+		t.Fatalf("openAuthPostgres: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if db == nil {
+		t.Fatal("expected db handle")
+	}
+}
+
+func TestUnit_ConfigurePostgresPool_NoPanic(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	configurePostgresPool(db)
 }
