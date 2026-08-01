@@ -30,10 +30,7 @@ func startAuthGRPC(t *testing.T, dbDSN string) (authv1.AuthServiceClient, func()
 	t.Helper()
 	db := testutil.OpenDB(t, dbDSN)
 	reg := ibexmetrics.NewAuth(ibexmetrics.AuthConfig{ServiceName: "auth-test", DB: db})
-	repo, err := repository.NewTokensRepository(db, reg)
-	if err != nil {
-		t.Fatalf("NewTokensRepository: %v", err)
-	}
+	repo := repository.RequireTokensRepository(t, db, reg)
 	agentsRepo := repository.NewAgentsRepository(db, reg)
 	argon2 := token.DefaultArgon2Params()
 	lookup, err := token.NewRepoLookup(repo)
@@ -182,10 +179,7 @@ func TestRevokeTokenCrossTenant(t *testing.T) {
 	if err != nil {
 		t.Fatalf("hash: %v", err)
 	}
-	repo, err := repository.NewTokensRepository(db, nil)
-	if err != nil {
-		t.Fatalf("NewTokensRepository: %v", err)
-	}
+	repo := repository.RequireTokensRepository(t, db, nil)
 	idB, err := repo.InsertTestToken(context.Background(), orgB, "ibex_pat_"+tokenIDB.String(), hash, "b", 1, false, nil)
 	if err != nil {
 		t.Fatalf("insert b: %v", err)

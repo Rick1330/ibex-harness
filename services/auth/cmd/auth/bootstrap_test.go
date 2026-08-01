@@ -50,10 +50,7 @@ func newTestAuthRegistry(t *testing.T, db *sql.DB) *ibexmetrics.AuthRegistry {
 
 func newTestAuthServiceDeps(t *testing.T, db *sql.DB, reg *ibexmetrics.AuthRegistry) authServiceDeps {
 	t.Helper()
-	repo, err := repository.NewTokensRepository(db, reg)
-	if err != nil {
-		t.Fatalf("NewTokensRepository: %v", err)
-	}
+	repo := repository.RequireTokensRepository(t, db, reg)
 	agentsRepo := repository.NewAgentsRepository(db, reg)
 	lookup, err := token.NewRepoLookup(repo)
 	if err != nil {

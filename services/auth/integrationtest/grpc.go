@@ -48,10 +48,7 @@ func startAuthGRPC(t testing.TB, dbDSN string, redisClient redis.UniversalClient
 	t.Helper()
 	db := testutil.OpenDB(t, dbDSN)
 	reg := ibexmetrics.NewAuth(ibexmetrics.AuthConfig{ServiceName: "auth-test", DB: db})
-	repo, err := repository.NewTokensRepository(db, reg)
-	if err != nil {
-		t.Fatalf("NewTokensRepository: %v", err)
-	}
+	repo := repository.RequireTokensRepository(t, db, reg)
 	agentsRepo := repository.NewAgentsRepository(db, reg)
 	argon2 := token.DefaultArgon2Params()
 	lookup, err := token.NewRepoLookup(repo)

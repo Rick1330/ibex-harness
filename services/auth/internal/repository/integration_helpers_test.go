@@ -21,11 +21,7 @@ func setupTokensRepo(t *testing.T) (*repository.TokensRepository, *sql.DB) {
 	t.Cleanup(cleanupPG)
 	db := testutil.OpenDB(t, dsn)
 	t.Cleanup(func() { _ = db.Close() })
-	repo, err := repository.NewTokensRepository(db, nil)
-	if err != nil {
-		t.Fatalf("NewTokensRepository: %v", err)
-	}
-	return repo, db
+	return repository.RequireTokensRepository(t, db, nil), db
 }
 
 type findActiveCase struct {

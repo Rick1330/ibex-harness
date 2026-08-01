@@ -69,10 +69,7 @@ func TestValidateTokenOptionalFields(t *testing.T) {
 
 func newValidateEnv(t *testing.T, db *sql.DB) validateEnv {
 	t.Helper()
-	repo, err := repository.NewTokensRepository(db, nil)
-	if err != nil {
-		t.Fatalf("NewTokensRepository: %v", err)
-	}
+	repo := repository.RequireTokensRepository(t, db, nil)
 	lookup, err := token.NewRepoLookup(repo)
 	if err != nil {
 		t.Fatalf("NewRepoLookup: %v", err)
