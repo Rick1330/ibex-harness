@@ -70,6 +70,8 @@ type OpenAIConfig struct {
 	RequestTimeout time.Duration
 	MaxRetries     int
 	RetryBaseDelay time.Duration
+	// ExtraModels are comma-sourced live-mode model IDs beyond the default OpenAI allowlist.
+	ExtraModels []string
 }
 
 type Config struct {

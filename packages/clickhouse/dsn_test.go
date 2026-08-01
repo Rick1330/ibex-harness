@@ -47,6 +47,40 @@ func TestUnit_DSN_DefaultDatabase(t *testing.T) {
 	}
 }
 
+func TestUnit_DSN_UserinfoPasswordFlattens(t *testing.T) {
+	t.Parallel()
+	opts, err := parseOptions("clickhouse://default:ibexdev@localhost:8123/ibex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opts.Auth.Username != "default" {
+		t.Fatalf("username=%s", opts.Auth.Username)
+	}
+	if opts.Auth.Password != "ibexdev" {
+		t.Fatalf("password not applied from userinfo")
+	}
+	if opts.Auth.Database != "ibex" {
+		t.Fatalf("db=%s", opts.Auth.Database)
+	}
+	if opts.Protocol != ch.HTTP {
+		t.Fatal("want HTTP protocol for :8123")
+	}
+}
+
+func TestUnit_NormalizeAppDSN_RewritesHTTPScheme(t *testing.T) {
+	t.Parallel()
+	got := normalizeAppDSN("clickhouse://default:secret@localhost:8123/ibex")
+	if !strings.HasPrefix(got, "http://") {
+		t.Fatalf("got %q", got)
+	}
+	if strings.Contains(got, "secret@") {
+		t.Fatalf("userinfo password leaked: %q", got)
+	}
+	if !strings.Contains(got, "password=secret") {
+		t.Fatalf("password query missing: %q", got)
+	}
+}
+
 func TestUnit_DSN_Empty(t *testing.T) {
 	t.Parallel()
 	if _, err := parseOptions("  "); err == nil {

@@ -21,6 +21,22 @@ func TestClient_SupportedModels(t *testing.T) {
 	}
 }
 
+func TestUnit_Client_SupportedModels_ExtraModels(t *testing.T) {
+	t.Parallel()
+	c := New(Config{
+		APIKey:      "k",
+		BaseURL:     "http://example.com",
+		ExtraModels: []string{"openai/gpt-oss-20b:free", "gpt-4o", " ", "openai/gpt-oss-20b:free"},
+	}, logger.Discard("openai"), telemetry.NoopTracer("openai"), nil)
+	models := c.SupportedModels()
+	if len(models) != 5 {
+		t.Fatalf("models: %v", models)
+	}
+	if models[4] != "openai/gpt-oss-20b:free" {
+		t.Fatalf("extra model: %v", models)
+	}
+}
+
 func TestConfig_ApplyDefaults_nilUsesDefaultRetries(t *testing.T) {
 	t.Parallel()
 	cfg := Config{}

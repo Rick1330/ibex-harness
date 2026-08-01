@@ -19,6 +19,8 @@ type Config struct {
 	StreamTimeout  time.Duration
 	MaxRetries     *int
 	RetryBaseDelay time.Duration
+	// ExtraModels are additional model IDs this client accepts (e.g. OpenRouter slugs).
+	ExtraModels []string
 }
 
 // ApplyDefaults fills zero-valued fields with production defaults.

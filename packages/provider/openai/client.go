@@ -58,8 +58,34 @@ func New(cfg Config, log *logger.Logger, tracer trace.Tracer, metrics Metrics) *
 
 func (c *Client) Name() string { return "openai" }
 
+var defaultSupportedModels = []string{"gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"}
+
 func (c *Client) SupportedModels() []string {
-	return []string{"gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"}
+	return mergeSupportedModels(defaultSupportedModels, c.cfg.ExtraModels)
+}
+
+func mergeSupportedModels(base, extra []string) []string {
+	out := make([]string, 0, len(base)+len(extra))
+	seen := make(map[string]struct{}, len(base)+len(extra))
+	for _, m := range base {
+		appendUniqueModel(&out, seen, m)
+	}
+	for _, m := range extra {
+		appendUniqueModel(&out, seen, m)
+	}
+	return out
+}
+
+func appendUniqueModel(out *[]string, seen map[string]struct{}, model string) {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return
+	}
+	if _, ok := seen[model]; ok {
+		return
+	}
+	seen[model] = struct{}{}
+	*out = append(*out, model)
 }
 
 // Complete sends a chat completion request to OpenAI.

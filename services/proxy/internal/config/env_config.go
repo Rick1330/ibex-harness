@@ -27,6 +27,7 @@ type envConfig struct {
 	RateLimitOrgOverrides string            `env:"IBEX_RATE_LIMIT_ORG_OVERRIDES"`
 	ShutdownTimeoutRaw    string            `env:"IBEX_SHUTDOWN_TIMEOUT"`
 	LLMMode               string            `env:"IBEX_LLM_MODE" envDefault:"mock"`
+	LLMExtraModels        string            `env:"IBEX_LLM_EXTRA_MODELS"`
 	OpenAIAPIKey          ibexconfig.Secret `env:"OPENAI_API_KEY" secret:"true"`
 	OpenAIBaseURL         string            `env:"OPENAI_BASE_URL" envDefault:"https://api.openai.com/v1"`
 	OpenAIRequestTimeout  time.Duration     `env:"OPENAI_REQUEST_TIMEOUT"`
@@ -77,7 +78,26 @@ func openAIConfigFromEnv(envCfg envConfig) OpenAIConfig {
 		RequestTimeout: envCfg.OpenAIRequestTimeout,
 		MaxRetries:     envCfg.OpenAIMaxRetries,
 		RetryBaseDelay: envCfg.OpenAIRetryBaseDelay,
+		ExtraModels:    parseCSVModels(envCfg.LLMExtraModels),
 	}
+}
+
+func parseCSVModels(raw string) []string {
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	seen := make(map[string]struct{}, len(parts))
+	for _, p := range parts {
+		m := strings.TrimSpace(p)
+		if m == "" {
+			continue
+		}
+		if _, ok := seen[m]; ok {
+			continue
+		}
+		seen[m] = struct{}{}
+		out = append(out, m)
+	}
+	return out
 }
 
 func baseProxyConfig(envCfg envConfig, level slog.Level) Config {

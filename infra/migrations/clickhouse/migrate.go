@@ -62,6 +62,11 @@ func (c Conn) Redacted() string {
 	if u.User != nil {
 		u.User = url.User(u.User.Username())
 	}
+	q := u.Query()
+	if q.Get("password") != "" {
+		q.Set("password", "xxxxx")
+		u.RawQuery = q.Encode()
+	}
 	return u.String()
 }
 
@@ -73,8 +78,28 @@ func normalizeMigrateURL(raw string) string {
 	}
 	normalizeSchemeAndPort(u)
 	liftPathDatabase(u)
+	flattenUserinfoToQuery(u)
 	ensureMigrateQuery(u)
 	return u.String()
+}
+
+// flattenUserinfoToQuery moves user:pass into query params. clickhouse-go v1
+// authenticates reliably with username=/password= but not userinfo in the URL.
+func flattenUserinfoToQuery(u *url.URL) {
+	if u.User == nil {
+		return
+	}
+	user := u.User.Username()
+	pass, hasPass := u.User.Password()
+	q := u.Query()
+	if user != "" && q.Get("username") == "" {
+		q.Set("username", user)
+	}
+	if hasPass && q.Get("password") == "" {
+		q.Set("password", pass)
+	}
+	u.User = nil
+	u.RawQuery = q.Encode()
 }
 
 func applyMigrateQueryDefaults(raw string) string {
