@@ -161,7 +161,11 @@ func initAuthServices(
 ) (authServiceDeps, error) {
 	repo := repository.NewTokensRepository(db, reg)
 	agentsRepo := repository.NewAgentsRepository(db, reg)
-	validator := token.NewValidator(token.RepoLookup{Inner: repo}, cfg.Argon2)
+	lookup, err := token.NewRepoLookup(repo)
+	if err != nil {
+		return authServiceDeps{}, err
+	}
+	validator := token.NewValidator(lookup, cfg.Argon2)
 
 	redisClient, publisher, err := setupRevocationPublisher(cfg, log, reg)
 	if err != nil {

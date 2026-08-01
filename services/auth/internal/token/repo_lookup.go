@@ -2,6 +2,7 @@ package token
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/Rick1330/ibex-harness/services/auth/internal/repository"
 )
@@ -13,12 +14,24 @@ type repoActiveLookup interface {
 
 // RepoLookup adapts repository.TokenRow into token.Row for Validator.
 type RepoLookup struct {
-	Inner repoActiveLookup
+	inner repoActiveLookup
+}
+
+// NewRepoLookup returns a Validator lookup adapter over a repository store.
+// inner must be non-nil.
+func NewRepoLookup(inner repoActiveLookup) (RepoLookup, error) {
+	if inner == nil {
+		return RepoLookup{}, fmt.Errorf("token: nil RepoLookup inner")
+	}
+	return RepoLookup{inner: inner}, nil
 }
 
 // FindActiveByPrefix implements the Validator lookup port.
 func (l RepoLookup) FindActiveByPrefix(ctx context.Context, prefix string) (Row, error) {
-	row, err := l.Inner.FindActiveByPrefix(ctx, prefix)
+	if l.inner == nil {
+		return Row{}, fmt.Errorf("token: nil RepoLookup inner")
+	}
+	row, err := l.inner.FindActiveByPrefix(ctx, prefix)
 	if err != nil {
 		return Row{}, err
 	}

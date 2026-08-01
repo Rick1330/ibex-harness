@@ -23,7 +23,11 @@ func TestValidateTokenIntegration(t *testing.T) {
 
 	repo := repository.NewTokensRepository(db, nil)
 	argon2 := token.DefaultArgon2Params()
-	validator := token.NewValidator(token.RepoLookup{Inner: repo}, argon2)
+	lookup, err := token.NewRepoLookup(repo)
+	if err != nil {
+		t.Fatalf("NewRepoLookup: %v", err)
+	}
+	validator := token.NewValidator(lookup, argon2)
 
 	orgA := testutil.SeedOrganization(t, db, "Org A", "org-a-val-"+uuid.NewString()[:8])
 	orgB := testutil.SeedOrganization(t, db, "Org B", "org-b-val-"+uuid.NewString()[:8])
@@ -97,7 +101,11 @@ func TestValidateTokenOptionalFields(t *testing.T) {
 
 	repo := repository.NewTokensRepository(db, nil)
 	argon2 := token.DefaultArgon2Params()
-	validator := token.NewValidator(token.RepoLookup{Inner: repo}, argon2)
+	lookup, err := token.NewRepoLookup(repo)
+	if err != nil {
+		t.Fatalf("NewRepoLookup: %v", err)
+	}
+	validator := token.NewValidator(lookup, argon2)
 
 	orgID := testutil.SeedOrganization(t, db, "Optional Fields Org", "opt-"+uuid.NewString()[:8])
 	userID := testutil.SeedUser(t, db, orgID, "opt-"+uuid.NewString()[:8]+"@test.local", "Opt User")

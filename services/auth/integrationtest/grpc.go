@@ -51,7 +51,11 @@ func startAuthGRPC(t testing.TB, dbDSN string, redisClient redis.UniversalClient
 	repo := repository.NewTokensRepository(db, reg)
 	agentsRepo := repository.NewAgentsRepository(db, reg)
 	argon2 := token.DefaultArgon2Params()
-	validator := token.NewValidator(token.RepoLookup{Inner: repo}, argon2)
+	lookup, err := token.NewRepoLookup(repo)
+	if err != nil {
+		t.Fatalf("NewRepoLookup: %v", err)
+	}
+	validator := token.NewValidator(lookup, argon2)
 
 	publisher := revocation.Publisher(revocation.NoopPublisher{})
 	if redisClient != nil {
