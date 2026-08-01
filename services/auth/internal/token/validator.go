@@ -8,13 +8,12 @@ import (
 	"time"
 
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
-	"github.com/Rick1330/ibex-harness/services/auth/internal/repository"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // tokenLookup loads active token rows for validation.
 type tokenLookup interface {
-	FindActiveByPrefix(ctx context.Context, prefix string) (repository.TokenRow, error)
+	FindActiveByPrefix(ctx context.Context, prefix string) (Row, error)
 }
 
 // Validator validates bearer tokens against Postgres.
@@ -47,22 +46,25 @@ func (v *Validator) Validate(ctx context.Context, accessToken string) (*authv1.V
 		return nil, ErrUnauthenticated
 	}
 
+	return validateResponseFromRow(row), nil
+}
+
+func validateResponseFromRow(row Row) *authv1.ValidateTokenResponse {
 	resp := &authv1.ValidateTokenResponse{
 		OrgId:       row.OrgID,
 		Permissions: row.Permissions,
 		TokenId:     &row.ID,
 	}
-	if row.AgentID.Valid {
-		resp.AgentId = &row.AgentID.String
+	if row.AgentID != nil {
+		resp.AgentId = row.AgentID
 	}
-	if row.UserID.Valid {
-		resp.UserId = &row.UserID.String
+	if row.UserID != nil {
+		resp.UserId = row.UserID
 	}
-	if row.ExpiresAt.Valid {
-		ts := timestamppb.New(row.ExpiresAt.Time.UTC())
-		resp.ExpiresAt = ts
+	if row.ExpiresAt != nil {
+		resp.ExpiresAt = timestamppb.New(row.ExpiresAt.UTC())
 	}
-	return resp, nil
+	return resp
 }
 
 // HashForTest exposes HashBearer for integration tests in the auth module.

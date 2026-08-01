@@ -2,13 +2,11 @@ package token_test
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"testing"
 	"time"
 
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
-	"github.com/Rick1330/ibex-harness/services/auth/internal/repository"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/token"
 	"github.com/google/uuid"
 )
@@ -62,13 +60,13 @@ func runValidatorCase(t *testing.T, run validatorRun) {
 }
 
 type fakeLookup struct {
-	row repository.TokenRow
+	row token.Row
 	err error
 }
 
-func (f *fakeLookup) FindActiveByPrefix(ctx context.Context, _ string) (repository.TokenRow, error) {
+func (f *fakeLookup) FindActiveByPrefix(ctx context.Context, _ string) (token.Row, error) {
 	if f.err != nil {
-		return repository.TokenRow{}, f.err
+		return token.Row{}, f.err
 	}
 	return f.row, nil
 }
@@ -84,11 +82,10 @@ func TestValidator_Validate(t *testing.T) {
 	}
 	agentID := uuid.NewString()
 	userID := uuid.NewString()
-	row := repository.TokenRow{
+	expires := time.Now().UTC().Add(time.Hour)
+	row := token.Row{
 		ID: tokenID.String(), OrgID: uuid.NewString(), Hash: hash, Permissions: 42,
-		AgentID:   sql.NullString{String: agentID, Valid: true},
-		UserID:    sql.NullString{String: userID, Valid: true},
-		ExpiresAt: sql.NullTime{Time: time.Now().UTC().Add(time.Hour), Valid: true},
+		AgentID: &agentID, UserID: &userID, ExpiresAt: &expires,
 	}
 	for _, tc := range validatorCases(validatorFixture{bearer: bearer, hash: hash, agentID: agentID, userID: userID, row: row}) {
 		tc := tc

@@ -4,6 +4,7 @@ package auth_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"testing"
 	"time"
@@ -12,7 +13,28 @@ import (
 	"github.com/Rick1330/ibex-harness/services/auth/internal/repository"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/token"
 	"github.com/google/uuid"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
+
+type validateEnv struct {
+	v      *token.Validator
+	repo   *repository.TokensRepository
+	argon2 token.Argon2Params
+}
+
+type orgRef struct {
+	id string
+}
+
+type optionalScope struct {
+	orgID   string
+	userID  string
+	agentID string
+}
+
+type bearerRef struct {
+	raw string
+}
 
 func TestValidateTokenIntegration(t *testing.T) {
 	dsn, cleanup := testutil.SetupPostgres(t)
@@ -21,71 +43,14 @@ func TestValidateTokenIntegration(t *testing.T) {
 	db := testutil.OpenDB(t, dsn)
 	defer db.Close()
 
-	repo := repository.NewTokensRepository(db, nil)
-	argon2 := token.DefaultArgon2Params()
-	validator := token.NewValidator(repo, argon2)
+	env := newValidateEnv(t, db)
+	orgA := orgRef{id: testutil.SeedOrganization(t, db, "Org A", "org-a-val-"+uuid.NewString()[:8])}
+	orgB := orgRef{id: testutil.SeedOrganization(t, db, "Org B", "org-b-val-"+uuid.NewString()[:8])}
 
-	orgA := testutil.SeedOrganization(t, db, "Org A", "org-a-val-"+uuid.NewString()[:8])
-	orgB := testutil.SeedOrganization(t, db, "Org B", "org-b-val-"+uuid.NewString()[:8])
-
-	tokenID := uuid.New()
-	bearer := "ibex_pat_" + tokenID.String() + "_integrationsecret"
-	prefix := "ibex_pat_" + tokenID.String()
-	hash, err := token.HashForTest(bearer, argon2)
-	if err != nil {
-		t.Fatalf("hash: %v", err)
-	}
-	_, err = repo.InsertTestToken(context.Background(), orgA, prefix, hash, "test-pat", 42, false, nil)
-	if err != nil {
-		t.Fatalf("insert token: %v", err)
-	}
-
-	resp, err := validator.Validate(context.Background(), bearer)
-	if err != nil {
-		t.Fatalf("validate: %v", err)
-	}
-	if resp.GetOrgId() != orgA || resp.GetPermissions() != 42 {
-		t.Fatalf("response: org=%s perms=%d", resp.GetOrgId(), resp.GetPermissions())
-	}
-
-	_, err = validator.Validate(context.Background(), bearer+"wrong")
-	if !errors.Is(err, token.ErrUnauthenticated) {
-		t.Fatalf("expected unauthenticated, got %v", err)
-	}
-
-	revokedID := uuid.New()
-	revokedBearer := "ibex_pat_" + revokedID.String() + "_revoked"
-	revokedHash, err := token.HashForTest(revokedBearer, argon2)
-	if err != nil {
-		t.Fatalf("hash revoked: %v", err)
-	}
-	_, err = repo.InsertTestToken(context.Background(), orgA, "ibex_pat_"+revokedID.String(), revokedHash, "revoked", 1, true, nil)
-	if err != nil {
-		t.Fatalf("insert revoked: %v", err)
-	}
-	_, err = validator.Validate(context.Background(), revokedBearer)
-	if !errors.Is(err, token.ErrUnauthenticated) {
-		t.Fatalf("revoked token should fail: %v", err)
-	}
-
-	otherID := uuid.New()
-	otherBearer := "ibex_pat_" + otherID.String() + "_otherorg"
-	otherHash, err := token.HashForTest(otherBearer, argon2)
-	if err != nil {
-		t.Fatalf("hash other: %v", err)
-	}
-	_, err = repo.InsertTestToken(context.Background(), orgB, "ibex_pat_"+otherID.String(), otherHash, "org-b-token", 99, false, nil)
-	if err != nil {
-		t.Fatalf("insert org b token: %v", err)
-	}
-
-	respB, err := validator.Validate(context.Background(), otherBearer)
-	if err != nil {
-		t.Fatalf("validate org b: %v", err)
-	}
-	if respB.GetOrgId() != orgB {
-		t.Fatalf("org b id: got %s want %s", respB.GetOrgId(), orgB)
-	}
+	env.assertValidateOK(t, orgA, 42)
+	env.assertUnauthenticated(t, bearerRef{raw: "ibex_pat_" + uuid.NewString() + "_wrong"})
+	env.assertRevokedRejected(t, orgA)
+	env.assertValidateOrg(t, orgB, 99)
 }
 
 func TestValidateTokenOptionalFields(t *testing.T) {
@@ -95,51 +60,134 @@ func TestValidateTokenOptionalFields(t *testing.T) {
 	db := testutil.OpenDB(t, dsn)
 	defer db.Close()
 
-	repo := repository.NewTokensRepository(db, nil)
-	argon2 := token.DefaultArgon2Params()
-	validator := token.NewValidator(repo, argon2)
-
+	env := newValidateEnv(t, db)
 	orgID := testutil.SeedOrganization(t, db, "Optional Fields Org", "opt-"+uuid.NewString()[:8])
 	userID := testutil.SeedUser(t, db, orgID, "opt-"+uuid.NewString()[:8]+"@test.local", "Opt User")
 	agentID := testutil.SeedAgent(t, db, orgID, userID, "Opt Agent", "opt-agent-"+uuid.NewString()[:8])
+	env.assertOptionalFields(t, optionalScope{orgID: orgID, userID: userID, agentID: agentID})
+}
 
-	tokenID := uuid.New()
-	bearer := "ibex_pat_" + tokenID.String() + "_optionalfields"
-	prefix := "ibex_pat_" + tokenID.String()
-	hash, err := token.HashForTest(bearer, argon2)
+func newValidateEnv(t *testing.T, db *sql.DB) validateEnv {
+	t.Helper()
+	repo := repository.NewTokensRepository(db, nil)
+	lookup, err := token.NewRepoLookup(repo)
+	if err != nil {
+		t.Fatalf("NewRepoLookup: %v", err)
+	}
+	argon2 := token.DefaultArgon2Params()
+	return validateEnv{
+		v: token.NewValidator(lookup, argon2), repo: repo, argon2: argon2,
+	}
+}
+
+func (e validateEnv) mustHash(t *testing.T, bearer bearerRef) string {
+	t.Helper()
+	hash, err := token.HashForTest(bearer.raw, e.argon2)
 	if err != nil {
 		t.Fatalf("hash: %v", err)
 	}
+	return hash
+}
+
+func (e validateEnv) insertActivePAT(t *testing.T, org orgRef, perms int64) bearerRef {
+	t.Helper()
+	tokenID := uuid.New()
+	bearer := bearerRef{raw: "ibex_pat_" + tokenID.String() + "_integrationsecret"}
+	prefix := "ibex_pat_" + tokenID.String()
+	hash := e.mustHash(t, bearer)
+	_, err := e.repo.InsertTestToken(context.Background(), org.id, prefix, hash, "test-pat", perms, false, nil)
+	if err != nil {
+		t.Fatalf("insert token: %v", err)
+	}
+	return bearer
+}
+
+func (e validateEnv) assertValidateOK(t *testing.T, org orgRef, perms int64) {
+	t.Helper()
+	bearer := e.insertActivePAT(t, org, perms)
+	resp, err := e.v.Validate(context.Background(), bearer.raw)
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	if resp.GetOrgId() != org.id {
+		t.Fatalf("org=%s want %s", resp.GetOrgId(), org.id)
+	}
+	if resp.GetPermissions() != perms {
+		t.Fatalf("perms=%d want %d", resp.GetPermissions(), perms)
+	}
+}
+
+func (e validateEnv) assertUnauthenticated(t *testing.T, bearer bearerRef) {
+	t.Helper()
+	_, err := e.v.Validate(context.Background(), bearer.raw)
+	if !errors.Is(err, token.ErrUnauthenticated) {
+		t.Fatalf("expected unauthenticated, got %v", err)
+	}
+}
+
+func (e validateEnv) assertRevokedRejected(t *testing.T, org orgRef) {
+	t.Helper()
+	revokedID := uuid.New()
+	revokedBearer := bearerRef{raw: "ibex_pat_" + revokedID.String() + "_revoked"}
+	revokedHash := e.mustHash(t, revokedBearer)
+	_, err := e.repo.InsertTestToken(context.Background(), org.id, "ibex_pat_"+revokedID.String(), revokedHash, "revoked", 1, true, nil)
+	if err != nil {
+		t.Fatalf("insert revoked: %v", err)
+	}
+	e.assertUnauthenticated(t, revokedBearer)
+}
+
+func (e validateEnv) assertValidateOrg(t *testing.T, org orgRef, perms int64) {
+	t.Helper()
+	bearer := e.insertActivePAT(t, org, perms)
+	resp, err := e.v.Validate(context.Background(), bearer.raw)
+	if err != nil {
+		t.Fatalf("validate org: %v", err)
+	}
+	if resp.GetOrgId() != org.id {
+		t.Fatalf("org id: got %s want %s", resp.GetOrgId(), org.id)
+	}
+}
+
+func (e validateEnv) assertOptionalFields(t *testing.T, scope optionalScope) {
+	t.Helper()
+	tokenID := uuid.New()
+	bearer := bearerRef{raw: "ibex_pat_" + tokenID.String() + "_optionalfields"}
+	prefix := "ibex_pat_" + tokenID.String()
+	hash := e.mustHash(t, bearer)
 	expires := token.FutureExpiry()
-	_, err = repo.CreateToken(context.Background(), repository.CreateTokenParams{
-		ID:          tokenID.String(),
-		OrgID:       orgID,
-		Name:        "scoped-pat",
-		Hash:        hash,
-		Prefix:      prefix,
-		Permissions: 55,
-		UserID:      &userID,
-		AgentID:     &agentID,
-		ExpiresAt:   expires,
+	_, err := e.repo.CreateToken(context.Background(), repository.CreateTokenParams{
+		ID: tokenID.String(), OrgID: scope.orgID, Name: "scoped-pat",
+		Hash: hash, Prefix: prefix, Permissions: 55,
+		UserID: &scope.userID, AgentID: &scope.agentID, ExpiresAt: expires,
 	})
 	if err != nil {
 		t.Fatalf("insert scoped token: %v", err)
 	}
-
-	resp, err := validator.Validate(context.Background(), bearer)
+	resp, err := e.v.Validate(context.Background(), bearer.raw)
 	if err != nil {
 		t.Fatalf("validate: %v", err)
 	}
-	if resp.GetUserId() != userID {
-		t.Fatalf("user_id: got %q want %q", resp.GetUserId(), userID)
+	if resp.GetUserId() != scope.userID {
+		t.Fatalf("user_id: got %q want %q", resp.GetUserId(), scope.userID)
 	}
-	if resp.GetAgentId() != agentID {
-		t.Fatalf("agent_id: got %q want %q", resp.GetAgentId(), agentID)
+	if resp.GetAgentId() != scope.agentID {
+		t.Fatalf("agent_id: got %q want %q", resp.GetAgentId(), scope.agentID)
 	}
-	if resp.GetExpiresAt() == nil {
+	assertExpiresMatches(t, resp.GetExpiresAt(), expires)
+}
+
+func assertExpiresMatches(t *testing.T, got *timestamppb.Timestamp, want *time.Time) {
+	t.Helper()
+	if got == nil {
 		t.Fatal("expected expires_at in response")
 	}
-	if resp.GetExpiresAt().AsTime().UTC().Truncate(time.Second) != expires.UTC().Truncate(time.Second) {
-		t.Fatalf("expires_at mismatch: got %v want %v", resp.GetExpiresAt().AsTime(), expires)
+	if want == nil {
+		t.Fatal("want expires nil")
+	}
+	gotT := got.AsTime().UTC().Truncate(time.Second)
+	wantT := want.UTC().Truncate(time.Second)
+	if gotT != wantT {
+		t.Fatalf("expires_at mismatch: got %v want %v", gotT, wantT)
 	}
 }
