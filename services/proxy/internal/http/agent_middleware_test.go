@@ -43,7 +43,7 @@ func agentTestAgentID() string {
 	return "550e8400-e29b-41d4-a716-446655440000"
 }
 
-func runAgentVerification(t *testing.T, verifier auth.AgentVerifier, agentID string, withAuth bool) *httptest.ResponseRecorder {
+func runAgentVerification(t *testing.T, verifier AgentVerifier, agentID string, withAuth bool) *httptest.ResponseRecorder {
 	t.Helper()
 	handler := AgentVerificationMiddleware(verifier, logger.Discard("proxy"))(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -72,7 +72,7 @@ func runAgentVerification(t *testing.T, verifier auth.AgentVerifier, agentID str
 func TestAgentVerification(t *testing.T) {
 	tests := []struct {
 		name       string
-		verifier   auth.AgentVerifier
+		verifier   AgentVerifier
 		agentID    string
 		withAuth   bool
 		wantStatus int
