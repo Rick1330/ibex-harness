@@ -127,31 +127,13 @@ func (s *Server) ValidateToken(ctx context.Context, req *authv1.ValidateTokenReq
 }
 
 func (s *Server) CreateToken(ctx context.Context, req *authv1.CreateTokenRequest) (*authv1.CreateTokenResponse, error) {
-	caller, ok := CallerFromContext(ctx)
-	if !ok {
-		return nil, status.Error(codes.Unauthenticated, errMsgMissingCallerContext)
-	}
-	orgID, err := parseOrgID(req.GetOrgId())
-	if err != nil {
-		return nil, status.Error(codes.InvalidArgument, err.Error())
-	}
-	if caller.OrgID != orgID.String() {
-		s.auditCrossTenant(ctx, caller.OrgID, "token", "")
-		return nil, status.Error(codes.PermissionDenied, "forbidden")
-	}
-	if err := RequireOrgAndPermission(ctx, req.GetOrgId(), permissions.TokenCreate); err != nil {
-		return nil, err
-	}
-	in, err := createTokenInputFromProto(req)
+	in, err := s.authorizeCreateTokenRequest(ctx, req)
 	if err != nil {
 		return nil, err
 	}
 	result, err := s.tokenService.CreateToken(ctx, in)
 	if err != nil {
-		if errors.Is(err, service.ErrInvalidArgument) {
-			return nil, status.Error(codes.InvalidArgument, "invalid request")
-		}
-		return nil, status.Errorf(codes.Internal, "create token failed")
+		return nil, s.mapCreateTokenServiceErr(ctx, err)
 	}
 	return &authv1.CreateTokenResponse{
 		TokenId:   result.TokenID,
@@ -159,6 +141,54 @@ func (s *Server) CreateToken(ctx context.Context, req *authv1.CreateTokenRequest
 		Prefix:    result.Prefix,
 		CreatedAt: timestamppb.New(result.CreatedAt),
 	}, nil
+}
+
+func (s *Server) mapCreateTokenServiceErr(ctx context.Context, err error) error {
+	switch {
+	case errors.Is(err, service.ErrInvalidArgument):
+		return status.Error(codes.InvalidArgument, errMsgInvalidRequest)
+	case errors.Is(err, context.DeadlineExceeded):
+		return status.Error(codes.DeadlineExceeded, "create token timed out")
+	case errors.Is(err, context.Canceled):
+		return status.Error(codes.Canceled, "create token canceled")
+	default:
+		s.log.ErrorCtx(ctx, "create token failed", "error", err)
+		return status.Error(codes.Internal, "create token failed")
+	}
+}
+
+func (s *Server) authorizeCreateTokenRequest(ctx context.Context, req *authv1.CreateTokenRequest) (service.CreateTokenInput, error) {
+	caller, ok := CallerFromContext(ctx)
+	if !ok {
+		return service.CreateTokenInput{}, status.Error(codes.Unauthenticated, errMsgMissingCallerContext)
+	}
+	orgID, err := parseOrgID(req.GetOrgId())
+	if err != nil {
+		return service.CreateTokenInput{}, status.Error(codes.InvalidArgument, err.Error())
+	}
+	if caller.OrgID != orgID.String() {
+		s.auditCrossTenant(ctx, caller.OrgID, "token", "")
+		return service.CreateTokenInput{}, status.Error(codes.PermissionDenied, errMsgForbidden)
+	}
+	if err := RequireOrgAndPermission(ctx, orgID.String(), permissions.TokenCreate); err != nil {
+		return service.CreateTokenInput{}, err
+	}
+	if err := authorizeCreateTokenPermissions(caller.Permissions, req.GetPermissions()); err != nil {
+		return service.CreateTokenInput{}, err
+	}
+	return createTokenInputFromProto(req)
+}
+
+// authorizeCreateTokenPermissions enforces requested ⊆ caller (no privilege
+// escalation) and rejects reserved high bits on the requested bitmap.
+func authorizeCreateTokenPermissions(callerPerms, requested int64) error {
+	if permissions.UsesReservedHighBits(requested) {
+		return status.Error(codes.InvalidArgument, errMsgInvalidRequest)
+	}
+	if !permissions.Has(callerPerms, requested) {
+		return status.Error(codes.PermissionDenied, errMsgForbidden)
+	}
+	return nil
 }
 
 func createTokenInputFromProto(req *authv1.CreateTokenRequest) (service.CreateTokenInput, error) {
@@ -169,7 +199,7 @@ func createTokenInputFromProto(req *authv1.CreateTokenRequest) (service.CreateTo
 	}
 	if ts := req.GetExpiresAt(); ts != nil {
 		if err := ts.CheckValid(); err != nil {
-			return service.CreateTokenInput{}, status.Error(codes.InvalidArgument, "invalid request")
+			return service.CreateTokenInput{}, status.Error(codes.InvalidArgument, errMsgInvalidRequest)
 		}
 		t := ts.AsTime()
 		in.ExpiresAt = &t
