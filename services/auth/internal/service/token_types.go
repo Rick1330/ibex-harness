@@ -21,7 +21,8 @@ const (
 // CreateTokenInput is the service-boundary DTO for TokenService.CreateToken.
 // Callers must supply OrgID and Name; TokenType must be TokenTypePAT or
 // TokenTypeUnspecified. Invalid inputs return ErrInvalidArgument before any
-// persistence. Optional UserID, AgentID, ExpiresAt, Description, and Permissions
+// persistence. Optional UserID and AgentID must belong to OrgID when set
+// (ErrTokenSubjectForbidden otherwise); ExpiresAt, Description, and Permissions
 // are forwarded to the repository when set.
 type CreateTokenInput struct {
 	OrgID       string

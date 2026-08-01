@@ -38,7 +38,8 @@ func startAuthGRPC(t *testing.T, dbDSN string) (authv1.AuthServiceClient, func()
 		t.Fatalf("NewRepoLookup: %v", err)
 	}
 	validator := token.NewValidator(lookup, argon2)
-	tokenSvc := service.NewTokenService(repo, argon2, logger.Discard("auth"), nil)
+	tokenSvc := service.NewTokenService(repo, argon2, logger.Discard("auth"), nil,
+		service.WithSubjectLookup(service.NewRepoTokenSubjects(agentsRepo, repository.NewUsersRepository(db, reg))))
 	agentSvc, err := service.NewAgentService(agentsRepo)
 	require.NoError(t, err)
 
@@ -266,5 +267,58 @@ func TestCreateTokenPermissionSubset(t *testing.T) {
 	}
 	if val.GetPermissions() != permissions.AgentDefault {
 		t.Fatalf("minted permissions=%d want AgentDefault", val.GetPermissions())
+	}
+}
+
+func TestCreateTokenSubjectOrgBind(t *testing.T) {
+	dsn, cleanupPG := testutil.SetupPostgres(t)
+	defer cleanupPG()
+
+	db := testutil.OpenDB(t, dsn)
+	orgA := testutil.SeedOrganization(t, db, "Bind Org A", "bind-a-"+uuid.NewString()[:8])
+	orgB := testutil.SeedOrganization(t, db, "Bind Org B", "bind-b-"+uuid.NewString()[:8])
+	userA := testutil.SeedUser(t, db, orgA, "a-"+uuid.NewString()[:8]+"@example.com", "User A")
+	userB := testutil.SeedUser(t, db, orgB, "b-"+uuid.NewString()[:8]+"@example.com", "User B")
+	agentA := testutil.SeedAgent(t, db, orgA, userA, "Agent A", "agent-a-"+uuid.NewString()[:8])
+	agentB := testutil.SeedAgent(t, db, orgB, userB, "Agent B", "agent-b-"+uuid.NewString()[:8])
+	adminA := testutil.SeedBootstrapAdminToken(t, db, orgA)
+	_ = db.Close()
+
+	client, cleanup := startAuthGRPC(t, dsn)
+	defer cleanup()
+
+	_, err := client.CreateToken(authCtx(adminA), &authv1.CreateTokenRequest{
+		OrgId: orgA, Name: "cross-agent", Type: authv1.TokenType_TOKEN_TYPE_PAT,
+		Permissions: permissions.AgentDefault, AgentId: &agentB,
+	})
+	if status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("cross-org agent bind: code=%v err=%v", status.Code(err), err)
+	}
+
+	_, err = client.CreateToken(authCtx(adminA), &authv1.CreateTokenRequest{
+		OrgId: orgA, Name: "cross-user", Type: authv1.TokenType_TOKEN_TYPE_PAT,
+		Permissions: permissions.AgentDefault, UserId: &userB,
+	})
+	if status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("cross-org user bind: code=%v err=%v", status.Code(err), err)
+	}
+
+	resp, err := client.CreateToken(authCtx(adminA), &authv1.CreateTokenRequest{
+		OrgId: orgA, Name: "same-org", Type: authv1.TokenType_TOKEN_TYPE_PAT,
+		Permissions: permissions.AgentDefault, AgentId: &agentA, UserId: &userA,
+	})
+	if err != nil {
+		t.Fatalf("same-org bind: %v", err)
+	}
+
+	valCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	val, err := client.ValidateToken(valCtx, &authv1.ValidateTokenRequest{AccessToken: resp.GetPlaintext()})
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	if val.GetAgentId() != agentA || val.GetUserId() != userA {
+		t.Fatalf("bound agent=%q user=%q want agent=%q user=%q",
+			val.GetAgentId(), val.GetUserId(), agentA, userA)
 	}
 }

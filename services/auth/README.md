@@ -59,7 +59,8 @@ grpcurl -plaintext \
   localhost:9091 ibex.auth.v1.AuthService/ValidateToken
 ```
 
-**CreateToken** (requires admin PAT with `TokenCreate` in metadata):
+**CreateToken** (requires caller PAT with `TokenCreate`; requested permissions must be a
+subset of the caller bitmap; optional `agent_id` / `user_id` must belong to `org_id`):
 
 ```bash
 grpcurl -plaintext \

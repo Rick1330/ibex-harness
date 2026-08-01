@@ -133,7 +133,7 @@ func (s *Server) CreateToken(ctx context.Context, req *authv1.CreateTokenRequest
 	}
 	result, err := s.tokenService.CreateToken(ctx, in)
 	if err != nil {
-		return nil, s.mapCreateTokenServiceErr(ctx, err)
+		return nil, s.mapCreateTokenFailure(ctx, err)
 	}
 	return &authv1.CreateTokenResponse{
 		TokenId:   result.TokenID,
@@ -143,10 +143,21 @@ func (s *Server) CreateToken(ctx context.Context, req *authv1.CreateTokenRequest
 	}, nil
 }
 
+func (s *Server) mapCreateTokenFailure(ctx context.Context, err error) error {
+	if errors.Is(err, service.ErrTokenSubjectForbidden) {
+		if caller, ok := CallerFromContext(ctx); ok {
+			s.auditCrossTenant(ctx, caller.OrgID, "token_bind", "")
+		}
+	}
+	return s.mapCreateTokenServiceErr(ctx, err)
+}
+
 func (s *Server) mapCreateTokenServiceErr(ctx context.Context, err error) error {
 	switch {
 	case errors.Is(err, service.ErrInvalidArgument):
 		return status.Error(codes.InvalidArgument, errMsgInvalidRequest)
+	case errors.Is(err, service.ErrTokenSubjectForbidden):
+		return status.Error(codes.PermissionDenied, errMsgForbidden)
 	case errors.Is(err, context.DeadlineExceeded):
 		return status.Error(codes.DeadlineExceeded, "create token timed out")
 	case errors.Is(err, context.Canceled):

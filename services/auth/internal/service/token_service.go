@@ -27,21 +27,34 @@ type TokenService struct {
 	argon2        token.Argon2Params
 	logger        *logger.Logger
 	publisher     revocation.Publisher
+	subjects      tokenSubjectLookup
 	publishWG     sync.WaitGroup
 	publishCancel context.CancelFunc
 	publishDone   <-chan struct{}
 }
 
+// TokenServiceOption configures optional TokenService dependencies.
+type TokenServiceOption func(*TokenService)
+
+// WithSubjectLookup enables same-org checks for optional agent_id/user_id binds.
+func WithSubjectLookup(lookup tokenSubjectLookup) TokenServiceOption {
+	return func(s *TokenService) { s.subjects = lookup }
+}
+
 // NewTokenService constructs a TokenService. publisher may be nil (NoopPublisher).
-func NewTokenService(repo tokenRepo, argon2 token.Argon2Params, log *logger.Logger, publisher revocation.Publisher) *TokenService {
+func NewTokenService(repo tokenRepo, argon2 token.Argon2Params, log *logger.Logger, publisher revocation.Publisher, opts ...TokenServiceOption) *TokenService {
 	if publisher == nil {
 		publisher = revocation.NoopPublisher{}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	return &TokenService{
+	svc := &TokenService{
 		repo: repo, argon2: argon2, logger: log, publisher: publisher,
 		publishCancel: cancel, publishDone: ctx.Done(),
 	}
+	for _, opt := range opts {
+		opt(svc)
+	}
+	return svc
 }
 
 // CreateTokenResult holds the one-time plaintext response fields.
@@ -59,6 +72,9 @@ type CreateTokenResult struct {
 // The plaintext token in the result is only available at creation time.
 func (s *TokenService) CreateToken(ctx context.Context, in CreateTokenInput) (CreateTokenResult, error) {
 	if err := validateCreateTokenInput(in); err != nil {
+		return CreateTokenResult{}, err
+	}
+	if err := s.validateCreateTokenSubjects(ctx, in); err != nil {
 		return CreateTokenResult{}, err
 	}
 	plaintext, prefix, params, err := buildCreateTokenParams(in, s.argon2)

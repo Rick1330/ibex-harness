@@ -164,6 +164,7 @@ func initAuthServices(
 		return authServiceDeps{}, err
 	}
 	agentsRepo := repository.NewAgentsRepository(db, reg)
+	usersRepo := repository.NewUsersRepository(db, reg)
 	lookup, err := token.NewRepoLookup(repo)
 	if err != nil {
 		return authServiceDeps{}, err
@@ -174,7 +175,8 @@ func initAuthServices(
 	if err != nil {
 		return authServiceDeps{}, err
 	}
-	tokenSvc := service.NewTokenService(repo, cfg.Argon2, log, publisher)
+	subjects := service.NewRepoTokenSubjects(agentsRepo, usersRepo)
+	tokenSvc := service.NewTokenService(repo, cfg.Argon2, log, publisher, service.WithSubjectLookup(subjects))
 	return authServiceDeps{
 		validator: validator, tokenSvc: tokenSvc, agentsRepo: agentsRepo,
 		redisClient: redisClient, log: log,
