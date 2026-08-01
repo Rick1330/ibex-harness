@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 
 	"github.com/Rick1330/ibex-harness/services/auth/internal/repository"
 	"github.com/google/uuid"
@@ -16,9 +17,13 @@ var ErrTokenSubjectForbidden = errors.New("token subject forbidden")
 // ErrTokenSubjectLookup indicates a store failure while verifying bind subjects.
 var ErrTokenSubjectLookup = errors.New("token subject lookup failed")
 
-// userByOrgLookup loads a user record scoped to an organization.
-type userByOrgLookup interface {
-	GetByIDAndOrg(ctx context.Context, userID, orgID uuid.UUID) (*repository.UserRecord, error)
+// ErrTokenSubjectUnavailable indicates subject lookup was not wired (misconfig).
+// Callers must map this to Internal and must not treat it as a tenant denial.
+var ErrTokenSubjectUnavailable = errors.New("token subject lookup unavailable")
+
+// userOrgFinder loads a user record scoped to an organization.
+type userOrgFinder interface {
+	Find(ctx context.Context, userID, orgID uuid.UUID) (*repository.UserRecord, error)
 }
 
 // tokenSubjectLookup verifies optional CreateToken agent/user binds stay in-org.
@@ -29,12 +34,39 @@ type tokenSubjectLookup interface {
 
 type repoTokenSubjects struct {
 	agents agentByOrgLookup
-	users  userByOrgLookup
+	users  userOrgFinder
+}
+
+type usersFindAdapter struct {
+	repo *repository.UsersRepository
+}
+
+func (a usersFindAdapter) Find(ctx context.Context, userID, orgID uuid.UUID) (*repository.UserRecord, error) {
+	return a.repo.GetByIDAndOrg(ctx, userID, orgID)
 }
 
 // NewRepoTokenSubjects builds a subject lookup from agent and user repositories.
-func NewRepoTokenSubjects(agents agentByOrgLookup, users userByOrgLookup) tokenSubjectLookup {
-	return &repoTokenSubjects{agents: agents, users: users}
+func NewRepoTokenSubjects(agents agentByOrgLookup, users *repository.UsersRepository) (tokenSubjectLookup, error) {
+	if isNilSubjectDep(agents) {
+		return nil, fmt.Errorf("service: nil agent subject lookup")
+	}
+	if users == nil {
+		return nil, fmt.Errorf("service: nil users repository")
+	}
+	return &repoTokenSubjects{agents: agents, users: usersFindAdapter{repo: users}}, nil
+}
+
+func isNilSubjectDep(v any) bool {
+	if v == nil {
+		return true
+	}
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Ptr, reflect.Slice:
+		return rv.IsNil()
+	default:
+		return false
+	}
 }
 
 func (s *repoTokenSubjects) AgentBelongsToOrg(ctx context.Context, agentID, orgID uuid.UUID) (bool, error) {
@@ -46,7 +78,7 @@ func (s *repoTokenSubjects) AgentBelongsToOrg(ctx context.Context, agentID, orgI
 }
 
 func (s *repoTokenSubjects) UserBelongsToOrg(ctx context.Context, userID, orgID uuid.UUID) (bool, error) {
-	rec, err := s.users.GetByIDAndOrg(ctx, userID, orgID)
+	rec, err := s.users.Find(ctx, userID, orgID)
 	if err != nil {
 		return false, err
 	}
@@ -58,7 +90,7 @@ func (s *TokenService) validateCreateTokenSubjects(ctx context.Context, in Creat
 		return nil
 	}
 	if s.subjects == nil {
-		return ErrTokenSubjectForbidden
+		return ErrTokenSubjectUnavailable
 	}
 	orgID, err := uuid.Parse(in.OrgID)
 	if err != nil {
@@ -115,4 +147,18 @@ func parseOptionalSubjectID(raw string) (uuid.UUID, error) {
 		return uuid.Nil, ErrInvalidArgument
 	}
 	return id, nil
+}
+
+// TokenBindResourceID formats optional bind subjects for internal audit logs.
+func TokenBindResourceID(in CreateTokenInput) string {
+	switch {
+	case in.AgentID != nil && in.UserID != nil:
+		return "agent:" + *in.AgentID + ",user:" + *in.UserID
+	case in.AgentID != nil:
+		return *in.AgentID
+	case in.UserID != nil:
+		return *in.UserID
+	default:
+		return ""
+	}
 }

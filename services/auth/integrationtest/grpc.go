@@ -65,8 +65,12 @@ func startAuthGRPC(t testing.TB, dbDSN string, redisClient redis.UniversalClient
 		}
 		publisher = pub
 	}
+	subjects, err := service.NewRepoTokenSubjects(agentsRepo, repository.NewUsersRepository(db, reg))
+	if err != nil {
+		t.Fatalf("NewRepoTokenSubjects: %v", err)
+	}
 	tokenSvc := service.NewTokenService(repo, argon2, logger.Discard("auth"), publisher,
-		service.WithSubjectLookup(service.NewRepoTokenSubjects(agentsRepo, repository.NewUsersRepository(db, reg))))
+		service.WithSubjectLookup(subjects))
 	agentSvc, err := service.NewAgentService(agentsRepo)
 	if err != nil {
 		t.Fatalf("agent service: %v", err)

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/Rick1330/ibex-harness/packages/logger"
+	"github.com/Rick1330/ibex-harness/services/auth/internal/repository"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/token"
 	"github.com/google/uuid"
 )
@@ -43,11 +44,11 @@ func TestUnit_CreateToken_SubjectOrgBind(t *testing.T) {
 			in:   CreateTokenInput{OrgID: orgID, Name: "plain", TokenType: TokenTypePAT},
 		},
 		{
-			name: "nil_lookup_rejects_agent_bind",
+			name: "nil_lookup_unavailable",
 			in: CreateTokenInput{
 				OrgID: orgID, Name: "a", TokenType: TokenTypePAT, AgentID: &sameAgent,
 			},
-			wantErr: ErrTokenSubjectForbidden,
+			wantErr: ErrTokenSubjectUnavailable,
 		},
 		{
 			name: "cross_org_agent_forbidden",
@@ -79,7 +80,7 @@ func TestUnit_CreateToken_SubjectOrgBind(t *testing.T) {
 				OrgID: orgID, Name: "bad", TokenType: TokenTypePAT,
 				AgentID: strPtr("not-a-uuid"),
 			},
-			lookup:  allowAllSubjects{},
+			lookup:  scriptedSubjects{},
 			wantErr: ErrInvalidArgument,
 		},
 		{
@@ -111,6 +112,46 @@ func TestUnit_CreateToken_SubjectOrgBind(t *testing.T) {
 			}
 			if err != nil {
 				t.Fatalf("CreateToken: %v", err)
+			}
+		})
+	}
+}
+
+func TestUnit_NewRepoTokenSubjects_RejectsNil(t *testing.T) {
+	t.Parallel()
+	users := &repository.UsersRepository{}
+	if _, err := NewRepoTokenSubjects(nil, users); err == nil {
+		t.Fatal("expected nil agents error")
+	}
+	if _, err := NewRepoTokenSubjects(&repository.AgentsRepository{}, nil); err == nil {
+		t.Fatal("expected nil users error")
+	}
+	var typedNilAgents *repository.AgentsRepository
+	if _, err := NewRepoTokenSubjects(typedNilAgents, users); err == nil {
+		t.Fatal("expected typed-nil agents error")
+	}
+}
+
+func TestUnit_TokenBindResourceID(t *testing.T) {
+	t.Parallel()
+	agent := "agent-1"
+	user := "user-1"
+	cases := []struct {
+		name string
+		in   CreateTokenInput
+		want string
+	}{
+		{name: "empty", want: ""},
+		{name: "agent_only", in: CreateTokenInput{AgentID: &agent}, want: "agent-1"},
+		{name: "user_only", in: CreateTokenInput{UserID: &user}, want: "user-1"},
+		{name: "both", in: CreateTokenInput{AgentID: &agent, UserID: &user}, want: "agent:agent-1,user:user-1"},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := TokenBindResourceID(tc.in); got != tc.want {
+				t.Fatalf("got %q want %q", got, tc.want)
 			}
 		})
 	}

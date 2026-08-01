@@ -11,6 +11,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/permissions"
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	"github.com/Rick1330/ibex-harness/packages/reqid"
+	"github.com/Rick1330/ibex-harness/services/auth/internal/service"
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -134,6 +135,68 @@ func TestUnit_ValidateAgent_SameOrgMissDoesNotAuditCrossTenant(t *testing.T) {
 	}
 }
 
+func TestUnit_CreateToken_SubjectBindDeniedAudit(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	orgID := uuid.NewString()
+	agentID := uuid.NewString()
+	userID := uuid.NewString()
+	tokens := &fakeTokenAPI{
+		createFn: func(context.Context, service.CreateTokenInput) (service.CreateTokenResult, error) {
+			return service.CreateTokenResult{}, service.ErrTokenSubjectForbidden
+		},
+	}
+	s := newServerWithLogTokens(t, &buf, tokens)
+	ctx := ContextWithCaller(context.Background(), CallerContext{
+		OrgID: orgID, Permissions: permissions.Admin,
+	})
+	ctx = metadata.NewIncomingContext(ctx, metadata.Pairs(reqid.GRPCMetadataKey, "req-bind"))
+
+	_, err := s.CreateToken(ctx, &authv1.CreateTokenRequest{
+		OrgId: orgID, Name: "bind", Permissions: permissions.AgentDefault,
+		AgentId: &agentID, UserId: &userID,
+	})
+	assertGRPCCode(t, err, codes.PermissionDenied)
+
+	logged := buf.String()
+	if strings.Contains(logged, "cross-tenant access attempt") {
+		t.Fatalf("bind deny must not use cross-tenant audit: %s", logged)
+	}
+	assertLogContains(t, logged, "token subject bind denied")
+	assertLogContains(t, logged, `"target_resource_type":"token_bind"`)
+	assertLogContains(t, logged, "agent:"+agentID+",user:"+userID)
+	assertLogContains(t, logged, "req-bind")
+}
+
+func TestUnit_CreateToken_SubjectUnavailableNoBindAudit(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	orgID := uuid.NewString()
+	agentID := uuid.NewString()
+	tokens := &fakeTokenAPI{
+		createFn: func(context.Context, service.CreateTokenInput) (service.CreateTokenResult, error) {
+			return service.CreateTokenResult{}, service.ErrTokenSubjectUnavailable
+		},
+	}
+	s := newServerWithLogTokens(t, &buf, tokens)
+	ctx := ContextWithCaller(context.Background(), CallerContext{
+		OrgID: orgID, Permissions: permissions.Admin,
+	})
+
+	_, err := s.CreateToken(ctx, &authv1.CreateTokenRequest{
+		OrgId: orgID, Name: "misconfig", Permissions: permissions.AgentDefault, AgentId: &agentID,
+	})
+	assertGRPCCode(t, err, codes.Internal)
+
+	logged := buf.String()
+	if strings.Contains(logged, "token subject bind denied") || strings.Contains(logged, "cross-tenant access attempt") {
+		t.Fatalf("unavailable must not audit bind/cross-tenant: %s", logged)
+	}
+	assertLogContains(t, logged, "create token subject lookup unavailable")
+}
+
 func assertCrossTenantAudit(t *testing.T, callerOrg string, tc auditCase) {
 	t.Helper()
 
@@ -160,6 +223,27 @@ func assertCrossTenantAudit(t *testing.T, callerOrg string, tc auditCase) {
 func newServerWithLog(t *testing.T, buf *bytes.Buffer) *Server {
 	t.Helper()
 	return newServerWithLogAndAgents(t, buf, &fakeAgentAPI{})
+}
+
+func newServerWithLogTokens(t *testing.T, buf *bytes.Buffer, tokens tokenAPI) *Server {
+	t.Helper()
+	log, err := logger.New(logger.Config{
+		Service: "auth", Level: slog.LevelWarn, Writer: buf,
+	})
+	if err != nil {
+		t.Fatalf("logger: %v", err)
+	}
+	srv, err := NewServer(ServerDeps{
+		Validator:    &fakeTokenValidator{},
+		TokenService: tokens,
+		AgentService: &fakeAgentAPI{},
+		Metrics:      testAuthRegistry(),
+		Log:          log,
+	})
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	return srv
 }
 
 func newServerWithLogAndAgents(t *testing.T, buf *bytes.Buffer, agents agentAPI) *Server {

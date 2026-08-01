@@ -133,7 +133,7 @@ func (s *Server) CreateToken(ctx context.Context, req *authv1.CreateTokenRequest
 	}
 	result, err := s.tokenService.CreateToken(ctx, in)
 	if err != nil {
-		return nil, s.mapCreateTokenFailure(ctx, err)
+		return nil, s.mapCreateTokenFailure(ctx, in, err)
 	}
 	return &authv1.CreateTokenResponse{
 		TokenId:   result.TokenID,
@@ -143,10 +143,10 @@ func (s *Server) CreateToken(ctx context.Context, req *authv1.CreateTokenRequest
 	}, nil
 }
 
-func (s *Server) mapCreateTokenFailure(ctx context.Context, err error) error {
+func (s *Server) mapCreateTokenFailure(ctx context.Context, in service.CreateTokenInput, err error) error {
 	if errors.Is(err, service.ErrTokenSubjectForbidden) {
 		if caller, ok := CallerFromContext(ctx); ok {
-			s.auditCrossTenant(ctx, caller.OrgID, "token_bind", "")
+			s.auditTokenBindDenied(ctx, caller.OrgID, service.TokenBindResourceID(in))
 		}
 	}
 	return s.mapCreateTokenServiceErr(ctx, err)
@@ -158,6 +158,9 @@ func (s *Server) mapCreateTokenServiceErr(ctx context.Context, err error) error 
 		return status.Error(codes.InvalidArgument, errMsgInvalidRequest)
 	case errors.Is(err, service.ErrTokenSubjectForbidden):
 		return status.Error(codes.PermissionDenied, errMsgForbidden)
+	case errors.Is(err, service.ErrTokenSubjectUnavailable):
+		s.log.ErrorCtx(ctx, "create token subject lookup unavailable", "error", err)
+		return status.Error(codes.Internal, "create token failed")
 	case errors.Is(err, context.DeadlineExceeded):
 		return status.Error(codes.DeadlineExceeded, "create token timed out")
 	case errors.Is(err, context.Canceled):
@@ -298,6 +301,18 @@ func (s *Server) auditCrossTenant(ctx context.Context, requestingOrg, resourceTy
 	s.log.WarnCtx(ctx, "cross-tenant access attempt",
 		"requesting_org_id", requestingOrg,
 		"target_resource_type", resourceType,
+		"target_resource_id", resourceID,
+	)
+}
+
+func (s *Server) auditTokenBindDenied(ctx context.Context, requestingOrg, resourceID string) {
+	if s.log == nil {
+		return
+	}
+	ctx = withIncomingRequestID(ctx)
+	s.log.WarnCtx(ctx, "token subject bind denied",
+		"requesting_org_id", requestingOrg,
+		"target_resource_type", "token_bind",
 		"target_resource_id", resourceID,
 	)
 }

@@ -38,8 +38,12 @@ func startAuthGRPC(t *testing.T, dbDSN string) (authv1.AuthServiceClient, func()
 		t.Fatalf("NewRepoLookup: %v", err)
 	}
 	validator := token.NewValidator(lookup, argon2)
+	subjects, err := service.NewRepoTokenSubjects(agentsRepo, repository.NewUsersRepository(db, reg))
+	if err != nil {
+		t.Fatalf("NewRepoTokenSubjects: %v", err)
+	}
 	tokenSvc := service.NewTokenService(repo, argon2, logger.Discard("auth"), nil,
-		service.WithSubjectLookup(service.NewRepoTokenSubjects(agentsRepo, repository.NewUsersRepository(db, reg))))
+		service.WithSubjectLookup(subjects))
 	agentSvc, err := service.NewAgentService(agentsRepo)
 	require.NoError(t, err)
 

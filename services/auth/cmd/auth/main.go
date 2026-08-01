@@ -175,7 +175,10 @@ func initAuthServices(
 	if err != nil {
 		return authServiceDeps{}, err
 	}
-	subjects := service.NewRepoTokenSubjects(agentsRepo, usersRepo)
+	subjects, err := service.NewRepoTokenSubjects(agentsRepo, usersRepo)
+	if err != nil {
+		return authServiceDeps{}, err
+	}
 	tokenSvc := service.NewTokenService(repo, cfg.Argon2, log, publisher, service.WithSubjectLookup(subjects))
 	return authServiceDeps{
 		validator: validator, tokenSvc: tokenSvc, agentsRepo: agentsRepo,

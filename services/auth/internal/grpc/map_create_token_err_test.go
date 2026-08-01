@@ -35,6 +35,12 @@ func TestUnit_MapCreateTokenServiceErr(t *testing.T) {
 			wantMsg:  errMsgForbidden,
 		},
 		{
+			name:     "subject_unavailable",
+			err:      service.ErrTokenSubjectUnavailable,
+			wantCode: codes.Internal,
+			wantMsg:  "create token failed",
+		},
+		{
 			name:     "deadline",
 			err:      context.DeadlineExceeded,
 			wantCode: codes.DeadlineExceeded,

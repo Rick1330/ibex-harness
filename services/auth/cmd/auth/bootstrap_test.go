@@ -58,7 +58,10 @@ func newTestAuthServiceDeps(t *testing.T, db *sql.DB, reg *ibexmetrics.AuthRegis
 		t.Fatalf("NewRepoLookup: %v", err)
 	}
 	validator := token.NewValidator(lookup, token.DefaultArgon2Params())
-	subjects := service.NewRepoTokenSubjects(agentsRepo, usersRepo)
+	subjects, err := service.NewRepoTokenSubjects(agentsRepo, usersRepo)
+	if err != nil {
+		t.Fatalf("NewRepoTokenSubjects: %v", err)
+	}
 	tokenSvc := service.NewTokenService(repo, token.DefaultArgon2Params(), logger.Discard("auth"), nil,
 		service.WithSubjectLookup(subjects))
 	return authServiceDeps{
