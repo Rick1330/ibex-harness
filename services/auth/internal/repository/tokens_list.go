@@ -10,6 +10,20 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/metrics"
 )
 
+// Fixed SQL shapes — placeholders only; never interpolate user values into the text.
+const listTokensSQL = `
+			SELECT id::text, name, prefix, permissions, expires_at, created_at, revoked_at, is_revoked
+			FROM ibex_core.tokens
+			WHERE org_id = $1::uuid
+			ORDER BY created_at DESC, id DESC LIMIT $2`
+
+const listTokensSQLWithCursor = `
+			SELECT id::text, name, prefix, permissions, expires_at, created_at, revoked_at, is_revoked
+			FROM ibex_core.tokens
+			WHERE org_id = $1::uuid
+			  AND (created_at < $2 OR (created_at = $2 AND id < $3::uuid))
+			ORDER BY created_at DESC, id DESC LIMIT $4`
+
 // ListTokens returns token metadata for an org with cursor pagination.
 func (r *TokensRepository) ListTokens(ctx context.Context, orgID, cursor string, limit int) ([]TokenMetadata, string, error) {
 	start := time.Now()
@@ -47,8 +61,7 @@ type listTokensQuery struct {
 func (r *TokensRepository) queryTokenMetadataPage(ctx context.Context, q listTokensQuery) ([]TokenMetadata, error) {
 	var rows []TokenMetadata
 	err := r.withServiceAccount(ctx, func(tx *sql.Tx) error {
-		sqlText, args := buildListTokensSQL(q)
-		result, err := tx.QueryContext(ctx, sqlText, args...)
+		result, err := queryListTokens(ctx, tx, q)
 		if err != nil {
 			return err
 		}
@@ -58,21 +71,11 @@ func (r *TokensRepository) queryTokenMetadataPage(ctx context.Context, q listTok
 	return rows, err
 }
 
-func buildListTokensSQL(q listTokensQuery) (string, []any) {
-	query := `
-			SELECT id::text, name, prefix, permissions, expires_at, created_at, revoked_at, is_revoked
-			FROM ibex_core.tokens
-			WHERE org_id = $1::uuid`
-	args := []any{q.orgID}
-	argN := 2
-	if q.cursor != "" {
-		query += fmt.Sprintf(` AND (created_at < $%d OR (created_at = $%d AND id < $%d::uuid))`, argN, argN, argN+1)
-		args = append(args, q.cursorTS, q.cursorID)
-		argN += 2
+func queryListTokens(ctx context.Context, tx *sql.Tx, q listTokensQuery) (*sql.Rows, error) {
+	if q.cursor == "" {
+		return tx.QueryContext(ctx, listTokensSQL, q.orgID, q.limit+1)
 	}
-	query += fmt.Sprintf(` ORDER BY created_at DESC, id DESC LIMIT $%d`, argN)
-	args = append(args, q.limit+1)
-	return query, args
+	return tx.QueryContext(ctx, listTokensSQLWithCursor, q.orgID, q.cursorTS, q.cursorID, q.limit+1)
 }
 
 func scanTokenMetadataRows(result *sql.Rows, rows *[]TokenMetadata) error {
