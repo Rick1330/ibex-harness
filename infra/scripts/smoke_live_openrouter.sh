@@ -23,9 +23,18 @@ CURL_STREAM_MAX_TIME="${CURL_STREAM_MAX_TIME:-90}"
 
 CHAT_BODY="$(printf '{"model":"%s","messages":[{"role":"user","content":"Reply with exactly: pong"}]}' "$LIVE_MODEL")"
 STREAM_BODY="$(printf '{"model":"%s","stream":true,"messages":[{"role":"user","content":"Say hi in one word"}]}' "$LIVE_MODEL")"
+HDR_CONTENT_TYPE_JSON="Content-Type: application/json"
 
-fail() { echo "FAIL: $1" >&2; exit 1; }
-pass() { echo "PASS: $1"; }
+fail() {
+  local msg="$1"
+  echo "FAIL: $msg" >&2
+  exit 1
+}
+
+pass() {
+  local msg="$1"
+  echo "PASS: $msg"
+}
 
 expect_http() {
   local got="$1"
@@ -63,12 +72,12 @@ HTTP="$(http_code "$PROXY_ADDR/ready")"
 expect_http "$HTTP" "200" "proxy /ready → 200" "proxy /ready returned $HTTP"
 
 HTTP="$(http_code -X POST "$PROXY_ADDR/v1/chat/completions" \
-  -H "Content-Type: application/json" \
+  -H "$HDR_CONTENT_TYPE_JSON" \
   -d "$CHAT_BODY")"
 expect_http "$HTTP" "401" "no token → 401" "no token returned $HTTP, want 401"
 
 HTTP="$(http_code -X POST "$PROXY_ADDR/v1/chat/completions" \
-  -H "Content-Type: application/json" \
+  -H "$HDR_CONTENT_TYPE_JSON" \
   -H "Authorization: Bearer $DEV_TOKEN" \
   -H "X-IBEX-Agent-ID: $DEV_AGENT" \
   -d '{"model":"not-a-real-model-xyz","messages":[{"role":"user","content":"x"}]}')"
@@ -79,7 +88,7 @@ HTTP="$(curl -s -o "$BODY_FILE" -w "%{http_code}" \
   --connect-timeout "$CURL_CONNECT_TIMEOUT" \
   --max-time "$CURL_MAX_TIME" \
   -X POST "$PROXY_ADDR/v1/chat/completions" \
-  -H "Content-Type: application/json" \
+  -H "$HDR_CONTENT_TYPE_JSON" \
   -H "Authorization: Bearer $DEV_TOKEN" \
   -H "X-IBEX-Agent-ID: $DEV_AGENT" \
   -d "$CHAT_BODY")"
@@ -101,7 +110,7 @@ HTTP="$(curl -s -o "$STREAM_FILE" -w "%{http_code}" -N \
   --connect-timeout "$CURL_CONNECT_TIMEOUT" \
   --max-time "$CURL_STREAM_MAX_TIME" \
   -X POST "$PROXY_ADDR/v1/chat/completions" \
-  -H "Content-Type: application/json" \
+  -H "$HDR_CONTENT_TYPE_JSON" \
   -H "Authorization: Bearer $DEV_TOKEN" \
   -H "X-IBEX-Agent-ID: $DEV_AGENT" \
   -d "$STREAM_BODY")"
