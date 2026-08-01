@@ -2,10 +2,13 @@ package token
 
 import (
 	"context"
-	"fmt"
+	"errors"
 
 	"github.com/Rick1330/ibex-harness/services/auth/internal/repository"
 )
+
+// ErrNilRepoLookupInner indicates a RepoLookup was built without a backing store.
+var ErrNilRepoLookupInner = errors.New("token: nil RepoLookup inner")
 
 // repoActiveLookup is the persistence port adapted into domain Row.
 type repoActiveLookup interface {
@@ -21,7 +24,7 @@ type RepoLookup struct {
 // inner must be non-nil.
 func NewRepoLookup(inner repoActiveLookup) (RepoLookup, error) {
 	if inner == nil {
-		return RepoLookup{}, fmt.Errorf("token: nil RepoLookup inner")
+		return RepoLookup{}, ErrNilRepoLookupInner
 	}
 	return RepoLookup{inner: inner}, nil
 }
@@ -29,7 +32,7 @@ func NewRepoLookup(inner repoActiveLookup) (RepoLookup, error) {
 // FindActiveByPrefix implements the Validator lookup port.
 func (l RepoLookup) FindActiveByPrefix(ctx context.Context, prefix string) (Row, error) {
 	if l.inner == nil {
-		return Row{}, fmt.Errorf("token: nil RepoLookup inner")
+		return Row{}, ErrNilRepoLookupInner
 	}
 	row, err := l.inner.FindActiveByPrefix(ctx, prefix)
 	if err != nil {
