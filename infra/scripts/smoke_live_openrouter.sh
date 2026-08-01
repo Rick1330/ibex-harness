@@ -24,6 +24,21 @@ CURL_STREAM_MAX_TIME="${CURL_STREAM_MAX_TIME:-90}"
 CHAT_BODY="$(printf '{"model":"%s","messages":[{"role":"user","content":"Reply with exactly: pong"}]}' "$LIVE_MODEL")"
 STREAM_BODY="$(printf '{"model":"%s","stream":true,"messages":[{"role":"user","content":"Say hi in one word"}]}' "$LIVE_MODEL")"
 HDR_CONTENT_TYPE_JSON="Content-Type: application/json"
+HDR_AGENT="X-IBEX-Agent-ID: ${DEV_AGENT}"
+
+BODY_FILE="$(mktemp)"
+STREAM_FILE="$(mktemp)"
+AUTH_HDR_FILE="$(mktemp)"
+cleanup() {
+  rm -f "$BODY_FILE" "$STREAM_FILE" "$AUTH_HDR_FILE"
+}
+trap cleanup EXIT
+
+# Keep the bearer token out of curl argv (ps(1) / audit logs).
+umask 077
+printf 'Authorization: Bearer %s\n' "$DEV_TOKEN" >"$AUTH_HDR_FILE"
+chmod 600 "$AUTH_HDR_FILE"
+unset DEV_TOKEN
 
 fail() {
   local msg="$1"
@@ -78,68 +93,60 @@ expect_http "$HTTP" "401" "no token → 401" "no token returned $HTTP, want 401"
 
 HTTP="$(http_code -X POST "$PROXY_ADDR/v1/chat/completions" \
   -H "$HDR_CONTENT_TYPE_JSON" \
-  -H "Authorization: Bearer $DEV_TOKEN" \
-  -H "X-IBEX-Agent-ID: $DEV_AGENT" \
+  -H "@${AUTH_HDR_FILE}" \
+  -H "$HDR_AGENT" \
   -d '{"model":"not-a-real-model-xyz","messages":[{"role":"user","content":"x"}]}')"
 expect_http "$HTTP" "501" "unknown model → 501" "unknown model returned $HTTP, want 501"
 
-BODY_FILE="$(mktemp)"
 HTTP="$(curl -s -o "$BODY_FILE" -w "%{http_code}" \
   --connect-timeout "$CURL_CONNECT_TIMEOUT" \
   --max-time "$CURL_MAX_TIME" \
   -X POST "$PROXY_ADDR/v1/chat/completions" \
   -H "$HDR_CONTENT_TYPE_JSON" \
-  -H "Authorization: Bearer $DEV_TOKEN" \
-  -H "X-IBEX-Agent-ID: $DEV_AGENT" \
+  -H "@${AUTH_HDR_FILE}" \
+  -H "$HDR_AGENT" \
   -d "$CHAT_BODY")"
 if [[ "$HTTP" != "200" ]]; then
   echo "body: $(head -c 500 "$BODY_FILE")" >&2
-  rm -f "$BODY_FILE"
   fail "live chat returned $HTTP, want 200"
 fi
 if ! grep -q 'choices' "$BODY_FILE"; then
   echo "body: $(head -c 500 "$BODY_FILE")" >&2
-  rm -f "$BODY_FILE"
   fail "live chat body missing choices"
 fi
-rm -f "$BODY_FILE"
 pass "live chat → 200 with choices"
 
-STREAM_FILE="$(mktemp)"
 HTTP="$(curl -s -o "$STREAM_FILE" -w "%{http_code}" -N \
   --connect-timeout "$CURL_CONNECT_TIMEOUT" \
   --max-time "$CURL_STREAM_MAX_TIME" \
   -X POST "$PROXY_ADDR/v1/chat/completions" \
   -H "$HDR_CONTENT_TYPE_JSON" \
-  -H "Authorization: Bearer $DEV_TOKEN" \
-  -H "X-IBEX-Agent-ID: $DEV_AGENT" \
+  -H "@${AUTH_HDR_FILE}" \
+  -H "$HDR_AGENT" \
   -d "$STREAM_BODY")"
 if [[ "$HTTP" != "200" ]]; then
   echo "stream body: $(head -c 500 "$STREAM_FILE")" >&2
-  rm -f "$STREAM_FILE"
   fail "live stream returned $HTTP, want 200"
 fi
 if ! grep -q 'data:' "$STREAM_FILE"; then
   echo "stream body: $(head -c 500 "$STREAM_FILE")" >&2
-  rm -f "$STREAM_FILE"
   fail "live stream missing SSE data lines"
 fi
-rm -f "$STREAM_FILE"
 pass "live stream → 200 SSE"
 
-HTTP="$(http_code -H "Authorization: Bearer $DEV_TOKEN" \
-  -H "X-IBEX-Agent-ID: $DEV_AGENT" \
+HTTP="$(http_code -H "@${AUTH_HDR_FILE}" \
+  -H "$HDR_AGENT" \
   "$PROXY_ADDR/v1/internal/auth-probe")"
 expect_http "$HTTP" "200" "auth probe → 200" "auth probe returned $HTTP"
 
-HTTP="$(http_code -H "Authorization: Bearer $DEV_TOKEN" \
-  -H "X-IBEX-Agent-ID: $DEV_AGENT" \
+HTTP="$(http_code -H "@${AUTH_HDR_FILE}" \
+  -H "$HDR_AGENT" \
   "$PROXY_ADDR/v1/orgs/$DEV_ORG/auth-probe")"
 expect_http "$HTTP" "200" "org auth probe → 200" "org auth probe returned $HTTP"
 
 WRONG_ORG="00000000-0000-0000-0000-000000000099"
-HTTP="$(http_code -H "Authorization: Bearer $DEV_TOKEN" \
-  -H "X-IBEX-Agent-ID: $DEV_AGENT" \
+HTTP="$(http_code -H "@${AUTH_HDR_FILE}" \
+  -H "$HDR_AGENT" \
   "$PROXY_ADDR/v1/orgs/$WRONG_ORG/auth-probe")"
 expect_http "$HTTP" "403" "cross-org path probe → 403" "cross-org probe returned $HTTP, want 403"
 

@@ -13,10 +13,10 @@ func FlattenUserinfoToQuery(u *url.URL) {
 	user := u.User.Username()
 	pass, hasPass := u.User.Password()
 	q := u.Query()
-	if user != "" && q.Get("username") == "" {
+	if user != "" && !q.Has("username") {
 		q.Set("username", user)
 	}
-	if hasPass && q.Get("password") == "" {
+	if hasPass && !q.Has("password") {
 		q.Set("password", pass)
 	}
 	u.User = nil

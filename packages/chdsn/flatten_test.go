@@ -52,3 +52,25 @@ func TestUnit_FlattenUserinfoToQuery_PreservesExistingQueryCreds(t *testing.T) {
 		t.Fatalf("query=%v", q)
 	}
 }
+
+func TestUnit_FlattenUserinfoToQuery_PreservesExplicitEmptyQueryCreds(t *testing.T) {
+	t.Parallel()
+
+	u, err := url.Parse("clickhouse://default:secret@localhost:8123/ibex?username=&password=")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	FlattenUserinfoToQuery(u)
+
+	q := u.Query()
+	if !q.Has("username") || !q.Has("password") {
+		t.Fatalf("expected empty query keys present: %v", q)
+	}
+	if q.Get("username") != "" || q.Get("password") != "" {
+		t.Fatalf("empty query creds overwritten: %v", q)
+	}
+	if u.User != nil {
+		t.Fatal("userinfo should be cleared")
+	}
+}
