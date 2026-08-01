@@ -14,6 +14,9 @@ import (
 // ErrNotFound is returned when a token row does not exist for the given org scope.
 var ErrNotFound = errors.New("token not found")
 
+// ErrNilDB is returned when NewTokensRepository is constructed with a nil *sql.DB.
+var ErrNilDB = errors.New("repository: nil db")
+
 // TokenRow is a token record used for validation.
 type TokenRow struct {
 	ID          string
@@ -31,9 +34,10 @@ type TokensRepository struct {
 	obs metrics.QueryObserver
 }
 
+// NewTokensRepository constructs a TokensRepository. Returns ErrNilDB when db is nil.
 func NewTokensRepository(db *sql.DB, obs metrics.QueryObserver) (*TokensRepository, error) {
 	if db == nil {
-		return nil, errors.New("repository: nil db")
+		return nil, ErrNilDB
 	}
 	return &TokensRepository{db: db, obs: obs}, nil
 }

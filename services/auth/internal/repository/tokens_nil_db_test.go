@@ -16,8 +16,8 @@ func TestUnit_NewTokensRepository_NilDB(t *testing.T) {
 	if repo != nil {
 		t.Fatal("expected nil repo")
 	}
-	if got := err.Error(); got != "repository: nil db" {
-		t.Fatalf("error: %q", got)
+	if !errors.Is(err, repository.ErrNilDB) {
+		t.Fatalf("error: %v", err)
 	}
 	if errors.Is(err, repository.ErrNotFound) {
 		t.Fatal("nil db must not be ErrNotFound")
