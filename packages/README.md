@@ -15,6 +15,10 @@ Shared libraries and contract artifacts (not deployable as standalone processes)
 | `metrics/` | Canonical Prometheus metric registry ([ADR-0021](../docs/adr/ADR-0021-prometheus-metric-catalog.md)) |
 | `config/` | Typed env loading with aggregated validation ([ADR-0020](../docs/adr/ADR-0020-shared-package-boundaries.md)) |
 | `apierror/` | Canonical HTTP/gRPC error codes and envelope ([ADR-0020](../docs/adr/ADR-0020-shared-package-boundaries.md)) |
+| `session/` | Session store contract (intentional multi-consumer API — [ARCHITECTURE_LAYERING.md](../web/engineering/ARCHITECTURE_LAYERING.md)) |
+| `idempotency/` | Idempotency store contract (intentional multi-consumer API) |
+| `directive/` | Directive resolver contract (intentional multi-consumer API) |
+| `authcache/` | Token validation LRU + Redis cache (upstream `Validator` stays here) |
 | `healthcheck/` | Shared `/health` and `/ready` probe framework ([ADR-0022](../docs/adr/ADR-0022-health-check-contract.md)) |
 | `provider/` | LLM provider abstraction and model registry ([ADR-0025](../web/content/docs/adr/0025-llm-provider-abstraction.mdx)) |
 | `sdk-python/` | Python client SDK (planned) |

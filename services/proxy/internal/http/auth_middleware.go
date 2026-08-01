@@ -31,7 +31,7 @@ type authWriteCtx struct {
 const authUnavailableMsg = "Authentication service unavailable"
 
 // AuthMiddleware validates bearer tokens and attaches auth context.
-func AuthMiddleware(validator auth.TokenValidator, log *logger.Logger, opts AuthOptions) func(http.Handler) http.Handler {
+func AuthMiddleware(validator TokenValidator, log *logger.Logger, opts AuthOptions) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		deps := authServeDeps{validator: validator, log: log, opts: opts, next: next}
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -41,7 +41,7 @@ func AuthMiddleware(validator auth.TokenValidator, log *logger.Logger, opts Auth
 }
 
 type authServeDeps struct {
-	validator auth.TokenValidator
+	validator TokenValidator
 	log       *logger.Logger
 	opts      AuthOptions
 	next      http.Handler

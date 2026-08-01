@@ -34,6 +34,8 @@ type AgentRecord struct {
 }
 
 // AgentVerifier validates agent ownership for the authenticated org.
+// Prefer the HTTP consumer port (services/proxy/internal/http.AgentVerifier)
+// at middleware boundaries; this remains for auth package adapters and wiring.
 type AgentVerifier interface {
 	Verify(ctx context.Context, bearer, agentID, orgID string) (*AgentRecord, error)
 }

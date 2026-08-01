@@ -40,8 +40,8 @@ type RouterDeps struct {
 	Logger             *logger.Logger
 	Metrics            *metrics.ProxyRegistry
 	Tracer             trace.Tracer
-	Validator          auth.TokenValidator
-	AgentVerifier      auth.AgentVerifier
+	Validator          TokenValidator
+	AgentVerifier      AgentVerifier
 	Limiter            ratelimit.Limiter
 	DirectiveResolver  directive.Resolver
 	SessionStore       session.Store
