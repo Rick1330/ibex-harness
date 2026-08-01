@@ -1,6 +1,7 @@
 package clickhouse
 
 import (
+	"net/url"
 	"strings"
 	"testing"
 
@@ -49,7 +50,11 @@ func TestUnit_DSN_DefaultDatabase(t *testing.T) {
 
 func TestUnit_DSN_UserinfoPasswordFlattens(t *testing.T) {
 	t.Parallel()
-	opts, err := parseOptions("clickhouse://default:ibexdev@localhost:8123/ibex")
+
+	dsn := "clickhouse://default:ibexdev@localhost:8123/ibex"
+
+	opts, err := parseOptions(dsn)
+
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +74,11 @@ func TestUnit_DSN_UserinfoPasswordFlattens(t *testing.T) {
 
 func TestUnit_NormalizeAppDSN_RewritesHTTPScheme(t *testing.T) {
 	t.Parallel()
-	got := normalizeAppDSN("clickhouse://default:secret@localhost:8123/ibex")
+
+	dsn := "clickhouse://default:secret@localhost:8123/ibex"
+
+	got := normalizeAppDSN(dsn)
+
 	if !strings.HasPrefix(got, "http://") {
 		t.Fatalf("got %q", got)
 	}
@@ -78,6 +87,34 @@ func TestUnit_NormalizeAppDSN_RewritesHTTPScheme(t *testing.T) {
 	}
 	if !strings.Contains(got, "password=secret") {
 		t.Fatalf("password query missing: %q", got)
+	}
+}
+
+func TestUnit_NormalizeAppDSN_InvalidURLPassthrough(t *testing.T) {
+	t.Parallel()
+
+	in := "not-a-url"
+
+	got := normalizeAppDSN(in)
+
+	if got != in {
+		t.Fatalf("got %q want %q", got, in)
+	}
+}
+
+func TestUnit_RewriteHTTPScheme_NoHostOrBadPort(t *testing.T) {
+	t.Parallel()
+
+	uEmpty := &url.URL{Scheme: "clickhouse"}
+	rewriteHTTPScheme(uEmpty)
+	if uEmpty.Scheme != "clickhouse" {
+		t.Fatalf("empty host scheme=%s", uEmpty.Scheme)
+	}
+
+	uBare := &url.URL{Scheme: "clickhouse", Host: "localhost"}
+	rewriteHTTPScheme(uBare)
+	if uBare.Scheme != "clickhouse" {
+		t.Fatalf("bare host scheme=%s", uBare.Scheme)
 	}
 }
 

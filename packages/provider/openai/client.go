@@ -58,10 +58,22 @@ func New(cfg Config, log *logger.Logger, tracer trace.Tracer, metrics Metrics) *
 
 func (c *Client) Name() string { return "openai" }
 
-var defaultSupportedModels = []string{"gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"}
+const (
+	modelGPT4o      = "gpt-4o"
+	modelGPT4oMini  = "gpt-4o-mini"
+	modelGPT4Turbo  = "gpt-4-turbo"
+	modelGPT35Turbo = "gpt-3.5-turbo"
+)
 
+func builtInSupportedModels() []string {
+	return []string{modelGPT4o, modelGPT4oMini, modelGPT4Turbo, modelGPT35Turbo}
+}
+
+// SupportedModels returns the allowlist checked before upstream requests so
+// unknown model IDs fail closed as PROVIDER_NOT_CONFIGURED instead of leaking
+// arbitrary model strings to the provider.
 func (c *Client) SupportedModels() []string {
-	return mergeSupportedModels(defaultSupportedModels, c.cfg.ExtraModels)
+	return mergeSupportedModels(builtInSupportedModels(), c.cfg.ExtraModels)
 }
 
 func mergeSupportedModels(base, extra []string) []string {

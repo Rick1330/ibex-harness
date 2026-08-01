@@ -89,7 +89,11 @@ func TestUnit_MigrateDSN_Redacted(t *testing.T) {
 
 func TestUnit_MigrateDSN_FlattensPasswordToQuery(t *testing.T) {
 	t.Parallel()
-	got := ParseConn("clickhouse://default:ibexdev@localhost:9002?database=ibex").String()
+
+	dsn := "clickhouse://default:ibexdev@localhost:9002?database=ibex"
+
+	got := ParseConn(dsn).String()
+
 	if strings.Contains(got, "ibexdev@") {
 		t.Fatalf("userinfo password should be flattened: %q", got)
 	}

@@ -10,6 +10,7 @@ import (
 
 	// Registers the ClickHouse database/sql driver used by golang-migrate.
 	_ "github.com/ClickHouse/clickhouse-go"
+	"github.com/Rick1330/ibex-harness/packages/chdsn"
 	"github.com/golang-migrate/migrate/v4"
 	// Registers the ClickHouse database driver with golang-migrate.
 	_ "github.com/golang-migrate/migrate/v4/database/clickhouse"
@@ -78,28 +79,9 @@ func normalizeMigrateURL(raw string) string {
 	}
 	normalizeSchemeAndPort(u)
 	liftPathDatabase(u)
-	flattenUserinfoToQuery(u)
+	chdsn.FlattenUserinfoToQuery(u)
 	ensureMigrateQuery(u)
 	return u.String()
-}
-
-// flattenUserinfoToQuery moves user:pass into query params. clickhouse-go v1
-// authenticates reliably with username=/password= but not userinfo in the URL.
-func flattenUserinfoToQuery(u *url.URL) {
-	if u.User == nil {
-		return
-	}
-	user := u.User.Username()
-	pass, hasPass := u.User.Password()
-	q := u.Query()
-	if user != "" && q.Get("username") == "" {
-		q.Set("username", user)
-	}
-	if hasPass && q.Get("password") == "" {
-		q.Set("password", pass)
-	}
-	u.User = nil
-	u.RawQuery = q.Encode()
 }
 
 func applyMigrateQueryDefaults(raw string) string {

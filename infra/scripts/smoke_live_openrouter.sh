@@ -17,6 +17,9 @@ DEV_TOKEN="${IBEX_DEV_TOKEN:-ibex_pat_00000000-0000-0000-0000-000000000004_LOCAL
 DEV_AGENT="${IBEX_DEV_AGENT_ID:-00000000-0000-0000-0000-000000000003}"
 DEV_ORG="${IBEX_DEV_ORG_ID:-00000000-0000-0000-0000-000000000001}"
 LIVE_MODEL="${IBEX_LIVE_MODEL:-openai/gpt-oss-20b:free}"
+CURL_CONNECT_TIMEOUT="${CURL_CONNECT_TIMEOUT:-5}"
+CURL_MAX_TIME="${CURL_MAX_TIME:-60}"
+CURL_STREAM_MAX_TIME="${CURL_STREAM_MAX_TIME:-90}"
 
 CHAT_BODY="$(printf '{"model":"%s","messages":[{"role":"user","content":"Reply with exactly: pong"}]}' "$LIVE_MODEL")"
 STREAM_BODY="$(printf '{"model":"%s","stream":true,"messages":[{"role":"user","content":"Say hi in one word"}]}' "$LIVE_MODEL")"
@@ -24,8 +27,23 @@ STREAM_BODY="$(printf '{"model":"%s","stream":true,"messages":[{"role":"user","c
 fail() { echo "FAIL: $1" >&2; exit 1; }
 pass() { echo "PASS: $1"; }
 
+expect_http() {
+  local got="$1"
+  local want="$2"
+  local ok_msg="$3"
+  local fail_msg="$4"
+  if [[ "$got" == "$want" ]]; then
+    pass "$ok_msg"
+  else
+    fail "$fail_msg"
+  fi
+}
+
 http_code() {
-  curl -s -o /dev/null -w "%{http_code}" "$@"
+  curl -s -o /dev/null -w "%{http_code}" \
+    --connect-timeout "$CURL_CONNECT_TIMEOUT" \
+    --max-time "$CURL_MAX_TIME" \
+    "$@"
 }
 
 echo "=== IBEX Harness Live OpenRouter Smoke ==="
@@ -33,30 +51,34 @@ echo "  Proxy: $PROXY_ADDR"
 echo "  Model: $LIVE_MODEL"
 echo ""
 
-if ! curl -s --connect-timeout 2 "$PROXY_ADDR/health" >/dev/null 2>&1; then
+if ! curl -s --connect-timeout "$CURL_CONNECT_TIMEOUT" --max-time "$CURL_MAX_TIME" \
+  "$PROXY_ADDR/health" >/dev/null 2>&1; then
   fail "proxy not reachable at $PROXY_ADDR"
 fi
 
 HTTP="$(http_code "$PROXY_ADDR/health")"
-[[ "$HTTP" == "200" ]] && pass "proxy /health → 200" || fail "proxy /health returned $HTTP"
+expect_http "$HTTP" "200" "proxy /health → 200" "proxy /health returned $HTTP"
 
 HTTP="$(http_code "$PROXY_ADDR/ready")"
-[[ "$HTTP" == "200" ]] && pass "proxy /ready → 200" || fail "proxy /ready returned $HTTP"
+expect_http "$HTTP" "200" "proxy /ready → 200" "proxy /ready returned $HTTP"
 
 HTTP="$(http_code -X POST "$PROXY_ADDR/v1/chat/completions" \
   -H "Content-Type: application/json" \
   -d "$CHAT_BODY")"
-[[ "$HTTP" == "401" ]] && pass "no token → 401" || fail "no token returned $HTTP, want 401"
+expect_http "$HTTP" "401" "no token → 401" "no token returned $HTTP, want 401"
 
 HTTP="$(http_code -X POST "$PROXY_ADDR/v1/chat/completions" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $DEV_TOKEN" \
   -H "X-IBEX-Agent-ID: $DEV_AGENT" \
   -d '{"model":"not-a-real-model-xyz","messages":[{"role":"user","content":"x"}]}')"
-[[ "$HTTP" == "501" ]] && pass "unknown model → 501" || fail "unknown model returned $HTTP, want 501"
+expect_http "$HTTP" "501" "unknown model → 501" "unknown model returned $HTTP, want 501"
 
 BODY_FILE="$(mktemp)"
-HTTP="$(curl -s -o "$BODY_FILE" -w "%{http_code}" -X POST "$PROXY_ADDR/v1/chat/completions" \
+HTTP="$(curl -s -o "$BODY_FILE" -w "%{http_code}" \
+  --connect-timeout "$CURL_CONNECT_TIMEOUT" \
+  --max-time "$CURL_MAX_TIME" \
+  -X POST "$PROXY_ADDR/v1/chat/completions" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $DEV_TOKEN" \
   -H "X-IBEX-Agent-ID: $DEV_AGENT" \
@@ -75,7 +97,10 @@ rm -f "$BODY_FILE"
 pass "live chat → 200 with choices"
 
 STREAM_FILE="$(mktemp)"
-HTTP="$(curl -s -o "$STREAM_FILE" -w "%{http_code}" -N -X POST "$PROXY_ADDR/v1/chat/completions" \
+HTTP="$(curl -s -o "$STREAM_FILE" -w "%{http_code}" -N \
+  --connect-timeout "$CURL_CONNECT_TIMEOUT" \
+  --max-time "$CURL_STREAM_MAX_TIME" \
+  -X POST "$PROXY_ADDR/v1/chat/completions" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $DEV_TOKEN" \
   -H "X-IBEX-Agent-ID: $DEV_AGENT" \
@@ -96,18 +121,18 @@ pass "live stream → 200 SSE"
 HTTP="$(http_code -H "Authorization: Bearer $DEV_TOKEN" \
   -H "X-IBEX-Agent-ID: $DEV_AGENT" \
   "$PROXY_ADDR/v1/internal/auth-probe")"
-[[ "$HTTP" == "200" ]] && pass "auth probe → 200" || fail "auth probe returned $HTTP"
+expect_http "$HTTP" "200" "auth probe → 200" "auth probe returned $HTTP"
 
 HTTP="$(http_code -H "Authorization: Bearer $DEV_TOKEN" \
   -H "X-IBEX-Agent-ID: $DEV_AGENT" \
   "$PROXY_ADDR/v1/orgs/$DEV_ORG/auth-probe")"
-[[ "$HTTP" == "200" ]] && pass "org auth probe → 200" || fail "org auth probe returned $HTTP"
+expect_http "$HTTP" "200" "org auth probe → 200" "org auth probe returned $HTTP"
 
 WRONG_ORG="00000000-0000-0000-0000-000000000099"
 HTTP="$(http_code -H "Authorization: Bearer $DEV_TOKEN" \
   -H "X-IBEX-Agent-ID: $DEV_AGENT" \
   "$PROXY_ADDR/v1/orgs/$WRONG_ORG/auth-probe")"
-[[ "$HTTP" == "403" ]] && pass "cross-org path probe → 403" || fail "cross-org probe returned $HTTP, want 403"
+expect_http "$HTTP" "403" "cross-org path probe → 403" "cross-org probe returned $HTTP, want 403"
 
 echo ""
 echo "All live OpenRouter smoke tests passed"

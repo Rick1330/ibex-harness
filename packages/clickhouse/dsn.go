@@ -7,33 +7,15 @@ import (
 	"strings"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/Rick1330/ibex-harness/packages/chdsn"
 )
-
-// flattenUserinfoToQuery moves user:pass into query params. clickhouse-go
-// authenticates reliably with username=/password= but not userinfo in the URL.
-func flattenUserinfoToQuery(u *url.URL) {
-	if u.User == nil {
-		return
-	}
-	user := u.User.Username()
-	pass, hasPass := u.User.Password()
-	q := u.Query()
-	if user != "" && q.Get("username") == "" {
-		q.Set("username", user)
-	}
-	if hasPass && q.Get("password") == "" {
-		q.Set("password", pass)
-	}
-	u.User = nil
-	u.RawQuery = q.Encode()
-}
 
 func normalizeAppDSN(dsn string) string {
 	u, err := url.Parse(dsn)
 	if err != nil || u.Scheme == "" {
 		return dsn
 	}
-	flattenUserinfoToQuery(u)
+	chdsn.FlattenUserinfoToQuery(u)
 	// clickhouse-go HTTP mode POSTs using the DSN scheme; "clickhouse://" is
 	// rejected by net/http. Rewrite app HTTP ports to http(s) before ParseDSN.
 	rewriteHTTPScheme(u)

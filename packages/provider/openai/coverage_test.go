@@ -14,8 +14,11 @@ import (
 
 func TestClient_SupportedModels(t *testing.T) {
 	t.Parallel()
+
 	c := New(Config{APIKey: "k", BaseURL: "http://example.com"}, logger.Discard("openai"), telemetry.NoopTracer("openai"), nil)
+
 	models := c.SupportedModels()
+
 	if len(models) != 4 {
 		t.Fatalf("models: %v", models)
 	}
@@ -23,17 +26,29 @@ func TestClient_SupportedModels(t *testing.T) {
 
 func TestUnit_Client_SupportedModels_ExtraModels(t *testing.T) {
 	t.Parallel()
+
 	c := New(Config{
-		APIKey:      "k",
-		BaseURL:     "http://example.com",
-		ExtraModels: []string{"openai/gpt-oss-20b:free", "gpt-4o", " ", "openai/gpt-oss-20b:free"},
+		APIKey:  "k",
+		BaseURL: "http://example.com",
+		ExtraModels: []string{
+			"openai/gpt-oss-20b:free",
+			"gpt-4o",
+			" ",
+			"  padded-model-id  ",
+			"openai/gpt-oss-20b:free",
+		},
 	}, logger.Discard("openai"), telemetry.NoopTracer("openai"), nil)
+
 	models := c.SupportedModels()
-	if len(models) != 5 {
+
+	if len(models) != 6 {
 		t.Fatalf("models: %v", models)
 	}
 	if models[4] != "openai/gpt-oss-20b:free" {
 		t.Fatalf("extra model: %v", models)
+	}
+	if models[5] != "padded-model-id" {
+		t.Fatalf("trimmed padded model: %v", models)
 	}
 }
 
