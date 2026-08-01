@@ -26,19 +26,46 @@ func TestUsersRepository_GetByIDAndOrg(t *testing.T) {
 	repo := repository.NewUsersRepository(db, nil)
 	ctx := context.Background()
 
-	rec, err := repo.GetByIDAndOrg(ctx, uuid.MustParse(userA), uuid.MustParse(orgA))
+	assertUserSameOrg(t, repo, ctx, userA, orgA)
+	assertUserCrossOrgNil(t, repo, ctx, userA, orgB)
+	assertUserUnknownNil(t, repo, ctx, orgA)
+}
+
+func assertUserSameOrg(t *testing.T, repo *repository.UsersRepository, ctx context.Context, userID, orgID string) {
+	t.Helper()
+	rec, err := repo.GetByIDAndOrg(ctx, uuid.MustParse(userID), uuid.MustParse(orgID))
 	if err != nil {
 		t.Fatalf("same-org: %v", err)
 	}
-	if rec == nil || rec.ID != userA || rec.OrgID != orgA {
-		t.Fatalf("same-org record=%+v", rec)
+	if rec == nil {
+		t.Fatal("same-org: nil record")
 	}
+	if rec.ID != userID {
+		t.Fatalf("id=%q want %q", rec.ID, userID)
+	}
+	if rec.OrgID != orgID {
+		t.Fatalf("org=%q want %q", rec.OrgID, orgID)
+	}
+}
 
-	miss, err := repo.GetByIDAndOrg(ctx, uuid.MustParse(userA), uuid.MustParse(orgB))
+func assertUserCrossOrgNil(t *testing.T, repo *repository.UsersRepository, ctx context.Context, userID, otherOrg string) {
+	t.Helper()
+	miss, err := repo.GetByIDAndOrg(ctx, uuid.MustParse(userID), uuid.MustParse(otherOrg))
 	if err != nil {
 		t.Fatalf("cross-org: %v", err)
 	}
 	if miss != nil {
 		t.Fatalf("cross-org want nil got %+v", miss)
+	}
+}
+
+func assertUserUnknownNil(t *testing.T, repo *repository.UsersRepository, ctx context.Context, orgID string) {
+	t.Helper()
+	miss, err := repo.GetByIDAndOrg(ctx, uuid.New(), uuid.MustParse(orgID))
+	if err != nil {
+		t.Fatalf("unknown user: %v", err)
+	}
+	if miss != nil {
+		t.Fatalf("unknown user want nil got %+v", miss)
 	}
 }

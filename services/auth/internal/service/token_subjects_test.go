@@ -25,101 +25,148 @@ func (s scriptedSubjects) UserBelongsToOrg(context.Context, uuid.UUID, uuid.UUID
 	return s.userOK, s.err
 }
 
-func TestUnit_CreateToken_SubjectOrgBind(t *testing.T) {
-	t.Parallel()
-	orgID := uuid.NewString()
-	sameAgent := uuid.NewString()
-	sameUser := uuid.NewString()
-	foreignAgent := uuid.NewString()
-	foreignUser := uuid.NewString()
+type scriptedAgentLookup struct {
+	rec *repository.AgentRecord
+	err error
+}
 
-	cases := []struct {
+func (s scriptedAgentLookup) GetByIDAndOrg(context.Context, uuid.UUID, uuid.UUID) (*repository.AgentRecord, error) {
+	return s.rec, s.err
+}
+
+type scriptedUserFinder struct {
+	rec *repository.UserRecord
+	err error
+}
+
+func (s scriptedUserFinder) Find(context.Context, uuid.UUID, uuid.UUID) (*repository.UserRecord, error) {
+	return s.rec, s.err
+}
+
+type valueAgentLookup struct{}
+
+func (valueAgentLookup) GetByIDAndOrg(context.Context, uuid.UUID, uuid.UUID) (*repository.AgentRecord, error) {
+	return &repository.AgentRecord{ID: "a"}, nil
+}
+
+type subjectBindIDs struct {
+	org, sameAgent, sameUser, foreignAgent, foreignUser string
+}
+
+func subjectBindCases(ids subjectBindIDs) []struct {
+	name    string
+	in      CreateTokenInput
+	lookup  tokenSubjectLookup
+	wantErr error
+} {
+	return []struct {
 		name    string
 		in      CreateTokenInput
 		lookup  tokenSubjectLookup
 		wantErr error
 	}{
-		{
-			name: "no_subjects_ok_without_binds",
-			in:   CreateTokenInput{OrgID: orgID, Name: "plain", TokenType: TokenTypePAT},
-		},
+		{name: "no_subjects_ok_without_binds", in: CreateTokenInput{OrgID: ids.org, Name: "plain", TokenType: TokenTypePAT}},
 		{
 			name: "nil_lookup_unavailable",
 			in: CreateTokenInput{
-				OrgID: orgID, Name: "a", TokenType: TokenTypePAT, AgentID: &sameAgent,
+				OrgID: ids.org, Name: "a", TokenType: TokenTypePAT, AgentID: &ids.sameAgent,
 			},
 			wantErr: ErrTokenSubjectUnavailable,
 		},
 		{
 			name: "cross_org_agent_forbidden",
 			in: CreateTokenInput{
-				OrgID: orgID, Name: "a", TokenType: TokenTypePAT, AgentID: &foreignAgent,
+				OrgID: ids.org, Name: "a", TokenType: TokenTypePAT, AgentID: &ids.foreignAgent,
 			},
-			lookup:  scriptedSubjects{agentOK: false},
-			wantErr: ErrTokenSubjectForbidden,
+			lookup: scriptedSubjects{agentOK: false}, wantErr: ErrTokenSubjectForbidden,
 		},
 		{
 			name: "cross_org_user_forbidden",
 			in: CreateTokenInput{
-				OrgID: orgID, Name: "u", TokenType: TokenTypePAT, UserID: &foreignUser,
+				OrgID: ids.org, Name: "u", TokenType: TokenTypePAT, UserID: &ids.foreignUser,
 			},
-			lookup:  scriptedSubjects{userOK: false},
-			wantErr: ErrTokenSubjectForbidden,
+			lookup: scriptedSubjects{userOK: false}, wantErr: ErrTokenSubjectForbidden,
 		},
 		{
 			name: "same_org_agent_and_user_ok",
 			in: CreateTokenInput{
-				OrgID: orgID, Name: "ok", TokenType: TokenTypePAT,
-				AgentID: &sameAgent, UserID: &sameUser,
+				OrgID: ids.org, Name: "ok", TokenType: TokenTypePAT,
+				AgentID: &ids.sameAgent, UserID: &ids.sameUser,
 			},
 			lookup: scriptedSubjects{agentOK: true, userOK: true},
 		},
 		{
 			name: "invalid_agent_uuid",
 			in: CreateTokenInput{
-				OrgID: orgID, Name: "bad", TokenType: TokenTypePAT,
-				AgentID: strPtr("not-a-uuid"),
+				OrgID: ids.org, Name: "bad", TokenType: TokenTypePAT, AgentID: strPtr("not-a-uuid"),
 			},
-			lookup:  scriptedSubjects{},
-			wantErr: ErrInvalidArgument,
+			lookup: scriptedSubjects{}, wantErr: ErrInvalidArgument,
+		},
+		{
+			name: "empty_user_id",
+			in: CreateTokenInput{
+				OrgID: ids.org, Name: "empty", TokenType: TokenTypePAT, UserID: strPtr(""),
+			},
+			lookup: scriptedSubjects{userOK: true}, wantErr: ErrInvalidArgument,
+		},
+		{
+			name: "invalid_org_id_with_bind",
+			in: CreateTokenInput{
+				OrgID: "not-org", Name: "bad-org", TokenType: TokenTypePAT, AgentID: &ids.sameAgent,
+			},
+			lookup: scriptedSubjects{agentOK: true}, wantErr: ErrInvalidArgument,
 		},
 		{
 			name: "lookup_error_wrapped",
 			in: CreateTokenInput{
-				OrgID: orgID, Name: "err", TokenType: TokenTypePAT, AgentID: &sameAgent,
+				OrgID: ids.org, Name: "err", TokenType: TokenTypePAT, AgentID: &ids.sameAgent,
 			},
-			lookup:  scriptedSubjects{err: errors.New("db down")},
-			wantErr: ErrTokenSubjectLookup,
+			lookup: scriptedSubjects{err: errors.New("db down")}, wantErr: ErrTokenSubjectLookup,
 		},
 	}
+}
 
+func TestUnit_CreateToken_SubjectOrgBind(t *testing.T) {
+	t.Parallel()
+	cases := subjectBindCases(subjectBindIDs{
+		org: uuid.NewString(), sameAgent: uuid.NewString(), sameUser: uuid.NewString(),
+		foreignAgent: uuid.NewString(), foreignUser: uuid.NewString(),
+	})
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			repo := newMemTokenRepo()
-			opts := []TokenServiceOption{}
-			if tc.lookup != nil {
-				opts = append(opts, WithSubjectLookup(tc.lookup))
-			}
-			svc := NewTokenService(repo, token.DefaultArgon2Params(), logger.Discard("auth"), nil, opts...)
-			_, err := svc.CreateToken(context.Background(), tc.in)
-			if tc.wantErr != nil {
-				if !errors.Is(err, tc.wantErr) {
-					t.Fatalf("err=%v want %v", err, tc.wantErr)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("CreateToken: %v", err)
-			}
+			runSubjectBindCase(t, tc.in, tc.lookup, tc.wantErr)
 		})
+	}
+}
+
+func runSubjectBindCase(t *testing.T, in CreateTokenInput, lookup tokenSubjectLookup, wantErr error) {
+	t.Helper()
+	svc := NewTokenService(newMemTokenRepo(), token.DefaultArgon2Params(), logger.Discard("auth"), nil)
+	if lookup != nil {
+		svc = svc.WithSubjectLookup(lookup)
+	}
+	_, err := svc.CreateToken(context.Background(), in)
+	assertSubjectBindErr(t, err, wantErr)
+}
+
+func assertSubjectBindErr(t *testing.T, err, wantErr error) {
+	t.Helper()
+	if wantErr != nil {
+		if !errors.Is(err, wantErr) {
+			t.Fatalf("err=%v want %v", err, wantErr)
+		}
+		return
+	}
+	if err != nil {
+		t.Fatalf("CreateToken: %v", err)
 	}
 }
 
 func TestUnit_NewRepoTokenSubjects_RejectsNil(t *testing.T) {
 	t.Parallel()
-	users := &repository.UsersRepository{}
+	users := UsersFinder(&repository.UsersRepository{})
 	if _, err := NewRepoTokenSubjects(nil, users); err == nil {
 		t.Fatal("expected nil agents error")
 	}
@@ -129,6 +176,91 @@ func TestUnit_NewRepoTokenSubjects_RejectsNil(t *testing.T) {
 	var typedNilAgents *repository.AgentsRepository
 	if _, err := NewRepoTokenSubjects(typedNilAgents, users); err == nil {
 		t.Fatal("expected typed-nil agents error")
+	}
+	var typedNilUsers *usersFindAdapter
+	if _, err := NewRepoTokenSubjects(&repository.AgentsRepository{}, typedNilUsers); err == nil {
+		t.Fatal("expected typed-nil users error")
+	}
+}
+
+func TestUnit_RepoTokenSubjects_Belongs(t *testing.T) {
+	t.Parallel()
+	agentID := uuid.New()
+	userID := uuid.New()
+	orgID := uuid.New()
+
+	subjects, err := NewRepoTokenSubjects(
+		scriptedAgentLookup{rec: &repository.AgentRecord{ID: agentID.String()}},
+		scriptedUserFinder{rec: &repository.UserRecord{ID: userID.String()}},
+	)
+	if err != nil {
+		t.Fatalf("NewRepoTokenSubjects: %v", err)
+	}
+	ok, err := subjects.AgentBelongsToOrg(context.Background(), agentID, orgID)
+	if err != nil || !ok {
+		t.Fatalf("agent belongs: ok=%v err=%v", ok, err)
+	}
+	ok, err = subjects.UserBelongsToOrg(context.Background(), userID, orgID)
+	if err != nil || !ok {
+		t.Fatalf("user belongs: ok=%v err=%v", ok, err)
+	}
+
+	miss, err := NewRepoTokenSubjects(scriptedAgentLookup{}, scriptedUserFinder{})
+	if err != nil {
+		t.Fatalf("miss subjects: %v", err)
+	}
+	ok, err = miss.AgentBelongsToOrg(context.Background(), agentID, orgID)
+	if err != nil || ok {
+		t.Fatalf("agent miss: ok=%v err=%v", ok, err)
+	}
+	ok, err = miss.UserBelongsToOrg(context.Background(), userID, orgID)
+	if err != nil || ok {
+		t.Fatalf("user miss: ok=%v err=%v", ok, err)
+	}
+}
+
+func TestUnit_RepoTokenSubjects_LookupErrors(t *testing.T) {
+	t.Parallel()
+	boom := errors.New("db")
+	subjects, err := NewRepoTokenSubjects(
+		scriptedAgentLookup{err: boom},
+		scriptedUserFinder{err: boom},
+	)
+	if err != nil {
+		t.Fatalf("NewRepoTokenSubjects: %v", err)
+	}
+	if _, err := subjects.AgentBelongsToOrg(context.Background(), uuid.New(), uuid.New()); err == nil {
+		t.Fatal("expected agent lookup error")
+	}
+	if _, err := subjects.UserBelongsToOrg(context.Background(), uuid.New(), uuid.New()); err == nil {
+		t.Fatal("expected user lookup error")
+	}
+}
+
+func TestUnit_NewRepoTokenSubjects_ValueReceiverDep(t *testing.T) {
+	t.Parallel()
+	subjects, err := NewRepoTokenSubjects(valueAgentLookup{}, scriptedUserFinder{
+		rec: &repository.UserRecord{ID: "u"},
+	})
+	if err != nil {
+		t.Fatalf("value agent dep: %v", err)
+	}
+	ok, err := subjects.AgentBelongsToOrg(context.Background(), uuid.New(), uuid.New())
+	if err != nil || !ok {
+		t.Fatalf("value agent belongs: ok=%v err=%v", ok, err)
+	}
+}
+
+func TestUnit_UsersFinder_WrapsRepo(t *testing.T) {
+	t.Parallel()
+	repo := &repository.UsersRepository{}
+	finder := UsersFinder(repo)
+	adapter, ok := finder.(usersFindAdapter)
+	if !ok {
+		t.Fatalf("type=%T", finder)
+	}
+	if adapter.repo != repo {
+		t.Fatal("adapter repo mismatch")
 	}
 }
 

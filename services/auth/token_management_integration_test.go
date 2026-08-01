@@ -38,12 +38,11 @@ func startAuthGRPC(t *testing.T, dbDSN string) (authv1.AuthServiceClient, func()
 		t.Fatalf("NewRepoLookup: %v", err)
 	}
 	validator := token.NewValidator(lookup, argon2)
-	subjects, err := service.NewRepoTokenSubjects(agentsRepo, repository.NewUsersRepository(db, reg))
+	subjects, err := service.NewRepoTokenSubjects(agentsRepo, service.UsersFinder(repository.NewUsersRepository(db, reg)))
 	if err != nil {
 		t.Fatalf("NewRepoTokenSubjects: %v", err)
 	}
-	tokenSvc := service.NewTokenService(repo, argon2, logger.Discard("auth"), nil,
-		service.WithSubjectLookup(subjects))
+	tokenSvc := service.NewTokenService(repo, argon2, logger.Discard("auth"), nil).WithSubjectLookup(subjects)
 	agentSvc, err := service.NewAgentService(agentsRepo)
 	require.NoError(t, err)
 
@@ -275,54 +274,84 @@ func TestCreateTokenPermissionSubset(t *testing.T) {
 }
 
 func TestCreateTokenSubjectOrgBind(t *testing.T) {
+	fx := seedSubjectBindFixture(t)
+	client, cleanup := startAuthGRPC(t, fx.dsn)
+	defer cleanup()
+
+	assertCreateDenied(t, client, createDeniedArgs{
+		bearer: fx.adminA, orgID: fx.orgA, name: "cross-agent", agentID: &fx.agentB,
+	})
+	assertCreateDenied(t, client, createDeniedArgs{
+		bearer: fx.adminA, orgID: fx.orgA, name: "cross-user", userID: &fx.userB,
+	})
+	assertSameOrgBindOK(t, client, fx)
+}
+
+type subjectBindFixture struct {
+	dsn            string
+	orgA, adminA   string
+	userA, userB   string
+	agentA, agentB string
+}
+
+func seedSubjectBindFixture(t *testing.T) subjectBindFixture {
+	t.Helper()
 	dsn, cleanupPG := testutil.SetupPostgres(t)
-	defer cleanupPG()
+	t.Cleanup(cleanupPG)
 
 	db := testutil.OpenDB(t, dsn)
+	defer func() { _ = db.Close() }()
+
 	orgA := testutil.SeedOrganization(t, db, "Bind Org A", "bind-a-"+uuid.NewString()[:8])
 	orgB := testutil.SeedOrganization(t, db, "Bind Org B", "bind-b-"+uuid.NewString()[:8])
 	userA := testutil.SeedUser(t, db, orgA, "a-"+uuid.NewString()[:8]+"@example.com", "User A")
 	userB := testutil.SeedUser(t, db, orgB, "b-"+uuid.NewString()[:8]+"@example.com", "User B")
-	agentA := testutil.SeedAgent(t, db, orgA, userA, "Agent A", "agent-a-"+uuid.NewString()[:8])
-	agentB := testutil.SeedAgent(t, db, orgB, userB, "Agent B", "agent-b-"+uuid.NewString()[:8])
-	adminA := testutil.SeedBootstrapAdminToken(t, db, orgA)
-	_ = db.Close()
+	return subjectBindFixture{
+		dsn:    dsn,
+		orgA:   orgA,
+		adminA: testutil.SeedBootstrapAdminToken(t, db, orgA),
+		userA:  userA,
+		userB:  userB,
+		agentA: testutil.SeedAgent(t, db, orgA, userA, "Agent A", "agent-a-"+uuid.NewString()[:8]),
+		agentB: testutil.SeedAgent(t, db, orgB, userB, "Agent B", "agent-b-"+uuid.NewString()[:8]),
+	}
+}
 
-	client, cleanup := startAuthGRPC(t, dsn)
-	defer cleanup()
+type createDeniedArgs struct {
+	bearer, orgID, name string
+	agentID, userID     *string
+}
 
-	_, err := client.CreateToken(authCtx(adminA), &authv1.CreateTokenRequest{
-		OrgId: orgA, Name: "cross-agent", Type: authv1.TokenType_TOKEN_TYPE_PAT,
-		Permissions: permissions.AgentDefault, AgentId: &agentB,
+func assertCreateDenied(t *testing.T, client authv1.AuthServiceClient, a createDeniedArgs) {
+	t.Helper()
+	_, err := client.CreateToken(authCtx(a.bearer), &authv1.CreateTokenRequest{
+		OrgId: a.orgID, Name: a.name, Type: authv1.TokenType_TOKEN_TYPE_PAT,
+		Permissions: permissions.AgentDefault, AgentId: a.agentID, UserId: a.userID,
 	})
 	if status.Code(err) != codes.PermissionDenied {
-		t.Fatalf("cross-org agent bind: code=%v err=%v", status.Code(err), err)
+		t.Fatalf("%s: code=%v err=%v", a.name, status.Code(err), err)
 	}
+}
 
-	_, err = client.CreateToken(authCtx(adminA), &authv1.CreateTokenRequest{
-		OrgId: orgA, Name: "cross-user", Type: authv1.TokenType_TOKEN_TYPE_PAT,
-		Permissions: permissions.AgentDefault, UserId: &userB,
-	})
-	if status.Code(err) != codes.PermissionDenied {
-		t.Fatalf("cross-org user bind: code=%v err=%v", status.Code(err), err)
-	}
-
-	resp, err := client.CreateToken(authCtx(adminA), &authv1.CreateTokenRequest{
-		OrgId: orgA, Name: "same-org", Type: authv1.TokenType_TOKEN_TYPE_PAT,
-		Permissions: permissions.AgentDefault, AgentId: &agentA, UserId: &userA,
+func assertSameOrgBindOK(t *testing.T, client authv1.AuthServiceClient, fx subjectBindFixture) {
+	t.Helper()
+	resp, err := client.CreateToken(authCtx(fx.adminA), &authv1.CreateTokenRequest{
+		OrgId: fx.orgA, Name: "same-org", Type: authv1.TokenType_TOKEN_TYPE_PAT,
+		Permissions: permissions.AgentDefault, AgentId: &fx.agentA, UserId: &fx.userA,
 	})
 	if err != nil {
 		t.Fatalf("same-org bind: %v", err)
 	}
-
 	valCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	val, err := client.ValidateToken(valCtx, &authv1.ValidateTokenRequest{AccessToken: resp.GetPlaintext()})
 	if err != nil {
 		t.Fatalf("validate: %v", err)
 	}
-	if val.GetAgentId() != agentA || val.GetUserId() != userA {
-		t.Fatalf("bound agent=%q user=%q want agent=%q user=%q",
-			val.GetAgentId(), val.GetUserId(), agentA, userA)
+	if val.GetAgentId() != fx.agentA {
+		t.Fatalf("agent=%q want %q", val.GetAgentId(), fx.agentA)
+	}
+	if val.GetUserId() != fx.userA {
+		t.Fatalf("user=%q want %q", val.GetUserId(), fx.userA)
 	}
 }

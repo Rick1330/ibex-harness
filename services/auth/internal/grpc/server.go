@@ -160,14 +160,14 @@ func (s *Server) mapCreateTokenServiceErr(ctx context.Context, err error) error 
 		return status.Error(codes.PermissionDenied, errMsgForbidden)
 	case errors.Is(err, service.ErrTokenSubjectUnavailable):
 		s.log.ErrorCtx(ctx, "create token subject lookup unavailable", "error", err)
-		return status.Error(codes.Internal, "create token failed")
+		return status.Error(codes.Internal, errMsgCreateTokenFailed)
 	case errors.Is(err, context.DeadlineExceeded):
 		return status.Error(codes.DeadlineExceeded, "create token timed out")
 	case errors.Is(err, context.Canceled):
 		return status.Error(codes.Canceled, "create token canceled")
 	default:
-		s.log.ErrorCtx(ctx, "create token failed", "error", err)
-		return status.Error(codes.Internal, "create token failed")
+		s.log.ErrorCtx(ctx, errMsgCreateTokenFailed, "error", err)
+		return status.Error(codes.Internal, errMsgCreateTokenFailed)
 	}
 }
 

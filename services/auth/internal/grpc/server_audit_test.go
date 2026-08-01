@@ -222,31 +222,25 @@ func assertCrossTenantAudit(t *testing.T, callerOrg string, tc auditCase) {
 
 func newServerWithLog(t *testing.T, buf *bytes.Buffer) *Server {
 	t.Helper()
-	return newServerWithLogAndAgents(t, buf, &fakeAgentAPI{})
+	return newServerWithDeps(t, buf, serverLogDeps{})
 }
 
 func newServerWithLogTokens(t *testing.T, buf *bytes.Buffer, tokens tokenAPI) *Server {
 	t.Helper()
-	log, err := logger.New(logger.Config{
-		Service: "auth", Level: slog.LevelWarn, Writer: buf,
-	})
-	if err != nil {
-		t.Fatalf("logger: %v", err)
-	}
-	srv, err := NewServer(ServerDeps{
-		Validator:    &fakeTokenValidator{},
-		TokenService: tokens,
-		AgentService: &fakeAgentAPI{},
-		Metrics:      testAuthRegistry(),
-		Log:          log,
-	})
-	if err != nil {
-		t.Fatalf("NewServer: %v", err)
-	}
-	return srv
+	return newServerWithDeps(t, buf, serverLogDeps{tokens: tokens})
 }
 
 func newServerWithLogAndAgents(t *testing.T, buf *bytes.Buffer, agents agentAPI) *Server {
+	t.Helper()
+	return newServerWithDeps(t, buf, serverLogDeps{agents: agents})
+}
+
+type serverLogDeps struct {
+	tokens tokenAPI
+	agents agentAPI
+}
+
+func newServerWithDeps(t *testing.T, buf *bytes.Buffer, d serverLogDeps) *Server {
 	t.Helper()
 	log, err := logger.New(logger.Config{
 		Service: "auth", Level: slog.LevelWarn, Writer: buf,
@@ -254,9 +248,17 @@ func newServerWithLogAndAgents(t *testing.T, buf *bytes.Buffer, agents agentAPI)
 	if err != nil {
 		t.Fatalf("logger: %v", err)
 	}
+	tokens := tokenAPI(&fakeTokenAPI{})
+	if d.tokens != nil {
+		tokens = d.tokens
+	}
+	agents := agentAPI(&fakeAgentAPI{})
+	if d.agents != nil {
+		agents = d.agents
+	}
 	srv, err := NewServer(ServerDeps{
 		Validator:    &fakeTokenValidator{},
-		TokenService: &fakeTokenAPI{},
+		TokenService: tokens,
 		AgentService: agents,
 		Metrics:      testAuthRegistry(),
 		Log:          log,

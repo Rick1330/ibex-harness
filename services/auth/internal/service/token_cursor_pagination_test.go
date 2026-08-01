@@ -75,8 +75,8 @@ func decodeMemTokenCursor(cursor string) (time.Time, string, error) {
 }
 
 func testTokenService(repo tokenRepo) *TokenService {
-	return NewTokenService(repo, token.DefaultArgon2Params(), logger.Discard("auth"), nil,
-		WithSubjectLookup(allowAllSubjects{}))
+	return NewTokenService(repo, token.DefaultArgon2Params(), logger.Discard("auth"), nil).
+		WithSubjectLookup(allowAllSubjects{})
 }
 
 type allowAllSubjects struct{}

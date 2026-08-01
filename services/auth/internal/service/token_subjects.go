@@ -32,6 +32,8 @@ type tokenSubjectLookup interface {
 	UserBelongsToOrg(ctx context.Context, userID, orgID uuid.UUID) (bool, error)
 }
 
+type subjectBelongsFn func(ctx context.Context, id, orgID uuid.UUID) (bool, error)
+
 type repoTokenSubjects struct {
 	agents agentByOrgLookup
 	users  userOrgFinder
@@ -41,19 +43,24 @@ type usersFindAdapter struct {
 	repo *repository.UsersRepository
 }
 
+// UsersFinder adapts UsersRepository to userOrgFinder for NewRepoTokenSubjects.
+func UsersFinder(repo *repository.UsersRepository) userOrgFinder {
+	return usersFindAdapter{repo: repo}
+}
+
 func (a usersFindAdapter) Find(ctx context.Context, userID, orgID uuid.UUID) (*repository.UserRecord, error) {
 	return a.repo.GetByIDAndOrg(ctx, userID, orgID)
 }
 
 // NewRepoTokenSubjects builds a subject lookup from agent and user repositories.
-func NewRepoTokenSubjects(agents agentByOrgLookup, users *repository.UsersRepository) (tokenSubjectLookup, error) {
+func NewRepoTokenSubjects(agents agentByOrgLookup, users userOrgFinder) (tokenSubjectLookup, error) {
 	if isNilSubjectDep(agents) {
 		return nil, fmt.Errorf("service: nil agent subject lookup")
 	}
-	if users == nil {
-		return nil, fmt.Errorf("service: nil users repository")
+	if isNilSubjectDep(users) {
+		return nil, fmt.Errorf("service: nil user subject lookup")
 	}
-	return &repoTokenSubjects{agents: agents, users: usersFindAdapter{repo: users}}, nil
+	return &repoTokenSubjects{agents: agents, users: users}, nil
 }
 
 func isNilSubjectDep(v any) bool {
@@ -96,39 +103,26 @@ func (s *TokenService) validateCreateTokenSubjects(ctx context.Context, in Creat
 	if err != nil {
 		return ErrInvalidArgument
 	}
-	if err := s.validateOptionalAgentBind(ctx, orgID, in.AgentID); err != nil {
+	if err := s.validateOptionalSubjectBind(ctx, orgID, in.AgentID, s.subjects.AgentBelongsToOrg); err != nil {
 		return err
 	}
-	return s.validateOptionalUserBind(ctx, orgID, in.UserID)
+	return s.validateOptionalSubjectBind(ctx, orgID, in.UserID, s.subjects.UserBelongsToOrg)
 }
 
-func (s *TokenService) validateOptionalAgentBind(ctx context.Context, orgID uuid.UUID, raw *string) error {
+func (s *TokenService) validateOptionalSubjectBind(
+	ctx context.Context,
+	orgID uuid.UUID,
+	raw *string,
+	belongs subjectBelongsFn,
+) error {
 	if raw == nil {
 		return nil
 	}
-	agentID, err := parseOptionalSubjectID(*raw)
+	id, err := parseOptionalSubjectID(*raw)
 	if err != nil {
 		return err
 	}
-	ok, err := s.subjects.AgentBelongsToOrg(ctx, agentID, orgID)
-	if err != nil {
-		return fmt.Errorf("%w: %w", ErrTokenSubjectLookup, err)
-	}
-	if !ok {
-		return ErrTokenSubjectForbidden
-	}
-	return nil
-}
-
-func (s *TokenService) validateOptionalUserBind(ctx context.Context, orgID uuid.UUID, raw *string) error {
-	if raw == nil {
-		return nil
-	}
-	userID, err := parseOptionalSubjectID(*raw)
-	if err != nil {
-		return err
-	}
-	ok, err := s.subjects.UserBelongsToOrg(ctx, userID, orgID)
+	ok, err := belongs(ctx, id, orgID)
 	if err != nil {
 		return fmt.Errorf("%w: %w", ErrTokenSubjectLookup, err)
 	}

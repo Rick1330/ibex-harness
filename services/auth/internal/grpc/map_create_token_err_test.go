@@ -38,7 +38,7 @@ func TestUnit_MapCreateTokenServiceErr(t *testing.T) {
 			name:     "subject_unavailable",
 			err:      service.ErrTokenSubjectUnavailable,
 			wantCode: codes.Internal,
-			wantMsg:  "create token failed",
+			wantMsg:  errMsgCreateTokenFailed,
 		},
 		{
 			name:     "deadline",
@@ -56,7 +56,7 @@ func TestUnit_MapCreateTokenServiceErr(t *testing.T) {
 			name:     "internal_opaque",
 			err:      errors.New("db connection refused"),
 			wantCode: codes.Internal,
-			wantMsg:  "create token failed",
+			wantMsg:  errMsgCreateTokenFailed,
 		},
 	}
 	for _, tc := range cases {

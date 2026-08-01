@@ -51,30 +51,13 @@ func startAuthGRPC(t testing.TB, dbDSN string, redisClient redis.UniversalClient
 	repo := repository.RequireTokensRepository(t, db, reg)
 	agentsRepo := repository.NewAgentsRepository(db, reg)
 	argon2 := token.DefaultArgon2Params()
-	lookup, err := token.NewRepoLookup(repo)
-	if err != nil {
-		t.Fatalf("NewRepoLookup: %v", err)
-	}
-	validator := token.NewValidator(lookup, argon2)
-
-	publisher := revocation.Publisher(revocation.NoopPublisher{})
-	if redisClient != nil {
-		pub, err := revocation.NewRedisPublisher(redisClient, logger.Discard("auth"), nil)
-		if err != nil {
-			t.Fatalf("revocation publisher: %v", err)
-		}
-		publisher = pub
-	}
-	subjects, err := service.NewRepoTokenSubjects(agentsRepo, repository.NewUsersRepository(db, reg))
-	if err != nil {
-		t.Fatalf("NewRepoTokenSubjects: %v", err)
-	}
-	tokenSvc := service.NewTokenService(repo, argon2, logger.Discard("auth"), publisher,
-		service.WithSubjectLookup(subjects))
-	agentSvc, err := service.NewAgentService(agentsRepo)
-	if err != nil {
-		t.Fatalf("agent service: %v", err)
-	}
+	validator := mustTokenValidator(t, repo, argon2)
+	publisher := revocationPublisher(t, redisClient)
+	tokenSvc := mustTokenService(t, tokenServiceParts{
+		repo: repo, agents: agentsRepo, users: repository.NewUsersRepository(db, reg),
+		argon2: argon2, publisher: publisher,
+	})
+	agentSvc := mustAgentService(t, agentsRepo)
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -110,6 +93,54 @@ func startAuthGRPC(t testing.TB, dbDSN string, redisClient redis.UniversalClient
 			_ = db.Close()
 		},
 	}
+}
+
+func mustTokenValidator(t testing.TB, repo *repository.TokensRepository, argon2 token.Argon2Params) *token.Validator {
+	t.Helper()
+	lookup, err := token.NewRepoLookup(repo)
+	if err != nil {
+		t.Fatalf("NewRepoLookup: %v", err)
+	}
+	return token.NewValidator(lookup, argon2)
+}
+
+func revocationPublisher(t testing.TB, redisClient redis.UniversalClient) revocation.Publisher {
+	t.Helper()
+	if redisClient == nil {
+		return revocation.NoopPublisher{}
+	}
+	pub, err := revocation.NewRedisPublisher(redisClient, logger.Discard("auth"), nil)
+	if err != nil {
+		t.Fatalf("revocation publisher: %v", err)
+	}
+	return pub
+}
+
+type tokenServiceParts struct {
+	repo      *repository.TokensRepository
+	agents    *repository.AgentsRepository
+	users     *repository.UsersRepository
+	argon2    token.Argon2Params
+	publisher revocation.Publisher
+}
+
+func mustTokenService(t testing.TB, p tokenServiceParts) *service.TokenService {
+	t.Helper()
+	subjects, err := service.NewRepoTokenSubjects(p.agents, service.UsersFinder(p.users))
+	if err != nil {
+		t.Fatalf("NewRepoTokenSubjects: %v", err)
+	}
+	return service.NewTokenService(p.repo, p.argon2, logger.Discard("auth"), p.publisher).
+		WithSubjectLookup(subjects)
+}
+
+func mustAgentService(t testing.TB, agents *repository.AgentsRepository) *service.AgentService {
+	t.Helper()
+	agentSvc, err := service.NewAgentService(agents)
+	if err != nil {
+		t.Fatalf("agent service: %v", err)
+	}
+	return agentSvc
 }
 
 // WaitPendingPublishes blocks until in-flight revocation PUBLISH calls finish.

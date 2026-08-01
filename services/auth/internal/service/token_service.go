@@ -33,28 +33,22 @@ type TokenService struct {
 	publishDone   <-chan struct{}
 }
 
-// TokenServiceOption configures optional TokenService dependencies.
-type TokenServiceOption func(*TokenService)
-
-// WithSubjectLookup enables same-org checks for optional agent_id/user_id binds.
-func WithSubjectLookup(lookup tokenSubjectLookup) TokenServiceOption {
-	return func(s *TokenService) { s.subjects = lookup }
-}
-
 // NewTokenService constructs a TokenService. publisher may be nil (NoopPublisher).
-func NewTokenService(repo tokenRepo, argon2 token.Argon2Params, log *logger.Logger, publisher revocation.Publisher, opts ...TokenServiceOption) *TokenService {
+func NewTokenService(repo tokenRepo, argon2 token.Argon2Params, log *logger.Logger, publisher revocation.Publisher) *TokenService {
 	if publisher == nil {
 		publisher = revocation.NoopPublisher{}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	svc := &TokenService{
+	return &TokenService{
 		repo: repo, argon2: argon2, logger: log, publisher: publisher,
 		publishCancel: cancel, publishDone: ctx.Done(),
 	}
-	for _, opt := range opts {
-		opt(svc)
-	}
-	return svc
+}
+
+// WithSubjectLookup enables same-org checks for optional agent_id/user_id binds.
+func (s *TokenService) WithSubjectLookup(lookup tokenSubjectLookup) *TokenService {
+	s.subjects = lookup
+	return s
 }
 
 // CreateTokenResult holds the one-time plaintext response fields.
