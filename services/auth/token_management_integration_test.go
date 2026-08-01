@@ -221,3 +221,50 @@ func TestCreateTokenCrossTenant(t *testing.T) {
 		t.Fatalf("cross-tenant create: code=%v err=%v", status.Code(err), err)
 	}
 }
+
+func TestCreateTokenPermissionSubset(t *testing.T) {
+	dsn, cleanupPG := testutil.SetupPostgres(t)
+	defer cleanupPG()
+
+	db := testutil.OpenDB(t, dsn)
+	orgID := testutil.SeedOrganization(t, db, "Subset Org", "sub-"+uuid.NewString()[:8])
+	limitedBearer, _ := testutil.SeedToken(t, db, orgID, permissions.TokenCreate)
+	adminBearer := testutil.SeedBootstrapAdminToken(t, db, orgID)
+	_ = db.Close()
+
+	client, cleanup := startAuthGRPC(t, dsn)
+	defer cleanup()
+
+	_, err := client.CreateToken(authCtx(limitedBearer), &authv1.CreateTokenRequest{
+		OrgId:       orgID,
+		Name:        "escalate-admin",
+		Type:        authv1.TokenType_TOKEN_TYPE_PAT,
+		Permissions: permissions.Admin,
+	})
+	if status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("escalate create: code=%v err=%v", status.Code(err), err)
+	}
+
+	resp, err := client.CreateToken(authCtx(adminBearer), &authv1.CreateTokenRequest{
+		OrgId:       orgID,
+		Name:        "agent-ok",
+		Type:        authv1.TokenType_TOKEN_TYPE_PAT,
+		Permissions: permissions.AgentDefault,
+	})
+	if err != nil {
+		t.Fatalf("admin subset create: %v", err)
+	}
+	if resp.GetPlaintext() == "" {
+		t.Fatal("expected plaintext")
+	}
+
+	valCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	val, err := client.ValidateToken(valCtx, &authv1.ValidateTokenRequest{AccessToken: resp.GetPlaintext()})
+	if err != nil {
+		t.Fatalf("validate minted: %v", err)
+	}
+	if val.GetPermissions() != permissions.AgentDefault {
+		t.Fatalf("minted permissions=%d want AgentDefault", val.GetPermissions())
+	}
+}

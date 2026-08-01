@@ -22,7 +22,7 @@ func createTokenCases(t *testing.T, orgID string, expires *timestamppb.Timestamp
 
 func createTokenAuthzCases(t *testing.T, orgID string) []createTokenCase {
 	t.Helper()
-	return []createTokenCase{
+	out := []createTokenCase{
 		{
 			name:     "unauthenticated",
 			ctx:      context.Background(),
@@ -44,6 +44,49 @@ func createTokenAuthzCases(t *testing.T, orgID string) []createTokenCase {
 			}),
 			req:      &authv1.CreateTokenRequest{OrgId: orgID, Name: "x"},
 			wantCode: codes.PermissionDenied,
+		},
+	}
+	return append(out, createTokenPermissionSubsetCases(t, orgID)...)
+}
+
+func createTokenPermissionSubsetCases(t *testing.T, orgID string) []createTokenCase {
+	t.Helper()
+	return []createTokenCase{
+		{
+			name: "permission denied escalate to Admin",
+			ctx: ContextWithCaller(context.Background(), CallerContext{
+				OrgID: orgID, Permissions: permissions.TokenCreate,
+			}),
+			req: &authv1.CreateTokenRequest{
+				OrgId: orgID, Name: "escalate", Permissions: permissions.Admin,
+			},
+			wantCode: codes.PermissionDenied,
+		},
+		{
+			name: "invalid argument reserved high bits",
+			ctx: ContextWithCaller(context.Background(), CallerContext{
+				OrgID: orgID, Permissions: permissions.Admin,
+			}),
+			req: &authv1.CreateTokenRequest{
+				OrgId: orgID, Name: "reserved", Permissions: int64(1 << 60),
+			},
+			wantCode: codes.InvalidArgument,
+		},
+		{
+			name: "ok subset equal to caller",
+			ctx: ContextWithCaller(context.Background(), CallerContext{
+				OrgID: orgID, Permissions: permissions.TokenCreate | permissions.AgentDefault,
+			}),
+			req: &authv1.CreateTokenRequest{
+				OrgId: orgID, Name: "subset", Permissions: permissions.AgentDefault,
+			},
+			wantCode: codes.OK,
+			checkIn: func(t *testing.T, in service.CreateTokenInput) {
+				t.Helper()
+				if in.Permissions != permissions.AgentDefault {
+					t.Fatalf("permissions=%d", in.Permissions)
+				}
+			},
 		},
 	}
 }

@@ -142,6 +142,9 @@ func (s *Server) CreateToken(ctx context.Context, req *authv1.CreateTokenRequest
 	if err := RequireOrgAndPermission(ctx, req.GetOrgId(), permissions.TokenCreate); err != nil {
 		return nil, err
 	}
+	if err := authorizeCreateTokenPermissions(caller.Permissions, req.GetPermissions()); err != nil {
+		return nil, err
+	}
 	in, err := createTokenInputFromProto(req)
 	if err != nil {
 		return nil, err
@@ -159,6 +162,18 @@ func (s *Server) CreateToken(ctx context.Context, req *authv1.CreateTokenRequest
 		Prefix:    result.Prefix,
 		CreatedAt: timestamppb.New(result.CreatedAt),
 	}, nil
+}
+
+// authorizeCreateTokenPermissions enforces requested ⊆ caller (no privilege
+// escalation) and rejects reserved high bits on the requested bitmap.
+func authorizeCreateTokenPermissions(callerPerms, requested int64) error {
+	if permissions.UsesReservedHighBits(requested) {
+		return status.Error(codes.InvalidArgument, "invalid request")
+	}
+	if !permissions.Has(callerPerms, requested) {
+		return status.Error(codes.PermissionDenied, "forbidden")
+	}
+	return nil
 }
 
 func createTokenInputFromProto(req *authv1.CreateTokenRequest) (service.CreateTokenInput, error) {
