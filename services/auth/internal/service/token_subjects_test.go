@@ -173,6 +173,9 @@ func TestUnit_NewRepoTokenSubjects_RejectsNil(t *testing.T) {
 	if _, err := NewRepoTokenSubjects(&repository.AgentsRepository{}, nil); err == nil {
 		t.Fatal("expected nil users error")
 	}
+	if _, err := NewRepoTokenSubjects(&repository.AgentsRepository{}, UsersFinder(nil)); err == nil {
+		t.Fatal("expected UsersFinder(nil) error")
+	}
 	var typedNilAgents *repository.AgentsRepository
 	if _, err := NewRepoTokenSubjects(typedNilAgents, users); err == nil {
 		t.Fatal("expected typed-nil agents error")
@@ -183,39 +186,58 @@ func TestUnit_NewRepoTokenSubjects_RejectsNil(t *testing.T) {
 	}
 }
 
-func TestUnit_RepoTokenSubjects_Belongs(t *testing.T) {
+func TestUnit_RepoTokenSubjects_BelongsHit(t *testing.T) {
 	t.Parallel()
 	agentID := uuid.New()
 	userID := uuid.New()
 	orgID := uuid.New()
-
-	subjects, err := NewRepoTokenSubjects(
+	subjects := mustRepoSubjects(t,
 		scriptedAgentLookup{rec: &repository.AgentRecord{ID: agentID.String()}},
 		scriptedUserFinder{rec: &repository.UserRecord{ID: userID.String()}},
 	)
+	ok, err := subjects.AgentBelongsToOrg(context.Background(), agentID, orgID)
+	assertBelongsOK(t, ok, err)
+	ok, err = subjects.UserBelongsToOrg(context.Background(), userID, orgID)
+	assertBelongsOK(t, ok, err)
+}
+
+func TestUnit_RepoTokenSubjects_BelongsMiss(t *testing.T) {
+	t.Parallel()
+	subjects := mustRepoSubjects(t, scriptedAgentLookup{}, scriptedUserFinder{})
+	id := uuid.New()
+	org := uuid.New()
+	ok, err := subjects.AgentBelongsToOrg(context.Background(), id, org)
+	assertBelongsMiss(t, ok, err)
+	ok, err = subjects.UserBelongsToOrg(context.Background(), id, org)
+	assertBelongsMiss(t, ok, err)
+}
+
+func mustRepoSubjects(t *testing.T, agents agentByOrgLookup, users userOrgFinder) tokenSubjectLookup {
+	t.Helper()
+	subjects, err := NewRepoTokenSubjects(agents, users)
 	if err != nil {
 		t.Fatalf("NewRepoTokenSubjects: %v", err)
 	}
-	ok, err := subjects.AgentBelongsToOrg(context.Background(), agentID, orgID)
-	if err != nil || !ok {
-		t.Fatalf("agent belongs: ok=%v err=%v", ok, err)
-	}
-	ok, err = subjects.UserBelongsToOrg(context.Background(), userID, orgID)
-	if err != nil || !ok {
-		t.Fatalf("user belongs: ok=%v err=%v", ok, err)
-	}
+	return subjects
+}
 
-	miss, err := NewRepoTokenSubjects(scriptedAgentLookup{}, scriptedUserFinder{})
+func assertBelongsOK(t *testing.T, ok bool, err error) {
+	t.Helper()
 	if err != nil {
-		t.Fatalf("miss subjects: %v", err)
+		t.Fatalf("belongs err: %v", err)
 	}
-	ok, err = miss.AgentBelongsToOrg(context.Background(), agentID, orgID)
-	if err != nil || ok {
-		t.Fatalf("agent miss: ok=%v err=%v", ok, err)
+	if !ok {
+		t.Fatal("expected belongs=true")
 	}
-	ok, err = miss.UserBelongsToOrg(context.Background(), userID, orgID)
-	if err != nil || ok {
-		t.Fatalf("user miss: ok=%v err=%v", ok, err)
+}
+
+func assertBelongsMiss(t *testing.T, ok bool, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("belongs err: %v", err)
+	}
+	if ok {
+		t.Fatal("expected belongs=false")
 	}
 }
 

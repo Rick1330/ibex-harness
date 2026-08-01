@@ -53,7 +53,7 @@ func (r *UsersRepository) GetByIDAndOrg(
 			if errors.Is(err, sql.ErrNoRows) {
 				return nil
 			}
-			return fmt.Errorf("query user: %w", err)
+			return fmt.Errorf("query user user_id=%s org_id=%s: %w", userID, orgID, err)
 		}
 		out = &rec
 		return nil

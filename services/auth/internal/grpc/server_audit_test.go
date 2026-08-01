@@ -120,7 +120,7 @@ func TestUnit_ValidateAgent_SameOrgMissDoesNotAuditCrossTenant(t *testing.T) {
 
 	var buf bytes.Buffer
 	orgID := uuid.NewString()
-	s := newServerWithLogAndAgents(t, &buf, &fakeAgentAPI{})
+	s := newServerWithDeps(t, &buf, serverLogDeps{agents: &fakeAgentAPI{}})
 	ctx := ContextWithCaller(context.Background(), CallerContext{
 		OrgID: orgID, Permissions: permissions.Admin,
 	})
@@ -147,7 +147,7 @@ func TestUnit_CreateToken_SubjectBindDeniedAudit(t *testing.T) {
 			return service.CreateTokenResult{}, service.ErrTokenSubjectForbidden
 		},
 	}
-	s := newServerWithLogTokens(t, &buf, tokens)
+	s := newServerWithDeps(t, &buf, serverLogDeps{tokens: tokens})
 	ctx := ContextWithCaller(context.Background(), CallerContext{
 		OrgID: orgID, Permissions: permissions.Admin,
 	})
@@ -180,7 +180,7 @@ func TestUnit_CreateToken_SubjectUnavailableNoBindAudit(t *testing.T) {
 			return service.CreateTokenResult{}, service.ErrTokenSubjectUnavailable
 		},
 	}
-	s := newServerWithLogTokens(t, &buf, tokens)
+	s := newServerWithDeps(t, &buf, serverLogDeps{tokens: tokens})
 	ctx := ContextWithCaller(context.Background(), CallerContext{
 		OrgID: orgID, Permissions: permissions.Admin,
 	})
@@ -223,16 +223,6 @@ func assertCrossTenantAudit(t *testing.T, callerOrg string, tc auditCase) {
 func newServerWithLog(t *testing.T, buf *bytes.Buffer) *Server {
 	t.Helper()
 	return newServerWithDeps(t, buf, serverLogDeps{})
-}
-
-func newServerWithLogTokens(t *testing.T, buf *bytes.Buffer, tokens tokenAPI) *Server {
-	t.Helper()
-	return newServerWithDeps(t, buf, serverLogDeps{tokens: tokens})
-}
-
-func newServerWithLogAndAgents(t *testing.T, buf *bytes.Buffer, agents agentAPI) *Server {
-	t.Helper()
-	return newServerWithDeps(t, buf, serverLogDeps{agents: agents})
 }
 
 type serverLogDeps struct {

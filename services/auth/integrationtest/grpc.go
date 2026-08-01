@@ -3,6 +3,7 @@
 package integrationtest
 
 import (
+	"database/sql"
 	"net"
 	"testing"
 
@@ -51,48 +52,78 @@ func startAuthGRPC(t testing.TB, dbDSN string, redisClient redis.UniversalClient
 	repo := repository.RequireTokensRepository(t, db, reg)
 	agentsRepo := repository.NewAgentsRepository(db, reg)
 	argon2 := token.DefaultArgon2Params()
-	validator := mustTokenValidator(t, repo, argon2)
-	publisher := revocationPublisher(t, redisClient)
-	tokenSvc := mustTokenService(t, tokenServiceParts{
-		repo: repo, agents: agentsRepo, users: repository.NewUsersRepository(db, reg),
-		argon2: argon2, publisher: publisher,
+	return serveAuthFixture(t, authServeParts{
+		db: db, reg: reg,
+		validator: mustTokenValidator(t, repo, argon2),
+		tokenSvc: mustTokenService(t, tokenServiceParts{
+			repo: repo, agents: agentsRepo, users: repository.NewUsersRepository(db, reg),
+			argon2: argon2, publisher: revocationPublisher(t, redisClient),
+		}),
+		agentSvc: mustAgentService(t, agentsRepo),
 	})
-	agentSvc := mustAgentService(t, agentsRepo)
+}
 
-	lis, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
+type authServeParts struct {
+	db        *sql.DB
+	reg       *ibexmetrics.AuthRegistry
+	validator *token.Validator
+	tokenSvc  *service.TokenService
+	agentSvc  *service.AgentService
+}
+
+func serveAuthFixture(t testing.TB, p authServeParts) *AuthGRPCFixture {
+	t.Helper()
+	lis := mustListenLocal(t)
+	grpcSrv := newAuthGRPCServer(t, p)
+	go func() { _ = grpcSrv.Serve(lis) }()
+	conn := mustDialLocal(t, lis.Addr().String())
+	return &AuthGRPCFixture{
+		Addr:     lis.Addr().String(),
+		Client:   authv1.NewAuthServiceClient(conn),
+		tokenSvc: p.tokenSvc,
+		cleanup: func() {
+			p.tokenSvc.DrainPublishes()
+			grpcSrv.GracefulStop()
+			_ = conn.Close()
+			_ = p.db.Close()
+		},
 	}
+}
+
+func newAuthGRPCServer(t testing.TB, p authServeParts) *grpc.Server {
+	t.Helper()
 	grpcSrv := grpc.NewServer( // nosemgrep: go.grpc.security.grpc-server-insecure-connection
 		grpc.ChainUnaryInterceptor(
-			grpcserver.MetricsUnaryInterceptor(reg),
-			grpcserver.AuthzUnaryInterceptor(validator),
+			grpcserver.MetricsUnaryInterceptor(p.reg),
+			grpcserver.AuthzUnaryInterceptor(p.validator),
 		))
 	srv, err := grpcserver.NewServer(grpcserver.ServerDeps{
-		Validator: validator, TokenService: tokenSvc, AgentService: agentSvc, Metrics: reg,
-		Log: logger.Discard("auth"),
+		Validator: p.validator, TokenService: p.tokenSvc, AgentService: p.agentSvc,
+		Metrics: p.reg, Log: logger.Discard("auth"),
 	})
 	if err != nil {
 		t.Fatalf("grpc server init: %v", err)
 	}
 	authv1.RegisterAuthServiceServer(grpcSrv, srv)
-	go func() { _ = grpcSrv.Serve(lis) }()
+	return grpcSrv
+}
 
-	conn, err := grpc.NewClient(lis.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+func mustListenLocal(t testing.TB) net.Listener {
+	t.Helper()
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	return lis
+}
+
+func mustDialLocal(t testing.TB, addr string) *grpc.ClientConn {
+	t.Helper()
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
-	return &AuthGRPCFixture{
-		Addr:     lis.Addr().String(),
-		Client:   authv1.NewAuthServiceClient(conn),
-		tokenSvc: tokenSvc,
-		cleanup: func() {
-			tokenSvc.DrainPublishes()
-			grpcSrv.GracefulStop()
-			_ = conn.Close()
-			_ = db.Close()
-		},
-	}
+	return conn
 }
 
 func mustTokenValidator(t testing.TB, repo *repository.TokensRepository, argon2 token.Argon2Params) *token.Validator {

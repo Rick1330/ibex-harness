@@ -45,6 +45,9 @@ type usersFindAdapter struct {
 
 // UsersFinder adapts UsersRepository to userOrgFinder for NewRepoTokenSubjects.
 func UsersFinder(repo *repository.UsersRepository) userOrgFinder {
+	if repo == nil {
+		return nil
+	}
 	return usersFindAdapter{repo: repo}
 }
 
@@ -124,7 +127,7 @@ func (s *TokenService) validateOptionalSubjectBind(
 	}
 	ok, err := belongs(ctx, id, orgID)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrTokenSubjectLookup, err)
+		return fmt.Errorf("%w org_id=%s subject_id=%s: %w", ErrTokenSubjectLookup, orgID, id, err)
 	}
 	if !ok {
 		return ErrTokenSubjectForbidden

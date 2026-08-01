@@ -274,6 +274,7 @@ func TestCreateTokenPermissionSubset(t *testing.T) {
 }
 
 func TestCreateTokenSubjectOrgBind(t *testing.T) {
+	t.Parallel()
 	fx := seedSubjectBindFixture(t)
 	client, cleanup := startAuthGRPC(t, fx.dsn)
 	defer cleanup()
