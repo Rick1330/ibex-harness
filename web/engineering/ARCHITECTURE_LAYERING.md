@@ -61,4 +61,4 @@ ADR-0020 import rules.
 
 - [CODING_STANDARDS.md](./CODING_STANDARDS.md) — interface design (“define at consumer”)
 - [GOLANGCI_POLICY.md](./GOLANGCI_POLICY.md) — depguard / MF-001 proxy Postgres exception ([ADR-0039](/docs/adr/0039-proxy-postgres-session-directive))
-- [20-architecture-layering.mdc](../.cursor/rules/20-architecture-layering.mdc)
+- [20-architecture-layering.mdc](../../.cursor/rules/20-architecture-layering.mdc)

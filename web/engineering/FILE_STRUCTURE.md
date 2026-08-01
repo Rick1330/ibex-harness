@@ -45,7 +45,6 @@ ibex-harness/
     README.md
     PROJECT_CONTEXT.md
     ARCHITECTURE.md
-    ARCHITECTURE_LAYERING.md
     TECH_STACK.md
     API_DOCUMENTATION.md
     DATABASE_SCHEMA.md
@@ -99,6 +98,9 @@ ibex-harness/
     scripts/                    # operational scripts, migrations helpers, etc.
 
   tools/                        # dev tooling scripts (optional; keep small)
+  web/
+    engineering/                # living engineering docs (site)
+      ARCHITECTURE_LAYERING.md  # consumer-owned ports vs shared package interfaces
   Makefile
 ```
 
@@ -108,6 +110,7 @@ ibex-harness/
 - **packages/**: published libraries/tools (SDKs, CLI, proto)
 - **infra/**: deployment, orchestration, observability, local dev infrastructure
 - **docs/**: living documentation + ADRs
+- **web/engineering/**: living engineering docs served with the site (includes `ARCHITECTURE_LAYERING.md`)
 
 ### 2.2 What does NOT belong at top-level?
 

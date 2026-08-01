@@ -69,7 +69,8 @@ func runAgentVerification(t *testing.T, verifier AgentVerifier, agentID string, 
 	return rec
 }
 
-func TestAgentVerification(t *testing.T) {
+func TestUnit_AgentVerification(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		verifier   AgentVerifier
