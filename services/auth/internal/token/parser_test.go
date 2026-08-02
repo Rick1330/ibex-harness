@@ -51,6 +51,19 @@ func TestUnit_ParsePATRejectsOversized(t *testing.T) {
 	}
 }
 
+func TestUnit_ParsePATRejectsWhitespacePaddingBypass(t *testing.T) {
+	t.Parallel()
+	id := uuid.New()
+	valid := "ibex_pat_" + id.String() + "_secretvalue"
+	padded := strings.Repeat(" ", maxPATLen) + valid
+	if len(padded) <= maxPATLen {
+		t.Fatalf("fixture must exceed maxPATLen before trim; got %d", len(padded))
+	}
+	if _, err := ParsePAT(padded); err == nil {
+		t.Fatal("whitespace padding must not bypass maxPATLen")
+	}
+}
+
 func TestUnit_ParsePATAcceptsGeneratedShape(t *testing.T) {
 	t.Parallel()
 	plaintext, _, _, err := GeneratePAT()

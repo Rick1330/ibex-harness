@@ -7,6 +7,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Rick1330/ibex-harness/infra/testing/testutil"
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
@@ -19,10 +20,20 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+const validateRPCTimeout = 5 * time.Second
+
 type errKeyedLimiter struct{}
 
 func (errKeyedLimiter) CheckKey(context.Context, string) (ratelimit.Result, error) {
 	return ratelimit.Result{}, errors.New("redis unavailable")
+}
+
+func validateTokenWithTimeout(t *testing.T, client authv1.AuthServiceClient, token string) error {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), validateRPCTimeout)
+	defer cancel()
+	_, err := client.ValidateToken(ctx, &authv1.ValidateTokenRequest{AccessToken: token})
+	return err
 }
 
 func TestValidateToken_PeerRateLimit_ResourceExhausted(t *testing.T) {
@@ -31,7 +42,11 @@ func TestValidateToken_PeerRateLimit_ResourceExhausted(t *testing.T) {
 
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	t.Cleanup(func() { _ = rdb.Close() })
+	t.Cleanup(func() {
+		if err := rdb.Close(); err != nil {
+			t.Errorf("close redis: %v", err)
+		}
+	})
 
 	limiter, err := ratelimit.NewRedisKeyed(rdb, ratelimit.RedisKeyedConfig{
 		DefaultRPM: 1,
@@ -44,13 +59,12 @@ func TestValidateToken_PeerRateLimit_ResourceExhausted(t *testing.T) {
 	fx := integrationtest.StartAuthGRPCWithValidateLimiter(t, dsn, limiter)
 	defer fx.Close()
 
-	miss := &authv1.ValidateTokenRequest{AccessToken: "not-a-pat"}
-	_, err = fx.Client.ValidateToken(context.Background(), miss)
+	err = validateTokenWithTimeout(t, fx.Client, "not-a-pat")
 	if status.Code(err) != codes.Unauthenticated {
 		t.Fatalf("first: code=%v err=%v", status.Code(err), err)
 	}
 
-	_, err = fx.Client.ValidateToken(context.Background(), miss)
+	err = validateTokenWithTimeout(t, fx.Client, "not-a-pat")
 	if status.Code(err) != codes.ResourceExhausted {
 		t.Fatalf("second: code=%v err=%v want ResourceExhausted", status.Code(err), err)
 	}
@@ -63,9 +77,7 @@ func TestValidateToken_PeerRateLimit_FailOpen(t *testing.T) {
 	fx := integrationtest.StartAuthGRPCWithValidateLimiter(t, dsn, errKeyedLimiter{})
 	defer fx.Close()
 
-	_, err := fx.Client.ValidateToken(context.Background(), &authv1.ValidateTokenRequest{
-		AccessToken: "not-a-pat",
-	})
+	err := validateTokenWithTimeout(t, fx.Client, "not-a-pat")
 	if status.Code(err) != codes.Unauthenticated {
 		t.Fatalf("fail-open should reach validator; code=%v err=%v", status.Code(err), err)
 	}
@@ -79,9 +91,7 @@ func TestValidateToken_OversizedPAT_Unauthenticated(t *testing.T) {
 	defer fx.Close()
 
 	oversized := "ibex_pat_" + uuid.NewString() + "_" + strings.Repeat("a", 200)
-	_, err := fx.Client.ValidateToken(context.Background(), &authv1.ValidateTokenRequest{
-		AccessToken: oversized,
-	})
+	err := validateTokenWithTimeout(t, fx.Client, oversized)
 	if status.Code(err) != codes.Unauthenticated {
 		t.Fatalf("oversized PAT: code=%v err=%v", status.Code(err), err)
 	}

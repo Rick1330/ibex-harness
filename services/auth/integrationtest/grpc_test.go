@@ -86,6 +86,13 @@ func TestIntegration_StartAuthGRPC_NilGuards(t *testing.T) {
 	})
 }
 
+func TestIntegration_newAuthGRPCServer_RejectsInvalidDeps(t *testing.T) {
+	t.Parallel()
+	assertStartFatal(t, func(tb testing.TB) {
+		_ = newAuthGRPCServer(tb, authServeParts{})
+	})
+}
+
 type fatalRecorder struct {
 	testing.TB
 	msg string

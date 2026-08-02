@@ -627,7 +627,7 @@ Use a parent directory with **two siblings**:
 
 Examples:
 
-- Windows: `<drive>:\path\to\ibex-r\ibex-harness` and `<drive>:\path\to\ibex-r\ibex-harness-workspace`
+- Windows: `X:\src\ibex-r\ibex-harness` and `X:\src\ibex-r\ibex-harness-workspace` (any drive/path layout matching §12)
 - macOS/Linux: `~/ibex-r/ibex-harness` and `~/ibex-r/ibex-harness-workspace`
 
 After cloning, create the workspace folder manually or copy the structure from this section. **Do not** store session files under `reports/` inside the repo (removed).

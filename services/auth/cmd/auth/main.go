@@ -198,6 +198,9 @@ const (
 	validateTokenRateKeyPrefix = "ratelimit:auth:validate"
 )
 
+// newRedisKeyed constructs the Redis keyed limiter (overridable in unit tests).
+var newRedisKeyed = ratelimit.NewRedisKeyed
+
 func newValidateTokenLimiter(
 	cfg config.Config,
 	redisClient redis.UniversalClient,
@@ -208,7 +211,7 @@ func newValidateTokenLimiter(
 			"ValidateToken rate limit disabled; REDIS_URL empty (private-network assumption)")
 		return ratelimit.NoopKeyed(), nil
 	}
-	limiter, err := ratelimit.NewRedisKeyed(redisClient, ratelimit.RedisKeyedConfig{
+	limiter, err := newRedisKeyed(redisClient, ratelimit.RedisKeyedConfig{
 		DefaultRPM: cfg.ValidateTokenRPM,
 		KeyPrefix:  validateTokenRateKeyPrefix,
 	})

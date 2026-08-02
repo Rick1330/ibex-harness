@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"net"
 	"testing"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/Rick1330/ibex-harness/services/auth/internal/service"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/token"
 	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 )
 
 func openTestDB(t *testing.T) *sql.DB {
@@ -278,6 +280,36 @@ func TestUnit_NewValidateTokenLimiter_NilRedisUsesNoop(t *testing.T) {
 	res, err := limiter.CheckKey(context.Background(), "any")
 	if err != nil || !res.Allowed {
 		t.Fatalf("noop: allowed=%v err=%v", res.Allowed, err)
+	}
+}
+
+func TestUnit_NewValidateTokenLimiter_PropagatesKeyedError(t *testing.T) {
+	t.Parallel()
+	prev := newRedisKeyed
+	t.Cleanup(func() { newRedisKeyed = prev })
+	newRedisKeyed = func(redis.UniversalClient, ratelimit.RedisKeyedConfig) (ratelimit.KeyedLimiter, error) {
+		return nil, errors.New("forced keyed failure")
+	}
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	_, err := newValidateTokenLimiter(config.Config{ValidateTokenRPM: 10}, client, logger.Discard("auth"))
+	if err == nil {
+		t.Fatal("expected keyed construction error")
+	}
+}
+
+func TestUnit_InitAuthServices_RejectsZeroArgon2(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	reg := newTestAuthRegistry(t, db)
+	_, err := initAuthServices(config.Config{
+		RedisURL:         "",
+		ValidateTokenRPM: 6000,
+		Argon2:           token.Argon2Params{},
+	}, db, logger.Discard("auth"), reg)
+	if err == nil {
+		t.Fatal("expected token validator construction error")
 	}
 }
 

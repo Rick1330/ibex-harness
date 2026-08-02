@@ -21,8 +21,13 @@ type ParsedPAT struct {
 
 // ParsePAT parses ibex_pat_<token_uuid>_<secret>.
 func ParsePAT(accessToken string) (ParsedPAT, error) {
-	accessToken = strings.TrimSpace(accessToken)
+	// Bound raw wire size before TrimSpace so padding cannot bypass maxPATLen
+	// or force a large trim scan.
 	if accessToken == "" || len(accessToken) > maxPATLen {
+		return ParsedPAT{}, ErrUnauthenticated
+	}
+	accessToken = strings.TrimSpace(accessToken)
+	if accessToken == "" {
 		return ParsedPAT{}, ErrUnauthenticated
 	}
 	if !strings.HasPrefix(accessToken, patWirePrefix) {
