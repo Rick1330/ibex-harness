@@ -32,12 +32,15 @@ func startAuthGRPC(t *testing.T, dbDSN string) (authv1.AuthServiceClient, func()
 	reg := ibexmetrics.NewAuth(ibexmetrics.AuthConfig{ServiceName: "auth-test", DB: db})
 	repo := repository.RequireTokensRepository(t, db, reg)
 	agentsRepo := repository.NewAgentsRepository(db, reg)
-	argon2 := token.DefaultArgon2Params()
+	argon2 := token.TestArgon2Params()
 	lookup, err := token.NewRepoLookup(repo)
 	if err != nil {
 		t.Fatalf("NewRepoLookup: %v", err)
 	}
-	validator := token.NewValidator(lookup, argon2)
+	validator, err := token.NewValidator(lookup, argon2)
+	if err != nil {
+		t.Fatalf("NewValidator: %v", err)
+	}
 	subjects, err := service.NewRepoTokenSubjects(agentsRepo, service.UsersFinder(repository.NewUsersRepository(db, reg)))
 	if err != nil {
 		t.Fatalf("NewRepoTokenSubjects: %v", err)

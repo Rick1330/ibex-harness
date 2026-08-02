@@ -42,7 +42,11 @@ func assertValidatorResponse(t *testing.T, resp *authv1.ValidateTokenResponse, a
 
 func runValidatorCase(t *testing.T, run validatorRun) {
 	t.Helper()
-	resp, err := token.NewValidator(run.tc.lookup, run.argon2).Validate(context.Background(), run.tc.token)
+	v, err := token.NewValidator(run.tc.lookup, run.argon2)
+	if err != nil {
+		t.Fatalf("NewValidator: %v", err)
+	}
+	resp, err := v.Validate(context.Background(), run.tc.token)
 	if run.tc.wantErr != nil {
 		assertValidatorError(t, err, run.tc.wantErr)
 		return
@@ -73,10 +77,14 @@ func (f *fakeLookup) FindActiveByPrefix(ctx context.Context, _ string) (token.Ro
 
 func TestValidator_Validate(t *testing.T) {
 	t.Parallel()
-	argon2 := token.DefaultArgon2Params()
+	argon2 := token.TestArgon2Params()
 	tokenID := uuid.New()
 	bearer := "ibex_pat_" + tokenID.String() + "_secret"
 	hash, err := token.HashForTest(bearer, argon2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherHash, err := token.HashForTest(bearer+"_other", argon2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +95,9 @@ func TestValidator_Validate(t *testing.T) {
 		ID: tokenID.String(), OrgID: uuid.NewString(), Hash: hash, Permissions: 42,
 		AgentID: &agentID, UserID: &userID, ExpiresAt: &expires,
 	}
-	for _, tc := range validatorCases(validatorFixture{bearer: bearer, hash: hash, agentID: agentID, userID: userID, row: row}) {
+	for _, tc := range validatorCases(validatorFixture{
+		bearer: bearer, hash: hash, otherHash: otherHash, agentID: agentID, userID: userID, row: row,
+	}) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

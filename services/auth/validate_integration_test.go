@@ -74,9 +74,13 @@ func newValidateEnv(t *testing.T, db *sql.DB) validateEnv {
 	if err != nil {
 		t.Fatalf("NewRepoLookup: %v", err)
 	}
-	argon2 := token.DefaultArgon2Params()
+	argon2 := token.TestArgon2Params()
+	v, err := token.NewValidator(lookup, argon2)
+	if err != nil {
+		t.Fatalf("NewValidator: %v", err)
+	}
 	return validateEnv{
-		v: token.NewValidator(lookup, argon2), repo: repo, argon2: argon2,
+		v: v, repo: repo, argon2: argon2,
 	}
 }
 

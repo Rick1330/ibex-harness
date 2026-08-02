@@ -8,12 +8,13 @@ import (
 
 func validAuthConfig() Config {
 	return Config{
-		Environment:     "development",
-		ServiceName:     "auth",
-		Port:            "8081",
-		GRPCPort:        "9091",
-		PostgresDSN:     "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable",
-		ShutdownTimeout: 30 * time.Second,
+		Environment:      "development",
+		ServiceName:      "auth",
+		Port:             "8081",
+		GRPCPort:         "9091",
+		PostgresDSN:      "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable",
+		ValidateTokenRPM: 6000,
+		ShutdownTimeout:  30 * time.Second,
 	}
 }
 
@@ -102,12 +103,13 @@ func TestValidateAcceptsDefaultShape(t *testing.T) {
 	t.Parallel()
 
 	cfg := Config{
-		Environment:     "development",
-		ServiceName:     "auth",
-		Port:            "8081",
-		GRPCPort:        "9091",
-		PostgresDSN:     "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable",
-		ShutdownTimeout: 30 * time.Second,
+		Environment:      "development",
+		ServiceName:      "auth",
+		Port:             "8081",
+		GRPCPort:         "9091",
+		PostgresDSN:      "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable",
+		ValidateTokenRPM: 6000,
+		ShutdownTimeout:  30 * time.Second,
 	}
 
 	if err := cfg.Validate(); err != nil {

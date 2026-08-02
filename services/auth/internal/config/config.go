@@ -14,25 +14,27 @@ import (
 )
 
 const (
-	defaultEnvironment     = "development"
-	defaultServiceName     = "auth"
-	defaultLogLevel        = slog.LevelInfo
-	defaultPort            = "8081"
-	defaultGRPCPort        = "9091"
-	defaultShutdownTimeout = 30 * time.Second
+	defaultEnvironment      = "development"
+	defaultServiceName      = "auth"
+	defaultLogLevel         = slog.LevelInfo
+	defaultPort             = "8081"
+	defaultGRPCPort         = "9091"
+	defaultShutdownTimeout  = 30 * time.Second
+	defaultValidateTokenRPM = int64(6000)
 )
 
 type Config struct {
-	Environment     string
-	ServiceName     string
-	LogLevel        slog.Level
-	Port            string
-	GRPCPort        string
-	PostgresDSN     string
-	RedisURL        string
-	Argon2          token.Argon2Params
-	ShutdownTimeout time.Duration
-	Telemetry       telemetry.Config
+	Environment      string
+	ServiceName      string
+	LogLevel         slog.Level
+	Port             string
+	GRPCPort         string
+	PostgresDSN      string
+	RedisURL         string
+	ValidateTokenRPM int64
+	Argon2           token.Argon2Params
+	ShutdownTimeout  time.Duration
+	Telemetry        telemetry.Config
 }
 
 func Load() (Config, error) {
@@ -56,6 +58,9 @@ func (c Config) Validate() error {
 	}
 	if c.PostgresDSN == "" {
 		return fmt.Errorf("POSTGRES_DSN is required for auth token validation")
+	}
+	if c.ValidateTokenRPM < 1 {
+		return fmt.Errorf("IBEX_AUTH_VALIDATE_RPM must be >= 1")
 	}
 	return shutdown.ValidateTimeout(c.ShutdownTimeout)
 }

@@ -132,7 +132,11 @@ func mustTokenValidator(t testing.TB, repo *repository.TokensRepository, argon2 
 	if err != nil {
 		t.Fatalf("NewRepoLookup: %v", err)
 	}
-	return token.NewValidator(lookup, argon2)
+	v, err := token.NewValidator(lookup, argon2)
+	if err != nil {
+		t.Fatalf("NewValidator: %v", err)
+	}
+	return v
 }
 
 func revocationPublisher(t testing.TB, redisClient redis.UniversalClient) revocation.Publisher {

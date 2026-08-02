@@ -146,11 +146,12 @@ func loadAuthBootstrap() (config.Config, *logger.Logger, bool) {
 }
 
 type authServiceDeps struct {
-	validator   *token.Validator
-	tokenSvc    *service.TokenService
-	agentsRepo  *repository.AgentsRepository
-	redisClient redis.UniversalClient
-	log         *logger.Logger
+	validator       *token.Validator
+	tokenSvc        *service.TokenService
+	agentsRepo      *repository.AgentsRepository
+	redisClient     redis.UniversalClient
+	validateLimiter ratelimit.KeyedLimiter
+	log             *logger.Logger
 }
 
 func initAuthServices(
@@ -169,9 +170,16 @@ func initAuthServices(
 	if err != nil {
 		return authServiceDeps{}, err
 	}
-	validator := token.NewValidator(lookup, cfg.Argon2)
+	validator, err := token.NewValidator(lookup, cfg.Argon2)
+	if err != nil {
+		return authServiceDeps{}, err
+	}
 
 	redisClient, publisher, err := setupRevocationPublisher(cfg, log, reg)
+	if err != nil {
+		return authServiceDeps{}, err
+	}
+	validateLimiter, err := newValidateTokenLimiter(cfg, redisClient, log)
 	if err != nil {
 		return authServiceDeps{}, err
 	}
@@ -182,14 +190,40 @@ func initAuthServices(
 	tokenSvc := service.NewTokenService(repo, cfg.Argon2, log, publisher).WithSubjectLookup(subjects)
 	return authServiceDeps{
 		validator: validator, tokenSvc: tokenSvc, agentsRepo: agentsRepo,
-		redisClient: redisClient, log: log,
+		redisClient: redisClient, validateLimiter: validateLimiter, log: log,
 	}, nil
+}
+
+func newValidateTokenLimiter(
+	cfg config.Config,
+	redisClient redis.UniversalClient,
+	log *logger.Logger,
+) (ratelimit.KeyedLimiter, error) {
+	if redisClient == nil {
+		log.WarnCtx(context.Background(),
+			"ValidateToken rate limit disabled; REDIS_URL empty (private-network assumption)")
+		return ratelimit.NoopKeyed(), nil
+	}
+	limiter, err := ratelimit.NewRedisKeyed(redisClient, ratelimit.RedisKeyedConfig{
+		DefaultRPM: cfg.ValidateTokenRPM,
+		KeyPrefix:  "ratelimit:auth:validate",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("ValidateToken rate limiter: %w", err)
+	}
+	log.InfoCtx(context.Background(), "ValidateToken rate limit configured",
+		"rpm", cfg.ValidateTokenRPM, "key_prefix", "ratelimit:auth:validate")
+	return limiter, nil
 }
 
 func newAuthGRPCServer(deps authServiceDeps, reg *ibexmetrics.AuthRegistry) (*grpc.Server, error) {
 	grpcSrv := grpc.NewServer(
 		grpc.ChainUnaryInterceptor(
 			grpcserver.MetricsUnaryInterceptor(reg),
+			grpcserver.ValidateTokenRateLimitInterceptor(grpcserver.ValidateRateLimitOpts{
+				Limiter: deps.validateLimiter,
+				Log:     deps.log,
+			}),
 			grpcserver.AuthzUnaryInterceptor(deps.validator),
 		),
 	)

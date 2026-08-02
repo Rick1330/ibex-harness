@@ -9,7 +9,7 @@ Go service for IBEX Harness authentication. Exposes HTTP health/metrics and gRPC
 | `GET /health` | Liveness — `{"status":"ok","checks":{}}` ([ADR-0022](../../docs/adr/ADR-0022-health-check-contract.md)) |
 | `GET /ready` | Readiness — critical: `postgres` (`SELECT 1`), `grpc` (TCP) |
 | `GET /metrics` | Prometheus text metrics |
-| gRPC `ValidateToken` | Internal token validation (no caller bearer) |
+| gRPC `ValidateToken` | Internal token validation (no caller bearer); constant-cost miss path; peer RPM when Redis set |
 | gRPC `CreateToken` / `RevokeToken` / `ListTokens` | PAT lifecycle (caller bearer required) |
 
 ## Configuration
@@ -19,6 +19,8 @@ See [.env.example](.env.example) and [ENVIRONMENT_VARIABLES.md](../../web/engine
 | Variable | Required | Default |
 | --- | --- | --- |
 | `POSTGRES_DSN` | Yes | — |
+| `REDIS_URL` | No | empty (disables revoke pub/sub + ValidateToken RPM) |
+| `IBEX_AUTH_VALIDATE_RPM` | No | `6000` |
 | `IBEX_PORT` | No | `8081` |
 | `IBEX_GRPC_PORT` | No | `9091` |
 | `IBEX_ARGON2_*` | No | see docs |

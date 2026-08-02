@@ -2,10 +2,14 @@ package ratelimit
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
 )
+
+// ErrNilClient is returned when a Redis-backed limiter is constructed with a nil client.
+var ErrNilClient = errors.New("ratelimit: nil redis client")
 
 // Limiter checks and enforces rate limits.
 // Phase 4 will add hierarchical Lua-based limits without changing callers.

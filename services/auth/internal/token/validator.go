@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/Rick1330/ibex-harness/packages/crypto"
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -18,12 +19,18 @@ type tokenLookup interface {
 
 // Validator validates bearer tokens against Postgres.
 type Validator struct {
-	repo   tokenLookup
-	argon2 Argon2Params
+	repo     tokenLookup
+	argon2   Argon2Params
+	dummyPHC string
 }
 
-func NewValidator(repo tokenLookup, argon2 Argon2Params) *Validator {
-	return &Validator{repo: repo, argon2: argon2}
+// NewValidator builds a Validator that equalizes Argon2 cost on prefix misses.
+func NewValidator(repo tokenLookup, argon2 Argon2Params) (*Validator, error) {
+	dummy, err := crypto.DummyPHC(argon2)
+	if err != nil {
+		return nil, fmt.Errorf("token.NewValidator dummy PHC: %w", err)
+	}
+	return &Validator{repo: repo, argon2: argon2, dummyPHC: dummy}, nil
 }
 
 // Validate returns a proto response or ErrUnauthenticated.
@@ -36,17 +43,26 @@ func (v *Validator) Validate(ctx context.Context, accessToken string) (*authv1.V
 	row, err := v.repo.FindActiveByPrefix(ctx, parsed.Prefix)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
+			v.equalizeMiss(parsed.Bearer)
 			return nil, ErrUnauthenticated
 		}
 		return nil, fmt.Errorf("Validator.Validate prefix=%s: %w", parsed.Prefix, err)
 	}
 
-	ok, err := VerifyBearer(row.Hash, parsed.Bearer, v.argon2)
-	if err != nil || !ok {
+	ok, verr := VerifyBearer(row.Hash, parsed.Bearer, v.argon2)
+	if verr != nil {
+		// Malformed stored PHC skipped Argon2 — equalize before denying.
+		v.equalizeMiss(parsed.Bearer)
 		return nil, ErrUnauthenticated
 	}
-
+	if !ok {
+		return nil, ErrUnauthenticated
+	}
 	return validateResponseFromRow(row), nil
+}
+
+func (v *Validator) equalizeMiss(bearer string) {
+	_, _ = VerifyBearer(v.dummyPHC, bearer, v.argon2)
 }
 
 func validateResponseFromRow(row Row) *authv1.ValidateTokenResponse {

@@ -182,7 +182,7 @@ make db-migrate
 
 **`make dev-smoke` returns 503 on bearer requests (want 400/501):**
 
-Proxy auth gRPC `ValidateToken` is timing out. The code default is `50ms` (production budget); local Argon2 verify often needs more on developer machines. Restart proxy with:
+Proxy auth gRPC `ValidateToken` is timing out. The code default is `50ms` (production budget); local Argon2 verify often needs more on developer machines — including **prefix-miss** paths, which now run a dummy Argon2 verify for timing equalization. Restart proxy with:
 
 ```bash
 IBEX_AUTH_VALIDATE_TIMEOUT=2s go run ./services/proxy/cmd/proxy
