@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -51,6 +52,13 @@ func TestValidateTokenIntegration(t *testing.T) {
 	env.assertUnauthenticated(t, bearerRef{raw: "ibex_pat_" + uuid.NewString() + "_wrong"})
 	env.assertRevokedRejected(t, orgA)
 	env.assertValidateOrg(t, orgB, 99)
+	env.assertOversizedRejected(t)
+}
+
+func (e validateEnv) assertOversizedRejected(t *testing.T) {
+	t.Helper()
+	secret := strings.Repeat("x", 200)
+	e.assertUnauthenticated(t, bearerRef{raw: "ibex_pat_" + uuid.NewString() + "_" + secret})
 }
 
 func TestValidateTokenOptionalFields(t *testing.T) {
@@ -74,9 +82,13 @@ func newValidateEnv(t *testing.T, db *sql.DB) validateEnv {
 	if err != nil {
 		t.Fatalf("NewRepoLookup: %v", err)
 	}
-	argon2 := token.DefaultArgon2Params()
+	argon2 := token.TestArgon2Params()
+	v, err := token.NewValidator(lookup, argon2)
+	if err != nil {
+		t.Fatalf("NewValidator: %v", err)
+	}
 	return validateEnv{
-		v: token.NewValidator(lookup, argon2), repo: repo, argon2: argon2,
+		v: v, repo: repo, argon2: argon2,
 	}
 }
 

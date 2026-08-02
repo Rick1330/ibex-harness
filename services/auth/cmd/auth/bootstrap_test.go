@@ -3,17 +3,20 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"net"
 	"testing"
 
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	ibexmetrics "github.com/Rick1330/ibex-harness/packages/metrics"
+	"github.com/Rick1330/ibex-harness/packages/ratelimit"
 	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/config"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/repository"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/service"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/token"
 	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 )
 
 func openTestDB(t *testing.T) *sql.DB {
@@ -41,6 +44,9 @@ func assertAuthServiceDeps(t *testing.T, deps authServiceDeps) {
 	if deps.agentsRepo == nil {
 		t.Fatal("expected agents repo")
 	}
+	if deps.validateLimiter == nil {
+		t.Fatal("expected validate limiter")
+	}
 }
 
 func newTestAuthRegistry(t *testing.T, db *sql.DB) *ibexmetrics.AuthRegistry {
@@ -57,16 +63,20 @@ func newTestAuthServiceDeps(t *testing.T, db *sql.DB, reg *ibexmetrics.AuthRegis
 	if err != nil {
 		t.Fatalf("NewRepoLookup: %v", err)
 	}
-	validator := token.NewValidator(lookup, token.DefaultArgon2Params())
+	validator, err := token.NewValidator(lookup, token.TestArgon2Params())
+	if err != nil {
+		t.Fatalf("NewValidator: %v", err)
+	}
 	subjects, err := service.NewRepoTokenSubjects(agentsRepo, service.UsersFinder(usersRepo))
 	if err != nil {
 		t.Fatalf("NewRepoTokenSubjects: %v", err)
 	}
-	tokenSvc := service.NewTokenService(repo, token.DefaultArgon2Params(), logger.Discard("auth"), nil).
+	tokenSvc := service.NewTokenService(repo, token.TestArgon2Params(), logger.Discard("auth"), nil).
 		WithSubjectLookup(subjects)
 	return authServiceDeps{
 		validator: validator, tokenSvc: tokenSvc, agentsRepo: agentsRepo,
-		log: logger.Discard("auth"),
+		validateLimiter: ratelimit.NoopKeyed(),
+		log:             logger.Discard("auth"),
 	}
 }
 
@@ -200,8 +210,9 @@ func TestUnit_InvalidRedisURL_Rejects(t *testing.T) {
 			name: "auth services",
 			run: func() error {
 				_, err := initAuthServices(config.Config{
-					RedisURL: badURL,
-					Argon2:   token.DefaultArgon2Params(),
+					RedisURL:         badURL,
+					ValidateTokenRPM: 6000,
+					Argon2:           token.TestArgon2Params(),
 				}, db, log, reg)
 				return err
 			},
@@ -233,6 +244,75 @@ func TestUnit_NewAuthGRPCServer_RejectsInvalidDeps(t *testing.T) {
 	}
 }
 
+func TestUnit_InitAuthServices_WithMiniredisLimiter(t *testing.T) {
+	t.Parallel()
+
+	db := openTestDB(t)
+	reg := newTestAuthRegistry(t, db)
+	log := logger.Discard("auth")
+	mr := miniredis.RunT(t)
+
+	deps, err := initAuthServices(config.Config{
+		RedisURL:         "redis://" + mr.Addr() + "/0",
+		ValidateTokenRPM: 120,
+		Argon2:           token.TestArgon2Params(),
+	}, db, log, reg)
+	if err != nil {
+		t.Fatalf("initAuthServices: %v", err)
+	}
+	assertAuthServiceDeps(t, deps)
+	if deps.redisClient == nil {
+		t.Fatal("expected redis client")
+	}
+	t.Cleanup(func() { _ = deps.redisClient.Close() })
+	res, err := deps.validateLimiter.CheckKey(context.Background(), "127.0.0.1")
+	if err != nil || !res.Allowed {
+		t.Fatalf("validate limiter: allowed=%v err=%v", res.Allowed, err)
+	}
+}
+
+func TestUnit_NewValidateTokenLimiter_NilRedisUsesNoop(t *testing.T) {
+	t.Parallel()
+	limiter, err := newValidateTokenLimiter(config.Config{ValidateTokenRPM: 6000}, nil, logger.Discard("auth"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := limiter.CheckKey(context.Background(), "any")
+	if err != nil || !res.Allowed {
+		t.Fatalf("noop: allowed=%v err=%v", res.Allowed, err)
+	}
+}
+
+func TestUnit_NewValidateTokenLimiter_PropagatesKeyedError(t *testing.T) {
+	// Must stay sequential: mutates package-level newRedisKeyed.
+	prev := newRedisKeyed
+	defer func() { newRedisKeyed = prev }()
+	newRedisKeyed = func(redis.UniversalClient, ratelimit.RedisKeyedConfig) (ratelimit.KeyedLimiter, error) {
+		return nil, errors.New("forced keyed failure")
+	}
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	_, err := newValidateTokenLimiter(config.Config{ValidateTokenRPM: 10}, client, logger.Discard("auth"))
+	if err == nil {
+		t.Fatal("expected keyed construction error")
+	}
+}
+
+func TestUnit_InitAuthServices_RejectsZeroArgon2(t *testing.T) {
+	t.Parallel()
+	db := openTestDB(t)
+	reg := newTestAuthRegistry(t, db)
+	_, err := initAuthServices(config.Config{
+		RedisURL:         "",
+		ValidateTokenRPM: 6000,
+		Argon2:           token.Argon2Params{},
+	}, db, logger.Discard("auth"), reg)
+	if err == nil {
+		t.Fatal("expected token validator construction error")
+	}
+}
+
 func TestUnit_InitAuthServices_EmptyRedisURL(t *testing.T) {
 	t.Parallel()
 
@@ -241,8 +321,9 @@ func TestUnit_InitAuthServices_EmptyRedisURL(t *testing.T) {
 	log := logger.Discard("auth")
 
 	deps, err := initAuthServices(config.Config{
-		RedisURL: "",
-		Argon2:   token.DefaultArgon2Params(),
+		RedisURL:         "",
+		ValidateTokenRPM: 6000,
+		Argon2:           token.TestArgon2Params(),
 	}, db, log, reg)
 
 	if err != nil {
@@ -308,8 +389,9 @@ func TestUnit_InitAuthServices_NilDB(t *testing.T) {
 
 	reg := ibexmetrics.NewAuth(ibexmetrics.AuthConfig{ServiceName: "auth"})
 	_, err := initAuthServices(config.Config{
-		RedisURL: "",
-		Argon2:   token.DefaultArgon2Params(),
+		RedisURL:         "",
+		ValidateTokenRPM: 6000,
+		Argon2:           token.TestArgon2Params(),
 	}, nil, logger.Discard("auth"), reg)
 	if err == nil {
 		t.Fatal("expected nil db error from NewTokensRepository")

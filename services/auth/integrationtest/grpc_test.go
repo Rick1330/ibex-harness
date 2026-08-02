@@ -3,9 +3,11 @@
 package integrationtest
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/Rick1330/ibex-harness/infra/testing/testutil"
+	"github.com/Rick1330/ibex-harness/packages/ratelimit"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 )
@@ -52,4 +54,70 @@ func TestIntegration_StartAuthGRPCWithRedis(t *testing.T) {
 	assertAuthGRPCFixture(t, fx, true)
 	fx.WaitPendingPublishes()
 	fx.Close()
+}
+
+func TestIntegration_StartAuthGRPCWithValidateLimiter(t *testing.T) {
+	dsn, cleanup := testutil.SetupPostgres(t)
+	defer cleanup()
+
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+
+	limiter, err := ratelimit.NewRedisKeyed(client, ratelimit.RedisKeyedConfig{
+		DefaultRPM: 100,
+		KeyPrefix:  "ratelimit:auth:validate:fixture",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fx := StartAuthGRPCWithValidateLimiter(t, dsn, limiter)
+	assertAuthGRPCFixture(t, fx, true)
+	fx.Close()
+}
+
+func TestIntegration_StartAuthGRPC_NilGuards(t *testing.T) {
+	t.Parallel()
+	assertStartFatal(t, func(tb testing.TB) {
+		StartAuthGRPCWithRedis(tb, "postgres://unused", nil)
+	})
+	assertStartFatal(t, func(tb testing.TB) {
+		StartAuthGRPCWithValidateLimiter(tb, "postgres://unused", nil)
+	})
+}
+
+func TestIntegration_newAuthGRPCServer_RejectsInvalidDeps(t *testing.T) {
+	t.Parallel()
+	assertStartFatal(t, func(tb testing.TB) {
+		_ = newAuthGRPCServer(tb, authServeParts{})
+	})
+}
+
+type fatalRecorder struct {
+	testing.TB
+	msg string
+}
+
+func (f *fatalRecorder) Helper() {}
+func (f *fatalRecorder) Fatal(args ...any) {
+	f.msg = fmt.Sprint(args...)
+	panic("fatal")
+}
+func (f *fatalRecorder) Fatalf(format string, args ...any) {
+	f.msg = fmt.Sprintf(format, args...)
+	panic("fatal")
+}
+
+func assertStartFatal(t *testing.T, run func(testing.TB)) {
+	t.Helper()
+	rec := &fatalRecorder{TB: t}
+	defer func() {
+		if recover() == nil {
+			t.Fatal("expected Fatal from nil guard")
+		}
+		if rec.msg == "" {
+			t.Fatal("expected fatal message")
+		}
+	}()
+	run(rec)
 }

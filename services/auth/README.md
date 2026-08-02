@@ -9,7 +9,7 @@ Go service for IBEX Harness authentication. Exposes HTTP health/metrics and gRPC
 | `GET /health` | Liveness — `{"status":"ok","checks":{}}` ([ADR-0022](../../docs/adr/ADR-0022-health-check-contract.md)) |
 | `GET /ready` | Readiness — critical: `postgres` (`SELECT 1`), `grpc` (TCP) |
 | `GET /metrics` | Prometheus text metrics |
-| gRPC `ValidateToken` | Internal token validation (no caller bearer) |
+| gRPC `ValidateToken` | Internal token validation (no caller bearer). **Private-network only** — listen only for trusted proxy hosts (mTLS / internal net). `IBEX_AUTH_VALIDATE_RPM` is a per-proxy-host aggregate cap when `REDIS_URL` is set (disabled when Redis is empty); it is **not** client-facing internet rate limiting. Constant-cost miss path. |
 | gRPC `CreateToken` / `RevokeToken` / `ListTokens` | PAT lifecycle (caller bearer required) |
 
 ## Configuration
@@ -19,9 +19,25 @@ See [.env.example](.env.example) and [ENVIRONMENT_VARIABLES.md](../../web/engine
 | Variable | Required | Default |
 | --- | --- | --- |
 | `POSTGRES_DSN` | Yes | — |
+| `REDIS_URL` | No | empty (disables revoke pub/sub + ValidateToken RPM) |
+| `IBEX_AUTH_VALIDATE_RPM` | No | `6000` (per proxy-host aggregate) |
 | `IBEX_PORT` | No | `8081` |
 | `IBEX_GRPC_PORT` | No | `9091` |
 | `IBEX_ARGON2_*` | No | see docs |
+
+## Testing
+
+```bash
+# Unit (no infra)
+go test ./services/auth/...
+
+# Integration (Postgres; covered by CI auth-validate-smoke)
+# Includes peer ValidateToken RPM + oversized PAT guards via miniredis/Postgres.
+make compose-test-up
+go test -tags=integration ./services/auth/...
+```
+
+There is no dedicated compose E2E workflow for ValidateToken RPM: merge gates already run the integration suite above. Live compose smoke remains `make e2e-wave2b-token-fks` / `make dev-smoke` (make-only, not CI).
 
 ## Run locally
 
@@ -37,10 +53,12 @@ IBEX_PORT=8081 IBEX_GRPC_PORT=9091 \
   go run ./services/auth/cmd/auth
 ```
 
-**Windows (PowerShell)** — use `$env:` instead of bash `VAR=value cmd` (no `\` line continuation):
+**Windows (PowerShell)** — use `$env:` instead of bash `VAR=value cmd` (no `\` line continuation).
+Set `$RepoRoot` to your clone path first:
 
 ```powershell
-cd D:\ibex-r\ibex-harness
+$RepoRoot = 'C:\path\to\ibex-harness'   # set to your clone
+Set-Location $RepoRoot
 make compose-dev-up
 make db-migrate
 make proto-gen

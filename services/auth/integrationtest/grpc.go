@@ -11,6 +11,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	ibexmetrics "github.com/Rick1330/ibex-harness/packages/metrics"
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
+	"github.com/Rick1330/ibex-harness/packages/ratelimit"
 	"github.com/Rick1330/ibex-harness/packages/revocation"
 	grpcserver "github.com/Rick1330/ibex-harness/services/auth/internal/grpc"
 	"github.com/Rick1330/ibex-harness/services/auth/internal/repository"
@@ -32,7 +33,7 @@ type AuthGRPCFixture struct {
 // StartAuthGRPC starts AuthService on an ephemeral port backed by dbDSN.
 func StartAuthGRPC(t testing.TB, dbDSN string) *AuthGRPCFixture {
 	t.Helper()
-	return startAuthGRPC(t, dbDSN, nil)
+	return startAuthGRPC(t, dbDSN, authGRPCOpts{})
 }
 
 // StartAuthGRPCWithRedis starts AuthService and PUBLISHes revocation events
@@ -42,10 +43,24 @@ func StartAuthGRPCWithRedis(t testing.TB, dbDSN string, redisClient redis.Univer
 	if redisClient == nil {
 		t.Fatal("redisClient is required")
 	}
-	return startAuthGRPC(t, dbDSN, redisClient)
+	return startAuthGRPC(t, dbDSN, authGRPCOpts{redis: redisClient})
 }
 
-func startAuthGRPC(t testing.TB, dbDSN string, redisClient redis.UniversalClient) *AuthGRPCFixture {
+// StartAuthGRPCWithValidateLimiter starts AuthService with ValidateToken peer RPM.
+func StartAuthGRPCWithValidateLimiter(t testing.TB, dbDSN string, limiter ratelimit.KeyedLimiter) *AuthGRPCFixture {
+	t.Helper()
+	if limiter == nil {
+		t.Fatal("validate limiter is required")
+	}
+	return startAuthGRPC(t, dbDSN, authGRPCOpts{validateLimiter: limiter})
+}
+
+type authGRPCOpts struct {
+	redis           redis.UniversalClient
+	validateLimiter ratelimit.KeyedLimiter
+}
+
+func startAuthGRPC(t testing.TB, dbDSN string, opts authGRPCOpts) *AuthGRPCFixture {
 	t.Helper()
 	db := testutil.OpenDB(t, dbDSN)
 	reg := ibexmetrics.NewAuth(ibexmetrics.AuthConfig{ServiceName: "auth-test", DB: db})
@@ -57,18 +72,20 @@ func startAuthGRPC(t testing.TB, dbDSN string, redisClient redis.UniversalClient
 		validator: mustTokenValidator(t, repo, argon2),
 		tokenSvc: mustTokenService(t, tokenServiceParts{
 			repo: repo, agents: agentsRepo, users: repository.NewUsersRepository(db, reg),
-			argon2: argon2, publisher: revocationPublisher(t, redisClient),
+			argon2: argon2, publisher: revocationPublisher(t, opts.redis),
 		}),
-		agentSvc: mustAgentService(t, agentsRepo),
+		agentSvc:        mustAgentService(t, agentsRepo),
+		validateLimiter: opts.validateLimiter,
 	})
 }
 
 type authServeParts struct {
-	db        *sql.DB
-	reg       *ibexmetrics.AuthRegistry
-	validator *token.Validator
-	tokenSvc  *service.TokenService
-	agentSvc  *service.AgentService
+	db              *sql.DB
+	reg             *ibexmetrics.AuthRegistry
+	validator       *token.Validator
+	tokenSvc        *service.TokenService
+	agentSvc        *service.AgentService
+	validateLimiter ratelimit.KeyedLimiter
 }
 
 func serveAuthFixture(t testing.TB, p authServeParts) *AuthGRPCFixture {
@@ -95,6 +112,10 @@ func newAuthGRPCServer(t testing.TB, p authServeParts) *grpc.Server {
 	grpcSrv := grpc.NewServer( // nosemgrep: go.grpc.security.grpc-server-insecure-connection
 		grpc.ChainUnaryInterceptor(
 			grpcserver.MetricsUnaryInterceptor(p.reg),
+			grpcserver.ValidateTokenRateLimitInterceptor(grpcserver.ValidateRateLimitOpts{
+				Limiter: p.validateLimiter,
+				Log:     logger.Discard("auth"),
+			}),
 			grpcserver.AuthzUnaryInterceptor(p.validator),
 		))
 	srv, err := grpcserver.NewServer(grpcserver.ServerDeps{
@@ -132,7 +153,11 @@ func mustTokenValidator(t testing.TB, repo *repository.TokensRepository, argon2 
 	if err != nil {
 		t.Fatalf("NewRepoLookup: %v", err)
 	}
-	return token.NewValidator(lookup, argon2)
+	v, err := token.NewValidator(lookup, argon2)
+	if err != nil {
+		t.Fatalf("NewValidator: %v", err)
+	}
+	return v
 }
 
 func revocationPublisher(t testing.TB, redisClient redis.UniversalClient) revocation.Publisher {

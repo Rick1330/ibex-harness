@@ -8,12 +8,13 @@ import (
 
 func validAuthConfig() Config {
 	return Config{
-		Environment:     "development",
-		ServiceName:     "auth",
-		Port:            "8081",
-		GRPCPort:        "9091",
-		PostgresDSN:     "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable",
-		ShutdownTimeout: 30 * time.Second,
+		Environment:      "development",
+		ServiceName:      "auth",
+		Port:             "8081",
+		GRPCPort:         "9091",
+		PostgresDSN:      "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable",
+		ValidateTokenRPM: 6000,
+		ShutdownTimeout:  30 * time.Second,
 	}
 }
 
@@ -42,6 +43,18 @@ func TestValidate_rejectsInvalidConfig(t *testing.T) {
 			name:   "empty service name",
 			mutate: func(c *Config) { c.ServiceName = "" },
 		},
+		{
+			name:   "non_numeric_port",
+			mutate: func(c *Config) { c.Port = "abc" },
+		},
+		{
+			name:   "invalid grpc port",
+			mutate: func(c *Config) { c.GRPCPort = "0" },
+		},
+		{
+			name:   "negative validate token rpm",
+			mutate: func(c *Config) { c.ValidateTokenRPM = -1 },
+		},
 	}
 
 	for _, tc := range tests {
@@ -54,6 +67,14 @@ func TestValidate_rejectsInvalidConfig(t *testing.T) {
 				t.Fatalf("expected validation error for %s", tc.name)
 			}
 		})
+	}
+}
+
+func TestLoadRejectsNonPositiveValidateTokenRPM(t *testing.T) {
+	t.Setenv("POSTGRES_DSN", "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable")
+	t.Setenv("IBEX_AUTH_VALIDATE_RPM", "0")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected error for IBEX_AUTH_VALIDATE_RPM=0")
 	}
 }
 
@@ -102,12 +123,13 @@ func TestValidateAcceptsDefaultShape(t *testing.T) {
 	t.Parallel()
 
 	cfg := Config{
-		Environment:     "development",
-		ServiceName:     "auth",
-		Port:            "8081",
-		GRPCPort:        "9091",
-		PostgresDSN:     "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable",
-		ShutdownTimeout: 30 * time.Second,
+		Environment:      "development",
+		ServiceName:      "auth",
+		Port:             "8081",
+		GRPCPort:         "9091",
+		PostgresDSN:      "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable",
+		ValidateTokenRPM: 6000,
+		ShutdownTimeout:  30 * time.Second,
 	}
 
 	if err := cfg.Validate(); err != nil {
