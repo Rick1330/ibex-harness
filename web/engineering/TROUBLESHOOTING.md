@@ -160,7 +160,7 @@ Common root cause:
 - multiple Postgres containers running
 - wrong database name
 
-**Migration 008 / 012 fails on token subject FKs (dirty version 8 or 12):**
+**Migration 008 / 012 fails on token FK constraints (dirty version 8 or 12):**
 
 Stale dev data can leave `tokens.revoked_by` pointing at deleted users, or `tokens.agent_id` / `tokens.user_id` pointing at a subject in another org. Validation then fails with a dirty `schema_migrations` row.
 
@@ -169,7 +169,9 @@ Stale dev data can leave `tokens.revoked_by` pointing at deleted users, or `toke
 make compose-dev-reset
 make db-migrate
 
-# Or repair in place (keeps volume data; clears missing-ID and cross-org orphans)
+# Or repair in place (keeps volume data; clears missing-ID and cross-org orphans).
+# If 000012 rolled back but left dirty@12 with legacy FKs, repair forces version 11
+# so the next migrate re-applies composite subject FKs (never force-cleans 12 without them).
 make db-repair-token-fks
 make db-migrate
 ```

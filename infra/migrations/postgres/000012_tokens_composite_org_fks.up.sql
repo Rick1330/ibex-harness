@@ -2,32 +2,26 @@
 -- Prerequisite: agents already have UNIQUE (id, org_id) from 000009.
 -- users need UNIQUE (id, org_id) before (user_id, org_id) can reference them.
 --
--- Cross-org orphans (IDs exist but wrong org) are nulled before VALIDATE so
--- environments that predate app-layer Wave 2a can migrate cleanly.
+-- Same-ID / wrong-org binds are nulled before VALIDATE. Existence-only orphans
+-- cannot exist while 000008 single-column FKs are still in place (dropped below).
+-- UNIQUE (id, org_id) matches 000009 agents pattern (not CONCURRENTLY): Phase-1
+-- users is small; splitting index/constraint across migrations is unnecessary.
 
 ALTER TABLE ibex_core.users
     ADD CONSTRAINT users_id_org_unique UNIQUE (id, org_id);
 
--- Clear same-ID / wrong-org binds (existence-only orphans are already handled by 000008).
+-- Null subjects whose parent row exists in a different org.
 UPDATE ibex_core.tokens t
 SET agent_id = NULL
-WHERE agent_id IS NOT NULL
-  AND NOT EXISTS (
-      SELECT 1
-      FROM ibex_core.agents a
-      WHERE a.id = t.agent_id
-        AND a.org_id = t.org_id
-  );
+FROM ibex_core.agents a
+WHERE t.agent_id = a.id
+  AND t.org_id <> a.org_id;
 
 UPDATE ibex_core.tokens t
 SET user_id = NULL
-WHERE user_id IS NOT NULL
-  AND NOT EXISTS (
-      SELECT 1
-      FROM ibex_core.users u
-      WHERE u.id = t.user_id
-        AND u.org_id = t.org_id
-  );
+FROM ibex_core.users u
+WHERE t.user_id = u.id
+  AND t.org_id <> u.org_id;
 
 ALTER TABLE ibex_core.tokens DROP CONSTRAINT IF EXISTS tokens_agent_id_fk;
 ALTER TABLE ibex_core.tokens DROP CONSTRAINT IF EXISTS tokens_user_id_fk;

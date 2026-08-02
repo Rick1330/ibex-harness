@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Repair orphaned token FK columns after failed migration 000008 or 000012.
-# Clears missing-ID orphans and same-ID / wrong-org binds, then validates
-# whichever token subject FK constraints are present.
+# Clears missing-ID orphans and same-ID / wrong-org binds, validates an
+# exclusive FK set, then force-cleans schema_migrations only to a version that
+# matches the constraints actually present (never force 12 without composites).
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -33,106 +34,160 @@ run_psql() {
   exit 1
 }
 
+force_migrate_version() {
+  local ver="$1"
+  echo "Marking migration version ${ver} clean (force; does not run SQL)..."
+  cd "$ROOT_DIR"
+  export POSTGRES_MIGRATE_DSN="${POSTGRES_MIGRATE_DSN:-${POSTGRES_DSN:-postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable}}"
+  go run ./infra/migrations/postgres/cmd/migrate -command force -version "$ver"
+}
+
 echo "Clearing orphaned and cross-org token foreign keys..."
 run_psql <<'SQL'
 UPDATE ibex_core.tokens t
 SET revoked_by = NULL
 WHERE revoked_by IS NOT NULL
-  AND NOT EXISTS (SELECT 1 FROM ibex_core.users u WHERE u.id = t.revoked_by);
+  AND revoked_by NOT IN (SELECT id FROM ibex_core.users);
+
+UPDATE ibex_core.tokens t
+SET user_id = NULL
+FROM ibex_core.users u
+WHERE t.user_id = u.id
+  AND t.org_id <> u.org_id;
 
 UPDATE ibex_core.tokens t
 SET user_id = NULL
 WHERE user_id IS NOT NULL
-  AND NOT EXISTS (
-      SELECT 1 FROM ibex_core.users u
-      WHERE u.id = t.user_id AND u.org_id = t.org_id
-  );
+  AND user_id NOT IN (SELECT id FROM ibex_core.users);
+
+UPDATE ibex_core.tokens t
+SET agent_id = NULL
+FROM ibex_core.agents a
+WHERE t.agent_id = a.id
+  AND t.org_id <> a.org_id;
 
 UPDATE ibex_core.tokens t
 SET agent_id = NULL
 WHERE agent_id IS NOT NULL
-  AND NOT EXISTS (
-      SELECT 1 FROM ibex_core.agents a
-      WHERE a.id = t.agent_id AND a.org_id = t.org_id
-  );
+  AND agent_id NOT IN (SELECT id FROM ibex_core.agents);
 SQL
 
-echo "Validating token FK constraints (if present)..."
-run_psql <<'SQL'
-DO $$
-DECLARE
-  has_user_id_fk boolean;
-  has_agent_id_fk boolean;
-  has_user_org_fk boolean;
-  has_agent_org_fk boolean;
-  has_revoked_fk boolean;
-BEGIN
-  SELECT EXISTS (
-    SELECT 1 FROM pg_constraint
-    WHERE conname = 'tokens_user_id_fk' AND conrelid = 'ibex_core.tokens'::regclass
-  ) INTO has_user_id_fk;
-  SELECT EXISTS (
-    SELECT 1 FROM pg_constraint
-    WHERE conname = 'tokens_agent_id_fk' AND conrelid = 'ibex_core.tokens'::regclass
-  ) INTO has_agent_id_fk;
-  SELECT EXISTS (
-    SELECT 1 FROM pg_constraint
-    WHERE conname = 'tokens_user_org_fk' AND conrelid = 'ibex_core.tokens'::regclass
-  ) INTO has_user_org_fk;
-  SELECT EXISTS (
-    SELECT 1 FROM pg_constraint
-    WHERE conname = 'tokens_agent_org_fk' AND conrelid = 'ibex_core.tokens'::regclass
-  ) INTO has_agent_org_fk;
-  SELECT EXISTS (
-    SELECT 1 FROM pg_constraint
-    WHERE conname = 'tokens_revoked_by_fk' AND conrelid = 'ibex_core.tokens'::regclass
-  ) INTO has_revoked_fk;
+echo "Detecting token FK constraint set..."
+# Prints: composite | legacy | mixed | missing
+SCHEMA_KIND="$(run_psql -Atc "
+SELECT CASE
+  WHEN EXISTS (
+      SELECT 1 FROM pg_constraint
+      WHERE conname = 'tokens_user_org_fk' AND conrelid = 'ibex_core.tokens'::regclass
+    )
+    AND EXISTS (
+      SELECT 1 FROM pg_constraint
+      WHERE conname = 'tokens_agent_org_fk' AND conrelid = 'ibex_core.tokens'::regclass
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM pg_constraint
+      WHERE conname = 'tokens_user_id_fk' AND conrelid = 'ibex_core.tokens'::regclass
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM pg_constraint
+      WHERE conname = 'tokens_agent_id_fk' AND conrelid = 'ibex_core.tokens'::regclass
+    )
+    AND EXISTS (
+      SELECT 1 FROM pg_constraint
+      WHERE conname = 'tokens_revoked_by_fk' AND conrelid = 'ibex_core.tokens'::regclass
+    )
+    AND EXISTS (
+      SELECT 1 FROM pg_constraint
+      WHERE conname = 'users_id_org_unique'
+        AND conrelid = 'ibex_core.users'::regclass
+    )
+  THEN 'composite'
+  WHEN EXISTS (
+      SELECT 1 FROM pg_constraint
+      WHERE conname = 'tokens_user_id_fk' AND conrelid = 'ibex_core.tokens'::regclass
+    )
+    AND EXISTS (
+      SELECT 1 FROM pg_constraint
+      WHERE conname = 'tokens_agent_id_fk' AND conrelid = 'ibex_core.tokens'::regclass
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM pg_constraint
+      WHERE conname = 'tokens_user_org_fk' AND conrelid = 'ibex_core.tokens'::regclass
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM pg_constraint
+      WHERE conname = 'tokens_agent_org_fk' AND conrelid = 'ibex_core.tokens'::regclass
+    )
+    AND EXISTS (
+      SELECT 1 FROM pg_constraint
+      WHERE conname = 'tokens_revoked_by_fk' AND conrelid = 'ibex_core.tokens'::regclass
+    )
+  THEN 'legacy'
+  WHEN EXISTS (
+      SELECT 1 FROM pg_constraint
+      WHERE conrelid = 'ibex_core.tokens'::regclass
+        AND conname IN (
+          'tokens_user_org_fk', 'tokens_agent_org_fk',
+          'tokens_user_id_fk', 'tokens_agent_id_fk'
+        )
+    )
+  THEN 'mixed'
+  ELSE 'missing'
+END;
+" | tr -d '\r')"
 
-  IF has_user_org_fk AND has_agent_org_fk AND has_revoked_fk THEN
-    ALTER TABLE ibex_core.tokens VALIDATE CONSTRAINT tokens_user_org_fk;
-    ALTER TABLE ibex_core.tokens VALIDATE CONSTRAINT tokens_agent_org_fk;
-    ALTER TABLE ibex_core.tokens VALIDATE CONSTRAINT tokens_revoked_by_fk;
-    RAISE NOTICE 'validated composite token subject FKs (000012)';
-  ELSIF has_user_id_fk AND has_agent_id_fk AND has_revoked_fk THEN
-    ALTER TABLE ibex_core.tokens VALIDATE CONSTRAINT tokens_user_id_fk;
-    ALTER TABLE ibex_core.tokens VALIDATE CONSTRAINT tokens_agent_id_fk;
-    ALTER TABLE ibex_core.tokens VALIDATE CONSTRAINT tokens_revoked_by_fk;
-    RAISE NOTICE 'validated single-column token subject FKs (000008)';
-  ELSE
-    RAISE EXCEPTION 'missing expected token FK constraints; refusing repair';
-  END IF;
-END $$;
+case "$SCHEMA_KIND" in
+  composite)
+    echo "Validating composite token subject FKs (000012)..."
+    run_psql <<'SQL'
+ALTER TABLE ibex_core.tokens VALIDATE CONSTRAINT tokens_user_org_fk;
+ALTER TABLE ibex_core.tokens VALIDATE CONSTRAINT tokens_agent_org_fk;
+ALTER TABLE ibex_core.tokens VALIDATE CONSTRAINT tokens_revoked_by_fk;
 SQL
-
-echo "Checking migration dirty state..."
-run_psql <<'SQL'
-DO $$
-DECLARE
-  ver bigint;
-  dirty boolean;
-BEGIN
-  SELECT version, dirty INTO ver, dirty FROM schema_migrations LIMIT 1;
-  IF NOT FOUND THEN
-    RAISE NOTICE 'no schema_migrations row; skip force';
-    RETURN;
-  END IF;
-  IF NOT dirty THEN
-    RAISE NOTICE 'schema_migrations clean at version %', ver;
-    RETURN;
-  END IF;
-  IF ver NOT IN (8, 12) THEN
-    RAISE EXCEPTION 'dirty schema_migrations version % not supported by this repair (want 8 or 12)', ver;
-  END IF;
-END $$;
+    ;;
+  legacy)
+    echo "Validating single-column token subject FKs (000008)..."
+    run_psql <<'SQL'
+ALTER TABLE ibex_core.tokens VALIDATE CONSTRAINT tokens_user_id_fk;
+ALTER TABLE ibex_core.tokens VALIDATE CONSTRAINT tokens_agent_id_fk;
+ALTER TABLE ibex_core.tokens VALIDATE CONSTRAINT tokens_revoked_by_fk;
 SQL
+    ;;
+  mixed)
+    echo "error: mixed/partial token subject FKs; refuse repair (re-run 000012 from version 11)" >&2
+    exit 1
+    ;;
+  *)
+    echo "error: missing expected token FK constraints; refusing repair" >&2
+    exit 1
+    ;;
+esac
 
-# Force clean only when dirty at 8 or 12 (validated above).
 DIRTY_VER="$(run_psql -Atc "SELECT CASE WHEN dirty THEN version::text ELSE '' END FROM schema_migrations LIMIT 1" | tr -d '\r')"
-if [[ -n "$DIRTY_VER" ]]; then
-  echo "Marking migration version ${DIRTY_VER} clean..."
-  cd "$ROOT_DIR"
-  export POSTGRES_MIGRATE_DSN="${POSTGRES_MIGRATE_DSN:-${POSTGRES_DSN:-postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable}}"
-  go run ./infra/migrations/postgres/cmd/migrate -command force -version "$DIRTY_VER"
+if [[ -z "$DIRTY_VER" ]]; then
+  echo "schema_migrations clean; no force needed"
+  echo "db-repair-token-fks: ok (run make db-migrate to confirm)"
+  exit 0
 fi
+
+echo "Dirty schema_migrations at version ${DIRTY_VER} (schema_kind=${SCHEMA_KIND})"
+case "$SCHEMA_KIND:$DIRTY_VER" in
+  composite:12)
+    force_migrate_version 12
+    ;;
+  legacy:8)
+    force_migrate_version 8
+    ;;
+  legacy:12)
+    # 000012 rolled back DDL but left dirty@12; force to 11 so migrate re-applies composites.
+    echo "000012 incomplete (legacy FKs only at dirty 12); forcing version 11 for re-apply"
+    force_migrate_version 11
+    ;;
+  *)
+    echo "error: dirty version ${DIRTY_VER} incompatible with schema_kind=${SCHEMA_KIND}" >&2
+    echo "hint: for rolled-back 000012, force to 11 manually and run make db-migrate" >&2
+    exit 1
+    ;;
+esac
 
 echo "db-repair-token-fks: ok (run make db-migrate to confirm)"

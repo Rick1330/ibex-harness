@@ -167,6 +167,8 @@ CREATE TABLE ibex_core.users (
     deleted_at      TIMESTAMPTZ,
 
     UNIQUE(org_id, email),
+    -- Applied in migration 000012 (composite token subject FKs):
+    UNIQUE (id, org_id),  -- users_id_org_unique; required for tokens (user_id, org_id)
     CONSTRAINT users_email_format
         CHECK (email ~ '^[^@]+@[^@]+\.[^@]+$')
 );
@@ -256,6 +258,8 @@ CREATE TABLE ibex_core.agents (
     deleted_at              TIMESTAMPTZ,
 
     UNIQUE(org_id, slug),
+    -- Applied in migration 000009 (directive/session composite FKs; tokens reuse in 000012):
+    UNIQUE (id, org_id),  -- agents_id_org_unique; required for tokens (agent_id, org_id)
     CONSTRAINT agents_slug_format
         CHECK (slug ~ '^[a-z0-9-]+$')
 );

@@ -24,6 +24,18 @@ const insertTokenWithUserSQL = `
 	VALUES
 		($1::uuid, 'pat', $2, $3, $4, 0, false, $5::uuid)`
 
+const insertTokenNullSubjectsSQL = `
+	INSERT INTO ibex_core.tokens
+		(org_id, type, hash, prefix, name, permissions, is_revoked)
+	VALUES
+		($1::uuid, 'pat', $2, $3, $4, 0, false)`
+
+const insertTokenCrossOrgRevokedBySQL = `
+	INSERT INTO ibex_core.tokens
+		(org_id, type, hash, prefix, name, permissions, is_revoked, revoked_by)
+	VALUES
+		($1::uuid, 'pat', $2, $3, $4, 0, true, $5::uuid)`
+
 type userLookup struct {
 	db           *sql.DB
 	orgID, email string
@@ -64,15 +76,25 @@ func TestTokens_CompositeFKOwnership(t *testing.T) {
 	assertTokenInsertOK(t, ctx, tokenSubjectInsert{
 		db: db, label: "same-org user_id", orgID: orgA, subjectID: userA, sqlText: insertTokenWithUserSQL,
 	})
+	assertNullSubjectTokenOK(t, ctx, db, orgA)
+	assertTokenInsertOK(t, ctx, tokenSubjectInsert{
+		db: db, label: "cross-org revoked_by", orgID: orgA, subjectID: userB,
+		sqlText: insertTokenCrossOrgRevokedBySQL,
+	})
 }
 
-func assertTokenFKDenied(t *testing.T, ctx context.Context, in tokenSubjectInsert) {
+func execTokenInsert(t *testing.T, ctx context.Context, in tokenSubjectInsert) error {
 	t.Helper()
-	err := withServiceAccount(ctx, in.db, func(tx *sql.Tx) error {
+	return withServiceAccount(ctx, in.db, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, in.sqlText,
 			in.orgID, uniqueTokenHash(), uniqueTokenPrefix(), "tok-"+in.label, in.subjectID)
 		return err
 	})
+}
+
+func assertTokenFKDenied(t *testing.T, ctx context.Context, in tokenSubjectInsert) {
+	t.Helper()
+	err := execTokenInsert(t, ctx, in)
 	if err == nil {
 		t.Fatalf("expected %s FK to fail", in.label)
 	}
@@ -81,13 +103,20 @@ func assertTokenFKDenied(t *testing.T, ctx context.Context, in tokenSubjectInser
 
 func assertTokenInsertOK(t *testing.T, ctx context.Context, in tokenSubjectInsert) {
 	t.Helper()
-	err := withServiceAccount(ctx, in.db, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, in.sqlText,
-			in.orgID, uniqueTokenHash(), uniqueTokenPrefix(), "tok-"+in.label, in.subjectID)
+	if err := execTokenInsert(t, ctx, in); err != nil {
+		t.Fatalf("expected %s insert to succeed: %v", in.label, err)
+	}
+}
+
+func assertNullSubjectTokenOK(t *testing.T, ctx context.Context, db *sql.DB, orgID string) {
+	t.Helper()
+	err := withServiceAccount(ctx, db, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, insertTokenNullSubjectsSQL,
+			orgID, uniqueTokenHash(), uniqueTokenPrefix(), "tok-null-subjects")
 		return err
 	})
 	if err != nil {
-		t.Fatalf("expected %s insert to succeed: %v", in.label, err)
+		t.Fatalf("expected NULL subject insert to succeed: %v", err)
 	}
 }
 
