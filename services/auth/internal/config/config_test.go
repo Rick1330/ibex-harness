@@ -44,8 +44,16 @@ func TestValidate_rejectsInvalidConfig(t *testing.T) {
 			mutate: func(c *Config) { c.ServiceName = "" },
 		},
 		{
-			name:   "invalid validate token rpm",
-			mutate: func(c *Config) { c.ValidateTokenRPM = 0 },
+			name:   "non_numeric_port",
+			mutate: func(c *Config) { c.Port = "abc" },
+		},
+		{
+			name:   "invalid grpc port",
+			mutate: func(c *Config) { c.GRPCPort = "0" },
+		},
+		{
+			name:   "negative validate token rpm",
+			mutate: func(c *Config) { c.ValidateTokenRPM = -1 },
 		},
 	}
 

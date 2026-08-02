@@ -101,6 +101,21 @@ func TestUnit_NoopKeyed_alwaysAllows(t *testing.T) {
 	}
 }
 
+func TestUnit_RedisKeyed_CheckKeyRedisError(t *testing.T) {
+	t.Parallel()
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	limiter, err := NewRedisKeyed(client, RedisKeyedConfig{DefaultRPM: 10, OpTimeout: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = client.Close()
+	_, err = limiter.CheckKey(context.Background(), "peer")
+	if err == nil {
+		t.Fatal("want redis error after client close")
+	}
+}
+
 func TestUnit_currentMinuteWindow_retryAfterNonNegative(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 8, 2, 12, 0, 30, 0, time.UTC)
@@ -110,6 +125,16 @@ func TestUnit_currentMinuteWindow_retryAfterNonNegative(t *testing.T) {
 	}
 	if w.resetUnix != now.Unix()+30 {
 		t.Fatalf("resetUnix=%d", w.resetUnix)
+	}
+}
+
+func TestUnit_currentMinuteWindow_retryAfterClamped(t *testing.T) {
+	t.Parallel()
+	// resultFromCount clamps remaining when count exceeds limit.
+	w := currentMinuteWindow(time.Unix(90, 0).UTC())
+	res := resultFromCount(5, 3, w)
+	if res.Allowed || res.Remaining != 0 {
+		t.Fatalf("over-limit result: %+v", res)
 	}
 }
 

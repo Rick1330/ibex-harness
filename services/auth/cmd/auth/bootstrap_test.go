@@ -242,6 +242,45 @@ func TestUnit_NewAuthGRPCServer_RejectsInvalidDeps(t *testing.T) {
 	}
 }
 
+func TestUnit_InitAuthServices_WithMiniredisLimiter(t *testing.T) {
+	t.Parallel()
+
+	db := openTestDB(t)
+	reg := newTestAuthRegistry(t, db)
+	log := logger.Discard("auth")
+	mr := miniredis.RunT(t)
+
+	deps, err := initAuthServices(config.Config{
+		RedisURL:         "redis://" + mr.Addr() + "/0",
+		ValidateTokenRPM: 120,
+		Argon2:           token.TestArgon2Params(),
+	}, db, log, reg)
+	if err != nil {
+		t.Fatalf("initAuthServices: %v", err)
+	}
+	assertAuthServiceDeps(t, deps)
+	if deps.redisClient == nil {
+		t.Fatal("expected redis client")
+	}
+	t.Cleanup(func() { _ = deps.redisClient.Close() })
+	res, err := deps.validateLimiter.CheckKey(context.Background(), "127.0.0.1")
+	if err != nil || !res.Allowed {
+		t.Fatalf("validate limiter: allowed=%v err=%v", res.Allowed, err)
+	}
+}
+
+func TestUnit_NewValidateTokenLimiter_NilRedisUsesNoop(t *testing.T) {
+	t.Parallel()
+	limiter, err := newValidateTokenLimiter(config.Config{ValidateTokenRPM: 6000}, nil, logger.Discard("auth"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := limiter.CheckKey(context.Background(), "any")
+	if err != nil || !res.Allowed {
+		t.Fatalf("noop: allowed=%v err=%v", res.Allowed, err)
+	}
+}
+
 func TestUnit_InitAuthServices_EmptyRedisURL(t *testing.T) {
 	t.Parallel()
 

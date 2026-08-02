@@ -113,6 +113,14 @@ func assertPATSkipsLookup(t *testing.T, accessToken string) {
 	}
 }
 
+func TestUnit_NewValidator_RejectsZeroArgon2(t *testing.T) {
+	t.Parallel()
+	_, err := token.NewValidator(&fakeLookup{}, token.Argon2Params{})
+	if err == nil {
+		t.Fatal("expected DummyPHC / NewValidator error for zero Argon2Params")
+	}
+}
+
 func TestValidator_Validate(t *testing.T) {
 	t.Parallel()
 	argon2 := token.TestArgon2Params()

@@ -29,11 +29,11 @@ type minuteWindow struct {
 func currentMinuteWindow(now time.Time) minuteWindow {
 	unixMinute := now.Unix() / 60
 	resetUnix := (unixMinute + 1) * 60
-	retryAfter := time.Unix(resetUnix, 0).Sub(now)
-	if retryAfter < 0 {
-		retryAfter = 0
+	return minuteWindow{
+		unixMinute: unixMinute,
+		resetUnix:  resetUnix,
+		retryAfter: time.Unix(resetUnix, 0).Sub(now),
 	}
-	return minuteWindow{unixMinute: unixMinute, resetUnix: resetUnix, retryAfter: retryAfter}
 }
 
 func resultFromCount(count, limit int64, window minuteWindow) Result {
