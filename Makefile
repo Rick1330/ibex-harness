@@ -6,7 +6,7 @@ endif
 
 DEV_TOOL := infra/scripts/dev-tool.sh
 
-.PHONY: help lint-docs lint-go security-scan repo-guards proto-lint proto-breaking proto-gen proto-test proto-test-integration test-integration coverage-report coverage-gate compose-dev-up compose-dev-down compose-dev-reset compose-dev-logs compose-dev-ps compose-test-up compose-test-down db-migrate db-migrate-down db-version db-seed db-repair-token-fks clickhouse-migrate clickhouse-migrate-down clickhouse-version dev-smoke dev-smoke-live verify-phase15
+.PHONY: help lint-docs lint-go security-scan repo-guards proto-lint proto-breaking proto-gen proto-test proto-test-integration test-integration coverage-report coverage-gate compose-dev-up compose-dev-down compose-dev-reset compose-dev-logs compose-dev-ps compose-test-up compose-test-down db-migrate db-migrate-down db-version db-seed db-repair-token-fks clickhouse-migrate clickhouse-migrate-down clickhouse-version dev-smoke dev-smoke-live e2e-wave2b-token-fks verify-phase15
 
 help: ## Show available commands
 	@"$(BASH)" "$(DEV_TOOL)" help
@@ -83,7 +83,7 @@ db-version: ## Show current Postgres migration version
 db-seed: ## Seed local dev database with test org, user, agent, and PAT
 	@"$(BASH)" "$(DEV_TOOL)" db-seed
 
-db-repair-token-fks: ## Fix orphaned token FKs after failed migration 008
+db-repair-token-fks: ## Fix orphaned token FKs after failed migration 008/012
 	@"$(BASH)" "$(DEV_TOOL)" db-repair-token-fks
 
 clickhouse-migrate: ## Apply all pending ClickHouse migrations
@@ -100,6 +100,9 @@ dev-smoke: ## Run local end-to-end smoke test (auth+proxy)
 
 dev-smoke-live: ## Run live OpenRouter smoke test (auth+proxy+upstream)
 	@"$(BASH)" "$(DEV_TOOL)" dev-smoke-live
+
+e2e-wave2b-token-fks: ## Compose-dev Wave 2b token composite FK + CreateToken E2E
+	@"$(BASH)" "$(DEV_TOOL)" e2e-wave2b-token-fks
 
 verify-phase15: ## Verify unified public site (IBEX_SITE_URL, default production)
 	@"$(BASH)" "$(DEV_TOOL)" verify-phase15

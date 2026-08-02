@@ -589,6 +589,7 @@ The following invariants are enforced by the `security-integration` CI job (`Tes
 - `CreateToken` optional `agent_id` / `user_id` must belong to the request `org_id` → else `PERMISSION_DENIED` (opaque; never `NOT_FOUND`)
 - `CreateToken` malformed `agent_id` / `user_id` UUIDs → `INVALID_ARGUMENT`
 - `CreateToken` with binds when subject lookup is not wired → `INTERNAL` (misconfiguration; not a tenant denial)
+- DB defense-in-depth: `tokens` composite FKs `(agent_id, org_id)` / `(user_id, org_id)` reject cross-org binds (migration `000012`; `revoked_by` stays single-column)
 - Same-org missing token on revoke → `NOT_FOUND`
 
 Full matrix: [M1.5.1 milestone](roadmap/phase-1-core-platform/milestones/1.5.1-security-integration-test-suite.md). Exit audit: [PHASE1_EXIT_AUDIT.md](roadmap/phase-1-core-platform/PHASE1_EXIT_AUDIT.md).

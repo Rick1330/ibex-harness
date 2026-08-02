@@ -48,12 +48,13 @@ case "${1:-help}" in
       "  db-migrate-down        Roll back one Postgres migration step" \
       "  db-version             Show current Postgres migration version" \
       "  db-seed                Seed local dev database (org/user/agent/PAT)" \
-      "  db-repair-token-fks    Fix orphaned token FKs after failed migration 008" \
+      "  db-repair-token-fks    Fix orphaned token FKs after failed migration 008/012" \
       "  clickhouse-migrate     Apply all pending ClickHouse migrations" \
       "  clickhouse-migrate-down Roll back one ClickHouse migration step" \
       "  clickhouse-version     Show current ClickHouse migration version" \
       "  dev-smoke              Run local auth+proxy smoke test" \
       "  dev-smoke-live         Run live OpenRouter auth+proxy smoke test" \
+      "  e2e-wave2b-token-fks   Compose-dev Wave 2b token FK + CreateToken E2E" \
       "  verify-phase15         Run Phase 1.5 public site verification (IBEX_SITE_URL)"
     ;;
   lint-docs)
@@ -166,6 +167,9 @@ case "${1:-help}" in
     ;;
   dev-smoke-live)
     bash "$ROOT_DIR/infra/scripts/smoke_live_openrouter.sh"
+    ;;
+  e2e-wave2b-token-fks)
+    bash "$ROOT_DIR/infra/scripts/e2e_compose_dev_wave2b.sh"
     ;;
   verify-phase15)
     bash "$ROOT_DIR/infra/scripts/verify_phase15.sh"
