@@ -14,13 +14,12 @@ import (
 )
 
 const (
-	defaultEnvironment      = "development"
-	defaultServiceName      = "auth"
-	defaultLogLevel         = slog.LevelInfo
-	defaultPort             = "8081"
-	defaultGRPCPort         = "9091"
-	defaultShutdownTimeout  = 30 * time.Second
-	defaultValidateTokenRPM = int64(6000)
+	defaultEnvironment     = "development"
+	defaultServiceName     = "auth"
+	defaultLogLevel        = slog.LevelInfo
+	defaultPort            = "8081"
+	defaultGRPCPort        = "9091"
+	defaultShutdownTimeout = 30 * time.Second
 )
 
 type Config struct {
@@ -42,27 +41,49 @@ func Load() (Config, error) {
 }
 
 func (c Config) Validate() error {
-	switch c.Environment {
-	case "development", "staging", "production":
-	default:
-		return fmt.Errorf("IBEX_ENV must be one of development, staging, production")
+	if err := validateEnvironment(c.Environment); err != nil {
+		return err
 	}
 	if strings.TrimSpace(c.ServiceName) == "" {
 		return fmt.Errorf("IBEX_SERVICE_NAME must not be empty")
 	}
-	for name, port := range map[string]string{"IBEX_PORT": c.Port, "IBEX_GRPC_PORT": c.GRPCPort} {
-		portNum, err := strconv.Atoi(port)
-		if err != nil || portNum < 1 || portNum > 65535 {
-			return fmt.Errorf("%s must be a valid TCP port", name)
-		}
+	if err := validateTCPPort("IBEX_PORT", c.Port); err != nil {
+		return err
+	}
+	if err := validateTCPPort("IBEX_GRPC_PORT", c.GRPCPort); err != nil {
+		return err
 	}
 	if c.PostgresDSN == "" {
 		return fmt.Errorf("POSTGRES_DSN is required for auth token validation")
 	}
-	if c.ValidateTokenRPM < 1 {
-		return fmt.Errorf("IBEX_AUTH_VALIDATE_RPM must be >= 1")
+	if err := validateValidateTokenRPM(c.ValidateTokenRPM); err != nil {
+		return err
 	}
 	return shutdown.ValidateTimeout(c.ShutdownTimeout)
+}
+
+func validateEnvironment(env string) error {
+	switch env {
+	case "development", "staging", "production":
+		return nil
+	default:
+		return fmt.Errorf("IBEX_ENV must be one of development, staging, production")
+	}
+}
+
+func validateTCPPort(name, port string) error {
+	portNum, err := strconv.Atoi(port)
+	if err != nil || portNum < 1 || portNum > 65535 {
+		return fmt.Errorf("%s must be a valid TCP port", name)
+	}
+	return nil
+}
+
+func validateValidateTokenRPM(rpm int64) error {
+	if rpm < 1 {
+		return fmt.Errorf("IBEX_AUTH_VALIDATE_RPM must be >= 1")
+	}
+	return nil
 }
 
 func ListenAddress(port string) string {

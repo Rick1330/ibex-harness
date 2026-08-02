@@ -56,9 +56,6 @@ func baseAuthConfig(envCfg envConfig, level slog.Level) (Config, error) {
 		ValidateTokenRPM: envCfg.ValidateTokenRPM,
 		Argon2:           crypto.ProductionParams(),
 	}
-	if cfg.ValidateTokenRPM < 1 {
-		cfg.ValidateTokenRPM = defaultValidateTokenRPM
-	}
 	if err := applyAuthEnvOverrides(&cfg, envCfg); err != nil {
 		return Config{}, err
 	}

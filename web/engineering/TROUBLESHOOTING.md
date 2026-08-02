@@ -190,6 +190,10 @@ IBEX_AUTH_VALIDATE_TIMEOUT=2s go run ./services/proxy/cmd/proxy
 
 PowerShell: `$env:IBEX_AUTH_VALIDATE_TIMEOUT = "2s"`. See `services/proxy/.env.example`.
 
+**`ValidateToken` returns `RESOURCE_EXHAUSTED` under load:**
+
+Auth caps **all** `ValidateToken` RPCs from a given proxy host at `IBEX_AUTH_VALIDATE_RPM` (default 6000/min ≈ 100 RPS) when `REDIS_URL` is set. Raise the env to peak legitimate RPS×60 per proxy host, not only to an abuse threshold. Empty `REDIS_URL` disables this cap (private-network assumption).
+
 ---
 
 ### 3.4 “Redis errors / Lua script failures”

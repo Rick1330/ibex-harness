@@ -8,6 +8,11 @@ import (
 
 const patWirePrefix = "ibex_pat_"
 
+// maxPATLen bounds wire PAT size to reject attacker-controlled oversized secrets
+// before miss-path Argon2 (equalizeMiss) allocates on the bearer. Generated PATs
+// are ~89 bytes (prefix + UUID + '_' + 43-char base64url of 32 secret bytes).
+const maxPATLen = 128
+
 // ParsedPAT holds a parsed personal access token wire value.
 type ParsedPAT struct {
 	Bearer string // full access_token value
@@ -17,7 +22,7 @@ type ParsedPAT struct {
 // ParsePAT parses ibex_pat_<token_uuid>_<secret>.
 func ParsePAT(accessToken string) (ParsedPAT, error) {
 	accessToken = strings.TrimSpace(accessToken)
-	if accessToken == "" {
+	if accessToken == "" || len(accessToken) > maxPATLen {
 		return ParsedPAT{}, ErrUnauthenticated
 	}
 	if !strings.HasPrefix(accessToken, patWirePrefix) {

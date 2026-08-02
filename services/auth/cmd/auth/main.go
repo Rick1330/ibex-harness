@@ -172,7 +172,7 @@ func initAuthServices(
 	}
 	validator, err := token.NewValidator(lookup, cfg.Argon2)
 	if err != nil {
-		return authServiceDeps{}, err
+		return authServiceDeps{}, fmt.Errorf("token validator: %w", err)
 	}
 
 	redisClient, publisher, err := setupRevocationPublisher(cfg, log, reg)
@@ -181,7 +181,7 @@ func initAuthServices(
 	}
 	validateLimiter, err := newValidateTokenLimiter(cfg, redisClient, log)
 	if err != nil {
-		return authServiceDeps{}, err
+		return authServiceDeps{}, fmt.Errorf("validate token rate limiter: %w", err)
 	}
 	subjects, err := service.NewRepoTokenSubjects(agentsRepo, service.UsersFinder(usersRepo))
 	if err != nil {
@@ -193,6 +193,10 @@ func initAuthServices(
 		redisClient: redisClient, validateLimiter: validateLimiter, log: log,
 	}, nil
 }
+
+const (
+	validateTokenRateKeyPrefix = "ratelimit:auth:validate"
+)
 
 func newValidateTokenLimiter(
 	cfg config.Config,
@@ -206,13 +210,13 @@ func newValidateTokenLimiter(
 	}
 	limiter, err := ratelimit.NewRedisKeyed(redisClient, ratelimit.RedisKeyedConfig{
 		DefaultRPM: cfg.ValidateTokenRPM,
-		KeyPrefix:  "ratelimit:auth:validate",
+		KeyPrefix:  validateTokenRateKeyPrefix,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("ValidateToken rate limiter: %w", err)
 	}
 	log.InfoCtx(context.Background(), "ValidateToken rate limit configured",
-		"rpm", cfg.ValidateTokenRPM, "key_prefix", "ratelimit:auth:validate")
+		"rpm", cfg.ValidateTokenRPM, "key_prefix", validateTokenRateKeyPrefix)
 	return limiter, nil
 }
 

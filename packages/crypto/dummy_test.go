@@ -1,8 +1,11 @@
 package crypto
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
-func TestDummyPHCVerifyCosts(t *testing.T) {
+func TestUnit_DummyPHC_VerifyCosts(t *testing.T) {
 	p := TestParams()
 	dummy, err := DummyPHC(p)
 	if err != nil {
@@ -17,9 +20,9 @@ func TestDummyPHCVerifyCosts(t *testing.T) {
 	}
 }
 
-func TestDummyPHCRejectsZeroParams(t *testing.T) {
+func TestUnit_DummyPHC_RejectsZeroParams(t *testing.T) {
 	_, err := DummyPHC(Argon2Params{})
-	if err == nil {
-		t.Fatal("expected error for zero params")
+	if !errors.Is(err, ErrInvalidArgon2Params) {
+		t.Fatalf("want ErrInvalidArgon2Params, got %v", err)
 	}
 }

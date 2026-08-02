@@ -43,6 +43,10 @@ func TestValidate_rejectsInvalidConfig(t *testing.T) {
 			name:   "empty service name",
 			mutate: func(c *Config) { c.ServiceName = "" },
 		},
+		{
+			name:   "invalid validate token rpm",
+			mutate: func(c *Config) { c.ValidateTokenRPM = 0 },
+		},
 	}
 
 	for _, tc := range tests {
@@ -55,6 +59,14 @@ func TestValidate_rejectsInvalidConfig(t *testing.T) {
 				t.Fatalf("expected validation error for %s", tc.name)
 			}
 		})
+	}
+}
+
+func TestLoadRejectsNonPositiveValidateTokenRPM(t *testing.T) {
+	t.Setenv("POSTGRES_DSN", "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable")
+	t.Setenv("IBEX_AUTH_VALIDATE_RPM", "0")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected error for IBEX_AUTH_VALIDATE_RPM=0")
 	}
 }
 

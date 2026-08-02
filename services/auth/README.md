@@ -20,7 +20,7 @@ See [.env.example](.env.example) and [ENVIRONMENT_VARIABLES.md](../../web/engine
 | --- | --- | --- |
 | `POSTGRES_DSN` | Yes | — |
 | `REDIS_URL` | No | empty (disables revoke pub/sub + ValidateToken RPM) |
-| `IBEX_AUTH_VALIDATE_RPM` | No | `6000` |
+| `IBEX_AUTH_VALIDATE_RPM` | No | `6000` (per proxy-host aggregate) |
 | `IBEX_PORT` | No | `8081` |
 | `IBEX_GRPC_PORT` | No | `9091` |
 | `IBEX_ARGON2_*` | No | see docs |

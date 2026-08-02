@@ -3,6 +3,7 @@ package ratelimit
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
@@ -14,9 +15,9 @@ type RedisSliderConfig struct {
 	OrgOverrides map[uuid.UUID]int64
 }
 
-// RedisSlider implements a calendar-minute sliding window using Redis INCR + EXPIRE.
+// RedisSlider implements a calendar-minute sliding window using Redis.
 // Phase 1: org-level only; agentID is ignored.
-// NOTE: INCR + EXPIRE is not atomic. Phase 4 replaces this with Lua scripts.
+// INCR+EXPIRE is atomic via shared Lua (incrWithExpire).
 type RedisSlider struct {
 	client redis.UniversalClient
 	cfg    RedisSliderConfig
@@ -40,7 +41,7 @@ func (r *RedisSlider) Check(ctx context.Context, orgID, _ uuid.UUID) (Result, er
 		limit = 60
 	}
 
-	window := currentMinuteWindow(timeNowUTC())
+	window := currentMinuteWindow(time.Now().UTC())
 	key := fmt.Sprintf("ratelimit:%s:rpm:%d", orgID.String(), window.unixMinute)
 
 	count, err := incrWithExpire(ctx, r.client, key)

@@ -24,7 +24,7 @@ func (s stubKeyedLimiter) CheckKey(_ context.Context, _ string) (ratelimit.Resul
 	return s.res, s.err
 }
 
-func TestValidateTokenRateLimitInterceptor_skipsOtherMethods(t *testing.T) {
+func TestUnit_ValidateTokenRateLimitInterceptor_skipsOtherMethods(t *testing.T) {
 	t.Parallel()
 	ic := ValidateTokenRateLimitInterceptor(ValidateRateLimitOpts{
 		Limiter: stubKeyedLimiter{res: ratelimit.Result{Allowed: false}},
@@ -42,7 +42,7 @@ func TestValidateTokenRateLimitInterceptor_skipsOtherMethods(t *testing.T) {
 	}
 }
 
-func TestValidateTokenRateLimitInterceptor_deniesWhenExceeded(t *testing.T) {
+func TestUnit_ValidateTokenRateLimitInterceptor_deniesWhenExceeded(t *testing.T) {
 	t.Parallel()
 	ic := ValidateTokenRateLimitInterceptor(ValidateRateLimitOpts{
 		Limiter: stubKeyedLimiter{res: ratelimit.Result{Allowed: false, Limit: 1}},
@@ -59,7 +59,7 @@ func TestValidateTokenRateLimitInterceptor_deniesWhenExceeded(t *testing.T) {
 	}
 }
 
-func TestValidateTokenRateLimitInterceptor_failOpenOnRedisError(t *testing.T) {
+func TestUnit_ValidateTokenRateLimitInterceptor_failOpenOnRedisError(t *testing.T) {
 	t.Parallel()
 	ic := ValidateTokenRateLimitInterceptor(ValidateRateLimitOpts{
 		Limiter: stubKeyedLimiter{err: errors.New("redis down")},
@@ -78,13 +78,51 @@ func TestValidateTokenRateLimitInterceptor_failOpenOnRedisError(t *testing.T) {
 	}
 }
 
-func TestPeerRateLimitKey_stripsPort(t *testing.T) {
+func TestUnit_ValidateTokenRateLimitInterceptor_nilLimiterUsesNoop(t *testing.T) {
+	t.Parallel()
+	ic := ValidateTokenRateLimitInterceptor(ValidateRateLimitOpts{})
+	called := false
+	_, err := ic(peerCtx("127.0.0.1", 1), &authv1.ValidateTokenRequest{},
+		&grpc.UnaryServerInfo{FullMethod: validateTokenFullMethod},
+		func(ctx context.Context, req any) (any, error) {
+			called = true
+			return &authv1.ValidateTokenResponse{}, nil
+		},
+	)
+	if err != nil || !called {
+		t.Fatalf("noop path: err=%v called=%v", err, called)
+	}
+}
+
+func TestUnit_PeerRateLimitKey_stripsPort(t *testing.T) {
 	t.Parallel()
 	got := peerRateLimitKey(peerCtx("10.1.2.3", 5555))
 	if got != "10.1.2.3" {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestUnit_PeerRateLimitKey_unknownWithoutPeer(t *testing.T) {
+	t.Parallel()
+	if got := peerRateLimitKey(context.Background()); got != "unknown" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestUnit_PeerRateLimitKey_rawAddrWithoutPort(t *testing.T) {
+	t.Parallel()
+	ctx := peer.NewContext(context.Background(), &peer.Peer{
+		Addr: net.Addr(&rawAddr{s: "unix-socket"}),
+	})
+	if got := peerRateLimitKey(ctx); got != "unix-socket" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+type rawAddr struct{ s string }
+
+func (a *rawAddr) Network() string { return "unix" }
+func (a *rawAddr) String() string  { return a.s }
 
 func peerCtx(ip string, port int) context.Context {
 	return peer.NewContext(context.Background(), &peer.Peer{

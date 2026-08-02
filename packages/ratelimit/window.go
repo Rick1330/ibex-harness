@@ -10,19 +10,26 @@ import (
 
 const keyTTL = 90 * time.Second
 
+// incrExpireLua atomically INCR and EXPIRE-on-create so counters never lack TTL
+// if the process dies between INCR and EXPIRE (ADR-0015 race window shrink).
+var incrExpireLua = redis.NewScript(`
+local n = redis.call("INCR", KEYS[1])
+if n == 1 then
+  redis.call("EXPIRE", KEYS[1], ARGV[1])
+end
+return n
+`)
+
 type minuteWindow struct {
 	unixMinute int64
 	resetUnix  int64
 	retryAfter time.Duration
 }
 
-// timeNowUTC is overridden in tests.
-var timeNowUTC = func() time.Time { return time.Now().UTC() }
-
 func currentMinuteWindow(now time.Time) minuteWindow {
 	unixMinute := now.Unix() / 60
 	resetUnix := (unixMinute + 1) * 60
-	retryAfter := time.Until(time.Unix(resetUnix, 0))
+	retryAfter := time.Unix(resetUnix, 0).Sub(now)
 	if retryAfter < 0 {
 		retryAfter = 0
 	}
@@ -52,16 +59,11 @@ func resultFromCount(count, limit int64, window minuteWindow) Result {
 }
 
 func incrWithExpire(ctx context.Context, client redis.UniversalClient, key string) (int64, error) {
-	count, err := client.Incr(ctx, key).Result()
+	n, err := incrExpireLua.Run(ctx, client, []string{key}, int(keyTTL.Seconds())).Int64()
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("incrWithExpire: %w", err)
 	}
-	if count == 1 {
-		if expireErr := client.Expire(ctx, key, keyTTL).Err(); expireErr != nil {
-			return 0, expireErr
-		}
-	}
-	return count, nil
+	return n, nil
 }
 
 func keyedMinuteRedisKey(prefix, key string, unixMinute int64) string {

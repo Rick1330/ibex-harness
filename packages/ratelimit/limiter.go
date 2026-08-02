@@ -8,7 +8,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// ErrNilClient is returned when a Redis-backed limiter is constructed with a nil client.
+// ErrNilClient lets callers distinguish invalid limiter construction from Redis operation failures.
 var ErrNilClient = errors.New("ratelimit: nil redis client")
 
 // Limiter checks and enforces rate limits.

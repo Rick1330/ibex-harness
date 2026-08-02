@@ -12,9 +12,8 @@ import (
 )
 
 // Soft-limit race bound for RedisSlider (ADR-0015 / MF-007).
-// Redis INCR is atomic, so post-increment admit decisions never exceed DefaultRPM
-// under concurrency (maxAdmitOvershoot = 0). The non-atomic INCR+EXPIRE gap can
-// only affect key TTL, not the allowed count. Phase 4 Lua replaces both.
+// Redis INCR via Lua is atomic with EXPIRE-on-create, so admit decisions never
+// exceed DefaultRPM under concurrency (maxAdmitOvershoot = 0).
 const maxAdmitOvershoot = 0
 
 const (

@@ -591,7 +591,7 @@ The following invariants are enforced by the `security-integration` CI job (`Tes
 - `CreateToken` with binds when subject lookup is not wired → `INTERNAL` (misconfiguration; not a tenant denial)
 - DB defense-in-depth: `tokens` composite FKs `(agent_id, org_id)` / `(user_id, org_id)` reject cross-org binds (migration `000012`; `revoked_by` stays single-column)
 - `ValidateToken` prefix-miss / revoked / expired paths run a dummy Argon2id verify so cost matches wrong-secret hits (timing equalization)
-- `ValidateToken` peer rate limit when `REDIS_URL` is set (`IBEX_AUTH_VALIDATE_RPM`, default 6000); internal-network assumption documented; Redis errors fail-open with WARN
+- `ValidateToken` peer rate limit when `REDIS_URL` is set (`IBEX_AUTH_VALIDATE_RPM`, default 6000): **per proxy host aggregate** (not per attacker token); size to peak legitimate ValidateToken RPS from each proxy; Redis errors fail-open with WARN
 - Same-org missing token on revoke → `NOT_FOUND`
 
 Full matrix: [M1.5.1 milestone](roadmap/phase-1-core-platform/milestones/1.5.1-security-integration-test-suite.md). Exit audit: [PHASE1_EXIT_AUDIT.md](roadmap/phase-1-core-platform/PHASE1_EXIT_AUDIT.md).

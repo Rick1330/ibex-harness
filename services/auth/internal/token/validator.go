@@ -62,7 +62,8 @@ func (v *Validator) Validate(ctx context.Context, accessToken string) (*authv1.V
 }
 
 func (v *Validator) equalizeMiss(bearer string) {
-	_, _ = VerifyBearer(v.dummyPHC, bearer, v.argon2)
+	// Discarded: only burns Argon2 wall time on miss/malformed-hash paths.
+	_, _ = VerifyBearer(v.dummyPHC, bearer, v.argon2) //nolint:errcheck // timing equalization only
 }
 
 func validateResponseFromRow(row Row) *authv1.ValidateTokenResponse {
