@@ -8,6 +8,8 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 )
 
 func assertAuthClients(t *testing.T, b authClients, present bool) {
@@ -39,7 +41,22 @@ func assertCachingValidator(t *testing.T, v auth.TokenValidator) {
 	}
 }
 
-func setupAuthClientsForTest(t *testing.T, cache config.AuthCacheConfig) authClients {
+func assertNotCachingValidator(t *testing.T, v auth.TokenValidator) {
+	t.Helper()
+	if _, ok := v.(auth.CacheInvalidator); ok {
+		t.Fatal("expected unwrapped validator without CacheInvalidator")
+	}
+}
+
+func testRedisClient(t *testing.T) *redis.Client {
+	t.Helper()
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	return client
+}
+
+func setupAuthClientsForTest(t *testing.T, cache config.AuthCacheConfig, redisClient redis.UniversalClient) authClients {
 	t.Helper()
 	lis := grpctest.StartUnimplementedAuthServer(t)
 	log := logger.Discard("proxy")
@@ -50,7 +67,7 @@ func setupAuthClientsForTest(t *testing.T, cache config.AuthCacheConfig) authCli
 		AuthCache:           cache,
 	}
 
-	clients, err := setupAuthClients(cfg, log, nil)
+	clients, err := setupAuthClients(cfg, log, nil, redisClient)
 
 	if err != nil {
 		t.Fatalf("setupAuthClients: %v", err)
@@ -66,24 +83,28 @@ func setupAuthClientsForTest(t *testing.T, cache config.AuthCacheConfig) authCli
 func TestUnit_SetupAuthClients_GRPCOnly(t *testing.T) {
 	t.Parallel()
 
-	clients := setupAuthClientsForTest(t, config.AuthCacheConfig{})
+	clients := setupAuthClientsForTest(t, config.AuthCacheConfig{}, nil)
 
 	assertAuthClients(t, clients, true)
+	assertNotCachingValidator(t, clients.validator)
 }
 
 func TestUnit_SetupAuthClients_WithAuthCache(t *testing.T) {
 	t.Parallel()
 
-	clients := setupAuthClientsForTest(t, config.AuthCacheConfig{
-		Enabled:            true,
-		LRUCapacity:        100,
-		LRUMaxTTL:          30 * time.Second,
-		BloomExpectedItems: 1000,
-		BloomFPRate:        0.001,
-	})
+	clients := setupAuthClientsForTest(t, validAuthCacheConfig(), testRedisClient(t))
 
 	assertAuthClients(t, clients, true)
 	assertCachingValidator(t, clients.validator)
+}
+
+func TestUnit_SetupAuthClients_AuthCacheSkippedWithoutRedis(t *testing.T) {
+	t.Parallel()
+
+	clients := setupAuthClientsForTest(t, validAuthCacheConfig(), nil)
+
+	assertAuthClients(t, clients, true)
+	assertNotCachingValidator(t, clients.validator)
 }
 
 func TestUnit_SetupAuthClients_EmptyAddr(t *testing.T) {
@@ -91,7 +112,7 @@ func TestUnit_SetupAuthClients_EmptyAddr(t *testing.T) {
 
 	log := logger.Discard("proxy")
 
-	clients, err := setupAuthClients(config.Config{AuthGRPCAddr: ""}, log, nil)
+	clients, err := setupAuthClients(config.Config{AuthGRPCAddr: ""}, log, nil, nil)
 
 	if err != nil {
 		t.Fatalf("setupAuthClients: %v", err)
@@ -113,7 +134,7 @@ func TestUnit_SetupAuthClients_InvalidAuthCacheConfig(t *testing.T) {
 			Enabled:     true,
 			LRUCapacity: -1,
 		},
-	}, log, nil)
+	}, log, nil, testRedisClient(t))
 
 	if err == nil {
 		t.Fatal("expected auth cache config error")

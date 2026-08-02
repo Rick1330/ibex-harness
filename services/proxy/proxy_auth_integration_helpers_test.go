@@ -109,7 +109,7 @@ type securityTestEnv struct {
 
 type redisFixture struct {
 	url    string
-	client *redis.Client
+	client redis.UniversalClient
 	mr     *miniredis.Miniredis
 }
 
@@ -117,7 +117,8 @@ type proxyServerOpts struct {
 	defaultRPM    int64
 	orgOverrides  map[uuid.UUID]int64
 	providers     []provider.Provider
-	withAuthCache bool // bloom+LRU validator + revocation subscriber (SEC7)
+	withAuthCache bool // bloom+LRU + revocation subscriber when Redis present (SEC7)
+	skipRedis     bool // empty REDIS_URL — Wave 4: cache must not wrap
 }
 
 func setupSecurityTestEnv(t *testing.T, srvOpts proxyServerOpts) securityTestEnv {
@@ -128,9 +129,9 @@ func setupSecurityTestEnv(t *testing.T, srvOpts proxyServerOpts) securityTestEnv
 	db := testutil.OpenDB(t, dsn)
 	t.Cleanup(func() { _ = db.Close() })
 
-	redis := setupTestRedis(t)
+	redis := optionalTestRedis(t, srvOpts.skipRedis)
 	var authFx *integrationtest.AuthGRPCFixture
-	if srvOpts.withAuthCache {
+	if srvOpts.withAuthCache && redis.client != nil {
 		authFx = integrationtest.StartAuthGRPCWithRedis(t, dsn, redis.client)
 	} else {
 		authFx = integrationtest.StartAuthGRPC(t, dsn)
@@ -165,6 +166,14 @@ func setupTestRedis(t *testing.T) redisFixture {
 	return redisFixture{url: url, client: client, mr: mr}
 }
 
+func optionalTestRedis(t *testing.T, skip bool) redisFixture {
+	t.Helper()
+	if skip {
+		return redisFixture{}
+	}
+	return setupTestRedis(t)
+}
+
 func startProxyServer(t *testing.T, authAddr string, srvOpts proxyServerOpts) *httptest.Server {
 	t.Helper()
 	return startProxyServerRedis(t, authAddr, srvOpts, setupTestRedis(t))
@@ -194,7 +203,7 @@ func proxyIntegrationConfig(authAddr, redisURL string, srvOpts proxyServerOpts) 
 	if defaultRPM < 1 {
 		defaultRPM = 60
 	}
-	return config.Config{
+	cfg := config.Config{
 		Environment:         "development",
 		ServiceName:         "proxy",
 		Port:                "8080",
@@ -205,6 +214,16 @@ func proxyIntegrationConfig(authAddr, redisURL string, srvOpts proxyServerOpts) 
 			DefaultRPM: int(defaultRPM),
 		},
 	}
+	if srvOpts.withAuthCache {
+		cfg.AuthCache = config.AuthCacheConfig{
+			Enabled:            true,
+			LRUCapacity:        256,
+			LRUMaxTTL:          30 * time.Second,
+			BloomExpectedItems: 1000,
+			BloomFPRate:        0.01,
+		}
+	}
+	return cfg
 }
 
 type proxyIntegrationHandlerOpts struct {
@@ -226,29 +245,32 @@ func newProxyIntegrationHandler(t *testing.T, opts proxyIntegrationHandlerOpts) 
 	}
 
 	validator := mustGRPCValidator(t, opts.client, opts.cfg.AuthValidateTimeout)
-	if opts.srvOpts.withAuthCache {
+	// Mirror bootstrap maybeWrapAuthCache (Wave 4): wrap only when Redis can host
+	// the revocation subscriber. Enabled flag alone must not create a stale LRU.
+	if opts.srvOpts.withAuthCache && opts.redisClient != nil {
 		validator = mustCachedValidator(t, validator)
 		revokeCtx, revokeCancel := context.WithCancel(context.Background())
 		t.Cleanup(revokeCancel)
 		startTestRevocationSubscriber(t, revokeCtx, opts.redisClient, validator)
 	}
 	agentVerifier := mustGRPCAgentVerifier(t, opts.client, opts.cfg.AuthValidateTimeout)
-	limiter := mustRedisSlider(t, opts.redisClient, defaultRPM, orgOverrides)
+	limiter := mustProxyLimiter(t, opts.redisClient, defaultRPM, orgOverrides)
 	providerReg := mustProviderRegistry(t, opts.srvOpts.providers...)
+	healthCheckers := map[string]healthcheck.Checker{
+		"auth_grpc": healthcheck.AuthGRPC(opts.client, opts.cfg.AuthValidateTimeout),
+	}
+	if opts.cfg.RedisURL != "" {
+		healthCheckers["redis"] = healthcheck.RedisPing(opts.cfg.RedisURL)
+	}
 	handler, err := proxyhttp.NewRouter(proxyhttp.RouterDeps{
-		Config:        opts.cfg,
-		Logger:        logger.Discard("proxy"),
-		Metrics:       metrics.NewProxy("test"),
-		Tracer:        telemetry.NoopTracer("proxy"),
-		Validator:     validator,
-		AgentVerifier: agentVerifier,
-		Limiter:       limiter,
-		Health: &healthcheck.Server{
-			CriticalCheckers: map[string]healthcheck.Checker{
-				"auth_grpc": healthcheck.AuthGRPC(opts.client, opts.cfg.AuthValidateTimeout),
-				"redis":     healthcheck.RedisPing(opts.cfg.RedisURL),
-			},
-		},
+		Config:           opts.cfg,
+		Logger:           logger.Discard("proxy"),
+		Metrics:          metrics.NewProxy("test"),
+		Tracer:           telemetry.NoopTracer("proxy"),
+		Validator:        validator,
+		AgentVerifier:    agentVerifier,
+		Limiter:          limiter,
+		Health:           &healthcheck.Server{CriticalCheckers: healthCheckers},
 		ProviderRegistry: providerReg,
 	})
 	if err != nil {
@@ -332,6 +354,14 @@ func mustRedisSlider(t *testing.T, client redis.UniversalClient, defaultRPM int6
 		t.Fatalf("NewRedisSlider: %v", err)
 	}
 	return limiter
+}
+
+func mustProxyLimiter(t *testing.T, client redis.UniversalClient, defaultRPM int64, orgOverrides map[uuid.UUID]int64) ratelimit.Limiter {
+	t.Helper()
+	if client == nil {
+		return ratelimit.Noop()
+	}
+	return mustRedisSlider(t, client, defaultRPM, orgOverrides)
 }
 
 func mustProviderRegistry(t *testing.T, providers ...provider.Provider) *provider.Registry {

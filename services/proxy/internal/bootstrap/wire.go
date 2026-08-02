@@ -162,7 +162,7 @@ func assembleProxyInfra(
 	if err != nil {
 		return proxyInfra{}, fmt.Errorf("rate limiter: %w", err)
 	}
-	authBundle, err := setupAuthClients(cfg, log, reg)
+	authBundle, err := setupAuthClients(cfg, log, reg, redisClient)
 	if err != nil {
 		return proxyInfra{}, fmt.Errorf("auth clients: %w", err)
 	}

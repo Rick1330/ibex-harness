@@ -69,3 +69,37 @@ func TestSecurity_SEC7_2_AuthCacheWarmThenRevoke(t *testing.T) {
 		t.Fatalf("revocation SLA exceeded: %v (limit %v)", elapsed, revocationSLA(t))
 	}
 }
+
+// SEC7.3: IBEX_AUTH_CACHE_ENABLED without Redis must not wrap LRU (no stale allow).
+func TestSecurity_SEC7_3_AuthCacheEnabledWithoutRedisImmediateRevoke(t *testing.T) {
+	env := setupSecurityTestEnv(t, proxyServerOpts{
+		defaultRPM: 60, withAuthCache: true, skipRedis: true,
+	})
+	admin := testutil.SeedBootstrapAdminToken(t, env.db, env.orgA.OrgID)
+
+	rpcCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	ctx := metadata.NewOutgoingContext(rpcCtx, metadata.Pairs("authorization", "Bearer "+admin))
+
+	createResp, err := env.authFx.Client.CreateToken(ctx, &authv1.CreateTokenRequest{
+		OrgId: env.orgA.OrgID, Name: "sec7-no-redis", Type: authv1.TokenType_TOKEN_TYPE_PAT,
+		Permissions: permissions.ProxyChatCompletion,
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	plain := createResp.GetPlaintext()
+	opts := authProbeOpts{srvURL: env.proxy.URL, bearer: plain, agentID: env.orgA.AgentID}
+
+	// Two probes must never advertise cache — Redis absent ⇒ no wrap.
+	requireProbeOKCached(t, opts, false)
+	requireProbeOKCached(t, opts, false)
+
+	if _, err = env.authFx.Client.RevokeToken(ctx, &authv1.RevokeTokenRequest{
+		OrgId: env.orgA.OrgID, TokenId: createResp.GetTokenId(),
+	}); err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+	// Immediate 401 — no LRU stale window without revocation channel.
+	requireProbe(t, opts, probeExpect{http.StatusUnauthorized, apierror.CodeInvalidToken}, plain)
+}

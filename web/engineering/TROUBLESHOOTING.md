@@ -282,7 +282,8 @@ ibex tokens create --name dev --type pat
 
 Implementation expectation:
 
-- Proxy should cache valid tokens for 30s, but must respect revocation broadcasts.
+- Proxy caches valid tokens only when Redis hosts the revocation channel; otherwise ValidateToken is uncached.
+- With cache active, respect revocation broadcasts (worst-case LRU TTL 30s if a message is missed).
 
 ---
 

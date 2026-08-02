@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/authcache"
 	"github.com/Rick1330/ibex-harness/packages/idempotency"
@@ -25,6 +26,9 @@ import (
 	// Register the lib/pq "postgres" driver used by sql.Open for directives + sessions.
 	_ "github.com/lib/pq"
 )
+
+// authCacheRedisPingTO bounds the startup Ping that gates auth-cache wrap.
+const authCacheRedisPingTO = 2 * time.Second
 
 func setupRateLimiter(cfg config.Config, log *logger.Logger) (redis.UniversalClient, ratelimit.Limiter, error) {
 	if cfg.RedisURL == "" {
@@ -59,7 +63,12 @@ type authClients struct {
 	conn          *grpc.ClientConn
 }
 
-func setupAuthClients(cfg config.Config, log *logger.Logger, m *ibexmetrics.ProxyRegistry) (authClients, error) {
+func setupAuthClients(
+	cfg config.Config,
+	log *logger.Logger,
+	m *ibexmetrics.ProxyRegistry,
+	redisClient redis.UniversalClient,
+) (authClients, error) {
 	if cfg.AuthGRPCAddr == "" {
 		return authClients{}, nil
 	}
@@ -78,7 +87,7 @@ func setupAuthClients(cfg config.Config, log *logger.Logger, m *ibexmetrics.Prox
 		return authClients{}, fmt.Errorf("auth validator: %w", err)
 	}
 	var validator auth.TokenValidator = grpcValidator
-	validator, err = maybeWrapAuthCache(validator, cfg, log, m)
+	validator, err = maybeWrapAuthCache(validator, cfg, log, m, redisClient)
 	if err != nil {
 		_ = conn.Close() //nolint:errcheck // best-effort cleanup; preserve constructor error
 		return authClients{}, err
@@ -88,10 +97,12 @@ func setupAuthClients(cfg config.Config, log *logger.Logger, m *ibexmetrics.Prox
 		_ = conn.Close() //nolint:errcheck // best-effort cleanup; preserve constructor error
 		return authClients{}, fmt.Errorf("agent verifier: %w", err)
 	}
+	_, cacheActive := validator.(auth.CacheInvalidator)
 	log.InfoCtx(context.Background(), "auth grpc client configured",
 		"addr", cfg.AuthGRPCAddr,
 		"timeout", cfg.AuthValidateTimeout.String(),
 		"auth_cache_enabled", cfg.AuthCache.Enabled,
+		"auth_cache_active", cacheActive,
 		"tls", cfg.Environment != "development",
 	)
 	return authClients{
@@ -111,10 +122,58 @@ func maybeWrapAuthCache(
 	cfg config.Config,
 	log *logger.Logger,
 	m *ibexmetrics.ProxyRegistry,
+	redisClient redis.UniversalClient,
 ) (auth.TokenValidator, error) {
 	if !cfg.AuthCache.Enabled {
 		return validator, nil
 	}
+	if redisClient == nil {
+		warnAuthCacheSkipped(log, "redis_url_empty", nil)
+		return validator, nil
+	}
+	if err := pingRedisForAuthCache(redisClient); err != nil {
+		warnAuthCacheSkipped(log, "redis_ping_failed", err)
+		return validator, nil
+	}
+	return wrapAuthCache(validator, cfg, log, m)
+}
+
+func warnAuthCacheSkipped(log *logger.Logger, reason string, err error) {
+	attrs := []any{
+		"reason", reason,
+		"IBEX_AUTH_CACHE_ENABLED", true,
+	}
+	if err != nil {
+		attrs = append(attrs, "error", err.Error())
+	}
+	log.WarnCtx(context.Background(),
+		"auth cache disabled; revocation channel unavailable",
+		attrs...,
+	)
+}
+
+func authCacheSkipReason(redisClient redis.UniversalClient) string {
+	if redisClient == nil {
+		return "redis_url_empty"
+	}
+	if err := pingRedisForAuthCache(redisClient); err != nil {
+		return "redis_ping_failed"
+	}
+	return ""
+}
+
+func pingRedisForAuthCache(client redis.UniversalClient) error {
+	ctx, cancel := context.WithTimeout(context.Background(), authCacheRedisPingTO)
+	defer cancel()
+	return client.Ping(ctx).Err()
+}
+
+func wrapAuthCache(
+	validator auth.TokenValidator,
+	cfg config.Config,
+	log *logger.Logger,
+	m *ibexmetrics.ProxyRegistry,
+) (auth.TokenValidator, error) {
 	var metrics authcache.Metrics = authcache.NoopMetrics{}
 	if m != nil {
 		metrics = m
@@ -128,6 +187,7 @@ func maybeWrapAuthCache(
 	if err != nil {
 		return nil, fmt.Errorf("auth cache: %w", err)
 	}
+	log.InfoCtx(context.Background(), "auth cache enabled with revocation channel")
 	return wrapped, nil
 }
 
