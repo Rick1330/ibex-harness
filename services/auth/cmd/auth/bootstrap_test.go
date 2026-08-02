@@ -284,9 +284,9 @@ func TestUnit_NewValidateTokenLimiter_NilRedisUsesNoop(t *testing.T) {
 }
 
 func TestUnit_NewValidateTokenLimiter_PropagatesKeyedError(t *testing.T) {
-	t.Parallel()
+	// Must stay sequential: mutates package-level newRedisKeyed.
 	prev := newRedisKeyed
-	t.Cleanup(func() { newRedisKeyed = prev })
+	defer func() { newRedisKeyed = prev }()
 	newRedisKeyed = func(redis.UniversalClient, ratelimit.RedisKeyedConfig) (ratelimit.KeyedLimiter, error) {
 		return nil, errors.New("forced keyed failure")
 	}
