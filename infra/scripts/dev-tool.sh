@@ -54,6 +54,7 @@ case "${1:-help}" in
       "  clickhouse-version     Show current ClickHouse migration version" \
       "  dev-smoke              Run local auth+proxy smoke test" \
       "  dev-smoke-live         Run live OpenRouter auth+proxy smoke test" \
+      "  e2e-wave2b-token-fks   Compose-dev Wave 2b token FK + CreateToken E2E" \
       "  verify-phase15         Run Phase 1.5 public site verification (IBEX_SITE_URL)"
     ;;
   lint-docs)
@@ -166,6 +167,9 @@ case "${1:-help}" in
     ;;
   dev-smoke-live)
     bash "$ROOT_DIR/infra/scripts/smoke_live_openrouter.sh"
+    ;;
+  e2e-wave2b-token-fks)
+    bash "$ROOT_DIR/infra/scripts/e2e_compose_dev_wave2b.sh"
     ;;
   verify-phase15)
     bash "$ROOT_DIR/infra/scripts/verify_phase15.sh"
