@@ -11,48 +11,53 @@ import (
 	"github.com/google/uuid"
 )
 
+type timingPair struct {
+	miss   *token.Validator
+	wrong  *token.Validator
+	bearer string
+}
+
 func TestUnit_Validator_MissPathPaysArgon2(t *testing.T) {
 	t.Parallel()
 	if testing.Short() {
 		t.Skip("timing parity skipped in -short")
 	}
-	missV, wrongV, bearer := missAndWrongValidators(t)
-
-	assertUnauthenticated(t, missV, bearer)
-	assertUnauthenticated(t, wrongV, bearer)
-
-	missDur, wrongDur := averageValidateDurations(t, missV, wrongV, bearer, 3)
+	pair := newTimingPair(t)
+	assertUnauthenticated(t, pair.miss, pair.bearer)
+	assertUnauthenticated(t, pair.wrong, pair.bearer)
+	missDur, wrongDur := averageValidateDurations(t, pair)
 	assertTimingParity(t, missDur, wrongDur)
 }
 
-func missAndWrongValidators(t *testing.T) (missV, wrongV *token.Validator, bearer string) {
+func newTimingPair(t *testing.T) timingPair {
 	t.Helper()
 	argon2 := token.TestArgon2Params()
 	tokenID := uuid.New()
-	bearer = "ibex_pat_" + tokenID.String() + "_secret"
+	bearer := "ibex_pat_" + tokenID.String() + "_secret"
 	wrongHash, err := token.HashForTest(bearer+"_other", argon2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	missV, err = token.NewValidator(&fakeLookup{err: sql.ErrNoRows}, argon2)
+	missV, err := token.NewValidator(&fakeLookup{err: sql.ErrNoRows}, argon2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	wrongV, err = token.NewValidator(&fakeLookup{row: token.Row{Hash: wrongHash, OrgID: "org"}}, argon2)
+	wrongV, err := token.NewValidator(&fakeLookup{row: token.Row{Hash: wrongHash, OrgID: "org"}}, argon2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return missV, wrongV, bearer
+	return timingPair{miss: missV, wrong: wrongV, bearer: bearer}
 }
 
-func averageValidateDurations(t *testing.T, missV, wrongV *token.Validator, bearer string, samples int) (missDur, wrongDur time.Duration) {
+func averageValidateDurations(t *testing.T, pair timingPair) (missDur, wrongDur time.Duration) {
 	t.Helper()
+	const samples = 3
 	var missTotal, wrongTotal time.Duration
 	for i := 0; i < samples; i++ {
-		missTotal += timeValidate(t, missV, bearer)
-		wrongTotal += timeValidate(t, wrongV, bearer)
+		missTotal += timeValidate(t, pair.miss, pair.bearer)
+		wrongTotal += timeValidate(t, pair.wrong, pair.bearer)
 	}
-	return missTotal / time.Duration(samples), wrongTotal / time.Duration(samples)
+	return missTotal / samples, wrongTotal / samples
 }
 
 func timeValidate(t *testing.T, v *token.Validator, bearer string) time.Duration {

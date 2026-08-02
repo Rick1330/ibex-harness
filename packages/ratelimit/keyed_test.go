@@ -3,6 +3,7 @@ package ratelimit
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -77,6 +78,15 @@ func TestUnit_NewRedisKeyed_defaults(t *testing.T) {
 	}
 }
 
+func TestUnit_RedisKeyed_ConcurrentBurst(t *testing.T) {
+	t.Parallel()
+	limiter := newTestKeyed(t, RedisKeyedConfig{DefaultRPM: 20, KeyPrefix: "ratelimit:keyed:burst"})
+	allowed := countKeyedAllowed(burstKeyedCheck(t, limiter, "same-peer", 80))
+	if allowed > 20 || allowed < 1 {
+		t.Fatalf("admitted %d want 1..20", allowed)
+	}
+}
+
 func TestUnit_NoopKeyed_alwaysAllows(t *testing.T) {
 	t.Parallel()
 	res, err := NoopKeyed().CheckKey(context.Background(), "any")
@@ -95,6 +105,40 @@ func TestUnit_currentMinuteWindow_retryAfterNonNegative(t *testing.T) {
 	if w.resetUnix != now.Unix()+30 {
 		t.Fatalf("resetUnix=%d", w.resetUnix)
 	}
+}
+
+func burstKeyedCheck(t *testing.T, limiter KeyedLimiter, key string, n int) []Result {
+	t.Helper()
+	results := make([]Result, n)
+	errs := make([]error, n)
+	var wg sync.WaitGroup
+	wg.Add(n)
+	for i := 0; i < n; i++ {
+		i := i
+		go func() {
+			defer wg.Done()
+			res, err := limiter.CheckKey(context.Background(), key)
+			results[i] = res
+			errs[i] = err
+		}()
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("CheckKey[%d]: %v", i, err)
+		}
+	}
+	return results
+}
+
+func countKeyedAllowed(results []Result) int {
+	n := 0
+	for _, res := range results {
+		if res.Allowed {
+			n++
+		}
+	}
+	return n
 }
 
 func newTestKeyed(t testing.TB, cfg RedisKeyedConfig) KeyedLimiter {

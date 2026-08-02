@@ -2,7 +2,9 @@ package token_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -64,15 +66,50 @@ func runValidatorCase(t *testing.T, run validatorRun) {
 }
 
 type fakeLookup struct {
-	row token.Row
-	err error
+	row   token.Row
+	err   error
+	calls int
 }
 
 func (f *fakeLookup) FindActiveByPrefix(ctx context.Context, _ string) (token.Row, error) {
+	f.calls++
 	if f.err != nil {
 		return token.Row{}, f.err
 	}
 	return f.row, nil
+}
+
+func TestUnit_Validator_OversizedPATSkipsLookup(t *testing.T) {
+	t.Parallel()
+	lookup := &fakeLookup{err: sql.ErrNoRows}
+	v, err := token.NewValidator(lookup, token.TestArgon2Params())
+	if err != nil {
+		t.Fatal(err)
+	}
+	oversized := "ibex_pat_" + uuid.NewString() + "_" + strings.Repeat("z", 200)
+	_, err = v.Validate(context.Background(), oversized)
+	if !errors.Is(err, token.ErrUnauthenticated) {
+		t.Fatalf("want ErrUnauthenticated, got %v", err)
+	}
+	if lookup.calls != 0 {
+		t.Fatalf("oversized PAT must not hit DB; calls=%d", lookup.calls)
+	}
+}
+
+func TestUnit_Validator_MalformedPATSkipsLookup(t *testing.T) {
+	t.Parallel()
+	lookup := &fakeLookup{err: sql.ErrNoRows}
+	v, err := token.NewValidator(lookup, token.TestArgon2Params())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = v.Validate(context.Background(), "not-a-pat")
+	if !errors.Is(err, token.ErrUnauthenticated) {
+		t.Fatalf("want ErrUnauthenticated, got %v", err)
+	}
+	if lookup.calls != 0 {
+		t.Fatalf("malformed PAT must not hit DB; calls=%d", lookup.calls)
+	}
 }
 
 func TestValidator_Validate(t *testing.T) {

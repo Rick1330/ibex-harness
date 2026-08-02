@@ -24,98 +24,109 @@ func (s stubKeyedLimiter) CheckKey(_ context.Context, _ string) (ratelimit.Resul
 	return s.res, s.err
 }
 
-func TestUnit_ValidateTokenRateLimitInterceptor_skipsOtherMethods(t *testing.T) {
+type interceptorCase struct {
+	name       string
+	opts       ValidateRateLimitOpts
+	fullMethod string
+	ctx        context.Context
+	wantCode   codes.Code
+	wantCall   bool
+}
+
+func TestUnit_ValidateTokenRateLimitInterceptor(t *testing.T) {
 	t.Parallel()
-	ic := ValidateTokenRateLimitInterceptor(ValidateRateLimitOpts{
-		Limiter: stubKeyedLimiter{res: ratelimit.Result{Allowed: false}},
-	})
-	called := false
-	_, err := ic(context.Background(), &authv1.CreateTokenRequest{},
-		&grpc.UnaryServerInfo{FullMethod: "/ibex.auth.v1.AuthService/CreateToken"},
-		func(ctx context.Context, req any) (any, error) {
-			called = true
-			return &authv1.CreateTokenResponse{}, nil
-		},
-	)
-	if err != nil || !called {
-		t.Fatalf("err=%v called=%v", err, called)
+	for _, tc := range interceptorCases() {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			runInterceptorCase(t, tc)
+		})
 	}
 }
 
-func TestUnit_ValidateTokenRateLimitInterceptor_deniesWhenExceeded(t *testing.T) {
-	t.Parallel()
-	ic := ValidateTokenRateLimitInterceptor(ValidateRateLimitOpts{
-		Limiter: stubKeyedLimiter{res: ratelimit.Result{Allowed: false, Limit: 1}},
-	})
-	_, err := ic(peerCtx("127.0.0.1", 4242), &authv1.ValidateTokenRequest{},
-		&grpc.UnaryServerInfo{FullMethod: validateTokenFullMethod},
-		func(ctx context.Context, req any) (any, error) {
-			t.Fatal("handler should not run")
-			return nil, nil
+func interceptorCases() []interceptorCase {
+	return []interceptorCase{
+		{
+			name:       "skips_other_methods",
+			opts:       ValidateRateLimitOpts{Limiter: stubKeyedLimiter{res: ratelimit.Result{Allowed: false}}},
+			fullMethod: "/ibex.auth.v1.AuthService/CreateToken",
+			ctx:        context.Background(),
+			wantCode:   codes.OK,
+			wantCall:   true,
 		},
-	)
-	if status.Code(err) != codes.ResourceExhausted {
-		t.Fatalf("code=%v err=%v", status.Code(err), err)
+		{
+			name:       "denies_when_exceeded",
+			opts:       ValidateRateLimitOpts{Limiter: stubKeyedLimiter{res: ratelimit.Result{Allowed: false, Limit: 1}}},
+			fullMethod: validateTokenFullMethod,
+			ctx:        peerCtx("127.0.0.1", 4242),
+			wantCode:   codes.ResourceExhausted,
+			wantCall:   false,
+		},
+		{
+			name: "fail_open_on_redis_error",
+			opts: ValidateRateLimitOpts{
+				Limiter: stubKeyedLimiter{err: errors.New("redis down")},
+				Log:     logger.Discard("auth"),
+			},
+			fullMethod: validateTokenFullMethod,
+			ctx:        peerCtx("127.0.0.1", 4242),
+			wantCode:   codes.OK,
+			wantCall:   true,
+		},
+		{
+			name:       "nil_limiter_uses_noop",
+			opts:       ValidateRateLimitOpts{},
+			fullMethod: validateTokenFullMethod,
+			ctx:        peerCtx("127.0.0.1", 1),
+			wantCode:   codes.OK,
+			wantCall:   true,
+		},
 	}
 }
 
-func TestUnit_ValidateTokenRateLimitInterceptor_failOpenOnRedisError(t *testing.T) {
-	t.Parallel()
-	ic := ValidateTokenRateLimitInterceptor(ValidateRateLimitOpts{
-		Limiter: stubKeyedLimiter{err: errors.New("redis down")},
-		Log:     logger.Discard("auth"),
-	})
+func runInterceptorCase(t *testing.T, tc interceptorCase) {
+	t.Helper()
+	ic := ValidateTokenRateLimitInterceptor(tc.opts)
 	called := false
-	_, err := ic(peerCtx("127.0.0.1", 4242), &authv1.ValidateTokenRequest{},
-		&grpc.UnaryServerInfo{FullMethod: validateTokenFullMethod},
+	_, err := ic(tc.ctx, &authv1.ValidateTokenRequest{},
+		&grpc.UnaryServerInfo{FullMethod: tc.fullMethod},
 		func(ctx context.Context, req any) (any, error) {
 			called = true
 			return &authv1.ValidateTokenResponse{}, nil
 		},
 	)
-	if err != nil || !called {
-		t.Fatalf("fail-open expected; err=%v called=%v", err, called)
+	assertInterceptorOutcome(t, err, called, tc.wantCode, tc.wantCall)
+}
+
+func assertInterceptorOutcome(t *testing.T, err error, called bool, wantCode codes.Code, wantCall bool) {
+	t.Helper()
+	if status.Code(err) != wantCode {
+		t.Fatalf("code=%v want %v err=%v", status.Code(err), wantCode, err)
+	}
+	if called != wantCall {
+		t.Fatalf("handler called=%v want %v", called, wantCall)
 	}
 }
 
-func TestUnit_ValidateTokenRateLimitInterceptor_nilLimiterUsesNoop(t *testing.T) {
+func TestUnit_PeerRateLimitKey(t *testing.T) {
 	t.Parallel()
-	ic := ValidateTokenRateLimitInterceptor(ValidateRateLimitOpts{})
-	called := false
-	_, err := ic(peerCtx("127.0.0.1", 1), &authv1.ValidateTokenRequest{},
-		&grpc.UnaryServerInfo{FullMethod: validateTokenFullMethod},
-		func(ctx context.Context, req any) (any, error) {
-			called = true
-			return &authv1.ValidateTokenResponse{}, nil
-		},
-	)
-	if err != nil || !called {
-		t.Fatalf("noop path: err=%v called=%v", err, called)
+	cases := []struct {
+		name string
+		ctx  context.Context
+		want string
+	}{
+		{name: "strips_port", ctx: peerCtx("10.1.2.3", 5555), want: "10.1.2.3"},
+		{name: "unknown_without_peer", ctx: context.Background(), want: "unknown"},
+		{name: "raw_addr_without_port", ctx: rawPeerCtx("unix-socket"), want: "unix-socket"},
 	}
-}
-
-func TestUnit_PeerRateLimitKey_stripsPort(t *testing.T) {
-	t.Parallel()
-	got := peerRateLimitKey(peerCtx("10.1.2.3", 5555))
-	if got != "10.1.2.3" {
-		t.Fatalf("got %q", got)
-	}
-}
-
-func TestUnit_PeerRateLimitKey_unknownWithoutPeer(t *testing.T) {
-	t.Parallel()
-	if got := peerRateLimitKey(context.Background()); got != "unknown" {
-		t.Fatalf("got %q", got)
-	}
-}
-
-func TestUnit_PeerRateLimitKey_rawAddrWithoutPort(t *testing.T) {
-	t.Parallel()
-	ctx := peer.NewContext(context.Background(), &peer.Peer{
-		Addr: net.Addr(&rawAddr{s: "unix-socket"}),
-	})
-	if got := peerRateLimitKey(ctx); got != "unix-socket" {
-		t.Fatalf("got %q", got)
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := peerRateLimitKey(tc.ctx); got != tc.want {
+				t.Fatalf("got %q want %q", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -128,4 +139,8 @@ func peerCtx(ip string, port int) context.Context {
 	return peer.NewContext(context.Background(), &peer.Peer{
 		Addr: &net.TCPAddr{IP: net.ParseIP(ip), Port: port},
 	})
+}
+
+func rawPeerCtx(addr string) context.Context {
+	return peer.NewContext(context.Background(), &peer.Peer{Addr: &rawAddr{s: addr}})
 }

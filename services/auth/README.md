@@ -25,6 +25,20 @@ See [.env.example](.env.example) and [ENVIRONMENT_VARIABLES.md](../../web/engine
 | `IBEX_GRPC_PORT` | No | `9091` |
 | `IBEX_ARGON2_*` | No | see docs |
 
+## Testing
+
+```bash
+# Unit (no infra)
+go test ./services/auth/...
+
+# Integration (Postgres; covered by CI auth-validate-smoke)
+# Includes peer ValidateToken RPM + oversized PAT guards via miniredis/Postgres.
+make compose-test-up
+go test -tags=integration ./services/auth/...
+```
+
+There is no dedicated compose E2E workflow for ValidateToken RPM: merge gates already run the integration suite above. Live compose smoke remains `make e2e-wave2b-token-fks` / `make dev-smoke` (make-only, not CI).
+
 ## Run locally
 
 From repository root:
