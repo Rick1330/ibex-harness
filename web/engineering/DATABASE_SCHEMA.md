@@ -41,7 +41,7 @@ CREATE SCHEMA ibex_analytics; -- Summary analytics
 
 > **Milestone 1.1.1:** `ibex_core.organizations` and `ibex_core.tokens` are applied via numbered SQL in [`infra/migrations/postgres/`](../../infra/migrations/postgres/). Run `make db-migrate` after local Compose is up.
 >
-> **Milestone 1.1.7:** `ibex_core.users` and `ibex_core.agents` are applied as the Phase-1 column subset (see migrations `000006`–`000007`). `tokens.user_id`, `tokens.agent_id`, and `tokens.revoked_by` now have enforced foreign keys (`000008`). Full-schema columns deferred to Phase 3+ remain documented below but are not yet migrated.
+> **Milestone 1.1.7:** `ibex_core.users` and `ibex_core.agents` are applied as the Phase-1 column subset (see migrations `000006`–`000007`). `tokens.revoked_by` remains a single-column FK (`000008`). `tokens.user_id` / `tokens.agent_id` enforce tenant ownership via composite FKs `(user_id, org_id)` / `(agent_id, org_id)` (`000012`; `users` and `agents` expose `UNIQUE (id, org_id)`). Full-schema columns deferred to Phase 3+ remain documented below but are not yet migrated.
 >
 > **Milestone 2.3.1:** `ibex_core.directives` and `ibex_core.directive_versions` are applied as the Phase-2 agent-scoped subset (`000009`; see [ADR-0030](../content/docs/adr/0030-directive-versioning.mdx)). The marketplace-oriented columns documented in the DIRECTIVES sections below are not yet migrated.
 
@@ -974,12 +974,12 @@ CREATE TABLE ibex_core.tokens (
     org_id          UUID NOT NULL
                     REFERENCES ibex_core.organizations(id)
                     ON DELETE CASCADE,
-    user_id         UUID
-                    REFERENCES ibex_core.users(id)
-                    ON DELETE CASCADE,
-    agent_id        UUID
-                    REFERENCES ibex_core.agents(id)
-                    ON DELETE CASCADE,
+    user_id         UUID,
+    -- Composite tenant FK (000012): FOREIGN KEY (user_id, org_id)
+    -- REFERENCES ibex_core.users (id, org_id) ON DELETE CASCADE
+    agent_id        UUID,
+    -- Composite tenant FK (000012): FOREIGN KEY (agent_id, org_id)
+    -- REFERENCES ibex_core.agents (id, org_id) ON DELETE CASCADE
 
     -- Token classification
     type            TEXT NOT NULL

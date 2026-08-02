@@ -97,8 +97,8 @@ make db-migrate
 psql "$POSTGRES_DSN" -c "\dt ibex_core.*"
 ```
 
-<Callout type="warning" title="Dirty migration 008">
-  Stale dev data can leave invalid `tokens.revoked_by` FKs. Reset with `make compose-dev-reset && make db-migrate`, or repair with `make db-repair-token-fks`.
+<Callout type="warning" title="Dirty migration 008 / 012">
+  Stale dev data can leave invalid `tokens.revoked_by` FKs or cross-org `agent_id` / `user_id` binds. Reset with `make compose-dev-reset && make db-migrate`, or repair with `make db-repair-token-fks`.
 </Callout>
 
 **Windows:** `make db-seed` uses `docker exec` when host `psql` is not on PATH. Ensure compose-dev Postgres is running first.

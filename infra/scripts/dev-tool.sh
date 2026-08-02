@@ -48,7 +48,7 @@ case "${1:-help}" in
       "  db-migrate-down        Roll back one Postgres migration step" \
       "  db-version             Show current Postgres migration version" \
       "  db-seed                Seed local dev database (org/user/agent/PAT)" \
-      "  db-repair-token-fks    Fix orphaned token FKs after failed migration 008" \
+      "  db-repair-token-fks    Fix orphaned token FKs after failed migration 008/012" \
       "  clickhouse-migrate     Apply all pending ClickHouse migrations" \
       "  clickhouse-migrate-down Roll back one ClickHouse migration step" \
       "  clickhouse-version     Show current ClickHouse migration version" \

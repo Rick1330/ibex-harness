@@ -160,16 +160,16 @@ Common root cause:
 - multiple Postgres containers running
 - wrong database name
 
-**Migration 008 fails on `tokens_revoked_by_fk` (dirty version 8):**
+**Migration 008 / 012 fails on token subject FKs (dirty version 8 or 12):**
 
-Stale dev data can leave `tokens.revoked_by` pointing at deleted users. Validation then fails with a dirty `schema_migrations` row.
+Stale dev data can leave `tokens.revoked_by` pointing at deleted users, or `tokens.agent_id` / `tokens.user_id` pointing at a subject in another org. Validation then fails with a dirty `schema_migrations` row.
 
 ```bash
 # Fresh local Postgres (recommended)
 make compose-dev-reset
 make db-migrate
 
-# Or repair in place (keeps volume data)
+# Or repair in place (keeps volume data; clears missing-ID and cross-org orphans)
 make db-repair-token-fks
 make db-migrate
 ```

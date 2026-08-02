@@ -83,7 +83,7 @@ db-version: ## Show current Postgres migration version
 db-seed: ## Seed local dev database with test org, user, agent, and PAT
 	@"$(BASH)" "$(DEV_TOOL)" db-seed
 
-db-repair-token-fks: ## Fix orphaned token FKs after failed migration 008
+db-repair-token-fks: ## Fix orphaned token FKs after failed migration 008/012
 	@"$(BASH)" "$(DEV_TOOL)" db-repair-token-fks
 
 clickhouse-migrate: ## Apply all pending ClickHouse migrations
