@@ -79,36 +79,37 @@ func (f *fakeLookup) FindActiveByPrefix(ctx context.Context, _ string) (token.Ro
 	return f.row, nil
 }
 
-func TestUnit_Validator_OversizedPATSkipsLookup(t *testing.T) {
+func TestUnit_Validator_InvalidPATSkipsLookup(t *testing.T) {
 	t.Parallel()
-	lookup := &fakeLookup{err: sql.ErrNoRows}
-	v, err := token.NewValidator(lookup, token.TestArgon2Params())
-	if err != nil {
-		t.Fatal(err)
+	cases := []struct {
+		name  string
+		token string
+	}{
+		{name: "malformed", token: "not-a-pat"},
+		{name: "oversized", token: "ibex_pat_" + uuid.NewString() + "_" + strings.Repeat("z", 200)},
 	}
-	oversized := "ibex_pat_" + uuid.NewString() + "_" + strings.Repeat("z", 200)
-	_, err = v.Validate(context.Background(), oversized)
-	if !errors.Is(err, token.ErrUnauthenticated) {
-		t.Fatalf("want ErrUnauthenticated, got %v", err)
-	}
-	if lookup.calls != 0 {
-		t.Fatalf("oversized PAT must not hit DB; calls=%d", lookup.calls)
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assertPATSkipsLookup(t, tc.token)
+		})
 	}
 }
 
-func TestUnit_Validator_MalformedPATSkipsLookup(t *testing.T) {
-	t.Parallel()
+func assertPATSkipsLookup(t *testing.T, accessToken string) {
+	t.Helper()
 	lookup := &fakeLookup{err: sql.ErrNoRows}
 	v, err := token.NewValidator(lookup, token.TestArgon2Params())
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = v.Validate(context.Background(), "not-a-pat")
+	_, err = v.Validate(context.Background(), accessToken)
 	if !errors.Is(err, token.ErrUnauthenticated) {
 		t.Fatalf("want ErrUnauthenticated, got %v", err)
 	}
 	if lookup.calls != 0 {
-		t.Fatalf("malformed PAT must not hit DB; calls=%d", lookup.calls)
+		t.Fatalf("invalid PAT must not hit DB; calls=%d", lookup.calls)
 	}
 }
 

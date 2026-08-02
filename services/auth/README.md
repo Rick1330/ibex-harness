@@ -56,7 +56,7 @@ IBEX_PORT=8081 IBEX_GRPC_PORT=9091 \
 **Windows (PowerShell)** — use `$env:` instead of bash `VAR=value cmd` (no `\` line continuation):
 
 ```powershell
-cd D:\ibex-r\ibex-harness
+cd <repo-root>
 make compose-dev-up
 make db-migrate
 make proto-gen

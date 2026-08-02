@@ -24,11 +24,20 @@ func (s stubKeyedLimiter) CheckKey(_ context.Context, _ string) (ratelimit.Resul
 	return s.res, s.err
 }
 
+type peerSetup int
+
+const (
+	peerBackground peerSetup = iota
+	peerTCP127
+	peerTCP10
+	peerUnixRaw
+)
+
 type interceptorCase struct {
 	name       string
 	opts       ValidateRateLimitOpts
 	fullMethod string
-	ctx        context.Context
+	peer       peerSetup
 	wantCode   codes.Code
 	wantCall   bool
 }
@@ -50,7 +59,7 @@ func interceptorCases() []interceptorCase {
 			name:       "skips_other_methods",
 			opts:       ValidateRateLimitOpts{Limiter: stubKeyedLimiter{res: ratelimit.Result{Allowed: false}}},
 			fullMethod: "/ibex.auth.v1.AuthService/CreateToken",
-			ctx:        context.Background(),
+			peer:       peerBackground,
 			wantCode:   codes.OK,
 			wantCall:   true,
 		},
@@ -58,7 +67,7 @@ func interceptorCases() []interceptorCase {
 			name:       "denies_when_exceeded",
 			opts:       ValidateRateLimitOpts{Limiter: stubKeyedLimiter{res: ratelimit.Result{Allowed: false, Limit: 1}}},
 			fullMethod: validateTokenFullMethod,
-			ctx:        peerCtx("127.0.0.1", 4242),
+			peer:       peerTCP127,
 			wantCode:   codes.ResourceExhausted,
 			wantCall:   false,
 		},
@@ -69,7 +78,7 @@ func interceptorCases() []interceptorCase {
 				Log:     logger.Discard("auth"),
 			},
 			fullMethod: validateTokenFullMethod,
-			ctx:        peerCtx("127.0.0.1", 4242),
+			peer:       peerTCP127,
 			wantCode:   codes.OK,
 			wantCall:   true,
 		},
@@ -77,7 +86,7 @@ func interceptorCases() []interceptorCase {
 			name:       "nil_limiter_uses_noop",
 			opts:       ValidateRateLimitOpts{},
 			fullMethod: validateTokenFullMethod,
-			ctx:        peerCtx("127.0.0.1", 1),
+			peer:       peerTCP127,
 			wantCode:   codes.OK,
 			wantCall:   true,
 		},
@@ -88,23 +97,23 @@ func runInterceptorCase(t *testing.T, tc interceptorCase) {
 	t.Helper()
 	ic := ValidateTokenRateLimitInterceptor(tc.opts)
 	called := false
-	_, err := ic(tc.ctx, &authv1.ValidateTokenRequest{},
+	_, err := ic(buildPeerContext(tc.peer), &authv1.ValidateTokenRequest{},
 		&grpc.UnaryServerInfo{FullMethod: tc.fullMethod},
 		func(ctx context.Context, req any) (any, error) {
 			called = true
 			return &authv1.ValidateTokenResponse{}, nil
 		},
 	)
-	assertInterceptorOutcome(t, err, called, tc.wantCode, tc.wantCall)
+	assertInterceptorOutcome(t, err, called, tc)
 }
 
-func assertInterceptorOutcome(t *testing.T, err error, called bool, wantCode codes.Code, wantCall bool) {
+func assertInterceptorOutcome(t *testing.T, err error, called bool, tc interceptorCase) {
 	t.Helper()
-	if status.Code(err) != wantCode {
-		t.Fatalf("code=%v want %v err=%v", status.Code(err), wantCode, err)
+	if status.Code(err) != tc.wantCode {
+		t.Fatalf("code=%v want %v err=%v", status.Code(err), tc.wantCode, err)
 	}
-	if called != wantCall {
-		t.Fatalf("handler called=%v want %v", called, wantCall)
+	if called != tc.wantCall {
+		t.Fatalf("handler called=%v want %v", called, tc.wantCall)
 	}
 }
 
@@ -112,21 +121,34 @@ func TestUnit_PeerRateLimitKey(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name string
-		ctx  context.Context
+		peer peerSetup
 		want string
 	}{
-		{name: "strips_port", ctx: peerCtx("10.1.2.3", 5555), want: "10.1.2.3"},
-		{name: "unknown_without_peer", ctx: context.Background(), want: "unknown"},
-		{name: "raw_addr_without_port", ctx: rawPeerCtx("unix-socket"), want: "unix-socket"},
+		{name: "strips_port", peer: peerTCP10, want: "10.1.2.3"},
+		{name: "unknown_without_peer", peer: peerBackground, want: "unknown"},
+		{name: "raw_addr_without_port", peer: peerUnixRaw, want: "unix-socket"},
 	}
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if got := peerRateLimitKey(tc.ctx); got != tc.want {
+			if got := peerRateLimitKey(buildPeerContext(tc.peer)); got != tc.want {
 				t.Fatalf("got %q want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func buildPeerContext(setup peerSetup) context.Context {
+	switch setup {
+	case peerTCP127:
+		return peerCtx("127.0.0.1", 4242)
+	case peerTCP10:
+		return peerCtx("10.1.2.3", 5555)
+	case peerUnixRaw:
+		return rawPeerCtx("unix-socket")
+	default:
+		return context.Background()
 	}
 }
 

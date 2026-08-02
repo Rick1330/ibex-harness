@@ -80,7 +80,13 @@ func TestUnit_NewRedisKeyed_defaults(t *testing.T) {
 
 func TestUnit_RedisKeyed_ConcurrentBurst(t *testing.T) {
 	t.Parallel()
-	limiter := newTestKeyed(t, RedisKeyedConfig{DefaultRPM: 20, KeyPrefix: "ratelimit:keyed:burst"})
+	// OpTimeout must exceed DefaultRedisOpTimeout: 80 parallel Lua scripts on
+	// miniredis can exceed 50ms under CI load (coverage/race jobs).
+	limiter := newTestKeyed(t, RedisKeyedConfig{
+		DefaultRPM: 20,
+		KeyPrefix:  "ratelimit:keyed:burst",
+		OpTimeout:  time.Second,
+	})
 	allowed := countKeyedAllowed(burstKeyedCheck(t, limiter, "same-peer", 80))
 	if allowed > 20 || allowed < 1 {
 		t.Fatalf("admitted %d want 1..20", allowed)

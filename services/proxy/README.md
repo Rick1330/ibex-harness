@@ -95,7 +95,7 @@ IBEX_AUTH_GRPC_ADDR=127.0.0.1:9091 REDIS_URL=redis://localhost:6379/0 \
 Terminal 1 — auth:
 
 ```powershell
-cd D:\ibex-r\ibex-harness
+cd <repo-root>
 make compose-dev-up
 make db-migrate
 $env:POSTGRES_DSN = "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable"
@@ -106,7 +106,7 @@ go run ./services/auth/cmd/auth
 Terminal 2 — proxy (new window; auth must stay running):
 
 ```powershell
-cd D:\ibex-r\ibex-harness
+cd <repo-root>
 $env:IBEX_AUTH_GRPC_ADDR = "127.0.0.1:9091"
 $env:REDIS_URL = "redis://localhost:6379/0"
 $env:POSTGRES_DSN = "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable"
