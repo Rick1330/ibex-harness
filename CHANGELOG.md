@@ -12,6 +12,17 @@ Release notes are human-readable summaries of user-visible changes, security fix
 
 ---
 
+## [0.1.3](https://github.com/Rick1330/ibex-harness/compare/v0.1.2...v0.1.3) (2026-08-09)
+
+
+### Bug Fixes
+
+* **auth:** equalize ValidateToken miss cost and rate-limit peers ([#445](https://github.com/Rick1330/ibex-harness/issues/445)) ([7fcab0a](https://github.com/Rick1330/ibex-harness/commit/7fcab0a8023711cc7677d150e682d0aa679b3c55))
+* **auth:** require CreateToken agent_id/user_id same-org bind ([#440](https://github.com/Rick1330/ibex-harness/issues/440)) ([790caba](https://github.com/Rick1330/ibex-harness/commit/790caba922a10da9ba3d75dfa0ad8e875ac2645a))
+* **auth:** require CreateToken permissions subset of caller ([#437](https://github.com/Rick1330/ibex-harness/issues/437)) ([f9b8f3c](https://github.com/Rick1330/ibex-harness/commit/f9b8f3cb871a7ae5a8f01091fa218235d21baad9))
+* **ci:** unblock semantic-pr-title on release PRs ([#404](https://github.com/Rick1330/ibex-harness/issues/404)) ([7e93d5f](https://github.com/Rick1330/ibex-harness/commit/7e93d5f31708975e010f0a44924bd0b42e903480))
+* **db:** enforce composite org FKs on token subjects ([#443](https://github.com/Rick1330/ibex-harness/issues/443)) ([f8e9ea8](https://github.com/Rick1330/ibex-harness/commit/f8e9ea8ca0741c42c48d3557faf4085e5f608917))
+
 ## [0.1.2](https://github.com/Rick1330/ibex-harness/compare/v0.1.1...v0.1.2) (2026-07-27)
 
 
