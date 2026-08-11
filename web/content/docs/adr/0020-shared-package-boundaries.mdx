@@ -50,11 +50,11 @@ Both `services/auth` and `services/proxy` used scattered `os.Getenv` calls with 
 
 - New error codes are added only in `packages/apierror`
 - New required env vars are documented via struct tags + `.env.example` + `ENVIRONMENT_VARIABLES.md`
-- Phase 2 Python services document pydantic-settings pattern separately ([07-python-code-quality.mdc](/AGENTS.md))
+- Phase 2 Python services document pydantic-settings pattern separately (`AGENTS.md`)
 
 ## References
 
 - [M1.4.2 milestone](/roadmap/phase-1-core-platform/milestones/1.4.2-shared-config-and-error-packages)
 - [ADR-0013](/docs/adr/0013-proxy-input-validation-and-error-envelope)
-- [29-ibex-packages.mdc](/AGENTS.md)
+- `AGENTS.md`
 - [ARCHITECTURE_LAYERING.md](/engineering/ARCHITECTURE_LAYERING) — consumer-owned ports vs intentional shared package interfaces (`session` / `idempotency` / `directive`)

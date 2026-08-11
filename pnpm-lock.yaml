@@ -130,7 +130,7 @@ importers:
         specifier: ^29.1.1
         version: 29.1.1
       postcss:
-        specifier: ^8.5.26
+        specifier: '>=8.5.23'
         version: 8.5.26
       tailwindcss:
         specifier: ^4.3.2
