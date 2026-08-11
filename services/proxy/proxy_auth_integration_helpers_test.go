@@ -174,6 +174,17 @@ func optionalTestRedis(t *testing.T, skip bool) redisFixture {
 	return setupTestRedis(t)
 }
 
+// redisReadyForAuthCache mirrors bootstrap authCacheUnavailableReason: non-nil
+// client and successful Ping are required before wrapping the auth cache.
+func redisReadyForAuthCache(client redis.UniversalClient) bool {
+	if client == nil {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	return client.Ping(ctx).Err() == nil
+}
+
 func startProxyServer(t *testing.T, authAddr string, srvOpts proxyServerOpts) *httptest.Server {
 	t.Helper()
 	return startProxyServerRedis(t, authAddr, srvOpts, setupTestRedis(t))
@@ -245,9 +256,9 @@ func newProxyIntegrationHandler(t *testing.T, opts proxyIntegrationHandlerOpts) 
 	}
 
 	validator := mustGRPCValidator(t, opts.client, opts.cfg.AuthValidateTimeout)
-	// Mirror bootstrap maybeWrapAuthCache (Wave 4): wrap only when Redis can host
-	// the revocation subscriber. Enabled flag alone must not create a stale LRU.
-	if opts.srvOpts.withAuthCache && opts.redisClient != nil {
+	// Mirror bootstrap maybeWrapAuthCache (Wave 4): wrap only when Redis Ping succeeds.
+	// Enabled flag alone must not create a stale LRU.
+	if opts.srvOpts.withAuthCache && redisReadyForAuthCache(opts.redisClient) {
 		validator = mustCachedValidator(t, validator)
 		revokeCtx, revokeCancel := context.WithCancel(context.Background())
 		t.Cleanup(revokeCancel)
@@ -259,6 +270,8 @@ func newProxyIntegrationHandler(t *testing.T, opts proxyIntegrationHandlerOpts) 
 	healthCheckers := map[string]healthcheck.Checker{
 		"auth_grpc": healthcheck.AuthGRPC(opts.client, opts.cfg.AuthValidateTimeout),
 	}
+	// Production always registers RedisPing (empty URL → readiness fail). Tests that
+	// model intentional empty REDIS_URL omit it so /ready stays usable for SEC-7.3.
 	if opts.cfg.RedisURL != "" {
 		healthCheckers["redis"] = healthcheck.RedisPing(opts.cfg.RedisURL)
 	}

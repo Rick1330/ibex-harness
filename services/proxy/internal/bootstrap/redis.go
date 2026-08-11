@@ -19,6 +19,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
@@ -72,31 +76,54 @@ func setupAuthClients(
 	if cfg.AuthGRPCAddr == "" {
 		return authClients{}, nil
 	}
+	dialed, err := dialAuthGRPC(cfg)
+	if err != nil {
+		return authClients{}, err
+	}
+	validator, err := maybeWrapAuthCache(dialed.validator, cfg, authCacheDeps{
+		log: log, metrics: m, redisClient: redisClient,
+	})
+	if err != nil {
+		_ = dialed.conn.Close() //nolint:errcheck // best-effort cleanup; preserve wrap error
+		return authClients{}, err
+	}
+	agentVerifier, err := auth.NewGRPCAgentVerifier(dialed.client, cfg.AuthValidateTimeout)
+	if err != nil {
+		_ = dialed.conn.Close() //nolint:errcheck // best-effort cleanup; preserve constructor error
+		return authClients{}, fmt.Errorf("agent verifier: %w", err)
+	}
+	logAuthClientsConfigured(log, cfg, validator)
+	return authClients{
+		validator: validator, agentVerifier: agentVerifier,
+		client: dialed.client, conn: dialed.conn,
+	}, nil
+}
+
+type dialedAuthGRPC struct {
+	conn      *grpc.ClientConn
+	client    authv1.AuthServiceClient
+	validator auth.TokenValidator
+}
+
+func dialAuthGRPC(cfg config.Config) (dialedAuthGRPC, error) {
 	conn, err := grpc.NewClient(cfg.AuthGRPCAddr,
 		grpc.WithTransportCredentials(authTransportCredentials(cfg.Environment)),
 		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
 		grpc.WithChainUnaryInterceptor(proxygrpc.RequestIDUnaryInterceptor()),
 	)
 	if err != nil {
-		return authClients{}, fmt.Errorf("auth grpc dial addr=%s: %w", cfg.AuthGRPCAddr, err)
+		return dialedAuthGRPC{}, fmt.Errorf("auth grpc dial addr=%s: %w", cfg.AuthGRPCAddr, err)
 	}
 	client := authv1.NewAuthServiceClient(conn)
 	grpcValidator, err := auth.NewGRPCValidator(client, cfg.AuthValidateTimeout)
 	if err != nil {
 		_ = conn.Close() //nolint:errcheck // best-effort cleanup; preserve constructor error
-		return authClients{}, fmt.Errorf("auth validator: %w", err)
+		return dialedAuthGRPC{}, fmt.Errorf("auth validator: %w", err)
 	}
-	var validator auth.TokenValidator = grpcValidator
-	validator, err = maybeWrapAuthCache(validator, cfg, log, m, redisClient)
-	if err != nil {
-		_ = conn.Close() //nolint:errcheck // best-effort cleanup; preserve constructor error
-		return authClients{}, err
-	}
-	agentVerifier, err := auth.NewGRPCAgentVerifier(client, cfg.AuthValidateTimeout)
-	if err != nil {
-		_ = conn.Close() //nolint:errcheck // best-effort cleanup; preserve constructor error
-		return authClients{}, fmt.Errorf("agent verifier: %w", err)
-	}
+	return dialedAuthGRPC{conn: conn, client: client, validator: grpcValidator}, nil
+}
+
+func logAuthClientsConfigured(log *logger.Logger, cfg config.Config, validator auth.TokenValidator) {
 	_, cacheActive := validator.(auth.CacheInvalidator)
 	log.InfoCtx(context.Background(), "auth grpc client configured",
 		"addr", cfg.AuthGRPCAddr,
@@ -105,9 +132,6 @@ func setupAuthClients(
 		"auth_cache_active", cacheActive,
 		"tls", cfg.Environment != "development",
 	)
-	return authClients{
-		validator: validator, agentVerifier: agentVerifier, client: client, conn: conn,
-	}, nil
 }
 
 func authTransportCredentials(environment string) credentials.TransportCredentials {
@@ -117,25 +141,26 @@ func authTransportCredentials(environment string) credentials.TransportCredentia
 	return credentials.NewTLS(&tls.Config{MinVersion: tls.VersionTLS12})
 }
 
+// authCacheDeps groups logger, metrics, and Redis for auth-cache wrap gating.
+type authCacheDeps struct {
+	log         *logger.Logger
+	metrics     *ibexmetrics.ProxyRegistry
+	redisClient redis.UniversalClient
+}
+
 func maybeWrapAuthCache(
 	validator auth.TokenValidator,
 	cfg config.Config,
-	log *logger.Logger,
-	m *ibexmetrics.ProxyRegistry,
-	redisClient redis.UniversalClient,
+	deps authCacheDeps,
 ) (auth.TokenValidator, error) {
 	if !cfg.AuthCache.Enabled {
 		return validator, nil
 	}
-	if redisClient == nil {
-		warnAuthCacheSkipped(log, "redis_url_empty", nil)
+	if reason, err := authCacheUnavailableReason(deps.redisClient); reason != "" {
+		warnAuthCacheSkipped(deps.log, reason, err)
 		return validator, nil
 	}
-	if err := pingRedisForAuthCache(redisClient); err != nil {
-		warnAuthCacheSkipped(log, "redis_ping_failed", err)
-		return validator, nil
-	}
-	return wrapAuthCache(validator, cfg, log, m)
+	return wrapAuthCache(validator, cfg, deps.log, deps.metrics)
 }
 
 func warnAuthCacheSkipped(log *logger.Logger, reason string, err error) {
@@ -152,20 +177,35 @@ func warnAuthCacheSkipped(log *logger.Logger, reason string, err error) {
 	)
 }
 
-func authCacheSkipReason(redisClient redis.UniversalClient) string {
+// authCacheUnavailableReason is the single gate for wrap-skip: empty reason means
+// Redis can host the revocation subscriber. Non-empty reason is redis_url_empty
+// or redis_ping_failed (with the Ping error when applicable).
+func authCacheUnavailableReason(redisClient redis.UniversalClient) (string, error) {
 	if redisClient == nil {
-		return "redis_url_empty"
+		return "redis_url_empty", nil
 	}
 	if err := pingRedisForAuthCache(redisClient); err != nil {
-		return "redis_ping_failed"
+		return "redis_ping_failed", err
 	}
-	return ""
+	return "", nil
 }
 
 func pingRedisForAuthCache(client redis.UniversalClient) error {
 	ctx, cancel := context.WithTimeout(context.Background(), authCacheRedisPingTO)
 	defer cancel()
-	return client.Ping(ctx).Err()
+	ctx, span := otel.Tracer("ibex-proxy").Start(ctx, "bootstrap.Redis.Ping",
+		trace.WithAttributes(
+			attribute.String("db.system", "redis"),
+			attribute.String("db.operation", "PING"),
+		),
+	)
+	defer span.End()
+	err := client.Ping(ctx).Err()
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+	}
+	return err
 }
 
 func wrapAuthCache(
@@ -187,7 +227,8 @@ func wrapAuthCache(
 	if err != nil {
 		return nil, fmt.Errorf("auth cache: %w", err)
 	}
-	log.InfoCtx(context.Background(), "auth cache enabled with revocation channel")
+	log.InfoCtx(context.Background(),
+		"auth cache wrapped; revocation subscriber will connect via Redis")
 	return wrapped, nil
 }
 

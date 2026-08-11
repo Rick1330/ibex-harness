@@ -29,65 +29,55 @@ func validAuthCacheConfig() config.AuthCacheConfig {
 	}
 }
 
-func TestUnit_MaybeWrapAuthCache_Disabled(t *testing.T) {
-	t.Parallel()
-
-	inner := stubValidator{}
-	cfg := config.Config{AuthCache: config.AuthCacheConfig{Enabled: false}}
-
-	got, err := maybeWrapAuthCache(inner, cfg, logger.Discard("proxy"), nil, nil)
-
-	if err != nil {
-		t.Fatalf("err=%v", err)
-	}
-	if _, ok := got.(auth.CacheInvalidator); ok {
-		t.Fatal("disabled cache must not wrap")
-	}
-	if got != inner {
-		t.Fatal("expected unwrapped validator")
-	}
+func gateDeps(redisClient redis.UniversalClient) authCacheDeps {
+	return authCacheDeps{log: logger.Discard("proxy"), redisClient: redisClient}
 }
 
-func TestUnit_MaybeWrapAuthCache_SkipsWhenRedisNil(t *testing.T) {
+func TestUnit_MaybeWrapAuthCache_SkipCases(t *testing.T) {
 	t.Parallel()
 
-	inner := stubValidator{}
-	cfg := config.Config{AuthCache: validAuthCacheConfig()}
-
-	got, err := maybeWrapAuthCache(inner, cfg, logger.Discard("proxy"), nil, nil)
-
-	if err != nil {
-		t.Fatalf("err=%v", err)
+	tests := []struct {
+		name  string
+		cfg   config.Config
+		redis func(t *testing.T) redis.UniversalClient
+	}{
+		{
+			name:  "disabled",
+			cfg:   config.Config{AuthCache: config.AuthCacheConfig{Enabled: false}},
+			redis: func(t *testing.T) redis.UniversalClient { return nil },
+		},
+		{
+			name:  "nil_redis",
+			cfg:   config.Config{AuthCache: validAuthCacheConfig()},
+			redis: func(t *testing.T) redis.UniversalClient { return nil },
+		},
+		{
+			name: "ping_fails",
+			cfg:  config.Config{AuthCache: validAuthCacheConfig()},
+			redis: func(t *testing.T) redis.UniversalClient {
+				t.Helper()
+				mr := miniredis.RunT(t)
+				client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+				t.Cleanup(func() { _ = client.Close() })
+				mr.Close()
+				return client
+			},
+		},
 	}
-	if _, ok := got.(auth.CacheInvalidator); ok {
-		t.Fatal("nil Redis must not wrap auth cache")
-	}
-	if got != inner {
-		t.Fatal("expected unwrapped validator")
-	}
-}
 
-func TestUnit_MaybeWrapAuthCache_SkipsWhenPingFails(t *testing.T) {
-	t.Parallel()
-
-	mr := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	t.Cleanup(func() { _ = client.Close() })
-	mr.Close()
-
-	inner := stubValidator{}
-	cfg := config.Config{AuthCache: validAuthCacheConfig()}
-
-	got, err := maybeWrapAuthCache(inner, cfg, logger.Discard("proxy"), nil, client)
-
-	if err != nil {
-		t.Fatalf("err=%v", err)
-	}
-	if _, ok := got.(auth.CacheInvalidator); ok {
-		t.Fatal("unreachable Redis must not wrap auth cache")
-	}
-	if got != inner {
-		t.Fatal("expected unwrapped validator")
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			inner := stubValidator{}
+			got, err := maybeWrapAuthCache(inner, tc.cfg, gateDeps(tc.redis(t)))
+			if err != nil {
+				t.Fatalf("err=%v", err)
+			}
+			assertNotCachingValidator(t, got)
+			if got != inner {
+				t.Fatal("expected unwrapped validator")
+			}
+		})
 	}
 }
 
@@ -101,7 +91,7 @@ func TestUnit_MaybeWrapAuthCache_WrapsWhenRedisHealthy(t *testing.T) {
 	inner := stubValidator{}
 	cfg := config.Config{AuthCache: validAuthCacheConfig()}
 
-	got, err := maybeWrapAuthCache(inner, cfg, logger.Discard("proxy"), nil, client)
+	got, err := maybeWrapAuthCache(inner, cfg, gateDeps(client))
 
 	if err != nil {
 		t.Fatalf("err=%v", err)
@@ -109,22 +99,25 @@ func TestUnit_MaybeWrapAuthCache_WrapsWhenRedisHealthy(t *testing.T) {
 	assertCachingValidator(t, got)
 }
 
-func TestUnit_AuthCacheSkipReason(t *testing.T) {
+func TestUnit_AuthCacheUnavailableReason(t *testing.T) {
 	t.Parallel()
 
-	if got := authCacheSkipReason(nil); got != "redis_url_empty" {
-		t.Fatalf("nil client reason=%q", got)
+	reason, err := authCacheUnavailableReason(nil)
+	if reason != "redis_url_empty" || err != nil {
+		t.Fatalf("nil client reason=%q err=%v", reason, err)
 	}
 
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
-	if got := authCacheSkipReason(client); got != "" {
-		t.Fatalf("healthy redis reason=%q", got)
+	reason, err = authCacheUnavailableReason(client)
+	if reason != "" || err != nil {
+		t.Fatalf("healthy redis reason=%q err=%v", reason, err)
 	}
 
 	mr.Close()
-	if got := authCacheSkipReason(client); got != "redis_ping_failed" {
-		t.Fatalf("closed redis reason=%q", got)
+	reason, err = authCacheUnavailableReason(client)
+	if reason != "redis_ping_failed" || err == nil {
+		t.Fatalf("closed redis reason=%q err=%v", reason, err)
 	}
 }
