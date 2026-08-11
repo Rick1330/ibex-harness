@@ -173,7 +173,7 @@ Release notes are human-readable summaries of user-visible changes, security fix
 - Auth cache revoke hardening: tombstone installed before index removal; LRU lookup re-checks revocation before serving cached claims
 - Token revocation propagation (`packages/revocation`): auth PUBLISH + proxy SUBSCRIBE on `ibex:token:revocations` with `token_id` events and `InvalidateByTokenID` ([ADR-0029](web/content/docs/adr/0029-token-revocation-propagation.mdx)); metrics `ibex_auth_revocation_publish_total`, `ibex_proxy_revocation_invalidate_total`
 - Auth cache (`packages/authcache`): in-process invalid-token bloom + claims LRU for proxy `ValidateToken` ([ADR-0028](web/content/docs/adr/0028-auth-cache-design.mdx)); metrics `ibex_proxy_auth_cache_*`; header `X-IBEX-Auth-Cached` on LRU hits
-- PR push hygiene Cursor rule (`.cursor/rules/32-pr-push-hygiene.mdc`) encoding #350 CI/merge lessons
+- PR push hygiene guidance (see [AGENTS.md](AGENTS.md) and [CONTRIBUTING.md](CONTRIBUTING.md)) encoding #350 CI/merge lessons
 - Provider error mapping (`provider.MapError` / `MapProviderError` → `apierror.Error`) with sanitized details and `Retry-After` on upstream 429 ([ADR-0026](web/content/docs/adr/0026-openai-client-design.mdx))
 - Provider routing middleware (`ChatParse` + `ProviderRouting`) extracts model→provider lookup from the chat handler ([ADR-0025](web/content/docs/adr/0025-llm-provider-abstraction.mdx))
 - OpenAI streaming SSE dual-write forwarder (`stream=true`) with `StreamAccumulator`, flush-per-event, and stream metrics ([ADR-0027](web/content/docs/adr/0027-streaming-dual-write.mdx))

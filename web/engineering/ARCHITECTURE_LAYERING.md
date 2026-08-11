@@ -60,5 +60,5 @@ ADR-0020 import rules.
 ## Related
 
 - [CODING_STANDARDS.md](./CODING_STANDARDS.md) — interface design (“define at consumer”)
+- [AGENTS.md](../../AGENTS.md) — agent workflow and architecture layering invariants
 - [GOLANGCI_POLICY.md](./GOLANGCI_POLICY.md) — depguard / MF-001 proxy Postgres exception ([ADR-0039](/docs/adr/0039-proxy-postgres-session-directive))
-- [20-architecture-layering.mdc](../../.cursor/rules/20-architecture-layering.mdc)

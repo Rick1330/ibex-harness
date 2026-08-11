@@ -9,7 +9,7 @@ Reference for the DevSecOps hardening work on branch `chore/security-ci-gates`. 
 | Workflows | `.github/workflows/ci.yml`, `codeql.yml`, `semgrep.yml`, `scorecard.yml`, `sbom.yml` |
 | Config | `.github/dependabot.yml`, `.github/branch-protection-main.json`, `.semgrep/rules/ibex-security.yml`, `.semgrepignore`, `.hadolint.yaml` |
 | Docs / ADR | `CONTRIBUTING.md`, `SECURITY.md` §12.2, `DEPENDENCIES.md` §9, `TOOLCHAIN.md`, `ADR-0008`, `ADR-0003`, `ADR-0002` |
-| Prompts | `prompts/20-security-ci-audit.txt`, `.cursorrules` §9.5 |
+| Agent guidance | `AGENTS.md`, `CLAUDE.md` |
 
 ## Severity thresholds
 

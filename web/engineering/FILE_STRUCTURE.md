@@ -27,9 +27,8 @@ This exists because AI-assisted development fails badly when:
 
 ```text
 ibex-harness/
-  .cursorrules
   AGENTS.md
-  PROMPTS.md
+  CLAUDE.md
   README.md
   LICENSE                      # choose before public release
   .gitignore

@@ -198,7 +198,7 @@ Used by: **proxy** (`services/proxy`)
 
 | Variable | Required | Default | Description | Security Notes |
 |----------|----------|---------|-------------|----------------|
-| `REDIS_URL` | Conditional | (empty) | Redis for rate limiting + `/ready`; empty → Noop limiter (no RPM enforcement) | Secret if password present |
+| `REDIS_URL` | Conditional | (empty) | Redis for rate limiting, token-revocation SUBSCRIBE (`ibex:token:revocations`), and `/ready`. Empty → Noop limiter **and** auth cache wrap is skipped even when `IBEX_AUTH_CACHE_ENABLED=true` (WARN at startup) so revoke is immediate via gRPC. | Secret if password present |
 | `IBEX_PORT` | No | `8080` | HTTP listen port | |
 | `IBEX_AUTH_GRPC_ADDR` | No | `127.0.0.1:9091` | Auth gRPC target for ValidateToken | Internal; mTLS in prod |
 | `IBEX_SHUTDOWN_TIMEOUT` | No | `30s` | Graceful shutdown drain | |
@@ -207,9 +207,9 @@ Used by: **proxy** (`services/proxy`)
 | `IBEX_REQUEST_ID_HEADER` | No | `X-Request-ID` | Inbound request ID header | |
 | `IBEX_TRACE_ID_HEADER` | No | `X-Trace-ID` | Trace ID response header | |
 | `IBEX_AUTH_VALIDATE_TIMEOUT` | No | `50ms` (code); `2s` in `services/proxy/.env.example` for local dev | Per-request auth validate budget (`ValidateToken` / `ValidateAgent`) | Code default per [ADR-0011](adr/ADR-0011-proxy-auth-client.md); use `2s` locally when Argon2 verify exceeds 50ms — see [TROUBLESHOOTING.md](TROUBLESHOOTING.md) §3.3 |
-| `IBEX_AUTH_CACHE_ENABLED` | No | `true` | Wrap ValidateToken with bloom + LRU ([ADR-0028](/docs/adr/0028-auth-cache-design)) | Set `false` to force every request through gRPC |
+| `IBEX_AUTH_CACHE_ENABLED` | No | `true` | Request bloom + LRU wrap for ValidateToken ([ADR-0028](/docs/adr/0028-auth-cache-design)). Wrap is **skipped** (WARN) when `REDIS_URL` is empty or Redis Ping fails — revoke must not rely on LRU TTL alone without the pub/sub channel ([ADR-0029](/docs/adr/0029-token-revocation-propagation)). | Set `false` to force every request through gRPC |
 | `IBEX_AUTH_CACHE_LRU_CAPACITY` | No | `5000` | Max claims entries per proxy process | |
-| `IBEX_AUTH_CACHE_LRU_MAX_TTL` | No | `30s` | Max cache TTL (also max revoke lag without 2.2.2) | |
+| `IBEX_AUTH_CACHE_LRU_MAX_TTL` | No | `30s` | Max cache TTL (also max revoke lag if a pub/sub message is missed) | Requires Redis + healthy Ping for cache wrap |
 | `IBEX_AUTH_CACHE_BLOOM_EXPECTED_ITEMS` | No | `10000` | Bloom sizing for invalid token hashes | |
 | `IBEX_AUTH_CACHE_BLOOM_FP_RATE` | No | `0.001` | Target false-positive rate (0.1%) | |
 | `IBEX_MAX_REQUEST_BODY_BYTES` | No | `1048576` | Max chat request body (1 MiB) | See [ADR-0013](adr/ADR-0013-proxy-input-validation-and-error-envelope.md) |
@@ -252,7 +252,7 @@ Used by: **auth** (`services/auth`)
 | Variable | Required | Default | Description | Security Notes |
 |----------|----------|---------|-------------|----------------|
 | `POSTGRES_DSN` | Yes | (none) | Postgres DSN (`postgres://...`) | Secret |
-| `REDIS_URL` | No | (empty) | Redis for token-revocation PUBLISH (`ibex:token:revocations`) **and** ValidateToken peer rate limiting (`ratelimit:auth:validate:*`). Empty → Noop publisher + Noop ValidateToken rate limit (private-network assumption; proxies rely on LRU TTL ≤30s for revoke lag). Must match proxy Redis when auth cache is enabled. | Secret if password present |
+| `REDIS_URL` | No | (empty) | Redis for token-revocation PUBLISH (`ibex:token:revocations`) **and** ValidateToken peer rate limiting (`ratelimit:auth:validate:*`). Empty → Noop publisher + Noop ValidateToken rate limit (private-network assumption). Proxies with empty Redis skip auth-cache wrap (immediate revoke via gRPC); do not rely on LRU TTL alone. Must match proxy Redis when auth cache is active. | Secret if password present |
 | `IBEX_AUTH_VALIDATE_RPM` | No | `6000` | Per-**proxy-host** calendar-minute cap on gRPC `ValidateToken` when `REDIS_URL` is set (key = peer IP/host after stripping port). All ValidateToken calls from that host — valid and invalid — share one counter. Size to peak legitimate proxy RPS×60, not only abuse thresholds (~100 RPS at default 6000). Exceed → `RESOURCE_EXHAUSTED`. Redis check errors fail-open with WARN. | Defense-in-depth; ValidateToken remains an internal RPC |
 | `IBEX_PORT` | No | `8081` | HTTP port for `/health`, `/ready`, `/metrics` | |
 | `IBEX_GRPC_PORT` | No | `9091` | gRPC listen port for `AuthService` | Internal only; use mTLS in production |

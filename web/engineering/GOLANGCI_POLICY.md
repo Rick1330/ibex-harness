@@ -48,7 +48,7 @@ shrink them below thresholds when practical.
 
 ## Proxy Postgres / `database/sql` (MF-001)
 
-**Phase 1 rule** (always applied in `.cursor/rules/20-architecture-layering.mdc`):
+**Phase 1 rule** (see [AGENTS.md](../../AGENTS.md) and [ARCHITECTURE_LAYERING.md](./ARCHITECTURE_LAYERING.md)):
 the proxy must not use Postgres for identity; auth stays on gRPC.
 
 **Accepted exception (ADR-0039):** `services/proxy/internal/bootstrap` may open
