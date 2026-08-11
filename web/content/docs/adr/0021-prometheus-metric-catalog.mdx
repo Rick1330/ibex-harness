@@ -14,7 +14,7 @@ date: "2026-06-07"
 
 ## Context
 
-Auth and proxy exposed `/metrics` via duplicate custom mutex-based implementations with inconsistent metric names, histogram buckets, and high-cardinality `path` labels (raw URLs with UUIDs). Cursor rules (`AGENTS.md`, `AGENTS.md`) require a shared `packages/metrics` registry.
+Auth and proxy exposed `/metrics` via duplicate custom mutex-based implementations with inconsistent metric names, histogram buckets, and high-cardinality `path` labels (raw URLs with UUIDs). Repository guidance (`AGENTS.md`) requires a shared `packages/metrics` registry.
 
 M1.3.1 initialized OTel tracing ([ADR-0019](/docs/adr/0019-opentelemetry-provider-configuration)). Phase 1 Prometheus exposition uses `prometheus/client_golang` directly — not the OTel meter bridge.
 

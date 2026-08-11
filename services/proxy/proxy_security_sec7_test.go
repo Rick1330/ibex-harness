@@ -37,7 +37,7 @@ func TestSecurity_SEC7_1_ChatBodyTooLarge(t *testing.T) {
 
 type sec7TokenProbe struct {
 	env     securityTestEnv
-	ctx     context.Context
+	authMD  metadata.MD
 	tokenID string
 	opts    authProbeOpts
 	plain   string
@@ -47,9 +47,10 @@ type sec7TokenProbe struct {
 func newSec7TokenProbe(t *testing.T, env securityTestEnv, tokenName string) sec7TokenProbe {
 	t.Helper()
 	admin := testutil.SeedBootstrapAdminToken(t, env.db, env.orgA.OrgID)
+	authMD := metadata.Pairs("authorization", "Bearer "+admin)
 	rpcCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	t.Cleanup(cancel)
-	ctx := metadata.NewOutgoingContext(rpcCtx, metadata.Pairs("authorization", "Bearer "+admin))
+	defer cancel()
+	ctx := metadata.NewOutgoingContext(rpcCtx, authMD)
 
 	createResp, err := env.authFx.Client.CreateToken(ctx, &authv1.CreateTokenRequest{
 		OrgId: env.orgA.OrgID, Name: tokenName, Type: authv1.TokenType_TOKEN_TYPE_PAT,
@@ -61,7 +62,7 @@ func newSec7TokenProbe(t *testing.T, env securityTestEnv, tokenName string) sec7
 	plain := createResp.GetPlaintext()
 	return sec7TokenProbe{
 		env:     env,
-		ctx:     ctx,
+		authMD:  authMD,
 		tokenID: createResp.GetTokenId(),
 		plain:   plain,
 		opts:    authProbeOpts{srvURL: env.proxy.URL, bearer: plain, agentID: env.orgA.AgentID},
@@ -70,7 +71,10 @@ func newSec7TokenProbe(t *testing.T, env securityTestEnv, tokenName string) sec7
 
 func (p sec7TokenProbe) revoke(t *testing.T) {
 	t.Helper()
-	if _, err := p.env.authFx.Client.RevokeToken(p.ctx, &authv1.RevokeTokenRequest{
+	rpcCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	ctx := metadata.NewOutgoingContext(rpcCtx, p.authMD)
+	if _, err := p.env.authFx.Client.RevokeToken(ctx, &authv1.RevokeTokenRequest{
 		OrgId: p.env.orgA.OrgID, TokenId: p.tokenID,
 	}); err != nil {
 		t.Fatalf("revoke: %v", err)
