@@ -2,8 +2,8 @@
 
 Read before reviewing or suggesting code changes:
 
-- [.cursorrules](../../.cursorrules)
 - [AGENTS.md](../../AGENTS.md)
+- [CLAUDE.md](../../CLAUDE.md)
 - [web/engineering/SECURITY.md](../../web/engineering/SECURITY.md)
 - [web/engineering/FILE_STRUCTURE.md](../../web/engineering/FILE_STRUCTURE.md)
 

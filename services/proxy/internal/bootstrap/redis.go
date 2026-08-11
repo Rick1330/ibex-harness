@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"time"
 
@@ -156,20 +157,21 @@ func maybeWrapAuthCache(
 	if !cfg.AuthCache.Enabled {
 		return validator, nil
 	}
-	if reason, err := authCacheUnavailableReason(deps.redisClient); reason != "" {
-		warnAuthCacheSkipped(deps.log, reason, err)
+	if reason, pingErr := authCacheUnavailableReason(deps.redisClient); reason != "" {
+		warnAuthCacheSkipped(deps.log, reason, pingErr != nil)
 		return validator, nil
 	}
 	return wrapAuthCache(validator, cfg, deps.log, deps.metrics)
 }
 
-func warnAuthCacheSkipped(log *logger.Logger, reason string, err error) {
+func warnAuthCacheSkipped(log *logger.Logger, reason string, pingFailed bool) {
 	attrs := []any{
 		"reason", reason,
 		"IBEX_AUTH_CACHE_ENABLED", true,
 	}
-	if err != nil {
-		attrs = append(attrs, "error", err.Error())
+	if pingFailed {
+		// Stable class only — raw dial errors may embed host/IP (never log those).
+		attrs = append(attrs, "failure_class", "redis_ping_failed")
 	}
 	log.WarnCtx(context.Background(),
 		"auth cache disabled; revocation channel unavailable",
@@ -179,7 +181,7 @@ func warnAuthCacheSkipped(log *logger.Logger, reason string, err error) {
 
 // authCacheUnavailableReason is the single gate for wrap-skip: empty reason means
 // Redis can host the revocation subscriber. Non-empty reason is redis_url_empty
-// or redis_ping_failed (with the Ping error when applicable).
+// or redis_ping_failed. The returned error is for control flow only (never log/trace).
 func authCacheUnavailableReason(redisClient redis.UniversalClient) (string, error) {
 	if redisClient == nil {
 		return "redis_url_empty", nil
@@ -202,10 +204,23 @@ func pingRedisForAuthCache(client redis.UniversalClient) error {
 	defer span.End()
 	err := client.Ping(ctx).Err()
 	if err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, err.Error())
+		// Classify without embedding dial target (may contain IP) in span status/events.
+		failureClass := classifyRedisPingFailure(err)
+		span.SetAttributes(attribute.String("error.type", failureClass))
+		span.SetStatus(codes.Error, failureClass)
+		return err
 	}
-	return err
+	return nil
+}
+
+func classifyRedisPingFailure(err error) string {
+	if err == nil {
+		return ""
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return "timeout"
+	}
+	return "redis_ping_failed"
 }
 
 func wrapAuthCache(

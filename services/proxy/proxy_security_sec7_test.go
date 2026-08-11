@@ -35,36 +35,60 @@ func TestSecurity_SEC7_1_ChatBodyTooLarge(t *testing.T) {
 	assertSecurityErrorEnvelope(t, resp, body, chatToken)
 }
 
-func TestSecurity_SEC7_2_AuthCacheWarmThenRevoke(t *testing.T) {
-	env := setupSecurityTestEnv(t, proxyServerOpts{defaultRPM: 60, withAuthCache: true})
-	admin := testutil.SeedBootstrapAdminToken(t, env.db, env.orgA.OrgID)
+type sec7TokenProbe struct {
+	env     securityTestEnv
+	ctx     context.Context
+	tokenID string
+	opts    authProbeOpts
+	plain   string
+}
 
+// newSec7TokenProbe creates a PAT via auth gRPC and returns probe opts for the proxy.
+func newSec7TokenProbe(t *testing.T, env securityTestEnv, tokenName string) sec7TokenProbe {
+	t.Helper()
+	admin := testutil.SeedBootstrapAdminToken(t, env.db, env.orgA.OrgID)
 	rpcCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	t.Cleanup(cancel)
 	ctx := metadata.NewOutgoingContext(rpcCtx, metadata.Pairs("authorization", "Bearer "+admin))
 
 	createResp, err := env.authFx.Client.CreateToken(ctx, &authv1.CreateTokenRequest{
-		OrgId: env.orgA.OrgID, Name: "sec7-cache", Type: authv1.TokenType_TOKEN_TYPE_PAT,
+		OrgId: env.orgA.OrgID, Name: tokenName, Type: authv1.TokenType_TOKEN_TYPE_PAT,
 		Permissions: permissions.ProxyChatCompletion,
 	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	plain := createResp.GetPlaintext()
-	opts := authProbeOpts{srvURL: env.proxy.URL, bearer: plain, agentID: env.orgA.AgentID}
+	return sec7TokenProbe{
+		env:     env,
+		ctx:     ctx,
+		tokenID: createResp.GetTokenId(),
+		plain:   plain,
+		opts:    authProbeOpts{srvURL: env.proxy.URL, bearer: plain, agentID: env.orgA.AgentID},
+	}
+}
 
-	// Miss then hit: second response must advertise cache via X-IBEX-Auth-Cached.
-	requireProbeOKCached(t, opts, false)
-	requireProbeOKCached(t, opts, true)
-
-	start := time.Now()
-	if _, err = env.authFx.Client.RevokeToken(ctx, &authv1.RevokeTokenRequest{
-		OrgId: env.orgA.OrgID, TokenId: createResp.GetTokenId(),
+func (p sec7TokenProbe) revoke(t *testing.T) {
+	t.Helper()
+	if _, err := p.env.authFx.Client.RevokeToken(p.ctx, &authv1.RevokeTokenRequest{
+		OrgId: p.env.orgA.OrgID, TokenId: p.tokenID,
 	}); err != nil {
 		t.Fatalf("revoke: %v", err)
 	}
+}
+
+func TestSecurity_SEC7_2_AuthCacheWarmThenRevoke(t *testing.T) {
+	env := setupSecurityTestEnv(t, proxyServerOpts{defaultRPM: 60, withAuthCache: true})
+	p := newSec7TokenProbe(t, env, "sec7-cache")
+
+	// Miss then hit: second response must advertise cache via X-IBEX-Auth-Cached.
+	requireProbeOKCached(t, p.opts, false)
+	requireProbeOKCached(t, p.opts, true)
+
+	start := time.Now()
+	p.revoke(t)
 	env.authFx.WaitPendingPublishes()
-	requireProbeUnauthorizedEventually(t, opts, plain, revocationSLA(t))
+	requireProbeUnauthorizedEventually(t, p.opts, p.plain, revocationSLA(t))
 	if elapsed := time.Since(start); elapsed > revocationSLA(t) {
 		t.Fatalf("revocation SLA exceeded: %v (limit %v)", elapsed, revocationSLA(t))
 	}
@@ -75,31 +99,13 @@ func TestSecurity_SEC7_3_AuthCacheEnabledWithoutRedisImmediateRevoke(t *testing.
 	env := setupSecurityTestEnv(t, proxyServerOpts{
 		defaultRPM: 60, withAuthCache: true, skipRedis: true,
 	})
-	admin := testutil.SeedBootstrapAdminToken(t, env.db, env.orgA.OrgID)
-
-	rpcCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	ctx := metadata.NewOutgoingContext(rpcCtx, metadata.Pairs("authorization", "Bearer "+admin))
-
-	createResp, err := env.authFx.Client.CreateToken(ctx, &authv1.CreateTokenRequest{
-		OrgId: env.orgA.OrgID, Name: "sec7-no-redis", Type: authv1.TokenType_TOKEN_TYPE_PAT,
-		Permissions: permissions.ProxyChatCompletion,
-	})
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
-	plain := createResp.GetPlaintext()
-	opts := authProbeOpts{srvURL: env.proxy.URL, bearer: plain, agentID: env.orgA.AgentID}
+	p := newSec7TokenProbe(t, env, "sec7-no-redis")
 
 	// Two probes must never advertise cache — Redis absent ⇒ no wrap.
-	requireProbeOKCached(t, opts, false)
-	requireProbeOKCached(t, opts, false)
+	requireProbeOKCached(t, p.opts, false)
+	requireProbeOKCached(t, p.opts, false)
 
-	if _, err = env.authFx.Client.RevokeToken(ctx, &authv1.RevokeTokenRequest{
-		OrgId: env.orgA.OrgID, TokenId: createResp.GetTokenId(),
-	}); err != nil {
-		t.Fatalf("revoke: %v", err)
-	}
+	p.revoke(t)
 	// Immediate 401 — no LRU stale window without revocation channel.
-	requireProbe(t, opts, probeExpect{http.StatusUnauthorized, apierror.CodeInvalidToken}, plain)
+	requireProbe(t, p.opts, probeExpect{http.StatusUnauthorized, apierror.CodeInvalidToken}, p.plain)
 }

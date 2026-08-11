@@ -114,7 +114,7 @@ See [TOOLCHAIN.md](TOOLCHAIN.md) for installation instructions and sanity checks
 
 Implementation progress is tracked in [`web/content/roadmap/current-state.mdx`](../content/roadmap/current-state.mdx) (public `/roadmap/current-state` on the docs site). After every milestone merges to `main`, update that file (Git SHA, what works / does not, next three tasks). Milestone definitions live under [`web/content/roadmap/phase-1-core-platform/milestones/`](../content/roadmap/phase-1-core-platform/milestones/). Log plan changes in [`web/content/roadmap/findings.mdx`](../content/roadmap/findings.mdx).
 
-**Execution prompts** for AI-assisted milestone work live in `ibex-harness-workspace/prompts/` (local workspace, not published on the docs site).
+**Agent guidance** lives in [AGENTS.md](../../AGENTS.md) and [CLAUDE.md](../../CLAUDE.md). Optional local workspace prompts (if used) stay outside the git repo.
 
 Session notes and closed audits live in the **session workspace** (sibling `ibex-harness-workspace`, not in git). See §12.
 
@@ -414,7 +414,7 @@ Import boundaries and complexity are enforced in CI via `golangci-lint` (not a s
 - **Base linters:** `.golangci.yml` (`govet` / `staticcheck` / `revive` / `errcheck`) — full tree, no `whole-files`.
 - **Complexity:** `.golangci.complexity.yml` (`funlen` / `gocognit`) with `issues.new` + `new-from-rev: origin/main` + `whole-files: true` (scoped so touching a file does not re-surface non-complexity findings).
 - **Local run:** `make lint-go` fetches/verifies `origin/main`, then runs all three configs (golangci-lint v2.4+; CI uses v2.8.0).
-- **MF-001 / Phase 1 proxy DB:** Identity stays on auth gRPC (no proxy DB for tokens/agents). Accepted exception ([ADR-0039](../content/docs/adr/0039-proxy-postgres-session-directive.mdx)): `services/proxy/internal/bootstrap` may open Postgres for **session and directive** stores only — same wording as `.cursor/rules/20-architecture-layering.mdc` and `GOLANGCI_POLICY.md`. Depguard rule `proxy-no-database-sql` enforces the boundary.
+- **MF-001 / Phase 1 proxy DB:** Identity stays on auth gRPC (no proxy DB for tokens/agents). Accepted exception ([ADR-0039](../content/docs/adr/0039-proxy-postgres-session-directive.mdx)): `services/proxy/internal/bootstrap` may open Postgres for **session and directive** stores only — same wording as [AGENTS.md](../../AGENTS.md) and `GOLANGCI_POLICY.md`. Depguard rule `proxy-no-database-sql` enforces the boundary.
 - **Interface ports:** Prefer consumer-owned ports for service-local transport contracts; shared multi-consumer package interfaces (`session` / `idempotency` / `directive` / `ratelimit`) are intentional — see [`ARCHITECTURE_LAYERING.md`](./ARCHITECTURE_LAYERING.md).
 - TypeScript: `eslint`, `tsc`, `vitest`
 - Security: secret scan, dependency scan, container scan
@@ -648,7 +648,6 @@ ibex-harness-workspace/
   handoff.md
   known_issues.md
   contracts.md
-  prompts/                  # milestone execution prompts (not published on docs site)
   pr-bodies/                # PR description drafts (full template); never commit to git repo
     pr-<number>-<slug>.md
   session_log/

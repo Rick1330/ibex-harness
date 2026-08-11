@@ -85,7 +85,8 @@ Then use [DEVELOPMENT_GUIDE.md](DEVELOPMENT_GUIDE.md) for day-to-day workflow, P
 |------|-------------|
 | [../README.md](../README.md) | Project entrypoint and quick start |
 | [../AGENTS.md](../AGENTS.md) | Global AI agent operating manual |
-| [../.cursorrules](../.cursorrules) | Cursor IDE rules for this repo |
+| [../AGENTS.md](../AGENTS.md) | Agent / AI assistant workflow and invariants |
+| [../CLAUDE.md](../CLAUDE.md) | Claude entrypoint → `@AGENTS.md` |
 
 ---
 

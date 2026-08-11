@@ -27,7 +27,7 @@ Phase 2 will call real LLM providers; without rate limiting, runaway tests can e
 
 ### 2) Algorithm (Phase 1)
 
-- Org-level calendar-minute window: key `ratelimit:{org_id}:rpm:{unix_minute}` per [15-redis-patterns.mdc](../../.cursor/rules/15-redis-patterns.mdc)
+- Org-level calendar-minute window: key `ratelimit:{org_id}:rpm:{unix_minute}` per [15-redis-patterns.mdc](/AGENTS.md)
 - On first increment in a window: `EXPIRE` **90s** (clock skew buffer)
 - **Not atomic** — acceptable soft limit until Phase 4 Lua scripts
 - `agentID` parameter accepted on `Check` but **ignored** in Phase 1 (org-level only)

@@ -332,7 +332,7 @@ Avoid:
 | `pip` | `/services/memory` | `requirements.txt` or `pyproject.toml` + lockfile |
 | `npm` | `/services/dashboard` | `package-lock.json` |
 
-Also add `services/memory` to the Bandit CI job and extend golangci-lint paths for new Go services (see `prompts/05-new-service-bootstrap.txt`).
+Also add `services/memory` to the Bandit CI job and extend golangci-lint paths for new Go services (see [AGENTS.md](../AGENTS.md) and this guide).
 
 ### 9.0.1 SCA remediation thresholds (OSPS-VM-05.01–05.03)
 
