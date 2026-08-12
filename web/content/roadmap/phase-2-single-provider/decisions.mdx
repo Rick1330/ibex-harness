@@ -14,13 +14,14 @@ Quick decisions during Phase 2. Promote durable choices to `docs/adr/` when they
 | 2026-07-12 | LLM provider abstraction (`provider.Provider`, registry) | Phase 4 multi-provider without rewriting proxy handlers | [ADR-0025](/docs/adr/0025-llm-provider-abstraction) — **Accepted** |
 | 2026-07-12 | OpenAI HTTP client, pooling, retry policy | Production-grade forwarding for first provider | [ADR-0026](/docs/adr/0026-openai-client-design) — **Accepted** |
 | 2026-07-22 | Streaming dual-write and backpressure | Real-time SSE without buffering full body on hot path | [ADR-0027](/docs/adr/0027-streaming-dual-write) — **Accepted** |
-| ADR-0028 | Auth LRU + bloom filter cache | Meet &lt;20ms proxy overhead under load | [ADR-0028](/docs/adr/0028-auth-cache-design) — **Accepted** |
+| 2026-07-23 | Auth LRU + bloom filter cache | Meet &lt;20ms proxy overhead under load | [ADR-0028](/docs/adr/0028-auth-cache-design) — **Accepted** |
 | 2026-07-23 | Token revocation via Redis pub/sub (`token_id` events) | Meet 5s revoke exit gate without migration | [ADR-0029](/docs/adr/0029-token-revocation-propagation) — **Accepted** |
 | 2026-07-23 | Directive immutable versioning (`active_version_id` pointer) | Safe rollback and cache keys without lost updates | [ADR-0030](/docs/adr/0030-directive-versioning) — **Accepted** |
-| TBD | System prompt injection ordering | Directive precedes caller system message | [ADR-0031](/docs/adr/0031-system-prompt-injection) — **Pending** |
+| 2026-07-23 | System prompt injection ordering | Directive precedes caller system message | [ADR-0031](/docs/adr/0031-system-prompt-injection) — **Accepted** |
 | 2026-07-24 | Session and checkpoint data model | Foundation for Phase 3 memory extraction | [ADR-0032](/docs/adr/0032-session-data-model) — **Accepted** |
 | 2026-07-25 | ClickHouse `llm_traces` schema and 90-day TTL | Analytics backbone without hot-path blocking; compose-dev CH | [ADR-0033](/docs/adr/0033-clickhouse-schema) — **Accepted** |
 | 2026-07-26 | Proxy overhead measurement methodology | Reproducible p99 benchmark for exit gate; real package stages only | [ADR-0034](/docs/adr/0034-performance-methodology) — **Accepted** |
+| 2026-07-26 | Chat idempotency with optional `Idempotency-Key` | Prevent duplicate non-streaming completions with Redis claim/commit while failing open when Redis is unavailable | [ADR-0035](/docs/adr/0035-chat-idempotency-key) — **Accepted** |
 | 2026-06-05 | Auth cache required in Phase 2 (not optional) | Phase 2 latency budget impossible with per-request gRPC only | See [phase-1 decisions](/roadmap/phase-1-core-platform/decisions) |
 
 ## Pending decisions (resolve during milestones)
@@ -28,4 +29,4 @@ Quick decisions during Phase 2. Promote durable choices to `docs/adr/` when they
 1. **OpenAI API base URL** — default `https://api.openai.com/v1`; document override for Azure in Phase 4.
 2. **E2E smoke OpenAI key** — sandbox key in CI secrets vs skipped required check (resolve in 2.6.2).
 
-Log pivots in [FINDINGS.md](/roadmap/findings).
+Log pivots in [roadmap findings](/roadmap/findings).

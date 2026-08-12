@@ -27,7 +27,7 @@ summary: "Phase 0, Phase 1, and Phase 1.5 are complete. Phase 2 (Single Provider
 <StatusBadge status="stable" /> **Phase 1.5 — Public Web Product:** complete  
 <StatusBadge status="new" /> **Phase 2 — Single Provider:** in progress (2.1.6 + 2.6.1 complete; 2.6.2 next)
 
-**Last updated:** 2026-07-26  
+**Last updated:** 2026-08-12
 **Branch:** `main`  
 **Current focus:** [2.6.2 Phase 2 exit gate](/roadmap/phase-2-single-provider/milestones/2.6.2-phase2-exit-gate)  
 **Completed (recent):** [2.1.6 Idempotency-Key](/roadmap/phase-2-single-provider/milestones/2.1.6-idempotency-key)
@@ -154,6 +154,6 @@ pnpm --filter web build
 make verify-phase15   # against https://ibexharness.com when online
 ```
 
-Windows: see [services/auth/README.md](/docs/services/auth) and [services/proxy/README.md](/docs/services/proxy) for PowerShell env syntax. Integration tests: `make compose-test-up` (Postgres 5433) or `$env:POSTGRES_TEST_DSN = "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable"` for dev Postgres.
+Windows: see [`services/auth/README.md`](https://github.com/Rick1330/ibex-harness/blob/main/services/auth/README.md) and [`services/proxy/README.md`](https://github.com/Rick1330/ibex-harness/blob/main/services/proxy/README.md) for PowerShell env syntax. Integration tests: `make compose-test-up` (Postgres 5433) or `$env:POSTGRES_TEST_DSN = "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable"` for dev Postgres.
 
 Expected: `security-integration` and all four `ci-gate-*` jobs green in CI; `verify_phase15.sh` exits 0 against production.
