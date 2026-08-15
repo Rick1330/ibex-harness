@@ -21,7 +21,7 @@ export default function NotFound() {
         </Link>
         <Link
           className="inline-flex h-9 items-center rounded-[4px] border border-border bg-transparent px-4 text-sm font-medium text-text-primary transition hover:bg-panel-raised"
-          href="/docs/getting-started/introduction"
+          href="/docs"
         >
           Documentation home
         </Link>
