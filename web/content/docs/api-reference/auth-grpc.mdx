@@ -15,10 +15,15 @@ The auth service exposes `ibex.auth.v1.AuthService` on **`IBEX_GRPC_PORT`** (def
 
 ## Service definition
 
+Full `AuthService` surface from the proto (proxy hot path uses Validate*; token lifecycle uses Create/Revoke/List):
+
 ```protobuf
 service AuthService {
   rpc ValidateToken(ValidateTokenRequest) returns (ValidateTokenResponse);
   rpc ValidateAgent(ValidateAgentRequest) returns (ValidateAgentResponse);
+  rpc CreateToken(CreateTokenRequest) returns (CreateTokenResponse);
+  rpc RevokeToken(RevokeTokenRequest) returns (RevokeTokenResponse);
+  rpc ListTokens(ListTokensRequest) returns (ListTokensResponse);
 }
 ```
 

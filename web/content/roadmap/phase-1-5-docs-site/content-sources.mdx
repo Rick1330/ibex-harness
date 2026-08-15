@@ -21,7 +21,7 @@ Treat this file as a **living coverage map**, not a one-time Phase 1.5 porting p
 | Proxy | `services/proxy/README.md`, `services/proxy/internal/http/`, `packages/directive`, `packages/injection`, `packages/authcache`, `packages/idempotency`, `packages/session` | Highest priority | This is where most late-Phase-2 drift currently lives |
 | Auth | `services/auth/README.md`, `packages/proto/proto/ibex/auth/v1/auth.proto`, accepted ADRs | Mostly accurate | Public auth pages need lighter updates than proxy pages |
 | Deployment / ops | `services/*/.env.example`, `infra/compose/dev/.env.example`, `services/proxy/internal/config/`, `packages/clickhouse`, `packages/metrics`, `packages/telemetry` | Needs expansion | Env/config docs still reflect an earlier runtime surface |
-| API reference | Manual MDX + proto contracts + route inventory | Mixed | Keep manual behavioral pages; defer OpenAPI until a maintained spec exists |
+| API reference | Manual MDX + proto (`auth.proto`) + HTTP route inventory | Current | Behavioral pages + `/docs/api-reference/http-routes`; OpenAPI / fumadocs-openapi deferred until CI-validated spec |
 
 ## Getting Started
 
@@ -91,6 +91,7 @@ Treat this file as a **living coverage map**, not a one-time Phase 1.5 porting p
 
 | Public page | Source |
 | --- | --- |
+| HTTP route inventory | `services/proxy/internal/http/router.go`, `router_protected.go` |
 | Auth gRPC | `packages/proto/proto/ibex/auth/v1/auth.proto`, `services/auth/README.md` |
 | Proxy health | `services/proxy/README.md`, ADR-0022 |
 | Chat completions | `services/proxy/README.md`, `services/proxy/internal/http/router.go`, ADR-0012/0013/0031/0035 |

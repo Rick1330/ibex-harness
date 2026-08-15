@@ -20,43 +20,42 @@ export type SearchablePage = {
   data: SearchablePageData;
 };
 
+const STRUCTURED_CONTENT_CAP = 800;
+
+function appendText(parts: string[], value: unknown, limit?: number) {
+  if (typeof value !== "string") return;
+  const text = value.trim();
+  if (!text) return;
+  parts.push(limit === undefined ? text : text.slice(0, limit));
+}
+
 function collectTocTitles(items: SearchTocItem[] | undefined, out: string[]) {
   if (!items) return;
   for (const item of items) {
-    if (typeof item.title === "string" && item.title.trim()) {
-      out.push(item.title.trim());
-    }
+    appendText(out, item.title);
     collectTocTitles(item.children, out);
+  }
+}
+
+function collectStructuredContent(
+  structured: SearchablePageData["structuredData"],
+  parts: string[],
+) {
+  if (!structured) return;
+  for (const heading of structured.headings ?? []) {
+    appendText(parts, heading.content);
+  }
+  for (const block of structured.contents ?? []) {
+    appendText(parts, block.heading);
+    appendText(parts, block.content, STRUCTURED_CONTENT_CAP);
   }
 }
 
 /** Build searchable body text from description, headings, and structured excerpts. */
 export function buildSearchContent(page: SearchablePage): string {
   const parts: string[] = [];
-  const description = page.data.description ?? page.data.excerpt ?? "";
-  if (description) parts.push(description);
-
+  appendText(parts, page.data.description ?? page.data.excerpt ?? "");
   collectTocTitles(page.data.toc, parts);
-
-  const structured = page.data.structuredData;
-  if (structured?.headings) {
-    for (const heading of structured.headings) {
-      if (typeof heading.content === "string" && heading.content.trim()) {
-        parts.push(heading.content.trim());
-      }
-    }
-  }
-  if (structured?.contents) {
-    for (const block of structured.contents) {
-      if (typeof block.heading === "string" && block.heading.trim()) {
-        parts.push(block.heading.trim());
-      }
-      if (typeof block.content === "string" && block.content.trim()) {
-        // Cap per-block to keep the static index bounded.
-        parts.push(block.content.trim().slice(0, 800));
-      }
-    }
-  }
-
+  collectStructuredContent(page.data.structuredData, parts);
   return parts.join("\n");
 }

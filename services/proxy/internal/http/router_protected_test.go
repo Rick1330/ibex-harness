@@ -102,3 +102,30 @@ func TestProtectedRoutes_orgAuthProbe_methodNotAllowed(t *testing.T) {
 		t.Fatalf("status: %d body=%s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestProtectedRoutes_internalAuthProbe_methodNotAllowed(t *testing.T) {
+	t.Parallel()
+
+	validator := &mockValidator{res: &auth.ValidateResult{OrgID: agentTestOrgUUID, Permissions: permissions.Admin}}
+	cfg := config.Config{
+		Environment: "test", ServiceName: "proxy", Port: "8080",
+		MaxRequestBodyBytes: 1 << 20, RequestIDHeader: "X-Request-ID", TraceIDHeader: "X-Trace-ID",
+	}
+	handler := newTestRouter(t, cfg, validator, ratelimit.Noop())
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/internal/auth-probe", nil)
+	req.Header.Set("Authorization", "Bearer ibex_pat_test")
+	req.Header.Set("X-IBEX-Agent-ID", agentTestAgentID())
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status: %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), string(apierror.CodeMethodNotAllowed)) {
+		t.Fatalf("body: %s", rec.Body.String())
+	}
+	if got := rec.Header().Get("Allow"); got != http.MethodGet {
+		t.Fatalf("Allow: %q", got)
+	}
+}

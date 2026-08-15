@@ -1,6 +1,10 @@
 ---
 title: Health and metrics
 description: Liveness, readiness, and Prometheus metrics endpoints on auth and proxy services (ADR-0022).
+audience: operator
+scope: shipped
+verifiedDate: "2026-08-15"
+sourceOfTruth: packages/healthcheck; packages/metrics; services/proxy/internal/http/router.go
 ---
 
 Both Go services expose three operational HTTP routes on their respective **`IBEX_PORT`** values: proxy **8080**, auth **8081**. These endpoints are unauthenticated and intended for load balancers, Kubernetes probes, and Prometheus scrapes.

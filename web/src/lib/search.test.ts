@@ -37,4 +37,17 @@ describe("buildSearchContent", () => {
     expect(content).toContain("Checkpoints");
     expect(content).toContain("async checkpoint");
   });
+
+  it("caps each structured content block at 800 characters", () => {
+    const content = buildSearchContent({
+      url: "/docs/proxy/sessions",
+      data: {
+        structuredData: {
+          contents: [{ content: "a".repeat(801) }],
+        },
+      },
+    });
+
+    expect(content).toBe("a".repeat(800));
+  });
 });
