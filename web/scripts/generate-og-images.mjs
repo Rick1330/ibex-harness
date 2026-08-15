@@ -43,7 +43,10 @@ async function loadDocSlugs() {
 }
 
 async function fetchOgPng(port, slugPath) {
-  const url = `http://127.0.0.1:${port}/api/og/${slugPath}`;
+  // Docs hub uses an empty slug → /api/og (optional catch-all), not /api/og/.
+  const url = slugPath
+    ? `http://127.0.0.1:${port}/api/og/${slugPath}`
+    : `http://127.0.0.1:${port}/api/og`;
   const response = await fetch(url, {
     signal: AbortSignal.timeout(60_000),
     redirect: "manual",
