@@ -3,15 +3,13 @@ title: Provider adapters
 description: Pluggable adapters for OpenAI-compatible and other LLM providers.
 ---
 
-Provider adapters translate normalized IBEX chat requests into upstream LLM API calls and stream responses back to clients. Phase 1 validates and authenticates requests only — no adapter is registered at runtime, so every valid chat request stops with `501 PROVIDER_NOT_CONFIGURED`.
+Provider adapters translate normalized IBEX chat requests into upstream LLM API calls and stream responses back to clients. The registry ships with a **mock** adapter (default) and an **OpenAI-compatible** adapter for live mode.
 
-<Callout type="info" title="Phase 2 progress">
-  Milestones [2.1.1](/roadmap/phase-2-single-provider/milestones/2.1.1-provider-interface-and-registry) through
-  [2.1.5](/roadmap/phase-2-single-provider/milestones/2.1.5-provider-error-mapping) ship `packages/provider`,
-  the OpenAI adapter, SSE dual-write forwarding, provider routing, and centralized error mapping per
-  [ADR-0025](/docs/adr/0025-llm-provider-abstraction),
-  [ADR-0026](/docs/adr/0026-openai-client-design), and [ADR-0027](/docs/adr/0027-streaming-dual-write).
-  Set `IBEX_LLM_MODE=live` and `OPENAI_API_KEY` to forward; default `mock` returns `501 PROVIDER_NOT_CONFIGURED`.
+<Callout type="info" title="Modes">
+  `IBEX_LLM_MODE=mock` (default) returns HTTP **200** from an in-process stub for registered models.
+  Set `IBEX_LLM_MODE=live` and `OPENAI_API_KEY` to forward to an OpenAI-compatible API.
+  Unknown models still return `501 PROVIDER_NOT_CONFIGURED`. Design: [ADR-0025](/docs/adr/0025-llm-provider-abstraction),
+  [ADR-0026](/docs/adr/0026-openai-client-design), [ADR-0027](/docs/adr/0027-streaming-dual-write).
 </Callout>
 
 ## Why adapters exist
@@ -62,19 +60,18 @@ flowchart LR
 
 Adapters must not read `org_id` from the request body. Tenant context comes from verified auth middleware only — [Tenant isolation](/docs/security/tenant-isolation).
 
-## Phase 1 behavior
+## Mock vs live behavior
 
-Every authenticated, validated chat request hits the stub handler:
+Registered models in mock mode return HTTP **200**. Probe status (not `.error.code`):
 
 <CodeTabs>
   <CodeTab label="curl">
 ```bash
-curl -s http://localhost:8080/v1/chat/completions \
+curl -s -o /tmp/chat.json -w "%{http_code}\n" http://localhost:8080/v1/chat/completions \
   -H "Authorization: Bearer ${IBEX_DEV_TOKEN}" \
   -H "X-IBEX-Agent-ID: ${IBEX_DEV_AGENT_ID}" \
   -H "Content-Type: application/json" \
-  -d '{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}' \
-  | jq '.error.code'
+  -d '{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}'
 ```
   </CodeTab>
   <CodeTab label="PowerShell">
@@ -85,18 +82,18 @@ $headers = @{
   "X-IBEX-Agent-ID" = $env:IBEX_DEV_AGENT_ID
 }
 $body = '{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}'
-(Invoke-RestMethod -Uri http://localhost:8080/v1/chat/completions -Method POST -Headers $headers -Body $body).error.code
+(Invoke-WebRequest -Uri http://localhost:8080/v1/chat/completions -Method POST -Headers $headers -Body $body).StatusCode
 ```
   </CodeTab>
 </CodeTabs>
 
-Expected output: `"PROVIDER_NOT_CONFIGURED"`.
+Expected output: `200`.
 
-<Callout type="success" title="501 means success in Phase 1">
-  HTTP 501 after validation confirms auth, agent verify, rate limiting, and normalization all passed. Use `make dev-smoke` to assert this automatically.
+<Callout type="success" title="Default mock returns 200">
+  Registered models in mock mode return HTTP 200. Use `make dev-smoke` for the local happy path. A 501 means the model id is not registered — check spelling or `IBEX_LLM_EXTRA_MODELS`.
 </Callout>
 
-## Error envelope
+## Error envelope (unknown model)
 
 ```json
 {
@@ -109,49 +106,49 @@ Expected output: `"PROVIDER_NOT_CONFIGURED"`.
 }
 ```
 
-This is distinct from `503` dependency failures — the proxy itself is healthy; forwarding is simply not implemented yet.
+This is distinct from `503` dependency failures — the proxy itself is healthy; the requested **model** is not in the active registry.
 
-## What Phase 2 adds
+## What still evolves
 
 <Steps>
-  <Step title="Registry">
-    Model-to-adapter resolution with org-level overrides.
+  <Step title="Registry (shipped)">
+    Model-to-adapter resolution for mock and OpenAI-compatible live modes.
   </Step>
-  <Step title="OpenAI adapter">
+  <Step title="OpenAI adapter (shipped)">
     Non-streaming JSON and streaming SSE dual-write ([ADR-0027](/docs/adr/0027-streaming-dual-write)).
   </Step>
   <Step title="Circuit breaker">
-    Provider 5xx triggers breaker; clients receive `503` with `Retry-After`.
+    Provider 5xx triggers breaker; clients receive `503` with `Retry-After` (hardening continues).
   </Step>
-  <Step title="Context injection">
-    Parallel memory and directive retrieval before upstream call (later milestones).
+  <Step title="Memory injection">
+    Parallel memory retrieval before upstream call remains Phase 3 — directives already inject today.
   </Step>
 </Steps>
 
-Provider API keys will be stored per org in Postgres and injected by the adapter — never accepted from client headers. Rotation guidance: [Secrets and keys](/docs/security/secrets-and-keys).
+Provider API keys are server-side (`OPENAI_API_KEY` / future org vault) — never accepted from client headers. Rotation guidance: [Secrets and keys](/docs/security/secrets-and-keys).
 
 ## Security boundaries
 
-| Control | Phase 1 | Phase 2+ |
-| --- | --- | --- |
-| Client supplies provider API key | N/A (no forward) | **Forbidden** |
-| Org from token | Enforced | Enforced |
-| Audit log per upstream call | No | Yes (ClickHouse traces) |
-| PII in upstream prompts | Validated locally | Redaction pipeline |
+| Control | Today |
+| --- | --- |
+| Client supplies provider API key | **Forbidden** |
+| Org from token | Enforced |
+| Audit log per upstream call | ClickHouse traces when `CLICKHOUSE_DSN` set |
+| PII in upstream prompts | Validated locally; memory redaction is Phase 3 |
 
-## Verify adapter stub
+## Verify adapters
 
 ```bash
 make compose-dev-up
 make db-migrate && make db-seed
-make dev-smoke   # asserts 501 on chat without LLM key
+make dev-smoke   # asserts mock chat success without OPENAI_API_KEY
 ```
 
-Integration tests in `services/proxy/` assert `PROVIDER_NOT_CONFIGURED` for valid authenticated chat bodies.
+Integration tests in `services/proxy/` cover mock success and `PROVIDER_NOT_CONFIGURED` for unknown models.
 
 ## Related
 
 - [Request routing](/docs/proxy/request-routing) — normalization before adapter handoff
 - [Overview](/docs/proxy/overview) — middleware and failure modes
 - [Architecture services](/docs/architecture/services) — proxy role in the system map
-- [Roadmap Phase 2](/roadmap/phase-2-single-provider) — adapter delivery timeline
+- [Roadmap Phase 2](/roadmap/phase-2-single-provider) — exit-gate timeline
