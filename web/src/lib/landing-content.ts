@@ -125,7 +125,7 @@ export const STACK_SHELL_LINES = [
 
 export const FOOTER_LINKS = {
   product: [
-    { label: "Docs", href: "/docs/getting-started/introduction" },
+    { label: "Docs", href: "/docs" },
     { label: "Benchmarks", href: "/benchmarks" },
     { label: "Roadmap", href: "/roadmap" },
   ],

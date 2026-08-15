@@ -1,17 +1,10 @@
 import { create, insertMultiple, save } from "@orama/orama";
 import { createSearchAPI, type Index } from "fumadocs-core/search/server";
 
+import { buildSearchContent, type SearchablePage } from "@/lib/search-content";
 import { blogSource, roadmapSource, source } from "@/lib/source";
 
-type SearchablePage = {
-  url: string;
-  data: {
-    title?: string;
-    description?: string;
-    excerpt?: string;
-    tags?: string[];
-  };
-};
+export { buildSearchContent } from "@/lib/search-content";
 
 /** Roadmap milestone specs inflate the index; keep hub and phase overviews only. */
 function shouldIndexPage(url: string): boolean {
@@ -28,7 +21,7 @@ function toSimpleIndex(page: SearchablePage): Index {
     url: page.url,
     title: page.data.title ?? page.url,
     description,
-    content: description,
+    content: buildSearchContent(page),
     keywords: page.data.tags?.join(", "),
   };
 }

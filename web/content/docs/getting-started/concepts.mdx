@@ -1,25 +1,30 @@
 ---
 title: Concepts
-description: Core ideas behind the proxy, auth service, and agent memory model.
+description: Core ideas behind the proxy, auth service, and late Phase 2 platform features.
+audience: integrator
+scope: shipped
+verifiedDate: "2026-08-15"
+sourceOfTruth: web/content/roadmap/current-state.mdx
 ---
 
-IBEX Harness separates **who** is calling (organization + agent), **what** they may do (permissions), and **where** requests go (proxy routing). Understanding these three axes is enough to integrate against Phase 1 — memory, context assembly, and provider forwarding build on the same identity model later.
+IBEX Harness separates **who** is calling (organization + agent), **what** they may do (permissions), and **where** requests go (proxy routing + provider mode). Understanding these axes is enough to integrate against the shipped auth + proxy surface.
 
-<Callout type="note" title="Phase 1 scope">
-  Phase 1 delivers auth + proxy only. Memory injection, vector search, and LLM provider forwarding are planned — not available. See [current state](/roadmap/current-state).
+<Callout type="info" title="Shipped vs planned">
+  Auth, proxy forwarding (mock/live), directives, sessions, idempotency, auth cache, and ClickHouse traces are **shipped**. Memory injection, vector search, and the Python dashboard remain **Phase 3+**. See [current state](/roadmap/current-state).
 </Callout>
 
 ## Platform vocabulary
 
-| Term | Meaning | Phase 1 |
+| Term | Meaning | Status |
 | --- | --- | --- |
-| **Organization** | Top-level tenant; owns agents, tokens, rate limits | Active — [glossary](/docs/glossary) |
-| **Agent** | Autonomous actor inside an org; identified per request | Active |
-| **PAT** | Personal Access Token — `ibex_pat_*` bearer credential | Active |
-| **RLS** | Postgres row-level security isolating tenant rows | Active |
-| **Proxy** | HTTP edge — auth, validate, rate limit, (future) forward | Active (no forward) |
-| **Memory** | Persistent agent knowledge store | Not shipped |
-| **Directive** | Behavioral instructions injected into LLM context | Not shipped |
+| **Organization** | Top-level tenant; owns agents, tokens, rate limits | Shipped — [glossary](/docs/glossary) |
+| **Agent** | Autonomous actor inside an org; identified per request | Shipped |
+| **PAT** | Personal Access Token — `ibex_pat_*` bearer credential | Shipped |
+| **RLS** | Postgres row-level security isolating tenant rows | Shipped |
+| **Proxy** | HTTP edge — auth, rate limit, inject, forward | Shipped |
+| **Directive** | Org behavioral instructions injected into chat | Shipped — [Directives](/docs/proxy/directives) |
+| **Session** | Conversation lifecycle + checkpoints | Shipped — [Sessions](/docs/proxy/sessions) |
+| **Memory** | Persistent agent knowledge store | Not shipped (Phase 3) |
 
 ## Core entities
 
@@ -31,16 +36,16 @@ IBEX Harness separates **who** is calling (organization + agent), **what** they 
     An agent is an autonomous actor inside an org. The proxy requires `X-IBEX-Agent-ID` on protected routes and validates it via auth gRPC `ValidateAgent`.
   </Step>
   <Step title="Token (PAT)">
-    Clients authenticate with a Personal Access Token. The proxy calls `ValidateToken`; Argon2id verifies the secret server-side. Permissions are a 64-bit bitmap ([ADR-0009](/docs/adr/0009-permission-bitmap)).
+    Clients authenticate with a Personal Access Token. The proxy calls `ValidateToken` (optionally via bloom+LRU cache); Argon2id verifies the secret server-side. Permissions are a 64-bit bitmap ([ADR-0009](/docs/adr/0009-permission-bitmap)).
   </Step>
   <Step title="User">
-    Human operator linked to org membership. Phase 1 uses users for token audit trails; dashboard login is future work.
+    Human operator linked to org membership. Used for token audit trails; dashboard login is future work.
   </Step>
 </Steps>
 
 Entity relationships: [Org and project model](/docs/auth/org-project-model) and [Data model](/docs/architecture/data-model).
 
-## Request path (Phase 1)
+## Request path (today)
 
 ```mermaid
 sequenceDiagram
@@ -48,15 +53,19 @@ sequenceDiagram
   participant P as Proxy
   participant A as Auth
   participant R as Redis
+  participant L as LLM
 
   C->>P: Bearer PAT + X-IBEX-Agent-ID + JSON body
-  P->>A: ValidateToken
+  P->>A: ValidateToken (cache miss → gRPC)
   A-->>P: org_id, permissions
   P->>A: ValidateAgent(org_id, agent_id)
   A-->>P: authorized
   P->>R: rate limit check
   R-->>P: allowed / denied
-  P-->>C: 501 PROVIDER_NOT_CONFIGURED (Phase 1)
+  P->>P: resolve directive + session
+  P->>L: mock stub or live forward
+  L-->>P: completion
+  P-->>C: 200 (+ async checkpoint / trace)
 ```
 
 Full lifecycle documentation: [Request lifecycle](/docs/architecture/request-lifecycle).
@@ -70,6 +79,8 @@ Authorization: Bearer ibex_pat_<uuid>_<secret>
 X-IBEX-Agent-ID: <agent-uuid>
 Content-Type: application/json   # POST bodies only
 ```
+
+Optional: `Idempotency-Key` on non-streaming chat when Redis is configured.
 
 <CodeTabs>
   <CodeTab label="curl">
@@ -93,11 +104,20 @@ Invoke-RestMethod -Uri http://localhost:8080/v1/chat/completions -Method POST -H
   </CodeTab>
 </CodeTabs>
 
-Phase 1 expected response: HTTP **501** with `PROVIDER_NOT_CONFIGURED` — auth, agent verify, rate limit, and validation succeeded.
+Default mock mode expected response: HTTP **200**. Use `IBEX_LLM_MODE=live` plus `OPENAI_API_KEY` for real provider responses.
 
 <Callout type="tip" title="Org from token">
   Chat uses `POST /v1/chat/completions` without `{org_id}` in the URL. Tenant scope comes from the PAT, not the path.
 </Callout>
+
+## Provider modes
+
+| Mode | When | Result |
+| --- | --- | --- |
+| `mock` (default) | Local/dev without a provider key | In-process stub → HTTP 200 |
+| `live` | `OPENAI_API_KEY` set | Forward to OpenAI-compatible `/chat/completions` |
+
+Mock is **not allowed** when `IBEX_ENV=production`. Unregistered models return `501 PROVIDER_NOT_CONFIGURED`.
 
 ## Permission model
 
@@ -143,8 +163,8 @@ Semantic validation adds `field_errors[]`. Use `request_id` to correlate with pr
       description: 'Middleware, gRPC, store WHERE clauses, and Postgres RLS all enforce isolation.',
     },
     {
-      title: 'Redis namespacing',
-      description: 'Keys include org_id as the second segment — ratelimit:{org_id}:...',
+      title: 'Redis + ClickHouse namespacing',
+      description: 'Redis keys include org_id; every ClickHouse query must filter org_id explicitly.',
     },
   ]}
 />
@@ -152,8 +172,6 @@ Semantic validation adds `field_errors[]`. Use `request_id` to correlate with pr
 Details: [Tenant isolation](/docs/security/tenant-isolation) and [Multi-tenant RLS](/docs/auth/multi-tenant-rls).
 
 ## Future concepts (not yet available)
-
-The architecture doc describes services that **do not run** in Phase 1:
 
 - **Context assembly** — parallel directive + memory retrieval (40ms budget)
 - **Memory service** — vector search, dedup, conflict detection
@@ -169,8 +187,9 @@ flowchart LR
   Client["Client<br/>(PAT + Agent)"] --> Proxy["Proxy"]
   Proxy -->|gRPC| Auth["Auth"]
   Auth --> PG["Postgres<br/>SQL + RLS"]
-  Proxy --> Redis["Redis<br/>rate limits"]
-  Proxy -.->|Phase 2| LLM["LLM provider"]
+  Proxy --> PG
+  Proxy --> Redis["Redis<br/>rate limits + cache"]
+  Proxy -->|mock / live| LLM["LLM provider"]
   Proxy -.->|Phase 3+| Memory["Memory / Context"]
 ```
 

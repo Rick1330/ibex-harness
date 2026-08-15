@@ -54,7 +54,7 @@ Application services (run separately on the host):
     {
       title: 'Smoke test',
       description:
-        'make dev-smoke checks /health, /ready, auth failures, and the chat 501 stub.',
+        'make dev-smoke checks /health, /ready, auth failures, and chat HTTP 200 for registered gpt-4o. Expect the default non-production IBEX_LLM_MODE=mock (or a live proxy that also returns 200); use make dev-smoke-live for explicit live OpenRouter checks.',
     },
   ]}
 />

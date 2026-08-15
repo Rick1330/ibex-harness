@@ -1,7 +1,7 @@
 ---
 title: "Phases Overview"
-description: "High-level roadmap from Foundation through production hardening. Phases 0–1.5 complete; Phase 2 in progress."
-summary: "High-level roadmap from Foundation through production hardening. Phases 0–1.5 complete; Phase 2 in progress."
+description: "High-level roadmap from Foundation through production hardening. Phases 0–2 complete; Phase 3 next."
+summary: "High-level roadmap from Foundation through production hardening. Phases 0–2 complete; Phase 3 next."
 status: "completed"
 ---
 
@@ -14,7 +14,7 @@ High-level roadmap from Foundation through production hardening. Detailed milest
 | [0](phase-0-foundation/) | Foundation | Done | **Complete** | Empty repo | CI, docs, compose, proto source, Go skeletons |
 | [1](phase-1-core-platform/) | Core Platform | 4–6 weeks | **Complete** | Phase 0 complete | Migrations, auth, proxy platform, security gate |
 | [1.5](phase-1-5-docs-site/) | Public Web Product | 2–3 weeks | **Complete** | Phase 1 complete | Unified site at ibexharness.com; verify_phase15.sh |
-| [2](phase-2-single-provider/) | Single Provider E2E | Sum of milestone estimates (~3–5 wk calendar if sequential solo) | **In progress** | Phase 1.5 exit | Authenticated OpenAI-compatible chat through proxy |
+| [2](phase-2-single-provider/) | Single Provider E2E | Sum of milestone estimates (~3–5 wk calendar if sequential solo) | **Complete** | Phase 1.5 exit | Authenticated OpenAI-compatible chat through proxy |
 | [3](phase-3-memory-engine/) | Memory Engine and Operator Platform | Sum of milestone estimates (~6–8 wk calendar if sequential solo) | Planned | Phase 2 exit | Memory graph, context assembly, operator API + dashboard |
 | [4](phase-4-multi-provider/) | Multi-Provider and Routing | 4–6 weeks | Planned | Phase 3 exit | Multiple providers, routing, Redis rate limits |
 | [5](phase-5-production-hardening/) | Production Hardening | 4–8 weeks | Planned | Phase 4 exit | SLOs, OTel pipeline, chaos/load, hardened CI |
@@ -67,27 +67,30 @@ See [phase-1-core-platform](/roadmap/phase-1-core-platform) and [phase1-exit-aud
 
 ## Phase 2: Single Provider E2E
 
-**Status:** In progress — milestone 2.1.1 complete ([ADR-0025](/docs/adr/0025-llm-provider-abstraction))
+**Status:** Complete
 
-**Current milestone:** [2.1.2 OpenAI non-streaming client](/roadmap/phase-2-single-provider/milestones/2.1.2-openai-non-streaming-client)
+**Exit milestone:** [2.6.2 Phase 2 exit gate](/roadmap/phase-2-single-provider/milestones/2.6.2-phase2-exit-gate)
 
 **Goals:** [goals](/roadmap/phase-2-single-provider/goals)
 
 | Goal | Summary |
 | --- | --- |
-| 2.1 | Provider abstraction and OpenAI forwarding (streaming + error mapping) |
+| 2.1 | Provider abstraction and OpenAI forwarding (streaming + error mapping + idempotency) |
 | 2.2 | Auth LRU + bloom cache and revocation propagation |
 | 2.3 | Directive resolution and system prompt injection |
 | 2.4 | Session tracking and checkpoints |
 | 2.5 | Async ClickHouse trace emission |
-| 2.6 | Latency benchmark and Phase 2 exit gate (infrastructure pre-delivered in Phase 1.5) |
+| 2.6 | Latency benchmark + exit gate |
 
-**Exit criteria:**
+**Exit criteria (met):**
 
-- End-to-end chat completion via proxy to OpenAI (streaming and non-streaming)
-- Proxy overhead &lt;20ms p99; auth cache hit path &lt;1ms
-- Directive injected; sessions and ClickHouse traces emitted async
-- Phase 1 security tests still pass; `make e2e-smoke` green
+- End-to-end chat completion via proxy (mock default; live with `IBEX_LLM_MODE=live` + API key)
+- Streaming SSE and non-streaming JSON paths
+- Proxy overhead gated by 2.6.1 latency benchmark ([ADR-0034](/docs/adr/0034-performance-methodology))
+- Directive injection; sessions/checkpoints; ClickHouse traces async
+- Phase 1 security tests still pass; local `make dev-smoke` green
+
+See [phase-2-single-provider](/roadmap/phase-2-single-provider) and [current state](/roadmap/current-state).
 
 ---
 
