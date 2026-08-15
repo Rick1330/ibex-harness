@@ -10,7 +10,7 @@ sourceOfTruth: web/engineering/SECURITY.md; services/proxy security-integration 
 IBEX Harness sits on a high-value data path — LLM traffic, persistent memory, org-scoped tokens, and billing events. Security is an invariant, not a phase. This page summarizes what must always be true and what we defend against on the shipped auth + proxy path.
 
 <Callout type="note" title="Shipped surface">
-  Auth, agent identity, rate limits, error envelopes, and provider forwarding (mock/live) are exercised by the `security-integration` CI job. Memory injection defenses and dashboard MFA ship in Phase 3+.
+  Auth, agent identity, rate limits, error envelopes, and **mock-provider** forwarding are exercised by the `security-integration` CI job. Live OpenAI/OpenRouter forwarding is covered by operator smokes (`make dev-smoke-live`), not that job. Memory injection defenses and dashboard MFA ship in Phase 3+.
 </Callout>
 
 ## Security objectives

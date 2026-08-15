@@ -51,7 +51,7 @@ Yes. A missing or cross-org `X-IBEX-Agent-ID` returns `403` before the request r
 
 ### Why do I sometimes see `501 PROVIDER_NOT_CONFIGURED`?
 
-That code means the **model id is not registered** in the active provider registry (typo, or missing from defaults / `IBEX_LLM_EXTRA_MODELS`). Default `IBEX_LLM_MODE=mock` returns HTTP **200** for registered models. Live forwarding needs `IBEX_LLM_MODE=live` and `OPENAI_API_KEY`. See [Provider adapters](/docs/proxy/provider-adapters) and [Chat completions](/docs/api-reference/chat-completions).
+That code means the **model id is not registered** in the active provider registry (typo, or missing from defaults / `IBEX_LLM_EXTRA_MODELS`). In non-production environments, default `IBEX_LLM_MODE=mock` returns HTTP **200** for registered models. Mock mode is rejected when `IBEX_ENV=production` — use `IBEX_LLM_MODE=live` with `OPENAI_API_KEY` for live forwarding. See [Provider adapters](/docs/proxy/provider-adapters) and [Chat completions](/docs/api-reference/chat-completions).
 
 ### Where is the dashboard?
 
