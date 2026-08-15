@@ -1,6 +1,10 @@
 ---
 title: FAQ
-description: Answers to common setup, security, and Phase 1 scope questions.
+description: Answers to common setup, security, and capability-boundary questions for the shipped auth + proxy stack.
+audience: integrator
+scope: shipped
+verifiedDate: "2026-08-15"
+sourceOfTruth: web/content/roadmap/current-state.mdx; services/proxy/README.md
 ---
 
 Quick answers for the questions we hear most during local setup and security review.
@@ -37,21 +41,21 @@ make db-migrate
 
 ### Does the proxy fail open on rate limits?
 
-Yes — if Redis is unreachable, requests proceed without rate limiting. This is intentional for Phase 1 availability; see the security integration tests in `services/proxy`.
+Yes — if Redis is unreachable, requests proceed without rate limiting. This is intentional for availability; see the security integration tests in `services/proxy`.
 
 ### Does agent verification fail closed?
 
 Yes. A missing or cross-org `X-IBEX-Agent-ID` returns `403` before the request reaches provider logic.
 
-## Phase 1 scope
+## Capability boundary
 
-### Why do chat completions return 501?
+### Why do I sometimes see `501 PROVIDER_NOT_CONFIGURED`?
 
-No provider adapter is registered yet. Phase 2 adds OpenAI-compatible forwarding. The proxy still exercises auth, agent verify, validation, and rate limiting.
+That code means the **model id is not registered** in the active provider registry (typo, or missing from defaults / `IBEX_LLM_EXTRA_MODELS`). Default `IBEX_LLM_MODE=mock` returns HTTP **200** for registered models. Live forwarding needs `IBEX_LLM_MODE=live` and `OPENAI_API_KEY`. See [Provider adapters](/docs/proxy/provider-adapters) and [Chat completions](/docs/api-reference/chat-completions).
 
 ### Where is the dashboard?
 
-The operator dashboard is planned for a later phase. Phase 1 is API-only: proxy + auth + docs.
+The operator dashboard is Phase 3+. Today the shipped surface is API-only: proxy + auth + this docs site. See [current state](/roadmap/current-state).
 
 ## Still stuck?
 

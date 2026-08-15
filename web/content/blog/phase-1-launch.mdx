@@ -16,9 +16,13 @@ excerpt: >
   wired yet.
 ---
 
+<Callout type="info" title="Historical post">
+  Published at Phase 1 exit (2026-06-14). Chat completions now forward in mock/live modes; treat `501 PROVIDER_NOT_CONFIGURED` as **unregistered model**, not “forwarding missing.” Current capability boundary: [current state](/roadmap/current-state).
+</Callout>
+
 Most LLM proxies start by forwarding HTTP. IBEX Harness starts by earning trust.
 
-Phase 1 is complete. Before we call OpenAI, assemble context, or store a single memory, the platform validates every bearer token, verifies agent identity against the organization in the URL path, normalizes request bodies into a stable internal shape, and rejects traffic that fails any check. Chat routes return `501 PROVIDER_NOT_CONFIGURED` on purpose — that response means auth, agent verification, and routing succeeded; provider forwarding ships in Phase 2.
+Phase 1 is complete. Before we call OpenAI, assemble context, or store a single memory, the platform validates every bearer token, verifies agent identity against the organization in the URL path, normalizes request bodies into a stable internal shape, and rejects traffic that fails any check. **At Phase 1 exit**, chat routes returned `501 PROVIDER_NOT_CONFIGURED` on purpose — that response meant auth, agent verification, and routing succeeded while provider forwarding was still ahead. Phase 2 later added mock/live OpenAI-compatible forwarding.
 
 This post explains what Phase 1 built, why we sequenced it this way, and how to run it locally in five minutes.
 
@@ -143,7 +147,7 @@ Track delivery on the [roadmap hub](/roadmap). For the memory story ahead of imp
   <DocCard title="Quickstart" href="/docs/getting-started/quickstart" description="Boot the stack and send your first proxied request in ~5 minutes." iconName="Zap" category="tutorial" />
   <DocCard title="Security overview" href="/docs/security/overview" description="Fail-closed auth, RLS, and tenant isolation." iconName="Shield" category="guide" />
   <DocCard title="Phase 1 exit audit" href="/roadmap/phase-1-core-platform/phase1-exit-audit" description="Gap analysis and completion evidence." iconName="FileCode" category="reference" />
-  <DocCard title="Chat completions API" href="/docs/api-reference/chat-completions" description="Proxy route shape and Phase 1 501 behavior." iconName="Waypoints" category="reference" />
+  <DocCard title="Chat completions API" href="/docs/api-reference/chat-completions" description="Current proxy route shape, mock/live modes, and errors." iconName="Waypoints" category="reference" />
 </CardGrid>
 
 Phase 1 is the floor. Everything IBEX promises — learning agents, sub-20ms overhead, multi-tenant memory — builds on a proxy that refuses to forward untrusted traffic. That floor is in place.

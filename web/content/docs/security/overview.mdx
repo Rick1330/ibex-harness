@@ -1,12 +1,16 @@
 ---
 title: Security overview
-description: Security objectives S1–S6, threat model summary, and Phase 1 validated invariants.
+description: Security objectives S1–S6, threat model summary, and validated auth + proxy invariants.
+audience: operator
+scope: shipped
+verifiedDate: "2026-08-15"
+sourceOfTruth: web/engineering/SECURITY.md; services/proxy security-integration tests
 ---
 
-IBEX Harness sits on a high-value data path — LLM traffic, persistent memory, org-scoped tokens, and billing events. Security is an invariant, not a phase. This page summarizes what must always be true and what we defend against in Phase 1 (auth + proxy).
+IBEX Harness sits on a high-value data path — LLM traffic, persistent memory, org-scoped tokens, and billing events. Security is an invariant, not a phase. This page summarizes what must always be true and what we defend against on the shipped auth + proxy path.
 
-<Callout type="note" title="Phase 1 scope">
-  Phase 1 validates auth, agent identity, rate limits, and error envelopes via the `security-integration` CI job. Memory injection defenses and dashboard MFA ship in later phases.
+<Callout type="note" title="Shipped surface">
+  Auth, agent identity, rate limits, error envelopes, and provider forwarding (mock/live) are exercised by the `security-integration` CI job. Memory injection defenses and dashboard MFA ship in Phase 3+.
 </Callout>
 
 ## Security objectives
