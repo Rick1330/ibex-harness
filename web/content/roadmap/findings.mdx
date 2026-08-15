@@ -26,6 +26,20 @@ Unexpected discoveries, design pivots, and plan changes. Update this file when i
 
 ---
 
+## 2026-07-23 — Auth cache 2.2.1 shipped (supersedes June deferral note)
+
+**Context:** Phase 2 / Milestone 2.2.1; roadmap truth pass ([#481](https://github.com/Rick1330/ibex-harness/pull/481))
+
+**Finding:** Milestone [2.2.1](/roadmap/phase-2-single-provider/milestones/2.2.1-auth-cache-bloom) is complete. Bloom + LRU auth cache ships per [ADR-0028](/docs/adr/0028-auth-cache-design), but the 2026-06-04 deferral entry below still reads like the cache is future work.
+
+**Impact:** Roadmap decision logs and `current-state` must treat auth cache as shipped; public docs that still describe gRPC-only auth need rebaselining in the docs rewrite PRs.
+
+**Decision:** Treat 2.2.1 as authoritative for current status. Keep the 2026-06-04 entry as historical context only.
+
+**Updated:** `findings.mdx`, `phase-2-single-provider/decisions.mdx`, `current-state.mdx`
+
+---
+
 ## 2026-07-19 — Session idle sweeper required (→ 2.4.4)
 
 **Context:** Phase 2 / Goal 2.4; Phase 3 extraction (3.4.2)
@@ -111,6 +125,8 @@ Unexpected discoveries, design pivots, and plan changes. Update this file when i
 ---
 
 ## 2026-06-04 — Auth cache (bloom/LRU) deferred to Phase 2 optional 2.2.1
+
+**Historical note:** Superseded for current status by the 2026-07-23 finding above — milestone 2.2.1 is complete.
 
 **Context:** Milestone 1.2.1 / PR #51
 
