@@ -14,99 +14,98 @@ import (
 	"github.com/google/uuid"
 )
 
-func protectedAuthProbeRouter(t *testing.T, orgID uuid.UUID) http.Handler {
-	t.Helper()
-	validator := &mockValidator{res: &auth.ValidateResult{OrgID: orgID, Permissions: permissions.Admin}}
-	cfg := config.Config{
-		Environment: "test", ServiceName: "proxy", Port: "8080",
-		MaxRequestBodyBytes: 1 << 20, RequestIDHeader: "X-Request-ID", TraceIDHeader: "X-Trace-ID",
-	}
-	return newTestRouter(t, cfg, validator, ratelimit.Noop())
+type authProbeCase struct {
+	name       string
+	tokenOrg   uuid.UUID
+	method     string
+	path       string
+	withAgent  bool
+	wantStatus int
+	wantCode   string
+	wantAllow  string
 }
 
-func serveAuthProbe(
-	t *testing.T,
-	handler http.Handler,
-	method, path string,
-	withAgent bool,
-) *httptest.ResponseRecorder {
-	t.Helper()
-	req := httptest.NewRequest(method, path, nil)
-	req.Header.Set("Authorization", "Bearer ibex_pat_test")
-	if withAgent {
-		req.Header.Set("X-IBEX-Agent-ID", agentTestAgentID())
-	}
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-	return rec
-}
-
-func TestProtectedRoutes_internalAuthProbe_success(t *testing.T) {
+func TestProtectedRoutes_authProbe(t *testing.T) {
 	t.Parallel()
-	rec := serveAuthProbe(t, protectedAuthProbeRouter(t, agentTestOrgUUID), http.MethodGet, "/v1/internal/auth-probe", true)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status: %d body=%s", rec.Code, rec.Body.String())
-	}
-}
 
-func TestProtectedRoutes_orgAuthProbe_success(t *testing.T) {
-	t.Parallel()
 	orgID := agentTestOrgID()
-	rec := serveAuthProbe(
-		t,
-		protectedAuthProbeRouter(t, uuid.MustParse(orgID)),
-		http.MethodGet,
-		"/v1/orgs/"+orgID+"/auth-probe",
-		true,
-	)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status: %d body=%s", rec.Code, rec.Body.String())
-	}
-}
-
-func TestProtectedRoutes_orgAuthProbe_orgMismatch(t *testing.T) {
-	t.Parallel()
 	otherOrg := "550e8400-e29b-41d4-a716-446655440099"
-	rec := serveAuthProbe(
-		t,
-		protectedAuthProbeRouter(t, agentTestOrgUUID),
-		http.MethodGet,
-		"/v1/orgs/"+otherOrg+"/auth-probe",
-		true,
-	)
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("status: %d body=%s", rec.Code, rec.Body.String())
-	}
-	if !strings.Contains(rec.Body.String(), string(apierror.CodeInsufficientPermissions)) {
-		t.Fatalf("body: %s", rec.Body.String())
-	}
-}
 
-func TestProtectedRoutes_orgAuthProbe_methodNotAllowed(t *testing.T) {
-	t.Parallel()
-	orgID := agentTestOrgID()
-	rec := serveAuthProbe(
-		t,
-		protectedAuthProbeRouter(t, uuid.MustParse(orgID)),
-		http.MethodPost,
-		"/v1/orgs/"+orgID+"/auth-probe",
-		false,
-	)
-	if rec.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("status: %d body=%s", rec.Code, rec.Body.String())
+	cases := []authProbeCase{
+		{
+			name:       "internal_get_ok",
+			tokenOrg:   agentTestOrgUUID,
+			method:     http.MethodGet,
+			path:       "/v1/internal/auth-probe",
+			withAgent:  true,
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "org_get_ok",
+			tokenOrg:   uuid.MustParse(orgID),
+			method:     http.MethodGet,
+			path:       "/v1/orgs/" + orgID + "/auth-probe",
+			withAgent:  true,
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "org_mismatch_forbidden",
+			tokenOrg:   agentTestOrgUUID,
+			method:     http.MethodGet,
+			path:       "/v1/orgs/" + otherOrg + "/auth-probe",
+			withAgent:  true,
+			wantStatus: http.StatusForbidden,
+			wantCode:   string(apierror.CodeInsufficientPermissions),
+		},
+		{
+			name:       "org_post_method_not_allowed",
+			tokenOrg:   uuid.MustParse(orgID),
+			method:     http.MethodPost,
+			path:       "/v1/orgs/" + orgID + "/auth-probe",
+			wantStatus: http.StatusMethodNotAllowed,
+		},
+		{
+			name:       "internal_post_method_not_allowed",
+			tokenOrg:   agentTestOrgUUID,
+			method:     http.MethodPost,
+			path:       "/v1/internal/auth-probe",
+			withAgent:  true,
+			wantStatus: http.StatusMethodNotAllowed,
+			wantCode:   string(apierror.CodeMethodNotAllowed),
+			wantAllow:  http.MethodGet,
+		},
 	}
-}
 
-func TestProtectedRoutes_internalAuthProbe_methodNotAllowed(t *testing.T) {
-	t.Parallel()
-	rec := serveAuthProbe(t, protectedAuthProbeRouter(t, agentTestOrgUUID), http.MethodPost, "/v1/internal/auth-probe", true)
-	if rec.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("status: %d body=%s", rec.Code, rec.Body.String())
-	}
-	if !strings.Contains(rec.Body.String(), string(apierror.CodeMethodNotAllowed)) {
-		t.Fatalf("body: %s", rec.Body.String())
-	}
-	if got := rec.Header().Get("Allow"); got != http.MethodGet {
-		t.Fatalf("Allow: %q", got)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			validator := &mockValidator{res: &auth.ValidateResult{OrgID: tc.tokenOrg, Permissions: permissions.Admin}}
+			cfg := config.Config{
+				Environment: "test", ServiceName: "proxy", Port: "8080",
+				MaxRequestBodyBytes: 1 << 20, RequestIDHeader: "X-Request-ID", TraceIDHeader: "X-Trace-ID",
+			}
+			handler := newTestRouter(t, cfg, validator, ratelimit.Noop())
+
+			req := httptest.NewRequest(tc.method, tc.path, nil)
+			req.Header.Set("Authorization", "Bearer ibex_pat_test")
+			if tc.withAgent {
+				req.Header.Set("X-IBEX-Agent-ID", agentTestAgentID())
+			}
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+
+			if rec.Code != tc.wantStatus {
+				t.Fatalf("status: %d body=%s", rec.Code, rec.Body.String())
+			}
+			if tc.wantCode != "" && !strings.Contains(rec.Body.String(), tc.wantCode) {
+				t.Fatalf("body: %s", rec.Body.String())
+			}
+			if tc.wantAllow != "" {
+				if got := rec.Header().Get("Allow"); got != tc.wantAllow {
+					t.Fatalf("Allow: %q", got)
+				}
+			}
+		})
 	}
 }
