@@ -20,7 +20,7 @@ export function LandingCta() {
         </p>
         <div className="landing-cta-actions">
           <Link
-            href="/docs/getting-started/introduction"
+            href="/docs"
             className="btn-solid"
           >
             Get started →

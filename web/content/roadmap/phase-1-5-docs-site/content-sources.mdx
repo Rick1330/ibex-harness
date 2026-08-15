@@ -1,45 +1,56 @@
 ---
-title: "Content sources"
-description: "Maps public Fumadocs pages (`web/content/docs/`) to engineering sources in repo-root `docs/`. Do not wholesale-port future Phase 2+ API spec."
-summary: "Maps public Fumadocs pages (`web/content/docs/`) to engineering sources in repo-root `docs/`. Do not wholesale-port future Phase 2+ API spec."
+title: "Content coverage map"
+description: "Tracks the current public docs corpus against implementation-native sources after the late Phase 2 docs realignment."
+summary: "Tracks the current public docs corpus against implementation-native sources after the late Phase 2 docs realignment."
 phase: "phase-1-5-docs-site"
-fullTitle: "Content sources — Phase 1.5 public docs"
+fullTitle: "Content coverage map — public docs"
 ---
 
-# Content sources — Phase 1.5 public docs
+# Content coverage map — public docs
 
-Maps public Fumadocs pages (`web/content/docs/`) to engineering sources in repo-root `docs/`. **Do not** wholesale-port future Phase 2+ API spec.
+Tracks public Fumadocs pages (`web/content/docs/`) against the sources that should keep them honest. Phase 1.5 seeded much of the site from engineering markdown; after the late-Phase-2 proxy work, docs should prefer implementation-native sources where available (`services/*/README.md`, `packages/*`, proto contracts, and accepted ADRs).
 
-Draft extraction helper: `ibex-harness-workspace/docs-app-scripts/port-engineering-content.mjs` (`--list`, `--map <slug>`).
+Treat this file as a **living coverage map**, not a one-time Phase 1.5 porting plan.
+
+## Coverage status
+
+| Area | Current source of truth | Coverage status | Notes |
+| --- | --- | --- | --- |
+| Getting started | `web/content/roadmap/current-state.mdx`, `Makefile`, `services/auth/README.md`, `services/proxy/README.md` | Current | Rebaselined for mock/live Phase 2; FAQ/quickstart no longer teach 501 as happy path |
+| Architecture | `services/README.md`, `services/*/README.md`, accepted ADRs | Current | Overview/lifecycle updated for forwarding, sessions, traces |
+| Proxy | `services/proxy/README.md`, `services/proxy/internal/http/`, `packages/directive`, `packages/injection`, `packages/authcache`, `packages/idempotency`, `packages/session` | Current | Feature deep-dives shipped for directives, sessions, auth cache, traces |
+| Auth | `services/auth/README.md`, `packages/proto/proto/ibex/auth/v1/auth.proto`, accepted ADRs | Current | Proto-backed gRPC reference + issuing keys guides |
+| Deployment / ops | `services/*/.env.example`, `infra/compose/dev/.env.example`, `services/proxy/internal/config/`, `packages/clickhouse`, `packages/metrics`, `packages/telemetry` | Current | Env docs + compose smoke path match late Phase 2 |
+| API reference | Manual MDX + proto (`auth.proto`) + HTTP route inventory | Current | Behavioral pages + `/docs/api-reference/http-routes`; OpenAPI / fumadocs-openapi deferred until CI-validated spec |
 
 ## Getting Started
 
 | Public page | Source | Notes |
 | --- | --- | --- |
-| Introduction | `DEVELOPMENT_GUIDE.md`, `/roadmap/current-state` | Phase 1 honest scope |
-| Concepts | `ARCHITECTURE.md` (overview), `GLOSSARY.md` | No memory/LLM forwarding yet |
-| Quickstart | `Makefile`, `compose-dev`, `dev-smoke`, `DEVELOPMENT_GUIDE.md` | D.3.3 — CodeTabs, 501 honesty |
-| FAQ | New | Common Phase 1 questions |
+| Introduction | `/roadmap/current-state`, `services/README.md` | Late-Phase-2 capability boundary |
+| Concepts | `services/README.md`, `services/proxy/README.md`, `web/engineering/GLOSSARY.md` | Distinguishes shipped proxy features from Phase 3 memory |
+| Quickstart | `Makefile`, `compose-dev`, `services/auth/README.md`, `services/proxy/README.md` | Mock-mode happy path; live optional |
+| FAQ | Current docs corpus + issue/PR feedback | Mock/live + unregistered-model 501 |
 
 ## Architecture
 
 | Public page | Source |
 | --- | --- |
-| Overview | `ARCHITECTURE.md` §1–3, `PROJECT_CONTEXT.md` |
-| Services | `ARCHITECTURE.md` Core Services, `services/*/README.md` |
-| Data model | `DATABASE_SCHEMA.md` (orgs/projects/agents/tokens) |
-| Request lifecycle | `ARCHITECTURE.md`, ADR-0011/0012/0013 |
+| Overview | `services/README.md`, accepted ADRs, `/roadmap/current-state` |
+| Services | `services/*/README.md`, `packages/README.md` |
+| Data model | `web/engineering/DATABASE_SCHEMA.md` plus session/directive ADRs |
+| Request lifecycle | `services/proxy/README.md`, ADR-0011/0012/0013/0031/0035 |
 
 ## Proxy
 
 | Public page | Source |
 | --- | --- |
 | Overview | `services/proxy/README.md` |
-| Configuration | `ENVIRONMENT_VARIABLES.md` (proxy vars) |
-| Authentication | ADR-0011, `services/proxy/README.md` |
-| Rate limiting | ADR-0015 |
-| Request routing | ADR-0012, ADR-0013 |
-| Provider adapters | Phase 2 placeholder note |
+| Configuration | `services/proxy/.env.example`, `services/proxy/internal/config/`, `services/proxy/README.md` |
+| Authentication | ADR-0011, ADR-0028, ADR-0029, `services/proxy/README.md` |
+| Rate limiting | ADR-0015, `packages/ratelimit/` |
+| Request routing | `services/proxy/README.md`, ADR-0012, ADR-0013, ADR-0031, ADR-0035 |
+| Provider adapters | `packages/provider/`, `packages/provider/openai/`, ADR-0025/0026/0027 |
 
 ## Auth
 
@@ -47,45 +58,46 @@ Draft extraction helper: `ibex-harness-workspace/docs-app-scripts/port-engineeri
 | --- | --- |
 | Overview | `services/auth/README.md` |
 | Issuing API keys | ADR-0007, token management docs |
-| Org & project model | `DATABASE_SCHEMA.md`, ADR-0014 |
-| Multi-tenant RLS | `SECURITY.md`, migration docs |
+| Org & project model | `web/engineering/DATABASE_SCHEMA.md`, ADR-0014 |
+| Multi-tenant RLS | `web/engineering/SECURITY.md`, migration docs |
 
 ## Security
 
 | Public page | Source |
 | --- | --- |
-| Overview | `SECURITY.md` objectives + threat model |
+| Overview | `web/engineering/SECURITY.md` objectives + threat model |
 | Authentication | ADR-0007, ADR-0010, ADR-0011 |
-| Tenant isolation | `SECURITY.md` §5, ADR-0014, ADR-0009 |
-| Secrets and keys | `ENVIRONMENT_VARIABLES.md`, ADR-0010 |
+| Tenant isolation | `web/engineering/SECURITY.md` §5, ADR-0014, ADR-0009 |
+| Secrets and keys | `web/engineering/ENVIRONMENT_VARIABLES.md`, ADR-0010 |
 
 ## Deployment
 
 | Public page | Source |
 | --- | --- |
-| Docker Compose (dev) | `infra/compose/dev/`, `DEVELOPMENT_GUIDE.md` |
-| Kubernetes | Honest Phase 1 stub — `DEPLOYMENT.md` future preview |
-| Environment variables | `ENVIRONMENT_VARIABLES.md` (integrator filter) |
+| Docker Compose (dev) | `infra/compose/dev/`, `web/engineering/DEVELOPMENT_GUIDE.md` |
+| Kubernetes | Honest future-facing stub until production manifests become authoritative |
+| Environment variables | `services/*/.env.example`, `services/proxy/internal/config/`, `services/auth/internal/config/` |
 
 ## Operations
 
 | Public page | Source |
 | --- | --- |
-| Observability | `OPS_GUIDE.md`, ADR-0019, ADR-0021 |
-| Troubleshooting | `TROUBLESHOOTING.md` (compose-dev, auth/proxy, DB) |
-| Health checks | ADR-0022, `MONITORING.md` |
-| Incident response | `runbooks/RUNBOOKS.md` (subset) |
+| Observability | `packages/metrics/`, `packages/telemetry/`, `services/proxy/internal/http/trace/`, ADR-0019/0021/0033 |
+| Troubleshooting | `web/engineering/TROUBLESHOOTING.md`, `services/auth/README.md`, `services/proxy/README.md` |
+| Health checks | ADR-0022, `packages/healthcheck/` |
+| Incident response | `web/engineering/runbooks/RUNBOOKS.md` (subset) |
 
-## API Reference (manual, Wave 13)
+## API Reference (manual + contract-backed)
 
 | Public page | Source |
 | --- | --- |
-| Auth gRPC | `packages/proto`, `API_DOCUMENTATION.md` Phase 1 banner |
+| HTTP route inventory | `services/proxy/internal/http/router.go`, `router_protected.go` |
+| Auth gRPC | `packages/proto/proto/ibex/auth/v1/auth.proto`, `services/auth/README.md` |
 | Proxy health | `services/proxy/README.md`, ADR-0022 |
-| Chat completions stub | ADR-0012 (501 `PROVIDER_NOT_CONFIGURED`) |
-| Errors | ADR-0013 error envelope |
+| Chat completions | `services/proxy/README.md`, `services/proxy/internal/http/router.go`, ADR-0012/0013/0031/0035 |
+| Errors | ADR-0013 error envelope, `packages/provider/errors.go`, `packages/provider/map_error.go` |
 
-**Deferred:** OpenAPI auto-gen from `openapi.yaml` — file does not exist until Phase 2.
+**Deferred:** OpenAPI auto-generation stays out of scope until a maintained `openapi.yaml` exists and is CI-validated against implemented routes.
 
 ## ADRs
 
@@ -97,15 +109,15 @@ Draft extraction helper: `ibex-harness-workspace/docs-app-scripts/port-engineeri
 
 | Public page | Source |
 | --- | --- |
-| Changelog | `CHANGELOG.md` Phase 1 entries |
-| Glossary | `GLOSSARY.md` (Phase 1 terms + future markers) |
+| Changelog | `CHANGELOG.md` plus release parser pipeline |
+| Glossary | `web/engineering/GLOSSARY.md` plus current docs corpus |
 
 ## Stays internal only
 
-- `CODING_STANDARDS.md`, `FILE_STRUCTURE.md`, `TESTING_STRATEGY.md`
-- `DEPENDENCIES.md`, `PERFORMANCE.md`, `TOOLCHAIN.md`, `UI_UX_GUIDELINES.md`
-- Full `DATABASE_SCHEMA.md`, `API_DOCUMENTATION.md` Phase 2+ surfaces
-- `SECURITY-CI-GATES-DELIVERABLES.md`, CI audit registers
+- `web/engineering/CODING_STANDARDS.md`, `web/engineering/FILE_STRUCTURE.md`, `web/engineering/TESTING_STRATEGY.md`
+- `web/engineering/DEPENDENCIES.md`, `web/engineering/PERFORMANCE.md`, `web/engineering/TOOLCHAIN.md`, `web/engineering/UI_UX_GUIDELINES.md`
+- Full `web/engineering/DATABASE_SCHEMA.md`, `web/engineering/API_DOCUMENTATION.md` Phase 2+ surfaces
+- `web/engineering/SECURITY-CI-GATES-DELIVERABLES.md`, CI audit registers
 - Contributor workspace prompts (not published)
 
-Public ADRs: [`/docs/adr`](/docs/adr). Live status: [`/roadmap/current-state`](/roadmap/current-state).
+Public ADRs: [`/docs/adr`](/docs/adr). Canonical short-form status: [`/roadmap/current-state`](/roadmap/current-state).

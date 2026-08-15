@@ -1,21 +1,25 @@
 ---
 title: Environment variables
-description: Integrator-focused env vars for proxy, auth, Postgres, and Redis in Phase 1 local and staging deployments.
+description: Integrator-focused env vars for proxy, auth, Postgres, Redis, and ClickHouse.
+audience: operator
+scope: shipped
+verifiedDate: "2026-08-15"
+sourceOfTruth: web/engineering/ENVIRONMENT_VARIABLES.md
 ---
 
 IBEX services load configuration from environment variables at startup via `packages/config`. Missing required values fail fast with a clear message — there are no checked-in `.env` files, only `.env.example` per service.
 
 <Callout type="tip" title="Full registry">
-  Operators and platform engineers should also read `web/engineering/ENVIRONMENT_VARIABLES.md` in the repository for ClickHouse, MinIO, Python services, and production profiles.
+  Operators and platform engineers should also read `web/engineering/ENVIRONMENT_VARIABLES.md` in the repository for production profiles and planned Python-service variables.
 </Callout>
 
 ## Conventions
 
-- Prefix `IBEX_` for project-wide settings; `POSTGRES_` / `REDIS_` for infrastructure.
-- Secrets (DSNs, Redis passwords) never belong in git — inject via your secret manager.
+- Prefix `IBEX_` for project-wide settings; `POSTGRES_` / `REDIS_` / `CLICKHOUSE_` / `OPENAI_` for infrastructure and providers.
+- Secrets (DSNs, API keys, Redis passwords) never belong in git — inject via your secret manager.
 - Precedence: process env → `.env` file (local only) → documented defaults.
 
-## Proxy (Phase 1)
+## Proxy
 
 <ParamTable
   params={[
@@ -30,8 +34,38 @@ IBEX services load configuration from environment variables at startup via `pack
       name: 'REDIS_URL',
       type: 'string (URL)',
       description:
-        "Redis for rate limiting and proxy /ready. Empty uses Noop limiter (no RPM enforcement).",
+        'Redis for rate limiting, auth-cache revocation subscribe, idempotency, and /ready. Empty uses Noop limiter.',
       defaultValue: '(empty)',
+    },
+    {
+      name: 'POSTGRES_DSN',
+      type: 'string (postgres://…)',
+      description:
+        'Enables directives and sessions on the proxy. Empty → Noop stores.',
+      defaultValue: '(empty)',
+    },
+    {
+      name: 'IBEX_LLM_MODE',
+      type: 'enum',
+      description: '`mock` (default stub) or `live` (requires OPENAI_API_KEY). Mock forbidden in production.',
+      defaultValue: 'mock',
+    },
+    {
+      name: 'OPENAI_API_KEY',
+      type: 'string',
+      description: 'Required when IBEX_LLM_MODE=live.',
+    },
+    {
+      name: 'OPENAI_BASE_URL',
+      type: 'string (URL)',
+      description: 'OpenAI-compatible API base URL.',
+      defaultValue: 'https://api.openai.com/v1',
+    },
+    {
+      name: 'IBEX_AUTH_CACHE_ENABLED',
+      type: 'boolean',
+      description: 'Enable bloom+LRU auth cache when Redis is healthy.',
+      defaultValue: 'true',
     },
     {
       name: 'IBEX_PORT',
@@ -59,6 +93,18 @@ IBEX services load configuration from environment variables at startup via `pack
       defaultValue: '1048576',
     },
     {
+      name: 'IBEX_IDEMPOTENCY_TTL',
+      type: 'duration',
+      description: 'Idempotency-Key retention for non-streaming chat.',
+      defaultValue: '24h',
+    },
+    {
+      name: 'CLICKHOUSE_DSN',
+      type: 'string',
+      description: 'Enables async llm_traces. Empty disables writer (fail-open).',
+      defaultValue: '(empty)',
+    },
+    {
       name: 'IBEX_ERROR_DOCS_BASE',
       type: 'string (URL)',
       description: 'Optional base for error envelope docs_url fields.',
@@ -67,9 +113,9 @@ IBEX services load configuration from environment variables at startup via `pack
   ]}
 />
 
-Copy `services/proxy/.env.example` and `services/auth/.env.example` before running services.
+Copy `services/proxy/.env.example` and `services/auth/.env.example` before running services. More knobs (session sweep, OpenAI retries, cache bloom size): [Proxy configuration](/docs/proxy/configuration).
 
-## Auth (Phase 1)
+## Auth
 
 <ParamTable
   params={[
@@ -78,7 +124,14 @@ Copy `services/proxy/.env.example` and `services/auth/.env.example` before runni
       type: 'string (postgres://…)',
       required: true,
       description:
-        `Postgres for tokens and agents. Compose: postgres://ibex:ibex@localhost:5432/ibex`,
+        'Postgres for tokens and agents. Compose: postgres://ibex:ibex@localhost:5432/ibex',
+    },
+    {
+      name: 'REDIS_URL',
+      type: 'string (URL)',
+      description:
+        'Publish token revocations (`ibex:token:revocations`) and ValidateToken RPM. Empty → Noop publisher.',
+      defaultValue: '(empty)',
     },
     {
       name: 'IBEX_PORT',
@@ -93,15 +146,21 @@ Copy `services/proxy/.env.example` and `services/auth/.env.example` before runni
       defaultValue: '9091',
     },
     {
+      name: 'IBEX_AUTH_VALIDATE_RPM',
+      type: 'integer',
+      description: 'ValidateToken rate limit when Redis is set.',
+      defaultValue: '6000',
+    },
+    {
       name: 'POSTGRES_TEST_DSN',
       type: 'string',
       description: 'Integration tests on compose test port 5433.',
-      defaultValue: `postgres://ibex:ibex@localhost:5433/ibex_test?sslmode=disable`,
+      defaultValue: 'postgres://ibex:ibex@localhost:5433/ibex_test?sslmode=disable',
     },
   ]}
 />
 
-The proxy never reads `POSTGRES_DSN` in Phase 1 — identity access is gRPC-only. Run `make db-migrate` after compose is healthy.
+Run `make db-migrate` after compose is healthy.
 
 ## Redis
 
@@ -111,7 +170,7 @@ The proxy never reads `POSTGRES_DSN` in Phase 1 — identity access is gRPC-only
       name: 'REDIS_URL',
       type: 'string (URL)',
       description: 'Primary connection string, e.g. redis://localhost:6379/0.',
-      defaultValue: `redis://localhost:6379/0`,
+      defaultValue: 'redis://localhost:6379/0',
     },
     {
       name: 'REDIS_CONNECT_TIMEOUT_MS',
@@ -129,8 +188,35 @@ The proxy never reads `POSTGRES_DSN` in Phase 1 — identity access is gRPC-only
 />
 
 <Callout type="warning" title="Fail-open rate limiting">
-  When Redis is unreachable, the proxy rate limiter fails open (requests proceed). Readiness still reports Redis as a critical check — see [Proxy health](/docs/api-reference/proxy-health).
+  When Redis is unreachable, the proxy rate limiter fails open (requests proceed) and auth cache is not wrapped. Readiness still reports Redis as a critical check — see [Proxy health](/docs/api-reference/proxy-health).
 </Callout>
+
+## ClickHouse (optional traces)
+
+<ParamTable
+  params={[
+    {
+      name: 'CLICKHOUSE_DSN',
+      type: 'string',
+      description: 'HTTP DSN for async llm_traces inserts.',
+      defaultValue: '(empty / disabled)',
+    },
+    {
+      name: 'CLICKHOUSE_INSERT_BATCH_SIZE',
+      type: 'integer',
+      description: 'Rows per insert batch.',
+      defaultValue: '500',
+    },
+    {
+      name: 'CLICKHOUSE_INSERT_FLUSH_MS',
+      type: 'integer',
+      description: 'Flush interval in milliseconds.',
+      defaultValue: '200',
+    },
+  ]}
+/>
+
+Every analytics query must filter `org_id` — see [Traces and ClickHouse](/docs/operations/traces-and-clickhouse).
 
 ## Local `.env` layout
 

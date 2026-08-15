@@ -1,23 +1,23 @@
 ---
 title: "Current State"
-description: "Phase 0, Phase 1, and Phase 1.5 are complete. Phase 2 (Single Provider) is in progress."
-summary: "Phase 0, Phase 1, and Phase 1.5 are complete. Phase 2 (Single Provider) is in progress."
+description: "Phases 0–2 are complete. Auth, proxy, and single-provider E2E ship on main; Phase 3 (memory) is next."
+summary: "Phases 0–2 are complete. Auth, proxy, and single-provider E2E ship on main; Phase 3 (memory) is next."
 ---
 
 # Current State
 
-<Callout type="success" title="Platform and public site complete">
-  Phase 0, Phase 1, and Phase 1.5 are complete. The platform layer (auth, proxy,
-  security gates) and the unified public web product at ibexharness.com are
-  shipped and running.
+<Callout type="success" title="Phase 2 shipped">
+  Phases 0, 1, 1.5, and **2 (Single Provider E2E)** are complete. Authenticated
+  OpenAI-compatible chat (mock/live), auth cache, directives, sessions,
+  ClickHouse traces, and the public site at ibexharness.com ship on `main`.
 </Callout>
 
-<Callout type="info" title="Phase 1 / 1.5 AC hygiene">
-  Phase 1 and Phase 1.5 acceptance criteria are **verified complete** via exit
-  audits and merged PRs — see [phase1-exit-audit](/roadmap/phase-1-core-platform/phase1-exit-audit)
-  and `infra/scripts/verify_phase15.sh`. Individual milestone checkbox lists may
-  still show unchecked boxes in older pages; treat exit audits / frontmatter
-  `status: completed` as authoritative rather than mass-editing every `- [ ]`.
+<Callout type="info" title="Exit-audit hygiene">
+  Phase 1 / 1.5 / 2 acceptance is **verified complete** via exit audits, merged
+  milestones, CI gates, and the docs realignment series
+  ([#481](https://github.com/Rick1330/ibex-harness/pull/481)–[#492](https://github.com/Rick1330/ibex-harness/pull/492)).
+  Treat exit audits and frontmatter `status: completed` as authoritative when older
+  checkbox lists still show unchecked boxes.
 </Callout>
 
 ## Snapshot
@@ -25,12 +25,13 @@ summary: "Phase 0, Phase 1, and Phase 1.5 are complete. Phase 2 (Single Provider
 <StatusBadge status="stable" /> **Phase 0 — Foundation:** complete  
 <StatusBadge status="stable" /> **Phase 1 — Core Platform:** complete  
 <StatusBadge status="stable" /> **Phase 1.5 — Public Web Product:** complete  
-<StatusBadge status="new" /> **Phase 2 — Single Provider:** in progress (2.1.6 + 2.6.1 complete; 2.6.2 next)
+<StatusBadge status="stable" /> **Phase 2 — Single Provider:** complete  
+<StatusBadge status="new" /> **Phase 3 — Memory Engine:** next
 
-**Last updated:** 2026-07-26  
+**Last updated:** 2026-08-15  
 **Branch:** `main`  
-**Current focus:** [2.6.2 Phase 2 exit gate](/roadmap/phase-2-single-provider/milestones/2.6.2-phase2-exit-gate)  
-**Completed (recent):** [2.1.6 Idempotency-Key](/roadmap/phase-2-single-provider/milestones/2.1.6-idempotency-key)
+**Current focus:** [Phase 3 — Memory Engine](/roadmap/phase-3-memory-engine)  
+**Completed (recent):** Phase 2 exit ([2.6.2](/roadmap/phase-2-single-provider/milestones/2.6.2-phase2-exit-gate)); docs/roadmap realignment (#481–#492)
 
 <QuickLinks
   links={[
@@ -40,14 +41,14 @@ summary: "Phase 0, Phase 1, and Phase 1.5 are complete. Phase 2 (Single Provider
       description: "Live phase cards and milestone progress.",
     },
     {
+      title: "Phase 2",
+      href: "/roadmap/phase-2-single-provider",
+      description: "Single-provider E2E milestones and exit gate.",
+    },
+    {
       title: "Phase 1 exit audit",
       href: "/roadmap/phase-1-core-platform/phase1-exit-audit",
       description: "Completion evidence for the platform phase.",
-    },
-    {
-      title: "CI audit",
-      href: "/roadmap/phase-1-core-platform/ci-audit",
-      description: "CI gates, path filtering, and coverage posture.",
     },
     {
       title: "Architecture decisions",
@@ -59,78 +60,84 @@ summary: "Phase 0, Phase 1, and Phase 1.5 are complete. Phase 2 (Single Provider
 
 ## Shipped Since Last Update
 
-- Proxy overhead latency benchmark (milestone 2.6.1; [ADR-0034](/docs/adr/0034-performance-methodology)): real warm-path Go stages, full-middleware chat httptest bench, mockllm provider, k6 full-profile chat path, pinned baseline
-- Async LLM trace emitter to ClickHouse (milestone 2.5.3)
-- Directive injection (`packages/injection`) and proxy wire-up before `Complete` (milestone 2.3.3; ADR-0031)
-- Directive resolver (`packages/directive`): Redis cache with Postgres fallback, pub/sub invalidation, proxy hot-path middleware (milestone 2.3.2)
-- Path-filtered CI with area gate jobs ([#206](https://github.com/Rick1330/ibex-harness/pull/206)): `ci-gate-repo`, `ci-gate-go`, `ci-gate-web`, `ci-gate-security`
-- Unified product site at [ibexharness.com](https://ibexharness.com) — landing, docs, blog, benchmarks, releases, roadmap (static export via Cloudflare Pages)
-- Benchmark pipeline + public dashboard + bot integration (ADR-0024); weekly `benchmark.yml` and PR overlays
-- OpenSSF Scorecard badge on README; `publish_results: true` on weekly schedule
-- Phase 1.5 exit gate: `infra/scripts/verify_phase15.sh` against production URL
+- Docs/roadmap realignment: truth pass, `/docs` hub, core rebaseline, feature deep-dives, API reference + search body indexing, validation/historical cleanup (#481–#492)
+- Mixed API reference model: behavioral MDX + proto-backed Auth gRPC + HTTP route inventory (OpenAPI deferred)
+- Go **1.25.13** toolchain + golang alpine digests for stdlib vuln gates
+- Proxy overhead latency benchmark (2.6.1; [ADR-0034](/docs/adr/0034-performance-methodology))
+- Async LLM trace emitter to ClickHouse (2.5.3)
+- Directive resolver + system-prompt injection (2.3.2–2.3.3; ADR-0031)
+- Auth LRU + bloom cache with revocation pub/sub (2.2.x)
+- Sessions, checkpoints, idle sweeper (2.4.x)
+- Idempotency-Key replay (2.1.6; ADR-0035)
+- Unified product site at [ibexharness.com](https://ibexharness.com)
 
 ## What Ships Today
 
 <Callout type="note" title="Current capability boundary">
-  Authenticated request handling and governance are production-ready. OpenAI JSON
-  and SSE forwarding ship when `IBEX_LLM_MODE=live` and `OPENAI_API_KEY` are set
-  (default `mock` uses an in-process stub provider for smoke and latency gates —
-  [ADR-0034](/docs/adr/0034-performance-methodology)). Provider routing middleware
-  (2.1.4) selects the adapter from the request model; provider failures map to the
-  stable IBEX envelope (2.1.5). The memory pipeline is
-  deferred until Phase 3; multi-provider routing remains out of scope until Phase 4.
+  **Shipped:** Auth (Go), Proxy (Go) with mock/live OpenAI-compatible forwarding,
+  auth cache, directives/injection, sessions/checkpoints, idempotency, ClickHouse
+  traces, shared packages, and this public site. Default non-production
+  `IBEX_LLM_MODE=mock` answers registered models with HTTP 200; `live` needs
+  `OPENAI_API_KEY` (mock is rejected when `IBEX_ENV=production`).
+  **`501 PROVIDER_NOT_CONFIGURED`** means the model is not in the registry — not
+  “forwarding missing.” **Not shipped (Phase 3+):** Python memory, context
+  assembly, worker, management API, operator dashboard.
 </Callout>
 
 ### Platform (Phase 1)
 
-- Auth gRPC (`ValidateToken`, `ValidateAgent`) with Argon2id-backed token validation
+- Auth gRPC (`ValidateToken`, `ValidateAgent`, token lifecycle) with Argon2id-backed PATs
 - Proxy auth middleware, agent verification, request normalization, stable error envelopes, rate limiting
-- Security integration gate with 31-case cross-tenant denial matrix and CI enforcement
-- Shared packages (`logger`, `metrics`, `telemetry`, `config`, `apierror`, `shutdown`, `reqid`, `ratelimit`, `crypto`, `permissions`, `provider`)
+- Security integration gate with cross-tenant denial matrix and CI enforcement
+- Shared packages (`logger`, `metrics`, `telemetry`, `config`, `apierror`, `shutdown`, `reqid`, `ratelimit`, `crypto`, `permissions`, `provider`, …)
 - Postgres migrations with RLS; integration smokes for auth, proxy, and security paths
 
-### Public web product (Phase 1.5)
+### Single provider E2E (Phase 2)
+
+| Area | What shipped |
+| --- | --- |
+| Provider | Registry, OpenAI JSON + SSE, routing middleware, error mapping, Idempotency-Key |
+| Auth cache | Bloom + LRU; Redis revocation channel |
+| Directives | Postgres + Redis resolver; system-prompt injection |
+| Sessions | Sticky `X-IBEX-Session-ID`, checkpoints, idle sweeper |
+| Traces | Async ClickHouse writes (org-filtered; no prompt content) |
+| Quality | Latency benchmark (2.6.1); exit gate (2.6.2) |
+
+### Public web product (Phase 1.5 + docs realignment)
 
 | Surface | Path | Notes |
 | --- | --- | --- |
-| Landing | `/` | Matte Graphite marketing page in `web/src/app/page.tsx` |
-| Docs | `/docs/*` | Fumadocs; 76+ MDX pages, ADR index, engineering corpus |
-| Benchmarks | `/benchmarks/*` | Latency, load, waterfall, history, compare dashboards |
-| Blog | `/blog` | MDX posts under `web/content/blog/` |
+| Landing | `/` | Matte Graphite marketing page |
+| Docs | `/docs/*` | Hub + late Phase 2 feature guides + API reference |
+| Benchmarks | `/benchmarks/*` | Latency, load, waterfall, history, compare |
+| Blog | `/blog` | Historical Phase 1 posts labeled; current links updated |
 | Releases | `/releases` | Parses root `CHANGELOG.md` |
 | Roadmap | `/roadmap/*` | Live phase and milestone corpus |
-| Search | Cmd+K | Static `/search-index.json` prefetch |
+| Search | Cmd+K | Static index includes headings / structured excerpts |
 
 Legacy `docs.ibexharness.com` redirects to apex paths (301).
 
-### Delivered beyond original Phase 1.5 milestone table
-
-- Benchmark data publishing (`web/public/benchmarks/`, `ibexharness-benchmark-bot` integration)
-- CI path filters (`.github/path-filters.yml`, `.github/actions/detect-changes`)
-- PR auto-labeler (`.github/workflows/labeler.yml`)
-
 ## Blockers And Risks
 
-<Callout type="warning" title="Phase 2 entry">
-  Non-streaming and streaming OpenAI forwarding ship when `IBEX_LLM_MODE=live` and `OPENAI_API_KEY` are set
-  (`stream=false` JSON or `stream=true` SSE per [ADR-0026](/docs/adr/0026-openai-client-design) and
-  [ADR-0027](/docs/adr/0027-streaming-dual-write)). Default `IBEX_LLM_MODE=mock` registers an in-process
-  stub provider (immediate JSON) for CI, local smoke, and the 2.6.1 latency gate ([ADR-0034](/docs/adr/0034-performance-methodology)).
+<Callout type="warning" title="Phase 3 entry">
+  Phase 3 adds Python memory, context assembly, workers, and the operator
+  dashboard. Do not treat those services as implemented under `services/` today.
 </Callout>
 
-- Python services (memory, context, embedder, worker, api, dashboard) are not in shipping scope until Phase 3
+- Multi-provider routing remains Phase 4
+- Formal live `make e2e-smoke` with a sandbox OpenAI key is an operator path (`dev-smoke-live` / compose e2e); CI security-integration covers mock-provider forwarding
 
 ## Next 3 Priorities
 
 <Steps>
-  <Step title="2.6.2 — Phase 2 exit gate">
-    Latency, load, and AC verification for Phase 2 exit (2.1.6 complete).
-  </Step>
   <Step title="Phase 3 kickoff">
-    Memory engine after Phase 2 exit.
+    Memory engine schema, embedding, and extraction after Phase 2 exit.
   </Step>
-  <Step title="Phase 2 docs / ops polish">
-    Keep exit-gate findings and runbooks current as 2.6.2 closes.
+  <Step title="Phase 3 context assembly">
+    Bounded-latency AssembleContext on the proxy critical path.
+  </Step>
+  <Step title="Keep docs honest">
+    Prefer implementation-native sources; OpenAPI remains deferred until a CI-validated spec exists.
   </Step>
 </Steps>
 
@@ -148,12 +155,14 @@ go test ./services/proxy/...
 make compose-test-up
 go test -tags=integration -run '^TestSecurity_' ./services/proxy
 make test-integration
+make dev-smoke            # expects HTTP 200 chat under default mock
+# make dev-smoke-live     # optional live OpenRouter path
 pnpm install
-pnpm --filter web dev
+pnpm --filter web typecheck
 pnpm --filter web build
-make verify-phase15   # against https://ibexharness.com when online
+make verify-phase15       # against https://ibexharness.com when online
 ```
 
-Windows: see [services/auth/README.md](/docs/services/auth) and [services/proxy/README.md](/docs/services/proxy) for PowerShell env syntax. Integration tests: `make compose-test-up` (Postgres 5433) or `$env:POSTGRES_TEST_DSN = "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable"` for dev Postgres.
+Windows: see [`services/auth/README.md`](https://github.com/Rick1330/ibex-harness/blob/main/services/auth/README.md) and [`services/proxy/README.md`](https://github.com/Rick1330/ibex-harness/blob/main/services/proxy/README.md) for PowerShell env syntax.
 
 Expected: `security-integration` and all four `ci-gate-*` jobs green in CI; `verify_phase15.sh` exits 0 against production.

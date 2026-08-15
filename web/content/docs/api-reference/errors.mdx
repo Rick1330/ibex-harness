@@ -1,12 +1,16 @@
 ---
 title: Errors
 description: Stable JSON error envelope for proxy HTTP responses — codes from packages/apierror per ADR-0013.
+audience: integrator
+scope: shipped
+verifiedDate: "2026-08-15"
+sourceOfTruth: packages/apierror; services/proxy/internal/http
 ---
 
 Every proxy JSON error uses the same envelope shape. Codes are **UPPER_SNAKE_CASE** strings from `packages/apierror` — never ad-hoc literals in handlers. Design record: [ADR-0013](/docs/adr/0013-proxy-input-validation-and-error-envelope).
 
-<Callout type="note" title="Phase 1 scope">
-  This page covers **proxy HTTP** errors returned to integrators. Auth gRPC uses standard gRPC status codes; see [Auth gRPC](/docs/api-reference/auth-grpc). Phase 2+ REST resources are not implemented yet.
+<Callout type="info" title="Scope">
+  This page covers **proxy HTTP** errors returned to integrators. Auth gRPC uses standard gRPC status codes; see [Auth gRPC](/docs/api-reference/auth-grpc).
 </Callout>
 
 ## Envelope shape
@@ -17,7 +21,7 @@ Every proxy JSON error uses the same envelope shape. Codes are **UPPER_SNAKE_CAS
     "code": "VALIDATION_ERROR",
     "message": "Request validation failed",
     "detail": "One or more fields failed validation",
-    "docs_url": "https://docs.ibexharness.com/errors/VALIDATION_ERROR",
+    "docs_url": "https://ibexharness.com/docs/api-reference/errors",
     "request_id": "019abc-def0-7890-abcd-ef1234567890",
     "timestamp": "2026-06-14T12:00:00.000Z",
     "field_errors": [
@@ -57,7 +61,7 @@ All error responses include:
 
 Configurable via `IBEX_REQUEST_ID_HEADER` and `IBEX_TRACE_ID_HEADER`.
 
-## Proxy error codes (Phase 1)
+## Proxy error codes
 
 ### Client errors (4xx)
 
@@ -75,19 +79,21 @@ Configurable via `IBEX_REQUEST_ID_HEADER` and `IBEX_TRACE_ID_HEADER`.
 | 413 | `PAYLOAD_TOO_LARGE` | Body exceeds `IBEX_MAX_REQUEST_BODY_BYTES` (1 MiB) |
 | 415 | `UNSUPPORTED_MEDIA_TYPE` | Chat POST without `application/json` |
 | 429 | `RATE_LIMITED` | Org RPM limit exceeded |
+| 409 | `IDEMPOTENCY_KEY_REUSE` | Same Idempotency-Key with a different request fingerprint |
+| 409 | `IDEMPOTENCY_IN_PROGRESS` | Same key is still being processed — retry shortly |
 
 ### Server / dependency errors (5xx)
 
 | HTTP | Code | When |
 | --- | --- | --- |
-| 501 | `PROVIDER_NOT_CONFIGURED` | Valid request; no LLM provider wired for the model |
+| 501 | `PROVIDER_NOT_CONFIGURED` | Requested model is not registered in the active provider registry |
 | 503 | `SERVICE_DEGRADED` | Auth ValidateToken failed unexpectedly / deadline |
 | 503 | `AUTH_UNAVAILABLE` | Auth ValidateAgent transport failure |
 | 500 | `INTERNAL_ERROR` | Unhandled server fault |
 
-## Provider / upstream errors (Phase 2)
+## Provider / upstream errors
 
-Upstream LLM failures are mapped by `packages/provider.MapError` into the same envelope ([milestone 2.1.5](/roadmap/phase-2-single-provider/milestones/2.1.5-provider-error-mapping), [ADR-0026](/docs/adr/0026-openai-client-design)).
+Upstream LLM failures are mapped by `packages/provider.MapError` into the same envelope ([ADR-0026](/docs/adr/0026-openai-client-design)).
 
 | HTTP | Code | When |
 | --- | --- | --- |
@@ -163,5 +169,6 @@ Implemented in `packages/apierror.HTTPStatus`. Unknown codes default to **500**.
 
 ## Related
 
-- [Chat completions](/docs/api-reference/chat-completions) — 501 stub behavior
+- [Chat completions](/docs/api-reference/chat-completions) — request shape and provider forward
+- [HTTP route inventory](/docs/api-reference/http-routes) — implemented paths
 - [ADR-0013](/docs/adr/0013-proxy-input-validation-and-error-envelope) — limits and middleware order

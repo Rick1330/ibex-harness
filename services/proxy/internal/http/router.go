@@ -151,6 +151,9 @@ func chain(middlewares ...func(http.Handler) http.Handler) func(http.Handler) ht
 }
 
 func handleAuthProbe(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet, ErrorDocsBaseFromContext(r.Context())) {
+		return
+	}
 	res, ok := auth.FromContext(r.Context())
 	if !ok {
 		apierror.WriteStatus(w, http.StatusInternalServerError, apierror.CodeServiceDegraded,

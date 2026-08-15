@@ -16,9 +16,13 @@ excerpt: >
   wired yet.
 ---
 
+<Callout type="info" title="Historical post">
+  Published at Phase 1 exit (2026-06-14). Chat completions now forward in mock/live modes; treat `501 PROVIDER_NOT_CONFIGURED` as **unregistered model**, not “forwarding missing.” Current capability boundary: [current state](/roadmap/current-state).
+</Callout>
+
 Most LLM proxies start by forwarding HTTP. IBEX Harness starts by earning trust.
 
-Phase 1 is complete. Before we call OpenAI, assemble context, or store a single memory, the platform validates every bearer token, verifies agent identity against the organization in the URL path, normalizes request bodies into a stable internal shape, and rejects traffic that fails any check. Chat routes return `501 PROVIDER_NOT_CONFIGURED` on purpose — that response means auth, agent verification, and routing succeeded; provider forwarding ships in Phase 2.
+Phase 1 is complete. Before we call OpenAI, assemble context, or store a single memory, the platform validates every bearer token, verifies agent identity against the organization in the URL path, normalizes request bodies into a stable internal shape, and rejects traffic that fails any check. **At Phase 1 exit**, chat routes returned `501 PROVIDER_NOT_CONFIGURED` on purpose — that response meant auth, agent verification, and routing succeeded while provider forwarding was still ahead. Phase 2 later added mock/live OpenAI-compatible forwarding.
 
 This post explains what Phase 1 built, why we sequenced it this way, and how to run it locally in five minutes.
 
@@ -92,7 +96,7 @@ flowchart LR
   Proxy -->|gRPC :9091| Auth["Auth"]
   Auth --> PG["Postgres + RLS"]
   Proxy --> Redis["Redis"]
-  Proxy -.->|"Phase 2"| LLM["LLM provider"]
+  Proxy -.->|"Phase 2+"| LLM["LLM provider"]
 ```
 
 | Component | Phase 1 status | Default port |
@@ -102,19 +106,19 @@ flowchart LR
 | Postgres | Required — schema + RLS | 5432 |
 | Redis | Required — rate limits | 6379 |
 
-## What a successful request looks like today
+## What a successful request looked like at Phase 1 exit
 
-Follow the [Quickstart](/docs/getting-started/quickstart): boot Compose, run migrations, start auth and proxy, issue a PAT, then POST to the chat completions route.
+Follow the [Quickstart](/docs/getting-started/quickstart) for today’s path. **At Phase 1 exit**, a successful chat POST stopped at the empty provider slot and returned **`501 PROVIDER_NOT_CONFIGURED`**. That confirmed:
 
-A **`501 PROVIDER_NOT_CONFIGURED`** response is success for Phase 1. It confirms:
-
-1. Your bearer token validated over gRPC
-2. The agent in the URL matched the token
+1. Bearer token validated over gRPC
+2. Agent identity matched the token org
 3. Rate limiting and body parsing ran
-4. The handler reached the provider slot — which is intentionally empty until Phase 2
+4. The handler reached the provider slot before any upstream LLM call
 
-<Callout type="warning" title="Honest scope">
-  Do not expect LLM responses, memory writes, or dashboard flows. JWT sessions, Python services, ClickHouse traces, and context assembly are Phase 2+ work. Live inventory: [current state](/roadmap/current-state).
+**Today (Phase 2 shipped):** registered models return HTTP **200** under default non-production `IBEX_LLM_MODE=mock`, or live OpenAI-compatible JSON/SSE when `IBEX_LLM_MODE=live` and `OPENAI_API_KEY` are set. `501 PROVIDER_NOT_CONFIGURED` now means the **model id is not registered** — see [Chat completions](/docs/api-reference/chat-completions) and [current state](/roadmap/current-state).
+
+<Callout type="warning" title="Honest scope (still true)">
+  Memory writes, context assembly, and the operator dashboard remain Phase 3+. Live inventory: [current state](/roadmap/current-state).
 </Callout>
 
 ## Design choices worth knowing
@@ -132,7 +136,7 @@ A **`501 PROVIDER_NOT_CONFIGURED`** response is success for Phase 1. It confirms
 | Phase | Focus |
 | --- | --- |
 | [Phase 1.5](/roadmap/phase-1-5-docs-site) | Public docs site, roadmap, ADRs — [now live](/blog/docs-site-and-roadmap-launch) |
-| [Phase 2](/roadmap/phase-2-single-provider) | First LLM provider adapter, session store, directive resolver, ClickHouse traces |
+| [Phase 2](/roadmap/phase-2-single-provider) | Single provider E2E — **shipped** (mock/live chat, cache, directives, sessions, traces) |
 | [Phase 3](/roadmap/phase-3-memory-engine) | Memory engine, context assembly, operator dashboard |
 
 Track delivery on the [roadmap hub](/roadmap). For the memory story ahead of implementation, read [The Journey of a Thought](/blog/ibex-memory-lifecycle-map).
@@ -143,7 +147,7 @@ Track delivery on the [roadmap hub](/roadmap). For the memory story ahead of imp
   <DocCard title="Quickstart" href="/docs/getting-started/quickstart" description="Boot the stack and send your first proxied request in ~5 minutes." iconName="Zap" category="tutorial" />
   <DocCard title="Security overview" href="/docs/security/overview" description="Fail-closed auth, RLS, and tenant isolation." iconName="Shield" category="guide" />
   <DocCard title="Phase 1 exit audit" href="/roadmap/phase-1-core-platform/phase1-exit-audit" description="Gap analysis and completion evidence." iconName="FileCode" category="reference" />
-  <DocCard title="Chat completions API" href="/docs/api-reference/chat-completions" description="Proxy route shape and Phase 1 501 behavior." iconName="Waypoints" category="reference" />
+  <DocCard title="Chat completions API" href="/docs/api-reference/chat-completions" description="Current proxy route shape, mock/live modes, and errors." iconName="Waypoints" category="reference" />
 </CardGrid>
 
 Phase 1 is the floor. Everything IBEX promises — learning agents, sub-20ms overhead, multi-tenant memory — builds on a proxy that refuses to forward untrusted traffic. That floor is in place.
