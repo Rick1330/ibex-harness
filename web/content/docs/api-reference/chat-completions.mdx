@@ -1,6 +1,10 @@
 ---
 title: Chat completions
 description: OpenAI-compatible POST /v1/chat/completions — auth, validation, provider forward, and optional Idempotency-Key replay.
+audience: integrator
+scope: shipped
+verifiedDate: "2026-08-15"
+sourceOfTruth: services/proxy/internal/http/router_protected.go; chat handler
 ---
 
 The proxy exposes an OpenAI-shaped chat endpoint for SDK drop-in compatibility. After auth, agent verification, rate limits, and request normalization, the proxy forwards to the configured LLM provider (mock or live).
@@ -50,6 +54,13 @@ Decision records: [ADR-0012](/docs/adr/0012-proxy-request-normalization) (normal
       required: false,
       description:
         'Opaque client key (max 256 chars). Within TTL (default 24h), the same key + same request fingerprint replays the first completion without a second upstream call. Redis key: idempotency:{org_id}:{key} (org from token). See ADR-0035.',
+    },
+    {
+      name: 'X-IBEX-Session-ID',
+      type: 'string',
+      required: false,
+      description:
+        'Sticky session external id (max 64 chars). Missing/invalid values are minted and echoed on the response. Durable sessions require POSTGRES_DSN — see Sessions.',
     },
   ]}
 />
@@ -167,6 +178,8 @@ With `IBEX_LLM_MODE=mock`, expect HTTP **200** and an OpenAI-shaped JSON body. T
 
 ## Related
 
+- [HTTP route inventory](/docs/api-reference/http-routes) — all implemented proxy paths
+- [Sessions](/docs/proxy/sessions) — sticky `X-IBEX-Session-ID`
 - [Quickstart](/docs/getting-started/quickstart) — five-minute local path
 - [Authentication](/docs/proxy/authentication) — header requirements
 - [ADR-0035](/docs/adr/0035-chat-idempotency-key) — Idempotency-Key design
