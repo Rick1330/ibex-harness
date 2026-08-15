@@ -14,22 +14,36 @@ import (
 	"github.com/google/uuid"
 )
 
-func TestProtectedRoutes_internalAuthProbe_success(t *testing.T) {
-	t.Parallel()
-
-	validator := &mockValidator{res: &auth.ValidateResult{OrgID: agentTestOrgUUID, Permissions: permissions.Admin}}
+func protectedAuthProbeRouter(t *testing.T, orgID uuid.UUID) http.Handler {
+	t.Helper()
+	validator := &mockValidator{res: &auth.ValidateResult{OrgID: orgID, Permissions: permissions.Admin}}
 	cfg := config.Config{
 		Environment: "test", ServiceName: "proxy", Port: "8080",
 		MaxRequestBodyBytes: 1 << 20, RequestIDHeader: "X-Request-ID", TraceIDHeader: "X-Trace-ID",
 	}
-	handler := newTestRouter(t, cfg, validator, ratelimit.Noop())
+	return newTestRouter(t, cfg, validator, ratelimit.Noop())
+}
 
-	req := httptest.NewRequest(http.MethodGet, "/v1/internal/auth-probe", nil)
+func serveAuthProbe(
+	t *testing.T,
+	handler http.Handler,
+	method, path string,
+	withAgent bool,
+) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(method, path, nil)
 	req.Header.Set("Authorization", "Bearer ibex_pat_test")
-	req.Header.Set("X-IBEX-Agent-ID", agentTestAgentID())
+	if withAgent {
+		req.Header.Set("X-IBEX-Agent-ID", agentTestAgentID())
+	}
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
+	return rec
+}
 
+func TestProtectedRoutes_internalAuthProbe_success(t *testing.T) {
+	t.Parallel()
+	rec := serveAuthProbe(t, protectedAuthProbeRouter(t, agentTestOrgUUID), http.MethodGet, "/v1/internal/auth-probe", true)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -37,21 +51,14 @@ func TestProtectedRoutes_internalAuthProbe_success(t *testing.T) {
 
 func TestProtectedRoutes_orgAuthProbe_success(t *testing.T) {
 	t.Parallel()
-
 	orgID := agentTestOrgID()
-	validator := &mockValidator{res: &auth.ValidateResult{OrgID: uuid.MustParse(orgID), Permissions: permissions.Admin}}
-	cfg := config.Config{
-		Environment: "test", ServiceName: "proxy", Port: "8080",
-		MaxRequestBodyBytes: 1 << 20, RequestIDHeader: "X-Request-ID", TraceIDHeader: "X-Trace-ID",
-	}
-	handler := newTestRouter(t, cfg, validator, ratelimit.Noop())
-
-	req := httptest.NewRequest(http.MethodGet, "/v1/orgs/"+orgID+"/auth-probe", nil)
-	req.Header.Set("Authorization", "Bearer ibex_pat_test")
-	req.Header.Set("X-IBEX-Agent-ID", agentTestAgentID())
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-
+	rec := serveAuthProbe(
+		t,
+		protectedAuthProbeRouter(t, uuid.MustParse(orgID)),
+		http.MethodGet,
+		"/v1/orgs/"+orgID+"/auth-probe",
+		true,
+	)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -59,21 +66,14 @@ func TestProtectedRoutes_orgAuthProbe_success(t *testing.T) {
 
 func TestProtectedRoutes_orgAuthProbe_orgMismatch(t *testing.T) {
 	t.Parallel()
-
-	validator := &mockValidator{res: &auth.ValidateResult{OrgID: agentTestOrgUUID, Permissions: permissions.Admin}}
-	cfg := config.Config{
-		Environment: "test", ServiceName: "proxy", Port: "8080",
-		MaxRequestBodyBytes: 1 << 20, RequestIDHeader: "X-Request-ID", TraceIDHeader: "X-Trace-ID",
-	}
-	handler := newTestRouter(t, cfg, validator, ratelimit.Noop())
-
 	otherOrg := "550e8400-e29b-41d4-a716-446655440099"
-	req := httptest.NewRequest(http.MethodGet, "/v1/orgs/"+otherOrg+"/auth-probe", nil)
-	req.Header.Set("Authorization", "Bearer ibex_pat_test")
-	req.Header.Set("X-IBEX-Agent-ID", agentTestAgentID())
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-
+	rec := serveAuthProbe(
+		t,
+		protectedAuthProbeRouter(t, agentTestOrgUUID),
+		http.MethodGet,
+		"/v1/orgs/"+otherOrg+"/auth-probe",
+		true,
+	)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status: %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -84,20 +84,14 @@ func TestProtectedRoutes_orgAuthProbe_orgMismatch(t *testing.T) {
 
 func TestProtectedRoutes_orgAuthProbe_methodNotAllowed(t *testing.T) {
 	t.Parallel()
-
 	orgID := agentTestOrgID()
-	validator := &mockValidator{res: &auth.ValidateResult{OrgID: uuid.MustParse(orgID), Permissions: permissions.Admin}}
-	cfg := config.Config{
-		Environment: "test", ServiceName: "proxy", Port: "8080",
-		MaxRequestBodyBytes: 1 << 20, RequestIDHeader: "X-Request-ID", TraceIDHeader: "X-Trace-ID",
-	}
-	handler := newTestRouter(t, cfg, validator, ratelimit.Noop())
-
-	req := httptest.NewRequest(http.MethodPost, "/v1/orgs/"+orgID+"/auth-probe", nil)
-	req.Header.Set("Authorization", "Bearer ibex_pat_test")
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-
+	rec := serveAuthProbe(
+		t,
+		protectedAuthProbeRouter(t, uuid.MustParse(orgID)),
+		http.MethodPost,
+		"/v1/orgs/"+orgID+"/auth-probe",
+		false,
+	)
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("status: %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -105,20 +99,7 @@ func TestProtectedRoutes_orgAuthProbe_methodNotAllowed(t *testing.T) {
 
 func TestProtectedRoutes_internalAuthProbe_methodNotAllowed(t *testing.T) {
 	t.Parallel()
-
-	validator := &mockValidator{res: &auth.ValidateResult{OrgID: agentTestOrgUUID, Permissions: permissions.Admin}}
-	cfg := config.Config{
-		Environment: "test", ServiceName: "proxy", Port: "8080",
-		MaxRequestBodyBytes: 1 << 20, RequestIDHeader: "X-Request-ID", TraceIDHeader: "X-Trace-ID",
-	}
-	handler := newTestRouter(t, cfg, validator, ratelimit.Noop())
-
-	req := httptest.NewRequest(http.MethodPost, "/v1/internal/auth-probe", nil)
-	req.Header.Set("Authorization", "Bearer ibex_pat_test")
-	req.Header.Set("X-IBEX-Agent-ID", agentTestAgentID())
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-
+	rec := serveAuthProbe(t, protectedAuthProbeRouter(t, agentTestOrgUUID), http.MethodPost, "/v1/internal/auth-probe", true)
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("status: %d body=%s", rec.Code, rec.Body.String())
 	}
