@@ -94,7 +94,7 @@ func newAuthProbeRequest(tc authProbeCase) *http.Request {
 	return req
 }
 
-func assertStatus(t *testing.T, rec *httptest.ResponseRecorder, want int) {
+func assertAuthProbeStatus(t *testing.T, rec *httptest.ResponseRecorder, want int) {
 	t.Helper()
 	if rec.Code == want {
 		return
@@ -102,7 +102,7 @@ func assertStatus(t *testing.T, rec *httptest.ResponseRecorder, want int) {
 	t.Fatalf("status: %d body=%s", rec.Code, rec.Body.String())
 }
 
-func assertBodyContains(t *testing.T, rec *httptest.ResponseRecorder, want string) {
+func assertAuthProbeBodyCode(t *testing.T, rec *httptest.ResponseRecorder, want string) {
 	t.Helper()
 	if want == "" {
 		return
@@ -113,7 +113,7 @@ func assertBodyContains(t *testing.T, rec *httptest.ResponseRecorder, want strin
 	t.Fatalf("body: %s", rec.Body.String())
 }
 
-func assertAllowHeader(t *testing.T, rec *httptest.ResponseRecorder, want string) {
+func assertAuthProbeAllow(t *testing.T, rec *httptest.ResponseRecorder, want string) {
 	t.Helper()
 	if want == "" {
 		return
@@ -131,9 +131,9 @@ func TestProtectedRoutes_authProbe(t *testing.T) {
 			t.Parallel()
 			rec := httptest.NewRecorder()
 			newAuthProbeHandler(t, tc.tokenOrg).ServeHTTP(rec, newAuthProbeRequest(tc))
-			assertStatus(t, rec, tc.wantStatus)
-			assertBodyContains(t, rec, tc.wantCode)
-			assertAllowHeader(t, rec, tc.wantAllow)
+			assertAuthProbeStatus(t, rec, tc.wantStatus)
+			assertAuthProbeBodyCode(t, rec, tc.wantCode)
+			assertAuthProbeAllow(t, rec, tc.wantAllow)
 		})
 	}
 }
