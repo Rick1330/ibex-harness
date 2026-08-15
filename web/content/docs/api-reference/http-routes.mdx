@@ -1,0 +1,50 @@
+---
+title: HTTP route inventory
+description: Implemented public and protected HTTP routes on the IBEX proxy (sourced from the Go router).
+audience: integrator
+scope: shipped
+verifiedDate: "2026-08-15"
+sourceOfTruth: services/proxy/internal/http/router.go; router_protected.go
+---
+
+This page is the **HTTP route inventory** half of the mixed API reference model:
+
+1. **Behavioral MDX** — [Chat completions](/docs/api-reference/chat-completions), [Errors](/docs/api-reference/errors), [Health](/docs/api-reference/proxy-health)
+2. **Proto-backed gRPC** — [Auth gRPC](/docs/api-reference/auth-grpc) from `packages/proto/.../auth.proto`
+3. **Route inventory (this page)** — paths registered in the Go router
+
+<Callout type="info" title="OpenAPI deferred">
+  Auto-generated OpenAPI / `fumadocs-openapi` pages stay out of scope until a maintained `openapi.yaml` exists and is CI-validated against these routes. Until then, treat this inventory plus the behavioral pages as source of truth for HTTP.
+</Callout>
+
+## Public (no auth)
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/health` | Liveness |
+| `GET` | `/ready` | Readiness (`auth_grpc`, `redis` when configured) |
+| `GET` | `/metrics` | Prometheus text exposition |
+
+Public handlers are registered without method-specific ServeMux patterns. Integrators should call `GET` (Prometheus scrapers also use `GET`/`HEAD` conventions).
+
+## Protected
+
+| Method | Path | Auth | Notes |
+| --- | --- | --- | --- |
+| `GET` | `/v1/internal/auth-probe` | PAT + agent | Returns `{org_id, permissions}`; non-`GET` → `405 METHOD_NOT_ALLOWED` |
+| `GET` | `/v1/orgs/{org_id}/auth-probe` | PAT + agent | Path org must match token org; non-`GET` → `405` |
+| `POST` | `/v1/chat/completions` | PAT + agent + `ProxyChatCompletion` | Mock/live provider forward; non-`POST` → `405` |
+
+Tenant scope for chat comes from the **token**, not the URL. See [Chat completions](/docs/api-reference/chat-completions) and [Proxy overview](/docs/proxy/overview).
+
+## Not listed here
+
+- Auth gRPC on `:9091` — [Auth gRPC](/docs/api-reference/auth-grpc)
+- Future Python/API/dashboard routes — Phase 3+ (not present under `services/`)
+
+## Related
+
+- [Errors](/docs/api-reference/errors)
+- [Proxy health](/docs/api-reference/proxy-health)
+- [Environment variables](/docs/deployment/environment-variables)
+- [Content sources](/roadmap/phase-1-5-docs-site/content-sources) — reference strategy map

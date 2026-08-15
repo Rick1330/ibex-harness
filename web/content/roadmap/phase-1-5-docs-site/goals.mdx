@@ -45,7 +45,7 @@ phase: "phase-1-5-docs-site"
 
 ## Goal D.3: Content authoring and IA
 
-**Description:** Define sidebar information architecture, seed all leaf pages, author the 5-minute quickstart, and document Phase 1 proxy/auth API endpoints manually (OpenAPI generation deferred).
+**Description:** Define sidebar information architecture, seed all leaf pages, author the 5-minute quickstart, and publish the initial manual proxy/auth API reference for implemented surfaces (OpenAPI generation deferred until a maintained spec exists).
 
 **Related milestones:**
 
@@ -57,14 +57,14 @@ phase: "phase-1-5-docs-site"
 
 ## Goal D.4: CI/CD and preview deploys
 
-**Description:** Wire Vercel preview deploys and GitHub Actions checks (build, link-check, Lighthouse) for every PR touching the docs app.
+**Description:** Wire GitHub Actions checks and production deployment for the unified `web/` site. Historical milestone names retain the original Vercel wording, but the shipped path is GitHub Actions plus Cloudflare Pages for the apex domain.
 
 **Related milestones:**
 
 - [D.4.1](/roadmap/phase-1-5-docs-site/milestones/d4.1-vercel-preview-deploys)
 - [D.4.2](/roadmap/phase-1-5-docs-site/milestones/d4.2-github-actions-docs-checks)
 
-**Validation:** Preview URL on every docs PR; broken links and a11y regressions block merge
+**Validation:** Required web checks stay green on PRs touching `web/`; production deploy publishes the unified site to `ibexharness.com`; broken links and a11y regressions block merge
 
 ---
 
@@ -83,7 +83,7 @@ phase: "phase-1-5-docs-site"
 
 ## Goal D.6: Domain, DNS, and cross-site nav
 
-**Description:** Attach `ibexharness.com` to Vercel, configure DNS, and wire cross-links and sitemaps between landing and docs.
+**Description:** Configure the apex-domain DNS and wire cross-links and sitemaps for the unified `ibexharness.com` site. Historical milestone filenames retain the original Vercel/domain wording for URL stability, but production runs on Cloudflare Pages.
 
 **Related milestones:**
 
@@ -91,4 +91,4 @@ phase: "phase-1-5-docs-site"
 - [D.6.2](/roadmap/phase-1-5-docs-site/milestones/d6.2-dns-vercel-domain-attach)
 - [D.6.3](/roadmap/phase-1-5-docs-site/milestones/d6.3-cross-site-nav-sitemaps)
 
-**Validation:** Both domains show Valid Configuration in Vercel; cross-nav links work; sitemaps and robots.txt verified
+**Validation:** Apex-domain routing is correct; legacy `docs.ibexharness.com` redirects to apex docs paths; cross-nav links work; sitemaps and `robots.txt` are verified

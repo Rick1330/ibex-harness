@@ -1,0 +1,88 @@
+---
+title: Sessions
+description: Sticky session IDs, durable sessions, checkpoints, and idle sweep on the proxy.
+audience: integrator
+scope: shipped
+verifiedDate: "2026-08-15"
+sourceOfTruth: packages/session; ADR-0032; ADR-0039
+---
+
+<StatusBadge status="new" /> Session lifecycle is **shipped** on the chat path. There is no separate public session CRUD API today — clients use `X-IBEX-Session-ID` on `POST /v1/chat/completions`.
+
+Design: [ADR-0032](/docs/adr/0032-session-data-model), [ADR-0039](/docs/adr/0039-proxy-postgres-session-directive).
+
+## What you get
+
+| Topic | Behavior |
+| --- | --- |
+| Sticky header | `X-IBEX-Session-ID` — client-supplied or minted UUID (max 64 chars) |
+| Durable row | Postgres `ibex_core.sessions` when `POSTGRES_DSN` is set |
+| Checkpoints | Async append to `ibex_core.checkpoints` after successful completions |
+| Cache | Redis `session:{org_id}:{agent_id}:{external_id}` |
+| Idle sweeper | Marks stale `active` sessions `abandoned` |
+
+## Client contract
+
+```http
+POST /v1/chat/completions
+Authorization: Bearer ibex_pat_…
+X-IBEX-Agent-ID: <agent-uuid>
+X-IBEX-Session-ID: <optional-sticky-id>
+Content-Type: application/json
+```
+
+- If the header is missing or invalid, the proxy mints a UUID and **echoes** it on the response.
+- The sticky value is the session `external_id`, not the internal row UUID.
+- Without Postgres, sticky IDs still work for correlation; nothing is persisted.
+
+## Durable GetOrCreate
+
+When `POSTGRES_DSN` is set:
+
+1. Look up Redis cache for the sticky external id.
+2. On miss, `GetOrCreate` in Postgres under RLS (`SET LOCAL app.current_org_id`).
+3. Budget default: `IBEX_SESSION_GETORCREATE_TIMEOUT=50ms`.
+4. On timeout/error: **fail-open** — continue with sticky id only; skip checkpoints until a durable session exists.
+
+## Checkpoints
+
+After a complete non-stream response (or streaming completion), the proxy enqueues an async checkpoint write:
+
+| Variable | Default |
+| --- | --- |
+| `IBEX_SESSION_CHECKPOINT_WORKERS` | `8` |
+| `IBEX_SESSION_CHECKPOINT_QUEUE` | `256` |
+
+Duplicate turn handling invalidates cache, re-GetOrCreate, and retries once. Provider failures that leave an incomplete turn do not write an empty checkpoint.
+
+## Idle sweeper
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `IBEX_SESSION_IDLE_TIMEOUT` | `45m` | `updated_at` age before `active` → `abandoned` |
+| `IBEX_SESSION_SWEEP_INTERVAL` | `1m` | Sweep cadence (must be ≤ idle timeout) |
+| `IBEX_SESSION_CACHE_TTL` | `60s` | Redis session cache TTL |
+
+Sweeper runs only when Postgres is configured.
+
+## Failure modes
+
+| Condition | Result |
+| --- | --- |
+| No `POSTGRES_DSN` | Sticky header only; no DB sessions/checkpoints/sweeper |
+| GetOrCreate timeout | Chat continues; no durable session for that request |
+| Checkpoint queue full / worker error | Logged; chat response already returned |
+
+## Where to look in the repo
+
+- `services/proxy/internal/http/session/` — sticky id + checkpoint helpers
+- `services/proxy/internal/http/chat_session_bridge.go` — GetOrCreate bridge
+- `services/proxy/internal/sessionsweeper/` — idle sweeper
+- `infra/migrations/postgres/000010_create_sessions.up.sql` — schema
+
+## Related docs
+
+- [Directives](/docs/proxy/directives)
+- [Proxy configuration](/docs/proxy/configuration)
+- [Multi-tenant RLS](/docs/auth/multi-tenant-rls)
+- [Chat completions](/docs/api-reference/chat-completions)

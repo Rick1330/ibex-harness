@@ -58,8 +58,9 @@ Public pages are authored as MDX; port/adapt from engineering sources per [CONTE
 
 ### 5) API reference
 
-- Phase 1.5: **manual** endpoint pages for implemented surfaces only.
-- OpenAPI-driven pages (`fumadocs-openapi`) deferred until `services/proxy` publishes `openapi.yaml` (Phase 2).
+- **Mixed model (current):** manual behavioral MDX + proto-backed gRPC pages + HTTP route inventory from the Go router.
+- OpenAPI-driven pages (`fumadocs-openapi`) remain deferred until `services/proxy` publishes a maintained `openapi.yaml` that is CI-validated against implemented routes.
+- **Amendment (2026-08-15):** Documented inventory at `/docs/api-reference/http-routes`; search indexes MDX headings / structured excerpts in addition to description.
 
 ### 6) Delivery
 
