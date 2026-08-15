@@ -3,6 +3,7 @@
   "icon": "Activity",
   "pages": [
     "observability",
+    "traces-and-clickhouse",
     "troubleshooting",
     "health-checks",
     "incident-response"

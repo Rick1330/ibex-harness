@@ -1,14 +1,18 @@
 ---
 title: Introduction
-description: Welcome to the IBEX Harness documentation — self-hosted LLM proxy with persistent agent memory.
+description: Welcome to the IBEX Harness documentation — authenticated LLM proxy with multi-tenant identity.
+audience: integrator
+scope: shipped
+verifiedDate: "2026-08-15"
+sourceOfTruth: web/content/roadmap/current-state.mdx
 ---
 
 IBEX Harness is a self-hosted AI agent platform: an authenticated LLM proxy, multi-tenant identity service, and (in later phases) persistent agent memory with behavioral drift detection. The long-term goal is enterprise-grade context injection on every LLM call with under 20ms proxy overhead.
 
-This documentation reflects **what ships today** — not the full vision. Phase 1 delivered auth + proxy; Phase 1.5 delivers this docs site. LLM forwarding and memory services are explicitly out of scope until Phase 2+.
+This documentation reflects **what ships on `main` today**. Auth and proxy are late Phase 2; Python memory/context/dashboard services remain Phase 3+.
 
-<Callout type="note" title="Honest Phase 1 scope">
-  Chat completion routes return `501 PROVIDER_NOT_CONFIGURED` until Phase 2 wires a provider adapter. Python services (memory, context, dashboard) are not runnable yet. Live status: [current state](/roadmap/current-state).
+<Callout type="info" title="Capability boundary">
+  **Shipped:** Auth (Go), Proxy (Go) with mock/live provider modes, auth cache + revocation, directives, sessions, idempotency, and async ClickHouse traces. **Planned:** Python memory, context assembly, worker, API, and dashboard. Live status: [current state](/roadmap/current-state).
 </Callout>
 
 ## What you can do today
@@ -17,31 +21,28 @@ This documentation reflects **what ships today** — not the full vision. Phase 
   <Step title="Authenticate every proxy request">
     Bearer PAT validation and agent identity verification over gRPC — fail-closed on auth outage.
   </Step>
-  <Step title="Run the stack locally">
-    Docker Compose for Postgres and Redis; auth and proxy on the host for fast iteration.
+  <Step title="Forward chat completions">
+    Default `IBEX_LLM_MODE=mock` returns HTTP 200 from an in-process stub. Set `live` plus `OPENAI_API_KEY` for real OpenAI-compatible forwarding.
   </Step>
-  <Step title="Enforce org rate limits">
-    Redis-backed RPM budgets per organization (fail-open when Redis is down).
+  <Step title="Use platform features on the critical path">
+    Directives, sessions, idempotency keys, and auth caching are wired when Postgres/Redis are configured — see [Docs hub](/docs).
   </Step>
   <Step title="Issue and revoke PATs">
-    gRPC `CreateToken` / `RevokeToken` with Argon2id hashing and Postgres RLS.
+    gRPC `CreateToken` / `RevokeToken` with Argon2id hashing, Postgres RLS, and Redis revocation publish.
   </Step>
-  <Step title="Browse this docs site">
-    Search, OG previews, ADR index, and roadmap with Phase honesty throughout.
+  <Step title="Emit async traces">
+    Optional ClickHouse writes via `CLICKHOUSE_DSN` — never blocks the chat path.
   </Step>
 </Steps>
 
 ## What does not work yet
 
-Per [current state](/roadmap/current-state) and the development guide:
-
 - JWT issuance and dashboard session flows
-- Proxy LLM forwarding and context injection
 - Python services: memory, context assembly, embedder, worker, API, dashboard
-- Background jobs, ClickHouse trace ingestion, MinIO session archives
+- MinIO session archives and billing dashboards
 
-<Callout type="warning" title="Do not assume future APIs">
-  Integrate against documented Phase 1 endpoints only. Treat `501 PROVIDER_NOT_CONFIGURED` as the expected chat outcome until Phase 2 launches.
+<Callout type="warning" title="When you still see 501">
+  `501 PROVIDER_NOT_CONFIGURED` means the requested **model is not registered** in the active provider registry — not that forwarding is unimplemented. Default mock mode answers registered models with HTTP 200.
 </Callout>
 
 ## Architecture at a glance
@@ -51,23 +52,24 @@ flowchart LR
   Client["Agent / SDK"] -->|HTTPS :8080| Proxy["Proxy"]
   Proxy -->|gRPC :9091| Auth["Auth"]
   Auth --> PG["Postgres"]
+  Proxy --> PG
   Proxy --> Redis["Redis"]
-  Proxy -.->|Phase 2| LLM["LLM provider"]
+  Proxy -->|mock or live| LLM["LLM provider"]
+  Proxy -.->|async| CH["ClickHouse"]
 ```
 
-| Component | Phase 1 status | Port (default) |
+| Component | Status | Port (default) |
 | --- | --- | --- |
-| Proxy | Running — auth, validate, rate limit | HTTP 8080 |
-| Auth | Running — PAT + agent identity | HTTP 8081, gRPC 9091 |
+| Proxy | Shipped — auth, rate limit, mock/live forward, sessions, directives | HTTP 8080 |
+| Auth | Shipped — PAT + agent identity + revoke publish | HTTP 8081, gRPC 9091 |
 | Postgres | Running via Compose | 5432 |
 | Redis | Running via Compose | 6379 |
-| Memory / Context | Not implemented | — |
+| ClickHouse | Optional traces when DSN set | 8123 / 9002 |
+| Memory / Context | Not implemented (Phase 3) | — |
 
 Deeper dive: [Architecture](/docs/architecture) and [Request lifecycle](/docs/architecture/request-lifecycle).
 
 ## New contributor path
-
-The development guide targets a **one-hour** onboarding loop:
 
 <ProcessSteps
   steps={[
@@ -90,7 +92,7 @@ The development guide targets a **one-hour** onboarding loop:
     },
     {
       title: 'Smoke test',
-      description: 'make dev-smoke — health, auth failures, 501 chat stub.',
+      description: 'make dev-smoke — health, auth failures, and mock chat success.',
     },
   ]}
 />
@@ -104,6 +106,7 @@ Security is not deferred to a later phase:
 - Multi-tenant isolation via RLS + explicit org filters — [Tenant isolation](/docs/security/tenant-isolation)
 - Cross-tenant resource access returns `403`, never `404`
 - PAT secrets hashed with Argon2id; plaintext shown once — [Secrets and keys](/docs/security/secrets-and-keys)
+- ClickHouse queries must filter `org_id` (no RLS there)
 - 35+ automated security integration cases in CI
 
 Overview: [Security](/docs/security).
@@ -140,7 +143,7 @@ curl -s http://localhost:8080/v1/internal/auth-probe \
 
 ## Next steps
 
-- [Quickstart](/docs/getting-started/quickstart) — clone, boot, and send a probe request
+- [Quickstart](/docs/getting-started/quickstart) — clone, boot, and send a mock chat request
 - [Concepts](/docs/getting-started/concepts) — organizations, agents, and tokens
 - [FAQ](/docs/getting-started/faq) — common setup questions
 - [Proxy overview](/docs/proxy/overview) — middleware pipeline detail

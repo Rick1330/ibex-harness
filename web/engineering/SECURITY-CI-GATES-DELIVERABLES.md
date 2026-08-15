@@ -33,7 +33,7 @@ gh api --method PUT repos/Rick1330/ibex-harness/branches/main/protection \
 
 ## Toolchain
 
-- `go.mod` **Go 1.25.12** with `go-version-file: go.mod` in CI.
+- `go.mod` **Go 1.25.13** with `go-version-file: go.mod` in CI.
 - `golang.org/x/crypto` **v0.54.0+** (direct require in `packages/crypto`; Argon2id per ADR-0010).
 - **Go vulnerability gates:** `govulncheck` (reachable stdlib/module vulns). OSV scans JS lockfiles only — `GO-2026-5932` is a module-level `openpgp` advisory that OSV cannot mark unexecuted when only `argon2` is imported (ADR-0008).
 - Docker builder images: `golang:1.26-alpine3.22` (≥ `go.mod` minimum; no `GOTOOLCHAIN=auto` needed).

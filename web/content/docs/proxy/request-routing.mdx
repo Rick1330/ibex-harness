@@ -3,7 +3,7 @@ title: Request routing
 description: How requests are normalized and forwarded to provider adapters.
 ---
 
-The proxy exposes an OpenAI-compatible chat completion endpoint and diagnostic auth probes. In Phase 1 every chat request is parsed, validated, and authenticated end-to-end; provider forwarding stops with `501 PROVIDER_NOT_CONFIGURED` until Phase 2 registers an adapter ([ADR-0012](/docs/adr/0012-proxy-request-normalization), [ADR-0013](/docs/adr/0013-proxy-input-validation-and-error-envelope)).
+The proxy exposes an OpenAI-compatible chat completion endpoint and diagnostic auth probes. Every chat request is parsed, validated, and authenticated end-to-end, then routed to the mock or live provider ([ADR-0012](/docs/adr/0012-proxy-request-normalization), [ADR-0013](/docs/adr/0013-proxy-input-validation-and-error-envelope)).
 
 <Callout type="note" title="Org scope from token">
   `POST /v1/chat/completions` does **not** include `org_id` in the URL. Tenant scope comes from the validated PAT. Path-based org probes exist only on `/v1/orgs/{org_id}/auth-probe`.
@@ -14,7 +14,7 @@ The proxy exposes an OpenAI-compatible chat completion endpoint and diagnostic a
 <Endpoint
   method="POST"
   path="/v1/chat/completions"
-  description="OpenAI-compatible chat completions. Requires ProxyChatCompletion permission. Phase 1 returns 501 after validation."
+  description="OpenAI-compatible chat completions. Requires ProxyChatCompletion permission. Mock mode returns 200; unknown models return 501."
 />
 
 <Endpoint
@@ -136,7 +136,7 @@ Invoke-RestMethod -Uri http://localhost:8080/v1/chat/completions -Method POST -H
   </CodeTab>
 </CodeTabs>
 
-Phase 1 expected: HTTP **501**, `error.code` = `PROVIDER_NOT_CONFIGURED`. That confirms routing, auth, agent verify, rate limit, and validation all succeeded.
+Default mock mode expected: HTTP **200** for registered models. `501 PROVIDER_NOT_CONFIGURED` means the model is not in the registry.
 
 ## Path org enforcement
 
@@ -166,11 +166,11 @@ When a provider adapter registers, the handler will:
 2. Attach org/agent metadata for audit and tracing
 3. Stream OpenAI-compatible SSE or JSON back to the client
 
-Until then, treat `501` as the healthy Phase 1 outcome. Track progress: [Provider adapters](/docs/proxy/provider-adapters) and [roadmap](/roadmap/phase-2-single-provider).
+See [Provider adapters](/docs/proxy/provider-adapters) for mock vs live configuration and [roadmap](/roadmap/phase-2-single-provider) for remaining exit-gate work.
 
 ## Related
 
 - [Authentication](/docs/proxy/authentication) — credentials required before routing
 - [Provider adapters](/docs/proxy/provider-adapters) — Phase 2 upstream contract
 - [Overview](/docs/proxy/overview) — full endpoint table
-- [Chat completions](/docs/api-reference/chat-completions) — Phase 1 HTTP stub
+- [Chat completions](/docs/api-reference/chat-completions) — request shape and headers

@@ -11,6 +11,10 @@ fullTitle: "Milestone 1.2.1: Proxy Auth Client and Middleware"
 
 # Milestone 1.2.1: Proxy Auth Client and Middleware
 
+<Callout type="info" title="Historical milestone">
+  Acceptance items below describe Phase 1 exit (chat as `501` stub). Provider forwarding shipped later — see [current state](/roadmap/current-state).
+</Callout>
+
 **Status:** Complete  
 **Goal:** [1.2 Proxy platform integration](/roadmap/phase-1-core-platform/goals#goal-12-proxy-platform-integration)  
 **Phase:** 1 — Core Platform
@@ -38,7 +42,7 @@ Connect the proxy to auth via gRPC `ValidateToken`, HTTP auth middleware on prot
 - [x] [ADR-0011](/docs/adr/0011-proxy-auth-client)
 - [x] `services/proxy/internal/auth/` — `TokenValidator`, `GRPCValidator`, bearer parse, context
 - [x] `services/proxy/internal/errors/` — minimal stable envelope
-- [x] Auth middleware + routes: `/v1/internal/auth-probe`, `/v1/orgs/{org_id}/auth-probe`, `POST /v1/chat/completions` (501 stub)
+- [x] Auth middleware + routes: `/v1/internal/auth-probe`, `/v1/orgs/{org_id}/auth-probe`, `POST /v1/chat/completions` (501 stub at Phase 1 exit)
 - [x] Config: `IBEX_AUTH_GRPC_ADDR`, `IBEX_AUTH_VALIDATE_TIMEOUT`
 - [x] Metrics: auth validate total/duration (no `org_id` label)
 - [x] Unit tests (mock validator) + integration tests (real auth gRPC + Postgres)

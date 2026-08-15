@@ -46,11 +46,6 @@ const config = {
   // Redirects apply in `next dev` only; production uses public/_redirects on Pages.
   redirects: async () => [
     {
-      source: "/docs",
-      destination: "/docs/getting-started/introduction",
-      permanent: false,
-    },
-    {
       source: "/roadmap/phase-3-context-system/:path*",
       destination: "/roadmap/phase-3-memory-engine/:path*",
       permanent: true,
