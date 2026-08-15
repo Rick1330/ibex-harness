@@ -1,0 +1,39 @@
+---
+title: HTTP route inventory
+description: Implemented public and protected HTTP routes on the IBEX proxy (sourced from the Go router).
+audience: integrator
+scope: shipped
+verifiedDate: "2026-08-15"
+sourceOfTruth: services/proxy/internal/http/router.go; router_protected.go
+---
+
+This page lists **implemented** proxy HTTP routes. It is a manual inventory kept in sync with `services/proxy/internal/http/router.go` and `router_protected.go`. OpenAPI generation is deferred until a CI-validated spec exists.
+
+## Public (no auth)
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/health` | Liveness |
+| `GET` | `/ready` | Readiness (`auth_grpc`, `redis` when configured) |
+| `GET` | `/metrics` | Prometheus text exposition |
+
+## Protected
+
+| Method | Path | Auth | Notes |
+| --- | --- | --- | --- |
+| `GET` | `/v1/internal/auth-probe` | PAT + agent | Returns `{org_id, permissions}` |
+| `GET` | `/v1/orgs/{org_id}/auth-probe` | PAT + agent | Path org must match token org |
+| `POST` | `/v1/chat/completions` | PAT + agent + `ProxyChatCompletion` | Mock/live provider forward |
+
+Tenant scope for chat comes from the **token**, not the URL. See [Chat completions](/docs/api-reference/chat-completions) and [Proxy overview](/docs/proxy/overview).
+
+## Not listed here
+
+- Auth gRPC on `:9091` — [Auth gRPC](/docs/api-reference/auth-grpc)
+- Future Python/API/dashboard routes — Phase 3+ (not present under `services/`)
+
+## Related
+
+- [Errors](/docs/api-reference/errors)
+- [Proxy health](/docs/api-reference/proxy-health)
+- [Environment variables](/docs/deployment/environment-variables)

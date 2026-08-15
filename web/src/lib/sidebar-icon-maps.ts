@@ -127,6 +127,7 @@ export const PAGE_ICONS: Record<string, LucideIcon> = {
   "operations/health-checks": Gauge,
   "operations/incident-response": AlertCircle,
   "api-reference/auth-grpc": Terminal,
+  "api-reference/http-routes": GitBranch,
   "api-reference/proxy-health": Activity,
   "api-reference/chat-completions": Plug,
   "api-reference/errors": AlertCircle,

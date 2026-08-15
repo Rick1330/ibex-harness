@@ -63,7 +63,7 @@ Returns dependency detail:
 | Top-level `status` | HTTP | Meaning |
 | --- | --- | --- |
 | `ok` | 200 | All critical checks passed |
-| `degraded` | 200 | Critical OK; advisory failure (none in Phase 1) |
+| `degraded` | 200 | Critical OK; advisory failure |
 | `unhealthy` | 503 | At least one critical check failed |
 
 Per-check timeout: **500ms**. Overall request budget: **750ms**.
@@ -115,7 +115,7 @@ readinessProbe:
   `make dev-smoke` asserts proxy `/health` and `/ready` return 200 when compose, auth, and proxy are running with seed data.
 </Callout>
 
-## Metrics catalog (Phase 1)
+## Metrics catalog
 
 Scrape `/metrics` on both services. Key series include:
 

@@ -1,9 +1,13 @@
 ---
 title: Auth gRPC (ValidateToken, ValidateAgent)
-description: Internal AuthService RPCs consumed by the proxy — not exposed on the public internet in Phase 1.
+description: Internal AuthService RPCs consumed by the proxy — not exposed on the public internet.
+audience: integrator
+scope: shipped
+verifiedDate: "2026-08-15"
+sourceOfTruth: packages/proto/proto/ibex/auth/v1/auth.proto
 ---
 
-The auth service exposes `ibex.auth.v1.AuthService` on **`IBEX_GRPC_PORT`** (default **9091**). The proxy is the primary caller in Phase 1. Management RPCs (`CreateToken`, `RevokeToken`, `ListTokens`) exist but are out of scope for this page — see milestone 1.1.4 in the roadmap.
+The auth service exposes `ibex.auth.v1.AuthService` on **`IBEX_GRPC_PORT`** (default **9091**). The proxy is the primary caller. Management RPCs (`CreateToken`, `RevokeToken`, `ListTokens`) are available on the same service — see [Issuing API keys](/docs/auth/issuing-api-keys).
 
 <Callout type="warning" title="Internal only">
   Do not expose port 9091 to the public internet. Production uses mTLS on the internal mesh. Contract policy: [ADR-0006](/docs/adr/0006-auth-proto-contract).
