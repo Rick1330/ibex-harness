@@ -1,7 +1,7 @@
 ---
 title: "Content coverage map"
-description: "Tracks the current public docs corpus against implementation-native sources and highlights where late Phase 2 coverage still needs rebaselining."
-summary: "Tracks the current public docs corpus against implementation-native sources and highlights where late Phase 2 coverage still needs rebaselining."
+description: "Tracks the current public docs corpus against implementation-native sources after the late Phase 2 docs realignment."
+summary: "Tracks the current public docs corpus against implementation-native sources after the late Phase 2 docs realignment."
 phase: "phase-1-5-docs-site"
 fullTitle: "Content coverage map — public docs"
 ---
@@ -16,21 +16,21 @@ Treat this file as a **living coverage map**, not a one-time Phase 1.5 porting p
 
 | Area | Current source of truth | Coverage status | Notes |
 | --- | --- | --- | --- |
-| Getting started | `web/content/roadmap/current-state.mdx`, `Makefile`, `services/auth/README.md`, `services/proxy/README.md` | Needs rebaseline | Several pages still teach Phase 1 `501` behavior rather than current mock/live Phase 2 behavior |
-| Architecture | `services/README.md`, `services/*/README.md`, accepted ADRs | Needs rebaseline | Public pages still understate forwarding, sessions, and ClickHouse traces |
-| Proxy | `services/proxy/README.md`, `services/proxy/internal/http/`, `packages/directive`, `packages/injection`, `packages/authcache`, `packages/idempotency`, `packages/session` | Highest priority | This is where most late-Phase-2 drift currently lives |
-| Auth | `services/auth/README.md`, `packages/proto/proto/ibex/auth/v1/auth.proto`, accepted ADRs | Mostly accurate | Public auth pages need lighter updates than proxy pages |
-| Deployment / ops | `services/*/.env.example`, `infra/compose/dev/.env.example`, `services/proxy/internal/config/`, `packages/clickhouse`, `packages/metrics`, `packages/telemetry` | Needs expansion | Env/config docs still reflect an earlier runtime surface |
+| Getting started | `web/content/roadmap/current-state.mdx`, `Makefile`, `services/auth/README.md`, `services/proxy/README.md` | Current | Rebaselined for mock/live Phase 2; FAQ/quickstart no longer teach 501 as happy path |
+| Architecture | `services/README.md`, `services/*/README.md`, accepted ADRs | Current | Overview/lifecycle updated for forwarding, sessions, traces |
+| Proxy | `services/proxy/README.md`, `services/proxy/internal/http/`, `packages/directive`, `packages/injection`, `packages/authcache`, `packages/idempotency`, `packages/session` | Current | Feature deep-dives shipped for directives, sessions, auth cache, traces |
+| Auth | `services/auth/README.md`, `packages/proto/proto/ibex/auth/v1/auth.proto`, accepted ADRs | Current | Proto-backed gRPC reference + issuing keys guides |
+| Deployment / ops | `services/*/.env.example`, `infra/compose/dev/.env.example`, `services/proxy/internal/config/`, `packages/clickhouse`, `packages/metrics`, `packages/telemetry` | Current | Env docs + compose smoke path match late Phase 2 |
 | API reference | Manual MDX + proto (`auth.proto`) + HTTP route inventory | Current | Behavioral pages + `/docs/api-reference/http-routes`; OpenAPI / fumadocs-openapi deferred until CI-validated spec |
 
 ## Getting Started
 
 | Public page | Source | Notes |
 | --- | --- | --- |
-| Introduction | `/roadmap/current-state`, `services/README.md` | Rebaseline to current late-Phase-2 capability boundary |
-| Concepts | `services/README.md`, `services/proxy/README.md`, `web/engineering/GLOSSARY.md` | Distinguish current proxy features from planned Phase 3 memory systems |
-| Quickstart | `Makefile`, `compose-dev`, `services/auth/README.md`, `services/proxy/README.md` | Happy path should document `mock` mode success, with `live` mode as optional |
-| FAQ | Current docs corpus + issue/PR feedback | Expand as real late-Phase-2 operator questions appear |
+| Introduction | `/roadmap/current-state`, `services/README.md` | Late-Phase-2 capability boundary |
+| Concepts | `services/README.md`, `services/proxy/README.md`, `web/engineering/GLOSSARY.md` | Distinguishes shipped proxy features from Phase 3 memory |
+| Quickstart | `Makefile`, `compose-dev`, `services/auth/README.md`, `services/proxy/README.md` | Mock-mode happy path; live optional |
+| FAQ | Current docs corpus + issue/PR feedback | Mock/live + unregistered-model 501 |
 
 ## Architecture
 
