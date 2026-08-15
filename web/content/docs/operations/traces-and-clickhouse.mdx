@@ -1,0 +1,34 @@
+---
+title: Traces and ClickHouse
+description: Async LLM trace writes from the proxy into ClickHouse.
+audience: operator
+scope: shipped
+verifiedDate: "2026-08-15"
+sourceOfTruth: packages/clickhouse; ADR-0033
+---
+
+<StatusBadge status="new" /> Async LLM traces to ClickHouse are **shipped**. Query cookbooks and dashboard views land later; this page is the navigation stub and source map.
+
+<Callout type="info" title="What ships today">
+  The proxy emits trace batches asynchronously so analytics never block the chat critical path. Schema and writer design: [ADR-0033](/docs/adr/0033-clickhouse-schema). Every ClickHouse query must filter by `org_id` — ClickHouse has no RLS.
+</Callout>
+
+## Scope
+
+| Topic | Status |
+| --- | --- |
+| `llm_traces` schema + typed batch writer | Shipped |
+| Proxy async trace pool | Shipped |
+| Billing/usage dashboards | Planned (Phase 6+) |
+
+## Where to look in the repo
+
+- `packages/clickhouse` — connection and inserter
+- `services/proxy` — async writer wiring
+- Roadmap: [current state](/roadmap/current-state)
+
+## Related docs
+
+- [Observability](/docs/operations/observability)
+- [Tenant isolation](/docs/security/tenant-isolation)
+- [Proxy overview](/docs/proxy/overview)

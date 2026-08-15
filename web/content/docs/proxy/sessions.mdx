@@ -1,0 +1,35 @@
+---
+title: Sessions
+description: Proxy session lifecycle, checkpoints, and tenant-scoped session data.
+audience: integrator
+scope: shipped
+verifiedDate: "2026-08-15"
+sourceOfTruth: packages/session; ADR-0032; ADR-0039
+---
+
+<StatusBadge status="new" /> Session lifecycle is **shipped**. Detailed API examples and operator runbooks land in a follow-up docs PR; this page is the navigation stub and source map.
+
+<Callout type="info" title="What ships today">
+  Sessions are org-scoped Postgres records with checkpoint support and an idle sweeper on the proxy. Design: [ADR-0032](/docs/adr/0032-session-data-model) and [ADR-0039](/docs/adr/0039-proxy-postgres-session-directive).
+</Callout>
+
+## Scope
+
+| Topic | Status |
+| --- | --- |
+| Session + checkpoint schema | Shipped |
+| Proxy session HTTP surface | Shipped |
+| Idle sweeper | Shipped |
+| Dashboard session UX | Planned (Phase 3+) |
+
+## Where to look in the repo
+
+- `packages/session` — shared session types and helpers
+- `services/proxy/internal/http/session` — HTTP handlers
+- Roadmap: [current state](/roadmap/current-state)
+
+## Related docs
+
+- [Directives](/docs/proxy/directives)
+- [Proxy configuration](/docs/proxy/configuration)
+- [Multi-tenant RLS](/docs/auth/multi-tenant-rls)

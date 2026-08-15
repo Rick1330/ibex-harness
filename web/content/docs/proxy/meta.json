@@ -5,6 +5,9 @@
     "overview",
     "configuration",
     "authentication",
+    "auth-caching",
+    "directives",
+    "sessions",
     "rate-limiting",
     "request-routing",
     "provider-adapters"

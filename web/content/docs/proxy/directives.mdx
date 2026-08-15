@@ -1,0 +1,35 @@
+---
+title: Directives
+description: Org-scoped directives and system-prompt injection on the proxy critical path.
+audience: integrator
+scope: shipped
+verifiedDate: "2026-08-15"
+sourceOfTruth: packages/directive; ADR-0031; ADR-0039
+---
+
+<StatusBadge status="new" /> Org directives are **shipped** on the proxy path. Full behavioral narrative and examples land in a follow-up docs PR; this page is the navigation stub and source map.
+
+<Callout type="info" title="What ships today">
+  Directives are loaded from Postgres, versioned, and injected into chat requests according to the configured system-prompt strategy. Design: [ADR-0031](/docs/adr/0031-system-prompt-injection) and [ADR-0039](/docs/adr/0039-proxy-postgres-session-directive).
+</Callout>
+
+## Scope
+
+| Topic | Status |
+| --- | --- |
+| Directive schema + versions | Shipped |
+| Proxy injection middleware | Shipped |
+| Prompt-injection hygiene for memory content | Phase 3 (memories not implemented) |
+
+## Where to look in the repo
+
+- `packages/directive` — store and load helpers
+- `packages/injection` — injection strategies
+- `services/proxy` — middleware wiring on chat completions
+- Roadmap: [Phase 2 decisions](/roadmap/phase-2-single-provider/decisions)
+
+## Related docs
+
+- [Proxy overview](/docs/proxy/overview)
+- [Proxy authentication](/docs/proxy/authentication)
+- [Sessions](/docs/proxy/sessions)

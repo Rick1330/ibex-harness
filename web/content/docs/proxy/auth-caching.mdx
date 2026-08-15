@@ -1,0 +1,35 @@
+---
+title: Auth caching
+description: Bloom filter + LRU auth cache with Redis revocation propagation.
+audience: operator
+scope: shipped
+verifiedDate: "2026-08-15"
+sourceOfTruth: packages/authcache; ADR-0028; ADR-0029
+---
+
+<StatusBadge status="new" /> Auth caching is **shipped** (milestone 2.2.1). Deep tuning guidance lands in a follow-up docs PR; this page is the navigation stub and source map.
+
+<Callout type="info" title="What ships today">
+  The proxy may cache successful token validations behind a bloom filter + LRU. Cache enablement requires a working Redis revocation channel so revokes invalidate hot entries. Design: [ADR-0028](/docs/adr/0028-auth-cache-design) and [ADR-0029](/docs/adr/0029-token-revocation-propagation).
+</Callout>
+
+## Scope
+
+| Topic | Status |
+| --- | --- |
+| Bloom + LRU cache package | Shipped |
+| Revocation pub/sub gate | Shipped |
+| Fail-closed auth when Auth is down | Shipped (independent of cache) |
+
+## Where to look in the repo
+
+- `packages/authcache` — cache implementation
+- `packages/revocation` — revoke broadcast helpers
+- `services/proxy/internal/bootstrap` — enablement gate (requires revocation channel)
+- Roadmap finding supersession: [findings](/roadmap/findings)
+
+## Related docs
+
+- [Proxy authentication](/docs/proxy/authentication)
+- [Security authentication](/docs/security/authentication)
+- [Issuing API keys](/docs/auth/issuing-api-keys)

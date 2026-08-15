@@ -37,9 +37,14 @@ export const docs = defineDocs({
   docs: {
     schema: frontmatterSchema.extend({
       adrId: z.string().optional(),
+      // ADR acceptance status (e.g. Accepted) or freeform page status.
       status: z.string().optional(),
       date: z.string().optional(),
       authors: z.string().optional(),
+      audience: z.enum(["integrator", "operator", "contributor"]).optional(),
+      verifiedDate: z.string().optional(),
+      sourceOfTruth: z.string().optional(),
+      scope: z.enum(["shipped", "optional-live", "planned"]).optional(),
     }),
   },
 });
