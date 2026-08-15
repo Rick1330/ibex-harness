@@ -25,13 +25,10 @@ type authProbeCase struct {
 	wantAllow  string
 }
 
-func TestProtectedRoutes_authProbe(t *testing.T) {
-	t.Parallel()
-
+func authProbeCases() []authProbeCase {
 	orgID := agentTestOrgID()
 	otherOrg := "550e8400-e29b-41d4-a716-446655440099"
-
-	cases := []authProbeCase{
+	return []authProbeCase{
 		{
 			name:       "internal_get_ok",
 			tokenOrg:   agentTestOrgUUID,
@@ -75,37 +72,68 @@ func TestProtectedRoutes_authProbe(t *testing.T) {
 			wantAllow:  http.MethodGet,
 		},
 	}
+}
 
-	for _, tc := range cases {
+func newAuthProbeHandler(t *testing.T, orgID uuid.UUID) http.Handler {
+	t.Helper()
+	validator := &mockValidator{res: &auth.ValidateResult{OrgID: orgID, Permissions: permissions.Admin}}
+	cfg := config.Config{
+		Environment: "test", ServiceName: "proxy", Port: "8080",
+		MaxRequestBodyBytes: 1 << 20, RequestIDHeader: "X-Request-ID", TraceIDHeader: "X-Trace-ID",
+	}
+	return newTestRouter(t, cfg, validator, ratelimit.Noop())
+}
+
+func newAuthProbeRequest(tc authProbeCase) *http.Request {
+	req := httptest.NewRequest(tc.method, tc.path, nil)
+	req.Header.Set("Authorization", "Bearer ibex_pat_test")
+	if !tc.withAgent {
+		return req
+	}
+	req.Header.Set("X-IBEX-Agent-ID", agentTestAgentID())
+	return req
+}
+
+func assertStatus(t *testing.T, rec *httptest.ResponseRecorder, want int) {
+	t.Helper()
+	if rec.Code == want {
+		return
+	}
+	t.Fatalf("status: %d body=%s", rec.Code, rec.Body.String())
+}
+
+func assertBodyContains(t *testing.T, rec *httptest.ResponseRecorder, want string) {
+	t.Helper()
+	if want == "" {
+		return
+	}
+	if strings.Contains(rec.Body.String(), want) {
+		return
+	}
+	t.Fatalf("body: %s", rec.Body.String())
+}
+
+func assertAllowHeader(t *testing.T, rec *httptest.ResponseRecorder, want string) {
+	t.Helper()
+	if want == "" {
+		return
+	}
+	if got := rec.Header().Get("Allow"); got != want {
+		t.Fatalf("Allow: %q", got)
+	}
+}
+
+func TestProtectedRoutes_authProbe(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range authProbeCases() {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-
-			validator := &mockValidator{res: &auth.ValidateResult{OrgID: tc.tokenOrg, Permissions: permissions.Admin}}
-			cfg := config.Config{
-				Environment: "test", ServiceName: "proxy", Port: "8080",
-				MaxRequestBodyBytes: 1 << 20, RequestIDHeader: "X-Request-ID", TraceIDHeader: "X-Trace-ID",
-			}
-			handler := newTestRouter(t, cfg, validator, ratelimit.Noop())
-
-			req := httptest.NewRequest(tc.method, tc.path, nil)
-			req.Header.Set("Authorization", "Bearer ibex_pat_test")
-			if tc.withAgent {
-				req.Header.Set("X-IBEX-Agent-ID", agentTestAgentID())
-			}
 			rec := httptest.NewRecorder()
-			handler.ServeHTTP(rec, req)
-
-			if rec.Code != tc.wantStatus {
-				t.Fatalf("status: %d body=%s", rec.Code, rec.Body.String())
-			}
-			if tc.wantCode != "" && !strings.Contains(rec.Body.String(), tc.wantCode) {
-				t.Fatalf("body: %s", rec.Body.String())
-			}
-			if tc.wantAllow != "" {
-				if got := rec.Header().Get("Allow"); got != tc.wantAllow {
-					t.Fatalf("Allow: %q", got)
-				}
-			}
+			newAuthProbeHandler(t, tc.tokenOrg).ServeHTTP(rec, newAuthProbeRequest(tc))
+			assertStatus(t, rec, tc.wantStatus)
+			assertBodyContains(t, rec, tc.wantCode)
+			assertAllowHeader(t, rec, tc.wantAllow)
 		})
 	}
 }
