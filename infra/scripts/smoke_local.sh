@@ -4,6 +4,9 @@
 # Usage: make dev-smoke
 # Prerequisites: make compose-dev-up && make db-migrate && make db-seed
 #                auth and proxy services running locally
+# Expectation: proxy default IBEX_LLM_MODE=mock (non-production). Chat asserts HTTP 200
+# for registered gpt-4o; a live-mode proxy can also pass — use make dev-smoke-live for
+# explicit live OpenRouter checks.
 
 set -euo pipefail
 

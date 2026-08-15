@@ -12,7 +12,7 @@ export const LANDING_NAV_LINK = {
 export const NAV_LINKS = [
   {
     text: "Docs",
-    href: "/docs/getting-started/introduction",
+    href: "/docs",
     match: "/docs",
   },
   {

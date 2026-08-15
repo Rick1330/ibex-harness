@@ -4,4 +4,18 @@
 
 [[IgnoredVulns]]
 id = "GO-2026-5932"
+# Revisit when golang.org/x/crypto publishes a fixed openpgp release or we drop the module.
+ignoreUntil = 2026-12-01
 reason = "Unreachable openpgp subpackage; only golang.org/x/crypto/argon2 is used (ADR-0008, ADR-0010). Verified by govulncheck."
+
+# image-size DoS in JXL/HEIF parsers: no patched release (advisory last-affected 2.0.2).
+# Transitive via fumadocs-core; docs site does not parse untrusted image buffers
+# through image-size. Prefer package-scoped ignore over global advisory IDs.
+
+[[PackageOverrides]]
+name = "image-size"
+version = "1.2.1"
+ecosystem = "npm"
+vulnerability.ignore = true
+effectiveUntil = 2026-12-01
+reason = "No patched image-size release (<=2.0.2). Transitive fumadocs-core@14; docs build does not feed untrusted buffers into image-size. Revisit when upstream patches or fumadocs drops the dep."

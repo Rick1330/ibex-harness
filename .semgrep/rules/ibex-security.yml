@@ -4,7 +4,7 @@ rules:
     severity: ERROR
     message: >-
       ClickHouse query missing org_id filter — cross-tenant data leak risk.
-      See .cursorrules §4 and web/engineering/SECURITY.md.
+      See AGENTS.md §4 and web/engineering/SECURITY.md.
     patterns:
       - pattern-either:
           - pattern: |
@@ -25,7 +25,7 @@ rules:
   - id: ibex-no-secrets-in-logs
     languages: [python]
     severity: ERROR
-    message: "Potential secret logged. See .cursorrules §5."
+    message: "Potential secret logged. See AGENTS.md §5 and web/engineering/SECURITY.md."
     pattern-either:
       - pattern: |
           logger.$METHOD($MSG, "$SENSITIVE_KEY", $VAL)
@@ -40,7 +40,7 @@ rules:
     severity: WARNING
     message: >-
       Memory content injected directly into prompt without delimiter isolation.
-      Prompt injection risk. See .cursorrules §6.
+      Prompt injection risk. See AGENTS.md §5 and web/engineering/SECURITY.md.
     patterns:
       - pattern: |
           $PROMPT = f"...{$MEMORY}..."
@@ -56,7 +56,7 @@ rules:
     severity: WARNING
     message: >-
       Memory content injected directly into prompt without delimiter isolation.
-      Prompt injection risk. See .cursorrules §6.
+      Prompt injection risk. See AGENTS.md §5 and web/engineering/SECURITY.md.
     patterns:
       - pattern: |
           $PROMPT = ... + $MEMORY + ...
@@ -70,7 +70,7 @@ rules:
   - id: ibex-no-raw-sql-format
     languages: [python]
     severity: ERROR
-    message: "SQL must be parameterized. No string formatting in queries. See .cursorrules §5."
+    message: "SQL must be parameterized. No string formatting in queries. See AGENTS.md §5 and web/engineering/SECURITY.md."
     pattern-either:
       - patterns:
           - pattern: |

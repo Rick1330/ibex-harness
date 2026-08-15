@@ -6,7 +6,7 @@ import { source } from "@/lib/source";
 export const dynamic = "force-dynamic";
 
 type RouteContext = {
-  params: Promise<{ slug: string[] }>;
+  params: Promise<{ slug?: string[] }>;
 };
 
 export async function GET(_request: Request, context: RouteContext) {
@@ -21,5 +21,6 @@ export async function GET(_request: Request, context: RouteContext) {
 }
 
 export function generateStaticParams() {
+  // Optional catch-all accepts the docs hub ({ slug: [] } → /api/og).
   return source.generateParams();
 }

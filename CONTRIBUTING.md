@@ -211,7 +211,7 @@ make verify-phase15
 make coverage-gate
 ```
 
-CI/security config changes: use [prompts/20-security-ci-audit.txt](prompts/20-security-ci-audit.txt).
+CI/security config changes: follow [AGENTS.md](AGENTS.md) and [web/engineering/SECURITY.md](web/engineering/SECURITY.md).
 
 ## Good first issues
 

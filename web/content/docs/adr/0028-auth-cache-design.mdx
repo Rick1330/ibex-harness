@@ -69,10 +69,13 @@ On upstream transport / timeout when not serving a **fresh** LRU hit: return una
 
 `IBEX_AUTH_CACHE_ENABLED` (default `true`), `IBEX_AUTH_CACHE_LRU_CAPACITY`, `IBEX_AUTH_CACHE_LRU_MAX_TTL`, `IBEX_AUTH_CACHE_BLOOM_EXPECTED_ITEMS`, `IBEX_AUTH_CACHE_BLOOM_FP_RATE`.
 
+**Amendment (Wave 4 adversarial hardening):** The proxy wraps bloom+LRU only when `REDIS_URL` is set **and** Redis responds to Ping at startup. If the flag is enabled but Redis is empty or unreachable, log WARN and leave `ValidateToken` uncached so revoke is effective on the next gRPC call (no 30s stale allow without the [ADR-0029](/docs/adr/0029-token-revocation-propagation) channel).
+
 ## Consequences
 
 - Hot-path LRU hits avoid gRPC; miss path matches Phase 1 semantics.
-- Revoke lag is explicitly **30s** until 2.2.2; roadmap exit gate “5s” depends on pub/sub.
+- Revoke lag with healthy pub/sub is ~1s (ADR-0029); without Redis the cache does not wrap (immediate revoke via gRPC).
+- If a pub/sub message is missed, worst-case lag remains `LRUMaxTTL` (**30 seconds**).
 - `Invalidate` is synchronous and ready for the 2.2.2 subscriber.
 - Each proxy process has an independent cache (no cross-instance coherence without pub/sub).
 

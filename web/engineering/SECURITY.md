@@ -581,6 +581,7 @@ The following invariants are enforced by the `security-integration` CI job (`Tes
 | All error responses use stable JSON envelope | SEC-6.1–SEC-6.5 (parametrized sweep) |
 | Oversized chat body returns 413 `PAYLOAD_TOO_LARGE` with envelope | SEC-7.1 |
 | Auth cache warm path still rejects revoked tokens within SLA | SEC-7.2 |
+| Auth cache flag without Redis does not wrap; revoke is immediate 401 | SEC-7.3 |
 
 **Auth gRPC token management (companion to SEC matrix):**
 

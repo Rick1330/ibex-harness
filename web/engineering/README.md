@@ -19,7 +19,7 @@ Then use [DEVELOPMENT_GUIDE.md](DEVELOPMENT_GUIDE.md) for day-to-day workflow, P
 
 **Local dependencies:** [../infra/compose/dev/README.md](../infra/compose/dev/README.md) (Docker Compose). **Contracts:** [../packages/proto/README.md](../packages/proto/README.md) (Buf / protobuf).
 
-**AI-assisted work:** read [../AGENTS.md](../AGENTS.md). Execution prompts live in the contributor workspace (not published on the docs site).
+**AI-assisted work:** read [../../AGENTS.md](../../AGENTS.md). Optional local workspace prompts stay outside the git repo.
 
 ---
 
@@ -83,9 +83,9 @@ Then use [DEVELOPMENT_GUIDE.md](DEVELOPMENT_GUIDE.md) for day-to-day workflow, P
 
 | Path | Description |
 |------|-------------|
-| [../README.md](../README.md) | Project entrypoint and quick start |
-| [../AGENTS.md](../AGENTS.md) | Global AI agent operating manual |
-| [../.cursorrules](../.cursorrules) | Cursor IDE rules for this repo |
+| [../../README.md](../../README.md) | Project entrypoint and quick start |
+| [../../AGENTS.md](../../AGENTS.md) | Agent / AI assistant workflow and invariants |
+| [../../CLAUDE.md](../../CLAUDE.md) | Claude entrypoint → `@AGENTS.md` |
 
 ---
 

@@ -672,7 +672,7 @@ Coverage is a signal, not a goal — but we still enforce minimums:
 - Go merged profile (unit + integration), **hand-written scope only**: **≥ 80%** via `infra/scripts/coverage-gate.sh`
 - **Excluded from gate:** `packages/proto/gen/go/**` (generated protobuf). Contract tests remain in `packages/proto/`.
 - Go packages (`packages/*`, excluding gen): ≥ 90% statement coverage
-- Go middleware/store/grpc internals: per-package thresholds in `.cursor/rules/04-go-testing.mdc`
+- Go middleware/store/grpc internals: per-package thresholds in [AGENTS.md](../../AGENTS.md) and [TESTING_STRATEGY](./TESTING_STRATEGY.md) coverage tables
 - Python: ≥ 85% for algorithms and security-related code
 - TypeScript: ≥ 70% for core UI logic; E2E covers critical flows
 

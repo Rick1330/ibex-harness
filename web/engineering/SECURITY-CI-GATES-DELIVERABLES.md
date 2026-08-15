@@ -9,7 +9,7 @@ Reference for the DevSecOps hardening work on branch `chore/security-ci-gates`. 
 | Workflows | `.github/workflows/ci.yml`, `codeql.yml`, `semgrep.yml`, `scorecard.yml`, `sbom.yml` |
 | Config | `.github/dependabot.yml`, `.github/branch-protection-main.json`, `.semgrep/rules/ibex-security.yml`, `.semgrepignore`, `.hadolint.yaml` |
 | Docs / ADR | `CONTRIBUTING.md`, `SECURITY.md` §12.2, `DEPENDENCIES.md` §9, `TOOLCHAIN.md`, `ADR-0008`, `ADR-0003`, `ADR-0002` |
-| Prompts | `prompts/20-security-ci-audit.txt`, `.cursorrules` §9.5 |
+| Agent guidance | `AGENTS.md`, `CLAUDE.md` |
 
 ## Severity thresholds
 
@@ -33,7 +33,7 @@ gh api --method PUT repos/Rick1330/ibex-harness/branches/main/protection \
 
 ## Toolchain
 
-- `go.mod` **Go 1.25.12** with `go-version-file: go.mod` in CI.
+- `go.mod` **Go 1.25.13** with `go-version-file: go.mod` in CI.
 - `golang.org/x/crypto` **v0.54.0+** (direct require in `packages/crypto`; Argon2id per ADR-0010).
 - **Go vulnerability gates:** `govulncheck` (reachable stdlib/module vulns). OSV scans JS lockfiles only — `GO-2026-5932` is a module-level `openpgp` advisory that OSV cannot mark unexecuted when only `argon2` is imported (ADR-0008).
 - Docker builder images: `golang:1.26-alpine3.22` (≥ `go.mod` minimum; no `GOTOOLCHAIN=auto` needed).

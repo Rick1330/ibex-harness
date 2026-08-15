@@ -42,7 +42,7 @@ The repo has a single root `go.mod`, Go services `auth` and `proxy`, two Dockerf
 
 Weekly `schedule` on CI runs **only** `osv-scan` (other jobs use `if: github.event_name != 'schedule'`).
 
-CI uses `go-version-file: go.mod` so the runner Go version tracks `go.mod` (currently **1.25.12**; `golang.org/x/crypto` ≥ v0.54.0; golangci-lint **v2.4+** for Go 1.25).
+CI uses `go-version-file: go.mod` so the runner Go version tracks `go.mod` (currently **1.25.13**; `golang.org/x/crypto` ≥ v0.54.0; golangci-lint **v2.4+** for Go 1.25).
 
 ### Go vs JavaScript vulnerability scanning
 
@@ -132,9 +132,8 @@ Heavy jobs run only when their area changed. Filter definitions live in [`.githu
 
 ### AI agent enforcement
 
-- Custom Semgrep rules encode `.cursorrules` invariants
-- [prompts/20-security-ci-audit.txt](../../prompts/20-security-ci-audit.txt) for CI/security config reviews
-- `.cursorrules` §9.5 CI tooling invariants
+- Custom Semgrep rules encode AGENTS.md / SECURITY.md invariants
+- `AGENTS.md` for agent security/CI review expectations
 
 ## Consequences
 

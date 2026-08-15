@@ -1,0 +1,55 @@
+---
+title: Documentation
+description: Product docs for the IBEX Harness auth service, LLM proxy, and operator surfaces that ship today.
+audience: integrator
+scope: shipped
+verifiedDate: "2026-08-15"
+sourceOfTruth: web/content/roadmap/current-state.mdx
+---
+
+IBEX Harness is a self-hosted AI agent platform: an authenticated LLM proxy, multi-tenant identity service, and (in later phases) persistent agent memory. These docs describe **what ships on `main` today**.
+
+Live program status: [current state](/roadmap/current-state). Design rationale lives in [ADRs](/docs/adr).
+
+<Callout type="info" title="Capability boundary">
+  **Shipped:** Auth (Go), Proxy (Go), shared runtime packages (auth cache, directives, sessions, idempotency, ClickHouse traces), and this public site. **Planned (Phase 3+):** Python memory, context assembly, worker, API, and dashboard — do not treat those as implemented.
+</Callout>
+
+## Start here
+
+<CardGrid>
+  <DocCard title="Quickstart" description="Boot compose-dev and send a chat completion in mock mode." href="/docs/getting-started/quickstart" iconName="Zap" category="tutorial" />
+  <DocCard title="Concepts" description="Tenancy, PATs, proxy critical path, and phase honesty." href="/docs/getting-started/concepts" iconName="Lightbulb" category="guide" />
+  <DocCard title="Architecture overview" description="Services, data stores, and request flow." href="/docs/architecture/overview" iconName="LayoutDashboard" category="guide" />
+  <DocCard title="Chat completions API" description="HTTP shape, errors, and streaming notes." href="/docs/api-reference/chat-completions" iconName="Plug" category="reference" />
+  <DocCard title="HTTP route inventory" description="Public and protected proxy paths as implemented." href="/docs/api-reference/http-routes" iconName="GitBranch" category="reference" />
+</CardGrid>
+
+## Integrate the proxy
+
+<CardGrid>
+  <DocCard title="Proxy overview" description="Middleware chain from auth to provider forward." href="/docs/proxy/overview" iconName="Waypoints" category="guide" />
+  <DocCard title="Authentication" description="PATs, agent verify, cache, and revocation." href="/docs/proxy/authentication" iconName="Lock" category="guide" />
+  <DocCard title="Provider modes" description="Mock vs live OpenAI-compatible forwarding." href="/docs/proxy/provider-adapters" iconName="Plug" category="guide" />
+  <DocCard title="Issuing API keys" description="Create and revoke org-scoped PATs." href="/docs/auth/issuing-api-keys" iconName="Key" category="guide" />
+</CardGrid>
+
+## Platform features (Phase 2)
+
+These Phase 2 surfaces are implemented. Use the guides below for configuration and failure modes.
+
+<CardGrid>
+  <DocCard title="Directives" description="Org directives and system-prompt injection." href="/docs/proxy/directives" iconName="FileText" category="guide" />
+  <DocCard title="Sessions" description="Session lifecycle and checkpoints." href="/docs/proxy/sessions" iconName="Layers" category="guide" />
+  <DocCard title="Auth cache" description="Bloom + LRU cache with revocation." href="/docs/proxy/auth-caching" iconName="Gauge" category="guide" />
+  <DocCard title="Traces & ClickHouse" description="Async LLM trace writes." href="/docs/operations/traces-and-clickhouse" iconName="Database" category="guide" />
+</CardGrid>
+
+## Operate and harden
+
+<CardGrid>
+  <DocCard title="Observability" description="Metrics, logs, and OpenTelemetry." href="/docs/operations/observability" iconName="Activity" category="guide" />
+  <DocCard title="Environment variables" description="Runtime configuration registry." href="/docs/deployment/environment-variables" iconName="Settings" category="reference" />
+  <DocCard title="Security overview" description="Fail-closed auth and tenant isolation." href="/docs/security/overview" iconName="Shield" category="guide" />
+  <DocCard title="Troubleshooting" description="Common local and production failures." href="/docs/operations/troubleshooting" iconName="CircleHelp" category="guide" />
+</CardGrid>

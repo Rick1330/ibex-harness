@@ -42,7 +42,7 @@ One milestone per PR. See [Phase 1.5 README](../roadmap/phase-1-5-docs-site/READ
 - Hex colors in components (use CSS variables / Tailwind tokens)
 - Default exports in components (except Next.js routes)
 
-Full rules: [MASTER_BRIEF §0.1](../roadmap/phase-1-5-docs-site/MASTER_BRIEF.md) and `.cursor/rules/docs-site.mdc`.
+Full rules: [MASTER_BRIEF §0.1](../content/roadmap/phase-1-5-docs-site/master-brief.mdx) and [AGENTS.md](../../AGENTS.md).
 
 ## PR checklist
 

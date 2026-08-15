@@ -105,7 +105,7 @@ Invoke-RestMethod -Method POST `
   </CodeTab>
 </CodeTabs>
 
-Phase 1 expected: **501** `PROVIDER_NOT_CONFIGURED` — auth and agent checks passed; provider forwarding is deferred.
+Mock-mode expected: **200** for registered models. `501 PROVIDER_NOT_CONFIGURED` means the model is not registered — auth and agent checks already passed.
 
 ## Error responses
 

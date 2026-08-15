@@ -26,8 +26,8 @@ Redis is already required for rate limiting. Pub/sub fans out revoke events to a
 
 1. **Channel:** `ibex:token:revocations` (global; not org-scoped).
 2. **Event:** JSON `RevocationEvent` with schema version `v`, **`token_id`** (UUID string), `revoked_at`, and `org_id` (audit only).
-3. **Auth publisher:** After durable Postgres revoke, publish asynchronously (`REDIS_URL`). Redis failure must **not** fail `RevokeToken` — Postgres remains source of truth; LRU will expire naturally within 30s.
-4. **Proxy subscriber:** On message, call `CachingValidator.InvalidateByTokenID(tokenID)`. The claims LRU maintains a secondary `tokenID → digest` index populated on `putLRU`. Lifecycle owned by `packages/shutdown`.
+3. **Auth publisher:** After durable Postgres revoke, publish asynchronously (`REDIS_URL`). Redis failure must **not** fail `RevokeToken` — Postgres remains source of truth. Proxies that never wrapped the auth cache (empty/unreachable Redis at startup) already revalidate via gRPC on every request.
+4. **Proxy subscriber:** On message, call `CachingValidator.InvalidateByTokenID(tokenID)`. The claims LRU maintains a secondary `tokenID → digest` index populated on `putLRU`. Lifecycle owned by `packages/shutdown`. Proxy bootstrap wraps the cache **only** when Redis is present and Ping succeeds; otherwise WARN and skip wrap (no stale LRU without a revocation channel).
 5. **SLA vs TTL gap (documented):** Steady-state with healthy pub/sub meets ~1s invalidate / 5s exit SLA. If a proxy **misses messages** (disconnect, subscribe lag, process restart before resubscribe), the worst case is still the **30s LRU TTL** until natural expiry. That gap is accepted for Phase 2 with the follow-up below.
 
 ## Optional follow-up (not Phase 2 blocking)
