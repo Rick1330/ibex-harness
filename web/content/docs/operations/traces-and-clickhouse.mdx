@@ -1,0 +1,67 @@
+---
+title: Traces and ClickHouse
+description: Async LLM trace writes from the proxy into ClickHouse.
+audience: operator
+scope: shipped
+verifiedDate: "2026-08-15"
+sourceOfTruth: packages/clickhouse; ADR-0033
+---
+
+<StatusBadge status="new" /> Async LLM traces to ClickHouse are **shipped**. The proxy records latency and identity metadata for analytics without putting prompt or completion text in the warehouse.
+
+Design: [ADR-0033](/docs/adr/0033-clickhouse-schema).
+
+<Callout type="warning" title="No RLS — filter org_id">
+  ClickHouse has no row-level security. Every query **must** include an `org_id` predicate. The writer also rejects records with a nil `org_id`.
+</Callout>
+
+## Enablement
+
+| Condition | Result |
+| --- | --- |
+| `CLICKHOUSE_DSN` unset | Trace writer disabled (INFO log); chat unaffected |
+| DSN set but writer start fails | WARN; chat continues without traces |
+| DSN healthy | Async batch inserts to `ibex.llm_traces` |
+
+Compose example: `clickhouse://default:ibexdev@localhost:8123/ibex`.
+
+## What is stored
+
+Table `ibex.llm_traces` (MergeTree, partitioned by month, TTL 90 days), ordered by `(org_id, agent_id, requested_at)`:
+
+- Identity: `request_id`, `org_id`, `agent_id`, optional `session_id` / `checkpoint_id`
+- Model: `model`, `provider`, `is_streaming`
+- Tokens: prompt/completion counts when known
+- Latency: `auth_latency_ms`, `directive_latency_ms`, `provider_ttfb_ms`, `total_latency_ms`
+- Outcome: `status_code`, `is_complete`, `error_code`, timestamps
+
+**Not stored:** raw prompts, completions, PATs, or directive bodies.
+
+## Batching
+
+| Variable | Default |
+| --- | --- |
+| `CLICKHOUSE_INSERT_BATCH_SIZE` | `500` |
+| `CLICKHOUSE_INSERT_FLUSH_MS` | `200` |
+
+Internal caps also bound buffer size and shutdown flush timeouts in `packages/clickhouse`.
+
+## Operator checklist
+
+1. Run ClickHouse migrations under `infra/migrations/clickhouse/`.
+2. Set `CLICKHOUSE_DSN` on the proxy.
+3. Confirm chat still succeeds if ClickHouse is stopped (fail-open).
+4. Query only with `WHERE org_id = …` (and prefer agent/time bounds).
+
+## Where to look in the repo
+
+- `packages/clickhouse` — record, validate, batch writer
+- `services/proxy/internal/bootstrap/trace.go` — enablement
+- `infra/migrations/clickhouse/000001_create_llm_traces.up.sql` — schema
+
+## Related docs
+
+- [Observability](/docs/operations/observability)
+- [Tenant isolation](/docs/security/tenant-isolation)
+- [Proxy overview](/docs/proxy/overview)
+- [Proxy configuration](/docs/proxy/configuration)

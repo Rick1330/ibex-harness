@@ -1,14 +1,18 @@
 ---
 title: Overview
-description: High-level system diagram, design philosophy, and honest Phase 1 scope for IBEX Harness.
+description: High-level system diagram, design philosophy, and honest late Phase 2 scope for IBEX Harness.
+audience: integrator
+scope: shipped
+verifiedDate: "2026-08-15"
+sourceOfTruth: web/content/roadmap/current-state.mdx
 ---
 
 import { Brain, Gauge, Shield, Waypoints } from "lucide-react";
 
-IBEX Harness is a distributed platform for persistent agent memory, intelligent context assembly, and behavioral consistency. Agent applications call a low-latency [LLM proxy](/docs/proxy/overview); the proxy authenticates every request through the [auth service](/docs/auth/overview) and (in later phases) injects memory and directives before forwarding to provider APIs.
+IBEX Harness is a distributed platform for persistent agent memory, intelligent context assembly, and behavioral consistency. Agent applications call a low-latency [LLM proxy](/docs/proxy/overview); the proxy authenticates every request through the [auth service](/docs/auth/overview), applies org directives and session context, then forwards to a mock or live provider.
 
-<Callout type="note" title="Phase 1 honest scope">
-  **Live today:** Go proxy and auth services, Postgres schema with RLS, Redis rate limiting, gRPC token validation. **Not yet live:** chat completion forwarding (returns `501 PROVIDER_NOT_CONFIGURED`), memory service, context assembly, Python workers, and dashboard. Treat diagrams below as the target architecture; dashed nodes are planned.
+<Callout type="info" title="Late Phase 2 honest scope">
+  **Live today:** Go proxy and auth, Postgres RLS, Redis (rate limits, auth cache, idempotency), mock/live chat forwarding, directives, sessions, optional ClickHouse traces. **Not yet live:** Python memory, context assembly, workers, and dashboard. Dashed nodes below are Phase 3+.
 </Callout>
 
 ## System diagram
@@ -19,12 +23,12 @@ flowchart TB
         SDK["SDKs / CLI"]
     end
 
-    subgraph critical["Critical path — Phase 1 live"]
+    subgraph critical["Critical path — shipped"]
         Proxy["LLM Proxy<br/>(Go)"]
         Auth["Auth Service<br/>(Go)"]
     end
 
-    subgraph planned["Planned — Phase 2+"]
+    subgraph planned["Planned — Phase 3+"]
         Context["Context Assembly<br/>(Python)"]
         Memory["Memory Service<br/>(Python)"]
         Embed["Embedding Service<br/>(Python)"]
@@ -41,17 +45,20 @@ flowchart TB
     SDK --> Proxy
     Proxy -->|gRPC ValidateToken| Auth
     Auth --> PG
+    Proxy --> PG
     Proxy --> Redis
-    Proxy -.->|Phase 2| Context
+    Proxy -->|mock / live| LLM["LLM provider"]
+    Proxy -->|async traces| CH
+    Proxy -.->|Phase 3| Context
     Context -.-> Memory
     Memory -.-> Embed
     Memory -.-> PG
-    Proxy -.->|async traces| CH
     Workers -.-> Memory
     Workers -.-> CH
+    Workers -.-> S3
 ```
 
-The **critical path** is every LLM request: authenticate, enforce limits, assemble context, call the provider, stream the response. Target proxy overhead is under 20ms (p99) excluding provider latency. Memory extraction, drift detection, and analytics run asynchronously and must never block the agent's inference call.
+The **critical path** is every LLM request: authenticate, enforce limits, resolve directive/session, call the provider, stream the response. Target proxy overhead is under 20ms (p99) excluding provider latency. Trace emission and future memory extraction must never block inference.
 
 ## Design principles
 
@@ -61,7 +68,7 @@ The **critical path** is every LLM request: authenticate, enforce limits, assemb
       icon: Gauge,
       title: "Performance first",
       description:
-        "The proxy and context assembly pipeline are optimized for millisecond budgets. Auth validation has a 50ms gRPC deadline; context retrieval targets a 40ms parallel deadline in Phase 2.",
+        "The proxy path is optimized for millisecond budgets. Auth validation has a 50ms gRPC deadline; auth cache and Redis timeouts keep the hot path bounded.",
     },
     {
       icon: Shield,
@@ -73,13 +80,13 @@ The **critical path** is every LLM request: authenticate, enforce limits, assemb
       icon: Waypoints,
       title: "Fail gracefully",
       description:
-        "Auth unreachable → fail closed (503). Context assembly timeout → directive-only context. Memory slow → hot-cache only. Rate limit Redis down → conservative fail-open with audit.",
+        "Auth unreachable → fail closed (503). Redis down → rate limit fail-open; auth cache skips wrap. ClickHouse down → traces drop, chat continues.",
     },
     {
       icon: Brain,
       title: "Observable everything",
       description:
-        "Structured JSON logs with request_id, Prometheus metrics on bounded labels, and OpenTelemetry traces across HTTP, gRPC, Redis, and database boundaries.",
+        "Structured JSON logs with request_id, Prometheus metrics on bounded labels, OpenTelemetry traces, and optional ClickHouse llm_traces batches.",
     },
   ]}
 />
@@ -91,17 +98,17 @@ The **critical path** is every LLM request: authenticate, enforce limits, assemb
     {
       title: "Synchronous (blocks the agent)",
       description:
-        "Token validation, agent identity check, rate limiting, context retrieval, LLM provider call, and response streaming. These steps define user-perceived latency.",
+        "Token validation, agent identity check, rate limiting, directive resolve, chat parse, provider call, and response streaming.",
     },
     {
       title: "Asynchronous (never blocks)",
       description:
-        "Trace emission to ClickHouse, memory extraction jobs, behavioral fingerprinting, drift alerts, billing counters, and notification delivery. Failures here degrade analytics, not inference.",
+        "ClickHouse trace emission, session checkpoint writes, and (Phase 3+) memory extraction, drift alerts, and billing counters.",
     },
     {
-      title: "Phase 1 today",
+      title: "Today",
       description:
-        "Only the first three synchronous steps are live: validate token, verify agent, rate limit. Provider forwarding and context injection return 501 until Phase 2.",
+        "Mock or live provider forwarding is live. Memory/context assembly remain Phase 3 — do not design clients against those APIs yet.",
     },
   ]}
 />
@@ -113,7 +120,7 @@ The **critical path** is every LLM request: authenticate, enforce limits, assemb
 | Auth `ValidateToken` gRPC | 50ms |
 | Redis rate limit check | 5ms |
 | Full proxy overhead (excl. LLM) | 20ms p99 |
-| Context assembly (Phase 2) | 50ms p95 |
+| Context assembly (Phase 3) | 50ms p95 (planned) |
 
 ## Related
 

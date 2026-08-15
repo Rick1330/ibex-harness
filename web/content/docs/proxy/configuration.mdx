@@ -1,11 +1,15 @@
 ---
 title: Configuration
-description: Environment variables and config files for the proxy service.
+description: Environment variables and config for the proxy service (late Phase 2).
+audience: operator
+scope: shipped
+verifiedDate: "2026-08-15"
+sourceOfTruth: services/proxy/.env.example; web/engineering/ENVIRONMENT_VARIABLES.md
 ---
 
 The proxy loads configuration from environment variables at startup via `packages/config`. There is no `config.yaml` — missing required values panic with a clear message so misconfiguration surfaces before the first request, not during traffic.
 
-Copy `services/proxy/.env.example` to `services/proxy/.env` for local development. The canonical registry is `web/engineering/ENVIRONMENT_VARIABLES.md` §9.
+Copy `services/proxy/.env.example` to `services/proxy/.env` for local development. The canonical registry is `web/engineering/ENVIRONMENT_VARIABLES.md` §9–10.
 
 <Callout type="tip" title="Local dev timeout">
   Set `IBEX_AUTH_VALIDATE_TIMEOUT=2s` on developer machines. The production default `50ms` is often too tight for Argon2 token verification over loopback; without the override, bearer requests may return `503 SERVICE_DEGRADED`.
@@ -27,14 +31,116 @@ Copy `services/proxy/.env.example` to `services/proxy/.env` for local developmen
       type: "string (URL)",
       required: true,
       description:
-        "Redis connection for org-level rate limiting. Required for /ready when set.",
+        "Redis for rate limiting, auth-cache revocation subscribe, idempotency, and /ready.",
     },
   ]}
 />
 
-<Callout type="note" title="No direct Postgres">
-  The proxy does **not** read `POSTGRES_DSN` in Phase 1. All identity data flows through auth gRPC — see [Architecture services](/docs/architecture/services).
-</Callout>
+## Provider modes
+
+<ParamTable
+  params={[
+    {
+      name: "IBEX_LLM_MODE",
+      type: "enum",
+      description: "`mock` (in-process stub, default) or `live` (OpenAI-compatible forward). Mock is forbidden when IBEX_ENV=production.",
+      defaultValue: "mock",
+    },
+    {
+      name: "OPENAI_API_KEY",
+      type: "string",
+      description: "Required when IBEX_LLM_MODE=live.",
+    },
+    {
+      name: "OPENAI_BASE_URL",
+      type: "string (URL)",
+      description: "OpenAI-compatible API base.",
+      defaultValue: "https://api.openai.com/v1",
+    },
+    {
+      name: "IBEX_LLM_EXTRA_MODELS",
+      type: "string",
+      description: "Comma-separated extra model ids registered for routing.",
+    },
+  ]}
+/>
+
+## Postgres features (directives / sessions)
+
+<ParamTable
+  params={[
+    {
+      name: "POSTGRES_DSN",
+      type: "string (postgres://…)",
+      description:
+        "Enables directive load and session store. Empty → Noop directive/session behavior.",
+    },
+    {
+      name: "IBEX_DIRECTIVE_CACHE_TTL",
+      type: "duration",
+      description: "Directive Redis cache TTL.",
+      defaultValue: "60s",
+    },
+    {
+      name: "IBEX_SESSION_CACHE_TTL",
+      type: "duration",
+      description: "Session Redis cache TTL.",
+      defaultValue: "60s",
+    },
+    {
+      name: "IBEX_SESSION_IDLE_TIMEOUT",
+      type: "duration",
+      description: "Idle session sweeper threshold.",
+      defaultValue: "45m",
+    },
+  ]}
+/>
+
+## Auth cache
+
+<ParamTable
+  params={[
+    {
+      name: "IBEX_AUTH_CACHE_ENABLED",
+      type: "boolean",
+      description:
+        "Wrap ValidateToken with bloom+LRU when Redis is healthy. Skipped (WARN) if Redis URL empty or Ping fails.",
+      defaultValue: "true",
+    },
+  ]}
+/>
+
+See [Auth caching](/docs/proxy/auth-caching).
+
+## Idempotency and traces
+
+<ParamTable
+  params={[
+    {
+      name: "IBEX_IDEMPOTENCY_TTL",
+      type: "duration",
+      description: "Redis Idempotency-Key TTL for non-streaming chat.",
+      defaultValue: "24h",
+    },
+    {
+      name: "CLICKHOUSE_DSN",
+      type: "string",
+      description: "Empty disables async llm_traces writer (fail-open).",
+    },
+    {
+      name: "CLICKHOUSE_INSERT_BATCH_SIZE",
+      type: "integer",
+      description: "Trace batch size before flush.",
+      defaultValue: "500",
+    },
+    {
+      name: "CLICKHOUSE_INSERT_FLUSH_MS",
+      type: "integer",
+      description: "Max flush interval in milliseconds.",
+      defaultValue: "200",
+    },
+  ]}
+/>
 
 ## HTTP and auth tuning
 
@@ -87,61 +193,15 @@ Copy `services/proxy/.env.example` to `services/proxy/.env` for local developmen
 
 Redis keys follow `ratelimit:{org_id}:rpm:{unix_minute}` — org_id is always the second segment per [Tenant isolation](/docs/security/tenant-isolation).
 
-## Correlation and errors
-
-<ParamTable
-  params={[
-    {
-      name: "IBEX_REQUEST_ID_HEADER",
-      type: "string",
-      description: "Inbound/outbound request ID header name.",
-      defaultValue: "X-Request-ID",
-    },
-    {
-      name: "IBEX_TRACE_ID_HEADER",
-      type: "string",
-      description: "Trace ID response header name.",
-      defaultValue: "X-Trace-ID",
-    },
-    {
-      name: "IBEX_ERROR_DOCS_BASE",
-      type: "string (URL)",
-      description: "Optional prefix for docs_url in JSON error envelopes.",
-    },
-  ]}
-/>
-
-## Observability
-
-<ParamTable
-  params={[
-    {
-      name: "OTEL_SERVICE_NAME",
-      type: "string",
-      description: "OpenTelemetry service.name resource attribute.",
-      defaultValue: "ibex-proxy",
-    },
-    {
-      name: "OTEL_EXPORTER_OTLP_ENDPOINT",
-      type: "string (URL)",
-      description: "OTLP exporter endpoint; unset = no-op tracer.",
-    },
-    {
-      name: "IBEX_LOG_LEVEL",
-      type: "string",
-      description: "Structured log verbosity (debug, info, warn, error).",
-      defaultValue: "info",
-    },
-  ]}
-/>
-
 ## Example `.env` excerpt
 
 ```bash title="services/proxy/.env"
 IBEX_PORT=8080
 IBEX_AUTH_GRPC_ADDR=127.0.0.1:9091
 IBEX_AUTH_VALIDATE_TIMEOUT=2s
+IBEX_LLM_MODE=mock
 REDIS_URL=redis://localhost:6379/0
+POSTGRES_DSN=postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
 IBEX_MAX_REQUEST_BODY_BYTES=1048576
 IBEX_RATE_LIMIT_DEFAULT_RPM=60
 IBEX_LOG_LEVEL=debug
@@ -156,7 +216,7 @@ Smoke-test convenience variables (`IBEX_DEV_TOKEN`, `IBEX_DEV_AGENT_ID`) are doc
 | Check | When evaluated | Failure impact |
 | --- | --- | --- |
 | `auth_grpc` | Always | Orchestrator should not route traffic |
-| `redis` | When `REDIS_URL` is set | Rate limiter degraded; requests still allowed |
+| `redis` | When `REDIS_URL` is set | Rate limiter / cache degraded; requests still allowed |
 
 Liveness (`GET /health`) does not probe dependencies — use it for process-up checks only. Details: [ADR-0022](/docs/adr/0022-health-check-contract).
 
@@ -164,13 +224,13 @@ Liveness (`GET /health`) does not probe dependencies — use it for process-up c
 
 <Steps>
   <Step title="Infrastructure">
-    `make compose-dev-up` — Postgres (auth), Redis (proxy rate limit).
+    `make compose-dev-up` — Postgres, Redis, optional ClickHouse.
   </Step>
   <Step title="Migrations and seed">
     `make db-migrate && make db-seed` — org, agent, and dev PAT for smoke tests.
   </Step>
   <Step title="Auth first">
-    Start auth on gRPC `9091` before the proxy. See [Auth configuration](/docs/deployment/environment-variables).
+    Start auth on gRPC `9091` before the proxy. See [Environment variables](/docs/deployment/environment-variables).
   </Step>
   <Step title="Proxy">
     `go run ./services/proxy/cmd/proxy` with env from `.env`.
@@ -201,4 +261,4 @@ Expected: `/health` returns `{"status":"ok"}`. `/ready` returns `ok` when auth g
 - [Overview](/docs/proxy/overview) — middleware order and endpoint table
 - [Rate limiting](/docs/proxy/rate-limiting) — how RPM config maps to Redis
 - [Docker Compose](/docs/deployment/docker-compose) — production-like local stack
-- [Environment variables](/docs/deployment/environment-variables) — full cross-service registry
+- [Environment variables](/docs/deployment/environment-variables) — integrator registry

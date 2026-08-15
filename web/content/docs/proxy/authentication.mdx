@@ -6,7 +6,7 @@ description: How the proxy validates tokens and resolves agent identity.
 Protected proxy routes require two credentials: a Personal Access Token (PAT) in the `Authorization` header and an active agent UUID in `X-IBEX-Agent-ID`. The proxy never stores token hashes — every validation is delegated to the auth service over gRPC ([ADR-0011](/docs/adr/0011-proxy-auth-client), [ADR-0016](/docs/adr/0016-agent-identity-verification)).
 
 <Callout type="warning" title="Fail-closed on auth outage">
-  When auth gRPC is unavailable, token validation returns `503 SERVICE_DEGRADED` and agent verification returns `503 AUTH_UNAVAILABLE`. There is no permission cache bypass in Phase 1.
+  When auth gRPC is unavailable, token validation returns `503 SERVICE_DEGRADED` and agent verification returns `503 AUTH_UNAVAILABLE`. Auth cache only wraps successful validations when Redis revocation is healthy — it never bypasses fail-closed auth.
 </Callout>
 
 ## Required headers
@@ -89,7 +89,7 @@ Successful probe response:
 
 ## Chat completion probe
 
-After auth and agent checks pass, chat returns `501` in Phase 1 — that is success for credential verification:
+After auth and agent checks pass, mock-mode chat returns **200** for registered models:
 
 <CodeTabs>
   <CodeTab label="curl">
@@ -114,7 +114,7 @@ Invoke-RestMethod -Uri http://localhost:8080/v1/chat/completions -Method POST -H
   </CodeTab>
 </CodeTabs>
 
-Expected: HTTP **501** with `error.code` = `PROVIDER_NOT_CONFIGURED`.
+Expected (mock): HTTP **200**. A `501 PROVIDER_NOT_CONFIGURED` means the model is not registered.
 
 ## Error matrix
 
