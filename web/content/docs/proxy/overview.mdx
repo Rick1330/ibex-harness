@@ -1,17 +1,21 @@
 ---
 title: Overview
-description: How the IBEX Harness proxy sits between clients and LLM providers.
+description: How the IBEX Harness proxy authenticates, injects context, and forwards to LLM providers.
+audience: integrator
+scope: shipped
+verifiedDate: "2026-08-15"
+sourceOfTruth: services/proxy/internal/http/router_protected.go
 ---
 
-The proxy is the public HTTP edge for IBEX Harness. Every protected request passes through authentication, agent identity verification, rate limiting, and request normalization before any provider handoff. In Phase 1 the critical path stops at validation — chat routes return `501 PROVIDER_NOT_CONFIGURED` until Phase 2 registers a provider adapter.
+The proxy is the public HTTP edge for IBEX Harness. Every protected request passes through authentication, agent identity verification, rate limiting, directive resolution, and provider routing before returning a completion.
 
-<Callout type="note" title="Phase 1 scope">
-  Auth, agent verify, semantic validation, and org-level rate limits are production-ready today. LLM forwarding, context injection, and memory retrieval are **not** wired yet. Track live status on [current state](/roadmap/current-state).
+<Callout type="info" title="Late Phase 2 scope">
+  Auth, agent verify, semantic validation, org rate limits, mock/live forwarding, directives, sessions, and optional ClickHouse traces are production-ready for the Go stack. Memory retrieval remains Phase 3. Track status on [current state](/roadmap/current-state).
 </Callout>
 
 ## Role in the platform
 
-The proxy is stateless by design: it holds no Postgres connection in Phase 1. Identity lookups go through the [auth service](/docs/auth/overview) over gRPC; rate-limit counters live in Redis. That separation keeps the critical path horizontally scalable and avoids multi-master write complexity.
+The proxy stays horizontally scalable: identity validation goes through the [auth service](/docs/auth/overview) over gRPC (with an optional bloom+LRU cache), rate-limit and idempotency state live in Redis, and session/directive data use Postgres when `POSTGRES_DSN` is set.
 
 See [Architecture overview](/docs/architecture/overview) for the full system diagram and [Request lifecycle](/docs/architecture/request-lifecycle) for the end-to-end flow.
 
@@ -19,9 +23,10 @@ See [Architecture overview](/docs/architecture/overview) for the full system dia
 flowchart LR
   Client["Agent / SDK"] -->|HTTPS| Proxy["Proxy :8080"]
   Proxy -->|ValidateToken| Auth["Auth gRPC :9091"]
-  Proxy -->|INCR rpm| Redis["Redis"]
-  Proxy -.->|Phase 2| Provider["LLM provider"]
-  Auth --> PG["Postgres"]
+  Proxy -->|RPM / cache| Redis["Redis"]
+  Proxy --> PG["Postgres"]
+  Proxy -->|mock / live| Provider["LLM provider"]
+  Auth --> PG
 ```
 
 ## Endpoint surface
@@ -33,7 +38,7 @@ flowchart LR
 | `GET /metrics` | No | Prometheus text exposition |
 | `GET /v1/internal/auth-probe` | PAT + agent | Returns `{org_id, permissions}` from validated token |
 | `GET /v1/orgs/{org_id}/auth-probe` | PAT + agent | Same probe; path `org_id` must match token org |
-| `POST /v1/chat/completions` | PAT + agent + `ProxyChatCompletion` | OpenAI-compatible chat; **501** until provider configured |
+| `POST /v1/chat/completions` | PAT + agent + `ProxyChatCompletion` | OpenAI-compatible chat — mock **200** or live forward |
 
 Organization scope for chat comes from the **validated token**, not the URL path. Cross-tenant path probes return `403` — see [Tenant isolation](/docs/security/tenant-isolation).
 
@@ -41,7 +46,7 @@ Organization scope for chat comes from the **validated token**, not the URL path
 
 Global middleware wraps every route: metrics → request context → response headers → logging → mux.
 
-Protected routes add route-specific chains. For chat completions:
+Protected chat completions add:
 
 <ProcessSteps
   steps={[
@@ -53,7 +58,7 @@ Protected routes add route-specific chains. For chat completions:
     {
       title: 'Token validation',
       description:
-        'Calls auth ValidateToken over gRPC with a 50ms production budget (ADR-0011).',
+        'Calls auth ValidateToken over gRPC (50ms production budget), optionally via auth cache when Redis revocation is healthy (ADR-0011, ADR-0028).',
     },
     {
       title: 'Agent verification',
@@ -66,9 +71,14 @@ Protected routes add route-specific chains. For chat completions:
         'Org-level RPM in Redis; fail-open when Redis is unavailable (ADR-0015).',
     },
     {
-      title: 'Normalize and validate',
+      title: 'Directive resolve',
       description:
-        'Parses OpenAI chat JSON; semantic errors return field_errors in the envelope (ADR-0012).',
+        'Loads org directive versions and prepares system-prompt injection (ADR-0031).',
+    },
+    {
+      title: 'Normalize, route, forward',
+      description:
+        'Parses OpenAI chat JSON, selects mock or live provider, returns completion or 501 for unknown models.',
     },
   ]}
 />
@@ -81,8 +91,9 @@ Auth-probe routes skip body limit and Content-Type checks but still run auth, ag
 | --- | --- | --- |
 | Auth gRPC down / timeout | Fail **closed** on token validation | `503 SERVICE_DEGRADED` |
 | Auth gRPC down on agent verify | Fail **closed** | `503 AUTH_UNAVAILABLE` |
-| Redis down | Rate limit **skipped** (fail-open) | Request proceeds; monitor `/ready` |
-| No provider registered | Expected in Phase 1 | `501 PROVIDER_NOT_CONFIGURED` |
+| Redis down | Rate limit **skipped** (fail-open); auth cache not wrapped | Request proceeds; monitor `/ready` |
+| Unknown model | No adapter for that model id | `501 PROVIDER_NOT_CONFIGURED` |
+| ClickHouse down | Traces drop | Chat still **200** |
 
 Full threat-model context: [Security overview](/docs/security/overview) and [Authentication](/docs/security/authentication).
 
@@ -109,14 +120,15 @@ Protected routes with rate limiting enabled also emit `X-RateLimit-Limit`, `X-Ra
     `curl -s http://localhost:8080/health` — expect HTTP 200.
   </Step>
   <Step title="Smoke test">
-    `make dev-smoke` exercises probes, auth failures, and the chat stub.
+    `make dev-smoke` exercises probes, auth failures, and mock chat success.
   </Step>
 </Steps>
 
 ## Related guides
 
 - [Authentication](/docs/proxy/authentication) — headers, error codes, probe examples
+- [Auth caching](/docs/proxy/auth-caching) — bloom+LRU and revocation gate
+- [Directives](/docs/proxy/directives) / [Sessions](/docs/proxy/sessions) — platform features
 - [Configuration](/docs/proxy/configuration) — env vars and readiness dependencies
 - [Rate limiting](/docs/proxy/rate-limiting) — RPM budgets and Redis keys
-- [Request routing](/docs/proxy/request-routing) — normalization rules and chat schema
-- [Provider adapters](/docs/proxy/provider-adapters) — Phase 2 forwarding contract
+- [Provider adapters](/docs/proxy/provider-adapters) — mock vs live

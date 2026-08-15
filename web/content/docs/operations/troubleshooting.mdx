@@ -1,9 +1,9 @@
 ---
 title: Troubleshooting
-description: Common compose-dev, auth, proxy, and database failures for Phase 1.
+description: Common compose-dev, auth, proxy, and database failures for local development.
 ---
 
-When something breaks locally, identify which boundary failed first — client to proxy, proxy to auth, or services to Postgres/Redis. This page covers the most common Phase 1 setup and runtime issues. Always redact secrets from bug reports.
+When something breaks locally, identify which boundary failed first — client to proxy, proxy to auth, or services to Postgres/Redis. Always redact secrets from bug reports.
 
 <Callout type="tip" title="Golden rule">
   Start with health endpoints, then infra (Docker), then service logs filtered by `request_id`.
@@ -128,7 +128,7 @@ IBEX_AUTH_VALIDATE_TIMEOUT=2s go run ./services/proxy/cmd/proxy
 
 PowerShell: `$env:IBEX_AUTH_VALIDATE_TIMEOUT = "2s"`.
 
-Phase 1 smoke expectation: **501** `PROVIDER_NOT_CONFIGURED` means auth passed.
+Mock-mode smoke expectation: HTTP **200** means auth and provider routing passed. **501** means an unregistered model.
 
 ## Proxy issues
 
