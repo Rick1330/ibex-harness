@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ALLOWED_TOP='^(web|services|packages|infra|reports|benchmarks|\.github|\.git|_report|node_modules)$'
+ALLOWED_TOP='^(web|services|packages|infra|reports|benchmarks|patches|\.github|\.git|_report|node_modules)$'
 ROOT_DOCS='^(AGENTS\.md|CLAUDE\.md|README\.md|LICENSE|CONTRIBUTING\.md|CODE_OF_CONDUCT\.md|CHANGELOG\.md)$'
 
 fail=0

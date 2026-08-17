@@ -27,9 +27,13 @@
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-blue.svg"></a>
 </p>
 
+## Current status
+
+Phases **0–2 are complete** (auth, proxy, shared Go packages, docs site). Python memory/context/workers and the operator dashboard are **Phase 3+**. See [roadmap current state](https://ibexharness.com/roadmap/current-state).
+
 ## Quick start
 
-- **Prerequisites**: Docker, Go, Buf, Make. See [TOOLCHAIN.md](web/engineering/TOOLCHAIN.md).
+- **Prerequisites**: Docker, Go, Buf, Make, Node 22 / pnpm 9. See [TOOLCHAIN.md](web/engineering/TOOLCHAIN.md).
 - **Full setup and local workflow**: [DEVELOPMENT_GUIDE.md](web/engineering/DEVELOPMENT_GUIDE.md).
 
 ```bash

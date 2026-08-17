@@ -21,7 +21,8 @@ make help
 | Go | 1.25.13+ | Go services (`auth`, `proxy`, future CLI); must match `go.mod` |
 | Docker builder (auth/proxy) | `golang:1.26-alpine3.22` | Multi-stage builds; `CGO_ENABLED=0`, pinned digests, non-root runtime |
 | GNU Make | any POSIX `make` implementation | Canonical command surface (`Makefile`) used by developers and CI; on Windows prefer running via Git Bash or install a compatible `make` implementation |
-| Node.js | 18+ | `markdownlint-cli2` and future dashboard |
+| Node.js | 22 (see `.nvmrc`) | Docs site (`web/`), markdownlint, pnpm workspace |
+| pnpm | 9.15.9 (see root `packageManager`) | Workspace installs for `web/` and `@ibex-harness/proto` |
 | Python | 3.11+ | Future Python services and optional tooling |
 | Buf CLI | 1.47+ | Protobuf linting and breaking-change checks |
 | Bash | Git Bash, macOS bash, or Linux shell | Root `Makefile` targets and repo guards |
@@ -50,12 +51,16 @@ winget install --id OpenJS.NodeJS.LTS -e
 winget install --id Python.Python.3.11 -e
 winget install --id Bufbuild.Buf -e
 winget install --id Gitleaks.Gitleaks -e
+corepack enable
+corepack prepare pnpm@9.15.9 --activate
 ```
 
 If `winget` does not provide a package in your environment, Chocolatey equivalents are:
 
 ```powershell
 choco install git docker-desktop golang nodejs-lts python311 buf gitleaks -y
+corepack enable
+corepack prepare pnpm@9.15.9 --activate
 ```
 
 After installing Docker Desktop, start it once from the Windows UI and confirm Docker Compose v2 is available.
@@ -65,6 +70,8 @@ After installing Docker Desktop, start it once from the Windows UI and confirm D
 ```bash
 brew install git go node python@3.11 bufbuild/buf/buf gitleaks pre-commit act
 brew install --cask docker
+corepack enable
+corepack prepare pnpm@9.15.9 --activate
 ```
 
 Start Docker Desktop before running compose commands.
@@ -75,7 +82,12 @@ Ubuntu/Debian:
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y git make curl ca-certificates gnupg python3.11 python3-pip nodejs npm golang-go
+sudo apt-get install -y git make curl ca-certificates gnupg python3.11 python3-pip
+# Node 22: use nvm/fnm or NodeSource; then:
+corepack enable
+corepack prepare pnpm@9.15.9 --activate
+# Go from distro or https://go.dev/dl/ (must match go.mod)
+sudo apt-get install -y golang-go
 ```
 
 Install Docker Engine and the Compose plugin using Docker's official packages for your distribution:
@@ -119,7 +131,7 @@ docker version
 docker compose version
 go version
 node --version
-npm --version
+pnpm --version
 python --version
 buf --version
 ```
@@ -129,10 +141,15 @@ Expected:
 - `git --version` prints Git `2.40` or newer.
 - `docker version` reports a reachable Docker server.
 - `docker compose version` prints Compose `v2...`.
-- `go version` prints `go1.22` or newer.
-- `node --version` prints `v18...` or newer.
+- `go version` prints `go1.25.13` or newer (must match `go.mod`).
+- `node --version` prints `v22...` (`.nvmrc`; web app and `pnpm` workspace).
+- `pnpm --version` prints `9.15.9` (root `packageManager` in `package.json`).
 - `python --version` prints `3.11...` or newer.
 - `buf --version` prints `1.47...` or newer.
+
+The docs app (`web/`) currently uses Next.js 16 and Fumadocs 14.
+
+**Note:** CI `markdownlint` runs on Node 20 (`.github/markdownlint` isolated install); the web workspace and `@ibex-harness/proto` typecheck use Node 22 via `.github/actions/setup-pnpm-web`.
 
 Optional:
 

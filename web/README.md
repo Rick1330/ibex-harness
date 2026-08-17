@@ -35,12 +35,12 @@ Then browse `http://localhost:3000`. Docs and roadmap route segments set `export
 
 ### Windows tips
 
-- Stop stale servers before rebuilding: `pnpm --filter docs stop:next`
+- Stop stale servers before rebuilding: `pnpm --filter web stop:next`
 - Prefer `pnpm docs:dev:clean` or `pnpm docs:build:clean` over raw `next` commands
 - Never run `dev`, `build`, and `start` concurrently on the same port
 - **Wait for build to fully exit** before `pnpm start` — the last phases (`Collecting build traces`, `Finishing writing to cache`) can take 1–5 minutes with no output on Windows
-- If cache write appears stuck, try `pnpm --filter docs build:fast` (disables webpack disk cache)
-- Add a Windows Defender exclusion for `docs/app/.next` if builds are consistently slow
+- If cache write appears stuck, try `pnpm --filter web build:fast` (disables webpack disk cache)
+- Add a Windows Defender exclusion for `web/.next` if builds are consistently slow
 
 ### Build phases (what to expect)
 
@@ -66,4 +66,4 @@ pnpm docs:build        # from repo root
 pnpm docs:build:clean  # stop stale processes, clean .next, then build
 ```
 
-See [Phase 1.5 roadmap](../roadmap/phase-1-5-docs-site/README.md) and [ADR-0023](../adr/ADR-0023-docs-site-architecture.md).
+See [roadmap current state](content/roadmap/current-state.mdx) and [ADR-0023](content/docs/adr/0023-docs-site-architecture.mdx).
