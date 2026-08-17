@@ -17,6 +17,6 @@ Planned layout (see [web/engineering/FILE_STRUCTURE.md](../web/engineering/FILE_
 **Available now:**
 
 - `compose/dev/` — [compose/dev/README.md](compose/dev/README.md) (Postgres, Redis Stack, ClickHouse, MinIO)
-- `compose/test/` — minimal Postgres + Redis for future integration tests
+- `compose/test/` — minimal Postgres + Redis for Go integration tests (`make compose-test-up`, port 5433)
 
 Other infra (helm, terraform, monitoring) is not implemented yet.

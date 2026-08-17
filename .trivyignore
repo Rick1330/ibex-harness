@@ -5,8 +5,9 @@
 CVE-2026-56864
 CVE-2026-56865
 
-# image-size DoS (no patched release <=2.0.2). Same acceptance as osv-scanner.toml:
-# transitive via fumadocs-core; docs build does not feed untrusted buffers into
-# image-size. Revisit by 2026-12-01.
+# image-size DoS (CVE-2025-71329 / CVE-2025-71330; Dependabot alerts #24 / #25).
+# No patched release yet (advisory last-affected <=2.0.2; npm latest still 2.0.2).
+# Same acceptance as osv-scanner.toml: transitive via fumadocs-core@14; docs build
+# does not feed untrusted buffers into image-size. Revisit by 2026-12-01.
 CVE-2025-71329
 CVE-2025-71330

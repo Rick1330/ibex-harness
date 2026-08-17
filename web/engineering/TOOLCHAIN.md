@@ -21,7 +21,8 @@ make help
 | Go | 1.25.13+ | Go services (`auth`, `proxy`, future CLI); must match `go.mod` |
 | Docker builder (auth/proxy) | `golang:1.26-alpine3.22` | Multi-stage builds; `CGO_ENABLED=0`, pinned digests, non-root runtime |
 | GNU Make | any POSIX `make` implementation | Canonical command surface (`Makefile`) used by developers and CI; on Windows prefer running via Git Bash or install a compatible `make` implementation |
-| Node.js | 18+ | `markdownlint-cli2` and future dashboard |
+| Node.js | 22 (see `.nvmrc`) | Docs site (`web/`), markdownlint, pnpm workspace |
+| pnpm | 9.15.9 (see root `packageManager`) | Workspace installs for `web/` and `@ibex-harness/proto` |
 | Python | 3.11+ | Future Python services and optional tooling |
 | Buf CLI | 1.47+ | Protobuf linting and breaking-change checks |
 | Bash | Git Bash, macOS bash, or Linux shell | Root `Makefile` targets and repo guards |
@@ -119,7 +120,7 @@ docker version
 docker compose version
 go version
 node --version
-npm --version
+pnpm --version
 python --version
 buf --version
 ```
@@ -129,10 +130,13 @@ Expected:
 - `git --version` prints Git `2.40` or newer.
 - `docker version` reports a reachable Docker server.
 - `docker compose version` prints Compose `v2...`.
-- `go version` prints `go1.22` or newer.
-- `node --version` prints `v18...` or newer.
+- `go version` prints `go1.25.13` or newer (must match `go.mod`).
+- `node --version` prints `v22...` (`.nvmrc`).
+- `pnpm --version` prints `9.15.x` (root `packageManager`).
 - `python --version` prints `3.11...` or newer.
 - `buf --version` prints `1.47...` or newer.
+
+The docs app (`web/`) currently uses Next.js 16 and Fumadocs 14.
 
 Optional:
 
