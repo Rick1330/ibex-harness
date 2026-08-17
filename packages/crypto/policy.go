@@ -1,5 +1,5 @@
 // Package crypto provides approved cryptographic primitives for IBEX Harness.
-// Policy is defined in docs/adr/ADR-0010-cryptography-policy.md.
+// Policy is defined in web/content/docs/adr/0010-cryptography-policy.mdx.
 package crypto
 
 const (

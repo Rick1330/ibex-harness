@@ -9,6 +9,10 @@ updates:
   labels:
   - dependencies
   - github-actions
+  groups:
+    codeql-actions:
+      patterns:
+      - github/codeql-action*
 - package-ecosystem: gomod
   directory: /
   schedule:
@@ -52,3 +56,10 @@ updates:
   labels:
   - dependencies
   - area/web
+  ignore:
+  # No patched release yet (advisory last-affected <=2.0.2; npm latest still 2.0.2).
+  # Accepted via .trivyignore + osv-scanner.toml; Dependabot alerts 24/25.
+  # Remove this ignore when image-size publishes >2.0.2.
+  - dependency-name: image-size
+    versions:
+    - "<=2.0.2"

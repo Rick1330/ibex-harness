@@ -8,7 +8,8 @@ id = "GO-2026-5932"
 ignoreUntil = 2026-12-01
 reason = "Unreachable openpgp subpackage; only golang.org/x/crypto/argon2 is used (ADR-0008, ADR-0010). Verified by govulncheck."
 
-# image-size DoS in JXL/HEIF parsers: no patched release (advisory last-affected 2.0.2).
+# image-size DoS in JXL/HEIF/ICNS parsers (Dependabot alerts #24 / #25):
+# no patched release (advisory last-affected 2.0.2; npm latest still 2.0.2).
 # Transitive via fumadocs-core; docs site does not parse untrusted image buffers
 # through image-size. Prefer package-scoped ignore over global advisory IDs.
 
@@ -18,4 +19,4 @@ version = "1.2.1"
 ecosystem = "npm"
 vulnerability.ignore = true
 effectiveUntil = 2026-12-01
-reason = "No patched image-size release (<=2.0.2). Transitive fumadocs-core@14; docs build does not feed untrusted buffers into image-size. Revisit when upstream patches or fumadocs drops the dep."
+reason = "No patched image-size release (<=2.0.2). Transitive fumadocs-core@14; docs build does not feed untrusted buffers into image-size (Dependabot #24/#25). Revisit when upstream patches or fumadocs drops the dep."
