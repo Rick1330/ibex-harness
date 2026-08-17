@@ -2,7 +2,7 @@
 
 Roadmap content has moved to the docs site source at `web/content/roadmap/`.
 
-- **Public site:** [/roadmap](https://ibex-harness.dev/roadmap) (when deployed) or run the docs app locally and open `/roadmap`.
+- **Public site:** [/roadmap](https://ibexharness.com/roadmap) (when deployed) or run the docs app locally and open `/roadmap`.
 - **Contributor edits:** change MDX under `web/content/roadmap/`, then run `pnpm exec fumadocs-mdx` in `web/`.
 - **Agent guidance:** [AGENTS.md](../../../AGENTS.md), [CLAUDE.md](../../../CLAUDE.md).
 

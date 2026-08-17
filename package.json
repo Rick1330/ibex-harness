@@ -15,7 +15,7 @@
     "docs:start": "pnpm web:start"
   },
   "devDependencies": {
-    "turbo": "^2.10.5"
+    "turbo": "^2.10.9"
   },
   "pnpm": {
     "overrides": {
@@ -26,6 +26,9 @@
       "postcss": ">=8.5.23",
       "sharp": ">=0.35.0",
       "undici": ">=7.29.0 <8"
+    },
+    "patchedDependencies": {
+      "image-size@1.2.1": "patches/image-size@1.2.1.patch"
     }
   }
 }

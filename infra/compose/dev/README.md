@@ -48,7 +48,7 @@ make db-migrate
 make clickhouse-migrate
 ```
 
-See [ADR-0005](../../../docs/adr/ADR-0005-postgres-migration-strategy.md) and `make db-version` / `make db-migrate-down` (dev rollback, one step).
+See [ADR-0005](../../../web/content/docs/adr/0005-postgres-migration-strategy.mdx) and `make db-version` / `make db-migrate-down` (dev rollback, one step).
 
 ## Verify health
 
