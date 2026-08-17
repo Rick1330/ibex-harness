@@ -4,7 +4,7 @@ Go service for the IBEX Harness LLM proxy.
 
 ## Platform endpoints (no auth)
 
-- `GET /health` — liveness (`{"status":"ok","checks":{}}`; [ADR-0022](../../docs/adr/ADR-0022-health-check-contract.md))
+- `GET /health` — liveness (`{"status":"ok","checks":{}}`; [ADR-0022](../../web/content/docs/adr/0022-health-check-contract.mdx))
 - `GET /ready` — readiness; critical: `auth_grpc` (ValidateToken probe), `redis` (`PING`); advisory: `postgres` (`SELECT 1` when `POSTGRES_DSN` set)
 - `GET /metrics` — Prometheus text metrics
 
@@ -13,13 +13,13 @@ Go service for the IBEX Harness LLM proxy.
 All protected routes require:
 
 - `Authorization: Bearer <pat>`
-- `X-IBEX-Agent-ID: <uuid>` — must be an **active** agent owned by the token's org ([ADR-0016](../../docs/adr/ADR-0016-agent-identity-verification.md))
+- `X-IBEX-Agent-ID: <uuid>` — must be an **active** agent owned by the token's org ([ADR-0016](../../web/content/docs/adr/0016-agent-identity-verification.mdx))
 
 - `GET /v1/internal/auth-probe` — returns `{org_id, permissions}` for the caller token
 - `GET /v1/orgs/{org_id}/auth-probe` — same; path `org_id` must be UUID; **403** if path org ≠ token org
-- `POST /v1/chat/completions` — auth + agent verify + `ProxyChatCompletion`; body limit + JSON Content-Type; semantic validation; rate limit; **501** when valid; **429** `RATE_LIMITED`; **400** `MISSING_AGENT_ID` / `VALIDATION_ERROR` / `INVALID_JSON`; **403** `AGENT_NOT_AUTHORIZED` / `AGENT_SUSPENDED`; **413** / **415** per [ADR-0013](../../docs/adr/ADR-0013-proxy-input-validation-and-error-envelope.md)
+- `POST /v1/chat/completions` — auth + agent verify + `ProxyChatCompletion`; body limit + JSON Content-Type; semantic validation; rate limit; provider routing (default `IBEX_LLM_MODE=mock` → HTTP **200** for registered models; `live` + `OPENAI_API_KEY` for real upstream). **501** `PROVIDER_NOT_CONFIGURED` means the **model is not in the registry**, not that forwarding is missing. Also: **429** `RATE_LIMITED`; **400** `MISSING_AGENT_ID` / `VALIDATION_ERROR` / `INVALID_JSON`; **403** `AGENT_NOT_AUTHORIZED` / `AGENT_SUSPENDED`; **413** / **415** per [ADR-0013](../../web/content/docs/adr/0013-proxy-input-validation-and-error-envelope.mdx). Mock is rejected when `IBEX_ENV=production`.
 
-Auth validates via gRPC `ValidateToken` ([ADR-0011](../../docs/adr/ADR-0011-proxy-auth-client.md)). Agent ownership via gRPC `ValidateAgent` ([ADR-0016](../../docs/adr/ADR-0016-agent-identity-verification.md)). Parse: [ADR-0012](../../docs/adr/ADR-0012-proxy-request-normalization.md). Validation + envelope: [ADR-0013](../../docs/adr/ADR-0013-proxy-input-validation-and-error-envelope.md). Rate limit: [ADR-0015](../../docs/adr/ADR-0015-proxy-rate-limit-skeleton.md). Directive resolve (m2.3.2): Redis cache with Postgres fallback via `POSTGRES_DSN` (`openProxyPostgres` / `directive.PostgresStore.Load`) when Redis is also configured. Session lifecycle (m2.4.3): when `POSTGRES_DSN` is set, chat resolves/mints sticky `X-IBEX-Session-ID` (= `sessions.external_id`, not row `id`), optionally via Redis key `session:{org_id}:{agent_id}:{external_id}`, echoes that external id on stream and non-stream responses (including GetOrCreate fail-open sticky-only), and enqueues `AppendCheckpoint` on a bounded non-dropping async pool (detached Background+timeout per task, drained on shutdown). GetOrCreate failures fail open (sticky header kept; checkpoint skipped). Idle sweeper (m2.4.4): background ticker marks stale `active` sessions `abandoned` (`IBEX_SESSION_IDLE_TIMEOUT` / `IBEX_SESSION_SWEEP_INTERVAL`), invalidates Redis session keys, and uses a Postgres advisory lock across replicas. Explicit `X-IBEX-Session-End` → `completed` may be wired later; idle path uses `abandoned`. Directive injection (m2.3.3): handler applies `packages/injection.Inject` (`system_first` / `system_append` / `user_prepend`) to `provider.Request.Messages` before `Complete` ([ADR-0031](../../web/content/docs/adr/0031-system-prompt-injection.mdx)); directive content is never logged. Fail closed: token auth outage → **503** `SERVICE_DEGRADED`; agent verify outage → **503** `AUTH_UNAVAILABLE`. Rate limit Redis outage → fail open (request allowed).
+Auth validates via gRPC `ValidateToken` ([ADR-0011](../../web/content/docs/adr/0011-proxy-auth-client.mdx)). Agent ownership via gRPC `ValidateAgent` ([ADR-0016](../../web/content/docs/adr/0016-agent-identity-verification.mdx)). Parse: [ADR-0012](../../web/content/docs/adr/0012-proxy-request-normalization.mdx). Validation + envelope: [ADR-0013](../../web/content/docs/adr/0013-proxy-input-validation-and-error-envelope.mdx). Rate limit: [ADR-0015](../../web/content/docs/adr/0015-proxy-rate-limit-skeleton.mdx). Directive resolve (m2.3.2): Redis cache with Postgres fallback via `POSTGRES_DSN` (`openProxyPostgres` / `directive.PostgresStore.Load`) when Redis is also configured. Session lifecycle (m2.4.3): when `POSTGRES_DSN` is set, chat resolves/mints sticky `X-IBEX-Session-ID` (= `sessions.external_id`, not row `id`), optionally via Redis key `session:{org_id}:{agent_id}:{external_id}`, echoes that external id on stream and non-stream responses (including GetOrCreate fail-open sticky-only), and enqueues `AppendCheckpoint` on a bounded non-dropping async pool (detached Background+timeout per task, drained on shutdown). GetOrCreate failures fail open (sticky header kept; checkpoint skipped). Idle sweeper (m2.4.4): background ticker marks stale `active` sessions `abandoned` (`IBEX_SESSION_IDLE_TIMEOUT` / `IBEX_SESSION_SWEEP_INTERVAL`), invalidates Redis session keys, and uses a Postgres advisory lock across replicas. Explicit `X-IBEX-Session-End` → `completed` may be wired later; idle path uses `abandoned`. Directive injection (m2.3.3): handler applies `packages/injection.Inject` (`system_first` / `system_append` / `user_prepend`) to `provider.Request.Messages` before `Complete` ([ADR-0031](../../web/content/docs/adr/0031-system-prompt-injection.mdx)); directive content is never logged. Fail closed: token auth outage → **503** `SERVICE_DEGRADED`; agent verify outage → **503** `AUTH_UNAVAILABLE`. Rate limit Redis outage → fail open (request allowed).
 
 ## Middleware order
 
@@ -40,7 +40,7 @@ Protected responses include `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `X
 
 All responses include `X-Request-ID`, `X-Trace-ID`, and `X-Response-Time` (configurable header names via env).
 
-Request IDs use **UUID v7** when generated ([ADR-0017](../../docs/adr/ADR-0017-request-id-strategy.md)). Valid inbound UUIDs (v4 or v7) on `IBEX_REQUEST_ID_HEADER` are honoured; invalid values are replaced. The same ID appears in JSON error `request_id` and is propagated to auth gRPC calls via `x-request-id` metadata (`packages/reqid`).
+Request IDs use **UUID v7** when generated ([ADR-0017](../../web/content/docs/adr/0017-request-id-strategy.mdx)). Valid inbound UUIDs (v4 or v7) on `IBEX_REQUEST_ID_HEADER` are honoured; invalid values are replaced. The same ID appears in JSON error `request_id` and is propagated to auth gRPC calls via `x-request-id` metadata (`packages/reqid`).
 
 ## Configuration
 
@@ -67,6 +67,15 @@ See [.env.example](.env.example).
 | `IBEX_SESSION_GETORCREATE_TIMEOUT` | `50ms` | Hot-path GetOrCreate deadline (fail-open) |
 | `IBEX_SESSION_IDLE_TIMEOUT` | `45m` | Idle `active` → `abandoned` threshold (`updated_at`) |
 | `IBEX_SESSION_SWEEP_INTERVAL` | `1m` | Sweeper ticker interval (≤ idle timeout) |
+| `IBEX_LLM_MODE` | `mock` | `mock` (in-process stub) or `live` (OpenAI-compatible). Rejected when `IBEX_ENV=production` |
+| `OPENAI_API_KEY` | (empty) | Required when `IBEX_LLM_MODE=live` |
+| `OPENAI_BASE_URL` | OpenAI default | Optional upstream base URL |
+| `IBEX_LLM_EXTRA_MODELS` | (empty) | Comma-separated extra model IDs for live registry |
+| `IBEX_IDEMPOTENCY_TTL` | `24h` | Idempotency-Key Redis TTL (non-streaming chat) |
+| `IBEX_IDEMPOTENCY_REDIS_TIMEOUT` | `50ms` | Idempotency Redis budget |
+| `CLICKHOUSE_DSN` | (empty) | Optional `llm_traces` writer |
+| `CLICKHOUSE_INSERT_BATCH_SIZE` | `500` | Trace insert batch size |
+| `CLICKHOUSE_INSERT_FLUSH_MS` | `200` | Trace flush interval |
 
 ## Run locally
 
@@ -131,8 +140,9 @@ curl -s -X POST http://localhost:8080/v1/chat/completions \
   -H "Authorization: Bearer <pat>" \
   -H "Content-Type: application/json" \
   -H "X-IBEX-Agent-ID: 550e8400-e29b-41d4-a716-446655440000" \
-  -d '{"model":"gpt-4","messages":[{"role":"user","content":"hello"}]}'
-# expect 501 PROVIDER_NOT_CONFIGURED
+  -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"hello"}]}'
+# expect HTTP 200 under default IBEX_LLM_MODE=mock (registered model)
+# 501 PROVIDER_NOT_CONFIGURED only if the model is not in the registry
 ```
 
 Chat (PowerShell — do not use bash `\` line continuation):
@@ -143,7 +153,7 @@ $headers = @{
   "Content-Type" = "application/json"
   "X-IBEX-Agent-ID" = "550e8400-e29b-41d4-a716-446655440000"
 }
-$body = '{"model":"gpt-4","messages":[{"role":"user","content":"hello"}]}'
+$body = '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"hello"}]}'
 Invoke-RestMethod -Uri http://localhost:8080/v1/chat/completions -Method POST -Headers $headers -Body $body
 ```
 
