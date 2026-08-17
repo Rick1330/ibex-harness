@@ -316,6 +316,21 @@ Avoid:
 - moment (prefer date-fns or Temporal polyfill if truly needed)
 - axios (prefer fetch)
 
+### 8.4.1 TypeScript — Proto stubs (`packages/proto`)
+
+**Dependency:** `@bufbuild/protobuf` ^2.14.0 (workspace dev/type resolution only; `gen/typescript` is gitignored).
+
+**Admission (summary):**
+
+1. **Why:** Buf `protoc-gen-es` emits TypeScript that imports `@bufbuild/protobuf`; without a workspace package, IDE and `tsc -p packages/proto/tsconfig.json` cannot resolve types locally or in CI after `buf generate`.
+2. **Scope:** `packages/proto` only; not linked into Go services or production runtime.
+3. **Security:** Buf-maintained runtime for generated message types; no untrusted input parsing in this package.
+4. **Maintenance:** Active Buf ecosystem; semver-aligned with `protoc-gen-es` / buf.gen.yaml pins.
+5. **Transitive:** Single direct dep; Apache-2.0.
+6. **Performance:** Typecheck-only / IDE; zero hot-path impact.
+7. **License:** Apache-2.0 (compatible).
+8. **Exit:** Remove workspace package if generated TS stubs are dropped or moved to committed artifacts with a different type strategy (see ADR-0004).
+
 ---
 
 ## 9) Dependency Scanning in CI (Required Gates)

@@ -66,4 +66,4 @@ pnpm docs:build        # from repo root
 pnpm docs:build:clean  # stop stale processes, clean .next, then build
 ```
 
-See [roadmap current state](../content/roadmap/current-state.mdx) and [ADR-0023](../content/docs/adr/0023-docs-site-architecture.mdx).
+See [roadmap current state](content/roadmap/current-state.mdx) and [ADR-0023](content/docs/adr/0023-docs-site-architecture.mdx).

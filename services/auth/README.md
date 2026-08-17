@@ -9,7 +9,7 @@ Go service for IBEX Harness authentication. Exposes HTTP health/metrics and gRPC
 | `GET /health` | Liveness — `{"status":"ok","checks":{}}` ([ADR-0022](../../web/content/docs/adr/0022-health-check-contract.mdx)) |
 | `GET /ready` | Readiness — critical: `postgres` (`SELECT 1`), `grpc` (TCP) |
 | `GET /metrics` | Prometheus text metrics |
-| gRPC `ValidateToken` | Internal token validation (no caller bearer). **Private-network only** — listen only for trusted proxy hosts (mTLS / internal net). `IBEX_AUTH_VALIDATE_RPM` is a per-proxy-host aggregate cap when `REDIS_URL` is set (disabled when Redis is empty); it is **not** client-facing internet rate limiting. Constant-cost miss path. |
+| gRPC `ValidateToken` | Internal token validation (no caller bearer). **Private-network only** — listen for trusted proxy hosts (mTLS / internal net). `IBEX_AUTH_VALIDATE_RPM` is a per-proxy-host aggregate cap when `REDIS_URL` is set (disabled when Redis is empty); it is **not** client-facing internet rate limiting. Constant-cost miss path. |
 | gRPC `ValidateAgent` | Checks `agent_id` belongs to token `org_id` and is active (called by proxy after `ValidateToken`) |
 | gRPC `CreateToken` / `RevokeToken` / `ListTokens` | PAT lifecycle (caller bearer required) |
 

@@ -301,6 +301,9 @@ jobs:
       - name: Generate stubs (ephemeral; not committed)
         working-directory: packages/proto
         run: buf generate
+      - uses: ./.github/actions/setup-pnpm-web
+      - name: Type-check generated TypeScript stubs
+        run: pnpm exec tsc -p packages/proto/tsconfig.json
       - name: Contract unit tests
         run: |
           bash infra/scripts/go-test-gotestsum.sh test-results/junit/proto-contract-unit.xml -- \
