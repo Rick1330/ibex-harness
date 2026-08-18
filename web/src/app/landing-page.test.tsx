@@ -48,7 +48,9 @@ describe("HomePage", () => {
       "#local-stack",
     );
 
-    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(/LLMs/i);
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
+      /memory layer/i,
+    );
     expect(screen.getByTestId("hero-terminal")).toBeInTheDocument();
     expect(screen.getByTestId("hero-shell-column")).toBeInTheDocument();
 
@@ -58,6 +60,15 @@ describe("HomePage", () => {
     expect(screen.getByLabelText(/Key stats/i)).toBeInTheDocument();
     expect(
       screen.getByRole("heading", { name: /at the proxy/i }),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText(/compose-dev-up/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("MOCK-LIVE").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("MEMORY").length).toBeGreaterThan(0);
+    expect(
+      screen.getByText(/Persistent agent memory is the product/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/memory injection is Phase 3/i),
     ).toBeInTheDocument();
   });
 });

@@ -26,6 +26,20 @@ Unexpected discoveries, design pivots, and plan changes. Update this file when i
 
 ---
 
+## 2026-08-18 — Phase 2 closed; landing/docs honesty wrap
+
+**Context:** Phase 2 exit / handoff to Phase 3
+
+**Finding:** Roadmap pages already marked Phase 2 complete, but the landing page, `SITE_DESCRIPTION`, and several operator guides still described Phase 1 (`make up`, Auth gRPC `:50051`, chat **501** stub as the happy path) or sold unshipped memory as live.
+
+**Impact:** New visitors could think persistent memory ships today; operators following `make dev-smoke` docs would expect the wrong status code.
+
+**Decision:** Treat Phase 2 as closed on `main`. Landing and live operator docs match mock/live chat, directives, sessions, and traces. Memory, context assembly, workers, and dashboard remain **Phase 3** — do not invent those services under `services/` until those milestones land.
+
+**Updated:** `current-state.mdx`, `findings.mdx`, `phase-3-memory-engine/index.mdx`, landing copy, `DEVELOPMENT_GUIDE.md`, `TESTING_STRATEGY.md`, issuing-api-keys, incident-response, rate-limiting, docs changelog unreleased
+
+---
+
 ## 2026-07-23 — Auth cache 2.2.1 shipped (supersedes June deferral note)
 
 **Context:** Phase 2 / Milestone 2.2.1; roadmap truth pass ([#481](https://github.com/Rick1330/ibex-harness/pull/481))

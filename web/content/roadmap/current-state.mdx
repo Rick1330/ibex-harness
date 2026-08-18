@@ -28,10 +28,10 @@ summary: "Phases 0–2 are complete. Auth, proxy, and single-provider E2E ship o
 <StatusBadge status="stable" /> **Phase 2 — Single Provider:** complete  
 <StatusBadge status="new" /> **Phase 3 — Memory Engine:** next
 
-**Last updated:** 2026-08-15  
+**Last updated:** 2026-08-18  
 **Branch:** `main`  
 **Current focus:** [Phase 3 — Memory Engine](/roadmap/phase-3-memory-engine)  
-**Completed (recent):** Phase 2 exit ([2.6.2](/roadmap/phase-2-single-provider/milestones/2.6.2-phase2-exit-gate)); docs/roadmap realignment (#481–#492)
+**Completed (recent):** Phase 2 exit ([2.6.2](/roadmap/phase-2-single-provider/milestones/2.6.2-phase2-exit-gate)); docs/roadmap realignment (#481–#492); hygiene/deps (#514, #524); Dependabot absorb; benchmark bot run [#526](https://github.com/Rick1330/ibex-harness/pull/526) (`34781cd`)
 
 <QuickLinks
   links={[
@@ -60,6 +60,9 @@ summary: "Phases 0–2 are complete. Auth, proxy, and single-provider E2E ship o
 
 ## Shipped Since Last Update
 
+- Phase 2 close-out: landing/SEO honesty (mock/live proxy today; memory remains Phase 3); operator docs no longer teach the Phase 1 chat-501 stub as the happy path
+- Hygiene/deps: proto TS workspace package, image-size pnpm patch, Cursor attribution guard (`#514`, `#524`); Dependabot absorb (CodeQL group, npm/docker/actions)
+- Benchmark bot data update ([#526](https://github.com/Rick1330/ibex-harness/pull/526), `34781cd`)
 - Docs/roadmap realignment: truth pass, `/docs` hub, core rebaseline, feature deep-dives, API reference + search body indexing, validation/historical cleanup (#481–#492)
 - Mixed API reference model: behavioral MDX + proto-backed Auth gRPC + HTTP route inventory (OpenAPI deferred)
 - Go **1.25.13** toolchain + golang alpine digests for stdlib vuln gates
@@ -108,7 +111,7 @@ summary: "Phases 0–2 are complete. Auth, proxy, and single-provider E2E ship o
 | Surface | Path | Notes |
 | --- | --- | --- |
 | Landing | `/` | Matte Graphite marketing page |
-| Docs | `/docs/*` | Hub + late Phase 2 feature guides + API reference |
+| Docs | `/docs/*` | Hub + Phase 2 feature guides + API reference |
 | Benchmarks | `/benchmarks/*` | Latency, load, waterfall, history, compare |
 | Blog | `/blog` | Historical Phase 1 posts labeled; current links updated |
 | Releases | `/releases` | Parses root `CHANGELOG.md` |

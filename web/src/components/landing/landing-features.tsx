@@ -9,11 +9,11 @@ export function LandingFeatures() {
       <div className="grid items-start gap-12 lg:grid-cols-12 lg:gap-16">
         <div className="lg:col-span-5 md:sticky md:top-[calc(var(--topbar-h)+1.5rem)] md:self-start">
           <h2 className="landing-h2 max-w-[16ch]">
-            Built for agents that cannot afford silent failure.
+            Memory that follows the agent, not the prompt.
           </h2>
           <p className="landing-body mt-5 max-w-[40ch]">
-            One ingress. Every model request inspected, authorized, and traced
-            before it leaves your perimeter.
+            The proxy is the injection point. Identity and policy ship today;
+            persistent memory joins the same path in Phase 3.
           </p>
         </div>
 
@@ -24,7 +24,7 @@ export function LandingFeatures() {
                 key={feature.index}
                 className={cn(
                   "grid gap-3 border-b border-border py-6 transition-colors duration-[var(--dur-2)] sm:grid-cols-[160px_1fr] sm:gap-6",
-                  feature.index === "03" ? "bg-surface" : "hover:bg-surface",
+                  feature.index === "01" ? "bg-surface" : "hover:bg-surface",
                 )}
               >
                 <p className="px-4 font-mono text-[11px] tracking-[0.08em] text-foreground-muted sm:px-0">

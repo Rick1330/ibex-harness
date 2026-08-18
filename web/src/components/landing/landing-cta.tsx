@@ -15,8 +15,8 @@ export function LandingCta() {
           <em className="italic">at the proxy.</em>
         </h2>
         <p className="landing-lede landing-cta-lede">
-          Read the docs, explore benchmarks, and follow the roadmap for memory
-          and context assembly.
+          Run the authenticated ingress today. Follow the roadmap for
+          extraction, ranking, and injection on every LLM call.
         </p>
         <div className="landing-cta-actions">
           <Link

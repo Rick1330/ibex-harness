@@ -14,16 +14,18 @@ export function LandingHero() {
         <div className="grid items-center gap-12 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.95fr)] xl:gap-20">
           <div className="min-w-0">
             <p className="landing-eyebrow mb-5">
-              §01 · Open source · AI agent infrastructure
+              §01 · Open source · Agent memory infrastructure
             </p>
             <h1 className="landing-h1 max-w-[16ch]">
-              The control plane for agents that call{" "}
-              <em className="italic">LLMs</em> in production.
+              The memory layer for agents that call{" "}
+              <em className="italic">LLMs</em>.
             </h1>
             <p className="landing-lede mt-6 max-w-[52ch]">
-              Intercept every model request. Validate tenant identity. Enforce
-              policy. Prepare memory context — at the proxy, not in application
-              glue code.
+              Persistent agent memory is the product. The proxy is where it
+              lives — every model request already hits one ingress, so the next
+              call can carry what the agent already learned, without glue in
+              your app. Auth, directives, and mock/live forwarding ship today;
+              memory injection is Phase 3.
             </p>
             <div className="mt-8 flex flex-wrap items-center gap-3">
               <Link
@@ -61,7 +63,7 @@ export function LandingHero() {
                 <span className="landing-hero-shell-chip-dot" aria-hidden />
                 <span>operational</span>
               </div>
-              <div className="landing-hero-shell-chip">make up</div>
+              <div className="landing-hero-shell-chip">compose-dev-up</div>
             </div>
           </div>
         </div>
