@@ -7,7 +7,6 @@ import { LandingFlow } from "@/components/landing/landing-flow";
 import { LandingFooter } from "@/components/landing/landing-footer";
 import { LandingFrame } from "@/components/landing/landing-frame";
 import { LandingHero } from "@/components/landing/landing-hero";
-import { LandingMarquee } from "@/components/landing/landing-marquee";
 import { LandingTerminal } from "@/components/landing/landing-terminal";
 import { SITE_DESCRIPTION, SITE_URL } from "@/lib/site-seo";
 
@@ -65,7 +64,6 @@ export default function HomePage() {
       </a>
       <script type="application/ld+json">{JSON.stringify(SOFTWARE_JSON_LD)}</script>
       <LandingHero />
-      <LandingMarquee />
       <LandingFeatures />
       <LandingFlow />
       <LandingTerminal />

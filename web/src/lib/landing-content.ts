@@ -21,49 +21,57 @@ export const FEATURES = [
   {
     index: "01",
     slug: "AGENT_MEMORY",
+    status: "ROADMAP",
     title: "Persistent agent memory",
-    body: "The product is a memory graph that follows the agent. Extract, rank, and inject prior knowledge on the next call — without changing the application. That engine lands in Phase 3 on this same ingress.",
+    body: "A memory graph that follows the agent across calls. The same ingress that handles auth, directives, and tracing becomes the place where recalled context is injected.",
   },
   {
     index: "02",
     slug: "INGRESS_PROXY",
+    status: "LIVE",
     title: "The proxy is the injection point",
-    body: "An OpenAI-compatible control plane already sits in front of every model request. Identity, policy, directives, and mock/live forwarding ship today so memory has a place to live.",
+    body: "OpenAI-compatible ingress for every chat request. It already applies policy, directives, and forwarding in one place, so memory does not need app-specific glue.",
   },
   {
     index: "03",
     slug: "TENANT_AUTH",
+    status: "LIVE",
     title: "Tenant auth + rate limits",
-    body: "gRPC auth validation, per-org Redis sliding windows, and defense-in-depth isolation so agents cannot cross tenant boundaries.",
+    body: "gRPC auth validation and per-org Redis limits protect the edge. Tenant boundaries are enforced before traffic reaches any model provider.",
   },
   {
     index: "04",
     slug: "TELEMETRY",
+    status: "LIVE",
     title: "Observable by default",
-    body: "Structured logs, Prometheus metrics, and OpenTelemetry traces across proxy boundaries — built for operators running agents at scale.",
+    body: "Structured logs, Prometheus metrics, and request traces expose what happened on every call. Operators can inspect latency and behavior without sampling raw prompts.",
   },
 ] as const;
 
 export const REQUEST_PATH_STEPS = [
   {
     step: "01",
+    eyebrow: "Ingress",
     title: "Agent request",
-    body: "Your agent calls the proxy with OpenAI-compatible headers and an org-scoped token — the same path memory will use.",
+    body: "OpenAI-compatible request enters one org-scoped ingress.",
   },
   {
     step: "02",
+    eyebrow: "Control",
     title: "Validate + limit",
-    body: "Auth verifies the token and agent. Redis enforces per-org rate limits before work continues.",
+    body: "Auth verifies the token and agent; Redis applies per-org limits.",
   },
   {
     step: "03",
-    title: "Context at the ingress",
-    body: "Directives and sticky sessions ship today. Memory retrieval and packing join this step in Phase 3 — that is the product.",
+    eyebrow: "Context",
+    title: "Directives + session context",
+    body: "System directives and sticky session state are attached before forwarding.",
   },
   {
     step: "04",
+    eyebrow: "Execution",
     title: "Forward + trace",
-    body: "The proxy forwards to your LLM provider and emits a full request trace for operators.",
+    body: "The provider call is forwarded and traced with p99 overhead under 20ms.",
   },
 ] as const;
 
@@ -82,36 +90,26 @@ export const STACK_PORTS = [
 ] as const;
 
 export const REQUEST_TRACE_SHELL = [
-  { k: "comment" as const, t: "inbound request" },
+  { k: "comment" as const, t: "one request, one ingress" },
   { k: "prompt" as const, t: "POST /v1/chat/completions" },
-  { k: "output" as const, t: "  X-IBEX-Agent-ID: 7f3a9c21-…" },
-  { k: "output" as const, t: "  Authorization: Bearer ibex_…" },
-  { k: "output" as const, t: "" },
-  { k: "comment" as const, t: "pipeline" },
-  { k: "output" as const, t: "auth.ValidateAgent (gRPC)      2.1ms" },
-  { k: "output" as const, t: "ratelimit.Check (Redis)        0.8ms" },
-  { k: "output" as const, t: "proxy.forward (upstream)      12.4ms" },
-  { k: "success" as const, t: "✓ status 200 · duration 17.4ms" },
+  { k: "output" as const, t: "auth ok · directives applied" },
+  { k: "success" as const, t: "✓ upstream 200 · trace 17.4ms" },
 ] as const;
 
 export const HERO_SHELL_LINES = [
-  { k: "comment" as const, t: "bring up the phase-2 stack" },
-  {
-    k: "prompt" as const,
-    t: "git clone https://github.com/Rick1330/ibex-harness.git",
-  },
-  { k: "prompt" as const, t: "cd ibex-harness && make compose-dev-up" },
-  { k: "output" as const, t: "" },
-  { k: "output" as const, t: "ibex-proxy   | listening on :8080" },
-  { k: "output" as const, t: "ibex-auth    | grpc on :9091" },
-  { k: "output" as const, t: "postgres     | ready for connections" },
-  { k: "success" as const, t: "redis        | ready ✓" },
-  { k: "output" as const, t: "" },
-  { k: "prompt" as const, t: "curl -s localhost:8080/health" },
+  { k: "comment" as const, t: "what it feels like" },
+  { k: "prompt" as const, t: "POST /v1/chat/completions" },
+  { k: "output" as const, t: "auth ok · directives attached" },
+  { k: "success" as const, t: "✓ 200 in 17.4ms" },
 ] as const;
 
 export const STACK_SHELL_LINES = [
   { k: "comment" as const, t: "compose the phase-2 stack" },
+  {
+    k: "prompt" as const,
+    t: "git clone https://github.com/Rick1330/ibex-harness.git",
+  },
+  { k: "prompt" as const, t: "cd ibex-harness" },
   { k: "prompt" as const, t: "make db-migrate && make db-seed" },
   {
     k: "prompt" as const,
@@ -123,6 +121,7 @@ export const STACK_SHELL_LINES = [
   { k: "success" as const, t: "redis       | Ready to accept connections ✓" },
   { k: "comment" as const, t: "Hit the proxy" },
   { k: "prompt" as const, t: "curl -s localhost:8080/health | jq ." },
+  { k: "output" as const, t: '{ "status": "ok" }' },
 ] as const;
 
 export const FOOTER_LINKS = {

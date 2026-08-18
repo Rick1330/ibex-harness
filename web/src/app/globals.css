@@ -135,23 +135,27 @@
   --accent-fg: var(--paper-0);
   --ring: oklch(0.145 0 0 / 0.35);
 
-  /* Shell tokens — screenshot charcoal palette (identical light+dark).
-     Also re-locked on .code-shell so page theme cannot override. */
-  --shell-bg: #110f0e;
-  --shell-fg: #c9c1b9;
-  --shell-border: rgb(255 255 255 / 0.1);
-  --shell-comment: #5e564f;
-  --shell-prompt: #d48a5c;
-  --shell-string: #7dbb94;
-  --shell-keyword: #9aa7c7;
-  --shell-number: #d4a574;
-  --shell-success: #7dbb94;
-  --shell-header: #161311;
-  --shell-status: #141210;
+  /* Shell tokens — light paper terminal; .dark overrides below.
+     Docs syntax blocks keep a charcoal lock separately. */
+  --shell-bg: #f7f2ea;
+  --shell-fg: #1c1814;
+  --shell-border: rgb(28 24 20 / 0.16);
+  --shell-comment: #4a453f;
+  --shell-prompt: #b4531a;
+  --shell-string: #1f7a4d;
+  --shell-keyword: #35507a;
+  --shell-number: #9a5418;
+  --shell-success: #1f7a4d;
+  --shell-header: #efe8dc;
+  --shell-status: #efe8dc;
+  --shell-dot-close: #ff5f56;
+  --shell-dot-min: #ffbd2e;
+  --shell-dot-max: #27c93f;
+  --shell-dot-ring: rgb(28 24 20 / 0.22);
   --shell-shadow:
-    0 1px 0 rgb(255 255 255 / 0.05) inset,
-    0 16px 40px -18px rgb(0 0 0 / 0.55),
-    0 28px 56px -28px rgb(0 0 0 / 0.4);
+    0 1px 0 rgb(255 255 255 / 0.7) inset,
+    0 16px 40px -18px rgb(28 24 20 / 0.18),
+    0 28px 56px -28px rgb(28 24 20 / 0.12);
 
   --space-1: 4px;
   --space-2: 8px;
@@ -266,20 +270,23 @@
   --accent-fg: var(--paper-50);
   --ring: oklch(1 0 0 / 0.28);
 
-  /* Shell — identical hex lock (same as :root; never invert with page) */
-  --shell-bg: #110f0e;
-  --shell-fg: #c9c1b9;
-  --shell-border: rgb(255 255 255 / 0.1);
-  --shell-comment: #5e564f;
-  --shell-prompt: #d48a5c;
-  --shell-string: #7dbb94;
+  --shell-bg: #161311;
+  --shell-fg: #f0e7dc;
+  --shell-border: rgb(255 255 255 / 0.16);
+  --shell-comment: #b8aea4;
+  --shell-prompt: #e09a68;
+  --shell-string: #8fd4a8;
   --shell-keyword: #9aa7c7;
   --shell-number: #d4a574;
-  --shell-success: #7dbb94;
-  --shell-header: #161311;
-  --shell-status: #141210;
+  --shell-success: #8fd4a8;
+  --shell-header: #1c1815;
+  --shell-status: #1a1614;
+  --shell-dot-close: #ff5f56;
+  --shell-dot-min: #ffbd2e;
+  --shell-dot-max: #27c93f;
+  --shell-dot-ring: rgb(0 0 0 / 0.45);
   --shell-shadow:
-    0 1px 0 rgb(255 255 255 / 0.05) inset,
+    0 1px 0 rgb(255 255 255 / 0.06) inset,
     0 16px 40px -18px rgb(0 0 0 / 0.55),
     0 28px 56px -28px rgb(0 0 0 / 0.4);
 
@@ -2370,6 +2377,7 @@ html.dark .brand-mark-dark {
   margin-inline: auto;
   padding-inline: 1rem;
   min-width: 0;
+  padding-block: 6rem;
 }
 
 .landing-inner {
@@ -2392,15 +2400,19 @@ html.dark .brand-mark-dark {
   .landing-inner {
     padding-inline: 2rem;
   }
+
+  .landing-hero-inner {
+    padding-block: 7.5rem;
+  }
 }
 
 .landing-section-pad {
-  padding-block: 5.5rem;
+  padding-block: 6.5rem;
 }
 
 @media (min-width: 1024px) {
   .landing-section-pad {
-    padding-block: 7rem;
+    padding-block: 8rem;
   }
 }
 
@@ -2464,10 +2476,7 @@ html.dark .brand-mark-dark {
   color: var(--foreground-muted);
 }
 
-/* §11 Code shell — screenshot charcoal palette, theme-proof.
-   Local custom properties override any page theme so light === dark. */
-.terminal-card,
-.code-shell,
+/* Docs syntax blocks stay charcoal so Shiki token colors remain readable. */
 .fd-codeblock,
 .nd-codeblock,
 figure[data-rehype-pretty-code-figure],
@@ -2475,7 +2484,7 @@ figure[data-rehype-pretty-code-figure],
   --shell-bg: #110f0e;
   --shell-fg: #c9c1b9;
   --shell-border: rgb(255 255 255 / 0.1);
-  --shell-comment: #5e564f;
+  --shell-comment: #9a9086;
   --shell-prompt: #d48a5c;
   --shell-string: #7dbb94;
   --shell-keyword: #9aa7c7;
@@ -2494,6 +2503,7 @@ figure[data-rehype-pretty-code-figure],
 .code-shell {
   display: flex;
   flex-direction: column;
+  min-width: 0;
   overflow: hidden;
   border-radius: 12px;
   border: 1px solid var(--shell-border);
@@ -2533,13 +2543,38 @@ figure[data-rehype-pretty-code-figure],
   flex-shrink: 0;
 }
 
+.landing-status-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  padding: 0.18rem 0.55rem;
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.landing-status-pill-live {
+  background: color-mix(in oklch, var(--accent) 10%, var(--surface-raised));
+  color: var(--foreground);
+}
+
+.landing-status-pill-roadmap {
+  background: var(--background);
+  color: var(--foreground-muted);
+}
+
 .terminal-card-header,
 .code-shell-header {
   display: flex;
   align-items: center;
+  flex-shrink: 0;
   gap: 0.5rem;
+  min-height: 2.75rem;
   border-bottom: 1px solid var(--shell-border);
-  padding: 0.65rem 1rem;
+  padding: 0.75rem 1rem;
   background: var(--shell-header) !important;
   font-family: var(--font-mono);
   font-size: 11px;
@@ -2552,27 +2587,34 @@ figure[data-rehype-pretty-code-figure],
 }
 
 .code-shell-dot {
-  width: 0.625rem;
-  height: 0.625rem;
+  width: 0.75rem;
+  height: 0.75rem;
   flex-shrink: 0;
-  border-radius: 4px;
-  background: var(--shell-border);
+  border-radius: 999px;
+  box-shadow: 0 0 0 1px var(--shell-dot-ring);
 }
 
-.code-shell-dot-close,
-.code-shell-dot-min,
+.code-shell-dot-close {
+  background: var(--shell-dot-close) !important;
+}
+
+.code-shell-dot-min {
+  background: var(--shell-dot-min) !important;
+}
+
 .code-shell-dot-max {
-  background: var(--shell-border);
+  background: var(--shell-dot-max) !important;
 }
 
 .code-shell-title {
   margin-inline: auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: var(--font-mono);
   font-size: 11px;
-  color: var(--shell-comment);
+  color: var(--shell-fg);
 }
 
 .code-shell-tag {
@@ -2584,23 +2626,25 @@ figure[data-rehype-pretty-code-figure],
   font-size: 10px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--shell-comment);
-  background: rgb(255 255 255 / 0.04);
+  color: var(--shell-fg);
+  background: color-mix(in oklch, var(--shell-fg) 8%, var(--shell-bg));
 }
 
 .code-shell-body {
   margin: 0;
   flex: 1 1 auto;
   overflow-x: auto;
-  padding: 1.35rem 1.25rem;
+  overflow-y: visible;
+  padding: 1.1rem 1.25rem 1.25rem;
   font-family: var(--font-mono);
   font-size: 13px;
   line-height: 1.75;
-  white-space: pre;
-  color: #c9c1b9 !important;
-  min-height: 15rem;
-  /* Must beat global `pre { background: var(--panel) }` — that was cream in light mode */
-  background-color: #110f0e !important;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--shell-fg) !important;
+  min-height: 0;
+  border-radius: 0 !important;
+  background-color: var(--shell-bg) !important;
   border: none !important;
 }
 
@@ -2629,13 +2673,15 @@ figure[data-rehype-pretty-code-figure],
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-shrink: 0;
   gap: 0.75rem;
+  min-height: 2.25rem;
   border-top: 1px solid var(--shell-border);
   padding: 0.55rem 1rem;
   font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.04em;
-  color: var(--shell-comment);
+  color: var(--shell-fg);
   background: var(--shell-status) !important;
 }
 
@@ -2663,61 +2709,44 @@ figure[data-rehype-pretty-code-figure],
   box-shadow: var(--shell-shadow);
 }
 
-/* §03 request path pipeline */
-.landing-flow-steps {
-  display: flex;
-  flex-direction: column;
+/* §03 request path flow rail */
+.landing-flow-intro {
+  max-width: 40rem;
+  margin-inline: auto;
+  text-align: center;
+}
+
+.landing-flow-rail {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem;
   margin: 0;
   padding: 0;
   list-style: none;
+}
+
+.landing-flow-node {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem;
+}
+
+.landing-flow-card {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--surface-raised);
   box-shadow: var(--shadow-2);
-  overflow: hidden;
+  padding: 1.2rem 1.15rem;
+  min-height: 100%;
 }
 
-.landing-flow-step {
-  display: flex;
-  gap: 1rem;
-  padding: 1.15rem 1.25rem;
-  border-bottom: 1px solid var(--border);
-  transition: background-color var(--dur-2) ease-out;
-}
-
-.landing-flow-step:last-child {
-  border-bottom: 0;
-}
-
-.landing-flow-step:hover {
-  background: color-mix(in oklch, var(--accent) 5%, var(--surface-raised));
-}
-
-.landing-flow-step-chip {
+.landing-flow-card-top {
   display: flex;
   align-items: center;
-  justify-content: center;
-  width: 2.75rem;
-  height: 2.75rem;
-  flex-shrink: 0;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--background);
-  font-family: var(--font-mono);
-  font-size: 0.75rem;
-  letter-spacing: 0.06em;
-  color: var(--foreground-muted);
-  box-shadow: var(--shadow-1);
+  gap: 0.75rem;
 }
 
-.landing-flow-step:hover .landing-flow-step-chip {
-  border-color: color-mix(in oklch, var(--accent) 45%, var(--border-strong));
-  color: var(--foreground);
-}
-
-.landing-flow-step-meta {
-  display: block;
-  margin-bottom: 0.25rem;
+.landing-flow-card-kicker {
   font-family: var(--font-mono);
   font-size: 0.625rem;
   letter-spacing: 0.18em;
@@ -2725,11 +2754,48 @@ figure[data-rehype-pretty-code-figure],
   color: var(--foreground-subtle);
 }
 
+.landing-flow-arrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--foreground-subtle);
+}
+
+.landing-flow-step-chip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  flex-shrink: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--background);
+  color: var(--foreground);
+  box-shadow: var(--shadow-1);
+}
+
 .landing-flow-step-title {
   font-size: 0.975rem;
   font-weight: 500;
   line-height: 1.35;
   color: var(--foreground);
+}
+
+@media (min-width: 900px) {
+  .landing-flow-rail {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.75rem;
+  }
+
+  .landing-flow-node {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
+
+  .landing-flow-node:last-child {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* §04 port list */
@@ -2973,14 +3039,16 @@ figure[data-rehype-pretty-code-figure],
   color: var(--foreground-muted);
 }
 
-/* Closing CTA — left-aligned stack, buttons in a row */
+/* Closing CTA — copy left, actions right on desktop */
 .landing-cta {
   background: var(--background);
 }
 
 .landing-cta-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
   padding-block: 4.5rem;
-  max-width: 48rem;
 }
 
 @media (min-width: 640px) {
@@ -2991,6 +3059,10 @@ figure[data-rehype-pretty-code-figure],
 
 @media (min-width: 1024px) {
   .landing-cta-inner {
+    display: grid;
+    grid-template-columns: minmax(0, 1.35fr) minmax(16rem, auto);
+    align-items: end;
+    column-gap: 3rem;
     padding-block: 6.5rem;
   }
 }
@@ -3012,7 +3084,13 @@ figure[data-rehype-pretty-code-figure],
   flex-wrap: wrap;
   align-items: center;
   gap: 0.75rem;
-  margin-top: 2rem;
+}
+
+@media (min-width: 1024px) {
+  .landing-cta-actions {
+    justify-content: flex-end;
+    padding-bottom: 0.35rem;
+  }
 }
 
 .landing-cta-actions .btn-solid,

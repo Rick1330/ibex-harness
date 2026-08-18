@@ -9,12 +9,12 @@ export function LandingTerminal() {
       <div className="grid items-start gap-12 lg:grid-cols-2 lg:gap-14">
         <div>
           <h2 className="landing-h2 max-w-[14ch]">
-            Run the harness on your machine.
+            Run the full stack locally.
           </h2>
           <p className="landing-body mt-5 max-w-[42ch]">
-            Clone the monorepo, apply migrations, and bring up the Phase 2
-            compose stack for proxy, auth, Postgres, Redis, and ClickHouse. No
-            hosted account required.
+            This is the practical setup path: clone the repo, seed the dev data,
+            bring up proxy plus auth, and verify the health endpoint before you
+            wire an agent to it.
           </p>
           <ul className="landing-stack-ports mt-10">
             {STACK_PORTS.map((port) => (
@@ -35,7 +35,7 @@ export function LandingTerminal() {
             title="docker-compose.yml"
             tag="compose"
             lines={STACK_SHELL_LINES}
-            statusRight="compose-dev-up · phase 2"
+            statusRight="local setup · phase 2"
             testId="stack-shell"
           />
         </div>

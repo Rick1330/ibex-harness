@@ -1,11 +1,17 @@
-import { SectionShell } from "@/components/chrome/section-shell";
-import { CodeShell } from "@/components/site/code-shell";
 import {
-  REQUEST_PATH_STEPS,
-  REQUEST_TRACE_SHELL,
-} from "@/lib/landing-content";
+  ArrowRight,
+  BookText,
+  ShieldCheck,
+  Upload,
+  Waypoints,
+} from "lucide-react";
 
-/** §03 · Request Path — sunken band, shell | numbered pipeline. */
+import { SectionShell } from "@/components/chrome/section-shell";
+import { REQUEST_PATH_STEPS } from "@/lib/landing-content";
+
+const FLOW_ICONS = [Upload, ShieldCheck, BookText, Waypoints] as const;
+
+/** §03 · Request Path — visual flow instead of prose stack. */
 export function LandingFlow() {
   return (
     <SectionShell
@@ -14,46 +20,43 @@ export function LandingFlow() {
       label="REQUEST PATH"
       className="!border-border bg-surface-sunken"
     >
-      <div className="max-w-[52ch]">
-        <h2 className="landing-h2 max-w-[18ch]">
-          Memory belongs on the{" "}
-          <em className="italic">request path</em>.
+      <div className="landing-flow-intro">
+        <h2 className="landing-h2">
+          How one call moves through{" "}
+          <em className="italic">the system</em>.
         </h2>
         <p className="landing-lede mt-5">
-          Identity and policy ship today. Memory retrieval joins the same
-          ingress in Phase 3 — one gate, four steps, no per-app glue.
+          Intake, auth, context, then forward — four steps on one ingress.
         </p>
       </div>
 
-      <div className="mt-12 grid items-stretch gap-8 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)] lg:gap-12">
-        <div className="landing-flow-shell">
-          <CodeShell
-            title="IBEX-PROXY — REQUEST TRACE"
-            tag="live"
-            lines={REQUEST_TRACE_SHELL}
-            statusRight="trace_id 7f3a…c21 · 17.4ms"
-            testId="request-trace-shell"
-            className="h-full"
-          />
-        </div>
+      <div className="mt-12">
+        <ol className="landing-flow-rail">
+          {REQUEST_PATH_STEPS.map((step, index) => {
+            const Icon = FLOW_ICONS[index];
 
-        <ol className="landing-flow-steps">
-          {REQUEST_PATH_STEPS.map((step, index) => (
-            <li key={step.step} className="landing-flow-step">
-              <span className="landing-flow-step-chip" aria-hidden>
-                {step.step}
-              </span>
-              <div className="min-w-0">
-                <p className="landing-flow-step-title">
-                  <span className="landing-flow-step-meta">
-                    Step {index + 1} of {REQUEST_PATH_STEPS.length}
-                  </span>
-                  {step.title}
-                </p>
-                <p className="landing-small mt-1.5">{step.body}</p>
-              </div>
-            </li>
-          ))}
+            return (
+              <li key={step.step} className="landing-flow-node">
+                <div className="landing-flow-card">
+                  <div className="landing-flow-card-top">
+                    <span className="landing-flow-step-chip" aria-hidden>
+                      <Icon className="h-4 w-4" />
+                    </span>
+                    <span className="landing-flow-card-kicker">
+                      {step.step} · {step.eyebrow}
+                    </span>
+                  </div>
+                  <p className="landing-flow-step-title mt-4">{step.title}</p>
+                  <p className="landing-small mt-2">{step.body}</p>
+                </div>
+                {index < REQUEST_PATH_STEPS.length - 1 ? (
+                  <div className="landing-flow-arrow" aria-hidden>
+                    <ArrowRight className="h-4 w-4" />
+                  </div>
+                ) : null}
+              </li>
+            );
+          })}
         </ol>
       </div>
     </SectionShell>
