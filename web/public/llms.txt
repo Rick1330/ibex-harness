@@ -40,9 +40,10 @@ IBEX Harness is an open-source (MIT) platform for teams running AI agents in pro
 ## Home page sections (ibexharness.com/)
 
 - #overview — hero: memory is the product; the proxy is where it lives
-- #features — agent memory, ingress proxy, auth, telemetry
-- #flow — request path from agent to provider (memory joins in Phase 3)
-- #metrics — verified platform facts
+- #capabilities — agent memory, ingress proxy, auth, telemetry
+- #request-path — request path from agent to provider (memory joins in Phase 3)
+- #local-stack — compose the Phase 2 proxy/auth stack
+- #benchmarks — verified platform facts
 - Internal links to /docs, /blog, /releases, /roadmap, /benchmarks
 
 ## Legacy subdomain
