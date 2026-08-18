@@ -12,8 +12,8 @@ export function LandingFeatures() {
             Memory that follows the agent, not the prompt.
           </h2>
           <p className="landing-body mt-5 max-w-[40ch]">
-            The proxy is the injection point. Identity and policy ship today;
-            persistent memory joins the same path in Phase 3.
+            The proxy is the injection point. Auth, directives, and telemetry
+            already sit on the same path.
           </p>
         </div>
 
@@ -31,7 +31,18 @@ export function LandingFeatures() {
                   [{feature.index}] {feature.slug}
                 </p>
                 <div className="px-4 sm:px-0">
-                  <h3 className="landing-h3">{feature.title}</h3>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <h3 className="landing-h3">{feature.title}</h3>
+                    <span
+                      className={
+                        feature.status === "LIVE"
+                          ? "landing-status-pill landing-status-pill-live"
+                          : "landing-status-pill landing-status-pill-roadmap"
+                      }
+                    >
+                      {feature.status}
+                    </span>
+                  </div>
                   <p className="landing-small mt-2 max-w-[48ch]">
                     {feature.body}
                   </p>

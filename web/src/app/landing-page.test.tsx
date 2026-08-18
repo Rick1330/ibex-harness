@@ -48,27 +48,33 @@ describe("HomePage", () => {
       "#local-stack",
     );
 
-    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
-      /memory layer/i,
-    );
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(/request path/i);
     expect(screen.getByTestId("hero-terminal")).toBeInTheDocument();
     expect(screen.getByTestId("hero-shell-column")).toBeInTheDocument();
+    expect(screen.queryByTestId("landing-marquee")).not.toBeInTheDocument();
 
     expect(screen.getByText(/§02 · CAPABILITIES/i)).toBeInTheDocument();
     expect(screen.getByText(/§03 · REQUEST PATH/i)).toBeInTheDocument();
     expect(screen.getByText(/§04 · LOCAL STACK/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/Key stats/i)).toBeInTheDocument();
     expect(
-      screen.getByRole("heading", { name: /at the proxy/i }),
+      screen.getByRole("heading", { name: /grow into memory/i }),
     ).toBeInTheDocument();
     expect(screen.getAllByText(/compose-dev-up/i).length).toBeGreaterThan(0);
-    expect(screen.getAllByText("MOCK-LIVE").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("MEMORY").length).toBeGreaterThan(0);
+    expect(screen.getByText("ROADMAP")).toBeInTheDocument();
+    expect(screen.getAllByText("LIVE").length).toBeGreaterThan(0);
     expect(
-      screen.getByText(/Persistent agent memory is the product/i),
+      screen.getByText(/IBEX Harness turns the proxy into the place/i),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/memory injection is Phase 3/i),
+      screen.getByText(/Memory that follows the agent, not the prompt/i),
     ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Intake, auth, context, then forward/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/The page should explain the product in one pass/i),
+    ).not.toBeInTheDocument();
+    expect(screen.getAllByText(/Phase 3/i)).toHaveLength(2);
   });
 });

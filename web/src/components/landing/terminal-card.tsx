@@ -10,7 +10,7 @@ type TerminalCardProps = Readonly<{
   testId?: string;
 }>;
 
-/** Charcoal terminal shell — identical `--shell-*` tokens in light and dark. */
+/** Theme-aware terminal shell — paper in light, charcoal in dark. */
 export function TerminalCard({
   title,
   rightMeta,

@@ -17,17 +17,16 @@ export function LandingHero() {
               §01 · Open source · Agent memory infrastructure
             </p>
             <h1 className="landing-h1 max-w-[16ch]">
-              The memory layer for agents that call{" "}
-              <em className="italic">LLMs</em>.
+              Agent memory belongs{" "}
+              <em className="italic">on the request path</em>.
             </h1>
-            <p className="landing-lede mt-6 max-w-[52ch]">
-              Persistent agent memory is the product. The proxy is where it
-              lives — every model request already hits one ingress, so the next
-              call can carry what the agent already learned, without glue in
-              your app. Auth, directives, and mock/live forwarding ship today;
-              memory injection is Phase 3.
+            <p className="landing-lede mt-6 max-w-[48ch]">
+              IBEX Harness turns the proxy into the place where identity,
+              context, and eventually memory are applied. Auth, directives, and
+              mock/live forwarding are live now; memory retrieval joins that same
+              ingress in Phase 3.
             </p>
-            <div className="mt-8 flex flex-wrap items-center gap-3">
+            <div className="mt-10 flex flex-wrap items-center gap-3">
               <Link
                 href="/docs"
                 className="btn-solid"
@@ -54,16 +53,16 @@ export function LandingHero() {
               title="~/ibex — zsh"
               tag="v0.1"
               lines={HERO_SHELL_LINES}
-              statusRight="p99 · 18ms · trace 7f3a…c21"
+              statusRight="teaser · one ingress"
               testId="hero-terminal"
               className="w-full"
             />
             <div className="landing-hero-shell-meta">
               <div className="landing-hero-shell-chip inline-flex items-center gap-2">
                 <span className="landing-hero-shell-chip-dot" aria-hidden />
-                <span>operational</span>
+                <span>live now</span>
               </div>
-              <div className="landing-hero-shell-chip">compose-dev-up</div>
+              <div className="landing-hero-shell-chip">memory next</div>
             </div>
           </div>
         </div>

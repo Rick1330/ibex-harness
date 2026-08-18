@@ -90,7 +90,8 @@ function ShellLine({ line }: Readonly<{ line: CodeShellLine }>) {
 
 /**
  * Code shell (DESIGN_GUIDE.md §11).
- * Charcoal terminal — identical tokens in light and dark.
+ * Theme-aware terminal: paper shell in light, charcoal in dark.
+ * Traffic-light window controls stay red / yellow / green in both themes.
  * SSR renders all lines; line-reveal starts only after mount when animate.
  */
 export function CodeShell({
