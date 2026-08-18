@@ -332,11 +332,12 @@ session/directive (see `.github/workflows/integration-race.yml`).
 
 - valid OpenAI-shaped JSON
 - invalid/truncated JSON, non-array `messages`, non-object message elements
-- httptest: auth + valid JSON → 501; auth + bad JSON → 400
+- httptest: auth + valid JSON for a registered mock model → 200; unregistered model → 501; auth + bad JSON → 400
 
 **Integration tests must cover:**
 
-- authenticated valid JSON → 501 `PROVIDER_NOT_CONFIGURED`
+- authenticated valid JSON (registered mock model) → 200
+- authenticated valid JSON (unregistered model) → 501 `PROVIDER_NOT_CONFIGURED`
 - authenticated malformed JSON → 400 `INVALID_JSON`
 
 ---
@@ -360,7 +361,8 @@ session/directive (see `.github/workflows/integration-race.yml`).
 
 | Case | Expected |
 | --- | --- |
-| Valid JSON + headers | 501 `PROVIDER_NOT_CONFIGURED` |
+| Valid JSON + headers (registered mock model) | 200 |
+| Valid JSON + unregistered `model` | 501 `PROVIDER_NOT_CONFIGURED` |
 | Missing `model` | 400 `VALIDATION_ERROR` + field `model` |
 | Body > 1 MiB | 413 `PAYLOAD_TOO_LARGE` |
 | Wrong Content-Type | 415 `UNSUPPORTED_MEDIA_TYPE` |

@@ -8,7 +8,7 @@ The proxy enforces organization-level requests-per-minute (RPM) limits using a R
 Rate limiting is a **cost control**, not a security boundary. Auth and tenant isolation remain fail-closed; the limiter intentionally fails open when Redis is down.
 
 <Callout type="warning" title="Fail-open on Redis outage">
-  When Redis is unreachable, rate limiting is skipped and requests proceed. Monitor `/ready` and Redis metrics in production. Phase 2 may add conservative in-memory fallbacks.
+  When Redis is unreachable, rate limiting is skipped and requests proceed. Monitor `/ready` and Redis metrics in production. Hierarchical in-memory fallbacks are not in Phase 2 scope.
 </Callout>
 
 ## How it works
@@ -96,7 +96,7 @@ All protected `/v1/*` routes share the same org-level bucket in Phase 1:
 - `GET /v1/orgs/{org_id}/auth-probe`
 - `POST /v1/chat/completions`
 
-There is no per-agent or per-IP tier yet. Hierarchical limits (agent → org → global) are planned for Phase 2+.
+There is no per-agent or per-IP tier yet. Hierarchical limits (agent → org → global) are planned for [Phase 4](/roadmap/phase-4-multi-provider).
 
 ## Verify the limiter
 

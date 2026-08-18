@@ -187,7 +187,7 @@ With Compose, migrations, seed, auth, and proxy running:
 make dev-smoke
 ```
 
-Checks `/health`, `/ready`, auth failures (401/400), chat stub (501 without LLM), and auth probe routes. Optional rate-limit WARN if 429 is not observed in 65 rapid requests.
+Checks `/health`, `/ready`, auth failures (401/400), auth probe routes, and chat completions. Default `IBEX_LLM_MODE=mock` returns HTTP **200** for registered models; **501** `PROVIDER_NOT_CONFIGURED` means the model is not in the registry. Optional rate-limit WARN if 429 is not observed in 65 rapid requests.
 
 Proxy must reach auth gRPC on `IBEX_AUTH_GRPC_ADDR` (default `127.0.0.1:9091`). For local dev, set `IBEX_AUTH_VALIDATE_TIMEOUT=2s` on the proxy — the default `50ms` production budget is often too low for Argon2 token verification on developer machines; without it, bearer requests return **503** `SERVICE_DEGRADED` before the missing-agent **400** check runs.
 

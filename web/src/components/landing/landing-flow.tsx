@@ -16,12 +16,12 @@ export function LandingFlow() {
     >
       <div className="max-w-[52ch]">
         <h2 className="landing-h2 max-w-[18ch]">
-          Every LLM call passes through{" "}
-          <em className="italic">one gate</em>.
+          Memory belongs on the{" "}
+          <em className="italic">request path</em>.
         </h2>
         <p className="landing-lede mt-5">
-          Identity, policy, and tracing happen before the provider sees a
-          token — one ingress, four decisive steps.
+          Identity and policy ship today. Memory retrieval joins the same
+          ingress in Phase 3 — one gate, four steps, no per-app glue.
         </p>
       </div>
 

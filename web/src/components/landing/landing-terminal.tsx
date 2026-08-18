@@ -12,9 +12,9 @@ export function LandingTerminal() {
             Run the harness on your machine.
           </h2>
           <p className="landing-body mt-5 max-w-[42ch]">
-            Clone the monorepo, apply migrations, and bring up the Phase 1
-            compose stack for proxy, auth, Postgres, and Redis. No hosted
-            account required.
+            Clone the monorepo, apply migrations, and bring up the Phase 2
+            compose stack for proxy, auth, Postgres, Redis, and ClickHouse. No
+            hosted account required.
           </p>
           <ul className="landing-stack-ports mt-10">
             {STACK_PORTS.map((port) => (
@@ -35,7 +35,7 @@ export function LandingTerminal() {
             title="docker-compose.yml"
             tag="compose"
             lines={STACK_SHELL_LINES}
-            statusRight="make up · phase 1"
+            statusRight="compose-dev-up · phase 2"
             testId="stack-shell"
           />
         </div>

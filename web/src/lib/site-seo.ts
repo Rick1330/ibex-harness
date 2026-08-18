@@ -26,15 +26,15 @@ export const MARKETING_LLMS_URL = SITE_LLMS_URL;
 export const MARKETING_AI_URL = SITE_AI_URL;
 
 export const SITE_DESCRIPTION =
-  "Self-hosted LLM proxy with persistent agent memory, context assembly, and behavioral drift detection for AI agents at scale.";
+  "Self-hosted agent memory platform. An authenticated OpenAI-compatible proxy ships today; persistent memory and context assembly land on that same ingress in Phase 3.";
 
 export const SITE_KEYWORDS = [
   "IBEX Harness",
-  "LLM proxy",
   "AI agent memory",
+  "LLM proxy",
   "OpenAI-compatible proxy",
+  "context assembly",
   "multi-tenant AI",
   "agent infrastructure",
-  "context assembly",
   "drift detection",
 ].join(", ");

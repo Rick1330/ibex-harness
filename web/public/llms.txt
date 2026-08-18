@@ -1,6 +1,6 @@
 # IBEX Harness
 
-> Self-hosted LLM proxy with persistent agent memory, context assembly, and behavioral drift detection for AI agents at scale.
+> Self-hosted agent memory platform. An authenticated OpenAI-compatible proxy ships today; persistent memory and context assembly land on that same ingress in Phase 3.
 
 IBEX Harness is an open-source (MIT) platform for teams running AI agents in production. The product site, documentation, blog, releases, benchmarks, and roadmap all live on ibexharness.com.
 
@@ -30,19 +30,20 @@ IBEX Harness is an open-source (MIT) platform for teams running AI agents in pro
 
 ## Product summary
 
-- **What it is:** A Go LLM proxy + auth service that intercepts OpenAI-compatible API calls.
-- **Who it's for:** Engineering teams deploying AI agents with multi-tenant isolation requirements.
-- **Phase 1 (shipped):** Proxy ingress, auth gRPC validation, per-org Redis rate limiting.
-- **Phase 2+ (roadmap):** Memory extraction/retrieval, context assembly per request, drift detection.
-- **Stack:** Go (proxy, auth), PostgreSQL, Redis; Python services planned for memory/context.
+- **What it is:** Persistent agent memory, injected at an authenticated LLM proxy so every model call can carry what the agent already learned.
+- **Who it's for:** Engineering teams deploying AI agents that need memory without per-app glue, plus multi-tenant isolation.
+- **Phase 2 (shipped):** Proxy ingress, auth gRPC, mock/live OpenAI-compatible forwarding, directives, sessions, traces.
+- **Phase 3 (roadmap):** Memory extraction/retrieval, context assembly per request — the core product. Drift detection is later.
+- **Stack:** Go (proxy, auth), PostgreSQL, Redis, ClickHouse; Python services planned for memory/context.
 - **License:** MIT — fully open source.
 
 ## Home page sections (ibexharness.com/)
 
-- #overview — hero and value proposition
-- #features — proxy, auth, rate limits, memory-ready path
-- #flow — request path from agent to provider
-- #metrics — verified platform facts
+- #overview — hero: memory is the product; the proxy is where it lives
+- #capabilities — agent memory, ingress proxy, auth, telemetry
+- #request-path — request path from agent to provider (memory joins in Phase 3)
+- #local-stack — compose the Phase 2 proxy/auth stack
+- #benchmarks — verified platform facts
 - Internal links to /docs, /blog, /releases, /roadmap, /benchmarks
 
 ## Legacy subdomain

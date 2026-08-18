@@ -53,7 +53,7 @@ export function SectionRail() {
       aria-label="Section rail"
     >
       <p className="landing-rail-brand" aria-hidden>
-        IBEX HARNESS · V0.1 · PHASE 1
+        IBEX HARNESS · V0.1 · PHASE 2
       </p>
       <nav
         className="landing-rail-nav mt-auto flex flex-col gap-2.5 pb-4"
