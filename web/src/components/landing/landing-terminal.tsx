@@ -32,7 +32,7 @@ export function LandingTerminal() {
 
         <div className="landing-flow-shell">
           <CodeShell
-            title="docker-compose.yml"
+            title="~/ibex — zsh"
             tag="compose"
             lines={STACK_SHELL_LINES}
             statusRight="local setup · phase 2"

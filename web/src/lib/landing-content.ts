@@ -71,7 +71,7 @@ export const REQUEST_PATH_STEPS = [
     step: "04",
     eyebrow: "Execution",
     title: "Forward + trace",
-    body: "The provider call is forwarded and traced with p99 overhead under 20ms.",
+    body: "The call is forwarded and traced. Proxy overhead budget is p99 under 20ms, excluding upstream latency.",
   },
 ] as const;
 
@@ -93,14 +93,14 @@ export const REQUEST_TRACE_SHELL = [
   { k: "comment" as const, t: "one request, one ingress" },
   { k: "prompt" as const, t: "POST /v1/chat/completions" },
   { k: "output" as const, t: "auth ok · directives applied" },
-  { k: "success" as const, t: "✓ upstream 200 · trace 17.4ms" },
+  { k: "success" as const, t: "✓ upstream 200 · sample 17.4ms" },
 ] as const;
 
 export const HERO_SHELL_LINES = [
-  { k: "comment" as const, t: "what it feels like" },
+  { k: "comment" as const, t: "illustrative ingress trace" },
   { k: "prompt" as const, t: "POST /v1/chat/completions" },
   { k: "output" as const, t: "auth ok · directives attached" },
-  { k: "success" as const, t: "✓ 200 in 17.4ms" },
+  { k: "success" as const, t: "✓ 200 · sample 17.4ms" },
 ] as const;
 
 export const STACK_SHELL_LINES = [

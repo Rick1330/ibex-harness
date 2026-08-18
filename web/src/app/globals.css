@@ -866,6 +866,22 @@ body {
 .nd-codeblock,
 figure[data-rehype-pretty-code-figure],
 [data-codeblock] {
+  --shell-bg: #110f0e;
+  --shell-fg: #c9c1b9;
+  --shell-border: rgb(255 255 255 / 0.1);
+  --shell-comment: #9a9086;
+  --shell-prompt: #d48a5c;
+  --shell-string: #7dbb94;
+  --shell-keyword: #9aa7c7;
+  --shell-number: #d4a574;
+  --shell-success: #7dbb94;
+  --shell-header: #161311;
+  --shell-status: #141210;
+  --shell-shadow:
+    0 1px 0 rgb(255 255 255 / 0.05) inset,
+    0 16px 40px -18px rgb(0 0 0 / 0.55),
+    0 28px 56px -28px rgb(0 0 0 / 0.4);
+  color-scheme: only dark;
   position: relative !important;
   margin: 1.75rem 0 !important;
   overflow: hidden !important;
@@ -2476,29 +2492,6 @@ html.dark .brand-mark-dark {
   color: var(--foreground-muted);
 }
 
-/* Docs syntax blocks stay charcoal so Shiki token colors remain readable. */
-.fd-codeblock,
-.nd-codeblock,
-figure[data-rehype-pretty-code-figure],
-[data-codeblock] {
-  --shell-bg: #110f0e;
-  --shell-fg: #c9c1b9;
-  --shell-border: rgb(255 255 255 / 0.1);
-  --shell-comment: #9a9086;
-  --shell-prompt: #d48a5c;
-  --shell-string: #7dbb94;
-  --shell-keyword: #9aa7c7;
-  --shell-number: #d4a574;
-  --shell-success: #7dbb94;
-  --shell-header: #161311;
-  --shell-status: #141210;
-  --shell-shadow:
-    0 1px 0 rgb(255 255 255 / 0.05) inset,
-    0 16px 40px -18px rgb(0 0 0 / 0.55),
-    0 28px 56px -28px rgb(0 0 0 / 0.4);
-  color-scheme: only dark;
-}
-
 .terminal-card,
 .code-shell {
   display: flex;
@@ -2640,7 +2633,7 @@ figure[data-rehype-pretty-code-figure],
   font-size: 13px;
   line-height: 1.75;
   white-space: pre-wrap;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
   color: var(--shell-fg) !important;
   min-height: 0;
   border-radius: 0 !important;
@@ -2761,6 +2754,10 @@ figure[data-rehype-pretty-code-figure],
   color: var(--foreground-subtle);
 }
 
+.landing-flow-arrow svg {
+  transform: rotate(90deg);
+}
+
 .landing-flow-step-chip {
   display: flex;
   align-items: center;
@@ -2783,6 +2780,10 @@ figure[data-rehype-pretty-code-figure],
 }
 
 @media (min-width: 900px) {
+  .landing-flow-arrow svg {
+    transform: none;
+  }
+
   .landing-flow-rail {
     grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 0.75rem;
