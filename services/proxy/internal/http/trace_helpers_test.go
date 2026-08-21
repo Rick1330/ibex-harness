@@ -110,7 +110,7 @@ func authedTraceContext(t *testing.T) context.Context {
 
 func chatRouterWithTrace(t *testing.T, tw TraceWriter, pool *asyncpool.Pool) http.Handler {
 	t.Helper()
-	reg, err := provider.NewRegistry(stubLLMProvider{
+	reg, err := provider.NewRegistry(provider.BuiltInCapabilityCatalog(), stubLLMProvider{
 		name: "openai", models: []string{"gpt-4o"},
 		body: `{"choices":[{"message":{"content":"hello"}}]}`,
 	})

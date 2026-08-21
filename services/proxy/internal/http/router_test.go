@@ -21,7 +21,7 @@ import (
 
 func mustEmptyProviderRegistry(tb testing.TB) *provider.Registry {
 	tb.Helper()
-	reg, err := provider.NewRegistry()
+	reg, err := provider.NewRegistry(provider.BuiltInCapabilityCatalog())
 	if err != nil {
 		tb.Fatal(err)
 	}

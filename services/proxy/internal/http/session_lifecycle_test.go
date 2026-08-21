@@ -112,7 +112,7 @@ func (m *memSessionStore) appendCount() int {
 
 func sessionLifecycleRouter(t *testing.T, store session.Store, pool *asyncpool.Pool, cache *sessioncache.Cache) http.Handler {
 	t.Helper()
-	reg, err := provider.NewRegistry(stubLLMProvider{
+	reg, err := provider.NewRegistry(provider.BuiltInCapabilityCatalog(), stubLLMProvider{
 		name: "openai", models: []string{"gpt-4o"},
 		body: `{"choices":[{"message":{"content":"hello"}}]}`,
 	})
@@ -223,7 +223,7 @@ func TestUnit_SessionLifecycle_StreamSetsHeaderBeforeBody(t *testing.T) {
 	}
 	cleanupPool(t, pool)
 
-	reg, err := provider.NewRegistry(&streamStubProvider{
+	reg, err := provider.NewRegistry(provider.BuiltInCapabilityCatalog(), &streamStubProvider{
 		name: "openai", models: []string{"gpt-4o"},
 		chunks: []string{
 			"data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n",

@@ -40,7 +40,7 @@ func TestUnit_ChatCompletions_EmitsTraceOnSuccess(t *testing.T) {
 func TestUnit_ChatCompletions_EmitsTraceOnProviderFailure(t *testing.T) {
 	t.Parallel()
 	tw := &recordingTraceWriter{}
-	reg, err := provider.NewRegistry(stubLLMProvider{
+	reg, err := provider.NewRegistry(provider.BuiltInCapabilityCatalog(), stubLLMProvider{
 		name: "openai", models: []string{"gpt-4o"},
 		err: &provider.ProviderError{ProviderName: "openai", StatusCode: http.StatusBadGateway},
 	})

@@ -2,7 +2,7 @@
 title: "2.5.G1.M2 Model capability registry"
 description: "Replace the hardcoded model list with a structured ModelCapability registry. With Anthropic and self-hosted vLLM models that differ in context windows, tool-calling support, and vision support, knowing only which provider handles a model is insufficient for proxy and context-assembly decisions."
 summary: "Replace the hardcoded model list with a structured ModelCapability registry. With Anthropic and self-hosted vLLM models that differ in context windows, tool-calling support, and vision support, knowing only which provider handles a model is insufficient for proxy and context-assembly decisions."
-status: "planned"
+status: "completed"
 milestoneId: "2.5.G1.M2"
 track: "A"
 trackTitle: "Multi-Provider Adapters"
@@ -15,10 +15,11 @@ fullTitle: "Milestone 2.5.G1.M2 — Model Capability Registry"
 
 # Milestone 2.5.G1.M2 — Model Capability Registry
 
-**Status:** Planned  
+**Status:** Completed  
 **Goal:** [Track A — Multi-Provider Adapters](/roadmap/phase-2-5-provider-generalization/tracks#track-a--multi-provider-adapters)  
 **Phase:** 2.5 — Provider Generalization & Foundation  
-**Estimated effort:** 1–2 days
+**Estimated effort:** 1–2 days  
+**ADR:** [ADR-0041 — Model capability registry](/docs/adr/0041-model-capability-registry)
 
 ---
 
@@ -43,97 +44,24 @@ Today, supported models are effectively a hardcoded list, and `Registry.For(mode
 
 ---
 
-## Orientation (indicative)
+## What shipped
 
-Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
-**rough sketches for orientation** — inspiration and a baseline, not a required change list.
-
-During implementation, expect to:
-
-- open the live tree and follow existing patterns before inventing new ones
-- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
-- advance the design beyond the sketch where measurement or code reality says so
-- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
-
-Prefer outcomes over matching any particular file tree or command sequence.
-
-**Areas that may be involved** (situational — not a checklist):
-
-- Provider abstraction / adapters
-- Proxy service (HTTP, bootstrap, config)
-
-## Suggested naming (provisional)
-
-Rename freely to match the change that actually lands.
-
-- Branch: `feature/m2-5-g1-m2-model-capability-registry`
-- PR title: `feat(proxy): ModelCapability registry for per-model context window and feature support (m2.5.G1.M2)`
-
-## Illustrative shape
-
-Exact types and file layout will follow live provider code.
-
-```go
-// Illustrative — exact path may differ
-type ModelCapability struct {
- ModelID string
- Provider string
- ContextWindow int // max input+output tokens
- MaxOutputTokens int
- SupportsTools bool
- SupportsVision bool
- SupportsStreaming bool
- TokenizerFamily string // "cl100k_base", "o200k_base", "llama3", "qwen2" ...
-}
-```
-
-`Registry` gains `Registry.Capability(model string) (ModelCapability, bool)` alongside the existing `For(model string)`.
-
----
-
-## Working notes
-
-Preferred starting points and open questions — situational, and expected to evolve with further research during implementation.
-
-### Where the data comes from
-
-Three options, ranked as a starting point for planning:
-
-1. **Maintain a small, curated table in-repo**, hand-verified against each vendor's docs (map literal or embedded JSON/YAML). For the ~10–20 models likely near term, this stays easy to review in a PR. Strongest default when auditability matters.
-
-2. **Use LiteLLM's `model_prices_and_context_window.json` as a periodically-synced reference dataset**, not a live dependency. A small sync script can fetch that JSON, filter it to registered models, and regenerate the in-repo table. Useful as an upstream verification path rather than as the production source of truth.
-
-3. **Take a runtime dependency on the file directly**. This is generally the weakest option for the near-term roadmap because it covers hundreds of unused models, adds re-parsing logic, and ties capability correctness to an external repo's update schedule. If this path is explored, it should be treated as follow-up investigation and implemented with versioned snapshots rather than a live runtime dependency.
-
-If implementation constraints change, this ranking can be revisited. In particular, the LiteLLM-sync path is worth investigating if the model matrix grows faster than a hand-maintained table remains comfortable to review.
-
-### Registry extension
-
-The `Registry` type gains `Capability` alongside `For`:
-
-```go
-// Capability returns the capability record for the given model ID.
-// Returns (ModelCapability{}, false) if no capability is registered for the model.
-func (r *Registry) Capability(model string) (ModelCapability, bool)
-```
-
-Capabilities are registered at `NewRegistry` time, paired with the provider implementation. A model without a capability entry is a configuration error surfaced at startup, not at request time.
-
----
+- `provider.ModelCapability` + `CapabilityCatalog` with curated `BuiltInCapabilityCatalog`
+- `Registry.Capability(model)` beside `Registry.For(model)`
+- Fail-closed `NewRegistry(catalog, …)` (`ErrMissingCapability`)
+- `IBEX_MODEL_CAPABILITY_OVERLAYS` for ExtraModels
+- Maintainer diff tool: `go run ./packages/provider/scripts/diff_capabilities -fetch`
 
 ## Success signals
 
-Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
-
-- A capability record exists per registered model (context window, tools/vision/streaming, tokenizer family)
-- Lookup by model ID is available alongside provider lookup
-- OpenAI and Anthropic models used in Phase 2.5 have capability entries
-- Missing capability is a startup/configuration error, not a silent nil at request time
-- Optional: a sync/diff path against an upstream table if the curated table is kept small
-- Tests cover lookup, missing-model failure, and tokenizer-family presence
-- Repo guards / CI checks still pass
+- [x] A capability record exists per registered model (context window, tools/vision/streaming, tokenizer family)
+- [x] Lookup by model ID is available alongside provider lookup
+- [x] OpenAI and Anthropic models used in Phase 2.5 have capability entries
+- [x] Missing capability is a startup/configuration error, not a silent nil at request time
+- [x] Optional: a sync/diff path against an upstream table if the curated table is kept small
+- [x] Tests cover lookup, missing-model failure, and tokenizer-family presence
+- [ ] Repo guards / CI checks still pass (verified on PR)
 
 ## Prerequisites
 
 - 2.5.G1.M1 (Anthropic provider adapter) — establishes which Anthropic models are registered
-

@@ -21,12 +21,17 @@ func buildProviderRegistry(cfg config.Config, log *logger.Logger, tracer trace.T
 	return buildLiveProviderRegistry(cfg, log, tracer, reg)
 }
 
+func capabilityCatalog(cfg config.Config) provider.CapabilityCatalog {
+	overlay := provider.CatalogFromCapabilities(cfg.ModelCapabilityOverlays...)
+	return provider.MergeCapabilityCatalog(provider.BuiltInCapabilityCatalog(), overlay)
+}
+
 func buildMockProviderRegistry(cfg config.Config) (*provider.Registry, error) {
 	// Defense in depth: Validate() also rejects this; keep fail-closed at wire-up.
 	if strings.EqualFold(strings.TrimSpace(cfg.Environment), "production") {
 		return nil, fmt.Errorf("IBEX_LLM_MODE=mock is not allowed when IBEX_ENV=production")
 	}
-	out, err := provider.NewRegistry(mockllm.Provider{})
+	out, err := provider.NewRegistry(capabilityCatalog(cfg), mockllm.Provider{})
 	if err != nil {
 		return nil, fmt.Errorf("mock provider registry: %w", err)
 	}
@@ -64,7 +69,7 @@ func buildLiveProviderRegistry(cfg config.Config, log *logger.Logger, tracer tra
 		return nil, fmt.Errorf("live mode requires OPENAI_API_KEY and/or ANTHROPIC_API_KEY")
 	}
 
-	out, err := provider.NewRegistry(providers...)
+	out, err := provider.NewRegistry(capabilityCatalog(cfg), providers...)
 	if err != nil {
 		return nil, fmt.Errorf("provider registry: %w", err)
 	}

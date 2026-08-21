@@ -6,6 +6,7 @@ import (
 
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/metrics"
+	"github.com/Rick1330/ibex-harness/packages/provider"
 	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
 )
@@ -59,6 +60,16 @@ func TestBuildProviderRegistry_LiveModeRegistersOpenAI(t *testing.T) {
 			APIKey:      "test-key",
 			ExtraModels: []string{"openai/gpt-oss-20b:free"},
 		},
+		ModelCapabilityOverlays: []provider.ModelCapability{{
+			ModelID:           "openai/gpt-oss-20b:free",
+			Provider:          "openai",
+			ContextWindow:     8192,
+			MaxOutputTokens:   2048,
+			SupportsTools:     false,
+			SupportsVision:    false,
+			SupportsStreaming: true,
+			TokenizerFamily:   provider.TokenizerFamilyUnknown,
+		}},
 	}
 
 	reg, err := buildProviderRegistry(cfg, logger.Discard("proxy"), telemetry.NoopTracer("proxy"), metrics.NewProxy("test"))
@@ -69,6 +80,29 @@ func TestBuildProviderRegistry_LiveModeRegistersOpenAI(t *testing.T) {
 		if _, err := reg.For(model); err != nil {
 			t.Fatalf("For(%s): %v", model, err)
 		}
+		if _, ok := reg.Capability(model); !ok {
+			t.Fatalf("Capability(%s): missing", model)
+		}
+	}
+}
+
+func TestBuildProviderRegistry_LiveModeExtraModelsRequireOverlay(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Config{
+		LLMMode: "live",
+		OpenAI: config.OpenAIConfig{
+			APIKey:      "test-key",
+			ExtraModels: []string{"openai/gpt-oss-20b:free"},
+		},
+	}
+
+	_, err := buildProviderRegistry(cfg, logger.Discard("proxy"), telemetry.NoopTracer("proxy"), metrics.NewProxy("test"))
+	if err == nil {
+		t.Fatal("expected missing capability error")
+	}
+	if !strings.Contains(err.Error(), "openai/gpt-oss-20b:free") {
+		t.Fatalf("err=%v", err)
 	}
 }
 

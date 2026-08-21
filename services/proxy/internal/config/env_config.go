@@ -12,51 +12,52 @@ import (
 )
 
 type envConfig struct {
-	Environment           string            `env:"IBEX_ENV" envDefault:"development"`
-	ServiceName           string            `env:"IBEX_SERVICE_NAME" envDefault:"proxy"`
-	LogLevel              string            `env:"IBEX_LOG_LEVEL" envDefault:"INFO"`
-	Port                  string            `env:"IBEX_PORT" envDefault:"8080"`
-	RedisURL              ibexconfig.Secret `env:"REDIS_URL" secret:"true"`
-	AuthGRPCAddr          string            `env:"IBEX_AUTH_GRPC_ADDR" envDefault:"127.0.0.1:9091"`
-	AuthValidateTimeout   time.Duration     `env:"IBEX_AUTH_VALIDATE_TIMEOUT"`
-	MaxRequestBodyBytes   int64             `env:"IBEX_MAX_REQUEST_BODY_BYTES"`
-	RequestIDHeader       string            `env:"IBEX_REQUEST_ID_HEADER" envDefault:"X-Request-ID"`
-	TraceIDHeader         string            `env:"IBEX_TRACE_ID_HEADER" envDefault:"X-Trace-ID"`
-	ErrorDocsBase         string            `env:"IBEX_ERROR_DOCS_BASE"`
-	RateLimitDefaultRPM   int               `env:"IBEX_RATE_LIMIT_DEFAULT_RPM"`
-	RateLimitOrgOverrides string            `env:"IBEX_RATE_LIMIT_ORG_OVERRIDES"`
-	ShutdownTimeoutRaw    string            `env:"IBEX_SHUTDOWN_TIMEOUT"`
-	LLMMode               string            `env:"IBEX_LLM_MODE" envDefault:"mock"`
-	LLMExtraModels        string            `env:"IBEX_LLM_EXTRA_MODELS"`
-	OpenAIAPIKey          ibexconfig.Secret `env:"OPENAI_API_KEY" secret:"true"`
-	OpenAIBaseURL         string            `env:"OPENAI_BASE_URL" envDefault:"https://api.openai.com/v1"`
-	OpenAIRequestTimeout  time.Duration     `env:"OPENAI_REQUEST_TIMEOUT"`
-	OpenAIMaxRetries      int               `env:"OPENAI_MAX_RETRIES"`
-	OpenAIRetryBaseDelay  time.Duration     `env:"OPENAI_RETRY_BASE_DELAY"`
-	AnthropicAPIKey       ibexconfig.Secret `env:"ANTHROPIC_API_KEY" secret:"true"`
-	AnthropicBaseURL      string            `env:"ANTHROPIC_BASE_URL" envDefault:"https://api.anthropic.com"`
-	AnthropicRequestTO    time.Duration     `env:"ANTHROPIC_REQUEST_TIMEOUT"`
-	AnthropicMaxRetries   int               `env:"ANTHROPIC_MAX_RETRIES"`
-	AnthropicRetryDelay   time.Duration     `env:"ANTHROPIC_RETRY_BASE_DELAY"`
-	AnthropicExtraModels  string            `env:"ANTHROPIC_EXTRA_MODELS"`
-	AuthCacheEnabled      string            `env:"IBEX_AUTH_CACHE_ENABLED" envDefault:"true"`
-	AuthCacheLRUCapacity  int               `env:"IBEX_AUTH_CACHE_LRU_CAPACITY"`
-	AuthCacheLRUMaxTTL    time.Duration     `env:"IBEX_AUTH_CACHE_LRU_MAX_TTL"`
-	AuthCacheBloomItems   uint              `env:"IBEX_AUTH_CACHE_BLOOM_EXPECTED_ITEMS"`
-	AuthCacheBloomFPRate  float64           `env:"IBEX_AUTH_CACHE_BLOOM_FP_RATE"`
-	PostgresDSN           ibexconfig.Secret `env:"POSTGRES_DSN" secret:"true"`
-	DirectiveCacheTTL     time.Duration     `env:"IBEX_DIRECTIVE_CACHE_TTL"`
-	SessionCacheTTL       time.Duration     `env:"IBEX_SESSION_CACHE_TTL"`
-	CheckpointWorkers     int               `env:"IBEX_SESSION_CHECKPOINT_WORKERS"`
-	CheckpointQueue       int               `env:"IBEX_SESSION_CHECKPOINT_QUEUE"`
-	SessionGetOrCreateTO  time.Duration     `env:"IBEX_SESSION_GETORCREATE_TIMEOUT"`
-	SessionIdleTimeout    time.Duration     `env:"IBEX_SESSION_IDLE_TIMEOUT"`
-	SessionSweepInterval  time.Duration     `env:"IBEX_SESSION_SWEEP_INTERVAL"`
-	ClickHouseDSN         ibexconfig.Secret `env:"CLICKHOUSE_DSN" secret:"true"`
-	ClickHouseBatchSize   int               `env:"CLICKHOUSE_INSERT_BATCH_SIZE"`
-	ClickHouseFlushMS     int               `env:"CLICKHOUSE_INSERT_FLUSH_MS"`
-	IdempotencyTTL        time.Duration     `env:"IBEX_IDEMPOTENCY_TTL"`
-	IdempotencyRedisTO    time.Duration     `env:"IBEX_IDEMPOTENCY_REDIS_TIMEOUT"`
+	Environment             string            `env:"IBEX_ENV" envDefault:"development"`
+	ServiceName             string            `env:"IBEX_SERVICE_NAME" envDefault:"proxy"`
+	LogLevel                string            `env:"IBEX_LOG_LEVEL" envDefault:"INFO"`
+	Port                    string            `env:"IBEX_PORT" envDefault:"8080"`
+	RedisURL                ibexconfig.Secret `env:"REDIS_URL" secret:"true"`
+	AuthGRPCAddr            string            `env:"IBEX_AUTH_GRPC_ADDR" envDefault:"127.0.0.1:9091"`
+	AuthValidateTimeout     time.Duration     `env:"IBEX_AUTH_VALIDATE_TIMEOUT"`
+	MaxRequestBodyBytes     int64             `env:"IBEX_MAX_REQUEST_BODY_BYTES"`
+	RequestIDHeader         string            `env:"IBEX_REQUEST_ID_HEADER" envDefault:"X-Request-ID"`
+	TraceIDHeader           string            `env:"IBEX_TRACE_ID_HEADER" envDefault:"X-Trace-ID"`
+	ErrorDocsBase           string            `env:"IBEX_ERROR_DOCS_BASE"`
+	RateLimitDefaultRPM     int               `env:"IBEX_RATE_LIMIT_DEFAULT_RPM"`
+	RateLimitOrgOverrides   string            `env:"IBEX_RATE_LIMIT_ORG_OVERRIDES"`
+	ShutdownTimeoutRaw      string            `env:"IBEX_SHUTDOWN_TIMEOUT"`
+	LLMMode                 string            `env:"IBEX_LLM_MODE" envDefault:"mock"`
+	LLMExtraModels          string            `env:"IBEX_LLM_EXTRA_MODELS"`
+	OpenAIAPIKey            ibexconfig.Secret `env:"OPENAI_API_KEY" secret:"true"`
+	OpenAIBaseURL           string            `env:"OPENAI_BASE_URL" envDefault:"https://api.openai.com/v1"`
+	OpenAIRequestTimeout    time.Duration     `env:"OPENAI_REQUEST_TIMEOUT"`
+	OpenAIMaxRetries        int               `env:"OPENAI_MAX_RETRIES"`
+	OpenAIRetryBaseDelay    time.Duration     `env:"OPENAI_RETRY_BASE_DELAY"`
+	AnthropicAPIKey         ibexconfig.Secret `env:"ANTHROPIC_API_KEY" secret:"true"`
+	AnthropicBaseURL        string            `env:"ANTHROPIC_BASE_URL" envDefault:"https://api.anthropic.com"`
+	AnthropicRequestTO      time.Duration     `env:"ANTHROPIC_REQUEST_TIMEOUT"`
+	AnthropicMaxRetries     int               `env:"ANTHROPIC_MAX_RETRIES"`
+	AnthropicRetryDelay     time.Duration     `env:"ANTHROPIC_RETRY_BASE_DELAY"`
+	AnthropicExtraModels    string            `env:"ANTHROPIC_EXTRA_MODELS"`
+	ModelCapabilityOverlays string            `env:"IBEX_MODEL_CAPABILITY_OVERLAYS"`
+	AuthCacheEnabled        string            `env:"IBEX_AUTH_CACHE_ENABLED" envDefault:"true"`
+	AuthCacheLRUCapacity    int               `env:"IBEX_AUTH_CACHE_LRU_CAPACITY"`
+	AuthCacheLRUMaxTTL      time.Duration     `env:"IBEX_AUTH_CACHE_LRU_MAX_TTL"`
+	AuthCacheBloomItems     uint              `env:"IBEX_AUTH_CACHE_BLOOM_EXPECTED_ITEMS"`
+	AuthCacheBloomFPRate    float64           `env:"IBEX_AUTH_CACHE_BLOOM_FP_RATE"`
+	PostgresDSN             ibexconfig.Secret `env:"POSTGRES_DSN" secret:"true"`
+	DirectiveCacheTTL       time.Duration     `env:"IBEX_DIRECTIVE_CACHE_TTL"`
+	SessionCacheTTL         time.Duration     `env:"IBEX_SESSION_CACHE_TTL"`
+	CheckpointWorkers       int               `env:"IBEX_SESSION_CHECKPOINT_WORKERS"`
+	CheckpointQueue         int               `env:"IBEX_SESSION_CHECKPOINT_QUEUE"`
+	SessionGetOrCreateTO    time.Duration     `env:"IBEX_SESSION_GETORCREATE_TIMEOUT"`
+	SessionIdleTimeout      time.Duration     `env:"IBEX_SESSION_IDLE_TIMEOUT"`
+	SessionSweepInterval    time.Duration     `env:"IBEX_SESSION_SWEEP_INTERVAL"`
+	ClickHouseDSN           ibexconfig.Secret `env:"CLICKHOUSE_DSN" secret:"true"`
+	ClickHouseBatchSize     int               `env:"CLICKHOUSE_INSERT_BATCH_SIZE"`
+	ClickHouseFlushMS       int               `env:"CLICKHOUSE_INSERT_FLUSH_MS"`
+	IdempotencyTTL          time.Duration     `env:"IBEX_IDEMPOTENCY_TTL"`
+	IdempotencyRedisTO      time.Duration     `env:"IBEX_IDEMPOTENCY_REDIS_TIMEOUT"`
 }
 
 func loadFromEnv() (Config, error) {
@@ -71,6 +72,11 @@ func loadFromEnv() (Config, error) {
 	}
 
 	cfg := baseProxyConfig(envCfg, level)
+	overlays, err := ParseCapabilityOverlays(envCfg.ModelCapabilityOverlays)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.ModelCapabilityOverlays = overlays
 	if err := applyProxyEnvOverrides(&cfg, envCfg); err != nil {
 		return Config{}, err
 	}

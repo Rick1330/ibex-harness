@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Rick1330/ibex-harness/packages/provider"
 	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"github.com/google/uuid"
 )
@@ -89,24 +90,26 @@ type AnthropicConfig struct {
 }
 
 type Config struct {
-	Environment             string
-	ServiceName             string
-	LogLevel                slog.Level
-	Port                    string
-	RedisURL                string
-	AuthGRPCAddr            string
-	AuthValidateTimeout     time.Duration
-	AuthCache               AuthCacheConfig
-	MaxRequestBodyBytes     int64
-	RequestIDHeader         string
-	TraceIDHeader           string
-	ErrorDocsBase           string
-	RateLimit               RateLimitConfig
-	ShutdownTimeout         time.Duration
-	Telemetry               telemetry.Config
-	LLMMode                 string
-	OpenAI                  OpenAIConfig
-	Anthropic               AnthropicConfig
+	Environment         string
+	ServiceName         string
+	LogLevel            slog.Level
+	Port                string
+	RedisURL            string
+	AuthGRPCAddr        string
+	AuthValidateTimeout time.Duration
+	AuthCache           AuthCacheConfig
+	MaxRequestBodyBytes int64
+	RequestIDHeader     string
+	TraceIDHeader       string
+	ErrorDocsBase       string
+	RateLimit           RateLimitConfig
+	ShutdownTimeout     time.Duration
+	Telemetry           telemetry.Config
+	LLMMode             string
+	OpenAI              OpenAIConfig
+	Anthropic           AnthropicConfig
+	// ModelCapabilityOverlays extends BuiltInCapabilityCatalog for ExtraModels (ADR-0041).
+	ModelCapabilityOverlays []provider.ModelCapability
 	PostgresDSN             string
 	DirectiveCacheTTL       time.Duration
 	SessionCacheTTL         time.Duration

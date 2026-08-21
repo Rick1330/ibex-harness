@@ -34,11 +34,11 @@ type Provider interface {
 
 `Request.Stream bool` selects streaming vs non-streaming inside the implementation. A split interface (`Streamer` + `Completer`) would force callers to type-assert on every request.
 
-### 2) Model routing lives in `Registry`, not providers
+### 2) Model routing and capabilities live in `Registry`, not providers
 
 Each provider declares `SupportedModels()`. `Registry.For(model)` returns the implementation. Phase 2.5 registers Anthropic ([ADR-0040](/docs/adr/0040-anthropic-provider-adapter)); later phases add Azure OpenAI / Bedrock without changing handlers or middleware contracts.
 
-`NewRegistry` panics on duplicate model IDs — fail fast at startup, not on first customer request.
+`NewRegistry` takes a `CapabilityCatalog` and returns `ErrDuplicateModel` / `ErrMissingCapability` on conflicts or missing metadata — fail fast at startup, not on first customer request. `Registry.Capability(model)` exposes curated context window / feature / tokenizer-family rows ([ADR-0041](/docs/adr/0041-model-capability-registry)).
 
 ### 3) API keys are constructor details, not interface fields
 
@@ -58,11 +58,12 @@ Streaming responses must not be fully buffered on the hot path. Non-streaming ca
 
 ### 7) Registry lifecycle
 
-Built once at proxy startup via `provider.NewRegistry(...)`. Read-only after construction. Milestone 2.1.1 ships an empty registry (no providers registered); 2.1.2 registers OpenAI.
+Built once at proxy startup via `provider.NewRegistry(catalog, ...)`. Read-only after construction. Milestone 2.1.1 shipped an empty registry (no providers registered); 2.1.2 registers OpenAI; 2.5.G1.M2 requires a capability entry for every registered model ID.
 
 ### 8) Error types
 
 - `ErrNoProviderForModel` → proxy returns `501 PROVIDER_NOT_CONFIGURED`
+- `ErrMissingCapability` / `ErrDuplicateModel` → startup/config failure (never silent at request time)
 - `ProviderError` carries provider HTTP status and raw body for mapping in 2.1.5 — **never log `ProviderBody`**
 
 ### 9) Phase 2 proxy Postgres exception
