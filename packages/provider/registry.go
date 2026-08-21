@@ -25,26 +25,46 @@ func NewRegistry(catalog CapabilityCatalog, providers ...Provider) (*Registry, e
 	byModel := make(map[string]Provider)
 	caps := make(map[string]ModelCapability)
 	for _, p := range providers {
-		for _, model := range p.SupportedModels() {
-			if existing, ok := byModel[model]; ok {
-				return nil, fmt.Errorf("%w: %q claimed by %q and %q",
-					ErrDuplicateModel, model, existing.Name(), p.Name())
-			}
-			cap, ok := catalog.Lookup(model)
-			if !ok {
-				return nil, fmt.Errorf("%w: %q (provider %q)", ErrMissingCapability, model, p.Name())
-			}
-			if err := ValidateCapability(cap); err != nil {
-				return nil, fmt.Errorf("%w: model %q: %v", ErrInvalidCapability, model, err)
-			}
-			if cap.ModelID != model {
-				return nil, fmt.Errorf("%w: catalog key %q has ModelID %q", ErrInvalidCapability, model, cap.ModelID)
-			}
-			byModel[model] = p
-			caps[model] = cap
+		if err := registerProviderModels(catalog, p, byModel, caps); err != nil {
+			return nil, err
 		}
 	}
 	return &Registry{providers: byModel, capabilities: caps}, nil
+}
+
+func registerProviderModels(
+	catalog CapabilityCatalog,
+	p Provider,
+	byModel map[string]Provider,
+	caps map[string]ModelCapability,
+) error {
+	for _, model := range p.SupportedModels() {
+		if existing, ok := byModel[model]; ok {
+			return fmt.Errorf("%w: %q claimed by %q and %q",
+				ErrDuplicateModel, model, existing.Name(), p.Name())
+		}
+		cap, err := lookupValidatedCapability(catalog, model, p.Name())
+		if err != nil {
+			return err
+		}
+		byModel[model] = p
+		caps[model] = cap
+	}
+	return nil
+}
+
+func lookupValidatedCapability(catalog CapabilityCatalog, model, providerName string) (ModelCapability, error) {
+	cap, ok := catalog.Lookup(model)
+	if !ok {
+		return ModelCapability{}, fmt.Errorf("%w: %q (provider %q)", ErrMissingCapability, model, providerName)
+	}
+	if err := ValidateCapability(cap); err != nil {
+		return ModelCapability{}, fmt.Errorf("%w: model %q: %v", ErrInvalidCapability, model, err)
+	}
+	if cap.ModelID != model {
+		return ModelCapability{}, fmt.Errorf("%w: catalog key %q has ModelID %q", ErrInvalidCapability, model, cap.ModelID)
+	}
+	return cap, nil
 }
 
 // For returns the provider for the given model ID.
