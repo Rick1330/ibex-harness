@@ -1,0 +1,106 @@
+---
+title: "2.5.G6.M1 MCP server skeleton"
+description: "MCP server exposing memory as audited tools — stub handlers, OAuth via AuthService.ValidateToken gRPC, ClickHouse trace pipeline integration. Proves auth boundary and audit-log wiring before Phase 3's real memory service exists."
+summary: "MCP server exposing memory as audited tools — stub handlers, OAuth via AuthService.ValidateToken gRPC, ClickHouse trace pipeline integration. Proves auth boundary and audit-log wiring before Phase 3's real memory service exists."
+status: "planned"
+milestoneId: "2.5.G6.M1"
+track: "F"
+trackTitle: "MCP Server Skeleton"
+trackHref: "/roadmap/phase-2-5-provider-generalization/tracks#track-f--mcp-server-skeleton"
+goal: "[Track F — MCP Server Skeleton](/roadmap/phase-2-5-provider-generalization/tracks#track-f--mcp-server-skeleton)"
+estimatedEffort: "3 days"
+phase: "phase-2-5-provider-generalization"
+fullTitle: "Milestone 2.5.G6.M1 — MCP Server Skeleton"
+---
+
+# Milestone 2.5.G6.M1 — MCP Server Skeleton
+
+**Status:** Planned  
+**Goal:** [Track F — MCP Server Skeleton](/roadmap/phase-2-5-provider-generalization/tracks#track-f--mcp-server-skeleton)  
+**Phase:** 2.5 — Provider Generalization & Foundation  
+**Estimated effort:** 3 days
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+Ship the MCP server now against stub/mock tool handlers (same `IBEX_LLM_MODE=mock` pattern already used for the LLM provider registry) so the auth boundary, OAuth flow, and audit-log wiring are proven and testable before Phase 3's real memory service exists to plug in behind it. This follows the "build the seam before the thing that uses it" logic used throughout Phase 2.5.
+
+This is explicitly **not** a general tool-call broker — it's an MCP server that exposes exactly two IBEX capabilities as MCP tools, secured via OAuth at the server layer.
+
+---
+
+## Non-Goals
+
+- Real memory read/write (stub handlers only — Phase 3.5 adds real implementations)
+- General tool-call brokering
+- Any MCP capability beyond `write_memory` and `search_memory` stubs
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- MCP server surface
+- Auth service
+
+## Suggested naming (provisional)
+
+Rename freely to match the change that actually lands.
+
+- Branch: `feature/m2-5-g6-m1-mcp-server-skeleton`
+- PR title: `feat(mcp): MCP server skeleton with stub tools and auth boundary (m2.5.G6.M1)`
+
+## Working notes
+
+Preferred starting points and open questions — situational, and expected to evolve with further research during implementation.
+
+### Why Python + official SDK
+
+The MCP spec (JSON-RPC framing, capability negotiation, resource/tool schemas) is still evolving; hand-rolling it against a moving target is wasted, fragile effort. The official `mcp` Python SDK (Anthropic-maintained, open source, MIT-licensed) tracks spec changes automatically.
+
+### Auth integration
+
+OAuth resource-server validation reuses `AuthService.ValidateToken` via gRPC (same client the proxy already uses) rather than a second, parallel auth implementation — one identity system, two protocol surfaces (REST/proxy, MCP).
+
+### Audit trail
+
+Every tool invocation is written to the same ClickHouse trace pipeline the proxy already uses for LLM calls, so "audited enterprise remote action" is true from day one.
+
+---
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] MCP server passes the official MCP conformance/inspector tool against stub handlers
+- [ ] OAuth resource-server validation reuses `AuthService.ValidateToken` via gRPC — one identity system, two protocol surfaces
+- [ ] Every tool invocation is written to the ClickHouse trace pipeline
+- [ ] Stub tool handlers return well-formed mock responses matching the expected schema
+- [ ] Repo guards / CI checks still pass
+
+## Prerequisites
+
+- Phase 2 exit (merged)
+- Auth service gRPC contract stable
+

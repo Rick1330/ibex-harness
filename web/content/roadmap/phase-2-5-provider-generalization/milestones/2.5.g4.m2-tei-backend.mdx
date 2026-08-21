@@ -1,0 +1,149 @@
+---
+title: "2.5.G4.M2 TEI backend (GPU profile)"
+description: "Implement the production/GPU embedding backend using Hugging Face Text Embeddings Inference (TEI). TEI ships as a prebuilt Docker image and handles continuous batching, dynamic padding, and flash-attention kernels internally — eliminating the need for hand-rolled batching code."
+summary: "Implement the production/GPU embedding backend using Hugging Face Text Embeddings Inference (TEI). TEI ships as a prebuilt Docker image and handles continuous batching, dynamic padding, and flash-attention kernels internally — eliminating the need for hand-rolled batching code."
+status: "planned"
+milestoneId: "2.5.G4.M2"
+track: "D"
+trackTitle: "Pluggable Embedding Service"
+trackHref: "/roadmap/phase-2-5-provider-generalization/tracks#track-d--pluggable-embedding-service"
+goal: "[Track D — Pluggable Embedding Service](/roadmap/phase-2-5-provider-generalization/tracks#track-d--pluggable-embedding-service)"
+estimatedEffort: "1–2 days"
+phase: "phase-2-5-provider-generalization"
+fullTitle: "Milestone 2.5.G4.M2 — TEI Backend (GPU Profile)"
+---
+
+# Milestone 2.5.G4.M2 — TEI Backend (GPU Profile)
+
+**Status:** Planned  
+**Goal:** [Track D — Pluggable Embedding Service](/roadmap/phase-2-5-provider-generalization/tracks#track-d--pluggable-embedding-service)  
+**Phase:** 2.5 — Provider Generalization & Foundation  
+**Estimated effort:** 1–2 days
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+Implement the production/GPU embedding backend. TEI ships as a prebuilt Docker image (`ghcr.io/huggingface/text-embeddings-inference`) with a model ID passed as a launch arg — this milestone is a thin HTTP client, not custom inference code. `tei_backend.py` calls TEI (`POST /embed`, with OpenAI-compatible `/v1/embeddings` also supported) and stays smaller than hand-rolled batching-buffer-timeout logic because TEI's Rust core already implements continuous batching, dynamic padding, and flash-attention kernels.
+
+**TEI is Apache-2.0, fully free, maintained by Hugging Face** — no licensing concern, no vendor lock-in (it's a standard HTTP server can later be swapped for vLLM's embeddings endpoint or Infinity later without changing `EmbeddingBackend`'s interface).
+
+---
+
+## Non-Goals
+
+- Custom batching logic (TEI handles this internally)
+- GPU provisioning automation
+- Inference performance tuning beyond TEI's defaults
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Embedding service / backends
+
+## Suggested naming (provisional)
+
+Rename freely to match the change that actually lands.
+
+- Branch: `feature/m2-5-g4-m2-tei-backend`
+- PR title: `feat(embedder): TEI HTTP backend for GPU/production embedding profile (m2.5.G4.M2)`
+
+## Deployment Configuration
+
+```yaml
+# docker-compose / k8s equivalent
+embedder-tei:
+ image: ghcr.io/huggingface/text-embeddings-inference:1.6
+ command: ["--model-id", "BAAI/bge-m3", "--port", "80"]
+ # GPU variant requires nvidia container runtime
+ deploy:
+ resources:
+ reservations:
+ devices:
+ - driver: nvidia
+ count: 1
+ capabilities: [gpu]
+```
+
+---
+
+## Working notes
+
+Preferred starting points and open questions — situational, and expected to evolve with further research during implementation.
+
+### TEI backend is a thin HTTP client
+
+```python
+# Illustrative — exact path may differ
+import httpx
+import numpy as np
+from .base import EmbeddingBackend
+
+class TEIBackend(EmbeddingBackend):
+ def __init__(self, base_url: str, model_id: str = "BAAI/bge-m3"):
+ self._client = httpx.AsyncClient(base_url=base_url, timeout=30.0)
+ self._model_id = model_id
+ self._dimensions = 1024 # bge-m3 output dim
+
+ async def embed(self, texts: list[str]) -> np.ndarray:
+ resp = await self._client.post("/embed", json={"inputs": texts})
+ resp.raise_for_status()
+ return np.array(resp.json(), dtype=np.float32)
+
+ @property
+ def dimensions(self) -> int:
+ return self._dimensions
+
+ @property
+ def name(self) -> str:
+ return "tei"
+```
+
+### Contract test
+
+The contract test suite (defined in 2.5.G4.M1) should pass:
+
+- Same input → vectors of shape `(n, 1024)` (bge-m3 dimensionality)
+- Vectors are L2-normalized (norm ≈ 1.0)
+- Batch and single-item inputs produce identical per-item vectors
+
+---
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] `TEIBackend` implements `EmbeddingBackend` ABC
+- [ ] (TEI native) works; `/v1/embeddings` (OpenAI-compatible) also tested
+- [ ] Contract test suite passes (shape, L2-normalization)
+- [ ] `EMBEDDER_PROFILE=gpu` selects `TEIBackend` at service startup
+- [ ] TEI Docker Compose definition committed (GPU variant documented)
+- [ ] Health-check: service startup waits for TEI `/health` to return 200 before accepting requests
+- [ ] Unit/integration tests against a VCR recording or a real TEI instance in CI
+
+## Prerequisites
+
+- 2.5.G4.M1 (Embedder interface and registry) — `EmbeddingBackend` ABC and contract test suite
+

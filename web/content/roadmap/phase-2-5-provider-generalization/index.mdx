@@ -1,0 +1,90 @@
+---
+title: "Phase 2.5: Provider Generalization & Foundation"
+description: "Generalize the single-provider proxy into a pluggable, multi-backend platform before building the memory engine."
+summary: "Generalize the single-provider proxy into a pluggable, multi-backend platform before building the memory engine."
+status: "planned"
+phase: "phase-2-5-provider-generalization"
+fullTitle: "Phase 2.5 — Provider Generalization & Foundation"
+---
+
+# Phase 2.5 — Provider Generalization & Foundation
+
+<Callout type="note" title="Planning baseline">
+  Paths, libraries, schemas, and sequencing on this phase are orientation for planning.
+  Implementation is expected to require further research and may land differently than any sketch.
+</Callout>
+
+<Callout type="info" title="Entry condition">
+ **Phase 2 is complete on `main`.** This phase generalizes the single-provider proxy into a pluggable,
+ multi-backend platform. It proves the `Provider` interface against a structurally different vendor (Anthropic),
+ adds model-aware tokenization, response-side processing hooks, a pluggable embedding service, schema pre-work
+ for Phase 3's memory store, and an MCP server skeleton — all before the memory engine itself is built.
+</Callout>
+
+## What Phase 2.5 Delivers
+
+Phase 2 proved an OpenAI-compatible proxy works end-to-end. Phase 2.5 widens the foundation so that
+Phase 3's memory engine, Phase 3.5's context assembly, and Phase 4's multi-provider routing all build
+on proven abstractions instead of inventing them under pressure. Every track in this phase creates a
+**seam** that a later phase fills with real logic — the same "build the plumbing before the thing that
+uses it" pattern that made Phase 1 (auth/proxy skeleton) a clean foundation for Phase 2 (real forwarding).
+
+## Phase 2.5 Scope
+
+### Six tracks
+
+| Track | Theme | Key Deliverable |
+|---|---|---|
+| A | Multi-provider adapters | Anthropic adapter proving `Provider` interface generalizes; model capability registry |
+| B | Tokenizer registry | Per-model token counting via Hugging Face `tokenizers` (CGo in proxy, Python service for context assembly) |
+| C | Response-side processing | `ResponsePipeline` stage interface; typed decode/re-encode of upstream responses; streaming design ADR |
+| D | Pluggable embedding service | `Embedder` interface + registry; TEI GPU backend, sentence-transformers CPU fallback, hosted-API option; content-hash cache |
+| E | Schema pre-work | Temporal validity columns, multi-label category support, relationship graph index — migrations only, no application code |
+| F | MCP server skeleton | Auth-boundary-scoped MCP server exposing stub memory tools; OAuth via existing `AuthService.ValidateToken` |
+
+## Recommended Execution Order
+
+```
+Track A (Multi-provider — start immediately):
+ 2.5.G1.M1 (Anthropic adapter) → 2.5.G1.M2 (capability registry) → 2.5.G1.M3 (self-hosted vLLM adapter)
+
+Track B (Tokenizer — blocks context assembly):
+ 2.5.G2.M1 (tokenizer registry)
+
+Track C (Response pipeline — seam for Phase 3 guardrails):
+ 2.5.G3.M1 (non-streaming response middleware) → 2.5.G3.M2 (streaming design spike / ADR)
+
+Track D (Embedding — blocks memory writes):
+ 2.5.G4.M1 (Embedder interface + registry) → 2.5.G4.M2 (TEI backend)
+ → 2.5.G4.M3 (hosted-API backend) → 2.5.G4.M4 (content-hash cache)
+
+Track E (Schema — parallel with A/B):
+ 2.5.G5.M1 (temporal validity) → 2.5.G5.M2 (multi-label categories)
+ → 2.5.G5.M3 (relationship graph index)
+
+Track F (MCP skeleton — after A):
+ 2.5.G6.M1 (MCP server with stub tools)
+```
+
+## Tech Stack Additions
+
+| Concern | Choice | Reason |
+|---|---|---|
+| Response pipeline typed model | Go structs mirroring OpenAI chat response shape, in `packages/responsepipeline` | Keeps decode/re-encode in the proxy's hot language |
+| Embedding backend abstraction | Python ABC (`EmbeddingBackend`), profile selected by `EMBEDDER_PROFILE` env at startup | Mirrors the proven `provider.Provider`/`Registry` pattern |
+| Default production embedding model | `BAAI/bge-m3` (1024-dim) | Best available open retrieval-tuned model; multilingual + long-context |
+| CPU-fallback embedding model | `all-MiniLM-L6-v2` (384-dim) | Already right-sized for the CPU-only constraint |
+| Embedding serving runtime (GPU) | Hugging Face TEI (Apache-2.0) | Eliminates hand-rolled batching code entirely |
+| MCP SDK | Official `mcp` Python SDK | Tracks an evolving spec |
+| MCP auth | Reuse existing `AuthService.ValidateToken` gRPC | One identity system, not two |
+
+## Exit Criteria
+
+1. Anthropic adapter passes the same streaming/non-streaming/error-mapping test depth as the OpenAI adapter
+2. `Registry.For(model)` resolves both OpenAI and Anthropic models without handler/middleware changes
+3. `ModelCapability` struct queryable for context window, tool support, and tokenizer family
+4. Response pipeline decode/re-encode round trip is byte-for-byte identical to passthrough (zero stages) with p99 overhead < 2ms
+5. `Embedder` interface has at least two real backends (sentence-transformers + TEI) passing the same contract test suite
+6. All three schema migrations (temporal validity, multi-label, relationship graph index) apply cleanly via `make db-migrate`
+7. MCP server passes official MCP conformance against stub handlers with auth validated via gRPC
+8. All Phase 1 and Phase 2 tests still pass with zero regressions

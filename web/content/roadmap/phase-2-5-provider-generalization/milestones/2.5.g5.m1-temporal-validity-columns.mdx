@@ -1,0 +1,112 @@
+---
+title: "2.5.G5.M1 Temporal validity columns"
+description: "The current schema tracks memory lifecycle status but has no notion of when a fact was true. Adding valid_from, valid_until, and observed_at columns closes the gap that Zep/Graphiti-style temporal graphs address — a contradiction becomes two rows with overlapping validity ranges rather than a silent winner-picking operation."
+summary: "The current schema tracks memory lifecycle status but has no notion of when a fact was true. Adding valid_from, valid_until, and observed_at columns closes the gap that Zep/Graphiti-style temporal graphs address — a contradiction becomes two rows with overlapping validity ranges rather than a silent winner-picking operation."
+status: "planned"
+milestoneId: "2.5.G5.M1"
+track: "E"
+trackTitle: "Schema Pre-Work"
+trackHref: "/roadmap/phase-2-5-provider-generalization/tracks#track-e--schema-pre-work"
+goal: "[Track E — Schema Pre-Work](/roadmap/phase-2-5-provider-generalization/tracks#track-e--schema-pre-work)"
+estimatedEffort: "0.5 days"
+phase: "phase-2-5-provider-generalization"
+fullTitle: "Milestone 2.5.G5.M1 — Temporal Validity Columns"
+---
+
+# Milestone 2.5.G5.M1 — Temporal Validity Columns
+
+**Status:** Planned  
+**Goal:** [Track E — Schema Pre-Work](/roadmap/phase-2-5-provider-generalization/tracks#track-e--schema-pre-work)  
+**Phase:** 2.5 — Provider Generalization & Foundation  
+**Estimated effort:** 0.5 days
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+The current schema tracks memory *lifecycle* status (`active/superseded/merged_into/archived/quarantined/deleted`) but has no notion of **when a fact was true**, which is exactly the gap Zep/Graphiti-style temporal graphs close.
+
+This is the schema-level fix for the "contradiction requires a similarity threshold to even detect" problem — a contradiction becomes two rows with overlapping `[valid_from, valid_until)` ranges and a `contradicts` edge in `memory_relationships`, rather than requiring the extraction worker to silently pick a winner.
+
+This milestone is **migration-only, additive, and unused by application code yet** — the point is to have the right shape in Postgres before Phase 3's write pipeline is built against it.
+
+---
+
+## Non-Goals
+
+- Application code reading or writing the new columns (Phase 3)
+- Temporal query patterns or indexes (Phase 3)
+- Backfilling historical `valid_from` values for existing memories (Phase 3 migration runbook)
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Database schema / migrations
+
+## Suggested naming (provisional)
+
+Rename freely to match the change that actually lands.
+
+- Branch: `feature/m2-5-g5-m1-temporal-validity-columns`
+- PR title: `feat(db): temporal validity columns on memories table (m2.5.G5.M1)`
+
+## Migration
+
+```sql
+ALTER TABLE ibex_core.memories
+ ADD COLUMN valid_from TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+ ADD COLUMN valid_until TIMESTAMPTZ, -- NULL = still valid
+ ADD COLUMN observed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(); -- when IBEX learned this fact,
+ -- distinct from valid_from
+```
+
+### Column semantics
+
+| Column | Meaning | Nullable |
+| --- | --- | --- |
+| `valid_from` | When the fact described by this memory became true in the real world | No (defaults to `NOW()` on insert) |
+| `valid_until` | When the fact ceased to be true (`NULL` = still valid) | Yes |
+| `observed_at` | When IBEX learned this fact (distinct from when it became true) | No (defaults to `NOW()` on insert) |
+
+**Why `observed_at` is distinct from `valid_from`:** A user might tell IBEX "I moved to Berlin three years ago" — the fact (`valid_from` = 3 years ago) and the observation (`observed_at` = now) are different instants. Conflating them makes historical reconstruction impossible.
+
+---
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] Migration adds `valid_from`, `valid_until`, `observed_at` to `ibex_core.memories`
+- [ ] `valid_from` and `observed_at` have `DEFAULT NOW()` and are `NOT NULL`
+- [ ] `valid_until` is nullable
+- [ ] Migration is forward-only (no `downgrade()` removes production data)
+- [ ] Migration applies cleanly on top of the existing Phase 3 draft schema: `make db-migrate` on a seeded dataset exits 0
+- [ ] No application code reads or writes the new columns in this milestone
+- [ ] Consistent with the existing migration-strategy ADR's expand-contract policy
+
+## Prerequisites
+
+- Phase 3 draft schema (`ibex_core.memories` table) should exist
+

@@ -1,0 +1,130 @@
+---
+title: "2.5.G4.M3 Hosted-API embedding backend"
+description: "Implement the hosted-API embedding backend for teams that don't want to run any embedding infrastructure. Default hosted option is OpenAI text-embedding-3-large; Cohere and Voyage are exposed as alternates behind the same interface."
+summary: "Implement the hosted-API embedding backend for teams that don't want to run any embedding infrastructure. Default hosted option is OpenAI text-embedding-3-large; Cohere and Voyage are exposed as alternates behind the same interface."
+status: "planned"
+milestoneId: "2.5.G4.M3"
+track: "D"
+trackTitle: "Pluggable Embedding Service"
+trackHref: "/roadmap/phase-2-5-provider-generalization/tracks#track-d--pluggable-embedding-service"
+goal: "[Track D — Pluggable Embedding Service](/roadmap/phase-2-5-provider-generalization/tracks#track-d--pluggable-embedding-service)"
+estimatedEffort: "1–2 days"
+phase: "phase-2-5-provider-generalization"
+fullTitle: "Milestone 2.5.G4.M3 — Hosted-API Embedding Backend"
+---
+
+# Milestone 2.5.G4.M3 — Hosted-API Embedding Backend
+
+**Status:** Planned  
+**Goal:** [Track D — Pluggable Embedding Service](/roadmap/phase-2-5-provider-generalization/tracks#track-d--pluggable-embedding-service)  
+**Phase:** 2.5 — Provider Generalization & Foundation  
+**Estimated effort:** 1–2 days
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+For deployments that prefer not to run local embedding infrastructure: a backend that calls OpenAI's `text-embedding-3-large` or Cohere's `embed-v4` over HTTP.
+
+**Default hosted option: OpenAI `text-embedding-3-large`** — purely because it keeps the number of external vendor dependencies down for teams already using OpenAI as their LLM provider in Phase 2. Cohere/Voyage are competitive on retrieval benchmarks and worth exposing as alternates behind the same interface, not as the default.
+
+---
+
+## Non-Goals
+
+- Per-request provider selection within the hosted backend
+- Cost management or usage tracking (separate concern)
+- Automatic fallback between hosted providers
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Embedding service / backends
+
+## Suggested naming (provisional)
+
+Rename freely to match the change that actually lands.
+
+- Branch: `feature/m2-5-g4-m3-hosted-api-backend`
+- PR title: `feat(embedder): hosted-API embedding backend (OpenAI default, Cohere/Voyage alternates) (m2.5.G4.M3)`
+
+## Working notes
+
+Preferred starting points and open questions — situational, and expected to evolve with further research during implementation.
+
+### Hosted backend selects provider by env var
+
+```python
+# Illustrative — exact path may differ
+from .base import EmbeddingBackend
+import httpx
+import numpy as np
+
+class HostedAPIBackend(EmbeddingBackend):
+ """Calls an external embeddings API (OpenAI, Cohere, Voyage).
+
+ EMBEDDER_HOSTED_PROVIDER selects the API. Defaults to 'openai'.
+ """
+ def __init__(self, provider: str, api_key: str, model: str | None = None):
+ self._provider = provider
+ self._api_key = api_key
+ self._model = model or self._default_model(provider)
+ self._dimensions = self._declared_dim(provider, self._model)
+
+ def _default_model(self, provider: str) -> str:
+ return {
+ "openai": "text-embedding-3-large",
+ "cohere": "embed-english-v3.0",
+ "voyage": "voyage-3",
+ }[provider]
+
+ async def embed(self, texts: list[str]) -> np.ndarray:
+ # dispatch to provider-specific call
+ ...
+```
+
+### Dimension handling
+
+`text-embedding-3-large` is 3072-dim by default (reducible via Matryoshka). For `pgvector` compatibility, the dimension must match the org's provisioned `embedding_dim`. Document the supported dimension values per provider in `hosted_backend.py`'s docstring.
+
+---
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] `HostedAPIBackend` implements `EmbeddingBackend` ABC
+- [ ] OpenAI `text-embedding-3-large` path implemented and tested (VCR recording in CI)
+- [ ] Cohere `embed-english-v3.0` path implemented (or stubbed with clear TODO for near-term follow-up)
+- [ ] `EMBEDDER_PROFILE=hosted` selects `HostedAPIBackend` at service startup
+- [ ] `EMBEDDER_HOSTED_PROVIDER`, `EMBEDDER_HOSTED_API_KEY`, `EMBEDDER_HOSTED_MODEL` env vars documented
+- [ ] Contract test suite passes for OpenAI path (shape, L2-normalization)
+- [ ] Dimension mismatch with org config caught at startup (not at query time)
+- [ ] API key never logged
+
+## Prerequisites
+
+- 2.5.G4.M1 (Embedder interface and registry) — `EmbeddingBackend` ABC and contract test suite
+
