@@ -108,8 +108,12 @@ type Config struct {
 	LLMMode             string
 	OpenAI              OpenAIConfig
 	Anthropic           AnthropicConfig
+	SelfHosted          SelfHostedConfig
 	// ModelCapabilityOverlays extends BuiltInCapabilityCatalog for ExtraModels (ADR-0041).
 	ModelCapabilityOverlays []provider.ModelCapability
+	// Provider circuit breaker (shared defaults; applied to self-hosted path).
+	ProviderBreakerFailures uint32
+	ProviderBreakerCoolDown time.Duration
 	PostgresDSN             string
 	DirectiveCacheTTL       time.Duration
 	SessionCacheTTL         time.Duration
@@ -252,6 +256,23 @@ func (c *Config) applyLLMDefaults() {
 	}
 	c.applyOpenAIDefaults()
 	c.applyAnthropicDefaults()
+	c.applySelfHostedDefaults()
+}
+
+func (c *Config) applySelfHostedDefaults() {
+	if c.SelfHosted.Enabled {
+		c.SelfHosted.BaseURL = c.SelfHosted.NormalizeBaseURL()
+	}
+	applyDurationDefaultZeroOnly(&c.SelfHosted.ReadyTimeout, defaultSelfHostedReadyTimeout)
+	applyDurationDefaultZeroOnly(&c.SelfHosted.ReadyPoll, defaultSelfHostedReadyInterval)
+	if c.ProviderBreakerFailures == 0 {
+		c.ProviderBreakerFailures = defaultBreakerFailures
+	}
+	if c.ProviderBreakerCoolDown <= 0 {
+		c.ProviderBreakerCoolDown = defaultBreakerCoolDown
+	}
+	c.SelfHosted.BreakerFailures = c.ProviderBreakerFailures
+	c.SelfHosted.BreakerCoolDown = c.ProviderBreakerCoolDown
 }
 
 func (c *Config) applyOpenAIDefaults() {

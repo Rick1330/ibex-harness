@@ -1,4 +1,4 @@
-package openai
+package openaicompatible
 
 import (
 	"context"
@@ -110,22 +110,23 @@ func TestUnit_StreamAccumulator_SoftCapUTF8Boundary(t *testing.T) {
 	}
 }
 
-func TestUnit_StreamAccumulator_MarkClosed(t *testing.T) {
+func TestUnit_StreamAccumulator_WaitTimeout(t *testing.T) {
 	t.Parallel()
 	acc := NewStreamAccumulator()
-	_, _ = acc.Write([]byte(`data: {"choices":[{"delta":{"content":"hi"}}]}` + "\n\n"))
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	_, _, err := acc.Wait(ctx)
+	if err == nil {
+		t.Fatal("expected timeout")
+	}
+}
+
+func TestUnit_StreamAccumulator_WriteAfterClosed(t *testing.T) {
+	t.Parallel()
+	acc := NewStreamAccumulator()
 	acc.MarkClosed()
-	content, usage, err := acc.Wait(context.Background())
-	if err != nil {
-		t.Fatalf("Wait: %v", err)
-	}
-	if content != "hi" {
-		t.Fatalf("content=%q", content)
-	}
-	if usage != nil {
-		t.Fatalf("unexpected usage %#v", usage)
-	}
-	if acc.Complete() {
-		t.Fatal("MarkClosed should not set Complete")
+	n, err := acc.Write([]byte("data: ignored\n\n"))
+	if err != nil || n == 0 {
+		t.Fatalf("n=%d err=%v", n, err)
 	}
 }

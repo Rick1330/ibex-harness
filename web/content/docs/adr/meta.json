@@ -39,6 +39,7 @@
     "0038-context-assembly-service",
     "0039-proxy-postgres-session-directive",
     "0040-anthropic-provider-adapter",
-    "0041-model-capability-registry"
+    "0041-model-capability-registry",
+    "0042-self-hosted-openai-compatible-adapter"
   ]
 }

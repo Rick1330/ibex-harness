@@ -242,10 +242,18 @@ func buildProxyHealth(cfg config.Config, authClient authv1.AuthServiceClient, pg
 			"redis":     healthcheck.RedisPing(cfg.RedisURL),
 		},
 	}
+	advisory := map[string]healthcheck.Checker{}
 	if pgDB != nil {
-		healthSrv.AdvisoryCheckers = map[string]healthcheck.Checker{
-			"postgres": healthcheck.PostgresSelect1(pgDB),
-		}
+		advisory["postgres"] = healthcheck.PostgresSelect1(pgDB)
+	}
+	if cfg.SelfHosted.Enabled {
+		advisory["selfhosted_llm"] = newSelfHostedReadyChecker(
+			cfg.SelfHosted.NormalizeBaseURL(),
+			cfg.SelfHosted.APIKey,
+		)
+	}
+	if len(advisory) > 0 {
+		healthSrv.AdvisoryCheckers = advisory
 	}
 	return healthSrv
 }
