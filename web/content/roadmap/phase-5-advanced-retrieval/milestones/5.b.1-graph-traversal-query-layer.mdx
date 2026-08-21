@@ -1,0 +1,85 @@
+---
+title: "5.B.1 Graph Traversal Query Layer"
+description: "Recursive CTE in Postgres for memory lineage traversal — 5-hop cap, org_id filter at every recursion level, cycle detection, no external graph database required."
+summary: "Recursive CTE in Postgres for memory lineage traversal — 5-hop cap, org_id filter at every recursion level, cycle detection, no external graph database required."
+status: "planned"
+milestoneId: "5.B.1"
+track: "B"
+trackTitle: "Graph-Aware Retrieval"
+trackHref: "/roadmap/phase-5-advanced-retrieval/tracks#track-b--graph-aware-retrieval"
+goal: "[Track B — Graph-Aware Retrieval](/roadmap/phase-5-advanced-retrieval/tracks#track-b--graph-aware-retrieval)"
+estimatedEffort: "4 days"
+phase: "phase-5-advanced-retrieval"
+fullTitle: "Milestone 5.B.1 — Graph Traversal Query Layer"
+---
+
+# Milestone 5.B.1 — Graph Traversal Query Layer
+
+**Status:** Planned  
+**Goal:** [Track B — Graph-Aware Retrieval](/roadmap/phase-5-advanced-retrieval/tracks#track-b--graph-aware-retrieval)  
+**Phase:** 5 — Advanced Retrieval  
+**Estimated effort:** 4 days  
+**Track:** [Track B — Graph-Aware Retrieval](/roadmap/phase-5-advanced-retrieval/tracks#track-b--graph-aware-retrieval)
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+`memory_relationships` models typed edges but nothing traverses this graph at query time. Recursive CTEs in Postgres handle this without a separate graph database — the relationship graph is shallow (2-4 hops typical) and RLS applies naturally since the table has its own `org_id` policy.
+
+---
+
+## Design note: Postgres Recursive CTE
+
+Current ranking of options:
+
+- **Start with Postgres recursive CTEs** for the initial implementation. They fit the current graph shape, keep tenant-isolation behavior in one data store, and avoid introducing new infrastructure before there is evidence it is needed.
+- **Keep Apache AGE as a follow-up investigation option** if traversal patterns become materially more complex while staying in Postgres remains desirable.
+- **Keep a dedicated graph database as a later option** only if the roadmap uncovers traversal depth, query volume, or graph-specific workloads that clearly outgrow recursive CTEs.
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Graph / lineage traversal
+- Memory service / repositories
+- MCP server surface
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] Depth cap is enforced in the traversal query itself, not only in application code
+- [ ] Tenant filter present at every recursion level, not only the base case
+- [ ] Cross-tenant isolation test cross-org traversal-leak test
+- [ ] Cycle detection: pathological cycles terminate at depth 5 (verified with seeded fixture)
+- [ ] P99 traversal latency measured at 3-hop and 5-hop on 1M-row table
+
+---
+
+## Prerequisites
+
+- Phase 4.5 exit criteria met
+- `memory_relationships` table populated (Phase 3)
+

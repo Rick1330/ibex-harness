@@ -1,0 +1,73 @@
+---
+title: "5.B.2 Graph-Boosted Scoring"
+description: "Use lineage to improve ranking — superseded memories never outrank successors, and unresolved contradictions are filtered at pack time so both sides are never injected together."
+summary: "Use lineage to improve ranking — superseded memories never outrank successors, and unresolved contradictions are filtered at pack time so both sides are never injected together."
+status: "planned"
+milestoneId: "5.B.2"
+track: "B"
+trackTitle: "Graph-Aware Retrieval"
+trackHref: "/roadmap/phase-5-advanced-retrieval/tracks#track-b--graph-aware-retrieval"
+goal: "[Track B — Graph-Aware Retrieval](/roadmap/phase-5-advanced-retrieval/tracks#track-b--graph-aware-retrieval)"
+estimatedEffort: "2 days"
+phase: "phase-5-advanced-retrieval"
+fullTitle: "Milestone 5.B.2 — Graph-Boosted Scoring"
+---
+
+# Milestone 5.B.2 — Graph-Boosted Scoring
+
+**Status:** Planned  
+**Goal:** [Track B — Graph-Aware Retrieval](/roadmap/phase-5-advanced-retrieval/tracks#track-b--graph-aware-retrieval)  
+**Phase:** 5 — Advanced Retrieval  
+**Estimated effort:** 2 days  
+**Track:** [Track B — Graph-Aware Retrieval](/roadmap/phase-5-advanced-retrieval/tracks#track-b--graph-aware-retrieval)
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+Two concrete signals from lineage: (1) superseded memories should never outrank their successors, and (2) unresolved contradictions (both `pending_review`) should not both be packed into context — that actively confuses the model. The packer needs a contradiction-edge check before formatting.
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Graph / lineage traversal
+- Memory service / repositories
+- MCP server surface
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] Contradiction filter: two candidates with `contradicts` edge and no resolution → only higher-scored survives
+- [ ] Golden-output regression test extended with contradiction-pair fixture
+- [ ] ADR-0049 written: "Why we filter unresolved contradictions at pack time"
+
+---
+
+## Prerequisites
+
+- Milestone 5.B.1 (Graph traversal query layer)
+- Context assembly packer (Phase 3.5)
+

@@ -1,0 +1,79 @@
+---
+title: "5.D.1 Retrieval Quality Sign-off"
+description: "Benchmark sign-off verifying hybrid beats dense-only, reranker meets latency budget, graph traversal doesn't regress normal-case retrieval, and all Phase 1–4.5 suites green."
+summary: "Benchmark sign-off verifying hybrid beats dense-only, reranker meets latency budget, graph traversal doesn't regress normal-case retrieval, and all Phase 1–4.5 suites green."
+status: "planned"
+milestoneId: "5.D.1"
+track: "D"
+trackTitle: "Exit Gate"
+trackHref: "/roadmap/phase-5-advanced-retrieval/tracks#track-d--exit-gate"
+goal: "[Track D — Exit Gate](/roadmap/phase-5-advanced-retrieval/tracks#track-d--exit-gate)"
+estimatedEffort: "2 days"
+phase: "phase-5-advanced-retrieval"
+fullTitle: "Milestone 5.D.1 — Retrieval Quality Sign-off"
+---
+
+# Milestone 5.D.1 — Retrieval Quality Sign-off
+
+**Status:** Planned  
+**Goal:** [Track D — Exit Gate](/roadmap/phase-5-advanced-retrieval/tracks#track-d--exit-gate)  
+**Phase:** 5 — Advanced Retrieval  
+**Estimated effort:** 2 days  
+**Track:** [Track D — Exit Gate](/roadmap/phase-5-advanced-retrieval/tracks#track-d--exit-gate)
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Exit Criteria
+
+1. Hybrid retrieval (BM25 + RRF) live, default-on, beating dense-only on gold-set v2 lexical queries
+2. Cross-encoder reranker meets latency budget within context-assembly p95 ≤ 50ms / p99 ≤ 100ms
+3. Graph traversal live via API and MCP tool, with `ISO-MCP-LINEAGE-01` passing
+4. Gold-set v2 committed with inter-annotator agreement ≥0.8 kappa
+5. Multi-mode benchmark running in CI on retrieval-touching PRs
+6. Shadow-evaluation pipeline live with working divergence dashboard
+7. All Phase 1–4.5 regression suites green
+8. ADR index updated
+9. `make e2e-smoke-p5` exits 0
+10. Phase 5 gap register published with zero open P0s
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Evaluation / benchmarks
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] All 10 exit criteria verified
+- [ ] Regression gate passes in CI
+- [ ] No unaddressed benchmark regressions
+
+---
+
+## Prerequisites
+
+- All Track A–C milestones complete
+

@@ -1,0 +1,72 @@
+---
+title: "Phase 5 — Goals"
+description: "Advanced Retrieval & Graph Memory: hybrid search, graph traversal, evaluation harness, and exit gate."
+summary: "Advanced Retrieval & Graph Memory: hybrid search, graph traversal, evaluation harness, and exit gate."
+phase: "phase-5-advanced-retrieval"
+---
+
+# Phase 5 — Goals
+
+<Callout type="note" title="Planning baseline">
+  Paths, libraries, schemas, and sequencing on this phase are orientation for planning.
+  Implementation is expected to require further research and may land differently than any sketch.
+</Callout>
+
+## Track A — Hybrid Retrieval (Dense + Sparse + Reranking)
+
+### Goal 5.A: Combine dense and sparse retrieval with cross-encoder reranking
+
+**Milestones:**
+- **5.A.1 — Sparse (BM25) retrieval channel:** `find_lexical()` using `ts_rank_cd` (cover density), parallel sibling to `find_similar`. GIN index verified at 100K+ row scale.
+- **5.A.2 — Reciprocal Rank Fusion combiner:** `reciprocal_rank_fusion()` combining dense and sparse result lists. Memories appearing in both lists near the top dominate.
+- **5.A.3 — Cross-encoder reranking:** `BAAI/bge-reranker-v2-m3` via TEI `/rerank` endpoint. Only runs on top-50 RRF-fused candidates. Graceful degradation to RRF-only on TEI unavailability.
+
+**Acceptance criteria:**
+- Exact-phrase query ranks exact-match memory above semantically-similar-but-wrong one
+- Hybrid beats pure-dense baseline on gold-set v2 lexical queries
+- Reranker p95 latency fits within 40ms context-assembly deadline as explicit sub-budget
+- Degradation to RRF-only on TEI timeout verified
+
+---
+
+## Track B — Graph-Aware Retrieval
+
+### Goal 5.B: Traverse the memory relationship graph at query time for lineage and contradiction awareness
+
+**Milestones:**
+- **5.B.1 — Graph traversal query layer:** Recursive CTE in Postgres, capped at 5 hops. `org_id` filter at every level of the recursion. Cycle detection via depth cap.
+- **5.B.2 — Graph-boosted retrieval scoring:** Superseded memories never outrank their successor. Unresolved contradictions in top-K: only higher-scored one packed into context.
+- **5.B.3 — MCP `get_memory_lineage` tool:** Returns full supersession/contradiction/specialization chain. Same auth/rate-limit path as existing MCP tools.
+
+**Acceptance criteria:**
+- `org_id` filter present at every CTE level (cross-org traversal-leak test)
+- Contradiction-pair fixture: only higher composite-score memory survives into packed context
+- `ISO-MCP-LINEAGE-01` cross-tenant test passes
+
+---
+
+## Track C — Evaluation Harness Upgrade
+
+### Goal 5.C: Multi-mode retrieval benchmark with online shadow evaluation
+
+**Milestones:**
+- **5.C.1 — Hybrid-aware gold set v2:** ~500 memories, 150 labeled queries. Lexical-specific and graph-traversal-specific subsets. Two human labelers, &gt;= 0.8 Cohen's kappa.
+- **5.C.2 — Multi-mode benchmark runner:** Dense-only, hybrid, hybrid+rerank, full-graph configs run side by side against the same gold set.
+- **5.C.3 — Production shadow evaluation:** 1% of real retrievals run through both live and candidate configs. Divergence logged to ClickHouse. Weekly automated report on divergence rate.
+
+**Acceptance criteria:**
+- At least 30 queries where dense-only is measurably worse than hybrid (proves RRF value)
+- At least 20 queries requiring graph traversal (proves Track B value)
+- CI fails on regression against committed baseline (3 point tolerance)
+- Shadow path adds zero latency to real requests
+
+---
+
+## Track D — Exit Gate
+
+### Goal 5.D: Verify advanced retrieval quality and performance at phase boundary
+
+**Acceptance criteria:**
+- All exit criteria from the phase index met
+- Phase 5 gap register published with zero open P0s
+- ADR index updated

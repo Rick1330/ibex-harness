@@ -1,0 +1,72 @@
+---
+title: "5.C.3 Production Shadow Evaluation"
+description: "1% traffic sampling with live and candidate retrieval configs in parallel — divergence logged to ClickHouse, weekly automated report, dashboard panel for trend monitoring."
+summary: "1% traffic sampling with live and candidate retrieval configs in parallel — divergence logged to ClickHouse, weekly automated report, dashboard panel for trend monitoring."
+status: "planned"
+milestoneId: "5.C.3"
+track: "C"
+trackTitle: "Evaluation Harness Upgrade"
+trackHref: "/roadmap/phase-5-advanced-retrieval/tracks#track-c--evaluation-harness-upgrade"
+goal: "[Track C — Evaluation Harness Upgrade](/roadmap/phase-5-advanced-retrieval/tracks#track-c--evaluation-harness-upgrade)"
+estimatedEffort: "3 days"
+phase: "phase-5-advanced-retrieval"
+fullTitle: "Milestone 5.C.3 — Production Shadow Evaluation"
+---
+
+# Milestone 5.C.3 — Production Shadow Evaluation
+
+**Status:** Planned  
+**Goal:** [Track C — Evaluation Harness Upgrade](/roadmap/phase-5-advanced-retrieval/tracks#track-c--evaluation-harness-upgrade)  
+**Phase:** 5 — Advanced Retrieval  
+**Estimated effort:** 3 days  
+**Track:** [Track C — Evaluation Harness Upgrade](/roadmap/phase-5-advanced-retrieval/tracks#track-c--evaluation-harness-upgrade)
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+Offline gold sets go stale and don't capture real traffic distribution. Shadow evaluation samples 1% of production retrievals, runs both live and candidate configs in parallel (fire-and-forget, zero latency impact), and logs divergence to catch regressions fixed gold sets structurally cannot.
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Evaluation / benchmarks
+- Hybrid retrieval
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] Shadow path adds zero latency to real requests (fire-and-forget, same pattern as async trace emitter)
+- [ ] Dashboard panel showing divergence rate trend over 7/30 days
+- [ ] Weekly automated report flags divergence exceeding threshold
+
+---
+
+## Prerequisites
+
+- Milestone 5.C.2 (Multi-mode benchmark runner)
+- ClickHouse operational
+

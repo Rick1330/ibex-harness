@@ -1,0 +1,72 @@
+---
+title: "5.A.1 BM25 Sparse Retrieval"
+description: "Add a real BM25-scored full-text retrieval channel using ts_rank_cd and GIN index, running in parallel with vector search as a first-class signal — not a sequential fallback."
+summary: "Add a real BM25-scored full-text retrieval channel using ts_rank_cd and GIN index, running in parallel with vector search as a first-class signal — not a sequential fallback."
+status: "planned"
+milestoneId: "5.A.1"
+track: "A"
+trackTitle: "Hybrid Retrieval"
+trackHref: "/roadmap/phase-5-advanced-retrieval/tracks#track-a--hybrid-retrieval"
+goal: "[Track A — Hybrid Retrieval](/roadmap/phase-5-advanced-retrieval/tracks#track-a--hybrid-retrieval)"
+estimatedEffort: "3 days"
+phase: "phase-5-advanced-retrieval"
+fullTitle: "Milestone 5.A.1 — BM25 Sparse Retrieval"
+---
+
+# Milestone 5.A.1 — BM25 Sparse Retrieval
+
+**Status:** Planned  
+**Goal:** [Track A — Hybrid Retrieval](/roadmap/phase-5-advanced-retrieval/tracks#track-a--hybrid-retrieval)  
+**Phase:** 5 — Advanced Retrieval  
+**Estimated effort:** 3 days  
+**Track:** [Track A — Hybrid Retrieval](/roadmap/phase-5-advanced-retrieval/tracks#track-a--hybrid-retrieval)
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+Pure dense retrieval reliably underperforms on exact-match queries (proper nouns, IDs, exact phrases). A preferred starting approach is a parallel BM25 channel using Postgres `ts_rank_cd` (cover density — rewards proximity of matched terms) rather than standing up a separate search cluster — reopen if Postgres FTS proves insufficient.
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Hybrid retrieval
+- Memory service / repositories
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] Lexical retrieval returns BM25/`ts_rank_cd`-style scores with the same org/agent scoping as dense search
+- [ ] Query plans use the expected GIN / full-text index at meaningful scale
+- [ ] Exact-phrase queries rank exact matches above merely similar near-misses
+
+---
+
+## Prerequisites
+
+- Phase 4.5 exit criteria met
+- Existing `search_vector tsvector` column on `memories.content`
+

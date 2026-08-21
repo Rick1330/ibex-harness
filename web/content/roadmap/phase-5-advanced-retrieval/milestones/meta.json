@@ -1,0 +1,16 @@
+{
+  "title": "Milestones",
+  "pages": [
+    "5.a.1-bm25-sparse-retrieval",
+    "5.a.2-reciprocal-rank-fusion",
+    "5.a.3-cross-encoder-reranking",
+    "5.b.1-graph-traversal-query-layer",
+    "5.b.2-graph-boosted-scoring",
+    "5.b.3-mcp-get-memory-lineage",
+    "5.c.1-hybrid-aware-gold-set-v2",
+    "5.c.2-multi-mode-benchmark-runner",
+    "5.c.3-production-shadow-evaluation",
+    "5.d.1-retrieval-quality-sign-off",
+    "5.d.2-phase5-exit-audit"
+  ]
+}

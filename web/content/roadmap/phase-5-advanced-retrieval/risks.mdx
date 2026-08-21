@@ -1,0 +1,25 @@
+---
+title: "Phase 5 — Risks and Mitigations"
+description: "Risks for hybrid retrieval, graph traversal, reranking, evaluation, and shadow rollout of advanced retrieval."
+summary: "Risks for hybrid retrieval, graph traversal, reranking, evaluation, and shadow rollout of advanced retrieval."
+phase: "phase-5-advanced-retrieval"
+---
+
+# Phase 5 — Risks and Mitigations
+
+<Callout type="note" title="Planning baseline">
+  Paths, libraries, schemas, and sequencing on this phase are orientation for planning.
+  Implementation is expected to require further research and may land differently than any sketch.
+</Callout>
+
+| Risk | Area | Likelihood | Impact | Mitigation |
+| --- | --- | --- | --- | --- |
+| Hybrid retrieval improves some queries while regressing others | 5.A.x | Medium | High | Compare dense-only, hybrid, reranked, and graph-aware modes side by side; keep dense-only as a baseline floor in CI |
+| BM25 tuning is corpus-sensitive | 5.A.1 | Medium | Medium | Start with Postgres-native ranking, measure on the gold set, and leave room for later investigation if corpus behavior suggests additional tuning |
+| Cross-encoder reranking adds too much latency | 5.A.3 | Medium | High | Bound reranking to a small candidate set, keep a clear timeout budget, and fall back cleanly to fused ranking when the reranker is unavailable |
+| Graph traversal leaks tenant boundaries or follows pathological cycles | 5.B.1 | Low | Critical | Enforce `org_id` filtering at every recursive step, cap traversal depth in SQL, and keep explicit cycle fixtures in tests |
+| Contradiction filtering hides useful context | 5.B.2 | Medium | Medium | Treat the filter as a conservative packing rule, log dropped contradictions for review, and revisit the strategy if evaluation results show missed recall |
+| Gold-set coverage is too narrow for hybrid and graph behaviors | 5.C.1 | Medium | High | Split lexical and graph-specific subsets, document label quality, and keep expansion of the corpus as an ongoing research task |
+| Shadow evaluation creates operational noise without decision value | 5.C.3 | Medium | Medium | Sample conservatively, store divergence metrics asynchronously, and review dashboard usefulness before raising sampling rates |
+| Retrieval-quality expectations outpace underlying data quality | 5 overall | Medium | Medium | Keep benchmarking tied to labeled evidence, record open questions in findings/exit audit, and allow follow-up investigation where quality deltas are unclear |
+
