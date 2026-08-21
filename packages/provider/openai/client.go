@@ -62,7 +62,9 @@ func (c *Client) SupportedModels() []string {
 // Complete sends a chat completion request to OpenAI.
 // When req.Stream is true, Body is a live SSE stream (caller must close it).
 func (c *Client) Complete(ctx context.Context, req provider.Request) (provider.Response, error) {
-	ctx, span := provider.StartCompleteSpan(ctx, c.tracer, "openai.Complete", c.Name(), req)
+	ctx, span := provider.StartCompleteSpan(ctx, c.tracer, provider.CompleteSpanNames{
+		Span: "openai.Complete", Provider: c.Name(),
+	}, req)
 	defer span.End()
 
 	body, err := c.marshalRequest(req)
@@ -125,19 +127,26 @@ func isRetryableStatus(code int) bool {
 }
 
 func (c *Client) waitBeforeRetry(ctx context.Context, attempt int, lastErr error) error {
-	// OpenAI may embed retry_after in JSON when the header is absent.
-	if pe, ok := lastErr.(*provider.ProviderError); ok && pe.StatusCode == http.StatusTooManyRequests && pe.RetryAfter <= 0 {
-		if ra := retryAfterFromProvider(pe); ra > 0 {
-			lastErr = &provider.ProviderError{
-				ProviderName:   pe.ProviderName,
-				StatusCode:     pe.StatusCode,
-				ProviderBody:   pe.ProviderBody,
-				ProviderErrMsg: pe.ProviderErrMsg,
-				RetryAfter:     ra,
-			}
-		}
-	}
+	lastErr = enrichOpenAIRetryAfter(lastErr)
 	return provider.WaitBeforeRetry(ctx, c.cfg.RetryBaseDelay, attempt, lastErr)
+}
+
+func enrichOpenAIRetryAfter(lastErr error) error {
+	pe, ok := lastErr.(*provider.ProviderError)
+	if !ok || pe.StatusCode != http.StatusTooManyRequests || pe.RetryAfter > 0 {
+		return lastErr
+	}
+	ra := retryAfterFromProvider(pe)
+	if ra <= 0 {
+		return lastErr
+	}
+	return &provider.ProviderError{
+		ProviderName:   pe.ProviderName,
+		StatusCode:     pe.StatusCode,
+		ProviderBody:   pe.ProviderBody,
+		ProviderErrMsg: pe.ProviderErrMsg,
+		RetryAfter:     ra,
+	}
 }
 
 func retryAfterFromProvider(pe *provider.ProviderError) time.Duration {

@@ -13,12 +13,11 @@ import (
 // Client implements provider.Provider for the Anthropic Messages API.
 // Responses are translated to OpenAI-compatible JSON/SSE (ADR-0040).
 type Client struct {
-	cfg          Config
-	httpClient   *http.Client
-	streamClient *http.Client
-	log          *logger.Logger
-	tracer       trace.Tracer
-	metrics      Metrics
+	cfg     Config
+	clients provider.HTTPClients
+	log     *logger.Logger
+	tracer  trace.Tracer
+	metrics Metrics
 }
 
 // New constructs an Anthropic Client with a shared http.Client for connection pooling.
@@ -27,14 +26,12 @@ func New(cfg Config, log *logger.Logger, tracer trace.Tracer, metrics Metrics) *
 	if metrics == nil {
 		metrics = noopMetrics{}
 	}
-	clients := provider.NewHTTPClients(cfg.Timeout)
 	return &Client{
-		cfg:          cfg,
-		httpClient:   clients.Sync,
-		streamClient: clients.Stream,
-		log:          log,
-		tracer:       provider.TracerOrNoop(tracer, "anthropic"),
-		metrics:      metrics,
+		cfg:     cfg,
+		clients: provider.NewHTTPClients(cfg.Timeout),
+		log:     log,
+		tracer:  provider.TracerOrNoop(tracer, "anthropic"),
+		metrics: metrics,
 	}
 }
 
@@ -57,7 +54,9 @@ func (c *Client) SupportedModels() []string {
 
 // Complete sends a Messages API request and returns an OpenAI-compatible body.
 func (c *Client) Complete(ctx context.Context, req provider.Request) (provider.Response, error) {
-	ctx, span := provider.StartCompleteSpan(ctx, c.tracer, "anthropic.Complete", c.Name(), req)
+	ctx, span := provider.StartCompleteSpan(ctx, c.tracer, provider.CompleteSpanNames{
+		Span: "anthropic.Complete", Provider: c.Name(),
+	}, req)
 	defer span.End()
 
 	body, err := marshalAnthropicRequestBody(req, c.cfg.DefaultTokens)
@@ -78,8 +77,8 @@ func (c *Client) doRequest(ctx context.Context, call upstreamCall) (*http.Respon
 	return provider.DoUpstream(
 		ctx,
 		c.cfg.StreamTimeout,
-		c.httpClient,
-		c.streamClient,
+		c.clients.Sync,
+		c.clients.Stream,
 		c.newMessagesRequest,
 		provider.UpstreamCall{URL: call.URL, Body: call.Body, Stream: call.Stream},
 	)

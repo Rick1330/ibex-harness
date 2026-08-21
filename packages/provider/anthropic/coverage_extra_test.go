@@ -29,17 +29,26 @@ func TestConfig_ApplyDefaultsBranches(t *testing.T) {
 
 func assertDefaultsApplied(t *testing.T, c Config) {
 	t.Helper()
-	if c.BaseURL == "" || c.APIVersion == "" {
-		t.Fatal("endpoint defaults")
+	if c.BaseURL == "" {
+		t.Fatal("base url")
 	}
-	if c.Timeout <= 0 || c.StreamTimeout <= 0 {
-		t.Fatal("timeout defaults")
+	if c.APIVersion == "" {
+		t.Fatal("api version")
+	}
+	if c.Timeout <= 0 {
+		t.Fatal("timeout")
+	}
+	if c.StreamTimeout <= 0 {
+		t.Fatal("stream timeout")
 	}
 	if c.MaxRetries == nil || *c.MaxRetries != 0 {
 		t.Fatalf("max retries=%v", c.MaxRetries)
 	}
-	if c.RetryBaseDelay != defaultRetryBaseDelay || c.DefaultTokens != defaultMaxTokens {
-		t.Fatal("retry/token defaults")
+	if c.RetryBaseDelay != defaultRetryBaseDelay {
+		t.Fatal("retry delay")
+	}
+	if c.DefaultTokens != defaultMaxTokens {
+		t.Fatal("tokens")
 	}
 }
 
@@ -154,7 +163,7 @@ func TestNew_NilDeps(t *testing.T) {
 	if c.tracer == nil {
 		t.Fatal("tracer")
 	}
-	if c.metrics == nil || c.streamClient == nil {
+	if c.metrics == nil || c.clients.Stream == nil {
 		t.Fatal("metrics/stream")
 	}
 }

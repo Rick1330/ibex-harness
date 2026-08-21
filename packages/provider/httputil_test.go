@@ -285,12 +285,22 @@ func TestCancelOnClose(t *testing.T) {
 	}
 }
 
-func TestClientBootHelpers(t *testing.T) {
+func TestNewHTTPClients(t *testing.T) {
 	t.Parallel()
 	clients := NewHTTPClients(time.Second)
-	if clients.Sync == nil || clients.Stream == nil || clients.Sync.Transport != clients.Stream.Transport {
-		t.Fatal("http clients")
+	if clients.Sync == nil {
+		t.Fatal("sync")
 	}
+	if clients.Stream == nil {
+		t.Fatal("stream")
+	}
+	if clients.Sync.Transport != clients.Stream.Transport {
+		t.Fatal("shared transport")
+	}
+}
+
+func TestTracerOrNoop(t *testing.T) {
+	t.Parallel()
 	if TracerOrNoop(nil, "x") == nil {
 		t.Fatal("noop tracer")
 	}
@@ -298,9 +308,14 @@ func TestClientBootHelpers(t *testing.T) {
 	if TracerOrNoop(tr, "x") != tr {
 		t.Fatal("passthrough tracer")
 	}
-	ctx, span := StartCompleteSpan(context.Background(), tr, "prov.Complete", "prov", Request{
-		Model: "m", Stream: true,
-	})
+}
+
+func TestStartCompleteSpanAndJoin(t *testing.T) {
+	t.Parallel()
+	tr := noop.NewTracerProvider().Tracer("t")
+	ctx, span := StartCompleteSpan(context.Background(), tr, CompleteSpanNames{
+		Span: "prov.Complete", Provider: "prov",
+	}, Request{Model: "m", Stream: true})
 	span.End()
 	if ctx == nil {
 		t.Fatal("span ctx")
@@ -308,14 +323,21 @@ func TestClientBootHelpers(t *testing.T) {
 	if JoinBaseURL("https://api.example/", "/v1/x") != "https://api.example/v1/x" {
 		t.Fatal("join")
 	}
+}
+
+func TestNewJSONPostAndTimedOnce(t *testing.T) {
+	t.Parallel()
 	req, err := NewJSONPostRequest(context.Background(), UpstreamCall{
 		URL: "http://example.invalid", Body: []byte(`{}`), Stream: true,
 	}, map[string]string{"Content-Type": "application/json"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if req.Header.Get("Accept") != "text/event-stream" || req.Header.Get("Content-Type") != "application/json" {
-		t.Fatal("headers")
+	if req.Header.Get("Accept") != "text/event-stream" {
+		t.Fatal("accept")
+	}
+	if req.Header.Get("Content-Type") != "application/json" {
+		t.Fatal("content-type")
 	}
 	out := TimedHTTPOnce(0, 0,
 		func() (*http.Response, error) {
@@ -331,12 +353,21 @@ func TestClientBootHelpers(t *testing.T) {
 	}
 }
 
-func TestSharedUpstreamHelpers(t *testing.T) {
+func TestIsRetryableHTTPStatus(t *testing.T) {
 	t.Parallel()
-	if !IsRetryableHTTPStatus(429) || !IsRetryableHTTPStatus(529, 529) || IsRetryableHTTPStatus(400) {
-		t.Fatal("status classification")
+	if !IsRetryableHTTPStatus(429) {
+		t.Fatal("429")
 	}
+	if !IsRetryableHTTPStatus(529, 529) {
+		t.Fatal("529")
+	}
+	if IsRetryableHTTPStatus(400) {
+		t.Fatal("400")
+	}
+}
 
+func TestDoUpstreamAndReadProviderError(t *testing.T) {
+	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("X-Test") != "1" {
 			t.Errorf("missing header")
@@ -347,8 +378,7 @@ func TestSharedUpstreamHelpers(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	base := NewPooledHTTPClient(time.Second)
-	stream := StreamHTTPClient(base)
-	resp, err := DoUpstream(context.Background(), time.Second, base, stream,
+	resp, err := DoUpstream(context.Background(), time.Second, base, StreamHTTPClient(base),
 		func(ctx context.Context, call UpstreamCall) (*http.Request, error) {
 			req, err := http.NewRequestWithContext(ctx, http.MethodPost, call.URL, bytes.NewReader(call.Body))
 			if err != nil {
@@ -362,17 +392,26 @@ func TestSharedUpstreamHelpers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer func() { _ = resp.Body.Close() }()
 	pe := ReadProviderError("t", resp, func(raw []byte) string {
 		if strings.Contains(string(raw), "nope") {
 			return "nope"
 		}
 		return "upstream provider error"
 	})
-	_ = resp.Body.Close()
-	if pe.StatusCode != 429 || pe.ProviderErrMsg != "nope" || pe.RetryAfter <= 0 {
-		t.Fatalf("%+v", pe)
+	if pe.StatusCode != 429 {
+		t.Fatalf("status=%d", pe.StatusCode)
 	}
+	if pe.ProviderErrMsg != "nope" {
+		t.Fatalf("msg=%q", pe.ProviderErrMsg)
+	}
+	if pe.RetryAfter <= 0 {
+		t.Fatal("retry-after")
+	}
+}
 
+func TestNonEventStreamErrorCloses(t *testing.T) {
+	t.Parallel()
 	okSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{}`))
@@ -387,7 +426,10 @@ func TestSharedUpstreamHelpers(t *testing.T) {
 	if out.Err == nil {
 		t.Fatal("expected non-event-stream error")
 	}
+}
 
+func TestTryHTTPOnceDialRetry(t *testing.T) {
+	t.Parallel()
 	attempts := 0
 	got := TryHTTPOnce(1, 0,
 		func() (*http.Response, error) {
@@ -399,10 +441,19 @@ func TestSharedUpstreamHelpers(t *testing.T) {
 		func(*http.Response) *ProviderError { return nil },
 		func(*http.Response) AttemptOutcome { return AttemptOutcome{} },
 	)
-	if got.Err == nil || !got.Retry || attempts != 1 {
-		t.Fatalf("%+v attempts=%d", got, attempts)
+	if got.Err == nil {
+		t.Fatal("err")
 	}
+	if !got.Retry {
+		t.Fatal("retry")
+	}
+	if attempts != 1 {
+		t.Fatalf("attempts=%d", attempts)
+	}
+}
 
+func TestTryHTTPOnceOK(t *testing.T) {
+	t.Parallel()
 	okOnce := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
@@ -412,20 +463,26 @@ func TestSharedUpstreamHelpers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer func() { _ = okHTTP.Body.Close() }()
 	okGot := TryHTTPOnce(0, 0,
 		func() (*http.Response, error) { return okHTTP, nil },
 		func(string) {},
 		func(code int) bool { return IsRetryableHTTPStatus(code) },
 		func(*http.Response) *ProviderError { return nil },
 		func(resp *http.Response) AttemptOutcome {
-			defer func() { _ = resp.Body.Close() }()
 			return AttemptOutcome{Resp: Response{StatusCode: 200}}
 		},
 	)
-	if okGot.Err != nil || okGot.Resp.StatusCode != 200 {
-		t.Fatalf("%+v", okGot)
+	if okGot.Err != nil {
+		t.Fatal(okGot.Err)
 	}
+	if okGot.Resp.StatusCode != 200 {
+		t.Fatalf("status=%d", okGot.Resp.StatusCode)
+	}
+}
 
+func TestTryHTTPOnceRetryableStatus(t *testing.T) {
+	t.Parallel()
 	errOnce := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "no", http.StatusBadGateway)
 	}))
@@ -434,6 +491,7 @@ func TestSharedUpstreamHelpers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer func() { _ = errHTTP.Body.Close() }()
 	errGot := TryHTTPOnce(1, 0,
 		func() (*http.Response, error) { return errHTTP, nil },
 		func(string) {},
@@ -443,7 +501,10 @@ func TestSharedUpstreamHelpers(t *testing.T) {
 		},
 		func(*http.Response) AttemptOutcome { return AttemptOutcome{} },
 	)
-	if errGot.Err == nil || !errGot.Retry {
-		t.Fatalf("%+v", errGot)
+	if errGot.Err == nil {
+		t.Fatal("err")
+	}
+	if !errGot.Retry {
+		t.Fatal("retry")
 	}
 }

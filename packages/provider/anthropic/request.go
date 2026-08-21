@@ -83,6 +83,10 @@ func toAnthropicRequest(req provider.Request, defaultTokens int) (anthropicReque
 func extractSystemAndTurns(messages []provider.Message) (string, []anthropicMessage, error) {
 	system, rest := peelSystemPrefix(messages)
 	system, rest = foldMidConversationSystem(system, rest)
+	return buildAnthropicTurns(system, rest)
+}
+
+func buildAnthropicTurns(system string, rest []provider.Message) (string, []anthropicMessage, error) {
 	if len(rest) == 0 {
 		return system, nil, badRequest("anthropic requires at least one non-system message")
 	}

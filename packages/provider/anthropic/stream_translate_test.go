@@ -204,7 +204,13 @@ func assertChunksParse(t *testing.T, out string) {
 
 func openAIChunkPayload(block string) (string, bool) {
 	block = strings.TrimSpace(block)
-	if block == "" || block == "data: [DONE]" || strings.HasPrefix(block, ":") {
+	if block == "" {
+		return "", false
+	}
+	if block == "data: [DONE]" {
+		return "", false
+	}
+	if strings.HasPrefix(block, ":") {
 		return "", false
 	}
 	if !strings.HasPrefix(block, "data: ") {

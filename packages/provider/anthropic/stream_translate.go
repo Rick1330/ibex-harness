@@ -225,11 +225,11 @@ func (st *streamState) handle(ev sseEvent) error {
 	case "error":
 		return mapStreamError(ev.Data)
 	case "message_start":
-		return st.onMessageStart(ev.Data)
+		return st.onMessageStart(ev)
 	case "content_block_delta":
-		return st.onContentDelta(ev.Data)
+		return st.onContentDelta(ev)
 	case "message_delta":
-		return st.onMessageDelta(ev.Data)
+		return st.onMessageDelta(ev)
 	case "ping":
 		return st.writeRaw(": ping\n\n")
 	case "sse_comment":
@@ -241,14 +241,14 @@ func (st *streamState) handle(ev sseEvent) error {
 	}
 }
 
-func (st *streamState) onMessageStart(data string) error {
+func (st *streamState) onMessageStart(ev sseEvent) error {
 	var payload struct {
 		Message struct {
 			ID    string `json:"id"`
 			Model string `json:"model"`
 		} `json:"message"`
 	}
-	if err := json.Unmarshal([]byte(data), &payload); err == nil {
+	if err := json.Unmarshal([]byte(ev.Data), &payload); err == nil {
 		if payload.Message.ID != "" {
 			st.msgID = payload.Message.ID
 		}
@@ -259,14 +259,14 @@ func (st *streamState) onMessageStart(data string) error {
 	return st.ensureRole()
 }
 
-func (st *streamState) onContentDelta(data string) error {
+func (st *streamState) onContentDelta(ev sseEvent) error {
 	var payload struct {
 		Delta struct {
 			Type string `json:"type"`
 			Text string `json:"text"`
 		} `json:"delta"`
 	}
-	if err := json.Unmarshal([]byte(data), &payload); err != nil {
+	if err := json.Unmarshal([]byte(ev.Data), &payload); err != nil {
 		return nil
 	}
 	if payload.Delta.Type != "" && payload.Delta.Type != "text_delta" {
@@ -290,13 +290,13 @@ func (st *streamState) onContentDelta(data string) error {
 	})
 }
 
-func (st *streamState) onMessageDelta(data string) error {
+func (st *streamState) onMessageDelta(ev sseEvent) error {
 	var payload struct {
 		Delta struct {
 			StopReason string `json:"stop_reason"`
 		} `json:"delta"`
 	}
-	if err := json.Unmarshal([]byte(data), &payload); err != nil || payload.Delta.StopReason == "" {
+	if err := json.Unmarshal([]byte(ev.Data), &payload); err != nil || payload.Delta.StopReason == "" {
 		return nil
 	}
 	return st.writeFinish(mapStopReason(payload.Delta.StopReason))

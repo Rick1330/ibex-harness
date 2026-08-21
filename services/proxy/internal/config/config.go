@@ -252,50 +252,49 @@ func (c *Config) applyLLMDefaults() {
 }
 
 func (c *Config) applyOpenAIDefaults() {
-	applyProviderHTTPDefaults(
-		&c.OpenAI.BaseURL,
-		&c.OpenAI.RequestTimeout,
-		&c.OpenAI.MaxRetries,
-		&c.OpenAI.RetryBaseDelay,
-		defaultOpenAIBaseURL,
-		defaultOpenAIRequestTimeout,
-		defaultOpenAIMaxRetries,
-		defaultOpenAIRetryBaseDelay,
-	)
+	applyProviderHTTPDefaults(providerHTTPFields{
+		BaseURL: &c.OpenAI.BaseURL, Timeout: &c.OpenAI.RequestTimeout,
+		MaxRetries: &c.OpenAI.MaxRetries, RetryDelay: &c.OpenAI.RetryBaseDelay,
+	}, providerHTTPFallback{
+		BaseURL: defaultOpenAIBaseURL, Timeout: defaultOpenAIRequestTimeout,
+		MaxRetries: defaultOpenAIMaxRetries, RetryDelay: defaultOpenAIRetryBaseDelay,
+	})
 }
 
 func (c *Config) applyAnthropicDefaults() {
-	applyProviderHTTPDefaults(
-		&c.Anthropic.BaseURL,
-		&c.Anthropic.RequestTimeout,
-		&c.Anthropic.MaxRetries,
-		&c.Anthropic.RetryBaseDelay,
-		defaultAnthropicBaseURL,
-		defaultAnthropicTimeout,
-		defaultAnthropicMaxRetries,
-		defaultAnthropicRetryDelay,
-	)
+	applyProviderHTTPDefaults(providerHTTPFields{
+		BaseURL: &c.Anthropic.BaseURL, Timeout: &c.Anthropic.RequestTimeout,
+		MaxRetries: &c.Anthropic.MaxRetries, RetryDelay: &c.Anthropic.RetryBaseDelay,
+	}, providerHTTPFallback{
+		BaseURL: defaultAnthropicBaseURL, Timeout: defaultAnthropicTimeout,
+		MaxRetries: defaultAnthropicMaxRetries, RetryDelay: defaultAnthropicRetryDelay,
+	})
 }
 
-func applyProviderHTTPDefaults(
-	baseURL *string,
-	timeout *time.Duration,
-	maxRetries *int,
-	retryDelay *time.Duration,
-	defaultURL string,
-	defaultTimeout time.Duration,
-	defaultMaxRetries int,
-	defaultRetryDelay time.Duration,
-) {
-	if strings.TrimSpace(*baseURL) == "" {
-		*baseURL = defaultURL
+type providerHTTPFields struct {
+	BaseURL    *string
+	Timeout    *time.Duration
+	MaxRetries *int
+	RetryDelay *time.Duration
+}
+
+type providerHTTPFallback struct {
+	BaseURL    string
+	Timeout    time.Duration
+	MaxRetries int
+	RetryDelay time.Duration
+}
+
+func applyProviderHTTPDefaults(fields providerHTTPFields, fallback providerHTTPFallback) {
+	if strings.TrimSpace(*fields.BaseURL) == "" {
+		*fields.BaseURL = fallback.BaseURL
 	}
-	if *timeout <= 0 {
-		*timeout = defaultTimeout
+	if *fields.Timeout <= 0 {
+		*fields.Timeout = fallback.Timeout
 	}
-	*maxRetries = normalizeRetryCount(*maxRetries, defaultMaxRetries)
-	if *retryDelay <= 0 {
-		*retryDelay = defaultRetryDelay
+	*fields.MaxRetries = normalizeRetryCount(*fields.MaxRetries, fallback.MaxRetries)
+	if *fields.RetryDelay <= 0 {
+		*fields.RetryDelay = fallback.RetryDelay
 	}
 }
 
