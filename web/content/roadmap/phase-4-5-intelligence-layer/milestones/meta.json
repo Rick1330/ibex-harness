@@ -1,0 +1,19 @@
+{
+  "title": "Milestones",
+  "pages": [
+    "4.5.a.1-feature-extraction-pipeline",
+    "4.5.a.2-fingerprint-schema-migration",
+    "4.5.a.3-fingerprint-trigger-scheduling",
+    "4.5.b.1-distribution-aware-drift-tests",
+    "4.5.b.2-threshold-calibration",
+    "4.5.b.3-severity-aggregation-action-policy",
+    "4.5.c.1-scenario-management-versioning",
+    "4.5.c.2-regression-runner-service",
+    "4.5.c.3-promotion-gate-gradual-rollout",
+    "4.5.c.4-dashboard-integration",
+    "4.5.d.1-cross-track-integration-suite",
+    "4.5.d.2-e2e-playwright-coverage",
+    "4.5.d.3-benchmark-sign-off",
+    "4.5.d.4-gap-register-sign-off"
+  ]
+}

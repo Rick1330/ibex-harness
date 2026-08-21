@@ -1,0 +1,140 @@
+---
+title: "4.5.A.1 Feature Extraction Pipeline"
+description: "Turn a rolling window of ClickHouse trace rows into the feature vector that drift detection consumes. Replaces mean/std with t-digest quantile sketches, Laplace-smoothed Jensen-Shannon divergence, k-means sub-clusters, and Beta-Binomial error tracking."
+summary: "Turn a rolling window of ClickHouse trace rows into the feature vector that drift detection consumes. Replaces mean/std with t-digest quantile sketches, Laplace-smoothed Jensen-Shannon divergence, k-means sub-clusters, and Beta-Binomial error tracking."
+status: "planned"
+milestoneId: "4.5.A.1"
+track: "A"
+trackTitle: "Behavioral Fingerprinting"
+trackHref: "/roadmap/phase-4-5-intelligence-layer/tracks#track-a--behavioral-fingerprinting"
+goal: "[Track A — Behavioral Fingerprinting](/roadmap/phase-4-5-intelligence-layer/tracks#track-a--behavioral-fingerprinting)"
+estimatedEffort: "4 days"
+phase: "phase-4-5-intelligence-layer"
+fullTitle: "Milestone 4.5.A.1 — Feature Extraction Pipeline"
+---
+
+# Milestone 4.5.A.1 — Feature Extraction Pipeline
+
+**Status:** Planned  
+**Goal:** [Track A — Behavioral Fingerprinting](/roadmap/phase-4-5-intelligence-layer/tracks#track-a--behavioral-fingerprinting)  
+**Phase:** 4.5 — Intelligence Layer  
+**Estimated effort:** 4 days  
+**Track:** [Track A — Behavioral Fingerprinting](/roadmap/phase-4-5-intelligence-layer/tracks#track-a--behavioral-fingerprinting)  
+**ADR required:** ADR-0045 — Fingerprint statistical methodology
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+The original design computes fingerprints using raw means and standard deviations, then compares them via z-score. This has a fundamental problem: token counts, response lengths, and tool-call rates are not Gaussian — they are right-skewed or bounded/discrete. A raw z-score will false-positive constantly on any agent with a naturally bursty workload.
+
+This milestone replaces each feature's statistical representation with a distribution-appropriate approach, so that downstream drift detection (Track B) operates on sound foundations rather than inherited statistical assumptions.
+
+---
+
+## Non-Goals
+
+- Drift comparison logic (Track B)
+- Fingerprint storage schema (4.5.A.2)
+- Scheduling and trigger logic (4.5.A.3)
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Fingerprinting / drift
+- Workers / task runtime
+
+## Suggested naming (provisional)
+
+Rename freely to match the change that actually lands.
+
+- Branch: `feature/m4-5-a1-feature-extraction-pipeline`
+- PR title: `feat(worker/fingerprint): feature extraction pipeline with t-digest and k-means (m4.5.A.1)`
+
+## ADR-0045 — Fingerprint Statistical Methodology
+
+Write `web/content/docs/adr/0045-fingerprint-statistical-methodology.mdx` documenting:
+
+- **Why t-digest instead of mean/std for token features:** t-digest is a streaming quantile sketch that is O(1) memory, mergeable across time windows, and enables distribution-aware comparison (KS test) instead of assuming Gaussianity.
+- **Why Jensen-Shannon divergence instead of KL divergence for tool distribution:** JS divergence is symmetric, bounded in [0, ln 2], and eliminates the undefined/infinite result when a new tool type appears with zero probability in the baseline. Combined with Laplace (add-one) smoothing to eliminate zero-probability blowups.
+- **Why k-means sub-clusters instead of a single embedding centroid:** A single mean-pooled centroid destroys multi-modal behavior structure. An agent that handles three distinct types of requests will have a smeared centroid that any single new cluster of behavior looks equidistant from. k=3–5 with silhouette-selected k detects "a new behavior mode appeared" directly.
+- **Why Beta-Binomial for error rates:** A 2% error rate on 10 requests and 10,000 requests are statistically very different confidence levels. The ratio alone erases that; storing successes/trials enables proper credible interval comparisons.
+
+---
+
+## Deliverables
+
+Target outcomes for the milestone; concrete artifacts may differ from any sketch above.
+
+### File structure
+
+```
+services/worker/
+ fingerprint/
+ __init__.py
+ feature_extractor.py # ClickHouse query + feature computation
+ sketches.py # t-digest wrapper (tdigest PyPI, MIT license)
+ clustering.py # scikit-learn KMeans + silhouette scoring for response centroids
+ tasks.py # Celery task: compute_fingerprint(agent_id, window)
+ tests/
+ test_feature_extractor.py
+ test_sketches.py
+ test_clustering.py
+```
+
+### Feature class mapping
+
+| Feature class | Representation | Why |
+|---|---|---|
+| Token/length features (`avg_prompt_tokens`, `avg_response_length`) | **t-digest quantile sketch** per window | Distribution-aware; mergeable across windows; enables KS test in Track B |
+| Tool usage (`tool_call_rate`, `tool_distribution`) | Proportions with **Laplace (add-one) smoothing** | Eliminates zero-probability blowups for Jensen-Shannon divergence |
+| Response semantics (`response_embedding_centroid`) | **k-means k=3–5 sub-clusters** (silhouette-selected) | Preserves multi-modal structure; detects "new cluster appeared" directly |
+| Error/timeout rates | **Beta-Binomial** (store successes/trials) | Sample-size-aware comparison; ratio alone is insufficient |
+
+### Dependencies added
+
+- `tdigest` (Python, MIT) — streaming quantile sketches, mergeable across time windows, no new infra
+- `scikit-learn` — k-means + silhouette score (already implied by the ML stack)
+
+Both run inside the existing Celery worker, reading from ClickHouse. No new infrastructure dependency.
+
+---
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] Feature extractor produces t-digest sketches, smoothed tool distributions, and multi-centroid clusters from real ClickHouse trace data
+- [ ] Fingerprint computation p95 ≤ 1s / p99 ≤ 5s measured on realistic data volume
+- [ ] Zero-traffic agent: no crash, no fingerprint produced — graceful no-op
+- [ ] Single-tool-type agent: JS divergence is well-defined (Laplace smoothing works correctly)
+- [ ] High-cardinality tool agent: smoothing does not blow up proportions
+- [ ] ADR-0045 published and indexed
+
+## Prerequisites
+
+- Phase 4 exit (dashboard live, multi-provider live, hierarchical rate limiting live)
+- ClickHouse `inference_traces` table accessible from worker service
+

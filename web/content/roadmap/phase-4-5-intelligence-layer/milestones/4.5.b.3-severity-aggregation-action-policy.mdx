@@ -1,0 +1,161 @@
+---
+title: "4.5.B.3 Severity Aggregation & Action Policy"
+description: "Implement the staged action ladder: Shadow (mandatory 30 days, zero automatic actions) → Notify-only (opt-in) → Auto-suspend (opt-in, off by default). Replaces the original direct auto-suspend on uncalibrated thresholds."
+summary: "Implement the staged action ladder: Shadow (mandatory 30 days, zero automatic actions) → Notify-only (opt-in) → Auto-suspend (opt-in, off by default). Replaces the original direct auto-suspend on uncalibrated thresholds."
+status: "planned"
+milestoneId: "4.5.B.3"
+track: "B"
+trackTitle: "Drift Detection"
+trackHref: "/roadmap/phase-4-5-intelligence-layer/tracks#track-b--drift-detection"
+goal: "[Track B — Drift Detection](/roadmap/phase-4-5-intelligence-layer/tracks#track-b--drift-detection)"
+estimatedEffort: "2 days"
+phase: "phase-4-5-intelligence-layer"
+fullTitle: "Milestone 4.5.B.3 — Severity Aggregation & Action Policy"
+---
+
+# Milestone 4.5.B.3 — Severity Aggregation & Action Policy
+
+**Status:** Planned  
+**Goal:** [Track B — Drift Detection](/roadmap/phase-4-5-intelligence-layer/tracks#track-b--drift-detection)  
+**Phase:** 4.5 — Intelligence Layer  
+**Estimated effort:** 2 days  
+**Track:** [Track B — Drift Detection](/roadmap/phase-4-5-intelligence-layer/tracks#track-b--drift-detection)  
+**ADR required:** ADR-0047 — Drift action policy
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+The original plan's action policy is: high severity drift → auto-suspend the agent. This is a high blast-radius automatic action gated by a detection methodology that — until this phase — had known statistical problems and no calibration procedure. Even with the 4.5.B.1/B.2 redesign, automatic suspension of a production agent based on a statistical model should not be the default behavior. This milestone replaces the original policy with a staged rollout of trust that makes shadow mode the mandatory starting point.
+
+---
+
+## Non-Goals
+
+- Statistical drift tests (4.5.B.1)
+- Threshold calibration (4.5.B.2)
+- Dashboard alert display UI (4.5.C.4)
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Fingerprinting / drift
+
+## Suggested naming (provisional)
+
+Rename freely to match the change that actually lands.
+
+- Branch: `feature/m4-5-b3-severity-aggregation-action-policy`
+- PR title: `feat(worker/drift): staged action ladder with shadow mode default (m4.5.B.3)`
+
+## ADR-0047 — Drift Action Policy
+
+Write `web/content/docs/adr/0047-drift-action-policy.mdx` documenting:
+
+- **Why shadow mode is mandatory for the first 30 days:** automatic, consequential actions built on a statistical model need a track record. Shadow mode provides that track record without risk.
+- **Why auto-suspend is opt-in and off by default:** consistent with the principle that org-affecting actions with high blast radius require explicit consent, not defaults that should be turned off.
+- **How the staged ladder interacts with Track C:** a drift alert during a gradual directive rollout (4.5.C.3) triggers an auto-rollback regardless of the org's action ladder stage — this is a narrow, well-defined automatic action with a clear rollback path, distinct from indefinite agent suspension.
+
+---
+
+## Deliverables
+
+Target outcomes for the milestone; concrete artifacts may differ from any sketch above.
+
+### Staged action ladder
+
+| Stage | Behavior | When |
+|---|---|---|
+| **Shadow (default, mandatory)** | All drift alerts logged and shown on dashboard; zero automatic actions regardless of severity | Default for all orgs; minimum 30 days of production data before Stage 2 is offerable |
+| **Notify-only** | High severity → webhook/email/Slack to org owner; no auto-suspend | Opt-in per org, after Stage 1 track record reviewed |
+| **Auto-suspend (opt-in, off by default)** | High severity → agent suspended via existing `AGENT_SUSPENDED` `ValidateAgent` status check | Requires explicit org-level opt-in flag; never a global default |
+
+### Schema additions
+
+```sql
+-- agents table additions
+ALTER TABLE ibex_core.agents
+ ADD COLUMN drift_action_stage VARCHAR(20) NOT NULL DEFAULT 'shadow'
+ CHECK (drift_action_stage IN ('shadow', 'notify', 'auto_suspend')),
+ ADD COLUMN drift_shadow_started_at TIMESTAMPTZ;
+
+-- drift_alerts table (new)
+CREATE TABLE ibex_core.drift_alerts (
+ id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+ org_id UUID NOT NULL REFERENCES ibex_core.organizations(id),
+ agent_id UUID NOT NULL REFERENCES ibex_core.agents(id),
+ fingerprint_id UUID NOT NULL,
+ severity VARCHAR(10) NOT NULL CHECK (severity IN ('low', 'medium', 'high')),
+ feature_class VARCHAR(50) NOT NULL,
+ test_statistic NUMERIC(10,6),
+ threshold_used NUMERIC(10,6),
+ action_taken VARCHAR(30) NOT NULL DEFAULT 'logged',
+ created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+ acknowledged_at TIMESTAMPTZ,
+ acknowledged_by UUID
+);
+```
+
+### Action enforcement
+
+```python
+# Illustrative — exact path may differ
+async def apply_action(alert: DriftAlert, agent: Agent) -> ActionTaken:
+ if agent.drift_action_stage == "shadow":
+ return ActionTaken.LOGGED # always — no side effects
+ if alert.severity != "high":
+ return ActionTaken.LOGGED # only high severity triggers further action
+ if agent.drift_action_stage == "notify":
+ await dispatch_drift_notification(agent, alert)
+ return ActionTaken.NOTIFIED
+ if agent.drift_action_stage == "auto_suspend":
+ await suspend_agent(agent.id, reason="drift_auto_suspend", alert_id=alert.id)
+ return ActionTaken.SUSPENDED
+```
+
+### Severity aggregation
+
+Severity is aggregated from per-feature-class test results:
+
+- **High:** any feature class with test statistic > high threshold (per `thresholds.yaml`)
+- **Medium:** any feature class with test statistic > medium threshold, none > high
+- **Low:** any feature class with test statistic above baseline, none above medium
+
+---
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] Shadow mode is the only behavior possible without an explicit opt-in flag — verified by integration test that a high-severity drift event on a default-stage agent produces zero automatic actions (only a `drift_alerts` row)
+- [ ] Stage promotion blocked if `drift_shadow_started_at < NOW() - INTERVAL '30 days'` is false
+- [ ] Auto-suspend routes through the same `ValidateAgent` status check path as manual suspension — not a parallel code path
+- [ ] `drift_alerts` table populated for every fingerprint comparison regardless of action stage
+- [ ] Cross-tenant: Org A's drift alert inaccessible via Org B's session — verified via INT-4.5.9
+
+## Prerequisites
+
+- 4.5.B.1, 4.5.B.2 merged
+
