@@ -35,30 +35,14 @@ func TestRequest_SystemExtractionNoMutation(t *testing.T) {
 		{Role: "user", Content: "hi"},
 	}
 	orig := append([]provider.Message(nil), msgs...)
-	raw, err := marshalAnthropicRequestBody(provider.Request{
-		Model:    modelClaudeSonnet45,
-		Messages: msgs,
-	}, 4096)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for i := range msgs {
-		if msgs[i] != orig[i] {
-			t.Fatalf("mutated messages[%d]", i)
-		}
-	}
-	var body anthropicRequest
-	if err := json.Unmarshal(raw, &body); err != nil {
-		t.Fatal(err)
-	}
-	if body.System != "be helpful\n\nbe brief" {
-		t.Fatalf("system=%q", body.System)
+	raw := mustMarshalRequest(t, provider.Request{Model: modelClaudeSonnet45, Messages: msgs}, 4096)
+	assertMessagesUnchanged(t, msgs, orig)
+	body := mustDecodeAnthropicRequest(t, raw)
+	if body.System != "be helpful\n\nbe brief" || body.MaxTokens != 4096 {
+		t.Fatalf("system=%q max_tokens=%d", body.System, body.MaxTokens)
 	}
 	if len(body.Messages) != 1 || body.Messages[0].Role != "user" {
 		t.Fatalf("messages=%+v", body.Messages)
-	}
-	if body.MaxTokens != 4096 {
-		t.Fatalf("max_tokens=%d", body.MaxTokens)
 	}
 }
 
@@ -71,12 +55,9 @@ func TestRequest_CoalesceAndRejectAssistantFirst(t *testing.T) {
 			{Role: "user", Content: "hi"},
 		},
 	}, 1024)
-	var pe *provider.ProviderError
-	if !errors.As(err, &pe) || pe.StatusCode != http.StatusBadRequest {
-		t.Fatalf("err=%v", err)
-	}
+	assertBadRequest(t, err)
 
-	raw, err := marshalAnthropicRequestBody(provider.Request{
+	raw := mustMarshalRequest(t, provider.Request{
 		Model: modelClaudeSonnet45,
 		Messages: []provider.Message{
 			{Role: "user", Content: "a"},
@@ -84,11 +65,7 @@ func TestRequest_CoalesceAndRejectAssistantFirst(t *testing.T) {
 			{Role: "assistant", Content: "c"},
 		},
 	}, 1024)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var body anthropicRequest
-	_ = json.Unmarshal(raw, &body)
+	body := mustDecodeAnthropicRequest(t, raw)
 	if len(body.Messages) != 2 || body.Messages[0].Content != "a\n\nb" {
 		t.Fatalf("coalesce=%+v", body.Messages)
 	}
@@ -96,7 +73,7 @@ func TestRequest_CoalesceAndRejectAssistantFirst(t *testing.T) {
 
 func TestRequest_DenyPassthroughOverrides(t *testing.T) {
 	t.Parallel()
-	raw, err := marshalAnthropicRequestBody(provider.Request{
+	raw := mustMarshalRequest(t, provider.Request{
 		Model:    modelClaudeSonnet45,
 		Messages: []provider.Message{{Role: "user", Content: "hi"}},
 		PassthroughFields: map[string]any{
@@ -106,37 +83,23 @@ func TestRequest_DenyPassthroughOverrides(t *testing.T) {
 			"system": "override",
 		},
 	}, 1024)
-	if err != nil {
-		t.Fatal(err)
-	}
 	var merged map[string]any
 	_ = json.Unmarshal(raw, &merged)
-	if merged["model"] != modelClaudeSonnet45 {
-		t.Fatalf("model overridden: %v", merged["model"])
-	}
-	if _, ok := merged["system"]; ok && merged["system"] == "override" {
-		t.Fatal("system override allowed")
+	if merged["model"] != modelClaudeSonnet45 || merged["top_p"] != 0.5 {
+		t.Fatalf("merged=%v", merged)
 	}
 	if _, ok := merged["tools"]; ok {
 		t.Fatal("tools passthrough must be blocked")
 	}
-	if merged["top_p"] != 0.5 {
-		t.Fatalf("top_p missing: %v", merged["top_p"])
+	if merged["system"] == "override" {
+		t.Fatal("system override allowed")
 	}
 }
 
 func TestNonStream_Translate(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("x-api-key") != "test-key" {
-			t.Errorf("x-api-key=%q", r.Header.Get("x-api-key"))
-		}
-		if r.Header.Get("anthropic-version") != defaultAPIVersion {
-			t.Errorf("version=%q", r.Header.Get("anthropic-version"))
-		}
-		if r.URL.Path != "/v1/messages" {
-			t.Errorf("path=%q", r.URL.Path)
-		}
+		assertAnthropicHeaders(t, r)
 		w.Header().Set("request-id", "req_123")
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
@@ -148,27 +111,15 @@ func TestNonStream_Translate(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	client := testClient(t, srv.URL, "test-key")
-	resp, err := client.Complete(context.Background(), provider.Request{
+	resp := mustComplete(t, testClient(t, srv.URL, "test-key"), provider.Request{
 		Model:    modelClaudeSonnet45,
 		Messages: []provider.Message{{Role: "user", Content: "hi"}},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	if !strings.Contains(string(body), `"object":"chat.completion"`) {
-		t.Fatalf("body=%s", body)
-	}
-	if !strings.Contains(string(body), `"finish_reason":"stop"`) {
-		t.Fatalf("finish_reason missing: %s", body)
-	}
-	if resp.ProviderRequestID != "req_123" {
-		t.Fatalf("request id=%q", resp.ProviderRequestID)
-	}
-	if resp.Usage == nil || resp.Usage.TotalTokens != 4 {
-		t.Fatalf("usage=%+v", resp.Usage)
+	defer func() { _ = resp.Body.Close() }()
+	body := mustReadAll(t, resp.Body)
+	assertContainsAll(t, body, `"object":"chat.completion"`, `"finish_reason":"stop"`)
+	if resp.ProviderRequestID != "req_123" || resp.Usage == nil || resp.Usage.TotalTokens != 4 {
+		t.Fatalf("id=%q usage=%+v", resp.ProviderRequestID, resp.Usage)
 	}
 }
 
@@ -189,14 +140,10 @@ func TestClient_Retry_on529(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	client := testClient(t, srv.URL, "test-key")
-	resp, err := client.Complete(context.Background(), provider.Request{
+	resp := mustComplete(t, testClient(t, srv.URL, "test-key"), provider.Request{
 		Model:    modelClaudeSonnet45,
 		Messages: []provider.Message{{Role: "user", Content: "hi"}},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	_ = resp.Body.Close()
 	if calls.Load() != 2 {
 		t.Fatalf("calls=%d", calls.Load())
@@ -229,6 +176,36 @@ func TestClient_NoRetry_On400(t *testing.T) {
 	}
 }
 
+func TestClient_NoRetryAfterStreamStarts(t *testing.T) {
+	t.Parallel()
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		_, _ = io.WriteString(w, "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}\n\n")
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	client := testClient(t, srv.URL, "test-key")
+	resp, err := client.Complete(context.Background(), provider.Request{
+		Model:    modelClaudeSonnet45,
+		Stream:   true,
+		Messages: []provider.Message{{Role: "user", Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	if calls.Load() != 1 {
+		t.Fatalf("calls=%d want 1 (no retry after stream body)", calls.Load())
+	}
+}
+
 func TestSupportedModels_Extra(t *testing.T) {
 	t.Parallel()
 	c := New(Config{APIKey: "k", ExtraModels: []string{"claude-custom"}}, logger.Discard("a"), nil, nil)
@@ -251,5 +228,66 @@ func TestMapStopReason(t *testing.T) {
 	}
 	if mapStopReason("end_turn") != "stop" {
 		t.Fatal("end_turn")
+	}
+}
+
+func mustMarshalRequest(t *testing.T, req provider.Request, defaults int) []byte {
+	t.Helper()
+	raw, err := marshalAnthropicRequestBody(req, defaults)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
+func mustDecodeAnthropicRequest(t *testing.T, raw []byte) anthropicRequest {
+	t.Helper()
+	var body anthropicRequest
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatal(err)
+	}
+	return body
+}
+
+func assertMessagesUnchanged(t *testing.T, msgs, orig []provider.Message) {
+	t.Helper()
+	for i := range msgs {
+		if msgs[i] != orig[i] {
+			t.Fatalf("mutated messages[%d]", i)
+		}
+	}
+}
+
+func assertAnthropicHeaders(t *testing.T, r *http.Request) {
+	t.Helper()
+	if r.Header.Get("x-api-key") != "test-key" || r.Header.Get("anthropic-version") != defaultAPIVersion || r.URL.Path != "/v1/messages" {
+		t.Fatalf("headers/path unexpected: key=%q ver=%q path=%q", r.Header.Get("x-api-key"), r.Header.Get("anthropic-version"), r.URL.Path)
+	}
+}
+
+func mustComplete(t *testing.T, client *Client, req provider.Request) provider.Response {
+	t.Helper()
+	resp, err := client.Complete(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp
+}
+
+func mustReadAll(t *testing.T, r io.Reader) string {
+	t.Helper()
+	b, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+func assertContainsAll(t *testing.T, body string, needles ...string) {
+	t.Helper()
+	for _, n := range needles {
+		if !strings.Contains(body, n) {
+			t.Fatalf("missing %q in %s", n, body)
+		}
 	}
 }
