@@ -1,7 +1,7 @@
 ---
 title: "Current State"
-description: "Phases 0–2 are complete. Auth, proxy, and single-provider E2E ship on main; Phase 3 (memory) is next."
-summary: "Phases 0–2 are complete. Auth, proxy, and single-provider E2E ship on main; Phase 3 (memory) is next."
+description: "Phases 0–2 are complete. Auth, proxy, and single-provider E2E ship on main; Phase 2.5 (provider generalization) is next."
+summary: "Phases 0–2 are complete. Auth, proxy, and single-provider E2E ship on main; Phase 2.5 (provider generalization) is next."
 ---
 
 # Current State
@@ -12,12 +12,12 @@ summary: "Phases 0–2 are complete. Auth, proxy, and single-provider E2E ship o
   ClickHouse traces, and the public site at ibexharness.com ship on `main`.
 </Callout>
 
-<Callout type="info" title="Exit-audit hygiene">
-  Phase 1 / 1.5 / 2 acceptance is **verified complete** via exit audits, merged
-  milestones, CI gates, and the docs realignment series
-  ([#481](https://github.com/Rick1330/ibex-harness/pull/481)–[#492](https://github.com/Rick1330/ibex-harness/pull/492)).
-  Treat exit audits and frontmatter `status: completed` as authoritative when older
-  checkbox lists still show unchecked boxes.
+<Callout type="info" title="Roadmap redesigned">
+  The roadmap has been **restructured** to add intermediate phases (2.5, 3.5, 4.5),
+  rescope Phase 3 to the memory substrate only, merge management API and dashboard into Phase 4,
+  and absorb Phase 6 (Intelligence & Monetization) into Phase 4.5. Phase 5 is Advanced Retrieval
+  & Graph Memory; org-wide production hardening is deferred as future roadmap scope. See
+  [findings log](/roadmap/findings) for the rationale.
 </Callout>
 
 ## Snapshot
@@ -26,11 +26,16 @@ summary: "Phases 0–2 are complete. Auth, proxy, and single-provider E2E ship o
 <StatusBadge status="stable" /> **Phase 1 — Core Platform:** complete  
 <StatusBadge status="stable" /> **Phase 1.5 — Public Web Product:** complete  
 <StatusBadge status="stable" /> **Phase 2 — Single Provider:** complete  
-<StatusBadge status="new" /> **Phase 3 — Memory Engine:** next
+<StatusBadge status="new" /> **Phase 2.5 — Provider Generalization:** next  
+<StatusBadge status="new" /> **Phase 3 — Core Memory Substrate:** planned  
+<StatusBadge status="new" /> **Phase 3.5 — Extraction & Context Assembly:** planned  
+<StatusBadge status="new" /> **Phase 4 — Operator Platform & Multi-Provider:** planned  
+<StatusBadge status="new" /> **Phase 4.5 — Intelligence Layer:** planned  
+<StatusBadge status="new" /> **Phase 5 — Advanced Retrieval & Graph Memory:** planned
 
-**Last updated:** 2026-08-18  
+**Last updated:** 2026-08-20  
 **Branch:** `main`  
-**Current focus:** [Phase 3 — Memory Engine](/roadmap/phase-3-memory-engine)  
+**Current focus:** [Phase 2.5 — Provider Generalization](/roadmap/phase-2-5-provider-generalization)  
 **Completed (recent):** Phase 2 exit ([2.6.2](/roadmap/phase-2-single-provider/milestones/2.6.2-phase2-exit-gate)); docs/roadmap realignment (#481–#492); hygiene/deps (#514, #524); Dependabot absorb; benchmark bot run [#526](https://github.com/Rick1330/ibex-harness/pull/526) (`34781cd`)
 
 <QuickLinks
@@ -41,14 +46,14 @@ summary: "Phases 0–2 are complete. Auth, proxy, and single-provider E2E ship o
       description: "Live phase cards and milestone progress.",
     },
     {
-      title: "Phase 2",
-      href: "/roadmap/phase-2-single-provider",
-      description: "Single-provider E2E milestones and exit gate.",
+      title: "Phase 2.5",
+      href: "/roadmap/phase-2-5-provider-generalization",
+      description: "Provider generalization and foundation.",
     },
     {
-      title: "Phase 1 exit audit",
-      href: "/roadmap/phase-1-core-platform/phase1-exit-audit",
-      description: "Completion evidence for the platform phase.",
+      title: "Phase 3 (redesigned)",
+      href: "/roadmap/phase-3-memory-engine",
+      description: "Core memory substrate.",
     },
     {
       title: "Architecture decisions",
@@ -73,6 +78,7 @@ summary: "Phases 0–2 are complete. Auth, proxy, and single-provider E2E ship o
 - Sessions, checkpoints, idle sweeper (2.4.x)
 - Idempotency-Key replay (2.1.6; ADR-0035)
 - Unified product site at [ibexharness.com](https://ibexharness.com)
+- **Roadmap redesigned:** phases restructured (2.5, 3 rescoped, 3.5, 4 expanded, 4.5 added, 5 → Advanced Retrieval; Phase 5.5 and Phase 6 removed)
 
 ## What Ships Today
 
@@ -83,7 +89,8 @@ summary: "Phases 0–2 are complete. Auth, proxy, and single-provider E2E ship o
   `IBEX_LLM_MODE=mock` answers registered models with HTTP 200; `live` needs
   `OPENAI_API_KEY` (mock is rejected when `IBEX_ENV=production`).
   **`501 PROVIDER_NOT_CONFIGURED`** means the model is not in the registry — not
-  “forwarding missing.” **Not shipped (Phase 3+):** Python memory, context
+  "forwarding missing." **Not shipped (Phase 2.5+):** Anthropic adapter, tokenizer
+  registry, response pipeline, embedding service, Python memory, context
   assembly, worker, management API, operator dashboard.
 </Callout>
 
@@ -92,7 +99,7 @@ summary: "Phases 0–2 are complete. Auth, proxy, and single-provider E2E ship o
 - Auth gRPC (`ValidateToken`, `ValidateAgent`, token lifecycle) with Argon2id-backed PATs
 - Proxy auth middleware, agent verification, request normalization, stable error envelopes, rate limiting
 - Security integration gate with cross-tenant denial matrix and CI enforcement
-- Shared packages (`logger`, `metrics`, `telemetry`, `config`, `apierror`, `shutdown`, `reqid`, `ratelimit`, `crypto`, `permissions`, `provider`, …)
+- Shared packages (`logger`, `metrics`, `telemetry`, `config`, `apierror`, `shutdown`, `reqid`, `ratelimit`, `crypto`, `permissions`, `provider`, ...)
 - Postgres migrations with RLS; integration smokes for auth, proxy, and security paths
 
 ### Single provider E2E (Phase 2)
@@ -122,9 +129,10 @@ Legacy `docs.ibexharness.com` redirects to apex paths (301).
 
 ## Blockers And Risks
 
-<Callout type="warning" title="Phase 3 entry">
-  Phase 3 adds Python memory, context assembly, workers, and the operator
-  dashboard. Do not treat those services as implemented under `services/` today.
+<Callout type="warning" title="Phase 2.5 entry">
+  Phase 2.5 adds Anthropic adapter, tokenizer registry, response pipeline, embedding service,
+  schema pre-work, and MCP skeleton. Do not treat those services as implemented under `services/`
+  today.
 </Callout>
 
 - Multi-provider routing remains Phase 4
@@ -133,14 +141,14 @@ Legacy `docs.ibexharness.com` redirects to apex paths (301).
 ## Next 3 Priorities
 
 <Steps>
-  <Step title="Phase 3 kickoff">
-    Memory engine schema, embedding, and extraction after Phase 2 exit.
+  <Step title="Phase 2.5 kickoff">
+    Anthropic adapter, model capability registry, tokenizer abstraction, response pipeline seam, embedder service, schema pre-work.
   </Step>
-  <Step title="Phase 3 context assembly">
-    Bounded-latency AssembleContext on the proxy critical path.
+  <Step title="Phase 3 memory substrate">
+    Memory schema v2 (HNSW, temporal validity, multi-label), write pipeline, read/ranking with category-conditional scoring.
   </Step>
-  <Step title="Keep docs honest">
-    Prefer implementation-native sources; OpenAPI remains deferred until a CI-validated spec exists.
+  <Step title="Phase 3.5 extraction & assembly">
+    Close the learning loop: extraction worker turns conversations into memories, context assembly injects memories into the proxy hot path.
   </Step>
 </Steps>
 

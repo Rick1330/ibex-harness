@@ -63,7 +63,7 @@ phase: "phase-2-single-provider"
 
 **What:** Every LLM conversation (a series of turns between a user and an agent) is tracked as a "session." Each request within a session creates a "checkpoint" — a snapshot of the turn's input and output token counts, latency, and model used.
 
-**Why this goal exists:** Sessions are the foundational data structure for Phase 3 memory extraction. Without session tracking, the proxy has no durable record of conversations to extract memories from. Additionally, sessions are the billing unit in Phase 3 — you cannot bill by conversation without knowing where conversations start and end.
+**Why this goal exists:** Sessions are the foundational data structure for Phase 3 memory extraction. Without session tracking, the proxy has no durable record of conversations to extract memories from. Additionally, sessions are the billing unit in Phase 3 — conversation billing needs clear session boundaries.
 
 **Acceptance criteria:**
 - A session is created in Postgres on the first request that carries `X-IBEX-Session-ID` or omits it (auto-created)
