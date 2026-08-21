@@ -165,7 +165,10 @@ func parseUpstreamLimit(v *float64) (int, bool) {
 	if f == 0 {
 		return 0, false
 	}
-	if f < 1 || f != math.Trunc(f) || f > float64(math.MaxInt) {
+	if !isPositiveWholeNumber(f) {
+		return 0, true
+	}
+	if f > float64(math.MaxInt) {
 		return 0, true
 	}
 	n := int(f)
@@ -173,6 +176,13 @@ func parseUpstreamLimit(v *float64) (int, bool) {
 		return 0, true
 	}
 	return n, false
+}
+
+func isPositiveWholeNumber(f float64) bool {
+	if f < 1 {
+		return false
+	}
+	return f == math.Trunc(f)
 }
 
 // writef / writeln keep CLI I/O errcheck-clean; a broken stdout/stderr is non-actionable here.

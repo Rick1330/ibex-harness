@@ -22,27 +22,48 @@ var curatedLimits = map[string]map[string]any{
 	"claude-opus-4-5":   {"max_input_tokens": 200000, "max_output_tokens": 64000},
 }
 
-// snapshotJSON builds a LiteLLM-style catalog JSON. omit drops models;
-// overrides replace or insert per-model objects (nil value omits that model).
-func snapshotJSON(omit map[string]struct{}, overrides map[string]map[string]any) string {
+func cloneCuratedLimits() map[string]map[string]any {
 	out := make(map[string]map[string]any, len(curatedLimits))
 	for id, limits := range curatedLimits {
-		if _, skip := omit[id]; skip {
-			continue
-		}
-		cp := make(map[string]any, len(limits))
-		for k, v := range limits {
-			cp[k] = v
-		}
-		out[id] = cp
+		out[id] = cloneLimitRow(limits)
 	}
+	return out
+}
+
+func cloneLimitRow(limits map[string]any) map[string]any {
+	cp := make(map[string]any, len(limits))
+	for k, v := range limits {
+		cp[k] = v
+	}
+	return cp
+}
+
+func applySnapshotOverrides(out map[string]map[string]any, overrides map[string]map[string]any) {
 	for id, limits := range overrides {
-		if limits == nil {
-			delete(out, id)
-			continue
-		}
-		out[id] = limits
+		applyOneOverride(out, id, limits)
 	}
+}
+
+func applyOneOverride(out map[string]map[string]any, id string, limits map[string]any) {
+	if limits == nil {
+		delete(out, id)
+		return
+	}
+	out[id] = limits
+}
+
+func omitSnapshotModels(out map[string]map[string]any, omit []string) {
+	for _, id := range omit {
+		delete(out, id)
+	}
+}
+
+// snapshotJSON builds a LiteLLM-style catalog JSON from curated defaults plus
+// optional omissions and per-model overrides (nil override value deletes the model).
+func snapshotJSON(omit []string, overrides map[string]map[string]any) string {
+	out := cloneCuratedLimits()
+	omitSnapshotModels(out, omit)
+	applySnapshotOverrides(out, overrides)
 	raw, err := json.Marshal(out)
 	if err != nil {
 		panic(err)
@@ -71,16 +92,51 @@ func runSnapshot(t *testing.T, body string) (code int, stdout string) {
 	return code, out.String()
 }
 
-func TestRun_FileMissingLimitsIsMismatch(t *testing.T) {
+func TestRun_MismatchCases(t *testing.T) {
 	t.Parallel()
-	code, stdout := runSnapshot(t, snapshotJSON(nil, map[string]map[string]any{
-		"gpt-4o": {"max_tokens": 16384},
-	}))
-	if code != 1 {
-		t.Fatalf("exit=%d stdout=%s", code, stdout)
+	cases := []struct {
+		name    string
+		body    string
+		wantSub []string
+	}{
+		{
+			name:    "no limits",
+			body:    snapshotJSON(nil, map[string]map[string]any{"gpt-4o": {"max_tokens": 16384}}),
+			wantSub: []string{"NO_LIMITS_UPSTREAM\tgpt-4o"},
+		},
+		{
+			name: "context and max out",
+			body: snapshotJSON(nil, map[string]map[string]any{
+				"gpt-4o": {"max_input_tokens": 999, "max_output_tokens": 1},
+			}),
+			wantSub: []string{"CONTEXT_MISMATCH\tgpt-4o", "MAX_OUT_MISMATCH\tgpt-4o"},
+		},
+		{
+			name:    "missing upstream",
+			body:    snapshotJSON([]string{"gpt-4o"}, nil),
+			wantSub: []string{"MISSING_UPSTREAM\tgpt-4o"},
+		},
+		{
+			name: "invalid upstream limits",
+			body: snapshotJSON(nil, map[string]map[string]any{
+				"gpt-4o": {"max_input_tokens": 128000.5, "max_output_tokens": 1e20},
+			}),
+			wantSub: []string{"INVALID_UPSTREAM_CONTEXT\tgpt-4o", "INVALID_UPSTREAM_MAX_OUT\tgpt-4o"},
+		},
 	}
-	if !strings.Contains(stdout, "NO_LIMITS_UPSTREAM\tgpt-4o") {
-		t.Fatalf("stdout=%s", stdout)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			code, stdout := runSnapshot(t, tc.body)
+			if code != 1 {
+				t.Fatalf("exit=%d stdout=%s", code, stdout)
+			}
+			for _, sub := range tc.wantSub {
+				if !strings.Contains(stdout, sub) {
+					t.Fatalf("stdout=%s want %q", stdout, sub)
+				}
+			}
+		})
 	}
 }
 
@@ -98,44 +154,6 @@ func TestRun_RequiresFileOrFetch(t *testing.T) {
 	code := run(nil, &stdout, &stderr)
 	if code != 2 {
 		t.Fatalf("exit=%d", code)
-	}
-}
-
-func TestRun_ContextAndMaxOutMismatch(t *testing.T) {
-	t.Parallel()
-	code, stdout := runSnapshot(t, snapshotJSON(nil, map[string]map[string]any{
-		"gpt-4o": {"max_input_tokens": 999, "max_output_tokens": 1},
-	}))
-	if code != 1 {
-		t.Fatalf("exit=%d", code)
-	}
-	if !strings.Contains(stdout, "CONTEXT_MISMATCH\tgpt-4o") || !strings.Contains(stdout, "MAX_OUT_MISMATCH\tgpt-4o") {
-		t.Fatalf("stdout=%s", stdout)
-	}
-}
-
-func TestRun_MissingUpstreamModel(t *testing.T) {
-	t.Parallel()
-	code, stdout := runSnapshot(t, snapshotJSON(map[string]struct{}{"gpt-4o": {}}, nil))
-	if code != 1 {
-		t.Fatalf("exit=%d", code)
-	}
-	if !strings.Contains(stdout, "MISSING_UPSTREAM\tgpt-4o") {
-		t.Fatalf("stdout=%s", stdout)
-	}
-}
-
-func TestRun_InvalidUpstreamLimits(t *testing.T) {
-	t.Parallel()
-	code, stdout := runSnapshot(t, snapshotJSON(nil, map[string]map[string]any{
-		"gpt-4o": {"max_input_tokens": 128000.5, "max_output_tokens": 1e20},
-	}))
-	if code != 1 {
-		t.Fatalf("exit=%d", code)
-	}
-	if !strings.Contains(stdout, "INVALID_UPSTREAM_CONTEXT\tgpt-4o") ||
-		!strings.Contains(stdout, "INVALID_UPSTREAM_MAX_OUT\tgpt-4o") {
-		t.Fatalf("stdout=%s", stdout)
 	}
 }
 
