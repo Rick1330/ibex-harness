@@ -2,6 +2,7 @@ package provider
 
 import (
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -142,6 +143,35 @@ func TestUnit_Registry_ConcurrentCapability(t *testing.T) {
 	wg.Wait()
 }
 
+func TestUnit_CatalogFromCapabilities_SkipsEmptyID(t *testing.T) {
+	t.Parallel()
+	got := CatalogFromCapabilities(
+		ModelCapability{ModelID: "  ", Provider: "openai", ContextWindow: 1, MaxOutputTokens: 1, TokenizerFamily: TokenizerFamilyO200kBase},
+		ModelCapability{ModelID: " gpt-4o ", Provider: "openai", ContextWindow: 128_000, MaxOutputTokens: 16_384,
+			SupportsTools: true, SupportsVision: true, SupportsStreaming: true, TokenizerFamily: TokenizerFamilyO200kBase},
+	)
+	if _, ok := got.Lookup("gpt-4o"); !ok {
+		t.Fatal("expected trimmed gpt-4o")
+	}
+	if len(got) != 1 {
+		t.Fatalf("len=%d", len(got))
+	}
+}
+
+func TestUnit_ValidateCapability_EmptyProviderAndMaxOut(t *testing.T) {
+	t.Parallel()
+	if err := ValidateCapability(ModelCapability{
+		ModelID: "m", ContextWindow: 10, MaxOutputTokens: 1, TokenizerFamily: TokenizerFamilyO200kBase,
+	}); err == nil || !strings.Contains(err.Error(), "empty Provider") {
+		t.Fatalf("err=%v", err)
+	}
+	if err := ValidateCapability(ModelCapability{
+		ModelID: "m", Provider: "openai", ContextWindow: 10, MaxOutputTokens: 0, TokenizerFamily: TokenizerFamilyO200kBase,
+	}); err == nil || !strings.Contains(err.Error(), "MaxOutputTokens") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
 func TestUnit_ValidateCapability(t *testing.T) {
 	t.Parallel()
 	valid := ModelCapability{
@@ -163,6 +193,9 @@ func TestUnit_ValidateCapability(t *testing.T) {
 		{"zero window", ModelCapability{ModelID: "m", Provider: "openai", MaxOutputTokens: 1, TokenizerFamily: TokenizerFamilyO200kBase}, ValidateCapability, false},
 		{"max out exceeds ctx", ModelCapability{ModelID: "m", Provider: "openai", ContextWindow: 10, MaxOutputTokens: 11, TokenizerFamily: TokenizerFamilyO200kBase}, ValidateCapability, false},
 		{"empty tokenizer", ModelCapability{ModelID: "m", Provider: "openai", ContextWindow: 1, MaxOutputTokens: 1}, ValidateCapability, false},
+		{"bad provider", ModelCapability{ModelID: "m", Provider: "azure", ContextWindow: 1, MaxOutputTokens: 1, TokenizerFamily: TokenizerFamilyO200kBase}, ValidateCapability, false},
+		{"spaced provider", ModelCapability{ModelID: "m", Provider: " openai", ContextWindow: 1, MaxOutputTokens: 1, TokenizerFamily: TokenizerFamilyO200kBase}, ValidateCapability, false},
+		{"spaced tokenizer", ModelCapability{ModelID: "m", Provider: "openai", ContextWindow: 1, MaxOutputTokens: 1, TokenizerFamily: " o200k_base "}, ValidateCapability, false},
 	}
 	for _, tc := range cases {
 		err := tc.fn(tc.cap)

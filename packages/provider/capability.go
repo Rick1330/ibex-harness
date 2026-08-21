@@ -14,6 +14,12 @@ var ErrMissingCapability = errors.New("missing model capability")
 // (malformed fields, tokenizer allowlist, ModelID mismatch, etc.).
 var ErrInvalidCapability = errors.New("invalid model capability")
 
+// CapabilityProvider* are vendor-family values for ModelCapability.Provider.
+const (
+	CapabilityProviderOpenAI    = "openai"
+	CapabilityProviderAnthropic = "anthropic"
+)
+
 // Tokenizer family keys consumed by the Phase 2.5.G2 tokenizer registry.
 const (
 	TokenizerFamilyO200kBase  = "o200k_base"
@@ -67,7 +73,8 @@ func MergeCapabilityCatalog(base CapabilityCatalog, overlays ...CapabilityCatalo
 }
 
 // CatalogFromCapabilities builds a catalog from capability rows. Empty ModelID
-// entries are skipped. Duplicate IDs: last write wins.
+// entries are skipped. Duplicate IDs: last write wins. Provider and
+// TokenizerFamily are trimmed so stored rows match ValidateCapability checks.
 func CatalogFromCapabilities(caps ...ModelCapability) CapabilityCatalog {
 	out := make(CapabilityCatalog, len(caps))
 	for _, cap := range caps {
@@ -76,6 +83,8 @@ func CatalogFromCapabilities(caps ...ModelCapability) CapabilityCatalog {
 			continue
 		}
 		cap.ModelID = id
+		cap.Provider = strings.TrimSpace(cap.Provider)
+		cap.TokenizerFamily = strings.TrimSpace(cap.TokenizerFamily)
 		out[id] = cap
 	}
 	return out
@@ -95,13 +104,38 @@ func ValidateBuiltinCapability(cap ModelCapability) error {
 }
 
 func validateCapability(cap ModelCapability, allowUnknownTokenizer bool) error {
+	if err := validateCapabilityIdentity(cap); err != nil {
+		return err
+	}
+	if err := validateCapabilityLimits(cap); err != nil {
+		return err
+	}
+	return validateCapabilityTokenizer(cap, allowUnknownTokenizer)
+}
+
+func validateCapabilityIdentity(cap ModelCapability) error {
 	id := strings.TrimSpace(cap.ModelID)
 	if id == "" {
 		return fmt.Errorf("%w: empty ModelID", ErrInvalidCapability)
 	}
-	if strings.TrimSpace(cap.Provider) == "" {
+	if cap.ModelID != id {
+		return fmt.Errorf("%w: %q: ModelID must not have surrounding whitespace", ErrInvalidCapability, id)
+	}
+	provider := strings.TrimSpace(cap.Provider)
+	if provider == "" {
 		return fmt.Errorf("%w: %q: empty Provider", ErrInvalidCapability, id)
 	}
+	if cap.Provider != provider {
+		return fmt.Errorf("%w: %q: Provider must not have surrounding whitespace", ErrInvalidCapability, id)
+	}
+	if !isAllowedCapabilityProvider(provider) {
+		return fmt.Errorf("%w: %q: unsupported Provider %q", ErrInvalidCapability, id, provider)
+	}
+	return nil
+}
+
+func validateCapabilityLimits(cap ModelCapability) error {
+	id := strings.TrimSpace(cap.ModelID)
 	if cap.ContextWindow <= 0 {
 		return fmt.Errorf("%w: %q: ContextWindow must be > 0", ErrInvalidCapability, id)
 	}
@@ -112,14 +146,31 @@ func validateCapability(cap ModelCapability, allowUnknownTokenizer bool) error {
 		return fmt.Errorf("%w: %q: MaxOutputTokens (%d) exceeds ContextWindow (%d)",
 			ErrInvalidCapability, id, cap.MaxOutputTokens, cap.ContextWindow)
 	}
+	return nil
+}
+
+func validateCapabilityTokenizer(cap ModelCapability, allowUnknownTokenizer bool) error {
+	id := strings.TrimSpace(cap.ModelID)
 	family := strings.TrimSpace(cap.TokenizerFamily)
 	if family == "" {
 		return fmt.Errorf("%w: %q: empty TokenizerFamily", ErrInvalidCapability, id)
+	}
+	if cap.TokenizerFamily != family {
+		return fmt.Errorf("%w: %q: TokenizerFamily must not have surrounding whitespace", ErrInvalidCapability, id)
 	}
 	if !isAllowedTokenizerFamily(family, allowUnknownTokenizer) {
 		return fmt.Errorf("%w: %q: unsupported TokenizerFamily %q", ErrInvalidCapability, id, family)
 	}
 	return nil
+}
+
+func isAllowedCapabilityProvider(provider string) bool {
+	switch provider {
+	case CapabilityProviderOpenAI, CapabilityProviderAnthropic:
+		return true
+	default:
+		return false
+	}
 }
 
 func isAllowedTokenizerFamily(family string, allowUnknown bool) bool {

@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"sort"
@@ -30,8 +31,11 @@ type modelDiffInput struct {
 	stdout  io.Writer
 }
 
+// exitFunc is swapped in tests so main can be exercised without terminating the process.
+var exitFunc = os.Exit
+
 func main() {
-	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+	exitFunc(run(os.Args[1:], os.Stdout, os.Stderr))
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
@@ -45,22 +49,22 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 	raw, err := loadLiteLLM(*file, *fetch)
 	if err != nil {
-		fmt.Fprintf(stderr, "diff_capabilities: %v\n", err)
+		writef(stderr, "diff_capabilities: %v\n", err)
 		return 2
 	}
 
 	var table map[string]liteLLMEntry
 	if err := json.Unmarshal(raw, &table); err != nil {
-		fmt.Fprintf(stderr, "diff_capabilities: parse JSON: %v\n", err)
+		writef(stderr, "diff_capabilities: parse JSON: %v\n", err)
 		return 2
 	}
 
 	mismatches := diffCatalog(provider.BuiltInCapabilityCatalog(), table, stdout)
 	if mismatches == 0 {
-		fmt.Fprintln(stdout, "OK: curated models match LiteLLM context/max_output where present")
+		writeln(stdout, "OK: curated models match LiteLLM context/max_output where present")
 		return 0
 	}
-	fmt.Fprintf(stderr, "diff_capabilities: %d mismatch(es)\n", mismatches)
+	writef(stderr, "diff_capabilities: %d mismatch(es)\n", mismatches)
 	return 1
 }
 
@@ -83,46 +87,66 @@ func diffCatalog(catalog provider.CapabilityCatalog, table map[string]liteLLMEnt
 
 func diffOneModel(in modelDiffInput) int {
 	if !in.present {
-		fmt.Fprintf(in.stdout, "MISSING_UPSTREAM\t%s\t(curated ctx=%d max_out=%d)\n",
+		writef(in.stdout, "MISSING_UPSTREAM\t%s\t(curated ctx=%d max_out=%d)\n",
 			in.id, in.cap.ContextWindow, in.cap.MaxOutputTokens)
 		return 1
 	}
-	upCtx := intFromPtr(in.entry.MaxInputTokens)
-	upOut := intFromPtr(in.entry.MaxOutputTokens)
+	upCtx, ctxInvalid := parseUpstreamLimit(in.entry.MaxInputTokens)
+	upOut, outInvalid := parseUpstreamLimit(in.entry.MaxOutputTokens)
+	if ctxInvalid || outInvalid {
+		return reportInvalidUpstreamLimits(in, ctxInvalid, outInvalid)
+	}
 	// Do not fall back to max_tokens: LiteLLM often uses it for output limits.
 	if upCtx == 0 && upOut == 0 {
-		fmt.Fprintf(in.stdout, "NO_LIMITS_UPSTREAM\t%s\n", in.id)
+		writef(in.stdout, "NO_LIMITS_UPSTREAM\t%s\n", in.id)
 		return 1
 	}
 	return countLimitMismatches(in, upCtx, upOut)
 }
 
+func reportInvalidUpstreamLimits(in modelDiffInput, ctxInvalid, outInvalid bool) int {
+	n := 0
+	if ctxInvalid {
+		writef(in.stdout, "INVALID_UPSTREAM_CONTEXT\t%s\n", in.id)
+		n++
+	}
+	if outInvalid {
+		writef(in.stdout, "INVALID_UPSTREAM_MAX_OUT\t%s\n", in.id)
+		n++
+	}
+	return n
+}
+
 func countLimitMismatches(in modelDiffInput, upCtx, upOut int) int {
 	n := 0
 	if upCtx != 0 && upCtx != in.cap.ContextWindow {
-		fmt.Fprintf(in.stdout, "CONTEXT_MISMATCH\t%s\tcurated=%d\tlitellm=%d\n", in.id, in.cap.ContextWindow, upCtx)
+		writef(in.stdout, "CONTEXT_MISMATCH\t%s\tcurated=%d\tlitellm=%d\n", in.id, in.cap.ContextWindow, upCtx)
 		n++
 	}
 	if upOut != 0 && upOut != in.cap.MaxOutputTokens {
-		fmt.Fprintf(in.stdout, "MAX_OUT_MISMATCH\t%s\tcurated=%d\tlitellm=%d\n", in.id, in.cap.MaxOutputTokens, upOut)
+		writef(in.stdout, "MAX_OUT_MISMATCH\t%s\tcurated=%d\tlitellm=%d\n", in.id, in.cap.MaxOutputTokens, upOut)
 		n++
 	}
 	return n
 }
 
 func loadLiteLLM(file string, fetch bool) ([]byte, error) {
+	return loadLiteLLMFrom(file, fetch, defaultLiteLLMURL)
+}
+
+func loadLiteLLMFrom(file string, fetch bool, url string) ([]byte, error) {
 	switch {
 	case strings.TrimSpace(file) != "":
 		return os.ReadFile(file)
 	case fetch:
 		client := &http.Client{Timeout: 30 * time.Second}
-		resp, err := client.Get(defaultLiteLLMURL)
+		resp, err := client.Get(url)
 		if err != nil {
 			return nil, err
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("fetch %s: status %d", defaultLiteLLMURL, resp.StatusCode)
+			return nil, fmt.Errorf("fetch %s: status %d", url, resp.StatusCode)
 		}
 		return io.ReadAll(io.LimitReader(resp.Body, 32<<20))
 	default:
@@ -130,9 +154,32 @@ func loadLiteLLM(file string, fetch bool) ([]byte, error) {
 	}
 }
 
-func intFromPtr(v *float64) int {
+// parseUpstreamLimit converts a LiteLLM numeric limit. nil and 0 mean absent
+// (preserve NO_LIMITS_UPSTREAM). Present values that are fractional, non-positive,
+// or outside the int range (including float precision loss) are invalid.
+func parseUpstreamLimit(v *float64) (int, bool) {
 	if v == nil {
-		return 0
+		return 0, false
 	}
-	return int(*v)
+	f := *v
+	if f == 0 {
+		return 0, false
+	}
+	if f < 1 || f != math.Trunc(f) || f > float64(math.MaxInt) {
+		return 0, true
+	}
+	n := int(f)
+	if float64(n) != f {
+		return 0, true
+	}
+	return n, false
+}
+
+// writef / writeln keep CLI I/O errcheck-clean; a broken stdout/stderr is non-actionable here.
+func writef(w io.Writer, format string, args ...any) {
+	_, _ = fmt.Fprintf(w, format, args...)
+}
+
+func writeln(w io.Writer, s string) {
+	_, _ = fmt.Fprintln(w, s)
 }

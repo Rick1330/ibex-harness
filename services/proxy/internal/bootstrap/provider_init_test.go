@@ -25,6 +25,33 @@ func TestBuildProviderRegistry_CatalogCoversProviderSupportedModels(t *testing.T
 	}
 }
 
+func TestBuildProviderRegistry_MockModeIgnoresExtraModelsAndOverlays(t *testing.T) {
+	t.Parallel()
+	cfg := config.Config{
+		Environment: "development",
+		LLMMode:     "mock",
+		OpenAI: config.OpenAIConfig{
+			ExtraModels: []string{"openai/gpt-oss-20b:free"},
+		},
+		ModelCapabilityOverlays: []provider.ModelCapability{{
+			ModelID: "openai/gpt-oss-20b:free", Provider: provider.CapabilityProviderOpenAI,
+			ContextWindow: 8192, MaxOutputTokens: 1024,
+			SupportsTools: false, SupportsVision: false, SupportsStreaming: true,
+			TokenizerFamily: provider.TokenizerFamilyUnknown,
+		}},
+	}
+	reg, err := buildProviderRegistry(cfg, logger.Discard("proxy"), telemetry.NoopTracer("proxy"), metrics.NewProxy("test"))
+	if err != nil {
+		t.Fatalf("buildProviderRegistry: %v", err)
+	}
+	if _, err := reg.For("openai/gpt-oss-20b:free"); err == nil {
+		t.Fatal("ExtraModels must not register under mock")
+	}
+	if _, ok := reg.Capability("openai/gpt-oss-20b:free"); ok {
+		t.Fatal("overlays must not register under mock")
+	}
+}
+
 func TestBuildProviderRegistry_MockModeRegistersMock(t *testing.T) {
 	t.Parallel()
 
@@ -76,7 +103,7 @@ func TestBuildProviderRegistry_LiveModeRegistersOpenAI(t *testing.T) {
 		},
 		ModelCapabilityOverlays: []provider.ModelCapability{{
 			ModelID:           "openai/gpt-oss-20b:free",
-			Provider:          "openai",
+			Provider:          provider.CapabilityProviderOpenAI,
 			ContextWindow:     8192,
 			MaxOutputTokens:   2048,
 			SupportsTools:     false,
@@ -114,7 +141,43 @@ func TestBuildProviderRegistry_LiveModeExtraModelsRequireOverlay(t *testing.T) {
 	}
 }
 
-func TestBuildProviderRegistry_OverlayPolicyFailures(t *testing.T) {
+func TestBuildProviderRegistry_BuiltinListedInExtraModelsNeedsNoOverlay(t *testing.T) {
+	t.Parallel()
+	cfg := config.Config{
+		LLMMode: "live",
+		OpenAI: config.OpenAIConfig{
+			APIKey: "test-key", ExtraModels: []string{"gpt-4o"},
+		},
+	}
+	reg, err := buildProviderRegistry(cfg, logger.Discard("proxy"), telemetry.NoopTracer("proxy"), metrics.NewProxy("test"))
+	if err != nil {
+		t.Fatalf("buildProviderRegistry: %v", err)
+	}
+	if _, ok := reg.Capability("gpt-4o"); !ok {
+		t.Fatal("Capability(gpt-4o): missing")
+	}
+}
+
+func TestBuildProviderRegistry_InvalidOverlayProviderRejected(t *testing.T) {
+	t.Parallel()
+	cfg := config.Config{
+		LLMMode: "live",
+		OpenAI: config.OpenAIConfig{
+			APIKey: "test-key", ExtraModels: []string{"openai/gpt-oss-20b:free"},
+		},
+		ModelCapabilityOverlays: []provider.ModelCapability{{
+			ModelID: "openai/gpt-oss-20b:free", Provider: "", ContextWindow: 8192, MaxOutputTokens: 1024,
+			SupportsTools: false, SupportsVision: false, SupportsStreaming: true,
+			TokenizerFamily: provider.TokenizerFamilyUnknown,
+		}},
+	}
+	_, err := buildProviderRegistry(cfg, logger.Discard("proxy"), telemetry.NoopTracer("proxy"), metrics.NewProxy("test"))
+	if err == nil || !strings.Contains(err.Error(), "provider must be") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestBuildProviderRegistry_RejectsBuiltinAndOrphanOverlays(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name    string
@@ -127,7 +190,7 @@ func TestBuildProviderRegistry_OverlayPolicyFailures(t *testing.T) {
 				LLMMode: "live",
 				OpenAI:  config.OpenAIConfig{APIKey: "k"},
 				ModelCapabilityOverlays: []provider.ModelCapability{{
-					ModelID: "gpt-4o", Provider: "openai", ContextWindow: 1, MaxOutputTokens: 1,
+					ModelID: "gpt-4o", Provider: provider.CapabilityProviderOpenAI, ContextWindow: 1, MaxOutputTokens: 1,
 					SupportsTools: false, SupportsVision: false, SupportsStreaming: true,
 					TokenizerFamily: provider.TokenizerFamilyUnknown,
 				}},
@@ -140,13 +203,24 @@ func TestBuildProviderRegistry_OverlayPolicyFailures(t *testing.T) {
 				LLMMode: "live",
 				OpenAI:  config.OpenAIConfig{APIKey: "k"},
 				ModelCapabilityOverlays: []provider.ModelCapability{{
-					ModelID: "orphan-model", Provider: "openai", ContextWindow: 8192, MaxOutputTokens: 1024,
+					ModelID: "orphan-model", Provider: provider.CapabilityProviderOpenAI, ContextWindow: 8192, MaxOutputTokens: 1024,
 					SupportsTools: false, SupportsVision: false, SupportsStreaming: true,
 					TokenizerFamily: provider.TokenizerFamilyUnknown,
 				}},
 			},
 			wantErr: "not listed",
 		},
+	}
+	assertRegistryErrContains(t, cases)
+}
+
+func TestBuildProviderRegistry_RejectsExtrasWithoutOverlayOrKey(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name    string
+		cfg     config.Config
+		wantErr string
+	}{
 		{
 			name: "anthropic extra without overlay",
 			cfg: config.Config{
@@ -157,7 +231,58 @@ func TestBuildProviderRegistry_OverlayPolicyFailures(t *testing.T) {
 			},
 			wantErr: "claude-custom",
 		},
+		{
+			name: "extras without api key",
+			cfg: config.Config{
+				LLMMode: "live",
+				OpenAI:  config.OpenAIConfig{APIKey: "k"},
+				Anthropic: config.AnthropicConfig{
+					ExtraModels: []string{"claude-custom"},
+				},
+			},
+			wantErr: "ANTHROPIC_API_KEY",
+		},
+		{
+			name: "overlay provider mismatch",
+			cfg: config.Config{
+				LLMMode: "live",
+				OpenAI: config.OpenAIConfig{
+					APIKey: "k", ExtraModels: []string{"openai/gpt-oss-20b:free"},
+				},
+				ModelCapabilityOverlays: []provider.ModelCapability{{
+					ModelID: "openai/gpt-oss-20b:free", Provider: provider.CapabilityProviderAnthropic,
+					ContextWindow: 8192, MaxOutputTokens: 1024,
+					SupportsTools: false, SupportsVision: false, SupportsStreaming: true,
+					TokenizerFamily: provider.TokenizerFamilyUnknown,
+				}},
+			},
+			wantErr: "provider must be",
+		},
 	}
+	assertRegistryErrContains(t, cases)
+}
+
+func TestBuildProviderRegistry_OpenAIOnlyRejectsAnthropicExtrasWithoutKey(t *testing.T) {
+	t.Parallel()
+	cfg := config.Config{
+		LLMMode: "live",
+		OpenAI:  config.OpenAIConfig{APIKey: "k"},
+		Anthropic: config.AnthropicConfig{
+			ExtraModels: []string{"claude-custom"},
+		},
+	}
+	_, err := buildProviderRegistry(cfg, logger.Discard("proxy"), telemetry.NoopTracer("proxy"), metrics.NewProxy("test"))
+	if err == nil || !strings.Contains(err.Error(), "ANTHROPIC_API_KEY") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func assertRegistryErrContains(t *testing.T, cases []struct {
+	name    string
+	cfg     config.Config
+	wantErr string
+}) {
+	t.Helper()
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

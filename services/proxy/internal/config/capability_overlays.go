@@ -1,7 +1,6 @@
 package config
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -46,11 +45,14 @@ func decodeOverlayWires(raw string) ([]overlayWire, error) {
 	if len(raw) > maxCapabilityOverlayJSONBytes {
 		return nil, fmt.Errorf("IBEX_MODEL_CAPABILITY_OVERLAYS exceeds %d bytes", maxCapabilityOverlayJSONBytes)
 	}
-	dec := json.NewDecoder(bytes.NewReader([]byte(raw)))
+	dec := json.NewDecoder(strings.NewReader(raw))
 	dec.DisallowUnknownFields()
 	var wires []overlayWire
 	if err := dec.Decode(&wires); err != nil {
 		return nil, fmt.Errorf("IBEX_MODEL_CAPABILITY_OVERLAYS: invalid JSON: %w", err)
+	}
+	if dec.More() {
+		return nil, fmt.Errorf("IBEX_MODEL_CAPABILITY_OVERLAYS: trailing data after JSON array")
 	}
 	if wires == nil {
 		return nil, fmt.Errorf("IBEX_MODEL_CAPABILITY_OVERLAYS: expected a JSON array")

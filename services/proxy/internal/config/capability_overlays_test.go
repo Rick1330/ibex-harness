@@ -41,7 +41,7 @@ func TestParseCapabilityOverlays_Valid(t *testing.T) {
 	if got[0].TokenizerFamily != provider.TokenizerFamilyUnknown {
 		t.Fatalf("tokenizer=%q", got[0].TokenizerFamily)
 	}
-	if got[0].SupportsStreaming != true || got[0].SupportsTools {
+	if !got[0].SupportsStreaming || got[0].SupportsTools {
 		t.Fatalf("flags=%+v", got[0])
 	}
 }
@@ -57,10 +57,13 @@ func TestParseCapabilityOverlays_RejectsInvalid(t *testing.T) {
 		{"null array", `null`, "expected a JSON array"},
 		{"unknown field", `[{"model_id":"a","provider":"openai","context_window":1,"max_output_tokens":1,"supports_tools":true,"supports_vision":false,"supports_streaming":true,"tokenizer_family":"unknown","extra":1}]`, "invalid JSON"},
 		{"omitted supports_tools", `[{"model_id":"a","provider":"openai","context_window":1,"max_output_tokens":1,"supports_vision":false,"supports_streaming":true,"tokenizer_family":"unknown"}]`, "supports_tools is required"},
+		{"omitted supports_vision", `[{"model_id":"a","provider":"openai","context_window":1,"max_output_tokens":1,"supports_tools":true,"supports_streaming":true,"tokenizer_family":"unknown"}]`, "supports_vision is required"},
+		{"omitted supports_streaming", `[{"model_id":"a","provider":"openai","context_window":1,"max_output_tokens":1,"supports_tools":true,"supports_vision":false,"tokenizer_family":"unknown"}]`, "supports_streaming is required"},
 		{"empty model id", `[{"model_id":"","provider":"openai","context_window":1,"max_output_tokens":1,"supports_tools":true,"supports_vision":false,"supports_streaming":true,"tokenizer_family":"unknown"}]`, "empty ModelID"},
 		{"bad tokenizer", `[{"model_id":"a","provider":"openai","context_window":1,"max_output_tokens":1,"supports_tools":true,"supports_vision":false,"supports_streaming":true,"tokenizer_family":"x"}]`, "unsupported TokenizerFamily"},
 		{"max exceeds ctx", `[{"model_id":"a","provider":"openai","context_window":10,"max_output_tokens":11,"supports_tools":true,"supports_vision":false,"supports_streaming":true,"tokenizer_family":"unknown"}]`, "exceeds ContextWindow"},
 		{"duplicate", `[{"model_id":"a","provider":"openai","context_window":1,"max_output_tokens":1,"supports_tools":true,"supports_vision":false,"supports_streaming":true,"tokenizer_family":"unknown"},{"model_id":"a","provider":"openai","context_window":1,"max_output_tokens":1,"supports_tools":true,"supports_vision":false,"supports_streaming":true,"tokenizer_family":"unknown"}]`, "duplicate"},
+		{"trailing data", `[{"model_id":"a","provider":"openai","context_window":1,"max_output_tokens":1,"supports_tools":true,"supports_vision":false,"supports_streaming":true,"tokenizer_family":"unknown"}]{}`, "trailing data"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

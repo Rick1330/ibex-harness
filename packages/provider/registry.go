@@ -59,7 +59,7 @@ func lookupValidatedCapability(catalog CapabilityCatalog, model, providerName st
 		return ModelCapability{}, fmt.Errorf("%w: %q (provider %q)", ErrMissingCapability, model, providerName)
 	}
 	if err := ValidateCapability(cap); err != nil {
-		return ModelCapability{}, fmt.Errorf("%w: model %q: %v", ErrInvalidCapability, model, err)
+		return ModelCapability{}, fmt.Errorf("model %q: %w", model, err)
 	}
 	if cap.ModelID != model {
 		return ModelCapability{}, fmt.Errorf("%w: catalog key %q has ModelID %q", ErrInvalidCapability, model, cap.ModelID)

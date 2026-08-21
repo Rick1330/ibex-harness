@@ -2,59 +2,93 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
-func TestRun_FileMissingLimitsIsMismatch(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	path := filepath.Join(dir, "snapshot.json")
-	// gpt-4o present but no max_input_tokens / max_output_tokens.
-	body := `{
-		"gpt-4o": {"max_tokens": 16384},
-		"gpt-4o-mini": {"max_input_tokens": 128000, "max_output_tokens": 16384},
-		"gpt-4-turbo": {"max_input_tokens": 128000, "max_output_tokens": 4096},
-		"gpt-3.5-turbo": {"max_input_tokens": 16385, "max_output_tokens": 4096},
-		"claude-sonnet-4-5": {"max_input_tokens": 200000, "max_output_tokens": 64000},
-		"claude-haiku-4-5": {"max_input_tokens": 200000, "max_output_tokens": 64000},
-		"claude-opus-4-5": {"max_input_tokens": 200000, "max_output_tokens": 64000}
-	}`
+// curatedLimits is the matching LiteLLM shape for BuiltInCapabilityCatalog.
+var curatedLimits = map[string]map[string]any{
+	"gpt-4o":            {"max_input_tokens": 128000, "max_output_tokens": 16384},
+	"gpt-4o-mini":       {"max_input_tokens": 128000, "max_output_tokens": 16384},
+	"gpt-4-turbo":       {"max_input_tokens": 128000, "max_output_tokens": 4096},
+	"gpt-3.5-turbo":     {"max_input_tokens": 16385, "max_output_tokens": 4096},
+	"claude-sonnet-4-5": {"max_input_tokens": 200000, "max_output_tokens": 64000},
+	"claude-haiku-4-5":  {"max_input_tokens": 200000, "max_output_tokens": 64000},
+	"claude-opus-4-5":   {"max_input_tokens": 200000, "max_output_tokens": 64000},
+}
+
+// snapshotJSON builds a LiteLLM-style catalog JSON. omit drops models;
+// overrides replace or insert per-model objects (nil value omits that model).
+func snapshotJSON(omit map[string]struct{}, overrides map[string]map[string]any) string {
+	out := make(map[string]map[string]any, len(curatedLimits))
+	for id, limits := range curatedLimits {
+		if _, skip := omit[id]; skip {
+			continue
+		}
+		cp := make(map[string]any, len(limits))
+		for k, v := range limits {
+			cp[k] = v
+		}
+		out[id] = cp
+	}
+	for id, limits := range overrides {
+		if limits == nil {
+			delete(out, id)
+			continue
+		}
+		out[id] = limits
+	}
+	raw, err := json.Marshal(out)
+	if err != nil {
+		panic(err)
+	}
+	return string(raw)
+}
+
+func matchingSnapshot() string {
+	return snapshotJSON(nil, nil)
+}
+
+func writeSnapshot(t *testing.T, body string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "snapshot.json")
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	var stdout, stderr bytes.Buffer
-	code := run([]string{"-file", path}, &stdout, &stderr)
+	return path
+}
+
+func runSnapshot(t *testing.T, body string) (code int, stdout string) {
+	t.Helper()
+	path := writeSnapshot(t, body)
+	var out, errBuf bytes.Buffer
+	code = run([]string{"-file", path}, &out, &errBuf)
+	return code, out.String()
+}
+
+func TestRun_FileMissingLimitsIsMismatch(t *testing.T) {
+	t.Parallel()
+	code, stdout := runSnapshot(t, snapshotJSON(nil, map[string]map[string]any{
+		"gpt-4o": {"max_tokens": 16384},
+	}))
 	if code != 1 {
-		t.Fatalf("exit=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+		t.Fatalf("exit=%d stdout=%s", code, stdout)
 	}
-	if !strings.Contains(stdout.String(), "NO_LIMITS_UPSTREAM\tgpt-4o") {
-		t.Fatalf("stdout=%s", stdout.String())
+	if !strings.Contains(stdout, "NO_LIMITS_UPSTREAM\tgpt-4o") {
+		t.Fatalf("stdout=%s", stdout)
 	}
 }
 
 func TestRun_MatchingSnapshotOK(t *testing.T) {
 	t.Parallel()
-	dir := t.TempDir()
-	path := filepath.Join(dir, "snapshot.json")
-	body := `{
-		"gpt-4o": {"max_input_tokens": 128000, "max_output_tokens": 16384},
-		"gpt-4o-mini": {"max_input_tokens": 128000, "max_output_tokens": 16384},
-		"gpt-4-turbo": {"max_input_tokens": 128000, "max_output_tokens": 4096},
-		"gpt-3.5-turbo": {"max_input_tokens": 16385, "max_output_tokens": 4096},
-		"claude-sonnet-4-5": {"max_input_tokens": 200000, "max_output_tokens": 64000},
-		"claude-haiku-4-5": {"max_input_tokens": 200000, "max_output_tokens": 64000},
-		"claude-opus-4-5": {"max_input_tokens": 200000, "max_output_tokens": 64000}
-	}`
-	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	var stdout, stderr bytes.Buffer
-	code := run([]string{"-file", path}, &stdout, &stderr)
+	code, stdout := runSnapshot(t, matchingSnapshot())
 	if code != 0 {
-		t.Fatalf("exit=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+		t.Fatalf("exit=%d stdout=%s", code, stdout)
 	}
 }
 
@@ -64,5 +98,133 @@ func TestRun_RequiresFileOrFetch(t *testing.T) {
 	code := run(nil, &stdout, &stderr)
 	if code != 2 {
 		t.Fatalf("exit=%d", code)
+	}
+}
+
+func TestRun_ContextAndMaxOutMismatch(t *testing.T) {
+	t.Parallel()
+	code, stdout := runSnapshot(t, snapshotJSON(nil, map[string]map[string]any{
+		"gpt-4o": {"max_input_tokens": 999, "max_output_tokens": 1},
+	}))
+	if code != 1 {
+		t.Fatalf("exit=%d", code)
+	}
+	if !strings.Contains(stdout, "CONTEXT_MISMATCH\tgpt-4o") || !strings.Contains(stdout, "MAX_OUT_MISMATCH\tgpt-4o") {
+		t.Fatalf("stdout=%s", stdout)
+	}
+}
+
+func TestRun_MissingUpstreamModel(t *testing.T) {
+	t.Parallel()
+	code, stdout := runSnapshot(t, snapshotJSON(map[string]struct{}{"gpt-4o": {}}, nil))
+	if code != 1 {
+		t.Fatalf("exit=%d", code)
+	}
+	if !strings.Contains(stdout, "MISSING_UPSTREAM\tgpt-4o") {
+		t.Fatalf("stdout=%s", stdout)
+	}
+}
+
+func TestRun_InvalidUpstreamLimits(t *testing.T) {
+	t.Parallel()
+	code, stdout := runSnapshot(t, snapshotJSON(nil, map[string]map[string]any{
+		"gpt-4o": {"max_input_tokens": 128000.5, "max_output_tokens": 1e20},
+	}))
+	if code != 1 {
+		t.Fatalf("exit=%d", code)
+	}
+	if !strings.Contains(stdout, "INVALID_UPSTREAM_CONTEXT\tgpt-4o") ||
+		!strings.Contains(stdout, "INVALID_UPSTREAM_MAX_OUT\tgpt-4o") {
+		t.Fatalf("stdout=%s", stdout)
+	}
+}
+
+func TestRun_InvalidJSON(t *testing.T) {
+	t.Parallel()
+	code, _ := runSnapshot(t, `{`)
+	if code != 2 {
+		t.Fatalf("exit=%d", code)
+	}
+}
+
+func TestRun_MissingFile(t *testing.T) {
+	t.Parallel()
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"-file", filepath.Join(t.TempDir(), "missing.json")}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("exit=%d", code)
+	}
+}
+
+func TestLoadLiteLLMFrom_FetchOKAndError(t *testing.T) {
+	t.Parallel()
+	okSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(okSrv.Close)
+	raw, err := loadLiteLLMFrom("", true, okSrv.URL)
+	if err != nil || string(raw) != "{}" {
+		t.Fatalf("ok: raw=%q err=%v", raw, err)
+	}
+
+	badSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	t.Cleanup(badSrv.Close)
+	if _, err := loadLiteLLMFrom("", true, badSrv.URL); err == nil || !strings.Contains(err.Error(), "status") {
+		t.Fatalf("bad status err=%v", err)
+	}
+
+	if _, err := loadLiteLLMFrom("", true, "http://127.0.0.1:1"); err == nil {
+		t.Fatal("expected dial error")
+	}
+}
+
+func TestLoadLiteLLM_FilePath(t *testing.T) {
+	t.Parallel()
+	path := writeSnapshot(t, `{}`)
+	raw, err := loadLiteLLM(path, false)
+	if err != nil || string(raw) != "{}" {
+		t.Fatalf("raw=%q err=%v", raw, err)
+	}
+}
+
+func TestMain_ExitsWithRunCode(t *testing.T) {
+	oldExit := exitFunc
+	oldArgs := os.Args
+	t.Cleanup(func() {
+		exitFunc = oldExit
+		os.Args = oldArgs
+	})
+	var code int
+	exitFunc = func(c int) { code = c }
+	os.Args = []string{"diff_capabilities"}
+	main()
+	if code != 2 {
+		t.Fatalf("exit=%d want 2 (missing -file/-fetch)", code)
+	}
+}
+
+func TestParseUpstreamLimit(t *testing.T) {
+	t.Parallel()
+	neg, huge, frac := -1.0, 1e20, 1.5
+	zero, ok := 0.0, 128000.0
+	cases := []struct {
+		in      *float64
+		want    int
+		invalid bool
+	}{
+		{nil, 0, false},
+		{&zero, 0, false},
+		{&ok, 128000, false},
+		{&neg, 0, true},
+		{&frac, 0, true},
+		{&huge, 0, true},
+	}
+	for _, tc := range cases {
+		got, invalid := parseUpstreamLimit(tc.in)
+		if got != tc.want || invalid != tc.invalid {
+			t.Fatalf("in=%v got=(%d,%v) want=(%d,%v)", tc.in, got, invalid, tc.want, tc.invalid)
+		}
 	}
 }

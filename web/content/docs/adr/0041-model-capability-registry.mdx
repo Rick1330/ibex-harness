@@ -53,7 +53,7 @@ func (r *Registry) Capability(model string) (ModelCapability, bool)
 func NewRegistry(catalog CapabilityCatalog, providers ...Provider) (*Registry, error)
 ```
 
-Every model ID returned by `SupportedModels()` must resolve in `catalog`. Missing entries return `ErrMissingCapability` at startup — never a silent miss at request time. Duplicate model IDs still return `ErrDuplicateModel`.
+Every model ID returned by `SupportedModels()` must resolve in `catalog`. Missing entries return `ErrMissingCapability` at startup — never a silent miss at request time. Duplicate model IDs still return `ErrDuplicateModel`. Invalid catalog rows (failed field validation, or a row whose `ModelID` does not match the catalog key) return `ErrInvalidCapability`.
 
 ### 4) ExtraModels require explicit overlays
 
