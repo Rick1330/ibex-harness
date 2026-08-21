@@ -120,18 +120,24 @@ func foldMidConversationSystem(system string, messages []provider.Message) (stri
 	}
 	out := make([]provider.Message, 0, len(messages))
 	for _, m := range messages {
-		if !strings.EqualFold(strings.TrimSpace(m.Role), "system") {
-			out = append(out, m)
+		if strings.EqualFold(strings.TrimSpace(m.Role), "system") {
+			system = appendSystemPart(system, m.Content)
 			continue
 		}
-		if s := strings.TrimSpace(m.Content); s != "" {
-			if system != "" {
-				system += "\n\n"
-			}
-			system += s
-		}
+		out = append(out, m)
 	}
 	return system, out
+}
+
+func appendSystemPart(system, content string) string {
+	s := strings.TrimSpace(content)
+	if s == "" {
+		return system
+	}
+	if system == "" {
+		return s
+	}
+	return system + "\n\n" + s
 }
 
 func mapAnthropicTurns(messages []provider.Message) ([]anthropicMessage, error) {

@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -116,11 +117,11 @@ func (timeoutNetError) Temporary() bool { return true }
 
 func TestRetryDelayAndWait(t *testing.T) {
 	t.Parallel()
-	if got := RetryDelay(time.Millisecond, 0, time.Second); got <= 0 {
+	if RetryDelay(time.Millisecond, 0, time.Second) <= 0 {
 		t.Fatal("delay")
 	}
-	if got := RetryDelay(time.Second, 100, 50*time.Millisecond); got != 50*time.Millisecond {
-		t.Fatalf("cap=%v", got)
+	if RetryDelay(time.Second, 100, 50*time.Millisecond) != 50*time.Millisecond {
+		t.Fatal("cap")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -136,6 +137,13 @@ func TestRetryDelayAndWait(t *testing.T) {
 
 func TestStreamHelpers(t *testing.T) {
 	t.Parallel()
+	assertPooledClients(t)
+	assertStreamContext(t)
+	assertAttachStreamCancel(t)
+}
+
+func assertPooledClients(t *testing.T) {
+	t.Helper()
 	client := NewPooledHTTPClient(time.Second)
 	if client.Timeout != time.Second || client.Transport == nil {
 		t.Fatal("pooled")
@@ -145,30 +153,38 @@ func TestStreamHelpers(t *testing.T) {
 		t.Fatal("stream client")
 	}
 	NoopCancel()
-	NoopCancel() // exercise empty body for coverage
+}
 
+func assertStreamContext(t *testing.T) {
+	t.Helper()
 	ctx, cancel := StreamRequestContext(context.Background(), false, time.Minute)
+	cancel()
 	if ctx != context.Background() {
 		t.Fatal("non-stream ctx")
 	}
-	cancel()
 	ctx, cancel = StreamRequestContext(context.Background(), true, time.Minute)
 	cancel()
 	if _, ok := ctx.Deadline(); !ok {
 		t.Fatal("stream deadline")
 	}
+}
 
+func assertAttachStreamCancel(t *testing.T) {
+	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("ok"))
 	}))
 	t.Cleanup(srv.Close)
+
 	resp, err := http.Get(srv.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
 	called := false
-	wrapped := AttachStreamCancel(resp, true, func() { called = true })
-	_ = wrapped.Body.Close()
+	resp = AttachStreamCancel(resp, true, func() { called = true })
+	if err := resp.Body.Close(); err != nil {
+		t.Fatal(err)
+	}
 	if !called {
 		t.Fatal("cancel not called")
 	}
@@ -179,7 +195,7 @@ func TestStreamHelpers(t *testing.T) {
 	}
 	canceled := false
 	_ = AttachStreamCancel(resp2, false, func() { canceled = true })
-	_ = resp2.Body.Close()
+	defer func() { _ = resp2.Body.Close() }()
 	if !canceled {
 		t.Fatal("non-stream cancel")
 	}
@@ -257,5 +273,113 @@ func TestCancelOnClose(t *testing.T) {
 	}
 	if !canceled {
 		t.Fatal("cancel")
+	}
+}
+
+func TestSharedUpstreamHelpers(t *testing.T) {
+	t.Parallel()
+	if !IsRetryableHTTPStatus(429) || !IsRetryableHTTPStatus(529, 529) || IsRetryableHTTPStatus(400) {
+		t.Fatal("status classification")
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Test") != "1" {
+			t.Errorf("missing header")
+		}
+		w.Header().Set("Retry-After", "1")
+		http.Error(w, `{"error":{"message":"nope"}}`, http.StatusTooManyRequests)
+	}))
+	t.Cleanup(srv.Close)
+
+	base := NewPooledHTTPClient(time.Second)
+	stream := StreamHTTPClient(base)
+	resp, err := DoUpstream(context.Background(), time.Second, base, stream,
+		func(ctx context.Context, call UpstreamCall) (*http.Request, error) {
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, call.URL, bytes.NewReader(call.Body))
+			if err != nil {
+				return nil, err
+			}
+			req.Header.Set("X-Test", "1")
+			return req, nil
+		},
+		UpstreamCall{URL: srv.URL, Body: []byte("{}"), Stream: false},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pe := ReadProviderError("t", resp, func(raw []byte) string {
+		if strings.Contains(string(raw), "nope") {
+			return "nope"
+		}
+		return "upstream provider error"
+	})
+	_ = resp.Body.Close()
+	if pe.StatusCode != 429 || pe.ProviderErrMsg != "nope" || pe.RetryAfter <= 0 {
+		t.Fatalf("%+v", pe)
+	}
+
+	okSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(okSrv.Close)
+	okResp, err := http.Get(okSrv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := NonEventStreamError("t", okResp)
+	if out.Err == nil {
+		t.Fatal("expected non-event-stream error")
+	}
+
+	attempts := 0
+	got := TryHTTPOnce(1, 0,
+		func() (*http.Response, error) {
+			attempts++
+			return nil, &net.OpError{Op: "dial", Err: errors.New("refused")}
+		},
+		func(string) {},
+		func(code int) bool { return IsRetryableHTTPStatus(code) },
+		func(*http.Response) *ProviderError { return nil },
+		func(*http.Response) AttemptOutcome { return AttemptOutcome{} },
+	)
+	if got.Err == nil || !got.Retry || attempts != 1 {
+		t.Fatalf("%+v attempts=%d", got, attempts)
+	}
+
+	okOnce := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	}))
+	t.Cleanup(okOnce.Close)
+	okGot := TryHTTPOnce(0, 0,
+		func() (*http.Response, error) { return http.Get(okOnce.URL) },
+		func(string) {},
+		func(code int) bool { return IsRetryableHTTPStatus(code) },
+		func(*http.Response) *ProviderError { return nil },
+		func(resp *http.Response) AttemptOutcome {
+			_ = resp.Body.Close()
+			return AttemptOutcome{Resp: Response{StatusCode: 200}}
+		},
+	)
+	if okGot.Err != nil || okGot.Resp.StatusCode != 200 {
+		t.Fatalf("%+v", okGot)
+	}
+
+	errOnce := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "no", http.StatusBadGateway)
+	}))
+	t.Cleanup(errOnce.Close)
+	errGot := TryHTTPOnce(1, 0,
+		func() (*http.Response, error) { return http.Get(errOnce.URL) },
+		func(string) {},
+		func(code int) bool { return IsRetryableHTTPStatus(code) },
+		func(resp *http.Response) *ProviderError {
+			return ReadProviderError("t", resp, nil)
+		},
+		func(*http.Response) AttemptOutcome { return AttemptOutcome{} },
+	)
+	if errGot.Err == nil || !errGot.Retry {
+		t.Fatalf("%+v", errGot)
 	}
 }

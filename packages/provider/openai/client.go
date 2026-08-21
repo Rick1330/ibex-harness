@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -98,25 +97,17 @@ func (c *Client) marshalRequest(req provider.Request) ([]byte, error) {
 }
 
 func (c *Client) doRequest(ctx context.Context, call upstreamCall) (*http.Response, error) {
-	reqCtx, cancel := provider.StreamRequestContext(ctx, call.Stream, c.cfg.StreamTimeout)
-	httpReq, err := c.newChatRequest(reqCtx, call)
-	if err != nil {
-		cancel()
-		return nil, err
-	}
-	client := c.httpClient
-	if call.Stream {
-		client = c.streamClient
-	}
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		cancel()
-		return nil, err
-	}
-	return provider.AttachStreamCancel(resp, call.Stream, cancel), nil
+	return provider.DoUpstream(
+		ctx,
+		c.cfg.StreamTimeout,
+		c.httpClient,
+		c.streamClient,
+		c.newChatRequest,
+		provider.UpstreamCall{URL: call.URL, Body: call.Body, Stream: call.Stream},
+	)
 }
 
-func (c *Client) newChatRequest(ctx context.Context, call upstreamCall) (*http.Request, error) {
+func (c *Client) newChatRequest(ctx context.Context, call provider.UpstreamCall) (*http.Request, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, call.URL, bytes.NewReader(call.Body))
 	if err != nil {
 		return nil, err
@@ -130,14 +121,7 @@ func (c *Client) newChatRequest(ctx context.Context, call upstreamCall) (*http.R
 }
 
 func readProviderError(name string, resp *http.Response) *provider.ProviderError {
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
-	return &provider.ProviderError{
-		ProviderName:   name,
-		StatusCode:     resp.StatusCode,
-		ProviderBody:   raw,
-		ProviderErrMsg: extractOpenAIErrorMessage(raw),
-		RetryAfter:     provider.RetryAfterHeader(resp.Header.Get("Retry-After")),
-	}
+	return provider.ReadProviderError(name, resp, extractOpenAIErrorMessage)
 }
 
 func extractOpenAIErrorMessage(raw []byte) string {
@@ -153,32 +137,23 @@ func extractOpenAIErrorMessage(raw []byte) string {
 }
 
 func isRetryableStatus(code int) bool {
-	switch code {
-	case http.StatusTooManyRequests, http.StatusInternalServerError,
-		http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
-		return true
-	default:
-		return false
-	}
+	return provider.IsRetryableHTTPStatus(code)
 }
 
 func (c *Client) waitBeforeRetry(ctx context.Context, attempt int, lastErr error) error {
-	delay := provider.RetryDelay(c.cfg.RetryBaseDelay, attempt, maxRetryBackoff)
-	if pe, ok := lastErr.(*provider.ProviderError); ok && pe.StatusCode == http.StatusTooManyRequests {
-		if pe.RetryAfter > 0 {
-			delay = pe.RetryAfter
-		} else if ra := retryAfterFromProvider(pe); ra > 0 {
-			delay = ra
+	// OpenAI may embed retry_after in JSON when the header is absent.
+	if pe, ok := lastErr.(*provider.ProviderError); ok && pe.StatusCode == http.StatusTooManyRequests && pe.RetryAfter <= 0 {
+		if ra := retryAfterFromProvider(pe); ra > 0 {
+			lastErr = &provider.ProviderError{
+				ProviderName:   pe.ProviderName,
+				StatusCode:     pe.StatusCode,
+				ProviderBody:   pe.ProviderBody,
+				ProviderErrMsg: pe.ProviderErrMsg,
+				RetryAfter:     ra,
+			}
 		}
 	}
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
+	return provider.WaitBeforeRetry(ctx, c.cfg.RetryBaseDelay, attempt, lastErr)
 }
 
 func retryAfterFromProvider(pe *provider.ProviderError) time.Duration {

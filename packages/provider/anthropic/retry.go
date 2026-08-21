@@ -33,27 +33,17 @@ func (c *Client) executeWithRetry(ctx context.Context, span trace.Span, call ups
 
 func (c *Client) tryOnce(ctx context.Context, call upstreamCall, attempt int) provider.AttemptOutcome {
 	start := time.Now()
-	resp, err := c.doRequest(ctx, call)
-	if err != nil {
-		c.metrics.IncProviderRequest(c.Name(), "error")
-		return provider.AttemptOutcome{
-			Err:   err,
-			Retry: provider.IsRetryableTransport(err) && attempt < c.cfg.maxRetries(),
-		}
-	}
-
-	c.metrics.IncProviderRequest(c.Name(), provider.StatusClass(resp.StatusCode))
-	if resp.StatusCode == http.StatusOK {
-		return c.acceptOKBody(resp, call, start)
-	}
-
-	provErr := readProviderError(c.Name(), resp)
-	_ = resp.Body.Close()
-	return provider.AttemptOutcome{
-		Err:   provErr,
-		Retry: isRetryableStatus(resp.StatusCode) && attempt < c.cfg.maxRetries(),
-		Resp:  provider.Response{},
-	}
+	return provider.TryHTTPOnce(
+		c.cfg.maxRetries(),
+		attempt,
+		func() (*http.Response, error) { return c.doRequest(ctx, call) },
+		func(statusClass string) { c.metrics.IncProviderRequest(c.Name(), statusClass) },
+		isRetryableStatus,
+		func(resp *http.Response) *provider.ProviderError { return readProviderError(c.Name(), resp) },
+		func(resp *http.Response) provider.AttemptOutcome {
+			return c.acceptOKBody(resp, call, start)
+		},
+	)
 }
 
 func (c *Client) acceptOKBody(resp *http.Response, call upstreamCall, start time.Time) provider.AttemptOutcome {
@@ -67,14 +57,7 @@ func (c *Client) acceptOKBody(resp *http.Response, call upstreamCall, start time
 
 func (c *Client) acceptStreamBody(resp *http.Response, model, requestID string, latency time.Duration) provider.AttemptOutcome {
 	if !provider.IsEventStream(resp.Header.Get("Content-Type")) {
-		_ = resp.Body.Close()
-		return provider.AttemptOutcome{
-			Err: &provider.ProviderError{
-				ProviderName:   c.Name(),
-				StatusCode:     http.StatusBadGateway,
-				ProviderErrMsg: "upstream did not return text/event-stream",
-			},
-		}
+		return provider.NonEventStreamError(c.Name(), resp)
 	}
 	// Live SSE body: never retry after this point (ADR-0027 / ADR-0040).
 	pipe := newStreamTranslatePipe(resp.Body, model, requestID)

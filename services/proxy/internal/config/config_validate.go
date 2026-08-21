@@ -196,19 +196,27 @@ func parseOrgRPMOverrides(raw string) (map[uuid.UUID]int, error) {
 		if pair == "" {
 			continue
 		}
-		parts := strings.SplitN(pair, "=", 2)
-		if len(parts) != 2 {
-			return nil, fmt.Errorf("invalid pair %q (expected uuid=rpm)", pair)
-		}
-		orgID, err := uuid.Parse(strings.TrimSpace(parts[0]))
+		orgID, rpm, err := parseOrgRPMPair(pair)
 		if err != nil {
-			return nil, fmt.Errorf("invalid org UUID in %q: %w", pair, err)
-		}
-		rpm, err := strconv.Atoi(strings.TrimSpace(parts[1]))
-		if err != nil || rpm < 1 {
-			return nil, fmt.Errorf("invalid RPM in %q", pair)
+			return nil, err
 		}
 		out[orgID] = rpm
 	}
 	return out, nil
+}
+
+func parseOrgRPMPair(pair string) (uuid.UUID, int, error) {
+	parts := strings.SplitN(pair, "=", 2)
+	if len(parts) != 2 {
+		return uuid.Nil, 0, fmt.Errorf("invalid pair %q (expected uuid=rpm)", pair)
+	}
+	orgID, err := uuid.Parse(strings.TrimSpace(parts[0]))
+	if err != nil {
+		return uuid.Nil, 0, fmt.Errorf("invalid org UUID in %q: %w", pair, err)
+	}
+	rpm, err := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if err != nil || rpm < 1 {
+		return uuid.Nil, 0, fmt.Errorf("invalid RPM in %q", pair)
+	}
+	return orgID, rpm, nil
 }

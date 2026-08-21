@@ -183,19 +183,27 @@ func assertChunkID(t *testing.T, out, wantID string) {
 func assertChunksParse(t *testing.T, out string) {
 	t.Helper()
 	for _, block := range strings.Split(out, "\n\n") {
-		block = strings.TrimSpace(block)
-		if block == "" || block == "data: [DONE]" || strings.HasPrefix(block, ":") {
-			continue
-		}
-		if !strings.HasPrefix(block, "data: ") {
+		payload, ok := openAIChunkPayload(block)
+		if !ok {
 			continue
 		}
 		var chunk openAIStreamChunk
-		if err := json.Unmarshal([]byte(strings.TrimPrefix(block, "data: ")), &chunk); err != nil {
+		if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
 			t.Fatalf("chunk json: %v (%s)", err, block)
 		}
 		if chunk.Object != openAIChunkObject {
 			t.Fatalf("object=%q", chunk.Object)
 		}
 	}
+}
+
+func openAIChunkPayload(block string) (string, bool) {
+	block = strings.TrimSpace(block)
+	if block == "" || block == "data: [DONE]" || strings.HasPrefix(block, ":") {
+		return "", false
+	}
+	if !strings.HasPrefix(block, "data: ") {
+		return "", false
+	}
+	return strings.TrimPrefix(block, "data: "), true
 }

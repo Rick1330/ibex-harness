@@ -246,12 +246,8 @@ func WithRetries(
 ) (Response, error) {
 	var lastErr error
 	for attempt := 0; attempt <= maxRetries; attempt++ {
-		if attempt > 0 {
-			onRetry()
-			if err := wait(ctx, attempt, lastErr); err != nil {
-				RecordSpanErr(span, err)
-				return Response{}, err
-			}
+		if err := maybeWaitRetry(ctx, span, attempt, lastErr, wait, onRetry); err != nil {
+			return Response{}, err
 		}
 		out := tryOnce(ctx, attempt)
 		if out.Err == nil {
@@ -263,9 +259,138 @@ func WithRetries(
 			return Response{}, lastErr
 		}
 	}
+	return exhaustedRetry(span, lastErr, exhaustedMsg)
+}
+
+func maybeWaitRetry(
+	ctx context.Context,
+	span trace.Span,
+	attempt int,
+	lastErr error,
+	wait func(context.Context, int, error) error,
+	onRetry func(),
+) error {
+	if attempt == 0 {
+		return nil
+	}
+	onRetry()
+	if err := wait(ctx, attempt, lastErr); err != nil {
+		RecordSpanErr(span, err)
+		return err
+	}
+	return nil
+}
+
+func exhaustedRetry(span trace.Span, lastErr error, exhaustedMsg string) (Response, error) {
 	if lastErr == nil {
 		lastErr = errors.New(exhaustedMsg)
 	}
 	RecordSpanErr(span, lastErr)
 	return Response{}, lastErr
+}
+
+// UpstreamCall is the HTTP payload for one provider attempt.
+type UpstreamCall struct {
+	URL    string
+	Body   []byte
+	Stream bool
+}
+
+// DoUpstream builds and executes one upstream request with stream-aware context/cancel.
+func DoUpstream(
+	ctx context.Context,
+	streamTimeout time.Duration,
+	httpClient, streamClient *http.Client,
+	build func(context.Context, UpstreamCall) (*http.Request, error),
+	call UpstreamCall,
+) (*http.Response, error) {
+	reqCtx, cancel := StreamRequestContext(ctx, call.Stream, streamTimeout)
+	httpReq, err := build(reqCtx, call)
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	client := httpClient
+	if call.Stream {
+		client = streamClient
+	}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	return AttachStreamCancel(resp, call.Stream, cancel), nil
+}
+
+// ReadProviderError reads a capped error body and builds a ProviderError.
+func ReadProviderError(name string, resp *http.Response, extractMsg func([]byte) string) *ProviderError {
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	msg := "upstream provider error"
+	if extractMsg != nil {
+		msg = extractMsg(raw)
+	}
+	return &ProviderError{
+		ProviderName:   name,
+		StatusCode:     resp.StatusCode,
+		ProviderBody:   raw,
+		ProviderErrMsg: msg,
+		RetryAfter:     RetryAfterHeader(resp.Header.Get("Retry-After")),
+	}
+}
+
+// IsRetryableHTTPStatus reports statuses that are safe to retry for Complete.
+func IsRetryableHTTPStatus(code int, extra ...int) bool {
+	switch code {
+	case http.StatusTooManyRequests, http.StatusInternalServerError,
+		http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	}
+	for _, e := range extra {
+		if code == e {
+			return true
+		}
+	}
+	return false
+}
+
+// NonEventStreamError closes the body and returns a Bad Gateway provider error.
+func NonEventStreamError(name string, resp *http.Response) AttemptOutcome {
+	_ = resp.Body.Close()
+	return AttemptOutcome{
+		Err: &ProviderError{
+			ProviderName:   name,
+			StatusCode:     http.StatusBadGateway,
+			ProviderErrMsg: "upstream did not return text/event-stream",
+		},
+	}
+}
+
+// TryHTTPOnce runs one HTTP attempt: transport/status classification + OK handler.
+func TryHTTPOnce(
+	maxRetries int,
+	attempt int,
+	doRequest func() (*http.Response, error),
+	incRequest func(statusClass string),
+	isRetryableStatus func(int) bool,
+	readErr func(*http.Response) *ProviderError,
+	onOK func(*http.Response) AttemptOutcome,
+) AttemptOutcome {
+	resp, err := doRequest()
+	if err != nil {
+		incRequest("error")
+		return AttemptOutcome{
+			Err:   err,
+			Retry: IsRetryableTransport(err) && attempt < maxRetries,
+		}
+	}
+	incRequest(StatusClass(resp.StatusCode))
+	if resp.StatusCode == http.StatusOK {
+		return onOK(resp)
+	}
+	provErr := readErr(resp)
+	_ = resp.Body.Close()
+	return AttemptOutcome{
+		Err:   provErr,
+		Retry: isRetryableStatus(resp.StatusCode) && attempt < maxRetries,
+	}
 }

@@ -58,16 +58,45 @@ type openAIUsage struct {
 }
 
 func translateNonStreamResponse(raw []byte, requestModel string, requestID string, latency time.Duration) (provider.Response, error) {
+	anth, err := decodeAnthropicMessage(raw)
+	if err != nil {
+		return provider.Response{}, err
+	}
+	out := buildOpenAICompletion(anth, requestModel)
+	body, err := json.Marshal(out)
+	if err != nil {
+		return provider.Response{}, err
+	}
+	if requestID == "" {
+		requestID = out.ID
+	}
+	return provider.Response{
+		Body:       io.NopCloser(bytes.NewReader(body)),
+		StatusCode: http.StatusOK,
+		Usage: &provider.Usage{
+			InputTokens:  anth.Usage.InputTokens,
+			OutputTokens: anth.Usage.OutputTokens,
+			TotalTokens:  out.Usage.TotalTokens,
+		},
+		Latency:           latency,
+		ProviderRequestID: requestID,
+	}, nil
+}
+
+func decodeAnthropicMessage(raw []byte) (anthropicMessageResponse, error) {
 	var anth anthropicMessageResponse
 	if err := json.Unmarshal(raw, &anth); err != nil {
-		return provider.Response{}, &provider.ProviderError{
+		return anthropicMessageResponse{}, &provider.ProviderError{
 			ProviderName:   "anthropic",
 			StatusCode:     http.StatusBadGateway,
 			ProviderErrMsg: "invalid anthropic response JSON",
 			ProviderBody:   raw,
 		}
 	}
-	content := concatTextBlocks(anth.Content)
+	return anth, nil
+}
+
+func buildOpenAICompletion(anth anthropicMessageResponse, requestModel string) openAIChatCompletion {
 	model := anth.Model
 	if model == "" {
 		model = requestModel
@@ -81,7 +110,7 @@ func translateNonStreamResponse(raw []byte, requestModel string, requestID strin
 		CompletionTokens: anth.Usage.OutputTokens,
 		TotalTokens:      anth.Usage.InputTokens + anth.Usage.OutputTokens,
 	}
-	out := openAIChatCompletion{
+	return openAIChatCompletion{
 		ID:      id,
 		Object:  "chat.completion",
 		Created: time.Now().Unix(),
@@ -90,31 +119,12 @@ func translateNonStreamResponse(raw []byte, requestModel string, requestID strin
 			Index: 0,
 			Message: openAIMessage{
 				Role:    "assistant",
-				Content: content,
+				Content: concatTextBlocks(anth.Content),
 			},
 			FinishReason: mapStopReason(anth.StopReason),
 		}},
 		Usage: usage,
 	}
-
-	body, err := json.Marshal(out)
-	if err != nil {
-		return provider.Response{}, err
-	}
-	if requestID == "" {
-		requestID = id
-	}
-	return provider.Response{
-		Body:       io.NopCloser(bytes.NewReader(body)),
-		StatusCode: http.StatusOK,
-		Usage: &provider.Usage{
-			InputTokens:  anth.Usage.InputTokens,
-			OutputTokens: anth.Usage.OutputTokens,
-			TotalTokens:  usage.TotalTokens,
-		},
-		Latency:           latency,
-		ProviderRequestID: requestID,
-	}, nil
 }
 
 func concatTextBlocks(blocks []anthropicContent) string {

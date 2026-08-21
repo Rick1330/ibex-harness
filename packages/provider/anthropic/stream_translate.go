@@ -104,21 +104,34 @@ func newSSEParser(r io.Reader) *sseParser {
 
 func (p *sseParser) nextEvent() (eventType, data string, err error) {
 	for p.scanner.Scan() {
-		line := p.scanner.Text()
-		if line == "" {
-			return p.flush()
-		}
-		if strings.HasPrefix(line, ":") {
-			comment := strings.TrimSpace(strings.TrimPrefix(line, ":"))
-			if comment == "" {
-				comment = "keepalive"
-			}
-			return "sse_comment", comment, nil
-		}
-		if err := p.ingestLine(line); err != nil {
-			return "", "", err
+		et, data, done, err := p.handleScanLine(p.scanner.Text())
+		if err != nil || done {
+			return et, data, err
 		}
 	}
+	return p.finishScan()
+}
+
+func (p *sseParser) handleScanLine(line string) (eventType, data string, done bool, err error) {
+	if line == "" {
+		et, data, err := p.flush()
+		return et, data, true, err
+	}
+	if strings.HasPrefix(line, ":") {
+		return "sse_comment", commentPayload(line), true, nil
+	}
+	return "", "", false, p.ingestLine(line)
+}
+
+func commentPayload(line string) string {
+	comment := strings.TrimSpace(strings.TrimPrefix(line, ":"))
+	if comment == "" {
+		return "keepalive"
+	}
+	return comment
+}
+
+func (p *sseParser) finishScan() (eventType, data string, err error) {
 	if err := p.scanner.Err(); err != nil {
 		return "", "", err
 	}

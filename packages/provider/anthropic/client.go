@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"io"
 	"net/http"
 	"strings"
 
@@ -87,25 +86,17 @@ func (c *Client) Complete(ctx context.Context, req provider.Request) (provider.R
 }
 
 func (c *Client) doRequest(ctx context.Context, call upstreamCall) (*http.Response, error) {
-	reqCtx, cancel := provider.StreamRequestContext(ctx, call.Stream, c.cfg.StreamTimeout)
-	httpReq, err := c.newMessagesRequest(reqCtx, call)
-	if err != nil {
-		cancel()
-		return nil, err
-	}
-	client := c.httpClient
-	if call.Stream {
-		client = c.streamClient
-	}
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		cancel()
-		return nil, err
-	}
-	return provider.AttachStreamCancel(resp, call.Stream, cancel), nil
+	return provider.DoUpstream(
+		ctx,
+		c.cfg.StreamTimeout,
+		c.httpClient,
+		c.streamClient,
+		c.newMessagesRequest,
+		provider.UpstreamCall{URL: call.URL, Body: call.Body, Stream: call.Stream},
+	)
 }
 
-func (c *Client) newMessagesRequest(ctx context.Context, call upstreamCall) (*http.Request, error) {
+func (c *Client) newMessagesRequest(ctx context.Context, call provider.UpstreamCall) (*http.Request, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, call.URL, bytes.NewReader(call.Body))
 	if err != nil {
 		return nil, err
@@ -120,14 +111,7 @@ func (c *Client) newMessagesRequest(ctx context.Context, call upstreamCall) (*ht
 }
 
 func readProviderError(name string, resp *http.Response) *provider.ProviderError {
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
-	return &provider.ProviderError{
-		ProviderName:   name,
-		StatusCode:     resp.StatusCode,
-		ProviderBody:   raw,
-		ProviderErrMsg: extractAnthropicErrorMessage(raw),
-		RetryAfter:     provider.RetryAfterHeader(resp.Header.Get("Retry-After")),
-	}
+	return provider.ReadProviderError(name, resp, extractAnthropicErrorMessage)
 }
 
 func extractAnthropicErrorMessage(raw []byte) string {
@@ -152,14 +136,7 @@ func extractAnthropicErrorMessage(raw []byte) string {
 }
 
 func isRetryableStatus(code int) bool {
-	switch code {
-	case http.StatusTooManyRequests, http.StatusInternalServerError,
-		http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout,
-		statusOverloaded:
-		return true
-	default:
-		return false
-	}
+	return provider.IsRetryableHTTPStatus(code, statusOverloaded)
 }
 
 func (c *Client) waitBeforeRetry(ctx context.Context, attempt int, lastErr error) error {
