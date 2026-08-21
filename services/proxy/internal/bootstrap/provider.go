@@ -180,44 +180,13 @@ func buildMockProviderRegistry(cfg config.Config) (*provider.Registry, error) {
 }
 
 func buildLiveProviderRegistry(cfg config.Config, log *logger.Logger, tracer trace.Tracer, reg *metrics.ProxyRegistry) (*provider.Registry, error) {
-	var providers []provider.Provider
-
-	if key := strings.TrimSpace(cfg.OpenAI.APIKey); key != "" {
-		maxRetries := cfg.OpenAI.MaxRetries
-		providers = append(providers, openai.New(openai.Config{
-			APIKey:         key,
-			BaseURL:        cfg.OpenAI.BaseURL,
-			Timeout:        cfg.OpenAI.RequestTimeout,
-			MaxRetries:     &maxRetries,
-			RetryBaseDelay: cfg.OpenAI.RetryBaseDelay,
-			ExtraModels:    cfg.OpenAI.ExtraModels,
-		}, log, tracer, reg))
+	providers, err := collectLiveProviders(cfg, log, tracer, reg)
+	if err != nil {
+		return nil, err
 	}
-
-	if key := strings.TrimSpace(cfg.Anthropic.APIKey); key != "" {
-		maxRetries := cfg.Anthropic.MaxRetries
-		providers = append(providers, anthropic.New(anthropic.Config{
-			APIKey:         key,
-			BaseURL:        cfg.Anthropic.BaseURL,
-			Timeout:        cfg.Anthropic.RequestTimeout,
-			MaxRetries:     &maxRetries,
-			RetryBaseDelay: cfg.Anthropic.RetryBaseDelay,
-			ExtraModels:    cfg.Anthropic.ExtraModels,
-		}, log, tracer, reg))
-	}
-
-	if cfg.SelfHosted.Enabled {
-		p, err := newSelfHostedProvider(cfg, log, tracer, reg)
-		if err != nil {
-			return nil, err
-		}
-		providers = append(providers, p)
-	}
-
 	if len(providers) == 0 {
 		return nil, fmt.Errorf("live mode requires OPENAI_API_KEY, ANTHROPIC_API_KEY, and/or IBEX_SELFHOSTED_ENABLED")
 	}
-
 	catalog, err := capabilityCatalog(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("provider registry: %w", err)
@@ -227,6 +196,56 @@ func buildLiveProviderRegistry(cfg config.Config, log *logger.Logger, tracer tra
 		return nil, fmt.Errorf("provider registry: %w", err)
 	}
 	return out, nil
+}
+
+func collectLiveProviders(cfg config.Config, log *logger.Logger, tracer trace.Tracer, reg *metrics.ProxyRegistry) ([]provider.Provider, error) {
+	var providers []provider.Provider
+	if p := newOpenAIProvider(cfg, log, tracer, reg); p != nil {
+		providers = append(providers, p)
+	}
+	if p := newAnthropicProvider(cfg, log, tracer, reg); p != nil {
+		providers = append(providers, p)
+	}
+	if !cfg.SelfHosted.Enabled {
+		return providers, nil
+	}
+	p, err := newSelfHostedProvider(cfg, log, tracer, reg)
+	if err != nil {
+		return nil, err
+	}
+	return append(providers, p), nil
+}
+
+func newOpenAIProvider(cfg config.Config, log *logger.Logger, tracer trace.Tracer, reg *metrics.ProxyRegistry) provider.Provider {
+	key := strings.TrimSpace(cfg.OpenAI.APIKey)
+	if key == "" {
+		return nil
+	}
+	maxRetries := cfg.OpenAI.MaxRetries
+	return openai.New(openai.Config{
+		APIKey:         key,
+		BaseURL:        cfg.OpenAI.BaseURL,
+		Timeout:        cfg.OpenAI.RequestTimeout,
+		MaxRetries:     &maxRetries,
+		RetryBaseDelay: cfg.OpenAI.RetryBaseDelay,
+		ExtraModels:    cfg.OpenAI.ExtraModels,
+	}, log, tracer, reg)
+}
+
+func newAnthropicProvider(cfg config.Config, log *logger.Logger, tracer trace.Tracer, reg *metrics.ProxyRegistry) provider.Provider {
+	key := strings.TrimSpace(cfg.Anthropic.APIKey)
+	if key == "" {
+		return nil
+	}
+	maxRetries := cfg.Anthropic.MaxRetries
+	return anthropic.New(anthropic.Config{
+		APIKey:         key,
+		BaseURL:        cfg.Anthropic.BaseURL,
+		Timeout:        cfg.Anthropic.RequestTimeout,
+		MaxRetries:     &maxRetries,
+		RetryBaseDelay: cfg.Anthropic.RetryBaseDelay,
+		ExtraModels:    cfg.Anthropic.ExtraModels,
+	}, log, tracer, reg)
 }
 
 func newSelfHostedProvider(

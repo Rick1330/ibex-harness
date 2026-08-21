@@ -31,7 +31,9 @@ func waitSelfHostedReady(ctx context.Context, baseURL string, sh config.SelfHost
 			log.InfoCtx(ctx, "selfhosted_ready", "url", url, "attempts", attempt)
 			return nil
 		}
-		if errors.Is(probeErr, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		// Only the readiness context deadline ends polling. http.Client.Timeout
+		// errors also satisfy errors.Is(..., DeadlineExceeded) and must be retried.
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return readinessTimeoutError(timeout, probeErr)
 		}
 		if err := waitOrTimeout(ctx, deadline, timeout, poll, url, attempt, probeErr, log); err != nil {

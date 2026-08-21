@@ -238,9 +238,9 @@ func retryAfterFromProvider(pe *provider.ProviderError) time.Duration {
 	if err := json.Unmarshal(pe.ProviderBody, &payload); err != nil || payload.Error.RetryAfter <= 0 {
 		return 0
 	}
-	d := time.Duration(payload.Error.RetryAfter * float64(time.Second))
-	if d > maxRetryBackoff {
+	// Compare in seconds first so oversized floats cannot overflow time.Duration.
+	if payload.Error.RetryAfter >= maxRetryBackoff.Seconds() {
 		return maxRetryBackoff
 	}
-	return d
+	return time.Duration(payload.Error.RetryAfter * float64(time.Second))
 }

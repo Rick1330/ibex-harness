@@ -41,10 +41,20 @@ func TestBreaker_DefaultsAndNilExecute(t *testing.T) {
 
 func TestBreaker_CanceledDoesNotTrip(t *testing.T) {
 	t.Parallel()
+	assertNonFailureDoesNotTrip(t, context.Canceled)
+}
+
+func TestBreaker_DeadlineExceededDoesNotTrip(t *testing.T) {
+	t.Parallel()
+	assertNonFailureDoesNotTrip(t, context.DeadlineExceeded)
+}
+
+func assertNonFailureDoesNotTrip(t *testing.T, nonFailure error) {
+	t.Helper()
 	b := New(Settings{Name: "t", MaxFailures: 1, CoolDown: time.Minute})
-	_, err := b.Execute(func() (any, error) { return nil, context.Canceled })
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("err=%v", err)
+	_, err := b.Execute(func() (any, error) { return nil, nonFailure })
+	if !errors.Is(err, nonFailure) {
+		t.Fatalf("err=%v want %v", err, nonFailure)
 	}
 	assertState(t, b, "closed")
 	_, err = b.Execute(func() (any, error) { return "ok", nil })

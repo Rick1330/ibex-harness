@@ -290,7 +290,7 @@ func TestWaitSelfHostedReady_BlockedHandlerHonorsTimeout(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected timeout")
 	}
-	if elapsed > 2*time.Second {
+	if elapsed > 500*time.Millisecond {
 		t.Fatalf("elapsed=%s too long", elapsed)
 	}
 }
@@ -313,7 +313,7 @@ func TestWaitSelfHostedReady_PollCappedByTimeout(t *testing.T) {
 	if !errors.Is(err, context.DeadlineExceeded) && !strings.Contains(err.Error(), "readiness probe failed") {
 		t.Fatalf("err=%v", err)
 	}
-	if elapsed > 2*time.Second {
+	if elapsed > 500*time.Millisecond {
 		t.Fatalf("elapsed=%s; ReadyPoll must be capped", elapsed)
 	}
 }

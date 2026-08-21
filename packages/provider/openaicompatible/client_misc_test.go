@@ -71,6 +71,22 @@ func TestEnrichRetryAfter_JSONAndPassthrough(t *testing.T) {
 	}
 }
 
+func TestEnrichRetryAfter_ClampsOversized(t *testing.T) {
+	t.Parallel()
+	pe := &provider.ProviderError{
+		StatusCode:   http.StatusTooManyRequests,
+		ProviderBody: []byte(`{"error":{"retry_after":1e20}}`),
+	}
+	out := enrichOpenAIRetryAfter(pe)
+	var got *provider.ProviderError
+	if !errors.As(out, &got) {
+		t.Fatalf("got=%v", out)
+	}
+	if got.RetryAfter != maxRetryBackoff {
+		t.Fatalf("RetryAfter=%s want %s", got.RetryAfter, maxRetryBackoff)
+	}
+}
+
 func TestExtractOpenAIErrorMessage_Fallback(t *testing.T) {
 	t.Parallel()
 	if extractOpenAIErrorMessage([]byte(`not-json`)) != "upstream provider error" {
