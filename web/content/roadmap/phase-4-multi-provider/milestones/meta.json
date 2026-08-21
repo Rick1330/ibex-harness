@@ -1,0 +1,26 @@
+{
+  "title": "Milestones",
+  "pages": [
+    "4.a.1-api-server-skeleton",
+    "4.a.2-org-user-management-api",
+    "4.a.3-agent-management-api",
+    "4.a.4-token-management-api",
+    "4.a.5-provider-credential-management",
+    "4.b.1-lua-hierarchical-rate-limiter",
+    "4.b.2-rate-limit-config-api",
+    "4.b.3-rate-limit-load-benchmark",
+    "4.c.1-anthropic-adapter-hardening",
+    "4.c.2-per-org-model-routing",
+    "4.c.3-circuit-breaker-per-provider",
+    "4.c.4-fallback-routing",
+    "4.c.5-streaming-hardening",
+    "4.d.1-dashboard-foundation-auth-realtime",
+    "4.d.2-trace-inspector",
+    "4.d.3-memory-browser-v2-graph",
+    "4.d.4-drift-alerts-directive-management",
+    "4.d.5-analytics-v2-cost-governance",
+    "4.e.1-dashboard-e2e-playwright",
+    "4.e.2-multi-provider-resilience-suite",
+    "4.e.3-phase4-exit-audit"
+  ]
+}

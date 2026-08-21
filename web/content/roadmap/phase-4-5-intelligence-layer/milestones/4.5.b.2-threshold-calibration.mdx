@@ -1,0 +1,141 @@
+---
+title: "4.5.B.2 Threshold Calibration"
+description: "Replace the original arbitrary threshold constants (|z|&gt;2.0, cosine &gt;0.3, KL &gt;0.5) with an empirical calibration procedure targeting ≤2% false-positive rate per week per agent. Thresholds stored as config, not constants."
+summary: "Replace the original arbitrary threshold constants (|z|&gt;2.0, cosine &gt;0.3, KL &gt;0.5) with an empirical calibration procedure targeting ≤2% false-positive rate per week per agent. Thresholds stored as config, not constants."
+status: "planned"
+milestoneId: "4.5.B.2"
+track: "B"
+trackTitle: "Drift Detection"
+trackHref: "/roadmap/phase-4-5-intelligence-layer/tracks#track-b--drift-detection"
+goal: "[Track B — Drift Detection](/roadmap/phase-4-5-intelligence-layer/tracks#track-b--drift-detection)"
+estimatedEffort: "3 days"
+phase: "phase-4-5-intelligence-layer"
+fullTitle: "Milestone 4.5.B.2 — Threshold Calibration"
+---
+
+# Milestone 4.5.B.2 — Threshold Calibration
+
+**Status:** Planned  
+**Goal:** [Track B — Drift Detection](/roadmap/phase-4-5-intelligence-layer/tracks#track-b--drift-detection)  
+**Phase:** 4.5 — Intelligence Layer  
+**Estimated effort:** 3 days  
+**Track:** [Track B — Drift Detection](/roadmap/phase-4-5-intelligence-layer/tracks#track-b--drift-detection)  
+**ADR required:** ADR-0046 — Drift threshold calibration methodology
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+The original plan's thresholds (`|z|>2.0`, cosine `>0.3`, KL `>0.5`) have zero empirical justification anywhere in the documentation. They are guessed constants. In an operational system that gates consequential actions (even if those actions start as alerts), thresholds typically need defensible grounding and a clear path for revisiting/tuning as production data accumulates. This milestone therefore calls for a calibration procedure rather than another guessed constant.
+
+---
+
+## Non-Goals
+
+- The statistical tests themselves (4.5.B.1)
+- Severity aggregation and action policy (4.5.B.3)
+- Rerunning calibration on production data (can be done post-launch via the same script)
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Fingerprinting / drift
+
+## Suggested naming (provisional)
+
+Rename freely to match the change that actually lands.
+
+- Branch: `feature/m4-5-b2-threshold-calibration`
+- PR title: `feat(worker/drift): empirical threshold calibration against gold-set replay (m4.5.B.2)`
+
+## ADR-0046 — Drift Threshold Calibration Methodology
+
+Write `web/content/docs/adr/0046-drift-threshold-calibration.mdx` documenting:
+
+- **Target:** ≤2% false-positive rate per week per agent on known-stable behavior windows
+- **Procedure:** Run calibration over the labeled Phase 3.5 gold-set conversations plus available production trace replay, where "stable" windows are those with no known behavior change event
+- **Per-feature-class thresholds:** Each feature class (KS, JS, chi-squared, Beta-Binomial) gets its own threshold, calibrated independently
+- **Why 2%:** An agent running 7 days × 24 fingerprint windows = 168 windows per week. At 2% FPR, expected false alerts ≈ 3.4 per week per agent — acceptable for shadow-mode alerts, not acceptable for automated actions (hence the staged rollout in B.3)
+- **Revisability:** Thresholds are YAML config committed to the repo. Any production change requires a documented reason in the commit message and an updated calibration run result.
+
+---
+
+## Deliverables
+
+Target outcomes for the milestone; concrete artifacts may differ from any sketch above.
+
+### Calibration procedure (steps)
+
+1. Run the feature extractor (4.5.A.1) retroactively over labeled Phase 3.5 gold-set conversations and available production traces to produce a set of "known-stable" fingerprint window pairs.
+2. For each feature class and each test type, compute the false-positive rate at a menu of thresholds on the known-stable windows.
+3. For each feature class, select the threshold that caps false-positive rate at ≤2% per week per agent.
+4. Commit resulting thresholds to `thresholds.yaml` alongside the calibration script and the measured FPR at each candidate threshold.
+
+### thresholds.yaml structure
+
+```yaml
+# Illustrative — exact path may differ
+# Calibrated against Phase 3.5 gold set + available production replay.
+# FPR target: ≤2% per week per agent (see ADR-0046).
+# Last calibrated: <date>
+ks_test_token_length:
+ threshold: 0.15 # D-statistic; calibrated FPR: 1.8%
+ calibrated_at: "YYYY-MM-DD"
+js_divergence_tool_distribution:
+ threshold: 0.12 # JS divergence [0, ln2]; calibrated FPR: 1.6%
+ calibrated_at: "YYYY-MM-DD"
+chi_squared_cluster_membership:
+ threshold: 0.05 # p-value; calibrated FPR: 1.9%
+ calibrated_at: "YYYY-MM-DD"
+beta_binomial_error_rate:
+ credible_interval_overlap_threshold: 0.10 # calibrated FPR: 1.7%
+ calibrated_at: "YYYY-MM-DD"
+```
+
+Note: actual numeric values are placeholders; the calibration script populates them.
+
+### Calibration script
+
+```
+services/worker/drift/calibration.py # offline script: sweep thresholds against gold-set + prod replay
+```
+
+---
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- Calibration script runs to completion against Phase 3.5 gold-set data, producing a thresholds.yaml with populated, non-placeholder values
+- Each threshold entry includes the measured FPR at the chosen value and the calibrated date
+- ADR-0046 published documenting the 2% FPR target, the calibration procedure, and the final results
+- `thresholds.yaml` is loaded at worker startup, not hardcoded (tests verify the loaded value matches the file)
+- Any code path that reads a threshold fails loudly if the threshold key is missing from config (no silent fallback to a hardcoded default)
+
+## Prerequisites
+
+- 4.5.B.1 merged (detector code exists to calibrate)
+- Phase 3.5 gold-set conversations accessible (or a representative replay corpus)
+

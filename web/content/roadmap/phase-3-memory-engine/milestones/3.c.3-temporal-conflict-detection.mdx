@@ -1,0 +1,140 @@
+---
+title: "3.C.3 Temporal-interval-aware conflict detection"
+description: "Redesign of conflict detection to check temporal interval overlap before escalating to an LLM call, eliminating false contradictions for sequential facts. ADR-0042 required before implementation."
+summary: "Redesign of conflict detection to check temporal interval overlap before escalating to an LLM call, eliminating false contradictions for sequential facts. ADR-0042 required before implementation."
+status: "planned"
+milestoneId: "3.C.3"
+track: "C"
+trackTitle: "Write Pipeline"
+trackHref: "/roadmap/phase-3-memory-engine/tracks#track-c--write-pipeline"
+goal: "[Track C — Write Pipeline](/roadmap/phase-3-memory-engine/tracks#track-c--write-pipeline)"
+estimatedEffort: "4 days"
+phase: "phase-3-memory-engine"
+fullTitle: "Milestone 3.C.3 — Temporal-interval-aware conflict detection"
+---
+
+# Milestone 3.C.3 — Temporal-interval-aware conflict detection
+
+**Status:** Planned  
+**Goal:** [Track C — Write Pipeline](/roadmap/phase-3-memory-engine/tracks#track-c--write-pipeline)  
+**Phase:** 3 — Core Memory Substrate  
+**Estimated effort:** 4 days  
+**Track:** [Track C — Write Pipeline](/roadmap/phase-3-memory-engine/tracks#track-c--write-pipeline)  
+**ADR required:** ADR-0042 — Temporal-interval-aware conflict detection (targeted to land before implementation because it defines the conflict model and edge cases)
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+This is the single biggest correctness fix in Phase 3. The original design treats *any* pair of near-duplicate memories above a similarity threshold as a candidate contradiction and fires an LLM call to classify it. The flaw: "User prefers Python" (March) and "User is switching to Go" (June) are *not* a logical contradiction — they are a **sequential fact change**, correctly modeled as `supersedes`, not `contradicts`.
+
+The original conflict resolution table already distinguishes these types, but the *detection* step does not use time at all before calling the LLM — it relies entirely on the LLM prompt to figure out "these are actually sequential, not contradictory" from text alone, which is fragile and wastes LLM calls.
+
+ADR-0042 is the preferred first step before implementation work proceeds, because it captures the conflict model, interval semantics, and reviewable tradeoffs in one place.
+
+---
+
+## Non-Goals
+
+- Changes to the conflict resolution taxonomy (supersedes/contradicts/merge — kept as-is)
+- The post-resolution actions (`superseded_by`, `pending_review` — kept from original)
+- Subject extraction beyond what is needed for the interval check
+- GDPR deletion or archive flows
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Memory service / repositories
+- Write pipeline / safety
+- Database schema / migrations
+
+## Suggested naming (provisional)
+
+Rename freely to match the change that actually lands.
+
+- Branch: `feature/m3-c-3-temporal-conflict`
+- PR title: `feat(memory): temporal-interval-aware conflict detection (m3.C.3)`
+
+## ADR-0042 — Temporal-interval-aware conflict detection
+
+Write `web/content/docs/adr/0042-temporal-conflict-detection.mdx`. It should document:
+
+1. **Why interval-overlap-first beats similarity-only gating:** Cuts unnecessary LLM calls. Fixes the sequential-fact misclassification (the "Python → Go" example above is the canonical test case; it should be documented explicitly as the motivating failure mode).
+2. **The subject-extraction approach chosen (spaCy vs. a cheap secondary LLM call):** starting preference is **spaCy**, because it is free, fast (&lt;5ms), self-hostable, and this is a well-scoped, single-purpose NLP task that may not need an LLM. If real fixtures show weak subject extraction quality, that should trigger follow-up investigation rather than forcing the initial choice.
+3. **Fallback behavior when `valid_from` cannot be reliably inferred:** Default to "no interval information available" → falls back to the original LLM-gated contradiction check. Never silently drops the check.
+
+---
+
+## Redesigned Algorithm
+
+```
+1. Near-duplicate candidate supplied by Milestone 3.C.2 (cosine > 0.85, same category).
+
+2. Temporal interval check (fast path):
+ - Extract subject from new memory and candidate memory using spaCy dependency parse.
+ - If new memory valid_from > candidate memory valid_from
+ AND subjects refer to same attribute/entity:
+ → classify as SUPERSEDES, no LLM call.
+ → write memory_relationships row: type=supersedes.
+ → set candidate memory status=superseded, superseded_by=new_memory_id.
+ → DONE.
+
+3. Interval overlap check (slow path, only if fast path did not fire):
+ - If validity intervals overlap (both claim to be true at the same time):
+ → escalate to LLM contradiction-check prompt.
+ → LLM returns: contradicts | near_duplicate | unrelated.
+ → Resolution actions apply (see below).
+ - If no interval overlap and not same attribute/entity:
+ → no conflict, proceed to write.
+
+4. Resolution actions (unchanged from original plan):
+ - contradicts → create memory_relationships row type=contradicts,
+ set status=pending_review on lower-confidence memory
+ - near_duplicate → merge: set status=merged_into on duplicate,
+ merged_into=surviving_id
+ - unrelated → proceed to write normally
+```
+
+---
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] ADR-0042 written and merged **before** implementation starts (per repo convention)
+- [ ] Sequential-fact test fixture (e.g., "prefers Python" → "switching to Go", 3 months apart) classified as `supersedes` with zero LLM calls
+- [ ] Overlapping-interval contradiction test fixture still escalates to LLM and is classified correctly
+- [ ] `memory_relationships` row created for every detected conflict, using the existing typed-edge schema
+- [ ] Integration test: end-to-end write of two conflicting memories via the real API, verifying resolution status transitions in Postgres
+- [ ] `llm_call_made` metric recorded per detection run (visible in Prometheus)
+
+---
+
+## Prerequisites
+
+- Milestone 3.1.1 merged (`valid_from`/`valid_until` columns and `idx_memories_validity` index in schema)
+- Milestone 3.C.2 merged (near-duplicate candidates supplied as input)
+- ADR-0042 reviewed and approved before any code is written
+

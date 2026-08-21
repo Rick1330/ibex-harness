@@ -1,0 +1,105 @@
+---
+title: "Phase 5: Advanced Retrieval & Graph Memory"
+description: "Phase 5 upgrades retrieval from single-vector ANN search to hybrid dense+sparse+reranking with graph-aware traversal."
+summary: "Phase 5 upgrades retrieval from single-vector ANN search to hybrid dense+sparse+reranking with graph-aware traversal."
+status: "planned"
+phase: "phase-5-advanced-retrieval"
+fullTitle: "Phase 5 — Advanced Retrieval & Graph Memory"
+---
+
+# Phase 5 — Advanced Retrieval & Graph Memory
+
+<Callout type="note" title="Planning baseline">
+  Paths, libraries, schemas, and sequencing on this phase are orientation for planning.
+  Implementation is expected to require further research and may land differently than any sketch.
+</Callout>
+
+**Status:** Planned  
+**Depends on:** [Phase 4.5 — Intelligence Layer](/roadmap/phase-4-5-intelligence-layer) 
+**Next:** Future roadmap work (org-wide production hardening remains deferred)
+
+<Callout type="info" title="About org-wide production hardening">
+ Org-wide production hardening (Prometheus/Grafana/Loki/Tempo observability stack, chaos/load
+ validation, release discipline, security/GDPR baseline) is intentionally deferred beyond Phase 5.
+ Per-phase exit gates from 2.5 onward already cover most hardening concerns; remaining org-wide
+ work is tracked as future roadmap scope, not a separate phase.
+</Callout>
+
+## Purpose
+
+Phase 3 established a flat vector store with a `memory_relationships` graph table that is not yet
+traversed at query time. Phase 5 is where retrieval quality moves beyond "one embedding, one ANN
+search, one score" toward hybrid search, reranking, and graph-aware packing:
+
+- **Hybrid search:** Dense (HNSW) + Sparse (BM25 via Postgres GIN) combined with Reciprocal Rank Fusion
+- **Cross-encoder reranking:** `BAAI/bge-reranker-v2-m3` via TEI for top-50 candidate refinement
+- **Graph-aware retrieval:** Multi-hop traversal of `memory_relationships` for lineage/contradiction chains
+- **Production shadow evaluation:** 1% traffic sampling for online retrieval-quality monitoring
+
+Suggested paths and libraries below are planning defaults. Implementation may revisit them after
+measurement, further research, or operational constraints.
+
+## Milestones
+
+| ID | Milestone | Status |
+| --- | --- | --- |
+| 5.A.1 | [BM25 Sparse Retrieval](/roadmap/phase-5-advanced-retrieval/milestones/5.a.1-bm25-sparse-retrieval) | Planned |
+| 5.A.2 | [Reciprocal Rank Fusion](/roadmap/phase-5-advanced-retrieval/milestones/5.a.2-reciprocal-rank-fusion) | Planned |
+| 5.A.3 | [Cross-Encoder Reranking](/roadmap/phase-5-advanced-retrieval/milestones/5.a.3-cross-encoder-reranking) | Planned |
+| 5.B.1 | [Graph Traversal Query Layer](/roadmap/phase-5-advanced-retrieval/milestones/5.b.1-graph-traversal-query-layer) | Planned |
+| 5.B.2 | [Graph-Boosted Scoring](/roadmap/phase-5-advanced-retrieval/milestones/5.b.2-graph-boosted-scoring) | Planned |
+| 5.B.3 | [MCP get_memory_lineage](/roadmap/phase-5-advanced-retrieval/milestones/5.b.3-mcp-get-memory-lineage) | Planned |
+| 5.C.1 | [Hybrid-Aware Gold Set v2](/roadmap/phase-5-advanced-retrieval/milestones/5.c.1-hybrid-aware-gold-set-v2) | Planned |
+| 5.C.2 | [Multi-Mode Benchmark Runner](/roadmap/phase-5-advanced-retrieval/milestones/5.c.2-multi-mode-benchmark-runner) | Planned |
+| 5.C.3 | [Production Shadow Evaluation](/roadmap/phase-5-advanced-retrieval/milestones/5.c.3-production-shadow-evaluation) | Planned |
+| 5.D.1 | [Retrieval Quality Sign-off](/roadmap/phase-5-advanced-retrieval/milestones/5.d.1-retrieval-quality-sign-off) | Planned |
+| 5.D.2 | [Phase 5 Exit Audit](/roadmap/phase-5-advanced-retrieval/milestones/5.d.2-phase5-exit-audit) | Planned |
+
+## What Phase 5 is not
+
+- Org-wide observability stack / chaos engineering / release governance (future work)
+- Replacing the Phase 3 dense retrieval path as the only available mode (dense-only remains a baseline)
+- A separate graph database requirement (Postgres recursive CTEs are the starting preference)
+
+## Entry criteria
+
+- [ ] Phase 4.5 exit criteria met
+- [ ] Phase 3 `memory_relationships` populated and Phase 3.5 context assembly live
+
+## Exit criteria
+
+1. Hybrid retrieval (BM25 + RRF) live behind feature flag, default-on, beating dense-only on gold-set lexical queries
+2. Cross-encoder reranker meets latency budget without breaking context assembly p95 &lt;= 50ms
+3. Graph traversal live via API and MCP `get_memory_lineage` tool with cross-tenant isolation test passing
+4. Gold-set v2 committed with inter-annotator agreement &gt;= 0.8 kappa
+5. Multi-mode benchmark running in CI on every retrieval-touching PR
+6. Shadow-evaluation pipeline live with divergence dashboard
+7. All Phase 1–4.5 regression suites still green
+8. `make e2e-smoke-p5` exits 0
+9. Phase 5 gap register published with zero open P0s
+10. Org-wide production hardening remains explicitly deferred as future roadmap scope
+
+## Execution order
+
+```text
+Track A: 5.A.1 → 5.A.2 → 5.A.3
+Track B: 5.B.1 → 5.B.2 → 5.B.3 (can start after Phase 4.5; pairs with Track A for eval)
+Track C: 5.C.1 → 5.C.2 → 5.C.3 (depends on A/B surfaces existing)
+Track D: 5.D.1 → 5.D.2 (after A–C verification)
+```
+
+## Documents
+
+- [tracks.mdx](/roadmap/phase-5-advanced-retrieval/tracks) — Track purpose and milestone grouping
+- [goals.mdx](/roadmap/phase-5-advanced-retrieval/goals) — Goal overview by track
+- [risks.mdx](/roadmap/phase-5-advanced-retrieval/risks) — Risks and mitigations
+- [milestones/](/roadmap/phase-5-advanced-retrieval/milestones) — PR-sized work units
+
+## Goal overview
+
+| Goal | Focus |
+| --- | --- |
+| [5.A](/roadmap/phase-5-advanced-retrieval/goals#track-a--hybrid-retrieval-dense--sparse--reranking) | Hybrid retrieval (dense + sparse + reranking) |
+| [5.B](/roadmap/phase-5-advanced-retrieval/goals#track-b--graph-aware-retrieval) | Graph-aware retrieval |
+| [5.C](/roadmap/phase-5-advanced-retrieval/goals#track-c--evaluation-harness-upgrade) | Evaluation harness upgrade |
+| [5.D](/roadmap/phase-5-advanced-retrieval/goals#track-d--exit-gate) | Exit gate |

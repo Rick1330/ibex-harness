@@ -1,0 +1,92 @@
+---
+title: "3.5.D.1 Go gRPC client for Context Assembly"
+description: "Thin, well-tested packages/contextclient wrapper mirroring the auth gRPC client pattern — fail-open for context (never returns a Go error, degrades to original messages with Fallback=true)."
+summary: "Thin, well-tested packages/contextclient wrapper mirroring the auth gRPC client pattern — fail-open for context (never returns a Go error, degrades to original messages with Fallback=true)."
+status: "planned"
+milestoneId: "3.5.D.1"
+track: "D"
+trackTitle: "Proxy Integration"
+trackHref: "/roadmap/phase-3-5-extraction-assembly/tracks#track-d--proxy-integration"
+goal: "[Track D — Proxy Integration](/roadmap/phase-3-5-extraction-assembly/tracks#track-d--proxy-integration)"
+estimatedEffort: "2 days"
+phase: "phase-3-5-extraction-assembly"
+fullTitle: "Milestone 3.5.D.1 — Go gRPC Client for Context Assembly"
+---
+
+# Milestone 3.5.D.1 — Go gRPC Client for Context Assembly
+
+**Status:** Planned  
+**Goal:** [Track D — Proxy Integration](/roadmap/phase-3-5-extraction-assembly/tracks#track-d--proxy-integration)  
+**Phase:** 3.5 — Extraction & Context Assembly  
+**Estimated effort:** 2 days  
+**Track:** [Track D — Proxy Integration](/roadmap/phase-3-5-extraction-assembly/tracks#track-d--proxy-integration)  
+**Depends on:** Milestone 3.5.C.6 (gRPC service skeleton)
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+The proxy needs a thin, well-tested Go wrapper around the `ContextAssemblyService` gRPC contract — not raw `grpc.ClientConn` calls scattered in the handler. This mirrors the pattern already established for the auth gRPC client (fail-closed for auth, fail-open for context).
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Proxy service (HTTP, bootstrap, config)
+- Context assembly service
+- Workers / task runtime
+
+## Design
+
+`Assemble` never returns a Go `error` to its caller — this is deliberate, matching `applyDirectiveInjection`'s existing "missing context leaves messages unchanged" fail-open contract. A memory-quality degradation should never become an HTTP error.
+
+```go
+// Illustrative — exact path may differ
+func (c *Client) Assemble(ctx context.Context, req AssembleRequest) AssembleResult {
+ ctx, cancel := context.WithTimeout(ctx, c.timeout) // default 45ms
+ defer cancel()
+ resp, err := c.stub.AssembleContext(ctx, req.toProto())
+ if err != nil {
+ return AssembleResult{Messages: req.OriginalMessages, Fallback: true}
+ }
+ return fromProto(resp)
+}
+```
+
+---
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] Fully unit-tested with fault injection for all 4 degradation levels (exact path may differ)
+- [ ] `Assemble` never returns a Go `error` — always returns `AssembleResult` with `Fallback` flag
+- [ ] Default timeout 45ms, independent of server's internal 40ms budget
+- [ ] Tests for the new behavior pass
+- [ ] Repo guards / CI checks still pass
+
+## Prerequisites
+
+- Milestone 3.5.C.6 (gRPC service skeleton)
+

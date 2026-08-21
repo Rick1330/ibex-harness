@@ -1,6 +1,15 @@
 # Benchmarks
 
-This directory contains the benchmark pipeline assets:
+This directory contains the **proxy / load benchmark pipeline** used today (Phases 0–2 complete).
+Retrieval-quality and intelligence eval harnesses land later under services (and possibly here) as
+Phases **3.5**, **4.5**, and **5** advance — those are planning baselines, not present yet in this tree.
+
+Methodology: [ADR-0034](/docs/adr/0034-performance-methodology). Public charts: `/benchmarks` on the site.
+Roadmap alignment: [current state](https://ibexharness.com/roadmap/current-state).
+
+---
+
+## What exists today
 
 - `go/`: warm-path proxy overhead stage microbenchmarks (authcache, ratelimit, directive, injection).
 - `services/proxy/internal/http`: `/health` (`BenchmarkProxyHealth`) and full chat overhead (`BenchmarkProxyChatOverhead`) with mockllm.
@@ -21,7 +30,20 @@ Published benchmark data is committed to `web/public/benchmarks/` via the benchm
 
 Target wall-clock: **~2–4 min** for `smoke` PRs, **~5–10 min** for `fast`, current quality bar for `full`. All keep Postgres + Redis + real proxy. Go stage microbenches run before stack start. Each published run records `profile: "smoke" | "fast" | "full"`.
 
-Methodology: [ADR-0034](/docs/adr/0034-performance-methodology). Stack helper seeds the DB and exports `IBEX_DEV_TOKEN` / `IBEX_DEV_AGENT_ID`; `IBEX_LLM_MODE=mock` registers an immediate stub provider so chat returns **200**.
+Stack helper seeds the DB and exports `IBEX_DEV_TOKEN` / `IBEX_DEV_AGENT_ID`; `IBEX_LLM_MODE=mock` registers an immediate stub provider so chat returns **200**.
+
+## Planned expansions (do not invent paths early)
+
+| Concern | Preferred phase | Likely home (orientation) |
+| --- | --- | --- |
+| Memory vector search recall/latency benches (HNSW `ef_search`) | **3** | Under `services/memory/` (or promoted here with ADR) |
+| Extraction quality gold-set / regression gate | **3.5** | Under `services/worker/eval/` |
+| Context-assembly latency under degradation ladder | **3.5** | Proxy + context integration suites |
+| Multi-provider resilience / breaker benches | **4** | Proxy + k6 scenarios |
+| Drift / regression-suite CI gates | **4.5** | Worker + API |
+| Hybrid retrieval / shadow eval | **5** | Memory/context + optional production shadow sampler |
+
+When those land, update this README, ADR-0034 (or a follow-on ADR), and the public `/benchmarks` docs in the same change set.
 
 ## Verification
 

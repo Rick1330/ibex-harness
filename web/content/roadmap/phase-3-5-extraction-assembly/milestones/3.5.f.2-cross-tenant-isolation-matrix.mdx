@@ -1,0 +1,76 @@
+---
+title: "3.5.F.2 Cross-tenant isolation matrix"
+description: "Four new ISO-MCP-* cases covering MCP-specific tenant isolation: cross-org agent access, suspended agent handling, and extraction worker RLS enforcement."
+summary: "Four new ISO-MCP-* cases covering MCP-specific tenant isolation: cross-org agent access, suspended agent handling, and extraction worker RLS enforcement."
+status: "planned"
+milestoneId: "3.5.F.2"
+track: "F"
+trackTitle: "Exit Gate"
+trackHref: "/roadmap/phase-3-5-extraction-assembly/tracks#track-f--exit-gate"
+goal: "[Track F — Exit Gate](/roadmap/phase-3-5-extraction-assembly/tracks#track-f--exit-gate)"
+estimatedEffort: "2 days"
+phase: "phase-3-5-extraction-assembly"
+fullTitle: "Milestone 3.5.F.2 — Cross-Tenant Isolation Matrix"
+---
+
+# Milestone 3.5.F.2 — Cross-Tenant Isolation Matrix
+
+**Status:** Planned  
+**Goal:** [Track F — Exit Gate](/roadmap/phase-3-5-extraction-assembly/tracks#track-f--exit-gate)  
+**Phase:** 3.5 — Extraction & Context Assembly  
+**Estimated effort:** 2 days  
+**Track:** [Track F — Exit Gate](/roadmap/phase-3-5-extraction-assembly/tracks#track-f--exit-gate)  
+**Depends on:** Milestone 3.5.F.1 (E2E suite)
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Test Matrix
+
+| Case ID | Scenario | Expected |
+|---|---|---|
+| ISO-MCP-01 | Org A's PAT calls `search_memory` with Org B's `agent_id` | `PERMISSION_DENIED` → MCP error, never `NOT_FOUND` |
+| ISO-MCP-02 | Org A's token, Org A's agent, but agent belongs to different user within org | Allowed if permission bit present — org-level isolation is the boundary |
+| ISO-MCP-03 | `write_memory` with `agent_id` from a suspended agent | 403-equivalent MCP error |
+| ISO-MCP-04 | Extraction worker processing Org A's session should never read/write Org B's memories | RLS + application-layer double check |
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Evaluation / benchmarks
+- MCP server surface
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] All 4 ISO-MCP-* cases automated, run against real Postgres + real auth service
+- [ ] CI job `security-integration-p3.5` enforces minimum test count
+- [ ] Repo guards / CI checks still pass
+
+## Prerequisites
+
+- Milestone 3.5.F.1 (E2E suite)
+- Milestone 3.5.E.2 (MCP tools)
+

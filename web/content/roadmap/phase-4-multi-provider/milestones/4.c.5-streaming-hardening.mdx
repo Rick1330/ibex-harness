@@ -1,0 +1,71 @@
+---
+title: "4.C.5 Streaming Hardening"
+description: "Harden SSE streaming under slow clients and multi-provider error dialects — bounded backpressure buffers, mid-stream error normalization, and ADR-0027 verbatim-close semantics across all providers."
+summary: "Harden SSE streaming under slow clients and multi-provider error dialects — bounded backpressure buffers, mid-stream error normalization, and ADR-0027 verbatim-close semantics across all providers."
+status: "planned"
+milestoneId: "4.C.5"
+track: "C"
+trackTitle: "Multi-Provider Adapters & Resilience"
+trackHref: "/roadmap/phase-4-multi-provider/tracks#track-c--multi-provider-adapters--resilience"
+goal: "[Track C — Multi-Provider Adapters & Resilience](/roadmap/phase-4-multi-provider/tracks#track-c--multi-provider-adapters--resilience)"
+estimatedEffort: "2 days"
+phase: "phase-4-multi-provider"
+fullTitle: "Milestone 4.C.5 — Streaming Hardening"
+---
+
+# Milestone 4.C.5 — Streaming Hardening
+
+**Status:** Planned  
+**Goal:** [Track C — Multi-Provider Adapters & Resilience](/roadmap/phase-4-multi-provider/tracks#track-c--multi-provider-adapters--resilience)  
+**Phase:** 4 — Operator Platform & Multi-Provider  
+**Estimated effort:** 2 days  
+**Track:** [Track C — Multi-Provider Adapters & Resilience](/roadmap/phase-4-multi-provider/tracks#track-c--multi-provider-adapters--resilience)
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+Multi-provider means multi-dialect failure modes. Anthropic emits `error` events mid-stream differently than OpenAI's connection-drop pattern. The proxy must handle slow-client backpressure (bounded buffer + timeout) and normalize mid-stream errors across providers to the same ADR-0027 verbatim-close behavior.
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Provider abstraction / adapters
+- Proxy service (HTTP, bootstrap, config)
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] Slow-client backpressure test: client reads 1 byte/sec, proxy does not buffer unbounded upstream data (bounded buffer + timeout, then close upstream)
+- [ ] Mid-stream Anthropic `error` event and mid-stream OpenAI connection drop both produce the same client-visible behavior (verbatim close per ADR-0027)
+- [ ] No memory leak under sustained slow-client load (verified via benchmark)
+- [ ] Both providers tested with the same parameterized test harness
+
+## Prerequisites
+
+- Milestone 4.C.1 (Anthropic adapter hardening)
+- ADR-0027 (streaming behavior specification)
+

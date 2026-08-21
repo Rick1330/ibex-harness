@@ -1,0 +1,107 @@
+---
+title: "3.5.B.3 Incremental Turn Tracking and Idempotency"
+description: "Ensure last_extracted_turn is updated atomically with memory writes in the same DB transaction, preventing duplicate LLM spend on retry without requiring duplicate-memory guards alone."
+summary: "Ensure last_extracted_turn is updated atomically with memory writes in the same DB transaction, preventing duplicate LLM spend on retry without requiring duplicate-memory guards alone."
+status: "planned"
+milestoneId: "3.5.B.3"
+track: "B"
+trackTitle: "Extraction Pipeline"
+trackHref: "/roadmap/phase-3-5-extraction-assembly/tracks#track-b--extraction-pipeline"
+goal: "[Track B — Extraction Pipeline](/roadmap/phase-3-5-extraction-assembly/tracks#track-b--extraction-pipeline)"
+estimatedEffort: "2 days"
+phase: "phase-3-5-extraction-assembly"
+fullTitle: "Milestone 3.5.B.3 — Incremental Turn Tracking and Idempotency"
+---
+
+# Milestone 3.5.B.3 — Incremental Turn Tracking and Idempotency
+
+**Status:** Planned  
+**Goal:** [Track B — Extraction Pipeline](/roadmap/phase-3-5-extraction-assembly/tracks#track-b--extraction-pipeline)  
+**Phase:** 3.5 — Extraction & Context Assembly  
+**Estimated effort:** 2 days  
+**Track:** [Track B — Extraction Pipeline](/roadmap/phase-3-5-extraction-assembly/tracks#track-b--extraction-pipeline)  
+**Depends on:** [3.5.B.2](/roadmap/phase-3-5-extraction-assembly/milestones/3.5.b.2-cost-tiered-extraction-execution)
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+The original idempotency design (content_hash dedup at the DB layer handles double-processing) is still correct, but needs one addition given the batch-extraction redesign in 3.5.B.2: **`last_extracted_turn` should be updated atomically with the batch's memory writes, in the same DB transaction**, not as a separate step after — otherwise a crash between "memories written" and "pointer updated" causes duplicate extraction on retry.
+
+Content-hash dedup prevents *duplicate memories*, but not *wasted re-extraction cost* — more important once extraction is a single batched paid LLM call instead of many small ones.
+
+---
+
+## Non-Goals
+
+- Quality evaluation (3.5.B.4)
+- Providing explicit turn-level status tracking visible in the operator dashboard (Phase 4)
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Extraction pipeline
+- Workers / task runtime
+
+## Suggested naming (provisional)
+
+Rename freely to match the change that actually lands.
+
+- Branch: `feature/m3-5-b3-turn-tracking-idempotency`
+- PR title: `feat(worker): atomic turn-pointer update + idempotency for batch extraction (m3.5.B.3)`
+
+## Design
+
+```python
+async def _run_batch_extraction(session_id: UUID, org_id: UUID) -> dict:
+ async with db.transaction():
+ turns = await load_unprocessed_turns(session_id)
+ if not turns:
+ return {"status": "noop", "extracted": 0}
+ result = await extraction_provider.extract_batch(turns)
+ for turn_result in result.turns:
+ for mem in turn_result.memories:
+ await write_pipeline.write(org_id=org_id, session_id=session_id, memory=mem)
+ await update_last_extracted_turn(session_id, max(t.turn_index for t in turns))
+ return {"status": "ok", "extracted": sum(len(t.memories) for t in result.turns)}
+```
+
+The critical invariant: `update_last_extracted_turn` is called inside the same `async with db.transaction()` block as the memory writes. If the process crashes after writes but before the pointer update, Postgres rolls back the entire transaction — the retry starts clean with zero wasted LLM cost beyond the single retry.
+
+---
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] Crash-injection test: kill the process between memory write and pointer update (simulate via forced exception after write, before pointer update) — verify the transaction rolls back fully, and retry re-processes correctly with no duplicate memories AND no double LLM spend beyond the single retry
+- [ ] `extract_session_memories` run twice in immediate succession on the same session produces identical DB state (idempotency test)
+
+---
+
+## Prerequisites
+
+- [3.5.B.2 Cost-tiered extraction execution](/roadmap/phase-3-5-extraction-assembly/milestones/3.5.b.2-cost-tiered-extraction-execution)
+

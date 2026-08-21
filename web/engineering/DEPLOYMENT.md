@@ -4,13 +4,15 @@
 
 This document defines **how IBEX Harness is built, released, deployed, and rolled back** safely.
 
-IBEX Harness has:
+**Current shipped surface:** `proxy` + `auth` (+ shared packages/infra). Later services (`embedder`, `memory`, `context`, `worker`, `api`, `dashboard`, `mcp-memory`, optional `tokenizer-service`) follow the redesigned phase sequence in [`web/content/roadmap/`](../content/roadmap/) and [`services/README.md`](../../services/README.md). Do not assume every service listed below is deployed today.
+
+IBEX Harness has (target topology):
 
 - multiple services (Go, Python, TypeScript),
 - strict multi-tenancy and security invariants,
 - latency-critical paths (proxy + context assembly),
 - stateful dependencies (Postgres, Redis, ClickHouse, MinIO),
-- and non-trivial migrations (schema + embedding evolution).
+- and non-trivial migrations (schema + embedding-profile evolution).
 
 A deployment strategy must guarantee:
 
@@ -147,9 +149,10 @@ For each deployable service:
 
 ### 6.3 Progressive delivery strategies (per component)
 
-#### Stateless services (proxy/auth/api/memory/context/embedder/dashboard)
+#### Stateless services (proxy / auth / embedder / tokenizer-service / mcp-memory / memory / context / api / dashboard)
 
-Recommended rollout: **blue/green** or **canary** depending on risk.
+Recommended rollout: **blue/green** or **canary** depending on risk. Exact service inventory:
+[`services/README.md`](../../services/README.md) (planning baseline).
 
 **Default: Canary**
 

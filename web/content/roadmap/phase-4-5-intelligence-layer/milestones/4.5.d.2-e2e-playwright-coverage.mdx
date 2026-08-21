@@ -1,0 +1,81 @@
+---
+title: "4.5.D.2 E2E Playwright Coverage"
+description: "Full end-to-end lifecycle test — seed agent, generate sessions with behavior shift, verify fingerprint/drift/regression/promotion flow — plus multi-page Playwright scenario."
+summary: "Full end-to-end lifecycle test — seed agent, generate sessions with behavior shift, verify fingerprint/drift/regression/promotion flow — plus multi-page Playwright scenario."
+status: "planned"
+milestoneId: "4.5.D.2"
+track: "D"
+trackTitle: "Exit Gate"
+trackHref: "/roadmap/phase-4-5-intelligence-layer/tracks#track-d--exit-gate"
+goal: "[Track D — Exit Gate](/roadmap/phase-4-5-intelligence-layer/tracks#track-d--exit-gate)"
+estimatedEffort: "2 days"
+phase: "phase-4-5-intelligence-layer"
+fullTitle: "Milestone 4.5.D.2 — E2E Playwright Coverage"
+---
+
+# Milestone 4.5.D.2 — E2E Playwright Coverage
+
+**Status:** Planned  
+**Goal:** [Track D — Exit Gate](/roadmap/phase-4-5-intelligence-layer/tracks#track-d--exit-gate)  
+**Phase:** 4.5 — Intelligence Layer  
+**Estimated effort:** 2 days  
+**Track:** [Track D — Exit Gate](/roadmap/phase-4-5-intelligence-layer/tracks#track-d--exit-gate)
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+The highest-value Playwright scenario in the redesigned roadmap — the first place three previously-separate subsystems (fingerprinting, drift, directive regression) are proven to work as one operator-facing workflow through the dashboard.
+
+---
+
+## E2E Scenarios
+
+**API-level (`make e2e-smoke-p4.5`):** Seed agent → 30 synthetic sessions with mid-stream behavior shift → verify fingerprint → drift alert → regression run → promotion blocked pending review.
+
+**Playwright:** Operator opens drift alert → clicks "run regression from here" → watches live pass/fail stream → approves → promotes with gradual rollout → observes rollout progress advancing → manually pauses → resumes.
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Evaluation / benchmarks
+- Fingerprinting / drift
+- Directive regression / promotion
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] API-level E2E exits 0 with full lifecycle verified
+- [ ] Playwright flow covers drift-alert → regression → promote → rollout → pause → resume
+- [ ] Both scenarios run in CI (smoke profile)
+
+---
+
+## Prerequisites
+
+- Milestone 4.5.D.1 (Cross-track integration suite passing)
+- Milestone 4.5.C.4 (Dashboard integration)
+

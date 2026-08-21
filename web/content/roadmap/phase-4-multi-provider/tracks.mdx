@@ -1,0 +1,86 @@
+---
+title: "Tracks"
+description: "Phase 4 is organized into five parallel tracks covering the management API, rate limiting, multi-provider adapters, the operator dashboard, and exit gate verification."
+phase: "phase-4-multi-provider"
+---
+
+# Phase 4 — Tracks
+
+<Callout type="note" title="Planning baseline">
+  Tracks group milestones for planning. Preferred sequencing below is not a rigid schedule.
+  Paths, libraries, and designs on linked milestone pages are orientation sketches — implementation
+  is expected to require further research and may diverge.
+</Callout>
+
+Phase 4 delivers the operator platform and multi-provider routing layer across five tracks.
+
+---
+
+## Track A — Management API Server
+
+Management API providing authenticated CRUD for organizations, users, agents, tokens, and provider credentials. Service layout ideas on linked milestones are orientation only.
+
+**Preferred sequencing within track:** `4.A.1 → 4.A.2 → 4.A.3 → 4.A.4 → 4.A.5`
+
+**Milestones:**
+- [4.A.1 — API Server Skeleton](/roadmap/phase-4-multi-provider/milestones/4.a.1-api-server-skeleton)
+- [4.A.2 — Org & User Management API](/roadmap/phase-4-multi-provider/milestones/4.a.2-org-user-management-api)
+- [4.A.3 — Agent Management API](/roadmap/phase-4-multi-provider/milestones/4.a.3-agent-management-api)
+- [4.A.4 — Token Management API](/roadmap/phase-4-multi-provider/milestones/4.a.4-token-management-api)
+- [4.A.5 — Provider Credential Management](/roadmap/phase-4-multi-provider/milestones/4.a.5-provider-credential-management)
+
+---
+
+## Track B — Rate Limiting & Quota Enforcement
+
+Redis Lua hierarchical rate limiting with per-org/agent tier configuration and load benchmarking.
+
+**Preferred sequencing within track:** `4.B.1 → 4.B.2 → 4.B.3`
+
+**Milestones:**
+- [4.B.1 — Lua Hierarchical Rate Limiter](/roadmap/phase-4-multi-provider/milestones/4.b.1-lua-hierarchical-rate-limiter)
+- [4.B.2 — Rate Limit Config API](/roadmap/phase-4-multi-provider/milestones/4.b.2-rate-limit-config-api)
+- [4.B.3 — Rate Limit Load Benchmark](/roadmap/phase-4-multi-provider/milestones/4.b.3-rate-limit-load-benchmark)
+
+---
+
+## Track C — Multi-Provider Adapters & Resilience
+
+Multi-provider routing: Anthropic adapter hardening, per-org model routing, circuit breakers, fallback routing, and streaming hardening. Fallback stays opt-in; thresholds are expected to be revisited after real traffic.
+
+**Preferred sequencing within track:** `4.C.1 → 4.C.2 → 4.C.3 → 4.C.4 → 4.C.5`
+
+**Milestones:**
+- [4.C.1 — Anthropic Adapter Hardening](/roadmap/phase-4-multi-provider/milestones/4.c.1-anthropic-adapter-hardening)
+- [4.C.2 — Per-Org Model Routing](/roadmap/phase-4-multi-provider/milestones/4.c.2-per-org-model-routing)
+- [4.C.3 — Circuit Breaker per Provider](/roadmap/phase-4-multi-provider/milestones/4.c.3-circuit-breaker-per-provider)
+- [4.C.4 — Fallback Routing](/roadmap/phase-4-multi-provider/milestones/4.c.4-fallback-routing)
+- [4.C.5 — Streaming Hardening](/roadmap/phase-4-multi-provider/milestones/4.c.5-streaming-hardening)
+
+---
+
+## Track D — Operator Dashboard
+
+Operator dashboard with JWT auth, RBAC, real-time SSE, trace inspector, memory graph browser, drift alerts, directive management, and cost governance. Dashboard layout ideas on linked milestones are orientation only.
+
+**Preferred sequencing within track:** `4.D.1 → 4.D.2 → 4.D.3 → 4.D.4 → 4.D.5` (depends on Track A for API contracts)
+
+**Milestones:**
+- [4.D.1 — Dashboard Foundation: Auth & Real-time](/roadmap/phase-4-multi-provider/milestones/4.d.1-dashboard-foundation-auth-realtime)
+- [4.D.2 — Trace Inspector](/roadmap/phase-4-multi-provider/milestones/4.d.2-trace-inspector)
+- [4.D.3 — Memory Browser v2 (Graph-Aware)](/roadmap/phase-4-multi-provider/milestones/4.d.3-memory-browser-v2-graph)
+- [4.D.4 — Drift Alerts & Directive Management](/roadmap/phase-4-multi-provider/milestones/4.d.4-drift-alerts-directive-management)
+- [4.D.5 — Analytics v2: Cost Governance](/roadmap/phase-4-multi-provider/milestones/4.d.5-analytics-v2-cost-governance)
+
+---
+
+## Track E — Exit Gate
+
+Dashboard E2E testing, multi-provider resilience verification, and the Phase 4 gap register with sign-off.
+
+**Preferred sequencing within track:** `4.E.1 → 4.E.2 → 4.E.3`
+
+**Milestones:**
+- [4.E.1 — Dashboard E2E (Playwright)](/roadmap/phase-4-multi-provider/milestones/4.e.1-dashboard-e2e-playwright)
+- [4.E.2 — Multi-Provider Resilience Suite](/roadmap/phase-4-multi-provider/milestones/4.e.2-multi-provider-resilience-suite)
+- [4.E.3 — Phase 4 Exit Audit](/roadmap/phase-4-multi-provider/milestones/4.e.3-phase4-exit-audit)

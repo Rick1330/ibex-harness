@@ -1,0 +1,84 @@
+---
+title: "4.5.D.3 Benchmark Sign-off"
+description: "Performance benchmarks for fingerprint computation, drift comparison, regression suite execution, and proxy overhead — extending the existing benchmark harness."
+summary: "Performance benchmarks for fingerprint computation, drift comparison, regression suite execution, and proxy overhead — extending the existing benchmark harness."
+status: "planned"
+milestoneId: "4.5.D.3"
+track: "D"
+trackTitle: "Exit Gate"
+trackHref: "/roadmap/phase-4-5-intelligence-layer/tracks#track-d--exit-gate"
+goal: "[Track D — Exit Gate](/roadmap/phase-4-5-intelligence-layer/tracks#track-d--exit-gate)"
+estimatedEffort: "1 day"
+phase: "phase-4-5-intelligence-layer"
+fullTitle: "Milestone 4.5.D.3 — Benchmark Sign-off"
+---
+
+# Milestone 4.5.D.3 — Benchmark Sign-off
+
+**Status:** Planned  
+**Goal:** [Track D — Exit Gate](/roadmap/phase-4-5-intelligence-layer/tracks#track-d--exit-gate)  
+**Phase:** 4.5 — Intelligence Layer  
+**Estimated effort:** 1 day  
+**Track:** [Track D — Exit Gate](/roadmap/phase-4-5-intelligence-layer/tracks#track-d--exit-gate)
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+Extends the existing `aggregate_metrics.py` → `regression_gate.py` → `build_benchmark_data.py` pipeline with Phase 4.5-specific targets, ensuring intelligence features don't degrade proxy performance.
+
+---
+
+## Benchmark Targets
+
+| Benchmark | Target | Rationale |
+|---|---|---|
+| Fingerprint computation (100 sessions) | p95 &lt; 500ms | Async worker budget |
+| Drift comparison (fingerprint vs. baseline) | p95 &lt; 50ms | Per-fingerprint-cycle, not per-request |
+| Regression suite (50 scenarios, mocked judge) | &lt; 30s wall clock | Operator-facing wait in promotion UI |
+| Proxy overhead with Phase 4.5 enabled | &lt;20ms p99 non-provider | Standing regression gate since Phase 2 |
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Evaluation / benchmarks
+- Fingerprinting / drift
+- Directive regression / promotion
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] All 4 benchmarks passing in CI
+- [ ] Proxy overhead re-certified at &lt;20ms p99 with fingerprinting/drift enabled
+- [ ] Results committed to benchmark data pipeline
+
+---
+
+## Prerequisites
+
+- All Track A–C milestones complete
+- Existing benchmark harness operational
+

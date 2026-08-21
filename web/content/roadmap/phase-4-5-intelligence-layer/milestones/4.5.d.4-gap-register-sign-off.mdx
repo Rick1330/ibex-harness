@@ -1,0 +1,86 @@
+---
+title: "4.5.D.4 Gap Register & Sign-off"
+description: "Publish the Phase 4.5 exit audit using the Phase 1 severity taxonomy — P0–P3 gap register, ADR fidelity table, and 8-point sign-off checklist with zero open P0s."
+summary: "Publish the Phase 4.5 exit audit using the Phase 1 severity taxonomy — P0–P3 gap register, ADR fidelity table, and 8-point sign-off checklist with zero open P0s."
+status: "planned"
+milestoneId: "4.5.D.4"
+track: "D"
+trackTitle: "Exit Gate"
+trackHref: "/roadmap/phase-4-5-intelligence-layer/tracks#track-d--exit-gate"
+goal: "[Track D — Exit Gate](/roadmap/phase-4-5-intelligence-layer/tracks#track-d--exit-gate)"
+estimatedEffort: "1 day"
+phase: "phase-4-5-intelligence-layer"
+fullTitle: "Milestone 4.5.D.4 — Gap Register & Sign-off"
+---
+
+# Milestone 4.5.D.4 — Gap Register & Sign-off
+
+**Status:** Planned  
+**Goal:** [Track D — Exit Gate](/roadmap/phase-4-5-intelligence-layer/tracks#track-d--exit-gate)  
+**Phase:** 4.5 — Intelligence Layer  
+**Estimated effort:** 1 day  
+**Track:** [Track D — Exit Gate](/roadmap/phase-4-5-intelligence-layer/tracks#track-d--exit-gate)
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+Produces the Phase 4.5 equivalent of the Phase 1 exit audit — the actual completion certificate with severity-tiered gap register, ADR fidelity table for ADRs 0045–0048, and track-by-track verification.
+
+---
+
+## Sign-off Criteria
+
+1. Gap register published, zero open P0 gaps
+2. All 10 INT-4.5 cases pass with `-m integration` in CI
+3. `intelligence-integration` CI check required on `main`
+4. Cross-tenant isolation (INT-4.5.9) independently re-verified
+5. Fingerprint/drift computation stays off proxy hot path (benchmark D.3)
+6. All Phase 1–4 regression suites still green
+7. Dashboard Playwright flow (D.2) green
+8. `current-state.mdx` updated to reflect completion
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Evaluation / benchmarks
+- Fingerprinting / drift
+- Directive regression / promotion
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] Gap register published with Phase 1's severity table format
+- [ ] ADR fidelity table for ADRs 0045–0048
+- [ ] Zero open P0 gaps at sign-off
+- [ ] `current-state.mdx` updated
+
+---
+
+## Prerequisites
+
+- Milestones 4.5.D.1–4.5.D.3 complete
+

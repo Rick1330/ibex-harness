@@ -1,0 +1,25 @@
+---
+title: "Phase 3.5 — Risks and Mitigations"
+description: "Risks for extraction worker + context assembly integration, including proxy hot-path latency, degradation ladder correctness, and cross-tenant isolation."
+summary: "Risks for extraction worker + context assembly integration, including proxy hot-path latency, degradation ladder correctness, and cross-tenant isolation."
+phase: "phase-3-5-extraction-assembly"
+---
+
+# Phase 3.5 — Risks and Mitigations
+
+<Callout type="note" title="Planning baseline">
+  Paths, libraries, schemas, and sequencing on this phase are orientation for planning.
+  Implementation is expected to require further research and may land differently than any sketch.
+</Callout>
+
+| Risk | Area | Likelihood | Impact | Mitigation |
+| --- | --- | --- | --- | --- |
+| Proxy hot-path latency regression | Context assembly + degradation ladder | Medium | High | Hard latency budgets (40ms assembly target), async/timeout wrappers, and circuit-breaker behavior verified in integration tests |
+| Degradation ladder fails closed or blocks responses | Proxy integration | Low | High | Ensure assembly failure never blocks LLM responses; verify each ladder level in fixtures with real dependencies |
+| Wrong/unstable extraction output schema | Worker extraction + schema v2 | Medium | High | Contract tests against extraction output shape; reject invalid payloads with safe fallbacks |
+| Cross-tenant memory leakage via orchestration code | Worker + context service | Low | Critical | ISO-\* cross-tenant test suite in CI; enforce `org_id` scope at every query path (not just at entrypoints) |
+| MCP tool behavior diverges from API behavior | MCP Memory Tools | Medium | Medium | Reuse the same service layer for MCP tools and API; golden tests for `search_memory`/`write_memory`/`record_feedback` |
+| Cost-tiered extraction execution overload | Provider-agnostic execution | Medium | Medium | Strict per-session/task timeouts; queue backpressure; bounded concurrency per cost tier |
+| Dead-letter handling leads to permanent staleness | Celery tasks | Low | Medium | DLQ observability + replay path; periodic sweeper to re-drive stalled extractions |
+| Context packaging correctness regressions | DP packer + formatter | Medium | Medium | Golden-output regression tests with contradiction fixtures; compare packed context to expected ordering |
+

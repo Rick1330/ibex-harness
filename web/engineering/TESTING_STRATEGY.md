@@ -688,7 +688,7 @@ The `coverage` job uploads Go coverage to [Codecov](https://codecov.io/gh/Rick13
 | --- | --- | --- | --- | --- |
 | Go | Now | `go test -coverprofile` | `go` | `coverage-go-unit.out` |
 | Python | Phase 2+ (`services/memory`) | `pytest --cov --cov-report=xml` | `python` | `coverage-python.xml` |
-| TypeScript | Phase 3+ (`apps/dashboard`) | `jest --coverage` | `typescript` | `coverage/lcov.info` |
+| TypeScript | Phase 4 (`services/dashboard`) | `jest --coverage` / project default | `typescript` | `coverage/lcov.info` |
 
 Repo root [`codecov.yml`](../codecov.yml) ignores `packages/proto/gen/go/**`, sets patch target 80%, and project target **80%** on meaningful code. The `coverage` job runs `infra/scripts/coverage-gate.sh` on the merged profile and **fails CI** when hand-written coverage is below 80%.
 

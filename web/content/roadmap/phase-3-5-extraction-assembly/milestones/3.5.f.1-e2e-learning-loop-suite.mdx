@@ -1,0 +1,82 @@
+---
+title: "3.5.F.1 End-to-end learning-loop test suite"
+description: "Six-scenario E2E suite: extraction→injection, cross-tenant isolation, latency, degradation ladder correctness, and MCP/proxy consistency — proving the composed system works."
+summary: "Six-scenario E2E suite: extraction→injection, cross-tenant isolation, latency, degradation ladder correctness, and MCP/proxy consistency — proving the composed system works."
+status: "planned"
+milestoneId: "3.5.F.1"
+track: "F"
+trackTitle: "Exit Gate"
+trackHref: "/roadmap/phase-3-5-extraction-assembly/tracks#track-f--exit-gate"
+goal: "[Track F — Exit Gate](/roadmap/phase-3-5-extraction-assembly/tracks#track-f--exit-gate)"
+estimatedEffort: "3 days"
+phase: "phase-3-5-extraction-assembly"
+fullTitle: "Milestone 3.5.F.1 — End-to-End Learning-Loop Test Suite"
+---
+
+# Milestone 3.5.F.1 — End-to-End Learning-Loop Test Suite
+
+**Status:** Planned  
+**Goal:** [Track F — Exit Gate](/roadmap/phase-3-5-extraction-assembly/tracks#track-f--exit-gate)  
+**Phase:** 3.5 — Extraction & Context Assembly  
+**Estimated effort:** 3 days  
+**Track:** [Track F — Exit Gate](/roadmap/phase-3-5-extraction-assembly/tracks#track-f--exit-gate)  
+**Depends on:** All Tracks A–E milestones
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+Phase 3.5 is the first phase where the proxy hot path, the memory substrate, the extraction worker, and the MCP server are all live simultaneously — the composition risk is the highest of any phase so far.
+
+---
+
+## Scenarios
+
+1. **Extraction → injection:** completed session → extraction worker → memory stored → subsequent chat injects it
+2. **Cross-tenant isolation:** Org A memory never injected into Org B's context
+3. **Latency:** context assembly p95 &lt; 50ms at 20 concurrent requests
+4. **Proxy overhead:** &lt;20ms p99 non-provider time with context assembly enabled
+5. **Degradation ladder:** for each of L0–L3, inject a fault and assert 200 with correct fallback header
+6. **MCP/proxy consistency:** write via MCP `write_memory`, chat through proxy → memory injected, proving shared substrate
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Evaluation / benchmarks
+- MCP server surface
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] All 6 scenarios pass against the full local compose stack (`make e2e-smoke-p3.5`)
+- [ ] Degradation ladder scenario covers all 4 levels independently
+- [ ] MCP/proxy consistency passes with zero special-casing
+- [ ] Repo guards / CI checks still pass
+
+## Prerequisites
+
+- All Tracks A–E milestones
+

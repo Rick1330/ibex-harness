@@ -1,0 +1,84 @@
+---
+title: "4.D.1 Dashboard Foundation: Auth & Real-time"
+description: "Replace PAT-only auth with JWT sessions + RBAC, add SSE real-time data layer, and establish the full navigation architecture from the UX spec."
+summary: "Replace PAT-only auth with JWT sessions + RBAC, add SSE real-time data layer, and establish the full navigation architecture from the UX spec."
+status: "planned"
+milestoneId: "4.D.1"
+track: "D"
+trackTitle: "Operator Dashboard"
+trackHref: "/roadmap/phase-4-multi-provider/tracks#track-d--operator-dashboard"
+goal: "[Track D — Operator Dashboard](/roadmap/phase-4-multi-provider/tracks#track-d--operator-dashboard)"
+estimatedEffort: "5 days"
+phase: "phase-4-multi-provider"
+fullTitle: "Milestone 4.D.1 — Dashboard Foundation: Auth & Real-time"
+---
+
+# Milestone 4.D.1 — Dashboard Foundation: Auth & Real-time
+
+**Status:** Planned  
+**Goal:** [Track D — Operator Dashboard](/roadmap/phase-4-multi-provider/tracks#track-d--operator-dashboard)  
+**Phase:** 4 — Operator Platform & Multi-Provider  
+**Estimated effort:** 5 days  
+**Track:** [Track D — Operator Dashboard](/roadmap/phase-4-multi-provider/tracks#track-d--operator-dashboard)
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+The original PAT-in-cookie auth model was a Phase 3 shortcut. Enterprise operators expect per-operator identity with RBAC. The real-time data layer (SSE for traces/alerts) was explicitly deferred to Phase 4. This milestone replaces both with production-grade implementations and establishes all top-level nav items from `UI_UX_GUIDELINES.md` §3.
+
+---
+
+## Design notes
+
+| Decision | Choice | Why |
+|---|---|---|
+| Session model | Short-lived JWT (15min) + httpOnly refresh cookie | Enterprise identity without full OAuth/SSO complexity (SSO is Phase 4.5 add-on) |
+| RBAC | Reuse existing 64-bit permission bitmap (ADR-0009) | One auth model for API and dashboard |
+| Live updates | SSE for trace/alert streams, TanStack Query polling elsewhere | SSE is simpler than WebSocket for server→client push, reuses existing HTTP infra |
+| State management | Zustand for cross-page UI state, TanStack Query for server state | Matches `CODING_STANDARDS.md` conventions |
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Operator dashboard
+- Management API
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] JWT session issuance/refresh working against the management API auth endpoint
+- [ ] Permission bitmap correctly hides/disables nav items and action buttons per role
+- [ ] SSE connection for trace stream survives reconnect (exponential backoff, resumes from `Last-Event-ID`)
+- [ ] All top-level nav items from `UI_UX_GUIDELINES.md` §3 present as real routes
+- [ ] Lighthouse ≥ 90, axe-core 0 violations on the shell layout
+
+## Prerequisites
+
+- Phase 3.5 exit criteria met
+- Auth service JWT issuance available
+- Management API (Track A) operational
+

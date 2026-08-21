@@ -1,0 +1,124 @@
+---
+title: "2.5.G1.M3 Self-hosted LLM adapter (vLLM-first)"
+description: "Support air-gapped / self-hosted deployments using OpenAI-compatible inference servers. A shared compatible adapter with a configurable base URL is the preferred starting shape for vLLM, TGI, Ollama, and llama.cpp."
+summary: "Support air-gapped / self-hosted deployments using OpenAI-compatible inference servers. A shared compatible adapter with a configurable base URL is the preferred starting shape for vLLM, TGI, Ollama, and llama.cpp."
+status: "planned"
+milestoneId: "2.5.G1.M3"
+track: "A"
+trackTitle: "Multi-Provider Adapters"
+trackHref: "/roadmap/phase-2-5-provider-generalization/tracks#track-a--multi-provider-adapters"
+goal: "[Track A — Multi-Provider Adapters](/roadmap/phase-2-5-provider-generalization/tracks#track-a--multi-provider-adapters)"
+estimatedEffort: "2–3 days"
+phase: "phase-2-5-provider-generalization"
+fullTitle: "Milestone 2.5.G1.M3 — Self-Hosted LLM Adapter (vLLM-First)"
+---
+
+# Milestone 2.5.G1.M3 — Self-Hosted LLM Adapter (vLLM-First)
+
+**Status:** Planned  
+**Goal:** [Track A — Multi-Provider Adapters](/roadmap/phase-2-5-provider-generalization/tracks#track-a--multi-provider-adapters)  
+**Phase:** 2.5 — Provider Generalization & Foundation  
+**Estimated effort:** 2–3 days
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+Support air-gapped / self-hosted deployments by leaning on the fact that several inference servers already speak an OpenAI-compatible `/v1/chat/completions` dialect. A preferred starting shape is **one compatible adapter with a configurable base URL**, rather than a separate adapter per runtime — but that should be confirmed against live `openai` client code and real server quirks during implementation.
+
+---
+
+## Why vLLM as a starting preference
+
+- **vLLM** is a strong first self-hosted target for throughput (PagedAttention + continuous batching) and already exposes an OpenAI-compatible chat API.
+- Nearby options, ranked by situation rather than as a locked choice:
+ - **TGI** — mature, also OpenAI-compatible; worth evaluating when a customer's model is a better fit there.
+ - **Ollama** — simpler local/dev story; usually the wrong default for high-QPS enterprise.
+ - **llama.cpp server** — useful when the constraint is CPU-only or very small hardware.
+
+Which runtime ships in a given environment is a deployment decision; this milestone is the adapter and reliability story, not a mandate to run vLLM.
+
+---
+
+## Non-Goals
+
+- Supporting non-OpenAI-compatible self-hosted inference servers without custom adapters
+- GPU node pool provisioning (infra sketches are reference only)
+- Automatic model downloading or quantization
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Provider abstraction / adapters
+- Proxy service (HTTP, bootstrap, config)
+
+## Suggested naming (provisional)
+
+Rename freely to match the change that actually lands.
+
+- Branch: `feature/m2-5-g1-m3-self-hosted-llm-adapter`
+- PR title: `feat(proxy): openaicompatible adapter for self-hosted LLM backends (m2.5.G1.M3)`
+
+---
+
+## Working notes
+
+Preferred starting points and open questions — situational, and expected to evolve with further research during implementation.
+
+### Reliability over a “better connection”
+
+A self-hosted backend is usually *less* reliable than a hosted vendor API: model load can take minutes, GPUs saturate, queues fill. Starting preferences to research against live code:
+
+- Health-check (or equivalent readiness) before registering the backend, with backoff while a model is still loading.
+- A circuit breaker around self-hosted calls — especially if the same GPU also serves embeddings.
+- Distinct mapping for queue-full (often HTTP 503) vs generic 500 so retry / `Retry-After` can be correct.
+- Token counting for open-weight models should not silently reuse `tiktoken` — coordinate with 2.5.G2.M1.
+
+### Shared OpenAI-compatible client
+
+A useful starting idea is to generalize the existing OpenAI client behind a configurable base URL, then keep the public OpenAI constructor as a thin wrapper. That refactor should be behavior-preserving for the hosted OpenAI path. If live code makes a wrapper messier than a small shared helper, prefer the smaller change.
+
+Infra manifests for a sample vLLM deployment can be committed as **reference only** — applying them is not the milestone.
+
+---
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] A self-hosted OpenAI-compatible backend can be registered from config
+- [ ] Hosted OpenAI behavior is unchanged after any shared-client refactor
+- [ ] Readiness / health handling avoids registering a backend that is still loading
+- [ ] Queue-full and generic upstream failures are distinguishable
+- [ ] Reliability measures (breaker, retry, or equivalent) exist for the self-hosted path
+- [ ] Reference deploy sketches are optional and clearly marked as such
+- [ ] Unit tests cover the compatible client; existing OpenAI tests still pass
+- [ ] Repo guards / CI checks still pass
+
+## Prerequisites
+
+- 2.5.G1.M2 (model capability registry) — self-hosted models need capability entries
+- 2.5.G2.M1 (tokenizer registry) — correct token counting for open-weight models
+- Phase 2 OpenAI provider path complete

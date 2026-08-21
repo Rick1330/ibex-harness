@@ -1,0 +1,83 @@
+---
+title: "3.5.C.6 gRPC service skeleton and degradation contract"
+description: "Wrap budget/retrieval/scorer/packer/formatter into ContextAssemblyService gRPC server with a four-level degradation ladder (L0–L3), each independently testable via fault injection."
+summary: "Wrap budget/retrieval/scorer/packer/formatter into ContextAssemblyService gRPC server with a four-level degradation ladder (L0–L3), each independently testable via fault injection."
+status: "planned"
+milestoneId: "3.5.C.6"
+track: "C"
+trackTitle: "Context Assembly Engine"
+trackHref: "/roadmap/phase-3-5-extraction-assembly/tracks#track-c--context-assembly-engine"
+goal: "[Track C — Context Assembly Engine](/roadmap/phase-3-5-extraction-assembly/tracks#track-c--context-assembly-engine)"
+estimatedEffort: "3 days"
+phase: "phase-3-5-extraction-assembly"
+fullTitle: "Milestone 3.5.C.6 — gRPC Service Skeleton and Degradation Contract"
+---
+
+# Milestone 3.5.C.6 — gRPC Service Skeleton and Degradation Contract
+
+**Status:** Planned  
+**Goal:** [Track C — Context Assembly Engine](/roadmap/phase-3-5-extraction-assembly/tracks#track-c--context-assembly-engine)  
+**Phase:** 3.5 — Extraction & Context Assembly  
+**Estimated effort:** 3 days  
+**Track:** [Track C — Context Assembly Engine](/roadmap/phase-3-5-extraction-assembly/tracks#track-c--context-assembly-engine)  
+**Depends on:** Milestone 3.5.C.5 (context formatter)
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+Wraps Track C's budget/retrieval/scorer/packer/formatter internals into the actual `ContextAssemblyService` gRPC server, and locks down exactly what "graceful degradation" means operationally.
+
+---
+
+## Degradation Ladder
+
+| Level | Trigger | Behavior | Response signal |
+|---|---|---|---|
+| L0 — Full | All retrieval sources respond within budget | Directive + hot + cold memories, full scoring/packing | `context_assembly_fallback=false` |
+| L1 — Cold-search degraded | Cold pgvector/HNSW search exceeds its sub-deadline | Hot cache + directive only, cold results dropped | `AssemblyMetrics.candidates_evaluated` reflects hot-only count |
+| L2 — Memory degraded | Both hot and cold sources fail/timeout | Directive-only context | `was_truncated=false`, `memories_included=0` |
+| L3 — Full degraded | gRPC call itself times out (45ms) or connection refused | Proxy uses original, unmodified messages | `X-IBEX-Context-Fallback: true` |
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Context assembly service
+- Tokenizer registry / counting
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] Each degradation level has a dedicated unit test with a fault-injected dependency
+- [ ] `AssemblyMetrics` populated accurately at every level (not just L0)
+- [ ] GRPC server enforces its own internal 40ms retrieval deadline independently of the proxy's 45ms client-side timeout
+- [ ] Load test: sustained 500 RPS against `AssembleContext` with p99 < 50ms on a 100K-memory corpus
+- [ ] Repo guards / CI checks still pass
+
+## Prerequisites
+
+- Milestones 3.5.C.1–3.5.C.5
+

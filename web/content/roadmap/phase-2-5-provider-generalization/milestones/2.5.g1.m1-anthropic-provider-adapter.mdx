@@ -1,0 +1,115 @@
+---
+title: "2.5.G1.M1 Anthropic provider adapter"
+description: "Prove the Provider interface supports a second, dialect-different vendor before broader provider work. Anthropic's structurally different API surfaces places where code still assumes an OpenAI shape."
+summary: "Prove the Provider interface supports a second, dialect-different vendor before broader provider work. Anthropic's structurally different API surfaces places where code still assumes an OpenAI shape."
+status: "planned"
+milestoneId: "2.5.G1.M1"
+track: "A"
+trackTitle: "Multi-Provider Adapters"
+trackHref: "/roadmap/phase-2-5-provider-generalization/tracks#track-a--multi-provider-adapters"
+goal: "[Track A — Multi-Provider Adapters](/roadmap/phase-2-5-provider-generalization/tracks#track-a--multi-provider-adapters)"
+estimatedEffort: "3–4 days"
+phase: "phase-2-5-provider-generalization"
+fullTitle: "Milestone 2.5.G1.M1 — Anthropic Provider Adapter"
+---
+
+# Milestone 2.5.G1.M1 — Anthropic Provider Adapter
+
+**Status:** Planned  
+**Goal:** [Track A — Multi-Provider Adapters](/roadmap/phase-2-5-provider-generalization/tracks#track-a--multi-provider-adapters)  
+**Phase:** 2.5 — Provider Generalization & Foundation  
+**Estimated effort:** 3–4 days
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+Prove the `Provider` interface supports a second, dialect-different vendor before broader work (local inference, capability routing). Anthropic is a strong second provider for that proof — not another OpenAI-compatible clone — because its API is structurally different enough (separate `system` parameter instead of a `system` role in `messages`, different streaming event format, different tool-call schema) to surface places where code still assumes an OpenAI shape instead of the abstract `provider.Request`/`provider.Response` shape from ADR-0025.
+
+---
+
+## Non-Goals
+
+- Any new provider beyond Anthropic (Phase 4 adds Azure OpenAI, Bedrock)
+- Model routing or provider selection logic (Phase 4)
+- Tool-call passthrough for Anthropic (future milestone)
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Provider abstraction / adapters
+- Proxy service (HTTP, bootstrap, config)
+
+## Suggested naming (provisional)
+
+Rename freely to match the change that actually lands.
+
+- Branch: `feature/m2-5-g1-m1-anthropic-provider-adapter`
+- PR title: `feat(proxy): Anthropic provider adapter proving Provider interface generalizes (m2.5.G1.M1)`
+
+---
+
+## Working notes
+
+Preferred starting points and open questions — situational, and expected to evolve with further research during implementation.
+
+### Request translation stays vendor-local
+
+ADR-0025 keeps provider implementations free of injection logic and the interface vendor-neutral. Anthropic requires `system` as a **top-level string**, not a message with `role: "system"`. A reasonable starting approach is to extract a leading system-role message inside the Anthropic adapter and leave the shared `Request` type unchanged — unless live code shows a cleaner shared helper.
+
+### Streaming is the likely hard part
+
+OpenAI's SSE stream is a flat sequence of `data: {...}` chunks; Anthropic's streaming protocol sends **typed events** (`message_start`, `content_block_start`, `content_block_delta`, `message_delta`, `message_stop`) with different payload shapes per event type. The current dual-write streaming design (ADR-0027, referenced in ADR-0026 §5) may still assume OpenAI's flat chunk format. Confirm whether the proxy's SSE forwarder is OpenAI-coupled or generic over `provider.Response`. If it is coupled, generalizing that path is likely part of this milestone.
+
+### Error mapping and retries
+
+Anthropic's error codes (`invalid_request_error`, `overloaded_error`, `rate_limit_error`) do not line up 1:1 with OpenAI's HTTP-status-driven scheme. Extending the shared mapper while keeping a stable `apierror.Error` envelope is a useful starting preference. HTTP 529 (`overloaded_error`) is retryable in Anthropic's vocabulary and is a good reason to keep an Anthropic-specific retry predicate rather than copying OpenAI's status list verbatim.
+
+### Options worth researching
+
+- Anthropic's official Go SDK (`github.com/anthropics/anthropic-sdk-go`, Apache-2.0) already handles retries, streaming parsing, and typed structs — a strong option if it fits proxy constraints better than a raw HTTP client.
+- LiteLLM and Portkey's Gateway are useful references for translation edge cases such as `stop_reason` vs `finish_reason`.
+
+---
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] Anthropic is reachable through the existing `Provider` interface without leaking Anthropic types into shared request/response types
+- [ ] System-role content maps to Anthropic's top-level `system` field without mutating the shared request
+- [ ] Anthropic SSE typed events parse into the shared response stream
+- [ ] Anthropic error bodies map into the stable error envelope, including retryable 529 / overloaded
+- [ ] Anthropic can be registered from config when credentials are present
+- [ ] Streaming still works for OpenAI after any forwarder generalization
+- [ ] Durable design choices are recorded (ADR or equivalent) if the implementation settles something new
+- [ ] Unit and integration coverage exists for translation, streaming, and error mapping
+- [ ] Repo guards / CI checks still pass
+
+## Prerequisites
+
+- Phase 2 exit (merged)
+- `packages/provider.Provider` interface complete (milestone 2.1.1)
+- Shared error envelopes established

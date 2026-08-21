@@ -1,0 +1,88 @@
+---
+title: "4.D.2 Trace Inspector"
+description: "The dashboard's primary debugging screen — 'Why did my agent do that?' — with context assembly breakdown, per-memory score components, tool call timeline, and raw JSON view."
+summary: "The dashboard's primary debugging screen — 'Why did my agent do that?' — with context assembly breakdown, per-memory score components, tool call timeline, and raw JSON view."
+status: "planned"
+milestoneId: "4.D.2"
+track: "D"
+trackTitle: "Operator Dashboard"
+trackHref: "/roadmap/phase-4-multi-provider/tracks#track-d--operator-dashboard"
+goal: "[Track D — Operator Dashboard](/roadmap/phase-4-multi-provider/tracks#track-d--operator-dashboard)"
+estimatedEffort: "3 days"
+phase: "phase-4-multi-provider"
+fullTitle: "Milestone 4.D.2 — Trace Inspector"
+---
+
+# Milestone 4.D.2 — Trace Inspector
+
+**Status:** Planned  
+**Goal:** [Track D — Operator Dashboard](/roadmap/phase-4-multi-provider/tracks#track-d--operator-dashboard)  
+**Phase:** 4 — Operator Platform & Multi-Provider  
+**Estimated effort:** 3 days  
+**Track:** [Track D — Operator Dashboard](/roadmap/phase-4-multi-provider/tracks#track-d--operator-dashboard)
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+U1 in the UX spec: "Debuggability is the primary UX goal." The trace inspector is the screen every other page links into — from traces to sessions to agents, from traces to memories used. It renders the full context assembly breakdown with per-memory score components (relevance/recency/usefulness/confidence weighted per category), making the scoring redesign auditable in production.
+
+---
+
+## Six-Section Layout (per UX spec)
+
+| Section | Data Source | Component |
+|---|---|---|
+| Summary header | ClickHouse trace + AssemblyMetrics | `TraceSummaryHeader.tsx` |
+| Context assembly | `ibex.context.v1` trace payload | `ContextAssemblyPanel.tsx` |
+| Conversation | Session archive (MinIO) or ClickHouse | `ConversationView.tsx` |
+| Tool calls | ATP/tool-call tracking | `ToolCallTimeline.tsx` |
+| Raw JSON | Full trace payload (permission-gated) | `RawJsonViewer.tsx` |
+| Cross-links | Memory detail, directive diff, session replay | Inline links |
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Operator dashboard
+- Management API
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] All 6 UX-spec sections render with real data end-to-end for a synthetic trace
+- [ ] Score breakdown component shows per-category weight vectors, not a flattened number
+- [ ] Raw JSON panel gated by `trace:read_raw` permission; unauthorized users see "request access" state
+- [ ] Golden-trace fixture test: known input → exact expected rendered summary
+- [ ] P95 page load < 2s measured against real payload
+
+---
+
+## Prerequisites
+
+- Milestone 4.D.1 (Dashboard foundation)
+- ClickHouse trace ingestion operational
+- Context assembly service emitting `AssemblyMetrics`
+

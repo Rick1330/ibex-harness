@@ -1,0 +1,73 @@
+---
+title: "4.E.2 Multi-Provider Resilience Suite"
+description: "Dedicated integration test suite that kills providers mid-request — verifying circuit breakers trip, fallback routes correctly, and mid-stream disconnects respect ADR-0027 semantics."
+summary: "Dedicated integration test suite that kills providers mid-request — verifying circuit breakers trip, fallback routes correctly, and mid-stream disconnects respect ADR-0027 semantics."
+status: "planned"
+milestoneId: "4.E.2"
+track: "E"
+trackTitle: "Exit Gate"
+trackHref: "/roadmap/phase-4-multi-provider/tracks#track-e--exit-gate"
+goal: "[Track E — Exit Gate](/roadmap/phase-4-multi-provider/tracks#track-e--exit-gate)"
+estimatedEffort: "2 days"
+phase: "phase-4-multi-provider"
+fullTitle: "Milestone 4.E.2 — Multi-Provider Resilience Suite"
+---
+
+# Milestone 4.E.2 — Multi-Provider Resilience Suite
+
+**Status:** Planned  
+**Goal:** [Track E — Exit Gate](/roadmap/phase-4-multi-provider/tracks#track-e--exit-gate)  
+**Phase:** 4 — Operator Platform & Multi-Provider  
+**Estimated effort:** 2 days  
+**Track:** [Track E — Exit Gate](/roadmap/phase-4-multi-provider/tracks#track-e--exit-gate)
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+Track C claims circuit breakers, fallback routing, and per-provider error mapping — none credible without a dedicated integration suite that actually kills a provider mid-request and asserts the breaker trips. This is the verification harness, not the implementation.
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Operator dashboard
+- Provider abstraction / adapters
+- Evaluation / benchmarks
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] Breaker opens after configured error-rate threshold, verified with fault-injecting mock provider
+- [ ] Half-open probe behavior tested: single trial request, closes on success / re-opens on failure
+- [ ] Fallback only triggers when org config explicitly enables it — default-off verified by negative test
+- [ ] Mid-stream disconnect with 2 providers reuses ADR-0027 verbatim-close test pattern
+
+---
+
+## Prerequisites
+
+- Milestones 4.C.3–4.C.5 (Circuit breaker, fallback, streaming hardening)
+

@@ -1,0 +1,133 @@
+---
+title: "4.5.A.2 Fingerprint Schema Migration"
+description: "Extend the behavioral_fingerprints table to store t-digest quantile sketches, multi-centroid cluster arrays, Beta-Binomial error tracking columns, and Laplace-smoothed tool distributions."
+summary: "Extend the behavioral_fingerprints table to store t-digest quantile sketches, multi-centroid cluster arrays, Beta-Binomial error tracking columns, and Laplace-smoothed tool distributions."
+status: "planned"
+milestoneId: "4.5.A.2"
+track: "A"
+trackTitle: "Behavioral Fingerprinting"
+trackHref: "/roadmap/phase-4-5-intelligence-layer/tracks#track-a--behavioral-fingerprinting"
+goal: "[Track A — Behavioral Fingerprinting](/roadmap/phase-4-5-intelligence-layer/tracks#track-a--behavioral-fingerprinting)"
+estimatedEffort: "2 days"
+phase: "phase-4-5-intelligence-layer"
+fullTitle: "Milestone 4.5.A.2 — Fingerprint Schema Migration"
+---
+
+# Milestone 4.5.A.2 — Fingerprint Schema Migration
+
+**Status:** Planned  
+**Goal:** [Track A — Behavioral Fingerprinting](/roadmap/phase-4-5-intelligence-layer/tracks#track-a--behavioral-fingerprinting)  
+**Phase:** 4.5 — Intelligence Layer  
+**Estimated effort:** 2 days  
+**Track:** [Track A — Behavioral Fingerprinting](/roadmap/phase-4-5-intelligence-layer/tracks#track-a--behavioral-fingerprinting)  
+**ADR required:** None (extends ADR-0045 written in 4.5.A.1)
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+The existing `behavioral_fingerprints` schema stores a single `embedding_centroid vector(384)` and raw proportion columns. This is a reasonable foundation, but it cannot accommodate the redesigned feature representations from 4.5.A.1: t-digest sketches require a serialized BYTEA column, k-means sub-clusters require an array of vectors, and Beta-Binomial tracking requires integer count columns. This milestone extends — not replaces — the existing schema.
+
+---
+
+## Non-Goals
+
+- Feature extraction logic (4.5.A.1)
+- Drift detection queries (Track B)
+- Any change to the existing `behavioral_fingerprints` columns that existing queries depend on (extend only)
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Fingerprinting / drift
+- Workers / task runtime
+
+## Suggested naming (provisional)
+
+Rename freely to match the change that actually lands.
+
+- Branch: `feature/m4-5-a2-fingerprint-schema-migration`
+- PR title: `feat(migrations): extend behavioral_fingerprints for distribution-aware storage (m4.5.A.2)`
+
+## Deliverables
+
+Target outcomes for the milestone; concrete artifacts may differ from any sketch above.
+
+### Migration SQL
+
+```sql
+-- infra/migrations/postgres/0000XX_extend_behavioral_fingerprints.up.sql
+ALTER TABLE ibex_core.behavioral_fingerprints
+ ADD COLUMN token_quantile_sketch BYTEA,
+ ADD COLUMN response_cluster_centroids vector(384)[],
+ ADD COLUMN response_cluster_weights NUMERIC(5,4)[],
+ ADD COLUMN error_successes INTEGER NOT NULL DEFAULT 0,
+ ADD COLUMN error_trials INTEGER NOT NULL DEFAULT 0,
+ ADD COLUMN tool_distribution_smoothed JSONB;
+```
+
+```sql
+-- infra/migrations/postgres/0000XX_extend_behavioral_fingerprints.down.sql
+ALTER TABLE ibex_core.behavioral_fingerprints
+ DROP COLUMN IF EXISTS token_quantile_sketch,
+ DROP COLUMN IF EXISTS response_cluster_centroids,
+ DROP COLUMN IF EXISTS response_cluster_weights,
+ DROP COLUMN IF EXISTS error_successes,
+ DROP COLUMN IF EXISTS error_trials,
+ DROP COLUMN IF EXISTS tool_distribution_smoothed;
+```
+
+### Column rationale
+
+| Column | Type | Why |
+|---|---|---|
+| `token_quantile_sketch` | `BYTEA` | Serialized t-digest; per-window; mergeable without re-scanning raw traces |
+| `response_cluster_centroids` | `vector(384)[]` | Array replaces single centroid; k-means k=3–5 sub-clusters from 4.5.A.1 |
+| `response_cluster_weights` | `NUMERIC(5,4)[]` | Cluster membership proportions for chi-squared test in Track B |
+| `error_successes` | `INTEGER` | Numerator for Beta-Binomial; stores successes not ratio |
+| `error_trials` | `INTEGER` | Denominator for Beta-Binomial; enables sample-size-aware comparison |
+| `tool_distribution_smoothed` | `JSONB` | Post-Laplace-smoothing distribution; inputs to JS divergence in Track B |
+
+### SQLAlchemy model update
+
+Update `services/worker/fingerprint/models.py` to add the new columns to the `BehavioralFingerprint` ORM model.
+
+---
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] Migration runs forward and backward without error on a clean schema
+- [ ] Existing `behavioral_fingerprints` queries continue to work after migration (additive only)
+- [ ] All new nullable/defaulted columns have correct constraints
+- [ ] `vector(384)[]` array column compatible with pgvector version in use (verify)
+- [ ] ORM model updated and type-checked
+
+## Prerequisites
+
+- 4.5.A.1 merged (defines which columns are needed)
+- pgvector extension installed and version checked for array-of-vector support
+

@@ -1,0 +1,102 @@
+---
+title: "3.E.3 Retrieval-quality benchmark sign-off"
+description: "Convert recall/latency and ranking-quality benchmarks into permanent CI regression gates with committed baselines, gold-set labeled queries, and pass/fail thresholds."
+summary: "Convert recall/latency and ranking-quality benchmarks into permanent CI regression gates with committed baselines, gold-set labeled queries, and pass/fail thresholds."
+status: "planned"
+milestoneId: "3.E.3"
+track: "E"
+trackTitle: "Exit Gate"
+trackHref: "/roadmap/phase-3-memory-engine/tracks#track-e--exit-gate"
+goal: "[Track E — Exit Gate](/roadmap/phase-3-memory-engine/tracks#track-e--exit-gate)"
+estimatedEffort: "2 days"
+phase: "phase-3-memory-engine"
+fullTitle: "Milestone 3.E.3 — Retrieval-Quality Benchmark Sign-Off"
+---
+
+# Milestone 3.E.3 — Retrieval-Quality Benchmark Sign-Off
+
+**Status:** Planned  
+**Goal:** [Track E — Exit Gate](/roadmap/phase-3-memory-engine/tracks#track-e--exit-gate)  
+**Phase:** 3 — Core Memory Substrate  
+**Estimated effort:** 2 days
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+The single most important addition versus the original roadmap: the old plan had zero automated way to detect a ranking-quality regression (e.g., someone tweaks the composite-scoring weights and silently makes retrieval worse). This milestone closes that gap permanently.
+
+---
+
+## What Gets Committed
+
+```
+services/memory/benchmarks/
+ bench_vector_search.py # recall@10, p50/p95/p99 latency at 10K/100K/1M synthetic rows
+ bench_ranking_quality.py # precision@k, recall@k, MRR against labeled gold set
+ gold_set/
+ v1_labeled_queries.jsonl # versioned — schema: query, expected_memory_ids, category
+ baseline.json # committed baseline
+ regression_gate.py # ported from benchmarks/scripts/regression_gate.py
+```
+
+---
+
+## CI Wiring
+
+New scheduled job `memory-benchmark.yml`, mirroring the existing `benchmark.yml` weekly-schedule + PR-overlay pattern. Weekly full run (1M synthetic rows); PR runs use a smaller profile (10K rows) — same `smoke`/`fast`/`full` profile convention.
+
+---
+
+## Sign-Off Gate
+
+| Metric | Threshold | Source |
+|---|---|---|
+| HNSW recall@10 vs brute-force ground truth, 1M rows | ≥ 98% | Empirically derived in Track B |
+| Vector search p99, 1M rows | < 100ms | Matches original Goal 3.3 search budget |
+| Write pipeline p95 (all 9 stages) | < 200ms | Unchanged from original plan |
+| Ranking precision@5 on gold set | ≥ baseline − 2% (regression gate) | New |
+| ISO-* suite | 100% pass | Milestone 3.E.1 |
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Evaluation / benchmarks
+- Memory service / repositories
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] Benchmark scripts, gold set, baseline, and regression gate committed
+- [ ] CI job `memory-benchmark.yml` running on weekly schedule + PR overlay
+- [ ] All sign-off thresholds met on initial baseline run
+- [ ] Repo guards / CI checks still pass
+
+## Prerequisites
+
+- All Track A–D milestones
+- Milestone 3.E.1 (security integration suite)
+

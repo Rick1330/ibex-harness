@@ -1,0 +1,151 @@
+---
+title: "4.5.C.1 Scenario Management & Versioning"
+description: "Implement first-class scenario lifecycle management: three evaluation modes (deterministic, structured_judge, freeform_judge), second-reviewer requirement for is_critical scenarios, and the directive_scenario_rubrics table for structured LLM-judge evaluation."
+summary: "Implement first-class scenario lifecycle management: three evaluation modes (deterministic, structured_judge, freeform_judge), second-reviewer requirement for is_critical scenarios, and the directive_scenario_rubrics table for structured LLM-judge evaluation."
+status: "planned"
+milestoneId: "4.5.C.1"
+track: "C"
+trackTitle: "Directive Regression Testing"
+trackHref: "/roadmap/phase-4-5-intelligence-layer/tracks#track-c--directive-regression-testing"
+goal: "[Track C — Directive Regression Testing](/roadmap/phase-4-5-intelligence-layer/tracks#track-c--directive-regression-testing)"
+estimatedEffort: "3 days"
+phase: "phase-4-5-intelligence-layer"
+fullTitle: "Milestone 4.5.C.1 — Scenario Management & Versioning"
+---
+
+# Milestone 4.5.C.1 — Scenario Management & Versioning
+
+**Status:** Planned  
+**Goal:** [Track C — Directive Regression Testing](/roadmap/phase-4-5-intelligence-layer/tracks#track-c--directive-regression-testing)  
+**Phase:** 4.5 — Intelligence Layer  
+**Estimated effort:** 3 days  
+**Track:** [Track C — Directive Regression Testing](/roadmap/phase-4-5-intelligence-layer/tracks#track-c--directive-regression-testing)  
+**ADR required:** None (methodology documented in ADR-0045)
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+The schema and API surface for directive regression already exist in the original plan (`directive_versions.regression_test_status`, `directive_scenarios` table, `submit-review` and `promote` endpoints). The gap is scenario quality management: a hand-written, unreviewed `expected_behavior` string is only as good as the person who wrote it, and there is no mechanism to catch an ambiguous or untestable scenario before it silently blocks or fails to block a promotion. This milestone adds the lifecycle controls that make scenarios trustworthy.
+
+---
+
+## Non-Goals
+
+- Running regression tests (4.5.C.2)
+- Promotion gate enforcement (4.5.C.3)
+- Dashboard display (4.5.C.4)
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Directive regression / promotion
+- Operator dashboard
+
+## Suggested naming (provisional)
+
+Rename freely to match the change that actually lands.
+
+- Branch: `feature/m4-5-c1-scenario-management-versioning`
+- PR title: `feat(api/directives): scenario management with evaluation modes and second-reviewer gate (m4.5.C.1)`
+
+## Deliverables
+
+Target outcomes for the milestone; concrete artifacts may differ from any sketch above.
+
+### Design decisions
+
+1. **Second reviewer for `is_critical` scenarios:** A scenario with `is_critical = true` can block every future directive promotion; treat it with the same rigor as a CI gate definition. Add `reviewed_by`, `reviewed_at` columns to `directive_scenarios`.
+
+2. **Three evaluation modes:** Scenarios must declare an evaluation mode before use:
+ - `deterministic` — regex/JSON-schema check against the response; zero LLM calls, zero flakiness
+ - `structured_judge` — LLM judge constrained to a structured rubric with discrete pass/fail criteria
+ - `freeform_judge` — natural-language `expected_behavior` evaluated holistically; reserved for scenarios where a rubric cannot be pre-specified
+
+### New table: `directive_scenario_rubrics`
+
+```sql
+CREATE TABLE ibex_core.directive_scenario_rubrics (
+ id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+ scenario_id UUID NOT NULL REFERENCES ibex_core.directive_scenarios(id) ON DELETE CASCADE,
+ criterion TEXT NOT NULL,
+ weight NUMERIC(3,2) NOT NULL DEFAULT 1.0,
+ is_required BOOLEAN NOT NULL DEFAULT TRUE
+);
+```
+
+### Schema extensions to `directive_scenarios`
+
+```sql
+ALTER TABLE ibex_core.directive_scenarios
+ ADD COLUMN evaluation_mode VARCHAR(20) NOT NULL DEFAULT 'freeform_judge'
+ CHECK (evaluation_mode IN ('deterministic', 'structured_judge', 'freeform_judge')),
+ ADD COLUMN check_expression TEXT, -- required when evaluation_mode = 'deterministic'
+ ADD COLUMN reviewed_by UUID REFERENCES ibex_core.users(id),
+ ADD COLUMN reviewed_at TIMESTAMPTZ,
+ ADD COLUMN deleted_at TIMESTAMPTZ;
+```
+
+### Endpoints (illustrative)
+
+Route shapes below are a planning sketch — names, nesting, and payloads may change during implementation.
+
+```
+POST /v1/directives/{directive_id}/scenarios
+GET /v1/directives/{directive_id}/scenarios
+PATCH /v1/directives/{directive_id}/scenarios/{id}
+POST /v1/directives/{directive_id}/scenarios/{id}/submit-review
+POST /v1/directives/{directive_id}/scenarios/{id}/approve
+DELETE /v1/directives/{directive_id}/scenarios/{id} # soft delete via deleted_at
+```
+
+### File structure
+
+```
+services/api/src/directives/
+ scenarios/
+ models.py # DirectiveScenario, ScenarioRubric SQLAlchemy models
+ schemas.py # Pydantic request/response, EvaluationMode enum
+ router.py # CRUD endpoints
+ review.py # second-reviewer approval workflow
+```
+
+---
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] Scenario cannot reach `is_critical = true` without `reviewed_by` set — enforced by DB constraint AND application check
+- [ ] `evaluation_mode` enum enforced at the API boundary
+- [ ] `structured_judge` and `freeform_judge` scenarios require ≥1 rubric row in `directive_scenario_rubrics`
+- [ ] `deterministic` scenarios require a non-null `check_expression`
+- [ ] Full CRUD + review workflow integration tested against real Postgres with RLS
+- [ ] Soft delete enforced: deleted scenarios still visible in history but excluded from active regression runs
+
+## Prerequisites
+
+- Existing `directive_scenarios` and `directive_versions` tables present
+

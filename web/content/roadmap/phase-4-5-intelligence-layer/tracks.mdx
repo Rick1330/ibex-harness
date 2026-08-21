@@ -1,0 +1,69 @@
+---
+title: "Tracks"
+description: "Phase 4.5 is organized into four tracks covering behavioral fingerprinting, drift detection, directive regression testing, and exit gate verification."
+phase: "phase-4-5-intelligence-layer"
+---
+
+# Phase 4.5 — Tracks
+
+<Callout type="note" title="Planning baseline">
+  Tracks group milestones for planning. Preferred sequencing below is not a rigid schedule.
+  Paths, libraries, and designs on linked milestone pages are orientation sketches — implementation
+  is expected to require further research and may diverge.
+</Callout>
+
+Phase 4.5 delivers the intelligence layer — behavioral fingerprinting, drift detection, and directive regression testing — across four tracks.
+
+---
+
+## Track A — Behavioral Fingerprinting
+
+Feature extraction pipeline, fingerprint schema, and trigger/scheduling for computing behavioral baselines per agent. Statistical feature choices are a starting preference and may be revised after calibration research.
+
+**Preferred sequencing within track:** `4.5.A.1 → 4.5.A.2 → 4.5.A.3`
+
+**Milestones:**
+- [4.5.A.1 — Feature Extraction Pipeline](/roadmap/phase-4-5-intelligence-layer/milestones/4.5.a.1-feature-extraction-pipeline)
+- [4.5.A.2 — Fingerprint Schema & Migration](/roadmap/phase-4-5-intelligence-layer/milestones/4.5.a.2-fingerprint-schema-migration)
+- [4.5.A.3 — Fingerprint Trigger & Scheduling](/roadmap/phase-4-5-intelligence-layer/milestones/4.5.a.3-fingerprint-trigger-scheduling)
+
+---
+
+## Track B — Drift Detection
+
+Distribution-aware drift testing, threshold calibration, severity aggregation, and staged action policies. Thresholds are config-driven and expected to be revisited as production evidence accumulates.
+
+**Preferred sequencing within track:** `4.5.B.1 → 4.5.B.2 → 4.5.B.3`
+
+**Milestones:**
+- [4.5.B.1 — Distribution-Aware Drift Tests](/roadmap/phase-4-5-intelligence-layer/milestones/4.5.b.1-distribution-aware-drift-tests)
+- [4.5.B.2 — Threshold Calibration](/roadmap/phase-4-5-intelligence-layer/milestones/4.5.b.2-threshold-calibration)
+- [4.5.B.3 — Severity Aggregation & Action Policy](/roadmap/phase-4-5-intelligence-layer/milestones/4.5.b.3-severity-aggregation-action-policy)
+
+---
+
+## Track C — Directive Regression Testing
+
+Scenario management, async regression runner, promotion gate with gradual rollout, and dashboard integration. Judge modes and rollout percentages are planning defaults.
+
+**Preferred sequencing within track:** `4.5.C.1 → 4.5.C.2 → 4.5.C.3 → 4.5.C.4`
+
+**Milestones:**
+- [4.5.C.1 — Scenario Management & Versioning](/roadmap/phase-4-5-intelligence-layer/milestones/4.5.c.1-scenario-management-versioning)
+- [4.5.C.2 — Regression Runner Service](/roadmap/phase-4-5-intelligence-layer/milestones/4.5.c.2-regression-runner-service)
+- [4.5.C.3 — Promotion Gate & Gradual Rollout](/roadmap/phase-4-5-intelligence-layer/milestones/4.5.c.3-promotion-gate-gradual-rollout)
+- [4.5.C.4 — Dashboard Integration](/roadmap/phase-4-5-intelligence-layer/milestones/4.5.c.4-dashboard-integration)
+
+---
+
+## Track D — Exit Gate
+
+Cross-track integration testing, E2E Playwright coverage, benchmark sign-off, and the Phase 4.5 gap register.
+
+**Preferred sequencing within track:** `4.5.D.1 → 4.5.D.2 → 4.5.D.3 → 4.5.D.4`
+
+**Milestones:**
+- [4.5.D.1 — Cross-Track Integration Suite](/roadmap/phase-4-5-intelligence-layer/milestones/4.5.d.1-cross-track-integration-suite)
+- [4.5.D.2 — E2E Playwright Coverage](/roadmap/phase-4-5-intelligence-layer/milestones/4.5.d.2-e2e-playwright-coverage)
+- [4.5.D.3 — Benchmark Sign-off](/roadmap/phase-4-5-intelligence-layer/milestones/4.5.d.3-benchmark-sign-off)
+- [4.5.D.4 — Gap Register & Sign-off](/roadmap/phase-4-5-intelligence-layer/milestones/4.5.d.4-gap-register-sign-off)

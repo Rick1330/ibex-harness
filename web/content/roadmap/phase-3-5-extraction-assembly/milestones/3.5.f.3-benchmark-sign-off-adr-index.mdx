@@ -1,0 +1,97 @@
+---
+title: "3.5.F.3 Benchmark sign-off and ADR index"
+description: "Extend benchmark profiles with proxy+context overhead, MCP tool p95, and extraction throughput. Publish ADR-0038/0043/0044, write Phase 3.5 decision log and exit-audit doc."
+summary: "Extend benchmark profiles with proxy+context overhead, MCP tool p95, and extraction throughput. Publish ADR-0038/0043/0044, write Phase 3.5 decision log and exit-audit doc."
+status: "planned"
+milestoneId: "3.5.F.3"
+track: "F"
+trackTitle: "Exit Gate"
+trackHref: "/roadmap/phase-3-5-extraction-assembly/tracks#track-f--exit-gate"
+goal: "[Track F — Exit Gate](/roadmap/phase-3-5-extraction-assembly/tracks#track-f--exit-gate)"
+estimatedEffort: "1 day"
+phase: "phase-3-5-extraction-assembly"
+fullTitle: "Milestone 3.5.F.3 — Benchmark Sign-Off and ADR Index"
+---
+
+# Milestone 3.5.F.3 — Benchmark Sign-Off and ADR Index
+
+**Status:** Planned  
+**Goal:** [Track F — Exit Gate](/roadmap/phase-3-5-extraction-assembly/tracks#track-f--exit-gate)  
+**Phase:** 3.5 — Extraction & Context Assembly  
+**Estimated effort:** 1 day  
+**Track:** [Track F — Exit Gate](/roadmap/phase-3-5-extraction-assembly/tracks#track-f--exit-gate)  
+**Depends on:** Milestones 3.5.F.1–3.5.F.2
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+Extend benchmarks, publish ADRs, and write the Phase 3.5 exit-audit doc following the established pattern.
+
+---
+
+## Deliverables
+
+Target outcomes for the milestone; concrete artifacts may differ from any sketch above.
+
+- Extend `benchmarks/README.md` profiles to cover: proxy overhead with context assembly, MCP tool-call p95, extraction-worker throughput
+- Publish ADR-0038 (context assembly — move from Pending to Accepted), ADR-0043 (MCP scope/transport), ADR-0044 (MCP write pipeline)
+- Write `decisions.mdx` (Phase 3.5 decision log) and `phase-3.5-exit-audit.md` (P0–P3 gap tracking)
+
+---
+
+## Phase 3.5 Exit Criteria
+
+1. Extraction worker converts a completed session into &gt;=1 correctly-categorized memory
+2. Subsequent chat request transparently injects a relevant memory
+3. Zero cross-tenant memory leakage across all ISO-* and ISO-MCP-* cases
+4. Context assembly p95 &lt; 50ms at 20 concurrent requests; proxy overhead &lt;20ms p99
+5. All 4 degradation-ladder levels independently verified
+6. MCP tools function end-to-end, sharing one substrate with proxy path
+7. MCP server fails closed on auth-service outage; independent rate-limit budget verified
+8. All Phase 1, 2, and 3 regression tests pass with zero regressions
+9. `make e2e-smoke-p3.5` exits 0
+10. ADR-0038, ADR-0043, ADR-0044 published and indexed
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Evaluation / benchmarks
+- MCP server surface
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] Benchmark profiles extended and baselines committed
+- [ ] ADRs published in `web/content/docs/adr/meta.json`
+- [ ] Phase 3.5 decision log and exit-audit doc committed
+- [ ] All exit criteria verified
+- [ ] Repo guards / CI checks still pass
+
+## Prerequisites
+
+- Milestones 3.5.F.1–3.5.F.2
+

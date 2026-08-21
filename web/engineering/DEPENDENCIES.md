@@ -277,25 +277,32 @@ Avoid:
 7. **License:** MIT.
 8. **Exit:** Fall back to compose test stack (`make compose-test-up`) permanently supported.
 
-### 8.3 Python — Memory/API/Context/Embedder/Worker services
+### 8.3 Python — Memory / API / Context / Embedder / Worker / MCP / Tokenizer services
 
-Required (typical):
+Preferred phase timing: embedder (+ optional tokenizer-service, MCP skeleton) **2.5**; memory **3**;
+worker + context + MCP tools **3.5**; management API **4**. See [`services/README.md`](../../services/README.md).
 
-- FastAPI (API services)
+Required (typical, as each service lands):
+
+- FastAPI (HTTP services) / gRPC server libs (context)
 - Uvicorn/Gunicorn (runtime)
 - SQLAlchemy 2.0 + async driver (`asyncpg`)
 - Pydantic v2 (+ pydantic-settings)
 - Redis client (async)
-- Celery (worker)
-- sentence-transformers / transformers (embedder/extraction)
-- numpy/scipy (ranking/statistics) where required
+- Celery (worker) — preferred starting queue stack
+- Official `mcp` Python SDK (MCP memory server)
+- Hugging Face `tokenizers` (tokenizer-service path)
+- Presidio (PII detection in memory write path) when that milestone lands
 - OpenTelemetry Python SDK
-- Sentry SDK
+- Sentry SDK (optional)
+
+Embedding inference preference: call **TEI** (or hosted embedding APIs) behind a thin client rather than bundling heavy `sentence-transformers` into every service process. Local MiniLM remains valid for CPU/dev profiles.
 
 Avoid:
 
 - large “all-in-one” frameworks that add unrelated functionality
 - ORMs for ClickHouse (raw SQL preferred)
+- inventing a second auth stack for MCP (reuse Auth gRPC)
 
 ### 8.4 TypeScript — Dashboard (services/dashboard)
 

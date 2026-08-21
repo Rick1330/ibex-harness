@@ -1,0 +1,158 @@
+---
+title: "4.A.4 Token Management API"
+description: "Scoped PAT management: permission strings, plaintext-once creation, IP restrictions, expiry, and revocation via gRPC to the Auth service — never direct DB access."
+summary: "Scoped PAT management: permission strings, plaintext-once creation, IP restrictions, expiry, and revocation via gRPC to the Auth service — never direct DB access."
+status: "planned"
+milestoneId: "4.A.4"
+track: "A"
+trackTitle: "Management API Server"
+trackHref: "/roadmap/phase-4-multi-provider/tracks#track-a--management-api-server"
+goal: "[Track A — Management API Server](/roadmap/phase-4-multi-provider/tracks#track-a--management-api-server)"
+estimatedEffort: "2 days"
+phase: "phase-4-multi-provider"
+fullTitle: "Milestone 4.A.4 — Token Management API"
+---
+
+# Milestone 4.A.4 — Token Management API
+
+**Status:** Planned  
+**Goal:** [Track A — Management API Server](/roadmap/phase-4-multi-provider/tracks#track-a--management-api-server)  
+**Phase:** 4 — Operator Platform & Multi-Provider  
+**Estimated effort:** 2 days  
+**Track:** [Track A — Management API Server](/roadmap/phase-4-multi-provider/tracks#track-a--management-api-server)
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+Operators need a self-service surface for issuing, scoping, and revoking Personal Access Tokens (PATs). The API documentation already specifies the schema and permission model; this milestone wires those specifications into the management API. One critical invariant: the API server should never touch the token hash table directly — all revocation goes through `AuthService.RevokeToken` gRPC, mirroring the proxy's own "gRPC to auth, not direct DB" rule.
+
+---
+
+## Non-Goals
+
+- OAuth/SSO session tokens (Phase 4.5)
+- Token rotation automation (future)
+- Batch token issuance
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Management API
+- Auth service
+- Database schema / migrations
+
+## Suggested naming (provisional)
+
+Rename freely to match the change that actually lands.
+
+- Branch: `feature/m4-a-4-token-management`
+- PR title: `feat(api): PAT management API with scoped permissions and gRPC revocation (m4.A.4)`
+
+## Endpoints (illustrative)
+
+Route shapes below are a planning sketch — names, nesting, and payloads may change during implementation.
+
+```
+GET /v1/tokens → CursorPage[TokenResponse] (org-scoped; plaintext never returned in list)
+POST /v1/tokens → TokenCreateResponse (201; includes plaintext token — shown exactly once)
+GET /v1/tokens/{token_id} → TokenResponse (no plaintext)
+PATCH /v1/tokens/{token_id} → TokenResponse (name, allowed_ips, expires_at)
+DELETE /v1/tokens/{token_id} → 204 (revocation via AuthService.RevokeToken gRPC)
+```
+
+---
+
+## Token Schema
+
+```python
+class TokenCreateRequest(BaseModel):
+ name: str # human-readable label
+ permissions: list[str] # e.g. ["memory:read", "session:create", "admin:token_create"]
+ allowed_ips: list[str] | None = None # CIDR notation, optional
+ expires_at: datetime | None = None # optional absolute expiry
+ agent_id: UUID | None = None # optional: scoped to a specific agent
+
+class TokenCreateResponse(BaseModel):
+ id: UUID
+ name: str
+ token: str # plaintext — shown once, never again
+ permissions: list[str]
+ allowed_ips: list[str] | None
+ expires_at: datetime | None
+ created_at: datetime
+
+class TokenResponse(BaseModel):
+ id: UUID
+ name: str
+ permissions: list[str]
+ allowed_ips: list[str] | None
+ expires_at: datetime | None
+ last_used_at: datetime | None
+ created_at: datetime
+ # token field deliberately absent
+```
+
+---
+
+## Permission Strings
+
+Scoped permission strings map to the existing 64-bit permission bitmap (ADR-0009):
+
+| Permission String | Bitmap Bit | Description |
+| --- | --- | --- |
+| `memory:read` | bit 0 | Read memories |
+| `memory:write` | bit 1 | Create/update memories |
+| `session:create` | bit 2 | Start proxy sessions |
+| `admin:token_create` | bit 8 | Issue new tokens |
+| `admin:org_manage` | bit 9 | Suspend/update org |
+| `admin:user_manage` | bit 10 | Invite/delete users |
+
+---
+
+## Business Rules
+
+- **Plaintext shown exactly once**: on `POST`, the plaintext token is generated, hashed (Argon2id), the hash stored via auth service, and the plaintext returned in the response. It cannot be recovered after this point.
+- **Revocation via gRPC only**: `DELETE` calls `AuthService.RevokeToken(token_id)` — the management API never directly modifies the token hash table. This ensures the auth service's revocation-propagation Redis pub/sub mechanism fires correctly.
+- **IP restriction validation**: `allowed_ips` CIDRs are validated syntactically before storage; invalid CIDR returns 422.
+- **Permission scope enforcement**: the issuing operator cannot grant permissions they do not themselves hold (permission elevation is rejected with 403 `PERMISSION_ELEVATION_DENIED`).
+
+---
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] Plaintext token present in create response, absent in all list/get responses
+- [ ] Token revocation reflected in proxy auth-cache within 5s (integration test, matching existing token-revocation test pattern)
+- [ ] Permission elevation attempt returns 403 `PERMISSION_ELEVATION_DENIED`
+- [ ] Invalid CIDR in `allowed_ips` returns 422 with field-level error
+- [ ] `TestAPI_ISO_TOKEN_*`: org A cannot read/revoke org B's tokens (404)
+
+## Prerequisites
+
+- M4.A.1 skeleton merged
+- `AuthService.RevokeToken` gRPC available
+

@@ -1,0 +1,152 @@
+---
+title: "3.5.A.2 Task Observability and Dead-Letter Handling"
+description: "Close the silent-failure gap: route exhausted-retry task payloads to Postgres, emit OTel spans, and fire Prometheus alerts so a systematically-failing extraction is caught before customers notice."
+summary: "Close the silent-failure gap: route exhausted-retry task payloads to Postgres, emit OTel spans, and fire Prometheus alerts so a systematically-failing extraction is caught before customers notice."
+status: "planned"
+milestoneId: "3.5.A.2"
+track: "A"
+trackTitle: "Worker Infrastructure"
+trackHref: "/roadmap/phase-3-5-extraction-assembly/tracks#track-a--worker-infrastructure"
+goal: "[Track A — Worker Infrastructure](/roadmap/phase-3-5-extraction-assembly/tracks#track-a--worker-infrastructure)"
+estimatedEffort: "2 days"
+phase: "phase-3-5-extraction-assembly"
+fullTitle: "Milestone 3.5.A.2 — Task Observability and Dead-Letter Handling"
+---
+
+# Milestone 3.5.A.2 — Task Observability and Dead-Letter Handling
+
+**Status:** Planned  
+**Goal:** [Track A — Worker Infrastructure](/roadmap/phase-3-5-extraction-assembly/tracks#track-a--worker-infrastructure)  
+**Phase:** 3.5 — Extraction & Context Assembly  
+**Estimated effort:** 2 days  
+**Track:** [Track A — Worker Infrastructure](/roadmap/phase-3-5-extraction-assembly/tracks#track-a--worker-infrastructure)  
+**Depends on:** [3.5.A.1](/roadmap/phase-3-5-extraction-assembly/milestones/3.5.a.1-celery-worker-skeleton)
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+The original plan mentioned "retry 3 times with exponential backoff before dead-letter" as an acceptance criterion but never specified *where the dead-lettered task goes* or *how anyone finds out it failed*. Without this, a systematically-failing extraction (e.g., OpenAI API key misconfigured) fails silently forever — every session accumulates unextracted turns and nobody notices until a customer asks "why doesn't my agent remember anything."
+
+---
+
+## Non-Goals
+
+- Flower (Celery admin UI) as a production dependency — it can be run operationally but nothing depends on it being up
+- Alerting SaaS integrations (PagerDuty, etc.) — the Prometheus rule YAML is the deliverable; routing is operator-configured
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Workers / task runtime
+
+## Suggested naming (provisional)
+
+Rename freely to match the change that actually lands.
+
+- Branch: `feature/m3-5-a2-task-observability-dead-letter`
+- PR title: `feat(worker): task observability, OTel tracing, and dead-letter handling (m3.5.A.2)`
+
+## Design
+
+### `services/worker/src/worker/observability.py`
+
+```python
+from __future__ import annotations
+
+import functools
+from typing import Any, Callable, TypeVar
+
+from celery.signals import task_failure, task_success, task_retry
+from opentelemetry import trace
+
+tracer = trace.get_tracer("ibex.worker")
+F = TypeVar("F", bound=Callable[..., Any])
+
+def traced_task(name: str) -> Callable[[F], F]:
+ """Wrap a Celery task body in an OTel span, tagged with the task name.
+ This makes every extraction/embedding/maintenance task show up in the
+ same distributed trace the proxy already emits, closeable end-to-end
+ in a single Jaeger/Tempo view: proxy request -> extraction -> memory write.
+ """
+ def decorator(fn: F) -> F:
+ @functools.wraps(fn)
+ def wrapper(*args: Any, **kwargs: Any) -> Any:
+ with tracer.start_as_current_span(name) as span:
+ span.set_attribute("worker.task", name)
+ return fn(*args, **kwargs)
+ return wrapper # type: ignore[return-value]
+ return decorator
+
+@task_failure.connect
+def on_task_failure(sender=None, task_id=None, exception=None, **kwargs):
+ """After max_retries exhausted, Celery fires task_failure once (not per retry).
+ This is the dead-letter signal. Log at ERROR with full context, and increment
+ a Prometheus counter labeled by task name — this is what pages on-call,
+ not silent accumulation in the Redis unacked queue.
+ """
+ ... # emit ibex_worker_task_dead_letter_total{task_name=...} counter
+```
+
+---
+
+## Dead-Letter Destination
+
+Rather than a bespoke dead-letter queue (which needs its own consumer/UI to be useful), route dead-lettered task payloads into a Postgres `ibex_core.failed_tasks` table (`task_name`, `args`, `kwargs`, `exception`, `traceback`, `failed_at`, `retry_count`). This is deliberately simple — queryable via plain SQL immediately, and becomes a first-class "failed extractions" list in the Phase 4 operator dashboard without needing a Celery-specific admin tool (Flower) as a hard dependency.
+
+**Free/open-source alternative note:** Flower (Celery's official monitoring UI, BSD-licensed) is worth running in the dev-compose stack for local debugging, but should not be a production dependency for correctness — the Postgres `failed_tasks` table is the source of truth precisely because it survives Flower being down.
+
+---
+
+## Prometheus Alert Rule
+
+```yaml
+- alert: IBEXWorkerTaskDeadLettered
+ expr: rate(ibex_worker_task_dead_letter_total[5m]) > 0
+ for: 1m
+ labels:
+ severity: page
+ annotations:
+ summary: "Worker task dead-lettered after max retries"
+ description: "Task {{ $labels.task_name }} is being dead-lettered. Check failed_tasks table."
+```
+
+---
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] Every task in `tasks/*.py` wrapped with `@traced_task`; span visible in local Jaeger/OTel collector during integration tests
+- [ ] `task_failure` signal handler writes a row to `ibex_core.failed_tasks` with full traceback
+- [ ] Prometheus counter `ibex_worker_task_dead_letter_total` increments exactly once per exhausted-retry failure (not once per retry attempt) — tested by forcing 3 failures and asserting counter == 1, not 3
+- [ ] Alert rule documented (Prometheus alerting rule YAML) for `rate(ibex_worker_task_dead_letter_total[5m]) > 0` — this closes the "silent failure" gap explicitly
+
+---
+
+## Prerequisites
+
+- [3.5.A.1 Celery worker skeleton](/roadmap/phase-3-5-extraction-assembly/milestones/3.5.a.1-celery-worker-skeleton)
+

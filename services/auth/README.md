@@ -26,6 +26,8 @@ See [.env.example](.env.example) and [ENVIRONMENT_VARIABLES.md](../../web/engine
 | `IBEX_GRPC_PORT` | No | `9091` |
 | `IBEX_ARGON2_*` | No | see docs |
 
+**Next (Phase 4 planning baseline):** provider-credential RPCs for BYO keys (encrypted at rest; proxy resolves via Auth gRPC — never plaintext in API responses). Exact RPC/env names land with that milestone + ADR. Full env registry: [ENVIRONMENT_VARIABLES.md](../../web/engineering/ENVIRONMENT_VARIABLES.md).
+
 ## Testing
 
 ```bash

@@ -169,6 +169,42 @@ In IBEX, memory content is untrusted input and must be injected as data with str
 
 ---
 
+### Embedding Profile
+
+A **deployment-time** choice of embedding model + dimensionality (for example `bge-m3` / 1024-dim vs MiniLM / 384-dim). Profiles are not interchangeable in the same pgvector column without a migration / re-embed.
+
+---
+
+### Tokenizer Family
+
+A key that selects which tokenizer vocabulary to use for budget math (for example `cl100k_base`, `o200k_base`, `llama3`). Phase 2.5 introduces a registry so non-OpenAI models are not silently counted with `tiktoken`.
+
+---
+
+### MCP Memory Server
+
+A Model Context Protocol server that exposes IBEX memory capabilities as audited tools (search / write / feedback), authenticating via the existing Auth gRPC surface. Preferred directory name in the planning baseline: `services/mcp-memory/`.
+
+---
+
+### HNSW (pgvector)
+
+Hierarchical Navigable Small World index used for approximate nearest-neighbor search. Preferred Phase 3+ vector index starting point (replacing the older IVFFlat default in earlier plans). `ef_search` should be tuned from benchmarks.
+
+---
+
+### Hybrid Retrieval
+
+Combining dense (vector) and sparse (for example BM25 / Postgres FTS) channels, typically fused with Reciprocal Rank Fusion, optionally followed by cross-encoder reranking. Preferred Phase **5** concern.
+
+---
+
+### Graph Lineage Traversal
+
+Walking typed edges in `memory_relationships` (supersedes, contradicts, …) at query time. Phase 5 preferred starting approach: Postgres recursive CTEs with hop caps and `org_id` at every level — not a separate graph DB by default.
+
+---
+
 ## Context Assembly Terms
 
 ### Directive

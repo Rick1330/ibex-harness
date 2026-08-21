@@ -1,0 +1,168 @@
+---
+title: "4.5.C.2 Regression Runner Service"
+description: "Implement the async Celery-based regression runner that routes test scenarios through the real IBEX proxy with a directive-version override header, supports all three evaluation modes with majority-vote LLM judging, and tracks judge cost and disagreement rate as Prometheus metrics."
+summary: "Implement the async Celery-based regression runner that routes test scenarios through the real IBEX proxy with a directive-version override header, supports all three evaluation modes with majority-vote LLM judging, and tracks judge cost and disagreement rate as Prometheus metrics."
+status: "planned"
+milestoneId: "4.5.C.2"
+track: "C"
+trackTitle: "Directive Regression Testing"
+trackHref: "/roadmap/phase-4-5-intelligence-layer/tracks#track-c--directive-regression-testing"
+goal: "[Track C — Directive Regression Testing](/roadmap/phase-4-5-intelligence-layer/tracks#track-c--directive-regression-testing)"
+estimatedEffort: "4 days"
+phase: "phase-4-5-intelligence-layer"
+fullTitle: "Milestone 4.5.C.2 — Regression Runner Service"
+---
+
+# Milestone 4.5.C.2 — Regression Runner Service
+
+**Status:** Planned  
+**Goal:** [Track C — Directive Regression Testing](/roadmap/phase-4-5-intelligence-layer/tracks#track-c--directive-regression-testing)  
+**Phase:** 4.5 — Intelligence Layer  
+**Estimated effort:** 4 days  
+**Track:** [Track C — Directive Regression Testing](/roadmap/phase-4-5-intelligence-layer/tracks#track-c--directive-regression-testing)  
+**ADR required:** ADR-0048 — Regression runner design
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+`POST .../submit-review` triggers a regression test suite. The original design expected this to be a synchronous blocking call — but 47 scenarios × judge LLM latency makes this multi-minute, which the original response already acknowledged with `estimated_completion_seconds: 120`. It was always intended to be async; it was just never designed as such. This milestone implements the Celery-based async runner properly.
+
+---
+
+## Non-Goals
+
+- Promotion gate enforcement (4.5.C.3)
+- Dashboard display (4.5.C.4)
+- Scenario management (4.5.C.1)
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Directive regression / promotion
+- Operator dashboard
+
+## Suggested naming (provisional)
+
+Rename freely to match the change that actually lands.
+
+- Branch: `feature/m4-5-c2-regression-runner-service`
+- PR title: `feat(worker/regression): async regression runner with real proxy routing and majority-vote judge (m4.5.C.2)`
+
+## ADR-0048 — Regression Runner Design
+
+Write `web/content/docs/adr/0048-regression-runner-design.mdx` documenting:
+
+- **Why scenarios route through the real proxy:** A bespoke test harness that reimplements injection logic separately would fail to catch bugs in the injection pipeline itself. Routing through `POST /v1/chat/completions` against a dedicated regression-test service-account org/agent, with the candidate directive version force-injected via `X-IBEX-Directive-Version-Override`, guarantees the same code path production traffic uses.
+- **Why the judge model must differ from the model being tested:** Self-judging has well-documented self-preference bias. A fixed judge model prevents "regression pass rate changed because we silently upgraded the judge" from being confused with "the directive actually got worse."
+- **Why majority vote (3 runs) for judge modes:** LLM judges are non-deterministic. A scenario with high disagreement across 3 runs is itself a signal the scenario is poorly specified.
+
+---
+
+## Deliverables
+
+Target outcomes for the milestone; concrete artifacts may differ from any sketch above.
+
+### Architecture
+
+```
+POST .../submit-review
+ → Celery task: run_regression_suite(directive_version_id)
+ → For each scenario: render prompt with candidate directive version
+ → Call target model via provider.Registry (real proxy path, isolated test org/agent)
+ → Evaluate response per evaluation_mode
+ → Aggregate: pass/fail per scenario, critical failures highlighted
+ → Write regression_test_results JSONB + regression_test_status
+ → Notify: WebSocket/poll for dashboard
+```
+
+### Evaluator
+
+```python
+# Illustrative — exact path may differ
+class ScenarioEvaluator:
+ async def evaluate(self, scenario: DirectiveScenario, response: str) -> ScenarioResult:
+ if scenario.evaluation_mode == EvaluationMode.DETERMINISTIC:
+ return self._evaluate_deterministic(scenario, response)
+ elif scenario.evaluation_mode == EvaluationMode.STRUCTURED_JUDGE:
+ return await self._evaluate_structured(scenario, response)
+ else:
+ return await self._evaluate_freeform(scenario, response)
+
+ async def _evaluate_structured(self, scenario, response) -> ScenarioResult:
+ # One judge call per scenario evaluates ALL rubric criteria at once
+ # (not one call per criterion — that would multiply judge cost/latency
+ # by rubric size for no accuracy benefit).
+ judge_prompt = render_rubric_judge_prompt(scenario.rubrics, response)
+ # 3 runs, majority vote
+ judgments = await asyncio.gather(*[
+ self.judge_provider.complete(judge_prompt, response_format="json")
+ for _ in range(3)
+ ])
+ return self._majority_vote(judgments, scenario.rubrics)
+```
+
+### File structure
+
+```
+services/worker/src/regression/
+ tasks.py # Celery task: run_regression_suite(directive_version_id)
+ runner.py # Orchestrates scenario execution against proxy
+ evaluator.py # ScenarioEvaluator
+ prompts.py # render_rubric_judge_prompt, render_freeform_judge_prompt
+ models.py # ScenarioResult dataclass
+services/worker/tests/regression/
+ test_evaluator.py # unit: each evaluation mode, majority-vote logic
+ test_runner_integration.py # integration: real proxy call with override header
+```
+
+### Metrics
+
+```
+ibex_regression_suite_duration_seconds{directive_id}
+ibex_regression_scenario_result_total{directive_id, category, evaluation_mode, result}
+ibex_regression_judge_disagreement_rate{directive_id}
+ibex_regression_judge_cost_usd_total{directive_id}
+```
+
+---
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] All 3 evaluation modes implemented and unit-tested with mocked judge responses
+- [ ] Regression calls route through the real proxy with `X-IBEX-Directive-Version-Override` header; a fault-injection integration test verifies that a bug in `injection.Inject` is actually caught by the suite
+- [ ] Majority vote (3 runs) implemented for judge modes; disagreement metric emitted
+- [ ] `regression_test_status` transitions `pending → running → passed|failed` correctly; `is_critical` scenario failure forces overall `failed` regardless of aggregate score
+- [ ] Suite of 47 scenarios completes within 120s budget at p95 with bounded parallel execution (5 concurrent scenario runs, not fully sequential)
+- [ ] Judge cost (USD) tracked per run and surfaced in `regression_test_results` JSONB
+- [ ] Different judge model than the model being tested; `judge_model` stored on every `regression_test_results` entry
+
+## Prerequisites
+
+- 4.5.C.1 merged (scenario models and evaluation modes exist)
+- Provider registry accessible from worker (for routing test calls through proxy)
+

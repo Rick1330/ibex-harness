@@ -1,0 +1,163 @@
+---
+title: "2.5.G3.M2 Streaming response pipeline design"
+description: "Design spike and ADR for streaming response transformation. A transformation stage that needs to see the complete response is a poor fit with low-latency chunk-by-chunk forwarding — this milestone makes the constraint explicit and documents the correct approach before Phase 3 commits to a design."
+summary: "Design spike and ADR for streaming response transformation. A transformation stage that needs to see the complete response is a poor fit with low-latency chunk-by-chunk forwarding — this milestone makes the constraint explicit and documents the correct approach before Phase 3 commits to a design."
+status: "planned"
+milestoneId: "2.5.G3.M2"
+track: "C"
+trackTitle: "Response-Side Processing Pipeline"
+trackHref: "/roadmap/phase-2-5-provider-generalization/tracks#track-c--response-side-processing-pipeline"
+goal: "[Track C — Response-Side Processing Pipeline](/roadmap/phase-2-5-provider-generalization/tracks#track-c--response-side-processing-pipeline)"
+estimatedEffort: "2 days"
+phase: "phase-2-5-provider-generalization"
+fullTitle: "Milestone 2.5.G3.M2 — Streaming Response Pipeline Design"
+---
+
+# Milestone 2.5.G3.M2 — Streaming Response Pipeline Design
+
+**Status:** Planned  
+**Goal:** [Track C — Response-Side Processing Pipeline](/roadmap/phase-2-5-provider-generalization/tracks#track-c--response-side-processing-pipeline)  
+**Phase:** 2.5 — Provider Generalization & Foundation  
+**Estimated effort:** 2 days  
+**Track:** [Track C — Response-Side Processing Pipeline](/roadmap/phase-2-5-provider-generalization/tracks#track-c--response-side-processing-pipeline)  
+**ADR required:** ADR-00XX — Streaming response transformation
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+This is the harder half of the response pipeline, and it's scoped as a *design spike*, not a full implementation, inside Phase 2.5 — implementation lands in Phase 3 once memory stages exist to actually plug in.
+
+The core problem: streaming forwards SSE chunks live, dual-write style, as they arrive from the provider following ADR-0027's ordering rules (flush-per-event, no retry after first byte). A transformation stage that needs the *complete* response (for example rewriting hallucinated content) is incompatible with low-latency chunk-by-chunk forwarding — a sentence already streamed to the client cannot be redacted or corrected after the fact.
+
+---
+
+## Non-Goals
+
+- Full implementation of streaming transformation stages (Phase 3)
+- Per-agent streaming disable configuration (future)
+- Semantic content correction on streaming responses (explicitly a non-goal, documented as such)
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Proxy service (HTTP, bootstrap, config)
+- Response pipeline / stages
+
+## Suggested naming (provisional)
+
+Rename freely to match the change that actually lands.
+
+- Branch: `feature/m2-5-g3-m2-streaming-pipeline-design`
+- PR title: `design(proxy): streaming response transformation ADR and prototype (m2.5.G3.M2)`
+
+## Options to Evaluate
+
+### Option 1: Token-window buffering
+
+Buffer N tokens/chars behind the live edge, run cheap per-window checks (regex PII patterns, injection heuristics) on the trailing buffer, flush once clear. Works for redaction-class stages; does *not* work for "correct the content" (that requires seeing the full response, which defeats streaming).
+
+### Option 2: Post-hoc correction via follow-up event
+
+Stream unmodified, then if a stage flags a problem after the fact, emit it to observability/dashboard for human review rather than trying to mutate what's already been sent to the client. This is honest about streaming's physical constraint instead of pretending it's solvable transparently.
+
+### Option 3: Disable transformation for streaming, force non-streaming for flagged-sensitive agents
+
+A config flag per agent/directive that says "this agent's responses may be rewritten, so streaming is disabled for it." Ugly but correct.
+
+### Recommendation
+
+Ship **(1) token-window buffering** for anything regex/pattern-based (PII, secrets, quarantined-memory-string detection) — IBEX already has a stated regex-based PII pipeline planned for memory writes and can reuse that logic. Ship **(2) post-hoc correction** for anything semantic/LLM-judged (can't be windowed cheaply).
+
+Explicitly reject "seamless full-content correction on a streaming response" as a documented non-goal — that's a real physical limit worth writing down now so it doesn't get silently promised in Phase 3 marketing copy.
+
+---
+
+## Deliverables
+
+Target outcomes for the milestone; concrete artifacts may differ from any sketch above.
+
+### 1. ADR
+
+`web/content/docs/adr/00XX-streaming-response-transformation.mdx` capturing:
+
+- The physical constraint (can't mutate already-flushed bytes)
+- The three options with tradeoffs
+- The adopted approach (token-window buffering for pattern-based, post-hoc for semantic)
+- Explicit non-goal: seamless full-content correction on streaming response
+- How buffering affects `ObserveStreamDuration` and `IncStreamBackpressure` metrics
+
+### 2. Prototype
+
+`services/proxy/internal/http/stream_transform_prototype.go` — **not wired into the real path**, throwaway prototype of the token-window buffer to validate:
+
+- Buffering-vs-flush-metrics interaction against `ObserveStreamDuration`/`IncStreamBackpressure`
+- Latency impact of holding N tokens behind the live edge
+- Whether flush semantics (flush-per-event from ADR-0027) are compatible with the window approach
+
+---
+
+## Working notes
+
+Preferred starting points and open questions — situational, and expected to evolve with further research during implementation.
+
+### What the prototype must measure
+
+Buffering necessarily adds latency and changes backpressure characteristics. Before Phase 3 commits to the approach, the prototype must produce benchmark numbers for:
+
+1. **Added TTFB** from buffering (client sees first bytes N-token-window later than provider TTFB)
+2. **Backpressure effect** — does buffering cause the proxy to stop reading from the provider? This would affect provider-side request queueing behavior.
+3. **Memory overhead** per concurrent streaming request when holding a token window
+
+These numbers belong in the ADR as constraints Phase 3 must work within.
+
+### Files
+
+```
+web/content/docs/adr/
+ 00XX-streaming-response-transformation.mdx # ADR
+services/proxy/internal/http/
+ stream_transform_prototype.go # throwaway, not wired in
+ stream_transform_prototype_test.go # benchmark
+```
+
+---
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] ADR written capturing the physical constraint, three options, recommendation, and explicit non-goals
+- [ ] ADR indexed in the ADR index
+- [ ] Prototype measures and records TTFB delta, backpressure effect, and per-request memory overhead
+- [ ] Benchmark numbers committed alongside the prototype
+- [ ] Prototype is explicitly **not** wired into the production SSE stream path (a comment at the top of the file makes this clear)
+- [ ] Phase 3 streaming stage design is now unambiguously constrained — no surprise architectural debates when implementation begins
+
+## Prerequisites
+
+- 2.5.G3.M1 (response middleware hook) — establishes the typed `ChatResponse` and pipeline pattern
+- ADR-0027 (dual-write streaming design from Phase 2)
+

@@ -1,0 +1,89 @@
+---
+title: "4.5.D.1 Cross-Track Integration Suite"
+description: "10-case integration test matrix proving fingerprinting, drift detection, and directive regression work as one composed pipeline — not just in isolation."
+summary: "10-case integration test matrix proving fingerprinting, drift detection, and directive regression work as one composed pipeline — not just in isolation."
+status: "planned"
+milestoneId: "4.5.D.1"
+track: "D"
+trackTitle: "Exit Gate"
+trackHref: "/roadmap/phase-4-5-intelligence-layer/tracks#track-d--exit-gate"
+goal: "[Track D — Exit Gate](/roadmap/phase-4-5-intelligence-layer/tracks#track-d--exit-gate)"
+estimatedEffort: "3 days"
+phase: "phase-4-5-intelligence-layer"
+fullTitle: "Milestone 4.5.D.1 — Cross-Track Integration Suite"
+---
+
+# Milestone 4.5.D.1 — Cross-Track Integration Suite
+
+**Status:** Planned  
+**Goal:** [Track D — Exit Gate](/roadmap/phase-4-5-intelligence-layer/tracks#track-d--exit-gate)  
+**Phase:** 4.5 — Intelligence Layer  
+**Estimated effort:** 3 days  
+**Track:** [Track D — Exit Gate](/roadmap/phase-4-5-intelligence-layer/tracks#track-d--exit-gate)
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+Phase 1's audit proved individual milestone checkboxes don't guarantee composed behavior works. This suite proves the full pipeline: drifted agent fingerprint → dashboard alert → linked regression run → gated promotion. Uses real Postgres + Redis via testcontainers.
+
+---
+
+## INT-4.5 Test Matrix
+
+| ID | Scenario | Assertion |
+|---|---|---|
+| INT-4.5.1 | Fresh agent, first 20 sessions | `is_baseline=True` fingerprint, no drift alert |
+| INT-4.5.2 | Stable agent, sessions 21–40 | Low/absent severity, no alert |
+| INT-4.5.3 | Injected drift at session 25 | Alert fires within one fingerprinting cycle |
+| INT-4.5.4 | Drift alert → regression from suggested-action | `submit-review` triggers against current active directive |
+| INT-4.5.5 | 2 critical-scenario failures | `promote` rejects with 403 |
+| INT-4.5.6 | Regression passes, gradual rollout | Advances only if drift/error within threshold |
+| INT-4.5.7 | Fingerprinting disabled for org | Zero fingerprint rows written |
+| INT-4.5.8 | Auth service outage during fingerprint | Worker retries, no corrupt rows |
+| INT-4.5.9 | Cross-tenant: Org A alert invisible to Org B | 403 on direct API call |
+| INT-4.5.10 | Rollout paused manually | Resumes from paused percentage, not 0 |
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Evaluation / benchmarks
+- Fingerprinting / drift
+- Directive regression / promotion
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] All 10 INT-4.5 cases pass with `pytest -m integration`, real Postgres + Redis
+- [ ] Suite runtime < 90s in CI
+- [ ] CI job `intelligence-integration` added to required checks on `main`
+
+---
+
+## Prerequisites
+
+- All Track A–C milestones complete
+

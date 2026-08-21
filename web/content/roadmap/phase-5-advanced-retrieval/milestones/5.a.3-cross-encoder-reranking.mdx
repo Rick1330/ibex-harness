@@ -1,0 +1,73 @@
+---
+title: "5.A.3 Cross-Encoder Reranking"
+description: "BAAI/bge-reranker-v2-m3 via TEI /rerank endpoint — top-50 RRF candidates reranked to top-10, with graceful degradation to RRF-fused order on timeout."
+summary: "BAAI/bge-reranker-v2-m3 via TEI /rerank endpoint — top-50 RRF candidates reranked to top-10, with graceful degradation to RRF-fused order on timeout."
+status: "planned"
+milestoneId: "5.A.3"
+track: "A"
+trackTitle: "Hybrid Retrieval"
+trackHref: "/roadmap/phase-5-advanced-retrieval/tracks#track-a--hybrid-retrieval"
+goal: "[Track A — Hybrid Retrieval](/roadmap/phase-5-advanced-retrieval/tracks#track-a--hybrid-retrieval)"
+estimatedEffort: "3 days"
+phase: "phase-5-advanced-retrieval"
+fullTitle: "Milestone 5.A.3 — Cross-Encoder Reranking"
+---
+
+# Milestone 5.A.3 — Cross-Encoder Reranking
+
+**Status:** Planned  
+**Goal:** [Track A — Hybrid Retrieval](/roadmap/phase-5-advanced-retrieval/tracks#track-a--hybrid-retrieval)  
+**Phase:** 5 — Advanced Retrieval  
+**Estimated effort:** 3 days  
+**Track:** [Track A — Hybrid Retrieval](/roadmap/phase-5-advanced-retrieval/tracks#track-a--hybrid-retrieval)
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+Bi-encoders (embedding models) can't model query-document interaction as precisely as cross-encoders that jointly encode both. Standard two-stage IR pattern: cheap bi-encoder retrieves top-50, expensive cross-encoder reranks to top-10 for packing. Uses the same TEI runtime already adopted for embeddings.
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Hybrid retrieval
+- Memory service / repositories
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] Reranking only runs on top-50 RRF-fused candidates, never full corpus
+- [ ] P95 rerank latency for 50 candidates fits inside context-assembly deadline as explicit sub-budget
+- [ ] Retrieval-quality benchmark shows reranking improves precision@5 over RRF-only on gold set
+- [ ] Degradation ladder: reranker timeout/unavailable falls back to RRF-fused order (reuses existing degradation pattern)
+
+---
+
+## Prerequisites
+
+- Milestone 5.A.2 (Reciprocal Rank Fusion)
+- TEI runtime operational (Phase 2.5)
+

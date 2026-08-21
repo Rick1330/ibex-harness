@@ -1,0 +1,158 @@
+---
+title: "4.B.3 Rate Limit Load & Correctness Benchmark"
+description: "k6 + Go benchmark proving the Lua limiter is atomic under concurrency: 200 concurrent goroutines against a limit of 100 must admit exactly 100 and reject exactly 100 — zero over-admission tolerance."
+summary: "k6 + Go benchmark proving the Lua limiter is atomic under concurrency: 200 concurrent goroutines against a limit of 100 must admit exactly 100 and reject exactly 100 — zero over-admission tolerance."
+status: "planned"
+milestoneId: "4.B.3"
+track: "B"
+trackTitle: "Rate Limiting & Quota Enforcement"
+trackHref: "/roadmap/phase-4-multi-provider/tracks#track-b--rate-limiting--quota-enforcement"
+goal: "[Track B — Rate Limiting & Quota Enforcement](/roadmap/phase-4-multi-provider/tracks#track-b--rate-limiting--quota-enforcement)"
+estimatedEffort: "1 day"
+phase: "phase-4-multi-provider"
+fullTitle: "Milestone 4.B.3 — Rate Limit Load & Correctness Benchmark"
+---
+
+# Milestone 4.B.3 — Rate Limit Load & Correctness Benchmark
+
+**Status:** Planned  
+**Goal:** [Track B — Rate Limiting & Quota Enforcement](/roadmap/phase-4-multi-provider/tracks#track-b--rate-limiting--quota-enforcement)  
+**Phase:** 4 — Operator Platform & Multi-Provider  
+**Estimated effort:** 1 day  
+**Track:** [Track B — Rate Limiting & Quota Enforcement](/roadmap/phase-4-multi-provider/tracks#track-b--rate-limiting--quota-enforcement)
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+A dedicated k6 + Go benchmark scenario proves the Lua limiter is atomic under concurrency — the thing the Phase 1 version explicitly could not guarantee. This becomes a permanent regression test, not a one-time check, since a future refactor could silently reintroduce a race.
+
+The proof is simple and binary: spin up 200 concurrent goroutines hammering the same agent key with a limit of 100. Assert **exactly** 100 succeed and 100 return 429 — zero over-admission, which is only possible with the atomic script.
+
+---
+
+## Non-Goals
+
+- Latency profiling of the full proxy path (that's the Phase 2 exit benchmark)
+- Provider throughput benchmarking
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Rate limiting
+- Proxy service (HTTP, bootstrap, config)
+
+## Suggested naming (provisional)
+
+Rename freely to match the change that actually lands.
+
+- Branch: `feature/m4-b-3-rate-limit-benchmark`
+- PR title: `test(ratelimit): atomic concurrency correctness and load benchmark (m4.B.3)`
+
+## Go Concurrency Correctness Test
+
+```go
+// Illustrative — exact path may differ
+
+func TestHierarchicalLuaLimiter_ZeroOverAdmission(t *testing.T) {
+ // Spin up a real Redis via testcontainers
+ client := startTestRedis(t)
+ limiter := NewHierarchicalLuaLimiter(client, 1000 /*global*/)
+
+ const limit = 100
+ const concurrent = 200
+
+ admitted := atomic.Int64{}
+ rejected := atomic.Int64{}
+
+ var wg sync.WaitGroup
+ for i := 0; i < concurrent; i++ {
+ wg.Add(1)
+ go func() {
+ defer wg.Done()
+ req := RateLimitRequest{
+ OrgID: "test-org",
+ AgentID: "test-agent",
+ AgentLimit: limit,
+ OrgLimit: limit * 10,
+ WindowSecs: 60,
+ }
+ ok, _ := limiter.Allow(context.Background(), req)
+ if ok {
+ admitted.Add(1)
+ } else {
+ rejected.Add(1)
+ }
+ }()
+ }
+ wg.Wait()
+
+ assert.Equal(t, int64(limit), admitted.Load(), "must admit exactly %d", limit)
+ assert.Equal(t, int64(concurrent-limit), rejected.Load(), "must reject exactly %d", concurrent-limit)
+}
+```
+
+---
+
+## k6 Load Scenario
+
+```javascript
+// benchmarks/k6/ratelimit-load.js
+// Tests rate-limit overhead on the proxy's hot path under sustained load.
+// Expects: p99 rate-limit check overhead < 5ms (the Phase 2 budget target)
+
+import http from 'k6/http';
+import { check } from 'k6';
+
+export const options = {
+ scenarios: {
+ sustained: {
+ executor: 'constant-vus',
+ vus: 50,
+ duration: '60s',
+ }
+ },
+ thresholds: {
+ // Rate-limit check must add < 5ms to proxy overhead (Phase 2 budget preserved)
+ 'http_req_duration{tag:stage:ratelimit}': ['p(99)<5'],
+ },
+};
+```
+
+---
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] Cross-tenant isolation test passes in CI with a real Redis container: exactly 100 admitted, exactly 100 rejected
+- [ ] K6 scenario confirms rate-limit check adds < 5ms at p99 (preserving Phase 2 proxy overhead budget)
+- [ ] Test added to `make test-integration` — it is a permanent regression gate, not a one-time benchmark
+- [ ] Fail-open behavior on Redis outage verified unchanged via existing cross-tenant isolation test-style integration test
+
+## Prerequisites
+
+- M4.B.1 Lua limiter merged
+

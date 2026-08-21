@@ -47,50 +47,47 @@ The LLM Proxy and Context Assembly are latency-sensitive. Everything else must b
 
 ## 3) Repository Structure (Monorepo)
 
-Target structure (actual may evolve, but changes must be deliberate):
+Current and planned layout (see [`services/README.md`](../../services/README.md),
+[`packages/README.md`](../../packages/README.md), [`FILE_STRUCTURE.md`](FILE_STRUCTURE.md)):
 
 ```text
 ibex-harness/
-  services/                 # deployable services
-    proxy/                  # Go
-    auth/                   # Go
-    api/                    # Python FastAPI (management plane)
-    memory/                 # Python FastAPI (memory CRUD/search)
-    context/                # Python gRPC (context assembly)
-    embedder/               # Python FastAPI (embedding)
-    worker/                 # Python Celery workers
-    dashboard/              # Next.js (TypeScript)
+  services/                 # deployable processes
+    proxy/                  # Go — shipped (Phase 2); grows in 2.5+
+    auth/                   # Go — shipped (Phase 2); grows in 4
+    embedder/               # Python — planned 2.5
+    tokenizer-service/      # Python — planned 2.5 (situational)
+    mcp-memory/             # Python — MCP tools (2.5 → 3.5)
+    memory/                 # Python — planned 3
+    worker/                 # Python Celery — planned 3.5+
+    context/                # Python gRPC — planned 3.5
+    api/                    # Python FastAPI — planned 4
+    dashboard/              # Next.js — planned 4
 
-  packages/                 # shared artifacts + SDKs
-    proto/                  # protobuf definitions (source of truth)
-    sdk-python/
-    sdk-typescript/
-    sdk-go/
-    cli/                    # Go CLI
+  packages/                 # shared libraries + contracts
+    proto/                  # protobuf source of truth
+    provider/               # LLM providers (extends in 2.5+)
+    # planned: tokenizer/, responsepipeline/, embedder/, contextclient/, circuitbreaker/
+    # planned SDKs/CLI: sdk-python/, sdk-typescript/, sdk-go/, cli/
 
   infra/
-    compose/                # local/dev/test compose files
-    docker/                 # Dockerfiles + build assets
-    k8s/                    # raw manifests (if any)
-    helm/                   # Helm charts for deployment
-    terraform/              # IaC
-    monitoring/             # Prometheus/Grafana/Loki/Tempo configs
+    compose/                # local/dev/test compose
+    migrations/             # Postgres + ClickHouse
+    scripts/                # operational helpers
+    # planned: docker/, helm/, terraform/, monitoring/
 
-  docs/
-    PROJECT_CONTEXT.md
-    ARCHITECTURE.md
-    TECH_STACK.md
-    API_DOCUMENTATION.md
-    DATABASE_SCHEMA.md
-    CODING_STANDARDS.md
-    SECURITY.md
-    TESTING_STRATEGY.md
-    PERFORMANCE.md
-    MONITORING.md
-    adr/                    # README pointer → web/content/docs/adr/
+  benchmarks/               # proxy/load pipeline (retrieval eval later)
+  web/
+    content/docs/           # public /docs + ADRs
+    content/roadmap/        # public /roadmap (redesigned phases 0–5)
+    engineering/            # living engineering docs (this guide lives here)
 ```
 
-**Rule:** Don’t invent new top-level directories casually. If you need one, justify it with an ADR.
+**Rule:** Don’t invent new top-level directories casually. If you need one, justify it with an ADR and update the inventories above.
+
+**Living docs:** When roadmap phase scope or service/package inventory changes, update
+`web/content/roadmap/`, `services/README.md`, `packages/README.md`, and the affected files under
+`web/engineering/` in the same change set (or an immediately follow-up docs PR).
 
 ---
 

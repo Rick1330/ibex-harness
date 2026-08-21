@@ -1,0 +1,154 @@
+---
+title: "2.5.G2.M1 Tokenizer registry"
+description: "Any token-budget math done with tiktoken (OpenAI's tokenizer) will be wrong for every open-weight model — different vocabulary, different merge rules, different special tokens. Build the tokenizer registry before Phase 3's context-assembly engine is built against it."
+summary: "Any token-budget math done with tiktoken (OpenAI's tokenizer) will be wrong for every open-weight model — different vocabulary, different merge rules, different special tokens. Build the tokenizer registry before Phase 3's context-assembly engine is built against it."
+status: "planned"
+milestoneId: "2.5.G2.M1"
+track: "B"
+trackTitle: "Tokenizer Registry"
+trackHref: "/roadmap/phase-2-5-provider-generalization/tracks#track-b--tokenizer-registry"
+goal: "[Track B — Tokenizer Registry](/roadmap/phase-2-5-provider-generalization/tracks#track-b--tokenizer-registry)"
+estimatedEffort: "3–4 days"
+phase: "phase-2-5-provider-generalization"
+fullTitle: "Milestone 2.5.G2.M1 — Tokenizer Registry"
+---
+
+# Milestone 2.5.G2.M1 — Tokenizer Registry
+
+**Status:** Planned  
+**Goal:** [Track B — Tokenizer Registry](/roadmap/phase-2-5-provider-generalization/tracks#track-b--tokenizer-registry)  
+**Phase:** 2.5 — Provider Generalization & Foundation  
+**Estimated effort:** 3–4 days
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+Token-budget math done with `tiktoken` (OpenAI's tokenizer) will be wrong for open-weight models — different vocabulary, merge rules, and special tokens. If this stays unfixed before Phase 3 context assembly is built, the budget calculator can silently overflow or waste context on non-OpenAI models.
+
+---
+
+## Non-Goals
+
+- Full token-ID retrieval (only token counts needed in proxy hot path)
+- Streaming tokenization mid-response
+- Per-user tokenizer customization
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Tokenizer registry / counting
+- Provider abstraction / adapters
+
+## Suggested naming (provisional)
+
+Rename freely to match the change that actually lands.
+
+- Branch: `feature/m2-5-g2-m1-tokenizer-registry`
+- PR title: `feat(proxy): tokenizer registry for per-model accurate token counting (m2.5.G2.M1)`
+
+## What Hugging Face `tokenizers` Actually Is
+
+It's a Rust library (with Python and no first-class Go bindings) that implements the exact same BPE/WordPiece/Unigram tokenization algorithms used to train and run open-weight models — the key property is it loads a model's **actual `tokenizer.json`** (published alongside every Hugging Face model) and reproduces token counts *exactly* as that model sees them, rather than approximating with a different vocabulary.
+
+---
+
+## Options under consideration
+
+Ranked starting preferences only — reopen if research or constraints point elsewhere.
+
+The proxy is Go; `tokenizers` is Rust/Python. Three implementation paths (ranked by accuracy-first for production):
+
+1. **Run a tiny tokenizer microservice in Python** (FastAPI + `tokenizers` library), analogous to the embedding service — `POST /tokenize {model, text} -> {token_count}` / `{token_ids}`. Simple, consistent with the existing Python-service pattern for Phase 3, adds one more network hop.
+
+2. **Use `tokenizers`' Rust core via CGo bindings** (community Go bindings, e.g. `github.com/daulet/tokenizers`, wrap the Rust library through FFI) — keeps counting in-process in the Go proxy and avoids the network hop, but adds a CGo build dependency (cross-compilation is harder; the Rust shared library should be available at build/deploy time).
+
+3. **Approximate in pure Go** using a rough heuristic (chars/4, or a bundled BPE re-implementation) — usually not preferred when token-budget accuracy matters. If used for early prototyping, treat it as interim until ground-truth vectors show acceptable error bounds.
+
+**Initial preference:** dual-path. Use CGo in the proxy for pre-flight checks (to stay within the `&lt;20ms` proxy overhead budget) and use the Python tokenizer service for Phase 3's context-assembly engine (already Python, already calling services over the network). If minimizing CGo build complexity matters, start with only the Python service and revisit the CGo path after deployment constraints are clearer.
+
+---
+
+## Working notes
+
+Preferred starting points and open questions — situational, and expected to evolve with further research during implementation.
+
+### Load once at startup
+
+Load each tokenizer once at startup, keyed by `TokenizerFamily` from the capability registry (milestone 2.5.G1.M2). Cache the `tokenizer.json` files locally (bundled in the image or fetched once at build time) so token counting does not depend on network access to Hugging Face at runtime, which matters for air-gapped/self-hosted deployments.
+
+### Tokenizer interface
+
+```go
+// Illustrative — exact path may differ
+type Tokenizer interface {
+ // Count returns the number of tokens in text for the given model.
+ // Returns an error if the model is unknown or the tokenizer fails.
+ Count(ctx context.Context, model, text string) (int, error)
+}
+
+// Registry maps TokenizerFamily -> Tokenizer implementation.
+type Registry struct { ... }
+
+func (r *Registry) For(family string) (Tokenizer, error)
+```
+
+### Ground-truth verification
+
+For every tokenizer family, include a test vector table:
+
+```go
+// hf_cgo_test.go
+var countTests = []struct {
+ family string
+ text string
+ want int
+}{
+ {"llama3", "Hello world", 3},
+ // ...
+}
+```
+
+Vectors sourced from running the actual model's tokenizer offline and committing the expected counts.
+
+---
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- Token counting is selectable by tokenizer family (not a single OpenAI vocabulary for every model)
+- OpenAI families used in production have accurate counts against known vectors
+- At least one open-weight family is covered by whatever path implementation chooses (in-process, service, or other)
+- Counts match offline ground-truth vectors for each supported family
+- Runtime does not depend on live Hugging Face downloads for counting
+- Missing / unknown family fails clearly rather than silently approximating
+- Tests cover the counting path(s) that land
+- Repo guards / CI checks still pass
+
+## Prerequisites
+
+- 2.5.G1.M2 (model capability registry) — `TokenizerFamily` field provides the registry key
+

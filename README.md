@@ -29,7 +29,7 @@
 
 ## Current status
 
-Phases **0–2 are complete** (auth, proxy, shared Go packages, docs site). Python memory/context/workers and the operator dashboard are **Phase 3+**. See [roadmap current state](https://ibexharness.com/roadmap/current-state).
+Phases **0–2 are complete** (auth, proxy, shared Go packages, docs site). **Phase 2.5** (provider generalization, tokenizer, response pipeline, embedder, schema pre-work, MCP skeleton) is next. Memory substrate is Phase **3**; extraction/context assembly are Phase **3.5**; operator platform is Phase **4**; intelligence is Phase **4.5**; advanced retrieval is Phase **5**. See [roadmap current state](https://ibexharness.com/roadmap/current-state).
 
 ## Quick start
 

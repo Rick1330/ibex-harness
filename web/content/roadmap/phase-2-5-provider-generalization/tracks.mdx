@@ -1,0 +1,71 @@
+---
+title: "Phase 2.5 — Tracks"
+description: "Six execution tracks for provider generalization."
+phase: "phase-2-5-provider-generalization"
+---
+
+# Phase 2.5 — Tracks
+
+<Callout type="note" title="Planning baseline">
+  Tracks group milestones for planning. Preferred sequencing below is not a rigid schedule.
+  Paths, libraries, and designs on linked milestone pages are orientation sketches — implementation
+  is expected to require further research and may diverge.
+</Callout>
+
+## Track A — Multi-Provider Adapters
+
+Prove the `Provider` interface generalizes beyond OpenAI by implementing structurally different providers.
+
+**Preferred sequencing within track:** `2.5.G1.M1 → 2.5.G1.M2 → 2.5.G1.M3`
+
+**Related tracks:** Track B uses `TokenizerFamily` from the capability registry.
+
+- [2.5.G1.M1 — Anthropic Provider Adapter](/roadmap/phase-2-5-provider-generalization/milestones/2.5.g1.m1-anthropic-provider-adapter)
+- [2.5.G1.M2 — Model Capability Registry](/roadmap/phase-2-5-provider-generalization/milestones/2.5.g1.m2-model-capability-registry)
+- [2.5.G1.M3 — Self-Hosted LLM Adapter](/roadmap/phase-2-5-provider-generalization/milestones/2.5.g1.m3-self-hosted-llm-adapter)
+
+## Track B — Tokenizer Registry
+
+Accurate token counting across provider-specific tokenizers, required for downstream budget calculation.
+
+**Preferred sequencing within track:** single milestone; depends on Track A capability registry for `TokenizerFamily`.
+
+- [2.5.G2.M1 — Tokenizer Registry](/roadmap/phase-2-5-provider-generalization/milestones/2.5.g2.m1-tokenizer-registry)
+
+## Track C — Response-Side Processing Pipeline
+
+Typed response decode/re-encode pipeline enabling post-provider processing stages (usage normalization, metadata injection).
+
+**Preferred sequencing within track:** `2.5.G3.M1 → 2.5.G3.M2` (streaming is design/spike after non-streaming seam)
+
+- [2.5.G3.M1 — Response Middleware Hook](/roadmap/phase-2-5-provider-generalization/milestones/2.5.g3.m1-response-middleware-hook)
+- [2.5.G3.M2 — Streaming Response Pipeline Design](/roadmap/phase-2-5-provider-generalization/milestones/2.5.g3.m2-streaming-response-pipeline-design)
+
+## Track D — Pluggable Embedding Service
+
+Abstract embedding behind a backend interface so the memory system can swap models without changing callers. Profile choice is a deployment setting; dimensionalities are not interchangeable without migration.
+
+**Preferred sequencing within track:** `2.5.G4.M1 → 2.5.G4.M2 / 2.5.G4.M3 → 2.5.G4.M4`
+
+- [2.5.G4.M1 — Embedder Interface & Registry](/roadmap/phase-2-5-provider-generalization/milestones/2.5.g4.m1-embedder-interface-registry)
+- [2.5.G4.M2 — TEI Backend](/roadmap/phase-2-5-provider-generalization/milestones/2.5.g4.m2-tei-backend)
+- [2.5.G4.M3 — Hosted API Backend](/roadmap/phase-2-5-provider-generalization/milestones/2.5.g4.m3-hosted-api-backend)
+- [2.5.G4.M4 — Content-Hash Embedding Cache](/roadmap/phase-2-5-provider-generalization/milestones/2.5.g4.m4-content-hash-embedding-cache)
+
+## Track E — Schema Pre-Work
+
+Migration-only, additive schema changes preparing Postgres for Phase 3's write pipeline — temporal validity, multi-label categories, relationship graph indexes. Migration sketches on linked milestones are orientation only and may change during schema work.
+
+**Preferred sequencing within track:** `2.5.G5.M1 → 2.5.G5.M2 → 2.5.G5.M3` (can run in parallel with Tracks A/B)
+
+- [2.5.G5.M1 — Temporal Validity Columns](/roadmap/phase-2-5-provider-generalization/milestones/2.5.g5.m1-temporal-validity-columns)
+- [2.5.G5.M2 — Multi-Label Category Support](/roadmap/phase-2-5-provider-generalization/milestones/2.5.g5.m2-multi-label-category-support)
+- [2.5.G5.M3 — Relationship Graph Readiness](/roadmap/phase-2-5-provider-generalization/milestones/2.5.g5.m3-relationship-graph-readiness)
+
+## Track F — MCP Server Skeleton
+
+Auth-boundary-scoped MCP server with stub tools, proving the OAuth flow and audit-log wiring before Phase 3's real memory service exists.
+
+**Preferred sequencing within track:** single milestone; prefer after Track A auth/provider patterns are stable.
+
+- [2.5.G6.M1 — MCP Server Skeleton](/roadmap/phase-2-5-provider-generalization/milestones/2.5.g6.m1-mcp-server-skeleton)

@@ -1,0 +1,72 @@
+---
+title: "5.C.1 Hybrid-Aware Gold Set v2"
+description: "~500 memories, 150 labeled queries with lexical and graph subsets — designed to distinguish hybrid retrieval from dense-only. Two labelers, kappa &gt;= 0.8."
+summary: "~500 memories, 150 labeled queries with lexical and graph subsets — designed to distinguish hybrid retrieval from dense-only. Two labelers, kappa &gt;= 0.8."
+status: "planned"
+milestoneId: "5.C.1"
+track: "C"
+trackTitle: "Evaluation Harness Upgrade"
+trackHref: "/roadmap/phase-5-advanced-retrieval/tracks#track-c--evaluation-harness-upgrade"
+goal: "[Track C — Evaluation Harness Upgrade](/roadmap/phase-5-advanced-retrieval/tracks#track-c--evaluation-harness-upgrade)"
+estimatedEffort: "4 days"
+phase: "phase-5-advanced-retrieval"
+fullTitle: "Milestone 5.C.1 — Hybrid-Aware Gold Set v2"
+---
+
+# Milestone 5.C.1 — Hybrid-Aware Gold Set v2
+
+**Status:** Planned  
+**Goal:** [Track C — Evaluation Harness Upgrade](/roadmap/phase-5-advanced-retrieval/tracks#track-c--evaluation-harness-upgrade)  
+**Phase:** 5 — Advanced Retrieval  
+**Estimated effort:** 4 days  
+**Track:** [Track C — Evaluation Harness Upgrade](/roadmap/phase-5-advanced-retrieval/tracks#track-c--evaluation-harness-upgrade)
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+Phase 3's gold set only covers dense vector search. Track A added BM25 fusion and reranking, Track B added graph traversal — neither has a regression gate without a purpose-built evaluation corpus. This is the proof that new retrieval modes earn their complexity.
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Evaluation / benchmarks
+- Hybrid retrieval
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] At least 30 queries in `lexical_queries.jsonl` where dense-only scores measurably worse than hybrid
+- [ ] At least 20 queries in `graph_queries.jsonl` requiring relationship traversal to answer correctly
+- [ ] Two independent human labelers; agreement rate ≥0.8 Cohen's kappa documented
+
+---
+
+## Prerequisites
+
+- Milestone 5.A.2 (RRF operational for baseline comparison)
+- Milestone 5.B.1 (Graph traversal for graph queries)
+

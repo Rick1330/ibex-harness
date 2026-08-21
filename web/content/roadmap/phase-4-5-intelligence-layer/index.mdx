@@ -1,0 +1,73 @@
+---
+title: "Phase 4.5"
+description: "Phase 4.5 makes IBEX observably trustworthy over time: behavioral fingerprinting, drift detection with calibrated statistical methodology, and directive regression testing with LLM-judge evaluation."
+summary: "Phase 4.5 makes IBEX observably trustworthy over time: behavioral fingerprinting, drift detection with calibrated statistical methodology, and directive regression testing with LLM-judge evaluation."
+status: "planned"
+phase: "phase-4-5-intelligence-layer"
+fullTitle: "Phase 4.5 — Intelligence Layer"
+---
+
+# Phase 4.5 — Intelligence Layer
+
+<Callout type="note" title="Planning baseline">
+  Paths, libraries, schemas, and sequencing on this phase are orientation for planning.
+  Implementation is expected to require further research and may land differently than any sketch.
+</Callout>
+
+<Callout type="info" title="Intelligence features live here">
+ Behavioral fingerprinting, drift detection, and directive regression testing — originally planned
+ for a separate Phase 6 — are all in this phase, redesigned with calibrated statistical methodology
+ (KS tests, ADWIN, Jensen-Shannon divergence).
+</Callout>
+
+<Callout type="info" title="Entry condition">
+ **Phase 4 is complete.** Dashboard live, multi-provider live, hierarchical rate limiting live.
+</Callout>
+
+## What Phase 4.5 Delivers
+
+This phase makes IBEX **observably trustworthy over time**. It does not change what an agent sees
+on any single request (no hot-path injection changes) — it only watches, measures, and alerts.
+Nothing here can change agent behavior automatically in this phase; auto-remediation is an explicit
+non-goal until the statistical methodology has a track record.
+
+### What changed from the original design
+
+The original design had five statistical problems this redesign fixes:
+
+1. **Z-score assumes Gaussian distributions** — token counts and response lengths are right-skewed. Replaced with Kolmogorov-Smirnov tests on t-digest quantile sketches.
+2. **Static baseline cannot distinguish gradual drift from sudden regression** — replaced with `river`'s ADWIN (Adaptive Windowing) detector.
+3. **Single embedding centroid smears multi-modal behavior** — replaced with k-means sub-clusters per window.
+4. **KL divergence is undefined on zero-probability events** — replaced with Jensen-Shannon divergence with Laplace smoothing.
+5. **Auto-suspend on uncalibrated thresholds** — replaced with a staged rollout (shadow → notify-only → auto-suspend opt-in).
+
+## Phase 4.5 Tracks
+
+| Track | Theme | Key Milestones |
+|---|---|---|
+| A | Behavioral Fingerprint Computation | 4.5.A.1 (feature extraction with t-digest/clustering), 4.5.A.2 (schema migration), 4.5.A.3 (trigger scheduling) |
+| B | Drift Detection Engine | 4.5.B.1 (distribution-aware drift tests), 4.5.B.2 (threshold calibration), 4.5.B.3 (severity aggregation + staged action ladder) |
+| C | Directive Regression Testing | 4.5.C.1 (scenario management), 4.5.C.2 (regression runner with LLM judge), 4.5.C.3 (promotion gate + gradual rollout), 4.5.C.4 (dashboard integration) |
+| D | Exit Gate | 4.5.D.1 (cross-track integration tests INT-4.5.*), 4.5.D.2 (e2e + Playwright), 4.5.D.3 (benchmark sign-off), 4.5.D.4 (gap register) |
+
+## Key Design Decisions
+
+- **Quantile sketches (t-digest):** Store distribution shape, not just mean/std. Enables KS-test comparison instead of z-score.
+- **Jensen-Shannon divergence:** Symmetric, bounded, no infinite-blowup on new tool types. Laplace smoothing eliminates zero-probability edge cases.
+- **Multi-centroid clusters:** k-means with k=3–5 per window (silhouette-selected). Detects "new behavior mode appeared" directly.
+- **ADWIN (Adaptive Windowing):** From the `river` library. Automatically maintains variable-size window and flags drift with proven false-positive rate bound.
+- **Calibrated thresholds:** Not arbitrary constants. Calibration procedure targets &lt;=2% false-positive rate per week per agent, documented in ADR.
+- **Staged action ladder:** Shadow (mandatory 30 days) → Notify-only (opt-in) → Auto-suspend (opt-in, off by default). Auto-remediation never a global default.
+- **Regression runner routes through real proxy:** Tests the exact injection/formatting/token-budget code path, not a bespoke harness.
+- **LLM judge majority vote (3 runs):** Non-deterministic judges need repeated evaluation. Judge disagreement rate tracked as its own metric.
+
+## Exit Criteria
+
+1. Gap register published, zero open P0 gaps
+2. All 10 INT-4.5 integration cases pass with real containers
+3. `intelligence-integration` CI check required on `main`
+4. Cross-tenant isolation independently verified for fingerprint/drift tables
+5. Fingerprint/drift computation stays fully off the proxy hot path (benchmarked)
+6. All Phase 1–4 regression suites still green
+7. Dashboard Playwright flow (drift alert → regression → promotion) green
+8. `current-state.mdx` and roadmap snapshot updated
