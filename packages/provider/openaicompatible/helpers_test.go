@@ -60,7 +60,7 @@ func completeHi(c *Client) (provider.Response, error) {
 	})
 }
 
-func requireProviderReason(t *testing.T, err error, want string) *provider.ProviderError {
+func requireProviderReason(t *testing.T, err error, want string) {
 	t.Helper()
 	var pe *provider.ProviderError
 	if !errors.As(err, &pe) {
@@ -69,5 +69,4 @@ func requireProviderReason(t *testing.T, err error, want string) *provider.Provi
 	if pe.Reason != want {
 		t.Fatalf("Reason=%q want %q", pe.Reason, want)
 	}
-	return pe
 }
