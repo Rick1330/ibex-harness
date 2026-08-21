@@ -1,0 +1,105 @@
+---
+title: "3.D.2 Composite scoring v2 (category-conditional decay)"
+description: "Fix the recency-decay bug — replace the single fixed 14-day half-life with a per-category half-life table so factual/procedural memories don't decay as fast as episodic ones."
+summary: "Fix the recency-decay bug — replace the single fixed 14-day half-life with a per-category half-life table so factual/procedural memories don't decay as fast as episodic ones."
+status: "planned"
+milestoneId: "3.D.2"
+track: "D"
+trackTitle: "Read/Ranking Pipeline"
+trackHref: "/roadmap/phase-3-memory-engine/tracks#track-d--readranking-pipeline"
+goal: "[Track D — Read/Ranking Pipeline](/roadmap/phase-3-memory-engine/tracks#track-d--readranking-pipeline)"
+estimatedEffort: "2 days"
+phase: "phase-3-memory-engine"
+fullTitle: "Milestone 3.D.2 — Composite Scoring v2 (Category-Conditional Decay)"
+---
+
+# Milestone 3.D.2 — Composite Scoring v2 (Category-Conditional Decay)
+
+**Status:** Planned  
+**Goal:** [Track D — Read/Ranking Pipeline](/roadmap/phase-3-memory-engine/tracks#track-d--readranking-pipeline)  
+**Phase:** 3 — Core Memory Substrate  
+**Estimated effort:** 2 days
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+A single fixed 14-day half-life applied to every category is wrong for `factual`/`procedural` memories, which shouldn't meaningfully decay over weeks the way `episodic` memories should. This milestone fixes the `recency_score` component only — the composite formula structure and weights (0.40/0.25/0.20/0.10/0.05) are unchanged.
+
+---
+
+## Non-Goals
+
+- Changing the composite formula weights (validated separately in Phase 3.5's benchmark)
+- Introducing a relevance gate (that's Phase 3.5, milestone 3.5.C.3)
+- Changing any scoring component other than recency
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Memory service / repositories
+- Vector store / search
+- Caching / Redis
+
+## Suggested naming (provisional)
+
+Rename freely to match the change that actually lands.
+
+- Branch: `feature/m3-d-2-composite-scoring-v2`
+- PR title: `feat(memory): category-conditional recency decay in composite scorer (m3.D.2)`
+
+## Working notes
+
+Preferred starting points and open questions — situational, and expected to evolve with further research during implementation.
+
+### Per-category half-life table
+
+```python
+CATEGORY_HALF_LIFE_DAYS: Final[dict[str, float]] = {
+ "factual": 180.0, # facts decay slowly
+ "procedural": 120.0, # how-to knowledge is durable
+ "preference": 45.0, # preferences drift moderately
+ "behavioral": 30.0, # patterns can shift faster
+ "episodic": 14.0, # events are most time-sensitive (original constant, now scoped correctly)
+}
+```
+
+The half-life table should be data (config-driven), not hardcoded per-branch logic — trivially tunable without a redeploy if backed by environment variables.
+
+---
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] Formula weights unchanged (0.40/0.25/0.20/0.10/0.05) — only recency component is category-conditional
+- [ ] Regression test proves the specific bug (old factual outranked by fresh episodic of equal relevance) is fixed
+- [ ] Half-life table is data, not hardcoded per-branch logic — trivially tunable without a redeploy if backed by config
+- [ ] Repo guards / CI checks still pass
+
+## Prerequisites
+
+- Milestone 3.D.1 (semantic search read path)
+

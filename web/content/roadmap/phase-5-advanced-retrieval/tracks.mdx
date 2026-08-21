@@ -1,0 +1,82 @@
+---
+title: "Tracks"
+description: "Phase 5 tracks for hybrid retrieval, graph-aware retrieval, evaluation, and exit gate."
+phase: "phase-5-advanced-retrieval"
+---
+
+# Phase 5 — Tracks
+
+<Callout type="note" title="Planning baseline">
+  Tracks group milestones for planning. Preferred sequencing below is not a rigid schedule.
+  Paths, libraries, and designs on linked milestone pages are orientation sketches — implementation
+  is expected to require further research and may diverge.
+</Callout>
+
+Phase 5 is organized into four tracks. Paths and libraries named below are planning defaults and may
+change after measurement or further investigation.
+
+---
+
+## Track A — Hybrid Retrieval
+
+**Purpose:** Close the exact-match gap of pure dense retrieval by adding a parallel BM25 channel,
+fusing dense and sparse rankings with Reciprocal Rank Fusion, then optionally reranking a bounded
+candidate set with a cross-encoder.
+
+**Preferred sequencing within track:** `5.A.1 → 5.A.2 → 5.A.3`
+
+**Related tracks:** Track C evaluates whether hybrid and reranked modes beat dense-only.
+
+**Milestones:**
+
+- [5.A.1 — BM25 Sparse Retrieval](/roadmap/phase-5-advanced-retrieval/milestones/5.a.1-bm25-sparse-retrieval)
+- [5.A.2 — Reciprocal Rank Fusion](/roadmap/phase-5-advanced-retrieval/milestones/5.a.2-reciprocal-rank-fusion)
+- [5.A.3 — Cross-Encoder Reranking](/roadmap/phase-5-advanced-retrieval/milestones/5.a.3-cross-encoder-reranking)
+
+---
+
+## Track B — Graph-Aware Retrieval
+
+**Purpose:** Use the existing `memory_relationships` table at query time for lineage, supersession,
+and contradiction awareness — starting with Postgres recursive CTEs rather than a separate graph DB.
+
+**Preferred sequencing within track:** `5.B.1 → 5.B.2 → 5.B.3`
+
+**Related tracks:** Track A produces the candidate set; Track C includes graph-specific eval queries.
+
+**Milestones:**
+
+- [5.B.1 — Graph Traversal Query Layer](/roadmap/phase-5-advanced-retrieval/milestones/5.b.1-graph-traversal-query-layer)
+- [5.B.2 — Graph-Boosted Scoring](/roadmap/phase-5-advanced-retrieval/milestones/5.b.2-graph-boosted-scoring)
+- [5.B.3 — MCP get_memory_lineage Tool](/roadmap/phase-5-advanced-retrieval/milestones/5.b.3-mcp-get-memory-lineage)
+
+---
+
+## Track C — Evaluation Harness Upgrade
+
+**Purpose:** Keep retrieval quality measurable as hybrid and graph features land — gold-set v2,
+side-by-side mode comparison, and optional production shadow sampling.
+
+**Preferred sequencing within track:** `5.C.1 → 5.C.2 → 5.C.3` (5.C.3 can start after 5.C.2 once live configs exist)
+
+**Related tracks:** Depends on Tracks A and B being far enough along to exercise real configs.
+
+**Milestones:**
+
+- [5.C.1 — Hybrid-Aware Gold Set v2](/roadmap/phase-5-advanced-retrieval/milestones/5.c.1-hybrid-aware-gold-set-v2)
+- [5.C.2 — Multi-Mode Benchmark Runner](/roadmap/phase-5-advanced-retrieval/milestones/5.c.2-multi-mode-benchmark-runner)
+- [5.C.3 — Production Shadow Evaluation](/roadmap/phase-5-advanced-retrieval/milestones/5.c.3-production-shadow-evaluation)
+
+---
+
+## Track D — Exit Gate
+
+**Purpose:** Sign off retrieval quality and publish the Phase 5 gap register before declaring the
+phase complete.
+
+**Preferred sequencing within track:** `5.D.1 → 5.D.2`
+
+**Milestones:**
+
+- [5.D.1 — Retrieval Quality Sign-off](/roadmap/phase-5-advanced-retrieval/milestones/5.d.1-retrieval-quality-sign-off)
+- [5.D.2 — Phase 5 Exit Audit](/roadmap/phase-5-advanced-retrieval/milestones/5.d.2-phase5-exit-audit)

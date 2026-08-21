@@ -1,0 +1,105 @@
+---
+title: "3.E.5 Phase 3 exit audit document"
+description: "Standalone gap register with severity-tiered (P0–P3) tracking, following the Phase 1 exit-audit precedent. Covers schema drift, HNSW tuning evidence, PII false-negative rates, and benchmark baseline staleness."
+summary: "Standalone gap register with severity-tiered (P0–P3) tracking, following the Phase 1 exit-audit precedent. Covers schema drift, HNSW tuning evidence, PII false-negative rates, and benchmark baseline staleness."
+status: "planned"
+milestoneId: "3.E.5"
+track: "E"
+trackTitle: "Exit Gate"
+trackHref: "/roadmap/phase-3-memory-engine/tracks#track-e--exit-gate"
+goal: "[Track E — Exit Gate](/roadmap/phase-3-memory-engine/tracks#track-e--exit-gate)"
+estimatedEffort: "1 day"
+phase: "phase-3-memory-engine"
+fullTitle: "Milestone 3.E.5 — Phase 3 Exit Audit Document"
+---
+
+# Milestone 3.E.5 — Phase 3 Exit Audit Document
+
+**Status:** Planned  
+**Goal:** [Track E — Exit Gate](/roadmap/phase-3-memory-engine/tracks#track-e--exit-gate)  
+**Phase:** 3 — Core Memory Substrate  
+**Estimated effort:** 1 day
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+Following the Phase 1 precedent exactly — a standalone gap register with severity tiers, not folded into the roadmap page.
+
+---
+
+## Document Structure
+
+```
+web/engineering/archive/0XX-phase3-exit-audit.md
+
+## Severity definitions (unchanged from Phase 1 precedent)
+P0 — Blocker, should be green before Phase 3.5
+P1 — High, fix at exit gate or immediately after
+P2 — Hygiene, fix before phase sign-off PR
+P3 — Defer, document as Phase 3.5+, not hidden
+```
+
+### Audit scope (Tracks A–E)
+
+- **Track A/B gaps:** schema drift between migration files and `DATABASE_SCHEMA.md`, HNSW parameter tuning evidence completeness
+- **Track C/D gaps:** PII detector false-negative rate on the labeled test set, conflict-detection precision on ambiguous cases
+- **Track E gaps:** any ISO-* test flakiness, benchmark baseline staleness
+
+---
+
+## Phase 3 Exit Criteria (Final Consolidated List)
+
+1. Memory write pipeline (9 steps) passes all unit + ISO-* integration tests
+2. HNSW recall@10 ≥ 98% and p99 < 100ms at 1M-row benchmark scale
+3. Temporal-interval-aware conflict detection correctly distinguishes sequential-fact vs. true-contradiction cases, with zero unnecessary LLM calls on non-overlapping intervals
+4. Retrieval-quality benchmark running in CI with a committed baseline
+5. `search_memory`/`write_memory` MCP tools function end-to-end with full ClickHouse tracing
+6. All 10+ ISO-* cross-tenant isolation cases pass, including the `memory_relationships` cross-org edge case
+7. GDPR delete cascade verified end-to-end, including the MinIO-partial-failure orphan-detection path
+8. All Phase 1 and Phase 2 security regression tests still pass with zero regressions
+9. `make e2e-smoke-p3-memory` exits 0
+10. ADR-0040 through ADR-0044 published and cross-linked
+11. **No proxy hot-path changes** — explicitly re-verified, since that's Phase 3.5's boundary
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Evaluation / benchmarks
+- Memory service / repositories
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] Exit audit document committed with all severity-tiered gaps populated
+- [ ] All P0 items resolved before Phase 3.5 begins
+- [ ] Exit criteria list verified against actual test/benchmark results
+- [ ] Repo guards / CI checks still pass
+
+## Prerequisites
+
+- Milestones 3.E.1–3.E.4
+

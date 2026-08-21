@@ -1,0 +1,25 @@
+---
+title: "Phase 4 — Risks and Mitigations"
+description: "Risks for the management API, hierarchical rate limiting, multi-provider routing, and dashboard delivery."
+summary: "Risks for the management API, hierarchical rate limiting, multi-provider routing, and dashboard delivery."
+phase: "phase-4-multi-provider"
+---
+
+# Phase 4 — Risks and Mitigations
+
+<Callout type="note" title="Planning baseline">
+  Paths, libraries, schemas, and sequencing on this phase are orientation for planning.
+  Implementation is expected to require further research and may land differently than any sketch.
+</Callout>
+
+| Risk | Area | Likelihood | Impact | Mitigation |
+| --- | --- | --- | --- | --- |
+| Rate-limiter correctness bugs under concurrency | 4.B.x | Medium | High | Keep Lua logic small, benchmark with real Redis under contention, and make zero-over-admission a required verification gate |
+| Provider translation drift between OpenAI and Anthropic | 4.C.x | Medium | High | Maintain golden fixtures per provider, reuse the shared error envelope, and verify streaming parity in CI |
+| Fallback routing changes behavior unexpectedly | 4.C.4 | Medium | High | Keep fallback opt-in per org, trace every fallback event, and require negative tests for the default-off path |
+| Circuit-breaker thresholds are too aggressive or too slow | 4.C.3 | Medium | Medium | Start with conservative windows, validate with resilience tests, and revisit thresholds after real traffic observations |
+| Dashboard RBAC gaps expose cross-tenant operator data | 4.D.x | Low | Critical | Use server-side permission checks for every data path, add end-to-end RBAC tests, and keep 404-style anti-enumeration behavior |
+| OpenAPI / client drift slows dashboard delivery | 4.A.x + 4.D.x | Medium | Medium | Publish the spec in CI, generate clients from the same contract, and fail builds on incompatible changes |
+| Analytics and observability dependencies bleed into user-facing availability | 4.D.x | Low | Medium | Keep trace/analytics writes asynchronous and ensure degraded observability does not block the management surface |
+| Provider-credential handling introduces operational risk | 4.A.5 | Low | Critical | Validate before store, encrypt at rest, avoid plaintext in logs/traces, and verify the retrieval path through integration tests |
+

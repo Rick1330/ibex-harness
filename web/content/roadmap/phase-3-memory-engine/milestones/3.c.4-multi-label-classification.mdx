@@ -1,0 +1,131 @@
+---
+title: "3.C.4 Multi-label memory classification"
+description: "Fixes the single-enum category limitation by introducing a memory_labels join table supporting 1–N labels per memory with per-label confidence, while retaining primary_category for backward-compatible queries."
+summary: "Fixes the single-enum category limitation by introducing a memory_labels join table supporting 1–N labels per memory with per-label confidence, while retaining primary_category for backward-compatible queries."
+status: "planned"
+milestoneId: "3.C.4"
+track: "C"
+trackTitle: "Write Pipeline"
+trackHref: "/roadmap/phase-3-memory-engine/tracks#track-c--write-pipeline"
+goal: "[Track C — Write Pipeline](/roadmap/phase-3-memory-engine/tracks#track-c--write-pipeline)"
+estimatedEffort: "2 days"
+phase: "phase-3-memory-engine"
+fullTitle: "Milestone 3.C.4 — Multi-label memory classification"
+---
+
+# Milestone 3.C.4 — Multi-label memory classification
+
+**Status:** Planned  
+**Goal:** [Track C — Write Pipeline](/roadmap/phase-3-memory-engine/tracks#track-c--write-pipeline)  
+**Phase:** 3 — Core Memory Substrate  
+**Estimated effort:** 2 days
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+Fixes the second major schema gap: a memory can be both `procedural` and `behavioral` (e.g., "when debugging, the user always checks logs before restarting" is both a how-to pattern *and* a behavioral pattern), but the current schema forces a single `category` enum. This forces an artificial choice that misrepresents reality and causes ranking bugs — a memory with dual relevance gets ranked using only one of its applicable half-life profiles.
+
+The `memory_labels` table was already introduced in Milestone 3.1.1 at the schema level. This milestone implements the write-path logic that populates it correctly, and validates that the `primary_category` trigger (also from 3.1.1) fires as expected under the multi-label write path.
+
+---
+
+## Non-Goals
+
+- Changing the extraction worker prompt (that is Phase 3.5 scope; the classification stub in this milestone accepts labels as explicit input, not auto-extracted)
+- Changing the composite scoring formula weights (ADR-0041 established them)
+- Any changes to the read/ranking pipeline (Track D)
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Memory service / repositories
+- Write pipeline / safety
+- Database schema / migrations
+
+## Suggested naming (provisional)
+
+Rename freely to match the change that actually lands.
+
+- Branch: `feature/m3-c-4-multi-label-classification`
+- PR title: `feat(memory): multi-label memory classification write path (m3.C.4)`
+
+## Design
+
+Keep `primary_category` as the dominant/primary label (for backward-compatible sorting, indexing, and the composite-score formula's category-conditional decay). Add `memory_labels` join table for secondary labels.
+
+The `memory_labels` table was already created in Milestone 3.1.1:
+
+```sql
+CREATE TABLE ibex_core.memory_labels (
+ memory_id UUID NOT NULL REFERENCES ibex_core.memories(id) ON DELETE CASCADE,
+ label TEXT NOT NULL CHECK (label IN ('factual','preference','behavioral','episodic','procedural')),
+ confidence NUMERIC(3,2) NOT NULL DEFAULT 0.80 CHECK (confidence BETWEEN 0 AND 1),
+ PRIMARY KEY (memory_id, label)
+);
+```
+
+The `primary_category` trigger from 3.1.1 automatically keeps `memories.primary_category` in sync as the highest-confidence label — no application-layer sync code is needed.
+
+### Input format for labels (from extraction prompt or user-provided)
+
+```python
+@dataclass
+class MemoryLabelInput:
+ label: str # one of: factual, preference, behavioral, episodic, procedural
+ confidence: float # 0.0–1.0
+
+# Example: a memory that is both procedural and behavioral
+labels = [
+ MemoryLabelInput(label="procedural", confidence=0.85),
+ MemoryLabelInput(label="behavioral", confidence=0.72),
+]
+```
+
+---
+
+## Relationship to Composite Scoring
+
+The composite scoring formula in Track D (Milestone 3.D.2) reads `memory_labels` for the recency decay calculation. For multi-label memories, recency uses the shortest half-life among all labels (conservative: decay faster, not slower, when ambiguous). This behavior is implemented in 3.D.2 — this milestone only establishes the write path.
+
+---
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] `memory_labels` table populated correctly for 1–3 labels per memory
+- [ ] `primary_category` column updated correctly by DB trigger after label write
+- [ ] Multi-label write path tested: a memory can carry 1–3 labels with independent confidence scores
+- [ ] `category` / `primary_category` backward-compatible simple queries still function
+- [ ] RLS verified: `memory_labels` rows not accessible cross-org
+
+---
+
+## Prerequisites
+
+- Milestone 3.1.1 merged (`memory_labels` table and `primary_category` trigger in schema)
+- Milestone 3.C.3 merged (conflict detection output may influence label assignment)
+

@@ -201,47 +201,47 @@ Modern AI agents suffer from critical limitations:
 - Data residency compliance
 - Custom integration requirements
 
-## 📅 Project Phases
+## 📅 Project Phases (redesigned roadmap)
 
-### Phase 1: Foundation (Months 1-2)
-- Core infrastructure and development environment
-- Protocol buffer definitions
-- Database schema
-- CI/CD pipeline
-- Agent configuration and documentation
+Phases **0–2 are complete**. The public source of truth for milestones is
+[`web/content/roadmap/`](../content/roadmap/) ([overview](https://ibexharness.com/roadmap/overview),
+[current state](https://ibexharness.com/roadmap/current-state)). Calendar “months” below are
+planning orientation only — not commitments.
 
-### Phase 2: Core Platform (Months 2-4)
-- LLM Proxy service
-- Memory service with vector storage
-- Context assembly engine
-- Authentication and authorization
-- Basic API server
+| Phase | Name | Status | What it delivers |
+| --- | --- | --- | --- |
+| 0 | Foundation | **Complete** | Monorepo, CI, compose, proto, Go skeletons |
+| 1 | Core Platform | **Complete** | Migrations, auth, proxy platform, security gates |
+| 1.5 | Public Web Product | **Complete** | Unified site at ibexharness.com |
+| 2 | Single Provider E2E | **Complete** | Authenticated OpenAI-compatible chat through the proxy |
+| **2.5** | Provider Generalization & Foundation | **Next** | Anthropic + self-hosted adapters, tokenizer, response pipeline, embedder, schema pre-work, MCP skeleton |
+| **3** | Core Memory Substrate | Planned | Memory schema v2 (HNSW), write pipeline, read/ranking, hot cache |
+| **3.5** | Extraction & Context Assembly | Planned | Celery extraction worker, context assembly on the proxy hot path, MCP memory tools |
+| **4** | Operator Platform & Multi-Provider | Planned | Management API, dashboard, multi-provider routing, hierarchical rate limiting |
+| **4.5** | Intelligence Layer | Planned | Behavioral fingerprinting, drift detection, directive regression testing |
+| **5** | Advanced Retrieval & Graph Memory | Planned | Hybrid search (dense+sparse+reranking), graph traversal, evaluation harness |
 
-### Phase 3: Intelligence Layer (Months 4-6)
-- Behavioral fingerprinting
-- Drift detection
-- Conflict resolution
-- Session management with ATP
-- Directive versioning
+**Important redesign notes** (see [findings](https://ibexharness.com/roadmap/findings)):
 
-### Phase 4: Developer Experience (Months 6-8)
-- Python, TypeScript, Go SDKs
-- CLI tool
-- Web dashboard
-- Documentation and examples
+- Phase 3 is **memory substrate only** — extraction and context assembly moved to **3.5**.
+- Management API + operator dashboard land in **Phase 4** (not a separate early DX phase).
+- Intelligence work that used to look like a late “Phase 6” is absorbed into **4.5**.
+- Org-wide production hardening (full observability stack, chaos, release governance) is **deferred beyond Phase 5** as future roadmap scope; per-phase exit gates still cover hardening for that phase’s surfaces.
 
-### Phase 5: Integrations (Months 8-10)
-- LangChain, AutoGen, CrewAI, LlamaIndex plugins
-- VS Code and Cursor extensions
-- GitHub and Slack integrations
-- Webhook system
+### Capability → phase mapping (high level)
 
-### Phase 6: Production Hardening (Months 10-12)
-- Performance optimization
-- Security hardening
-- Monitoring and observability
-- Load testing and chaos engineering
-- Beta program and early customers
+| Capability | Preferred phase |
+| --- | --- |
+| Multi-provider adapters, tokenizer, embedder, MCP skeleton | 2.5 |
+| Memory schema, vector store, write/read pipelines | 3 |
+| Extraction workers, context assembly gRPC, MCP tools | 3.5 |
+| Management API, dashboard, BYO keys, circuit breakers | 4 |
+| Fingerprints, drift, directive regression | 4.5 |
+| Hybrid retrieval, graph lineage at query time | 5 |
+
+Service and package inventories: [`services/README.md`](../../services/README.md), [`packages/README.md`](../../packages/README.md).
+
+---
 
 ## 🎨 Design Principles
 
@@ -264,20 +264,21 @@ Modern AI agents suffer from critical limitations:
 5. **Reliable**: Consistent behavior that developers can depend on
 6. **Fast**: Low enough latency to use in production without compromise
 
-## 🚫 Explicit Non-Goals (This Version)
+## 🚫 Explicit Non-Goals (near-term product)
 
-To maintain focus and ship v1.0, we explicitly defer:
+To keep focus through Phase 5, we explicitly defer or narrow:
 
-1. **Multi-modal memory**: V1 is text-only, no image/audio/video memories
-2. **Federated memory sharing**: V1 is single-org only
-3. **Real-time collaboration**: V1 is single-writer per agent session
-4. **Custom ML models**: V1 uses standard embedding models only
-5. **Mobile SDKs**: V1 is server-side only (Python, TypeScript, Go)
-6. **Edge deployment**: V1 is cloud or self-hosted only, no edge runtime
-7. **Graph-based memory**: V1 is vector-based only
-8. **Multi-agent coordination**: V1 is single-agent sessions only
+1. **Multi-modal memory**: text-first; no image/audio/video memories as a v1 requirement
+2. **Federated memory sharing**: single-org tenancy model
+3. **Real-time multi-writer collaboration**: single-writer per agent session as the default
+4. **Custom proprietary ML training pipelines**: use standard embedding / reranker models behind pluggable backends
+5. **Mobile SDKs**: server-side SDKs (Python, TypeScript, Go) first
+6. **Edge runtime**: cloud or self-hosted Kubernetes-style deploy; no edge agent runtime requirement
+7. **Dedicated graph database as a default**: Phase 5 starts with Postgres recursive CTEs over `memory_relationships`; a separate graph DB only with evidence + ADR
+8. **Org-wide production-hardening phase as a numbered roadmap gate**: deferred beyond Phase 5 (observability stack, chaos, release governance) — track as future scope
+9. **Framework integrations marketplace**: LangChain/AutoGen/etc. plugins remain post-Phase-5 product expansion unless pulled forward with evidence
 
-These may be added in future versions based on customer demand.
+If implementation needs to deviate, record an ADR and update this document plus the public roadmap.
 
 ## 🎯 Definition of Success
 

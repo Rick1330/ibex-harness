@@ -1,39 +1,71 @@
 ---
-title: "Phase 4: Multi-Provider and Routing"
-description: "Phase 4: Multi-Provider and Routing — planned. Estimated 4–6 weeks. Depends on phase 3 exit."
-summary: "Phase 4: Multi-Provider and Routing — planned. Estimated 4–6 weeks. Depends on phase 3 exit."
+title: "Phase 4: Operator Platform & Multi-Provider"
+description: "Phase 4 is where IBEX stops being a proxy with an API-only backend and becomes an operable product: humans get a management surface, a second LLM provider proves the abstraction, and rate limiting becomes real cost control."
+summary: "Phase 4 is where IBEX stops being a proxy with an API-only backend and becomes an operable product: humans get a management surface, a second LLM provider proves the abstraction, and rate limiting becomes real cost control."
 status: "planned"
 phase: "phase-4-multi-provider"
-estimatedEffort: "4–6 weeks  \\n"
+fullTitle: "Phase 4 — Operator Platform & Multi-Provider"
 ---
 
-# Phase 4: Multi-Provider and Routing
+# Phase 4 — Operator Platform & Multi-Provider
 
-**Status:** Planned  
-**Estimated duration:** 4–6 weeks  
-**Depends on:** [Phase 3](/roadmap/phase-3-memory-engine) exit
-
-## Theme
-
-Generalize the proxy for **multiple LLM providers**, intelligent routing, and **production-grade rate limiting** in Redis.
-
-## Entry criteria
-
-- Single-provider path stable with context injection
-- Redis available in all environments
-
-## Exit criteria
-
-- Provider adapter interface; at least two providers (e.g., OpenAI + Anthropic or Azure OpenAI)
-- Model-based routing configuration per org
-- Redis Lua rate limits (org/agent/global hierarchy)
-- Streaming hardened under slow clients and provider errors
-- Circuit breakers on provider and context dependencies
-
-## Goals
-
-See [goals.md](/roadmap/phase-4-multi-provider/goals).
-
-<Callout type="note">
-  Milestone definitions for this phase are not published yet. Goals below reflect current planning; detailed milestones will be added in a future update.
+<Callout type="note" title="Planning baseline">
+  Paths, libraries, schemas, and sequencing on this phase are orientation for planning.
+  Implementation is expected to require further research and may land differently than any sketch.
 </Callout>
+
+<Callout type="info" title="Scope note">
+ Phase 4 combines management APIs, the operator dashboard, and multi-provider routing into one delivery
+ phase. The intent is to build the operator surface alongside provider and rate-limit controls, since
+ they depend on the same org-scoped configuration and observability surfaces. Intelligence-layer work
+ remains in Phase 4.5.
+</Callout>
+
+<Callout type="info" title="Entry condition">
+ **Phase 3.5 is complete.** Extraction worker running, context assembly live on proxy hot path,
+ MCP `search_memory`/`write_memory` tools functional.
+</Callout>
+
+## What Phase 4 Delivers
+
+- **Management API** (`services/api/`): Full CRUD for orgs, users, agents, tokens, directives, memories, sessions, provider credentials
+- **Hierarchical rate limiting:** Redis Lua-based atomic agent → org → global rate limiter replacing the Phase 1 placeholder
+- **Multi-provider routing:** At least two LLM providers live (OpenAI + Anthropic), per-org model routing, circuit breakers, opt-in fallback routing
+- **Operator dashboard** (`services/dashboard/`): Agent management, memory browser with relationship graph, trace inspector, analytics, drift alerts, billing/usage
+
+## Phase 4 Tracks
+
+| Track | Theme | Key Milestones |
+|---|---|---|
+| A | Management API Server | 4.A.1 (skeleton), 4.A.2 (org/user management), 4.A.3 (agent API), 4.A.4 (token API), 4.A.5 (provider credential API) |
+| B | Hierarchical Rate Limiting | 4.B.1 (Lua-based atomic limiter), 4.B.2 (rate-limit config API), 4.B.3 (load/correctness benchmark) |
+| C | Multi-Provider Adapters & Routing | 4.C.1 (Anthropic hardening), 4.C.2 (per-org model routing), 4.C.3 (circuit breaker), 4.C.4 (fallback routing), 4.C.5 (streaming hardening) |
+| D | Operator Dashboard | 4.D.1 (foundation + auth + real-time), 4.D.2 (trace inspector), 4.D.3 (memory browser v2 with graph), 4.D.4 (drift alerts + directive management), 4.D.5 (analytics v2 + cost governance) |
+| E | Exit Gate | 4.E.1 (dashboard Playwright e2e), 4.E.2 (multi-provider resilience suite), 4.E.3 (exit audit) |
+
+### New services
+
+| Service | Language | Path | Purpose |
+|---|---|---|---|
+| API Server | Python 3.12 | `services/api/` | Management REST API for operators |
+| Dashboard | TypeScript/Next.js | `services/dashboard/` | Operator web UI |
+
+## Key Design Decisions
+
+- **Provider credentials are org-scoped, encrypted-at-rest:** BYO-key enterprise customers; proxy reads credentials via gRPC through auth service, never direct DB access. Platform-default fallback for managed deployments.
+- **Lua-based atomic three-level rate limiting:** Single Redis round trip checks agent → org → global. Zero over-admission tolerance under concurrency. Fail-open on Redis error preserved.
+- **Circuit breaker per provider:** Rolling error-rate window (not consecutive-count). Per-provider isolation — Anthropic outage never degrades OpenAI traffic.
+- **Fallback routing is opt-in per org:** Silent model swap is a compliance issue. `X-IBEX-Provider-Fallback` header signals substitution.
+- **Dashboard auth:** Short-lived JWT (15min) + httpOnly refresh cookie. Permission bitmap reuse from API (ADR-0009). SSE for real-time trace/alert streams.
+
+## Exit Criteria
+
+1. Management API live with full CRUD for orgs, users, agents, tokens, directives, memories, sessions, provider credentials
+2. Redis Lua-based hierarchical rate limiter atomic and load-tested (zero over-admission)
+3. At least two LLM providers live with per-org model routing
+4. Circuit breakers on provider and context-assembly dependencies, independently testable
+5. Operator dashboard live: agent management, memory browser, analytics, trace inspector, rate-limit visibility
+6. Dashboard Playwright e2e suite green, zero axe-core `serious`/`critical` accessibility violations
+7. Management API OpenAPI spec published and consumed by dashboard client
+8. All Phase 1–3.5 regression suites still pass; proxy overhead stays &lt;20ms p99
+9. Phase 4 gap register published with zero open P0 gaps

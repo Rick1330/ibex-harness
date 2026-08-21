@@ -1,0 +1,100 @@
+---
+title: "Phase 2.5 — Goals"
+description: "Generalize the proxy into a pluggable, multi-backend platform with provider adapters, tokenizer registry, response pipeline, embedding service, schema pre-work, and MCP skeleton."
+summary: "Generalize the proxy into a pluggable, multi-backend platform with provider adapters, tokenizer registry, response pipeline, embedding service, schema pre-work, and MCP skeleton."
+phase: "phase-2-5-provider-generalization"
+---
+
+# Phase 2.5 — Goals
+
+<Callout type="note" title="Planning baseline">
+  Paths, libraries, schemas, and sequencing on this phase are orientation for planning.
+  Implementation is expected to require further research and may land differently than any sketch.
+</Callout>
+
+## Track A — Multi-Provider Adapters
+
+### Goal 2.5.A: Prove the Provider interface generalizes beyond OpenAI
+
+**Milestones:**
+- **2.5.G1.M1 — Anthropic provider adapter:** Implement `packages/provider/anthropic/` proving `provider.Request`/`provider.Response` are vendor-neutral. Handles system-field extraction, Anthropic SSE event parsing, and error mapping to the shared `apierror.Error` envelope.
+- **2.5.G1.M2 — Model capability registry:** `ModelCapability` struct with context window, max output tokens, tool/vision/streaming support, and tokenizer family. `Registry.Capability(model)` alongside `Registry.For(model)`.
+- **2.5.G1.M3 — Self-hosted LLM adapter (vLLM-first):** Generalized `openaicompatible` package reusing OpenAI client logic with configurable `base_url`. Health-check at bootstrap, circuit breaker for self-hosted backends, explicit 503/queue-full mapping.
+
+**Acceptance criteria:**
+- Second provider added without duplicating streaming/auth logic
+- `ModelCapability` queryable for all registered models
+- Self-hosted vLLM endpoint registered and health-checked at bootstrap
+
+---
+
+## Track B — Tokenizer Registry
+
+### Goal 2.5.B: Model-accurate token counting for every registered model
+
+**Milestones:**
+- **2.5.G2.M1 — Tokenizer registry:** `packages/tokenizer` Go package with `Tokenizer` interface (`Count(model, text) (int, error)`). tiktoken for OpenAI models, Hugging Face `tokenizers` via CGo bindings for open-weight models. Tokenizers loaded once at startup, keyed by `TokenizerFamily` from the capability registry.
+
+**Acceptance criteria:**
+- Token counts match ground truth for OpenAI and at least one open-weight model family
+- No network dependency on Hugging Face at runtime (tokenizer files bundled or cached locally)
+
+---
+
+## Track C — Response-Side Processing Pipeline
+
+### Goal 2.5.C: Create the extension point for Phase 3 response stages
+
+**Milestones:**
+- **2.5.G3.M1 — Response middleware hook (non-streaming):** `ResponsePipeline` with `Stage` interface in `packages/responsepipeline`. Typed decode of OpenAI chat response JSON, pipeline execution, re-encode. Fail-open by default. p99 overhead < 2ms benchmarked.
+- **2.5.G3.M2 — Streaming response pipeline design (design doc + prototype only):** ADR evaluating token-window buffering vs. post-hoc correction vs. disable-for-flagged-agents. Throwaway prototype measuring buffering-vs-flush interaction.
+
+**Acceptance criteria:**
+- Byte-for-byte identical output vs. current passthrough when pipeline has zero stages
+- ADR published with streaming transformation decision
+
+---
+
+## Track D — Multi-Backend Pluggable Embedding Service
+
+### Goal 2.5.D: Embedding backends selectable per deployment profile
+
+**Milestones:**
+- **2.5.G4.M1 — Embedder interface + registry:** Python ABC (`EmbeddingBackend`), selected by `EMBEDDER_PROFILE` env (cpu/gpu/hosted). Profile is a deployment-time choice, not per-request.
+- **2.5.G4.M2 — TEI backend (GPU):** HTTP client to Hugging Face TEI sidecar running `BAAI/bge-m3`. No hand-rolled batching — TEI handles it.
+- **2.5.G4.M3 — Hosted-API backend:** OpenAI `text-embedding-3-large` as default hosted option.
+- **2.5.G4.M4 — Content-hash embedding cache:** Redis `SHA-256(text) -> vector` cache, backend-agnostic, &gt;80% hit-rate target.
+
+**Acceptance criteria:**
+- At least two `EmbeddingBackend` implementations passing the same contract test suite
+- Org config carries `embedding_profile` + `embedding_dim`, validated against pgvector column at migration time
+- Re-embedding migration runbook written and dry-run tested
+
+---
+
+## Track E — Schema Pre-Work
+
+### Goal 2.5.E: Prepare Postgres schema for Phase 3 memory store
+
+**Milestones:**
+- **2.5.G5.M1 — Temporal validity columns:** `valid_from`, `valid_until`, `observed_at` on `ibex_core.memories`. Migration-only, no application code.
+- **2.5.G5.M2 — Multi-label category support:** `ibex_core.memory_categories` join table replacing single `category` enum exclusivity.
+- **2.5.G5.M3 — Relationship graph readiness:** Graph-traversal index on `memory_relationships`, helper view for recursive CTE traversal.
+
+**Acceptance criteria:**
+- All three migrations apply cleanly on top of existing Phase 3 draft schema with zero application code depending on new columns
+- Verified via `make db-migrate` on a seeded dataset
+
+---
+
+## Track F — MCP Server Skeleton
+
+### Goal 2.5.F: Prove MCP auth and tool-call audit pipeline before memory exists
+
+**Milestones:**
+- **2.5.G6.M1 — MCP server with stub tools:** Python MCP server using official SDK. OAuth via `AuthService.ValidateToken` gRPC. Stub `write_memory`/`search_memory` handlers. Every tool invocation traced to ClickHouse.
+
+**Acceptance criteria:**
+- MCP server passes official conformance/inspector tool against stub handlers
+- Auth reuses `AuthService.ValidateToken` via gRPC (no second identity system)
+- Tool invocations written to ClickHouse trace pipeline

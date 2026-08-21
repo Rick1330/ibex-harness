@@ -1,0 +1,167 @@
+---
+title: "2.5.G4.M4 Content-hash embedding cache"
+description: "Redis SHA-256(text) → vector cache sitting in front of whichever EmbeddingBackend is active. Backend-agnostic and targets &gt;80% hit rate for memory embeddings, which are frequently re-embedded for identical or near-identical content."
+summary: "Redis SHA-256(text) → vector cache sitting in front of whichever EmbeddingBackend is active. Backend-agnostic and targets &gt;80% hit rate for memory embeddings, which are frequently re-embedded for identical or near-identical content."
+status: "planned"
+milestoneId: "2.5.G4.M4"
+track: "D"
+trackTitle: "Pluggable Embedding Service"
+trackHref: "/roadmap/phase-2-5-provider-generalization/tracks#track-d--pluggable-embedding-service"
+goal: "[Track D — Pluggable Embedding Service](/roadmap/phase-2-5-provider-generalization/tracks#track-d--pluggable-embedding-service)"
+estimatedEffort: "1 day"
+phase: "phase-2-5-provider-generalization"
+fullTitle: "Milestone 2.5.G4.M4 — Content-Hash Embedding Cache"
+---
+
+# Milestone 2.5.G4.M4 — Content-Hash Embedding Cache
+
+**Status:** Planned  
+**Goal:** [Track D — Pluggable Embedding Service](/roadmap/phase-2-5-provider-generalization/tracks#track-d--pluggable-embedding-service)  
+**Phase:** 2.5 — Provider Generalization & Foundation  
+**Estimated effort:** 1 day
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+Embedding the same text repeatedly is expensive (GPU time or API cost) and unnecessary. A content-hash cache using `SHA-256(text) → vector` in Redis sits in front of whichever `EmbeddingBackend` is active — backend-agnostic, no logic duplication per backend.
+
+Memory content is often highly repetitive — the same user preference, factual statement, or procedural note gets re-embedded each time it's updated or re-ranked. A `>80%` hit rate target is realistic and materially reduces both latency and cost.
+
+---
+
+## Non-Goals
+
+- Semantic deduplication (separate concern in Phase 3 memory dedup)
+- Per-org cache namespace isolation at this stage (add if multi-tenant concerns arise)
+- Cache invalidation on model upgrade (handled by re-embedding migration procedure)
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Embedding service / backends
+
+## Suggested naming (provisional)
+
+Rename freely to match the change that actually lands.
+
+- Branch: `feature/m2-5-g4-m4-content-hash-cache`
+- PR title: `feat(embedder): Redis content-hash embedding cache (m2.5.G4.M4)`
+
+## Design
+
+The cache is a decorator over `EmbeddingBackend`:
+
+```python
+# Illustrative — exact path may differ
+import hashlib
+import redis.asyncio as redis
+import numpy as np
+from .backends.base import EmbeddingBackend
+
+class CachingEmbeddingBackend(EmbeddingBackend):
+ """Wraps an EmbeddingBackend with a Redis content-hash cache.
+
+ Key format: embed:{model_id}:{sha256(text)}
+ TTL: configurable, default 7 days
+ """
+ def __init__(self, backend: EmbeddingBackend, redis_client: redis.Redis,
+ model_id: str, ttl_seconds: int = 604800):
+ self._backend = backend
+ self._redis = redis_client
+ self._model_id = model_id
+ self._ttl = ttl_seconds
+
+ async def embed(self, texts: list[str]) -> np.ndarray:
+ keys = [self._cache_key(t) for t in texts]
+ cached = await self._redis.mget(keys)
+ results = [None] * len(texts)
+ miss_indices = []
+
+ for i, val in enumerate(cached):
+ if val is not None:
+ results[i] = np.frombuffer(val, dtype=np.float32)
+ else:
+ miss_indices.append(i)
+
+ if miss_indices:
+ miss_texts = [texts[i] for i in miss_indices]
+ miss_vectors = await self._backend.embed(miss_texts)
+ pipe = self._redis.pipeline()
+ for idx, vec in zip(miss_indices, miss_vectors):
+ results[idx] = vec
+ pipe.setex(keys[idx], self._ttl, vec.tobytes())
+ await pipe.execute()
+
+ return np.stack(results)
+
+ def _cache_key(self, text: str) -> str:
+ h = hashlib.sha256(text.encode()).hexdigest()
+ return f"embed:{self._model_id}:{h}"
+
+ @property
+ def dimensions(self) -> int:
+ return self._backend.dimensions
+
+ @property
+ def name(self) -> str:
+ return f"cached:{self._backend.name}"
+```
+
+---
+
+## Redis Key Pattern
+
+| Component | Value |
+| --- | --- |
+| Prefix | `embed:` |
+| Model ID | `bge-m3`, `all-MiniLM-L6-v2`, `text-embedding-3-large`, etc. |
+| Content hash | `SHA-256(text)` hex |
+| Full key example | `embed:bge-m3:a3f2e1...` |
+| TTL | 7 days (configurable via `EMBEDDER_CACHE_TTL_SECONDS`) |
+
+Changing the embedding model (profile upgrade) naturally invalidates all cache entries because `model_id` is part of the key — no explicit flush required.
+
+---
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] Relevant behavior wraps any `EmbeddingBackend`, transparent to callers
+- [ ] Cache key uses `SHA-256(text)` with model ID prefix (not text content in key)
+- [ ] Cache hit: no call to underlying backend
+- [ ] Cache miss: underlying backend called, result stored with TTL
+- [ ] Batch requests: mixed hit/miss handled efficiently (single `MGET`, one pipeline `SETEX` batch)
+- [ ] TTL configurable via `EMBEDDER_CACHE_TTL_SECONDS` env var, default 7 days
+- [ ] Cache hit/miss rate exposed as Prometheus counter (labels: `backend`, `hit=true|false`)
+- [ ] Unit tests cover hit, miss, partial-batch, and Redis failure (fail-open: on Redis error, call backend directly)
+- [ ] Redis failure does not fail the embedding request
+
+## Prerequisites
+
+- 2.5.G4.M1 (Embedder interface) — `EmbeddingBackend` ABC
+- 2.5.G4.M2 or 2.5.G4.M3 — at least one real backend to wrap
+

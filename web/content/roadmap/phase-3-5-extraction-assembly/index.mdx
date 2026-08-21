@@ -1,0 +1,104 @@
+---
+title: "Phase 3.5"
+description: "Phase 3.5 closes the learning loop: conversations become memories (extraction) and memories become context on the next request (assembly), wired into the real proxy hot path."
+summary: "Phase 3.5 closes the learning loop: conversations become memories (extraction) and memories become context on the next request (assembly), wired into the real proxy hot path."
+status: "planned"
+phase: "phase-3-5-extraction-assembly"
+fullTitle: "Phase 3.5 — Extraction & Context Assembly"
+---
+
+# Phase 3.5 — Extraction & Context Assembly
+
+<Callout type="note" title="Planning baseline">
+  Paths, libraries, schemas, and sequencing on this phase are orientation for planning.
+  Implementation is expected to require further research and may land differently than any sketch.
+</Callout>
+
+<Callout type="info" title="Entry condition">
+ **Phase 3 is complete.** Memory schema, HNSW vector store, write pipeline, dedup/conflict detection,
+ and MCP skeleton from Phase 2.5 are all proven. This phase is where "the proxy that learns" actually
+ becomes true end-to-end.
+</Callout>
+
+## What Phase 3.5 Delivers
+
+Everything before this phase (Phase 3) built a memory store that works in isolation via direct API calls —
+nothing consumed it automatically. Phase 3.5 closes that loop:
+
+- **Extraction:** Conversations get turned into memories via an async Celery worker with cost-tiered, provider-agnostic LLM extraction.
+- **Context Assembly:** Memories get turned back into context on the next request, wired into the real proxy hot path with strict latency budgets and a four-level degradation ladder.
+- **MCP Memory Tools:** The Phase 2.5 MCP skeleton gains real `search_memory`/`write_memory`/`record_feedback` tool implementations.
+
+## Why This Is Its Own Phase
+
+The original roadmap put extraction and context assembly in the same phase as the memory schema and embedding
+service. That conflates two very different risk profiles:
+
+- Phase 3's work (schema/store/dedup) is testable in complete isolation via direct HTTP/gRPC calls — no proxy risk.
+- Phase 3.5's work is where the proxy's request-response hot path gets touched for the first time since Phase 2, introducing a new failure mode: **a slow or wrong memory system can now degrade or break every single LLM call**.
+
+## Phase 3.5 Tracks
+
+| Track | Theme | Key Milestones |
+|---|---|---|
+| A | Worker Foundation | 3.5.A.1 (Celery skeleton), 3.5.A.2 (task observability + dead-letter) |
+| B | Extraction Intelligence | 3.5.B.1 (extraction prompt v2 + structured output), 3.5.B.2 (cost-tiered execution), 3.5.B.3 (incremental turn tracking), 3.5.B.4 (extraction quality eval harness) |
+| C | Context Assembly Engine | 3.5.C.1 (token budget calculator), 3.5.C.2 (parallel retrieval), 3.5.C.3 (composite scorer v2 with relevance gate), 3.5.C.4 (DP knapsack packer), 3.5.C.5 (context formatter), 3.5.C.6 (gRPC service + degradation ladder) |
+| D | Proxy Hot-Path Integration | 3.5.D.1 (Go gRPC context client), 3.5.D.2 (handler wiring + fallback), 3.5.D.3 (response headers + metadata), 3.5.D.4 (extraction task enqueue), 3.5.D.5 (config + env vars), 3.5.D.6 (integration tests) |
+| E | MCP Memory Tools | 3.5.E.1 (MCP server skeleton + transport), 3.5.E.2 (search/write tools), 3.5.E.3 (record_feedback), 3.5.E.4 (observability + rate limiting) |
+| F | Exit Gate | 3.5.F.1 (e2e learning-loop suite), 3.5.F.2 (cross-tenant isolation matrix), 3.5.F.3 (benchmark sign-off + ADR index) |
+
+### New services
+
+| Service | Language | Path | Purpose |
+|---|---|---|---|
+| Context Assembly Engine | Python 3.12 | `services/context/` | Assemble enriched context per request, 40ms budget |
+| Worker Service | Python 3.12 | `services/worker/` | Celery: extraction, embedding, maintenance |
+| MCP Memory Server | Python 3.12 | `services/mcp-memory/` | MCP tools for explicit memory read/write |
+
+## Recommended Execution Order
+
+```
+Track A (Worker — no dependency on Track C):
+ 3.5.A.1 (Celery skeleton) → 3.5.A.2 (observability + dead-letter)
+
+Track B (Extraction — depends on Track A):
+ 3.5.B.1 (prompt v2) → 3.5.B.2 (cost-tiered execution)
+ → 3.5.B.3 (incremental tracking) → 3.5.B.4 (eval harness)
+
+Track C (Context Assembly — depends on Phase 3, independent of A/B):
+ 3.5.C.1 (budget calc) → 3.5.C.2 (parallel retrieval)
+ → 3.5.C.3 (scorer v2) → 3.5.C.4 (DP packer) → 3.5.C.5 (formatter)
+ → 3.5.C.6 (gRPC service)
+
+Track D (Proxy integration — depends on Track C):
+ 3.5.D.1 (Go client) → 3.5.D.2 (handler wiring) → 3.5.D.3 (headers)
+ → 3.5.D.4 (extraction trigger) → 3.5.D.5 (config) → 3.5.D.6 (tests)
+
+Track E (MCP tools — depends on Phase 3 + Track C):
+ 3.5.E.1 → 3.5.E.2 → 3.5.E.3 → 3.5.E.4
+
+Track F (Exit gate — after all):
+ 3.5.F.1 → 3.5.F.2 → 3.5.F.3
+```
+
+## Key Design Decisions
+
+- **Relevance gate on scorer:** Memories below a cosine similarity floor (0.15) are excluded before scoring, preventing irrelevant-but-frequently-accessed content from outranking relevant memories.
+- **DP knapsack packer:** Replaces pure greedy with bounded pseudo-polynomial DP (bucketed to 16 tokens), recovering &gt;90% budget utilization in adversarial cases where greedy recovers &lt;65%.
+- **Context ordering (locked):** Directive → Conversation history → Memories by category (procedural → factual → preference → behavioral → episodic) → Tool schemas. History in position 2 for "lost in the middle" mitigation.
+- **Degradation ladder:** L0 (full) → L1 (cold-search degraded) → L2 (memory degraded, directive-only) → L3 (full degraded, original messages unchanged). Assembly failure never blocks the LLM response.
+- **Batch extraction:** Per-session-close, not per-turn. Single LLM call covering all unprocessed turns for cross-turn awareness and cost efficiency.
+
+## Phase 3.5 Exit Criteria
+
+1. Extraction worker converts a completed session into correctly-categorized memories
+2. A subsequent chat request transparently injects a relevant memory
+3. Zero cross-tenant memory leakage across all ISO-\* and ISO-MCP-\* cases
+4. Context assembly p95 &lt; 50ms at 20 concurrent requests; proxy overhead stays &lt;20ms p99 non-provider time
+5. All 4 degradation-ladder levels independently verified
+6. MCP `search_memory`/`write_memory`/`record_feedback` tools function end-to-end, sharing one substrate with the proxy
+7. MCP server fails closed on auth-service outage; independent rate-limit budget verified
+8. All Phase 1, Phase 2, and Phase 3 regression tests still pass
+9. `make e2e-smoke-p3.5` exits 0
+10. ADR-0038, ADR-0043, ADR-0044 published and indexed

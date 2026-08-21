@@ -1,0 +1,84 @@
+---
+title: "4.5.C.3 Promotion Gate & Gradual Rollout"
+description: "Wire regression results into the promote endpoint's enforcement, implement percentage-based sticky hash routing for gradual rollouts, and auto-rollback on drift signal breach."
+summary: "Wire regression results into the promote endpoint's enforcement, implement percentage-based sticky hash routing for gradual rollouts, and auto-rollback on drift signal breach."
+status: "planned"
+milestoneId: "4.5.C.3"
+track: "C"
+trackTitle: "Directive Regression Testing"
+trackHref: "/roadmap/phase-4-5-intelligence-layer/tracks#track-c--directive-regression-testing"
+goal: "[Track C — Directive Regression Testing](/roadmap/phase-4-5-intelligence-layer/tracks#track-c--directive-regression-testing)"
+estimatedEffort: "3 days"
+phase: "phase-4-5-intelligence-layer"
+fullTitle: "Milestone 4.5.C.3 — Promotion Gate & Gradual Rollout"
+---
+
+# Milestone 4.5.C.3 — Promotion Gate & Gradual Rollout
+
+**Status:** Planned  
+**Goal:** [Track C — Directive Regression Testing](/roadmap/phase-4-5-intelligence-layer/tracks#track-c--directive-regression-testing)  
+**Phase:** 4.5 — Intelligence Layer  
+**Estimated effort:** 3 days  
+**Track:** [Track C — Directive Regression Testing](/roadmap/phase-4-5-intelligence-layer/tracks#track-c--directive-regression-testing)
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+The `promote` endpoint must enforce that regression tests passed and review was approved before allowing promotion. Gradual rollout uses percentage-based sticky hash routing — hash `agent_id + session_id` into a `[0,100)` bucket, compare against `rollout_percentage`, never flip version mid-session. A Celery beat task advances the percentage, auto-pausing/rolling back if drift metrics exceed threshold.
+
+---
+
+## Key Design: Sticky Hash Routing
+
+```go
+// Illustrative — exact path may differ
+func bucket(agentID, sessionID string) int // deterministic [0,100)
+```
+
+Same session always resolves to same directive version within a rollout window.
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Directive regression / promotion
+- Operator dashboard
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] `promote` rejects with `409 REGRESSION_NOT_PASSED` when status isn't `passed`
+- [ ] Sticky bucket routing: same `(agent_id, session_id)` always resolves to same version
+- [ ] Auto-rollback: synthetic drift signal during rollout resets percentage to 0 with alert emitted
+- [ ] Diff endpoint `behavioral_comparison.changes` populated from real before/after regression runs
+
+---
+
+## Prerequisites
+
+- Milestone 4.5.C.2 (Regression runner service)
+- Track A/B (Fingerprinting and drift detection operational)
+

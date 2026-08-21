@@ -1,0 +1,102 @@
+---
+title: "2.5.G5.M3 Relationship graph readiness"
+description: "Add graph-traversal index on memory_relationships and helper view for recursive CTE queries before Phase 3's extraction worker starts writing relationship edges at volume."
+summary: "Add graph-traversal index on memory_relationships and helper view for recursive CTE queries before Phase 3's extraction worker starts writing relationship edges at volume."
+status: "planned"
+milestoneId: "2.5.G5.M3"
+track: "E"
+trackTitle: "Schema Pre-Work"
+trackHref: "/roadmap/phase-2-5-provider-generalization/tracks#track-e--schema-pre-work"
+goal: "[Track E — Schema Pre-Work](/roadmap/phase-2-5-provider-generalization/tracks#track-e--schema-pre-work)"
+estimatedEffort: "1 day"
+phase: "phase-2-5-provider-generalization"
+fullTitle: "Milestone 2.5.G5.M3 — Relationship Graph Readiness"
+---
+
+# Milestone 2.5.G5.M3 — Relationship Graph Readiness
+
+**Status:** Planned  
+**Goal:** [Track E — Schema Pre-Work](/roadmap/phase-2-5-provider-generalization/tracks#track-e--schema-pre-work)  
+**Phase:** 2.5 — Provider Generalization & Foundation  
+**Estimated effort:** 1 day
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+The `memory_relationships` table already exists with the right shape (typed edges: `supersedes/contradicts/specializes/generalizes/merged_from/derived_from`) but lacks graph-traversal indexes needed for the recursive CTEs Phase 3's extraction worker will run at volume (e.g., "walk the supersession chain to the current version"). Adding the index and helper view now, as pure schema-readiness, avoids a performance cliff when Phase 3 starts writing relationship edges.
+
+---
+
+## Non-Goals
+
+- Application code using the new index or view (pure schema-readiness)
+- Changing the relationship type taxonomy
+- Adding new edge types
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Database schema / migrations
+
+## Suggested naming (provisional)
+
+Rename freely to match the change that actually lands.
+
+- Branch: `feature/m2-5-g5-m3-relationship-graph-readiness`
+- PR title: `feat(schema): graph-traversal index and helper view for memory_relationships (m2.5.G5.M3)`
+
+## Working notes
+
+Preferred starting points and open questions — situational, and expected to evolve with further research during implementation.
+
+### Index
+
+```sql
+CREATE INDEX idx_memory_relationships_source_type
+ ON ibex_core.memory_relationships(source_memory_id, relationship_type);
+```
+
+### Helper view
+
+A helper view for recursive CTE traversal of supersession chains — the most common graph-walk pattern in the write pipeline's conflict detection and the read pipeline's "resolve to current version" logic.
+
+---
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] Migration applies cleanly on top of existing schema with zero application code depending on the new index/view
+- [ ] `EXPLAIN ANALYZE` on a sample recursive CTE query confirms index usage
+- [ ] `make db-migrate` succeeds on a seeded dataset
+- [ ] Consistent with existing migration-strategy ADR's forward-only, expand-contract policy
+- [ ] `DATABASE_SCHEMA.md` updated
+
+## Prerequisites
+
+- Milestone 2.5.G5.M1 (temporal validity columns)
+- Milestone 2.5.G5.M2 (multi-label category support)
+

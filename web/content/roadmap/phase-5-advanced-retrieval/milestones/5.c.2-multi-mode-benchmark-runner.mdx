@@ -1,0 +1,84 @@
+---
+title: "5.C.2 Multi-Mode Benchmark Runner"
+description: "Run the gold set through dense-only, hybrid, hybrid+rerank, and full-graph configs side by side — CI-gated regression on every retrieval-touching PR."
+summary: "Run the gold set through dense-only, hybrid, hybrid+rerank, and full-graph configs side by side — CI-gated regression on every retrieval-touching PR."
+status: "planned"
+milestoneId: "5.C.2"
+track: "C"
+trackTitle: "Evaluation Harness Upgrade"
+trackHref: "/roadmap/phase-5-advanced-retrieval/tracks#track-c--evaluation-harness-upgrade"
+goal: "[Track C — Evaluation Harness Upgrade](/roadmap/phase-5-advanced-retrieval/tracks#track-c--evaluation-harness-upgrade)"
+estimatedEffort: "3 days"
+phase: "phase-5-advanced-retrieval"
+fullTitle: "Milestone 5.C.2 — Multi-Mode Benchmark Runner"
+---
+
+# Milestone 5.C.2 — Multi-Mode Benchmark Runner
+
+**Status:** Planned  
+**Goal:** [Track C — Evaluation Harness Upgrade](/roadmap/phase-5-advanced-retrieval/tracks#track-c--evaluation-harness-upgrade)  
+**Phase:** 5 — Advanced Retrieval  
+**Estimated effort:** 3 days  
+**Track:** [Track C — Evaluation Harness Upgrade](/roadmap/phase-5-advanced-retrieval/tracks#track-c--evaluation-harness-upgrade)
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+Four retrieval configurations should be compared side by side to prove each stage adds value without degrading others. CI-gated regression prevents silent quality drops.
+
+---
+
+## Configurations
+
+| Config | BM25 | Rerank | Graph |
+|---|---|---|---|
+| `dense_only` | No | No | No |
+| `hybrid` | Yes | No | No |
+| `hybrid_rerank` | Yes | Yes | No |
+| `full_graph` | Yes | Yes | Yes |
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Evaluation / benchmarks
+- Hybrid retrieval
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] CI job runs on every PR touching retrieval/reranker/graph code
+- [ ] `full_graph` should not regress precision@5 vs. `hybrid_rerank` by &gt;2 points on non-graph queries
+- [ ] Reranker latency budget enforced as part of eval
+- [ ] Baseline results committed; any config regressing &gt;3 points fails CI
+
+---
+
+## Prerequisites
+
+- Milestone 5.C.1 (Gold set v2)
+- All Track A and B milestones
+

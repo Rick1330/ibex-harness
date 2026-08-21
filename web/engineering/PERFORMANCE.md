@@ -46,7 +46,9 @@ These numbers exclude upstream LLM provider latency.
 
 ### 2.3 Memory search budgets (Memory service)
 
-- p95 ≤ 100ms (typical dataset sizes up to 10M vectors per tenant with pgvector IVFFlat)
+- p95 ≤ 100ms (typical dataset sizes up to 10M vectors per tenant with pgvector)
+- Preferred Phase 3+ index: **HNSW** (tune `ef_search` from benchmarks). IVFFlat numbers in older notes are historical.
+- Phase 5 hybrid / rerank paths must still respect context-assembly deadlines (degrade gracefully if reranker unavailable)
 - p99 ≤ 250ms
 
 ### 2.4 Memory write budgets
@@ -220,13 +222,11 @@ Weekly or before major releases:
 
 ### 7.2 pgvector tuning (initial guidance)
 
-- IVFFlat lists:
-  - starting point: `lists ≈ sqrt(N)` for N vectors per partition/tenant
-- probes:
-  - tune via experiments; trade recall vs latency
-- plan migration to Qdrant when:
-  - >50M vectors per tenant with high QPS
-  - or pgvector query latency degrades beyond SLOs
+- Preferred Phase 3+ index: **HNSW** (`m=16`, `ef_construction=64` as a starting build preference; tune query-time `ef_search` from recall/latency benches — roadmap starting point `40`).
+- Older IVFFlat `lists ≈ sqrt(N)` / `probes` guidance is **historical** (pre-redesign). Do not start new deployments on IVFFlat without an ADR reversing ADR-0040-style HNSW preference.
+- Plan migration to Qdrant (or Postgres partitioning) only when:
+  - corpus/QPS clearly outgrows a single HNSW instance with evidence, **and**
+  - an ADR records the dual-write / cutover plan.
 
 ### 7.3 Redis usage rules
 

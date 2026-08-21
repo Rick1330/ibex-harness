@@ -705,8 +705,8 @@ memories, err := client.Memory.Search(ctx, &ibex.SearchRequest{
 **pgvector Performance:**
 
 - <100K vectors: Excellent performance (<50ms queries)
-- 100K-10M vectors: Good performance with IVFFlat index
-- >10M vectors per tenant: Transition to Qdrant (planned migration path)
+- 100K-10M vectors: Good performance with **HNSW** (preferred Phase 3+ starting index; tune `ef_search` from benches). Older IVFFlat guidance remains historical.
+- >10M vectors per tenant: Transition to Qdrant (planned migration path — only with evidence + ADR)
 
 **Migration Strategy to Qdrant:**
 

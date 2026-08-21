@@ -1,0 +1,156 @@
+---
+title: "4.C.1 Anthropic Adapter Hardening"
+description: "Harden the Phase 2.5 Anthropic prototype to production parity with the OpenAI adapter: full SSE dual-write, anthropic-version header handling, and message-role translation (no system role inside messages — it's a top-level field)."
+summary: "Harden the Phase 2.5 Anthropic prototype to production parity with the OpenAI adapter: full SSE dual-write, anthropic-version header handling, and message-role translation (no system role inside messages — it's a top-level field)."
+status: "planned"
+milestoneId: "4.C.1"
+track: "C"
+trackTitle: "Multi-Provider Adapters & Resilience"
+trackHref: "/roadmap/phase-4-multi-provider/tracks#track-c--multi-provider-adapters--resilience"
+goal: "[Track C — Multi-Provider Adapters & Resilience](/roadmap/phase-4-multi-provider/tracks#track-c--multi-provider-adapters--resilience)"
+estimatedEffort: "3 days"
+phase: "phase-4-multi-provider"
+fullTitle: "Milestone 4.C.1 — Anthropic Adapter Hardening"
+---
+
+# Milestone 4.C.1 — Anthropic Adapter Hardening
+
+**Status:** Planned  
+**Goal:** [Track C — Multi-Provider Adapters & Resilience](/roadmap/phase-4-multi-provider/tracks#track-c--multi-provider-adapters--resilience)  
+**Phase:** 4 — Operator Platform & Multi-Provider  
+**Estimated effort:** 3 days  
+**Track:** [Track C — Multi-Provider Adapters & Resilience](/roadmap/phase-4-multi-provider/tracks#track-c--multi-provider-adapters--resilience)
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+Phase 2.5 stood up a first-cut Anthropic adapter to prove the interface generalizes. This milestone hardens it to production parity with the OpenAI adapter: full SSE dual-write, `anthropic-version` header handling, and the message-role translation Anthropic requires (no `system` role inside `messages`; it's a top-level `system` field).
+
+This is not new design — it's closing gaps against the same bar OpenAI already cleared. The `packages/provider.Provider` interface (ADR-0025) should be satisfied without any handler/middleware changes.
+
+---
+
+## Non-Goals
+
+- Per-org model routing (4.C.2)
+- Circuit breaker (4.C.3)
+- Azure OpenAI or Bedrock adapters (future)
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Provider abstraction / adapters
+- Proxy service (HTTP, bootstrap, config)
+
+## Suggested naming (provisional)
+
+Rename freely to match the change that actually lands.
+
+- Branch: `feature/m4-c-1-anthropic-adapter-hardening`
+- PR title: `feat(provider): production-hardened Anthropic adapter with SSE dual-write (m4.C.1)`
+
+## Message-Role Translation
+
+Anthropic's API does not accept a `system` role inside the `messages` array. It requires a top-level `system` field:
+
+```go
+// Illustrative — exact path may differ
+
+// toAnthropicRequest translates an IBEX provider.Request to Anthropic's native wire format.
+// Key translation: system messages extracted from Messages array → top-level system field.
+func toAnthropicRequest(req provider.Request) anthropicRequest {
+ var systemParts []string
+ var messages []anthropicMessage
+
+ // Inject directive as first system content
+ if req.SystemDirective != "" {
+ systemParts = append(systemParts, req.SystemDirective)
+ }
+
+ for _, m := range req.Messages {
+ if m.Role == "system" {
+ systemParts = append(systemParts, m.Content)
+ } else {
+ messages = append(messages, anthropicMessage{
+ Role: m.Role,
+ Content: m.Content,
+ })
+ }
+ }
+
+ return anthropicRequest{
+ Model: req.Model,
+ System: strings.Join(systemParts, "\n\n"),
+ Messages: messages,
+ MaxTokens: maxTokensOrDefault(req.MaxTokens),
+ Stream: req.Stream,
+ }
+}
+```
+
+---
+
+## Anthropic SSE Event Mapping
+
+Anthropic's SSE stream uses different event types than OpenAI's:
+
+```go
+// Illustrative — exact path may differ
+
+// Anthropic event types that matter for IBEX:
+// - content_block_delta: contains text delta (maps to OpenAI's delta.content)
+// - message_stop: signals stream completion (maps to OpenAI's [DONE])
+// - error: mid-stream error event — should be forwarded verbatim per ADR-0027
+
+type anthropicStreamEvent struct {
+ Type string `json:"type"`
+ Delta *anthropicDelta `json:"delta,omitempty"`
+ Error *anthropicError `json:"error,omitempty"`
+}
+
+type anthropicDelta struct {
+ Type string `json:"type"` // "text_delta"
+ Text string `json:"text"`
+}
+```
+
+---
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] `Registry.For("claude-*")` resolves to the Anthropic adapter; `NewRegistry` panics on duplicate model prefixes across providers
+- [ ] Streaming dual-write behavior matches ADR-0027 exactly (no JSON-swap mid-stream) — same test harness reused from OpenAI, parameterized by provider
+- [ ] `writeProviderFailure`/error mapping paths reused unmodified — Anthropic errors map through the same `provider.MapError` (do not special-case in the handler)
+- [ ] Golden-fixture tests pass for both non-streaming and streaming request/response pairs
+- [ ] Zero changes to any proxy handler or middleware code (pure adapter addition)
+
+## Prerequisites
+
+- Phase 2.5 Anthropic prototype merged
+- `packages/provider.Provider` interface stable (M2.1.1)
+

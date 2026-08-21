@@ -1,0 +1,84 @@
+---
+title: "3.5.D.6 Integration tests"
+description: "TestMemoryIntegration_* suite covering context assembly success, L1–L3 degradation fault injection, X-IBEX-Skip-Memory bypass, extraction enqueue semantics, and full Phase 1+2 regression."
+summary: "TestMemoryIntegration_* suite covering context assembly success, L1–L3 degradation fault injection, X-IBEX-Skip-Memory bypass, extraction enqueue semantics, and full Phase 1+2 regression."
+status: "planned"
+milestoneId: "3.5.D.6"
+track: "D"
+trackTitle: "Proxy Integration"
+trackHref: "/roadmap/phase-3-5-extraction-assembly/tracks#track-d--proxy-integration"
+goal: "[Track D — Proxy Integration](/roadmap/phase-3-5-extraction-assembly/tracks#track-d--proxy-integration)"
+estimatedEffort: "2 days"
+phase: "phase-3-5-extraction-assembly"
+fullTitle: "Milestone 3.5.D.6 — Integration Tests"
+---
+
+# Milestone 3.5.D.6 — Integration Tests
+
+**Status:** Planned  
+**Goal:** [Track D — Proxy Integration](/roadmap/phase-3-5-extraction-assembly/tracks#track-d--proxy-integration)  
+**Phase:** 3.5 — Extraction & Context Assembly  
+**Estimated effort:** 2 days  
+**Track:** [Track D — Proxy Integration](/roadmap/phase-3-5-extraction-assembly/tracks#track-d--proxy-integration)  
+**Depends on:** Milestones 3.5.D.1–3.5.D.5
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+Update the canonical middleware chain diagram to its final Phase 3.5 form and add `TestMemoryIntegration_*` suite in `services/proxy`, mirroring the `TestSecurity_SEC*` convention.
+
+---
+
+## Test Coverage
+
+- Context assembly success path with real memories present
+- L1–L3 degradation paths (fault-injected via a test gRPC server that delays/errors on demand)
+- `X-IBEX-Skip-Memory` correctly bypasses the gRPC call (asserted via call-count mock)
+- Extraction enqueue fires exactly once per completed session, never on `active` status
+- Full regression: all Phase 1 + Phase 2 security/session tests still pass with `IBEX_CONTEXT_ENABLED=true`
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Proxy service (HTTP, bootstrap, config)
+- Context assembly service
+- Workers / task runtime
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] Fully unit-tested with fault injection for all 4 degradation levels
+- [ ] `dispatchProviderCompletion` wired, with `IBEX_CONTEXT_ENABLED=false` verified to reproduce exact Phase 2 behavior
+- [ ] Both header-only and embedded-metadata response surfaces implemented
+- [ ] Extraction enqueue uses Celery-native Redis list semantics
+- [ ] Proxy-side benchmark confirms `<20ms` proxy overhead target with context assembly enabled
+- [ ] Repo guards / CI checks still pass
+
+## Prerequisites
+
+- Milestones 3.5.D.1–3.5.D.5
+

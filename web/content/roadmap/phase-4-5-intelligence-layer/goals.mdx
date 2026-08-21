@@ -1,0 +1,80 @@
+---
+title: "Phase 4.5 — Goals"
+description: "Intelligence Layer: behavioral fingerprinting, drift detection, directive regression testing, and exit gate."
+summary: "Intelligence Layer: behavioral fingerprinting, drift detection, directive regression testing, and exit gate."
+phase: "phase-4-5-intelligence-layer"
+---
+
+# Phase 4.5 — Goals
+
+<Callout type="note" title="Planning baseline">
+  Paths, libraries, schemas, and sequencing on this phase are orientation for planning.
+  Implementation is expected to require further research and may land differently than any sketch.
+</Callout>
+
+## Track A — Behavioral Fingerprint Computation Service
+
+### Goal 4.5.A: Turn trace data into statistically sound behavioral signatures
+
+**Milestones:**
+- **4.5.A.1 — Feature extraction pipeline:** ClickHouse trace rows → feature vector. t-digest quantile sketches for token/length features. Laplace-smoothed tool distributions. k-means sub-clusters for response semantics. Beta-Binomial for error rates.
+- **4.5.A.2 — Fingerprint schema migration:** Extend `behavioral_fingerprints` with `token_quantile_sketch`, `response_cluster_centroids`, `response_cluster_weights`, `tool_distribution_smoothed`. ADR-0045.
+- **4.5.A.3 — Fingerprint computation trigger:** Time-boxed with count floor: `max(10 calls, 1 hour elapsed)`.
+
+**Acceptance criteria:**
+- t-digest, smoothed distributions, and multi-centroid clusters produced from real ClickHouse data
+- Fingerprint computation p95 &lt;= 1s / p99 &lt;= 5s
+- Zero-traffic agent does not crash, single-tool agent produces well-defined JS divergence
+
+---
+
+## Track B — Drift Detection Engine
+
+### Goal 4.5.B: Distribution-aware drift tests with calibrated thresholds and staged actions
+
+**Milestones:**
+- **4.5.B.1 — Distribution-aware drift tests:** KS two-sample test (tokens/length), Jensen-Shannon divergence (tool usage), chi-squared cluster-membership shift (response semantics), Beta-Binomial credible-interval overlap (error rate). ADWIN (from `river`) as sequential drift detector.
+- **4.5.B.2 — Threshold calibration:** Calibration procedure targeting &lt;=2% false-positive rate per week per agent. Thresholds are config (`thresholds.yaml`), not constants. ADR-0046.
+- **4.5.B.3 — Severity aggregation and staged action ladder:** Shadow (mandatory 30 days) → Notify-only (opt-in) → Auto-suspend (opt-in, off by default). Shadow mode is the only behavior possible without explicit org opt-in.
+
+**Acceptance criteria:**
+- ADWIN integrated and unit-tested against synthetic drift/no-drift streams
+- Calibration thresholds committed with ADR documenting false-positive-rate target
+- Chi-squared test correctly flags "new behavior cluster appears" (regression test vs. old centroid approach)
+- Action ladder enforced: shadow-only without opt-in flag
+- Drift detection runs fully async, off the proxy hot path
+
+---
+
+## Track C — Directive Regression Testing
+
+### Goal 4.5.C: Pre-promotion regression testing with structured LLM-judge evaluation
+
+**Milestones:**
+- **4.5.C.1 — Scenario management and versioning:** Three evaluation modes: `deterministic` (regex/JSON-schema), `structured_judge` (rubric-based), `freeform_judge` (natural language). `is_critical` scenarios require second reviewer. `directive_scenario_rubrics` table.
+- **4.5.C.2 — Regression runner service:** Celery task routing scenarios through the real proxy with `X-IBEX-Directive-Version-Override`. Majority vote (3 runs) for judge modes. Judge cost tracked per run. Different judge model than the model being tested.
+- **4.5.C.3 — Promotion gate and gradual rollout:** `promote` rejects without passed regression. Sticky hash routing for gradual rollout (10% → 50% → 100%). Auto-rollback on drift metric breach during rollout.
+- **4.5.C.4 — Dashboard integration:** Regression scenario list with pass/fail/critical-fail. Live rollout progress view with pause action.
+
+**Acceptance criteria:**
+- `promote` rejects with 409 when regression status is not `passed`
+- Sticky bucket routing verified across repeated calls
+- Auto-rollback integration test: synthetic drift during rollout triggers pause + revert
+- Judge disagreement rate tracked as Prometheus metric
+
+---
+
+## Track D — Exit Gate
+
+### Goal 4.5.D: Prove fingerprinting, drift, and regression work as one composed pipeline
+
+**Milestones:**
+- **4.5.D.1 — Cross-track integration suite (INT-4.5.\*):** 10 cases covering fresh agent baseline, stable agent no-alert, injected drift detection, regression from drift alert, promotion gate, gradual rollout, feature-disabled org, auth outage resilience, cross-tenant isolation, manual rollout pause.
+- **4.5.D.2 — End-to-end and Playwright coverage:** Full lifecycle e2e. Playwright: drift alert → regression → promotion → gradual rollout → pause → resume.
+- **4.5.D.3 — Benchmark sign-off:** Fingerprint p95 &lt; 500ms, drift comparison p95 &lt; 50ms, regression suite &lt; 30s, proxy overhead still &lt;20ms p99.
+- **4.5.D.4 — Gap register and sign-off:** P0–P3 severity, per-track gap table, ADR fidelity table. Zero open P0 gaps.
+
+**Acceptance criteria:**
+- All 10 INT-4.5 cases pass with real Postgres + Redis
+- Suite runtime &lt; 90s in CI
+- `intelligence-integration` added to required checks on `main`

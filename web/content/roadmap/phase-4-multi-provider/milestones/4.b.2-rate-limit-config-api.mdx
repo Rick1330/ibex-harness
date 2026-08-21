@@ -1,0 +1,159 @@
+---
+title: "4.B.2 Rate Limit Config API"
+description: "Management API endpoints for reading and overriding per-org/per-agent RPM and token budgets, backed by Postgres with proxy hot-path reload via Redis pub/sub invalidation."
+summary: "Management API endpoints for reading and overriding per-org/per-agent RPM and token budgets, backed by Postgres with proxy hot-path reload via Redis pub/sub invalidation."
+status: "planned"
+milestoneId: "4.B.2"
+track: "B"
+trackTitle: "Rate Limiting & Quota Enforcement"
+trackHref: "/roadmap/phase-4-multi-provider/tracks#track-b--rate-limiting--quota-enforcement"
+goal: "[Track B — Rate Limiting & Quota Enforcement](/roadmap/phase-4-multi-provider/tracks#track-b--rate-limiting--quota-enforcement)"
+estimatedEffort: "2 days"
+phase: "phase-4-multi-provider"
+fullTitle: "Milestone 4.B.2 — Rate Limit Configuration API"
+---
+
+# Milestone 4.B.2 — Rate Limit Configuration API
+
+**Status:** Planned  
+**Goal:** [Track B — Rate Limiting & Quota Enforcement](/roadmap/phase-4-multi-provider/tracks#track-b--rate-limiting--quota-enforcement)  
+**Phase:** 4 — Operator Platform & Multi-Provider  
+**Estimated effort:** 2 days  
+**Track:** [Track B — Rate Limiting & Quota Enforcement](/roadmap/phase-4-multi-provider/tracks#track-b--rate-limiting--quota-enforcement)
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+The Lua limiter (4.B.1) needs per-org and per-agent limits sourced from configuration, not hard-coded constants. Operators should be able to adjust these limits without a service restart. Configuration is stored in Postgres, read into the proxy's in-memory config on a 30s poll or Redis pub/sub invalidation — never a per-request DB read on the hot path.
+
+---
+
+## Non-Goals
+
+- Rate-limit metering/billing integration (Phase 4.5)
+- Per-user rate limits
+- Global platform limit configuration (that's an operator-level infrastructure setting, not an API endpoint)
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Rate limiting
+- Proxy service (HTTP, bootstrap, config)
+
+## Suggested naming (provisional)
+
+Rename freely to match the change that actually lands.
+
+- Branch: `feature/m4-b-2-rate-limit-config-api`
+- PR title: `feat(api): rate limit configuration API with hot-path reload (m4.B.2)`
+
+## Endpoints (illustrative)
+
+Route shapes below are a planning sketch — names, nesting, and payloads may change during implementation.
+
+```
+GET /v1/organizations/{org_id}/rate-limits → current agent/org/global limits + current usage
+PATCH /v1/organizations/{org_id}/rate-limits → override RPM/token budgets (admin permission required)
+GET /v1/agents/{agent_id}/rate-limits/usage → time-series usage for dashboard chart
+```
+
+---
+
+## Schema Addition
+
+```sql
+CREATE TABLE ibex_core.rate_limit_overrides (
+ id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+ org_id UUID NOT NULL REFERENCES ibex_core.organizations(id),
+ agent_id UUID REFERENCES ibex_core.agents(id), -- NULL = org-level override
+ requests_per_minute INTEGER, -- NULL = use platform default
+ tokens_per_month BIGINT, -- NULL = use platform default
+ updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+ UNIQUE (org_id, agent_id) -- one override per (org, agent) pair; (org_id, NULL) = org-level
+);
+```
+
+---
+
+## Response Schemas
+
+```python
+class RateLimitStatusResponse(BaseModel):
+ org_requests_per_minute: int # effective limit (override or platform default)
+ agent_requests_per_minute: int | None
+ org_tokens_per_month: int # effective limit
+ current_minute_requests: int # live counter from Redis
+ current_month_tokens: int # live counter from Redis
+ reset_at: datetime # when current window resets
+
+class RateLimitUsagePoint(BaseModel):
+ timestamp: datetime
+ requests: int
+ tokens: int
+
+class RateLimitUsageResponse(BaseModel):
+ agent_id: UUID
+ points: list[RateLimitUsagePoint] # last 60 minutes at 1-minute granularity
+```
+
+---
+
+## Hot-Path Reload Pattern
+
+Config is stored in Postgres; the proxy reads it on startup and caches in memory. Updates are propagated via Redis pub/sub (same pattern as directive cache invalidation):
+
+```go
+// Illustrative — exact path may differ
+type ConfigWatcher struct {
+ redis redis.UniversalClient
+ db RateLimitConfigRepo
+ cache *sync.Map // org_id → RateLimitConfig
+}
+
+// StartWatcher subscribes to the "ratelimit:config:updated" Redis channel.
+// On message, re-fetches affected org's config from Postgres and updates cache.
+// Falls back to 30s polling if pub/sub is unavailable.
+func (w *ConfigWatcher) StartWatcher(ctx context.Context)
+```
+
+The management API publishes `ratelimit:config:updated:{org_id}` on every `PATCH` to the rate-limits endpoint.
+
+---
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] `PATCH` with new limit reflected in proxy config within 30s (worst case, polling) or within 1s (pub/sub path) — verified by integration test
+- [ ] Current usage figures in `GET` response match Redis counters (not stale)
+- [ ] `admin` permission required for `PATCH`; `read_only` role can `GET` but not `PATCH`
+- [ ] `TestAPI_ISO_RATELIMIT_*`: org A cannot read/modify org B's rate limit config (404)
+
+## Prerequisites
+
+- M4.A.1 skeleton merged
+- M4.B.1 Lua limiter merged (needed for counter key namespace)
+

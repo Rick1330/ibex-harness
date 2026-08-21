@@ -1,0 +1,125 @@
+---
+title: "3.5.C.2 Parallel Retrieval Orchestration"
+description: "Four-way concurrent retrieval (directive, hot memories, history, cold search) with per-branch timeouts, outer 40ms deadline enforcement, and org_id/agent_id scoping at the SQL/Redis-key layer."
+summary: "Four-way concurrent retrieval (directive, hot memories, history, cold search) with per-branch timeouts, outer 40ms deadline enforcement, and org_id/agent_id scoping at the SQL/Redis-key layer."
+status: "planned"
+milestoneId: "3.5.C.2"
+track: "C"
+trackTitle: "Context Assembly Engine"
+trackHref: "/roadmap/phase-3-5-extraction-assembly/tracks#track-c--context-assembly-engine"
+goal: "[Track C — Context Assembly Engine](/roadmap/phase-3-5-extraction-assembly/tracks#track-c--context-assembly-engine)"
+estimatedEffort: "3 days"
+phase: "phase-3-5-extraction-assembly"
+fullTitle: "Milestone 3.5.C.2 — Parallel Retrieval Orchestration"
+---
+
+# Milestone 3.5.C.2 — Parallel Retrieval Orchestration
+
+**Status:** Planned  
+**Goal:** [Track C — Context Assembly Engine](/roadmap/phase-3-5-extraction-assembly/tracks#track-c--context-assembly-engine)  
+**Phase:** 3.5 — Extraction & Context Assembly  
+**Estimated effort:** 3 days  
+**Track:** [Track C — Context Assembly Engine](/roadmap/phase-3-5-extraction-assembly/tracks#track-c--context-assembly-engine)  
+**Depends on:** [3.5.C.1](/roadmap/phase-3-5-extraction-assembly/milestones/3.5.c.1-token-budget-calculator), Phase 3 exit (HNSW vector store)
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+The Phase 3 Track B work already specified the `ContextRetriever.retrieve()` component well — launching directive/hot-cache/embedding concurrently via `asyncio.gather(..., return_exceptions=True)`, only starting cold search once the query embedding is ready, merging and deduplicating hot/cold results. This milestone **wires it into the assembly pipeline directly** and adds the pieces the original spec left implicit.
+
+---
+
+## Non-Goals
+
+- Scoring and ranking (3.5.C.3)
+- Packing (3.5.C.4)
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Context assembly service
+- Tokenizer registry / counting
+
+## Suggested naming (provisional)
+
+Rename freely to match the change that actually lands.
+
+- Branch: `feature/m3-5-c2-parallel-retrieval`
+- PR title: `feat(context): parallel retrieval orchestration with four-way concurrency (m3.5.C.2)`
+
+## Additions on Top of the Existing Retriever Design
+
+### 1. History retrieval (missing from original design)
+
+The three sources originally named are directive, hot memories, and cold search — but "recent conversation history" is explicitly one of context assembly's stated inputs and one of ARCHITECTURE.md's parallel-retrieval branches. This is a genuine internal contradiction in the original design. **Fix:** add a fourth concurrent task, `history_task`, querying the session-checkpoint store (Postgres, keyed by `session_id`), bounded by the same 40ms envelope, with its own independent timeout (10ms — it's a single indexed row read).
+
+### 2. Outer deadline enforcement is the caller's job
+
+```python
+# Illustrative — exact path may differ
+class ContextAssembler:
+ async def assemble(self, request: AssembleContextRequest) -> AssembleContextResponse:
+ t0 = time.monotonic()
+ budget = await self._budget_calc.calculate(request.model, request.recent_messages, directive="")
+ try:
+ retrieval = await asyncio.wait_for(
+ self._retriever.retrieve(request.org_id, request.agent_id, request.session_id,
+ request.recent_messages, budget),
+ timeout=0.040,
+ )
+ except asyncio.TimeoutError:
+ return self._directive_only_fallback(request, budget, reason="retrieval_timeout")
+ ...
+```
+
+### 3. Tenant scoping enforced at the data layer
+
+Every hot-cache key and cold-search query should be namespaced (`{org_id}:hot_memories:{agent_id}`) per the established Redis convention, and this is the exact surface the Phase 3.5 ISO-* isolation test matrix (Track F) targets. `org_id`/`agent_id` scoping is enforced at the retriever's SQL/Redis-key layer, not just passed through.
+
+### 4. `RetrievalResult` extension
+
+```python
+@dataclass
+class RetrievalResult:
+ directive: str
+ hot_memories: list[dict]
+ cold_memories: list[dict]
+ history: list[Message] # NEW — conversation history from session store
+ sources_available: set[str] # which sources responded within deadline
+```
+
+---
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] Four-way concurrent retrieval (directive, hot memories, history, cold search — cold search gated on embedding completion)
+- [ ] Each branch has its own timeout; total wall-clock bounded by the outer `wait_for(0.040)`
+- [ ] `RetrievalResult` extended with a `history: list[Message]` field
+- [ ] Integration test: kill the memory-service dependency mid-retrieval → assembler still returns within the 40ms envelope using partial results (no cascading timeout)
+
+---

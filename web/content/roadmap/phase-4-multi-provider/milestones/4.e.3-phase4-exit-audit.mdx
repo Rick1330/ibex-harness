@@ -1,0 +1,89 @@
+---
+title: "4.E.3 Phase 4 Exit Audit"
+description: "Produce the Phase 4 gap register and exit audit — severity-tiered (P0–P3), track-by-track verification, ADR fidelity table, and sign-off checklist with zero open P0s."
+summary: "Produce the Phase 4 gap register and exit audit — severity-tiered (P0–P3), track-by-track verification, ADR fidelity table, and sign-off checklist with zero open P0s."
+status: "planned"
+milestoneId: "4.E.3"
+track: "E"
+trackTitle: "Exit Gate"
+trackHref: "/roadmap/phase-4-multi-provider/tracks#track-e--exit-gate"
+goal: "[Track E — Exit Gate](/roadmap/phase-4-multi-provider/tracks#track-e--exit-gate)"
+estimatedEffort: "1 day"
+phase: "phase-4-multi-provider"
+fullTitle: "Milestone 4.E.3 — Phase 4 Exit Audit"
+---
+
+# Milestone 4.E.3 — Phase 4 Exit Audit
+
+**Status:** Planned  
+**Goal:** [Track E — Exit Gate](/roadmap/phase-4-multi-provider/tracks#track-e--exit-gate)  
+**Phase:** 4 — Operator Platform & Multi-Provider  
+**Estimated effort:** 1 day  
+**Track:** [Track E — Exit Gate](/roadmap/phase-4-multi-provider/tracks#track-e--exit-gate)
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+Every prior phase's real completion evidence lived in a dedicated exit-audit artifact. Phase 4 adds a new human-facing attack surface (dashboard, multi-provider credentials) plus a second live upstream provider — it needs the same rigor as Phase 1's audit, not a lighter one.
+
+---
+
+## Exit Criteria (10-point sign-off)
+
+1. Second live LLM provider (Anthropic) passes same test depth as OpenAI
+2. `Registry.For(model)` resolves both providers with zero handler/middleware changes
+3. Circuit breaker and opt-in fallback verified via 4.E.2's fault-injection suite
+4. Redis Lua hierarchical rate limiting passes concurrency over-admission test (zero tolerance)
+5. Dashboard E2E suite (4.E.1) green in CI, required on `main`
+6. Zero axe-core `serious`/`critical` accessibility violations
+7. Management API OpenAPI spec consumed by dashboard client with zero manual type overrides
+8. All Phase 1–3.5 regression suites green with 2 providers registered
+9. Phase 4 gap register published with zero open P0 gaps
+10. `CURRENT_STATE.mdx` and roadmap snapshot updated
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Operator dashboard
+- Provider abstraction / adapters
+- Evaluation / benchmarks
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] Gap register published using Phase 1's severity table format (P0–P3)
+- [ ] ADR fidelity table for every ADR touched in Phase 4
+- [ ] Zero open P0 gaps at sign-off
+- [ ] `current-state.mdx` updated to reflect Phase 4 completion
+
+---
+
+## Prerequisites
+
+- All Track A–D milestones complete
+- Milestones 4.E.1 and 4.E.2 passing in CI
+

@@ -66,7 +66,7 @@ Mapped loosely to OWASP/CWE themes: broken access control (C1), crypto failures 
 | --- | --- |
 | Solo maintainer bus factor | Accepted for pre-1.0; see [GOVERNANCE.md](./GOVERNANCE.md) access continuity |
 | Proxy↔auth gRPC may use plaintext on private networks | Documented; mTLS planned for multi-tenant SaaS |
-| Formal pen-test / Phase 5 workshop | Scheduled for production hardening roadmap |
+| Formal pen-test / org-wide hardening workshop | Deferred beyond Phase 5 (future roadmap scope); per-phase isolation gates still required |
 
 ---
 

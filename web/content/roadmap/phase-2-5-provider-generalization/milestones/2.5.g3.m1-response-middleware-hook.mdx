@@ -1,0 +1,162 @@
+---
+title: "2.5.G3.M1 Response middleware hook (non-streaming)"
+description: "Today the success path is pure passthrough — nothing sits between 'upstream JSON received' and 'JSON written to client.' Before Phase 3 can do anything to a model's output (PII redaction, injection-scan, corrected content), that seam should exist as a first-class extension point."
+summary: "Today the success path is pure passthrough — nothing sits between 'upstream JSON received' and 'JSON written to client.' Before Phase 3 can do anything to a model's output (PII redaction, injection-scan, corrected content), that seam should exist as a first-class extension point."
+status: "planned"
+milestoneId: "2.5.G3.M1"
+track: "C"
+trackTitle: "Response-Side Processing Pipeline"
+trackHref: "/roadmap/phase-2-5-provider-generalization/tracks#track-c--response-side-processing-pipeline"
+goal: "[Track C — Response-Side Processing Pipeline](/roadmap/phase-2-5-provider-generalization/tracks#track-c--response-side-processing-pipeline)"
+estimatedEffort: "2 days"
+phase: "phase-2-5-provider-generalization"
+fullTitle: "Milestone 2.5.G3.M1 — Response Middleware Hook (Non-Streaming)"
+---
+
+# Milestone 2.5.G3.M1 — Response Middleware Hook (Non-Streaming)
+
+**Status:** Planned  
+**Goal:** [Track C — Response-Side Processing Pipeline](/roadmap/phase-2-5-provider-generalization/tracks#track-c--response-side-processing-pipeline)  
+**Phase:** 2.5 — Provider Generalization & Foundation  
+**Estimated effort:** 2 days
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+Today the success path is pure passthrough — `writeProviderSuccess` reads the entire upstream body and writes it back verbatim with no transformation point. Nothing sits between "upstream JSON received" and "JSON written to client." Before Phase 3 can do anything to a model's output (PII redaction, injection-scan, "corrected content"), that seam is useful to establish as a first-class extension point before later stages depend on it.
+
+**Why in Phase 2.5 rather than Phase 3:** Phase 3 guardrails / PII-redaction stages need this seam; adding it now with a no-op stage means Phase 3 can add stages rather than plumbing, and the typed decode/re-encode round-trip can be validated against real OpenAI responses before later work depends on it.
+
+---
+
+## Non-Goals
+
+- Streaming response transformation (separate milestone 2.5.G3.M2)
+- Actual PII redaction or injection scanning (Phase 3 adds real stages)
+- Per-agent pipeline configuration (future)
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Proxy service (HTTP, bootstrap, config)
+- Response pipeline / stages
+
+## Suggested naming (provisional)
+
+Rename freely to match the change that actually lands.
+
+- Branch: `feature/m2-5-g3-m1-response-middleware-hook`
+- PR title: `feat(proxy): ResponsePipeline stage interface with no-op stage for non-streaming responses (m2.5.G3.M1)`
+
+## Design
+
+Introduce a `ResponsePipeline` interface in a new `packages/responsepipeline` package:
+
+```go
+// Illustrative — exact path may differ
+type Stage interface {
+ Name() string
+ Process(ctx context.Context, resp *ChatResponse) (*ChatResponse, error)
+}
+
+// Illustrative — exact path may differ
+type Pipeline struct{ stages []Stage }
+func (p *Pipeline) Run(ctx context.Context, resp *ChatResponse) (*ChatResponse, error)
+```
+
+`ChatResponse` wraps the parsed OpenAI-shaped JSON (not raw bytes) — it is not possible to redact/rewrite content without parsing it, so this milestone also introduces a typed decode of the response body (currently it's opaque `[]byte` all the way through).
+
+**Failure mode:** fail-open by default, fail-closed only for stages explicitly marked security-critical — the same posture already used for directive injection (`ok, hasContent` guarded, missing context leaves messages unchanged).
+
+---
+
+## Working notes
+
+Preferred starting points and open questions — situational, and expected to evolve with further research during implementation.
+
+### Package boundary should be respected
+
+Decode/re-encode belongs with the proxy response path, not inside provider adapters. Provider implementations should not carry injection/response logic — this is an existing package boundary rule.
+
+### Typed ChatResponse
+
+The `ChatResponse` type mirrors the OpenAI chat completion response JSON:
+
+```go
+// Illustrative — exact path may differ
+type ChatResponse struct {
+ ID string `json:"id"`
+ Object string `json:"object"`
+ Created int64 `json:"created"`
+ Model string `json:"model"`
+ Choices []Choice `json:"choices"`
+ Usage *Usage `json:"usage,omitempty"`
+}
+
+type Choice struct {
+ Index int `json:"index"`
+ Message Message `json:"message"`
+ FinishReason string `json:"finish_reason"`
+}
+```
+
+### No-op stage
+
+```go
+// Illustrative — exact path may differ
+type NoopStage struct{}
+func (n *NoopStage) Name() string { return "noop" }
+func (n *NoopStage) Process(ctx context.Context, resp *ChatResponse) (*ChatResponse, error) {
+ return resp, nil
+}
+```
+
+### Benchmark requirement
+
+The p99 overhead added by decode/re-encode round trip should be measured and stay under 2ms. This is now permanently on the `<20ms` proxy overhead budget, so it should be benchmarked here, not discovered as a regression during Phase 3.
+
+---
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] Interface defined: `Name()`, `Process(ctx, *ChatResponse) (*ChatResponse, error)` (exact path may differ)
+- [ ] Executes stages in order, propagates errors (exact path may differ)
+- [ ] Fail-open behavior: non-security-critical stage error logs and passes through
+- [ ] `ChatResponse` typed decode/re-encode round-trip is byte-for-byte identical to raw passthrough
+- [ ] No-op stage implementation exists and is the default
+- [ ] `writeProviderSuccess` in `chat_provider.go` calls `pipeline.Run` before writing response
+- [ ] Benchmark: decode/re-encode p99 < 2ms (committed as `BenchmarkResponsePipelineNoop` in `*_test.go`)
+- [ ] Boundary respected — decode/re-encode stays (exact path may differ)
+- [ ] And `go test ./services/proxy/...` pass
+- [ ] Repo guards / CI checks still pass
+
+## Prerequisites
+
+- Phase 2 `writeProviderSuccess` path established
+- `packages/provider.Response` type stable
+

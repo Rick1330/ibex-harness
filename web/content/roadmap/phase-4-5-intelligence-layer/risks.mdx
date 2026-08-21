@@ -1,0 +1,25 @@
+---
+title: "Phase 4.5 — Risks and Mitigations"
+description: "Risks for fingerprinting, drift detection, regression testing, and rollout controls in the intelligence layer."
+summary: "Risks for fingerprinting, drift detection, regression testing, and rollout controls in the intelligence layer."
+phase: "phase-4-5-intelligence-layer"
+---
+
+# Phase 4.5 — Risks and Mitigations
+
+<Callout type="note" title="Planning baseline">
+  Paths, libraries, schemas, and sequencing on this phase are orientation for planning.
+  Implementation is expected to require further research and may land differently than any sketch.
+</Callout>
+
+| Risk | Area | Likelihood | Impact | Mitigation |
+| --- | --- | --- | --- | --- |
+| Drift thresholds generate noisy alerts | 4.5.B.2 | Medium | High | Calibrate against replay data, keep thresholds in config, and revisit them as production evidence accumulates |
+| Statistical tests do not generalize across agents | 4.5.B.x | Medium | Medium | Separate feature classes, document assumptions, and treat calibration as an iterative research task rather than a one-time constant choice |
+| Fingerprint generation competes with hot-path workloads | 4.5.A.x | Low | High | Keep the whole pipeline asynchronous, time-box worker jobs, and benchmark fingerprint computation independently from the proxy |
+| Judge-based regression results are unstable | 4.5.C.2 | Medium | Medium | Use repeated runs, track disagreement rate, and retain deterministic checks where they are sufficient |
+| Promotion gate or rollout controls pause healthy agents incorrectly | 4.5.C.3 | Low | High | Start with shadow and notify-only modes, keep auto-actions opt-in, and require explicit rollback/pause verification in integration tests |
+| Cross-tenant leakage in fingerprint or drift tables | 4.5.A.x + 4.5.B.x | Low | Critical | Apply the same `org_id` enforcement pattern used in earlier phases and keep dedicated cross-tenant tests in the exit suite |
+| Dashboard narratives overstate drift confidence | 4.5.C.4 | Medium | Medium | Surface severity and confidence separately, show calibration provenance, and keep manual review available for critical decisions |
+| Replay corpus is too narrow for calibration | 4.5.B.2 | Medium | Medium | Record the limitation explicitly, treat additional replay data as follow-up investigation work, and plan recalibration after broader coverage |
+

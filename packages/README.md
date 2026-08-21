@@ -1,6 +1,14 @@
 # packages/
 
-Shared libraries and contract artifacts (not deployable as standalone processes).
+Shared libraries and contract artifacts (not deployable as standalone processes). Deployable runtimes live under [`services/`](../services/README.md).
+
+Names below mix **shipped** packages with **planned** libraries from the redesigned roadmap (Phases 2.5–5). Planned rows are orientation only — exact package boundaries may change during implementation. See [Changing this inventory](#changing-this-inventory).
+
+Scaffold guidance: [web/engineering/FILE_STRUCTURE.md](../web/engineering/FILE_STRUCTURE.md). Package boundary rules: [ADR-0020](../web/content/docs/adr/0020-shared-package-boundaries.mdx).
+
+---
+
+## Shipped (Go / shared)
 
 | Directory | Role |
 | --- | --- |
@@ -17,15 +25,32 @@ Shared libraries and contract artifacts (not deployable as standalone processes)
 | `apierror/` | Canonical HTTP/gRPC error codes and envelope ([ADR-0020](../web/content/docs/adr/0020-shared-package-boundaries.mdx)) |
 | `session/` | Session store contract (intentional multi-consumer API — [ARCHITECTURE_LAYERING.md](../web/engineering/ARCHITECTURE_LAYERING.md)) |
 | `idempotency/` | Idempotency store contract (intentional multi-consumer API) |
-| `directive/` | Directive resolver contract (intentional multi-consumer API) |
+| `directive/` | Directive resolver contract (intentional multi-consumer API; rollout helpers may extend this in Phase 4.5) |
 | `injection/` | System-prompt injection strategies for chat messages ([ADR-0031](../web/content/docs/adr/0031-system-prompt-injection.mdx)) |
 | `authcache/` | Token validation LRU + bloom of invalids ([ADR-0028](../web/content/docs/adr/0028-auth-cache-design.mdx)) |
 | `revocation/` | Auth-cache revocation channel helpers ([ADR-0029](../web/content/docs/adr/0029-token-revocation-propagation.mdx)) |
 | `redissub/` | Shared Redis SUBSCRIBE helpers for revocation fan-out |
 | `healthcheck/` | Shared `/health` and `/ready` probe framework ([ADR-0022](../web/content/docs/adr/0022-health-check-contract.mdx)) |
-| `provider/` | LLM provider abstraction and model registry ([ADR-0025](../web/content/docs/adr/0025-llm-provider-abstraction.mdx)) |
+| `provider/` | LLM provider abstraction and registry ([ADR-0025](../web/content/docs/adr/0025-llm-provider-abstraction.mdx)); Phase 2.5+ extends with Anthropic, capability registry, OpenAI-compatible / self-hosted adapters |
 | `clickhouse/` | ClickHouse writer/DSN helpers for `llm_traces` ([ADR-0033](../web/content/docs/adr/0033-clickhouse-schema.mdx)) |
 | `chdsn/` | ClickHouse DSN flattening helpers |
+
+---
+
+## Planned (redesigned roadmap)
+
+| Directory | Role | Preferred phase | Notes |
+| --- | --- | --- | --- |
+| `tokenizer/` | Go — `Tokenizer` interface + registry keyed by `TokenizerFamily` (tiktoken and/or HF via CGo) | **2.5** | May pair with `services/tokenizer-service/` depending on latency vs build complexity |
+| `responsepipeline/` | Go — typed response decode / stage pipeline / re-encode for non-streaming (streaming design follows) | **2.5** | Stays out of `provider/` (no injection/response logic in provider adapters) |
+| `embedder/` | Go — proxy/client-facing embedder interface + registry (inference lives in `services/embedder/`) | **2.5** | Thin shared contract; backends are a service concern |
+| `contextclient/` | Go — fail-open gRPC client for context assembly | **3.5** | Mirrors the auth gRPC client pattern; never blocks the LLM path on assembly failure |
+| `circuitbreaker/` | Go — shared breaker for providers and context dependencies | **4** | Preferred starting place for per-provider isolation |
+
+### Client SDKs / CLI (still planned)
+
+| Directory | Role |
+| --- | --- |
 | `sdk-python/` | Python client SDK (planned) |
 | `sdk-typescript/` | TypeScript client SDK (planned) |
 | `sdk-go/` | Go client SDK (planned) |
@@ -33,4 +58,17 @@ Shared libraries and contract artifacts (not deployable as standalone processes)
 
 **TypeScript:** pnpm workspace members with a `package.json` (today `@ibex-harness/proto` for local codegen; future `sdk-typescript/`, shared UI tokens) live alongside Go packages. pnpm ignores directories without `package.json`.
 
-See [web/engineering/FILE_STRUCTURE.md](../web/engineering/FILE_STRUCTURE.md).
+---
+
+## Changing this inventory
+
+Packages are **open to change**. Adding, removing, renaming, merging, or splitting libraries — or moving logic between `packages/` and `services/` — is allowed when there is **strong evidence** (measured hot-path cost, clearer module boundaries, duplicated crypto/auth logic, proto ownership, etc.).
+
+Prefer:
+
+1. **Evidence** — why the current boundary fails (import cycles, latency, duplicated secrets handling, unclear ownership)
+2. **Reasoning** — tradeoffs vs extending an existing package
+3. **An ADR** — especially for new shared contracts, crypto, auth, provider boundaries, or anything multiple services will import
+4. **README + roadmap updates** — keep this file and milestone references aligned with the decision
+
+Do not invent a new top-level package for one-off service helpers; keep those under `services/<name>/internal` (Go) or the service’s private modules (Python) until a second consumer and an ADR justify promotion.

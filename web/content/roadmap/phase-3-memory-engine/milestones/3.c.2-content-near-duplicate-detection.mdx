@@ -1,0 +1,116 @@
+---
+title: "3.C.2 Content and near-duplicate detection"
+description: "Steps 3 and 5 of the write pipeline: exact dedup via SHA-256 content hash and near-duplicate detection via cosine similarity threshold, routed through the VectorStore interface from Track B."
+summary: "Steps 3 and 5 of the write pipeline: exact dedup via SHA-256 content hash and near-duplicate detection via cosine similarity threshold, routed through the VectorStore interface from Track B."
+status: "planned"
+milestoneId: "3.C.2"
+track: "C"
+trackTitle: "Write Pipeline"
+trackHref: "/roadmap/phase-3-memory-engine/tracks#track-c--write-pipeline"
+goal: "[Track C — Write Pipeline](/roadmap/phase-3-memory-engine/tracks#track-c--write-pipeline)"
+estimatedEffort: "2 days"
+phase: "phase-3-memory-engine"
+fullTitle: "Milestone 3.C.2 — Content and near-duplicate detection"
+---
+
+# Milestone 3.C.2 — Content and near-duplicate detection
+
+**Status:** Planned  
+**Goal:** [Track C — Write Pipeline](/roadmap/phase-3-memory-engine/tracks#track-c--write-pipeline)  
+**Phase:** 3 — Core Memory Substrate  
+**Estimated effort:** 2 days
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+Steps 3 (exact dedup) and 5 (near-duplicate detection) of the 9-step write pipeline. Before a memory is stored, the system must verify it is not an exact duplicate of an existing memory (same content hash) and not a near-duplicate (cosine similarity above threshold) that should be merged or superseded. Running both checks before write prevents redundant memory accumulation that degrades retrieval quality and wastes storage.
+
+The three-stage dedup model (content hash → vector similarity → optional deep semantic check) is correct from the original plan and is kept as-is. The redesign changes only what happens *after* the near-duplicate threshold fires (handled in Milestone 3.C.3).
+
+---
+
+## Non-Goals
+
+- Conflict detection and resolution (Milestone 3.C.3)
+- The LLM-based deep semantic check (triggered only in 3.C.3 after temporal interval check)
+- Any change to the similarity threshold logic
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Memory service / repositories
+- Write pipeline / safety
+- Database schema / migrations
+
+## Suggested naming (provisional)
+
+Rename freely to match the change that actually lands.
+
+- Branch: `feature/m3-c-2-dedup`
+- PR title: `feat(memory): content and near-duplicate detection (m3.C.2)`
+
+## Design
+
+### Exact dedup: content hash
+
+`content_hash` is a SHA-256 of normalized content (whitespace-collapsed, lowercased), with a unique constraint scoped to `(org_id, agent_id)` and `status = 'active'`. On exact hash match:
+- No insert
+- `retrieval_count` incremented on existing row
+- No LLM call fired
+- Existing memory ID returned to caller
+
+### Near-duplicate detection: vector similarity
+
+Cosine similarity > 0.92 (configurable threshold) triggers near-duplicate candidate detection. Candidates are fetched via `VectorStore.search()` from Track B — no duplicate query logic in the dedup module. The dedup stage returns a list of near-duplicate candidates to the conflict-detection stage (3.C.3), which decides what to do with them.
+
+```python
+# dedup.py (key interface)
+@dataclass
+class DedupResult:
+ is_exact_duplicate: bool
+ existing_memory_id: UUID | None # set when exact match
+ near_duplicate_candidates: list[UUID] # set when similarity > threshold
+```
+
+---
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] Identical `content_hash` → no insert, `retrieval_count` incremented on existing row, no LLM call fired
+- [ ] Near-duplicate candidates (cosine > 0.92) fetched via `VectorStore.find_similar` interface from Track B — no duplicate query logic
+- [ ] Near-dup detection is org/agent-scoped (no cross-tenant leakage in candidate search)
+- [ ] Empty corpus case handled correctly (new agent, no prior memories)
+
+---
+
+## Prerequisites
+
+- Milestone 3.1.1 merged (`content_hash` column and unique constraint in schema)
+- Milestone 3.2.1 merged (`VectorStore` interface available)
+- Milestone 3.C.1 merged (PII stage runs before dedup in pipeline)
+

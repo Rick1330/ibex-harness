@@ -1,0 +1,117 @@
+---
+title: "3.C.1 PII detection and redaction stage"
+description: "Step 2 of the memory write pipeline: two-tier PII detection (regex + NER via Microsoft Presidio), redaction before embedding, and quarantine routing for low-confidence findings."
+summary: "Step 2 of the memory write pipeline: two-tier PII detection (regex + NER via Microsoft Presidio), redaction before embedding, and quarantine routing for low-confidence findings."
+status: "planned"
+milestoneId: "3.C.1"
+track: "C"
+trackTitle: "Write Pipeline"
+trackHref: "/roadmap/phase-3-memory-engine/tracks#track-c--write-pipeline"
+goal: "[Track C — Write Pipeline](/roadmap/phase-3-memory-engine/tracks#track-c--write-pipeline)"
+estimatedEffort: "3 days"
+phase: "phase-3-memory-engine"
+fullTitle: "Milestone 3.C.1 — PII detection and redaction stage"
+---
+
+# Milestone 3.C.1 — PII detection and redaction stage
+
+**Status:** Planned  
+**Goal:** [Track C — Write Pipeline](/roadmap/phase-3-memory-engine/tracks#track-c--write-pipeline)  
+**Phase:** 3 — Core Memory Substrate  
+**Estimated effort:** 3 days
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+Step 2 of the write pipeline. The original plan's acceptance criterion ("PII detection redacts email, phone, SSN patterns") is regex-only — this misses names, addresses, and context-dependent PII (e.g., "my daughter Sarah goes to Lincoln Elementary") that regex cannot catch. This matters critically for GDPR "right to erasure" claims, which require reliable identification of personal information in all its forms.
+
+A strictly regex-based approach would pass the letter of the original acceptance criteria while failing real-world GDPR compliance. This milestone builds a two-tier detector from the start, since no existing PII-redacted data needs to be migrated.
+
+---
+
+## Non-Goals
+
+- Deduplication (Milestone 3.C.2)
+- Conflict detection (Milestone 3.C.3)
+- Classification (Milestone 3.C.4)
+- GDPR deletion cascade (Track E)
+- External PII detection APIs (self-hosted Presidio only)
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Memory service / repositories
+- Write pipeline / safety
+- Database schema / migrations
+
+## Suggested naming (provisional)
+
+Rename freely to match the change that actually lands.
+
+- Branch: `feature/m3-c-1-pii-detection`
+- PR title: `feat(memory): PII detection and redaction pipeline stage (m3.C.1)`
+
+## Design — Two-tier detection
+
+### Tier 1 (fast, deterministic)
+Regex/pattern matchers for structured PII (email, phone, SSN, credit card, IP address). Implemented via **Microsoft Presidio** (`presidio-analyzer` + `presidio-anonymizer`, MIT-licensed) rather than hand-rolled regex. Presidio ships NER-based recognizers as Tier 2, so adopting it delivers both tiers from one dependency.
+
+### Tier 2 (contextual, NER-based)
+Presidio's `AnalyzerEngine` with the built-in NLP engine (spaCy `en_core_web_lg`). Free, open-source, self-hostable — no external API call at inference time. Critically for IBEX's "quarantine PII findings" behavior, Presidio returns confidence scores per finding, so low-confidence detections route to `quarantined` status rather than binary allow/block.
+
+**Why Presidio over hand-rolling or a paid API:**
+- Purpose-built for this use case (used in production in health/finance-regulated environments)
+- Avoids reinventing entity recognition
+- Self-hostable (important for air-gapped deployment)
+- Returns per-finding confidence scores for quarantine routing
+- MIT license, actively maintained
+
+---
+
+## Critical Ordering Invariant
+
+Redaction **must** happen **before** embedding generation, not after. If the embedding encodes the PII (e.g., "call me at 555-1234" embeds differently than "call me at [PHONE]"), PII leaks into similarity search results even if the stored text is redacted. This ordering constraint is a hard invariant enforced by pipeline stage ordering, not a code review convention. A pipeline ordering test must verify it.
+
+---
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] Presidio integrated as a Python dependency, running self-hosted (no external API)
+- [ ] Structured PII (email/phone/SSN/credit card) redacted with &gt;95% recall on a labeled test fixture
+- [ ] Named-entity PII (person names, addresses) flagged with confidence score; findings below threshold route to `quarantined` status, not silently redacted
+- [ ] Redaction happens strictly before the embedding stage — enforced by pipeline ordering test, not just convention
+- [ ] Unit tests cover both true positives and known false-positive traps
+- [ ] `pii_detected` and `pii_redacted` flags set correctly on the `memories` row
+
+---
+
+## Prerequisites
+
+- Milestone 3.1.1 merged (schema has `pii_detected`, `pii_redacted` columns and `quarantined` status)
+- Presidio dependency (`presidio-analyzer`, `presidio-anonymizer`) added to `services/memory/pyproject.toml`
+

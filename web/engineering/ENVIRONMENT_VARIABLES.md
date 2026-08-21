@@ -10,8 +10,15 @@ This document is the **single source of truth** for:
 - default values and safe development defaults,
 - and security/rotation requirements.
 
+**Current state:** Phases **0–2** are shipped. Variables marked **shipped** are wired today.
+Variables marked **planned (2.5+)**, **planned (3+)**, etc. are the redesigned-roadmap planning
+baseline — exact names may change during implementation when live code and an ADR say so. Keep this
+file aligned with [`services/README.md`](../../services/README.md),
+[`packages/README.md`](../../packages/README.md), and [`web/content/roadmap/`](../content/roadmap/).
+
 **Rule:** If a service reads an environment variable, it must be documented here.  
-**Rule:** If a variable is documented here, it must be referenced exactly (same name, same meaning) in code.
+**Rule:** If a variable is documented here, it must be referenced exactly (same name, same meaning) in code (once that surface ships).  
+**Rule:** Do not invent production secrets in examples; use placeholders.
 
 ---
 
@@ -102,7 +109,7 @@ These apply across services, or are read by most services.
 
 ## 5) Database (PostgreSQL) Variables
 
-Used by: **auth, api, memory, context, worker, dashboard (server-only)**
+Used by: **auth, api, memory, context, worker, dashboard (server-only)** — and any future Python/Go service that opens Postgres. Shipped today: **auth**, **proxy** (session/directive only).
 
 | Variable | Required | Default | Description | Security Notes |
 |----------|----------|---------|-------------|----------------|
@@ -231,17 +238,27 @@ Used by: **proxy** (`services/proxy`)
 | `OPENAI_REQUEST_TIMEOUT` | No | `120s` | Upstream request timeout | |
 | `OPENAI_MAX_RETRIES` | No | `3` | Retries on 429/5xx/network | |
 | `OPENAI_RETRY_BASE_DELAY` | No | `500ms` | Exponential backoff base | |
-| `ANTHROPIC_API_KEY` | Phase 4 | (none) | Not wired in Phase 2 | Secret |
-| `IBEX_DEFAULT_PROVIDER` | Phase 4 | `openai` | Deferred — single OpenAI registry in Phase 2 | |
-| `IBEX_PROVIDER_TIMEOUT_MS` | Phase 4 | — | Superseded by `OPENAI_REQUEST_TIMEOUT` in Phase 2 | |
-| `IBEX_PROVIDER_CONNECT_TIMEOUT_MS` | Phase 4 | — | Not wired | |
-| `IBEX_PROVIDER_MAX_RETRIES` | Phase 4 | — | Superseded by `OPENAI_MAX_RETRIES` in Phase 2 | |
-| `IBEX_PROVIDER_CIRCUIT_BREAKER_FAILURES` | Phase 4 | `5` | Not wired in Phase 2 | |
-| `IBEX_PROVIDER_CIRCUIT_BREAKER_COOLDOWN_SECONDS` | Phase 4 | `30` | Not wired in Phase 2 | |
+| `ANTHROPIC_API_KEY` | Planned **2.5** (when Anthropic registered) | (none) | Anthropic API key for Messages API adapter | Secret; never logged |
+| `ANTHROPIC_BASE_URL` | Planned **2.5** | `https://api.anthropic.com` | Anthropic API base URL | Override for gateways/proxies |
+| `ANTHROPIC_MAX_RETRIES` | Planned **2.5** | `3` | Anthropic-specific retries (include HTTP 529 overloaded) | Do not copy OpenAI retry list verbatim |
+| `IBEX_SELFHOSTED_ENABLED` | Planned **2.5** | `false` | Register OpenAI-compatible self-hosted backend(s) | Air-gapped / vLLM / TGI / Ollama path |
+| `IBEX_SELFHOSTED_BASE_URL` | Conditional | (none) | Base URL for self-hosted OpenAI-compatible API | Required when enabled |
+| `IBEX_SELFHOSTED_MODELS` | Conditional | (none) | Comma-separated model IDs served by that backend | Must exist in capability registry |
+| `IBEX_SELFHOSTED_API_KEY` | No | (none) | Optional bearer for self-hosted servers that require one | Secret if set |
+| `IBEX_CONTEXT_ENABLED` | Planned **3.5** | `false` | Master switch for context-assembly injection; `false` = Phase 2 directive-only behavior | Additive; fail-open |
+| `IBEX_CONTEXT_GRPC_ADDR` | Conditional | `127.0.0.1:9092` | Context Assembly Engine gRPC target | Required when context enabled |
+| `IBEX_CONTEXT_TIMEOUT` | Planned **3.5** | `45ms` | Client-side assembly deadline (independent of server internal budget) | Fail-open on timeout |
+| `IBEX_CONTEXT_EMBED_METADATA` | Planned **3.5** | `false` | Embed assembly metadata JSON in response (costs a decode) | Off by default |
+| `IBEX_EXTRACTION_REDIS_URL` | Planned **3.5** | (falls back to `REDIS_URL`) | Optional separate Redis for Celery broker | Secret if password present |
+| `IBEX_TOKENIZER_MODE` | Planned **2.5** | `local` | `local` \| `service` \| `dual` — how proxy counts tokens | Situational; dual-path is a starting preference |
+| `IBEX_TOKENIZER_SERVICE_URL` | Conditional | (none) | Python tokenizer-service base URL | Required when mode uses service |
+| `IBEX_DEFAULT_PROVIDER` | Planned **4** | `openai` | Org-level default when multi-provider routing is live | Phase 2/2.5 use registry registration |
+| `IBEX_PROVIDER_CIRCUIT_BREAKER_FAILURES` | Planned **4** (prefer earlier for self-hosted) | `5` | Failures in window before open | Shared `circuitbreaker` package |
+| `IBEX_PROVIDER_CIRCUIT_BREAKER_COOLDOWN_SECONDS` | Planned **4** | `30` | Cool-down before half-open | |
 
-**BYOK (Bring your own key) variables (optional advanced):**
+**BYOK (Bring your own key) — Phase 4:**
 
-- If orgs store their own provider keys, those must be encrypted at rest and never returned to clients.
+- Org-scoped provider credentials are encrypted at rest and resolved via Auth gRPC — never returned to clients or logged. Exact env names for KMS/envelope keys belong with the auth/API surfaces when that milestone lands.
 
 ---
 
@@ -311,22 +328,44 @@ Used by: **auth** (`services/auth`)
 
 ---
 
-## 11) Context / Memory / Embedding Variables
+## 11) Context / Memory / Embedding / Tokenizer Variables
 
-Used by: **memory service**, **context service**, **embedder**, **workers**
+**Phase timing (planning baseline):** embedder + tokenizer → **2.5**; memory substrate → **3**;
+context assembly + extraction enqueue → **3.5**; hybrid/graph retrieval knobs → **5**.
 
-### Embeddings
+Used by: **memory**, **context**, **embedder**, **tokenizer-service** (optional), **workers**, **proxy** (clients)
+
+### Embedding profile (deployment-time)
+
+Profile chooses model **and** dimensionality together. Switching profiles requires a re-embed /
+migration — do not mix dims in one pgvector column.
 
 | Variable | Required | Default | Description | Notes |
 |----------|----------|---------|-------------|-------|
-| `IBEX_EMBEDDING_MODEL` | No | `all-MiniLM-L6-v2` | Embedding model name | Must match schema dim |
-| `IBEX_EMBEDDING_DIM` | No | `384` | Embedding dimensionality | Must match pgvector column |
-| `IBEX_EMBEDDER_URL` | Yes (if remote) | (none) | Embedder service URL | Internal |
+| `IBEX_EMBEDDING_PROFILE` | Planned **2.5** | `cpu` | `cpu` \| `gpu` \| `hosted` | Deployment choice, not per-request |
+| `IBEX_EMBEDDING_MODEL` | No | profile-dependent | Model id (e.g. `BAAI/bge-m3`, `all-MiniLM-L6-v2`, `text-embedding-3-large`) | Must match schema dim |
+| `IBEX_EMBEDDING_DIM` | No | profile-dependent | Vector dimensionality (e.g. `1024` for bge-m3, `384` for MiniLM) | Validated at startup vs DB |
+| `IBEX_EMBEDDER_URL` | Yes (if remote) | (none) | Embedder service / TEI base URL | Internal |
+| `IBEX_EMBEDDER_BACKEND` | Planned **2.5** | `tei` | `tei` \| `hosted` \| `local` | Backend registry key |
 | `IBEX_EMBEDDER_TIMEOUT_MS` | No | `2000` | Embed request timeout | Context path sensitive |
-| `IBEX_EMBEDDER_BATCH_SIZE` | No | `64` | Batch size | GPU efficiency |
-| `IBEX_EMBEDDER_BATCH_MAX_WAIT_MS` | No | `50` | Max wait for batching | Controls latency |
+| `IBEX_EMBEDDER_BATCH_SIZE` | No | `64` | Batch size when client-side batching is used | TEI may batch server-side |
+| `IBEX_EMBEDDER_BATCH_MAX_WAIT_MS` | No | `50` | Max wait for client-side batching | |
+| `IBEX_EMBEDDING_CACHE_ENABLED` | Planned **2.5** | `true` | Content-hash embedding cache | Redis-backed |
+| `IBEX_EMBEDDING_CACHE_TTL_SECONDS` | Planned **2.5** | `86400` | Cache TTL | Org-scoped keys |
+| `OPENAI_EMBEDDING_API_KEY` | Conditional | (none) | Hosted embedding API key when backend=`hosted` | Secret; may reuse `OPENAI_API_KEY` if policy allows |
 
-### Memory system knobs
+Preferred starting models in the roadmap: **GPU/prod** `bge-m3` (1024-dim); **CPU/dev** MiniLM (384-dim); **hosted** OpenAI `text-embedding-3-large` (or Cohere/Voyage as alternates).
+
+### Tokenizer
+
+| Variable | Required | Default | Description | Notes |
+|----------|----------|---------|-------------|-------|
+| `IBEX_TOKENIZER_MODE` | Planned **2.5** | `local` | `local` \| `service` \| `dual` | Dual = CGo in proxy + Python service for assembly |
+| `IBEX_TOKENIZER_SERVICE_URL` | Conditional | (none) | `services/tokenizer-service` base URL | FastAPI `/tokenize` |
+| `IBEX_TOKENIZER_TIMEOUT_MS` | No | `20` | Remote count budget | Hot path; degrade to char estimate |
+| `IBEX_TOKENIZER_ASSET_DIR` | No | (bundled) | Local `tokenizer.json` cache dir | Air-gapped friendly |
+
+### Memory system knobs (Phase 3+)
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
@@ -337,28 +376,48 @@ Used by: **memory service**, **context service**, **embedder**, **workers**
 | `IBEX_MEMORY_NEAR_DUPLICATE_SIM_THRESHOLD` | No | `0.92` | Near-duplicate similarity threshold |
 | `IBEX_MEMORY_VECTOR_SEARCH_MIN_SIMILARITY` | No | `0.70` | Default min similarity |
 | `IBEX_MEMORY_HOT_CACHE_TTL_SECONDS` | No | `3600` | Cache TTL for hot memories |
+| `IBEX_HNSW_EF_SEARCH` | Planned **3** | `40` | Per-query HNSW `ef_search` starting point | Tune from recall/latency benches |
+| `IBEX_MEMORY_HYBRID_ENABLED` | Planned **5** | `false` | Enable dense+sparse hybrid retrieval | Feature flag |
+| `IBEX_MEMORY_RERANK_ENABLED` | Planned **5** | `false` | Cross-encoder rerank on fused top-K | Degrade if TEI unavailable |
 
-### Context assembly knobs
+### Context assembly knobs (Phase 3.5+)
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `IBEX_CONTEXT_DEADLINE_MS` | No | `40` | Shared deadline for context retrieval |
-| `IBEX_CONTEXT_P95_TARGET_MS` | No | `50` | Target p95 | For alerting/benchmarks |
+| `IBEX_CONTEXT_DEADLINE_MS` | No | `40` | Server-side assembly budget |
+| `IBEX_CONTEXT_P95_TARGET_MS` | No | `50` | Target p95 | Alerting/benchmarks |
 | `IBEX_CONTEXT_MAX_MEMORIES` | No | `20` | Max memories injected |
 | `IBEX_CONTEXT_RESPONSE_RESERVE_RATIO` | No | `0.15` | Reserve for model output |
 | `IBEX_CONTEXT_SAFETY_BUFFER_RATIO` | No | `0.10` | Buffer to avoid overflow |
+
+Proxy client switches for assembly live in §9 (`IBEX_CONTEXT_ENABLED`, `IBEX_CONTEXT_GRPC_ADDR`, …).
 
 ### Ranking weights (defaults)
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `IBEX_RANK_WEIGHT_RELEVANCE` | No | `0.40` | Cosine similarity weight |
-| `IBEX_RANK_WEIGHT_RECENCY` | No | `0.25` | Recency weight |
-| `IBEX_RANK_WEIGHT_USEFULNESS` | No | `0.20` | Usefulness weight |
+| `IBEX_RANK_WEIGHT_RECENCY` | No | `0.25` | Recency weight (category-conditional half-lives in Phase 3) |
+| `IBEX_RANK_WEIGHT_USEFULNESS` | No | `0.20` | Usefulness / feedback weight |
 | `IBEX_RANK_WEIGHT_CONFIDENCE` | No | `0.10` | Confidence weight |
 | `IBEX_RANK_WEIGHT_FREQUENCY` | No | `0.05` | Access frequency weight |
 
 **Rule:** weights must sum to 1.0; validate at startup.
+
+---
+
+## 11b) MCP Memory Server Variables (planned 2.5 → 3.5)
+
+Used by: **`services/mcp-memory/`**
+
+| Variable | Required | Default | Description | Notes |
+|----------|----------|---------|-------------|-------|
+| `IBEX_MCP_ENABLED` | Planned | `false` | Master enable | Prefer per-org enable later |
+| `IBEX_MCP_TRANSPORT` | Planned | `streamable_http` | `streamable_http` \| `stdio` | `stdio` is dev-only |
+| `IBEX_MCP_PORT` | Planned | `8090` | HTTP listen port | |
+| `IBEX_AUTH_GRPC_ADDR` | Yes (when enabled) | `127.0.0.1:9091` | Reuse Auth `ValidateToken` | One identity system |
+| `IBEX_MCP_RATE_LIMIT_RPM` | Planned | `120` | Independent MCP tool budget | Separate from chat RPM |
+| `IBEX_MEMORY_HTTP_URL` | Conditional | (none) | Memory service base for tools | Phase 3+ |
 
 ---
 
@@ -389,26 +448,29 @@ Used by: **api**, **proxy**, **workers**, **dashboard**
 
 ## 13) Worker / Queue Variables (Celery)
 
-Used by: **worker service**
+Used by: **worker service** (preferred start: Phase **3.5** extraction; Phase **4.5** intelligence jobs)
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `CELERY_BROKER_URL` | Yes | (none) | Redis broker URL | Secret if includes password |
-| `CELERY_RESULT_BACKEND` | No | (same as broker) | Where results stored | |
+| `CELERY_RESULT_BACKEND` | No | (same as broker) | Where results stored | Prefer short TTL / ignore-result for fire-and-forget extraction |
+| `CELERY_RESULT_EXPIRES` | No | `3600` | Result key TTL (seconds) | Avoid unbounded Redis growth |
+| `CELERY_TASK_IGNORE_RESULT` | No | `true` | Default ignore-result for extraction | Opt in per task when visibility needed |
 | `CELERY_CONCURRENCY` | No | `4` | Worker processes/threads | Tune per CPU |
 | `CELERY_PREFETCH_MULTIPLIER` | No | `4` | Prefetch count | Controls fairness |
 | `CELERY_MAX_TASKS_PER_CHILD` | No | `1000` | Restart child to avoid leaks | |
 | `CELERY_TASK_ACKS_LATE` | No | `true` | Ack only after completion | At-least-once |
 | `CELERY_TASK_TIME_LIMIT_SECONDS` | No | `300` | Hard time limit | Prevent stuck jobs |
 | `CELERY_TASK_SOFT_TIME_LIMIT_SECONDS` | No | `240` | Soft limit | Graceful shutdown |
+| `IBEX_CELERY_QUEUES` | Planned **3.5** | `extraction,embedding,maintenance,mcp_audit` | Queues this worker consumes | Exact names situational |
 
-### Streams / job routing (if using Redis Streams directly)
+### Streams / job routing (illustrative — Celery Redis lists preferred for extraction enqueue)
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `IBEX_STREAM_MEMORY_EXTRACTION` | No | `memory_extraction_jobs` | Stream name |
+| `IBEX_STREAM_MEMORY_EXTRACTION` | No | `memory_extraction_jobs` | Legacy/stream name if used |
 | `IBEX_STREAM_CONFLICT_DETECTION` | No | `conflict_detection_jobs` | Stream name |
-| `IBEX_STREAM_FINGERPRINT` | No | `fingerprint_jobs` | Stream name |
+| `IBEX_STREAM_FINGERPRINT` | No | `fingerprint_jobs` | Phase **4.5** |
 | `IBEX_STREAM_NOTIFICATIONS` | No | `notification_jobs` | Stream name |
 | `IBEX_STREAM_DLQ_SUFFIX` | No | `:dlq` | Dead-letter suffix |
 
@@ -451,7 +513,7 @@ Used by: **all services**
 
 ## 15) Dashboard Variables (Next.js)
 
-Used by: **dashboard** (server + client, be careful)
+Used by: **dashboard** (Phase **4** operator UI — server + client; be careful)
 
 ### Public (safe in browser)
 
@@ -595,5 +657,15 @@ Every service must validate configuration at startup:
    - Prevention: local conservative limiter fallback; alert on degraded mode
 
 ---
+
+## 20) Changing this registry
+
+When adding, renaming, or retiring a variable:
+
+1. Update this file in the **same PR** as the code that reads it.
+2. Mark status accurately: **shipped** vs **planned (phase)** — never document fictional production knobs as required.
+3. Sync `.env.example` for the affected service and any Compose notes.
+4. If the change implies a new service, package, or infra dependency, update [`services/README.md`](../../services/README.md) / [`packages/README.md`](../../packages/README.md) / [`infra/README.md`](../../infra/README.md) with **evidence + ADR** (same governance as those inventories).
+5. Prefer renaming over silent semantic drift (same name, different meaning).
 
 This document is the env-var contract for IBEX Harness. Update it whenever config changes.

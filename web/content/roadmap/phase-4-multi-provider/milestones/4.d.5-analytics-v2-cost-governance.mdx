@@ -1,0 +1,88 @@
+---
+title: "4.D.5 Analytics v2: Cost Governance"
+description: "Extend analytics with cost governance — budget alert configuration, per-agent spend caps (soft alert / hard pause), quota usage visualization, and retained usage/latency charts."
+summary: "Extend analytics with cost governance — budget alert configuration, per-agent spend caps (soft alert / hard pause), quota usage visualization, and retained usage/latency charts."
+status: "planned"
+milestoneId: "4.D.5"
+track: "D"
+trackTitle: "Operator Dashboard"
+trackHref: "/roadmap/phase-4-multi-provider/tracks#track-d--operator-dashboard"
+goal: "[Track D — Operator Dashboard](/roadmap/phase-4-multi-provider/tracks#track-d--operator-dashboard)"
+estimatedEffort: "3 days"
+phase: "phase-4-multi-provider"
+fullTitle: "Milestone 4.D.5 — Analytics v2: Cost Governance"
+---
+
+# Milestone 4.D.5 — Analytics v2: Cost Governance
+
+**Status:** Planned  
+**Goal:** [Track D — Operator Dashboard](/roadmap/phase-4-multi-provider/tracks#track-d--operator-dashboard)  
+**Phase:** 4 — Operator Platform & Multi-Provider  
+**Estimated effort:** 3 days  
+**Track:** [Track D — Operator Dashboard](/roadmap/phase-4-multi-provider/tracks#track-d--operator-dashboard)
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+The original analytics milestone was usage/latency/model-breakdown charts only. Cost governance (budget guardrails, per-agent spend caps) is a missing differentiator versus LiteLLM/Portkey. The backing schema (`usage_counters`/`tier_limits`/`billing_events`) already exists but was never wired to a UI.
+
+---
+
+## New Capabilities
+
+- Quota usage bars (tokens/memories) against org limits
+- Cost breakdown by model (reuses `ModelBreakdownPie.tsx`)
+- Budget alert configuration — "notify at 80% of monthly token quota"
+- Per-agent spend cap: soft cap = alert, hard cap = pause agent (`AGENT_SUSPENDED`)
+
+## Retained from v1
+
+- `UsageChart.tsx` (stacked area, date-range picker)
+- `LatencyHistogram.tsx` (p50/p95/p99 reference lines against 20ms proxy target)
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Operator dashboard
+- Management API
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] Budget alert fires correctly at threshold in test harness (mock usage counter)
+- [ ] Per-agent hard cap actually pauses the agent (verified via proxy returning `AGENT_SUSPENDED`)
+- [ ] All charts responsive at 1024/1440px, loading skeletons present
+- [ ] Matches site's existing `Skeleton`/`ChartSkeleton` primitives
+
+---
+
+## Prerequisites
+
+- Milestone 4.D.1 (Dashboard foundation)
+- Rate-limit/billing schema (Track B)
+- Usage counter API available
+

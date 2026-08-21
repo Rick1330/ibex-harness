@@ -1,0 +1,136 @@
+---
+title: "4.A.3 Agent Management API"
+description: "Port the original, production-ready agent management spec: 8 endpoints covering full lifecycle (list/create/get/patch/delete/activate/pause/archive), plus per-agent default provider/model fields for Track C routing."
+summary: "Port the original, production-ready agent management spec: 8 endpoints covering full lifecycle (list/create/get/patch/delete/activate/pause/archive), plus per-agent default provider/model fields for Track C routing."
+status: "planned"
+milestoneId: "4.A.3"
+track: "A"
+trackTitle: "Management API Server"
+trackHref: "/roadmap/phase-4-multi-provider/tracks#track-a--management-api-server"
+goal: "[Track A — Management API Server](/roadmap/phase-4-multi-provider/tracks#track-a--management-api-server)"
+estimatedEffort: "2 days"
+phase: "phase-4-multi-provider"
+fullTitle: "Milestone 4.A.3 — Agent Management API"
+---
+
+# Milestone 4.A.3 — Agent Management API
+
+**Status:** Planned  
+**Goal:** [Track A — Management API Server](/roadmap/phase-4-multi-provider/tracks#track-a--management-api-server)  
+**Phase:** 4 — Operator Platform & Multi-Provider  
+**Estimated effort:** 2 days  
+**Track:** [Track A — Management API Server](/roadmap/phase-4-multi-provider/tracks#track-a--management-api-server)
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+The original agent management spec was already complete and correct: 8 endpoints, slug uniqueness per org (409 on conflict), cannot hard-delete an agent with `total_sessions > 0`. No redesign is needed here — this is one of the few pieces of the original Phase 3 plan that was production-ready as written.
+
+One addition is needed beyond the original: `default_provider` and `default_model` (nullable fields) on `AgentResponse`, since Track C's per-agent model routing needs somewhere to store the default.
+
+---
+
+## Non-Goals
+
+- Model routing logic itself (Track C)
+- Rate-limit configuration per agent (Track B)
+- Agent memory stats (read-only views — covered by memories router)
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Management API
+- Auth service
+- Database schema / migrations
+
+## Suggested naming (provisional)
+
+Rename freely to match the change that actually lands.
+
+- Branch: `feature/m4-a-3-agent-management`
+- PR title: `feat(api): agent management API with default provider/model fields (m4.A.3)`
+
+## Endpoints (illustrative)
+
+Route shapes below are a planning sketch — names, nesting, and payloads may change during implementation.
+
+```
+GET /v1/agents → CursorPage[AgentResponse] (org-scoped)
+POST /v1/agents → AgentResponse (201)
+GET /v1/agents/{agent_id} → AgentResponse
+PATCH /v1/agents/{agent_id} → AgentResponse
+DELETE /v1/agents/{agent_id} → 204 (hard delete blocked if total_sessions > 0 → 409)
+POST /v1/agents/{agent_id}/activate → AgentResponse (status: active)
+POST /v1/agents/{agent_id}/pause → AgentResponse (status: paused)
+POST /v1/agents/{agent_id}/archive → AgentResponse (status: archived)
+```
+
+---
+
+## AgentResponse Schema
+
+```python
+class AgentResponse(BaseModel):
+ id: UUID
+ org_id: UUID
+ slug: str # unique per org, URL-safe, immutable after creation
+ name: str
+ status: Literal["active", "paused", "archived"]
+ default_provider: str | None # NEW — e.g. "anthropic", "openai"; null = platform default
+ default_model: str | None # NEW — e.g. "claude-3-5-sonnet-20241022"; null = org/platform default
+ directive_id: UUID | None
+ total_sessions: int
+ created_at: datetime
+ updated_at: datetime
+```
+
+---
+
+## Business Rules
+
+- Slug is immutable after creation (changing it would break external integrations that reference agents by slug).
+- `slug` uniqueness enforced at DB level (`UNIQUE (org_id, slug)`); API returns 409 `AGENT_SLUG_CONFLICT` on collision.
+- Hard delete blocked when `total_sessions > 0` — returns 409 `AGENT_HAS_SESSIONS`. Use `archive` instead.
+- `default_provider` should be one of the registered provider names or null; validation done at the API layer (not just a DB constraint) with an explicit 422 on unknown provider name.
+- Pausing an agent propagates to the proxy: paused agents return `AGENT_SUSPENDED` on subsequent requests (same enforcement path as org suspension from 4.A.2).
+
+---
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] All 8 endpoints functional with correct status codes
+- [ ] Slug conflict returns 409 `AGENT_SLUG_CONFLICT`
+- [ ] Hard-delete of agent with sessions returns 409 `AGENT_HAS_SESSIONS`
+- [ ] `default_provider` / `default_model` fields persisted and returned correctly (null when not set)
+- [ ] `TestAPI_ISO_AGENT_*`: org A cannot read/modify org B's agents (all return 404)
+- [ ] Agent pause propagated to proxy within 5s (integration test)
+
+## Prerequisites
+
+- M4.A.1 skeleton merged
+

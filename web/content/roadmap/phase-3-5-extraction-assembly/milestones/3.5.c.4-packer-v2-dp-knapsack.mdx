@@ -1,0 +1,145 @@
+---
+title: "3.5.C.4 Packer v2 — Bounded DP Knapsack"
+description: "Replace the pure-greedy packer with a numpy-vectorized 0/1 knapsack DP that recovers ≥90% budget utilization where greedy recovers &lt;65% on adversarial cases, with a greedy fallback for safety."
+summary: "Replace the pure-greedy packer with a numpy-vectorized 0/1 knapsack DP that recovers ≥90% budget utilization where greedy recovers &lt;65% on adversarial cases, with a greedy fallback for safety."
+status: "planned"
+milestoneId: "3.5.C.4"
+track: "C"
+trackTitle: "Context Assembly Engine"
+trackHref: "/roadmap/phase-3-5-extraction-assembly/tracks#track-c--context-assembly-engine"
+goal: "[Track C — Context Assembly Engine](/roadmap/phase-3-5-extraction-assembly/tracks#track-c--context-assembly-engine)"
+estimatedEffort: "2 days"
+phase: "phase-3-5-extraction-assembly"
+fullTitle: "Milestone 3.5.C.4 — Packer v2 (Bounded DP Knapsack, Not Pure Greedy)"
+---
+
+# Milestone 3.5.C.4 — Packer v2 (Bounded DP Knapsack, Not Pure Greedy)
+
+**Status:** Planned  
+**Goal:** [Track C — Context Assembly Engine](/roadmap/phase-3-5-extraction-assembly/tracks#track-c--context-assembly-engine)  
+**Phase:** 3.5 — Extraction & Context Assembly  
+**Estimated effort:** 2 days  
+**Track:** [Track C — Context Assembly Engine](/roadmap/phase-3-5-extraction-assembly/tracks#track-c--context-assembly-engine)  
+**Depends on:** [3.5.C.3](/roadmap/phase-3-5-extraction-assembly/milestones/3.5.c.3-composite-scorer-v2-relevance-gated)
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+The original packer is a straightforward greedy-with-early-stop: sort by score, add while it fits, stop after `MAX_CONSECUTIVE_SKIPS` misses. This is `O(n)` and simple, but greedy-by-score can strand usable budget: a high-score memory that's slightly too large gets skipped while several lower-score-but-small memories that would have collectively used the budget better never get considered once the consecutive-skip threshold triggers.
+
+---
+
+## Non-Goals
+
+- Changing the `PackedMemories` output structure visible to the formatter
+- Full online/streaming repacking (not needed at n≤70)
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Context assembly service
+- Tokenizer registry / counting
+
+## Suggested naming (provisional)
+
+Rename freely to match the change that actually lands.
+
+- Branch: `feature/m3-5-c4-packer-v2-knapsack`
+- PR title: `feat(context): packer v2 — bounded DP knapsack replacing pure-greedy (m3.5.C.4)`
+
+## Design Decision: Bounded Pseudo-Polynomial DP
+
+```python
+# Illustrative — exact path may differ
+
+class ContextPacker:
+ """
+ Token budgets are bounded (typically &lt; 100K), and memory counts per request
+ are bounded (retrieval caps at 70 candidates: 20 hot + 50 cold, per
+ milestone 3.5.3's fetch limits). This makes exact 0/1 knapsack DP tractable:
+ O(n * budget) with budget in the ~100K range and n &lt;= 70 is well under the
+ packing time budget (&lt;5ms target from ARCHITECTURE.md).
+
+ We discretize tokens into buckets of BUCKET_SIZE=16 tokens to keep the DP
+ table small (100K/16 ≈ 6250 columns × 70 rows — trivial in pure Python
+ with numpy, sub-millisecond).
+ """
+ BUCKET_SIZE = 16
+
+ def pack(self, scored_memories: list[ScoredMemory], token_budget: int, model: str) -> PackedMemories:
+ if not scored_memories or token_budget <= 0:
+ return PackedMemories(memories=[], total_tokens=0, total_score=0.0,
+ skipped_count=len(scored_memories), was_budget_reached=False)
+
+ buckets = max(1, token_budget // self.BUCKET_SIZE)
+ weights = [max(1, self._tokens(m) // self.BUCKET_SIZE) for m in scored_memories]
+ values = [m.composite_score for m in scored_memories]
+
+ # Standard 0/1 knapsack DP, vectorized with numpy for speed
+ dp = np.zeros((len(scored_memories) + 1, buckets + 1), dtype=np.float64)
+ keep = np.zeros_like(dp, dtype=bool)
+ for i, (w, v) in enumerate(zip(weights, values), start=1):
+ dp[i, :w] = dp[i - 1, :w]
+ take = dp[i - 1, :-w] + v if w <= buckets else np.array([])
+ skip = dp[i - 1, w:]
+ better = take > skip if len(take) else np.array([])
+ dp[i, w:] = np.where(better, take, skip) if len(better) else dp[i - 1, w:]
+ keep[i, w:] = better
+
+ # Backtrack to recover selected memories
+ selected_idx = self._backtrack(keep, weights)
+ packed = [scored_memories[i] for i in sorted(selected_idx)] # preserve score order
+ tokens_used = sum(self._tokens(m) for m in packed)
+ return PackedMemories(
+ memories=packed, total_tokens=tokens_used,
+ total_score=sum(m.composite_score for m in packed),
+ skipped_count=len(scored_memories) - len(packed),
+ was_budget_reached=len(packed) < len(scored_memories),
+ )
+```
+
+---
+
+## Why DP Over Pure Greedy — With Numbers
+
+On a synthetic worst-case (one large 90th-percentile-score memory that's 60% of budget, plus 15 smaller lower-score memories that collectively sum to 95% of budget), pure greedy packs only the one large memory and wastes 40% of the budget; DP packs the 15 smaller ones and uses &gt;95% of budget for materially higher total injected value.
+
+**Why bucketed DP and not exact-token DP:** Exact token-granularity DP would need a table with up to ~100K columns per candidate; bucketing to 16-token granularity cuts this ~16x with negligible practical loss (a memory is off by at most 15 tokens in the worst case) while keeping the whole operation comfortably under the 5ms packing budget.
+
+**Fallback:** if `n * buckets` exceeds a safety ceiling (pathological case — shouldn't happen given the 70-candidate cap, but defend anyway), fall back to the original greedy algorithm and log a warning. Never let the packer itself become the latency outlier.
+
+---
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] DP packer implemented, numpy-vectorized, unit-tested against the "greedy strands budget" adversarial case — DP should recover ≥90% budget utilization where greedy recovers &lt;65%
+- [ ] P99 packing latency &lt;5ms benchmarked at n=70 candidates, verified in CI benchmark suite
+- [ ] Fallback-to-greedy path tested explicitly (simulate an oversized `n * buckets`)
+- [ ] `was_budget_reached` semantics preserved for the formatter's `was_truncated` metadata field
+
+---

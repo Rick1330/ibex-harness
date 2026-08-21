@@ -1,0 +1,80 @@
+---
+title: "3.E.4 ADR consolidation and index update"
+description: "Publish ADR-0040 through ADR-0044 covering vector index strategy, composite scoring v2, temporal conflict detection, memory tenant isolation, and retrieval-quality benchmark methodology."
+summary: "Publish ADR-0040 through ADR-0044 covering vector index strategy, composite scoring v2, temporal conflict detection, memory tenant isolation, and retrieval-quality benchmark methodology."
+status: "planned"
+milestoneId: "3.E.4"
+track: "E"
+trackTitle: "Exit Gate"
+trackHref: "/roadmap/phase-3-memory-engine/tracks#track-e--exit-gate"
+goal: "[Track E — Exit Gate](/roadmap/phase-3-memory-engine/tracks#track-e--exit-gate)"
+estimatedEffort: "1 day"
+phase: "phase-3-memory-engine"
+fullTitle: "Milestone 3.E.4 — ADR Consolidation and Index Update"
+---
+
+# Milestone 3.E.4 — ADR Consolidation and Index Update
+
+**Status:** Planned  
+**Goal:** [Track E — Exit Gate](/roadmap/phase-3-memory-engine/tracks#track-e--exit-gate)  
+**Phase:** 3 — Core Memory Substrate  
+**Estimated effort:** 1 day
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+Per the repo's own ADR workflow, Phase 3 (redesigned) needs these new ADRs, continuing sequentially from ADR-0039:
+
+| ADR | Title | Supersedes |
+|---|---|---|
+| ADR-0040 | Vector index strategy: HNSW as Phase 3 default | ADR-0035 (which deferred HNSW to Phase 4) |
+| ADR-0041 | Composite memory scoring v2 (category-conditional decay) | New — extends the formula referenced in `goals.mdx` |
+| ADR-0042 | Temporal-interval-aware conflict detection | Supersedes original binary contradiction/supersession model |
+| ADR-0043 | Memory service tenant isolation model (RLS + app-layer double enforcement) | New — Phase 3 equivalent of ADR-0016 |
+| ADR-0044 | Retrieval-quality benchmark methodology | New — Phase 3 sibling to ADR-0034 |
+
+Each follows the exact template already in use: Status/Date/Authors header, Context, Decision, Consequences (positive/negative), References.
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Evaluation / benchmarks
+- Memory service / repositories
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] ADR-0040 through ADR-0044 written, following existing template
+- [ ] Updated (exact path may differ)
+- [ ] `index.mdx` "through ADR-00xx" pointer updated
+- [ ] `pnpm exec fumadocs-mdx` regeneration successful
+- [ ] Repo guards / CI checks still pass
+
+## Prerequisites
+
+- All Track A–D milestones (ADRs document decisions made during implementation)
+

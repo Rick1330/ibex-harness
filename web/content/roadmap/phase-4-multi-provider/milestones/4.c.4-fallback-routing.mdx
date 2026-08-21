@@ -1,0 +1,93 @@
+---
+title: "4.C.4 Fallback Routing"
+description: "Transparent model rerouting when primary provider circuit breaker is open, with opt-in per-org policy, fallback chain depth cap, and full tracing."
+summary: "Transparent model rerouting when primary provider circuit breaker is open, with opt-in per-org policy, fallback chain depth cap, and full tracing."
+status: "planned"
+milestoneId: "4.C.4"
+track: "C"
+trackTitle: "Multi-Provider Adapters & Resilience"
+trackHref: "/roadmap/phase-4-multi-provider/tracks#track-c--multi-provider-adapters--resilience"
+goal: "[Track C — Multi-Provider Adapters & Resilience](/roadmap/phase-4-multi-provider/tracks#track-c--multi-provider-adapters--resilience)"
+estimatedEffort: "2 days"
+phase: "phase-4-multi-provider"
+fullTitle: "Milestone 4.C.4 — Fallback Routing"
+---
+
+# Milestone 4.C.4 — Fallback Routing
+
+**Status:** Planned  
+**Goal:** [Track C — Multi-Provider Adapters & Resilience](/roadmap/phase-4-multi-provider/tracks#track-c--multi-provider-adapters--resilience)  
+**Phase:** 4 — Operator Platform & Multi-Provider  
+**Estimated effort:** 2 days  
+**Track:** [Track C — Multi-Provider Adapters & Resilience](/roadmap/phase-4-multi-provider/tracks#track-c--multi-provider-adapters--resilience)
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+A circuit breaker alone just fails fast; it doesn't recover the request. When a client's requested model's provider is open (tripped) and the org has an equivalent-capability model on a healthy provider, transparently reroute rather than return 503. Response includes `X-IBEX-Provider-Fallback: true` and `X-IBEX-Provider-Used: <actual>` so callers can detect substitution.
+
+---
+
+## Non-Goals
+
+- Circuit breaker implementation (4.C.3)
+- Model capability matching beyond configured fallback chains
+- Silent model swaps without signaling (explicitly prohibited)
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Provider abstraction / adapters
+- Proxy service (HTTP, bootstrap, config)
+
+## Suggested naming (provisional)
+
+Rename freely to match the change that actually lands.
+
+- Branch: `feature/m4-c-4-fallback-routing`
+- PR title: `feat(proxy): opt-in fallback routing on breaker-open with tracing (m4.C.4)`
+
+## Design note: Opt-In per Org
+
+Fallback routing should be opt-in per org, not a global default — silently rerouting changes model behavior, pricing, and data-residency posture. Configured via `org_model_policies` table extension with a `fallback_chain` column. Fallback only triggers on breaker-open or 5xx/timeout — never on 4xx.
+
+---
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] Fallback only triggers on breaker-open or 5xx/timeout — never on 4xx
+- [ ] Fallback chain capped at configurable depth (default 1 hop)
+- [ ] Every fallback event traced to ClickHouse with `original_model`, `fallback_model`, `reason`
+- [ ] Org without fallback enabled receives hard 503 on breaker-open (negative test)
+- [ ] `X-IBEX-Provider-Fallback` and `X-IBEX-Provider-Used` headers present on rerouted responses
+
+## Prerequisites
+
+- Milestone 4.C.3 (Circuit breaker per provider)
+- Milestone 4.C.2 (Per-org model routing — provides `org_model_policies` table)
+

@@ -1,0 +1,157 @@
+---
+title: "4.B.1 Lua Hierarchical Rate Limiter"
+description: "Replace the non-atomic INCR+EXPIRE counter with a single atomic Redis Lua script that checks and decrements three nested budgets in one round trip: agent → org → global."
+summary: "Replace the non-atomic INCR+EXPIRE counter with a single atomic Redis Lua script that checks and decrements three nested budgets in one round trip: agent → org → global."
+status: "planned"
+milestoneId: "4.B.1"
+track: "B"
+trackTitle: "Rate Limiting & Quota Enforcement"
+trackHref: "/roadmap/phase-4-multi-provider/tracks#track-b--rate-limiting--quota-enforcement"
+goal: "[Track B — Rate Limiting & Quota Enforcement](/roadmap/phase-4-multi-provider/tracks#track-b--rate-limiting--quota-enforcement)"
+estimatedEffort: "3 days"
+phase: "phase-4-multi-provider"
+fullTitle: "Milestone 4.B.1 — Lua-Based Atomic Hierarchical Rate Limiter"
+---
+
+# Milestone 4.B.1 — Lua-Based Atomic Hierarchical Rate Limiter
+
+**Status:** Planned  
+**Goal:** [Track B — Rate Limiting & Quota Enforcement](/roadmap/phase-4-multi-provider/tracks#track-b--rate-limiting--quota-enforcement)  
+**Phase:** 4 — Operator Platform & Multi-Provider  
+**Estimated effort:** 3 days  
+**Track:** [Track B — Rate Limiting & Quota Enforcement](/roadmap/phase-4-multi-provider/tracks#track-b--rate-limiting--quota-enforcement)
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+The Phase 1 limiter was explicitly a placeholder: "org-level token bucket... NOT atomic... Phase 4 will replace with Lua scripts for atomic check-and-decrement," and the `RateLimiter` interface was deliberately designed to be swappable without touching callers. This milestone cashes in that design decision.
+
+Rate limiting sits in the proxy's hot path and directly gates cost — it should be hardened before multi-provider routing adds more ways to burn budget (each provider has different pricing, so per-org token-spend limits, not just RPM, become necessary once two providers are live).
+
+---
+
+## Non-Goals
+
+- Rate-limit config API (Milestone 4.B.2)
+- Load benchmark (Milestone 4.B.3)
+- Per-user (as opposed to per-agent/per-org) rate limits
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Rate limiting
+- Proxy service (HTTP, bootstrap, config)
+
+## Suggested naming (provisional)
+
+Rename freely to match the change that actually lands.
+
+- Branch: `feature/m4-b-1-lua-hierarchical-limiter`
+- PR title: `feat(proxy): atomic Lua hierarchical rate limiter agent→org→global (m4.B.1)`
+
+## The Lua Script (Atomic Three-Level Check)
+
+```lua
+-- KEYS[1] = agent key, KEYS[2] = org key, KEYS[3] = global key
+-- ARGV[1] = agent_limit, ARGV[2] = org_limit, ARGV[3] = global_limit, ARGV[4] = window_seconds
+local agent_count = tonumber(redis.call('GET', KEYS[1]) or '0')
+local org_count = tonumber(redis.call('GET', KEYS[2]) or '0')
+local global_count = tonumber(redis.call('GET', KEYS[3]) or '0')
+
+if agent_count >= tonumber(ARGV[1]) then return {0, 'agent', agent_count} end
+if org_count >= tonumber(ARGV[2]) then return {0, 'org', org_count} end
+if global_count >= tonumber(ARGV[3]) then return {0, 'global', global_count} end
+
+redis.call('INCR', KEYS[1]); redis.call('EXPIRE', KEYS[1], ARGV[4])
+redis.call('INCR', KEYS[2]); redis.call('EXPIRE', KEYS[2], ARGV[4])
+redis.call('INCR', KEYS[3]); redis.call('EXPIRE', KEYS[3], ARGV[4])
+return {1, 'ok', agent_count + 1}
+```
+
+---
+
+## HierarchicalLuaLimiter Interface
+
+```go
+// Illustrative — exact path may differ
+
+// HierarchicalLuaLimiter implements the Limiter interface using an atomic Lua script.
+// It checks and decrements three nested budgets in a single Redis round trip:
+// agent → org → global.
+type HierarchicalLuaLimiter struct {
+ client redis.UniversalClient
+ scriptSHA string
+ globalLimit int
+}
+
+func NewHierarchicalLuaLimiter(client redis.UniversalClient, globalLimit int) (*HierarchicalLuaLimiter, error)
+
+// Allow checks the hierarchical budgets. Returns (true, nil) on admission,
+// (false, ErrRateLimitExceeded) when any level is exhausted.
+// level field in the error indicates which level triggered: "agent", "org", or "global".
+func (l *HierarchicalLuaLimiter) Allow(ctx context.Context, req RateLimitRequest) (bool, error)
+```
+
+---
+
+## Design notes
+
+1. **Check-most-specific-first ordering (agent → org → global)**: an individual noisy agent is throttled before it can exhaust the org's shared budget, giving better fairness across an org's fleet of agents than a flat org-only counter.
+
+2. **EVALSHA with NOSCRIPT fallback to EVAL**, script SHA cached at process startup and re-verified on `NOSCRIPT` error (Redis flushed scripts on restart) — avoids re-sending the script body on every request.
+
+3. **Fail-open on Redis error is preserved, unchanged** — rate limiting remains "cost control, not a security boundary" per ADR-0015. This redesign makes the *allowed* path atomic; it does not change the *degraded* path's philosophy.
+
+4. **Token-spend budgets, not just RPM**: add a fourth tier — `ratelimit:{org_id}:month_tokens` — checked in the same Lua script as a hard monthly token ceiling, decremented post-response (separate script, since token count isn't known until the provider responds). This is the first real building block for usage-based billing enforcement.
+
+---
+
+## Redis Key Namespace
+
+```
+ratelimit:{org_id}:agent:{agent_id}:minute → per-agent RPM counter
+ratelimit:{org_id}:minute → per-org RPM counter
+ratelimit:global:minute → global RPM counter
+ratelimit:{org_id}:month_tokens → per-org monthly token ceiling
+```
+
+---
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] Lua script loaded via `SCRIPT LOAD` at proxy startup; SHA cached; `EVALSHA`→`NOSCRIPT`→reload path unit-tested
+- [ ] `RateLimiter` interface signature **unchanged** — proxy handler code requires zero modification, only the constructor call at bootstrap swaps `RedisSlider` for `HierarchicalLuaLimiter`
+- [ ] Fail-open behavior on Redis outage verified unchanged via existing cross-tenant isolation test-style integration test
+- [ ] All three levels (`agent`, `org`, `global`) tested independently — tripping one does not affect the others' counters
+- [ ] Token-spend post-response decrement script written and unit-tested (functional correctness; load test is 4.B.3)
+
+## Prerequisites
+
+- Phase 3.5 exit: proxy hot path live
+- Redis available (already true since Phase 1)
+

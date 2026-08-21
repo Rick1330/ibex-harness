@@ -1,0 +1,161 @@
+---
+title: "2.5.G4.M1 Embedder interface and registry"
+description: "Define the Embedder interface and registry that mirrors the proven provider.Provider/Registry pattern. The embedding service profile is a deployment-time choice — CPU-only users get all-MiniLM-L6-v2, GPU/production users get BAAI/bge-m3 via TEI — and mixing profiles across requests is explicitly forbidden."
+summary: "Define the Embedder interface and registry that mirrors the proven provider.Provider/Registry pattern. The embedding service profile is a deployment-time choice — CPU-only users get all-MiniLM-L6-v2, GPU/production users get BAAI/bge-m3 via TEI — and mixing profiles across requests is explicitly forbidden."
+status: "planned"
+milestoneId: "2.5.G4.M1"
+track: "D"
+trackTitle: "Pluggable Embedding Service"
+trackHref: "/roadmap/phase-2-5-provider-generalization/tracks#track-d--pluggable-embedding-service"
+goal: "[Track D — Pluggable Embedding Service](/roadmap/phase-2-5-provider-generalization/tracks#track-d--pluggable-embedding-service)"
+estimatedEffort: "2–3 days"
+phase: "phase-2-5-provider-generalization"
+fullTitle: "Milestone 2.5.G4.M1 — Embedder Interface and Registry"
+---
+
+# Milestone 2.5.G4.M1 — Embedder Interface and Registry
+
+**Status:** Planned  
+**Goal:** [Track D — Pluggable Embedding Service](/roadmap/phase-2-5-provider-generalization/tracks#track-d--pluggable-embedding-service)  
+**Phase:** 2.5 — Provider Generalization & Foundation  
+**Estimated effort:** 2–3 days
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+Define the `Embedder` interface and registry that mirrors the proven `provider.Provider`/`Registry` pattern. The interface should be defined before any backend implementations (TEI, sentence-transformers, hosted API) are built, so all backends are built against the same contract.
+
+**Key constraint:** The embedding profile is a **deployment-time choice, not a runtime per-request choice**. `bge-m3` is 1024-dim; MiniLM is 384-dim. It is not possible to mix vectors from two dimensionalities in the same `pgvector` column/index. An org's `pgvector` schema is provisioned for one dimensionality at setup (store `embedding_dim` and `embedding_model_id` on the org config row), and switching later requires the re-embedding migration procedure.
+
+---
+
+## Non-Goals
+
+- Per-request embedder selection
+- Actual backend implementations (2.5.G4.M2 and 2.5.G4.M3)
+- Re-embedding migration tooling (Phase 3)
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Embedding service / backends
+
+## Suggested naming (provisional)
+
+Rename freely to match the change that actually lands.
+
+- Branch: `feature/m2-5-g4-m1-embedder-interface-registry`
+- PR title: `feat(embedder): Embedder interface + registry and Python EmbeddingBackend ABC (m2.5.G4.M1)`
+
+## Model choices — starting preference
+
+- **Default/production profile → `BAAI/bge-m3`.** It's multilingual, supports dense+sparse+ColBERT-style multi-vector retrieval in one model, and has a long (8192-token) input context — meaningfully better retrieval quality than `all-MiniLM-L6-v2`'s 384-dim/256-token design.
+- **CPU-only/dev/self-hosted-lite profile → `all-MiniLM-L6-v2`** — the right choice for that constraint (90MB, 3000 sentences/sec CPU, fits in 512MB container).
+- **Treat profiles as non-interchangeable at the vector-search level without a migration plan** — `bge-m3` is 1024-dim, MiniLM is 384-dim. The profile is a deployment setting, decided once.
+- Reject "let every request choose its own embedder" — it breaks vector index compatibility and multiplies operational surface for no real user benefit.
+
+---
+
+## Working notes
+
+Preferred starting points and open questions — situational, and expected to evolve with further research during implementation.
+
+### Go interface
+
+```go
+// Illustrative — exact path may differ
+type Embedder interface {
+ // Embed returns embeddings for the given texts.
+ // All embeddings in a single call use the same model.
+ // Implementations should be safe for concurrent use.
+ Embed(ctx context.Context, texts []string) ([][]float32, error)
+
+ // Name returns the backend identifier (e.g. "tei", "sentence-transformers", "openai").
+ Name() string
+
+ // Dimensions returns the embedding vector dimension for this backend.
+ // Used to validate pgvector column compatibility at startup.
+ Dimensions() int
+}
+```
+
+### Python ABC
+
+```python
+# Illustrative — exact path may differ
+from abc import ABC, abstractmethod
+import numpy as np
+
+class EmbeddingBackend(ABC):
+ @abstractmethod
+ def embed(self, texts: list[str]) -> np.ndarray:
+ """Returns shape (len(texts), dimensions), L2-normalized."""
+ ...
+
+ @property
+ @abstractmethod
+ def dimensions(self) -> int: ...
+
+ @property
+ @abstractmethod
+ def name(self) -> str: ...
+```
+
+### Org config schema
+
+Add to the org config table (migration, not yet used by application code):
+
+```sql
+ALTER TABLE ibex_core.orgs
+ ADD COLUMN embedding_profile TEXT NOT NULL DEFAULT 'cpu'
+ CHECK (embedding_profile IN ('cpu', 'gpu', 'hosted')),
+ ADD COLUMN embedding_dim INTEGER NOT NULL DEFAULT 384,
+ ADD COLUMN embedding_model_id TEXT NOT NULL DEFAULT 'all-MiniLM-L6-v2';
+```
+
+Validate `embedding_dim` against the active backend's `Dimensions()` at service startup — fail startup on mismatch, not at query time.
+
+---
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] Interface defined: `Embed`, `Name`, `Dimensions` (exact path may differ)
+- [ ] Keyed by profile string (`cpu`/`gpu`/`hosted`) (exact path may differ)
+- [ ] Python `EmbeddingBackend` ABC defined with `embed`, `dimensions`, `name`
+- [ ] `EMBEDDER_PROFILE` env var selects backend at Python service startup
+- [ ] Org config migration adds `embedding_profile`, `embedding_dim`, `embedding_model_id` columns
+- [ ] Startup validation: backend `Dimensions()` matches org config `embedding_dim` or service refuses to start
+- [ ] Contract test suite defined (same input → vectors of declared dimension, L2-normalized) — backends added in 2.5.G4.M2 and 2.5.G4.M3 should pass this suite
+- [ ] Unit tests for registry: `go test ./packages/embedder/...`
+- [ ] Repo guards / CI checks still pass
+
+## Prerequisites
+
+- Phase 2 exit (merged)
+- `packages/provider.Provider`/`Registry` pattern established (milestone 2.1.1)
+

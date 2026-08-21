@@ -1,0 +1,116 @@
+---
+title: "Phase 3.5 — Goals"
+description: "Extraction intelligence, context assembly engine, proxy hot-path integration, MCP memory tools, and exit gate."
+summary: "Extraction intelligence, context assembly engine, proxy hot-path integration, MCP memory tools, and exit gate."
+phase: "phase-3-5-extraction-assembly"
+---
+
+# Phase 3.5 — Goals
+
+<Callout type="note" title="Planning baseline">
+  Paths, libraries, schemas, and sequencing on this phase are orientation for planning.
+  Implementation is expected to require further research and may land differently than any sketch.
+</Callout>
+
+## Track A — Worker Service Foundation
+
+### Goal 3.5.A: Establish the async execution substrate for extraction and maintenance
+
+**Milestones:**
+- **3.5.A.1 — Celery worker skeleton:** Redis broker, four queues (extraction, embedding, maintenance, mcp_audit) with priority tiers. Result backend with `result_expires=3600`. Beat scheduler for maintenance sweeps.
+- **3.5.A.2 — Task observability and dead-letter handling:** OTel span wrapping for every task. `task_failure` signal writes to `ibex_core.failed_tasks` table. Prometheus counter for dead-lettered tasks.
+
+**Acceptance criteria:**
+- Task routing verified (extraction queue tasks never land in default queue)
+- Dead-letter handler fires exactly once per exhausted-retry failure (not per attempt)
+- Alert rule documented for dead-letter rate
+
+---
+
+## Track B — Extraction Intelligence
+
+### Goal 3.5.B: Turn conversations into structured, multi-label, temporally-aware memories
+
+**Milestones:**
+- **3.5.B.1 — Extraction prompt v2 and structured output:** Multi-label `categories` (1–3 per memory), `valid_from`/`valid_until` temporal fields, Pydantic schema validation.
+- **3.5.B.2 — Cost-tiered, provider-agnostic execution:** `ExtractionProvider` ABC with OpenAI (`gpt-4o-mini`) and vLLM (`Qwen2.5-14B-Instruct`) implementations. Batch extraction per session-close (not per-turn).
+- **3.5.B.3 — Incremental turn tracking and idempotency:** `last_extracted_turn` updated atomically with memory writes in the same DB transaction.
+- **3.5.B.4 — Extraction quality evaluation harness:** Versioned gold-set (~100-200 conversations), precision/recall per category, CI-gated regression check.
+
+**Acceptance criteria:**
+- Batch extraction handles 1–50 unprocessed turns correctly
+- Extraction cost logged to ClickHouse trace table
+- Gold set evaluated for both OpenAI and vLLM providers side-by-side
+- CI fails if any eval metric regresses by more than 3 percentage points
+
+---
+
+## Track C — Context Assembly Engine
+
+### Goal 3.5.C: Assemble memory-enriched context within a bounded latency budget
+
+**Milestones:**
+- **3.5.C.1 — Token budget calculator:** Model-aware via Phase 2.5's capability registry and tokenizer. Tokenizer-family-specific safety buffer. Fallback to character estimate on tokenizer failure.
+- **3.5.C.2 — Parallel retrieval orchestration:** Four-way concurrent retrieval (directive, hot memories, history, cold search). Each branch has independent timeout; total bounded by 40ms `wait_for`.
+- **3.5.C.3 — Composite scorer v2 (relevance-gated):** `RELEVANCE_FLOOR = 0.15` hard gate. Category-conditional half-life table. Memories below the floor structurally cannot be scored.
+- **3.5.C.4 — Packer v2 (bounded DP knapsack):** Discretized to 16-token buckets. numpy-vectorized. Fallback to greedy on pathological input size.
+- **3.5.C.5 — Context formatter:** XML-style delimiters, session nonce, locked ordering (directive → history → memories → tools). ADR-0042 amendment.
+- **3.5.C.6 — gRPC service skeleton and degradation contract:** `ContextAssemblyService` with four degradation levels (L0–L3), each independently testable. 500 RPS load test target.
+
+**Acceptance criteria:**
+- Relevance gate: a memory with similarity=0.05 and confidence=1.0 must be excluded
+- DP packer recovers &gt;=90% budget utilization in adversarial cases
+- Each degradation level has a dedicated unit test with fault injection
+- Context assembly p95 &lt; 50ms at sustained 500 RPS on 100K-memory corpus
+
+---
+
+## Track D — Proxy Hot-Path Integration
+
+### Goal 3.5.D: Wire context assembly and extraction into the real proxy without breaking existing behavior
+
+**Milestones:**
+- **3.5.D.1 — Go gRPC client (`packages/contextclient`):** Fail-open contract (never returns error to caller). 45ms client-side deadline.
+- **3.5.D.2 — Handler wiring:** `dispatchProviderCompletion` calls context assembly. `IBEX_CONTEXT_ENABLED=false` reproduces exact Phase 2 behavior. `X-IBEX-Skip-Memory` header honored.
+- **3.5.D.3 — Response headers and metadata:** `X-IBEX-Memories-Injected`, `X-IBEX-Context-Tokens`, `X-IBEX-Context-Fallback`. Optional embedded `ibex` JSON block behind feature flag.
+- **3.5.D.4 — Extraction task enqueue:** Celery-native Redis list semantics (`LPUSH`), triggered on `session.status == 'completed'` only.
+- **3.5.D.5 — Config and env vars:** `IBEX_CONTEXT_ENABLED`, `IBEX_CONTEXT_GRPC_ADDR`, `IBEX_CONTEXT_TIMEOUT`, etc.
+- **3.5.D.6 — Integration tests:** Context assembly success/degradation paths, extraction enqueue verification, full Phase 1+2 regression.
+
+**Acceptance criteria:**
+- `IBEX_CONTEXT_ENABLED=false` verified to reproduce exact Phase 2 behavior
+- Proxy overhead stays &lt;20ms p99 non-provider time with context assembly enabled
+- Extraction enqueue fires exactly once per completed session
+
+---
+
+## Track E — MCP Memory Tools
+
+### Goal 3.5.E: Expose memory read/write as audited MCP tools sharing one substrate with the proxy
+
+**Milestones:**
+- **3.5.E.1 — MCP server skeleton and transport:** Streamable HTTP (production) + stdio (dev). Auth via `AuthService.ValidateToken` gRPC.
+- **3.5.E.2 — `search_memory` and `write_memory` tools:** Explicit JSON schemas. `search_memory` calls `ContextAssemblyService.SearchMemories`. `write_memory` goes through the full write pipeline with `source="mcp_explicit"`.
+- **3.5.E.3 — `record_feedback` tool:** Feeds the composite scorer's `usefulness` term. Also exposed as `POST /v1/memories/{id}/feedback` REST endpoint.
+- **3.5.E.4 — MCP observability and rate limiting:** `mcp_tool_calls` ClickHouse table. Independent rate-limit budget from the chat-completions limiter.
+
+**Acceptance criteria:**
+- MCP tools share one substrate with the proxy (verified by cross-surface e2e test)
+- MCP server fails closed on auth outage
+- Rate limit independent from proxy chat rate limit
+
+---
+
+## Track F — Exit Gate
+
+### Goal 3.5.F: Prove the composed learning loop works end-to-end
+
+**Milestones:**
+- **3.5.F.1 — End-to-end learning-loop test suite:** 6 scenarios including degradation ladder and MCP/proxy consistency.
+- **3.5.F.2 — Cross-tenant isolation matrix:** ISO-MCP-01 through ISO-MCP-04 covering MCP-specific attack surfaces.
+- **3.5.F.3 — Benchmark sign-off and ADR index:** Proxy overhead, MCP tool-call latency, extraction throughput. Phase 3.5 decision log and exit audit.
+
+**Acceptance criteria:**
+- All 6 e2e scenarios pass against the full local compose stack
+- All ISO-MCP-\* cases pass with real containers
+- Phase 3.5 gap register published with zero open P0 gaps

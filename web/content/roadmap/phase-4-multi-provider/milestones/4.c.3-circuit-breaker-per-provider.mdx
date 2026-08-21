@@ -1,0 +1,93 @@
+---
+title: "4.C.3 Circuit Breaker per Provider"
+description: "Rolling error-rate circuit breaker that trips independently per provider, preventing cascading failures across the multi-provider routing layer."
+summary: "Rolling error-rate circuit breaker that trips independently per provider, preventing cascading failures across the multi-provider routing layer."
+status: "planned"
+milestoneId: "4.C.3"
+track: "C"
+trackTitle: "Multi-Provider Adapters & Resilience"
+trackHref: "/roadmap/phase-4-multi-provider/tracks#track-c--multi-provider-adapters--resilience"
+goal: "[Track C — Multi-Provider Adapters & Resilience](/roadmap/phase-4-multi-provider/tracks#track-c--multi-provider-adapters--resilience)"
+estimatedEffort: "3 days"
+phase: "phase-4-multi-provider"
+fullTitle: "Milestone 4.C.3 — Circuit Breaker per Provider"
+---
+
+# Milestone 4.C.3 — Circuit Breaker per Provider
+
+**Status:** Planned  
+**Goal:** [Track C — Multi-Provider Adapters & Resilience](/roadmap/phase-4-multi-provider/tracks#track-c--multi-provider-adapters--resilience)  
+**Phase:** 4 — Operator Platform & Multi-Provider  
+**Estimated effort:** 3 days  
+**Track:** [Track C — Multi-Provider Adapters & Resilience](/roadmap/phase-4-multi-provider/tracks#track-c--multi-provider-adapters--resilience)
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+The architecture explicitly requires circuit breakers on provider and context dependencies. A breaker trips independently per provider name — Anthropic outage should never degrade OpenAI traffic. Uses a rolling error-rate window (last 30s, min 10 samples, &gt;50% failure trips open) rather than naive consecutive-failure counting, which is too sensitive to flapping.
+
+---
+
+## Non-Goals
+
+- Fallback routing logic (4.C.4)
+- Provider-specific error mapping (already handled by `provider.MapError`)
+- Context-assembly circuit breaking (reuses same package, wired separately)
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Provider abstraction / adapters
+- Proxy service (HTTP, bootstrap, config)
+
+## Suggested naming (provisional)
+
+Rename freely to match the change that actually lands.
+
+- Branch: `feature/m4-c-3-circuit-breaker`
+- PR title: `feat(proxy): rolling error-rate circuit breaker per provider (m4.C.3)`
+
+## Design note: Rolling Error-Rate Window
+
+Use a rolling error-rate window (e.g., last 30s, min 10 samples, &gt;50% failure trips open) rather than "5 consecutive failures" — consecutive-count breakers are too sensitive to single flapping request patterns and too slow to trip under genuine partial degradation. The breaker state machine follows the glossary definition: closed → open → half-open.
+
+---
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] Per-provider isolation: breaker instances keyed by `provider.Name()`, tested explicitly
+- [ ] Sliding window algorithm: sustained 60% error rate trips breaker within N requests
+- [ ] Half-open probe: single trial request, closes on success / re-opens on failure
+- [ ] `503` with `Retry-After` header returned when breaker is open
+- [ ] Reusable for context-assembly gRPC dependency (not provider-specific API)
+
+## Prerequisites
+
+- Milestone 4.C.1 (Anthropic adapter hardening)
+- Milestone 4.C.2 (Per-org model routing)
+

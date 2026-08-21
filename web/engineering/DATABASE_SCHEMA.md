@@ -2,6 +2,8 @@
 
 PostgreSQL (OLTP + pgvector), Redis key patterns, and ClickHouse analytics schema. For system architecture and service flows, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
+**Roadmap note:** Phases **0–2** schema (orgs, users, agents, tokens, directives, sessions, `llm_traces`) is what is applied today. Phase **2.5** adds additive pre-work (temporal validity, multi-label categories, relationship-graph readiness). Phase **3** lands memory schema v2 with **HNSW** as the preferred vector index starting point. Phase **5** uses graph edges at query time (recursive CTEs) and hybrid retrieval — it does not require a separate graph database by default. See [`web/content/roadmap/`](../content/roadmap/).
+
 ## Schema Design Philosophy
 
 ### Core Principles
@@ -621,9 +623,15 @@ CREATE INDEX idx_memories_content_hash
     ON ibex_core.memories(org_id, agent_id, content_hash);
 
 -- Vector similarity search (IBEX Harness primary use case)
--- IVFFlat: Inverted File Index - approximates ANN search
--- lists=100: 100 cluster centroids (sqrt of expected row count)
--- For exact search remove this, use sequential scan for <10k rows
+-- Preferred Phase 3+ index: HNSW (redesigned roadmap / ADR-0040 direction).
+-- IVFFlat DDL below is historical reference from earlier plans — do not treat as the default for new migrations.
+-- Example HNSW (illustrative; confirm params via benches):
+-- CREATE INDEX idx_memories_embedding_hnsw
+--     ON ibex_core.memories
+--     USING hnsw (embedding vector_cosine_ops)
+--     WITH (m = 16, ef_construction = 64)
+--     WHERE status = 'active' AND deleted_at IS NULL;
+-- Historical IVFFlat example (not the preferred starting path):
 CREATE INDEX idx_memories_embedding
     ON ibex_core.memories
     USING ivfflat (embedding vector_cosine_ops)

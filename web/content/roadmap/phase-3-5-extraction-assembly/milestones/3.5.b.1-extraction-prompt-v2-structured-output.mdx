@@ -1,0 +1,150 @@
+---
+title: "3.5.B.1 Extraction Prompt v2 and Structured Output Contract"
+description: "Define what gets extracted and in what shape. Changes the output schema to be multi-label and temporally aware, consistent with the conflict-detection redesign that requires valid_from/valid_until on memories."
+summary: "Define what gets extracted and in what shape. Changes the output schema to be multi-label and temporally aware, consistent with the conflict-detection redesign that requires valid_from/valid_until on memories."
+status: "planned"
+milestoneId: "3.5.B.1"
+track: "B"
+trackTitle: "Extraction Pipeline"
+trackHref: "/roadmap/phase-3-5-extraction-assembly/tracks#track-b--extraction-pipeline"
+goal: "[Track B — Extraction Pipeline](/roadmap/phase-3-5-extraction-assembly/tracks#track-b--extraction-pipeline)"
+estimatedEffort: "3 days"
+phase: "phase-3-5-extraction-assembly"
+fullTitle: "Milestone 3.5.B.1 — Extraction Prompt v2 and Structured Output Contract"
+---
+
+# Milestone 3.5.B.1 — Extraction Prompt v2 and Structured Output Contract
+
+**Status:** Planned  
+**Goal:** [Track B — Extraction Pipeline](/roadmap/phase-3-5-extraction-assembly/tracks#track-b--extraction-pipeline)  
+**Phase:** 3.5 — Extraction & Context Assembly  
+**Estimated effort:** 3 days  
+**Track:** [Track B — Extraction Pipeline](/roadmap/phase-3-5-extraction-assembly/tracks#track-b--extraction-pipeline)  
+**ADR required:** ADR-0045 — Extraction output schema v2
+**Depends on:** [3.5.A.1](/roadmap/phase-3-5-extraction-assembly/milestones/3.5.a.1-celery-worker-skeleton)
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+Define what gets extracted and in what shape, before wiring up execution. The original prompt design was reasonable as a v1 — the redesign keeps its five-category taxonomy as the **default label set** but changes the output schema to be **multi-label and temporally aware**, consistent with the Track C (Phase 3) conflict-detection redesign that requires `valid_from`/`valid_until` on memories.
+
+---
+
+## Non-Goals
+
+- Actual execution/provider wiring (3.5.B.2)
+- Cost tiering and batching (3.5.B.2)
+- Quality evaluation harness (3.5.B.4)
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Extraction pipeline
+- Workers / task runtime
+
+## Suggested naming (provisional)
+
+Rename freely to match the change that actually lands.
+
+- Branch: `feature/m3-5-b1-extraction-prompt-v2`
+- PR title: `feat(worker): extraction prompt v2 and structured output schema (m3.5.B.1)`
+
+## ADR-0045 — Extraction Output Schema v2
+
+**Why multi-label, not single-category:** A statement like "I always deploy on Fridays, but this week I'm switching to Mondays because of the incident" is simultaneously `behavioral` (a pattern) and `episodic` (a one-off change) and `procedural` (an instruction going forward). Forcing a single category loses information the scorer needs later. `category` becomes `categories: list[str]` (still validated against the fixed enum, 1-3 items).
+
+**Why temporal fields on extraction, not just storage:** The extraction LLM is the only place with access to the *conversational* signal of "this replaces X" or "this is only true until Y." Pushing temporal reasoning to the write pipeline's dedup step throws that signal away. `valid_from` defaults to the turn's timestamp; `valid_until` is nullable, explicit, and validated as an ISO-8601 string when present.
+
+**Why keep confidence scoring:** Unchanged from original — `pending_review` gate for confidence < 0.5 remains a real safety mechanism, no redesign needed there.
+
+---
+
+## Extraction Schema
+
+```python
+# Illustrative — exact path may differ
+from __future__ import annotations
+from datetime import datetime
+from pydantic import BaseModel, Field, field_validator
+
+VALID_CATEGORIES = {"factual", "preference", "behavioral", "episodic", "procedural"}
+
+class ExtractedMemory(BaseModel):
+ content: str = Field(min_length=5, max_length=1000)
+ categories: list[str] = Field(min_length=1, max_length=3)
+ confidence: float = Field(ge=0.0, le=1.0)
+ valid_from: datetime | None = None # defaults to turn timestamp if omitted
+ valid_until: datetime | None = None # None = indefinite
+
+ @field_validator("categories")
+ @classmethod
+ def categories_must_be_known(cls, v: list[str]) -> list[str]:
+ unknown = set(v) - VALID_CATEGORIES
+ if unknown:
+ raise ValueError(f"unknown categories: {unknown}")
+ return v
+
+class ExtractionResult(BaseModel):
+ memories: list[ExtractedMemory] = Field(default_factory=list)
+
+ @field_validator("memories")
+ @classmethod
+ def cap_per_turn(cls, v: list[ExtractedMemory]) -> list[ExtractedMemory]:
+ return v[:10] # safety cap: max 10 memories per turn
+```
+
+---
+
+## Extraction Prompt v2 Delta
+
+Keeps original rules 1–4 unchanged, adds:
+
+```
+5. A memory may belong to 1-3 categories if applicable (e.g. a stated
+ one-time preference change is both "preference" and "episodic"). Avoid forcing
+ a single category if the content spans multiple.
+6. If the memory describes something true only for a limited time or scope
+ (e.g. "for this migration", "until Friday"), set valid_until to the best
+ estimate of the ISO-8601 end date. Otherwise omit it (memory is indefinite).
+```
+
+---
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] `ExtractionResult.model_validate()` round-trips 50 hand-labeled example conversation turns without validation errors
+- [ ] Multi-category output verified against ≥10 crafted examples that span 2 categories
+- [ ] `valid_until` correctly parsed for ≥5 crafted "temporary fact" examples, correctly `None` for indefinite facts
+- [ ] ADR-0045 published with example extractions for both the single- and multi-category cases
+
+---
+
+## Prerequisites
+
+- [3.5.A.1 Celery worker skeleton](/roadmap/phase-3-5-extraction-assembly/milestones/3.5.a.1-celery-worker-skeleton)
+

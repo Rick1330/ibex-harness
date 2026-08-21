@@ -1,28 +1,30 @@
 ---
 title: "Phases Overview"
-description: "High-level roadmap from Foundation through production hardening. Phases 0–2 complete; Phase 3 next."
-summary: "High-level roadmap from Foundation through production hardening. Phases 0–2 complete; Phase 3 next."
+description: "High-level roadmap from Foundation through Advanced Retrieval. Phases 0–2 complete; Phase 2.5 next."
+summary: "High-level roadmap from Foundation through Advanced Retrieval. Phases 0–2 complete; Phase 2.5 next."
 status: "completed"
 ---
 
 # Phases Overview
 
-High-level roadmap from Foundation through production hardening. Detailed milestones for Phase 1 live under [phase-1-core-platform/](phase-1-core-platform/).
+High-level roadmap from Foundation through Advanced Retrieval. Detailed milestones for completed phases live under their respective directories.
 
-| Phase | Name | Est. duration | Status | Entry | Exit (summary) |
-| --- | --- | --- | --- | --- | --- |
-| [0](phase-0-foundation/) | Foundation | Done | **Complete** | Empty repo | CI, docs, compose, proto source, Go skeletons |
-| [1](phase-1-core-platform/) | Core Platform | 4–6 weeks | **Complete** | Phase 0 complete | Migrations, auth, proxy platform, security gate |
-| [1.5](phase-1-5-docs-site/) | Public Web Product | 2–3 weeks | **Complete** | Phase 1 complete | Unified site at ibexharness.com; verify_phase15.sh |
-| [2](phase-2-single-provider/) | Single Provider E2E | Sum of milestone estimates (~3–5 wk calendar if sequential solo) | **Complete** | Phase 1.5 exit | Authenticated OpenAI-compatible chat through proxy |
-| [3](phase-3-memory-engine/) | Memory Engine and Operator Platform | Sum of milestone estimates (~6–8 wk calendar if sequential solo) | Planned | Phase 2 exit | Memory graph, context assembly, operator API + dashboard |
-| [4](phase-4-multi-provider/) | Multi-Provider and Routing | 4–6 weeks | Planned | Phase 3 exit | Multiple providers, routing, Redis rate limits |
-| [5](phase-5-production-hardening/) | Production Hardening | 4–8 weeks | Planned | Phase 4 exit | SLOs, OTel pipeline, chaos/load, hardened CI |
-| [6](phase-6-intelligence-monetization/) | Intelligence & Monetization | Stub (TBD) | Planned | Phase 5 exit | Fingerprints, drift, billing (deferred from Phase 4) |
+| Phase | Name | Status | Entry | Exit (summary) |
+| --- | --- | --- | --- | --- |
+| [0](phase-0-foundation/) | Foundation | **Complete** | Empty repo | CI, docs, compose, proto source, Go skeletons |
+| [1](phase-1-core-platform/) | Core Platform | **Complete** | Phase 0 complete | Migrations, auth, proxy platform, security gate |
+| [1.5](phase-1-5-docs-site/) | Public Web Product | **Complete** | Phase 1 complete | Unified site at ibexharness.com |
+| [2](phase-2-single-provider/) | Single Provider E2E | **Complete** | Phase 1.5 exit | Authenticated OpenAI-compatible chat through proxy |
+| [2.5](phase-2-5-provider-generalization/) | Provider Generalization & Foundation | Planned | Phase 2 exit | Anthropic adapter, tokenizer, response pipeline, embedder, schema pre-work, MCP skeleton |
+| [3](phase-3-memory-engine/) | Core Memory Substrate | Planned | Phase 2.5 exit | Memory schema v2 (HNSW), write pipeline, read/ranking, hot cache |
+| [3.5](phase-3-5-extraction-assembly/) | Extraction & Context Assembly | Planned | Phase 3 exit | Extraction worker, context assembly on proxy hot path, MCP memory tools |
+| [4](phase-4-multi-provider/) | Operator Platform & Multi-Provider | Planned | Phase 3.5 exit | Management API, dashboard, multi-provider routing, hierarchical rate limiting |
+| [4.5](phase-4-5-intelligence-layer/) | Intelligence Layer | Planned | Phase 4 exit | Behavioral fingerprinting, drift detection, directive regression testing |
+| [5](phase-5-advanced-retrieval/) | Advanced Retrieval & Graph Memory | Planned | Phase 4.5 exit | Hybrid search (dense+sparse+reranking), graph traversal, evaluation harness |
 
 <Callout type="note" title="Phase week banners are not load-bearing">
   For solo maintenance, phase "N weeks" banners are planning guidance only — not a commitment.
-  Calendar time ≈ the sum of `estimatedEffort` on each milestone page (sequential), which can exceed
+  Calendar time is the sum of `estimatedEffort` on each milestone page (sequential), which can exceed
   the banner when interruptions or dependency wait times land. See [GOVERNANCE.md](/docs/engineering/GOVERNANCE).
 </Callout>
 
@@ -33,8 +35,6 @@ High-level roadmap from Foundation through production hardening. Detailed milest
 **Status:** Complete
 
 **Delivered:** Documentation-first monorepo, governance CI, Buf proto foundation, local compose, toolchain (`Makefile`, `TOOLCHAIN.md`), Go auth/proxy skeletons with health/readiness/metrics.
-
-**Merge commits:** `c4d302a` (toolchain), `5d0bfac` (Go skeletons).
 
 See [phase-0-foundation](/roadmap/phase-0-foundation).
 
@@ -56,13 +56,6 @@ See [phase-1-core-platform](/roadmap/phase-1-core-platform) and [phase1-exit-aud
 
 **Goals:** [goals](/roadmap/phase-1-5-docs-site/goals)
 
-**Exit criteria (met):**
-
-- Unified Next.js static export live at `https://ibexharness.com` (landing `/`, docs `/docs`, benchmarks, blog, releases, roadmap)
-- Matte Graphite design system; visual QA complete (Wave 14)
-- `infra/scripts/verify_phase15.sh` passes against production
-- Cross-site nav and sitemap on apex domain
-
 ---
 
 ## Phase 2: Single Provider E2E
@@ -73,90 +66,72 @@ See [phase-1-core-platform](/roadmap/phase-1-core-platform) and [phase1-exit-aud
 
 **Goals:** [goals](/roadmap/phase-2-single-provider/goals)
 
-| Goal | Summary |
-| --- | --- |
-| 2.1 | Provider abstraction and OpenAI forwarding (streaming + error mapping + idempotency) |
-| 2.2 | Auth LRU + bloom cache and revocation propagation |
-| 2.3 | Directive resolution and system prompt injection |
-| 2.4 | Session tracking and checkpoints |
-| 2.5 | Async ClickHouse trace emission |
-| 2.6 | Latency benchmark + exit gate |
+---
 
-**Exit criteria (met):**
+## Phase 2.5: Provider Generalization & Foundation
 
-- End-to-end chat completion via proxy (mock default; live with `IBEX_LLM_MODE=live` + API key)
-- Streaming SSE and non-streaming JSON paths
-- Proxy overhead gated by 2.6.1 latency benchmark ([ADR-0034](/docs/adr/0034-performance-methodology))
-- Directive injection; sessions/checkpoints; ClickHouse traces async
-- Phase 1 security tests still pass; local `make dev-smoke` green
+**Status:** Planned
 
-See [phase-2-single-provider](/roadmap/phase-2-single-provider) and [current state](/roadmap/current-state).
+**Goals:** [goals](/roadmap/phase-2-5-provider-generalization/goals)
+
+Six tracks: multi-provider adapters (Anthropic, vLLM), tokenizer registry, response pipeline, pluggable embedding service, schema pre-work (temporal validity, multi-label), and MCP server skeleton.
 
 ---
 
-## Phase 3: Memory Engine and Operator Platform
+## Phase 3: Core Memory Substrate
 
-**Status:** Planned
+**Status:** Planned (redesigned)
 
 **Goals:** [goals](/roadmap/phase-3-memory-engine/goals)
 
-**Milestones:** [45 milestones](/roadmap/phase-3-memory-engine/milestones) across memory schema, embedding, memory service, extraction worker, context assembly, management API, MinIO archives, operator dashboard, and exit gate.
-
-**Exit criteria:**
-
-- Real conversation produces memories visible in dashboard within 30 seconds of session completion
-- Subsequent agent requests include memory-injected context (verified in outbound provider calls)
-- Context assembly p95 &lt; 50ms under 50 concurrent requests
-- Management API CRUD for agents, directives, tokens, memories; dashboard displays real data
-- Cross-tenant memory isolation verified; GDPR deletion cascade works
-- `make e2e-smoke-p3` exits 0; Phase 1 and Phase 2 security tests still pass
+Five tracks: memory schema v2 (HNSW, temporal validity, multi-label), vector store abstraction with composite scoring v2, write pipeline (PII, dedup, temporal conflict), read/ranking with category-conditional decay, and exit gate.
 
 ---
 
-## Phase 4: Multi-Provider and Routing
+## Phase 3.5: Extraction & Context Assembly
 
 **Status:** Planned
+
+**Goals:** [goals](/roadmap/phase-3-5-extraction-assembly/goals)
+
+Six tracks: worker foundation, extraction intelligence, context assembly engine, proxy hot-path integration, MCP memory tools, and exit gate. This is where "the proxy that learns" becomes true end-to-end.
+
+---
+
+## Phase 4: Operator Platform & Multi-Provider
+
+**Status:** Planned (redesigned)
 
 **Goals:** [goals](/roadmap/phase-4-multi-provider/goals)
 
-**Exit criteria:**
-
-- Provider adapter interface; at least two providers
-- Model routing and failover policies
-- Production-grade Redis rate limiting (Lua)
-- Streaming backpressure hardened
+Five tracks: management API, hierarchical rate limiting (Redis Lua), multi-provider adapters/routing/resilience, operator dashboard, and exit gate. Merges the original Phase 3 management API/dashboard with the original Phase 4 multi-provider scope.
 
 ---
 
-## Phase 5: Production Hardening
+## Phase 4.5: Intelligence Layer
 
 **Status:** Planned
 
-**Goals:** [goals](/roadmap/phase-5-production-hardening/goals)
+**Goals:** [goals](/roadmap/phase-4-5-intelligence-layer/goals)
 
-**Exit criteria:**
-
-- OTel collectors and Grafana dashboards per MONITORING.md
-- Circuit breakers on external deps; documented fallbacks
-- Load/chaos tests on proxy path
-- Required CI gates stable under path-filtered matrix (`ci-gate-*`)
+Four tracks: behavioral fingerprinting with distribution-aware statistics, drift detection with calibrated thresholds, directive regression testing with LLM-judge evaluation, and exit gate.
 
 ---
 
-## Phase 6: Intelligence & Monetization
+## Phase 5: Advanced Retrieval & Graph Memory
 
-**Status:** Planned (stub)
+**Status:** Planned (redesigned)
 
-**Goals:** [goals](/roadmap/phase-6-intelligence-monetization/goals)
+**Goals:** [goals](/roadmap/phase-5-advanced-retrieval/goals)
 
-Behavioural fingerprints, drift alerts, and billing — deferred from Phase 4. Detailed milestones TBD near Phase 5 exit.
+Four tracks: hybrid retrieval (BM25 + RRF + cross-encoder reranking), graph-aware retrieval (multi-hop traversal, contradiction filtering), evaluation harness upgrade (gold set v2, shadow evaluation), and exit gate. Org-wide production hardening remains future roadmap scope beyond Phase 5.
 
 ---
 
 ## Critical path (dependency order)
 
 ```text
-Phase 0 → Phase 1 → Phase 1.5 (web product) → Phase 2 provider → Phase 3 memory/context → Phase 4 scale → Phase 5 harden → Phase 6 intelligence/monetization
+Phase 0 → 1 → 1.5 → 2 → 2.5 → 3 → 3.5 → 4 → 4.5 → 5
 ```
 
 Pivot triggers and discoveries: [findings](/roadmap/findings).

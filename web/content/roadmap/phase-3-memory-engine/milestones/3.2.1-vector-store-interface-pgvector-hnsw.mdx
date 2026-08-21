@@ -1,0 +1,283 @@
+---
+title: "3.2.1 VectorStore interface and pgvector-HNSW implementation"
+description: "VectorStore interface and pgvector-HNSW implementation, composite scoring v2 with category-conditional recency decay, and embedding client for Phase 2.5's embedder service."
+summary: "VectorStore interface and pgvector-HNSW implementation, composite scoring v2 with category-conditional recency decay, and embedding client for Phase 2.5's embedder service."
+status: "planned"
+milestoneId: "3.2.1"
+track: "B"
+trackTitle: "Vector Store & Embedding"
+trackHref: "/roadmap/phase-3-memory-engine/tracks#track-b--vector-store--embedding"
+goal: "[Track B — Vector Store & Embedding](/roadmap/phase-3-memory-engine/tracks#track-b--vector-store--embedding)"
+estimatedEffort: "3 days"
+phase: "phase-3-memory-engine"
+fullTitle: "Milestone 3.2.1 — VectorStore interface and pgvector-HNSW implementation"
+---
+
+# Milestone 3.2.1 — VectorStore interface and pgvector-HNSW implementation
+
+**Status:** Planned  
+**Goal:** [Track B — Vector Store & Embedding](/roadmap/phase-3-memory-engine/tracks#track-b--vector-store--embedding)  
+**Phase:** 3 — Core Memory Substrate  
+**Estimated effort:** 3 days  
+**Track:** [Track B — Vector Store & Embedding](/roadmap/phase-3-memory-engine/tracks#track-b--vector-store--embedding)  
+**ADR required:** ADR-0041 — Vector store abstraction and composite scoring formula v2
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+Two prior review findings converge here:
+
+1. The embedding backend is now pluggable per Phase 2.5, so the memory service must call it through an interface, not a hardcoded `sentence-transformers` import.
+2. The composite scoring formula's fixed 14-day half-life recency decay is wrong for `factual`/`procedural` memories. This milestone is where the corrected, category-conditional formula gets implemented, since it is the same code path as vector search.
+
+Goal: the renamed "Vector Store Integration" goal (renamed from the original "Embedding Service" goal — the embedding *service* itself was already built in Phase 2.5; this goal is specifically about how the memory service *calls* it and stores results).
+
+---
+
+## Non-Goals
+
+- Building a Qdrant implementation (YAGNI — the interface boundary means it can be added later without touching MemoryService business logic)
+- The embedding model itself (stays isolated in the dedicated embedder service from Phase 2.5)
+- The memory write or read pipeline (Track C and D)
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Vector store / search
+- Database schema / migrations
+
+## Suggested naming (provisional)
+
+Rename freely to match the change that actually lands.
+
+- Branch: `feature/m3-2-1-vector-store-interface`
+- PR title: `feat(memory): VectorStore interface, pgvector-HNSW impl, composite scoring v2 (m3.2.1)`
+
+## ADR-0041 — Vector store abstraction and composite scoring v2
+
+Write `web/content/docs/adr/0041-vector-store-abstraction.mdx`:
+
+```markdown
+## Decision
+
+### 1) VectorStore interface (Python ABC, mirrors packages/provider's Go pattern)
+
+class VectorStore(ABC):
+ async def upsert(self, memory_id: UUID, embedding: list[float], org_id: UUID) -> None: ...
+ async def search(self, org_id: UUID, agent_id: UUID, query_embedding: list[float],
+ limit: int, min_confidence: float) -> list[tuple[UUID, float]]: ...
+ async def delete(self, memory_id: UUID, org_id: UUID) -> None: ...
+
+Concrete implementation: `PgVectorStore` (this milestone). A `QdrantStore` stub
+is intentionally NOT built now — YAGNI — but the interface boundary means it
+can be added later without touching MemoryService business logic.
+
+### 2) ef_search tuning is a per-query, not per-connection, setting
+
+`SET LOCAL hnsw.ef_search = 40` inside the same transaction as the search
+query — never a global GUC change — so concurrent requests with different
+recall/latency needs cannot interfere with each other.
+
+### 3) Composite scoring formula v2 — category-conditional recency decay
+
+score = 0.40 * relevance + 0.25 * recency(category) + 0.20 * usefulness
+ + 0.10 * confidence + 0.05 * access_frequency
+
+recency(category) uses exponential decay with a category-specific half-life:
+ factual: 180 days (facts don't go stale quickly)
+ procedural: 120 days (how-to knowledge is durable)
+ preference: 45 days (preferences drift faster)
+ behavioral: 30 days
+ episodic: 14 days (original global default — correct only for this category)
+
+For multi-label memories, recency uses the shortest half-life among the
+memory's labels (conservative — decay faster, not slower, when ambiguous).
+```
+
+---
+
+## Deliverables
+
+Target outcomes for the milestone; concrete artifacts may differ from any sketch above.
+
+### File structure
+
+```
+services/memory/
+ vectorstore/
+ __init__.py
+ base.py # VectorStore ABC
+ pgvector_store.py # PgVectorStore(VectorStore) — HNSW search + ef_search tuning
+ pgvector_store_test.py
+ scoring/
+ __init__.py
+ composite.py # score(memory, query_embedding_similarity) -> Decimal
+ half_life.py # CATEGORY_HALF_LIFE_DAYS constant table
+ composite_test.py
+ embedding_client.py # thin HTTP client to Phase 2.5's embedder service
+ embedding_client_test.py
+```
+
+### VectorStore ABC
+
+```python
+from abc import ABC, abstractmethod
+from uuid import UUID
+
+class VectorStore(ABC):
+ @abstractmethod
+ async def upsert(
+ self,
+ memory_id: UUID,
+ embedding: list[float],
+ org_id: UUID,
+ ) -> None:
+ """Store or update an embedding for a memory."""
+ ...
+
+ @abstractmethod
+ async def search(
+ self,
+ org_id: UUID,
+ agent_id: UUID,
+ query_embedding: list[float],
+ limit: int,
+ min_confidence: float = 0.0,
+ ) -> list[tuple[UUID, float]]:
+ """Return (memory_id, cosine_similarity) pairs, descending similarity, org/agent scoped."""
+ ...
+
+ @abstractmethod
+ async def delete(self, memory_id: UUID, org_id: UUID) -> None:
+ """Remove an embedding from the store."""
+ ...
+```
+
+### PgVectorStore implementation
+
+```python
+class PgVectorStore(VectorStore):
+ async def search(
+ self,
+ org_id: UUID,
+ agent_id: UUID,
+ query_embedding: list[float],
+ limit: int,
+ min_confidence: float = 0.0,
+ ) -> list[tuple[UUID, float]]:
+ async with self._session() as session:
+ # ef_search is set per-transaction, not globally (ADR-0041 §2)
+ await session.execute(text("SET LOCAL hnsw.ef_search = 40"))
+ rows = await session.execute(
+ text("""
+ SELECT id, 1 - (embedding <=> :query) AS similarity
+ FROM ibex_core.memories
+ WHERE org_id = :org_id
+ AND agent_id = :agent_id
+ AND status = 'active'
+ AND deleted_at IS NULL
+ AND 1 - (embedding <=> :query) >= :min_confidence
+ ORDER BY embedding <=> :query
+ LIMIT :limit
+ """),
+ {"query": query_embedding, "org_id": org_id,
+ "agent_id": agent_id, "min_confidence": min_confidence, "limit": limit},
+ )
+ return [(row.id, row.similarity) for row in rows]
+```
+
+### Composite scoring formula v2
+
+```python
+# scoring/half_life.py
+from typing import Final
+
+CATEGORY_HALF_LIFE_DAYS: Final[dict[str, float]] = {
+ "factual": 180.0,
+ "procedural": 120.0,
+ "preference": 45.0,
+ "behavioral": 30.0,
+ "episodic": 14.0,
+}
+
+def recency_decay(age_days: float, category: str) -> float:
+ """Exponential decay. For multi-label memories, uses the shortest half-life."""
+ half_life = CATEGORY_HALF_LIFE_DAYS.get(category, 14.0)
+ import math
+ return math.exp(-0.693 * age_days / half_life)
+```
+
+```python
+# scoring/composite.py
+def score(
+ relevance: float,
+ recency: float,
+ usefulness: float,
+ confidence: float,
+ access_frequency: float,
+) -> float:
+ return (
+ 0.40 * relevance
+ + 0.25 * recency
+ + 0.20 * usefulness
+ + 0.10 * confidence
+ + 0.05 * access_frequency
+ )
+```
+
+### Embedding client
+
+`embedding_client.py` calls Phase 2.5's embedder `/embed` endpoint (TEI-backed, `bge-m3` default). The memory service must **never** load a model in-process; that responsibility stays isolated in the dedicated embedder service.
+
+---
+
+## Working notes
+
+Preferred starting points and open questions — situational, and expected to evolve with further research during implementation.
+
+- `embedding_client.py` must have zero direct ML library imports — verified by a CI import-lint rule (mirrors the "no services/* imports in packages/provider" boundary rule already enforced in Go).
+- `ef_search` is set via `SET LOCAL` inside the transaction, never as a global GUC — so concurrent requests cannot interfere with each other.
+- For multi-label memories, recency uses the shortest half-life among all labels (conservative: decay faster, not slower, when ambiguous).
+
+---
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] `VectorStore` ABC + `PgVectorStore` implementation with `ef_search` set per-transaction
+- [ ] Composite scoring v2 implemented with category-conditional half-life, unit-tested against the documented formula
+- [ ] Recall/latency benchmark run at 10K/100K/1M synthetic rows; results committed to `services/memory/benchmarks/output/` and referenced in ADR-0041
+- [ ] `embedding_client.py` has zero direct ML library imports — verified by a CI import-lint rule
+- [ ] ADR-0041 published in `web/content/docs/adr/`
+
+---
+
+## Prerequisites
+
+- Milestone 3.1.1 merged (HNSW schema and `memory_labels` table in place)
+- Phase 2.5 embedder service running and reachable at known endpoint
+
