@@ -234,7 +234,7 @@ Used by: **proxy** (`services/proxy`)
 | `IBEX_LLM_MODE` | No | `mock` | `mock` \| `live` — `mock` registers an in-process stub; `live` registers OpenAI and/or Anthropic when credentials are present ([ADR-0026](/docs/adr/0026-openai-client-design), [ADR-0040](/docs/adr/0040-anthropic-provider-adapter)). **Rejected when `IBEX_ENV=production`** | Default `mock` for CI/dev without API key; production must use `live` |
 | `OPENAI_API_KEY` | Live (≥1 of OpenAI/Anthropic) | (none) | OpenAI API key (or OpenAI-compatible provider key) | Secret; never logged |
 | `OPENAI_BASE_URL` | No | `https://api.openai.com/v1` | OpenAI API base URL | Use `https://openrouter.ai/api/v1` for OpenRouter |
-| `IBEX_LLM_EXTRA_MODELS` | No | (none) | Comma-separated extra live-mode model IDs beyond the default OpenAI allowlist | e.g. `openai/gpt-oss-20b:free` for OpenRouter |
+| `IBEX_LLM_EXTRA_MODELS` | No | (none) | Comma-separated extra live-mode model IDs beyond the default OpenAI allowlist | e.g. `openai/gpt-oss-20b:free` for OpenRouter; each ID needs an `IBEX_MODEL_CAPABILITY_OVERLAYS` entry |
 | `OPENAI_REQUEST_TIMEOUT` | No | `120s` | Upstream request timeout | |
 | `OPENAI_MAX_RETRIES` | No | `3` | Retries on 429/5xx/network | |
 | `OPENAI_RETRY_BASE_DELAY` | No | `500ms` | Exponential backoff base | |
@@ -243,7 +243,8 @@ Used by: **proxy** (`services/proxy`)
 | `ANTHROPIC_REQUEST_TIMEOUT` | No | `120s` | Anthropic non-stream HTTP timeout | Stream bounded via request context |
 | `ANTHROPIC_MAX_RETRIES` | No | `3` | Anthropic-specific retries (**includes HTTP 529** overloaded) | Do not copy OpenAI retry list verbatim |
 | `ANTHROPIC_RETRY_BASE_DELAY` | No | `500ms` | Anthropic exponential backoff base | Cap 30s + jitter |
-| `ANTHROPIC_EXTRA_MODELS` | No | (none) | Comma-separated extra Claude model IDs beyond the built-in allowlist | |
+| `ANTHROPIC_EXTRA_MODELS` | No | (none) | Comma-separated extra Claude model IDs beyond the built-in allowlist | Each ID needs an `IBEX_MODEL_CAPABILITY_OVERLAYS` entry |
+| `IBEX_MODEL_CAPABILITY_OVERLAYS` | Conditional | (none) | JSON array of capability rows for ExtraModels ([ADR-0041](/docs/adr/0041-model-capability-registry)) | Required when ExtraModels is set; fail-closed at registry build |
 | `IBEX_SELFHOSTED_ENABLED` | Planned **2.5** | `false` | Register OpenAI-compatible self-hosted backend(s) | Air-gapped / vLLM / TGI / Ollama path |
 | `IBEX_SELFHOSTED_BASE_URL` | Conditional | (none) | Base URL for self-hosted OpenAI-compatible API | Required when enabled |
 | `IBEX_SELFHOSTED_MODELS` | Conditional | (none) | Comma-separated model IDs served by that backend | Must exist in capability registry |

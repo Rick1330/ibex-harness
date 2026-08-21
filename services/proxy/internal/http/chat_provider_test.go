@@ -87,7 +87,7 @@ func writeProviderFailureRec(t *testing.T, err error) *httptest.ResponseRecorder
 
 func preStreamErrorHandler(t *testing.T) http.Handler {
 	t.Helper()
-	reg, err := provider.NewRegistry(stubLLMProvider{
+	reg, err := provider.NewRegistry(provider.BuiltInCapabilityCatalog(), stubLLMProvider{
 		name:   "openai",
 		models: []string{"gpt-4o"},
 		err: &provider.ProviderError{

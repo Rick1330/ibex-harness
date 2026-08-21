@@ -72,7 +72,7 @@ func (s *countingLLMProvider) SupportedModels() []string { return s.models }
 
 func idempotencyTestRouter(t *testing.T, store idempotency.Store, prov provider.Provider, validator auth.TokenValidator) http.Handler {
 	t.Helper()
-	reg, err := provider.NewRegistry(prov)
+	reg, err := provider.NewRegistry(provider.BuiltInCapabilityCatalog(), prov)
 	if err != nil {
 		t.Fatalf("NewRegistry: %v", err)
 	}

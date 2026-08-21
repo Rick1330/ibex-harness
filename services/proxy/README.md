@@ -70,10 +70,11 @@ See [.env.example](.env.example).
 | `IBEX_LLM_MODE` | `mock` | `mock` (in-process stub) or `live` (register configured vendors). Rejected when `IBEX_ENV=production` |
 | `OPENAI_API_KEY` | (empty) | Registers OpenAI when `live` and set |
 | `OPENAI_BASE_URL` | OpenAI default | Optional upstream base URL |
-| `IBEX_LLM_EXTRA_MODELS` | (empty) | Comma-separated extra OpenAI model IDs |
+| `IBEX_LLM_EXTRA_MODELS` | (empty) | Comma-separated extra OpenAI model IDs (require capability overlays) |
 | `ANTHROPIC_API_KEY` | (empty) | Registers Anthropic when `live` and set ([ADR-0040](../../web/content/docs/adr/0040-anthropic-provider-adapter.mdx)) |
 | `ANTHROPIC_BASE_URL` | `https://api.anthropic.com` | Anthropic API base |
-| `ANTHROPIC_EXTRA_MODELS` | (empty) | Extra Claude model IDs |
+| `ANTHROPIC_EXTRA_MODELS` | (empty) | Extra Claude model IDs (require capability overlays) |
+| `IBEX_MODEL_CAPABILITY_OVERLAYS` | (empty) | JSON array of `ModelCapability` rows for ExtraModels ([ADR-0041](../../web/content/docs/adr/0041-model-capability-registry.mdx)) |
 | `IBEX_IDEMPOTENCY_TTL` | `24h` | Idempotency-Key Redis TTL (non-streaming chat) |
 | `IBEX_IDEMPOTENCY_REDIS_TIMEOUT` | `50ms` | Idempotency Redis budget |
 | `CLICKHOUSE_DSN` | (empty) | Optional `llm_traces` writer |
@@ -84,10 +85,10 @@ Full registry: [ENVIRONMENT_VARIABLES.md](../../web/engineering/ENVIRONMENT_VARI
 
 ## Next (Phase 2.5+) — remaining planning baseline
 
-Anthropic adapter is shipped (m2.5.G1.M1 / ADR-0040). Still planned:
+Anthropic adapter and model capability registry are shipped (m2.5.G1.M1–M2 / ADR-0040, ADR-0041). Still planned:
 
 - OpenAI-compatible self-hosted adapters (`IBEX_SELFHOSTED_*`)
-- Model capability registry + tokenizer counting (`IBEX_TOKENIZER_*`)
+- Tokenizer counting (`IBEX_TOKENIZER_*`) keyed by `TokenizerFamily` from the capability registry
 - Non-streaming response pipeline seam (`packages/responsepipeline`)
 - Later: fail-open context-assembly client (`IBEX_CONTEXT_*`, Phase 3.5)
 

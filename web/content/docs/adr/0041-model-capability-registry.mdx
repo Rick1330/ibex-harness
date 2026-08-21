@@ -1,0 +1,90 @@
+---
+title: "ADR-0041: Model capability registry"
+description: "Architecture decision record 0041 — curated ModelCapability catalog beside Registry.For, fail-closed registration, and ExtraModels overlays."
+adrId: "0041"
+status: "Accepted"
+date: "2026-08-21"
+authors: "IBEX Harness team"
+---
+
+# ADR-0041: Model capability registry
+
+- **Status:** Accepted
+- **Date:** 2026-08-21
+- **Authors:** IBEX Harness team
+- **Milestone:** [2.5.G1.M2 Model capability registry](/roadmap/phase-2-5-provider-generalization/milestones/2.5.g1.m2-model-capability-registry)
+
+## Context
+
+[ADR-0025](/docs/adr/0025-llm-provider-abstraction) routes by model via `Registry.For(model)` — that answers *which provider* handles a request. After Anthropic ([ADR-0040](/docs/adr/0040-anthropic-provider-adapter)) and before self-hosted vLLM (2.5.G1.M3) and the tokenizer registry (2.5.G2.M1), the proxy and future context-assembly engine also need *what a model can do*: context window, max output tokens, tools/vision/streaming support, and tokenizer family.
+
+A hardcoded allowlist of model IDs is not enough. Capability metadata must be queryable, fail-closed at startup, and reviewable in PRs.
+
+## Decision
+
+### 1) Curated in-repo capability catalog
+
+Maintain a small, hand-verified Go table in `packages/provider` (`BuiltInCapabilityCatalog`). Values are checked against vendor docs (OpenAI model cards; Anthropic models overview). Do **not** take a runtime dependency on LiteLLM or fetch capability JSON on the hot path.
+
+An optional offline maintainer script may diff curated rows against a LiteLLM snapshot for drift detection; it is never imported by the proxy binary and is not a CI gate.
+
+### 2) `ModelCapability` beside `Registry.For`
+
+```go
+type ModelCapability struct {
+    ModelID           string
+    Provider          string // vendor family: "openai" | "anthropic" (catalog truth)
+    ContextWindow     int
+    MaxOutputTokens   int
+    SupportsTools     bool
+    SupportsVision    bool
+    SupportsStreaming bool
+    TokenizerFamily   string // "o200k_base" | "cl100k_base" | "claude" | …
+}
+
+func (r *Registry) Capability(model string) (ModelCapability, bool)
+```
+
+`Provider` on a capability row is the **vendor family** for the model ID, not necessarily the runtime adapter name. The mock LLM reuses OpenAI model IDs and therefore reuses OpenAI capability rows.
+
+### 3) Fail-closed `NewRegistry`
+
+```go
+func NewRegistry(catalog CapabilityCatalog, providers ...Provider) (*Registry, error)
+```
+
+Every model ID returned by `SupportedModels()` must resolve in `catalog`. Missing entries return `ErrMissingCapability` at startup — never a silent miss at request time. Duplicate model IDs still return `ErrDuplicateModel`. Invalid catalog rows (failed field validation, or a row whose `ModelID` does not match the catalog key) return `ErrInvalidCapability`.
+
+### 4) ExtraModels require explicit overlays
+
+`IBEX_LLM_EXTRA_MODELS` / `ANTHROPIC_EXTRA_MODELS` remain allowlist extensions. Operators must also supply capability overlays (`IBEX_MODEL_CAPABILITY_OVERLAYS` JSON) for every extra model ID. Overlay rules (fail-closed):
+
+- unknown JSON fields are rejected
+- feature flags (`supports_tools` / `supports_vision` / `supports_streaming`) must be present explicitly
+- tokenizer family must be one of the declared constants (`o200k_base`, `cl100k_base`, `claude`, `unknown`)
+- overlays cannot override built-in curated model IDs
+- overlay `model_id` values must appear in ExtraModels (no orphan overlays)
+
+Overlays merge on top of the built-in catalog only after those checks pass. Extra models without overlay entries fail registry construction.
+
+### 5) Capability reflects vendor model truth, not adapter completeness
+
+`SupportsTools` / `SupportsVision` describe what the **vendor model** supports. Anthropic tool/image passthrough in the adapter may still be deferred; request-time enforcement of these flags is out of scope for this milestone. Document the gap so tokenizer/budget consumers are not confused with proxy feature completeness.
+
+### 6) Tokenizer family keys for G2
+
+Stable string keys (`o200k_base`, `cl100k_base`, `claude`, later `llama3` / `qwen2`) are the join key for [2.5.G2.M1](/roadmap/phase-2-5-provider-generalization/milestones/2.5.g2.m1-tokenizer-registry). Anthropic uses `claude` — not a fake tiktoken mapping.
+
+## Consequences
+
+**Positive:**
+
+- Proxy and Phase 3 context assembly can size budgets and validate features without scraping vendor docs at runtime
+- Startup fails loudly when ExtraModels lack metadata
+- G2/M3 extend the same table rather than inventing parallel maps
+
+**Negative / follow-ups:**
+
+- Curated table needs periodic refresh when vendors ship new model IDs
+- Hot-path rejection based on `SupportsTools` / `SupportsVision` is deferred until adapters expose those features
+- Self-hosted models (M3) must register capability rows (and overlays) explicitly

@@ -188,7 +188,7 @@ func TestNewHTTPServer(t *testing.T) {
 	t.Parallel()
 	cfg := config.Config{Port: "8080"}
 	cfg.ApplyDefaults()
-	providerReg, err := provider.NewRegistry()
+	providerReg, err := provider.NewRegistry(provider.BuiltInCapabilityCatalog())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -76,7 +76,7 @@ func TestUnit_NewRouter_nilProviderRegistryUsesEmptyRegistry(t *testing.T) {
 
 func TestUnit_ChatCompletions_registeredProviderForwardsResponse(t *testing.T) {
 	t.Parallel()
-	reg, err := provider.NewRegistry(stubLLMProvider{name: "openai", models: []string{"gpt-4o"}})
+	reg, err := provider.NewRegistry(provider.BuiltInCapabilityCatalog(), stubLLMProvider{name: "openai", models: []string{"gpt-4o"}})
 	if err != nil {
 		t.Fatalf("NewRegistry: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestUnit_ChatCompletions_providerErrorMapsToHTTPStatus(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			reg, err := provider.NewRegistry(stubLLMProvider{
+			reg, err := provider.NewRegistry(provider.BuiltInCapabilityCatalog(), stubLLMProvider{
 				name: "openai", models: []string{"gpt-4o"}, err: tc.provErr,
 			})
 			if err != nil {
@@ -253,7 +253,7 @@ func TestUnit_parseAndValidateChatRequest_headerValidation(t *testing.T) {
 
 func TestUnit_chatCompletionHandler_logsParsedRequest(t *testing.T) {
 	t.Parallel()
-	reg, err := provider.NewRegistry()
+	reg, err := provider.NewRegistry(provider.BuiltInCapabilityCatalog())
 	if err != nil {
 		t.Fatalf("NewRegistry: %v", err)
 	}

@@ -163,7 +163,7 @@ func newStreamTestHandler(t *testing.T, stub *streamStubProvider) http.Handler {
 
 func newStreamTestHandlerWithValidator(t *testing.T, stub *streamStubProvider, validator auth.TokenValidator) http.Handler {
 	t.Helper()
-	reg, err := provider.NewRegistry(stub)
+	reg, err := provider.NewRegistry(provider.BuiltInCapabilityCatalog(), stub)
 	if err != nil {
 		t.Fatalf("NewRegistry: %v", err)
 	}

@@ -23,7 +23,7 @@ func (s stubProvider) SupportedModels() []string { return s.models }
 func TestUnit_Registry_ForKnownModel(t *testing.T) {
 	t.Parallel()
 	openai := stubProvider{name: "openai", models: []string{"gpt-4o", "gpt-4o-mini"}}
-	reg, err := NewRegistry(openai)
+	reg, err := NewRegistry(BuiltInCapabilityCatalog(), openai)
 	if err != nil {
 		t.Fatalf("NewRegistry: %v", err)
 	}
@@ -39,7 +39,7 @@ func TestUnit_Registry_ForKnownModel(t *testing.T) {
 
 func TestUnit_Registry_ForUnknownModel(t *testing.T) {
 	t.Parallel()
-	reg, err := NewRegistry(stubProvider{name: "openai", models: []string{"gpt-4o"}})
+	reg, err := NewRegistry(BuiltInCapabilityCatalog(), stubProvider{name: "openai", models: []string{"gpt-4o"}})
 	if err != nil {
 		t.Fatalf("NewRegistry: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestUnit_Registry_ForUnknownModel(t *testing.T) {
 
 func TestUnit_Registry_EmptyRegistry(t *testing.T) {
 	t.Parallel()
-	reg, err := NewRegistry()
+	reg, err := NewRegistry(BuiltInCapabilityCatalog())
 	if err != nil {
 		t.Fatalf("NewRegistry: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestUnit_Registry_DuplicateModelReturnsError(t *testing.T) {
 	a := stubProvider{name: "openai", models: []string{"gpt-4o"}}
 	b := stubProvider{name: "azure", models: []string{"gpt-4o"}}
 
-	_, err := NewRegistry(a, b)
+	_, err := NewRegistry(BuiltInCapabilityCatalog(), a, b)
 	if !errors.Is(err, ErrDuplicateModel) {
 		t.Fatalf("err = %v, want ErrDuplicateModel", err)
 	}
@@ -76,7 +76,7 @@ func TestUnit_Registry_DuplicateModelReturnsError(t *testing.T) {
 
 func TestUnit_Registry_ConcurrentFor(t *testing.T) {
 	t.Parallel()
-	reg, err := NewRegistry(stubProvider{name: "openai", models: []string{"gpt-4o"}})
+	reg, err := NewRegistry(BuiltInCapabilityCatalog(), stubProvider{name: "openai", models: []string{"gpt-4o"}})
 	if err != nil {
 		t.Fatalf("NewRegistry: %v", err)
 	}

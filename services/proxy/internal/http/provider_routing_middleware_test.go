@@ -87,7 +87,7 @@ func TestUnit_ChatParse_MissingModel400(t *testing.T) {
 
 func serveProviderRouting(t *testing.T, model string, next http.Handler) *httptest.ResponseRecorder {
 	t.Helper()
-	reg, err := provider.NewRegistry(stubLLMProvider{name: "openai", models: []string{"gpt-4o"}})
+	reg, err := provider.NewRegistry(provider.BuiltInCapabilityCatalog(), stubLLMProvider{name: "openai", models: []string{"gpt-4o"}})
 	if err != nil {
 		t.Fatalf("NewRegistry: %v", err)
 	}

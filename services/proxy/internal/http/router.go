@@ -76,7 +76,7 @@ func resolveProviderRegistry(reg *provider.Registry) (*provider.Registry, error)
 	if reg != nil {
 		return reg, nil
 	}
-	providerReg, err := provider.NewRegistry()
+	providerReg, err := provider.NewRegistry(provider.BuiltInCapabilityCatalog())
 	if err != nil {
 		return nil, fmt.Errorf("provider registry: %w", err)
 	}

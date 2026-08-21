@@ -103,7 +103,7 @@ func newChatOverheadHandler(b *testing.B) http.Handler {
 	b.Helper()
 	orgUUID := uuid.MustParse(testChatOrgID)
 	agentUUID := uuid.MustParse(testChatAgentID)
-	reg, err := provider.NewRegistry(mockllm.Provider{})
+	reg, err := provider.NewRegistry(provider.BuiltInCapabilityCatalog(), mockllm.Provider{})
 	if err != nil {
 		b.Fatalf("registry: %v", err)
 	}

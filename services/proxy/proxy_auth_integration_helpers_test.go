@@ -379,7 +379,7 @@ func mustProxyLimiter(t *testing.T, client redis.UniversalClient, defaultRPM int
 
 func mustProviderRegistry(t *testing.T, providers ...provider.Provider) *provider.Registry {
 	t.Helper()
-	reg, err := provider.NewRegistry(providers...)
+	reg, err := provider.NewRegistry(provider.BuiltInCapabilityCatalog(), providers...)
 	if err != nil {
 		t.Fatalf("provider registry: %v", err)
 	}

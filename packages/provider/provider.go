@@ -2,7 +2,8 @@
 // All LLM communication goes through this interface.
 //
 // Phase 2: OpenAI (+ mock) implementation.
-// Phase 2.5: Anthropic adapter (OpenAI-compatible wire translation; ADR-0040).
+// Phase 2.5: Anthropic adapter (OpenAI-compatible wire translation; ADR-0040)
+// and ModelCapability registry (ADR-0041).
 // Later: Azure OpenAI, AWS Bedrock, self-hosted OpenAI-compatible backends.
 package provider
 
