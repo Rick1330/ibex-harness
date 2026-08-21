@@ -19,6 +19,10 @@ describe("getPhaseTimeline", () => {
     expect(timeline[0]?.phaseIndex).toBe("0");
     expect(timeline[0]?.anchor).toMatch(/^phase-/);
     expect(timeline.some((p) => p.phaseIndex === "1.5")).toBe(true);
+    expect(timeline.some((p) => p.phaseIndex === "2.5")).toBe(true);
+    expect(timeline.some((p) => p.phaseIndex === "3.5")).toBe(true);
+    expect(timeline.some((p) => p.phaseIndex === "4.5")).toBe(true);
+    expect(timeline.some((p) => p.slug === "phase-5-advanced-retrieval")).toBe(true);
   });
 
   it("keeps getPhaseCards compatible for existing consumers", () => {

@@ -110,9 +110,14 @@ export function getPhaseCards() {
 
     const milestonesPending =
       stats.total === 0 &&
-      ["phase-3-memory-engine", "phase-4-multi-provider", "phase-5-production-hardening"].includes(
-        slug,
-      );
+      [
+        "phase-2-5-provider-generalization",
+        "phase-3-memory-engine",
+        "phase-3-5-extraction-assembly",
+        "phase-4-multi-provider",
+        "phase-4-5-intelligence-layer",
+        "phase-5-advanced-retrieval",
+      ].includes(slug);
 
     return {
       slug,
@@ -135,6 +140,9 @@ function stripPhaseTitlePrefix(title: string): string {
 
 function phaseDisplayIndex(slug: PhaseSlug): string {
   if (slug === "phase-1-5-docs-site") return "1.5";
+  if (slug === "phase-2-5-provider-generalization") return "2.5";
+  if (slug === "phase-3-5-extraction-assembly") return "3.5";
+  if (slug === "phase-4-5-intelligence-layer") return "4.5";
   const match = /^phase-(\d+)/.exec(slug);
   return match?.[1] ?? slug;
 }

@@ -5,9 +5,12 @@ export const PHASE_SLUGS = [
   "phase-1-core-platform",
   "phase-1-5-docs-site",
   "phase-2-single-provider",
+  "phase-2-5-provider-generalization",
   "phase-3-memory-engine",
+  "phase-3-5-extraction-assembly",
   "phase-4-multi-provider",
-  "phase-5-production-hardening",
+  "phase-4-5-intelligence-layer",
+  "phase-5-advanced-retrieval",
 ] as const;
 
 export type PhaseSlug = (typeof PHASE_SLUGS)[number];
