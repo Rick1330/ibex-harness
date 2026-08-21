@@ -1,176 +1,110 @@
 ---
 title: "Phase 3"
-description: "Phase 2 built a working LLM proxy. Every request is authenticated, rate-limited, and forwarded to OpenAI with a static directive. That is a good proxy. Phase 3 makes it something fundamentally different: a proxy that learns."
-summary: "Phase 2 built a working LLM proxy. Every request is authenticated, rate-limited, and forwarded to OpenAI with a static directive. That is a good proxy. Phase 3 makes it something fundamentally different: a proxy that learns."
+description: "Phase 3 proves memory can be written, deduplicated, conflict-checked, and retrieved correctly and fast — in isolation, testable via direct API calls."
+summary: "Phase 3 proves memory can be written, deduplicated, conflict-checked, and retrieved correctly and fast — in isolation, testable via direct API calls."
 status: "planned"
 phase: "phase-3-memory-engine"
-fullTitle: "Phase 3 — Memory Engine and Operator Platform"
+fullTitle: "Phase 3 — Core Memory Substrate"
 ---
 
-# Phase 3 — Memory Engine and Operator Platform
+# Phase 3 — Core Memory Substrate
+
+<Callout type="note" title="Planning baseline">
+  Paths, libraries, schemas, and sequencing on this phase are orientation for planning.
+  Implementation is expected to require further research and may land differently than any sketch.
+</Callout>
+
+<Callout type="info" title="Scope note">
+ Phase 3 is intentionally limited to the core memory substrate: schema, vector store, write pipeline,
+ read/ranking, and hot cache. Extraction and context assembly continue in Phase 3.5, while the
+ management API and dashboard continue in Phase 4. This keeps the memory layer testable in isolation
+ before proxy hot-path integration begins.
+</Callout>
 
 <Callout type="info" title="Entry condition">
-  **Phase 2 is complete on `main`.** Start here for memory, context assembly, workers, the management API, and the operator dashboard. Do not treat Python paths under `services/` as implemented until these milestones land.
+ **Phase 2.5 is complete.** Pluggable embedder, response pipeline, tokenizer abstraction, and MCP
+ skeleton are proven. Start here for the memory schema, vector store, write pipeline, and read/ranking
+ pipeline.
 </Callout>
 
 ## What Phase 3 Delivers
 
-Phase 2 built a working LLM proxy. Every request is authenticated, rate-limited, and forwarded to OpenAI with a static directive. That is a good proxy. Phase 3 makes it something fundamentally different: **a proxy that learns**.
+Phase 3 proves memory can be **written, deduplicated, conflict-checked, and retrieved correctly and
+fast** — in isolation, testable via direct API calls. It deliberately does **not** touch the proxy hot
+path or auto-extraction; that is Phase 3.5. This mirrors how Phase 1 (auth/proxy plumbing) was kept
+separate from Phase 2 (actual LLM forwarding).
 
-After Phase 3, every conversation an AI agent has is automatically analysed, stripped of knowledge, and woven into a persistent memory graph. The next time that agent runs, its context is enriched with the most relevant memories from all prior conversations — transparently, without any change to the application using the agent. Operators see everything through a purpose-built dashboard. The system manages itself: memory extraction, deduplication, conflict resolution, and garbage collection all run in the background.
+## Why the Original Plan Needed This Rewrite
 
-This is the core value proposition of IBEX Harness. Phase 3 is the most complex phase in the roadmap.
+1. **IVFFlat replaced by HNSW:** The original plan specified IVFFlat (lists=100) with HNSW deferred to Phase 4. Since Phase 3 is greenfield (no existing index to migrate), starting with the better index avoids a costly live-traffic migration later.
+2. **Multi-label categories:** The original single `category` enum cannot represent memories that span multiple categories. A join table (`memory_labels`) replaces the exclusive enum.
+3. **Temporal validity:** The original schema had no notion of when a fact was true, causing false contradictions when facts change over time. `valid_from`/`valid_until` columns fix this.
 
-## Phase 3 Scope
+## Phase 3 Scope — Five Tracks
 
-### Six new services
+| Track | Theme | Key Milestones |
+|---|---|---|
+| A | Memory Schema & Data Foundation | 3.1.1 (schema v2: HNSW, temporal validity, multi-label) |
+| B | Vector Store & Embedding Integration | 3.2.1 (`VectorStore` interface, pgvector-HNSW impl, composite scoring v2) |
+| C | Memory Write Pipeline | 3.C.1 (PII detection/redaction), 3.C.2 (dedup), 3.C.3 (temporal conflict detection), 3.C.4 (multi-label classification) |
+| D | Read/Ranking Pipeline & Hot Cache | 3.D.1 (semantic search), 3.D.2 (category-conditional decay), 3.D.3 (Redis hot cache) |
+| E | Exit Gate | 3.E.1 (security integration), 3.E.2 (e2e lifecycle test), 3.E.3 (retrieval benchmark sign-off), 3.E.4 (ADR consolidation), 3.E.5 (exit audit) |
+
+### New services (Phase 3 only)
 
 | Service | Language | Path | Purpose |
 |---|---|---|---|
-| Embedding Service | Python 3.11 | `services/embedder/` | Text → 384-dim vectors (all-MiniLM-L6-v2) |
-| Memory Service | Python 3.11 | `services/memory/` | Memory CRUD, dedup, vector search, hot cache |
-| Context Assembly Engine | Python 3.11 | `services/context/` | Assemble enriched context, 40ms budget |
-| Worker Service | Python 3.11 | `services/worker/` | Celery: extraction, embedding, fingerprinting |
-| API Server | Python 3.11 | `services/api/` | Management REST API for operators |
-| Dashboard | TypeScript/Next.js 14 | `services/dashboard/` | Operator web UI |
+| Memory Service | Python 3.12 | `services/memory/` | Memory CRUD, dedup, vector search, hot cache |
 
-### Major schema additions
+Embedding service, context assembly, worker, API server, and dashboard are **not** in Phase 3 scope.
 
-- `ibex_core.memories` — core memory store with pgvector (384-dim)
-- `ibex_core.memory_relationships` — graph of memory connections
-- `ibex_core.memory_versions` — immutable memory change history
-- `ibex_core.memory_tags` — flexible tagging for search and filtering
-- MinIO bucket structure — session content archives
-
-### Extended proxy behaviour (Go)
-
-- Context assembly gRPC call added to the hot path
-- Memory extraction job triggered async after every session checkpoint
-- Hot memory cache management (Redis sorted set per agent)
-
-## The Critical Path After Phase 3
+## Recommended Execution Order
 
 ```
-Client SDK
-    │
-    ▼  POST /v1/chat/completions
-┌──────────────────────────────────────────────────────────────────────┐
-│                           IBEX Proxy (Go)                            │
-│  RequestID → Auth LRU → AgentVerify → RateLimit                      │
-│  → ContextAssemblyGRPC ─────────────────────────────────────────────►│
-│                  │                                                    │
-│  ┌───────────────▼──────────────────────────────────────────────┐   │
-│  │             Context Assembly Engine (Python/gRPC)             │   │
-│  │  1. Token budget calculation (model-aware)                    │   │
-│  │  2. Parallel retrieval (40ms deadline):                       │   │
-│  │     ├── Directive   → Redis (<1ms)                            │   │
-│  │     ├── Hot memories→ Redis sorted set (<5ms)                 │   │
-│  │     └── Cold search → pgvector IVFFlat ANN (<30ms)            │   │
-│  │  3. Composite scoring (relevance+recency+usefulness)          │   │
-│  │  4. Greedy knapsack packing                                   │   │
-│  │  5. Format: directive → procedural → declarative → episodic   │   │
-│  └───────────────────────────────────────────────────────────────┘   │
-│  → OpenAI Forward → Stream back                                       │
-│  → [async] Session checkpoint + Trace + ExtractionJob trigger         │
-└──────────────────────────────────────────────────────────────────────┘
-                                                │
-                                    ┌───────────▼──────────────────┐
-                                    │     Worker (Celery/Python)    │
-                                    │  1. Read unprocessed turns    │
-                                    │  2. LLM extraction → memories │
-                                    │  3. Embed → pgvector write    │
-                                    │  4. Dedup + conflict detect   │
-                                    │  5. Hot cache refresh          │
-                                    └───────────────────────────────┘
+Track A (Schema — start immediately):
+ 3.1.1 (memory schema v2)
+
+Track B (Vector store — after Track A):
+ 3.2.1 (VectorStore + pgvector-HNSW + composite scoring v2)
+
+Track C (Write pipeline — after Track A + B):
+ 3.C.1 (PII) → 3.C.2 (dedup) → 3.C.3 (temporal conflict) → 3.C.4 (multi-label)
+
+Track D (Read/ranking — after Track B):
+ 3.D.1 (semantic search) → 3.D.2 (category-conditional decay) → 3.D.3 (hot cache)
+
+Track E (Exit gate — after all):
+ 3.E.1 → 3.E.2 → 3.E.3 → 3.E.4 → 3.E.5
 ```
+
+## Key Design Decisions (ADRs)
+
+| ADR | Title |
+|---|---|
+| ADR-0040 | Memory schema v2: HNSW, temporal validity, multi-label taxonomy |
+| ADR-0041 | Vector store abstraction and composite scoring formula v2 |
+| ADR-0042 | Temporal-interval-aware conflict detection |
+| ADR-0043 | Memory service tenant isolation model (RLS + app-layer double enforcement) |
+| ADR-0044 | Retrieval-quality benchmark methodology |
 
 ## Phase 3 Latency Budgets
 
 | Operation | Budget | Notes |
 |---|---|---|
-| Context assembly (full) | p95 < 50ms | The 40ms deadline for parallel retrieval + 10ms for scoring and formatting |
-| Embedding (single text) | p95 < 20ms | CPU inference; GPU reduces to &lt;5ms |
-| Embedding (batch 32) | p95 < 100ms | Amortised cost |
-| Memory write | p95 < 200ms | Including embedding call |
-| pgvector search (IVFFlat) | p95 < 30ms | 1M vectors, lists=100, probes=10 |
+| Memory write (full pipeline) | p95 < 200ms | Including embedding call |
+| pgvector HNSW search | p95 < 30ms | 1M vectors, ef_search=40 |
 | Hot cache read | p99 < 5ms | Redis sorted set ZREVRANGE |
-| Management API (CRUD) | p95 < 300ms | No SLA criticality; operator use |
-| Full proxy overhead (Phase 3) | p99 < 25ms | 5ms added vs Phase 2 for context assembly gRPC |
-
-## Phase 3 Goals
-
-| # | Goal | Key Milestones |
-|---|---|---|
-| 3.1 | Memory schema and data foundation | 3.1.1, 3.1.2 |
-| 3.2 | Embedding service | 3.2.1–3.2.4 |
-| 3.3 | Memory service | 3.3.1–3.3.6 |
-| 3.4 | Memory extraction worker | 3.4.1–3.4.6 |
-| 3.5 | Context assembly engine | 3.5.1–3.5.7 |
-| 3.6 | Management API server | 3.6.1–3.6.8 |
-| 3.7 | MinIO session content archives | 3.7.1–3.7.3 |
-| 3.8 | Operator dashboard | 3.8.1–3.8.6 |
-| 3.9 | Phase 3 quality gate | 3.9.1–3.9.3 |
-
-## Recommended Execution Order
-
-```
-Track A (Infrastructure — start immediately):
-  3.1.1 (memory schema) → 3.1.2 (Python store base)
-  3.7.1 (MinIO client) [parallel with 3.1]
-
-Track B (Embedding — blocks memory writes and context search):
-  3.2.1 → 3.2.2 → 3.2.3 → 3.2.4
-
-Track C (Memory service — blocks worker and context assembly):
-  [after 3.1 + 3.2] → 3.3.1 → 3.3.2 → 3.3.3 → 3.3.4 → 3.3.5 → 3.3.6
-
-Track D (Worker — blocks memory extraction):
-  [after 3.3] → 3.4.1 → 3.4.2 → 3.4.3 → 3.4.4 → 3.4.5 → 3.4.6
-
-Track E (Context assembly — the hot path addition):
-  [after 3.3] → 3.5.1 → 3.5.2 → 3.5.3 → 3.5.4 → 3.5.5 → 3.5.6 → 3.5.7
-
-Track F (Management API — parallel with E after 3.1):
-  3.6.1 → 3.6.2 → 3.6.3 → 3.6.4 → 3.6.5 → 3.6.6 → 3.6.7 → 3.6.8
-
-Track G (Dashboard — after API):
-  [after 3.6] → 3.8.1 → 3.8.2 → 3.8.3 → 3.8.4 → 3.8.5 → 3.8.6
-
-[All tracks merged] → 3.9.1 → 3.9.2 → 3.9.3
-```
-
-## Phase 3 Python Stack Decisions
-
-All Python services use these versions and patterns — non-negotiable:
-
-| Concern | Choice | Reason |
-|---|---|---|
-| Python version | 3.11 | Significant perf gains over 3.10; 3.12 is not yet stable in all ML libs |
-| Web framework | FastAPI 0.110+ | Native async, automatic OpenAPI, DI system |
-| ORM | SQLAlchemy 2.0 (async) | Type-safe async queries, pgvector support |
-| Migrations | Alembic | Standard SQLAlchemy companion |
-| Config | pydantic-settings v2 | Typed, validated, `.env` support |
-| Testing | pytest + pytest-asyncio | Standard; asyncio_mode="auto" |
-| Linting | ruff (format + lint) + mypy --strict | Single tool, fast, comprehensive |
-| Task queue | Celery 5 + Redis broker | Industry standard; no RabbitMQ dependency |
-| gRPC | grpcio + grpcio-tools + betterproto | betterproto generates dataclasses not protobuf classes |
-| HTTP client | httpx (async) | Not aiohttp; httpx has better typing |
-| Embeddings | sentence-transformers 2.x | Wraps HuggingFace; model flexibility |
-| Packaging | pyproject.toml + uv | uv replaces pip; 10–100× faster installs |
+| Composite scoring (70 candidates) | p95 < 10ms | Category-conditional decay |
 
 ## Phase 3 Exit Criteria
 
-Phase 3 is complete when ALL of the following are true:
-
-1. A real LLM conversation produces memories visible in the dashboard within 30 seconds of session completion
-2. Subsequent requests from the same agent contain memory-injected context (verified by examining the requests sent to OpenAI)
-3. Context assembly p95 < 50ms under 50 concurrent requests
-4. Memory extraction worker processes a 10-turn session within 10 seconds of session close
-5. Management API returns 200 on all CRUD endpoints for agents, directives, tokens, memories
-6. Dashboard loads and displays real data for all main views (agents, memories, analytics, sessions)
-7. Cross-tenant memory isolation verified: agent from org A cannot see memories from org B
-8. GDPR memory deletion cascade works end-to-end
-9. All Phase 1 and Phase 2 security tests still pass
-10. `make e2e-smoke-p3` exits 0
-
----
+1. Memory write pipeline (9 steps) passes all unit + ISO-\* integration tests
+2. HNSW recall@10 &gt;= 98% and p99 < 100ms at 1M-row benchmark scale
+3. Temporal-interval-aware conflict detection correctly distinguishes sequential-fact vs. true-contradiction cases, with zero unnecessary LLM calls on non-overlapping intervals
+4. Retrieval-quality benchmark running in CI with a committed baseline
+5. All 10+ ISO-\* cross-tenant isolation cases pass, including the `memory_relationships` cross-org edge case
+6. GDPR delete cascade verified end-to-end
+7. All Phase 1 and Phase 2 security regression tests still pass with zero regressions
+8. `make e2e-smoke-p3-memory` exits 0
+9. ADR-0040 through ADR-0044 published and cross-linked from the phase decision log
+10. **No proxy hot-path changes** — explicitly re-verified (that is Phase 3.5's boundary)

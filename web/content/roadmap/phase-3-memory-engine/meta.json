@@ -1,8 +1,9 @@
 {
-  "title": "Phase 3 memory engine",
+  "title": "Phase 3 core memory substrate",
   "icon": "Lightbulb",
   "pages": [
     "index",
+    "tracks",
     "goals",
     "decisions",
     "risks",
