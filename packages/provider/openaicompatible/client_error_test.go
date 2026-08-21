@@ -1,8 +1,10 @@
 package openaicompatible
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -171,9 +173,11 @@ func TestClassifyForBreaker_CallerVsUpstreamDeadline(t *testing.T) {
 
 func statusServer(t *testing.T, code int, body string) *httptest.Server {
 	t.Helper()
+	payload := []byte(body)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(code)
-		_, _ = w.Write([]byte(body))
+		_, _ = io.Copy(w, bytes.NewReader(payload))
 	}))
 	t.Cleanup(srv.Close)
 	return srv
