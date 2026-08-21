@@ -13,7 +13,10 @@ import (
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
 )
 
-const selfHostedModelsPath = "/models"
+const (
+	selfHostedModelsPath = "/models"
+	maxProbeHTTPTimeout  = 5 * time.Second
+)
 
 // waitSelfHostedReady polls GET {base}/models until 2xx or timeout (fail-closed at boot).
 func waitSelfHostedReady(ctx context.Context, baseURL string, sh config.SelfHostedConfig, log *logger.Logger) error {
@@ -22,7 +25,7 @@ func waitSelfHostedReady(ctx context.Context, baseURL string, sh config.SelfHost
 	ctx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
 
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := &http.Client{Timeout: probeHTTPTimeout(timeout)}
 	url := strings.TrimRight(baseURL, "/") + selfHostedModelsPath
 
 	for attempt := 1; ; attempt++ {
@@ -36,7 +39,15 @@ func waitSelfHostedReady(ctx context.Context, baseURL string, sh config.SelfHost
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return readinessTimeoutError(timeout, probeErr)
 		}
-		if err := waitOrTimeout(ctx, deadline, timeout, poll, url, attempt, probeErr, log); err != nil {
+		wait := readinessWait{
+			deadline: deadline,
+			timeout:  timeout,
+			poll:     poll,
+			url:      url,
+			attempt:  attempt,
+			lastErr:  probeErr,
+		}
+		if err := waitOrTimeout(ctx, wait, log); err != nil {
 			return err
 		}
 	}
@@ -54,24 +65,32 @@ func selfHostedProbeTiming(sh config.SelfHostedConfig) (timeout, poll time.Durat
 	return timeout, poll
 }
 
-func waitOrTimeout(
-	ctx context.Context,
-	deadline time.Time,
-	timeout, poll time.Duration,
-	url string,
-	attempt int,
-	probeErr error,
-	log *logger.Logger,
-) error {
-	wait := remainingPoll(deadline, poll)
-	if wait <= 0 {
-		return readinessTimeoutError(timeout, probeErr)
+func probeHTTPTimeout(readyTimeout time.Duration) time.Duration {
+	if readyTimeout > 0 && readyTimeout < maxProbeHTTPTimeout {
+		return readyTimeout
 	}
-	log.WarnCtx(ctx, "selfhosted_not_ready", "url", url, "attempt", attempt, "err", errString(probeErr))
+	return maxProbeHTTPTimeout
+}
+
+type readinessWait struct {
+	deadline time.Time
+	timeout  time.Duration
+	poll     time.Duration
+	url      string
+	attempt  int
+	lastErr  error
+}
+
+func waitOrTimeout(ctx context.Context, w readinessWait, log *logger.Logger) error {
+	wait := remainingPoll(w.deadline, w.poll)
+	if wait <= 0 {
+		return readinessTimeoutError(w.timeout, w.lastErr)
+	}
+	log.WarnCtx(ctx, "selfhosted_not_ready", "url", w.url, "attempt", w.attempt, "err", errString(w.lastErr))
 	select {
 	case <-ctx.Done():
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return readinessTimeoutError(timeout, probeErr)
+			return readinessTimeoutError(w.timeout, w.lastErr)
 		}
 		return ctx.Err()
 	case <-time.After(wait):

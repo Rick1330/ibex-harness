@@ -33,8 +33,14 @@ func TestClient_ApplyDefaults_NegativeRetries(t *testing.T) {
 	if *cfg.MaxRetries != 0 {
 		t.Fatalf("MaxRetries=%d", *cfg.MaxRetries)
 	}
-	if cfg.Timeout <= 0 || cfg.StreamTimeout <= 0 || cfg.RetryBaseDelay <= 0 {
-		t.Fatal("defaults not applied")
+	if cfg.Timeout <= 0 {
+		t.Fatal("Timeout default")
+	}
+	if cfg.StreamTimeout <= 0 {
+		t.Fatal("StreamTimeout default")
+	}
+	if cfg.RetryBaseDelay <= 0 {
+		t.Fatal("RetryBaseDelay default")
 	}
 	if cfg.maxRetries() != 0 {
 		t.Fatal("maxRetries")
@@ -66,8 +72,11 @@ func TestEnrichRetryAfter_JSONAndPassthrough(t *testing.T) {
 	}
 	out := enrichOpenAIRetryAfter(peJSON)
 	var got *provider.ProviderError
-	if !errors.As(out, &got) || got.RetryAfter <= 0 {
+	if !errors.As(out, &got) {
 		t.Fatalf("got=%v", out)
+	}
+	if got.RetryAfter <= 0 {
+		t.Fatalf("RetryAfter=%s", got.RetryAfter)
 	}
 }
 

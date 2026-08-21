@@ -103,7 +103,13 @@ func TestClient_RecordsMetricsOnRetry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m.requests.Load() != 2 || m.retries.Load() != 1 || m.durations.Load() != 2 {
-		t.Fatalf("requests=%d retries=%d durations=%d", m.requests.Load(), m.retries.Load(), m.durations.Load())
+	if m.requests.Load() != 2 {
+		t.Fatalf("requests=%d", m.requests.Load())
+	}
+	if m.retries.Load() != 1 {
+		t.Fatalf("retries=%d", m.retries.Load())
+	}
+	if m.durations.Load() != 2 {
+		t.Fatalf("durations=%d", m.durations.Load())
 	}
 }

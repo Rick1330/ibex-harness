@@ -200,12 +200,28 @@ func buildLiveProviderRegistry(cfg config.Config, log *logger.Logger, tracer tra
 
 func collectLiveProviders(cfg config.Config, log *logger.Logger, tracer trace.Tracer, reg *metrics.ProxyRegistry) ([]provider.Provider, error) {
 	var providers []provider.Provider
-	if p := newOpenAIProvider(cfg, log, tracer, reg); p != nil {
-		providers = append(providers, p)
-	}
-	if p := newAnthropicProvider(cfg, log, tracer, reg); p != nil {
-		providers = append(providers, p)
-	}
+	providers = appendLiveIfPresent(providers, strings.TrimSpace(cfg.OpenAI.APIKey) != "", func() provider.Provider {
+		maxRetries := cfg.OpenAI.MaxRetries
+		return openai.New(openai.Config{
+			APIKey:         cfg.OpenAI.APIKey,
+			BaseURL:        cfg.OpenAI.BaseURL,
+			Timeout:        cfg.OpenAI.RequestTimeout,
+			MaxRetries:     &maxRetries,
+			RetryBaseDelay: cfg.OpenAI.RetryBaseDelay,
+			ExtraModels:    cfg.OpenAI.ExtraModels,
+		}, log, tracer, reg)
+	})
+	providers = appendLiveIfPresent(providers, strings.TrimSpace(cfg.Anthropic.APIKey) != "", func() provider.Provider {
+		maxRetries := cfg.Anthropic.MaxRetries
+		return anthropic.New(anthropic.Config{
+			APIKey:         cfg.Anthropic.APIKey,
+			BaseURL:        cfg.Anthropic.BaseURL,
+			Timeout:        cfg.Anthropic.RequestTimeout,
+			MaxRetries:     &maxRetries,
+			RetryBaseDelay: cfg.Anthropic.RetryBaseDelay,
+			ExtraModels:    cfg.Anthropic.ExtraModels,
+		}, log, tracer, reg)
+	})
 	if !cfg.SelfHosted.Enabled {
 		return providers, nil
 	}
@@ -216,36 +232,11 @@ func collectLiveProviders(cfg config.Config, log *logger.Logger, tracer trace.Tr
 	return append(providers, p), nil
 }
 
-func newOpenAIProvider(cfg config.Config, log *logger.Logger, tracer trace.Tracer, reg *metrics.ProxyRegistry) provider.Provider {
-	key := strings.TrimSpace(cfg.OpenAI.APIKey)
-	if key == "" {
-		return nil
+func appendLiveIfPresent(dst []provider.Provider, present bool, build func() provider.Provider) []provider.Provider {
+	if !present {
+		return dst
 	}
-	maxRetries := cfg.OpenAI.MaxRetries
-	return openai.New(openai.Config{
-		APIKey:         key,
-		BaseURL:        cfg.OpenAI.BaseURL,
-		Timeout:        cfg.OpenAI.RequestTimeout,
-		MaxRetries:     &maxRetries,
-		RetryBaseDelay: cfg.OpenAI.RetryBaseDelay,
-		ExtraModels:    cfg.OpenAI.ExtraModels,
-	}, log, tracer, reg)
-}
-
-func newAnthropicProvider(cfg config.Config, log *logger.Logger, tracer trace.Tracer, reg *metrics.ProxyRegistry) provider.Provider {
-	key := strings.TrimSpace(cfg.Anthropic.APIKey)
-	if key == "" {
-		return nil
-	}
-	maxRetries := cfg.Anthropic.MaxRetries
-	return anthropic.New(anthropic.Config{
-		APIKey:         key,
-		BaseURL:        cfg.Anthropic.BaseURL,
-		Timeout:        cfg.Anthropic.RequestTimeout,
-		MaxRetries:     &maxRetries,
-		RetryBaseDelay: cfg.Anthropic.RetryBaseDelay,
-		ExtraModels:    cfg.Anthropic.ExtraModels,
-	}, log, tracer, reg)
+	return append(dst, build())
 }
 
 func newSelfHostedProvider(

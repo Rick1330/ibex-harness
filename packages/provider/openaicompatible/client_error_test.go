@@ -17,48 +17,30 @@ import (
 
 func TestClient_QueueFullReasonOn503(t *testing.T) {
 	t.Parallel()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_, _ = w.Write([]byte(`{"error":{"message":"queue full"}}`))
-	}))
-	t.Cleanup(srv.Close)
-	zero := 0
-	c := New(Config{
-		ProviderName: ProviderNameSelfHosted,
-		BaseURL:      srv.URL,
-		MaxRetries:   &zero,
-		AuthMode:     AuthBearerOmitEmpty,
-		ExtraModels:  []string{"m"},
-	}, logger.Discard("t"), telemetry.NoopTracer("t"), nil)
-	_, err := c.Complete(context.Background(), provider.Request{
-		Model: "m", Messages: []provider.Message{{Role: "user", Content: "hi"}},
-	})
-	var pe *provider.ProviderError
-	if !errors.As(err, &pe) {
-		t.Fatalf("err=%v", err)
-	}
-	if pe.Reason != provider.ErrorReasonQueueFull {
-		t.Fatalf("Reason=%q", pe.Reason)
-	}
+	srv := statusServer(t, http.StatusServiceUnavailable, `{"error":{"message":"queue full"}}`)
+	c := newSelfHostedTestClient(srv.URL, nil)
+	_, err := completeHi(c)
+	requireProviderReason(t, err, provider.ErrorReasonQueueFull)
 	mapped, write := provider.MapError(err)
-	if !write || mapped == nil || !strings.Contains(mapped.Detail, "queue") {
+	if !write {
+		t.Fatal("expected mapped write")
+	}
+	if mapped == nil {
+		t.Fatal("mapped nil")
+	}
+	if !strings.Contains(mapped.Detail, "queue") {
 		t.Fatalf("mapped=%+v", mapped)
 	}
 }
 
 func TestClient_OpenAI503HasEmptyReason(t *testing.T) {
 	t.Parallel()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_, _ = w.Write([]byte(`{"error":{"message":"unavailable"}}`))
-	}))
-	t.Cleanup(srv.Close)
-	zero := 0
+	srv := statusServer(t, http.StatusServiceUnavailable, `{"error":{"message":"unavailable"}}`)
 	c := New(Config{
 		ProviderName:  ProviderNameOpenAI,
 		APIKey:        "k",
 		BaseURL:       srv.URL,
-		MaxRetries:    &zero,
+		MaxRetries:    zeroRetries(),
 		AuthMode:      AuthBearerAlways,
 		BuiltInModels: []string{"gpt-4o"},
 	}, logger.Discard("t"), telemetry.NoopTracer("t"), nil)
@@ -76,57 +58,27 @@ func TestClient_OpenAI503HasEmptyReason(t *testing.T) {
 
 func TestClient_CircuitBreakerMapsOpen(t *testing.T) {
 	t.Parallel()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write([]byte(`{"error":{"message":"boom"}}`))
-	}))
-	t.Cleanup(srv.Close)
-	zero := 0
+	srv := statusServer(t, http.StatusInternalServerError, `{"error":{"message":"boom"}}`)
 	br := circuitbreaker.New(circuitbreaker.Settings{Name: "t", MaxFailures: 1, CoolDown: time.Minute})
-	c := New(Config{
-		ProviderName: ProviderNameSelfHosted,
-		BaseURL:      srv.URL,
-		MaxRetries:   &zero,
-		AuthMode:     AuthBearerOmitEmpty,
-		ExtraModels:  []string{"m"},
-		Breaker:      br,
-	}, logger.Discard("t"), telemetry.NoopTracer("t"), nil)
+	c := newSelfHostedTestClient(srv.URL, br)
 	req := provider.Request{Model: "m", Messages: []provider.Message{{Role: "user", Content: "hi"}}}
-	_, _ = c.Complete(context.Background(), req) // trip
+	_, _ = c.Complete(context.Background(), req)
 	_, err := c.Complete(context.Background(), req)
-	var pe *provider.ProviderError
-	if !errors.As(err, &pe) {
-		t.Fatalf("err=%v", err)
-	}
-	if pe.Reason != provider.ErrorReasonCircuitOpen {
-		t.Fatalf("Reason=%q", pe.Reason)
-	}
+	requireProviderReason(t, err, provider.ErrorReasonCircuitOpen)
 	mapped, _ := provider.MapError(err)
-	if mapped == nil || !strings.Contains(mapped.Detail, "circuit") {
+	if mapped == nil {
+		t.Fatal("mapped nil")
+	}
+	if !strings.Contains(mapped.Detail, "circuit") {
 		t.Fatalf("mapped=%+v", mapped)
 	}
 }
 
 func TestClient_BreakerPassesProviderError(t *testing.T) {
 	t.Parallel()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"error":{"message":"bad"}}`))
-	}))
-	t.Cleanup(srv.Close)
-	zero := 0
+	srv := statusServer(t, http.StatusBadRequest, `{"error":{"message":"bad"}}`)
 	br := circuitbreaker.New(circuitbreaker.Settings{Name: "t", MaxFailures: 10, CoolDown: time.Minute})
-	c := New(Config{
-		ProviderName: ProviderNameSelfHosted,
-		BaseURL:      srv.URL,
-		MaxRetries:   &zero,
-		AuthMode:     AuthBearerOmitEmpty,
-		ExtraModels:  []string{"m"},
-		Breaker:      br,
-	}, logger.Discard("t"), telemetry.NoopTracer("t"), nil)
-	_, err := c.Complete(context.Background(), provider.Request{
-		Model: "m", Messages: []provider.Message{{Role: "user", Content: "hi"}},
-	})
+	_, err := completeHi(newSelfHostedTestClient(srv.URL, br))
 	var pe *provider.ProviderError
 	if !errors.As(err, &pe) {
 		t.Fatalf("err=%v", err)
@@ -138,24 +90,9 @@ func TestClient_BreakerPassesProviderError(t *testing.T) {
 
 func TestClient_BreakerSuccessPath(t *testing.T) {
 	t.Parallel()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
-	}))
-	t.Cleanup(srv.Close)
-	zero := 0
+	srv := statusServer(t, http.StatusOK, `{"choices":[{"message":{"content":"ok"}}]}`)
 	br := circuitbreaker.New(circuitbreaker.Settings{Name: "ok", MaxFailures: 5, CoolDown: time.Minute})
-	c := New(Config{
-		ProviderName: ProviderNameSelfHosted,
-		BaseURL:      srv.URL,
-		MaxRetries:   &zero,
-		AuthMode:     AuthBearerOmitEmpty,
-		ExtraModels:  []string{"m"},
-		Breaker:      br,
-	}, logger.Discard("t"), telemetry.NoopTracer("t"), nil)
-	resp, err := c.Complete(context.Background(), provider.Request{
-		Model: "m", Messages: []provider.Message{{Role: "user", Content: "hi"}},
-	})
+	resp, err := completeHi(newSelfHostedTestClient(srv.URL, br))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,18 +101,8 @@ func TestClient_BreakerSuccessPath(t *testing.T) {
 
 func TestClient_BreakerNonOpenErrorPassthrough(t *testing.T) {
 	t.Parallel()
-	zero := 0
-	c := New(Config{
-		ProviderName: ProviderNameSelfHosted,
-		BaseURL:      "http://127.0.0.1:9",
-		MaxRetries:   &zero,
-		ExtraModels:  []string{"m"},
-		AuthMode:     AuthBearerOmitEmpty,
-		Breaker:      stubBreaker{err: errors.New("unexpected-breaker")},
-	}, logger.Discard("t"), telemetry.NoopTracer("t"), nil)
-	_, err := c.Complete(context.Background(), provider.Request{
-		Model: "m", Messages: []provider.Message{{Role: "user", Content: "hi"}},
-	})
+	c := newSelfHostedTestClient("http://127.0.0.1:9", stubBreaker{err: errors.New("unexpected-breaker")})
+	_, err := completeHi(c)
 	if err == nil || !strings.Contains(err.Error(), "unexpected-breaker") {
 		t.Fatalf("err=%v", err)
 	}
@@ -183,18 +110,8 @@ func TestClient_BreakerNonOpenErrorPassthrough(t *testing.T) {
 
 func TestClient_BreakerInvalidResult(t *testing.T) {
 	t.Parallel()
-	zero := 0
-	c := New(Config{
-		ProviderName: ProviderNameSelfHosted,
-		BaseURL:      "http://127.0.0.1:9",
-		MaxRetries:   &zero,
-		ExtraModels:  []string{"m"},
-		AuthMode:     AuthBearerOmitEmpty,
-		Breaker:      stubBreaker{result: "not-a-response"},
-	}, logger.Discard("t"), telemetry.NoopTracer("t"), nil)
-	_, err := c.Complete(context.Background(), provider.Request{
-		Model: "m", Messages: []provider.Message{{Role: "user", Content: "hi"}},
-	})
+	c := newSelfHostedTestClient("http://127.0.0.1:9", stubBreaker{result: "not-a-response"})
+	_, err := completeHi(c)
 	if err == nil || !strings.Contains(err.Error(), "unexpected result") {
 		t.Fatalf("err=%v", err)
 	}
@@ -202,20 +119,10 @@ func TestClient_BreakerInvalidResult(t *testing.T) {
 
 func TestClient_TransportError(t *testing.T) {
 	t.Parallel()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	url := srv.URL
 	srv.Close()
-	zero := 0
-	c := New(Config{
-		ProviderName: ProviderNameSelfHosted,
-		BaseURL:      url,
-		MaxRetries:   &zero,
-		AuthMode:     AuthBearerOmitEmpty,
-		ExtraModels:  []string{"m"},
-	}, logger.Discard("t"), telemetry.NoopTracer("t"), nil)
-	_, err := c.Complete(context.Background(), provider.Request{
-		Model: "m", Messages: []provider.Message{{Role: "user", Content: "hi"}},
-	})
+	_, err := completeHi(newSelfHostedTestClient(url, nil))
 	if err == nil {
 		t.Fatal("expected transport error")
 	}
@@ -229,18 +136,45 @@ func TestClient_StreamRequiresEventStream(t *testing.T) {
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
 	}))
 	t.Cleanup(srv.Close)
-	zero := 0
-	c := New(Config{
-		ProviderName: ProviderNameSelfHosted,
-		BaseURL:      srv.URL,
-		MaxRetries:   &zero,
-		AuthMode:     AuthBearerOmitEmpty,
-		ExtraModels:  []string{"m"},
-	}, logger.Discard("t"), telemetry.NoopTracer("t"), nil)
+	c := newSelfHostedTestClient(srv.URL, nil)
 	_, err := c.Complete(context.Background(), provider.Request{
 		Model: "m", Stream: true, Messages: []provider.Message{{Role: "user", Content: "hi"}},
 	})
 	if err == nil {
 		t.Fatal("expected non-event-stream error")
 	}
+}
+
+func TestClassifyForBreaker_CallerVsUpstreamDeadline(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if !errors.Is(classifyForBreaker(ctx, context.Canceled), context.Canceled) {
+		t.Fatal("canceled")
+	}
+
+	dead, cancelDead := context.WithTimeout(context.Background(), time.Nanosecond)
+	defer cancelDead()
+	<-dead.Done()
+	if !errors.Is(classifyForBreaker(dead, context.DeadlineExceeded), context.DeadlineExceeded) {
+		t.Fatal("caller deadline")
+	}
+
+	up := classifyForBreaker(context.Background(), context.DeadlineExceeded)
+	if errors.Is(up, context.DeadlineExceeded) {
+		t.Fatal("upstream deadline must not match DeadlineExceeded")
+	}
+	if !strings.Contains(up.Error(), "upstream timed out") {
+		t.Fatalf("up=%v", up)
+	}
+}
+
+func statusServer(t *testing.T, code int, body string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(code)
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(srv.Close)
+	return srv
 }

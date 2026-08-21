@@ -73,7 +73,8 @@ func TestBreaker_RecoversAfterCoolDown(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err=%v", err)
 	}
-	if out.(string) != "ok" {
+	got, ok := out.(string)
+	if !ok || got != "ok" {
 		t.Fatalf("out=%v", out)
 	}
 	assertState(t, b, "closed")

@@ -92,13 +92,20 @@ func (c Config) validateLiveLLMCredentials(mode string) error {
 	if mode != envLLMModeLive {
 		return nil
 	}
-	hasOpenAI := strings.TrimSpace(c.OpenAI.APIKey) != ""
-	hasAnthropic := strings.TrimSpace(c.Anthropic.APIKey) != ""
-	hasSelfHosted := c.SelfHosted.Enabled
-	if !hasOpenAI && !hasAnthropic && !hasSelfHosted {
-		return fmt.Errorf("IBEX_LLM_MODE=live requires OPENAI_API_KEY, ANTHROPIC_API_KEY, and/or IBEX_SELFHOSTED_ENABLED")
+	if liveCredentialConfigured(c) {
+		return nil
 	}
-	return nil
+	return fmt.Errorf("IBEX_LLM_MODE=live requires OPENAI_API_KEY, ANTHROPIC_API_KEY, and/or IBEX_SELFHOSTED_ENABLED")
+}
+
+func liveCredentialConfigured(c Config) bool {
+	if strings.TrimSpace(c.OpenAI.APIKey) != "" {
+		return true
+	}
+	if strings.TrimSpace(c.Anthropic.APIKey) != "" {
+		return true
+	}
+	return c.SelfHosted.Enabled
 }
 
 func (c Config) validateSelfHostedConfig() error {

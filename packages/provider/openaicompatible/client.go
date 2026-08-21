@@ -60,32 +60,60 @@ func (c *Client) Complete(ctx context.Context, req provider.Request) (provider.R
 		return c.completeOnce(ctx, req)
 	}
 	out, err := c.cfg.Breaker.Execute(func() (any, error) {
-		resp, err := c.completeOnce(ctx, req)
-		if err != nil {
-			return nil, err
-		}
-		return resp, nil
+		return c.completeUnderBreaker(ctx, req)
 	})
+	return decodeBreakerResult(c.Name(), out, err)
+}
+
+func (c *Client) completeUnderBreaker(ctx context.Context, req provider.Request) (any, error) {
+	resp, err := c.completeOnce(ctx, req)
 	if err != nil {
-		var pe *provider.ProviderError
-		if errors.As(err, &pe) {
-			return provider.Response{}, pe
-		}
-		if errors.Is(err, circuitbreaker.ErrOpen) {
-			return provider.Response{}, &provider.ProviderError{
-				ProviderName:   c.Name(),
-				StatusCode:     http.StatusServiceUnavailable,
-				ProviderErrMsg: "circuit breaker open",
-				Reason:         provider.ErrorReasonCircuitOpen,
-			}
-		}
-		return provider.Response{}, err
+		return nil, classifyForBreaker(ctx, err)
+	}
+	return resp, nil
+}
+
+// classifyForBreaker keeps caller abandonment from tripping the breaker, while
+// ensuring upstream timeouts that wrap DeadlineExceeded still count as failures.
+func classifyForBreaker(ctx context.Context, err error) error {
+	switch {
+	case errors.Is(ctx.Err(), context.Canceled):
+		return context.Canceled
+	case errors.Is(ctx.Err(), context.DeadlineExceeded):
+		return context.DeadlineExceeded
+	case errors.Is(err, context.DeadlineExceeded):
+		// Do not wrap with %w: errors.Is must not match DeadlineExceeded.
+		return fmt.Errorf("upstream timed out: %v", err)
+	default:
+		return err
+	}
+}
+
+func decodeBreakerResult(name string, out any, err error) (provider.Response, error) {
+	if err != nil {
+		return mapBreakerError(name, err)
 	}
 	resp, ok := out.(provider.Response)
 	if !ok {
-		return provider.Response{}, fmt.Errorf("%s: circuit breaker returned unexpected result", c.Name())
+		return provider.Response{}, fmt.Errorf("%s: circuit breaker returned unexpected result", name)
 	}
 	return resp, nil
+}
+
+func mapBreakerError(name string, err error) (provider.Response, error) {
+	var pe *provider.ProviderError
+	if errors.As(err, &pe) {
+		return provider.Response{}, pe
+	}
+	if errors.Is(err, circuitbreaker.ErrOpen) {
+		return provider.Response{}, &provider.ProviderError{
+			ProviderName:   name,
+			StatusCode:     http.StatusServiceUnavailable,
+			ProviderErrMsg: "circuit breaker open",
+			Reason:         provider.ErrorReasonCircuitOpen,
+		}
+	}
+	return provider.Response{}, err
 }
 
 func (c *Client) completeOnce(ctx context.Context, req provider.Request) (provider.Response, error) {
@@ -186,9 +214,16 @@ func (c *Client) newChatRequest(ctx context.Context, call provider.UpstreamCall)
 
 func readProviderError(name string, resp *http.Response) *provider.ProviderError {
 	pe := provider.ReadProviderError(name, resp, extractOpenAIErrorMessage)
-	if pe != nil && pe.StatusCode == http.StatusServiceUnavailable && name == ProviderNameSelfHosted {
-		pe.Reason = provider.ErrorReasonQueueFull
+	if pe == nil {
+		return nil
 	}
+	if pe.StatusCode != http.StatusServiceUnavailable {
+		return pe
+	}
+	if name != ProviderNameSelfHosted {
+		return pe
+	}
+	pe.Reason = provider.ErrorReasonQueueFull
 	return pe
 }
 
