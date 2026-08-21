@@ -1,19 +1,19 @@
 ---
 title: Kubernetes (production)
-description: Phase 1 has no shipped Helm charts or manifests — this page documents the gap honestly and previews the target production architecture.
+description: No shipped Helm charts yet — documents the gap honestly and previews the target production architecture (Phases 0–2 shipped; charts planned Phase 4+).
 ---
 
-**Phase 1 status:** Kubernetes deployment artifacts are **not implemented**. There is no Helm chart, Kustomize overlay, or official manifest set in this repository yet. Local development uses [Docker Compose](/docs/deployment/docker-compose) for dependencies only; auth and proxy run as host processes or ad-hoc containers you build yourself.
+**Status (Phases 0–2 shipped):** Kubernetes deployment artifacts are **not implemented**. There is no Helm chart, Kustomize overlay, or official manifest set in this repository yet. Local development uses [Docker Compose](/docs/deployment/docker-compose) for dependencies only; auth and proxy run as host processes or ad-hoc containers built from service Dockerfiles when present.
 
-<Callout type="experimental" title="Not available in Phase 1">
-  Do not point production traffic at IBEX Harness until Phase 5 production-hardening milestones ship charts, runbooks, and SLO-backed rollouts. Track progress on the [roadmap](/roadmap/phase-5-production-hardening).
+<Callout type="experimental" title="No production Kubernetes manifests yet">
+  Do not point production traffic at IBEX Harness until charts, runbooks, and SLO-backed rollouts exist. Helm/K8s packaging is planned for **Phase 4+** (earlier only with evidence). Org-wide production hardening (full observability stack, chaos, release governance) is **deferred beyond Phase 5**. Track product phases on the [roadmap](/roadmap/overview) — Phase 5 is **advanced retrieval**, not hardening.
 </Callout>
 
 ## What exists today
 
-| Artifact | Phase 1 | Notes |
+| Artifact | Today | Notes |
 | --- | --- | --- |
-| Helm / Kustomize manifests | No | Planned Phase 5 |
+| Helm / Kustomize manifests | No | Planned Phase **4+** (see repo `infra/README.md`) |
 | Docker images for auth/proxy | No official publish | Build from `services/*/Dockerfile` when present |
 | Compose dev stack | Yes | Data stores only — not a production topology |
 | Health probe contract | Yes | [ADR-0022](/docs/adr/0022-health-check-contract) defines `/health` and `/ready` |
@@ -21,7 +21,7 @@ description: Phase 1 has no shipped Helm charts or manifests — this page docum
 
 ## Target architecture (preview)
 
-The production layout below is **design intent**, not shipped configuration. It shows how Phase 1 services are expected to fit into a cluster once manifests land.
+The production layout below is **design intent**, not shipped configuration. It shows how **current** services (`proxy`, `auth`) and later roadmap services are expected to fit into a cluster once manifests land.
 
 ```mermaid
 graph TB
@@ -74,7 +74,7 @@ When charts ship, operators should wire probes per [ADR-0022](/docs/adr/0022-hea
   ]}
 />
 
-### Critical readiness checks (Phase 1)
+### Critical readiness checks (shipped proxy / auth)
 
 | Service | Critical checks | Fails /ready when |
 | --- | --- | --- |

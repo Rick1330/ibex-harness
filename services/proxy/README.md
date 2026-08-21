@@ -77,6 +77,19 @@ See [.env.example](.env.example).
 | `CLICKHOUSE_INSERT_BATCH_SIZE` | `500` | Trace insert batch size |
 | `CLICKHOUSE_INSERT_FLUSH_MS` | `200` | Trace flush interval |
 
+Full registry (including **planned Phase 2.5+** Anthropic / self-hosted / context / tokenizer vars): [ENVIRONMENT_VARIABLES.md](../../web/engineering/ENVIRONMENT_VARIABLES.md).
+
+## Next (Phase 2.5+) — planning baseline
+
+Not wired yet. Expected proxy-adjacent work from the redesigned roadmap:
+
+- Anthropic + OpenAI-compatible self-hosted provider adapters (`ANTHROPIC_*`, `IBEX_SELFHOSTED_*`)
+- Model capability registry + tokenizer counting (`IBEX_TOKENIZER_*`)
+- Non-streaming response pipeline seam (`packages/responsepipeline`)
+- Later: fail-open context-assembly client (`IBEX_CONTEXT_*`, Phase 3.5)
+
+Paths and env names may change during implementation — update this README and `ENVIRONMENT_VARIABLES.md` when they land.
+
 ## Run locally
 
 Start **auth first**, then proxy. Chat requires a real PAT with `ProxyChatCompletion` permission (create via [auth CreateToken](../auth/README.md#grpc-examples-grpcurl) — replace `<pat>` below).
