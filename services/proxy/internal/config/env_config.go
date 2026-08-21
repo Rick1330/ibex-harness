@@ -135,7 +135,9 @@ func selfHostedConfigFromEnv(envCfg envConfig) (SelfHostedConfig, error) {
 }
 
 func cooldownFromSeconds(secs int) time.Duration {
-	if secs <= 0 {
+	// Max seconds that fit in time.Duration without overflow (math.MaxInt64 / 1e9).
+	const maxCooldownSeconds = 9223372036
+	if secs <= 0 || secs > maxCooldownSeconds {
 		return 0
 	}
 	return time.Duration(secs) * time.Second

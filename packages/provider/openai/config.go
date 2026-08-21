@@ -46,8 +46,9 @@ func (c *Config) ApplyDefaults() {
 	}
 }
 
-// Metrics records upstream provider outcomes and retries.
+// Metrics records upstream provider outcomes, retries, and per-attempt latency.
 type Metrics interface {
 	IncProviderRequest(provider, statusClass string)
 	IncProviderRetry(provider string)
+	ObserveProviderDurationSeconds(provider string, seconds float64)
 }

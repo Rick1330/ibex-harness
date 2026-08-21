@@ -22,6 +22,7 @@ func TestClient_DefaultsProviderNameAndNoopMetrics(t *testing.T) {
 	var n noopMetrics
 	n.IncProviderRequest("x", "2xx")
 	n.IncProviderRetry("x")
+	n.ObserveProviderDurationSeconds("x", 0.01)
 }
 
 func TestClient_ApplyDefaults_NegativeRetries(t *testing.T) {

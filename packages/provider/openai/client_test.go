@@ -294,12 +294,6 @@ func testClientWithRetries(t *testing.T, opts clientOpts) *Client {
 
 func intPtr(v int) *int { return &v }
 
-type noopMetrics struct{}
-
-func (noopMetrics) IncProviderRequest(string, string) {}
-func (noopMetrics) IncProviderRetry(string)           {}
-
-
 func TestUnit_OpenAIClient_Streaming_AcceptAndBody(t *testing.T) {
 	t.Parallel()
 	var gotAccept string

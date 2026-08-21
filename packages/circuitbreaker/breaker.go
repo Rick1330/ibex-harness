@@ -1,6 +1,7 @@
 package circuitbreaker
 
 import (
+	"context"
 	"errors"
 	"time"
 
@@ -12,6 +13,8 @@ type Settings struct {
 	Name        string
 	MaxFailures uint32
 	CoolDown    time.Duration
+	// OnStateChange is invoked on closed/open/half_open transitions when non-nil.
+	OnStateChange func(from, to string)
 }
 
 // Breaker wraps sony/gobreaker for provider Complete calls.
@@ -31,8 +34,9 @@ func New(s Settings) *Breaker {
 			return counts.ConsecutiveFailures >= s.MaxFailures
 		},
 		IsSuccessful: func(err error) bool {
-			return err == nil
+			return isSuccessfulOutcome(err)
 		},
+		OnStateChange: onStateChangeAdapter(s.OnStateChange),
 	})
 	return &Breaker{inner: cb}
 }
@@ -48,6 +52,33 @@ func applyBreakerDefaults(s Settings) Settings {
 		s.CoolDown = 30 * time.Second
 	}
 	return s
+}
+
+func isSuccessfulOutcome(err error) bool {
+	if err == nil {
+		return true
+	}
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
+func onStateChangeAdapter(cb func(from, to string)) func(name string, from gobreaker.State, to gobreaker.State) {
+	if cb == nil {
+		return nil
+	}
+	return func(_ string, from, to gobreaker.State) {
+		cb(stateString(from), stateString(to))
+	}
+}
+
+func stateString(s gobreaker.State) string {
+	switch s {
+	case gobreaker.StateOpen:
+		return "open"
+	case gobreaker.StateHalfOpen:
+		return "half_open"
+	default:
+		return "closed"
+	}
 }
 
 // Execute runs fn under the breaker. When open, returns ErrOpen.
@@ -71,12 +102,5 @@ func (b *Breaker) State() string {
 	if b == nil || b.inner == nil {
 		return "closed"
 	}
-	switch b.inner.State() {
-	case gobreaker.StateOpen:
-		return "open"
-	case gobreaker.StateHalfOpen:
-		return "half_open"
-	default:
-		return "closed"
-	}
+	return stateString(b.inner.State())
 }

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -18,9 +19,10 @@ import (
 
 func TestClient_NonStreaming_Success_OmitEmptyAuth(t *testing.T) {
 	t.Parallel()
-	var sawAuth string
+	var sawAuth atomic.Value
+	sawAuth.Store("")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		sawAuth = r.Header.Get("Authorization")
+		sawAuth.Store(r.Header.Get("Authorization"))
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
 	}))
@@ -50,21 +52,22 @@ func TestClient_NonStreaming_Success_OmitEmptyAuth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(resp.Body)
 	if !strings.Contains(string(body), "ok") {
 		t.Fatalf("body=%s", body)
 	}
-	if sawAuth != "" {
-		t.Fatalf("expected no Authorization, got %q", sawAuth)
+	if got := sawAuth.Load().(string); got != "" {
+		t.Fatalf("expected no Authorization, got %q", got)
 	}
 }
 
 func TestClient_BearerWhenKeySet(t *testing.T) {
 	t.Parallel()
-	var sawAuth string
+	var sawAuth atomic.Value
+	sawAuth.Store("")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		sawAuth = r.Header.Get("Authorization")
+		sawAuth.Store(r.Header.Get("Authorization"))
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
 	}))
@@ -84,16 +87,17 @@ func TestClient_BearerWhenKeySet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
-	if sawAuth != "Bearer secret" {
-		t.Fatalf("auth=%q", sawAuth)
+	if got := sawAuth.Load().(string); got != "Bearer secret" {
+		t.Fatalf("auth=%q", got)
 	}
 }
 
 func TestClient_AlwaysAuthMode(t *testing.T) {
 	t.Parallel()
-	var sawAuth string
+	var sawAuth atomic.Value
+	sawAuth.Store("")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		sawAuth = r.Header.Get("Authorization")
+		sawAuth.Store(r.Header.Get("Authorization"))
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
 	}))
@@ -113,8 +117,8 @@ func TestClient_AlwaysAuthMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
-	if sawAuth != "Bearer k" {
-		t.Fatalf("auth=%q", sawAuth)
+	if got := sawAuth.Load().(string); got != "Bearer k" {
+		t.Fatalf("auth=%q", got)
 	}
 }
 

@@ -19,6 +19,8 @@ func TestValidateSelfHostedBaseURL(t *testing.T) {
 		{name: "userinfo", raw: "http://u:p@127.0.0.1:8000/v1", wantErr: "userinfo"},
 		{name: "no host", raw: "http:///v1", wantErr: "host"},
 		{name: "missing v1", raw: "http://127.0.0.1:8000", wantErr: "/v1"},
+		{name: "query", raw: "http://127.0.0.1:8000/v1?x=1", wantErr: "query string"},
+		{name: "fragment", raw: "http://127.0.0.1:8000/v1#frag", wantErr: "fragment"},
 		{name: "ok loopback", raw: "http://127.0.0.1:8000/v1"},
 		{name: "ok trailing slash", raw: "http://10.0.0.5:8000/v1/"},
 		{name: "ok https hostname", raw: "https://vllm.internal/v1"},
@@ -108,5 +110,11 @@ func TestCooldownFromSeconds(t *testing.T) {
 	}
 	if cooldownFromSeconds(30) != 30*time.Second {
 		t.Fatal("30s")
+	}
+	if cooldownFromSeconds(9223372036) != 9223372036*time.Second {
+		t.Fatal("max accepted")
+	}
+	if cooldownFromSeconds(9223372037) != 0 {
+		t.Fatal("above max rejected")
 	}
 }

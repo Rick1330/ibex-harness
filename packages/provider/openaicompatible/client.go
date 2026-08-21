@@ -81,7 +81,11 @@ func (c *Client) Complete(ctx context.Context, req provider.Request) (provider.R
 		}
 		return provider.Response{}, err
 	}
-	return out.(provider.Response), nil
+	resp, ok := out.(provider.Response)
+	if !ok {
+		return provider.Response{}, fmt.Errorf("%s: circuit breaker returned unexpected result", c.Name())
+	}
+	return resp, nil
 }
 
 func (c *Client) completeOnce(ctx context.Context, req provider.Request) (provider.Response, error) {
@@ -125,6 +129,10 @@ func (c *Client) executeWithRetry(ctx context.Context, span trace.Span, call ups
 }
 
 func (c *Client) tryOnce(ctx context.Context, call upstreamCall, attempt int) provider.AttemptOutcome {
+	start := time.Now()
+	defer func() {
+		c.metrics.ObserveProviderDurationSeconds(c.Name(), time.Since(start).Seconds())
+	}()
 	return provider.TimedHTTPOnce(
 		c.cfg.maxRetries(),
 		attempt,
@@ -178,7 +186,7 @@ func (c *Client) newChatRequest(ctx context.Context, call provider.UpstreamCall)
 
 func readProviderError(name string, resp *http.Response) *provider.ProviderError {
 	pe := provider.ReadProviderError(name, resp, extractOpenAIErrorMessage)
-	if pe != nil && pe.StatusCode == http.StatusServiceUnavailable {
+	if pe != nil && pe.StatusCode == http.StatusServiceUnavailable && name == ProviderNameSelfHosted {
 		pe.Reason = provider.ErrorReasonQueueFull
 	}
 	return pe
@@ -202,8 +210,8 @@ func (c *Client) waitBeforeRetry(ctx context.Context, attempt int, lastErr error
 }
 
 func enrichOpenAIRetryAfter(lastErr error) error {
-	pe, ok := lastErr.(*provider.ProviderError)
-	if !ok {
+	var pe *provider.ProviderError
+	if !errors.As(lastErr, &pe) || pe == nil {
 		return lastErr
 	}
 	if pe.StatusCode != http.StatusTooManyRequests {
@@ -227,8 +235,12 @@ func retryAfterFromProvider(pe *provider.ProviderError) time.Duration {
 			RetryAfter float64 `json:"retry_after"`
 		} `json:"error"`
 	}
-	if err := json.Unmarshal(pe.ProviderBody, &payload); err == nil && payload.Error.RetryAfter > 0 {
-		return time.Duration(payload.Error.RetryAfter * float64(time.Second))
+	if err := json.Unmarshal(pe.ProviderBody, &payload); err != nil || payload.Error.RetryAfter <= 0 {
+		return 0
 	}
-	return 0
+	d := time.Duration(payload.Error.RetryAfter * float64(time.Second))
+	if d > maxRetryBackoff {
+		return maxRetryBackoff
+	}
+	return d
 }

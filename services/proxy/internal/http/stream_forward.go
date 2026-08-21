@@ -12,7 +12,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/packages/provider"
-	"github.com/Rick1330/ibex-harness/packages/provider/openai"
+	"github.com/Rick1330/ibex-harness/packages/provider/openaicompatible"
 )
 
 const (
@@ -61,7 +61,7 @@ func forwardSSEStream(p streamForwardParams) {
 	}
 	clearSSEWriteDeadline(p.r.Context(), p.w, p.log)
 
-	acc := openai.NewStreamAccumulator()
+	acc := openaicompatible.NewStreamAccumulator()
 	start := time.Now()
 	status := writeSSEHeadersAndCopy(p, flusher, acc)
 	if p.metrics != nil {
@@ -91,7 +91,7 @@ func clearSSEWriteDeadline(ctx context.Context, w http.ResponseWriter, log *logg
 	}
 }
 
-func writeSSEHeadersAndCopy(p streamForwardParams, flusher http.Flusher, acc *openai.StreamAccumulator) string {
+func writeSSEHeadersAndCopy(p streamForwardParams, flusher http.Flusher, acc *openaicompatible.StreamAccumulator) string {
 	setSessionResponseHeader(p.w, p.r.Context())
 	p.w.Header().Set("Content-Type", "text/event-stream")
 	p.w.Header().Set("Cache-Control", "no-cache")
@@ -106,7 +106,7 @@ func writeSSEHeadersAndCopy(p streamForwardParams, flusher http.Flusher, acc *op
 	return classifyStreamEnd(p, acc, err)
 }
 
-func classifyStreamEnd(p streamForwardParams, acc *openai.StreamAccumulator, err error) string {
+func classifyStreamEnd(p streamForwardParams, acc *openaicompatible.StreamAccumulator, err error) string {
 	if isClientDisconnect(p.r.Context(), err) {
 		noteIncompleteStream(p, streamEndNote{acc: acc, clientSide: true, msg: "client disconnected mid-stream"})
 		return "client_disconnect"
@@ -130,7 +130,7 @@ func isClientDisconnect(ctx context.Context, err error) bool {
 }
 
 type streamEndNote struct {
-	acc        *openai.StreamAccumulator
+	acc        *openaicompatible.StreamAccumulator
 	clientSide bool
 	msg        string
 	err        error
@@ -203,7 +203,7 @@ func isSSEEventBoundary(line []byte) bool {
 	return len(line) == 2 && line[0] == '\r' && line[1] == '\n'
 }
 
-func drainAccumulator(p streamForwardParams, acc *openai.StreamAccumulator) (string, *provider.Usage) {
+func drainAccumulator(p streamForwardParams, acc *openaicompatible.StreamAccumulator) (string, *provider.Usage) {
 	waitCtx, cancel := context.WithTimeout(p.r.Context(), streamDrainTimeout)
 	defer cancel()
 	content, usage, err := acc.Wait(waitCtx)

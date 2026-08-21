@@ -14,7 +14,7 @@ services:
   vllm:
     image: vllm/vllm-openai:latest
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     environment:
       # Replace with a model your host can load.
       MODEL: ${VLLM_MODEL:-facebook/opt-125m}

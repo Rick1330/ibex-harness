@@ -48,6 +48,12 @@ func ValidateSelfHostedBaseURL(raw string) error {
 	if strings.TrimSpace(u.Host) == "" {
 		return fmt.Errorf("IBEX_SELFHOSTED_BASE_URL: host is required")
 	}
+	if u.RawQuery != "" {
+		return fmt.Errorf("IBEX_SELFHOSTED_BASE_URL: query string is not allowed")
+	}
+	if u.Fragment != "" {
+		return fmt.Errorf("IBEX_SELFHOSTED_BASE_URL: fragment is not allowed")
+	}
 	path := strings.TrimSuffix(u.Path, "/")
 	if !strings.HasSuffix(path, "/v1") {
 		return fmt.Errorf("IBEX_SELFHOSTED_BASE_URL: path must end with /v1 (got %q)", u.Path)

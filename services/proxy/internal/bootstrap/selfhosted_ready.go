@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,6 +19,9 @@ const selfHostedModelsPath = "/models"
 func waitSelfHostedReady(ctx context.Context, baseURL string, sh config.SelfHostedConfig, log *logger.Logger) error {
 	timeout, poll := selfHostedProbeTiming(sh)
 	deadline := time.Now().Add(timeout)
+	ctx, cancel := context.WithDeadline(ctx, deadline)
+	defer cancel()
+
 	client := &http.Client{Timeout: 5 * time.Second}
 	url := strings.TrimRight(baseURL, "/") + selfHostedModelsPath
 
@@ -26,6 +30,9 @@ func waitSelfHostedReady(ctx context.Context, baseURL string, sh config.SelfHost
 		if ok {
 			log.InfoCtx(ctx, "selfhosted_ready", "url", url, "attempts", attempt)
 			return nil
+		}
+		if errors.Is(probeErr, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return readinessTimeoutError(timeout, probeErr)
 		}
 		if err := waitOrTimeout(ctx, deadline, timeout, poll, url, attempt, probeErr, log); err != nil {
 			return err
@@ -54,16 +61,31 @@ func waitOrTimeout(
 	probeErr error,
 	log *logger.Logger,
 ) error {
-	if time.Now().After(deadline) {
+	wait := remainingPoll(deadline, poll)
+	if wait <= 0 {
 		return readinessTimeoutError(timeout, probeErr)
 	}
 	log.WarnCtx(ctx, "selfhosted_not_ready", "url", url, "attempt", attempt, "err", errString(probeErr))
 	select {
 	case <-ctx.Done():
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return readinessTimeoutError(timeout, probeErr)
+		}
 		return ctx.Err()
-	case <-time.After(poll):
+	case <-time.After(wait):
 		return nil
 	}
+}
+
+func remainingPoll(deadline time.Time, poll time.Duration) time.Duration {
+	left := time.Until(deadline)
+	if left <= 0 {
+		return 0
+	}
+	if poll < left {
+		return poll
+	}
+	return left
 }
 
 func readinessTimeoutError(timeout time.Duration, probeErr error) error {

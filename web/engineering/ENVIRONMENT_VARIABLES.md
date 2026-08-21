@@ -261,8 +261,6 @@ Used by: **proxy** (`services/proxy`)
 | `IBEX_TOKENIZER_MODE` | Planned **2.5** | `local` | `local` \| `service` \| `dual` — how proxy counts tokens | Situational; dual-path is a starting preference |
 | `IBEX_TOKENIZER_SERVICE_URL` | Conditional | (none) | Python tokenizer-service base URL | Required when mode uses service |
 | `IBEX_DEFAULT_PROVIDER` | Planned **4** | `openai` | Org-level default when multi-provider routing is live | Phase 2/2.5 use registry registration |
-| `IBEX_PROVIDER_CIRCUIT_BREAKER_FAILURES` | Planned **4** (prefer earlier for self-hosted) | `5` | Failures in window before open | Shared `circuitbreaker` package |
-| `IBEX_PROVIDER_CIRCUIT_BREAKER_COOLDOWN_SECONDS` | Planned **4** | `30` | Cool-down before half-open | |
 
 **BYOK (Bring your own key) — Phase 4:**
 

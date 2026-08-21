@@ -130,4 +130,3 @@ func TestUnit_StreamAccumulator_WriteAfterClosed(t *testing.T) {
 		t.Fatalf("n=%d err=%v", n, err)
 	}
 }
-

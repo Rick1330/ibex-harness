@@ -46,6 +46,34 @@ func TestClient_QueueFullReasonOn503(t *testing.T) {
 	}
 }
 
+func TestClient_OpenAI503HasEmptyReason(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"error":{"message":"unavailable"}}`))
+	}))
+	t.Cleanup(srv.Close)
+	zero := 0
+	c := New(Config{
+		ProviderName:  ProviderNameOpenAI,
+		APIKey:        "k",
+		BaseURL:       srv.URL,
+		MaxRetries:    &zero,
+		AuthMode:      AuthBearerAlways,
+		BuiltInModels: []string{"gpt-4o"},
+	}, logger.Discard("t"), telemetry.NoopTracer("t"), nil)
+	_, err := c.Complete(context.Background(), provider.Request{
+		Model: "gpt-4o", Messages: []provider.Message{{Role: "user", Content: "hi"}},
+	})
+	var pe *provider.ProviderError
+	if !errors.As(err, &pe) {
+		t.Fatalf("err=%v", err)
+	}
+	if pe.Reason != "" {
+		t.Fatalf("Reason=%q want empty", pe.Reason)
+	}
+}
+
 func TestClient_CircuitBreakerMapsOpen(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -149,6 +177,25 @@ func TestClient_BreakerNonOpenErrorPassthrough(t *testing.T) {
 		Model: "m", Messages: []provider.Message{{Role: "user", Content: "hi"}},
 	})
 	if err == nil || !strings.Contains(err.Error(), "unexpected-breaker") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestClient_BreakerInvalidResult(t *testing.T) {
+	t.Parallel()
+	zero := 0
+	c := New(Config{
+		ProviderName: ProviderNameSelfHosted,
+		BaseURL:      "http://127.0.0.1:9",
+		MaxRetries:   &zero,
+		ExtraModels:  []string{"m"},
+		AuthMode:     AuthBearerOmitEmpty,
+		Breaker:      stubBreaker{result: "not-a-response"},
+	}, logger.Discard("t"), telemetry.NoopTracer("t"), nil)
+	_, err := c.Complete(context.Background(), provider.Request{
+		Model: "m", Messages: []provider.Message{{Role: "user", Content: "hi"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "unexpected result") {
 		t.Fatalf("err=%v", err)
 	}
 }

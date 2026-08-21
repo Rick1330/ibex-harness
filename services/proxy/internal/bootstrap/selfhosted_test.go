@@ -270,3 +270,50 @@ func TestWaitSelfHostedReady_Defaults(t *testing.T) {
 	}
 }
 
+func TestWaitSelfHostedReady_BlockedHandlerHonorsTimeout(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-time.After(5 * time.Second):
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	start := time.Now()
+	err := waitSelfHostedReady(context.Background(), srv.URL, config.SelfHostedConfig{
+		ReadyTimeout: 80 * time.Millisecond,
+		ReadyPoll:    20 * time.Millisecond,
+	}, logger.Discard("t"))
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("expected timeout")
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("elapsed=%s too long", elapsed)
+	}
+}
+
+func TestWaitSelfHostedReady_PollCappedByTimeout(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(srv.Close)
+	start := time.Now()
+	err := waitSelfHostedReady(context.Background(), srv.URL, config.SelfHostedConfig{
+		ReadyTimeout: 60 * time.Millisecond,
+		ReadyPoll:    5 * time.Second, // must not extend past ReadyTimeout
+	}, logger.Discard("t"))
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("expected timeout")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) && !strings.Contains(err.Error(), "readiness probe failed") {
+		t.Fatalf("err=%v", err)
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("elapsed=%s; ReadyPoll must be capped", elapsed)
+	}
+}

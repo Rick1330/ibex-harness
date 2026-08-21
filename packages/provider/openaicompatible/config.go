@@ -28,10 +28,10 @@ const (
 // Config tunes an OpenAI-compatible chat completions client.
 type Config struct {
 	// ProviderName is returned by Name() and used in metrics/spans (required).
-	ProviderName string
-	APIKey       string
-	BaseURL      string
-	Timeout      time.Duration
+	ProviderName   string
+	APIKey         string
+	BaseURL        string
+	Timeout        time.Duration
 	StreamTimeout  time.Duration
 	MaxRetries     *int
 	RetryBaseDelay time.Duration
