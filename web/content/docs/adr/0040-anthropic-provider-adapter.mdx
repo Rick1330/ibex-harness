@@ -31,7 +31,7 @@ The official Go SDK (`github.com/anthropics/anthropic-sdk-go`) handles retries a
 
 ### 1) Raw `net/http` client, mirroring OpenAI
 
-Implement `packages/provider/anthropic/` with stdlib HTTP, the same connection-pool / timeout / retry structure as OpenAI. Do **not** add `anthropic-sdk-go`. Justification is recorded in `DEPENDENCIES.md`.
+Implement `packages/provider/anthropic/` with stdlib HTTP. Shared transport/retry helpers live in `packages/provider` (`httputil.go`); Anthropic-specific request/response/SSE translation stays vendor-local. Do **not** add `anthropic-sdk-go`. Justification is recorded in `DEPENDENCIES.md`.
 
 ### 2) OpenAI-compatible wire translation inside the adapter
 
@@ -48,12 +48,14 @@ Client `PassthroughFields` for Anthropic use an **allowlist** (`top_p`, `stop_se
 
 - Extract leading consecutive `system` messages into Anthropic’s top-level `system` without mutating the shared `provider.Request`
 - Coalesce consecutive same-role turns; fail closed if the first non-system turn is `assistant`
-- When `MaxTokens == 0`, default to **4096** (Anthropic requires `max_tokens`)
+- When `MaxTokens <= 0`, default to **4096** (Anthropic requires `max_tokens`)
+- Fold mid-conversation `system` turns into the top-level `system` field (directive-injection order safety)
+- Reject empty turn content locally (fail closed before the network hop)
 - Headers: `x-api-key`, `anthropic-version: 2023-06-01`, `content-type: application/json`
 
 ### 4) Anthropic-specific retries
 
-Retry HTTP **429, 500, 502, 503, 504, 529** and retryable transport errors. Do not retry 400/401/403/404, cancel, or deadline. No retry after a live streaming body is returned. Mid-stream Anthropic `event: error` terminates the translate pipe as incomplete — never JSON-swap mid-stream to the client.
+Retry HTTP **429, 500, 502, 503, 504, 529** and **pre-delivery** transport errors (`dial`/`connect` only). Do **not** retry timeouts, cancel, or deadline — a timed-out POST may already have been accepted upstream. Honor `Retry-After` on 429/503/529. No retry after a live streaming body is returned. Mid-stream Anthropic `event: error` terminates the translate pipe as incomplete — never JSON-swap mid-stream to the client.
 
 ### 5) Live multi-provider registration
 
