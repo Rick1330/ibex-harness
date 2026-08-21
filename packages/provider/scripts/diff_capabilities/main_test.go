@@ -127,16 +127,36 @@ func TestRun_MismatchCases(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			code, stdout := runSnapshot(t, tc.body)
-			if code != 1 {
-				t.Fatalf("exit=%d stdout=%s", code, stdout)
-			}
-			for _, sub := range tc.wantSub {
-				if !strings.Contains(stdout, sub) {
-					t.Fatalf("stdout=%s want %q", stdout, sub)
-				}
-			}
+			assertMismatchRun(t, tc.body, tc.wantSub)
 		})
+	}
+}
+
+func assertMismatchRun(t *testing.T, body string, wantSub []string) {
+	t.Helper()
+	code, stdout := runSnapshot(t, body)
+	requireExitCode(t, code, 1, stdout)
+	requireStdoutContainsAll(t, stdout, wantSub)
+}
+
+func requireExitCode(t *testing.T, got, want int, stdout string) {
+	t.Helper()
+	if got != want {
+		t.Fatalf("exit=%d want %d stdout=%s", got, want, stdout)
+	}
+}
+
+func requireStdoutContainsAll(t *testing.T, stdout string, wantSub []string) {
+	t.Helper()
+	for _, sub := range wantSub {
+		requireStdoutContains(t, stdout, sub)
+	}
+}
+
+func requireStdoutContains(t *testing.T, stdout, sub string) {
+	t.Helper()
+	if !strings.Contains(stdout, sub) {
+		t.Fatalf("stdout=%s want %q", stdout, sub)
 	}
 }
 
