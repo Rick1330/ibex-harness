@@ -40,6 +40,14 @@ type envConfig struct {
 	AnthropicRetryDelay     time.Duration     `env:"ANTHROPIC_RETRY_BASE_DELAY"`
 	AnthropicExtraModels    string            `env:"ANTHROPIC_EXTRA_MODELS"`
 	ModelCapabilityOverlays string            `env:"IBEX_MODEL_CAPABILITY_OVERLAYS"`
+	SelfHostedEnabled       string            `env:"IBEX_SELFHOSTED_ENABLED" envDefault:"false"`
+	SelfHostedBaseURL       string            `env:"IBEX_SELFHOSTED_BASE_URL"`
+	SelfHostedModels        string            `env:"IBEX_SELFHOSTED_MODELS"`
+	SelfHostedAPIKey        ibexconfig.Secret `env:"IBEX_SELFHOSTED_API_KEY" secret:"true"`
+	SelfHostedReadyTimeout  time.Duration     `env:"IBEX_SELFHOSTED_READY_TIMEOUT"`
+	SelfHostedReadyPoll     time.Duration     `env:"IBEX_SELFHOSTED_READY_POLL"`
+	ProviderBreakerFailures uint32            `env:"IBEX_PROVIDER_CIRCUIT_BREAKER_FAILURES"`
+	ProviderBreakerCoolSecs int               `env:"IBEX_PROVIDER_CIRCUIT_BREAKER_COOLDOWN_SECONDS"`
 	AuthCacheEnabled        string            `env:"IBEX_AUTH_CACHE_ENABLED" envDefault:"true"`
 	AuthCacheLRUCapacity    int               `env:"IBEX_AUTH_CACHE_LRU_CAPACITY"`
 	AuthCacheLRUMaxTTL      time.Duration     `env:"IBEX_AUTH_CACHE_LRU_MAX_TTL"`
@@ -72,6 +80,13 @@ func loadFromEnv() (Config, error) {
 	}
 
 	cfg := baseProxyConfig(envCfg, level)
+	sh, err := selfHostedConfigFromEnv(envCfg)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.SelfHosted = sh
+	cfg.ProviderBreakerFailures = envCfg.ProviderBreakerFailures
+	cfg.ProviderBreakerCoolDown = cooldownFromSeconds(envCfg.ProviderBreakerCoolSecs)
 	overlays, err := ParseCapabilityOverlays(envCfg.ModelCapabilityOverlays)
 	if err != nil {
 		return Config{}, err
@@ -102,6 +117,28 @@ func anthropicConfigFromEnv(envCfg envConfig) AnthropicConfig {
 	cfg.RetryBaseDelay = envCfg.AnthropicRetryDelay
 	cfg.ExtraModels = parseCSVModels(envCfg.AnthropicExtraModels)
 	return cfg
+}
+
+func selfHostedConfigFromEnv(envCfg envConfig) (SelfHostedConfig, error) {
+	enabled, err := parseEnabledFlag(envCfg.SelfHostedEnabled, false)
+	if err != nil {
+		return SelfHostedConfig{}, fmt.Errorf("IBEX_SELFHOSTED_ENABLED: %w", err)
+	}
+	return SelfHostedConfig{
+		Enabled:      enabled,
+		BaseURL:      envCfg.SelfHostedBaseURL,
+		APIKey:       envCfg.SelfHostedAPIKey.String(),
+		Models:       parseCSVModels(envCfg.SelfHostedModels),
+		ReadyTimeout: envCfg.SelfHostedReadyTimeout,
+		ReadyPoll:    envCfg.SelfHostedReadyPoll,
+	}, nil
+}
+
+func cooldownFromSeconds(secs int) time.Duration {
+	if secs <= 0 {
+		return 0
+	}
+	return time.Duration(secs) * time.Second
 }
 
 func parseCSVModels(raw string) []string {

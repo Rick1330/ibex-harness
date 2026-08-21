@@ -1,0 +1,71 @@
+---
+title: "ADR-0042: Self-hosted OpenAI-compatible LLM adapter"
+description: "Architecture decision record 0042 — second Provider for self-hosted OpenAI-compatible backends (vLLM-first), shared client, readiness probe, and circuit breaker."
+adrId: "0042"
+status: "Accepted"
+date: "2026-08-21"
+authors: "IBEX Harness team"
+---
+
+# ADR-0042: Self-hosted OpenAI-compatible LLM adapter
+
+- **Status:** Accepted
+- **Date:** 2026-08-21
+- **Authors:** IBEX Harness team
+- **Milestone:** [2.5.G1.M3 Self-hosted LLM adapter](/roadmap/phase-2-5-provider-generalization/milestones/2.5.g1.m3-self-hosted-llm-adapter)
+
+## Context
+
+Air-gapped and GPU-local deployments need the proxy to talk to OpenAI-compatible inference servers (vLLM, TGI, Ollama, llama.cpp) without overloading hosted `OPENAI_BASE_URL`. Hosted OpenAI and self-hosted backends differ in auth (optional bearer), readiness (model load can take minutes), and failure modes (queue-full 503 vs breaker-open).
+
+Capability overlays already require ExtraModels metadata ([ADR-0041](/docs/adr/0041-model-capability-registry)). Self-hosted model IDs participate in that same overlay contract using the **openai** vendor family (wire dialect), while the runtime adapter name is distinct.
+
+## Decision
+
+### 1) Second Provider: `openaicompatible`
+
+Register a separate `provider.Provider` named `openaicompatible` when `IBEX_SELFHOSTED_ENABLED=true`. Do **not** steal `OPENAI_BASE_URL` from the hosted OpenAI client.
+
+Shared HTTP/chat/SSE logic lives in `packages/provider/openaicompatible`. Hosted OpenAI (`packages/provider/openai`) is a thin wrapper with curated built-ins and always-on Bearer auth.
+
+### 2) Config surface
+
+| Variable | Role |
+| --- | --- |
+| `IBEX_SELFHOSTED_ENABLED` | Fail-closed gate |
+| `IBEX_SELFHOSTED_BASE_URL` | Must be `http(s)`, no userinfo, path ending in `/v1` |
+| `IBEX_SELFHOSTED_MODELS` | Comma-separated allowlist (required when enabled) |
+| `IBEX_SELFHOSTED_API_KEY` | Optional bearer (omit Authorization when empty) |
+| `IBEX_SELFHOSTED_READY_TIMEOUT` / `IBEX_SELFHOSTED_READY_POLL` | Bootstrap probe budget |
+| `IBEX_PROVIDER_CIRCUIT_BREAKER_FAILURES` / `…_COOLDOWN_SECONDS` | Breaker defaults for self-hosted |
+
+Live mode may start with **only** self-hosted (no cloud keys). Mock mode ignores self-hosted registration.
+
+### 3) Overlays use openai vendor family
+
+`IBEX_SELFHOSTED_MODELS` IDs are active ExtraModels keyed as `provider: "openai"` for overlay validation (wire dialect). Runtime routing still resolves through the `openaicompatible` adapter's `SupportedModels()`.
+
+`tokenizer_family: unknown` is acceptable until [2.5.G2.M1](/roadmap/phase-2-5-provider-generalization/milestones/2.5.g2.m1-tokenizer-registry).
+
+### 4) Bootstrap readiness + advisory `/ready`
+
+Before registry registration, poll `GET {base}/models` until 2xx or timeout (fail-closed at boot). After registration, `/ready` exposes an **advisory** `selfhosted_llm` checker so temporary GPU saturation does not fail critical readiness.
+
+### 5) Circuit breaker outside retries
+
+`packages/circuitbreaker` wraps each `Complete` (retries happen inside one breaker attempt). Distinct client-facing details:
+
+- HTTP 503 from upstream → `queue_full` reason → “Self-hosted LLM backend queue is full”
+- Breaker open → `circuit_open` reason → “Self-hosted LLM circuit breaker is open”
+
+Both map to `PROVIDER_UNAVAILABLE` (HTTP 503) without leaking upstream bodies or keys.
+
+### 6) SSRF exception
+
+Self-hosted BaseURL may target private/loopback hosts **only** when explicitly enabled. Hosted OpenAI BaseURL policy is unchanged. See [SECURITY.md §8.3](/engineering/SECURITY#83-ssrf--external-calls).
+
+## Consequences
+
+**Positive:** Air-gapped deployments work without cloud keys; hosted OpenAI path stays behavior-preserving; operators get distinct queue vs breaker signals.
+
+**Negative / follow-ups:** Tokenizer accuracy for open-weight models waits on G2.M1; multi-backend self-hosted pools are out of scope.

@@ -1,15 +1,18 @@
 package bootstrap
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
+	"github.com/Rick1330/ibex-harness/packages/circuitbreaker"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/packages/provider"
 	"github.com/Rick1330/ibex-harness/packages/provider/anthropic"
 	"github.com/Rick1330/ibex-harness/packages/provider/mockllm"
 	"github.com/Rick1330/ibex-harness/packages/provider/openai"
+	"github.com/Rick1330/ibex-harness/packages/provider/openaicompatible"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -68,7 +71,18 @@ func activeExtraModels(cfg config.Config) (map[string]string, error) {
 	}); err != nil {
 		return nil, err
 	}
+	if err := collectSelfHostedExtras(out, cfg.SelfHosted); err != nil {
+		return nil, err
+	}
 	return out, nil
+}
+
+func collectSelfHostedExtras(dst map[string]string, sh config.SelfHostedConfig) error {
+	if !sh.Enabled {
+		return nil
+	}
+	// Overlay vendor family stays "openai" (wire dialect); registry provider name is openaicompatible.
+	return addVendorExtraIDs(dst, provider.CapabilityProviderOpenAI, sh.Models)
 }
 
 type vendorExtras struct {
@@ -122,7 +136,7 @@ func rejectInvalidOverlays(builtin provider.CapabilityCatalog, extraByProvider m
 		}
 		wantProvider, ok := extraByProvider[id]
 		if !ok {
-			return fmt.Errorf("IBEX_MODEL_CAPABILITY_OVERLAYS: model %q is not listed in IBEX_LLM_EXTRA_MODELS or ANTHROPIC_EXTRA_MODELS for an active provider", id)
+			return fmt.Errorf("IBEX_MODEL_CAPABILITY_OVERLAYS: model %q is not listed in ExtraModels for an active provider (IBEX_LLM_EXTRA_MODELS, ANTHROPIC_EXTRA_MODELS, or IBEX_SELFHOSTED_MODELS)", id)
 		}
 		gotProvider := strings.TrimSpace(overlay.Provider)
 		if gotProvider != wantProvider {
@@ -192,8 +206,16 @@ func buildLiveProviderRegistry(cfg config.Config, log *logger.Logger, tracer tra
 		}, log, tracer, reg))
 	}
 
+	if cfg.SelfHosted.Enabled {
+		p, err := newSelfHostedProvider(cfg, log, tracer, reg)
+		if err != nil {
+			return nil, err
+		}
+		providers = append(providers, p)
+	}
+
 	if len(providers) == 0 {
-		return nil, fmt.Errorf("live mode requires OPENAI_API_KEY and/or ANTHROPIC_API_KEY")
+		return nil, fmt.Errorf("live mode requires OPENAI_API_KEY, ANTHROPIC_API_KEY, and/or IBEX_SELFHOSTED_ENABLED")
 	}
 
 	catalog, err := capabilityCatalog(cfg)
@@ -205,4 +227,33 @@ func buildLiveProviderRegistry(cfg config.Config, log *logger.Logger, tracer tra
 		return nil, fmt.Errorf("provider registry: %w", err)
 	}
 	return out, nil
+}
+
+func newSelfHostedProvider(
+	cfg config.Config,
+	log *logger.Logger,
+	tracer trace.Tracer,
+	reg *metrics.ProxyRegistry,
+) (provider.Provider, error) {
+	base := cfg.SelfHosted.NormalizeBaseURL()
+	if err := waitSelfHostedReady(context.Background(), base, cfg.SelfHosted, log); err != nil {
+		return nil, err
+	}
+	br := circuitbreaker.New(circuitbreaker.Settings{
+		Name:        openaicompatible.ProviderNameSelfHosted,
+		MaxFailures: cfg.SelfHosted.BreakerFailures,
+		CoolDown:    cfg.SelfHosted.BreakerCoolDown,
+	})
+	maxRetries := cfg.OpenAI.MaxRetries
+	return openaicompatible.New(openaicompatible.Config{
+		ProviderName:   openaicompatible.ProviderNameSelfHosted,
+		APIKey:         cfg.SelfHosted.APIKey,
+		BaseURL:        base,
+		Timeout:        cfg.OpenAI.RequestTimeout,
+		MaxRetries:     &maxRetries,
+		RetryBaseDelay: cfg.OpenAI.RetryBaseDelay,
+		ExtraModels:    cfg.SelfHosted.Models,
+		AuthMode:       openaicompatible.AuthBearerOmitEmpty,
+		Breaker:        br,
+	}, log, tracer, reg), nil
 }

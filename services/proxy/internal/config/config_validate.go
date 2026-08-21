@@ -75,12 +75,29 @@ func (c Config) validateLLMConfig() error {
 	if mode == envLLMModeMock && c.Environment == envProduction {
 		return fmt.Errorf("IBEX_LLM_MODE=mock is not allowed when IBEX_ENV=production")
 	}
+	if err := c.validateSelfHostedConfig(); err != nil {
+		return err
+	}
 	if mode == envLLMModeLive {
 		hasOpenAI := strings.TrimSpace(c.OpenAI.APIKey) != ""
 		hasAnthropic := strings.TrimSpace(c.Anthropic.APIKey) != ""
-		if !hasOpenAI && !hasAnthropic {
-			return fmt.Errorf("IBEX_LLM_MODE=live requires OPENAI_API_KEY and/or ANTHROPIC_API_KEY")
+		hasSelfHosted := c.SelfHosted.Enabled
+		if !hasOpenAI && !hasAnthropic && !hasSelfHosted {
+			return fmt.Errorf("IBEX_LLM_MODE=live requires OPENAI_API_KEY, ANTHROPIC_API_KEY, and/or IBEX_SELFHOSTED_ENABLED")
 		}
+	}
+	return nil
+}
+
+func (c Config) validateSelfHostedConfig() error {
+	if !c.SelfHosted.Enabled {
+		return nil
+	}
+	if err := ValidateSelfHostedBaseURL(c.SelfHosted.BaseURL); err != nil {
+		return err
+	}
+	if len(c.SelfHosted.Models) == 0 {
+		return fmt.Errorf("IBEX_SELFHOSTED_MODELS is required when IBEX_SELFHOSTED_ENABLED=true")
 	}
 	return nil
 }

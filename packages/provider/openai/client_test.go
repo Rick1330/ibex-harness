@@ -3,7 +3,6 @@ package openai
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -80,9 +79,7 @@ func runRetryStatusCase(t *testing.T, tc retryStatusCase) {
 	}))
 	t.Cleanup(srv.Close)
 
-	client := testClient(t, srv.URL, "test-key", nil)
-	client.cfg.MaxRetries = intPtr(3)
-	client.cfg.RetryBaseDelay = 1 * time.Millisecond
+	client := testClientWithRetries(t, srv.URL, "test-key", nil, 3, time.Millisecond)
 
 	_, err := client.Complete(context.Background(), provider.Request{
 		Model:    "gpt-4o",
@@ -103,8 +100,7 @@ func TestOpenAIClient_RetryableTransport_recordsErrorMetricPerAttempt(t *testing
 	srv.Close()
 
 	reg := metrics.NewProxy("test")
-	client := testClient(t, url, "test-key", reg)
-	client.cfg.MaxRetries = intPtr(2)
+	client := testClientWithRetries(t, url, "test-key", reg, 2, time.Millisecond)
 
 	_, err := client.Complete(context.Background(), provider.Request{
 		Model:    "gpt-4o",
@@ -158,9 +154,10 @@ func TestOpenAIClient_Timeout(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	client := testClient(t, srv.URL, "test-key", nil)
-	client.cfg.Timeout = 50 * time.Millisecond
-	client.httpClient.Timeout = 50 * time.Millisecond
+	zero := 0
+	client := New(Config{
+		APIKey: "test-key", BaseURL: srv.URL, Timeout: 50 * time.Millisecond, MaxRetries: &zero,
+	}, logger.Discard("openai"), telemetry.NoopTracer("openai"), nil)
 
 	_, err := client.Complete(context.Background(), provider.Request{
 		Model:    "gpt-4o",
@@ -190,8 +187,7 @@ func TestOpenAIClient_NetworkError(t *testing.T) {
 func TestOpenAIClient_NonRetryableTransport_recordsSingleErrorMetric(t *testing.T) {
 	t.Parallel()
 	reg := metrics.NewProxy("test")
-	client := testClient(t, "http://127.0.0.1:1", "test-key", reg)
-	client.cfg.MaxRetries = intPtr(0)
+	client := testClientWithRetries(t, "http://127.0.0.1:1", "test-key", reg, 0, time.Millisecond)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -242,24 +238,6 @@ func TestOpenAIClient_APIKeyNotInLogs(t *testing.T) {
 	}
 }
 
-func TestToOpenAIRequest_marshalsMessages(t *testing.T) {
-	t.Parallel()
-	out, err := toOpenAIRequest(provider.Request{
-		Model:    "gpt-4o",
-		Messages: []provider.Message{{Role: "user", Content: "hi"}},
-	})
-	if err != nil {
-		t.Fatalf("toOpenAIRequest: %v", err)
-	}
-	raw, err := json.Marshal(out)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	if !strings.Contains(string(raw), `"role":"user"`) {
-		t.Fatalf("body: %s", raw)
-	}
-}
-
 func scrapeProviderMetrics(t *testing.T, gatherer prometheus.Gatherer) string {
 	t.Helper()
 	rec := httptest.NewRecorder()
@@ -288,8 +266,12 @@ func countPrometheusCounter(body, needle string) int {
 }
 
 func testClient(t *testing.T, baseURL, apiKey string, reg *metrics.ProxyRegistry) *Client {
+	return testClientWithRetries(t, baseURL, apiKey, reg, 3, time.Millisecond)
+}
+
+func testClientWithRetries(t *testing.T, baseURL, apiKey string, reg *metrics.ProxyRegistry, maxRetries int, retryDelay time.Duration) *Client {
 	t.Helper()
-	var m Metrics = noopMetrics{}
+	var m Metrics
 	if reg != nil {
 		m = reg
 	}
@@ -297,10 +279,18 @@ func testClient(t *testing.T, baseURL, apiKey string, reg *metrics.ProxyRegistry
 		APIKey:         apiKey,
 		BaseURL:        baseURL,
 		Timeout:        5 * time.Second,
-		MaxRetries:     intPtr(3),
-		RetryBaseDelay: 1 * time.Millisecond,
+		MaxRetries:     intPtr(maxRetries),
+		RetryBaseDelay: retryDelay,
 	}, logger.Discard("openai"), telemetry.NoopTracer("openai"), m)
 }
+
+func intPtr(v int) *int { return &v }
+
+type noopMetrics struct{}
+
+func (noopMetrics) IncProviderRequest(string, string) {}
+func (noopMetrics) IncProviderRetry(string)           {}
+
 
 func TestUnit_OpenAIClient_Streaming_AcceptAndBody(t *testing.T) {
 	t.Parallel()

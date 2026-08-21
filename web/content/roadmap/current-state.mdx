@@ -83,13 +83,14 @@ summary: "Phases 0–2 are complete. Auth, proxy, and single-provider E2E ship o
 ## What Ships Today
 
 <Callout type="note" title="Current capability boundary">
-  **Shipped:** Auth (Go), Proxy (Go) with mock/live OpenAI-compatible forwarding,
-  auth cache, directives/injection, sessions/checkpoints, idempotency, ClickHouse
-  traces, shared packages, and this public site. Default non-production
-  `IBEX_LLM_MODE=mock` answers registered models with HTTP 200; `live` needs
-  `OPENAI_API_KEY` (mock is rejected when `IBEX_ENV=production`).
+  **Shipped:** Auth (Go), Proxy (Go) with mock/live OpenAI + Anthropic + self-hosted
+  OpenAI-compatible forwarding, model capability registry, auth cache, directives/injection,
+  sessions/checkpoints, idempotency, ClickHouse traces, shared packages, and this public site.
+  Default non-production `IBEX_LLM_MODE=mock` answers registered models with HTTP 200; `live`
+  needs `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, and/or `IBEX_SELFHOSTED_ENABLED` (mock is rejected
+  when `IBEX_ENV=production`).
   **`501 PROVIDER_NOT_CONFIGURED`** means the model is not in the registry — not
-  "forwarding missing." **Not shipped (Phase 2.5+):** Anthropic adapter, tokenizer
+  "forwarding missing." **Not shipped (Phase 2.5+ remaining):** tokenizer
   registry, response pipeline, embedding service, Python memory, context
   assembly, worker, management API, operator dashboard.
 </Callout>
@@ -106,7 +107,7 @@ summary: "Phases 0–2 are complete. Auth, proxy, and single-provider E2E ship o
 
 | Area | What shipped |
 | --- | --- |
-| Provider | Registry, OpenAI JSON + SSE, routing middleware, error mapping, Idempotency-Key |
+| Provider | Registry, OpenAI JSON + SSE, Anthropic adapter, self-hosted openaicompatible, capability registry, routing middleware, error mapping, Idempotency-Key |
 | Auth cache | Bloom + LRU; Redis revocation channel |
 | Directives | Postgres + Redis resolver; system-prompt injection |
 | Sessions | Sticky `X-IBEX-Session-ID`, checkpoints, idle sweeper |
@@ -129,10 +130,10 @@ Legacy `docs.ibexharness.com` redirects to apex paths (301).
 
 ## Blockers And Risks
 
-<Callout type="warning" title="Phase 2.5 entry">
-  Phase 2.5 adds Anthropic adapter, tokenizer registry, response pipeline, embedding service,
-  schema pre-work, and MCP skeleton. Do not treat those services as implemented under `services/`
-  today.
+<Callout type="warning" title="Phase 2.5 remaining">
+  Tokenizer registry, response pipeline, embedding service, schema pre-work, and MCP skeleton
+  are still ahead. Anthropic, capability registry, and self-hosted OpenAI-compatible adapter
+  (G1.M1–M3) are already on `main` once merged — do not treat those as unimplemented.
 </Callout>
 
 - Multi-provider routing remains Phase 4
@@ -141,8 +142,8 @@ Legacy `docs.ibexharness.com` redirects to apex paths (301).
 ## Next 3 Priorities
 
 <Steps>
-  <Step title="Phase 2.5 kickoff">
-    Anthropic adapter, model capability registry, tokenizer abstraction, response pipeline seam, embedder service, schema pre-work.
+  <Step title="Phase 2.5 continue">
+    Tokenizer abstraction (G2), response pipeline seam (G3), embedder service (G4), schema pre-work, MCP skeleton.
   </Step>
   <Step title="Phase 3 memory substrate">
     Memory schema v2 (HNSW, temporal validity, multi-label), write pipeline, read/ranking with category-conditional scoring.

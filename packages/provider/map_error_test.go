@@ -70,12 +70,33 @@ var mapProviderServerCases = []mapCase{
 	{name: "503", in: MapInput{StatusCode: 503}, wantCode: apierror.CodeProviderUnavailable, wantStatus: 503},
 	{name: "504", in: MapInput{StatusCode: 504}, wantCode: apierror.CodeProviderUnavailable, wantStatus: 503},
 	{
+		name:       "queue_full",
+		in:         MapInput{StatusCode: 503, Reason: ErrorReasonQueueFull},
+		wantCode:   apierror.CodeProviderUnavailable,
+		wantStatus: 503,
+	},
+	{
+		name:       "circuit_open",
+		in:         MapInput{StatusCode: 503, Reason: ErrorReasonCircuitOpen},
+		wantCode:   apierror.CodeProviderUnavailable,
+		wantStatus: 503,
+	},
+	{
 		name:       "transport",
 		in:         MapInput{TransportErr: errors.New("dial tcp: connection refused")},
 		wantCode:   apierror.CodeProviderUnavailable,
 		wantStatus: 503,
 	},
 	{name: "canceled", in: MapInput{TransportErr: context.Canceled}, wantNil: true},
+	{
+		name: "transport_with_status",
+		in: MapInput{
+			TransportErr: errors.New("partial"),
+			StatusCode:   502,
+		},
+		wantCode:   apierror.CodeProviderUnavailable,
+		wantStatus: 503,
+	},
 }
 
 func TestMapProviderError_core(t *testing.T) {
@@ -169,8 +190,55 @@ func runMapErrorCases(t *testing.T) {
 			wantDetail: msgInvalidRequest,
 		},
 		{
+			name: "circuit_open_reason",
+			err: &ProviderError{
+				ProviderName:   "openaicompatible",
+				StatusCode:     http.StatusServiceUnavailable,
+				ProviderErrMsg: "circuit breaker open",
+				Reason:         ErrorReasonCircuitOpen,
+			},
+			wantWrite:  true,
+			wantCode:   apierror.CodeProviderUnavailable,
+			wantStatus: http.StatusServiceUnavailable,
+			wantDetail: "Self-hosted LLM circuit breaker is open",
+		},
+		{
+			name: "queue_full_reason",
+			err: &ProviderError{
+				ProviderName:   "openaicompatible",
+				StatusCode:     http.StatusServiceUnavailable,
+				ProviderErrMsg: "queue full",
+				Reason:         ErrorReasonQueueFull,
+			},
+			wantWrite:  true,
+			wantCode:   apierror.CodeProviderUnavailable,
+			wantStatus: http.StatusServiceUnavailable,
+			wantDetail: "Self-hosted LLM backend queue is full",
+		},
+		{
+			name:       "deadline",
+			err:        context.DeadlineExceeded,
+			wantWrite:  true,
+			wantCode:   apierror.CodeProviderTimeout,
+			wantStatus: http.StatusGatewayTimeout,
+			wantDetail: msgProviderTimeout,
+		},
+		{
+			name:       "transport_generic",
+			err:        errors.New("connection reset"),
+			wantWrite:  true,
+			wantCode:   apierror.CodeProviderUnavailable,
+			wantStatus: http.StatusServiceUnavailable,
+			wantDetail: msgProviderUnavailable,
+		},
+		{
 			name:      "canceled",
 			err:       context.Canceled,
+			wantWrite: false,
+		},
+		{
+			name:      "nil",
+			err:       nil,
 			wantWrite: false,
 		},
 	}

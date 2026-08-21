@@ -359,6 +359,8 @@ Any external HTTP call must:
 - disallow internal IP ranges unless explicitly required (self-hosted config)
 - log only metadata (host, status), never secrets
 
+**Self-hosted exception ([ADR-0042](../content/docs/adr/0042-self-hosted-openai-compatible-adapter.mdx)):** when `IBEX_SELFHOSTED_ENABLED=true`, `IBEX_SELFHOSTED_BASE_URL` may target loopback or private hosts (cluster-local vLLM). The URL must still be `http`/`https`, forbid userinfo, and end with `/v1`. Hosted `OPENAI_BASE_URL` is a separate setting and must not be overloaded for this path.
+
 ### 8.4 CORS / CSRF
 
 - Dashboard uses JWT session tokens with CSRF protection on state-changing requests.
