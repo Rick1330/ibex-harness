@@ -56,6 +56,24 @@ func TestValidate_acceptsValidConfig(t *testing.T) {
 				return cfg
 			}(),
 		},
+		{
+			name: "live anthropic only",
+			cfg: func() Config {
+				cfg := validProxyConfig()
+				cfg.LLMMode = "live"
+				cfg.Anthropic.APIKey = "anth-key"
+				return cfg
+			}(),
+		},
+		{
+			name: "live openai only",
+			cfg: func() Config {
+				cfg := validProxyConfig()
+				cfg.LLMMode = "live"
+				cfg.OpenAI.APIKey = "openai-key"
+				return cfg
+			}(),
+		},
 	}
 
 	for _, tc := range tests {

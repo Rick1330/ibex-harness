@@ -33,6 +33,12 @@ type envConfig struct {
 	OpenAIRequestTimeout  time.Duration     `env:"OPENAI_REQUEST_TIMEOUT"`
 	OpenAIMaxRetries      int               `env:"OPENAI_MAX_RETRIES"`
 	OpenAIRetryBaseDelay  time.Duration     `env:"OPENAI_RETRY_BASE_DELAY"`
+	AnthropicAPIKey       ibexconfig.Secret `env:"ANTHROPIC_API_KEY" secret:"true"`
+	AnthropicBaseURL      string            `env:"ANTHROPIC_BASE_URL" envDefault:"https://api.anthropic.com"`
+	AnthropicRequestTO    time.Duration     `env:"ANTHROPIC_REQUEST_TIMEOUT"`
+	AnthropicMaxRetries   int               `env:"ANTHROPIC_MAX_RETRIES"`
+	AnthropicRetryDelay   time.Duration     `env:"ANTHROPIC_RETRY_BASE_DELAY"`
+	AnthropicExtraModels  string            `env:"ANTHROPIC_EXTRA_MODELS"`
 	AuthCacheEnabled      string            `env:"IBEX_AUTH_CACHE_ENABLED" envDefault:"true"`
 	AuthCacheLRUCapacity  int               `env:"IBEX_AUTH_CACHE_LRU_CAPACITY"`
 	AuthCacheLRUMaxTTL    time.Duration     `env:"IBEX_AUTH_CACHE_LRU_MAX_TTL"`
@@ -82,6 +88,17 @@ func openAIConfigFromEnv(envCfg envConfig) OpenAIConfig {
 	}
 }
 
+func anthropicConfigFromEnv(envCfg envConfig) AnthropicConfig {
+	return AnthropicConfig{
+		APIKey:         envCfg.AnthropicAPIKey.String(),
+		BaseURL:        envCfg.AnthropicBaseURL,
+		RequestTimeout: envCfg.AnthropicRequestTO,
+		MaxRetries:     envCfg.AnthropicMaxRetries,
+		RetryBaseDelay: envCfg.AnthropicRetryDelay,
+		ExtraModels:    parseCSVModels(envCfg.AnthropicExtraModels),
+	}
+}
+
 func parseCSVModels(raw string) []string {
 	parts := strings.Split(raw, ",")
 	out := make([]string, 0, len(parts))
@@ -117,6 +134,7 @@ func baseProxyConfig(envCfg envConfig, level slog.Level) Config {
 		},
 		LLMMode: strings.TrimSpace(envCfg.LLMMode),
 		OpenAI:  openAIConfigFromEnv(envCfg),
+		Anthropic: anthropicConfigFromEnv(envCfg),
 		AuthCache: AuthCacheConfig{
 			Enabled: true,
 		},

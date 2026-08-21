@@ -17,7 +17,7 @@ All protected routes require:
 
 - `GET /v1/internal/auth-probe` — returns `{org_id, permissions}` for the caller token
 - `GET /v1/orgs/{org_id}/auth-probe` — same; path `org_id` must be UUID; **403** if path org ≠ token org
-- `POST /v1/chat/completions` — auth + agent verify + `ProxyChatCompletion`; body limit + JSON Content-Type; semantic validation; rate limit; provider routing (default `IBEX_LLM_MODE=mock` → HTTP **200** for registered models; `live` + `OPENAI_API_KEY` for real upstream). **501** `PROVIDER_NOT_CONFIGURED` means the **model is not in the registry**, not that forwarding is missing. Also: **429** `RATE_LIMITED`; **400** `MISSING_AGENT_ID` / `VALIDATION_ERROR` / `INVALID_JSON`; **403** `AGENT_NOT_AUTHORIZED` / `AGENT_SUSPENDED`; **413** / **415** per [ADR-0013](../../web/content/docs/adr/0013-proxy-input-validation-and-error-envelope.mdx). Mock is rejected when `IBEX_ENV=production`.
+- `POST /v1/chat/completions` — auth + agent verify + `ProxyChatCompletion`; body limit + JSON Content-Type; semantic validation; rate limit; provider routing (default `IBEX_LLM_MODE=mock` → HTTP **200** for registered models; `live` + `OPENAI_API_KEY` and/or `ANTHROPIC_API_KEY` for real upstream). **501** `PROVIDER_NOT_CONFIGURED` means the **model is not in the registry**, not that forwarding is missing. Also: **429** `RATE_LIMITED`; **400** `MISSING_AGENT_ID` / `VALIDATION_ERROR` / `INVALID_JSON`; **403** `AGENT_NOT_AUTHORIZED` / `AGENT_SUSPENDED`; **413** / **415** per [ADR-0013](../../web/content/docs/adr/0013-proxy-input-validation-and-error-envelope.mdx). Mock is rejected when `IBEX_ENV=production`.
 
 Auth validates via gRPC `ValidateToken` ([ADR-0011](../../web/content/docs/adr/0011-proxy-auth-client.mdx)). Agent ownership via gRPC `ValidateAgent` ([ADR-0016](../../web/content/docs/adr/0016-agent-identity-verification.mdx)). Parse: [ADR-0012](../../web/content/docs/adr/0012-proxy-request-normalization.mdx). Validation + envelope: [ADR-0013](../../web/content/docs/adr/0013-proxy-input-validation-and-error-envelope.mdx). Rate limit: [ADR-0015](../../web/content/docs/adr/0015-proxy-rate-limit-skeleton.mdx). Directive resolve (m2.3.2): Redis cache with Postgres fallback via `POSTGRES_DSN` (`openProxyPostgres` / `directive.PostgresStore.Load`) when Redis is also configured. Session lifecycle (m2.4.3): when `POSTGRES_DSN` is set, chat resolves/mints sticky `X-IBEX-Session-ID` (= `sessions.external_id`, not row `id`), optionally via Redis key `session:{org_id}:{agent_id}:{external_id}`, echoes that external id on stream and non-stream responses (including GetOrCreate fail-open sticky-only), and enqueues `AppendCheckpoint` on a bounded non-dropping async pool (detached Background+timeout per task, drained on shutdown). GetOrCreate failures fail open (sticky header kept; checkpoint skipped). Idle sweeper (m2.4.4): background ticker marks stale `active` sessions `abandoned` (`IBEX_SESSION_IDLE_TIMEOUT` / `IBEX_SESSION_SWEEP_INTERVAL`), invalidates Redis session keys, and uses a Postgres advisory lock across replicas. Explicit `X-IBEX-Session-End` → `completed` may be wired later; idle path uses `abandoned`. Directive injection (m2.3.3): handler applies `packages/injection.Inject` (`system_first` / `system_append` / `user_prepend`) to `provider.Request.Messages` before `Complete` ([ADR-0031](../../web/content/docs/adr/0031-system-prompt-injection.mdx)); directive content is never logged. Fail closed: token auth outage → **503** `SERVICE_DEGRADED`; agent verify outage → **503** `AUTH_UNAVAILABLE`. Rate limit Redis outage → fail open (request allowed).
 
@@ -67,23 +67,26 @@ See [.env.example](.env.example).
 | `IBEX_SESSION_GETORCREATE_TIMEOUT` | `50ms` | Hot-path GetOrCreate deadline (fail-open) |
 | `IBEX_SESSION_IDLE_TIMEOUT` | `45m` | Idle `active` → `abandoned` threshold (`updated_at`) |
 | `IBEX_SESSION_SWEEP_INTERVAL` | `1m` | Sweeper ticker interval (≤ idle timeout) |
-| `IBEX_LLM_MODE` | `mock` | `mock` (in-process stub) or `live` (OpenAI-compatible). Rejected when `IBEX_ENV=production` |
-| `OPENAI_API_KEY` | (empty) | Required when `IBEX_LLM_MODE=live` |
+| `IBEX_LLM_MODE` | `mock` | `mock` (in-process stub) or `live` (register configured vendors). Rejected when `IBEX_ENV=production` |
+| `OPENAI_API_KEY` | (empty) | Registers OpenAI when `live` and set |
 | `OPENAI_BASE_URL` | OpenAI default | Optional upstream base URL |
-| `IBEX_LLM_EXTRA_MODELS` | (empty) | Comma-separated extra model IDs for live registry |
+| `IBEX_LLM_EXTRA_MODELS` | (empty) | Comma-separated extra OpenAI model IDs |
+| `ANTHROPIC_API_KEY` | (empty) | Registers Anthropic when `live` and set ([ADR-0040](../../web/content/docs/adr/0040-anthropic-provider-adapter.mdx)) |
+| `ANTHROPIC_BASE_URL` | `https://api.anthropic.com` | Anthropic API base |
+| `ANTHROPIC_EXTRA_MODELS` | (empty) | Extra Claude model IDs |
 | `IBEX_IDEMPOTENCY_TTL` | `24h` | Idempotency-Key Redis TTL (non-streaming chat) |
 | `IBEX_IDEMPOTENCY_REDIS_TIMEOUT` | `50ms` | Idempotency Redis budget |
 | `CLICKHOUSE_DSN` | (empty) | Optional `llm_traces` writer |
 | `CLICKHOUSE_INSERT_BATCH_SIZE` | `500` | Trace insert batch size |
 | `CLICKHOUSE_INSERT_FLUSH_MS` | `200` | Trace flush interval |
 
-Full registry (including **planned Phase 2.5+** Anthropic / self-hosted / context / tokenizer vars): [ENVIRONMENT_VARIABLES.md](../../web/engineering/ENVIRONMENT_VARIABLES.md).
+Full registry: [ENVIRONMENT_VARIABLES.md](../../web/engineering/ENVIRONMENT_VARIABLES.md).
 
-## Next (Phase 2.5+) — planning baseline
+## Next (Phase 2.5+) — remaining planning baseline
 
-Not wired yet. Expected proxy-adjacent work from the redesigned roadmap:
+Anthropic adapter is shipped (m2.5.G1.M1 / ADR-0040). Still planned:
 
-- Anthropic + OpenAI-compatible self-hosted provider adapters (`ANTHROPIC_*`, `IBEX_SELFHOSTED_*`)
+- OpenAI-compatible self-hosted adapters (`IBEX_SELFHOSTED_*`)
 - Model capability registry + tokenizer counting (`IBEX_TOKENIZER_*`)
 - Non-streaming response pipeline seam (`packages/responsepipeline`)
 - Later: fail-open context-assembly client (`IBEX_CONTEXT_*`, Phase 3.5)

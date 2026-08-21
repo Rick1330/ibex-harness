@@ -75,8 +75,12 @@ func (c Config) validateLLMConfig() error {
 	if mode == envLLMModeMock && c.Environment == envProduction {
 		return fmt.Errorf("IBEX_LLM_MODE=mock is not allowed when IBEX_ENV=production")
 	}
-	if mode == envLLMModeLive && strings.TrimSpace(c.OpenAI.APIKey) == "" {
-		return fmt.Errorf("OPENAI_API_KEY is required when IBEX_LLM_MODE=live")
+	if mode == envLLMModeLive {
+		hasOpenAI := strings.TrimSpace(c.OpenAI.APIKey) != ""
+		hasAnthropic := strings.TrimSpace(c.Anthropic.APIKey) != ""
+		if !hasOpenAI && !hasAnthropic {
+			return fmt.Errorf("IBEX_LLM_MODE=live requires OPENAI_API_KEY and/or ANTHROPIC_API_KEY")
+		}
 	}
 	return nil
 }
