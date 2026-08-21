@@ -1,17 +1,13 @@
 package anthropic
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
-	"strings"
 
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/provider"
-	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
-	"go.opentelemetry.io/otel/trace/noop"
 )
 
 // Client implements provider.Provider for the Anthropic Messages API.
@@ -31,16 +27,13 @@ func New(cfg Config, log *logger.Logger, tracer trace.Tracer, metrics Metrics) *
 	if metrics == nil {
 		metrics = noopMetrics{}
 	}
-	if tracer == nil {
-		tracer = noop.NewTracerProvider().Tracer("anthropic")
-	}
-	httpClient := provider.NewPooledHTTPClient(cfg.Timeout)
+	clients := provider.NewHTTPClients(cfg.Timeout)
 	return &Client{
 		cfg:          cfg,
-		httpClient:   httpClient,
-		streamClient: provider.StreamHTTPClient(httpClient),
+		httpClient:   clients.Sync,
+		streamClient: clients.Stream,
 		log:          log,
-		tracer:       tracer,
+		tracer:       provider.TracerOrNoop(tracer, "anthropic"),
 		metrics:      metrics,
 	}
 }
@@ -64,13 +57,7 @@ func (c *Client) SupportedModels() []string {
 
 // Complete sends a Messages API request and returns an OpenAI-compatible body.
 func (c *Client) Complete(ctx context.Context, req provider.Request) (provider.Response, error) {
-	ctx, span := c.tracer.Start(ctx, "anthropic.Complete",
-		trace.WithAttributes(
-			attribute.String("provider.name", c.Name()),
-			attribute.String("llm.model", req.Model),
-			attribute.Bool("llm.stream", req.Stream),
-		),
-	)
+	ctx, span := provider.StartCompleteSpan(ctx, c.tracer, "anthropic.Complete", c.Name(), req)
 	defer span.End()
 
 	body, err := marshalAnthropicRequestBody(req, c.cfg.DefaultTokens)
@@ -79,9 +66,11 @@ func (c *Client) Complete(ctx context.Context, req provider.Request) (provider.R
 		return provider.Response{}, err
 	}
 
-	url := strings.TrimRight(c.cfg.BaseURL, "/") + "/v1/messages"
 	return c.executeWithRetry(ctx, span, upstreamCall{
-		URL: url, Body: body, Stream: req.Stream, Model: req.Model,
+		URL:    provider.JoinBaseURL(c.cfg.BaseURL, "/v1/messages"),
+		Body:   body,
+		Stream: req.Stream,
+		Model:  req.Model,
 	})
 }
 
@@ -97,17 +86,11 @@ func (c *Client) doRequest(ctx context.Context, call upstreamCall) (*http.Respon
 }
 
 func (c *Client) newMessagesRequest(ctx context.Context, call provider.UpstreamCall) (*http.Request, error) {
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, call.URL, bytes.NewReader(call.Body))
-	if err != nil {
-		return nil, err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("x-api-key", c.cfg.APIKey)
-	httpReq.Header.Set("anthropic-version", c.cfg.APIVersion)
-	if call.Stream {
-		httpReq.Header.Set("Accept", "text/event-stream")
-	}
-	return httpReq, nil
+	return provider.NewJSONPostRequest(ctx, call, map[string]string{
+		"Content-Type":      "application/json",
+		"x-api-key":         c.cfg.APIKey,
+		"anthropic-version": c.cfg.APIVersion,
+	})
 }
 
 func readProviderError(name string, resp *http.Response) *provider.ProviderError {
@@ -137,8 +120,4 @@ func extractAnthropicErrorMessage(raw []byte) string {
 
 func isRetryableStatus(code int) bool {
 	return provider.IsRetryableHTTPStatus(code, statusOverloaded)
-}
-
-func (c *Client) waitBeforeRetry(ctx context.Context, attempt int, lastErr error) error {
-	return provider.WaitBeforeRetry(ctx, c.cfg.RetryBaseDelay, attempt, lastErr)
 }

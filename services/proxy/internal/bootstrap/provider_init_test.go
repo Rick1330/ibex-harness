@@ -56,17 +56,19 @@ func TestBuildProviderRegistry_LiveModeRegistersOpenAI(t *testing.T) {
 	cfg := config.Config{
 		LLMMode: "live",
 		OpenAI: config.OpenAIConfig{
-			APIKey: "test-key",
+			APIKey:      "test-key",
+			ExtraModels: []string{"openai/gpt-oss-20b:free"},
 		},
 	}
 
 	reg, err := buildProviderRegistry(cfg, logger.Discard("proxy"), telemetry.NoopTracer("proxy"), metrics.NewProxy("test"))
-
 	if err != nil {
 		t.Fatalf("buildProviderRegistry: %v", err)
 	}
-	if _, err := reg.For("gpt-4o"); err != nil {
-		t.Fatalf("For: %v", err)
+	for _, model := range []string{"gpt-4o", "openai/gpt-oss-20b:free"} {
+		if _, err := reg.For(model); err != nil {
+			t.Fatalf("For(%s): %v", model, err)
+		}
 	}
 }
 
@@ -130,25 +132,5 @@ func TestBuildProviderRegistry_LiveModeRequiresCredential(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "OPENAI_API_KEY") {
 		t.Fatalf("err=%v", err)
-	}
-}
-
-func TestUnit_BuildProviderRegistry_LiveExtraModels(t *testing.T) {
-	t.Parallel()
-
-	cfg := config.Config{
-		LLMMode: "live",
-		OpenAI: config.OpenAIConfig{
-			APIKey:      "test-key",
-			ExtraModels: []string{"openai/gpt-oss-20b:free"},
-		},
-	}
-
-	reg, err := buildProviderRegistry(cfg, logger.Discard("proxy"), telemetry.NoopTracer("proxy"), metrics.NewProxy("test"))
-	if err != nil {
-		t.Fatalf("buildProviderRegistry: %v", err)
-	}
-	if _, err := reg.For("openai/gpt-oss-20b:free"); err != nil {
-		t.Fatalf("For extra model: %v", err)
 	}
 }

@@ -1,19 +1,15 @@
 package openai
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/provider"
-	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
-	"go.opentelemetry.io/otel/trace/noop"
 )
 
 // Client implements provider.Provider for the OpenAI API.
@@ -32,16 +28,13 @@ func New(cfg Config, log *logger.Logger, tracer trace.Tracer, metrics Metrics) *
 	if metrics == nil {
 		metrics = noopMetrics{}
 	}
-	if tracer == nil {
-		tracer = noop.NewTracerProvider().Tracer("openai")
-	}
-	httpClient := provider.NewPooledHTTPClient(cfg.Timeout)
+	clients := provider.NewHTTPClients(cfg.Timeout)
 	return &Client{
 		cfg:          cfg,
-		httpClient:   httpClient,
-		streamClient: provider.StreamHTTPClient(httpClient),
+		httpClient:   clients.Sync,
+		streamClient: clients.Stream,
 		log:          log,
-		tracer:       tracer,
+		tracer:       provider.TracerOrNoop(tracer, "openai"),
 		metrics:      metrics,
 	}
 }
@@ -69,13 +62,7 @@ func (c *Client) SupportedModels() []string {
 // Complete sends a chat completion request to OpenAI.
 // When req.Stream is true, Body is a live SSE stream (caller must close it).
 func (c *Client) Complete(ctx context.Context, req provider.Request) (provider.Response, error) {
-	ctx, span := c.tracer.Start(ctx, "openai.Complete",
-		trace.WithAttributes(
-			attribute.String("provider.name", c.Name()),
-			attribute.String("llm.model", req.Model),
-			attribute.Bool("llm.stream", req.Stream),
-		),
-	)
+	ctx, span := provider.StartCompleteSpan(ctx, c.tracer, "openai.Complete", c.Name(), req)
 	defer span.End()
 
 	body, err := c.marshalRequest(req)
@@ -84,8 +71,11 @@ func (c *Client) Complete(ctx context.Context, req provider.Request) (provider.R
 		return provider.Response{}, err
 	}
 
-	url := strings.TrimRight(c.cfg.BaseURL, "/") + "/chat/completions"
-	return c.executeWithRetry(ctx, span, upstreamCall{URL: url, Body: body, Stream: req.Stream})
+	return c.executeWithRetry(ctx, span, upstreamCall{
+		URL:    provider.JoinBaseURL(c.cfg.BaseURL, "/chat/completions"),
+		Body:   body,
+		Stream: req.Stream,
+	})
 }
 
 func (c *Client) marshalRequest(req provider.Request) ([]byte, error) {
@@ -108,16 +98,10 @@ func (c *Client) doRequest(ctx context.Context, call upstreamCall) (*http.Respon
 }
 
 func (c *Client) newChatRequest(ctx context.Context, call provider.UpstreamCall) (*http.Request, error) {
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, call.URL, bytes.NewReader(call.Body))
-	if err != nil {
-		return nil, err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+c.cfg.APIKey)
-	if call.Stream {
-		httpReq.Header.Set("Accept", "text/event-stream")
-	}
-	return httpReq, nil
+	return provider.NewJSONPostRequest(ctx, call, map[string]string{
+		"Content-Type":  "application/json",
+		"Authorization": "Bearer " + c.cfg.APIKey,
+	})
 }
 
 func readProviderError(name string, resp *http.Response) *provider.ProviderError {

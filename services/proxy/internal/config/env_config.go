@@ -89,14 +89,13 @@ func openAIConfigFromEnv(envCfg envConfig) OpenAIConfig {
 }
 
 func anthropicConfigFromEnv(envCfg envConfig) AnthropicConfig {
-	return AnthropicConfig{
-		APIKey:         envCfg.AnthropicAPIKey.String(),
-		BaseURL:        envCfg.AnthropicBaseURL,
-		RequestTimeout: envCfg.AnthropicRequestTO,
-		MaxRetries:     envCfg.AnthropicMaxRetries,
-		RetryBaseDelay: envCfg.AnthropicRetryDelay,
-		ExtraModels:    parseCSVModels(envCfg.AnthropicExtraModels),
-	}
+	cfg := AnthropicConfig{APIKey: envCfg.AnthropicAPIKey.String()}
+	cfg.BaseURL = envCfg.AnthropicBaseURL
+	cfg.RequestTimeout = envCfg.AnthropicRequestTO
+	cfg.MaxRetries = envCfg.AnthropicMaxRetries
+	cfg.RetryBaseDelay = envCfg.AnthropicRetryDelay
+	cfg.ExtraModels = parseCSVModels(envCfg.AnthropicExtraModels)
+	return cfg
 }
 
 func parseCSVModels(raw string) []string {

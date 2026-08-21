@@ -18,8 +18,14 @@ import (
 func TestMergeSupportedModels(t *testing.T) {
 	t.Parallel()
 	got := MergeSupportedModels([]string{"a", "b"}, []string{" b ", "c", "", "a"})
-	if len(got) != 3 || got[0] != "a" || got[1] != "b" || got[2] != "c" {
+	want := []string{"a", "b", "c"}
+	if len(got) != len(want) {
 		t.Fatalf("got=%v", got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got=%v", got)
+		}
 	}
 }
 
@@ -92,20 +98,23 @@ func TestRetryAfterFromError(t *testing.T) {
 
 func TestIsRetryableTransport(t *testing.T) {
 	t.Parallel()
-	if IsRetryableTransport(nil) || IsRetryableTransport(context.Canceled) || IsRetryableTransport(context.DeadlineExceeded) {
-		t.Fatal("nil/cancel/deadline")
-	}
-	if IsRetryableTransport(timeoutNetError{}) {
-		t.Fatal("timeout")
-	}
+	assertNotRetryable(t, nil)
+	assertNotRetryable(t, context.Canceled)
+	assertNotRetryable(t, context.DeadlineExceeded)
+	assertNotRetryable(t, timeoutNetError{})
+	assertNotRetryable(t, &net.OpError{Op: "write", Err: errors.New("reset")})
 	if !IsRetryableTransport(&net.OpError{Op: "dial", Err: errors.New("refused")}) {
 		t.Fatal("dial")
 	}
 	if !IsRetryableTransport(&net.OpError{Op: "connect", Err: errors.New("refused")}) {
 		t.Fatal("connect")
 	}
-	if IsRetryableTransport(&net.OpError{Op: "write", Err: errors.New("reset")}) {
-		t.Fatal("write")
+}
+
+func assertNotRetryable(t *testing.T, err error) {
+	t.Helper()
+	if IsRetryableTransport(err) {
+		t.Fatalf("unexpected retryable: %v", err)
 	}
 }
 
@@ -276,6 +285,52 @@ func TestCancelOnClose(t *testing.T) {
 	}
 }
 
+func TestClientBootHelpers(t *testing.T) {
+	t.Parallel()
+	clients := NewHTTPClients(time.Second)
+	if clients.Sync == nil || clients.Stream == nil || clients.Sync.Transport != clients.Stream.Transport {
+		t.Fatal("http clients")
+	}
+	if TracerOrNoop(nil, "x") == nil {
+		t.Fatal("noop tracer")
+	}
+	tr := noop.NewTracerProvider().Tracer("t")
+	if TracerOrNoop(tr, "x") != tr {
+		t.Fatal("passthrough tracer")
+	}
+	ctx, span := StartCompleteSpan(context.Background(), tr, "prov.Complete", "prov", Request{
+		Model: "m", Stream: true,
+	})
+	span.End()
+	if ctx == nil {
+		t.Fatal("span ctx")
+	}
+	if JoinBaseURL("https://api.example/", "/v1/x") != "https://api.example/v1/x" {
+		t.Fatal("join")
+	}
+	req, err := NewJSONPostRequest(context.Background(), UpstreamCall{
+		URL: "http://example.invalid", Body: []byte(`{}`), Stream: true,
+	}, map[string]string{"Content-Type": "application/json"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.Header.Get("Accept") != "text/event-stream" || req.Header.Get("Content-Type") != "application/json" {
+		t.Fatal("headers")
+	}
+	out := TimedHTTPOnce(0, 0,
+		func() (*http.Response, error) {
+			return nil, &net.OpError{Op: "dial", Err: errors.New("refused")}
+		},
+		func(string) {},
+		func(int) bool { return true },
+		func(*http.Response) *ProviderError { return nil },
+		func(*http.Response, time.Duration) AttemptOutcome { return AttemptOutcome{} },
+	)
+	if out.Err == nil {
+		t.Fatal("expected dial error")
+	}
+}
+
 func TestSharedUpstreamHelpers(t *testing.T) {
 	t.Parallel()
 	if !IsRetryableHTTPStatus(429) || !IsRetryableHTTPStatus(529, 529) || IsRetryableHTTPStatus(400) {
@@ -327,6 +382,7 @@ func TestSharedUpstreamHelpers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer func() { _ = okResp.Body.Close() }()
 	out := NonEventStreamError("t", okResp)
 	if out.Err == nil {
 		t.Fatal("expected non-event-stream error")
@@ -352,13 +408,17 @@ func TestSharedUpstreamHelpers(t *testing.T) {
 		_, _ = w.Write([]byte("ok"))
 	}))
 	t.Cleanup(okOnce.Close)
+	okHTTP, err := http.Get(okOnce.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
 	okGot := TryHTTPOnce(0, 0,
-		func() (*http.Response, error) { return http.Get(okOnce.URL) },
+		func() (*http.Response, error) { return okHTTP, nil },
 		func(string) {},
 		func(code int) bool { return IsRetryableHTTPStatus(code) },
 		func(*http.Response) *ProviderError { return nil },
 		func(resp *http.Response) AttemptOutcome {
-			_ = resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 			return AttemptOutcome{Resp: Response{StatusCode: 200}}
 		},
 	)
@@ -370,8 +430,12 @@ func TestSharedUpstreamHelpers(t *testing.T) {
 		http.Error(w, "no", http.StatusBadGateway)
 	}))
 	t.Cleanup(errOnce.Close)
+	errHTTP, err := http.Get(errOnce.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
 	errGot := TryHTTPOnce(1, 0,
-		func() (*http.Response, error) { return http.Get(errOnce.URL) },
+		func() (*http.Response, error) { return errHTTP, nil },
 		func(string) {},
 		func(code int) bool { return IsRetryableHTTPStatus(code) },
 		func(resp *http.Response) *ProviderError {

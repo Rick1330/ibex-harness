@@ -23,7 +23,9 @@ func (c *Client) executeWithRetry(ctx context.Context, span trace.Span, call ups
 		span,
 		c.cfg.maxRetries(),
 		"anthropic request failed",
-		c.waitBeforeRetry,
+		func(ctx context.Context, attempt int, lastErr error) error {
+			return provider.WaitBeforeRetry(ctx, c.cfg.RetryBaseDelay, attempt, lastErr)
+		},
 		func() { c.metrics.IncProviderRetry(c.Name()) },
 		func(ctx context.Context, attempt int) provider.AttemptOutcome {
 			return c.tryOnce(ctx, call, attempt)
@@ -32,23 +34,21 @@ func (c *Client) executeWithRetry(ctx context.Context, span trace.Span, call ups
 }
 
 func (c *Client) tryOnce(ctx context.Context, call upstreamCall, attempt int) provider.AttemptOutcome {
-	start := time.Now()
-	return provider.TryHTTPOnce(
+	return provider.TimedHTTPOnce(
 		c.cfg.maxRetries(),
 		attempt,
 		func() (*http.Response, error) { return c.doRequest(ctx, call) },
 		func(statusClass string) { c.metrics.IncProviderRequest(c.Name(), statusClass) },
 		isRetryableStatus,
 		func(resp *http.Response) *provider.ProviderError { return readProviderError(c.Name(), resp) },
-		func(resp *http.Response) provider.AttemptOutcome {
-			return c.acceptOKBody(resp, call, start)
+		func(resp *http.Response, latency time.Duration) provider.AttemptOutcome {
+			return c.acceptOKBody(resp, call, latency)
 		},
 	)
 }
 
-func (c *Client) acceptOKBody(resp *http.Response, call upstreamCall, start time.Time) provider.AttemptOutcome {
+func (c *Client) acceptOKBody(resp *http.Response, call upstreamCall, latency time.Duration) provider.AttemptOutcome {
 	requestID := firstNonEmpty(resp.Header.Get("request-id"), resp.Header.Get("x-request-id"))
-	latency := time.Since(start)
 	if call.Stream {
 		return c.acceptStreamBody(resp, call.Model, requestID, latency)
 	}
@@ -60,7 +60,7 @@ func (c *Client) acceptStreamBody(resp *http.Response, model, requestID string, 
 		return provider.NonEventStreamError(c.Name(), resp)
 	}
 	// Live SSE body: never retry after this point (ADR-0027 / ADR-0040).
-	pipe := newStreamTranslatePipe(resp.Body, model, requestID)
+	pipe := newStreamTranslatePipe(resp.Body, streamMeta{Model: model, RequestID: requestID})
 	return provider.AttemptOutcome{
 		Resp: provider.Response{
 			Body:              pipe,

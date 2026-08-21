@@ -48,26 +48,61 @@ func (timeoutNetError) Error() string   { return "timeout" }
 func (timeoutNetError) Timeout() bool   { return true }
 func (timeoutNetError) Temporary() bool { return true }
 
-func TestRequest_ToolRoleRejected(t *testing.T) {
+func TestWaitBeforeRetry_Honors503RetryAfter(t *testing.T) {
 	t.Parallel()
-	_, err := marshalAnthropicRequestBody(provider.Request{
-		Model: modelClaudeSonnet45,
-		Messages: []provider.Message{
-			{Role: "user", Content: "hi"},
-			{Role: "tool", Content: "{}"},
-		},
-	}, 1024)
-	assertBadRequest(t, err)
+	client := testClient(t, "http://example.invalid", "k")
+	err := provider.WaitBeforeRetry(context.Background(), client.cfg.RetryBaseDelay, 1, &provider.ProviderError{
+		StatusCode: http.StatusServiceUnavailable,
+		RetryAfter: time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 }
 
-func TestRequest_EmptyNonSystemRejected(t *testing.T) {
+func TestRequest_ValidationRejected(t *testing.T) {
 	t.Parallel()
-	_, err := marshalAnthropicRequestBody(provider.Request{
-		Model:    modelClaudeSonnet45,
-		Messages: []provider.Message{{Role: "system", Content: "only"}},
-	}, 1024)
-	if err == nil {
-		t.Fatal("expected error")
+	cases := []struct {
+		name string
+		req  provider.Request
+	}{
+		{
+			name: "tool_role",
+			req: provider.Request{
+				Model: modelClaudeSonnet45,
+				Messages: []provider.Message{
+					{Role: "user", Content: "hi"},
+					{Role: "tool", Content: "{}"},
+				},
+			},
+		},
+		{
+			name: "empty_user",
+			req: provider.Request{
+				Model:    modelClaudeSonnet45,
+				Messages: []provider.Message{{Role: "user", Content: "   "}},
+			},
+		},
+		{
+			name: "system_only",
+			req: provider.Request{
+				Model:    modelClaudeSonnet45,
+				Messages: []provider.Message{{Role: "system", Content: "only"}},
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := marshalAnthropicRequestBody(tc.req, 1024)
+			if tc.name == "system_only" {
+				if err == nil {
+					t.Fatal("expected error")
+				}
+				return
+			}
+			assertBadRequest(t, err)
+		})
 	}
 }
 
@@ -106,15 +141,6 @@ func TestTranslateNonStream_MissingIDUsesUniqueFallback(t *testing.T) {
 	if resp.ProviderRequestID == "" || resp.ProviderRequestID == "chatcmpl-anthropic" {
 		t.Fatalf("request id=%q", resp.ProviderRequestID)
 	}
-}
-
-func TestRequest_EmptyContentRejected(t *testing.T) {
-	t.Parallel()
-	_, err := marshalAnthropicRequestBody(provider.Request{
-		Model:    modelClaudeSonnet45,
-		Messages: []provider.Message{{Role: "user", Content: "   "}},
-	}, 1024)
-	assertBadRequest(t, err)
 }
 
 func TestRequest_MidConversationSystemFolded(t *testing.T) {
@@ -193,18 +219,6 @@ func TestClient_HonorsRetryAfterOn529(t *testing.T) {
 	_ = resp.Body.Close()
 	if calls.Load() != 2 {
 		t.Fatalf("calls=%d", calls.Load())
-	}
-}
-
-func TestWaitBeforeRetry_Honors503RetryAfter(t *testing.T) {
-	t.Parallel()
-	client := testClient(t, "http://example.invalid", "k")
-	err := client.waitBeforeRetry(context.Background(), 1, &provider.ProviderError{
-		StatusCode: http.StatusServiceUnavailable,
-		RetryAfter: time.Millisecond,
-	})
-	if err != nil {
-		t.Fatal(err)
 	}
 }
 

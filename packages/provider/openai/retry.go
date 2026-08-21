@@ -31,21 +31,20 @@ func (c *Client) executeWithRetry(ctx context.Context, span trace.Span, call ups
 }
 
 func (c *Client) tryOnce(ctx context.Context, call upstreamCall, attempt int) provider.AttemptOutcome {
-	start := time.Now()
-	return provider.TryHTTPOnce(
+	return provider.TimedHTTPOnce(
 		c.cfg.maxRetries(),
 		attempt,
 		func() (*http.Response, error) { return c.doRequest(ctx, call) },
 		func(statusClass string) { c.metrics.IncProviderRequest(c.Name(), statusClass) },
 		isRetryableStatus,
 		func(resp *http.Response) *provider.ProviderError { return readProviderError(c.Name(), resp) },
-		func(resp *http.Response) provider.AttemptOutcome {
-			return c.acceptOKBody(resp, call.Stream, start)
+		func(resp *http.Response, latency time.Duration) provider.AttemptOutcome {
+			return c.acceptOKBody(resp, call.Stream, latency)
 		},
 	)
 }
 
-func (c *Client) acceptOKBody(resp *http.Response, stream bool, start time.Time) provider.AttemptOutcome {
+func (c *Client) acceptOKBody(resp *http.Response, stream bool, latency time.Duration) provider.AttemptOutcome {
 	if stream && !provider.IsEventStream(resp.Header.Get("Content-Type")) {
 		return provider.NonEventStreamError(c.Name(), resp)
 	}
@@ -54,7 +53,7 @@ func (c *Client) acceptOKBody(resp *http.Response, stream bool, start time.Time)
 		Resp: provider.Response{
 			Body:       resp.Body,
 			StatusCode: resp.StatusCode,
-			Latency:    time.Since(start),
+			Latency:    latency,
 		},
 	}
 }

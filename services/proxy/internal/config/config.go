@@ -252,28 +252,50 @@ func (c *Config) applyLLMDefaults() {
 }
 
 func (c *Config) applyOpenAIDefaults() {
-	if strings.TrimSpace(c.OpenAI.BaseURL) == "" {
-		c.OpenAI.BaseURL = defaultOpenAIBaseURL
-	}
-	if c.OpenAI.RequestTimeout <= 0 {
-		c.OpenAI.RequestTimeout = defaultOpenAIRequestTimeout
-	}
-	c.OpenAI.MaxRetries = normalizeRetryCount(c.OpenAI.MaxRetries, defaultOpenAIMaxRetries)
-	if c.OpenAI.RetryBaseDelay <= 0 {
-		c.OpenAI.RetryBaseDelay = defaultOpenAIRetryBaseDelay
-	}
+	applyProviderHTTPDefaults(
+		&c.OpenAI.BaseURL,
+		&c.OpenAI.RequestTimeout,
+		&c.OpenAI.MaxRetries,
+		&c.OpenAI.RetryBaseDelay,
+		defaultOpenAIBaseURL,
+		defaultOpenAIRequestTimeout,
+		defaultOpenAIMaxRetries,
+		defaultOpenAIRetryBaseDelay,
+	)
 }
 
 func (c *Config) applyAnthropicDefaults() {
-	if strings.TrimSpace(c.Anthropic.BaseURL) == "" {
-		c.Anthropic.BaseURL = defaultAnthropicBaseURL
+	applyProviderHTTPDefaults(
+		&c.Anthropic.BaseURL,
+		&c.Anthropic.RequestTimeout,
+		&c.Anthropic.MaxRetries,
+		&c.Anthropic.RetryBaseDelay,
+		defaultAnthropicBaseURL,
+		defaultAnthropicTimeout,
+		defaultAnthropicMaxRetries,
+		defaultAnthropicRetryDelay,
+	)
+}
+
+func applyProviderHTTPDefaults(
+	baseURL *string,
+	timeout *time.Duration,
+	maxRetries *int,
+	retryDelay *time.Duration,
+	defaultURL string,
+	defaultTimeout time.Duration,
+	defaultMaxRetries int,
+	defaultRetryDelay time.Duration,
+) {
+	if strings.TrimSpace(*baseURL) == "" {
+		*baseURL = defaultURL
 	}
-	if c.Anthropic.RequestTimeout <= 0 {
-		c.Anthropic.RequestTimeout = defaultAnthropicTimeout
+	if *timeout <= 0 {
+		*timeout = defaultTimeout
 	}
-	c.Anthropic.MaxRetries = normalizeRetryCount(c.Anthropic.MaxRetries, defaultAnthropicMaxRetries)
-	if c.Anthropic.RetryBaseDelay <= 0 {
-		c.Anthropic.RetryBaseDelay = defaultAnthropicRetryDelay
+	*maxRetries = normalizeRetryCount(*maxRetries, defaultMaxRetries)
+	if *retryDelay <= 0 {
+		*retryDelay = defaultRetryDelay
 	}
 }
 

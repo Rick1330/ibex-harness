@@ -20,18 +20,26 @@ func TestConfig_ApplyDefaultsBranches(t *testing.T) {
 	neg := -3
 	c := Config{MaxRetries: &neg, RetryBaseDelay: -1, DefaultTokens: -1}
 	c.ApplyDefaults()
-	if c.BaseURL == "" || c.APIVersion == "" || c.Timeout <= 0 || c.StreamTimeout <= 0 {
-		t.Fatal("endpoint/timeout defaults")
+	assertDefaultsApplied(t, c)
+	var bare Config
+	if bare.maxRetries() != defaultMaxRetries {
+		t.Fatal("nil maxRetries")
+	}
+}
+
+func assertDefaultsApplied(t *testing.T, c Config) {
+	t.Helper()
+	if c.BaseURL == "" || c.APIVersion == "" {
+		t.Fatal("endpoint defaults")
+	}
+	if c.Timeout <= 0 || c.StreamTimeout <= 0 {
+		t.Fatal("timeout defaults")
 	}
 	if c.MaxRetries == nil || *c.MaxRetries != 0 {
 		t.Fatalf("max retries=%v", c.MaxRetries)
 	}
 	if c.RetryBaseDelay != defaultRetryBaseDelay || c.DefaultTokens != defaultMaxTokens {
 		t.Fatal("retry/token defaults")
-	}
-	var bare Config
-	if bare.maxRetries() != defaultMaxRetries {
-		t.Fatal("nil maxRetries")
 	}
 }
 
@@ -143,8 +151,11 @@ func TestStream_MalformedDeltasIgnored(t *testing.T) {
 func TestNew_NilDeps(t *testing.T) {
 	t.Parallel()
 	c := New(Config{APIKey: "k"}, logger.Discard("a"), nil, nil)
-	if c.tracer == nil || c.metrics == nil || c.streamClient == nil {
-		t.Fatal("defaults")
+	if c.tracer == nil {
+		t.Fatal("tracer")
+	}
+	if c.metrics == nil || c.streamClient == nil {
+		t.Fatal("metrics/stream")
 	}
 }
 
@@ -194,8 +205,14 @@ func TestClient_ReadProviderErrorMessage(t *testing.T) {
 		Messages: []provider.Message{{Role: "user", Content: "hi"}},
 	})
 	var pe *provider.ProviderError
-	if !errors.As(err, &pe) || pe.StatusCode != 429 || pe.ProviderErrMsg != "rl" {
+	if !errors.As(err, &pe) {
 		t.Fatalf("err=%v", err)
+	}
+	if pe.StatusCode != 429 {
+		t.Fatalf("status=%d", pe.StatusCode)
+	}
+	if pe.ProviderErrMsg != "rl" {
+		t.Fatalf("msg=%q", pe.ProviderErrMsg)
 	}
 }
 

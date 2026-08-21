@@ -118,8 +118,11 @@ func TestNonStream_Translate(t *testing.T) {
 	defer func() { _ = resp.Body.Close() }()
 	body := mustReadAll(t, resp.Body)
 	assertContainsAll(t, body, `"object":"chat.completion"`, `"finish_reason":"stop"`)
-	if resp.ProviderRequestID != "req_123" || resp.Usage == nil || resp.Usage.TotalTokens != 4 {
-		t.Fatalf("id=%q usage=%+v", resp.ProviderRequestID, resp.Usage)
+	if resp.ProviderRequestID != "req_123" {
+		t.Fatalf("id=%q", resp.ProviderRequestID)
+	}
+	if resp.Usage == nil || resp.Usage.TotalTokens != 4 {
+		t.Fatalf("usage=%+v", resp.Usage)
 	}
 }
 
@@ -260,8 +263,14 @@ func assertMessagesUnchanged(t *testing.T, msgs, orig []provider.Message) {
 
 func assertAnthropicHeaders(t *testing.T, r *http.Request) {
 	t.Helper()
-	if r.Header.Get("x-api-key") != "test-key" || r.Header.Get("anthropic-version") != defaultAPIVersion || r.URL.Path != "/v1/messages" {
-		t.Fatalf("headers/path unexpected: key=%q ver=%q path=%q", r.Header.Get("x-api-key"), r.Header.Get("anthropic-version"), r.URL.Path)
+	if r.Header.Get("x-api-key") != "test-key" {
+		t.Fatalf("api key=%q", r.Header.Get("x-api-key"))
+	}
+	if r.Header.Get("anthropic-version") != defaultAPIVersion {
+		t.Fatalf("version=%q", r.Header.Get("anthropic-version"))
+	}
+	if r.URL.Path != "/v1/messages" {
+		t.Fatalf("path=%q", r.URL.Path)
 	}
 }
 

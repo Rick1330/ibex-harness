@@ -23,24 +23,34 @@ const (
 // errPipeClosed is returned when the consumer closes the translate pipe intentionally.
 var errPipeClosed = errors.New("anthropic stream translate pipe closed")
 
+// streamMeta carries identity fields for one translated SSE stream.
+type streamMeta struct {
+	Model     string
+	RequestID string
+}
+
+// sseEvent is one parsed Anthropic SSE event.
+type sseEvent struct {
+	Type string
+	Data string
+}
+
 // streamTranslatePipe reads Anthropic named SSE and emits OpenAI chat.completion.chunk SSE.
 // Backpressure is natural via io.Pipe: the producer blocks when the consumer is slow.
 type streamTranslatePipe struct {
 	pr         *io.PipeReader
 	src        io.ReadCloser
-	model      string
-	requestID  string
+	meta       streamMeta
 	closeSrc   sync.Once
 	readerDone chan struct{}
 }
 
-func newStreamTranslatePipe(src io.ReadCloser, model, requestID string) *streamTranslatePipe {
+func newStreamTranslatePipe(src io.ReadCloser, meta streamMeta) *streamTranslatePipe {
 	pr, pw := io.Pipe()
 	p := &streamTranslatePipe{
 		pr:         pr,
 		src:        src,
-		model:      model,
-		requestID:  requestID,
+		meta:       meta,
 		readerDone: make(chan struct{}),
 	}
 	go p.run(pw)
@@ -63,31 +73,28 @@ func (p *streamTranslatePipe) closeUpstream() {
 func (p *streamTranslatePipe) run(pw *io.PipeWriter) {
 	defer close(p.readerDone)
 	defer p.closeUpstream()
-
-	runErr := p.translateInto(pw)
-	if runErr != nil && !errors.Is(runErr, errPipeClosed) {
-		_ = pw.CloseWithError(runErr)
+	if err := p.translateInto(pw); err != nil && !errors.Is(err, errPipeClosed) {
+		_ = pw.CloseWithError(err)
 		return
 	}
 	_ = pw.Close()
 }
 
 func (p *streamTranslatePipe) translateInto(pw *io.PipeWriter) error {
-	st := newStreamState(p.requestID, p.model, pw)
+	st := newStreamState(p.meta, pw)
 	parser := newSSEParser(p.src)
 	for {
-		et, data, err := parser.nextEvent()
+		ev, err := parser.nextEvent()
 		if err == io.EOF {
-			break
+			return st.finish()
 		}
 		if err != nil {
 			return err
 		}
-		if err := st.handle(et, data); err != nil {
+		if err := st.handle(ev); err != nil {
 			return err
 		}
 	}
-	return st.finish()
 }
 
 type sseParser struct {
@@ -102,25 +109,25 @@ func newSSEParser(r io.Reader) *sseParser {
 	return &sseParser{scanner: sc}
 }
 
-func (p *sseParser) nextEvent() (eventType, data string, err error) {
+func (p *sseParser) nextEvent() (sseEvent, error) {
 	for p.scanner.Scan() {
-		et, data, done, err := p.handleScanLine(p.scanner.Text())
+		ev, done, err := p.handleScanLine(p.scanner.Text())
 		if err != nil || done {
-			return et, data, err
+			return ev, err
 		}
 	}
 	return p.finishScan()
 }
 
-func (p *sseParser) handleScanLine(line string) (eventType, data string, done bool, err error) {
+func (p *sseParser) handleScanLine(line string) (sseEvent, bool, error) {
 	if line == "" {
-		et, data, err := p.flush()
-		return et, data, true, err
+		ev, err := p.flush()
+		return ev, true, err
 	}
 	if strings.HasPrefix(line, ":") {
-		return "sse_comment", commentPayload(line), true, nil
+		return sseEvent{Type: "sse_comment", Data: commentPayload(line)}, true, nil
 	}
-	return "", "", false, p.ingestLine(line)
+	return sseEvent{}, false, p.ingestLine(line)
 }
 
 func commentPayload(line string) string {
@@ -131,18 +138,18 @@ func commentPayload(line string) string {
 	return comment
 }
 
-func (p *sseParser) finishScan() (eventType, data string, err error) {
+func (p *sseParser) finishScan() (sseEvent, error) {
 	if err := p.scanner.Err(); err != nil {
-		return "", "", err
+		return sseEvent{}, err
 	}
-	et, data, flushErr := p.flush()
-	if flushErr != nil {
-		return "", "", flushErr
+	ev, err := p.flush()
+	if err != nil {
+		return sseEvent{}, err
 	}
-	if et == "" && data == "" {
-		return "", "", io.EOF
+	if ev.Type == "" && ev.Data == "" {
+		return sseEvent{}, io.EOF
 	}
-	return et, data, nil
+	return ev, nil
 }
 
 func (p *sseParser) ingestLine(line string) error {
@@ -172,18 +179,18 @@ func (p *sseParser) appendData(payload string) error {
 	return nil
 }
 
-func (p *sseParser) flush() (eventType, data string, err error) {
-	data = strings.TrimSpace(p.dataBuf.String())
+func (p *sseParser) flush() (sseEvent, error) {
+	data := strings.TrimSpace(p.dataBuf.String())
 	et := strings.TrimSpace(p.eventType)
 	p.eventType = ""
 	p.dataBuf.Reset()
 	if et == "" && data == "" {
-		return "", "", nil
+		return sseEvent{}, nil
 	}
 	if et == "" {
 		et = "message"
 	}
-	return et, data, nil
+	return sseEvent{Type: et, Data: data}, nil
 }
 
 // streamState is owned exclusively by the producer goroutine.
@@ -196,12 +203,12 @@ type streamState struct {
 	pw         *io.PipeWriter
 }
 
-func newStreamState(requestID, model string, pw *io.PipeWriter) *streamState {
-	msgID := requestID
+func newStreamState(meta streamMeta, pw *io.PipeWriter) *streamState {
+	msgID := meta.RequestID
 	if msgID == "" {
 		msgID = newFallbackCompletionID()
 	}
-	return &streamState{msgID: msgID, model: model, created: time.Now().Unix(), pw: pw}
+	return &streamState{msgID: msgID, model: meta.Model, created: time.Now().Unix(), pw: pw}
 }
 
 func (st *streamState) finish() error {
@@ -213,20 +220,20 @@ func (st *streamState) finish() error {
 	return st.writeRaw("data: " + doneSentinel + "\n\n")
 }
 
-func (st *streamState) handle(eventType, data string) error {
-	switch eventType {
+func (st *streamState) handle(ev sseEvent) error {
+	switch ev.Type {
 	case "error":
-		return mapStreamError(data)
+		return mapStreamError(ev.Data)
 	case "message_start":
-		return st.onMessageStart(data)
+		return st.onMessageStart(ev.Data)
 	case "content_block_delta":
-		return st.onContentDelta(data)
+		return st.onContentDelta(ev.Data)
 	case "message_delta":
-		return st.onMessageDelta(data)
+		return st.onMessageDelta(ev.Data)
 	case "ping":
 		return st.writeRaw(": ping\n\n")
 	case "sse_comment":
-		return st.writeRaw(": " + data + "\n\n")
+		return st.writeRaw(": " + ev.Data + "\n\n")
 	case "message_stop", "content_block_start", "content_block_stop":
 		return nil
 	default:

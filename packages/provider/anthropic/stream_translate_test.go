@@ -26,8 +26,13 @@ func TestStreamTranslate_TextAndDone(t *testing.T) {
 		`data: {"type":"message_stop"}`,
 	)
 	out := mustTranslateAll(t, anth, modelClaudeSonnet45, "fallback-id")
+	assertHappyStream(t, out, "msg_s")
+}
+
+func assertHappyStream(t *testing.T, out, wantID string) {
+	t.Helper()
 	assertContainsAll(t, out, `"content":"Hi"`, `"content":"!"`, `"finish_reason":"stop"`, "data: [DONE]")
-	assertChunkID(t, out, "msg_s")
+	assertChunkID(t, out, wantID)
 	assertChunksParse(t, out)
 }
 
@@ -41,7 +46,7 @@ func TestStreamTranslate_MidStreamOverloaded(t *testing.T) {
 		`event: error`,
 		`data: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}`,
 	)
-	pipe := newStreamTranslatePipe(io.NopCloser(strings.NewReader(anth)), modelClaudeSonnet45, "")
+	pipe := newStreamTranslatePipe(io.NopCloser(strings.NewReader(anth)), streamMeta{Model: modelClaudeSonnet45, RequestID: ""})
 	defer func() { _ = pipe.Close() }()
 	_, err := io.ReadAll(pipe)
 	if err == nil {
@@ -92,7 +97,7 @@ func TestStreamTranslate_EventSizeLimit(t *testing.T) {
 		b.WriteByte('\n')
 	}
 	b.WriteByte('\n')
-	pipe := newStreamTranslatePipe(io.NopCloser(strings.NewReader(b.String())), modelClaudeSonnet45, "id")
+	pipe := newStreamTranslatePipe(io.NopCloser(strings.NewReader(b.String())), streamMeta{Model: modelClaudeSonnet45, RequestID: "id"})
 	defer func() { _ = pipe.Close() }()
 	_, err := io.ReadAll(pipe)
 	if err == nil {
@@ -112,7 +117,7 @@ func TestStreamTranslate_CloseUnblocksProducer(t *testing.T) {
 			}
 		}
 	}()
-	pipe := newStreamTranslatePipe(pr, modelClaudeSonnet45, "id")
+	pipe := newStreamTranslatePipe(pr, streamMeta{Model: modelClaudeSonnet45, RequestID: "id"})
 	buf := make([]byte, 64)
 	_, _ = pipe.Read(buf)
 	done := make(chan struct{})
@@ -133,7 +138,7 @@ func TestStreamTranslate_RateLimitError(t *testing.T) {
 		`event: error`,
 		`data: {"type":"error","error":{"type":"rate_limit_error","message":"slow down"}}`,
 	)
-	pipe := newStreamTranslatePipe(io.NopCloser(strings.NewReader(anth)), modelClaudeSonnet45, "id")
+	pipe := newStreamTranslatePipe(io.NopCloser(strings.NewReader(anth)), streamMeta{Model: modelClaudeSonnet45, RequestID: "id"})
 	defer func() { _ = pipe.Close() }()
 	_, err := io.ReadAll(pipe)
 	var pe *provider.ProviderError
@@ -156,7 +161,7 @@ func anthropicSSEFixture(lines ...string) string {
 
 func mustTranslateAll(t *testing.T, anth, model, id string) string {
 	t.Helper()
-	pipe := newStreamTranslatePipe(io.NopCloser(strings.NewReader(anth)), model, id)
+	pipe := newStreamTranslatePipe(io.NopCloser(strings.NewReader(anth)), streamMeta{Model: model, RequestID: id})
 	defer func() { _ = pipe.Close() }()
 	out, err := io.ReadAll(pipe)
 	if err != nil {
