@@ -132,8 +132,8 @@ func baseProxyConfig(envCfg envConfig, level slog.Level) Config {
 			DefaultRPM:   defaultRateLimitRPM,
 			OrgOverrides: map[uuid.UUID]int{},
 		},
-		LLMMode: strings.TrimSpace(envCfg.LLMMode),
-		OpenAI:  openAIConfigFromEnv(envCfg),
+		LLMMode:   strings.TrimSpace(envCfg.LLMMode),
+		OpenAI:    openAIConfigFromEnv(envCfg),
 		Anthropic: anthropicConfigFromEnv(envCfg),
 		AuthCache: AuthCacheConfig{
 			Enabled: true,

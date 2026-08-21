@@ -9,9 +9,9 @@ type Metrics interface {
 type noopMetrics struct{}
 
 func (noopMetrics) IncProviderRequest(string, string) {
-	// No-op when no metrics registry is wired.
+	_ = struct{}{}
 }
 
 func (noopMetrics) IncProviderRetry(string) {
-	// No-op when no metrics registry is wired.
+	_ = struct{}{}
 }

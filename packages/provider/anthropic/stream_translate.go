@@ -50,7 +50,6 @@ func newStreamTranslatePipe(src io.ReadCloser, model, requestID string) *streamT
 func (p *streamTranslatePipe) Read(b []byte) (int, error) { return p.pr.Read(b) }
 
 func (p *streamTranslatePipe) Close() error {
-	// Closing the pipe reader unblocks any Write in run with a short error.
 	_ = p.pr.Close()
 	p.closeUpstream()
 	<-p.readerDone
@@ -58,103 +57,120 @@ func (p *streamTranslatePipe) Close() error {
 }
 
 func (p *streamTranslatePipe) closeUpstream() {
-	p.closeSrc.Do(func() {
-		_ = p.src.Close()
-	})
+	p.closeSrc.Do(func() { _ = p.src.Close() })
 }
 
 func (p *streamTranslatePipe) run(pw *io.PipeWriter) {
 	defer close(p.readerDone)
 	defer p.closeUpstream()
 
-	var runErr error
-	defer func() {
-		if runErr != nil && !errors.Is(runErr, errPipeClosed) {
-			_ = pw.CloseWithError(runErr)
-			return
-		}
-		_ = pw.Close()
-	}()
-
-	scanner := bufio.NewScanner(p.src)
-	scanner.Buffer(make([]byte, 0, 64*1024), maxSSELineBytes)
-
-	st := streamState{
-		msgID:   p.requestID,
-		model:   p.model,
-		created: time.Now().Unix(),
-		pw:      pw,
-	}
-	if st.msgID == "" {
-		st.msgID = "chatcmpl-anthropic"
-	}
-
-	var eventType string
-	var dataBuf strings.Builder
-
-	flushEvent := func() error {
-		data := strings.TrimSpace(dataBuf.String())
-		et := strings.TrimSpace(eventType)
-		eventType = ""
-		dataBuf.Reset()
-		if et == "" && data == "" {
-			return nil
-		}
-		if et == "" {
-			et = "message"
-		}
-		return st.handle(et, data)
-	}
-
-	for scanner.Scan() {
-		line := scanner.Text()
-		switch {
-		case line == "":
-			if err := flushEvent(); err != nil {
-				runErr = err
-				return
-			}
-		case strings.HasPrefix(line, ":"):
-			// SSE comment / keepalive
-			continue
-		case strings.HasPrefix(line, "event:"):
-			eventType = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
-		case strings.HasPrefix(line, "data:"):
-			payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-			if dataBuf.Len()+len(payload)+1 > maxSSEEventBytes {
-				runErr = &provider.ProviderError{
-					ProviderName:   "anthropic",
-					StatusCode:     http.StatusBadGateway,
-					ProviderErrMsg: "anthropic SSE event exceeds size limit",
-				}
-				return
-			}
-			if dataBuf.Len() > 0 {
-				dataBuf.WriteByte('\n')
-			}
-			dataBuf.WriteString(payload)
-		default:
-			// Ignore unknown SSE fields (id:, retry:, etc.)
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		runErr = err
+	runErr := p.translateInto(pw)
+	if runErr != nil && !errors.Is(runErr, errPipeClosed) {
+		_ = pw.CloseWithError(runErr)
 		return
 	}
-	if err := flushEvent(); err != nil {
-		runErr = err
-		return
-	}
-	if !st.finishSent {
-		if err := st.writeFinish("stop"); err != nil {
-			runErr = err
-			return
+	_ = pw.Close()
+}
+
+func (p *streamTranslatePipe) translateInto(pw *io.PipeWriter) error {
+	st := newStreamState(p.requestID, p.model, pw)
+	parser := newSSEParser(p.src)
+	for {
+		et, data, err := parser.nextEvent()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		if err := st.handle(et, data); err != nil {
+			return err
 		}
 	}
-	if err := st.writeRaw("data: " + doneSentinel + "\n\n"); err != nil {
-		runErr = err
-		return
+	return st.finish()
+}
+
+type sseParser struct {
+	scanner   *bufio.Scanner
+	eventType string
+	dataBuf   strings.Builder
+}
+
+func newSSEParser(r io.Reader) *sseParser {
+	sc := bufio.NewScanner(r)
+	sc.Buffer(make([]byte, 0, 64*1024), maxSSELineBytes)
+	return &sseParser{scanner: sc}
+}
+
+func (p *sseParser) nextEvent() (eventType, data string, err error) {
+	for p.scanner.Scan() {
+		line := p.scanner.Text()
+		if line == "" {
+			return p.flush()
+		}
+		if strings.HasPrefix(line, ":") {
+			comment := strings.TrimSpace(strings.TrimPrefix(line, ":"))
+			if comment == "" {
+				comment = "keepalive"
+			}
+			return "sse_comment", comment, nil
+		}
+		if err := p.ingestLine(line); err != nil {
+			return "", "", err
+		}
 	}
+	if err := p.scanner.Err(); err != nil {
+		return "", "", err
+	}
+	et, data, flushErr := p.flush()
+	if flushErr != nil {
+		return "", "", flushErr
+	}
+	if et == "" && data == "" {
+		return "", "", io.EOF
+	}
+	return et, data, nil
+}
+
+func (p *sseParser) ingestLine(line string) error {
+	switch {
+	case strings.HasPrefix(line, "event:"):
+		p.eventType = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+		return nil
+	case strings.HasPrefix(line, "data:"):
+		return p.appendData(strings.TrimSpace(strings.TrimPrefix(line, "data:")))
+	default:
+		return nil
+	}
+}
+
+func (p *sseParser) appendData(payload string) error {
+	if p.dataBuf.Len()+len(payload)+1 > maxSSEEventBytes {
+		return &provider.ProviderError{
+			ProviderName:   "anthropic",
+			StatusCode:     http.StatusBadGateway,
+			ProviderErrMsg: "anthropic SSE event exceeds size limit",
+		}
+	}
+	if p.dataBuf.Len() > 0 {
+		p.dataBuf.WriteByte('\n')
+	}
+	p.dataBuf.WriteString(payload)
+	return nil
+}
+
+func (p *sseParser) flush() (eventType, data string, err error) {
+	data = strings.TrimSpace(p.dataBuf.String())
+	et := strings.TrimSpace(p.eventType)
+	p.eventType = ""
+	p.dataBuf.Reset()
+	if et == "" && data == "" {
+		return "", "", nil
+	}
+	if et == "" {
+		et = "message"
+	}
+	return et, data, nil
 }
 
 // streamState is owned exclusively by the producer goroutine.
@@ -167,6 +183,23 @@ type streamState struct {
 	pw         *io.PipeWriter
 }
 
+func newStreamState(requestID, model string, pw *io.PipeWriter) *streamState {
+	msgID := requestID
+	if msgID == "" {
+		msgID = newFallbackCompletionID()
+	}
+	return &streamState{msgID: msgID, model: model, created: time.Now().Unix(), pw: pw}
+}
+
+func (st *streamState) finish() error {
+	if !st.finishSent {
+		if err := st.writeFinish("stop"); err != nil {
+			return err
+		}
+	}
+	return st.writeRaw("data: " + doneSentinel + "\n\n")
+}
+
 func (st *streamState) handle(eventType, data string) error {
 	switch eventType {
 	case "error":
@@ -177,7 +210,11 @@ func (st *streamState) handle(eventType, data string) error {
 		return st.onContentDelta(data)
 	case "message_delta":
 		return st.onMessageDelta(data)
-	case "message_stop", "content_block_start", "content_block_stop", "ping":
+	case "ping":
+		return st.writeRaw(": ping\n\n")
+	case "sse_comment":
+		return st.writeRaw(": " + data + "\n\n")
+	case "message_stop", "content_block_start", "content_block_stop":
 		return nil
 	default:
 		return nil
@@ -210,7 +247,7 @@ func (st *streamState) onContentDelta(data string) error {
 		} `json:"delta"`
 	}
 	if err := json.Unmarshal([]byte(data), &payload); err != nil {
-		return nil // best-effort: skip malformed deltas
+		return nil
 	}
 	if payload.Delta.Type != "" && payload.Delta.Type != "text_delta" {
 		return nil
@@ -239,10 +276,7 @@ func (st *streamState) onMessageDelta(data string) error {
 			StopReason string `json:"stop_reason"`
 		} `json:"delta"`
 	}
-	if err := json.Unmarshal([]byte(data), &payload); err != nil {
-		return nil
-	}
-	if payload.Delta.StopReason == "" {
+	if err := json.Unmarshal([]byte(data), &payload); err != nil || payload.Delta.StopReason == "" {
 		return nil
 	}
 	return st.writeFinish(mapStopReason(payload.Delta.StopReason))
@@ -320,7 +354,6 @@ func (st *streamState) writeRaw(s string) error {
 	if err == nil {
 		return nil
 	}
-	// Consumer closed the pipe (client disconnect / Body.Close): stop quietly.
 	if errors.Is(err, io.ErrClosedPipe) {
 		return errPipeClosed
 	}

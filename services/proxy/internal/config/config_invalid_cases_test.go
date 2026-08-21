@@ -41,7 +41,7 @@ var invalidProxyConfigCases = []struct {
 			c.RateLimit.OrgOverrides = map[uuid.UUID]int{orgID: 0}
 		},
 	},
-	{name: "live mode missing openai key", mutate: func(c *Config) { c.LLMMode = "live"; c.OpenAI.APIKey = ""; c.Anthropic.APIKey = "" }},
+	{name: "live mode missing all provider keys", mutate: func(c *Config) { c.LLMMode = "live"; c.OpenAI.APIKey = ""; c.Anthropic.APIKey = "" }},
 	{name: "invalid llm mode", mutate: func(c *Config) { c.LLMMode = "invalid" }},
 	{name: "mock mode in production", mutate: func(c *Config) {
 		c.Environment = envProduction

@@ -247,34 +247,42 @@ func (c *Config) applyLLMDefaults() {
 	if strings.TrimSpace(c.LLMMode) == "" {
 		c.LLMMode = defaultLLMMode
 	}
+	c.applyOpenAIDefaults()
+	c.applyAnthropicDefaults()
+}
+
+func (c *Config) applyOpenAIDefaults() {
 	if strings.TrimSpace(c.OpenAI.BaseURL) == "" {
 		c.OpenAI.BaseURL = defaultOpenAIBaseURL
 	}
 	if c.OpenAI.RequestTimeout <= 0 {
 		c.OpenAI.RequestTimeout = defaultOpenAIRequestTimeout
 	}
-	if c.OpenAI.MaxRetries < 0 {
-		c.OpenAI.MaxRetries = 0
-	}
-	if c.OpenAI.MaxRetries == 0 {
-		c.OpenAI.MaxRetries = defaultOpenAIMaxRetries
-	}
+	c.OpenAI.MaxRetries = normalizeRetryCount(c.OpenAI.MaxRetries, defaultOpenAIMaxRetries)
 	if c.OpenAI.RetryBaseDelay <= 0 {
 		c.OpenAI.RetryBaseDelay = defaultOpenAIRetryBaseDelay
 	}
+}
+
+func (c *Config) applyAnthropicDefaults() {
 	if strings.TrimSpace(c.Anthropic.BaseURL) == "" {
 		c.Anthropic.BaseURL = defaultAnthropicBaseURL
 	}
 	if c.Anthropic.RequestTimeout <= 0 {
 		c.Anthropic.RequestTimeout = defaultAnthropicTimeout
 	}
-	if c.Anthropic.MaxRetries < 0 {
-		c.Anthropic.MaxRetries = 0
-	}
-	if c.Anthropic.MaxRetries == 0 {
-		c.Anthropic.MaxRetries = defaultAnthropicMaxRetries
-	}
+	c.Anthropic.MaxRetries = normalizeRetryCount(c.Anthropic.MaxRetries, defaultAnthropicMaxRetries)
 	if c.Anthropic.RetryBaseDelay <= 0 {
 		c.Anthropic.RetryBaseDelay = defaultAnthropicRetryDelay
 	}
+}
+
+func normalizeRetryCount(current, fallback int) int {
+	if current < 0 {
+		return 0
+	}
+	if current == 0 {
+		return fallback
+	}
+	return current
 }

@@ -32,12 +32,12 @@ type anthropicUsage struct {
 }
 
 type openAIChatCompletion struct {
-	ID      string          `json:"id"`
-	Object  string          `json:"object"`
-	Created int64           `json:"created"`
-	Model   string          `json:"model"`
-	Choices []openAIChoice  `json:"choices"`
-	Usage   openAIUsage     `json:"usage"`
+	ID      string         `json:"id"`
+	Object  string         `json:"object"`
+	Created int64          `json:"created"`
+	Model   string         `json:"model"`
+	Choices []openAIChoice `json:"choices"`
+	Usage   openAIUsage    `json:"usage"`
 }
 
 type openAIChoice struct {
@@ -74,7 +74,7 @@ func translateNonStreamResponse(raw []byte, requestModel string, requestID strin
 	}
 	id := anth.ID
 	if id == "" {
-		id = "chatcmpl-anthropic"
+		id = newFallbackCompletionID()
 	}
 	usage := openAIUsage{
 		PromptTokens:     anth.Usage.InputTokens,
@@ -105,8 +105,8 @@ func translateNonStreamResponse(raw []byte, requestModel string, requestID strin
 		requestID = id
 	}
 	return provider.Response{
-		Body:              io.NopCloser(bytes.NewReader(body)),
-		StatusCode:        http.StatusOK,
+		Body:       io.NopCloser(bytes.NewReader(body)),
+		StatusCode: http.StatusOK,
 		Usage: &provider.Usage{
 			InputTokens:  anth.Usage.InputTokens,
 			OutputTokens: anth.Usage.OutputTokens,
