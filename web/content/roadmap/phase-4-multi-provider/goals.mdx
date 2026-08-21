@@ -1,56 +1,105 @@
 ---
 title: "Phase 4 — Goals"
-description: "Description: Pluggable adapters behind a stable internal interface in `services/proxy`."
-summary: "Description: Pluggable adapters behind a stable internal interface in `services/proxy`."
+description: "Operator Platform & Multi-Provider: management API, hierarchical rate limiting, multi-provider routing, operator dashboard, and exit gate."
+summary: "Operator Platform & Multi-Provider: management API, hierarchical rate limiting, multi-provider routing, operator dashboard, and exit gate."
 phase: "phase-4-multi-provider"
 ---
 
 # Phase 4 — Goals
 
-## Goal 4.1: Provider adapter layer
+<Callout type="note" title="Planning baseline">
+  Paths, libraries, schemas, and sequencing on this phase are orientation for planning.
+  Implementation is expected to require further research and may land differently than any sketch.
+</Callout>
 
-**Description:** Pluggable adapters behind a stable internal interface in `services/proxy`.
+<Callout type="info" title="Scope note">
+ Phase 4 covers the management API, operator dashboard, multi-provider routing, and rate limiting as a
+ single operator-platform phase. Intelligence-layer work continues in Phase 4.5.
+</Callout>
+
+## Track A — Management API Server
+
+### Goal 4.A: Authenticated, tenant-isolated management surface for all IBEX resources
+
+**Milestones:**
+- **4.A.1 — API server skeleton:** FastAPI, auth middleware via gRPC `ValidateToken`, stable error envelope, `SET LOCAL app.org_id` per transaction for RLS.
+- **4.A.2 — Organization and user management:** Full CRUD. Org suspension propagates to proxy auth cache within 5s. Last-owner-cannot-be-demoted invariant.
+- **4.A.3 — Agent management:** 8 endpoints (list/create/get/patch/delete/activate/pause/archive). `default_provider` and `default_model` fields.
+- **4.A.4 — Token management:** Scoped permission strings, plaintext shown once on creation, optional IP CIDR restriction, revocation via `AuthService.RevokeToken`.
+- **4.A.5 — Provider credential management (new):** Org-scoped, envelope-encrypted credentials. Validate-before-store. Proxy reads via `AuthService.GetProviderCredential` gRPC. Platform-default fallback.
 
 **Acceptance criteria:**
-
-- Add second provider without duplicating streaming/auth logic
-- Provider-specific quirks isolated in adapter package
-- Config-driven provider registry per org
-
-**Validation:** Integration tests per adapter; contract tests for normalized internal request type
+- Cross-org access returns 404 (anti-enumeration)
+- Org suspension observed in proxy auth-cache within 5s
+- Encrypted API key never appears in any response, log, or trace
 
 ---
 
-## Goal 4.2: Routing and failover
+## Track B — Hierarchical Redis Lua Rate Limiting
 
-**Description:** Route models to providers with fallback when primary unavailable.
+### Goal 4.B: Atomic, three-level rate limiting replacing the Phase 1 placeholder
+
+**Milestones:**
+- **4.B.1 — Lua-based atomic hierarchical limiter:** Single Lua script checks agent → org → global in one round trip. `EVALSHA` with `NOSCRIPT` fallback. Monthly token-spend ceiling post-response.
+- **4.B.2 — Rate limit configuration API:** Per-org/agent RPM and token budget overrides. Dashboard usage endpoint.
+- **4.B.3 — Load and correctness benchmark:** 200 concurrent goroutines, limit=100: exactly 100 succeed, 100 return 429. Zero over-admission.
 
 **Acceptance criteria:**
-
-- Routing rules stored in Postgres or Redis with cache
-- Failover respects circuit breaker state
-- Documented behavior when all providers down (503)
-
-**Validation:** Chaos test: primary provider returns 503 → fallback succeeds
+- `RateLimiter` interface signature unchanged (validates Phase 1 interface design)
+- Concurrency test proves zero over-admission
+- Fail-open on Redis outage preserved
 
 ---
 
-## Goal 4.3: Hierarchical rate limiting
+## Track C — Multi-Provider Adapters, Routing & Resilience
 
-**Description:** Redis Lua scripts enforce limits at agent, org, and global levels.
+### Goal 4.C: At least two live providers with routing, circuit breakers, and fallback
+
+**Milestones:**
+- **4.C.1 — Anthropic adapter hardening:** Promote Phase 2.5 prototype to production parity. Full SSE dual-write, message-role translation.
+- **4.C.2 — Per-org model routing:** `Registry.ForOrg(ctx, orgID, model)`. Allow/deny list in Postgres, cached via bloom→LRU.
+- **4.C.3 — Circuit breaker per provider:** Rolling error-rate window (30s, &gt;50% failure trips open). Per-provider isolation. New `packages/circuitbreaker`.
+- **4.C.4 — Fallback routing (new):** On breaker-open, transparently reroute to fallback model. Opt-in per org. `X-IBEX-Provider-Fallback` header. Traced to ClickHouse.
+- **4.C.5 — Streaming hardening:** Slow-client backpressure. Mid-stream Anthropic `error` event and OpenAI connection drop both produce the same client behavior.
 
 **Acceptance criteria:**
-
-- Atomic increment/check in Lua
-- 429 responses with stable error body
-- Integration test proves limit enforcement (no mocks for Lua atomicity)
-
-**Validation:** TESTING_STRATEGY.md Redis tests with real Redis
+- Golden-fixture parity tests green for both providers in CI
+- Circuit breaker trips on sustained 60% error rate, half-open probe recovers correctly
+- Fallback only triggers when org config explicitly enables it (default-off)
+- No regression in Phase 1–3.5 suites with 2 providers registered
 
 ---
 
-## Deferred
+## Track D — Operator Dashboard
 
-- Marketplace tokens and federation (architecture describes; post-MVP)
-- Custom enterprise routing SLAs
-- **Behavioural fingerprints, drift alerts, and billing** — deferred to [Phase 6 — Intelligence & Monetization](/roadmap/phase-6-intelligence-monetization) (not Phase 4 scope)
+### Goal 4.D: Purpose-built operator UI built directly to the UX spec
+
+**Milestones:**
+- **4.D.1 — Dashboard foundation:** JWT session + httpOnly refresh. Permission bitmap RBAC. SSE for trace/alert streams. Full nav from `UI_UX_GUIDELINES.md` §3.
+- **4.D.2 — Trace inspector ("Why did my agent do that?"):** 6-section layout per UX spec. Score breakdown per memory with per-category weight vectors.
+- **4.D.3 — Memory browser v2:** Flat table + relationship graph view (node-link). GDPR export/delete workflow surfaced in UI.
+- **4.D.4 — Drift alerts and directive management:** Alert grouping, severity badges, small-multiples feature drift charts. Directive version timeline, diff viewer, promotion workflow, emergency revoke with MFA.
+- **4.D.5 — Analytics v2 (cost governance):** Budget alert configuration. Per-agent spend cap (soft=alert, hard=pause agent). Usage/latency charts retained.
+
+**Acceptance criteria:**
+- Lighthouse &gt;= 90, axe-core 0 violations on shell layout
+- Trace inspector renders all 6 UX-spec sections with real data
+- Memory graph renders at 200-node cap without jank
+- Budget alert fires correctly at threshold
+
+---
+
+## Track E — Exit Gate
+
+### Goal 4.E: Prove the composed operator platform works end-to-end
+
+**Milestones:**
+- **4.E.1 — Dashboard E2E test suite (Playwright):** 6 spec files covering auth, RBAC, agents, memory browser, trace inspector, rate limits, accessibility. All 4 roles tested.
+- **4.E.2 — Multi-provider resilience integration suite:** Circuit breaker, half-open probe, fallback routing, mid-stream disconnect tests.
+- **4.E.3 — Phase 4 gap register and exit audit:** Severity-tiered (P0–P3), same format as Phase 1 exit audit.
+
+**Acceptance criteria:**
+- Playwright e2e green in CI, required on `main`
+- Zero axe-core `serious`/`critical` violations
+- Fallback routing opt-in default verified by negative test
+- Zero open P0 gaps

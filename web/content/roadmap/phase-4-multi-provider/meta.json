@@ -1,5 +1,5 @@
 {
-  "title": "phase 4 multi provider",
-  "icon": "Waypoints",
-  "pages": ["index", "goals", "decisions", "risks", "milestones"]
+  "title": "Phase 4 operator platform",
+  "icon": "LayoutDashboard",
+  "pages": ["index", "tracks", "goals", "risks", "milestones"]
 }

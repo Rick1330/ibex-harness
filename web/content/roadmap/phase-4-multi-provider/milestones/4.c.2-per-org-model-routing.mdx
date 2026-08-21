@@ -1,0 +1,157 @@
+---
+title: "4.C.2 Per-Org Model Routing"
+description: "Per-org allowlists/denylists and default-model overrides, backed by a Postgres policy table cached with the existing bloom→LRU pattern — no synchronous Postgres round-trip on the hot path."
+summary: "Per-org allowlists/denylists and default-model overrides, backed by a Postgres policy table cached with the existing bloom→LRU pattern — no synchronous Postgres round-trip on the hot path."
+status: "planned"
+milestoneId: "4.C.2"
+track: "C"
+trackTitle: "Multi-Provider Adapters & Resilience"
+trackHref: "/roadmap/phase-4-multi-provider/tracks#track-c--multi-provider-adapters--resilience"
+goal: "[Track C — Multi-Provider Adapters & Resilience](/roadmap/phase-4-multi-provider/tracks#track-c--multi-provider-adapters--resilience)"
+estimatedEffort: "2 days"
+phase: "phase-4-multi-provider"
+fullTitle: "Milestone 4.C.2 — Per-Org Model Routing Configuration"
+---
+
+# Milestone 4.C.2 — Per-Org Model Routing Configuration
+
+**Status:** Planned  
+**Goal:** [Track C — Multi-Provider Adapters & Resilience](/roadmap/phase-4-multi-provider/tracks#track-c--multi-provider-adapters--resilience)  
+**Phase:** 4 — Operator Platform & Multi-Provider  
+**Estimated effort:** 2 days  
+**Track:** [Track C — Multi-Provider Adapters & Resilience](/roadmap/phase-4-multi-provider/tracks#track-c--multi-provider-adapters--resilience)
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+Exit criteria requires "model-based routing configuration per org" — not just "any org can request any model," but per-org allowlists/denylists and default-model overrides (e.g., an enterprise org restricted to Anthropic only for compliance reasons).
+
+The design extends `Registry.For(model)` to `Registry.ForOrg(ctx, orgID, model)`, backed by a small Postgres table, cached in Redis with the same bloom→LRU pattern already used for the auth cache — so this doesn't add a synchronous Postgres round-trip to the hot path.
+
+---
+
+## Non-Goals
+
+- A generic rules engine or DSL — a flat priority-ordered allow/deny list evaluated in Go is sufficient and testable
+- Per-user model routing (per-org is the correct granularity for v1)
+- Azure OpenAI or Bedrock routing (those adapters not yet in scope)
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Provider abstraction / adapters
+- Proxy service (HTTP, bootstrap, config)
+
+## Suggested naming (provisional)
+
+Rename freely to match the change that actually lands.
+
+- Branch: `feature/m4-c-2-per-org-model-routing`
+- PR title: `feat(proxy): per-org model routing policy with bloom→LRU cache (m4.C.2)`
+
+## Schema Addition
+
+```sql
+CREATE TABLE ibex_core.org_model_policies (
+ id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+ org_id UUID NOT NULL REFERENCES ibex_core.organizations(id),
+ model_pattern TEXT NOT NULL, -- exact model ID or glob pattern, e.g. "claude-*"
+ allowed BOOLEAN NOT NULL, -- true = allowlist entry, false = denylist entry
+ priority INTEGER NOT NULL, -- lower = evaluated first
+ fallback_chain TEXT[], -- ordered list of fallback model IDs (for 4.C.4)
+ created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+ UNIQUE (org_id, model_pattern)
+);
+```
+
+---
+
+## Registry Extension
+
+```go
+// Illustrative — exact path may differ
+
+// ForOrg returns the provider for the given model ID, respecting the org's policy.
+// Returns (nil, ErrModelNotAllowedForOrg) if the org's policy denies the model.
+// Falls back to the platform-level registry if no org-specific policy matches.
+func (r *OrgAwareRegistry) ForOrg(ctx context.Context, orgID string, model string) (Provider, error)
+
+// OrgAwareRegistry wraps the base Registry with per-org policy enforcement.
+// Policies are cached in Redis using the bloom→LRU pattern from packages/authcache.
+type OrgAwareRegistry struct {
+ base *Registry
+ cache *OrgModelPolicyCache
+ db OrgModelPolicyRepo
+}
+
+// ErrModelNotAllowedForOrg is returned when the org's policy denies the requested model.
+var ErrModelNotAllowedForOrg = errors.New("model not allowed for this organization")
+```
+
+---
+
+## Caching Strategy
+
+```go
+// Illustrative — exact path may differ
+
+// OrgModelPolicyCache caches per-org model policies using the same bloom→LRU pattern
+// as the auth cache (ADR-0021). Cache TTL: 60s. On miss: fetch from Postgres.
+// Cache invalidation: Redis pub/sub on policy update (same pattern as directive cache).
+type OrgModelPolicyCache struct {
+ bloom *bloom.BloomFilter // "does this org have any policy entries at all?"
+ lru *lru.Cache // org_id → []OrgModelPolicy
+ redis redis.UniversalClient
+}
+```
+
+---
+
+## Policy Evaluation Order
+
+1. Retrieve all policy rows for the org, ordered by `priority ASC`.
+2. For each row, check if `model_pattern` matches the requested model (glob match).
+3. First match wins: if `allowed = true`, permit; if `allowed = false`, deny.
+4. If no row matches: use platform default (allow any registered model).
+
+---
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] `Registry.ForOrg` with a denylist policy returns `ErrModelNotAllowedForOrg` (translated to `403 MODEL_NOT_ALLOWED`)
+- [ ] Policy cache populated on first request, subsequent requests served from LRU without DB hit
+- [ ] Policy change propagated to proxy within 60s (TTL expiry) or 1s (pub/sub invalidation) — integration test
+- [ ] `TestRouting_OrgPolicy_*` integration suite against real Postgres: allow/deny/priority-order scenarios
+- [ ] Zero proxy handler/middleware changes — only registry constructor updated
+
+---
+
+## Prerequisites
+
+- M4.C.1 Anthropic adapter merged (two providers needed to test routing)
+

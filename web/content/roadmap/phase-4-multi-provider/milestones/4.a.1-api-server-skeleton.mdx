@@ -1,0 +1,102 @@
+---
+title: "4.A.1 API Server Skeleton"
+description: "Stand up the FastAPI process, auth middleware, error envelope, and OpenAPI generation — the load-bearing scaffold every subsequent resource router depends on."
+summary: "Stand up the FastAPI process, auth middleware, error envelope, and OpenAPI generation — the load-bearing scaffold every subsequent resource router depends on."
+status: "planned"
+milestoneId: "4.A.1"
+track: "A"
+trackTitle: "Management API Server"
+trackHref: "/roadmap/phase-4-multi-provider/tracks#track-a--management-api-server"
+goal: "[Track A — Management API Server](/roadmap/phase-4-multi-provider/tracks#track-a--management-api-server)"
+estimatedEffort: "3 days"
+phase: "phase-4-multi-provider"
+fullTitle: "Milestone 4.A.1 — API Server Skeleton"
+---
+
+# Milestone 4.A.1 — API Server Skeleton
+
+**Status:** Planned  
+**Goal:** [Track A — Management API Server](/roadmap/phase-4-multi-provider/tracks#track-a--management-api-server)  
+**Phase:** 4 — Operator Platform & Multi-Provider  
+**Estimated effort:** 3 days  
+**Track:** [Track A — Management API Server](/roadmap/phase-4-multi-provider/tracks#track-a--management-api-server)
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+Everything else in Phase 4 — provider credential management, rate-limit tier configuration, the dashboard — needs somewhere to live as data and an authenticated surface to be read/written through. FastAPI + auth middleware via gRPC `ValidateToken` + stable error envelope + cursor pagination is the preferred starting scaffold. Exact layout may differ once live patterns are clear.
+
+---
+
+## Non-Goals
+
+- Any resource-specific CRUD (orgs/users/agents — those are 4.A.2–4.A.5)
+- Provider credential management (4.A.5)
+- Rate-limit config endpoints (Track B)
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Management API
+- Auth service
+- Database schema / migrations
+
+## Suggested naming (provisional)
+
+Rename freely to match the change that actually lands.
+
+- Branch: `feature/m4-a-1-api-server-skeleton`
+- PR title: `feat(api): FastAPI server skeleton with auth middleware and error envelope (m4.A.1)`
+
+## Design note: RLS Session Variable
+
+Every existing service in this codebase double-enforces tenant isolation: RLS **and** application-layer `WHERE org_id = ...`. The API server's DB session dependency should set `SET LOCAL app.org_id = '<uuid>'` at the start of every request transaction (from the verified token's `org_id`, never from a path/body param), so that Postgres RLS policies are the backstop even if a router forgets a `WHERE` clause. This costs one line per request.
+
+```python
+# Illustrative — exact path may differ
+async def get_db_session(request: Request) -> AsyncIterator[AsyncSession]:
+ async with async_session_factory() as session:
+ await session.execute(text("SET LOCAL app.org_id = :org_id"), {"org_id": str(request.state.org_id)})
+ yield session
+```
+
+---
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] OpenAPI spec is generated; health/readiness endpoints work
+- [ ] Unauthenticated requests and unhandled exceptions use the stable IBEX error envelope (not raw tracebacks)
+- [ ] Every DB session sets tenant context for RLS (from verified token claims, not request path/body)
+- [ ] Request IDs propagate into error responses and structured logs
+- [ ] Offline and integration coverage exists for auth middleware and session tenant wiring
+
+## Prerequisites
+
+- Phase 3.5 exit criteria met
+- Auth service gRPC `ValidateToken` RPC available
+

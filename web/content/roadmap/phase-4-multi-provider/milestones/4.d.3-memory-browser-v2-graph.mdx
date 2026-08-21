@@ -1,0 +1,81 @@
+---
+title: "4.D.3 Memory Browser v2 (Graph-Aware)"
+description: "Extend the memory browser with a typed relationship graph view (supersession/contradiction/specialization edges), GDPR export/delete workflow, and retained table+search from v1."
+summary: "Extend the memory browser with a typed relationship graph view (supersession/contradiction/specialization edges), GDPR export/delete workflow, and retained table+search from v1."
+status: "planned"
+milestoneId: "4.D.3"
+track: "D"
+trackTitle: "Operator Dashboard"
+trackHref: "/roadmap/phase-4-multi-provider/tracks#track-d--operator-dashboard"
+goal: "[Track D — Operator Dashboard](/roadmap/phase-4-multi-provider/tracks#track-d--operator-dashboard)"
+estimatedEffort: "4 days"
+phase: "phase-4-multi-provider"
+fullTitle: "Milestone 4.D.3 — Memory Browser v2 (Graph-Aware)"
+---
+
+# Milestone 4.D.3 — Memory Browser v2 (Graph-Aware)
+
+**Status:** Planned  
+**Goal:** [Track D — Operator Dashboard](/roadmap/phase-4-multi-provider/tracks#track-d--operator-dashboard)  
+**Phase:** 4 — Operator Platform & Multi-Provider  
+**Estimated effort:** 4 days  
+**Track:** [Track D — Operator Dashboard](/roadmap/phase-4-multi-provider/tracks#track-d--operator-dashboard)
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+The original memory browser was a flat table + search bar. Phase 3's redesign built a typed relationship graph (`memory_relationships` with supersession/merge/contradiction edges) and temporal-interval-aware conflict resolution. A table alone cannot show "this memory superseded that one because of a detected contradiction" — the most useful debugging view for memory-quality issues.
+
+---
+
+## New Capabilities
+
+- **Relationship graph view** — node-link graph (react-force-graph or d3), nodes colored by category, edges labeled by relationship type, capped at 200 nodes for render performance
+- **GDPR export/delete workflow** — two-step confirm dialog showing cascade preview ("3 memories, 2 relationships, 1 archived session")
+- **Retained from v1** — `MemoryTable.tsx` with cursor pagination, category/status/date filters, debounced semantic search
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Operator dashboard
+- Management API
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] Relationship graph renders correctly for a memory with ≥3 relationship types simultaneously
+- [ ] Graph interaction (click/hover/zoom) has no jank at 200-node cap; degrades gracefully beyond
+- [ ] GDPR delete preview accurately reflects cascade scope before confirmation
+- [ ] All accessibility rules verified (keyboard nav, `aria-expanded` on graph toggle, focus trap on dialogs)
+
+---
+
+## Prerequisites
+
+- Milestone 4.D.1 (Dashboard foundation)
+- Memory relationship API available
+
