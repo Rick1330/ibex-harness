@@ -1,0 +1,83 @@
+---
+title: "3.5.E.1 MCP server skeleton and transport"
+description: "Minimal spec-compliant MCP server process with Streamable HTTP transport (production) and stdio (dev-only), auth via AuthService.ValidateToken gRPC, zero tools registered yet."
+summary: "Minimal spec-compliant MCP server process with Streamable HTTP transport (production) and stdio (dev-only), auth via AuthService.ValidateToken gRPC, zero tools registered yet."
+status: "planned"
+milestoneId: "3.5.E.1"
+track: "E"
+trackTitle: "MCP Tool Surface"
+trackHref: "/roadmap/phase-3-5-extraction-assembly/tracks#track-e--mcp-tool-surface"
+goal: "[Track E — MCP Tool Surface](/roadmap/phase-3-5-extraction-assembly/tracks#track-e--mcp-tool-surface)"
+estimatedEffort: "2 days"
+phase: "phase-3-5-extraction-assembly"
+fullTitle: "Milestone 3.5.E.1 — MCP Server Skeleton and Transport"
+---
+
+# Milestone 3.5.E.1 — MCP Server Skeleton and Transport
+
+**Status:** Planned  
+**Goal:** [Track E — MCP Tool Surface](/roadmap/phase-3-5-extraction-assembly/tracks#track-e--mcp-tool-surface)  
+**Phase:** 3.5 — Extraction & Context Assembly  
+**Estimated effort:** 2 days  
+**Track:** [Track E — MCP Tool Surface](/roadmap/phase-3-5-extraction-assembly/tracks#track-e--mcp-tool-surface)  
+**Depends on:** Phase 3 exit
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+Stand up a minimal, spec-compliant MCP server process that authenticates against the existing IBEX identity system and exposes zero tools yet — proving the transport, auth, and process-lifecycle plumbing work before any memory logic is added.
+
+---
+
+## Transport Decision (ADR-0043)
+
+- **Streamable HTTP** as the only supported production transport
+- **stdio** for dev-convenience only, gated behind `IBEX_MCP_TRANSPORT=stdio`
+- **Python 3.11 + official `mcp` SDK** (`modelcontextprotocol/python-sdk`)
+- New service `services/mcp-memory/` — separate lifecycle from proxy/API/context
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- MCP server surface
+- Memory service / repositories
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] Starts, responds to MCP `initialize` handshake over Streamable HTTP (exact path may differ)
+- [ ] Bearer token validated via real `AuthService.ValidateToken` gRPC call (integration test)
+- [ ] Invalid/expired/revoked token → MCP error response in JSON-RPC format
+- [ ] Zero tools registered yet — plumbing only
+- [ ] `docker-compose.dev.yml` entry added; health-checked
+- [ ] Repo guards / CI checks still pass
+
+## Prerequisites
+
+- Phase 3 exit
+- Auth service gRPC contract stable
+

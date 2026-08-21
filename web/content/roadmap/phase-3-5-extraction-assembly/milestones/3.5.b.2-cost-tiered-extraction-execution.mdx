@@ -1,0 +1,156 @@
+---
+title: "3.5.B.2 Cost-Tiered, Provider-Agnostic Extraction Execution"
+description: "Replace the original hardcoded OpenAI call with an ExtractionProvider ABC and batch-session extraction — reducing cost, enabling local vLLM deployments, and giving the model cross-turn context."
+summary: "Replace the original hardcoded OpenAI call with an ExtractionProvider ABC and batch-session extraction — reducing cost, enabling local vLLM deployments, and giving the model cross-turn context."
+status: "planned"
+milestoneId: "3.5.B.2"
+track: "B"
+trackTitle: "Extraction Pipeline"
+trackHref: "/roadmap/phase-3-5-extraction-assembly/tracks#track-b--extraction-pipeline"
+goal: "[Track B — Extraction Pipeline](/roadmap/phase-3-5-extraction-assembly/tracks#track-b--extraction-pipeline)"
+estimatedEffort: "3 days"
+phase: "phase-3-5-extraction-assembly"
+fullTitle: "Milestone 3.5.B.2 — Cost-Tiered, Provider-Agnostic Extraction Execution"
+---
+
+# Milestone 3.5.B.2 — Cost-Tiered, Provider-Agnostic Extraction Execution
+
+**Status:** Planned  
+**Goal:** [Track B — Extraction Pipeline](/roadmap/phase-3-5-extraction-assembly/tracks#track-b--extraction-pipeline)  
+**Phase:** 3.5 — Extraction & Context Assembly  
+**Estimated effort:** 3 days  
+**Track:** [Track B — Extraction Pipeline](/roadmap/phase-3-5-extraction-assembly/tracks#track-b--extraction-pipeline)  
+**Depends on:** [3.5.B.1](/roadmap/phase-3-5-extraction-assembly/milestones/3.5.b.1-extraction-prompt-v2-structured-output)
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+The original plan hardcoded `from openai import OpenAI` directly in the task body. Given Phase 2.5 already built a `Provider`/`Registry` abstraction in Go for the proxy's own LLM calls, extraction should use the equivalent pattern on the Python side — not a second, inconsistent way of calling LLMs.
+
+---
+
+## Non-Goals
+
+- Idempotency and transaction safety (3.5.B.3)
+- Quality evaluation harness (3.5.B.4)
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Extraction pipeline
+- Workers / task runtime
+
+## Suggested naming (provisional)
+
+Rename freely to match the change that actually lands.
+
+- Branch: `feature/m3-5-b2-cost-tiered-extraction`
+- PR title: `feat(worker): cost-tiered provider-agnostic extraction execution (m3.5.B.2)`
+
+## `ExtractionProvider` ABC
+
+```python
+# Illustrative — exact path may differ
+from __future__ import annotations
+from abc import ABC, abstractmethod
+
+class ExtractionProvider(ABC):
+ @abstractmethod
+ async def extract(self, system_prompt: str, user_content: str) -> str:
+ """Returns raw JSON string from the model. Caller validates/parses."""
+
+class OpenAIExtractionProvider(ExtractionProvider):
+ """Wraps gpt-4o-mini via the OpenAI SDK. Default for cloud deployments."""
+ ...
+
+class VLLMExtractionProvider(ExtractionProvider):
+ """Wraps a self-hosted vLLM OpenAI-compatible endpoint.
+ Same request shape as OpenAI — vLLM's server IS OpenAI-compatible —
+ so this is nearly the OpenAI provider with a different base_url and no API key,
+ consistent with the Phase 2.5 provider-abstraction pattern.
+ """
+ ...
+```
+
+---
+
+## Model Recommendations
+
+| Deployment mode | Model | Reasoning |
+| --- | --- | --- |
+| **Cloud / default** | `gpt-4o-mini` | Cheapest model with acceptable structured-extraction quality; the original ADR-0036 cost math (~$0.0008/10-turn session) still holds |
+| **Self-hosted / air-gapped** | `Qwen2.5-14B-Instruct` (or `Llama-3.1-8B-Instruct` for smaller GPU budgets) served via vLLM | Both have strong structured-JSON-output reliability at this size class; 14B for quality-sensitive deployments, 8B where GPU memory is the binding constraint. Reject sub-7B models — measurably worse instruction-following for multi-label structured extraction |
+| **Cost/latency-sensitive at scale** | Same model as cloud tier, but batched: accumulate multiple turns per session into a single extraction call | Real cost lever the original plan missed entirely — turn-by-turn extraction wastes ~150–200 tokens of repeated system-prompt overhead per call |
+
+---
+
+## Batching Redesign
+
+Instead of calling `extract_memories_from_turn` once per turn (the original design), extract per **session-close event**, sending *all* unprocessed turns in a single structured call with turn boundaries marked, and parsing a results array keyed by turn index. This doesn't just reduce cost — it also gives the model actual cross-turn context (e.g., recognizing a preference stated in turn 3 was reversed in turn 7), which the strictly-per-turn original design structurally could not do.
+
+```python
+EXTRACTION_SYSTEM_PROMPT_V2 = """... (rules 1-6 from 3.5.B.1) ...
+The input contains multiple conversation turns in order, each tagged with a turn index.
+Extract memories with awareness of the full sequence — if a later turn contradicts
+or supersedes an earlier one, prefer the later turn's information and note the
+earlier one's valid_until as the timestamp of the superseding turn.
+Return: {"turns": [{"turn_index": 0, "memories": [...]}, ...]}
+"""
+
+@shared_task(
+ name="worker.tasks.extraction.extract_session_memories",
+ bind=True, max_retries=3, default_retry_delay=10,
+ soft_time_limit=120, time_limit=180, queue="extraction",
+)
+@traced_task("extraction.extract_session_memories")
+def extract_session_memories(self, session_id: str, org_id: str) -> dict:
+ """
+ 1. Load session; check status == 'completed'
+ 2. Load ALL unprocessed turns (> last_extracted_turn) as a batch
+ 3. Single extraction call covering the whole batch (not per-turn)
+ 4. For each returned turn's memories: call write_pipeline.write
+ 5. Atomically update last_extracted_turn to max processed turn index
+ """
+ try:
+ return _run_batch_extraction(session_id=UUID(session_id), org_id=UUID(org_id))
+ except Exception as exc:
+ raise self.retry(exc=exc)
+```
+
+**Provider selection at runtime:** `EXTRACTION_PROVIDER` env var (`openai` | `vllm`), resolved once at worker startup — mirrors the `EMBEDDER_PROFILE` pattern established in Phase 2.5.
+
+---
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] `ExtractionProvider` ABC with both `OpenAIExtractionProvider` and `VLLMExtractionProvider` implementations, unit-tested against a mocked HTTP transport (no real API calls in CI)
+- [ ] Batch extraction call handles sessions with 1, 10, and 50 unprocessed turns correctly, with turn-index mapping verified
+- [ ] Token cost per session logged (input + output tokens, model name) to the same ClickHouse trace table the proxy already writes to
+- [ ] Self-hosted path (`EXTRACTION_PROVIDER=vllm`) integration-tested against a real local vLLM instance running `Qwen2.5-14B-Instruct` in CI (or a documented manual verification step if GPU CI runners aren't available yet — flag this explicitly rather than skipping silently)
+
+---

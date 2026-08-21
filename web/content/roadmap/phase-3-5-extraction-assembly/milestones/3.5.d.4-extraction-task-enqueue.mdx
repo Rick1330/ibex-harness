@@ -1,0 +1,73 @@
+---
+title: "3.5.D.4 Extraction task enqueue"
+description: "Add Redis LPUSH extraction enqueue to the post-response path using Celery-native broker format, triggered only on session status='completed'."
+summary: "Add Redis LPUSH extraction enqueue to the post-response path using Celery-native broker format, triggered only on session status='completed'."
+status: "planned"
+milestoneId: "3.5.D.4"
+track: "D"
+trackTitle: "Proxy Integration"
+trackHref: "/roadmap/phase-3-5-extraction-assembly/tracks#track-d--proxy-integration"
+goal: "[Track D — Proxy Integration](/roadmap/phase-3-5-extraction-assembly/tracks#track-d--proxy-integration)"
+estimatedEffort: "1 day"
+phase: "phase-3-5-extraction-assembly"
+fullTitle: "Milestone 3.5.D.4 — Extraction Task Enqueue"
+---
+
+# Milestone 3.5.D.4 — Extraction Task Enqueue
+
+**Status:** Planned  
+**Goal:** [Track D — Proxy Integration](/roadmap/phase-3-5-extraction-assembly/tracks#track-d--proxy-integration)  
+**Phase:** 3.5 — Extraction & Context Assembly  
+**Estimated effort:** 1 day  
+**Track:** [Track D — Proxy Integration](/roadmap/phase-3-5-extraction-assembly/tracks#track-d--proxy-integration)  
+**Depends on:** Milestone 3.5.D.2 (handler wiring)
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+The proxy needs to trigger memory extraction after a completed session. This uses Celery-native Redis list semantics (`LPUSH`/`BRPOP`), not Redis Streams — reconciling the ARCHITECTURE.md/milestone doc conflict. The proxy never imports Celery; it speaks the broker's wire protocol directly.
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Proxy service (HTTP, bootstrap, config)
+- Context assembly service
+- Workers / task runtime
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] Extraction enqueue fires exactly once per completed session, never on `active` status
+- [ ] Uses Celery-native Redis list semantics (`LPUSH`)
+- [ ] Proxy does not import Celery — raw Redis `LPUSH` with Celery wire format
+- [ ] Repo guards / CI checks still pass
+
+## Prerequisites
+
+- Milestone 3.5.D.2 (handler wiring)
+- Phase 3.5 Track A (worker skeleton)
+

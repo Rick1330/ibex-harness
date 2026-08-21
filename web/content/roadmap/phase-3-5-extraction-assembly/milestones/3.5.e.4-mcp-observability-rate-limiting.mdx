@@ -1,0 +1,79 @@
+---
+title: "3.5.E.4 MCP observability and rate limiting"
+description: "ClickHouse mcp_tool_calls table, rate limiting via packages/ratelimit Limiter with independent MCP budget, and AuthService circuit breaker (fail-closed on auth outage)."
+summary: "ClickHouse mcp_tool_calls table, rate limiting via packages/ratelimit Limiter with independent MCP budget, and AuthService circuit breaker (fail-closed on auth outage)."
+status: "planned"
+milestoneId: "3.5.E.4"
+track: "E"
+trackTitle: "MCP Tool Surface"
+trackHref: "/roadmap/phase-3-5-extraction-assembly/tracks#track-e--mcp-tool-surface"
+goal: "[Track E — MCP Tool Surface](/roadmap/phase-3-5-extraction-assembly/tracks#track-e--mcp-tool-surface)"
+estimatedEffort: "1 day"
+phase: "phase-3-5-extraction-assembly"
+fullTitle: "Milestone 3.5.E.4 — MCP Observability and Rate Limiting"
+---
+
+# Milestone 3.5.E.4 — MCP Observability and Rate Limiting
+
+**Status:** Planned  
+**Goal:** [Track E — MCP Tool Surface](/roadmap/phase-3-5-extraction-assembly/tracks#track-e--mcp-tool-surface)  
+**Phase:** 3.5 — Extraction & Context Assembly  
+**Estimated effort:** 1 day  
+**Track:** [Track E — MCP Tool Surface](/roadmap/phase-3-5-extraction-assembly/tracks#track-e--mcp-tool-surface)  
+**Depends on:** Milestone 3.5.E.3 (record_feedback tool)
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+An MCP server exposed to external agent frameworks is a new, untrusted-by-default entry point — it needs the same operational rigor as the HTTP proxy.
+
+---
+
+## Requirements
+
+- Every tool call traced to ClickHouse `mcp_tool_calls` table (org_id, agent_id, tool_name, latency_ms, success, error_code) — reuses the async, non-blocking emitter pattern from the proxy
+- Rate limiting reuses `packages/ratelimit`'s `Limiter` interface, keyed `ratelimit:{org_id}:mcp:{unix_minute}` — independent budget from chat-completions
+- Circuit breaker: `AuthService` gRPC unreachable → MCP server fails closed
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- MCP server surface
+- Memory service / repositories
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] `mcp_tool_calls` ClickHouse table + migration, TTL matching `llm_traces` (90 days)
+- [ ] Rate limit integration test: burst of `search_memory` calls correctly 429s at threshold, independent of proxy chat rate limit
+- [ ] Fault injection test: `AuthService` down → MCP calls fail closed within timeout, no hang
+- [ ] Repo guards / CI checks still pass
+
+## Prerequisites
+
+- Milestone 3.5.E.3 (record_feedback tool)
+

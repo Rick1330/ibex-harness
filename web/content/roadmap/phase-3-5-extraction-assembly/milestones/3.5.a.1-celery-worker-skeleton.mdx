@@ -1,0 +1,121 @@
+---
+title: "3.5.A.1 Celery Worker Skeleton"
+description: "Establish the async execution substrate for memory extraction. Without it, extraction has nowhere to run — a session can be completed but nothing turns it into memory."
+summary: "Establish the async execution substrate for memory extraction. Without it, extraction has nowhere to run — a session can be completed but nothing turns it into memory."
+status: "planned"
+milestoneId: "3.5.A.1"
+track: "A"
+trackTitle: "Worker Infrastructure"
+trackHref: "/roadmap/phase-3-5-extraction-assembly/tracks#track-a--worker-infrastructure"
+goal: "[Track A — Worker Infrastructure](/roadmap/phase-3-5-extraction-assembly/tracks#track-a--worker-infrastructure)"
+estimatedEffort: "3 days"
+phase: "phase-3-5-extraction-assembly"
+fullTitle: "Milestone 3.5.A.1 — Celery Worker Skeleton with Redis Broker and Task Routing"
+---
+
+# Milestone 3.5.A.1 — Celery Worker Skeleton with Redis Broker and Task Routing
+
+**Status:** Planned  
+**Goal:** [Track A — Worker Infrastructure](/roadmap/phase-3-5-extraction-assembly/tracks#track-a--worker-infrastructure)  
+**Phase:** 3.5 — Extraction & Context Assembly  
+**Estimated effort:** 3 days
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+Establish the async execution substrate. Without it, extraction has nowhere to run — a session can be "completed" but nothing turns it into memory.
+
+Worker substrate details below are a starting preference. Queue topology and result-backend choices should be confirmed against live Redis/Celery constraints during implementation — including whether a dedicated low-priority audit queue is still the right shape.
+
+---
+
+## Non-Goals
+
+- Extraction logic itself (Track B)
+- Context assembly (Track C)
+- MCP tool calls (Track E)
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Workers / task runtime
+
+## Suggested naming (provisional)
+
+Rename freely to match the change that actually lands.
+
+- Branch: `feature/m3-5-a1-celery-worker-skeleton`
+- PR title: `feat(worker): Celery worker skeleton with Redis broker and task routing (m3.5.A.1)`
+
+## Why Celery + Redis
+
+| Option | Verdict | Reason |
+| --- | --- | --- |
+| **Celery + Redis** (preferred start) | Preferred start | Mature, huge ecosystem, native priority queues, `beat` scheduler built-in for the maintenance sweeps this phase also needs, and the rest of the Python stack (FastAPI services) already assumes Redis is present |
+| Temporal | Considered for later investigation | Often a stronger fit for long-running, stateful workflows. For the current phase, extraction tasks are still expected to be bounded single-session jobs, so Celery + Redis is the simpler starting point. Revisit if later phases need durable workflow semantics. |
+| Arq / Dramatiq | Lower-ranked for the current plan | Smaller ecosystems, less obvious priority-queue support than Celery's `x-max-priority`, and no clear near-term advantage for this workload. Worth revisiting only if Celery introduces operational overhead the team wants to reduce. |
+
+---
+
+## Queue topology (illustrative)
+
+Exact queue names and priorities are a starting sketch — adjust during implementation if the live workload says otherwise.
+
+```python
+# Illustrative — exact names/priorities may differ
+QUEUES = [
+    Queue("extraction", Exchange("extraction"), routing_key="extraction",
+          queue_arguments={"x-max-priority": 10}),
+    Queue("embedding", Exchange("embedding"), routing_key="embedding"),
+    Queue("maintenance", Exchange("maintenance"), routing_key="maintenance"),
+    Queue("mcp_audit", Exchange("mcp_audit"), routing_key="mcp_audit"),
+]
+```
+
+---
+
+## Design note — Result backend
+
+A useful starting preference is Redis as the result backend with short TTL and ignore-result defaults for fire-and-forget extraction (results write to Postgres, not polled). Tasks that need retry visibility can opt into result tracking. Confirm TTL/ignore defaults against real Redis memory pressure during implementation.
+
+Celery / Redis / kombu are already in the free/open-source stack — no new licensing decision for this milestone.
+
+---
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] Worker process starts cleanly against local Redis with the intended queues
+- [ ] Task routing sends work to the intended queue (not a silent default-queue fallback)
+- [ ] Result retention defaults avoid unbounded Redis growth for fire-and-forget extraction
+- [ ] Scheduled maintenance hooks exist and can be triggered in tests without waiting on real cron
+- [ ] Unit coverage exists for app bootstrap and queue routing
+
+## Prerequisites
+
+- Phase 3 exit (schema, HNSW vector store, write pipeline, dedup/conflict detection)
+

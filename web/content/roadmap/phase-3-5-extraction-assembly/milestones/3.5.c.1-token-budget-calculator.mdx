@@ -1,0 +1,128 @@
+---
+title: "3.5.C.1 Token Budget Calculator"
+description: "Model-aware, tokenizer-correct budget calculation derived from the Phase 2.5 ModelCapability registry — replacing the original flat 10% safety-buffer guess with tokenizer-family-specific tolerances."
+summary: "Model-aware, tokenizer-correct budget calculation derived from the Phase 2.5 ModelCapability registry — replacing the original flat 10% safety-buffer guess with tokenizer-family-specific tolerances."
+status: "planned"
+milestoneId: "3.5.C.1"
+track: "C"
+trackTitle: "Context Assembly Engine"
+trackHref: "/roadmap/phase-3-5-extraction-assembly/tracks#track-c--context-assembly-engine"
+goal: "[Track C — Context Assembly Engine](/roadmap/phase-3-5-extraction-assembly/tracks#track-c--context-assembly-engine)"
+estimatedEffort: "2 days"
+phase: "phase-3-5-extraction-assembly"
+fullTitle: "Milestone 3.5.C.1 — Token Budget Calculator (Model-Aware, Tokenizer-Correct)"
+---
+
+# Milestone 3.5.C.1 — Token Budget Calculator (Model-Aware, Tokenizer-Correct)
+
+**Status:** Planned  
+**Goal:** [Track C — Context Assembly Engine](/roadmap/phase-3-5-extraction-assembly/tracks#track-c--context-assembly-engine)  
+**Phase:** 3.5 — Extraction & Context Assembly  
+**Estimated effort:** 2 days  
+**Track:** [Track C — Context Assembly Engine](/roadmap/phase-3-5-extraction-assembly/tracks#track-c--context-assembly-engine)  
+**Depends on:** Phase 3 exit (Phase 2.5 tokenizer service + ModelCapability registry)
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Named paths, package layouts,
+  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
+  that are expected to change once the live code, constraints, and research during implementation
+  make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+## Why This Milestone Exists
+
+Every downstream stage in context assembly depends on knowing the real usable token budget for the *specific* model being called. The original design used a flat percentage-reservation scheme without wiring in the multi-tokenizer work already built in Phase 2.5 (`packages/tokenizer` Go package and/or the tokenizer-service). This milestone closes that gap explicitly.
+
+---
+
+## Non-Goals
+
+- Retrieval orchestration itself (3.5.C.2)
+- Cross-model comparison analytics
+
+---
+
+## Orientation (indicative)
+
+Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
+**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+
+During implementation, expect to:
+
+- open the live tree and follow existing patterns before inventing new ones
+- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
+- advance the design beyond the sketch where measurement or code reality says so
+- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+
+Prefer outcomes over matching any particular file tree or command sequence.
+
+**Areas that may be involved** (situational — not a checklist):
+
+- Context assembly service
+- Tokenizer registry / counting
+
+## Suggested naming (provisional)
+
+Rename freely to match the change that actually lands.
+
+- Branch: `feature/m3-5-c1-token-budget-calculator`
+- PR title: `feat(context): tokenizer-aware token budget calculator (m3.5.C.1)`
+
+## File Layout
+
+```
+services/context/src/context/services/budget.py # NEW
+services/context/src/context/services/budget_test.py
+services/context/src/context/models/capability.py # shared with Phase 2.5's ModelCapability registry
+```
+
+---
+
+## Design
+
+```python
+@dataclass(frozen=True)
+class TokenBudget:
+ context_window: int # model's total context window
+ response_reserve: int # reserved for the LLM's own output
+ safety_buffer: int # % headroom against tokenizer estimation error
+ usable_budget: int # context_window - response_reserve - safety_buffer
+ directive_tokens: int = 0
+ messages_tokens: int = 0
+ is_constrained: bool = False # true when usable_budget for memories < MIN_VIABLE_MEMORY_BUDGET
+
+class BudgetCalculator:
+ def __init__(self, tokenizer_client: TokenizerClient, capability_registry: CapabilityRegistry): ...
+
+ async def calculate(self, model: str, messages: list[Message], directive: str) -> TokenBudget:
+ cap = self._capabilities.for_model(model) # from Phase 2.5's registry, not a hardcoded table
+ directive_tokens = await self._tokenizer.count(model, directive)
+ messages_tokens = await self._tokenizer.count(model, _concat(messages))
+ response_reserve = max(cap.default_response_reserve, min(int(cap.context_window * 0.15), 4096))
+ safety_buffer = int(cap.context_window * 0.05) # tokenizer-family-specific tolerance, not a magic 10%
+ usable = cap.context_window - response_reserve - safety_buffer - directive_tokens - messages_tokens
+ return TokenBudget(..., is_constrained=usable < MIN_VIABLE_MEMORY_BUDGET)
+```
+
+---
+
+## Design note
+
+The original 10% "safety buffer" was a flat guess. Here it's derived from `cap.tokenizer_family` — a tiktoken-counted model (OpenAI) needs a much smaller buffer (near-exact counts) than an HF-tokenizer-counted local model where drift from prompt template rendering is more likely. This is a direct consequence of Phase 2.5's tokenizer abstraction paying off downstream.
+
+**Failure mode:** if the tokenizer client is unreachable, fall back to a conservative `len(text) // 3` character-based estimate and set `is_constrained=True` — never crash the budget calculation, since everything downstream depends on it.
+
+---
+
+## Success signals
+
+Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
+
+- [ ] `TokenBudget` computed per real model capability, not a static table
+- [ ] Tokenizer failures degrade to char-estimate, never raise
+- [ ] Unit tests: budget for GPT-4o vs. a local Llama-3.1-8B model produce materially different `safety_buffer` values (proves the tokenizer-family branch is exercised)
+- [ ] `is_constrained` correctly triggers the "skip cold search" fast-path used in Track C's retriever
+
+---

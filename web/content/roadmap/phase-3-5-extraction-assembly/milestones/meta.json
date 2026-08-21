@@ -1,0 +1,31 @@
+{
+  "title": "Milestones",
+  "icon": "Flag",
+  "pages": [
+    "3.5.a.1-celery-worker-skeleton",
+    "3.5.a.2-task-observability-dead-letter",
+    "3.5.b.1-extraction-prompt-v2-structured-output",
+    "3.5.b.2-cost-tiered-extraction-execution",
+    "3.5.b.3-incremental-turn-tracking-idempotency",
+    "3.5.b.4-extraction-quality-eval-harness",
+    "3.5.c.1-token-budget-calculator",
+    "3.5.c.2-parallel-retrieval-orchestration",
+    "3.5.c.3-composite-scorer-v2-relevance-gated",
+    "3.5.c.4-packer-v2-dp-knapsack",
+    "3.5.c.5-context-formatter",
+    "3.5.c.6-grpc-service-degradation-contract",
+    "3.5.d.1-go-grpc-context-client",
+    "3.5.d.2-handler-wiring-fallback",
+    "3.5.d.3-response-headers-metadata",
+    "3.5.d.4-extraction-task-enqueue",
+    "3.5.d.5-config-feature-flags",
+    "3.5.d.6-integration-tests",
+    "3.5.e.1-mcp-server-skeleton-transport",
+    "3.5.e.2-search-write-memory-tools",
+    "3.5.e.3-record-feedback-tool",
+    "3.5.e.4-mcp-observability-rate-limiting",
+    "3.5.f.1-e2e-learning-loop-suite",
+    "3.5.f.2-cross-tenant-isolation-matrix",
+    "3.5.f.3-benchmark-sign-off-adr-index"
+  ]
+}
