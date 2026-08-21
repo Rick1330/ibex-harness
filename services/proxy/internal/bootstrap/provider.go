@@ -42,6 +42,13 @@ func validateCapabilityOverlays(builtin provider.CapabilityCatalog, extraIDs []s
 	for _, id := range extraIDs {
 		extraSet[id] = struct{}{}
 	}
+	if err := rejectInvalidOverlays(builtin, extraSet, overlays); err != nil {
+		return err
+	}
+	return requireExtraOverlays(builtin, extraIDs, overlays)
+}
+
+func rejectInvalidOverlays(builtin provider.CapabilityCatalog, extraSet map[string]struct{}, overlays []provider.ModelCapability) error {
 	for _, overlay := range overlays {
 		id := strings.TrimSpace(overlay.ModelID)
 		if _, ok := builtin.Lookup(id); ok {
@@ -51,6 +58,10 @@ func validateCapabilityOverlays(builtin provider.CapabilityCatalog, extraIDs []s
 			return fmt.Errorf("IBEX_MODEL_CAPABILITY_OVERLAYS: model %q is not listed in IBEX_LLM_EXTRA_MODELS or ANTHROPIC_EXTRA_MODELS", id)
 		}
 	}
+	return nil
+}
+
+func requireExtraOverlays(builtin provider.CapabilityCatalog, extraIDs []string, overlays []provider.ModelCapability) error {
 	covered := make(map[string]struct{}, len(overlays))
 	for _, overlay := range overlays {
 		covered[strings.TrimSpace(overlay.ModelID)] = struct{}{}
@@ -59,9 +70,10 @@ func validateCapabilityOverlays(builtin provider.CapabilityCatalog, extraIDs []s
 		if _, ok := builtin.Lookup(id); ok {
 			continue
 		}
-		if _, ok := covered[id]; !ok {
-			return fmt.Errorf("IBEX_MODEL_CAPABILITY_OVERLAYS: missing capability overlay for ExtraModels id %q", id)
+		if _, ok := covered[id]; ok {
+			continue
 		}
+		return fmt.Errorf("IBEX_MODEL_CAPABILITY_OVERLAYS: missing capability overlay for ExtraModels id %q", id)
 	}
 	return nil
 }

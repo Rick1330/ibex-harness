@@ -1,14 +1,3 @@
-// Command diff_capabilities compares the curated BuiltInCapabilityCatalog against
-// a LiteLLM model_prices_and_context_window.json snapshot (or live URL).
-//
-// Maintainer tooling only — not imported by the proxy binary and not a CI gate.
-//
-// Usage:
-//
-//	go run ./packages/provider/scripts/diff_capabilities \
-//	  -file /path/to/model_prices_and_context_window.json
-//
-//	go run ./packages/provider/scripts/diff_capabilities -fetch
 package main
 
 import (
@@ -31,6 +20,14 @@ type liteLLMEntry struct {
 	MaxInputTokens  *float64 `json:"max_input_tokens"`
 	MaxOutputTokens *float64 `json:"max_output_tokens"`
 	MaxTokens       *float64 `json:"max_tokens"`
+}
+
+type modelDiffInput struct {
+	id      string
+	cap     provider.ModelCapability
+	entry   liteLLMEntry
+	present bool
+	stdout  io.Writer
 }
 
 func main() {
@@ -76,30 +73,38 @@ func diffCatalog(catalog provider.CapabilityCatalog, table map[string]liteLLMEnt
 
 	mismatches := 0
 	for _, id := range ids {
-		mismatches += diffOneModel(id, catalog[id], table[id], table, stdout)
+		entry, ok := table[id]
+		mismatches += diffOneModel(modelDiffInput{
+			id: id, cap: catalog[id], entry: entry, present: ok, stdout: stdout,
+		})
 	}
 	return mismatches
 }
 
-func diffOneModel(id string, cap provider.ModelCapability, entry liteLLMEntry, table map[string]liteLLMEntry, stdout io.Writer) int {
-	if _, ok := table[id]; !ok {
-		fmt.Fprintf(stdout, "MISSING_UPSTREAM\t%s\t(curated ctx=%d max_out=%d)\n", id, cap.ContextWindow, cap.MaxOutputTokens)
+func diffOneModel(in modelDiffInput) int {
+	if !in.present {
+		fmt.Fprintf(in.stdout, "MISSING_UPSTREAM\t%s\t(curated ctx=%d max_out=%d)\n",
+			in.id, in.cap.ContextWindow, in.cap.MaxOutputTokens)
 		return 1
 	}
-	upCtx := intFromPtr(entry.MaxInputTokens)
-	upOut := intFromPtr(entry.MaxOutputTokens)
+	upCtx := intFromPtr(in.entry.MaxInputTokens)
+	upOut := intFromPtr(in.entry.MaxOutputTokens)
 	// Do not fall back to max_tokens: LiteLLM often uses it for output limits.
-	n := 0
 	if upCtx == 0 && upOut == 0 {
-		fmt.Fprintf(stdout, "NO_LIMITS_UPSTREAM\t%s\n", id)
+		fmt.Fprintf(in.stdout, "NO_LIMITS_UPSTREAM\t%s\n", in.id)
 		return 1
 	}
-	if upCtx != 0 && upCtx != cap.ContextWindow {
-		fmt.Fprintf(stdout, "CONTEXT_MISMATCH\t%s\tcurated=%d\tlitellm=%d\n", id, cap.ContextWindow, upCtx)
+	return countLimitMismatches(in, upCtx, upOut)
+}
+
+func countLimitMismatches(in modelDiffInput, upCtx, upOut int) int {
+	n := 0
+	if upCtx != 0 && upCtx != in.cap.ContextWindow {
+		fmt.Fprintf(in.stdout, "CONTEXT_MISMATCH\t%s\tcurated=%d\tlitellm=%d\n", in.id, in.cap.ContextWindow, upCtx)
 		n++
 	}
-	if upOut != 0 && upOut != cap.MaxOutputTokens {
-		fmt.Fprintf(stdout, "MAX_OUT_MISMATCH\t%s\tcurated=%d\tlitellm=%d\n", id, cap.MaxOutputTokens, upOut)
+	if upOut != 0 && upOut != in.cap.MaxOutputTokens {
+		fmt.Fprintf(in.stdout, "MAX_OUT_MISMATCH\t%s\tcurated=%d\tlitellm=%d\n", in.id, in.cap.MaxOutputTokens, upOut)
 		n++
 	}
 	return n

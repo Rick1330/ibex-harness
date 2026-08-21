@@ -35,10 +35,17 @@ func ParseCapabilityOverlays(raw string) ([]provider.ModelCapability, error) {
 	if raw == "" {
 		return nil, nil
 	}
+	wires, err := decodeOverlayWires(raw)
+	if err != nil {
+		return nil, err
+	}
+	return materializeOverlays(wires)
+}
+
+func decodeOverlayWires(raw string) ([]overlayWire, error) {
 	if len(raw) > maxCapabilityOverlayJSONBytes {
 		return nil, fmt.Errorf("IBEX_MODEL_CAPABILITY_OVERLAYS exceeds %d bytes", maxCapabilityOverlayJSONBytes)
 	}
-
 	dec := json.NewDecoder(bytes.NewReader([]byte(raw)))
 	dec.DisallowUnknownFields()
 	var wires []overlayWire
@@ -51,7 +58,10 @@ func ParseCapabilityOverlays(raw string) ([]provider.ModelCapability, error) {
 	if len(wires) > maxCapabilityOverlayEntries {
 		return nil, fmt.Errorf("IBEX_MODEL_CAPABILITY_OVERLAYS: at most %d entries", maxCapabilityOverlayEntries)
 	}
+	return wires, nil
+}
 
+func materializeOverlays(wires []overlayWire) ([]provider.ModelCapability, error) {
 	out := make([]provider.ModelCapability, 0, len(wires))
 	seen := make(map[string]struct{}, len(wires))
 	for i, wire := range wires {
@@ -72,14 +82,8 @@ func ParseCapabilityOverlays(raw string) ([]provider.ModelCapability, error) {
 }
 
 func overlayWireToCapability(wire overlayWire) (provider.ModelCapability, error) {
-	if wire.SupportsTools == nil {
-		return provider.ModelCapability{}, fmt.Errorf("supports_tools is required")
-	}
-	if wire.SupportsVision == nil {
-		return provider.ModelCapability{}, fmt.Errorf("supports_vision is required")
-	}
-	if wire.SupportsStreaming == nil {
-		return provider.ModelCapability{}, fmt.Errorf("supports_streaming is required")
+	if err := requireOverlayBools(wire); err != nil {
+		return provider.ModelCapability{}, err
 	}
 	return provider.ModelCapability{
 		ModelID:           strings.TrimSpace(wire.ModelID),
@@ -91,4 +95,17 @@ func overlayWireToCapability(wire overlayWire) (provider.ModelCapability, error)
 		SupportsStreaming: *wire.SupportsStreaming,
 		TokenizerFamily:   strings.TrimSpace(wire.TokenizerFamily),
 	}, nil
+}
+
+func requireOverlayBools(wire overlayWire) error {
+	switch {
+	case wire.SupportsTools == nil:
+		return fmt.Errorf("supports_tools is required")
+	case wire.SupportsVision == nil:
+		return fmt.Errorf("supports_vision is required")
+	case wire.SupportsStreaming == nil:
+		return fmt.Errorf("supports_streaming is required")
+	default:
+		return nil
+	}
 }

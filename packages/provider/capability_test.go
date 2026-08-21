@@ -63,31 +63,36 @@ func TestUnit_NewRegistry_MissingCapability(t *testing.T) {
 	}
 }
 
-func TestUnit_NewRegistry_ModelIDMismatch(t *testing.T) {
+func TestUnit_NewRegistry_RejectsInvalidCapabilityRows(t *testing.T) {
 	t.Parallel()
-	catalog := CapabilityCatalog{
-		"gpt-4o": {
-			ModelID: "gpt-4o-mini", Provider: "openai", ContextWindow: 128_000, MaxOutputTokens: 16_384,
-			SupportsTools: true, SupportsVision: true, SupportsStreaming: true, TokenizerFamily: TokenizerFamilyO200kBase,
+	cases := []struct {
+		name string
+		cap  ModelCapability
+	}{
+		{
+			name: "model id mismatch",
+			cap: ModelCapability{
+				ModelID: "gpt-4o-mini", Provider: "openai", ContextWindow: 128_000, MaxOutputTokens: 16_384,
+				SupportsTools: true, SupportsVision: true, SupportsStreaming: true, TokenizerFamily: TokenizerFamilyO200kBase,
+			},
+		},
+		{
+			name: "bad tokenizer",
+			cap: ModelCapability{
+				ModelID: "gpt-4o", Provider: "openai", ContextWindow: 128_000, MaxOutputTokens: 16_384,
+				SupportsTools: true, SupportsVision: true, SupportsStreaming: true, TokenizerFamily: "not-a-family",
+			},
 		},
 	}
-	_, err := NewRegistry(catalog, stubProvider{name: "openai", models: []string{"gpt-4o"}})
-	if !errors.Is(err, ErrInvalidCapability) {
-		t.Fatalf("err=%v want ErrInvalidCapability", err)
-	}
-}
-
-func TestUnit_NewRegistry_InvalidCapability(t *testing.T) {
-	t.Parallel()
-	catalog := CapabilityCatalog{
-		"gpt-4o": {
-			ModelID: "gpt-4o", Provider: "openai", ContextWindow: 128_000, MaxOutputTokens: 16_384,
-			SupportsTools: true, SupportsVision: true, SupportsStreaming: true, TokenizerFamily: "not-a-family",
-		},
-	}
-	_, err := NewRegistry(catalog, stubProvider{name: "openai", models: []string{"gpt-4o"}})
-	if !errors.Is(err, ErrInvalidCapability) {
-		t.Fatalf("err=%v want ErrInvalidCapability", err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			catalog := CapabilityCatalog{"gpt-4o": tc.cap}
+			_, err := NewRegistry(catalog, stubProvider{name: "openai", models: []string{"gpt-4o"}})
+			if !errors.Is(err, ErrInvalidCapability) {
+				t.Fatalf("err=%v want ErrInvalidCapability", err)
+			}
+		})
 	}
 }
 
