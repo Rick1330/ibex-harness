@@ -57,7 +57,15 @@ Every model ID returned by `SupportedModels()` must resolve in `catalog`. Missin
 
 ### 4) ExtraModels require explicit overlays
 
-`IBEX_LLM_EXTRA_MODELS` / `ANTHROPIC_EXTRA_MODELS` remain allowlist extensions. Operators must also supply capability overlays (`IBEX_MODEL_CAPABILITY_OVERLAYS` JSON) for every extra model ID. Overlays merge on top of the built-in catalog (overlay wins on ID collision). Extra models without overlay entries fail registry construction.
+`IBEX_LLM_EXTRA_MODELS` / `ANTHROPIC_EXTRA_MODELS` remain allowlist extensions. Operators must also supply capability overlays (`IBEX_MODEL_CAPABILITY_OVERLAYS` JSON) for every extra model ID. Overlay rules (fail-closed):
+
+- unknown JSON fields are rejected
+- feature flags (`supports_tools` / `supports_vision` / `supports_streaming`) must be present explicitly
+- tokenizer family must be one of the declared constants (`o200k_base`, `cl100k_base`, `claude`, `unknown`)
+- overlays cannot override built-in curated model IDs
+- overlay `model_id` values must appear in ExtraModels (no orphan overlays)
+
+Overlays merge on top of the built-in catalog only after those checks pass. Extra models without overlay entries fail registry construction.
 
 ### 5) Capability reflects vendor model truth, not adapter completeness
 

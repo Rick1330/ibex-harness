@@ -7,9 +7,23 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/packages/provider"
+	"github.com/Rick1330/ibex-harness/packages/provider/anthropic"
+	"github.com/Rick1330/ibex-harness/packages/provider/openai"
 	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
 )
+
+func TestBuildProviderRegistry_CatalogCoversProviderSupportedModels(t *testing.T) {
+	t.Parallel()
+	catalog := provider.BuiltInCapabilityCatalog()
+	oai := openai.New(openai.Config{APIKey: "k"}, logger.Discard("t"), telemetry.NoopTracer("t"), metrics.NewProxy("t"))
+	anth := anthropic.New(anthropic.Config{APIKey: "k"}, logger.Discard("t"), telemetry.NoopTracer("t"), metrics.NewProxy("t"))
+	for _, model := range append(oai.SupportedModels(), anth.SupportedModels()...) {
+		if _, ok := catalog.Lookup(model); !ok {
+			t.Fatalf("SupportedModels id %q missing from BuiltInCapabilityCatalog", model)
+		}
+	}
+}
 
 func TestBuildProviderRegistry_MockModeRegistersMock(t *testing.T) {
 	t.Parallel()
@@ -102,6 +116,55 @@ func TestBuildProviderRegistry_LiveModeExtraModelsRequireOverlay(t *testing.T) {
 		t.Fatal("expected missing capability error")
 	}
 	if !strings.Contains(err.Error(), "openai/gpt-oss-20b:free") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestBuildProviderRegistry_RejectsBuiltinOverlay(t *testing.T) {
+	t.Parallel()
+	cfg := config.Config{
+		LLMMode: "live",
+		OpenAI:  config.OpenAIConfig{APIKey: "k"},
+		ModelCapabilityOverlays: []provider.ModelCapability{{
+			ModelID: "gpt-4o", Provider: "openai", ContextWindow: 1, MaxOutputTokens: 1,
+			SupportsTools: false, SupportsVision: false, SupportsStreaming: true,
+			TokenizerFamily: provider.TokenizerFamilyUnknown,
+		}},
+	}
+	_, err := buildProviderRegistry(cfg, logger.Discard("proxy"), telemetry.NoopTracer("proxy"), metrics.NewProxy("test"))
+	if err == nil || !strings.Contains(err.Error(), "cannot override built-in") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestBuildProviderRegistry_RejectsOrphanOverlay(t *testing.T) {
+	t.Parallel()
+	cfg := config.Config{
+		LLMMode: "live",
+		OpenAI:  config.OpenAIConfig{APIKey: "k"},
+		ModelCapabilityOverlays: []provider.ModelCapability{{
+			ModelID: "orphan-model", Provider: "openai", ContextWindow: 8192, MaxOutputTokens: 1024,
+			SupportsTools: false, SupportsVision: false, SupportsStreaming: true,
+			TokenizerFamily: provider.TokenizerFamilyUnknown,
+		}},
+	}
+	_, err := buildProviderRegistry(cfg, logger.Discard("proxy"), telemetry.NoopTracer("proxy"), metrics.NewProxy("test"))
+	if err == nil || !strings.Contains(err.Error(), "not listed") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestBuildProviderRegistry_AnthropicExtraModelsRequireOverlay(t *testing.T) {
+	t.Parallel()
+	cfg := config.Config{
+		LLMMode: "live",
+		Anthropic: config.AnthropicConfig{
+			APIKey:      "anth-key",
+			ExtraModels: []string{"claude-custom"},
+		},
+	}
+	_, err := buildProviderRegistry(cfg, logger.Discard("proxy"), telemetry.NoopTracer("proxy"), metrics.NewProxy("test"))
+	if err == nil || !strings.Contains(err.Error(), "claude-custom") {
 		t.Fatalf("err=%v", err)
 	}
 }

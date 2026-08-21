@@ -10,40 +10,42 @@ package provider
 // SupportsTools/SupportsVision reflect vendor model truth, not adapter feature
 // completeness (Anthropic tool/image passthrough may still be deferred).
 
+type capabilityRow struct {
+	modelID   string
+	provider  string
+	ctx       int
+	maxOut    int
+	tools     bool
+	vision    bool
+	tokenizer string
+}
+
 func BuiltInCapabilityCatalog() CapabilityCatalog {
-	return CatalogFromCapabilities(
-		openaiCap("gpt-4o", 128_000, 16_384, true, true, TokenizerFamilyO200kBase),
-		openaiCap("gpt-4o-mini", 128_000, 16_384, true, true, TokenizerFamilyO200kBase),
-		openaiCap("gpt-4-turbo", 128_000, 4_096, true, true, TokenizerFamilyCL100kBase),
-		openaiCap("gpt-3.5-turbo", 16_385, 4_096, true, false, TokenizerFamilyCL100kBase),
-		anthropicCap("claude-sonnet-4-5", 200_000, 64_000),
-		anthropicCap("claude-haiku-4-5", 200_000, 64_000),
-		anthropicCap("claude-opus-4-5", 200_000, 64_000),
-	)
-}
-
-func openaiCap(modelID string, ctx, maxOut int, tools, vision bool, tokenizer string) ModelCapability {
-	return ModelCapability{
-		ModelID:           modelID,
-		Provider:          "openai",
-		ContextWindow:     ctx,
-		MaxOutputTokens:   maxOut,
-		SupportsTools:     tools,
-		SupportsVision:    vision,
-		SupportsStreaming: true,
-		TokenizerFamily:   tokenizer,
+	rows := []capabilityRow{
+		{modelID: "gpt-4o", provider: "openai", ctx: 128_000, maxOut: 16_384, tools: true, vision: true, tokenizer: TokenizerFamilyO200kBase},
+		{modelID: "gpt-4o-mini", provider: "openai", ctx: 128_000, maxOut: 16_384, tools: true, vision: true, tokenizer: TokenizerFamilyO200kBase},
+		{modelID: "gpt-4-turbo", provider: "openai", ctx: 128_000, maxOut: 4_096, tools: true, vision: true, tokenizer: TokenizerFamilyCL100kBase},
+		{modelID: "gpt-3.5-turbo", provider: "openai", ctx: 16_385, maxOut: 4_096, tools: true, vision: false, tokenizer: TokenizerFamilyCL100kBase},
+		{modelID: "claude-sonnet-4-5", provider: "anthropic", ctx: 200_000, maxOut: 64_000, tools: true, vision: true, tokenizer: TokenizerFamilyClaude},
+		{modelID: "claude-haiku-4-5", provider: "anthropic", ctx: 200_000, maxOut: 64_000, tools: true, vision: true, tokenizer: TokenizerFamilyClaude},
+		{modelID: "claude-opus-4-5", provider: "anthropic", ctx: 200_000, maxOut: 64_000, tools: true, vision: true, tokenizer: TokenizerFamilyClaude},
 	}
+	caps := make([]ModelCapability, 0, len(rows))
+	for _, row := range rows {
+		caps = append(caps, capabilityFromRow(row))
+	}
+	return CatalogFromCapabilities(caps...)
 }
 
-func anthropicCap(modelID string, ctx, maxOut int) ModelCapability {
+func capabilityFromRow(row capabilityRow) ModelCapability {
 	return ModelCapability{
-		ModelID:           modelID,
-		Provider:          "anthropic",
-		ContextWindow:     ctx,
-		MaxOutputTokens:   maxOut,
-		SupportsTools:     true, // vendor model supports tools; adapter passthrough may lag
-		SupportsVision:    true,
+		ModelID:           row.modelID,
+		Provider:          row.provider,
+		ContextWindow:     row.ctx,
+		MaxOutputTokens:   row.maxOut,
+		SupportsTools:     row.tools,
+		SupportsVision:    row.vision,
 		SupportsStreaming: true,
-		TokenizerFamily:   TokenizerFamilyClaude,
+		TokenizerFamily:   row.tokenizer,
 	}
 }

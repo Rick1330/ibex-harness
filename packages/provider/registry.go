@@ -19,6 +19,8 @@ type Registry struct {
 // catalog must supply a valid capability for every SupportedModels() ID.
 // Returns ErrDuplicateModel when two providers claim the same model ID.
 // Returns ErrMissingCapability when a model has no catalog entry.
+// Returns ErrInvalidCapability when a catalog row fails validation or ModelID
+// does not match the lookup key.
 func NewRegistry(catalog CapabilityCatalog, providers ...Provider) (*Registry, error) {
 	byModel := make(map[string]Provider)
 	caps := make(map[string]ModelCapability)
@@ -33,7 +35,10 @@ func NewRegistry(catalog CapabilityCatalog, providers ...Provider) (*Registry, e
 				return nil, fmt.Errorf("%w: %q (provider %q)", ErrMissingCapability, model, p.Name())
 			}
 			if err := ValidateCapability(cap); err != nil {
-				return nil, fmt.Errorf("%w: %v", ErrMissingCapability, err)
+				return nil, fmt.Errorf("%w: model %q: %v", ErrInvalidCapability, model, err)
+			}
+			if cap.ModelID != model {
+				return nil, fmt.Errorf("%w: catalog key %q has ModelID %q", ErrInvalidCapability, model, cap.ModelID)
 			}
 			byModel[model] = p
 			caps[model] = cap
@@ -57,6 +62,7 @@ func (r *Registry) For(model string) (Provider, error) {
 
 // Capability returns the capability record for the given model ID.
 // Returns (ModelCapability{}, false) if no capability is registered.
+// Callers must check ok; a zero ModelCapability is not a silent default.
 func (r *Registry) Capability(model string) (ModelCapability, bool) {
 	if r == nil {
 		return ModelCapability{}, false

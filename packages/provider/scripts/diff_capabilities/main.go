@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"os"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/provider"
@@ -33,23 +34,40 @@ type liteLLMEntry struct {
 }
 
 func main() {
-	file := flag.String("file", "", "path to LiteLLM JSON snapshot")
-	fetch := flag.Bool("fetch", false, "fetch LiteLLM JSON from GitHub")
-	flag.Parse()
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+}
+
+func run(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("diff_capabilities", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	file := fs.String("file", "", "path to LiteLLM JSON snapshot")
+	fetch := fs.Bool("fetch", false, "fetch LiteLLM JSON from GitHub")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
 
 	raw, err := loadLiteLLM(*file, *fetch)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "diff_capabilities: %v\n", err)
-		os.Exit(2)
+		fmt.Fprintf(stderr, "diff_capabilities: %v\n", err)
+		return 2
 	}
 
 	var table map[string]liteLLMEntry
 	if err := json.Unmarshal(raw, &table); err != nil {
-		fmt.Fprintf(os.Stderr, "diff_capabilities: parse JSON: %v\n", err)
-		os.Exit(2)
+		fmt.Fprintf(stderr, "diff_capabilities: parse JSON: %v\n", err)
+		return 2
 	}
 
-	catalog := provider.BuiltInCapabilityCatalog()
+	mismatches := diffCatalog(provider.BuiltInCapabilityCatalog(), table, stdout)
+	if mismatches == 0 {
+		fmt.Fprintln(stdout, "OK: curated models match LiteLLM context/max_output where present")
+		return 0
+	}
+	fmt.Fprintf(stderr, "diff_capabilities: %d mismatch(es)\n", mismatches)
+	return 1
+}
+
+func diffCatalog(catalog provider.CapabilityCatalog, table map[string]liteLLMEntry, stdout io.Writer) int {
 	ids := make([]string, 0, len(catalog))
 	for id := range catalog {
 		ids = append(ids, id)
@@ -58,42 +76,38 @@ func main() {
 
 	mismatches := 0
 	for _, id := range ids {
-		cap := catalog[id]
-		entry, ok := table[id]
-		if !ok {
-			fmt.Printf("MISSING_UPSTREAM\t%s\t(curated ctx=%d max_out=%d)\n", id, cap.ContextWindow, cap.MaxOutputTokens)
-			mismatches++
-			continue
-		}
-		upCtx := intFromPtr(entry.MaxInputTokens)
-		if upCtx == 0 {
-			upCtx = intFromPtr(entry.MaxTokens)
-		}
-		upOut := intFromPtr(entry.MaxOutputTokens)
-		if upCtx != 0 && upCtx != cap.ContextWindow {
-			fmt.Printf("CONTEXT_MISMATCH\t%s\tcurated=%d\tlitellm=%d\n", id, cap.ContextWindow, upCtx)
-			mismatches++
-		}
-		if upOut != 0 && upOut != cap.MaxOutputTokens {
-			fmt.Printf("MAX_OUT_MISMATCH\t%s\tcurated=%d\tlitellm=%d\n", id, cap.MaxOutputTokens, upOut)
-			mismatches++
-		}
-		if upCtx == 0 && upOut == 0 {
-			fmt.Printf("NO_LIMITS_UPSTREAM\t%s\n", id)
-		}
+		mismatches += diffOneModel(id, catalog[id], table[id], table, stdout)
 	}
+	return mismatches
+}
 
-	if mismatches == 0 {
-		fmt.Println("OK: curated models match LiteLLM context/max_output where present")
-		return
+func diffOneModel(id string, cap provider.ModelCapability, entry liteLLMEntry, table map[string]liteLLMEntry, stdout io.Writer) int {
+	if _, ok := table[id]; !ok {
+		fmt.Fprintf(stdout, "MISSING_UPSTREAM\t%s\t(curated ctx=%d max_out=%d)\n", id, cap.ContextWindow, cap.MaxOutputTokens)
+		return 1
 	}
-	fmt.Fprintf(os.Stderr, "diff_capabilities: %d mismatch(es)\n", mismatches)
-	os.Exit(1)
+	upCtx := intFromPtr(entry.MaxInputTokens)
+	upOut := intFromPtr(entry.MaxOutputTokens)
+	// Do not fall back to max_tokens: LiteLLM often uses it for output limits.
+	n := 0
+	if upCtx == 0 && upOut == 0 {
+		fmt.Fprintf(stdout, "NO_LIMITS_UPSTREAM\t%s\n", id)
+		return 1
+	}
+	if upCtx != 0 && upCtx != cap.ContextWindow {
+		fmt.Fprintf(stdout, "CONTEXT_MISMATCH\t%s\tcurated=%d\tlitellm=%d\n", id, cap.ContextWindow, upCtx)
+		n++
+	}
+	if upOut != 0 && upOut != cap.MaxOutputTokens {
+		fmt.Fprintf(stdout, "MAX_OUT_MISMATCH\t%s\tcurated=%d\tlitellm=%d\n", id, cap.MaxOutputTokens, upOut)
+		n++
+	}
+	return n
 }
 
 func loadLiteLLM(file string, fetch bool) ([]byte, error) {
 	switch {
-	case file != "":
+	case strings.TrimSpace(file) != "":
 		return os.ReadFile(file)
 	case fetch:
 		client := &http.Client{Timeout: 30 * time.Second}

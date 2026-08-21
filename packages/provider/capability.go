@@ -10,6 +10,10 @@ import (
 // no capability entry in the catalog.
 var ErrMissingCapability = errors.New("missing model capability")
 
+// ErrInvalidCapability is returned when a capability row fails validation
+// (malformed fields, tokenizer allowlist, ModelID mismatch, etc.).
+var ErrInvalidCapability = errors.New("invalid model capability")
+
 // Tokenizer family keys consumed by the Phase 2.5.G2 tokenizer registry.
 const (
 	TokenizerFamilyO200kBase  = "o200k_base"
@@ -77,23 +81,54 @@ func CatalogFromCapabilities(caps ...ModelCapability) CapabilityCatalog {
 	return out
 }
 
-// ValidateCapability checks required fields for a catalog row.
+// ValidateCapability checks required fields for a catalog row (overlay-safe).
+// TokenizerFamily must be one of the declared family constants (including
+// TokenizerFamilyUnknown for ExtraModels overlays).
 func ValidateCapability(cap ModelCapability) error {
+	return validateCapability(cap, true)
+}
+
+// ValidateBuiltinCapability is ValidateCapability plus rejection of
+// TokenizerFamilyUnknown (built-in curated rows must name a real family).
+func ValidateBuiltinCapability(cap ModelCapability) error {
+	return validateCapability(cap, false)
+}
+
+func validateCapability(cap ModelCapability, allowUnknownTokenizer bool) error {
 	id := strings.TrimSpace(cap.ModelID)
 	if id == "" {
-		return fmt.Errorf("model capability: empty ModelID")
+		return fmt.Errorf("%w: empty ModelID", ErrInvalidCapability)
 	}
 	if strings.TrimSpace(cap.Provider) == "" {
-		return fmt.Errorf("model capability %q: empty Provider", id)
+		return fmt.Errorf("%w: %q: empty Provider", ErrInvalidCapability, id)
 	}
 	if cap.ContextWindow <= 0 {
-		return fmt.Errorf("model capability %q: ContextWindow must be > 0", id)
+		return fmt.Errorf("%w: %q: ContextWindow must be > 0", ErrInvalidCapability, id)
 	}
 	if cap.MaxOutputTokens <= 0 {
-		return fmt.Errorf("model capability %q: MaxOutputTokens must be > 0", id)
+		return fmt.Errorf("%w: %q: MaxOutputTokens must be > 0", ErrInvalidCapability, id)
 	}
-	if strings.TrimSpace(cap.TokenizerFamily) == "" {
-		return fmt.Errorf("model capability %q: empty TokenizerFamily", id)
+	if cap.MaxOutputTokens > cap.ContextWindow {
+		return fmt.Errorf("%w: %q: MaxOutputTokens (%d) exceeds ContextWindow (%d)",
+			ErrInvalidCapability, id, cap.MaxOutputTokens, cap.ContextWindow)
+	}
+	family := strings.TrimSpace(cap.TokenizerFamily)
+	if family == "" {
+		return fmt.Errorf("%w: %q: empty TokenizerFamily", ErrInvalidCapability, id)
+	}
+	if !isAllowedTokenizerFamily(family, allowUnknownTokenizer) {
+		return fmt.Errorf("%w: %q: unsupported TokenizerFamily %q", ErrInvalidCapability, id, family)
 	}
 	return nil
+}
+
+func isAllowedTokenizerFamily(family string, allowUnknown bool) bool {
+	switch family {
+	case TokenizerFamilyO200kBase, TokenizerFamilyCL100kBase, TokenizerFamilyClaude:
+		return true
+	case TokenizerFamilyUnknown:
+		return allowUnknown
+	default:
+		return false
+	}
 }

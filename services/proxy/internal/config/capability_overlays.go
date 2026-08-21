@@ -1,10 +1,10 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/Rick1330/ibex-harness/packages/provider"
 )
@@ -14,29 +14,51 @@ const (
 	maxCapabilityOverlayEntries   = 64
 )
 
+// overlayWire is the strict JSON shape for IBEX_MODEL_CAPABILITY_OVERLAYS.
+// Pointer bools require explicit presence so omitted fields fail closed.
+type overlayWire struct {
+	ModelID           string `json:"model_id"`
+	Provider          string `json:"provider"`
+	ContextWindow     int    `json:"context_window"`
+	MaxOutputTokens   int    `json:"max_output_tokens"`
+	SupportsTools     *bool  `json:"supports_tools"`
+	SupportsVision    *bool  `json:"supports_vision"`
+	SupportsStreaming *bool  `json:"supports_streaming"`
+	TokenizerFamily   string `json:"tokenizer_family"`
+}
+
 // ParseCapabilityOverlays decodes IBEX_MODEL_CAPABILITY_OVERLAYS JSON.
-// Empty input yields a nil slice. Each entry must pass provider.ValidateCapability.
+// Empty input yields a nil slice. Rejects unknown JSON fields, omitted feature
+// flags, duplicate model IDs, and rows that fail provider.ValidateCapability.
 func ParseCapabilityOverlays(raw string) ([]provider.ModelCapability, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return nil, nil
 	}
-	if utf8.RuneCountInString(raw) > maxCapabilityOverlayJSONBytes {
+	if len(raw) > maxCapabilityOverlayJSONBytes {
 		return nil, fmt.Errorf("IBEX_MODEL_CAPABILITY_OVERLAYS exceeds %d bytes", maxCapabilityOverlayJSONBytes)
 	}
-	var caps []provider.ModelCapability
-	if err := json.Unmarshal([]byte(raw), &caps); err != nil {
+
+	dec := json.NewDecoder(bytes.NewReader([]byte(raw)))
+	dec.DisallowUnknownFields()
+	var wires []overlayWire
+	if err := dec.Decode(&wires); err != nil {
 		return nil, fmt.Errorf("IBEX_MODEL_CAPABILITY_OVERLAYS: invalid JSON: %w", err)
 	}
-	if len(caps) > maxCapabilityOverlayEntries {
+	if wires == nil {
+		return nil, fmt.Errorf("IBEX_MODEL_CAPABILITY_OVERLAYS: expected a JSON array")
+	}
+	if len(wires) > maxCapabilityOverlayEntries {
 		return nil, fmt.Errorf("IBEX_MODEL_CAPABILITY_OVERLAYS: at most %d entries", maxCapabilityOverlayEntries)
 	}
-	out := make([]provider.ModelCapability, 0, len(caps))
-	seen := make(map[string]struct{}, len(caps))
-	for i, cap := range caps {
-		cap.ModelID = strings.TrimSpace(cap.ModelID)
-		cap.Provider = strings.TrimSpace(cap.Provider)
-		cap.TokenizerFamily = strings.TrimSpace(cap.TokenizerFamily)
+
+	out := make([]provider.ModelCapability, 0, len(wires))
+	seen := make(map[string]struct{}, len(wires))
+	for i, wire := range wires {
+		cap, err := overlayWireToCapability(wire)
+		if err != nil {
+			return nil, fmt.Errorf("IBEX_MODEL_CAPABILITY_OVERLAYS[%d]: %w", i, err)
+		}
 		if err := provider.ValidateCapability(cap); err != nil {
 			return nil, fmt.Errorf("IBEX_MODEL_CAPABILITY_OVERLAYS[%d]: %w", i, err)
 		}
@@ -47,4 +69,26 @@ func ParseCapabilityOverlays(raw string) ([]provider.ModelCapability, error) {
 		out = append(out, cap)
 	}
 	return out, nil
+}
+
+func overlayWireToCapability(wire overlayWire) (provider.ModelCapability, error) {
+	if wire.SupportsTools == nil {
+		return provider.ModelCapability{}, fmt.Errorf("supports_tools is required")
+	}
+	if wire.SupportsVision == nil {
+		return provider.ModelCapability{}, fmt.Errorf("supports_vision is required")
+	}
+	if wire.SupportsStreaming == nil {
+		return provider.ModelCapability{}, fmt.Errorf("supports_streaming is required")
+	}
+	return provider.ModelCapability{
+		ModelID:           strings.TrimSpace(wire.ModelID),
+		Provider:          strings.TrimSpace(wire.Provider),
+		ContextWindow:     wire.ContextWindow,
+		MaxOutputTokens:   wire.MaxOutputTokens,
+		SupportsTools:     *wire.SupportsTools,
+		SupportsVision:    *wire.SupportsVision,
+		SupportsStreaming: *wire.SupportsStreaming,
+		TokenizerFamily:   strings.TrimSpace(wire.TokenizerFamily),
+	}, nil
 }
