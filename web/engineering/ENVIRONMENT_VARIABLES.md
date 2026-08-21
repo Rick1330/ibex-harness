@@ -231,24 +231,28 @@ Used by: **proxy** (`services/proxy`)
 | `IBEX_IDEMPOTENCY_TTL` | No | `24h` | Redis TTL for completed `idempotency:{org_id}:{key}` chat Idempotency-Key records ([ADR-0035](/docs/adr/0035-chat-idempotency-key)). Pending claims use a separate ~9m package default. | Requires `REDIS_URL`; empty Redis → Noop (no dedupe) |
 | `IBEX_IDEMPOTENCY_REDIS_TIMEOUT` | No | `50ms` | Per claim/commit Redis budget; timeout fail-opens without dedupe | Aligns with auth validate budget class |
 | `IBEX_ERROR_DOCS_BASE` | No | (empty) | Base URL for `docs_url` in error envelope | Omit in dev when unset |
-| `IBEX_LLM_MODE` | No | `mock` | `mock` \| `live` — `mock` registers an in-process stub; `live` registers OpenAI and/or Anthropic when credentials are present ([ADR-0026](/docs/adr/0026-openai-client-design), [ADR-0040](/docs/adr/0040-anthropic-provider-adapter)). **Rejected when `IBEX_ENV=production`** | Default `mock` for CI/dev without API key; production must use `live` |
-| `OPENAI_API_KEY` | Live (≥1 of OpenAI/Anthropic) | (none) | OpenAI API key (or OpenAI-compatible provider key) | Secret; never logged |
-| `OPENAI_BASE_URL` | No | `https://api.openai.com/v1` | OpenAI API base URL | Use `https://openrouter.ai/api/v1` for OpenRouter |
+| `IBEX_LLM_MODE` | No | `mock` | `mock` \| `live` — `mock` registers an in-process stub; `live` registers OpenAI, Anthropic, and/or self-hosted when configured ([ADR-0026](/docs/adr/0026-openai-client-design), [ADR-0040](/docs/adr/0040-anthropic-provider-adapter), [ADR-0042](/docs/adr/0042-self-hosted-openai-compatible-adapter)). **Rejected when `IBEX_ENV=production`** | Default `mock` for CI/dev without API key; production must use `live` |
+| `OPENAI_API_KEY` | Live (≥1 of OpenAI/Anthropic/self-hosted) | (none) | OpenAI API key (or OpenAI-compatible provider key) | Secret; never logged |
+| `OPENAI_BASE_URL` | No | `https://api.openai.com/v1` | OpenAI API base URL | Use `https://openrouter.ai/api/v1` for OpenRouter; do **not** point this at self-hosted vLLM ([ADR-0042](/docs/adr/0042-self-hosted-openai-compatible-adapter)) |
 | `IBEX_LLM_EXTRA_MODELS` | No | (none) | Comma-separated extra live-mode model IDs beyond the default OpenAI allowlist | e.g. `openai/gpt-oss-20b:free` for OpenRouter; each ID needs an `IBEX_MODEL_CAPABILITY_OVERLAYS` entry |
-| `OPENAI_REQUEST_TIMEOUT` | No | `120s` | Upstream request timeout | |
-| `OPENAI_MAX_RETRIES` | No | `3` | Retries on 429/5xx/network | |
+| `OPENAI_REQUEST_TIMEOUT` | No | `120s` | Upstream request timeout | Also used as the self-hosted HTTP timeout |
+| `OPENAI_MAX_RETRIES` | No | `3` | Retries on 429/5xx/network | Shared retry budget for self-hosted chat calls |
 | `OPENAI_RETRY_BASE_DELAY` | No | `500ms` | Exponential backoff base | |
-| `ANTHROPIC_API_KEY` | Live (≥1 of OpenAI/Anthropic) | (none) | Anthropic API key for Messages API adapter ([ADR-0040](/docs/adr/0040-anthropic-provider-adapter)) | Secret; never logged |
+| `ANTHROPIC_API_KEY` | Live (≥1 of OpenAI/Anthropic/self-hosted) | (none) | Anthropic API key for Messages API adapter ([ADR-0040](/docs/adr/0040-anthropic-provider-adapter)) | Secret; never logged |
 | `ANTHROPIC_BASE_URL` | No | `https://api.anthropic.com` | Anthropic API base URL | Override for gateways/proxies |
 | `ANTHROPIC_REQUEST_TIMEOUT` | No | `120s` | Anthropic non-stream HTTP timeout | Stream bounded via request context |
 | `ANTHROPIC_MAX_RETRIES` | No | `3` | Anthropic-specific retries (**includes HTTP 529** overloaded) | Do not copy OpenAI retry list verbatim |
 | `ANTHROPIC_RETRY_BASE_DELAY` | No | `500ms` | Anthropic exponential backoff base | Cap 30s + jitter |
 | `ANTHROPIC_EXTRA_MODELS` | No | (none) | Comma-separated extra Claude model IDs beyond the built-in allowlist | Each ID needs an `IBEX_MODEL_CAPABILITY_OVERLAYS` entry |
-| `IBEX_MODEL_CAPABILITY_OVERLAYS` | Conditional | (none) | JSON array of capability rows for ExtraModels ([ADR-0041](/docs/adr/0041-model-capability-registry)) | Required when ExtraModels is set; fail-closed at registry build |
-| `IBEX_SELFHOSTED_ENABLED` | Planned **2.5** | `false` | Register OpenAI-compatible self-hosted backend(s) | Air-gapped / vLLM / TGI / Ollama path |
-| `IBEX_SELFHOSTED_BASE_URL` | Conditional | (none) | Base URL for self-hosted OpenAI-compatible API | Required when enabled |
-| `IBEX_SELFHOSTED_MODELS` | Conditional | (none) | Comma-separated model IDs served by that backend | Must exist in capability registry |
-| `IBEX_SELFHOSTED_API_KEY` | No | (none) | Optional bearer for self-hosted servers that require one | Secret if set |
+| `IBEX_MODEL_CAPABILITY_OVERLAYS` | Conditional | (none) | JSON array of capability rows for ExtraModels / self-hosted models ([ADR-0041](/docs/adr/0041-model-capability-registry)) | Required when ExtraModels or `IBEX_SELFHOSTED_MODELS` is set; fail-closed at registry build |
+| `IBEX_SELFHOSTED_ENABLED` | No | `false` | Register OpenAI-compatible self-hosted backend ([ADR-0042](/docs/adr/0042-self-hosted-openai-compatible-adapter)) | Air-gapped / vLLM / TGI / Ollama path |
+| `IBEX_SELFHOSTED_BASE_URL` | Conditional | (none) | Base URL ending in `/v1` for self-hosted OpenAI-compatible API | Required when enabled; private/loopback allowed only when enabled |
+| `IBEX_SELFHOSTED_MODELS` | Conditional | (none) | Comma-separated model IDs served by that backend | Overlay `provider` must be `openai` (wire dialect) |
+| `IBEX_SELFHOSTED_API_KEY` | No | (none) | Optional bearer for self-hosted servers that require one | Secret if set; Authorization omitted when empty |
+| `IBEX_SELFHOSTED_READY_TIMEOUT` | No | `60s` | Bootstrap `GET /models` probe deadline | Fail-closed at boot |
+| `IBEX_SELFHOSTED_READY_POLL` | No | `2s` | Bootstrap probe interval | |
+| `IBEX_PROVIDER_CIRCUIT_BREAKER_FAILURES` | No | `5` | Consecutive Complete failures before self-hosted breaker opens | |
+| `IBEX_PROVIDER_CIRCUIT_BREAKER_COOLDOWN_SECONDS` | No | `30` | Breaker cool-down in seconds | Integer seconds (not Go duration string) |
 | `IBEX_CONTEXT_ENABLED` | Planned **3.5** | `false` | Master switch for context-assembly injection; `false` = Phase 2 directive-only behavior | Additive; fail-open |
 | `IBEX_CONTEXT_GRPC_ADDR` | Conditional | `127.0.0.1:9092` | Context Assembly Engine gRPC target | Required when context enabled |
 | `IBEX_CONTEXT_TIMEOUT` | Planned **3.5** | `45ms` | Client-side assembly deadline (independent of server internal budget) | Fail-open on timeout |
@@ -257,8 +261,6 @@ Used by: **proxy** (`services/proxy`)
 | `IBEX_TOKENIZER_MODE` | Planned **2.5** | `local` | `local` \| `service` \| `dual` — how proxy counts tokens | Situational; dual-path is a starting preference |
 | `IBEX_TOKENIZER_SERVICE_URL` | Conditional | (none) | Python tokenizer-service base URL | Required when mode uses service |
 | `IBEX_DEFAULT_PROVIDER` | Planned **4** | `openai` | Org-level default when multi-provider routing is live | Phase 2/2.5 use registry registration |
-| `IBEX_PROVIDER_CIRCUIT_BREAKER_FAILURES` | Planned **4** (prefer earlier for self-hosted) | `5` | Failures in window before open | Shared `circuitbreaker` package |
-| `IBEX_PROVIDER_CIRCUIT_BREAKER_COOLDOWN_SECONDS` | Planned **4** | `30` | Cool-down before half-open | |
 
 **BYOK (Bring your own key) — Phase 4:**
 

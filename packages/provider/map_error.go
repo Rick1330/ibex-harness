@@ -23,6 +23,7 @@ type MapInput struct {
 	RetryAfter   time.Duration
 	TransportErr error
 	SafeMessage  string // optional sanitized 400 detail
+	Reason       string // optional: queue_full, circuit_open
 }
 
 // MapProviderError translates provider HTTP status or transport failure into
@@ -32,7 +33,30 @@ func MapProviderError(in MapInput) *apierror.Error {
 	if mapped, handled := mapTransport(in); handled {
 		return mapped
 	}
+	if mapped, handled := mapReason(in); handled {
+		return mapped
+	}
 	return mapHTTPStatus(in.StatusCode, in.RetryAfter, in.SafeMessage)
+}
+
+func mapReason(in MapInput) (*apierror.Error, bool) {
+	switch in.Reason {
+	case ErrorReasonCircuitOpen:
+		return unavailableWithDetail("Self-hosted LLM circuit breaker is open"), true
+	case ErrorReasonQueueFull:
+		return unavailableWithDetail("Self-hosted LLM backend queue is full"), true
+	default:
+		return nil, false
+	}
+}
+
+func unavailableWithDetail(detail string) *apierror.Error {
+	return &apierror.Error{
+		Code:       apierror.CodeProviderUnavailable,
+		Message:    msgProviderUnavailable,
+		Detail:     detail,
+		HTTPStatus: apierror.HTTPStatus(apierror.CodeProviderUnavailable),
+	}
 }
 
 // MapError is the handler entrypoint: unwraps ProviderError / deadline / cancel.
@@ -48,6 +72,7 @@ func MapError(err error) (mapped *apierror.Error, write bool) {
 			StatusCode:   pe.StatusCode,
 			RetryAfter:   pe.RetryAfter,
 			SafeMessage:  sanitizeProviderDetail(pe.ProviderErrMsg),
+			Reason:       pe.Reason,
 		}), true
 	}
 	if errors.Is(err, context.DeadlineExceeded) {

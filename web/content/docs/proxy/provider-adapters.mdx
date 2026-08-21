@@ -3,14 +3,15 @@ title: Provider adapters
 description: Pluggable adapters for OpenAI-compatible and other LLM providers.
 ---
 
-Provider adapters translate normalized IBEX chat requests into upstream LLM API calls and stream responses back to clients. The registry ships with a **mock** adapter (default), an **OpenAI-compatible** adapter, and an **Anthropic** adapter ([ADR-0040](/docs/adr/0040-anthropic-provider-adapter)).
+Provider adapters translate normalized IBEX chat requests into upstream LLM API calls and stream responses back to clients. The registry ships with a **mock** adapter (default), an **OpenAI** adapter, an **Anthropic** adapter ([ADR-0040](/docs/adr/0040-anthropic-provider-adapter)), and a self-hosted **OpenAI-compatible** adapter ([ADR-0042](/docs/adr/0042-self-hosted-openai-compatible-adapter)).
 
 <Callout type="info" title="Modes">
   `IBEX_LLM_MODE=mock` (default) returns HTTP **200** from an in-process stub for registered models.
-  Set `IBEX_LLM_MODE=live` with `OPENAI_API_KEY` and/or `ANTHROPIC_API_KEY` to register those vendors.
-  Live mode requires at least one key. Unknown models still return `501 PROVIDER_NOT_CONFIGURED`. Design:
-  [ADR-0025](/docs/adr/0025-llm-provider-abstraction), [ADR-0026](/docs/adr/0026-openai-client-design),
-  [ADR-0027](/docs/adr/0027-streaming-dual-write), [ADR-0040](/docs/adr/0040-anthropic-provider-adapter).
+  Set `IBEX_LLM_MODE=live` with `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, and/or `IBEX_SELFHOSTED_ENABLED=true`
+  to register those backends. Live mode requires at least one. Unknown models still return
+  `501 PROVIDER_NOT_CONFIGURED`. Design: [ADR-0025](/docs/adr/0025-llm-provider-abstraction),
+  [ADR-0026](/docs/adr/0026-openai-client-design), [ADR-0027](/docs/adr/0027-streaming-dual-write),
+  [ADR-0040](/docs/adr/0040-anthropic-provider-adapter), [ADR-0042](/docs/adr/0042-self-hosted-openai-compatible-adapter).
 </Callout>
 
 ## Why adapters exist
@@ -28,9 +29,19 @@ flowchart LR
   M[ProviderRouter middleware] --> R[Provider registry]
   R --> O[OpenAI adapter]
   R --> A[Anthropic adapter]
+  R --> S[openaicompatible adapter]
   O --> UP1[api.openai.com]
   A --> UP2[api.anthropic.com]
+  S --> UP3[vLLM / TGI / Ollama]
 ```
+
+## Self-hosted OpenAI-compatible (vLLM-first)
+
+Enable with `IBEX_SELFHOSTED_ENABLED=true`, a BaseURL ending in `/v1`, and `IBEX_SELFHOSTED_MODELS`.
+Capability overlays use `provider: "openai"` (wire dialect) while the runtime provider name is
+`openaicompatible`. Bootstrap probes `GET /models` before registration; `/ready` exposes an advisory
+`selfhosted_llm` check. Queue-full (HTTP 503) and circuit-open failures return distinct
+`PROVIDER_UNAVAILABLE` details — see [ADR-0042](/docs/adr/0042-self-hosted-openai-compatible-adapter).
 
 ## Planned adapter contract → Anthropic shipped
 
@@ -44,7 +55,7 @@ forwarder stay unchanged. Built-in models: `claude-sonnet-4-5`, `claude-haiku-4-
     {
       title: 'Register at startup',
       description:
-        'Each configured adapter is registered into provider.Registry by SupportedModels(). Live mode registers OpenAI and/or Anthropic when keys are present.',
+        'Each configured adapter is registered into provider.Registry by SupportedModels(). Live mode registers OpenAI, Anthropic, and/or self-hosted (openaicompatible) when configured.',
     },
     {
       title: 'Receive normalized payload',
@@ -54,7 +65,7 @@ forwarder stay unchanged. Built-in models: `claude-sonnet-4-5`, `claude-haiku-4-
     {
       title: 'Call upstream',
       description:
-        'Adapter applies provider credentials from process env (never from the client request body). Anthropic uses x-api-key + anthropic-version.',
+        'Adapter applies provider credentials from process env (never from the client request body). Anthropic uses x-api-key + anthropic-version; self-hosted omits Authorization when the key is empty.',
     },
     {
       title: 'Stream response',

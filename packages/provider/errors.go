@@ -20,7 +20,15 @@ type ProviderError struct {
 	ProviderBody   []byte
 	ProviderErrMsg string
 	RetryAfter     time.Duration
+	// Reason is an optional machine-oriented cause (queue_full, circuit_open).
+	Reason string
 }
+
+// Well-known ProviderError.Reason values for self-hosted backends.
+const (
+	ErrorReasonQueueFull   = "queue_full"
+	ErrorReasonCircuitOpen = "circuit_open"
+)
 
 // Error returns a redacted, caller-safe message: provider name, HTTP status, and
 // ProviderErrMsg only. ProviderBody is never included in the string.

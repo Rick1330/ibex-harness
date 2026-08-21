@@ -108,13 +108,13 @@ Infra manifests for a sample vLLM deployment can be committed as **reference onl
 
 Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
 
-- [ ] A self-hosted OpenAI-compatible backend can be registered from config
-- [ ] Hosted OpenAI behavior is unchanged after any shared-client refactor
-- [ ] Readiness / health handling avoids registering a backend that is still loading
-- [ ] Queue-full and generic upstream failures are distinguishable
-- [ ] Reliability measures (breaker, retry, or equivalent) exist for the self-hosted path
-- [ ] Reference deploy sketches are optional and clearly marked as such
-- [ ] Unit tests cover the compatible client; existing OpenAI tests still pass
+- [x] A self-hosted OpenAI-compatible backend can be registered from config
+- [x] Hosted OpenAI behavior is unchanged after any shared-client refactor
+- [x] Readiness / health handling avoids registering a backend that is still loading
+- [x] Queue-full and generic upstream failures are distinguishable
+- [x] Reliability measures (breaker, retry, or equivalent) exist for the self-hosted path
+- [x] Reference deploy sketches are optional and clearly marked as such
+- [x] Unit tests cover the compatible client; existing OpenAI tests still pass
 - [ ] Repo guards / CI checks still pass
 
 ## Prerequisites
@@ -122,3 +122,10 @@ Outcome-oriented signals that the milestone is in good shape. Exact filenames, p
 - 2.5.G1.M2 (model capability registry) — self-hosted models need capability entries
 - 2.5.G2.M1 (tokenizer registry) — correct token counting for open-weight models
 - Phase 2 OpenAI provider path complete
+
+## Implementation notes (shipped)
+
+- Shared client: `packages/provider/openaicompatible` (hosted OpenAI wraps it)
+- Runtime provider name: `openaicompatible`; overlay vendor family remains `openai`
+- Config: `IBEX_SELFHOSTED_*` + breaker envs — see [ADR-0042](/docs/adr/0042-self-hosted-openai-compatible-adapter)
+- Reference compose (optional): `infra/reference/vllm-openai-compatible.compose.yaml`

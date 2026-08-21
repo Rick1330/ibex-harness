@@ -8,7 +8,6 @@ const (
 	defaultStreamTimeout  = 30 * time.Minute
 	defaultMaxRetries     = 3
 	defaultRetryBaseDelay = 500 * time.Millisecond
-	maxRetryBackoff       = 30 * time.Second
 )
 
 // Config tunes upstream OpenAI HTTP behavior (timeouts, retries, endpoint) for the proxy provider client.
@@ -36,22 +35,20 @@ func (c *Config) ApplyDefaults() {
 		c.StreamTimeout = defaultStreamTimeout
 	}
 	if c.MaxRetries == nil {
-		c.MaxRetries = intPtr(defaultMaxRetries)
+		v := defaultMaxRetries
+		c.MaxRetries = &v
 	} else if *c.MaxRetries < 0 {
-		c.MaxRetries = intPtr(0)
+		v := 0
+		c.MaxRetries = &v
 	}
 	if c.RetryBaseDelay <= 0 {
 		c.RetryBaseDelay = defaultRetryBaseDelay
 	}
 }
 
-func (c Config) maxRetries() int {
-	if c.MaxRetries == nil {
-		return defaultMaxRetries
-	}
-	return *c.MaxRetries
-}
-
-func intPtr(v int) *int {
-	return &v
+// Metrics records upstream provider outcomes, retries, and per-attempt latency.
+type Metrics interface {
+	IncProviderRequest(provider, statusClass string)
+	IncProviderRetry(provider string)
+	ObserveProviderDurationSeconds(provider string, seconds float64)
 }
