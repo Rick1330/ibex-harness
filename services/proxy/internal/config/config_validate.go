@@ -67,24 +67,36 @@ func (c Config) validateSessionSweeper() error {
 
 func (c Config) validateLLMConfig() error {
 	mode := strings.ToLower(strings.TrimSpace(c.LLMMode))
+	if err := validateLLMMode(mode, c.Environment); err != nil {
+		return err
+	}
+	if err := c.validateSelfHostedConfig(); err != nil {
+		return err
+	}
+	return c.validateLiveLLMCredentials(mode)
+}
+
+func validateLLMMode(mode, environment string) error {
 	switch mode {
 	case envLLMModeMock, envLLMModeLive:
 	default:
 		return fmt.Errorf("IBEX_LLM_MODE must be mock or live")
 	}
-	if mode == envLLMModeMock && c.Environment == envProduction {
+	if mode == envLLMModeMock && environment == envProduction {
 		return fmt.Errorf("IBEX_LLM_MODE=mock is not allowed when IBEX_ENV=production")
 	}
-	if err := c.validateSelfHostedConfig(); err != nil {
-		return err
+	return nil
+}
+
+func (c Config) validateLiveLLMCredentials(mode string) error {
+	if mode != envLLMModeLive {
+		return nil
 	}
-	if mode == envLLMModeLive {
-		hasOpenAI := strings.TrimSpace(c.OpenAI.APIKey) != ""
-		hasAnthropic := strings.TrimSpace(c.Anthropic.APIKey) != ""
-		hasSelfHosted := c.SelfHosted.Enabled
-		if !hasOpenAI && !hasAnthropic && !hasSelfHosted {
-			return fmt.Errorf("IBEX_LLM_MODE=live requires OPENAI_API_KEY, ANTHROPIC_API_KEY, and/or IBEX_SELFHOSTED_ENABLED")
-		}
+	hasOpenAI := strings.TrimSpace(c.OpenAI.APIKey) != ""
+	hasAnthropic := strings.TrimSpace(c.Anthropic.APIKey) != ""
+	hasSelfHosted := c.SelfHosted.Enabled
+	if !hasOpenAI && !hasAnthropic && !hasSelfHosted {
+		return fmt.Errorf("IBEX_LLM_MODE=live requires OPENAI_API_KEY, ANTHROPIC_API_KEY, and/or IBEX_SELFHOSTED_ENABLED")
 	}
 	return nil
 }

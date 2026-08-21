@@ -44,13 +44,8 @@ func TestBreaker_RecoversAfterCoolDown(t *testing.T) {
 	t.Parallel()
 	b := New(Settings{Name: "t", MaxFailures: 1, CoolDown: 25 * time.Millisecond})
 	_, _ = b.Execute(func() (any, error) { return nil, errors.New("fail") })
-	if b.State() != "open" {
-		t.Fatalf("state=%s", b.State())
-	}
+	assertState(t, b, "open")
 	time.Sleep(40 * time.Millisecond)
-	if st := b.State(); st != "half_open" && st != "open" && st != "closed" {
-		t.Fatalf("state=%s", st)
-	}
 	out, err := b.Execute(func() (any, error) { return "ok", nil })
 	if err != nil {
 		t.Fatalf("err=%v", err)
@@ -58,7 +53,12 @@ func TestBreaker_RecoversAfterCoolDown(t *testing.T) {
 	if out.(string) != "ok" {
 		t.Fatalf("out=%v", out)
 	}
-	if b.State() != "closed" {
-		t.Fatalf("state=%s", b.State())
+	assertState(t, b, "closed")
+}
+
+func assertState(t *testing.T, b *Breaker, want string) {
+	t.Helper()
+	if got := b.State(); got != want {
+		t.Fatalf("state=%s want %s", got, want)
 	}
 }

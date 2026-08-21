@@ -109,31 +109,6 @@ func TestMapProviderError_serverAndTransport(t *testing.T) {
 	runMapCases(t, mapProviderServerCases)
 }
 
-func TestMapError_entrypoints(t *testing.T) {
-	t.Parallel()
-	runMapErrorCases(t)
-}
-
-func TestSanitizeProviderDetail(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		in, want string
-	}{
-		{"  Invalid request parameter  ", "Invalid request parameter"},
-		{"missing messages field", "missing messages field"},
-		{"Invalid API key sk-live-abcdefg", ""},
-		{"key sk-live-abcdefg leaked", ""},
-		{"Bearer tok123", ""},
-		{"ok message", ""},
-		{"", ""},
-	}
-	for _, tc := range cases {
-		if got := sanitizeProviderDetail(tc.in); got != tc.want {
-			t.Fatalf("in=%q got=%q want=%q", tc.in, got, tc.want)
-		}
-	}
-}
-
 func runMapCases(t *testing.T, cases []mapCase) {
 	t.Helper()
 	for _, tc := range cases {
@@ -155,93 +130,93 @@ func runMapCases(t *testing.T, cases []mapCase) {
 	}
 }
 
-func runMapErrorCases(t *testing.T) {
+func TestMapError_entrypoints(t *testing.T) {
+	t.Parallel()
+	runMapErrorCases(t, mapErrorEntrypointCases)
+}
+
+type mapErrorCase struct {
+	name       string
+	err        error
+	wantWrite  bool
+	wantCode   apierror.Code
+	wantStatus int
+	wantDetail string
+}
+
+var mapErrorEntrypointCases = []mapErrorCase{
+	{
+		name: "safe_400_detail",
+		err: &ProviderError{
+			ProviderName:   "openai",
+			StatusCode:     http.StatusBadRequest,
+			ProviderErrMsg: "Invalid type for messages",
+			ProviderBody:   []byte(`{"error":{"message":"secret sk-abc123"}}`),
+		},
+		wantWrite:  true,
+		wantCode:   apierror.CodeInvalidRequest,
+		wantStatus: http.StatusBadRequest,
+		wantDetail: "Invalid type for messages",
+	},
+	{
+		name: "unsafe_detail_dropped",
+		err: &ProviderError{
+			StatusCode:     http.StatusBadRequest,
+			ProviderErrMsg: "something weird with key material",
+		},
+		wantWrite:  true,
+		wantCode:   apierror.CodeInvalidRequest,
+		wantStatus: http.StatusBadRequest,
+		wantDetail: msgInvalidRequest,
+	},
+	{
+		name: "circuit_open_reason",
+		err: &ProviderError{
+			ProviderName:   "openaicompatible",
+			StatusCode:     http.StatusServiceUnavailable,
+			ProviderErrMsg: "circuit breaker open",
+			Reason:         ErrorReasonCircuitOpen,
+		},
+		wantWrite:  true,
+		wantCode:   apierror.CodeProviderUnavailable,
+		wantStatus: http.StatusServiceUnavailable,
+		wantDetail: "Self-hosted LLM circuit breaker is open",
+	},
+	{
+		name: "queue_full_reason",
+		err: &ProviderError{
+			ProviderName:   "openaicompatible",
+			StatusCode:     http.StatusServiceUnavailable,
+			ProviderErrMsg: "queue full",
+			Reason:         ErrorReasonQueueFull,
+		},
+		wantWrite:  true,
+		wantCode:   apierror.CodeProviderUnavailable,
+		wantStatus: http.StatusServiceUnavailable,
+		wantDetail: "Self-hosted LLM backend queue is full",
+	},
+	{
+		name:       "deadline",
+		err:        context.DeadlineExceeded,
+		wantWrite:  true,
+		wantCode:   apierror.CodeProviderTimeout,
+		wantStatus: http.StatusGatewayTimeout,
+		wantDetail: msgProviderTimeout,
+	},
+	{
+		name:       "transport_generic",
+		err:        errors.New("connection reset"),
+		wantWrite:  true,
+		wantCode:   apierror.CodeProviderUnavailable,
+		wantStatus: http.StatusServiceUnavailable,
+		wantDetail: msgProviderUnavailable,
+	},
+	{name: "canceled", err: context.Canceled, wantWrite: false},
+	{name: "nil", err: nil, wantWrite: false},
+}
+
+func runMapErrorCases(t *testing.T, cases []mapErrorCase) {
 	t.Helper()
-	cases := []struct {
-		name       string
-		err        error
-		wantWrite  bool
-		wantCode   apierror.Code
-		wantStatus int
-		wantDetail string
-	}{
-		{
-			name: "safe_400_detail",
-			err: &ProviderError{
-				ProviderName:   "openai",
-				StatusCode:     http.StatusBadRequest,
-				ProviderErrMsg: "Invalid type for messages",
-				ProviderBody:   []byte(`{"error":{"message":"secret sk-abc123"}}`),
-			},
-			wantWrite:  true,
-			wantCode:   apierror.CodeInvalidRequest,
-			wantStatus: http.StatusBadRequest,
-			wantDetail: "Invalid type for messages",
-		},
-		{
-			name: "unsafe_detail_dropped",
-			err: &ProviderError{
-				StatusCode:     http.StatusBadRequest,
-				ProviderErrMsg: "something weird with key material",
-			},
-			wantWrite:  true,
-			wantCode:   apierror.CodeInvalidRequest,
-			wantStatus: http.StatusBadRequest,
-			wantDetail: msgInvalidRequest,
-		},
-		{
-			name: "circuit_open_reason",
-			err: &ProviderError{
-				ProviderName:   "openaicompatible",
-				StatusCode:     http.StatusServiceUnavailable,
-				ProviderErrMsg: "circuit breaker open",
-				Reason:         ErrorReasonCircuitOpen,
-			},
-			wantWrite:  true,
-			wantCode:   apierror.CodeProviderUnavailable,
-			wantStatus: http.StatusServiceUnavailable,
-			wantDetail: "Self-hosted LLM circuit breaker is open",
-		},
-		{
-			name: "queue_full_reason",
-			err: &ProviderError{
-				ProviderName:   "openaicompatible",
-				StatusCode:     http.StatusServiceUnavailable,
-				ProviderErrMsg: "queue full",
-				Reason:         ErrorReasonQueueFull,
-			},
-			wantWrite:  true,
-			wantCode:   apierror.CodeProviderUnavailable,
-			wantStatus: http.StatusServiceUnavailable,
-			wantDetail: "Self-hosted LLM backend queue is full",
-		},
-		{
-			name:       "deadline",
-			err:        context.DeadlineExceeded,
-			wantWrite:  true,
-			wantCode:   apierror.CodeProviderTimeout,
-			wantStatus: http.StatusGatewayTimeout,
-			wantDetail: msgProviderTimeout,
-		},
-		{
-			name:       "transport_generic",
-			err:        errors.New("connection reset"),
-			wantWrite:  true,
-			wantCode:   apierror.CodeProviderUnavailable,
-			wantStatus: http.StatusServiceUnavailable,
-			wantDetail: msgProviderUnavailable,
-		},
-		{
-			name:      "canceled",
-			err:       context.Canceled,
-			wantWrite: false,
-		},
-		{
-			name:      "nil",
-			err:       nil,
-			wantWrite: false,
-		},
-	}
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {

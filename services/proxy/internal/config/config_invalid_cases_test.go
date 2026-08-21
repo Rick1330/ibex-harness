@@ -42,6 +42,12 @@ var invalidProxyConfigCases = []struct {
 		},
 	},
 	{name: "live mode missing all provider keys", mutate: func(c *Config) { c.LLMMode = "live"; c.OpenAI.APIKey = ""; c.Anthropic.APIKey = "" }},
+	{name: "selfhosted enabled missing models", mutate: func(c *Config) {
+		c.LLMMode = "live"
+		c.SelfHosted.Enabled = true
+		c.SelfHosted.BaseURL = "http://127.0.0.1:8000/v1"
+		c.SelfHosted.Models = nil
+	}},
 	{name: "invalid llm mode", mutate: func(c *Config) { c.LLMMode = "invalid" }},
 	{name: "mock mode in production", mutate: func(c *Config) {
 		c.Environment = envProduction

@@ -79,7 +79,7 @@ func runRetryStatusCase(t *testing.T, tc retryStatusCase) {
 	}))
 	t.Cleanup(srv.Close)
 
-	client := testClientWithRetries(t, srv.URL, "test-key", nil, 3, time.Millisecond)
+	client := testClientWithRetries(t, clientOpts{BaseURL: srv.URL, APIKey: "test-key", MaxRetries: 3, RetryDelay: time.Millisecond})
 
 	_, err := client.Complete(context.Background(), provider.Request{
 		Model:    "gpt-4o",
@@ -100,7 +100,7 @@ func TestOpenAIClient_RetryableTransport_recordsErrorMetricPerAttempt(t *testing
 	srv.Close()
 
 	reg := metrics.NewProxy("test")
-	client := testClientWithRetries(t, url, "test-key", reg, 2, time.Millisecond)
+	client := testClientWithRetries(t, clientOpts{BaseURL: url, APIKey: "test-key", Reg: reg, MaxRetries: 2, RetryDelay: time.Millisecond})
 
 	_, err := client.Complete(context.Background(), provider.Request{
 		Model:    "gpt-4o",
@@ -187,7 +187,7 @@ func TestOpenAIClient_NetworkError(t *testing.T) {
 func TestOpenAIClient_NonRetryableTransport_recordsSingleErrorMetric(t *testing.T) {
 	t.Parallel()
 	reg := metrics.NewProxy("test")
-	client := testClientWithRetries(t, "http://127.0.0.1:1", "test-key", reg, 0, time.Millisecond)
+	client := testClientWithRetries(t, clientOpts{BaseURL: "http://127.0.0.1:1", APIKey: "test-key", Reg: reg, MaxRetries: 0, RetryDelay: time.Millisecond})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -266,21 +266,29 @@ func countPrometheusCounter(body, needle string) int {
 }
 
 func testClient(t *testing.T, baseURL, apiKey string, reg *metrics.ProxyRegistry) *Client {
-	return testClientWithRetries(t, baseURL, apiKey, reg, 3, time.Millisecond)
+	return testClientWithRetries(t, clientOpts{BaseURL: baseURL, APIKey: apiKey, Reg: reg, MaxRetries: 3, RetryDelay: time.Millisecond})
 }
 
-func testClientWithRetries(t *testing.T, baseURL, apiKey string, reg *metrics.ProxyRegistry, maxRetries int, retryDelay time.Duration) *Client {
+type clientOpts struct {
+	BaseURL    string
+	APIKey     string
+	Reg        *metrics.ProxyRegistry
+	MaxRetries int
+	RetryDelay time.Duration
+}
+
+func testClientWithRetries(t *testing.T, opts clientOpts) *Client {
 	t.Helper()
 	var m Metrics
-	if reg != nil {
-		m = reg
+	if opts.Reg != nil {
+		m = opts.Reg
 	}
 	return New(Config{
-		APIKey:         apiKey,
-		BaseURL:        baseURL,
+		APIKey:         opts.APIKey,
+		BaseURL:        opts.BaseURL,
 		Timeout:        5 * time.Second,
-		MaxRetries:     intPtr(maxRetries),
-		RetryBaseDelay: retryDelay,
+		MaxRetries:     intPtr(opts.MaxRetries),
+		RetryBaseDelay: opts.RetryDelay,
 	}, logger.Discard("openai"), telemetry.NoopTracer("openai"), m)
 }
 

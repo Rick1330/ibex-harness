@@ -3,7 +3,7 @@
 # See ADR-0042 and milestone 2.5.G1.M3.
 #
 # Usage (operator machine with GPU / compatible runtime):
-#   docker compose -f deploy/reference/vllm-openai-compatible.compose.yaml up
+#   docker compose -f infra/reference/vllm-openai-compatible.compose.yaml up
 # Then point proxy at:
 #   IBEX_SELFHOSTED_ENABLED=true
 #   IBEX_SELFHOSTED_BASE_URL=http://127.0.0.1:8000/v1

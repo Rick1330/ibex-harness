@@ -21,15 +21,7 @@ type Breaker struct {
 
 // New constructs a Breaker. MaxFailures defaults to 5; CoolDown defaults to 30s.
 func New(s Settings) *Breaker {
-	if s.Name == "" {
-		s.Name = "provider"
-	}
-	if s.MaxFailures == 0 {
-		s.MaxFailures = 5
-	}
-	if s.CoolDown <= 0 {
-		s.CoolDown = 30 * time.Second
-	}
+	s = applyBreakerDefaults(s)
 	cb := gobreaker.NewCircuitBreaker[any](gobreaker.Settings{
 		Name:        s.Name,
 		MaxRequests: 1,
@@ -45,16 +37,33 @@ func New(s Settings) *Breaker {
 	return &Breaker{inner: cb}
 }
 
+func applyBreakerDefaults(s Settings) Settings {
+	if s.Name == "" {
+		s.Name = "provider"
+	}
+	if s.MaxFailures == 0 {
+		s.MaxFailures = 5
+	}
+	if s.CoolDown <= 0 {
+		s.CoolDown = 30 * time.Second
+	}
+	return s
+}
+
 // Execute runs fn under the breaker. When open, returns ErrOpen.
 func (b *Breaker) Execute(fn func() (any, error)) (any, error) {
 	if b == nil || b.inner == nil {
 		return fn()
 	}
 	out, err := b.inner.Execute(fn)
-	if err != nil && (errors.Is(err, gobreaker.ErrOpenState) || errors.Is(err, gobreaker.ErrTooManyRequests)) {
+	if isBreakerBlocked(err) {
 		return nil, ErrOpen
 	}
 	return out, err
+}
+
+func isBreakerBlocked(err error) bool {
+	return errors.Is(err, gobreaker.ErrOpenState) || errors.Is(err, gobreaker.ErrTooManyRequests)
 }
 
 // State returns a stable string for metrics/logs.

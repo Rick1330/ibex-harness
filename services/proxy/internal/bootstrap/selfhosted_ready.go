@@ -16,38 +16,61 @@ const selfHostedModelsPath = "/models"
 
 // waitSelfHostedReady polls GET {base}/models until 2xx or timeout (fail-closed at boot).
 func waitSelfHostedReady(ctx context.Context, baseURL string, sh config.SelfHostedConfig, log *logger.Logger) error {
-	timeout := sh.ReadyTimeout
-	if timeout <= 0 {
-		timeout = 60 * time.Second
-	}
-	poll := sh.ReadyPoll
-	if poll <= 0 {
-		poll = 2 * time.Second
-	}
+	timeout, poll := selfHostedProbeTiming(sh)
 	deadline := time.Now().Add(timeout)
 	client := &http.Client{Timeout: 5 * time.Second}
 	url := strings.TrimRight(baseURL, "/") + selfHostedModelsPath
-	attempt := 0
-	for {
-		attempt++
-		ok, err := probeModels(ctx, client, url, sh.APIKey)
+
+	for attempt := 1; ; attempt++ {
+		ok, probeErr := probeModels(ctx, client, url, sh.APIKey)
 		if ok {
 			log.InfoCtx(ctx, "selfhosted_ready", "url", url, "attempts", attempt)
 			return nil
 		}
-		if time.Now().After(deadline) {
-			if err != nil {
-				return fmt.Errorf("self-hosted readiness probe failed after %s: %w", timeout, err)
-			}
-			return fmt.Errorf("self-hosted readiness probe failed after %s: non-success response", timeout)
-		}
-		log.WarnCtx(ctx, "selfhosted_not_ready", "url", url, "attempt", attempt, "err", errString(err))
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(poll):
+		if err := waitOrTimeout(ctx, deadline, timeout, poll, url, attempt, probeErr, log); err != nil {
+			return err
 		}
 	}
+}
+
+func selfHostedProbeTiming(sh config.SelfHostedConfig) (timeout, poll time.Duration) {
+	timeout = sh.ReadyTimeout
+	if timeout <= 0 {
+		timeout = 60 * time.Second
+	}
+	poll = sh.ReadyPoll
+	if poll <= 0 {
+		poll = 2 * time.Second
+	}
+	return timeout, poll
+}
+
+func waitOrTimeout(
+	ctx context.Context,
+	deadline time.Time,
+	timeout, poll time.Duration,
+	url string,
+	attempt int,
+	probeErr error,
+	log *logger.Logger,
+) error {
+	if time.Now().After(deadline) {
+		return readinessTimeoutError(timeout, probeErr)
+	}
+	log.WarnCtx(ctx, "selfhosted_not_ready", "url", url, "attempt", attempt, "err", errString(probeErr))
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(poll):
+		return nil
+	}
+}
+
+func readinessTimeoutError(timeout time.Duration, probeErr error) error {
+	if probeErr != nil {
+		return fmt.Errorf("self-hosted readiness probe failed after %s: %w", timeout, probeErr)
+	}
+	return fmt.Errorf("self-hosted readiness probe failed after %s: non-success response", timeout)
 }
 
 func probeModels(ctx context.Context, client *http.Client, url, apiKey string) (bool, error) {
@@ -55,9 +78,7 @@ func probeModels(ctx context.Context, client *http.Client, url, apiKey string) (
 	if err != nil {
 		return false, err
 	}
-	if key := strings.TrimSpace(apiKey); key != "" {
-		req.Header.Set("Authorization", "Bearer "+key)
-	}
+	applyOptionalBearer(req, apiKey)
 	resp, err := client.Do(req)
 	if err != nil {
 		return false, err
@@ -68,6 +89,12 @@ func probeModels(ctx context.Context, client *http.Client, url, apiKey string) (
 		return true, nil
 	}
 	return false, fmt.Errorf("status %d", resp.StatusCode)
+}
+
+func applyOptionalBearer(req *http.Request, apiKey string) {
+	if key := strings.TrimSpace(apiKey); key != "" {
+		req.Header.Set("Authorization", "Bearer "+key)
+	}
 }
 
 func errString(err error) string {
