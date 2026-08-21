@@ -142,6 +142,12 @@ func TestRetryDelayAndWait(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	got := retrySleepDuration(time.Millisecond, 1, &ProviderError{
+		StatusCode: 429, RetryAfter: time.Hour,
+	})
+	if got != DefaultMaxRetryBackoff {
+		t.Fatalf("Retry-After clamp got=%v want=%v", got, DefaultMaxRetryBackoff)
+	}
 }
 
 func TestStreamHelpers(t *testing.T) {
@@ -297,6 +303,10 @@ func TestNewHTTPClients(t *testing.T) {
 	if clients.Sync.Transport != clients.Stream.Transport {
 		t.Fatal("shared transport")
 	}
+	tr, ok := clients.Sync.Transport.(*http.Transport)
+	if !ok || tr.Proxy == nil {
+		t.Fatal("ProxyFromEnvironment required")
+	}
 }
 
 func TestTracerOrNoop(t *testing.T) {
@@ -313,9 +323,10 @@ func TestTracerOrNoop(t *testing.T) {
 func TestStartCompleteSpanAndJoin(t *testing.T) {
 	t.Parallel()
 	tr := noop.NewTracerProvider().Tracer("t")
-	ctx, span := StartCompleteSpan(context.Background(), tr, CompleteSpanNames{
-		Span: "prov.Complete", Provider: "prov",
-	}, Request{Model: "m", Stream: true})
+	ctx, span := StartCompleteSpan(context.Background(), tr, CompleteSpan{
+		Names: CompleteSpanNames{Span: "prov.Complete", Provider: "prov"},
+		Req:   Request{Model: "m", Stream: true},
+	})
 	span.End()
 	if ctx == nil {
 		t.Fatal("span ctx")

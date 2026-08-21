@@ -32,6 +32,12 @@ func TracerOrNoop(tracer trace.Tracer, name string) trace.Tracer {
 	return noop.NewTracerProvider().Tracer(name)
 }
 
+// CompleteSpan describes a provider Complete span start.
+type CompleteSpan struct {
+	Names CompleteSpanNames
+	Req   Request
+}
+
 // CompleteSpanNames identifies a provider Complete span.
 type CompleteSpanNames struct {
 	Span     string
@@ -39,17 +45,12 @@ type CompleteSpanNames struct {
 }
 
 // StartCompleteSpan starts the standard provider Complete span attributes.
-func StartCompleteSpan(
-	ctx context.Context,
-	tracer trace.Tracer,
-	names CompleteSpanNames,
-	req Request,
-) (context.Context, trace.Span) {
-	return tracer.Start(ctx, names.Span,
+func StartCompleteSpan(ctx context.Context, tracer trace.Tracer, span CompleteSpan) (context.Context, trace.Span) {
+	return tracer.Start(ctx, span.Names.Span,
 		trace.WithAttributes(
-			attribute.String("provider.name", names.Provider),
-			attribute.String("llm.model", req.Model),
-			attribute.Bool("llm.stream", req.Stream),
+			attribute.String("provider.name", span.Names.Provider),
+			attribute.String("llm.model", span.Req.Model),
+			attribute.Bool("llm.stream", span.Req.Stream),
 		),
 	)
 }

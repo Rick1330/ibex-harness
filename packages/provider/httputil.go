@@ -51,10 +51,12 @@ func NewPooledHTTPClient(timeout time.Duration) *http.Client {
 	return &http.Client{
 		Timeout: timeout,
 		Transport: &http.Transport{
+			Proxy:               http.ProxyFromEnvironment,
 			MaxIdleConns:        100,
 			MaxIdleConnsPerHost: 20,
 			IdleConnTimeout:     90 * time.Second,
 			TLSHandshakeTimeout: 10 * time.Second,
+			ForceAttemptHTTP2:   true,
 		},
 	}
 }
@@ -164,10 +166,7 @@ func RetryAfterFromError(lastErr error) time.Duration {
 
 // WaitBeforeRetry sleeps for backoff (honoring Retry-After hints) or returns ctx err.
 func WaitBeforeRetry(ctx context.Context, base time.Duration, attempt int, lastErr error) error {
-	delay := RetryDelay(base, attempt, DefaultMaxRetryBackoff)
-	if ra := RetryAfterFromError(lastErr); ra > 0 {
-		delay = ra
-	}
+	delay := retrySleepDuration(base, attempt, lastErr)
 	timer := time.NewTimer(delay)
 	defer timer.Stop()
 	select {
@@ -176,6 +175,14 @@ func WaitBeforeRetry(ctx context.Context, base time.Duration, attempt int, lastE
 	case <-timer.C:
 		return nil
 	}
+}
+
+func retrySleepDuration(base time.Duration, attempt int, lastErr error) time.Duration {
+	delay := RetryDelay(base, attempt, DefaultMaxRetryBackoff)
+	if ra := RetryAfterFromError(lastErr); ra > 0 {
+		return min(ra, DefaultMaxRetryBackoff)
+	}
+	return delay
 }
 
 // StatusClass maps an HTTP status to a coarse metrics label.

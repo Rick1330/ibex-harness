@@ -31,9 +31,25 @@ type streamMeta struct {
 
 // sseEvent is one parsed Anthropic SSE event.
 type sseEvent struct {
-	Type string
-	Data string
+	Kind eventKind
+	Data eventPayload
 }
+
+type eventKind string
+type eventPayload string
+
+const (
+	eventKindError          eventKind = "error"
+	eventKindMessageStart   eventKind = "message_start"
+	eventKindContentDelta   eventKind = "content_block_delta"
+	eventKindMessageDelta   eventKind = "message_delta"
+	eventKindPing           eventKind = "ping"
+	eventKindComment        eventKind = "sse_comment"
+	eventKindMessageStop    eventKind = "message_stop"
+	eventKindContentStart   eventKind = "content_block_start"
+	eventKindContentStop    eventKind = "content_block_stop"
+	eventKindDefaultMessage eventKind = "message"
+)
 
 // streamTranslatePipe reads Anthropic named SSE and emits OpenAI chat.completion.chunk SSE.
 // Backpressure is natural via io.Pipe: the producer blocks when the consumer is slow.
@@ -73,11 +89,12 @@ func (p *streamTranslatePipe) closeUpstream() {
 func (p *streamTranslatePipe) run(pw *io.PipeWriter) {
 	defer close(p.readerDone)
 	defer p.closeUpstream()
-	if err := p.translateInto(pw); err != nil && !errors.Is(err, errPipeClosed) {
-		_ = pw.CloseWithError(err)
+	err := p.translateInto(pw)
+	if errors.Is(err, errPipeClosed) || err == nil {
+		_ = pw.Close()
 		return
 	}
-	_ = pw.Close()
+	_ = pw.CloseWithError(err)
 }
 
 func (p *streamTranslatePipe) translateInto(pw *io.PipeWriter) error {
@@ -98,9 +115,9 @@ func (p *streamTranslatePipe) translateInto(pw *io.PipeWriter) error {
 }
 
 type sseParser struct {
-	scanner   *bufio.Scanner
-	eventType string
-	dataBuf   strings.Builder
+	scanner *bufio.Scanner
+	kind    eventKind
+	dataBuf strings.Builder
 }
 
 func newSSEParser(r io.Reader) *sseParser {
@@ -125,17 +142,17 @@ func (p *sseParser) handleScanLine(line string) (sseEvent, bool, error) {
 		return ev, true, err
 	}
 	if strings.HasPrefix(line, ":") {
-		return sseEvent{Type: "sse_comment", Data: commentPayload(line)}, true, nil
+		return sseEvent{Kind: eventKindComment, Data: commentPayload(line)}, true, nil
 	}
 	return sseEvent{}, false, p.ingestLine(line)
 }
 
-func commentPayload(line string) string {
+func commentPayload(line string) eventPayload {
 	comment := strings.TrimSpace(strings.TrimPrefix(line, ":"))
 	if comment == "" {
 		return "keepalive"
 	}
-	return comment
+	return eventPayload(comment)
 }
 
 func (p *sseParser) finishScan() (sseEvent, error) {
@@ -146,7 +163,7 @@ func (p *sseParser) finishScan() (sseEvent, error) {
 	if err != nil {
 		return sseEvent{}, err
 	}
-	if ev.Type == "" && ev.Data == "" {
+	if ev.Kind == "" && ev.Data == "" {
 		return sseEvent{}, io.EOF
 	}
 	return ev, nil
@@ -155,7 +172,7 @@ func (p *sseParser) finishScan() (sseEvent, error) {
 func (p *sseParser) ingestLine(line string) error {
 	switch {
 	case strings.HasPrefix(line, "event:"):
-		p.eventType = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+		p.kind = eventKind(strings.TrimSpace(strings.TrimPrefix(line, "event:")))
 		return nil
 	case strings.HasPrefix(line, "data:"):
 		return p.appendData(strings.TrimSpace(strings.TrimPrefix(line, "data:")))
@@ -180,17 +197,17 @@ func (p *sseParser) appendData(payload string) error {
 }
 
 func (p *sseParser) flush() (sseEvent, error) {
-	data := strings.TrimSpace(p.dataBuf.String())
-	et := strings.TrimSpace(p.eventType)
-	p.eventType = ""
+	data := eventPayload(strings.TrimSpace(p.dataBuf.String()))
+	kind := eventKind(strings.TrimSpace(string(p.kind)))
+	p.kind = ""
 	p.dataBuf.Reset()
-	if et == "" && data == "" {
+	if kind == "" && data == "" {
 		return sseEvent{}, nil
 	}
-	if et == "" {
-		et = "message"
+	if kind == "" {
+		kind = eventKindDefaultMessage
 	}
-	return sseEvent{Type: et, Data: data}, nil
+	return sseEvent{Kind: kind, Data: data}, nil
 }
 
 // streamState is owned exclusively by the producer goroutine.
@@ -221,20 +238,20 @@ func (st *streamState) finish() error {
 }
 
 func (st *streamState) handle(ev sseEvent) error {
-	switch ev.Type {
-	case "error":
+	switch ev.Kind {
+	case eventKindError:
 		return mapStreamError(ev.Data)
-	case "message_start":
+	case eventKindMessageStart:
 		return st.onMessageStart(ev)
-	case "content_block_delta":
+	case eventKindContentDelta:
 		return st.onContentDelta(ev)
-	case "message_delta":
+	case eventKindMessageDelta:
 		return st.onMessageDelta(ev)
-	case "ping":
+	case eventKindPing:
 		return st.writeRaw(": ping\n\n")
-	case "sse_comment":
-		return st.writeRaw(": " + ev.Data + "\n\n")
-	case "message_stop", "content_block_start", "content_block_stop":
+	case eventKindComment:
+		return st.writeRaw(": " + string(ev.Data) + "\n\n")
+	case eventKindMessageStop, eventKindContentStart, eventKindContentStop:
 		return nil
 	default:
 		return nil
@@ -333,7 +350,8 @@ func (st *streamState) writeFinish(reason string) error {
 	})
 }
 
-func mapStreamError(data string) error {
+func mapStreamError(data eventPayload) error {
+	raw := []byte(data)
 	var payload struct {
 		Error struct {
 			Type    string `json:"type"`
@@ -342,7 +360,7 @@ func mapStreamError(data string) error {
 	}
 	msg := "anthropic stream error"
 	status := http.StatusBadGateway
-	if err := json.Unmarshal([]byte(data), &payload); err == nil {
+	if err := json.Unmarshal(raw, &payload); err == nil {
 		if payload.Error.Message != "" {
 			msg = truncateErrMsg(payload.Error.Message)
 		}
@@ -357,7 +375,7 @@ func mapStreamError(data string) error {
 		ProviderName:   "anthropic",
 		StatusCode:     status,
 		ProviderErrMsg: msg,
-		ProviderBody:   []byte(data),
+		ProviderBody:   raw,
 	}
 }
 

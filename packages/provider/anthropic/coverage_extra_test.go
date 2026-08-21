@@ -29,26 +29,19 @@ func TestConfig_ApplyDefaultsBranches(t *testing.T) {
 
 func assertDefaultsApplied(t *testing.T, c Config) {
 	t.Helper()
-	if c.BaseURL == "" {
-		t.Fatal("base url")
-	}
-	if c.APIVersion == "" {
-		t.Fatal("api version")
-	}
-	if c.Timeout <= 0 {
-		t.Fatal("timeout")
-	}
-	if c.StreamTimeout <= 0 {
-		t.Fatal("stream timeout")
-	}
-	if c.MaxRetries == nil || *c.MaxRetries != 0 {
-		t.Fatalf("max retries=%v", c.MaxRetries)
-	}
-	if c.RetryBaseDelay != defaultRetryBaseDelay {
-		t.Fatal("retry delay")
-	}
-	if c.DefaultTokens != defaultMaxTokens {
-		t.Fatal("tokens")
+	requireField(t, c.BaseURL != "", "base url")
+	requireField(t, c.APIVersion != "", "api version")
+	requireField(t, c.Timeout > 0, "timeout")
+	requireField(t, c.StreamTimeout > 0, "stream timeout")
+	requireField(t, c.MaxRetries != nil && *c.MaxRetries == 0, "max retries")
+	requireField(t, c.RetryBaseDelay == defaultRetryBaseDelay, "retry delay")
+	requireField(t, c.DefaultTokens == defaultMaxTokens, "tokens")
+}
+
+func requireField(t *testing.T, ok bool, name string) {
+	t.Helper()
+	if !ok {
+		t.Fatal(name)
 	}
 }
 
@@ -244,28 +237,53 @@ func TestFoldEmptyMidSystem(t *testing.T) {
 	}
 }
 
-func TestSSE_IgnoresUnknownSSEFields(t *testing.T) {
+func TestSSE_KeepaliveAndUnknownFields(t *testing.T) {
 	t.Parallel()
-	anth := "id: 1\nretry: 1000\n" + anthropicSSEFixture(
-		`event: content_block_delta`,
-		`data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"z"}}`,
-		`event: message_stop`,
-		`data: {"type":"message_stop"}`,
-	)
-	out := mustTranslateAll(t, anth, modelClaudeSonnet45, "id")
-	assertContainsAll(t, out, `"content":"z"`)
-}
-
-func TestSSE_EmptyCommentKeepalive(t *testing.T) {
-	t.Parallel()
-	anth := ":\n" + anthropicSSEFixture(
-		`event: content_block_delta`,
-		`data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"k"}}`,
-		`event: message_stop`,
-		`data: {"type":"message_stop"}`,
-	)
-	out := mustTranslateAll(t, anth, modelClaudeSonnet45, "id")
-	assertContainsAll(t, out, ": keepalive", `"content":"k"`)
+	cases := []struct {
+		name string
+		anth string
+		want []string
+	}{
+		{
+			name: "unknown_fields",
+			anth: "id: 1\nretry: 1000\n" + anthropicSSEFixture(
+				`event: content_block_delta`,
+				`data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"z"}}`,
+				`event: message_stop`,
+				`data: {"type":"message_stop"}`,
+			),
+			want: []string{`"content":"z"`},
+		},
+		{
+			name: "empty_comment",
+			anth: ":\n" + anthropicSSEFixture(
+				`event: content_block_delta`,
+				`data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"k"}}`,
+				`event: message_stop`,
+				`data: {"type":"message_stop"}`,
+			),
+			want: []string{": keepalive", `"content":"k"`},
+		},
+		{
+			name: "empty_text_delta",
+			anth: anthropicSSEFixture(
+				`event: content_block_delta`,
+				`data: {"type":"content_block_delta","delta":{"type":"text_delta","text":""}}`,
+				`event: content_block_delta`,
+				`data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"y"}}`,
+				`event: message_stop`,
+				`data: {"type":"message_stop"}`,
+			),
+			want: []string{`"content":"y"`},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			out := mustTranslateAll(t, tc.anth, modelClaudeSonnet45, "id")
+			assertContainsAll(t, out, tc.want...)
+		})
+	}
 }
 
 func TestExtractAnthropicErrorMessage_EmptyPayload(t *testing.T) {
@@ -277,20 +295,6 @@ func TestExtractAnthropicErrorMessage_EmptyPayload(t *testing.T) {
 	if len(extractAnthropicErrorMessage([]byte(long))) != 512 {
 		t.Fatal("truncate")
 	}
-}
-
-func TestOnContentDelta_EmptyText(t *testing.T) {
-	t.Parallel()
-	anth := anthropicSSEFixture(
-		`event: content_block_delta`,
-		`data: {"type":"content_block_delta","delta":{"type":"text_delta","text":""}}`,
-		`event: content_block_delta`,
-		`data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"y"}}`,
-		`event: message_stop`,
-		`data: {"type":"message_stop"}`,
-	)
-	out := mustTranslateAll(t, anth, modelClaudeSonnet45, "id")
-	assertContainsAll(t, out, `"content":"y"`)
 }
 
 func TestTranslateNonStream_UsesRequestModel(t *testing.T) {
