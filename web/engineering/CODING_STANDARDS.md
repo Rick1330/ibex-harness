@@ -2216,8 +2216,8 @@ sdk-typescript, sdk-go, cli, infra, db
 ```text
 feat(memory): add vector similarity search with pgvector
 
-Uses IVFFlat index for approximate nearest neighbor search.
-Significantly faster than exact search at 1M+ vectors.
+Uses HNSW for approximate nearest neighbor search (preferred Phase 3+ index).
+ef_search tuned from recall/latency benches.
 
 Fixes: IBEX-142
 

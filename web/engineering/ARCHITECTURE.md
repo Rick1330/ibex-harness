@@ -3,6 +3,28 @@
 Go interface placement (consumer ports vs shared package APIs):
 [ARCHITECTURE_LAYERING.md](./ARCHITECTURE_LAYERING.md).
 
+## Roadmap alignment (read this first)
+
+Phases **0–2 are complete** (auth, proxy, shared Go packages, public site). The next work is
+**Phase 2.5** (provider generalization, tokenizer, response pipeline, embedder, schema pre-work,
+MCP skeleton), then the redesigned sequence:
+
+| Phase | Focus |
+| --- | --- |
+| 2.5 | Multi-provider foundation + embedder + tokenizer + MCP skeleton |
+| 3 | Memory substrate (schema v2 / HNSW, write + read pipelines) |
+| 3.5 | Extraction workers + context assembly on the proxy hot path + MCP tools |
+| 4 | Management API + dashboard + multi-provider resilience |
+| 4.5 | Fingerprinting, drift, directive regression |
+| 5 | Hybrid retrieval + graph lineage at query time |
+
+Public roadmap: [`web/content/roadmap/`](../content/roadmap/). Service/package inventories:
+[`services/README.md`](../../services/README.md), [`packages/README.md`](../../packages/README.md).
+
+Org-wide production hardening beyond per-phase exit gates is **deferred past Phase 5** as future
+scope. Paths and package names in diagrams below are planning baselines — they may change with
+evidence and an ADR.
+
 ## 🏗️ Architecture Overview
 
 IBEX Harness is a distributed system designed for high performance, reliability, and scalability. The architecture follows microservices principles with clear service boundaries, while maintaining tight latency requirements for the critical path.
@@ -26,44 +48,37 @@ IBEX Harness is a distributed system designed for high performance, reliability,
                     │  Service  │           <20ms overhead target
                     └─────┬─────┘
                           │
-        ┌─────────────────┼─────────────────┐
-        │                 │                 │
-   ┌────▼────┐      ┌────▼────┐      ┌────▼────┐
-   │  Auth   │      │Context  │      │ Memory  │
-   │ Service │      │Assembly │      │ Service │
-   │   (Go)  │      │  Engine │      │ (Python)│
-   └────┬────┘      │ (Python)│      └────┬────┘
-        │           └────┬────┘            │
-        │                │                 │
-        │           ┌────▼────┐            │
-        │           │Embedding│            │
-        │           │ Service │            │
-        │           │ (Python)│            │
-        │           └────┬────┘            │
-        │                │                 │
-   ┌────▼────────────────▼─────────────────▼────┐
-   │           Infrastructure Layer              │
-   ├──────────────────────────────────────────────┤
-   │  PostgreSQL  │  Redis   │ ClickHouse │ MinIO│
-   │   (Primary)  │ (Cache)  │ (Analytics)│ (S3) │
-   └──────────────────────────────────────────────┘
+        ┌─────────────────┼─────────────────┬─────────────────┐
+        │                 │                 │                 │
+   ┌────▼────┐      ┌────▼────┐      ┌────▼────┐      ┌────▼────┐
+   │  Auth   │      │Context  │      │ Memory  │      │Embedder │
+   │ Service │      │Assembly │      │ Service │      │ Service │
+   │   (Go)  │      │  Engine │      │ (Python)│      │ (Python)│
+   └────┬────┘      │ (Python)│      └────┬────┘      └────┬────┘
+        │           └────┬────┘            │                 │
+        │                │                 │                 │
+   ┌────▼────────────────▼─────────────────▼─────────────────▼────┐
+   │           Infrastructure Layer                                │
+   ├───────────────────────────────────────────────────────────────┤
+   │  PostgreSQL+pgvector │  Redis  │ ClickHouse │ MinIO/S3       │
+   └───────────────────────────────────────────────────────────────┘
                           │
    ┌──────────────────────▼─────────────────────┐
    │       Background Workers (Python/Celery)   │
-   │  • Memory Extraction  • Conflict Detection │
-   │  • Fingerprinting     • Drift Detection    │
-   │  • Notification       • Garbage Collection │
+   │  • Memory Extraction (3.5)                 │
+   │  • Fingerprinting / Drift / Regression (4.5)│
+   │  • Maintenance / GC                        │
    └────────────────────────────────────────────┘
                           │
    ┌──────────────────────▼─────────────────────┐
-   │         Operator Interfaces                │
-   │  ┌─────────┐  ┌─────────┐  ┌─────────┐   │
-   │  │Dashboard│  │   API   │  │ Admin   │   │
-   │  │(Next.js)│  │ Server  │  │  Tools  │   │
-   │  └─────────┘  │(Python) │  └─────────┘   │
-   │               └─────────┘                 │
+   │         Operator + MCP surfaces            │
+   │  Dashboard (Next.js) │ API (FastAPI)       │
+   │  MCP memory server (tools over Auth gRPC)  │
    └────────────────────────────────────────────┘
 ```
+
+Preferred phase timing for the surfaces above is summarized in [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md)
+(redesigned phases). Context assembly and extraction are **Phase 3.5**, not Phase 3.
 
 ## 🎯 Design Philosophy
 
@@ -176,12 +191,15 @@ Every operation emits:
 
 ### 2. Memory Service (Python/FastAPI)
 
+**Preferred phase:** **3** (core memory substrate). Extraction jobs do **not** live here — they land in `services/worker/` in **Phase 3.5**. Hybrid retrieval / graph traversal at query time land primarily in **Phase 5** on top of this substrate.
+
 **Purpose**: Write, store, deduplicate, and retrieve agent memories
 
 **Technology**: Python 3.11+, FastAPI, SQLAlchemy 2.0 (async)
 
 - Chosen for: Rich ML ecosystem, async support, rapid development
 - Framework: FastAPI for automatic OpenAPI, native async, dependency injection
+- Vector index preference for Phase 3+: **pgvector HNSW** (IVFFlat remains historical context from earlier plans)
 
 **Key Responsibilities**:
 
@@ -259,6 +277,8 @@ Memory:
 ---
 
 ### 3. Context Assembly Engine (Python)
+
+**Preferred phase:** **3.5** (not Phase 3). The proxy calls this over gRPC via a fail-open Go client (`packages/contextclient` in the planning baseline). Token budgets should use the Phase **2.5** tokenizer registry / service rather than a single OpenAI vocabulary.
 
 **Purpose**: Assemble the optimal context for each LLM request within token budget
 
@@ -338,6 +358,8 @@ Process:
 ---
 
 ### 4. Embedding Service (Python)
+
+**Preferred phase:** **2.5** (pulled forward). Pluggable backends (TEI / hosted API / CPU fallback). Embedding **profile is a deployment-time choice** — dimensionalities are not interchangeable without migration. Default production preference in the roadmap is `bge-m3` (1024-dim) with MiniLM as the CPU/dev profile; older MiniLM-only notes below remain useful for the CPU path.
 
 **Purpose**: Generate vector embeddings for all text (memories, queries)
 
@@ -513,6 +535,8 @@ Bit Position | Permission
 ---
 
 ### 6. Background Workers (Python/Celery)
+
+**Preferred phase:** extraction and related jobs in **3.5**; fingerprinting / drift / directive regression in **4.5**. Celery + Redis is the preferred starting stack — reopen with evidence + ADR if the workload needs Temporal (or similar).
 
 **Purpose**: Async processing that doesn't block agent requests
 

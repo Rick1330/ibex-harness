@@ -86,7 +86,7 @@ The project maintains a living security assessment:
 - Cryptography policy: [ADR-0010](../content/docs/adr/0010-cryptography-policy.mdx)
 - Phase 1 validated invariants: SECURITY.md Appendix A (`TestSecurity_SEC*` integration suite)
 
-Formal threat-modeling workshops (OSPS-SA-03.02) are scheduled for Phase 5 production hardening; the documented threat model in SECURITY.md §3 is the current baseline.
+Formal threat-modeling workshops (OSPS-SA-03.02) remain on the backlog for org-wide production hardening (**deferred beyond Phase 5** as future roadmap scope). The documented threat model in SECURITY.md §3 is the current baseline; per-phase exit gates still require security/isolation evidence for that phase’s surfaces.
 
 ### Security review record (OpenSSF Gold `security_review`)
 

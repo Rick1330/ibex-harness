@@ -1,10 +1,12 @@
 # Operations Guide
 
-Deployment and runtime operations for IBEX Harness Go services (Phase 1: `auth`, `proxy`).
+Deployment and runtime operations for IBEX Harness. **Shipped today:** Go services `auth` and `proxy` (Phases 0–2). Later services (`embedder`, `memory`, `context`, `worker`, `api`, `dashboard`, `mcp-memory`, …) follow [`services/README.md`](../../services/README.md) and the redesigned roadmap — add probe/runbook rows when those processes exist.
+
+Env registry: [ENVIRONMENT_VARIABLES.md](ENVIRONMENT_VARIABLES.md). Deployment topology: [DEPLOYMENT.md](DEPLOYMENT.md).
 
 ## Health endpoints
 
-Contract: [ADR-0022](adr/ADR-0022-health-check-contract.md).
+Contract: [ADR-0022](adr/ADR-0022-health-check-contract.md) (public: `/docs/adr/0022-health-check-contract`).
 
 | Endpoint | Probe type | Checks external deps | On failure |
 | --- | --- | --- | --- |

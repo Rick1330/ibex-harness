@@ -18,98 +18,72 @@ This exists because AI-assisted development fails badly when:
 - generated code is committed inconsistently,
 - service boundaries become blurry over time.
 
-**Rule:** If you add a new directory, you must justify it (usually via ADR).  
-**Rule:** If you add a new file pattern, you must follow the service scaffold conventions below.
+**Rule:** If you add a new top-level directory or a new deployable service, justify it (usually via ADR) and update [`services/README.md`](../../services/README.md) / [`packages/README.md`](../../packages/README.md).  
+**Rule:** If you add a new file pattern inside a service, follow the service scaffold conventions below — treat scaffolds as orientation, not a rigid file checklist.  
+**Rule:** Engineering docs and the public roadmap must stay aligned when phase scope or service inventory changes.
 
 ---
 
 ## 2) Top-Level Layout (Canonical)
+
+Living engineering docs live under `web/engineering/` (this tree). Integrator-facing docs and the
+public roadmap live under `web/content/`. Do **not** add a parallel top-level `docs/` tree.
 
 ```text
 ibex-harness/
   AGENTS.md
   CLAUDE.md
   README.md
-  LICENSE                      # choose before public release
-  .gitignore
-  .gitattributes
-  .editorconfig
-  .pre-commit-config.yaml
+  LICENSE
   Makefile
-  go.mod                       # single Go module for all Go code (services + future CLI/SDK)
+  go.mod                       # single Go module for services + packages
   go.sum
   .golangci.yml
+  .pre-commit-config.yaml
 
-  docs/
-    README.md
-    PROJECT_CONTEXT.md
-    ARCHITECTURE.md
-    TECH_STACK.md
-    API_DOCUMENTATION.md
-    DATABASE_SCHEMA.md
-    CODING_STANDARDS.md
-    DEVELOPMENT_GUIDE.md
-    TESTING_STRATEGY.md
-    SECURITY.md
-    ENVIRONMENT_VARIABLES.md
-    MONITORING.md
-    PERFORMANCE.md
-    DEPENDENCIES.md
-    DEPLOYMENT.md
-    FILE_STRUCTURE.md
-    TROUBLESHOOTING.md
-    CHANGELOG.md
-    GLOSSARY.md
-    UI_UX_GUIDELINES.md
-    runbooks/
-      README.md
-      RUNBOOKS.md
-    adr/
-      ADR-0001-template.md
-      ADR-0002-...md
+  services/                    # deployable processes — see services/README.md
+    proxy/                     # Go — LLM proxy (shipped; grows in 2.5+)
+    auth/                      # Go — auth (shipped; grows in 4)
+    embedder/                  # Python — embeddings (planned 2.5)
+    tokenizer-service/         # Python — token counts (planned 2.5, situational)
+    mcp-memory/                # Python — MCP memory tools (2.5 skeleton → 3.5)
+    memory/                    # Python — memory substrate (planned 3)
+    worker/                    # Python Celery — extraction / jobs (planned 3.5+)
+    context/                   # Python gRPC — context assembly (planned 3.5)
+    api/                       # Python FastAPI — management plane (planned 4)
+    dashboard/                 # Next.js — operator UI (planned 4)
 
-  services/
-    proxy/                      # Go - LLM proxy (latency critical)
-    auth/                       # Go - auth service (token/JWT)
-    api/                        # Python FastAPI - management plane
-    memory/                     # Python FastAPI - memory CRUD/search
-    context/                    # Python gRPC - context assembly
-    embedder/                   # Python FastAPI - embeddings
-    worker/                     # Python Celery - async processing
-    dashboard/                  # Next.js (TS) - web UI
-
-  packages/
-    proto/                      # protobuf source-of-truth + generation config
-    sdk-python/
-    sdk-typescript/
-    sdk-go/
-    cli/                        # Go CLI (ibex)
+  packages/                    # shared libraries — see packages/README.md
+    proto/                     # protobuf source of truth + codegen
+    provider/                  # LLM provider abstraction (extends in 2.5+)
+    # planned: tokenizer/, responsepipeline/, embedder/, contextclient/, circuitbreaker/
+    # planned SDKs/CLI: sdk-python/, sdk-typescript/, sdk-go/, cli/
 
   infra/
-    compose/
-      dev/
-      test/
-    docker/                     # shared Docker build assets
-    k8s/                        # raw manifests (optional; prefer helm/)
-    helm/                       # Helm charts
-    terraform/                  # IaC modules + envs
-    monitoring/                 # Prometheus/Grafana/Loki/Tempo configs
-    scripts/                    # operational scripts, migrations helpers, etc.
+    compose/dev/               # local dependencies (available)
+    compose/test/              # CI/integration compose (available)
+    migrations/                # Postgres + ClickHouse migrations (available)
+    scripts/                   # operational helpers (available)
+    docker/ helm/ terraform/ monitoring/   # planned; not all present yet
 
-  tools/                        # dev tooling scripts (optional; keep small)
+  benchmarks/                  # proxy overhead + load pipeline (available); retrieval eval grows later
   web/
-    engineering/                # living engineering docs (site)
-      ARCHITECTURE_LAYERING.md  # consumer-owned ports vs shared package interfaces
-  Makefile
+    content/docs/              # public /docs
+    content/roadmap/           # public /roadmap (phases 0–5 redesigned)
+    engineering/               # this living engineering doc set
+    src/                       # Next.js public site
+
+  tools/                       # optional small dev tooling
 ```
 
 ### 2.1 What belongs where?
 
 - **services/**: deployable runtime components (anything that runs as a process)
-- **packages/**: published libraries/tools (SDKs, CLI, proto)
-- **infra/**: deployment, orchestration, observability, local dev infrastructure
-- **docs/**: living documentation + ADRs
-- **web/engineering/**: living engineering docs served with the site (includes `ARCHITECTURE_LAYERING.md`)
+- **packages/**: shared libraries and contracts (proto, provider, future SDKs/CLI)
+- **infra/**: deployment, orchestration, observability, local dev infrastructure, migrations
+- **web/engineering/**: living engineering documentation (this directory)
+- **web/content/**: public site MDX (docs, roadmap, blog)
+- **benchmarks/**: proxy/load benchmark pipeline; later phases add retrieval/eval harnesses under services or here with an ADR
 
 ### 2.2 What does NOT belong at top-level?
 
@@ -117,7 +91,15 @@ Avoid adding:
 
 - `utils/` (too vague; becomes junk drawer)
 - `scripts/` at top-level (use `infra/scripts/` unless truly universal)
-- random `config/` directories (service-specific config should live with service)
+- random `config/` directories (service-specific config should live with the service)
+- a second `docs/` tree alongside `web/engineering/`
+
+### 2.3 Inventory is a planning baseline
+
+Service and package directories named above are the **current planning baseline** from the redesigned
+roadmap. Exact names, merges, and splits may change during implementation when there is strong
+evidence — record an ADR and update [`services/README.md`](../../services/README.md) /
+[`packages/README.md`](../../packages/README.md).
 
 ---
 
@@ -248,7 +230,9 @@ services/memory/
 
 ### 3.3 Python worker service (Celery)
 
-Canonical layout:
+Preferred starting worker stack for Phase **3.5+** (extraction, embedding jobs, maintenance; later fingerprint/drift/regression in **4.5**). Alternatives (e.g. Temporal) only with evidence + ADR.
+
+Canonical layout (illustrative — exact module names may differ):
 
 ```text
 services/worker/
@@ -259,13 +243,12 @@ services/worker/
       celery_app.py            # Celery app + routing + retry policies
       tasks/
         __init__.py
-        memory_extraction.py
+        memory_extraction.py   # Phase 3.5
         embedding_jobs.py
-        conflict_detection.py
-        fingerprinting.py
-        drift_detection.py
-        notifications.py
-        garbage_collection.py
+        maintenance.py
+        fingerprinting.py      # Phase 4.5
+        drift_detection.py     # Phase 4.5
+        regression.py          # Phase 4.5
       clients/                 # HTTP/gRPC clients to other services
         __init__.py
         memory_client.py
@@ -292,6 +275,7 @@ services/worker/
 - Tasks must be idempotent (explicit idempotency keys).
 - Retries must be explicit and categorized (transient vs permanent).
 - Tasks must never log sensitive content.
+- Queue topology is situational — confirm against live Redis/Celery constraints during implementation.
 
 ### 3.4 Next.js dashboard (App Router) — TypeScript
 
@@ -583,11 +567,12 @@ Generated code is a frequent source of drift:
 
 ### Allowed (when justified)
 
-- New service under `services/` with full scaffold
-- New SDK module under `packages/`
+- New service under `services/` with full scaffold — update [`services/README.md`](../../services/README.md) + ADR when inventing a new process boundary
+- New shared library under `packages/` — update [`packages/README.md`](../../packages/README.md) + ADR when promoting shared contracts
 - New proto package version under `packages/proto/proto/ibex/...`
-- New docs under `docs/` (especially ADRs)
-- New infra module under `infra/`
+- New engineering docs under `web/engineering/` and public ADRs under `web/content/docs/adr/`
+- New roadmap MDX under `web/content/roadmap/`
+- New infra module under `infra/` — update [`infra/README.md`](../../infra/README.md)
 
 ### Forbidden patterns
 
@@ -597,6 +582,7 @@ Generated code is a frequent source of drift:
 - mixing business logic into API routers/handlers
 - putting DB queries into service layer (Python)
 - putting server-only code into Next.js client components
+- recreating a top-level `docs/` tree parallel to `web/engineering/`
 
 ---
 
@@ -633,13 +619,15 @@ AI agents often put files in wrong places because:
 
 ```text
 File placement rules:
-- You MUST place files only under these directories:
+- Prefer placing files only under these directories:
   - services/<service-name>/...
   - packages/<package-name>/...
   - infra/...
-  - docs/...
-- Do NOT create new top-level directories.
+  - web/engineering/...
+  - web/content/docs/... or web/content/roadmap/...
+- Do NOT create new top-level directories without an ADR.
 - Match the existing layout in services/<service-name>.
+- Treat scaffolds as orientation — exact filenames may differ when live patterns say so.
 - If a file path conflicts with framework conventions, stop and ask.
 ```
 
@@ -649,11 +637,13 @@ File placement rules:
 
 Before merging a PR that creates or moves files:
 
-- [ ] Tree matches this document
-- [ ] Service scaffold includes README + `.env.example` + Dockerfile
+- [ ] Tree matches this document (or an ADR explains the deliberate divergence)
+- [ ] Service scaffold includes README + `.env.example` + Dockerfile when introducing a new deployable
 - [ ] No new junk-drawer directories (`utils`, `helpers`, etc.)
 - [ ] Generated code not edited manually
 - [ ] Imports reflect boundaries (no cross-layer coupling)
+- [ ] Inventories updated (`services/README.md` / `packages/README.md` / `infra/README.md` as needed)
+- [ ] Roadmap / engineering docs updated when phase scope or public contracts change
 - [ ] CI generation checks pass
 
 ---
