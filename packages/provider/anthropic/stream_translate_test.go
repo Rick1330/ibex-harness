@@ -11,6 +11,9 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/provider"
 )
 
+type translatedStream string
+type sseLine string
+
 func TestStreamTranslate_TextAndDone(t *testing.T) {
 	t.Parallel()
 	anth := anthropicSSEFixture(
@@ -25,15 +28,8 @@ func TestStreamTranslate_TextAndDone(t *testing.T) {
 		`event: message_stop`,
 		`data: {"type":"message_stop"}`,
 	)
-	out := mustTranslateAll(t, anth, modelClaudeSonnet45, "fallback-id")
-	assertHappyStream(t, out, "msg_s")
-}
-
-func assertHappyStream(t *testing.T, out, wantID string) {
-	t.Helper()
-	assertContainsAll(t, out, `"content":"Hi"`, `"content":"!"`, `"finish_reason":"stop"`, "data: [DONE]")
-	assertChunkID(t, out, wantID)
-	assertChunksParse(t, out)
+	mustTranslate(t, anth, streamMeta{Model: modelClaudeSonnet45, RequestID: "fallback-id"}).
+		assertHappy(t, "msg_s")
 }
 
 func TestStreamTranslate_MidStreamOverloaded(t *testing.T) {
@@ -46,15 +42,19 @@ func TestStreamTranslate_MidStreamOverloaded(t *testing.T) {
 		`event: error`,
 		`data: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}`,
 	)
-	pipe := newStreamTranslatePipe(io.NopCloser(strings.NewReader(anth)), streamMeta{Model: modelClaudeSonnet45, RequestID: ""})
+	pipe := newStreamTranslatePipe(io.NopCloser(strings.NewReader(anth)), streamMeta{Model: modelClaudeSonnet45})
 	defer func() { _ = pipe.Close() }()
 	_, err := io.ReadAll(pipe)
 	if err == nil {
 		t.Fatal("expected overload error")
 	}
-	if !strings.Contains(err.Error(), "Overloaded") && !strings.Contains(err.Error(), "529") {
-		t.Fatalf("err=%v", err)
+	if strings.Contains(err.Error(), "Overloaded") {
+		return
 	}
+	if strings.Contains(err.Error(), "529") {
+		return
+	}
+	t.Fatalf("err=%v", err)
 }
 
 func TestStreamTranslate_IgnoresNonTextDelta(t *testing.T) {
@@ -67,9 +67,9 @@ func TestStreamTranslate_IgnoresNonTextDelta(t *testing.T) {
 		`event: message_stop`,
 		`data: {"type":"message_stop"}`,
 	)
-	out := mustTranslateAll(t, anth, modelClaudeSonnet45, "id")
-	assertContainsAll(t, out, `"content":"ok"`)
-	if strings.Contains(out, "partial_json") {
+	out := mustTranslate(t, anth, streamMeta{Model: modelClaudeSonnet45, RequestID: "id"})
+	out.mustContain(t, `"content":"ok"`)
+	if strings.Contains(string(out), "partial_json") {
 		t.Fatal("leaked tool json into OpenAI stream")
 	}
 }
@@ -82,8 +82,8 @@ func TestStreamTranslate_PingAndCommentKeepalive(t *testing.T) {
 		`event: message_stop`,
 		`data: {"type":"message_stop"}`,
 	)
-	out := mustTranslateAll(t, anth, modelClaudeSonnet45, "id")
-	assertContainsAll(t, out, ": keepalive", ": ping", `"content":"x"`)
+	mustTranslate(t, anth, streamMeta{Model: modelClaudeSonnet45, RequestID: "id"}).
+		mustContain(t, ": keepalive", ": ping", `"content":"x"`)
 }
 
 func TestStreamTranslate_EventSizeLimit(t *testing.T) {
@@ -147,33 +147,56 @@ func TestStreamTranslate_RateLimitError(t *testing.T) {
 	}
 }
 
-func anthropicSSEFixture(lines ...string) string {
+func anthropicSSEFixture(lines ...sseLine) string {
 	var b strings.Builder
 	for _, line := range lines {
-		b.WriteString(line)
+		b.WriteString(string(line))
 		b.WriteByte('\n')
-		if strings.HasPrefix(line, "data:") {
+		if strings.HasPrefix(string(line), "data:") {
 			b.WriteByte('\n')
 		}
 	}
 	return b.String()
 }
 
-func mustTranslateAll(t *testing.T, anth, model, id string) string {
+func mustTranslate(t *testing.T, anth string, meta streamMeta) translatedStream {
 	t.Helper()
-	pipe := newStreamTranslatePipe(io.NopCloser(strings.NewReader(anth)), streamMeta{Model: model, RequestID: id})
+	pipe := newStreamTranslatePipe(io.NopCloser(strings.NewReader(anth)), meta)
 	defer func() { _ = pipe.Close() }()
 	out, err := io.ReadAll(pipe)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return string(out)
+	return translatedStream(out)
 }
 
-func assertChunkID(t *testing.T, out, wantID string) {
+// mustTranslateAll keeps older call sites working while moving string args onto streamMeta.
+func mustTranslateAll(t *testing.T, anth, model, id string) string {
+	t.Helper()
+	return string(mustTranslate(t, anth, streamMeta{Model: model, RequestID: id}))
+}
+
+func (out translatedStream) assertHappy(t *testing.T, wantID string) {
+	t.Helper()
+	out.mustContain(t, `"content":"Hi"`, `"content":"!"`, `"finish_reason":"stop"`, "data: [DONE]")
+	out.mustHaveChunkID(t, wantID)
+	out.mustParseChunks(t)
+}
+
+func (out translatedStream) mustContain(t *testing.T, needles ...string) {
+	t.Helper()
+	body := string(out)
+	for _, n := range needles {
+		if !strings.Contains(body, n) {
+			t.Fatalf("missing %q in %s", n, body)
+		}
+	}
+}
+
+func (out translatedStream) mustHaveChunkID(t *testing.T, wantID string) {
 	t.Helper()
 	var chunk openAIStreamChunk
-	for _, block := range strings.Split(out, "\n\n") {
+	for _, block := range strings.Split(string(out), "\n\n") {
 		if !strings.HasPrefix(block, "data: {") {
 			continue
 		}
@@ -185,9 +208,9 @@ func assertChunkID(t *testing.T, out, wantID string) {
 	t.Fatalf("missing id %q in %s", wantID, out)
 }
 
-func assertChunksParse(t *testing.T, out string) {
+func (out translatedStream) mustParseChunks(t *testing.T) {
 	t.Helper()
-	for _, block := range strings.Split(out, "\n\n") {
+	for _, block := range strings.Split(string(out), "\n\n") {
 		payload, ok := openAIChunkPayload(block)
 		if !ok {
 			continue
