@@ -16,7 +16,7 @@ authors: "IBEX Harness team"
 
 ## Context
 
-When this ADR was written, Phase 1 validated and authenticated every `POST /v1/chat/completions` request but returned `501 PROVIDER_NOT_CONFIGURED` with no upstream LLM call. Phase 2 later added mock/live forwarding via `packages/provider`; Phase 4 still plans Anthropic, Azure OpenAI, and AWS Bedrock. Hard-coding OpenAI HTTP calls in the proxy handler would require a large refactor when multi-provider support lands.
+When this ADR was written, Phase 1 validated and authenticated every `POST /v1/chat/completions` request but returned `501 PROVIDER_NOT_CONFIGURED` with no upstream LLM call. Phase 2 later added mock/live forwarding via `packages/provider`. Anthropic lands in Phase 2.5 ([ADR-0040](/docs/adr/0040-anthropic-provider-adapter)); Azure OpenAI and AWS Bedrock remain later multi-provider work. Hard-coding OpenAI HTTP calls in the proxy handler would require a large refactor when multi-provider support lands.
 
 The proxy already parses OpenAI-shaped JSON in `services/proxy/internal/llm` (Phase 1). Provider communication needs a shared abstraction in `packages/provider` with no service imports.
 

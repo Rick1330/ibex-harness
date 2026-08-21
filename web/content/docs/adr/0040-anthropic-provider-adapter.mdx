@@ -1,0 +1,78 @@
+---
+title: "ADR-0040: Anthropic provider adapter"
+description: "Architecture decision record 0040 — Anthropic Messages API adapter with OpenAI-compatible wire translation, raw HTTP client, and 529-aware retries."
+adrId: "0040"
+status: "Accepted"
+date: "2026-08-21"
+authors: "IBEX Harness team"
+---
+
+# ADR-0040: Anthropic provider adapter
+
+- **Status:** Accepted
+- **Date:** 2026-08-21
+- **Authors:** IBEX Harness team
+- **Milestone:** [2.5.G1.M1 Anthropic provider adapter](/roadmap/phase-2-5-provider-generalization/milestones/2.5.g1.m1-anthropic-provider-adapter)
+
+## Context
+
+Phase 2 shipped a single OpenAI-compatible provider under `packages/provider/openai/` and a proxy that forwards OpenAI-shaped JSON and SSE verbatim ([ADR-0025](/docs/adr/0025-llm-provider-abstraction), [ADR-0026](/docs/adr/0026-openai-client-design), [ADR-0027](/docs/adr/0027-streaming-dual-write)). Phase 2.5 requires a second, dialect-different vendor to prove the `Provider` interface generalizes.
+
+Anthropic’s Messages API differs from OpenAI chat completions:
+
+- top-level `system` instead of `role: system` messages
+- required `max_tokens`
+- named SSE events (`message_start`, `content_block_delta`, …) without `data: [DONE]`
+- HTTP **529** `overloaded_error`, including mid-stream `event: error` after HTTP 200
+
+The official Go SDK (`github.com/anthropics/anthropic-sdk-go`) handles retries and typed streams, but would add transitive surface area, risk stacking retries with ours, and fight the existing `provider.Response.Body io.ReadCloser` contract.
+
+## Decision
+
+### 1) Raw `net/http` client, mirroring OpenAI
+
+Implement `packages/provider/anthropic/` with stdlib HTTP, the same connection-pool / timeout / retry structure as OpenAI. Do **not** add `anthropic-sdk-go`. Justification is recorded in `DEPENDENCIES.md`.
+
+### 2) OpenAI-compatible wire translation inside the adapter
+
+The public proxy API remains OpenAI chat completions. Anthropic `Complete` returns:
+
+- non-stream: OpenAI `chat.completion` JSON
+- stream: OpenAI `chat.completion.chunk` SSE plus trailing `data: [DONE]\n\n`
+
+Streaming translation uses `io.Pipe` so slow clients apply natural backpressure (no unbounded in-memory SSE buffer). Assembled Anthropic event payloads are capped. The proxy SSE forwarder and `openai.StreamAccumulator` stay verbatim over that OpenAI-shaped body ([ADR-0027](/docs/adr/0027-streaming-dual-write)). Reframing is adapter-local, not proxy SSE rewriting.
+
+Client `PassthroughFields` for Anthropic use an **allowlist** (`top_p`, `stop_sequences`, `metadata`, `service_tier`) so powerful Messages fields (`tools`, thinking blocks, etc.) cannot be injected in this text-only milestone.
+
+### 3) Request translation stays vendor-local
+
+- Extract leading consecutive `system` messages into Anthropic’s top-level `system` without mutating the shared `provider.Request`
+- Coalesce consecutive same-role turns; fail closed if the first non-system turn is `assistant`
+- When `MaxTokens == 0`, default to **4096** (Anthropic requires `max_tokens`)
+- Headers: `x-api-key`, `anthropic-version: 2023-06-01`, `content-type: application/json`
+
+### 4) Anthropic-specific retries
+
+Retry HTTP **429, 500, 502, 503, 504, 529** and retryable transport errors. Do not retry 400/401/403/404, cancel, or deadline. No retry after a live streaming body is returned. Mid-stream Anthropic `event: error` terminates the translate pipe as incomplete — never JSON-swap mid-stream to the client.
+
+### 5) Live multi-provider registration
+
+When `IBEX_LLM_MODE=live`, register every provider that has credentials:
+
+- `OPENAI_API_KEY` → OpenAI
+- `ANTHROPIC_API_KEY` → Anthropic
+
+Live mode requires **at least one** key. Duplicate model IDs fail at `NewRegistry` startup.
+
+## Consequences
+
+**Positive:**
+
+- Proves ADR-0025 for a non–OpenAI-compatible dialect without changing the client contract
+- Keeps dual-write / StreamAccumulator working
+- Avoids SDK dual-retry and dependency bloat on the hot path
+
+**Negative / follow-ups:**
+
+- Must maintain Anthropic↔OpenAI translation (text-only in this milestone; tools/images deferred)
+- Built-in Claude model allowlist needs periodic refresh via `ANTHROPIC_EXTRA_MODELS`

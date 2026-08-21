@@ -241,11 +241,21 @@ Allowed if justified (hot path review required):
 - `fasthttp` (provider-facing client side only) — only with benchmark justification
 - `golang.org/x/sync/errgroup` — accepted (small, stable)
 
+**Anthropic adapter (Phase 2.5 / ADR-0040):** use Go stdlib `net/http` in `packages/provider/anthropic/`, mirroring the OpenAI client. Do **not** add `github.com/anthropics/anthropic-sdk-go`.
+
+| Criterion | Decision |
+| --- | --- |
+| Why not SDK | Large transitive surface; SDK retries stack with ours (especially HTTP 529); stream iterators fight `provider.Response.Body io.ReadCloser` |
+| Stdlib sufficiency | Messages JSON + named SSE parse cleanly with `encoding/json` and a line-buffered translator |
+| Hot path | Explicit translate-pipe keeps TTFB and dual-write (ADR-0027) under control |
+| Exit | Revisit only with measured evidence that hand-rolled SSE/error handling is a maintenance liability |
+
 Avoid / disallow by default:
 
 - Gin/Echo/Fiber (frameworks)
 - heavyweight middleware frameworks
 - reflection-heavy routing libraries
+- Anthropic (or other LLM) official SDKs on the proxy hot path without ADR + evidence
 
 ### 8.2 Go — Auth service (services/auth)
 

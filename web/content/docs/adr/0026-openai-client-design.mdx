@@ -18,7 +18,7 @@ authors: "IBEX Harness team"
 
 Milestone 2.1.1 shipped `packages/provider` with an empty registry. Phase 2 Goal 2.1 requires `POST /v1/chat/completions` with `stream=false` to return a real OpenAI completion. The first concrete adapter lives in `packages/provider/openai/` and is registered by the proxy at startup.
 
-Prior engineering docs (`ENVIRONMENT_VARIABLES.md` §9) described generic `IBEX_PROVIDER_*` variables that were never wired. Phase 2 is OpenAI-only; multi-provider env naming is deferred to Phase 4.
+Prior engineering docs (`ENVIRONMENT_VARIABLES.md` §9) described generic `IBEX_PROVIDER_*` variables that were never wired. Phase 2 is OpenAI-first; Anthropic env vars and multi-key live registration land in Phase 2.5 ([ADR-0040](/docs/adr/0040-anthropic-provider-adapter)).
 
 ## Decision
 
