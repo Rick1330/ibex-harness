@@ -16,7 +16,7 @@ authors: "IBEX Harness team"
 
 ## Context
 
-When this ADR was written, Phase 1 validated and authenticated every `POST /v1/chat/completions` request but returned `501 PROVIDER_NOT_CONFIGURED` with no upstream LLM call. Phase 2 later added mock/live forwarding via `packages/provider`; Phase 4 still plans Anthropic, Azure OpenAI, and AWS Bedrock. Hard-coding OpenAI HTTP calls in the proxy handler would require a large refactor when multi-provider support lands.
+When this ADR was written, Phase 1 validated and authenticated every `POST /v1/chat/completions` request but returned `501 PROVIDER_NOT_CONFIGURED` with no upstream LLM call. Phase 2 later added mock/live forwarding via `packages/provider`. Anthropic lands in Phase 2.5 ([ADR-0040](/docs/adr/0040-anthropic-provider-adapter)); Azure OpenAI and AWS Bedrock remain later multi-provider work. Hard-coding OpenAI HTTP calls in the proxy handler would require a large refactor when multi-provider support lands.
 
 The proxy already parses OpenAI-shaped JSON in `services/proxy/internal/llm` (Phase 1). Provider communication needs a shared abstraction in `packages/provider` with no service imports.
 
@@ -36,7 +36,7 @@ type Provider interface {
 
 ### 2) Model routing lives in `Registry`, not providers
 
-Each provider declares `SupportedModels()`. `Registry.For(model)` returns the implementation. Phase 4 registers Anthropic/Azure without changing handlers or middleware contracts.
+Each provider declares `SupportedModels()`. `Registry.For(model)` returns the implementation. Phase 2.5 registers Anthropic ([ADR-0040](/docs/adr/0040-anthropic-provider-adapter)); later phases add Azure OpenAI / Bedrock without changing handlers or middleware contracts.
 
 `NewRegistry` panics on duplicate model IDs — fail fast at startup, not on first customer request.
 
@@ -73,7 +73,7 @@ Phase 1 rule: proxy has no Postgres for **identity** (auth via gRPC only). Phase
 
 **Positive:**
 
-- Phase 4 multi-provider is registration-only
+- Phase 2.5 Anthropic registration is already live; later Azure/Bedrock work stays registration-only
 - Shared package testable offline at ≥90% unit coverage
 - Handler stays provider-agnostic
 - Milestone 2.1.4 extracted registry lookup from handler into ProviderRoutingMiddleware (no behavior change)

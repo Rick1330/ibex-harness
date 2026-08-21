@@ -1,8 +1,9 @@
 // Package provider defines the LLM provider abstraction for IBEX Harness.
 // All LLM communication goes through this interface.
 //
-// Phase 2: OpenAI implementation only.
-// Phase 4: Anthropic, Azure OpenAI, AWS Bedrock implementations added.
+// Phase 2: OpenAI (+ mock) implementation.
+// Phase 2.5: Anthropic adapter (OpenAI-compatible wire translation; ADR-0040).
+// Later: Azure OpenAI, AWS Bedrock, self-hosted OpenAI-compatible backends.
 package provider
 
 import (

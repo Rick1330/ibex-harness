@@ -3,13 +3,14 @@ title: Provider adapters
 description: Pluggable adapters for OpenAI-compatible and other LLM providers.
 ---
 
-Provider adapters translate normalized IBEX chat requests into upstream LLM API calls and stream responses back to clients. The registry ships with a **mock** adapter (default) and an **OpenAI-compatible** adapter for live mode.
+Provider adapters translate normalized IBEX chat requests into upstream LLM API calls and stream responses back to clients. The registry ships with a **mock** adapter (default), an **OpenAI-compatible** adapter, and an **Anthropic** adapter ([ADR-0040](/docs/adr/0040-anthropic-provider-adapter)).
 
 <Callout type="info" title="Modes">
   `IBEX_LLM_MODE=mock` (default) returns HTTP **200** from an in-process stub for registered models.
-  Set `IBEX_LLM_MODE=live` and `OPENAI_API_KEY` to forward to an OpenAI-compatible API.
-  Unknown models still return `501 PROVIDER_NOT_CONFIGURED`. Design: [ADR-0025](/docs/adr/0025-llm-provider-abstraction),
-  [ADR-0026](/docs/adr/0026-openai-client-design), [ADR-0027](/docs/adr/0027-streaming-dual-write).
+  Set `IBEX_LLM_MODE=live` with `OPENAI_API_KEY` and/or `ANTHROPIC_API_KEY` to register those vendors.
+  Live mode requires at least one key. Unknown models still return `501 PROVIDER_NOT_CONFIGURED`. Design:
+  [ADR-0025](/docs/adr/0025-llm-provider-abstraction), [ADR-0026](/docs/adr/0026-openai-client-design),
+  [ADR-0027](/docs/adr/0027-streaming-dual-write), [ADR-0040](/docs/adr/0040-anthropic-provider-adapter).
 </Callout>
 
 ## Why adapters exist
@@ -31,14 +32,19 @@ flowchart LR
   A --> UP2[api.anthropic.com]
 ```
 
-## Planned adapter contract
+## Planned adapter contract → Anthropic shipped
+
+Anthropic is implemented in `packages/provider/anthropic/`. It translates Messages API requests/responses
+to OpenAI-compatible JSON and SSE so the public `POST /v1/chat/completions` contract and dual-write
+forwarder stay unchanged. Built-in models: `claude-sonnet-4-5`, `claude-haiku-4-5`, `claude-opus-4-5`
+(plus `ANTHROPIC_EXTRA_MODELS`). Tool-use / image blocks are not passthrough in this milestone.
 
 <ProcessSteps
   steps={[
     {
       title: 'Register at startup',
       description:
-        'Each adapter registers a name, supported model prefixes, and a Forward function with the proxy registry.',
+        'Each configured adapter is registered into provider.Registry by SupportedModels(). Live mode registers OpenAI and/or Anthropic when keys are present.',
     },
     {
       title: 'Receive normalized payload',
@@ -48,12 +54,12 @@ flowchart LR
     {
       title: 'Call upstream',
       description:
-        'Adapter applies provider credentials from org-scoped configuration (never from the client request body).',
+        'Adapter applies provider credentials from process env (never from the client request body). Anthropic uses x-api-key + anthropic-version.',
     },
     {
       title: 'Stream response',
       description:
-        'Return OpenAI-compatible JSON or SSE chunks to the client; accumulate for async trace emission in later phases.',
+        'Return OpenAI-compatible JSON or SSE chunks to the client; accumulate for async trace emission.',
     },
   ]}
 />

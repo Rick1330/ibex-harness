@@ -12,7 +12,7 @@ The public marketing/docs/benchmarks site lives in `web/` (Phase 1.5+), not unde
 
 | Directory | Role | Status |
 | --- | --- | --- |
-| `proxy/` | Go — LLM proxy (latency-critical): auth middleware, agent verification, rate limiting, provider forwarding, auth cache, directives + injection, sessions, ClickHouse traces, idempotency, health/metrics | **Shipped (Phase 2)** — continues to grow in 2.5+ (Anthropic / self-hosted adapters, response pipeline, context client, multi-provider routing) |
+| `proxy/` | Go — LLM proxy (latency-critical): auth middleware, agent verification, rate limiting, provider forwarding (OpenAI + Anthropic), auth cache, directives + injection, sessions, ClickHouse traces, idempotency, health/metrics | **Shipped (Phase 2)** — continues in 2.5+ (capability registry, self-hosted adapters, response pipeline, context client, multi-provider routing) |
 | `auth/` | Go — authentication and token validation: gRPC `ValidateToken` / `ValidateAgent` / PAT lifecycle, Argon2id, Postgres stores, revoke pub/sub | **Shipped (Phase 2)** — extends in Phase 4 (e.g. provider-credential RPCs) |
 
 ---

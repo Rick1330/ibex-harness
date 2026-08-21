@@ -56,26 +56,6 @@ func TestBuildProviderRegistry_LiveModeRegistersOpenAI(t *testing.T) {
 	cfg := config.Config{
 		LLMMode: "live",
 		OpenAI: config.OpenAIConfig{
-			APIKey: "test-key",
-		},
-	}
-
-	reg, err := buildProviderRegistry(cfg, logger.Discard("proxy"), telemetry.NoopTracer("proxy"), metrics.NewProxy("test"))
-
-	if err != nil {
-		t.Fatalf("buildProviderRegistry: %v", err)
-	}
-	if _, err := reg.For("gpt-4o"); err != nil {
-		t.Fatalf("For: %v", err)
-	}
-}
-
-func TestUnit_BuildProviderRegistry_LiveExtraModels(t *testing.T) {
-	t.Parallel()
-
-	cfg := config.Config{
-		LLMMode: "live",
-		OpenAI: config.OpenAIConfig{
 			APIKey:      "test-key",
 			ExtraModels: []string{"openai/gpt-oss-20b:free"},
 		},
@@ -85,7 +65,72 @@ func TestUnit_BuildProviderRegistry_LiveExtraModels(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildProviderRegistry: %v", err)
 	}
-	if _, err := reg.For("openai/gpt-oss-20b:free"); err != nil {
-		t.Fatalf("For extra model: %v", err)
+	for _, model := range []string{"gpt-4o", "openai/gpt-oss-20b:free"} {
+		if _, err := reg.For(model); err != nil {
+			t.Fatalf("For(%s): %v", model, err)
+		}
+	}
+}
+
+func TestBuildProviderRegistry_LiveModeRegistersAnthropicOnly(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Config{
+		LLMMode: "live",
+		Anthropic: config.AnthropicConfig{
+			APIKey: "anth-key",
+		},
+	}
+
+	reg, err := buildProviderRegistry(cfg, logger.Discard("proxy"), telemetry.NoopTracer("proxy"), metrics.NewProxy("test"))
+	if err != nil {
+		t.Fatalf("buildProviderRegistry: %v", err)
+	}
+	p, err := reg.For("claude-sonnet-4-5")
+	if err != nil {
+		t.Fatalf("For: %v", err)
+	}
+	if p.Name() != "anthropic" {
+		t.Fatalf("provider=%q", p.Name())
+	}
+	if _, err := reg.For("gpt-4o"); err == nil {
+		t.Fatal("expected gpt-4o unregistered without OpenAI key")
+	}
+}
+
+func TestBuildProviderRegistry_LiveModeRegistersBoth(t *testing.T) {
+	t.Parallel()
+
+	cfg := config.Config{
+		LLMMode: "live",
+		OpenAI: config.OpenAIConfig{
+			APIKey: "openai-key",
+		},
+		Anthropic: config.AnthropicConfig{
+			APIKey: "anth-key",
+		},
+	}
+
+	reg, err := buildProviderRegistry(cfg, logger.Discard("proxy"), telemetry.NoopTracer("proxy"), metrics.NewProxy("test"))
+	if err != nil {
+		t.Fatalf("buildProviderRegistry: %v", err)
+	}
+	if _, err := reg.For("gpt-4o"); err != nil {
+		t.Fatalf("openai: %v", err)
+	}
+	if _, err := reg.For("claude-sonnet-4-5"); err != nil {
+		t.Fatalf("anthropic: %v", err)
+	}
+}
+
+func TestBuildProviderRegistry_LiveModeRequiresCredential(t *testing.T) {
+	t.Parallel()
+
+	_, err := buildProviderRegistry(config.Config{LLMMode: "live"}, logger.Discard("proxy"), telemetry.NoopTracer("proxy"), metrics.NewProxy("test"))
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "OPENAI_API_KEY") {
+		t.Fatalf("err=%v", err)
 	}
 }

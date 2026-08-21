@@ -1,33 +1,25 @@
 package openai
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
-	"net"
 	"net/http"
-	"strconv"
-	"strings"
 	"time"
 
-	"github.com/Rick1330/ibex-harness/packages/crypto"
 	"github.com/Rick1330/ibex-harness/packages/logger"
 	"github.com/Rick1330/ibex-harness/packages/provider"
-	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
-	"go.opentelemetry.io/otel/trace/noop"
 )
 
 // Client implements provider.Provider for the OpenAI API.
 type Client struct {
-	cfg        Config
-	httpClient *http.Client
-	log        *logger.Logger
-	tracer     trace.Tracer
-	metrics    Metrics
+	cfg          Config
+	httpClient   *http.Client
+	streamClient *http.Client
+	log          *logger.Logger
+	tracer       trace.Tracer
+	metrics      Metrics
 }
 
 // New constructs an OpenAI Client with a shared http.Client for connection pooling.
@@ -36,23 +28,14 @@ func New(cfg Config, log *logger.Logger, tracer trace.Tracer, metrics Metrics) *
 	if metrics == nil {
 		metrics = noopMetrics{}
 	}
-	if tracer == nil {
-		tracer = noop.NewTracerProvider().Tracer("openai")
-	}
+	clients := provider.NewHTTPClients(cfg.Timeout)
 	return &Client{
-		cfg: cfg,
-		httpClient: &http.Client{
-			Timeout: cfg.Timeout,
-			Transport: &http.Transport{
-				MaxIdleConns:        100,
-				MaxIdleConnsPerHost: 20,
-				IdleConnTimeout:     90 * time.Second,
-				TLSHandshakeTimeout: 10 * time.Second,
-			},
-		},
-		log:     log,
-		tracer:  tracer,
-		metrics: metrics,
+		cfg:          cfg,
+		httpClient:   clients.Sync,
+		streamClient: clients.Stream,
+		log:          log,
+		tracer:       provider.TracerOrNoop(tracer, "openai"),
+		metrics:      metrics,
 	}
 }
 
@@ -73,53 +56,29 @@ func builtInSupportedModels() []string {
 // unknown model IDs fail closed as PROVIDER_NOT_CONFIGURED instead of leaking
 // arbitrary model strings to the provider.
 func (c *Client) SupportedModels() []string {
-	return mergeSupportedModels(builtInSupportedModels(), c.cfg.ExtraModels)
-}
-
-func mergeSupportedModels(base, extra []string) []string {
-	out := make([]string, 0, len(base)+len(extra))
-	seen := make(map[string]struct{}, len(base)+len(extra))
-	for _, m := range base {
-		appendUniqueModel(&out, seen, m)
-	}
-	for _, m := range extra {
-		appendUniqueModel(&out, seen, m)
-	}
-	return out
-}
-
-func appendUniqueModel(out *[]string, seen map[string]struct{}, model string) {
-	model = strings.TrimSpace(model)
-	if model == "" {
-		return
-	}
-	if _, ok := seen[model]; ok {
-		return
-	}
-	seen[model] = struct{}{}
-	*out = append(*out, model)
+	return provider.MergeSupportedModels(builtInSupportedModels(), c.cfg.ExtraModels)
 }
 
 // Complete sends a chat completion request to OpenAI.
 // When req.Stream is true, Body is a live SSE stream (caller must close it).
 func (c *Client) Complete(ctx context.Context, req provider.Request) (provider.Response, error) {
-	ctx, span := c.tracer.Start(ctx, "openai.Complete",
-		trace.WithAttributes(
-			attribute.String("provider.name", c.Name()),
-			attribute.String("llm.model", req.Model),
-			attribute.Bool("llm.stream", req.Stream),
-		),
-	)
+	ctx, span := provider.StartCompleteSpan(ctx, c.tracer, provider.CompleteSpan{
+		Names: provider.CompleteSpanNames{Span: "openai.Complete", Provider: c.Name()},
+		Req:   req,
+	})
 	defer span.End()
 
 	body, err := c.marshalRequest(req)
 	if err != nil {
-		recordSpanErr(span, err)
+		provider.RecordSpanErr(span, err)
 		return provider.Response{}, err
 	}
 
-	url := strings.TrimRight(c.cfg.BaseURL, "/") + "/chat/completions"
-	return c.executeWithRetry(ctx, span, upstreamCall{URL: url, Body: body, Stream: req.Stream})
+	return c.executeWithRetry(ctx, span, upstreamCall{
+		URL:    provider.JoinBaseURL(c.cfg.BaseURL, "/chat/completions"),
+		Body:   body,
+		Stream: req.Stream,
+	})
 }
 
 func (c *Client) marshalRequest(req provider.Request) ([]byte, error) {
@@ -131,84 +90,25 @@ func (c *Client) marshalRequest(req provider.Request) ([]byte, error) {
 }
 
 func (c *Client) doRequest(ctx context.Context, call upstreamCall) (*http.Response, error) {
-	reqCtx, cancel := c.streamRequestContext(ctx, call.Stream)
-	httpReq, err := c.newChatRequest(reqCtx, call)
-	if err != nil {
-		cancel()
-		return nil, err
-	}
-	resp, err := c.httpClientFor(call.Stream).Do(httpReq)
-	if err != nil {
-		cancel()
-		return nil, err
-	}
-	return attachStreamCancel(resp, call.Stream, cancel), nil
+	return provider.DoUpstream(
+		ctx,
+		c.cfg.StreamTimeout,
+		c.httpClient,
+		c.streamClient,
+		c.newChatRequest,
+		provider.UpstreamCall{URL: call.URL, Body: call.Body, Stream: call.Stream},
+	)
 }
 
-func (c *Client) streamRequestContext(ctx context.Context, stream bool) (context.Context, context.CancelFunc) {
-	if !stream {
-		return ctx, noopCancel
-	}
-	return context.WithTimeout(ctx, c.cfg.StreamTimeout)
-}
-
-// noopCancel is used for non-stream requests that share the caller's context.
-func noopCancel() {
-	// Intentionally empty: there is no derived deadline to cancel on the non-stream path.
-}
-
-func (c *Client) newChatRequest(ctx context.Context, call upstreamCall) (*http.Request, error) {
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, call.URL, bytes.NewReader(call.Body))
-	if err != nil {
-		return nil, err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+c.cfg.APIKey)
-	if call.Stream {
-		httpReq.Header.Set("Accept", "text/event-stream")
-	}
-	return httpReq, nil
-}
-
-func (c *Client) httpClientFor(stream bool) *http.Client {
-	if !stream {
-		return c.httpClient
-	}
-	// Client.Timeout would abort long SSE streams; bound via request context instead.
-	return &http.Client{Transport: c.httpClient.Transport}
-}
-
-func attachStreamCancel(resp *http.Response, stream bool, cancel context.CancelFunc) *http.Response {
-	if !stream {
-		cancel()
-		return resp
-	}
-	resp.Body = &cancelOnClose{ReadCloser: resp.Body, cancel: cancel}
-	return resp
-}
-
-// cancelOnClose cancels the stream request context when the body is closed.
-type cancelOnClose struct {
-	io.ReadCloser
-	cancel context.CancelFunc
-}
-
-func (c *cancelOnClose) Close() error {
-	err := c.ReadCloser.Close()
-	c.cancel()
-	return err
+func (c *Client) newChatRequest(ctx context.Context, call provider.UpstreamCall) (*http.Request, error) {
+	return provider.NewJSONPostRequest(ctx, call, map[string]string{
+		"Content-Type":  "application/json",
+		"Authorization": "Bearer " + c.cfg.APIKey,
+	})
 }
 
 func readProviderError(name string, resp *http.Response) *provider.ProviderError {
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
-	msg := extractOpenAIErrorMessage(raw)
-	return &provider.ProviderError{
-		ProviderName:   name,
-		StatusCode:     resp.StatusCode,
-		ProviderBody:   raw,
-		ProviderErrMsg: msg,
-		RetryAfter:     RetryAfterHeader(resp.Header.Get("Retry-After")),
-	}
+	return provider.ReadProviderError(name, resp, extractOpenAIErrorMessage)
 }
 
 func extractOpenAIErrorMessage(raw []byte) string {
@@ -224,63 +124,32 @@ func extractOpenAIErrorMessage(raw []byte) string {
 }
 
 func isRetryableStatus(code int) bool {
-	switch code {
-	case http.StatusTooManyRequests, http.StatusInternalServerError,
-		http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
-		return true
-	default:
-		return false
-	}
-}
-
-func isRetryableTransport(err error) bool {
-	if err == nil {
-		return false
-	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return false
-	}
-	var netErr net.Error
-	if errors.As(err, &netErr) && netErr.Timeout() {
-		return true
-	}
-	var opErr *net.OpError
-	return errors.As(err, &opErr)
+	return provider.IsRetryableHTTPStatus(code)
 }
 
 func (c *Client) waitBeforeRetry(ctx context.Context, attempt int, lastErr error) error {
-	delay := retryDelay(c.cfg.RetryBaseDelay, attempt)
-	if pe, ok := lastErr.(*provider.ProviderError); ok && pe.StatusCode == http.StatusTooManyRequests {
-		if pe.RetryAfter > 0 {
-			delay = pe.RetryAfter
-		} else if ra := retryAfterFromProvider(pe); ra > 0 {
-			delay = ra
-		}
-	}
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
+	lastErr = enrichOpenAIRetryAfter(lastErr)
+	return provider.WaitBeforeRetry(ctx, c.cfg.RetryBaseDelay, attempt, lastErr)
 }
 
-func retryDelay(base time.Duration, attempt int) time.Duration {
-	if attempt < 1 {
-		attempt = 1
+func enrichOpenAIRetryAfter(lastErr error) error {
+	pe, ok := lastErr.(*provider.ProviderError)
+	if !ok {
+		return lastErr
 	}
-	shift := attempt - 1
-	if shift > 10 {
-		shift = 10
+	if pe.StatusCode != http.StatusTooManyRequests {
+		return lastErr
 	}
-	delay := base * time.Duration(1<<shift)
-	delay += crypto.RandomDuration(base)
-	if delay > maxRetryBackoff {
-		delay = maxRetryBackoff
+	if pe.RetryAfter > 0 {
+		return lastErr
 	}
-	return delay
+	ra := retryAfterFromProvider(pe)
+	if ra <= 0 {
+		return lastErr
+	}
+	copied := *pe
+	copied.RetryAfter = ra
+	return &copied
 }
 
 func retryAfterFromProvider(pe *provider.ProviderError) time.Duration {
@@ -295,32 +164,8 @@ func retryAfterFromProvider(pe *provider.ProviderError) time.Duration {
 	return 0
 }
 
-func statusClass(code int) string {
-	switch {
-	case code >= 200 && code < 300:
-		return "2xx"
-	case code >= 400 && code < 500:
-		return "4xx"
-	case code >= 500:
-		return "5xx"
-	default:
-		return "other"
-	}
-}
-
 // RetryAfterHeader parses the Retry-After response header when present.
+// Deprecated: prefer provider.RetryAfterHeader; kept for existing package tests.
 func RetryAfterHeader(hdr string) time.Duration {
-	if hdr == "" {
-		return 0
-	}
-	if secs, err := strconv.Atoi(hdr); err == nil && secs > 0 {
-		return time.Duration(secs) * time.Second
-	}
-	if t, err := http.ParseTime(hdr); err == nil {
-		d := time.Until(t)
-		if d > 0 {
-			return d
-		}
-	}
-	return 0
+	return provider.RetryAfterHeader(hdr)
 }

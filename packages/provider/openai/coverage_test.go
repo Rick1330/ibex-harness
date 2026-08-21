@@ -2,6 +2,8 @@ package openai
 
 import (
 	"context"
+	"errors"
+	"net"
 	"net/http"
 	"strings"
 	"testing"
@@ -153,16 +155,16 @@ func TestRetryAfterFromProvider_jsonField(t *testing.T) {
 
 func TestStatusClass_allBuckets(t *testing.T) {
 	t.Parallel()
-	if statusClass(http.StatusOK) != "2xx" {
+	if provider.StatusClass(http.StatusOK) != "2xx" {
 		t.Fatal("expected 2xx")
 	}
-	if statusClass(http.StatusInternalServerError) != "5xx" {
+	if provider.StatusClass(http.StatusInternalServerError) != "5xx" {
 		t.Fatal("expected 5xx")
 	}
-	if statusClass(http.StatusBadRequest) != "4xx" {
+	if provider.StatusClass(http.StatusBadRequest) != "4xx" {
 		t.Fatal("expected 4xx")
 	}
-	if statusClass(100) != "other" {
+	if provider.StatusClass(100) != "other" {
 		t.Fatal("expected other")
 	}
 }
@@ -221,7 +223,7 @@ func TestWaitBeforeRetry_honorsProviderRetryAfter(t *testing.T) {
 
 func TestRetryDelay_capsAtMaxBackoff(t *testing.T) {
 	t.Parallel()
-	got := retryDelay(time.Second, 20)
+	got := provider.RetryDelay(time.Second, 20, maxRetryBackoff)
 	if got > maxRetryBackoff {
 		t.Fatalf("delay %v exceeds max %v", got, maxRetryBackoff)
 	}
@@ -230,8 +232,11 @@ func TestRetryDelay_capsAtMaxBackoff(t *testing.T) {
 func TestIsRetryableTransport_timeout(t *testing.T) {
 	t.Parallel()
 	var netErr timeoutNetError
-	if !isRetryableTransport(netErr) {
-		t.Fatal("timeout net error should retry")
+	if provider.IsRetryableTransport(netErr) {
+		t.Fatal("timeout must not retry (ambiguous delivery)")
+	}
+	if !provider.IsRetryableTransport(&net.OpError{Op: "dial", Err: errors.New("refused")}) {
+		t.Fatal("dial should retry")
 	}
 }
 

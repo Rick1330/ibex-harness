@@ -372,8 +372,8 @@ func TestUnit_IsEventStream(t *testing.T) {
 		{"", false},
 	}
 	for _, tc := range cases {
-		if got := isEventStream(tc.in); got != tc.want {
-			t.Fatalf("isEventStream(%q)=%v want %v", tc.in, got, tc.want)
+		if got := provider.IsEventStream(tc.in); got != tc.want {
+			t.Fatalf("IsEventStream(%q)=%v want %v", tc.in, got, tc.want)
 		}
 	}
 }

@@ -26,6 +26,10 @@ const (
 	defaultOpenAIRequestTimeout = 120 * time.Second
 	defaultOpenAIMaxRetries     = 3
 	defaultOpenAIRetryBaseDelay = 500 * time.Millisecond
+	defaultAnthropicBaseURL     = "https://api.anthropic.com"
+	defaultAnthropicTimeout     = 120 * time.Second
+	defaultAnthropicMaxRetries  = 3
+	defaultAnthropicRetryDelay  = 500 * time.Millisecond
 	defaultAuthCacheLRUCapacity = 5000
 	defaultAuthCacheLRUMaxTTL   = 30 * time.Second
 	defaultAuthCacheBloomItems  = 10000
@@ -74,6 +78,16 @@ type OpenAIConfig struct {
 	ExtraModels []string
 }
 
+// AnthropicConfig holds Anthropic Messages API settings for the proxy process.
+type AnthropicConfig struct {
+	APIKey         string
+	BaseURL        string
+	RequestTimeout time.Duration
+	MaxRetries     int
+	RetryBaseDelay time.Duration
+	ExtraModels    []string
+}
+
 type Config struct {
 	Environment             string
 	ServiceName             string
@@ -92,6 +106,7 @@ type Config struct {
 	Telemetry               telemetry.Config
 	LLMMode                 string
 	OpenAI                  OpenAIConfig
+	Anthropic               AnthropicConfig
 	PostgresDSN             string
 	DirectiveCacheTTL       time.Duration
 	SessionCacheTTL         time.Duration
@@ -232,19 +247,63 @@ func (c *Config) applyLLMDefaults() {
 	if strings.TrimSpace(c.LLMMode) == "" {
 		c.LLMMode = defaultLLMMode
 	}
-	if strings.TrimSpace(c.OpenAI.BaseURL) == "" {
-		c.OpenAI.BaseURL = defaultOpenAIBaseURL
+	c.applyOpenAIDefaults()
+	c.applyAnthropicDefaults()
+}
+
+func (c *Config) applyOpenAIDefaults() {
+	applyProviderHTTPDefaults(providerHTTPFields{
+		BaseURL: &c.OpenAI.BaseURL, Timeout: &c.OpenAI.RequestTimeout,
+		MaxRetries: &c.OpenAI.MaxRetries, RetryDelay: &c.OpenAI.RetryBaseDelay,
+	}, providerHTTPFallback{
+		BaseURL: defaultOpenAIBaseURL, Timeout: defaultOpenAIRequestTimeout,
+		MaxRetries: defaultOpenAIMaxRetries, RetryDelay: defaultOpenAIRetryBaseDelay,
+	})
+}
+
+func (c *Config) applyAnthropicDefaults() {
+	applyProviderHTTPDefaults(providerHTTPFields{
+		BaseURL: &c.Anthropic.BaseURL, Timeout: &c.Anthropic.RequestTimeout,
+		MaxRetries: &c.Anthropic.MaxRetries, RetryDelay: &c.Anthropic.RetryBaseDelay,
+	}, providerHTTPFallback{
+		BaseURL: defaultAnthropicBaseURL, Timeout: defaultAnthropicTimeout,
+		MaxRetries: defaultAnthropicMaxRetries, RetryDelay: defaultAnthropicRetryDelay,
+	})
+}
+
+type providerHTTPFields struct {
+	BaseURL    *string
+	Timeout    *time.Duration
+	MaxRetries *int
+	RetryDelay *time.Duration
+}
+
+type providerHTTPFallback struct {
+	BaseURL    string
+	Timeout    time.Duration
+	MaxRetries int
+	RetryDelay time.Duration
+}
+
+func applyProviderHTTPDefaults(fields providerHTTPFields, fallback providerHTTPFallback) {
+	if strings.TrimSpace(*fields.BaseURL) == "" {
+		*fields.BaseURL = fallback.BaseURL
 	}
-	if c.OpenAI.RequestTimeout <= 0 {
-		c.OpenAI.RequestTimeout = defaultOpenAIRequestTimeout
+	if *fields.Timeout <= 0 {
+		*fields.Timeout = fallback.Timeout
 	}
-	if c.OpenAI.MaxRetries < 0 {
-		c.OpenAI.MaxRetries = 0
+	*fields.MaxRetries = normalizeRetryCount(*fields.MaxRetries, fallback.MaxRetries)
+	if *fields.RetryDelay <= 0 {
+		*fields.RetryDelay = fallback.RetryDelay
 	}
-	if c.OpenAI.MaxRetries == 0 {
-		c.OpenAI.MaxRetries = defaultOpenAIMaxRetries
+}
+
+func normalizeRetryCount(current, fallback int) int {
+	if current < 0 {
+		return 0
 	}
-	if c.OpenAI.RetryBaseDelay <= 0 {
-		c.OpenAI.RetryBaseDelay = defaultOpenAIRetryBaseDelay
+	if current == 0 {
+		return fallback
 	}
+	return current
 }
