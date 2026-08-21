@@ -2,7 +2,7 @@
 title: "2.5.G1.M1 Anthropic provider adapter"
 description: "Prove the Provider interface supports a second, dialect-different vendor before broader provider work. Anthropic's structurally different API surfaces places where code still assumes an OpenAI shape."
 summary: "Prove the Provider interface supports a second, dialect-different vendor before broader provider work. Anthropic's structurally different API surfaces places where code still assumes an OpenAI shape."
-status: "planned"
+status: "completed"
 milestoneId: "2.5.G1.M1"
 track: "A"
 trackTitle: "Multi-Provider Adapters"
@@ -15,7 +15,7 @@ fullTitle: "Milestone 2.5.G1.M1 — Anthropic Provider Adapter"
 
 # Milestone 2.5.G1.M1 — Anthropic Provider Adapter
 
-**Status:** Planned  
+**Status:** Completed  
 **Goal:** [Track A — Multi-Provider Adapters](/roadmap/phase-2-5-provider-generalization/tracks#track-a--multi-provider-adapters)  
 **Phase:** 2.5 — Provider Generalization & Foundation  
 **Estimated effort:** 3–4 days
@@ -98,14 +98,14 @@ Anthropic's error codes (`invalid_request_error`, `overloaded_error`, `rate_limi
 
 Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
 
-- [ ] Anthropic is reachable through the existing `Provider` interface without leaking Anthropic types into shared request/response types
-- [ ] System-role content maps to Anthropic's top-level `system` field without mutating the shared request
-- [ ] Anthropic SSE typed events parse into the shared response stream
-- [ ] Anthropic error bodies map into the stable error envelope, including retryable 529 / overloaded
-- [ ] Anthropic can be registered from config when credentials are present
-- [ ] Streaming still works for OpenAI after any forwarder generalization
-- [ ] Durable design choices are recorded (ADR or equivalent) if the implementation settles something new
-- [ ] Unit and integration coverage exists for translation, streaming, and error mapping
+- [x] Anthropic is reachable through the existing `Provider` interface without leaking Anthropic types into shared request/response types
+- [x] System-role content maps to Anthropic's top-level `system` field without mutating the shared request
+- [x] Anthropic SSE typed events parse into the shared response stream
+- [x] Anthropic error bodies map into the stable error envelope, including retryable 529 / overloaded
+- [x] Anthropic can be registered from config when credentials are present
+- [x] Streaming still works for OpenAI after any forwarder generalization
+- [x] Durable design choices are recorded (ADR or equivalent) if the implementation settles something new
+- [x] Unit and integration coverage exists for translation, streaming, and error mapping
 - [ ] Repo guards / CI checks still pass
 
 ## Prerequisites

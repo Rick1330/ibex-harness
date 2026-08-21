@@ -31,7 +31,7 @@ Scaffold guidance: [web/engineering/FILE_STRUCTURE.md](../web/engineering/FILE_S
 | `revocation/` | Auth-cache revocation channel helpers ([ADR-0029](../web/content/docs/adr/0029-token-revocation-propagation.mdx)) |
 | `redissub/` | Shared Redis SUBSCRIBE helpers for revocation fan-out |
 | `healthcheck/` | Shared `/health` and `/ready` probe framework ([ADR-0022](../web/content/docs/adr/0022-health-check-contract.mdx)) |
-| `provider/` | LLM provider abstraction and registry ([ADR-0025](../web/content/docs/adr/0025-llm-provider-abstraction.mdx)); Phase 2.5+ extends with Anthropic, capability registry, OpenAI-compatible / self-hosted adapters |
+| `provider/` | LLM provider abstraction and registry ([ADR-0025](../web/content/docs/adr/0025-llm-provider-abstraction.mdx)); OpenAI + Anthropic adapters ([ADR-0040](../web/content/docs/adr/0040-anthropic-provider-adapter.mdx)); Phase 2.5+ continues with capability registry and self-hosted adapters |
 | `clickhouse/` | ClickHouse writer/DSN helpers for `llm_traces` ([ADR-0033](../web/content/docs/adr/0033-clickhouse-schema.mdx)) |
 | `chdsn/` | ClickHouse DSN flattening helpers |
 
