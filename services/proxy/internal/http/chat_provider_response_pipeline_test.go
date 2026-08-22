@@ -16,9 +16,9 @@ import (
 
 const (
 	testChoiceCompletionUpstream = `{"id":"x","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"orig"},"finish_reason":"stop"}]}`
-	testSecretChoiceUpstream       = `{"id":"x","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"secret"},"finish_reason":"stop"}]}`
-	testFingerprintUpstream        = `{"id":"x","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"system_fingerprint":"fp"}`
-	testCompletionWithModelJSON    = `{"id":"x","object":"chat.completion","choices":[],"model":"orig"}`
+	testSecretChoiceUpstream     = `{"id":"x","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"secret"},"finish_reason":"stop"}]}`
+	testFingerprintUpstream      = `{"id":"x","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"system_fingerprint":"fp"}`
+	testCompletionWithModelJSON  = `{"id":"x","object":"chat.completion","choices":[],"model":"orig"}`
 )
 
 type processBodyCase struct {
@@ -43,7 +43,7 @@ func TestUnit_processResponseBody_scenarios(t *testing.T) {
 		{
 			name: "security critical 502", body: mockBody,
 			pipeline: responsepipeline.NewPipeline([]responsepipeline.Stage{httpCriticalStage{name: "guard", err: errors.New("blocked")}}),
-			wantErr: true, wantStatus: http.StatusBadGateway, wantMsg: errMsgResponsePipelineStageFailed,
+			wantErr:  true, wantStatus: http.StatusBadGateway, wantMsg: errMsgResponsePipelineStageFailed,
 		},
 		{
 			name: "cancelled context", pipeline: responsepipeline.NewDefaultPipeline(), body: mockBody,
@@ -51,7 +51,7 @@ func TestUnit_processResponseBody_scenarios(t *testing.T) {
 		},
 		{
 			name: "modified stage re-encodes", body: []byte(testChoiceCompletionUpstream),
-			pipeline: responsepipeline.NewPipeline([]responsepipeline.Stage{redactContentStage{}}),
+			pipeline:    responsepipeline.NewPipeline([]responsepipeline.Stage{redactContentStage{}}),
 			wantContain: "redacted",
 		},
 	}
@@ -129,12 +129,16 @@ func TestUnit_ChatCompletions_responsePipelineScenarios(t *testing.T) {
 		},
 		{
 			name: "modified changes client body", upstream: testSecretChoiceUpstream,
-			configure: func(d *RouterDeps) { d.ResponsePipeline = responsepipeline.NewPipeline([]responsepipeline.Stage{redactContentStage{}}) },
+			configure: func(d *RouterDeps) {
+				d.ResponsePipeline = responsepipeline.NewPipeline([]responsepipeline.Stage{redactContentStage{}})
+			},
 			wantStatus: http.StatusOK, wantContains: []string{"redacted"}, wantNotContains: []string{"secret"},
 		},
 		{
 			name: "modified preserves unknown fields", upstream: testFingerprintUpstream,
-			configure: func(d *RouterDeps) { d.ResponsePipeline = responsepipeline.NewPipeline([]responsepipeline.Stage{redactContentStage{}}) },
+			configure: func(d *RouterDeps) {
+				d.ResponsePipeline = responsepipeline.NewPipeline([]responsepipeline.Stage{redactContentStage{}})
+			},
 			wantStatus: http.StatusOK, wantContains: []string{"system_fingerprint"},
 		},
 		{
