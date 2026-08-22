@@ -165,27 +165,27 @@ func (h chatCompletionHandler) processResponseBody(ctx context.Context, provider
 	if h.responsePipeline == nil {
 		return body, nil
 	}
+	return h.encodePipelineResult(ctx, providerName, chat)
+}
+
+func (h chatCompletionHandler) encodePipelineResult(ctx context.Context, providerName string, chat *responsepipeline.ChatResponse) ([]byte, error) {
 	processed, err := h.responsePipeline.Run(ctx, chat)
 	if err != nil {
-		if h.log != nil {
-			h.log.WarnCtx(ctx, "response pipeline stage failed; fail-closed",
-				"provider", providerName,
-				"error", err,
-			)
-		}
+		h.warnPipelineIssue(ctx, providerName, "response pipeline stage failed; fail-closed", err)
 		return nil, providerErr502(providerName, errMsgResponsePipelineStageFailed)
 	}
 	out, err := processed.Bytes()
 	if err != nil {
-		if h.log != nil {
-			h.log.WarnCtx(ctx, "response pipeline serialization failed",
-				"provider", providerName,
-				"error", err,
-			)
-		}
+		h.warnPipelineIssue(ctx, providerName, "response pipeline serialization failed", err)
 		return nil, providerErr502(providerName, errMsgResponsePipelineSerialize)
 	}
 	return out, nil
+}
+
+func (h chatCompletionHandler) warnPipelineIssue(ctx context.Context, providerName, msg string, err error) {
+	if h.log != nil {
+		h.log.WarnCtx(ctx, msg, "provider", providerName, "error", err)
+	}
 }
 
 func providerErr502(providerName, msg string) *provider.ProviderError {

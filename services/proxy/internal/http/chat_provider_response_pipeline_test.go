@@ -82,7 +82,7 @@ func TestUnit_processResponseBody_modifiedStageReturnsReEncodedBody(t *testing.T
 	t.Parallel()
 	body := []byte(testChoiceCompletionUpstream)
 	h := chatCompletionHandler{
-		responsePipeline: responsepipeline.NewPipeline([]responsepipeline.Stage{httpMutateStage{}}),
+		responsePipeline: responsepipeline.NewPipeline([]responsepipeline.Stage{redactContentStage{}}),
 	}
 	out, err := h.processResponseBody(context.Background(), "openai", body)
 	require.NoError(t, err)
@@ -90,67 +90,76 @@ func TestUnit_processResponseBody_modifiedStageReturnsReEncodedBody(t *testing.T
 	require.NotEqual(t, body, out)
 }
 
-func TestUnit_ChatCompletions_responsePipelineNoopByteIdentical(t *testing.T) {
+func TestUnit_ChatCompletions_responsePipelineScenarios(t *testing.T) {
 	t.Parallel()
-	upstream := mockllm.MockJSONBody()
-	handler := pipelineChatHandler(t, upstream, nil)
-	rec := postDefaultPipelineChat(t, handler)
-	require.Equal(t, http.StatusOK, rec.Code)
-	require.Equal(t, upstream, rec.Body.String())
-}
-
-func TestUnit_ChatCompletions_responsePipelineInvalidUpstreamJSON(t *testing.T) {
-	t.Parallel()
-	handler := pipelineChatHandler(t, "not json", nil)
-	rec := postDefaultPipelineChat(t, handler)
-	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
-}
-
-func TestUnit_ChatCompletions_responsePipelineSecurityCriticalMapsTo503Envelope(t *testing.T) {
-	t.Parallel()
-	handler := pipelineChatHandler(t, mockllm.MockJSONBody(), func(d *RouterDeps) {
-		d.ResponsePipeline = responsepipeline.NewPipeline([]responsepipeline.Stage{httpCriticalStage{
-			name: "guard", err: errors.New("blocked"),
-		}})
-	})
-	rec := postDefaultPipelineChat(t, handler)
-	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
-	require.Contains(t, rec.Body.String(), string(apierror.CodeProviderUnavailable))
-}
-
-func TestUnit_ChatCompletions_responsePipelineModifiedChangesClientBody(t *testing.T) {
-	t.Parallel()
-	handler := pipelineChatHandler(t, testSecretChoiceUpstream, func(d *RouterDeps) {
-		d.ResponsePipeline = responsepipeline.NewPipeline([]responsepipeline.Stage{httpMutateStage{}})
-	})
-	rec := postDefaultPipelineChat(t, handler)
-	require.Equal(t, http.StatusOK, rec.Code)
-	require.Contains(t, rec.Body.String(), "redacted")
-	require.NotContains(t, rec.Body.String(), "secret")
-}
-
-func TestUnit_ChatCompletions_responsePipelineModifiedPreservesUnknownFields(t *testing.T) {
-	t.Parallel()
-	handler := pipelineChatHandler(t, testFingerprintUpstream, func(d *RouterDeps) {
-		d.ResponsePipeline = responsepipeline.NewPipeline([]responsepipeline.Stage{httpMutateStage{}})
-	})
-	rec := postDefaultPipelineChat(t, handler)
-	require.Equal(t, http.StatusOK, rec.Code)
-	require.Contains(t, rec.Body.String(), "system_fingerprint")
-}
-
-func TestUnit_ChatCompletions_responsePipelineFailOpenTwoStagePartialMutation(t *testing.T) {
-	t.Parallel()
-	handler := pipelineChatHandler(t, testCompletionWithModelJSON, func(d *RouterDeps) {
-		d.ResponsePipeline = responsepipeline.NewPipeline([]responsepipeline.Stage{
-			httpModelStage{model: "kept"},
-			httpFailStage{name: "fail"},
+	cases := []struct {
+		name            string
+		upstream        string
+		configure       func(*RouterDeps)
+		wantStatus      int
+		wantBody        string
+		wantContains    []string
+		wantNotContains []string
+	}{
+		{
+			name: "noop byte identical", upstream: mockllm.MockJSONBody(),
+			wantStatus: http.StatusOK, wantBody: mockllm.MockJSONBody(),
+		},
+		{
+			name: "invalid upstream JSON", upstream: "not json",
+			wantStatus: http.StatusServiceUnavailable,
+		},
+		{
+			name: "security critical maps to 503", upstream: mockllm.MockJSONBody(),
+			configure: func(d *RouterDeps) {
+				d.ResponsePipeline = responsepipeline.NewPipeline([]responsepipeline.Stage{httpCriticalStage{
+					name: "guard", err: errors.New("blocked"),
+				}})
+			},
+			wantStatus: http.StatusServiceUnavailable,
+			wantContains: []string{string(apierror.CodeProviderUnavailable)},
+		},
+		{
+			name: "modified changes client body", upstream: testSecretChoiceUpstream,
+			configure: func(d *RouterDeps) {
+				d.ResponsePipeline = responsepipeline.NewPipeline([]responsepipeline.Stage{redactContentStage{}})
+			},
+			wantStatus: http.StatusOK, wantContains: []string{"redacted"}, wantNotContains: []string{"secret"},
+		},
+		{
+			name: "modified preserves unknown fields", upstream: testFingerprintUpstream,
+			configure: func(d *RouterDeps) {
+				d.ResponsePipeline = responsepipeline.NewPipeline([]responsepipeline.Stage{redactContentStage{}})
+			},
+			wantStatus: http.StatusOK, wantContains: []string{"system_fingerprint"},
+		},
+		{
+			name: "fail-open keeps prior stage mutation", upstream: testCompletionWithModelJSON,
+			configure: func(d *RouterDeps) {
+				d.ResponsePipeline = responsepipeline.NewPipeline([]responsepipeline.Stage{
+					setModelStage{model: "kept"},
+					failAfterMutateStage{name: "fail", revertModel: "reverted"},
+				})
+			},
+			wantStatus: http.StatusOK, wantContains: []string{`"model":"kept"`}, wantNotContains: []string{`"model":"reverted"`},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			rec := postDefaultPipelineChat(t, pipelineChatHandler(t, tc.upstream, tc.configure))
+			require.Equal(t, tc.wantStatus, rec.Code)
+			if tc.wantBody != "" {
+				require.Equal(t, tc.wantBody, rec.Body.String())
+			}
+			for _, s := range tc.wantContains {
+				require.Contains(t, rec.Body.String(), s)
+			}
+			for _, s := range tc.wantNotContains {
+				require.NotContains(t, rec.Body.String(), s)
+			}
 		})
-	})
-	rec := postDefaultPipelineChat(t, handler)
-	require.Equal(t, http.StatusOK, rec.Code)
-	require.Contains(t, rec.Body.String(), `"model":"kept"`)
-	require.NotContains(t, rec.Body.String(), `"model":"reverted"`)
+	}
 }
 
 func TestUnit_Idempotency_responsePipelineReplayParity(t *testing.T) {
@@ -183,49 +192,33 @@ func TestUnit_Idempotency_responsePipelineReplayParity(t *testing.T) {
 	require.Equal(t, int64(1), prov.calls.Load())
 }
 
-type httpMutateStage struct{}
+type redactContentStage struct{}
 
-func (httpMutateStage) Name() string { return "mutate" }
+func (redactContentStage) Name() string { return "mutate" }
 
-func (httpMutateStage) Process(_ context.Context, resp *responsepipeline.ChatResponse) (*responsepipeline.ChatResponse, error) {
-	if err := resp.Mutate(func(doc *responsepipeline.ResponseDoc) error {
-		if len(doc.Choices) > 0 {
-			doc.Choices[0].Message.Content = "redacted"
-		}
-		return nil
-	}); err != nil {
-		return nil, err
-	}
-	return resp, nil
+func (redactContentStage) Process(_ context.Context, resp *responsepipeline.ChatResponse) (*responsepipeline.ChatResponse, error) {
+	return mutateFirstChoiceContent(resp, "redacted")
 }
 
-type httpModelStage struct {
+type setModelStage struct {
 	model string
 }
 
-func (s httpModelStage) Name() string { return "model" }
+func (s setModelStage) Name() string { return "model" }
 
-func (s httpModelStage) Process(_ context.Context, resp *responsepipeline.ChatResponse) (*responsepipeline.ChatResponse, error) {
-	if err := resp.Mutate(func(doc *responsepipeline.ResponseDoc) error {
-		doc.Model = s.model
-		return nil
-	}); err != nil {
-		return nil, err
-	}
-	return resp, nil
+func (s setModelStage) Process(_ context.Context, resp *responsepipeline.ChatResponse) (*responsepipeline.ChatResponse, error) {
+	return mutateModel(resp, s.model)
 }
 
-type httpFailStage struct {
-	name string
+type failAfterMutateStage struct {
+	name         string
+	revertModel  string
 }
 
-func (s httpFailStage) Name() string { return s.name }
+func (s failAfterMutateStage) Name() string { return s.name }
 
-func (s httpFailStage) Process(_ context.Context, resp *responsepipeline.ChatResponse) (*responsepipeline.ChatResponse, error) {
-	if err := resp.Mutate(func(doc *responsepipeline.ResponseDoc) error {
-		doc.Model = "reverted"
-		return nil
-	}); err != nil {
+func (s failAfterMutateStage) Process(_ context.Context, resp *responsepipeline.ChatResponse) (*responsepipeline.ChatResponse, error) {
+	if _, err := mutateModel(resp, s.revertModel); err != nil {
 		return nil, err
 	}
 	return nil, errors.New("fail-open")
@@ -243,3 +236,25 @@ func (s httpCriticalStage) Process(_ context.Context, _ *responsepipeline.ChatRe
 }
 
 func (httpCriticalStage) SecurityCritical() bool { return true }
+
+func mutateModel(resp *responsepipeline.ChatResponse, model string) (*responsepipeline.ChatResponse, error) {
+	if err := resp.Mutate(func(doc *responsepipeline.ResponseDoc) error {
+		doc.Model = model
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+func mutateFirstChoiceContent(resp *responsepipeline.ChatResponse, content string) (*responsepipeline.ChatResponse, error) {
+	if err := resp.Mutate(func(doc *responsepipeline.ResponseDoc) error {
+		if len(doc.Choices) > 0 {
+			doc.Choices[0].Message.Content = content
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return resp, nil
+}

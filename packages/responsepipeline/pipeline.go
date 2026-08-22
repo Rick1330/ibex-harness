@@ -80,6 +80,13 @@ func (p *Pipeline) Run(ctx context.Context, resp *ChatResponse) (*ChatResponse, 
 	return current, nil
 }
 
+type stageExec struct {
+	ctx      context.Context
+	stage    Stage
+	snapshot *ChatResponse
+	start    time.Time
+}
+
 func (p *Pipeline) runStage(
 	ctx context.Context,
 	stage Stage,
@@ -89,7 +96,7 @@ func (p *Pipeline) runStage(
 	start := time.Now()
 	next, err := stage.Process(ctx, current)
 	if err != nil {
-		return p.handleStageError(ctx, stage, stageEntry, err, start)
+		return p.handleStageError(stageExec{ctx: ctx, stage: stage, snapshot: stageEntry, start: start}, err)
 	}
 	p.recordStage(stage.Name(), stageResultSuccess, start)
 	if next != nil {
@@ -98,25 +105,19 @@ func (p *Pipeline) runStage(
 	return current, false, nil
 }
 
-func (p *Pipeline) handleStageError(
-	ctx context.Context,
-	stage Stage,
-	snapshot *ChatResponse,
-	err error,
-	start time.Time,
-) (*ChatResponse, bool, error) {
-	if isSecurityCritical(stage) {
-		p.recordStage(stage.Name(), stageResultError, start)
+func (p *Pipeline) handleStageError(se stageExec, err error) (*ChatResponse, bool, error) {
+	if isSecurityCritical(se.stage) {
+		p.recordStage(se.stage.Name(), stageResultError, se.start)
 		return nil, true, err
 	}
 	if p.log != nil {
-		p.log.WarnStageError(ctx, stage.Name(), err)
+		p.log.WarnStageError(se.ctx, se.stage.Name(), err)
 	}
 	if p.obs != nil {
-		p.obs.IncStageFailOpen(stage.Name())
+		p.obs.IncStageFailOpen(se.stage.Name())
 	}
-	p.recordStage(stage.Name(), stageResultFailOpen, start)
-	return snapshot, false, nil
+	p.recordStage(se.stage.Name(), stageResultFailOpen, se.start)
+	return se.snapshot, false, nil
 }
 
 func (p *Pipeline) recordStage(stage, result string, start time.Time) {

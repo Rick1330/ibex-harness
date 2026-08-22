@@ -25,6 +25,14 @@ func labelPairValue(labels []*dto.LabelPair, name string) string {
 	return ""
 }
 
+func noopDurationResult(t *testing.T, m *dto.Metric) (string, uint64) {
+	t.Helper()
+	require.Equal(t, "noop", labelPairValue(m.GetLabel(), "stage"))
+	result := labelPairValue(m.GetLabel(), "result")
+	require.Contains(t, []string{"success", "fail_open"}, result)
+	return result, m.GetHistogram().GetSampleCount()
+}
+
 func assertDurationFamily(t *testing.T, mfs []*dto.MetricFamily) (uint64, bool, bool) {
 	t.Helper()
 	var durationCount uint64
@@ -35,16 +43,14 @@ func assertDurationFamily(t *testing.T, mfs []*dto.MetricFamily) (uint64, bool, 
 		}
 		require.Equal(t, dto.MetricType_HISTOGRAM, mf.GetType())
 		for _, m := range mf.GetMetric() {
-			require.Equal(t, "noop", labelPairValue(m.GetLabel(), "stage"))
-			switch labelPairValue(m.GetLabel(), "result") {
+			result, count := noopDurationResult(t, m)
+			durationCount += count
+			switch result {
 			case "success":
 				sawSuccess = true
 			case "fail_open":
 				sawFailOpen = true
-			default:
-				t.Fatalf("unexpected result label %q", labelPairValue(m.GetLabel(), "result"))
 			}
-			durationCount += m.GetHistogram().GetSampleCount()
 		}
 	}
 	return durationCount, sawSuccess, sawFailOpen
