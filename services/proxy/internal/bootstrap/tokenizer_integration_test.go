@@ -19,7 +19,7 @@ func TestIntegration_BuildTokenizerRegistry_FromEnvDefaults(t *testing.T) {
 	reg, err := buildTokenizerRegistry(cfg)
 	require.NoError(t, err)
 	require.NotNil(t, reg)
-	_, err = countForBuiltinModel(reg, "claude-sonnet-4-5", "Hello world")
+	_, err = countForBuiltinModel(reg, "claude-sonnet-4-5", tokenizer.VectorHelloWorld())
 	require.NoError(t, err)
 }
 

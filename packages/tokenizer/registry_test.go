@@ -2,6 +2,7 @@ package tokenizer
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -87,13 +88,13 @@ func TestUnit_Count_Concurrent(t *testing.T) {
 	errCh := make(chan error, workers)
 	for i := 0; i < workers; i++ {
 		go func() {
-			n, err := tok.Count(context.Background(), "Hello world")
+			n, err := tok.Count(context.Background(), vectorHelloWorld)
 			if err != nil {
 				errCh <- err
 				return
 			}
 			if n != 2 {
-				errCh <- err
+				errCh <- fmt.Errorf("unexpected token count: got %d want 2", n)
 				return
 			}
 			errCh <- nil

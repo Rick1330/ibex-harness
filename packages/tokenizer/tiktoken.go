@@ -125,9 +125,9 @@ type SelfTestVector struct {
 // DefaultSelfTestVectors returns sample counts verified in vectors_test.go.
 func DefaultSelfTestVectors() []SelfTestVector {
 	return []SelfTestVector{
-		{Family: provider.TokenizerFamilyO200kBase, Text: "Hello world", Want: 2},
-		{Family: provider.TokenizerFamilyCL100kBase, Text: "Hello world", Want: 2},
-		{Family: provider.TokenizerFamilyClaude, Text: "Hello world", Want: 4},
+		{Family: provider.TokenizerFamilyO200kBase, Text: vectorHelloWorld, Want: 2},
+		{Family: provider.TokenizerFamilyCL100kBase, Text: vectorHelloWorld, Want: 2},
+		{Family: provider.TokenizerFamilyClaude, Text: vectorHelloWorld, Want: 4},
 	}
 }
 

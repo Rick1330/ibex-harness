@@ -2,6 +2,7 @@ package metrics
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/Rick1330/ibex-harness/packages/provider"
@@ -21,6 +22,22 @@ func TestUnit_ObserveTokenizerCount_Registered(t *testing.T) {
 	reg := NewProxy("tokenizer-metrics-test")
 	reg.ObserveTokenizerCount("o200k_base", "success", 0.001)
 	reg.ObserveTokenizerCount("claude", "error", 0.002)
+
+	body := scrapeMetrics(t, reg.Gatherer())
+	require.True(t, strings.Contains(body, "ibex_tokenizer_count_total"))
+	require.True(t, strings.Contains(body, "ibex_tokenizer_count_duration_seconds"))
+
+	families := gatherFamilies(t, reg.Gatherer())
+	counter := families["ibex_tokenizer_count_total"]
+	require.NotNil(t, counter)
+	require.Equal(t, float64(1), counterByLabel(counter, "family", "o200k_base"))
+	require.Equal(t, float64(1), counterByLabel(counter, "family", "claude"))
+	require.Equal(t, float64(1), counterByLabel(counter, "result", "success"))
+	require.Equal(t, float64(1), counterByLabel(counter, "result", "error"))
+
+	hist := families["ibex_tokenizer_count_duration_seconds"]
+	require.NotNil(t, hist)
+	require.NotEmpty(t, hist.GetMetric())
 }
 
 func TestUnit_TokenizerObserver_SuccessAndCancel(t *testing.T) {
@@ -30,14 +47,20 @@ func TestUnit_TokenizerObserver_SuccessAndCancel(t *testing.T) {
 	tok, err := tokReg.ForFamily(provider.TokenizerFamilyO200kBase)
 	require.NoError(t, err)
 
-	n, err := tokenizer.CountWithObserver(context.Background(), tok, "Hello world", reg)
+	n, err := tokenizer.CountWithObserver(context.Background(), tok, tokenizer.VectorHelloWorld(), reg)
 	require.NoError(t, err)
 	require.Equal(t, 2, n)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err = tokenizer.CountWithObserver(ctx, tok, "Hello world", reg)
+	_, err = tokenizer.CountWithObserver(ctx, tok, tokenizer.VectorHelloWorld(), reg)
 	require.ErrorIs(t, err, context.Canceled)
+
+	families := gatherFamilies(t, reg.Gatherer())
+	counter := families["ibex_tokenizer_count_total"]
+	require.Equal(t, float64(1), counterByLabel(counter, "family", provider.TokenizerFamilyO200kBase))
+	require.Equal(t, float64(1), counterByLabel(counter, "result", "success"))
+	require.Equal(t, float64(1), counterByLabel(counter, "result", "error"))
 }
 
 func TestUnit_TokenizerObserver_CountForModel(t *testing.T) {
@@ -49,9 +72,22 @@ func TestUnit_TokenizerObserver_CountForModel(t *testing.T) {
 		provider.BuiltInCapabilityCatalog(),
 		tokReg,
 		"gpt-4o",
-		"Hello world",
+		tokenizer.VectorHelloWorld(),
 		reg,
 	)
 	require.NoError(t, err)
 	require.Equal(t, 2, n)
+
+	families := gatherFamilies(t, reg.Gatherer())
+	hist := families["ibex_tokenizer_count_duration_seconds"]
+	require.NotNil(t, hist)
+	metrics := hist.GetMetric()
+	require.NotEmpty(t, metrics)
+	for _, m := range metrics {
+		for _, lp := range m.GetLabel() {
+			if lp.GetName() == "family" {
+				require.Equal(t, provider.TokenizerFamilyO200kBase, lp.GetValue())
+			}
+		}
+	}
 }

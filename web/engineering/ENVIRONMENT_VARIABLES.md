@@ -369,7 +369,7 @@ Preferred starting models in the roadmap: **GPU/prod** `bge-m3` (1024-dim); **CP
 |----------|----------|---------|-------------|-------|
 | `IBEX_TOKENIZER_MODE` | No | `local` | `local` \| `service` \| `dual` | **Shipped 2.5.G2.M1:** `local` only |
 | `IBEX_TOKENIZER_SERVICE_URL` | Planned **2.5+** | (none) | `services/tokenizer-service` base URL | FastAPI `/tokenize` (deferred) |
-| `IBEX_TOKENIZER_TIMEOUT_MS` | Planned **2.5+** | `20` | Remote count budget | Hot path; degrade to char estimate |
+| `IBEX_TOKENIZER_TIMEOUT_MS` | Planned **2.5+** | `20` | Remote count budget | Deferred until service mode lands |
 | `IBEX_TOKENIZER_ASSET_DIR` | No | (bundled) | Optional BPE override dir | Air-gapped friendly |
 
 ### Memory system knobs (Phase 3+)

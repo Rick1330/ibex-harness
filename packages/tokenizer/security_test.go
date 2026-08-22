@@ -2,7 +2,6 @@ package tokenizer
 
 import (
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"sync"
@@ -38,7 +37,7 @@ func TestUnit_BpeLoader_MissingAssetDirFallsBackToEmbedded(t *testing.T) {
 	require.NoError(t, err)
 	tok, err := reg.ForFamily(provider.TokenizerFamilyO200kBase)
 	require.NoError(t, err)
-	n, err := tok.Count(context.Background(), "Hello world")
+	n, err := tok.Count(context.Background(), VectorHelloWorld())
 	require.NoError(t, err)
 	require.Equal(t, 2, n)
 }
@@ -160,10 +159,10 @@ func TestUnit_BpeLoader_OfflineCL100k(t *testing.T) {
 	require.NotEmpty(t, ranks)
 }
 
-func TestUnit_LoadBpeFile_Missing(t *testing.T) {
-	_, err := loadBpeFile(filepath.Join(t.TempDir(), "missing.tiktoken"))
-	require.Error(t, err)
-	require.True(t, errors.Is(err, os.ErrNotExist))
+func TestUnit_LoadBpeFromAssetDir_Missing(t *testing.T) {
+	_, found, err := loadBpeFromAssetDir(t.TempDir(), "o200k_base.tiktoken")
+	require.NoError(t, err)
+	require.False(t, found)
 }
 
 func TestUnit_Claude_CountRespectsContext(t *testing.T) {

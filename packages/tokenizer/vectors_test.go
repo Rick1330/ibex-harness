@@ -16,7 +16,7 @@ type countVector struct {
 func TestUnit_GroundTruthVectors_O200k(t *testing.T) {
 	vectors := []countVector{
 		{"", 0},
-		{"Hello world", 2},
+		{vectorHelloWorld, 2},
 		{"Hello, world!", 4},
 		{"🚀", 2},
 		{"The quick brown fox jumps over the lazy dog.", 10},
@@ -32,7 +32,7 @@ func TestUnit_GroundTruthVectors_O200k(t *testing.T) {
 func TestUnit_GroundTruthVectors_CL100k(t *testing.T) {
 	vectors := []countVector{
 		{"", 0},
-		{"Hello world", 2},
+		{vectorHelloWorld, 2},
 		{"Hello, world!", 4},
 		{"🚀", 3},
 		{"The quick brown fox jumps over the lazy dog.", 10},
@@ -48,7 +48,7 @@ func TestUnit_GroundTruthVectors_CL100k(t *testing.T) {
 func TestUnit_GroundTruthVectors_ClaudeEstimate(t *testing.T) {
 	vectors := []countVector{
 		{"", 0},
-		{"Hello world", 4},
+		{vectorHelloWorld, 4},
 		{"Hello, world!", 4},
 		{"🚀", 1},
 		{"The quick brown fox jumps over the lazy dog.", 13},
@@ -77,7 +77,7 @@ func runVectors(t *testing.T, tok Tokenizer, vectors []countVector) {
 func TestUnit_CountForModel_BuiltinGPT4o(t *testing.T) {
 	reg, err := NewLocalRegistry("")
 	require.NoError(t, err)
-	n, err := CountForModel(context.Background(), provider.BuiltInCapabilityCatalog(), reg, "gpt-4o", "Hello world")
+	n, err := CountForModel(context.Background(), provider.BuiltInCapabilityCatalog(), reg, "gpt-4o", VectorHelloWorld())
 	require.NoError(t, err)
 	require.Equal(t, 2, n)
 }

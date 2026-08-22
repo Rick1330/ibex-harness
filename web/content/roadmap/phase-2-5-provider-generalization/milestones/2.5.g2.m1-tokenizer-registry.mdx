@@ -2,7 +2,7 @@
 title: "2.5.G2.M1 Tokenizer registry"
 description: "Any token-budget math done with tiktoken (OpenAI's tokenizer) will be wrong for every open-weight model — different vocabulary, different merge rules, different special tokens. Build the tokenizer registry before Phase 3's context-assembly engine is built against it."
 summary: "Any token-budget math done with tiktoken (OpenAI's tokenizer) will be wrong for every open-weight model — different vocabulary, different merge rules, different special tokens. Build the tokenizer registry before Phase 3's context-assembly engine is built against it."
-status: "shipped"
+status: "completed"
 milestoneId: "2.5.G2.M1"
 track: "B"
 trackTitle: "Tokenizer Registry"
@@ -15,7 +15,7 @@ fullTitle: "Milestone 2.5.G2.M1 — Tokenizer Registry"
 
 # Milestone 2.5.G2.M1 — Tokenizer Registry
 
-**Status:** Shipped (2.5.G2.M1 — [ADR-0043](/docs/adr/0043-tokenizer-registry))
+**Status:** Completed (2.5.G2.M1 — [ADR-0043](/docs/adr/0043-tokenizer-registry))
 **Goal:** [Track B — Tokenizer Registry](/roadmap/phase-2-5-provider-generalization/tracks#track-b--tokenizer-registry)  
 **Phase:** 2.5 — Provider Generalization & Foundation  
 **Estimated effort:** 3–4 days
@@ -140,9 +140,9 @@ Vectors sourced from running the actual model's tokenizer offline and committing
 Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
 
 - Token counting is selectable by tokenizer family (not a single OpenAI vocabulary for every model)
-- OpenAI families used in production have accurate counts against known vectors
-- At least one open-weight family is covered by whatever path implementation chooses (in-process, service, or other)
-- Counts match offline ground-truth vectors for each supported family
+- OpenAI families (`o200k_base`, `cl100k_base`) match offline ground-truth vectors
+- Claude family uses a documented heuristic estimate backend (`IsEstimate() == true`)
+- Open-weight HF families (`llama3`, `qwen2`) — **deferred** (not in this milestone; requires CGo or tokenizer-service)
 - Runtime does not depend on live Hugging Face downloads for counting
 - Missing / unknown family fails clearly rather than silently approximating
 - Tests cover the counting path(s) that land

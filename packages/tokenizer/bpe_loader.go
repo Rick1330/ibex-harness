@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -15,11 +16,24 @@ import (
 	tiktoken_loader "github.com/pkoukk/tiktoken-go-loader"
 )
 
+// embed is required so o200k_base.tiktoken ships in the binary for air-gap installs.
+//
 //go:embed assets/o200k_base.tiktoken
 var embeddedO200kBPE []byte
 
+const maxBpeAssetBytes = 64 << 20 // 64 MiB cap for operator-supplied override files
+
 // ErrAssetPathEscape is returned when a resolved asset path leaves IBEX_TOKENIZER_ASSET_DIR.
 var ErrAssetPathEscape = errors.New("tokenizer asset path escapes asset dir")
+
+var (
+	errInvalidBpeLine   = errors.New("invalid bpe line")
+	errEmptyBpeVocab    = errors.New("empty bpe vocabulary")
+	errDuplicateBpeToken = errors.New("duplicate bpe token")
+	errDuplicateBpeRank  = errors.New("duplicate bpe rank")
+	errNegativeBpeRank   = errors.New("negative bpe rank")
+	errNonContiguousRanks = errors.New("non-contiguous bpe ranks")
+)
 
 type bundledBpeLoader struct {
 	assetDir string
@@ -51,17 +65,22 @@ func (l *bundledBpeLoader) LoadTiktokenBpe(tiktokenBpeFile string) (map[string]i
 }
 
 func loadBpeFromAssetDir(assetDir, base string) (map[string]int, bool, error) {
-	target, err := jailedAssetPath(assetDir, base)
+	jailed, err := jailedAssetPath(assetDir, base)
 	if err != nil {
 		return nil, false, err
 	}
-	if _, err := os.Stat(target); err != nil {
+	if _, err := os.Stat(jailed); err != nil {
 		if os.IsNotExist(err) {
 			return nil, false, nil
 		}
 		return nil, false, err
 	}
-	ranks, err := loadBpeFile(target)
+	// jailed is validated under assetDir by jailedAssetPath; basename-only override files.
+	raw, err := readBoundedFile(jailed, maxBpeAssetBytes)
+	if err != nil {
+		return nil, true, err
+	}
+	ranks, err := parseBpeLines(string(raw))
 	return ranks, true, err
 }
 
@@ -84,33 +103,81 @@ func jailedAssetPath(assetDir, base string) (string, error) {
 	return target, nil
 }
 
-func loadBpeFile(path string) (map[string]int, error) {
-	raw, err := os.ReadFile(path)
+func readBoundedFile(path string, maxBytes int64) ([]byte, error) {
+	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
-	return parseBpeLines(string(raw))
+	defer f.Close()
+	limited := io.LimitReader(f, maxBytes+1)
+	raw, err := io.ReadAll(limited)
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(raw)) > maxBytes {
+		return nil, fmt.Errorf("bpe asset exceeds %d bytes", maxBytes)
+	}
+	return raw, nil
 }
 
 func parseBpeLines(contents string) (map[string]int, error) {
+	if strings.TrimSpace(contents) == "" {
+		return nil, errEmptyBpeVocab
+	}
 	bpeRanks := make(map[string]int)
+	seenRanks := make(map[int]struct{})
+	lineNo := 0
 	for _, line := range strings.Split(contents, "\n") {
 		if line == "" {
 			continue
 		}
-		parts := strings.Split(line, " ")
-		if len(parts) != 2 {
-			return nil, fmt.Errorf("invalid bpe line")
-		}
-		token, err := base64.StdEncoding.DecodeString(parts[0])
+		lineNo++
+		token, rank, err := parseBpeLine(line)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("line %d: %w", lineNo, err)
 		}
-		rank, err := strconv.Atoi(parts[1])
-		if err != nil {
-			return nil, err
+		if _, dup := bpeRanks[token]; dup {
+			return nil, fmt.Errorf("line %d: %w", lineNo, errDuplicateBpeToken)
 		}
-		bpeRanks[string(token)] = rank
+		if _, dup := seenRanks[rank]; dup {
+			return nil, fmt.Errorf("line %d: %w", lineNo, errDuplicateBpeRank)
+		}
+		if rank < 0 {
+			return nil, fmt.Errorf("line %d: %w", lineNo, errNegativeBpeRank)
+		}
+		bpeRanks[token] = rank
+		seenRanks[rank] = struct{}{}
+	}
+	if len(bpeRanks) == 0 {
+		return nil, errEmptyBpeVocab
+	}
+	if err := validateContiguousRanks(seenRanks, len(bpeRanks)); err != nil {
+		return nil, err
 	}
 	return bpeRanks, nil
+}
+
+func parseBpeLine(line string) (token string, rank int, err error) {
+	parts := strings.Split(line, " ")
+	if len(parts) != 2 {
+		return "", 0, errInvalidBpeLine
+	}
+	decoded, err := base64.StdEncoding.DecodeString(parts[0])
+	if err != nil {
+		return "", 0, err
+	}
+	rank, err = strconv.Atoi(parts[1])
+	if err != nil {
+		return "", 0, err
+	}
+	return string(decoded), rank, nil
+}
+
+func validateContiguousRanks(seen map[int]struct{}, count int) error {
+	for i := 0; i < count; i++ {
+		if _, ok := seen[i]; !ok {
+			return errNonContiguousRanks
+		}
+	}
+	return nil
 }

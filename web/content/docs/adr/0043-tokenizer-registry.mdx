@@ -69,7 +69,7 @@ tokens = 0                         if text is empty
 tokens = ceil(rune_count / 3.5)    otherwise  (implemented as (runes*2+6)/7)
 ```
 
-Consumers in Phase 3.5 must apply family-specific safety buffers; treat claude counts as **conservative estimates**, not vendor ground truth.
+Consumers in Phase 3.5 may use Claude counts only after establishing a measured, versioned error bound against Anthropic `count_tokens` or an equivalent ground-truth source. Until then, apply family-specific safety buffers and do not treat the heuristic as directionally safe for budget enforcement.
 
 ### 5) Config surface (v1)
 

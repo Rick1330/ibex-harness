@@ -83,6 +83,8 @@ See [.env.example](.env.example).
 | `IBEX_PROVIDER_CIRCUIT_BREAKER_COOLDOWN_SECONDS` | `30` | Breaker cool-down (integer seconds) |
 | `IBEX_IDEMPOTENCY_TTL` | `24h` | Idempotency-Key Redis TTL (non-streaming chat) |
 | `IBEX_IDEMPOTENCY_REDIS_TIMEOUT` | `50ms` | Idempotency Redis budget |
+| `IBEX_TOKENIZER_MODE` | `local` | `local` only in G2.M1 (`service`/`dual` rejected at validate) |
+| `IBEX_TOKENIZER_ASSET_DIR` | (bundled) | Optional BPE override directory (`o200k_base.tiktoken`, etc.) |
 | `CLICKHOUSE_DSN` | (empty) | Optional `llm_traces` writer |
 | `CLICKHOUSE_INSERT_BATCH_SIZE` | `500` | Trace insert batch size |
 | `CLICKHOUSE_INSERT_FLUSH_MS` | `200` | Trace flush interval |
@@ -91,10 +93,9 @@ Full registry: [ENVIRONMENT_VARIABLES.md](../../web/engineering/ENVIRONMENT_VARI
 
 ## Next (Phase 2.5+) — remaining planning baseline
 
-Anthropic adapter, model capability registry, and self-hosted OpenAI-compatible adapter are shipped
-(m2.5.G1.M1–M3 / ADR-0040–0042). Still planned:
+Anthropic adapter, model capability registry, self-hosted OpenAI-compatible adapter, and
+tokenizer registry are shipped (m2.5.G1.M1–M3, m2.5.G2.M1 / ADR-0040–0043). Still planned:
 
-- Tokenizer counting (`IBEX_TOKENIZER_*`) keyed by `TokenizerFamily` from the capability registry
 - Non-streaming response pipeline seam (`packages/responsepipeline`)
 - Later: fail-open context-assembly client (`IBEX_CONTEXT_*`, Phase 3.5)
 

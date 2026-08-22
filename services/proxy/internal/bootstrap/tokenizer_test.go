@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"testing"
 
+	"github.com/Rick1330/ibex-harness/packages/tokenizer"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
 	"github.com/stretchr/testify/require"
 )
@@ -27,7 +28,7 @@ func TestUnit_BuildTokenizerRegistry_CatalogCoverage(t *testing.T) {
 	cfg.ApplyDefaults()
 	reg, err := buildTokenizerRegistry(cfg)
 	require.NoError(t, err)
-	n, err := countForBuiltinModel(reg, "gpt-4o", "Hello world")
+	n, err := countForBuiltinModel(reg, "gpt-4o", tokenizer.VectorHelloWorld())
 	require.NoError(t, err)
 	require.Equal(t, 2, n)
 }

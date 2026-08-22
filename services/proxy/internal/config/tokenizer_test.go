@@ -19,3 +19,17 @@ func TestUnit_ValidateTokenizer_LocalDefault(t *testing.T) {
 	require.NoError(t, cfg.validateTokenizer())
 	require.Equal(t, "local", cfg.Tokenizer.Mode)
 }
+
+func TestUnit_ApplyTokenizerDefaults_NormalizesMode(t *testing.T) {
+	for _, tc := range []struct {
+		in   string
+		want string
+	}{
+		{in: " LOCAL ", want: "local"},
+		{in: "LOCAL", want: "local"},
+	} {
+		cfg := Config{Tokenizer: TokenizerConfig{Mode: tc.in}}
+		cfg.ApplyDefaults()
+		require.Equal(t, tc.want, cfg.Tokenizer.Mode)
+	}
+}

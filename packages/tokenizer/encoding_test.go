@@ -24,5 +24,5 @@ func TestUnit_EncodingDefinition_UsesLoaderNotGlobalCache(t *testing.T) {
 func TestUnit_LoadEncoding_BuildsWorkingTokenizer(t *testing.T) {
 	tke, err := loadEncoding(tiktoken.MODEL_CL100K_BASE, newBundledBpeLoader(""))
 	require.NoError(t, err)
-	require.Equal(t, 2, len(tke.Encode("Hello world", nil, nil)))
+	require.Equal(t, 2, len(tke.Encode(VectorHelloWorld(), nil, nil)))
 }

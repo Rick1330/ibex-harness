@@ -3,6 +3,7 @@ package tokenizer
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/Rick1330/ibex-harness/packages/provider"
@@ -58,6 +59,7 @@ func (r *Registry) Families() []string {
 	for f := range r.byFamily {
 		out = append(out, f)
 	}
+	sort.Strings(out)
 	return out
 }
 

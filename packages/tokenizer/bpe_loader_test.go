@@ -12,18 +12,23 @@ import (
 
 func TestUnit_BpeLoader_AssetDirOverride(t *testing.T) {
 	dir := t.TempDir()
-	src := filepath.Join("assets", "o200k_base.tiktoken")
-	raw, err := os.ReadFile(src)
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "o200k_base.tiktoken"), raw, 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "o200k_base.tiktoken"), embeddedO200kBPE, 0o600))
 
 	reg, err := NewLocalRegistry(dir)
 	require.NoError(t, err)
 	tok, err := reg.ForFamily(provider.TokenizerFamilyO200kBase)
 	require.NoError(t, err)
-	n, err := tok.Count(context.Background(), "Hello world")
+	n, err := tok.Count(context.Background(), vectorHelloWorld)
 	require.NoError(t, err)
 	require.Equal(t, 2, n)
+}
+
+func TestUnit_ReadBoundedFile_RejectsOversized(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "large.tiktoken")
+	require.NoError(t, os.WriteFile(path, make([]byte, maxBpeAssetBytes+1), 0o600))
+	_, err := readBoundedFile(path, maxBpeAssetBytes)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "exceeds")
 }
 
 func TestUnit_ParseBpeLines_Invalid(t *testing.T) {
@@ -31,10 +36,39 @@ func TestUnit_ParseBpeLines_Invalid(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestUnit_ParseBpeLines_MalformedCases(t *testing.T) {
+	cases := []struct {
+		name    string
+		content string
+	}{
+		{name: "empty", content: ""},
+		{name: "duplicate token", content: "YQ== 0\nYQ== 1\n"},
+		{name: "duplicate rank", content: "YQ== 0\nYg== 0\n"},
+		{name: "negative rank", content: "YQ== -1\n"},
+		{name: "non contiguous", content: "YQ== 0\nYg== 2\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := parseBpeLines(tc.content)
+			require.Error(t, err)
+		})
+	}
+}
+
+func TestUnit_ParseBpeLines_ValidContiguous(t *testing.T) {
+	ranks, err := parseBpeLines("YQ== 0\nYg== 1\n")
+	require.NoError(t, err)
+	require.Len(t, ranks, 2)
+}
+
 func TestUnit_Registry_Families(t *testing.T) {
 	reg, err := NewLocalRegistry("")
 	require.NoError(t, err)
-	require.Len(t, reg.Families(), 3)
+	require.Equal(t, []string{
+		provider.TokenizerFamilyCL100kBase,
+		provider.TokenizerFamilyClaude,
+		provider.TokenizerFamilyO200kBase,
+	}, reg.Families())
 }
 
 func TestUnit_TiktokenBackend_IsEstimateFalse(t *testing.T) {
@@ -45,5 +79,15 @@ func TestUnit_TiktokenBackend_IsEstimateFalse(t *testing.T) {
 }
 
 func TestUnit_EstimateClaudeTokens(t *testing.T) {
-	require.Equal(t, 4, EstimateClaudeTokens("Hello world"))
+	require.Equal(t, 4, EstimateClaudeTokens(vectorHelloWorld))
+}
+
+func TestUnit_ValidateAssetDir_NotDirectory(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "file")
+	require.NoError(t, os.WriteFile(path, []byte("x"), 0o600))
+	require.Error(t, validateAssetDir(path))
+}
+
+func TestUnit_ValidateAssetDir_Missing(t *testing.T) {
+	require.Error(t, validateAssetDir(filepath.Join(t.TempDir(), "missing")))
 }

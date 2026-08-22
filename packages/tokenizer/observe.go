@@ -42,11 +42,11 @@ func CountForModelWithObserver(
 	obs CountObserver,
 ) (int, error) {
 	start := time.Now()
+	family := observerFamilyLabel(catalog, model)
 	n, err := CountForModel(ctx, catalog, reg, model, text)
 	if obs == nil {
 		return n, err
 	}
-	family := observerFamilyLabel(catalog, model, err)
 	result := "success"
 	if err != nil {
 		result = "error"
@@ -55,13 +55,14 @@ func CountForModelWithObserver(
 	return n, err
 }
 
-func observerFamilyLabel(catalog provider.CapabilityCatalog, model string, err error) string {
-	if err != nil {
-		return "unknown"
-	}
+func observerFamilyLabel(catalog provider.CapabilityCatalog, model string) string {
 	cap, ok := catalog.Lookup(strings.TrimSpace(model))
 	if !ok {
 		return "unknown"
 	}
-	return cap.TokenizerFamily
+	family := strings.TrimSpace(cap.TokenizerFamily)
+	if family == "" || family == provider.TokenizerFamilyUnknown {
+		return "unknown"
+	}
+	return family
 }
