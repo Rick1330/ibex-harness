@@ -258,8 +258,9 @@ Used by: **proxy** (`services/proxy`)
 | `IBEX_CONTEXT_TIMEOUT` | Planned **3.5** | `45ms` | Client-side assembly deadline (independent of server internal budget) | Fail-open on timeout |
 | `IBEX_CONTEXT_EMBED_METADATA` | Planned **3.5** | `false` | Embed assembly metadata JSON in response (costs a decode) | Off by default |
 | `IBEX_EXTRACTION_REDIS_URL` | Planned **3.5** | (falls back to `REDIS_URL`) | Optional separate Redis for Celery broker | Secret if password present |
-| `IBEX_TOKENIZER_MODE` | Planned **2.5** | `local` | `local` \| `service` \| `dual` — how proxy counts tokens | Situational; dual-path is a starting preference |
-| `IBEX_TOKENIZER_SERVICE_URL` | Conditional | (none) | Python tokenizer-service base URL | Required when mode uses service |
+| `IBEX_TOKENIZER_MODE` | No | `local` | `local` \| `service` \| `dual` — how proxy counts tokens | **Shipped 2.5.G2.M1:** `local` only; `service`/`dual` rejected at validate |
+| `IBEX_TOKENIZER_ASSET_DIR` | No | (bundled) | Optional BPE override dir (`o200k_base.tiktoken`, etc.) | Air-gapped friendly; defaults to embedded assets |
+| `IBEX_TOKENIZER_SERVICE_URL` | Planned **2.5+** | (none) | Python tokenizer-service base URL | Deferred until service mode lands |
 | `IBEX_DEFAULT_PROVIDER` | Planned **4** | `openai` | Org-level default when multi-provider routing is live | Phase 2/2.5 use registry registration |
 
 **BYOK (Bring your own key) — Phase 4:**
@@ -366,10 +367,10 @@ Preferred starting models in the roadmap: **GPU/prod** `bge-m3` (1024-dim); **CP
 
 | Variable | Required | Default | Description | Notes |
 |----------|----------|---------|-------------|-------|
-| `IBEX_TOKENIZER_MODE` | Planned **2.5** | `local` | `local` \| `service` \| `dual` | Dual = CGo in proxy + Python service for assembly |
-| `IBEX_TOKENIZER_SERVICE_URL` | Conditional | (none) | `services/tokenizer-service` base URL | FastAPI `/tokenize` |
-| `IBEX_TOKENIZER_TIMEOUT_MS` | No | `20` | Remote count budget | Hot path; degrade to char estimate |
-| `IBEX_TOKENIZER_ASSET_DIR` | No | (bundled) | Local `tokenizer.json` cache dir | Air-gapped friendly |
+| `IBEX_TOKENIZER_MODE` | No | `local` | `local` \| `service` \| `dual` | **Shipped 2.5.G2.M1:** `local` only |
+| `IBEX_TOKENIZER_SERVICE_URL` | Planned **2.5+** | (none) | Reserved for future service-mode tokenizer HTTP client | Deferred until service mode lands |
+| `IBEX_TOKENIZER_TIMEOUT_MS` | Planned **2.5+** | (none) | Reserved for future service-mode count timeout | Deferred until service mode lands |
+| `IBEX_TOKENIZER_ASSET_DIR` | No | (bundled) | Optional BPE override dir | Air-gapped friendly |
 
 ### Memory system knobs (Phase 3+)
 

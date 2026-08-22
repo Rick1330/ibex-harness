@@ -47,6 +47,8 @@ type ProxyRegistry struct {
 	clickhouseFlushSec    prometheus.Histogram
 	idempotencyTotal      *prometheus.CounterVec
 	idempotencyDuration   prometheus.Histogram
+	tokenizerCountTotal   *prometheus.CounterVec
+	tokenizerCountSeconds *prometheus.HistogramVec
 	processUp             prometheus.Gauge
 }
 

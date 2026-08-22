@@ -109,6 +109,7 @@ type Config struct {
 	OpenAI              OpenAIConfig
 	Anthropic           AnthropicConfig
 	SelfHosted          SelfHostedConfig
+	Tokenizer           TokenizerConfig
 	// ModelCapabilityOverlays extends BuiltInCapabilityCatalog for ExtraModels (ADR-0041).
 	ModelCapabilityOverlays []provider.ModelCapability
 	// Provider circuit breaker (shared defaults; applied to self-hosted path).
@@ -136,6 +137,7 @@ func (c *Config) ApplyDefaults() {
 	c.applyRateLimitDefaults()
 	c.applyAuthCacheDefaults()
 	c.applyLLMDefaults()
+	c.applyTokenizerDefaults()
 	c.applySessionDefaults()
 	c.applyClickHouseDefaults()
 	c.applyIdempotencyDefaults()

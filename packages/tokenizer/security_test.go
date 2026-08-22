@@ -1,0 +1,231 @@
+package tokenizer
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/Rick1330/ibex-harness/packages/provider"
+	tiktoken_loader "github.com/pkoukk/tiktoken-go-loader"
+	"github.com/stretchr/testify/require"
+)
+
+func TestUnit_LoadBpeFromAssetDir_RejectsDirectSymlinkEscape(t *testing.T) {
+	dir := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside.tiktoken")
+	require.NoError(t, os.WriteFile(outside, []byte("secret"), 0o600))
+	link := filepath.Join(dir, "o200k_base.tiktoken")
+	require.NoError(t, os.Symlink(outside, link))
+
+	_, found, err := loadBpeFromAssetDir(testAssetDir(dir), testAssetBase("o200k_base.tiktoken"))
+	require.True(t, found)
+	require.ErrorIs(t, err, ErrAssetSymlink)
+}
+
+func TestUnit_LoadBpeFromAssetDir_RejectsSymlinkReplacementRace(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "o200k_base.tiktoken")
+	require.NoError(t, os.WriteFile(path, embeddedO200kBPE, 0o600))
+
+	_, found, err := loadBpeFromAssetDir(testAssetDir(dir), testAssetBase("o200k_base.tiktoken"))
+	require.NoError(t, err)
+	require.True(t, found)
+
+	outside := filepath.Join(t.TempDir(), "outside.tiktoken")
+	require.NoError(t, os.WriteFile(outside, []byte("bad"), 0o600))
+	require.NoError(t, os.Remove(path))
+	require.NoError(t, os.Symlink(outside, path))
+
+	_, found, err = loadBpeFromAssetDir(testAssetDir(dir), testAssetBase("o200k_base.tiktoken"))
+	require.True(t, found)
+	require.ErrorIs(t, err, ErrAssetSymlink)
+}
+
+func TestUnit_LoadBpeFromAssetDir_RejectsDirectoryAsset(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(dir, "o200k_base.tiktoken"), 0o700))
+
+	_, found, err := loadBpeFromAssetDir(testAssetDir(dir), testAssetBase("o200k_base.tiktoken"))
+	require.True(t, found)
+	require.ErrorIs(t, err, ErrAssetNotRegular)
+}
+
+func TestUnit_JailedAssetPath_RejectsEmptyBasename(t *testing.T) {
+	_, err := jailedAssetPath(testAssetDir(t.TempDir()), testAssetBase("  "))
+	require.ErrorIs(t, err, ErrAssetPathEscape)
+}
+
+func TestUnit_JailedAssetPath_ResolvesUnderAssetDir(t *testing.T) {
+	dir := t.TempDir()
+	path, err := jailedAssetPath(testAssetDir(dir), testAssetBase("o200k_base.tiktoken"))
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(dir, "o200k_base.tiktoken"), path)
+}
+
+func TestUnit_JailedAssetPath_RejectsTraversal(t *testing.T) {
+	_, err := jailedAssetPath(testAssetDir(t.TempDir()), testAssetBase("../outside.tiktoken"))
+	require.ErrorIs(t, err, ErrAssetPathEscape)
+}
+
+func TestUnit_JailedAssetPath_RejectsNestedBase(t *testing.T) {
+	_, err := jailedAssetPath(testAssetDir(t.TempDir()), testAssetBase("../etc/passwd"))
+	require.ErrorIs(t, err, ErrAssetPathEscape)
+}
+
+func TestUnit_BpeLoader_CorruptAssetDirFailsStartup(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "o200k_base.tiktoken"), []byte("not-bpe"), 0o600))
+	_, err := NewLocalRegistry(LocalRegistryConfig{AssetDir: dir})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "warmup")
+}
+
+func TestUnit_BpeLoader_MissingAssetDirFallsBackToEmbedded(t *testing.T) {
+	dir := t.TempDir()
+	reg, err := NewLocalRegistry(LocalRegistryConfig{AssetDir: dir})
+	require.NoError(t, err)
+	tok, err := reg.ForFamily(provider.TokenizerFamilyO200kBase)
+	require.NoError(t, err)
+	n, err := tok.Count(context.Background(), VectorHelloWorld())
+	require.NoError(t, err)
+	require.Equal(t, 2, n)
+}
+
+func TestUnit_BpeLoader_AssetDirPermissionDenied(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root can read chmod 000 files on Linux")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "o200k_base.tiktoken")
+	require.NoError(t, os.WriteFile(path, []byte("bad"), 0o000))
+	t.Cleanup(func() { _ = os.Chmod(path, 0o600) })
+	_, err := NewLocalRegistry(LocalRegistryConfig{AssetDir: dir})
+	require.Error(t, err)
+}
+
+func TestUnit_RunSelfTest_EmptyVectors(t *testing.T) {
+	reg, err := NewLocalRegistry(LocalRegistryConfig{})
+	require.NoError(t, err)
+	require.Error(t, RunSelfTest(reg, nil))
+}
+
+func TestUnit_RunSelfTest_EmptyFamily(t *testing.T) {
+	reg, err := NewLocalRegistry(LocalRegistryConfig{})
+	require.NoError(t, err)
+	err = RunSelfTest(reg, []SelfTestVector{{Family: " ", Text: "x", Want: 1}})
+	require.Error(t, err)
+}
+
+func TestUnit_ForFamily_UnknownAndEmpty(t *testing.T) {
+	reg, err := NewLocalRegistry(LocalRegistryConfig{})
+	require.NoError(t, err)
+	_, err = reg.ForFamily("not-a-family")
+	require.ErrorIs(t, err, ErrUnknownFamily)
+	_, err = reg.ForFamily("")
+	require.ErrorIs(t, err, ErrUnknownFamily)
+}
+
+func TestUnit_ConcurrentCount_AllFamilies(t *testing.T) {
+	reg, err := NewLocalRegistry(LocalRegistryConfig{})
+	require.NoError(t, err)
+	families := []string{
+		provider.TokenizerFamilyO200kBase,
+		provider.TokenizerFamilyCL100kBase,
+		provider.TokenizerFamilyClaude,
+	}
+	const workers = 32
+	var wg sync.WaitGroup
+	errCh := make(chan error, workers*len(families))
+	for _, family := range families {
+		tok, tokErr := reg.ForFamily(family)
+		require.NoError(t, tokErr)
+		for i := 0; i < workers; i++ {
+			wg.Add(1)
+			go func(tok Tokenizer) {
+				defer wg.Done()
+				_, countErr := tok.Count(context.Background(), "concurrent tokenizer probe")
+				errCh <- countErr
+			}(tok)
+		}
+	}
+	wg.Wait()
+	close(errCh)
+	for countErr := range errCh {
+		require.NoError(t, countErr)
+	}
+}
+
+func TestUnit_ConcurrentEncodingLoad(t *testing.T) {
+	loader := newBundledBpeLoader(assetDirPath(""))
+	const workers = 8
+	errCh := make(chan error, workers*2)
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			_, err := loadEncoding("o200k_base", loader)
+			errCh <- err
+		}()
+		go func() {
+			defer wg.Done()
+			_, err := loadEncoding("cl100k_base", loader)
+			errCh <- err
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		require.NoError(t, err)
+	}
+}
+
+func TestUnit_BpeLoader_OfflineCL100k(t *testing.T) {
+	loader := &bundledBpeLoader{offline: tiktoken_loader.NewOfflineLoader()}
+	ranks, err := loader.LoadTiktokenBpe("https://example.invalid/cl100k_base.tiktoken")
+	require.NoError(t, err)
+	require.NotEmpty(t, ranks)
+}
+
+func TestUnit_LoadBpeFromAssetDir_Missing(t *testing.T) {
+	_, found, err := loadBpeFromAssetDir(testAssetDir(t.TempDir()), testAssetBase("o200k_base.tiktoken"))
+	require.NoError(t, err)
+	require.False(t, found)
+}
+
+func TestUnit_Claude_CountRespectsContext(t *testing.T) {
+	tok := newClaudeEstimate()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := tok.Count(ctx, "Hello")
+	require.ErrorIs(t, err, context.Canceled)
+}
+
+func TestUnit_NewLocalRegistry_RejectsUnreadableAssetDir(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root bypasses directory permission checks")
+	}
+	dir := t.TempDir()
+	require.NoError(t, os.Chmod(dir, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	_, err := NewLocalRegistry(LocalRegistryConfig{AssetDir: dir})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "IBEX_TOKENIZER_ASSET_DIR")
+}
+
+func TestUnit_SelfTestRespectsContext(t *testing.T) {
+	reg, err := NewLocalRegistry(LocalRegistryConfig{})
+	require.NoError(t, err)
+	checker := func(ctx context.Context) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return RunSelfTest(reg, DefaultSelfTestVectors())
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	require.NoError(t, checker(ctx))
+}

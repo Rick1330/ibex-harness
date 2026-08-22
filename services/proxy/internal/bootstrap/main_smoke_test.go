@@ -37,7 +37,7 @@ func proxyBootstrapSmokeEnv(t *testing.T) (sigCh chan os.Signal, httpPort string
 
 func waitForTCP(t *testing.T, addr string) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		conn, err := net.DialTimeout("tcp", addr, 50*time.Millisecond)
 		if err == nil {

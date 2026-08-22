@@ -66,6 +66,8 @@ type envConfig struct {
 	ClickHouseFlushMS       int               `env:"CLICKHOUSE_INSERT_FLUSH_MS"`
 	IdempotencyTTL          time.Duration     `env:"IBEX_IDEMPOTENCY_TTL"`
 	IdempotencyRedisTO      time.Duration     `env:"IBEX_IDEMPOTENCY_REDIS_TIMEOUT"`
+	TokenizerMode           string            `env:"IBEX_TOKENIZER_MODE" envDefault:"local"`
+	TokenizerAssetDir       string            `env:"IBEX_TOKENIZER_ASSET_DIR"`
 }
 
 func loadFromEnv() (Config, error) {
@@ -92,6 +94,10 @@ func loadFromEnv() (Config, error) {
 		return Config{}, err
 	}
 	cfg.ModelCapabilityOverlays = overlays
+	cfg.Tokenizer = TokenizerConfig{
+		Mode:     envCfg.TokenizerMode,
+		AssetDir: envCfg.TokenizerAssetDir,
+	}
 	if err := applyProxyEnvOverrides(&cfg, envCfg); err != nil {
 		return Config{}, err
 	}

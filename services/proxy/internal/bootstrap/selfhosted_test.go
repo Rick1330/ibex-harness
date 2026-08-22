@@ -82,7 +82,7 @@ func TestBuildProxyHealth_IncludesSelfHostedAdvisory(t *testing.T) {
 		},
 	}
 	cfg.ApplyDefaults()
-	h := buildProxyHealth(cfg, nil, nil)
+	h := buildProxyHealth(cfg, nil, nil, nil)
 	if _, ok := h.AdvisoryCheckers["selfhosted_llm"]; !ok {
 		t.Fatal("missing selfhosted_llm advisory")
 	}

@@ -368,7 +368,7 @@ func TestUnit_BuildProxyHealth_WithAndWithoutPostgres(t *testing.T) {
 	t.Parallel()
 	cfg := config.Config{}
 	cfg.ApplyDefaults()
-	without := buildProxyHealth(cfg, nil, nil)
+	without := buildProxyHealth(cfg, nil, nil, nil)
 	if without.AdvisoryCheckers != nil {
 		t.Fatal("expected no advisory checkers")
 	}
@@ -380,7 +380,7 @@ func TestUnit_BuildProxyHealth_WithAndWithoutPostgres(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	with := buildProxyHealth(cfg, nil, db)
+	with := buildProxyHealth(cfg, nil, db, nil)
 	if _, ok := with.AdvisoryCheckers["postgres"]; !ok {
 		t.Fatal("missing postgres advisory checker")
 	}

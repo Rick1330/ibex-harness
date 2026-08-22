@@ -26,6 +26,7 @@ func (c Config) Validate() error {
 		c.validateHTTPHeaders,
 		c.validateRateLimit,
 		c.validateLLMConfig,
+		c.validateTokenizer,
 		c.validateSessionSweeper,
 		c.validateClickHouse,
 		c.validateIdempotency,
