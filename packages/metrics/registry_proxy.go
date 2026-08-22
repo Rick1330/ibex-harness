@@ -49,6 +49,8 @@ type ProxyRegistry struct {
 	idempotencyDuration   prometheus.Histogram
 	tokenizerCountTotal   *prometheus.CounterVec
 	tokenizerCountSeconds *prometheus.HistogramVec
+	responsePipelineStageDuration *prometheus.HistogramVec
+	responsePipelineFailOpenTotal   *prometheus.CounterVec
 	processUp             prometheus.Gauge
 }
 

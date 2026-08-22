@@ -211,6 +211,7 @@ func finishAssembledCore(in finishAssembledCoreInput) (assembledProxyCore, error
 		return assembledProxyCore{}, fmt.Errorf("idempotency store: %w", err)
 	}
 	traceWriter := optionalTraceWriter(in.cfg, in.log, in.reg, ibexch.NewWriter)
+	responsePipeline := buildResponsePipeline(in.log, in.reg)
 	deps := proxyhttp.RouterDeps{
 		Config: in.cfg, Logger: in.log, Metrics: in.reg, Tracer: in.tracer,
 		Validator: in.infra.auth.validator, AgentVerifier: in.infra.auth.agentVerifier,
@@ -219,6 +220,7 @@ func finishAssembledCore(in finishAssembledCoreInput) (assembledProxyCore, error
 		CheckpointPool: in.infra.sessionStack.pool, GetOrCreateTimeout: in.cfg.SessionGetOrCreateTO,
 		Health:           buildProxyHealth(in.cfg, in.infra.auth.client, in.infra.pgDB, tokenizerReg),
 		ProviderRegistry: providerReg,
+		ResponsePipeline: responsePipeline,
 		IdempotencyStore: idempStore,
 	}
 	assignTraceWriter(&deps, traceWriter)

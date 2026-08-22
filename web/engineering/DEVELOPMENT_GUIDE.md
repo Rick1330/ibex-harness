@@ -67,7 +67,7 @@ ibex-harness/
   packages/                 # shared libraries + contracts
     proto/                  # protobuf source of truth
     provider/               # LLM providers (extends in 2.5+)
-    # planned: tokenizer/, responsepipeline/, embedder/, contextclient/, circuitbreaker/
+    # planned: embedder/, contextclient/, circuitbreaker/
     # planned SDKs/CLI: sdk-python/, sdk-typescript/, sdk-go/, cli/
 
   infra/

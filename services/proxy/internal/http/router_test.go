@@ -53,9 +53,12 @@ func testHealthServer() *healthcheck.Server {
 
 func newTestRouter(tb testing.TB, cfg config.Config, validator auth.TokenValidator, limiter ratelimit.Limiter) http.Handler {
 	tb.Helper()
-	var agentVerifier auth.AgentVerifier
 	if validator != nil {
-		agentVerifier = passAgentVerifier{}
+		deps := defaultChatRouterDeps(tb)
+		deps.Config = cfg
+		deps.Validator = validator
+		deps.Limiter = limiter
+		return mustNewRouter(tb, deps)
 	}
 	return mustNewRouter(tb, RouterDeps{
 		Config:           cfg,
@@ -63,7 +66,7 @@ func newTestRouter(tb testing.TB, cfg config.Config, validator auth.TokenValidat
 		Metrics:          metrics.NewProxy("test"),
 		Tracer:           telemetry.NoopTracer("proxy"),
 		Validator:        validator,
-		AgentVerifier:    agentVerifier,
+		AgentVerifier:    passAgentVerifier{},
 		Limiter:          limiter,
 		Health:           testHealthServer(),
 		ProviderRegistry: mustEmptyProviderRegistry(tb),

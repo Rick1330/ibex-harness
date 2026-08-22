@@ -14,6 +14,9 @@ import (
 
 const mockJSONBody = `{"id":"mock","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`
 
+// MockJSONBody returns the deterministic non-stream JSON body used by mockllm.Provider.
+func MockJSONBody() string { return mockJSONBody }
+
 // Minimal OpenAI-shaped SSE so stream=true clients get a valid event stream.
 const mockSSEBody = "data: {\"id\":\"mock\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"},\"finish_reason\":null}]}\n\ndata: [DONE]\n\n"
 

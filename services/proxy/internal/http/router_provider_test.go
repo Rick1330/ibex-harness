@@ -12,11 +12,8 @@ import (
 
 	apierror "github.com/Rick1330/ibex-harness/packages/apierror"
 	"github.com/Rick1330/ibex-harness/packages/logger"
-	"github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/packages/permissions"
 	"github.com/Rick1330/ibex-harness/packages/provider"
-	"github.com/Rick1330/ibex-harness/packages/ratelimit"
-	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/llm"
@@ -50,16 +47,10 @@ func (s stubLLMProvider) SupportedModels() []string { return s.models }
 
 func TestUnit_NewRouter_nilProviderRegistryUsesEmptyRegistry(t *testing.T) {
 	t.Parallel()
-	handler := mustNewRouter(t, RouterDeps{
-		Config:        config.Config{ServiceName: "proxy"},
-		Logger:        logger.Discard("proxy"),
-		Metrics:       metrics.NewProxy("test"),
-		Tracer:        telemetry.NoopTracer("proxy"),
-		Validator:     defaultChatValidator(),
-		AgentVerifier: passAgentVerifier{},
-		Limiter:       ratelimit.Noop(),
-		Health:        testHealthServer(),
-	})
+	handler := mustNewRouter(t, mergeRouterDeps(defaultChatRouterDeps(t), func(d *RouterDeps) {
+		d.Config = config.Config{ServiceName: "proxy"}
+		d.ProviderRegistry = mustEmptyProviderRegistry(t)
+	}))
 
 	rec := postChat(t, handler, chatRequestOpts{
 		body:    `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`,
@@ -81,17 +72,7 @@ func TestUnit_ChatCompletions_registeredProviderForwardsResponse(t *testing.T) {
 		t.Fatalf("NewRegistry: %v", err)
 	}
 
-	handler := mustNewRouter(t, RouterDeps{
-		Config:           chatTestConfig(),
-		Logger:           logger.Discard("proxy"),
-		Metrics:          metrics.NewProxy("test"),
-		Tracer:           telemetry.NoopTracer("proxy"),
-		Validator:        defaultChatValidator(),
-		AgentVerifier:    passAgentVerifier{},
-		Limiter:          ratelimit.Noop(),
-		Health:           testHealthServer(),
-		ProviderRegistry: reg,
-	})
+	handler := chatRouterWithProvider(t, reg, nil)
 
 	rec := postChat(t, handler, chatRequestOpts{
 		body:    `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`,
@@ -155,17 +136,7 @@ func TestUnit_ChatCompletions_providerErrorMapsToHTTPStatus(t *testing.T) {
 				t.Fatalf("NewRegistry: %v", err)
 			}
 
-			handler := mustNewRouter(t, RouterDeps{
-				Config:           chatTestConfig(),
-				Logger:           logger.Discard("proxy"),
-				Metrics:          metrics.NewProxy("test"),
-				Tracer:           telemetry.NoopTracer("proxy"),
-				Validator:        defaultChatValidator(),
-				AgentVerifier:    passAgentVerifier{},
-				Limiter:          ratelimit.Noop(),
-				Health:           testHealthServer(),
-				ProviderRegistry: reg,
-			})
+			handler := chatRouterWithProvider(t, reg, nil)
 
 			rec := postChat(t, handler, chatRequestOpts{
 				body:    `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`,
@@ -258,16 +229,10 @@ func TestUnit_chatCompletionHandler_logsParsedRequest(t *testing.T) {
 		t.Fatalf("NewRegistry: %v", err)
 	}
 
-	handler := mustNewRouter(t, RouterDeps{
-		Config:           chatTestConfig(),
-		Logger:           logger.Discard("proxy"),
-		Metrics:          metrics.NewProxy("test"),
-		Tracer:           telemetry.NoopTracer("proxy"),
-		Validator:        &chatMockValidator{res: &auth.ValidateResult{OrgID: uuid.MustParse(testChatOrgID), Permissions: permissions.ProxyChatCompletion}},
-		AgentVerifier:    passAgentVerifier{},
-		Limiter:          ratelimit.Noop(),
-		Health:           testHealthServer(),
-		ProviderRegistry: reg,
+	handler := chatRouterWithProvider(t, reg, func(d *RouterDeps) {
+		d.Validator = &chatMockValidator{res: &auth.ValidateResult{
+			OrgID: uuid.MustParse(testChatOrgID), Permissions: permissions.ProxyChatCompletion,
+		}}
 	})
 
 	rec := postChat(t, handler, chatRequestOpts{

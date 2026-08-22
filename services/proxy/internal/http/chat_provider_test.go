@@ -11,11 +11,8 @@ import (
 
 	apierror "github.com/Rick1330/ibex-harness/packages/apierror"
 	"github.com/Rick1330/ibex-harness/packages/logger"
-	"github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/packages/permissions"
 	"github.com/Rick1330/ibex-harness/packages/provider"
-	"github.com/Rick1330/ibex-harness/packages/ratelimit"
-	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/google/uuid"
 )
@@ -98,15 +95,10 @@ func preStreamErrorHandler(t *testing.T) http.Handler {
 	if err != nil {
 		t.Fatalf("NewRegistry: %v", err)
 	}
-	return mustNewRouter(t, RouterDeps{
-		Config:           chatTestConfig(),
-		Logger:           logger.Discard("proxy"),
-		Metrics:          metrics.NewProxy("test"),
-		Tracer:           telemetry.NoopTracer("proxy"),
-		Validator:        &chatMockValidator{res: &auth.ValidateResult{OrgID: uuid.MustParse(testChatOrgID), Permissions: permissions.ProxyChatCompletion}},
-		AgentVerifier:    passAgentVerifier{},
-		Limiter:          ratelimit.Noop(),
-		Health:           testHealthServer(),
-		ProviderRegistry: reg,
-	})
+	return mustNewRouter(t, mergeRouterDeps(defaultChatRouterDeps(t), func(d *RouterDeps) {
+		d.Validator = &chatMockValidator{res: &auth.ValidateResult{
+			OrgID: uuid.MustParse(testChatOrgID), Permissions: permissions.ProxyChatCompletion,
+		}}
+		d.ProviderRegistry = reg
+	}))
 }

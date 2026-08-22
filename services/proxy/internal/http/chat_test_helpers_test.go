@@ -7,8 +7,13 @@ import (
 	"testing"
 
 	"github.com/Rick1330/ibex-harness/infra/testing/httptestx"
+	"github.com/Rick1330/ibex-harness/packages/logger"
+	"github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/packages/permissions"
+	"github.com/Rick1330/ibex-harness/packages/provider"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
+	"github.com/Rick1330/ibex-harness/packages/responsepipeline"
+	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
 	"github.com/google/uuid"
@@ -31,6 +36,29 @@ func chatTestConfig() config.Config {
 		Environment: "test", ServiceName: "proxy", Port: "8080",
 		MaxRequestBodyBytes: 1 << 20, RequestIDHeader: "X-Request-ID", TraceIDHeader: "X-Trace-ID",
 	}
+}
+
+func defaultChatRouterDeps(tb testing.TB) RouterDeps {
+	tb.Helper()
+	return RouterDeps{
+		Config:           chatTestConfig(),
+		Logger:           logger.Discard("proxy"),
+		Metrics:          metrics.NewProxy("test"),
+		Tracer:           telemetry.NoopTracer("proxy"),
+		Validator:        defaultChatValidator(),
+		AgentVerifier:    passAgentVerifier{},
+		Limiter:          ratelimit.Noop(),
+		Health:           testHealthServer(),
+		ProviderRegistry: mustEmptyProviderRegistry(tb),
+		ResponsePipeline: responsepipeline.NewDefaultPipeline(),
+	}
+}
+
+func mergeRouterDeps(base RouterDeps, overrides func(*RouterDeps)) RouterDeps {
+	if overrides != nil {
+		overrides(&base)
+	}
+	return base
 }
 
 func chatTestHandler(t *testing.T, validator auth.TokenValidator, cfg config.Config) http.Handler {
@@ -69,4 +97,16 @@ func defaultChatValidator() *chatMockValidator {
 	return &chatMockValidator{res: &auth.ValidateResult{
 		OrgID: uuid.MustParse(testChatOrgID), Permissions: permissions.ProxyChatCompletion,
 	}}
+}
+
+func chatRouterWithProvider(t *testing.T, reg *provider.Registry, overrides func(*RouterDeps)) http.Handler {
+	t.Helper()
+	return mustNewRouter(t, mergeRouterDeps(defaultChatRouterDeps(t), func(d *RouterDeps) {
+		if reg != nil {
+			d.ProviderRegistry = reg
+		}
+		if overrides != nil {
+			overrides(d)
+		}
+	}))
 }
