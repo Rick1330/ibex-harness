@@ -14,6 +14,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const (
+	testChoiceCompletionUpstream = `{"id":"x","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"orig"},"finish_reason":"stop"}]}`
+	testSecretChoiceUpstream       = `{"id":"x","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"secret"},"finish_reason":"stop"}]}`
+	testFingerprintUpstream        = `{"id":"x","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"system_fingerprint":"fp"}`
+	testCompletionWithModelJSON    = `{"id":"x","object":"chat.completion","choices":[],"model":"orig"}`
+)
+
 func TestUnit_processResponseBody_nilPipelineReturnsOriginal(t *testing.T) {
 	t.Parallel()
 	body := []byte(mockllm.MockJSONBody())
@@ -25,9 +32,7 @@ func TestUnit_processResponseBody_nilPipelineReturnsOriginal(t *testing.T) {
 
 func TestUnit_processResponseBody_invalidJSON(t *testing.T) {
 	t.Parallel()
-	h := chatCompletionHandler{
-		responsePipeline: responsepipeline.NewDefaultPipeline(),
-	}
+	h := chatCompletionHandler{responsePipeline: responsepipeline.NewDefaultPipeline()}
 	_, err := h.processResponseBody(context.Background(), "openai", []byte("not json"))
 	require.Error(t, err)
 	var pe *provider.ProviderError
@@ -38,9 +43,7 @@ func TestUnit_processResponseBody_invalidJSON(t *testing.T) {
 func TestUnit_processResponseBody_noopPreservesBytes(t *testing.T) {
 	t.Parallel()
 	body := []byte(mockllm.MockJSONBody())
-	h := chatCompletionHandler{
-		responsePipeline: responsepipeline.NewDefaultPipeline(),
-	}
+	h := chatCompletionHandler{responsePipeline: responsepipeline.NewDefaultPipeline()}
 	out, err := h.processResponseBody(context.Background(), "openai", body)
 	require.NoError(t, err)
 	require.Equal(t, body, out)
@@ -51,8 +54,7 @@ func TestUnit_processResponseBody_securityCriticalReturnsProviderError502(t *tes
 	body := []byte(mockllm.MockJSONBody())
 	h := chatCompletionHandler{
 		responsePipeline: responsepipeline.NewPipeline([]responsepipeline.Stage{httpCriticalStage{
-			name: "guard",
-			err:  errors.New("blocked"),
+			name: "guard", err: errors.New("blocked"),
 		}}),
 	}
 	_, err := h.processResponseBody(context.Background(), "openai", body)
@@ -67,9 +69,7 @@ func TestUnit_processResponseBody_securityCriticalReturnsProviderError502(t *tes
 func TestUnit_processResponseBody_cancelledContext(t *testing.T) {
 	t.Parallel()
 	body := []byte(mockllm.MockJSONBody())
-	h := chatCompletionHandler{
-		responsePipeline: responsepipeline.NewDefaultPipeline(),
-	}
+	h := chatCompletionHandler{responsePipeline: responsepipeline.NewDefaultPipeline()}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	_, err := h.processResponseBody(ctx, "openai", body)
@@ -80,7 +80,7 @@ func TestUnit_processResponseBody_cancelledContext(t *testing.T) {
 
 func TestUnit_processResponseBody_modifiedStageReturnsReEncodedBody(t *testing.T) {
 	t.Parallel()
-	body := []byte(`{"id":"x","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"orig"},"finish_reason":"stop"}]}`)
+	body := []byte(testChoiceCompletionUpstream)
 	h := chatCompletionHandler{
 		responsePipeline: responsepipeline.NewPipeline([]responsepipeline.Stage{httpMutateStage{}}),
 	}
@@ -93,78 +93,37 @@ func TestUnit_processResponseBody_modifiedStageReturnsReEncodedBody(t *testing.T
 func TestUnit_ChatCompletions_responsePipelineNoopByteIdentical(t *testing.T) {
 	t.Parallel()
 	upstream := mockllm.MockJSONBody()
-	reg, err := provider.NewRegistry(provider.BuiltInCapabilityCatalog(), stubLLMProvider{
-		name: "openai", models: []string{"gpt-4o"}, body: upstream,
-	})
-	require.NoError(t, err)
-
-	handler := chatRouterWithProvider(t, reg, nil)
-
-	rec := postChat(t, handler, chatRequestOpts{
-		body:    `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`,
-		auth:    true,
-		agentID: testChatAgentID,
-	})
+	handler := pipelineChatHandler(t, upstream, nil)
+	rec := postDefaultPipelineChat(t, handler)
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, upstream, rec.Body.String())
 }
 
 func TestUnit_ChatCompletions_responsePipelineInvalidUpstreamJSON(t *testing.T) {
 	t.Parallel()
-	reg, err := provider.NewRegistry(provider.BuiltInCapabilityCatalog(), stubLLMProvider{
-		name: "openai", models: []string{"gpt-4o"}, body: "not json",
-	})
-	require.NoError(t, err)
-
-	handler := chatRouterWithProvider(t, reg, nil)
-
-	rec := postChat(t, handler, chatRequestOpts{
-		body:    `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`,
-		auth:    true,
-		agentID: testChatAgentID,
-	})
+	handler := pipelineChatHandler(t, "not json", nil)
+	rec := postDefaultPipelineChat(t, handler)
 	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
 }
 
 func TestUnit_ChatCompletions_responsePipelineSecurityCriticalMapsTo503Envelope(t *testing.T) {
 	t.Parallel()
-	reg, err := provider.NewRegistry(provider.BuiltInCapabilityCatalog(), stubLLMProvider{
-		name: "openai", models: []string{"gpt-4o"}, body: mockllm.MockJSONBody(),
-	})
-	require.NoError(t, err)
-
-	handler := chatRouterWithProvider(t, reg, func(d *RouterDeps) {
+	handler := pipelineChatHandler(t, mockllm.MockJSONBody(), func(d *RouterDeps) {
 		d.ResponsePipeline = responsepipeline.NewPipeline([]responsepipeline.Stage{httpCriticalStage{
 			name: "guard", err: errors.New("blocked"),
 		}})
 	})
-
-	rec := postChat(t, handler, chatRequestOpts{
-		body:    `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`,
-		auth:    true,
-		agentID: testChatAgentID,
-	})
+	rec := postDefaultPipelineChat(t, handler)
 	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
 	require.Contains(t, rec.Body.String(), string(apierror.CodeProviderUnavailable))
 }
 
 func TestUnit_ChatCompletions_responsePipelineModifiedChangesClientBody(t *testing.T) {
 	t.Parallel()
-	upstream := `{"id":"x","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"secret"},"finish_reason":"stop"}]}`
-	reg, err := provider.NewRegistry(provider.BuiltInCapabilityCatalog(), stubLLMProvider{
-		name: "openai", models: []string{"gpt-4o"}, body: upstream,
-	})
-	require.NoError(t, err)
-
-	handler := chatRouterWithProvider(t, reg, func(d *RouterDeps) {
+	handler := pipelineChatHandler(t, testSecretChoiceUpstream, func(d *RouterDeps) {
 		d.ResponsePipeline = responsepipeline.NewPipeline([]responsepipeline.Stage{httpMutateStage{}})
 	})
-
-	rec := postChat(t, handler, chatRequestOpts{
-		body:    `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`,
-		auth:    true,
-		agentID: testChatAgentID,
-	})
+	rec := postDefaultPipelineChat(t, handler)
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Contains(t, rec.Body.String(), "redacted")
 	require.NotContains(t, rec.Body.String(), "secret")
@@ -172,45 +131,23 @@ func TestUnit_ChatCompletions_responsePipelineModifiedChangesClientBody(t *testi
 
 func TestUnit_ChatCompletions_responsePipelineModifiedPreservesUnknownFields(t *testing.T) {
 	t.Parallel()
-	upstream := `{"id":"x","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"system_fingerprint":"fp"}`
-	reg, err := provider.NewRegistry(provider.BuiltInCapabilityCatalog(), stubLLMProvider{
-		name: "openai", models: []string{"gpt-4o"}, body: upstream,
-	})
-	require.NoError(t, err)
-
-	handler := chatRouterWithProvider(t, reg, func(d *RouterDeps) {
+	handler := pipelineChatHandler(t, testFingerprintUpstream, func(d *RouterDeps) {
 		d.ResponsePipeline = responsepipeline.NewPipeline([]responsepipeline.Stage{httpMutateStage{}})
 	})
-
-	rec := postChat(t, handler, chatRequestOpts{
-		body:    `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`,
-		auth:    true,
-		agentID: testChatAgentID,
-	})
+	rec := postDefaultPipelineChat(t, handler)
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Contains(t, rec.Body.String(), "system_fingerprint")
 }
 
 func TestUnit_ChatCompletions_responsePipelineFailOpenTwoStagePartialMutation(t *testing.T) {
 	t.Parallel()
-	upstream := `{"id":"x","object":"chat.completion","choices":[],"model":"orig"}`
-	reg, err := provider.NewRegistry(provider.BuiltInCapabilityCatalog(), stubLLMProvider{
-		name: "openai", models: []string{"gpt-4o"}, body: upstream,
-	})
-	require.NoError(t, err)
-
-	handler := chatRouterWithProvider(t, reg, func(d *RouterDeps) {
+	handler := pipelineChatHandler(t, testCompletionWithModelJSON, func(d *RouterDeps) {
 		d.ResponsePipeline = responsepipeline.NewPipeline([]responsepipeline.Stage{
 			httpModelStage{model: "kept"},
 			httpFailStage{name: "fail"},
 		})
 	})
-
-	rec := postChat(t, handler, chatRequestOpts{
-		body:    `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`,
-		auth:    true,
-		agentID: testChatAgentID,
-	})
+	rec := postDefaultPipelineChat(t, handler)
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Contains(t, rec.Body.String(), `"model":"kept"`)
 	require.NotContains(t, rec.Body.String(), `"model":"reverted"`)
@@ -220,9 +157,7 @@ func TestUnit_Idempotency_responsePipelineReplayParity(t *testing.T) {
 	t.Parallel()
 	store, _ := testRedisIdempotencyStore(t)
 	upstream := mockllm.MockJSONBody()
-	prov := &countingLLMProvider{
-		name: "openai", models: []string{"gpt-4o"}, body: upstream,
-	}
+	prov := &countingLLMProvider{name: "openai", models: []string{"gpt-4o"}, body: upstream}
 	reg, err := provider.NewRegistry(provider.BuiltInCapabilityCatalog(), prov)
 	require.NoError(t, err)
 

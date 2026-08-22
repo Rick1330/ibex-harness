@@ -17,6 +17,7 @@ import (
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
 )
 
 const testChatOrgID = "550e8400-e29b-41d4-a716-446655440001"
@@ -112,4 +113,26 @@ func chatRouterWithProvider(t *testing.T, reg *provider.Registry, overrides func
 			overrides(d)
 		}
 	}))
+}
+
+func defaultPipelineChatOpts() chatRequestOpts {
+	return chatRequestOpts{
+		body:    `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`,
+		auth:    true,
+		agentID: testChatAgentID,
+	}
+}
+
+func postDefaultPipelineChat(t *testing.T, handler http.Handler) *httptest.ResponseRecorder {
+	t.Helper()
+	return postChat(t, handler, defaultPipelineChatOpts())
+}
+
+func pipelineChatHandler(t *testing.T, upstream string, configure func(*RouterDeps)) http.Handler {
+	t.Helper()
+	reg, err := provider.NewRegistry(provider.BuiltInCapabilityCatalog(), stubLLMProvider{
+		name: "openai", models: []string{"gpt-4o"}, body: upstream,
+	})
+	require.NoError(t, err)
+	return chatRouterWithProvider(t, reg, configure)
 }
