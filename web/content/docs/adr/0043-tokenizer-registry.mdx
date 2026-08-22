@@ -1,0 +1,113 @@
+---
+title: "ADR-0043: Tokenizer registry architecture"
+description: "Architecture decision record 0043 — per-family tokenizer registry, bundled BPE assets, claude estimate policy, and proxy bootstrap wiring."
+adrId: "0043"
+status: "Accepted"
+date: "2026-08-22"
+authors: "IBEX Harness team"
+---
+
+# ADR-0043: Tokenizer registry architecture
+
+- **Status:** Accepted
+- **Date:** 2026-08-22
+- **Authors:** IBEX Harness team
+- **Milestone:** [2.5.G2.M1 Tokenizer registry](/roadmap/phase-2-5-provider-generalization/milestones/2.5.g2.m1-tokenizer-registry)
+
+## Context
+
+[ADR-0041](/docs/adr/0041-model-capability-registry) defines `TokenizerFamily` join keys (`o200k_base`, `cl100k_base`, `claude`, `unknown` on overlays). Phase 3.5 token budget calculation needs **family-accurate pre-flight counts** — using OpenAI tiktoken for Anthropic or self-hosted models is systematically wrong.
+
+SPIKE findings (G2.M1):
+
+| Family | Backend (v1) | Rationale |
+| --- | --- | --- |
+| `o200k_base` | Pure Go [`tiktoken-go`](https://github.com/pkoukk/tiktoken-go) + **bundled** `o200k_base.tiktoken` in `packages/tokenizer/assets/` | Exact counts; air-gap safe (no runtime download) |
+| `cl100k_base` | `tiktoken-go` + embedded BPE via [`tiktoken-go-loader`](https://github.com/pkoukk/tiktoken-go-loader) offline loader | Exact counts; no network |
+| `claude` | **Documented estimate** (`ceil(rune_count / 3.5)`) | Anthropic Claude 3+ has no public offline vocab; official path is `count_tokens` API — do **not** map to tiktoken |
+| `llama3` / `qwen2` | Deferred (Phase 2.5+ or Python `tokenizer-service`) | CGo (`daulet/tokenizers`) complicates cross-compile; prefer service path when first HF overlay ships |
+| `unknown` (overlays) | Not registered | Fail at `CountForModel`; operators must set explicit family before accurate budgets |
+
+Proxy hot path ([ADR-0034](/docs/adr/0034-performance-methodology)) must **not** block on counting in G2 — registry construction + advisory `/ready` self-test only.
+
+## Decision
+
+### 1) `packages/tokenizer` contract
+
+```go
+type Tokenizer interface {
+    Family() string
+    Count(ctx context.Context, text string) (int, error)
+}
+```
+
+- `Registry` maps `TokenizerFamily` → `Tokenizer` (mirrors `provider.Registry` pattern).
+- `NewLocalRegistry(assetDir)` builds default v1 backends.
+- `ValidateCatalogCoverage(catalog, reg)` fails closed when any catalog row (non-`unknown` family) lacks an impl.
+- `CountForModel(ctx, catalog, reg, model, text)` resolves model → capability → family → `Count`.
+
+### 2) Fail-closed startup, conservative runtime (Phase 3.5)
+
+- Registry construction validates catalog coverage at proxy bootstrap.
+- Missing family → startup error (`ErrMissingTokenizer`).
+- Overlay with `unknown` → allowed in catalog validation; `CountForModel` returns error (no silent tiktoken substitution).
+- Phase 3.5 may degrade to char estimate on remote failure — **not** in G2.
+
+### 3) Air-gap asset policy
+
+- `o200k_base.tiktoken` is committed under `packages/tokenizer/assets/` (embedded via `go:embed`).
+- `cl100k_base` loads from `tiktoken-go-loader` embedded assets.
+- Optional `IBEX_TOKENIZER_ASSET_DIR` overrides BPE files by basename (operator-managed updates).
+- No runtime Hugging Face downloads in v1.
+
+### 4) Claude estimate (explicit, not exact)
+
+`claude` backend implements `Estimator` with `IsEstimate() == true`. Formula:
+
+```
+tokens = 0                         if text is empty
+tokens = ceil(rune_count / 3.5)    otherwise  (implemented as (runes*2+6)/7)
+```
+
+Consumers in Phase 3.5 must apply family-specific safety buffers; treat claude counts as **conservative estimates**, not vendor ground truth.
+
+### 5) Config surface (v1)
+
+| Variable | v1 behavior |
+| --- | --- |
+| `IBEX_TOKENIZER_MODE` | `local` only; `service` / `dual` rejected at validate |
+| `IBEX_TOKENIZER_ASSET_DIR` | Optional BPE override directory |
+
+Deferred: `IBEX_TOKENIZER_SERVICE_URL`, `IBEX_TOKENIZER_TIMEOUT_MS`.
+
+### 6) Proxy wiring (advisory)
+
+- Bootstrap builds tokenizer registry after capability catalog merge.
+- `/ready` advisory checker `tokenizer`: runs `RunSelfTest` on default vectors.
+- Metrics: `ibex_tokenizer_count_total{family,result}`, `ibex_tokenizer_count_duration_seconds{family}` (observed when counting is invoked — not on Complete hot path in G2).
+
+### 7) Input bounds and security
+
+- Max input: 100 KiB (`MaxCountTextBytes`, aligned with ADR-0013 message limit).
+- No raw text in logs — log family, model_id, text_len, duration, error class only.
+- Counting is stateless; no tenant data in algorithm.
+
+## Consequences
+
+**Positive:**
+
+- Stable counting contract keyed by ADR-0041 families before Phase 3.5 budget math.
+- OpenAI families match offline ground-truth vectors in CI.
+- Air-gap deployments do not require OpenAI blob downloads at runtime.
+
+**Negative / follow-ups:**
+
+- Claude counts are estimates until API or service path lands.
+- HF families (`llama3`, `qwen2`) require a follow-up milestone + allowlist extension in `capability.go`.
+- Bundled `o200k_base.tiktoken` (~3.6 MiB) increases repo size; version bumps need changelog + vector re-verify.
+
+## References
+
+- [ADR-0041 Model capability registry](/docs/adr/0041-model-capability-registry)
+- [ADR-0034 Performance methodology](/docs/adr/0034-performance-methodology)
+- [ENVIRONMENT_VARIABLES.md](/engineering/ENVIRONMENT_VARIABLES) — `IBEX_TOKENIZER_*`

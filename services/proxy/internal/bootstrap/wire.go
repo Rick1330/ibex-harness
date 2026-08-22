@@ -15,6 +15,7 @@ import (
 	authv1 "github.com/Rick1330/ibex-harness/packages/proto/gen/go/ibex/auth/v1"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
 	"github.com/Rick1330/ibex-harness/packages/revocation"
+	"github.com/Rick1330/ibex-harness/packages/tokenizer"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/asyncpool"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
@@ -48,6 +49,7 @@ type proxyCore struct {
 	checkpointPool    *asyncpool.Pool
 	sessionSweeper    *sessionsweeper.Sweeper
 	traceWriter       *ibexch.Writer
+	tokenizerReg      *tokenizer.Registry
 }
 
 type setupProxyCoreInput struct {
@@ -111,6 +113,7 @@ func finishProxyCore(parts proxyCoreParts) *proxyCore {
 		checkpointPool: parts.assembled.checkpointPool,
 		sessionSweeper: parts.assembled.sessionSweeper,
 		traceWriter:    parts.assembled.traceWriter,
+		tokenizerReg:   parts.assembled.tokenizerReg,
 	}
 }
 
@@ -124,6 +127,7 @@ type assembledProxyCore struct {
 	checkpointPool    *asyncpool.Pool
 	sessionSweeper    *sessionsweeper.Sweeper
 	traceWriter       *ibexch.Writer
+	tokenizerReg      *tokenizer.Registry
 }
 
 type proxyInfra struct {
@@ -198,6 +202,10 @@ func finishAssembledCore(in finishAssembledCoreInput) (assembledProxyCore, error
 	if err != nil {
 		return assembledProxyCore{}, fmt.Errorf("provider registry: %w", err)
 	}
+	tokenizerReg, err := buildTokenizerRegistry(in.cfg)
+	if err != nil {
+		return assembledProxyCore{}, fmt.Errorf("tokenizer registry: %w", err)
+	}
 	idempStore, err := newIdempotencyStore(in.infra.redisClient, in.cfg)
 	if err != nil {
 		return assembledProxyCore{}, fmt.Errorf("idempotency store: %w", err)
@@ -209,7 +217,7 @@ func finishAssembledCore(in finishAssembledCoreInput) (assembledProxyCore, error
 		Limiter: in.infra.limiter, DirectiveResolver: in.infra.directiveResolver,
 		SessionStore: in.infra.sessionStack.store, SessionCache: in.infra.sessionStack.cache,
 		CheckpointPool: in.infra.sessionStack.pool, GetOrCreateTimeout: in.cfg.SessionGetOrCreateTO,
-		Health:           buildProxyHealth(in.cfg, in.infra.auth.client, in.infra.pgDB),
+		Health:           buildProxyHealth(in.cfg, in.infra.auth.client, in.infra.pgDB, tokenizerReg),
 		ProviderRegistry: providerReg,
 		IdempotencyStore: idempStore,
 	}
@@ -222,7 +230,7 @@ func finishAssembledCore(in finishAssembledCoreInput) (assembledProxyCore, error
 		server: server, grpcConn: in.infra.auth.conn, redisClient: in.infra.redisClient, pgDB: in.infra.pgDB,
 		validator: in.infra.auth.validator, directiveResolver: in.infra.directiveResolver,
 		checkpointPool: in.infra.sessionStack.pool, sessionSweeper: in.infra.sessionStack.sweeper,
-		traceWriter: traceWriter,
+		traceWriter: traceWriter, tokenizerReg: tokenizerReg,
 	}, nil
 }
 
@@ -235,7 +243,7 @@ func assignTraceWriter(deps *proxyhttp.RouterDeps, w *ibexch.Writer) {
 	deps.TraceWriter = w
 }
 
-func buildProxyHealth(cfg config.Config, authClient authv1.AuthServiceClient, pgDB *sql.DB) *healthcheck.Server {
+func buildProxyHealth(cfg config.Config, authClient authv1.AuthServiceClient, pgDB *sql.DB, tokenizerReg *tokenizer.Registry) *healthcheck.Server {
 	healthSrv := &healthcheck.Server{
 		CriticalCheckers: map[string]healthcheck.Checker{
 			"auth_grpc": healthcheck.AuthGRPC(authClient, cfg.AuthValidateTimeout),
@@ -251,6 +259,9 @@ func buildProxyHealth(cfg config.Config, authClient authv1.AuthServiceClient, pg
 			cfg.SelfHosted.NormalizeBaseURL(),
 			cfg.SelfHosted.APIKey,
 		)
+	}
+	if tokenizerReg != nil {
+		advisory["tokenizer"] = newTokenizerReadyChecker(tokenizerReg)
 	}
 	if len(advisory) > 0 {
 		healthSrv.AdvisoryCheckers = advisory

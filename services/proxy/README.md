@@ -5,7 +5,7 @@ Go service for the IBEX Harness LLM proxy.
 ## Platform endpoints (no auth)
 
 - `GET /health` — liveness (`{"status":"ok","checks":{}}`; [ADR-0022](../../web/content/docs/adr/0022-health-check-contract.mdx))
-- `GET /ready` — readiness; critical: `auth_grpc` (ValidateToken probe), `redis` (`PING`); advisory: `postgres` (`SELECT 1` when `POSTGRES_DSN` set), `selfhosted_llm` (`GET /models` when self-hosted enabled)
+- `GET /ready` — readiness; critical: `auth_grpc` (ValidateToken probe), `redis` (`PING`); advisory: `postgres` (`SELECT 1` when `POSTGRES_DSN` set), `selfhosted_llm` (`GET /models` when self-hosted enabled), `tokenizer` (ground-truth self-test when registry loaded)
 - `GET /metrics` — Prometheus text metrics
 
 ## Protected endpoints (Bearer PAT + agent header required)
