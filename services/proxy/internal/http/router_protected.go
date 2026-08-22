@@ -11,6 +11,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/packages/provider"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
+	"github.com/Rick1330/ibex-harness/packages/responsepipeline"
 	"github.com/Rick1330/ibex-harness/packages/session"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/asyncpool"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
@@ -32,6 +33,7 @@ type protectedRouteDeps struct {
 	getOrCreateTimeout       time.Duration
 	docsBase                 string
 	providerRegistry         *provider.Registry
+	responsePipeline         *responsepipeline.Pipeline
 	traceWriter              TraceWriter
 	idempotencyStore         idempotency.Store
 	idempotencyTimeout       time.Duration
@@ -113,6 +115,7 @@ func newChatCompletionHandler(deps protectedRouteDeps) chatCompletionHandler {
 		log:                      deps.logger,
 		docsBase:                 deps.docsBase,
 		metrics:                  deps.reg,
+		responsePipeline:         deps.responsePipeline,
 		sessionStore:             deps.sessionStore,
 		sessionCache:             deps.sessionCache,
 		checkpointPool:           deps.checkpointPool,

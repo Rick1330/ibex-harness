@@ -14,12 +14,8 @@ import (
 
 	apierror "github.com/Rick1330/ibex-harness/packages/apierror"
 	"github.com/Rick1330/ibex-harness/packages/idempotency"
-	"github.com/Rick1330/ibex-harness/packages/logger"
-	"github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/packages/permissions"
 	"github.com/Rick1330/ibex-harness/packages/provider"
-	"github.com/Rick1330/ibex-harness/packages/ratelimit"
-	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	httpchat "github.com/Rick1330/ibex-harness/services/proxy/internal/http/chat"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/llm"
@@ -59,7 +55,7 @@ func (s *countingLLMProvider) Complete(ctx context.Context, _ provider.Request) 
 	}
 	body := s.body
 	if body == "" {
-		body = `{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`
+		body = minimalValidChatCompletionJSON
 	}
 	return provider.Response{
 		StatusCode: http.StatusOK,
@@ -82,18 +78,12 @@ func idempotencyTestRouter(t *testing.T, store idempotency.Store, prov provider.
 	cfg := chatTestConfig()
 	cfg.IdempotencyTTL = time.Hour
 	cfg.IdempotencyRedisTimeout = time.Second
-	return mustNewRouter(t, RouterDeps{
-		Config:           cfg,
-		Logger:           logger.Discard("proxy"),
-		Metrics:          metrics.NewProxy("test"),
-		Tracer:           telemetry.NoopTracer("proxy"),
-		Validator:        validator,
-		AgentVerifier:    passAgentVerifier{},
-		Limiter:          ratelimit.Noop(),
-		Health:           testHealthServer(),
-		ProviderRegistry: reg,
-		IdempotencyStore: store,
-	})
+	return mustNewRouter(t, mergeRouterDeps(defaultChatRouterDeps(t), func(d *RouterDeps) {
+		d.Config = cfg
+		d.Validator = validator
+		d.ProviderRegistry = reg
+		d.IdempotencyStore = store
+	}))
 }
 
 func testRedisIdempotencyStore(t *testing.T) (idempotency.Store, *miniredis.Miniredis) {
@@ -131,7 +121,7 @@ func TestUnit_Idempotency_DuplicateKeyReplaysWithoutSecondComplete(t *testing.T)
 	store, _ := testRedisIdempotencyStore(t)
 	prov := &countingLLMProvider{
 		name: "openai", models: []string{"gpt-4o"},
-		body: `{"choices":[{"message":{"role":"assistant","content":"once"}}]}`,
+		body: `{"id":"test","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"once"},"finish_reason":"stop"}]}`,
 	}
 	handler := idempotencyTestRouter(t, store, prov, nil)
 

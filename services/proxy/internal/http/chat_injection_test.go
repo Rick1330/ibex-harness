@@ -23,7 +23,7 @@ func (c *captureLLMProvider) Complete(_ context.Context, req provider.Request) (
 	c.last = req
 	return provider.Response{
 		StatusCode: http.StatusOK,
-		Body:       io.NopCloser(strings.NewReader(`{"ok":true}`)),
+		Body:       io.NopCloser(strings.NewReader(minimalValidChatCompletionJSON)),
 	}, nil
 }
 

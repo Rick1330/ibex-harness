@@ -2,7 +2,7 @@
 title: "2.5.G3.M1 Response middleware hook (non-streaming)"
 description: "Today the success path is pure passthrough — nothing sits between 'upstream JSON received' and 'JSON written to client.' Before Phase 3 can do anything to a model's output (PII redaction, injection-scan, corrected content), that seam should exist as a first-class extension point."
 summary: "Today the success path is pure passthrough — nothing sits between 'upstream JSON received' and 'JSON written to client.' Before Phase 3 can do anything to a model's output (PII redaction, injection-scan, corrected content), that seam should exist as a first-class extension point."
-status: "planned"
+status: "completed"
 milestoneId: "2.5.G3.M1"
 track: "C"
 trackTitle: "Response-Side Processing Pipeline"
@@ -15,7 +15,7 @@ fullTitle: "Milestone 2.5.G3.M1 — Response Middleware Hook (Non-Streaming)"
 
 # Milestone 2.5.G3.M1 — Response Middleware Hook (Non-Streaming)
 
-**Status:** Planned  
+**Status:** Completed (2.5.G3.M1 — [ADR-0044](/docs/adr/0044-response-pipeline-non-streaming))
 **Goal:** [Track C — Response-Side Processing Pipeline](/roadmap/phase-2-5-provider-generalization/tracks#track-c--response-side-processing-pipeline)  
 **Phase:** 2.5 — Provider Generalization & Foundation  
 **Estimated effort:** 2 days
@@ -69,7 +69,7 @@ Prefer outcomes over matching any particular file tree or command sequence.
 Rename freely to match the change that actually lands.
 
 - Branch: `feature/m2-5-g3-m1-response-middleware-hook`
-- PR title: `feat(proxy): ResponsePipeline stage interface with no-op stage for non-streaming responses (m2.5.G3.M1)`
+- PR title: `feat(proxy): non-streaming response pipeline seam (m2.5.G3.M1)`
 
 ## Design
 
@@ -144,16 +144,16 @@ The p99 overhead added by decode/re-encode round trip should be measured and sta
 
 Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
 
-- [ ] Interface defined: `Name()`, `Process(ctx, *ChatResponse) (*ChatResponse, error)` (exact path may differ)
-- [ ] Executes stages in order, propagates errors (exact path may differ)
-- [ ] Fail-open behavior: non-security-critical stage error logs and passes through
-- [ ] `ChatResponse` typed decode/re-encode round-trip is byte-for-byte identical to raw passthrough
-- [ ] No-op stage implementation exists and is the default
-- [ ] `writeProviderSuccess` in `chat_provider.go` calls `pipeline.Run` before writing response
-- [ ] Benchmark: decode/re-encode p99 < 2ms (committed as `BenchmarkResponsePipelineNoop` in `*_test.go`)
-- [ ] Boundary respected — decode/re-encode stays (exact path may differ)
-- [ ] And `go test ./services/proxy/...` pass
-- [ ] Repo guards / CI checks still pass
+- [x] Interface defined: `Name()`, `Process(ctx, *ChatResponse) (*ChatResponse, error)` (exact path may differ)
+- [x] Executes stages in order, propagates errors (exact path may differ)
+- [x] Fail-open behavior: non-critical stage errors log (stage + error class) and continue with snapshot rollback
+- [x] Unmodified `ChatResponse` returns stored raw bytes without re-encoding (byte-for-byte passthrough)
+- [x] No-op stage implementation exists and is the default
+- [x] `writeProviderSuccess` in `chat_provider.go` calls `pipeline.Run` before writing response
+- [x] Benchmark: decode + noop pipeline p99 < 2ms (`BenchmarkResponsePipelineNoop` in `*_test.go`)
+- [x] Boundary respected — decode/re-encode stays (exact path may differ)
+- [x] And `go test ./services/proxy/...` pass
+- [x] Repo guards / CI checks still pass
 
 ## Prerequisites
 

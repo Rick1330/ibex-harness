@@ -15,6 +15,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/packages/provider"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
+	"github.com/Rick1330/ibex-harness/packages/responsepipeline"
 	"github.com/Rick1330/ibex-harness/packages/session"
 	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/asyncpool"
@@ -50,6 +51,7 @@ type RouterDeps struct {
 	GetOrCreateTimeout time.Duration
 	Health             *healthcheck.Server
 	ProviderRegistry   *provider.Registry
+	ResponsePipeline   *responsepipeline.Pipeline
 	TraceWriter        TraceWriter
 	IdempotencyStore   idempotency.Store
 }
@@ -108,6 +110,7 @@ func buildProtectedRouteDeps(deps RouterDeps, providerReg *provider.Registry) pr
 		getOrCreateTimeout:       deps.GetOrCreateTimeout,
 		docsBase:                 deps.Config.ErrorDocsBase,
 		providerRegistry:         providerReg,
+		responsePipeline:         deps.ResponsePipeline,
 		traceWriter:              httptrace.EffectiveWriter(deps.TraceWriter),
 		idempotencyStore:         deps.IdempotencyStore,
 		idempotencyTimeout:       deps.Config.IdempotencyRedisTimeout,
@@ -177,6 +180,7 @@ type chatCompletionHandler struct {
 	log                      *logger.Logger
 	docsBase                 string
 	metrics                  *metrics.ProxyRegistry
+	responsePipeline         *responsepipeline.Pipeline
 	sessionStore             session.Store
 	sessionCache             *sessioncache.Cache
 	checkpointPool           *asyncpool.Pool

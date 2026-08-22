@@ -15,6 +15,7 @@ import (
 	"github.com/Rick1330/ibex-harness/packages/permissions"
 	"github.com/Rick1330/ibex-harness/packages/provider"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
+	"github.com/Rick1330/ibex-harness/packages/responsepipeline"
 	"github.com/Rick1330/ibex-harness/packages/session"
 	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/asyncpool"
@@ -114,7 +115,7 @@ func sessionLifecycleRouter(t *testing.T, store session.Store, pool *asyncpool.P
 	t.Helper()
 	reg, err := provider.NewRegistry(provider.BuiltInCapabilityCatalog(), stubLLMProvider{
 		name: "openai", models: []string{"gpt-4o"},
-		body: `{"choices":[{"message":{"content":"hello"}}]}`,
+		body: `{"id":"test","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"hello"},"finish_reason":"stop"}]}`,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -129,6 +130,7 @@ func sessionLifecycleRouter(t *testing.T, store session.Store, pool *asyncpool.P
 		SessionStore: store, SessionCache: cache, CheckpointPool: pool,
 		Health:           testHealthServer(),
 		ProviderRegistry: reg,
+		ResponsePipeline: responsepipeline.NewDefaultPipeline(),
 	})
 }
 

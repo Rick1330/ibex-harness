@@ -20,6 +20,6 @@ func (mockForwardingProvider) SupportedModels() []string { return []string{"gpt-
 func (mockForwardingProvider) Complete(_ context.Context, _ provider.Request) (provider.Response, error) {
 	return provider.Response{
 		StatusCode: http.StatusOK,
-		Body:       io.NopCloser(strings.NewReader(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`)),
+		Body:       io.NopCloser(strings.NewReader(`{"id":"test","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`)),
 	}, nil
 }

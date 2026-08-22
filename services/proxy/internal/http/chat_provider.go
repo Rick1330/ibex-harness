@@ -9,8 +9,18 @@ import (
 	apierror "github.com/Rick1330/ibex-harness/packages/apierror"
 	"github.com/Rick1330/ibex-harness/packages/injection"
 	"github.com/Rick1330/ibex-harness/packages/provider"
+	"github.com/Rick1330/ibex-harness/packages/responsepipeline"
 	httpsession "github.com/Rick1330/ibex-harness/services/proxy/internal/http/session"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/llm"
+)
+
+const (
+	// ResponsePipelineTimeout bounds non-streaming pipeline stage execution on the success path.
+	ResponsePipelineTimeout = 50 * time.Millisecond
+
+	errMsgInvalidProviderResponseJSON = "invalid provider response JSON"
+	errMsgResponsePipelineStageFailed = "response pipeline stage failed"
+	errMsgResponsePipelineSerialize   = "failed to serialize processed response"
 )
 
 type chatForwardParams struct {
@@ -118,16 +128,26 @@ func (h chatCompletionHandler) writeProviderSuccess(p providerSuccessParams) {
 		})
 		return
 	}
+	pipelineCtx, cancel := context.WithTimeout(p.r.Context(), ResponsePipelineTimeout)
+	defer cancel()
+	out, err := h.processResponseBody(pipelineCtx, p.providerName, body)
+	if err != nil {
+		h.writeProviderFailure(providerFailureParams{
+			w: p.w, r: p.r, err: err, requestID: requestIDFromContext(p.r.Context()),
+			parsed: p.parsed, providerName: p.providerName, claim: p.claim,
+		})
+		return
+	}
 	setSessionResponseHeader(p.w, p.r.Context())
 	p.w.Header().Set("Content-Type", "application/json")
 	p.w.WriteHeader(p.resp.StatusCode)
 	//nolint:errcheck // best-effort forward of upstream JSON body; client disconnect is acceptable
-	httpsession.WriteJSONBody(p.w, body)
+	httpsession.WriteJSONBody(p.w, out)
 	// Flush before Submit may block on a full non-dropping checkpoint queue.
 	flushIfSupported(p.w)
-	h.finishIdempotency(p.claim, p.resp.StatusCode, body)
+	h.finishIdempotency(p.claim, p.resp.StatusCode, out)
 	h.enqueuePostResponse(p.r.Context(), checkpointInput{
-		Messages: p.parsed.Messages, CompletionText: httpsession.CompletionTextFromJSON(body),
+		Messages: p.parsed.Messages, CompletionText: httpsession.CompletionTextFromJSON(out),
 		Model: p.parsed.Model, Provider: p.providerName, Usage: p.resp.Usage,
 		Latency: p.resp.Latency, ProviderReqID: p.resp.ProviderRequestID,
 		IsStreaming: false, IsComplete: true,
@@ -135,6 +155,45 @@ func (h chatCompletionHandler) writeProviderSuccess(p providerSuccessParams) {
 		StatusCode: uint16(p.resp.StatusCode),
 		IsComplete: true,
 	})
+}
+
+func (h chatCompletionHandler) processResponseBody(ctx context.Context, providerName string, body []byte) ([]byte, error) {
+	chat, err := responsepipeline.Decode(body)
+	if err != nil {
+		return nil, providerErr502(providerName, errMsgInvalidProviderResponseJSON)
+	}
+	if h.responsePipeline == nil {
+		return body, nil
+	}
+	return h.encodePipelineResult(ctx, providerName, chat)
+}
+
+func (h chatCompletionHandler) encodePipelineResult(ctx context.Context, providerName string, chat *responsepipeline.ChatResponse) ([]byte, error) {
+	processed, err := h.responsePipeline.Run(ctx, chat)
+	if err != nil {
+		h.warnPipelineIssue(ctx, providerName, "response pipeline stage failed; fail-closed", err)
+		return nil, providerErr502(providerName, errMsgResponsePipelineStageFailed)
+	}
+	out, err := processed.Bytes()
+	if err != nil {
+		h.warnPipelineIssue(ctx, providerName, "response pipeline serialization failed", err)
+		return nil, providerErr502(providerName, errMsgResponsePipelineSerialize)
+	}
+	return out, nil
+}
+
+func (h chatCompletionHandler) warnPipelineIssue(ctx context.Context, providerName, msg string, err error) {
+	if h.log != nil {
+		h.log.WarnCtx(ctx, msg, "provider", providerName, "error", err)
+	}
+}
+
+func providerErr502(providerName, msg string) *provider.ProviderError {
+	return &provider.ProviderError{
+		ProviderName:   providerName,
+		StatusCode:     http.StatusBadGateway,
+		ProviderErrMsg: msg,
+	}
 }
 
 func (h chatCompletionHandler) streamCheckpointHook(

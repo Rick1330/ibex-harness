@@ -56,7 +56,7 @@ ibex-harness/
   packages/                    # shared libraries — see packages/README.md
     proto/                     # protobuf source of truth + codegen
     provider/                  # LLM provider abstraction (extends in 2.5+)
-    # planned: tokenizer/, responsepipeline/, embedder/, contextclient/, circuitbreaker/
+    # planned: embedder/, contextclient/, circuitbreaker/
     # planned SDKs/CLI: sdk-python/, sdk-typescript/, sdk-go/, cli/
 
   infra/

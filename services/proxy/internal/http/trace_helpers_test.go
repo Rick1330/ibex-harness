@@ -9,12 +9,8 @@ import (
 	"time"
 
 	ibexch "github.com/Rick1330/ibex-harness/packages/clickhouse"
-	"github.com/Rick1330/ibex-harness/packages/logger"
-	"github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/packages/permissions"
 	"github.com/Rick1330/ibex-harness/packages/provider"
-	"github.com/Rick1330/ibex-harness/packages/ratelimit"
-	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/asyncpool"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/google/uuid"
@@ -112,19 +108,17 @@ func chatRouterWithTrace(t *testing.T, tw TraceWriter, pool *asyncpool.Pool) htt
 	t.Helper()
 	reg, err := provider.NewRegistry(provider.BuiltInCapabilityCatalog(), stubLLMProvider{
 		name: "openai", models: []string{"gpt-4o"},
-		body: `{"choices":[{"message":{"content":"hello"}}]}`,
+		body: `{"id":"test","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"hello"},"finish_reason":"stop"}]}`,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return mustNewRouter(t, RouterDeps{
-		Config: chatTestConfig(), Logger: logger.Discard("proxy"),
-		Metrics: metrics.NewProxy("test"), Tracer: telemetry.NoopTracer("proxy"),
-		Validator: &chatMockValidator{res: &auth.ValidateResult{
+	return mustNewRouter(t, mergeRouterDeps(defaultChatRouterDeps(t), func(d *RouterDeps) {
+		d.Validator = &chatMockValidator{res: &auth.ValidateResult{
 			OrgID: uuid.MustParse(testChatOrgID), Permissions: permissions.ProxyChatCompletion,
-		}},
-		AgentVerifier: passAgentVerifier{}, Limiter: ratelimit.Noop(),
-		CheckpointPool: pool, TraceWriter: tw,
-		Health: testHealthServer(), ProviderRegistry: reg,
-	})
+		}}
+		d.CheckpointPool = pool
+		d.TraceWriter = tw
+		d.ProviderRegistry = reg
+	}))
 }

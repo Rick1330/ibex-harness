@@ -13,11 +13,8 @@ import (
 	"time"
 
 	"github.com/Rick1330/ibex-harness/packages/logger"
-	"github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/packages/permissions"
 	"github.com/Rick1330/ibex-harness/packages/provider"
-	"github.com/Rick1330/ibex-harness/packages/ratelimit"
-	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/google/uuid"
 )
@@ -167,17 +164,10 @@ func newStreamTestHandlerWithValidator(t *testing.T, stub *streamStubProvider, v
 	if err != nil {
 		t.Fatalf("NewRegistry: %v", err)
 	}
-	return mustNewRouter(t, RouterDeps{
-		Config:           chatTestConfig(),
-		Logger:           logger.Discard("proxy"),
-		Metrics:          metrics.NewProxy("test"),
-		Tracer:           telemetry.NoopTracer("proxy"),
-		Validator:        validator,
-		AgentVerifier:    passAgentVerifier{},
-		Limiter:          ratelimit.Noop(),
-		Health:           testHealthServer(),
-		ProviderRegistry: reg,
-	})
+	return mustNewRouter(t, mergeRouterDeps(defaultChatRouterDeps(t), func(d *RouterDeps) {
+		d.Validator = validator
+		d.ProviderRegistry = reg
+	}))
 }
 
 func newStreamChatRequest(ctx context.Context) *http.Request {

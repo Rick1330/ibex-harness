@@ -33,6 +33,7 @@ Scaffold guidance: [web/engineering/FILE_STRUCTURE.md](../web/engineering/FILE_S
 | `healthcheck/` | Shared `/health` and `/ready` probe framework ([ADR-0022](../web/content/docs/adr/0022-health-check-contract.mdx)) |
 | `provider/` | LLM provider abstraction and registry ([ADR-0025](../web/content/docs/adr/0025-llm-provider-abstraction.mdx)); OpenAI + Anthropic adapters ([ADR-0040](../web/content/docs/adr/0040-anthropic-provider-adapter.mdx)); capability registry; self-hosted adapter |
 | `tokenizer/` | Per-family token counting registry ([ADR-0043](../web/content/docs/adr/0043-tokenizer-registry.mdx)); tiktoken OpenAI families + claude estimate |
+| `responsepipeline/` | Non-streaming chat response decode / stage pipeline / re-encode ([ADR-0044](../web/content/docs/adr/0044-response-pipeline-non-streaming.mdx)); noop default, fail-open stages |
 | `clickhouse/` | ClickHouse writer/DSN helpers for `llm_traces` ([ADR-0033](../web/content/docs/adr/0033-clickhouse-schema.mdx)) |
 | `chdsn/` | ClickHouse DSN flattening helpers |
 
@@ -42,7 +43,6 @@ Scaffold guidance: [web/engineering/FILE_STRUCTURE.md](../web/engineering/FILE_S
 
 | Directory | Role | Preferred phase | Notes |
 | --- | --- | --- | --- |
-| `responsepipeline/` | Go — typed response decode / stage pipeline / re-encode for non-streaming (streaming design follows) | **2.5** | Stays out of `provider/` (no injection/response logic in provider adapters) |
 | `embedder/` | Go — proxy/client-facing embedder interface + registry (inference lives in `services/embedder/`) | **2.5** | Thin shared contract; backends are a service concern |
 | `contextclient/` | Go — fail-open gRPC client for context assembly | **3.5** | Mirrors the auth gRPC client pattern; never blocks the LLM path on assembly failure |
 | `circuitbreaker/` | Go — shared breaker for providers and context dependencies | **4** | Preferred starting place for per-provider isolation |

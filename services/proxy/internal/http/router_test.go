@@ -9,11 +9,8 @@ import (
 	"testing"
 
 	"github.com/Rick1330/ibex-harness/packages/healthcheck"
-	"github.com/Rick1330/ibex-harness/packages/logger"
-	"github.com/Rick1330/ibex-harness/packages/metrics"
 	"github.com/Rick1330/ibex-harness/packages/provider"
 	"github.com/Rick1330/ibex-harness/packages/ratelimit"
-	"github.com/Rick1330/ibex-harness/packages/telemetry"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/auth"
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/config"
 	"github.com/google/uuid"
@@ -53,21 +50,11 @@ func testHealthServer() *healthcheck.Server {
 
 func newTestRouter(tb testing.TB, cfg config.Config, validator auth.TokenValidator, limiter ratelimit.Limiter) http.Handler {
 	tb.Helper()
-	var agentVerifier auth.AgentVerifier
-	if validator != nil {
-		agentVerifier = passAgentVerifier{}
-	}
-	return mustNewRouter(tb, RouterDeps{
-		Config:           cfg,
-		Logger:           logger.Discard("proxy"),
-		Metrics:          metrics.NewProxy("test"),
-		Tracer:           telemetry.NoopTracer("proxy"),
-		Validator:        validator,
-		AgentVerifier:    agentVerifier,
-		Limiter:          limiter,
-		Health:           testHealthServer(),
-		ProviderRegistry: mustEmptyProviderRegistry(tb),
-	})
+	deps := defaultChatRouterDeps(tb)
+	deps.Config = cfg
+	deps.Validator = validator
+	deps.Limiter = limiter
+	return mustNewRouter(tb, deps)
 }
 
 func TestHealthReturnsOK(t *testing.T) {

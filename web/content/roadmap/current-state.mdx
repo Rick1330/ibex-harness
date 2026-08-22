@@ -33,7 +33,7 @@ summary: "Phases 0–2 are complete. Auth, proxy, and single-provider E2E ship o
 <StatusBadge status="new" /> **Phase 4.5 — Intelligence Layer:** planned  
 <StatusBadge status="new" /> **Phase 5 — Advanced Retrieval & Graph Memory:** planned
 
-**Last updated:** 2026-08-21  
+**Last updated:** 2026-08-22  
 **Branch:** `main`  
 **Current focus:** [Phase 2.5 — Provider Generalization](/roadmap/phase-2-5-provider-generalization)  
 **Completed (recent):** Phase 2 exit ([2.6.2](/roadmap/phase-2-single-provider/milestones/2.6.2-phase2-exit-gate)); docs/roadmap realignment (#481–#492); hygiene/deps (#514, #524); Dependabot absorb; benchmark bot run [#526](https://github.com/Rick1330/ibex-harness/pull/526) (`34781cd`)
@@ -85,14 +85,14 @@ summary: "Phases 0–2 are complete. Auth, proxy, and single-provider E2E ship o
 <Callout type="note" title="Current capability boundary">
   **Shipped:** Auth (Go), Proxy (Go) with mock/live OpenAI + Anthropic + self-hosted
   OpenAI-compatible forwarding, model capability registry, tokenizer registry
-  (G2.M1), auth cache, directives/injection,
+  (G2.M1), non-streaming response pipeline (G3.M1), auth cache, directives/injection,
   sessions/checkpoints, idempotency, ClickHouse traces, shared packages, and this public site.
   Default non-production `IBEX_LLM_MODE=mock` answers registered models with HTTP 200; `live`
   needs `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, and/or `IBEX_SELFHOSTED_ENABLED` (mock is rejected
   when `IBEX_ENV=production`).
   **`501 PROVIDER_NOT_CONFIGURED`** means the model is not in the registry — not
-  "forwarding missing." **Not shipped (Phase 2.5+ remaining):** response
-  pipeline, embedding service, Python memory, context
+  "forwarding missing." **Not shipped (Phase 2.5+ remaining):** streaming response
+  pipeline design, embedding service, Python memory, context
   assembly, worker, management API, operator dashboard.
 </Callout>
 
@@ -132,9 +132,9 @@ Legacy `docs.ibexharness.com` redirects to apex paths (301).
 ## Blockers And Risks
 
 <Callout type="warning" title="Phase 2.5 remaining">
-  Response pipeline, embedding service, schema pre-work, and MCP skeleton
-  are still ahead. Anthropic, capability registry, self-hosted adapter, and
-  tokenizer registry (G1.M1–M3, G2.M1) are on `main`.
+  Streaming response pipeline design (G3.M2), embedding service, schema pre-work, and MCP skeleton
+  are still ahead. Anthropic, capability registry, self-hosted adapter, tokenizer registry
+  (G1.M1–M3, G2.M1), and non-streaming response pipeline (G3.M1) are on `main`.
 </Callout>
 
 - Multi-provider routing remains Phase 4
@@ -144,7 +144,7 @@ Legacy `docs.ibexharness.com` redirects to apex paths (301).
 
 <Steps>
   <Step title="Phase 2.5 continue">
-    Response pipeline seam (G3), embedder service (G4), schema pre-work, MCP skeleton.
+    Streaming response pipeline design (G3.M2), embedder service (G4), schema pre-work, MCP skeleton.
   </Step>
   <Step title="Phase 3 memory substrate">
     Memory schema v2 (HNSW, temporal validity, multi-label), write pipeline, read/ranking with category-conditional scoring.

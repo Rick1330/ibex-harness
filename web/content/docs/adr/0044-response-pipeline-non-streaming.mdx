@@ -1,0 +1,107 @@
+---
+title: "ADR-0044: Non-streaming response pipeline"
+description: "Architecture decision record 0044 — typed OpenAI-shaped response decode, stage pipeline seam, raw-byte passthrough policy, and fail-open execution for non-streaming chat completions."
+adrId: "0044"
+status: "Accepted"
+date: "2026-08-22"
+authors: "IBEX Harness team"
+---
+
+# ADR-0044: Non-streaming response pipeline
+
+- **Status:** Accepted
+- **Date:** 2026-08-22
+- **Authors:** IBEX Harness team
+- **Milestone:** [2.5.G3.M1 Response middleware hook](/roadmap/phase-2-5-provider-generalization/milestones/2.5.g3.m1-response-middleware-hook)
+
+## Context
+
+Non-streaming chat completions today pass upstream JSON verbatim from `writeProviderSuccess` ([`services/proxy/internal/http/chat_provider.go`](https://github.com/Rick1330/ibex-harness/blob/main/services/proxy/internal/http/chat_provider.go)). Phase 3 guardrails (PII redaction, injection scanning, metadata injection) and Phase 3.5 embedded `ibex` response blocks require a **typed extension point** between provider response and client write.
+
+Constraints:
+
+- [ADR-0020](/docs/adr/0020-shared-package-boundaries) — response transformation stays out of `packages/provider/*` adapters.
+- [ADR-0034](/docs/adr/0034-performance-methodology) — proxy overhead budget; decode+noop pipeline must benchmark **p99 &lt; 2ms**.
+- [ADR-0027](/docs/adr/0027-streaming-dual-write) — streaming SSE forwarding is unchanged; streaming transformation is deferred to [2.5.G3.M2](/roadmap/phase-2-5-provider-generalization/milestones/2.5.g3.m2-streaming-response-pipeline-design).
+
+Wire shape confirmed against v1 providers:
+
+| Source | Shape |
+| --- | --- |
+| `mockllm` | OpenAI `chat.completion` JSON |
+| `openaicompatible` / OpenAI | Native OpenAI JSON |
+| `anthropic` adapter | Translated to OpenAI `chat.completion` before proxy sees body |
+
+## Decision
+
+### 1) `packages/responsepipeline` contract
+
+```go
+type Stage interface {
+    Name() string
+    Process(ctx context.Context, resp *ChatResponse) (*ChatResponse, error)
+}
+
+type SecurityCritical interface {
+    SecurityCritical() bool
+}
+```
+
+- `Pipeline.Run` executes stages in order.
+- **Fail-open:** non-critical stage errors log (stage name + error class), restore a pre-stage snapshot (so in-place mutations from the failing stage are discarded), and **continue** with subsequent stages.
+- **Fail-closed:** stages implementing `SecurityCritical` with `SecurityCritical() == true` propagate errors to the proxy as `ProviderError` with HTTP **502** via `providerErr502` (client envelope maps to provider-unavailable **503** through existing `MapError`).
+
+### 2) Raw-byte preservation (noop default)
+
+`ChatResponse` stores a clone of upstream bytes plus a typed `ResponseDoc`. When no stage marks the response modified, `Bytes()` returns the **original raw bytes** (no `json.Marshal`), guaranteeing byte-for-byte passthrough with the default noop pipeline. Callers must not mutate the returned slice.
+
+Stages should prefer `Mutate(fn func(*ResponseDoc) error)`, which sets the dirty flag automatically. Direct `Doc()` mutation requires an explicit `MarkModified()` or client-visible bytes stay stale.
+
+When dirty, `Bytes()` re-encodes from `ResponseDoc` (Phase 3+).
+
+**Stage author contract:** do not mutate the response on an error return path; fail-open rollback covers accidental in-place edits, but stages should treat errors as leaving the response untouched.
+
+### 3) Proxy wiring (non-streaming only)
+
+- Bootstrap builds `NewDefaultPipeline()` (single noop stage).
+- `RouterDeps.ResponsePipeline` → `chatCompletionHandler.responsePipeline`.
+- `writeProviderSuccess`: `ReadAllBody` → `Decode` → `Pipeline.Run` → `Bytes()` → `WriteJSONBody`.
+- Invalid upstream JSON → `ProviderError` / 502 (same posture as corrupt provider body).
+- Streaming path (`forwardSSEStream`) does **not** invoke the pipeline in G3.M1.
+
+### 4) Logging and metrics
+
+Never log `choices[].message.content`. Stage failure logs include stage name and a stable `error_class` only (never raw error strings, which may echo response or directive content).
+
+Optional `PipelineObserver` records:
+
+| Metric | Type | Labels |
+| --- | --- | --- |
+| `ibex_proxy_response_pipeline_stage_duration_seconds` | Histogram | `stage`, `result` (`success`/`error`/`fail_open`) |
+| `ibex_proxy_response_pipeline_stage_fail_open_total` | Counter | `stage` |
+
+Bootstrap wires the proxy `*metrics.ProxyRegistry` as the observer when non-nil.
+
+### 5) Config surface (v1)
+
+No new environment variables in G3.M1. Per-agent pipeline configuration deferred.
+
+## Consequences
+
+**Positive:**
+
+- Phase 3 can add stages without new proxy plumbing.
+- No-op default preserves today’s client-visible behavior and idempotency replay bytes.
+- Typed model enables future metadata injection ([3.5.D.3](/roadmap/phase-3-5-extraction-assembly/milestones/3.5.d.3-response-headers-metadata.mdx)).
+
+**Negative / follow-ups:**
+
+- Modified responses re-encode typed fields and merge preserved unknown top-level keys from upstream JSON.
+- Streaming pipeline requires G3.M2 design ADR before implementation.
+- Security-critical stages not shipped in M1 — interface only.
+
+## References
+
+- [ADR-0020 Shared package boundaries](/docs/adr/0020-shared-package-boundaries)
+- [ADR-0027 Streaming dual-write](/docs/adr/0027-streaming-dual-write)
+- [ADR-0034 Performance methodology](/docs/adr/0034-performance-methodology)
