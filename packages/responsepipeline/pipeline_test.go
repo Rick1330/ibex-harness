@@ -194,6 +194,49 @@ func TestUnit_Pipeline_StageReturnsNilKeepsCurrent(t *testing.T) {
 	require.Same(t, resp, out)
 }
 
+func TestUnit_Decode_RejectsNullBody(t *testing.T) {
+	_, err := Decode([]byte("null"))
+	require.ErrorIs(t, err, ErrInvalidResponse)
+}
+
+func TestUnit_Decode_RejectsEmptyObject(t *testing.T) {
+	_, err := Decode([]byte("{}"))
+	require.ErrorIs(t, err, ErrInvalidResponse)
+}
+
+func TestUnit_Decode_RejectsMissingRequiredFields(t *testing.T) {
+	_, err := Decode([]byte(`{"object":"chat.completion","choices":[]}`))
+	require.ErrorIs(t, err, ErrInvalidResponse)
+}
+
+func TestUnit_Decode_RejectsNullRequiredField(t *testing.T) {
+	_, err := Decode([]byte(`{"id":null,"object":"chat.completion","choices":[]}`))
+	require.ErrorIs(t, err, ErrInvalidResponse)
+}
+
+func TestUnit_Pipeline_FailOpenSnapshotPreservesExtraFields(t *testing.T) {
+	body := []byte(`{"id":"x","object":"chat.completion","choices":[],"model":"orig","system_fingerprint":"fp","usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`)
+	resp, err := Decode(body)
+	require.NoError(t, err)
+	out, err := NewPipeline([]Stage{
+		stubStage{name: "mutate", fn: func(r *ChatResponse) (*ChatResponse, error) {
+			require.NoError(t, r.Mutate(func(doc *ResponseDoc) error {
+				doc.Model = "edited"
+				return nil
+			}))
+			return r, nil
+		}},
+		stubStage{name: "fail", fn: func(*ChatResponse) (*ChatResponse, error) {
+			return nil, errors.New("boom")
+		}},
+	}).Run(context.Background(), resp)
+	require.NoError(t, err)
+	wire, err := out.Bytes()
+	require.NoError(t, err)
+	require.Contains(t, string(wire), `"model":"edited"`)
+	require.Contains(t, string(wire), "system_fingerprint")
+}
+
 func TestUnit_Pipeline_FailOpenRevertsFailingStageMutation(t *testing.T) {
 	body := []byte(`{"id":"x","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"orig"},"finish_reason":"stop"}]}`)
 	resp, err := Decode(body)
@@ -201,7 +244,10 @@ func TestUnit_Pipeline_FailOpenRevertsFailingStageMutation(t *testing.T) {
 	out, err := NewPipeline([]Stage{stubStage{
 		name: "mutate-and-fail",
 		fn: func(r *ChatResponse) (*ChatResponse, error) {
-			r.Doc().Choices[0].Message.Content = "partial"
+			require.NoError(t, r.Mutate(func(doc *ResponseDoc) error {
+				doc.Choices[0].Message.Content = "partial"
+				return nil
+			}))
 			return nil, errors.New("boom")
 		},
 	}}).Run(context.Background(), resp)
@@ -297,7 +343,7 @@ func TestUnit_ChatResponse_DocMutationWithoutMarkModifiedReturnsRaw(t *testing.T
 	require.Equal(t, body, wire)
 }
 
-func TestUnit_ChatResponse_ModifiedReEncodeDropsUnknownFields(t *testing.T) {
+func TestUnit_ChatResponse_ModifiedReEncodePreservesUnknownFields(t *testing.T) {
 	body := []byte(`{"id":"x","object":"chat.completion","choices":[],"model":"orig","system_fingerprint":"fp"}`)
 	resp, err := Decode(body)
 	require.NoError(t, err)
@@ -307,7 +353,7 @@ func TestUnit_ChatResponse_ModifiedReEncodeDropsUnknownFields(t *testing.T) {
 	}))
 	wire, err := resp.Bytes()
 	require.NoError(t, err)
-	require.NotContains(t, string(wire), "system_fingerprint")
+	require.Contains(t, string(wire), "system_fingerprint")
 	require.Contains(t, string(wire), `"model":"new"`)
 }
 

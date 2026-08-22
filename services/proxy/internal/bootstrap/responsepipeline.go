@@ -12,13 +12,13 @@ type proxyStageLogger struct {
 	log *logger.Logger
 }
 
-func (p proxyStageLogger) WarnStageError(ctx context.Context, stage string, err error) {
-	if p.log == nil || err == nil {
+func (p proxyStageLogger) WarnStageError(ctx context.Context, stage string, _ error) {
+	if p.log == nil {
 		return
 	}
 	p.log.WarnCtx(ctx, "response pipeline stage failed; fail-open",
 		"stage", stage,
-		"error", err.Error(),
+		"error_class", "stage_error",
 	)
 }
 

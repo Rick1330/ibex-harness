@@ -23,7 +23,13 @@ func (r *ProxyRegistry) ObserveResponsePipelineStageDuration(stage, result strin
 	if r == nil || r.responsePipelineStageDuration == nil {
 		return
 	}
-	if seconds < 0 || math.IsNaN(seconds) || math.IsInf(seconds, 0) {
+	if seconds < 0 {
+		return
+	}
+	if math.IsNaN(seconds) {
+		return
+	}
+	if math.IsInf(seconds, 0) {
 		return
 	}
 	r.responsePipelineStageDuration.WithLabelValues(stage, result).Observe(seconds)

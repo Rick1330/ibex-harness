@@ -108,7 +108,7 @@ func chatRouterWithTrace(t *testing.T, tw TraceWriter, pool *asyncpool.Pool) htt
 	t.Helper()
 	reg, err := provider.NewRegistry(provider.BuiltInCapabilityCatalog(), stubLLMProvider{
 		name: "openai", models: []string{"gpt-4o"},
-		body: `{"choices":[{"message":{"content":"hello"}}]}`,
+		body: `{"id":"test","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"hello"},"finish_reason":"stop"}]}`,
 	})
 	if err != nil {
 		t.Fatal(err)

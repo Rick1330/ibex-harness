@@ -146,11 +146,11 @@ Outcome-oriented signals that the milestone is in good shape. Exact filenames, p
 
 - [x] Interface defined: `Name()`, `Process(ctx, *ChatResponse) (*ChatResponse, error)` (exact path may differ)
 - [x] Executes stages in order, propagates errors (exact path may differ)
-- [x] Fail-open behavior: non-security-critical stage error logs and passes through
-- [x] `ChatResponse` typed decode/re-encode round-trip is byte-for-byte identical to raw passthrough
+- [x] Fail-open behavior: non-critical stage errors log (stage + error class) and continue with snapshot rollback
+- [x] Unmodified `ChatResponse` returns stored raw bytes without re-encoding (byte-for-byte passthrough)
 - [x] No-op stage implementation exists and is the default
 - [x] `writeProviderSuccess` in `chat_provider.go` calls `pipeline.Run` before writing response
-- [x] Benchmark: decode/re-encode p99 < 2ms (committed as `BenchmarkResponsePipelineNoop` in `*_test.go`)
+- [x] Benchmark: decode + noop pipeline p99 < 2ms (`BenchmarkResponsePipelineNoop` in `*_test.go`)
 - [x] Boundary respected — decode/re-encode stays (exact path may differ)
 - [x] And `go test ./services/proxy/...` pass
 - [x] Repo guards / CI checks still pass

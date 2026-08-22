@@ -170,7 +170,7 @@ func TestUnit_ChatCompletions_responsePipelineModifiedChangesClientBody(t *testi
 	require.NotContains(t, rec.Body.String(), "secret")
 }
 
-func TestUnit_ChatCompletions_responsePipelineModifiedDropsUnknownFields(t *testing.T) {
+func TestUnit_ChatCompletions_responsePipelineModifiedPreservesUnknownFields(t *testing.T) {
 	t.Parallel()
 	upstream := `{"id":"x","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"system_fingerprint":"fp"}`
 	reg, err := provider.NewRegistry(provider.BuiltInCapabilityCatalog(), stubLLMProvider{
@@ -188,7 +188,7 @@ func TestUnit_ChatCompletions_responsePipelineModifiedDropsUnknownFields(t *test
 		agentID: testChatAgentID,
 	})
 	require.Equal(t, http.StatusOK, rec.Code)
-	require.NotContains(t, rec.Body.String(), "system_fingerprint")
+	require.Contains(t, rec.Body.String(), "system_fingerprint")
 }
 
 func TestUnit_ChatCompletions_responsePipelineFailOpenTwoStagePartialMutation(t *testing.T) {
@@ -213,6 +213,7 @@ func TestUnit_ChatCompletions_responsePipelineFailOpenTwoStagePartialMutation(t 
 	})
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Contains(t, rec.Body.String(), `"model":"kept"`)
+	require.NotContains(t, rec.Body.String(), `"model":"reverted"`)
 }
 
 func TestUnit_Idempotency_responsePipelineReplayParity(t *testing.T) {
@@ -285,7 +286,13 @@ type httpFailStage struct {
 
 func (s httpFailStage) Name() string { return s.name }
 
-func (s httpFailStage) Process(_ context.Context, _ *responsepipeline.ChatResponse) (*responsepipeline.ChatResponse, error) {
+func (s httpFailStage) Process(_ context.Context, resp *responsepipeline.ChatResponse) (*responsepipeline.ChatResponse, error) {
+	if err := resp.Mutate(func(doc *responsepipeline.ResponseDoc) error {
+		doc.Model = "reverted"
+		return nil
+	}); err != nil {
+		return nil, err
+	}
 	return nil, errors.New("fail-open")
 }
 

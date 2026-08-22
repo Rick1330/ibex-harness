@@ -22,6 +22,9 @@ import (
 const testChatOrgID = "550e8400-e29b-41d4-a716-446655440001"
 const testChatAgentID = "550e8400-e29b-41d4-a716-446655440000"
 
+// minimalValidChatCompletionJSON satisfies responsepipeline.Decode required fields.
+const minimalValidChatCompletionJSON = `{"id":"test","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`
+
 type chatMockValidator struct {
 	res *auth.ValidateResult
 	err error

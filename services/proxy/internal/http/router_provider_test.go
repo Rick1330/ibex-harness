@@ -33,7 +33,7 @@ func (s stubLLMProvider) Complete(_ context.Context, _ provider.Request) (provid
 	}
 	body := s.body
 	if body == "" {
-		body = `{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`
+		body = minimalValidChatCompletionJSON
 	}
 	return provider.Response{
 		StatusCode: http.StatusOK,

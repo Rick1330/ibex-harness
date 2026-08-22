@@ -55,7 +55,7 @@ func (s *countingLLMProvider) Complete(ctx context.Context, _ provider.Request) 
 	}
 	body := s.body
 	if body == "" {
-		body = `{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`
+		body = minimalValidChatCompletionJSON
 	}
 	return provider.Response{
 		StatusCode: http.StatusOK,
@@ -121,7 +121,7 @@ func TestUnit_Idempotency_DuplicateKeyReplaysWithoutSecondComplete(t *testing.T)
 	store, _ := testRedisIdempotencyStore(t)
 	prov := &countingLLMProvider{
 		name: "openai", models: []string{"gpt-4o"},
-		body: `{"choices":[{"message":{"role":"assistant","content":"once"}}]}`,
+		body: `{"id":"test","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"once"},"finish_reason":"stop"}]}`,
 	}
 	handler := idempotencyTestRouter(t, store, prov, nil)
 

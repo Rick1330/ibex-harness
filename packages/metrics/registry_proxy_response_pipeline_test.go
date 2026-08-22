@@ -25,6 +25,46 @@ func labelPairValue(labels []*dto.LabelPair, name string) string {
 	return ""
 }
 
+func assertDurationFamily(t *testing.T, mfs []*dto.MetricFamily) (uint64, bool, bool) {
+	t.Helper()
+	var durationCount uint64
+	var sawSuccess, sawFailOpen bool
+	for _, mf := range mfs {
+		if mf.GetName() != "ibex_proxy_response_pipeline_stage_duration_seconds" {
+			continue
+		}
+		require.Equal(t, dto.MetricType_HISTOGRAM, mf.GetType())
+		for _, m := range mf.GetMetric() {
+			require.Equal(t, "noop", labelPairValue(m.GetLabel(), "stage"))
+			switch labelPairValue(m.GetLabel(), "result") {
+			case "success":
+				sawSuccess = true
+			case "fail_open":
+				sawFailOpen = true
+			default:
+				t.Fatalf("unexpected result label %q", labelPairValue(m.GetLabel(), "result"))
+			}
+			durationCount += m.GetHistogram().GetSampleCount()
+		}
+	}
+	return durationCount, sawSuccess, sawFailOpen
+}
+
+func assertFailOpenFamily(t *testing.T, mfs []*dto.MetricFamily) uint64 {
+	t.Helper()
+	var failOpenCount uint64
+	for _, mf := range mfs {
+		if mf.GetName() != "ibex_proxy_response_pipeline_stage_fail_open_total" {
+			continue
+		}
+		for _, m := range mf.GetMetric() {
+			require.Equal(t, "noop", labelPairValue(m.GetLabel(), "stage"))
+			failOpenCount += uint64(m.GetCounter().GetValue())
+		}
+	}
+	return failOpenCount
+}
+
 func TestUnit_ObserveResponsePipelineStageDuration_Registered(t *testing.T) {
 	reg := NewProxy("response-pipeline-metrics-test")
 	reg.ObserveResponsePipelineStageDuration("noop", "success", 0.001)
@@ -34,33 +74,9 @@ func TestUnit_ObserveResponsePipelineStageDuration_Registered(t *testing.T) {
 	mfs, err := reg.Gatherer().Gather()
 	require.NoError(t, err)
 
-	var durationCount, failOpenCount uint64
-	var sawSuccess, sawFailOpen bool
-	for _, mf := range mfs {
-		switch mf.GetName() {
-		case "ibex_proxy_response_pipeline_stage_duration_seconds":
-			require.Equal(t, dto.MetricType_HISTOGRAM, mf.GetType())
-			for _, m := range mf.GetMetric() {
-				stage := labelPairValue(m.GetLabel(), "stage")
-				result := labelPairValue(m.GetLabel(), "result")
-				require.Equal(t, "noop", stage)
-				switch result {
-				case "success":
-					sawSuccess = true
-				case "fail_open":
-					sawFailOpen = true
-				default:
-					t.Fatalf("unexpected result label %q", result)
-				}
-				durationCount += m.GetHistogram().GetSampleCount()
-			}
-		case "ibex_proxy_response_pipeline_stage_fail_open_total":
-			for _, m := range mf.GetMetric() {
-				require.Equal(t, "noop", labelPairValue(m.GetLabel(), "stage"))
-				failOpenCount += uint64(m.GetCounter().GetValue())
-			}
-		}
-	}
+	durationCount, sawSuccess, sawFailOpen := assertDurationFamily(t, mfs)
+	failOpenCount := assertFailOpenFamily(t, mfs)
+
 	require.True(t, sawSuccess)
 	require.True(t, sawFailOpen)
 	require.Equal(t, uint64(2), durationCount)
@@ -77,21 +93,16 @@ func TestUnit_ObserveResponsePipelineStageDuration_RejectsInvalidSeconds(t *test
 	mfs, err := reg.Gatherer().Gather()
 	require.NoError(t, err)
 
-	var durationCount uint64
-	for _, mf := range mfs {
-		if mf.GetName() != "ibex_proxy_response_pipeline_stage_duration_seconds" {
-			continue
-		}
-		for _, m := range mf.GetMetric() {
-			require.Equal(t, "noop", labelPairValue(m.GetLabel(), "stage"))
-			require.Equal(t, "success", labelPairValue(m.GetLabel(), "result"))
-			durationCount += m.GetHistogram().GetSampleCount()
-		}
-	}
+	durationCount, sawSuccess, sawFailOpen := assertDurationFamily(t, mfs)
+	require.True(t, sawSuccess)
+	require.False(t, sawFailOpen)
 	require.Equal(t, uint64(1), durationCount)
 }
 
 func TestUnit_IncResponsePipelineStageFailOpen_NilSafe(t *testing.T) {
 	var reg *ProxyRegistry
+	reg.IncResponsePipelineStageFailOpen("noop")
+
+	reg = &ProxyRegistry{}
 	reg.IncResponsePipelineStageFailOpen("noop")
 }

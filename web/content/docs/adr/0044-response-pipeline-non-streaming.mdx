@@ -71,7 +71,7 @@ When dirty, `Bytes()` re-encodes from `ResponseDoc` (Phase 3+).
 
 ### 4) Logging and metrics
 
-Never log `choices[].message.content`. Stage failure logs include stage name and error string only.
+Never log `choices[].message.content`. Stage failure logs include stage name and a stable `error_class` only (never raw error strings, which may echo response or directive content).
 
 Optional `PipelineObserver` records:
 
@@ -96,7 +96,7 @@ No new environment variables in G3.M1. Per-agent pipeline configuration deferred
 
 **Negative / follow-ups:**
 
-- Modified responses re-marshal from struct (unknown top-level JSON fields dropped until RawMessage preservation added).
+- Modified responses re-encode typed fields and merge preserved unknown top-level keys from upstream JSON.
 - Streaming pipeline requires G3.M2 design ADR before implementation.
 - Security-critical stages not shipped in M1 — interface only.
 

@@ -86,10 +86,11 @@ func TestUnit_ProxyStageLogger_LogsStageNotContent(t *testing.T) {
 		Writer:  &buf,
 	})
 	require.NoError(t, err)
-	proxyStageLogger{log: log}.WarnStageError(context.Background(), "redact", errors.New("stage failed"))
+	proxyStageLogger{log: log}.WarnStageError(context.Background(), "redact", errors.New("secret assistant content leaked"))
 	out := buf.String()
 	require.Contains(t, out, "redact")
-	require.Contains(t, out, "stage failed")
+	require.Contains(t, out, "stage_error")
+	require.NotContains(t, out, "secret assistant content leaked")
 	require.NotContains(t, out, "assistant")
 	require.NotContains(t, out, "message.content")
 }
