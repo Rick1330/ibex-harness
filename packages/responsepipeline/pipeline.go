@@ -87,7 +87,7 @@ func (p *Pipeline) Run(ctx context.Context, resp *ChatResponse) (*ChatResponse, 
 			}
 			p.recordStage(stage.Name(), stageResultFailOpen, start)
 			current = stageEntry
-			return current, nil
+			continue
 		}
 		p.recordStage(stage.Name(), stageResultSuccess, start)
 		if next != nil {

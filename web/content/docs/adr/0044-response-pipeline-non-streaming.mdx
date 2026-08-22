@@ -48,8 +48,8 @@ type SecurityCritical interface {
 ```
 
 - `Pipeline.Run` executes stages in order.
-- **Fail-open:** non-critical stage errors log (stage name + error class), restore a pre-stage snapshot (so in-place mutations from the failing stage are discarded), and return the last good response.
-- **Fail-closed:** stages implementing `SecurityCritical` with `SecurityCritical() == true` propagate errors to the proxy (mapped to 502/503 envelope).
+- **Fail-open:** non-critical stage errors log (stage name + error class), restore a pre-stage snapshot (so in-place mutations from the failing stage are discarded), and **continue** with subsequent stages.
+- **Fail-closed:** stages implementing `SecurityCritical` with `SecurityCritical() == true` propagate errors to the proxy as `ProviderError` with HTTP **502** via `providerErr502` (client envelope maps to provider-unavailable **503** through existing `MapError`).
 
 ### 2) Raw-byte preservation (noop default)
 

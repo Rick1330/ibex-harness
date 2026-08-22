@@ -3,11 +3,11 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=coverage-responsepipeline-gate_lib.sh
+source "$ROOT/infra/scripts/coverage-responsepipeline-gate_lib.sh"
+
 MIN_RAW="${MIN_COVERAGE:-95}"
-if ! [[ "$MIN_RAW" =~ ^[0-9]+$ ]]; then
-  echo "MIN_COVERAGE must be an integer, got: $MIN_RAW"
-  exit 1
-fi
+validate_min_coverage "$MIN_RAW"
 MIN="$MIN_RAW"
 
 cd "$ROOT"
@@ -24,17 +24,12 @@ go test -count=1 -coverprofile="$BOOT_PROFILE" ./services/proxy/internal/bootstr
 go test -count=1 -coverprofile="$HTTP_PROFILE" ./services/proxy/internal/http/...
 
 FILTERED="$TMPDIR/scoped.out"
-{
-  grep -E '^mode:' "$RP_PROFILE"
-  grep -vE '^mode:' "$RP_PROFILE"
-  grep -vE '^mode:' "$BOOT_PROFILE" | grep 'responsepipeline\.go'
-  grep -vE '^mode:' "$HTTP_PROFILE" | grep 'chat_provider\.go' | awk -F: '$2 >= 149 && $2 <= 174 { print }'
-} > "$FILTERED"
+merge_scoped_profiles "$RP_PROFILE" "$BOOT_PROFILE" "$HTTP_PROFILE" "$FILTERED"
 
-PCT=$(go tool cover -func="$FILTERED" | awk '/^total:/ { gsub(/%/,"",$3); print $3 }')
+PCT=$(coverage_pct_from_profile "$FILTERED")
 echo "response pipeline scoped coverage: ${PCT}% (minimum ${MIN}%)"
 echo "  packages/responsepipeline"
 echo "  services/proxy/internal/bootstrap/responsepipeline.go"
 echo "  services/proxy/internal/http/chat_provider.go (processResponseBody path)"
 
-awk -v pct="$PCT" -v min="$MIN" 'BEGIN { exit (pct + 0 >= min + 0) ? 0 : 1 }'
+check_coverage_threshold "$PCT" "$MIN"

@@ -1,6 +1,10 @@
 package metrics
 
-import "github.com/prometheus/client_golang/prometheus"
+import (
+	"math"
+
+	"github.com/prometheus/client_golang/prometheus"
+)
 
 func (r *ProxyRegistry) initResponsePipelineMetrics() {
 	r.responsePipelineStageDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
@@ -17,6 +21,9 @@ func (r *ProxyRegistry) initResponsePipelineMetrics() {
 // ObserveResponsePipelineStageDuration records stage execution outcome and duration.
 func (r *ProxyRegistry) ObserveResponsePipelineStageDuration(stage, result string, seconds float64) {
 	if r == nil || r.responsePipelineStageDuration == nil {
+		return
+	}
+	if seconds < 0 || math.IsNaN(seconds) || math.IsInf(seconds, 0) {
 		return
 	}
 	r.responsePipelineStageDuration.WithLabelValues(stage, result).Observe(seconds)

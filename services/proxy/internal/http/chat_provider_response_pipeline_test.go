@@ -60,6 +60,8 @@ func TestUnit_processResponseBody_securityCriticalReturnsProviderError502(t *tes
 	var pe *provider.ProviderError
 	require.ErrorAs(t, err, &pe)
 	require.Equal(t, http.StatusBadGateway, pe.StatusCode)
+	require.Equal(t, errMsgResponsePipelineStageFailed, pe.ProviderErrMsg)
+	require.NotContains(t, pe.ProviderErrMsg, "blocked")
 }
 
 func TestUnit_processResponseBody_cancelledContext(t *testing.T) {
@@ -74,21 +76,6 @@ func TestUnit_processResponseBody_cancelledContext(t *testing.T) {
 	require.Error(t, err)
 	var pe *provider.ProviderError
 	require.ErrorAs(t, err, &pe)
-}
-
-func TestUnit_processResponseBody_bytesMarshalError(t *testing.T) {
-	t.Parallel()
-	body := []byte(mockllm.MockJSONBody())
-	h := chatCompletionHandler{
-		responsePipeline: responsepipeline.NewPipeline([]responsepipeline.Stage{
-			responsepipeline.ForceBytesErrorStage{},
-		}),
-	}
-	_, err := h.processResponseBody(context.Background(), "openai", body)
-	require.Error(t, err)
-	var pe *provider.ProviderError
-	require.ErrorAs(t, err, &pe)
-	require.Equal(t, http.StatusBadGateway, pe.StatusCode)
 }
 
 func TestUnit_processResponseBody_modifiedStageReturnsReEncodedBody(t *testing.T) {

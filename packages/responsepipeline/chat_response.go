@@ -3,7 +3,6 @@ package responsepipeline
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 )
@@ -40,10 +39,10 @@ type Usage struct {
 
 // ChatResponse wraps upstream bytes and a typed view for pipeline stages.
 type ChatResponse struct {
-	raw           []byte
-	doc           ResponseDoc
-	dirty         bool
-	forceBytesErr bool // test-only: ForceBytesErrorStage
+	raw          []byte
+	doc          ResponseDoc
+	dirty        bool
+	errOnMarshal error // set only from export_test.go for marshal-failure tests
 }
 
 // Decode validates and parses an OpenAI-shaped chat completion JSON body.
@@ -106,8 +105,8 @@ func (c *ChatResponse) Bytes() ([]byte, error) {
 	if !c.dirty {
 		return c.raw, nil
 	}
-	if c.forceBytesErr {
-		return nil, fmt.Errorf("marshal chat response: %w", errors.New("forced"))
+	if c.errOnMarshal != nil {
+		return nil, fmt.Errorf("marshal chat response: %w", c.errOnMarshal)
 	}
 	out, err := json.Marshal(c.doc)
 	if err != nil {
@@ -121,7 +120,7 @@ func (c *ChatResponse) clone() *ChatResponse {
 		return nil
 	}
 	cp := &ChatResponse{
-		raw:   bytes.Clone(c.raw),
+		raw:   c.raw,
 		doc:   c.doc,
 		dirty: c.dirty,
 	}

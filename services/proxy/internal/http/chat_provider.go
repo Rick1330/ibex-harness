@@ -14,6 +14,15 @@ import (
 	"github.com/Rick1330/ibex-harness/services/proxy/internal/llm"
 )
 
+const (
+	// ResponsePipelineTimeout bounds non-streaming pipeline stage execution on the success path.
+	ResponsePipelineTimeout = 50 * time.Millisecond
+
+	errMsgInvalidProviderResponseJSON = "invalid provider response JSON"
+	errMsgResponsePipelineStageFailed = "response pipeline stage failed"
+	errMsgResponsePipelineSerialize   = "failed to serialize processed response"
+)
+
 type chatForwardParams struct {
 	w      http.ResponseWriter
 	r      *http.Request
@@ -119,7 +128,9 @@ func (h chatCompletionHandler) writeProviderSuccess(p providerSuccessParams) {
 		})
 		return
 	}
-	out, err := h.processResponseBody(p.r.Context(), p.providerName, body)
+	pipelineCtx, cancel := context.WithTimeout(p.r.Context(), ResponsePipelineTimeout)
+	defer cancel()
+	out, err := h.processResponseBody(pipelineCtx, p.providerName, body)
 	if err != nil {
 		h.writeProviderFailure(providerFailureParams{
 			w: p.w, r: p.r, err: err, requestID: requestIDFromContext(p.r.Context()),
@@ -149,18 +160,30 @@ func (h chatCompletionHandler) writeProviderSuccess(p providerSuccessParams) {
 func (h chatCompletionHandler) processResponseBody(ctx context.Context, providerName string, body []byte) ([]byte, error) {
 	chat, err := responsepipeline.Decode(body)
 	if err != nil {
-		return nil, providerErr502(providerName, "invalid provider response JSON")
+		return nil, providerErr502(providerName, errMsgInvalidProviderResponseJSON)
 	}
 	if h.responsePipeline == nil {
 		return body, nil
 	}
 	processed, err := h.responsePipeline.Run(ctx, chat)
 	if err != nil {
-		return nil, providerErr502(providerName, err.Error())
+		if h.log != nil {
+			h.log.WarnCtx(ctx, "response pipeline stage failed; fail-closed",
+				"provider", providerName,
+				"error", err,
+			)
+		}
+		return nil, providerErr502(providerName, errMsgResponsePipelineStageFailed)
 	}
 	out, err := processed.Bytes()
 	if err != nil {
-		return nil, providerErr502(providerName, "invalid provider response JSON")
+		if h.log != nil {
+			h.log.WarnCtx(ctx, "response pipeline serialization failed",
+				"provider", providerName,
+				"error", err,
+			)
+		}
+		return nil, providerErr502(providerName, errMsgResponsePipelineSerialize)
 	}
 	return out, nil
 }

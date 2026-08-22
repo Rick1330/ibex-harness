@@ -51,6 +51,7 @@ coverage-gate: ## Fail if merged coverage profile is below MIN_COVERAGE (default
 	@"$(BASH)" infra/scripts/coverage-gate.sh coverage-go-merged.out
 
 coverage-responsepipeline-gate: ## Fail if scoped response-pipeline coverage is below MIN_COVERAGE (default 95)
+	@"$(BASH)" infra/scripts/coverage-responsepipeline-gate_test.sh
 	@"$(BASH)" infra/scripts/coverage-responsepipeline-gate.sh
 
 compose-dev-up: ## Start local development dependencies

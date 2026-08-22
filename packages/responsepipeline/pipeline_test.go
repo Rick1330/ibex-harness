@@ -171,6 +171,7 @@ func TestUnit_Pipeline_CancelledContextBetweenStages(t *testing.T) {
 	resp, err := Decode(body)
 	require.NoError(t, err)
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	s1 := stubStage{name: "first", fn: func(r *ChatResponse) (*ChatResponse, error) {
 		cancel()
 		return r, nil
@@ -374,10 +375,64 @@ func TestUnit_ForceBytesErrorStage_BytesFails(t *testing.T) {
 	body := []byte(`{"id":"x","object":"chat.completion","choices":[]}`)
 	resp, err := Decode(body)
 	require.NoError(t, err)
-	out, err := NewPipeline([]Stage{ForceBytesErrorStage{}}).Run(context.Background(), resp)
+	out, err := NewPipeline([]Stage{MarshalFailStageForTest()}).Run(context.Background(), resp)
 	require.NoError(t, err)
 	_, err = out.Bytes()
 	require.Error(t, err)
+}
+
+func TestUnit_Pipeline_FailOpenContinuesToLaterSecurityCriticalStage(t *testing.T) {
+	body := []byte(`{"id":"x","object":"chat.completion","choices":[]}`)
+	resp, err := Decode(body)
+	require.NoError(t, err)
+	wantErr := errors.New("guard blocked")
+	_, err = NewPipeline([]Stage{
+		stubStage{name: "mutate", fn: func(r *ChatResponse) (*ChatResponse, error) {
+			require.NoError(t, r.Mutate(func(doc *ResponseDoc) error {
+				doc.Model = "kept"
+				return nil
+			}))
+			return r, nil
+		}},
+		stubStage{name: "fail-open", fn: func(*ChatResponse) (*ChatResponse, error) {
+			return nil, errors.New("soft fail")
+		}},
+		criticalStubStage{stubStage{
+			name: "guard",
+			fn:   func(*ChatResponse) (*ChatResponse, error) { return nil, wantErr },
+		}},
+	}).Run(context.Background(), resp)
+	require.ErrorIs(t, err, wantErr)
+}
+
+func TestUnit_Pipeline_FailOpenContinuesToLaterNonCriticalStage(t *testing.T) {
+	body := []byte(`{"id":"x","object":"chat.completion","choices":[],"model":"orig"}`)
+	resp, err := Decode(body)
+	require.NoError(t, err)
+	var thirdRan bool
+	out, err := NewPipeline([]Stage{
+		stubStage{name: "mutate", fn: func(r *ChatResponse) (*ChatResponse, error) {
+			require.NoError(t, r.Mutate(func(doc *ResponseDoc) error {
+				doc.Model = "kept"
+				return nil
+			}))
+			return r, nil
+		}},
+		stubStage{name: "fail-open", fn: func(*ChatResponse) (*ChatResponse, error) {
+			return nil, errors.New("soft fail")
+		}},
+		stubStage{name: "third", fn: func(r *ChatResponse) (*ChatResponse, error) {
+			thirdRan = true
+			require.NoError(t, r.Mutate(func(doc *ResponseDoc) error {
+				doc.Model = "final"
+				return nil
+			}))
+			return r, nil
+		}},
+	}).Run(context.Background(), resp)
+	require.NoError(t, err)
+	require.True(t, thirdRan)
+	require.Equal(t, "final", out.Doc().Model)
 }
 
 type stubStage struct {
