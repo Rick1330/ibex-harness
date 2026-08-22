@@ -136,3 +136,18 @@ func pipelineChatHandler(t *testing.T, upstream string, configure func(*RouterDe
 	require.NoError(t, err)
 	return chatRouterWithProvider(t, reg, configure)
 }
+
+func assertHTTPResponse(t *testing.T, rec *httptest.ResponseRecorder, wantStatus int, wantBody string, contains, notContains []string) {
+	t.Helper()
+	require.Equal(t, wantStatus, rec.Code)
+	body := rec.Body.String()
+	if wantBody != "" {
+		require.Equal(t, wantBody, body)
+	}
+	for _, s := range contains {
+		require.Contains(t, body, s)
+	}
+	for _, s := range notContains {
+		require.NotContains(t, body, s)
+	}
+}
