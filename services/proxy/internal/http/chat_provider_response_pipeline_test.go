@@ -151,7 +151,9 @@ func TestUnit_ChatCompletions_responsePipelineScenarios(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			rec := postDefaultPipelineChat(t, pipelineChatHandler(t, tc.upstream, tc.configure))
-			assertHTTPResponse(t, rec, tc.wantStatus, tc.wantBody, tc.wantContains, tc.wantNotContains)
+			assertHTTPResponse(t, rec, httpResponseExpect{
+				status: tc.wantStatus, body: tc.wantBody, contains: tc.wantContains, notContains: tc.wantNotContains,
+			})
 		})
 	}
 }
