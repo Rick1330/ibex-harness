@@ -44,7 +44,7 @@ func TestUnit_ObserveTokenizerCount_Registered(t *testing.T) {
 
 func TestUnit_TokenizerObserver_SuccessAndCancel(t *testing.T) {
 	reg := NewProxy("tokenizer-metrics-test")
-	tokReg, err := tokenizer.NewLocalRegistry("")
+	tokReg, err := tokenizer.NewLocalRegistry(tokenizer.LocalRegistryConfig{})
 	require.NoError(t, err)
 	tok, err := tokReg.ForFamily(provider.TokenizerFamilyO200kBase)
 	require.NoError(t, err)
@@ -70,7 +70,7 @@ func TestUnit_TokenizerObserver_SuccessAndCancel(t *testing.T) {
 
 func TestUnit_TokenizerObserver_CountForModel(t *testing.T) {
 	reg := NewProxy("tokenizer-metrics-test")
-	tokReg, err := tokenizer.NewLocalRegistry("")
+	tokReg, err := tokenizer.NewLocalRegistry(tokenizer.LocalRegistryConfig{})
 	require.NoError(t, err)
 	n, err := tokenizer.CountForModelWithObserver(tokenizer.ModelCountObserveRequest{
 		ModelCountRequest: tokenizer.ModelCountRequest{

@@ -22,7 +22,7 @@ func (s *stubObserver) ObserveTokenizerCount(family, result string, _ float64) {
 }
 
 func TestUnit_CountWithObserver_RecordsSuccessAndError(t *testing.T) {
-	reg, err := NewLocalRegistry("")
+	reg, err := NewLocalRegistry(LocalRegistryConfig{})
 	require.NoError(t, err)
 	tok, err := reg.ForFamily(provider.TokenizerFamilyO200kBase)
 	require.NoError(t, err)
@@ -44,7 +44,7 @@ func TestUnit_CountWithObserver_RecordsSuccessAndError(t *testing.T) {
 }
 
 func TestUnit_CountWithObserver_NilObserver(t *testing.T) {
-	reg, err := NewLocalRegistry("")
+	reg, err := NewLocalRegistry(LocalRegistryConfig{})
 	require.NoError(t, err)
 	tok, err := reg.ForFamily(provider.TokenizerFamilyO200kBase)
 	require.NoError(t, err)
@@ -54,7 +54,7 @@ func TestUnit_CountWithObserver_NilObserver(t *testing.T) {
 }
 
 func TestUnit_CountForModelWithObserver_SkipsMetricsWhenObserverNil(t *testing.T) {
-	reg, err := NewLocalRegistry("")
+	reg, err := NewLocalRegistry(LocalRegistryConfig{})
 	require.NoError(t, err)
 	n, err := CountForModelWithObserver(ModelCountObserveRequest{
 		ModelCountRequest: ModelCountRequest{
@@ -82,7 +82,7 @@ func TestUnit_ObserverFamilyLabel_ReturnsUnknownForBlankFamily(t *testing.T) {
 
 func TestUnit_CountForModelWithObserver_ErrorPaths(t *testing.T) {
 	obs := &stubObserver{}
-	reg, err := NewLocalRegistry("")
+	reg, err := NewLocalRegistry(LocalRegistryConfig{})
 	require.NoError(t, err)
 
 	_, err = CountForModelWithObserver(ModelCountObserveRequest{
@@ -111,7 +111,7 @@ func TestUnit_CountForModelWithObserver_ErrorPaths(t *testing.T) {
 
 func TestUnit_CountForModelWithObserver_PreservesFamilyOnCountFailure(t *testing.T) {
 	obs := &stubObserver{}
-	reg, err := NewLocalRegistry("")
+	reg, err := NewLocalRegistry(LocalRegistryConfig{})
 	require.NoError(t, err)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

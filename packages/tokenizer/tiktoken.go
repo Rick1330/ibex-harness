@@ -22,8 +22,21 @@ type tiktokenBackend struct {
 	err    error
 }
 
-func newTiktokenBackend(family, encoding string, loader tiktoken.BpeLoader) *tiktokenBackend {
-	return &tiktokenBackend{family: family, enc: encoding, loader: loader}
+// LocalRegistryConfig controls optional operator asset overrides for NewLocalRegistry.
+type LocalRegistryConfig struct {
+	AssetDir string
+}
+
+type tiktokenBackendSpec struct {
+	family   string
+	encoding string
+	loader   tiktoken.BpeLoader
+}
+
+type countText string
+
+func newTiktokenBackend(spec tiktokenBackendSpec) *tiktokenBackend {
+	return &tiktokenBackend{family: spec.family, enc: spec.encoding, loader: spec.loader}
 }
 
 func (t *tiktokenBackend) Family() string { return t.family }
@@ -34,7 +47,7 @@ func (t *tiktokenBackend) Count(ctx context.Context, text string) (int, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
-	if err := validateCountInput(text); err != nil {
+	if err := validateCountInput(countText(text)); err != nil {
 		return 0, err
 	}
 	if text == "" {
@@ -56,8 +69,8 @@ func (t *tiktokenBackend) load() (*tiktoken.Tiktoken, error) {
 
 // NewLocalRegistry builds a registry with bundled OpenAI tiktoken backends and
 // the claude estimate backend. assetDir overrides BPE files when present.
-func NewLocalRegistry(assetDir string) (*Registry, error) {
-	assetDir = strings.TrimSpace(assetDir)
+func NewLocalRegistry(cfg LocalRegistryConfig) (*Registry, error) {
+	assetDir := assetDirPath(strings.TrimSpace(cfg.AssetDir))
 	if assetDir != "" {
 		if err := validateAssetDir(assetDir); err != nil {
 			return nil, err
@@ -65,9 +78,13 @@ func NewLocalRegistry(assetDir string) (*Registry, error) {
 	}
 	loader := newBundledBpeLoader(assetDir)
 	families := map[string]Tokenizer{
-		provider.TokenizerFamilyO200kBase:  newTiktokenBackend(provider.TokenizerFamilyO200kBase, tiktoken.MODEL_O200K_BASE, loader),
-		provider.TokenizerFamilyCL100kBase: newTiktokenBackend(provider.TokenizerFamilyCL100kBase, tiktoken.MODEL_CL100K_BASE, loader),
-		provider.TokenizerFamilyClaude:     newClaudeEstimate(),
+		provider.TokenizerFamilyO200kBase: newTiktokenBackend(tiktokenBackendSpec{
+			family: provider.TokenizerFamilyO200kBase, encoding: tiktoken.MODEL_O200K_BASE, loader: loader,
+		}),
+		provider.TokenizerFamilyCL100kBase: newTiktokenBackend(tiktokenBackendSpec{
+			family: provider.TokenizerFamilyCL100kBase, encoding: tiktoken.MODEL_CL100K_BASE, loader: loader,
+		}),
+		provider.TokenizerFamilyClaude: newClaudeEstimate(),
 	}
 	reg, err := NewRegistry(families)
 	if err != nil {
@@ -79,8 +96,8 @@ func NewLocalRegistry(assetDir string) (*Registry, error) {
 	return reg, nil
 }
 
-func validateAssetDir(assetDir string) error {
-	root, err := filepath.Abs(filepath.Clean(assetDir))
+func validateAssetDir(assetDir assetDirPath) error {
+	root, err := filepath.Abs(filepath.Clean(string(assetDir)))
 	if err != nil {
 		return fmt.Errorf("IBEX_TOKENIZER_ASSET_DIR: %w", err)
 	}
@@ -165,7 +182,7 @@ func verifySelfTestVector(reg *Registry, ctx context.Context, v SelfTestVector) 
 	return nil
 }
 
-func validateCountInput(text string) error {
+func validateCountInput(text countText) error {
 	if len(text) > MaxCountTextBytes {
 		return fmt.Errorf("%w: %d bytes (max %d)", ErrTextTooLong, len(text), MaxCountTextBytes)
 	}

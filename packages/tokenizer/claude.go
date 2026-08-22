@@ -25,7 +25,7 @@ func (c *claudeEstimate) Count(ctx context.Context, text string) (int, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
-	if err := validateCountInput(text); err != nil {
+	if err := validateCountInput(countText(text)); err != nil {
 		return 0, err
 	}
 	if text == "" {

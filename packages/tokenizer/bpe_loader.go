@@ -9,7 +9,6 @@ import (
 	"io/fs"
 	"os"
 	"path"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -43,13 +42,13 @@ var (
 )
 
 type bundledBpeLoader struct {
-	assetDir string
+	assetDir assetDirPath
 	offline  tiktoken.BpeLoader
 }
 
-func newBundledBpeLoader(assetDir string) *bundledBpeLoader {
+func newBundledBpeLoader(assetDir assetDirPath) *bundledBpeLoader {
 	return &bundledBpeLoader{
-		assetDir: strings.TrimSpace(assetDir),
+		assetDir: assetDirPath(strings.TrimSpace(string(assetDir))),
 		offline:  tiktoken_loader.NewOfflineLoader(),
 	}
 }
@@ -57,7 +56,7 @@ func newBundledBpeLoader(assetDir string) *bundledBpeLoader {
 func (l *bundledBpeLoader) LoadTiktokenBpe(tiktokenBpeFile string) (map[string]int, error) {
 	base := path.Base(tiktokenBpeFile)
 	if l.assetDir != "" {
-		ranks, found, err := loadBpeFromAssetDir(l.assetDir, base)
+		ranks, found, err := loadBpeFromAssetDir(l.assetDir, assetBasename(base))
 		if err != nil {
 			return nil, err
 		}
@@ -66,23 +65,23 @@ func (l *bundledBpeLoader) LoadTiktokenBpe(tiktokenBpeFile string) (map[string]i
 		}
 	}
 	if base == "o200k_base.tiktoken" {
-		return parseBpeLines(string(embeddedO200kBPE))
+		return parseBpeLines(bpeVocabText(embeddedO200kBPE))
 	}
 	return l.offline.LoadTiktokenBpe(tiktokenBpeFile)
 }
 
-func loadBpeFromAssetDir(assetDir, base string) (map[string]int, bool, error) {
-	safeBase, root, err := jailedAssetLocation(assetDir, base)
+func loadBpeFromAssetDir(assetDir assetDirPath, base assetBasename) (map[string]int, bool, error) {
+	ref, err := jailedAssetLocation(assetDir, base)
 	if err != nil {
 		return nil, false, err
 	}
-	assetRoot, err := os.OpenRoot(root)
+	assetRoot, err := os.OpenRoot(string(ref.root))
 	if err != nil {
 		return nil, false, err
 	}
-	defer assetRoot.Close()
+	defer func() { _ = assetRoot.Close() }()
 
-	f, found, err := openJailedAssetFile(assetRoot, safeBase)
+	f, found, err := openJailedAssetFile(assetRoot, ref)
 	if err != nil || !found {
 		return nil, found, err
 	}
@@ -92,23 +91,24 @@ func loadBpeFromAssetDir(assetDir, base string) (map[string]int, bool, error) {
 	if err != nil {
 		return nil, true, err
 	}
-	ranks, err := parseBpeLines(string(raw))
+	ranks, err := parseBpeLines(bpeVocabText(raw))
 	return ranks, true, err
 }
 
-func openJailedAssetFile(assetRoot *os.Root, safeBase string) (*os.File, bool, error) {
-	info, err := assetRoot.Lstat(safeBase)
+func openJailedAssetFile(assetRoot *os.Root, ref jailedAssetRef) (*os.File, bool, error) {
+	name := string(ref.basename)
+	info, err := assetRoot.Lstat(name)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, false, nil
 		}
 		return nil, false, err
 	}
-	if err := rejectNonRegularAsset(info, safeBase); err != nil {
+	if err := rejectNonRegularAsset(info, ref.basename); err != nil {
 		return nil, true, err
 	}
 
-	f, err := assetRoot.OpenFile(safeBase, os.O_RDONLY|openFlagNoFollow(), 0)
+	f, err := assetRoot.OpenFile(name, os.O_RDONLY|openFlagNoFollow(), 0)
 	if err != nil {
 		return nil, true, err
 	}
@@ -117,14 +117,14 @@ func openJailedAssetFile(assetRoot *os.Root, safeBase string) (*os.File, bool, e
 		_ = f.Close()
 		return nil, true, err
 	}
-	if err := rejectNonRegularAsset(st, safeBase); err != nil {
+	if err := rejectNonRegularAsset(st, ref.basename); err != nil {
 		_ = f.Close()
 		return nil, true, err
 	}
 	return f, true, nil
 }
 
-func rejectNonRegularAsset(info fs.FileInfo, label string) error {
+func rejectNonRegularAsset(info fs.FileInfo, label assetBasename) error {
 	if info.Mode()&os.ModeSymlink != 0 {
 		return fmt.Errorf("%w: %q", ErrAssetSymlink, label)
 	}
@@ -132,52 +132,6 @@ func rejectNonRegularAsset(info fs.FileInfo, label string) error {
 		return fmt.Errorf("%w: %q", ErrAssetNotRegular, label)
 	}
 	return nil
-}
-
-func jailedAssetPath(assetDir, base string) (string, error) {
-	safeBase, root, err := jailedAssetLocation(assetDir, base)
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(root, safeBase), nil
-}
-
-func jailedAssetLocation(assetDir, base string) (safeBase, root string, err error) {
-	safeBase, err = sanitizeAssetBasename(base)
-	if err != nil {
-		return "", "", err
-	}
-	root, err = filepath.Abs(filepath.Clean(assetDir))
-	if err != nil {
-		return "", "", err
-	}
-	resolved := filepath.Join(root, safeBase)
-	if err := assertPathUnderRoot(root, resolved, safeBase); err != nil {
-		return "", "", err
-	}
-	return safeBase, root, nil
-}
-
-func assertPathUnderRoot(root, resolved, label string) error {
-	rel, err := filepath.Rel(root, resolved)
-	if err != nil || strings.HasPrefix(rel, "..") {
-		return fmt.Errorf("%w: %q", ErrAssetPathEscape, label)
-	}
-	return nil
-}
-
-func sanitizeAssetBasename(base string) (string, error) {
-	trimmed := strings.TrimSpace(base)
-	if trimmed == "" {
-		return "", fmt.Errorf("%w: invalid asset basename %q", ErrAssetPathEscape, base)
-	}
-	if trimmed != path.Base(trimmed) {
-		return "", fmt.Errorf("%w: invalid asset basename %q", ErrAssetPathEscape, base)
-	}
-	if strings.Contains(trimmed, string(os.PathSeparator)) {
-		return "", fmt.Errorf("%w: invalid asset basename %q", ErrAssetPathEscape, base)
-	}
-	return trimmed, nil
 }
 
 func readBoundedFile(r io.Reader, maxBytes int64) ([]byte, error) {
@@ -192,8 +146,8 @@ func readBoundedFile(r io.Reader, maxBytes int64) ([]byte, error) {
 	return raw, nil
 }
 
-func readBoundedFSFile(fsys fs.FS, name string, maxBytes int64) ([]byte, error) {
-	f, err := fsys.Open(name)
+func readBoundedFSFile(fsys fs.FS, name assetBasename, maxBytes int64) ([]byte, error) {
+	f, err := fsys.Open(string(name))
 	if err != nil {
 		return nil, err
 	}
@@ -201,19 +155,23 @@ func readBoundedFSFile(fsys fs.FS, name string, maxBytes int64) ([]byte, error) 
 	return readBoundedFile(f, maxBytes)
 }
 
-func parseBpeLines(contents string) (map[string]int, error) {
-	if strings.TrimSpace(contents) == "" {
+type bpeVocabText []byte
+
+func (t bpeVocabText) string() string { return string(t) }
+
+func parseBpeLines(contents bpeVocabText) (map[string]int, error) {
+	if strings.TrimSpace(contents.string()) == "" {
 		return nil, errEmptyBpeVocab
 	}
 	bpeRanks := make(map[string]int)
 	seenRanks := make(map[int]struct{})
 	lineNo := 0
-	for _, line := range strings.Split(contents, "\n") {
+	for _, line := range strings.Split(contents.string(), "\n") {
 		if line == "" {
 			continue
 		}
 		lineNo++
-		if err := addBpeLine(bpeRanks, seenRanks, lineNo, line); err != nil {
+		if err := addBpeLine(bpeRanks, seenRanks, bpeInputLine{no: lineNo, text: bpeLineText(line)}); err != nil {
 			return nil, err
 		}
 	}
@@ -226,39 +184,51 @@ func parseBpeLines(contents string) (map[string]int, error) {
 	return bpeRanks, nil
 }
 
-func addBpeLine(bpeRanks map[string]int, seenRanks map[int]struct{}, lineNo int, line string) error {
-	token, rank, err := parseBpeLine(line)
+type bpeLineText string
+
+type bpeInputLine struct {
+	no   int
+	text bpeLineText
+}
+
+type bpeToken struct {
+	value string
+	rank  int
+}
+
+func addBpeLine(bpeRanks map[string]int, seenRanks map[int]struct{}, line bpeInputLine) error {
+	token, err := parseBpeLine(line.text)
 	if err != nil {
-		return fmt.Errorf("line %d: %w", lineNo, err)
+		return fmt.Errorf("line %d: %w", line.no, err)
 	}
-	if _, dup := bpeRanks[token]; dup {
-		return fmt.Errorf("line %d: %w", lineNo, errDuplicateBpeToken)
+	if _, dup := bpeRanks[token.value]; dup {
+		return fmt.Errorf("line %d: %w", line.no, errDuplicateBpeToken)
 	}
-	if _, dup := seenRanks[rank]; dup {
-		return fmt.Errorf("line %d: %w", lineNo, errDuplicateBpeRank)
+	if _, dup := seenRanks[token.rank]; dup {
+		return fmt.Errorf("line %d: %w", line.no, errDuplicateBpeRank)
 	}
-	if rank < 0 {
-		return fmt.Errorf("line %d: %w", lineNo, errNegativeBpeRank)
+	if token.rank < 0 {
+		return fmt.Errorf("line %d: %w", line.no, errNegativeBpeRank)
 	}
-	bpeRanks[token] = rank
-	seenRanks[rank] = struct{}{}
+	bpeRanks[token.value] = token.rank
+	seenRanks[token.rank] = struct{}{}
 	return nil
 }
 
-func parseBpeLine(line string) (token string, rank int, err error) {
-	parts := strings.Split(line, " ")
+func parseBpeLine(line bpeLineText) (bpeToken, error) {
+	parts := strings.Split(string(line), " ")
 	if len(parts) != 2 {
-		return "", 0, errInvalidBpeLine
+		return bpeToken{}, errInvalidBpeLine
 	}
 	decoded, err := base64.StdEncoding.DecodeString(parts[0])
 	if err != nil {
-		return "", 0, err
+		return bpeToken{}, err
 	}
-	rank, err = strconv.Atoi(parts[1])
+	rank, err := strconv.Atoi(parts[1])
 	if err != nil {
-		return "", 0, err
+		return bpeToken{}, err
 	}
-	return string(decoded), rank, nil
+	return bpeToken{value: string(decoded), rank: rank}, nil
 }
 
 func validateContiguousRanks(seen map[int]struct{}, count int) error {

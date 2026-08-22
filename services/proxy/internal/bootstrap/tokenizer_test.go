@@ -10,10 +10,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestUnit_BuildTokenizerRegistry_MockMode(t *testing.T) {
+func mockTokenizerConfig() config.Config {
 	cfg := config.Config{LLMMode: "mock"}
 	cfg.ApplyDefaults()
-	reg, err := buildTokenizerRegistry(cfg)
+	return cfg
+}
+
+func TestUnit_BuildTokenizerRegistry_MockMode(t *testing.T) {
+	reg, err := buildTokenizerRegistry(mockTokenizerConfig())
 	require.NoError(t, err)
 	require.NotNil(t, reg)
 }
@@ -33,36 +37,43 @@ func TestUnit_BuildTokenizerRegistry_RejectsDualMode(t *testing.T) {
 	require.Contains(t, err.Error(), "IBEX_TOKENIZER_MODE")
 }
 
-func TestUnit_BuildLocalTokenizerRegistry_RejectsMissingAssetDir(t *testing.T) {
-	cfg := config.Config{
-		LLMMode: "mock",
-		Tokenizer: config.TokenizerConfig{
-			AssetDir: filepath.Join(t.TempDir(), "missing-subdir"),
+func TestUnit_BuildLocalTokenizerRegistry_RejectsInvalidConfig(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  config.Config
+	}{
+		{
+			name: "missing asset dir",
+			cfg: config.Config{
+				LLMMode: "mock",
+				Tokenizer: config.TokenizerConfig{
+					AssetDir: filepath.Join(t.TempDir(), "missing-subdir"),
+				},
+			},
+		},
+		{
+			name: "live catalog without api key",
+			cfg: config.Config{
+				LLMMode: "openai",
+				OpenAI: config.OpenAIConfig{
+					ExtraModels: []string{"custom-model"},
+				},
+			},
 		},
 	}
-	cfg.ApplyDefaults()
-	_, err := buildLocalTokenizerRegistry(cfg)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "tokenizer registry")
-}
-
-func TestUnit_BuildLocalTokenizerRegistry_RejectsLiveCatalogWithoutAPIKey(t *testing.T) {
-	cfg := config.Config{
-		LLMMode: "openai",
-		OpenAI: config.OpenAIConfig{
-			ExtraModels: []string{"custom-model"},
-		},
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := tc.cfg
+			cfg.ApplyDefaults()
+			_, err := buildLocalTokenizerRegistry(cfg)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "tokenizer registry")
+		})
 	}
-	cfg.ApplyDefaults()
-	_, err := buildLocalTokenizerRegistry(cfg)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "tokenizer registry")
 }
 
 func TestUnit_NewTokenizerReadyChecker_CanceledContext(t *testing.T) {
-	cfg := config.Config{LLMMode: "mock"}
-	cfg.ApplyDefaults()
-	reg, err := buildTokenizerRegistry(cfg)
+	reg, err := buildTokenizerRegistry(mockTokenizerConfig())
 	require.NoError(t, err)
 	checker := newTokenizerReadyChecker(reg)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -71,9 +82,7 @@ func TestUnit_NewTokenizerReadyChecker_CanceledContext(t *testing.T) {
 }
 
 func TestUnit_BuildTokenizerRegistry_CatalogCoverage(t *testing.T) {
-	cfg := config.Config{LLMMode: "mock"}
-	cfg.ApplyDefaults()
-	reg, err := buildTokenizerRegistry(cfg)
+	reg, err := buildTokenizerRegistry(mockTokenizerConfig())
 	require.NoError(t, err)
 	n, err := countForBuiltinModel(reg, "gpt-4o", tokenizer.VectorHelloWorld())
 	require.NoError(t, err)
@@ -81,10 +90,8 @@ func TestUnit_BuildTokenizerRegistry_CatalogCoverage(t *testing.T) {
 }
 
 func TestUnit_BuildProxyHealth_IncludesTokenizer(t *testing.T) {
-	cfg := config.Config{LLMMode: "mock"}
-	cfg.ApplyDefaults()
-	reg, err := buildTokenizerRegistry(cfg)
+	reg, err := buildTokenizerRegistry(mockTokenizerConfig())
 	require.NoError(t, err)
-	h := buildProxyHealth(cfg, nil, nil, reg)
+	h := buildProxyHealth(mockTokenizerConfig(), nil, nil, reg)
 	require.Contains(t, h.AdvisoryCheckers, "tokenizer")
 }

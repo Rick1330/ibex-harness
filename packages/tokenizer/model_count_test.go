@@ -40,7 +40,7 @@ func TestUnit_CountForModel_RejectsNilRegistry(t *testing.T) {
 
 func TestUnit_CountForModel_RejectsCanceledContext(t *testing.T) {
 	t.Parallel()
-	reg, err := NewLocalRegistry("")
+	reg, err := NewLocalRegistry(LocalRegistryConfig{})
 	require.NoError(t, err)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -53,7 +53,7 @@ func TestUnit_CountForModel_RejectsCanceledContext(t *testing.T) {
 
 func TestUnit_CountForModel_RejectsEmptyModelID(t *testing.T) {
 	t.Parallel()
-	reg, err := NewLocalRegistry("")
+	reg, err := NewLocalRegistry(LocalRegistryConfig{})
 	require.NoError(t, err)
 
 	_, err = CountForModel(ModelCountRequest{
@@ -64,7 +64,7 @@ func TestUnit_CountForModel_RejectsEmptyModelID(t *testing.T) {
 
 func TestUnit_CountForModel_RejectsMissingCatalogModel(t *testing.T) {
 	t.Parallel()
-	reg, err := NewLocalRegistry("")
+	reg, err := NewLocalRegistry(LocalRegistryConfig{})
 	require.NoError(t, err)
 	_, err = CountForModel(ModelCountRequest{
 		Ctx: context.Background(), Catalog: provider.BuiltInCapabilityCatalog(), Reg: reg, Model: "missing-model", Text: "probe",
@@ -74,7 +74,7 @@ func TestUnit_CountForModel_RejectsMissingCatalogModel(t *testing.T) {
 
 func TestUnit_CountForModel_RejectsUnknownCatalogFamily(t *testing.T) {
 	t.Parallel()
-	reg, err := NewLocalRegistry("")
+	reg, err := NewLocalRegistry(LocalRegistryConfig{})
 	require.NoError(t, err)
 	catalog := provider.CatalogFromCapabilities(provider.ModelCapability{
 		ModelID: "local", Provider: provider.CapabilityProviderOpenAI,
@@ -90,7 +90,7 @@ func TestUnit_CountForModel_RejectsUnknownCatalogFamily(t *testing.T) {
 }
 
 func TestUnit_CountForModel_CountsBuiltinModel(t *testing.T) {
-	reg, err := NewLocalRegistry("")
+	reg, err := NewLocalRegistry(LocalRegistryConfig{})
 	require.NoError(t, err)
 
 	n, err := CountForModel(ModelCountRequest{

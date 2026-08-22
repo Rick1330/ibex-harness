@@ -20,7 +20,7 @@ func buildTokenizerRegistry(cfg config.Config) (*tokenizer.Registry, error) {
 }
 
 func buildLocalTokenizerRegistry(cfg config.Config) (*tokenizer.Registry, error) {
-	reg, err := tokenizer.NewLocalRegistry(cfg.Tokenizer.AssetDir)
+	reg, err := tokenizer.NewLocalRegistry(tokenizer.LocalRegistryConfig{AssetDir: cfg.Tokenizer.AssetDir})
 	if err != nil {
 		return nil, fmt.Errorf("tokenizer registry: %w", err)
 	}

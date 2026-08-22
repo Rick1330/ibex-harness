@@ -23,7 +23,7 @@ func TestUnit_GroundTruthVectors_O200k(t *testing.T) {
 		{"The quick brown fox jumps over the lazy dog.", 10},
 		{"αβγ", 3},
 	}
-	reg, err := NewLocalRegistry("")
+	reg, err := NewLocalRegistry(LocalRegistryConfig{})
 	require.NoError(t, err)
 	tok, err := reg.ForFamily(provider.TokenizerFamilyO200kBase)
 	require.NoError(t, err)
@@ -39,7 +39,7 @@ func TestUnit_GroundTruthVectors_CL100k(t *testing.T) {
 		{"The quick brown fox jumps over the lazy dog.", 10},
 		{"αβγ", 3},
 	}
-	reg, err := NewLocalRegistry("")
+	reg, err := NewLocalRegistry(LocalRegistryConfig{})
 	require.NoError(t, err)
 	tok, err := reg.ForFamily(provider.TokenizerFamilyCL100kBase)
 	require.NoError(t, err)
@@ -62,7 +62,7 @@ func TestUnit_GroundTruthVectors_ClaudeEstimate(t *testing.T) {
 		{"The quick brown fox jumps over the lazy dog.", 13},
 		{"αβγ", 1},
 	}
-	reg, err := NewLocalRegistry("")
+	reg, err := NewLocalRegistry(LocalRegistryConfig{})
 	require.NoError(t, err)
 	tok, err := reg.ForFamily(provider.TokenizerFamilyClaude)
 	require.NoError(t, err)
