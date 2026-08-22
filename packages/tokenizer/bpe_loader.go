@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -27,11 +28,11 @@ const maxBpeAssetBytes = 64 << 20 // 64 MiB cap for operator-supplied override f
 var ErrAssetPathEscape = errors.New("tokenizer asset path escapes asset dir")
 
 var (
-	errInvalidBpeLine   = errors.New("invalid bpe line")
-	errEmptyBpeVocab    = errors.New("empty bpe vocabulary")
-	errDuplicateBpeToken = errors.New("duplicate bpe token")
-	errDuplicateBpeRank  = errors.New("duplicate bpe rank")
-	errNegativeBpeRank   = errors.New("negative bpe rank")
+	errInvalidBpeLine     = errors.New("invalid bpe line")
+	errEmptyBpeVocab      = errors.New("empty bpe vocabulary")
+	errDuplicateBpeToken  = errors.New("duplicate bpe token")
+	errDuplicateBpeRank   = errors.New("duplicate bpe rank")
+	errNegativeBpeRank    = errors.New("negative bpe rank")
 	errNonContiguousRanks = errors.New("non-contiguous bpe ranks")
 )
 
@@ -65,18 +66,18 @@ func (l *bundledBpeLoader) LoadTiktokenBpe(tiktokenBpeFile string) (map[string]i
 }
 
 func loadBpeFromAssetDir(assetDir, base string) (map[string]int, bool, error) {
-	jailed, err := jailedAssetPath(assetDir, base)
+	safeBase, root, err := jailedAssetLocation(assetDir, base)
 	if err != nil {
 		return nil, false, err
 	}
-	if _, err := os.Stat(jailed); err != nil {
-		if os.IsNotExist(err) {
+	assetFS := os.DirFS(root)
+	if _, err := fs.Stat(assetFS, safeBase); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
 			return nil, false, nil
 		}
 		return nil, false, err
 	}
-	// jailed is validated under assetDir by jailedAssetPath; basename-only override files.
-	raw, err := readBoundedFile(jailed, maxBpeAssetBytes)
+	raw, err := readBoundedFSFile(assetFS, safeBase, maxBpeAssetBytes)
 	if err != nil {
 		return nil, true, err
 	}
@@ -85,30 +86,47 @@ func loadBpeFromAssetDir(assetDir, base string) (map[string]int, bool, error) {
 }
 
 func jailedAssetPath(assetDir, base string) (string, error) {
-	if strings.TrimSpace(base) == "" || base != path.Base(base) || strings.Contains(base, string(os.PathSeparator)) {
-		return "", fmt.Errorf("%w: invalid asset basename %q", ErrAssetPathEscape, base)
-	}
-	root, err := filepath.Abs(filepath.Clean(assetDir))
+	safeBase, root, err := jailedAssetLocation(assetDir, base)
 	if err != nil {
 		return "", err
 	}
-	target, err := filepath.Abs(filepath.Join(root, base))
-	if err != nil {
-		return "", err
-	}
-	rel, err := filepath.Rel(root, target)
-	if err != nil || strings.HasPrefix(rel, "..") {
-		return "", fmt.Errorf("%w: %q", ErrAssetPathEscape, base)
-	}
-	return target, nil
+	return filepath.Join(root, safeBase), nil
 }
 
-func readBoundedFile(path string, maxBytes int64) ([]byte, error) {
-	f, err := os.Open(path)
+func jailedAssetLocation(assetDir, base string) (safeBase, root string, err error) {
+	safeBase, err = sanitizeAssetBasename(base)
+	if err != nil {
+		return "", "", err
+	}
+	root, err = filepath.Abs(filepath.Clean(assetDir))
+	if err != nil {
+		return "", "", err
+	}
+	resolved := filepath.Join(root, safeBase)
+	rel, err := filepath.Rel(root, resolved)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return "", "", fmt.Errorf("%w: %q", ErrAssetPathEscape, safeBase)
+	}
+	return safeBase, root, nil
+}
+
+func sanitizeAssetBasename(base string) (string, error) {
+	trimmed := strings.TrimSpace(base)
+	if trimmed == "" {
+		return "", fmt.Errorf("%w: invalid asset basename %q", ErrAssetPathEscape, base)
+	}
+	if trimmed != path.Base(trimmed) || strings.Contains(trimmed, string(os.PathSeparator)) {
+		return "", fmt.Errorf("%w: invalid asset basename %q", ErrAssetPathEscape, base)
+	}
+	return trimmed, nil
+}
+
+func readBoundedFSFile(fsys fs.FS, name string, maxBytes int64) ([]byte, error) {
+	f, err := fsys.Open(name)
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	limited := io.LimitReader(f, maxBytes+1)
 	raw, err := io.ReadAll(limited)
 	if err != nil {

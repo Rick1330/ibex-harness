@@ -3,6 +3,7 @@ package tokenizer
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -90,11 +91,9 @@ func validateAssetDir(assetDir string) error {
 	if !info.IsDir() {
 		return fmt.Errorf("IBEX_TOKENIZER_ASSET_DIR: not a directory")
 	}
-	f, err := os.Open(root)
-	if err != nil {
+	if _, err := fs.ReadDir(os.DirFS(root), "."); err != nil {
 		return fmt.Errorf("IBEX_TOKENIZER_ASSET_DIR: %w", err)
 	}
-	_ = f.Close()
 	return nil
 }
 

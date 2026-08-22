@@ -23,10 +23,10 @@ func TestUnit_BpeLoader_AssetDirOverride(t *testing.T) {
 	require.Equal(t, 2, n)
 }
 
-func TestUnit_ReadBoundedFile_RejectsOversized(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "large.tiktoken")
-	require.NoError(t, os.WriteFile(path, make([]byte, maxBpeAssetBytes+1), 0o600))
-	_, err := readBoundedFile(path, maxBpeAssetBytes)
+func TestUnit_ReadBoundedFSFile_RejectsOversized(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "large.tiktoken"), make([]byte, maxBpeAssetBytes+1), 0o600))
+	_, err := readBoundedFSFile(os.DirFS(dir), "large.tiktoken", maxBpeAssetBytes)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "exceeds")
 }
