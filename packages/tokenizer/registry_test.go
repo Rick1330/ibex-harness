@@ -2,6 +2,7 @@ package tokenizer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -10,7 +11,41 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestUnit_NewRegistry_FamilyKeyMismatch(t *testing.T) {
+type fixedCountTokenizer struct {
+	family string
+	n      int
+	err    error
+}
+
+func (f fixedCountTokenizer) Family() string { return f.family }
+
+func (f fixedCountTokenizer) Count(ctx context.Context, text string) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	if f.err != nil {
+		return 0, f.err
+	}
+	return f.n, nil
+}
+
+func TestUnit_NewRegistry_RejectsEmptyFamilyKey(t *testing.T) {
+	t.Parallel()
+	_, err := NewRegistry(map[string]Tokenizer{
+		"  ": fixedCountTokenizer{family: provider.TokenizerFamilyO200kBase},
+	})
+	require.ErrorIs(t, err, ErrUnknownFamily)
+}
+
+func TestUnit_NewRegistry_RejectsNilTokenizer(t *testing.T) {
+	t.Parallel()
+	_, err := NewRegistry(map[string]Tokenizer{
+		provider.TokenizerFamilyO200kBase: nil,
+	})
+	require.ErrorIs(t, err, ErrMissingTokenizer)
+}
+
+func TestUnit_NewRegistry_RejectsFamilyKeyMismatch(t *testing.T) {
 	t.Parallel()
 	_, err := NewRegistry(map[string]Tokenizer{
 		provider.TokenizerFamilyO200kBase: newTiktokenBackend(provider.TokenizerFamilyCL100kBase, "cl100k_base", newBundledBpeLoader("")),
@@ -18,7 +53,7 @@ func TestUnit_NewRegistry_FamilyKeyMismatch(t *testing.T) {
 	require.ErrorIs(t, err, ErrUnknownFamily)
 }
 
-func TestUnit_ValidateCatalogCoverage_MissingFamily(t *testing.T) {
+func TestUnit_ValidateCatalogCoverage_RejectsMissingFamily(t *testing.T) {
 	t.Parallel()
 	reg, err := NewRegistry(map[string]Tokenizer{
 		provider.TokenizerFamilyO200kBase: newTiktokenBackend(provider.TokenizerFamilyO200kBase, "o200k_base", newBundledBpeLoader("")),
@@ -34,35 +69,47 @@ func TestUnit_ValidateCatalogCoverage_MissingFamily(t *testing.T) {
 	require.ErrorIs(t, err, ErrMissingTokenizer)
 }
 
-func TestUnit_CountForModel_UnknownFamilyOverlay(t *testing.T) {
+func TestUnit_Registry_NilReceiverReturnsSafeDefaults(t *testing.T) {
 	t.Parallel()
-	reg, err := NewLocalRegistry("")
-	require.NoError(t, err)
-	catalog := provider.CatalogFromCapabilities(provider.ModelCapability{
-		ModelID: "local", Provider: provider.CapabilityProviderOpenAI,
-		ContextWindow: 1, MaxOutputTokens: 1,
-		SupportsTools: true, SupportsVision: true, SupportsStreaming: true,
-		TokenizerFamily: provider.TokenizerFamilyUnknown,
-	})
-	_, err = CountForModel(context.Background(), catalog, reg, "local", "hi")
-	require.ErrorIs(t, err, ErrMissingTokenizer)
+	var reg *Registry
+	require.Nil(t, reg.Families())
+	_, err := reg.ForFamily(provider.TokenizerFamilyO200kBase)
+	require.ErrorIs(t, err, ErrUnknownFamily)
+	require.Error(t, ValidateCatalogCoverage(provider.BuiltInCapabilityCatalog(), nil))
 }
 
-func TestUnit_CountForModel_MissingModel(t *testing.T) {
+func TestUnit_RequiredFamilies_OmitsBlankAndUnknown(t *testing.T) {
 	t.Parallel()
-	reg, err := NewLocalRegistry("")
-	require.NoError(t, err)
-	_, err = CountForModel(context.Background(), provider.BuiltInCapabilityCatalog(), reg, "missing-model", "x")
-	require.ErrorIs(t, err, ErrModelNotInCatalog)
+	catalog := provider.CatalogFromCapabilities(
+		provider.ModelCapability{
+			ModelID: "blank", Provider: provider.CapabilityProviderOpenAI,
+			ContextWindow: 1, MaxOutputTokens: 1,
+			SupportsTools: true, SupportsVision: false, SupportsStreaming: true,
+			TokenizerFamily: "  ",
+		},
+		provider.ModelCapability{
+			ModelID: "unknown", Provider: provider.CapabilityProviderOpenAI,
+			ContextWindow: 1, MaxOutputTokens: 1,
+			SupportsTools: true, SupportsVision: false, SupportsStreaming: true,
+			TokenizerFamily: provider.TokenizerFamilyUnknown,
+		},
+		provider.ModelCapability{
+			ModelID: "gpt-4o", Provider: provider.CapabilityProviderOpenAI,
+			ContextWindow: 1, MaxOutputTokens: 1,
+			SupportsTools: true, SupportsVision: false, SupportsStreaming: true,
+			TokenizerFamily: provider.TokenizerFamilyO200kBase,
+		},
+	)
+	require.Equal(t, []string{provider.TokenizerFamilyO200kBase}, RequiredFamilies(catalog))
 }
 
-func TestUnit_NewLocalRegistry_CatalogCoverage(t *testing.T) {
+func TestUnit_NewLocalRegistry_CoversBuiltinCatalogFamilies(t *testing.T) {
 	reg, err := NewLocalRegistry("")
 	require.NoError(t, err)
 	require.NoError(t, ValidateCatalogCoverage(provider.BuiltInCapabilityCatalog(), reg))
 }
 
-func TestUnit_Count_EmptyAndBounds(t *testing.T) {
+func TestUnit_Count_RejectsEmptyAndOversizedInput(t *testing.T) {
 	t.Parallel()
 	reg, err := NewLocalRegistry("")
 	require.NoError(t, err)
@@ -78,7 +125,7 @@ func TestUnit_Count_EmptyAndBounds(t *testing.T) {
 	require.ErrorIs(t, err, ErrTextTooLong)
 }
 
-func TestUnit_Count_Concurrent(t *testing.T) {
+func TestUnit_Count_ConcurrentExactBackend(t *testing.T) {
 	reg, err := NewLocalRegistry("")
 	require.NoError(t, err)
 	tok, err := reg.ForFamily(provider.TokenizerFamilyCL100kBase)
@@ -105,8 +152,62 @@ func TestUnit_Count_Concurrent(t *testing.T) {
 	}
 }
 
-func TestUnit_RunSelfTest(t *testing.T) {
+func TestUnit_RunSelfTest_PassesDefaultVectors(t *testing.T) {
 	reg, err := NewLocalRegistry("")
 	require.NoError(t, err)
 	require.NoError(t, RunSelfTest(reg, DefaultSelfTestVectors()))
+}
+
+func TestUnit_RunSelfTest_RejectsNilRegistry(t *testing.T) {
+	require.Error(t, RunSelfTest(nil, DefaultSelfTestVectors()))
+}
+
+func TestUnit_RunSelfTest_RejectsCountMismatch(t *testing.T) {
+	reg, err := NewRegistry(map[string]Tokenizer{
+		provider.TokenizerFamilyO200kBase: fixedCountTokenizer{
+			family: provider.TokenizerFamilyO200kBase,
+			n:      99,
+		},
+	})
+	require.NoError(t, err)
+	err = RunSelfTest(reg, []SelfTestVector{{
+		Family: provider.TokenizerFamilyO200kBase,
+		Text:   vectorHelloWorld,
+		Want:   2,
+	}})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "got 99 want 2")
+}
+
+func TestUnit_RunSelfTest_RejectsMissingFamily(t *testing.T) {
+	reg, err := NewRegistry(map[string]Tokenizer{
+		provider.TokenizerFamilyO200kBase: fixedCountTokenizer{
+			family: provider.TokenizerFamilyO200kBase,
+			n:      2,
+		},
+	})
+	require.NoError(t, err)
+	err = RunSelfTest(reg, []SelfTestVector{{
+		Family: provider.TokenizerFamilyCL100kBase,
+		Text:   vectorHelloWorld,
+		Want:   2,
+	}})
+	require.Error(t, err)
+}
+
+func TestUnit_RunSelfTest_RejectsCountFailure(t *testing.T) {
+	wantErr := errors.New("count failed")
+	reg, err := NewRegistry(map[string]Tokenizer{
+		provider.TokenizerFamilyO200kBase: fixedCountTokenizer{
+			family: provider.TokenizerFamilyO200kBase,
+			err:    wantErr,
+		},
+	})
+	require.NoError(t, err)
+	err = RunSelfTest(reg, []SelfTestVector{{
+		Family: provider.TokenizerFamilyO200kBase,
+		Text:   vectorHelloWorld,
+		Want:   2,
+	}})
+	require.ErrorIs(t, err, wantErr)
 }

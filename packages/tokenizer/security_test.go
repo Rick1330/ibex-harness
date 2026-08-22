@@ -13,6 +13,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestUnit_JailedAssetPath_RejectsEmptyBasename(t *testing.T) {
+	_, err := jailedAssetPath(t.TempDir(), "  ")
+	require.ErrorIs(t, err, ErrAssetPathEscape)
+}
+
+func TestUnit_JailedAssetPath_ResolvesUnderAssetDir(t *testing.T) {
+	dir := t.TempDir()
+	path, err := jailedAssetPath(dir, "o200k_base.tiktoken")
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(dir, "o200k_base.tiktoken"), path)
+}
+
 func TestUnit_JailedAssetPath_RejectsTraversal(t *testing.T) {
 	_, err := jailedAssetPath(t.TempDir(), "../outside.tiktoken")
 	require.ErrorIs(t, err, ErrAssetPathEscape)
@@ -52,27 +64,6 @@ func TestUnit_BpeLoader_AssetDirPermissionDenied(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chmod(path, 0o600) })
 	_, err := NewLocalRegistry(dir)
 	require.Error(t, err)
-}
-
-func TestUnit_CountForModel_NilRegistry(t *testing.T) {
-	_, err := CountForModel(context.Background(), provider.BuiltInCapabilityCatalog(), nil, "gpt-4o", "x")
-	require.ErrorIs(t, err, ErrMissingTokenizer)
-}
-
-func TestUnit_CountForModel_EmptyModel(t *testing.T) {
-	reg, err := NewLocalRegistry("")
-	require.NoError(t, err)
-	_, err = CountForModel(context.Background(), provider.BuiltInCapabilityCatalog(), reg, "  ", "x")
-	require.ErrorIs(t, err, ErrModelNotInCatalog)
-}
-
-func TestUnit_CountForModel_NilContextDone(t *testing.T) {
-	reg, err := NewLocalRegistry("")
-	require.NoError(t, err)
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	_, err = CountForModel(ctx, provider.BuiltInCapabilityCatalog(), reg, "gpt-4o", "x")
-	require.ErrorIs(t, err, context.Canceled)
 }
 
 func TestUnit_RunSelfTest_EmptyVectors(t *testing.T) {

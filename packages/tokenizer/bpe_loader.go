@@ -103,11 +103,18 @@ func jailedAssetLocation(assetDir, base string) (safeBase, root string, err erro
 		return "", "", err
 	}
 	resolved := filepath.Join(root, safeBase)
-	rel, err := filepath.Rel(root, resolved)
-	if err != nil || strings.HasPrefix(rel, "..") {
-		return "", "", fmt.Errorf("%w: %q", ErrAssetPathEscape, safeBase)
+	if err := assertPathUnderRoot(root, resolved, safeBase); err != nil {
+		return "", "", err
 	}
 	return safeBase, root, nil
+}
+
+func assertPathUnderRoot(root, resolved, label string) error {
+	rel, err := filepath.Rel(root, resolved)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return fmt.Errorf("%w: %q", ErrAssetPathEscape, label)
+	}
+	return nil
 }
 
 func sanitizeAssetBasename(base string) (string, error) {
@@ -150,21 +157,9 @@ func parseBpeLines(contents string) (map[string]int, error) {
 			continue
 		}
 		lineNo++
-		token, rank, err := parseBpeLine(line)
-		if err != nil {
-			return nil, fmt.Errorf("line %d: %w", lineNo, err)
+		if err := addBpeLine(bpeRanks, seenRanks, lineNo, line); err != nil {
+			return nil, err
 		}
-		if _, dup := bpeRanks[token]; dup {
-			return nil, fmt.Errorf("line %d: %w", lineNo, errDuplicateBpeToken)
-		}
-		if _, dup := seenRanks[rank]; dup {
-			return nil, fmt.Errorf("line %d: %w", lineNo, errDuplicateBpeRank)
-		}
-		if rank < 0 {
-			return nil, fmt.Errorf("line %d: %w", lineNo, errNegativeBpeRank)
-		}
-		bpeRanks[token] = rank
-		seenRanks[rank] = struct{}{}
 	}
 	if len(bpeRanks) == 0 {
 		return nil, errEmptyBpeVocab
@@ -173,6 +168,25 @@ func parseBpeLines(contents string) (map[string]int, error) {
 		return nil, err
 	}
 	return bpeRanks, nil
+}
+
+func addBpeLine(bpeRanks map[string]int, seenRanks map[int]struct{}, lineNo int, line string) error {
+	token, rank, err := parseBpeLine(line)
+	if err != nil {
+		return fmt.Errorf("line %d: %w", lineNo, err)
+	}
+	if _, dup := bpeRanks[token]; dup {
+		return fmt.Errorf("line %d: %w", lineNo, errDuplicateBpeToken)
+	}
+	if _, dup := seenRanks[rank]; dup {
+		return fmt.Errorf("line %d: %w", lineNo, errDuplicateBpeRank)
+	}
+	if rank < 0 {
+		return fmt.Errorf("line %d: %w", lineNo, errNegativeBpeRank)
+	}
+	bpeRanks[token] = rank
+	seenRanks[rank] = struct{}{}
+	return nil
 }
 
 func parseBpeLine(line string) (token string, rank int, err error) {

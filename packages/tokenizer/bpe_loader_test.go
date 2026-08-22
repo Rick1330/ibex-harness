@@ -44,6 +44,23 @@ func TestUnit_ParseBpeLines_LineErrorIncludesNumber(t *testing.T) {
 	require.Contains(t, err.Error(), "line 2:")
 }
 
+func TestUnit_ParseBpeLine_RejectsMalformedLine(t *testing.T) {
+	_, _, err := parseBpeLine("only-one-field")
+	require.ErrorIs(t, err, errInvalidBpeLine)
+	_, _, err = parseBpeLine("!!! 0")
+	require.Error(t, err)
+	_, _, err = parseBpeLine("YQ== not-a-rank")
+	require.Error(t, err)
+}
+
+func TestUnit_LoadBpeFromAssetDir_RejectsCorruptOverride(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "o200k_base.tiktoken"), []byte("bad"), 0o600))
+	_, found, err := loadBpeFromAssetDir(dir, "o200k_base.tiktoken")
+	require.True(t, found)
+	require.Error(t, err)
+}
+
 func TestUnit_ParseBpeLines_MalformedCases(t *testing.T) {
 	cases := []struct {
 		name    string

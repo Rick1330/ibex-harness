@@ -140,20 +140,27 @@ func RunSelfTest(reg *Registry, vectors []SelfTestVector) error {
 	}
 	ctx := context.Background()
 	for _, v := range vectors {
-		if strings.TrimSpace(v.Family) == "" {
-			return fmt.Errorf("tokenizer self-test: empty family")
+		if err := verifySelfTestVector(reg, ctx, v); err != nil {
+			return err
 		}
-		tok, err := reg.ForFamily(v.Family)
-		if err != nil {
-			return fmt.Errorf("family %q self-test: %w", v.Family, err)
-		}
-		got, err := tok.Count(ctx, v.Text)
-		if err != nil {
-			return fmt.Errorf("family %q self-test: %w", v.Family, err)
-		}
-		if got != v.Want {
-			return fmt.Errorf("family %q self-test: got %d want %d", v.Family, got, v.Want)
-		}
+	}
+	return nil
+}
+
+func verifySelfTestVector(reg *Registry, ctx context.Context, v SelfTestVector) error {
+	if strings.TrimSpace(v.Family) == "" {
+		return fmt.Errorf("tokenizer self-test: empty family")
+	}
+	tok, err := reg.ForFamily(v.Family)
+	if err != nil {
+		return fmt.Errorf("family %q self-test: %w", v.Family, err)
+	}
+	got, err := tok.Count(ctx, v.Text)
+	if err != nil {
+		return fmt.Errorf("family %q self-test: %w", v.Family, err)
+	}
+	if got != v.Want {
+		return fmt.Errorf("family %q self-test: got %d want %d", v.Family, got, v.Want)
 	}
 	return nil
 }

@@ -1,7 +1,6 @@
 package tokenizer
 
 import (
-	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -77,6 +76,7 @@ func RequiredFamilies(catalog provider.CapabilityCatalog) []string {
 	for f := range seen {
 		out = append(out, f)
 	}
+	sort.Strings(out)
 	return out
 }
 
@@ -92,37 +92,4 @@ func ValidateCatalogCoverage(catalog provider.CapabilityCatalog, reg *Registry) 
 		}
 	}
 	return nil
-}
-
-// CountForModel resolves model → capability → family → Count.
-func CountForModel(
-	ctx context.Context,
-	catalog provider.CapabilityCatalog,
-	reg *Registry,
-	model string,
-	text string,
-) (int, error) {
-	if err := ctx.Err(); err != nil {
-		return 0, err
-	}
-	if reg == nil {
-		return 0, fmt.Errorf("%w: registry is nil", ErrMissingTokenizer)
-	}
-	model = strings.TrimSpace(model)
-	if model == "" {
-		return 0, fmt.Errorf("%w: empty model id", ErrModelNotInCatalog)
-	}
-	cap, ok := catalog.Lookup(model)
-	if !ok {
-		return 0, fmt.Errorf("%w: %q", ErrModelNotInCatalog, model)
-	}
-	family := strings.TrimSpace(cap.TokenizerFamily)
-	if family == provider.TokenizerFamilyUnknown {
-		return 0, fmt.Errorf("%w: model %q uses unknown tokenizer family", ErrMissingTokenizer, model)
-	}
-	tok, err := reg.ForFamily(family)
-	if err != nil {
-		return 0, err
-	}
-	return tok.Count(ctx, text)
 }

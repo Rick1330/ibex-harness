@@ -21,12 +21,31 @@ func (r *ProxyRegistry) register(serviceName string) {
 		Help:        "1 if the service process is running.",
 		ConstLabels: prometheus.Labels{"service": serviceName},
 	})
-	mustRegisterAll(r.reg,
+	mustRegisterAll(r.reg, r.prometheusCollectors()...)
+	r.processUp.Set(1)
+}
+
+func (r *ProxyRegistry) prometheusCollectors() []prometheus.Collector {
+	out := make([]prometheus.Collector, 0, 40)
+	out = append(out, r.httpAndRateCollectors()...)
+	out = append(out, r.providerAndStreamCollectors()...)
+	out = append(out, r.authAndSessionCollectors()...)
+	out = append(out, r.storageAndTokenizerCollectors()...)
+	return out
+}
+
+func (r *ProxyRegistry) httpAndRateCollectors() []prometheus.Collector {
+	return []prometheus.Collector{
 		r.requestDuration,
 		r.requestsTotal,
 		r.activeConnections,
 		r.rateLimitedTotal,
 		r.rateLimitRedisErrors,
+	}
+}
+
+func (r *ProxyRegistry) providerAndStreamCollectors() []prometheus.Collector {
+	return []prometheus.Collector{
 		r.providerRequests,
 		r.providerRetries,
 		r.providerDuration,
@@ -36,6 +55,11 @@ func (r *ProxyRegistry) register(serviceName string) {
 		r.streamBackpressure,
 		r.asyncQueueDepth,
 		r.asyncDroppedTotal,
+	}
+}
+
+func (r *ProxyRegistry) authAndSessionCollectors() []prometheus.Collector {
+	return []prometheus.Collector{
 		r.authDuration,
 		r.authCacheHits,
 		r.authCacheMisses,
@@ -54,6 +78,11 @@ func (r *ProxyRegistry) register(serviceName string) {
 		r.sessionComplete,
 		r.sessionSweeperMarked,
 		r.sessionSweeperRuns,
+	}
+}
+
+func (r *ProxyRegistry) storageAndTokenizerCollectors() []prometheus.Collector {
+	return []prometheus.Collector{
 		r.clickhouseFlushTotal,
 		r.clickhouseFlushRows,
 		r.clickhouseDroppedRows,
@@ -63,8 +92,7 @@ func (r *ProxyRegistry) register(serviceName string) {
 		r.tokenizerCountTotal,
 		r.tokenizerCountSeconds,
 		r.processUp,
-	)
-	r.processUp.Set(1)
+	}
 }
 
 func (r *ProxyRegistry) initHTTPMetrics() {

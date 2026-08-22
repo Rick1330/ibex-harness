@@ -13,6 +13,11 @@ type CountObserver interface {
 	ObserveTokenizerCount(family, result string, seconds float64)
 }
 
+type modelCountObserveRequest struct {
+	ModelCountRequest
+	Obs CountObserver
+}
+
 // CountWithObserver runs Count and records duration/outcome when obs is non-nil.
 func CountWithObserver(
 	ctx context.Context,
@@ -22,13 +27,7 @@ func CountWithObserver(
 ) (int, error) {
 	start := time.Now()
 	n, err := tok.Count(ctx, text)
-	if obs != nil {
-		result := "success"
-		if err != nil {
-			result = "error"
-		}
-		obs.ObserveTokenizerCount(tok.Family(), result, time.Since(start).Seconds())
-	}
+	observeCountOutcome(obs, tok.Family(), err, start)
 	return n, err
 }
 
@@ -41,18 +40,37 @@ func CountForModelWithObserver(
 	text string,
 	obs CountObserver,
 ) (int, error) {
+	return countForModelWithObserver(modelCountObserveRequest{
+		ModelCountRequest: ModelCountRequest{
+			Ctx: ctx, Catalog: catalog, Reg: reg, Model: model, Text: text,
+		},
+		Obs: obs,
+	})
+}
+
+func countForModelWithObserver(req modelCountObserveRequest) (int, error) {
 	start := time.Now()
-	family := observerFamilyLabel(catalog, model)
-	n, err := CountForModel(ctx, catalog, reg, model, text)
-	if obs == nil {
+	family := observerFamilyLabel(req.Catalog, req.Model)
+	n, err := countForModel(req.ModelCountRequest)
+	if req.Obs == nil {
 		return n, err
 	}
-	result := "success"
-	if err != nil {
-		result = "error"
-	}
-	obs.ObserveTokenizerCount(family, result, time.Since(start).Seconds())
+	req.Obs.ObserveTokenizerCount(family, countResult(err), time.Since(start).Seconds())
 	return n, err
+}
+
+func observeCountOutcome(obs CountObserver, family string, err error, start time.Time) {
+	if obs == nil {
+		return
+	}
+	obs.ObserveTokenizerCount(family, countResult(err), time.Since(start).Seconds())
+}
+
+func countResult(err error) string {
+	if err != nil {
+		return "error"
+	}
+	return "success"
 }
 
 func observerFamilyLabel(catalog provider.CapabilityCatalog, model string) string {

@@ -2,6 +2,7 @@ package tokenizer
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/Rick1330/ibex-harness/packages/provider"
@@ -45,6 +46,13 @@ func TestUnit_GroundTruthVectors_CL100k(t *testing.T) {
 	runVectors(t, tok, vectors)
 }
 
+func TestUnit_ClaudeEstimate_RejectsOversizedInput(t *testing.T) {
+	tok := newClaudeEstimate()
+	long := strings.Repeat("a", MaxCountTextBytes+1)
+	_, err := tok.Count(context.Background(), long)
+	require.ErrorIs(t, err, ErrTextTooLong)
+}
+
 func TestUnit_GroundTruthVectors_ClaudeEstimate(t *testing.T) {
 	vectors := []countVector{
 		{"", 0},
@@ -72,12 +80,4 @@ func runVectors(t *testing.T, tok Tokenizer, vectors []countVector) {
 		require.NoError(t, err)
 		require.Equal(t, v.want, got, "text=%q", v.text)
 	}
-}
-
-func TestUnit_CountForModel_BuiltinGPT4o(t *testing.T) {
-	reg, err := NewLocalRegistry("")
-	require.NoError(t, err)
-	n, err := CountForModel(context.Background(), provider.BuiltInCapabilityCatalog(), reg, "gpt-4o", VectorHelloWorld())
-	require.NoError(t, err)
-	require.Equal(t, 2, n)
 }

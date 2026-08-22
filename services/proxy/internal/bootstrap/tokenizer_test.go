@@ -18,14 +18,14 @@ func TestUnit_BuildTokenizerRegistry_MockMode(t *testing.T) {
 	require.NotNil(t, reg)
 }
 
-func TestUnit_BuildTokenizerRegistry_UnsupportedMode(t *testing.T) {
+func TestUnit_BuildTokenizerRegistry_RejectsServiceMode(t *testing.T) {
 	cfg := config.Config{Tokenizer: config.TokenizerConfig{Mode: "service"}}
 	cfg.ApplyDefaults()
 	_, err := buildTokenizerRegistry(cfg)
 	require.Error(t, err)
 }
 
-func TestUnit_BuildTokenizerRegistry_DualModeRejected(t *testing.T) {
+func TestUnit_BuildTokenizerRegistry_RejectsDualMode(t *testing.T) {
 	cfg := config.Config{Tokenizer: config.TokenizerConfig{Mode: "dual"}, LLMMode: "mock"}
 	cfg.ApplyDefaults()
 	_, err := buildTokenizerRegistry(cfg)
@@ -33,7 +33,7 @@ func TestUnit_BuildTokenizerRegistry_DualModeRejected(t *testing.T) {
 	require.Contains(t, err.Error(), "IBEX_TOKENIZER_MODE")
 }
 
-func TestUnit_BuildLocalTokenizerRegistry_InvalidAssetDir(t *testing.T) {
+func TestUnit_BuildLocalTokenizerRegistry_RejectsMissingAssetDir(t *testing.T) {
 	cfg := config.Config{
 		LLMMode: "mock",
 		Tokenizer: config.TokenizerConfig{
@@ -46,7 +46,7 @@ func TestUnit_BuildLocalTokenizerRegistry_InvalidAssetDir(t *testing.T) {
 	require.Contains(t, err.Error(), "tokenizer registry")
 }
 
-func TestUnit_BuildLocalTokenizerRegistry_CatalogError(t *testing.T) {
+func TestUnit_BuildLocalTokenizerRegistry_RejectsLiveCatalogWithoutAPIKey(t *testing.T) {
 	cfg := config.Config{
 		LLMMode: "openai",
 		OpenAI: config.OpenAIConfig{
