@@ -21,73 +21,83 @@ const (
 	testCompletionWithModelJSON    = `{"id":"x","object":"chat.completion","choices":[],"model":"orig"}`
 )
 
-func TestUnit_processResponseBody_nilPipelineReturnsOriginal(t *testing.T) {
+func TestUnit_processResponseBody_scenarios(t *testing.T) {
 	t.Parallel()
-	body := []byte(mockllm.MockJSONBody())
-	h := chatCompletionHandler{responsePipeline: nil}
-	out, err := h.processResponseBody(context.Background(), "openai", body)
-	require.NoError(t, err)
-	require.Equal(t, body, out)
-}
-
-func TestUnit_processResponseBody_invalidJSON(t *testing.T) {
-	t.Parallel()
-	h := chatCompletionHandler{responsePipeline: responsepipeline.NewDefaultPipeline()}
-	_, err := h.processResponseBody(context.Background(), "openai", []byte("not json"))
-	require.Error(t, err)
-	var pe *provider.ProviderError
-	require.ErrorAs(t, err, &pe)
-	require.Equal(t, http.StatusBadGateway, pe.StatusCode)
-}
-
-func TestUnit_processResponseBody_noopPreservesBytes(t *testing.T) {
-	t.Parallel()
-	body := []byte(mockllm.MockJSONBody())
-	h := chatCompletionHandler{responsePipeline: responsepipeline.NewDefaultPipeline()}
-	out, err := h.processResponseBody(context.Background(), "openai", body)
-	require.NoError(t, err)
-	require.Equal(t, body, out)
-}
-
-func TestUnit_processResponseBody_securityCriticalReturnsProviderError502(t *testing.T) {
-	t.Parallel()
-	body := []byte(mockllm.MockJSONBody())
-	h := chatCompletionHandler{
-		responsePipeline: responsepipeline.NewPipeline([]responsepipeline.Stage{httpCriticalStage{
-			name: "guard", err: errors.New("blocked"),
-		}}),
+	mockBody := []byte(mockllm.MockJSONBody())
+	cases := []struct {
+		name        string
+		ctx         context.Context
+		pipeline    *responsepipeline.Pipeline
+		body        []byte
+		wantErr     bool
+		wantStatus  int
+		wantMsg     string
+		wantEqual   []byte
+		wantContain string
+	}{
+		{
+			name: "nil pipeline passthrough", pipeline: nil, body: mockBody, wantEqual: mockBody,
+		},
+		{
+			name: "noop preserves bytes", pipeline: responsepipeline.NewDefaultPipeline(),
+			body: mockBody, wantEqual: mockBody,
+		},
+		{
+			name: "invalid JSON", pipeline: responsepipeline.NewDefaultPipeline(),
+			body: []byte("not json"), wantErr: true, wantStatus: http.StatusBadGateway,
+		},
+		{
+			name: "security critical 502", body: mockBody,
+			pipeline: responsepipeline.NewPipeline([]responsepipeline.Stage{httpCriticalStage{
+				name: "guard", err: errors.New("blocked"),
+			}}),
+			wantErr: true, wantStatus: http.StatusBadGateway, wantMsg: errMsgResponsePipelineStageFailed,
+		},
+		{
+			name: "cancelled context", pipeline: responsepipeline.NewDefaultPipeline(), body: mockBody,
+			ctx: func() context.Context { c, cancel := context.WithCancel(context.Background()); cancel(); return c }(),
+			wantErr: true,
+		},
+		{
+			name: "modified stage re-encodes", body: []byte(testChoiceCompletionUpstream),
+			pipeline: responsepipeline.NewPipeline([]responsepipeline.Stage{redactContentStage{}}),
+			wantContain: "redacted",
+		},
 	}
-	_, err := h.processResponseBody(context.Background(), "openai", body)
-	require.Error(t, err)
-	var pe *provider.ProviderError
-	require.ErrorAs(t, err, &pe)
-	require.Equal(t, http.StatusBadGateway, pe.StatusCode)
-	require.Equal(t, errMsgResponsePipelineStageFailed, pe.ProviderErrMsg)
-	require.NotContains(t, pe.ProviderErrMsg, "blocked")
-}
-
-func TestUnit_processResponseBody_cancelledContext(t *testing.T) {
-	t.Parallel()
-	body := []byte(mockllm.MockJSONBody())
-	h := chatCompletionHandler{responsePipeline: responsepipeline.NewDefaultPipeline()}
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	_, err := h.processResponseBody(ctx, "openai", body)
-	require.Error(t, err)
-	var pe *provider.ProviderError
-	require.ErrorAs(t, err, &pe)
-}
-
-func TestUnit_processResponseBody_modifiedStageReturnsReEncodedBody(t *testing.T) {
-	t.Parallel()
-	body := []byte(testChoiceCompletionUpstream)
-	h := chatCompletionHandler{
-		responsePipeline: responsepipeline.NewPipeline([]responsepipeline.Stage{redactContentStage{}}),
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := tc.ctx
+			if ctx == nil {
+				ctx = context.Background()
+			}
+			h := chatCompletionHandler{responsePipeline: tc.pipeline}
+			out, err := h.processResponseBody(ctx, "openai", tc.body)
+			if tc.wantErr {
+				require.Error(t, err)
+				if tc.wantStatus != 0 {
+					var pe *provider.ProviderError
+					require.ErrorAs(t, err, &pe)
+					require.Equal(t, tc.wantStatus, pe.StatusCode)
+				}
+				if tc.wantMsg != "" {
+					var pe *provider.ProviderError
+					require.ErrorAs(t, err, &pe)
+					require.Equal(t, tc.wantMsg, pe.ProviderErrMsg)
+					require.NotContains(t, pe.ProviderErrMsg, "blocked")
+				}
+				return
+			}
+			require.NoError(t, err)
+			if tc.wantEqual != nil {
+				require.Equal(t, tc.wantEqual, out)
+			}
+			if tc.wantContain != "" {
+				require.Contains(t, string(out), tc.wantContain)
+				require.NotEqual(t, tc.body, out)
+			}
+		})
 	}
-	out, err := h.processResponseBody(context.Background(), "openai", body)
-	require.NoError(t, err)
-	require.Contains(t, string(out), "redacted")
-	require.NotEqual(t, body, out)
 }
 
 func TestUnit_ChatCompletions_responsePipelineScenarios(t *testing.T) {

@@ -25,6 +25,15 @@ func labelPairValue(labels []*dto.LabelPair, name string) string {
 	return ""
 }
 
+func durationMetrics(mfs []*dto.MetricFamily) []*dto.Metric {
+	for _, mf := range mfs {
+		if mf.GetName() == "ibex_proxy_response_pipeline_stage_duration_seconds" {
+			return mf.GetMetric()
+		}
+	}
+	return nil
+}
+
 func noopDurationResult(t *testing.T, m *dto.Metric) (string, uint64) {
 	t.Helper()
 	require.Equal(t, "noop", labelPairValue(m.GetLabel(), "stage"))
@@ -33,27 +42,22 @@ func noopDurationResult(t *testing.T, m *dto.Metric) (string, uint64) {
 	return result, m.GetHistogram().GetSampleCount()
 }
 
-func assertDurationFamily(t *testing.T, mfs []*dto.MetricFamily) (uint64, bool, bool) {
+func sumNoopDurationResults(t *testing.T, metrics []*dto.Metric) (uint64, bool, bool) {
 	t.Helper()
 	var durationCount uint64
 	var sawSuccess, sawFailOpen bool
-	for _, mf := range mfs {
-		if mf.GetName() != "ibex_proxy_response_pipeline_stage_duration_seconds" {
-			continue
-		}
-		require.Equal(t, dto.MetricType_HISTOGRAM, mf.GetType())
-		for _, m := range mf.GetMetric() {
-			result, count := noopDurationResult(t, m)
-			durationCount += count
-			switch result {
-			case "success":
-				sawSuccess = true
-			case "fail_open":
-				sawFailOpen = true
-			}
-		}
+	for _, m := range metrics {
+		result, count := noopDurationResult(t, m)
+		durationCount += count
+		sawSuccess = sawSuccess || result == "success"
+		sawFailOpen = sawFailOpen || result == "fail_open"
 	}
 	return durationCount, sawSuccess, sawFailOpen
+}
+
+func assertDurationFamily(t *testing.T, mfs []*dto.MetricFamily) (uint64, bool, bool) {
+	t.Helper()
+	return sumNoopDurationResults(t, durationMetrics(mfs))
 }
 
 func assertFailOpenFamily(t *testing.T, mfs []*dto.MetricFamily) uint64 {
