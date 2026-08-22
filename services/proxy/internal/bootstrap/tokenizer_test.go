@@ -1,6 +1,8 @@
 package bootstrap
 
 import (
+	"context"
+	"path/filepath"
 	"testing"
 
 	"github.com/Rick1330/ibex-harness/packages/tokenizer"
@@ -21,6 +23,51 @@ func TestUnit_BuildTokenizerRegistry_UnsupportedMode(t *testing.T) {
 	cfg.ApplyDefaults()
 	_, err := buildTokenizerRegistry(cfg)
 	require.Error(t, err)
+}
+
+func TestUnit_BuildTokenizerRegistry_DualModeRejected(t *testing.T) {
+	cfg := config.Config{Tokenizer: config.TokenizerConfig{Mode: "dual"}, LLMMode: "mock"}
+	cfg.ApplyDefaults()
+	_, err := buildTokenizerRegistry(cfg)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "IBEX_TOKENIZER_MODE")
+}
+
+func TestUnit_BuildLocalTokenizerRegistry_InvalidAssetDir(t *testing.T) {
+	cfg := config.Config{
+		LLMMode: "mock",
+		Tokenizer: config.TokenizerConfig{
+			AssetDir: filepath.Join(t.TempDir(), "missing-subdir"),
+		},
+	}
+	cfg.ApplyDefaults()
+	_, err := buildLocalTokenizerRegistry(cfg)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "tokenizer registry")
+}
+
+func TestUnit_BuildLocalTokenizerRegistry_CatalogError(t *testing.T) {
+	cfg := config.Config{
+		LLMMode: "openai",
+		OpenAI: config.OpenAIConfig{
+			ExtraModels: []string{"custom-model"},
+		},
+	}
+	cfg.ApplyDefaults()
+	_, err := buildLocalTokenizerRegistry(cfg)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "tokenizer registry")
+}
+
+func TestUnit_NewTokenizerReadyChecker_CanceledContext(t *testing.T) {
+	cfg := config.Config{LLMMode: "mock"}
+	cfg.ApplyDefaults()
+	reg, err := buildTokenizerRegistry(cfg)
+	require.NoError(t, err)
+	checker := newTokenizerReadyChecker(reg)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	require.ErrorIs(t, checker(ctx), context.Canceled)
 }
 
 func TestUnit_BuildTokenizerRegistry_CatalogCoverage(t *testing.T) {

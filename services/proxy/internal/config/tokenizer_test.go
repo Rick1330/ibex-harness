@@ -6,6 +6,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestUnit_ValidateTokenizer_DualAndInvalidRejected(t *testing.T) {
+	for _, mode := range []string{"dual", "remote"} {
+		cfg := Config{Tokenizer: TokenizerConfig{Mode: mode}}
+		cfg.ApplyDefaults()
+		err := cfg.validateTokenizer()
+		require.Error(t, err)
+	}
+}
+
 func TestUnit_ValidateTokenizer_ServiceModeRejected(t *testing.T) {
 	cfg := Config{Tokenizer: TokenizerConfig{Mode: "service"}}
 	cfg.ApplyDefaults()

@@ -31,9 +31,17 @@ func TestUnit_ReadBoundedFSFile_RejectsOversized(t *testing.T) {
 	require.Contains(t, err.Error(), "exceeds")
 }
 
-func TestUnit_ParseBpeLines_Invalid(t *testing.T) {
-	_, err := parseBpeLines("not-valid-bpe\n")
+func TestUnit_LoadBpeFromAssetDir_NonDirectoryRoot(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "not-a-dir")
+	require.NoError(t, os.WriteFile(path, []byte("x"), 0o600))
+	_, _, err := loadBpeFromAssetDir(path, "o200k_base.tiktoken")
 	require.Error(t, err)
+}
+
+func TestUnit_ParseBpeLines_LineErrorIncludesNumber(t *testing.T) {
+	_, err := parseBpeLines("YQ== 0\n!!! 1\n")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "line 2:")
 }
 
 func TestUnit_ParseBpeLines_MalformedCases(t *testing.T) {
