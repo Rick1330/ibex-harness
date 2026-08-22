@@ -13,6 +13,46 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestUnit_LoadBpeFromAssetDir_RejectsDirectSymlinkEscape(t *testing.T) {
+	dir := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside.tiktoken")
+	require.NoError(t, os.WriteFile(outside, []byte("secret"), 0o600))
+	link := filepath.Join(dir, "o200k_base.tiktoken")
+	require.NoError(t, os.Symlink(outside, link))
+
+	_, found, err := loadBpeFromAssetDir(dir, "o200k_base.tiktoken")
+	require.True(t, found)
+	require.ErrorIs(t, err, ErrAssetSymlink)
+}
+
+func TestUnit_LoadBpeFromAssetDir_RejectsSymlinkReplacementRace(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "o200k_base.tiktoken")
+	require.NoError(t, os.WriteFile(path, embeddedO200kBPE, 0o600))
+
+	_, found, err := loadBpeFromAssetDir(dir, "o200k_base.tiktoken")
+	require.NoError(t, err)
+	require.True(t, found)
+
+	outside := filepath.Join(t.TempDir(), "outside.tiktoken")
+	require.NoError(t, os.WriteFile(outside, []byte("bad"), 0o600))
+	require.NoError(t, os.Remove(path))
+	require.NoError(t, os.Symlink(outside, path))
+
+	_, found, err = loadBpeFromAssetDir(dir, "o200k_base.tiktoken")
+	require.True(t, found)
+	require.ErrorIs(t, err, ErrAssetSymlink)
+}
+
+func TestUnit_LoadBpeFromAssetDir_RejectsDirectoryAsset(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(dir, "o200k_base.tiktoken"), 0o700))
+
+	_, found, err := loadBpeFromAssetDir(dir, "o200k_base.tiktoken")
+	require.True(t, found)
+	require.ErrorIs(t, err, ErrAssetNotRegular)
+}
+
 func TestUnit_JailedAssetPath_RejectsEmptyBasename(t *testing.T) {
 	_, err := jailedAssetPath(t.TempDir(), "  ")
 	require.ErrorIs(t, err, ErrAssetPathEscape)

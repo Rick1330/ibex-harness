@@ -16,25 +16,25 @@ func TestUnit_CountForModel_RejectsMissingRegistryFamily(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = CountForModel(
-		context.Background(),
-		provider.BuiltInCapabilityCatalog(),
-		reg,
-		"gpt-4o",
-		"probe",
-	)
+	_, err = CountForModel(ModelCountRequest{
+		Ctx:     context.Background(),
+		Catalog: provider.BuiltInCapabilityCatalog(),
+		Reg:     reg,
+		Model:   "gpt-4o",
+		Text:    "probe",
+	})
 	require.ErrorIs(t, err, ErrMissingTokenizer)
 }
 
 func TestUnit_CountForModel_RejectsNilRegistry(t *testing.T) {
 	t.Parallel()
-	_, err := CountForModel(
-		context.Background(),
-		provider.BuiltInCapabilityCatalog(),
-		nil,
-		"gpt-4o",
-		"probe",
-	)
+	_, err := CountForModel(ModelCountRequest{
+		Ctx:     context.Background(),
+		Catalog: provider.BuiltInCapabilityCatalog(),
+		Reg:     nil,
+		Model:   "gpt-4o",
+		Text:    "probe",
+	})
 	require.ErrorIs(t, err, ErrMissingTokenizer)
 }
 
@@ -45,7 +45,9 @@ func TestUnit_CountForModel_RejectsCanceledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	_, err = CountForModel(ctx, provider.BuiltInCapabilityCatalog(), reg, "gpt-4o", "probe")
+	_, err = CountForModel(ModelCountRequest{
+		Ctx: ctx, Catalog: provider.BuiltInCapabilityCatalog(), Reg: reg, Model: "gpt-4o", Text: "probe",
+	})
 	require.ErrorIs(t, err, context.Canceled)
 }
 
@@ -54,7 +56,9 @@ func TestUnit_CountForModel_RejectsEmptyModelID(t *testing.T) {
 	reg, err := NewLocalRegistry("")
 	require.NoError(t, err)
 
-	_, err = CountForModel(context.Background(), provider.BuiltInCapabilityCatalog(), reg, "  ", "probe")
+	_, err = CountForModel(ModelCountRequest{
+		Ctx: context.Background(), Catalog: provider.BuiltInCapabilityCatalog(), Reg: reg, Model: "  ", Text: "probe",
+	})
 	require.ErrorIs(t, err, ErrModelNotInCatalog)
 }
 
@@ -62,7 +66,9 @@ func TestUnit_CountForModel_RejectsMissingCatalogModel(t *testing.T) {
 	t.Parallel()
 	reg, err := NewLocalRegistry("")
 	require.NoError(t, err)
-	_, err = CountForModel(context.Background(), provider.BuiltInCapabilityCatalog(), reg, "missing-model", "probe")
+	_, err = CountForModel(ModelCountRequest{
+		Ctx: context.Background(), Catalog: provider.BuiltInCapabilityCatalog(), Reg: reg, Model: "missing-model", Text: "probe",
+	})
 	require.ErrorIs(t, err, ErrModelNotInCatalog)
 }
 
@@ -77,7 +83,9 @@ func TestUnit_CountForModel_RejectsUnknownCatalogFamily(t *testing.T) {
 		TokenizerFamily: provider.TokenizerFamilyUnknown,
 	})
 
-	_, err = CountForModel(context.Background(), catalog, reg, "local", "probe")
+	_, err = CountForModel(ModelCountRequest{
+		Ctx: context.Background(), Catalog: catalog, Reg: reg, Model: "local", Text: "probe",
+	})
 	require.ErrorIs(t, err, ErrMissingTokenizer)
 }
 
@@ -85,13 +93,13 @@ func TestUnit_CountForModel_CountsBuiltinModel(t *testing.T) {
 	reg, err := NewLocalRegistry("")
 	require.NoError(t, err)
 
-	n, err := CountForModel(
-		context.Background(),
-		provider.BuiltInCapabilityCatalog(),
-		reg,
-		"gpt-4o",
-		VectorHelloWorld(),
-	)
+	n, err := CountForModel(ModelCountRequest{
+		Ctx:     context.Background(),
+		Catalog: provider.BuiltInCapabilityCatalog(),
+		Reg:     reg,
+		Model:   "gpt-4o",
+		Text:    VectorHelloWorld(),
+	})
 	require.NoError(t, err)
 	require.Equal(t, 2, n)
 }

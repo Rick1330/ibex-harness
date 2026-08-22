@@ -13,7 +13,8 @@ type CountObserver interface {
 	ObserveTokenizerCount(family, result string, seconds float64)
 }
 
-type modelCountObserveRequest struct {
+// ModelCountObserveRequest groups inputs for CountForModelWithObserver.
+type ModelCountObserveRequest struct {
 	ModelCountRequest
 	Obs CountObserver
 }
@@ -32,23 +33,11 @@ func CountWithObserver(
 }
 
 // CountForModelWithObserver is CountForModel with optional metrics observation.
-func CountForModelWithObserver(
-	ctx context.Context,
-	catalog provider.CapabilityCatalog,
-	reg *Registry,
-	model string,
-	text string,
-	obs CountObserver,
-) (int, error) {
-	return countForModelWithObserver(modelCountObserveRequest{
-		ModelCountRequest: ModelCountRequest{
-			Ctx: ctx, Catalog: catalog, Reg: reg, Model: model, Text: text,
-		},
-		Obs: obs,
-	})
+func CountForModelWithObserver(req ModelCountObserveRequest) (int, error) {
+	return countForModelWithObserver(req)
 }
 
-func countForModelWithObserver(req modelCountObserveRequest) (int, error) {
+func countForModelWithObserver(req ModelCountObserveRequest) (int, error) {
 	start := time.Now()
 	family := observerFamilyLabel(req.Catalog, req.Model)
 	n, err := countForModel(req.ModelCountRequest)

@@ -18,16 +18,8 @@ type ModelCountRequest struct {
 }
 
 // CountForModel resolves model → capability → family → Count.
-func CountForModel(
-	ctx context.Context,
-	catalog provider.CapabilityCatalog,
-	reg *Registry,
-	model string,
-	text string,
-) (int, error) {
-	return countForModel(ModelCountRequest{
-		Ctx: ctx, Catalog: catalog, Reg: reg, Model: model, Text: text,
-	})
+func CountForModel(req ModelCountRequest) (int, error) {
+	return countForModel(req)
 }
 
 func countForModel(req ModelCountRequest) (int, error) {

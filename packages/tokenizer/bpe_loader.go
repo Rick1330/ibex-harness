@@ -27,6 +27,12 @@ const maxBpeAssetBytes = 64 << 20 // 64 MiB cap for operator-supplied override f
 // ErrAssetPathEscape is returned when a resolved asset path leaves IBEX_TOKENIZER_ASSET_DIR.
 var ErrAssetPathEscape = errors.New("tokenizer asset path escapes asset dir")
 
+// ErrAssetSymlink is returned when a tokenizer asset path is a symbolic link.
+var ErrAssetSymlink = errors.New("tokenizer asset is a symbolic link")
+
+// ErrAssetNotRegular is returned when a tokenizer asset is not a regular file.
+var ErrAssetNotRegular = errors.New("tokenizer asset is not a regular file")
+
 var (
 	errInvalidBpeLine     = errors.New("invalid bpe line")
 	errEmptyBpeVocab      = errors.New("empty bpe vocabulary")
@@ -70,19 +76,62 @@ func loadBpeFromAssetDir(assetDir, base string) (map[string]int, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
-	assetFS := os.DirFS(root)
-	if _, err := fs.Stat(assetFS, safeBase); err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil, false, nil
-		}
+	assetRoot, err := os.OpenRoot(root)
+	if err != nil {
 		return nil, false, err
 	}
-	raw, err := readBoundedFSFile(assetFS, safeBase, maxBpeAssetBytes)
+	defer assetRoot.Close()
+
+	f, found, err := openJailedAssetFile(assetRoot, safeBase)
+	if err != nil || !found {
+		return nil, found, err
+	}
+	defer func() { _ = f.Close() }()
+
+	raw, err := readBoundedFile(f, maxBpeAssetBytes)
 	if err != nil {
 		return nil, true, err
 	}
 	ranks, err := parseBpeLines(string(raw))
 	return ranks, true, err
+}
+
+func openJailedAssetFile(assetRoot *os.Root, safeBase string) (*os.File, bool, error) {
+	info, err := assetRoot.Lstat(safeBase)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	if err := rejectNonRegularAsset(info, safeBase); err != nil {
+		return nil, true, err
+	}
+
+	f, err := assetRoot.OpenFile(safeBase, os.O_RDONLY|openFlagNoFollow(), 0)
+	if err != nil {
+		return nil, true, err
+	}
+	st, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
+		return nil, true, err
+	}
+	if err := rejectNonRegularAsset(st, safeBase); err != nil {
+		_ = f.Close()
+		return nil, true, err
+	}
+	return f, true, nil
+}
+
+func rejectNonRegularAsset(info fs.FileInfo, label string) error {
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("%w: %q", ErrAssetSymlink, label)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("%w: %q", ErrAssetNotRegular, label)
+	}
+	return nil
 }
 
 func jailedAssetPath(assetDir, base string) (string, error) {
@@ -122,19 +171,17 @@ func sanitizeAssetBasename(base string) (string, error) {
 	if trimmed == "" {
 		return "", fmt.Errorf("%w: invalid asset basename %q", ErrAssetPathEscape, base)
 	}
-	if trimmed != path.Base(trimmed) || strings.Contains(trimmed, string(os.PathSeparator)) {
+	if trimmed != path.Base(trimmed) {
+		return "", fmt.Errorf("%w: invalid asset basename %q", ErrAssetPathEscape, base)
+	}
+	if strings.Contains(trimmed, string(os.PathSeparator)) {
 		return "", fmt.Errorf("%w: invalid asset basename %q", ErrAssetPathEscape, base)
 	}
 	return trimmed, nil
 }
 
-func readBoundedFSFile(fsys fs.FS, name string, maxBytes int64) ([]byte, error) {
-	f, err := fsys.Open(name)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = f.Close() }()
-	limited := io.LimitReader(f, maxBytes+1)
+func readBoundedFile(r io.Reader, maxBytes int64) ([]byte, error) {
+	limited := io.LimitReader(r, maxBytes+1)
 	raw, err := io.ReadAll(limited)
 	if err != nil {
 		return nil, err
@@ -143,6 +190,15 @@ func readBoundedFSFile(fsys fs.FS, name string, maxBytes int64) ([]byte, error) 
 		return nil, fmt.Errorf("bpe asset exceeds %d bytes", maxBytes)
 	}
 	return raw, nil
+}
+
+func readBoundedFSFile(fsys fs.FS, name string, maxBytes int64) ([]byte, error) {
+	f, err := fsys.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	return readBoundedFile(f, maxBytes)
 }
 
 func parseBpeLines(contents string) (map[string]int, error) {

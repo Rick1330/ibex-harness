@@ -107,6 +107,31 @@ func counterByLabel(mf *dto.MetricFamily, label, value string) float64 {
 	return 0
 }
 
+func counterByLabels(mf *dto.MetricFamily, labels map[string]string) float64 {
+	for _, m := range mf.GetMetric() {
+		if metricLabelsMatch(m.GetLabel(), labels) {
+			return m.GetCounter().GetValue()
+		}
+	}
+	return 0
+}
+
+func metricLabelsMatch(pairs []*dto.LabelPair, want map[string]string) bool {
+	if len(pairs) != len(want) {
+		return false
+	}
+	seen := make(map[string]string, len(want))
+	for _, lp := range pairs {
+		seen[lp.GetName()] = lp.GetValue()
+	}
+	for name, value := range want {
+		if seen[name] != value {
+			return false
+		}
+	}
+	return true
+}
+
 func counterValue(mf *dto.MetricFamily) float64 {
 	if mf == nil || len(mf.GetMetric()) == 0 {
 		return 0

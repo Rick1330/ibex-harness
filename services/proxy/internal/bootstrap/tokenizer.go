@@ -45,5 +45,11 @@ func newTokenizerReadyChecker(reg *tokenizer.Registry) func(context.Context) err
 
 // countForBuiltinModel is a diagnostics helper for joint bootstrap tests.
 func countForBuiltinModel(reg *tokenizer.Registry, model, text string) (int, error) {
-	return tokenizer.CountForModel(context.Background(), provider.BuiltInCapabilityCatalog(), reg, model, text)
+	return tokenizer.CountForModel(tokenizer.ModelCountRequest{
+		Ctx:     context.Background(),
+		Catalog: provider.BuiltInCapabilityCatalog(),
+		Reg:     reg,
+		Model:   model,
+		Text:    text,
+	})
 }

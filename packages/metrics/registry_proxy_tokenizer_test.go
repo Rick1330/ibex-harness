@@ -30,10 +30,12 @@ func TestUnit_ObserveTokenizerCount_Registered(t *testing.T) {
 	families := gatherFamilies(t, reg.Gatherer())
 	counter := families["ibex_tokenizer_count_total"]
 	require.NotNil(t, counter)
-	require.Equal(t, float64(1), counterByLabel(counter, "family", "o200k_base"))
-	require.Equal(t, float64(1), counterByLabel(counter, "family", "claude"))
-	require.Equal(t, float64(1), counterByLabel(counter, "result", "success"))
-	require.Equal(t, float64(1), counterByLabel(counter, "result", "error"))
+	require.Equal(t, float64(1), counterByLabels(counter, map[string]string{
+		"family": "o200k_base", "result": "success",
+	}))
+	require.Equal(t, float64(1), counterByLabels(counter, map[string]string{
+		"family": "claude", "result": "error",
+	}))
 
 	hist := families["ibex_tokenizer_count_duration_seconds"]
 	require.NotNil(t, hist)
@@ -58,23 +60,28 @@ func TestUnit_TokenizerObserver_SuccessAndCancel(t *testing.T) {
 
 	families := gatherFamilies(t, reg.Gatherer())
 	counter := families["ibex_tokenizer_count_total"]
-	require.Equal(t, float64(1), counterByLabel(counter, "family", provider.TokenizerFamilyO200kBase))
-	require.Equal(t, float64(1), counterByLabel(counter, "result", "success"))
-	require.Equal(t, float64(1), counterByLabel(counter, "result", "error"))
+	require.Equal(t, float64(1), counterByLabels(counter, map[string]string{
+		"family": provider.TokenizerFamilyO200kBase, "result": "success",
+	}))
+	require.Equal(t, float64(1), counterByLabels(counter, map[string]string{
+		"family": provider.TokenizerFamilyO200kBase, "result": "error",
+	}))
 }
 
 func TestUnit_TokenizerObserver_CountForModel(t *testing.T) {
 	reg := NewProxy("tokenizer-metrics-test")
 	tokReg, err := tokenizer.NewLocalRegistry("")
 	require.NoError(t, err)
-	n, err := tokenizer.CountForModelWithObserver(
-		context.Background(),
-		provider.BuiltInCapabilityCatalog(),
-		tokReg,
-		"gpt-4o",
-		tokenizer.VectorHelloWorld(),
-		reg,
-	)
+	n, err := tokenizer.CountForModelWithObserver(tokenizer.ModelCountObserveRequest{
+		ModelCountRequest: tokenizer.ModelCountRequest{
+			Ctx:     context.Background(),
+			Catalog: provider.BuiltInCapabilityCatalog(),
+			Reg:     tokReg,
+			Model:   "gpt-4o",
+			Text:    tokenizer.VectorHelloWorld(),
+		},
+		Obs: reg,
+	})
 	require.NoError(t, err)
 	require.Equal(t, 2, n)
 
