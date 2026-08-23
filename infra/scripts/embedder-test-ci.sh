@@ -13,7 +13,7 @@ fi
 cd "$EMBEDDER_DIR"
 
 if command -v uv >/dev/null 2>&1 && [[ -f uv.lock ]]; then
-  uv sync --frozen --extra dev
+  bash "$ROOT/infra/scripts/embedder-uv-sync.sh"
   uv run ruff check app tests
   uv run pytest -q \
     --cov=app \
