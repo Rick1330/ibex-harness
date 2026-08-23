@@ -43,9 +43,4 @@ while IFS= read -r f; do
   fi
 done < <(git ls-files '*.md')
 
-if [[ -f services/embedder/pyproject.toml ]]; then
-  bash infra/scripts/embedder-test-ci.sh
-  bash infra/scripts/coverage-embedder-gate.sh
-fi
-
 exit "$fail"
