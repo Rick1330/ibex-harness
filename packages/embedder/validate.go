@@ -83,8 +83,12 @@ func ValidateOutputVectors(texts []string, vectors [][]float32, dim int) error {
 	return nil
 }
 
+func invalidNormSum(sum float64) bool {
+	return sum == 0 || math.IsNaN(sum) || math.IsInf(sum, 0)
+}
+
 func normSquaredSumOK(sum float64) error {
-	if sum == 0 || math.IsNaN(sum) || math.IsInf(sum, 0) {
+	if invalidNormSum(sum) {
 		return fmt.Errorf("%w: cannot L2-normalize zero/non-finite vector", ErrInvalidVector)
 	}
 	return nil

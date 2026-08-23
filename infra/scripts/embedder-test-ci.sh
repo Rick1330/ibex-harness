@@ -11,12 +11,22 @@ if [[ ! -f "$EMBEDDER_DIR/pyproject.toml" ]]; then
 fi
 
 cd "$EMBEDDER_DIR"
-if [[ ! -d .venv ]]; then
-  python3 -m venv .venv
+
+if command -v uv >/dev/null 2>&1 && [[ -f uv.lock ]]; then
+  uv sync --frozen --extra dev
+  uv run ruff check app tests
+  uv run pytest -q \
+    --cov=app \
+    --cov-report=xml:coverage-embedder.xml \
+    --cov-report=term-missing
+else
+  if [[ ! -d .venv ]]; then
+    python3 -m venv .venv
+  fi
+  .venv/bin/pip install --disable-pip-version-check --no-cache-dir -q -e ".[dev]"
+  .venv/bin/ruff check app tests
+  .venv/bin/pytest -q \
+    --cov=app \
+    --cov-report=xml:coverage-embedder.xml \
+    --cov-report=term-missing
 fi
-.venv/bin/pip install --disable-pip-version-check --no-cache-dir -q -e ".[dev]"
-.venv/bin/ruff check app tests
-.venv/bin/pytest -q \
-  --cov=app \
-  --cov-report=xml:coverage-embedder.xml \
-  --cov-report=term-missing

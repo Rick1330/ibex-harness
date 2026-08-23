@@ -9,6 +9,33 @@ import (
 	"testing"
 )
 
+func maxEmbeddedMigrationVersion(t *testing.T) uint {
+	t.Helper()
+	entries, err := migrationFiles.ReadDir(".")
+	if err != nil {
+		t.Fatalf("read migrations: %v", err)
+	}
+	upPattern := regexp.MustCompile(`^(\d+)_(.+)\.up\.sql$`)
+	var maxV int
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		m := upPattern.FindStringSubmatch(e.Name())
+		if m == nil {
+			continue
+		}
+		v, _ := strconv.Atoi(m[1])
+		if v > maxV {
+			maxV = v
+		}
+	}
+	if maxV == 0 {
+		t.Fatal("no up migrations found")
+	}
+	return uint(maxV)
+}
+
 func TestMigrationFileNaming(t *testing.T) {
 	entries, err := migrationFiles.ReadDir(".")
 	if err != nil {

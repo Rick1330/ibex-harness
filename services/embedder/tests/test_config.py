@@ -43,8 +43,9 @@ def test_load_active_backend_cpu_defaults() -> None:
 
 
 def test_load_active_backend_geometry_mismatch() -> None:
+    settings = Settings(profile="cpu", dim=1024, model="all-MiniLM-L6-v2")
     with pytest.raises(GeometryMismatchError):
-        load_active_backend(Settings(profile="cpu", dim=1024, model="all-MiniLM-L6-v2"))
+        load_active_backend(settings)
 
 
 def test_registry_duplicate_profile() -> None:

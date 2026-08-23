@@ -53,17 +53,16 @@ async def lifespan(app: FastAPI):
         _startup_embedder(state)
     except EmbedderError as exc:
         _mark_startup_failed(state, exc.message if hasattr(exc, "message") else str(exc))
-        logger.error(
+        logger.exception(
             "embedder startup geometry validation failed profile=%s error_class=%s",
             settings.profile,
             exc.code,
         )
-    except (ValidationError, ValueError, TypeError) as exc:
+    except (ValidationError, ValueError, TypeError):
         _mark_startup_failed(state, "invalid startup configuration")
-        logger.error(
-            "embedder startup configuration error profile=%s error_class=%s",
+        logger.exception(
+            "embedder startup configuration error profile=%s",
             settings.profile,
-            type(exc).__name__,
         )
     yield
 
@@ -90,7 +89,7 @@ def create_app() -> FastAPI:
 app = create_app()
 
 
-@probe_router.get("/health", response_model=HealthResponse)
+@probe_router.get("/health")
 async def health() -> HealthResponse:
     return HealthResponse()
 

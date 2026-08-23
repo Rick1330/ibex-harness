@@ -19,22 +19,40 @@ from app.errors import (
 from app.limits import MAX_BATCH_TEXTS, MAX_TEXT_BYTES
 
 
-def validate_geometry(backend: EmbeddingBackend | None, want_dim: int, want_model: str) -> None:
+def _require_backend(backend: EmbeddingBackend | None) -> EmbeddingBackend:
     if backend is None:
         raise MissingBackendError("nil backend")
-    want_model = want_model.strip()
-    if want_dim < 1 or not want_model:
+    return backend
+
+
+def _normalized_expected_geometry(want_dim: int, want_model: str) -> str:
+    model = want_model.strip()
+    if want_dim < 1 or not model:
         raise GeometryMismatchError(
-            f"invalid expected geometry dim={want_dim} model={want_model!r}"
+            f"invalid expected geometry dim={want_dim} model={model!r}"
         )
+    return model
+
+
+def _assert_backend_dimensions(backend: EmbeddingBackend, want_dim: int) -> None:
     if backend.dimensions != want_dim:
         raise GeometryMismatchError(
             f"dimensions got {backend.dimensions} want {want_dim}"
         )
+
+
+def _assert_backend_model(backend: EmbeddingBackend, want_model: str) -> None:
     if backend.model_id.strip() != want_model:
         raise GeometryMismatchError(
             f"model got {backend.model_id!r} want {want_model!r}"
         )
+
+
+def validate_geometry(backend: EmbeddingBackend | None, want_dim: int, want_model: str) -> None:
+    impl = _require_backend(backend)
+    model = _normalized_expected_geometry(want_dim, want_model)
+    _assert_backend_dimensions(impl, want_dim)
+    _assert_backend_model(impl, model)
 
 
 def _validate_batch_bounds(texts: list[str]) -> None:

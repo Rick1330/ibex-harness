@@ -16,9 +16,16 @@ if [[ ! -f "$EMBEDDER_DIR/pyproject.toml" ]]; then
 fi
 
 cd "$EMBEDDER_DIR"
-if [[ ! -d .venv ]]; then
-  python3 -m venv .venv
+
+if command -v uv >/dev/null 2>&1 && [[ -f uv.lock ]]; then
+  uv sync --frozen --extra dev
+  uv run pytest -q --cov=app --cov-report=term-missing --cov-fail-under="$MIN_RAW"
+else
+  if [[ ! -d .venv ]]; then
+    python3 -m venv .venv
+  fi
+  .venv/bin/pip install --disable-pip-version-check --no-cache-dir -q -e ".[dev]"
+  .venv/bin/pytest -q --cov=app --cov-report=term-missing --cov-fail-under="$MIN_RAW"
 fi
-.venv/bin/pip install --disable-pip-version-check --no-cache-dir -q -e ".[dev]"
-.venv/bin/pytest -q --cov=app --cov-report=term-missing --cov-fail-under="$MIN_RAW"
+
 echo "embedder app coverage gate passed (minimum ${MIN_RAW}%)"
