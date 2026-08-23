@@ -25,6 +25,16 @@ func ValidateGeometry(e Embedder, wantDim int, wantModel string) error {
 	return nil
 }
 
+func validateTextAt(index int, text string) error {
+	if utf8.RuneCountInString(text) == 0 && len(text) == 0 {
+		return fmt.Errorf("%w: empty text at index %d", ErrEmptyBatch, index)
+	}
+	if len(text) > MaxTextBytes {
+		return fmt.Errorf("%w: index %d has %d bytes (max %d)", ErrTextTooLong, index, len(text), MaxTextBytes)
+	}
+	return nil
+}
+
 // ValidateEmbedInput rejects empty/oversized batches before calling a backend.
 func ValidateEmbedInput(texts []string) error {
 	if len(texts) == 0 {
@@ -34,11 +44,24 @@ func ValidateEmbedInput(texts []string) error {
 		return fmt.Errorf("%w: %d > %d", ErrBatchTooLarge, len(texts), MaxBatchTexts)
 	}
 	for i, t := range texts {
-		if utf8.RuneCountInString(t) == 0 && len(t) == 0 {
-			return fmt.Errorf("%w: empty text at index %d", ErrEmptyBatch, i)
+		if err := validateTextAt(i, t); err != nil {
+			return err
 		}
-		if len(t) > MaxTextBytes {
-			return fmt.Errorf("%w: index %d has %d bytes (max %d)", ErrTextTooLong, i, len(t), MaxTextBytes)
+	}
+	return nil
+}
+
+func vectorLenOK(v []float32, idx, dim int) error {
+	if len(v) != dim {
+		return fmt.Errorf("%w: index %d len %d want %d", ErrInvalidVector, idx, len(v), dim)
+	}
+	return nil
+}
+
+func vectorFiniteOK(v []float32, idx int) error {
+	for j, x := range v {
+		if math.IsNaN(float64(x)) || math.IsInf(float64(x), 0) {
+			return fmt.Errorf("%w: non-finite at [%d][%d]", ErrInvalidVector, idx, j)
 		}
 	}
 	return nil
@@ -50,14 +73,19 @@ func ValidateOutputVectors(texts []string, vectors [][]float32, dim int) error {
 		return fmt.Errorf("%w: got %d vectors for %d texts", ErrInvalidVector, len(vectors), len(texts))
 	}
 	for i, v := range vectors {
-		if len(v) != dim {
-			return fmt.Errorf("%w: index %d len %d want %d", ErrInvalidVector, i, len(v), dim)
+		if err := vectorLenOK(v, i, dim); err != nil {
+			return err
 		}
-		for j, x := range v {
-			if math.IsNaN(float64(x)) || math.IsInf(float64(x), 0) {
-				return fmt.Errorf("%w: non-finite at [%d][%d]", ErrInvalidVector, i, j)
-			}
+		if err := vectorFiniteOK(v, i); err != nil {
+			return err
 		}
+	}
+	return nil
+}
+
+func normSquaredSumOK(sum float64) error {
+	if sum == 0 || math.IsNaN(sum) || math.IsInf(sum, 0) {
+		return fmt.Errorf("%w: cannot L2-normalize zero/non-finite vector", ErrInvalidVector)
 	}
 	return nil
 }
@@ -68,8 +96,8 @@ func L2NormalizeInPlace(v []float32) error {
 	for _, x := range v {
 		sum += float64(x) * float64(x)
 	}
-	if sum == 0 || math.IsNaN(sum) || math.IsInf(sum, 0) {
-		return fmt.Errorf("%w: cannot L2-normalize zero/non-finite vector", ErrInvalidVector)
+	if err := normSquaredSumOK(sum); err != nil {
+		return err
 	}
 	inv := float32(1 / math.Sqrt(sum))
 	for i := range v {

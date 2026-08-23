@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+
 import numpy as np
 from numpy.typing import NDArray
 
@@ -10,17 +12,11 @@ from app.errors import GeometryMismatchError, UnknownProfileError
 from app.profiles import Profile, default_geometry, valid_profile
 from app.validate import l2_normalize_rows, validate_embed_input, validate_output_vectors
 
-_FNV64_OFFSET = 14695981039346656037
-_FNV64_PRIME = 1099511628211
-_GOLDEN = 0x9E3779B97F4A7C15
 
-
-def _fnv1a64(data: bytes) -> int:
-    h = _FNV64_OFFSET
-    for byte in data:
-        h ^= byte
-        h = (h * _FNV64_PRIME) & 0xFFFFFFFFFFFFFFFF
-    return h
+def _deterministic_seed(text: str) -> int:
+    """Non-cryptographic seed for stub vectors (test/dev only; not for security)."""
+    digest = hashlib.sha256(text.encode("utf-8")).digest()
+    return int.from_bytes(digest[:8], "big")
 
 
 class StubBackend(EmbeddingBackend):
@@ -66,9 +62,10 @@ class StubBackend(EmbeddingBackend):
         return vectors
 
     def _vector_for(self, text: str) -> NDArray[np.float32]:
-        seed = _fnv1a64(text.encode("utf-8"))
+        seed = _deterministic_seed(text)
         vec = np.empty(self._dimensions, dtype=np.float32)
+        golden = 0x9E3779B97F4A7C15
         for i in range(self._dimensions):
-            mixed = seed ^ ((i + 1) * _GOLDEN)
+            mixed = seed ^ ((i + 1) * golden)
             vec[i] = float(int(mixed % 2001) - 1000) / 1000.0
         return l2_normalize_rows(vec.reshape(1, -1))[0]

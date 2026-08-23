@@ -4,35 +4,44 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
 
-from fastapi import FastAPI, Request, status
+from fastapi import APIRouter, FastAPI, Request, status
 from fastapi.responses import JSONResponse
+from pydantic import ValidationError
 
-from app.backend import EmbeddingBackend
 from app.config import get_settings, load_active_backend
+from app.deps import AppStateDep
 from app.errors import EmbedderError, ServiceNotReadyError
+from app.schemas import ErrorEnvelope, HealthResponse, ReadyResponse
+from app.state import AppState
 
 logger = logging.getLogger(__name__)
 
-
-@dataclass(slots=True)
-class AppState:
-    backend: EmbeddingBackend | None = None
-    ready: bool = False
-    ready_error: str | None = None
+probe_router = APIRouter(tags=["probes"])
 
 
-def _error_response(
-    *,
-    status_code: int,
-    code: str,
-    message: str,
-) -> JSONResponse:
-    return JSONResponse(
-        status_code=status_code,
-        content={"error": {"code": code, "message": message}},
+def error_response(*, status_code: int, code: str, message: str) -> JSONResponse:
+    body = ErrorEnvelope(error={"code": code, "message": message})
+    return JSONResponse(status_code=status_code, content=body.model_dump())
+
+
+def _startup_embedder(state: AppState) -> None:
+    settings = get_settings()
+    backend = load_active_backend(settings)
+    state.backend = backend
+    state.ready = True
+    logger.info(
+        "embedder ready profile=%s model_id=%s dimensions=%d backend=%s",
+        settings.profile,
+        backend.model_id,
+        backend.dimensions,
+        backend.name,
     )
+
+
+def _mark_startup_failed(state: AppState, message: str) -> None:
+    state.ready = False
+    state.ready_error = message
 
 
 @asynccontextmanager
@@ -41,62 +50,64 @@ async def lifespan(app: FastAPI):
     app.state.embedder = state
     settings = get_settings()
     try:
-        backend = load_active_backend(settings)
-        state.backend = backend
-        state.ready = True
-        logger.info(
-            "embedder ready profile=%s model_id=%s dimensions=%d backend=%s",
-            settings.profile,
-            backend.model_id,
-            backend.dimensions,
-            backend.name,
-        )
+        _startup_embedder(state)
     except EmbedderError as exc:
-        state.ready = False
-        state.ready_error = exc.message if hasattr(exc, "message") else str(exc)
+        _mark_startup_failed(state, exc.message if hasattr(exc, "message") else str(exc))
         logger.error(
             "embedder startup geometry validation failed profile=%s error_class=%s",
             settings.profile,
             exc.code,
         )
-    except Exception:
-        state.ready = False
-        state.ready_error = "unexpected startup failure"
-        logger.exception("embedder unexpected startup failure profile=%s", settings.profile)
+    except (ValidationError, ValueError, TypeError) as exc:
+        _mark_startup_failed(state, "invalid startup configuration")
+        logger.error(
+            "embedder startup configuration error profile=%s error_class=%s",
+            settings.profile,
+            type(exc).__name__,
+        )
     yield
 
 
-app = FastAPI(
-    title="IBEX Embedder",
-    version="0.1.0",
-    lifespan=lifespan,
-)
+def create_app() -> FastAPI:
+    application = FastAPI(
+        title="IBEX Embedder",
+        version="0.1.0",
+        lifespan=lifespan,
+    )
+
+    @application.exception_handler(EmbedderError)
+    async def embedder_error_handler(_request: Request, exc: EmbedderError) -> JSONResponse:
+        return error_response(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            code=exc.code,
+            message=exc.message if hasattr(exc, "message") else str(exc),
+        )
+
+    application.include_router(probe_router)
+    return application
 
 
-def _get_state(request: Request) -> AppState:
-    return request.app.state.embedder
+app = create_app()
 
 
-@app.get("/health")
-async def health() -> dict[str, str]:
-    return {"status": "ok"}
+@probe_router.get("/health", response_model=HealthResponse)
+async def health() -> HealthResponse:
+    return HealthResponse()
 
 
-@app.get("/ready", response_model=None)
-async def ready(request: Request):
-    state = _get_state(request)
+@probe_router.get("/ready", response_model=None)
+async def ready(state: AppStateDep):
     if not state.ready or state.backend is None:
         message = state.ready_error or "service not ready"
-        return _error_response(
+        return error_response(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             code=ServiceNotReadyError.code,
             message=message,
         )
     backend = state.backend
-    return {
-        "status": "ready",
-        "profile": backend.profile,
-        "model_id": backend.model_id,
-        "dimensions": backend.dimensions,
-        "backend": backend.name,
-    }
+    return ReadyResponse(
+        profile=backend.profile,
+        model_id=backend.model_id,
+        dimensions=backend.dimensions,
+        backend=backend.name,
+    )

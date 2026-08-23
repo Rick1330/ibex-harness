@@ -37,19 +37,27 @@ def validate_geometry(backend: EmbeddingBackend | None, want_dim: int, want_mode
         )
 
 
-def validate_embed_input(texts: list[str]) -> None:
+def _validate_batch_bounds(texts: list[str]) -> None:
     if not texts:
         raise EmptyBatchError("empty embedding batch")
     if len(texts) > MAX_BATCH_TEXTS:
         raise BatchTooLargeError(f"{len(texts)} > {MAX_BATCH_TEXTS}")
+
+
+def _validate_text_at(index: int, text: str) -> None:
+    if not text:
+        raise EmptyBatchError(f"empty text at index {index}")
+    encoded = text.encode("utf-8")
+    if len(encoded) > MAX_TEXT_BYTES:
+        raise TextTooLongError(
+            f"index {index} has {len(encoded)} bytes (max {MAX_TEXT_BYTES})"
+        )
+
+
+def validate_embed_input(texts: list[str]) -> None:
+    _validate_batch_bounds(texts)
     for i, text in enumerate(texts):
-        if not text:
-            raise EmptyBatchError(f"empty text at index {i}")
-        encoded = text.encode("utf-8")
-        if len(encoded) > MAX_TEXT_BYTES:
-            raise TextTooLongError(
-                f"index {i} has {len(encoded)} bytes (max {MAX_TEXT_BYTES})"
-            )
+        _validate_text_at(i, text)
 
 
 def validate_output_vectors(

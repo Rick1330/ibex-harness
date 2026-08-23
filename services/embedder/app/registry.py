@@ -11,6 +11,31 @@ from app.errors import (
 from app.profiles import valid_profile
 
 
+def _validate_profile_key(profile: str) -> str:
+    key = profile.strip()
+    if not key or not valid_profile(key):
+        raise UnknownProfileError(f"unknown embedding profile: {profile!r}")
+    return key
+
+
+def _validate_backend_present(key: str, backend: EmbeddingBackend | None) -> EmbeddingBackend:
+    if backend is None:
+        raise MissingBackendError(f"nil backend for {key!r}")
+    return backend
+
+
+def _validate_backend_profile_match(key: str, backend: EmbeddingBackend) -> None:
+    if backend.profile != key:
+        raise UnknownProfileError(
+            f"key {key!r} backend reports {backend.profile!r}"
+        )
+
+
+def _ensure_unique_profile(dst: dict[str, EmbeddingBackend], key: str) -> None:
+    if key in dst:
+        raise DuplicateProfileError(f"duplicate embedding profile: {key!r}")
+
+
 class BackendRegistry:
     """Maps deployment profiles to EmbeddingBackend implementations."""
 
@@ -26,18 +51,11 @@ class BackendRegistry:
         profile: str,
         backend: EmbeddingBackend | None,
     ) -> None:
-        key = profile.strip()
-        if not key or not valid_profile(key):
-            raise UnknownProfileError(f"unknown embedding profile: {profile!r}")
-        if backend is None:
-            raise MissingBackendError(f"nil backend for {key!r}")
-        if backend.profile != key:
-            raise UnknownProfileError(
-                f"key {key!r} backend reports {backend.profile!r}"
-            )
-        if key in dst:
-            raise DuplicateProfileError(f"duplicate embedding profile: {key!r}")
-        dst[key] = backend
+        key = _validate_profile_key(profile)
+        impl = _validate_backend_present(key, backend)
+        _validate_backend_profile_match(key, impl)
+        _ensure_unique_profile(dst, key)
+        dst[key] = impl
 
     def for_profile(self, profile: str) -> EmbeddingBackend:
         key = profile.strip()

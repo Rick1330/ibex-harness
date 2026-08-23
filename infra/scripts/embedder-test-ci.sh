@@ -16,4 +16,7 @@ if [[ ! -d .venv ]]; then
 fi
 .venv/bin/pip install --disable-pip-version-check --no-cache-dir -q -e ".[dev]"
 .venv/bin/ruff check app tests
-.venv/bin/pytest -q
+.venv/bin/pytest -q \
+  --cov=app \
+  --cov-report=xml:coverage-embedder.xml \
+  --cov-report=term-missing

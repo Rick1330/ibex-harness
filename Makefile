@@ -6,7 +6,7 @@ endif
 
 DEV_TOOL := infra/scripts/dev-tool.sh
 
-.PHONY: help lint-docs lint-go security-scan repo-guards proto-lint proto-breaking proto-gen proto-test proto-test-integration test-integration test-embedder coverage-report coverage-gate coverage-responsepipeline-gate compose-dev-up compose-dev-down compose-dev-reset compose-dev-logs compose-dev-ps compose-test-up compose-test-down db-migrate db-migrate-down db-version db-seed db-repair-token-fks clickhouse-migrate clickhouse-migrate-down clickhouse-version dev-smoke dev-smoke-live e2e-wave2b-token-fks verify-phase15
+.PHONY: help lint-docs lint-go security-scan repo-guards proto-lint proto-breaking proto-gen proto-test proto-test-integration test-integration test-embedder coverage-embedder-gate coverage-report coverage-gate coverage-responsepipeline-gate compose-dev-up compose-dev-down compose-dev-reset compose-dev-logs compose-dev-ps compose-test-up compose-test-down db-migrate db-migrate-down db-version db-seed db-repair-token-fks clickhouse-migrate clickhouse-migrate-down clickhouse-version dev-smoke dev-smoke-live e2e-wave2b-token-fks verify-phase15
 
 help: ## Show available commands
 	@"$(BASH)" "$(DEV_TOOL)" help
@@ -45,7 +45,10 @@ test-integration: ## Run all Go integration tests (-tags=integration)
 	@"$(BASH)" "$(DEV_TOOL)" test-integration
 
 test-embedder: ## Run Python embedder service unit tests (services/embedder)
-	@"$(BASH)" -c 'set -euo pipefail; cd services/embedder; if [ ! -d .venv ]; then python3 -m venv .venv; fi; .venv/bin/pip install -q -e ".[dev]"; .venv/bin/pytest -q; .venv/bin/ruff check app tests'
+	@"$(BASH)" -c 'set -euo pipefail; cd services/embedder; if [ ! -d .venv ]; then python3 -m venv .venv; fi; .venv/bin/pip install -q -e ".[dev]"; .venv/bin/ruff check app tests; .venv/bin/pytest -q'
+
+coverage-embedder-gate: ## Fail if embedder app coverage is below MIN_COVERAGE (default 95)
+	@"$(BASH)" infra/scripts/coverage-embedder-gate.sh
 
 coverage-report: ## Generate unit (+ integration if POSTGRES_TEST_DSN set) coverage report
 	@"$(BASH)" infra/scripts/coverage-report.sh
