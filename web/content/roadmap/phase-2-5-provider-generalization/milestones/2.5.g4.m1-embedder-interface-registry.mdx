@@ -149,7 +149,7 @@ Outcome-oriented signals that the milestone is in good shape. Exact filenames, p
 - [x] Python `EmbeddingBackend` ABC defined with `embed`, `dimensions`, `name`
 - [x] `IBEX_EMBEDDING_PROFILE` env var selects backend at Python service startup
 - [x] Org config migration adds `embedding_profile`, `embedding_dim`, `embedding_model_id` columns
-- [x] Startup validation: backend `Dimensions()` matches org config `embedding_dim` or service refuses to start
+- [x] Startup validation: backend geometry matches `IBEX_EMBEDDING_*` resolved config or service refuses to start
 - [x] Contract test suite defined (same input → vectors of declared dimension, L2-normalized) — backends added in 2.5.G4.M2 and 2.5.G4.M3 should pass this suite
 - [x] Unit tests for registry: `go test ./packages/embedder/...`
 - [ ] Repo guards / CI checks still pass

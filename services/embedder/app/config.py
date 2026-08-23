@@ -7,6 +7,7 @@ from functools import lru_cache
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.limits import MAX_MODEL_ID_LEN
 from app.profiles import Profile, default_geometry, valid_profile
 from app.registry import BackendRegistry
 from app.stub import StubBackend
@@ -41,9 +42,16 @@ class Settings(BaseSettings):
     @field_validator("model")
     @classmethod
     def _check_model(cls, value: str | None) -> str | None:
-        if value is not None and not value.strip():
+        if value is None:
+            return None
+        trimmed = value.strip()
+        if not trimmed:
             raise ValueError("embedding model must be non-empty when set")
-        return value.strip() if value is not None else None
+        if len(trimmed) > MAX_MODEL_ID_LEN:
+            raise ValueError(
+                f"embedding model exceeds max length {MAX_MODEL_ID_LEN} characters"
+            )
+        return trimmed
 
     def resolved_geometry(self) -> tuple[int, str]:
         defaults = default_geometry(self.profile)

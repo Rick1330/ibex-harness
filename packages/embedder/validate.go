@@ -9,7 +9,7 @@ import (
 
 // ValidateGeometry fails closed when the embedder's dim/model do not match expected config.
 func ValidateGeometry(e Embedder, wantDim int, wantModel string) error {
-	if e == nil {
+	if embedderIsMissing(e) {
 		return fmt.Errorf("%w: nil embedder", ErrMissingEmbedder)
 	}
 	wantModel = strings.TrimSpace(wantModel)

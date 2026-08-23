@@ -27,7 +27,7 @@ func registerOne(dst map[Profile]Embedder, profile Profile, emb Embedder) error 
 	if key == "" || !ValidProfile(key) {
 		return fmt.Errorf("%w: %q", ErrUnknownProfile, profile)
 	}
-	if emb == nil {
+	if embedderIsMissing(emb) {
 		return fmt.Errorf("%w: nil embedder for %q", ErrMissingEmbedder, key)
 	}
 	if got := emb.Profile(); got != key {

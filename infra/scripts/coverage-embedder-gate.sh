@@ -17,15 +17,23 @@ fi
 
 cd "$EMBEDDER_DIR"
 
-if command -v uv >/dev/null 2>&1 && [[ -f uv.lock ]]; then
-  bash "$ROOT/infra/scripts/embedder-uv-sync.sh"
-  .venv/bin/pytest -q --cov=app --cov-report=term-missing --cov-fail-under="$MIN_RAW"
-else
-  if [[ ! -d .venv ]]; then
-    python3 -m venv .venv
-  fi
-  .venv/bin/pip install --disable-pip-version-check --no-cache-dir -q -e ".[dev]"
-  .venv/bin/pytest -q --cov=app --cov-report=term-missing --cov-fail-under="$MIN_RAW"
+if [[ -f coverage-embedder.xml ]]; then
+  .venv/bin/python - <<PY
+import os
+import sys
+import xml.etree.ElementTree as ET
+
+min_pct = float(os.environ.get("MIN_COVERAGE", "95"))
+root = ET.parse("coverage-embedder.xml").getroot()
+rate = float(root.get("line-rate", "0")) * 100.0
+if rate + 1e-9 < min_pct:
+    print(f"embedder coverage {rate:.2f}% below minimum {min_pct:.0f}%", file=sys.stderr)
+    sys.exit(1)
+print(f"embedder app coverage gate passed ({rate:.2f}% >= {min_pct:.0f}%)")
+PY
+  exit 0
 fi
 
+bash "$ROOT/infra/scripts/embedder-uv-sync.sh"
+.venv/bin/pytest -q --cov=app --cov-report=term-missing --cov-fail-under="$MIN_RAW"
 echo "embedder app coverage gate passed (minimum ${MIN_RAW}%)"

@@ -48,45 +48,25 @@ def _mark_startup_failed(state: AppState, message: str) -> None:
 async def lifespan(app: FastAPI):
     state = AppState()
     app.state.embedder = state
-    settings = get_settings()
+    profile = "unknown"
     try:
+        settings = get_settings()
+        profile = settings.profile
         _startup_embedder(state)
     except EmbedderError as exc:
         _mark_startup_failed(state, exc.message if hasattr(exc, "message") else str(exc))
         logger.exception(
             "embedder startup geometry validation failed profile=%s error_class=%s",
-            settings.profile,
+            profile,
             exc.code,
         )
     except (ValidationError, ValueError, TypeError):
         _mark_startup_failed(state, "invalid startup configuration")
         logger.exception(
             "embedder startup configuration error profile=%s",
-            settings.profile,
+            profile,
         )
     yield
-
-
-def create_app() -> FastAPI:
-    application = FastAPI(
-        title="IBEX Embedder",
-        version="0.1.0",
-        lifespan=lifespan,
-    )
-
-    @application.exception_handler(EmbedderError)
-    async def embedder_error_handler(_request: Request, exc: EmbedderError) -> JSONResponse:
-        return error_response(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            code=exc.code,
-            message=exc.message if hasattr(exc, "message") else str(exc),
-        )
-
-    application.include_router(probe_router)
-    return application
-
-
-app = create_app()
 
 
 @probe_router.get("/health")
@@ -110,3 +90,25 @@ async def ready(state: AppStateDep):
         dimensions=backend.dimensions,
         backend=backend.name,
     )
+
+
+def create_app() -> FastAPI:
+    application = FastAPI(
+        title="IBEX Embedder",
+        version="0.1.0",
+        lifespan=lifespan,
+    )
+
+    @application.exception_handler(EmbedderError)
+    async def embedder_error_handler(_request: Request, exc: EmbedderError) -> JSONResponse:
+        return error_response(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            code=exc.code,
+            message=exc.message if hasattr(exc, "message") else str(exc),
+        )
+
+    application.include_router(probe_router)
+    return application
+
+
+app = create_app()

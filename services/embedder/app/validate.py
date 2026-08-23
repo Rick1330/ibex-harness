@@ -87,12 +87,19 @@ def validate_output_vectors(
         raise InvalidVectorError(
             f"got {vectors.shape[0]} vectors for {len(texts)} texts"
         )
-    if vectors.ndim != 2 or vectors.shape[1] != dim:
+    if vectors.ndim != 2:
+        raise InvalidVectorError(
+            f"expected rank-2 array, got ndim={vectors.ndim}"
+        )
+    if vectors.shape[1] != dim:
         raise InvalidVectorError(
             f"expected shape ({len(texts)}, {dim}), got {vectors.shape}"
         )
     if not np.all(np.isfinite(vectors)):
         raise InvalidVectorError("non-finite values in output")
+    norms = np.linalg.norm(vectors, axis=1)
+    if not np.allclose(norms, 1.0, atol=1e-5):
+        raise InvalidVectorError("vectors must be L2-normalized")
 
 
 def l2_normalize_rows(vectors: NDArray[np.float32]) -> NDArray[np.float32]:

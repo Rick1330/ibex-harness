@@ -62,11 +62,11 @@ type Embedder interface {
 
 ### 4) Org columns vs deployment
 
-`ibex_core.organizations` stores provisioned geometry:
+`ibex_core.organizations` stores provisioned geometry defaults for new org rows:
 
-- `embedding_profile`, `embedding_dim`, `embedding_model_id`
+- `embedding_profile`, `embedding_dim`, `embedding_model_id` (migration defaults: `cpu` / 384 / `all-MiniLM-L6-v2`)
 
-Defaults match CPU/MiniLM/384. Deployment env selects the running backend; new orgs inherit deployment defaults. Per-org write-time mismatch enforcement is Phase 3 (memory writes).
+The **running embedder process** is configured and validated only through `IBEX_EMBEDDING_*` at startup — it does not load org rows or derive geometry from deployment env beyond those variables. Per-org write-time mismatch enforcement (memory writes vs org geometry) is **Phase 3** work.
 
 ### 5) Library vs inference process
 

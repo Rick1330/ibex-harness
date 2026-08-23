@@ -92,7 +92,9 @@ summary: "Phases 0–2 are complete. Auth, proxy, and single-provider E2E ship o
   needs `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, and/or `IBEX_SELFHOSTED_ENABLED` (mock is rejected
   when `IBEX_ENV=production`).
   **`501 PROVIDER_NOT_CONFIGURED`** means the model is not in the registry — not
-  "forwarding missing." **Not shipped (Phase 2.5+ remaining):** embedding service, Python memory, context
+  "forwarding missing." **Shipped (G4.M1):** embedder contract + stub service (`/health`, `/ready`;
+  deterministic stub backend only — not production TEI/hosted inference). **Not shipped (Phase 2.5+
+  remaining / Phase 3+):** production embedding backends (G4.M2–M4), Python memory, context
   assembly, worker, management API, operator dashboard.
 </Callout>
 
@@ -145,7 +147,7 @@ Legacy `docs.ibexharness.com` redirects to apex paths (301).
 
 <Steps>
   <Step title="Phase 2.5 continue">
-    TEI/hosted embedder backends (G4.M2–M4), schema pre-work, MCP skeleton.
+    TEI embedder backend (G4.M2), hosted embedder backend (G4.M3), content-hash cache (G4.M4), schema pre-work, MCP skeleton.
   </Step>
   <Step title="Phase 3 memory substrate">
     Memory schema v2 (HNSW, temporal validity, multi-label), write pipeline, read/ranking with category-conditional scoring.

@@ -90,7 +90,8 @@ CREATE TABLE ibex_core.organizations (
                                   CHECK (embedding_profile IN ('cpu', 'gpu', 'hosted')),
     embedding_dim                 INTEGER NOT NULL DEFAULT 384
                                   CHECK (embedding_dim > 0),
-    embedding_model_id            TEXT NOT NULL DEFAULT 'all-MiniLM-L6-v2',
+    embedding_model_id            TEXT NOT NULL DEFAULT 'all-MiniLM-L6-v2'
+                                  CHECK (length(trim(embedding_model_id)) > 0),
 
     -- Metadata
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),

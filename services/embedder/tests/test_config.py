@@ -12,7 +12,9 @@ from app.stub import StubBackend
 
 
 @pytest.fixture(autouse=True)
-def _clear_settings_cache() -> None:
+def _clear_settings_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    for key in ("IBEX_EMBEDDING_PROFILE", "IBEX_EMBEDDING_DIM", "IBEX_EMBEDDING_MODEL"):
+        monkeypatch.delenv(key, raising=False)
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()

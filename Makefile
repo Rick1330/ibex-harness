@@ -45,7 +45,7 @@ test-integration: ## Run all Go integration tests (-tags=integration)
 	@"$(BASH)" "$(DEV_TOOL)" test-integration
 
 test-embedder: ## Run Python embedder service unit tests (services/embedder)
-	@"$(BASH)" -c 'set -euo pipefail; cd services/embedder; if [ ! -d .venv ]; then python3 -m venv .venv; fi; .venv/bin/pip install -q -e ".[dev]"; .venv/bin/ruff check app tests; .venv/bin/pytest -q'
+	@"$(BASH)" infra/scripts/embedder-test-ci.sh
 
 coverage-embedder-gate: ## Fail if embedder app coverage is below MIN_COVERAGE (default 95)
 	@"$(BASH)" infra/scripts/coverage-embedder-gate.sh

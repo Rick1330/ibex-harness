@@ -73,6 +73,11 @@ func TestUnit_ValidateGeometry(t *testing.T) {
 	require.ErrorIs(t, ValidateGeometry(cpu, 1024, "all-MiniLM-L6-v2"), ErrGeometryMismatch)
 	require.ErrorIs(t, ValidateGeometry(cpu, 384, "BAAI/bge-m3"), ErrGeometryMismatch)
 	require.ErrorIs(t, ValidateGeometry(nil, 384, "all-MiniLM-L6-v2"), ErrMissingEmbedder)
+	var typedNil *Stub
+	var asIface Embedder = typedNil
+	require.ErrorIs(t, ValidateGeometry(asIface, 384, "all-MiniLM-L6-v2"), ErrMissingEmbedder)
+	_, err = NewRegistry(map[Profile]Embedder{ProfileCPU: asIface})
+	require.ErrorIs(t, err, ErrMissingEmbedder)
 	require.ErrorIs(t, ValidateGeometry(cpu, 0, "all-MiniLM-L6-v2"), ErrGeometryMismatch)
 }
 
@@ -135,15 +140,20 @@ func TestUnit_Stub_ConcurrentEmbed(t *testing.T) {
 	s, err := NewStubForProfile(ProfileCPU)
 	require.NoError(t, err)
 	var wg sync.WaitGroup
+	errCh := make(chan error, 32)
 	for i := 0; i < 32; i++ {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
 			_, err := s.Embed(context.Background(), []string{string(rune('a' + i%26))})
-			require.NoError(t, err)
+			errCh <- err
 		}(i)
 	}
 	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		require.NoError(t, err)
+	}
 }
 
 func TestUnit_L2NormalizeAndInvalidVectors(t *testing.T) {
