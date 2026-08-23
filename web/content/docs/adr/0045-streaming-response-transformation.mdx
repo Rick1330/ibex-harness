@@ -77,7 +77,7 @@ Today TeeReader accumulates **upstream** bytes. When Phase 3 transforms client-v
 ### 8) Security and DoS
 
 - Never log raw stream content or matched substrings (ADR-0044 posture).
-- Hard per-request buffer cap; overflow → fail-closed (`ErrPrototypeBufferOverflow` in the design prototype).
+- Hard per-request buffer cap (`MaxBufferRunes`) and absolute ceiling (`prototypeAbsoluteMaxBufferRunes`); overflow / oversize config → fail-closed (`ErrPrototypeBufferOverflow` / `ErrPrototypeInvalidConfig`).
 - Reject unbounded “buffer entire stream then transform” designs for the default path.
 
 ### 9) Prototype (G3.M2 deliverable)
@@ -86,18 +86,20 @@ Throwaway implementation in `services/proxy/internal/http/stream_transform_proto
 
 ## Prototype measurements (local, 2026-08-23)
 
-Environment: linux/amd64, Intel Core Ultra 7 155H. Command: `go test ./services/proxy/internal/http/ -bench BenchmarkPrototypeWindow -benchtime=100ms`.
+Environment: linux/amd64, Intel Core Ultra 7 155H. Command: `go test ./services/proxy/internal/http/ -bench BenchmarkPrototypeWindow -benchtime=50ms`.
 
 | Measurement | Result | Phase 3 implication |
 | --- | --- | --- |
-| First emit CPU (holdback 16) | ~1.5 µs / first emit | Buffer CPU is negligible vs model token latency |
-| First emit CPU (holdback 64) | ~6 µs | Default holdback is cheap in-process |
-| First emit CPU (holdback 256) | ~45 µs | Still ≪ 1 ms; perceptual TTFT dominated by waiting for N model tokens |
-| Steady `Feed` (holdback 64) | ~1.6 µs/op | Fits ADR-0034 overhead discipline for the buffer itself |
-| 100 concurrent windows × 64 holdback | 6400 runes retained; ~91 KiB allocs in bench construct | Budget ~holdback runes per in-flight stream (+ small struct overhead) |
-| Max `Feed` vs 50 ms backpressure threshold | max feed ≪ 50 ms (bench reports ~0.3 ms worst sample) | Holdback does **not** invent ADR-0027 backpressure; slow client flush remains the signal |
+| First emit CPU (holdback 16) | ~1.5–2 µs / first emit | Buffer CPU is negligible vs model token latency |
+| First emit CPU (holdback 64) | ~6–8 µs | Default holdback is cheap in-process |
+| First emit CPU (holdback 256) | ~45–54 µs | Still ≪ 1 ms; perceptual TTFT dominated by waiting for N model tokens |
+| Steady `Feed` (holdback 64) | ~1.6–2 µs/op | Fits ADR-0034 overhead discipline for the buffer itself |
+| **Client-visible TTFB delta** (holdback 64 vs near-passthrough 14; 4-rune chunks) | **+13 feeds** until first emit; **~13 ms** modeled wall delta at 1 ms inter-chunk | Phase 3 SLOs should budget ≈ `(holdback/chunk_runes) × inter_token_ms` added TTFT |
+| **Per-request memory** (holdback 64, ASCII) | **64 bytes** retained content buffer at steady state; ~64 runes/request across 100 windows | Budget ≈ holdback bytes (ASCII) + small struct/alloc overhead per in-flight stream |
+| 100 concurrent windows construct | ~91 KiB allocs/op in bench | Dominated by builder growth during prime, not steady retained size |
+| Max `Feed` vs 50 ms backpressure threshold | max feed ≪ 50 ms | Holdback does **not** invent ADR-0027 backpressure; slow client flush remains the signal |
 
-**Perceptual added TTFT** (not CPU): approximately `holdback_runes / model_tokens_per_second` plus inter-chunk jitter. Industry reports for similar windows often cite ~30–80 ms wall delay when the model is already streaming; Phase 3 must measure against real providers before setting SLOs.
+**Perceptual added TTFT** (client-visible): modeled as `feeds_until_emit_delta × assumed_inter_chunk`. With 4-rune chunks and 1 ms inter-chunk, default holdback 64 adds ~13 ms vs the minimum legal holdback (14). Industry reports for similar windows often cite ~30–80 ms wall delay when the model is already streaming; Phase 3 must measure against real providers before setting SLOs.
 
 ## Consequences
 

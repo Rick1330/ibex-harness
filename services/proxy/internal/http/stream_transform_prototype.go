@@ -21,6 +21,9 @@ const (
 	// prototypeMaxPatternRunes is len("SECRET")+8 digits; holdback must be >= this
 	// or a complete match near the cut line can leak a prefix before redaction.
 	prototypeMaxPatternRunes = 14
+	// prototypeAbsoluteMaxBufferRunes is a hard ceiling on HoldbackRunes and
+	// MaxBufferRunes to bound DoS from misconfiguration (1 MiB of runes).
+	prototypeAbsoluteMaxBufferRunes = 1 << 20
 )
 
 // ErrPrototypeBufferOverflow is returned when the window would exceed MaxBufferRunes.
@@ -78,6 +81,9 @@ func validatePrototypeConfig(holdback, maxBuf int) error {
 		return ErrPrototypeInvalidConfig
 	}
 	if holdback > maxBuf {
+		return ErrPrototypeInvalidConfig
+	}
+	if holdback > prototypeAbsoluteMaxBufferRunes || maxBuf > prototypeAbsoluteMaxBufferRunes {
 		return ErrPrototypeInvalidConfig
 	}
 	return nil

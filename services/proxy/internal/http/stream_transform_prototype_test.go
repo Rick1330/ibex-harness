@@ -1,6 +1,8 @@
 package http
 
 import (
+	"context"
+	"net/http"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -100,6 +102,8 @@ func TestUnit_PrototypeWindow_InvalidConfig(t *testing.T) {
 		{HoldbackRunes: 5, MaxBufferRunes: 100}, // below max pattern
 		{HoldbackRunes: 64, MaxBufferRunes: 10}, // holdback > max
 		{HoldbackRunes: -1, MaxBufferRunes: 100},
+		{HoldbackRunes: prototypeAbsoluteMaxBufferRunes + 1, MaxBufferRunes: prototypeAbsoluteMaxBufferRunes + 1},
+		{HoldbackRunes: 64, MaxBufferRunes: prototypeAbsoluteMaxBufferRunes + 1},
 	}
 	for _, cfg := range cases {
 		_, err := NewPrototypeWindowBuffer(cfg)
@@ -131,14 +135,27 @@ func TestUnit_PrototypeWindow_IncompletePatternAtEndEmitted(t *testing.T) {
 	require.Equal(t, "SECR", out)
 }
 
-func TestUnit_PrototypeWindow_NotWiredIntoStreamForward(t *testing.T) {
+func TestUnit_Streaming_SecretContentUnchangedWithoutPrototype(t *testing.T) {
 	t.Parallel()
-	// Guardrail: production forwardSSEStream must not reference the prototype types.
-	// Compile-time: PrototypeWindowBuffer is unused by stream_forward.go (no call sites).
-	// Runtime smoke: constructing a buffer must not require router/bootstrap.
-	w, err := NewPrototypeWindowBuffer(PrototypeWindowConfig{})
-	require.NoError(t, err)
-	require.NotNil(t, w)
+	// Production SSE path must forward SECRET* verbatim — PrototypeWindowBuffer
+	// is not wired into forwardSSEStream.
+	const secret = "SECRET999"
+	stub := &streamStubProvider{
+		name: "openai", models: []string{"gpt-4o"},
+		chunks: []string{
+			`data: {"choices":[{"delta":{"content":"before ` + secret + ` after"}}]}` + "\n\n",
+			"data: [DONE]\n\n",
+		},
+	}
+	handler := newStreamTestHandler(t, stub)
+	rec := newFlushRecorder()
+	handler.ServeHTTP(rec, newStreamChatRequest(context.Background()))
+	stub.wg.Wait()
+	require.Equal(t, http.StatusOK, rec.Code)
+	body := rec.Body.String()
+	require.Contains(t, body, secret)
+	require.NotContains(t, body, prototypeRedactToken)
+	require.Contains(t, body, "[DONE]")
 }
 
 func mustPrototypeWindow(t *testing.T, cfg PrototypeWindowConfig) *PrototypeWindowBuffer {

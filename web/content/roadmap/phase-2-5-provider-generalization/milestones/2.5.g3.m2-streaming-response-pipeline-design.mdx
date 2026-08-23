@@ -154,9 +154,9 @@ Outcome-oriented signals that the milestone is in good shape. Exact filenames, p
 
 - [x] ADR written capturing the physical constraint, three options, recommendation, and explicit non-goals
 - [x] ADR indexed in the ADR index
-- [x] Prototype measures and records TTFB delta, backpressure effect, and per-request memory overhead
+- [x] Prototype measures and records **client-visible TTFB delta** (~13 ms modeled at 1 ms inter-chunk for holdback 64 vs 14), backpressure effect (Feed ≪ 50 ms), and **normalized per-request memory** (64 bytes retained at holdback 64) — see [ADR-0045](/docs/adr/0045-streaming-response-transformation) measurements table
 - [x] Benchmark numbers committed alongside the prototype
-- [x] Prototype is explicitly **not** wired into the production SSE stream path (a comment at the top of the file makes this clear)
+- [x] Prototype is explicitly **not** wired into the production SSE stream path (a comment at the top of the file makes this clear; `TestUnit_Streaming_SecretContentUnchangedWithoutPrototype` asserts SECRET content is forwarded verbatim)
 - [x] Phase 3 streaming stage design is now unambiguously constrained — no surprise architectural debates when implementation begins
 
 ## Prerequisites

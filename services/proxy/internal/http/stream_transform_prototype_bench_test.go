@@ -82,36 +82,82 @@ func runFeedSteadyBench(b *testing.B, holdback int, chunk string) {
 	}
 }
 
-// BenchmarkPrototypeWindow_RetainedMemory reports retained runes at steady state.
+// BenchmarkPrototypeWindow_ClientVisibleTTFBDelta counts feeds until first emit
+// for near-passthrough holdback vs default 64. Modeled wall TTFT delta assumes
+// 1 ms inter-chunk (reported as ns/ttfb_delta_model); CPU path stays sleep-free.
+func BenchmarkPrototypeWindow_ClientVisibleTTFBDelta(b *testing.B) {
+	const (
+		chunk        = "tok " // 4 runes
+		interChunkNS = int64(time.Millisecond)
+		nearPass     = prototypeMaxPatternRunes
+		defaultHB    = 64
+	)
+	b.ReportAllocs()
+	b.ResetTimer()
+	var feedDeltaSum int64
+	for i := 0; i < b.N; i++ {
+		passFeeds := feedsUntilFirstEmit(b, nearPass, chunk)
+		holdFeeds := feedsUntilFirstEmit(b, defaultHB, chunk)
+		feedDeltaSum += int64(holdFeeds - passFeeds)
+	}
+	avgFeedDelta := float64(feedDeltaSum) / float64(b.N)
+	b.ReportMetric(avgFeedDelta, "feeds_until_emit_delta")
+	b.ReportMetric(avgFeedDelta*float64(interChunkNS), "ns/ttfb_delta_model")
+}
+
+func feedsUntilFirstEmit(b *testing.B, holdback int, chunk string) int {
+	b.Helper()
+	w := mustBenchWindow(b, holdback)
+	for n := 1; ; n++ {
+		emit, err := w.Feed(chunk)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if emit != "" {
+			return n
+		}
+		if n > 1_000_000 {
+			b.Fatal("first emit never arrived")
+		}
+	}
+}
+
+// BenchmarkPrototypeWindow_PerRequestMemory reports retained UTF-8 bytes per
+// window at steady state (ASCII content → 1 byte/rune in the string buffer).
+func BenchmarkPrototypeWindow_PerRequestMemory(b *testing.B) {
+	holdback := 64
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		w := mustBenchWindow(b, holdback)
+		if _, err := w.Feed(strings.Repeat("m", holdback+8)); err != nil {
+			b.Fatal(err)
+		}
+		b.ReportMetric(float64(w.RetainedRunes()), "bytes_per_request")
+	}
+}
+
+// BenchmarkPrototypeWindow_RetainedMemory reports aggregate retained runes for
+// 100 concurrent windows (allocs/op for construct overhead).
 func BenchmarkPrototypeWindow_RetainedMemory(b *testing.B) {
 	const nWindows = 100
 	holdback := 64
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		retained := fillWindowsRetained(b, nWindows, holdback)
+		retained := 0
+		for j := 0; j < nWindows; j++ {
+			w := mustBenchWindow(b, holdback)
+			if _, err := w.Feed(strings.Repeat("m", holdback+8)); err != nil {
+				b.Fatal(err)
+			}
+			retained += w.RetainedRunes()
+		}
 		if retained != nWindows*holdback {
 			b.Fatalf("retained=%d want=%d", retained, nWindows*holdback)
 		}
-		b.ReportMetric(float64(retained), "runes_retained")
+		b.ReportMetric(float64(retained)/float64(nWindows), "runes_per_request")
 	}
-}
-
-func fillWindowsRetained(b *testing.B, nWindows, holdback int) int {
-	b.Helper()
-	windows := make([]*PrototypeWindowBuffer, nWindows)
-	for j := 0; j < nWindows; j++ {
-		w := mustBenchWindow(b, holdback)
-		if _, err := w.Feed(strings.Repeat("m", holdback+8)); err != nil {
-			b.Fatal(err)
-		}
-		windows[j] = w
-	}
-	var retained int
-	for _, w := range windows {
-		retained += w.RetainedRunes()
-	}
-	return retained
 }
 
 // BenchmarkPrototypeWindow_BackpressureProxy shows holdback Feed alone stays
