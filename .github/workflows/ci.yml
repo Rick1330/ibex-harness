@@ -1199,9 +1199,12 @@ jobs:
         id: bandit
         run: |
           targets=()
-          for svc in services/memory services/embedder; do
-            if [ -d "$svc" ]; then
-              targets+=("$svc")
+          for svc in memory embedder; do
+            app_dir="services/${svc}/app"
+            if [ -d "$app_dir" ]; then
+              targets+=("$app_dir")
+            elif [ -d "services/${svc}" ]; then
+              targets+=("services/${svc}")
             fi
           done
           if [ "${#targets[@]}" -eq 0 ]; then
@@ -1213,7 +1216,7 @@ jobs:
             --only-binary :all: \
             --require-hashes \
             -r .github/requirements/bandit.txt
-          bandit -r "${targets[@]}" -x tests/,test_ -f sarif -o bandit.sarif
+          bandit -r "${targets[@]}" -x 'tests/,test_,.venv/' -f sarif -o bandit.sarif
           echo "run=true" >> "$GITHUB_OUTPUT"
       - name: Bandit skipped summary
         if: steps.bandit.outputs.run != 'true'

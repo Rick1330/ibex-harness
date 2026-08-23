@@ -14,8 +14,8 @@ cd "$EMBEDDER_DIR"
 
 if command -v uv >/dev/null 2>&1 && [[ -f uv.lock ]]; then
   bash "$ROOT/infra/scripts/embedder-uv-sync.sh"
-  uv run ruff check app tests
-  uv run pytest -q \
+  .venv/bin/ruff check app tests
+  .venv/bin/pytest -q \
     --cov=app \
     --cov-report=xml:coverage-embedder.xml \
     --cov-report=term-missing
