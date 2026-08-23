@@ -102,6 +102,7 @@ func TestUnit_PrototypeWindow_InvalidConfig(t *testing.T) {
 		{HoldbackRunes: 5, MaxBufferRunes: 100}, // below max pattern
 		{HoldbackRunes: 64, MaxBufferRunes: 10}, // holdback > max
 		{HoldbackRunes: -1, MaxBufferRunes: 100},
+		{HoldbackRunes: 64, MaxBufferRunes: -1}, // maxBuf < 1 after normalize skips zeros only
 		{HoldbackRunes: prototypeAbsoluteMaxBufferRunes + 1, MaxBufferRunes: prototypeAbsoluteMaxBufferRunes + 1},
 		{HoldbackRunes: 64, MaxBufferRunes: prototypeAbsoluteMaxBufferRunes + 1},
 	}
@@ -109,6 +110,21 @@ func TestUnit_PrototypeWindow_InvalidConfig(t *testing.T) {
 		_, err := NewPrototypeWindowBuffer(cfg)
 		require.ErrorIs(t, err, ErrPrototypeInvalidConfig)
 	}
+}
+
+func TestUnit_PrototypeWindow_DefaultsAndNilReceiver(t *testing.T) {
+	t.Parallel()
+	w, err := NewPrototypeWindowBuffer(PrototypeWindowConfig{}) // holdback=0, maxBuf=0 → defaults
+	require.NoError(t, err)
+	require.Equal(t, prototypeDefaultHoldbackRunes, w.holdback)
+	require.Equal(t, prototypeDefaultMaxBufferRunes, w.maxBuf)
+
+	var nilBuf *PrototypeWindowBuffer
+	_, err = nilBuf.Feed("x")
+	require.ErrorIs(t, err, ErrPrototypeInvalidConfig)
+	_, err = nilBuf.Flush()
+	require.ErrorIs(t, err, ErrPrototypeInvalidConfig)
+	require.Equal(t, 0, nilBuf.RetainedRunes())
 }
 
 func TestUnit_PrototypeWindow_FlushEmitsHoldbackTail(t *testing.T) {
