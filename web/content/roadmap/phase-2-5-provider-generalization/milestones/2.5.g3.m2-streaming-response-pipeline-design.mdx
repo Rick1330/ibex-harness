@@ -2,7 +2,7 @@
 title: "2.5.G3.M2 Streaming response pipeline design"
 description: "Design spike and ADR for streaming response transformation. A transformation stage that needs to see the complete response is a poor fit with low-latency chunk-by-chunk forwarding — this milestone makes the constraint explicit and documents the correct approach before Phase 3 commits to a design."
 summary: "Design spike and ADR for streaming response transformation. A transformation stage that needs to see the complete response is a poor fit with low-latency chunk-by-chunk forwarding — this milestone makes the constraint explicit and documents the correct approach before Phase 3 commits to a design."
-status: "planned"
+status: "completed"
 milestoneId: "2.5.G3.M2"
 track: "C"
 trackTitle: "Response-Side Processing Pipeline"
@@ -15,12 +15,12 @@ fullTitle: "Milestone 2.5.G3.M2 — Streaming Response Pipeline Design"
 
 # Milestone 2.5.G3.M2 — Streaming Response Pipeline Design
 
-**Status:** Planned  
+**Status:** Completed (2.5.G3.M2 — [ADR-0045](/docs/adr/0045-streaming-response-transformation))  
 **Goal:** [Track C — Response-Side Processing Pipeline](/roadmap/phase-2-5-provider-generalization/tracks#track-c--response-side-processing-pipeline)  
 **Phase:** 2.5 — Provider Generalization & Foundation  
 **Estimated effort:** 2 days  
 **Track:** [Track C — Response-Side Processing Pipeline](/roadmap/phase-2-5-provider-generalization/tracks#track-c--response-side-processing-pipeline)  
-**ADR required:** ADR-00XX — Streaming response transformation
+**ADR:** [ADR-0045 — Streaming response transformation](/docs/adr/0045-streaming-response-transformation)
 
 ---
 
@@ -71,7 +71,7 @@ Prefer outcomes over matching any particular file tree or command sequence.
 Rename freely to match the change that actually lands.
 
 - Branch: `feature/m2-5-g3-m2-streaming-pipeline-design`
-- PR title: `design(proxy): streaming response transformation ADR and prototype (m2.5.G3.M2)`
+- PR title: `docs(proxy): streaming response transformation ADR and prototype (m2.5.G3.M2)`
 
 ## Options to Evaluate
 
@@ -93,6 +93,8 @@ Ship **(1) token-window buffering** for anything regex/pattern-based (PII, secre
 
 Explicitly reject "seamless full-content correction on a streaming response" as a documented non-goal — that's a real physical limit worth writing down now so it doesn't get silently promised in Phase 3 marketing copy.
 
+**Shipped decision:** [ADR-0045](/docs/adr/0045-streaming-response-transformation) adopts the hybrid above; Option 3 is documented as a Phase 3 operator escape hatch only.
+
 ---
 
 ## Deliverables
@@ -101,7 +103,7 @@ Target outcomes for the milestone; concrete artifacts may differ from any sketch
 
 ### 1. ADR
 
-`web/content/docs/adr/00XX-streaming-response-transformation.mdx` capturing:
+`web/content/docs/adr/0045-streaming-response-transformation.mdx` capturing:
 
 - The physical constraint (can't mutate already-flushed bytes)
 - The three options with tradeoffs
@@ -137,10 +139,11 @@ These numbers belong in the ADR as constraints Phase 3 must work within.
 
 ```
 web/content/docs/adr/
- 00XX-streaming-response-transformation.mdx # ADR
+ 0045-streaming-response-transformation.mdx # ADR
 services/proxy/internal/http/
  stream_transform_prototype.go # throwaway, not wired in
- stream_transform_prototype_test.go # benchmark
+ stream_transform_prototype_test.go # adversarial unit tests
+ stream_transform_prototype_bench_test.go # benchmarks
 ```
 
 ---
@@ -149,15 +152,14 @@ services/proxy/internal/http/
 
 Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
 
-- [ ] ADR written capturing the physical constraint, three options, recommendation, and explicit non-goals
-- [ ] ADR indexed in the ADR index
-- [ ] Prototype measures and records TTFB delta, backpressure effect, and per-request memory overhead
-- [ ] Benchmark numbers committed alongside the prototype
-- [ ] Prototype is explicitly **not** wired into the production SSE stream path (a comment at the top of the file makes this clear)
-- [ ] Phase 3 streaming stage design is now unambiguously constrained — no surprise architectural debates when implementation begins
+- [x] ADR written capturing the physical constraint, three options, recommendation, and explicit non-goals
+- [x] ADR indexed in the ADR index
+- [x] Prototype measures and records TTFB delta, backpressure effect, and per-request memory overhead
+- [x] Benchmark numbers committed alongside the prototype
+- [x] Prototype is explicitly **not** wired into the production SSE stream path (a comment at the top of the file makes this clear)
+- [x] Phase 3 streaming stage design is now unambiguously constrained — no surprise architectural debates when implementation begins
 
 ## Prerequisites
 
 - 2.5.G3.M1 (response middleware hook) — establishes the typed `ChatResponse` and pipeline pattern
 - ADR-0027 (dual-write streaming design from Phase 2)
-

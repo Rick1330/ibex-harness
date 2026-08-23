@@ -42,6 +42,7 @@
     "0041-model-capability-registry",
     "0042-self-hosted-openai-compatible-adapter",
     "0043-tokenizer-registry",
-    "0044-response-pipeline-non-streaming"
+    "0044-response-pipeline-non-streaming",
+    "0045-streaming-response-transformation"
   ]
 }

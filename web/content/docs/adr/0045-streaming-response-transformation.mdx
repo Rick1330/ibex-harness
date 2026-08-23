@@ -1,0 +1,121 @@
+---
+title: "ADR-0045: Streaming response transformation"
+description: "Architecture decision record 0045 — physical flush constraint, token-window buffering for pattern stages, post-hoc semantic correction, and Phase 3 stream-stage contract sketch."
+adrId: "0045"
+status: "Accepted"
+date: "2026-08-23"
+authors: "IBEX Harness team"
+---
+
+# ADR-0045: Streaming response transformation
+
+- **Status:** Accepted
+- **Date:** 2026-08-23
+- **Authors:** IBEX Harness team
+- **Milestone:** [2.5.G3.M2 Streaming response pipeline design](/roadmap/phase-2-5-provider-generalization/milestones/2.5.g3.m2-streaming-response-pipeline-design)
+
+## Context
+
+[ADR-0044](/docs/adr/0044-response-pipeline-non-streaming) ships a typed non-streaming response pipeline. Streaming remains verbatim dual-write per [ADR-0027](/docs/adr/0027-streaming-dual-write): flush-per-SSE-event, TeeReader into `StreamAccumulator`, no JSON error envelopes after headers start.
+
+Phase 3 will want pattern-based guardrails (PII / secrets / quarantined-string detection) and, separately, semantic review. A stage that needs the *complete* response cannot rewrite bytes already flushed to the client.
+
+Industry practice for streaming PII gateways (bounded holdback / sliding window, safe flush of non-partial prefixes, fail-closed under overload) confirms the milestone options rather than inventing a fourth path.
+
+## Decision
+
+### 1) Physical constraint (non-negotiable)
+
+Once an SSE event has been written and flushed to the client, those bytes are immutable from the proxy’s perspective. There is no correct transparent way to “unsend” or rewrite them.
+
+### 2) Options evaluated
+
+| Option | Summary | Tradeoff |
+| --- | --- | --- |
+| **1 Token-window buffering** | Hold N runes behind the live edge; run cheap pattern checks; flush only the safe prefix | Adds TTFT proportional to holdback; works for regex/pattern class only |
+| **2 Post-hoc correction** | Stream unmodified; flag problems to observability / human review after the fact | Honest about irreversibility; no client mutation |
+| **3 Disable streaming** | Force `stream=false` for agents that require full-document rewrite | Correct when rewrite is mandatory; needs per-agent config (not in G3.M2) |
+
+### 3) Adopted approach (hybrid)
+
+- **Pattern-class stages (Phase 3):** Option **1** — bounded token/rune window on **assistant content deltas** (not raw SSE framing). Holdback must be ≥ longest pattern. Production holdback default target: **64 runes** (tunable); prototype enforces holdback ≥ 14 for its synthetic matcher.
+- **Semantic / LLM-judged stages:** Option **2** — post-hoc signals only (metrics, drift/alerts, dashboard). Never mutate already-flushed stream bytes.
+- **Mandatory full rewrite:** Option **3** — document as a Phase 3 **operator escape hatch** (per-agent / per-directive force non-streaming). Not implemented in this ADR’s milestone.
+
+**Explicit non-goal:** seamless full-content correction on a live streaming response.
+
+### 4) SSE framing vs content buffer
+
+Holdback applies to decoded **content delta text**. The proxy must not re-frame OpenAI SSE, inject events, or rewrite tool-call deltas unless a future ADR revisits ADR-0027’s verbatim policy. Pattern stages extract/re-emit content fields only.
+
+### 5) Stream-stage contract (Phase 3 sketch — not shipped)
+
+`packages/responsepipeline.Stage` / `ChatResponse` remain **non-streaming full-document** APIs. Streaming needs a separate contract, for example:
+
+```go
+type StreamStage interface {
+    Name() string
+    Feed(ctx context.Context, delta string) (emit string, err error)
+    Flush(ctx context.Context) (emit string, err error)
+}
+```
+
+Security-critical stream stages fail closed by **aborting upstream read and stopping client writes** (incomplete stream) or masking the remaining buffer — never returning a JSON error envelope after headers (ADR-0027 §4). Non-critical stages may skip/passthrough with metrics (mirror ADR-0044 fail-open where possible).
+
+### 6) Checkpoint / accumulator policy
+
+Today TeeReader accumulates **upstream** bytes. When Phase 3 transforms client-visible content, the default is: **accumulate client-visible content** so session/trace text matches what the user saw. Dual-track upstream+client is deferred unless product requires both.
+
+### 7) Metrics
+
+| Metric | Streaming + window behavior |
+| --- | --- |
+| `ibex_proxy_stream_duration_seconds` | Unchanged definition: headers → copy end (includes buffer hold time) |
+| `ibex_proxy_stream_backpressure_events_total` | Unchanged: client write/flush ≥ 50ms. Holdback CPU alone must not invent backpressure |
+| Added TTFT (Phase 3 budget input) | Separate measurement: time until first non-empty client emit under holdback; not a new Prometheus series in G3.M2 |
+
+### 8) Security and DoS
+
+- Never log raw stream content or matched substrings (ADR-0044 posture).
+- Hard per-request buffer cap; overflow → fail-closed (`ErrPrototypeBufferOverflow` in the design prototype).
+- Reject unbounded “buffer entire stream then transform” designs for the default path.
+
+### 9) Prototype (G3.M2 deliverable)
+
+Throwaway implementation in `services/proxy/internal/http/stream_transform_prototype.go` — **not wired** into `forwardSSEStream`. Synthetic matcher `SECRET[0-9]{1,8}` only.
+
+## Prototype measurements (local, 2026-08-23)
+
+Environment: linux/amd64, Intel Core Ultra 7 155H. Command: `go test ./services/proxy/internal/http/ -bench BenchmarkPrototypeWindow -benchtime=100ms`.
+
+| Measurement | Result | Phase 3 implication |
+| --- | --- | --- |
+| First emit CPU (holdback 16) | ~1.5 µs / first emit | Buffer CPU is negligible vs model token latency |
+| First emit CPU (holdback 64) | ~6 µs | Default holdback is cheap in-process |
+| First emit CPU (holdback 256) | ~45 µs | Still ≪ 1 ms; perceptual TTFT dominated by waiting for N model tokens |
+| Steady `Feed` (holdback 64) | ~1.6 µs/op | Fits ADR-0034 overhead discipline for the buffer itself |
+| 100 concurrent windows × 64 holdback | 6400 runes retained; ~91 KiB allocs in bench construct | Budget ~holdback runes per in-flight stream (+ small struct overhead) |
+| Max `Feed` vs 50 ms backpressure threshold | max feed ≪ 50 ms (bench reports ~0.3 ms worst sample) | Holdback does **not** invent ADR-0027 backpressure; slow client flush remains the signal |
+
+**Perceptual added TTFT** (not CPU): approximately `holdback_runes / model_tokens_per_second` plus inter-chunk jitter. Industry reports for similar windows often cite ~30–80 ms wall delay when the model is already streaming; Phase 3 must measure against real providers before setting SLOs.
+
+## Consequences
+
+**Positive:**
+
+- Phase 3 cannot accidentally promise full-stream rewrite.
+- Pattern redaction has a validated algorithm + fail-closed overflow.
+- Metrics semantics stay compatible with ADR-0027.
+
+**Negative / follow-ups:**
+
+- Production PII packs, stream-stage wiring, and per-agent force-non-streaming remain Phase 3+.
+- Content-delta extraction from OpenAI SSE (without breaking tool calls) needs careful Phase 3 design.
+- Client-visible accumulator change is a behavior change for checkpoints/traces when transforms land.
+
+## References
+
+- [ADR-0027 Streaming dual-write](/docs/adr/0027-streaming-dual-write)
+- [ADR-0044 Non-streaming response pipeline](/docs/adr/0044-response-pipeline-non-streaming)
+- [ADR-0034 Performance methodology](/docs/adr/0034-performance-methodology)
+- Milestone [2.5.G3.M2](/roadmap/phase-2-5-provider-generalization/milestones/2.5.g3.m2-streaming-response-pipeline-design)
