@@ -6,103 +6,90 @@ import (
 	"time"
 )
 
+func mustBenchWindow(b *testing.B, holdback int) *PrototypeWindowBuffer {
+	b.Helper()
+	w, err := NewPrototypeWindowBuffer(PrototypeWindowConfig{
+		HoldbackRunes: holdback, MaxBufferRunes: 1 << 20,
+	})
+	if err != nil {
+		b.Fatal(err)
+	}
+	return w
+}
+
+func primeUntilEmit(b *testing.B, w *PrototypeWindowBuffer, chunk string) {
+	b.Helper()
+	for {
+		emit, err := w.Feed(chunk)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if emit != "" {
+			return
+		}
+	}
+}
+
+func feedOrReset(b *testing.B, w **PrototypeWindowBuffer, chunk string, holdback int) {
+	b.Helper()
+	if _, err := (*w).Feed(chunk); err == nil {
+		return
+	}
+	*w = mustBenchWindow(b, holdback)
+}
+
 // BenchmarkPrototypeWindow_FirstEmit measures time until the first non-empty emit
-// (proxy for added TTFT from holdback). Holdback delays first client bytes until
-// retained runes exceed HoldbackRunes.
+// (proxy for added TTFT from holdback).
 func BenchmarkPrototypeWindow_FirstEmit(b *testing.B) {
 	for _, holdback := range []int{16, 64, 256} {
-		if holdback < prototypeMaxPatternRunes {
-			holdback = prototypeMaxPatternRunes
-		}
 		b.Run(holdbackName(holdback), func(b *testing.B) {
-			chunk := "token "
-			b.ReportAllocs()
-			b.ResetTimer()
-			var firstEmitNs int64
-			for i := 0; i < b.N; i++ {
-				w, err := NewPrototypeWindowBuffer(PrototypeWindowConfig{
-					HoldbackRunes: holdback, MaxBufferRunes: 1 << 20,
-				})
-				if err != nil {
-					b.Fatal(err)
-				}
-				start := time.Now()
-				var got string
-				for got == "" {
-					got, err = w.Feed(chunk)
-					if err != nil {
-						b.Fatal(err)
-					}
-				}
-				firstEmitNs += time.Since(start).Nanoseconds()
-			}
-			b.ReportMetric(float64(firstEmitNs)/float64(b.N), "ns/first_emit")
+			runFirstEmitBench(b, holdback)
 		})
 	}
 }
 
-// BenchmarkPrototypeWindow_PassthroughVsHoldback compares steady-state Feed cost
-// with holdback vs an immediate-flush path (holdback equal to max pattern floor).
+func runFirstEmitBench(b *testing.B, holdback int) {
+	chunk := "token "
+	b.ReportAllocs()
+	b.ResetTimer()
+	var firstEmitNs int64
+	for i := 0; i < b.N; i++ {
+		w := mustBenchWindow(b, holdback)
+		start := time.Now()
+		primeUntilEmit(b, w, chunk)
+		firstEmitNs += time.Since(start).Nanoseconds()
+	}
+	b.ReportMetric(float64(firstEmitNs)/float64(b.N), "ns/first_emit")
+}
+
+// BenchmarkPrototypeWindow_FeedSteady measures steady-state Feed after first emit.
 func BenchmarkPrototypeWindow_FeedSteady(b *testing.B) {
 	chunk := strings.Repeat("a", 32)
 	for _, holdback := range []int{prototypeMaxPatternRunes, 64, 256} {
 		b.Run(holdbackName(holdback), func(b *testing.B) {
-			w, err := NewPrototypeWindowBuffer(PrototypeWindowConfig{
-				HoldbackRunes: holdback, MaxBufferRunes: 1 << 20,
-			})
-			if err != nil {
-				b.Fatal(err)
-			}
-			// Prime past first emit so we measure steady Feed.
-			for {
-				emit, err := w.Feed(chunk)
-				if err != nil {
-					b.Fatal(err)
-				}
-				if emit != "" {
-					break
-				}
-			}
-			b.ReportAllocs()
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				if _, err := w.Feed(chunk); err != nil {
-					// Reset on overflow to keep bench running.
-					w, err = NewPrototypeWindowBuffer(PrototypeWindowConfig{
-						HoldbackRunes: holdback, MaxBufferRunes: 1 << 20,
-					})
-					if err != nil {
-						b.Fatal(err)
-					}
-				}
-			}
+			runFeedSteadyBench(b, holdback, chunk)
 		})
 	}
 }
 
-// BenchmarkPrototypeWindow_RetainedMemory reports retained runes at steady state
-// for concurrent-ish sequential windows (allocs/op stands in for per-request overhead).
+func runFeedSteadyBench(b *testing.B, holdback int, chunk string) {
+	w := mustBenchWindow(b, holdback)
+	primeUntilEmit(b, w, chunk)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		feedOrReset(b, &w, chunk, holdback)
+	}
+}
+
+// BenchmarkPrototypeWindow_RetainedMemory reports retained runes at steady state.
 func BenchmarkPrototypeWindow_RetainedMemory(b *testing.B) {
 	const nWindows = 100
 	holdback := 64
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		windows := make([]*PrototypeWindowBuffer, nWindows)
-		for j := 0; j < nWindows; j++ {
-			w, err := NewPrototypeWindowBuffer(PrototypeWindowConfig{HoldbackRunes: holdback})
-			if err != nil {
-				b.Fatal(err)
-			}
-			if _, err := w.Feed(strings.Repeat("m", holdback+8)); err != nil {
-				b.Fatal(err)
-			}
-			windows[j] = w
-		}
-		var retained int
-		for _, w := range windows {
-			retained += w.RetainedRunes()
-		}
+		retained := fillWindowsRetained(b, nWindows, holdback)
 		if retained != nWindows*holdback {
 			b.Fatalf("retained=%d want=%d", retained, nWindows*holdback)
 		}
@@ -110,27 +97,36 @@ func BenchmarkPrototypeWindow_RetainedMemory(b *testing.B) {
 	}
 }
 
+func fillWindowsRetained(b *testing.B, nWindows, holdback int) int {
+	b.Helper()
+	windows := make([]*PrototypeWindowBuffer, nWindows)
+	for j := 0; j < nWindows; j++ {
+		w := mustBenchWindow(b, holdback)
+		if _, err := w.Feed(strings.Repeat("m", holdback+8)); err != nil {
+			b.Fatal(err)
+		}
+		windows[j] = w
+	}
+	var retained int
+	for _, w := range windows {
+		retained += w.RetainedRunes()
+	}
+	return retained
+}
+
 // BenchmarkPrototypeWindow_BackpressureProxy shows holdback Feed alone stays
-// well under the ADR-0027 50ms backpressure threshold; slow client flush is a
-// separate signal (not invented by buffering).
+// well under the ADR-0027 50ms backpressure threshold.
 func BenchmarkPrototypeWindow_BackpressureProxy(b *testing.B) {
 	const backpressureThreshold = 50 * time.Millisecond
-	w, err := NewPrototypeWindowBuffer(PrototypeWindowConfig{HoldbackRunes: 64})
-	if err != nil {
-		b.Fatal(err)
-	}
+	w := mustBenchWindow(b, 64)
 	chunk := strings.Repeat("z", 80)
 	b.ReportAllocs()
 	b.ResetTimer()
 	var maxFeedNs int64
 	for i := 0; i < b.N; i++ {
 		start := time.Now()
-		_, err := w.Feed(chunk)
+		feedOrReset(b, &w, chunk, 64)
 		elapsed := time.Since(start)
-		if err != nil {
-			w, _ = NewPrototypeWindowBuffer(PrototypeWindowConfig{HoldbackRunes: 64})
-			continue
-		}
 		if ns := elapsed.Nanoseconds(); ns > maxFeedNs {
 			maxFeedNs = ns
 		}

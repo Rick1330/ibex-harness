@@ -51,18 +51,36 @@ type PrototypeWindowBuffer struct {
 
 // NewPrototypeWindowBuffer constructs a buffer. Zero values use prototype defaults.
 func NewPrototypeWindowBuffer(cfg PrototypeWindowConfig) (*PrototypeWindowBuffer, error) {
-	holdback := cfg.HoldbackRunes
+	holdback, maxBuf := normalizePrototypeConfig(cfg)
+	if err := validatePrototypeConfig(holdback, maxBuf); err != nil {
+		return nil, err
+	}
+	return &PrototypeWindowBuffer{holdback: holdback, maxBuf: maxBuf}, nil
+}
+
+func normalizePrototypeConfig(cfg PrototypeWindowConfig) (holdback, maxBuf int) {
+	holdback = cfg.HoldbackRunes
 	if holdback == 0 {
 		holdback = prototypeDefaultHoldbackRunes
 	}
-	maxBuf := cfg.MaxBufferRunes
+	maxBuf = cfg.MaxBufferRunes
 	if maxBuf == 0 {
 		maxBuf = prototypeDefaultMaxBufferRunes
 	}
-	if holdback < prototypeMaxPatternRunes || maxBuf < 1 || holdback > maxBuf {
-		return nil, ErrPrototypeInvalidConfig
+	return holdback, maxBuf
+}
+
+func validatePrototypeConfig(holdback, maxBuf int) error {
+	if holdback < prototypeMaxPatternRunes {
+		return ErrPrototypeInvalidConfig
 	}
-	return &PrototypeWindowBuffer{holdback: holdback, maxBuf: maxBuf}, nil
+	if maxBuf < 1 {
+		return ErrPrototypeInvalidConfig
+	}
+	if holdback > maxBuf {
+		return ErrPrototypeInvalidConfig
+	}
+	return nil
 }
 
 // Feed appends a content chunk, redacts complete prototype matches, and returns
@@ -74,11 +92,15 @@ func (w *PrototypeWindowBuffer) Feed(chunk string) (string, error) {
 	if chunk == "" {
 		return "", nil
 	}
-	if utf8.RuneCountInString(w.buf.String())+utf8.RuneCountInString(chunk) > w.maxBuf {
+	if w.wouldOverflow(chunk) {
 		return "", ErrPrototypeBufferOverflow
 	}
 	w.buf.WriteString(chunk)
 	return w.emitSafe(false)
+}
+
+func (w *PrototypeWindowBuffer) wouldOverflow(chunk string) bool {
+	return utf8.RuneCountInString(w.buf.String())+utf8.RuneCountInString(chunk) > w.maxBuf
 }
 
 // Flush redacts any remaining complete matches and emits the entire buffer
@@ -99,22 +121,29 @@ func (w *PrototypeWindowBuffer) RetainedRunes() int {
 }
 
 func (w *PrototypeWindowBuffer) emitSafe(flushAll bool) (string, error) {
+	redacted := w.redactAndStore()
+	if flushAll {
+		w.buf.Reset()
+		return redacted, nil
+	}
+	return w.emitHoldbackPrefix(redacted)
+}
+
+func (w *PrototypeWindowBuffer) redactAndStore() string {
 	redacted := prototypeSecretPattern.ReplaceAllString(w.buf.String(), prototypeRedactToken)
 	w.buf.Reset()
 	w.buf.WriteString(redacted)
+	return redacted
+}
 
+func (w *PrototypeWindowBuffer) emitHoldbackPrefix(redacted string) (string, error) {
 	runes := []rune(redacted)
-	if flushAll || len(runes) <= w.holdback {
-		if flushAll {
-			w.buf.Reset()
-			return redacted, nil
-		}
+	if len(runes) <= w.holdback {
 		return "", nil
 	}
 	cut := len(runes) - w.holdback
 	emit := string(runes[:cut])
-	keep := string(runes[cut:])
 	w.buf.Reset()
-	w.buf.WriteString(keep)
+	w.buf.WriteString(string(runes[cut:]))
 	return emit, nil
 }
