@@ -85,6 +85,13 @@ CREATE TABLE ibex_core.organizations (
     --   "federation_enabled": false
     -- }
 
+    -- Embedding geometry (ADR-0046 / migration 000013; deployment profile, not per-request)
+    embedding_profile             TEXT NOT NULL DEFAULT 'cpu'
+                                  CHECK (embedding_profile IN ('cpu', 'gpu', 'hosted')),
+    embedding_dim                 INTEGER NOT NULL DEFAULT 384
+                                  CHECK (embedding_dim > 0),
+    embedding_model_id            TEXT NOT NULL DEFAULT 'all-MiniLM-L6-v2',
+
     -- Metadata
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),

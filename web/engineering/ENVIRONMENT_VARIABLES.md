@@ -349,9 +349,9 @@ migration — do not mix dims in one pgvector column.
 
 | Variable | Required | Default | Description | Notes |
 |----------|----------|---------|-------------|-------|
-| `IBEX_EMBEDDING_PROFILE` | Planned **2.5** | `cpu` | `cpu` \| `gpu` \| `hosted` | Deployment choice, not per-request |
-| `IBEX_EMBEDDING_MODEL` | No | profile-dependent | Model id (e.g. `BAAI/bge-m3`, `all-MiniLM-L6-v2`, `text-embedding-3-large`) | Must match schema dim |
-| `IBEX_EMBEDDING_DIM` | No | profile-dependent | Vector dimensionality (e.g. `1024` for bge-m3, `384` for MiniLM) | Validated at startup vs DB |
+| `IBEX_EMBEDDING_PROFILE` | **Shipped 2.5.G4.M1** | `cpu` | `cpu` \| `gpu` \| `hosted` | Deployment choice, not per-request |
+| `IBEX_EMBEDDING_MODEL` | No | profile-dependent | Model id (e.g. `BAAI/bge-m3`, `all-MiniLM-L6-v2`, `text-embedding-3-large`) | **Shipped 2.5.G4.M1:** validated at embedder startup |
+| `IBEX_EMBEDDING_DIM` | No | profile-dependent | Vector dimensionality (e.g. `1024` for bge-m3, `384` for MiniLM) | **Shipped 2.5.G4.M1:** validated at embedder startup |
 | `IBEX_EMBEDDER_URL` | Yes (if remote) | (none) | Embedder service / TEI base URL | Internal |
 | `IBEX_EMBEDDER_BACKEND` | Planned **2.5** | `tei` | `tei` \| `hosted` \| `local` | Backend registry key |
 | `IBEX_EMBEDDER_TIMEOUT_MS` | No | `2000` | Embed request timeout | Context path sensitive |
