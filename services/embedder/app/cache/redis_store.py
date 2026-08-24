@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Sequence
 
 from redis.asyncio import Redis
 
-logger = logging.getLogger(__name__)
-
 
 class RedisEmbeddingStore:
-    """MGET / pipeline SET EX / PING / aclose over redis-asyncio."""
+    """MGET / pipeline SET EX / PING / aclose over redis-asyncio.
+
+    Timeouts are set at construction so a slow Redis fails fast and the
+    cache decorator can fail-open to the inner backend.
+    """
 
     def __init__(self, client: Redis) -> None:
         self._client = client
@@ -23,6 +24,7 @@ class RedisEmbeddingStore:
             socket_connect_timeout=timeout_seconds,
             socket_timeout=timeout_seconds,
             decode_responses=False,
+            retry_on_timeout=False,
         )
         return cls(client)
 

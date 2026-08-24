@@ -1,19 +1,21 @@
-"""Unit tests for CachingEmbeddingBackend (mock Redis store)."""
+"""Unit tests for CachingEmbeddingBackend (in-memory mock Redis store)."""
 
 from __future__ import annotations
 
 import hashlib
+from dataclasses import dataclass
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
 import numpy as np
 import pytest
+from redis.exceptions import TimeoutError as RedisTimeoutError
 
 from app.backends.stub import StubBackend
-from app.cache.backend import CachingEmbeddingBackend, _encode_vector
+from app.cache.backend import CachingEmbeddingBackend
 from app.cache.context import org_context
-from app.cache.keys import cache_key_for_text
 from app.cache.metrics import CACHE_ERRORS, CACHE_REQUESTS
+from app.cache.wire import encode_vector
 from app.errors import MissingOrgContextError
 
 _ORG = UUID("11111111-1111-1111-1111-111111111111")
@@ -21,15 +23,11 @@ _ORG_B = UUID("22222222-2222-2222-2222-222222222222")
 
 
 def _l2_for_text(text: str, dim: int = 8) -> np.ndarray:
-    """Deterministic L2 vector unique per text (not shared across texts)."""
+    """Deterministic unit vector unique per text."""
     seed = int.from_bytes(hashlib.sha256(text.encode()).digest()[:8], "big")
     rng = np.random.default_rng(seed)
     raw = rng.standard_normal(dim).astype(np.float32)
     return (raw / np.linalg.norm(raw)).astype(np.float32)
-
-
-def _l2_batch(texts: list[str], dim: int = 8) -> np.ndarray:
-    return np.vstack([_l2_for_text(t, dim) for t in texts]).astype(np.float32)
 
 
 def _counting_inner(dim: int = 8) -> MagicMock:
@@ -38,15 +36,44 @@ def _counting_inner(dim: int = 8) -> MagicMock:
     inner.model_id = "all-MiniLM-L6-v2"
     inner.dimensions = dim
     inner.profile = "cpu"
-    inner.embed_calls = []
+    calls: list[list[str]] = []
+    inner.embed_calls = calls
 
     async def _embed(texts: list[str]) -> np.ndarray:
-        inner.embed_calls.append(list(texts))
-        return _l2_batch(texts, dim)
+        calls.append(list(texts))
+        return np.vstack([_l2_for_text(t, dim) for t in texts]).astype(np.float32)
 
     inner.embed = AsyncMock(side_effect=_embed)
     inner.aclose = AsyncMock()
     return inner
+
+
+@dataclass
+class _MockCache:
+    data: dict[str, bytes]
+    store: MagicMock
+    inner: MagicMock
+    cached: CachingEmbeddingBackend
+
+
+def _mock_cache(*, dim: int = 8, prefill: dict[str, bytes] | None = None) -> _MockCache:
+    data: dict[str, bytes] = dict(prefill or {})
+    store = MagicMock()
+    store.mget = AsyncMock(side_effect=lambda keys: [data.get(k) for k in keys])
+
+    async def _set_many(items, *, ttl_seconds: int) -> None:
+        for key, value in items:
+            data[key] = value
+
+    store.set_many_ex = AsyncMock(side_effect=_set_many)
+    store.aclose = AsyncMock()
+    inner = _counting_inner(dim)
+    return _MockCache(
+        data=data,
+        store=store,
+        inner=inner,
+        cached=CachingEmbeddingBackend(inner, store, ttl_seconds=60),
+    )
 
 
 @pytest.fixture
@@ -57,184 +84,99 @@ def org_ctx():
 
 class TestCachingBackendUnit:
     async def test_miss_then_hit_skips_inner(self, org_ctx: UUID) -> None:
-        store: dict[str, bytes] = {}
-
-        mock_store = MagicMock()
-        mock_store.mget = AsyncMock(
-            side_effect=lambda keys: [store.get(k) for k in keys]
-        )
-
-        async def _set_many(items, *, ttl_seconds: int) -> None:
-            for key, value in items:
-                store[key] = value
-
-        mock_store.set_many_ex = AsyncMock(side_effect=_set_many)
-        mock_store.aclose = AsyncMock()
-
-        inner = _counting_inner()
-        cached = CachingEmbeddingBackend(inner, mock_store, ttl_seconds=60)
-
-        first = await cached.embed(["hello"])
-        second = await cached.embed(["hello"])
-
-        assert first.shape == (1, 8)
+        env = _mock_cache()
+        first = await env.cached.embed(["hello"])
+        second = await env.cached.embed(["hello"])
         np.testing.assert_array_equal(first, second)
-        assert len(inner.embed_calls) == 1
-        assert mock_store.set_many_ex.await_count == 1
+        assert len(env.inner.embed_calls) == 1
+        assert env.store.set_many_ex.await_count == 1
 
-    async def test_partial_batch_mixed_hit_miss(self, org_ctx: UUID) -> None:
-        inner = _counting_inner()
-        store: dict[str, bytes] = {}
-        mock_store = MagicMock()
-        mock_store.mget = AsyncMock(
-            side_effect=lambda keys: [store.get(k) for k in keys]
-        )
-
-        async def _set_many(items, *, ttl_seconds: int) -> None:
-            for key, value in items:
-                store[key] = value
-
-        mock_store.set_many_ex = AsyncMock(side_effect=_set_many)
-        cached = CachingEmbeddingBackend(inner, mock_store, ttl_seconds=60)
-
-        await cached.embed(["a"])
-        result = await cached.embed(["a", "b", "a"])
-        assert result.shape == (3, 8)
-        assert inner.embed_calls[-1] == ["b"]
+    async def test_partial_batch_preserves_order(self, org_ctx: UUID) -> None:
+        env = _mock_cache()
+        await env.cached.embed(["a"])
+        result = await env.cached.embed(["a", "b", "a"])
+        assert env.inner.embed_calls[-1] == ["b"]
         np.testing.assert_array_equal(result[0], _l2_for_text("a"))
         np.testing.assert_array_equal(result[1], _l2_for_text("b"))
-        np.testing.assert_array_equal(result[2], _l2_for_text("a"))
-        np.testing.assert_array_equal(result[0], result[2])
+        np.testing.assert_array_equal(result[2], result[0])
         assert not np.allclose(result[0], result[1])
 
     async def test_duplicate_miss_texts_embedded_once(self, org_ctx: UUID) -> None:
-        inner = _counting_inner()
-        mock_store = MagicMock()
-        mock_store.mget = AsyncMock(return_value=[None, None, None])
-        mock_store.set_many_ex = AsyncMock()
-        cached = CachingEmbeddingBackend(inner, mock_store, ttl_seconds=60)
-
-        result = await cached.embed(["x", "y", "x"])
-        assert result.shape == (3, 8)
-        assert inner.embed_calls == [["x", "y"]]
+        env = _mock_cache()
+        env.store.mget = AsyncMock(return_value=[None, None, None])
+        result = await env.cached.embed(["x", "y", "x"])
+        assert env.inner.embed_calls == [["x", "y"]]
         np.testing.assert_array_equal(result[0], result[2])
         np.testing.assert_array_equal(result[0], _l2_for_text("x"))
-        np.testing.assert_array_equal(result[1], _l2_for_text("y"))
-        written = mock_store.set_many_ex.await_args.args[0]
-        assert len(written) == 3
+        # One SET per unique digest (x and y), not three.
+        written = env.store.set_many_ex.await_args.args[0]
+        assert len(written) == 2
 
-    async def test_corrupt_blob_counts_as_miss(self, org_ctx: UUID) -> None:
-        inner = _counting_inner(dim=8)
-        key = cache_key_for_text(
-            org_id=_ORG,
-            model_id=inner.model_id,
-            dimensions=8,
-            text="z",
-        )
-        mock_store = MagicMock()
-        mock_store.mget = AsyncMock(return_value=[b"short"])
-        mock_store.set_many_ex = AsyncMock()
-        cached = CachingEmbeddingBackend(inner, mock_store, ttl_seconds=60)
-
-        await cached.embed(["z"])
-        assert inner.embed_calls == [["z"]]
-        assert mock_store.set_many_ex.await_count == 1
-        assert key  # key format exercised
-
-    async def test_non_finite_cached_vector_counts_as_miss(self, org_ctx: UUID) -> None:
-        inner = _counting_inner(dim=8)
-        bad = np.full(8, np.nan, dtype=np.float32)
-        mock_store = MagicMock()
-        mock_store.mget = AsyncMock(return_value=[_encode_vector(bad)])
-        mock_store.set_many_ex = AsyncMock()
-        cached = CachingEmbeddingBackend(inner, mock_store, ttl_seconds=60)
-
-        result = await cached.embed(["bad"])
-        assert inner.embed_calls == [["bad"]]
+    @pytest.mark.parametrize(
+        ("blob", "text"),
+        [
+            (b"short", "z"),
+            (encode_vector(np.full(8, np.nan, dtype=np.float32)), "bad"),
+            (encode_vector(np.ones(8, dtype=np.float32)), "unnorm"),
+        ],
+        ids=["trunc", "nan", "non_unit_l2"],
+    )
+    async def test_invalid_blob_is_miss_and_overwritten(
+        self,
+        org_ctx: UUID,
+        blob: bytes,
+        text: str,
+    ) -> None:
+        env = _mock_cache()
+        env.store.mget = AsyncMock(return_value=[blob])
+        result = await env.cached.embed([text])
+        assert env.inner.embed_calls == [[text]]
         assert np.all(np.isfinite(result))
-        assert mock_store.set_many_ex.await_count == 1
-
-    async def test_non_normalized_cached_vector_counts_as_miss(self, org_ctx: UUID) -> None:
-        inner = _counting_inner(dim=8)
-        raw = np.ones(8, dtype=np.float32)  # L2 != 1
-        mock_store = MagicMock()
-        mock_store.mget = AsyncMock(return_value=[_encode_vector(raw)])
-        mock_store.set_many_ex = AsyncMock()
-        cached = CachingEmbeddingBackend(inner, mock_store, ttl_seconds=60)
-
-        result = await cached.embed(["unnorm"])
-        assert inner.embed_calls == [["unnorm"]]
         assert np.allclose(np.linalg.norm(result[0]), 1.0, atol=1e-5)
-        assert mock_store.set_many_ex.await_count == 1
+        assert env.store.set_many_ex.await_count == 1
 
     async def test_mget_error_fail_open(self, org_ctx: UUID) -> None:
-        inner = _counting_inner()
-        mock_store = MagicMock()
-        mock_store.mget = AsyncMock(side_effect=ConnectionError("down"))
-        mock_store.set_many_ex = AsyncMock()
-        cached = CachingEmbeddingBackend(inner, mock_store, ttl_seconds=60)
-
+        env = _mock_cache()
+        env.store.mget = AsyncMock(side_effect=ConnectionError("down"))
         before = CACHE_ERRORS.labels(op="mget")._value.get()
-        result = await cached.embed(["hello"])
+        result = await env.cached.embed(["hello"])
         assert result.shape == (1, 8)
-        assert inner.embed_calls == [["hello"]]
-        assert mock_store.set_many_ex.await_count == 0
+        assert env.inner.embed_calls == [["hello"]]
+        assert env.store.set_many_ex.await_count == 0
         assert CACHE_ERRORS.labels(op="mget")._value.get() == before + 1
 
     async def test_set_error_still_returns_vectors(self, org_ctx: UUID) -> None:
-        from redis.exceptions import TimeoutError as RedisTimeoutError
-
-        inner = _counting_inner()
-        mock_store = MagicMock()
-        mock_store.mget = AsyncMock(return_value=[None])
-        mock_store.set_many_ex = AsyncMock(side_effect=RedisTimeoutError("slow"))
-        cached = CachingEmbeddingBackend(inner, mock_store, ttl_seconds=60)
-
+        env = _mock_cache()
+        env.store.mget = AsyncMock(return_value=[None])
+        env.store.set_many_ex = AsyncMock(side_effect=RedisTimeoutError("slow"))
         before = CACHE_ERRORS.labels(op="set")._value.get()
-        result = await cached.embed(["hello"])
+        result = await env.cached.embed(["hello"])
         assert result.shape == (1, 8)
         assert CACHE_ERRORS.labels(op="set")._value.get() == before + 1
 
     async def test_missing_org_context_raises(self) -> None:
-        inner = _counting_inner()
-        mock_store = MagicMock()
-        cached = CachingEmbeddingBackend(inner, mock_store, ttl_seconds=60)
+        env = _mock_cache()
         with pytest.raises(MissingOrgContextError):
-            await cached.embed(["hello"])
-        assert inner.embed.await_count == 0
+            await env.cached.embed(["hello"])
+        assert env.inner.embed.await_count == 0
 
-    async def test_name_forwards_inner_not_cached_prefix(self, org_ctx: UUID) -> None:
+    async def test_identity_forwards_inner(self, org_ctx: UUID) -> None:
         inner = StubBackend.for_profile("cpu")
-        mock_store = MagicMock()
-        mock_store.mget = AsyncMock(return_value=[None])
-        mock_store.set_many_ex = AsyncMock()
-        cached = CachingEmbeddingBackend(inner, mock_store, ttl_seconds=60)
+        store = MagicMock()
+        store.mget = AsyncMock(return_value=[None])
+        store.set_many_ex = AsyncMock()
+        cached = CachingEmbeddingBackend(inner, store, ttl_seconds=60)
         assert cached.name == "stub"
         assert cached.model_id == inner.model_id
         assert cached.dimensions == inner.dimensions
         assert cached.profile == "cpu"
 
     async def test_metrics_hit_miss_per_text(self, org_ctx: UUID) -> None:
-        store: dict[str, bytes] = {}
-        mock_store = MagicMock()
-        mock_store.mget = AsyncMock(
-            side_effect=lambda keys: [store.get(k) for k in keys]
-        )
-
-        async def _set_many(items, *, ttl_seconds: int) -> None:
-            for key, value in items:
-                store[key] = value
-
-        mock_store.set_many_ex = AsyncMock(side_effect=_set_many)
-        inner = _counting_inner()
-        cached = CachingEmbeddingBackend(inner, mock_store, ttl_seconds=60)
-
+        env = _mock_cache()
         hits_before = CACHE_REQUESTS.labels(backend="stub", result="hit")._value.get()
         misses_before = CACHE_REQUESTS.labels(backend="stub", result="miss")._value.get()
-
-        await cached.embed(["a"])
-        await cached.embed(["a", "b"])
-
+        await env.cached.embed(["a"])
+        await env.cached.embed(["a", "b"])
         assert CACHE_REQUESTS.labels(backend="stub", result="miss")._value.get() == (
             misses_before + 2
         )
@@ -243,44 +185,28 @@ class TestCachingBackendUnit:
         )
 
     async def test_cross_tenant_no_shared_hit(self) -> None:
-        store: dict[str, bytes] = {}
-        mock_store = MagicMock()
-        mock_store.mget = AsyncMock(
-            side_effect=lambda keys: [store.get(k) for k in keys]
-        )
-
-        async def _set_many(items, *, ttl_seconds: int) -> None:
-            for key, value in items:
-                store[key] = value
-
-        mock_store.set_many_ex = AsyncMock(side_effect=_set_many)
-        inner = _counting_inner()
-        cached = CachingEmbeddingBackend(inner, mock_store, ttl_seconds=60)
-
+        env = _mock_cache()
         with org_context(_ORG):
-            await cached.embed(["shared"])
+            await env.cached.embed(["shared"])
         with org_context(_ORG_B):
-            await cached.embed(["shared"])
+            await env.cached.embed(["shared"])
+        assert len(env.inner.embed_calls) == 2
+        assert len(env.data) == 2
 
-        assert len(inner.embed_calls) == 2
-        assert len(store) == 2
+    async def test_rejects_non_positive_ttl(self) -> None:
+        with pytest.raises(ValueError, match="ttl_seconds"):
+            CachingEmbeddingBackend(_counting_inner(), MagicMock(), ttl_seconds=0)
 
-    async def test_aclose_closes_store_and_inner(self, org_ctx: UUID) -> None:
-        inner = _counting_inner()
-        mock_store = MagicMock()
-        mock_store.aclose = AsyncMock()
-        cached = CachingEmbeddingBackend(inner, mock_store, ttl_seconds=60)
-        await cached.aclose()
-        mock_store.aclose.assert_awaited_once()
-        inner.aclose.assert_awaited_once()
+    async def test_aclose_closes_store_and_inner(self) -> None:
+        env = _mock_cache()
+        await env.cached.aclose()
+        env.store.aclose.assert_awaited_once()
+        env.inner.aclose.assert_awaited_once()
 
     async def test_never_caches_inner_errors(self, org_ctx: UUID) -> None:
-        inner = _counting_inner()
-        inner.embed = AsyncMock(side_effect=RuntimeError("boom"))
-        mock_store = MagicMock()
-        mock_store.mget = AsyncMock(return_value=[None])
-        mock_store.set_many_ex = AsyncMock()
-        cached = CachingEmbeddingBackend(inner, mock_store, ttl_seconds=60)
+        env = _mock_cache()
+        env.inner.embed = AsyncMock(side_effect=RuntimeError("boom"))
+        env.store.mget = AsyncMock(return_value=[None])
         with pytest.raises(RuntimeError, match="boom"):
-            await cached.embed(["hello"])
-        assert mock_store.set_many_ex.await_count == 0
+            await env.cached.embed(["hello"])
+        assert env.store.set_many_ex.await_count == 0
