@@ -27,7 +27,7 @@ func DefaultGeometry(p Profile) (ProfileDefaults, error) {
 	case ProfileGPU:
 		return ProfileDefaults{ModelID: "BAAI/bge-m3", Dimensions: 1024}, nil
 	case ProfileHosted:
-		// Hosted model is config-driven in G4.M3; placeholder documents a common default.
+		// Hosted default for OpenAI text-embedding-3-large (G4.M3); Cohere uses 1024.
 		return ProfileDefaults{ModelID: "text-embedding-3-large", Dimensions: 3072}, nil
 	default:
 		return ProfileDefaults{}, fmt.Errorf("%w: %q", ErrUnknownProfile, p)

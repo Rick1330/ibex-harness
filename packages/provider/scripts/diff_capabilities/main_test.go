@@ -38,7 +38,7 @@ func cloneLimitRow(limits map[string]any) map[string]any {
 	return cp
 }
 
-func applySnapshotOverrides(out map[string]map[string]any, overrides map[string]map[string]any) {
+func applySnapshotOverrides(out, overrides map[string]map[string]any) {
 	for id, limits := range overrides {
 		applyOneOverride(out, id, limits)
 	}

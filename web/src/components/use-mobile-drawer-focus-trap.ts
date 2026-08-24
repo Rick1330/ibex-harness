@@ -57,10 +57,7 @@ export function useMobileDrawerFocusTrap(open: boolean, drawerId: string) {
 
       const focusable = listFocusableElements(drawer);
       if (focusable.length === 0) return;
-
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      trapTabBetweenEnds(event, first, last);
+      trapTabBetweenEnds(event, focusable[0], focusable.at(-1)!);
     };
 
     document.addEventListener("keydown", handleKeyDown);

@@ -14,7 +14,11 @@ function escapeXml(value: string): string {
 
 /** Strip trailing slashes so feed links/GUIDs stay canonical. */
 export function normalizeSiteUrl(raw: string): string {
-  return raw.replace(/\/+$/, "");
+  let url = raw;
+  while (url.endsWith("/")) {
+    url = url.slice(0, -1);
+  }
+  return url;
 }
 
 export async function GET() {

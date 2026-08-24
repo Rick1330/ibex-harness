@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
+from app.backends.stub import StubBackend
 from app.errors import DuplicateProfileError, MissingBackendError, UnknownProfileError
 from app.registry import BackendRegistry
-from app.stub import StubBackend
 
 
 def test_registry_for_profile_and_rejects() -> None:

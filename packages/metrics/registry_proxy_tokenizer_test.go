@@ -72,9 +72,8 @@ func TestUnit_TokenizerObserver_CountForModel(t *testing.T) {
 	reg := NewProxy("tokenizer-metrics-test")
 	tokReg, err := tokenizer.NewLocalRegistry(tokenizer.LocalRegistryConfig{})
 	require.NoError(t, err)
-	n, err := tokenizer.CountForModelWithObserver(tokenizer.ModelCountObserveRequest{
+	n, err := tokenizer.CountForModelWithObserver(context.Background(), tokenizer.ModelCountObserveRequest{
 		ModelCountRequest: tokenizer.ModelCountRequest{
-			Ctx:     context.Background(),
 			Catalog: provider.BuiltInCapabilityCatalog(),
 			Reg:     tokReg,
 			Model:   "gpt-4o",

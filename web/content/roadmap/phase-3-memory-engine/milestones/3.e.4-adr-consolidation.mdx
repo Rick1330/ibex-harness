@@ -1,7 +1,7 @@
 ---
 title: "3.E.4 ADR consolidation and index update"
-description: "Publish ADR-0040 through ADR-0044 covering vector index strategy, composite scoring v2, temporal conflict detection, memory tenant isolation, and retrieval-quality benchmark methodology."
-summary: "Publish ADR-0040 through ADR-0044 covering vector index strategy, composite scoring v2, temporal conflict detection, memory tenant isolation, and retrieval-quality benchmark methodology."
+description: "Publish Phase 3 memory ADRs (next free numbers after ADR-0047) covering HNSW expand, composite scoring v2, temporal conflict detection, memory tenant isolation, and retrieval-quality benchmark methodology. Do not reuse ADR-0040–0046."
+summary: "Publish Phase 3 memory ADRs (next free numbers after ADR-0047) covering HNSW expand, composite scoring v2, temporal conflict detection, memory tenant isolation, and retrieval-quality benchmark methodology. Do not reuse ADR-0040–0046."
 status: "planned"
 milestoneId: "3.E.4"
 track: "E"
@@ -31,15 +31,18 @@ fullTitle: "Milestone 3.E.4 — ADR Consolidation and Index Update"
 
 ## Why This Milestone Exists
 
-Per the repo's own ADR workflow, Phase 3 (redesigned) needs these new ADRs, continuing sequentially from ADR-0039:
+Per the repo's ADR workflow, Phase 3 needs new ADRs for the memory substrate.
+**ADR-0040 through ADR-0046 are already published for Phase 2.5** (Anthropic adapter through
+embedder registry). Temporal validity foundation is [ADR-0047](/docs/adr/0047-memory-temporal-validity).
+Assign the **next free numbers** at write time — do not reuse 0040–0046.
 
-| ADR | Title | Supersedes |
-|---|---|---|
-| ADR-0040 | Vector index strategy: HNSW as Phase 3 default | ADR-0035 (which deferred HNSW to Phase 4) |
-| ADR-0041 | Composite memory scoring v2 (category-conditional decay) | New — extends the formula referenced in `goals.mdx` |
-| ADR-0042 | Temporal-interval-aware conflict detection | Supersedes original binary contradiction/supersession model |
-| ADR-0043 | Memory service tenant isolation model (RLS + app-layer double enforcement) | New — Phase 3 equivalent of ADR-0016 |
-| ADR-0044 | Retrieval-quality benchmark methodology | New — Phase 3 sibling to ADR-0034 |
+| Planned topic | Notes |
+|---|---|
+| Memory schema v2 expand (HNSW / multi-label) | Expands ADR-0047 foundation |
+| Composite memory scoring v2 (category-conditional decay) | |
+| Temporal-interval-aware conflict detection | Builds on ADR-0047 columns |
+| Memory service tenant isolation (RLS + app-layer) | Phase 3 equivalent of ADR-0016 |
+| Retrieval-quality benchmark methodology | Phase 3 sibling to ADR-0034 |
 
 Each follows the exact template already in use: Status/Date/Authors header, Context, Decision, Consequences (positive/negative), References.
 
@@ -68,7 +71,7 @@ Prefer outcomes over matching any particular file tree or command sequence.
 
 Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
 
-- [ ] ADR-0040 through ADR-0044 written, following existing template
+- [ ] Phase 3 memory ADRs written at next free numbers after ADR-0047 (not 0040–0046), following existing template
 - [ ] Updated (exact path may differ)
 - [ ] `index.mdx` "through ADR-00xx" pointer updated
 - [ ] `pnpm exec fumadocs-mdx` regeneration successful
