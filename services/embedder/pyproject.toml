@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ibex-embedder"
 version = "0.1.0"
-description = "IBEX Harness embedding service (G4.M2 TEI GPU backend)"
+description = "IBEX Harness embedding service (G4.M2 TEI + G4.M3 hosted API)"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -36,6 +36,7 @@ pythonpath = ["."]
 asyncio_mode = "auto"
 markers = [
   "tei_live: requires a running TEI instance (set IBEX_TEI_LIVE=1)",
+  "hosted_live: requires hosted API credentials (set IBEX_HOSTED_LIVE=1)",
 ]
 
 [tool.ruff]

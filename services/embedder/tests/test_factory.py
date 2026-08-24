@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from app.backends.hosted import HostedAPIBackend
 from app.backends.stub import StubBackend
 from app.backends.tei import TEIBackend
 from app.config import Settings, get_settings
@@ -25,10 +26,49 @@ class TestBuildBackend:
         assert backend.name == "stub"
         assert backend.profile == "cpu"
 
-    def test_hosted_profile_returns_stub(self) -> None:
-        backend = build_backend(Settings(profile="hosted"))
-        assert isinstance(backend, StubBackend)
+    def test_hosted_profile_returns_hosted_backend(self) -> None:
+        settings = Settings(
+            profile="hosted",
+            hosted_api_key="sk-test",  # type: ignore[arg-type]
+        )
+        backend = build_backend(settings)
+        assert isinstance(backend, HostedAPIBackend)
+        assert backend.name == "openai"
         assert backend.profile == "hosted"
+        assert backend.dimensions == 3072
+
+    def test_hosted_without_key_raises_immediately(self) -> None:
+        settings = Settings(profile="hosted")
+        with pytest.raises(BackendUnavailableError, match="HOSTED_API_KEY"):
+            build_backend(settings)
+
+    def test_hosted_never_falls_back_to_stub(self) -> None:
+        settings = Settings(profile="hosted")
+        with pytest.raises(BackendUnavailableError):
+            backend = build_backend(settings)
+            if isinstance(backend, StubBackend):
+                pytest.fail("hosted profile returned stub — geometry contract violated")
+
+    def test_hosted_voyage_fail_closed(self) -> None:
+        settings = Settings(
+            profile="hosted",
+            hosted_provider="voyage",
+            hosted_api_key="sk-test",  # type: ignore[arg-type]
+        )
+        with pytest.raises(BackendUnavailableError, match="not implemented"):
+            build_backend(settings)
+
+    def test_hosted_cohere_geometry(self) -> None:
+        settings = Settings(
+            profile="hosted",
+            hosted_provider="cohere",
+            hosted_api_key="cohere-key",  # type: ignore[arg-type]
+        )
+        backend = build_backend(settings)
+        assert isinstance(backend, HostedAPIBackend)
+        assert backend.name == "cohere"
+        assert backend.dimensions == 1024
+        assert backend.model_id == "embed-english-v3.0"
 
     def test_gpu_with_url_returns_tei_backend(self) -> None:
         settings = Settings(profile="gpu", tei_base_url="http://tei:8080")
@@ -115,6 +155,12 @@ class TestLoadActiveBackend:
             load_active_backend(settings)
 
     def test_hosted_default_geometry(self) -> None:
-        backend = load_active_backend(Settings(profile="hosted"))
+        backend = load_active_backend(
+            Settings(profile="hosted", hosted_api_key="sk-test")  # type: ignore[arg-type]
+        )
         assert backend.dimensions == 3072
         assert backend.model_id == "text-embedding-3-large"
+
+    def test_hosted_without_key_raises(self) -> None:
+        with pytest.raises(BackendUnavailableError):
+            load_active_backend(Settings(profile="hosted"))

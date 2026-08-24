@@ -15,6 +15,7 @@ from pydantic import ValidationError
 
 from app.api.embed import embed_router
 from app.api.probes import probe_router
+from app.backends.hosted import HostedAPIBackend
 from app.backends.tei import TEIBackend
 from app.config import get_settings
 from app.errors import (
@@ -22,6 +23,7 @@ from app.errors import (
     BackendUnavailableError,
     EmbedderError,
     GeometryMismatchError,
+    InvalidVectorError,
 )
 from app.factory import build_backend
 from app.schemas import ErrorEnvelope
@@ -78,7 +80,7 @@ async def _verify_tei_geometry(backend: TEIBackend) -> None:
     _assert_tei_model_id(backend, info)
     _assert_info_dimensions(backend, info)
     probe = await backend.embed([_GEOMETRY_PROBE_TEXT])
-    _assert_probe_dimensions(probe, backend.dimensions)
+    _assert_probe_dimensions(probe, backend.dimensions, label="TEI")
     logger.info(
         "TEI geometry confirmed model_id=%s dimensions=%d",
         backend.model_id,
@@ -106,11 +108,11 @@ def _assert_info_dimensions(backend: TEIBackend, info: object) -> None:
         )
 
 
-def _assert_probe_dimensions(probe: object, want: int) -> None:
+def _assert_probe_dimensions(probe: object, want: int, *, label: str) -> None:
     shape = getattr(probe, "shape", ())
     if not _probe_shape_matches(shape, want):
         raise GeometryMismatchError(
-            f"TEI dimensions mismatch: observed {shape!r} configured dimensions={want}"
+            f"{label} dimensions mismatch: observed {shape!r} configured dimensions={want}"
         )
 
 
@@ -122,8 +124,31 @@ def _probe_shape_matches(shape: object, want: int) -> bool:
     return int(shape[-1]) == want  # type: ignore[index]
 
 
+async def _verify_hosted_geometry(backend: HostedAPIBackend) -> None:
+    """Fail closed unless a probe embed matches configured dimensions.
+
+    Hosted providers have no TEI-style /info; a single bounded embed is the
+    geometry contract check (Matryoshka / wrong model dims). HostedAPIBackend.embed
+    already L2-validates; a dim mismatch surfaces as InvalidVectorError and is
+    remapped so startup reports a geometry failure, not a generic vector error.
+    """
+    try:
+        probe = await backend.embed([_GEOMETRY_PROBE_TEXT])
+    except InvalidVectorError as exc:
+        raise GeometryMismatchError(
+            f"hosted dimensions mismatch during startup probe: {exc.message}"
+        ) from exc
+    _assert_probe_dimensions(probe, backend.dimensions, label="hosted")
+    logger.info(
+        "hosted geometry confirmed provider=%s model_id=%s dimensions=%d",
+        backend.provider,
+        backend.model_id,
+        backend.dimensions,
+    )
+
+
 async def _startup(state: AppState) -> None:
-    """Build backend, run TEI startup checks, validate geometry, mark ready."""
+    """Build backend, run provider startup checks, validate geometry, mark ready."""
     settings = get_settings()
     settings.validate_runtime_security()
     backend = build_backend(settings)
@@ -135,6 +160,8 @@ async def _startup(state: AppState) -> None:
     if isinstance(backend, TEIBackend):
         await _wait_for_tei_health(backend, settings.tei_health_timeout_seconds)
         await _verify_tei_geometry(backend)
+    elif isinstance(backend, HostedAPIBackend):
+        await _verify_hosted_geometry(backend)
 
     want_dim, want_model = settings.resolved_geometry()
     validate_geometry(backend, want_dim, want_model)
@@ -172,10 +199,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     yield
 
-    # Shutdown: release TEI connection pool before process exits.
-    if isinstance(state.backend, TEIBackend):
+    # Shutdown: release HTTP connection pools before process exits.
+    if isinstance(state.backend, (TEIBackend, HostedAPIBackend)):
         await state.backend.aclose()
-        logger.info("TEI HTTP client closed")
+        logger.info("embedding HTTP client closed backend=%s", state.backend.name)
 
 
 def create_app() -> FastAPI:

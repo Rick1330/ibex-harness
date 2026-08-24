@@ -2,7 +2,7 @@
 title: "2.5.G4.M3 Hosted-API embedding backend"
 description: "Implement the hosted-API embedding backend for teams that don't want to run any embedding infrastructure. Default hosted option is OpenAI text-embedding-3-large; Cohere and Voyage are exposed as alternates behind the same interface."
 summary: "Implement the hosted-API embedding backend for teams that don't want to run any embedding infrastructure. Default hosted option is OpenAI text-embedding-3-large; Cohere and Voyage are exposed as alternates behind the same interface."
-status: "planned"
+status: "completed"
 milestoneId: "2.5.G4.M3"
 track: "D"
 trackTitle: "Pluggable Embedding Service"
@@ -15,7 +15,7 @@ fullTitle: "Milestone 2.5.G4.M3 — Hosted-API Embedding Backend"
 
 # Milestone 2.5.G4.M3 — Hosted-API Embedding Backend
 
-**Status:** Planned  
+**Status:** Completed (2026-08-24)  
 **Goal:** [Track D — Pluggable Embedding Service](/roadmap/phase-2-5-provider-generalization/tracks#track-d--pluggable-embedding-service)  
 **Phase:** 2.5 — Provider Generalization & Foundation  
 **Estimated effort:** 1–2 days
@@ -115,14 +115,14 @@ class HostedAPIBackend(EmbeddingBackend):
 
 Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
 
-- [ ] `HostedAPIBackend` implements `EmbeddingBackend` ABC
-- [ ] OpenAI `text-embedding-3-large` path implemented and tested (VCR recording in CI)
-- [ ] Cohere `embed-english-v3.0` path implemented (or stubbed with clear TODO for near-term follow-up)
-- [ ] `EMBEDDER_PROFILE=hosted` selects `HostedAPIBackend` at service startup
-- [ ] `EMBEDDER_HOSTED_PROVIDER`, `EMBEDDER_HOSTED_API_KEY`, `EMBEDDER_HOSTED_MODEL` env vars documented
-- [ ] Contract test suite passes for OpenAI path (shape, L2-normalization)
-- [ ] Dimension mismatch with org config caught at startup (not at query time)
-- [ ] API key never logged
+- [x] `HostedAPIBackend` implements `EmbeddingBackend` ABC
+- [x] OpenAI `text-embedding-3-large` path implemented and tested (respx in CI; optional `IBEX_HOSTED_LIVE=1`)
+- [x] Cohere `embed-english-v3.0` path implemented (not stubbed)
+- [x] `IBEX_EMBEDDING_PROFILE=hosted` selects `HostedAPIBackend` at service startup
+- [x] `IBEX_EMBEDDING_HOSTED_*` env vars documented (`OPENAI_EMBEDDING_API_KEY` is an OpenAI-only alias)
+- [x] Contract test suite passes for OpenAI path (shape, L2-normalization)
+- [x] Dimension mismatch with configured geometry caught at startup (not only at query time)
+- [x] API key never logged
 
 ## Prerequisites
 

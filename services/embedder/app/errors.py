@@ -58,13 +58,21 @@ class BackendUnavailableError(EmbedderError):
 
     retryable is an internal client hint. Public error type stays the same for
     both transient (429/502/503/transport) and non-retryable (4xx/500) failures.
+    retry_after_seconds is an optional client hint parsed from numeric Retry-After.
     """
 
     code = "backend_unavailable"
 
-    def __init__(self, message: str, *, retryable: bool = False) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        retryable: bool = False,
+        retry_after_seconds: float | None = None,
+    ) -> None:
         super().__init__(message)
         self.retryable = retryable
+        self.retry_after_seconds = retry_after_seconds
 
 
 class BackendTimeoutError(EmbedderError):
