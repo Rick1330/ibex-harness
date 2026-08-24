@@ -105,6 +105,7 @@ jobs:
       contents: read
     outputs:
       go: ${{ steps.detect.outputs.go }}
+      python: ${{ steps.detect.outputs.python }}
       web: ${{ steps.detect.outputs.web }}
       proto: ${{ steps.detect.outputs.proto }}
       docker: ${{ steps.detect.outputs.docker }}
@@ -115,6 +116,7 @@ jobs:
       compose: ${{ steps.detect.outputs.compose }}
       full: ${{ steps.detect.outputs.full }}
       run_go: ${{ steps.detect.outputs.run_go }}
+      run_python: ${{ steps.detect.outputs.run_python }}
       run_web: ${{ steps.detect.outputs.run_web }}
       run_security: ${{ steps.detect.outputs.run_security }}
       run_docker: ${{ steps.detect.outputs.run_docker }}
@@ -823,7 +825,7 @@ jobs:
   embedder-test:
     name: embedder-test
     needs: changes
-    if: needs.changes.outputs.run_go == 'true'
+    if: needs.changes.outputs.run_go == 'true' || needs.changes.outputs.run_python == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1062,7 +1064,7 @@ jobs:
           persist-credentials: false
       - name: Hadolint all Dockerfiles
         run: |
-          # Dockerfiles today: services/auth, services/proxy.
+          # Dockerfiles today: services/auth, services/proxy, services/embedder.
           # Pending: services/memory, services/dashboard (see web/engineering/DEPENDENCIES.md §10).
           mapfile -t files < <(find . -name 'Dockerfile*' -not -path './.git/*' | sort)
           if [ ${#files[@]} -eq 0 ]; then
@@ -1154,6 +1156,31 @@ jobs:
           go tool cover -func=coverage-go-handwritten.out | tail -1
       - name: Coverage gate
         run: bash infra/scripts/coverage-gate.sh coverage-go-merged.out
+      - name: Upload coverage reports to Codecov
+        continue-on-error: true
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage-go-handwritten.out,coverage-go-unit.out,coverage-go-integration.out
+          flags: go,unit,integration
+          fail_ci_if_error: false
+
+  embedder-coverage:
+    name: embedder-coverage
+    needs: changes
+    if: needs.changes.outputs.run_go == 'true' || needs.changes.outputs.run_python == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
@@ -1170,8 +1197,8 @@ jobs:
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          files: coverage-go-handwritten.out,coverage-go-unit.out,coverage-go-integration.out,services/embedder/coverage-embedder.xml
-          flags: go,unit,integration,embedder,python
+          files: services/embedder/coverage-embedder.xml
+          flags: embedder,python
           fail_ci_if_error: false
 
   bandit:
@@ -1216,8 +1243,17 @@ jobs:
             --only-binary :all: \
             --require-hashes \
             -r .github/requirements/bandit.txt
+          set +e
+          bandit -r "${targets[@]}" -x 'tests/,test_,.venv/' -f txt
+          txt_rc=$?
           bandit -r "${targets[@]}" -x 'tests/,test_,.venv/' -f sarif -o bandit.sarif
+          sarif_rc=$?
+          set -e
           echo "run=true" >> "$GITHUB_OUTPUT"
+          if [ "$txt_rc" -ne 0 ] || [ "$sarif_rc" -ne 0 ]; then
+            echo "Bandit failed (txt_rc=${txt_rc} sarif_rc=${sarif_rc})"
+            exit 1
+          fi
       - name: Bandit skipped summary
         if: steps.bandit.outputs.run != 'true'
         run: |
@@ -1239,7 +1275,7 @@ jobs:
           path: bandit-skip.txt
           retention-days: 7
       - name: Upload Bandit SARIF
-        if: steps.bandit.outputs.run == 'true'
+        if: always() && steps.bandit.outputs.run == 'true'
         uses: github/codeql-action/upload-sarif@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
         with:
           sarif_file: bandit.sarif
@@ -1395,6 +1431,7 @@ jobs:
       - go-race
       - go-services
       - embedder-test
+      - embedder-coverage
       - golangci-lint
       - coverage
       - govulncheck
@@ -1419,6 +1456,7 @@ jobs:
             "${{ needs.go-race.result }}" \
             "${{ needs.go-services.result }}" \
             "${{ needs.embedder-test.result }}" \
+            "${{ needs.embedder-coverage.result }}" \
             "${{ needs.golangci-lint.result }}" \
             "${{ needs.coverage.result }}" \
             "${{ needs.govulncheck.result }}"
@@ -1464,3 +1502,23 @@ jobs:
             "${{ needs.osv-scan.result }}" \
             "${{ needs.bandit.result }}" \
             "${{ needs.hadolint.result }}"
+
+  ci-gate-python:
+    name: ci-gate-python
+    needs:
+      - changes
+      - embedder-test
+      - embedder-coverage
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Evaluate Python gate
+        run: |
+          bash .github/scripts/evaluate-ci-gate.sh "${{ needs.changes.outputs.run_python }}" \
+            "${{ needs.embedder-test.result }}" \
+            "${{ needs.embedder-coverage.result }}"

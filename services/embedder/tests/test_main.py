@@ -16,7 +16,8 @@ def _clear_settings_cache() -> None:
     get_settings.cache_clear()
 
 
-def test_health_always_ok() -> None:
+def test_health_always_ok(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("IBEX_EMBEDDING_API_TOKEN", "service-token")
     with TestClient(app) as client:
         resp = client.get("/health")
     assert resp.status_code == 200
@@ -27,6 +28,7 @@ def test_ready_ok_with_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("IBEX_EMBEDDING_DIM", raising=False)
     monkeypatch.delenv("IBEX_EMBEDDING_MODEL", raising=False)
     monkeypatch.setenv("IBEX_EMBEDDING_PROFILE", "cpu")
+    monkeypatch.setenv("IBEX_EMBEDDING_API_TOKEN", "service-token")
     with TestClient(app) as client:
         resp = client.get("/ready")
     assert resp.status_code == 200
@@ -39,6 +41,7 @@ def test_ready_ok_with_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_ready_fails_on_geometry_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("IBEX_EMBEDDING_PROFILE", "cpu")
+    monkeypatch.setenv("IBEX_EMBEDDING_API_TOKEN", "service-token")
     monkeypatch.setenv("IBEX_EMBEDDING_DIM", "1024")
     monkeypatch.setenv("IBEX_EMBEDDING_MODEL", "all-MiniLM-L6-v2")
     with TestClient(app) as client:
@@ -47,3 +50,15 @@ def test_ready_fails_on_geometry_mismatch(monkeypatch: pytest.MonkeyPatch) -> No
     body = resp.json()
     assert body["error"]["code"] == "service_not_ready"
     assert "dimensions" in body["error"]["message"].lower()
+
+
+def test_ready_gpu_without_tei_url_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("IBEX_EMBEDDING_PROFILE", "gpu")
+    monkeypatch.setenv("IBEX_EMBEDDING_API_TOKEN", "service-token")
+    monkeypatch.delenv("IBEX_EMBEDDING_TEI_BASE_URL", raising=False)
+    with TestClient(app) as client:
+        resp = client.get("/ready")
+    assert resp.status_code == 503
+    body = resp.json()
+    assert body["error"]["code"] == "service_not_ready"
+    assert "TEI_BASE_URL" in body["error"]["message"] or "backend_unavailable" in body["error"]["code"]

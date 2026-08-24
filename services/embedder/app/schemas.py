@@ -24,3 +24,14 @@ class ErrorBody(BaseModel):
 
 class ErrorEnvelope(BaseModel):
     error: ErrorBody
+
+
+class EmbedRequest(BaseModel):
+    texts: list[str] = Field(..., description="Text batch to embed (1..64 items)")
+
+
+class EmbedResponse(BaseModel):
+    vectors: list[list[float]]
+    model_id: str
+    dimensions: int
+    backend: str

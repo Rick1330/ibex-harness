@@ -19,6 +19,9 @@ outputs:
   go:
     description: Raw go path filter match
     value: ${{ steps.filter.outputs.go }}
+  python:
+    description: Raw python path filter match
+    value: ${{ steps.filter.outputs.python }}
   web:
     description: Raw web path filter match
     value: ${{ steps.filter.outputs.web }}
@@ -49,6 +52,9 @@ outputs:
   run_go:
     description: Run Go lint, tests, and smokes
     value: ${{ steps.effective.outputs.run_go }}
+  run_python:
+    description: Run Python embedder tests and coverage
+    value: ${{ steps.effective.outputs.run_python }}
   run_web:
     description: Run web build and checks
     value: ${{ steps.effective.outputs.run_web }}
@@ -87,6 +93,7 @@ runs:
       shell: bash
       env:
         FILTER_GO: ${{ steps.filter.outputs.go }}
+        FILTER_PYTHON: ${{ steps.filter.outputs.python }}
         FILTER_WEB: ${{ steps.filter.outputs.web }}
         FILTER_DOCKER: ${{ steps.filter.outputs.docker }}
         FILTER_WORKFLOWS: ${{ steps.filter.outputs.workflows }}
@@ -98,6 +105,7 @@ runs:
         set -euo pipefail
         full=false
         run_go=false
+        run_python=false
         run_web=false
         run_security=false
         run_docker=false
@@ -106,6 +114,7 @@ runs:
         if [ "${FORCE_FULL}" = "true" ]; then
           full=true
           run_go=true
+          run_python=true
           run_web=true
           run_security=true
           run_docker=true
@@ -115,6 +124,7 @@ runs:
         if [ "$FILTER_WORKFLOWS" = "true" ] || [ "$FILTER_DEPS" = "true" ]; then
           full=true
           run_go=true
+          run_python=true
           run_web=true
           run_security=true
         fi
@@ -123,6 +133,11 @@ runs:
           run_go=true
           run_security=true
           run_docker=true
+        fi
+
+        if [ "$FILTER_PYTHON" = "true" ]; then
+          run_python=true
+          run_security=true
         fi
 
         if [ "$FILTER_WEB" = "true" ]; then
@@ -146,6 +161,7 @@ runs:
         {
           echo "full=$full"
           echo "run_go=$run_go"
+          echo "run_python=$run_python"
           echo "run_web=$run_web"
           echo "run_security=$run_security"
           echo "run_docker=$run_docker"

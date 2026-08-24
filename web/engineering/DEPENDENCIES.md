@@ -386,7 +386,7 @@ Also add `services/memory` to the Bandit CI job and extend golangci-lint paths f
 | golangci-lint | Lint errors on touched Go packages | No blanket disables |
 | gitleaks | Any secret match | Never suppress without rotation |
 
-All PRs run at least one automated test suite (`ci-gate-go` / `ci-gate-web`); see [TESTING_STRATEGY.md](./TESTING_STRATEGY.md) and [CONTRIBUTING.md](../../CONTRIBUTING.md#required-ci-checks).
+All PRs run at least one automated test suite (`ci-gate-go` / `ci-gate-python` / `ci-gate-web`); see [TESTING_STRATEGY.md](./TESTING_STRATEGY.md) and [CONTRIBUTING.md](../../CONTRIBUTING.md#required-ci-checks).
 
 - OSV Scanner (replaces separate `govulncheck` in CI)
 - `golangci-lint` on `./services/auth/...` and `./services/proxy/...` (hard gate)
@@ -410,7 +410,8 @@ All PRs run at least one automated test suite (`ci-gate-go` / `ci-gate-web`); se
 ### 9.4 Containers
 
 - **Trivy filesystem** scan on PR/push (`trivy` job): CRITICAL/HIGH, `ignore-unfixed: true`
-- **Hadolint** on all `Dockerfile*` paths
+- **Trivy image** (`docker-publish.yml`): CRITICAL/HIGH on built `auth`, `proxy`, and `embedder` OCI artifacts
+- **Hadolint** on all `Dockerfile*` paths (`services/auth`, `services/proxy`, `services/embedder`)
 - **Future:** `trivy image` per built image when CI produces tagged images (see `.github/workflows/sbom.yml` for SBOM supply chain)
 - block critical CVEs unless explicitly waived with documented reason and deadline (ADR required)
 

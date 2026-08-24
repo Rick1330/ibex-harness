@@ -13,7 +13,11 @@ function escapeXml(value: string): string {
 }
 
 function normalizeSiteUrl(raw: string): string {
-  return raw.replace(/\/+$/, "");
+  let url = raw;
+  while (url.endsWith("/")) {
+    url = url.slice(0, -1);
+  }
+  return url;
 }
 
 function rssPubDate(date: string | null | undefined): string | null {

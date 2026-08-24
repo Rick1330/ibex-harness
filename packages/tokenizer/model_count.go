@@ -10,7 +10,6 @@ import (
 
 // ModelCountRequest groups inputs for CountForModel.
 type ModelCountRequest struct {
-	Ctx     context.Context
 	Catalog provider.CapabilityCatalog
 	Reg     *Registry
 	Model   string
@@ -18,12 +17,12 @@ type ModelCountRequest struct {
 }
 
 // CountForModel resolves model → capability → family → Count.
-func CountForModel(req ModelCountRequest) (int, error) {
-	return countForModel(req)
+func CountForModel(ctx context.Context, req ModelCountRequest) (int, error) {
+	return countForModel(ctx, req)
 }
 
-func countForModel(req ModelCountRequest) (int, error) {
-	if err := req.Ctx.Err(); err != nil {
+func countForModel(ctx context.Context, req ModelCountRequest) (int, error) {
+	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
 	if req.Reg == nil {
@@ -45,5 +44,5 @@ func countForModel(req ModelCountRequest) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("%w: model %q requires %q", ErrMissingTokenizer, model, family)
 	}
-	return tok.Count(req.Ctx, req.Text)
+	return tok.Count(ctx, req.Text)
 }

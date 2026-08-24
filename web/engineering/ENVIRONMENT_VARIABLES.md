@@ -352,14 +352,17 @@ migration — do not mix dims in one pgvector column.
 | `IBEX_EMBEDDING_PROFILE` | **Shipped 2.5.G4.M1** | `cpu` | `cpu` \| `gpu` \| `hosted` | Deployment choice, not per-request |
 | `IBEX_EMBEDDING_MODEL` | No | profile-dependent | Model id (e.g. `BAAI/bge-m3`, `all-MiniLM-L6-v2`, `text-embedding-3-large`) | **Shipped 2.5.G4.M1:** validated at embedder startup |
 | `IBEX_EMBEDDING_DIM` | No | profile-dependent | Vector dimensionality (e.g. `1024` for bge-m3, `384` for MiniLM) | **Shipped 2.5.G4.M1:** validated at embedder startup |
-| `IBEX_EMBEDDER_URL` | Yes (if remote) | (none) | Embedder service / TEI base URL | Internal |
-| `IBEX_EMBEDDER_BACKEND` | Planned **2.5** | `tei` | `tei` \| `hosted` \| `local` | Backend registry key |
-| `IBEX_EMBEDDER_TIMEOUT_MS` | No | `2000` | Embed request timeout | Context path sensitive |
-| `IBEX_EMBEDDER_BATCH_SIZE` | No | `64` | Batch size when client-side batching is used | TEI may batch server-side |
-| `IBEX_EMBEDDER_BATCH_MAX_WAIT_MS` | No | `50` | Max wait for client-side batching | |
-| `IBEX_EMBEDDING_CACHE_ENABLED` | Planned **2.5** | `true` | Content-hash embedding cache | Redis-backed |
-| `IBEX_EMBEDDING_CACHE_TTL_SECONDS` | Planned **2.5** | `86400` | Cache TTL | Org-scoped keys |
-| `OPENAI_EMBEDDING_API_KEY` | Conditional | (none) | Hosted embedding API key when backend=`hosted` | Secret; may reuse `OPENAI_API_KEY` if policy allows |
+| `IBEX_EMBEDDING_API_TOKEN` | **Required at embedder startup** | (none) | Bearer token for internal `POST /v1/embed` | **Shipped 2.5.G4.M2.** Probes `/health` and `/ready` stay unauthenticated. Never logged. |
+| `IBEX_EMBEDDING_TEI_BASE_URL` | **Required for `gpu` profile** | (none) | TEI sidecar base URL (HTTPS by default) | **Shipped 2.5.G4.M2.** Fail-closed: gpu without URL fails startup (service never becomes ready). Cleartext only with `TEI_ALLOW_INSECURE`. |
+| `IBEX_EMBEDDING_TEI_ALLOW_INSECURE` | No | `false` | Allow cleartext TEI URLs (compose/dev only) | **Shipped 2.5.G4.M2.** Forbidden together with `TEI_API_KEY`. |
+| `IBEX_EMBEDDING_TEI_API_KEY` | No | (none) | Optional Bearer token for TEI auth — **never logged** | **Shipped 2.5.G4.M2.** Some TEI deployments require this. HTTPS only. |
+| `IBEX_EMBEDDING_TEI_TIMEOUT_SECONDS` | No | `30.0` | Read timeout for TEI `/embed` requests (seconds) | **Shipped 2.5.G4.M2.** |
+| `IBEX_EMBEDDING_TEI_CONNECT_TIMEOUT_SECONDS` | No | `2.0` | Connect timeout for TEI requests (seconds) | **Shipped 2.5.G4.M2.** |
+| `IBEX_EMBEDDING_TEI_MAX_RETRIES` | No | `2` | Max retry attempts for transient TEI errors (0 = no retries) | **Shipped 2.5.G4.M2.** Only retries 429/502/503/network errors. |
+| `IBEX_EMBEDDING_TEI_HEALTH_TIMEOUT_SECONDS` | No | `30.0` | Total seconds to wait for TEI `/health` to pass on startup | **Shipped 2.5.G4.M2.** Fail-closed on timeout. |
+| `IBEX_EMBEDDING_CACHE_ENABLED` | Planned **2.5.G4.M4** | `true` | Content-hash embedding cache | Redis-backed |
+| `IBEX_EMBEDDING_CACHE_TTL_SECONDS` | Planned **2.5.G4.M4** | `86400` | Cache TTL | Org-scoped keys |
+| `OPENAI_EMBEDDING_API_KEY` | Planned **2.5.G4.M3** | (none) | Hosted embedding API key when profile=`hosted` | Secret; never logged |
 
 Preferred starting models in the roadmap: **GPU/prod** `bge-m3` (1024-dim); **CPU/dev** MiniLM (384-dim); **hosted** OpenAI `text-embedding-3-large` (or Cohere/Voyage as alternates).
 

@@ -5,7 +5,7 @@ import process from "node:process";
 import { isDocsAppNextProcess, listNodeProcesses } from "./node-process-utils.mjs";
 
 function taskkillPath() {
-  const systemRoot = process.env.SystemRoot ?? "C:\\Windows";
+  const systemRoot = process.env.SystemRoot ?? String.raw`C:\Windows`;
   return path.join(systemRoot, "System32", "taskkill.exe");
 }
 

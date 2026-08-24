@@ -1,7 +1,7 @@
 package tokenizer
 
 import (
-	_ "embed"
+	_ "embed" // registers embed.FS for go:embed BPE token files in this package
 	"encoding/base64"
 	"errors"
 	"fmt"

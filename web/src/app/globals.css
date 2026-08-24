@@ -1974,7 +1974,7 @@ header[data-site-nav] a[data-site-nav-github] {
   display: block !important;
   min-width: 0 !important;
   white-space: normal !important;
-  word-break: break-word !important;
+  overflow-wrap: anywhere !important;
 }
 
 /* Collapsed rail: re-assert hide rules after global span display */
