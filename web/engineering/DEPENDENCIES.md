@@ -393,7 +393,12 @@ All PRs run at least one automated test suite (`ci-gate-go` / `ci-gate-web`); se
 
 ### 9.2 Python
 
-- Bandit on `services/memory/` when present (HIGH confidence + HIGH severity)
+- **Bandit** (`bandit` job): SAST on `services/*/app` (embedder now; memory when present).
+  Install from `.github/requirements/bandit.txt` (`--require-hashes`, `--only-binary :all:`).
+  Pin `bandit[sarif]==1.9.4` so `-f sarif` works for GitHub Code Scanning upload.
+  The `[sarif]` extra is CI-only (not embedder runtime). Alternatives (JSON converter
+  or skip upload) were rejected. Refresh hashes with `pip-compile --generate-hashes`
+  on `.github/requirements/bandit.in`.
 - Semgrep `p/python` + `.semgrep/rules/` (active in CI)
 - Future: uncomment Dependabot `pip` entry when memory service has a lockfile
 

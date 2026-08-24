@@ -14,3 +14,6 @@ coverage:
       paths:
         - packages/
         - services/
+    embedder:
+      paths:
+        - services/embedder/app/

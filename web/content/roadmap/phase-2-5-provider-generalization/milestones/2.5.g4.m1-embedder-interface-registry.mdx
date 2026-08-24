@@ -2,7 +2,7 @@
 title: "2.5.G4.M1 Embedder interface and registry"
 description: "Define the Embedder interface and registry that mirrors the proven provider.Provider/Registry pattern. The embedding service profile is a deployment-time choice — CPU-only users get all-MiniLM-L6-v2, GPU/production users get BAAI/bge-m3 via TEI — and mixing profiles across requests is explicitly forbidden."
 summary: "Define the Embedder interface and registry that mirrors the proven provider.Provider/Registry pattern. The embedding service profile is a deployment-time choice — CPU-only users get all-MiniLM-L6-v2, GPU/production users get BAAI/bge-m3 via TEI — and mixing profiles across requests is explicitly forbidden."
-status: "planned"
+status: "completed"
 milestoneId: "2.5.G4.M1"
 track: "D"
 trackTitle: "Pluggable Embedding Service"
@@ -15,7 +15,7 @@ fullTitle: "Milestone 2.5.G4.M1 — Embedder Interface and Registry"
 
 # Milestone 2.5.G4.M1 — Embedder Interface and Registry
 
-**Status:** Planned  
+**Status:** Completed  
 **Goal:** [Track D — Pluggable Embedding Service](/roadmap/phase-2-5-provider-generalization/tracks#track-d--pluggable-embedding-service)  
 **Phase:** 2.5 — Provider Generalization & Foundation  
 **Estimated effort:** 2–3 days
@@ -144,15 +144,15 @@ Validate `embedding_dim` against the active backend's `Dimensions()` at service 
 
 Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
 
-- [ ] Interface defined: `Embed`, `Name`, `Dimensions` (exact path may differ)
-- [ ] Keyed by profile string (`cpu`/`gpu`/`hosted`) (exact path may differ)
-- [ ] Python `EmbeddingBackend` ABC defined with `embed`, `dimensions`, `name`
-- [ ] `EMBEDDER_PROFILE` env var selects backend at Python service startup
-- [ ] Org config migration adds `embedding_profile`, `embedding_dim`, `embedding_model_id` columns
-- [ ] Startup validation: backend `Dimensions()` matches org config `embedding_dim` or service refuses to start
-- [ ] Contract test suite defined (same input → vectors of declared dimension, L2-normalized) — backends added in 2.5.G4.M2 and 2.5.G4.M3 should pass this suite
-- [ ] Unit tests for registry: `go test ./packages/embedder/...`
-- [ ] Repo guards / CI checks still pass
+- [x] Interface defined: `Embed`, `Name`, `Dimensions` (exact path may differ)
+- [x] Keyed by profile string (`cpu`/`gpu`/`hosted`) (exact path may differ)
+- [x] Python `EmbeddingBackend` ABC defined with `embed`, `dimensions`, `name`
+- [x] `IBEX_EMBEDDING_PROFILE` env var selects backend at Python service startup
+- [x] Org config migration adds `embedding_profile`, `embedding_dim`, `embedding_model_id` columns
+- [x] Startup validation: backend geometry matches `IBEX_EMBEDDING_*` resolved config or service refuses to start
+- [x] Contract test suite defined (same input → vectors of declared dimension, L2-normalized) — backends added in 2.5.G4.M2 and 2.5.G4.M3 should pass this suite
+- [x] Unit tests for registry: `go test ./packages/embedder/...`
+- [x] Repo guards / CI checks still pass (required `ci-gate-*` jobs; CodeScene is advisory)
 
 ## Prerequisites
 

@@ -43,6 +43,7 @@
     "0042-self-hosted-openai-compatible-adapter",
     "0043-tokenizer-registry",
     "0044-response-pipeline-non-streaming",
-    "0045-streaming-response-transformation"
+    "0045-streaming-response-transformation",
+    "0046-embedder-interface-registry"
   ]
 }

@@ -820,6 +820,32 @@ jobs:
       - name: go build
         run: go build -o /dev/null ./services/${{ matrix.service }}/cmd/${{ matrix.service }}
 
+  embedder-test:
+    name: embedder-test
+    needs: changes
+    if: needs.changes.outputs.run_go == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        uses: astral-sh/setup-uv@5f42d5af6c403a722299fda36d451c39f302a433 # v4.1.0
+        with:
+          enable-cache: true
+      - name: Embedder unit tests (pytest + ruff)
+        run: bash infra/scripts/embedder-test-ci.sh
+
   golangci-lint:
     name: golangci-lint
     needs: [changes, proto-contract]
@@ -1128,13 +1154,24 @@ jobs:
           go tool cover -func=coverage-go-handwritten.out | tail -1
       - name: Coverage gate
         run: bash infra/scripts/coverage-gate.sh coverage-go-merged.out
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        uses: astral-sh/setup-uv@5f42d5af6c403a722299fda36d451c39f302a433 # v4.1.0
+        with:
+          enable-cache: true
+      - name: Embedder pytest coverage
+        run: bash infra/scripts/embedder-test-ci.sh
+      - name: Embedder coverage gate
+        run: bash infra/scripts/coverage-embedder-gate.sh
       - name: Upload coverage reports to Codecov
         continue-on-error: true
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          files: coverage-go-handwritten.out,coverage-go-unit.out,coverage-go-integration.out
-          flags: go,unit,integration
+          files: coverage-go-handwritten.out,coverage-go-unit.out,coverage-go-integration.out,services/embedder/coverage-embedder.xml
+          flags: go,unit,integration,embedder,python
           fail_ci_if_error: false
 
   bandit:
@@ -1158,11 +1195,20 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.11"
-      - name: Bandit (memory service)
+      - name: Bandit (Python services)
         id: bandit
         run: |
-          if [ ! -d services/memory ]; then
-            echo "services/memory not present — skipping bandit until Python memory service lands"
+          targets=()
+          for svc in memory embedder; do
+            app_dir="services/${svc}/app"
+            if [ -d "$app_dir" ]; then
+              targets+=("$app_dir")
+            elif [ -d "services/${svc}" ]; then
+              targets+=("services/${svc}")
+            fi
+          done
+          if [ "${#targets[@]}" -eq 0 ]; then
+            echo "No Python services present — skipping bandit"
             echo "run=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -1170,7 +1216,7 @@ jobs:
             --only-binary :all: \
             --require-hashes \
             -r .github/requirements/bandit.txt
-          bandit -r services/memory/ -x tests/,test_ -f sarif -o bandit.sarif
+          bandit -r "${targets[@]}" -x 'tests/,test_,.venv/' -f sarif -o bandit.sarif
           echo "run=true" >> "$GITHUB_OUTPUT"
       - name: Bandit skipped summary
         if: steps.bandit.outputs.run != 'true'
@@ -1178,13 +1224,13 @@ jobs:
           cat <<'EOF' >> "$GITHUB_STEP_SUMMARY"
           ## Bandit (Python) skipped
 
-          This repository currently does not have `services/memory/` checked in, so the Bandit scan is intentionally skipped.
+          No Python service directories are checked in yet (`services/memory/`, `services/embedder/`).
 
-          - **Why**: Bandit is scoped to the Python memory service to avoid scanning unrelated paths.
+          - **Why**: Bandit is scoped to deployable Python services only.
           - **Effect**: `bandit.sarif` is not generated, so the “Upload Bandit SARIF” step is skipped as well.
-          - **Enables automatically**: Once `services/memory/` exists in the repo, Bandit will run and upload SARIF to Code Scanning.
+          - **Enables automatically**: Once a Python service directory exists, Bandit will run and upload SARIF to Code Scanning.
           EOF
-          printf "Bandit skipped: services/memory not present\n" > bandit-skip.txt
+          printf "Bandit skipped: no Python services present\n" > bandit-skip.txt
       - name: Upload Bandit skip note
         if: steps.bandit.outputs.run != 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -1348,6 +1394,7 @@ jobs:
       - security-integration
       - go-race
       - go-services
+      - embedder-test
       - golangci-lint
       - coverage
       - govulncheck
@@ -1371,6 +1418,7 @@ jobs:
             "${{ needs.security-integration.result }}" \
             "${{ needs.go-race.result }}" \
             "${{ needs.go-services.result }}" \
+            "${{ needs.embedder-test.result }}" \
             "${{ needs.golangci-lint.result }}" \
             "${{ needs.coverage.result }}" \
             "${{ needs.govulncheck.result }}"
