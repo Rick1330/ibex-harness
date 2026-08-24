@@ -7,6 +7,8 @@ exclude_paths:
   - "**/*.test.ts"
   - "**/*.test.tsx"
   - "**/*.test.mjs"
+  # Pytest uses assert for expectations; Codacy flags S101 in test bodies.
+  - "services/**/tests/**"
   # Integration tests use parameterized QueryRowContext/ExecContext; Opengrep SQLi
   # rules false-positive on package-level SQL consts.
   - "infra/migrations/postgres/*_test.go"

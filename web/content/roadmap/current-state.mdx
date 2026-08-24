@@ -36,7 +36,7 @@ summary: "Phases 0–2 are complete. Auth, proxy, and single-provider E2E ship o
 **Last updated:** 2026-08-23  
 **Branch:** `main`  
 **Current focus:** [Phase 2.5 — Provider Generalization](/roadmap/phase-2-5-provider-generalization)  
-**Completed (recent):** Streaming response pipeline design (G3.M2 / ADR-0045); non-streaming response pipeline (G3.M1); tokenizer registry (G2.M1); Phase 2 exit ([2.6.2](/roadmap/phase-2-single-provider/milestones/2.6.2-phase2-exit-gate))
+**Completed (recent):** Embedder interface and registry (G4.M1 / ADR-0046); streaming response pipeline design (G3.M2 / ADR-0045); non-streaming response pipeline (G3.M1); tokenizer registry (G2.M1); Phase 2 exit ([2.6.2](/roadmap/phase-2-single-provider/milestones/2.6.2-phase2-exit-gate))
 
 <QuickLinks
   links={[
@@ -92,7 +92,10 @@ summary: "Phases 0–2 are complete. Auth, proxy, and single-provider E2E ship o
   needs `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, and/or `IBEX_SELFHOSTED_ENABLED` (mock is rejected
   when `IBEX_ENV=production`).
   **`501 PROVIDER_NOT_CONFIGURED`** means the model is not in the registry — not
-  "forwarding missing." **Not shipped (Phase 2.5+ remaining):** embedding service, Python memory, context
+  "forwarding missing." **Shipped (G4.M1):** embedder contract + stub service (`/health`, `/ready`;
+  deterministic stub backend only — not production TEI/hosted inference). **Not shipped (Phase 2.5+
+  remaining / Phase 3+):** production embedding backends (G4.M2–M3), content-hash cache (G4.M4),
+  Python memory, context
   assembly, worker, management API, operator dashboard.
 </Callout>
 
@@ -132,10 +135,10 @@ Legacy `docs.ibexharness.com` redirects to apex paths (301).
 ## Blockers And Risks
 
 <Callout type="warning" title="Phase 2.5 remaining">
-  Embedding service, schema pre-work, and MCP skeleton are still ahead. Anthropic, capability
+  Schema pre-work and MCP skeleton are still ahead. Anthropic, capability
   registry, self-hosted adapter, tokenizer registry (G1.M1–M3, G2.M1), non-streaming response
-  pipeline (G3.M1), and streaming response pipeline design (G3.M2 / ADR-0045) are on `main`
-  (or landing).
+  pipeline (G3.M1), streaming response pipeline design (G3.M2 / ADR-0045), and embedder contract
+  (G4.M1 / ADR-0046) are on `main` (or landing).
 </Callout>
 
 - Multi-provider routing remains Phase 4
@@ -145,7 +148,7 @@ Legacy `docs.ibexharness.com` redirects to apex paths (301).
 
 <Steps>
   <Step title="Phase 2.5 continue">
-    Embedder service (G4), schema pre-work, MCP skeleton.
+    TEI embedder backend (G4.M2), hosted embedder backend (G4.M3), content-hash cache (G4.M4), schema pre-work, MCP skeleton.
   </Step>
   <Step title="Phase 3 memory substrate">
     Memory schema v2 (HNSW, temporal validity, multi-label), write pipeline, read/ranking with category-conditional scoring.

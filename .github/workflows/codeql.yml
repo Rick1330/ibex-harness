@@ -57,8 +57,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Python/JS added when services/memory and services/dashboard exist (ADR-0008).
-        language: [go]
+        # Go + Python deployable services (services/embedder, future services/memory).
+        language: [go, python]
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0

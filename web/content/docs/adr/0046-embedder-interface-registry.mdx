@@ -1,0 +1,99 @@
+---
+title: "ADR-0046: Embedder interface and profile registry"
+description: "Architecture decision record 0046 — deployment-time embedding profiles, Go/Python contracts, geometry validation, and stub-only M1 boundary."
+adrId: "0046"
+status: "Accepted"
+date: "2026-08-23"
+authors: "IBEX Harness team"
+---
+
+# ADR-0046: Embedder interface and profile registry
+
+- **Status:** Accepted
+- **Date:** 2026-08-23
+- **Authors:** IBEX Harness team
+- **Milestone:** [2.5.G4.M1 Embedder interface and registry](/roadmap/phase-2-5-provider-generalization/milestones/2.5.g4.m1-embedder-interface-registry)
+
+## Context
+
+Phase 3 memory write/search requires embedding vectors in pgvector. Different models produce incompatible coordinate systems (`all-MiniLM-L6-v2` = 384-dim; `BAAI/bge-m3` = 1024-dim). Mixing them in one index yields silent bad recall, not hard errors.
+
+Track D ([2.5.G4](/roadmap/phase-2-5-provider-generalization/tracks#track-d--pluggable-embedding-service)) needs a shared contract before TEI (G4.M2), hosted API (G4.M3), and content-hash cache (G4.M4).
+
+Patterns to mirror: [ADR-0025](/docs/adr/0025-llm-provider-abstraction) (`provider.Provider`/`Registry`) and [ADR-0043](/docs/adr/0043-tokenizer-registry).
+
+## Decision
+
+### 1) Deployment profile, not per-request selection
+
+Profiles: `cpu` | `gpu` | `hosted`. Selected at **deployment** via `IBEX_EMBEDDING_PROFILE` (with `IBEX_EMBEDDING_DIM` / `IBEX_EMBEDDING_MODEL`). Per-request embedder selection is forbidden.
+
+Documented default geometry:
+
+| Profile | Default model | Dim |
+| --- | --- | --- |
+| `cpu` | `all-MiniLM-L6-v2` | 384 |
+| `gpu` | `BAAI/bge-m3` | 1024 |
+| `hosted` | config-driven in G4.M3 (placeholder `text-embedding-3-large` / 3072) | varies |
+
+Never silently fall back across profiles (geometry change).
+
+### 2) Go contract — `packages/embedder`
+
+```go
+type Embedder interface {
+    Embed(ctx context.Context, texts []string) ([][]float32, error)
+    Name() string
+    ModelID() string
+    Dimensions() int
+    Profile() Profile
+}
+```
+
+- Registry keyed by `Profile` (fail-closed on nil/duplicate/mismatch).
+- `ValidateGeometry(e, wantDim, wantModel)` for startup.
+- Input limits: `MaxBatchTexts=64`, `MaxTextBytes=32KiB`; empty batch rejected.
+- Outputs must be **L2-normalized**; callers validate length/finiteness.
+- M1 ships a deterministic **stub** only (`Name()=="stub"`). No TEI/OpenAI client in this package.
+
+### 3) Python — `services/embedder`
+
+`EmbeddingBackend` ABC mirrors Go (`embed`, `name`, `model_id`, `dimensions`, `profile`). Profile registry + stub + FastAPI `/health`/`/ready` with startup geometry validation. Real backends land in G4.M2/M3.
+
+### 4) Org columns vs deployment
+
+`ibex_core.organizations` stores provisioned geometry defaults for new org rows:
+
+- `embedding_profile`, `embedding_dim`, `embedding_model_id` (migration defaults: `cpu` / 384 / `all-MiniLM-L6-v2`)
+
+The **running embedder process** is configured and validated only through `IBEX_EMBEDDING_*` at startup — it does not load org rows or derive geometry from deployment env beyond those variables. Per-org write-time mismatch enforcement (memory writes vs org geometry) is **Phase 3** work.
+
+### 5) Library vs inference process
+
+Go package = shared contract for future Go callers. Python service = inference HTTP owner. TEI/OpenAI are backends behind the Python service (not an extra IBEX hop in front of TEI for M1).
+
+### 6) Security / observability
+
+Never log raw text or vector payloads. Log profile, model_id, batch size, latency, cache hit/miss (later), error class only.
+
+### 7) Sequencing
+
+| Milestone | Scope |
+| --- | --- |
+| G4.M1 (this) | Interface, registry, stub, org columns, contract tests |
+| G4.M2 | TEI backend (`gpu`) |
+| G4.M3 | Hosted API backend |
+| G4.M4 | Content-hash cache (`sha256(model_id\|dim\|text)`, org-scoped keys) |
+
+## Consequences
+
+**Positive:** Single contract before backends; fail-closed geometry; org schema ready for Phase 3.
+
+**Negative / follow-ups:** Stub is not production inference; hosted defaults are placeholders until M3; dual Go/Python contracts must stay aligned manually until codegen exists.
+
+## References
+
+- [ADR-0025 LLM provider abstraction](/docs/adr/0025-llm-provider-abstraction)
+- [ADR-0043 Tokenizer registry](/docs/adr/0043-tokenizer-registry)
+- [ENVIRONMENT_VARIABLES.md](/engineering/ENVIRONMENT_VARIABLES) — `IBEX_EMBEDDING_*`
+- Milestone [2.5.G4.M1](/roadmap/phase-2-5-provider-generalization/milestones/2.5.g4.m1-embedder-interface-registry)

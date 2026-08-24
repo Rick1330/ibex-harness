@@ -1,4 +1,9 @@
 # Central path filters for dorny/paths-filter (see .github/actions/detect-changes).
+python:
+  - 'services/**/pyproject.toml'
+  - 'services/**/uv.lock'
+  - 'services/**/app/**'
+  - 'services/**/tests/**'
 go:
   - 'services/**'
   - 'packages/**'
