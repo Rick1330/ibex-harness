@@ -6,7 +6,7 @@ COPY go.mod go.sum ./
 RUN go mod download -x
 COPY packages ./packages
 COPY services/auth ./services/auth
-RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+RUN CGO_ENABLED=0 GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" \
     go build -trimpath -o /out/auth ./services/auth/cmd/auth
 
 FROM alpine@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.backend import EmbeddingBackend
+from app.backends.base import EmbeddingBackend
 from app.errors import (
     DuplicateProfileError,
     MissingBackendError,

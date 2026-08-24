@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
+from app.backends.stub import StubBackend
 from app.errors import BatchTooLargeError, EmptyBatchError, TextTooLongError
 from app.limits import MAX_BATCH_TEXTS, MAX_TEXT_BYTES
-from app.stub import StubBackend
 from app.validate import validate_embed_input
 
 
@@ -22,9 +22,9 @@ def test_validate_embed_input_rejects() -> None:
     validate_embed_input(["ok", "fine"])
 
 
-def test_stub_rejects_invalid_batch() -> None:
+async def test_stub_rejects_invalid_batch() -> None:
     stub = StubBackend.for_profile("cpu")
     with pytest.raises(EmptyBatchError):
-        stub.embed([])
+        await stub.embed([])
     with pytest.raises(TextTooLongError):
-        stub.embed(["x" * (MAX_TEXT_BYTES + 1)])
+        await stub.embed(["x" * (MAX_TEXT_BYTES + 1)])

@@ -24,13 +24,17 @@ type SimpleSearchHit = {
   document: SimpleSearchDocument;
 };
 
+function asSearchString(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
 /** Map Orama simple-index hits to fumadocs search result rows. */
 export function mapSimpleSearchHits(hits: SimpleSearchHit[]): DocsSearchResult[] {
   return hits.map((hit) => ({
     type: "page",
-    content: String(hit.document.title ?? ""),
-    id: String(hit.document.url ?? ""),
-    url: String(hit.document.url ?? ""),
+    content: asSearchString(hit.document.title),
+    id: asSearchString(hit.document.url),
+    url: asSearchString(hit.document.url),
   }));
 }
 

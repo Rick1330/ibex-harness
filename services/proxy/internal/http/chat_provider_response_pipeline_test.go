@@ -23,7 +23,7 @@ const (
 
 type processBodyCase struct {
 	name        string
-	ctx         context.Context
+	cancel      bool
 	pipeline    *responsepipeline.Pipeline
 	body        []byte
 	wantErr     bool
@@ -47,7 +47,7 @@ func TestUnit_processResponseBody_scenarios(t *testing.T) {
 		},
 		{
 			name: "cancelled context", pipeline: responsepipeline.NewDefaultPipeline(), body: mockBody,
-			ctx: cancelledContext(), wantErr: true,
+			cancel: true, wantErr: true,
 		},
 		{
 			name: "modified stage re-encodes", body: []byte(testChoiceCompletionUpstream),
@@ -65,9 +65,9 @@ func TestUnit_processResponseBody_scenarios(t *testing.T) {
 
 func runProcessBodyCase(t *testing.T, tc processBodyCase) {
 	t.Helper()
-	ctx := tc.ctx
-	if ctx == nil {
-		ctx = context.Background()
+	ctx := context.Background()
+	if tc.cancel {
+		ctx = cancelledContext()
 	}
 	out, err := chatCompletionHandler{responsePipeline: tc.pipeline}.processResponseBody(ctx, "openai", tc.body)
 	if tc.wantErr {

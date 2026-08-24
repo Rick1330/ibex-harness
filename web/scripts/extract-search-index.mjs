@@ -163,7 +163,9 @@ async function main() {
   await extractToPublic(EXTRACT_PORT);
 }
 
-main().catch((error) => {
+try {
+  await main();
+} catch (error) {
   console.error("[search] extract failed:", error);
   process.exit(1);
-});
+}

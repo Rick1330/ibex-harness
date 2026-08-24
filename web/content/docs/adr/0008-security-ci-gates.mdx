@@ -70,6 +70,7 @@ GitHub **Default** CodeQL setup conflicts with the advanced `.github/workflows/c
 | --- | --- |
 | `ci-gate-repo` | `repo-guards`, `shellcheck`, `markdownlint`, `compose-validate`, `go-mod-tidy`, `license-check` |
 | `ci-gate-go` | Buf/proto, Go smokes, `go-services`, `golangci-lint`, `coverage`, `govulncheck` |
+| `ci-gate-python` | `embedder-test`, `embedder-coverage` |
 | `ci-gate-web` | `web-build` |
 | `ci-gate-security` | `trivy`, `osv-scan`, `bandit`, `hadolint` |
 | `gitleaks` | Secret scan (always runs — secrets can appear in any path) |
@@ -94,6 +95,7 @@ Heavy jobs run only when their area changed. Filter definitions live in [`.githu
 | Filter | Paths (summary) | Effective flags |
 | --- | --- | --- |
 | `go` | `services/**`, `packages/**`, `go.mod`, migrations, `.golangci.yml` | `run_go`, `run_security`, `run_docker` |
+| `python` | `services/**/app/**`, `services/**/tests/**`, Python lockfiles | `run_python`, `run_security` |
 | `web` | `web/**`, pnpm/turbo root files | `run_web`, `run_security` |
 | `proto` | `packages/proto/**` | (included in `go` via shared paths) |
 | `docker` | Dockerfiles, `.hadolint.yaml` | `run_docker`, `run_security` |

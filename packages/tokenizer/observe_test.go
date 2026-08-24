@@ -56,10 +56,10 @@ func TestUnit_CountWithObserver_NilObserver(t *testing.T) {
 func TestUnit_CountForModelWithObserver_SkipsMetricsWhenObserverNil(t *testing.T) {
 	reg, err := NewLocalRegistry(LocalRegistryConfig{})
 	require.NoError(t, err)
-	n, err := CountForModelWithObserver(ModelCountObserveRequest{
+	n, err := CountForModelWithObserver(context.Background(), ModelCountObserveRequest{
 		ModelCountRequest: ModelCountRequest{
-			Ctx: context.Background(), Catalog: provider.BuiltInCapabilityCatalog(),
-			Reg: reg, Model: "gpt-4o", Text: vectorHelloWorld,
+			Catalog: provider.BuiltInCapabilityCatalog(),
+			Reg:     reg, Model: "gpt-4o", Text: vectorHelloWorld,
 		},
 	})
 	require.NoError(t, err)
@@ -85,10 +85,10 @@ func TestUnit_CountForModelWithObserver_ErrorPaths(t *testing.T) {
 	reg, err := NewLocalRegistry(LocalRegistryConfig{})
 	require.NoError(t, err)
 
-	_, err = CountForModelWithObserver(ModelCountObserveRequest{
+	_, err = CountForModelWithObserver(context.Background(), ModelCountObserveRequest{
 		ModelCountRequest: ModelCountRequest{
-			Ctx: context.Background(), Catalog: provider.BuiltInCapabilityCatalog(),
-			Reg: nil, Model: "gpt-4o", Text: "x",
+			Catalog: provider.BuiltInCapabilityCatalog(),
+			Reg:     nil, Model: "gpt-4o", Text: "x",
 		},
 		Obs: obs,
 	})
@@ -97,10 +97,10 @@ func TestUnit_CountForModelWithObserver_ErrorPaths(t *testing.T) {
 	require.Equal(t, provider.TokenizerFamilyO200kBase, obs.calls[0].family)
 	require.Equal(t, "error", obs.calls[0].result)
 
-	_, err = CountForModelWithObserver(ModelCountObserveRequest{
+	_, err = CountForModelWithObserver(context.Background(), ModelCountObserveRequest{
 		ModelCountRequest: ModelCountRequest{
-			Ctx: context.Background(), Catalog: provider.BuiltInCapabilityCatalog(),
-			Reg: reg, Model: "missing", Text: "x",
+			Catalog: provider.BuiltInCapabilityCatalog(),
+			Reg:     reg, Model: "missing", Text: "x",
 		},
 		Obs: obs,
 	})
@@ -115,10 +115,10 @@ func TestUnit_CountForModelWithObserver_PreservesFamilyOnCountFailure(t *testing
 	require.NoError(t, err)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err = CountForModelWithObserver(ModelCountObserveRequest{
+	_, err = CountForModelWithObserver(ctx, ModelCountObserveRequest{
 		ModelCountRequest: ModelCountRequest{
-			Ctx: ctx, Catalog: provider.BuiltInCapabilityCatalog(),
-			Reg: reg, Model: "gpt-4o", Text: vectorHelloWorld,
+			Catalog: provider.BuiltInCapabilityCatalog(),
+			Reg:     reg, Model: "gpt-4o", Text: vectorHelloWorld,
 		},
 		Obs: obs,
 	})

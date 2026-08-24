@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.backend import EmbeddingBackend
+from app.backends.base import EmbeddingBackend
 
 
 @dataclass(slots=True)

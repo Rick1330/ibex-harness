@@ -33,14 +33,14 @@ func CountWithObserver(
 }
 
 // CountForModelWithObserver is CountForModel with optional metrics observation.
-func CountForModelWithObserver(req ModelCountObserveRequest) (int, error) {
-	return countForModelWithObserver(req)
+func CountForModelWithObserver(ctx context.Context, req ModelCountObserveRequest) (int, error) {
+	return countForModelWithObserver(ctx, req)
 }
 
-func countForModelWithObserver(req ModelCountObserveRequest) (int, error) {
+func countForModelWithObserver(ctx context.Context, req ModelCountObserveRequest) (int, error) {
 	start := time.Now()
 	family := observerFamilyLabel(req.Catalog, req.Model)
-	n, err := countForModel(req.ModelCountRequest)
+	n, err := countForModel(ctx, req.ModelCountRequest)
 	if req.Obs == nil {
 		return n, err
 	}
