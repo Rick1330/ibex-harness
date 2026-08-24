@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
@@ -9,8 +10,8 @@ import numpy as np
 import pytest
 
 from app.backends.stub import StubBackend
-from app.cache.backend import CachingEmbeddingBackend
-from app.cache.context import reset_embed_org_id, set_embed_org_id
+from app.cache.backend import CachingEmbeddingBackend, _encode_vector
+from app.cache.context import org_context
 from app.cache.keys import cache_key_for_text
 from app.cache.metrics import CACHE_ERRORS, CACHE_REQUESTS
 from app.errors import MissingOrgContextError
@@ -19,11 +20,16 @@ _ORG = UUID("11111111-1111-1111-1111-111111111111")
 _ORG_B = UUID("22222222-2222-2222-2222-222222222222")
 
 
-def _l2(n: int, dim: int = 8) -> np.ndarray:
-    rng = np.random.default_rng(0)
-    raw = rng.standard_normal((n, dim)).astype(np.float32)
-    norms = np.linalg.norm(raw, axis=1, keepdims=True)
-    return (raw / norms).astype(np.float32)
+def _l2_for_text(text: str, dim: int = 8) -> np.ndarray:
+    """Deterministic L2 vector unique per text (not shared across texts)."""
+    seed = int.from_bytes(hashlib.sha256(text.encode()).digest()[:8], "big")
+    rng = np.random.default_rng(seed)
+    raw = rng.standard_normal(dim).astype(np.float32)
+    return (raw / np.linalg.norm(raw)).astype(np.float32)
+
+
+def _l2_batch(texts: list[str], dim: int = 8) -> np.ndarray:
+    return np.vstack([_l2_for_text(t, dim) for t in texts]).astype(np.float32)
 
 
 def _counting_inner(dim: int = 8) -> MagicMock:
@@ -36,7 +42,7 @@ def _counting_inner(dim: int = 8) -> MagicMock:
 
     async def _embed(texts: list[str]) -> np.ndarray:
         inner.embed_calls.append(list(texts))
-        return _l2(len(texts), dim)
+        return _l2_batch(texts, dim)
 
     inner.embed = AsyncMock(side_effect=_embed)
     inner.aclose = AsyncMock()
@@ -45,9 +51,8 @@ def _counting_inner(dim: int = 8) -> MagicMock:
 
 @pytest.fixture
 def org_ctx():
-    token = set_embed_org_id(_ORG)
-    yield _ORG
-    reset_embed_org_id(token)
+    with org_context(_ORG) as oid:
+        yield oid
 
 
 class TestCachingBackendUnit:
@@ -95,8 +100,12 @@ class TestCachingBackendUnit:
         await cached.embed(["a"])
         result = await cached.embed(["a", "b", "a"])
         assert result.shape == (3, 8)
-        # Second call: only unique miss "b" should hit inner once.
         assert inner.embed_calls[-1] == ["b"]
+        np.testing.assert_array_equal(result[0], _l2_for_text("a"))
+        np.testing.assert_array_equal(result[1], _l2_for_text("b"))
+        np.testing.assert_array_equal(result[2], _l2_for_text("a"))
+        np.testing.assert_array_equal(result[0], result[2])
+        assert not np.allclose(result[0], result[1])
 
     async def test_duplicate_miss_texts_embedded_once(self, org_ctx: UUID) -> None:
         inner = _counting_inner()
@@ -108,7 +117,9 @@ class TestCachingBackendUnit:
         result = await cached.embed(["x", "y", "x"])
         assert result.shape == (3, 8)
         assert inner.embed_calls == [["x", "y"]]
-        # Three SET entries (one per batch slot), even for duplicate text.
+        np.testing.assert_array_equal(result[0], result[2])
+        np.testing.assert_array_equal(result[0], _l2_for_text("x"))
+        np.testing.assert_array_equal(result[1], _l2_for_text("y"))
         written = mock_store.set_many_ex.await_args.args[0]
         assert len(written) == 3
 
@@ -129,6 +140,32 @@ class TestCachingBackendUnit:
         assert inner.embed_calls == [["z"]]
         assert mock_store.set_many_ex.await_count == 1
         assert key  # key format exercised
+
+    async def test_non_finite_cached_vector_counts_as_miss(self, org_ctx: UUID) -> None:
+        inner = _counting_inner(dim=8)
+        bad = np.full(8, np.nan, dtype=np.float32)
+        mock_store = MagicMock()
+        mock_store.mget = AsyncMock(return_value=[_encode_vector(bad)])
+        mock_store.set_many_ex = AsyncMock()
+        cached = CachingEmbeddingBackend(inner, mock_store, ttl_seconds=60)
+
+        result = await cached.embed(["bad"])
+        assert inner.embed_calls == [["bad"]]
+        assert np.all(np.isfinite(result))
+        assert mock_store.set_many_ex.await_count == 1
+
+    async def test_non_normalized_cached_vector_counts_as_miss(self, org_ctx: UUID) -> None:
+        inner = _counting_inner(dim=8)
+        raw = np.ones(8, dtype=np.float32)  # L2 != 1
+        mock_store = MagicMock()
+        mock_store.mget = AsyncMock(return_value=[_encode_vector(raw)])
+        mock_store.set_many_ex = AsyncMock()
+        cached = CachingEmbeddingBackend(inner, mock_store, ttl_seconds=60)
+
+        result = await cached.embed(["unnorm"])
+        assert inner.embed_calls == [["unnorm"]]
+        assert np.allclose(np.linalg.norm(result[0]), 1.0, atol=1e-5)
+        assert mock_store.set_many_ex.await_count == 1
 
     async def test_mget_error_fail_open(self, org_ctx: UUID) -> None:
         inner = _counting_inner()
@@ -200,10 +237,10 @@ class TestCachingBackendUnit:
 
         assert CACHE_REQUESTS.labels(backend="stub", result="miss")._value.get() == (
             misses_before + 2
-        )  # a then b
+        )
         assert CACHE_REQUESTS.labels(backend="stub", result="hit")._value.get() == (
             hits_before + 1
-        )  # second a
+        )
 
     async def test_cross_tenant_no_shared_hit(self) -> None:
         store: dict[str, bytes] = {}
@@ -220,17 +257,10 @@ class TestCachingBackendUnit:
         inner = _counting_inner()
         cached = CachingEmbeddingBackend(inner, mock_store, ttl_seconds=60)
 
-        token_a = set_embed_org_id(_ORG)
-        try:
+        with org_context(_ORG):
             await cached.embed(["shared"])
-        finally:
-            reset_embed_org_id(token_a)
-
-        token_b = set_embed_org_id(_ORG_B)
-        try:
+        with org_context(_ORG_B):
             await cached.embed(["shared"])
-        finally:
-            reset_embed_org_id(token_b)
 
         assert len(inner.embed_calls) == 2
         assert len(store) == 2

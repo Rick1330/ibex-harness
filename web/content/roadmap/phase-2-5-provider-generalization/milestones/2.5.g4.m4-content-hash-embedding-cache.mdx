@@ -1,7 +1,7 @@
 ---
 title: "2.5.G4.M4 Content-hash embedding cache"
-description: "Redis SHA-256 content-hash → vector cache sitting in front of whichever EmbeddingBackend is active. Backend-agnostic and targets &gt;80% hit rate for memory embeddings, which are frequently re-embedded for identical or near-identical content."
-summary: "Redis SHA-256 content-hash → vector cache sitting in front of whichever EmbeddingBackend is active. Backend-agnostic and targets &gt;80% hit rate for memory embeddings, which are frequently re-embedded for identical or near-identical content."
+description: "Redis SHA-256 content-hash → vector cache sitting in front of whichever EmbeddingBackend is active. Backend-agnostic; exact-match cache for identical text (same model + dim). Ops target &gt;80% hit rate on repetitive memory embeddings."
+summary: "Redis SHA-256 content-hash → vector cache sitting in front of whichever EmbeddingBackend is active. Backend-agnostic; exact-match cache for identical text (same model + dim). Ops target &gt;80% hit rate on repetitive memory embeddings."
 status: "completed"
 milestoneId: "2.5.G4.M4"
 track: "D"

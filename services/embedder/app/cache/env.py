@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 from urllib.parse import urlparse
 
@@ -70,8 +71,8 @@ class CacheEnvMixin(BaseModel):
     @field_validator("cache_redis_timeout_seconds")
     @classmethod
     def _check_redis_timeout(cls, value: float) -> float:
-        if value <= 0:
-            raise ValueError("cache_redis_timeout_seconds must be > 0")
+        if not math.isfinite(value) or value <= 0:
+            raise ValueError("cache_redis_timeout_seconds must be a finite value > 0")
         return value
 
     def resolved_cache_redis_url(self) -> str | None:

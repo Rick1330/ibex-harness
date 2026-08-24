@@ -83,7 +83,7 @@ Never log raw text or vector payloads. Log profile, model_id, batch size, latenc
 | G4.M1 (this) | Interface, registry, stub, org columns, contract tests |
 | G4.M2 | TEI backend (`gpu`) |
 | G4.M3 | Hosted API backend |
-| G4.M4 | Content-hash cache (`sha256(model_id\|dim\|text)`, org-scoped keys) |
+| G4.M4 | Content-hash cache (SHA-256 length-prefixed model_id+dim+text; `{org_id}:embed:v1:{hex}`) |
 
 ## Consequences
 
@@ -114,7 +114,7 @@ G4.M3 has shipped the hosted-API backend within this contract:
 - Startup probe embed confirms observed dimensions (OpenAI has no TEI `/info`); mismatch blocks readiness.
 - Output is L2-normalized then re-validated (OpenAI does not guarantee unit norm).
 - Env: `IBEX_EMBEDDING_HOSTED_PROVIDER`, `IBEX_EMBEDDING_HOSTED_API_KEY`, `IBEX_EMBEDDING_HOSTED_BASE_URL`, `IBEX_EMBEDDING_HOSTED_TIMEOUT_SECONDS`, `IBEX_EMBEDDING_HOSTED_CONNECT_TIMEOUT_SECONDS`, `IBEX_EMBEDDING_HOSTED_MAX_RETRIES`; optional OpenAI-only alias `OPENAI_EMBEDDING_API_KEY`.
-- CPU MiniLM remains stub (not part of M3). M4 cache is next.
+- CPU MiniLM remains stub (not part of M3). Cache decorator shipped in G4.M4.
 
 ### G4.M4 Update (2026-08-24)
 
@@ -125,9 +125,10 @@ G4.M4 has shipped the Redis content-hash embedding cache within this contract:
 - Redis keys are **org-scoped**: `{org_id}:embed:v1:{hex}` (sketch `embed:{model}:{hash}` was rejected for tenancy / embedding inversion).
 - `POST /v1/embed` requires `org_id` (UUID); FastAPI sets a ContextVar for the decorator.
 - Fail-open on Redis errors at request time; fail-closed at startup when cache is enabled without Redis or PING fails.
-- Values are `float32` little-endian bytes only (never pickle). Mixed batches use one `MGET` + one pipeline `SET EX`.
-- Prometheus: `ibex_embedder_cache_requests_total{backend,result}` per text; `GET /metrics`. JSON `backend` stays the inner name (not `cached:…`).
+- Values are `float32` little-endian (`<f4`) bytes only (never pickle). Mixed batches use one `MGET` + one pipeline `SET EX`. Corrupt / non-finite / non-L2 blobs count as misses and are overwritten.
+- Prometheus: `ibex_embedder_cache_requests_total{backend,result}` per text; authenticated `GET /metrics` (Bearer `IBEX_EMBEDDING_API_TOKEN`). JSON `backend` stays the inner name (not `cached:…`).
 - Env: `IBEX_EMBEDDING_CACHE_ENABLED` (default **false**), `IBEX_EMBEDDING_CACHE_TTL_SECONDS` (default 86400), `IBEX_EMBEDDING_CACHE_REDIS_URL` / `REDIS_URL`, `IBEX_EMBEDDING_CACHE_REDIS_TIMEOUT_SECONDS`.
+- Dependencies: `redis` (redis-py ≥5 async, wheel-only / no hiredis) for MGET+pipeline; `prometheus-client` for scrape counters. Alternatives rejected: fakeredis-only (not CI proof), hiredis (native build), BLAKE3/xxHash (not ADR-0010). Both are pure-Python wheels compatible with `uv --no-build` Docker builds; redis-py is the stdlib-adjacent client already used elsewhere in the org via go-redis patterns.
 
 ## References
 

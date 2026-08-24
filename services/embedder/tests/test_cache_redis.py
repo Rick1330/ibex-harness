@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
 import uuid
 from unittest.mock import AsyncMock, MagicMock
@@ -14,7 +15,7 @@ import redis as redis_sync
 from redis.exceptions import RedisError
 
 from app.cache.backend import CachingEmbeddingBackend
-from app.cache.context import reset_embed_org_id, set_embed_org_id
+from app.cache.context import org_context
 from app.cache.keys import cache_key_for_text
 from app.cache.redis_store import RedisEmbeddingStore
 
@@ -45,11 +46,11 @@ def _unique(prefix: str) -> str:
     return f"{prefix}-{uuid.uuid4()}"
 
 
-def _l2(n: int, dim: int = 8) -> np.ndarray:
-    rng = np.random.default_rng(42)
-    raw = rng.standard_normal((n, dim)).astype(np.float32)
-    norms = np.linalg.norm(raw, axis=1, keepdims=True)
-    return (raw / norms).astype(np.float32)
+def _l2_for_text(text: str, dim: int = 8) -> np.ndarray:
+    seed = int.from_bytes(hashlib.sha256(text.encode()).digest()[:8], "big")
+    rng = np.random.default_rng(seed)
+    raw = rng.standard_normal(dim).astype(np.float32)
+    return (raw / np.linalg.norm(raw)).astype(np.float32)
 
 
 def _inner(dim: int = 8) -> MagicMock:
@@ -63,7 +64,8 @@ def _inner(dim: int = 8) -> MagicMock:
 
     async def _embed(texts: list[str]) -> np.ndarray:
         calls.append(list(texts))
-        return _l2(len(texts), dim)
+        rows = [_l2_for_text(t, dim) for t in texts]
+        return np.vstack(rows).astype(np.float32)
 
     inner.embed = AsyncMock(side_effect=_embed)
     inner.aclose = AsyncMock()
@@ -77,17 +79,22 @@ async def store(require_redis: str):
     await s.aclose()
 
 
+async def _embed_under_org(
+    cached: CachingEmbeddingBackend,
+    org_id: UUID,
+    texts: list[str],
+) -> np.ndarray:
+    with org_context(org_id):
+        return await cached.embed(texts)
+
+
 class TestRedisIntegration:
     async def test_pipeline_write_and_hit(self, store: RedisEmbeddingStore) -> None:
         text = _unique("redis-hit-text")
         inner = _inner()
         cached = CachingEmbeddingBackend(inner, store, ttl_seconds=30)
-        token = set_embed_org_id(_ORG_A)
-        try:
-            first = await cached.embed([text])
-            second = await cached.embed([text])
-        finally:
-            reset_embed_org_id(token)
+        first = await _embed_under_org(cached, _ORG_A, [text])
+        second = await _embed_under_org(cached, _ORG_A, [text])
 
         np.testing.assert_array_equal(first, second)
         assert len(inner.embed_calls) == 1
@@ -106,33 +113,18 @@ class TestRedisIntegration:
         text = _unique("tenant-shared")
         inner = _inner()
         cached = CachingEmbeddingBackend(inner, store, ttl_seconds=30)
-
-        token_a = set_embed_org_id(_ORG_A)
-        try:
-            await cached.embed([text])
-        finally:
-            reset_embed_org_id(token_a)
-
-        token_b = set_embed_org_id(_ORG_B)
-        try:
-            await cached.embed([text])
-        finally:
-            reset_embed_org_id(token_b)
-
+        await _embed_under_org(cached, _ORG_A, [text])
+        await _embed_under_org(cached, _ORG_B, [text])
         assert len(inner.embed_calls) == 2
 
     async def test_ttl_expiry(self, store: RedisEmbeddingStore) -> None:
         text = _unique("ttl-expire")
         inner = _inner()
         cached = CachingEmbeddingBackend(inner, store, ttl_seconds=1)
-        token = set_embed_org_id(_ORG_A)
-        try:
-            await cached.embed([text])
-            assert len(inner.embed_calls) == 1
-            await asyncio.sleep(1.2)
-            await cached.embed([text])
-        finally:
-            reset_embed_org_id(token)
+        await _embed_under_org(cached, _ORG_A, [text])
+        assert len(inner.embed_calls) == 1
+        await asyncio.sleep(1.2)
+        await _embed_under_org(cached, _ORG_A, [text])
         assert len(inner.embed_calls) == 2
 
     async def test_fail_open_closed_port(self) -> None:
@@ -142,11 +134,9 @@ class TestRedisIntegration:
         )
         inner = _inner()
         cached = CachingEmbeddingBackend(inner, bad, ttl_seconds=30)
-        token = set_embed_org_id(_ORG_A)
         try:
-            result = await cached.embed([_unique("fail-open")])
+            result = await _embed_under_org(cached, _ORG_A, [_unique("fail-open")])
         finally:
-            reset_embed_org_id(token)
             await bad.aclose()
         assert result.shape == (1, 8)
         assert len(inner.embed_calls) == 1
@@ -157,21 +147,17 @@ class TestRedisIntegration:
         inner1 = _inner()
         store1 = RedisEmbeddingStore.from_url(require_redis, timeout_seconds=0.5)
         cached1 = CachingEmbeddingBackend(inner1, store1, ttl_seconds=60)
-        token = set_embed_org_id(_ORG_A)
         try:
-            await cached1.embed([text])
+            await _embed_under_org(cached1, _ORG_A, [text])
         finally:
-            reset_embed_org_id(token)
             await store1.aclose()
 
         inner2 = _inner()
         store2 = RedisEmbeddingStore.from_url(require_redis, timeout_seconds=0.5)
         cached2 = CachingEmbeddingBackend(inner2, store2, ttl_seconds=60)
-        token = set_embed_org_id(_ORG_A)
         try:
-            await cached2.embed([text])
+            await _embed_under_org(cached2, _ORG_A, [text])
         finally:
-            reset_embed_org_id(token)
             await store2.aclose()
 
         assert inner2.embed_calls == []

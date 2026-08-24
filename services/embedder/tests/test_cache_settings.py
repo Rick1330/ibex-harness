@@ -61,6 +61,12 @@ class TestCacheSettings:
         with pytest.raises(ValidationError):
             Settings(cache_ttl_seconds=0)
 
+    def test_redis_timeout_rejects_non_finite(self) -> None:
+        with pytest.raises(ValidationError):
+            Settings(cache_redis_timeout_seconds=float("nan"))
+        with pytest.raises(ValidationError):
+            Settings(cache_redis_timeout_seconds=float("inf"))
+
     def test_enabled_without_url_fails_runtime_security(self) -> None:
         settings = Settings(
             cache_enabled=True,
@@ -72,6 +78,12 @@ class TestCacheSettings:
     def test_rejects_bad_redis_scheme(self) -> None:
         with pytest.raises(ValidationError):
             Settings(cache_redis_url="http://localhost:6379/0")
+
+    def test_rejects_empty_and_hostless_redis_url(self) -> None:
+        with pytest.raises(ValidationError):
+            Settings(cache_redis_url="   ")
+        with pytest.raises(ValidationError):
+            Settings(cache_redis_url="redis:///0")
 
 
 class TestFactoryCacheWrap:
@@ -125,13 +137,15 @@ class TestEmbedOrgIdRequired:
             )
         assert resp.status_code == 400
 
-    def test_metrics_endpoint_scrapable(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_metrics_endpoint_requires_bearer(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("IBEX_EMBEDDING_PROFILE", "cpu")
         monkeypatch.setenv("IBEX_EMBEDDING_API_TOKEN", _TOKEN)
         with TestClient(app) as tc:
-            resp = tc.get("/metrics")
-        assert resp.status_code == 200
-        assert "text/plain" in resp.headers["content-type"]
+            unauth = tc.get("/metrics")
+            assert unauth.status_code == 401
+            auth = tc.get("/metrics", headers={"Authorization": f"Bearer {_TOKEN}"})
+        assert auth.status_code == 200
+        assert "text/plain" in auth.headers["content-type"]
 
 
 class TestCacheStartupFailClosed:

@@ -22,6 +22,7 @@ from app.backends.hosted import HostedAPIBackend
 from app.backends.tei import TEIBackend
 from app.cache.backend import CachingEmbeddingBackend
 from app.config import get_settings
+from app.deps import ServiceAuthDep
 from app.errors import (
     AuthenticationError,
     BackendUnavailableError,
@@ -264,7 +265,8 @@ def create_app() -> FastAPI:
     application.include_router(embed_router)
 
     @application.get("/metrics")
-    async def metrics() -> Response:
+    async def metrics(_auth: ServiceAuthDep) -> Response:
+        """Prometheus scrape endpoint — requires Bearer IBEX_EMBEDDING_API_TOKEN."""
         return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
     return application

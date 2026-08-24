@@ -14,14 +14,16 @@ from app.cache.context import embed_org_id
 from app.cache.keys import cache_key_for_text
 from app.cache.metrics import record_error, record_hit, record_miss
 from app.cache.redis_store import RedisEmbeddingStore
-from app.errors import MissingOrgContextError
+from app.errors import InvalidVectorError, MissingOrgContextError
 from app.profiles import Profile
-from app.validate import validate_embed_input
+from app.validate import validate_embed_input, validate_output_vectors
 
 logger = logging.getLogger(__name__)
 
 _FLOAT32_BYTES = 4
+_WIRE_DTYPE = np.dtype("<f4")  # explicit little-endian wire format
 _REDIS_FAIL_OPEN = (RedisError, OSError, TimeoutError)
+
 
 def _decode_vector(blob: bytes | None, *, dimensions: int) -> NDArray[np.float32] | None:
     if blob is None:
@@ -29,11 +31,27 @@ def _decode_vector(blob: bytes | None, *, dimensions: int) -> NDArray[np.float32
     expected = dimensions * _FLOAT32_BYTES
     if len(blob) != expected:
         return None
-    return np.frombuffer(blob, dtype=np.float32).copy()
+    decoded = np.frombuffer(blob, dtype=_WIRE_DTYPE).copy()
+    return decoded.astype(np.float32, copy=False)
 
 
 def _encode_vector(vec: NDArray[np.float32]) -> bytes:
-    return np.asarray(vec, dtype=np.float32).tobytes()
+    return np.asarray(vec, dtype=_WIRE_DTYPE).tobytes()
+
+
+def _valid_cached_vector(
+    vec: NDArray[np.float32] | None,
+    *,
+    dimensions: int,
+) -> NDArray[np.float32] | None:
+    """Return vec if it satisfies the embedding output contract; else None (miss)."""
+    if vec is None:
+        return None
+    try:
+        validate_output_vectors(["cache-hit"], vec.reshape(1, -1), dimensions)
+    except InvalidVectorError:
+        return None
+    return vec
 
 
 class CachingEmbeddingBackend(EmbeddingBackend):
@@ -88,7 +106,18 @@ class CachingEmbeddingBackend(EmbeddingBackend):
         texts: list[str],
         org_id: UUID,
     ) -> NDArray[np.float32]:
-        keys = [
+        keys = self._cache_keys(texts, org_id)
+        raw_values = await self._mget_or_fail_open(keys, texts)
+        if raw_values is None:
+            return await self._inner.embed(texts)
+
+        results, miss_indices = self._partition_hits(raw_values)
+        if miss_indices:
+            await self._fill_misses(texts, keys, results, miss_indices)
+        return self._stack_results(results)
+
+    def _cache_keys(self, texts: list[str], org_id: UUID) -> list[str]:
+        return [
             cache_key_for_text(
                 org_id=org_id,
                 model_id=self._inner.model_id,
@@ -97,8 +126,15 @@ class CachingEmbeddingBackend(EmbeddingBackend):
             )
             for text in texts
         ]
+
+    async def _mget_or_fail_open(
+        self,
+        keys: list[str],
+        texts: list[str],
+    ) -> list[bytes | None] | None:
+        """Return MGET values, or None when Redis fails (caller embeds full batch)."""
         try:
-            raw_values = await self._store.mget(keys)
+            return await self._store.mget(keys)
         except _REDIS_FAIL_OPEN as exc:
             record_error("mget")
             logger.warning(
@@ -107,23 +143,34 @@ class CachingEmbeddingBackend(EmbeddingBackend):
             )
             for _ in texts:
                 record_miss(self._inner.name)
-            return await self._inner.embed(texts)
+            return None
 
-        results: list[NDArray[np.float32] | None] = [None] * len(texts)
+    def _partition_hits(
+        self,
+        raw_values: list[bytes | None],
+    ) -> tuple[list[NDArray[np.float32] | None], list[int]]:
+        results: list[NDArray[np.float32] | None] = [None] * len(raw_values)
         miss_indices: list[int] = []
+        dim = self._inner.dimensions
+        backend_name = self._inner.name
         for i, blob in enumerate(raw_values):
-            decoded = _decode_vector(blob, dimensions=self._inner.dimensions)
+            decoded = _valid_cached_vector(
+                _decode_vector(blob, dimensions=dim),
+                dimensions=dim,
+            )
             if decoded is not None:
                 results[i] = decoded
-                record_hit(self._inner.name)
+                record_hit(backend_name)
             else:
                 miss_indices.append(i)
-                record_miss(self._inner.name)
+                record_miss(backend_name)
+        return results, miss_indices
 
-        if miss_indices:
-            await self._fill_misses(texts, keys, results, miss_indices)
-
-        stacked = np.vstack([results[i] for i in range(len(texts))])  # type: ignore[misc]
+    @staticmethod
+    def _stack_results(
+        results: list[NDArray[np.float32] | None],
+    ) -> NDArray[np.float32]:
+        stacked = np.vstack([results[i] for i in range(len(results))])  # type: ignore[misc]
         return stacked.astype(np.float32, copy=False)
 
     async def _fill_misses(
