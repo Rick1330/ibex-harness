@@ -185,7 +185,7 @@ class TeiClient:
             except (BackendRejectedError, InvalidVectorError):
                 raise
             except (BackendUnavailableError, BackendTimeoutError) as exc:
-                if isinstance(exc, BackendUnavailableError) and not exc.retryable:
+                if not _is_retryable_tei_error(exc):
                     raise
                 last_exc = exc
                 if attempt < self._max_retries:
@@ -262,6 +262,12 @@ class TeiClient:
             type(exc).__name__,
         )
         await asyncio.sleep(delay)
+
+
+def _is_retryable_tei_error(exc: Exception) -> bool:
+    if isinstance(exc, BackendTimeoutError):
+        return True
+    return isinstance(exc, BackendUnavailableError) and exc.retryable
 
 
 def _rejected_message(status: int, excerpt: str) -> str:

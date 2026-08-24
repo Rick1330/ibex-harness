@@ -349,8 +349,11 @@ jobs:
             --format sarif \
             --output trivy-image-embedder.sarif \
             --exit-code 0
+          sarif_rc=$?
           set -e
-          exit "$table_rc"
+          if [ "$table_rc" -ne 0 ] || [ "$sarif_rc" -ne 0 ]; then
+            exit 1
+          fi
       - name: Upload Trivy embedder SARIF
         if: always() && hashFiles('trivy-image-embedder.sarif') != ''
         uses: github/codeql-action/upload-sarif@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7

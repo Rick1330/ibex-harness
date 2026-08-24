@@ -108,10 +108,18 @@ def _assert_info_dimensions(backend: TEIBackend, info: object) -> None:
 
 def _assert_probe_dimensions(probe: object, want: int) -> None:
     shape = getattr(probe, "shape", ())
-    if not hasattr(shape, "__len__") or len(shape) < 2 or int(shape[-1]) != want:
+    if not _probe_shape_matches(shape, want):
         raise GeometryMismatchError(
             f"TEI dimensions mismatch: observed {shape!r} configured dimensions={want}"
         )
+
+
+def _probe_shape_matches(shape: object, want: int) -> bool:
+    if not hasattr(shape, "__len__"):
+        return False
+    if len(shape) < 2:  # type: ignore[arg-type]
+        return False
+    return int(shape[-1]) == want  # type: ignore[index]
 
 
 async def _startup(state: AppState) -> None:

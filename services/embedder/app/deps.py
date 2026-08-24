@@ -23,9 +23,13 @@ def get_embedder_state(request: Request) -> AppState:
 
 
 def _bearer_token_matches(provided: str, expected: str) -> bool:
-    if not expected or len(provided) != len(expected):
+    if not expected:
         return False
-    return hmac.compare_digest(provided, expected)
+    provided_bytes = provided.encode("utf-8")
+    expected_bytes = expected.encode("utf-8")
+    if len(provided_bytes) != len(expected_bytes):
+        return False
+    return hmac.compare_digest(provided_bytes, expected_bytes)
 
 
 def require_service_auth(

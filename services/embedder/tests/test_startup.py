@@ -216,46 +216,53 @@ class TestLifespanStartupPaths:
         get_settings.cache_clear()
         return resp
 
-    def test_gpu_startup_fails_without_tei_url(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        resp = self._ready(
-            monkeypatch,
-            {
-                "IBEX_EMBEDDING_PROFILE": "gpu",
-                "IBEX_EMBEDDING_TEI_BASE_URL": None,
-                "IBEX_EMBEDDING_API_TOKEN": "service-token",
-            },
-        )
-        assert resp.status_code == 503
-        assert resp.json()["error"]["code"] == "service_not_ready"
-
-    def test_cpu_startup_succeeds(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        resp = self._ready(
-            monkeypatch,
-            {
-                "IBEX_EMBEDDING_PROFILE": "cpu",
-                "IBEX_EMBEDDING_API_TOKEN": "service-token",
-            },
-        )
-        assert resp.status_code == 200
-
-    def test_invalid_config_marks_not_ready(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        resp = self._ready(
-            monkeypatch,
-            {
-                "IBEX_EMBEDDING_PROFILE": "cpu",
-                "IBEX_EMBEDDING_DIM": "0",
-                "IBEX_EMBEDDING_API_TOKEN": "service-token",
-            },
-        )
-        assert resp.status_code == 503
-
-    def test_missing_api_token_marks_not_ready(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        resp = self._ready(
-            monkeypatch,
-            {
-                "IBEX_EMBEDDING_PROFILE": "cpu",
-                "IBEX_EMBEDDING_API_TOKEN": None,
-            },
-        )
-        assert resp.status_code == 503
-        assert resp.json()["error"]["code"] == "service_not_ready"
+    @pytest.mark.parametrize(
+        ("env", "status", "error_code"),
+        [
+            (
+                {
+                    "IBEX_EMBEDDING_PROFILE": "gpu",
+                    "IBEX_EMBEDDING_TEI_BASE_URL": None,
+                    "IBEX_EMBEDDING_API_TOKEN": "service-token",
+                },
+                503,
+                "service_not_ready",
+            ),
+            (
+                {
+                    "IBEX_EMBEDDING_PROFILE": "cpu",
+                    "IBEX_EMBEDDING_API_TOKEN": "service-token",
+                },
+                200,
+                None,
+            ),
+            (
+                {
+                    "IBEX_EMBEDDING_PROFILE": "cpu",
+                    "IBEX_EMBEDDING_DIM": "0",
+                    "IBEX_EMBEDDING_API_TOKEN": "service-token",
+                },
+                503,
+                None,
+            ),
+            (
+                {
+                    "IBEX_EMBEDDING_PROFILE": "cpu",
+                    "IBEX_EMBEDDING_API_TOKEN": None,
+                },
+                503,
+                "service_not_ready",
+            ),
+        ],
+    )
+    def test_ready_status_for_startup_env(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        env: dict[str, str | None],
+        status: int,
+        error_code: str | None,
+    ) -> None:
+        resp = self._ready(monkeypatch, env)
+        assert resp.status_code == status
+        if error_code is not None:
+            assert resp.json()["error"]["code"] == error_code
