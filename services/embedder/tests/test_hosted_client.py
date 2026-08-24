@@ -17,7 +17,13 @@ from app.errors import (
     BackendUnavailableError,
     InvalidVectorError,
 )
-from app.hosted.client import HostedClient, HostedClientConfig, _jittered_backoff
+from app.hosted.client import (
+    HostedClient,
+    HostedClientConfig,
+    _jittered_backoff,
+    _parse_retry_after_seconds,
+    _retry_delay_seconds,
+)
 
 _OPENAI_URL = "https://api.openai.com/v1"
 _COHERE_URL = "https://api.cohere.com"
@@ -39,32 +45,49 @@ def _openai_body(vectors: list[list[float]]) -> dict:
     }
 
 
-def _openai_client(**kwargs) -> HostedClient:
-    api_key = kwargs.pop("api_key", _API_KEY)
-    cfg = {
-        "connect_timeout": 1.0,
-        "read_timeout": 5.0,
-        "max_retries": 2,
-        "provider": "openai",
-        "model_id": "text-embedding-3-large",
-        "dimensions": 3072,
-    }
-    cfg.update(kwargs)
-    return HostedClient(_OPENAI_URL, api_key, config=HostedClientConfig(**cfg))  # type: ignore[arg-type]
+def _hosted_client(
+    base_url: str,
+    *,
+    api_key: str,
+    defaults: dict[str, object],
+    **overrides: object,
+) -> HostedClient:
+    cfg = {**defaults, **overrides}
+    return HostedClient(base_url, api_key, config=HostedClientConfig(**cfg))  # type: ignore[arg-type]
 
 
-def _cohere_client(**kwargs) -> HostedClient:
-    api_key = kwargs.pop("api_key", "cohere-test")
-    cfg = {
-        "connect_timeout": 1.0,
-        "read_timeout": 5.0,
-        "max_retries": 2,
-        "provider": "cohere",
-        "model_id": "embed-english-v3.0",
-        "dimensions": 1024,
-    }
-    cfg.update(kwargs)
-    return HostedClient(_COHERE_URL, api_key, config=HostedClientConfig(**cfg))  # type: ignore[arg-type]
+def _openai_client(**kwargs: object) -> HostedClient:
+    api_key = str(kwargs.pop("api_key", _API_KEY))
+    return _hosted_client(
+        _OPENAI_URL,
+        api_key=api_key,
+        defaults={
+            "connect_timeout": 1.0,
+            "read_timeout": 5.0,
+            "max_retries": 2,
+            "provider": "openai",
+            "model_id": "text-embedding-3-large",
+            "dimensions": 3072,
+        },
+        **kwargs,
+    )
+
+
+def _cohere_client(**kwargs: object) -> HostedClient:
+    api_key = str(kwargs.pop("api_key", "cohere-test"))
+    return _hosted_client(
+        _COHERE_URL,
+        api_key=api_key,
+        defaults={
+            "connect_timeout": 1.0,
+            "read_timeout": 5.0,
+            "max_retries": 2,
+            "provider": "cohere",
+            "model_id": "embed-english-v3.0",
+            "dimensions": 1024,
+        },
+        **kwargs,
+    )
 
 
 class TestOpenAIEmbed:
@@ -255,3 +278,42 @@ class TestJitter:
         for attempt in range(12):
             delay = _jittered_backoff(attempt)
             assert 0.0 <= delay <= 8.0
+
+
+class TestRetryAfter:
+    def test_numeric_seconds(self) -> None:
+        assert _parse_retry_after_seconds("2") == 2.0
+        assert _parse_retry_after_seconds(" 7 ") == 7.0
+
+    def test_invalid_falls_back(self) -> None:
+        assert _parse_retry_after_seconds(None) is None
+        assert _parse_retry_after_seconds("Mon, 01 Jan 2024") is None
+        assert _parse_retry_after_seconds("-1") is None
+        assert _parse_retry_after_seconds("1.5") is None
+
+    def test_delay_uses_retry_after_as_floor_and_caps(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("app.hosted.client._jittered_backoff", lambda _attempt: 0.1)
+        assert _retry_delay_seconds(0, 2.0) == 2.0
+        assert _retry_delay_seconds(0, 100.0) == 8.0
+        assert _retry_delay_seconds(0, None) == 0.1
+
+    @respx.mock
+    async def test_429_sleeps_at_least_retry_after(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        sleeps: list[float] = []
+
+        async def _fake_sleep(delay: float) -> None:
+            sleeps.append(delay)
+
+        monkeypatch.setattr("app.hosted.client.asyncio.sleep", _fake_sleep)
+        monkeypatch.setattr("app.hosted.client._jittered_backoff", lambda _attempt: 0.05)
+        client = _openai_client(dimensions=_DIM, max_retries=1)
+        respx.post(f"{_OPENAI_URL}/embeddings").mock(
+            side_effect=[
+                Response(429, headers={"Retry-After": "3"}),
+                Response(200, json=_openai_body([_VEC_A])),
+            ]
+        )
+        await client.embed(["x"])
+        assert sleeps == [3.0]

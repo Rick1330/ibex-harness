@@ -21,6 +21,17 @@ def _coerce_hosted_provider(value: object) -> object:
     return value
 
 
+def _require_https_host_url(url: str, *, field: str) -> str:
+    parsed = urlparse(url)
+    if parsed.scheme.lower() != "https":
+        raise ValueError(f"{field} must use https")
+    if not parsed.hostname:
+        raise ValueError(f"{field} must include a hostname")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError(f"{field} must not include userinfo")
+    return url
+
+
 class Settings(BaseSettings):
     """All settings are read from IBEX_EMBEDDING_* environment variables.
 
@@ -214,14 +225,7 @@ class Settings(BaseSettings):
         stripped = value.strip().rstrip("/")
         if not stripped:
             raise ValueError("hosted_base_url must be non-empty when set")
-        parsed = urlparse(stripped)
-        if parsed.scheme.lower() != "https":
-            raise ValueError("hosted_base_url must use https")
-        if not parsed.hostname:
-            raise ValueError("hosted_base_url must include a hostname")
-        if parsed.username is not None or parsed.password is not None:
-            raise ValueError("hosted_base_url must not include userinfo")
-        return stripped
+        return _require_https_host_url(stripped, field="hosted_base_url")
 
     # ------------------------------------------------------------------ #
     # Derived helpers                                                       #

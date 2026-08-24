@@ -71,6 +71,23 @@ def _jittered_backoff(attempt: int) -> float:
     return (secrets.randbelow(1_000_000) / 1_000_000) * cap
 
 
+def _parse_retry_after_seconds(raw: str | None) -> float | None:
+    """Parse RFC 9110 delay-seconds Retry-After. HTTP-dates and junk are ignored."""
+    if raw is None:
+        return None
+    stripped = raw.strip()
+    if not stripped or len(stripped) > 8 or not stripped.isdigit():
+        return None
+    return float(int(stripped))
+
+
+def _retry_delay_seconds(attempt: int, retry_after_seconds: float | None) -> float:
+    delay = _jittered_backoff(attempt)
+    if retry_after_seconds is None:
+        return delay
+    return min(_BACKOFF_MAX_SECONDS, max(delay, retry_after_seconds))
+
+
 class HostedClient:
     """Long-lived async HTTP client for one hosted provider instance."""
 
@@ -167,7 +184,10 @@ class HostedClient:
             raise exc
         if attempt >= self._max_retries:
             raise exc
-        delay = _jittered_backoff(attempt)
+        retry_after = (
+            exc.retry_after_seconds if isinstance(exc, BackendUnavailableError) else None
+        )
+        delay = _retry_delay_seconds(attempt, retry_after)
         logger.warning(
             "hosted %s transient error; retrying attempt=%d/%d delay_ms=%.0f error_class=%s",
             path,
@@ -237,11 +257,18 @@ class HostedClient:
                 f"hosted auth rejected ({status})",
                 retryable=False,
             )
-        retry_after = resp.headers.get("Retry-After", "unknown")
+        retry_after = resp.headers.get("Retry-After")
         raise BackendUnavailableError(
-            _unavailable_message(status, retry_after),
+            _unavailable_message(status, retry_after or "unknown"),
             retryable=status in _RETRYABLE_STATUS,
+            retry_after_seconds=_retry_after_seconds_for_status(status, retry_after),
         )
+
+
+def _retry_after_seconds_for_status(status: int, retry_after: str | None) -> float | None:
+    if status != 429:
+        return None
+    return _parse_retry_after_seconds(retry_after)
 
 
 def _is_retryable(exc: Exception) -> bool:

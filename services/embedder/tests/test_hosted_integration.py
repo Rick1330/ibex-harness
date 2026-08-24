@@ -57,6 +57,7 @@ def _hosted_env(monkeypatch: pytest.MonkeyPatch, extra: dict[str, str | None] | 
     monkeypatch.setenv("IBEX_EMBEDDING_DIM", str(_DIM))
     monkeypatch.setenv("IBEX_EMBEDDING_MODEL", "text-embedding-3-large")
     monkeypatch.setenv("IBEX_EMBEDDING_HOSTED_MAX_RETRIES", "0")
+    monkeypatch.delenv("OPENAI_EMBEDDING_API_KEY", raising=False)
     if extra:
         for key, value in extra.items():
             if value is None:
@@ -142,8 +143,15 @@ class TestHostedLifespanAndEmbed:
         assert _HOSTED_KEY not in ready.text
         assert "invalid api key" not in ready.text
 
+    @respx.mock
     def test_missing_hosted_key_never_ready(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        _hosted_env(monkeypatch, extra={"IBEX_EMBEDDING_HOSTED_API_KEY": None})
+        _hosted_env(
+            monkeypatch,
+            extra={
+                "IBEX_EMBEDDING_HOSTED_API_KEY": None,
+                "OPENAI_EMBEDDING_API_KEY": None,
+            },
+        )
         with TestClient(app) as tc:
             ready = tc.get("/ready")
         assert ready.status_code == 503

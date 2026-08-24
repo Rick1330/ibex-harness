@@ -313,6 +313,7 @@ class TestLifespanStartupPaths:
                 {
                     "IBEX_EMBEDDING_PROFILE": "hosted",
                     "IBEX_EMBEDDING_HOSTED_API_KEY": None,
+                    "OPENAI_EMBEDDING_API_KEY": None,
                     "IBEX_EMBEDDING_API_TOKEN": "service-token",
                 },
                 503,

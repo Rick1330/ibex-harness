@@ -27,26 +27,26 @@ def parse_cohere_embed_response(body: Any) -> NDArray[np.float32]:
     """
     if not isinstance(body, dict) or "embeddings" not in body:
         raise BackendRejectedError("Cohere embed response missing 'embeddings' field")
-    raw = body["embeddings"]
-    vectors = _cohere_float_matrix(raw)
+    vectors = _require_nonempty_float_rows(body["embeddings"])
     try:
         return np.array(vectors, dtype=np.float32)
     except (ValueError, TypeError) as exc:
         raise InvalidVectorError(f"Cohere embed response is not numeric: {exc}") from exc
 
 
-def _cohere_float_matrix(raw: Any) -> list[Any]:
+def _require_nonempty_float_rows(raw: Any) -> list[Any]:
+    rows = _cohere_rows(raw)
+    if not rows:
+        raise BackendRejectedError("Cohere 'embeddings' must be a non-empty list")
+    return rows
+
+
+def _cohere_rows(raw: Any) -> list[Any]:
     if isinstance(raw, list):
-        if not raw:
-            raise BackendRejectedError("Cohere 'embeddings' must be a non-empty list")
         return raw
     if isinstance(raw, dict):
         floats = raw.get("float")
-        if not isinstance(floats, list) or not floats:
-            raise BackendRejectedError(
-                "Cohere by-type response missing non-empty embeddings.float"
-            )
-        return floats
+        return floats if isinstance(floats, list) else []
     raise BackendRejectedError(
         f"Cohere 'embeddings' has unexpected type {type(raw).__name__!r}"
     )

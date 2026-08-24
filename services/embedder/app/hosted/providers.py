@@ -116,29 +116,35 @@ def validate_hosted_dimensions(provider: HostedProvider, model_id: str, dimensio
     if dimensions < 1:
         raise GeometryMismatchError(f"hosted dimensions must be >= 1, got {dimensions}")
     if provider == "openai":
-        max_dim = _OPENAI_MATRYOSHKA_MAX.get(model_id)
-        if max_dim is not None and dimensions > max_dim:
-            raise GeometryMismatchError(
-                f"OpenAI model {model_id!r} supports dimensions 1..{max_dim}, got {dimensions}"
-            )
-        if model_id == "text-embedding-ada-002" and dimensions != 1536:
-            raise GeometryMismatchError(
-                "text-embedding-ada-002 has fixed dimensions=1536 (no Matryoshka)"
-            )
+        _validate_openai_dimensions(model_id, dimensions)
         return
     if provider == "cohere":
-        fixed = _COHERE_FIXED_DIM.get(model_id)
-        if fixed is not None and dimensions != fixed:
-            raise GeometryMismatchError(
-                f"Cohere model {model_id!r} has fixed dimensions={fixed}, got {dimensions}"
-            )
+        _validate_cohere_dimensions(model_id, dimensions)
+
+
+def _validate_openai_dimensions(model_id: str, dimensions: int) -> None:
+    max_dim = _OPENAI_MATRYOSHKA_MAX.get(model_id)
+    if max_dim is not None and dimensions > max_dim:
+        raise GeometryMismatchError(
+            f"OpenAI model {model_id!r} supports dimensions 1..{max_dim}, got {dimensions}"
+        )
+    if model_id == "text-embedding-ada-002" and dimensions != 1536:
+        raise GeometryMismatchError(
+            "text-embedding-ada-002 has fixed dimensions=1536 (no Matryoshka)"
+        )
+
+
+def _validate_cohere_dimensions(model_id: str, dimensions: int) -> None:
+    fixed = _COHERE_FIXED_DIM.get(model_id)
+    if fixed is not None and dimensions != fixed:
+        raise GeometryMismatchError(
+            f"Cohere model {model_id!r} has fixed dimensions={fixed}, got {dimensions}"
+        )
 
 
 def openai_request_dimensions(model_id: str, dimensions: int) -> int | None:
     """Return API `dimensions` when Matryoshka applies; None otherwise."""
     max_dim = _OPENAI_MATRYOSHKA_MAX.get(model_id)
-    if max_dim is None:
+    if max_dim is None or dimensions == max_dim:
         return None
-    if dimensions == max_dim:
-        return None  # omit; use model default
     return dimensions
