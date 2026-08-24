@@ -90,6 +90,7 @@ func TestSchemaObjectsExist(t *testing.T) {
 	tables := []string{
 		"organizations", "tokens", "users", "agents",
 		"directives", "directive_versions", "sessions", "checkpoints",
+		"memories",
 	}
 	assertCoreTablesExist(t, ctx, db, tables)
 	assertCoreTablesRLSEnabled(t, ctx, db, tables)
