@@ -2,20 +2,30 @@
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
+from typing import Annotated
 from urllib.parse import urlparse
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import BeforeValidator, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.hosted.providers import HostedProvider, resolve_hosted_geometry
 from app.limits import MAX_MODEL_ID_LEN
 from app.profiles import Profile, default_geometry, valid_profile
+
+
+def _coerce_hosted_provider(value: object) -> object:
+    if isinstance(value, str):
+        return value.strip().lower()
+    return value
 
 
 class Settings(BaseSettings):
     """All settings are read from IBEX_EMBEDDING_* environment variables.
 
     TEI-specific settings use the IBEX_EMBEDDING_TEI_* sub-namespace.
+    Hosted-API settings use IBEX_EMBEDDING_HOSTED_*.
     pydantic-settings maps snake_case field names to UPPER_SNAKE env vars
     under the configured prefix, so `tei_base_url` → IBEX_EMBEDDING_TEI_BASE_URL.
     """
@@ -65,9 +75,53 @@ class Settings(BaseSettings):
         description="Internal Bearer token required for POST /v1/embed",
     )
 
+    # Hosted API settings — IBEX_EMBEDDING_HOSTED_*.
+    hosted_provider: Annotated[
+        HostedProvider, BeforeValidator(_coerce_hosted_provider)
+    ] = Field(
+        default="openai",
+        description="Hosted embedding provider: openai | cohere | voyage",
+    )
+    hosted_api_key: SecretStr | None = Field(
+        default=None,
+        description=(
+            "API key for hosted provider — never logged. "
+            "Canonical: IBEX_EMBEDDING_HOSTED_API_KEY; "
+            "optional OpenAI-only alias: OPENAI_EMBEDDING_API_KEY"
+        ),
+    )
+    hosted_base_url: str | None = Field(
+        default=None,
+        description="Override hosted provider base URL (HTTPS required)",
+    )
+    hosted_timeout_seconds: float = Field(
+        default=30.0,
+        description="Read timeout for hosted embed requests (seconds)",
+    )
+    hosted_connect_timeout_seconds: float = Field(
+        default=2.0,
+        description="Connect timeout for hosted requests (seconds)",
+    )
+    hosted_max_retries: int = Field(
+        default=2,
+        description="Max retry attempts for transient hosted errors (0 = no retries)",
+    )
+
     # ------------------------------------------------------------------ #
     # Validators                                                            #
     # ------------------------------------------------------------------ #
+
+    @model_validator(mode="after")
+    def _alias_openai_embedding_api_key(self) -> Settings:
+        """Accept OPENAI_EMBEDDING_API_KEY only for the OpenAI hosted provider."""
+        if self.hosted_api_key is not None:
+            return self
+        if self.hosted_provider != "openai":
+            return self
+        alias = os.environ.get("OPENAI_EMBEDDING_API_KEY", "").strip()
+        if alias:
+            self.hosted_api_key = SecretStr(alias)
+        return self
 
     @field_validator("profile")
     @classmethod
@@ -123,19 +177,51 @@ class Settings(BaseSettings):
             raise ValueError("api_token must be non-empty when set")
         return value
 
-    @field_validator("tei_max_retries")
+    @field_validator("tei_max_retries", "hosted_max_retries")
     @classmethod
-    def _check_tei_max_retries(cls, value: int) -> int:
+    def _check_max_retries(cls, value: int) -> int:
         if value < 0:
-            raise ValueError("tei_max_retries must be >= 0")
+            raise ValueError("max_retries must be >= 0")
         return value
 
-    @field_validator("tei_timeout_seconds", "tei_connect_timeout_seconds", "tei_health_timeout_seconds")
+    @field_validator(
+        "tei_timeout_seconds",
+        "tei_connect_timeout_seconds",
+        "tei_health_timeout_seconds",
+        "hosted_timeout_seconds",
+        "hosted_connect_timeout_seconds",
+    )
     @classmethod
     def _check_positive_timeout(cls, value: float) -> float:
         if value <= 0:
             raise ValueError("timeout must be > 0")
         return value
+
+    @field_validator("hosted_api_key")
+    @classmethod
+    def _check_hosted_api_key(cls, value: SecretStr | None) -> SecretStr | None:
+        if value is None:
+            return None
+        if not value.get_secret_value().strip():
+            raise ValueError("hosted_api_key must be non-empty when set")
+        return value
+
+    @field_validator("hosted_base_url")
+    @classmethod
+    def _check_hosted_base_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip().rstrip("/")
+        if not stripped:
+            raise ValueError("hosted_base_url must be non-empty when set")
+        parsed = urlparse(stripped)
+        if parsed.scheme.lower() != "https":
+            raise ValueError("hosted_base_url must use https")
+        if not parsed.hostname:
+            raise ValueError("hosted_base_url must include a hostname")
+        if parsed.username is not None or parsed.password is not None:
+            raise ValueError("hosted_base_url must not include userinfo")
+        return stripped
 
     # ------------------------------------------------------------------ #
     # Derived helpers                                                       #
@@ -143,6 +229,12 @@ class Settings(BaseSettings):
 
     def resolved_geometry(self) -> tuple[int, str]:
         """Return (dimensions, model_id) using env overrides or profile defaults."""
+        if self.profile == "hosted":
+            return resolve_hosted_geometry(
+                self.hosted_provider,
+                model=self.model,
+                dim=self.dim,
+            )
         defaults = default_geometry(self.profile)
         dim = self.dim if self.dim is not None else defaults.dimensions
         model = self.model if self.model is not None else defaults.model_id
@@ -152,10 +244,19 @@ class Settings(BaseSettings):
         """Fail closed on insecure or incomplete runtime security settings."""
         self._require_api_token()
         self._require_secure_tei_transport()
+        self._require_hosted_api_key()
 
     def _require_api_token(self) -> None:
         if self.api_token is None or not self.api_token.get_secret_value().strip():
             raise ValueError("IBEX_EMBEDDING_API_TOKEN is required at startup")
+
+    def _require_hosted_api_key(self) -> None:
+        if self.profile != "hosted":
+            return
+        if self.hosted_api_key is None or not self.hosted_api_key.get_secret_value().strip():
+            raise ValueError(
+                "IBEX_EMBEDDING_HOSTED_API_KEY is required when profile=hosted"
+            )
 
     def _require_secure_tei_transport(self) -> None:
         if self.tei_base_url is None:

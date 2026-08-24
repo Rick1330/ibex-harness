@@ -360,9 +360,15 @@ migration — do not mix dims in one pgvector column.
 | `IBEX_EMBEDDING_TEI_CONNECT_TIMEOUT_SECONDS` | No | `2.0` | Connect timeout for TEI requests (seconds) | **Shipped 2.5.G4.M2.** |
 | `IBEX_EMBEDDING_TEI_MAX_RETRIES` | No | `2` | Max retry attempts for transient TEI errors (0 = no retries) | **Shipped 2.5.G4.M2.** Only retries 429/502/503/network errors. |
 | `IBEX_EMBEDDING_TEI_HEALTH_TIMEOUT_SECONDS` | No | `30.0` | Total seconds to wait for TEI `/health` to pass on startup | **Shipped 2.5.G4.M2.** Fail-closed on timeout. |
+| `IBEX_EMBEDDING_HOSTED_PROVIDER` | No | `openai` | `openai` \| `cohere` \| `voyage` | **Shipped 2.5.G4.M3.** Voyage is accepted but fail-closed (not implemented). |
+| `IBEX_EMBEDDING_HOSTED_API_KEY` | **Required for `hosted` profile** | (none) | Hosted provider API key | **Shipped 2.5.G4.M3.** `SecretStr`; never logged. No stub fallback without a key. |
+| `IBEX_EMBEDDING_HOSTED_BASE_URL` | No | provider default | HTTPS override of the provider base URL | **Shipped 2.5.G4.M3.** HTTPS only; userinfo in the URL is rejected. Defaults: `https://api.openai.com/v1`, `https://api.cohere.com`. |
+| `IBEX_EMBEDDING_HOSTED_TIMEOUT_SECONDS` | No | `30.0` | Read timeout for hosted embed requests | **Shipped 2.5.G4.M3.** |
+| `IBEX_EMBEDDING_HOSTED_CONNECT_TIMEOUT_SECONDS` | No | `2.0` | Connect timeout for hosted requests | **Shipped 2.5.G4.M3.** |
+| `IBEX_EMBEDDING_HOSTED_MAX_RETRIES` | No | `2` | Max retries for transient hosted errors | **Shipped 2.5.G4.M3.** Only 429/502/503 + transport/timeout. |
 | `IBEX_EMBEDDING_CACHE_ENABLED` | Planned **2.5.G4.M4** | `true` | Content-hash embedding cache | Redis-backed |
 | `IBEX_EMBEDDING_CACHE_TTL_SECONDS` | Planned **2.5.G4.M4** | `86400` | Cache TTL | Org-scoped keys |
-| `OPENAI_EMBEDDING_API_KEY` | Planned **2.5.G4.M3** | (none) | Hosted embedding API key when profile=`hosted` | Secret; never logged |
+| `OPENAI_EMBEDDING_API_KEY` | No | (none) | Optional alias for `IBEX_EMBEDDING_HOSTED_API_KEY` when provider=`openai` | **Shipped 2.5.G4.M3.** Ignored for Cohere. Prefer the canonical `IBEX_EMBEDDING_HOSTED_API_KEY`. |
 
 Preferred starting models in the roadmap: **GPU/prod** `bge-m3` (1024-dim); **CPU/dev** MiniLM (384-dim); **hosted** OpenAI `text-embedding-3-large` (or Cohere/Voyage as alternates).
 

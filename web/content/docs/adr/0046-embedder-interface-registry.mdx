@@ -34,7 +34,7 @@ Documented default geometry:
 | --- | --- | --- |
 | `cpu` | `all-MiniLM-L6-v2` | 384 |
 | `gpu` | `BAAI/bge-m3` | 1024 |
-| `hosted` | config-driven in G4.M3 (placeholder `text-embedding-3-large` / 3072) | varies |
+| `hosted` | OpenAI `text-embedding-3-large` / 3072 (Cohere 1024); G4.M3 | varies |
 
 Never silently fall back across profiles (geometry change).
 
@@ -89,7 +89,7 @@ Never log raw text or vector payloads. Log profile, model_id, batch size, latenc
 
 **Positive:** Single contract before backends; fail-closed geometry; org schema ready for Phase 3.
 
-**Negative / follow-ups:** Stub is not production inference; hosted defaults are placeholders until M3; dual Go/Python contracts must stay aligned manually until codegen exists.
+**Negative / follow-ups:** Stub is not production inference on `cpu`; Voyage remains fail-closed; dual Go/Python contracts must stay aligned manually until codegen exists.
 
 ### G4.M2 Update (2026-08-24)
 
@@ -102,7 +102,19 @@ G4.M2 has shipped the TEI GPU backend within this contract:
 - `POST /v1/embed` internal endpoint (Bearer `IBEX_EMBEDDING_API_TOKEN`; probes stay unauthenticated).
 - Reference compose: `infra/reference/tei-embeddings.compose.yaml`; Dockerfile at `services/embedder/Dockerfile`.
 - Env: `IBEX_EMBEDDING_API_TOKEN`, `IBEX_EMBEDDING_TEI_BASE_URL`, `IBEX_EMBEDDING_TEI_ALLOW_INSECURE`, `IBEX_EMBEDDING_TEI_API_KEY`, `IBEX_EMBEDDING_TEI_TIMEOUT_SECONDS`, `IBEX_EMBEDDING_TEI_CONNECT_TIMEOUT_SECONDS`, `IBEX_EMBEDDING_TEI_MAX_RETRIES`, `IBEX_EMBEDDING_TEI_HEALTH_TIMEOUT_SECONDS` — see `ENVIRONMENT_VARIABLES.md`.
-- M3 (hosted) and M4 (cache decorator) plug into the same `EmbeddingBackend` ABC without further contract breaks.
+- M4 (cache decorator) plugs into the same `EmbeddingBackend` ABC without a further contract break.
+
+### G4.M3 Update (2026-08-24)
+
+G4.M3 has shipped the hosted-API backend within this contract:
+
+- `HostedAPIBackend` (`name=="openai"|"cohere"`, `profile=="hosted"`) via `HostedClient` (httpx, retries, jittered backoff).
+- OpenAI `POST /v1/embeddings` reuses `parse_openai_compat_embed_response`; Cohere `POST /v2/embed` is isolated in `app/hosted/protocol.py`.
+- Fail-closed: hosted without `IBEX_EMBEDDING_HOSTED_API_KEY` never falls back to stub; `voyage` is accepted in settings and rejected at factory.
+- Startup probe embed confirms observed dimensions (OpenAI has no TEI `/info`); mismatch blocks readiness.
+- Output is L2-normalized then re-validated (OpenAI does not guarantee unit norm).
+- Env: `IBEX_EMBEDDING_HOSTED_PROVIDER`, `IBEX_EMBEDDING_HOSTED_API_KEY`, `IBEX_EMBEDDING_HOSTED_BASE_URL`, `IBEX_EMBEDDING_HOSTED_TIMEOUT_SECONDS`, `IBEX_EMBEDDING_HOSTED_CONNECT_TIMEOUT_SECONDS`, `IBEX_EMBEDDING_HOSTED_MAX_RETRIES`; optional OpenAI-only alias `OPENAI_EMBEDDING_API_KEY`.
+- CPU MiniLM remains stub (not part of M3). M4 cache is next.
 
 ## References
 

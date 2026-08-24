@@ -9,10 +9,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import numpy as np
 import pytest
 
+from app.backends.hosted import HostedAPIBackend
 from app.backends.tei import TEIBackend
 from app.config import get_settings
 from app.errors import BackendUnavailableError, GeometryMismatchError
-from app.main import _verify_tei_geometry, _wait_for_tei_health
+from app.main import _verify_hosted_geometry, _verify_tei_geometry, _wait_for_tei_health
 
 _DIM = 1024
 _MODEL = "BAAI/bge-m3"
@@ -158,6 +159,26 @@ class TestVerifyTeiGeometry:
             await _verify_tei_geometry(backend)
 
 
+class TestVerifyHostedGeometry:
+    async def test_passes_when_probe_matches(self) -> None:
+        backend = MagicMock(spec=HostedAPIBackend)
+        backend.provider = "openai"
+        backend.model_id = "text-embedding-3-large"
+        backend.dimensions = 8
+        backend.embed = AsyncMock(return_value=np.ones((1, 8), dtype=np.float32))
+        await _verify_hosted_geometry(backend)
+        backend.embed.assert_awaited_once()
+
+    async def test_raises_on_dim_mismatch(self) -> None:
+        backend = MagicMock(spec=HostedAPIBackend)
+        backend.provider = "openai"
+        backend.model_id = "text-embedding-3-large"
+        backend.dimensions = 3072
+        backend.embed = AsyncMock(return_value=np.ones((1, 8), dtype=np.float32))
+        with pytest.raises(GeometryMismatchError, match="hosted dimensions mismatch"):
+            await _verify_hosted_geometry(backend)
+
+
 class TestLifespanShutdown:
     def test_tei_client_closed_on_shutdown(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Lifespan shutdown must call aclose() on TEI backend."""
@@ -194,6 +215,41 @@ class TestLifespanShutdown:
                 pass  # context exit triggers lifespan shutdown
 
         assert aclose_called, "TEI backend aclose() was not called on lifespan shutdown"
+        get_settings.cache_clear()
+
+    def test_hosted_client_closed_on_shutdown(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from fastapi.testclient import TestClient
+
+        from app.main import app
+
+        get_settings.cache_clear()
+        monkeypatch.setenv("IBEX_EMBEDDING_PROFILE", "hosted")
+        monkeypatch.setenv("IBEX_EMBEDDING_HOSTED_API_KEY", "sk-test")
+        monkeypatch.setenv("IBEX_EMBEDDING_API_TOKEN", "service-token")
+
+        aclose_called: list[bool] = []
+
+        async def fake_aclose() -> None:
+            aclose_called.append(True)
+
+        with (
+            patch("app.main.build_backend") as mock_build,
+            patch("app.main._verify_hosted_geometry", new=AsyncMock()),
+            patch("app.main.validate_geometry"),
+        ):
+            fake_backend = MagicMock(spec=HostedAPIBackend)
+            fake_backend.model_id = "text-embedding-3-large"
+            fake_backend.dimensions = 3072
+            fake_backend.name = "openai"
+            fake_backend.profile = "hosted"
+            fake_backend.provider = "openai"
+            fake_backend.aclose = AsyncMock(side_effect=fake_aclose)
+            mock_build.return_value = fake_backend
+
+            with TestClient(app):
+                pass
+
+        assert aclose_called, "hosted backend aclose() was not called on lifespan shutdown"
         get_settings.cache_clear()
 
 
@@ -249,6 +305,15 @@ class TestLifespanStartupPaths:
                 {
                     "IBEX_EMBEDDING_PROFILE": "cpu",
                     "IBEX_EMBEDDING_API_TOKEN": None,
+                },
+                503,
+                "service_not_ready",
+            ),
+            (
+                {
+                    "IBEX_EMBEDDING_PROFILE": "hosted",
+                    "IBEX_EMBEDDING_HOSTED_API_KEY": None,
+                    "IBEX_EMBEDDING_API_TOKEN": "service-token",
                 },
                 503,
                 "service_not_ready",
