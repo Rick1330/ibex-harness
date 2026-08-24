@@ -366,8 +366,11 @@ migration — do not mix dims in one pgvector column.
 | `IBEX_EMBEDDING_HOSTED_TIMEOUT_SECONDS` | No | `30.0` | Read timeout for hosted embed requests | **Shipped 2.5.G4.M3.** |
 | `IBEX_EMBEDDING_HOSTED_CONNECT_TIMEOUT_SECONDS` | No | `2.0` | Connect timeout for hosted requests | **Shipped 2.5.G4.M3.** |
 | `IBEX_EMBEDDING_HOSTED_MAX_RETRIES` | No | `2` | Max retries for transient hosted errors | **Shipped 2.5.G4.M3.** Only 429/502/503 + transport/timeout. |
-| `IBEX_EMBEDDING_CACHE_ENABLED` | Planned **2.5.G4.M4** | `true` | Content-hash embedding cache | Redis-backed |
-| `IBEX_EMBEDDING_CACHE_TTL_SECONDS` | Planned **2.5.G4.M4** | `86400` | Cache TTL | Org-scoped keys |
+| `IBEX_EMBEDDING_CACHE_ENABLED` | No | `false` | Wrap active backend with Redis content-hash cache | **Shipped 2.5.G4.M4.** Default off so cpu/stub runs without Redis. Production compose should set `true` + Redis. |
+| `IBEX_EMBEDDING_CACHE_TTL_SECONDS` | No | `86400` | Redis TTL for cached float32 vectors | **Shipped 2.5.G4.M4.** Org-scoped keys `{org_id}:embed:v1:{sha256…}`. |
+| `IBEX_EMBEDDING_CACHE_REDIS_URL` | No | (falls back to `REDIS_URL`) | Optional dedicated Redis URL for embedder cache | **Shipped 2.5.G4.M4.** Schemes: `redis` / `rediss` / `unix`. |
+| `IBEX_EMBEDDING_CACHE_REDIS_TIMEOUT_SECONDS` | No | `0.1` | Redis connect/read/write socket timeout | **Shipped 2.5.G4.M4.** Keep short so Redis never waits like TEI/OpenAI. |
+| `REDIS_URL` | Conditional | (empty) | Shared Redis URL used when cache is enabled and `IBEX_EMBEDDING_CACHE_REDIS_URL` is unset | **Shipped 2.5.G4.M4** (embedder). Cache enabled without a URL → startup not ready. |
 | `OPENAI_EMBEDDING_API_KEY` | No | (none) | Optional alias for `IBEX_EMBEDDING_HOSTED_API_KEY` when provider=`openai` | **Shipped 2.5.G4.M3.** Ignored for Cohere. Prefer the canonical `IBEX_EMBEDDING_HOSTED_API_KEY`. |
 
 Preferred starting models in the roadmap: **GPU/prod** `bge-m3` (1024-dim); **CPU/dev** MiniLM (384-dim); **hosted** OpenAI `text-embedding-3-large` (or Cohere/Voyage as alternates).

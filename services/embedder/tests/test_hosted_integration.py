@@ -82,7 +82,7 @@ class TestHostedLifespanAndEmbed:
             assert health.status_code == 200
             resp = tc.post(
                 "/v1/embed",
-                json={"texts": ["hello"]},
+                json={"texts": ["hello"], "org_id": "11111111-1111-1111-1111-111111111111"},
                 headers={"Authorization": f"Bearer {_TOKEN}"},
             )
 
@@ -106,7 +106,7 @@ class TestHostedLifespanAndEmbed:
             assert tc.get("/ready").status_code == 200
             resp = tc.post(
                 "/v1/embed",
-                json={"texts": ["hello"]},
+                json={"texts": ["hello"], "org_id": "11111111-1111-1111-1111-111111111111"},
                 headers={"Authorization": "Bearer wrong-token"},
             )
         assert resp.status_code == 401
@@ -121,7 +121,7 @@ class TestHostedLifespanAndEmbed:
             ready = tc.get("/ready")
             embed = tc.post(
                 "/v1/embed",
-                json={"texts": ["hello"]},
+                json={"texts": ["hello"], "org_id": "11111111-1111-1111-1111-111111111111"},
                 headers={"Authorization": f"Bearer {_TOKEN}"},
             )
         assert ready.status_code == 503
@@ -183,7 +183,7 @@ class TestHostedLifespanAndEmbed:
             assert tc.get("/ready").status_code == 200
             resp = tc.post(
                 "/v1/embed",
-                json={"texts": ["hello"]},
+                json={"texts": ["hello"], "org_id": "11111111-1111-1111-1111-111111111111"},
                 headers={"Authorization": f"Bearer {_TOKEN}"},
             )
         assert resp.status_code == 200
@@ -208,7 +208,7 @@ class TestHostedLifespanAndEmbed:
             assert tc.get("/ready").status_code == 200
             resp = tc.post(
                 "/v1/embed",
-                json={"texts": ["hello"]},
+                json={"texts": ["hello"], "org_id": "11111111-1111-1111-1111-111111111111"},
                 headers={"Authorization": f"Bearer {_TOKEN}"},
             )
         assert resp.status_code == 502

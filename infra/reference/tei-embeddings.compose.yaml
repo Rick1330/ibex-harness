@@ -17,6 +17,9 @@
 #   IBEX_EMBEDDING_API_TOKEN=<shared-token>
 #   IBEX_EMBEDDING_MODEL=BAAI/bge-m3  # must match what TEI is serving
 #   IBEX_EMBEDDING_DIM=1024
+#   # Optional content-hash cache (G4.M4):
+#   IBEX_EMBEDDING_CACHE_ENABLED=true
+#   REDIS_URL=redis://localhost:6379/0
 #
 # Live integration tests (skipped in CI):
 #   IBEX_TEI_LIVE=1 pytest -m tei_live services/embedder/tests/
@@ -27,6 +30,16 @@
 #   Check https://github.com/huggingface/text-embeddings-inference/releases
 
 services:
+  redis:
+    image: redis:7
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   tei:
     # Pin to a specific release tag.
     # CPU variant suffix: -cpu (e.g. 1.6.0-cpu)

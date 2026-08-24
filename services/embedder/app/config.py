@@ -8,17 +8,19 @@ from urllib.parse import urlparse
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.cache.env import CacheEnvMixin
 from app.hosted.env import HostedEnvMixin
 from app.hosted.providers import resolve_hosted_geometry
 from app.limits import MAX_MODEL_ID_LEN
 from app.profiles import Profile, default_geometry, valid_profile
 
 
-class Settings(HostedEnvMixin, BaseSettings):
+class Settings(CacheEnvMixin, HostedEnvMixin, BaseSettings):
     """All settings are read from IBEX_EMBEDDING_* environment variables.
 
     TEI-specific settings use the IBEX_EMBEDDING_TEI_* sub-namespace.
     Hosted-API settings use IBEX_EMBEDDING_HOSTED_*.
+    Cache settings use IBEX_EMBEDDING_CACHE_* (Redis URL may fall back to REDIS_URL).
     pydantic-settings maps snake_case field names to UPPER_SNAKE env vars
     under the configured prefix, so `tei_base_url` → IBEX_EMBEDDING_TEI_BASE_URL.
     """
@@ -168,6 +170,7 @@ class Settings(HostedEnvMixin, BaseSettings):
         self._require_api_token()
         self._require_secure_tei_transport()
         self._require_hosted_api_key()
+        self._require_cache_redis_url()
 
     def _require_api_token(self) -> None:
         if self.api_token is None or not self.api_token.get_secret_value().strip():
@@ -179,6 +182,15 @@ class Settings(HostedEnvMixin, BaseSettings):
         if self.hosted_api_key is None or not self.hosted_api_key.get_secret_value().strip():
             raise ValueError(
                 "IBEX_EMBEDDING_HOSTED_API_KEY is required when profile=hosted"
+            )
+
+    def _require_cache_redis_url(self) -> None:
+        if not self.cache_enabled:
+            return
+        if self.resolved_cache_redis_url() is None:
+            raise ValueError(
+                "IBEX_EMBEDDING_CACHE_ENABLED=true requires REDIS_URL or "
+                "IBEX_EMBEDDING_CACHE_REDIS_URL"
             )
 
     def _require_secure_tei_transport(self) -> None:

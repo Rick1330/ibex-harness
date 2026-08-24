@@ -116,6 +116,19 @@ G4.M3 has shipped the hosted-API backend within this contract:
 - Env: `IBEX_EMBEDDING_HOSTED_PROVIDER`, `IBEX_EMBEDDING_HOSTED_API_KEY`, `IBEX_EMBEDDING_HOSTED_BASE_URL`, `IBEX_EMBEDDING_HOSTED_TIMEOUT_SECONDS`, `IBEX_EMBEDDING_HOSTED_CONNECT_TIMEOUT_SECONDS`, `IBEX_EMBEDDING_HOSTED_MAX_RETRIES`; optional OpenAI-only alias `OPENAI_EMBEDDING_API_KEY`.
 - CPU MiniLM remains stub (not part of M3). M4 cache is next.
 
+### G4.M4 Update (2026-08-24)
+
+G4.M4 has shipped the Redis content-hash embedding cache within this contract:
+
+- `CachingEmbeddingBackend` decorator wraps any `EmbeddingBackend`; ABC `embed(texts)` unchanged.
+- Content address: SHA-256 of length-prefixed `(model_id, dim, utf-8 text)` (ADR-0010; not MD5/xxHash/BLAKE3).
+- Redis keys are **org-scoped**: `{org_id}:embed:v1:{hex}` (sketch `embed:{model}:{hash}` was rejected for tenancy / embedding inversion).
+- `POST /v1/embed` requires `org_id` (UUID); FastAPI sets a ContextVar for the decorator.
+- Fail-open on Redis errors at request time; fail-closed at startup when cache is enabled without Redis or PING fails.
+- Values are `float32` little-endian bytes only (never pickle). Mixed batches use one `MGET` + one pipeline `SET EX`.
+- Prometheus: `ibex_embedder_cache_requests_total{backend,result}` per text; `GET /metrics`. JSON `backend` stays the inner name (not `cached:…`).
+- Env: `IBEX_EMBEDDING_CACHE_ENABLED` (default **false**), `IBEX_EMBEDDING_CACHE_TTL_SECONDS` (default 86400), `IBEX_EMBEDDING_CACHE_REDIS_URL` / `REDIS_URL`, `IBEX_EMBEDDING_CACHE_REDIS_TIMEOUT_SECONDS`.
+
 ## References
 
 - [ADR-0025 LLM provider abstraction](/docs/adr/0025-llm-provider-abstraction)

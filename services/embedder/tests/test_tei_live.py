@@ -244,7 +244,7 @@ class TestLiveEmbedAPI:
             tc.app.state.embedder = state
             resp = tc.post(
                 "/v1/embed",
-                json={"texts": ["live api test"]},
+                json={"texts": ["live api test"], "org_id": "11111111-1111-1111-1111-111111111111"},
                 headers={"Authorization": f"Bearer {_LIVE_API_TOKEN}"},
             )
 

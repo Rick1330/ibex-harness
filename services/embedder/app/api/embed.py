@@ -7,6 +7,7 @@ import logging
 from fastapi import APIRouter, status
 from fastapi.responses import JSONResponse
 
+from app.cache.context import reset_embed_org_id, set_embed_org_id
 from app.deps import AppStateDep, ServiceAuthDep
 from app.errors import (
     BackendRejectedError,
@@ -15,6 +16,7 @@ from app.errors import (
     BatchTooLargeError,
     EmptyBatchError,
     InvalidVectorError,
+    MissingOrgContextError,
     ServiceNotReadyError,
     TextTooLongError,
 )
@@ -41,6 +43,7 @@ async def embed(
     Returns 503 when the backend is not ready or the upstream TEI is unavailable.
     Returns 400 for validation failures (empty batch, oversized texts, etc.).
     Internal endpoint protected by a service Bearer token.
+    ``org_id`` is required for tenant-scoped embedding cache keys.
     """
     if not state.ready or state.backend is None:
         message = state.ready_error or "service not ready"
@@ -50,9 +53,16 @@ async def embed(
             message=message,
         )
 
+    org_token = set_embed_org_id(request.org_id)
     try:
         vectors = await state.backend.embed(request.texts)
-    except (EmptyBatchError, BatchTooLargeError, TextTooLongError, BackendRejectedError) as exc:
+    except (
+        EmptyBatchError,
+        BatchTooLargeError,
+        TextTooLongError,
+        BackendRejectedError,
+        MissingOrgContextError,
+    ) as exc:
         logger.warning("embed validation/rejection error_class=%s", type(exc).__name__)
         return _error_json(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -73,6 +83,8 @@ async def embed(
             code=exc.code,
             message=exc.message,
         )
+    finally:
+        reset_embed_org_id(org_token)
 
     backend = state.backend
     return EmbedResponse(

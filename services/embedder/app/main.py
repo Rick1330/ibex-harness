@@ -11,12 +11,16 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import ValidationError
+from redis.exceptions import RedisError
+from starlette.responses import Response
 
 from app.api.embed import embed_router
 from app.api.probes import probe_router
 from app.backends.hosted import HostedAPIBackend
 from app.backends.tei import TEIBackend
+from app.cache.backend import CachingEmbeddingBackend
 from app.config import get_settings
 from app.errors import (
     AuthenticationError,
@@ -25,14 +29,13 @@ from app.errors import (
     GeometryMismatchError,
     InvalidVectorError,
 )
-from app.factory import build_backend
+from app.factory import build_backend, unwrap_backend
 from app.schemas import ErrorEnvelope
 from app.state import AppState
 from app.tei.protocol import parse_info_dimensions
 from app.validate import validate_geometry
 
 logger = logging.getLogger(__name__)
-
 # Interval between /health polls during TEI startup wait.
 _HEALTH_POLL_INTERVAL_SECONDS = 1.0
 _GEOMETRY_PROBE_TEXT = "ibex-geometry-probe"
@@ -156,24 +159,48 @@ async def _startup(state: AppState) -> None:
     # Assign backend before health wait so /health probe still responds 200
     # (readiness is separate from liveness).
     state.backend = backend
+    inner = unwrap_backend(backend)
 
-    if isinstance(backend, TEIBackend):
-        await _wait_for_tei_health(backend, settings.tei_health_timeout_seconds)
-        await _verify_tei_geometry(backend)
-    elif isinstance(backend, HostedAPIBackend):
-        await _verify_hosted_geometry(backend)
+    if isinstance(inner, TEIBackend):
+        await _wait_for_tei_health(inner, settings.tei_health_timeout_seconds)
+        await _verify_tei_geometry(inner)
+    elif isinstance(inner, HostedAPIBackend):
+        await _verify_hosted_geometry(inner)
+
+    if isinstance(backend, CachingEmbeddingBackend):
+        await _verify_cache_redis(backend)
 
     want_dim, want_model = settings.resolved_geometry()
     validate_geometry(backend, want_dim, want_model)
 
     state.ready = True
     logger.info(
-        "embedder ready profile=%s model_id=%s dimensions=%d backend=%s",
+        "embedder ready profile=%s model_id=%s dimensions=%d backend=%s cache=%s",
         settings.profile,
         backend.model_id,
         backend.dimensions,
         backend.name,
+        isinstance(backend, CachingEmbeddingBackend),
     )
+
+
+async def _verify_cache_redis(backend: CachingEmbeddingBackend) -> None:
+    """Fail closed at startup when cache Redis is unreachable (misconfig)."""
+    try:
+        await backend.ping()
+    except (RedisError, OSError, TimeoutError) as exc:
+        raise BackendUnavailableError(
+            f"embedding cache Redis ping failed: {type(exc).__name__}"
+        ) from exc
+    logger.info("embedding cache Redis ping OK")
+
+
+async def _aclose_backend(backend: object) -> None:
+    """Close Redis and/or HTTP clients when the backend exposes aclose()."""
+    aclose = getattr(backend, "aclose", None)
+    if aclose is None:
+        return
+    await aclose()
 
 
 @asynccontextmanager
@@ -199,10 +226,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     yield
 
-    # Shutdown: release HTTP connection pools before process exits.
-    if isinstance(state.backend, (TEIBackend, HostedAPIBackend)):
-        await state.backend.aclose()
-        logger.info("embedding HTTP client closed backend=%s", state.backend.name)
+    if state.backend is not None:
+        await _aclose_backend(state.backend)
+        logger.info("embedding backend closed backend=%s", state.backend.name)
 
 
 def create_app() -> FastAPI:
@@ -236,6 +262,11 @@ def create_app() -> FastAPI:
 
     application.include_router(probe_router)
     application.include_router(embed_router)
+
+    @application.get("/metrics")
+    async def metrics() -> Response:
+        return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
     return application
 
 

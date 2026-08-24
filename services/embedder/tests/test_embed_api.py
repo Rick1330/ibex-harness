@@ -26,6 +26,7 @@ from app.state import AppState
 _DIM = 1024
 _MODEL = "BAAI/bge-m3"
 _API_TOKEN = "service-token"
+_ORG_ID = "11111111-1111-1111-1111-111111111111"
 
 
 def _l2_vecs(n: int, dim: int = _DIM) -> np.ndarray:
@@ -71,6 +72,12 @@ def _auth_headers(token: str = _API_TOKEN) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+def _embed_payload(texts: list[str] | object, **extra: object) -> dict[str, object]:
+    payload: dict[str, object] = {"texts": texts, "org_id": _ORG_ID}
+    payload.update(extra)
+    return payload
+
+
 def _post_v1_embed(
     monkeypatch: pytest.MonkeyPatch,
     payload: dict[str, Any],
@@ -102,7 +109,7 @@ class TestEmbedSuccess:
         state = _make_ready_state(_ReadyBackendSpec(embed_return=vecs))
         with TestClient(app) as tc:
             tc.app.state.embedder = state
-            resp = tc.post("/v1/embed", json={"texts": ["hello"]}, headers=_auth_headers())
+            resp = tc.post("/v1/embed", json={"texts": ["hello"], "org_id": "11111111-1111-1111-1111-111111111111"}, headers=_auth_headers())
         assert resp.status_code == 200
         body = resp.json()
         assert body["model_id"] == _MODEL
@@ -118,7 +125,7 @@ class TestEmbedSuccess:
         state = _make_ready_state(_ReadyBackendSpec(embed_return=vecs))
         with TestClient(app) as tc:
             tc.app.state.embedder = state
-            resp = tc.post("/v1/embed", json={"texts": ["a", "b", "c"]}, headers=_auth_headers())
+            resp = tc.post("/v1/embed", json={"texts": ["a", "b", "c"], "org_id": "11111111-1111-1111-1111-111111111111"}, headers=_auth_headers())
         assert resp.status_code == 200
         body = resp.json()
         assert len(body["vectors"]) == 3
@@ -129,7 +136,7 @@ class TestEmbedSuccess:
         state = _make_ready_state(_ReadyBackendSpec(embed_return=_l2_vecs(1)))
         with TestClient(app) as tc:
             tc.app.state.embedder = state
-            resp = tc.post("/v1/embed", json={"texts": ["x"]}, headers=_auth_headers())
+            resp = tc.post("/v1/embed", json={"texts": ["x"], "org_id": "11111111-1111-1111-1111-111111111111"}, headers=_auth_headers())
         body = resp.json()
         for field in ("vectors", "model_id", "dimensions", "backend"):
             assert field in body, f"missing field: {field}"
@@ -144,7 +151,7 @@ class TestEmbedNotReady:
         state.ready_error = "startup failed"
         with TestClient(app) as tc:
             tc.app.state.embedder = state
-            resp = tc.post("/v1/embed", json={"texts": ["x"]}, headers=_auth_headers())
+            resp = tc.post("/v1/embed", json={"texts": ["x"], "org_id": "11111111-1111-1111-1111-111111111111"}, headers=_auth_headers())
         assert resp.status_code == 503
         body = resp.json()
         assert body["error"]["code"] == "service_not_ready"
@@ -158,7 +165,7 @@ class TestEmbedNotReady:
         state.backend = None
         with TestClient(app) as tc:
             tc.app.state.embedder = state
-            resp = tc.post("/v1/embed", json={"texts": ["x"]}, headers=_auth_headers())
+            resp = tc.post("/v1/embed", json={"texts": ["x"], "org_id": "11111111-1111-1111-1111-111111111111"}, headers=_auth_headers())
         assert resp.status_code == 503
 
 
@@ -169,7 +176,7 @@ class TestEmbedValidationErrors:
         state = _make_ready_state(_ReadyBackendSpec(embed_side_effect=side_effect))
         with TestClient(app) as tc:
             tc.app.state.embedder = state
-            return tc.post("/v1/embed", json={"texts": texts}, headers=_auth_headers())
+            return tc.post("/v1/embed", json={"texts": texts, "org_id": "11111111-1111-1111-1111-111111111111"}, headers=_auth_headers())
 
     def test_empty_batch_from_backend_returns_400(self, monkeypatch: pytest.MonkeyPatch) -> None:
         resp = self._post([], side_effect=EmptyBatchError("empty"), monkeypatch=monkeypatch)
@@ -205,7 +212,7 @@ class TestEmbedBackendErrors:
         state = _make_ready_state(_ReadyBackendSpec(embed_side_effect=side_effect))
         with TestClient(app) as tc:
             tc.app.state.embedder = state
-            return tc.post("/v1/embed", json={"texts": ["hello"]}, headers=_auth_headers())
+            return tc.post("/v1/embed", json={"texts": ["hello"], "org_id": "11111111-1111-1111-1111-111111111111"}, headers=_auth_headers())
 
     def test_backend_unavailable_returns_503(self, monkeypatch: pytest.MonkeyPatch) -> None:
         resp = self._post(
@@ -242,7 +249,7 @@ class TestEmbedRequestSchema:
 
     def test_texts_not_list_returns_400(self, monkeypatch: pytest.MonkeyPatch) -> None:
         state = _make_ready_state()
-        resp = _post_v1_embed(monkeypatch, {"texts": "not a list"}, state=state)
+        resp = _post_v1_embed(monkeypatch, {"texts": "not a list", "org_id": "11111111-1111-1111-1111-111111111111"}, state=state)
         assert resp.status_code == 400
         body = resp.json()
         assert body["error"]["code"] == "invalid_request"
@@ -252,25 +259,25 @@ class TestEmbedRequestSchema:
 
 class TestEmbedAuth:
     def test_missing_bearer_token_returns_401(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        resp = _post_v1_embed(monkeypatch, {"texts": ["x"]}, headers={})
+        resp = _post_v1_embed(monkeypatch, {"texts": ["x"], "org_id": "11111111-1111-1111-1111-111111111111"}, headers={})
         assert resp.status_code == 401
         assert resp.json()["error"]["code"] == "authentication_failed"
 
     def test_invalid_bearer_token_returns_401(self, monkeypatch: pytest.MonkeyPatch) -> None:
         resp = _post_v1_embed(
-            monkeypatch, {"texts": ["x"]}, headers=_auth_headers("wrong-token")
+            monkeypatch, {"texts": ["x"], "org_id": "11111111-1111-1111-1111-111111111111"}, headers=_auth_headers("wrong-token")
         )
         assert resp.status_code == 401
         assert resp.json()["error"]["code"] == "authentication_failed"
 
     def test_same_length_wrong_token_returns_401(self, monkeypatch: pytest.MonkeyPatch) -> None:
         wrong = "x" * len(_API_TOKEN)
-        resp = _post_v1_embed(monkeypatch, {"texts": ["x"]}, headers=_auth_headers(wrong))
+        resp = _post_v1_embed(monkeypatch, {"texts": ["x"], "org_id": "11111111-1111-1111-1111-111111111111"}, headers=_auth_headers(wrong))
         assert resp.status_code == 401
 
     def test_valid_token_returns_200(self, monkeypatch: pytest.MonkeyPatch) -> None:
         state = _make_ready_state(_ReadyBackendSpec(embed_return=_l2_vecs(1)))
-        resp = _post_v1_embed(monkeypatch, {"texts": ["x"]}, state=state)
+        resp = _post_v1_embed(monkeypatch, {"texts": ["x"], "org_id": "11111111-1111-1111-1111-111111111111"}, state=state)
         assert resp.status_code == 200
 
 
@@ -284,6 +291,6 @@ class TestEmbedDoesNotLeakContent:
         )
         with TestClient(app) as tc:
             tc.app.state.embedder = state
-            resp = tc.post("/v1/embed", json={"texts": [secret]}, headers=_auth_headers())
+            resp = tc.post("/v1/embed", json={"texts": [secret], "org_id": "11111111-1111-1111-1111-111111111111"}, headers=_auth_headers())
         # The secret text must not appear in the error response body.
         assert secret not in resp.text
