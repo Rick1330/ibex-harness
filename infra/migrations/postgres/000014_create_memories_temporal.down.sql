@@ -8,6 +8,7 @@ DROP POLICY IF EXISTS memories_isolation ON ibex_core.memories;
 
 ALTER TABLE ibex_core.memories DISABLE ROW LEVEL SECURITY;
 
+DROP INDEX IF EXISTS idx_memories_session_id;
 DROP INDEX IF EXISTS idx_memories_content_hash;
 DROP INDEX IF EXISTS idx_memories_agent_active;
 

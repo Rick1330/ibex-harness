@@ -583,6 +583,10 @@ CREATE INDEX idx_memories_agent_active
 CREATE INDEX idx_memories_content_hash
     ON ibex_core.memories(org_id, agent_id, content_hash);
 
+CREATE INDEX idx_memories_session_id
+    ON ibex_core.memories(org_id, session_id)
+    WHERE session_id IS NOT NULL;
+
 ALTER TABLE ibex_core.memories ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ibex_core.memories FORCE ROW LEVEL SECURITY;
 

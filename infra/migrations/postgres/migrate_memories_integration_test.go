@@ -276,43 +276,66 @@ func TestMemories_SessionClearOnDelete(t *testing.T) {
 	}
 }
 
+type memoryColExpect struct {
+	name     string
+	nullable string
+	hasDef   bool
+}
+
 func assertMemoryTemporalColumns(t *testing.T, ctx context.Context, db *sql.DB) {
 	t.Helper()
-	type colExpect struct {
-		name     string
-		nullable string
-		hasDef   bool
-	}
-	expects := []colExpect{
+	assertMemoryTemporalColumnDefs(t, ctx, db)
+	assertMemoriesForceRLS(t, ctx, db)
+}
+
+func assertMemoryTemporalColumnDefs(t *testing.T, ctx context.Context, db *sql.DB) {
+	t.Helper()
+	expects := []memoryColExpect{
 		{name: "valid_from", nullable: "NO", hasDef: true},
 		{name: "valid_until", nullable: "YES", hasDef: false},
 		{name: "observed_at", nullable: "NO", hasDef: true},
 	}
 	for _, e := range expects {
-		var dataType, isNullable string
-		var columnDefault sql.NullString
-		err := db.QueryRowContext(ctx, `
-			SELECT data_type, is_nullable, column_default
-			FROM information_schema.columns
-			WHERE table_schema = 'ibex_core' AND table_name = 'memories' AND column_name = $1`,
-			e.name).Scan(&dataType, &isNullable, &columnDefault)
-		if err != nil {
-			t.Fatalf("column %s: %v", e.name, err)
-		}
-		if dataType != "timestamp with time zone" {
-			t.Errorf("column %s type=%q, want timestamptz", e.name, dataType)
-		}
-		if isNullable != e.nullable {
-			t.Errorf("column %s nullable=%q, want %q", e.name, isNullable, e.nullable)
-		}
-		if e.hasDef && (!columnDefault.Valid || columnDefault.String == "") {
+		assertMemoryColumn(t, ctx, db, e)
+	}
+}
+
+func assertMemoryColumn(t *testing.T, ctx context.Context, db *sql.DB, e memoryColExpect) {
+	t.Helper()
+	var dataType, isNullable string
+	var columnDefault sql.NullString
+	err := db.QueryRowContext(ctx, `
+		SELECT data_type, is_nullable, column_default
+		FROM information_schema.columns
+		WHERE table_schema = 'ibex_core' AND table_name = 'memories' AND column_name = $1`,
+		e.name).Scan(&dataType, &isNullable, &columnDefault)
+	if err != nil {
+		t.Fatalf("column %s: %v", e.name, err)
+	}
+	if dataType != "timestamp with time zone" {
+		t.Errorf("column %s type=%q, want timestamptz", e.name, dataType)
+	}
+	if isNullable != e.nullable {
+		t.Errorf("column %s nullable=%q, want %q", e.name, isNullable, e.nullable)
+	}
+	assertMemoryColumnDefault(t, e, columnDefault)
+}
+
+func assertMemoryColumnDefault(t *testing.T, e memoryColExpect, columnDefault sql.NullString) {
+	t.Helper()
+	if e.hasDef {
+		if !columnDefault.Valid || columnDefault.String == "" {
 			t.Errorf("column %s missing default", e.name)
 		}
-		if !e.hasDef && columnDefault.Valid && columnDefault.String != "" {
-			t.Errorf("column %s unexpected default %q", e.name, columnDefault.String)
-		}
+		return
 	}
+	if columnDefault.Valid && columnDefault.String != "" {
+		t.Errorf("column %s unexpected default %q", e.name, columnDefault.String)
+	}
+}
 
+func assertMemoriesForceRLS(t *testing.T, ctx context.Context, db *sql.DB) {
+	t.Helper()
 	var forced bool
 	err := db.QueryRowContext(ctx, `
 		SELECT c.relforcerowsecurity

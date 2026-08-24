@@ -76,6 +76,10 @@ CREATE INDEX idx_memories_agent_active
 CREATE INDEX idx_memories_content_hash
     ON ibex_core.memories (org_id, agent_id, content_hash);
 
+CREATE INDEX idx_memories_session_id
+    ON ibex_core.memories (org_id, session_id)
+    WHERE session_id IS NOT NULL;
+
 -- Preserve nullable session_id while using a composite org-scoped FK.
 CREATE OR REPLACE FUNCTION ibex_core.clear_memory_session_id()
 RETURNS trigger
@@ -85,7 +89,8 @@ AS $$
 BEGIN
     UPDATE ibex_core.memories
     SET session_id = NULL
-    WHERE session_id = OLD.id;
+    WHERE org_id = OLD.org_id
+      AND session_id = OLD.id;
     RETURN OLD;
 END;
 $$;

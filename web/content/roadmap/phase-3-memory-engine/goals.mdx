@@ -22,7 +22,7 @@ phase: "phase-3-memory-engine"
 ### Goal 3.A: Establish the memory schema with HNSW, temporal validity, and multi-label taxonomy
 
 **Milestones:**
-- **3.1.1 — Postgres schema v2:** `ibex_core.memories` with HNSW vector index (m=16, ef_construction=64), temporal validity columns (`valid_from`/`valid_until`), `ibex_core.memory_labels` join table, `primary_category` trigger, RLS policies. ADR-0040 required.
+- **3.1.1 — Postgres schema v2:** expand foundation `ibex_core.memories` (from G5.M1 / ADR-0047) with HNSW vector index (m=16, ef_construction=64), `ibex_core.memory_labels` join table, `primary_category` trigger, remaining quality columns. Planned expand ADR required (**not** ADR-0040 — that is Anthropic).
 
 **Acceptance criteria:**
 - Migration applies cleanly from zero via `make db-migrate`
@@ -89,7 +89,7 @@ phase: "phase-3-memory-engine"
 - **3.E.1 — Memory security integration suite (`TestMemory_ISO_*`):** 10+ cross-tenant isolation cases against real Postgres+pgvector+Redis.
 - **3.E.2 — End-to-end memory lifecycle test:** Full write/dedup/conflict/retrieve round trip via HTTP API. `make e2e-smoke-p3-memory`.
 - **3.E.3 — Retrieval-quality benchmark sign-off:** Recall@10, p50/p95/p99 latency, precision@k. CI regression gate.
-- **3.E.4 — ADR consolidation:** ADR-0040 through ADR-0044 published and indexed.
+- **3.E.4 — ADR consolidation:** Phase 3 memory ADRs published and indexed (next free numbers after ADR-0047; 0040–0046 are Phase 2.5).
 - **3.E.5 — Phase 3 exit audit:** Severity-tiered gap register (P0–P3), same format as Phase 1 exit audit.
 
 **Acceptance criteria:**
