@@ -498,182 +498,100 @@ CREATE INDEX idx_directive_scenarios_directive_id
 
 #### Memory System
 
+> **Shipped (2.5.G5.M1 / ADR-0047):** foundation `ibex_core.memories` via
+> `000014_create_memories_temporal` — tenancy, content, scalar category/status,
+> and bi-temporal columns (`valid_from` / `valid_until` / `observed_at`).
+> **Not yet shipped:** `embedding` / pgvector / HNSW, usefulness/feedback,
+> `search_vector`, multi-label join tables (Phase 3.1.1 expand + G5.M2/M3).
+
 ```sql
 -- ================================================================
--- MEMORIES
--- Core memory storage with vector embeddings
+-- MEMORIES (foundation — migration 000014 / ADR-0047)
+-- Temporal validity included; embedding columns deferred to 3.1.1
 -- ================================================================
 CREATE TABLE ibex_core.memories (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     org_id          UUID NOT NULL
                     REFERENCES ibex_core.organizations(id)
                     ON DELETE RESTRICT,
-    agent_id        UUID NOT NULL
-                    REFERENCES ibex_core.agents(id)
-                    ON DELETE CASCADE,
+    agent_id        UUID NOT NULL,
     session_id      UUID,
-    -- FK to sessions added after sessions table
     created_by_user UUID
                     REFERENCES ibex_core.users(id)
                     ON DELETE SET NULL,
 
     -- Content
     content         TEXT NOT NULL,
-    content_hash    VARCHAR(64) NOT NULL,
-    -- SHA-256 of normalized content (for exact dedup)
+    content_hash    TEXT NOT NULL,
+    -- SHA-256 of normalized content (exact dedup; app-enforced format)
     content_tokens  INTEGER NOT NULL,
     -- Pre-computed for budget management
 
-    -- Vector embedding
-    embedding       vector(384),
-    -- all-MiniLM-L6-v2 produces 384-dimensional vectors
-    embedding_model TEXT NOT NULL DEFAULT 'all-MiniLM-L6-v2',
-    -- Track which model generated embedding
-    -- Critical for model upgrade migrations
-
-    -- Classification
+    -- Classification (scalar retained for G5.M2 backward-compat;
+    -- multi-label join table lands in G5.M2 / 3.1.1)
     category        TEXT NOT NULL DEFAULT 'factual'
                     CHECK (category IN (
-                        'factual',      -- Factual knowledge
-                        'preference',   -- User/agent preferences
-                        'behavioral',   -- Behavioral patterns
-                        'episodic',     -- Past events/experiences
-                        'procedural'    -- How to do things
+                        'factual',
+                        'preference',
+                        'behavioral',
+                        'episodic',
+                        'procedural'
                     )),
-    subcategory     TEXT,
-    -- For finer classification within category
-
-    -- Quality signals
-    confidence      NUMERIC(3,2) NOT NULL DEFAULT 0.80
-                    CHECK (confidence >= 0 AND confidence <= 1),
-    -- How confident we are this memory is accurate
-
-    usefulness_score NUMERIC(3,2) NOT NULL DEFAULT 0.50
-                    CHECK (usefulness_score >= 0
-                           AND usefulness_score <= 1),
-    -- Updated based on retrieval feedback
-    -- Starts at 0.5 (neutral), adjusted up/down
-
-    -- Source tracking
-    source          TEXT NOT NULL DEFAULT 'extracted'
-                    CHECK (source IN (
-                        'extracted',    -- Auto-extracted from conversation
-                        'user_provided',-- Explicitly written by user
-                        'imported',     -- Imported from external system
-                        'inferred'      -- Inferred by system from patterns
-                    )),
-    source_trace_id UUID,
-    -- Which inference trace was this extracted from?
 
     -- Lifecycle
     status          TEXT NOT NULL DEFAULT 'active'
                     CHECK (status IN (
-                        'active',         -- Normal, retrievable
-                        'superseded',     -- Replaced by newer memory
-                        'merged_into',    -- Combined with another memory
-                        'archived',       -- Old but preserved
-                        'quarantined',    -- Flagged for review
-                        'deleted'         -- Soft deleted
+                        'active',
+                        'superseded',
+                        'merged_into',
+                        'archived',
+                        'quarantined',
+                        'deleted'
                     )),
-    superseded_by   UUID REFERENCES ibex_core.memories(id),
-    merged_into     UUID REFERENCES ibex_core.memories(id),
-
-    -- Usage tracking
-    retrieval_count INTEGER NOT NULL DEFAULT 0,
-    last_retrieved_at TIMESTAMPTZ,
-    positive_feedback_count INTEGER NOT NULL DEFAULT 0,
-    negative_feedback_count INTEGER NOT NULL DEFAULT 0,
-
-    -- Security
-    pii_detected    BOOLEAN NOT NULL DEFAULT FALSE,
-    pii_redacted    BOOLEAN NOT NULL DEFAULT FALSE,
-    injection_risk_score NUMERIC(3,2) DEFAULT 0
-                    CHECK (injection_risk_score >= 0
-                           AND injection_risk_score <= 1),
-
-    -- Visibility scoping
-    visibility      TEXT NOT NULL DEFAULT 'agent'
-                    CHECK (visibility IN (
-                        'agent',    -- Only this agent
-                        'org',      -- All agents in org
-                        'session'   -- Only current session
-                    )),
-    pinned          BOOLEAN NOT NULL DEFAULT FALSE,
-    -- Pinned memories always included in context
-
-    -- Flexible metadata
-    tags            TEXT[] NOT NULL DEFAULT '{}',
-    metadata        JSONB NOT NULL DEFAULT '{}',
-
-    -- Timestamps
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     deleted_at      TIMESTAMPTZ,
 
-    -- Full-text search vector
-    search_vector   tsvector GENERATED ALWAYS AS (
-        setweight(to_tsvector('english', content), 'A')
-    ) STORED
+    -- Temporal validity (half-open [valid_from, valid_until);
+    -- NULL valid_until = still open). observed_at = when IBEX learned the fact.
+    valid_from      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    valid_until     TIMESTAMPTZ,
+    observed_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    UNIQUE (id, org_id),
+    CONSTRAINT memories_agent_org_fk
+        FOREIGN KEY (agent_id, org_id)
+        REFERENCES ibex_core.agents (id, org_id)
+        ON DELETE CASCADE,
+    CONSTRAINT memories_session_org_fk
+        FOREIGN KEY (session_id, org_id)
+        REFERENCES ibex_core.sessions (id, org_id),
+    CONSTRAINT memories_content_not_empty CHECK (length(content) > 0),
+    CONSTRAINT memories_content_max CHECK (octet_length(content) <= 10000),
+    CONSTRAINT memories_content_hash_not_empty CHECK (length(content_hash) > 0),
+    CONSTRAINT memories_content_tokens_nonneg CHECK (content_tokens >= 0),
+    CONSTRAINT memories_valid_interval_chk
+        CHECK (valid_until IS NULL OR valid_until > valid_from)
 );
 
--- ================================================================
--- MEMORY INDEXES
--- Critical for performance - each index serves specific queries
--- ================================================================
-
--- Primary lookup: agent's active memories
+-- Operational indexes (temporal GiST / range indexes deferred until query patterns exist)
 CREATE INDEX idx_memories_agent_active
     ON ibex_core.memories(org_id, agent_id)
     WHERE status = 'active' AND deleted_at IS NULL;
 
--- Deduplication check (exact content match)
 CREATE INDEX idx_memories_content_hash
     ON ibex_core.memories(org_id, agent_id, content_hash);
 
--- Vector similarity search (IBEX Harness primary use case)
--- Preferred Phase 3+ index: HNSW (redesigned roadmap / ADR-0040 direction).
--- IVFFlat DDL below is historical reference from earlier plans — do not treat as the default for new migrations.
--- Example HNSW (illustrative; confirm params via benches):
--- CREATE INDEX idx_memories_embedding_hnsw
---     ON ibex_core.memories
---     USING hnsw (embedding vector_cosine_ops)
---     WITH (m = 16, ef_construction = 64)
---     WHERE status = 'active' AND deleted_at IS NULL;
--- Historical IVFFlat example (not the preferred starting path):
-CREATE INDEX idx_memories_embedding
-    ON ibex_core.memories
-    USING ivfflat (embedding vector_cosine_ops)
-    WITH (lists = 100)
-    WHERE status = 'active' AND deleted_at IS NULL;
-
--- Full-text search
-CREATE INDEX idx_memories_search_vector
-    ON ibex_core.memories USING gin(search_vector)
-    WHERE status = 'active' AND deleted_at IS NULL;
-
--- Tag filtering
-CREATE INDEX idx_memories_tags
-    ON ibex_core.memories USING gin(tags)
-    WHERE deleted_at IS NULL;
-
--- Recent memories (for hot cache population)
-CREATE INDEX idx_memories_recent
-    ON ibex_core.memories(org_id, agent_id, created_at DESC)
-    WHERE status = 'active' AND deleted_at IS NULL;
-
--- Most retrieved memories (for usefulness ranking)
-CREATE INDEX idx_memories_retrieval_count
-    ON ibex_core.memories(org_id, agent_id, retrieval_count DESC)
-    WHERE status = 'active' AND deleted_at IS NULL;
-
--- RLS
 ALTER TABLE ibex_core.memories ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ibex_core.memories FORCE ROW LEVEL SECURITY;
 
 CREATE POLICY memories_isolation ON ibex_core.memories
-    USING (
-        org_id = current_setting('app.current_org_id', true)::UUID
-        OR current_setting('app.is_service_account', true)::BOOLEAN = true
-    );
+    USING (ibex_core.rls_org_visible(org_id));
+
+-- Phase 3.1.1 expand (not yet applied): embedding vector(...), embedding_model,
+-- embedding_dim, HNSW index, usefulness/feedback, search_vector, etc.
+-- Do not greenfield-CREATE memories in 3.1.1 — ALTER the foundation table.
 
 -- ================================================================
 -- MEMORY RELATIONSHIPS

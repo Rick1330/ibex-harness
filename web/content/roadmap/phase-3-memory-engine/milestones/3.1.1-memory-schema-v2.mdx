@@ -20,9 +20,18 @@ fullTitle: "Milestone 3.1.1 — Memory schema v2: HNSW, temporal validity, multi
 **Phase:** 3 — Core Memory Substrate  
 **Estimated effort:** 4–5 days  
 **Track:** [Track A — Schema & Migrations](/roadmap/phase-3-memory-engine/tracks#track-a--schema--migrations)  
-**ADR required:** ADR-0040 — Memory schema v2: HNSW, temporal validity, multi-label taxonomy
+**ADR required:** (planned) memory schema v2 expand — do **not** reuse ADR-0040 (Anthropic adapter). Temporal foundation is [ADR-0047](/docs/adr/0047-memory-temporal-validity).
 
 ---
+
+<Callout type="info" title="Post–G5.M1: expand, do not CREATE">
+  After [2.5.G5.M1](/roadmap/phase-2-5-provider-generalization/milestones/2.5.g5.m1-temporal-validity-columns),
+  `ibex_core.memories` already exists (`000014`) with `valid_from` / `valid_until` / `observed_at`,
+  FORCE RLS, and composite org-safe FKs. Milestone 3.1.1 becomes an **expand** migration
+  (`ADD COLUMN embedding…`, HNSW, remaining quality columns, multi-label tables as sequenced with
+  G5.M2) — not a greenfield `CREATE TABLE` that would conflict. Keep `observed_at`; do not drop it
+  even if older sketches omitted it. Migration number in sketches (`000041`) is provisional.
+</Callout>
 
 <Callout type="note" title="Planning baseline">
   This page is a planning sketch, not an implementation script. Named paths, package layouts,

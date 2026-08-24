@@ -1,0 +1,96 @@
+---
+title: "ADR-0047: Memory temporal validity foundation"
+description: "Architecture decision record 0047 — CREATE ibex_core.memories with bi-temporal validity columns in Phase 2.5 Track E; defer pgvector/HNSW to Phase 3.1.1 expand."
+adrId: "0047"
+status: "Accepted"
+date: "2026-08-24"
+authors: "IBEX Harness team"
+---
+
+# ADR-0047: Memory temporal validity foundation
+
+- **Status:** Accepted
+- **Date:** 2026-08-24
+- **Authors:** IBEX Harness team
+- **Milestone:** [2.5.G5.M1 Temporal validity columns](/roadmap/phase-2-5-provider-generalization/milestones/2.5.g5.m1-temporal-validity-columns)
+
+## Context
+
+Phase 3 contradiction detection needs *when a fact was true* (world/valid time) distinct from *when IBEX learned it* (observation time). Track E ([2.5.G5](/roadmap/phase-2-5-provider-generalization/tracks#track-e--schema-pre-work)) is migration-only schema readiness before the memory write pipeline.
+
+The milestone sketch assumed `ALTER TABLE ibex_core.memories …`. Applied migrations through `000013` have **no** `memories` table. A bare ALTER cannot ship. G5.M2/M3 also need `memories(id)` (and org-safe composite FKs) as parents.
+
+Phase 3 milestone [3.1.1](/roadmap/phase-3-memory-engine/milestones/3.1.1-memory-schema-v2) still owns HNSW / pgvector / remaining quality columns. ADR-0005 forbids `CREATE EXTENSION vector` until needed; CI `postgres:16` has no vector extension. Roadmap text that referred to “ADR-0040 memory schema” conflicts with shipped ADR-0040 (Anthropic adapter) — this ADR is **0047**.
+
+Bi-temporal inspiration: [Graphiti](https://github.com/getzep/graphiti) / [Zep](https://arxiv.org/abs/2501.13956) — without Graphiti’s full four-timestamp edge invalidation (Phase 3 Track C).
+
+## Decision
+
+### 1) CREATE foundation table in `000014` (not ALTER)
+
+Ship `000014_create_memories_temporal` as a lean `CREATE TABLE ibex_core.memories` that includes temporal columns from day one:
+
+| Column | Role | Nullability |
+| --- | --- | --- |
+| `valid_from` | When the fact became true in the world (Graphiti `valid_at`) | `NOT NULL DEFAULT NOW()` |
+| `valid_until` | When it ceased (`NULL` = still open; Graphiti `invalid_at`) | nullable |
+| `observed_at` | When IBEX learned the fact | `NOT NULL DEFAULT NOW()` |
+| `created_at` / `updated_at` | Row bookkeeping | standard |
+
+Interval semantics: half-open `[valid_from, valid_until)`. Integrity:
+
+```sql
+CONSTRAINT memories_valid_interval_chk
+  CHECK (valid_until IS NULL OR valid_until > valid_from)
+```
+
+Do **not** require `observed_at >= valid_from` (retrospective reporting is valid).
+
+### 2) Keep `observed_at` even if 3.1.1 sketches omit it
+
+Observation time is distinct from world time (“moved to Berlin three years ago”). Phase 3.1.1 **expands** the existing table; it must not drop `observed_at`.
+
+### 3) Omit embedding / pgvector / HNSW in M1
+
+No `embedding` column and no `vector` extension in `000014`. Phase 3.1.1 adds embedding + HNSW as expand-contract `ALTER` / index work on the live foundation table — not a conflicting greenfield `CREATE`.
+
+### 4) Tenancy and FK shape
+
+- `UNIQUE (id, org_id)` for child composite FKs (G5.M2/M3)
+- Composite `(agent_id, org_id) → agents(id, org_id)`
+- Optional `session_id` with composite `(session_id, org_id) → sessions`; clear via trigger on session delete (composite `ON DELETE SET NULL` would also null `org_id`)
+- `FORCE ROW LEVEL SECURITY` + `ibex_core.rls_org_visible` (string compare `app.is_service_account = 'true'`, not draft `::BOOLEAN`)
+- Grants to `ibex_app`; reuse `set_updated_at`
+
+### 5) Lean content / lifecycle only
+
+Include `content`, `content_hash`, `content_tokens`, scalar `category` (G5.M2 backward-compat), `status`, `deleted_at`. Operational indexes: active agent lookup + content_hash. No usefulness/feedback/`search_vector` columns yet.
+
+### 6) No application writers in this milestone
+
+No ORM, REST, or proto changes. Columns exist for Phase 3 to consume.
+
+## Consequences
+
+### Positive
+
+- Track E can proceed (M2/M3 have a real parent table)
+- Temporal integrity enforced before any write pipeline
+- Avoids CI/pgvector coupling and a doomed ALTER
+
+### Negative
+
+- 3.1.1 docs/sketches must be re-read as **expand**, not CREATE-from-scratch
+- Full Phase 3 memory shape lands across multiple migrations (intentional expand-contract)
+
+## Rollout
+
+- Migration: `infra/migrations/postgres/000014_create_memories_temporal.{up,down}.sql`
+- Down is dev/test only; production forward-only per ADR-0005
+
+## References
+
+- [ADR-0005](/docs/adr/0005-postgres-migration-strategy) (golang-migrate, expand-contract, no vector until needed)
+- [ADR-0046](/docs/adr/0046-embedder-interface-registry) (embedding profiles; geometry for later 3.1.1)
+- Milestone [2.5.G5.M1](/roadmap/phase-2-5-provider-generalization/milestones/2.5.g5.m1-temporal-validity-columns)
+- Milestone [3.1.1](/roadmap/phase-3-memory-engine/milestones/3.1.1-memory-schema-v2) (expand note)
