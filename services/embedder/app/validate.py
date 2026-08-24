@@ -115,8 +115,8 @@ def validate_output_vectors(
     vectors: NDArray[np.float32],
     dim: int,
 ) -> None:
-    _assert_output_batch_len(texts, vectors)
     _assert_output_rank2(vectors)
+    _assert_output_batch_len(texts, vectors)
     _assert_output_dim(texts, vectors, dim)
     _assert_output_finite(vectors)
     _assert_output_unit_l2(vectors)

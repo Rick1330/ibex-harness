@@ -49,6 +49,8 @@ def test_validate_output_vectors_shape() -> None:
         validate_output_vectors(["a"], np.array([[1.0]], dtype=np.float32), 2)
     with pytest.raises(InvalidVectorError):
         validate_output_vectors(["a"], np.array([1.0, 0.0], dtype=np.float32), 2)
+    with pytest.raises(InvalidVectorError):
+        validate_output_vectors(["a"], np.array(1.0, dtype=np.float32), 2)
     unnormalized = np.array([[3.0, 4.0]], dtype=np.float32)
     with pytest.raises(InvalidVectorError):
         validate_output_vectors(["a"], unnormalized, 2)
