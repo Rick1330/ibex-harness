@@ -187,10 +187,12 @@ class CachingEmbeddingBackend(EmbeddingBackend):
         return np.ascontiguousarray(np.vstack(filled), dtype=np.float32)
 
     async def aclose(self) -> None:
-        await self._store.aclose()
-        aclose = getattr(self._inner, "aclose", None)
-        if aclose is not None:
-            await aclose()
+        try:
+            await self._store.aclose()
+        finally:
+            aclose = getattr(self._inner, "aclose", None)
+            if aclose is not None:
+                await aclose()
 
     async def ping(self) -> None:
         """Startup readiness check against Redis."""

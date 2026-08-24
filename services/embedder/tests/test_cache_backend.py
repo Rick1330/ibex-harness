@@ -203,6 +203,13 @@ class TestCachingBackendUnit:
         env.store.aclose.assert_awaited_once()
         env.inner.aclose.assert_awaited_once()
 
+    async def test_aclose_closes_inner_when_store_raises(self) -> None:
+        env = _mock_cache()
+        env.store.aclose = AsyncMock(side_effect=ConnectionError("redis gone"))
+        with pytest.raises(ConnectionError, match="redis gone"):
+            await env.cached.aclose()
+        env.inner.aclose.assert_awaited_once()
+
     async def test_never_caches_inner_errors(self, org_ctx: UUID) -> None:
         env = _mock_cache()
         env.inner.embed = AsyncMock(side_effect=RuntimeError("boom"))
