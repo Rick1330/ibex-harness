@@ -20,9 +20,18 @@ fullTitle: "Milestone 3.1.1 — Memory schema v2: HNSW, temporal validity, multi
 **Phase:** 3 — Core Memory Substrate  
 **Estimated effort:** 4–5 days  
 **Track:** [Track A — Schema & Migrations](/roadmap/phase-3-memory-engine/tracks#track-a--schema--migrations)  
-**ADR required:** ADR-0040 — Memory schema v2: HNSW, temporal validity, multi-label taxonomy
+**ADR required:** (planned) memory schema v2 expand — do **not** reuse ADR-0040 (Anthropic adapter). Temporal foundation is [ADR-0047](/docs/adr/0047-memory-temporal-validity).
 
 ---
+
+<Callout type="info" title="Post–G5.M1: expand, do not CREATE">
+  After [2.5.G5.M1](/roadmap/phase-2-5-provider-generalization/milestones/2.5.g5.m1-temporal-validity-columns),
+  `ibex_core.memories` already exists (`000014`) with `valid_from` / `valid_until` / `observed_at`,
+  FORCE RLS, and composite org-safe FKs. Milestone 3.1.1 becomes an **expand** migration
+  (`ADD COLUMN embedding…`, HNSW, remaining quality columns, multi-label tables as sequenced with
+  G5.M2) — not a greenfield `CREATE TABLE` that would conflict. Keep `observed_at`; do not drop it
+  even if older sketches omitted it. Migration number in sketches (`000041`) is provisional.
+</Callout>
 
 <Callout type="note" title="Planning baseline">
   This page is a planning sketch, not an implementation script. Named paths, package layouts,
@@ -75,21 +84,26 @@ Rename freely to match the change that actually lands.
 - Branch: `feature/m3-1-1-memory-schema-v2`
 - PR title: `feat(memory): memory schema v2 — HNSW, temporal validity, multi-label (m3.1.1)`
 
-## ADR-0040 — Memory schema v2
+## Planned ADR — Memory schema v2 expand
 
-Write `web/content/docs/adr/0040-memory-schema-v2.mdx` documenting:
+Write a **new** ADR (next free number at implementation time — **not** ADR-0040;
+ADR-0040 is the Anthropic provider adapter) documenting:
 
 ```markdown
-# ADR-0040: Memory schema v2 — HNSW, temporal validity, multi-label taxonomy
+# ADR-XXXX: Memory schema v2 — HNSW, multi-label taxonomy (expand)
 
 ## Status
 Proposed
 
 ## Context
-Phase 3 is greenfield — no memory data exists yet, so there is no migration-cost
-argument for choosing a weaker initial design. The originally planned schema
-(DATABASE_SCHEMA.md "Memory System" section) used a single-enum `category`
-column and no temporal-validity tracking, and specified IVFFlat as the vector
+Phase 3 expands the foundation `ibex_core.memories` table created in
+2.5.G5.M1 ([ADR-0047](/docs/adr/0047-memory-temporal-validity)). Temporal
+columns (`valid_from` / `valid_until` / `observed_at`) already exist.
+This ADR covers HNSW/pgvector, multi-label taxonomy, and remaining quality
+columns — expand-contract, not a greenfield CREATE.
+
+The originally planned schema (DATABASE_SCHEMA.md "Memory System" section)
+used a single-enum `category` column and specified IVFFlat as the vector
 index with HNSW deferred to Phase 4. Both choices are reconsidered here before
 any dependent service (memory service, context assembly) is built against them.
 
@@ -115,7 +129,7 @@ not apply — there is no existing IVFFlat index under time pressure to keep.
 Decision: **Multi-label**, with the legacy single `category` column retained
 as a *derived* "primary_category" (highest-confidence label) for
 backward-compatible simple queries and for the composite scoring formula's
-category-conditional decay (ADR-0041, Track D).
+category-conditional decay (Phase 3 Track D).
 
 ### Conflict modeling: similarity-threshold only vs temporal-interval-aware
 1. Global cosine-similarity threshold triggers "possible conflict" review for
@@ -126,13 +140,11 @@ category-conditional decay (ADR-0041, Track D).
  flagged as conflicting only if their validity intervals overlap; if they
  are sequential (B.valid_from > A.valid_until), B is recorded as
  `supersedes` A automatically without an LLM conflict-check call.
-Decision: **Temporal-interval-aware**. This directly fixes the
-false-contradiction failure mode identified in review (a user's DB choice
-changing across sessions was previously treated as a same-time contradiction).
+Decision: **Temporal-interval-aware** (foundation columns already in ADR-0047).
 
 ## Decision
-1. `ibex_core.memories` gains `valid_from TIMESTAMPTZ`, `valid_until TIMESTAMPTZ NULL`,
- drops mandatory single-`category` write path in favor of `memory_labels`.
+1. Expand `ibex_core.memories` with embedding columns; keep temporal columns
+ from ADR-0047 (including `observed_at`).
 2. `embedding vector(1024)` (BAAI/bge-m3 dimension per Phase 2.5's embedder
  decision), with `embedding_model` and `embedding_dim` columns retained so a
  future model swap does not require a blind rewrite of every row.
@@ -156,13 +168,15 @@ changing across sessions was previously treated as a same-time contradiction).
  the generated `primary_category` column mitigates this for hot-path reads.
 
 ## Rollout / Migration Plan
-Single golang-migrate migration, `infra/migrations/postgres/000041_memory_schema_v2.up.sql`,
-per ADR-0005's tool and layout convention. No dual-write phase needed — greenfield.
+golang-migrate expand on `000014` foundation (provisional sketch number
+`000041_memory_schema_v2` — assign next free version at implementation),
+per ADR-0005. Not a conflicting greenfield CREATE.
 
 ## References
 - ADR-0005 (migration tool/layout)
-- Original DATABASE_SCHEMA.md "Memory System" section (superseded by this ADR)
-- ADR-0041 (composite scoring, Track D) — depends on `memory_labels`
+- ADR-0047 (temporal validity foundation)
+- Original DATABASE_SCHEMA.md "Memory System" section (superseded incrementally)
+- Phase 3 Track D composite scoring — depends on `memory_labels`
 ```
 
 ---
@@ -210,7 +224,7 @@ CREATE TABLE ibex_core.memories (
  superseded_by UUID REFERENCES ibex_core.memories(id),
  merged_into UUID REFERENCES ibex_core.memories(id),
 
- -- Temporal validity (ADR-0040 §3)
+ -- Temporal validity (ADR-0047; retained from G5.M1 foundation)
  valid_from TIMESTAMPTZ NOT NULL DEFAULT NOW(),
  valid_until TIMESTAMPTZ, -- NULL = still valid
 
@@ -227,7 +241,7 @@ CREATE TABLE ibex_core.memories (
  search_vector tsvector GENERATED ALWAYS AS (setweight(to_tsvector('english', content), 'A')) STORED
 );
 
--- Multi-label taxonomy (ADR-0040 §2)
+-- Multi-label taxonomy (planned schema-v2 ADR §2)
 CREATE TABLE ibex_core.memory_labels (
  memory_id UUID NOT NULL REFERENCES ibex_core.memories(id) ON DELETE CASCADE,
  label TEXT NOT NULL CHECK (label IN ('factual','preference','behavioral','episodic','procedural')),
@@ -256,7 +270,7 @@ CREATE TRIGGER trg_update_primary_category
 AFTER INSERT OR UPDATE OR DELETE ON ibex_core.memory_labels
 FOR EACH ROW EXECUTE FUNCTION ibex_core.update_primary_category();
 
--- HNSW index (ADR-0040 §1) — replaces IVFFlat entirely, not "for now"
+-- HNSW index (planned schema-v2 ADR §1) — replaces IVFFlat entirely, not "for now"
 CREATE INDEX idx_memories_embedding_hnsw
  ON ibex_core.memories
  USING hnsw (embedding vector_cosine_ops)
@@ -333,7 +347,7 @@ Outcome-oriented signals that the milestone is in good shape. Exact filenames, p
 - [ ] `idx_memories_embedding_hnsw` confirmed as HNSW type in a CI assertion (not just present — type-checked)
 - [ ] RLS integration test proves cross-org denial on `memories` and `memory_labels`
 - [ ] `primary_category` trigger verified via unit test (insert 2 labels, differing confidence, correct one wins)
-- [ ] ADR-0040 published in `web/content/docs/adr/`
+- [ ] Planned memory schema v2 expand ADR published in `web/content/docs/adr/` (not ADR-0040)
 
 ---
 
