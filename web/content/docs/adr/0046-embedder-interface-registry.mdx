@@ -91,6 +91,19 @@ Never log raw text or vector payloads. Log profile, model_id, batch size, latenc
 
 **Negative / follow-ups:** Stub is not production inference; hosted defaults are placeholders until M3; dual Go/Python contracts must stay aligned manually until codegen exists.
 
+### G4.M2 Update (2026-08-24)
+
+G4.M2 has shipped the TEI GPU backend within this contract:
+
+- `EmbeddingBackend.embed()` converted to `async def` (one contract break now, not three later).
+- Package layout refactored: `app/backends/`, `app/tei/`, `app/api/` sub-packages.
+- `TEIBackend` (`name=="tei"`, `profile=="gpu"`) backed by `TeiClient` (httpx, retries, jittered backoff).
+- Startup: fail-closed `/health` poll + `/info` model-id geometry check; no gpu→stub fallback.
+- `POST /v1/embed` internal endpoint (Bearer `IBEX_EMBEDDING_API_TOKEN`; probes stay unauthenticated).
+- Reference compose: `infra/reference/tei-embeddings.compose.yaml`; Dockerfile at `services/embedder/Dockerfile`.
+- Env: `IBEX_EMBEDDING_API_TOKEN`, `IBEX_EMBEDDING_TEI_BASE_URL`, `IBEX_EMBEDDING_TEI_ALLOW_INSECURE`, `IBEX_EMBEDDING_TEI_API_KEY`, `IBEX_EMBEDDING_TEI_TIMEOUT_SECONDS`, `IBEX_EMBEDDING_TEI_CONNECT_TIMEOUT_SECONDS`, `IBEX_EMBEDDING_TEI_MAX_RETRIES`, `IBEX_EMBEDDING_TEI_HEALTH_TIMEOUT_SECONDS` — see `ENVIRONMENT_VARIABLES.md`.
+- M3 (hosted) and M4 (cache decorator) plug into the same `EmbeddingBackend` ABC without further contract breaks.
+
 ## References
 
 - [ADR-0025 LLM provider abstraction](/docs/adr/0025-llm-provider-abstraction)

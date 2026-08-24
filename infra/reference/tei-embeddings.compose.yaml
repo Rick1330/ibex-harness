@@ -1,0 +1,71 @@
+# REFERENCE ONLY — not included in make compose-dev-up.
+# TEI (Text Embeddings Inference) sidecar for the IBEX Embedder (G4.M2 / ADR-0046).
+#
+# Usage — laptop (CPU, slow but functional, use a tiny model):
+#   TEI_MODEL=BAAI/bge-small-en-v1.5 \
+#   docker compose -f infra/reference/tei-embeddings.compose.yaml up
+#
+# Usage — GPU workstation:
+#   Uncomment the deploy.resources block below, then:
+#   TEI_MODEL=BAAI/bge-m3 \
+#   docker compose -f infra/reference/tei-embeddings.compose.yaml up
+#
+# Then point the embedder at TEI (cleartext is compose/dev only):
+#   IBEX_EMBEDDING_PROFILE=gpu
+#   IBEX_EMBEDDING_TEI_BASE_URL=http://localhost:8080
+#   IBEX_EMBEDDING_TEI_ALLOW_INSECURE=true
+#   IBEX_EMBEDDING_API_TOKEN=<shared-token>
+#   IBEX_EMBEDDING_MODEL=BAAI/bge-m3  # must match what TEI is serving
+#   IBEX_EMBEDDING_DIM=1024
+#
+# Live integration tests (skipped in CI):
+#   IBEX_TEI_LIVE=1 pytest -m tei_live services/embedder/tests/
+#
+# Image versioning:
+#   ghcr.io/huggingface/text-embeddings-inference is the canonical registry.
+#   Pin to a specific sha or version tag — never use :latest in production.
+#   Check https://github.com/huggingface/text-embeddings-inference/releases
+
+services:
+  tei:
+    # Pin to a specific release tag.
+    # CPU variant suffix: -cpu (e.g. 1.6.0-cpu)
+    # GPU variant:        plain tag (requires CUDA runtime on host).
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.6
+    ports:
+      - "127.0.0.1:8080:80"
+    environment:
+      # Model to load — must match IBEX_EMBEDDING_MODEL on the embedder side.
+      # For production gpu profile use BAAI/bge-m3 (1024-d).
+      # For CPU-only laptops use a smaller model: BAAI/bge-small-en-v1.5 (384-d).
+      MODEL_ID: ${TEI_MODEL:-BAAI/bge-small-en-v1.5}
+    command:
+      - "--model-id"
+      - "${TEI_MODEL:-BAAI/bge-small-en-v1.5}"
+      - "--port"
+      - "80"
+    volumes:
+      # Cache downloaded model weights across container restarts.
+      - tei-model-cache:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s  # bge-m3 takes ~30s to load on first run
+
+    # ── GPU resource reservation ─────────────────────────────────────────
+    # Uncomment when running on a CUDA-capable host.
+    # Also change the image tag to the non -cpu variant (e.g. 1.6.0).
+    #
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+    # ──────────────────────────────────────────────────────────────────────
+
+volumes:
+  tei-model-cache:

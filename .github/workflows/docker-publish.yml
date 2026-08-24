@@ -6,6 +6,7 @@ on:
     paths:
       - 'services/auth/**'
       - 'services/proxy/**'
+      - 'services/embedder/**'
       - 'packages/**'
       - 'go.mod'
       - 'go.sum'
@@ -205,6 +206,40 @@ jobs:
           path: /tmp/proxy.tar
           retention-days: 1
 
+  build-embedder:
+    name: build-embedder
+    needs: resolve-tag
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - name: Build embedder image artifact
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: services/embedder/Dockerfile
+          platforms: linux/amd64
+          push: false
+          outputs: type=docker,dest=/tmp/embedder.tar
+          cache-from: type=gha,scope=embedder
+          cache-to: type=gha,mode=max,scope=embedder
+      - name: Upload embedder OCI artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: oci-embedder
+          path: /tmp/embedder.tar
+          retention-days: 1
+
   scan-image-auth:
     name: scan-image-auth
     needs: build-auth
@@ -276,6 +311,42 @@ jobs:
         with:
           sarif_file: trivy-image-proxy.sarif
           category: trivy-image-proxy
+
+  scan-image-embedder:
+    name: scan-image-embedder
+    needs: build-embedder
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: audit
+
+      - name: Download embedder OCI artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: oci-embedder
+          path: /tmp
+      - uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.0
+        with:
+          version: v0.70.0
+      - name: Scan embedder image with Trivy
+        run: |
+          trivy image --input /tmp/embedder.tar \
+            --severity CRITICAL,HIGH \
+            --ignore-unfixed \
+            --format sarif \
+            --output trivy-image-embedder.sarif \
+            --exit-code 1
+      - name: Upload Trivy embedder SARIF
+        if: always() && hashFiles('trivy-image-embedder.sarif') != ''
+        uses: github/codeql-action/upload-sarif@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
+        with:
+          sarif_file: trivy-image-embedder.sarif
+          category: trivy-image-embedder
 
   push-auth:
     name: push-auth
@@ -407,9 +478,69 @@ jobs:
           cache-from: type=gha,scope=proxy
           cache-to: type=gha,mode=max,scope=proxy
 
+  push-embedder:
+    name: push-embedder
+    needs: [resolve-tag, scan-image-embedder]
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      contents: read
+      id-token: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+        with:
+          platforms: linux/amd64,linux/arm64
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Resolve push tags
+        id: tags
+        env:
+          IMAGE_TAG: ${{ needs.resolve-tag.outputs.tag }}
+          PUSH_LATEST: ${{ needs.resolve-tag.outputs.push_latest }}
+        run: |
+          repo_lc="${GITHUB_REPOSITORY,,}"
+          tags="ghcr.io/${repo_lc}/embedder:${IMAGE_TAG}"
+          if [ "${PUSH_LATEST}" = "true" ]; then
+            tags="${tags}"$'\n'"ghcr.io/${repo_lc}/embedder:latest"
+          fi
+          {
+            echo "tags<<EOF"
+            echo "${tags}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+      - name: Build and push embedder image
+        id: build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: services/embedder/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          cache-from: type=gha,scope=embedder
+          cache-to: type=gha,mode=max,scope=embedder
+
   attest-provenance:
     name: attest-provenance
-    needs: [push-auth, push-proxy]
+    needs: [push-auth, push-proxy, push-embedder]
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
@@ -446,14 +577,23 @@ jobs:
           subject-digest: ${{ needs.push-proxy.outputs.digest }}
           push-to-registry: true
 
+      - name: Attest embedder image provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ghcr.io/${{ steps.repo_meta.outputs.repo_lc }}/embedder
+          subject-digest: ${{ needs.push-embedder.outputs.digest }}
+          push-to-registry: true
+
   notify:
     name: notify
     needs:
       - resolve-tag
       - scan-image-auth
       - scan-image-proxy
+      - scan-image-embedder
       - push-auth
       - push-proxy
+      - push-embedder
       - attest-provenance
     if: always() && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
@@ -474,11 +614,14 @@ jobs:
           TAG: ${{ needs.resolve-tag.outputs.tag }}
           AUTH_DIGEST: ${{ needs.push-auth.outputs.digest }}
           PROXY_DIGEST: ${{ needs.push-proxy.outputs.digest }}
+          EMBEDDER_DIGEST: ${{ needs.push-embedder.outputs.digest }}
           REPO_LC: ${{ github.repository }}
           RESULT_SCAN_AUTH: ${{ needs.scan-image-auth.result }}
           RESULT_SCAN_PROXY: ${{ needs.scan-image-proxy.result }}
+          RESULT_SCAN_EMBEDDER: ${{ needs.scan-image-embedder.result }}
           RESULT_PUSH_AUTH: ${{ needs.push-auth.result }}
           RESULT_PUSH_PROXY: ${{ needs.push-proxy.result }}
+          RESULT_PUSH_EMBEDDER: ${{ needs.push-embedder.result }}
           RESULT_ATTEST: ${{ needs.attest-provenance.result }}
         run: |
           repo_lc="${REPO,,}"
@@ -489,6 +632,7 @@ jobs:
 
           auth_image="ghcr.io/${repo_lc}/auth:${TAG}"
           proxy_image="ghcr.io/${repo_lc}/proxy:${TAG}"
+          embedder_image="ghcr.io/${repo_lc}/embedder:${TAG}"
 
           cat <<EOF > body.md
           ## Docker Publish
@@ -500,12 +644,15 @@ jobs:
           ### Images
           - **Auth**: \`${auth_image}\`  \`${AUTH_DIGEST}\`
           - **Proxy**: \`${proxy_image}\`  \`${PROXY_DIGEST}\`
+          - **Embedder**: \`${embedder_image}\`  \`${EMBEDDER_DIGEST}\`
 
           ### Job results
           - scan-image-auth: **${RESULT_SCAN_AUTH}**
           - scan-image-proxy: **${RESULT_SCAN_PROXY}**
+          - scan-image-embedder: **${RESULT_SCAN_EMBEDDER}**
           - push-auth: **${RESULT_PUSH_AUTH}**
           - push-proxy: **${RESULT_PUSH_PROXY}**
+          - push-embedder: **${RESULT_PUSH_EMBEDDER}**
           - attest-provenance: **${RESULT_ATTEST}**
 
           EOF

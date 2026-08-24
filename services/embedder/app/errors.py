@@ -47,3 +47,25 @@ class InvalidVectorError(EmbedderError):
 
 class ServiceNotReadyError(EmbedderError):
     code = "service_not_ready"
+
+
+class AuthenticationError(EmbedderError):
+    code = "authentication_failed"
+
+
+class BackendUnavailableError(EmbedderError):
+    """TEI or upstream backend is unreachable or returned a server error."""
+
+    code = "backend_unavailable"
+
+
+class BackendTimeoutError(EmbedderError):
+    """TEI request exceeded configured timeout."""
+
+    code = "backend_timeout"
+
+
+class BackendRejectedError(EmbedderError):
+    """TEI rejected the request (413/422/424) — do not retry."""
+
+    code = "backend_rejected"
