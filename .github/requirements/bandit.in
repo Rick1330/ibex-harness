@@ -1,1 +1,15 @@
+# Bandit SAST for Python services in CI (.github/workflows/ci.yml).
+#
+# Why [sarif]: github/codeql-action/upload-sarif requires SARIF. Bandit 1.8.x
+# ships csv/json/txt only; -f sarif needs the optional extra (jschema-to-python,
+# sarif-om, jsonpickle, attrs).
+#
+# Alternatives: bandit -f json + custom converter (extra CI code, drift risk);
+# skip Code Scanning upload (weaker GH security tab). Rejected.
+#
+# Security: CI-only, hash-pinned in bandit.txt, --only-binary :all:. Extra
+# packages do not ship in embedder runtime. Scan scope is services/*/app.
+#
+# Maintenance: PyCQA/bandit; extra adds ~4 small PyPI pkgs. Bump via
+# pip-compile --generate-hashes when refreshing bandit.txt.
 bandit[sarif]==1.9.4

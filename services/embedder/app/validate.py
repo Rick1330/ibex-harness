@@ -78,28 +78,48 @@ def validate_embed_input(texts: list[str]) -> None:
         _validate_text_at(i, text)
 
 
+def _assert_output_batch_len(texts: list[str], vectors: NDArray[np.float32]) -> None:
+    if vectors.shape[0] != len(texts):
+        raise InvalidVectorError(
+            f"got {vectors.shape[0]} vectors for {len(texts)} texts"
+        )
+
+
+def _assert_output_rank2(vectors: NDArray[np.float32]) -> None:
+    if vectors.ndim != 2:
+        raise InvalidVectorError(
+            f"expected rank-2 array, got ndim={vectors.ndim}"
+        )
+
+
+def _assert_output_dim(texts: list[str], vectors: NDArray[np.float32], dim: int) -> None:
+    if vectors.shape[1] != dim:
+        raise InvalidVectorError(
+            f"expected shape ({len(texts)}, {dim}), got {vectors.shape}"
+        )
+
+
+def _assert_output_finite(vectors: NDArray[np.float32]) -> None:
+    if not np.all(np.isfinite(vectors)):
+        raise InvalidVectorError("non-finite values in output")
+
+
+def _assert_output_unit_l2(vectors: NDArray[np.float32]) -> None:
+    norms = np.linalg.norm(vectors, axis=1)
+    if not np.allclose(norms, 1.0, atol=1e-5):
+        raise InvalidVectorError("vectors must be L2-normalized")
+
+
 def validate_output_vectors(
     texts: list[str],
     vectors: NDArray[np.float32],
     dim: int,
 ) -> None:
-    if vectors.shape[0] != len(texts):
-        raise InvalidVectorError(
-            f"got {vectors.shape[0]} vectors for {len(texts)} texts"
-        )
-    if vectors.ndim != 2:
-        raise InvalidVectorError(
-            f"expected rank-2 array, got ndim={vectors.ndim}"
-        )
-    if vectors.shape[1] != dim:
-        raise InvalidVectorError(
-            f"expected shape ({len(texts)}, {dim}), got {vectors.shape}"
-        )
-    if not np.all(np.isfinite(vectors)):
-        raise InvalidVectorError("non-finite values in output")
-    norms = np.linalg.norm(vectors, axis=1)
-    if not np.allclose(norms, 1.0, atol=1e-5):
-        raise InvalidVectorError("vectors must be L2-normalized")
+    _assert_output_batch_len(texts, vectors)
+    _assert_output_rank2(vectors)
+    _assert_output_dim(texts, vectors, dim)
+    _assert_output_finite(vectors)
+    _assert_output_unit_l2(vectors)
 
 
 def l2_normalize_rows(vectors: NDArray[np.float32]) -> NDArray[np.float32]:

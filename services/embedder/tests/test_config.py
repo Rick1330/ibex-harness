@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 from app.config import Settings, build_registry, get_settings, load_active_backend
 from app.errors import DuplicateProfileError, GeometryMismatchError
+from app.limits import MAX_MODEL_ID_LEN
 from app.registry import BackendRegistry
 from app.stub import StubBackend
 
@@ -26,6 +27,12 @@ def test_settings_defaults_cpu() -> None:
     assert settings.profile == "cpu"
     assert dim == 384
     assert model == "all-MiniLM-L6-v2"
+
+
+def test_settings_model_id_max_length() -> None:
+    Settings(model="m" * MAX_MODEL_ID_LEN)
+    with pytest.raises(ValidationError):
+        Settings(model="m" * (MAX_MODEL_ID_LEN + 1))
 
 
 def test_settings_rejects_invalid_profile() -> None:
