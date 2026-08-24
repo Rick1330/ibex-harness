@@ -19,7 +19,7 @@ FROM ghcr.io/astral-sh/uv:0.7.20 AS uv
 # --------------------------------------------------------------------------- #
 # Stage 2 — dependency install (wheels only; no sdist setup.py execution)     #
 # --------------------------------------------------------------------------- #
-FROM python:3.12-slim AS deps
+FROM python:3.12-slim-bookworm AS deps
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -39,15 +39,18 @@ RUN uv sync --frozen --no-build --no-install-project
 # --------------------------------------------------------------------------- #
 # Stage 3 — runtime image                                                      #
 # --------------------------------------------------------------------------- #
-FROM python:3.12-slim AS runtime
+FROM python:3.12-slim-bookworm AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/app/.venv/bin:$PATH"
 
-# Create a non-root user (uid 10001, no shell, no home).
-RUN groupadd -g 10001 ibex && \
-    useradd -u 10001 -g ibex -r -s /sbin/nologin ibex
+# Apply Debian security patches, then drop to a non-root user.
+RUN apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd -g 10001 ibex \
+    && useradd -u 10001 -g ibex -r -s /sbin/nologin ibex
 
 WORKDIR /app
 

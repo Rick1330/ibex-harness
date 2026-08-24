@@ -71,6 +71,22 @@ def _auth_headers(token: str = _API_TOKEN) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+def _post_v1_embed(
+    monkeypatch: pytest.MonkeyPatch,
+    payload: dict[str, Any],
+    *,
+    state: AppState | None = None,
+    headers: dict[str, str] | None = None,
+) -> Any:
+    monkeypatch.setenv("IBEX_EMBEDDING_PROFILE", "cpu")
+    monkeypatch.setenv("IBEX_EMBEDDING_API_TOKEN", _API_TOKEN)
+    ready = state if state is not None else _make_ready_state()
+    req_headers = _auth_headers() if headers is None else headers
+    with TestClient(app) as tc:
+        tc.app.state.embedder = ready
+        return tc.post("/v1/embed", json=payload, headers=req_headers)
+
+
 @pytest.fixture(autouse=True)
 def _clear_settings():
     get_settings.cache_clear()
@@ -215,69 +231,46 @@ class TestEmbedBackendErrors:
 
 
 class TestEmbedRequestSchema:
-    def test_missing_texts_field_returns_422(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("IBEX_EMBEDDING_PROFILE", "cpu")
-        monkeypatch.setenv("IBEX_EMBEDDING_API_TOKEN", _API_TOKEN)
+    def test_missing_texts_field_returns_400(self, monkeypatch: pytest.MonkeyPatch) -> None:
         state = _make_ready_state()
-        with TestClient(app) as tc:
-            tc.app.state.embedder = state
-            resp = tc.post("/v1/embed", json={}, headers=_auth_headers())
-        assert resp.status_code == 422
+        resp = _post_v1_embed(monkeypatch, {}, state=state)
+        assert resp.status_code == 400
+        body = resp.json()
+        assert body["error"]["code"] == "invalid_request"
+        assert "message" in body["error"]
+        assert "detail" not in body
 
-    def test_texts_not_list_returns_422(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("IBEX_EMBEDDING_PROFILE", "cpu")
-        monkeypatch.setenv("IBEX_EMBEDDING_API_TOKEN", _API_TOKEN)
+    def test_texts_not_list_returns_400(self, monkeypatch: pytest.MonkeyPatch) -> None:
         state = _make_ready_state()
-        with TestClient(app) as tc:
-            tc.app.state.embedder = state
-            resp = tc.post("/v1/embed", json={"texts": "not a list"}, headers=_auth_headers())
-        assert resp.status_code == 422
+        resp = _post_v1_embed(monkeypatch, {"texts": "not a list"}, state=state)
+        assert resp.status_code == 400
+        body = resp.json()
+        assert body["error"]["code"] == "invalid_request"
+        assert "message" in body["error"]
+        assert "detail" not in body
 
 
 class TestEmbedAuth:
     def test_missing_bearer_token_returns_401(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("IBEX_EMBEDDING_PROFILE", "cpu")
-        monkeypatch.setenv("IBEX_EMBEDDING_API_TOKEN", _API_TOKEN)
-        state = _make_ready_state()
-        with TestClient(app) as tc:
-            tc.app.state.embedder = state
-            resp = tc.post("/v1/embed", json={"texts": ["x"]})
+        resp = _post_v1_embed(monkeypatch, {"texts": ["x"]}, headers={})
         assert resp.status_code == 401
         assert resp.json()["error"]["code"] == "authentication_failed"
 
     def test_invalid_bearer_token_returns_401(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("IBEX_EMBEDDING_PROFILE", "cpu")
-        monkeypatch.setenv("IBEX_EMBEDDING_API_TOKEN", _API_TOKEN)
-        state = _make_ready_state()
-        with TestClient(app) as tc:
-            tc.app.state.embedder = state
-            resp = tc.post(
-                "/v1/embed",
-                json={"texts": ["x"]},
-                headers=_auth_headers("wrong-token"),
-            )
+        resp = _post_v1_embed(
+            monkeypatch, {"texts": ["x"]}, headers=_auth_headers("wrong-token")
+        )
         assert resp.status_code == 401
         assert resp.json()["error"]["code"] == "authentication_failed"
 
     def test_same_length_wrong_token_returns_401(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("IBEX_EMBEDDING_PROFILE", "cpu")
-        monkeypatch.setenv("IBEX_EMBEDDING_API_TOKEN", _API_TOKEN)
-        state = _make_ready_state()
         wrong = "x" * len(_API_TOKEN)
-        with TestClient(app) as tc:
-            tc.app.state.embedder = state
-            resp = tc.post(
-                "/v1/embed",
-                json={"texts": ["x"]},
-                headers=_auth_headers(wrong),
-            )
+        resp = _post_v1_embed(monkeypatch, {"texts": ["x"]}, headers=_auth_headers(wrong))
         assert resp.status_code == 401
-        monkeypatch.setenv("IBEX_EMBEDDING_PROFILE", "cpu")
-        monkeypatch.setenv("IBEX_EMBEDDING_API_TOKEN", _API_TOKEN)
+
+    def test_valid_token_returns_200(self, monkeypatch: pytest.MonkeyPatch) -> None:
         state = _make_ready_state(_ReadyBackendSpec(embed_return=_l2_vecs(1)))
-        with TestClient(app) as tc:
-            tc.app.state.embedder = state
-            resp = tc.post("/v1/embed", json={"texts": ["x"]}, headers=_auth_headers())
+        resp = _post_v1_embed(monkeypatch, {"texts": ["x"]}, state=state)
         assert resp.status_code == 200
 
 

@@ -54,9 +54,17 @@ class AuthenticationError(EmbedderError):
 
 
 class BackendUnavailableError(EmbedderError):
-    """TEI or upstream backend is unreachable or returned a server error."""
+    """TEI or upstream backend is unreachable or returned a server error.
+
+    retryable is an internal client hint. Public error type stays the same for
+    both transient (429/502/503/transport) and non-retryable (4xx/500) failures.
+    """
 
     code = "backend_unavailable"
+
+    def __init__(self, message: str, *, retryable: bool = False) -> None:
+        super().__init__(message)
+        self.retryable = retryable
 
 
 class BackendTimeoutError(EmbedderError):

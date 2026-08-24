@@ -55,8 +55,8 @@ func TestIntegration_UnknownFamilyOverlay_CountFailsAtRuntime(t *testing.T) {
 		SupportsTools: true, SupportsVision: false, SupportsStreaming: true,
 		TokenizerFamily: provider.TokenizerFamilyUnknown,
 	})
-	_, err = tokenizer.CountForModel(tokenizer.ModelCountRequest{
-		Ctx: context.Background(), Catalog: catalog, Reg: reg, Model: "custom-model", Text: "hi",
+	_, err = tokenizer.CountForModel(context.Background(), tokenizer.ModelCountRequest{
+		Catalog: catalog, Reg: reg, Model: "custom-model", Text: "hi",
 	})
 	require.ErrorIs(t, err, tokenizer.ErrMissingTokenizer)
 }

@@ -335,12 +335,22 @@ jobs:
           version: v0.70.0
       - name: Scan embedder image with Trivy
         run: |
+          # Table first so failing CVEs are visible in job logs (SARIF alone is opaque).
+          set +e
+          trivy image --input /tmp/embedder.tar \
+            --severity CRITICAL,HIGH \
+            --ignore-unfixed \
+            --format table \
+            --exit-code 1
+          table_rc=$?
           trivy image --input /tmp/embedder.tar \
             --severity CRITICAL,HIGH \
             --ignore-unfixed \
             --format sarif \
             --output trivy-image-embedder.sarif \
-            --exit-code 1
+            --exit-code 0
+          set -e
+          exit "$table_rc"
       - name: Upload Trivy embedder SARIF
         if: always() && hashFiles('trivy-image-embedder.sarif') != ''
         uses: github/codeql-action/upload-sarif@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7

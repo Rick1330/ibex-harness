@@ -219,7 +219,7 @@ class TestLiveFactory:
 # ------------------------------------------------------------------ #
 
 class TestLiveEmbedAPI:
-    async def test_v1_embed_returns_200_with_vectors(self) -> None:
+    async def test_v1_embed_returns_200_with_vectors(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """POST /v1/embed against a live backend via TestClient."""
         from fastapi.testclient import TestClient
 
@@ -227,8 +227,8 @@ class TestLiveEmbedAPI:
         from app.main import app
         from app.state import AppState
 
-        os.environ["IBEX_EMBEDDING_API_TOKEN"] = _LIVE_API_TOKEN
-        os.environ["IBEX_EMBEDDING_PROFILE"] = "cpu"
+        monkeypatch.setenv("IBEX_EMBEDDING_API_TOKEN", _LIVE_API_TOKEN)
+        monkeypatch.setenv("IBEX_EMBEDDING_PROFILE", "cpu")
         get_settings.cache_clear()
 
         backend = TEIBackend(

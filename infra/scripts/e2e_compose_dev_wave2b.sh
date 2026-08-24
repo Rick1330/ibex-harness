@@ -13,6 +13,7 @@ AGENT_A="00000000-0000-0000-0000-000000000003"
 DEV_TOKEN="${IBEX_DEV_TOKEN:-ibex_pat_00000000-0000-0000-0000-000000000004_LOCALDEVELOPMENTONLY}"
 PROXY_ADDR="${IBEX_PROXY_ADDR:-http://localhost:8080}"
 AUTH_HTTP="${IBEX_AUTH_HTTP:-http://localhost:8081}"
+HDR_JSON="Content-Type: application/json"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 pass() { echo "PASS: $*"; }
@@ -174,26 +175,26 @@ http_code() { curl -s -o /dev/null -w "%{http_code}" "$@"; }
 CHAT='{"model":"gpt-4o","messages":[{"role":"user","content":"e2e"}]}'
 
 HTTP="$(http_code -X POST "$PROXY_ADDR/v1/chat/completions" \
-  -H "Content-Type: application/json" -d "$CHAT")"
+  -H "$HDR_JSON" -d "$CHAT")"
 [[ "$HTTP" == "401" ]] || fail "no token → want 401 got $HTTP"
 pass "proxy no token → 401"
 
 HTTP="$(http_code -X POST "$PROXY_ADDR/v1/chat/completions" \
-  -H "Content-Type: application/json" \
+  -H "$HDR_JSON" \
   -H "Authorization: Bearer not-a-real-token" \
   -d "$CHAT")"
 [[ "$HTTP" == "401" ]] || fail "bad token → want 401 got $HTTP"
 pass "proxy bad token → 401"
 
 HTTP="$(http_code -X POST "$PROXY_ADDR/v1/chat/completions" \
-  -H "Content-Type: application/json" \
+  -H "$HDR_JSON" \
   -H "Authorization: Bearer $DEV_TOKEN" \
   -d "$CHAT")"
 [[ "$HTTP" == "400" ]] || fail "missing agent → want 400 got $HTTP"
 pass "proxy missing agent → 400"
 
 HTTP="$(http_code -X POST "$PROXY_ADDR/v1/chat/completions" \
-  -H "Content-Type: application/json" \
+  -H "$HDR_JSON" \
   -H "Authorization: Bearer $DEV_TOKEN" \
   -H "X-IBEX-Agent-ID: $AGENT_B" \
   -d "$CHAT")"
@@ -201,7 +202,7 @@ HTTP="$(http_code -X POST "$PROXY_ADDR/v1/chat/completions" \
 pass "proxy cross-org agent → 403"
 
 HTTP="$(http_code -X POST "$PROXY_ADDR/v1/chat/completions" \
-  -H "Content-Type: application/json" \
+  -H "$HDR_JSON" \
   -H "Authorization: Bearer $DEV_TOKEN" \
   -H "X-IBEX-Agent-ID: $AGENT_A" \
   -d "$CHAT")"

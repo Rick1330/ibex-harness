@@ -1243,9 +1243,17 @@ jobs:
             --only-binary :all: \
             --require-hashes \
             -r .github/requirements/bandit.txt
+          set +e
           bandit -r "${targets[@]}" -x 'tests/,test_,.venv/' -f txt
+          txt_rc=$?
           bandit -r "${targets[@]}" -x 'tests/,test_,.venv/' -f sarif -o bandit.sarif
+          sarif_rc=$?
+          set -e
           echo "run=true" >> "$GITHUB_OUTPUT"
+          if [ "$txt_rc" -ne 0 ] || [ "$sarif_rc" -ne 0 ]; then
+            echo "Bandit failed (txt_rc=${txt_rc} sarif_rc=${sarif_rc})"
+            exit 1
+          fi
       - name: Bandit skipped summary
         if: steps.bandit.outputs.run != 'true'
         run: |
@@ -1267,7 +1275,7 @@ jobs:
           path: bandit-skip.txt
           retention-days: 7
       - name: Upload Bandit SARIF
-        if: steps.bandit.outputs.run == 'true'
+        if: always() && steps.bandit.outputs.run == 'true'
         uses: github/codeql-action/upload-sarif@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
         with:
           sarif_file: bandit.sarif

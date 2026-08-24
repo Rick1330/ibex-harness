@@ -57,6 +57,35 @@ func TestWrite_envelopeShape(t *testing.T) {
 	}
 }
 
+func assertWriteJSONEnvelope(
+	t *testing.T,
+	rec *httptest.ResponseRecorder,
+	status int,
+	code apierror.Code,
+	message, requestID string,
+) {
+	t.Helper()
+	if rec.Code != status {
+		t.Fatalf("status: got %d want %d", rec.Code, status)
+	}
+	var body apierror.Response
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if body.Error.Code != code {
+		t.Fatalf("code: got %s want %s", body.Error.Code, code)
+	}
+	if body.Error.Message != message {
+		t.Fatalf("message: got %s want %s", body.Error.Message, message)
+	}
+	if body.Error.RequestID != requestID {
+		t.Fatalf("request_id: got %s want %s", body.Error.RequestID, requestID)
+	}
+	if body.Error.Timestamp.IsZero() {
+		t.Fatal("expected non-zero timestamp")
+	}
+}
+
 func TestWriteJSON_envelopeFields(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -96,25 +125,7 @@ func TestWriteJSON_envelopeFields(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := httptest.NewRecorder()
 			apierror.WriteJSON(rec, tc.status, tc.code, tc.message, tc.detail, tc.requestID)
-			if rec.Code != tc.status {
-				t.Fatalf("status: got %d want %d", rec.Code, tc.status)
-			}
-			var body apierror.Response
-			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-				t.Fatalf("unmarshal: %v", err)
-			}
-			if body.Error.Code != tc.code {
-				t.Fatalf("code: got %s want %s", body.Error.Code, tc.code)
-			}
-			if body.Error.Message != tc.message {
-				t.Fatalf("message: got %s want %s", body.Error.Message, tc.message)
-			}
-			if body.Error.RequestID != tc.requestID {
-				t.Fatalf("request_id: got %s want %s", body.Error.RequestID, tc.requestID)
-			}
-			if body.Error.Timestamp.IsZero() {
-				t.Fatal("expected non-zero timestamp")
-			}
+			assertWriteJSONEnvelope(t, rec, tc.status, tc.code, tc.message, tc.requestID)
 		})
 	}
 }

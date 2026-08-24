@@ -13,6 +13,7 @@ from app.errors import (
     BackendRejectedError,
     BackendTimeoutError,
     BackendUnavailableError,
+    InvalidVectorError,
 )
 from app.tei.client import TeiClient, TeiClientConfig
 
@@ -129,9 +130,40 @@ class TestEmbed:
             await client.embed(["x"])
 
     @respx.mock
-    async def test_500_raises_unavailable(self, client: TeiClient) -> None:
-        respx.post(f"{_BASE_URL}/embed").mock(return_value=Response(500, text="oops"))
+    async def test_500_raises_unavailable_without_retry(self, client: TeiClient) -> None:
+        route = respx.post(f"{_BASE_URL}/embed").mock(return_value=Response(500, text="oops"))
         with pytest.raises(BackendUnavailableError):
+            await client.embed(["x"])
+        assert route.call_count == 1
+
+    @respx.mock
+    @pytest.mark.parametrize("status", [400, 401, 403, 404])
+    async def test_non_retryable_client_errors_raise_once(
+        self, client: TeiClient, status: int
+    ) -> None:
+        route = respx.post(f"{_BASE_URL}/embed").mock(return_value=Response(status, text="nope"))
+        with pytest.raises(BackendUnavailableError):
+            await client.embed(["x"])
+        assert route.call_count == 1
+
+    @respx.mock
+    async def test_malformed_json_raises_invalid_vector(self, client: TeiClient) -> None:
+        respx.post(f"{_BASE_URL}/embed").mock(
+            return_value=Response(
+                200,
+                content=b"{not json",
+                headers={"content-type": "application/json"},
+            )
+        )
+        with pytest.raises(InvalidVectorError, match="malformed JSON"):
+            await client.embed(["x"])
+
+    @respx.mock
+    async def test_object_payload_raises_invalid_vector(self, client: TeiClient) -> None:
+        respx.post(f"{_BASE_URL}/embed").mock(
+            return_value=Response(200, json={"embeddings": [[0.1]]})
+        )
+        with pytest.raises(InvalidVectorError, match="unexpected type"):
             await client.embed(["x"])
 
     @respx.mock

@@ -7,6 +7,7 @@ import pytest
 
 from app.errors import BackendRejectedError, InvalidVectorError
 from app.tei.protocol import (
+    parse_info_dimensions,
     parse_info_response,
     parse_native_embed_response,
     parse_openai_compat_embed_response,
@@ -26,11 +27,11 @@ class TestParseNativeEmbedResponse:
         assert arr.shape == (2, 2)
 
     def test_not_a_list_raises(self) -> None:
-        with pytest.raises(BackendRejectedError, match="unexpected type"):
+        with pytest.raises(InvalidVectorError, match="unexpected type"):
             parse_native_embed_response({"data": []})
 
     def test_dict_raises(self) -> None:
-        with pytest.raises(BackendRejectedError):
+        with pytest.raises(InvalidVectorError):
             parse_native_embed_response({"inputs": [1, 2]})
 
     def test_non_numeric_values_raises(self) -> None:
@@ -38,7 +39,7 @@ class TestParseNativeEmbedResponse:
             parse_native_embed_response([["a", "b"]])
 
     def test_none_raises(self) -> None:
-        with pytest.raises(BackendRejectedError):
+        with pytest.raises(InvalidVectorError):
             parse_native_embed_response(None)
 
     def test_empty_list_becomes_empty_array(self) -> None:
@@ -129,3 +130,17 @@ class TestParseInfoResponse:
 
     def test_empty_string_model_id_returns_none(self) -> None:
         assert parse_info_response({"model_id": ""}) is None
+
+
+class TestParseInfoDimensions:
+    def test_hidden_size(self) -> None:
+        assert parse_info_dimensions({"hidden_size": 1024}) == 1024
+
+    def test_dim_key(self) -> None:
+        assert parse_info_dimensions({"dim": 384}) == 384
+
+    def test_absent_or_invalid(self) -> None:
+        assert parse_info_dimensions({}) is None
+        assert parse_info_dimensions({"hidden_size": 0}) is None
+        assert parse_info_dimensions({"hidden_size": "1024"}) is None
+        assert parse_info_dimensions([]) is None

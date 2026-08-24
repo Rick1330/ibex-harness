@@ -22,6 +22,12 @@ def get_embedder_state(request: Request) -> AppState:
     return request.app.state.embedder
 
 
+def _bearer_token_matches(provided: str, expected: str) -> bool:
+    if not expected or len(provided) != len(expected):
+        return False
+    return hmac.compare_digest(provided, expected)
+
+
 def require_service_auth(
     credentials: BearerCredDep,
     settings: SettingsDep,
@@ -29,10 +35,7 @@ def require_service_auth(
     expected = settings.api_token.get_secret_value() if settings.api_token is not None else ""
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise AuthenticationError("missing Bearer token")
-    provided = credentials.credentials
-    if not expected or len(provided) != len(expected):
-        raise AuthenticationError("invalid Bearer token")
-    if not hmac.compare_digest(provided, expected):
+    if not _bearer_token_matches(credentials.credentials, expected):
         raise AuthenticationError("invalid Bearer token")
 
 

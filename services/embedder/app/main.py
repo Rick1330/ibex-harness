@@ -9,6 +9,7 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
@@ -25,12 +26,14 @@ from app.errors import (
 from app.factory import build_backend
 from app.schemas import ErrorEnvelope
 from app.state import AppState
+from app.tei.protocol import parse_info_dimensions
 from app.validate import validate_geometry
 
 logger = logging.getLogger(__name__)
 
 # Interval between /health polls during TEI startup wait.
 _HEALTH_POLL_INTERVAL_SECONDS = 1.0
+_GEOMETRY_PROBE_TEXT = "ibex-geometry-probe"
 
 
 def _error_response(*, status_code: int, code: str, message: str) -> JSONResponse:
@@ -66,14 +69,25 @@ async def _wait_for_tei_health(backend: TEIBackend, timeout_seconds: float) -> N
 
 
 async def _verify_tei_geometry(backend: TEIBackend) -> None:
-    """Fetch /info and assert model_id matches configured value.
+    """Fail closed unless TEI model_id and observed vector dim match config.
 
-    /info identity is mandatory for readiness. A fetch failure or missing model_id
-    means we cannot prove the running backend matches configured geometry.
+    /info identity is mandatory. Dimension is taken from /info when present,
+    then confirmed with a single bounded embed probe (TEI often omits dim).
     """
     info = await backend.info()
+    _assert_tei_model_id(backend, info)
+    _assert_info_dimensions(backend, info)
+    probe = await backend.embed([_GEOMETRY_PROBE_TEXT])
+    _assert_probe_dimensions(probe, backend.dimensions)
+    logger.info(
+        "TEI geometry confirmed model_id=%s dimensions=%d",
+        backend.model_id,
+        backend.dimensions,
+    )
 
-    remote_model = backend.model_id_from_info(info)
+
+def _assert_tei_model_id(backend: TEIBackend, info: object) -> None:
+    remote_model = backend.model_id_from_info(info)  # type: ignore[arg-type]
     if remote_model is None:
         raise BackendUnavailableError("TEI /info did not return model_id; refusing readiness")
     if remote_model != backend.model_id:
@@ -81,7 +95,23 @@ async def _verify_tei_geometry(backend: TEIBackend) -> None:
             f"TEI model mismatch: running model_id={remote_model!r} "
             f"but configured model_id={backend.model_id!r}"
         )
-    logger.info("TEI model_id confirmed model_id=%s", remote_model)
+
+
+def _assert_info_dimensions(backend: TEIBackend, info: object) -> None:
+    reported = parse_info_dimensions(info)
+    if reported is not None and reported != backend.dimensions:
+        raise GeometryMismatchError(
+            f"TEI dimensions mismatch: reported dim={reported} "
+            f"configured dimensions={backend.dimensions}"
+        )
+
+
+def _assert_probe_dimensions(probe: object, want: int) -> None:
+    shape = getattr(probe, "shape", ())
+    if not hasattr(shape, "__len__") or len(shape) < 2 or int(shape[-1]) != want:
+        raise GeometryMismatchError(
+            f"TEI dimensions mismatch: observed {shape!r} configured dimensions={want}"
+        )
 
 
 async def _startup(state: AppState) -> None:
@@ -153,6 +183,16 @@ def create_app() -> FastAPI:
             status_code=status.HTTP_401_UNAUTHORIZED,
             code=exc.code,
             message=exc.message,
+        )
+
+    @application.exception_handler(RequestValidationError)
+    async def _request_validation_error_handler(
+        _: Request, __: RequestValidationError
+    ) -> JSONResponse:
+        return _error_response(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            code="invalid_request",
+            message="request validation failed",
         )
 
     @application.exception_handler(EmbedderError)

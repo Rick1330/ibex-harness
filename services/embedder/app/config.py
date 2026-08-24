@@ -106,9 +106,12 @@ class Settings(BaseSettings):
         stripped = value.strip().rstrip("/")
         if not stripped:
             raise ValueError("tei_base_url must be non-empty when set")
-        scheme = urlparse(stripped).scheme.lower()
+        parsed = urlparse(stripped)
+        scheme = parsed.scheme.lower()
         if scheme not in {"https", "http"}:
             raise ValueError("tei_base_url scheme must be https (or http with TEI_ALLOW_INSECURE)")
+        if not parsed.hostname:
+            raise ValueError("tei_base_url must include a hostname")
         return stripped
 
     @field_validator("api_token")
@@ -147,19 +150,26 @@ class Settings(BaseSettings):
 
     def validate_runtime_security(self) -> None:
         """Fail closed on insecure or incomplete runtime security settings."""
+        self._require_api_token()
+        self._require_secure_tei_transport()
+
+    def _require_api_token(self) -> None:
         if self.api_token is None or not self.api_token.get_secret_value().strip():
             raise ValueError("IBEX_EMBEDDING_API_TOKEN is required at startup")
+
+    def _require_secure_tei_transport(self) -> None:
         if self.tei_base_url is None:
             return
-        if urlparse(self.tei_base_url).scheme.lower() == "http":
-            if not self.tei_allow_insecure:
-                raise ValueError(
-                    "tei_base_url must use https unless IBEX_EMBEDDING_TEI_ALLOW_INSECURE=true"
-                )
-            if self.tei_api_key is not None:
-                raise ValueError(
-                    "tei_api_key is forbidden when tei_allow_insecure=true (cleartext HTTP)"
-                )
+        if urlparse(self.tei_base_url).scheme.lower() != "http":
+            return
+        if not self.tei_allow_insecure:
+            raise ValueError(
+                "tei_base_url must use https unless IBEX_EMBEDDING_TEI_ALLOW_INSECURE=true"
+            )
+        if self.tei_api_key is not None:
+            raise ValueError(
+                "tei_api_key is forbidden when tei_allow_insecure=true (cleartext HTTP)"
+            )
 
 
 @lru_cache

@@ -23,6 +23,10 @@ def _clear_settings_cache(monkeypatch: pytest.MonkeyPatch):
         "IBEX_EMBEDDING_TEI_API_KEY",
         "IBEX_EMBEDDING_TEI_ALLOW_INSECURE",
         "IBEX_EMBEDDING_API_TOKEN",
+        "IBEX_EMBEDDING_TEI_TIMEOUT_SECONDS",
+        "IBEX_EMBEDDING_TEI_CONNECT_TIMEOUT_SECONDS",
+        "IBEX_EMBEDDING_TEI_HEALTH_TIMEOUT_SECONDS",
+        "IBEX_EMBEDDING_TEI_MAX_RETRIES",
     ):
         monkeypatch.delenv(key, raising=False)
     get_settings.cache_clear()
@@ -111,6 +115,11 @@ def test_tei_base_url_rejects_non_http() -> None:
 def test_tei_base_url_rejects_empty() -> None:
     with pytest.raises(ValidationError):
         Settings(tei_base_url="   ")
+
+
+def test_tei_base_url_rejects_hostless_https() -> None:
+    with pytest.raises(ValidationError, match="hostname"):
+        Settings(tei_base_url="https://")
 
 
 def test_tei_base_url_accepts_https() -> None:

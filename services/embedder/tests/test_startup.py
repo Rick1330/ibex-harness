@@ -6,6 +6,7 @@ import asyncio
 from dataclasses import dataclass
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import numpy as np
 import pytest
 
 from app.backends.tei import TEIBackend
@@ -46,6 +47,8 @@ def _make_tei_backend(spec: _TeiProbeSpec | None = None) -> TEIBackend:
     backend.model_id_from_info = MagicMock(
         side_effect=lambda info: info.get("model_id") if isinstance(info, dict) else None
     )
+    probe_vec = np.ones((1, probe.dimensions), dtype=np.float32)
+    backend.embed = AsyncMock(return_value=probe_vec)
     return backend
 
 
@@ -138,7 +141,21 @@ class TestVerifyTeiGeometry:
     async def test_passes_when_model_id_present_and_matches(self) -> None:
         backend = _make_tei_backend(_TeiProbeSpec(info_return={"model_id": _MODEL}))
         backend.model_id_from_info = MagicMock(return_value=_MODEL)
-        await _verify_tei_geometry(backend)  # must not raise
+        await _verify_tei_geometry(backend)
+        backend.embed.assert_awaited_once()
+
+    async def test_raises_when_info_reports_wrong_dimensions(self) -> None:
+        backend = _make_tei_backend(
+            _TeiProbeSpec(info_return={"model_id": _MODEL, "hidden_size": 768})
+        )
+        with pytest.raises(GeometryMismatchError, match="dimensions mismatch"):
+            await _verify_tei_geometry(backend)
+
+    async def test_raises_when_probe_dimensions_mismatch(self) -> None:
+        backend = _make_tei_backend(_TeiProbeSpec(info_return={"model_id": _MODEL}))
+        backend.embed = AsyncMock(return_value=np.ones((1, 768), dtype=np.float32))
+        with pytest.raises(GeometryMismatchError, match="dimensions mismatch"):
+            await _verify_tei_geometry(backend)
 
 
 class TestLifespanShutdown:
@@ -183,60 +200,62 @@ class TestLifespanShutdown:
 class TestLifespanStartupPaths:
     """Verify lifespan startup error handling via TestClient."""
 
+    def _ready(self, monkeypatch: pytest.MonkeyPatch, env: dict[str, str | None]):
+        from fastapi.testclient import TestClient
+
+        from app.main import app
+
+        get_settings.cache_clear()
+        for key, value in env.items():
+            if value is None:
+                monkeypatch.delenv(key, raising=False)
+            else:
+                monkeypatch.setenv(key, value)
+        with TestClient(app) as tc:
+            resp = tc.get("/ready")
+        get_settings.cache_clear()
+        return resp
+
     def test_gpu_startup_fails_without_tei_url(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from fastapi.testclient import TestClient
-
-        from app.main import app
-
-        get_settings.cache_clear()
-        monkeypatch.setenv("IBEX_EMBEDDING_PROFILE", "gpu")
-        monkeypatch.delenv("IBEX_EMBEDDING_TEI_BASE_URL", raising=False)
-        monkeypatch.setenv("IBEX_EMBEDDING_API_TOKEN", "service-token")
-        with TestClient(app) as tc:
-            resp = tc.get("/ready")
-        assert resp.status_code == 503
-        body = resp.json()
-        assert body["error"]["code"] == "service_not_ready"
-        get_settings.cache_clear()
-
-    def test_cpu_startup_succeeds(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from fastapi.testclient import TestClient
-
-        from app.main import app
-
-        get_settings.cache_clear()
-        monkeypatch.setenv("IBEX_EMBEDDING_PROFILE", "cpu")
-        monkeypatch.setenv("IBEX_EMBEDDING_API_TOKEN", "service-token")
-        with TestClient(app) as tc:
-            resp = tc.get("/ready")
-        assert resp.status_code == 200
-        get_settings.cache_clear()
-
-    def test_invalid_config_marks_not_ready(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from fastapi.testclient import TestClient
-
-        from app.main import app
-
-        get_settings.cache_clear()
-        monkeypatch.setenv("IBEX_EMBEDDING_PROFILE", "cpu")
-        monkeypatch.setenv("IBEX_EMBEDDING_DIM", "0")  # invalid dim → ValidationError path
-        monkeypatch.setenv("IBEX_EMBEDDING_API_TOKEN", "service-token")
-        with TestClient(app) as tc:
-            resp = tc.get("/ready")
-        # ValidationError or ValueError from settings → 503
-        assert resp.status_code == 503
-        get_settings.cache_clear()
-
-    def test_missing_api_token_marks_not_ready(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from fastapi.testclient import TestClient
-
-        from app.main import app
-
-        get_settings.cache_clear()
-        monkeypatch.setenv("IBEX_EMBEDDING_PROFILE", "cpu")
-        monkeypatch.delenv("IBEX_EMBEDDING_API_TOKEN", raising=False)
-        with TestClient(app) as tc:
-            resp = tc.get("/ready")
+        resp = self._ready(
+            monkeypatch,
+            {
+                "IBEX_EMBEDDING_PROFILE": "gpu",
+                "IBEX_EMBEDDING_TEI_BASE_URL": None,
+                "IBEX_EMBEDDING_API_TOKEN": "service-token",
+            },
+        )
         assert resp.status_code == 503
         assert resp.json()["error"]["code"] == "service_not_ready"
-        get_settings.cache_clear()
+
+    def test_cpu_startup_succeeds(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        resp = self._ready(
+            monkeypatch,
+            {
+                "IBEX_EMBEDDING_PROFILE": "cpu",
+                "IBEX_EMBEDDING_API_TOKEN": "service-token",
+            },
+        )
+        assert resp.status_code == 200
+
+    def test_invalid_config_marks_not_ready(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        resp = self._ready(
+            monkeypatch,
+            {
+                "IBEX_EMBEDDING_PROFILE": "cpu",
+                "IBEX_EMBEDDING_DIM": "0",
+                "IBEX_EMBEDDING_API_TOKEN": "service-token",
+            },
+        )
+        assert resp.status_code == 503
+
+    def test_missing_api_token_marks_not_ready(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        resp = self._ready(
+            monkeypatch,
+            {
+                "IBEX_EMBEDDING_PROFILE": "cpu",
+                "IBEX_EMBEDDING_API_TOKEN": None,
+            },
+        )
+        assert resp.status_code == 503
+        assert resp.json()["error"]["code"] == "service_not_ready"

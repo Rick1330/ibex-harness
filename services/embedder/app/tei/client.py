@@ -27,6 +27,7 @@ from app.errors import (
     BackendRejectedError,
     BackendTimeoutError,
     BackendUnavailableError,
+    InvalidVectorError,
 )
 from app.tei.protocol import parse_info_response, parse_native_embed_response
 
@@ -170,8 +171,10 @@ class TeiClient:
 
         Retry policy:
           - Total attempts = max_retries + 1.
-          - Retryable: BackendUnavailableError, BackendTimeoutError, httpx transport errors.
-          - Not retryable: BackendRejectedError (4xx validation / wrong model).
+          - Retryable: BackendTimeoutError and BackendUnavailableError(retryable=True)
+            (429/502/503 and transport errors).
+          - Not retryable: BackendRejectedError, InvalidVectorError, and
+            non-retryable BackendUnavailableError (400/401/403/404/500 and other).
           - Backoff: full-jitter exponential, bounded at _BACKOFF_MAX_SECONDS.
         """
         last_exc: Exception = BackendUnavailableError(f"TEI {path}: no attempts made")
@@ -179,9 +182,11 @@ class TeiClient:
         for attempt in range(self._max_retries + 1):
             try:
                 return await self._attempt_post(path, payload, batch_size=batch_size)
-            except BackendRejectedError:
-                raise  # non-retryable — propagate immediately
+            except (BackendRejectedError, InvalidVectorError):
+                raise
             except (BackendUnavailableError, BackendTimeoutError) as exc:
+                if isinstance(exc, BackendUnavailableError) and not exc.retryable:
+                    raise
                 last_exc = exc
                 if attempt < self._max_retries:
                     await self._log_and_sleep_retry(path, attempt, exc)
@@ -202,7 +207,10 @@ class TeiClient:
         except httpx.TimeoutException as exc:
             raise BackendTimeoutError(f"TEI {path} timed out") from exc
         except httpx.TransportError as exc:
-            raise BackendUnavailableError(f"TEI {path} connection error: {exc}") from exc
+            raise BackendUnavailableError(
+                f"TEI {path} connection error: {exc}",
+                retryable=True,
+            ) from exc
 
         latency_ms = (time.monotonic() - t0) * 1000
         return self._parse_response(resp, path=path, latency_ms=latency_ms, batch_size=batch_size)
@@ -223,7 +231,11 @@ class TeiClient:
             latency_ms,
         )
         if resp.status_code == 200:
-            return parse_native_embed_response(resp.json())
+            try:
+                body = resp.json()
+            except ValueError as exc:
+                raise InvalidVectorError("TEI /embed returned malformed JSON") from exc
+            return parse_native_embed_response(body)
         self._raise_tei_http_error(resp)
 
     def _raise_tei_http_error(self, resp: httpx.Response) -> NoReturn:
@@ -232,7 +244,10 @@ class TeiClient:
         if status in (413, 422, 424):
             raise BackendRejectedError(_rejected_message(status, excerpt))
         retry_after = resp.headers.get("Retry-After", "unknown")
-        raise BackendUnavailableError(_unavailable_message(status, excerpt, retry_after))
+        raise BackendUnavailableError(
+            _unavailable_message(status, excerpt, retry_after),
+            retryable=status in _RETRYABLE_STATUS,
+        )
 
     async def _log_and_sleep_retry(
         self, path: str, attempt: int, exc: Exception
