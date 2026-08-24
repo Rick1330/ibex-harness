@@ -6,6 +6,8 @@ Fail-closed contract:
   - hosted without IBEX_EMBEDDING_HOSTED_API_KEY → BackendUnavailableError
   - hosted→stub fallback is explicitly prohibited
   - cpu returns StubBackend (local MiniLM is a future milestone, not M3)
+  - cache enabled without Redis URL → ValueError at settings validation
+  - cache wraps the profile backend when IBEX_EMBEDDING_CACHE_ENABLED=true
 
 Public surface consumed by main.py lifespan and test_config.py fixtures.
 """
@@ -18,6 +20,8 @@ from app.backends.base import EmbeddingBackend
 from app.backends.hosted import HostedAPIBackend
 from app.backends.stub import StubBackend
 from app.backends.tei import TEIBackend
+from app.cache.backend import CachingEmbeddingBackend
+from app.cache.redis_store import RedisEmbeddingStore
 from app.config import Settings
 from app.errors import BackendUnavailableError
 from app.hosted.client import HostedClient, HostedClientConfig
@@ -37,9 +41,17 @@ def build_backend(settings: Settings) -> EmbeddingBackend:
       gpu     → TEIBackend; requires tei_base_url or raises immediately
       hosted  → HostedAPIBackend; requires hosted_api_key or raises immediately
 
+    When cache is enabled, wraps the profile backend in CachingEmbeddingBackend.
     Raises BackendUnavailableError for gpu without URL or hosted without key.
     Never falls back gpu/hosted → stub: that silently produces wrong-geometry vectors.
     """
+    inner = _build_profile_backend(settings)
+    if not settings.cache_enabled:
+        return inner
+    return _wrap_with_cache(inner, settings)
+
+
+def _build_profile_backend(settings: Settings) -> EmbeddingBackend:
     profile = settings.profile
     if profile == "gpu":
         return _build_tei_backend(settings)
@@ -47,6 +59,35 @@ def build_backend(settings: Settings) -> EmbeddingBackend:
         return _build_hosted_backend(settings)
     logger.info("backend profile=%s using stub", profile)
     return StubBackend.for_profile(profile)  # type: ignore[arg-type]
+
+
+def _wrap_with_cache(inner: EmbeddingBackend, settings: Settings) -> CachingEmbeddingBackend:
+    url = settings.resolved_cache_redis_url()
+    if url is None:
+        raise BackendUnavailableError(
+            "cache enabled but REDIS_URL / IBEX_EMBEDDING_CACHE_REDIS_URL is unset"
+        )
+    store = RedisEmbeddingStore.from_url(
+        url,
+        timeout_seconds=settings.cache_redis_timeout_seconds,
+    )
+    logger.info(
+        "embedding cache enabled ttl_seconds=%d backend=%s",
+        settings.cache_ttl_seconds,
+        inner.name,
+    )
+    return CachingEmbeddingBackend(
+        inner,
+        store,
+        ttl_seconds=settings.cache_ttl_seconds,
+    )
+
+
+def unwrap_backend(backend: EmbeddingBackend) -> EmbeddingBackend:
+    """Return the inner profile backend when wrapped by the cache decorator."""
+    if isinstance(backend, CachingEmbeddingBackend):
+        return backend.inner
+    return backend
 
 
 def _build_tei_backend(settings: Settings) -> TEIBackend:

@@ -829,6 +829,18 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    env:
+      REDIS_URL: redis://127.0.0.1:6379/0
+    services:
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
@@ -1172,6 +1184,18 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    env:
+      REDIS_URL: redis://127.0.0.1:6379/0
+    services:
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ibex-embedder"
 version = "0.1.0"
-description = "IBEX Harness embedding service (G4.M2 TEI + G4.M3 hosted API)"
+description = "IBEX Harness embedding service (G4.M2 TEI + G4.M3 hosted API + G4.M4 cache)"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -15,6 +15,10 @@ dependencies = [
   "pydantic>=2.0.0",
   "pydantic-settings>=2.0.0",
   "httpx>=0.27.0",
+  # G4.M4: async Redis client (wheel-only; no hiredis). See ADR-0046.
+  "redis>=5.0.0",
+  # G4.M4: Prometheus scrape counters for cache hit/miss. See ADR-0046.
+  "prometheus-client>=0.20.0",
 ]
 
 [project.optional-dependencies]
@@ -37,6 +41,7 @@ asyncio_mode = "auto"
 markers = [
   "tei_live: requires a running TEI instance (set IBEX_TEI_LIVE=1)",
   "hosted_live: requires hosted API credentials (set IBEX_HOSTED_LIVE=1)",
+  "redis: requires a running Redis instance (REDIS_URL)",
 ]
 
 [tool.ruff]

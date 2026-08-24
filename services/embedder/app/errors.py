@@ -85,3 +85,9 @@ class BackendRejectedError(EmbedderError):
     """TEI rejected the request (413/422/424) — do not retry."""
 
     code = "backend_rejected"
+
+
+class MissingOrgContextError(EmbedderError):
+    """Cache enabled but request org_id ContextVar is unset."""
+
+    code = "missing_org_context"

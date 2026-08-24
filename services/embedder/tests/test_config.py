@@ -34,6 +34,11 @@ def _clear_settings_cache(monkeypatch: pytest.MonkeyPatch):
         "IBEX_EMBEDDING_HOSTED_CONNECT_TIMEOUT_SECONDS",
         "IBEX_EMBEDDING_HOSTED_MAX_RETRIES",
         "OPENAI_EMBEDDING_API_KEY",
+        "IBEX_EMBEDDING_CACHE_ENABLED",
+        "IBEX_EMBEDDING_CACHE_TTL_SECONDS",
+        "IBEX_EMBEDDING_CACHE_REDIS_URL",
+        "IBEX_EMBEDDING_CACHE_REDIS_TIMEOUT_SECONDS",
+        "REDIS_URL",
     ):
         monkeypatch.delenv(key, raising=False)
     get_settings.cache_clear()
