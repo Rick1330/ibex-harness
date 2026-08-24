@@ -178,20 +178,39 @@ class TeiClient:
           - Backoff: full-jitter exponential, bounded at _BACKOFF_MAX_SECONDS.
         """
         last_exc: Exception = BackendUnavailableError(f"TEI {path}: no attempts made")
-
         for attempt in range(self._max_retries + 1):
-            try:
-                return await self._attempt_post(path, payload, batch_size=batch_size)
-            except (BackendRejectedError, InvalidVectorError):
-                raise
-            except (BackendUnavailableError, BackendTimeoutError) as exc:
-                if not _is_retryable_tei_error(exc):
-                    raise
-                last_exc = exc
-                if attempt < self._max_retries:
-                    await self._log_and_sleep_retry(path, attempt, exc)
-
+            vectors = await self._post_allowing_retry(
+                path, payload, batch_size=batch_size, attempt=attempt
+            )
+            if vectors is not None:
+                return vectors
         raise last_exc
+
+    async def _post_allowing_retry(
+        self,
+        path: str,
+        payload: dict[str, Any],
+        *,
+        batch_size: int,
+        attempt: int,
+    ) -> NDArray[np.float32] | None:
+        """Return vectors, or None when a retryable error should back off."""
+        try:
+            return await self._attempt_post(path, payload, batch_size=batch_size)
+        except (BackendRejectedError, InvalidVectorError):
+            raise
+        except (BackendUnavailableError, BackendTimeoutError) as exc:
+            await self._maybe_schedule_retry(path, attempt, exc)
+            return None
+
+    async def _maybe_schedule_retry(
+        self, path: str, attempt: int, exc: BackendUnavailableError | BackendTimeoutError
+    ) -> None:
+        if not _is_retryable_tei_error(exc):
+            raise exc
+        if attempt >= self._max_retries:
+            raise exc
+        await self._log_and_sleep_retry(path, attempt, exc)
 
     async def _attempt_post(
         self,
