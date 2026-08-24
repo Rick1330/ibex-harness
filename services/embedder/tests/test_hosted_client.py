@@ -45,48 +45,38 @@ def _openai_body(vectors: list[list[float]]) -> dict:
     }
 
 
-def _hosted_client(
-    base_url: str,
-    *,
-    api_key: str,
-    defaults: dict[str, object],
-    **overrides: object,
-) -> HostedClient:
-    cfg = {**defaults, **overrides}
-    return HostedClient(base_url, api_key, config=HostedClientConfig(**cfg))  # type: ignore[arg-type]
+_TIMEOUTS = {"connect_timeout": 1.0, "read_timeout": 5.0, "max_retries": 2}
+_OPENAI_DEFAULTS: dict[str, object] = {
+    **_TIMEOUTS,
+    "provider": "openai",
+    "model_id": "text-embedding-3-large",
+    "dimensions": 3072,
+}
+_COHERE_DEFAULTS: dict[str, object] = {
+    **_TIMEOUTS,
+    "provider": "cohere",
+    "model_id": "embed-english-v3.0",
+    "dimensions": 1024,
+}
+
+
+def _hosted_client(base_url: str, api_key: str, defaults: dict[str, object], **overrides: object) -> HostedClient:
+    return HostedClient(
+        base_url,
+        api_key,
+        config=HostedClientConfig(**{**defaults, **overrides}),  # type: ignore[arg-type]
+    )
 
 
 def _openai_client(**kwargs: object) -> HostedClient:
-    api_key = str(kwargs.pop("api_key", _API_KEY))
     return _hosted_client(
-        _OPENAI_URL,
-        api_key=api_key,
-        defaults={
-            "connect_timeout": 1.0,
-            "read_timeout": 5.0,
-            "max_retries": 2,
-            "provider": "openai",
-            "model_id": "text-embedding-3-large",
-            "dimensions": 3072,
-        },
-        **kwargs,
+        _OPENAI_URL, str(kwargs.pop("api_key", _API_KEY)), _OPENAI_DEFAULTS, **kwargs
     )
 
 
 def _cohere_client(**kwargs: object) -> HostedClient:
-    api_key = str(kwargs.pop("api_key", "cohere-test"))
     return _hosted_client(
-        _COHERE_URL,
-        api_key=api_key,
-        defaults={
-            "connect_timeout": 1.0,
-            "read_timeout": 5.0,
-            "max_retries": 2,
-            "provider": "cohere",
-            "model_id": "embed-english-v3.0",
-            "dimensions": 1024,
-        },
-        **kwargs,
+        _COHERE_URL, str(kwargs.pop("api_key", "cohere-test")), _COHERE_DEFAULTS, **kwargs
     )
 
 
@@ -284,6 +274,9 @@ class TestRetryAfter:
     def test_numeric_seconds(self) -> None:
         assert _parse_retry_after_seconds("2") == 2.0
         assert _parse_retry_after_seconds(" 7 ") == 7.0
+
+    def test_large_numeric_value_is_capped(self) -> None:
+        assert _parse_retry_after_seconds("100000000") == 8.0
 
     def test_invalid_falls_back(self) -> None:
         assert _parse_retry_after_seconds(None) is None

@@ -72,13 +72,17 @@ def _jittered_backoff(attempt: int) -> float:
 
 
 def _parse_retry_after_seconds(raw: str | None) -> float | None:
-    """Parse RFC 9110 delay-seconds Retry-After. HTTP-dates and junk are ignored."""
+    """Parse RFC 9110 delay-seconds Retry-After, capped at the retry ceiling.
+
+    HTTP-dates and non-digit values are ignored. Digit-only values of any length
+    are accepted; the returned delay never exceeds _BACKOFF_MAX_SECONDS.
+    """
     if raw is None:
         return None
     stripped = raw.strip()
-    if not stripped or len(stripped) > 8 or not stripped.isdigit():
+    if not stripped.isdigit():
         return None
-    return float(int(stripped))
+    return min(_BACKOFF_MAX_SECONDS, float(int(stripped)))
 
 
 def _retry_delay_seconds(attempt: int, retry_after_seconds: float | None) -> float:
