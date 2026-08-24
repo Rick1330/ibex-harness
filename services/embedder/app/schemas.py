@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from uuid import UUID
+
 from pydantic import BaseModel, Field
 
 
@@ -28,6 +30,7 @@ class ErrorEnvelope(BaseModel):
 
 class EmbedRequest(BaseModel):
     texts: list[str] = Field(..., description="Text batch to embed (1..64 items)")
+    org_id: UUID = Field(..., description="Tenant org UUID (required for cache tenancy)")
 
 
 class EmbedResponse(BaseModel):

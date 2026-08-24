@@ -8,14 +8,19 @@ from urllib.parse import urlparse
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.cache.env import CacheEnvMixin
+from app.hosted.env import HostedEnvMixin
+from app.hosted.providers import resolve_hosted_geometry
 from app.limits import MAX_MODEL_ID_LEN
 from app.profiles import Profile, default_geometry, valid_profile
 
 
-class Settings(BaseSettings):
+class Settings(CacheEnvMixin, HostedEnvMixin, BaseSettings):
     """All settings are read from IBEX_EMBEDDING_* environment variables.
 
     TEI-specific settings use the IBEX_EMBEDDING_TEI_* sub-namespace.
+    Hosted-API settings use IBEX_EMBEDDING_HOSTED_*.
+    Cache settings use IBEX_EMBEDDING_CACHE_* (Redis URL may fall back to REDIS_URL).
     pydantic-settings maps snake_case field names to UPPER_SNAKE env vars
     under the configured prefix, so `tei_base_url` → IBEX_EMBEDDING_TEI_BASE_URL.
     """
@@ -123,14 +128,20 @@ class Settings(BaseSettings):
             raise ValueError("api_token must be non-empty when set")
         return value
 
-    @field_validator("tei_max_retries")
+    @field_validator("tei_max_retries", "hosted_max_retries")
     @classmethod
-    def _check_tei_max_retries(cls, value: int) -> int:
+    def _check_max_retries(cls, value: int) -> int:
         if value < 0:
-            raise ValueError("tei_max_retries must be >= 0")
+            raise ValueError("max_retries must be >= 0")
         return value
 
-    @field_validator("tei_timeout_seconds", "tei_connect_timeout_seconds", "tei_health_timeout_seconds")
+    @field_validator(
+        "tei_timeout_seconds",
+        "tei_connect_timeout_seconds",
+        "tei_health_timeout_seconds",
+        "hosted_timeout_seconds",
+        "hosted_connect_timeout_seconds",
+    )
     @classmethod
     def _check_positive_timeout(cls, value: float) -> float:
         if value <= 0:
@@ -143,6 +154,12 @@ class Settings(BaseSettings):
 
     def resolved_geometry(self) -> tuple[int, str]:
         """Return (dimensions, model_id) using env overrides or profile defaults."""
+        if self.profile == "hosted":
+            return resolve_hosted_geometry(
+                self.hosted_provider,
+                model=self.model,
+                dim=self.dim,
+            )
         defaults = default_geometry(self.profile)
         dim = self.dim if self.dim is not None else defaults.dimensions
         model = self.model if self.model is not None else defaults.model_id
@@ -152,10 +169,29 @@ class Settings(BaseSettings):
         """Fail closed on insecure or incomplete runtime security settings."""
         self._require_api_token()
         self._require_secure_tei_transport()
+        self._require_hosted_api_key()
+        self._require_cache_redis_url()
 
     def _require_api_token(self) -> None:
         if self.api_token is None or not self.api_token.get_secret_value().strip():
             raise ValueError("IBEX_EMBEDDING_API_TOKEN is required at startup")
+
+    def _require_hosted_api_key(self) -> None:
+        if self.profile != "hosted":
+            return
+        if self.hosted_api_key is None or not self.hosted_api_key.get_secret_value().strip():
+            raise ValueError(
+                "IBEX_EMBEDDING_HOSTED_API_KEY is required when profile=hosted"
+            )
+
+    def _require_cache_redis_url(self) -> None:
+        if not self.cache_enabled:
+            return
+        if self.resolved_cache_redis_url() is None:
+            raise ValueError(
+                "IBEX_EMBEDDING_CACHE_ENABLED=true requires REDIS_URL or "
+                "IBEX_EMBEDDING_CACHE_REDIS_URL"
+            )
 
     def _require_secure_tei_transport(self) -> None:
         if self.tei_base_url is None:

@@ -27,6 +27,18 @@ def _clear_settings_cache(monkeypatch: pytest.MonkeyPatch):
         "IBEX_EMBEDDING_TEI_CONNECT_TIMEOUT_SECONDS",
         "IBEX_EMBEDDING_TEI_HEALTH_TIMEOUT_SECONDS",
         "IBEX_EMBEDDING_TEI_MAX_RETRIES",
+        "IBEX_EMBEDDING_HOSTED_PROVIDER",
+        "IBEX_EMBEDDING_HOSTED_API_KEY",
+        "IBEX_EMBEDDING_HOSTED_BASE_URL",
+        "IBEX_EMBEDDING_HOSTED_TIMEOUT_SECONDS",
+        "IBEX_EMBEDDING_HOSTED_CONNECT_TIMEOUT_SECONDS",
+        "IBEX_EMBEDDING_HOSTED_MAX_RETRIES",
+        "OPENAI_EMBEDDING_API_KEY",
+        "IBEX_EMBEDDING_CACHE_ENABLED",
+        "IBEX_EMBEDDING_CACHE_TTL_SECONDS",
+        "IBEX_EMBEDDING_CACHE_REDIS_URL",
+        "IBEX_EMBEDDING_CACHE_REDIS_TIMEOUT_SECONDS",
+        "REDIS_URL",
     ):
         monkeypatch.delenv(key, raising=False)
     get_settings.cache_clear()
@@ -157,6 +169,67 @@ def test_tei_api_key_rejected_with_insecure_http() -> None:
 def test_runtime_security_requires_service_api_token() -> None:
     with pytest.raises(ValueError, match="IBEX_EMBEDDING_API_TOKEN"):
         Settings().validate_runtime_security()
+
+
+def test_runtime_security_requires_hosted_api_key() -> None:
+    settings = Settings(profile="hosted", api_token="service-token")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="HOSTED_API_KEY"):
+        settings.validate_runtime_security()
+
+
+def test_hosted_api_key_openai_alias(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENAI_EMBEDDING_API_KEY", "sk-alias")
+    settings = Settings(profile="hosted")
+    assert settings.hosted_api_key is not None
+    assert settings.hosted_api_key.get_secret_value() == "sk-alias"
+
+
+def test_hosted_api_key_alias_ignored_for_cohere(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENAI_EMBEDDING_API_KEY", "sk-alias")
+    settings = Settings(profile="hosted", hosted_provider="cohere")
+    assert settings.hosted_api_key is None
+
+
+def test_hosted_provider_normalizes_case() -> None:
+    settings = Settings(hosted_provider=" OpenAI ")  # type: ignore[arg-type]
+    assert settings.hosted_provider == "openai"
+
+
+def test_hosted_base_url_requires_https() -> None:
+    with pytest.raises(ValidationError, match="https"):
+        Settings(hosted_base_url="http://api.openai.com/v1")
+
+
+def test_hosted_base_url_rejects_userinfo() -> None:
+    with pytest.raises(ValidationError, match="userinfo"):
+        Settings(hosted_base_url="https://user:pass@api.openai.com/v1")
+
+
+def test_hosted_api_key_rejects_blank() -> None:
+    with pytest.raises(ValidationError):
+        Settings(hosted_api_key="   ")  # type: ignore[arg-type]
+
+
+def test_hosted_base_url_rejects_blank() -> None:
+    with pytest.raises(ValidationError):
+        Settings(hosted_base_url="   ")
+
+
+def test_hosted_base_url_rejects_missing_host() -> None:
+    with pytest.raises(ValidationError, match="hostname"):
+        Settings(hosted_base_url="https:///embeddings")
+
+
+def test_hosted_resolved_geometry_openai() -> None:
+    dim, model = Settings(profile="hosted").resolved_geometry()
+    assert dim == 3072
+    assert model == "text-embedding-3-large"
+
+
+def test_hosted_resolved_geometry_cohere() -> None:
+    dim, model = Settings(profile="hosted", hosted_provider="cohere").resolved_geometry()
+    assert dim == 1024
+    assert model == "embed-english-v3.0"
 
 
 # ------------------------------------------------------------------ #

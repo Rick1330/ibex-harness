@@ -11,26 +11,32 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import ValidationError
+from redis.exceptions import RedisError
+from starlette.responses import Response
 
 from app.api.embed import embed_router
 from app.api.probes import probe_router
+from app.backends.hosted import HostedAPIBackend
 from app.backends.tei import TEIBackend
+from app.cache.backend import CachingEmbeddingBackend
 from app.config import get_settings
+from app.deps import ServiceAuthDep
 from app.errors import (
     AuthenticationError,
     BackendUnavailableError,
     EmbedderError,
     GeometryMismatchError,
+    InvalidVectorError,
 )
-from app.factory import build_backend
+from app.factory import build_backend, unwrap_backend
 from app.schemas import ErrorEnvelope
 from app.state import AppState
 from app.tei.protocol import parse_info_dimensions
 from app.validate import validate_geometry
 
 logger = logging.getLogger(__name__)
-
 # Interval between /health polls during TEI startup wait.
 _HEALTH_POLL_INTERVAL_SECONDS = 1.0
 _GEOMETRY_PROBE_TEXT = "ibex-geometry-probe"
@@ -78,7 +84,7 @@ async def _verify_tei_geometry(backend: TEIBackend) -> None:
     _assert_tei_model_id(backend, info)
     _assert_info_dimensions(backend, info)
     probe = await backend.embed([_GEOMETRY_PROBE_TEXT])
-    _assert_probe_dimensions(probe, backend.dimensions)
+    _assert_probe_dimensions(probe, backend.dimensions, label="TEI")
     logger.info(
         "TEI geometry confirmed model_id=%s dimensions=%d",
         backend.model_id,
@@ -106,11 +112,11 @@ def _assert_info_dimensions(backend: TEIBackend, info: object) -> None:
         )
 
 
-def _assert_probe_dimensions(probe: object, want: int) -> None:
+def _assert_probe_dimensions(probe: object, want: int, *, label: str) -> None:
     shape = getattr(probe, "shape", ())
     if not _probe_shape_matches(shape, want):
         raise GeometryMismatchError(
-            f"TEI dimensions mismatch: observed {shape!r} configured dimensions={want}"
+            f"{label} dimensions mismatch: observed {shape!r} configured dimensions={want}"
         )
 
 
@@ -122,8 +128,31 @@ def _probe_shape_matches(shape: object, want: int) -> bool:
     return int(shape[-1]) == want  # type: ignore[index]
 
 
+async def _verify_hosted_geometry(backend: HostedAPIBackend) -> None:
+    """Fail closed unless a probe embed matches configured dimensions.
+
+    Hosted providers have no TEI-style /info; a single bounded embed is the
+    geometry contract check (Matryoshka / wrong model dims). HostedAPIBackend.embed
+    already L2-validates; a dim mismatch surfaces as InvalidVectorError and is
+    remapped so startup reports a geometry failure, not a generic vector error.
+    """
+    try:
+        probe = await backend.embed([_GEOMETRY_PROBE_TEXT])
+    except InvalidVectorError as exc:
+        raise GeometryMismatchError(
+            f"hosted dimensions mismatch during startup probe: {exc.message}"
+        ) from exc
+    _assert_probe_dimensions(probe, backend.dimensions, label="hosted")
+    logger.info(
+        "hosted geometry confirmed provider=%s model_id=%s dimensions=%d",
+        backend.provider,
+        backend.model_id,
+        backend.dimensions,
+    )
+
+
 async def _startup(state: AppState) -> None:
-    """Build backend, run TEI startup checks, validate geometry, mark ready."""
+    """Build backend, run provider startup checks, validate geometry, mark ready."""
     settings = get_settings()
     settings.validate_runtime_security()
     backend = build_backend(settings)
@@ -131,22 +160,48 @@ async def _startup(state: AppState) -> None:
     # Assign backend before health wait so /health probe still responds 200
     # (readiness is separate from liveness).
     state.backend = backend
+    inner = unwrap_backend(backend)
 
-    if isinstance(backend, TEIBackend):
-        await _wait_for_tei_health(backend, settings.tei_health_timeout_seconds)
-        await _verify_tei_geometry(backend)
+    if isinstance(inner, TEIBackend):
+        await _wait_for_tei_health(inner, settings.tei_health_timeout_seconds)
+        await _verify_tei_geometry(inner)
+    elif isinstance(inner, HostedAPIBackend):
+        await _verify_hosted_geometry(inner)
+
+    if isinstance(backend, CachingEmbeddingBackend):
+        await _verify_cache_redis(backend)
 
     want_dim, want_model = settings.resolved_geometry()
     validate_geometry(backend, want_dim, want_model)
 
     state.ready = True
     logger.info(
-        "embedder ready profile=%s model_id=%s dimensions=%d backend=%s",
+        "embedder ready profile=%s model_id=%s dimensions=%d backend=%s cache=%s",
         settings.profile,
         backend.model_id,
         backend.dimensions,
         backend.name,
+        isinstance(backend, CachingEmbeddingBackend),
     )
+
+
+async def _verify_cache_redis(backend: CachingEmbeddingBackend) -> None:
+    """Fail closed at startup when cache Redis is unreachable (misconfig)."""
+    try:
+        await backend.ping()
+    except (RedisError, OSError, TimeoutError) as exc:
+        raise BackendUnavailableError(
+            f"embedding cache Redis ping failed: {type(exc).__name__}"
+        ) from exc
+    logger.info("embedding cache Redis ping OK")
+
+
+async def _aclose_backend(backend: object) -> None:
+    """Close Redis and/or HTTP clients when the backend exposes aclose()."""
+    aclose = getattr(backend, "aclose", None)
+    if aclose is None:
+        return
+    await aclose()
 
 
 @asynccontextmanager
@@ -172,10 +227,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     yield
 
-    # Shutdown: release TEI connection pool before process exits.
-    if isinstance(state.backend, TEIBackend):
-        await state.backend.aclose()
-        logger.info("TEI HTTP client closed")
+    if state.backend is not None:
+        await _aclose_backend(state.backend)
+        logger.info("embedding backend closed backend=%s", state.backend.name)
 
 
 def create_app() -> FastAPI:
@@ -209,6 +263,12 @@ def create_app() -> FastAPI:
 
     application.include_router(probe_router)
     application.include_router(embed_router)
+
+    @application.get("/metrics")
+    async def metrics(_auth: ServiceAuthDep) -> Response:
+        """Prometheus scrape endpoint — requires Bearer IBEX_EMBEDDING_API_TOKEN."""
+        return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
     return application
 
 
