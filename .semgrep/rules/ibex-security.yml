@@ -86,3 +86,24 @@ rules:
     paths:
       include:
         - services/
+
+  - id: ibex-memory-no-ml-imports
+    languages: [python]
+    severity: ERROR
+    message: >-
+      services/memory must not import ML libraries in-process. Call the embedder
+      HTTP API instead (ADR-0046 / m3.2.1). Mirrors packages→services depguard.
+    pattern-either:
+      - pattern: import torch
+      - pattern: import tensorflow
+      - pattern: import transformers
+      - pattern: import sentence_transformers
+      - pattern: import sklearn
+      - pattern: from torch import $X
+      - pattern: from tensorflow import $X
+      - pattern: from transformers import $X
+      - pattern: from sentence_transformers import $X
+      - pattern: from sklearn import $X
+    paths:
+      include:
+        - services/memory/

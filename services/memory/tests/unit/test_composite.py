@@ -1,0 +1,58 @@
+from __future__ import annotations
+
+import pytest
+
+from app.scoring.composite import RankWeights, composite_score, score
+
+
+def test_score_default_weights_sum() -> None:
+    assert score(
+        relevance=1.0,
+        recency=1.0,
+        usefulness=1.0,
+        confidence=1.0,
+        access_frequency=1.0,
+    ) == pytest.approx(1.0)
+
+
+def test_score_rejects_bad_weights() -> None:
+    with pytest.raises(ValueError, match="sum to 1.0"):
+        score(
+            relevance=1.0,
+            recency=0.0,
+            usefulness=0.0,
+            confidence=0.0,
+            access_frequency=0.0,
+            weights=RankWeights(
+                relevance=0.5, recency=0.5, usefulness=0.5, confidence=0, frequency=0
+            ),
+        )
+
+
+def test_old_factual_outranks_fresh_episodic_at_equal_relevance() -> None:
+    """Bugfix: with a global 14d half-life, a ~90d factual decays near-zero and loses
+    to a 14d episodic. Category-conditional half-lives keep the factual competitive.
+    """
+    equal = {
+        "relevance": 0.90,
+        "usefulness": 0.50,
+        "confidence": 0.80,
+        "access_frequency": 0.10,
+    }
+    old_factual = composite_score(age_days=90.0, categories=["factual"], **equal)
+    fresh_episodic = composite_score(age_days=14.0, categories=["episodic"], **equal)
+    assert old_factual > fresh_episodic
+
+
+def test_composite_uses_shortest_half_life_for_multi_label() -> None:
+    equal = {
+        "relevance": 0.80,
+        "usefulness": 0.50,
+        "confidence": 0.80,
+        "access_frequency": 0.0,
+    }
+    factual_only = composite_score(age_days=60.0, categories=["factual"], **equal)
+    factual_and_episodic = composite_score(
+        age_days=60.0, categories=["factual", "episodic"], **equal
+    )
+    assert factual_and_episodic < factual_only

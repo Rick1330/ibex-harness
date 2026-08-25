@@ -898,6 +898,32 @@ jobs:
       - name: MCP memory unit tests (pytest + ruff)
         run: bash infra/scripts/mcp-memory-test-ci.sh
 
+  memory-test:
+    name: memory-test
+    needs: changes
+    if: needs.changes.outputs.run_go == 'true' || needs.changes.outputs.run_python == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+      - name: Memory unit tests (pytest + ruff)
+        run: bash infra/scripts/memory-test-ci.sh
+
   verify-phase25:
     name: verify-phase25
     needs: changes
@@ -1347,6 +1373,42 @@ jobs:
           flags: mcp-memory,python
           fail_ci_if_error: false
 
+  memory-coverage:
+    name: memory-coverage
+    needs: changes
+    if: needs.changes.outputs.run_go == 'true' || needs.changes.outputs.run_python == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+      - name: Memory pytest coverage
+        run: bash infra/scripts/memory-test-ci.sh
+      - name: Memory coverage gate
+        run: bash infra/scripts/coverage-memory-gate.sh
+      - name: Upload coverage reports to Codecov
+        continue-on-error: true
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: services/memory/coverage-memory.xml
+          flags: memory,python
+          fail_ci_if_error: false
+
   bandit:
     name: bandit
     needs: changes
@@ -1580,6 +1642,8 @@ jobs:
       - embedder-coverage
       - mcp-memory-test
       - mcp-memory-coverage
+      - memory-test
+      - memory-coverage
       - verify-phase25
       - golangci-lint
       - coverage
@@ -1608,6 +1672,8 @@ jobs:
             "${{ needs.embedder-coverage.result }}" \
             "${{ needs.mcp-memory-test.result }}" \
             "${{ needs.mcp-memory-coverage.result }}" \
+            "${{ needs.memory-test.result }}" \
+            "${{ needs.memory-coverage.result }}" \
             "${{ needs.verify-phase25.result }}" \
             "${{ needs.golangci-lint.result }}" \
             "${{ needs.coverage.result }}" \
@@ -1663,6 +1729,8 @@ jobs:
       - embedder-coverage
       - mcp-memory-test
       - mcp-memory-coverage
+      - memory-test
+      - memory-coverage
       - verify-phase25
     if: always()
     runs-on: ubuntu-latest
@@ -1679,4 +1747,6 @@ jobs:
             "${{ needs.embedder-coverage.result }}" \
             "${{ needs.mcp-memory-test.result }}" \
             "${{ needs.mcp-memory-coverage.result }}" \
+            "${{ needs.memory-test.result }}" \
+            "${{ needs.memory-coverage.result }}" \
             "${{ needs.verify-phase25.result }}"

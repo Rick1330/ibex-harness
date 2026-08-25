@@ -393,14 +393,18 @@ All PRs run at least one automated test suite (`ci-gate-go` / `ci-gate-python` /
 
 ### 9.2 Python
 
-- **Bandit** (`bandit` job): SAST on `services/*/app` (embedder now; memory when present).
+- **Bandit** (`bandit` job): SAST on `services/*/app` (embedder, mcp-memory, memory).
   Install from `.github/requirements/bandit.txt` (`--require-hashes`, `--only-binary :all:`).
   Pin `bandit[sarif]==1.9.4` so `-f sarif` works for GitHub Code Scanning upload.
-  The `[sarif]` extra is CI-only (not embedder runtime). Alternatives (JSON converter
+  The `[sarif]` extra is CI-only (not service runtime). Alternatives (JSON converter
   or skip upload) were rejected. Refresh hashes with `pip-compile --generate-hashes`
   on `.github/requirements/bandit.in`.
-- Semgrep `p/python` + `.semgrep/rules/` (active in CI)
-- Future: uncomment Dependabot `pip` entry when memory service has a lockfile
+- Semgrep `p/python` + `.semgrep/rules/` (active in CI), including
+  `ibex-memory-no-ml-imports` (ERROR) under `services/memory/` — no in-process
+  torch/tensorflow/transformers/sentence_transformers/sklearn (call embedder HTTP).
+- Unit/coverage jobs: `memory-test` / `memory-coverage` (fail-under 90), wired into
+  `ci-gate-python` (and listed on `ci-gate-go` for cross-gate visibility).
+- Dependabot `pip` for `/services/memory` may be enabled once lockfile is stable on `main`.
 
 ### 9.3 Node/TypeScript
 
@@ -410,8 +414,8 @@ All PRs run at least one automated test suite (`ci-gate-go` / `ci-gate-python` /
 ### 9.4 Containers
 
 - **Trivy filesystem** scan on PR/push (`trivy` job): CRITICAL/HIGH, `ignore-unfixed: true`
-- **Trivy image** (`docker-publish.yml`): CRITICAL/HIGH on built `auth`, `proxy`, and `embedder` OCI artifacts
-- **Hadolint** on all `Dockerfile*` paths (`services/auth`, `services/proxy`, `services/embedder`)
+- **Trivy image** (`docker-publish.yml`): CRITICAL/HIGH on built `auth`, `proxy`, `embedder`, and `mcp-memory` OCI artifacts (add `memory` when publish jobs land)
+- **Hadolint** on all `Dockerfile*` paths (`services/auth`, `services/proxy`, `services/embedder`, `services/mcp-memory`, `services/memory`)
 - **Future:** `trivy image` per built image when CI produces tagged images (see `.github/workflows/sbom.yml` for SBOM supply chain)
 - block critical CVEs unless explicitly waived with documented reason and deadline (ADR required)
 
