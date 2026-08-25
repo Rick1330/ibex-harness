@@ -79,7 +79,7 @@ make observability-up
 make observability-smoke
 ```
 
-Grafana: http://localhost:3000 (local anonymous Admin). See [MONITORING.md](MONITORING.md) and ADR-0051.
+Grafana: <http://localhost:3000> (local anonymous Viewer). See [MONITORING.md](MONITORING.md) and ADR-0051.
 
 ## Related docs
 

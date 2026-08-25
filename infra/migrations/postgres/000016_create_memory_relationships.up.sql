@@ -11,7 +11,7 @@ CREATE TABLE ibex_core.memory_relationships (
     target_memory_id    UUID NOT NULL,
     relationship_type   TEXT NOT NULL
                         CHECK (relationship_type IN (
-                            'supersedes',
+                            'supersedes', -- NOSONAR
                             'contradicts',
                             'specializes',
                             'generalizes',
@@ -68,7 +68,7 @@ SELECT
     resolution_notes,
     created_at
 FROM ibex_core.memory_relationships
-WHERE relationship_type = 'supersedes';
+WHERE relationship_type = 'supersedes'; -- NOSONAR
 
 GRANT SELECT ON ibex_core.memory_supersession_edges TO ibex_app;
 
@@ -112,7 +112,7 @@ BEGIN
         INNER JOIN ibex_core.memory_relationships e
             ON e.target_memory_id = w.mem_id
            AND e.org_id = p_org_id
-           AND e.relationship_type = 'supersedes'
+           AND e.relationship_type = 'supersedes' -- NOSONAR
         WHERE w.depth < max_depth
           AND NOT (e.source_memory_id = ANY (w.path))
     )

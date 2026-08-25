@@ -10,19 +10,19 @@ import (
 // ErrNilRepoLookupInner indicates a RepoLookup was built without a backing store.
 var ErrNilRepoLookupInner = errors.New("token: nil RepoLookup inner")
 
-// repoActiveLookup is the persistence port adapted into domain Row.
-type repoActiveLookup interface {
+// findActiveByPrefixer is the persistence port adapted into domain Row.
+type findActiveByPrefixer interface {
 	FindActiveByPrefix(ctx context.Context, prefix string) (repository.TokenRow, error)
 }
 
 // RepoLookup adapts repository.TokenRow into token.Row for Validator.
 type RepoLookup struct {
-	inner repoActiveLookup
+	inner findActiveByPrefixer
 }
 
 // NewRepoLookup returns a Validator lookup adapter over a repository store.
 // inner must be non-nil.
-func NewRepoLookup(inner repoActiveLookup) (RepoLookup, error) {
+func NewRepoLookup(inner findActiveByPrefixer) (RepoLookup, error) {
 	if inner == nil {
 		return RepoLookup{}, ErrNilRepoLookupInner
 	}

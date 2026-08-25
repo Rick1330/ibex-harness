@@ -72,11 +72,14 @@ class HTTPMetricsMiddleware:
             if message["type"] == "http.response.start":
                 status_code = int(message["status"])
             await send(message)
-            if message["type"] == "http.response.body" and not message.get("more_body", False):
-                if not recorded:
-                    recorded = True
-                    elapsed = time.perf_counter() - start
-                    _record(method, _route_label(scope), str(status_code), elapsed)
+            if (
+                message["type"] == "http.response.body"
+                and not message.get("more_body", False)
+                and not recorded
+            ):
+                recorded = True
+                elapsed = time.perf_counter() - start
+                _record(method, _route_label(scope), str(status_code), elapsed)
 
         try:
             await self.app(scope, receive, send_wrapper)

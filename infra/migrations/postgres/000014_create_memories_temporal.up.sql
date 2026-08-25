@@ -28,9 +28,9 @@ CREATE TABLE ibex_core.memories (
                          'episodic',
                          'procedural'
                      )),
-    status           TEXT NOT NULL DEFAULT 'active'
+    status           TEXT NOT NULL DEFAULT 'active' -- NOSONAR
                      CHECK (status IN (
-                         'active',
+                         'active', -- NOSONAR
                          'superseded',
                          'merged_into',
                          'archived',
@@ -71,7 +71,7 @@ CREATE TABLE ibex_core.memories (
 
 CREATE INDEX idx_memories_agent_active
     ON ibex_core.memories (org_id, agent_id)
-    WHERE status = 'active' AND deleted_at IS NULL;
+    WHERE status = 'active' AND deleted_at IS NULL; -- NOSONAR
 
 CREATE INDEX idx_memories_content_hash
     ON ibex_core.memories (org_id, agent_id, content_hash);

@@ -30,7 +30,7 @@ Examples:
 | --- | --- | --- |
 | `http.TokenValidator`, `http.AgentVerifier` | `services/proxy/internal/http` | `services/proxy/internal/auth` (gRPC + cache wrap) |
 | `http/trace.TraceWriter` | `services/proxy/internal/http/trace` | ClickHouse writer |
-| `tokenAPI`, `agentAPI` (unexported) | `services/auth/internal/grpc` | `service.TokenService`, `service.AgentService` |
+| `tokenAPI`, `validateForOrger` (unexported) | `services/auth/internal/grpc` | `service.TokenService`, `service.AgentService` |
 
 Middleware and handlers depend on the local port. Wiring injects concrete
 adapters that satisfy the port structurally.

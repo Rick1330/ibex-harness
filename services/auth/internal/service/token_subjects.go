@@ -35,7 +35,7 @@ type tokenSubjectLookup interface {
 type subjectBelongsFn func(ctx context.Context, id, orgID uuid.UUID) (bool, error)
 
 type repoTokenSubjects struct {
-	agents agentByOrgLookup
+	agents getByIDAndOrger
 	users  userOrgFinder
 }
 
@@ -56,7 +56,7 @@ func (a usersFindAdapter) Find(ctx context.Context, userID, orgID uuid.UUID) (*r
 }
 
 // NewRepoTokenSubjects builds a subject lookup from agent and user repositories.
-func NewRepoTokenSubjects(agents agentByOrgLookup, users userOrgFinder) (tokenSubjectLookup, error) {
+func NewRepoTokenSubjects(agents getByIDAndOrger, users userOrgFinder) (tokenSubjectLookup, error) {
 	if isNilSubjectDep(agents) {
 		return nil, fmt.Errorf("service: nil agent subject lookup")
 	}

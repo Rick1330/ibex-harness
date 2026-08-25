@@ -78,7 +78,7 @@ func testAuthRegistry() *metrics.AuthRegistry {
 	return metrics.NewAuth(metrics.AuthConfig{ServiceName: "test"})
 }
 
-func newTestServer(t testing.TB, validator tokenValidator, tokens tokenAPI, agents agentAPI) *Server {
+func newTestServer(t testing.TB, validator tokenValidator, tokens tokenAPI, agents validateForOrger) *Server {
 	t.Helper()
 	if tokens == nil {
 		tokens = &fakeTokenAPI{}

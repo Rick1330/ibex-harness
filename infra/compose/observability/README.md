@@ -17,12 +17,12 @@ make observability-smoke
 
 | UI | URL (defaults from `.env.example`) |
 |---|---|
-| Grafana | http://127.0.0.1:3000 (loopback; anonymous Viewer) |
-| Prometheus | http://127.0.0.1:19090 |
-| Tempo | http://127.0.0.1:3200 |
-| Loki | http://127.0.0.1:3100 |
-| Alertmanager | http://127.0.0.1:9093 |
-| OTLP gRPC | 127.0.0.1:4317 |
+| Grafana | <http://127.0.0.1:3000> (loopback; anonymous Viewer) |
+| Prometheus | <http://127.0.0.1:19090> |
+| Tempo | <http://127.0.0.1:3200> |
+| Loki | <http://127.0.0.1:3100> |
+| Alertmanager | <http://127.0.0.1:9093> |
+| OTLP gRPC | `127.0.0.1:4317` |
 
 Configs live in [`infra/monitoring/`](../../monitoring/). Dashboards are provisioned under
 Grafana → Dashboards → IBEX.
