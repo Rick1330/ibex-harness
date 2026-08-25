@@ -14,7 +14,8 @@ The public marketing/docs/benchmarks site lives in `web/` (Phase 1.5+), not unde
 | --- | --- | --- |
 | `proxy/` | Go — LLM proxy (latency-critical): auth middleware, agent verification, rate limiting, provider forwarding (OpenAI + Anthropic), auth cache, directives + injection, sessions, ClickHouse traces, idempotency, health/metrics | **Shipped (Phase 2)** — continues in 2.5+ (capability registry, self-hosted adapters, response pipeline, context client, multi-provider routing) |
 | `auth/` | Go — authentication and token validation: gRPC `ValidateToken` / `ValidateAgent` / PAT lifecycle, Argon2id, Postgres stores, revoke pub/sub | **Shipped (Phase 2)** — extends in Phase 4 (e.g. provider-credential RPCs) |
-| `embedder/` | Python FastAPI — embedding contract + stub backend, `/health`/`/ready`, profile registry (G4.M1); TEI/hosted/cache in G4.M2–M4 | **Partial (2.5.G4.M1)** — deployment-time profile; dimensionality not interchangeable without migration |
+| `embedder/` | Python FastAPI — embedding contract + stub backend, `/health`/`/ready`, profile registry (G4.M1); TEI/hosted/cache in G4.M2–M4 | **Partial (2.5.G4)** — deployment-time profile; dimensionality not interchangeable without migration |
+| `mcp-memory/` | Python — MCP resource server: Streamable HTTP, Auth gRPC fail-closed boundary, stub `search_memory`/`write_memory`, `mcp_tool_calls` audit | **Partial (2.5.G6.M1 / ADR-0050)** — real tool bodies in 3.5 |
 
 ---
 
@@ -23,7 +24,6 @@ The public marketing/docs/benchmarks site lives in `web/` (Phase 1.5+), not unde
 | Directory | Role | Preferred phase | Notes |
 | --- | --- | --- | --- |
 | `tokenizer-service/` | Python FastAPI — accurate token counts via Hugging Face `tokenizers` (optional dual-path with in-process Go/CGo in the proxy) | **2.5** | Situational: may be deferred if proxy-side counting alone proves sufficient for early budgets |
-| `mcp-memory/` | Python — MCP server exposing audited memory tools (search / write / feedback), OAuth via existing Auth gRPC | **2.5 skeleton → 3.5 tools** | Separate lifecycle from proxy/API/context; early skeleton may land under this name before full tools |
 | `memory/` | Python FastAPI (+ related clients) — memory schema/ORM, write pipeline, vector store, semantic search, hot cache | **3** | Core memory substrate; not the place for extraction workers |
 | `worker/` | Python Celery (+ Redis) — extraction, embedding jobs, maintenance, later fingerprint/drift/regression tasks | **3.5** (intelligence jobs continue in **4.5**) | Preferred starting worker stack; alternatives (e.g. Temporal) only with evidence |
 | `context/` | Python gRPC — context assembly (budget, retrieve, score, pack, format) with degradation contract | **3.5** | Hot-path dependency of the proxy via `packages/contextclient` |

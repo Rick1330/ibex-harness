@@ -1701,6 +1701,30 @@ TTL event_date + INTERVAL 90 DAY
 SETTINGS index_granularity = 8192;
 ```
 
+#### Phase 2.5 — `ibex.mcp_tool_calls` (G6.M1 / ADR-0050)
+
+Applied by migration `infra/migrations/clickhouse/000002_create_mcp_tool_calls`. Metadata only — no tool argument or memory content columns. Phase 3.5.E.4 must expand, not recreate.
+
+```sql
+CREATE TABLE IF NOT EXISTS ibex.mcp_tool_calls
+(
+    request_id   String,
+    org_id       UUID,
+    agent_id     Nullable(UUID),
+    tool_name    LowCardinality(String),
+    latency_ms   UInt32,
+    success      Bool,
+    error_code   LowCardinality(String),
+    requested_at DateTime64(3, 'UTC'),
+    event_date   Date MATERIALIZED toDate(requested_at)
+)
+ENGINE = MergeTree()
+PARTITION BY toYYYYMM(event_date)
+ORDER BY (org_id, requested_at, request_id)
+TTL event_date + INTERVAL 90 DAY
+SETTINGS index_granularity = 8192;
+```
+
 #### Future ClickHouse tables (Phase 3+)
 
 The following sketches (`inference_traces`, billing MVs, etc.) are **not** applied in Phase 2. Kept for planning only.

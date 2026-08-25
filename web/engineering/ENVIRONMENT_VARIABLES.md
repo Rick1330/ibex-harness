@@ -425,17 +425,24 @@ Proxy client switches for assembly live in §9 (`IBEX_CONTEXT_ENABLED`, `IBEX_CO
 
 ---
 
-## 11b) MCP Memory Server Variables (planned 2.5 → 3.5)
+## 11b) MCP Memory Server Variables (2.5.G6.M1+)
 
-Used by: **`services/mcp-memory/`**
+Used by: **`services/mcp-memory/`** — see [MCP_SERVER.md](MCP_SERVER.md) and [ADR-0050](../content/docs/adr/0050-mcp-server-skeleton.mdx).
 
 | Variable | Required | Default | Description | Notes |
 |----------|----------|---------|-------------|-------|
-| `IBEX_MCP_ENABLED` | Planned | `false` | Master enable | Prefer per-org enable later |
-| `IBEX_MCP_TRANSPORT` | Planned | `streamable_http` | `streamable_http` \| `stdio` | `stdio` is dev-only |
-| `IBEX_MCP_PORT` | Planned | `8090` | HTTP listen port | |
-| `IBEX_AUTH_GRPC_ADDR` | Yes (when enabled) | `127.0.0.1:9091` | Reuse Auth `ValidateToken` | One identity system |
-| `IBEX_MCP_RATE_LIMIT_RPM` | Planned | `120` | Independent MCP tool budget | Separate from chat RPM |
+| `IBEX_ENV` | No | `development` | Environment name | `production` forbids stdio |
+| `IBEX_MCP_TRANSPORT` | No | `streamable_http` | `streamable_http` \| `stdio` | `stdio` is dev-only |
+| `IBEX_MCP_ALLOW_STDIO` | No | `false` | Explicit stdio gate | Required with `stdio` |
+| `IBEX_MCP_HOST` | No | `0.0.0.0` | HTTP bind host | |
+| `IBEX_MCP_PORT` | No | `8090` | HTTP listen port | |
+| `IBEX_MCP_RESOURCE_URL` | No | `http://127.0.0.1:8090/mcp` | Public MCP resource URL | Used in auth challenge metadata |
+| `IBEX_MCP_AUTH_SERVER_URL` | No | `http://127.0.0.1:8080` | AS URL advertised in protected-resource metadata | Discovery hook only |
+| `IBEX_AUTH_GRPC_ADDR` | Yes (HTTP mode) | `127.0.0.1:9091` | Auth `ValidateToken` target | One identity system |
+| `IBEX_MCP_AUTH_TIMEOUT_MS` | No | `50` | Per-call auth deadline | Fail closed on timeout |
+| `IBEX_MCP_CLICKHOUSE_URL` | No | (empty) | ClickHouse HTTP base for audit inserts | Empty → logging sink |
+| `IBEX_MCP_AUDIT_QUEUE_SIZE` | No | `1024` | Async audit queue depth | Drops + metric when full |
+| `IBEX_MCP_RATE_LIMIT_RPM` | Planned 3.5.E.4 | `120` | Independent MCP tool budget | Reserved; not enforced in G6 |
 | `IBEX_MEMORY_HTTP_URL` | Conditional | (none) | Memory service base for tools | Phase 3+ |
 
 ---

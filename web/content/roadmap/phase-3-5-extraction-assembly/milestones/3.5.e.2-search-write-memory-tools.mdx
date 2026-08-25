@@ -33,7 +33,7 @@ fullTitle: "Milestone 3.5.E.2 — search_memory and write_memory Tools"
 
 ## Why This Milestone Exists
 
-Expose the two core memory operations as MCP tools with explicit, hand-declared JSON schemas. `search_memory` calls the same `ContextAssemblyService.SearchMemories` gRPC RPC the proxy uses — identical ranking/scoring logic. `write_memory` goes through the identical 9-step write pipeline with `source="mcp_explicit"`, not a shortcut (ADR-0044).
+Expose the two core memory operations as MCP tools with explicit, hand-declared JSON schemas. `search_memory` calls the same `ContextAssemblyService.SearchMemories` gRPC RPC the proxy uses — identical ranking/scoring logic. `write_memory` goes through the identical 9-step write pipeline with `source="mcp_explicit"`, not a shortcut ([ADR-0050](/docs/adr/0050-mcp-server-skeleton) stub contracts; real pipeline ADR when writers land).
 
 ---
 

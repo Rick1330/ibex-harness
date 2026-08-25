@@ -52,6 +52,8 @@ case "${1:-help}" in
       "  clickhouse-migrate     Apply all pending ClickHouse migrations" \
       "  clickhouse-migrate-down Roll back one ClickHouse migration step" \
       "  clickhouse-version     Show current ClickHouse migration version" \
+      "  test-clickhouse-migrate Run ClickHouse migration unit tests (repo root)" \
+      "  test-clickhouse-migrate-integration Run ClickHouse migration integration tests" \
       "  dev-smoke              Run local auth+proxy smoke test" \
       "  dev-smoke-live         Run live OpenRouter auth+proxy smoke test" \
       "  e2e-wave2b-token-fks   Compose-dev Wave 2b token FK + CreateToken E2E" \
@@ -161,6 +163,12 @@ case "${1:-help}" in
     ;;
   clickhouse-version)
     bash "$CH_MIGRATE" version
+    ;;
+  test-clickhouse-migrate)
+    bash "$ROOT_DIR/infra/scripts/clickhouse-migrate-test-ci.sh"
+    ;;
+  test-clickhouse-migrate-integration)
+    bash "$ROOT_DIR/infra/scripts/clickhouse-migrate-test-integration-ci.sh"
     ;;
   dev-smoke)
     bash "$ROOT_DIR/infra/scripts/smoke_local.sh"

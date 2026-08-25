@@ -6,7 +6,7 @@ endif
 
 DEV_TOOL := infra/scripts/dev-tool.sh
 
-.PHONY: help lint-docs lint-go security-scan repo-guards proto-lint proto-breaking proto-gen proto-test proto-test-integration test-integration test-embedder coverage-embedder-gate coverage-report coverage-gate coverage-responsepipeline-gate compose-dev-up compose-dev-down compose-dev-reset compose-dev-logs compose-dev-ps compose-test-up compose-test-down db-migrate db-migrate-down db-version db-seed db-repair-token-fks clickhouse-migrate clickhouse-migrate-down clickhouse-version dev-smoke dev-smoke-live e2e-wave2b-token-fks verify-phase15
+.PHONY: help lint-docs lint-go security-scan repo-guards proto-lint proto-breaking proto-gen proto-test proto-test-integration test-integration test-embedder test-mcp-memory test-clickhouse-migrate test-clickhouse-migrate-integration coverage-embedder-gate coverage-mcp-memory-gate coverage-report coverage-gate coverage-responsepipeline-gate compose-dev-up compose-dev-down compose-dev-reset compose-dev-logs compose-dev-ps compose-test-up compose-test-down db-migrate db-migrate-down db-version db-seed db-repair-token-fks clickhouse-migrate clickhouse-migrate-down clickhouse-version dev-smoke dev-smoke-live e2e-wave2b-token-fks verify-phase15
 
 help: ## Show available commands
 	@"$(BASH)" "$(DEV_TOOL)" help
@@ -47,8 +47,20 @@ test-integration: ## Run all Go integration tests (-tags=integration)
 test-embedder: ## Run Python embedder service unit tests (services/embedder)
 	@"$(BASH)" infra/scripts/embedder-test-ci.sh
 
+test-mcp-memory: ## Run Python mcp-memory service unit tests (services/mcp-memory)
+	@"$(BASH)" infra/scripts/mcp-memory-test-ci.sh
+
+test-clickhouse-migrate: ## Run ClickHouse migration unit tests (repo root; not from services/mcp-memory)
+	@"$(BASH)" infra/scripts/clickhouse-migrate-test-ci.sh
+
+test-clickhouse-migrate-integration: ## Run ClickHouse migration integration tests (requires compose-test ClickHouse)
+	@"$(BASH)" infra/scripts/clickhouse-migrate-test-integration-ci.sh
+
 coverage-embedder-gate: ## Fail if embedder app coverage is below MIN_COVERAGE (default 95)
 	@"$(BASH)" infra/scripts/coverage-embedder-gate.sh
+
+coverage-mcp-memory-gate: ## Fail if mcp-memory app coverage is below MIN_COVERAGE (default 90)
+	@"$(BASH)" infra/scripts/coverage-mcp-memory-gate.sh
 
 coverage-report: ## Generate unit (+ integration if POSTGRES_TEST_DSN set) coverage report
 	@"$(BASH)" infra/scripts/coverage-report.sh

@@ -109,7 +109,7 @@ Every PR must pass these **branch protection** status checks (stable gate names;
 |-------|---------|
 | `ci-gate-repo` | Fast repo checks: layout, shellcheck, markdownlint, compose (when infra changes), go-mod-tidy/license (when Go changes) |
 | `ci-gate-go` | Go/proto lint, tests, smokes, coverage, govulncheck (auto-passes when no Go changes) |
-| `ci-gate-python` | Embedder pytest + coverage (auto-passes when no Python service changes) |
+| `ci-gate-python` | Embedder + mcp-memory pytest/coverage (auto-passes when no Python service changes) |
 | `ci-gate-web` | Web build and static export guards (auto-passes when no web changes) |
 | `ci-gate-security` | Trivy, OSV, bandit, hadolint (auto-passes when no Go/web/deps changes) |
 | `gitleaks` | Secret scan (always runs) |
