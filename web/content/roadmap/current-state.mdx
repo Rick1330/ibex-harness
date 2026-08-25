@@ -35,8 +35,8 @@ summary: "Phases 0–2 are complete. Auth, proxy, and single-provider E2E ship o
 
 **Last updated:** 2026-08-25  
 **Branch:** `main`  
-**Current focus:** [Phase 2.5 — Provider Generalization](/roadmap/phase-2-5-provider-generalization) (G5.M3 + Track F)  
-**Completed (recent):** Multi-label `memory_labels` (G5.M2 / ADR-0048); temporal validity foundation (G5.M1 / ADR-0047); Track D embedder (G4.M1–M4); Track A–C (G1–G3)
+**Current focus:** [Phase 2.5 — Provider Generalization](/roadmap/phase-2-5-provider-generalization) (Track F MCP)  
+**Completed (recent):** Relationship graph foundation (G5.M3 / ADR-0049); multi-label `memory_labels` (G5.M2 / ADR-0048); temporal validity foundation (G5.M1 / ADR-0047); Track D embedder (G4.M1–M4); Track A–C (G1–G3)
 
 <QuickLinks
   links={[
@@ -65,7 +65,7 @@ summary: "Phases 0–2 are complete. Auth, proxy, and single-provider E2E ship o
 
 ## Shipped Since Last Update
 
-- **Track E:** `memory_labels` multi-label join + category primary sync (G5.M2 / ADR-0048); memories temporal foundation (G5.M1 / ADR-0047)
+- **Track E complete:** `memory_relationships` graph foundation (G5.M3 / ADR-0049); `memory_labels` multi-label join + category primary sync (G5.M2 / ADR-0048); memories temporal foundation (G5.M1 / ADR-0047)
 - **Track D complete:** TEI GPU backend (G4.M2), hosted OpenAI/Cohere backend (G4.M3), org-scoped Redis content-hash cache (G4.M4)
 - Track A–C: Anthropic adapter, model capability registry, self-hosted openaicompatible, tokenizer registry, response pipelines (G1–G3)
 - Phase 2 close-out: landing/SEO honesty (mock/live proxy today; memory remains Phase 3); operator docs no longer teach the Phase 1 chat-501 stub as the happy path
@@ -98,10 +98,11 @@ summary: "Phases 0–2 are complete. Auth, proxy, and single-provider E2E ship o
   "forwarding missing."
   **Shipped (Track D):** embedder contract + stub, TEI GPU backend, hosted OpenAI/Cohere
   backends, org-scoped Redis content-hash cache (G4.M1–M4 / ADR-0046).
-  **Shipped (Track E partial):** `ibex_core.memories` temporal foundation (G5.M1 / ADR-0047)
-  and `memory_labels` multi-label join with category primary sync (G5.M2 / ADR-0048) — no
-  application writers yet.
-  **Not shipped (Phase 2.5 remaining / Phase 3+):** relationship schema (G5.M3), MCP skeleton
+  **Shipped (Track E):** `ibex_core.memories` temporal foundation (G5.M1 / ADR-0047),
+  `memory_labels` multi-label join with category primary sync (G5.M2 / ADR-0048), and
+  `memory_relationships` typed graph with traversal indexes + tip helper (G5.M3 / ADR-0049) —
+  no application writers yet.
+  **Not shipped (Phase 2.5 remaining / Phase 3+):** MCP skeleton
   (G6.M1), Python memory service, context assembly, worker, management API, operator dashboard.
 </Callout>
 
@@ -141,8 +142,7 @@ Legacy `docs.ibexharness.com` redirects to apex paths (301).
 ## Blockers And Risks
 
 <Callout type="warning" title="Phase 2.5 remaining">
-  Track E finish (G5.M3 relationship graph) and Track F MCP skeleton are still ahead.
-  Tracks A–D (G1–G4) and G5.M1–M2 are on `main` (or landing).
+  Track F MCP skeleton is still ahead. Tracks A–E (G1–G5) are on `main` (or landing).
 </Callout>
 
 - Multi-provider routing remains Phase 4
@@ -152,10 +152,10 @@ Legacy `docs.ibexharness.com` redirects to apex paths (301).
 
 <Steps>
   <Step title="Phase 2.5 finish">
-    Relationship graph readiness (G5.M3), MCP skeleton (G6.M1).
+    MCP skeleton (G6.M1); Track E schema pre-work (G5.M1–M3) is complete.
   </Step>
   <Step title="Phase 3 memory substrate">
-    Expand memories schema (HNSW + remaining columns; temporal + labels already in G5.M1–M2), write pipeline, read/ranking with category-conditional scoring.
+    Expand memories schema (HNSW + remaining columns; temporal + labels + relationships already in G5.M1–M3), write pipeline, read/ranking with category-conditional scoring.
   </Step>
   <Step title="Phase 3.5 extraction & assembly">
     Close the learning loop: extraction worker turns conversations into memories, context assembly injects memories into the proxy hot path.
