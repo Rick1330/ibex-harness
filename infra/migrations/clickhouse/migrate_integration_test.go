@@ -104,6 +104,13 @@ func TestIntegration_Migrate_SchemaAndTTL(t *testing.T) {
 func assertMCPToolCallsTable(t *testing.T, db *sql.DB) {
 	t.Helper()
 	assertTableCount(t, db, "mcp_tool_calls", 1)
+	got := loadMCPToolCallColumns(t, db)
+	assertMCPRequiredColumns(t, got)
+	assertMCPForbiddenColumns(t, got)
+}
+
+func loadMCPToolCallColumns(t *testing.T, db *sql.DB) map[string]struct{} {
+	t.Helper()
 	rows, err := db.QueryContext(context.Background(), `
 		SELECT name FROM system.columns
 		WHERE database = 'ibex' AND table = 'mcp_tool_calls'`)
@@ -122,6 +129,11 @@ func assertMCPToolCallsTable(t *testing.T, db *sql.DB) {
 	if err := rows.Err(); err != nil {
 		t.Fatal(err)
 	}
+	return got
+}
+
+func assertMCPRequiredColumns(t *testing.T, got map[string]struct{}) {
+	t.Helper()
 	for _, col := range []string{
 		"request_id", "org_id", "agent_id", "tool_name",
 		"latency_ms", "success", "error_code", "requested_at", "event_date",
@@ -130,6 +142,10 @@ func assertMCPToolCallsTable(t *testing.T, db *sql.DB) {
 			t.Errorf("mcp_tool_calls missing column %s", col)
 		}
 	}
+}
+
+func assertMCPForbiddenColumns(t *testing.T, got map[string]struct{}) {
+	t.Helper()
 	for _, forbidden := range []string{"content", "query", "arguments", "payload"} {
 		if _, ok := got[forbidden]; ok {
 			t.Errorf("mcp_tool_calls must not store content column %s", forbidden)

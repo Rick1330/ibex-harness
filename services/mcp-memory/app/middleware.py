@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from dataclasses import dataclass
 from urllib.parse import urlsplit
 
 from starlette.requests import Request
@@ -20,6 +21,14 @@ logger = logging.getLogger(__name__)
 ValidatorProvider = Callable[[], TokenValidator | None]
 
 _WWW_AUTHENTICATE = 'Bearer realm="ibex-mcp", resource_metadata="{metadata_url}"'
+
+
+@dataclass(frozen=True, slots=True)
+class _AuthError:
+    status: int
+    code: str
+    message: str
+    www_authenticate: str | None = None
 
 
 class BearerAuthMiddleware:
@@ -62,9 +71,11 @@ class BearerAuthMiddleware:
                 scope,
                 receive,
                 send,
-                status=503,
-                code="auth_unavailable",
-                message="authentication service unavailable",
+                _AuthError(
+                    status=503,
+                    code="auth_unavailable",
+                    message="authentication service unavailable",
+                ),
             )
             return
 
@@ -78,10 +89,12 @@ class BearerAuthMiddleware:
                 scope,
                 receive,
                 send,
-                status=401,
-                code=exc.code,
-                message=exc.message,
-                www_authenticate=_WWW_AUTHENTICATE.format(metadata_url=self._metadata_url),
+                _AuthError(
+                    status=401,
+                    code=exc.code,
+                    message=exc.message,
+                    www_authenticate=_WWW_AUTHENTICATE.format(metadata_url=self._metadata_url),
+                ),
             )
             return
         except AuthUnavailableError as exc:
@@ -89,9 +102,7 @@ class BearerAuthMiddleware:
                 scope,
                 receive,
                 send,
-                status=503,
-                code=exc.code,
-                message=exc.message,
+                _AuthError(status=503, code=exc.code, message=exc.message),
             )
             return
 
@@ -115,7 +126,7 @@ def _origin_from_resource(resource_url: str) -> str:
         return url[: -len("/mcp")] or url
     parts = urlsplit(url)
     if parts.scheme and parts.netloc:
-        return f"{parts.scheme}://{parts.netloc}"
+        return parts.scheme + "://" + parts.netloc
     return url
 
 
@@ -123,18 +134,14 @@ async def _send_error(
     scope: Scope,
     receive: Receive,
     send: Send,
-    *,
-    status: int,
-    code: str,
-    message: str,
-    www_authenticate: str | None = None,
+    error: _AuthError,
 ) -> None:
     headers: dict[str, str] = {"content-type": "application/json"}
-    if www_authenticate is not None:
-        headers["www-authenticate"] = www_authenticate
+    if error.www_authenticate is not None:
+        headers["www-authenticate"] = error.www_authenticate
     response = JSONResponse(
-        status_code=status,
-        content={"error": {"code": code, "message": message}},
+        status_code=error.status,
+        content={"error": {"code": error.code, "message": error.message}},
         headers=headers,
     )
     await response(scope, receive, send)

@@ -182,19 +182,18 @@ class AsyncAuditEmitter:
 
     async def aclose(self) -> None:
         self._closed = True
-        if self._task is None:
+        task = self._task
+        self._task = None
+        if task is None:
             await self._sink.aclose()
             return
         await self._signal_stop()
         try:
-            await asyncio.wait_for(self._task, timeout=5.0)
+            await asyncio.wait_for(task, timeout=5.0)
         except TimeoutError:
-            self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
-        self._task = None
+            task.cancel()
+            # wait() does not raise CancelledError for the cancelled child task.
+            await asyncio.wait({task}, timeout=1.0)
         await self._sink.aclose()
 
     async def _signal_stop(self) -> None:

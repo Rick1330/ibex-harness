@@ -140,22 +140,27 @@ def _read_bytes(buf: bytes, idx: int) -> tuple[bytes, int]:
 
 def _skip_unknown(buf: bytes, idx: int, wire: int) -> int:
     if wire == _WIRE_VARINT:
-        _, idx = _decode_varint(buf, idx)
-        return idx
+        return _skip_varint(buf, idx)
     if wire == _WIRE_64BIT:
-        end = idx + 8
-        if end > len(buf):
-            raise AuthUnavailableError("truncated fixed64 field")
-        return end
+        return _skip_fixed(buf, idx, 8, "fixed64")
     if wire == _WIRE_32BIT:
-        end = idx + 4
-        if end > len(buf):
-            raise AuthUnavailableError("truncated fixed32 field")
-        return end
+        return _skip_fixed(buf, idx, 4, "fixed32")
     if wire == _WIRE_LEN:
         _, idx = _read_bytes(buf, idx)
         return idx
     raise AuthUnavailableError(f"unsupported wire type {wire}")
+
+
+def _skip_varint(buf: bytes, idx: int) -> int:
+    _, idx = _decode_varint(buf, idx)
+    return idx
+
+
+def _skip_fixed(buf: bytes, idx: int, size: int, label: str) -> int:
+    end = idx + size
+    if end > len(buf):
+        raise AuthUnavailableError(f"truncated {label} field")
+    return end
 
 
 def _decode_utf8(raw: bytes) -> str:

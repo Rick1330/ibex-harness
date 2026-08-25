@@ -71,10 +71,13 @@ class TokenValidator(ABC):
 def parse_authorization_header(header: str | None) -> str:
     if header is None or not header.strip():
         raise AuthFailedError("missing authorization header")
-    parts = header.strip().split(None, 1)
-    if len(parts) != 2 or parts[0].lower() != "bearer" or not parts[1].strip():
+    scheme, _, remainder = header.strip().partition(" ")
+    if scheme.lower() != "bearer":
         raise AuthFailedError("authorization header must be Bearer <token>")
-    return parts[1].strip()
+    token = remainder.strip()
+    if not token:
+        raise AuthFailedError("authorization header must be Bearer <token>")
+    return token
 
 
 class GRPCTokenValidator(TokenValidator):
@@ -94,18 +97,8 @@ class GRPCTokenValidator(TokenValidator):
         )
 
     async def validate(self, access_token: str) -> ValidateResult:
-        try:
-            payload = await self._stub(access_token, timeout=self._timeout)
-            if not isinstance(payload, (bytes, bytearray)):
-                raise AuthUnavailableError("auth response is not bytes")
-            return ValidateResult.from_wire(decode_validate_token_response(bytes(payload)))
-        except grpc.aio.AioRpcError as exc:
-            raise _map_rpc_error(exc) from exc
-        except AuthUnavailableError:
-            raise
-        except (TimeoutError, OSError) as exc:
-            logger.warning("auth grpc unavailable error_class=%s", type(exc).__name__)
-            raise AuthUnavailableError() from exc
+        payload = await self._invoke(access_token)
+        return _decode_validate_payload(payload)
 
     async def ready(self) -> bool:
         try:
@@ -118,6 +111,22 @@ class GRPCTokenValidator(TokenValidator):
 
     async def aclose(self) -> None:
         await self._channel.close()
+
+    async def _invoke(self, access_token: str) -> bytes:
+        try:
+            return await self._stub(access_token, timeout=self._timeout)
+        except grpc.aio.AioRpcError as exc:
+            raise _map_rpc_error(exc) from exc
+        except OSError as exc:
+            # TimeoutError is an OSError subclass on modern Python.
+            logger.warning("auth grpc unavailable error_class=%s", type(exc).__name__)
+            raise AuthUnavailableError() from exc
+
+
+def _decode_validate_payload(payload: object) -> ValidateResult:
+    if not isinstance(payload, (bytes, bytearray)):
+        raise AuthUnavailableError("auth response is not bytes")
+    return ValidateResult.from_wire(decode_validate_token_response(bytes(payload)))
 
 
 def _map_rpc_error(exc: grpc.aio.AioRpcError) -> AuthFailedError | AuthUnavailableError:

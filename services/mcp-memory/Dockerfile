@@ -12,12 +12,12 @@
 # --------------------------------------------------------------------------- #
 # Stage 1 — copy pinned uv binary (no pip install / setup.py execution)       #
 # --------------------------------------------------------------------------- #
-FROM ghcr.io/astral-sh/uv:0.7.20 AS uv
+FROM ghcr.io/astral-sh/uv:0.7.20@sha256:2fd1b38e3398a256d6af3f71f0e2ba6a517b249998726a64d8cfbe55ab34af5e AS uv
 
 # --------------------------------------------------------------------------- #
 # Stage 2 — dependency install (wheels only; no sdist setup.py execution)     #
 # --------------------------------------------------------------------------- #
-FROM python:3.12-slim-bookworm AS deps
+FROM python:3.12-slim-bookworm@sha256:b64e9d3a71eddaa1b3f80c04abf292b3139e3b7c4dd272d19c31dc1f91194d1b AS deps
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -36,7 +36,7 @@ RUN uv sync --frozen --no-build --no-install-project
 # --------------------------------------------------------------------------- #
 # Stage 3 — runtime image                                                      #
 # --------------------------------------------------------------------------- #
-FROM python:3.12-slim-bookworm AS runtime
+FROM python:3.12-slim-bookworm@sha256:b64e9d3a71eddaa1b3f80c04abf292b3139e3b7c4dd272d19c31dc1f91194d1b AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
