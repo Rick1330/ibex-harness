@@ -35,9 +35,9 @@ publish `/metrics` when run on the host. Adjust targets in
 if you change listen ports.
 
 Embedder `/metrics` requires a Bearer token. `make observability-up` writes
-`infra/monitoring/prometheus/secrets/embedder_metrics_bearer` from
+`infra/monitoring/prometheus/scrape-auth/embedder_metrics_bearer` from
 `IBEX_EMBEDDING_METRICS_BEARER` in `.env` (gitignored). Scrape jobs use
-`authorization.credentials_file` — do not commit the secret file.
+`authorization.credentials_file` — do not commit the bearer file.
 
 ## Non-goals
 
