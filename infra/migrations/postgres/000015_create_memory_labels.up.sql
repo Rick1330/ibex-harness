@@ -32,6 +32,7 @@ CREATE INDEX idx_memory_labels_org_label
 
 -- Sync memories.category from highest-confidence label (tie: label ASC).
 -- When no labels remain, leave category unchanged (NOT NULL).
+-- Org filter is defense-in-depth alongside composite FK (AGENTS.md tenancy).
 CREATE OR REPLACE FUNCTION ibex_core.sync_memory_primary_category()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -42,13 +43,9 @@ DECLARE
     target_org_id UUID;
     primary_label TEXT;
 BEGIN
-    IF TG_OP = 'DELETE' THEN
-        target_memory_id := OLD.memory_id;
-        target_org_id := OLD.org_id;
-    ELSE
-        target_memory_id := NEW.memory_id;
-        target_org_id := NEW.org_id;
-    END IF;
+    -- INSERT/UPDATE use NEW; DELETE uses OLD (COALESCE covers both).
+    target_memory_id := COALESCE(NEW.memory_id, OLD.memory_id);
+    target_org_id := COALESCE(NEW.org_id, OLD.org_id);
 
     SELECT ml.label INTO primary_label
     FROM ibex_core.memory_labels ml
@@ -65,10 +62,7 @@ BEGIN
           AND category IS DISTINCT FROM primary_label;
     END IF;
 
-    IF TG_OP = 'DELETE' THEN
-        RETURN OLD;
-    END IF;
-    RETURN NEW;
+    RETURN COALESCE(NEW, OLD);
 END;
 $$;
 

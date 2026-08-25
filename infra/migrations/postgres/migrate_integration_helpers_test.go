@@ -228,3 +228,19 @@ func assertCoreTableRLSEnabled(t *testing.T, ctx context.Context, db *sql.DB, ta
 		t.Errorf("RLS not enabled on ibex_core.%s", table)
 	}
 }
+
+func assertCoreTableForceRLS(t *testing.T, ctx context.Context, db *sql.DB, table string) {
+	t.Helper()
+	var forced bool
+	err := db.QueryRowContext(ctx, `
+		SELECT c.relforcerowsecurity
+		FROM pg_class c
+		JOIN pg_namespace n ON n.oid = c.relnamespace
+		WHERE n.nspname = 'ibex_core' AND c.relname = $1`, table).Scan(&forced)
+	if err != nil {
+		t.Fatalf("force rls %s: %v", table, err)
+	}
+	if !forced {
+		t.Errorf("expected FORCE ROW LEVEL SECURITY on ibex_core.%s", table)
+	}
+}

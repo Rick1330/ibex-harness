@@ -336,18 +336,7 @@ func assertMemoryColumnDefault(t *testing.T, e memoryColExpect, columnDefault sq
 
 func assertMemoriesForceRLS(t *testing.T, ctx context.Context, db *sql.DB) {
 	t.Helper()
-	var forced bool
-	err := db.QueryRowContext(ctx, `
-		SELECT c.relforcerowsecurity
-		FROM pg_class c
-		JOIN pg_namespace n ON n.oid = c.relnamespace
-		WHERE n.nspname = 'ibex_core' AND c.relname = 'memories'`).Scan(&forced)
-	if err != nil {
-		t.Fatalf("force rls: %v", err)
-	}
-	if !forced {
-		t.Error("expected FORCE ROW LEVEL SECURITY on ibex_core.memories")
-	}
+	assertCoreTableForceRLS(t, ctx, db, "memories")
 }
 
 type memorySeed struct {
