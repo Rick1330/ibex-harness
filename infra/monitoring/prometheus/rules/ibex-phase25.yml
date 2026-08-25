@@ -1,0 +1,48 @@
+groups:
+  - name: ibex.phase25
+    rules:
+      - alert: IbexProxyDown
+        expr: up{job="proxy"} == 0
+        for: 2m
+        labels:
+          severity: p1
+        annotations:
+          summary: "IBEX proxy /metrics scrape is down"
+          description: "Prometheus cannot scrape the proxy job for 2m."
+
+      - alert: IbexAuthDown
+        expr: up{job="auth"} == 0
+        for: 2m
+        labels:
+          severity: p1
+        annotations:
+          summary: "IBEX auth /metrics scrape is down"
+
+      - alert: IbexProxyHighErrorRatio
+        expr: |
+          (
+            sum(rate(ibex_proxy_requests_total{status=~"5..|error"}[5m]))
+            /
+            clamp_min(sum(rate(ibex_proxy_requests_total[5m])), 1e-9)
+          ) > 0.10
+        for: 5m
+        labels:
+          severity: p1
+        annotations:
+          summary: "Proxy error ratio > 10% over 5m"
+
+      - alert: IbexMCPAuditDrops
+        expr: rate(ibex_mcp_audit_dropped_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: p2
+        annotations:
+          summary: "MCP audit queue is dropping events"
+
+      - alert: IbexProcessNotUp
+        expr: ibex_process_up == 0
+        for: 1m
+        labels:
+          severity: p1
+        annotations:
+          summary: "ibex_process_up is 0 for a scraped target"

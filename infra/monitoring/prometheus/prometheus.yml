@@ -1,0 +1,88 @@
+global:
+  scrape_interval: 10s
+  evaluation_interval: 10s
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # Default host ports (make observability-up / local quickstart).
+  - job_name: proxy
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["host.docker.internal:8080"]
+        labels:
+          service: proxy
+          port_profile: default
+
+  - job_name: auth
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["host.docker.internal:8081"]
+        labels:
+          service: auth
+          port_profile: default
+
+  - job_name: embedder
+    metrics_path: /metrics
+    authorization:
+      type: Bearer
+      credentials: "dev-embedder-metrics-token"
+    static_configs:
+      - targets: ["host.docker.internal:8004"]
+        labels:
+          service: embedder
+          port_profile: default
+
+  - job_name: mcp-memory
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["host.docker.internal:8090"]
+        labels:
+          service: mcp-memory
+          port_profile: default
+
+  # Demo / e2e ports when 8080 is occupied on the host (Phase 2.5 exit live verify).
+  - job_name: proxy-demo
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["host.docker.internal:18080"]
+        labels:
+          service: proxy
+          port_profile: demo
+
+  - job_name: auth-demo
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["host.docker.internal:18081"]
+        labels:
+          service: auth
+          port_profile: demo
+
+  - job_name: embedder-demo
+    metrics_path: /metrics
+    authorization:
+      type: Bearer
+      credentials: "dev-embedder-metrics-token"
+    static_configs:
+      - targets: ["host.docker.internal:18004"]
+        labels:
+          service: embedder
+          port_profile: demo
+
+  - job_name: mcp-memory-demo
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["host.docker.internal:18090"]
+        labels:
+          service: mcp-memory
+          port_profile: demo

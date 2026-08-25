@@ -1,0 +1,9 @@
+# Local-only IBEX observability Helm chart (ADR-0051 / Phase 2.5.G7).
+# Mirrors infra/compose/observability for kind/minikube.
+# Full application Helm (proxy/auth/...) remains Phase 4+.
+apiVersion: v2
+name: ibex-observability
+description: Local LGTM stack — Prometheus, Grafana, Tempo, Loki, OTel Collector, Alertmanager
+type: application
+version: 0.1.0
+appVersion: "phase-2.5"
