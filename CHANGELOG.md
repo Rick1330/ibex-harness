@@ -12,6 +12,26 @@ Release notes are human-readable summaries of user-visible changes, security fix
 
 ---
 
+## [0.1.4](https://github.com/Rick1330/ibex-harness/compare/v0.1.3...v0.1.4) (2026-08-25)
+
+
+### Features
+
+* **db:** memory_labels multi-label join table (m2.5.G5.M2) ([#586](https://github.com/Rick1330/ibex-harness/issues/586)) ([28cdfe0](https://github.com/Rick1330/ibex-harness/commit/28cdfe09f5977cc2b2f4d3c6c858c730c1967052))
+* **db:** temporal validity foundation on memories (m2.5.G5.M1) ([#581](https://github.com/Rick1330/ibex-harness/issues/581)) ([8bf93e3](https://github.com/Rick1330/ibex-harness/commit/8bf93e3782321cb5bf0e16b6f89bfc5d33032a51))
+* **embedder:** add tei gpu embedding backend ([#561](https://github.com/Rick1330/ibex-harness/issues/561)) ([04f24f5](https://github.com/Rick1330/ibex-harness/commit/04f24f5457e2b1ebdfa0734c99e1ce9f770351f9))
+* **embedder:** hosted-API embedding backend (OpenAI default, Cohere alternate) (m2.5.G4.M3) ([#576](https://github.com/Rick1330/ibex-harness/issues/576)) ([671212b](https://github.com/Rick1330/ibex-harness/commit/671212bbfc72bff03e9e6aa4bcb2e97ae20f19d3))
+* **embedder:** interface registry and Python ABC (m2.5.G4.M1) ([#557](https://github.com/Rick1330/ibex-harness/issues/557)) ([640afed](https://github.com/Rick1330/ibex-harness/commit/640afed54c7eced8a11ade25745496a80108ed90))
+* **embedder:** redis content-hash embedding cache (m2.5.G4.M4) ([#579](https://github.com/Rick1330/ibex-harness/issues/579)) ([a395502](https://github.com/Rick1330/ibex-harness/commit/a395502132eb4b987be07f1d41aedd61adfd4fbd))
+* **mcp:** mcp server skeleton with stub tools and auth boundary (m2.5.G6.M1) ([#590](https://github.com/Rick1330/ibex-harness/issues/590)) ([50d161a](https://github.com/Rick1330/ibex-harness/commit/50d161af80b1faa8986880dd9d703a23e5fc9d84))
+* **obs:** phase 2.5 exit gate with local LGTM stack (m2.5.G7) ([#592](https://github.com/Rick1330/ibex-harness/issues/592)) ([e66e359](https://github.com/Rick1330/ibex-harness/commit/e66e359e8ef6629ef5eebf903b2b5e0cebbc5df1))
+* **proxy:** add model capability registry for per-model context and features (m2.5.G1.M2) ([#541](https://github.com/Rick1330/ibex-harness/issues/541)) ([3eb3ee5](https://github.com/Rick1330/ibex-harness/commit/3eb3ee599f240042b1ed4fbe7734cd43427c7161))
+* **proxy:** anthropic provider adapter (2.5.G1.M1) ([#538](https://github.com/Rick1330/ibex-harness/issues/538)) ([65a6360](https://github.com/Rick1330/ibex-harness/commit/65a636006395f65aabab88c002209113e4c51f54))
+* **proxy:** non-streaming response pipeline seam (m2.5.G3.M1) ([#551](https://github.com/Rick1330/ibex-harness/issues/551)) ([60c23b8](https://github.com/Rick1330/ibex-harness/commit/60c23b8d5b8637bebb88b5410a36ea9c3ad87482))
+* **proxy:** openaicompatible adapter for self-hosted LLM backends (m2.5.G1.M3) ([#544](https://github.com/Rick1330/ibex-harness/issues/544)) ([033cb62](https://github.com/Rick1330/ibex-harness/commit/033cb62d805726827b2cd1782baa3e4182e6663a))
+* **schema:** memory_relationships graph foundation (m2.5.G5.M3) ([#588](https://github.com/Rick1330/ibex-harness/issues/588)) ([80c8dae](https://github.com/Rick1330/ibex-harness/commit/80c8dae8bab4912b8a18a3c6d1a383982ef27dce))
+* **tokenizer:** per-family token counting registry (m2.5.G2.M1) ([#548](https://github.com/Rick1330/ibex-harness/issues/548)) ([6a08719](https://github.com/Rick1330/ibex-harness/commit/6a08719ab53d360ae5d5797cf917afa725cf448b))
+
 ## [0.1.3](https://github.com/Rick1330/ibex-harness/compare/v0.1.2...v0.1.3) (2026-08-09)
 
 
