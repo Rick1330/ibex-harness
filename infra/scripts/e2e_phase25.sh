@@ -26,6 +26,7 @@ CHAT_BODY='{"model":"gpt-4o","messages":[{"role":"user","content":"phase25 e2e"}
 OTEL_ENDPOINT="${OTEL_EXPORTER_OTLP_ENDPOINT:-}"
 
 PIDS=()
+BODY_FILE=""
 fail() { echo "FAIL: $*" >&2; exit 1; }
 pass() { echo "PASS: $*"; }
 
@@ -57,6 +58,9 @@ expect_http_any() {
 }
 
 cleanup() {
+  if [[ -n "${BODY_FILE:-}" && -f "$BODY_FILE" ]]; then
+    rm -f "$BODY_FILE"
+  fi
   if [[ "$MANAGE" != "1" ]]; then
     return 0
   fi
@@ -84,7 +88,10 @@ wait_http() {
 }
 
 http_code() {
-  curl -sS -o /tmp/ibex-e2e-body.$$ -w "%{http_code}" "$@" || true
+  if [[ -z "${BODY_FILE:-}" ]]; then
+    BODY_FILE="$(mktemp "${TMPDIR:-/tmp}/ibex-e2e-body.XXXXXX")"
+  fi
+  curl -sS -o "$BODY_FILE" -w "%{http_code}" "$@" || true
 }
 
 start_stack() {
@@ -220,7 +227,7 @@ CODE="$(http_code -X POST "$EMBEDDER_ADDR/v1/embed" \
   -H "Authorization: Bearer $EMBED_TOKEN" \
   -d '{"texts":["phase25 e2e"],"org_id":"00000000-0000-0000-0000-000000000001"}')"
 expect_http "$CODE" "200" "embedder /v1/embed → 200" \
-  "embedder embed -> $CODE body=$(head -c 200 /tmp/ibex-e2e-body.$$ 2>/dev/null || true)"
+  "embedder embed -> $CODE body=$(head -c 200 "${BODY_FILE:-/dev/null}" 2>/dev/null || true)"
 
 MCP_HEADERS=(
   -H "Authorization: Bearer $DEV_TOKEN"
@@ -237,7 +244,7 @@ curl -sS -X POST "$MCP_ADDR/mcp" "${MCP_HEADERS[@]}" \
 
 CODE="$(http_code -X POST "$MCP_ADDR/mcp" "${MCP_HEADERS[@]}" \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}')"
-BODY="$(cat /tmp/ibex-e2e-body.$$ 2>/dev/null || true)"
+BODY="$(cat "${BODY_FILE:-/dev/null}" 2>/dev/null || true)"
 if [[ "$CODE" != "200" && "$CODE" != "202" ]]; then
   fail "mcp tools/list -> $CODE"
 fi

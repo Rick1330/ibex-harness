@@ -13,8 +13,8 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "up{job=~\"proxy|auth|embedder|mcp-memory\"}",
-          "legendFormat": "{{job}}"
+          "expr": "up{service=~\"proxy|auth|embedder|mcp-memory\"}",
+          "legendFormat": "{{service}}/{{job}}"
         }
       ],
       "fieldConfig": {

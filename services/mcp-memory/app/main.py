@@ -64,12 +64,13 @@ def create_app(
     application.include_router(probe_router)
     # Mount at root: FastMCP exposes /mcp; FastAPI routes (/health, /ready) win first.
     application.mount("/", mcp_asgi)
-    application.add_middleware(HTTPMetricsMiddleware)
+    # Inner auth first, then metrics outermost so 401s are counted.
     application.add_middleware(
         BearerAuthMiddleware,
         settings=cfg,
         get_validator=lambda: state.validator or validator,
     )
+    application.add_middleware(HTTPMetricsMiddleware)
     return application
 
 

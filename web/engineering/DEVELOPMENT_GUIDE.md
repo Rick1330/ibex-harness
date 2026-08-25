@@ -205,7 +205,7 @@ make observability-live-verify
 
 Default host `:8080` is often busy/unreachable; live-verify scrapes **demo** ports (`18080`/`18081`/`18004`/`18090`) which Prometheus also scrapes as `*-demo` jobs.
 
-Grafana (anonymous Admin): http://localhost:3000 — dashboards under folder **IBEX** (System Overview, Proxy Critical Path, Auth, Embedder+MCP). Prometheus host port defaults to **19090** (avoids clashing with a host Prometheus on 9090).
+Grafana (loopback, anonymous Viewer): http://127.0.0.1:3000 — dashboards under folder **IBEX** (System Overview, Proxy Critical Path, Auth, Embedder+MCP). Prometheus host port defaults to **19090** (avoids clashing with a host Prometheus on 9090).
 
 ### Phase 2.5 exit verification
 

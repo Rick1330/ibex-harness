@@ -8,11 +8,11 @@ images:
   otelCollector: otel/opentelemetry-collector-contrib@sha256:37fa87091cfaaec7234a27e4e395a40c31c2bfaea97a349a4afef6d9e9681197
   alertmanager: prom/alertmanager@sha256:e13b6ed5cb929eeaee733479dce55e10eb3bc2e9c4586c705a4e8da41e5eacf5
 
-# Local chart uses anonymous Admin (compose parity). Do not embed login secrets in values;
-# operators who disable anonymous should mount credentials via grafana.existingSecret.
+# Local chart: anonymous auth off by default. Opt in with --set grafana.anonymousAdmin=true
+# (Viewer role only). Password login uses grafana.existingSecret (key admin-password).
 grafana:
-  anonymousAdmin: true
-  # Optional Secret name with key "admin-password" (only used when anonymousAdmin is false).
+  anonymousAdmin: false
+  # Optional Secret name with key "admin-password" (used when anonymousAdmin is false).
   existingSecret: ""
 
 resources:

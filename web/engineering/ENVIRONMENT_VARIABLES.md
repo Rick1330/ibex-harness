@@ -440,7 +440,7 @@ Used by: **`services/mcp-memory/`** — see [MCP_SERVER.md](MCP_SERVER.md) and [
 | `IBEX_MCP_AUTH_SERVER_URL` | No | `http://127.0.0.1:8080` | AS URL advertised in protected-resource metadata | Discovery hook only; production requires non-loopback HTTPS |
 | `IBEX_AUTH_GRPC_ADDR` | Yes (HTTP mode) | `127.0.0.1:9091` | Auth `ValidateToken` target | Insecure channel only for loopback/private IP or mesh short name (e.g. `auth`) |
 | `IBEX_MCP_AUTH_TIMEOUT_MS` | No | `50` | Per-call auth deadline | Fail closed on timeout |
-| `IBEX_MCP_CLICKHOUSE_URL` | No | (empty) | ClickHouse HTTP base for audit inserts (include user/password when required, e.g. `http://default:ibexdev@127.0.0.1:8123`) | Empty → logging sink |
+| `IBEX_MCP_CLICKHOUSE_URL` | No | (empty) | ClickHouse HTTP base for audit inserts (include credentials when required, e.g. `http://<user>:<password>@127.0.0.1:8123`; compose-dev fixture uses `CLICKHOUSE_PASSWORD` from `infra/compose/dev/.env`) | Empty → logging sink |
 | `IBEX_MCP_AUDIT_QUEUE_SIZE` | No | `1024` | Async audit queue depth | Drops + metric when full |
 | `IBEX_MCP_RATE_LIMIT_RPM` | Planned 3.5.E.4 | `120` | Independent MCP tool budget | Reserved; not enforced in G6 |
 | `IBEX_MEMORY_HTTP_URL` | Conditional | (none) | Memory service base for tools | Phase 3+ |

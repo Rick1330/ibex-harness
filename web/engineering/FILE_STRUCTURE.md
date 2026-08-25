@@ -62,9 +62,12 @@ ibex-harness/
   infra/
     compose/dev/               # local dependencies (available)
     compose/test/              # CI/integration compose (available)
+    compose/observability/     # local LGTM stack — ADR-0051 (available)
     migrations/                # Postgres + ClickHouse migrations (available)
     scripts/                   # operational helpers (available)
-    docker/ helm/ terraform/ monitoring/   # planned; not all present yet
+    monitoring/                # Prometheus/Grafana/OTel configs (available)
+    helm/observability/        # thin K8s LGTM chart (available)
+    docker/ terraform/         # planned; not all present yet
 
   benchmarks/                  # proxy overhead + load pipeline (available); retrieval eval grows later
   web/
@@ -475,6 +478,10 @@ infra/compose/
     .env.example
   test/
     docker-compose.yml
+  observability/             # Phase 2.5.G7 local LGTM (ADR-0051)
+    docker-compose.yml
+    .env.example
+    README.md
   README.md
 ```
 

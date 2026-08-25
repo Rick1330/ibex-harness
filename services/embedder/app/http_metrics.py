@@ -30,13 +30,20 @@ HTTP_DURATION = Histogram(
     buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0),
 )
 
+_UNMATCHED_ROUTE = "<unmatched>"
+
 
 def _route_label(request: Request) -> str:
     route = request.scope.get("route")
     path = getattr(route, "path", None)
     if isinstance(path, str) and path:
         return path
-    return request.url.path
+    return _UNMATCHED_ROUTE
+
+
+def _record(method: str, route: str, status: str, elapsed: float) -> None:
+    HTTP_REQUESTS.labels(method=method, route=route, status=status).inc()
+    HTTP_DURATION.labels(method=method, route=route).observe(elapsed)
 
 
 class HTTPMetricsMiddleware(BaseHTTPMiddleware):
@@ -49,11 +56,13 @@ class HTTPMetricsMiddleware(BaseHTTPMiddleware):
         if request.url.path == "/metrics":
             return await call_next(request)
         start = time.perf_counter()
-        response = await call_next(request)
-        elapsed = time.perf_counter() - start
-        route = _route_label(request)
         method = request.method
-        status = str(response.status_code)
-        HTTP_REQUESTS.labels(method=method, route=route, status=status).inc()
-        HTTP_DURATION.labels(method=method, route=route).observe(elapsed)
+        try:
+            response = await call_next(request)
+        except Exception:
+            elapsed = time.perf_counter() - start
+            _record(method, _route_label(request), "500", elapsed)
+            raise
+        elapsed = time.perf_counter() - start
+        _record(method, _route_label(request), str(response.status_code), elapsed)
         return response

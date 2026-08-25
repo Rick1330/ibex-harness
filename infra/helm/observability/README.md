@@ -5,31 +5,34 @@ Thin Kubernetes packaging of the local LGTM stack used by Phase 2.5 exit.
 
 ## kind / minikube
 
-Default chart settings match compose: **anonymous Grafana Admin**, no embedded login secrets,
+Default chart settings: **anonymous Grafana disabled**, no embedded login secrets,
 `automountServiceAccountToken: false`, and memory limits on every container.
+Enable anonymous Viewer (not Admin) only via `--set grafana.anonymousAdmin=true`.
 
 ```bash
 # kind
 kind create cluster --name ibex-obs || true
-helm upgrade --install ibex-obs ./infra/helm/observability
+helm upgrade --install ibex-obs ./infra/helm/observability \
+  --namespace ibex-observability --create-namespace
 
-# Grafana NodePort
-kubectl -n ibex-observability get svc grafana
-# Open http://localhost:30300 (kind: kubectl port-forward svc/grafana 3000:3000 -n ibex-observability)
+# Grafana via port-forward (do not rely on NodePort 30300 unless kind extraPortMappings are configured)
+kubectl -n ibex-observability port-forward svc/grafana 3000:3000
+# Open http://127.0.0.1:3000
 ```
 
 ```bash
 # minikube
 minikube start
-helm upgrade --install ibex-obs ./infra/helm/observability
-minikube service grafana -n ibex-observability
+helm upgrade --install ibex-obs ./infra/helm/observability \
+  --namespace ibex-observability --create-namespace
+kubectl -n ibex-observability port-forward svc/grafana 3000:3000
 ```
 
-To disable anonymous login, create a Secret with key `admin-password`, then:
+To use password login, create a Secret with key `admin-password`, then:
 
 ```bash
 helm upgrade --install ibex-obs ./infra/helm/observability \
-  --set grafana.anonymousAdmin=false \
+  --namespace ibex-observability --create-namespace \
   --set grafana.existingSecret=grafana-admin
 ```
 

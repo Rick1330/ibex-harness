@@ -69,10 +69,11 @@ if [[ "${IBEX_VERIFY_PHASE25_E2E:-0}" == "1" ]]; then
   bash infra/scripts/e2e_phase25.sh
   if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx ibex-obs-grafana; then
     bash infra/scripts/observability-traffic.sh || true
-    IBEX_OBS_REQUIRE_IBEX_SERIES=1 bash infra/scripts/observability-smoke.sh \
-      || bash infra/scripts/observability-smoke.sh
+    # Fail closed when series are required; do not fall back to a health-only smoke.
+    IBEX_OBS_REQUIRE_IBEX_SERIES=1 bash infra/scripts/observability-smoke.sh
   else
     echo "WARN: observability stack not up; skipping observability-smoke (make observability-up)"
+    echo "NOTE: for live Grafana series under demo ports, run make observability-live-verify"
   fi
   pass "live e2e path"
 else

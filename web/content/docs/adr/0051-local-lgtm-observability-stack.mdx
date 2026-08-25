@@ -19,7 +19,7 @@ authors: "IBEX Harness team"
 Services already expose Prometheus `/metrics` (proxy, auth, embedder, mcp-memory) and Go services
 initialize OpenTelemetry (ADR-0019 / ADR-0021). [`MONITORING.md`](/docs/engineering/MONITORING)
 specifies Grafana dashboards (including Proxy Critical Path) and a full LGTM stack, but
-[`infra/README.md`](/docs/engineering/FILE_STRUCTURE) previously deferred Prometheus/Grafana/Loki/Tempo
+[`FILE_STRUCTURE.md`](/docs/file_structure) / `infra/README.md` previously deferred Prometheus/Grafana/Loki/Tempo
 to “beyond Phase 5.”
 
 Without a runnable collection plane, Phase 2.5 cannot prove operability: no graphs, no scrape

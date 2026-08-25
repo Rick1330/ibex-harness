@@ -22,11 +22,15 @@ spec:
           securityContext:
             allowPrivilegeEscalation: false
           env:
+            {{- if .Values.grafana.anonymousAdmin }}
             - name: GF_AUTH_ANONYMOUS_ENABLED
-              value: {{ .Values.grafana.anonymousAdmin | quote }}
+              value: "true"
             - name: GF_AUTH_ANONYMOUS_ORG_ROLE
-              value: Admin
-            {{- if and (not .Values.grafana.anonymousAdmin) .Values.grafana.existingSecret }}
+              value: Viewer
+            {{- else }}
+            - name: GF_AUTH_ANONYMOUS_ENABLED
+              value: "false"
+            {{- if .Values.grafana.existingSecret }}
             - name: GF_SECURITY_ADMIN_USER
               value: admin
             - name: GF_SECURITY_ADMIN_PASSWORD
@@ -34,6 +38,7 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.grafana.existingSecret | quote }}
                   key: admin-password
+            {{- end }}
             {{- end }}
           ports:
             - containerPort: 3000
@@ -47,11 +52,10 @@ metadata:
   name: grafana
   namespace: {{ .Release.Namespace }}
 spec:
-  type: NodePort
+  type: ClusterIP
   selector:
     app: grafana
   ports:
     - name: http
       port: 3000
       targetPort: 3000
-      nodePort: 30300

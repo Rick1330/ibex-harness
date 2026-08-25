@@ -891,7 +891,7 @@ jobs:
   verify-phase25:
     name: verify-phase25
     needs: changes
-    if: needs.changes.outputs.run_go == 'true' || needs.changes.outputs.run_python == 'true'
+    if: needs.changes.outputs.run_go == 'true' || needs.changes.outputs.run_python == 'true' || needs.changes.outputs.run_compose == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read

@@ -772,9 +772,13 @@ This view must be accessible in the dashboard and must not require log scraping.
 
 ---
 
-## 15) Verification Checklist (Observability “Done” Criteria)
+## 15) Verification Checklist (Local Phase 2.5 LGTM — not production HA)
 
-Before any service is considered production-ready:
+Phase 2.5.G7 / ADR-0051 signs off **local Compose** evidence (Grafana on loopback, Prometheus scrape of
+host services, Alertmanager rules loaded, optional OTLP→Tempo). Production HA collectors, org-wide
+SLO burn alerts, and full runbook coverage remain later-phase work.
+
+Before Phase 2.5 exit is considered verified locally:
 
 - [x] `/metrics` endpoint exists and is scraped (local: `make observability-up`)
 - [x] request rate, error rate, latency metrics exist (proxy/auth; embedder/mcp golden signals in Phase 2.5.G7)

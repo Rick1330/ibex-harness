@@ -53,7 +53,8 @@ wait_http() {
 }
 
 prom_query() {
-  curl -fsS --get --data-urlencode "query=$1" "$PROM_URL/api/v1/query"
+  curl -fsS --connect-timeout 2 --max-time 10 \
+    --get --data-urlencode "query=$1" "$PROM_URL/api/v1/query"
 }
 
 assert_series() {

@@ -52,3 +52,9 @@ docs:
   - '**/*.mdx'
 compose:
   - 'infra/compose/**'
+  - 'infra/monitoring/**'
+  - 'infra/helm/observability/**'
+  - 'infra/scripts/verify_phase25.sh'
+  - 'infra/scripts/e2e_phase25.sh'
+  - 'infra/scripts/mcp-conformance.sh'
+  - 'infra/scripts/observability-*.sh'
