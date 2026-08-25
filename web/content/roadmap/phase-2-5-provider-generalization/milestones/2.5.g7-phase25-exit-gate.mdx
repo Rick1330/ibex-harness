@@ -1,0 +1,90 @@
+---
+title: "2.5.G7 Phase 2.5 Exit"
+description: "Phase 2.5 exit gate — observability pack-up, multi-service verify, roadmap sign-off, handoff to Phase 3."
+summary: "Phase 2.5 exit gate — observability pack-up, multi-service verify, roadmap sign-off, handoff to Phase 3."
+status: "completed"
+milestoneId: "2.5.G7"
+goal: "[2.5.G — Phase 2.5 exit / ops pack-up](/roadmap/phase-2-5-provider-generalization/tracks#track-g--exit--ops-pack-up)"
+estimatedEffort: "1 week"
+phase: "phase-2-5-provider-generalization"
+fullTitle: "Milestone 2.5.G7 — Phase 2.5 Exit Gate, Observability, and Handoff"
+---
+
+# Milestone 2.5.G7 — Phase 2.5 Exit Gate, Observability, and Handoff
+
+**Status:** Complete  
+**Goal:** [Track G — Exit / Ops pack-up](/roadmap/phase-2-5-provider-generalization/tracks#track-g--exit--ops-pack-up)  
+**Phase:** 2.5 — Provider Generalization & Foundation  
+**Estimated effort:** 1 week  
+**Completed:** 2026-08-25  
+**ADR:** [ADR-0051](/docs/adr/0051-local-lgtm-observability-stack)
+
+---
+
+## Why This Milestone Exists
+
+Tracks A–F delivered provider generalization, embedder, schema pre-work, and the MCP skeleton.
+Phase 2.5 is complete when those seams work together as a coherent platform, observability is
+operable locally (Prometheus/Grafana/Tempo/Loki), and a single verify gate proves the exit
+criteria. This milestone is the explicit completion gate — analogous to [2.6.2](/roadmap/phase-2-single-provider/milestones/2.6.2-phase2-exit-gate).
+
+Artefacts:
+
+1. **Local LGTM stack** — `make observability-up` with provisioned dashboards (ADR-0051).
+2. **`make verify-phase25`** — maps exit criteria to runnable checks + multi-service e2e.
+3. **Thin K8s observability chart** — compose parity for kind/minikube (not full app Helm).
+4. **Roadmap sign-off** — `current-state` + phase status completed; Phase 3 entry clear.
+
+---
+
+## Phase 2.5 Exit Checklist
+
+**Functionality (Tracks A–F):**
+- [x] Anthropic adapter test depth parity with OpenAI (G1.M1)
+- [x] `Registry.For(model)` resolves OpenAI + Anthropic without handler changes (G1.M2)
+- [x] `ModelCapability` queryable (context window, tools, tokenizer family) (G1.M2)
+- [x] Self-hosted OpenAI-compatible adapter (G1.M3)
+- [x] Tokenizer registry with metrics (G2.M1)
+- [x] Response pipeline zero-stage byte-identical; overhead budget documented (G3.M1–M2)
+- [x] Embedder ≥2 real backends: **TEI + hosted (OpenAI/Cohere)** same contract suite (G4; CPU MiniLM remains stub per ADR-0046)
+- [x] Schema migrations 14–16 (temporal, multi-label, relationship graph) via `make db-migrate` (G5)
+- [x] MCP skeleton + Auth gRPC resource-server boundary + `ibex.mcp_tool_calls` audit (G6.M1 / ADR-0050)
+
+**Operations / observability:**
+- [x] `make observability-up` starts Prometheus, Grafana, Tempo, Loki, OTel Collector, Alertmanager
+- [x] Grafana provisioned: System Overview, Proxy Critical Path, Auth, Embedder/MCP
+- [x] Prometheus scrapes proxy, auth, embedder, mcp-memory `/metrics`
+- [x] Proxy/auth OTLP traces appear in Tempo when `OTEL_EXPORTER_OTLP_ENDPOINT` is set
+- [x] `make observability-smoke` exits 0 after traffic
+- [x] Thin Helm chart under `infra/helm/observability/` documented for kind/minikube
+
+**Verification:**
+- [x] `make verify-phase25` exits 0 (CI job `verify-phase25`)
+- [x] Multi-service e2e: auth + proxy + embedder + mcp-memory (`make e2e-phase25`)
+- [x] MCP stub conformance evidence (`make mcp-conformance`)
+- [x] `e2e-wave2b-token-fks` asserts current Postgres migration head (16)
+- [x] Phase 1 security-integration + Phase 2 smokes still green (CI)
+
+**Documentation:**
+- [x] Exit criteria on phase index reconciled to shipped reality
+- [x] [current-state](/roadmap/current-state) reflects Phase 2.5 complete / Phase 3 next
+- [x] MONITORING.md / OPS_GUIDE / DEVELOPMENT_GUIDE cover observability compose
+- [x] ADR-0051 accepted; infra README timing updated
+
+---
+
+## Acceptance Criteria
+
+- [x] Local LGTM stack + dashboards show live `ibex_*` series after smoke traffic
+- [x] `make verify-phase25` green and documented
+- [x] Exit checklist signed off against `main`
+- [x] Phase index + overview status → **Complete**; Phase 3 entry assumes 2.5 exit
+- [x] K8s observability chart bring-up documented (kind/minikube)
+
+---
+
+## Handoff to Phase 3
+
+Phase 3 builds the memory substrate on Track D/E seams and expands the MCP process (ADR-0050)
+with real write/search. Org-wide HA observability hardening remains later; local LGTM is the
+operator path for Phase 3 development.

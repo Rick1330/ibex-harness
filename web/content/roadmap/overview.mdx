@@ -1,7 +1,7 @@
 ---
 title: "Phases Overview"
-description: "High-level roadmap from Foundation through Advanced Retrieval. Phases 0–2 complete; Phase 2.5 next."
-summary: "High-level roadmap from Foundation through Advanced Retrieval. Phases 0–2 complete; Phase 2.5 next."
+description: "High-level roadmap from Foundation through Advanced Retrieval. Phases 0–2.5 complete; Phase 3 next."
+summary: "High-level roadmap from Foundation through Advanced Retrieval. Phases 0–2.5 complete; Phase 3 next."
 status: "completed"
 ---
 
@@ -15,7 +15,7 @@ High-level roadmap from Foundation through Advanced Retrieval. Detailed mileston
 | [1](phase-1-core-platform/) | Core Platform | **Complete** | Phase 0 complete | Migrations, auth, proxy platform, security gate |
 | [1.5](phase-1-5-docs-site/) | Public Web Product | **Complete** | Phase 1 complete | Unified site at ibexharness.com |
 | [2](phase-2-single-provider/) | Single Provider E2E | **Complete** | Phase 1.5 exit | Authenticated OpenAI-compatible chat through proxy |
-| [2.5](phase-2-5-provider-generalization/) | Provider Generalization & Foundation | Planned | Phase 2 exit | Anthropic adapter, tokenizer, response pipeline, embedder, schema pre-work, MCP skeleton |
+| [2.5](phase-2-5-provider-generalization/) | Provider Generalization & Foundation | **Complete** | Phase 2 exit | Multi-provider, tokenizer, response pipeline, embedder, schema pre-work, MCP skeleton, LGTM exit |
 | [3](phase-3-memory-engine/) | Core Memory Substrate | Planned | Phase 2.5 exit | Memory schema v2 (HNSW), write pipeline, read/ranking, hot cache |
 | [3.5](phase-3-5-extraction-assembly/) | Extraction & Context Assembly | Planned | Phase 3 exit | Extraction worker, context assembly on proxy hot path, MCP memory tools |
 | [4](phase-4-multi-provider/) | Operator Platform & Multi-Provider | Planned | Phase 3.5 exit | Management API, dashboard, multi-provider routing, hierarchical rate limiting |
@@ -70,11 +70,13 @@ See [phase-1-core-platform](/roadmap/phase-1-core-platform) and [phase1-exit-aud
 
 ## Phase 2.5: Provider Generalization & Foundation
 
-**Status:** Planned
+**Status:** Complete
+
+**Exit milestone:** [2.5.G7 Phase 2.5 exit gate](/roadmap/phase-2-5-provider-generalization/milestones/2.5.g7-phase25-exit-gate)
 
 **Goals:** [goals](/roadmap/phase-2-5-provider-generalization/goals)
 
-Six tracks: multi-provider adapters (Anthropic, vLLM), tokenizer registry, response pipeline, pluggable embedding service, schema pre-work (temporal validity, multi-label), and MCP server skeleton.
+Seven tracks: multi-provider adapters (Anthropic, vLLM), tokenizer registry, response pipeline, pluggable embedding service, schema pre-work (temporal validity, multi-label), MCP server skeleton, and exit/ops pack-up (local LGTM + verify-phase25).
 
 ---
 

@@ -2,7 +2,7 @@
 title: "Phase 2.5: Provider Generalization & Foundation"
 description: "Generalize the single-provider proxy into a pluggable, multi-backend platform before building the memory engine."
 summary: "Generalize the single-provider proxy into a pluggable, multi-backend platform before building the memory engine."
-status: "planned"
+status: "completed"
 phase: "phase-2-5-provider-generalization"
 fullTitle: "Phase 2.5 — Provider Generalization & Foundation"
 ---
@@ -31,16 +31,17 @@ uses it" pattern that made Phase 1 (auth/proxy skeleton) a clean foundation for 
 
 ## Phase 2.5 Scope
 
-### Six tracks
+### Seven tracks
 
 | Track | Theme | Key Deliverable |
 |---|---|---|
 | A | Multi-provider adapters | Anthropic adapter proving `Provider` interface generalizes; model capability registry |
 | B | Tokenizer registry | Per-model token counting via Hugging Face `tokenizers` (CGo in proxy, Python service for context assembly) |
 | C | Response-side processing | `ResponsePipeline` stage interface; typed decode/re-encode of upstream responses; streaming design ADR |
-| D | Pluggable embedding service | `Embedder` interface + registry; TEI GPU backend, sentence-transformers CPU fallback, hosted-API option; content-hash cache |
+| D | Pluggable embedding service | `Embedder` interface + registry; TEI GPU backend, hosted OpenAI/Cohere backends, content-hash cache (CPU MiniLM stub) |
 | E | Schema pre-work | Temporal validity columns, multi-label category support, relationship graph index — migrations only, no application code |
-| F | MCP server skeleton | Auth-boundary-scoped MCP server exposing stub memory tools; OAuth via existing `AuthService.ValidateToken` |
+| F | MCP server skeleton | Auth-boundary-scoped MCP server exposing stub memory tools; resource-server auth via `AuthService.ValidateToken` |
+| G | Exit / ops pack-up | Local LGTM observability, `verify-phase25`, thin K8s observability chart, roadmap sign-off |
 
 ## Recommended Execution Order
 
@@ -64,6 +65,9 @@ Track E (Schema — parallel with A/B):
 
 Track F (MCP skeleton — after A):
  2.5.G6.M1 (MCP server with stub tools)
+
+Track G (Exit / ops — after A–F):
+ 2.5.G7 (exit gate, LGTM observability, verify-phase25)
 ```
 
 ## Tech Stack Additions
@@ -73,18 +77,22 @@ Track F (MCP skeleton — after A):
 | Response pipeline typed model | Go structs mirroring OpenAI chat response shape, in `packages/responsepipeline` | Keeps decode/re-encode in the proxy's hot language |
 | Embedding backend abstraction | Python ABC (`EmbeddingBackend`), profile selected by `EMBEDDER_PROFILE` env at startup | Mirrors the proven `provider.Provider`/`Registry` pattern |
 | Default production embedding model | `BAAI/bge-m3` (1024-dim) | Best available open retrieval-tuned model; multilingual + long-context |
-| CPU-fallback embedding model | `all-MiniLM-L6-v2` (384-dim) | Already right-sized for the CPU-only constraint |
+| CPU MiniLM profile | Stub only (ADR-0046); real CPU path deferred | Avoid shipping an unfinished local transformer path as a “real” backend |
 | Embedding serving runtime (GPU) | Hugging Face TEI (Apache-2.0) | Eliminates hand-rolled batching code entirely |
+| Hosted embeddings | OpenAI and/or Cohere HTTP backends | Second real backend family for contract parity without GPU |
 | MCP SDK | Official `mcp` Python SDK | Tracks an evolving spec |
 | MCP auth | Reuse existing `AuthService.ValidateToken` gRPC | One identity system, not two |
+| Local observability | Prometheus + Grafana + Tempo + Loki + OTel Collector (compose) | Pull-forward for Phase 2.5 exit (ADR-0051); HA platform remains later |
 
 ## Exit Criteria
 
 1. Anthropic adapter passes the same streaming/non-streaming/error-mapping test depth as the OpenAI adapter
 2. `Registry.For(model)` resolves both OpenAI and Anthropic models without handler/middleware changes
 3. `ModelCapability` struct queryable for context window, tool support, and tokenizer family
-4. Response pipeline decode/re-encode round trip is byte-for-byte identical to passthrough (zero stages) with p99 overhead < 2ms
-5. `Embedder` interface has at least two real backends (sentence-transformers + TEI) passing the same contract test suite
+4. Response pipeline decode/re-encode round trip is byte-for-byte identical to passthrough (zero stages) with p99 overhead &lt; 2ms
+5. `Embedder` interface has at least two real backends (**TEI + hosted OpenAI or Cohere**) passing the same contract test suite (CPU MiniLM remains stub)
 6. All three schema migrations (temporal validity, multi-label, relationship graph index) apply cleanly via `make db-migrate`
 7. MCP server passes official MCP conformance against stub handlers with auth validated via gRPC
 8. All Phase 1 and Phase 2 tests still pass with zero regressions
+9. Local LGTM observability stack is operable (`make observability-up` / `observability-smoke`) with Proxy Critical Path dashboard
+10. `make verify-phase25` exits 0 (phase pack-up gate)
