@@ -37,11 +37,13 @@ run_psql() {
 echo "=== Wave 2b compose-dev E2E ==="
 
 # ── 1. Migration / constraint inventory ─────────────────────────────────────
+# Head migrations: 000016_create_memory_relationships (Phase 2.5.G5).
+EXPECTED_MIGRATE_VERSION="${IBEX_EXPECTED_MIGRATE_VERSION:-16}"
 VER="$(run_psql -Atc "SELECT version FROM schema_migrations LIMIT 1" | tr -d '\r')"
 DIRTY="$(run_psql -Atc "SELECT dirty::text FROM schema_migrations LIMIT 1" | tr -d '\r')"
-[[ "$VER" == "12" ]] || fail "schema_migrations version=$VER want 12"
+[[ "$VER" == "$EXPECTED_MIGRATE_VERSION" ]] || fail "schema_migrations version=$VER want $EXPECTED_MIGRATE_VERSION"
 [[ "$DIRTY" == "f" || "$DIRTY" == "false" ]] || fail "schema_migrations dirty=$DIRTY"
-pass "migrate version=12 dirty=false"
+pass "migrate version=$VER dirty=false"
 
 for c in tokens_agent_org_fk tokens_user_org_fk tokens_revoked_by_fk; do
   ok="$(run_psql -Atc "SELECT EXISTS (

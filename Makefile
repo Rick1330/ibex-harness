@@ -6,7 +6,7 @@ endif
 
 DEV_TOOL := infra/scripts/dev-tool.sh
 
-.PHONY: help lint-docs lint-go security-scan repo-guards proto-lint proto-breaking proto-gen proto-test proto-test-integration test-integration test-embedder test-mcp-memory test-clickhouse-migrate test-clickhouse-migrate-integration coverage-embedder-gate coverage-mcp-memory-gate coverage-report coverage-gate coverage-responsepipeline-gate compose-dev-up compose-dev-down compose-dev-reset compose-dev-logs compose-dev-ps compose-test-up compose-test-down db-migrate db-migrate-down db-version db-seed db-repair-token-fks clickhouse-migrate clickhouse-migrate-down clickhouse-version dev-smoke dev-smoke-live e2e-wave2b-token-fks verify-phase15
+.PHONY: help lint-docs lint-go security-scan repo-guards proto-lint proto-breaking proto-gen proto-test proto-test-integration test-integration test-embedder test-mcp-memory test-clickhouse-migrate test-clickhouse-migrate-integration coverage-embedder-gate coverage-mcp-memory-gate coverage-report coverage-gate coverage-responsepipeline-gate compose-dev-up compose-dev-down compose-dev-reset compose-dev-logs compose-dev-ps compose-test-up compose-test-down observability-up observability-down observability-smoke observability-traffic observability-live-verify db-migrate db-migrate-down db-version db-seed db-repair-token-fks clickhouse-migrate clickhouse-migrate-down clickhouse-version dev-smoke dev-smoke-live e2e-wave2b-token-fks e2e-phase25 verify-phase15 verify-phase25 mcp-conformance
 
 help: ## Show available commands
 	@"$(BASH)" "$(DEV_TOOL)" help
@@ -93,6 +93,21 @@ compose-test-up: ## Start minimal test dependencies
 compose-test-down: ## Stop minimal test dependencies
 	@"$(BASH)" "$(DEV_TOOL)" compose-test-down
 
+observability-up: ## Start local LGTM observability stack (Prometheus/Grafana/Tempo/Loki)
+	@"$(BASH)" infra/scripts/observability-up.sh
+
+observability-down: ## Stop local LGTM observability stack
+	@"$(BASH)" infra/scripts/observability-down.sh
+
+observability-smoke: ## Smoke-check Grafana/Prometheus/Tempo/Loki (+ optional ibex_* series)
+	@"$(BASH)" infra/scripts/observability-smoke.sh
+
+observability-traffic: ## Hit local /health+/metrics so Prometheus has ibex_* series
+	@"$(BASH)" infra/scripts/observability-traffic.sh
+
+observability-live-verify: ## Start services, generate traffic, assert Grafana/Prometheus series
+	@"$(BASH)" infra/scripts/observability-live-verify.sh
+
 db-migrate: ## Apply all pending Postgres migrations
 	@"$(BASH)" "$(DEV_TOOL)" db-migrate
 
@@ -128,3 +143,12 @@ e2e-wave2b-token-fks: ## Compose-dev Wave 2b token composite FK + CreateToken E2
 
 verify-phase15: ## Verify unified public site (IBEX_SITE_URL, default production)
 	@"$(BASH)" "$(DEV_TOOL)" verify-phase15
+
+verify-phase25: ## Phase 2.5 exit gate verification (packages + Python services + optional e2e)
+	@"$(BASH)" infra/scripts/verify_phase25.sh
+
+e2e-phase25: ## Multi-service e2e (auth+proxy+embedder+mcp) against local processes
+	@"$(BASH)" infra/scripts/e2e_phase25.sh
+
+mcp-conformance: ## MCP stub HTTP protocol checks (G6.M1 / exit criterion 7 evidence)
+	@"$(BASH)" infra/scripts/mcp-conformance.sh

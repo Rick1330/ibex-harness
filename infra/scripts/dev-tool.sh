@@ -44,6 +44,9 @@ case "${1:-help}" in
       "  compose-dev-ps         Show local development dependency status" \
       "  compose-test-up        Start minimal test dependencies" \
       "  compose-test-down      Stop minimal test dependencies" \
+      "  observability-up       Start local LGTM observability stack" \
+      "  observability-down     Stop local LGTM observability stack" \
+      "  observability-smoke    Smoke-check Grafana/Prometheus/Tempo/Loki" \
       "  db-migrate             Apply all pending Postgres migrations" \
       "  db-migrate-down        Roll back one Postgres migration step" \
       "  db-version             Show current Postgres migration version" \
@@ -57,7 +60,10 @@ case "${1:-help}" in
       "  dev-smoke              Run local auth+proxy smoke test" \
       "  dev-smoke-live         Run live OpenRouter auth+proxy smoke test" \
       "  e2e-wave2b-token-fks   Compose-dev Wave 2b token FK + CreateToken E2E" \
-      "  verify-phase15         Run Phase 1.5 public site verification (IBEX_SITE_URL)"
+      "  verify-phase15         Run Phase 1.5 public site verification (IBEX_SITE_URL)" \
+      "  verify-phase25         Phase 2.5 exit gate verification" \
+      "  e2e-phase25            Multi-service e2e (auth+proxy+embedder+mcp)" \
+      "  mcp-conformance        MCP stub protocol conformance checks"
     ;;
   lint-docs)
     cd "$ROOT_DIR"
