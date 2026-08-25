@@ -20,21 +20,25 @@ fullTitle: "Milestone 3.1.1 — Memory schema v2: HNSW, temporal validity, multi
 **Phase:** 3 — Core Memory Substrate  
 **Estimated effort:** 4–5 days  
 **Track:** [Track A — Schema & Migrations](/roadmap/phase-3-memory-engine/tracks#track-a--schema--migrations)  
-**ADR required:** (planned) memory schema v2 expand — do **not** reuse ADR-0040 (Anthropic adapter). Temporal foundation is [ADR-0047](/docs/adr/0047-memory-temporal-validity); multi-label join is [ADR-0048](/docs/adr/0048-memory-multi-label-categories).
+**ADR required:** (planned) memory schema v2 expand — do **not** reuse ADR-0040 (Anthropic adapter). Temporal foundation is [ADR-0047](/docs/adr/0047-memory-temporal-validity); multi-label join is [ADR-0048](/docs/adr/0048-memory-multi-label-categories); relationship graph is [ADR-0049](/docs/adr/0049-memory-relationship-graph).
 
 ---
 
-<Callout type="info" title="Post–G5.M1 / G5.M2: expand, do not CREATE">
+<Callout type="info" title="Post–G5.M1 / G5.M2 / G5.M3: expand, do not CREATE">
   After [2.5.G5.M1](/roadmap/phase-2-5-provider-generalization/milestones/2.5.g5.m1-temporal-validity-columns),
   `ibex_core.memories` already exists (`000014`) with `valid_from` / `valid_until` / `observed_at`,
   FORCE RLS, and composite org-safe FKs. After
   [2.5.G5.M2](/roadmap/phase-2-5-provider-generalization/milestones/2.5.g5.m2-multi-label-category-support),
   `ibex_core.memory_labels` already exists (`000015`) with `org_id`, composite FK, FORCE RLS, and
-  primary sync onto `memories.category` — do **not** `CREATE TABLE memory_labels` again. Draft RLS
-  that uses `memory_id IN (SELECT id FROM memories)` is incorrect; keep `rls_org_visible(org_id)`.
-  Milestone 3.1.1 becomes an **expand** migration (`ADD COLUMN embedding…`, HNSW, remaining quality
-  columns; optional rename `category` → `primary_category`). Keep `observed_at`. Migration number in
-  sketches (`000041`) is provisional.
+  primary sync onto `memories.category` — do **not** `CREATE TABLE memory_labels` again. After
+  [2.5.G5.M3](/roadmap/phase-2-5-provider-generalization/milestones/2.5.g5.m3-relationship-graph-readiness),
+  `ibex_core.memory_relationships` already exists (`000016`) with dual composite FKs, FORCE RLS,
+  bidirectional traversal indexes, supersession view, and tip helper — do **not**
+  `CREATE TABLE memory_relationships` again ([ADR-0049](/docs/adr/0049-memory-relationship-graph)).
+  Draft RLS that uses `memory_id IN (SELECT id FROM memories)` is incorrect; keep
+  `rls_org_visible(org_id)`. Milestone 3.1.1 becomes an **expand** migration (`ADD COLUMN
+  embedding…`, HNSW, remaining quality columns; optional rename `category` → `primary_category`).
+  Keep `observed_at`. Migration number in sketches (`000041`) is provisional.
 </Callout>
 
 <Callout type="note" title="Planning baseline">
@@ -154,10 +158,10 @@ Decision: **Temporal-interval-aware** (foundation columns already in ADR-0047).
  future model swap does not require a blind rewrite of every row.
 3. HNSW index: `USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64)`.
 4. New `ibex_core.memory_labels` table (memory_id, label, confidence, PRIMARY KEY(memory_id, label)).
-5. `ibex_core.memory_relationships` unchanged in shape (already models
- supersedes/contradicts/specializes/generalizes/merged_from/derived_from)
- but `contradicts` edges may now only be created by the conflict worker
- after confirming interval overlap (enforced in application code, Track C).
+5. `ibex_core.memory_relationships` already exists (`000016` / ADR-0049) with the
+ typed-edge taxonomy; 3.1.1 must not recreate it. `contradicts` edges may only be
+ created by the conflict worker after confirming interval overlap (application
+ code, Track C).
 
 ## Consequences
 ### Positive

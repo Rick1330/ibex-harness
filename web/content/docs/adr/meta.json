@@ -46,6 +46,7 @@
     "0045-streaming-response-transformation",
     "0046-embedder-interface-registry",
     "0047-memory-temporal-validity",
-    "0048-memory-multi-label-categories"
+    "0048-memory-multi-label-categories",
+    "0049-memory-relationship-graph"
   ]
 }

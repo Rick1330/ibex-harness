@@ -504,8 +504,11 @@ CREATE INDEX idx_directive_scenarios_directive_id
 > **Shipped (2.5.G5.M2 / ADR-0048):** `ibex_core.memory_labels` multi-label join
 > table with per-label confidence; `memories.category` synced as primary when
 > labels exist.
+> **Shipped (2.5.G5.M3 / ADR-0049):** `ibex_core.memory_relationships` typed
+> edges with dual composite FKs, FORCE RLS, bidirectional traversal indexes,
+> `memory_supersession_edges` view, and `resolve_supersession_tip`.
 > **Not yet shipped:** `embedding` / pgvector / HNSW, usefulness/feedback,
-> `search_vector`, `memory_relationships` (Phase 3.1.1 expand + G5.M3).
+> `search_vector` (Phase 3.1.1 expand).
 
 ```sql
 -- ================================================================
@@ -638,24 +641,20 @@ CREATE POLICY memory_labels_isolation ON ibex_core.memory_labels
 
 -- Phase 3.1.1 expand (not yet applied): embedding vector(...), embedding_model,
 -- embedding_dim, HNSW index, usefulness/feedback, search_vector, etc.
--- Do not greenfield-CREATE memories or memory_labels in 3.1.1 — expand only.
+-- Do not greenfield-CREATE memories, memory_labels, or memory_relationships
+-- in 3.1.1 — expand only.
 
 -- ================================================================
--- MEMORY RELATIONSHIPS
--- Tracks relationships between memories (conflicts,
--- supersession, specialization)
+-- MEMORY RELATIONSHIPS (migration 000016 / ADR-0049)
+-- Typed edges; supersedes means source replaces target
 -- ================================================================
 CREATE TABLE ibex_core.memory_relationships (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    org_id          UUID NOT NULL
-                    REFERENCES ibex_core.organizations(id)
-                    ON DELETE RESTRICT,
-    source_memory_id    UUID NOT NULL
-                        REFERENCES ibex_core.memories(id)
-                        ON DELETE CASCADE,
-    target_memory_id    UUID NOT NULL
-                        REFERENCES ibex_core.memories(id)
-                        ON DELETE CASCADE,
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id              UUID NOT NULL
+                        REFERENCES ibex_core.organizations(id)
+                        ON DELETE RESTRICT,
+    source_memory_id    UUID NOT NULL,
+    target_memory_id    UUID NOT NULL,
     relationship_type   TEXT NOT NULL
                         CHECK (relationship_type IN (
                             'supersedes',    -- source replaces target
@@ -665,28 +664,38 @@ CREATE TABLE ibex_core.memory_relationships (
                             'merged_from',   -- source merged from target
                             'derived_from'   -- source derived from target
                         )),
-    confidence          NUMERIC(3,2) NOT NULL DEFAULT 0.90,
+    confidence          NUMERIC(3,2) NOT NULL DEFAULT 0.90
+                        CHECK (confidence >= 0 AND confidence <= 1),
     resolution_notes    TEXT,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
-    UNIQUE(source_memory_id, target_memory_id, relationship_type)
+    UNIQUE (source_memory_id, target_memory_id, relationship_type),
+    CONSTRAINT memory_relationships_no_self_loop_chk
+        CHECK (source_memory_id <> target_memory_id),
+    CONSTRAINT memory_relationships_source_org_fk
+        FOREIGN KEY (source_memory_id, org_id)
+        REFERENCES ibex_core.memories (id, org_id)
+        ON DELETE CASCADE,
+    CONSTRAINT memory_relationships_target_org_fk
+        FOREIGN KEY (target_memory_id, org_id)
+        REFERENCES ibex_core.memories (id, org_id)
+        ON DELETE CASCADE
 );
 
--- Indexes
-CREATE INDEX idx_memory_relationships_source
-    ON ibex_core.memory_relationships(source_memory_id);
-CREATE INDEX idx_memory_relationships_target
-    ON ibex_core.memory_relationships(target_memory_id);
+CREATE INDEX idx_memory_relationships_org_source_type
+    ON ibex_core.memory_relationships (org_id, source_memory_id, relationship_type);
+CREATE INDEX idx_memory_relationships_org_target_type
+    ON ibex_core.memory_relationships (org_id, target_memory_id, relationship_type);
 
--- RLS
-ALTER TABLE ibex_core.memory_relationships
-    ENABLE ROW LEVEL SECURITY;
-CREATE POLICY memory_relationships_isolation
-    ON ibex_core.memory_relationships
-    USING (
-        org_id = current_setting('app.current_org_id', true)::UUID
-        OR current_setting('app.is_service_account', true)::BOOLEAN = true
-    );
+ALTER TABLE ibex_core.memory_relationships ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ibex_core.memory_relationships FORCE ROW LEVEL SECURITY;
+
+CREATE POLICY memory_relationships_isolation ON ibex_core.memory_relationships
+    USING (ibex_core.rls_org_visible(org_id));
+
+-- View memory_supersession_edges: supersedes-only projection (security_invoker).
+-- Function resolve_supersession_tip(org_id, memory_id, max_depth DEFAULT 5):
+-- walk incoming supersedes to current tip with depth + cycle guards.
 
 -- ================================================================
 -- MEMORY VERSIONS

@@ -1,8 +1,8 @@
 ---
 title: "2.5.G5.M3 Relationship graph readiness"
-description: "Add graph-traversal index on memory_relationships and helper view for recursive CTE queries before Phase 3's extraction worker starts writing relationship edges at volume."
-summary: "Add graph-traversal index on memory_relationships and helper view for recursive CTE queries before Phase 3's extraction worker starts writing relationship edges at volume."
-status: "planned"
+description: "Org-safe memory_relationships CREATE with bidirectional graph-traversal indexes, supersession view, and depth-capped tip helper — schema readiness before Phase 3 writers."
+summary: "Org-safe memory_relationships CREATE with bidirectional graph-traversal indexes, supersession view, and depth-capped tip helper — schema readiness before Phase 3 writers."
+status: "completed"
 milestoneId: "2.5.G5.M3"
 track: "E"
 trackTitle: "Schema Pre-Work"
@@ -15,88 +15,57 @@ fullTitle: "Milestone 2.5.G5.M3 — Relationship Graph Readiness"
 
 # Milestone 2.5.G5.M3 — Relationship Graph Readiness
 
-**Status:** Planned  
+**Status:** Completed (2026-08-25)  
 **Goal:** [Track E — Schema Pre-Work](/roadmap/phase-2-5-provider-generalization/tracks#track-e--schema-pre-work)  
 **Phase:** 2.5 — Provider Generalization & Foundation  
-**Estimated effort:** 1 day
+**Estimated effort:** 1 day  
+**ADR:** [ADR-0049](/docs/adr/0049-memory-relationship-graph)
 
 ---
 
 <Callout type="note" title="Planning baseline">
-  This page is a planning sketch, not an implementation script. Named paths, package layouts,
-  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
-  that are expected to change once the live code, constraints, and research during implementation
-  make a better shape clear. Prefer outcomes over matching any particular file tree.
+  This page began as an index-only sketch assuming `memory_relationships` already existed.
+  The table was missing through `000015`. Shipped design is a greenfield CREATE with composite
+  org-safe FKs, FORCE RLS, dual traversal indexes, supersession view, and tip helper — prefer
+  ADR-0049 + `DATABASE_SCHEMA.md` over the sketch SQL below.
 </Callout>
 
 ## Why This Milestone Exists
 
-The `memory_relationships` table already exists with the right shape (typed edges: `supersedes/contradicts/specializes/generalizes/merged_from/derived_from`) but lacks graph-traversal indexes needed for the recursive CTEs Phase 3's extraction worker will run at volume (e.g., "walk the supersession chain to the current version"). Adding the index and helper view now, as pure schema-readiness, avoids a performance cliff when Phase 3 starts writing relationship edges.
-
----
+Phase 3's extraction / conflict pipeline will write typed relationship edges at volume, and Phase 5 will walk supersession chains with recursive CTEs. Landing an org-safe table plus graph-traversal indexes now avoids a schema and performance cliff when those writers start.
 
 ## Non-Goals
 
 - Application code using the new index or view (pure schema-readiness)
 - Changing the relationship type taxonomy
 - Adding new edge types
+- Apache AGE / external graph database
 
----
+## What shipped
 
-## Orientation (indicative)
-
-Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
-**rough sketches for orientation** — inspiration and a baseline, not a required change list.
-
-During implementation, expect to:
-
-- open the live tree and follow existing patterns before inventing new ones
-- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
-- advance the design beyond the sketch where measurement or code reality says so
-- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
-
-Prefer outcomes over matching any particular file tree or command sequence.
-
-**Areas that may be involved** (situational — not a checklist):
-
-- Database schema / migrations
-
-## Suggested naming (provisional)
-
-Rename freely to match the change that actually lands.
-
-- Branch: `feature/m2-5-g5-m3-relationship-graph-readiness`
-- PR title: `feat(schema): graph-traversal index and helper view for memory_relationships (m2.5.G5.M3)`
-
-## Working notes
-
-Preferred starting points and open questions — situational, and expected to evolve with further research during implementation.
-
-### Index
-
-```sql
-CREATE INDEX idx_memory_relationships_source_type
- ON ibex_core.memory_relationships(source_memory_id, relationship_type);
-```
-
-### Helper view
-
-A helper view for recursive CTE traversal of supersession chains — the most common graph-walk pattern in the write pipeline's conflict detection and the read pipeline's "resolve to current version" logic.
-
----
+- Migration `000016_create_memory_relationships` — greenfield CREATE (not index-only ALTER)
+- Dual composite FKs `(source|target_memory_id, org_id) → memories`; self-loop + confidence CHECKs
+- Indexes `(org_id, source_memory_id, relationship_type)` and `(org_id, target_memory_id, relationship_type)`
+- View `memory_supersession_edges` (`security_invoker`) + `resolve_supersession_tip` (depth/org/cycle)
+- FORCE RLS via `rls_org_visible`; integration tests; ADR-0049; 3.1.1 expand-not-CREATE note
 
 ## Success signals
 
-Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
-
-- [ ] Migration applies cleanly on top of existing schema with zero application code depending on the new index/view
-- [ ] `EXPLAIN ANALYZE` on a sample recursive CTE query confirms index usage
-- [ ] `make db-migrate` succeeds on a seeded dataset
-- [ ] Consistent with existing migration-strategy ADR's forward-only, expand-contract policy
-- [ ] `DATABASE_SCHEMA.md` updated
+- [x] Migration applies cleanly; no application writers depend on the new objects
+- [x] EXPLAIN on sample source/target+type filters mentions the traversal indexes
+- [x] `make db-migrate` / migrate smoke to version 16
+- [x] Forward-only expand-contract consistent with ADR-0005
+- [x] `DATABASE_SCHEMA.md` updated
 
 ## Prerequisites
 
 - Milestone 2.5.G5.M1 (temporal validity columns)
 - Milestone 2.5.G5.M2 (multi-label category support)
 
+## Orientation (historical sketch)
+
+```sql
+-- Sketch only — shipped path is CREATE + dual org-scoped indexes (000016 / ADR-0049)
+CREATE INDEX idx_memory_relationships_source_type
+ ON ibex_core.memory_relationships(source_memory_id, relationship_type);
+```
