@@ -45,6 +45,53 @@ def _record(method: str, route: str, status: str, elapsed: float) -> None:
     HTTP_DURATION.labels(method=method, route=route).observe(elapsed)
 
 
+def _should_instrument(scope: Scope) -> bool:
+    if scope["type"] != "http":
+        return False
+    return scope.get("path", "") != "/metrics"
+
+
+def _request_method(scope: Scope) -> str:
+    method = scope.get("method", "GET")
+    if isinstance(method, str):
+        return method
+    return "GET"
+
+
+class _RequestMetrics:
+    """Records once when the response body completes, or on error/fallback."""
+
+    def __init__(self, scope: Scope) -> None:
+        self._scope = scope
+        self._method = _request_method(scope)
+        self._start = time.perf_counter()
+        self._status_code = 500
+        self._recorded = False
+
+    def wrap_send(self, send: Send) -> Send:
+        async def send_wrapper(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                self._status_code = int(message["status"])
+            await send(message)
+            if message["type"] == "http.response.body" and not message.get("more_body", False):
+                self.record_once(str(self._status_code))
+
+        return send_wrapper
+
+    def record_once(self, status: str) -> None:
+        if self._recorded:
+            return
+        self._recorded = True
+        elapsed = time.perf_counter() - self._start
+        _record(self._method, _route_label(self._scope), status, elapsed)
+
+    def record_error(self) -> None:
+        self.record_once("500")
+
+    def record_if_needed(self) -> None:
+        self.record_once(str(self._status_code))
+
+
 class HTTPMetricsMiddleware:
     """ASGI middleware: duration ends when the response body completes (more_body=false)."""
 
@@ -52,43 +99,14 @@ class HTTPMetricsMiddleware:
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http":
-            await self.app(scope, receive, send)
-            return
-        path = scope.get("path", "")
-        if path == "/metrics":
+        if not _should_instrument(scope):
             await self.app(scope, receive, send)
             return
 
-        start = time.perf_counter()
-        method = scope.get("method", "GET")
-        if not isinstance(method, str):
-            method = "GET"
-        status_code = 500
-        recorded = False
-
-        async def send_wrapper(message: Message) -> None:
-            nonlocal status_code, recorded
-            if message["type"] == "http.response.start":
-                status_code = int(message["status"])
-            await send(message)
-            if (
-                message["type"] == "http.response.body"
-                and not message.get("more_body", False)
-                and not recorded
-            ):
-                recorded = True
-                elapsed = time.perf_counter() - start
-                _record(method, _route_label(scope), str(status_code), elapsed)
-
+        metrics = _RequestMetrics(scope)
         try:
-            await self.app(scope, receive, send_wrapper)
+            await self.app(scope, receive, metrics.wrap_send(send))
         except Exception:
-            if not recorded:
-                recorded = True
-                elapsed = time.perf_counter() - start
-                _record(method, _route_label(scope), "500", elapsed)
+            metrics.record_error()
             raise
-        if not recorded:
-            elapsed = time.perf_counter() - start
-            _record(method, _route_label(scope), str(status_code), elapsed)
+        metrics.record_if_needed()

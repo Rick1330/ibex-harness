@@ -174,6 +174,11 @@ func countKeyedAllowed(results []Result) int {
 
 func newTestKeyed(t testing.TB, cfg RedisKeyedConfig) KeyedLimiter {
 	t.Helper()
+	// DefaultRedisOpTimeout (50ms) is too tight under -race + parallel CI load;
+	// production keeps the short timeout — tests use a generous bound.
+	if cfg.OpTimeout <= 0 {
+		cfg.OpTimeout = time.Second
+	}
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = client.Close() })

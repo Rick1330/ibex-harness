@@ -15,6 +15,16 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 pass() { echo "PASS: $*"; }
 section() { echo ""; echo "=== $* ==="; }
 
+# Proto stubs are gitignored; generate when missing so proxy/auth unit smoke can compile.
+if [[ ! -d packages/proto/gen/go/ibex/auth/v1 ]]; then
+  section "Generate protobuf stubs (ephemeral)"
+  if ! command -v buf >/dev/null 2>&1; then
+    fail "buf CLI required to generate packages/proto/gen (install: https://buf.build/docs/installation)"
+  fi
+  (cd packages/proto && buf generate) || fail "buf generate failed"
+  pass "protobuf stubs generated"
+fi
+
 section "Exit #1–3: provider / capability registry"
 go test ./packages/provider/... ./packages/permissions/... -count=1
 pass "provider + permissions packages"

@@ -42,12 +42,12 @@ func TestUnit_CountForModel_BuiltinCatalog(t *testing.T) {
 	require.NoError(t, err)
 
 	cases := []struct {
-		name       string
-		canceled   bool
-		model      string
-		text       string
-		wantErr    error
-		wantN      int
+		name     string
+		canceled bool
+		model    string
+		text     string
+		wantErr  error
+		wantN    int
 	}{
 		{name: "canceled context", canceled: true, model: "gpt-4o", text: "probe", wantErr: context.Canceled},
 		{name: "empty model id", model: "  ", text: "probe", wantErr: ErrModelNotInCatalog},
