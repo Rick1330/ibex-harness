@@ -33,7 +33,7 @@ func zeroEmbedding1024() string {
 func TestMemorySchemaV2_ExtensionAndHNSWIndex(t *testing.T) {
 	db, _ := openMigratedSchemaV2DB(t)
 	ctx := context.Background()
-	assertVectorExtension(t, ctx, db, true)
+	assertVectorExtension(t, ctx, vectorExtCheck{db: db, want: true})
 	assertHNSWIndex(t, ctx, db)
 	assertIndexesExist(t, ctx, db, []string{"idx_memories_validity", "idx_memories_search_vector"})
 }
@@ -43,7 +43,7 @@ func TestMemorySchemaV2_QualityDefaultsAndSearchVector(t *testing.T) {
 	ctx := context.Background()
 	orgA, _ := seedTwoOrgsWithAgents(t, ctx, db)
 	memID := seedMemory(t, ctx, memorySeed{db: db, orgID: orgA, agentSlug: "agent-a", content: "quality defaults"})
-	assertMemoryQualityDefaults(t, ctx, db, memID)
+	assertMemoryQualityDefaults(t, ctx, memoryQualityDefaultsCheck{db: db, memID: memID})
 }
 
 func TestMemorySchemaV2_EmbeddingTripletAndChecks(t *testing.T) {
@@ -53,26 +53,29 @@ func TestMemorySchemaV2_EmbeddingTripletAndChecks(t *testing.T) {
 	agentID := lookupAgentID(t, ctx, agentLookup{db: db, orgID: orgA, slug: "agent-a"})
 	vec := zeroEmbedding1024()
 
-	memID := insertMemoryWithEmbedding(t, ctx, db, orgA, agentID, vec)
+	memID := insertMemoryWithEmbedding(t, ctx, embeddedMemoryInsert{db: db, orgID: orgA, agentID: agentID, vec: vec})
 	if memID == "" {
 		t.Fatal("expected memory id")
 	}
 
-	assertPQCode(t, execAsService(t, ctx, db, `
-		INSERT INTO ibex_core.memories (
-			org_id, agent_id, content, content_hash, content_tokens, embedding
-		) VALUES ($1::uuid, $2::uuid, 'bad triplet', 'hash-emb-bad', 1, $3::vector)`,
-		orgA, agentID, vec), sqlStateExpect{code: "23514"})
+	assertPQCode(t, execAsService(t, ctx, serviceExec{
+		db: db,
+		query: `
+			INSERT INTO ibex_core.memories (
+				org_id, agent_id, content, content_hash, content_tokens, embedding
+			) VALUES ($1::uuid, $2::uuid, 'bad triplet', 'hash-emb-bad', 1, $3::vector)`,
+		args: []any{orgA, agentID, vec},
+	}), sqlStateExpect{code: "23514"})
 
-	assertPQCode(t, execAsService(t, ctx, db,
-		`UPDATE ibex_core.memories SET confidence = 1.5 WHERE id = $1::uuid`, memID),
-		sqlStateExpect{code: "23514"})
-	assertPQCode(t, execAsService(t, ctx, db,
-		`UPDATE ibex_core.memories SET usefulness_score = -0.1 WHERE id = $1::uuid`, memID),
-		sqlStateExpect{code: "23514"})
-	assertPQCode(t, execAsService(t, ctx, db,
-		`UPDATE ibex_core.memories SET source = 'not-a-source' WHERE id = $1::uuid`, memID),
-		sqlStateExpect{code: "23514"})
+	assertPQCode(t, execAsService(t, ctx, serviceExec{
+		db: db, query: `UPDATE ibex_core.memories SET confidence = 1.5 WHERE id = $1::uuid`, args: []any{memID},
+	}), sqlStateExpect{code: "23514"})
+	assertPQCode(t, execAsService(t, ctx, serviceExec{
+		db: db, query: `UPDATE ibex_core.memories SET usefulness_score = -0.1 WHERE id = $1::uuid`, args: []any{memID},
+	}), sqlStateExpect{code: "23514"})
+	assertPQCode(t, execAsService(t, ctx, serviceExec{
+		db: db, query: `UPDATE ibex_core.memories SET source = 'not-a-source' WHERE id = $1::uuid`, args: []any{memID},
+	}), sqlStateExpect{code: "23514"})
 }
 
 func TestMemorySchemaV2_EmbeddingModelAndMetadataBounds(t *testing.T) {
@@ -80,29 +83,31 @@ func TestMemorySchemaV2_EmbeddingModelAndMetadataBounds(t *testing.T) {
 	ctx := context.Background()
 	orgA, _ := seedTwoOrgsWithAgents(t, ctx, db)
 	agentID := lookupAgentID(t, ctx, agentLookup{db: db, orgID: orgA, slug: "agent-a"})
-	vec := zeroEmbedding1024()
-	memID := insertMemoryWithEmbedding(t, ctx, db, orgA, agentID, vec)
+	memID := insertMemoryWithEmbedding(t, ctx, embeddedMemoryInsert{
+		db: db, orgID: orgA, agentID: agentID, vec: zeroEmbedding1024(),
+	})
 
-	// Valid metadata object write.
-	if err := execAsService(t, ctx, db,
-		`UPDATE ibex_core.memories SET metadata = '{"k":"v"}'::jsonb WHERE id = $1::uuid`, memID); err != nil {
+	if err := execAsService(t, ctx, serviceExec{
+		db: db, query: `UPDATE ibex_core.memories SET metadata = '{"k":"v"}'::jsonb WHERE id = $1::uuid`, args: []any{memID},
+	}); err != nil {
 		t.Fatalf("valid metadata object: %v", err)
 	}
 
-	oversizedModel := strings.Repeat("m", 257)
-	assertPQCode(t, execAsService(t, ctx, db, `
-		UPDATE ibex_core.memories
-		SET embedding_model = $1
-		WHERE id = $2::uuid`, oversizedModel, memID), sqlStateExpect{code: "23514"})
+	assertPQCode(t, execAsService(t, ctx, serviceExec{
+		db:    db,
+		query: `UPDATE ibex_core.memories SET embedding_model = $1 WHERE id = $2::uuid`,
+		args:  []any{strings.Repeat("m", 257), memID},
+	}), sqlStateExpect{code: "23514"})
 
-	assertPQCode(t, execAsService(t, ctx, db,
-		`UPDATE ibex_core.memories SET metadata = '["not","object"]'::jsonb WHERE id = $1::uuid`, memID),
-		sqlStateExpect{code: "23514"})
+	assertPQCode(t, execAsService(t, ctx, serviceExec{
+		db: db, query: `UPDATE ibex_core.memories SET metadata = '["not","object"]'::jsonb WHERE id = $1::uuid`, args: []any{memID},
+	}), sqlStateExpect{code: "23514"})
 
-	oversizedMeta := `{"pad":"` + strings.Repeat("x", 8200) + `"}`
-	assertPQCode(t, execAsService(t, ctx, db,
-		`UPDATE ibex_core.memories SET metadata = $1::jsonb WHERE id = $2::uuid`, oversizedMeta, memID),
-		sqlStateExpect{code: "23514"})
+	assertPQCode(t, execAsService(t, ctx, serviceExec{
+		db:    db,
+		query: `UPDATE ibex_core.memories SET metadata = $1::jsonb WHERE id = $2::uuid`,
+		args:  []any{`{"pad":"` + strings.Repeat("x", 8200) + `"}`, memID},
+	}), sqlStateExpect{code: "23514"})
 }
 
 func TestMemorySchemaV2_RLSIsolationStillHolds(t *testing.T) {
@@ -165,20 +170,57 @@ func TestMemorySchemaV2_DownRemovesExpandColumns(t *testing.T) {
 	db, dsn := openMigratedSchemaV2DB(t)
 	ctx := context.Background()
 	downToVersion(t, dsn, 16)
-	assertColumnPresent(t, ctx, db, "embedding", false)
-	assertColumnPresent(t, ctx, db, "observed_at", true)
-	assertVectorExtension(t, ctx, db, true)
+	assertColumnPresent(t, ctx, columnPresenceCheck{db: db, column: "embedding", want: false})
+	assertColumnPresent(t, ctx, columnPresenceCheck{db: db, column: "observed_at", want: true})
+	assertVectorExtension(t, ctx, vectorExtCheck{db: db, want: true})
 }
 
-func assertVectorExtension(t *testing.T, ctx context.Context, db *sql.DB, want bool) {
+type vectorExtCheck struct {
+	db   *sql.DB
+	want bool
+}
+
+type memoryQualityDefaultsCheck struct {
+	db    *sql.DB
+	memID string
+}
+
+type memoryQualityRow struct {
+	confidence, usefulness   float64
+	source                   string
+	retrievalCount           int
+	piiDetected, piiRedacted bool
+	metadata                 string
+	searchVec                sql.NullString
+	embeddingNull            bool
+}
+
+type embeddedMemoryInsert struct {
+	db                  *sql.DB
+	orgID, agentID, vec string
+}
+
+type serviceExec struct {
+	db    *sql.DB
+	query string
+	args  []any
+}
+
+type columnPresenceCheck struct {
+	db     *sql.DB
+	column string
+	want   bool
+}
+
+func assertVectorExtension(t *testing.T, ctx context.Context, check vectorExtCheck) {
 	t.Helper()
 	var exists bool
-	if err := db.QueryRowContext(ctx,
+	if err := check.db.QueryRowContext(ctx,
 		`SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector')`).Scan(&exists); err != nil {
 		t.Fatalf("vector extension check: %v", err)
 	}
-	if exists != want {
-		t.Fatalf("vector extension exists=%v, want %v", exists, want)
+	if exists != check.want {
+		t.Fatalf("vector extension exists=%v, want %v", exists, check.want)
 	}
 }
 
@@ -218,61 +260,80 @@ func assertIndexesExist(t *testing.T, ctx context.Context, db *sql.DB, indexes [
 	}
 }
 
-func assertMemoryQualityDefaults(t *testing.T, ctx context.Context, db *sql.DB, memID string) {
+func assertMemoryQualityDefaults(t *testing.T, ctx context.Context, check memoryQualityDefaultsCheck) {
 	t.Helper()
-	var (
-		confidence, usefulness   float64
-		source                   string
-		retrievalCount           int
-		piiDetected, piiRedacted bool
-		metadata                 string
-		searchVec                sql.NullString
-		embeddingNull            bool
-	)
-	err := withServiceAccount(ctx, db, func(tx *sql.Tx) error {
+	row := loadMemoryQualityRow(t, ctx, check)
+	assertQualityNumericDefaults(t, row)
+	assertQualityTextAndFlags(t, row)
+	assertQualitySearchDefaults(t, row)
+}
+
+func loadMemoryQualityRow(t *testing.T, ctx context.Context, check memoryQualityDefaultsCheck) memoryQualityRow {
+	t.Helper()
+	var row memoryQualityRow
+	err := withServiceAccount(ctx, check.db, func(tx *sql.Tx) error {
 		return tx.QueryRowContext(ctx, `
 			SELECT confidence::float8, usefulness_score::float8, source, retrieval_count,
 			       pii_detected, pii_redacted, metadata::text,
 			       search_vector::text, (embedding IS NULL)
-			FROM ibex_core.memories WHERE id = $1::uuid`, memID).Scan(
-			&confidence, &usefulness, &source, &retrievalCount,
-			&piiDetected, &piiRedacted, &metadata,
-			&searchVec, &embeddingNull,
+			FROM ibex_core.memories WHERE id = $1::uuid`, check.memID).Scan(
+			&row.confidence, &row.usefulness, &row.source, &row.retrievalCount,
+			&row.piiDetected, &row.piiRedacted, &row.metadata,
+			&row.searchVec, &row.embeddingNull,
 		)
 	})
 	if err != nil {
 		t.Fatalf("select quality columns: %v", err)
 	}
-	if confidence != 0.80 {
-		t.Fatalf("confidence=%v, want 0.80", confidence)
+	return row
+}
+
+func assertQualityNumericDefaults(t *testing.T, row memoryQualityRow) {
+	t.Helper()
+	if row.confidence != 0.80 {
+		t.Fatalf("confidence=%v, want 0.80", row.confidence)
 	}
-	if usefulness != 0.50 {
-		t.Fatalf("usefulness=%v, want 0.50", usefulness)
+	if row.usefulness != 0.50 {
+		t.Fatalf("usefulness=%v, want 0.50", row.usefulness)
 	}
-	if source != "extracted" {
-		t.Fatalf("source=%q, want extracted", source)
-	}
-	if retrievalCount != 0 {
-		t.Fatalf("retrieval_count=%d, want 0", retrievalCount)
-	}
-	if piiDetected || piiRedacted {
-		t.Fatal("expected pii flags false")
-	}
-	if metadata != "{}" {
-		t.Fatalf("metadata=%q, want {}", metadata)
-	}
-	if !embeddingNull {
-		t.Fatal("expected embedding NULL without embed write")
-	}
-	if !searchVec.Valid || searchVec.String == "" {
-		t.Fatal("expected generated search_vector")
+	if row.retrievalCount != 0 {
+		t.Fatalf("retrieval_count=%d, want 0", row.retrievalCount)
 	}
 }
 
-func insertMemoryWithEmbedding(t *testing.T, ctx context.Context, db *sql.DB, orgID, agentID, vec string) string {
+func assertQualityTextAndFlags(t *testing.T, row memoryQualityRow) {
+	t.Helper()
+	if row.source != "extracted" {
+		t.Fatalf("source=%q, want extracted", row.source)
+	}
+	if row.piiDetected {
+		t.Fatal("expected pii_detected false")
+	}
+	if row.piiRedacted {
+		t.Fatal("expected pii_redacted false")
+	}
+	if row.metadata != "{}" {
+		t.Fatalf("metadata=%q, want {}", row.metadata)
+	}
+}
+
+func assertQualitySearchDefaults(t *testing.T, row memoryQualityRow) {
+	t.Helper()
+	if !row.embeddingNull {
+		t.Fatal("expected embedding NULL without embed write")
+	}
+	if !row.searchVec.Valid {
+		t.Fatal("expected generated search_vector")
+	}
+	if row.searchVec.String == "" {
+		t.Fatal("expected non-empty search_vector")
+	}
+}
+
+func insertMemoryWithEmbedding(t *testing.T, ctx context.Context, in embeddedMemoryInsert) string {
 	t.Helper()
 	var memID string
-	err := withServiceAccount(ctx, db, func(tx *sql.Tx) error {
+	err := withServiceAccount(ctx, in.db, func(tx *sql.Tx) error {
 		return tx.QueryRowContext(ctx, `
 			INSERT INTO ibex_core.memories (
 				org_id, agent_id, content, content_hash, content_tokens,
@@ -280,7 +341,7 @@ func insertMemoryWithEmbedding(t *testing.T, ctx context.Context, db *sql.DB, or
 			) VALUES (
 				$1::uuid, $2::uuid, 'embedded mem', 'hash-emb-1', 2,
 				$3::vector, 'bge-m3', 1024
-			) RETURNING id::text`, orgID, agentID, vec).Scan(&memID)
+			) RETURNING id::text`, in.orgID, in.agentID, in.vec).Scan(&memID)
 	})
 	if err != nil {
 		t.Fatalf("insert with embedding: %v", err)
@@ -288,10 +349,10 @@ func insertMemoryWithEmbedding(t *testing.T, ctx context.Context, db *sql.DB, or
 	return memID
 }
 
-func execAsService(t *testing.T, ctx context.Context, db *sql.DB, query string, args ...any) error {
+func execAsService(t *testing.T, ctx context.Context, e serviceExec) error {
 	t.Helper()
-	return withServiceAccount(ctx, db, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, query, args...)
+	return withServiceAccount(ctx, e.db, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, e.query, e.args...)
 		return err
 	})
 }
@@ -329,20 +390,20 @@ func downToVersion(t *testing.T, dsn string, want uint) {
 	}
 }
 
-func assertColumnPresent(t *testing.T, ctx context.Context, db *sql.DB, column string, want bool) {
+func assertColumnPresent(t *testing.T, ctx context.Context, check columnPresenceCheck) {
 	t.Helper()
 	var exists bool
-	err := db.QueryRowContext(ctx, `
+	err := check.db.QueryRowContext(ctx, `
 		SELECT EXISTS (
 			SELECT 1 FROM information_schema.columns
 			WHERE table_schema = 'ibex_core'
 			  AND table_name = 'memories'
 			  AND column_name = $1
-		)`, column).Scan(&exists)
+		)`, check.column).Scan(&exists)
 	if err != nil {
-		t.Fatalf("column %s check: %v", column, err)
+		t.Fatalf("column %s check: %v", check.column, err)
 	}
-	if exists != want {
-		t.Fatalf("column %s exists=%v, want %v", column, exists, want)
+	if exists != check.want {
+		t.Fatalf("column %s exists=%v, want %v", check.column, exists, check.want)
 	}
 }
