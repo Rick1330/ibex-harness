@@ -40,7 +40,9 @@ FROM python:3.12-slim-bookworm@sha256:b64e9d3a71eddaa1b3f80c04abf292b3139e3b7c4d
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PATH="/app/.venv/bin:$PATH"
+    PATH="/app/.venv/bin:$PATH" \
+    IBEX_MCP_HOST=0.0.0.0 \
+    IBEX_MCP_PORT=8090
 
 RUN apt-get update \
     && apt-get upgrade -y --no-install-recommends \
@@ -60,4 +62,4 @@ EXPOSE 8090
 HEALTHCHECK --interval=10s --timeout=3s --start-period=20s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/health')"
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8090"]
+CMD ["sh", "-c", "uvicorn app.main:app --host \"${IBEX_MCP_HOST}\" --port \"${IBEX_MCP_PORT}\""]

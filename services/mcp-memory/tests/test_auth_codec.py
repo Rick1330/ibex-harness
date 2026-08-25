@@ -30,11 +30,12 @@ def test_decode_missing_org_fails() -> None:
         decode_validate_token_response(b"\x10\x01")
 
 
-def test_decode_skips_unknown_fixed64() -> None:
+def test_decode_skips_unknown_len_binary_without_utf8() -> None:
     org = "11111111-1111-1111-1111-111111111111"
     org_b = org.encode()
-    # field 9 wire64 + 8 bytes, then org_id field 1
-    payload = b"\x49" + (b"\x00" * 8)
+    # field 9 (unknown) length-delimited with non-UTF8 bytes, then org_id.
+    junk = b"\xff\xfe\x00\x01"
+    payload = b"\x4a" + bytes([len(junk)]) + junk
     payload += b"\x0a" + bytes([len(org_b)]) + org_b
     got = decode_validate_token_response(payload)
     assert got.org_id == UUID(org)

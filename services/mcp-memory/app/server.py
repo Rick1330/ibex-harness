@@ -12,7 +12,7 @@ from uuid import UUID
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
-from pydantic import Field
+from pydantic import ConfigDict, Field
 
 from app.audit import AsyncAuditEmitter, ToolCallAuditEvent
 from app.errors import MCPServiceError
@@ -76,7 +76,23 @@ def build_mcp_server(audit: AsyncAuditEmitter, *, allow_test_hosts: bool = True)
             runner=_run_write,
         )
 
+    _forbid_undeclared_tool_args(mcp)
     return mcp
+
+
+def _forbid_undeclared_tool_args(mcp: FastMCP) -> None:
+    """Reject unknown tool arguments and advertise additionalProperties: false."""
+    for tool in mcp._tool_manager._tools.values():
+        model = tool.fn_metadata.arg_model
+        type.__setattr__(
+            model,
+            "model_config",
+            ConfigDict(arbitrary_types_allowed=True, extra="forbid"),
+        )
+        model.model_rebuild(force=True)
+        schema = model.model_json_schema(by_alias=True)
+        schema["additionalProperties"] = False
+        tool.parameters = schema
 
 
 def _transport_security(*, allow_test_hosts: bool) -> TransportSecuritySettings:

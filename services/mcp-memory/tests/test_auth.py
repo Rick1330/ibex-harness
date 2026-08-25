@@ -6,7 +6,12 @@ from uuid import UUID
 
 import pytest
 
-from app.auth import StaticTokenValidator, ValidateResult, parse_authorization_header
+from app.auth import (
+    StaticTokenValidator,
+    ValidateResult,
+    assert_trusted_insecure_auth_target,
+    parse_authorization_header,
+)
 from app.errors import AuthFailedError, AuthUnavailableError
 
 ORG = UUID("11111111-1111-1111-1111-111111111111")
@@ -70,3 +75,11 @@ def test_map_rpc_unavailable() -> None:
     exc.code.return_value = grpc.StatusCode.UNAVAILABLE
     err = _map_rpc_error(exc)
     assert isinstance(err, AuthUnavailableError)
+
+
+def test_trusted_insecure_auth_targets() -> None:
+    assert assert_trusted_insecure_auth_target("127.0.0.1:9091") == "127.0.0.1:9091"
+    assert assert_trusted_insecure_auth_target("auth:9091") == "auth:9091"
+    assert assert_trusted_insecure_auth_target("10.0.0.5:9091") == "10.0.0.5:9091"
+    with pytest.raises(ValueError, match="refusing"):
+        assert_trusted_insecure_auth_target("auth.example.com:9091")

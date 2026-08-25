@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -23,6 +24,7 @@ logger = logging.getLogger(__name__)
 READINESS_PROBE_SENTINEL = "ibex_health_probe_invalid"
 
 _VALIDATE_METHOD = "/ibex.auth.v1.AuthService/ValidateToken"
+_LOOPBACK_DNS = frozenset({"localhost"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,16 +82,64 @@ def parse_authorization_header(header: str | None) -> str:
     return token
 
 
+def assert_trusted_insecure_auth_target(target: str) -> str:
+    """Allow insecure gRPC only to loopback, private IP, or mesh short name.
+
+    Public FQDNs must not receive bearer tokens over plaintext gRPC. Compose/k8s
+    short names (e.g. ``auth``) are treated as TLS-terminating mesh endpoints.
+    """
+    cleaned = target.strip()
+    if not cleaned:
+        raise ValueError("auth gRPC target is required")
+    host = _host_of(cleaned)
+    if _is_trusted_insecure_host(host):
+        return cleaned
+    raise ValueError(
+        "insecure Auth gRPC requires loopback/private address or mesh short name; "
+        f"refusing target host {host!r}"
+    )
+
+
+def _host_of(target: str) -> str:
+    cleaned = target.strip()
+    for prefix in ("dns:///", "dns://", "unix://", "ipv4:", "ipv6:"):
+        if cleaned.lower().startswith(prefix):
+            cleaned = cleaned[len(prefix) :]
+            break
+    if cleaned.startswith("["):
+        end = cleaned.find("]")
+        if end > 0:
+            return cleaned[1:end].lower().rstrip(".")
+    host, _, port = cleaned.rpartition(":")
+    if host and port.isdigit():
+        return host.lower().rstrip(".")
+    return cleaned.lower().rstrip(".")
+
+
+def _is_trusted_insecure_host(host: str) -> bool:
+    if not host:
+        return False
+    if host in _LOOPBACK_DNS:
+        return True
+    # Compose / k8s short service names (no dots).
+    if "." not in host and host.replace("-", "").isalnum():
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return bool(ip.is_loopback or ip.is_private)
+
+
 class GRPCTokenValidator(TokenValidator):
     """Bounded ValidateToken client. Never logs the access token."""
 
     def __init__(self, target: str, timeout_seconds: float) -> None:
-        if not target.strip():
-            raise ValueError("auth gRPC target is required")
+        trusted = assert_trusted_insecure_auth_target(target)
         if timeout_seconds <= 0:
             timeout_seconds = 0.05
         self._timeout = timeout_seconds
-        self._channel = grpc.aio.insecure_channel(target.strip())
+        self._channel = grpc.aio.insecure_channel(trusted)
         self._stub = self._channel.unary_unary(
             _VALIDATE_METHOD,
             request_serializer=encode_validate_token_request,

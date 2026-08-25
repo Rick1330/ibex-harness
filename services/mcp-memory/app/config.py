@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 from functools import lru_cache
 from urllib.parse import urlsplit
 
@@ -11,7 +12,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 TRANSPORT_HTTP = "streamable_http"
 TRANSPORT_STDIO = "stdio"
 _ALLOWED_TRANSPORTS = frozenset({TRANSPORT_HTTP, TRANSPORT_STDIO})
-_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "[::1]"})
+_LOOPBACK_DNS = frozenset({"localhost"})
 
 
 class Settings(BaseSettings):
@@ -67,10 +68,10 @@ class Settings(BaseSettings):
     @staticmethod
     def _require_public_https(name: str, value: str) -> None:
         parts = urlsplit(value.strip())
-        host = (parts.hostname or "").lower()
+        host = (parts.hostname or "").lower().rstrip(".")
         if parts.scheme.lower() != "https":
             raise ValueError(f"{name} must use https in production")
-        if not host or host in _LOOPBACK_HOSTS:
+        if not host or _is_loopback_host(host):
             raise ValueError(f"{name} must not use a loopback host in production")
 
     def validate_transport_policy(self) -> None:
@@ -81,6 +82,17 @@ class Settings(BaseSettings):
             raise ValueError("stdio MCP transport is forbidden when IBEX_ENV=production")
         if not self.allow_stdio:
             raise ValueError("stdio MCP transport requires IBEX_MCP_ALLOW_STDIO=true")
+
+
+def _is_loopback_host(host: str) -> bool:
+    """True for localhost DNS and any loopback IPv4/IPv6 literal (incl. 127.0.0.2)."""
+    normalized = host.lower().rstrip(".")
+    if normalized in _LOOPBACK_DNS:
+        return True
+    try:
+        return ipaddress.ip_address(normalized).is_loopback
+    except ValueError:
+        return False
 
 
 @lru_cache(maxsize=1)

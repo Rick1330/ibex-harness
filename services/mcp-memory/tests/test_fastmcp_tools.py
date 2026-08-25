@@ -52,6 +52,7 @@ async def test_tools_list_schemas_advertise_constraints() -> None:
     assert set(by_name) == {"search_memory", "write_memory"}
 
     search = by_name["search_memory"].inputSchema
+    assert search.get("additionalProperties") is False
     query = search["properties"]["query"]
     assert query.get("minLength") == 1
     assert query.get("maxLength") == 2000
@@ -62,6 +63,7 @@ async def test_tools_list_schemas_advertise_constraints() -> None:
     assert agent.get("format") == "uuid" or "uuid" in str(agent).lower()
 
     write = by_name["write_memory"].inputSchema
+    assert write.get("additionalProperties") is False
     content = write["properties"]["content"]
     assert content.get("minLength") == 1
     assert content.get("maxLength") == 8000
@@ -76,3 +78,19 @@ async def test_tools_list_schemas_advertise_constraints() -> None:
     confidence = write["properties"]["confidence"]
     assert confidence.get("minimum") == 0.0
     assert confidence.get("maximum") == 1.0
+
+
+@pytest.mark.asyncio
+async def test_unknown_tool_argument_rejected_before_execution() -> None:
+    sink = MemoryAuditSink()
+    audit = AsyncAuditEmitter(sink, maxsize=4)
+    audit.start()
+    mcp = build_mcp_server(audit)
+    set_principal(Principal(org_id=ORG, permissions=MEMORY_READ | MEMORY_WRITE))
+    try:
+        with pytest.raises(Exception, match="[Ee]xtra|limti|validation"):
+            await mcp.call_tool("search_memory", {"query": "q", "limti": 3})
+    finally:
+        set_principal(None)
+        await audit.aclose()
+    assert sink.events == []

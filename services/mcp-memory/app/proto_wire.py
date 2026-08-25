@@ -92,6 +92,8 @@ def _finish_decode(state: _DecodeState) -> ValidateTokenWire:
 
 
 def _apply_len_field(state: _DecodeState, field: int, raw: bytes) -> None:
+    if field not in (1, 3, 4, 5):
+        return
     text = _decode_utf8(raw)
     if field == 1:
         state.org_id = _parse_uuid(text, "org_id")
@@ -99,7 +101,7 @@ def _apply_len_field(state: _DecodeState, field: int, raw: bytes) -> None:
         state.agent_id = _parse_uuid(text, "agent_id")
     elif field == 4:
         state.user_id = _bounded_string(text, "user_id")
-    elif field == 5:
+    else:
         state.token_id = _bounded_string(text, "token_id")
 
 

@@ -72,3 +72,21 @@ def test_production_accepts_public_https(monkeypatch: pytest.MonkeyPatch) -> Non
     s = get_settings()
     assert s.resource_url.startswith("https://")
     assert s.auth_server_url.startswith("https://")
+
+
+def test_production_rejects_loopback_ipv4_range(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("IBEX_ENV", "production")
+    monkeypatch.setenv("IBEX_MCP_RESOURCE_URL", "https://127.0.0.2/mcp")
+    monkeypatch.setenv("IBEX_MCP_AUTH_SERVER_URL", "https://auth.example.com")
+    get_settings.cache_clear()
+    with pytest.raises(ValueError, match="loopback"):
+        get_settings()
+
+
+def test_production_rejects_localhost_trailing_dot(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("IBEX_ENV", "production")
+    monkeypatch.setenv("IBEX_MCP_RESOURCE_URL", "https://mcp.example.com/mcp")
+    monkeypatch.setenv("IBEX_MCP_AUTH_SERVER_URL", "https://localhost./")
+    get_settings.cache_clear()
+    with pytest.raises(ValueError, match="loopback"):
+        get_settings()
