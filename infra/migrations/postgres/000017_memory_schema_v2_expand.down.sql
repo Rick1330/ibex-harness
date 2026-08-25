@@ -15,6 +15,12 @@ ALTER TABLE ibex_core.memories
     DROP CONSTRAINT IF EXISTS memories_superseded_by_org_fk;
 
 ALTER TABLE ibex_core.memories
+    DROP CONSTRAINT IF EXISTS memories_metadata_max_chk;
+
+ALTER TABLE ibex_core.memories
+    DROP CONSTRAINT IF EXISTS memories_metadata_object_chk;
+
+ALTER TABLE ibex_core.memories
     DROP CONSTRAINT IF EXISTS memories_retrieval_count_nonneg_chk;
 
 ALTER TABLE ibex_core.memories
@@ -25,6 +31,9 @@ ALTER TABLE ibex_core.memories
 
 ALTER TABLE ibex_core.memories
     DROP CONSTRAINT IF EXISTS memories_confidence_range_chk;
+
+ALTER TABLE ibex_core.memories
+    DROP CONSTRAINT IF EXISTS memories_embedding_model_len_chk;
 
 ALTER TABLE ibex_core.memories
     DROP CONSTRAINT IF EXISTS memories_embedding_triplet_chk;

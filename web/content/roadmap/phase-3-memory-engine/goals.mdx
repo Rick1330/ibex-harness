@@ -22,13 +22,13 @@ phase: "phase-3-memory-engine"
 ### Goal 3.A: Establish the memory schema with HNSW, temporal validity, and multi-label taxonomy
 
 **Milestones:**
-- **3.1.1 — Postgres schema v2:** expand foundation `ibex_core.memories` (from G5.M1 / ADR-0047) with HNSW vector index (m=16, ef_construction=64), `ibex_core.memory_labels` join table, `primary_category` trigger, remaining quality columns. Planned expand ADR required (**not** ADR-0040 — that is Anthropic).
+- **3.1.1 — Postgres schema v2 (completed):** expand foundation `ibex_core.memories` (from G5.M1 / ADR-0047) with HNSW vector index (m=16, ef_construction=64), quality columns, generated `search_vector`, bounded `embedding_model`/`metadata` CHECKs. Labels + primary sync already shipped in ADR-0048; expand ADR is [ADR-0052](/docs/adr/0052-memory-schema-v2-expand) (**not** ADR-0040).
 
 **Acceptance criteria:**
-- Migration applies cleanly from zero via `make db-migrate`
-- HNSW index type confirmed in CI assertion (not just present — type-checked)
-- RLS integration test proves cross-org denial on `memories` and `memory_labels`
-- `primary_category` trigger verified (insert 2 labels, differing confidence, correct one wins)
+- [x] Migration applies cleanly from zero via `make db-migrate`
+- [x] HNSW index type confirmed in CI assertion (not just present — type-checked)
+- [x] RLS integration test proves cross-org denial on `memories` (labels covered in 2.5.G5.M2)
+- [x] Primary-category sync verified via existing trigger (insert 2 labels, differing confidence, correct one wins)
 
 ---
 

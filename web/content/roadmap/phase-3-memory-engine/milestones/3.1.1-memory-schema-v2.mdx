@@ -48,7 +48,8 @@ fullTitle: "Milestone 3.1.1 — Memory schema v2: HNSW, temporal validity, multi
   foundation only. Deviations from the sketch: no CREATE of memories/labels/relationships; no
   Alembic / `services/memory` ORM skeleton; physical rename `category` → `primary_category`
   deferred (trigger still writes `memories.category`); indexes are non-CONCURRENTLY while the
-  table has no product write traffic; CI uses `pgvector/pgvector:pg16`.
+  table has no product write traffic; CI pins `pgvector/pgvector:0.8.6-pg16@sha256:…`
+  (pgvector 0.8.6 on PostgreSQL 16).
 </Callout>
 
 ## Why This Milestone Exists
@@ -83,10 +84,10 @@ infra/migrations/postgres/
 ### Expand summary
 
 - `CREATE EXTENSION IF NOT EXISTS vector`
-- Columns: `embedding vector(1024)`, `embedding_model`, `embedding_dim` (triplet CHECK),
+- Columns: `embedding vector(1024)`, `embedding_model` (≤256 chars), `embedding_dim` (triplet CHECK),
   `confidence`, `usefulness_score`, `source`, `superseded_by` / `merged_into` (composite FKs),
-  `retrieval_count`, `last_retrieved_at`, `pii_detected`, `pii_redacted`, `metadata`,
-  generated `search_vector`
+  `retrieval_count`, `last_retrieved_at`, `pii_detected`, `pii_redacted`,
+  `metadata` (JSON object, ≤8192 octets text), generated `search_vector`
 - Indexes: `idx_memories_embedding_hnsw` (HNSW), `idx_memories_validity`, `idx_memories_search_vector`
 - Hidden mutation (pre-existing, documented in migration comments): `sync_memory_primary_category`
 

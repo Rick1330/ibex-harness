@@ -511,6 +511,7 @@ CREATE INDEX idx_directive_scenarios_directive_id
 > `embedding_model` / `embedding_dim`, quality columns, generated `search_vector`,
 > HNSW + validity + GIN indexes (`000017_memory_schema_v2_expand`). Physical rename
 > `category` → `primary_category` deferred.
+
 ```sql
 -- ================================================================
 -- MEMORIES (foundation — migration 000014 / ADR-0047)
@@ -647,7 +648,8 @@ CREATE POLICY memory_labels_isolation ON ibex_core.memory_labels
 -- ================================================================
 -- Columns added on ibex_core.memories:
 --   embedding vector(1024) NULL,
---   embedding_model TEXT NULL,
+--   embedding_model TEXT NULL
+--     CHECK NULL or char_length <= 256 (memories_embedding_model_len_chk),
 --   embedding_dim INTEGER NULL,
 --   CHECK memories_embedding_triplet_chk (all NULL or embedding+model+dim=1024),
 --   confidence NUMERIC(3,2) NOT NULL DEFAULT 0.80,
@@ -659,7 +661,8 @@ CREATE POLICY memory_labels_isolation ON ibex_core.memory_labels
 --   retrieval_count INTEGER NOT NULL DEFAULT 0,
 --   last_retrieved_at TIMESTAMPTZ,
 --   pii_detected / pii_redacted BOOLEAN NOT NULL DEFAULT FALSE,
---   metadata JSONB NOT NULL DEFAULT '{}',
+--   metadata JSONB NOT NULL DEFAULT '{}'
+--     CHECK jsonb_typeof = 'object' AND octet_length(text) <= 8192,
 --   search_vector tsvector GENERATED ALWAYS AS
 --     (setweight(to_tsvector('english', coalesce(content,'')), 'A')) STORED
 --

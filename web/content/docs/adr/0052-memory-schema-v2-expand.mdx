@@ -24,7 +24,7 @@ Phase 3 Track A needs embedding storage, ANN search, quality/feedback columns, a
 
 Milestone [3.1.1](/roadmap/phase-3-memory-engine/milestones/3.1.1-memory-schema-v2) planning sketches still show a greenfield `CREATE TABLE` and provisional migration `000041`. Those sketches are stale. This ADR records the expand-contract design that ships as `000017`.
 
-[ADR-0005](/docs/adr/0005-postgres-migration-strategy) deferred `CREATE EXTENSION vector` until memory schema needed it. Local compose already uses `pgvector/pgvector:pg16`; CI historically used stock `postgres:16` and must switch so the extension can load.
+[ADR-0005](/docs/adr/0005-postgres-migration-strategy) deferred `CREATE EXTENSION vector` until memory schema needed it. Local compose already uses `pgvector/pgvector:pg16`; CI historically used stock `postgres:16` and must switch so the extension can load. CI pins an immutable digest of **pgvector 0.8.6 / PostgreSQL 16** (`pgvector/pgvector:0.8.6-pg16@sha256:…`), not the mutable `:pg16` tag.
 
 ## Options Considered
 
@@ -61,14 +61,22 @@ Decision: **Non-CONCURRENTLY** for HNSW / validity / GIN indexes in `000017`. Fu
 ### 6) CI Postgres image
 
 1. Keep `postgres:16` and skip vector in CI (blocks this milestone).
-2. Switch migrate-consuming CI services to `pgvector/pgvector:pg16` (parity with compose-dev/test).
-Decision: **pgvector image** for `db-migrate-smoke` and sibling migrate jobs.
+2. Switch migrate-consuming CI services to mutable `pgvector/pgvector:pg16`.
+3. Pin CI to immutable `pgvector/pgvector:0.8.6-pg16@sha256:…` (pgvector **0.8.6** on PostgreSQL 16); keep compose on `:pg16` for local DX.
+Decision: **Pinned pgvector 0.8.6-pg16 digest** for all migrate-consuming CI Postgres services.
+
+### 7) Free-form field bounds
+
+1. Unbounded `embedding_model` TEXT / `metadata` JSONB — rejects AGENTS.md input-validation norms.
+2. Documented CHECKs: `embedding_model` NULL or `char_length <= 256`; `metadata` must be a JSON object with `octet_length(metadata::text) <= 8192`.
+Decision: **Bounded CHECKs** (`memories_embedding_model_len_chk`, `memories_metadata_object_chk`, `memories_metadata_max_chk`).
 
 ## Decision
 
 1. Ship `000017_memory_schema_v2_expand` that:
    - `CREATE EXTENSION IF NOT EXISTS vector`
    - Adds `embedding vector(1024)`, nullable `embedding_model` / `embedding_dim`, quality columns, composite FKs for `superseded_by` / `merged_into`, and generated `search_vector`
+   - Enforces embedding-model length and metadata object/size CHECKs
    - Creates `idx_memories_embedding_hnsw`, `idx_memories_validity`, `idx_memories_search_vector`
 2. Keep `observed_at` and `category`; do not recreate labels/relationships or change `rls_org_visible` RLS.
 3. Dimension **1024** matches Phase 2.5 default **BAAI/bge-m3** ([ADR-0046](/docs/adr/0046-embedder-interface-registry)).
@@ -91,7 +99,7 @@ Decision: **pgvector image** for `db-migrate-smoke` and sibling migrate jobs.
 
 - Migration: `infra/migrations/postgres/000017_memory_schema_v2_expand.{up,down}.sql`
 - Down is dev/test only; production forward-only per ADR-0005
-- CI: replace `postgres:16` service images with `pgvector/pgvector:pg16` wherever golang-migrate runs
+- CI: replace `postgres:16` with pinned `pgvector/pgvector:0.8.6-pg16@sha256:…` (pgvector 0.8.6) wherever golang-migrate runs
 
 ## References
 

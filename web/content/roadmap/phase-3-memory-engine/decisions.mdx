@@ -31,18 +31,20 @@ Quick decisions during Phase 3. Promote durable choices to `docs/adr/` and the p
 
 | ADR | Topic | Milestone | Status |
 | --- | --- | --- | --- |
-| ADR-0032 | Memory data model | 3.1.1 | Pending |
-| ADR-0033 | Embedding service design | 3.2.1 | Pending |
-| ADR-0035 | Vector search / IVFFlat tuning | 3.3.4 | Pending |
+| ADR-0052 | Memory schema v2 expand (HNSW, quality columns) | 3.1.1 | Accepted |
+| ADR-0033 | Embedding service design | 3.2.1 | Pending (reserved; may renumber) |
+| ADR-0035 | Vector search / IVFFlat tuning | 3.3.4 | Superseded intent — prefer HNSW (ADR-0052) |
 | ADR-0036 | Memory extraction strategy | 3.4.3 | Pending |
 | ADR-0037 | Conflict detection + resolution | 3.4.5 | Pending |
-| ADR-0038 | Context assembly gRPC contract | 3.5.1 | Pending |
-| ADR-0045 | Token budget calculator | 3.5.2 | Pending |
-| ADR-0040 | Management API auth middleware | 3.6.1 | Pending |
-| ADR-0041 | MinIO session archive format | 3.7.1 | Pending |
-| ADR-0042 | Memory write pipeline + PII | 3.3.2 | Pending |
+| ADR-0038 | Context assembly gRPC contract | 3.5.1 | Pending (note: ADR-0038 may already be used in Phase 2.5 index — verify before publishing) |
+| ADR-0045 | Token budget calculator | 3.5.2 | Pending (note: ADR-0045 may already be used — verify before publishing) |
+| ADR-0040 | Management API auth middleware | 3.6.1 | Occupied (Anthropic adapter) — pick next free ID |
+| ADR-0041 | MinIO session archive format | 3.7.1 | Occupied (capability registry) — pick next free ID |
+| ADR-0042 | Memory write pipeline + PII | 3.3.2 | Pending (verify free ID) |
 
-Pending rows are **reserved IDs only**. They do not appear in the ADR sidebar / `meta.json` until the milestone writes and indexes the ADR (same pattern as ADR-0036 / ADR-0037).
+**3.1.1 note:** reserved placeholder “ADR-0032 memory data model” was **not** published; the expand shipped as **ADR-0052** / migration `000017`.
+
+Pending rows are **reserved IDs only**. They do not appear in the ADR sidebar / `meta.json` until the milestone writes and indexes the ADR (same pattern as ADR-0036 / ADR-0037). Numbers in older planning tables collide with Phase 2.5 ADRs — always take the next free number from `web/content/docs/adr/meta.json`.
 
 Log pivots in [findings](/roadmap/findings). When an ADR merges, add it under [docs/adr](/docs/adr).
 
@@ -50,6 +52,10 @@ Log pivots in [findings](/roadmap/findings). When an ADR merges, add it under [d
 
 | Decision | Rationale |
 | --- | --- |
+| Expand `memories` (000017) instead of greenfield CREATE | Foundations already shipped in 000014–000016 (ADR-0047–0049) |
+| HNSW (not IVFFlat) as starting ANN index | Avoid live IVFFlat→HNSW cutover; greenfield table |
+| Defer `category` → `primary_category` rename | Zero runtime benefit until app writers; keep 000015 trigger |
+| CI Postgres = pinned pgvector 0.8.6-pg16 digest | Mutable `:pg16` tag is unsafe for migrate smoke reproducibility |
 | Separate Python context assembly service (not inline in Go proxy) | Memory ranking needs NumPy, tiktoken, complex caching — wrong language for hot-path Go binary |
 | gRPC for context assembly (not HTTP) | Typed contract, lower overhead than JSON for &lt;50ms target; matches auth pattern |
 | Graceful degradation on context timeout | If assembly exceeds ~45ms, proxy continues with directive-only context |
@@ -60,6 +66,6 @@ Log pivots in [findings](/roadmap/findings). When an ADR merges, add it under [d
 
 ## Pending decisions (resolve during milestones)
 
-1. **IVFFlat probes vs recall** — default `lists=100`, `probes=10`; tune in 3.3.4 load tests.
+1. **HNSW `ef_search` per query** — tune in Track B load tests (schema defaults `m=16`, `ef_construction=64`).
 2. **Embedding GPU in dev compose** — CPU default; document optional GPU profile in `ENVIRONMENT_VARIABLES.md`.
 3. **Dashboard chart library** — Recharts vs Tremor; lock in 3.8.5 before analytics pages multiply.

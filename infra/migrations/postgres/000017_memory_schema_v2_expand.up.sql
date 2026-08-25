@@ -6,7 +6,7 @@
 
 -- ADR-0005 deferred CREATE EXTENSION vector until memory schema needed it;
 -- ADR-0047 lifted that deferral to this expand. Requires pgvector-capable image
--- (compose-dev/test and CI use pgvector/pgvector:pg16).
+-- (compose-dev/test: pgvector/pgvector:pg16; CI: pinned 0.8.6-pg16@sha256).
 CREATE EXTENSION IF NOT EXISTS vector;
 
 ALTER TABLE ibex_core.memories
@@ -37,6 +37,14 @@ ALTER TABLE ibex_core.memories
         )
     );
 
+-- Model id length bound (NULL allowed for pre-embed rows).
+ALTER TABLE ibex_core.memories
+    ADD CONSTRAINT memories_embedding_model_len_chk
+    CHECK (
+        embedding_model IS NULL
+        OR char_length(embedding_model) <= 256
+    );
+
 ALTER TABLE ibex_core.memories
     ADD CONSTRAINT memories_confidence_range_chk
     CHECK (confidence >= 0 AND confidence <= 1);
@@ -52,6 +60,15 @@ ALTER TABLE ibex_core.memories
 ALTER TABLE ibex_core.memories
     ADD CONSTRAINT memories_retrieval_count_nonneg_chk
     CHECK (retrieval_count >= 0);
+
+-- Metadata must be a JSON object; text form capped (same order as content_max style).
+ALTER TABLE ibex_core.memories
+    ADD CONSTRAINT memories_metadata_object_chk
+    CHECK (jsonb_typeof(metadata) = 'object');
+
+ALTER TABLE ibex_core.memories
+    ADD CONSTRAINT memories_metadata_max_chk
+    CHECK (octet_length(metadata::text) <= 8192);
 
 -- Composite org-safe FKs (MATCH SIMPLE: NULL tip skips the check).
 ALTER TABLE ibex_core.memories
