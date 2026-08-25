@@ -33,7 +33,12 @@ fullTitle: "Milestone 3.C.4 — Multi-label memory classification"
 
 Fixes the second major schema gap: a memory can be both `procedural` and `behavioral` (e.g., "when debugging, the user always checks logs before restarting" is both a how-to pattern *and* a behavioral pattern), but the current schema forces a single `category` enum. This forces an artificial choice that misrepresents reality and causes ranking bugs — a memory with dual relevance gets ranked using only one of its applicable half-life profiles.
 
-The `memory_labels` table was already introduced in Milestone 3.1.1 at the schema level. This milestone implements the write-path logic that populates it correctly, and validates that the `primary_category` trigger (also from 3.1.1) fires as expected under the multi-label write path.
+The `memory_labels` table and `memories.category` primary-sync trigger shipped in
+[2.5.G5.M2](/roadmap/phase-2-5-provider-generalization/milestones/2.5.g5.m2-multi-label-category-support)
+([ADR-0048](/docs/adr/0048-memory-multi-label-categories)). This milestone implements the **write-path
+logic** that populates labels correctly and validates the existing sync trigger under the multi-label
+write path (do not re-CREATE the table). Scalar primary today is `memories.category` (3.1.1 may rename
+to `primary_category` later).
 
 ---
 
@@ -74,20 +79,12 @@ Rename freely to match the change that actually lands.
 
 ## Design
 
-Keep `primary_category` as the dominant/primary label (for backward-compatible sorting, indexing, and the composite-score formula's category-conditional decay). Add `memory_labels` join table for secondary labels.
+Keep `memories.category` (or a later `primary_category` rename) as the dominant/primary label for
+backward-compatible sorting and category-conditional decay. The join table already exists from G5.M2
+(`000015` / ADR-0048) with `org_id`, composite FK, and FORCE RLS — writers only populate rows.
 
-The `memory_labels` table was already created in Milestone 3.1.1:
-
-```sql
-CREATE TABLE ibex_core.memory_labels (
- memory_id UUID NOT NULL REFERENCES ibex_core.memories(id) ON DELETE CASCADE,
- label TEXT NOT NULL CHECK (label IN ('factual','preference','behavioral','episodic','procedural')),
- confidence NUMERIC(3,2) NOT NULL DEFAULT 0.80 CHECK (confidence BETWEEN 0 AND 1),
- PRIMARY KEY (memory_id, label)
-);
-```
-
-The `primary_category` trigger from 3.1.1 automatically keeps `memories.primary_category` in sync as the highest-confidence label — no application-layer sync code is needed.
+The sync trigger already keeps `memories.category` as the highest-confidence label
+(`ORDER BY confidence DESC, label ASC`) — no application-layer sync code is needed.
 
 ### Input format for labels (from extraction prompt or user-provided)
 
@@ -116,16 +113,16 @@ The composite scoring formula in Track D (Milestone 3.D.2) reads `memory_labels`
 
 Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
 
-- [ ] `memory_labels` table populated correctly for 1–3 labels per memory
-- [ ] `primary_category` column updated correctly by DB trigger after label write
+- [ ] `memory_labels` populated correctly for 1–3 labels per memory
+- [ ] `memories.category` (primary) updated correctly by DB trigger after label write
 - [ ] Multi-label write path tested: a memory can carry 1–3 labels with independent confidence scores
-- [ ] `category` / `primary_category` backward-compatible simple queries still function
+- [ ] Scalar `category` backward-compatible simple queries still function
 - [ ] RLS verified: `memory_labels` rows not accessible cross-org
 
 ---
 
 ## Prerequisites
 
-- Milestone 3.1.1 merged (`memory_labels` table and `primary_category` trigger in schema)
+- Milestone 2.5.G5.M2 merged (`memory_labels` + category sync trigger; ADR-0048)
 - Milestone 3.C.3 merged (conflict detection output may influence label assignment)
 

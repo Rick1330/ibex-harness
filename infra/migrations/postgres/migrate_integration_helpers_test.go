@@ -122,6 +122,8 @@ func ibexCoreCountQuery(table string) (string, bool) {
 		return `SELECT COUNT(*) FROM ibex_core.checkpoints`, true
 	case "memories":
 		return `SELECT COUNT(*) FROM ibex_core.memories`, true
+	case "memory_labels":
+		return `SELECT COUNT(*) FROM ibex_core.memory_labels`, true
 	default:
 		return "", false
 	}
@@ -204,25 +206,47 @@ func assertCoreTableExists(t *testing.T, ctx context.Context, db *sql.DB, table 
 	}
 }
 
-func assertCoreTablesRLSEnabled(t *testing.T, ctx context.Context, db *sql.DB, tables []string) {
+type coreTableRLSFlags struct {
+	enabled bool
+	forced  bool
+}
+
+type coreTableRLSCheck struct {
+	db     *sql.DB
+	table  string
+	expect coreTableRLSFlags
+}
+
+func queryCoreTableRLSFlags(ctx context.Context, db *sql.DB, table string) (coreTableRLSFlags, error) {
+	var flags coreTableRLSFlags
+	err := db.QueryRowContext(ctx, `
+		SELECT c.relrowsecurity, c.relforcerowsecurity
+		FROM pg_class c
+		JOIN pg_namespace n ON n.oid = c.relnamespace
+		WHERE n.nspname = 'ibex_core' AND c.relname = $1`, table).Scan(&flags.enabled, &flags.forced)
+	return flags, err
+}
+
+// assertCoreTableRLS checks the RLS columns named by expect (true = must be on).
+func assertCoreTableRLS(t *testing.T, ctx context.Context, check coreTableRLSCheck) {
 	t.Helper()
-	for _, table := range tables {
-		assertCoreTableRLSEnabled(t, ctx, db, table)
+	got, err := queryCoreTableRLSFlags(ctx, check.db, check.table)
+	if err != nil {
+		t.Fatalf("check rls %s: %v", check.table, err)
+	}
+	if check.expect.enabled && !got.enabled {
+		t.Errorf("RLS not enabled on ibex_core.%s", check.table)
+	}
+	if check.expect.forced && !got.forced {
+		t.Errorf("expected FORCE ROW LEVEL SECURITY on ibex_core.%s", check.table)
 	}
 }
 
-func assertCoreTableRLSEnabled(t *testing.T, ctx context.Context, db *sql.DB, table string) {
+func assertCoreTablesRLSEnabled(t *testing.T, ctx context.Context, db *sql.DB, tables []string) {
 	t.Helper()
-	var rls bool
-	err := db.QueryRowContext(ctx, `
-		SELECT c.relrowsecurity
-		FROM pg_class c
-		JOIN pg_namespace n ON n.oid = c.relnamespace
-		WHERE n.nspname = 'ibex_core' AND c.relname = $1`, table).Scan(&rls)
-	if err != nil {
-		t.Fatalf("check rls %s: %v", table, err)
-	}
-	if !rls {
-		t.Errorf("RLS not enabled on ibex_core.%s", table)
+	for _, table := range tables {
+		assertCoreTableRLS(t, ctx, coreTableRLSCheck{
+			db: db, table: table, expect: coreTableRLSFlags{enabled: true},
+		})
 	}
 }

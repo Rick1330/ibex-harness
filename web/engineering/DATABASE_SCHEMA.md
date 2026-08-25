@@ -501,8 +501,11 @@ CREATE INDEX idx_directive_scenarios_directive_id
 > **Shipped (2.5.G5.M1 / ADR-0047):** foundation `ibex_core.memories` via
 > `000014_create_memories_temporal` — tenancy, content, scalar category/status,
 > and bi-temporal columns (`valid_from` / `valid_until` / `observed_at`).
+> **Shipped (2.5.G5.M2 / ADR-0048):** `ibex_core.memory_labels` multi-label join
+> table with per-label confidence; `memories.category` synced as primary when
+> labels exist.
 > **Not yet shipped:** `embedding` / pgvector / HNSW, usefulness/feedback,
-> `search_vector`, multi-label join tables (Phase 3.1.1 expand + G5.M2/M3).
+> `search_vector`, `memory_relationships` (Phase 3.1.1 expand + G5.M3).
 
 ```sql
 -- ================================================================
@@ -527,8 +530,8 @@ CREATE TABLE ibex_core.memories (
     content_tokens  INTEGER NOT NULL,
     -- Pre-computed for budget management
 
-    -- Classification (scalar retained for G5.M2 backward-compat;
-    -- multi-label join table lands in G5.M2 / 3.1.1)
+    -- Classification (scalar primary; multi-label in memory_labels / ADR-0048.
+    -- When labels exist, category is synced to highest-confidence label.)
     category        TEXT NOT NULL DEFAULT 'factual'
                     CHECK (category IN (
                         'factual',
@@ -593,9 +596,49 @@ ALTER TABLE ibex_core.memories FORCE ROW LEVEL SECURITY;
 CREATE POLICY memories_isolation ON ibex_core.memories
     USING (ibex_core.rls_org_visible(org_id));
 
+-- ================================================================
+-- MEMORY LABELS (migration 000015 / ADR-0048)
+-- Multi-label taxonomy; category on memories is primary when labels exist
+-- ================================================================
+CREATE TABLE ibex_core.memory_labels (
+    memory_id   UUID NOT NULL,
+    org_id      UUID NOT NULL
+                REFERENCES ibex_core.organizations(id)
+                ON DELETE RESTRICT,
+    label       TEXT NOT NULL
+                CHECK (label IN (
+                    'factual',
+                    'preference',
+                    'behavioral',
+                    'episodic',
+                    'procedural'
+                )),
+    confidence  NUMERIC(3,2) NOT NULL DEFAULT 1.00
+                CHECK (confidence >= 0 AND confidence <= 1),
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (memory_id, label),
+    CONSTRAINT memory_labels_memory_org_fk
+        FOREIGN KEY (memory_id, org_id)
+        REFERENCES ibex_core.memories (id, org_id)
+        ON DELETE CASCADE
+);
+
+CREATE INDEX idx_memory_labels_org_label
+    ON ibex_core.memory_labels (org_id, label);
+
+ALTER TABLE ibex_core.memory_labels ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ibex_core.memory_labels FORCE ROW LEVEL SECURITY;
+
+CREATE POLICY memory_labels_isolation ON ibex_core.memory_labels
+    USING (ibex_core.rls_org_visible(org_id));
+
+-- Trigger sync_memory_primary_category: WHEN labels remain, set
+-- memories.category = ORDER BY confidence DESC, label ASC LIMIT 1.
+-- When zero labels remain, leave category unchanged.
+
 -- Phase 3.1.1 expand (not yet applied): embedding vector(...), embedding_model,
 -- embedding_dim, HNSW index, usefulness/feedback, search_vector, etc.
--- Do not greenfield-CREATE memories in 3.1.1 — ALTER the foundation table.
+-- Do not greenfield-CREATE memories or memory_labels in 3.1.1 — expand only.
 
 -- ================================================================
 -- MEMORY RELATIONSHIPS
