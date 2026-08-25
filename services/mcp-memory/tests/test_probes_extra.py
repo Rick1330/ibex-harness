@@ -12,7 +12,6 @@ from app.auth import StaticTokenValidator, ValidateResult
 from app.config import Settings
 from app.main import create_app
 from app.permissions import MEMORY_READ
-from app.state import AppState
 
 ORG = UUID("11111111-1111-1111-1111-111111111111")
 
@@ -36,17 +35,30 @@ async def test_logging_sink_writes_metadata_only(caplog: pytest.LogCaptureFixtur
     assert str(ORG) in caplog.text
 
 
-def test_ready_503_when_not_ready() -> None:
+def test_ready_503_when_auth_unreachable() -> None:
     settings = Settings(resource_url="http://testserver/mcp")
     validator = StaticTokenValidator(
         {"t": ValidateResult(org_id=ORG, permissions=MEMORY_READ)},
-        available=True,
+        available=False,
     )
     application = create_app(settings=settings, validator=validator)
     with TestClient(application) as client:
-        state: AppState = application.state.mcp
-        state.ready = False
-        state.ready_error = "auth gRPC not reachable"
         resp = client.get("/ready")
         assert resp.status_code == 503
         assert resp.json()["error"]["code"] == "service_not_ready"
+        assert "auth" in resp.json()["error"]["message"].lower()
+
+
+def test_ready_recovers_when_auth_becomes_available() -> None:
+    settings = Settings(resource_url="http://testserver/mcp")
+    validator = StaticTokenValidator(
+        {"t": ValidateResult(org_id=ORG, permissions=MEMORY_READ)},
+        available=False,
+    )
+    application = create_app(settings=settings, validator=validator)
+    with TestClient(application) as client:
+        assert client.get("/ready").status_code == 503
+        validator.set_available(True)
+        resp = client.get("/ready")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ready"

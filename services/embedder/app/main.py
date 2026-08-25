@@ -31,6 +31,7 @@ from app.errors import (
     InvalidVectorError,
 )
 from app.factory import build_backend, unwrap_backend
+from app.http_metrics import HTTPMetricsMiddleware
 from app.schemas import ErrorEnvelope
 from app.state import AppState
 from app.tei.protocol import parse_info_dimensions
@@ -238,6 +239,7 @@ def create_app() -> FastAPI:
         version="0.2.0",
         lifespan=lifespan,
     )
+    application.add_middleware(HTTPMetricsMiddleware)
 
     @application.exception_handler(AuthenticationError)
     async def _authentication_error_handler(_: Request, exc: AuthenticationError) -> JSONResponse:

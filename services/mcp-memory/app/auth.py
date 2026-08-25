@@ -210,6 +210,10 @@ class StaticTokenValidator(TokenValidator):
         self._tokens = tokens
         self._available = available
 
+    def set_available(self, available: bool) -> None:
+        """Test helper to flip readiness without reconstructing the validator."""
+        self._available = available
+
     async def validate(self, access_token: str) -> ValidateResult:
         if not self._available:
             raise AuthUnavailableError()

@@ -19,17 +19,33 @@ async def health() -> dict[str, str]:
 
 @probe_router.get("/ready")
 async def ready(request: Request) -> JSONResponse:
+    """Live readiness: re-check Auth gRPC so late auth boot can recover."""
     state = request.app.state.mcp
-    if not state.ready:
+    validator = state.validator
+    if validator is None:
         return JSONResponse(
             status_code=503,
             content={
                 "error": {
                     "code": "service_not_ready",
-                    "message": state.ready_error or "service not ready",
+                    "message": "auth validator not initialized",
                 }
             },
         )
+    if not await validator.ready():
+        state.ready = False
+        state.ready_error = "auth gRPC not reachable"
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": {
+                    "code": "service_not_ready",
+                    "message": state.ready_error,
+                }
+            },
+        )
+    state.ready = True
+    state.ready_error = None
     return JSONResponse({"status": "ready", "service": "mcp-memory"})
 
 
