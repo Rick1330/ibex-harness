@@ -31,7 +31,6 @@ type labelsDB struct {
 	t   *testing.T
 	dsn string
 	db  *sql.DB
-	ctx context.Context
 }
 
 type memoryWithCategory struct {
@@ -63,7 +62,7 @@ func openMigratedLabelsDB(t *testing.T) *labelsDB {
 		t.Fatalf("up: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	return &labelsDB{t: t, dsn: dsn, db: db, ctx: context.Background()}
+	return &labelsDB{t: t, dsn: dsn, db: db}
 }
 
 func (f *labelsDB) mustDownTo(version uint) {
@@ -98,8 +97,8 @@ func (f *labelsDB) mustUp() {
 func (f *labelsDB) insertMemory(m memoryWithCategory) string {
 	f.t.Helper()
 	var memID string
-	err := withServiceAccount(f.ctx, f.db, func(tx *sql.Tx) error {
-		return tx.QueryRowContext(f.ctx, insertMemoryWithCategorySQL,
+	err := withServiceAccount(context.Background(), f.db, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(context.Background(), insertMemoryWithCategorySQL,
 			m.orgID, m.agentID, m.content, "hash-"+m.content, m.tokens, m.category,
 		).Scan(&memID)
 	})
@@ -111,8 +110,8 @@ func (f *labelsDB) insertMemory(m memoryWithCategory) string {
 
 func (f *labelsDB) insertLabel(w memoryLabelWrite) error {
 	f.t.Helper()
-	return withServiceAccount(f.ctx, f.db, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(f.ctx, insertMemoryLabelSQL, w.memID, w.orgID, w.label, w.confidence)
+	return withServiceAccount(context.Background(), f.db, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(context.Background(), insertMemoryLabelSQL, w.memID, w.orgID, w.label, w.confidence)
 		return err
 	})
 }
@@ -127,8 +126,8 @@ func (f *labelsDB) mustInsertLabel(w memoryLabelWrite) {
 func (f *labelsDB) firstLabel(memID string) memoryLabelRow {
 	f.t.Helper()
 	var row memoryLabelRow
-	err := withServiceAccount(f.ctx, f.db, func(tx *sql.Tx) error {
-		return tx.QueryRowContext(f.ctx, selectMemoryLabelSQL, memID).Scan(&row.label, &row.confidence)
+	err := withServiceAccount(context.Background(), f.db, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(context.Background(), selectMemoryLabelSQL, memID).Scan(&row.label, &row.confidence)
 	})
 	if err != nil {
 		f.t.Fatalf("select label: %v", err)
@@ -138,7 +137,7 @@ func (f *labelsDB) firstLabel(memID string) memoryLabelRow {
 
 func (f *labelsDB) assertCategory(check memoryCategoryCheck) {
 	f.t.Helper()
-	assertMemoryCategory(f.t, f.ctx, check)
+	assertMemoryCategory(f.t, context.Background(), check)
 }
 
 func (f *labelsDB) assertReject(err error, want sqlStateExpect) {
@@ -148,8 +147,8 @@ func (f *labelsDB) assertReject(err error, want sqlStateExpect) {
 
 func TestMemoryLabels_TableAndForceRLS(t *testing.T) {
 	f := openMigratedLabelsDB(t)
-	assertCoreTableExists(t, f.ctx, f.db, "memory_labels")
-	assertCoreTableRLS(t, f.ctx, coreTableRLSCheck{
+	assertCoreTableExists(t, context.Background(), f.db, "memory_labels")
+	assertCoreTableRLS(t, context.Background(), coreTableRLSCheck{
 		db: f.db, table: "memory_labels", expect: coreTableRLSFlags{forced: true},
 	})
 }
@@ -158,8 +157,8 @@ func TestMemoryLabels_BackfillOnMigrate(t *testing.T) {
 	f := openMigratedLabelsDB(t)
 	f.mustDownTo(14)
 
-	orgA, _ := seedTwoOrgsWithAgents(t, f.ctx, f.db)
-	agentID := lookupAgentID(t, f.ctx, agentLookup{db: f.db, orgID: orgA, slug: "agent-a"})
+	orgA, _ := seedTwoOrgsWithAgents(t, context.Background(), f.db)
+	agentID := lookupAgentID(t, context.Background(), agentLookup{db: f.db, orgID: orgA, slug: "agent-a"})
 	memID := f.insertMemory(memoryWithCategory{
 		orgID: orgA, agentID: agentID, content: "episodic note", category: "episodic", tokens: 2,
 	})
@@ -174,8 +173,8 @@ func TestMemoryLabels_BackfillOnMigrate(t *testing.T) {
 
 func TestMemoryLabels_PrimarySyncAndTieBreak(t *testing.T) {
 	f := openMigratedLabelsDB(t)
-	orgA, _ := seedTwoOrgsWithAgents(t, f.ctx, f.db)
-	agentID := lookupAgentID(t, f.ctx, agentLookup{db: f.db, orgID: orgA, slug: "agent-a"})
+	orgA, _ := seedTwoOrgsWithAgents(t, context.Background(), f.db)
+	agentID := lookupAgentID(t, context.Background(), agentLookup{db: f.db, orgID: orgA, slug: "agent-a"})
 	memID := f.insertMemory(memoryWithCategory{
 		orgID: orgA, agentID: agentID, content: "multi label mem", category: "factual", tokens: 3,
 	})
@@ -185,8 +184,8 @@ func TestMemoryLabels_PrimarySyncAndTieBreak(t *testing.T) {
 	f.assertCategory(memoryCategoryCheck{db: f.db, memID: memID, want: "preference"})
 
 	// Equal confidence: lexicographic label ASC (behavioral < factual < preference).
-	err := withServiceAccount(f.ctx, f.db, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(f.ctx, `
+	err := withServiceAccount(context.Background(), f.db, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(context.Background(), `
 			UPDATE ibex_core.memory_labels SET confidence = 0.80
 			WHERE memory_id = $1::uuid`, memID)
 		return err
@@ -200,8 +199,8 @@ func TestMemoryLabels_PrimarySyncAndTieBreak(t *testing.T) {
 
 func TestMemoryLabels_Checks(t *testing.T) {
 	f := openMigratedLabelsDB(t)
-	orgA, _ := seedTwoOrgsWithAgents(t, f.ctx, f.db)
-	agentID := lookupAgentID(t, f.ctx, agentLookup{db: f.db, orgID: orgA, slug: "agent-a"})
+	orgA, _ := seedTwoOrgsWithAgents(t, context.Background(), f.db)
+	agentID := lookupAgentID(t, context.Background(), agentLookup{db: f.db, orgID: orgA, slug: "agent-a"})
 	memID := f.insertMemory(memoryWithCategory{
 		orgID: orgA, agentID: agentID, content: "check mem", category: "factual", tokens: 1,
 	})
@@ -216,21 +215,21 @@ func TestMemoryLabels_Checks(t *testing.T) {
 
 func TestRLSMemoryLabelsIsolation(t *testing.T) {
 	f := openMigratedLabelsDB(t)
-	orgA, orgB := seedTwoOrgsWithAgents(t, f.ctx, f.db)
-	seedLabeledMemory(t, f.ctx, labeledMemorySeed{
+	orgA, orgB := seedTwoOrgsWithAgents(t, context.Background(), f.db)
+	seedLabeledMemory(t, context.Background(), labeledMemorySeed{
 		db: f.db, orgID: orgA, agentSlug: "agent-a", content: "a-mem", label: "factual",
 	})
-	seedLabeledMemory(t, f.ctx, labeledMemorySeed{
+	seedLabeledMemory(t, context.Background(), labeledMemorySeed{
 		db: f.db, orgID: orgB, agentSlug: "agent-b", content: "b-mem", label: "preference",
 	})
 
-	assertTableCount(t, f.ctx, tableCountCheck{db: f.db, table: "memory_labels", orgID: "", want: 0})
-	assertTableCount(t, f.ctx, tableCountCheck{db: f.db, table: "memory_labels", orgID: orgA, want: 1})
-	assertTableCount(t, f.ctx, tableCountCheck{db: f.db, table: "memory_labels", orgID: orgB, want: 1})
+	assertTableCount(t, context.Background(), tableCountCheck{db: f.db, table: "memory_labels", orgID: "", want: 0})
+	assertTableCount(t, context.Background(), tableCountCheck{db: f.db, table: "memory_labels", orgID: orgA, want: 1})
+	assertTableCount(t, context.Background(), tableCountCheck{db: f.db, table: "memory_labels", orgID: orgB, want: 1})
 
 	var serviceCount int
-	err := withServiceAccount(f.ctx, f.db, func(tx *sql.Tx) error {
-		return tx.QueryRowContext(f.ctx, `SELECT COUNT(*) FROM ibex_core.memory_labels`).Scan(&serviceCount)
+	err := withServiceAccount(context.Background(), f.db, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM ibex_core.memory_labels`).Scan(&serviceCount)
 	})
 	if err != nil {
 		t.Fatalf("service count: %v", err)
@@ -242,14 +241,14 @@ func TestRLSMemoryLabelsIsolation(t *testing.T) {
 
 func TestMemoryLabels_CascadeAndEmptyLeavesCategory(t *testing.T) {
 	f := openMigratedLabelsDB(t)
-	orgA, _ := seedTwoOrgsWithAgents(t, f.ctx, f.db)
-	memID := seedLabeledMemory(t, f.ctx, labeledMemorySeed{
+	orgA, _ := seedTwoOrgsWithAgents(t, context.Background(), f.db)
+	memID := seedLabeledMemory(t, context.Background(), labeledMemorySeed{
 		db: f.db, orgID: orgA, agentSlug: "agent-a", content: "cascade-mem", label: "procedural",
 	})
 	f.assertCategory(memoryCategoryCheck{db: f.db, memID: memID, want: "procedural"})
 
-	err := withServiceAccount(f.ctx, f.db, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(f.ctx, `
+	err := withServiceAccount(context.Background(), f.db, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(context.Background(), `
 			DELETE FROM ibex_core.memory_labels WHERE memory_id = $1::uuid`, memID)
 		return err
 	})
@@ -258,8 +257,8 @@ func TestMemoryLabels_CascadeAndEmptyLeavesCategory(t *testing.T) {
 	}
 	f.assertCategory(memoryCategoryCheck{db: f.db, memID: memID, want: "procedural"})
 
-	err = withServiceAccount(f.ctx, f.db, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(f.ctx, `DELETE FROM ibex_core.memories WHERE id = $1::uuid`, memID)
+	err = withServiceAccount(context.Background(), f.db, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(context.Background(), `DELETE FROM ibex_core.memories WHERE id = $1::uuid`, memID)
 		return err
 	})
 	if err != nil {
@@ -267,8 +266,8 @@ func TestMemoryLabels_CascadeAndEmptyLeavesCategory(t *testing.T) {
 	}
 
 	var n int
-	err = withServiceAccount(f.ctx, f.db, func(tx *sql.Tx) error {
-		return tx.QueryRowContext(f.ctx, `
+	err = withServiceAccount(context.Background(), f.db, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(context.Background(), `
 			SELECT COUNT(*) FROM ibex_core.memory_labels WHERE memory_id = $1::uuid`, memID,
 		).Scan(&n)
 	})
@@ -282,8 +281,8 @@ func TestMemoryLabels_CascadeAndEmptyLeavesCategory(t *testing.T) {
 
 func TestMemoryLabels_CrossOrgFKRejected(t *testing.T) {
 	f := openMigratedLabelsDB(t)
-	orgA, orgB := seedTwoOrgsWithAgents(t, f.ctx, f.db)
-	memA := seedLabeledMemory(t, f.ctx, labeledMemorySeed{
+	orgA, orgB := seedTwoOrgsWithAgents(t, context.Background(), f.db)
+	memA := seedLabeledMemory(t, context.Background(), labeledMemorySeed{
 		db: f.db, orgID: orgA, agentSlug: "agent-a", content: "fk-mem", label: "factual",
 	})
 	f.assertReject(f.insertLabel(memoryLabelWrite{

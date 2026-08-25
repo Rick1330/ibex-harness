@@ -212,7 +212,7 @@ func TestUnit_RepoTokenSubjects_BelongsMiss(t *testing.T) {
 	assertBelongsMiss(t, ok, err)
 }
 
-func mustRepoSubjects(t *testing.T, agents agentByOrgLookup, users userOrgFinder) tokenSubjectLookup {
+func mustRepoSubjects(t *testing.T, agents getByIDAndOrger, users userOrgFinder) tokenSubjectLookup {
 	t.Helper()
 	subjects, err := NewRepoTokenSubjects(agents, users)
 	if err != nil {

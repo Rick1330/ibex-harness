@@ -27,7 +27,6 @@ const insertRelationshipSQL = `
 type relationshipsDB struct {
 	t   *testing.T
 	db  *sql.DB
-	ctx context.Context
 }
 
 type relationshipWrite struct {
@@ -49,14 +48,14 @@ func openMigratedRelationshipsDB(t *testing.T) *relationshipsDB {
 		t.Fatalf("up: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	return &relationshipsDB{t: t, db: db, ctx: context.Background()}
+	return &relationshipsDB{t: t, db: db}
 }
 
 func (f *relationshipsDB) insertMemory(seed relationshipMemorySeed) string {
 	f.t.Helper()
 	var memID string
-	err := withServiceAccount(f.ctx, f.db, func(tx *sql.Tx) error {
-		return tx.QueryRowContext(f.ctx, insertMemoryMinimalRelSQL,
+	err := withServiceAccount(context.Background(), f.db, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(context.Background(), insertMemoryMinimalRelSQL,
 			seed.orgID, seed.agentID, seed.content, "hash-"+seed.content,
 		).Scan(&memID)
 	})
@@ -68,8 +67,8 @@ func (f *relationshipsDB) insertMemory(seed relationshipMemorySeed) string {
 
 func (f *relationshipsDB) insertEdge(w relationshipWrite) error {
 	f.t.Helper()
-	return withServiceAccount(f.ctx, f.db, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(f.ctx, insertRelationshipSQL,
+	return withServiceAccount(context.Background(), f.db, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(context.Background(), insertRelationshipSQL,
 			w.orgID, w.sourceID, w.targetID, w.relType, w.confidence)
 		return err
 	})
@@ -90,8 +89,8 @@ func (f *relationshipsDB) assertReject(err error, want sqlStateExpect) {
 func (f *relationshipsDB) resolveTipNullable(orgID, memID string, maxDepth int) sql.NullString {
 	f.t.Helper()
 	var tip sql.NullString
-	err := withServiceAccount(f.ctx, f.db, func(tx *sql.Tx) error {
-		return tx.QueryRowContext(f.ctx, `
+	err := withServiceAccount(context.Background(), f.db, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(context.Background(), `
 			SELECT ibex_core.resolve_supersession_tip($1::uuid, $2::uuid, $3)::text`,
 			orgID, memID, maxDepth).Scan(&tip)
 	})
@@ -112,13 +111,13 @@ func (f *relationshipsDB) resolveTip(orgID, memID string, maxDepth int) string {
 
 func TestMemoryRelationships_TableForceRLSAndView(t *testing.T) {
 	f := openMigratedRelationshipsDB(t)
-	assertCoreTableExists(t, f.ctx, f.db, "memory_relationships")
-	assertCoreTableRLS(t, f.ctx, coreTableRLSCheck{
+	assertCoreTableExists(t, context.Background(), f.db, "memory_relationships")
+	assertCoreTableRLS(t, context.Background(), coreTableRLSCheck{
 		db: f.db, table: "memory_relationships", expect: coreTableRLSFlags{forced: true},
 	})
 
 	var viewExists bool
-	err := f.db.QueryRowContext(f.ctx, `
+	err := f.db.QueryRowContext(context.Background(), `
 		SELECT EXISTS (
 			SELECT 1 FROM information_schema.views
 			WHERE table_schema = 'ibex_core' AND table_name = 'memory_supersession_edges'
@@ -131,7 +130,7 @@ func TestMemoryRelationships_TableForceRLSAndView(t *testing.T) {
 	}
 
 	var reloptions pq.StringArray
-	err = f.db.QueryRowContext(f.ctx, `
+	err = f.db.QueryRowContext(context.Background(), `
 		SELECT c.reloptions
 		FROM pg_class c
 		JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -147,18 +146,18 @@ func TestMemoryRelationships_TableForceRLSAndView(t *testing.T) {
 
 func TestMemoryRelationships_IndexesPresentAndUsed(t *testing.T) {
 	f := openMigratedRelationshipsDB(t)
-	assertIndexExists(t, f.ctx, f.db, "idx_memory_relationships_org_source_type")
-	assertIndexExists(t, f.ctx, f.db, "idx_memory_relationships_org_target_type")
+	assertIndexExists(t, context.Background(), f.db, "idx_memory_relationships_org_source_type")
+	assertIndexExists(t, context.Background(), f.db, "idx_memory_relationships_org_target_type")
 
-	orgA, _ := seedTwoOrgsWithAgents(t, f.ctx, f.db)
-	agentID := lookupAgentID(t, f.ctx, agentLookup{db: f.db, orgID: orgA, slug: "agent-a"})
+	orgA, _ := seedTwoOrgsWithAgents(t, context.Background(), f.db)
+	agentID := lookupAgentID(t, context.Background(), agentLookup{db: f.db, orgID: orgA, slug: "agent-a"})
 	older := f.insertMemory(relationshipMemorySeed{orgID: orgA, agentID: agentID, content: "older"})
 	newer := f.insertMemory(relationshipMemorySeed{orgID: orgA, agentID: agentID, content: "newer"})
 	f.mustInsertEdge(relationshipWrite{
 		orgID: orgA, sourceID: newer, targetID: older, relType: "supersedes", confidence: 0.95,
 	})
 
-	assertExplainUsesIndex(t, f.ctx, explainIndexCheck{
+	assertExplainUsesIndex(t, context.Background(), explainIndexCheck{
 		db: f.db, indexName: "idx_memory_relationships_org_source_type",
 		query: `
 			SELECT source_memory_id FROM ibex_core.memory_relationships
@@ -166,7 +165,7 @@ func TestMemoryRelationships_IndexesPresentAndUsed(t *testing.T) {
 			  AND relationship_type = 'supersedes'`,
 		arg1: orgA, arg2: newer,
 	})
-	assertExplainUsesIndex(t, f.ctx, explainIndexCheck{
+	assertExplainUsesIndex(t, context.Background(), explainIndexCheck{
 		db: f.db, indexName: "idx_memory_relationships_org_target_type",
 		query: `
 			SELECT source_memory_id FROM ibex_core.memory_relationships
@@ -178,8 +177,8 @@ func TestMemoryRelationships_IndexesPresentAndUsed(t *testing.T) {
 
 func TestMemoryRelationships_ChecksAndUnique(t *testing.T) {
 	f := openMigratedRelationshipsDB(t)
-	orgA, _ := seedTwoOrgsWithAgents(t, f.ctx, f.db)
-	agentID := lookupAgentID(t, f.ctx, agentLookup{db: f.db, orgID: orgA, slug: "agent-a"})
+	orgA, _ := seedTwoOrgsWithAgents(t, context.Background(), f.db)
+	agentID := lookupAgentID(t, context.Background(), agentLookup{db: f.db, orgID: orgA, slug: "agent-a"})
 	a := f.insertMemory(relationshipMemorySeed{orgID: orgA, agentID: agentID, content: "mem-a"})
 	b := f.insertMemory(relationshipMemorySeed{orgID: orgA, agentID: agentID, content: "mem-b"})
 
@@ -203,9 +202,9 @@ func TestMemoryRelationships_ChecksAndUnique(t *testing.T) {
 
 func TestMemoryRelationships_CrossOrgFKRejected(t *testing.T) {
 	f := openMigratedRelationshipsDB(t)
-	orgA, orgB := seedTwoOrgsWithAgents(t, f.ctx, f.db)
-	agentA := lookupAgentID(t, f.ctx, agentLookup{db: f.db, orgID: orgA, slug: "agent-a"})
-	agentB := lookupAgentID(t, f.ctx, agentLookup{db: f.db, orgID: orgB, slug: "agent-b"})
+	orgA, orgB := seedTwoOrgsWithAgents(t, context.Background(), f.db)
+	agentA := lookupAgentID(t, context.Background(), agentLookup{db: f.db, orgID: orgA, slug: "agent-a"})
+	agentB := lookupAgentID(t, context.Background(), agentLookup{db: f.db, orgID: orgB, slug: "agent-b"})
 	memA := f.insertMemory(relationshipMemorySeed{orgID: orgA, agentID: agentA, content: "a"})
 	memB := f.insertMemory(relationshipMemorySeed{orgID: orgB, agentID: agentB, content: "b"})
 
@@ -216,9 +215,9 @@ func TestMemoryRelationships_CrossOrgFKRejected(t *testing.T) {
 
 func TestRLSMemoryRelationshipsIsolation(t *testing.T) {
 	f := openMigratedRelationshipsDB(t)
-	orgA, orgB := seedTwoOrgsWithAgents(t, f.ctx, f.db)
-	agentA := lookupAgentID(t, f.ctx, agentLookup{db: f.db, orgID: orgA, slug: "agent-a"})
-	agentB := lookupAgentID(t, f.ctx, agentLookup{db: f.db, orgID: orgB, slug: "agent-b"})
+	orgA, orgB := seedTwoOrgsWithAgents(t, context.Background(), f.db)
+	agentA := lookupAgentID(t, context.Background(), agentLookup{db: f.db, orgID: orgA, slug: "agent-a"})
+	agentB := lookupAgentID(t, context.Background(), agentLookup{db: f.db, orgID: orgB, slug: "agent-b"})
 
 	a1 := f.insertMemory(relationshipMemorySeed{orgID: orgA, agentID: agentA, content: "a1"})
 	a2 := f.insertMemory(relationshipMemorySeed{orgID: orgA, agentID: agentA, content: "a2"})
@@ -231,15 +230,15 @@ func TestRLSMemoryRelationshipsIsolation(t *testing.T) {
 		orgID: orgB, sourceID: b2, targetID: b1, relType: "contradicts", confidence: 0.7,
 	})
 
-	assertTableCount(t, f.ctx, tableCountCheck{db: f.db, table: "memory_relationships", orgID: "", want: 0})
-	assertTableCount(t, f.ctx, tableCountCheck{db: f.db, table: "memory_relationships", orgID: orgA, want: 1})
-	assertTableCount(t, f.ctx, tableCountCheck{db: f.db, table: "memory_relationships", orgID: orgB, want: 1})
+	assertTableCount(t, context.Background(), tableCountCheck{db: f.db, table: "memory_relationships", orgID: "", want: 0})
+	assertTableCount(t, context.Background(), tableCountCheck{db: f.db, table: "memory_relationships", orgID: orgA, want: 1})
+	assertTableCount(t, context.Background(), tableCountCheck{db: f.db, table: "memory_relationships", orgID: orgB, want: 1})
 }
 
 func TestMemoryRelationships_CascadeAndViewFilter(t *testing.T) {
 	f := openMigratedRelationshipsDB(t)
-	orgA, _ := seedTwoOrgsWithAgents(t, f.ctx, f.db)
-	agentID := lookupAgentID(t, f.ctx, agentLookup{db: f.db, orgID: orgA, slug: "agent-a"})
+	orgA, _ := seedTwoOrgsWithAgents(t, context.Background(), f.db)
+	agentID := lookupAgentID(t, context.Background(), agentLookup{db: f.db, orgID: orgA, slug: "agent-a"})
 	older := f.insertMemory(relationshipMemorySeed{orgID: orgA, agentID: agentID, content: "old"})
 	newer := f.insertMemory(relationshipMemorySeed{orgID: orgA, agentID: agentID, content: "new"})
 	other := f.insertMemory(relationshipMemorySeed{orgID: orgA, agentID: agentID, content: "other"})
@@ -252,12 +251,12 @@ func TestMemoryRelationships_CascadeAndViewFilter(t *testing.T) {
 	})
 
 	var supersedeCount, allCount int
-	err := withServiceAccount(f.ctx, f.db, func(tx *sql.Tx) error {
-		if err := tx.QueryRowContext(f.ctx, `
+	err := withServiceAccount(context.Background(), f.db, func(tx *sql.Tx) error {
+		if err := tx.QueryRowContext(context.Background(), `
 			SELECT COUNT(*) FROM ibex_core.memory_supersession_edges`).Scan(&supersedeCount); err != nil {
 			return err
 		}
-		return tx.QueryRowContext(f.ctx, `
+		return tx.QueryRowContext(context.Background(), `
 			SELECT COUNT(*) FROM ibex_core.memory_relationships`).Scan(&allCount)
 	})
 	if err != nil {
@@ -267,8 +266,8 @@ func TestMemoryRelationships_CascadeAndViewFilter(t *testing.T) {
 		t.Fatalf("view=%d all=%d, want view=1 all=2", supersedeCount, allCount)
 	}
 
-	err = withServiceAccount(f.ctx, f.db, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(f.ctx, `DELETE FROM ibex_core.memories WHERE id = $1::uuid`, older)
+	err = withServiceAccount(context.Background(), f.db, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(context.Background(), `DELETE FROM ibex_core.memories WHERE id = $1::uuid`, older)
 		return err
 	})
 	if err != nil {
@@ -276,8 +275,8 @@ func TestMemoryRelationships_CascadeAndViewFilter(t *testing.T) {
 	}
 
 	var remaining int
-	err = withServiceAccount(f.ctx, f.db, func(tx *sql.Tx) error {
-		return tx.QueryRowContext(f.ctx, `
+	err = withServiceAccount(context.Background(), f.db, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(context.Background(), `
 			SELECT COUNT(*) FROM ibex_core.memory_relationships
 			WHERE source_memory_id = $1::uuid OR target_memory_id = $1::uuid`, older,
 		).Scan(&remaining)
@@ -292,9 +291,9 @@ func TestMemoryRelationships_CascadeAndViewFilter(t *testing.T) {
 
 func TestMemoryRelationships_ResolveTipChainCycleAndEmpty(t *testing.T) {
 	f := openMigratedRelationshipsDB(t)
-	orgA, orgB := seedTwoOrgsWithAgents(t, f.ctx, f.db)
-	agentA := lookupAgentID(t, f.ctx, agentLookup{db: f.db, orgID: orgA, slug: "agent-a"})
-	agentB := lookupAgentID(t, f.ctx, agentLookup{db: f.db, orgID: orgB, slug: "agent-b"})
+	orgA, orgB := seedTwoOrgsWithAgents(t, context.Background(), f.db)
+	agentA := lookupAgentID(t, context.Background(), agentLookup{db: f.db, orgID: orgA, slug: "agent-a"})
+	agentB := lookupAgentID(t, context.Background(), agentLookup{db: f.db, orgID: orgB, slug: "agent-b"})
 
 	b := f.insertMemory(relationshipMemorySeed{orgID: orgA, agentID: agentA, content: "b"})
 	a := f.insertMemory(relationshipMemorySeed{orgID: orgA, agentID: agentA, content: "a"})

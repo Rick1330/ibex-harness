@@ -194,8 +194,10 @@ class TestCachingBackendUnit:
         assert len(env.data) == 2
 
     async def test_rejects_non_positive_ttl(self) -> None:
+        inner = _counting_inner()
+        store = MagicMock()
         with pytest.raises(ValueError, match="ttl_seconds"):
-            CachingEmbeddingBackend(_counting_inner(), MagicMock(), ttl_seconds=0)
+            CachingEmbeddingBackend(inner, store, ttl_seconds=0)
 
     async def test_aclose_closes_store_and_inner(self) -> None:
         env = _mock_cache()

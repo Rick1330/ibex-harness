@@ -33,8 +33,8 @@ type tokenAPI interface {
 	ListTokens(ctx context.Context, orgID, cursor string, limit int32) ([]service.TokenListItem, string, error)
 }
 
-// agentAPI is the service port used by ValidateAgent.
-type agentAPI interface {
+// validateForOrger is the service port used by ValidateAgent.
+type validateForOrger interface {
 	ValidateForOrg(ctx context.Context, orgID, agentID uuid.UUID) (service.AgentView, error)
 }
 
@@ -44,7 +44,7 @@ type agentAPI interface {
 type ServerDeps struct {
 	Validator    tokenValidator
 	TokenService tokenAPI
-	AgentService agentAPI
+	AgentService validateForOrger
 	Metrics      *metrics.AuthRegistry
 	Log          *logger.Logger
 }
@@ -55,7 +55,7 @@ type Server struct {
 	validator    tokenValidator
 	tokenService tokenAPI
 	metrics      *metrics.AuthRegistry
-	agentService agentAPI
+	agentService validateForOrger
 	log          *logger.Logger
 }
 

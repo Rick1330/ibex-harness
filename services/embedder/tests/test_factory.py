@@ -45,9 +45,7 @@ class TestBuildBackend:
     def test_hosted_never_falls_back_to_stub(self) -> None:
         settings = Settings(profile="hosted")
         with pytest.raises(BackendUnavailableError):
-            backend = build_backend(settings)
-            if isinstance(backend, StubBackend):
-                pytest.fail("hosted profile returned stub — geometry contract violated")
+            build_backend(settings)
 
     def test_hosted_voyage_fail_closed(self) -> None:
         settings = Settings(
@@ -87,10 +85,7 @@ class TestBuildBackend:
         """Explicit contract: gpu without URL must raise, not silently return stub."""
         settings = Settings(profile="gpu")
         with pytest.raises(BackendUnavailableError):
-            backend = build_backend(settings)
-            # If we somehow got here, fail if it's a stub (geometry lie).
-            if isinstance(backend, StubBackend):
-                pytest.fail("gpu profile returned stub backend — geometry contract violated")
+            build_backend(settings)
 
     def test_gpu_tei_geometry_matches_settings(self) -> None:
         settings = Settings(
@@ -146,8 +141,9 @@ class TestLoadActiveBackend:
         assert backend.dimensions == 384
 
     def test_gpu_without_url_raises(self) -> None:
+        settings = Settings(profile="gpu")
         with pytest.raises(BackendUnavailableError):
-            load_active_backend(Settings(profile="gpu"))
+            load_active_backend(settings)
 
     def test_geometry_mismatch_raises(self) -> None:
         settings = Settings(profile="cpu", dim=9999, model="all-MiniLM-L6-v2")
@@ -162,5 +158,6 @@ class TestLoadActiveBackend:
         assert backend.model_id == "text-embedding-3-large"
 
     def test_hosted_without_key_raises(self) -> None:
+        settings = Settings(profile="hosted")
         with pytest.raises(BackendUnavailableError):
-            load_active_backend(Settings(profile="hosted"))
+            load_active_backend(settings)

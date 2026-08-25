@@ -1,15 +1,16 @@
 ---
 title: "Current State"
-description: "Phases 0–2 are complete. Auth, proxy, and single-provider E2E ship on main; Phase 2.5 (provider generalization) is next."
-summary: "Phases 0–2 are complete. Auth, proxy, and single-provider E2E ship on main; Phase 2.5 (provider generalization) is next."
+description: "Phases 0–2.5 are complete. Provider generalization, embedder, MCP skeleton, and local LGTM observability ship on main; Phase 3 (memory substrate) is next."
+summary: "Phases 0–2.5 are complete. Provider generalization, embedder, MCP skeleton, and local LGTM observability ship on main; Phase 3 (memory substrate) is next."
 ---
 
 # Current State
 
-<Callout type="success" title="Phase 2 shipped">
-  Phases 0, 1, 1.5, and **2 (Single Provider E2E)** are complete. Authenticated
-  OpenAI-compatible chat (mock/live), auth cache, directives, sessions,
-  ClickHouse traces, and the public site at ibexharness.com ship on `main`.
+<Callout type="success" title="Phase 2.5 shipped">
+  Phases 0–2 and **2.5 (Provider Generalization & Foundation)** are complete.
+  Multi-provider adapters, tokenizer, response pipelines, pluggable embedder,
+  schema pre-work, MCP skeleton, and local LGTM observability (ADR-0051) ship on `main`.
+  Phase 3 (Core Memory Substrate) is next.
 </Callout>
 
 <Callout type="info" title="Roadmap redesigned">
@@ -26,8 +27,8 @@ summary: "Phases 0–2 are complete. Auth, proxy, and single-provider E2E ship o
 <StatusBadge status="stable" /> **Phase 1 — Core Platform:** complete  
 <StatusBadge status="stable" /> **Phase 1.5 — Public Web Product:** complete  
 <StatusBadge status="stable" /> **Phase 2 — Single Provider:** complete  
-<StatusBadge status="new" /> **Phase 2.5 — Provider Generalization:** next  
-<StatusBadge status="new" /> **Phase 3 — Core Memory Substrate:** planned  
+<StatusBadge status="stable" /> **Phase 2.5 — Provider Generalization:** complete  
+<StatusBadge status="new" /> **Phase 3 — Core Memory Substrate:** next  
 <StatusBadge status="new" /> **Phase 3.5 — Extraction & Context Assembly:** planned  
 <StatusBadge status="new" /> **Phase 4 — Operator Platform & Multi-Provider:** planned  
 <StatusBadge status="new" /> **Phase 4.5 — Intelligence Layer:** planned  
@@ -35,8 +36,8 @@ summary: "Phases 0–2 are complete. Auth, proxy, and single-provider E2E ship o
 
 **Last updated:** 2026-08-25  
 **Branch:** `main`  
-**Current focus:** [Phase 2.5 — Provider Generalization](/roadmap/phase-2-5-provider-generalization) (exit / Phase 3 prep)  
-**Completed (recent):** MCP server skeleton (G6.M1 / ADR-0050); relationship graph foundation (G5.M3 / ADR-0049); multi-label `memory_labels` (G5.M2 / ADR-0048); temporal validity foundation (G5.M1 / ADR-0047); Track D embedder (G4.M1–M4); Track A–C (G1–G3)
+**Current focus:** [Phase 3 — Core Memory Substrate](/roadmap/phase-3-memory-engine)  
+**Completed (recent):** Phase 2.5 exit gate (G7 / ADR-0051 LGTM + `verify-phase25`); MCP skeleton (G6.M1 / ADR-0050); Tracks A–E
 
 <QuickLinks
   links={[
@@ -46,9 +47,9 @@ summary: "Phases 0–2 are complete. Auth, proxy, and single-provider E2E ship o
       description: "Live phase cards and milestone progress.",
     },
     {
-      title: "Phase 2.5",
-      href: "/roadmap/phase-2-5-provider-generalization",
-      description: "Provider generalization and foundation.",
+      title: "Phase 2.5 exit",
+      href: "/roadmap/phase-2-5-provider-generalization/milestones/2.5.g7-phase25-exit-gate",
+      description: "Exit checklist, observability, verify-phase25.",
     },
     {
       title: "Phase 3 (redesigned)",
@@ -65,24 +66,12 @@ summary: "Phases 0–2 are complete. Auth, proxy, and single-provider E2E ship o
 
 ## Shipped Since Last Update
 
+- **Track G / exit complete:** local LGTM stack (`make observability-up`), Grafana dashboards (Proxy Critical Path + service views), `make verify-phase25` / `make e2e-phase25` / `make mcp-conformance`, thin Helm observability chart (ADR-0051)
 - **Track F complete:** MCP resource-server skeleton with stub `search_memory` / `write_memory`, Auth gRPC validation, and `mcp_tool_calls` audit (G6.M1 / ADR-0050)
 - **Track E complete:** `memory_relationships` graph foundation (G5.M3 / ADR-0049); `memory_labels` multi-label join + category primary sync (G5.M2 / ADR-0048); memories temporal foundation (G5.M1 / ADR-0047)
 - **Track D complete:** TEI GPU backend (G4.M2), hosted OpenAI/Cohere backend (G4.M3), org-scoped Redis content-hash cache (G4.M4)
 - Track A–C: Anthropic adapter, model capability registry, self-hosted openaicompatible, tokenizer registry, response pipelines (G1–G3)
 - Phase 2 close-out: landing/SEO honesty (mock/live proxy today; memory remains Phase 3); operator docs no longer teach the Phase 1 chat-501 stub as the happy path
-- Hygiene/deps: proto TS workspace package, image-size pnpm patch, Cursor attribution guard (`#514`, `#524`); Dependabot absorb (CodeQL group, npm/docker/actions)
-- Benchmark bot data update ([#526](https://github.com/Rick1330/ibex-harness/pull/526), `34781cd`)
-- Docs/roadmap realignment: truth pass, `/docs` hub, core rebaseline, feature deep-dives, API reference + search body indexing, validation/historical cleanup (#481–#492)
-- Mixed API reference model: behavioral MDX + proto-backed Auth gRPC + HTTP route inventory (OpenAPI deferred)
-- Go **1.25.13** toolchain + golang alpine digests for stdlib vuln gates
-- Proxy overhead latency benchmark (2.6.1; [ADR-0034](/docs/adr/0034-performance-methodology))
-- Async LLM trace emitter to ClickHouse (2.5.3)
-- Directive resolver + system-prompt injection (2.3.2–2.3.3; ADR-0031)
-- Auth LRU + bloom cache with revocation pub/sub (2.2.x)
-- Sessions, checkpoints, idle sweeper (2.4.x)
-- Idempotency-Key replay (2.1.6; ADR-0035)
-- Unified product site at [ibexharness.com](https://ibexharness.com)
-- **Roadmap redesigned:** phases restructured (2.5, 3 rescoped, 3.5, 4 expanded, 4.5 added, 5 → Advanced Retrieval; Phase 5.5 and Phase 6 removed)
 
 ## What Ships Today
 
@@ -91,102 +80,27 @@ summary: "Phases 0–2 are complete. Auth, proxy, and single-provider E2E ship o
   OpenAI-compatible forwarding, model capability registry, tokenizer registry
   (G2.M1), non-streaming + streaming response pipelines (G3.M1–M2), auth cache,
   directives/injection, sessions/checkpoints, idempotency, ClickHouse traces,
+  embedder (TEI + hosted + stub), MCP memory skeleton, local observability stack,
   shared packages, and this public site.
   Default non-production `IBEX_LLM_MODE=mock` answers registered models with HTTP 200; `live`
   needs `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, and/or `IBEX_SELFHOSTED_ENABLED` (mock is rejected
   when `IBEX_ENV=production`).
-  **`501 PROVIDER_NOT_CONFIGURED`** means the model is not in the registry — not
-  "forwarding missing."
-  **Shipped (Track D):** embedder contract + stub, TEI GPU backend, hosted OpenAI/Cohere
-  backends, org-scoped Redis content-hash cache (G4.M1–M4 / ADR-0046).
-  **Shipped (Track E):** `ibex_core.memories` temporal foundation (G5.M1 / ADR-0047),
-  `memory_labels` multi-label join with category primary sync (G5.M2 / ADR-0048), and
-  `memory_relationships` typed graph with traversal indexes + tip helper (G5.M3 / ADR-0049) —
-  no application writers yet.
-  **Shipped (Track F):** MCP memory resource server skeleton (G6.M1 / ADR-0050) — Streamable HTTP,
-  Auth gRPC fail-closed boundary, stub tools, `ibex.mcp_tool_calls` audit.
-  **Not shipped (Phase 3+):** Python memory service, context assembly, worker, management API,
-  operator dashboard; real MCP tool bodies (3.5.E.2).
+  **Not yet:** real memory write/search engine (Phase 3), context assembly on the hot path (Phase 3.5),
+  management API/dashboard (Phase 4), org-wide HA observability.
 </Callout>
 
-### Platform (Phase 1)
+## Operator paths
 
-- Auth gRPC (`ValidateToken`, `ValidateAgent`, token lifecycle) with Argon2id-backed PATs
-- Proxy auth middleware, agent verification, request normalization, stable error envelopes, rate limiting
-- Security integration gate with cross-tenant denial matrix and CI enforcement
-- Shared packages (`logger`, `metrics`, `telemetry`, `config`, `apierror`, `shutdown`, `reqid`, `ratelimit`, `crypto`, `permissions`, `provider`, ...)
-- Postgres migrations with RLS; integration smokes for auth, proxy, and security paths
+| Goal | Command |
+|---|---|
+| Data deps | `make compose-dev-up && make db-migrate && make db-seed` |
+| Auth+proxy smoke | `make dev-smoke` |
+| Phase 2.5 verify | `make verify-phase25` |
+| Multi-service e2e | `make e2e-phase25` |
+| Observability | `make observability-up` → Grafana :3000; `make observability-smoke` |
+| MCP conformance | `make mcp-conformance` |
 
-### Single provider E2E (Phase 2)
+## Next
 
-| Area | What shipped |
-| --- | --- |
-| Provider | Registry, OpenAI JSON + SSE, Anthropic adapter, self-hosted openaicompatible, capability registry, routing middleware, error mapping, Idempotency-Key |
-| Auth cache | Bloom + LRU; Redis revocation channel |
-| Directives | Postgres + Redis resolver; system-prompt injection |
-| Sessions | Sticky `X-IBEX-Session-ID`, checkpoints, idle sweeper |
-| Traces | Async ClickHouse writes (org-filtered; no prompt content) |
-| Quality | Latency benchmark (2.6.1); exit gate (2.6.2) |
-
-### Public web product (Phase 1.5 + docs realignment)
-
-| Surface | Path | Notes |
-| --- | --- | --- |
-| Landing | `/` | Matte Graphite marketing page |
-| Docs | `/docs/*` | Hub + Phase 2 feature guides + API reference |
-| Benchmarks | `/benchmarks/*` | Latency, load, waterfall, history, compare |
-| Blog | `/blog` | Historical Phase 1 posts labeled; current links updated |
-| Releases | `/releases` | Parses root `CHANGELOG.md` |
-| Roadmap | `/roadmap/*` | Live phase and milestone corpus |
-| Search | Cmd+K | Static index includes headings / structured excerpts |
-
-Legacy `docs.ibexharness.com` redirects to apex paths (301).
-
-## Blockers And Risks
-
-<Callout type="warning" title="Phase 2.5 exit">
-  Tracks A–F (G1–G6) are on `main` (or landing). Phase 3 memory substrate is next.
-</Callout>
-
-- Multi-provider routing remains Phase 4
-- Formal live `make e2e-smoke` with a sandbox OpenAI key is an operator path (`dev-smoke-live` / compose e2e); CI security-integration covers mock-provider forwarding
-
-## Next 3 Priorities
-
-<Steps>
-  <Step title="Phase 2.5 exit → Phase 3">
-    MCP skeleton (G6.M1) and Track E schema pre-work (G5.M1–M3) are complete; begin memory substrate.
-  </Step>
-  <Step title="Phase 3 memory substrate">
-    Expand memories schema (HNSW + remaining columns; temporal + labels + relationships already in G5.M1–M3), write pipeline, read/ranking with category-conditional scoring.
-  </Step>
-  <Step title="Phase 3.5 extraction & assembly">
-    Close the learning loop: extraction worker turns conversations into memories, context assembly injects memories into the proxy hot path.
-  </Step>
-</Steps>
-
-## Verify current state locally
-
-```bash
-make help
-make repo-guards
-make compose-dev-up
-make db-migrate
-make db-seed
-make proto-gen
-go test ./packages/...
-go test ./services/proxy/...
-make compose-test-up
-go test -tags=integration -run '^TestSecurity_' ./services/proxy
-make test-integration
-make dev-smoke            # expects HTTP 200 chat under default mock
-# make dev-smoke-live     # optional live OpenRouter path
-pnpm install
-pnpm --filter web typecheck
-pnpm --filter web build
-make verify-phase15       # against https://ibexharness.com when online
-```
-
-Windows: see [`services/auth/README.md`](https://github.com/Rick1330/ibex-harness/blob/main/services/auth/README.md) and [`services/proxy/README.md`](https://github.com/Rick1330/ibex-harness/blob/main/services/proxy/README.md) for PowerShell env syntax.
-
-Expected: `security-integration` and all four `ci-gate-*` jobs green in CI; `verify_phase15.sh` exits 0 against production.
+Phase 3 builds the memory substrate on Track D/E seams and expands the MCP process (ADR-0050)
+with real write/search pipelines. See [Phase 3](/roadmap/phase-3-memory-engine).

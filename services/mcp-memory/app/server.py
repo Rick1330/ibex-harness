@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -136,7 +137,7 @@ async def _invoke_tool(
     success = False
     error_code = ""
     try:
-        result = runner(raw)
+        result = await asyncio.to_thread(runner, raw)
         success = True
         return json.dumps(result, separators=(",", ":"), sort_keys=True)
     except MCPServiceError as exc:

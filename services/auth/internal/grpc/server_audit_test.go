@@ -227,7 +227,7 @@ func newServerWithLog(t *testing.T, buf *bytes.Buffer) *Server {
 
 type serverLogDeps struct {
 	tokens tokenAPI
-	agents agentAPI
+	agents validateForOrger
 }
 
 func newServerWithDeps(t *testing.T, buf *bytes.Buffer, d serverLogDeps) *Server {
@@ -242,7 +242,7 @@ func newServerWithDeps(t *testing.T, buf *bytes.Buffer, d serverLogDeps) *Server
 	if d.tokens != nil {
 		tokens = d.tokens
 	}
-	agents := agentAPI(&fakeAgentAPI{})
+	agents := validateForOrger(&fakeAgentAPI{})
 	if d.agents != nil {
 		agents = d.agents
 	}

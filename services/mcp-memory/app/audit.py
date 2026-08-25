@@ -89,7 +89,10 @@ class AuditSink(ABC):
         raise NotImplementedError
 
     async def aclose(self) -> None:
-        return None
+        client = getattr(self, "_client", None)
+        if client is None:
+            return
+        await client.aclose()
 
 
 class MemoryAuditSink(AuditSink):
@@ -141,9 +144,6 @@ class ClickHouseHTTPAuditSink(AuditSink):
         )
         response.raise_for_status()
         AUDIT_EMITTED.labels(sink=self.name).inc()
-
-    async def aclose(self) -> None:
-        await self._client.aclose()
 
 
 def build_audit_sink(clickhouse_url: str) -> AuditSink:

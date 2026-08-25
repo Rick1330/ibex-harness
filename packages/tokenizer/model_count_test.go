@@ -40,24 +40,28 @@ func TestUnit_CountForModel_BuiltinCatalog(t *testing.T) {
 	t.Parallel()
 	reg, err := NewLocalRegistry(LocalRegistryConfig{})
 	require.NoError(t, err)
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
 
 	cases := []struct {
-		name    string
-		ctx     context.Context
-		model   string
-		text    string
-		wantErr error
-		wantN   int
+		name     string
+		canceled bool
+		model    string
+		text     string
+		wantErr  error
+		wantN    int
 	}{
-		{name: "canceled context", ctx: ctx, model: "gpt-4o", text: "probe", wantErr: context.Canceled},
-		{name: "empty model id", ctx: context.Background(), model: "  ", text: "probe", wantErr: ErrModelNotInCatalog},
-		{name: "counts builtin", ctx: context.Background(), model: "gpt-4o", text: VectorHelloWorld(), wantN: 2},
+		{name: "canceled context", canceled: true, model: "gpt-4o", text: "probe", wantErr: context.Canceled},
+		{name: "empty model id", model: "  ", text: "probe", wantErr: ErrModelNotInCatalog},
+		{name: "counts builtin", model: "gpt-4o", text: VectorHelloWorld(), wantN: 2},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			n, err := CountForModel(tc.ctx, ModelCountRequest{
+			ctx := context.Background()
+			if tc.canceled {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithCancel(context.Background())
+				cancel()
+			}
+			n, err := CountForModel(ctx, ModelCountRequest{
 				Catalog: provider.BuiltInCapabilityCatalog(),
 				Reg:     reg,
 				Model:   tc.model,

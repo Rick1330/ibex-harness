@@ -508,7 +508,11 @@ Panels:
 
 ### 10.2 Dashboard: “Proxy — Critical Path”
 
-> **Pull-forward:** Do **not** wait for a late hardening phase to ship a critical-path view. A **minimal** Proxy Critical Path dashboard (overhead p50/p95/p99, auth latency, rate-limit latency, fallbacks, inflight) should land once ClickHouse traces and Prometheus middleware metrics exist (late Phase 2 / early Phase 2.5–3.5 as surfaces appear). Org-wide Prometheus/Grafana/Loki/Tempo stack work is **deferred beyond Phase 5**; Phase 5 itself is Advanced Retrieval, not the observability platform.
+> **Pull-forward (Phase 2.5 exit / ADR-0051):** Local Docker Compose LGTM stack ships under
+> `infra/compose/observability/` with provisioned Grafana dashboards (including Proxy Critical Path).
+> Use `make observability-up` / `make observability-smoke`. Org-wide HA Prometheus/Grafana/Loki/Tempo
+> multi-cluster hardening remains deferred beyond Phase 5; Phase 5 itself is Advanced Retrieval,
+> not the observability platform.
 
 Panels:
 
@@ -768,18 +772,22 @@ This view must be accessible in the dashboard and must not require log scraping.
 
 ---
 
-## 15) Verification Checklist (Observability “Done” Criteria)
+## 15) Verification Checklist (Local Phase 2.5 LGTM — not production HA)
 
-Before any service is considered production-ready:
+Phase 2.5.G7 / ADR-0051 signs off **local Compose** evidence (Grafana on loopback, Prometheus scrape of
+host services, Alertmanager rules loaded, optional OTLP→Tempo). Production HA collectors, org-wide
+SLO burn alerts, and full runbook coverage remain later-phase work.
 
-- [ ] `/metrics` endpoint exists and is scraped
-- [ ] request rate, error rate, latency metrics exist
-- [ ] logs are structured JSON and include trace_id/request_id
-- [ ] OTel traces propagate across boundaries
-- [ ] at least one Grafana dashboard exists for the service
-- [ ] alerts exist for the service’s key failure modes
-- [ ] runbooks exist for P1/P2 alerts
-- [ ] no high-cardinality metric labels are used
+Before Phase 2.5 exit is considered verified locally:
+
+- [x] `/metrics` endpoint exists and is scraped (local: `make observability-up`)
+- [x] request rate, error rate, latency metrics exist (proxy/auth; embedder/mcp golden signals in Phase 2.5.G7)
+- [x] logs are structured JSON and include trace_id/request_id (Go services via `packages/logger`)
+- [x] OTel traces propagate across boundaries when `OTEL_EXPORTER_OTLP_ENDPOINT` is set (proxy/auth → collector → Tempo)
+- [x] at least one Grafana dashboard exists for the service (IBEX folder: Overview / Proxy Critical Path / Auth / Embedder+MCP)
+- [x] alerts exist for the service’s key failure modes (local Alertmanager rules in `infra/monitoring/prometheus/rules/`)
+- [ ] runbooks exist for P1/P2 alerts (partial — see `runbooks/`; expand with Phase 3+)
+- [x] no high-cardinality metric labels are used (ADR-0021 forbidden org/agent/user/session labels)
 
 ---
 

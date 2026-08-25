@@ -1,0 +1,2 @@
+# Runtime scrape bearer files (make observability-up). Do not commit tokens.
+embedder_metrics_bearer

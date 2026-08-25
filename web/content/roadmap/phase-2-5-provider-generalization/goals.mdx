@@ -66,9 +66,9 @@ phase: "phase-2-5-provider-generalization"
 - **2.5.G4.M4 — Content-hash embedding cache:** Redis `SHA-256(text) -> vector` cache, backend-agnostic, &gt;80% hit-rate target.
 
 **Acceptance criteria:**
-- At least two `EmbeddingBackend` implementations passing the same contract test suite
+- At least two real `EmbeddingBackend` implementations (**TEI + hosted OpenAI or Cohere**) passing the same contract test suite; CPU MiniLM profile remains stub (ADR-0046)
 - Org config carries `embedding_profile` + `embedding_dim`, validated against pgvector column at migration time
-- Re-embedding migration runbook written and dry-run tested
+- Re-embedding migration runbook deferred to Phase 3 (non-goal for 2.5; exit criteria updated accordingly)
 
 ---
 
@@ -97,4 +97,18 @@ phase: "phase-2-5-provider-generalization"
 **Acceptance criteria:**
 - MCP server passes official conformance/inspector tool against stub handlers
 - Auth reuses `AuthService.ValidateToken` via gRPC (no second identity system)
-- Tool invocations written to ClickHouse trace pipeline
+- Tool invocations written to ClickHouse `ibex.mcp_tool_calls` (not `llm_traces`; ADR-0050)
+
+---
+
+## Track G — Exit / Ops Pack-Up
+
+### Goal 2.5.G: Prove Phase 2.5 seams operate together with local observability
+
+**Milestones:**
+- **2.5.G7 — Phase 2.5 exit gate:** Local LGTM stack (ADR-0051), `make verify-phase25`, multi-service e2e, thin K8s observability chart, roadmap sign-off.
+
+**Acceptance criteria:**
+- `make observability-up` / `make observability-smoke` green with Proxy Critical Path dashboard
+- `make verify-phase25` maps exit criteria to runnable checks
+- Phase roadmap status completed; Phase 3 entry clear

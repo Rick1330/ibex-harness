@@ -26,9 +26,24 @@ func ConfigFromEnv(serviceName, environment string) (Config, error) {
 		ServiceName:    name,
 		ServiceVersion: envDefault("OTEL_SERVICE_VERSION", "dev"),
 		Environment:    resolveDeploymentEnvironment(environment),
-		OTLPEndpoint:   strings.TrimSpace(os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")),
+		OTLPEndpoint:   normalizeOTLPEndpoint(os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")),
 		SampleRatio:    ratio,
 	}, nil
+}
+
+// normalizeOTLPEndpoint accepts host:port or URL forms operators often paste.
+// otlptracegrpc.WithEndpoint expects host:port without a scheme.
+func normalizeOTLPEndpoint(raw string) string {
+	ep := strings.TrimSpace(raw)
+	if ep == "" {
+		return ""
+	}
+	ep = strings.TrimPrefix(ep, "http://")
+	ep = strings.TrimPrefix(ep, "https://")
+	if i := strings.Index(ep, "/"); i >= 0 {
+		ep = ep[:i]
+	}
+	return strings.TrimSpace(ep)
 }
 
 func resolveServiceName(fallback string) (string, error) {

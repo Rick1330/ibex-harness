@@ -167,8 +167,9 @@ def test_tei_api_key_rejected_with_insecure_http() -> None:
 
 
 def test_runtime_security_requires_service_api_token() -> None:
+    settings = Settings()
     with pytest.raises(ValueError, match="IBEX_EMBEDDING_API_TOKEN"):
-        Settings().validate_runtime_security()
+        settings.validate_runtime_security()
 
 
 def test_runtime_security_requires_hosted_api_key() -> None:

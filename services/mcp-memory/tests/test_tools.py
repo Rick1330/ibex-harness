@@ -34,14 +34,16 @@ def test_write_schema_rejects_bad_category() -> None:
 
 def test_search_requires_memory_read() -> None:
     principal = Principal(org_id=ORG_A, permissions=0)
+    args = parse_search_args({"query": "q"})
     with pytest.raises(PermissionDeniedError):
-        stub_search_memory(principal, parse_search_args({"query": "q"}))
+        stub_search_memory(principal, args)
 
 
 def test_write_requires_memory_write() -> None:
     principal = Principal(org_id=ORG_A, permissions=MEMORY_READ)
+    args = parse_write_args({"content": "c"})
     with pytest.raises(PermissionDeniedError):
-        stub_write_memory(principal, parse_write_args({"content": "c"}))
+        stub_write_memory(principal, args)
 
 
 def test_stub_search_is_org_scoped() -> None:

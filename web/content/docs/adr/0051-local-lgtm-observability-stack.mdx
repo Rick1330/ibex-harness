@@ -1,0 +1,57 @@
+---
+title: "ADR-0051: Local LGTM observability stack (Phase 2.5 exit pull-forward)"
+description: "Architecture decision record 0051 — Docker Compose Prometheus/Grafana/Tempo/Loki/OTel Collector for Phase 2.5 exit; HA platform remains later."
+adrId: "0051"
+status: "Accepted"
+date: "2026-08-25"
+authors: "IBEX Harness team"
+---
+
+# ADR-0051: Local LGTM observability stack (Phase 2.5 exit pull-forward)
+
+- **Status:** Accepted
+- **Date:** 2026-08-25
+- **Authors:** IBEX Harness team
+- **Milestone:** [2.5.G7 Phase 2.5 exit gate](/roadmap/phase-2-5-provider-generalization/milestones/2.5.g7-phase25-exit-gate)
+
+## Context
+
+Services already expose Prometheus `/metrics` (proxy, auth, embedder, mcp-memory) and Go services
+initialize OpenTelemetry (ADR-0019 / ADR-0021). [`MONITORING.md`](/docs/engineering/MONITORING)
+specifies Grafana dashboards (including Proxy Critical Path) and a full LGTM stack, but
+[`FILE_STRUCTURE.md`](/docs/file_structure) / `infra/README.md` previously deferred Prometheus/Grafana/Loki/Tempo
+to “beyond Phase 5.”
+
+Without a runnable collection plane, Phase 2.5 cannot prove operability: no graphs, no scrape
+targets, no local trace sink. Pulling a **local/dev** LGTM stack into the Phase 2.5 exit gate
+unblocks operators without claiming production HA observability is done.
+
+## Decision
+
+### 1) Compose stack under `infra/compose/observability/`
+
+Ship Prometheus, Grafana, Tempo, Loki, OpenTelemetry Collector, and Alertmanager as a dedicated
+compose project (separate from `compose/dev` data stores). Make targets:
+`observability-up`, `observability-down`, `observability-smoke`.
+
+### 2) Configs as code under `infra/monitoring/`
+
+Prometheus scrape + alert rules, OTel collector config, Tempo/Loki configs, Grafana datasource and
+dashboard provisioning. Dashboards cover only metrics that exist today (no Phase 3 memory/worker panels).
+
+### 3) Thin Helm chart `infra/helm/observability/`
+
+Kind/minikube parity for the same stack. Full `ibex-harness` application Helm remains Phase 4+.
+
+### 4) What remains deferred
+
+- Multi-AZ / HA Prometheus, long-term object storage for Tempo/Loki
+- Full app ServiceMonitors for every future service
+- Sentry SaaS wiring
+- Memory/context/worker metric catalogs (Phase 3+)
+
+## Consequences
+
+- Operators can open Grafana locally and see Proxy Critical Path after smoke traffic.
+- `infra/README.md` timing for LGTM is updated: local stack = Phase 2.5 exit; org-wide hardening later.
+- Phase 2.5 exit criteria include `make observability-up` / `make observability-smoke` and ADR-0051.

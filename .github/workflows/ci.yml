@@ -367,6 +367,8 @@ jobs:
         run: docker compose -f infra/compose/dev/docker-compose.yml --env-file infra/compose/dev/.env.example config
       - name: Validate test compose
         run: docker compose -f infra/compose/test/docker-compose.yml config
+      - name: Validate observability compose
+        run: docker compose -f infra/compose/observability/docker-compose.yml --env-file infra/compose/observability/.env.example config
 
   db-migrate-smoke:
     name: db-migrate-smoke
@@ -885,6 +887,52 @@ jobs:
           enable-cache: true
       - name: MCP memory unit tests (pytest + ruff)
         run: bash infra/scripts/mcp-memory-test-ci.sh
+
+  verify-phase25:
+    name: verify-phase25
+    needs: changes
+    if: needs.changes.outputs.run_go == 'true' || needs.changes.outputs.run_python == 'true' || needs.changes.outputs.run_compose == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      REDIS_URL: redis://127.0.0.1:6379/0
+    services:
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: ./.github/actions/setup-buf
+      - name: Generate protobuf stubs
+        working-directory: packages/proto
+        run: buf generate
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+      - name: Phase 2.5 exit gate (packages + Python; no live multi-service e2e)
+        run: bash infra/scripts/verify_phase25.sh
 
   golangci-lint:
     name: golangci-lint
@@ -1520,6 +1568,7 @@ jobs:
       - embedder-coverage
       - mcp-memory-test
       - mcp-memory-coverage
+      - verify-phase25
       - golangci-lint
       - coverage
       - govulncheck
@@ -1547,6 +1596,7 @@ jobs:
             "${{ needs.embedder-coverage.result }}" \
             "${{ needs.mcp-memory-test.result }}" \
             "${{ needs.mcp-memory-coverage.result }}" \
+            "${{ needs.verify-phase25.result }}" \
             "${{ needs.golangci-lint.result }}" \
             "${{ needs.coverage.result }}" \
             "${{ needs.govulncheck.result }}"
@@ -1601,6 +1651,7 @@ jobs:
       - embedder-coverage
       - mcp-memory-test
       - mcp-memory-coverage
+      - verify-phase25
     if: always()
     runs-on: ubuntu-latest
     permissions:
@@ -1615,4 +1666,5 @@ jobs:
             "${{ needs.embedder-test.result }}" \
             "${{ needs.embedder-coverage.result }}" \
             "${{ needs.mcp-memory-test.result }}" \
-            "${{ needs.mcp-memory-coverage.result }}"
+            "${{ needs.mcp-memory-coverage.result }}" \
+            "${{ needs.verify-phase25.result }}"

@@ -17,6 +17,9 @@ monitoring stacks should land with evidence and, for boundary changes, an ADR.
 | --- | --- |
 | `compose/dev/` | Local dependencies — [compose/dev/README.md](compose/dev/README.md) (Postgres + pgvector, Redis Stack, ClickHouse, MinIO) |
 | `compose/test/` | Minimal Postgres + Redis for Go integration tests (`make compose-test-up`, port 5433) |
+| `compose/observability/` | Local LGTM stack — Prometheus, Grafana, Tempo, Loki, OTel Collector, Alertmanager |
+| `monitoring/` | Scrape configs, alert rules, Grafana provisioning, collector/Tempo/Loki configs |
+| `helm/observability/` | Thin K8s chart mirroring the local observability stack (kind/minikube) |
 | `migrations/` | Postgres (`golang-migrate`) and ClickHouse migrations |
 | `scripts/` | Operational / repo-guard helpers used by `Makefile` |
 | `testing/` | Shared testing helpers (as present) |
@@ -33,7 +36,8 @@ monitoring stacks should land with evidence and, for boundary changes, an ADR.
 | Tokenizer model asset caching | Phase **2.5** | Bundle or bake `tokenizer.json` for air-gapped deploys |
 | Helm / raw k8s charts for proxy, auth, Python services | Phase **4+** (earlier if needed) | Prefer Helm over unchecked raw manifests |
 | Terraform modules / envs | Later | Cloud SaaS / enterprise self-host |
-| Prometheus / Grafana / Loki / Tempo stack | **Deferred beyond Phase 5** as org-wide hardening | Per-phase metrics still required on each service; full stack is future scope |
+| Local Prometheus / Grafana / Loki / Tempo / OTel Collector | **Phase 2.5 exit** (ADR-0051) | `infra/compose/observability/` + `infra/monitoring/`; `make observability-up` |
+| Org-wide HA observability (multi-AZ, long retention, full exporters) | **Deferred beyond Phase 5** | Local LGTM does not claim production HA |
 | Chaos / load environments | Future hardening | Phase exit gates already demand targeted load/isolation tests |
 
 ---

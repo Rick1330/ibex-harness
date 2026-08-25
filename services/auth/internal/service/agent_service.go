@@ -28,21 +28,20 @@ var ErrAgentInactive = errors.New("agent inactive")
 // ErrAgentLookup indicates a store failure during agent validation.
 var ErrAgentLookup = errors.New("agent lookup failed")
 
-// agentByOrgLookup loads an agent record scoped to an organization.
-// Named for the single GetByIDAndOrg method (Go -er interface convention).
-type agentByOrgLookup interface {
+// getByIDAndOrger loads an agent record scoped to an organization.
+type getByIDAndOrger interface {
 	GetByIDAndOrg(ctx context.Context, agentID, orgID uuid.UUID) (*repository.AgentRecord, error)
 }
 
 // AgentService validates agent identity for an organization.
 type AgentService struct {
-	repo agentByOrgLookup
+	repo getByIDAndOrger
 }
 
 // NewAgentService constructs an AgentService.
 // It rejects a nil lookup dependency so wiring fails fast at construction
 // instead of deferring a nil panic to the first ValidateForOrg call.
-func NewAgentService(repo agentByOrgLookup) (*AgentService, error) {
+func NewAgentService(repo getByIDAndOrger) (*AgentService, error) {
 	if repo == nil {
 		return nil, fmt.Errorf("service: nil agent repo")
 	}

@@ -11,6 +11,7 @@ from fastapi import FastAPI
 from app.audit import AsyncAuditEmitter, AuditSink, build_audit_sink
 from app.auth import GRPCTokenValidator, TokenValidator
 from app.config import Settings, get_settings
+from app.http_metrics import HTTPMetricsMiddleware
 from app.middleware import BearerAuthMiddleware
 from app.probes import probe_router
 from app.server import build_mcp_server
@@ -63,11 +64,13 @@ def create_app(
     application.include_router(probe_router)
     # Mount at root: FastMCP exposes /mcp; FastAPI routes (/health, /ready) win first.
     application.mount("/", mcp_asgi)
+    # Inner auth first, then metrics outermost so 401s are counted.
     application.add_middleware(
         BearerAuthMiddleware,
         settings=cfg,
         get_validator=lambda: state.validator or validator,
     )
+    application.add_middleware(HTTPMetricsMiddleware)
     return application
 
 

@@ -47,6 +47,18 @@ func TestConfigFromEnv_overrides(t *testing.T) {
 	}
 }
 
+func TestConfigFromEnv_stripsOTLPScheme(t *testing.T) {
+	t.Setenv("OTEL_SERVICE_NAME", "proxy")
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:4317")
+	cfg, err := telemetry.ConfigFromEnv("proxy", "development")
+	if err != nil {
+		t.Fatalf("ConfigFromEnv: %v", err)
+	}
+	if cfg.OTLPEndpoint != "127.0.0.1:4317" {
+		t.Fatalf("endpoint: %q", cfg.OTLPEndpoint)
+	}
+}
+
 func TestConfigFromEnv_missingServiceName(t *testing.T) {
 	t.Setenv("OTEL_SERVICE_NAME", "")
 	_, err := telemetry.ConfigFromEnv("", "")

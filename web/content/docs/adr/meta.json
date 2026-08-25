@@ -48,6 +48,7 @@
     "0047-memory-temporal-validity",
     "0048-memory-multi-label-categories",
     "0049-memory-relationship-graph",
-    "0050-mcp-server-skeleton"
+    "0050-mcp-server-skeleton",
+    "0051-local-lgtm-observability-stack"
   ]
 }

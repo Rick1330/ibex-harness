@@ -14,6 +14,7 @@
     "2.5.g5.m1-temporal-validity-columns",
     "2.5.g5.m2-multi-label-category-support",
     "2.5.g5.m3-relationship-graph-readiness",
-    "2.5.g6.m1-mcp-server-skeleton"
+    "2.5.g6.m1-mcp-server-skeleton",
+    "2.5.g7-phase25-exit-gate"
   ]
 }

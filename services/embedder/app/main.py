@@ -31,6 +31,7 @@ from app.errors import (
     InvalidVectorError,
 )
 from app.factory import build_backend, unwrap_backend
+from app.http_metrics import HTTPMetricsMiddleware
 from app.schemas import ErrorEnvelope
 from app.state import AppState
 from app.tei.protocol import parse_info_dimensions
@@ -121,11 +122,15 @@ def _assert_probe_dimensions(probe: object, want: int, *, label: str) -> None:
 
 
 def _probe_shape_matches(shape: object, want: int) -> bool:
-    if not hasattr(shape, "__len__"):
+    if not isinstance(shape, tuple):
         return False
-    if len(shape) < 2:  # type: ignore[arg-type]
+    if len(shape) < 2:
         return False
-    return int(shape[-1]) == want  # type: ignore[index]
+    last = shape[-1]
+    try:
+        return int(last) == want
+    except (TypeError, ValueError):
+        return False
 
 
 async def _verify_hosted_geometry(backend: HostedAPIBackend) -> None:
@@ -189,7 +194,7 @@ async def _verify_cache_redis(backend: CachingEmbeddingBackend) -> None:
     """Fail closed at startup when cache Redis is unreachable (misconfig)."""
     try:
         await backend.ping()
-    except (RedisError, OSError, TimeoutError) as exc:
+    except (RedisError, OSError) as exc:
         raise BackendUnavailableError(
             f"embedding cache Redis ping failed: {type(exc).__name__}"
         ) from exc
@@ -238,6 +243,7 @@ def create_app() -> FastAPI:
         version="0.2.0",
         lifespan=lifespan,
     )
+    application.add_middleware(HTTPMetricsMiddleware)
 
     @application.exception_handler(AuthenticationError)
     async def _authentication_error_handler(_: Request, exc: AuthenticationError) -> JSONResponse:

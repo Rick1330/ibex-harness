@@ -1,0 +1,65 @@
+namespace: ibex-observability
+
+images:
+  prometheus: prom/prometheus@sha256:2659f4c2ebb718e7695cb9b25ffa7d6be64db013daba13e05c875451cf51b0d3
+  grafana: grafana/grafana@sha256:fa801ab6e1ae035135309580891e09f7eb94d1abdbd2106bdc288030b028158c
+  tempo: grafana/tempo@sha256:ef4384fce6e8ad22b95b243d8fc165628cda655376fd50e7850536ad89d71d50
+  loki: grafana/loki@sha256:09a53b4a4ff81ffcd8f13886df19d33fac7a8d3aaf952e3c7e66cbade5b2fc31
+  otelCollector: otel/opentelemetry-collector-contrib@sha256:37fa87091cfaaec7234a27e4e395a40c31c2bfaea97a349a4afef6d9e9681197
+  alertmanager: prom/alertmanager@sha256:e13b6ed5cb929eeaee733479dce55e10eb3bc2e9c4586c705a4e8da41e5eacf5
+
+# Local chart: anonymous auth off by default. Opt in with --set grafana.anonymousAdmin=true
+# (Viewer role only). When anonymousAdmin is false, grafana.existingSecret is required
+# (Secret must contain key admin-password) or chart render fails.
+grafana:
+  anonymousAdmin: false
+  # Required when anonymousAdmin is false; optional when anonymousAdmin is true.
+  # Secret name with key "admin-password".
+  existingSecret: ""
+
+resources:
+  prometheus:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
+  grafana:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+  tempo:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
+  loki:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
+  otelCollector:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 384Mi
+
+# When apps are later charted, scrape via ServiceMonitor / static kube DNS.
+# For kind/minikube with host-run apps, override scrapeTargets to Node IPs.
+scrapeTargets:
+  proxy: []
+  auth: []
+  embedder: []
+  mcpMemory: []
+
+serviceMonitor:
+  enabled: false
+  # Future: selector matchLabels for ibex app charts.
+  selector:
+    matchLabels:
+      ibex.io/metrics: "true"
