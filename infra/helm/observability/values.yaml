@@ -9,10 +9,12 @@ images:
   alertmanager: prom/alertmanager@sha256:e13b6ed5cb929eeaee733479dce55e10eb3bc2e9c4586c705a4e8da41e5eacf5
 
 # Local chart: anonymous auth off by default. Opt in with --set grafana.anonymousAdmin=true
-# (Viewer role only). Password login uses grafana.existingSecret (key admin-password).
+# (Viewer role only). When anonymousAdmin is false, grafana.existingSecret is required
+# (Secret must contain key admin-password) or chart render fails.
 grafana:
   anonymousAdmin: false
-  # Optional Secret name with key "admin-password" (used when anonymousAdmin is false).
+  # Required when anonymousAdmin is false; optional when anonymousAdmin is true.
+  # Secret name with key "admin-password".
   existingSecret: ""
 
 resources:

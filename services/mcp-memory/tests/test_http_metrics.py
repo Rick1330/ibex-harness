@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import time
+import threading
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -58,25 +58,39 @@ def test_streaming_duration_waits_for_body_complete() -> None:
     app = FastAPI()
     app.add_middleware(HTTPMetricsMiddleware)
 
+    first_chunk_sent = threading.Event()
+    release_final = threading.Event()
+
     async def gen():
         yield b"a"
-        await asyncio.sleep(0.05)
+        first_chunk_sent.set()
+        await asyncio.to_thread(release_final.wait, 5.0)
         yield b"b"
 
     @app.get("/stream")
     def stream() -> StreamingResponse:
         return StreamingResponse(gen(), media_type="text/plain")
 
-    started = time.perf_counter()
-    with TestClient(app) as client:
-        resp = client.get("/stream")
-        assert resp.status_code == 200
-        assert resp.content == b"ab"
-    elapsed = time.perf_counter() - started
-    assert elapsed >= 0.04
-    body = generate_latest().decode()
-    assert 'route="/stream"' in body
-    assert "ibex_mcp_http_request_duration_seconds" in body
+    labels = {"method": "GET", "route": "/stream"}
+    before = _counter_value("ibex_mcp_http_request_duration_seconds_count", labels)
+    result: dict[str, bytes] = {}
+
+    def run_request() -> None:
+        with TestClient(app) as client, client.stream("GET", "/stream") as resp:
+            assert resp.status_code == 200
+            result["content"] = b"".join(resp.iter_bytes())
+
+    worker = threading.Thread(target=run_request)
+    worker.start()
+    assert first_chunk_sent.wait(timeout=5.0), "timed out waiting for first stream chunk"
+    mid = _counter_value("ibex_mcp_http_request_duration_seconds_count", labels)
+    assert mid == before, "duration must not be observed before body completes"
+    release_final.set()
+    worker.join(timeout=5.0)
+    assert not worker.is_alive(), "stream request did not finish"
+    after = _counter_value("ibex_mcp_http_request_duration_seconds_count", labels)
+    assert after == before + 1.0
+    assert result.get("content") == b"ab"
 
 
 def test_unauthorized_request_increments_metrics() -> None:

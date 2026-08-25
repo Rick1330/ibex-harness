@@ -7,13 +7,19 @@ Thin Kubernetes packaging of the local LGTM stack used by Phase 2.5 exit.
 
 Default chart settings: **anonymous Grafana disabled**, no embedded login secrets,
 `automountServiceAccountToken: false`, and memory limits on every container.
+When `grafana.anonymousAdmin` is `false` (default), **`grafana.existingSecret` is required**
+(Secret key `admin-password`) or `helm template` / install fails.
 Enable anonymous Viewer (not Admin) only via `--set grafana.anonymousAdmin=true`.
 
 ```bash
-# kind
+# kind — password login (required unless anonymousAdmin=true)
 kind create cluster --name ibex-obs || true
+kubectl create namespace ibex-observability --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n ibex-observability create secret generic grafana-admin \
+  --from-literal=admin-password=change-me --dry-run=client -o yaml | kubectl apply -f -
 helm upgrade --install ibex-obs ./infra/helm/observability \
-  --namespace ibex-observability --create-namespace
+  --namespace ibex-observability --create-namespace \
+  --set grafana.existingSecret=grafana-admin
 
 # Grafana via port-forward (do not rely on NodePort 30300 unless kind extraPortMappings are configured)
 kubectl -n ibex-observability port-forward svc/grafana 3000:3000
@@ -21,19 +27,23 @@ kubectl -n ibex-observability port-forward svc/grafana 3000:3000
 ```
 
 ```bash
-# minikube
+# minikube — same Secret + existingSecret requirement
 minikube start
+kubectl create namespace ibex-observability --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n ibex-observability create secret generic grafana-admin \
+  --from-literal=admin-password=change-me --dry-run=client -o yaml | kubectl apply -f -
 helm upgrade --install ibex-obs ./infra/helm/observability \
-  --namespace ibex-observability --create-namespace
+  --namespace ibex-observability --create-namespace \
+  --set grafana.existingSecret=grafana-admin
 kubectl -n ibex-observability port-forward svc/grafana 3000:3000
 ```
 
-To use password login, create a Secret with key `admin-password`, then:
+Local demo without a password Secret (Viewer-only anonymous):
 
 ```bash
 helm upgrade --install ibex-obs ./infra/helm/observability \
   --namespace ibex-observability --create-namespace \
-  --set grafana.existingSecret=grafana-admin
+  --set grafana.anonymousAdmin=true
 ```
 
 ## Compose vs Helm

@@ -510,7 +510,7 @@ Panels:
 
 > **Pull-forward (Phase 2.5 exit / ADR-0051):** Local Docker Compose LGTM stack ships under
 > `infra/compose/observability/` with provisioned Grafana dashboards (including Proxy Critical Path).
-> Use `make observability-up` / `observability-smoke`. Org-wide HA Prometheus/Grafana/Loki/Tempo
+> Use `make observability-up` / `make observability-smoke`. Org-wide HA Prometheus/Grafana/Loki/Tempo
 > multi-cluster hardening remains deferred beyond Phase 5; Phase 5 itself is Advanced Retrieval,
 > not the observability platform.
 

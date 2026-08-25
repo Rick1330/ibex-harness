@@ -28,17 +28,16 @@ spec:
             - name: GF_AUTH_ANONYMOUS_ORG_ROLE
               value: Viewer
             {{- else }}
+            {{- $secret := required "grafana.existingSecret is required when grafana.anonymousAdmin is false" .Values.grafana.existingSecret }}
             - name: GF_AUTH_ANONYMOUS_ENABLED
               value: "false"
-            {{- if .Values.grafana.existingSecret }}
             - name: GF_SECURITY_ADMIN_USER
               value: admin
             - name: GF_SECURITY_ADMIN_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.grafana.existingSecret | quote }}
+                  name: {{ $secret | quote }}
                   key: admin-password
-            {{- end }}
             {{- end }}
           ports:
             - containerPort: 3000

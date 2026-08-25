@@ -38,7 +38,7 @@ if [[ "$step_outcome" != "success" ]]; then
     echo ""
     echo "See [RELEASING.md](${server}/${repo}/blob/main/web/engineering/RELEASING.md) for workflow permissions and token setup."
   } >>"$GITHUB_STEP_SUMMARY"
-  echo "::error::Version release engine step failed (outcome=${step_outcome})" >&2
+  echo "::error::Version release engine step failed (outcome=${step_outcome})"
   exit 1
 fi
 
