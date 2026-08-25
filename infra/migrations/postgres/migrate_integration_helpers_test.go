@@ -206,41 +206,39 @@ func assertCoreTableExists(t *testing.T, ctx context.Context, db *sql.DB, table 
 	}
 }
 
-func assertCoreTablesRLSEnabled(t *testing.T, ctx context.Context, db *sql.DB, tables []string) {
-	t.Helper()
-	for _, table := range tables {
-		assertCoreTableRLSEnabled(t, ctx, db, table)
-	}
+type coreTableRLSFlags struct {
+	enabled bool
+	forced  bool
 }
 
-func assertCoreTableRLSEnabled(t *testing.T, ctx context.Context, db *sql.DB, table string) {
-	t.Helper()
-	var rls bool
+func queryCoreTableRLSFlags(ctx context.Context, db *sql.DB, table string) (coreTableRLSFlags, error) {
+	var flags coreTableRLSFlags
 	err := db.QueryRowContext(ctx, `
-		SELECT c.relrowsecurity
+		SELECT c.relrowsecurity, c.relforcerowsecurity
 		FROM pg_class c
 		JOIN pg_namespace n ON n.oid = c.relnamespace
-		WHERE n.nspname = 'ibex_core' AND c.relname = $1`, table).Scan(&rls)
+		WHERE n.nspname = 'ibex_core' AND c.relname = $1`, table).Scan(&flags.enabled, &flags.forced)
+	return flags, err
+}
+
+// assertCoreTableRLS checks the RLS columns named by expect (true = must be on).
+func assertCoreTableRLS(t *testing.T, ctx context.Context, db *sql.DB, table string, expect coreTableRLSFlags) {
+	t.Helper()
+	got, err := queryCoreTableRLSFlags(ctx, db, table)
 	if err != nil {
 		t.Fatalf("check rls %s: %v", table, err)
 	}
-	if !rls {
+	if expect.enabled && !got.enabled {
 		t.Errorf("RLS not enabled on ibex_core.%s", table)
+	}
+	if expect.forced && !got.forced {
+		t.Errorf("expected FORCE ROW LEVEL SECURITY on ibex_core.%s", table)
 	}
 }
 
-func assertCoreTableForceRLS(t *testing.T, ctx context.Context, db *sql.DB, table string) {
+func assertCoreTablesRLSEnabled(t *testing.T, ctx context.Context, db *sql.DB, tables []string) {
 	t.Helper()
-	var forced bool
-	err := db.QueryRowContext(ctx, `
-		SELECT c.relforcerowsecurity
-		FROM pg_class c
-		JOIN pg_namespace n ON n.oid = c.relnamespace
-		WHERE n.nspname = 'ibex_core' AND c.relname = $1`, table).Scan(&forced)
-	if err != nil {
-		t.Fatalf("force rls %s: %v", table, err)
-	}
-	if !forced {
-		t.Errorf("expected FORCE ROW LEVEL SECURITY on ibex_core.%s", table)
+	for _, table := range tables {
+		assertCoreTableRLS(t, ctx, db, table, coreTableRLSFlags{enabled: true})
 	}
 }
