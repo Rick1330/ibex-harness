@@ -25,7 +25,10 @@ class Settings(BaseSettings):
         populate_by_name=True,
     )
 
-    host: str = Field(default="0.0.0.0", description="Bind host")
+    host: str = Field(
+        default="127.0.0.1",
+        description="Bind host (containers set IBEX_MEMORY_HOST=0.0.0.0 explicitly)",
+    )
     port: int = Field(default=8005, description="Bind port")
 
     database_url: str | None = Field(

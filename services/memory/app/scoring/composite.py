@@ -29,43 +29,57 @@ class RankWeights:
             raise ValueError(msg)
 
 
+@dataclass(frozen=True, slots=True)
+class ScoreComponents:
+    """Precomputed [0, 1] component scores for a weighted sum."""
+
+    relevance: float
+    recency: float
+    usefulness: float
+    confidence: float
+    access_frequency: float
+
+
+@dataclass(frozen=True, slots=True)
+class CompositeInputs:
+    """Inputs for category-conditional composite scoring."""
+
+    relevance: float
+    age_days: float
+    categories: Sequence[str]
+    usefulness: float
+    confidence: float
+    access_frequency: float
+
+
 def score(
-    *,
-    relevance: float,
-    recency: float,
-    usefulness: float,
-    confidence: float,
-    access_frequency: float,
+    components: ScoreComponents,
     weights: RankWeights | None = None,
 ) -> float:
     """Pure weighted sum. Callers supply precomputed component scores in [0, 1]."""
     w = weights or RankWeights()
     w.validate()
     return (
-        w.relevance * relevance
-        + w.recency * recency
-        + w.usefulness * usefulness
-        + w.confidence * confidence
-        + w.frequency * access_frequency
+        w.relevance * components.relevance
+        + w.recency * components.recency
+        + w.usefulness * components.usefulness
+        + w.confidence * components.confidence
+        + w.frequency * components.access_frequency
     )
 
 
 def composite_score(
-    *,
-    relevance: float,
-    age_days: float,
-    categories: Sequence[str],
-    usefulness: float,
-    confidence: float,
-    access_frequency: float,
+    inputs: CompositeInputs,
     weights: RankWeights | None = None,
 ) -> float:
     """Composite score with category-conditional recency decay."""
     return score(
-        relevance=relevance,
-        recency=recency_decay(age_days, categories),
-        usefulness=usefulness,
-        confidence=confidence,
-        access_frequency=access_frequency,
-        weights=weights,
+        ScoreComponents(
+            relevance=inputs.relevance,
+            recency=recency_decay(inputs.age_days, inputs.categories),
+            usefulness=inputs.usefulness,
+            confidence=inputs.confidence,
+            access_frequency=inputs.access_frequency,
+        ),
+        weights,
     )
