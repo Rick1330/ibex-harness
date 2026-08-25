@@ -141,7 +141,9 @@ func (f *labelsDB) assertReject(err error, want sqlStateExpect) {
 func TestMemoryLabels_TableAndForceRLS(t *testing.T) {
 	f := openMigratedLabelsDB(t)
 	assertCoreTableExists(t, f.ctx, f.db, "memory_labels")
-	assertCoreTableRLS(t, f.ctx, f.db, "memory_labels", coreTableRLSFlags{forced: true})
+	assertCoreTableRLS(t, f.ctx, coreTableRLSCheck{
+		db: f.db, table: "memory_labels", expect: coreTableRLSFlags{forced: true},
+	})
 }
 
 func TestMemoryLabels_BackfillOnMigrate(t *testing.T) {

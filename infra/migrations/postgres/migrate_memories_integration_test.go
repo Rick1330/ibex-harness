@@ -336,7 +336,9 @@ func assertMemoryColumnDefault(t *testing.T, e memoryColExpect, columnDefault sq
 
 func assertMemoriesForceRLS(t *testing.T, ctx context.Context, db *sql.DB) {
 	t.Helper()
-	assertCoreTableRLS(t, ctx, db, "memories", coreTableRLSFlags{forced: true})
+	assertCoreTableRLS(t, ctx, coreTableRLSCheck{
+		db: db, table: "memories", expect: coreTableRLSFlags{forced: true},
+	})
 }
 
 type memorySeed struct {
