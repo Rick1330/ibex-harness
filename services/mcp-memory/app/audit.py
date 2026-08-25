@@ -89,7 +89,8 @@ class AuditSink(ABC):
         raise NotImplementedError
 
     async def aclose(self) -> None:
-        return None
+        # Default no-op; network sinks override with real awaits.
+        await asyncio.sleep(0)
 
 
 class MemoryAuditSink(AuditSink):

@@ -28,6 +28,7 @@ filter_http_chat_provider_lines() {
       if (start >= 149 && start <= 174) print
     }
   '
+  return 0
 }
 
 merge_scoped_profiles() {

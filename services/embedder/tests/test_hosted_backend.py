@@ -57,17 +57,20 @@ def _make_backend(spec: _BackendSpec | None = None) -> HostedAPIBackend:
 
 class TestConstruction:
     def test_rejects_empty_model(self) -> None:
+        client = MagicMock()
         with pytest.raises(GeometryMismatchError):
-            HostedAPIBackend(MagicMock(), provider="openai", model_id="  ", dimensions=8)
+            HostedAPIBackend(client, provider="openai", model_id="  ", dimensions=8)
 
     def test_rejects_bad_dim(self) -> None:
+        client = MagicMock()
         with pytest.raises(GeometryMismatchError):
-            HostedAPIBackend(MagicMock(), provider="openai", model_id="m", dimensions=0)
+            HostedAPIBackend(client, provider="openai", model_id="m", dimensions=0)
 
     def test_rejects_voyage_provider(self) -> None:
+        client = MagicMock()
         with pytest.raises(GeometryMismatchError):
             HostedAPIBackend(
-                MagicMock(), provider="voyage", model_id="m", dimensions=8  # type: ignore[arg-type]
+                client, provider="voyage", model_id="m", dimensions=8  # type: ignore[arg-type]
             )
 
     def test_name_is_provider(self) -> None:
@@ -92,8 +95,9 @@ class TestEmbed:
         assert out.shape == (3, _DIM)
 
     async def test_empty_batch_raises(self) -> None:
+        backend = _make_backend()
         with pytest.raises(EmptyBatchError):
-            await _make_backend().embed([])
+            await backend.embed([])
 
     async def test_wrong_dim_raises(self) -> None:
         backend = _make_backend(
