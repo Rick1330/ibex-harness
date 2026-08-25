@@ -75,7 +75,11 @@ curl -s http://localhost:8081/health | jq .
 curl -s http://localhost:8081/ready | jq .
 curl -s http://localhost:8080/ready | jq .
 make dev-smoke
+make observability-up
+make observability-smoke
 ```
+
+Grafana: http://localhost:3000 (local anonymous Admin). See [MONITORING.md](MONITORING.md) and ADR-0051.
 
 ## Related docs
 

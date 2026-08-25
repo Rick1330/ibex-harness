@@ -494,7 +494,8 @@ Canonical layout:
 
 ```text
 infra/helm/
-  ibex-harness/
+  observability/             # Phase 2.5.G7 local LGTM (ADR-0051); kind/minikube
+  ibex-harness/              # Full app chart — Phase 4+
     Chart.yaml
     values.yaml
     values-staging.yaml
@@ -514,6 +515,8 @@ infra/helm/
       minio/                 # optional if self-hosted
     README.md
 ```
+
+Local LGTM compose + configs: `infra/compose/observability/`, `infra/monitoring/`.
 
 **Rules:**
 

@@ -188,6 +188,34 @@ Checks `/health`, `/ready`, auth failures (401/400), auth probe routes, and chat
 
 Proxy must reach auth gRPC on `IBEX_AUTH_GRPC_ADDR` (default `127.0.0.1:9091`). For local dev, set `IBEX_AUTH_VALIDATE_TIMEOUT=2s` on the proxy — the default `50ms` production budget is often too low for Argon2 token verification on developer machines; without it, bearer requests return **503** `SERVICE_DEGRADED` before the missing-agent **400** check runs.
 
+### Local observability (`make observability-up`)
+
+Phase 2.5 exit pulls forward a local LGTM stack (ADR-0051):
+
+```bash
+make observability-up
+# Point Go services at the collector (optional; host:port, no scheme):
+export OTEL_EXPORTER_OTLP_ENDPOINT=127.0.0.1:4317
+make observability-traffic   # scrape /health+/metrics on running services
+make observability-smoke
+# Full prior-phase behaviour under Grafana (auth/proxy/embedder/mcp on demo ports):
+make observability-live-verify
+# Grafana http://localhost:3000  ·  Prometheus http://localhost:19090
+```
+
+Default host `:8080` is often busy/unreachable; live-verify scrapes **demo** ports (`18080`/`18081`/`18004`/`18090`) which Prometheus also scrapes as `*-demo` jobs.
+
+Grafana (anonymous Admin): http://localhost:3000 — dashboards under folder **IBEX** (System Overview, Proxy Critical Path, Auth, Embedder+MCP). Prometheus host port defaults to **19090** (avoids clashing with a host Prometheus on 9090).
+
+### Phase 2.5 exit verification
+
+```bash
+make verify-phase25                 # package + Python suites (CI)
+IBEX_VERIFY_PHASE25_E2E=1 make verify-phase25   # + multi-service e2e + MCP conformance
+make e2e-phase25                    # auth+proxy+embedder+mcp (starts processes by default)
+make mcp-conformance                # Streamable HTTP stub handshake evidence
+```
+
 ### 4.4 Run services
 
 Recommended pattern: run infra in Docker, run services on host for fast iteration.

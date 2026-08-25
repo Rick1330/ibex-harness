@@ -440,7 +440,7 @@ Used by: **`services/mcp-memory/`** — see [MCP_SERVER.md](MCP_SERVER.md) and [
 | `IBEX_MCP_AUTH_SERVER_URL` | No | `http://127.0.0.1:8080` | AS URL advertised in protected-resource metadata | Discovery hook only; production requires non-loopback HTTPS |
 | `IBEX_AUTH_GRPC_ADDR` | Yes (HTTP mode) | `127.0.0.1:9091` | Auth `ValidateToken` target | Insecure channel only for loopback/private IP or mesh short name (e.g. `auth`) |
 | `IBEX_MCP_AUTH_TIMEOUT_MS` | No | `50` | Per-call auth deadline | Fail closed on timeout |
-| `IBEX_MCP_CLICKHOUSE_URL` | No | (empty) | ClickHouse HTTP base for audit inserts | Empty → logging sink |
+| `IBEX_MCP_CLICKHOUSE_URL` | No | (empty) | ClickHouse HTTP base for audit inserts (include user/password when required, e.g. `http://default:ibexdev@127.0.0.1:8123`) | Empty → logging sink |
 | `IBEX_MCP_AUDIT_QUEUE_SIZE` | No | `1024` | Async audit queue depth | Drops + metric when full |
 | `IBEX_MCP_RATE_LIMIT_RPM` | Planned 3.5.E.4 | `120` | Independent MCP tool budget | Reserved; not enforced in G6 |
 | `IBEX_MEMORY_HTTP_URL` | Conditional | (none) | Memory service base for tools | Phase 3+ |
@@ -513,7 +513,7 @@ Used by: **all services**
 | `OTEL_SERVICE_NAME` | Yes* | from `IBEX_SERVICE_NAME` | OTel service name |
 | `OTEL_SERVICE_VERSION` | No | `dev` | Binary version tag |
 | `OTEL_DEPLOYMENT_ENVIRONMENT` | No | from `IBEX_ENV` | `development`, `staging`, `production` |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | No | (none) | OTLP gRPC collector (e.g. `localhost:4317`); empty = noop |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | No | (none) | OTLP gRPC collector as `host:port` (e.g. `127.0.0.1:4317`); empty = noop. `http://` / `https://` prefixes are stripped (ADR-0051 local LGTM: `make observability-up`) |
 | `OTEL_SAMPLE_RATIO` | No | `0.01` | Fraction of root spans sampled (`ParentBased` + `TraceIDRatio`) |
 | `OTEL_EXPORTER_OTLP_PROTOCOL` | No | `grpc` | Reserved; Phase 1 uses gRPC only |
 | `OTEL_PROPAGATORS` | No | `tracecontext,baggage` | Fixed in `packages/telemetry` (ADR-0019) |
