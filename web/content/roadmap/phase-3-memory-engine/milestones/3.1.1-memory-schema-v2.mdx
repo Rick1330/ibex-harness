@@ -2,7 +2,7 @@
 title: "3.1.1 Memory schema v2"
 description: "Memory schema v2: HNSW vector index, temporal validity columns, and multi-label taxonomy. Every later milestone in Phase 3, 3.5, and beyond depends on this schema."
 summary: "Memory schema v2: HNSW vector index, temporal validity columns, and multi-label taxonomy. Every later milestone in Phase 3, 3.5, and beyond depends on this schema."
-status: "planned"
+status: "completed"
 milestoneId: "3.1.1"
 track: "A"
 trackTitle: "Schema & Migrations"
@@ -15,12 +15,14 @@ fullTitle: "Milestone 3.1.1 — Memory schema v2: HNSW, temporal validity, multi
 
 # Milestone 3.1.1 — Memory schema v2: HNSW, temporal validity, multi-label
 
-**Status:** Planned  
+**Status:** Completed  
 **Goal:** [Track A — Schema & Migrations](/roadmap/phase-3-memory-engine/tracks#track-a--schema--migrations)  
 **Phase:** 3 — Core Memory Substrate  
 **Estimated effort:** 4–5 days  
 **Track:** [Track A — Schema & Migrations](/roadmap/phase-3-memory-engine/tracks#track-a--schema--migrations)  
-**ADR required:** (planned) memory schema v2 expand — do **not** reuse ADR-0040 (Anthropic adapter). Temporal foundation is [ADR-0047](/docs/adr/0047-memory-temporal-validity); multi-label join is [ADR-0048](/docs/adr/0048-memory-multi-label-categories); relationship graph is [ADR-0049](/docs/adr/0049-memory-relationship-graph).
+**ADR:** [ADR-0052](/docs/adr/0052-memory-schema-v2-expand) (expand — not ADR-0040). Temporal foundation [ADR-0047](/docs/adr/0047-memory-temporal-validity); multi-label [ADR-0048](/docs/adr/0048-memory-multi-label-categories); relationship graph [ADR-0049](/docs/adr/0049-memory-relationship-graph).  
+**Completed:** 2026-08-25  
+**Migration:** `000017_memory_schema_v2_expand`
 
 ---
 
@@ -36,25 +38,25 @@ fullTitle: "Milestone 3.1.1 — Memory schema v2: HNSW, temporal validity, multi
   bidirectional traversal indexes, supersession view, and tip helper — do **not**
   `CREATE TABLE memory_relationships` again ([ADR-0049](/docs/adr/0049-memory-relationship-graph)).
   Draft RLS that uses `memory_id IN (SELECT id FROM memories)` is incorrect; keep
-  `rls_org_visible(org_id)`. Milestone 3.1.1 becomes an **expand** migration (`ADD COLUMN
-  embedding…`, HNSW, remaining quality columns; optional rename `category` → `primary_category`).
-  Keep `observed_at`. Migration number in sketches (`000041`) is provisional.
+  `rls_org_visible(org_id)`. Milestone 3.1.1 is an **expand** migration (`ADD COLUMN
+  embedding…`, HNSW, remaining quality columns). Keep `observed_at`.
 </Callout>
 
-<Callout type="note" title="Planning baseline">
-  This page is a planning sketch, not an implementation script. Named paths, package layouts,
-  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
-  that are expected to change once the live code, constraints, and research during implementation
-  make a better shape clear. Prefer outcomes over matching any particular file tree.
+<Callout type="note" title="Planning baseline (sketch deviations)">
+  The SQL sketch on this page historically showed a greenfield `CREATE TABLE` and provisional
+  migration `000041`. **Shipped reality:** `000017_memory_schema_v2_expand` ALTERs the live
+  foundation only. Deviations from the sketch: no CREATE of memories/labels/relationships; no
+  Alembic / `services/memory` ORM skeleton; physical rename `category` → `primary_category`
+  deferred (trigger still writes `memories.category`); indexes are non-CONCURRENTLY while the
+  table has no product write traffic; CI uses `pgvector/pgvector:pg16`.
 </Callout>
 
 ## Why This Milestone Exists
 
-Every later milestone in Phase 3, 3.5, and beyond depends on this schema. The original schema conflated three separate problems into one `category` enum and one status/lifecycle column, and it picked an index type explicitly documented as a stopgap. Since this is greenfield (unimplemented), there is no reason to build the stopgap version first.
-
-The original plan specified an **IVFFlat vector index (lists=100)** as the primary ANN index and explicitly deferred HNSW to Phase 4. Since Phase 3 has not been implemented yet, there is no migration-cost argument for starting with the weaker index. IVFFlat cluster centroids are fixed at index-build time and degrade under active write traffic unless periodically rebuilt; HNSW builds an incrementally-updatable graph with materially better recall-per-query-latency at every corpus size pgvector supports (≥0.5.0). There is no scenario where starting with IVFFlat and migrating later is cheaper than starting with HNSW now.
-
-The original schema also carries two documented defects: a single mutually-exclusive `category` enum (no multi-label support) and no temporal-validity columns (`valid_from`/`valid_until`) to distinguish superseding facts from genuine contradictions. This redesign fixes both at the schema level, before any dependent service is built against the old shape.
+Every later milestone in Phase 3, 3.5, and beyond depends on embedding + ANN search + quality
+columns on the memories foundation. Phase 2.5 Track E already fixed temporal validity and
+multi-label taxonomy at the schema layer; 3.1.1 completes the expand with HNSW (not IVFFlat)
+and the remaining quality / hybrid-search columns.
 
 ---
 
@@ -63,306 +65,44 @@ The original schema also carries two documented defects: a single mutually-exclu
 - Any memory service business logic (Track C and D)
 - The embedding service itself (built in Phase 2.5)
 - Context assembly, extraction workers, or dashboard (Phase 3.5+)
-- Alembic migration runner in production (golang-migrate remains source of truth per ADR-0005)
+- Alembic / Python ORM mirror (golang-migrate remains source of truth per ADR-0005)
+- Physical rename of `category` → `primary_category` (deferred; ADR-0052)
 
 ---
 
-## Orientation (indicative)
+## Deliverables (shipped)
 
-Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
-**rough sketches for orientation** — inspiration and a baseline, not a required change list.
-
-During implementation, expect to:
-
-- open the live tree and follow existing patterns before inventing new ones
-- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
-- advance the design beyond the sketch where measurement or code reality says so
-- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
-
-Prefer outcomes over matching any particular file tree or command sequence.
-
-**Areas that may be involved** (situational — not a checklist):
-
-- Database schema / migrations
-
-## Suggested naming (provisional)
-
-Rename freely to match the change that actually lands.
-
-- Branch: `feature/m3-1-1-memory-schema-v2`
-- PR title: `feat(memory): memory schema v2 — HNSW, temporal validity, multi-label (m3.1.1)`
-
-## Planned ADR — Memory schema v2 expand
-
-Write a **new** ADR (next free number at implementation time — **not** ADR-0040;
-ADR-0040 is the Anthropic provider adapter) documenting:
-
-```markdown
-# ADR-XXXX: Memory schema v2 — HNSW, multi-label taxonomy (expand)
-
-## Status
-Proposed
-
-## Context
-Phase 3 expands the foundation `ibex_core.memories` table created in
-2.5.G5.M1 ([ADR-0047](/docs/adr/0047-memory-temporal-validity)). Temporal
-columns (`valid_from` / `valid_until` / `observed_at`) already exist.
-This ADR covers HNSW/pgvector, multi-label taxonomy, and remaining quality
-columns — expand-contract, not a greenfield CREATE.
-
-The originally planned schema (DATABASE_SCHEMA.md "Memory System" section)
-used a single-enum `category` column and specified IVFFlat as the vector
-index with HNSW deferred to Phase 4. Both choices are reconsidered here before
-any dependent service (memory service, context assembly) is built against them.
-
-## Options Considered
-
-### Vector index: IVFFlat vs HNSW
-1. IVFFlat (lists=100) — cheaper to build, needs periodic REINDEX as data grows
- or drifts from the training distribution used to place centroids; recall
- degrades under continuous write load between rebuilds.
-2. HNSW — incrementally maintained graph index; no REINDEX needed as data
- grows; consistently higher recall at equivalent query latency across corpus
- sizes; slightly higher build time and memory footprint per index.
-Decision: **HNSW**. The only argument for IVFFlat (faster initial build) does
-not apply — there is no existing IVFFlat index under time pressure to keep.
-
-### Memory categorization: single enum vs multi-label
-1. Single `category` enum — simplest queries, but forces an artificial choice
- when a memory is both, e.g., "how to configure the DB (procedural)
- because the user prefers manual setup (preference)."
-2. Multi-label via join table (`memory_labels`) — a memory can carry 1..N
- category labels with per-label confidence; ranking/packing logic reads all
- labels; queries join instead of filtering a scalar column.
-Decision: **Multi-label**, with the legacy single `category` column retained
-as a *derived* "primary_category" (highest-confidence label) for
-backward-compatible simple queries and for the composite scoring formula's
-category-conditional decay (Phase 3 Track D).
-
-### Conflict modeling: similarity-threshold only vs temporal-interval-aware
-1. Global cosine-similarity threshold triggers "possible conflict" review for
- any two memories above 0.85 similarity, regardless of whether they describe
- different time periods.
-2. Temporal-interval-aware: every memory carries `valid_from`/`valid_until`
- (nullable = "still valid" / "no known start"). Two similar memories are
- flagged as conflicting only if their validity intervals overlap; if they
- are sequential (B.valid_from > A.valid_until), B is recorded as
- `supersedes` A automatically without an LLM conflict-check call.
-Decision: **Temporal-interval-aware** (foundation columns already in ADR-0047).
-
-## Decision
-1. Expand `ibex_core.memories` with embedding columns; keep temporal columns
- from ADR-0047 (including `observed_at`).
-2. `embedding vector(1024)` (BAAI/bge-m3 dimension per Phase 2.5's embedder
- decision), with `embedding_model` and `embedding_dim` columns retained so a
- future model swap does not require a blind rewrite of every row.
-3. HNSW index: `USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64)`.
-4. Expand existing `ibex_core.memory_labels` from `000015`; do not recreate the
- table. Later 3.1.1 work may add columns or rename `category` →
- `primary_category`, but the join table itself is already shipped.
-5. `ibex_core.memory_relationships` already exists (`000016` / ADR-0049) with the
- typed-edge taxonomy; 3.1.1 must not recreate it. `contradicts` edges may only be
- created by the conflict worker after confirming interval overlap (application
- code, Track C).
-
-## Consequences
-### Positive
-- No stopgap-then-migrate vector index path; avoids a live-traffic HNSW
- migration later, which would require a `CONCURRENTLY`-style rebuild window.
-- Multi-label + temporal validity closes two documented failure modes before
- any ranking/dedup code is written against the old shape.
-### Negative
-- HNSW `ef_construction=64` increases index build time on large backfills
- (irrelevant here — greenfield, no backfill).
-- Multi-label queries require a join instead of a WHERE on a scalar column;
- the generated `primary_category` column mitigates this for hot-path reads.
-
-## Rollout / Migration Plan
-golang-migrate expand on `000014` foundation (provisional sketch number
-`000041_memory_schema_v2` — assign next free version at implementation),
-per ADR-0005. Not a conflicting greenfield CREATE.
-
-## References
-- ADR-0005 (migration tool/layout)
-- ADR-0047 (temporal validity foundation)
-- Original DATABASE_SCHEMA.md "Memory System" section (superseded incrementally)
-- Phase 3 Track D composite scoring — depends on `memory_labels`
-```
-
----
-
-## Deliverables
-
-Target outcomes for the milestone; concrete artifacts may differ from any sketch above.
-
-### 1. Migration files
+### Migration files
 
 ```
 infra/migrations/postgres/
- 000041_memory_schema_v2.up.sql
- 000041_memory_schema_v2.down.sql
+ 000017_memory_schema_v2_expand.up.sql
+ 000017_memory_schema_v2_expand.down.sql
 ```
 
-### 2. Key DDL
+### Expand summary
 
-```sql
--- 000041_memory_schema_v2.up.sql
-CREATE EXTENSION IF NOT EXISTS vector;
-
-CREATE TABLE ibex_core.memories (
- id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
- org_id UUID NOT NULL REFERENCES ibex_core.organizations(id) ON DELETE RESTRICT,
- agent_id UUID NOT NULL REFERENCES ibex_core.agents(id) ON DELETE CASCADE,
- session_id UUID,
- content TEXT NOT NULL,
- content_hash VARCHAR(64) NOT NULL,
- content_tokens INTEGER NOT NULL,
-
- embedding vector(1024), -- bge-m3 dimension (Phase 2.5 default)
- embedding_model TEXT NOT NULL DEFAULT 'bge-m3',
- embedding_dim INTEGER NOT NULL DEFAULT 1024,
-
- -- primary_category maintained by trigger (see below — NOT a generated column)
- primary_category TEXT,
- confidence NUMERIC(3,2) NOT NULL DEFAULT 0.80 CHECK (confidence BETWEEN 0 AND 1),
- usefulness_score NUMERIC(3,2) NOT NULL DEFAULT 0.50 CHECK (usefulness_score BETWEEN 0 AND 1),
-
- source TEXT NOT NULL DEFAULT 'extracted'
- CHECK (source IN ('extracted','user_provided','imported','inferred')),
- status TEXT NOT NULL DEFAULT 'active'
- CHECK (status IN ('active','superseded','merged_into','archived','quarantined','deleted')),
- superseded_by UUID REFERENCES ibex_core.memories(id),
- merged_into UUID REFERENCES ibex_core.memories(id),
-
- -- Temporal validity (ADR-0047; retained from G5.M1 foundation)
- valid_from TIMESTAMPTZ NOT NULL DEFAULT NOW(),
- valid_until TIMESTAMPTZ, -- NULL = still valid
-
- retrieval_count INTEGER NOT NULL DEFAULT 0,
- last_retrieved_at TIMESTAMPTZ,
- pii_detected BOOLEAN NOT NULL DEFAULT FALSE,
- pii_redacted BOOLEAN NOT NULL DEFAULT FALSE,
-
- metadata JSONB NOT NULL DEFAULT '{}',
- created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
- updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
- deleted_at TIMESTAMPTZ,
-
- search_vector tsvector GENERATED ALWAYS AS (setweight(to_tsvector('english', content), 'A')) STORED
-);
-
--- Multi-label taxonomy (planned schema-v2 ADR §2)
-CREATE TABLE ibex_core.memory_labels (
- memory_id UUID NOT NULL REFERENCES ibex_core.memories(id) ON DELETE CASCADE,
- label TEXT NOT NULL CHECK (label IN ('factual','preference','behavioral','episodic','procedural')),
- confidence NUMERIC(3,2) NOT NULL DEFAULT 0.80 CHECK (confidence BETWEEN 0 AND 1),
- PRIMARY KEY (memory_id, label)
-);
-
--- Trigger: maintain primary_category as highest-confidence label
--- (Cannot use GENERATED ALWAYS AS — generated columns cannot subquery other tables)
-CREATE OR REPLACE FUNCTION ibex_core.update_primary_category()
-RETURNS TRIGGER LANGUAGE plpgsql AS $$
-BEGIN
- UPDATE ibex_core.memories
- SET primary_category = (
- SELECT label FROM ibex_core.memory_labels
- WHERE memory_id = NEW.memory_id
- ORDER BY confidence DESC, label ASC
- LIMIT 1
- )
- WHERE id = NEW.memory_id;
- RETURN NEW;
-END;
-$$;
-
-CREATE TRIGGER trg_update_primary_category
-AFTER INSERT OR UPDATE OR DELETE ON ibex_core.memory_labels
-FOR EACH ROW EXECUTE FUNCTION ibex_core.update_primary_category();
-
--- HNSW index (planned schema-v2 ADR §1) — replaces IVFFlat entirely, not "for now"
-CREATE INDEX idx_memories_embedding_hnsw
- ON ibex_core.memories
- USING hnsw (embedding vector_cosine_ops)
- WITH (m = 16, ef_construction = 64)
- WHERE status = 'active' AND deleted_at IS NULL;
-
--- Temporal-interval lookup for conflict detection (Track C)
-CREATE INDEX idx_memories_validity
- ON ibex_core.memories (org_id, agent_id, valid_from, valid_until)
- WHERE status = 'active' AND deleted_at IS NULL;
-
--- GIN full-text index for hybrid search fallback (Track D)
-CREATE INDEX idx_memories_search_vector
- ON ibex_core.memories USING GIN (search_vector)
- WHERE status = 'active' AND deleted_at IS NULL;
-
-CREATE INDEX idx_memories_labels_lookup
- ON ibex_core.memory_labels (label, memory_id);
-
-ALTER TABLE ibex_core.memories ENABLE ROW LEVEL SECURITY;
-ALTER TABLE ibex_core.memories FORCE ROW LEVEL SECURITY;
-CREATE POLICY memories_isolation ON ibex_core.memories
- USING (org_id = current_setting('app.current_org_id', true)::UUID
- OR current_setting('app.is_service_account', true) = 'true');
-
-ALTER TABLE ibex_core.memory_labels ENABLE ROW LEVEL SECURITY;
-ALTER TABLE ibex_core.memory_labels FORCE ROW LEVEL SECURITY;
-CREATE POLICY memory_labels_isolation ON ibex_core.memory_labels
- USING (memory_id IN (SELECT id FROM ibex_core.memories));
-```
-
-### 3. Python service skeleton
-
-```
-services/memory/
- ibex_db/
- base.py
- models/
- __init__.py
- memory.py # Memory ORM model
- memory_label.py # MemoryLabel ORM model
- memory_relationship.py
- memory_version.py
- memory_tag.py
- repositories/
- base.py
- memory_repo.py
- label_repo.py
- types.py # pgvector Vector(1024) type wrapper
- alembic/
- env.py
- versions/ # Python-side migration mirror for SQLAlchemy metadata parity
-```
-
-**Important:** `services/memory/` uses Alembic in addition to golang-migrate. Per ADR-0005 §6, Python services use Alembic for ORM-metadata-driven migrations while golang-migrate remains the source of truth for applied DDL in production. Alembic's `env.py` should point at the same DSN and be run in `--sql` (offline) mode purely to keep SQLAlchemy model metadata verifiably in sync with the DDL. Document this explicitly to avoid two migration runners racing.
-
----
-
-## Working notes
-
-Preferred starting points and open questions — situational, and expected to evolve with further research during implementation.
-
-**`primary_category` trigger:** Prefer not to use `GENERATED ALWAYS AS` column referencing another table — Postgres generated columns cannot subquery. Instead, maintain it via an `AFTER INSERT OR UPDATE ON memory_labels` trigger that writes the highest-confidence label back into `memories.primary_category` (a plain nullable `TEXT` column, not a generated one). Document this trigger explicitly in the migration file with a comment — this is exactly the kind of "hidden mutation" that should get its own line in `ARCHITECTURE.md`.
-
-**HNSW parameter guidance (`m=16, ef_construction=64`):** These are pgvector's own documented defaults and a reasonable starting point. Avoid inventing custom values without a benchmark first. Track E's benchmark milestone is what should tune `ef_search` (the query-time parameter) empirically — set `SET LOCAL hnsw.ef_search = 40` as the starting point in the repository query (comparable recall to IVFFlat `probes=10` at this corpus size, per pgvector's benchmarks), and let the benchmark milestone justify any change with data.
+- `CREATE EXTENSION IF NOT EXISTS vector`
+- Columns: `embedding vector(1024)`, `embedding_model`, `embedding_dim` (triplet CHECK),
+  `confidence`, `usefulness_score`, `source`, `superseded_by` / `merged_into` (composite FKs),
+  `retrieval_count`, `last_retrieved_at`, `pii_detected`, `pii_redacted`, `metadata`,
+  generated `search_vector`
+- Indexes: `idx_memories_embedding_hnsw` (HNSW), `idx_memories_validity`, `idx_memories_search_vector`
+- Hidden mutation (pre-existing, documented in migration comments): `sync_memory_primary_category`
 
 ---
 
 ## Success signals
 
-Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
-
-- [ ] Migration applies cleanly from zero via `make db-migrate`
-- [ ] `idx_memories_embedding_hnsw` confirmed as HNSW type in a CI assertion (not just present — type-checked)
-- [ ] RLS integration test proves cross-org denial on `memories` and `memory_labels`
-- [ ] `primary_category` trigger verified via unit test (insert 2 labels, differing confidence, correct one wins)
-- [ ] Planned memory schema v2 expand ADR published in `web/content/docs/adr/` (not ADR-0040)
+- [x] Migration applies cleanly from zero via `make db-migrate` / CI `db-migrate-smoke`
+- [x] `idx_memories_embedding_hnsw` confirmed as HNSW type via `pg_am` catalog assertion
+- [x] RLS integration test proves cross-org denial on `memories` after expand
+- [x] Primary-category sync regression (existing trigger; two labels, confidence + label ASC tie-break)
+- [x] ADR-0052 published in `web/content/docs/adr/` (not ADR-0040)
 
 ---
 
 ## Prerequisites
 
-- Phase 2.5 exit (pluggable embedder, MCP skeleton)
+- Phase 2.5 exit (pluggable embedder, MCP skeleton, G5.M1–M3 schema)
 - `infra/migrations/postgres/` layout follows ADR-0005
-
