@@ -15,19 +15,31 @@ spec:
       labels:
         app: grafana
     spec:
+      automountServiceAccountToken: false
       containers:
         - name: grafana
           image: {{ .Values.images.grafana | quote }}
+          securityContext:
+            allowPrivilegeEscalation: false
           env:
             - name: GF_AUTH_ANONYMOUS_ENABLED
               value: {{ .Values.grafana.anonymousAdmin | quote }}
             - name: GF_AUTH_ANONYMOUS_ORG_ROLE
               value: Admin
+            {{- if and (not .Values.grafana.anonymousAdmin) .Values.grafana.existingSecret }}
+            - name: GF_SECURITY_ADMIN_USER
+              value: admin
             - name: GF_SECURITY_ADMIN_PASSWORD
-              value: {{ .Values.grafana.adminPassword | quote }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.grafana.existingSecret | quote }}
+                  key: admin-password
+            {{- end }}
           ports:
             - containerPort: 3000
               name: http
+          resources:
+            {{- toYaml .Values.resources.grafana | nindent 12 }}
 ---
 apiVersion: v1
 kind: Service

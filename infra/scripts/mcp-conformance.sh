@@ -15,7 +15,8 @@ cd "$ROOT_DIR/services/mcp-memory"
 echo "=== MCP conformance (HTTP stub suite) ==="
 
 if [[ ! -d .venv ]]; then
-  uv sync --frozen --extra dev >/dev/null 2>&1 || uv sync --extra dev
+  # Wheels only: --no-build blocks third-party sdist setup.py execution (Sonar S8541).
+  uv sync --frozen --no-build --extra dev >/dev/null
 fi
 # shellcheck disable=SC1091
 source .venv/bin/activate

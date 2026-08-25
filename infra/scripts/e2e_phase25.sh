@@ -29,6 +29,33 @@ PIDS=()
 fail() { echo "FAIL: $*" >&2; exit 1; }
 pass() { echo "PASS: $*"; }
 
+expect_http() {
+  local got="$1"
+  local want="$2"
+  local ok_msg="$3"
+  local fail_msg="$4"
+  if [[ "$got" == "$want" ]]; then
+    pass "$ok_msg"
+  else
+    fail "$fail_msg"
+  fi
+}
+
+expect_http_any() {
+  local got="$1"
+  local ok_msg="$2"
+  local fail_msg="$3"
+  shift 3
+  local want
+  for want in "$@"; do
+    if [[ "$got" == "$want" ]]; then
+      pass "$ok_msg"
+      return 0
+    fi
+  done
+  fail "$fail_msg"
+}
+
 cleanup() {
   if [[ "$MANAGE" != "1" ]]; then
     return 0
@@ -46,8 +73,7 @@ trap cleanup EXIT
 wait_http() {
   local name="$1"
   local url="$2"
-  local n
-  for n in $(seq 1 90); do
+  for _ in $(seq 1 90); do
     if curl -fsS --connect-timeout 1 --max-time 2 "$url" >/dev/null 2>&1; then
       pass "$name ready ($url)"
       return 0
@@ -103,7 +129,8 @@ start_stack() {
   (
     cd "$ROOT_DIR/services/embedder"
     if [[ ! -d .venv ]]; then
-      uv sync --frozen >/dev/null 2>&1 || uv sync >/dev/null 2>&1
+      # Wheels only: --no-build blocks third-party sdist setup.py execution (Sonar S8541).
+      uv sync --frozen --no-build >/dev/null
     fi
     # shellcheck disable=SC1091
     source .venv/bin/activate
@@ -121,7 +148,8 @@ start_stack() {
   (
     cd "$ROOT_DIR/services/mcp-memory"
     if [[ ! -d .venv ]]; then
-      uv sync --frozen --extra dev >/dev/null 2>&1 || uv sync --extra dev >/dev/null 2>&1
+      # Wheels only: --no-build blocks third-party sdist setup.py execution (Sonar S8541).
+      uv sync --frozen --no-build --extra dev >/dev/null
     fi
     # shellcheck disable=SC1091
     source .venv/bin/activate
@@ -157,37 +185,42 @@ else
 fi
 
 CODE="$(http_code "$PROXY_ADDR/ready")"
-[[ "$CODE" == "200" ]] && pass "proxy /ready" || fail "proxy /ready -> $CODE"
+expect_http "$CODE" "200" "proxy /ready" "proxy /ready -> $CODE"
 
 CODE="$(http_code "$AUTH_HTTP/ready")"
-[[ "$CODE" == "200" ]] && pass "auth /ready" || fail "auth /ready -> $CODE"
+expect_http "$CODE" "200" "auth /ready" "auth /ready -> $CODE"
 
 CODE="$(http_code "$EMBEDDER_ADDR/ready")"
-[[ "$CODE" == "200" ]] && pass "embedder /ready" || fail "embedder /ready -> $CODE (check cpu stub startup)"
+expect_http "$CODE" "200" "embedder /ready" "embedder /ready -> $CODE (check cpu stub startup)"
 
 CODE="$(http_code "$MCP_ADDR/ready")"
-[[ "$CODE" == "200" ]] && pass "mcp /ready" || {
+if [[ "$CODE" == "200" ]]; then
+  pass "mcp /ready"
+else
   echo "---- mcp log ----" >&2
   tail -n 40 "$LOG_DIR/mcp.log" 2>/dev/null >&2 || true
   fail "mcp /ready -> $CODE (auth gRPC must be reachable)"
-}
+fi
 
 CODE="$(http_code -X POST "$PROXY_ADDR/v1/chat/completions" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $DEV_TOKEN" \
   -H "X-IBEX-Agent-ID: $DEV_AGENT" \
   -d "$CHAT_BODY")"
-[[ "$CODE" == "200" ]] && pass "proxy chat → 200" || {
+if [[ "$CODE" == "200" ]]; then
+  pass "proxy chat → 200"
+else
   echo "---- proxy log ----" >&2
   tail -n 40 "$LOG_DIR/proxy.log" 2>/dev/null >&2 || true
   fail "proxy chat -> $CODE"
-}
+fi
 
 CODE="$(http_code -X POST "$EMBEDDER_ADDR/v1/embed" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $EMBED_TOKEN" \
   -d '{"texts":["phase25 e2e"],"org_id":"00000000-0000-0000-0000-000000000001"}')"
-[[ "$CODE" == "200" ]] && pass "embedder /v1/embed → 200" || fail "embedder embed -> $CODE body=$(head -c 200 /tmp/ibex-e2e-body.$$ 2>/dev/null || true)"
+expect_http "$CODE" "200" "embedder /v1/embed → 200" \
+  "embedder embed -> $CODE body=$(head -c 200 /tmp/ibex-e2e-body.$$ 2>/dev/null || true)"
 
 MCP_HEADERS=(
   -H "Authorization: Bearer $DEV_TOKEN"
@@ -197,7 +230,7 @@ MCP_HEADERS=(
 
 CODE="$(http_code -X POST "$MCP_ADDR/mcp" "${MCP_HEADERS[@]}" \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"e2e-phase25","version":"0"}}}')"
-[[ "$CODE" == "200" || "$CODE" == "202" ]] && pass "mcp initialize → $CODE" || fail "mcp initialize -> $CODE"
+expect_http_any "$CODE" "mcp initialize → $CODE" "mcp initialize -> $CODE" "200" "202"
 
 curl -sS -X POST "$MCP_ADDR/mcp" "${MCP_HEADERS[@]}" \
   -d '{"jsonrpc":"2.0","method":"notifications/initialized"}' >/dev/null || true
@@ -205,22 +238,23 @@ curl -sS -X POST "$MCP_ADDR/mcp" "${MCP_HEADERS[@]}" \
 CODE="$(http_code -X POST "$MCP_ADDR/mcp" "${MCP_HEADERS[@]}" \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}')"
 BODY="$(cat /tmp/ibex-e2e-body.$$ 2>/dev/null || true)"
-[[ "$CODE" == "200" || "$CODE" == "202" ]] || fail "mcp tools/list -> $CODE"
+if [[ "$CODE" != "200" && "$CODE" != "202" ]]; then
+  fail "mcp tools/list -> $CODE"
+fi
 echo "$BODY" | grep -q search_memory || fail "mcp tools/list missing search_memory"
 echo "$BODY" | grep -q write_memory || fail "mcp tools/list missing write_memory"
 pass "mcp tools/list (live Auth ValidateToken)"
 
 CODE="$(http_code -X POST "$MCP_ADDR/mcp" "${MCP_HEADERS[@]}" \
   -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"search_memory","arguments":{"query":"phase25"}}}')"
-[[ "$CODE" == "200" || "$CODE" == "202" ]] && pass "mcp tools/call search_memory → $CODE" \
-  || fail "mcp tools/call -> $CODE"
+expect_http_any "$CODE" "mcp tools/call search_memory → $CODE" "mcp tools/call -> $CODE" "200" "202"
 
 CODE="$(http_code "$PROXY_ADDR/metrics")"
-[[ "$CODE" == "200" ]] && pass "proxy /metrics" || fail "proxy /metrics -> $CODE"
+expect_http "$CODE" "200" "proxy /metrics" "proxy /metrics -> $CODE"
 CODE="$(http_code -H "Authorization: Bearer $EMBED_TOKEN" "$EMBEDDER_ADDR/metrics")"
-[[ "$CODE" == "200" ]] && pass "embedder /metrics" || fail "embedder /metrics -> $CODE"
+expect_http "$CODE" "200" "embedder /metrics" "embedder /metrics -> $CODE"
 CODE="$(http_code "$MCP_ADDR/metrics")"
-[[ "$CODE" == "200" ]] && pass "mcp /metrics" || fail "mcp /metrics -> $CODE"
+expect_http "$CODE" "200" "mcp /metrics" "mcp /metrics -> $CODE"
 
 echo ""
 echo "e2e-phase25 passed"

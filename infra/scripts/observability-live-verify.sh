@@ -41,8 +41,8 @@ cleanup() {
 trap cleanup EXIT
 
 wait_http() {
-  local name="$1" url="$2" n
-  for n in $(seq 1 90); do
+  local name="$1" url="$2"
+  for _ in $(seq 1 90); do
     if curl -fsS --connect-timeout 1 --max-time 2 "$url" >/dev/null 2>&1; then
       pass "$name ready"
       return 0
@@ -226,9 +226,6 @@ for uid in ibex-system-overview ibex-proxy-critical-path ibex-auth ibex-embedder
   pass "grafana dashboard: $uid"
 done
 
-# Instant query via Grafana Prometheus datasource proxy (anonymous)
-gbody="$(curl -fsS -G "$GRAFANA_URL/api/ds/query" \
-  --data-urlencode '' 2>/dev/null || true)"
 # Prefer Prometheus HTTP API already validated; also hit Grafana datasource health
 ds="$(curl -fsS "$GRAFANA_URL/api/datasources/uid/prometheus")"
 echo "$ds" | grep -q '"uid":"prometheus"' || fail "grafana prometheus datasource missing"

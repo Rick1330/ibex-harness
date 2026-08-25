@@ -12,7 +12,7 @@ data:
       - job_name: prometheus
         static_configs:
           - targets: ["localhost:9090"]
-      - job_name: kubernetes-collector
+      - job_name: otel-collector
         static_configs:
           - targets: ["otel-collector:8888"]
 ---
@@ -33,15 +33,20 @@ spec:
       labels:
         app: prometheus
     spec:
+      automountServiceAccountToken: false
       containers:
         - name: prometheus
           image: {{ .Values.images.prometheus | quote }}
+          securityContext:
+            allowPrivilegeEscalation: false
           args:
             - --config.file=/etc/prometheus/prometheus.yml
             - --storage.tsdb.retention.time=7d
           ports:
             - containerPort: 9090
               name: http
+          resources:
+            {{- toYaml .Values.resources.prometheus | nindent 12 }}
           volumeMounts:
             - name: config
               mountPath: /etc/prometheus
