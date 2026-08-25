@@ -3,7 +3,6 @@ package telemetry
 import (
 	"context"
 
-	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
@@ -31,18 +30,10 @@ func newTraceProvider(ctx context.Context, res *resource.Resource, cfg Config) (
 }
 
 func newMeterProvider(ctx context.Context, res *resource.Resource, cfg Config) (*sdkmetric.MeterProvider, func(context.Context) error, error) {
-	opts := []sdkmetric.Option{sdkmetric.WithResource(res)}
-	var shutdown func(context.Context) error
-	if cfg.OTLPEndpoint != "" {
-		exp, err := otlpmetricgrpc.New(ctx,
-			otlpmetricgrpc.WithEndpoint(cfg.OTLPEndpoint),
-			otlpmetricgrpc.WithInsecure(),
-		)
-		if err != nil {
-			return nil, nil, err
-		}
-		shutdown = exp.Shutdown
-		opts = append(opts, sdkmetric.WithReader(sdkmetric.NewPeriodicReader(exp)))
-	}
-	return sdkmetric.NewMeterProvider(opts...), shutdown, nil
+	// IBEX application metrics are Prometheus-pull (/metrics). OTLP metric export is
+	// intentionally disabled so a traces-only collector (Tempo) is not probed for
+	// MetricsService. Keep a MeterProvider for API completeness / future bridges.
+	_ = ctx
+	_ = cfg
+	return sdkmetric.NewMeterProvider(sdkmetric.WithResource(res)), nil, nil
 }
