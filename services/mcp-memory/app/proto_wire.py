@@ -53,22 +53,33 @@ def decode_validate_token_response(payload: bytes) -> ValidateTokenWire:
     """Decode ValidateTokenResponse fields 1–5 (org, permissions, agent, user, token)."""
     if len(payload) > _MAX_MESSAGE_BYTES:
         raise AuthUnavailableError("auth response too large")
+    return _finish_decode(_decode_all_fields(payload))
 
+
+def _decode_all_fields(payload: bytes) -> _DecodeState:
     state = _DecodeState()
     idx = 0
     while idx < len(payload):
-        key, idx = _decode_varint(payload, idx)
-        field = key >> 3
-        wire = key & 0x07
-        if wire == _WIRE_LEN:
-            raw, idx = _read_bytes(payload, idx)
-            _apply_len_field(state, field, raw)
-        elif wire == _WIRE_VARINT:
-            num, idx = _decode_varint(payload, idx)
-            _apply_varint_field(state, field, num)
-        else:
-            idx = _skip_unknown(payload, idx, wire)
+        idx = _decode_one_field(payload, idx, state)
+    return state
 
+
+def _decode_one_field(buf: bytes, idx: int, state: _DecodeState) -> int:
+    key, idx = _decode_varint(buf, idx)
+    field = key >> 3
+    wire = key & 0x07
+    if wire == _WIRE_LEN:
+        raw, idx = _read_bytes(buf, idx)
+        _apply_len_field(state, field, raw)
+        return idx
+    if wire == _WIRE_VARINT:
+        num, idx = _decode_varint(buf, idx)
+        _apply_varint_field(state, field, num)
+        return idx
+    return _skip_unknown(buf, idx, wire)
+
+
+def _finish_decode(state: _DecodeState) -> ValidateTokenWire:
     if state.org_id is None:
         raise AuthUnavailableError("auth response missing org_id")
     return ValidateTokenWire(
