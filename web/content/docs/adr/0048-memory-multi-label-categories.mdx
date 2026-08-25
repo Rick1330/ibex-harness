@@ -1,0 +1,82 @@
+---
+title: "ADR-0048: Memory multi-label categories"
+description: "Architecture decision record 0048 — ibex_core.memory_labels join table with org-safe FKs, FORCE RLS, and memories.category primary sync for Phase 2.5 Track E."
+adrId: "0048"
+status: "Accepted"
+date: "2026-08-25"
+authors: "IBEX Harness team"
+---
+
+# ADR-0048: Memory multi-label categories
+
+- **Status:** Accepted
+- **Date:** 2026-08-25
+- **Authors:** IBEX Harness team
+- **Milestone:** [2.5.G5.M2 Multi-label category support](/roadmap/phase-2-5-provider-generalization/milestones/2.5.g5.m2-multi-label-category-support)
+
+## Context
+
+A single `memories.category` enum cannot represent facts that span multiple taxonomy buckets (e.g. preference + factual). Track E ([2.5.G5](/roadmap/phase-2-5-provider-generalization/tracks#track-e--schema-pre-work)) needs the join table before Phase 3 writers and category-conditional scoring.
+
+The milestone sketch named the table `memory_categories` with only `REFERENCES memories(id)` and no `org_id`. Phase 3 sketches ([3.1.1](/roadmap/phase-3-memory-engine/milestones/3.1.1-memory-schema-v2), [3.C.4](/roadmap/phase-3-memory-engine/milestones/3.c.4-multi-label-classification)) use `memory_labels` / `label`. Live tenancy rules require explicit `org_id` filtering and composite org-safe FKs ([ADR-0047](/docs/adr/0047-memory-temporal-validity)).
+
+## Decision
+
+### 1) Table name `memory_labels` (not `memory_categories`)
+
+Ship `ibex_core.memory_labels` with column `label` to match Phase 3 consumers and avoid a rename migration. Document the sketch advancement on the milestone page.
+
+### 2) Tenancy-first DDL
+
+- `org_id NOT NULL` + `FOREIGN KEY (memory_id, org_id) → memories(id, org_id) ON DELETE CASCADE`
+- `PRIMARY KEY (memory_id, label)`
+- Same taxonomy CHECK as `memories.category`
+- `confidence NUMERIC(3,2) NOT NULL DEFAULT 1.00 CHECK (0..1)`
+- Index `(org_id, label)` for tenant filters
+- `FORCE ROW LEVEL SECURITY` + `ibex_core.rls_org_visible(org_id)` (not subquery-on-memories RLS drafts)
+
+### 3) Primary sync via `memories.category`
+
+Keep the existing `category` column (do not add `primary_category` in M2). Trigger `sync_memory_primary_category` after INSERT/UPDATE/DELETE on labels:
+
+- When ≥1 label remains: set `category` to `ORDER BY confidence DESC, label ASC LIMIT 1`
+- When zero labels remain: leave `category` unchanged (`NOT NULL`)
+
+Labels are source of truth once present. No bidirectional sync from `category` → labels in this milestone (avoids recursion). Phase 3 writers should maintain ≥1 label.
+
+### 4) Backfill
+
+`INSERT … SELECT id, org_id, category, 1.00 FROM memories ON CONFLICT DO NOTHING` in the same `up` migration.
+
+### 5) No application writers
+
+No ORM/REST/proto in this PR. Phase 3.C.4 owns write-path population beyond backfill.
+
+### 6) Expand-contract with 3.1.1 / 3.C.4
+
+Those milestones must **not** `CREATE TABLE memory_labels`. They may later rename `category` → `primary_category` if needed; M2 does not dual-column.
+
+## Consequences
+
+### Positive
+
+- Phase 3 scoring/extraction can assume multi-label shape
+- Tenant isolation matches live FORCE RLS pattern
+- Deterministic primary selection
+
+### Negative
+
+- Sketch name `memory_categories` diverges (documented)
+- Direct updates to `memories.category` while labels exist can be overwritten by the next label write
+
+## Rollout
+
+- Migration: `infra/migrations/postgres/000015_create_memory_labels.{up,down}.sql`
+- Down is dev/test only; production forward-only per ADR-0005
+
+## References
+
+- [ADR-0005](/docs/adr/0005-postgres-migration-strategy)
+- [ADR-0047](/docs/adr/0047-memory-temporal-validity)
+- Milestone [2.5.G5.M2](/roadmap/phase-2-5-provider-generalization/milestones/2.5.g5.m2-multi-label-category-support)
+- Milestones [3.1.1](/roadmap/phase-3-memory-engine/milestones/3.1.1-memory-schema-v2), [3.C.4](/roadmap/phase-3-memory-engine/milestones/3.c.4-multi-label-classification)

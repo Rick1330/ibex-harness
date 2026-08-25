@@ -122,6 +122,8 @@ func ibexCoreCountQuery(table string) (string, bool) {
 		return `SELECT COUNT(*) FROM ibex_core.checkpoints`, true
 	case "memories":
 		return `SELECT COUNT(*) FROM ibex_core.memories`, true
+	case "memory_labels":
+		return `SELECT COUNT(*) FROM ibex_core.memory_labels`, true
 	default:
 		return "", false
 	}
