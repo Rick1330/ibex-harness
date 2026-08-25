@@ -101,19 +101,35 @@ def assert_trusted_insecure_auth_target(target: str) -> str:
 
 
 def _host_of(target: str) -> str:
-    cleaned = target.strip()
+    cleaned = _strip_grpc_uri_prefix(target.strip())
+    bracketed = _host_from_brackets(cleaned)
+    if bracketed is not None:
+        return bracketed
+    return _host_from_hostport(cleaned)
+
+
+def _strip_grpc_uri_prefix(target: str) -> str:
+    lowered = target.lower()
     for prefix in ("dns:///", "dns://", "unix://", "ipv4:", "ipv6:"):
-        if cleaned.lower().startswith(prefix):
-            cleaned = cleaned[len(prefix) :]
-            break
-    if cleaned.startswith("["):
-        end = cleaned.find("]")
-        if end > 0:
-            return cleaned[1:end].lower().rstrip(".")
-    host, _, port = cleaned.rpartition(":")
+        if lowered.startswith(prefix):
+            return target[len(prefix) :]
+    return target
+
+
+def _host_from_brackets(target: str) -> str | None:
+    if not target.startswith("["):
+        return None
+    end = target.find("]")
+    if end <= 0:
+        return None
+    return target[1:end].lower().rstrip(".")
+
+
+def _host_from_hostport(target: str) -> str:
+    host, _, port = target.rpartition(":")
     if host and port.isdigit():
         return host.lower().rstrip(".")
-    return cleaned.lower().rstrip(".")
+    return target.lower().rstrip(".")
 
 
 def _is_trusted_insecure_host(host: str) -> bool:
