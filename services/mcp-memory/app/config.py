@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from urllib.parse import urlsplit
 
-from pydantic import AliasChoices, Field, field_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 TRANSPORT_HTTP = "streamable_http"
 TRANSPORT_STDIO = "stdio"
 _ALLOWED_TRANSPORTS = frozenset({TRANSPORT_HTTP, TRANSPORT_STDIO})
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "[::1]"})
 
 
 class Settings(BaseSettings):
@@ -28,7 +30,7 @@ class Settings(BaseSettings):
     )
     transport: str = Field(default=TRANSPORT_HTTP)
     allow_stdio: bool = Field(default=False)
-    host: str = Field(default="0.0.0.0")
+    host: str = Field(default="127.0.0.1")
     port: int = Field(default=8090, ge=1, le=65535)
     resource_url: str = Field(default="http://127.0.0.1:8090/mcp")
     auth_server_url: str = Field(default="http://127.0.0.1:8080")
@@ -52,6 +54,24 @@ class Settings(BaseSettings):
     @classmethod
     def _check_env(cls, value: str) -> str:
         return value.strip().lower() or "development"
+
+    @model_validator(mode="after")
+    def _check_discovery_urls(self) -> Settings:
+        """Production must advertise non-loopback HTTPS discovery URLs."""
+        if self.env != "production":
+            return self
+        self._require_public_https("IBEX_MCP_RESOURCE_URL", self.resource_url)
+        self._require_public_https("IBEX_MCP_AUTH_SERVER_URL", self.auth_server_url)
+        return self
+
+    @staticmethod
+    def _require_public_https(name: str, value: str) -> None:
+        parts = urlsplit(value.strip())
+        host = (parts.hostname or "").lower()
+        if parts.scheme.lower() != "https":
+            raise ValueError(f"{name} must use https in production")
+        if not host or host in _LOOPBACK_HOSTS:
+            raise ValueError(f"{name} must not use a loopback host in production")
 
     def validate_transport_policy(self) -> None:
         """Refuse stdio unless explicitly enabled and not production."""

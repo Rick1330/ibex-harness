@@ -42,8 +42,8 @@ class BearerAuthMiddleware:
         self.get_validator = get_validator
         self.protected_prefixes = protected_prefixes
         self._metadata_url = (
-            f"{_origin_from_resource(settings.resource_url)}"
-            f"/.well-known/oauth-protected-resource"
+            _origin_from_resource(settings.resource_url)
+            + "/.well-known/oauth-protected-resource"
         )
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:

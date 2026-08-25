@@ -18,7 +18,7 @@ It is **not** a general tool broker and **not** an OAuth authorization server.
 | Tenant scope | Token `org_id` only — never trust client-supplied org |
 | Tool schemas | Explicit JSON Schema (`additionalProperties: false`) in `app/tools.py` |
 | Persistence | None in G6; future writes go through memory write pipeline |
-| Audit | Async emitter → `ibex.mcp_tool_calls` (no content columns) |
+| Audit | Async emitter → `ibex.mcp_tool_calls` (no content columns). Empty `IBEX_MCP_CLICKHOUSE_URL` falls back to a logging sink; a full audit queue drops the event and increments a drop metric (tool call still succeeds). |
 
 ## Transport
 

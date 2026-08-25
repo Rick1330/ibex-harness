@@ -156,8 +156,10 @@ def test_metrics_endpoint() -> None:
     with client:
         resp = client.get("/metrics")
     assert resp.status_code == 200
-    assert b"python_info" in resp.content or b"ibex_mcp" in resp.content or resp.status_code == 200
+    assert b"python_info" in resp.content or b"ibex_mcp" in resp.content
 
+
+def test_authorization_token_not_echoed() -> None:
     client, _ = _app()
     secret = "super-secret-token-value"
     with client:

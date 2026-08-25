@@ -79,7 +79,20 @@ async def test_grpc_validator_maps_unauthenticated() -> None:
         assert await validator.ready() is False
 
         stub.side_effect = None
-        stub.return_value = ValidateResult(org_id=UUID(int=1), permissions=1)
+        org = "11111111-1111-1111-1111-111111111111"
+        org_b = org.encode()
+        stub.return_value = b"\x0a" + bytes([len(org_b)]) + org_b + b"\x10\x01"
         got = await validator.validate("tok")
         assert got.permissions == 1
+    await validator.aclose()
+
+
+@pytest.mark.asyncio
+async def test_grpc_validator_malformed_response_fail_closed() -> None:
+    validator = GRPCTokenValidator("127.0.0.1:9", timeout_seconds=0.01)
+    with patch.object(validator, "_stub", new_callable=AsyncMock) as stub:
+        stub.return_value = b"\xff\xfe\xfd not-a-protobuf"
+        with pytest.raises(AuthUnavailableError):
+            await validator.validate("tok")
+        assert await validator.ready() is False
     await validator.aclose()

@@ -206,8 +206,8 @@ func assertTableCount(t *testing.T, db *sql.DB, name string, want uint64) {
 		t.Fatalf("unknown table %s", name)
 	}
 	var n uint64
-	q := "SELECT count() FROM system.tables WHERE database = 'ibex' AND name = '" + name + "'"
-	if err := db.QueryRowContext(context.Background(), q).Scan(&n); err != nil {
+	q := "SELECT count() FROM system.tables WHERE database = ? AND name = ?"
+	if err := db.QueryRowContext(context.Background(), q, "ibex", name).Scan(&n); err != nil {
 		t.Fatalf("count tables %s: %v", name, err)
 	}
 	if n != want {

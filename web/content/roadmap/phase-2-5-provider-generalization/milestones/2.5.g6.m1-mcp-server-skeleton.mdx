@@ -45,7 +45,7 @@ of Phase 2.5.
 ## What shipped
 
 - Service `services/mcp-memory/` — official MCP Python SDK, FastAPI host, `/health` `/ready`
-- Transport: Streamable HTTP (`/mcp`); stdio gated (`IBEX_MCP_TRANSPORT=stdio` + `ALLOW_STDIO`)
+- Transport: Streamable HTTP (`/mcp`); stdio gated (`IBEX_MCP_TRANSPORT=stdio` + `IBEX_MCP_ALLOW_STDIO`)
 - Auth: Bearer → `AuthService.ValidateToken` gRPC, fail closed; `WWW-Authenticate` +
   `/.well-known/oauth-protected-resource`
 - Stub tools: `search_memory`, `write_memory` with strict schemas; tenant from token `org_id`

@@ -20,7 +20,7 @@ from app.proto_wire import (
 logger = logging.getLogger(__name__)
 
 # Sentinel rejected at PAT parse without Argon2/Postgres (matches packages/healthcheck).
-PROBE_TOKEN = "ibex_health_probe_invalid"
+READINESS_PROBE_SENTINEL = "ibex_health_probe_invalid"
 
 _VALIDATE_METHOD = "/ibex.auth.v1.AuthService/ValidateToken"
 
@@ -90,12 +90,15 @@ class GRPCTokenValidator(TokenValidator):
         self._stub = self._channel.unary_unary(
             _VALIDATE_METHOD,
             request_serializer=encode_validate_token_request,
-            response_deserializer=_deserialize_response,
+            response_deserializer=None,
         )
 
     async def validate(self, access_token: str) -> ValidateResult:
         try:
-            return await self._stub(access_token, timeout=self._timeout)
+            payload = await self._stub(access_token, timeout=self._timeout)
+            if not isinstance(payload, (bytes, bytearray)):
+                raise AuthUnavailableError("auth response is not bytes")
+            return ValidateResult.from_wire(decode_validate_token_response(bytes(payload)))
         except grpc.aio.AioRpcError as exc:
             raise _map_rpc_error(exc) from exc
         except AuthUnavailableError:
@@ -106,7 +109,7 @@ class GRPCTokenValidator(TokenValidator):
 
     async def ready(self) -> bool:
         try:
-            await self.validate(PROBE_TOKEN)
+            await self.validate(READINESS_PROBE_SENTINEL)
             return True
         except AuthFailedError:
             return True
@@ -115,10 +118,6 @@ class GRPCTokenValidator(TokenValidator):
 
     async def aclose(self) -> None:
         await self._channel.close()
-
-
-def _deserialize_response(payload: bytes) -> ValidateResult:
-    return ValidateResult.from_wire(decode_validate_token_response(payload))
 
 
 def _map_rpc_error(exc: grpc.aio.AioRpcError) -> AuthFailedError | AuthUnavailableError:

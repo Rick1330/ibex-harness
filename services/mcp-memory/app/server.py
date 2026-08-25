@@ -7,17 +7,18 @@ import logging
 import time
 import uuid
 from collections.abc import Callable
-from typing import Any
+from typing import Annotated, Any
+from uuid import UUID
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
+from pydantic import Field
 
 from app.audit import AsyncAuditEmitter, ToolCallAuditEvent
 from app.errors import MCPServiceError
 from app.principal import require_principal
 from app.tools import (
-    SEARCH_MEMORY_SCHEMA,
-    WRITE_MEMORY_SCHEMA,
+    Category,
     parse_search_args,
     parse_write_args,
     stub_search_memory,
@@ -44,9 +45,9 @@ def build_mcp_server(audit: AsyncAuditEmitter, *, allow_test_hosts: bool = True)
         description="Search org-scoped memories (stub — returns deterministic mock hits).",
     )
     async def search_memory(
-        query: str,
-        limit: int = 5,
-        agent_id: str | None = None,
+        query: Annotated[str, Field(min_length=1, max_length=2000)],
+        limit: Annotated[int, Field(default=5, ge=1, le=50)] = 5,
+        agent_id: UUID | None = None,
     ) -> str:
         return await _invoke_tool(
             audit=audit,
@@ -60,10 +61,10 @@ def build_mcp_server(audit: AsyncAuditEmitter, *, allow_test_hosts: bool = True)
         description="Write an explicit memory (stub — does not persist).",
     )
     async def write_memory(
-        content: str,
-        category: str = "fact",
-        confidence: float = 0.6,
-        agent_id: str | None = None,
+        content: Annotated[str, Field(min_length=1, max_length=8000)],
+        category: Category = "fact",
+        confidence: Annotated[float, Field(default=0.6, ge=0.0, le=1.0)] = 0.6,
+        agent_id: UUID | None = None,
     ) -> str:
         return await _invoke_tool(
             audit=audit,
@@ -75,8 +76,6 @@ def build_mcp_server(audit: AsyncAuditEmitter, *, allow_test_hosts: bool = True)
             runner=_run_write,
         )
 
-    search_memory.__mcp_schema__ = SEARCH_MEMORY_SCHEMA  # type: ignore[attr-defined]
-    write_memory.__mcp_schema__ = WRITE_MEMORY_SCHEMA  # type: ignore[attr-defined]
     return mcp
 
 
@@ -94,9 +93,9 @@ def _transport_security(*, allow_test_hosts: bool) -> TransportSecuritySettings:
     )
 
 
-def _optional_agent(payload: dict[str, Any], agent_id: str | None) -> dict[str, Any]:
+def _optional_agent(payload: dict[str, Any], agent_id: UUID | None) -> dict[str, Any]:
     if agent_id is not None:
-        return {**payload, "agent_id": agent_id}
+        return {**payload, "agent_id": str(agent_id)}
     return payload
 
 

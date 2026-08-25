@@ -43,7 +43,7 @@ SSE-as-primary-transport is out of scope.
 - Invalid/missing token → HTTP 401 with `WWW-Authenticate` Bearer challenge and `resource_metadata` pointing at `/.well-known/oauth-protected-resource`
 - Protected-resource metadata is a discovery hook. **Full OAuth authorization-server flows remain downstream** (no second identity system in G6)
 - Tool handlers never trust client-supplied `org_id`; tenant is the validated token's `org_id`
-- `search_memory` requires permission bit `MemoryRead` (1<<0); `write_memory` requires `MemoryWrite` (1<<1)
+- `search_memory` requires permission bit `MemoryRead` (bit 0); `write_memory` requires `MemoryWrite` (bit 1)
 
 ### 4) Scope — exactly two stub tools
 

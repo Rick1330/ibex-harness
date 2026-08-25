@@ -66,7 +66,9 @@ class ToolCallAuditEvent:
     def as_clickhouse_row(self) -> dict[str, Any]:
         """Metadata-only row matching ibex.mcp_tool_calls (no content columns)."""
         event = self.normalized()
-        assert event.requested_at is not None
+        when = event.requested_at
+        if when is None:
+            raise RuntimeError("audit requested_at missing")
         return {
             "request_id": event.request_id,
             "org_id": str(event.org_id),
@@ -75,7 +77,7 @@ class ToolCallAuditEvent:
             "latency_ms": event.latency_ms,
             "success": event.success,
             "error_code": event.error_code,
-            "requested_at": event.requested_at.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
+            "requested_at": when.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
         }
 
 
@@ -197,27 +199,34 @@ class AsyncAuditEmitter:
 
     async def _signal_stop(self) -> None:
         """Enqueue sentinel without blocking forever on a saturated queue."""
-        for _ in range(3):
+        if await self._try_enqueue_sentinel(attempts=3):
+            return
+        self._drain_queue()
+        try:
+            self._queue.put_nowait(None)
+        except asyncio.QueueFull:
+            logger.warning("mcp audit shutdown could not enqueue sentinel")
+
+    async def _try_enqueue_sentinel(self, *, attempts: int) -> bool:
+        for _ in range(attempts):
             try:
                 self._queue.put_nowait(None)
-                return
+                return True
             except asyncio.QueueFull:
                 try:
                     self._queue.get_nowait()
                     AUDIT_DROPPED.inc()
                 except asyncio.QueueEmpty:
                     await asyncio.sleep(0)
-        # Last resort: drop remaining work and force-stop the worker.
+        return False
+
+    def _drain_queue(self) -> None:
         while not self._queue.empty():
             try:
                 self._queue.get_nowait()
                 AUDIT_DROPPED.inc()
             except asyncio.QueueEmpty:
                 break
-        try:
-            self._queue.put_nowait(None)
-        except asyncio.QueueFull:
-            logger.warning("mcp audit shutdown could not enqueue sentinel")
 
     async def _run(self) -> None:
         while True:

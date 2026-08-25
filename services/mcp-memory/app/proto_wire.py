@@ -32,6 +32,15 @@ class ValidateTokenWire:
     token_id: str | None = None
 
 
+@dataclass(slots=True)
+class _DecodeState:
+    org_id: UUID | None = None
+    permissions: int = 0
+    agent_id: UUID | None = None
+    user_id: str | None = None
+    token_id: str | None = None
+
+
 def encode_validate_token_request(access_token: str) -> bytes:
     """Encode ValidateTokenRequest { access_token = 1 }."""
     data = access_token.encode("utf-8")
@@ -45,11 +54,7 @@ def decode_validate_token_response(payload: bytes) -> ValidateTokenWire:
     if len(payload) > _MAX_MESSAGE_BYTES:
         raise AuthUnavailableError("auth response too large")
 
-    org_id: UUID | None = None
-    permissions = 0
-    agent_id: UUID | None = None
-    user_id: str | None = None
-    token_id: str | None = None
+    state = _DecodeState()
     idx = 0
     while idx < len(payload):
         key, idx = _decode_varint(payload, idx)
@@ -57,31 +62,39 @@ def decode_validate_token_response(payload: bytes) -> ValidateTokenWire:
         wire = key & 0x07
         if wire == _WIRE_LEN:
             raw, idx = _read_bytes(payload, idx)
-            text = _decode_utf8(raw)
-            if field == 1:
-                org_id = _parse_uuid(text, "org_id")
-            elif field == 3:
-                agent_id = _parse_uuid(text, "agent_id")
-            elif field == 4:
-                user_id = _bounded_string(text, "user_id")
-            elif field == 5:
-                token_id = _bounded_string(text, "token_id")
+            _apply_len_field(state, field, raw)
         elif wire == _WIRE_VARINT:
             num, idx = _decode_varint(payload, idx)
-            if field == 2:
-                permissions = int(num)
+            _apply_varint_field(state, field, num)
         else:
             idx = _skip_unknown(payload, idx, wire)
 
-    if org_id is None:
+    if state.org_id is None:
         raise AuthUnavailableError("auth response missing org_id")
     return ValidateTokenWire(
-        org_id=org_id,
-        permissions=permissions,
-        agent_id=agent_id,
-        user_id=user_id,
-        token_id=token_id,
+        org_id=state.org_id,
+        permissions=state.permissions,
+        agent_id=state.agent_id,
+        user_id=state.user_id,
+        token_id=state.token_id,
     )
+
+
+def _apply_len_field(state: _DecodeState, field: int, raw: bytes) -> None:
+    text = _decode_utf8(raw)
+    if field == 1:
+        state.org_id = _parse_uuid(text, "org_id")
+    elif field == 3:
+        state.agent_id = _parse_uuid(text, "agent_id")
+    elif field == 4:
+        state.user_id = _bounded_string(text, "user_id")
+    elif field == 5:
+        state.token_id = _bounded_string(text, "token_id")
+
+
+def _apply_varint_field(state: _DecodeState, field: int, num: int) -> None:
+    if field == 2:
+        state.permissions = int(num)
 
 
 def _tag(field: int, wire: int) -> bytes:
@@ -117,7 +130,7 @@ def _decode_varint(buf: bytes, idx: int) -> tuple[int, int]:
 
 def _read_bytes(buf: bytes, idx: int) -> tuple[bytes, int]:
     length, idx = _decode_varint(buf, idx)
-    if length < 0 or length > _MAX_STRING_BYTES:
+    if length > _MAX_STRING_BYTES:
         raise AuthUnavailableError("length-delimited field exceeds limit")
     end = idx + length
     if end > len(buf):

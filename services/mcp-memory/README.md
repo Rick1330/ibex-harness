@@ -22,6 +22,8 @@ Probes: `GET /health`, `GET /ready`, discovery `GET /.well-known/oauth-protected
 
 ## Tests
 
+Run from the **repository root** (not from `services/mcp-memory/`):
+
 ```bash
 make test-mcp-memory
 # or

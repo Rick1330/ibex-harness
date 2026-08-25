@@ -434,10 +434,10 @@ Used by: **`services/mcp-memory/`** — see [MCP_SERVER.md](MCP_SERVER.md) and [
 | `IBEX_ENV` | No | `development` | Environment name | `production` forbids stdio |
 | `IBEX_MCP_TRANSPORT` | No | `streamable_http` | `streamable_http` \| `stdio` | `stdio` is dev-only |
 | `IBEX_MCP_ALLOW_STDIO` | No | `false` | Explicit stdio gate | Required with `stdio` |
-| `IBEX_MCP_HOST` | No | `0.0.0.0` | HTTP bind host | |
+| `IBEX_MCP_HOST` | No | `127.0.0.1` | HTTP bind host | Containers must set `0.0.0.0` explicitly |
 | `IBEX_MCP_PORT` | No | `8090` | HTTP listen port | |
-| `IBEX_MCP_RESOURCE_URL` | No | `http://127.0.0.1:8090/mcp` | Public MCP resource URL | Used in auth challenge metadata |
-| `IBEX_MCP_AUTH_SERVER_URL` | No | `http://127.0.0.1:8080` | AS URL advertised in protected-resource metadata | Discovery hook only |
+| `IBEX_MCP_RESOURCE_URL` | No | `http://127.0.0.1:8090/mcp` | Public MCP resource URL | Used in auth challenge metadata; production requires non-loopback HTTPS |
+| `IBEX_MCP_AUTH_SERVER_URL` | No | `http://127.0.0.1:8080` | AS URL advertised in protected-resource metadata | Discovery hook only; production requires non-loopback HTTPS |
 | `IBEX_AUTH_GRPC_ADDR` | Yes (HTTP mode) | `127.0.0.1:9091` | Auth `ValidateToken` target | One identity system |
 | `IBEX_MCP_AUTH_TIMEOUT_MS` | No | `50` | Per-call auth deadline | Fail closed on timeout |
 | `IBEX_MCP_CLICKHOUSE_URL` | No | (empty) | ClickHouse HTTP base for audit inserts | Empty → logging sink |

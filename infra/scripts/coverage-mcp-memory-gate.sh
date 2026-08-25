@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Fail if services/mcp-memory app coverage is below MIN_COVERAGE (default 90).
+# Regenerates coverage when the XML report is missing or older than sources.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -17,8 +18,28 @@ fi
 
 cd "$MCP_DIR"
 
-if [[ -f coverage-mcp-memory.xml ]]; then
-  .venv/bin/python - <<PY
+report_stale() {
+  local report="$1"
+  if [[ ! -f "$report" ]]; then
+    return 0
+  fi
+  # Newer sources than the report → regenerate.
+  if find app tests pyproject.toml -type f -newer "$report" 2>/dev/null | grep -q .; then
+    return 0
+  fi
+  return 1
+}
+
+if report_stale coverage-mcp-memory.xml; then
+  bash "$ROOT/infra/scripts/mcp-memory-uv-sync.sh"
+  .venv/bin/pytest -q \
+    --cov=app \
+    --cov-report=xml:coverage-mcp-memory.xml \
+    --cov-report=term-missing \
+    --cov-fail-under="$MIN_RAW"
+fi
+
+.venv/bin/python - <<PY
 import os
 import sys
 import xml.etree.ElementTree as ET
@@ -31,9 +52,3 @@ if rate + 1e-9 < min_pct:
     sys.exit(1)
 print(f"mcp-memory app coverage gate passed ({rate:.2f}% >= {min_pct:.0f}%)")
 PY
-  exit 0
-fi
-
-bash "$ROOT/infra/scripts/mcp-memory-uv-sync.sh"
-.venv/bin/pytest -q --cov=app --cov-report=term-missing --cov-fail-under="$MIN_RAW"
-echo "mcp-memory app coverage gate passed (minimum ${MIN_RAW}%)"
