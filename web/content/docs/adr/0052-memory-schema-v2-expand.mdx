@@ -1,0 +1,112 @@
+---
+title: "ADR-0052: Memory schema v2 expand (HNSW, quality columns)"
+description: "Architecture decision record 0052 — expand ibex_core.memories with pgvector embedding, HNSW, quality columns, and search_vector; defer category rename."
+adrId: "0052"
+status: "Accepted"
+date: "2026-08-25"
+authors: "IBEX Harness team"
+---
+
+# ADR-0052: Memory schema v2 expand (HNSW, quality columns)
+
+- **Status:** Accepted
+- **Date:** 2026-08-25
+- **Authors:** IBEX Harness team
+- **Milestone:** [3.1.1 Memory schema v2](/roadmap/phase-3-memory-engine/milestones/3.1.1-memory-schema-v2)
+
+## Context
+
+Phase 3 Track A needs embedding storage, ANN search, quality/feedback columns, and hybrid-search text indexing on `ibex_core.memories`. The foundation table already exists from Phase 2.5 Track E:
+
+- [ADR-0047](/docs/adr/0047-memory-temporal-validity) / `000014` — memories with temporal columns (including `observed_at`)
+- [ADR-0048](/docs/adr/0048-memory-multi-label-categories) / `000015` — `memory_labels` + primary sync onto `memories.category`
+- [ADR-0049](/docs/adr/0049-memory-relationship-graph) / `000016` — `memory_relationships`
+
+Milestone [3.1.1](/roadmap/phase-3-memory-engine/milestones/3.1.1-memory-schema-v2) planning sketches still show a greenfield `CREATE TABLE` and provisional migration `000041`. Those sketches are stale. This ADR records the expand-contract design that ships as `000017`.
+
+[ADR-0005](/docs/adr/0005-postgres-migration-strategy) deferred `CREATE EXTENSION vector` until memory schema needed it. Local compose already uses `pgvector/pgvector:pg16`; CI historically used stock `postgres:16` and must switch so the extension can load. CI pins an immutable digest of **pgvector 0.8.6 / PostgreSQL 16** (`pgvector/pgvector:0.8.6-pg16@sha256:…`), not the mutable `:pg16` tag.
+
+## Options Considered
+
+### 1) Expand vs greenfield CREATE
+
+1. **Greenfield `CREATE TABLE ibex_core.memories`** as in the 3.1.1 SQL sketch — conflicts with `000014`–`000016`, would drop temporal / labels / relationships foundations.
+2. **Expand-contract `ALTER TABLE`** on the live foundation — additive columns and indexes only.
+Decision: **Expand**. Do not recreate `memories`, `memory_labels`, or `memory_relationships`.
+
+### 2) Vector index: IVFFlat vs HNSW
+
+1. IVFFlat — cheaper initial build; centroids drift under write load; needs periodic REINDEX.
+2. HNSW — incrementally maintained; better recall/latency; slightly higher build cost.
+Decision: **HNSW** with pgvector defaults `m = 16`, `ef_construction = 64`, `vector_cosine_ops`, partial on `status = 'active' AND deleted_at IS NULL`. No stopgap IVFFlat.
+
+### 3) Rename `category` → `primary_category`
+
+1. Rename now — update trigger, tests, and docs in the same PR.
+2. **Defer** — keep `memories.category` and `sync_memory_primary_category` from ADR-0048; document the logical name as “primary category”.
+Decision: **Defer**. Physical rename has no runtime benefit until application writers exist; ADR-0048 already allowed deferral.
+
+### 4) NOT NULL / backfill (DEPLOYMENT.md §8.1 Rule C)
+
+1. Multi-step nullable → batch backfill → NOT NULL (required for large live tables).
+2. Single-statement `ADD COLUMN … NOT NULL DEFAULT …` for constant defaults (PG11+ catalog path).
+Decision: **Single-statement defaults** for quality columns. The table has no product write pipeline yet. `embedding` / `embedding_model` / `embedding_dim` stay nullable with a triplet CHECK so pre-embed rows are valid.
+
+### 5) `CREATE INDEX CONCURRENTLY`
+
+1. Always CONCURRENTLY (Rule B for large tables; pattern in `000011`).
+2. Non-CONCURRENTLY while the table has no product write traffic.
+Decision: **Non-CONCURRENTLY** for HNSW / validity / GIN indexes in `000017`. Future index adds under write load must use CONCURRENTLY.
+
+### 6) CI Postgres image
+
+1. Keep `postgres:16` and skip vector in CI (blocks this milestone).
+2. Switch migrate-consuming CI services to mutable `pgvector/pgvector:pg16`.
+3. Pin CI to immutable `pgvector/pgvector:0.8.6-pg16@sha256:…` (pgvector **0.8.6** on PostgreSQL 16); keep compose on `:pg16` for local DX.
+Decision: **Pinned pgvector 0.8.6-pg16 digest** for all migrate-consuming CI Postgres services.
+
+### 7) Free-form field bounds
+
+1. Unbounded `embedding_model` TEXT / `metadata` JSONB — rejects AGENTS.md input-validation norms.
+2. Documented CHECKs: `embedding_model` NULL or `char_length <= 256`; `metadata` must be a JSON object with `octet_length(metadata::text) <= 8192`.
+Decision: **Bounded CHECKs** (`memories_embedding_model_len_chk`, `memories_metadata_object_chk`, `memories_metadata_max_chk`).
+
+## Decision
+
+1. Ship `000017_memory_schema_v2_expand` that:
+   - `CREATE EXTENSION IF NOT EXISTS vector`
+   - Adds `embedding vector(1024)`, nullable `embedding_model` / `embedding_dim`, quality columns, composite FKs for `superseded_by` / `merged_into`, and generated `search_vector`
+   - Enforces embedding-model length and metadata object/size CHECKs
+   - Creates `idx_memories_embedding_hnsw`, `idx_memories_validity`, `idx_memories_search_vector`
+2. Keep `observed_at` and `category`; do not recreate labels/relationships or change `rls_org_visible` RLS.
+3. Dimension **1024** matches Phase 2.5 default **BAAI/bge-m3** ([ADR-0046](/docs/adr/0046-embedder-interface-registry)).
+4. No ORM, REST, or protobuf in this milestone.
+
+## Consequences
+
+### Positive
+
+- Phase 3 Tracks C/D can assume embedding + HNSW + quality columns without a later IVFFlat→HNSW cutover
+- Tenancy patterns from ADR-0047–0049 remain intact
+- CI can exercise vector DDL
+
+### Negative
+
+- Physical `primary_category` rename still pending (documented)
+- Hosted embedding profiles with non-1024 dims need a future model-swap migration (columns exist to support that plan)
+
+## Rollout / Migration Plan
+
+- Migration: `infra/migrations/postgres/000017_memory_schema_v2_expand.{up,down}.sql`
+- Down is dev/test only; production forward-only per ADR-0005
+- CI: replace `postgres:16` with pinned `pgvector/pgvector:0.8.6-pg16@sha256:…` (pgvector 0.8.6) wherever golang-migrate runs
+
+## References
+
+- [ADR-0005](/docs/adr/0005-postgres-migration-strategy)
+- [ADR-0046](/docs/adr/0046-embedder-interface-registry)
+- [ADR-0047](/docs/adr/0047-memory-temporal-validity)
+- [ADR-0048](/docs/adr/0048-memory-multi-label-categories)
+- [ADR-0049](/docs/adr/0049-memory-relationship-graph)
+- Milestone [3.1.1](/roadmap/phase-3-memory-engine/milestones/3.1.1-memory-schema-v2)
+- [DEPLOYMENT.md §8.1](/docs/engineering/DEPLOYMENT)

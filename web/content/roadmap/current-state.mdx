@@ -1,7 +1,7 @@
 ---
 title: "Current State"
-description: "Phases 0–2.5 are complete. Provider generalization, embedder, MCP skeleton, and local LGTM observability ship on main; Phase 3 (memory substrate) is next."
-summary: "Phases 0–2.5 are complete. Provider generalization, embedder, MCP skeleton, and local LGTM observability ship on main; Phase 3 (memory substrate) is next."
+description: "Phases 0–2.5 are complete. Phase 3 Track A schema expand (3.1.1 / ADR-0052) is in flight; memory write/search service work is next."
+summary: "Phases 0–2.5 are complete. Phase 3 Track A schema expand (3.1.1 / ADR-0052) is in flight; memory write/search service work is next."
 ---
 
 # Current State
@@ -10,7 +10,7 @@ summary: "Phases 0–2.5 are complete. Provider generalization, embedder, MCP sk
   Phases 0–2 and **2.5 (Provider Generalization & Foundation)** are complete.
   Multi-provider adapters, tokenizer, response pipelines, pluggable embedder,
   schema pre-work, MCP skeleton, and local LGTM observability (ADR-0051) ship on `main`.
-  Phase 3 (Core Memory Substrate) is next.
+  Phase 3 Track A (memory schema v2 expand) is underway.
 </Callout>
 
 <Callout type="info" title="Roadmap redesigned">
@@ -28,15 +28,15 @@ summary: "Phases 0–2.5 are complete. Provider generalization, embedder, MCP sk
 <StatusBadge status="stable" /> **Phase 1.5 — Public Web Product:** complete  
 <StatusBadge status="stable" /> **Phase 2 — Single Provider:** complete  
 <StatusBadge status="stable" /> **Phase 2.5 — Provider Generalization:** complete  
-<StatusBadge status="new" /> **Phase 3 — Core Memory Substrate:** next  
+<StatusBadge status="new" /> **Phase 3 — Core Memory Substrate:** in progress (Track A)  
 <StatusBadge status="new" /> **Phase 3.5 — Extraction & Context Assembly:** planned  
 <StatusBadge status="new" /> **Phase 4 — Operator Platform & Multi-Provider:** planned  
 <StatusBadge status="new" /> **Phase 4.5 — Intelligence Layer:** planned  
 <StatusBadge status="new" /> **Phase 5 — Advanced Retrieval & Graph Memory:** planned
 
 **Last updated:** 2026-08-25  
-**Branch:** `main`  
-**Current focus:** [Phase 3 — Core Memory Substrate](/roadmap/phase-3-memory-engine)  
+**Branch:** `feature/m3-1-1-memory-schema-v2` (PR toward `main`)  
+**Current focus:** [3.1.1 Memory schema v2](/roadmap/phase-3-memory-engine/milestones/3.1.1-memory-schema-v2)  
 **Completed (recent):** Phase 2.5 exit gate (G7 / ADR-0051 LGTM + `verify-phase25`); MCP skeleton (G6.M1 / ADR-0050); Tracks A–E
 
 <QuickLinks
@@ -47,9 +47,9 @@ summary: "Phases 0–2.5 are complete. Provider generalization, embedder, MCP sk
       description: "Live phase cards and milestone progress.",
     },
     {
-      title: "Phase 2.5 exit",
-      href: "/roadmap/phase-2-5-provider-generalization/milestones/2.5.g7-phase25-exit-gate",
-      description: "Exit checklist, observability, verify-phase25.",
+      title: "3.1.1 Memory schema v2",
+      href: "/roadmap/phase-3-memory-engine/milestones/3.1.1-memory-schema-v2",
+      description: "HNSW expand, quality columns, ADR-0052.",
     },
     {
       title: "Phase 3 (redesigned)",
@@ -66,12 +66,13 @@ summary: "Phases 0–2.5 are complete. Provider generalization, embedder, MCP sk
 
 ## Shipped Since Last Update
 
+- **Phase 3 Track A (in flight):** `000017_memory_schema_v2_expand` — pgvector + HNSW, quality columns, `search_vector`, bounded `embedding_model` / `metadata` CHECKs (ADR-0052); CI Postgres pinned to pgvector 0.8.6-pg16 digest
 - **Track G / exit complete:** local LGTM stack (`make observability-up`), Grafana dashboards (Proxy Critical Path + service views), `make verify-phase25` / `make e2e-phase25` / `make mcp-conformance`, thin Helm observability chart (ADR-0051)
 - **Track F complete:** MCP resource-server skeleton with stub `search_memory` / `write_memory`, Auth gRPC validation, and `mcp_tool_calls` audit (G6.M1 / ADR-0050)
 - **Track E complete:** `memory_relationships` graph foundation (G5.M3 / ADR-0049); `memory_labels` multi-label join + category primary sync (G5.M2 / ADR-0048); memories temporal foundation (G5.M1 / ADR-0047)
 - **Track D complete:** TEI GPU backend (G4.M2), hosted OpenAI/Cohere backend (G4.M3), org-scoped Redis content-hash cache (G4.M4)
 - Track A–C: Anthropic adapter, model capability registry, self-hosted openaicompatible, tokenizer registry, response pipelines (G1–G3)
-- Phase 2 close-out: landing/SEO honesty (mock/live proxy today; memory remains Phase 3); operator docs no longer teach the Phase 1 chat-501 stub as the happy path
+- Phase 2 close-out: landing/SEO honesty (mock/live proxy today; memory service remains Phase 3 Tracks B–D); operator docs no longer teach the Phase 1 chat-501 stub as the happy path
 
 ## What Ships Today
 
@@ -81,12 +82,13 @@ summary: "Phases 0–2.5 are complete. Provider generalization, embedder, MCP sk
   (G2.M1), non-streaming + streaming response pipelines (G3.M1–M2), auth cache,
   directives/injection, sessions/checkpoints, idempotency, ClickHouse traces,
   embedder (TEI + hosted + stub), MCP memory skeleton, local observability stack,
+  memories schema foundation through 000017 expand (embedding/HNSW/quality columns),
   shared packages, and this public site.
   Default non-production `IBEX_LLM_MODE=mock` answers registered models with HTTP 200; `live`
   needs `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, and/or `IBEX_SELFHOSTED_ENABLED` (mock is rejected
   when `IBEX_ENV=production`).
-  **Not yet:** real memory write/search engine (Phase 3), context assembly on the hot path (Phase 3.5),
-  management API/dashboard (Phase 4), org-wide HA observability.
+  **Not yet:** memory write/search service + VectorStore (Phase 3 Tracks B–D), context assembly
+  on the hot path (Phase 3.5), management API/dashboard (Phase 4), org-wide HA observability.
 </Callout>
 
 ## Operator paths
@@ -102,5 +104,6 @@ summary: "Phases 0–2.5 are complete. Provider generalization, embedder, MCP sk
 
 ## Next
 
-Phase 3 builds the memory substrate on Track D/E seams and expands the MCP process (ADR-0050)
-with real write/search pipelines. See [Phase 3](/roadmap/phase-3-memory-engine).
+After 3.1.1 merges: Track B (`VectorStore` / pgvector-HNSW app layer), then write and
+read pipelines (Tracks C–D). MCP stubs (ADR-0050) gain real backends later in Phase 3.5.
+See [Phase 3](/roadmap/phase-3-memory-engine).

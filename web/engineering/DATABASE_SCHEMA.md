@@ -507,8 +507,10 @@ CREATE INDEX idx_directive_scenarios_directive_id
 > **Shipped (2.5.G5.M3 / ADR-0049):** `ibex_core.memory_relationships` typed
 > edges with dual composite FKs, FORCE RLS, bidirectional traversal indexes,
 > `memory_supersession_edges` view, and `resolve_supersession_tip`.
-> **Not yet shipped:** `embedding` / pgvector / HNSW, usefulness/feedback,
-> `search_vector` (Phase 3.1.1 expand).
+> **Shipped (3.1.1 / ADR-0052):** expand `memories` with `embedding vector(1024)`,
+> `embedding_model` / `embedding_dim`, quality columns, generated `search_vector`,
+> HNSW + validity + GIN indexes (`000017_memory_schema_v2_expand`). Physical rename
+> `category` → `primary_category` deferred.
 
 ```sql
 -- ================================================================
@@ -638,11 +640,40 @@ CREATE POLICY memory_labels_isolation ON ibex_core.memory_labels
 -- Trigger sync_memory_primary_category: WHEN labels remain, set
 -- memories.category = ORDER BY confidence DESC, label ASC LIMIT 1.
 -- When zero labels remain, leave category unchanged.
+-- (Logical name = primary category; physical rename deferred — ADR-0052.)
 
--- Phase 3.1.1 expand (not yet applied): embedding vector(...), embedding_model,
--- embedding_dim, HNSW index, usefulness/feedback, search_vector, etc.
--- Do not greenfield-CREATE memories, memory_labels, or memory_relationships
--- in 3.1.1 — expand only.
+-- ================================================================
+-- MEMORIES EXPAND (migration 000017 / ADR-0052) — additive only
+-- Do not greenfield-CREATE memories, memory_labels, or memory_relationships.
+-- ================================================================
+-- Columns added on ibex_core.memories:
+--   embedding vector(1024) NULL,
+--   embedding_model TEXT NULL
+--     CHECK NULL or char_length <= 256 (memories_embedding_model_len_chk),
+--   embedding_dim INTEGER NULL,
+--   CHECK memories_embedding_triplet_chk (all NULL or embedding+model+dim=1024),
+--   confidence NUMERIC(3,2) NOT NULL DEFAULT 0.80,
+--   usefulness_score NUMERIC(3,2) NOT NULL DEFAULT 0.50,
+--   source TEXT NOT NULL DEFAULT 'extracted'
+--     CHECK IN ('extracted','user_provided','imported','inferred'),
+--   superseded_by UUID, merged_into UUID
+--     (composite FKs to memories(id, org_id)),
+--   retrieval_count INTEGER NOT NULL DEFAULT 0,
+--   last_retrieved_at TIMESTAMPTZ,
+--   pii_detected / pii_redacted BOOLEAN NOT NULL DEFAULT FALSE,
+--   metadata JSONB NOT NULL DEFAULT '{}'
+--     CHECK jsonb_typeof = 'object' AND octet_length(text) <= 8192,
+--   search_vector tsvector GENERATED ALWAYS AS
+--     (setweight(to_tsvector('english', coalesce(content,'')), 'A')) STORED
+--
+-- Indexes:
+--   idx_memories_embedding_hnsw USING hnsw (embedding vector_cosine_ops)
+--     WITH (m = 16, ef_construction = 64)
+--     WHERE status = 'active' AND deleted_at IS NULL
+--   idx_memories_validity (org_id, agent_id, valid_from, valid_until)
+--     WHERE status = 'active' AND deleted_at IS NULL
+--   idx_memories_search_vector USING GIN (search_vector)
+--     WHERE status = 'active' AND deleted_at IS NULL
 
 -- ================================================================
 -- MEMORY RELATIONSHIPS (migration 000016 / ADR-0049)
