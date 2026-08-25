@@ -74,6 +74,7 @@ GRANT SELECT ON ibex_core.memory_supersession_edges TO ibex_app;
 
 -- Walk incoming supersedes (target → source) to the current tip.
 -- org_id at every level; depth cap; cycle break via path array.
+-- Depth is capped at 5 per Phase 5.B.1's shallow-graph assumption.
 CREATE OR REPLACE FUNCTION ibex_core.resolve_supersession_tip(
     p_org_id uuid,
     p_memory_id uuid,
@@ -90,15 +91,18 @@ DECLARE
     max_depth integer;
 BEGIN
     max_depth := COALESCE(p_max_depth, 5);
-    IF max_depth < 1 THEN
+    IF max_depth < 1 OR max_depth > 5 THEN
         RETURN p_memory_id;
     END IF;
 
     WITH RECURSIVE walk AS (
         SELECT
-            p_memory_id AS mem_id,
+            m.id AS mem_id,
             0 AS depth,
-            ARRAY[p_memory_id]::uuid[] AS path
+            ARRAY[m.id]::uuid[] AS path
+        FROM ibex_core.memories m
+        WHERE m.id = p_memory_id
+          AND m.org_id = p_org_id
         UNION ALL
         SELECT
             e.source_memory_id,

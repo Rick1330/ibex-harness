@@ -48,7 +48,7 @@ Org-leading keys serve service-account queries that filter by `org_id` explicitl
 ### 4) Helper view + tip function (schema readiness)
 
 - View `ibex_core.memory_supersession_edges` — `relationship_type = 'supersedes'` projection with `security_invoker = true` (PG16) so caller RLS applies
-- Function `ibex_core.resolve_supersession_tip(org_id, memory_id, max_depth DEFAULT 5)` — `SECURITY INVOKER`, `search_path` pinned, `org_id` predicate at every recursion level, depth cap, cycle break via path array; empty chain returns the start id
+- Function `ibex_core.resolve_supersession_tip(org_id, memory_id, max_depth DEFAULT 5)` — `SECURITY INVOKER`, `search_path` pinned, base case seeds from `memories` where `id` and `org_id` match (returns NULL when invisible/mismatched), `org_id` predicate at every recursion level, hard depth cap `1..5` (out-of-range returns start id), cycle break via path array; valid seed with no outgoing supersedes returns the start id
 
 No application Go/Python writers in this milestone.
 

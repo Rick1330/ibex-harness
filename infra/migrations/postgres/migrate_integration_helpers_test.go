@@ -26,6 +26,17 @@ type tableCountCheck struct {
 	want  int
 }
 
+var ibexCoreCountQueries = map[string]string{
+	"agents":               `SELECT COUNT(*) FROM ibex_core.agents`,
+	"directives":           `SELECT COUNT(*) FROM ibex_core.directives`,
+	"directive_versions":   `SELECT COUNT(*) FROM ibex_core.directive_versions`,
+	"sessions":             `SELECT COUNT(*) FROM ibex_core.sessions`,
+	"checkpoints":          `SELECT COUNT(*) FROM ibex_core.checkpoints`,
+	"memories":             `SELECT COUNT(*) FROM ibex_core.memories`,
+	"memory_labels":        `SELECT COUNT(*) FROM ibex_core.memory_labels`,
+	"memory_relationships": `SELECT COUNT(*) FROM ibex_core.memory_relationships`,
+}
+
 type directiveSeed struct {
 	db                        *sql.DB
 	orgID, agentSlug, content string
@@ -109,26 +120,8 @@ func assertTableCount(t *testing.T, ctx context.Context, check tableCountCheck) 
 }
 
 func ibexCoreCountQuery(table string) (string, bool) {
-	switch table {
-	case "agents":
-		return `SELECT COUNT(*) FROM ibex_core.agents`, true
-	case "directives":
-		return `SELECT COUNT(*) FROM ibex_core.directives`, true
-	case "directive_versions":
-		return `SELECT COUNT(*) FROM ibex_core.directive_versions`, true
-	case "sessions":
-		return `SELECT COUNT(*) FROM ibex_core.sessions`, true
-	case "checkpoints":
-		return `SELECT COUNT(*) FROM ibex_core.checkpoints`, true
-	case "memories":
-		return `SELECT COUNT(*) FROM ibex_core.memories`, true
-	case "memory_labels":
-		return `SELECT COUNT(*) FROM ibex_core.memory_labels`, true
-	case "memory_relationships":
-		return `SELECT COUNT(*) FROM ibex_core.memory_relationships`, true
-	default:
-		return "", false
-	}
+	q, ok := ibexCoreCountQueries[table]
+	return q, ok
 }
 
 func seedDirectiveForOrg(t *testing.T, ctx context.Context, seed directiveSeed) seededDirective {

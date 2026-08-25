@@ -157,7 +157,9 @@ Decision: **Temporal-interval-aware** (foundation columns already in ADR-0047).
  decision), with `embedding_model` and `embedding_dim` columns retained so a
  future model swap does not require a blind rewrite of every row.
 3. HNSW index: `USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64)`.
-4. New `ibex_core.memory_labels` table (memory_id, label, confidence, PRIMARY KEY(memory_id, label)).
+4. Expand existing `ibex_core.memory_labels` from `000015`; do not recreate the
+ table. Later 3.1.1 work may add columns or rename `category` →
+ `primary_category`, but the join table itself is already shipped.
 5. `ibex_core.memory_relationships` already exists (`000016` / ADR-0049) with the
  typed-edge taxonomy; 3.1.1 must not recreate it. `contradicts` edges may only be
  created by the conflict worker after confirming interval overlap (application

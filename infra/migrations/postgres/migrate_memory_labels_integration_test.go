@@ -68,15 +68,23 @@ func openMigratedLabelsDB(t *testing.T) *labelsDB {
 
 func (f *labelsDB) mustDownTo(version uint) {
 	f.t.Helper()
-	if err := Down(f.dsn); err != nil {
-		f.t.Fatalf("down: %v", err)
-	}
-	v, dirty, err := Version(f.dsn)
-	if err != nil {
-		f.t.Fatalf("version: %v", err)
-	}
-	if dirty || v != version {
-		f.t.Fatalf("expected version %d clean, got v=%d dirty=%v", version, v, dirty)
+	for {
+		v, dirty, err := Version(f.dsn)
+		if err != nil {
+			f.t.Fatalf("version: %v", err)
+		}
+		if dirty {
+			f.t.Fatalf("expected clean migration state at v=%d", v)
+		}
+		if v == version {
+			return
+		}
+		if v < version {
+			f.t.Fatalf("cannot down to %d from %d", version, v)
+		}
+		if err := Down(f.dsn); err != nil {
+			f.t.Fatalf("down: %v", err)
+		}
 	}
 }
 

@@ -87,9 +87,9 @@ func (f *relationshipsDB) assertReject(err error, want sqlStateExpect) {
 	assertPQCode(f.t, err, want)
 }
 
-func (f *relationshipsDB) resolveTip(orgID, memID string, maxDepth int) string {
+func (f *relationshipsDB) resolveTipNullable(orgID, memID string, maxDepth int) sql.NullString {
 	f.t.Helper()
-	var tip string
+	var tip sql.NullString
 	err := withServiceAccount(f.ctx, f.db, func(tx *sql.Tx) error {
 		return tx.QueryRowContext(f.ctx, `
 			SELECT ibex_core.resolve_supersession_tip($1::uuid, $2::uuid, $3)::text`,
@@ -99,6 +99,15 @@ func (f *relationshipsDB) resolveTip(orgID, memID string, maxDepth int) string {
 		f.t.Fatalf("resolve tip: %v", err)
 	}
 	return tip
+}
+
+func (f *relationshipsDB) resolveTip(orgID, memID string, maxDepth int) string {
+	f.t.Helper()
+	tip := f.resolveTipNullable(orgID, memID, maxDepth)
+	if !tip.Valid {
+		f.t.Fatalf("resolve tip: got NULL for org=%s mem=%s depth=%d", orgID, memID, maxDepth)
+	}
+	return tip.String
 }
 
 func TestMemoryRelationships_TableForceRLSAndView(t *testing.T) {
@@ -300,11 +309,17 @@ func TestMemoryRelationships_ResolveTipChainCycleAndEmpty(t *testing.T) {
 		orgID: orgA, sourceID: c, targetID: a, relType: "supersedes", confidence: 0.95,
 	})
 
+	if tip := f.resolveTip(orgA, b, 1); tip != a {
+		t.Fatalf("depth-1 tip from B=%s, want A=%s", tip, a)
+	}
 	if tip := f.resolveTip(orgA, b, 5); tip != c {
 		t.Fatalf("chain tip from B=%s, want C=%s", tip, c)
 	}
 	if tip := f.resolveTip(orgA, lonely, 5); tip != lonely {
 		t.Fatalf("empty tip=%s, want start %s", tip, lonely)
+	}
+	if tip := f.resolveTip(orgA, b, 6); tip != b {
+		t.Fatalf("over-limit tip=%s, want start %s", tip, b)
 	}
 
 	// Isolated cycle Y ↔ Z: depth cap / path guard must terminate (not on B→A→C).
@@ -329,6 +344,11 @@ func TestMemoryRelationships_ResolveTipChainCycleAndEmpty(t *testing.T) {
 	}
 	if tip := f.resolveTip(orgA, b, 5); tip != c {
 		t.Fatalf("orgA tip polluted: got %s want %s", tip, c)
+	}
+
+	// Fail closed: memory in orgA queried under orgB returns NULL, not the seed id.
+	if tip := f.resolveTipNullable(orgB, b, 5); tip.Valid {
+		t.Fatalf("cross-org seed tip=%s, want NULL", tip.String)
 	}
 }
 
@@ -358,6 +378,9 @@ func assertExplainUsesIndex(t *testing.T, ctx context.Context, check explainInde
 	t.Helper()
 	var plans []string
 	err := withServiceAccount(ctx, check.db, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `SET LOCAL enable_seqscan = off`); err != nil {
+			return err
+		}
 		rows, err := tx.QueryContext(ctx, `EXPLAIN `+check.query, check.arg1, check.arg2)
 		if err != nil {
 			return err
