@@ -405,7 +405,7 @@ jobs:
       - name: Unit tests (migrations package)
         run: |
           bash infra/scripts/go-test-gotestsum.sh test-results/junit/db-migrate-unit.xml -- \
-            -count=1 ./infra/migrations/postgres/...
+            -count=1 ./infra/migrations/postgres/... ./infra/migrations/clickhouse/...
       - name: Upload test results to Trunk (db-migrate-unit)
         if: ${{ !cancelled() }}
         continue-on-error: true
@@ -860,6 +860,32 @@ jobs:
       - name: Embedder unit tests (pytest + ruff)
         run: bash infra/scripts/embedder-test-ci.sh
 
+  mcp-memory-test:
+    name: mcp-memory-test
+    needs: changes
+    if: needs.changes.outputs.run_go == 'true' || needs.changes.outputs.run_python == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+      - name: MCP memory unit tests (pytest + ruff)
+        run: bash infra/scripts/mcp-memory-test-ci.sh
+
   golangci-lint:
     name: golangci-lint
     needs: [changes, proto-contract]
@@ -1076,7 +1102,7 @@ jobs:
           persist-credentials: false
       - name: Hadolint all Dockerfiles
         run: |
-          # Dockerfiles today: services/auth, services/proxy, services/embedder.
+          # Dockerfiles today: services/auth, services/proxy, services/embedder, services/mcp-memory.
           # Pending: services/memory, services/dashboard (see web/engineering/DEPENDENCIES.md §10).
           mapfile -t files < <(find . -name 'Dockerfile*' -not -path './.git/*' | sort)
           if [ ${#files[@]} -eq 0 ]; then
@@ -1225,6 +1251,42 @@ jobs:
           flags: embedder,python
           fail_ci_if_error: false
 
+  mcp-memory-coverage:
+    name: mcp-memory-coverage
+    needs: changes
+    if: needs.changes.outputs.run_go == 'true' || needs.changes.outputs.run_python == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+      - name: MCP memory pytest coverage
+        run: bash infra/scripts/mcp-memory-test-ci.sh
+      - name: MCP memory coverage gate
+        run: bash infra/scripts/coverage-mcp-memory-gate.sh
+      - name: Upload coverage reports to Codecov
+        continue-on-error: true
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: services/mcp-memory/coverage-mcp-memory.xml
+          flags: mcp-memory,python
+          fail_ci_if_error: false
+
   bandit:
     name: bandit
     needs: changes
@@ -1250,7 +1312,7 @@ jobs:
         id: bandit
         run: |
           targets=()
-          for svc in memory embedder; do
+          for svc in memory embedder mcp-memory; do
             app_dir="services/${svc}/app"
             if [ -d "$app_dir" ]; then
               targets+=("$app_dir")
@@ -1284,7 +1346,7 @@ jobs:
           cat <<'EOF' >> "$GITHUB_STEP_SUMMARY"
           ## Bandit (Python) skipped
 
-          No Python service directories are checked in yet (`services/memory/`, `services/embedder/`).
+          No Python service directories are checked in yet (`services/memory/`, `services/embedder/`, `services/mcp-memory/`).
 
           - **Why**: Bandit is scoped to deployable Python services only.
           - **Effect**: `bandit.sarif` is not generated, so the “Upload Bandit SARIF” step is skipped as well.
@@ -1456,6 +1518,8 @@ jobs:
       - go-services
       - embedder-test
       - embedder-coverage
+      - mcp-memory-test
+      - mcp-memory-coverage
       - golangci-lint
       - coverage
       - govulncheck
@@ -1481,6 +1545,8 @@ jobs:
             "${{ needs.go-services.result }}" \
             "${{ needs.embedder-test.result }}" \
             "${{ needs.embedder-coverage.result }}" \
+            "${{ needs.mcp-memory-test.result }}" \
+            "${{ needs.mcp-memory-coverage.result }}" \
             "${{ needs.golangci-lint.result }}" \
             "${{ needs.coverage.result }}" \
             "${{ needs.govulncheck.result }}"
@@ -1533,6 +1599,8 @@ jobs:
       - changes
       - embedder-test
       - embedder-coverage
+      - mcp-memory-test
+      - mcp-memory-coverage
     if: always()
     runs-on: ubuntu-latest
     permissions:
@@ -1545,4 +1613,6 @@ jobs:
         run: |
           bash .github/scripts/evaluate-ci-gate.sh "${{ needs.changes.outputs.run_python }}" \
             "${{ needs.embedder-test.result }}" \
-            "${{ needs.embedder-coverage.result }}"
+            "${{ needs.embedder-coverage.result }}" \
+            "${{ needs.mcp-memory-test.result }}" \
+            "${{ needs.mcp-memory-coverage.result }}"

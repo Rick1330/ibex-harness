@@ -1,0 +1,93 @@
+---
+title: "ADR-0050: MCP server skeleton (transport, auth, audit)"
+description: "Architecture decision record 0050 — Streamable HTTP MCP resource server with AuthService.ValidateToken, stub memory tools, and async ClickHouse mcp_tool_calls audit."
+adrId: "0050"
+status: "Accepted"
+date: "2026-08-25"
+authors: "IBEX Harness team"
+---
+
+# ADR-0050: MCP server skeleton (transport, auth, audit)
+
+- **Status:** Accepted
+- **Date:** 2026-08-25
+- **Authors:** IBEX Harness team
+- **Milestone:** [2.5.G6.M1 MCP server skeleton](/roadmap/phase-2-5-provider-generalization/milestones/2.5.g6.m1-mcp-server-skeleton)
+
+## Context
+
+Phase 3.5/5 will expose audited memory operations as MCP tools. There is no MCP process today. Building protocol, auth, and audit after real memory writers exist would mix plumbing with domain logic.
+
+Later roadmap pages cited **ADR-0043 / ADR-0044** for MCP transport and write-pipeline scope. Those numbers already belong to the tokenizer registry and non-streaming response pipeline. This ADR is the MCP skeleton decision record; later MCP milestones must cite **ADR-0050** (and future MCP ADRs), not 0043/0044.
+
+OAuth language in the Phase 2.5 sketch is broader than the shipped Auth service (PATs + `ValidateToken` gRPC). G6 ships a **resource-server** boundary, not a new authorization server.
+
+## Decision
+
+### 1) New Python service `services/mcp-memory/`
+
+Official MCP Python SDK (`mcp`, 1.x). Layout matches the embedder (`app/` + `tests/`, uv lockfile, non-root Dockerfile). No coupling to `services/memory/` in this milestone.
+
+### 2) Transport
+
+- **Production:** Streamable HTTP only (`IBEX_MCP_TRANSPORT=streamable_http`), MCP endpoint `/mcp`
+- **Dev/test:** stdio only when `IBEX_MCP_TRANSPORT=stdio` **and** `IBEX_MCP_ALLOW_STDIO=true`; refused when `IBEX_ENV=production`
+
+SSE-as-primary-transport is out of scope.
+
+### 3) Auth — resource server, fail closed
+
+- Bearer required for `/mcp` (initialize, `tools/list`, `tools/call`)
+- Validate via existing `AuthService.ValidateToken` gRPC (same identity as the proxy)
+- Per-call timeout default **50ms** (proxy validator default); timeouts and transport errors map to **fail closed** (HTTP 503), not anonymous access
+- Invalid/missing token → HTTP 401 with `WWW-Authenticate` Bearer challenge and `resource_metadata` pointing at `/.well-known/oauth-protected-resource`
+- Protected-resource metadata is a discovery hook. **Full OAuth authorization-server flows remain downstream** (no second identity system in G6)
+- Tool handlers never trust client-supplied `org_id`; tenant is the validated token's `org_id`
+- `search_memory` requires permission bit `MemoryRead` (bit 0); `write_memory` requires `MemoryWrite` (bit 1)
+
+### 4) Scope — exactly two stub tools
+
+Register `search_memory` and `write_memory` with explicit JSON schemas (`additionalProperties: false`). Handlers return deterministic mock payloads matching the future 3.5.E.2 response shape. **No Postgres, no memory service, no embeddings.**
+
+Phase 3.5.E.1 must **expand** this process (not create a second MCP server). Phase 3.5.E.2 replaces stub bodies with real pipelines. Feedback/lineage tools stay later milestones.
+
+### 5) Audit — async ClickHouse `mcp_tool_calls`
+
+LLM `ibex.llm_traces` is the wrong grain for tool calls. Ship additive migration `000002_create_mcp_tool_calls` with org-leading order key, 90-day TTL, and **no content columns**. The MCP process emits rows through a non-blocking queue (drop + metric on overflow; never block tool execution). Phase 3.5.E.4 adds independent rate-limit budget and auth circuit-breaker polish on this table — it must not `CREATE TABLE mcp_tool_calls` again.
+
+### 6) Non-goals
+
+- Real memory write/search
+- `record_feedback` / `get_memory_lineage`
+- Custom OAuth authorization server / independent IdP
+- Independent MCP rate limiter (env knob reserved; enforcement is 3.5.E.4)
+
+## Consequences
+
+### Positive
+
+- Auth, transport, schemas, and audit are testable before Phase 3 writers
+- One identity system for REST/proxy and MCP
+- ClickHouse audit is queryable by `org_id` without storing memory content
+
+### Negative
+
+- Resource-server metadata is not a complete OAuth AS
+- Stub tools can be mistaken for a product memory API — docs must label them stubs
+- A dedicated `mcp_tool_calls` table (not reuse of `llm_traces`) is extra schema to operate
+
+## Rollout
+
+- Service: `services/mcp-memory/`
+- ClickHouse: `infra/migrations/clickhouse/000002_create_mcp_tool_calls.{up,down}.sql`
+- Env registry: `IBEX_MCP_*` plus shared `IBEX_AUTH_GRPC_ADDR`
+
+## References
+
+- [ADR-0006](/docs/adr/0006-auth-proto-contract) — Auth gRPC
+- [ADR-0007](/docs/adr/0007-auth-token-validation) — token validation
+- [ADR-0009](/docs/adr/0009-permission-bitmap)
+- [ADR-0022](/docs/adr/0022-health-check-contract)
+- [ADR-0033](/docs/adr/0033-clickhouse-schema)
+- Milestone [2.5.G6.M1](/roadmap/phase-2-5-provider-generalization/milestones/2.5.g6.m1-mcp-server-skeleton)
+- Downstream [3.5.E.1](/roadmap/phase-3-5-extraction-assembly/milestones/3.5.e.1-mcp-server-skeleton-transport), [3.5.E.2](/roadmap/phase-3-5-extraction-assembly/milestones/3.5.e.2-search-write-memory-tools), [3.5.E.4](/roadmap/phase-3-5-extraction-assembly/milestones/3.5.e.4-mcp-observability-rate-limiting)

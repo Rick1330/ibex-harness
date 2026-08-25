@@ -69,6 +69,7 @@ Then use [DEVELOPMENT_GUIDE.md](DEVELOPMENT_GUIDE.md) for day-to-day workflow, P
 | [TESTING_STRATEGY.md](TESTING_STRATEGY.md) | Unit, integration, contract, and performance testing |
 | [SECURITY.md](SECURITY.md) | Multi-tenancy, cryptography, prompt injection, incident response |
 | [ENVIRONMENT_VARIABLES.md](ENVIRONMENT_VARIABLES.md) | Env var registry and validation rules |
+| [MCP_SERVER.md](MCP_SERVER.md) | MCP memory resource server boundaries (G6+) |
 | [MONITORING.md](MONITORING.md) | Metrics, logs, traces, dashboards, alerts, SLOs |
 | [PERFORMANCE.md](PERFORMANCE.md) | Latency budgets, benchmarking, and profiling |
 | [DEPENDENCIES.md](DEPENDENCIES.md) | Dependency admission, licenses, and security SLAs |

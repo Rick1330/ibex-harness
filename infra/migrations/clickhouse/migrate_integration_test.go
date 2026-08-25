@@ -53,6 +53,7 @@ func resetClickHouse(t *testing.T, db *sql.DB) {
 	t.Helper()
 	ctx := context.Background()
 	drops := []string{
+		`DROP TABLE IF EXISTS ibex.mcp_tool_calls`,
 		`DROP TABLE IF EXISTS ibex.llm_traces`,
 		`DROP TABLE IF EXISTS ibex.schema_migrations`,
 		`DROP TABLE IF EXISTS default.schema_migrations`,
@@ -81,8 +82,8 @@ func TestIntegration_Migrate_UpIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("version: %v", err)
 	}
-	if dirty || v != 1 {
-		t.Fatalf("version=%d dirty=%v want 1/clean", v, dirty)
+	if dirty || v != 2 {
+		t.Fatalf("version=%d dirty=%v want 2/clean", v, dirty)
 	}
 }
 
@@ -97,6 +98,59 @@ func TestIntegration_Migrate_SchemaAndTTL(t *testing.T) {
 	assertRequiredColumns(t, db)
 	assertNoContentColumns(t, db)
 	assertCreateTableDDL(t, db)
+	assertMCPToolCallsTable(t, db)
+}
+
+func assertMCPToolCallsTable(t *testing.T, db *sql.DB) {
+	t.Helper()
+	assertTableCount(t, db, "mcp_tool_calls", 1)
+	got := loadMCPToolCallColumns(t, db)
+	assertMCPRequiredColumns(t, got)
+	assertMCPForbiddenColumns(t, got)
+}
+
+func loadMCPToolCallColumns(t *testing.T, db *sql.DB) map[string]struct{} {
+	t.Helper()
+	rows, err := db.QueryContext(context.Background(), `
+		SELECT name FROM system.columns
+		WHERE database = 'ibex' AND table = 'mcp_tool_calls'`)
+	if err != nil {
+		t.Fatalf("mcp columns: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+	got := map[string]struct{}{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatal(err)
+		}
+		got[name] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return got
+}
+
+func assertMCPRequiredColumns(t *testing.T, got map[string]struct{}) {
+	t.Helper()
+	for _, col := range []string{
+		"request_id", "org_id", "agent_id", "tool_name",
+		"latency_ms", "success", "error_code", "requested_at", "event_date",
+	} {
+		if _, ok := got[col]; !ok {
+			t.Errorf("mcp_tool_calls missing column %s", col)
+		}
+	}
+}
+
+func assertMCPForbiddenColumns(t *testing.T, got map[string]struct{}) {
+	t.Helper()
+	for _, forbidden := range []string{"content", "query", "arguments", "payload"} {
+		if _, ok := got[forbidden]; ok {
+			t.Errorf("mcp_tool_calls must not store content column %s", forbidden)
+		}
+	}
 }
 
 func assertRequiredColumns(t *testing.T, db *sql.DB) {
@@ -155,6 +209,25 @@ func assertCreateTableDDL(t *testing.T, db *sql.DB) {
 	}
 	if !strings.Contains(createSQL, "org_id") || !strings.Contains(createSQL, "ORDER BY") {
 		t.Fatalf("expected ORDER BY org_id, got: %s", createSQL)
+	}
+}
+
+func assertTableCount(t *testing.T, db *sql.DB, name string, want uint64) {
+	t.Helper()
+	allowed := map[string]struct{}{
+		"mcp_tool_calls": {},
+		"llm_traces":     {},
+	}
+	if _, ok := allowed[name]; !ok {
+		t.Fatalf("unknown table %s", name)
+	}
+	var n uint64
+	q := "SELECT count() FROM system.tables WHERE database = ? AND name = ?"
+	if err := db.QueryRowContext(context.Background(), q, "ibex", name).Scan(&n); err != nil {
+		t.Fatalf("count tables %s: %v", name, err)
+	}
+	if n != want {
+		t.Fatalf("table %s count=%d want=%d", name, n, want)
 	}
 }
 
@@ -286,18 +359,14 @@ func TestIntegration_Migrate_DownUpRoundTrip(t *testing.T) {
 		t.Fatalf("up: %v", err)
 	}
 	if err := Down(conn); err != nil {
-		t.Fatalf("down: %v", err)
+		t.Fatalf("down mcp_tool_calls: %v", err)
 	}
-	var n uint64
-	err := db.QueryRowContext(context.Background(), `
-		SELECT count() FROM system.tables
-		WHERE database = 'ibex' AND name = 'llm_traces'`).Scan(&n)
-	if err != nil {
-		t.Fatalf("count tables: %v", err)
+	assertTableCount(t, db, "mcp_tool_calls", 0)
+	assertTableCount(t, db, "llm_traces", 1)
+	if err := Down(conn); err != nil {
+		t.Fatalf("down llm_traces: %v", err)
 	}
-	if n != 0 {
-		t.Fatalf("table still present after down, count=%d", n)
-	}
+	assertTableCount(t, db, "llm_traces", 0)
 	if err := Up(conn); err != nil {
 		t.Fatalf("up after down: %v", err)
 	}

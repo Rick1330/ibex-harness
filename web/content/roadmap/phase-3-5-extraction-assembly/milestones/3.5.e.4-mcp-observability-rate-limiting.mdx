@@ -39,9 +39,9 @@ An MCP server exposed to external agent frameworks is a new, untrusted-by-defaul
 
 ## Requirements
 
-- Every tool call traced to ClickHouse `mcp_tool_calls` table (org_id, agent_id, tool_name, latency_ms, success, error_code) — reuses the async, non-blocking emitter pattern from the proxy
+- Every tool call traced to ClickHouse `mcp_tool_calls` table (org_id, agent_id, tool_name, latency_ms, success, error_code) — table created in 2.5.G6.M1 / ADR-0050; this milestone must **not** `CREATE TABLE` again
 - Rate limiting reuses `packages/ratelimit`'s `Limiter` interface, keyed `ratelimit:{org_id}:mcp:{unix_minute}` — independent budget from chat-completions
-- Circuit breaker: `AuthService` gRPC unreachable → MCP server fails closed
+- Circuit breaker: `AuthService` gRPC unreachable → MCP server fails closed (fail-closed already shipped in G6; this milestone adds breaker polish)
 
 ---
 

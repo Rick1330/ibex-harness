@@ -1,6 +1,6 @@
 # Local development — Docker Compose
 
-Pinned dependency stack for IBEX Harness local development. **No application services** are defined here — only data stores. Application processes (`proxy`, `auth`, later `embedder` / `memory` / …) run on the host via Make targets.
+Pinned dependency stack for IBEX Harness local development. **No application services** are defined here — only data stores. Application processes (`proxy`, `auth`, `embedder`, `mcp-memory`, later `memory` / …) run on the host via Make targets / uvicorn.
 
 Roadmap timing for app services: [`services/README.md`](../../../services/README.md). Env registry: [ENVIRONMENT_VARIABLES.md](../../../web/engineering/ENVIRONMENT_VARIABLES.md).
 
@@ -36,7 +36,7 @@ docker compose down -v
 |---------|-------|------------|---------|
 | Postgres + pgvector | `pgvector/pgvector:pg16` | 5432 | Primary OLTP (+ vector; HNSW-capable for Phase 3+) |
 | Redis Stack | `redis/redis-stack:7.4.0-v1` | 6379 | Cache, Bloom/Cuckoo filters, Celery broker later |
-| ClickHouse | `clickhouse/clickhouse-server:24.8.14.39` | 8123 (HTTP), **9002** (native) | Analytics / `llm_traces` |
+| ClickHouse | `clickhouse/clickhouse-server:24.8.14.39` | 8123 (HTTP), **9002** (native) | Analytics / `llm_traces` / `mcp_tool_calls` |
 | MinIO | `minio/minio:RELEASE.2024-12-18T13-15-44Z` | 9000 (API), 9001 (console) | Object storage |
 
 ClickHouse **native** is mapped to host port **9002** so it does not conflict with MinIO on **9000**. Use HTTP (`8123`) for typical local DSNs — see [ENVIRONMENT_VARIABLES.md](../../../web/engineering/ENVIRONMENT_VARIABLES.md).

@@ -37,12 +37,18 @@ Stand up a minimal, spec-compliant MCP server process that authenticates against
 
 ---
 
-## Transport Decision (ADR-0043)
+## Transport Decision ([ADR-0050](/docs/adr/0050-mcp-server-skeleton))
 
-- **Streamable HTTP** as the only supported production transport
-- **stdio** for dev-convenience only, gated behind `IBEX_MCP_TRANSPORT=stdio`
-- **Python 3.11 + official `mcp` SDK** (`modelcontextprotocol/python-sdk`)
-- New service `services/mcp-memory/` — separate lifecycle from proxy/API/context
+- **Streamable HTTP** as the only supported production transport (established in 2.5.G6.M1)
+- **stdio** for dev-convenience only, gated behind `IBEX_MCP_TRANSPORT=stdio` + `IBEX_MCP_ALLOW_STDIO`
+- **Python 3.12 + official `mcp` SDK** (`modelcontextprotocol/python-sdk`)
+- Expand existing `services/mcp-memory/` — do **not** create a second MCP process
+
+<Callout type="info" title="Expand, do not recreate">
+  Phase 2.5.G6.M1 already shipped the process, transport, and auth seam. This milestone
+  should deepen lifecycle/conformance coverage and remove any remaining gaps — not stand
+  up a parallel server.
+</Callout>
 
 ---
 
