@@ -3,30 +3,31 @@
 from __future__ import annotations
 
 import math
-import random  # nosec B311 — reproducible synthetic corpus, not secrets
 
-_DIM = 1024
-_ACTIVE_DIMS = 64
+# Sonar/Codacy: seeded PRNG is required for planted near-neighbor recall; not used for secrets.
+import random  # nosec B311  # NOSONAR
+
+DIM = 1024
+ACTIVE_DIMS = 64
 _BOOTSTRAP_RESAMPLES = 1000
+_ZERO_EPS = 1e-15
 
 
 def unit_vector(seed: int) -> list[float]:
-    # nosec B311 — seeded PRNG for planted near-neighbors; must be deterministic
-    rng = random.Random(seed)  # noqa: S311
-    vec = [0.0] * _DIM
-    for _ in range(_ACTIVE_DIMS):
-        idx = rng.randrange(_DIM)
+    rng = random.Random(seed)  # nosec B311  # NOSONAR
+    vec = [0.0] * DIM
+    for _ in range(ACTIVE_DIMS):
+        idx = rng.randrange(DIM)
         vec[idx] += rng.gauss(0.0, 1.0)
     norm = math.sqrt(sum(x * x for x in vec)) or 1.0
     return [x / norm for x in vec]
 
 
 def perturb(base: list[float], *, noise: float = 0.005, seed: int = 0) -> list[float]:
-    # nosec B311 — deterministic query noise for recall measurement
-    rng = random.Random(seed ^ 0xA5A5_5A5A)  # noqa: S311
+    rng = random.Random(seed ^ 0xA5A5_5A5A)  # nosec B311  # NOSONAR
     out = list(base)
     for i, x in enumerate(out):
-        if x != 0.0:
+        if abs(x) > _ZERO_EPS:
             out[i] = x + noise * rng.gauss(0.0, 1.0)
     norm = math.sqrt(sum(x * x for x in out)) or 1.0
     return [x / norm for x in out]
@@ -56,8 +57,7 @@ def bootstrap_p95_ci(
     if len(samples) < 2:
         p = percentile(sorted(samples), 95)
         return p, p
-    # nosec B311 — bootstrap resamples for CI only
-    rng = random.Random(seed)  # noqa: S311
+    rng = random.Random(seed)  # nosec B311  # NOSONAR
     n = len(samples)
     estimates: list[float] = []
     for _ in range(resamples):

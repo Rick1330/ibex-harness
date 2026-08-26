@@ -4,8 +4,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
+
+_BENCH_DIR = Path(__file__).resolve().parent
+if str(_BENCH_DIR) not in sys.path:
+    sys.path.insert(0, str(_BENCH_DIR))
+from path_guard import UnsafePathError, resolve_workspace_path  # noqa: E402
 
 
 def main() -> None:
@@ -18,7 +24,13 @@ def main() -> None:
     parser.add_argument("--run-url", default="")
     args = parser.parse_args()
 
-    raw = json.loads(args.raw.read_text(encoding="utf-8"))
+    try:
+        raw_path = resolve_workspace_path(args.raw, must_exist=True)
+        published_path = resolve_workspace_path(args.published, allow_create_parent=True)
+    except UnsafePathError as exc:
+        parser.error(str(exc))
+
+    raw = json.loads(raw_path.read_text(encoding="utf-8"))
     short = args.sha[:7] if len(args.sha) >= 7 else args.sha
     entry = {
         "sha": args.sha,
@@ -32,8 +44,8 @@ def main() -> None:
         "mean_recall_at_10": raw.get("mean_recall_at_10", 0.0),
     }
 
-    if args.published.exists():
-        published = json.loads(args.published.read_text(encoding="utf-8"))
+    if published_path.exists():
+        published = json.loads(published_path.read_text(encoding="utf-8"))
     else:
         published = {
             "schema_version": 1,
@@ -47,9 +59,9 @@ def main() -> None:
     published["benchmark"] = "hnsw_recall_latency"
     published["runs"] = runs[:50]
 
-    args.published.parent.mkdir(parents=True, exist_ok=True)
-    args.published.write_text(json.dumps(published, indent=2) + "\n", encoding="utf-8")
-    print(f"wrote {args.published} ({len(runs)} runs)", flush=True)
+    published_path.parent.mkdir(parents=True, exist_ok=True)
+    published_path.write_text(json.dumps(published, indent=2) + "\n", encoding="utf-8")
+    print(f"wrote {published_path} ({len(runs)} runs)", flush=True)
 
 
 if __name__ == "__main__":

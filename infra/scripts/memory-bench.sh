@@ -8,8 +8,27 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 MEMORY_DIR="$ROOT/services/memory"
 BENCH_DIR="$ROOT/benchmarks/memory"
 SIZES="${MEMORY_BENCH_SIZES:-10000 100000}"
-OUTPUT="${MEMORY_BENCH_OUTPUT:-$BENCH_DIR/output/hnsw_recall_latency.json}"
-PUBLISHED="${MEMORY_BENCH_PUBLISHED:-$ROOT/web/public/benchmarks/hnsw-benchmark-data.json}"
+# Workspace-relative paths (path_guard rejects escapes / parent refs).
+OUTPUT="${MEMORY_BENCH_OUTPUT:-benchmarks/memory/output/hnsw_recall_latency.json}"
+PUBLISHED="${MEMORY_BENCH_PUBLISHED:-web/public/benchmarks/hnsw-benchmark-data.json}"
+
+to_workspace_rel() {
+  local p="$1"
+  if [[ "$p" == /* ]]; then
+    case "$p" in
+      "$ROOT"/*) printf '%s\n' "${p#"$ROOT"/}" ;;
+      *)
+        echo "absolute path must be under repo root: $p" >&2
+        exit 1
+        ;;
+    esac
+  else
+    printf '%s\n' "$p"
+  fi
+}
+
+OUTPUT="$(to_workspace_rel "$OUTPUT")"
+PUBLISHED="$(to_workspace_rel "$PUBLISHED")"
 
 if [[ ! -f "$MEMORY_DIR/pyproject.toml" ]]; then
   echo "services/memory not present — skipping memory benches"
@@ -33,14 +52,16 @@ bash "$ROOT/infra/scripts/db-migrate.sh" up
 cd "$MEMORY_DIR"
 bash "$ROOT/infra/scripts/memory-uv-sync.sh"
 
+# Run from repo root so path_guard resolves workspace-relative CLI paths.
+cd "$ROOT"
 # Bench code lives under benchmarks/memory; app imports resolve via services/memory.
 # shellcheck disable=SC2086
-PYTHONPATH="$MEMORY_DIR" .venv/bin/python "$BENCH_DIR/hnsw_bench.py" \
+PYTHONPATH="$MEMORY_DIR" "$MEMORY_DIR/.venv/bin/python" "$BENCH_DIR/hnsw_bench.py" \
   --sizes ${SIZES} \
   --output "$OUTPUT" \
   "$@"
 
-PYTHONPATH="$MEMORY_DIR" .venv/bin/python "$BENCH_DIR/build_published_data.py" \
+PYTHONPATH="$MEMORY_DIR" "$MEMORY_DIR/.venv/bin/python" "$BENCH_DIR/build_published_data.py" \
   --raw "$OUTPUT" \
   --published "$PUBLISHED" \
   --sha "${GITHUB_SHA:-$(git -C "$ROOT" rev-parse HEAD)}" \

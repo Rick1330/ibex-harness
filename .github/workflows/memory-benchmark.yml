@@ -46,13 +46,12 @@ concurrency:
   group: memory-benchmarks-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-permissions:
-  contents: read
-
 jobs:
   detect-memory-bench-profile:
     name: detect-memory-bench-profile
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       bench_profile: ${{ steps.profile.outputs.bench_profile }}
     steps:

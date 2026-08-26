@@ -22,7 +22,7 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from uuid import UUID, uuid4, uuid5
+from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
@@ -35,25 +35,36 @@ from app.vectorstore.pgvector_store import SEARCH_SQL, PgVectorStore
 _BENCH_DIR = Path(__file__).resolve().parent
 if str(_BENCH_DIR) not in sys.path:
     sys.path.insert(0, str(_BENCH_DIR))
+from corpus import (  # noqa: E402
+    analyze_memories,
+    bulk_insert_memories,
+    count_memories,
+    drop_hnsw_index,
+    ensure_hnsw_index,
+    idx_scan_count,
+    memory_id_for,
+    reset_memories,
+    seed_org,
+    try_prewarm,
+)
+from path_guard import UnsafePathError, resolve_workspace_path  # noqa: E402
 from plan_assert import PlanAssertionError, assert_hnsw_index_used  # noqa: E402
-from synth import bootstrap_p95_ci, percentile, perturb, unit_vector, vec_literal  # noqa: E402
+from synth import (  # noqa: E402
+    ACTIVE_DIMS,
+    DIM,
+    bootstrap_p95_ci,
+    percentile,
+    perturb,
+    unit_vector,
+    vec_literal,
+)
 
-_DIM = 1024
 _DEFAULT_EF_SEARCH = 40
 _DEFAULT_SIZES = (10_000, 100_000)
 _QUERY_COUNTS = {10_000: 500, 100_000: 200, 1_000_000: 200}
 _WARMUP_QUERIES = 100
 # Offset so warm-up indices never share the timed `(q * 97) % size` sequence.
 _WARMUP_INDEX_OFFSET = 10_007
-_COPY_CHUNK = 20_000
-_HNSW_INDEX = "idx_memories_embedding_hnsw"
-_HNSW_CREATE_SQL = """
-CREATE INDEX idx_memories_embedding_hnsw
-    ON ibex_core.memories
-    USING hnsw (embedding vector_cosine_ops)
-    WITH (m = 16, ef_construction = 64)
-    WHERE status = 'active' AND deleted_at IS NULL
-"""
 
 
 def _maintenance_work_mem() -> str:
@@ -82,267 +93,20 @@ class SizeResult:
     row_count_verified: int
 
 
-async def _exec(session: AsyncSession, sql: str, params: dict[str, object] | None = None) -> None:
-    await session.execute(
-        text(sql),  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-        params or {},
-    )
+@dataclass(frozen=True, slots=True)
+class CellParams:
+    """Search-knob cell on an already-seeded corpus (reduces arg sprawl)."""
 
-
-async def _scalar(engine: AsyncEngine, sql: str, params: dict[str, object] | None = None) -> Any:
-    async with engine.begin() as conn:
-        await conn.execute(
-            text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-                "SELECT set_config('app.is_service_account', 'true', true)"
-            )
-        )
-        result = await conn.execute(
-            text(sql),  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-            params or {},
-        )
-        return result.scalar()
-
-
-async def _reset_memories(engine: AsyncEngine) -> None:
-    """TRUNCATE memories (+ dependent label/relationship rows) for a clean corpus."""
-    async with engine.begin() as conn:
-        await conn.execute(
-            text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-                "SELECT set_config('app.is_service_account', 'true', true)"
-            )
-        )
-        await conn.execute(
-            text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-                "TRUNCATE ibex_core.memories CASCADE"
-            )
-        )
-
-
-async def _analyze_memories(engine: AsyncEngine) -> None:
-    async with engine.begin() as conn:
-        await conn.execute(
-            text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-                "SELECT set_config('app.is_service_account', 'true', true)"
-            )
-        )
-        await conn.execute(
-            text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-                "ANALYZE ibex_core.memories"
-            )
-        )
-
-
-async def _count_memories(engine: AsyncEngine) -> int:
-    value = await _scalar(engine, "SELECT count(*)::bigint FROM ibex_core.memories")
-    return int(value or 0)
-
-
-async def _idx_scan_count(engine: AsyncEngine) -> int:
-    # PG15+ buffers stats; flush so deltas are visible to this process.
-    await _scalar(engine, "SELECT pg_stat_force_next_flush()")
-    value = await _scalar(
-        engine,
-        """
-        SELECT coalesce(sum(idx_scan), 0)::bigint
-        FROM pg_stat_all_indexes
-        WHERE indexrelname = :name
-        """,
-        {"name": _HNSW_INDEX},
-    )
-    return int(value or 0)
-
-
-async def _ensure_hnsw_index(engine: AsyncEngine) -> None:
-    exists = await _scalar(
-        engine,
-        """
-        SELECT 1
-        FROM pg_class c
-        JOIN pg_namespace n ON n.oid = c.relnamespace
-        WHERE n.nspname = 'ibex_core' AND c.relname = :name
-        """,
-        {"name": _HNSW_INDEX},
-    )
-    if exists:
-        return
-    async with engine.begin() as conn:
-        await conn.execute(
-            text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-                "SELECT set_config('app.is_service_account', 'true', true)"
-            )
-        )
-        # Align with CI Tune Postgres (default 2GB); override via MEMORY_BENCH_MAINTENANCE_WORK_MEM.
-        await conn.execute(
-            text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-                "SELECT set_config('maintenance_work_mem', :mwm, true)"
-            ),
-            {"mwm": _maintenance_work_mem()},
-        )
-        await conn.execute(
-            text(_HNSW_CREATE_SQL)  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-        )
-
-
-async def _drop_hnsw_index(engine: AsyncEngine) -> None:
-    async with engine.begin() as conn:
-        await conn.execute(
-            text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-                "SELECT set_config('app.is_service_account', 'true', true)"
-            )
-        )
-        await conn.execute(
-            text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-                "DROP INDEX IF EXISTS ibex_core.idx_memories_embedding_hnsw"
-            )
-        )
-
-
-async def _try_prewarm(engine: AsyncEngine) -> bool:
-    try:
-        async with engine.begin() as conn:
-            await conn.execute(
-                text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-                    "CREATE EXTENSION IF NOT EXISTS pg_prewarm"
-                )
-            )
-            await conn.execute(
-                text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-                    "SELECT pg_prewarm('ibex_core.idx_memories_embedding_hnsw'::regclass)"
-                )
-            )
-        return True
-    except Exception as exc:  # noqa: BLE001 — optional extension
-        print(f"  pg_prewarm skipped: {exc}", flush=True)
-        return False
-
-
-async def _seed_org(
-    factory: async_sessionmaker[AsyncSession],
-) -> tuple[UUID, UUID]:
-    org_id, user_id, agent_id = uuid4(), uuid4(), uuid4()
-    slug = f"bench-{org_id.hex[:8]}"
-    async with factory() as session, session.begin():
-        await _exec(session, "SELECT set_config('app.is_service_account', 'true', true)")
-        await _exec(
-            session,
-            """
-            INSERT INTO ibex_core.organizations (id, name, slug)
-            VALUES (:id, :name, :slug)
-            """,
-            {"id": str(org_id), "name": f"Bench {slug}", "slug": slug},
-        )
-        await _exec(
-            session,
-            """
-            INSERT INTO ibex_core.users (id, org_id, email, name)
-            VALUES (:id, :org_id, :email, :name)
-            """,
-            {
-                "id": str(user_id),
-                "org_id": str(org_id),
-                "email": f"{slug}@example.com",
-                "name": "Bench",
-            },
-        )
-        await _exec(
-            session,
-            """
-            INSERT INTO ibex_core.agents (id, org_id, created_by, name, slug)
-            VALUES (:id, :org_id, :created_by, :name, :slug)
-            """,
-            {
-                "id": str(agent_id),
-                "org_id": str(org_id),
-                "created_by": str(user_id),
-                "name": "BenchAgent",
-                "slug": f"agent-{agent_id.hex[:8]}",
-            },
-        )
-    return org_id, agent_id
-
-
-def _memory_id_for(org_id: UUID, idx: int) -> UUID:
-    return uuid5(org_id, f"bench-{idx}")
-
-
-async def _bulk_insert_memories(
-    engine: AsyncEngine,
-    *,
-    org_id: UUID,
-    agent_id: UUID,
-    size: int,
-) -> None:
-    """Seed via asyncpg text/CSV COPY in chunks (pgvector has no binary encoder)."""
-    import csv
-    from io import BytesIO, StringIO
-
-    columns = [
-        "id",
-        "org_id",
-        "agent_id",
-        "content",
-        "content_hash",
-        "content_tokens",
-        "embedding",
-        "embedding_model",
-        "embedding_dim",
-        "status",
-    ]
-
-    total = size
-    for start in range(0, total, _COPY_CHUNK):
-        end = min(total, start + _COPY_CHUNK)
-        text_buf = StringIO()
-        writer = csv.writer(text_buf)
-        for idx in range(start, end):
-            mid = _memory_id_for(org_id, idx)
-            writer.writerow(
-                [
-                    str(mid),
-                    str(org_id),
-                    str(agent_id),
-                    f"bench-{mid.hex}",
-                    f"h-{mid.hex}",
-                    1,
-                    vec_literal(unit_vector(idx)),
-                    "bench-synthetic",
-                    _DIM,
-                    "active",
-                ]
-            )
-        payload = BytesIO(text_buf.getvalue().encode("utf-8"))
-        del text_buf
-
-        async with engine.begin() as conn:
-            await conn.execute(
-                text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-                    "SELECT set_config('app.is_service_account', 'true', true)"
-                )
-            )
-            await conn.execute(
-                text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-                    "SELECT set_config('app.current_org_id', :org_id, true)"
-                ),
-                {"org_id": str(org_id)},
-            )
-            # Bench-only: skip fsync wait on ephemeral test DB (huge COPY speedup).
-            await conn.execute(
-                text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-                    "SELECT set_config('synchronous_commit', 'off', true)"
-                )
-            )
-            raw = await conn.get_raw_connection()
-            driver = raw.driver_connection
-            if driver is None:
-                raise RuntimeError("asyncpg driver_connection missing for COPY")
-            await driver.copy_to_table(
-                "memories",
-                source=payload,
-                columns=columns,
-                schema_name="ibex_core",
-                format="csv",
-            )
-        print(f"  seeded {end}/{total}", flush=True)
+    org_id: UUID
+    agent_id: UUID
+    size: int
+    ef_search: int
+    min_similarity: float
+    iterative_scan: str
+    index_build_mode: str
+    query_count: int | None
+    row_count: int
+    prewarm: bool
 
 
 async def _explain_search(
@@ -419,7 +183,6 @@ async def _run_size(
     idx_scan_delta: int,
     row_count: int,
 ) -> SizeResult:
-    # Warm-up (discarded) — offset indices so they do not overlap timed queries.
     for q in range(_WARMUP_QUERIES):
         idx = ((q * 97) + _WARMUP_INDEX_OFFSET) % size
         await store.search(
@@ -453,7 +216,7 @@ async def _run_size(
         )
         latencies.append((time.perf_counter() - t0) * 1000.0)
         top_ids = {hit.memory_id for hit in results}
-        if _memory_id_for(org_id, idx) in top_ids:
+        if memory_id_for(org_id, idx) in top_ids:
             hits += 1
 
     ordered = sorted(latencies)
@@ -487,22 +250,22 @@ async def _prepare_corpus(
     size: int,
     index_build_mode: str,
 ) -> tuple[UUID, UUID, float]:
-    await _reset_memories(engine)
+    await reset_memories(engine)
     if index_build_mode == "bulk":
-        await _drop_hnsw_index(engine)
+        await drop_hnsw_index(engine)
     else:
-        await _ensure_hnsw_index(engine)
+        await ensure_hnsw_index(engine, maintenance_work_mem=_maintenance_work_mem())
 
-    org_id, agent_id = await _seed_org(factory)
+    org_id, agent_id = await seed_org(factory)
     print(f"seeding corpus_size={size} mode={index_build_mode} …", flush=True)
     t0 = time.perf_counter()
-    await _bulk_insert_memories(engine, org_id=org_id, agent_id=agent_id, size=size)
+    await bulk_insert_memories(engine, org_id=org_id, agent_id=agent_id, size=size)
     if index_build_mode == "bulk":
         print("  CREATE INDEX (bulk) …", flush=True)
-        await _ensure_hnsw_index(engine)
+        await ensure_hnsw_index(engine, maintenance_work_mem=_maintenance_work_mem())
     build_s = time.perf_counter() - t0
-    await _analyze_memories(engine)
-    count = await _count_memories(engine)
+    await analyze_memories(engine)
+    count = await count_memories(engine)
     if count != size:
         msg = f"row count after seed expected {size}, got {count}"
         raise RuntimeError(msg)
@@ -510,56 +273,42 @@ async def _prepare_corpus(
     return org_id, agent_id, build_s
 
 
-async def _measure_cell(
-    engine: AsyncEngine,
-    store: PgVectorStore,
-    *,
-    org_id: UUID,
-    agent_id: UUID,
-    size: int,
-    ef_search: int,
-    min_similarity: float,
-    iterative_scan: str,
-    index_build_mode: str,
-    query_count: int | None,
-    row_count: int,
-    prewarm: bool,
-) -> SizeResult:
+async def _measure_cell(engine: AsyncEngine, store: PgVectorStore, cell: CellParams) -> SizeResult:
     """Time one (min_similarity × iterative_scan) cell on an already-seeded corpus."""
     plan_summary = await _explain_search(
         engine,
-        org_id=org_id,
-        agent_id=agent_id,
+        org_id=cell.org_id,
+        agent_id=cell.agent_id,
         query=unit_vector(0),
-        ef_search=ef_search,
-        min_similarity=min_similarity,
-        iterative_scan=iterative_scan,
+        ef_search=cell.ef_search,
+        min_similarity=cell.min_similarity,
+        iterative_scan=cell.iterative_scan,
     )
-    if prewarm:
-        await _try_prewarm(engine)
+    if cell.prewarm:
+        await try_prewarm(engine)
 
-    qn = query_count if query_count is not None else _QUERY_COUNTS.get(size, 200)
-    before = await _idx_scan_count(engine)
+    qn = cell.query_count if cell.query_count is not None else _QUERY_COUNTS.get(cell.size, 200)
+    before = await idx_scan_count(engine)
     print(
-        f"searching size={size} ef={ef_search} min_sim={min_similarity} "
-        f"iter={iterative_scan} queries={qn} warmup={_WARMUP_QUERIES} …",
+        f"searching size={cell.size} ef={cell.ef_search} min_sim={cell.min_similarity} "
+        f"iter={cell.iterative_scan} queries={qn} warmup={_WARMUP_QUERIES} …",
         flush=True,
     )
     result = await _run_size(
         store,
-        org_id=org_id,
-        agent_id=agent_id,
-        size=size,
+        org_id=cell.org_id,
+        agent_id=cell.agent_id,
+        size=cell.size,
         query_count=qn,
-        ef_search=ef_search,
-        min_similarity=min_similarity,
-        iterative_scan=iterative_scan,
-        index_build_mode=index_build_mode,
+        ef_search=cell.ef_search,
+        min_similarity=cell.min_similarity,
+        iterative_scan=cell.iterative_scan,
+        index_build_mode=cell.index_build_mode,
         plan_summary=plan_summary,
         idx_scan_delta=0,
-        row_count=row_count,
+        row_count=cell.row_count,
     )
-    after = await _idx_scan_count(engine)
+    after = await idx_scan_count(engine)
     delta = after - before
     if delta < 1:
         msg = (
@@ -569,7 +318,7 @@ async def _measure_cell(
         raise PlanAssertionError(msg)
     result = SizeResult(**{**asdict(result), "idx_scan_delta": delta})
     print(
-        f"size={size} recall@10={result.recall_at_10:.4f} "
+        f"size={cell.size} recall@10={result.recall_at_10:.4f} "
         f"p95_ms={result.latency_ms_p95:.2f} "
         f"p95_ci=[{result.latency_ms_p95_ci_low:.2f},{result.latency_ms_p95_ci_high:.2f}] "
         f"idx_scan_delta={delta}",
@@ -596,24 +345,22 @@ async def _benchmark(args: argparse.Namespace) -> dict[str, object]:
 
     results: list[SizeResult] = []
     try:
-        await _reset_memories(engine)
-        await _ensure_hnsw_index(engine)
+        await reset_memories(engine)
+        await ensure_hnsw_index(engine, maintenance_work_mem=_maintenance_work_mem())
         for size in sizes:
             for index_build_mode in index_modes:
-                # Seed once per (size × build mode). Search knobs share the corpus —
-                # re-seeding 4× was the main local wall-clock cost.
                 org_id, agent_id, _build_s = await _prepare_corpus(
                     engine, factory, size=size, index_build_mode=index_build_mode
                 )
                 await store.upsert(
                     UpsertRequest(
-                        memory_id=_memory_id_for(org_id, 0),
+                        memory_id=memory_id_for(org_id, 0),
                         org_id=org_id,
                         embedding=unit_vector(0),
                         embedding_model="bench-synthetic",
                     )
                 )
-                count = await _count_memories(engine)
+                count = await count_memories(engine)
                 if count != size:
                     msg = f"row count after upsert expected {size}, got {count}"
                     raise RuntimeError(msg)
@@ -621,9 +368,7 @@ async def _benchmark(args: argparse.Namespace) -> dict[str, object]:
                 first_cell = True
                 for iterative_scan in iterative_modes:
                     for min_similarity in min_sims:
-                        cell = await _measure_cell(
-                            engine,
-                            store,
+                        cell = CellParams(
                             org_id=org_id,
                             agent_id=agent_id,
                             size=size,
@@ -635,7 +380,7 @@ async def _benchmark(args: argparse.Namespace) -> dict[str, object]:
                             row_count=count,
                             prewarm=first_cell,
                         )
-                        results.append(cell)
+                        results.append(await _measure_cell(engine, store, cell))
                         first_cell = False
     finally:
         await engine.dispose()
@@ -646,8 +391,8 @@ async def _benchmark(args: argparse.Namespace) -> dict[str, object]:
         "methodology": {
             "index": "idx_memories_embedding_hnsw (m=16, ef_construction=64, cosine)",
             "ef_search": args.ef_search,
-            "dim": _DIM,
-            "active_dims": _ACTIVE_DIMS,
+            "dim": DIM,
+            "active_dims": ACTIVE_DIMS,
             "warmup_queries": _WARMUP_QUERIES,
             "truncate_between_sizes": True,
             "reuse_corpus_across_search_knobs": True,
@@ -664,8 +409,9 @@ async def _benchmark(args: argparse.Namespace) -> dict[str, object]:
         if results
         else 0.0,
     }
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    out = resolve_workspace_path(args.output, allow_create_parent=True)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     return payload
 
 
@@ -716,12 +462,16 @@ def main() -> None:
     parser.add_argument(
         "--output",
         type=Path,
-        default=_BENCH_DIR / "output" / "hnsw_recall_latency.json",
+        default=Path("benchmarks/memory/output/hnsw_recall_latency.json"),
+        help="Workspace-relative JSON output path",
     )
     args = parser.parse_args()
     if args.ef_search < 1:
         parser.error("--ef-search must be >= 1")
-    asyncio.run(_benchmark(args))
+    try:
+        asyncio.run(_benchmark(args))
+    except UnsafePathError as exc:
+        parser.error(str(exc))
 
 
 if __name__ == "__main__":

@@ -130,7 +130,8 @@ jobs:
       BENCH_PROFILE: ${{ needs.detect-benchmark-trigger.outputs.bench_profile }}
     services:
       postgres:
-        image: postgres:16
+        # pgvector required: migrate expands memories with vector(1024) + HNSW (ADR-0052)
+        image: pgvector/pgvector:0.8.6-pg16@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b
         env:
           POSTGRES_USER: ibex
           POSTGRES_PASSWORD: ibex

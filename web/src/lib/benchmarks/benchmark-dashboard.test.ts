@@ -5,8 +5,9 @@ import { stagePercentileRows } from "@/lib/benchmarks/stage-metrics";
 import type { StageLatency } from "@/lib/benchmarks/types";
 
 describe("benchmark navigation", () => {
-  it("lists six sidebar destinations including compare", () => {
-    expect(BENCHMARK_NAV_PAGES).toHaveLength(6);
+  it("lists seven sidebar destinations including memory and compare", () => {
+    expect(BENCHMARK_NAV_PAGES).toHaveLength(7);
+    expect(BENCHMARK_NAV_PAGES.map((page) => page.url)).toContain("/benchmarks/memory");
     expect(BENCHMARK_NAV_PAGES.map((page) => page.url)).toContain("/benchmarks/compare");
   });
 });
