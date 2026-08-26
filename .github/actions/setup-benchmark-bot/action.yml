@@ -5,7 +5,11 @@ inputs:
     description: Full SHA pin for ibexharness-benchmark-bot
     required: true
   release-tag:
-    description: Optional explicit release tag override
+    description: Optional explicit release tag override (must match pin short SHA)
+    required: false
+    default: ""
+  require-subcommand:
+    description: Subcommand that must exist on the binary (e.g. post-hnsw-pr-comment)
     required: false
     default: ""
 outputs:
@@ -25,6 +29,7 @@ runs:
         GH_TOKEN: ${{ github.token }}
         BENCHMARK_BOT_SHA: ${{ inputs.bot-sha }}
         BENCHMARK_BOT_RELEASE_TAG: ${{ inputs.release-tag }}
+        REQUIRE_SUBCOMMAND: ${{ inputs.require-subcommand }}
       run: |
         set -euo pipefail
         mkdir -p benchmark-bot-bin
@@ -32,18 +37,31 @@ runs:
         short="${BENCHMARK_BOT_SHA:0:7}"
         tags=()
         if [ -n "${BENCHMARK_BOT_RELEASE_TAG:-}" ]; then
-          tags+=("$BENCHMARK_BOT_RELEASE_TAG")
+          # Reject stale overrides that do not match the pin (root cause of missing subcommands).
+          if [ "$BENCHMARK_BOT_RELEASE_TAG" = "bot-${short}" ] || [ "$BENCHMARK_BOT_RELEASE_TAG" = "v${short}" ]; then
+            tags+=("$BENCHMARK_BOT_RELEASE_TAG")
+          else
+            echo "Ignoring BENCHMARK_BOT_RELEASE_TAG=${BENCHMARK_BOT_RELEASE_TAG} (does not match pin ${short})"
+          fi
         fi
         tags+=("bot-${short}" "v${short}")
         source=build
         path=""
         for tag in "${tags[@]}"; do
+          rm -f "benchmark-bot-bin/$asset"
           if gh release download "$tag" \
               --repo Rick1330/ibexharness-benchmark-bot \
               --pattern "$asset" \
               --dir benchmark-bot-bin 2>/dev/null; then
             chmod +x "benchmark-bot-bin/$asset"
-            path="${GITHUB_WORKSPACE}/benchmark-bot-bin/$asset"
+            cand="${GITHUB_WORKSPACE}/benchmark-bot-bin/$asset"
+            if [ -n "${REQUIRE_SUBCOMMAND:-}" ]; then
+              if ! "$cand" --help 2>&1 | grep -q -- "$REQUIRE_SUBCOMMAND"; then
+                echo "Release $tag missing subcommand ${REQUIRE_SUBCOMMAND}; trying next / cargo build"
+                continue
+              fi
+            fi
+            path="$cand"
             source=release
             echo "Downloaded bot binary from release tag $tag"
             break
@@ -52,7 +70,7 @@ runs:
         echo "path=$path" >> "$GITHUB_OUTPUT"
         echo "source=$source" >> "$GITHUB_OUTPUT"
         if [ "$source" = "build" ]; then
-          echo "No release asset for pin ${BENCHMARK_BOT_SHA}; will cargo build."
+          echo "No usable release asset for pin ${BENCHMARK_BOT_SHA}; will cargo build."
         fi
 
     - name: Checkout benchmark bot
@@ -91,16 +109,27 @@ runs:
         BOT_BIN_RELEASE: ${{ steps.bot_bin.outputs.path }}
         BOT_BIN_BUILD: ${{ steps.bot_build.outputs.path }}
         SOURCE: ${{ steps.bot_bin.outputs.source }}
+        REQUIRE_SUBCOMMAND: ${{ inputs.require-subcommand }}
       run: |
         set -euo pipefail
+        path=""
+        source=""
         if [ -n "${BOT_BIN_RELEASE:-}" ] && [ -x "$BOT_BIN_RELEASE" ]; then
-          echo "path=$BOT_BIN_RELEASE" >> "$GITHUB_OUTPUT"
-          echo "source=release" >> "$GITHUB_OUTPUT"
+          path="$BOT_BIN_RELEASE"
+          source=release
         elif [ -n "${BOT_BIN_BUILD:-}" ] && [ -x "$BOT_BIN_BUILD" ]; then
-          echo "path=$BOT_BIN_BUILD" >> "$GITHUB_OUTPUT"
-          echo "source=build" >> "$GITHUB_OUTPUT"
+          path="$BOT_BIN_BUILD"
+          source=build
         else
           echo "benchmark bot binary not found" >&2
           exit 1
         fi
-        echo "Resolved bot source=${SOURCE}"
+        if [ -n "${REQUIRE_SUBCOMMAND:-}" ]; then
+          if ! "$path" --help 2>&1 | grep -q -- "$REQUIRE_SUBCOMMAND"; then
+            echo "bot binary missing required subcommand: ${REQUIRE_SUBCOMMAND}" >&2
+            exit 1
+          fi
+        fi
+        echo "path=$path" >> "$GITHUB_OUTPUT"
+        echo "source=$source" >> "$GITHUB_OUTPUT"
+        echo "Resolved bot source=${source}"

@@ -147,6 +147,10 @@ jobs:
               ;;
           esac
           if [ -n "${override}" ]; then
+            if ! [[ "$override" =~ ^[0-9]+([[:space:]]+[0-9]+)*$ ]]; then
+              echo "sizes override must be space-separated positive integers" >&2
+              exit 1
+            fi
             sizes="$override"
           fi
           echo "sizes=$sizes" >> "$GITHUB_OUTPUT"
@@ -260,6 +264,7 @@ jobs:
         with:
           bot-sha: ${{ vars.BENCHMARK_BOT_SHA }}
           release-tag: ${{ vars.BENCHMARK_BOT_RELEASE_TAG }}
+          require-subcommand: post-hnsw-pr-comment
 
       - name: Post Memory HNSW PR comment
         if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository

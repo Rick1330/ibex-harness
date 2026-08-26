@@ -15,6 +15,12 @@ from build_published_data import (  # noqa: E402
 )
 
 
+def _expect(condition: bool, message: str) -> None:
+    """Fail tests without `assert` (Codacy flags assert under -O)."""
+    if not condition:
+        raise AssertionError(message)
+
+
 def test_filter_keeps_production_cells_only() -> None:
     results = [
         {
@@ -39,8 +45,8 @@ def test_filter_keeps_production_cells_only() -> None:
         },
     ]
     kept = filter_published_results(results)
-    assert len(kept) == 1
-    assert kept[0]["min_similarity"] == 0.70
+    _expect(len(kept) == 1, "expected one production cell")
+    _expect(kept[0]["min_similarity"] == 0.70, "expected min_similarity 0.70")
 
 
 def test_status_warn_without_1m() -> None:
@@ -53,8 +59,8 @@ def test_status_warn_without_1m() -> None:
         }
     ]
     gate = compute_gate_summary(cells)
-    assert gate["has_1m"] is False
-    assert compute_status(gate) == "warn"
+    _expect(gate["has_1m"] is False, "expected has_1m false")
+    _expect(compute_status(gate) == "warn", "expected warn without 1M")
 
 
 def test_status_fail_on_low_recall() -> None:
@@ -66,4 +72,4 @@ def test_status_fail_on_low_recall() -> None:
             "latency_ms_p99": 22.0,
         }
     ]
-    assert compute_status(compute_gate_summary(cells)) == "fail"
+    _expect(compute_status(compute_gate_summary(cells)) == "fail", "expected fail")

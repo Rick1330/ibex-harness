@@ -36,10 +36,14 @@ CI (`memory-benchmark.yml`) always measures with production publish knobs:
 --ef-search 40 --min-similarity 0.70 --iterative-scan off --index-build-mode bulk
 ```
 
-`build_published_data.py` filters to those cells and attaches `status` /
-`gate_summary` (recall ≥ 98%; 1M p95/p99 SLAs when a 1M cell exists — otherwise
+`build_published_data.py` (via `publish_cells.py`) filters to those cells and attaches
+`status` / `gate_summary` (recall ≥ 98%; 1M p95/p99 SLAs when a 1M cell exists — otherwise
 `warn` on smoke/fast). Full local matrices (`0.0 0.70`, iterative modes, incremental)
 remain useful for investigation but are **not** published.
+
+CI validates the published file with `benchmarks/scripts/validate_published_hnsw.py` and
+fails the Memory collect artifact upload if the bot binary lacks `post-hnsw-pr-comment`
+(stale `BENCHMARK_BOT_RELEASE_TAG` is ignored when it does not match `BENCHMARK_BOT_SHA`).
 
 ## Run
 

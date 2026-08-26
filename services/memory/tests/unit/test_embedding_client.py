@@ -33,11 +33,27 @@ def _client(*, max_retries: int = 2) -> EmbeddingClient:
 
 def _ok_body(*, n: int = 1) -> dict[str, object]:
     return {
-        "vectors": [_VEC for _ in range(n)],
+        "vectors": [list(_VEC) for _ in range(n)],
         "model_id": "bge-m3",
         "dimensions": 1024,
         "backend": "tei",
     }
+
+
+def _body_with_bad_dimensions() -> dict[str, object]:
+    body = _ok_body()
+    body["dimensions"] = 768
+    return body
+
+
+def _body_with_bad_component(bad: object) -> dict[str, object]:
+    body = _ok_body()
+    vectors = body["vectors"]
+    assert isinstance(vectors, list)
+    row = vectors[0]
+    assert isinstance(row, list)
+    row[0] = bad
+    return body
 
 
 @pytest.mark.asyncio
@@ -136,13 +152,25 @@ async def test_500_not_retried() -> None:
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_invalid_dimensions() -> None:
-    body = _ok_body()
-    body["dimensions"] = 768
-    respx.post(f"{_BASE}/v1/embed").mock(return_value=Response(200, json=body))
+@pytest.mark.parametrize(
+    ("body_factory", "match"),
+    [
+        (_body_with_bad_dimensions, "1024"),
+        (lambda: _body_with_bad_component(None), "finite number"),
+        (lambda: _body_with_bad_component(True), "finite number"),
+        (lambda: _body_with_bad_component("1.0"), "finite number"),
+    ],
+)
+async def test_embed_rejects_invalid_response_body(
+    body_factory: object,
+    match: str,
+) -> None:
+    respx.post(f"{_BASE}/v1/embed").mock(
+        return_value=Response(200, json=body_factory())  # type: ignore[operator]
+    )
     client = _client()
     try:
-        with pytest.raises(EmbeddingInvalidResponseError, match="1024"):
+        with pytest.raises(EmbeddingInvalidResponseError, match=match):
             await client.embed(["x"], org_id=_ORG)
     finally:
         await client.aclose()
@@ -224,18 +252,3 @@ async def test_embed_accepts_batch_of_64() -> None:
     finally:
         await client.aclose()
     assert len(result.vectors) == 64
-
-
-@pytest.mark.asyncio
-@respx.mock
-@pytest.mark.parametrize("bad_component", [None, True, "1.0"])
-async def test_embed_rejects_non_finite_vector_component(bad_component: object) -> None:
-    body = _ok_body()
-    body["vectors"][0][0] = bad_component  # type: ignore[index]
-    respx.post(f"{_BASE}/v1/embed").mock(return_value=Response(200, json=body))
-    client = _client()
-    try:
-        with pytest.raises(EmbeddingInvalidResponseError, match="finite number"):
-            await client.embed(["x"], org_id=_ORG)
-    finally:
-        await client.aclose()

@@ -49,13 +49,18 @@ Do **not** merge suites into one mega-JSON. Site nav groups by suite; proxy-only
 
 - `memory/hnsw_bench.py`: seed synthetic 1024-d vectors, measure recall@10 + search latency
   at 10K / 100K / 1M via `PgVectorStore.search` (includes `SET LOCAL`).
-- `memory/build_published_data.py`: merge raw JSON into `hnsw-benchmark-data.json`.
+- `memory/publish_cells.py`: production cell filter + `status` / `gate_summary` helpers.
+- `memory/build_published_data.py`: merge raw JSON into `hnsw-benchmark-data.json` (uses
+  `publish_cells`).
+- `scripts/validate_published_hnsw.py`: CI contract checks for published HNSW history.
 - `data-schema/hnsw-benchmark-data.schema.json`: Zod/CI contract for the HNSW file.
 - Workflow: `.github/workflows/memory-benchmark.yml` (name **`Memory Benchmarks`**).
+- Bot setup: `.github/actions/setup-benchmark-bot` (pin + optional `BENCHMARK_BOT_RELEASE_TAG`;
+  Memory collect requires subcommand `post-hnsw-pr-comment`).
 - Bot dispatch: `memory_benchmark_main_complete` → artifact `hnsw-benchmark-data` only
   (does **not** touch proxy `benchmark-data.json` / `badge.svg`).
 - Same-repo PRs also get a **Memory HNSW** sticky PR comment (`post-hnsw-pr-comment`)
-  separate from the proxy comment.
+  separate from the proxy comment (suite badge, corpus table, gate summary, site links).
 - Published cells are production knobs only: `ef_search=40`, `min_similarity=0.70`,
   `iterative_scan=off`, `index_build_mode=bulk` (full matrix stays in raw output).
 - Site suite: `/benchmarks/memory` (+ latency / history / compare).

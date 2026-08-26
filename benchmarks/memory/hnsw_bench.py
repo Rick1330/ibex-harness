@@ -200,23 +200,15 @@ async def _explain_search(engine: AsyncEngine, params: ExplainParams) -> dict[st
     return summary
 
 
-def _search_request(
-    *,
-    org_id: UUID,
-    agent_id: UUID,
-    query: list[float],
-    ef_search: int,
-    min_similarity: float,
-    iterative_scan: str,
-) -> SearchRequest:
+def _search_request(params: SizeRunParams, query: list[float]) -> SearchRequest:
     return SearchRequest(
-        org_id=org_id,
-        agent_id=agent_id,
+        org_id=params.org_id,
+        agent_id=params.agent_id,
         query_embedding=query,
         limit=10,
-        min_similarity=min_similarity,
-        ef_search=ef_search,
-        iterative_scan=iterative_scan,
+        min_similarity=params.min_similarity,
+        ef_search=params.ef_search,
+        iterative_scan=params.iterative_scan,
     )
 
 
@@ -224,14 +216,7 @@ async def _warmup_searches(store: PgVectorStore, params: SizeRunParams) -> None:
     for q in range(_WARMUP_QUERIES):
         idx = ((q * 97) + _WARMUP_INDEX_OFFSET) % params.size
         await store.search(
-            _search_request(
-                org_id=params.org_id,
-                agent_id=params.agent_id,
-                query=perturb(unit_vector(idx), seed=idx),
-                ef_search=params.ef_search,
-                min_similarity=params.min_similarity,
-                iterative_scan=params.iterative_scan,
-            )
+            _search_request(params, perturb(unit_vector(idx), seed=idx))
         )
 
 
@@ -244,16 +229,7 @@ async def _timed_search_pass(
         idx = (q * 97) % params.size
         query = perturb(unit_vector(idx), seed=idx)
         t0 = time.perf_counter()
-        results = await store.search(
-            _search_request(
-                org_id=params.org_id,
-                agent_id=params.agent_id,
-                query=query,
-                ef_search=params.ef_search,
-                min_similarity=params.min_similarity,
-                iterative_scan=params.iterative_scan,
-            )
-        )
+        results = await store.search(_search_request(params, query))
         latencies.append((time.perf_counter() - t0) * 1000.0)
         top_ids = {hit.memory_id for hit in results}
         if memory_id_for(params.org_id, idx) in top_ids:
@@ -434,16 +410,21 @@ async def _run_search_matrix(
     return results
 
 
-def _methodology_block(
-    *,
-    ef_search: int,
-    iterative_modes: list[str],
-    min_sims: list[float],
-    index_modes: list[str],
-) -> dict[str, object]:
+@dataclass(frozen=True, slots=True)
+class PayloadParams:
+    """Knobs + results for the published JSON payload."""
+
+    ef_search: int
+    results: list[SizeResult]
+    iterative_modes: list[str]
+    min_sims: list[float]
+    index_modes: list[str]
+
+
+def _methodology_block(params: PayloadParams) -> dict[str, object]:
     return {
         "index": "idx_memories_embedding_hnsw (m=16, ef_construction=64, cosine)",
-        "ef_search": ef_search,
+        "ef_search": params.ef_search,
         "dim": DIM,
         "active_dims": ACTIVE_DIMS,
         "warmup_queries": _WARMUP_QUERIES,
@@ -453,33 +434,21 @@ def _methodology_block(
         "explain_requires_hnsw": True,
         "recall": "planted near-neighbor must appear in top-10",
         "latency": "wall-clock PgVectorStore.search including SET LOCAL",
-        "iterative_scan_modes": iterative_modes,
-        "min_similarity_values": min_sims,
-        "index_build_modes": index_modes,
+        "iterative_scan_modes": params.iterative_modes,
+        "min_similarity_values": params.min_sims,
+        "index_build_modes": params.index_modes,
     }
 
 
-def _build_payload(
-    *,
-    ef_search: int,
-    results: list[SizeResult],
-    iterative_modes: list[str],
-    min_sims: list[float],
-    index_modes: list[str],
-) -> dict[str, object]:
+def _build_payload(params: PayloadParams) -> dict[str, object]:
     mean_recall = (
-        statistics.fmean(r.recall_at_10 for r in results) if results else 0.0
+        statistics.fmean(r.recall_at_10 for r in params.results) if params.results else 0.0
     )
     return {
         "benchmark": "hnsw_recall_latency",
         "generated_at": datetime.now(UTC).isoformat(),
-        "methodology": _methodology_block(
-            ef_search=ef_search,
-            iterative_modes=iterative_modes,
-            min_sims=min_sims,
-            index_modes=index_modes,
-        ),
-        "results": [asdict(r) for r in results],
+        "methodology": _methodology_block(params),
+        "results": [asdict(r) for r in params.results],
         "mean_recall_at_10": mean_recall,
     }
 
@@ -516,11 +485,13 @@ async def _benchmark(args: argparse.Namespace) -> dict[str, object]:
         await engine.dispose()
 
     payload = _build_payload(
-        ef_search=args.ef_search,
-        results=results,
-        iterative_modes=iterative_modes,
-        min_sims=min_sims,
-        index_modes=index_modes,
+        PayloadParams(
+            ef_search=args.ef_search,
+            results=results,
+            iterative_modes=iterative_modes,
+            min_sims=min_sims,
+            index_modes=index_modes,
+        )
     )
     out = resolve_raw_bench_path(args.output, must_exist=False)
     out.parent.mkdir(parents=True, exist_ok=True)

@@ -13,7 +13,6 @@ import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
 
 _BENCH_DIR = Path(__file__).resolve().parent
 if str(_BENCH_DIR) not in sys.path:
@@ -23,15 +22,23 @@ from path_guard import (  # noqa: E402
     resolve_published_hnsw_path,
     resolve_raw_bench_path,
 )
+from publish_cells import (  # noqa: E402
+    PUBLISH_EF_SEARCH,
+    PUBLISH_INDEX_BUILD_MODE,
+    PUBLISH_ITERATIVE_SCAN,
+    PUBLISH_MIN_SIMILARITY,
+    compute_gate_summary,
+    compute_status,
+    filter_published_results,
+)
 
-_PUBLISH_EF_SEARCH = 40
-_PUBLISH_MIN_SIMILARITY = 0.70
-_PUBLISH_MIN_SIM_TOLERANCE = 0.001
-_PUBLISH_ITERATIVE_SCAN = "off"
-_PUBLISH_INDEX_BUILD_MODE = "bulk"
-_RECALL_SLA = 0.98
-_P95_SLA_MS_1M = 30.0
-_P99_SLA_MS_1M = 100.0
+# Compat re-exports for tests / callers that import from this module.
+__all__ = [
+    "compute_gate_summary",
+    "compute_status",
+    "filter_published_results",
+    "main",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,84 +49,16 @@ class RunMeta:
     run_url: str
 
 
-def _is_production_cell(result: dict[str, Any]) -> bool:
-    ef = result.get("ef_search")
-    if ef != _PUBLISH_EF_SEARCH:
-        return False
-    min_sim = result.get("min_similarity")
-    if min_sim is None:
-        return False
-    try:
-        if abs(float(min_sim) - _PUBLISH_MIN_SIMILARITY) > _PUBLISH_MIN_SIM_TOLERANCE:
-            return False
-    except (TypeError, ValueError):
-        return False
-    if result.get("iterative_scan", _PUBLISH_ITERATIVE_SCAN) != _PUBLISH_ITERATIVE_SCAN:
-        return False
-    if result.get("index_build_mode", _PUBLISH_INDEX_BUILD_MODE) != _PUBLISH_INDEX_BUILD_MODE:
-        return False
-    return True
-
-
-def filter_published_results(results: list[Any]) -> list[dict[str, Any]]:
-    out: list[dict[str, Any]] = []
-    for item in results:
-        if isinstance(item, dict) and _is_production_cell(item):
-            out.append(item)
-    return out
-
-
-def compute_gate_summary(results: list[dict[str, Any]]) -> dict[str, Any]:
-    if not results:
-        return {
-            "recall_ok": False,
-            "recall_floor": _RECALL_SLA,
-            "worst_recall_at_10": 0.0,
-            "has_1m": False,
-            "note": "no production cells after filter",
-        }
-    recalls = [float(r["recall_at_10"]) for r in results]
-    worst = min(recalls)
-    recall_ok = worst >= _RECALL_SLA
-    at_1m = next((r for r in results if int(r["corpus_size"]) >= 1_000_000), None)
-    summary: dict[str, Any] = {
-        "recall_ok": recall_ok,
-        "recall_floor": _RECALL_SLA,
-        "worst_recall_at_10": worst,
-        "has_1m": at_1m is not None,
-    }
-    if at_1m is not None:
-        p95 = float(at_1m["latency_ms_p95"])
-        p99 = float(at_1m["latency_ms_p99"])
-        summary["p95_ms_1m"] = p95
-        summary["p99_ms_1m"] = p99
-        summary["p95_1m_ok"] = p95 < _P95_SLA_MS_1M
-        summary["p99_1m_ok"] = p99 < _P99_SLA_MS_1M
-    else:
-        summary["note"] = "1M cell absent (expected on smoke/fast profiles)"
-    return summary
-
-
-def compute_status(gate: dict[str, Any]) -> str:
-    if not gate.get("recall_ok", False):
-        return "fail"
-    if gate.get("has_1m"):
-        if not gate.get("p95_1m_ok", True) or not gate.get("p99_1m_ok", True):
-            return "fail"
-        return "pass"
-    return "warn"
-
-
 def _merge_entry(raw: dict, meta: RunMeta) -> dict:
     short = meta.sha[:7] if len(meta.sha) >= 7 else meta.sha
     filtered = filter_published_results(list(raw.get("results") or []))
     if not filtered:
         msg = (
             "no production HNSW cells to publish "
-            f"(need ef_search={_PUBLISH_EF_SEARCH}, "
-            f"min_similarity≈{_PUBLISH_MIN_SIMILARITY}, "
-            f"iterative_scan={_PUBLISH_ITERATIVE_SCAN}, "
-            f"index_build_mode={_PUBLISH_INDEX_BUILD_MODE})"
+            f"(need ef_search={PUBLISH_EF_SEARCH}, "
+            f"min_similarity≈{PUBLISH_MIN_SIMILARITY}, "
+            f"iterative_scan={PUBLISH_ITERATIVE_SCAN}, "
+            f"index_build_mode={PUBLISH_INDEX_BUILD_MODE})"
         )
         raise RuntimeError(msg)
     mean = sum(float(r["recall_at_10"]) for r in filtered) / len(filtered)
@@ -130,9 +69,9 @@ def _merge_entry(raw: dict, meta: RunMeta) -> dict:
         "iterative_scan=off, bulk index build. Full matrix retained under "
         "benchmarks/memory/output/."
     )
-    methodology["min_similarity_values"] = [_PUBLISH_MIN_SIMILARITY]
-    methodology["iterative_scan_modes"] = [_PUBLISH_ITERATIVE_SCAN]
-    methodology["index_build_modes"] = [_PUBLISH_INDEX_BUILD_MODE]
+    methodology["min_similarity_values"] = [PUBLISH_MIN_SIMILARITY]
+    methodology["iterative_scan_modes"] = [PUBLISH_ITERATIVE_SCAN]
+    methodology["index_build_modes"] = [PUBLISH_INDEX_BUILD_MODE]
     return {
         "sha": meta.sha,
         "short_sha": short,

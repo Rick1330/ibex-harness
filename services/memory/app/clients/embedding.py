@@ -221,6 +221,13 @@ class EmbeddingClient:
         _raise_http_error(resp)
 
 
+def _validate_one_text(i: int, item: object) -> None:
+    if not isinstance(item, str):
+        raise EmbeddingRejectedError(f"texts[{i}] must be a string")
+    if len(item.encode("utf-8")) > _MAX_TEXT_BYTES:
+        raise EmbeddingRejectedError(f"texts[{i}] exceeds {_MAX_TEXT_BYTES} bytes")
+
+
 def _validate_texts(texts: Sequence[str]) -> None:
     if not texts:
         raise EmbeddingRejectedError("texts must be non-empty")
@@ -229,10 +236,7 @@ def _validate_texts(texts: Sequence[str]) -> None:
             f"texts batch size {len(texts)} exceeds max {_MAX_BATCH_TEXTS}"
         )
     for i, item in enumerate(texts):
-        if not isinstance(item, str):
-            raise EmbeddingRejectedError(f"texts[{i}] must be a string")
-        if len(item.encode("utf-8")) > _MAX_TEXT_BYTES:
-            raise EmbeddingRejectedError(f"texts[{i}] exceeds {_MAX_TEXT_BYTES} bytes")
+        _validate_one_text(i, item)
 
 
 def _require_nonempty_str(value: object, *, field: str) -> str:
@@ -242,7 +246,11 @@ def _require_nonempty_str(value: object, *, field: str) -> str:
 
 
 def _require_dimensions(value: object) -> int:
-    if not isinstance(value, int) or isinstance(value, bool) or value != _EXPECTED_DIM:
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise EmbeddingInvalidResponseError(
+            f"embedder dimensions must be {_EXPECTED_DIM}, got {value!r}"
+        )
+    if value != _EXPECTED_DIM:
         raise EmbeddingInvalidResponseError(
             f"embedder dimensions must be {_EXPECTED_DIM}, got {value!r}"
         )
@@ -272,13 +280,7 @@ def _parse_vector_row(row: object, *, idx: int) -> list[float]:
     ]
 
 
-def _parse_success(resp: httpx.Response) -> EmbeddingResult:
-    try:
-        body = resp.json()
-    except ValueError as exc:
-        raise EmbeddingInvalidResponseError("embedder returned malformed JSON") from exc
-    if not isinstance(body, dict):
-        raise EmbeddingInvalidResponseError("embedder response must be a JSON object")
+def _parse_embed_body(body: dict[str, Any]) -> EmbeddingResult:
     vectors = body.get("vectors")
     if not isinstance(vectors, list) or not vectors:
         raise EmbeddingInvalidResponseError("embedder response missing vectors")
@@ -291,6 +293,16 @@ def _parse_success(resp: httpx.Response) -> EmbeddingResult:
         dimensions=dimensions,
         backend=backend,
     )
+
+
+def _parse_success(resp: httpx.Response) -> EmbeddingResult:
+    try:
+        body = resp.json()
+    except ValueError as exc:
+        raise EmbeddingInvalidResponseError("embedder returned malformed JSON") from exc
+    if not isinstance(body, dict):
+        raise EmbeddingInvalidResponseError("embedder response must be a JSON object")
+    return _parse_embed_body(body)
 
 
 def _raise_http_error(resp: httpx.Response) -> NoReturn:

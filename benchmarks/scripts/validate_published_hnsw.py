@@ -68,13 +68,24 @@ def resolve_hnsw_data_path(raw: str) -> Path:
     return resolved
 
 
+def require_nonneg_int(value: Any, label: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        fail(f"{label} must be a non-negative int")
+    return value
+
+
+def require_unit_interval(value: Any, label: str) -> float:
+    number = require_number(value, label)
+    if number < 0 or number > 1:
+        fail(f"{label} out of range")
+    return number
+
+
 def validate_result(result: Any, label: str) -> None:
     data = require_dict(result, label)
     require_number(data.get("corpus_size"), f"{label}.corpus_size")
     require_number(data.get("query_count"), f"{label}.query_count")
-    recall = require_number(data.get("recall_at_10"), f"{label}.recall_at_10")
-    if recall < 0 or recall > 1:
-        fail(f"{label}.recall_at_10 out of range")
+    require_unit_interval(data.get("recall_at_10"), f"{label}.recall_at_10")
     for key in ("latency_ms_p50", "latency_ms_p95", "latency_ms_p99"):
         val = require_number(data.get(key), f"{label}.{key}")
         if val < 0:
@@ -84,24 +95,21 @@ def validate_result(result: Any, label: str) -> None:
         fail(f"{label}.ef_search must be >= 1")
 
 
-def validate_run(run: Any, index: int) -> None:
-    label = f"runs[{index}]"
-    data = require_dict(run, label)
+def validate_run_meta(data: dict[str, Any], label: str) -> None:
     require_sha_ref(data.get("sha"), f"{label}.sha")
     require_sha_ref(data.get("short_sha"), f"{label}.short_sha")
     require_string(data.get("timestamp"), f"{label}.timestamp")
     require_string(data.get("branch"), f"{label}.branch")
-    run_number = data.get("run_number")
-    if not isinstance(run_number, int) or isinstance(run_number, bool) or run_number < 0:
-        fail(f"{label}.run_number must be a non-negative int")
+    require_nonneg_int(data.get("run_number"), f"{label}.run_number")
     require_string(data.get("run_url"), f"{label}.run_url")
     require_dict(data.get("methodology"), f"{label}.methodology")
-    mean = require_number(data.get("mean_recall_at_10"), f"{label}.mean_recall_at_10")
-    if mean < 0 or mean > 1:
-        fail(f"{label}.mean_recall_at_10 out of range")
+    require_unit_interval(data.get("mean_recall_at_10"), f"{label}.mean_recall_at_10")
     status = data.get("status")
     if status is not None and status not in VALID_STATUSES:
         fail(f"{label}.status invalid")
+
+
+def validate_run_results(data: dict[str, Any], label: str) -> None:
     results = data.get("results")
     if not isinstance(results, list) or not results:
         fail(f"{label}.results must be a non-empty array")
@@ -109,18 +117,32 @@ def validate_run(run: Any, index: int) -> None:
         validate_result(result, f"{label}.results[{ri}]")
 
 
-def validate_payload(payload: dict[str, Any]) -> None:
+def validate_run(run: Any, index: int) -> None:
+    label = f"runs[{index}]"
+    data = require_dict(run, label)
+    validate_run_meta(data, label)
+    validate_run_results(data, label)
+
+
+def validate_schema_identity(payload: dict[str, Any]) -> None:
     if payload.get("schema_version") != 1:
         fail("schema_version must be 1")
     if payload.get("benchmark") != "hnsw_recall_latency":
         fail("benchmark must be hnsw_recall_latency")
-    runs = payload.get("runs")
+
+
+def validate_runs_list(runs: Any) -> None:
     if not isinstance(runs, list):
         fail("runs must be an array")
     if len(runs) > MAX_RUNS:
         fail(f"runs exceeds max {MAX_RUNS}")
     for index, run in enumerate(runs):
         validate_run(run, index)
+
+
+def validate_payload(payload: dict[str, Any]) -> None:
+    validate_schema_identity(payload)
+    validate_runs_list(payload.get("runs"))
 
 
 def validate_against_json_schema(payload: dict[str, Any]) -> None:

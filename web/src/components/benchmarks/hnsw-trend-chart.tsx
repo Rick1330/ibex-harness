@@ -38,10 +38,9 @@ export function HnswTrendChart({
     containerRef,
     (width) => {
       const data: TrendDatum[] = [...runs]
-        .filter((run) => metric(run) != null)
-        .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
         .map((run) => {
-          const value = metric(run)!;
+          const value = metric(run);
+          if (value == null) return null;
           return {
             date: new Date(run.timestamp),
             value,
@@ -50,8 +49,10 @@ export function HnswTrendChart({
             timestamp: run.timestamp,
             prLabel: run.branch,
             budgetPct: targetMs && targetMs > 0 ? (value / targetMs) * 100 : undefined,
-          };
-        });
+          } satisfies TrendDatum;
+        })
+        .filter((row): row is TrendDatum => row != null)
+        .sort((a, b) => a.date.getTime() - b.date.getTime());
       return buildTrendPlot(data, theme, {
         width,
         height,
