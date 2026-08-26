@@ -84,27 +84,20 @@ def test_rank_weights_reject_negative() -> None:
         ).validate()
 
 
-def test_composite_rejects_scalar_string_categories() -> None:
-    with pytest.raises(TypeError, match="sequence of strings"):
+@pytest.mark.parametrize(
+    ("categories", "match"),
+    [
+        ("factual", "sequence of strings"),
+        ([123], r"categories\[0\] must be a str"),
+    ],
+)
+def test_composite_rejects_invalid_categories(categories: object, match: str) -> None:
+    with pytest.raises(TypeError, match=match):
         composite_score(
             CompositeInputs(
                 relevance=0.9,
                 age_days=1.0,
-                categories="factual",  # type: ignore[arg-type]
-                usefulness=0.5,
-                confidence=0.8,
-                access_frequency=0.1,
-            )
-        )
-
-
-def test_composite_rejects_non_string_category_elements() -> None:
-    with pytest.raises(TypeError, match="categories\\[0\\] must be a str"):
-        composite_score(
-            CompositeInputs(
-                relevance=0.9,
-                age_days=1.0,
-                categories=[123],  # type: ignore[list-item]
+                categories=categories,  # type: ignore[arg-type]
                 usefulness=0.5,
                 confidence=0.8,
                 access_frequency=0.1,

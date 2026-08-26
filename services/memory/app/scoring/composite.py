@@ -119,6 +119,9 @@ def _require_unit_interval(name: str, value: float) -> None:
     if not math.isfinite(value):
         msg = f"{name} must be a finite value in [0, 1], got {value!r}"
         raise ValueError(msg)
-    if value < 0.0 or value > 1.0:
+    if value < 0.0:
+        msg = f"{name} must be a finite value in [0, 1], got {value!r}"
+        raise ValueError(msg)
+    if value > 1.0:
         msg = f"{name} must be a finite value in [0, 1], got {value!r}"
         raise ValueError(msg)
