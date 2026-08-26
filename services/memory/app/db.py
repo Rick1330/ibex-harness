@@ -120,11 +120,19 @@ def _ssl_connect_arg(
     return _verified_tls_context(query)
 
 
-def _verified_tls_context(query: dict[str, str]) -> ssl.SSLContext:
-    """System CA trust store (optional sslrootcert) with hostname verification."""
-    ctx = ssl.create_default_context(cafile=query.get("sslrootcert"))
+def _verified_tls_context(query: dict[str, str]) -> bool | ssl.SSLContext:
+    """Verified TLS for asyncpg: default context, or custom CA/client certs.
+
+    When no cert paths are set, return ``True`` so asyncpg uses its verified
+    default SSL context. Custom paths build an explicit context with TLS ≥ 1.2.
+    """
+    cafile = query.get("sslrootcert")
     cert = query.get("sslcert")
     key = query.get("sslkey")
+    if not cafile and not cert and not key:
+        return True
+    ctx = ssl.create_default_context(cafile=cafile)
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
     if cert and key:
         ctx.load_cert_chain(cert, keyfile=key)
     return ctx
