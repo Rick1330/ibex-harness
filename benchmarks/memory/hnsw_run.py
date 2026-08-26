@@ -37,7 +37,7 @@ from synth import (
 )
 
 _QUERY_COUNTS = {10_000: 500, 100_000: 200, 1_000_000: 200}
-_WARMUP_QUERIES = 100
+WARMUP_QUERIES = 100
 # Offset so warm-up indices never share the timed `(q * 97) % size` sequence.
 _WARMUP_INDEX_OFFSET = 10_007
 
@@ -187,7 +187,7 @@ def _search_request(params: SizeRunParams, query: list[float]) -> SearchRequest:
 
 
 async def _warmup_searches(store: PgVectorStore, params: SizeRunParams) -> None:
-    for q in range(_WARMUP_QUERIES):
+    for q in range(WARMUP_QUERIES):
         idx = ((q * 97) + _WARMUP_INDEX_OFFSET) % params.size
         await store.search(
             _search_request(params, perturb(unit_vector(idx), seed=idx))
@@ -299,7 +299,7 @@ async def _measure_cell(engine: AsyncEngine, store: PgVectorStore, cell: CellPar
     before = await idx_scan_count(engine)
     print(
         f"searching size={cell.size} ef={cell.ef_search} min_sim={cell.min_similarity} "
-        f"iter={cell.iterative_scan} queries={qn} warmup={_WARMUP_QUERIES} …",
+        f"iter={cell.iterative_scan} queries={qn} warmup={WARMUP_QUERIES} …",
         flush=True,
     )
     result = await _run_size(

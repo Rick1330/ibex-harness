@@ -28,7 +28,7 @@ from app.vectorstore.pgvector_store import PgVectorStore
 _BENCH_DIR = Path(__file__).resolve().parent
 if str(_BENCH_DIR) not in sys.path:
     sys.path.insert(0, str(_BENCH_DIR))
-from hnsw_run import MatrixConfig, SizeResult, run_search_matrix  # noqa: E402
+from hnsw_run import MatrixConfig, SizeResult, WARMUP_QUERIES, run_search_matrix  # noqa: E402
 from path_guard import UnsafePathError, resolve_raw_bench_path  # noqa: E402
 from synth import ACTIVE_DIMS, DIM  # noqa: E402
 
@@ -52,7 +52,7 @@ def _methodology_block(params: PayloadParams) -> dict[str, object]:
         "ef_search": params.ef_search,
         "dim": DIM,
         "active_dims": ACTIVE_DIMS,
-        "warmup_queries": _WARMUP_QUERIES,
+        "warmup_queries": WARMUP_QUERIES,
         "truncate_between_sizes": True,
         "reuse_corpus_across_search_knobs": True,
         "analyze_after_copy": True,
