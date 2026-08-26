@@ -42,6 +42,9 @@ def half_life_days(categories: Sequence[str]) -> float:
 
 def recency_decay(age_days: float, categories: Sequence[str]) -> float:
     """Exponential decay in [0, 1] using category-conditional half-life."""
+    if not math.isfinite(age_days):
+        msg = "age_days must be finite"
+        raise ValueError(msg)
     if age_days < 0:
         msg = "age_days must be non-negative"
         raise ValueError(msg)

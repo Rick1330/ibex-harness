@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from fastapi import FastAPI
 
 from app.config import Settings, get_settings
+from app.http_metrics import HTTPMetricsMiddleware
 from app.probes import probe_router
 
 logger = logging.getLogger(__name__)
@@ -45,6 +46,7 @@ def create_app(*, settings: Settings | None = None) -> FastAPI:
     application.state.memory = state
     application.state.settings = cfg
     application.include_router(probe_router)
+    application.add_middleware(HTTPMetricsMiddleware)
     return application
 
 

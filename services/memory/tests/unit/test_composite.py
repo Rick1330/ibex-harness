@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 import pytest
 
 from app.scoring.composite import (
@@ -37,6 +39,43 @@ def test_score_rejects_bad_weights() -> None:
                 relevance=0.5, recency=0.5, usefulness=0.5, confidence=0, frequency=0
             ),
         )
+
+
+def test_score_rejects_out_of_range_component() -> None:
+    with pytest.raises(ValueError, match="relevance must be a finite value"):
+        score(
+            ScoreComponents(
+                relevance=1.5,
+                recency=0.0,
+                usefulness=0.0,
+                confidence=0.0,
+                access_frequency=0.0,
+            )
+        )
+
+
+def test_score_rejects_nan_component() -> None:
+    with pytest.raises(ValueError, match="recency must be a finite value"):
+        score(
+            ScoreComponents(
+                relevance=0.5,
+                recency=math.nan,
+                usefulness=0.0,
+                confidence=0.0,
+                access_frequency=0.0,
+            )
+        )
+
+
+def test_rank_weights_reject_negative() -> None:
+    with pytest.raises(ValueError, match="relevance must be a finite value"):
+        RankWeights(
+            relevance=-0.1,
+            recency=0.4,
+            usefulness=0.3,
+            confidence=0.2,
+            frequency=0.2,
+        ).validate()
 
 
 def test_old_factual_outranks_fresh_episodic_at_equal_relevance() -> None:

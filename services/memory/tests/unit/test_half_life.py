@@ -44,6 +44,11 @@ def test_recency_decay_rejects_negative_age() -> None:
         recency_decay(-1.0, ["factual"])
 
 
+def test_recency_decay_rejects_nan_age() -> None:
+    with pytest.raises(ValueError, match="finite"):
+        recency_decay(math.nan, ["factual"])
+
+
 def test_unknown_category_falls_back_to_14() -> None:
     assert half_life_days(["unknown"]) == 14.0
     expected = math.exp(-math.log(2.0) * 14.0 / 14.0)

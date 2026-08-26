@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -17,6 +18,14 @@ class RankWeights:
     frequency: float = 0.05
 
     def validate(self) -> None:
+        for name, value in (
+            ("relevance", self.relevance),
+            ("recency", self.recency),
+            ("usefulness", self.usefulness),
+            ("confidence", self.confidence),
+            ("frequency", self.frequency),
+        ):
+            _require_unit_interval(name, value)
         total = (
             self.relevance
             + self.recency
@@ -57,6 +66,14 @@ def score(
     weights: RankWeights | None = None,
 ) -> float:
     """Pure weighted sum. Callers supply precomputed component scores in [0, 1]."""
+    for name, value in (
+        ("relevance", components.relevance),
+        ("recency", components.recency),
+        ("usefulness", components.usefulness),
+        ("confidence", components.confidence),
+        ("access_frequency", components.access_frequency),
+    ):
+        _require_unit_interval(name, value)
     w = weights or RankWeights()
     w.validate()
     return (
@@ -83,3 +100,9 @@ def composite_score(
         ),
         weights,
     )
+
+
+def _require_unit_interval(name: str, value: float) -> None:
+    if not math.isfinite(value) or value < 0.0 or value > 1.0:
+        msg = f"{name} must be a finite value in [0, 1], got {value!r}"
+        raise ValueError(msg)

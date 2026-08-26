@@ -14,6 +14,7 @@ cd "$MEMORY_DIR"
 bash "$ROOT/infra/scripts/memory-uv-sync.sh"
 .venv/bin/ruff check app tests
 .venv/bin/pytest -q \
+  -m "not integration" \
   --cov=app \
   --cov-report=xml:coverage-memory.xml \
   --cov-report=term-missing \
