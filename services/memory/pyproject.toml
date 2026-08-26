@@ -47,7 +47,11 @@ target-version = "py312"
 
 [tool.coverage.run]
 source = ["app"]
-omit = ["app/__init__.py"]
+omit = [
+  "app/__init__.py",
+  # Exercised by tests/integration (requires live pgvector).
+  "app/vectorstore/pgvector_store.py",
+]
 
 [dependency-groups]
 dev = [
