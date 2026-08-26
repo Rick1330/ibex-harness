@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import secrets
 import time
 from collections.abc import Generator, Sequence
@@ -24,6 +25,8 @@ _BACKOFF_BASE_SECONDS = 0.25
 _BACKOFF_MAX_SECONDS = 8.0
 _EMBED_PATH = "/v1/embed"
 _EXPECTED_DIM = 1024
+_MAX_BATCH_TEXTS = 64
+_MAX_TEXT_BYTES = 32 * 1024
 
 
 class EmbeddingClientError(Exception):
@@ -152,6 +155,16 @@ class EmbeddingClient:
         if not texts:
             msg = "texts must be non-empty"
             raise EmbeddingRejectedError(msg)
+        if len(texts) > _MAX_BATCH_TEXTS:
+            msg = f"texts batch size {len(texts)} exceeds max {_MAX_BATCH_TEXTS}"
+            raise EmbeddingRejectedError(msg)
+        for i, item in enumerate(texts):
+            if not isinstance(item, str):
+                msg = f"texts[{i}] must be a string"
+                raise EmbeddingRejectedError(msg)
+            if len(item.encode("utf-8")) > _MAX_TEXT_BYTES:
+                msg = f"texts[{i}] exceeds {_MAX_TEXT_BYTES} bytes"
+                raise EmbeddingRejectedError(msg)
         payload = {"texts": list(texts), "org_id": str(org_id)}
         return await self._post_with_retry(payload, batch_size=len(texts))
 
@@ -220,6 +233,29 @@ class EmbeddingClient:
         _raise_http_error(resp)
 
 
+def _as_finite_float(value: object, *, vector_idx: int, component_idx: int) -> float:
+    # bool is a subclass of int — reject explicitly.
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise EmbeddingInvalidResponseError(
+            f"vector[{vector_idx}][{component_idx}] must be a finite number"
+        )
+    number = float(value)
+    if not math.isfinite(number):
+        raise EmbeddingInvalidResponseError(
+            f"vector[{vector_idx}][{component_idx}] must be a finite number"
+        )
+    return number
+
+
+def _parse_vector_row(row: object, *, idx: int) -> list[float]:
+    if not isinstance(row, list) or len(row) != _EXPECTED_DIM:
+        raise EmbeddingInvalidResponseError(f"vector[{idx}] length must be {_EXPECTED_DIM}")
+    return [
+        _as_finite_float(component, vector_idx=idx, component_idx=comp_i)
+        for comp_i, component in enumerate(row)
+    ]
+
+
 def _parse_success(resp: httpx.Response) -> EmbeddingResult:
     try:
         body = resp.json()
@@ -235,19 +271,15 @@ def _parse_success(resp: httpx.Response) -> EmbeddingResult:
         raise EmbeddingInvalidResponseError("embedder response missing vectors")
     if not isinstance(model_id, str) or not model_id:
         raise EmbeddingInvalidResponseError("embedder response missing model_id")
-    if not isinstance(dimensions, int) or dimensions != _EXPECTED_DIM:
+    if not isinstance(dimensions, int) or isinstance(dimensions, bool) or dimensions != _EXPECTED_DIM:
         raise EmbeddingInvalidResponseError(
             f"embedder dimensions must be {_EXPECTED_DIM}, got {dimensions!r}"
         )
     if not isinstance(backend, str) or not backend:
         raise EmbeddingInvalidResponseError("embedder response missing backend")
-    for idx, row in enumerate(vectors):
-        if not isinstance(row, list) or len(row) != _EXPECTED_DIM:
-            raise EmbeddingInvalidResponseError(
-                f"vector[{idx}] length must be {_EXPECTED_DIM}"
-            )
+    parsed = [_parse_vector_row(row, idx=idx) for idx, row in enumerate(vectors)]
     return EmbeddingResult(
-        vectors=[[float(x) for x in row] for row in vectors],
+        vectors=parsed,
         model_id=model_id,
         dimensions=dimensions,
         backend=backend,

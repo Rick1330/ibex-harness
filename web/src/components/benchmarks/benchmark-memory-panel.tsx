@@ -1,6 +1,5 @@
-"use client";
-
 import { BenchmarkEmptyState } from "@/components/benchmarks/empty-state";
+import { BenchmarkErrorState } from "@/components/benchmarks/benchmark-error-state";
 import { KpiCard } from "@/components/benchmarks/kpi-card";
 import { SlaGauge } from "@/components/benchmarks/sla-gauge";
 import { loadPublishedHnswBenchmarkData } from "@/lib/benchmarks/hnsw-published-data";
@@ -35,7 +34,11 @@ function ResultRow({ result }: { readonly result: HnswSizeResult }) {
 }
 
 export function BenchmarkMemoryPanel() {
-  const data = loadPublishedHnswBenchmarkData();
+  const loaded = loadPublishedHnswBenchmarkData();
+  if (!loaded.ok) {
+    return <BenchmarkErrorState message={loaded.error} />;
+  }
+  const data = loaded.data;
   const latest = data.runs[0];
 
   if (!latest) {
@@ -97,7 +100,10 @@ export function BenchmarkMemoryPanel() {
             </thead>
             <tbody>
               {latest.results.map((result) => (
-                <ResultRow key={result.corpus_size} result={result} />
+                <ResultRow
+                  key={`${result.corpus_size}-${result.ef_search}-${result.min_similarity ?? 0}`}
+                  result={result}
+                />
               ))}
             </tbody>
           </table>

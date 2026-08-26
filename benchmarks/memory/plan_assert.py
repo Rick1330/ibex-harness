@@ -63,12 +63,11 @@ def assert_hnsw_index_used(explain_json: list[Any] | dict[str, Any]) -> dict[str
             f"{n.get('Node Type')}@{n.get('Relation Name') or n.get('Index Name')}"
             for n in nodes[:12]
         )
+        seq_note = "; Seq Scan on memories also present" if seq_on_memories else ""
         raise PlanAssertionError(
             "expected Index Scan / Bitmap Index Scan on idx_memories_embedding_hnsw; "
-            f"saw: {detail}"
+            f"saw: {detail}{seq_note}"
         )
-    if seq_on_memories and not hnsw_nodes:
-        raise PlanAssertionError("Seq Scan on memories without HNSW index use")
 
     buffers = collect_buffer_stats(nodes)
     primary = hnsw_nodes[0]

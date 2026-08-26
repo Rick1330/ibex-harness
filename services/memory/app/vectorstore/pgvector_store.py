@@ -27,6 +27,7 @@ FROM (
     LIMIT :limit
 ) ranked
 WHERE similarity >= :min_similarity
+ORDER BY (1 - similarity) + 0
 """
 
 

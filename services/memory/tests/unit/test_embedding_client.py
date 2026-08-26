@@ -199,3 +199,78 @@ async def test_retry_log_omits_token_and_text(
     joined = " ".join(r.getMessage() for r in caplog.records)
     assert secret not in joined
     assert "do-not-log-this-text" not in joined
+
+
+@pytest.mark.asyncio
+async def test_embed_rejects_batch_over_64() -> None:
+    client = _client()
+    try:
+        with pytest.raises(EmbeddingRejectedError, match="exceeds max 64"):
+            await client.embed(["x"] * 65, org_id=_ORG)
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_embed_rejects_text_over_32kib() -> None:
+    client = _client()
+    huge = "a" * (32 * 1024 + 1)
+    try:
+        with pytest.raises(EmbeddingRejectedError, match="exceeds"):
+            await client.embed([huge], org_id=_ORG)
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_embed_accepts_batch_of_64() -> None:
+    respx.post(f"{_BASE}/v1/embed").mock(return_value=Response(200, json=_ok_body(n=64)))
+    client = _client()
+    try:
+        result = await client.embed(["x"] * 64, org_id=_ORG)
+    finally:
+        await client.aclose()
+    assert len(result.vectors) == 64
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_embed_rejects_null_vector_component() -> None:
+    body = _ok_body()
+    body["vectors"][0][0] = None  # type: ignore[index]
+    respx.post(f"{_BASE}/v1/embed").mock(return_value=Response(200, json=body))
+    client = _client()
+    try:
+        with pytest.raises(EmbeddingInvalidResponseError, match="finite number"):
+            await client.embed(["x"], org_id=_ORG)
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_embed_rejects_bool_vector_component() -> None:
+    body = _ok_body()
+    body["vectors"][0][0] = True  # type: ignore[index]
+    respx.post(f"{_BASE}/v1/embed").mock(return_value=Response(200, json=body))
+    client = _client()
+    try:
+        with pytest.raises(EmbeddingInvalidResponseError, match="finite number"):
+            await client.embed(["x"], org_id=_ORG)
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_embed_rejects_string_vector_component() -> None:
+    body = _ok_body()
+    body["vectors"][0][0] = "1.0"  # type: ignore[index]
+    respx.post(f"{_BASE}/v1/embed").mock(return_value=Response(200, json=body))
+    client = _client()
+    try:
+        with pytest.raises(EmbeddingInvalidResponseError, match="finite number"):
+            await client.embed(["x"], org_id=_ORG)
+    finally:
+        await client.aclose()

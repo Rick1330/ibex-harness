@@ -56,7 +56,7 @@ test-memory-integration: ## Run memory PgVectorStore integration tests (needs Po
 memory-bench-smoke: ## Run memory HNSW bench at 10K (needs Postgres + migrate)
 	@MEMORY_BENCH_SIZES="10000" "$(BASH)" infra/scripts/memory-bench.sh
 
-memory-bench: ## Run memory HNSW benches at 10K/100K/1M (needs Postgres + migrate)
+memory-bench: ## Run memory HNSW benches at 10K/100K (needs Postgres + migrate; 1M is CI-only)
 	@"$(BASH)" infra/scripts/memory-bench.sh
 
 test-mcp-memory: ## Run Python mcp-memory service unit tests (services/mcp-memory)

@@ -14,10 +14,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import math
 import os
-import random
 import statistics
+import sys
 import time
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -33,23 +32,20 @@ from app.db import create_engine, create_session_factory
 from app.vectorstore.base import SearchRequest, UpsertRequest
 from app.vectorstore.pgvector_store import SEARCH_SQL, PgVectorStore
 
-# Import plan assert relative to this file (benchmarks/memory on sys.path via argv).
-import sys
-
 _BENCH_DIR = Path(__file__).resolve().parent
 if str(_BENCH_DIR) not in sys.path:
     sys.path.insert(0, str(_BENCH_DIR))
 from plan_assert import PlanAssertionError, assert_hnsw_index_used  # noqa: E402
+from synth import bootstrap_p95_ci, percentile, perturb, unit_vector, vec_literal  # noqa: E402
 
 _DIM = 1024
 _DEFAULT_EF_SEARCH = 40
 _DEFAULT_SIZES = (10_000, 100_000)
 _QUERY_COUNTS = {10_000: 500, 100_000: 200, 1_000_000: 200}
 _WARMUP_QUERIES = 100
-# Larger chunks cut transaction/COPY overhead; progress prints every chunk.
+# Offset so warm-up indices never share the timed `(q * 97) % size` sequence.
+_WARMUP_INDEX_OFFSET = 10_007
 _COPY_CHUNK = 20_000
-_ACTIVE_DIMS = 64
-_BOOTSTRAP_RESAMPLES = 1000
 _HNSW_INDEX = "idx_memories_embedding_hnsw"
 _HNSW_CREATE_SQL = """
 CREATE INDEX idx_memories_embedding_hnsw
@@ -58,6 +54,10 @@ CREATE INDEX idx_memories_embedding_hnsw
     WITH (m = 16, ef_construction = 64)
     WHERE status = 'active' AND deleted_at IS NULL
 """
+
+
+def _maintenance_work_mem() -> str:
+    return os.environ.get("MEMORY_BENCH_MAINTENANCE_WORK_MEM", "2GB")
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,62 +80,6 @@ class SizeResult:
     shared_read_blocks: int
     idx_scan_delta: int
     row_count_verified: int
-
-
-def _unit_vector(seed: int) -> list[float]:
-    rng = random.Random(seed)
-    vec = [0.0] * _DIM
-    for _ in range(_ACTIVE_DIMS):
-        idx = rng.randrange(_DIM)
-        vec[idx] += rng.gauss(0.0, 1.0)
-    norm = math.sqrt(sum(x * x for x in vec)) or 1.0
-    return [x / norm for x in vec]
-
-
-def _perturb(base: list[float], *, noise: float = 0.005, seed: int = 0) -> list[float]:
-    rng = random.Random(seed ^ 0xA5A5_5A5A)
-    out = list(base)
-    for i, x in enumerate(out):
-        if x != 0.0:
-            out[i] = x + noise * rng.gauss(0.0, 1.0)
-    norm = math.sqrt(sum(x * x for x in out)) or 1.0
-    return [x / norm for x in out]
-
-
-def _vec_literal(vec: list[float]) -> str:
-    return "[" + ",".join(f"{v:.6g}" for v in vec) + "]"
-
-
-def _percentile(sorted_vals: list[float], pct: float) -> float:
-    if not sorted_vals:
-        return 0.0
-    if len(sorted_vals) == 1:
-        return sorted_vals[0]
-    rank = (pct / 100.0) * (len(sorted_vals) - 1)
-    lo = int(math.floor(rank))
-    hi = int(math.ceil(rank))
-    if lo == hi:
-        return sorted_vals[lo]
-    weight = rank - lo
-    return sorted_vals[lo] * (1.0 - weight) + sorted_vals[hi] * weight
-
-
-def _bootstrap_p95_ci(
-    samples: list[float], *, resamples: int = _BOOTSTRAP_RESAMPLES, seed: int = 42
-) -> tuple[float, float]:
-    if len(samples) < 2:
-        p = _percentile(sorted(samples), 95)
-        return p, p
-    rng = random.Random(seed)
-    n = len(samples)
-    estimates: list[float] = []
-    for _ in range(resamples):
-        draw = [samples[rng.randrange(n)] for _ in range(n)]
-        estimates.append(_percentile(sorted(draw), 95))
-    estimates.sort()
-    lo_i = int(0.025 * (len(estimates) - 1))
-    hi_i = int(0.975 * (len(estimates) - 1))
-    return estimates[lo_i], estimates[hi_i]
 
 
 async def _exec(session: AsyncSession, sql: str, params: dict[str, object] | None = None) -> None:
@@ -227,11 +171,12 @@ async def _ensure_hnsw_index(engine: AsyncEngine) -> None:
                 "SELECT set_config('app.is_service_account', 'true', true)"
             )
         )
-        # Bound parallel index build memory so CREATE INDEX fits container shm.
+        # Align with CI Tune Postgres (default 2GB); override via MEMORY_BENCH_MAINTENANCE_WORK_MEM.
         await conn.execute(
             text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-                "SELECT set_config('maintenance_work_mem', '1GB', true)"
-            )
+                "SELECT set_config('maintenance_work_mem', :mwm, true)"
+            ),
+            {"mwm": _maintenance_work_mem()},
         )
         await conn.execute(
             text(_HNSW_CREATE_SQL)  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
@@ -359,7 +304,7 @@ async def _bulk_insert_memories(
                     f"bench-{mid.hex}",
                     f"h-{mid.hex}",
                     1,
-                    _vec_literal(_unit_vector(idx)),
+                    vec_literal(unit_vector(idx)),
                     "bench-synthetic",
                     _DIM,
                     "active",
@@ -388,7 +333,8 @@ async def _bulk_insert_memories(
             )
             raw = await conn.get_raw_connection()
             driver = raw.driver_connection
-            assert driver is not None
+            if driver is None:
+                raise RuntimeError("asyncpg driver_connection missing for COPY")
             await driver.copy_to_table(
                 "memories",
                 source=payload,
@@ -438,7 +384,7 @@ async def _explain_search(
         result = await conn.execute(
             text(explain_sql),  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
             {
-                "query": _vec_literal(query),
+                "query": vec_literal(query),
                 "org_id": str(org_id),
                 "agent_id": str(agent_id),
                 "min_similarity": min_similarity,
@@ -473,14 +419,14 @@ async def _run_size(
     idx_scan_delta: int,
     row_count: int,
 ) -> SizeResult:
-    # Warm-up (discarded).
+    # Warm-up (discarded) — offset indices so they do not overlap timed queries.
     for q in range(_WARMUP_QUERIES):
-        idx = (q * 97) % size
+        idx = ((q * 97) + _WARMUP_INDEX_OFFSET) % size
         await store.search(
             SearchRequest(
                 org_id=org_id,
                 agent_id=agent_id,
-                query_embedding=_perturb(_unit_vector(idx), seed=idx),
+                query_embedding=perturb(unit_vector(idx), seed=idx),
                 limit=10,
                 min_similarity=min_similarity,
                 ef_search=ef_search,
@@ -492,7 +438,7 @@ async def _run_size(
     hits = 0
     for q in range(query_count):
         idx = (q * 97) % size
-        query = _perturb(_unit_vector(idx), seed=idx)
+        query = perturb(unit_vector(idx), seed=idx)
         t0 = time.perf_counter()
         results = await store.search(
             SearchRequest(
@@ -511,14 +457,14 @@ async def _run_size(
             hits += 1
 
     ordered = sorted(latencies)
-    ci_lo, ci_hi = _bootstrap_p95_ci(latencies)
+    ci_lo, ci_hi = bootstrap_p95_ci(latencies)
     return SizeResult(
         corpus_size=size,
         query_count=query_count,
         recall_at_10=hits / query_count,
-        latency_ms_p50=_percentile(ordered, 50),
-        latency_ms_p95=_percentile(ordered, 95),
-        latency_ms_p99=_percentile(ordered, 99),
+        latency_ms_p50=percentile(ordered, 50),
+        latency_ms_p95=percentile(ordered, 95),
+        latency_ms_p99=percentile(ordered, 99),
         latency_ms_p95_ci_low=ci_lo,
         latency_ms_p95_ci_high=ci_hi,
         ef_search=ef_search,
@@ -584,7 +530,7 @@ async def _measure_cell(
         engine,
         org_id=org_id,
         agent_id=agent_id,
-        query=_unit_vector(0),
+        query=unit_vector(0),
         ef_search=ef_search,
         min_similarity=min_similarity,
         iterative_scan=iterative_scan,
@@ -663,7 +609,7 @@ async def _benchmark(args: argparse.Namespace) -> dict[str, object]:
                     UpsertRequest(
                         memory_id=_memory_id_for(org_id, 0),
                         org_id=org_id,
-                        embedding=_unit_vector(0),
+                        embedding=unit_vector(0),
                         embedding_model="bench-synthetic",
                     )
                 )

@@ -28,7 +28,7 @@ not under this service tree. Published JSON:
 POSTGRES_TEST_DSN=postgres://ibex:ibex@localhost:5433/ibex_test?sslmode=disable \
   make memory-bench-smoke   # 10K
 POSTGRES_TEST_DSN=postgres://ibex:ibex@localhost:5433/ibex_test?sslmode=disable \
-  make memory-bench         # 10K / 100K / 1M
+  make memory-bench         # 10K / 100K (1M is CI-only — Memory Benchmarks profile full)
 ```
 
 Site: `/benchmarks/memory`. CI: `.github/workflows/memory-benchmark.yml`.

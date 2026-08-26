@@ -63,16 +63,19 @@ jobs:
 
       - id: profile
         name: Resolve bench profile
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BENCH_PROFILE_INPUT: ${{ github.event.inputs.bench_profile }}
         run: |
           set -euo pipefail
           # smoke = PRs, fast = main push, full = Sunday/dispatch
           profile="fast"
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
+          if [ "$EVENT_NAME" = "pull_request" ]; then
             profile="smoke"
-          elif [ "${{ github.event_name }}" = "schedule" ]; then
+          elif [ "$EVENT_NAME" = "schedule" ]; then
             profile="full"
-          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            profile="${{ github.event.inputs.bench_profile || 'full' }}"
+          elif [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            profile="${BENCH_PROFILE_INPUT:-full}"
           fi
           echo "bench_profile=$profile" >> "$GITHUB_OUTPUT"
           echo "Resolved MEMORY_BENCH_PROFILE=$profile"
@@ -125,10 +128,12 @@ jobs:
 
       - name: Resolve profile knobs
         id: knobs
+        env:
+          MEMORY_BENCH_SIZES_OVERRIDE: ${{ github.event.inputs.sizes }}
         run: |
           set -euo pipefail
           profile="${MEMORY_BENCH_PROFILE:-fast}"
-          override="${{ github.event.inputs.sizes }}"
+          override="${MEMORY_BENCH_SIZES_OVERRIDE:-}"
           case "$profile" in
             smoke)
               sizes="10000"
@@ -140,7 +145,7 @@ jobs:
               sizes="10000 100000"
               ;;
           esac
-          if [ -n "${override:-}" ]; then
+          if [ -n "${override}" ]; then
             sizes="$override"
           fi
           echo "sizes=$sizes" >> "$GITHUB_OUTPUT"
@@ -185,6 +190,7 @@ jobs:
       - name: Run HNSW benches
         env:
           MEMORY_BENCH_SIZES: ${{ steps.knobs.outputs.sizes }}
+          MEMORY_BENCH_MAINTENANCE_WORK_MEM: "2GB"
         run: |
           set -euo pipefail
           peak_file=$(mktemp)

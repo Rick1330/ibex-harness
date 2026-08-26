@@ -388,7 +388,7 @@ Preferred starting models in the roadmap: **GPU/prod** `bge-m3` (1024-dim); **CP
 
 | Variable | Required | Default | Description | Notes |
 |----------|----------|---------|-------------|-------|
-| `IBEX_MEMORY_DATABASE_URL` / `POSTGRES_DSN` | Conditional | (none) | Postgres DSN for memory service | Required when vector store is used |
+| `IBEX_MEMORY_DATABASE_URL` | Conditional | (none) | Postgres DSN for memory service | Required when vector store is used (`Settings.database_url`) |
 | `IBEX_MEMORY_MAX_CONTENT_CHARS` | No | `10000` | Max memory size | |
 | `IBEX_MEMORY_MAX_TAGS` | No | `20` | Max tags | |
 | `IBEX_MEMORY_QUARANTINE_INJECTION_THRESHOLD` | No | `0.70` | Quarantine if injection risk > threshold | |

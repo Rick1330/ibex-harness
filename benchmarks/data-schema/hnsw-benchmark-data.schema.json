@@ -56,7 +56,24 @@
                 "latency_ms_p50": { "type": "number", "minimum": 0 },
                 "latency_ms_p95": { "type": "number", "minimum": 0 },
                 "latency_ms_p99": { "type": "number", "minimum": 0 },
-                "ef_search": { "type": "integer", "minimum": 1 }
+                "latency_ms_p95_ci_low": { "type": "number", "minimum": 0 },
+                "latency_ms_p95_ci_high": { "type": "number", "minimum": 0 },
+                "ef_search": { "type": "integer", "minimum": 1 },
+                "min_similarity": { "type": "number", "minimum": 0, "maximum": 1 },
+                "iterative_scan": {
+                  "type": "string",
+                  "enum": ["off", "relaxed_order", "strict_order"]
+                },
+                "index_build_mode": {
+                  "type": "string",
+                  "enum": ["incremental", "bulk"]
+                },
+                "plan_node_type": { "type": "string" },
+                "plan_index_name": { "type": "string" },
+                "shared_hit_blocks": { "type": "integer", "minimum": 0 },
+                "shared_read_blocks": { "type": "integer", "minimum": 0 },
+                "idx_scan_delta": { "type": "integer", "minimum": 0 },
+                "row_count_verified": { "type": "integer", "minimum": 0 }
               }
             }
           }

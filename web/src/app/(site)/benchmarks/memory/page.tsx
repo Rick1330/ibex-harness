@@ -8,7 +8,7 @@ export const dynamic = "force-static";
 export const metadata: Metadata = {
   title: "Memory HNSW benchmarks",
   description:
-    "pgvector HNSW recall@10 and search latency at 10K / 100K / 1M for the IBEX memory substrate.",
+    "pgvector HNSW recall@10 and search latency at 10K / 100K (1M on CI schedule only) for the IBEX memory substrate.",
 };
 
 export default function BenchmarksMemoryPage() {

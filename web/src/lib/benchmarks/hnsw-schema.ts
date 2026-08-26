@@ -1,16 +1,25 @@
 import { z } from "zod";
 
-const hnswSizeResultSchema = z
-  .object({
-    corpus_size: z.number().int().positive(),
-    query_count: z.number().int().positive(),
-    recall_at_10: z.number().min(0).max(1),
-    latency_ms_p50: z.number().nonnegative(),
-    latency_ms_p95: z.number().nonnegative(),
-    latency_ms_p99: z.number().nonnegative(),
-    ef_search: z.number().int().positive(),
-  })
-  .passthrough();
+const hnswSizeResultSchema = z.object({
+  corpus_size: z.number().int().positive(),
+  query_count: z.number().int().positive(),
+  recall_at_10: z.number().min(0).max(1),
+  latency_ms_p50: z.number().nonnegative(),
+  latency_ms_p95: z.number().nonnegative(),
+  latency_ms_p99: z.number().nonnegative(),
+  latency_ms_p95_ci_low: z.number().nonnegative().optional(),
+  latency_ms_p95_ci_high: z.number().nonnegative().optional(),
+  ef_search: z.number().int().positive(),
+  min_similarity: z.number().min(0).max(1).optional(),
+  iterative_scan: z.enum(["off", "relaxed_order", "strict_order"]).optional(),
+  index_build_mode: z.enum(["incremental", "bulk"]).optional(),
+  plan_node_type: z.string().optional(),
+  plan_index_name: z.string().optional(),
+  shared_hit_blocks: z.number().int().nonnegative().optional(),
+  shared_read_blocks: z.number().int().nonnegative().optional(),
+  idx_scan_delta: z.number().int().nonnegative().optional(),
+  row_count_verified: z.number().int().nonnegative().optional(),
+});
 
 const hnswMethodologySchema = z
   .object({
