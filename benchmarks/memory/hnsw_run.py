@@ -337,29 +337,36 @@ async def _measure_cell(engine: AsyncEngine, store: PgVectorStore, cell: CellPar
     return result
 
 
+@dataclass(frozen=True, slots=True)
+class CorpusMeasureParams:
+    """One (size × index_build_mode) corpus measurement request."""
+
+    size: int
+    index_build_mode: str
+    config: MatrixConfig
+
+
 def _cells_for_corpus(
     *,
     org_id: UUID,
     agent_id: UUID,
-    size: int,
     count: int,
-    index_build_mode: str,
-    config: MatrixConfig,
+    params: CorpusMeasureParams,
 ) -> list[CellParams]:
     cells: list[CellParams] = []
     first_cell = True
-    for iterative_scan in config.iterative_modes:
-        for min_similarity in config.min_sims:
+    for iterative_scan in params.config.iterative_modes:
+        for min_similarity in params.config.min_sims:
             cells.append(
                 CellParams(
                     org_id=org_id,
                     agent_id=agent_id,
-                    size=size,
-                    ef_search=config.ef_search,
+                    size=params.size,
+                    ef_search=params.config.ef_search,
                     min_similarity=min_similarity,
                     iterative_scan=iterative_scan,
-                    index_build_mode=index_build_mode,
-                    query_count=config.queries,
+                    index_build_mode=params.index_build_mode,
+                    query_count=params.config.queries,
                     row_count=count,
                     prewarm=first_cell,
                 )
@@ -372,13 +379,10 @@ async def _measure_corpus(
     engine: AsyncEngine,
     store: PgVectorStore,
     factory: async_sessionmaker[AsyncSession],
-    *,
-    size: int,
-    index_build_mode: str,
-    config: MatrixConfig,
+    params: CorpusMeasureParams,
 ) -> list[SizeResult]:
     org_id, agent_id, _build_s = await _prepare_corpus(
-        engine, factory, size=size, index_build_mode=index_build_mode
+        engine, factory, size=params.size, index_build_mode=params.index_build_mode
     )
     await store.upsert(
         UpsertRequest(
@@ -389,17 +393,12 @@ async def _measure_corpus(
         )
     )
     count = await count_memories(engine)
-    if count != size:
-        raise RuntimeError(f"row count after upsert expected {size}, got {count}")
+    if count != params.size:
+        raise RuntimeError(f"row count after upsert expected {params.size}, got {count}")
     return [
         await _measure_cell(engine, store, cell)
         for cell in _cells_for_corpus(
-            org_id=org_id,
-            agent_id=agent_id,
-            size=size,
-            count=count,
-            index_build_mode=index_build_mode,
-            config=config,
+            org_id=org_id, agent_id=agent_id, count=count, params=params
         )
     ]
 
@@ -420,9 +419,9 @@ async def run_search_matrix(
                     engine,
                     store,
                     factory,
-                    size=size,
-                    index_build_mode=index_build_mode,
-                    config=config,
+                    CorpusMeasureParams(
+                        size=size, index_build_mode=index_build_mode, config=config
+                    ),
                 )
             )
     return results

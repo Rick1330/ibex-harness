@@ -69,7 +69,9 @@ def resolve_hnsw_data_path(raw: str) -> Path:
 
 
 def require_nonneg_int(value: Any, label: str) -> int:
-    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+    if isinstance(value, bool) or not isinstance(value, int):
+        fail(f"{label} must be a non-negative int")
+    if value < 0:
         fail(f"{label} must be a non-negative int")
     return value
 

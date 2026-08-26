@@ -81,6 +81,12 @@ def compute_gate_summary(results: list[dict[str, Any]]) -> dict[str, Any]:
     return summary
 
 
+def _1m_latency_failed(gate: dict[str, Any]) -> bool:
+    if not gate.get("has_1m"):
+        return False
+    return not gate.get("p95_1m_ok", True) or not gate.get("p99_1m_ok", True)
+
+
 def compute_status(gate: dict[str, Any]) -> str:
     """Gate status for published runs.
 
@@ -89,9 +95,7 @@ def compute_status(gate: dict[str, Any]) -> str:
     """
     if not gate.get("recall_ok", False):
         return "fail"
-    if gate.get("has_1m") and (
-        not gate.get("p95_1m_ok", True) or not gate.get("p99_1m_ok", True)
-    ):
+    if _1m_latency_failed(gate):
         return "fail"
     return "pass"
 
