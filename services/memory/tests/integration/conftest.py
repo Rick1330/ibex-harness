@@ -1,18 +1,10 @@
-<<<<<<< HEAD
-"""Postgres fixtures for memory service integration tests."""
-=======
-"""Shared helpers for PgVectorStore integration tests."""
->>>>>>> 396e985 (feat(memory): PgVectorStore HNSW with per-tx ef_search (m3.2.1))
+"""Shared helpers for memory Postgres integration tests (VectorStore + GUC)."""
 
 from __future__ import annotations
 
 import os
 from collections.abc import AsyncIterator
-<<<<<<< HEAD
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
-=======
 from uuid import UUID, uuid4
->>>>>>> 396e985 (feat(memory): PgVectorStore HNSW with per-tx ef_search (m3.2.1))
 
 import pytest
 import pytest_asyncio
@@ -20,33 +12,15 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.config import Settings
-<<<<<<< HEAD
-from app.db import create_engine, create_session_factory
-=======
 from app.db import create_engine, create_session_factory, normalize_async_database_url
 from app.vectorstore.pgvector_store import PgVectorStore
->>>>>>> 396e985 (feat(memory): PgVectorStore HNSW with per-tx ef_search (m3.2.1))
 
 
 def _async_dsn_from_env() -> str | None:
     raw = os.getenv("IBEX_MEMORY_DATABASE_URL") or os.getenv("POSTGRES_TEST_DSN")
     if not raw:
         return None
-<<<<<<< HEAD
-    if raw.startswith("postgres://"):
-        raw = "postgresql://" + raw[len("postgres://") :]
-    if raw.startswith("postgresql://"):
-        raw = "postgresql+asyncpg://" + raw[len("postgresql://") :]
-    parts = urlsplit(raw)
-    query = [
-        (k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True) if k != "sslmode"
-    ]
-    return urlunsplit(
-        (parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment)
-    )
-=======
     return normalize_async_database_url(raw)
->>>>>>> 396e985 (feat(memory): PgVectorStore HNSW with per-tx ef_search (m3.2.1))
 
 
 @pytest.fixture(scope="module")
@@ -75,8 +49,6 @@ async def engine(memory_database_url: str) -> AsyncIterator[AsyncEngine]:
 @pytest.fixture
 def session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
     return create_session_factory(engine)
-<<<<<<< HEAD
-=======
 
 
 @pytest.fixture
@@ -170,4 +142,3 @@ def zero_embedding(dim: int = 1024, *, hotspot: int = 0) -> list[float]:
     vec = [0.0] * dim
     vec[hotspot] = 1.0
     return vec
->>>>>>> 396e985 (feat(memory): PgVectorStore HNSW with per-tx ef_search (m3.2.1))
