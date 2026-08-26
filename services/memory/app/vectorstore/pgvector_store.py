@@ -9,7 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config import Settings
-from app.vectorstore.base import SearchHit, VectorStore
+from app.vectorstore.base import SearchHit, SearchRequest, UpsertRequest, VectorStore
 
 
 class PgVectorStore(VectorStore):
@@ -23,30 +23,13 @@ class PgVectorStore(VectorStore):
         self._session_factory = session_factory
         self._settings = settings
 
-    async def upsert(
-        self,
-        *,
-        memory_id: UUID,
-        org_id: UUID,
-        embedding: Sequence[float],
-        embedding_model: str,
-        embedding_dim: int = 1024,
-    ) -> None:
-        if embedding_dim != 1024:
-            msg = "embedding_dim must be 1024"
-            raise ValueError(msg)
-        if len(embedding) != embedding_dim:
-            msg = f"embedding length {len(embedding)} != embedding_dim {embedding_dim}"
-            raise ValueError(msg)
-        if not embedding_model.strip():
-            msg = "embedding_model must be non-empty"
-            raise ValueError(msg)
-
-        vector_literal = _vector_literal(embedding)
+    async def upsert(self, request: UpsertRequest) -> None:
+        request.validate()
+        vector_literal = _vector_literal(request.embedding)
         async with self._session_factory() as session, session.begin():
-            await _set_org(session, org_id)
+            await _set_org(session, request.org_id)
             result = await session.execute(
-                text(
+                text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
                     """
                         UPDATE ibex_core.memories
                         SET embedding = CAST(:embedding AS vector),
@@ -60,48 +43,41 @@ class PgVectorStore(VectorStore):
                 ),
                 {
                     "embedding": vector_literal,
-                    "embedding_model": embedding_model,
-                    "embedding_dim": embedding_dim,
-                    "memory_id": str(memory_id),
-                    "org_id": str(org_id),
+                    "embedding_model": request.embedding_model,
+                    "embedding_dim": request.embedding_dim,
+                    "memory_id": str(request.memory_id),
+                    "org_id": str(request.org_id),
                 },
             )
             if result.rowcount != 1:
-                msg = f"memory {memory_id} not found for org {org_id}"
+                msg = f"memory {request.memory_id} not found for org {request.org_id}"
                 raise LookupError(msg)
 
-    async def search(
-        self,
-        *,
-        org_id: UUID,
-        agent_id: UUID,
-        query_embedding: Sequence[float],
-        limit: int,
-        min_similarity: float | None = None,
-        ef_search: int | None = None,
-    ) -> list[SearchHit]:
-        if limit < 1:
+    async def search(self, request: SearchRequest) -> list[SearchHit]:
+        if request.limit < 1:
             msg = "limit must be >= 1"
             raise ValueError(msg)
         threshold = (
             self._settings.vector_search_min_similarity
-            if min_similarity is None
-            else min_similarity
+            if request.min_similarity is None
+            else request.min_similarity
         )
-        ef = self._settings.hnsw_ef_search if ef_search is None else ef_search
+        ef = self._settings.hnsw_ef_search if request.ef_search is None else request.ef_search
         if ef < 1:
             msg = "ef_search must be >= 1"
             raise ValueError(msg)
 
-        vector_literal = _vector_literal(query_embedding)
+        vector_literal = _vector_literal(request.query_embedding)
         async with self._session_factory() as session, session.begin():
-            await _set_org(session, org_id)
+            await _set_org(session, request.org_id)
             await session.execute(
-                text("SELECT set_config('hnsw.ef_search', :ef, true)"),
+                text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+                    "SELECT set_config('hnsw.ef_search', :ef, true)"
+                ),
                 {"ef": str(ef)},
             )
             result = await session.execute(
-                text(
+                text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
                     """
                         SELECT id::text AS memory_id,
                                (1 - (embedding <=> CAST(:query AS vector)))::float8
@@ -119,10 +95,10 @@ class PgVectorStore(VectorStore):
                 ),
                 {
                     "query": vector_literal,
-                    "org_id": str(org_id),
-                    "agent_id": str(agent_id),
+                    "org_id": str(request.org_id),
+                    "agent_id": str(request.agent_id),
                     "min_similarity": threshold,
-                    "limit": limit,
+                    "limit": request.limit,
                 },
             )
             rows = result.mappings().all()
@@ -135,7 +111,7 @@ class PgVectorStore(VectorStore):
         async with self._session_factory() as session, session.begin():
             await _set_org(session, org_id)
             await session.execute(
-                text(
+                text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
                     """
                         UPDATE ibex_core.memories
                         SET embedding = NULL,
@@ -152,7 +128,9 @@ class PgVectorStore(VectorStore):
 
 async def _set_org(session: AsyncSession, org_id: UUID) -> None:
     await session.execute(
-        text("SELECT set_config('app.current_org_id', :org_id, true)"),
+        text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+            "SELECT set_config('app.current_org_id', :org_id, true)"
+        ),
         {"org_id": str(org_id)},
     )
 

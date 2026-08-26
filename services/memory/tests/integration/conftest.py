@@ -37,7 +37,7 @@ async def engine(memory_database_url: str) -> AsyncIterator[AsyncEngine]:
     eng = create_engine(settings)
     try:
         async with eng.connect() as conn:
-            await conn.execute(text("SELECT 1"))
+            await conn.execute(text("SELECT 1"))  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
             await conn.commit()
     except Exception as exc:  # noqa: BLE001 — skip if DB unreachable
         await eng.dispose()
@@ -63,6 +63,13 @@ def store(
     return PgVectorStore(session_factory, settings)
 
 
+async def _exec_bound(session: AsyncSession, sql: str, params: dict[str, object]) -> None:
+    await session.execute(
+        text(sql),  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+        params,
+    )
+
+
 async def seed_org_agent_memory(
     factory: async_sessionmaker[AsyncSession],
     *,
@@ -75,67 +82,91 @@ async def seed_org_agent_memory(
     memory_id = uuid4()
     slug = f"org-{org_id.hex[:8]}"
     async with factory() as session, session.begin():
-        await session.execute(
-            text("SELECT set_config('app.is_service_account', 'true', true)")
+        await _exec_bound(
+            session,
+            "SELECT set_config('app.is_service_account', 'true', true)",
+            {},
         )
-        await session.execute(
-            text(
-                """
-                INSERT INTO ibex_core.organizations (id, name, slug)
-                VALUES (:id, :name, :slug)
-                """
-            ),
-            {"id": str(org_id), "name": f"Org {slug}", "slug": slug},
-        )
-        await session.execute(
-            text(
-                """
-                INSERT INTO ibex_core.users (id, org_id, email, name)
-                VALUES (:id, :org_id, :email, :name)
-                """
-            ),
-            {
-                "id": str(user_id),
-                "org_id": str(org_id),
-                "email": f"{slug}@example.com",
-                "name": "User",
-            },
-        )
-        await session.execute(
-            text(
-                """
-                INSERT INTO ibex_core.agents (id, org_id, created_by, name, slug)
-                VALUES (:id, :org_id, :created_by, :name, :slug)
-                """
-            ),
-            {
-                "id": str(agent_id),
-                "org_id": str(org_id),
-                "created_by": str(user_id),
-                "name": "Agent",
-                "slug": f"agent-{agent_id.hex[:8]}",
-            },
-        )
-        await session.execute(
-            text(
-                """
-                INSERT INTO ibex_core.memories (
-                    id, org_id, agent_id, content, content_hash, content_tokens
-                ) VALUES (
-                    :id, :org_id, :agent_id, :content, :hash, :tokens
-                )
-                """
-            ),
-            {
-                "id": str(memory_id),
-                "org_id": str(org_id),
-                "agent_id": str(agent_id),
-                "content": content,
-                "hash": f"hash-{memory_id.hex}",
-                "tokens": max(1, len(content.split())),
-            },
-        )
+        await _insert_org(session, org_id, slug)
+        await _insert_user(session, user_id, org_id, slug)
+        await _insert_agent(session, agent_id, org_id, user_id)
+        await _insert_memory(session, memory_id, org_id, agent_id, content)
     return org_id, agent_id, memory_id
+
+
+async def _insert_org(session: AsyncSession, org_id: UUID, slug: str) -> None:
+    await _exec_bound(
+        session,
+        """
+        INSERT INTO ibex_core.organizations (id, name, slug)
+        VALUES (:id, :name, :slug)
+        """,
+        {"id": str(org_id), "name": f"Org {slug}", "slug": slug},
+    )
+
+
+async def _insert_user(
+    session: AsyncSession, user_id: UUID, org_id: UUID, slug: str
+) -> None:
+    await _exec_bound(
+        session,
+        """
+        INSERT INTO ibex_core.users (id, org_id, email, name)
+        VALUES (:id, :org_id, :email, :name)
+        """,
+        {
+            "id": str(user_id),
+            "org_id": str(org_id),
+            "email": f"{slug}@example.com",
+            "name": "User",
+        },
+    )
+
+
+async def _insert_agent(
+    session: AsyncSession, agent_id: UUID, org_id: UUID, user_id: UUID
+) -> None:
+    await _exec_bound(
+        session,
+        """
+        INSERT INTO ibex_core.agents (id, org_id, created_by, name, slug)
+        VALUES (:id, :org_id, :created_by, :name, :slug)
+        """,
+        {
+            "id": str(agent_id),
+            "org_id": str(org_id),
+            "created_by": str(user_id),
+            "name": "Agent",
+            "slug": f"agent-{agent_id.hex[:8]}",
+        },
+    )
+
+
+async def _insert_memory(
+    session: AsyncSession,
+    memory_id: UUID,
+    org_id: UUID,
+    agent_id: UUID,
+    content: str,
+) -> None:
+    await _exec_bound(
+        session,
+        """
+        INSERT INTO ibex_core.memories (
+            id, org_id, agent_id, content, content_hash, content_tokens
+        ) VALUES (
+            :id, :org_id, :agent_id, :content, :hash, :tokens
+        )
+        """,
+        {
+            "id": str(memory_id),
+            "org_id": str(org_id),
+            "agent_id": str(agent_id),
+            "content": content,
+            "hash": f"hash-{memory_id.hex}",
+            "tokens": max(1, len(content.split())),
+        },
+    )
 
 
 def zero_embedding(dim: int = 1024, *, hotspot: int = 0) -> list[float]:
