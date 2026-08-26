@@ -2,6 +2,7 @@
 
 import { BenchmarkEmptyState } from "@/components/benchmarks/empty-state";
 import { BenchmarkErrorState } from "@/components/benchmarks/benchmark-error-state";
+import { MemorySuiteSummaryCard } from "@/components/benchmarks/benchmark-memory-panel";
 import { OverviewKpiGrid } from "@/components/benchmarks/overview-kpi-grid";
 import { OverviewSlaSection } from "@/components/benchmarks/overview-sla-section";
 import { OverviewTrendSection } from "@/components/benchmarks/overview-trend-section";
@@ -54,6 +55,7 @@ export function BenchmarkOverviewPanel() {
         <OverviewTrendSection runs={runs} />
         <OverviewSlaSection latest={latest} />
       </section>
+      <MemorySuiteSummaryCard />
     </div>
   );
 }

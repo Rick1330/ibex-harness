@@ -86,6 +86,8 @@ jobs:
     timeout-minutes: 180
     permissions:
       contents: read
+      pull-requests: write
+      issues: write
     env:
       POSTGRES_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
       POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
@@ -208,9 +210,9 @@ jobs:
           set +e
           bash infra/scripts/memory-bench.sh \
             --ef-search 40 \
-            --min-similarity 0.0 \
+            --min-similarity 0.70 \
             --iterative-scan off \
-            --index-build-mode incremental
+            --index-build-mode bulk
           rc=$?
           set -e
           kill "$sampler" 2>/dev/null || true
@@ -231,6 +233,58 @@ jobs:
           fi
           exit "$rc"
 
+      - name: Validate published HNSW data
+        run: |
+          python benchmarks/scripts/validate_published_hnsw.py \
+            web/public/benchmarks/hnsw-benchmark-data.json
+
+      - name: Require benchmark bot pin (same-repo PR)
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          BENCHMARK_BOT_SHA: ${{ vars.BENCHMARK_BOT_SHA }}
+        run: test -n "$BENCHMARK_BOT_SHA"
+
+      - name: Require benchmark bot App credentials (same-repo PR)
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          APP_ID: ${{ secrets.BENCHMARK_BOT_APP_ID }}
+          APP_PRIVATE_KEY: ${{ secrets.BENCHMARK_BOT_APP_PRIVATE_KEY }}
+          INSTALLATION_ID: ${{ secrets.BENCHMARK_BOT_INSTALLATION_ID }}
+        run: |
+          test -n "$APP_ID" && test -n "$APP_PRIVATE_KEY" && test -n "$INSTALLATION_ID"
+
+      - name: Setup benchmark bot
+        id: setup_bot
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        uses: ./.github/actions/setup-benchmark-bot
+        with:
+          bot-sha: ${{ vars.BENCHMARK_BOT_SHA }}
+          release-tag: ${{ vars.BENCHMARK_BOT_RELEASE_TAG }}
+
+      - name: Post Memory HNSW PR comment
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          APP_ID: ${{ secrets.BENCHMARK_BOT_APP_ID }}
+          APP_PRIVATE_KEY: ${{ secrets.BENCHMARK_BOT_APP_PRIVATE_KEY }}
+          INSTALLATION_ID: ${{ secrets.BENCHMARK_BOT_INSTALLATION_ID }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HNSW_BENCHMARK_DATA_PATH: ${{ github.workspace }}/web/public/benchmarks/hnsw-benchmark-data.json
+          BOT_PATH: ${{ steps.setup_bot.outputs.bot-path }}
+        run: |
+          set -euo pipefail
+          "$BOT_PATH" post-hnsw-pr-comment \
+            --hnsw-benchmark-data "$HNSW_BENCHMARK_DATA_PATH"
+
+      - name: Note fork PR publish limitation
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
+        run: |
+          {
+            echo "## Memory HNSW PR comment skipped"
+            echo "Fork PRs upload the \`hnsw-benchmark-data\` artifact only (no bot comment)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload HNSW artifact
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -238,7 +292,7 @@ jobs:
           name: hnsw-benchmark-data
           path: web/public/benchmarks/hnsw-benchmark-data.json
           retention-days: 14
-          if-no-files-found: warn
+          if-no-files-found: error
 
   notify-hnsw-benchmark-bot:
     name: notify-hnsw-benchmark-bot

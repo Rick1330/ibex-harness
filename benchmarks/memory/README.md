@@ -28,6 +28,19 @@ Synthetic semi-dense unit-vector corpus against live `pgvector` HNSW
 6. Seed **once** per `(corpus_size × index_build_mode)`; search knobs
    (`min_similarity` × `iterative_scan`) reuse that corpus (no 4× re-seed)
 
+## Profiles / published knobs
+
+CI (`memory-benchmark.yml`) always measures with production publish knobs:
+
+```bash
+--ef-search 40 --min-similarity 0.70 --iterative-scan off --index-build-mode bulk
+```
+
+`build_published_data.py` filters to those cells and attaches `status` /
+`gate_summary` (recall ≥ 98%; 1M p95/p99 SLAs when a 1M cell exists — otherwise
+`warn` on smoke/fast). Full local matrices (`0.0 0.70`, iterative modes, incremental)
+remain useful for investigation but are **not** published.
+
 ## Run
 
 From repo root (compose-test Postgres on `:5433`):
@@ -36,14 +49,14 @@ From repo root (compose-test Postgres on `:5433`):
 POSTGRES_TEST_DSN=postgres://ibex:ibex@localhost:5433/ibex_test?sslmode=disable \
   make memory-bench-smoke          # 10K only
 
-# Full local matrix (10K + 100K; avoid 1M on a laptop):
+# Match CI published knobs (10K + 100K; avoid 1M on a laptop):
 POSTGRES_TEST_DSN=postgres://ibex:ibex@localhost:5433/ibex_test?sslmode=disable \
   MEMORY_BENCH_SIZES='10000 100000' \
   bash infra/scripts/memory-bench.sh \
     --ef-search 40 \
-    --min-similarity 0.0 0.70 \
-    --iterative-scan off relaxed_order \
-    --index-build-mode incremental
+    --min-similarity 0.70 \
+    --iterative-scan off \
+    --index-build-mode bulk
 ```
 
 Useful flags:

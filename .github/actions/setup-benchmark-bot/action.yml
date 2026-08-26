@@ -1,0 +1,106 @@
+name: Setup benchmark bot
+description: Download pinned ibex-benchmark-bot release or cargo-build from BENCHMARK_BOT_SHA
+inputs:
+  bot-sha:
+    description: Full SHA pin for ibexharness-benchmark-bot
+    required: true
+  release-tag:
+    description: Optional explicit release tag override
+    required: false
+    default: ""
+outputs:
+  bot-path:
+    description: Absolute path to ibex-benchmark-bot binary
+    value: ${{ steps.resolve.outputs.path }}
+  source:
+    description: release or build
+    value: ${{ steps.resolve.outputs.source }}
+runs:
+  using: composite
+  steps:
+    - name: Download pinned benchmark bot binary
+      id: bot_bin
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        BENCHMARK_BOT_SHA: ${{ inputs.bot-sha }}
+        BENCHMARK_BOT_RELEASE_TAG: ${{ inputs.release-tag }}
+      run: |
+        set -euo pipefail
+        mkdir -p benchmark-bot-bin
+        asset="ibex-benchmark-bot-linux-amd64"
+        short="${BENCHMARK_BOT_SHA:0:7}"
+        tags=()
+        if [ -n "${BENCHMARK_BOT_RELEASE_TAG:-}" ]; then
+          tags+=("$BENCHMARK_BOT_RELEASE_TAG")
+        fi
+        tags+=("bot-${short}" "v${short}")
+        source=build
+        path=""
+        for tag in "${tags[@]}"; do
+          if gh release download "$tag" \
+              --repo Rick1330/ibexharness-benchmark-bot \
+              --pattern "$asset" \
+              --dir benchmark-bot-bin 2>/dev/null; then
+            chmod +x "benchmark-bot-bin/$asset"
+            path="${GITHUB_WORKSPACE}/benchmark-bot-bin/$asset"
+            source=release
+            echo "Downloaded bot binary from release tag $tag"
+            break
+          fi
+        done
+        echo "path=$path" >> "$GITHUB_OUTPUT"
+        echo "source=$source" >> "$GITHUB_OUTPUT"
+        if [ "$source" = "build" ]; then
+          echo "No release asset for pin ${BENCHMARK_BOT_SHA}; will cargo build."
+        fi
+
+    - name: Checkout benchmark bot
+      if: steps.bot_bin.outputs.source == 'build'
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        repository: Rick1330/ibexharness-benchmark-bot
+        ref: ${{ inputs.bot-sha }}
+        path: benchmark-bot
+        persist-credentials: false
+
+    - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
+      if: steps.bot_bin.outputs.source == 'build'
+      with:
+        toolchain: stable
+
+    - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2.8.2
+      if: steps.bot_bin.outputs.source == 'build'
+      with:
+        workspaces: benchmark-bot
+
+    - name: Build benchmark bot (fallback)
+      id: bot_build
+      if: steps.bot_bin.outputs.source == 'build'
+      shell: bash
+      run: |
+        set -euo pipefail
+        cd benchmark-bot
+        cargo build --release --locked
+        echo "path=${GITHUB_WORKSPACE}/benchmark-bot/target/release/ibex-benchmark-bot" >> "$GITHUB_OUTPUT"
+
+    - name: Resolve bot path
+      id: resolve
+      shell: bash
+      env:
+        BOT_BIN_RELEASE: ${{ steps.bot_bin.outputs.path }}
+        BOT_BIN_BUILD: ${{ steps.bot_build.outputs.path }}
+        SOURCE: ${{ steps.bot_bin.outputs.source }}
+      run: |
+        set -euo pipefail
+        if [ -n "${BOT_BIN_RELEASE:-}" ] && [ -x "$BOT_BIN_RELEASE" ]; then
+          echo "path=$BOT_BIN_RELEASE" >> "$GITHUB_OUTPUT"
+          echo "source=release" >> "$GITHUB_OUTPUT"
+        elif [ -n "${BOT_BIN_BUILD:-}" ] && [ -x "$BOT_BIN_BUILD" ]; then
+          echo "path=$BOT_BIN_BUILD" >> "$GITHUB_OUTPUT"
+          echo "source=build" >> "$GITHUB_OUTPUT"
+        else
+          echo "benchmark bot binary not found" >&2
+          exit 1
+        fi
+        echo "Resolved bot source=${SOURCE}"

@@ -5,10 +5,16 @@ import { stagePercentileRows } from "@/lib/benchmarks/stage-metrics";
 import type { StageLatency } from "@/lib/benchmarks/types";
 
 describe("benchmark navigation", () => {
-  it("lists seven sidebar destinations including memory and compare", () => {
-    expect(BENCHMARK_NAV_PAGES).toHaveLength(7);
-    expect(BENCHMARK_NAV_PAGES.map((page) => page.url)).toContain("/benchmarks/memory");
-    expect(BENCHMARK_NAV_PAGES.map((page) => page.url)).toContain("/benchmarks/compare");
+  it("exposes hub plus proxy and memory suite destinations", () => {
+    const urls = BENCHMARK_NAV_PAGES.map((page) => page.url);
+    expect(urls).toContain("/benchmarks");
+    expect(urls).toContain("/benchmarks/latency");
+    expect(urls).toContain("/benchmarks/compare");
+    expect(urls).toContain("/benchmarks/memory");
+    expect(urls).toContain("/benchmarks/memory/latency");
+    expect(urls).toContain("/benchmarks/memory/history");
+    expect(urls).toContain("/benchmarks/memory/compare");
+    expect(BENCHMARK_NAV_PAGES).toHaveLength(10);
   });
 });
 

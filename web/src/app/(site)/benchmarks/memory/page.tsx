@@ -15,7 +15,7 @@ export default function BenchmarksMemoryPage() {
   return (
     <BenchmarkPageShell
       title="Memory HNSW"
-      subtitle="Recall@10 and search latency for PgVectorStore against live pgvector HNSW (ef_search=40). Separate from proxy overhead charts — same publish surface."
+      subtitle="Recall@10 and search latency for PgVectorStore against live pgvector HNSW (ef_search=40). Latency, history, and compare live under this suite."
     >
       <BenchmarkMemoryPanel />
     </BenchmarkPageShell>

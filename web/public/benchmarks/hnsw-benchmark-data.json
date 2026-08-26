@@ -74,7 +74,15 @@
           "row_count_verified": 100000
         }
       ],
-      "mean_recall_at_10": 1.0
+      "mean_recall_at_10": 1.0,
+      "status": "warn",
+      "gate_summary": {
+        "recall_ok": true,
+        "recall_floor": 0.98,
+        "worst_recall_at_10": 1.0,
+        "has_1m": false,
+        "note": "1M cell absent (expected on smoke/fast profiles)"
+      }
     }
   ]
 }

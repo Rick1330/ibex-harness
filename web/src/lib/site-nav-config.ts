@@ -69,7 +69,7 @@ const MOBILE_SECTION_META: Record<
     kind: "list",
     dataKey: "benchmarkPages",
     hub: { href: "/benchmarks", label: "Overview" },
-    description: "Proxy performance and regression",
+    description: "Proxy and memory performance suites",
     iconId: "benchmarks",
   },
   "/blog": {

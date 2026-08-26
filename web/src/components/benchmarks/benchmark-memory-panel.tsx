@@ -1,30 +1,29 @@
+"use client";
+
+import Link from "next/link";
+
 import { BenchmarkEmptyState } from "@/components/benchmarks/empty-state";
 import { BenchmarkErrorState } from "@/components/benchmarks/benchmark-error-state";
 import { KpiCard } from "@/components/benchmarks/kpi-card";
 import { SlaGauge } from "@/components/benchmarks/sla-gauge";
-import { loadPublishedHnswBenchmarkData } from "@/lib/benchmarks/hnsw-published-data";
+import { ChartSkeleton } from "@/components/benchmarks/skeleton";
+import { HNSW_SLA_TARGETS } from "@/lib/benchmarks/constants";
+import {
+  corpusSizeLabel,
+  formatRecallPct,
+  largestCorpusResult,
+} from "@/lib/benchmarks/hnsw-runs";
 import type { HnswSizeResult } from "@/lib/benchmarks/hnsw-schema";
-
-const RECALL_SLA = 0.98;
-const P99_SLA_MS_1M = 100;
-const P95_SLA_MS_1M = 30;
-
-function formatPct(value: number): string {
-  return `${(value * 100).toFixed(1)}%`;
-}
-
-function sizeLabel(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(0)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(0)}K`;
-  return String(n);
-}
+import { useHnswBenchmarkData } from "@/hooks/use-hnsw-benchmark-data";
 
 function ResultRow({ result }: { readonly result: HnswSizeResult }) {
   return (
     <tr className="border-b border-border/60">
-      <td className="py-2 font-mono text-sm">{sizeLabel(result.corpus_size)}</td>
+      <td className="py-2 font-mono text-sm">{corpusSizeLabel(result.corpus_size)}</td>
       <td className="py-2 font-mono text-sm tabular-nums">{result.query_count}</td>
-      <td className="py-2 font-mono text-sm tabular-nums">{formatPct(result.recall_at_10)}</td>
+      <td className="py-2 font-mono text-sm tabular-nums">
+        {formatRecallPct(result.recall_at_10)}
+      </td>
       <td className="py-2 font-mono text-sm tabular-nums">{result.latency_ms_p50.toFixed(2)}</td>
       <td className="py-2 font-mono text-sm tabular-nums">{result.latency_ms_p95.toFixed(2)}</td>
       <td className="py-2 font-mono text-sm tabular-nums">{result.latency_ms_p99.toFixed(2)}</td>
@@ -34,12 +33,15 @@ function ResultRow({ result }: { readonly result: HnswSizeResult }) {
 }
 
 export function BenchmarkMemoryPanel() {
-  const loaded = loadPublishedHnswBenchmarkData();
-  if (!loaded.ok) {
-    return <BenchmarkErrorState message={loaded.error} />;
+  const { latest, runs, isLoading, isError, errorMessage } = useHnswBenchmarkData();
+
+  if (isLoading) {
+    return <ChartSkeleton className="h-[240px]" />;
   }
-  const data = loaded.data;
-  const latest = data.runs[0];
+
+  if (isError) {
+    return <BenchmarkErrorState message={errorMessage ?? "Failed to load HNSW data"} />;
+  }
 
   if (!latest) {
     return <BenchmarkEmptyState />;
@@ -47,20 +49,45 @@ export function BenchmarkMemoryPanel() {
 
   const at1m = latest.results.find((r) => r.corpus_size >= 1_000_000);
   const worstRecall = Math.min(...latest.results.map((r) => r.recall_at_10));
+  const status = latest.status ?? "pass";
 
   return (
     <div className="space-y-8">
+      <div className="flex flex-wrap items-center gap-3 text-sm">
+        <span className="rounded-md border border-border px-2 py-1 font-mono uppercase">
+          {status}
+        </span>
+        <Link
+          href="/benchmarks/memory/history"
+          className="text-muted-foreground underline-offset-2 hover:underline"
+        >
+          History
+        </Link>
+        <Link
+          href="/benchmarks/memory/compare"
+          className="text-muted-foreground underline-offset-2 hover:underline"
+        >
+          Compare
+        </Link>
+        <Link
+          href="/benchmarks/memory/latency"
+          className="text-muted-foreground underline-offset-2 hover:underline"
+        >
+          Latency trends
+        </Link>
+      </div>
+
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <KpiCard label="Latest short SHA" value={latest.short_sha} hint={latest.branch} />
         <KpiCard
           label="Mean recall@10"
-          value={formatPct(latest.mean_recall_at_10)}
+          value={formatRecallPct(latest.mean_recall_at_10)}
           hint={`${latest.results.length} corpus sizes`}
           higherIsBetter
         />
         <KpiCard
           label="Sizes measured"
-          value={latest.results.map((r) => sizeLabel(r.corpus_size)).join(" · ")}
+          value={latest.results.map((r) => corpusSizeLabel(r.corpus_size)).join(" · ")}
         />
         <KpiCard label="Run #" value={String(latest.run_number)} hint={latest.timestamp} />
       </div>
@@ -71,13 +98,21 @@ export function BenchmarkMemoryPanel() {
           <SlaGauge
             label="Worst recall@10 (target ≥ 98%)"
             value={1 - worstRecall}
-            target={1 - RECALL_SLA}
-            formatValue={() => formatPct(worstRecall)}
+            target={1 - HNSW_SLA_TARGETS.recall_at_10}
+            formatValue={() => formatRecallPct(worstRecall)}
           />
           {at1m ? (
             <>
-              <SlaGauge label="1M search p95" value={at1m.latency_ms_p95} target={P95_SLA_MS_1M} />
-              <SlaGauge label="1M search p99" value={at1m.latency_ms_p99} target={P99_SLA_MS_1M} />
+              <SlaGauge
+                label="1M search p95"
+                value={at1m.latency_ms_p95}
+                target={HNSW_SLA_TARGETS.p95_ms_1m}
+              />
+              <SlaGauge
+                label="1M search p99"
+                value={at1m.latency_ms_p99}
+                target={HNSW_SLA_TARGETS.p99_ms_1m}
+              />
             </>
           ) : null}
         </div>
@@ -123,20 +158,65 @@ export function BenchmarkMemoryPanel() {
         </p>
       </section>
 
-      {data.runs.length > 1 ? (
-        <section className="space-y-3">
-          <h2 className="text-lg font-semibold tracking-tight">History</h2>
-          <ul className="space-y-2 text-sm">
-            {data.runs.map((run) => (
-              <li key={run.sha} className="flex flex-wrap gap-x-3 gap-y-1 font-mono">
-                <span>{run.short_sha}</span>
-                <span className="text-muted-foreground">{run.timestamp}</span>
-                <span>mean recall {formatPct(run.mean_recall_at_10)}</span>
-              </li>
-            ))}
-          </ul>
-        </section>
+      {runs.length > 1 ? (
+        <p className="text-sm text-muted-foreground">
+          {runs.length} published runs — see{" "}
+          <Link href="/benchmarks/memory/history" className="underline underline-offset-2">
+            History
+          </Link>{" "}
+          for the full table.
+        </p>
       ) : null}
+    </div>
+  );
+}
+
+export function MemorySuiteSummaryCard() {
+  const { latest, isLoading, isError } = useHnswBenchmarkData();
+
+  if (isLoading) {
+    return <ChartSkeleton className="h-[120px]" />;
+  }
+
+  if (isError || !latest) {
+    return (
+      <div className="rounded-md border border-border p-4 text-sm text-muted-foreground">
+        <p className="font-medium text-foreground">Memory HNSW</p>
+        <p className="mt-1">No published HNSW runs yet.</p>
+        <Link href="/benchmarks/memory" className="mt-2 inline-block underline underline-offset-2">
+          Open Memory suite
+        </Link>
+      </div>
+    );
+  }
+
+  const largest = largestCorpusResult(latest);
+
+  return (
+    <div className="rounded-md border border-border p-4">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">
+          Memory HNSW
+        </h2>
+        <Link
+          href="/benchmarks/memory"
+          className="text-sm text-muted-foreground underline-offset-2 hover:underline"
+        >
+          Open suite
+        </Link>
+      </div>
+      <div className="mt-3 grid gap-3 sm:grid-cols-3">
+        <KpiCard
+          label="Mean recall@10"
+          value={formatRecallPct(latest.mean_recall_at_10)}
+          higherIsBetter
+        />
+        <KpiCard
+          label={largest ? `${corpusSizeLabel(largest.corpus_size)} p95` : "Largest p95"}
+          value={largest ? `${largest.latency_ms_p95.toFixed(1)} ms` : "—"}
+        />
+        <KpiCard label="Latest" value={latest.short_sha} hint={latest.branch} />
+      </div>
     </div>
   );
 }

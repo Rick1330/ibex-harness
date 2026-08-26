@@ -231,4 +231,8 @@ export const BENCHMARK_PAGE_ICONS: Record<string, LucideIcon> = {
   "/benchmarks/load": Zap,
   "/benchmarks/history": History,
   "/benchmarks/compare": GitCompareArrows,
+  "/benchmarks/memory": Brain,
+  "/benchmarks/memory/latency": Activity,
+  "/benchmarks/memory/history": History,
+  "/benchmarks/memory/compare": GitCompareArrows,
 };

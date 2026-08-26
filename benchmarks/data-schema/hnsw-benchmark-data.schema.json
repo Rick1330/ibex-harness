@@ -34,6 +34,14 @@
           "run_url": { "type": "string" },
           "methodology": { "type": "object" },
           "mean_recall_at_10": { "type": "number", "minimum": 0, "maximum": 1 },
+          "status": {
+            "type": "string",
+            "enum": ["pass", "fail", "warn"]
+          },
+          "gate_summary": {
+            "type": "object",
+            "additionalProperties": true
+          },
           "results": {
             "type": "array",
             "minItems": 1,

@@ -31,6 +31,20 @@ const hnswMethodologySchema = z
   })
   .passthrough();
 
+const hnswGateSummarySchema = z
+  .object({
+    recall_ok: z.boolean().optional(),
+    recall_floor: z.number().optional(),
+    worst_recall_at_10: z.number().optional(),
+    has_1m: z.boolean().optional(),
+    p95_1m_ok: z.boolean().optional(),
+    p99_1m_ok: z.boolean().optional(),
+    p95_ms_1m: z.number().optional(),
+    p99_ms_1m: z.number().optional(),
+    note: z.string().optional(),
+  })
+  .passthrough();
+
 const hnswRunSchema = z.object({
   sha: z.string().min(7),
   short_sha: z.string().min(7),
@@ -41,6 +55,8 @@ const hnswRunSchema = z.object({
   methodology: hnswMethodologySchema,
   results: z.array(hnswSizeResultSchema).min(1),
   mean_recall_at_10: z.number().min(0).max(1),
+  status: z.enum(["pass", "fail", "warn"]).optional(),
+  gate_summary: hnswGateSummarySchema.optional(),
 });
 
 export const hnswBenchmarkDataSchema = z.object({

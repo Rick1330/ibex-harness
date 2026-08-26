@@ -28,6 +28,23 @@ Methodology: [ADR-0034](/docs/adr/0034-performance-methodology) (proxy),
 Published proxy data is committed via the benchmark bot after successful **main** collects
 (`benchmark_main_complete` → artifact `benchmark-data`).
 
+### Suite contract (multi-bench)
+
+Each suite keeps its own JSON file and bot modules. Shared seams:
+
+| Field | Proxy | Memory HNSW | Future suite |
+| --- | --- | --- | --- |
+| `suite_id` | `proxy` | `hnsw` | e.g. `extraction` |
+| Artifact | `benchmark-data` | `hnsw-benchmark-data` | `<suite>-benchmark-data` |
+| Public path | `web/public/benchmarks/benchmark-data.json` | `…/hnsw-benchmark-data.json` | under same dir |
+| Dispatch | `benchmark_main_complete` | `memory_benchmark_main_complete` | new event type |
+| PR comment marker | `IBEX_BOT_COMMENT` | `IBEX_BOT_COMMENT_HNSW` | new marker |
+| Bot pin helper | `.github/actions/setup-benchmark-bot` | same | same |
+| Site registry | `web/src/lib/benchmarks/suites.ts` | same | add suite + nav pages |
+
+Do **not** merge suites into one mega-JSON. Site nav groups by suite; proxy-only concepts
+(waterfall / k6 load) are not invented for HNSW.
+
 ### Memory HNSW
 
 - `memory/hnsw_bench.py`: seed synthetic 1024-d vectors, measure recall@10 + search latency
@@ -37,6 +54,11 @@ Published proxy data is committed via the benchmark bot after successful **main*
 - Workflow: `.github/workflows/memory-benchmark.yml` (name **`Memory Benchmarks`**).
 - Bot dispatch: `memory_benchmark_main_complete` → artifact `hnsw-benchmark-data` only
   (does **not** touch proxy `benchmark-data.json` / `badge.svg`).
+- Same-repo PRs also get a **Memory HNSW** sticky PR comment (`post-hnsw-pr-comment`)
+  separate from the proxy comment.
+- Published cells are production knobs only: `ef_search=40`, `min_similarity=0.70`,
+  `iterative_scan=off`, `index_build_mode=bulk` (full matrix stays in raw output).
+- Site suite: `/benchmarks/memory` (+ latency / history / compare).
 
 ```bash
 POSTGRES_TEST_DSN=postgres://ibex:ibex@localhost:5433/ibex_test?sslmode=disable \

@@ -17,7 +17,7 @@ export function benchmarkBaseOptions(): BaseLayoutProps {
 export function benchmarkLayoutOptions(): Pick<DocsLayoutProps, "sidebar"> {
   return {
     sidebar: {
-      defaultOpenLevel: 0,
+      defaultOpenLevel: 1,
       collapsible: true,
       hideSearch: true,
       banner: <BenchmarkSidebarBanner />,
