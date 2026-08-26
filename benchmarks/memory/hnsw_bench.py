@@ -47,7 +47,7 @@ from corpus import (  # noqa: E402
     seed_org,
     try_prewarm,
 )
-from path_guard import UnsafePathError, resolve_workspace_path  # noqa: E402
+from path_guard import UnsafePathError, resolve_raw_bench_path  # noqa: E402
 from plan_assert import PlanAssertionError, assert_hnsw_index_used  # noqa: E402
 from synth import (  # noqa: E402
     ACTIVE_DIMS,
@@ -327,65 +327,68 @@ async def _measure_cell(engine: AsyncEngine, store: PgVectorStore, cell: CellPar
     return result
 
 
-async def _benchmark(args: argparse.Namespace) -> dict[str, object]:
-    dsn = os.getenv("IBEX_MEMORY_DATABASE_URL") or os.getenv("POSTGRES_TEST_DSN")
-    if not dsn:
-        msg = "IBEX_MEMORY_DATABASE_URL or POSTGRES_TEST_DSN required"
-        raise RuntimeError(msg)
-
-    settings = Settings(database_url=dsn, hnsw_ef_search=args.ef_search)
-    engine = create_engine(settings)
-    factory = create_session_factory(engine)
-    store = PgVectorStore(factory, settings)
-
-    sizes = list(args.sizes)
-    iterative_modes = list(args.iterative_scan)
-    min_sims = list(args.min_similarity)
-    index_modes = list(args.index_build_mode)
-
+async def _run_search_matrix(
+    engine: AsyncEngine,
+    store: PgVectorStore,
+    factory: async_sessionmaker[AsyncSession],
+    *,
+    sizes: list[int],
+    index_modes: list[str],
+    iterative_modes: list[str],
+    min_sims: list[float],
+    ef_search: int,
+    queries: int | None,
+) -> list[SizeResult]:
     results: list[SizeResult] = []
-    try:
-        await reset_memories(engine)
-        await ensure_hnsw_index(engine, maintenance_work_mem=_maintenance_work_mem())
-        for size in sizes:
-            for index_build_mode in index_modes:
-                org_id, agent_id, _build_s = await _prepare_corpus(
-                    engine, factory, size=size, index_build_mode=index_build_mode
+    await reset_memories(engine)
+    await ensure_hnsw_index(engine, maintenance_work_mem=_maintenance_work_mem())
+    for size in sizes:
+        for index_build_mode in index_modes:
+            org_id, agent_id, _build_s = await _prepare_corpus(
+                engine, factory, size=size, index_build_mode=index_build_mode
+            )
+            await store.upsert(
+                UpsertRequest(
+                    memory_id=memory_id_for(org_id, 0),
+                    org_id=org_id,
+                    embedding=unit_vector(0),
+                    embedding_model="bench-synthetic",
                 )
-                await store.upsert(
-                    UpsertRequest(
-                        memory_id=memory_id_for(org_id, 0),
+            )
+            count = await count_memories(engine)
+            if count != size:
+                msg = f"row count after upsert expected {size}, got {count}"
+                raise RuntimeError(msg)
+
+            first_cell = True
+            for iterative_scan in iterative_modes:
+                for min_similarity in min_sims:
+                    cell = CellParams(
                         org_id=org_id,
-                        embedding=unit_vector(0),
-                        embedding_model="bench-synthetic",
+                        agent_id=agent_id,
+                        size=size,
+                        ef_search=ef_search,
+                        min_similarity=min_similarity,
+                        iterative_scan=iterative_scan,
+                        index_build_mode=index_build_mode,
+                        query_count=queries,
+                        row_count=count,
+                        prewarm=first_cell,
                     )
-                )
-                count = await count_memories(engine)
-                if count != size:
-                    msg = f"row count after upsert expected {size}, got {count}"
-                    raise RuntimeError(msg)
+                    results.append(await _measure_cell(engine, store, cell))
+                    first_cell = False
+    return results
 
-                first_cell = True
-                for iterative_scan in iterative_modes:
-                    for min_similarity in min_sims:
-                        cell = CellParams(
-                            org_id=org_id,
-                            agent_id=agent_id,
-                            size=size,
-                            ef_search=args.ef_search,
-                            min_similarity=min_similarity,
-                            iterative_scan=iterative_scan,
-                            index_build_mode=index_build_mode,
-                            query_count=args.queries,
-                            row_count=count,
-                            prewarm=first_cell,
-                        )
-                        results.append(await _measure_cell(engine, store, cell))
-                        first_cell = False
-    finally:
-        await engine.dispose()
 
-    payload: dict[str, object] = {
+def _build_payload(
+    *,
+    args: argparse.Namespace,
+    results: list[SizeResult],
+    iterative_modes: list[str],
+    min_sims: list[float],
+    index_modes: list[str],
+) -> dict[str, object]:
+    return {
         "benchmark": "hnsw_recall_latency",
         "generated_at": datetime.now(UTC).isoformat(),
         "methodology": {
@@ -409,9 +412,50 @@ async def _benchmark(args: argparse.Namespace) -> dict[str, object]:
         if results
         else 0.0,
     }
-    out = resolve_workspace_path(args.output, allow_create_parent=True)
+
+
+async def _benchmark(args: argparse.Namespace) -> dict[str, object]:
+    dsn = os.getenv("IBEX_MEMORY_DATABASE_URL") or os.getenv("POSTGRES_TEST_DSN")
+    if not dsn:
+        msg = "IBEX_MEMORY_DATABASE_URL or POSTGRES_TEST_DSN required"
+        raise RuntimeError(msg)
+
+    settings = Settings(database_url=dsn, hnsw_ef_search=args.ef_search)
+    engine = create_engine(settings)
+    factory = create_session_factory(engine)
+    store = PgVectorStore(factory, settings)
+
+    iterative_modes = list(args.iterative_scan)
+    min_sims = list(args.min_similarity)
+    index_modes = list(args.index_build_mode)
+    try:
+        results = await _run_search_matrix(
+            engine,
+            store,
+            factory,
+            sizes=list(args.sizes),
+            index_modes=index_modes,
+            iterative_modes=iterative_modes,
+            min_sims=min_sims,
+            ef_search=args.ef_search,
+            queries=args.queries,
+        )
+    finally:
+        await engine.dispose()
+
+    payload = _build_payload(
+        args=args,
+        results=results,
+        iterative_modes=iterative_modes,
+        min_sims=min_sims,
+        index_modes=index_modes,
+    )
+    out = resolve_raw_bench_path(args.output, must_exist=False)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    out.write_text(  # NOSONAR pythonsecurity:S2083,pythonsecurity:S8707
+        json.dumps(payload, indent=2) + "\n",
+        encoding="utf-8",
+    )
     return payload
 
 

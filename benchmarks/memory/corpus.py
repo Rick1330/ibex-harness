@@ -15,6 +15,7 @@ from synth import unit_vector, vec_literal
 _DIM = 1024
 _COPY_CHUNK = 20_000
 _HNSW_INDEX = "idx_memories_embedding_hnsw"
+_SET_SERVICE_ACCOUNT = "SELECT set_config('app.is_service_account', 'true', true)"
 _HNSW_CREATE_SQL = """
 CREATE INDEX idx_memories_embedding_hnsw
     ON ibex_core.memories
@@ -43,7 +44,7 @@ async def scalar(
     async with engine.begin() as conn:
         await conn.execute(
             text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-                "SELECT set_config('app.is_service_account', 'true', true)"
+                _SET_SERVICE_ACCOUNT
             )
         )
         result = await conn.execute(
@@ -58,7 +59,7 @@ async def reset_memories(engine: AsyncEngine) -> None:
     async with engine.begin() as conn:
         await conn.execute(
             text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-                "SELECT set_config('app.is_service_account', 'true', true)"
+                _SET_SERVICE_ACCOUNT
             )
         )
         await conn.execute(
@@ -72,7 +73,7 @@ async def analyze_memories(engine: AsyncEngine) -> None:
     async with engine.begin() as conn:
         await conn.execute(
             text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-                "SELECT set_config('app.is_service_account', 'true', true)"
+                _SET_SERVICE_ACCOUNT
             )
         )
         await conn.execute(
@@ -117,7 +118,7 @@ async def ensure_hnsw_index(engine: AsyncEngine, *, maintenance_work_mem: str) -
     async with engine.begin() as conn:
         await conn.execute(
             text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-                "SELECT set_config('app.is_service_account', 'true', true)"
+                _SET_SERVICE_ACCOUNT
             )
         )
         await conn.execute(
@@ -135,7 +136,7 @@ async def drop_hnsw_index(engine: AsyncEngine) -> None:
     async with engine.begin() as conn:
         await conn.execute(
             text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-                "SELECT set_config('app.is_service_account', 'true', true)"
+                _SET_SERVICE_ACCOUNT
             )
         )
         await conn.execute(
@@ -170,7 +171,7 @@ async def seed_org(
     org_id, user_id, agent_id = uuid4(), uuid4(), uuid4()
     slug = f"bench-{org_id.hex[:8]}"
     async with factory() as session, session.begin():
-        await exec_sql(session, "SELECT set_config('app.is_service_account', 'true', true)")
+        await exec_sql(session, _SET_SERVICE_ACCOUNT)
         await exec_sql(
             session,
             """
@@ -257,7 +258,7 @@ async def bulk_insert_memories(
         async with engine.begin() as conn:
             await conn.execute(
                 text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-                    "SELECT set_config('app.is_service_account', 'true', true)"
+                    _SET_SERVICE_ACCOUNT
                 )
             )
             await conn.execute(

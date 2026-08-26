@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+_HNSW_INDEX = "idx_memories_embedding_hnsw"
+
 
 class PlanAssertionError(RuntimeError):
     """Raised when the planner does not use idx_memories_embedding_hnsw."""
@@ -33,11 +35,27 @@ def collect_buffer_stats(nodes: list[dict[str, Any]]) -> dict[str, int]:
     return {"shared_hit_blocks": hits, "shared_read_blocks": reads}
 
 
-def assert_hnsw_index_used(explain_json: list[Any] | dict[str, Any]) -> dict[str, Any]:
-    """Require an Index/Bitmap Index Scan on idx_memories_embedding_hnsw.
+def _is_hnsw_access(node: dict[str, Any]) -> bool:
+    ntype = str(node.get("Node Type") or "")
+    index_name = str(node.get("Index Name") or "")
+    return _HNSW_INDEX in index_name and ("Index" in ntype or "Bitmap" in ntype)
 
-    Fails loudly if a Seq Scan on memories is the ANN access path without HNSW.
-    """
+
+def _is_seq_on_memories(node: dict[str, Any]) -> bool:
+    ntype = str(node.get("Node Type") or "")
+    relation = str(node.get("Relation Name") or "")
+    return ntype == "Seq Scan" and relation in {"memories", "ibex_core.memories"}
+
+
+def _summarize_nodes(nodes: list[dict[str, Any]]) -> str:
+    return ", ".join(
+        f"{n.get('Node Type')}@{n.get('Relation Name') or n.get('Index Name')}"
+        for n in nodes[:12]
+    )
+
+
+def assert_hnsw_index_used(explain_json: list[Any] | dict[str, Any]) -> dict[str, Any]:
+    """Require an Index/Bitmap Index Scan on idx_memories_embedding_hnsw."""
     root = explain_json[0] if isinstance(explain_json, list) else explain_json
     if not isinstance(root, dict):
         raise PlanAssertionError(f"unexpected EXPLAIN root type: {type(root)!r}")
@@ -46,27 +64,14 @@ def assert_hnsw_index_used(explain_json: list[Any] | dict[str, Any]) -> dict[str
         raise PlanAssertionError("EXPLAIN JSON missing Plan")
 
     nodes = walk_plan_nodes(plan)
-    hnsw_nodes: list[dict[str, Any]] = []
-    seq_on_memories = False
-    for node in nodes:
-        ntype = str(node.get("Node Type") or "")
-        relation = str(node.get("Relation Name") or "")
-        index_name = str(node.get("Index Name") or "")
-        if "idx_memories_embedding_hnsw" in index_name:
-            if "Index" in ntype or "Bitmap" in ntype:
-                hnsw_nodes.append(node)
-        if ntype == "Seq Scan" and relation in {"memories", "ibex_core.memories"}:
-            seq_on_memories = True
+    hnsw_nodes = [n for n in nodes if _is_hnsw_access(n)]
+    seq_on_memories = any(_is_seq_on_memories(n) for n in nodes)
 
     if not hnsw_nodes:
-        detail = ", ".join(
-            f"{n.get('Node Type')}@{n.get('Relation Name') or n.get('Index Name')}"
-            for n in nodes[:12]
-        )
         seq_note = "; Seq Scan on memories also present" if seq_on_memories else ""
         raise PlanAssertionError(
             "expected Index Scan / Bitmap Index Scan on idx_memories_embedding_hnsw; "
-            f"saw: {detail}{seq_note}"
+            f"saw: {_summarize_nodes(nodes)}{seq_note}"
         )
 
     buffers = collect_buffer_stats(nodes)

@@ -11,7 +11,45 @@ from pathlib import Path
 _BENCH_DIR = Path(__file__).resolve().parent
 if str(_BENCH_DIR) not in sys.path:
     sys.path.insert(0, str(_BENCH_DIR))
-from path_guard import UnsafePathError, resolve_workspace_path  # noqa: E402
+from path_guard import (  # noqa: E402
+    UnsafePathError,
+    resolve_published_hnsw_path,
+    resolve_raw_bench_path,
+)
+
+
+def _merge_entry(raw: dict, *, sha: str, branch: str, run_number: int, run_url: str) -> dict:
+    short = sha[:7] if len(sha) >= 7 else sha
+    return {
+        "sha": sha,
+        "short_sha": short,
+        "timestamp": raw.get("generated_at") or datetime.now(UTC).isoformat(),
+        "branch": branch,
+        "run_number": run_number,
+        "run_url": run_url,
+        "methodology": raw.get("methodology", {}),
+        "results": raw.get("results", []),
+        "mean_recall_at_10": raw.get("mean_recall_at_10", 0.0),
+    }
+
+
+def _load_or_init_published(published_path: Path) -> dict:
+    if not published_path.exists():
+        return {
+            "schema_version": 1,
+            "benchmark": "hnsw_recall_latency",
+            "runs": [],
+        }
+    return json.loads(published_path.read_text(encoding="utf-8"))
+
+
+def _write_published(published_path: Path, published: dict) -> None:
+    published_path.parent.mkdir(parents=True, exist_ok=True)
+    # Path already basename-allowlisted + workspace-bound in path_guard.
+    published_path.write_text(  # NOSONAR pythonsecurity:S2083,pythonsecurity:S8707
+        json.dumps(published, indent=2) + "\n",
+        encoding="utf-8",
+    )
 
 
 def main() -> None:
@@ -25,42 +63,26 @@ def main() -> None:
     args = parser.parse_args()
 
     try:
-        raw_path = resolve_workspace_path(args.raw, must_exist=True)
-        published_path = resolve_workspace_path(args.published, allow_create_parent=True)
+        raw_path = resolve_raw_bench_path(args.raw, must_exist=True)
+        published_path = resolve_published_hnsw_path(args.published)
     except UnsafePathError as exc:
         parser.error(str(exc))
 
-    raw = json.loads(raw_path.read_text(encoding="utf-8"))
-    short = args.sha[:7] if len(args.sha) >= 7 else args.sha
-    entry = {
-        "sha": args.sha,
-        "short_sha": short,
-        "timestamp": raw.get("generated_at") or datetime.now(UTC).isoformat(),
-        "branch": args.branch,
-        "run_number": args.run_number,
-        "run_url": args.run_url,
-        "methodology": raw.get("methodology", {}),
-        "results": raw.get("results", []),
-        "mean_recall_at_10": raw.get("mean_recall_at_10", 0.0),
-    }
-
-    if published_path.exists():
-        published = json.loads(published_path.read_text(encoding="utf-8"))
-    else:
-        published = {
-            "schema_version": 1,
-            "benchmark": "hnsw_recall_latency",
-            "runs": [],
-        }
-
+    raw = json.loads(raw_path.read_text(encoding="utf-8"))  # NOSONAR pythonsecurity:S2083
+    entry = _merge_entry(
+        raw,
+        sha=args.sha,
+        branch=args.branch,
+        run_number=args.run_number,
+        run_url=args.run_url,
+    )
+    published = _load_or_init_published(published_path)
     runs = [r for r in published.get("runs", []) if r.get("sha") != args.sha]
     runs.insert(0, entry)
     published["schema_version"] = 1
     published["benchmark"] = "hnsw_recall_latency"
     published["runs"] = runs[:50]
-
-    published_path.parent.mkdir(parents=True, exist_ok=True)
-    published_path.write_text(json.dumps(published, indent=2) + "\n", encoding="utf-8")
+    _write_published(published_path, published)
     print(f"wrote {published_path} ({len(runs)} runs)", flush=True)
 
 
