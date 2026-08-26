@@ -246,7 +246,7 @@ def _require_nonempty_str(value: object, *, field: str) -> str:
 
 
 def _require_dimensions(value: object) -> int:
-    if not isinstance(value, int) or isinstance(value, bool):
+    if isinstance(value, bool) or not isinstance(value, int):
         raise EmbeddingInvalidResponseError(
             f"embedder dimensions must be {_EXPECTED_DIM}, got {value!r}"
         )
@@ -257,18 +257,21 @@ def _require_dimensions(value: object) -> int:
     return value
 
 
+def _reject_non_finite(number: float, *, vector_idx: int, component_idx: int) -> float:
+    if math.isfinite(number):
+        return number
+    raise EmbeddingInvalidResponseError(
+        f"vector[{vector_idx}][{component_idx}] must be a finite number"
+    )
+
+
 def _as_finite_float(value: object, *, vector_idx: int, component_idx: int) -> float:
     # bool is a subclass of int — reject explicitly.
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise EmbeddingInvalidResponseError(
             f"vector[{vector_idx}][{component_idx}] must be a finite number"
         )
-    number = float(value)
-    if not math.isfinite(number):
-        raise EmbeddingInvalidResponseError(
-            f"vector[{vector_idx}][{component_idx}] must be a finite number"
-        )
-    return number
+    return _reject_non_finite(float(value), vector_idx=vector_idx, component_idx=component_idx)
 
 
 def _parse_vector_row(row: object, *, idx: int) -> list[float]:
