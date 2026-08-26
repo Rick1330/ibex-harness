@@ -54,9 +54,7 @@ class PgVectorStore(VectorStore):
                 raise LookupError(msg)
 
     async def search(self, request: SearchRequest) -> list[SearchHit]:
-        if request.limit < 1:
-            msg = "limit must be >= 1"
-            raise ValueError(msg)
+        request.validate()
         threshold = (
             self._settings.vector_search_min_similarity
             if request.min_similarity is None

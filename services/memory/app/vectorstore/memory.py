@@ -30,10 +30,18 @@ class InMemoryVectorStore(VectorStore):
 
     def bind_agent(self, memory_id: UUID, agent_id: UUID) -> None:
         """Associate a memory with an agent (simulates row ownership for search)."""
+        existing = self._rows.get(memory_id)
+        if existing is not None and existing.agent_id != agent_id:
+            msg = f"cannot rebind agent for stored memory {memory_id}"
+            raise ValueError(msg)
         self._agents[memory_id] = agent_id
 
     async def upsert(self, request: UpsertRequest) -> None:
         request.validate()
+        existing = self._rows.get(request.memory_id)
+        if existing is not None and existing.org_id != request.org_id:
+            msg = f"memory {request.memory_id} not found for org {request.org_id}"
+            raise LookupError(msg)
         agent_id = self._agents.get(request.memory_id)
         if agent_id is None:
             msg = f"bind_agent required before upsert for memory {request.memory_id}"
@@ -47,6 +55,7 @@ class InMemoryVectorStore(VectorStore):
         )
 
     async def search(self, request: SearchRequest) -> list[SearchHit]:
+        request.validate()
         _ = request.ef_search  # unused in-memory; kept for ABC parity
         threshold = (
             self.default_min_similarity

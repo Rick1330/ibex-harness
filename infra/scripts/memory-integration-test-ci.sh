@@ -10,13 +10,17 @@ if [[ ! -f "$MEMORY_DIR/pyproject.toml" ]]; then
   exit 0
 fi
 
-if [[ -z "${POSTGRES_TEST_DSN:-}" && -z "${IBEX_MEMORY_DATABASE_URL:-}" ]]; then
-  echo "POSTGRES_TEST_DSN or IBEX_MEMORY_DATABASE_URL required for memory integration tests" >&2
+# One canonical DSN for migrate + pytest (prefer explicit migrate/app URLs).
+CANONICAL_DSN="${POSTGRES_DSN:-${POSTGRES_TEST_DSN:-${IBEX_MEMORY_DATABASE_URL:-}}}"
+if [[ -z "${CANONICAL_DSN}" ]]; then
+  echo "POSTGRES_DSN, POSTGRES_TEST_DSN, or IBEX_MEMORY_DATABASE_URL required" >&2
   exit 1
 fi
 
-export POSTGRES_DSN="${POSTGRES_DSN:-${POSTGRES_TEST_DSN:-}}"
-export POSTGRES_MIGRATE_DSN="${POSTGRES_MIGRATE_DSN:-${POSTGRES_DSN}}"
+export POSTGRES_DSN="${CANONICAL_DSN}"
+export POSTGRES_MIGRATE_DSN="${CANONICAL_DSN}"
+export POSTGRES_TEST_DSN="${CANONICAL_DSN}"
+export IBEX_MEMORY_DATABASE_URL="${IBEX_MEMORY_DATABASE_URL:-${CANONICAL_DSN}}"
 
 cd "$ROOT"
 bash "$ROOT/infra/scripts/db-migrate.sh" up

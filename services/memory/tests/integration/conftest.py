@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from uuid import UUID, uuid4
 
 import pytest
@@ -12,15 +13,20 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.config import Settings
-from app.db import create_engine, create_session_factory, normalize_async_database_url
+from app.db import create_engine, create_session_factory
 from app.vectorstore.pgvector_store import PgVectorStore
 
 
 def _async_dsn_from_env() -> str | None:
+    """Pass through DSN; create_engine translates sslmode via connect_args."""
     raw = os.getenv("IBEX_MEMORY_DATABASE_URL") or os.getenv("POSTGRES_TEST_DSN")
     if not raw:
         return None
-    return normalize_async_database_url(raw)
+    if raw.startswith("postgres://"):
+        return "postgresql+asyncpg://" + raw[len("postgres://") :]
+    if raw.startswith("postgresql://") and "+asyncpg" not in raw.split("://", 1)[0]:
+        return "postgresql+asyncpg://" + raw[len("postgresql://") :]
+    return raw
 
 
 @pytest.fixture(scope="module")
@@ -70,6 +76,16 @@ async def _exec_bound(session: AsyncSession, sql: str, params: dict[str, object]
     )
 
 
+@dataclass(frozen=True, slots=True)
+class _SeedIds:
+    org_id: UUID
+    user_id: UUID
+    agent_id: UUID
+    memory_id: UUID
+    slug: str
+    content: str
+
+
 async def seed_org_agent_memory(
     factory: async_sessionmaker[AsyncSession],
     *,
@@ -77,37 +93,39 @@ async def seed_org_agent_memory(
 ) -> tuple[UUID, UUID, UUID]:
     """Insert org/user/agent/memory as service account; return org, agent, memory ids."""
     org_id = uuid4()
-    user_id = uuid4()
-    agent_id = uuid4()
-    memory_id = uuid4()
-    slug = f"org-{org_id.hex[:8]}"
+    seed = _SeedIds(
+        org_id=org_id,
+        user_id=uuid4(),
+        agent_id=uuid4(),
+        memory_id=uuid4(),
+        slug=f"org-{org_id.hex[:8]}",
+        content=content,
+    )
     async with factory() as session, session.begin():
         await _exec_bound(
             session,
             "SELECT set_config('app.is_service_account', 'true', true)",
             {},
         )
-        await _insert_org(session, org_id, slug)
-        await _insert_user(session, user_id, org_id, slug)
-        await _insert_agent(session, agent_id, org_id, user_id)
-        await _insert_memory(session, memory_id, org_id, agent_id, content)
-    return org_id, agent_id, memory_id
+        await _insert_org(session, seed)
+        await _insert_user(session, seed)
+        await _insert_agent(session, seed)
+        await _insert_memory(session, seed)
+    return seed.org_id, seed.agent_id, seed.memory_id
 
 
-async def _insert_org(session: AsyncSession, org_id: UUID, slug: str) -> None:
+async def _insert_org(session: AsyncSession, seed: _SeedIds) -> None:
     await _exec_bound(
         session,
         """
         INSERT INTO ibex_core.organizations (id, name, slug)
         VALUES (:id, :name, :slug)
         """,
-        {"id": str(org_id), "name": f"Org {slug}", "slug": slug},
+        {"id": str(seed.org_id), "name": f"Org {seed.slug}", "slug": seed.slug},
     )
 
 
-async def _insert_user(
-    session: AsyncSession, user_id: UUID, org_id: UUID, slug: str
-) -> None:
+async def _insert_user(session: AsyncSession, seed: _SeedIds) -> None:
     await _exec_bound(
         session,
         """
@@ -115,17 +133,15 @@ async def _insert_user(
         VALUES (:id, :org_id, :email, :name)
         """,
         {
-            "id": str(user_id),
-            "org_id": str(org_id),
-            "email": f"{slug}@example.com",
+            "id": str(seed.user_id),
+            "org_id": str(seed.org_id),
+            "email": f"{seed.slug}@example.com",
             "name": "User",
         },
     )
 
 
-async def _insert_agent(
-    session: AsyncSession, agent_id: UUID, org_id: UUID, user_id: UUID
-) -> None:
+async def _insert_agent(session: AsyncSession, seed: _SeedIds) -> None:
     await _exec_bound(
         session,
         """
@@ -133,22 +149,16 @@ async def _insert_agent(
         VALUES (:id, :org_id, :created_by, :name, :slug)
         """,
         {
-            "id": str(agent_id),
-            "org_id": str(org_id),
-            "created_by": str(user_id),
+            "id": str(seed.agent_id),
+            "org_id": str(seed.org_id),
+            "created_by": str(seed.user_id),
             "name": "Agent",
-            "slug": f"agent-{agent_id.hex[:8]}",
+            "slug": f"agent-{seed.agent_id.hex[:8]}",
         },
     )
 
 
-async def _insert_memory(
-    session: AsyncSession,
-    memory_id: UUID,
-    org_id: UUID,
-    agent_id: UUID,
-    content: str,
-) -> None:
+async def _insert_memory(session: AsyncSession, seed: _SeedIds) -> None:
     await _exec_bound(
         session,
         """
@@ -159,12 +169,12 @@ async def _insert_memory(
         )
         """,
         {
-            "id": str(memory_id),
-            "org_id": str(org_id),
-            "agent_id": str(agent_id),
-            "content": content,
-            "hash": f"hash-{memory_id.hex}",
-            "tokens": max(1, len(content.split())),
+            "id": str(seed.memory_id),
+            "org_id": str(seed.org_id),
+            "agent_id": str(seed.agent_id),
+            "content": seed.content,
+            "hash": f"hash-{seed.memory_id.hex}",
+            "tokens": max(1, len(seed.content.split())),
         },
     )
 

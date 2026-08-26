@@ -16,14 +16,18 @@ pipelines. **Not** the place for extraction workers (`services/worker/`).
 
 ## Local
 
+From the **repository root**:
+
 ```bash
-cd services/memory
-uv sync --group dev
-uv run uvicorn app.main:app --host 127.0.0.1 --port 8005
+cd services/memory && uv sync --group dev
+uv run --directory services/memory uvicorn app.main:app --host 127.0.0.1 --port 8005
 make test-memory              # unit (skips integration)
 # compose-test Postgres on :5433, migrated:
 POSTGRES_TEST_DSN=postgres://ibex:ibex@localhost:5433/ibex_test?sslmode=disable \
   make test-memory-integration
 ```
+
+If you are already inside `services/memory/`, use `make -C ../.. test-memory` (and the
+same for `test-memory-integration`).
 
 See [ENVIRONMENT_VARIABLES.md](../../web/engineering/ENVIRONMENT_VARIABLES.md) §11.

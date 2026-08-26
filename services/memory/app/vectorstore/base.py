@@ -9,6 +9,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+_DEFAULT_EMBEDDING_DIM = 1024
+
 
 class SearchHit(BaseModel):
     """Cosine-similarity hit from a vector search."""
@@ -25,10 +27,10 @@ class UpsertRequest:
     org_id: UUID
     embedding: Sequence[float]
     embedding_model: str
-    embedding_dim: int = 1024
+    embedding_dim: int = _DEFAULT_EMBEDDING_DIM
 
     def validate(self) -> None:
-        if self.embedding_dim != 1024:
+        if self.embedding_dim != _DEFAULT_EMBEDDING_DIM:
             msg = "embedding_dim must be 1024"
             raise ValueError(msg)
         if len(self.embedding) != self.embedding_dim:
@@ -52,6 +54,25 @@ class SearchRequest:
     limit: int
     min_similarity: float | None = None
     ef_search: int | None = None
+
+    def validate(self, *, embedding_dim: int = _DEFAULT_EMBEDDING_DIM) -> None:
+        if len(self.query_embedding) != embedding_dim:
+            msg = (
+                f"query_embedding length {len(self.query_embedding)} "
+                f"!= embedding_dim {embedding_dim}"
+            )
+            raise ValueError(msg)
+        if self.limit < 1:
+            msg = "limit must be >= 1"
+            raise ValueError(msg)
+        if self.min_similarity is not None and (
+            self.min_similarity < 0.0 or self.min_similarity > 1.0
+        ):
+            msg = "min_similarity must be in [0, 1]"
+            raise ValueError(msg)
+        if self.ef_search is not None and self.ef_search < 1:
+            msg = "ef_search must be >= 1"
+            raise ValueError(msg)
 
 
 class VectorStore(ABC):

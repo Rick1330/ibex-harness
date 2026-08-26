@@ -144,3 +144,22 @@ async def test_upsert_missing_memory_raises(
                 embedding_model="bge-m3",
             )
         )
+
+
+@pytest.mark.asyncio
+async def test_search_rejects_invalid_limit(
+    store: PgVectorStore,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    org_id, agent_id, _memory_id = await seed_org_agent_memory(
+        session_factory, content="limit validation"
+    )
+    with pytest.raises(ValueError, match="limit must be >= 1"):
+        await store.search(
+            SearchRequest(
+                org_id=org_id,
+                agent_id=agent_id,
+                query_embedding=zero_embedding(),
+                limit=0,
+            )
+        )
