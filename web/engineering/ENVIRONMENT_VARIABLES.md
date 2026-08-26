@@ -386,16 +386,22 @@ Preferred starting models in the roadmap: **GPU/prod** `bge-m3` (1024-dim); **CP
 
 ### Memory system knobs (Phase 3+)
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `IBEX_MEMORY_MAX_CONTENT_CHARS` | No | `10000` | Max memory size |
-| `IBEX_MEMORY_MAX_TAGS` | No | `20` | Max tags |
-| `IBEX_MEMORY_QUARANTINE_INJECTION_THRESHOLD` | No | `0.70` | Quarantine if injection risk > threshold |
-| `IBEX_MEMORY_DEDUP_EXACT_ENABLED` | No | `true` | Enable content-hash dedup |
-| `IBEX_MEMORY_NEAR_DUPLICATE_SIM_THRESHOLD` | No | `0.92` | Near-duplicate similarity threshold |
-| `IBEX_MEMORY_VECTOR_SEARCH_MIN_SIMILARITY` | No | `0.70` | Default min similarity |
-| `IBEX_MEMORY_HOT_CACHE_TTL_SECONDS` | No | `3600` | Cache TTL for hot memories |
-| `IBEX_HNSW_EF_SEARCH` | Planned **3** | `40` | Per-query HNSW `ef_search` starting point | Tune from recall/latency benches |
+| Variable | Required | Default | Description | Notes |
+|----------|----------|---------|-------------|-------|
+| `IBEX_MEMORY_DATABASE_URL` / `POSTGRES_DSN` | Conditional | (none) | Postgres DSN for memory service | Required when vector store is used |
+| `IBEX_MEMORY_MAX_CONTENT_CHARS` | No | `10000` | Max memory size | |
+| `IBEX_MEMORY_MAX_TAGS` | No | `20` | Max tags | |
+| `IBEX_MEMORY_QUARANTINE_INJECTION_THRESHOLD` | No | `0.70` | Quarantine if injection risk > threshold | |
+| `IBEX_MEMORY_DEDUP_EXACT_ENABLED` | No | `true` | Enable content-hash dedup | |
+| `IBEX_MEMORY_NEAR_DUPLICATE_SIM_THRESHOLD` | No | `0.92` | Near-duplicate similarity threshold | |
+| `IBEX_MEMORY_VECTOR_SEARCH_MIN_SIMILARITY` | No | `0.70` | Default min similarity | |
+| `IBEX_MEMORY_HOT_CACHE_TTL_SECONDS` | No | `3600` | Cache TTL for hot memories | |
+| `IBEX_HNSW_EF_SEARCH` | No | `40` | Default per-query HNSW `ef_search` | Tune from recall/latency benches; applied via `SET LOCAL` |
+| `IBEX_MEMORY_EMBEDDING_BASE_URL` | No | `http://127.0.0.1:8004` | Embedder service base URL | Client: `app/clients/embedding.py` |
+| `IBEX_EMBEDDING_API_TOKEN` / `IBEX_MEMORY_EMBEDDING_API_TOKEN` | Conditional | (none) | Bearer for `POST /v1/embed` | Never logged; same token space as embedder |
+| `IBEX_MEMORY_EMBEDDING_TIMEOUT_SECONDS` | No | `30.0` | Embedder read timeout | |
+| `IBEX_MEMORY_EMBEDDING_CONNECT_TIMEOUT_SECONDS` | No | `2.0` | Embedder connect timeout | |
+| `IBEX_MEMORY_EMBEDDING_MAX_RETRIES` | No | `2` | Retries for 429/502/503 + transport | |
 | `IBEX_MEMORY_HYBRID_ENABLED` | Planned **5** | `false` | Enable dense+sparse hybrid retrieval | Feature flag |
 | `IBEX_MEMORY_RERANK_ENABLED` | Planned **5** | `false` | Cross-encoder rerank on fused top-K | Degrade if TEI unavailable |
 

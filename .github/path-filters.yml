@@ -43,8 +43,10 @@ benchmarks:
   - 'benchmarks/**'
   - 'web/public/benchmarks/**'
   - '.github/workflows/benchmark.yml'
+  - '.github/workflows/memory-benchmark.yml'
   - 'services/auth/**'
   - 'services/proxy/**'
+  - 'services/memory/**'
   - 'go.mod'
   - 'go.sum'
 docs:

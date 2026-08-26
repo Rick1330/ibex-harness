@@ -5,6 +5,7 @@ const BENCHMARK_PAGES = [
   { name: "Latency", url: "/benchmarks/latency" },
   { name: "Waterfall", url: "/benchmarks/waterfall" },
   { name: "Load test", url: "/benchmarks/load" },
+  { name: "Memory HNSW", url: "/benchmarks/memory" },
   { name: "History", url: "/benchmarks/history" },
   { name: "Compare", url: "/benchmarks/compare" },
 ] as const;

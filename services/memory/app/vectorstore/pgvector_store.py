@@ -11,6 +11,24 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.config import Settings
 from app.vectorstore.base import SearchHit, SearchRequest, UpsertRequest, VectorStore
 
+# Shared with benchmarks/memory/plan_assert.py — keep EXPLAIN SQL in sync.
+SEARCH_SQL = """
+SELECT memory_id, similarity
+FROM (
+    SELECT id::text AS memory_id,
+           (1 - (embedding <=> CAST(:query AS vector)))::float8 AS similarity
+    FROM ibex_core.memories
+    WHERE org_id = :org_id
+      AND agent_id = :agent_id
+      AND status = 'active'
+      AND deleted_at IS NULL
+      AND embedding IS NOT NULL
+    ORDER BY embedding <=> CAST(:query AS vector)
+    LIMIT :limit
+) ranked
+WHERE similarity >= :min_similarity
+"""
+
 
 class PgVectorStore(VectorStore):
     """Production VectorStore backed by ibex_core.memories + pgvector HNSW."""
@@ -74,22 +92,16 @@ class PgVectorStore(VectorStore):
                 ),
                 {"ef": str(ef)},
             )
+            if request.iterative_scan is not None:
+                await session.execute(
+                    text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+                        "SELECT set_config('hnsw.iterative_scan', :mode, true)"
+                    ),
+                    {"mode": request.iterative_scan},
+                )
             result = await session.execute(
                 text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-                    """
-                        SELECT id::text AS memory_id,
-                               (1 - (embedding <=> CAST(:query AS vector)))::float8
-                                   AS similarity
-                        FROM ibex_core.memories
-                        WHERE org_id = :org_id
-                          AND agent_id = :agent_id
-                          AND status = 'active'
-                          AND deleted_at IS NULL
-                          AND embedding IS NOT NULL
-                          AND (1 - (embedding <=> CAST(:query AS vector))) >= :min_similarity
-                        ORDER BY embedding <=> CAST(:query AS vector)
-                        LIMIT :limit
-                        """
+                    SEARCH_SQL
                 ),
                 {
                     "query": vector_literal,

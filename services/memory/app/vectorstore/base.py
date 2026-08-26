@@ -37,6 +37,9 @@ class UpsertRequest:
             raise ValueError(msg)
 
 
+_ITERATIVE_SCAN_VALUES = frozenset({"off", "relaxed_order", "strict_order"})
+
+
 @dataclass(frozen=True, slots=True)
 class SearchRequest:
     """Tenant-scoped vector similarity search."""
@@ -47,6 +50,8 @@ class SearchRequest:
     limit: int
     min_similarity: float | None = None
     ef_search: int | None = None
+    # pgvector 0.8+: off | relaxed_order | strict_order (None = leave GUC alone)
+    iterative_scan: str | None = None
 
     def validate(self, *, embedding_dim: int = _DEFAULT_EMBEDDING_DIM) -> None:
         _require_embedding_length(self.query_embedding, embedding_dim, "query_embedding")
@@ -54,6 +59,12 @@ class SearchRequest:
         _require_unit_interval(self.min_similarity, "min_similarity")
         if self.ef_search is not None:
             _require_at_least_one(self.ef_search, "ef_search")
+        if self.iterative_scan is not None and self.iterative_scan not in _ITERATIVE_SCAN_VALUES:
+            msg = (
+                "iterative_scan must be one of "
+                f"{sorted(_ITERATIVE_SCAN_VALUES)}, got {self.iterative_scan!r}"
+            )
+            raise ValueError(msg)
 
 
 def _require_default_embedding_dim(embedding_dim: int) -> None:

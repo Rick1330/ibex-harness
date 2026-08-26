@@ -1,0 +1,278 @@
+name: Memory Benchmarks
+
+# Profiles (mirror .github/workflows/benchmark.yml):
+#   smoke — PRs (10K only)
+#   fast  — main push (10K + 100K)
+#   full  — Sunday cron + workflow_dispatch (10K + 100K + 1M)
+# Successful main collects notify the benchmark bot when enabled.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'services/memory/**'
+      - 'benchmarks/memory/**'
+      - 'benchmarks/data-schema/hnsw-benchmark-data.schema.json'
+      - 'infra/scripts/memory-bench.sh'
+      - '.github/workflows/memory-benchmark.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'services/memory/**'
+      - 'benchmarks/memory/**'
+      - 'benchmarks/data-schema/hnsw-benchmark-data.schema.json'
+      - 'infra/scripts/memory-bench.sh'
+      - '.github/workflows/memory-benchmark.yml'
+  schedule:
+    # Weekly full suite (Sunday 05:00 UTC) after proxy benches
+    - cron: '0 5 * * 0'
+  workflow_dispatch:
+    inputs:
+      bench_profile:
+        description: Bench profile (smoke / fast / full)
+        required: false
+        default: full
+        type: choice
+        options:
+          - smoke
+          - fast
+          - full
+      sizes:
+        description: Override corpus sizes (space-separated; empty = profile default)
+        required: false
+        default: ''
+
+concurrency:
+  group: memory-benchmarks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  detect-memory-bench-profile:
+    name: detect-memory-bench-profile
+    runs-on: ubuntu-latest
+    outputs:
+      bench_profile: ${{ steps.profile.outputs.bench_profile }}
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: audit
+
+      - id: profile
+        name: Resolve bench profile
+        run: |
+          set -euo pipefail
+          # smoke = PRs, fast = main push, full = Sunday/dispatch
+          profile="fast"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            profile="smoke"
+          elif [ "${{ github.event_name }}" = "schedule" ]; then
+            profile="full"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            profile="${{ github.event.inputs.bench_profile || 'full' }}"
+          fi
+          echo "bench_profile=$profile" >> "$GITHUB_OUTPUT"
+          echo "Resolved MEMORY_BENCH_PROFILE=$profile"
+
+  collect-hnsw-benchmarks:
+    name: collect-hnsw-benchmarks
+    needs: detect-memory-bench-profile
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      contents: read
+    env:
+      POSTGRES_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+      POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+      POSTGRES_TEST_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+      IBEX_MEMORY_DATABASE_URL: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+      MEMORY_BENCH_PROFILE: ${{ needs.detect-memory-bench-profile.outputs.bench_profile }}
+    services:
+      postgres:
+        # pgvector 0.8.6 on PostgreSQL 16 — immutable pin (same as ci.yml)
+        image: pgvector/pgvector:0.8.6-pg16@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b
+        env:
+          POSTGRES_USER: ibex
+          POSTGRES_PASSWORD: ibex
+          POSTGRES_DB: ibex
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ibex -d ibex"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+          --shm-size=2gb
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+
+      - name: Resolve profile knobs
+        id: knobs
+        run: |
+          set -euo pipefail
+          profile="${MEMORY_BENCH_PROFILE:-fast}"
+          override="${{ github.event.inputs.sizes }}"
+          case "$profile" in
+            smoke)
+              sizes="10000"
+              ;;
+            full)
+              sizes="10000 100000 1000000"
+              ;;
+            *)
+              sizes="10000 100000"
+              ;;
+          esac
+          if [ -n "${override:-}" ]; then
+            sizes="$override"
+          fi
+          echo "sizes=$sizes" >> "$GITHUB_OUTPUT"
+          echo "profile=$profile" >> "$GITHUB_OUTPUT"
+          echo "Using MEMORY_BENCH_PROFILE=$profile sizes=$sizes"
+
+      - name: Install psql client
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+
+      - name: Tune Postgres for HNSW build
+        run: |
+          set -euo pipefail
+          # 1M x 1024-dim HNSW needs elevated maintenance_work_mem on ubuntu-latest (~7GB RAM).
+          # Stay on standard runner; do not silently upsize. If OOM, fail loudly and ask
+          # before switching to a larger runner label.
+          PGPASSWORD=ibex psql -h localhost -U ibex -d ibex -v ON_ERROR_STOP=1 <<'SQL'
+          ALTER SYSTEM SET maintenance_work_mem = '2GB';
+          ALTER SYSTEM SET max_parallel_maintenance_workers = 2;
+          SELECT pg_reload_conf();
+          SHOW maintenance_work_mem;
+          SHOW max_parallel_maintenance_workers;
+          SQL
+
+      - name: Record runner memory baseline
+        run: |
+          set -euo pipefail
+          {
+            echo "## Memory bench profile"
+            echo "- Profile: \`${{ steps.knobs.outputs.profile }}\`"
+            echo "- Sizes: \`${{ steps.knobs.outputs.sizes }}\`"
+            echo "- Runner: \`ubuntu-latest\` (do not silently upsize on OOM)"
+            echo "- \`maintenance_work_mem=2GB\` for HNSW build"
+            echo ""
+            echo "### Host memory (pre-bench)"
+            free -h
+            echo ""
+            echo "### Postgres knobs"
+            PGPASSWORD=ibex psql -h localhost -U ibex -d ibex -c "SHOW maintenance_work_mem;"
+            PGPASSWORD=ibex psql -h localhost -U ibex -d ibex -c "SHOW shared_buffers;"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Run HNSW benches
+        env:
+          MEMORY_BENCH_SIZES: ${{ steps.knobs.outputs.sizes }}
+        run: |
+          set -euo pipefail
+          peak_file=$(mktemp)
+          echo 0 > "$peak_file"
+          (
+            while true; do
+              cur=$(ps -o rss= -C postgres -C python -C python3 2>/dev/null | awk '{s+=$1} END {print s+0}')
+              prev=$(cat "$peak_file")
+              if [ "${cur:-0}" -gt "${prev:-0}" ]; then
+                echo "$cur" > "$peak_file"
+              fi
+              sleep 5
+            done
+          ) &
+          sampler=$!
+          set +e
+          bash infra/scripts/memory-bench.sh \
+            --ef-search 40 \
+            --min-similarity 0.0 \
+            --iterative-scan off \
+            --index-build-mode incremental
+          rc=$?
+          set -e
+          kill "$sampler" 2>/dev/null || true
+          wait "$sampler" 2>/dev/null || true
+          peak_kb=$(cat "$peak_file")
+          peak_mb=$((peak_kb / 1024))
+          {
+            echo ""
+            echo "### Host memory (post-bench)"
+            free -h
+            echo ""
+            echo "- Sampled peak RSS (postgres+python): **${peak_mb} MiB** (\`${peak_kb} kB\`)"
+            echo "- Bench exit code: \`$rc\`"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          rm -f "$peak_file"
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::HNSW bench failed (exit $rc). If OOM on ubuntu-latest during 1M index build, stop and ask before upsizing the runner."
+          fi
+          exit "$rc"
+
+      - name: Upload HNSW artifact
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hnsw-benchmark-data
+          path: web/public/benchmarks/hnsw-benchmark-data.json
+          retention-days: 14
+          if-no-files-found: warn
+
+  notify-hnsw-benchmark-bot:
+    name: notify-hnsw-benchmark-bot
+    needs: collect-hnsw-benchmarks
+    if: |
+      vars.BENCHMARK_BOT_ENABLED == 'true' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'schedule' ||
+       github.event_name == 'workflow_dispatch' ||
+       github.event_name == 'push')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: audit
+
+      - name: Validate dispatch prerequisites
+        env:
+          DISPATCH_TOKEN: ${{ secrets.BENCHMARK_BOT_DISPATCH_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "$DISPATCH_TOKEN" ]; then
+            echo "BENCHMARK_BOT_DISPATCH_TOKEN is required when BENCHMARK_BOT_ENABLED=true" >&2
+            exit 1
+          fi
+
+      - name: Dispatch memory_benchmark_main_complete
+        env:
+          GH_TOKEN: ${{ secrets.BENCHMARK_BOT_DISPATCH_TOKEN }}
+          DISPATCH_RUN_ID: ${{ github.run_id }}
+          DISPATCH_HEAD_SHA: ${{ github.sha }}
+          DISPATCH_RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          set -euo pipefail
+          gh api repos/Rick1330/ibexharness-benchmark-bot/dispatches \
+            -f event_type=memory_benchmark_main_complete \
+            -f "client_payload[run_id]=${DISPATCH_RUN_ID}" \
+            -f "client_payload[head_sha]=${DISPATCH_HEAD_SHA}" \
+            -f "client_payload[run_number]=${DISPATCH_RUN_NUMBER}"

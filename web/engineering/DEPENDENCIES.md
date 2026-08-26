@@ -414,7 +414,7 @@ All PRs run at least one automated test suite (`ci-gate-go` / `ci-gate-python` /
 ### 9.4 Containers
 
 - **Trivy filesystem** scan on PR/push (`trivy` job): CRITICAL/HIGH, `ignore-unfixed: true`
-- **Trivy image** (`docker-publish.yml`): CRITICAL/HIGH on built `auth`, `proxy`, `embedder`, and `mcp-memory` OCI artifacts (add `memory` when publish jobs land)
+- **Trivy image** (`docker-publish.yml`): CRITICAL/HIGH on built `auth`, `proxy`, `embedder`, `mcp-memory`, and `memory` OCI artifacts
 - **Hadolint** on all `Dockerfile*` paths (`services/auth`, `services/proxy`, `services/embedder`, `services/mcp-memory`, `services/memory`)
 - **Future:** `trivy image` per built image when CI produces tagged images (see `.github/workflows/sbom.yml` for SBOM supply chain)
 - block critical CVEs unless explicitly waived with documented reason and deadline (ADR required)

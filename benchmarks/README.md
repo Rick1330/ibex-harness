@@ -1,26 +1,51 @@
 # Benchmarks
 
-This directory contains the **proxy / load benchmark pipeline** used today (Phases 0–2 complete).
-Retrieval-quality and intelligence eval harnesses land later under services (and possibly here) as
-Phases **3.5**, **4.5**, and **5** advance — those are planning baselines, not present yet in this tree.
+This directory contains:
 
-Methodology: [ADR-0034](/docs/adr/0034-performance-methodology). Public charts: `/benchmarks` on the site.
-Roadmap alignment: [current state](https://ibexharness.com/roadmap/current-state).
+1. **Proxy / load benchmark pipeline** (Phases 0–2) — Go stage microbenches, k6, published
+   `web/public/benchmarks/benchmark-data.json` → site `/benchmarks`.
+2. **Memory HNSW recall/latency benches** (Phase 3 Track B) — `memory/` exercising
+   `services/memory` `PgVectorStore` against live pgvector; published
+   `web/public/benchmarks/hnsw-benchmark-data.json` → site `/benchmarks/memory`.
+
+Methodology: [ADR-0034](/docs/adr/0034-performance-methodology) (proxy),
+[ADR-0053](/docs/adr/0053-vector-store-abstraction) (vector store). Roadmap:
+[current state](https://ibexharness.com/roadmap/current-state).
 
 ---
 
 ## What exists today
 
+### Proxy
+
 - `go/`: warm-path proxy overhead stage microbenchmarks (authcache, ratelimit, directive, injection).
 - `services/proxy/internal/http`: `/health` (`BenchmarkProxyHealth`) and full chat overhead (`BenchmarkProxyChatOverhead`) with mockllm.
 - `k6/`: load test script — `/health` for smoke/fast; chat path when `K6_USE_CHAT=1`.
 - `scripts/`: aggregation, regression gate, published data builders, and proxy stack helpers.
-- `data-schema/`: baseline policy, JSON schema, and benchmark data contracts.
+- `data-schema/`: baseline policy, JSON schema, and benchmark data contracts (proxy + HNSW).
 - `testdata/`: fixtures for pipeline verification tests.
 
-Published benchmark data is committed to `web/public/benchmarks/` via the benchmark bot after successful **main** collects and served at `/benchmarks/benchmark-data.json`.
+Published proxy data is committed via the benchmark bot after successful **main** collects
+(`benchmark_main_complete` → artifact `benchmark-data`).
 
-## Profiles (speed vs quality)
+### Memory HNSW
+
+- `memory/hnsw_bench.py`: seed synthetic 1024-d vectors, measure recall@10 + search latency
+  at 10K / 100K / 1M via `PgVectorStore.search` (includes `SET LOCAL`).
+- `memory/build_published_data.py`: merge raw JSON into `hnsw-benchmark-data.json`.
+- `data-schema/hnsw-benchmark-data.schema.json`: Zod/CI contract for the HNSW file.
+- Workflow: `.github/workflows/memory-benchmark.yml` (name **`Memory Benchmarks`**).
+- Bot dispatch: `memory_benchmark_main_complete` → artifact `hnsw-benchmark-data` only
+  (does **not** touch proxy `benchmark-data.json` / `badge.svg`).
+
+```bash
+POSTGRES_TEST_DSN=postgres://ibex:ibex@localhost:5433/ibex_test?sslmode=disable \
+  make memory-bench-smoke
+POSTGRES_TEST_DSN=postgres://ibex:ibex@localhost:5433/ibex_test?sslmode=disable \
+  make memory-bench
+```
+
+## Profiles (proxy — speed vs quality)
 
 | Profile | When | Go `-count` | k6 | Path | Proxy HTTP bench |
 | --- | --- | --- | --- | --- | --- |
@@ -32,11 +57,18 @@ Target wall-clock: **~2–4 min** for `smoke` PRs, **~5–10 min** for `fast`, c
 
 Stack helper seeds the DB and exports `IBEX_DEV_TOKEN` / `IBEX_DEV_AGENT_ID`; `IBEX_LLM_MODE=mock` registers an immediate stub provider so chat returns **200**.
 
+### Memory sizes (Memory Benchmarks workflow)
+
+| Trigger | Corpus sizes |
+| --- | --- |
+| `pull_request` | 10K (smoke) |
+| `push` to `main` | 10K + 100K |
+| `schedule` (Sunday) / `workflow_dispatch` | 10K + 100K + 1M |
+
 ## Planned expansions (do not invent paths early)
 
 | Concern | Preferred phase | Likely home (orientation) |
 | --- | --- | --- |
-| Memory vector search recall/latency benches (HNSW `ef_search`) | **3** | Under `services/memory/` (or promoted here with ADR) |
 | Extraction quality gold-set / regression gate | **3.5** | Under `services/worker/eval/` |
 | Context-assembly latency under degradation ladder | **3.5** | Proxy + context integration suites |
 | Multi-provider resilience / breaker benches | **4** | Proxy + k6 scenarios |
@@ -53,7 +85,7 @@ python benchmarks/scripts/test_pipeline.py
 cd web && npm test -- src/lib/benchmarks/ && npm run typecheck
 ```
 
-## Local quick run
+## Local quick run (proxy)
 
 ```bash
 go test ./benchmarks/go -run=^$ -bench=. -benchmem -count=2 > benchmarks/output/go-bench.txt
@@ -79,11 +111,3 @@ python benchmarks/scripts/regression_gate.py
 BENCH_PROFILE=fast python benchmarks/scripts/build_benchmark_data.py
 python benchmarks/scripts/generate_badge.py
 ```
-
-## Data flow
-
-1. `aggregate_metrics.py` writes `benchmarks/output/latest.json`.
-2. `regression_gate.py` writes `gate-result.json` and enforces SLA/regression policy.
-3. `build_benchmark_data.py` merges the latest run into `benchmark-data.json` schema v1 (includes `profile`).
-4. `generate_badge.py` writes `badge.svg` from the latest run status.
-5. On `main` (schedule, dispatch, or path-triggered push), CI notifies the benchmark bot, which opens a Signed-off-by data PR.

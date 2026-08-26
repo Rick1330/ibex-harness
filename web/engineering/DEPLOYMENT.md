@@ -248,6 +248,20 @@ This is the only safe way to do schema evolution in zero-downtime systems.
 - apply lock timeouts to avoid deadlocks
 - run heavy backfills via worker jobs, not migrations
 
+### 8.2.1 Memory HNSW: load-then-index for large backfills
+
+Steady-state memory writes keep `idx_memories_embedding_hnsw` live (incremental graph updates).
+For **large-tenant cold loads / migrations** (tens of thousands of embeddings or more):
+
+1. Drop (or defer creating) `ibex_core.idx_memories_embedding_hnsw`
+2. Bulk `COPY` / insert rows with embeddings
+3. `CREATE INDEX` once with elevated `maintenance_work_mem` (and adequate `/dev/shm` in containers)
+4. `ANALYZE ibex_core.memories`
+
+Search latency after a correct HNSW build is comparable to incremental; the win is **build
+wall-clock**, not query p95. See [ADR-0053](/docs/adr/0053-vector-store-abstraction) §11 and
+`benchmarks/memory/` (`--index-build-mode bulk|incremental`).
+
 ### 8.3 Roll-forward fix strategy
 
 If a migration is wrong:

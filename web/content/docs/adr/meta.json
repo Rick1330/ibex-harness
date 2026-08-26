@@ -50,6 +50,7 @@
     "0049-memory-relationship-graph",
     "0050-mcp-server-skeleton",
     "0051-local-lgtm-observability-stack",
-    "0052-memory-schema-v2-expand"
+    "0052-memory-schema-v2-expand",
+    "0053-vector-store-abstraction"
   ]
 }

@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ibexharness.com/schemas/hnsw-benchmark-data.schema.json",
+  "title": "HNSW benchmark published data",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "benchmark", "runs"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "benchmark": { "const": "hnsw_recall_latency" },
+    "runs": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "sha",
+          "short_sha",
+          "timestamp",
+          "branch",
+          "run_number",
+          "run_url",
+          "methodology",
+          "results",
+          "mean_recall_at_10"
+        ],
+        "properties": {
+          "sha": { "type": "string", "minLength": 7 },
+          "short_sha": { "type": "string", "minLength": 7 },
+          "timestamp": { "type": "string" },
+          "branch": { "type": "string" },
+          "run_number": { "type": "integer", "minimum": 0 },
+          "run_url": { "type": "string" },
+          "methodology": { "type": "object" },
+          "mean_recall_at_10": { "type": "number", "minimum": 0, "maximum": 1 },
+          "results": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "corpus_size",
+                "query_count",
+                "recall_at_10",
+                "latency_ms_p50",
+                "latency_ms_p95",
+                "latency_ms_p99",
+                "ef_search"
+              ],
+              "properties": {
+                "corpus_size": { "type": "integer", "minimum": 1 },
+                "query_count": { "type": "integer", "minimum": 1 },
+                "recall_at_10": { "type": "number", "minimum": 0, "maximum": 1 },
+                "latency_ms_p50": { "type": "number", "minimum": 0 },
+                "latency_ms_p95": { "type": "number", "minimum": 0 },
+                "latency_ms_p99": { "type": "number", "minimum": 0 },
+                "ef_search": { "type": "integer", "minimum": 1 }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

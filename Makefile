@@ -6,7 +6,7 @@ endif
 
 DEV_TOOL := infra/scripts/dev-tool.sh
 
-.PHONY: help lint-docs lint-go security-scan repo-guards proto-lint proto-breaking proto-gen proto-test proto-test-integration test-integration test-embedder test-mcp-memory test-memory test-memory-integration test-clickhouse-migrate test-clickhouse-migrate-integration coverage-embedder-gate coverage-mcp-memory-gate coverage-memory-gate coverage-report coverage-gate coverage-responsepipeline-gate compose-dev-up compose-dev-down compose-dev-reset compose-dev-logs compose-dev-ps compose-test-up compose-test-down observability-up observability-down observability-smoke observability-traffic observability-live-verify db-migrate db-migrate-down db-version db-seed db-repair-token-fks clickhouse-migrate clickhouse-migrate-down clickhouse-version dev-smoke dev-smoke-live e2e-wave2b-token-fks e2e-phase25 verify-phase15 verify-phase25 mcp-conformance
+.PHONY: help lint-docs lint-go security-scan repo-guards proto-lint proto-breaking proto-gen proto-test proto-test-integration test-integration test-embedder test-mcp-memory test-memory test-memory-integration test-clickhouse-migrate test-clickhouse-migrate-integration coverage-embedder-gate coverage-mcp-memory-gate coverage-memory-gate memory-bench memory-bench-smoke coverage-report coverage-gate coverage-responsepipeline-gate compose-dev-up compose-dev-down compose-dev-reset compose-dev-logs compose-dev-ps compose-test-up compose-test-down observability-up observability-down observability-smoke observability-traffic observability-live-verify db-migrate db-migrate-down db-version db-seed db-repair-token-fks clickhouse-migrate clickhouse-migrate-down clickhouse-version dev-smoke dev-smoke-live e2e-wave2b-token-fks e2e-phase25 verify-phase15 verify-phase25 mcp-conformance
 
 help: ## Show available commands
 	@"$(BASH)" "$(DEV_TOOL)" help
@@ -52,6 +52,12 @@ test-memory: ## Run Python memory service unit tests (services/memory)
 
 test-memory-integration: ## Run memory PgVectorStore integration tests (needs Postgres + migrate)
 	@"$(BASH)" infra/scripts/memory-integration-test-ci.sh
+
+memory-bench-smoke: ## Run memory HNSW bench at 10K (needs Postgres + migrate)
+	@MEMORY_BENCH_SIZES="10000" "$(BASH)" infra/scripts/memory-bench.sh
+
+memory-bench: ## Run memory HNSW benches at 10K/100K/1M (needs Postgres + migrate)
+	@"$(BASH)" infra/scripts/memory-bench.sh
 
 test-mcp-memory: ## Run Python mcp-memory service unit tests (services/mcp-memory)
 	@"$(BASH)" infra/scripts/mcp-memory-test-ci.sh
