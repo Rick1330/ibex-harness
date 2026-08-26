@@ -295,14 +295,18 @@ def _parse_embed_body(body: dict[str, Any]) -> EmbeddingResult:
     )
 
 
-def _parse_success(resp: httpx.Response) -> EmbeddingResult:
+def _load_json_object(resp: httpx.Response) -> dict[str, Any]:
     try:
         body = resp.json()
     except ValueError as exc:
         raise EmbeddingInvalidResponseError("embedder returned malformed JSON") from exc
     if not isinstance(body, dict):
         raise EmbeddingInvalidResponseError("embedder response must be a JSON object")
-    return _parse_embed_body(body)
+    return body
+
+
+def _parse_success(resp: httpx.Response) -> EmbeddingResult:
+    return _parse_embed_body(_load_json_object(resp))
 
 
 def _raise_http_error(resp: httpx.Response) -> NoReturn:

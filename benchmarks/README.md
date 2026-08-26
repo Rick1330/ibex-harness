@@ -47,8 +47,8 @@ Do **not** merge suites into one mega-JSON. Site nav groups by suite; proxy-only
 
 ### Memory HNSW
 
-- `memory/hnsw_bench.py`: seed synthetic 1024-d vectors, measure recall@10 + search latency
-  at 10K / 100K / 1M via `PgVectorStore.search` (includes `SET LOCAL`).
+- `memory/hnsw_bench.py`: CLI + published payload builder.
+- `memory/hnsw_run.py`: corpus seed + search-matrix measurement helpers.
 - `memory/publish_cells.py`: production cell filter + `status` / `gate_summary` helpers.
 - `memory/build_published_data.py`: merge raw JSON into `hnsw-benchmark-data.json` (uses
   `publish_cells`).

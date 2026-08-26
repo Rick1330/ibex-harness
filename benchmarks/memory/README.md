@@ -37,9 +37,11 @@ CI (`memory-benchmark.yml`) always measures with production publish knobs:
 ```
 
 `build_published_data.py` (via `publish_cells.py`) filters to those cells and attaches
-`status` / `gate_summary` (recall ≥ 98%; 1M p95/p99 SLAs when a 1M cell exists — otherwise
-`warn` on smoke/fast). Full local matrices (`0.0 0.70`, iterative modes, incremental)
-remain useful for investigation but are **not** published.
+`status` / `gate_summary` (recall ≥ 98%; 1M p95/p99 SLAs when a 1M cell exists). Missing
+1M on smoke/fast is **expected coverage deferral** → `pass` plus an informational
+“1M deferred” note in the sticky comment (not a yellow WARN). Full local matrices
+(`0.0 0.70`, iterative modes, incremental) remain useful for investigation but are
+**not** published.
 
 CI validates the published file with `benchmarks/scripts/validate_published_hnsw.py` and
 fails the Memory collect artifact upload if the bot binary lacks `post-hnsw-pr-comment`

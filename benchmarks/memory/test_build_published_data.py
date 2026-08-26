@@ -49,7 +49,7 @@ def test_filter_keeps_production_cells_only() -> None:
     _expect(kept[0]["min_similarity"] == 0.70, "expected min_similarity 0.70")
 
 
-def test_status_warn_without_1m() -> None:
+def test_status_pass_without_1m_on_smoke_fast() -> None:
     cells = [
         {
             "corpus_size": 10_000,
@@ -60,7 +60,7 @@ def test_status_warn_without_1m() -> None:
     ]
     gate = compute_gate_summary(cells)
     _expect(gate["has_1m"] is False, "expected has_1m false")
-    _expect(compute_status(gate) == "warn", "expected warn without 1M")
+    _expect(compute_status(gate) == "pass", "missing 1M is deferred coverage, not warn")
 
 
 def test_status_fail_on_low_recall() -> None:

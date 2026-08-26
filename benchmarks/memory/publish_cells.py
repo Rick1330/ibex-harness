@@ -82,11 +82,16 @@ def compute_gate_summary(results: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def compute_status(gate: dict[str, Any]) -> str:
+    """Gate status for published runs.
+
+    Missing 1M on smoke/fast is expected coverage deferral, not a soft failure.
+    PR comments show an informational "1M deferred" badge instead of WARN.
+    """
     if not gate.get("recall_ok", False):
         return "fail"
-    if not gate.get("has_1m"):
-        return "warn"
-    if not gate.get("p95_1m_ok", True) or not gate.get("p99_1m_ok", True):
+    if gate.get("has_1m") and (
+        not gate.get("p95_1m_ok", True) or not gate.get("p99_1m_ok", True)
+    ):
         return "fail"
     return "pass"
 

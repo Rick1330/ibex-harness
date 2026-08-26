@@ -38,10 +38,10 @@ export function HnswTrendChart({
     containerRef,
     (width) => {
       const data: TrendDatum[] = [...runs]
-        .map((run) => {
+        .flatMap((run) => {
           const value = metric(run);
-          if (value == null) return null;
-          return {
+          if (value == null) return [];
+          const row: TrendDatum = {
             date: new Date(run.timestamp),
             value,
             status: toPlotStatus(run.status),
@@ -49,9 +49,9 @@ export function HnswTrendChart({
             timestamp: run.timestamp,
             prLabel: run.branch,
             budgetPct: targetMs && targetMs > 0 ? (value / targetMs) * 100 : undefined,
-          } satisfies TrendDatum;
+          };
+          return [row];
         })
-        .filter((row): row is TrendDatum => row != null)
         .sort((a, b) => a.date.getTime() - b.date.getTime());
       return buildTrendPlot(data, theme, {
         width,
