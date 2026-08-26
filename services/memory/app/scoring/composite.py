@@ -90,10 +90,11 @@ def composite_score(
     weights: RankWeights | None = None,
 ) -> float:
     """Composite score with category-conditional recency decay."""
+    categories = _validated_categories(inputs.categories)
     return score(
         ScoreComponents(
             relevance=inputs.relevance,
-            recency=recency_decay(inputs.age_days, inputs.categories),
+            recency=recency_decay(inputs.age_days, categories),
             usefulness=inputs.usefulness,
             confidence=inputs.confidence,
             access_frequency=inputs.access_frequency,
@@ -102,7 +103,22 @@ def composite_score(
     )
 
 
+def _validated_categories(categories: Sequence[str]) -> Sequence[str]:
+    """Reject scalar strings (Sequence[str] accepts str) and non-string elements."""
+    if isinstance(categories, (str, bytes)):
+        msg = "categories must be a sequence of strings, not a scalar string"
+        raise TypeError(msg)
+    for index, category in enumerate(categories):
+        if not isinstance(category, str):
+            msg = f"categories[{index}] must be a str, got {type(category).__name__}"
+            raise TypeError(msg)
+    return categories
+
+
 def _require_unit_interval(name: str, value: float) -> None:
-    if not math.isfinite(value) or value < 0.0 or value > 1.0:
+    if not math.isfinite(value):
+        msg = f"{name} must be a finite value in [0, 1], got {value!r}"
+        raise ValueError(msg)
+    if value < 0.0 or value > 1.0:
         msg = f"{name} must be a finite value in [0, 1], got {value!r}"
         raise ValueError(msg)

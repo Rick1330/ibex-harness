@@ -37,6 +37,18 @@ import sentence_transformers.models
 # ruleid: ibex-memory-no-ml-imports
 import sklearn.metrics
 
+# --- ibex-memory-no-ml-imports: aliased submodule ---
+# ruleid: ibex-memory-no-ml-imports
+import torch.nn as nn
+# ruleid: ibex-memory-no-ml-imports
+import tensorflow.keras as keras
+# ruleid: ibex-memory-no-ml-imports
+import transformers.models as hf_models
+# ruleid: ibex-memory-no-ml-imports
+import sentence_transformers.models as st_models
+# ruleid: ibex-memory-no-ml-imports
+import sklearn.metrics as sk_metrics
+
 # --- ibex-memory-no-ml-imports: from-submodule ---
 # ruleid: ibex-memory-no-ml-imports
 from torch.nn import Linear
@@ -45,9 +57,9 @@ from tensorflow.keras import Model
 # ruleid: ibex-memory-no-ml-imports
 from transformers.models import bert
 # ruleid: ibex-memory-no-ml-imports
-from sentence_transformers.models import Transformer
+from sentence_transformers.util import cos_sim
 # ruleid: ibex-memory-no-ml-imports
-from sklearn.metrics import accuracy_score
+from sklearn.model_selection import train_test_split
 
 # ok: ibex-memory-no-ml-imports
 import httpx

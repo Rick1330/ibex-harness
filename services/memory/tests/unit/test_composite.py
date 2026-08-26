@@ -41,30 +41,36 @@ def test_score_rejects_bad_weights() -> None:
         )
 
 
-def test_score_rejects_out_of_range_component() -> None:
-    with pytest.raises(ValueError, match="relevance must be a finite value"):
-        score(
+@pytest.mark.parametrize(
+    ("components", "match"),
+    [
+        (
             ScoreComponents(
                 relevance=1.5,
                 recency=0.0,
                 usefulness=0.0,
                 confidence=0.0,
                 access_frequency=0.0,
-            )
-        )
-
-
-def test_score_rejects_nan_component() -> None:
-    with pytest.raises(ValueError, match="recency must be a finite value"):
-        score(
+            ),
+            "relevance must be a finite value",
+        ),
+        (
             ScoreComponents(
                 relevance=0.5,
                 recency=math.nan,
                 usefulness=0.0,
                 confidence=0.0,
                 access_frequency=0.0,
-            )
-        )
+            ),
+            "recency must be a finite value",
+        ),
+    ],
+)
+def test_score_rejects_invalid_components(
+    components: ScoreComponents, match: str
+) -> None:
+    with pytest.raises(ValueError, match=match):
+        score(components)
 
 
 def test_rank_weights_reject_negative() -> None:
@@ -76,6 +82,34 @@ def test_rank_weights_reject_negative() -> None:
             confidence=0.2,
             frequency=0.2,
         ).validate()
+
+
+def test_composite_rejects_scalar_string_categories() -> None:
+    with pytest.raises(TypeError, match="sequence of strings"):
+        composite_score(
+            CompositeInputs(
+                relevance=0.9,
+                age_days=1.0,
+                categories="factual",  # type: ignore[arg-type]
+                usefulness=0.5,
+                confidence=0.8,
+                access_frequency=0.1,
+            )
+        )
+
+
+def test_composite_rejects_non_string_category_elements() -> None:
+    with pytest.raises(TypeError, match="categories\\[0\\] must be a str"):
+        composite_score(
+            CompositeInputs(
+                relevance=0.9,
+                age_days=1.0,
+                categories=[123],  # type: ignore[list-item]
+                usefulness=0.5,
+                confidence=0.8,
+                access_frequency=0.1,
+            )
+        )
 
 
 def test_old_factual_outranks_fresh_episodic_at_equal_relevance() -> None:

@@ -1,15 +1,11 @@
-"""Golden-signal HTTP metrics for the memory service."""
+"""Golden-signal HTTP metrics for the memory service (pure ASGI)."""
 
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
 
 from prometheus_client import Counter, Gauge, Histogram
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
-from starlette.responses import Response
-from starlette.types import ASGIApp
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 PROCESS_UP = Gauge(
     "ibex_process_up",
@@ -33,36 +29,58 @@ HTTP_DURATION = Histogram(
 _UNMATCHED_ROUTE = "<unmatched>"
 
 
-def _route_label(request: Request) -> str:
-    route = request.scope.get("route")
-    path = getattr(route, "path", None)
-    if isinstance(path, str) and path:
-        return path
+def _route_label(scope: Scope) -> str:
+    route = scope.get("route")
+    template = getattr(route, "path", None)
+    if isinstance(template, str) and template:
+        return template
     return _UNMATCHED_ROUTE
 
 
-def _record(method: str, route: str, status: str, elapsed: float) -> None:
-    HTTP_REQUESTS.labels(method=method, route=route, status=status).inc()
-    HTTP_DURATION.labels(method=method, route=route).observe(elapsed)
+def _instrument(scope: Scope) -> bool:
+    return scope.get("type") == "http" and scope.get("path") != "/metrics"
 
 
-class HTTPMetricsMiddleware(BaseHTTPMiddleware):
-    """Record request count and latency; skip /metrics to avoid scrape recursion noise."""
+class HTTPMetricsMiddleware:
+    """ASGI middleware: count + latency with status labels; skip /metrics."""
 
     def __init__(self, app: ASGIApp) -> None:
-        super().__init__(app)
+        self.app = app
 
-    async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        if request.url.path == "/metrics":
-            return await call_next(request)
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if not _instrument(scope):
+            await self.app(scope, receive, send)
+            return
+
+        method = scope.get("method", "GET")
+        if not isinstance(method, str):
+            method = "GET"
         start = time.perf_counter()
-        method = request.method
+        status_code = 500
+        recorded = False
+
+        def observe(status: str) -> None:
+            nonlocal recorded
+            if recorded:
+                return
+            recorded = True
+            route = _route_label(scope)
+            HTTP_REQUESTS.labels(method=method, route=route, status=status).inc()
+            HTTP_DURATION.labels(method=method, route=route).observe(
+                time.perf_counter() - start
+            )
+
+        async def send_wrapper(message: Message) -> None:
+            nonlocal status_code
+            if message["type"] == "http.response.start":
+                status_code = int(message["status"])
+            await send(message)
+            if message["type"] == "http.response.body" and not message.get("more_body", False):
+                observe(str(status_code))
+
         try:
-            response = await call_next(request)
+            await self.app(scope, receive, send_wrapper)
         except Exception:
-            elapsed = time.perf_counter() - start
-            _record(method, _route_label(request), "500", elapsed)
+            observe("500")
             raise
-        elapsed = time.perf_counter() - start
-        _record(method, _route_label(request), str(response.status_code), elapsed)
-        return response
+        observe(str(status_code))
