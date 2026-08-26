@@ -261,12 +261,22 @@ async def _timed_search_pass(
     return latencies, hits
 
 
+def _plan_fields(plan: dict[str, Any]) -> tuple[str, str, int, int]:
+    """Flatten EXPLAIN summary knobs used in SizeResult (keeps _run_size simple)."""
+    return (
+        str(plan.get("node_type") or ""),
+        str(plan.get("index_name") or ""),
+        int(plan.get("shared_hit_blocks") or 0),
+        int(plan.get("shared_read_blocks") or 0),
+    )
+
+
 async def _run_size(store: PgVectorStore, params: SizeRunParams) -> SizeResult:
     await _warmup_searches(store, params)
     latencies, hits = await _timed_search_pass(store, params)
     ordered = sorted(latencies)
     ci_lo, ci_hi = bootstrap_p95_ci(latencies)
-    plan = params.plan_summary
+    node_type, index_name, hit_blocks, read_blocks = _plan_fields(params.plan_summary)
     return SizeResult(
         corpus_size=params.size,
         query_count=params.query_count,
@@ -280,10 +290,10 @@ async def _run_size(store: PgVectorStore, params: SizeRunParams) -> SizeResult:
         min_similarity=params.min_similarity,
         iterative_scan=params.iterative_scan,
         index_build_mode=params.index_build_mode,
-        plan_node_type=str(plan.get("node_type") or ""),
-        plan_index_name=str(plan.get("index_name") or ""),
-        shared_hit_blocks=int(plan.get("shared_hit_blocks") or 0),
-        shared_read_blocks=int(plan.get("shared_read_blocks") or 0),
+        plan_node_type=node_type,
+        plan_index_name=index_name,
+        shared_hit_blocks=hit_blocks,
+        shared_read_blocks=read_blocks,
         idx_scan_delta=params.idx_scan_delta,
         row_count_verified=params.row_count,
     )

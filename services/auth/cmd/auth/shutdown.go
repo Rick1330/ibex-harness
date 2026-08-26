@@ -50,6 +50,12 @@ func startAuthGRPCServer(opts shutdownOpts, errCh chan<- error) {
 	go func() {
 		opts.logger.InfoCtx(context.Background(), "grpc starting", "port", opts.cfg.GRPCPort)
 		if err := opts.grpcSrv.Serve(opts.grpcLis); err != nil {
+			// GracefulStop / Stop makes Serve return ErrServerStopped; treat as clean exit
+			// (mirrors http.ErrServerClosed on the HTTP path).
+			if errors.Is(err, grpc.ErrServerStopped) {
+				errCh <- nil
+				return
+			}
 			errCh <- err
 			return
 		}

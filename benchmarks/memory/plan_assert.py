@@ -5,6 +5,9 @@ from __future__ import annotations
 from typing import Any
 
 _HNSW_INDEX = "idx_memories_embedding_hnsw"
+_NODE_TYPE = "Node Type"
+_INDEX_NAME = "Index Name"
+_RELATION_NAME = "Relation Name"
 
 
 class PlanAssertionError(RuntimeError):
@@ -36,20 +39,20 @@ def collect_buffer_stats(nodes: list[dict[str, Any]]) -> dict[str, int]:
 
 
 def _is_hnsw_access(node: dict[str, Any]) -> bool:
-    ntype = str(node.get("Node Type") or "")
-    index_name = str(node.get("Index Name") or "")
+    ntype = str(node.get(_NODE_TYPE) or "")
+    index_name = str(node.get(_INDEX_NAME) or "")
     return _HNSW_INDEX in index_name and ("Index" in ntype or "Bitmap" in ntype)
 
 
 def _is_seq_on_memories(node: dict[str, Any]) -> bool:
-    ntype = str(node.get("Node Type") or "")
-    relation = str(node.get("Relation Name") or "")
+    ntype = str(node.get(_NODE_TYPE) or "")
+    relation = str(node.get(_RELATION_NAME) or "")
     return ntype == "Seq Scan" and relation in {"memories", "ibex_core.memories"}
 
 
 def _summarize_nodes(nodes: list[dict[str, Any]]) -> str:
     return ", ".join(
-        f"{n.get('Node Type')}@{n.get('Relation Name') or n.get('Index Name')}"
+        f"{n.get(_NODE_TYPE)}@{n.get(_RELATION_NAME) or n.get(_INDEX_NAME)}"
         for n in nodes[:12]
     )
 
@@ -80,9 +83,9 @@ def _plan_summary(
     root: dict[str, Any], primary: dict[str, Any], buffers: dict[str, int]
 ) -> dict[str, Any]:
     return {
-        "node_type": primary.get("Node Type"),
-        "index_name": primary.get("Index Name"),
-        "relation": primary.get("Relation Name"),
+        "node_type": primary.get(_NODE_TYPE),
+        "index_name": primary.get(_INDEX_NAME),
+        "relation": primary.get(_RELATION_NAME),
         "actual_rows": primary.get("Actual Rows"),
         "planning_time_ms": root.get("Planning Time"),
         "execution_time_ms": root.get("Execution Time"),
