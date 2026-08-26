@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import (
 from app.config import Settings
 
 _SSL_QUERY_KEYS = frozenset({"sslmode", "sslrootcert", "sslcert", "sslkey", "sslcrl"})
+_TLS_MATERIAL_KEYS = ("sslrootcert", "sslcert", "sslkey")
 _PG_SCHEME = "postgresql://"
 _ASYNCPG_SCHEME = "postgresql+asyncpg://"
 _PLAINTEXT_SSLMODES = frozenset({"disable", "allow", "prefer"})
@@ -126,13 +127,26 @@ def _verified_tls_context(query: dict[str, str]) -> bool | ssl.SSLContext:
     When no cert paths are set, return ``True`` so asyncpg uses its verified
     default SSL context. Custom paths build an explicit context with TLS ≥ 1.2.
     """
-    cafile = query.get("sslrootcert")
-    cert = query.get("sslcert")
-    key = query.get("sslkey")
-    if not cafile and not cert and not key:
+    if not _has_tls_material(query):
         return True
-    ctx = ssl.create_default_context(cafile=cafile)
+    return _build_tls_context(query)
+
+
+def _has_tls_material(query: dict[str, str]) -> bool:
+    for key in _TLS_MATERIAL_KEYS:
+        if query.get(key):
+            return True
+    return False
+
+
+def _build_tls_context(query: dict[str, str]) -> ssl.SSLContext:
+    ctx = ssl.create_default_context(cafile=query.get("sslrootcert"))
     ctx.minimum_version = ssl.TLSVersion.TLSv1_2
-    if cert and key:
-        ctx.load_cert_chain(cert, keyfile=key)
+    certfile = query.get("sslcert")
+    keyfile = query.get("sslkey")
+    if certfile is None:
+        return ctx
+    if keyfile is None:
+        return ctx
+    ctx.load_cert_chain(certfile, keyfile=keyfile)
     return ctx
