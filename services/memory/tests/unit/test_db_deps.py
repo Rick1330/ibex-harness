@@ -65,8 +65,6 @@ def test_normalize_verify_full_enables_hostname_checks() -> None:
 
 
 def test_normalize_custom_ca_builds_tls12_context() -> None:
-    import os
-
     default_ca = ssl.get_default_verify_paths().cafile
     if not default_ca or not os.path.isfile(default_ca):
         pytest.skip("no system CA file available")
