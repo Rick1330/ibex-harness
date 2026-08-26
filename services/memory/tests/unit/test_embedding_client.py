@@ -92,40 +92,32 @@ async def test_400_rejected() -> None:
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_429_retries_then_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(
+    ("status", "headers", "max_retries"),
+    [
+        (429, {"Retry-After": "1"}, 2),
+        (503, {}, 1),
+    ],
+)
+async def test_retryable_status_then_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+    status: int,
+    headers: dict[str, str],
+    max_retries: int,
+) -> None:
     async def _no_sleep(_delay: float) -> None:
         return None
 
     monkeypatch.setattr("app.clients.embedding.asyncio.sleep", _no_sleep)
     respx.post(f"{_BASE}/v1/embed").mock(
-        side_effect=[
-            Response(429, headers={"Retry-After": "1"}),
-            Response(200, json=_ok_body()),
-        ]
+        side_effect=[Response(status, headers=headers), Response(200, json=_ok_body())]
     )
-    client = _client(max_retries=2)
+    client = _client(max_retries=max_retries)
     try:
         result = await client.embed(["x"], org_id=_ORG)
     finally:
         await client.aclose()
     assert result.backend == "tei"
-
-
-@pytest.mark.asyncio
-@respx.mock
-async def test_503_retries_then_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def _no_sleep(_delay: float) -> None:
-        return None
-
-    monkeypatch.setattr("app.clients.embedding.asyncio.sleep", _no_sleep)
-    respx.post(f"{_BASE}/v1/embed").mock(
-        side_effect=[Response(503), Response(200, json=_ok_body())]
-    )
-    client = _client(max_retries=1)
-    try:
-        result = await client.embed(["x"], org_id=_ORG)
-    finally:
-        await client.aclose()
     assert len(result.vectors) == 1
 
 
@@ -236,37 +228,10 @@ async def test_embed_accepts_batch_of_64() -> None:
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_embed_rejects_null_vector_component() -> None:
+@pytest.mark.parametrize("bad_component", [None, True, "1.0"])
+async def test_embed_rejects_non_finite_vector_component(bad_component: object) -> None:
     body = _ok_body()
-    body["vectors"][0][0] = None  # type: ignore[index]
-    respx.post(f"{_BASE}/v1/embed").mock(return_value=Response(200, json=body))
-    client = _client()
-    try:
-        with pytest.raises(EmbeddingInvalidResponseError, match="finite number"):
-            await client.embed(["x"], org_id=_ORG)
-    finally:
-        await client.aclose()
-
-
-@pytest.mark.asyncio
-@respx.mock
-async def test_embed_rejects_bool_vector_component() -> None:
-    body = _ok_body()
-    body["vectors"][0][0] = True  # type: ignore[index]
-    respx.post(f"{_BASE}/v1/embed").mock(return_value=Response(200, json=body))
-    client = _client()
-    try:
-        with pytest.raises(EmbeddingInvalidResponseError, match="finite number"):
-            await client.embed(["x"], org_id=_ORG)
-    finally:
-        await client.aclose()
-
-
-@pytest.mark.asyncio
-@respx.mock
-async def test_embed_rejects_string_vector_component() -> None:
-    body = _ok_body()
-    body["vectors"][0][0] = "1.0"  # type: ignore[index]
+    body["vectors"][0][0] = bad_component  # type: ignore[index]
     respx.post(f"{_BASE}/v1/embed").mock(return_value=Response(200, json=body))
     client = _client()
     try:

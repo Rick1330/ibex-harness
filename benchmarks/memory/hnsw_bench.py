@@ -109,17 +109,49 @@ class CellParams:
     prewarm: bool
 
 
-async def _explain_search(
-    engine: AsyncEngine,
-    *,
-    org_id: UUID,
-    agent_id: UUID,
-    query: list[float],
-    ef_search: int,
-    min_similarity: float,
-    iterative_scan: str,
-    limit: int = 10,
-) -> dict[str, Any]:
+@dataclass(frozen=True, slots=True)
+class ExplainParams:
+    """Args for EXPLAIN ANALYZE of a single search."""
+
+    org_id: UUID
+    agent_id: UUID
+    query: list[float]
+    ef_search: int
+    min_similarity: float
+    iterative_scan: str
+    limit: int = 10
+
+
+@dataclass(frozen=True, slots=True)
+class SizeRunParams:
+    """Timed search pass over a seeded corpus (after EXPLAIN / warm-up)."""
+
+    org_id: UUID
+    agent_id: UUID
+    size: int
+    query_count: int
+    ef_search: int
+    min_similarity: float
+    iterative_scan: str
+    index_build_mode: str
+    plan_summary: dict[str, Any]
+    idx_scan_delta: int
+    row_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class MatrixConfig:
+    """Outer search-matrix knobs (sizes × index/build × iterative × min_sim)."""
+
+    sizes: list[int]
+    index_modes: list[str]
+    iterative_modes: list[str]
+    min_sims: list[float]
+    ef_search: int
+    queries: int | None
+
+
+async def _explain_search(engine: AsyncEngine, params: ExplainParams) -> dict[str, Any]:
     explain_sql = f"EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) {SEARCH_SQL}"
     async with engine.begin() as conn:
         await conn.execute(
@@ -131,28 +163,28 @@ async def _explain_search(
             text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
                 "SELECT set_config('app.current_org_id', :org_id, true)"
             ),
-            {"org_id": str(org_id)},
+            {"org_id": str(params.org_id)},
         )
         await conn.execute(
             text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
                 "SELECT set_config('hnsw.ef_search', :ef, true)"
             ),
-            {"ef": str(ef_search)},
+            {"ef": str(params.ef_search)},
         )
         await conn.execute(
             text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
                 "SELECT set_config('hnsw.iterative_scan', :mode, true)"
             ),
-            {"mode": iterative_scan},
+            {"mode": params.iterative_scan},
         )
         result = await conn.execute(
             text(explain_sql),  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
             {
-                "query": vec_literal(query),
-                "org_id": str(org_id),
-                "agent_id": str(agent_id),
-                "min_similarity": min_similarity,
-                "limit": limit,
+                "query": vec_literal(params.query),
+                "org_id": str(params.org_id),
+                "agent_id": str(params.agent_id),
+                "min_similarity": params.min_similarity,
+                "limit": params.limit,
             },
         )
         payload = result.scalar()
@@ -168,78 +200,92 @@ async def _explain_search(
     return summary
 
 
-async def _run_size(
-    store: PgVectorStore,
+def _search_request(
     *,
     org_id: UUID,
     agent_id: UUID,
-    size: int,
-    query_count: int,
+    query: list[float],
     ef_search: int,
     min_similarity: float,
     iterative_scan: str,
-    index_build_mode: str,
-    plan_summary: dict[str, Any],
-    idx_scan_delta: int,
-    row_count: int,
-) -> SizeResult:
+) -> SearchRequest:
+    return SearchRequest(
+        org_id=org_id,
+        agent_id=agent_id,
+        query_embedding=query,
+        limit=10,
+        min_similarity=min_similarity,
+        ef_search=ef_search,
+        iterative_scan=iterative_scan,
+    )
+
+
+async def _warmup_searches(store: PgVectorStore, params: SizeRunParams) -> None:
     for q in range(_WARMUP_QUERIES):
-        idx = ((q * 97) + _WARMUP_INDEX_OFFSET) % size
+        idx = ((q * 97) + _WARMUP_INDEX_OFFSET) % params.size
         await store.search(
-            SearchRequest(
-                org_id=org_id,
-                agent_id=agent_id,
-                query_embedding=perturb(unit_vector(idx), seed=idx),
-                limit=10,
-                min_similarity=min_similarity,
-                ef_search=ef_search,
-                iterative_scan=iterative_scan,
+            _search_request(
+                org_id=params.org_id,
+                agent_id=params.agent_id,
+                query=perturb(unit_vector(idx), seed=idx),
+                ef_search=params.ef_search,
+                min_similarity=params.min_similarity,
+                iterative_scan=params.iterative_scan,
             )
         )
 
+
+async def _timed_search_pass(
+    store: PgVectorStore, params: SizeRunParams
+) -> tuple[list[float], int]:
     latencies: list[float] = []
     hits = 0
-    for q in range(query_count):
-        idx = (q * 97) % size
+    for q in range(params.query_count):
+        idx = (q * 97) % params.size
         query = perturb(unit_vector(idx), seed=idx)
         t0 = time.perf_counter()
         results = await store.search(
-            SearchRequest(
-                org_id=org_id,
-                agent_id=agent_id,
-                query_embedding=query,
-                limit=10,
-                min_similarity=min_similarity,
-                ef_search=ef_search,
-                iterative_scan=iterative_scan,
+            _search_request(
+                org_id=params.org_id,
+                agent_id=params.agent_id,
+                query=query,
+                ef_search=params.ef_search,
+                min_similarity=params.min_similarity,
+                iterative_scan=params.iterative_scan,
             )
         )
         latencies.append((time.perf_counter() - t0) * 1000.0)
         top_ids = {hit.memory_id for hit in results}
-        if memory_id_for(org_id, idx) in top_ids:
+        if memory_id_for(params.org_id, idx) in top_ids:
             hits += 1
+    return latencies, hits
 
+
+async def _run_size(store: PgVectorStore, params: SizeRunParams) -> SizeResult:
+    await _warmup_searches(store, params)
+    latencies, hits = await _timed_search_pass(store, params)
     ordered = sorted(latencies)
     ci_lo, ci_hi = bootstrap_p95_ci(latencies)
+    plan = params.plan_summary
     return SizeResult(
-        corpus_size=size,
-        query_count=query_count,
-        recall_at_10=hits / query_count,
+        corpus_size=params.size,
+        query_count=params.query_count,
+        recall_at_10=hits / params.query_count,
         latency_ms_p50=percentile(ordered, 50),
         latency_ms_p95=percentile(ordered, 95),
         latency_ms_p99=percentile(ordered, 99),
         latency_ms_p95_ci_low=ci_lo,
         latency_ms_p95_ci_high=ci_hi,
-        ef_search=ef_search,
-        min_similarity=min_similarity,
-        iterative_scan=iterative_scan,
-        index_build_mode=index_build_mode,
-        plan_node_type=str(plan_summary.get("node_type") or ""),
-        plan_index_name=str(plan_summary.get("index_name") or ""),
-        shared_hit_blocks=int(plan_summary.get("shared_hit_blocks") or 0),
-        shared_read_blocks=int(plan_summary.get("shared_read_blocks") or 0),
-        idx_scan_delta=idx_scan_delta,
-        row_count_verified=row_count,
+        ef_search=params.ef_search,
+        min_similarity=params.min_similarity,
+        iterative_scan=params.iterative_scan,
+        index_build_mode=params.index_build_mode,
+        plan_node_type=str(plan.get("node_type") or ""),
+        plan_index_name=str(plan.get("index_name") or ""),
+        shared_hit_blocks=int(plan.get("shared_hit_blocks") or 0),
+        shared_read_blocks=int(plan.get("shared_read_blocks") or 0),
+        idx_scan_delta=params.idx_scan_delta,
+        row_count_verified=params.row_count,
     )
 
 
@@ -277,12 +323,14 @@ async def _measure_cell(engine: AsyncEngine, store: PgVectorStore, cell: CellPar
     """Time one (min_similarity × iterative_scan) cell on an already-seeded corpus."""
     plan_summary = await _explain_search(
         engine,
-        org_id=cell.org_id,
-        agent_id=cell.agent_id,
-        query=unit_vector(0),
-        ef_search=cell.ef_search,
-        min_similarity=cell.min_similarity,
-        iterative_scan=cell.iterative_scan,
+        ExplainParams(
+            org_id=cell.org_id,
+            agent_id=cell.agent_id,
+            query=unit_vector(0),
+            ef_search=cell.ef_search,
+            min_similarity=cell.min_similarity,
+            iterative_scan=cell.iterative_scan,
+        ),
     )
     if cell.prewarm:
         await try_prewarm(engine)
@@ -296,17 +344,19 @@ async def _measure_cell(engine: AsyncEngine, store: PgVectorStore, cell: CellPar
     )
     result = await _run_size(
         store,
-        org_id=cell.org_id,
-        agent_id=cell.agent_id,
-        size=cell.size,
-        query_count=qn,
-        ef_search=cell.ef_search,
-        min_similarity=cell.min_similarity,
-        iterative_scan=cell.iterative_scan,
-        index_build_mode=cell.index_build_mode,
-        plan_summary=plan_summary,
-        idx_scan_delta=0,
-        row_count=cell.row_count,
+        SizeRunParams(
+            org_id=cell.org_id,
+            agent_id=cell.agent_id,
+            size=cell.size,
+            query_count=qn,
+            ef_search=cell.ef_search,
+            min_similarity=cell.min_similarity,
+            iterative_scan=cell.iterative_scan,
+            index_build_mode=cell.index_build_mode,
+            plan_summary=plan_summary,
+            idx_scan_delta=0,
+            row_count=cell.row_count,
+        ),
     )
     after = await idx_scan_count(engine)
     delta = after - before
@@ -331,19 +381,13 @@ async def _run_search_matrix(
     engine: AsyncEngine,
     store: PgVectorStore,
     factory: async_sessionmaker[AsyncSession],
-    *,
-    sizes: list[int],
-    index_modes: list[str],
-    iterative_modes: list[str],
-    min_sims: list[float],
-    ef_search: int,
-    queries: int | None,
+    config: MatrixConfig,
 ) -> list[SizeResult]:
     results: list[SizeResult] = []
     await reset_memories(engine)
     await ensure_hnsw_index(engine, maintenance_work_mem=_maintenance_work_mem())
-    for size in sizes:
-        for index_build_mode in index_modes:
+    for size in config.sizes:
+        for index_build_mode in config.index_modes:
             org_id, agent_id, _build_s = await _prepare_corpus(
                 engine, factory, size=size, index_build_mode=index_build_mode
             )
@@ -361,17 +405,17 @@ async def _run_search_matrix(
                 raise RuntimeError(msg)
 
             first_cell = True
-            for iterative_scan in iterative_modes:
-                for min_similarity in min_sims:
+            for iterative_scan in config.iterative_modes:
+                for min_similarity in config.min_sims:
                     cell = CellParams(
                         org_id=org_id,
                         agent_id=agent_id,
                         size=size,
-                        ef_search=ef_search,
+                        ef_search=config.ef_search,
                         min_similarity=min_similarity,
                         iterative_scan=iterative_scan,
                         index_build_mode=index_build_mode,
-                        query_count=queries,
+                        query_count=config.queries,
                         row_count=count,
                         prewarm=first_cell,
                     )
@@ -380,37 +424,53 @@ async def _run_search_matrix(
     return results
 
 
-def _build_payload(
+def _methodology_block(
     *,
-    args: argparse.Namespace,
-    results: list[SizeResult],
+    ef_search: int,
     iterative_modes: list[str],
     min_sims: list[float],
     index_modes: list[str],
 ) -> dict[str, object]:
     return {
+        "index": "idx_memories_embedding_hnsw (m=16, ef_construction=64, cosine)",
+        "ef_search": ef_search,
+        "dim": DIM,
+        "active_dims": ACTIVE_DIMS,
+        "warmup_queries": _WARMUP_QUERIES,
+        "truncate_between_sizes": True,
+        "reuse_corpus_across_search_knobs": True,
+        "analyze_after_copy": True,
+        "explain_requires_hnsw": True,
+        "recall": "planted near-neighbor must appear in top-10",
+        "latency": "wall-clock PgVectorStore.search including SET LOCAL",
+        "iterative_scan_modes": iterative_modes,
+        "min_similarity_values": min_sims,
+        "index_build_modes": index_modes,
+    }
+
+
+def _build_payload(
+    *,
+    ef_search: int,
+    results: list[SizeResult],
+    iterative_modes: list[str],
+    min_sims: list[float],
+    index_modes: list[str],
+) -> dict[str, object]:
+    mean_recall = (
+        statistics.fmean(r.recall_at_10 for r in results) if results else 0.0
+    )
+    return {
         "benchmark": "hnsw_recall_latency",
         "generated_at": datetime.now(UTC).isoformat(),
-        "methodology": {
-            "index": "idx_memories_embedding_hnsw (m=16, ef_construction=64, cosine)",
-            "ef_search": args.ef_search,
-            "dim": DIM,
-            "active_dims": ACTIVE_DIMS,
-            "warmup_queries": _WARMUP_QUERIES,
-            "truncate_between_sizes": True,
-            "reuse_corpus_across_search_knobs": True,
-            "analyze_after_copy": True,
-            "explain_requires_hnsw": True,
-            "recall": "planted near-neighbor must appear in top-10",
-            "latency": "wall-clock PgVectorStore.search including SET LOCAL",
-            "iterative_scan_modes": iterative_modes,
-            "min_similarity_values": min_sims,
-            "index_build_modes": index_modes,
-        },
+        "methodology": _methodology_block(
+            ef_search=ef_search,
+            iterative_modes=iterative_modes,
+            min_sims=min_sims,
+            index_modes=index_modes,
+        ),
         "results": [asdict(r) for r in results],
-        "mean_recall_at_10": statistics.fmean(r.recall_at_10 for r in results)
-        if results
-        else 0.0,
+        "mean_recall_at_10": mean_recall,
     }
 
 
@@ -433,18 +493,20 @@ async def _benchmark(args: argparse.Namespace) -> dict[str, object]:
             engine,
             store,
             factory,
-            sizes=list(args.sizes),
-            index_modes=index_modes,
-            iterative_modes=iterative_modes,
-            min_sims=min_sims,
-            ef_search=args.ef_search,
-            queries=args.queries,
+            MatrixConfig(
+                sizes=list(args.sizes),
+                index_modes=index_modes,
+                iterative_modes=iterative_modes,
+                min_sims=min_sims,
+                ef_search=args.ef_search,
+                queries=args.queries,
+            ),
         )
     finally:
         await engine.dispose()
 
     payload = _build_payload(
-        args=args,
+        ef_search=args.ef_search,
         results=results,
         iterative_modes=iterative_modes,
         min_sims=min_sims,

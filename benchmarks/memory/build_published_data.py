@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -18,15 +19,23 @@ from path_guard import (  # noqa: E402
 )
 
 
-def _merge_entry(raw: dict, *, sha: str, branch: str, run_number: int, run_url: str) -> dict:
-    short = sha[:7] if len(sha) >= 7 else sha
+@dataclass(frozen=True, slots=True)
+class RunMeta:
+    sha: str
+    branch: str
+    run_number: int
+    run_url: str
+
+
+def _merge_entry(raw: dict, meta: RunMeta) -> dict:
+    short = meta.sha[:7] if len(meta.sha) >= 7 else meta.sha
     return {
-        "sha": sha,
+        "sha": meta.sha,
         "short_sha": short,
         "timestamp": raw.get("generated_at") or datetime.now(UTC).isoformat(),
-        "branch": branch,
-        "run_number": run_number,
-        "run_url": run_url,
+        "branch": meta.branch,
+        "run_number": meta.run_number,
+        "run_url": meta.run_url,
         "methodology": raw.get("methodology", {}),
         "results": raw.get("results", []),
         "mean_recall_at_10": raw.get("mean_recall_at_10", 0.0),
@@ -71,10 +80,12 @@ def main() -> None:
     raw = json.loads(raw_path.read_text(encoding="utf-8"))  # NOSONAR pythonsecurity:S2083
     entry = _merge_entry(
         raw,
-        sha=args.sha,
-        branch=args.branch,
-        run_number=args.run_number,
-        run_url=args.run_url,
+        RunMeta(
+            sha=args.sha,
+            branch=args.branch,
+            run_number=args.run_number,
+            run_url=args.run_url,
+        ),
     )
     published = _load_or_init_published(published_path)
     runs = [r for r in published.get("runs", []) if r.get("sha") != args.sha]

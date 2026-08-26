@@ -54,28 +54,31 @@ def _summarize_nodes(nodes: list[dict[str, Any]]) -> str:
     )
 
 
-def assert_hnsw_index_used(explain_json: list[Any] | dict[str, Any]) -> dict[str, Any]:
-    """Require an Index/Bitmap Index Scan on idx_memories_embedding_hnsw."""
+def _root_plan(explain_json: list[Any] | dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     root = explain_json[0] if isinstance(explain_json, list) else explain_json
     if not isinstance(root, dict):
         raise PlanAssertionError(f"unexpected EXPLAIN root type: {type(root)!r}")
     plan = root.get("Plan")
     if not isinstance(plan, dict):
         raise PlanAssertionError("EXPLAIN JSON missing Plan")
+    return root, plan
 
-    nodes = walk_plan_nodes(plan)
+
+def _require_hnsw_nodes(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
     hnsw_nodes = [n for n in nodes if _is_hnsw_access(n)]
+    if hnsw_nodes:
+        return hnsw_nodes
     seq_on_memories = any(_is_seq_on_memories(n) for n in nodes)
+    seq_note = "; Seq Scan on memories also present" if seq_on_memories else ""
+    raise PlanAssertionError(
+        "expected Index Scan / Bitmap Index Scan on idx_memories_embedding_hnsw; "
+        f"saw: {_summarize_nodes(nodes)}{seq_note}"
+    )
 
-    if not hnsw_nodes:
-        seq_note = "; Seq Scan on memories also present" if seq_on_memories else ""
-        raise PlanAssertionError(
-            "expected Index Scan / Bitmap Index Scan on idx_memories_embedding_hnsw; "
-            f"saw: {_summarize_nodes(nodes)}{seq_note}"
-        )
 
-    buffers = collect_buffer_stats(nodes)
-    primary = hnsw_nodes[0]
+def _plan_summary(
+    root: dict[str, Any], primary: dict[str, Any], buffers: dict[str, int]
+) -> dict[str, Any]:
     return {
         "node_type": primary.get("Node Type"),
         "index_name": primary.get("Index Name"),
@@ -85,3 +88,11 @@ def assert_hnsw_index_used(explain_json: list[Any] | dict[str, Any]) -> dict[str
         "execution_time_ms": root.get("Execution Time"),
         **buffers,
     }
+
+
+def assert_hnsw_index_used(explain_json: list[Any] | dict[str, Any]) -> dict[str, Any]:
+    """Require an Index/Bitmap Index Scan on idx_memories_embedding_hnsw."""
+    root, plan = _root_plan(explain_json)
+    nodes = walk_plan_nodes(plan)
+    hnsw_nodes = _require_hnsw_nodes(nodes)
+    return _plan_summary(root, hnsw_nodes[0], collect_buffer_stats(nodes))

@@ -152,19 +152,7 @@ class EmbeddingClient:
         await self._client.aclose()
 
     async def embed(self, texts: Sequence[str], *, org_id: UUID) -> EmbeddingResult:
-        if not texts:
-            msg = "texts must be non-empty"
-            raise EmbeddingRejectedError(msg)
-        if len(texts) > _MAX_BATCH_TEXTS:
-            msg = f"texts batch size {len(texts)} exceeds max {_MAX_BATCH_TEXTS}"
-            raise EmbeddingRejectedError(msg)
-        for i, item in enumerate(texts):
-            if not isinstance(item, str):
-                msg = f"texts[{i}] must be a string"
-                raise EmbeddingRejectedError(msg)
-            if len(item.encode("utf-8")) > _MAX_TEXT_BYTES:
-                msg = f"texts[{i}] exceeds {_MAX_TEXT_BYTES} bytes"
-                raise EmbeddingRejectedError(msg)
+        _validate_texts(texts)
         payload = {"texts": list(texts), "org_id": str(org_id)}
         return await self._post_with_retry(payload, batch_size=len(texts))
 
@@ -233,6 +221,34 @@ class EmbeddingClient:
         _raise_http_error(resp)
 
 
+def _validate_texts(texts: Sequence[str]) -> None:
+    if not texts:
+        raise EmbeddingRejectedError("texts must be non-empty")
+    if len(texts) > _MAX_BATCH_TEXTS:
+        raise EmbeddingRejectedError(
+            f"texts batch size {len(texts)} exceeds max {_MAX_BATCH_TEXTS}"
+        )
+    for i, item in enumerate(texts):
+        if not isinstance(item, str):
+            raise EmbeddingRejectedError(f"texts[{i}] must be a string")
+        if len(item.encode("utf-8")) > _MAX_TEXT_BYTES:
+            raise EmbeddingRejectedError(f"texts[{i}] exceeds {_MAX_TEXT_BYTES} bytes")
+
+
+def _require_nonempty_str(value: object, *, field: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise EmbeddingInvalidResponseError(f"embedder response missing {field}")
+    return value
+
+
+def _require_dimensions(value: object) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value != _EXPECTED_DIM:
+        raise EmbeddingInvalidResponseError(
+            f"embedder dimensions must be {_EXPECTED_DIM}, got {value!r}"
+        )
+    return value
+
+
 def _as_finite_float(value: object, *, vector_idx: int, component_idx: int) -> float:
     # bool is a subclass of int — reject explicitly.
     if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -264,22 +280,13 @@ def _parse_success(resp: httpx.Response) -> EmbeddingResult:
     if not isinstance(body, dict):
         raise EmbeddingInvalidResponseError("embedder response must be a JSON object")
     vectors = body.get("vectors")
-    model_id = body.get("model_id")
-    dimensions = body.get("dimensions")
-    backend = body.get("backend")
     if not isinstance(vectors, list) or not vectors:
         raise EmbeddingInvalidResponseError("embedder response missing vectors")
-    if not isinstance(model_id, str) or not model_id:
-        raise EmbeddingInvalidResponseError("embedder response missing model_id")
-    if not isinstance(dimensions, int) or isinstance(dimensions, bool) or dimensions != _EXPECTED_DIM:
-        raise EmbeddingInvalidResponseError(
-            f"embedder dimensions must be {_EXPECTED_DIM}, got {dimensions!r}"
-        )
-    if not isinstance(backend, str) or not backend:
-        raise EmbeddingInvalidResponseError("embedder response missing backend")
-    parsed = [_parse_vector_row(row, idx=idx) for idx, row in enumerate(vectors)]
+    model_id = _require_nonempty_str(body.get("model_id"), field="model_id")
+    dimensions = _require_dimensions(body.get("dimensions"))
+    backend = _require_nonempty_str(body.get("backend"), field="backend")
     return EmbeddingResult(
-        vectors=parsed,
+        vectors=[_parse_vector_row(row, idx=idx) for idx, row in enumerate(vectors)],
         model_id=model_id,
         dimensions=dimensions,
         backend=backend,
