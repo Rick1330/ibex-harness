@@ -19,6 +19,10 @@ from sqlalchemy.ext.asyncio import (
 from app.config import Settings
 
 _SSL_QUERY_KEYS = frozenset({"sslmode", "sslrootcert", "sslcert", "sslkey", "sslcrl"})
+_PG_SCHEME = "postgresql://"
+_ASYNCPG_SCHEME = "postgresql+asyncpg://"
+_PLAINTEXT_SSLMODES = frozenset({"disable", "allow", "prefer"})
+_VERIFIED_SSLMODES = frozenset({"require", "verify-ca", "verify-full"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,22 +38,22 @@ def parse_async_database_url(url: str) -> AsyncDatabaseTarget:
 
     ``sslmode`` is not a valid asyncpg connect kwarg when SQLAlchemy parses the
     URL, so it is translated into ``connect_args["ssl"]`` and removed from the
-    query string. Certificate path params become an ``ssl.SSLContext``.
+    query string. Encrypting modes always use a verified TLS context (hostname
+    + certificate checks); weaker libpq ``require`` semantics are intentionally
+    strengthened.
     """
     raw = url.strip()
     if raw.startswith("postgres://"):
-        raw = "postgresql://" + raw[len("postgres://") :]
-    if raw.startswith("postgresql://"):
-        raw = "postgresql+asyncpg://" + raw[len("postgresql://") :]
+        raw = _PG_SCHEME + raw[len("postgres://") :]
+    if raw.startswith(_PG_SCHEME):
+        raw = _ASYNCPG_SCHEME + raw[len(_PG_SCHEME) :]
 
     parts = urlsplit(raw)
-    query_items = parse_qsl(parts.query, keep_blank_values=True)
-    query = {k: v for k, v in query_items}
+    query = dict(parse_qsl(parts.query, keep_blank_values=True))
     sslmode = query.pop("sslmode", None)
     ssl_arg = _ssl_connect_arg(sslmode, query)
-    for key in list(query):
-        if key in _SSL_QUERY_KEYS:
-            query.pop(key)
+    for key in _SSL_QUERY_KEYS:
+        query.pop(key, None)
 
     cleaned = urlunsplit(
         (parts.scheme, parts.netloc, parts.path, urlencode(list(query.items())), parts.fragment)
@@ -108,29 +112,19 @@ def _ssl_connect_arg(
     if sslmode is None:
         return None
     mode = sslmode.lower()
-    if mode in {"disable", "allow"}:
+    if mode in _PLAINTEXT_SSLMODES:
         return False
-    if mode == "prefer":
-        # Prefer plaintext when the server does not require TLS (local compose).
-        return False
-    if mode == "require":
-        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-        return ctx
-    if mode in {"verify-ca", "verify-full"}:
-        cafile = query.get("sslrootcert") or None
-        ctx = (
-            ssl.create_default_context(cafile=cafile)
-            if cafile
-            else ssl.create_default_context()
-        )
-        ctx.verify_mode = ssl.CERT_REQUIRED
-        ctx.check_hostname = mode == "verify-full"
-        cert = query.get("sslcert")
-        key = query.get("sslkey")
-        if cert and key:
-            ctx.load_cert_chain(cert, keyfile=key)
-        return ctx
-    msg = f"unsupported sslmode: {sslmode!r}"
-    raise ValueError(msg)
+    if mode not in _VERIFIED_SSLMODES:
+        msg = f"unsupported sslmode: {sslmode!r}"
+        raise ValueError(msg)
+    return _verified_tls_context(query)
+
+
+def _verified_tls_context(query: dict[str, str]) -> ssl.SSLContext:
+    """System CA trust store (optional sslrootcert) with hostname verification."""
+    ctx = ssl.create_default_context(cafile=query.get("sslrootcert"))
+    cert = query.get("sslcert")
+    key = query.get("sslkey")
+    if cert and key:
+        ctx.load_cert_chain(cert, keyfile=key)
+    return ctx

@@ -32,15 +32,32 @@ def test_normalize_plaintext_sslmode_disable() -> None:
     ) == target.url
 
 
-def test_normalize_require_uses_encrypting_context() -> None:
+def test_normalize_require_uses_verified_tls() -> None:
     target = parse_async_database_url(
         "postgresql://ibex:ibex@db.example:5432/ibex?sslmode=require"
     )
     assert "sslmode" not in target.url
     ctx = target.connect_args["ssl"]
     assert isinstance(ctx, ssl.SSLContext)
-    assert ctx.verify_mode == ssl.CERT_NONE
-    assert ctx.check_hostname is False
+    assert ctx.verify_mode == ssl.CERT_REQUIRED
+    assert ctx.check_hostname is True
+
+
+def test_normalize_verify_ca_matches_verified_tls() -> None:
+    target = parse_async_database_url(
+        "postgresql://ibex:ibex@db.example:5432/ibex?sslmode=verify-ca"
+    )
+    ctx = target.connect_args["ssl"]
+    assert isinstance(ctx, ssl.SSLContext)
+    assert ctx.verify_mode == ssl.CERT_REQUIRED
+    assert ctx.check_hostname is True
+
+
+def test_normalize_rejects_unknown_sslmode() -> None:
+    with pytest.raises(ValueError, match="unsupported sslmode"):
+        parse_async_database_url(
+            "postgresql://ibex:ibex@db.example:5432/ibex?sslmode=nonsense"
+        )
 
 
 def test_normalize_verify_full_enables_hostname_checks() -> None:

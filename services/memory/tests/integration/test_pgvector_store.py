@@ -135,15 +135,14 @@ async def test_ef_search_set_local_no_cross_session_leak(
 async def test_upsert_missing_memory_raises(
     store: PgVectorStore,
 ) -> None:
+    request = UpsertRequest(
+        memory_id=UUID("00000000-0000-0000-0000-000000000001"),
+        org_id=UUID("00000000-0000-0000-0000-000000000002"),
+        embedding=zero_embedding(),
+        embedding_model="bge-m3",
+    )
     with pytest.raises(LookupError):
-        await store.upsert(
-            UpsertRequest(
-                memory_id=UUID("00000000-0000-0000-0000-000000000001"),
-                org_id=UUID("00000000-0000-0000-0000-000000000002"),
-                embedding=zero_embedding(),
-                embedding_model="bge-m3",
-            )
-        )
+        await store.upsert(request)
 
 
 @pytest.mark.asyncio
@@ -154,12 +153,11 @@ async def test_search_rejects_invalid_limit(
     org_id, agent_id, _memory_id = await seed_org_agent_memory(
         session_factory, content="limit validation"
     )
+    request = SearchRequest(
+        org_id=org_id,
+        agent_id=agent_id,
+        query_embedding=zero_embedding(),
+        limit=0,
+    )
     with pytest.raises(ValueError, match="limit must be >= 1"):
-        await store.search(
-            SearchRequest(
-                org_id=org_id,
-                agent_id=agent_id,
-                query_embedding=zero_embedding(),
-                limit=0,
-            )
-        )
+        await store.search(request)

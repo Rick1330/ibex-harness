@@ -30,15 +30,8 @@ class UpsertRequest:
     embedding_dim: int = _DEFAULT_EMBEDDING_DIM
 
     def validate(self) -> None:
-        if self.embedding_dim != _DEFAULT_EMBEDDING_DIM:
-            msg = "embedding_dim must be 1024"
-            raise ValueError(msg)
-        if len(self.embedding) != self.embedding_dim:
-            msg = (
-                f"embedding length {len(self.embedding)} != embedding_dim "
-                f"{self.embedding_dim}"
-            )
-            raise ValueError(msg)
+        _require_default_embedding_dim(self.embedding_dim)
+        _require_embedding_length(self.embedding, self.embedding_dim, "embedding")
         if not self.embedding_model.strip():
             msg = "embedding_model must be non-empty"
             raise ValueError(msg)
@@ -56,23 +49,42 @@ class SearchRequest:
     ef_search: int | None = None
 
     def validate(self, *, embedding_dim: int = _DEFAULT_EMBEDDING_DIM) -> None:
-        if len(self.query_embedding) != embedding_dim:
-            msg = (
-                f"query_embedding length {len(self.query_embedding)} "
-                f"!= embedding_dim {embedding_dim}"
-            )
-            raise ValueError(msg)
-        if self.limit < 1:
-            msg = "limit must be >= 1"
-            raise ValueError(msg)
-        if self.min_similarity is not None and (
-            self.min_similarity < 0.0 or self.min_similarity > 1.0
-        ):
-            msg = "min_similarity must be in [0, 1]"
-            raise ValueError(msg)
-        if self.ef_search is not None and self.ef_search < 1:
-            msg = "ef_search must be >= 1"
-            raise ValueError(msg)
+        _require_embedding_length(self.query_embedding, embedding_dim, "query_embedding")
+        _require_at_least_one(self.limit, "limit")
+        _require_unit_interval(self.min_similarity, "min_similarity")
+        if self.ef_search is not None:
+            _require_at_least_one(self.ef_search, "ef_search")
+
+
+def _require_default_embedding_dim(embedding_dim: int) -> None:
+    if embedding_dim != _DEFAULT_EMBEDDING_DIM:
+        msg = "embedding_dim must be 1024"
+        raise ValueError(msg)
+
+
+def _require_embedding_length(
+    values: Sequence[float], expected: int, field_name: str
+) -> None:
+    if len(values) != expected:
+        msg = f"{field_name} length {len(values)} != embedding_dim {expected}"
+        raise ValueError(msg)
+
+
+def _require_at_least_one(value: int, field_name: str) -> None:
+    if value < 1:
+        msg = f"{field_name} must be >= 1"
+        raise ValueError(msg)
+
+
+def _require_unit_interval(value: float | None, field_name: str) -> None:
+    if value is None:
+        return
+    if value < 0.0:
+        msg = f"{field_name} must be in [0, 1]"
+        raise ValueError(msg)
+    if value > 1.0:
+        msg = f"{field_name} must be in [0, 1]"
+        raise ValueError(msg)
 
 
 class VectorStore(ABC):

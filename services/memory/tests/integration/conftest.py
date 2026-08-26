@@ -43,7 +43,11 @@ async def engine(memory_database_url: str) -> AsyncIterator[AsyncEngine]:
     eng = create_engine(settings)
     try:
         async with eng.connect() as conn:
-            await conn.execute(text("SELECT 1"))  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+            await conn.execute(
+                text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+                    "SELECT 1"
+                )
+            )
             await conn.commit()
     except Exception as exc:  # noqa: BLE001 — skip if DB unreachable
         await eng.dispose()
@@ -107,14 +111,11 @@ async def seed_org_agent_memory(
             "SELECT set_config('app.is_service_account', 'true', true)",
             {},
         )
-        await _insert_org(session, seed)
-        await _insert_user(session, seed)
-        await _insert_agent(session, seed)
-        await _insert_memory(session, seed)
+        await _insert_seed_rows(session, seed)
     return seed.org_id, seed.agent_id, seed.memory_id
 
 
-async def _insert_org(session: AsyncSession, seed: _SeedIds) -> None:
+async def _insert_seed_rows(session: AsyncSession, seed: _SeedIds) -> None:
     await _exec_bound(
         session,
         """
@@ -123,9 +124,6 @@ async def _insert_org(session: AsyncSession, seed: _SeedIds) -> None:
         """,
         {"id": str(seed.org_id), "name": f"Org {seed.slug}", "slug": seed.slug},
     )
-
-
-async def _insert_user(session: AsyncSession, seed: _SeedIds) -> None:
     await _exec_bound(
         session,
         """
@@ -139,9 +137,6 @@ async def _insert_user(session: AsyncSession, seed: _SeedIds) -> None:
             "name": "User",
         },
     )
-
-
-async def _insert_agent(session: AsyncSession, seed: _SeedIds) -> None:
     await _exec_bound(
         session,
         """
@@ -156,9 +151,6 @@ async def _insert_agent(session: AsyncSession, seed: _SeedIds) -> None:
             "slug": f"agent-{seed.agent_id.hex[:8]}",
         },
     )
-
-
-async def _insert_memory(session: AsyncSession, seed: _SeedIds) -> None:
     await _exec_bound(
         session,
         """

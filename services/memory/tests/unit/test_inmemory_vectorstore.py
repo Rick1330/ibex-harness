@@ -86,9 +86,9 @@ async def test_inmemory_respects_org_and_agent_scope() -> None:
 
 
 @pytest.mark.asyncio
-async def test_inmemory_rejects_cross_org_upsert_and_rebind() -> None:
+async def test_inmemory_rejects_agent_rebind_after_upsert() -> None:
     store = InMemoryVectorStore()
-    org_a, org_b = uuid4(), uuid4()
+    org_a = uuid4()
     agent_a, agent_b = uuid4(), uuid4()
     mem = uuid4()
     vec = [1.0] + [0.0] * 1023
@@ -96,15 +96,26 @@ async def test_inmemory_rejects_cross_org_upsert_and_rebind() -> None:
     await store.upsert(
         UpsertRequest(memory_id=mem, org_id=org_a, embedding=vec, embedding_model="bge-m3")
     )
-
     with pytest.raises(ValueError, match="cannot rebind"):
         store.bind_agent(mem, agent_b)
 
-    with pytest.raises(LookupError, match="not found for org"):
-        await store.upsert(
-            UpsertRequest(memory_id=mem, org_id=org_b, embedding=vec, embedding_model="bge-m3")
-        )
 
+@pytest.mark.asyncio
+async def test_inmemory_rejects_cross_org_upsert() -> None:
+    store = InMemoryVectorStore()
+    org_a, org_b = uuid4(), uuid4()
+    agent_a = uuid4()
+    mem = uuid4()
+    vec = [1.0] + [0.0] * 1023
+    store.bind_agent(mem, agent_a)
+    await store.upsert(
+        UpsertRequest(memory_id=mem, org_id=org_a, embedding=vec, embedding_model="bge-m3")
+    )
+    request = UpsertRequest(
+        memory_id=mem, org_id=org_b, embedding=vec, embedding_model="bge-m3"
+    )
+    with pytest.raises(LookupError, match="not found for org"):
+        await store.upsert(request)
     assert (
         await store.search(
             SearchRequest(
@@ -130,37 +141,58 @@ async def test_inmemory_rejects_cross_org_upsert_and_rebind() -> None:
 
 
 @pytest.mark.asyncio
-async def test_inmemory_validation_errors() -> None:
+async def test_inmemory_upsert_requires_bind_agent() -> None:
     store = InMemoryVectorStore()
     mem = uuid4()
     org = uuid4()
+    request = UpsertRequest(
+        memory_id=mem, org_id=org, embedding=[0.0] * 1024, embedding_model="bge-m3"
+    )
     with pytest.raises(KeyError):
-        await store.upsert(
-            UpsertRequest(
-                memory_id=mem, org_id=org, embedding=[0.0] * 1024, embedding_model="bge-m3"
-            )
-        )
+        await store.upsert(request)
+
+
+@pytest.mark.asyncio
+async def test_inmemory_rejects_short_embedding() -> None:
+    store = InMemoryVectorStore()
+    mem = uuid4()
+    org = uuid4()
     store.bind_agent(mem, uuid4())
+    request = UpsertRequest(
+        memory_id=mem, org_id=org, embedding=[0.0] * 8, embedding_model="bge-m3"
+    )
     with pytest.raises(ValueError, match="embedding length"):
-        await store.upsert(
-            UpsertRequest(memory_id=mem, org_id=org, embedding=[0.0] * 8, embedding_model="bge-m3")
-        )
+        await store.upsert(request)
+
+
+@pytest.mark.asyncio
+async def test_inmemory_rejects_non_default_embedding_dim() -> None:
+    store = InMemoryVectorStore()
+    mem = uuid4()
+    org = uuid4()
+    store.bind_agent(mem, uuid4())
+    request = UpsertRequest(
+        memory_id=mem,
+        org_id=org,
+        embedding=[0.0] * 512,
+        embedding_model="bge-m3",
+        embedding_dim=512,
+    )
     with pytest.raises(ValueError, match="1024"):
-        await store.upsert(
-            UpsertRequest(
-                memory_id=mem,
-                org_id=org,
-                embedding=[0.0] * 512,
-                embedding_model="bge-m3",
-                embedding_dim=512,
-            )
-        )
+        await store.upsert(request)
+
+
+@pytest.mark.asyncio
+async def test_inmemory_rejects_blank_embedding_model() -> None:
+    store = InMemoryVectorStore()
+    mem = uuid4()
+    org = uuid4()
+    store.bind_agent(mem, uuid4())
+    request = UpsertRequest(
+        memory_id=mem, org_id=org, embedding=[0.0] * 1024, embedding_model="  "
+    )
     with pytest.raises(ValueError, match="non-empty"):
-        await store.upsert(
-            UpsertRequest(
-                memory_id=mem, org_id=org, embedding=[0.0] * 1024, embedding_model="  "
-            )
-        )
+        await store.upsert(request)
 
 
 @pytest.mark.asyncio
@@ -174,10 +206,9 @@ async def test_search_rejects_invalid_limit_parity() -> None:
     await store.upsert(
         UpsertRequest(memory_id=mem, org_id=org, embedding=vec, embedding_model="bge-m3")
     )
+    request = SearchRequest(org_id=org, agent_id=agent, query_embedding=vec, limit=0)
     with pytest.raises(ValueError, match="limit must be >= 1"):
-        await store.search(
-            SearchRequest(org_id=org, agent_id=agent, query_embedding=vec, limit=0)
-        )
+        await store.search(request)
 
 
 @pytest.mark.asyncio
