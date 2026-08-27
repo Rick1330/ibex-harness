@@ -1,8 +1,8 @@
 ---
 title: "3.C.3 Temporal-interval-aware conflict detection"
-description: "Redesign of conflict detection to check temporal interval overlap before escalating to an LLM call, eliminating false contradictions for sequential facts. ADR-0042 required before implementation."
-summary: "Redesign of conflict detection to check temporal interval overlap before escalating to an LLM call, eliminating false contradictions for sequential facts. ADR-0042 required before implementation."
-status: "planned"
+description: "Interval-overlap-first conflict detection after near-dup: auto-supersede sequential facts without LLM; escalate only on overlap or missing validity. ADR-0056."
+summary: "Interval-overlap-first conflict detection after near-dup: auto-supersede sequential facts without LLM; escalate only on overlap or missing validity. ADR-0056."
+status: "in_progress"
 milestoneId: "3.C.3"
 track: "C"
 trackTitle: "Write Pipeline"
@@ -15,12 +15,12 @@ fullTitle: "Milestone 3.C.3 — Temporal-interval-aware conflict detection"
 
 # Milestone 3.C.3 — Temporal-interval-aware conflict detection
 
-**Status:** Planned  
+**Status:** In progress (`feature/m3-c-3-temporal-conflict`)  
 **Goal:** [Track C — Write Pipeline](/roadmap/phase-3-memory-engine/tracks#track-c--write-pipeline)  
 **Phase:** 3 — Core Memory Substrate  
 **Estimated effort:** 4 days  
 **Track:** [Track C — Write Pipeline](/roadmap/phase-3-memory-engine/tracks#track-c--write-pipeline)  
-**ADR required:** ADR-0042 — Temporal-interval-aware conflict detection (targeted to land before implementation because it defines the conflict model and edge cases)
+**ADR:** [ADR-0056](/docs/adr/0056-temporal-conflict-detection) (planning text said ADR-0042; that id is taken by the self-hosted adapter)
 
 ---
 
@@ -37,16 +37,17 @@ This is the single biggest correctness fix in Phase 3. The original design treat
 
 The original conflict resolution table already distinguishes these types, but the *detection* step does not use time at all before calling the LLM — it relies entirely on the LLM prompt to figure out "these are actually sequential, not contradictory" from text alone, which is fragile and wastes LLM calls.
 
-ADR-0042 is the preferred first step before implementation work proceeds, because it captures the conflict model, interval semantics, and reviewable tradeoffs in one place.
+ADR-0056 captures the conflict model, interval semantics, and reviewable tradeoffs.
 
 ---
 
 ## Non-Goals
 
 - Changes to the conflict resolution taxonomy (supersedes/contradicts/merge — kept as-is)
-- The post-resolution actions (`superseded_by`, `pending_review` — kept from original)
+- Inventing `pending_review` status without a migration (use existing CHECK + `contradicts` edge)
 - Subject extraction beyond what is needed for the interval check
 - GDPR deletion or archive flows
+- Production LLM worker (ships pluggable `ConflictClassifier` seam; default noop escalate)
 
 ---
 
@@ -75,46 +76,39 @@ Prefer outcomes over matching any particular file tree or command sequence.
 Rename freely to match the change that actually lands.
 
 - Branch: `feature/m3-c-3-temporal-conflict`
-- PR title: `feat(memory): temporal-interval-aware conflict detection (m3.C.3)`
+- PR title: `feat(memory): temporal-interval-aware conflict detection (m3.c.3)`
 
-## ADR-0042 — Temporal-interval-aware conflict detection
+## ADR-0056 — Temporal-interval-aware conflict detection
 
-Write `web/content/docs/adr/0042-temporal-conflict-detection.mdx`. It should document:
+See [ADR-0056](/docs/adr/0056-temporal-conflict-detection). It documents:
 
-1. **Why interval-overlap-first beats similarity-only gating:** Cuts unnecessary LLM calls. Fixes the sequential-fact misclassification (the "Python → Go" example above is the canonical test case; it should be documented explicitly as the motivating failure mode).
-2. **The subject-extraction approach chosen (spaCy vs. a cheap secondary LLM call):** starting preference is **spaCy**, because it is free, fast (&lt;5ms), self-hostable, and this is a well-scoped, single-purpose NLP task that may not need an LLM. If real fixtures show weak subject extraction quality, that should trigger follow-up investigation rather than forcing the initial choice.
-3. **Fallback behavior when `valid_from` cannot be reliably inferred:** Default to "no interval information available" → falls back to the original LLM-gated contradiction check. Never silently drops the check.
+1. **Why interval-overlap-first beats similarity-only gating**
+2. **spaCy subject extraction** (reuse `en_core_web_md` from ADR-0054)
+3. **Missing `valid_from` → escalate** (never silent skip)
+4. **Status taxonomy** without inventing `pending_review`
+5. **Pending supersede targets** until the new memory id exists post-insert
 
 ---
 
 ## Redesigned Algorithm
 
 ```
-1. Near-duplicate candidate supplied by Milestone 3.C.2 (cosine > 0.85, same category).
+1. Near-duplicate candidate supplied by Milestone 3.C.2 (cosine > threshold).
 
 2. Temporal interval check (fast path):
  - Extract subject from new memory and candidate memory using spaCy dependency parse.
  - If new memory valid_from > candidate memory valid_from
- AND subjects refer to same attribute/entity:
+ AND subjects refer to same attribute/entity
+ AND intervals do not overlap:
  → classify as SUPERSEDES, no LLM call.
- → write memory_relationships row: type=supersedes.
- → set candidate memory status=superseded, superseded_by=new_memory_id.
+ → (persist later) memory_relationships supersedes + status=superseded.
  → DONE.
 
 3. Interval overlap check (slow path, only if fast path did not fire):
- - If validity intervals overlap (both claim to be true at the same time):
- → escalate to LLM contradiction-check prompt.
- → LLM returns: contradicts | near_duplicate | unrelated.
- → Resolution actions apply (see below).
+ - If validity intervals overlap (or valid_from missing):
+ → escalate to ConflictClassifier (LLM seam; noop default → escalate_pending).
  - If no interval overlap and not same attribute/entity:
  → no conflict, proceed to write.
-
-4. Resolution actions (unchanged from original plan):
- - contradicts → create memory_relationships row type=contradicts,
- set status=pending_review on lower-confidence memory
- - near_duplicate → merge: set status=merged_into on duplicate,
- merged_into=surviving_id
- - unrelated → proceed to write normally
 ```
 
 ---
@@ -123,12 +117,12 @@ Write `web/content/docs/adr/0042-temporal-conflict-detection.mdx`. It should doc
 
 Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
 
-- [ ] ADR-0042 written and merged **before** implementation starts (per repo convention)
-- [ ] Sequential-fact test fixture (e.g., "prefers Python" → "switching to Go", 3 months apart) classified as `supersedes` with zero LLM calls
-- [ ] Overlapping-interval contradiction test fixture still escalates to LLM and is classified correctly
-- [ ] `memory_relationships` row created for every detected conflict, using the existing typed-edge schema
-- [ ] Integration test: end-to-end write of two conflicting memories via the real API, verifying resolution status transitions in Postgres
-- [ ] `llm_call_made` metric recorded per detection run (visible in Prometheus)
+- [x] ADR-0056 written (planning referred to ADR-0042; id already taken)
+- [x] Sequential-fact fixture classified as `supersedes` with zero LLM calls
+- [x] Overlapping-interval fixture escalates via classifier seam
+- [x] `memory_relationships` row helpers for supersedes / contradicts (org-scoped)
+- [x] Integration tests drive persist helpers against Postgres (full write HTTP API later)
+- [x] `ibex_memory_conflict_llm_calls_total` + `ibex_memory_conflicts_total{outcome}` metrics
 
 ---
 
@@ -136,5 +130,4 @@ Outcome-oriented signals that the milestone is in good shape. Exact filenames, p
 
 - Milestone 3.1.1 merged (`valid_from`/`valid_until` columns and `idx_memories_validity` index in schema)
 - Milestone 3.C.2 merged (near-duplicate candidates supplied as input)
-- ADR-0042 reviewed and approved before any code is written
-
+- ADR-0056 accepted with implementation

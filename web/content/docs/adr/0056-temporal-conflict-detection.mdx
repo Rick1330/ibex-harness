@@ -1,0 +1,71 @@
+---
+title: "ADR-0056: Temporal-interval-aware conflict detection"
+description: "Architecture decision record 0056 — interval-overlap-first conflict gating on near-dup candidates; auto-supersede without LLM; spaCy subject match; escalate only on overlap or missing validity."
+adrId: "0056"
+status: "Accepted"
+date: "2026-08-27"
+authors: "IBEX Harness team"
+---
+
+# ADR-0056: Temporal-interval-aware conflict detection
+
+- **Status:** Accepted
+- **Date:** 2026-08-27
+- **Authors:** IBEX Harness team
+- **Milestone:** [3.C.3 Temporal-interval-aware conflict detection](/roadmap/phase-3-memory-engine/milestones/3.c.3-temporal-conflict-detection)
+
+## Context
+
+Milestone planning text referred to “ADR-0042” for this decision. **ADR-0042 is already
+taken** ([self-hosted OpenAI-compatible adapter](/docs/adr/0042-self-hosted-openai-compatible-adapter)).
+This record is **ADR-0056**.
+
+Near-duplicate candidates from [ADR-0055](/docs/adr/0055-memory-write-path-dedup) must not
+all escalate to an LLM. Sequential facts (“prefers Python” in March → “switching to Go” in
+June) are `supersedes`, not `contradicts`. Temporal columns ship in
+[ADR-0047](/docs/adr/0047-memory-temporal-validity); relationship types in
+[ADR-0049](/docs/adr/0049-memory-relationship-graph).
+
+## Options considered
+
+### 1) Similarity-only → LLM
+
+Escalate every near-dup. Cheap to implement; wastes LLM budget and misclassifies sequential facts.
+
+### 2) Interval-overlap-first (chosen)
+
+1. Same subject/attribute **and** non-overlapping half-open intervals **and**
+   `new.valid_from > candidate.valid_from` → **`supersedes`**, zero LLM.
+2. Intervals **overlap** (or validity missing/unreliable) → **escalate** to LLM classifier.
+3. No overlap and subjects differ → **no conflict**.
+
+### 3) Subject extraction
+
+1. Secondary LLM call — accurate but costs latency/budget on the write path.
+2. **spaCy CNN** (`en_core_web_md`, already admitted for PII / ADR-0054) — free, &lt;5ms, self-hosted.
+
+Decision: **spaCy**. Weak fixtures trigger follow-up, not an initial LLM subject extractor.
+
+## Decision
+
+1. Half-open intervals `[valid_from, valid_until)`; `NULL valid_until` = open (+∞), per ADR-0047.
+2. Overlap iff `a_from < coalesce(b_until, +∞) AND b_from < coalesce(a_until, +∞)`.
+3. Auto-supersede only when **non-overlapping**, newer `valid_from`, and subject keys match.
+4. Missing `valid_from` on either side → escalate (never silent skip).
+5. Escalation is a **pluggable classifier** (`ConflictClassifier` protocol). This milestone
+   ships the seam + metrics; production LLM worker may land later. Tests inject a fake
+   classifier for overlap fixtures.
+6. Status taxonomy: use existing CHECK values (`superseded`, `merged_into`). Do **not** invent
+   `pending_review` without a migration — contradicts outcomes record a `contradicts` edge and
+   leave review routing to a later write/API milestone.
+7. Pipeline order: `… → near_dedup → conflict`. Supersession persist requires the **new**
+   memory id (post-insert helper); the stage records pending actions on `WriteContext`.
+8. Metrics: `ibex_memory_conflicts_total{outcome}` and
+   `ibex_memory_conflict_llm_calls_total` (`llm_call_made` counter per detection run).
+
+## Consequences
+
+- Sequential-fact fixtures cost zero LLM calls.
+- Overlapping same-subject claims still escalate.
+- Full write HTTP API remains a later milestone; integration tests drive service + persist
+  helpers directly (same pattern as 3.C.1 / 3.C.2).

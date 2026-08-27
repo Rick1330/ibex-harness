@@ -53,6 +53,7 @@
     "0052-memory-schema-v2-expand",
     "0053-vector-store-abstraction",
     "0054-memory-pii-presidio-in-process",
-    "0055-memory-write-path-dedup"
+    "0055-memory-write-path-dedup",
+    "0056-temporal-conflict-detection"
   ]
 }

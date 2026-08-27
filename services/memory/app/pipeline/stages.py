@@ -1,21 +1,36 @@
-"""Concrete write-pipeline stages (validate → pii → exact_dedup → embed → near_dedup)."""
+"""Concrete write-pipeline stages (validate → pii → exact → embed → near → conflict)."""
 
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable, Sequence
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Protocol
+from uuid import UUID
 
+from app.conflict import metrics as conflict_metrics
+from app.conflict.intervals import ValidityInterval
+from app.conflict.types import (
+    CandidateMemory,
+    ConflictDecision,
+    ConflictOutcome,
+    IncomingMemory,
+)
 from app.dedup import metrics as dedup_metrics
 from app.pipeline.context import WriteContext
 
 if TYPE_CHECKING:
     from app.config import Settings
+    from app.conflict.service import ConflictService
     from app.dedup.service import DedupService
     from app.pii.service import PiiService
 
 
 class EmbedCallable(Protocol):
     async def __call__(self, text: str) -> list[float]: ...
+
+
+CandidateLoader = Callable[[UUID, Sequence[UUID]], Awaitable[list[CandidateMemory]]]
 
 
 def _validate_content(content: str, max_chars: int) -> str | None:
@@ -133,3 +148,89 @@ class NearDedupStage:
         else:
             dedup_metrics.record_novel()
         return ctx
+
+
+class ConflictStage:
+    """Temporal conflict detection after near-dup (ADR-0056)."""
+
+    name = "conflict"
+
+    def __init__(
+        self,
+        conflict: ConflictService,
+        *,
+        load_candidates: CandidateLoader,
+        enabled: bool = True,
+    ) -> None:
+        self._conflict = conflict
+        self._load = load_candidates
+        self._enabled = enabled
+
+    async def process(self, ctx: WriteContext) -> WriteContext:
+        if not self._enabled or not ctx.near_duplicate_candidates:
+            return ctx
+        if ctx.agent_id is None:
+            ctx.stop = True
+            ctx.error = "agent_id_required"
+            return ctx
+
+        candidates = await self._load(ctx.org_id, tuple(ctx.near_duplicate_candidates))
+        if not candidates:
+            return ctx
+
+        if ctx.valid_from is None:
+            evaluation_decisions, llm_calls = await self._escalate_missing_validity(
+                ctx, candidates
+            )
+        else:
+            incoming = IncomingMemory(
+                content=ctx.content,
+                interval=ValidityInterval(
+                    valid_from=ctx.valid_from, valid_until=ctx.valid_until
+                ),
+                memory_id=ctx.existing_memory_id,
+            )
+            evaluation = await self._conflict.evaluate(incoming, candidates)
+            evaluation_decisions = evaluation.decisions
+            llm_calls = evaluation.llm_calls
+
+        ctx.conflict_decisions = evaluation_decisions
+        ctx.conflict_llm_calls = llm_calls
+        ctx.pending_supersede_targets = [
+            d.candidate_id
+            for d in evaluation_decisions
+            if d.outcome == ConflictOutcome.SUPERSEDES
+        ]
+        _record_conflict_metrics(evaluation_decisions, llm_calls)
+        return ctx
+
+    async def _escalate_missing_validity(
+        self,
+        ctx: WriteContext,
+        candidates: list[CandidateMemory],
+    ) -> tuple[list[ConflictDecision], int]:
+        """ADR-0056: missing valid_from → escalate, never silent skip."""
+        placeholder = IncomingMemory(
+            content=ctx.content,
+            interval=ValidityInterval(valid_from=datetime.now(tz=UTC)),
+            memory_id=ctx.existing_memory_id,
+        )
+        decisions: list[ConflictDecision] = []
+        llm_calls = 0
+        for candidate in candidates:
+            decision = await self._conflict.escalate_pair(
+                placeholder, candidate, reason="missing_validity"
+            )
+            decisions.append(decision)
+            if decision.llm_call_made:
+                llm_calls += 1
+        return decisions, llm_calls
+
+
+def _record_conflict_metrics(
+    decisions: list[ConflictDecision], llm_calls: int
+) -> None:
+    for decision in decisions:
+        conflict_metrics.record_outcome(decision.outcome.value)
+    for _ in range(llm_calls):
+        conflict_metrics.record_llm_call()
