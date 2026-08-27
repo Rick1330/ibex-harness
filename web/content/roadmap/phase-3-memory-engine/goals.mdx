@@ -54,7 +54,7 @@ phase: "phase-3-memory-engine"
 **Milestones:**
 - **3.C.1 — PII detection and redaction:** Two-tier detection via Microsoft Presidio (regex patterns + NER). Redaction before embedding. Quarantine for low-confidence PII findings.
 - **3.C.2 — Content and near-duplicate detection:** SHA-256 content hash for exact dedup. Cosine > 0.92 for near-duplicate candidate detection.
-- **3.C.3 — Temporal-interval-aware conflict detection:** Interval overlap check before LLM escalation. Sequential facts (`valid_from` ordering) auto-classified as `supersedes` with zero LLM calls. ADR-0042 rewritten for temporal-first design.
+- **3.C.3 — Temporal-interval-aware conflict detection:** Interval overlap check before LLM escalation. Sequential facts (`valid_from` ordering) auto-classified as `supersedes` with zero LLM calls. [ADR-0056](/docs/adr/0056-temporal-conflict-detection) (temporal-first design).
 - **3.C.4 — Multi-label memory classification:** `memory_labels` join table. Extraction prompt outputs label array with per-label confidence.
 
 **Acceptance criteria:**
