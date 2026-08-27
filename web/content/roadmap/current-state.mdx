@@ -14,7 +14,8 @@ summary: "Phases 0–2.5 complete. Phase 3 Tracks A–B closed (schema + VectorS
 
 <Callout type="info" title="Phase 3 in progress">
   Track A (**3.1.1** / ADR-0052) and Track B (**3.2.1** / ADR-0053) are merged.
-  Track C starts with **3.C.1** PII detection/redaction (ADR-0054) on the write pipeline.
+  Track C (**3.C.1** PII detection/redaction, ADR-0054) is in progress on the write
+  pipeline — not yet merged to `main`.
 </Callout>
 
 ## Snapshot
@@ -62,8 +63,6 @@ summary: "Phases 0–2.5 complete. Phase 3 Tracks A–B closed (schema + VectorS
 
 ## Shipped Since Last Update
 
-- **Phase 3 Track C (in flight):** 3.C.1 — Presidio + spaCy `en_core_web_md` in-process PII stage,
-  typed redaction, quarantine on low confidence, write-pipeline Stage seam (ADR-0054)
 - **Phase 3 Track B complete:** VectorStore ABC + PgVectorStore, scoring v2, embedder HTTP client,
   HNSW benches/publish, GHCR `memory` image (ADR-0053)
 - **Phase 3 Track A complete:** `000017_memory_schema_v2_expand` — HNSW, quality columns (ADR-0052)
@@ -74,7 +73,8 @@ summary: "Phases 0–2.5 complete. Phase 3 Tracks A–B closed (schema + VectorS
 <Callout type="note" title="Current capability boundary">
   **Shipped:** Auth, Proxy (mock/live multi-provider), embedder, MCP skeleton, observability,
   memories schema through HNSW expand, memory service substrate (VectorStore + scoring + embed
-  client + PII write stage), shared packages, public site.
+  client), shared packages, public site.
+  **In progress (not yet on main):** 3.C.1 PII write stage (Presidio / pipeline seam).
   **Not yet:** full write API (dedup/conflict/classify), semantic search read path / hot cache
   (Track D), context assembly (3.5), management API/dashboard (Phase 4).
 </Callout>

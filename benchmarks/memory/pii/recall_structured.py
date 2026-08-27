@@ -81,7 +81,7 @@ def main() -> int:
         "hits": hits,
         "recall": recall,
         "target_recall": TARGET_RECALL,
-        "pass": recall >= TARGET_RECALL,
+        "pass": recall > TARGET_RECALL,
         "latency_ms_p50": latencies_ms[len(latencies_ms) // 2],
         "latency_ms_p95": p95,
         "write_budget_ms_p95": WRITE_BUDGET_MS,

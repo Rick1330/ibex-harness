@@ -9,6 +9,14 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _WEIGHT_EPS = 1e-9
 
+# Bundled CNN models in services/memory (uv.lock). Transformers / arbitrary names rejected.
+_ALLOWED_PII_SPACY_MODELS: frozenset[str] = frozenset(
+    {
+        "en_core_web_sm",
+        "en_core_web_md",
+    }
+)
+
 
 class Settings(BaseSettings):
     """Settings for the memory substrate service (Phase 3 Track B bootstrap).
@@ -145,6 +153,10 @@ class Settings(BaseSettings):
                 "transformer spaCy models are forbidden in services/memory "
                 "(ibex-memory-no-ml-imports / ADR-0054); use en_core_web_md"
             )
+            raise ValueError(msg)
+        if normalized not in _ALLOWED_PII_SPACY_MODELS:
+            allowed = ", ".join(sorted(_ALLOWED_PII_SPACY_MODELS))
+            msg = f"unsupported pii_spacy_model {normalized!r}; allowed: {allowed}"
             raise ValueError(msg)
         return normalized
 

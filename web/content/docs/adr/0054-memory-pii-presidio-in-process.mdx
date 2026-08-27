@@ -43,11 +43,12 @@ inside the p95 ≤ 200ms write budget without a Semgrep necessity.
 
 1. Sketch `en_core_web_lg` (~560 MB).
 2. `en_core_web_trf` (higher NER accuracy; pulls `transformers`).
-3. **`en_core_web_md` (~40–50 MB)** default; `sm` for microbench/dev; `lg` ops override only.
+3. **`en_core_web_md` (~40–50 MB)** default; `en_core_web_sm` allowed for microbench/dev.
 
 Decision: **`en_core_web_md`**. NER quality is close to `lg` for Presidio’s needs while
-keeping the memory image small. **`en_core_web_trf` is forbidden** — it requires
-`transformers`, which Semgrep rejects under `services/memory/`.
+keeping the memory image small. Settings allow-list is **`en_core_web_sm` / `en_core_web_md`
+only** (bundled wheels). **`en_core_web_trf` is forbidden** — it requires `transformers`,
+which Semgrep rejects under `services/memory/`.
 
 ### 3) Quarantine threshold
 

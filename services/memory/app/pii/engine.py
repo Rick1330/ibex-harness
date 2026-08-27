@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 
 from presidio_analyzer import AnalyzerEngine
@@ -34,7 +35,10 @@ _TYPED_PLACEHOLDER_ENTITIES: tuple[str, ...] = (
 
 
 def build_analyzer(settings: Settings) -> AnalyzerEngine:
-    """Build AnalyzerEngine with the configured spaCy CNN model."""
+    """Build AnalyzerEngine with the configured spaCy CNN model (blocking I/O/CPU).
+
+    Must not run on the asyncio event loop — use :func:`build_analyzer_async`.
+    """
     configuration = {
         "nlp_engine_name": "spacy",
         "models": [{"lang_code": "en", "model_name": settings.pii_spacy_model}],
@@ -42,6 +46,11 @@ def build_analyzer(settings: Settings) -> AnalyzerEngine:
     provider = NlpEngineProvider(nlp_configuration=configuration)
     nlp_engine = provider.create_engine()
     return AnalyzerEngine(nlp_engine=nlp_engine, supported_languages=["en"])
+
+
+async def build_analyzer_async(settings: Settings) -> AnalyzerEngine:
+    """Load spaCy / Presidio analyzer off the event loop (bounded default executor)."""
+    return await asyncio.to_thread(build_analyzer, settings)
 
 
 def build_anonymizer() -> AnonymizerEngine:

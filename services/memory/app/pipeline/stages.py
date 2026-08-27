@@ -41,7 +41,7 @@ class PiiStage:
         self._pii = pii
 
     async def process(self, ctx: WriteContext) -> WriteContext:
-        result = self._pii.process(ctx.content)
+        result = await self._pii.process_async(ctx.content)
         ctx.findings = list(result.findings)
         ctx.pii_detected = result.pii_detected
         ctx.pii_redacted = result.pii_redacted

@@ -327,6 +327,11 @@ For dependencies: **presidio-analyzer** / **presidio-anonymizer** (2.2.x), **spa
 8. **Exit:** Replace with a remote AnalyzerEngine sidecar only if write-budget measurement
    forces it; keep typed Anonymizer operators behind `app/pii/` interfaces.
 
+**CVE note:** Presidio Anonymizer 2.2.364 declares `cryptography>=48.0.1,<49`. CVEs
+CVE-2026-69247 / CVE-2026-69249 require `cryptography>=50.0.0`. This service pins and
+`[tool.uv] override-dependencies` forces `cryptography>=50.0.0` (replace-only operators;
+revisit when Presidio raises its upper bound).
+
 Embedding inference preference: call **TEI** (or hosted embedding APIs) behind a thin client rather than bundling heavy `sentence-transformers` into every service process. Local MiniLM remains valid for CPU/dev profiles.
 
 Avoid:
@@ -376,16 +381,18 @@ Avoid:
 ### 9.0 Unified scanning (active)
 
 - **OSV Scanner** (`osv-scan` in `.github/workflows/ci.yml`): recursive scan of `go.sum` and future lockfiles; fails on CRITICAL/HIGH; SARIF to GitHub Security.
-- **Dependabot** (`.github/dependabot.yml`): `github-actions` + root `gomod` at `/` (weekly). Automated dependency PRs are the primary CVE remediation between CI runs.
+- **Dependabot** (`.github/dependabot.yml`): `github-actions` + root `gomod` at `/` (weekly),
+  plus **`pip` for `/services/memory`** (enabled for m3.C.1 / `uv.lock`). Automated dependency
+  PRs are the primary CVE remediation between CI runs.
 
-**Enable when services land** (uncomment blocks in `.github/dependabot.yml`):
+**Enable when remaining services land** (add blocks in `.github/dependabot.yml`):
 
-| Ecosystem | Directory | Prerequisite |
-|-----------|-----------|--------------|
-| `pip` | `/services/memory` | `requirements.txt` or `pyproject.toml` + lockfile |
-| `npm` | `/services/dashboard` | `package-lock.json` |
+| Ecosystem | Directory | Status |
+|-----------|-----------|--------|
+| `pip` | `/services/memory` | **Enabled** (`pyproject.toml` + `uv.lock`) |
+| `npm` | `/services/dashboard` | Pending `package-lock.json` |
 
-Also add `services/memory` to the Bandit CI job and extend golangci-lint paths for new Go services (see [AGENTS.md](../../AGENTS.md) and this guide).
+Also extend golangci-lint paths for new Go services (see [AGENTS.md](../../AGENTS.md) and this guide). Bandit already covers `services/memory/app`.
 
 ### 9.0.1 SCA remediation thresholds (OSPS-VM-05.01–05.03)
 
