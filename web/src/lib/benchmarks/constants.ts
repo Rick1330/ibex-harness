@@ -26,3 +26,11 @@ export const GO_MICROBENCH_WARM_PATH_STAGE_MODEL = "go_microbench_warm_path" as 
 export const GO_MICROBENCH_STAGE_MODEL = GO_MICROBENCH_WARM_PATH_STAGE_MODEL;
 
 export const BENCHMARK_DATA_URL = "/benchmarks/benchmark-data.json";
+export const HNSW_BENCHMARK_DATA_URL = "/benchmarks/hnsw-benchmark-data.json";
+
+/** Track B / Track E HNSW SLAs (roadmap + published gate_summary). */
+export const HNSW_SLA_TARGETS = {
+  recall_at_10: 0.98,
+  p95_ms_1m: 30,
+  p99_ms_1m: 100,
+} as const;

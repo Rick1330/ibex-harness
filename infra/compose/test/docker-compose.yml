@@ -6,8 +6,37 @@ services:
       POSTGRES_USER: ibex
       POSTGRES_PASSWORD: ibex
       POSTGRES_DB: ibex_test
+      # HNSW build / incremental insert — give the container headroom on developer hosts.
+      POSTGRES_INITDB_ARGS: "-E UTF8"
     ports:
       - "5433:5432"
+    shm_size: "3gb"
+    # Docker Desktop VM raised to ~8GiB for HNSW benches on this host.
+    mem_limit: 6g
+    command:
+      - postgres
+      - -c
+      - shared_buffers=1GB
+      - -c
+      - effective_cache_size=4GB
+      - -c
+      - maintenance_work_mem=1GB
+      - -c
+      - work_mem=64MB
+      - -c
+      - max_parallel_maintenance_workers=2
+      - -c
+      - max_wal_size=2GB
+      - -c
+      - checkpoint_timeout=15min
+      - -c
+      - synchronous_commit=off
+      - -c
+      - wal_buffers=64MB
+      - -c
+      - checkpoint_completion_target=0.9
+      - -c
+      - dynamic_shared_memory_type=posix
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ibex -d ibex_test"]
       interval: 5s

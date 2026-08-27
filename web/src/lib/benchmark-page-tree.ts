@@ -1,18 +1,12 @@
 import type { PageTree } from "fumadocs-core/server";
 
-const BENCHMARK_PAGES = [
-  { name: "Overview", url: "/benchmarks" },
-  { name: "Latency", url: "/benchmarks/latency" },
-  { name: "Waterfall", url: "/benchmarks/waterfall" },
-  { name: "Load test", url: "/benchmarks/load" },
-  { name: "History", url: "/benchmarks/history" },
-  { name: "Compare", url: "/benchmarks/compare" },
-] as const;
+import {
+  BENCHMARK_HUB_PAGE,
+  BENCHMARK_SUITES,
+  type SuiteNavPage,
+} from "@/lib/benchmarks/suites";
 
-function benchmarkPageItem(
-  name: string,
-  url: string,
-): PageTree.Item {
+function benchmarkPageItem(name: string, url: string): PageTree.Item {
   return {
     type: "page",
     name,
@@ -20,9 +14,38 @@ function benchmarkPageItem(
   };
 }
 
+function suiteFolder(
+  name: string,
+  pages: readonly SuiteNavPage[],
+  index?: SuiteNavPage,
+): PageTree.Folder {
+  return {
+    type: "folder",
+    name,
+    root: true,
+    defaultOpen: true,
+    index: index ? benchmarkPageItem(index.name, index.url) : undefined,
+    children: pages
+      .filter((page) => !index || page.url !== index.url)
+      .map((page) => benchmarkPageItem(page.name, page.url)),
+  };
+}
+
+const proxySuite = BENCHMARK_SUITES.find((s) => s.id === "proxy")!;
+const hnswSuite = BENCHMARK_SUITES.find((s) => s.id === "hnsw")!;
+
 export const benchmarkPageTree: PageTree.Root = {
   name: "Benchmarks",
-  children: BENCHMARK_PAGES.map((page) => benchmarkPageItem(page.name, page.url)),
+  children: [
+    benchmarkPageItem(BENCHMARK_HUB_PAGE.name, BENCHMARK_HUB_PAGE.url),
+    suiteFolder(proxySuite.label, proxySuite.navPages),
+    suiteFolder(hnswSuite.label, hnswSuite.navPages, hnswSuite.navPages[0]),
+  ],
 };
 
-export const BENCHMARK_NAV_PAGES = BENCHMARK_PAGES;
+/** Flat leaf list for sitemap / mobile drawer (hub + all suite pages). */
+export const BENCHMARK_NAV_PAGES: readonly SuiteNavPage[] = [
+  BENCHMARK_HUB_PAGE,
+  ...proxySuite.navPages,
+  ...hnswSuite.navPages,
+];

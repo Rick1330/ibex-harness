@@ -1,0 +1,159 @@
+name: Setup benchmark bot
+description: Download pinned ibex-benchmark-bot release or cargo-build from BENCHMARK_BOT_SHA
+inputs:
+  bot-sha:
+    description: Full SHA pin for ibexharness-benchmark-bot
+    required: true
+  release-tag:
+    description: Optional explicit release tag override (must match pin short SHA)
+    required: false
+    default: ""
+  require-subcommand:
+    description: Subcommand that must exist on the binary (e.g. post-hnsw-pr-comment)
+    required: false
+    default: ""
+outputs:
+  bot-path:
+    description: Absolute path to ibex-benchmark-bot binary
+    value: ${{ steps.resolve.outputs.path }}
+  source:
+    description: release or build
+    value: ${{ steps.resolve.outputs.source }}
+runs:
+  using: composite
+  steps:
+    - name: Download pinned benchmark bot binary
+      id: bot_bin
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        BENCHMARK_BOT_SHA: ${{ inputs.bot-sha }}
+        BENCHMARK_BOT_RELEASE_TAG: ${{ inputs.release-tag }}
+        REQUIRE_SUBCOMMAND: ${{ inputs.require-subcommand }}
+      run: |
+        set -euo pipefail
+        mkdir -p benchmark-bot-bin
+        asset="ibex-benchmark-bot-linux-amd64"
+        pin_file="${GITHUB_ACTION_PATH}/ibex-benchmark-bot-linux-amd64.sha256"
+        expected="$(awk 'NF { print $1; exit }' "$pin_file")"
+        if ! printf '%s' "$expected" | grep -Eq '^[0-9a-f]{64}$'; then
+          echo "Pinned SHA-256 missing or invalid in ${pin_file}" >&2
+          exit 1
+        fi
+        short="${BENCHMARK_BOT_SHA:0:7}"
+        tags=()
+        if [ -n "${BENCHMARK_BOT_RELEASE_TAG:-}" ]; then
+          # Reject stale overrides that do not match the pin (root cause of missing subcommands).
+          if [ "$BENCHMARK_BOT_RELEASE_TAG" = "bot-${short}" ] || [ "$BENCHMARK_BOT_RELEASE_TAG" = "v${short}" ]; then
+            tags+=("$BENCHMARK_BOT_RELEASE_TAG")
+          else
+            echo "Ignoring BENCHMARK_BOT_RELEASE_TAG=${BENCHMARK_BOT_RELEASE_TAG} (does not match pin ${short})"
+          fi
+        fi
+        tags+=("bot-${short}" "v${short}")
+        source=build
+        path=""
+        for tag in "${tags[@]}"; do
+          rm -f "benchmark-bot-bin/$asset" "benchmark-bot-bin/${asset}.sha256"
+          if ! gh release download "$tag" \
+              --repo Rick1330/ibexharness-benchmark-bot \
+              --pattern "$asset" \
+              --dir benchmark-bot-bin 2>/dev/null; then
+            continue
+          fi
+          got="$(sha256sum "benchmark-bot-bin/$asset" | awk '{ print $1 }')"
+          if [ "$got" != "$expected" ]; then
+            echo "Release $tag SHA-256 mismatch (got ${got}, expected ${expected}); skipping unverified asset"
+            rm -f "benchmark-bot-bin/$asset"
+            continue
+          fi
+          if gh release download "$tag" \
+              --repo Rick1330/ibexharness-benchmark-bot \
+              --pattern "${asset}.sha256" \
+              --dir benchmark-bot-bin 2>/dev/null; then
+            published="$(awk 'NF { print $1; exit }' "benchmark-bot-bin/${asset}.sha256")"
+            if [ "$published" != "$expected" ]; then
+              echo "Release $tag checksum asset does not match repo pin; skipping"
+              rm -f "benchmark-bot-bin/$asset" "benchmark-bot-bin/${asset}.sha256"
+              continue
+            fi
+          fi
+          chmod +x "benchmark-bot-bin/$asset"
+          cand="${GITHUB_WORKSPACE}/benchmark-bot-bin/$asset"
+          if [ -n "${REQUIRE_SUBCOMMAND:-}" ]; then
+            if ! "$cand" --help 2>&1 | grep -q -- "$REQUIRE_SUBCOMMAND"; then
+              echo "Release $tag missing subcommand ${REQUIRE_SUBCOMMAND}; trying next / cargo build"
+              continue
+            fi
+          fi
+          path="$cand"
+          source=release
+          echo "Downloaded verified bot binary from release tag $tag"
+          break
+        done
+        echo "path=$path" >> "$GITHUB_OUTPUT"
+        echo "source=$source" >> "$GITHUB_OUTPUT"
+        if [ "$source" = "build" ]; then
+          echo "No usable release asset for pin ${BENCHMARK_BOT_SHA}; will cargo build."
+        fi
+
+    - name: Checkout benchmark bot
+      if: steps.bot_bin.outputs.source == 'build'
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        repository: Rick1330/ibexharness-benchmark-bot
+        ref: ${{ inputs.bot-sha }}
+        path: benchmark-bot
+        persist-credentials: false
+
+    - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
+      if: steps.bot_bin.outputs.source == 'build'
+      with:
+        toolchain: stable
+
+    - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2.8.2
+      if: steps.bot_bin.outputs.source == 'build'
+      with:
+        workspaces: benchmark-bot
+
+    - name: Build benchmark bot (fallback)
+      id: bot_build
+      if: steps.bot_bin.outputs.source == 'build'
+      shell: bash
+      run: |
+        set -euo pipefail
+        cd benchmark-bot
+        cargo build --release --locked
+        echo "path=${GITHUB_WORKSPACE}/benchmark-bot/target/release/ibex-benchmark-bot" >> "$GITHUB_OUTPUT"
+
+    - name: Resolve bot path
+      id: resolve
+      shell: bash
+      env:
+        BOT_BIN_RELEASE: ${{ steps.bot_bin.outputs.path }}
+        BOT_BIN_BUILD: ${{ steps.bot_build.outputs.path }}
+        SOURCE: ${{ steps.bot_bin.outputs.source }}
+        REQUIRE_SUBCOMMAND: ${{ inputs.require-subcommand }}
+      run: |
+        set -euo pipefail
+        path=""
+        source=""
+        if [ -n "${BOT_BIN_RELEASE:-}" ] && [ -x "$BOT_BIN_RELEASE" ]; then
+          path="$BOT_BIN_RELEASE"
+          source=release
+        elif [ -n "${BOT_BIN_BUILD:-}" ] && [ -x "$BOT_BIN_BUILD" ]; then
+          path="$BOT_BIN_BUILD"
+          source=build
+        else
+          echo "benchmark bot binary not found" >&2
+          exit 1
+        fi
+        if [ -n "${REQUIRE_SUBCOMMAND:-}" ]; then
+          if ! "$path" --help 2>&1 | grep -q -- "$REQUIRE_SUBCOMMAND"; then
+            echo "bot binary missing required subcommand: ${REQUIRE_SUBCOMMAND}" >&2
+            exit 1
+          fi
+        fi
+        echo "path=$path" >> "$GITHUB_OUTPUT"
+        echo "source=$source" >> "$GITHUB_OUTPUT"
+        echo "Resolved bot source=${source}"

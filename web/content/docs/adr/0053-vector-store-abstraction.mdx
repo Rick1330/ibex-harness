@@ -1,0 +1,129 @@
+---
+title: "ADR-0053: Vector store abstraction and composite scoring v2"
+description: "Architecture decision record 0053 — VectorStore ABC, PgVectorStore with per-tx HNSW ef_search, composite scoring v2, and embedder HTTP client."
+adrId: "0053"
+status: "Accepted"
+date: "2026-08-26"
+authors: "IBEX Harness team"
+---
+
+# ADR-0053: Vector store abstraction and composite scoring v2
+
+- **Status:** Accepted
+- **Date:** 2026-08-26
+- **Authors:** IBEX Harness team
+- **Milestone:** [3.2.1 VectorStore interface and pgvector-HNSW](/roadmap/phase-3-memory-engine/milestones/3.2.1-vector-store-interface-pgvector-hnsw)
+
+## Context
+
+Phase 3 Track B needs a swappable vector store over the schema from
+[ADR-0052](/docs/adr/0052-memory-schema-v2-expand), category-conditional composite
+scoring, and an HTTP client for the Phase 2.5 embedder (`POST /v1/embed` per
+[ADR-0046](/docs/adr/0046-embedder-interface-registry)). Planning sketches still
+cite ADR-0041 for this work; ADR-0041 is already the model capability registry.
+This ADR is the authoritative record for the Track B substrate.
+
+## Options Considered
+
+### 1) Package layout
+
+1. `src/ibex_memory/` as in stale FILE_STRUCTURE sketches.
+2. Flat `services/memory/app/` matching embedder / mcp-memory (Bandit + Docker).
+Decision: **Flat `app/`**. No Alembic — golang-migrate remains SoT ([ADR-0005](/docs/adr/0005-postgres-migration-strategy)).
+
+### 2) Backend
+
+1. Qdrant (or other external ANN) behind the ABC now.
+2. **PgVectorStore only** on `ibex_core.memories` HNSW + an in-memory double for tests.
+Decision: **Pgvector only**. The ABC keeps a Qdrant path open without shipping one.
+
+### 3) `ef_search` scope
+
+1. Session/GU C set once at pool checkout.
+2. **`SET LOCAL hnsw.ef_search` per transaction** with `IBEX_HNSW_EF_SEARCH` default (40).
+Decision: **Per-transaction LOCAL**. Concurrent sessions must not leak ef values.
+
+### 4) Similarity threshold
+
+1. Sketch `min_confidence` on the ANN predicate.
+2. **`IBEX_MEMORY_VECTOR_SEARCH_MIN_SIMILARITY`** (default 0.70) as cosine similarity floor.
+Decision: **min_similarity**. Confidence stays a ranking feature, not the ANN cut.
+
+### 5) Composite scoring half-life
+
+1. Fixed 14-day half-life for all categories.
+2. **Category-conditional**: factual 180, procedural 120, preference 45, behavioral 30, episodic 14; multi-label uses **min** half-life.
+Decision: **Category-conditional**. Weights from env (`IBEX_RANK_WEIGHT_*`) must sum to 1.0.
+
+### 6) Embedding client
+
+1. In-process ML (`sentence-transformers` / torch) inside memory.
+2. **HTTP client** to embedder with Bearer token; retry only 429/502/503 + transport/timeout; Semgrep bans ML imports under `services/memory/`.
+Decision: **HTTP client**. No circuit breaker (embedder has none).
+
+### 7) Docker publish
+
+1. Defer GHCR until write/read APIs exist.
+2. **Publish `ghcr.io/<repo>/memory`** alongside auth/proxy/embedder/mcp-memory now that the Dockerfile exists.
+Decision: **Publish now** so release/docker workflows stay uniform.
+
+### 8) HNSW search SQL shape
+
+1. Repeat `embedding <=> query` in SELECT, WHERE, and ORDER BY.
+2. **Subquery/CTE**: `ORDER BY embedding <=> query LIMIT k` (HNSW-friendly), then filter
+   `similarity >= min_similarity` on the outer query; compute similarity once in the inner SELECT.
+Decision: **CTE / subquery**. Preserves ANN `ORDER BY … LIMIT` recognition.
+
+### 9) Filtered ANN (`hnsw.iterative_scan`)
+
+1. Leave iterative scans off (pgvector default).
+2. Inflate `ef_search` when filters reduce recall.
+3. **Expose `SearchRequest.iterative_scan`** (`off` | `relaxed_order` | `strict_order`) via
+   `SET LOCAL` in the same transaction as `ef_search`; default GUC unchanged when unset.
+Decision: **Optional per-request iterative_scan; production default remains unset/`off`.**
+Bench matrix at `ef_search=40` on 10K/100K (`min_similarity` ∈ {0.0, 0.70}) showed
+recall@10 = 1.0 and comparable p95 for `off` vs `relaxed_order` — no reason to default
+`relaxed_order` yet. Callers may enable it when filters cut candidate yield.
+
+### 10) Benchmark methodology (non-negotiable)
+
+1. Accumulate corpora across sizes / re-runs (no truncate).
+2. **TRUNCATE `ibex_core.memories CASCADE` at script start and before each size**; assert
+   `count(*) == corpus_size`; `ANALYZE` after COPY; EXPLAIN must use
+   `idx_memories_embedding_hnsw`; `pg_stat` `idx_scan` must move (flush with
+   `pg_stat_force_next_flush` on PG15+). Seed **once** per
+   `(corpus_size × index_build_mode)`; search knobs reuse that corpus.
+Decision: **Strict reset + plan/stat gates**. Default bench `--ef-search 40`. Benches live under
+`benchmarks/memory/` (not `services/memory/benchmarks/`). Local = 10K/100K; **1M on CI only**.
+
+### 11) Index build mode (incremental vs bulk)
+
+1. Always COPY into a live HNSW index (steady-state production path).
+2. Always DROP index → COPY → CREATE INDEX (migration/backfill path).
+3. **Support both in the bench**; ship guidance, not a forced production switch.
+Decision: **Both.** Steady-state writes keep the HNSW index live (`incremental`).
+Large-tenant backfills / cold loads should **load-then-index** (`bulk`) — document in
+ops notes. Search latency after a correct HNSW build is comparable; the cost difference is
+**seed/build wall-clock**, not query p95.
+
+## Decision
+
+1. Ship `VectorStore` ABC + `UpsertRequest` / `SearchRequest` dataclasses, `InMemoryVectorStore`, and `PgVectorStore` with explicit `org_id`/`agent_id` filters plus RLS GUC.
+2. Upsert updates embeddings on **existing** rows only (row create is Track C).
+3. Ship scoring v2 (`app/scoring/`) as pure functions reused later by Track D.
+4. Ship `EmbeddingClient` (`app/clients/embedding.py`) for `POST /v1/embed`.
+5. Commit HNSW recall/latency benches under `benchmarks/memory/` (published JSON at
+   `web/public/benchmarks/hnsw-benchmark-data.json`; CI smoke = 10K; 1M = schedule/dispatch).
+6. Wire `services/memory` into `docker-publish.yml` (build → Trivy → push → attest).
+7. **Defaults (data-backed, zero drift):** `IBEX_HNSW_EF_SEARCH=40`,
+   `IBEX_MEMORY_VECTOR_SEARCH_MIN_SIMILARITY=0.70`, `iterative_scan` unset/`off`,
+   CTE search SQL, benches default `--ef-search 40`.
+
+## Consequences
+
+- Track C/D consume this substrate without inventing a second vector API.
+- Memory images follow the same GHCR + provenance path as other services.
+- Full 1M benches stay on CI (`Memory Benchmarks` workflow, profiles smoke/fast/full); PR CI remains unit + 10K smoke.
+- FILE_STRUCTURE sketches that still show `src/ibex_memory/` are stale relative to this ADR.
+- Pre-methodology-fix published HNSW numbers (no truncate / no ANALYZE / wrong ef) are discarded and regenerated under the gates above.
+- Ops: large backfills prefer bulk index build; do not treat incremental COPY wall-clock as a search-latency regression.

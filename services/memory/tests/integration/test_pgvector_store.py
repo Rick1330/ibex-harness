@@ -161,3 +161,67 @@ async def test_search_rejects_invalid_limit(
     )
     with pytest.raises(ValueError, match="limit must be >= 1"):
         await store.search(request)
+
+
+@pytest.mark.asyncio
+async def test_search_relaxed_order_returns_descending_similarity(
+    store: PgVectorStore,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    from uuid import uuid4
+
+    org_id, agent_id, mem_near = await seed_org_agent_memory(
+        session_factory, content="relaxed-near"
+    )
+    vec_near = zero_embedding(hotspot=0)
+    vec_far = zero_embedding(hotspot=10)
+    mem_far = uuid4()
+    async with session_factory() as session, session.begin():
+        await session.execute(
+            text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+                "SELECT set_config('app.is_service_account', 'true', true)"
+            )
+        )
+        await session.execute(
+            text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+                """
+                INSERT INTO ibex_core.memories (
+                    id, org_id, agent_id, content, content_hash, content_tokens
+                ) VALUES (
+                    :id, :org_id, :agent_id, :content, :hash, 1
+                )
+                """
+            ),
+            {
+                "id": str(mem_far),
+                "org_id": str(org_id),
+                "agent_id": str(agent_id),
+                "content": "relaxed-far",
+                "hash": f"hash-{mem_far.hex}",
+            },
+        )
+
+    await store.upsert(
+        UpsertRequest(
+            memory_id=mem_near, org_id=org_id, embedding=vec_near, embedding_model="bge-m3"
+        )
+    )
+    await store.upsert(
+        UpsertRequest(
+            memory_id=mem_far, org_id=org_id, embedding=vec_far, embedding_model="bge-m3"
+        )
+    )
+    hits = await store.search(
+        SearchRequest(
+            org_id=org_id,
+            agent_id=agent_id,
+            query_embedding=vec_near,
+            limit=10,
+            min_similarity=0.0,
+            ef_search=40,
+            iterative_scan="relaxed_order",
+        )
+    )
+    assert len(hits) >= 2
+    sims = [h.similarity for h in hits]
+    assert sims == sorted(sims, reverse=True)

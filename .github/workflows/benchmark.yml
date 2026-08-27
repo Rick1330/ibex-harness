@@ -130,7 +130,8 @@ jobs:
       BENCH_PROFILE: ${{ needs.detect-benchmark-trigger.outputs.bench_profile }}
     services:
       postgres:
-        image: postgres:16
+        # pgvector required: migrate expands memories with vector(1024) + HNSW (ADR-0052)
+        image: pgvector/pgvector:0.8.6-pg16@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b
         env:
           POSTGRES_USER: ibex
           POSTGRES_PASSWORD: ibex
@@ -330,82 +331,14 @@ jobs:
         run: |
           test -n "$APP_ID" && test -n "$APP_PRIVATE_KEY" && test -n "$INSTALLATION_ID"
 
-      - name: Download pinned benchmark bot binary
-        id: bot_bin
+      - name: Setup benchmark bot
+        id: setup_bot
         if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
-        env:
-          GH_TOKEN: ${{ github.token }}
-          BENCHMARK_BOT_SHA: ${{ vars.BENCHMARK_BOT_SHA }}
-          BENCHMARK_BOT_RELEASE_TAG: ${{ vars.BENCHMARK_BOT_RELEASE_TAG }}
-        run: |
-          set -euo pipefail
-          mkdir -p benchmark-bot-bin
-          asset="ibex-benchmark-bot-linux-amd64"
-          short="${BENCHMARK_BOT_SHA:0:7}"
-          tags=()
-          if [ -n "${BENCHMARK_BOT_RELEASE_TAG:-}" ]; then
-            tags+=("$BENCHMARK_BOT_RELEASE_TAG")
-          fi
-          tags+=("bot-${short}" "v${short}")
-          source=build
-          path=""
-          for tag in "${tags[@]}"; do
-            if gh release download "$tag" \
-                --repo Rick1330/ibexharness-benchmark-bot \
-                --pattern "$asset" \
-                --dir benchmark-bot-bin 2>/dev/null; then
-              chmod +x "benchmark-bot-bin/$asset"
-              path="benchmark-bot-bin/$asset"
-              source=release
-              echo "Downloaded bot binary from release tag $tag"
-              break
-            fi
-          done
-          echo "path=$path" >> "$GITHUB_OUTPUT"
-          echo "source=$source" >> "$GITHUB_OUTPUT"
-          if [ "$source" = "build" ]; then
-            echo "No release asset for pin ${BENCHMARK_BOT_SHA}; will cargo build."
-          fi
-
-      - name: Checkout benchmark bot
-        if: >
-          github.event_name == 'pull_request' &&
-          github.event.pull_request.head.repo.full_name == github.repository &&
-          steps.bot_bin.outputs.source == 'build'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: ./.github/actions/setup-benchmark-bot
         with:
-          repository: Rick1330/ibexharness-benchmark-bot
-          ref: ${{ vars.BENCHMARK_BOT_SHA }}
-          path: benchmark-bot
-          persist-credentials: false
-
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
-        if: >
-          github.event_name == 'pull_request' &&
-          github.event.pull_request.head.repo.full_name == github.repository &&
-          steps.bot_bin.outputs.source == 'build'
-        with:
-          toolchain: stable
-
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2.8.2
-        if: >
-          github.event_name == 'pull_request' &&
-          github.event.pull_request.head.repo.full_name == github.repository &&
-          steps.bot_bin.outputs.source == 'build'
-        with:
-          workspaces: benchmark-bot
-
-      - name: Build benchmark bot (fallback)
-        id: bot_build
-        if: >
-          github.event_name == 'pull_request' &&
-          github.event.pull_request.head.repo.full_name == github.repository &&
-          steps.bot_bin.outputs.source == 'build'
-        run: |
-          set -euo pipefail
-          cd benchmark-bot
-          cargo build --release --locked
-          echo "path=${{ github.workspace }}/benchmark-bot/target/release/ibex-benchmark-bot" >> "$GITHUB_OUTPUT"
+          bot-sha: ${{ vars.BENCHMARK_BOT_SHA }}
+          release-tag: ${{ vars.BENCHMARK_BOT_RELEASE_TAG }}
+          require-subcommand: post-pr-comment
 
       - name: Build and post PR benchmark comment
         if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
@@ -418,22 +351,12 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           BENCHMARK_DATA_PATH: ${{ github.workspace }}/benchmarks/output/benchmark-data.json
           GATE_RESULT_PATH: ${{ github.workspace }}/benchmarks/output/gate-result.json
-          BOT_BIN_RELEASE: ${{ steps.bot_bin.outputs.path }}
-          BOT_BIN_BUILD: ${{ steps.bot_build.outputs.path }}
+          BOT_PATH: ${{ steps.setup_bot.outputs.bot-path }}
         run: |
           set -euo pipefail
-          if [ -n "${BOT_BIN_RELEASE:-}" ] && [ -x "$BOT_BIN_RELEASE" ]; then
-            bot="$BOT_BIN_RELEASE"
-          elif [ -n "${BOT_BIN_BUILD:-}" ] && [ -x "$BOT_BIN_BUILD" ]; then
-            bot="$BOT_BIN_BUILD"
-          else
-            echo "benchmark bot binary not found" >&2
-            exit 1
-          fi
-          "$bot" post-pr-comment \
+          "$BOT_PATH" post-pr-comment \
             --benchmark-data "$BENCHMARK_DATA_PATH" \
             --gate-result "$GATE_RESULT_PATH"
-
       - name: Stop proxy stack
         if: always()
         run: bash benchmarks/scripts/stop_proxy_stack.sh

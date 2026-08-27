@@ -16,7 +16,7 @@ The public marketing/docs/benchmarks site lives in `web/` (Phase 1.5+), not unde
 | `auth/` | Go — authentication and token validation: gRPC `ValidateToken` / `ValidateAgent` / PAT lifecycle, Argon2id, Postgres stores, revoke pub/sub | **Shipped (Phase 2)** — extends in Phase 4 (e.g. provider-credential RPCs) |
 | `embedder/` | Python FastAPI — embedding contract + stub backend, `/health`/`/ready`, profile registry (G4.M1); TEI/hosted/cache in G4.M2–M4 | **Partial (2.5.G4)** — deployment-time profile; dimensionality not interchangeable without migration |
 | `mcp-memory/` | Python — MCP resource server: Streamable HTTP, Auth gRPC fail-closed boundary, stub `search_memory`/`write_memory`, `mcp_tool_calls` audit | **Partial (2.5.G6.M1 / ADR-0050)** — real tool bodies in 3.5 |
-| `memory/` | Python FastAPI — memory substrate: probes, composite scoring v2; VectorStore/PgVectorStore and embedder client follow in m3.2.1 PR-B/C | **Partial (3 / m3.2.1)** — not extraction workers |
+| `memory/` | Python FastAPI — memory substrate: probes, scoring v2, VectorStore/PgVectorStore, embedder HTTP client; HNSW benches under `benchmarks/memory/` | **Partial (3 / m3.2.1)** — write/read pipelines later |
 
 ---
 

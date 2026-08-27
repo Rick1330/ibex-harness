@@ -1196,6 +1196,39 @@ jobs:
           fi
           echo "Overlaid benchmark artifact from run ${run_id}"
 
+      - name: Overlay PR HNSW benchmark artifact
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          run_id=""
+          if ! run_id="$(gh run list \
+            --repo "${GITHUB_REPOSITORY}" \
+            --workflow memory-benchmark.yml \
+            --commit "${HEAD_SHA}" \
+            --json databaseId,conclusion \
+            --jq '[.[] | select(.conclusion == "success")] | first | .databaseId // empty' 2>/dev/null)"; then
+            echo "HNSW overlay lookup failed for ${HEAD_SHA}; using committed HNSW JSON."
+            exit 0
+          fi
+          if [ -z "$run_id" ]; then
+            echo "No successful Memory Benchmarks run for ${HEAD_SHA}; using committed HNSW JSON."
+            exit 0
+          fi
+          mkdir -p web/public/benchmarks
+          if ! gh run download "$run_id" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --name hnsw-benchmark-data \
+            --dir /tmp/hnsw-benchmark-data; then
+            echo "HNSW artifact download failed for run ${run_id}; using committed HNSW JSON."
+            exit 0
+          fi
+          cp /tmp/hnsw-benchmark-data/hnsw-benchmark-data.json \
+            web/public/benchmarks/hnsw-benchmark-data.json
+          echo "Overlaid HNSW artifact from run ${run_id}"
+
       - uses: ./.github/actions/setup-pnpm-web
 
       - name: Cache Next.js build

@@ -2,7 +2,7 @@
 title: "3.2.1 VectorStore interface and pgvector-HNSW implementation"
 description: "VectorStore interface and pgvector-HNSW implementation, composite scoring v2 with category-conditional recency decay, and embedding client for Phase 2.5's embedder service."
 summary: "VectorStore interface and pgvector-HNSW implementation, composite scoring v2 with category-conditional recency decay, and embedding client for Phase 2.5's embedder service."
-status: "planned"
+status: "in-progress"
 milestoneId: "3.2.1"
 track: "B"
 trackTitle: "Vector Store & Embedding"
@@ -15,12 +15,12 @@ fullTitle: "Milestone 3.2.1 — VectorStore interface and pgvector-HNSW implemen
 
 # Milestone 3.2.1 — VectorStore interface and pgvector-HNSW implementation
 
-**Status:** Planned  
+**Status:** In progress (PR-C — embed client, HNSW benches, docker publish)  
 **Goal:** [Track B — Vector Store & Embedding](/roadmap/phase-3-memory-engine/tracks#track-b--vector-store--embedding)  
 **Phase:** 3 — Core Memory Substrate  
 **Estimated effort:** 3 days  
 **Track:** [Track B — Vector Store & Embedding](/roadmap/phase-3-memory-engine/tracks#track-b--vector-store--embedding)  
-**ADR required:** ADR-0041 — Vector store abstraction and composite scoring formula v2
+**ADR:** [ADR-0053](/docs/adr/0053-vector-store-abstraction) — Vector store abstraction and composite scoring v2 (planning sketches said ADR-0041; that number is the model capability registry)
 
 ---
 
@@ -29,6 +29,15 @@ fullTitle: "Milestone 3.2.1 — VectorStore interface and pgvector-HNSW implemen
   libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
   that are expected to change once the live code, constraints, and research during implementation
   make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+<Callout type="info" title="Planning baseline (sketch deviations)">
+  Shipped reality vs this sketch: flat `services/memory/app/` (not `src/ibex_memory/`);
+  ADR-**0053** (not ADR-0041); benches under `benchmarks/memory/` with published JSON at
+  `web/public/benchmarks/hnsw-benchmark-data.json`; search SQL uses a CTE (HNSW `ORDER BY … LIMIT`
+  then outer `min_similarity` filter); defaults stay `ef_search=40` and `min_similarity=0.70`
+  with `iterative_scan` off; **1M HNSW benches are CI-only** (local = 10K/100K). Large backfills
+  should load-then-`CREATE INDEX` (see [DEPLOYMENT.md](/engineering/DEPLOYMENT.md)).
 </Callout>
 
 ## Why This Milestone Exists
@@ -76,9 +85,9 @@ Rename freely to match the change that actually lands.
 - Branch: `feature/m3-2-1-vector-store-interface`
 - PR title: `feat(memory): VectorStore interface, pgvector-HNSW impl, composite scoring v2 (m3.2.1)`
 
-## ADR-0041 — Vector store abstraction and composite scoring v2
+## ADR-0053 — Vector store abstraction and composite scoring v2
 
-Write `web/content/docs/adr/0041-vector-store-abstraction.mdx`:
+Authoritative record: [`0053-vector-store-abstraction.mdx`](/docs/adr/0053-vector-store-abstraction). Planning excerpt (orientation only):
 
 ```markdown
 ## Decision
@@ -189,7 +198,7 @@ class PgVectorStore(VectorStore):
  min_confidence: float = 0.0,
  ) -> list[tuple[UUID, float]]:
  async with self._session() as session:
- # ef_search is set per-transaction, not globally (ADR-0041 §2)
+ # ef_search is set per-transaction, not globally (ADR-0053)
  await session.execute(text("SET LOCAL hnsw.ef_search = 40"))
  rows = await session.execute(
  text("""
@@ -268,11 +277,11 @@ Preferred starting points and open questions — situational, and expected to ev
 
 Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
 
-- [ ] `VectorStore` ABC + `PgVectorStore` implementation with `ef_search` set per-transaction
-- [ ] Composite scoring v2 implemented with category-conditional half-life, unit-tested against the documented formula
-- [ ] Recall/latency benchmark run at 10K/100K/1M synthetic rows; results committed to `services/memory/benchmarks/output/` and referenced in ADR-0041
-- [ ] `embedding_client.py` has zero direct ML library imports — verified by a CI import-lint rule
-- [ ] ADR-0041 published in `web/content/docs/adr/`
+- [x] `VectorStore` ABC + `PgVectorStore` implementation with `ef_search` set per-transaction (PR-A/B)
+- [x] Composite scoring v2 implemented with category-conditional half-life, unit-tested against the documented formula (PR-A)
+- [x] Recall/latency benchmark run at 10K/100K synthetic rows under fixed methodology (TRUNCATE + ANALYZE + EXPLAIN/pg_stat gates); results under `benchmarks/memory/output/` + published `web/public/benchmarks/hnsw-benchmark-data.json` (PR-C). **1M is CI-only** (`Memory Benchmarks` workflow profile `full`)
+- [x] Embedder HTTP client with zero direct ML library imports — Semgrep `ibex-memory-no-ml-imports` (PR-C)
+- [x] [ADR-0053](/docs/adr/0053-vector-store-abstraction) published (defaults: `ef_search=40`, `min_similarity=0.70`, `iterative_scan` off)
 
 ---
 

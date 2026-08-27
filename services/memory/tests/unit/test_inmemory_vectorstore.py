@@ -201,6 +201,19 @@ async def test_search_rejects_invalid_limit_parity() -> None:
         await store.search(request)
 
 
+def test_search_request_rejects_invalid_iterative_scan() -> None:
+    org, agent = uuid4(), uuid4()
+    request = SearchRequest(
+        org_id=org,
+        agent_id=agent,
+        query_embedding=_UNIT,
+        limit=5,
+        iterative_scan="bogus",
+    )
+    with pytest.raises(ValueError, match="iterative_scan"):
+        request.validate()
+
+
 @pytest.mark.asyncio
 async def test_inmemory_delete_wrong_org_is_noop() -> None:
     store = InMemoryVectorStore()

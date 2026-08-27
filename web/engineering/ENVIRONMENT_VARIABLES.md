@@ -386,16 +386,22 @@ Preferred starting models in the roadmap: **GPU/prod** `bge-m3` (1024-dim); **CP
 
 ### Memory system knobs (Phase 3+)
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `IBEX_MEMORY_MAX_CONTENT_CHARS` | No | `10000` | Max memory size |
-| `IBEX_MEMORY_MAX_TAGS` | No | `20` | Max tags |
-| `IBEX_MEMORY_QUARANTINE_INJECTION_THRESHOLD` | No | `0.70` | Quarantine if injection risk > threshold |
-| `IBEX_MEMORY_DEDUP_EXACT_ENABLED` | No | `true` | Enable content-hash dedup |
-| `IBEX_MEMORY_NEAR_DUPLICATE_SIM_THRESHOLD` | No | `0.92` | Near-duplicate similarity threshold |
-| `IBEX_MEMORY_VECTOR_SEARCH_MIN_SIMILARITY` | No | `0.70` | Default min similarity |
-| `IBEX_MEMORY_HOT_CACHE_TTL_SECONDS` | No | `3600` | Cache TTL for hot memories |
-| `IBEX_HNSW_EF_SEARCH` | Planned **3** | `40` | Per-query HNSW `ef_search` starting point | Tune from recall/latency benches |
+| Variable | Required | Default | Description | Notes |
+|----------|----------|---------|-------------|-------|
+| `IBEX_MEMORY_DATABASE_URL` | Conditional | (none) | Postgres DSN for memory service | Required when vector store is used (`Settings.database_url`) |
+| `IBEX_MEMORY_MAX_CONTENT_CHARS` | No | `10000` | Max memory size | |
+| `IBEX_MEMORY_MAX_TAGS` | No | `20` | Max tags | |
+| `IBEX_MEMORY_QUARANTINE_INJECTION_THRESHOLD` | No | `0.70` | Quarantine if injection risk > threshold | |
+| `IBEX_MEMORY_DEDUP_EXACT_ENABLED` | No | `true` | Enable content-hash dedup | |
+| `IBEX_MEMORY_NEAR_DUPLICATE_SIM_THRESHOLD` | No | `0.92` | Near-duplicate similarity threshold | |
+| `IBEX_MEMORY_VECTOR_SEARCH_MIN_SIMILARITY` | No | `0.70` | Default min similarity | |
+| `IBEX_MEMORY_HOT_CACHE_TTL_SECONDS` | No | `3600` | Cache TTL for hot memories | |
+| `IBEX_HNSW_EF_SEARCH` | No | `40` | Default per-query HNSW `ef_search` | Tune from recall/latency benches; applied via `SET LOCAL` |
+| `IBEX_MEMORY_EMBEDDING_BASE_URL` | No | `http://127.0.0.1:8004` | Embedder service base URL | Client: `app/clients/embedding.py` |
+| `IBEX_EMBEDDING_API_TOKEN` / `IBEX_MEMORY_EMBEDDING_API_TOKEN` | Conditional | (none) | Bearer for `POST /v1/embed` | Never logged; same token space as embedder |
+| `IBEX_MEMORY_EMBEDDING_TIMEOUT_SECONDS` | No | `30.0` | Embedder read timeout | |
+| `IBEX_MEMORY_EMBEDDING_CONNECT_TIMEOUT_SECONDS` | No | `2.0` | Embedder connect timeout | |
+| `IBEX_MEMORY_EMBEDDING_MAX_RETRIES` | No | `2` | Retries for 429/502/503 + transport | |
 | `IBEX_MEMORY_HYBRID_ENABLED` | Planned **5** | `false` | Enable dense+sparse hybrid retrieval | Feature flag |
 | `IBEX_MEMORY_RERANK_ENABLED` | Planned **5** | `false` | Cross-encoder rerank on fused top-K | Degrade if TEI unavailable |
 
@@ -617,8 +623,9 @@ Used by `.github/workflows/benchmark.yml` for cross-repo benchmark publishing an
 
 | Variable | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
-| `BENCHMARK_BOT_ENABLED` | repo variable | No | unset (disabled) | When `true`, `notify-benchmark-bot` dispatches to `ibexharness-benchmark-bot` after weekly (or manual) main benchmark runs |
-| `BENCHMARK_BOT_SHA` | repo variable | Yes when PR comments enabled | — | Pinned commit SHA of `ibexharness-benchmark-bot` for Rust `post-pr-comment` build (no `main` fallback) |
+| `BENCHMARK_BOT_ENABLED` | repo variable | No | unset (disabled) | When `true`, notify jobs dispatch to `ibexharness-benchmark-bot` after successful main collects (proxy + Memory HNSW) |
+| `BENCHMARK_BOT_SHA` | repo variable | Yes when PR comments enabled | — | Pinned commit SHA of `ibexharness-benchmark-bot` (no `main` fallback). Used by `.github/actions/setup-benchmark-bot` |
+| `BENCHMARK_BOT_RELEASE_TAG` | repo variable | Recommended | — | Release tag for prebuilt `ibex-benchmark-bot-linux-amd64` (e.g. `bot-<7-char-sha>`). Must match `BENCHMARK_BOT_SHA` short SHA or the setup action ignores it and cargo-builds |
 | `BENCHMARK_BOT_DISPATCH_TOKEN` | repo secret | Yes when `BENCHMARK_BOT_ENABLED=true` | — | Fine-grained PAT with **Contents: Read and write** on `ibexharness-benchmark-bot` (required for `repository_dispatch`) |
 | `BENCHMARK_BOT_APP_ID` | repo secret | Yes when PR comments enabled | — | GitHub App ID (same as bot repo `APP_ID`; posts comments as App, not `github-actions[bot]`) |
 | `BENCHMARK_BOT_APP_PRIVATE_KEY` | repo secret | Yes when PR comments enabled | — | App PEM private key |
@@ -626,13 +633,19 @@ Used by `.github/workflows/benchmark.yml` for cross-repo benchmark publishing an
 
 **Cadence:**
 
-- **Every PR:** Benchmarks workflow runs and posts a PR comment (artifact + App comment). Does **not** open a data PR against `main`.
-- **Weekly (Sunday 04:00 UTC) or manual `workflow_dispatch` on `main`:** `notify-benchmark-bot` dispatches the bot; the bot opens a `chore(bench): …` PR to publish `web/public/benchmarks/`.
-- **Push to `main` touching proxy/auth/go.mod:** still collects/uploads artifacts for dashboard CI overlay; does **not** auto-dispatch the bot (keeps publish weekly).
+- **Every matching PR:**
+  - **Benchmarks** and **Memory Benchmarks** upsert one shared sticky comment (`IBEX_BOT_COMMENT`) with Proxy and Memory HNSW sections. No data PR.
+- **Main / schedule collects:** notify jobs dispatch the bot; bot opens one data PR per suite (`benchmark-data.json` / `hnsw-benchmark-data.json`).
 
-**Pinning:** Set harness `BENCHMARK_BOT_SHA` to the same reviewed commit as bot repo variable `BOT_RELEASE_SHA` (defined in `ibexharness-benchmark-bot`, not in this repo). Legacy `BENCHMARK_COMMENT_RENDERER_SHA` is deprecated — use `BENCHMARK_BOT_SHA` only.
+**Pinning:** Keep these three in lockstep after each green bot merge:
 
-**Rotation:** Rotate `BENCHMARK_BOT_DISPATCH_TOKEN` quarterly. Rotate App private key per bot repo runbook. Update `BENCHMARK_BOT_SHA` and bot `BOT_RELEASE_SHA` together after security-reviewed bot releases.
+1. Bot repo `BOT_RELEASE_SHA` = squash commit on bot `main`
+2. Harness `BENCHMARK_BOT_SHA` = same SHA
+3. Tag `bot-<7-char-sha>`, run bot **Release binary** (uploads binary + `.sha256`), set harness `BENCHMARK_BOT_RELEASE_TAG` to that tag, and update `.github/actions/setup-benchmark-bot/ibex-benchmark-bot-linux-amd64.sha256` to the new digest
+
+Legacy `BENCHMARK_COMMENT_RENDERER_SHA` is deprecated — use `BENCHMARK_BOT_SHA` only. The setup action can `require-subcommand` (Memory collect requires `post-hnsw-pr-comment`) so a stale release binary cannot silently break CI.
+
+**Rotation:** Rotate `BENCHMARK_BOT_DISPATCH_TOKEN` quarterly. Rotate App private key per bot repo runbook. Update `BENCHMARK_BOT_SHA`, `BENCHMARK_BOT_RELEASE_TAG`, and bot `BOT_RELEASE_SHA` together after security-reviewed bot releases.
 
 ---
 

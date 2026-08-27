@@ -7,13 +7,18 @@ const WORKFLOW_URL =
 
 type BenchmarkErrorStateProps = Readonly<{
   message: string;
+  onRetry?: () => void;
 }>;
 
-export function BenchmarkErrorState({ message }: BenchmarkErrorStateProps) {
+export function BenchmarkErrorState({ message, onRetry }: BenchmarkErrorStateProps) {
   const { refresh } = useBenchmarkData();
 
   const handleRetry = () => {
-    refresh();
+    if (onRetry) {
+      onRetry();
+      return;
+    }
+    void refresh();
   };
 
   return (

@@ -32,6 +32,10 @@ validate_published_data = load_module(
     "validate_published_data",
     SCRIPTS / "validate_published_data.py",
 )
+validate_published_hnsw = load_module(
+    "validate_published_hnsw",
+    SCRIPTS / "validate_published_hnsw.py",
+)
 benchmark_constants = load_module("benchmark_constants", SCRIPTS / "benchmark_constants.py")
 
 
@@ -454,6 +458,39 @@ class ValidatePublishedDataTests(unittest.TestCase):
             ],
         }
         _assert_validate_rejects(payload)
+
+
+    def test_validate_published_hnsw_parse_args_strict_flag(self) -> None:
+        path, strict = validate_published_hnsw.parse_args(
+            ["--strict", "web/public/benchmarks/hnsw-benchmark-data.json"]
+        )
+        if path != "web/public/benchmarks/hnsw-benchmark-data.json" or strict is not True:
+            raise AssertionError("expected --strict path parse")
+        path, strict = validate_published_hnsw.parse_args(
+            ["web/public/benchmarks/hnsw-benchmark-data.json"]
+        )
+        if strict is not False:
+            raise AssertionError("expected non-strict default")
+
+    def test_validate_published_hnsw_strict_fails_without_jsonschema(self) -> None:
+        import builtins
+
+        real_import = builtins.__import__
+
+        def _blocked(name: str, *args: object, **kwargs: object):
+            if name == "jsonschema":
+                raise ImportError("blocked for test")
+            return real_import(name, *args, **kwargs)
+
+        builtins.__import__ = _blocked  # type: ignore[method-assign]
+        try:
+            try:
+                validate_published_hnsw.validate_against_json_schema({}, strict=True)
+            except SystemExit:
+                return
+            raise AssertionError("strict mode should fail without jsonschema")
+        finally:
+            builtins.__import__ = real_import  # type: ignore[method-assign]
 
 
 if __name__ == "__main__":

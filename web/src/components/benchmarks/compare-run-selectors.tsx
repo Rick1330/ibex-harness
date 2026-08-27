@@ -1,10 +1,10 @@
-import type { BenchmarkRun } from "@/lib/benchmarks/types";
+import type { BenchmarkRunIdentity } from "@/lib/benchmarks/run-identity";
 
 const COMPARE_SELECT_CLASS =
   "w-full rounded-md border border-border bg-background px-3 py-2 font-mono text-sm focus:border-border-strong focus:outline-none focus:ring-2 focus:ring-border-strong/40";
 
 type CompareRunSelectorsProps = Readonly<{
-  runs: BenchmarkRun[];
+  runs: readonly BenchmarkRunIdentity[];
   baseSha: string;
   headSha: string;
   onBaseChange: (sha: string) => void;
@@ -24,7 +24,9 @@ export function CompareRunSelectors({
         <span className="text-muted-foreground">Base</span>
         <select
           value={baseSha}
-          onChange={(event) => { onBaseChange(event.target.value); }}
+          onChange={(event) => {
+            onBaseChange(event.target.value);
+          }}
           className={COMPARE_SELECT_CLASS}
         >
           {runs.map((run) => (
@@ -38,7 +40,9 @@ export function CompareRunSelectors({
         <span className="text-muted-foreground">Head</span>
         <select
           value={headSha}
-          onChange={(event) => { onHeadChange(event.target.value); }}
+          onChange={(event) => {
+            onHeadChange(event.target.value);
+          }}
           className={COMPARE_SELECT_CLASS}
         >
           {runs.map((run) => (
