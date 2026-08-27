@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
@@ -47,7 +48,8 @@ class ConflictService:
     ) -> ConflictEvaluation:
         decisions: list[ConflictDecision] = []
         llm_calls = 0
-        incoming_subject = self._extract(incoming.content)
+        # spaCy / model load is sync — keep the event loop free.
+        incoming_subject = await asyncio.to_thread(self._extract, incoming.content)
         for candidate in candidates:
             decision, used_llm = await self._decide_one(
                 incoming, incoming_subject, candidate
@@ -63,7 +65,7 @@ class ConflictService:
         incoming_subject: str,
         candidate: CandidateMemory,
     ) -> tuple[ConflictDecision, bool]:
-        cand_subject = self._extract(candidate.content)
+        cand_subject = await asyncio.to_thread(self._extract, candidate.content)
         same_subject = subjects_match(incoming_subject, cand_subject)
         subject_key = incoming_subject or cand_subject
 
@@ -122,13 +124,14 @@ class ConflictService:
         outcome = await self._classifier.classify(incoming, candidate)
         if outcome == ConflictOutcome.SUPERSEDES:
             outcome = ConflictOutcome.ESCALATE_PENDING
+        used_llm = self._classifier.invokes_llm
         return (
             ConflictDecision(
                 candidate_id=candidate.memory_id,
                 outcome=outcome,
-                llm_call_made=True,
+                llm_call_made=used_llm,
                 subject_key=subject_key,
                 notes=reason,
             ),
-            True,
+            used_llm,
         )

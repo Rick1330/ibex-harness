@@ -93,6 +93,8 @@ async def test_conflict_stage_missing_valid_from_escalates() -> None:
     cand = uuid4()
 
     class _Cls:
+        invokes_llm = True
+
         async def classify(self, incoming, candidate):
             del incoming, candidate
             return ConflictOutcome.UNRELATED

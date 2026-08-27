@@ -26,6 +26,9 @@ class CandidateMemory:
     interval: ValidityInterval
     confidence: float = 0.80
 
+    def __post_init__(self) -> None:
+        _require_unit_interval(self.confidence, "confidence")
+
 
 @dataclass(frozen=True, slots=True)
 class IncomingMemory:
@@ -33,6 +36,15 @@ class IncomingMemory:
     interval: ValidityInterval
     memory_id: UUID | None = None
     confidence: float = 0.80
+
+    def __post_init__(self) -> None:
+        _require_unit_interval(self.confidence, "confidence")
+
+
+def _require_unit_interval(value: float, name: str) -> None:
+    if not 0.0 <= value <= 1.0:
+        msg = f"{name} must be in [0, 1], got {value}"
+        raise ValueError(msg)
 
 
 @dataclass(frozen=True, slots=True)

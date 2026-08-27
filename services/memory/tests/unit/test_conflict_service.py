@@ -27,6 +27,8 @@ def _subject(_: str) -> str:
 
 
 class _FixedClassifier:
+    invokes_llm = True
+
     def __init__(self, outcome: ConflictOutcome) -> None:
         self.outcome = outcome
         self.calls = 0
@@ -127,6 +129,55 @@ async def test_noop_classifier_returns_escalate_pending() -> None:
         interval=ValidityInterval(valid_from=_dt(3), valid_until=None),
     )
     assert await clf.classify(incoming, candidate) == ConflictOutcome.ESCALATE_PENDING
+    assert clf.invokes_llm is False
+
+
+@pytest.mark.asyncio
+async def test_noop_escalation_does_not_count_llm_calls() -> None:
+    svc = ConflictService(
+        Settings(),
+        classifier=NoopConflictClassifier(),
+        subject_extractor=_subject,
+    )
+    incoming = IncomingMemory(
+        content="User prefers Python",
+        interval=ValidityInterval(valid_from=_dt(3), valid_until=None),
+    )
+    candidates = [
+        CandidateMemory(
+            memory_id=uuid4(),
+            content="User prefers Go",
+            interval=ValidityInterval(valid_from=_dt(3), valid_until=None),
+        )
+    ]
+    result = await svc.evaluate(incoming, candidates)
+    assert result.llm_calls == 0
+    assert result.decisions[0].outcome == ConflictOutcome.ESCALATE_PENDING
+    assert result.decisions[0].llm_call_made is False
+
+
+@pytest.mark.asyncio
+async def test_same_entity_distinct_attributes_no_supersede() -> None:
+    svc = ConflictService(
+        Settings(),
+        subject_extractor=lambda text: (
+            "user prefer python" if "Python" in text else "user live seattle"
+        ),
+    )
+    incoming = IncomingMemory(
+        content="User lives in Seattle",
+        interval=ValidityInterval(valid_from=_dt(6), valid_until=None),
+    )
+    candidates = [
+        CandidateMemory(
+            memory_id=uuid4(),
+            content="User prefers Python",
+            interval=ValidityInterval(valid_from=_dt(3), valid_until=_dt(6)),
+        )
+    ]
+    result = await svc.evaluate(incoming, candidates)
+    assert result.llm_calls == 0
+    assert result.decisions[0].outcome == ConflictOutcome.NO_CONFLICT
 
 
 @pytest.mark.asyncio

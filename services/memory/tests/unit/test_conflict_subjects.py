@@ -47,7 +47,44 @@ def test_extract_nsubj(monkeypatch: object) -> None:
         "app.conflict.subjects._nlp",
         lambda _model: (lambda _text: tokens),
     )
-    assert extract_subject_key("User prefers Python") == "user"
+    assert extract_subject_key("User prefers Python") == "user prefer"
+
+
+def test_extract_nsubj_with_object(monkeypatch: object) -> None:
+    obj = SimpleNamespace(
+        dep_="dobj",
+        lemma_="Python",
+        is_stop=False,
+        is_alpha=True,
+        children=[],
+    )
+    root = SimpleNamespace(
+        dep_="ROOT",
+        lemma_="prefer",
+        is_stop=False,
+        is_alpha=True,
+        children=[obj],
+    )
+    nsubj = SimpleNamespace(
+        dep_="nsubj",
+        lemma_="User",
+        is_stop=False,
+        is_alpha=True,
+        children=[],
+    )
+    tokens = [nsubj, root, obj]
+    monkeypatch.setattr(  # type: ignore[attr-defined]
+        "app.conflict.subjects._nlp",
+        lambda _model: (lambda _text: tokens),
+    )
+    assert extract_subject_key("User prefers Python") == "user prefer python"
+
+
+def test_distinct_entity_properties_do_not_match() -> None:
+    """Same entity, unrelated attributes must not share a supersession key."""
+    preference = "user prefer python"
+    location = "user live seattle"
+    assert subjects_match(preference, location) is False
 
 
 def test_extract_root_with_obj(monkeypatch: object) -> None:

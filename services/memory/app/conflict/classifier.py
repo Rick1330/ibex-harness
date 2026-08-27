@@ -8,6 +8,11 @@ from app.conflict.types import CandidateMemory, ConflictOutcome, IncomingMemory
 
 
 class ConflictClassifier(Protocol):
+    @property
+    def invokes_llm(self) -> bool:
+        """True when classify() performs a real LLM call."""
+        ...
+
     async def classify(
         self,
         incoming: IncomingMemory,
@@ -22,6 +27,10 @@ class NoopConflictClassifier:
 
     Returns ESCALATE_PENDING so write/API layers can enqueue work later.
     """
+
+    @property
+    def invokes_llm(self) -> bool:
+        return False
 
     async def classify(
         self,
