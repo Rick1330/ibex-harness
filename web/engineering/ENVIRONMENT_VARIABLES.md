@@ -10,7 +10,7 @@ This document is the **single source of truth** for:
 - default values and safe development defaults,
 - and security/rotation requirements.
 
-**Current state:** Phases **0–2** are shipped. Variables marked **shipped** are wired today.
+**Current state:** Phases **0–2.5** are shipped; Phase **3** memory substrate is in progress. Variables marked **shipped** are wired today.
 Variables marked **planned (2.5+)**, **planned (3+)**, etc. are the redesigned-roadmap planning
 baseline — exact names may change during implementation when live code and an ADR say so. Keep this
 file aligned with [`services/README.md`](../../services/README.md),
@@ -639,7 +639,7 @@ Used by `.github/workflows/benchmark.yml` for cross-repo benchmark publishing an
 
 - **Every matching PR:**
   - **Benchmarks** and **Memory Benchmarks** upsert one shared sticky comment (`IBEX_BOT_COMMENT`) with Proxy and Memory HNSW sections. No data PR.
-- **Main / schedule collects:** notify jobs dispatch the bot; bot opens one data PR per suite (`benchmark-data.json` / `hnsw-benchmark-data.json`).
+- **Main / schedule collects:** notify jobs dispatch the bot; bot upserts **one** shared data PR on branch `chore/bench-data-publish` (proxy and/or HNSW files in the same PR).
 
 **Pinning:** Keep these three in lockstep after each green bot merge:
 

@@ -39,6 +39,7 @@ Each suite keeps its own JSON file and bot modules. Shared seams:
 | Public path | `web/public/benchmarks/benchmark-data.json` | `…/hnsw-benchmark-data.json` | under same dir |
 | Dispatch | `benchmark_main_complete` | `memory_benchmark_main_complete` | new event type |
 | PR comment | shared sticky `IBEX_BOT_COMMENT` (Proxy + Memory sections) | same | same marker, new section |
+| Data PR | shared upsert on `chore/bench-data-publish` (1–2 suite files) | same branch | same |
 | Bot pin helper | `.github/actions/setup-benchmark-bot` | same | same |
 | Site registry | `web/src/lib/benchmarks/suites.ts` | same | add suite + nav pages |
 
@@ -58,7 +59,8 @@ Do **not** merge suites into one mega-JSON. Site nav groups by suite; proxy-only
 - Bot setup: `.github/actions/setup-benchmark-bot` (pin + optional `BENCHMARK_BOT_RELEASE_TAG`;
   Memory collect requires subcommand `post-hnsw-pr-comment`).
 - Bot dispatch: `memory_benchmark_main_complete` → artifact `hnsw-benchmark-data` only
-  (does **not** touch proxy `benchmark-data.json` / `badge.svg`).
+  (commits `hnsw-benchmark-data.json` into the **shared** data PR branch; does **not** rewrite
+  proxy `benchmark-data.json` / `badge.svg`).
 - Same-repo PRs upsert the **Memory HNSW** section of the shared sticky comment
   (`post-hnsw-pr-comment` → `IBEX_BOT_COMMENT`; same thread as Proxy).
 - Published cells are production knobs only: `ef_search=40`, `min_similarity=0.70`,

@@ -1,6 +1,6 @@
 # Operations Guide
 
-Deployment and runtime operations for IBEX Harness. **Shipped today:** Go services `auth` and `proxy` (Phases 0–2). Later services (`embedder`, `memory`, `context`, `worker`, `api`, `dashboard`, `mcp-memory`, …) follow [`services/README.md`](../../services/README.md) and the redesigned roadmap — add probe/runbook rows when those processes exist.
+Deployment and runtime operations for IBEX Harness. **Shipped today:** Go services `auth` and `proxy` (Phases 0–2.5), Python `embedder` and `mcp-memory` (2.5), and Python `memory` substrate (Phase 3 in progress). Later services (`context`, `worker`, `api`, `dashboard`, …) follow [`services/README.md`](../../services/README.md) and the redesigned roadmap — add probe/runbook rows when those processes exist.
 
 Env registry: [ENVIRONMENT_VARIABLES.md](ENVIRONMENT_VARIABLES.md). Deployment topology: [DEPLOYMENT.md](DEPLOYMENT.md).
 

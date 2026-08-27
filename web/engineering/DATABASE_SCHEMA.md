@@ -2,7 +2,7 @@
 
 PostgreSQL (OLTP + pgvector), Redis key patterns, and ClickHouse analytics schema. For system architecture and service flows, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
-**Roadmap note:** Phases **0–2** schema (orgs, users, agents, tokens, directives, sessions, `llm_traces`) is what is applied today. Phase **2.5** adds additive pre-work (temporal validity, multi-label categories, relationship-graph readiness). Phase **3** lands memory schema v2 with **HNSW** as the preferred vector index starting point. Phase **5** uses graph edges at query time (recursive CTEs) and hybrid retrieval — it does not require a separate graph database by default. See [`web/content/roadmap/`](../content/roadmap/).
+**Roadmap note:** Phases **0–2.5** schema (orgs, users, agents, tokens, directives, sessions, `llm_traces`, temporal validity, multi-label readiness, relationship graph) is applied. Phase **3** is landing memory schema v2 with **HNSW** (expand migration + write-path uniqueness) plus write-pipeline stages. Phase **5** uses graph edges at query time (recursive CTEs) and hybrid retrieval — it does not require a separate graph database by default. See [`web/content/roadmap/`](../content/roadmap/).
 
 ## Schema Design Philosophy
 
