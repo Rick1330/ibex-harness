@@ -2,7 +2,7 @@
 title: "3.C.1 PII detection and redaction stage"
 description: "Step 2 of the memory write pipeline: two-tier PII detection (regex + NER via Microsoft Presidio), redaction before embedding, and quarantine routing for low-confidence findings."
 summary: "Step 2 of the memory write pipeline: two-tier PII detection (regex + NER via Microsoft Presidio), redaction before embedding, and quarantine routing for low-confidence findings."
-status: "planned"
+status: "complete"
 milestoneId: "3.C.1"
 track: "C"
 trackTitle: "Write Pipeline"
@@ -15,10 +15,11 @@ fullTitle: "Milestone 3.C.1 — PII detection and redaction stage"
 
 # Milestone 3.C.1 — PII detection and redaction stage
 
-**Status:** Planned  
+**Status:** Complete (implementation on `feature/m3-c-1-pii-detection`)  
 **Goal:** [Track C — Write Pipeline](/roadmap/phase-3-memory-engine/tracks#track-c--write-pipeline)  
 **Phase:** 3 — Core Memory Substrate  
-**Estimated effort:** 3 days
+**Estimated effort:** 3 days  
+**ADR:** [ADR-0054](/docs/adr/0054-memory-pii-presidio-in-process)
 
 ---
 
@@ -27,6 +28,14 @@ fullTitle: "Milestone 3.C.1 — PII detection and redaction stage"
   libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
   that are expected to change once the live code, constraints, and research during implementation
   make a better shape clear. Prefer outcomes over matching any particular file tree.
+</Callout>
+
+<Callout type="info" title="Planning baseline (sketch deviations)">
+  Shipped vs sketch: spaCy default is **`en_core_web_md`** (not `en_core_web_lg`) for image/latency
+  (ADR-0054); Semgrep `ibex-memory-no-ml-imports` left unchanged — it bans embedding ML stacks, not
+  Presidio/spaCy CNN; introduced `app/pipeline/` Stage seam (validate → pii → embed) ahead of
+  3.C.2–4; PII confidence uses `IBEX_MEMORY_PII_REDACT_MIN_CONFIDENCE` (default 0.70), separate from
+  injection quarantine; typed placeholders `[EMAIL_ADDRESS]` / `[PHONE_NUMBER]` / etc.
 </Callout>
 
 ## Why This Milestone Exists
@@ -101,12 +110,12 @@ Redaction **must** happen **before** embedding generation, not after. If the emb
 
 Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
 
-- [ ] Presidio integrated as a Python dependency, running self-hosted (no external API)
-- [ ] Structured PII (email/phone/SSN/credit card) redacted with &gt;95% recall on a labeled test fixture
-- [ ] Named-entity PII (person names, addresses) flagged with confidence score; findings below threshold route to `quarantined` status, not silently redacted
-- [ ] Redaction happens strictly before the embedding stage — enforced by pipeline ordering test, not just convention
-- [ ] Unit tests cover both true positives and known false-positive traps
-- [ ] `pii_detected` and `pii_redacted` flags set correctly on the `memories` row
+- [x] Presidio integrated as a Python dependency, running self-hosted (no external API)
+- [x] Structured PII (email/phone/SSN/credit card) redacted with &gt;95% recall on a labeled test fixture (`benchmarks/memory/pii/recall_structured.json`)
+- [x] Named-entity PII (person names, addresses) flagged with confidence score; findings below threshold route to `quarantined` status, not silently redacted
+- [x] Redaction happens strictly before the embedding stage — enforced by pipeline ordering test, not just convention
+- [x] Unit tests cover both true positives and known false-positive traps
+- [x] `pii_detected` and `pii_redacted` flags set correctly on the `memories` row
 
 ---
 

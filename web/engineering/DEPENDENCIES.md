@@ -302,9 +302,30 @@ Required (typical, as each service lands):
 - Celery (worker) — preferred starting queue stack
 - Official `mcp` Python SDK (MCP memory server)
 - Hugging Face `tokenizers` (tokenizer-service path)
-- Presidio (PII detection in memory write path) when that milestone lands
+- Presidio + spaCy (`en_core_web_md`) for memory write-path PII (m3.C.1 / ADR-0054)
 - OpenTelemetry Python SDK
 - Sentry SDK (optional)
+
+#### 8.3.1 Admission — Presidio + spaCy (m3.C.1)
+
+For dependencies: **presidio-analyzer** / **presidio-anonymizer** (2.2.x), **spacy** (3.8.x),
+**en-core-web-md** (3.8.0 wheel; **en-core-web-sm** locked for microbench only).
+
+1. **Why:** Two-tier PII (structured regex + NER) with per-finding confidence for quarantine.
+   Stdlib regex alone misses names/addresses required for GDPR-oriented write hygiene.
+2. **Scope:** `services/memory` write pipeline only (not proxy/auth hot path).
+3. **Security:** Processes untrusted user memory text; MIT-licensed Microsoft Presidio;
+   no external PII API. Semgrep still bans embedding ML stacks; spaCy CNN models only
+   (`trf` forbidden). Scan via Dependabot pip + OSV on `uv.lock`.
+4. **Maintenance:** Presidio and spaCy actively maintained; wide production adoption.
+5. **Transitive:** phonenumbers, thinc, numpy, etc. — accepted for the memory image;
+   not linked into Go services.
+6. **Performance:** NER-only microbench (`benchmarks/memory/pii/microbench_spacy_models.json`):
+   md p50 ≈ 3.7 ms / p95 ≈ 22 ms on sample texts vs write budget p95 200 ms (including
+   embedding). Prefer md over lg (~560 MB image) given similar NER for this use.
+7. **License:** MIT (Presidio, spaCy models).
+8. **Exit:** Replace with a remote AnalyzerEngine sidecar only if write-budget measurement
+   forces it; keep typed Anonymizer operators behind `app/pii/` interfaces.
 
 Embedding inference preference: call **TEI** (or hosted embedding APIs) behind a thin client rather than bundling heavy `sentence-transformers` into every service process. Local MiniLM remains valid for CPU/dev profiles.
 
@@ -400,11 +421,15 @@ All PRs run at least one automated test suite (`ci-gate-go` / `ci-gate-python` /
   or skip upload) were rejected. Refresh hashes with `pip-compile --generate-hashes`
   on `.github/requirements/bandit.in`.
 - Semgrep `p/python` + `.semgrep/rules/` (active in CI), including
-  `ibex-memory-no-ml-imports` (ERROR) under `services/memory/` — no in-process
-  torch/tensorflow/transformers/sentence_transformers/sklearn (call embedder HTTP).
+  `ibex-memory-no-ml-imports` (ERROR) under `services/memory/` — bans in-process
+  `torch` / `tensorflow` / `transformers` / `sentence_transformers` / `sklearn`
+  (call embedder HTTP). **Does not ban** Presidio or spaCy CNN models used for
+  write-path PII (ADR-0054); `en_core_web_trf` remains forbidden because it pulls
+  `transformers`.
 - Unit/coverage jobs: `memory-test` / `memory-coverage` (fail-under 90), wired into
   `ci-gate-python` (and listed on `ci-gate-go` for cross-gate visibility).
-- Dependabot `pip` for `/services/memory` may be enabled once lockfile is stable on `main`.
+- Dependabot `pip` for `/services/memory` enabled (weekly) now that `uv.lock` includes
+  Presidio/spaCy for m3.C.1.
 
 ### 9.3 Node/TypeScript
 

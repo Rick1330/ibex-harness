@@ -1,9 +1,12 @@
-# Memory service (Phase 3 Track B)
+# Memory service (Phase 3 Tracks B–C)
 
-Python FastAPI substrate for vector store, composite scoring, embedder client, and
-(later) write/read pipelines. **Not** the place for extraction workers (`services/worker/`).
+Python FastAPI substrate for vector store, composite scoring, embedder client, PII
+write stage, and (later) full write/read pipelines. **Not** the place for extraction
+workers (`services/worker/`).
 
-## Status (m3.2.1)
+## Status
+
+### m3.2.1 (Track B)
 
 - Probes: `GET /health`, `GET /ready`, `GET /metrics`
 - Composite scoring v2 + category half-life table (`app/scoring/`)
@@ -16,6 +19,14 @@ Python FastAPI substrate for vector store, composite scoring, embedder client, a
 - Config: `IBEX_MEMORY_*`, `IBEX_HNSW_EF_SEARCH`, `IBEX_RANK_WEIGHT_*`, embedder URL/token
 - ADR: [ADR-0053](../../web/content/docs/adr/0053-vector-store-abstraction.mdx)
 - Image: `ghcr.io/<repo>/memory` via `.github/workflows/docker-publish.yml`
+
+### m3.C.1 (Track C — PII)
+
+- Write-pipeline Stage seam: validate → pii → embed (`app/pipeline/`)
+- Presidio two-tier detect/redact + quarantine (`app/pii/`, ADR-0054)
+- Defaults: `IBEX_MEMORY_PII_REDACT_MIN_CONFIDENCE=0.70`, `IBEX_MEMORY_PII_SPACY_MODEL=en_core_web_md`
+- Typed placeholders (`[EMAIL_ADDRESS]`, …); low-confidence findings → `status=quarantined`
+- Benches: [`benchmarks/memory/pii/`](../../benchmarks/memory/pii/)
 
 ## HNSW benches
 
