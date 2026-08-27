@@ -203,7 +203,7 @@ Modern AI agents suffer from critical limitations:
 
 ## 📅 Project Phases (redesigned roadmap)
 
-Phases **0–2 are complete**. The public source of truth for milestones is
+Phases **0–2.5 are complete**. **Phase 3** is in progress. The public source of truth for milestones is
 [`web/content/roadmap/`](../content/roadmap/) ([overview](https://ibexharness.com/roadmap/overview),
 [current state](https://ibexharness.com/roadmap/current-state)). Calendar “months” below are
 planning orientation only — not commitments.
@@ -214,8 +214,8 @@ planning orientation only — not commitments.
 | 1 | Core Platform | **Complete** | Migrations, auth, proxy platform, security gates |
 | 1.5 | Public Web Product | **Complete** | Unified site at ibexharness.com |
 | 2 | Single Provider E2E | **Complete** | Authenticated OpenAI-compatible chat through the proxy |
-| **2.5** | Provider Generalization & Foundation | **Next** | Anthropic + self-hosted adapters, tokenizer, response pipeline, embedder, schema pre-work, MCP skeleton |
-| **3** | Core Memory Substrate | Planned | Memory schema v2 (HNSW), write pipeline, read/ranking, hot cache |
+| **2.5** | Provider Generalization & Foundation | **Complete** | Anthropic + self-hosted adapters, tokenizer, response pipeline, embedder, schema pre-work, MCP skeleton, LGTM |
+| **3** | Core Memory Substrate | **In progress** | Memory schema v2 (HNSW), write pipeline, read/ranking, hot cache |
 | **3.5** | Extraction & Context Assembly | Planned | Celery extraction worker, context assembly on the proxy hot path, MCP memory tools |
 | **4** | Operator Platform & Multi-Provider | Planned | Management API, dashboard, multi-provider routing, hierarchical rate limiting |
 | **4.5** | Intelligence Layer | Planned | Behavioral fingerprinting, drift detection, directive regression testing |

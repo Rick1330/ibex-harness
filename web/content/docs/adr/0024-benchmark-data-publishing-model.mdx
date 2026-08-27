@@ -51,6 +51,8 @@ The docs site embeds benchmark JSON at build time (`docs/app/src/lib/benchmarks/
   **workflow_dispatch**, or path-triggered **push** to `main` (so published
   history is not Sunday-only).
 - Interim `open-benchmark-data-pr` removed; bot opens data PRs with App identity.
+- Proxy and Memory HNSW keep separate JSON artifacts/files, but publish onto **one**
+  shared branch/PR (`chore/bench-data-publish`) so reviewers merge a single data PR.
 - **Every PR** still runs collection and posts a benchmark comment; that path never publishes JSON to `main`.
 
 ### 5) `run_number` semantics
@@ -63,7 +65,8 @@ The docs site embeds benchmark JSON at build time (`docs/app/src/lib/benchmarks/
 - PR branches stay free of automated benchmark commits; CI runs once per human code push.
 - Docs preview on PRs depends on a successful Benchmarks workflow artifact (falls back to committed JSON if none yet).
 - Fork PRs continue to use artifact download only; no branch writes.
-- Post-merge benchmark data PRs are opened by ibexharness-benchmark-bot (configure per bot repo APP_SETUP.md).
+- Post-merge benchmark data PRs are opened by ibexharness-benchmark-bot (one shared PR
+  for pending suite files; configure per bot repo APP_SETUP.md).
 
 ## Alternatives considered
 

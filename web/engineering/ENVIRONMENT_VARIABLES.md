@@ -10,7 +10,7 @@ This document is the **single source of truth** for:
 - default values and safe development defaults,
 - and security/rotation requirements.
 
-**Current state:** Phases **0–2** are shipped. Variables marked **shipped** are wired today.
+**Current state:** Phases **0–2.5** are shipped; Phase **3** memory substrate is in progress. Variables marked **shipped** are wired today.
 Variables marked **planned (2.5+)**, **planned (3+)**, etc. are the redesigned-roadmap planning
 baseline — exact names may change during implementation when live code and an ADR say so. Keep this
 file aligned with [`services/README.md`](../../services/README.md),
@@ -397,6 +397,7 @@ Preferred starting models in the roadmap: **GPU/prod** `bge-m3` (1024-dim); **CP
 | `IBEX_MEMORY_DEDUP_EXACT_ENABLED` | No | `true` | Enable content-hash exact dedup on write path (ADR-0055) | |
 | `IBEX_MEMORY_NEAR_DUPLICATE_SIM_THRESHOLD` | No | `0.92` | Near-duplicate cosine floor; candidates keep `similarity >` threshold | |
 | `IBEX_MEMORY_NEAR_DUPLICATE_CANDIDATE_LIMIT` | No | `10` | Max near-dup candidates from `VectorStore.search` | |
+| `IBEX_MEMORY_CONFLICT_DETECTION_ENABLED` | No | `true` | Run temporal conflict stage after near-dup (ADR-0056) | |
 | `IBEX_MEMORY_VECTOR_SEARCH_MIN_SIMILARITY` | No | `0.70` | Default min similarity | |
 | `IBEX_MEMORY_HOT_CACHE_TTL_SECONDS` | No | `3600` | Cache TTL for hot memories | |
 | `IBEX_HNSW_EF_SEARCH` | No | `40` | Default per-query HNSW `ef_search` | Tune from recall/latency benches; applied via `SET LOCAL` |
@@ -638,7 +639,7 @@ Used by `.github/workflows/benchmark.yml` for cross-repo benchmark publishing an
 
 - **Every matching PR:**
   - **Benchmarks** and **Memory Benchmarks** upsert one shared sticky comment (`IBEX_BOT_COMMENT`) with Proxy and Memory HNSW sections. No data PR.
-- **Main / schedule collects:** notify jobs dispatch the bot; bot opens one data PR per suite (`benchmark-data.json` / `hnsw-benchmark-data.json`).
+- **Main / schedule collects:** notify jobs dispatch the bot; bot upserts **one** shared data PR on branch `chore/bench-data-publish` (proxy and/or HNSW files in the same PR).
 
 **Pinning:** Keep these three in lockstep after each green bot merge:
 

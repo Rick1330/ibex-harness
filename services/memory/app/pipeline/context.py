@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from uuid import UUID
 
+from app.conflict.types import ConflictDecision
 from app.pii.types import PiiFinding
 
 
@@ -23,5 +25,11 @@ class WriteContext:
     is_exact_duplicate: bool = False
     existing_memory_id: UUID | None = None
     near_duplicate_candidates: list[UUID] = field(default_factory=list)
+    # World-time validity for conflict stage (ADR-0047 / ADR-0056).
+    valid_from: datetime | None = None
+    valid_until: datetime | None = None
+    conflict_decisions: list[ConflictDecision] = field(default_factory=list)
+    conflict_llm_calls: int = 0
+    pending_supersede_targets: list[UUID] = field(default_factory=list)
     stop: bool = False
     error: str | None = None

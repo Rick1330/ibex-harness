@@ -271,8 +271,10 @@ Every service must publish these metrics:
 - `ibex_memory_search_duration_seconds_bucket{status}`
 - `ibex_memory_dedup_total{result}`
   - result: `exact_duplicate|near_duplicate|novel`
-- `ibex_memory_conflicts_total{type}`
-  - type: `contradiction|overlap|supersedes|specializes`
+- `ibex_memory_conflicts_total{outcome}`
+  - outcome: `supersedes|contradicts|near_duplicate|unrelated|no_conflict|escalate_pending`
+- `ibex_memory_conflict_llm_calls_total`
+  - classifier invocations during conflict detection (m3.C.3 / ADR-0056)
 - `ibex_memory_quarantined_total{reason}`
   - reason: `pii|injection_risk`
 - `ibex_memory_cache_hits_total`

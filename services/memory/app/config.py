@@ -149,6 +149,12 @@ class Settings(BaseSettings):
         description="Max near-duplicate candidates returned from VectorStore.search",
     )
 
+    # Conflict stage (m3.C.3 / ADR-0056).
+    conflict_detection_enabled: bool = Field(
+        default=True,
+        description="Run temporal conflict detection after near-dup",
+    )
+
     @field_validator("database_url", mode="before")
     @classmethod
     def _empty_dsn_to_none(cls, value: object) -> object:

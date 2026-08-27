@@ -36,6 +36,15 @@ workers (`services/worker/`).
 - Partial unique index: `000018_memories_content_hash_unique_active`
 - Metric: `ibex_memory_dedup_total{result=exact_duplicate|near_duplicate|novel}`
 
+### m3.C.3 (Track C — Temporal conflict)
+
+- Stage: `conflict` after near_dedup (`app/conflict/`, ADR-0056)
+- Interval-overlap-first: same subject + newer `valid_from` + non-overlapping →
+  `supersedes` (zero LLM); overlap / missing `valid_from` → pluggable classifier
+- Persist helpers: `apply_supersession`, `insert_relationship` (org-scoped)
+- Metrics: `ibex_memory_conflicts_total{outcome}`, `ibex_memory_conflict_llm_calls_total`
+- Toggle: `IBEX_MEMORY_CONFLICT_DETECTION_ENABLED` (default true)
+
 ## HNSW benches
 
 Live under top-level [`benchmarks/memory/`](../../benchmarks/memory/) (publish-aligned),

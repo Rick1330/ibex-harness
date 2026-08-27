@@ -1,7 +1,8 @@
-"""Memory write pipeline (Track C: validate → pii → exact_dedup → embed → near_dedup)."""
+"""Memory write pipeline (Track C: validate → pii → exact → embed → near → conflict)."""
 
 from app.pipeline.context import WriteContext
 from app.pipeline.stages import (
+    ConflictStage,
     EmbedStage,
     ExactDedupStage,
     NearDedupStage,
@@ -11,6 +12,7 @@ from app.pipeline.stages import (
 from app.pipeline.write import WritePipeline
 
 __all__ = [
+    "ConflictStage",
     "EmbedStage",
     "ExactDedupStage",
     "NearDedupStage",

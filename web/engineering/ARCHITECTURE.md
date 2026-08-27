@@ -5,18 +5,18 @@ Go interface placement (consumer ports vs shared package APIs):
 
 ## Roadmap alignment (read this first)
 
-Phases **0–2 are complete** (auth, proxy, shared Go packages, public site). The next work is
-**Phase 2.5** (provider generalization, tokenizer, response pipeline, embedder, schema pre-work,
-MCP skeleton), then the redesigned sequence:
+Phases **0–2.5 are complete** (auth, multi-provider proxy, tokenizer, response pipeline, embedder,
+MCP skeleton, local LGTM). **Phase 3** (memory substrate) is in progress — write pipeline Track C
+(PII → dedup → conflict), then classify / read path. Redesigned sequence:
 
-| Phase | Focus |
-| --- | --- |
-| 2.5 | Multi-provider foundation + embedder + tokenizer + MCP skeleton |
-| 3 | Memory substrate (schema v2 / HNSW, write + read pipelines) |
-| 3.5 | Extraction workers + context assembly on the proxy hot path + MCP tools |
-| 4 | Management API + dashboard + multi-provider resilience |
-| 4.5 | Fingerprinting, drift, directive regression |
-| 5 | Hybrid retrieval + graph lineage at query time |
+| Phase | Focus | Status |
+| --- | --- | --- |
+| 2.5 | Multi-provider foundation + embedder + tokenizer + MCP skeleton | **Complete** |
+| 3 | Memory substrate (schema v2 / HNSW, write + read pipelines) | **In progress** |
+| 3.5 | Extraction workers + context assembly on the proxy hot path + MCP tools | Planned |
+| 4 | Management API + dashboard + multi-provider resilience | Planned |
+| 4.5 | Fingerprinting, drift, directive regression | Planned |
+| 5 | Hybrid retrieval + graph lineage at query time | Planned |
 
 Public roadmap: [`web/content/roadmap/`](../content/roadmap/). Service/package inventories:
 [`services/README.md`](../../services/README.md), [`packages/README.md`](../../packages/README.md).

@@ -74,3 +74,10 @@ Identical redacted payloads dedup; raw PII never enters the hash after redaction
 - Conflict classification / merge remains out of scope (3.C.3).
 - Operators can disable exact dedup via `IBEX_MEMORY_DEDUP_EXACT_ENABLED=false`
   (hash still computed for later persist).
+
+## Addendum (2026-08-27)
+
+Unique-violation → bump-retrieval → documented `409 DUPLICATE_CONTENT` mapping for
+`POST /v1/memories` is owned by [ADR-0057](/docs/adr/0057-memory-write-orchestration)
+/ milestone [3.C.5](/roadmap/phase-3-memory-engine/milestones/3.c.5-write-path-persistence-orchestration)
+([#620](https://github.com/Rick1330/ibex-harness/issues/620)).

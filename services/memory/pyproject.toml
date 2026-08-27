@@ -61,6 +61,9 @@ omit = [
   "app/pii/engine.py",
 ]
 
+[tool.coverage.report]
+fail_under = 95
+
 
 [tool.uv]
 # Semgrep dependency-cooldown: refuse packages published within the last 7 days.
