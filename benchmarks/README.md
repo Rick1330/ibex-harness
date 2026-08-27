@@ -90,7 +90,8 @@ Stack helper seeds the DB and exports `IBEX_DEV_TOKEN` / `IBEX_DEV_AGENT_ID`; `I
 | --- | --- |
 | `pull_request` | 10K (smoke) |
 | `push` to `main` | 10K + 100K |
-| `schedule` (Sunday) / `workflow_dispatch` | 10K + 100K + 1M |
+| `schedule` (Sunday) | 10K + 100K + 1M (full) |
+| `workflow_dispatch` | defaults to full (10K + 100K + 1M); override with `bench_profile` and/or `sizes` |
 
 ## Planned expansions (do not invent paths early)
 

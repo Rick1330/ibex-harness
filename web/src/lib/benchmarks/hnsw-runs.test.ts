@@ -59,6 +59,8 @@ describe("hnsw-runs helpers", () => {
   it("parses only canonical run-number path segments", () => {
     expect(parseHnswRunNumber("0")).toBe(0);
     expect(parseHnswRunNumber("12")).toBe(12);
+    expect(parseHnswRunNumber(String(Number.MAX_SAFE_INTEGER))).toBe(Number.MAX_SAFE_INTEGER);
+    expect(parseHnswRunNumber(String(Number.MAX_SAFE_INTEGER + 1))).toBeNull();
     expect(parseHnswRunNumber("12x")).toBeNull();
     expect(parseHnswRunNumber("12.5")).toBeNull();
     expect(parseHnswRunNumber("012")).toBeNull();
