@@ -24,6 +24,7 @@ LOG_DIR="${IBEX_E2E_PHASE25_LOG_DIR:-/tmp/ibex-e2e-phase25}"
 CHAT_BODY='{"model":"gpt-4o","messages":[{"role":"user","content":"phase25 e2e"}]}'
 # OTel gRPC WithEndpoint expects host:port (no scheme). Empty disables export.
 OTEL_ENDPOINT="${OTEL_EXPORTER_OTLP_ENDPOINT:-}"
+PORT_FROM_URL_SED='s#.*:([0-9]+).*#\1#'
 
 PIDS=()
 BODY_FILE=""
@@ -115,10 +116,10 @@ start_stack() {
   fi
 
   local proxy_port auth_http_port embedder_port mcp_port
-  proxy_port="$(echo "$PROXY_ADDR" | sed -E 's#.*:([0-9]+).*#\1#')"
-  auth_http_port="$(echo "$AUTH_HTTP" | sed -E 's#.*:([0-9]+).*#\1#')"
-  embedder_port="$(echo "$EMBEDDER_ADDR" | sed -E 's#.*:([0-9]+).*#\1#')"
-  mcp_port="$(echo "$MCP_ADDR" | sed -E 's#.*:([0-9]+).*#\1#')"
+  proxy_port="$(echo "$PROXY_ADDR" | sed -E "$PORT_FROM_URL_SED")"
+  auth_http_port="$(echo "$AUTH_HTTP" | sed -E "$PORT_FROM_URL_SED")"
+  embedder_port="$(echo "$EMBEDDER_ADDR" | sed -E "$PORT_FROM_URL_SED")"
+  mcp_port="$(echo "$MCP_ADDR" | sed -E "$PORT_FROM_URL_SED")"
 
   echo "e2e-phase25: starting auth on :${auth_http_port}/:${AUTH_GRPC_PORT}..."
   IBEX_PORT="$auth_http_port" IBEX_GRPC_PORT="$AUTH_GRPC_PORT" OTEL_SERVICE_NAME=ibex-auth \

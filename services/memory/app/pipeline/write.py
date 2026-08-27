@@ -1,4 +1,4 @@
-"""Ordered write pipeline — validate → pii → embed (later stages append here)."""
+"""Ordered write pipeline — validate → pii → exact_dedup → embed → near_dedup."""
 
 from __future__ import annotations
 

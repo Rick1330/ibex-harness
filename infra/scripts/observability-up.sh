@@ -20,8 +20,10 @@ source "$ENV_FILE"
 set +a
 
 require_tool() {
-  if ! command -v "$1" >/dev/null 2>&1; then
-    echo "$2"
+  local tool="$1"
+  local message="$2"
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    echo "$message"
     exit 1
   fi
 }

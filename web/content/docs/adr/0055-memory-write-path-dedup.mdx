@@ -1,0 +1,76 @@
+---
+title: "ADR-0055: Memory write-path exact and near-duplicate dedup"
+description: "Architecture decision record 0055 — SHA-256 content_hash exact dedup before embed; near-dup candidates via VectorStore.search with cosine > 0.92; partial unique index on active rows."
+adrId: "0055"
+status: "Accepted"
+date: "2026-08-27"
+authors: "IBEX Harness team"
+---
+
+# ADR-0055: Memory write-path exact and near-duplicate dedup
+
+- **Status:** Accepted
+- **Date:** 2026-08-27
+- **Authors:** IBEX Harness team
+- **Milestone:** [3.C.2 Content and near-duplicate detection](/roadmap/phase-3-memory-engine/milestones/3.c.2-content-near-duplicate-detection)
+
+## Context
+
+Track C write order is validate → PII → **exact dedup** → embed → **near-dup** →
+conflict (3.C.3). Milestone 3.C.1 shipped the Stage seam and PII. Exact and near
+checks must reuse Track B’s `VectorStore` (no bespoke ANN SQL), stay org/agent-scoped,
+and leave conflict/merge policy to 3.C.3.
+
+## Options considered
+
+### 1) Exact-hash uniqueness
+
+1. Application-only lookup (no DB unique) — race windows on concurrent writes.
+2. Full unique on `(org_id, agent_id, content_hash)` — blocks soft-deleted / superseded
+   rows from ever reusing a hash.
+3. **Partial unique index** on `(org_id, agent_id, content_hash)` where
+   `status = 'active' AND deleted_at IS NULL`.
+
+Decision: **(3)**. Matches “one live copy” while allowing 3.C.3 supersession / merge
+to free the hash for a replacement row.
+
+### 2) Near-duplicate API surface
+
+1. Add `VectorStore.find_similar` alias.
+2. **Call existing `VectorStore.search` with `min_similarity` = threshold.**
+
+Decision: **(2)**. Avoids ABC churn; Track D may still wrap `search` later.
+
+### 3) Threshold semantics
+
+Milestone text: cosine **> 0.92**. `search` returns `similarity >= min_similarity`.
+
+Decision: request `min_similarity = threshold`, then keep candidates with
+`similarity > threshold` (strict). Default
+`IBEX_MEMORY_NEAR_DUPLICATE_SIM_THRESHOLD=0.92`.
+
+### 4) Hash input
+
+Hash **post-PII** `ctx.content` (whitespace-collapsed, lowercased, SHA-256 hex).
+Identical redacted payloads dedup; raw PII never enters the hash after redaction.
+
+## Decision
+
+1. Pipeline stages: `ExactDedupStage` before `EmbedStage`; `NearDedupStage` after.
+2. Exact hit: no insert path, bump `retrieval_count` (+ `last_retrieved_at`), set
+   `ctx.stop`, skip embed/near-dup; metric `ibex_memory_dedup_total{result=exact_duplicate}`.
+3. Near-dup: attach `near_duplicate_candidates` for 3.C.3; metrics
+   `near_duplicate` / `novel`.
+4. Migration `000018_memories_content_hash_unique_active` adds the partial unique
+   index via `CREATE UNIQUE INDEX CONCURRENTLY` (same golang-migrate pattern as
+   `000011`).
+5. `agent_id` required for both dedup stages.
+6. Exact hit always invokes `bump_retrieval` (mandatory when a duplicate is found).
+
+## Consequences
+
+- Concurrent exact writes are serialized by the unique index (second insert fails;
+  write API in a later milestone must map that to the bump path).
+- Conflict classification / merge remains out of scope (3.C.3).
+- Operators can disable exact dedup via `IBEX_MEMORY_DEDUP_EXACT_ENABLED=false`
+  (hash still computed for later persist).

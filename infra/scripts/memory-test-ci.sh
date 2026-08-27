@@ -18,4 +18,4 @@ bash "$ROOT/infra/scripts/memory-uv-sync.sh"
   --cov=app \
   --cov-report=xml:coverage-memory.xml \
   --cov-report=term-missing \
-  --cov-fail-under=90
+  --cov-fail-under=95

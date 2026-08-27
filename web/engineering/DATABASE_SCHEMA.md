@@ -591,6 +591,11 @@ CREATE INDEX idx_memories_agent_active
 CREATE INDEX idx_memories_content_hash
     ON ibex_core.memories(org_id, agent_id, content_hash);
 
+-- Exact dedup (m3.C.2 / ADR-0055): one live active row per hash per agent.
+CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_memories_org_agent_content_hash_active
+    ON ibex_core.memories (org_id, agent_id, content_hash)
+    WHERE status = 'active' AND deleted_at IS NULL;
+
 CREATE INDEX idx_memories_session_id
     ON ibex_core.memories(org_id, session_id)
     WHERE session_id IS NOT NULL;
@@ -2116,12 +2121,14 @@ QUERY PATTERN → INDEX → REASONING
   → Partial index (status='active') keeps it small and fast
 
 "Find memory by content hash (dedup check)":
-  → idx_memories_content_hash (org_id, agent_id, content_hash)
-  → Exact lookup, should be near-instant
+  → idx_memories_org_agent_content_hash_active (org_id, agent_id, content_hash)
+    WHERE status='active' AND deleted_at IS NULL
+  → Exact lookup / uniqueness for live rows (ADR-0055)
+  → Non-unique idx_memories_content_hash remains for historical scans
 
 "Vector similarity search for top-K memories":
-  → idx_memories_embedding USING ivfflat
-  → ANN search, 95% accuracy vs exact, 100x faster at scale
+  → idx_memories_embedding_hnsw (cosine ops; active + not deleted)
+  → ANN search via VectorStore.search; near-dup uses min_similarity=0.92
 
 "Full-text search across memory content":
   → idx_memories_search_vector USING gin

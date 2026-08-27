@@ -22,32 +22,42 @@ resources:
     requests:
       cpu: 50m
       memory: 128Mi
+      ephemeral-storage: 256Mi
     limits:
       memory: 512Mi
+      ephemeral-storage: 1Gi
   grafana:
     requests:
       cpu: 50m
       memory: 128Mi
+      ephemeral-storage: 128Mi
     limits:
       memory: 256Mi
+      ephemeral-storage: 512Mi
   tempo:
     requests:
       cpu: 50m
       memory: 128Mi
+      ephemeral-storage: 256Mi
     limits:
       memory: 512Mi
+      ephemeral-storage: 1Gi
   loki:
     requests:
       cpu: 50m
       memory: 128Mi
+      ephemeral-storage: 256Mi
     limits:
       memory: 512Mi
+      ephemeral-storage: 1Gi
   otelCollector:
     requests:
       cpu: 50m
       memory: 128Mi
+      ephemeral-storage: 128Mi
     limits:
       memory: 384Mi
+      ephemeral-storage: 512Mi
 
 # When apps are later charted, scrape via ServiceMonitor / static kube DNS.
 # For kind/minikube with host-run apps, override scrapeTargets to Node IPs.

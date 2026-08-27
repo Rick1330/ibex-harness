@@ -1,7 +1,7 @@
 ---
 title: "Current State"
-description: "Phases 0–2.5 complete. Phase 3 Tracks A–B closed (schema + VectorStore); Track C write pipeline started with 3.C.1 PII stage."
-summary: "Phases 0–2.5 complete. Phase 3 Tracks A–B closed (schema + VectorStore); Track C write pipeline started with 3.C.1 PII stage."
+description: "Phases 0–2.5 complete. Phase 3 Tracks A–B and 3.C.1 closed; Track C continues with 3.C.2 dedup."
+summary: "Phases 0–2.5 complete. Phase 3 Tracks A–B and 3.C.1 closed; Track C continues with 3.C.2 dedup."
 ---
 
 # Current State
@@ -13,9 +13,9 @@ summary: "Phases 0–2.5 complete. Phase 3 Tracks A–B closed (schema + VectorS
 </Callout>
 
 <Callout type="info" title="Phase 3 in progress">
-  Track A (**3.1.1** / ADR-0052) and Track B (**3.2.1** / ADR-0053) are merged.
-  Track C (**3.C.1** PII detection/redaction, ADR-0054) is in progress on the write
-  pipeline — not yet merged to `main`.
+  Track A (**3.1.1** / ADR-0052), Track B (**3.2.1** / ADR-0053), and Track C
+  **3.C.1** (PII / ADR-0054) are merged. **3.C.2** exact + near-duplicate dedup
+  (ADR-0055) is in progress on the write pipeline — not yet merged to `main`.
 </Callout>
 
 ## Snapshot
@@ -32,9 +32,9 @@ summary: "Phases 0–2.5 complete. Phase 3 Tracks A–B closed (schema + VectorS
 <StatusBadge status="new" /> **Phase 5 — Advanced Retrieval & Graph Memory:** planned
 
 **Last updated:** 2026-08-27  
-**Branch:** `feature/m3-c-1-pii-detection`  
-**Current focus:** [3.C.1 PII detection and redaction](/roadmap/phase-3-memory-engine/milestones/3.c.1-pii-detection-redaction)  
-**Completed (recent):** 3.2.1 VectorStore + HNSW benches + ADR-0053 (#597/#599/#600); 3.1.1 schema expand (#595)
+**Branch:** `feature/m3-c-2-dedup`  
+**Current focus:** [3.C.2 Content and near-duplicate detection](/roadmap/phase-3-memory-engine/milestones/3.c.2-content-near-duplicate-detection)  
+**Completed (recent):** 3.C.1 PII Presidio stage + ADR-0054 (#604); 3.2.1 VectorStore (#597/#599/#600); 3.1.1 schema expand (#595)
 
 <QuickLinks
   links={[
@@ -44,42 +44,43 @@ summary: "Phases 0–2.5 complete. Phase 3 Tracks A–B closed (schema + VectorS
       description: "Live phase cards and milestone progress.",
     },
     {
+      title: "3.C.2 Dedup",
+      href: "/roadmap/phase-3-memory-engine/milestones/3.c.2-content-near-duplicate-detection",
+      description: "Exact hash + near-dup via VectorStore (ADR-0055).",
+    },
+    {
       title: "3.C.1 PII detection",
       href: "/roadmap/phase-3-memory-engine/milestones/3.c.1-pii-detection-redaction",
       description: "Presidio two-tier PII + quarantine (ADR-0054).",
     },
     {
-      title: "3.2.1 VectorStore",
-      href: "/roadmap/phase-3-memory-engine/milestones/3.2.1-vector-store-interface-pgvector-hnsw",
-      description: "PgVectorStore, scoring v2, embed client.",
-    },
-    {
       title: "Architecture decisions",
       href: "/docs/adr",
-      description: "Accepted ADRs through ADR-0054.",
+      description: "Accepted ADRs through ADR-0055.",
     },
   ]}
 />
 
 ## Shipped Since Last Update
 
+- **Phase 3 Track C 3.C.1:** Presidio PII detect/redact + write Stage seam (ADR-0054)
 - **Phase 3 Track B complete:** VectorStore ABC + PgVectorStore, scoring v2, embedder HTTP client,
   HNSW benches/publish, GHCR `memory` image (ADR-0053)
 - **Phase 3 Track A complete:** `000017_memory_schema_v2_expand` — HNSW, quality columns (ADR-0052)
-- Phase 2.5 exit gate (G7 / ADR-0051), MCP skeleton (ADR-0050), temporal/labels/relationships foundation
 
 ## What Ships Today
 
 <Callout type="note" title="Current capability boundary">
   **Shipped:** Auth, Proxy (mock/live multi-provider), embedder, MCP skeleton, observability,
   memories schema through HNSW expand, memory service substrate (VectorStore + scoring + embed
-  client), shared packages, public site.
-  **In progress (not yet on main):** 3.C.1 PII write stage (Presidio / pipeline seam).
-  **Not yet:** full write API (dedup/conflict/classify), semantic search read path / hot cache
-  (Track D), context assembly (3.5), management API/dashboard (Phase 4).
+  client + PII write stage), shared packages, public site.
+  **In progress (not yet on main):** 3.C.2 exact + near-duplicate write stages (ADR-0055).
+  **Not yet:** conflict resolution (3.C.3), classify (3.C.4), full write HTTP API, semantic
+  search read path / hot cache (Track D), context assembly (3.5), management API/dashboard
+  (Phase 4).
 </Callout>
 
 ## Next
 
-After 3.C.1 merges: **3.C.2** near-duplicate detection, then 3.C.3 / 3.C.4, then Track D read path.
+After 3.C.2 merges: **3.C.3** temporal conflict detection, then 3.C.4, then Track D read path.
 See [Phase 3](/roadmap/phase-3-memory-engine).

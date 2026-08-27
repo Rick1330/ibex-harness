@@ -26,19 +26,18 @@ def test_score_default_weights_sum() -> None:
 
 
 def test_score_rejects_bad_weights() -> None:
+    components = ScoreComponents(
+        relevance=1.0,
+        recency=0.0,
+        usefulness=0.0,
+        confidence=0.0,
+        access_frequency=0.0,
+    )
+    weights = RankWeights(
+        relevance=0.5, recency=0.5, usefulness=0.5, confidence=0, frequency=0
+    )
     with pytest.raises(ValueError, match="sum to 1.0"):
-        score(
-            ScoreComponents(
-                relevance=1.0,
-                recency=0.0,
-                usefulness=0.0,
-                confidence=0.0,
-                access_frequency=0.0,
-            ),
-            RankWeights(
-                relevance=0.5, recency=0.5, usefulness=0.5, confidence=0, frequency=0
-            ),
-        )
+        score(components, weights)
 
 
 @pytest.mark.parametrize(
@@ -74,14 +73,15 @@ def test_score_rejects_invalid_components(
 
 
 def test_rank_weights_reject_negative() -> None:
+    weights = RankWeights(
+        relevance=-0.1,
+        recency=0.4,
+        usefulness=0.3,
+        confidence=0.2,
+        frequency=0.2,
+    )
     with pytest.raises(ValueError, match="relevance must be a finite value"):
-        RankWeights(
-            relevance=-0.1,
-            recency=0.4,
-            usefulness=0.3,
-            confidence=0.2,
-            frequency=0.2,
-        ).validate()
+        weights.validate()
 
 
 @pytest.mark.parametrize(
@@ -92,17 +92,16 @@ def test_rank_weights_reject_negative() -> None:
     ],
 )
 def test_composite_rejects_invalid_categories(categories: object, match: str) -> None:
+    inputs = CompositeInputs(
+        relevance=0.9,
+        age_days=1.0,
+        categories=categories,  # type: ignore[arg-type]
+        usefulness=0.5,
+        confidence=0.8,
+        access_frequency=0.1,
+    )
     with pytest.raises(TypeError, match=match):
-        composite_score(
-            CompositeInputs(
-                relevance=0.9,
-                age_days=1.0,
-                categories=categories,  # type: ignore[arg-type]
-                usefulness=0.5,
-                confidence=0.8,
-                access_frequency=0.1,
-            )
-        )
+        composite_score(inputs)
 
 
 def test_old_factual_outranks_fresh_episodic_at_equal_relevance() -> None:

@@ -52,6 +52,7 @@
     "0051-local-lgtm-observability-stack",
     "0052-memory-schema-v2-expand",
     "0053-vector-store-abstraction",
-    "0054-memory-pii-presidio-in-process"
+    "0054-memory-pii-presidio-in-process",
+    "0055-memory-write-path-dedup"
   ]
 }

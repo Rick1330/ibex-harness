@@ -2,7 +2,7 @@
 title: "3.C.2 Content and near-duplicate detection"
 description: "Steps 3 and 5 of the write pipeline: exact dedup via SHA-256 content hash and near-duplicate detection via cosine similarity threshold, routed through the VectorStore interface from Track B."
 summary: "Steps 3 and 5 of the write pipeline: exact dedup via SHA-256 content hash and near-duplicate detection via cosine similarity threshold, routed through the VectorStore interface from Track B."
-status: "planned"
+status: "in_progress"
 milestoneId: "3.C.2"
 track: "C"
 trackTitle: "Write Pipeline"
@@ -15,10 +15,11 @@ fullTitle: "Milestone 3.C.2 — Content and near-duplicate detection"
 
 # Milestone 3.C.2 — Content and near-duplicate detection
 
-**Status:** Planned  
+**Status:** In progress (`feature/m3-c-2-dedup`)  
 **Goal:** [Track C — Write Pipeline](/roadmap/phase-3-memory-engine/tracks#track-c--write-pipeline)  
 **Phase:** 3 — Core Memory Substrate  
-**Estimated effort:** 2 days
+**Estimated effort:** 2 days  
+**ADR:** [ADR-0055](/docs/adr/0055-memory-write-path-dedup)
 
 ---
 
@@ -101,10 +102,18 @@ class DedupResult:
 
 Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
 
-- [ ] Identical `content_hash` → no insert, `retrieval_count` incremented on existing row, no LLM call fired
-- [ ] Near-duplicate candidates (cosine > 0.92) fetched via `VectorStore.find_similar` interface from Track B — no duplicate query logic
-- [ ] Near-dup detection is org/agent-scoped (no cross-tenant leakage in candidate search)
-- [ ] Empty corpus case handled correctly (new agent, no prior memories)
+- [x] Identical `content_hash` → no insert path, `retrieval_count` incremented on existing row, no LLM call fired
+- [x] Near-duplicate candidates (cosine > 0.92) fetched via `VectorStore.search` (Track B) — no duplicate ANN SQL
+- [x] Near-dup detection is org/agent-scoped (no cross-tenant leakage in candidate search)
+- [x] Empty corpus case handled correctly (new agent, no prior memories)
+- [x] Partial unique index on active `(org_id, agent_id, content_hash)` (`000018`)
+
+<Callout type="info" title="Planning baseline (sketch deviations)">
+  Shipped vs sketch: use live `VectorStore.search` (no `find_similar` ABC method);
+  candidates keep `similarity > threshold` after a `>= threshold` store query; hash is
+  computed on **post-PII** content; pipeline order validate → pii → exact_dedup → embed →
+  near_dedup (ADR-0055).
+</Callout>
 
 ---
 

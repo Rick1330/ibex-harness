@@ -394,8 +394,9 @@ Preferred starting models in the roadmap: **GPU/prod** `bge-m3` (1024-dim); **CP
 | `IBEX_MEMORY_QUARANTINE_INJECTION_THRESHOLD` | No | `0.70` | Quarantine if injection risk > threshold | Prompt-injection only — not PII |
 | `IBEX_MEMORY_PII_REDACT_MIN_CONFIDENCE` | No | `0.70` | PII findings at/above score are redacted; any below → `quarantined` | ADR-0054; distinct from injection threshold |
 | `IBEX_MEMORY_PII_SPACY_MODEL` | No | `en_core_web_md` | spaCy CNN model for Presidio NER | `en_core_web_trf` forbidden (Semgrep) |
-| `IBEX_MEMORY_DEDUP_EXACT_ENABLED` | No | `true` | Enable content-hash dedup | |
-| `IBEX_MEMORY_NEAR_DUPLICATE_SIM_THRESHOLD` | No | `0.92` | Near-duplicate similarity threshold | |
+| `IBEX_MEMORY_DEDUP_EXACT_ENABLED` | No | `true` | Enable content-hash exact dedup on write path (ADR-0055) | |
+| `IBEX_MEMORY_NEAR_DUPLICATE_SIM_THRESHOLD` | No | `0.92` | Near-duplicate cosine floor; candidates keep `similarity >` threshold | |
+| `IBEX_MEMORY_NEAR_DUPLICATE_CANDIDATE_LIMIT` | No | `10` | Max near-dup candidates from `VectorStore.search` | |
 | `IBEX_MEMORY_VECTOR_SEARCH_MIN_SIMILARITY` | No | `0.70` | Default min similarity | |
 | `IBEX_MEMORY_HOT_CACHE_TTL_SECONDS` | No | `3600` | Cache TTL for hot memories | |
 | `IBEX_HNSW_EF_SEARCH` | No | `40` | Default per-query HNSW `ef_search` | Tune from recall/latency benches; applied via `SET LOCAL` |
