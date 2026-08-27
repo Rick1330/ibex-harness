@@ -19,5 +19,9 @@ class WriteContext:
     findings: list[PiiFinding] = field(default_factory=list)
     quarantine_reason: str | None = None
     embedding: list[float] | None = None
+    content_hash: str | None = None
+    is_exact_duplicate: bool = False
+    existing_memory_id: UUID | None = None
+    near_duplicate_candidates: list[UUID] = field(default_factory=list)
     stop: bool = False
     error: str | None = None

@@ -28,6 +28,14 @@ workers (`services/worker/`).
 - Typed placeholders (`[EMAIL_ADDRESS]`, …); low-confidence findings → `status=quarantined`
 - Benches: [`benchmarks/memory/pii/`](../../benchmarks/memory/pii/)
 
+### m3.C.2 (Track C — Dedup)
+
+- Stages: exact_dedup → embed → near_dedup (`app/dedup/`, ADR-0055)
+- Exact: SHA-256 of normalized post-PII content; bump `retrieval_count` on hit; skip embed
+- Near: `VectorStore.search` with `IBEX_MEMORY_NEAR_DUPLICATE_SIM_THRESHOLD` (default 0.92, strict `>`)
+- Partial unique index: `000018_memories_content_hash_unique_active`
+- Metric: `ibex_memory_dedup_total{result=exact_duplicate|near_duplicate|novel}`
+
 ## HNSW benches
 
 Live under top-level [`benchmarks/memory/`](../../benchmarks/memory/) (publish-aligned),

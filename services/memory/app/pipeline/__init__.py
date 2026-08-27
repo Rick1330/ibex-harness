@@ -1,11 +1,19 @@
-"""Memory write pipeline (m3.C.1 seam; extended by later Track C milestones)."""
+"""Memory write pipeline (Track C: validate → pii → exact_dedup → embed → near_dedup)."""
 
 from app.pipeline.context import WriteContext
-from app.pipeline.stages import EmbedStage, PiiStage, ValidateStage
+from app.pipeline.stages import (
+    EmbedStage,
+    ExactDedupStage,
+    NearDedupStage,
+    PiiStage,
+    ValidateStage,
+)
 from app.pipeline.write import WritePipeline
 
 __all__ = [
     "EmbedStage",
+    "ExactDedupStage",
+    "NearDedupStage",
     "PiiStage",
     "ValidateStage",
     "WriteContext",

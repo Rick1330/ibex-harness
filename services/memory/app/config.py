@@ -131,6 +131,24 @@ class Settings(BaseSettings):
         description="Reject writes whose content exceeds this length",
     )
 
+    # Dedup stages (m3.C.2 / ADR-0055) — exact hash before embed; near-dup after.
+    dedup_exact_enabled: bool = Field(
+        default=True,
+        description="Enable SHA-256 content-hash exact dedup on the write path",
+    )
+    near_duplicate_sim_threshold: float = Field(
+        default=0.92,
+        ge=0.0,
+        le=1.0,
+        description="Cosine similarity floor for near-duplicate candidates (strict >)",
+    )
+    near_duplicate_candidate_limit: int = Field(
+        default=10,
+        ge=1,
+        le=100,
+        description="Max near-duplicate candidates returned from VectorStore.search",
+    )
+
     @field_validator("database_url", mode="before")
     @classmethod
     def _empty_dsn_to_none(cls, value: object) -> object:
