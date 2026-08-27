@@ -19,7 +19,7 @@ import { parseTimeRange } from "@/lib/benchmarks/plot";
 import { useHnswBenchmarkData } from "@/hooks/use-hnsw-benchmark-data";
 
 function MemoryLatencyContent() {
-  const { runs, latest, isLoading, isError, errorMessage } = useHnswBenchmarkData();
+  const { runs, latest, isLoading, isError, errorMessage, refresh } = useHnswBenchmarkData();
   const searchParams = useSearchParams();
   const range = parseTimeRange(searchParams.get("range"));
   const filtered = filterHnswRunsByRange(runs, range);
@@ -31,7 +31,12 @@ function MemoryLatencyContent() {
 
   if (isError) {
     return (
-      <BenchmarkErrorState message={errorMessage ?? "Failed to load HNSW benchmark data"} />
+      <BenchmarkErrorState
+        message={errorMessage ?? "Failed to load HNSW benchmark data"}
+        onRetry={() => {
+          void refresh();
+        }}
+      />
     );
   }
 

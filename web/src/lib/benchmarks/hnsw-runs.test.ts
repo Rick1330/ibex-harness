@@ -4,6 +4,7 @@ import { buildHnswCompareMetricRows } from "@/lib/benchmarks/hnsw-compare-metric
 import {
   corpusSizeLabel,
   filterHnswRunsByRange,
+  findHnswRunByNumber,
   findHnswRunBySha,
   formatRecallPct,
 } from "@/lib/benchmarks/hnsw-runs";
@@ -45,6 +46,13 @@ describe("hnsw-runs helpers", () => {
     const runs = [sampleRun()];
     expect(findHnswRunBySha(runs, "abcdef0")?.run_number).toBe(1);
     expect(findHnswRunBySha(runs, "abcdef0123456789")?.short_sha).toBe("abcdef0");
+  });
+
+  it("finds runs by run_number when SHAs collide", () => {
+    const first = sampleRun({ run_number: 1 });
+    const second = sampleRun({ run_number: 2, timestamp: "2026-08-27T12:00:00.000Z" });
+    expect(findHnswRunByNumber([first, second], 2)?.run_number).toBe(2);
+    expect(findHnswRunByNumber([first, second], 9)).toBeNull();
   });
 
   it("filters by time range", () => {

@@ -38,7 +38,7 @@ Each suite keeps its own JSON file and bot modules. Shared seams:
 | Artifact | `benchmark-data` | `hnsw-benchmark-data` | `<suite>-benchmark-data` |
 | Public path | `web/public/benchmarks/benchmark-data.json` | `…/hnsw-benchmark-data.json` | under same dir |
 | Dispatch | `benchmark_main_complete` | `memory_benchmark_main_complete` | new event type |
-| PR comment marker | `IBEX_BOT_COMMENT` | `IBEX_BOT_COMMENT_HNSW` | new marker |
+| PR comment | shared sticky `IBEX_BOT_COMMENT` (Proxy + Memory sections) | same | same marker, new section |
 | Bot pin helper | `.github/actions/setup-benchmark-bot` | same | same |
 | Site registry | `web/src/lib/benchmarks/suites.ts` | same | add suite + nav pages |
 

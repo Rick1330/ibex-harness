@@ -8,17 +8,19 @@ import { KpiCard } from "@/components/benchmarks/kpi-card";
 import { ChartSkeleton } from "@/components/benchmarks/skeleton";
 import {
   corpusSizeLabel,
-  findHnswRunBySha,
+  findHnswRunByNumber,
   formatRecallPct,
 } from "@/lib/benchmarks/hnsw-runs";
 import { useHnswBenchmarkData } from "@/hooks/use-hnsw-benchmark-data";
 
 type BenchmarkMemoryRunDetailPanelProps = Readonly<{
-  sha: string;
+  runNumber: string;
 }>;
 
-export function BenchmarkMemoryRunDetailPanel({ sha }: BenchmarkMemoryRunDetailPanelProps) {
-  const { runs, isLoading, isError, errorMessage } = useHnswBenchmarkData();
+export function BenchmarkMemoryRunDetailPanel({
+  runNumber,
+}: BenchmarkMemoryRunDetailPanelProps) {
+  const { runs, isLoading, isError, errorMessage, refresh } = useHnswBenchmarkData();
 
   if (isLoading) {
     return <ChartSkeleton className="h-[200px]" />;
@@ -26,11 +28,17 @@ export function BenchmarkMemoryRunDetailPanel({ sha }: BenchmarkMemoryRunDetailP
 
   if (isError) {
     return (
-      <BenchmarkErrorState message={errorMessage ?? "Failed to load HNSW benchmark data"} />
+      <BenchmarkErrorState
+        message={errorMessage ?? "Failed to load HNSW benchmark data"}
+        onRetry={() => {
+          void refresh();
+        }}
+      />
     );
   }
 
-  const run = findHnswRunBySha(runs, sha);
+  const parsed = Number.parseInt(runNumber, 10);
+  const run = findHnswRunByNumber(runs, parsed);
   if (!run) {
     return <BenchmarkEmptyState />;
   }
@@ -57,7 +65,7 @@ export function BenchmarkMemoryRunDetailPanel({ sha }: BenchmarkMemoryRunDetailP
           value={formatRecallPct(run.mean_recall_at_10)}
           higherIsBetter
         />
-        <KpiCard label="Status" value={(run.status ?? "pass").toUpperCase()} />
+        <KpiCard label="Status" value={(run.status ?? "unknown").toUpperCase()} />
       </div>
 
       <section className="space-y-3">

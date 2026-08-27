@@ -147,10 +147,12 @@ def validate_payload(payload: dict[str, Any]) -> None:
     validate_runs_list(payload.get("runs"))
 
 
-def validate_against_json_schema(payload: dict[str, Any]) -> None:
+def validate_against_json_schema(payload: dict[str, Any], *, strict: bool = False) -> None:
     try:
         import jsonschema  # type: ignore[import-untyped]
     except ImportError:
+        if strict:
+            fail("jsonschema is required in strict mode")
         print("validate_published_hnsw: jsonschema not installed; skipping Draft schema check")
         return
     if not _SCHEMA_PATH.is_file():
@@ -162,16 +164,30 @@ def validate_against_json_schema(payload: dict[str, Any]) -> None:
         fail(f"jsonschema: {exc.message}")
 
 
+def parse_args(argv: list[str]) -> tuple[str, bool]:
+    strict = False
+    path: str | None = None
+    for arg in argv:
+        if arg == "--strict":
+            strict = True
+            continue
+        if path is not None:
+            fail("usage: validate_published_hnsw.py [--strict] <path-to-hnsw-benchmark-data.json>")
+        path = arg
+    if path is None:
+        fail("usage: validate_published_hnsw.py [--strict] <path-to-hnsw-benchmark-data.json>")
+    return path, strict
+
+
 def main(argv: list[str] | None = None) -> None:
     args = argv if argv is not None else sys.argv[1:]
-    if len(args) != 1:
-        fail("usage: validate_published_hnsw.py <path-to-hnsw-benchmark-data.json>")
-    path = resolve_hnsw_data_path(args[0])
+    raw_path, strict = parse_args(args)
+    path = resolve_hnsw_data_path(raw_path)
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         fail("root must be an object")
     validate_payload(payload)
-    validate_against_json_schema(payload)
+    validate_against_json_schema(payload, strict=strict)
     print(f"ok: {path} ({len(payload.get('runs', []))} runs)")
 
 

@@ -13,7 +13,7 @@ import {
 import { useHnswBenchmarkData } from "@/hooks/use-hnsw-benchmark-data";
 
 export function BenchmarkMemoryHistoryPanel() {
-  const { runs, isLoading, isError, errorMessage } = useHnswBenchmarkData();
+  const { runs, isLoading, isError, errorMessage, refresh } = useHnswBenchmarkData();
 
   if (isLoading) {
     return <ChartSkeleton className="h-[200px]" />;
@@ -21,7 +21,12 @@ export function BenchmarkMemoryHistoryPanel() {
 
   if (isError) {
     return (
-      <BenchmarkErrorState message={errorMessage ?? "Failed to load HNSW benchmark data"} />
+      <BenchmarkErrorState
+        message={errorMessage ?? "Failed to load HNSW benchmark data"}
+        onRetry={() => {
+          void refresh();
+        }}
+      />
     );
   }
 
@@ -48,18 +53,18 @@ export function BenchmarkMemoryHistoryPanel() {
           {runs.map((run) => {
             const largest = largestCorpusResult(run);
             return (
-              <tr key={run.sha} className="border-b border-border/60">
-                <td className="py-2 font-mono text-sm tabular-nums">{run.run_number}</td>
-                <td className="py-2 font-mono text-sm">
+              <tr key={run.run_number} className="border-b border-border/60">
+                <td className="py-2 font-mono text-sm tabular-nums">
                   <Link
-                    href={`/benchmarks/memory/history/${run.short_sha}`}
+                    href={`/benchmarks/memory/history/${run.run_number}`}
                     className="underline-offset-2 hover:underline"
                   >
-                    {run.short_sha}
+                    {run.run_number}
                   </Link>
                 </td>
+                <td className="py-2 font-mono text-sm">{run.short_sha}</td>
                 <td className="py-2 font-mono text-sm">{run.branch}</td>
-                <td className="py-2 font-mono text-sm uppercase">{run.status ?? "pass"}</td>
+                <td className="py-2 font-mono text-sm uppercase">{run.status ?? "unknown"}</td>
                 <td className="py-2 font-mono text-sm tabular-nums">
                   {formatRecallPct(run.mean_recall_at_10)}
                 </td>

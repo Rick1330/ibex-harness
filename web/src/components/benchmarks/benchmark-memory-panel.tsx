@@ -47,7 +47,7 @@ function SlaSection({
           label="Worst recall@10 (target ≥ 98%)"
           value={1 - worstRecall}
           target={1 - HNSW_SLA_TARGETS.recall_at_10}
-          formatValue={() => formatRecallPct(worstRecall)}
+          formatValue={(value) => formatRecallPct(1 - value)}
         />
         {at1m ? (
           <>
@@ -113,14 +113,21 @@ function ResultsTable({ latest }: { readonly latest: HnswBenchmarkRun }) {
 }
 
 export function BenchmarkMemoryPanel() {
-  const { latest, runs, isLoading, isError, errorMessage } = useHnswBenchmarkData();
+  const { latest, runs, isLoading, isError, errorMessage, refresh } = useHnswBenchmarkData();
 
   if (isLoading) {
     return <ChartSkeleton className="h-[240px]" />;
   }
 
   if (isError) {
-    return <BenchmarkErrorState message={errorMessage ?? "Failed to load HNSW data"} />;
+    return (
+      <BenchmarkErrorState
+        message={errorMessage ?? "Failed to load HNSW data"}
+        onRetry={() => {
+          void refresh();
+        }}
+      />
+    );
   }
 
   if (!latest) {
@@ -129,7 +136,7 @@ export function BenchmarkMemoryPanel() {
 
   const at1m = latest.results.find((r) => r.corpus_size >= 1_000_000);
   const worstRecall = Math.min(...latest.results.map((r) => r.recall_at_10));
-  const status = latest.status ?? "pass";
+  const status = latest.status ?? "unknown";
 
   return (
     <div className="space-y-8">

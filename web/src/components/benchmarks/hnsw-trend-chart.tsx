@@ -21,7 +21,8 @@ type HnswTrendChartProps = Readonly<{
 function toPlotStatus(status: HnswBenchmarkRun["status"]): RunStatus {
   if (status === "fail") return "fail";
   if (status === "warn") return "unknown";
-  return "pass";
+  if (status === "pass") return "pass";
+  return "unknown";
 }
 
 export function HnswTrendChart({

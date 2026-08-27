@@ -7,31 +7,31 @@ import { loadPublishedHnswBenchmarkData } from "@/lib/benchmarks/hnsw-published-
 export const dynamic = "force-static";
 
 type PageProps = Readonly<{
-  params: Promise<{ sha: string }>;
+  params: Promise<{ run: string }>;
 }>;
 
 export async function generateStaticParams() {
   const loaded = loadPublishedHnswBenchmarkData();
   if (!loaded.ok) return [];
-  return loaded.data.runs.map((run) => ({ sha: run.short_sha }));
+  return loaded.data.runs.map((item) => ({ run: String(item.run_number) }));
 }
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
-  const { sha } = await params;
+  const { run } = await params;
   return {
-    title: `Memory HNSW run ${sha}`,
-    description: `HNSW benchmark detail for ${sha}.`,
+    title: `Memory HNSW run ${run}`,
+    description: `HNSW benchmark detail for run ${run}.`,
   };
 }
 
 export default async function BenchmarksMemoryRunDetailPage({ params }: PageProps) {
-  const { sha } = await params;
+  const { run } = await params;
   return (
     <BenchmarkPageShell
-      title={`Memory run ${sha}`}
+      title={`Memory run ${run}`}
       subtitle="Per-size cells and methodology for one published HNSW run."
     >
-      <BenchmarkMemoryRunDetailPanel sha={sha} />
+      <BenchmarkMemoryRunDetailPanel runNumber={run} />
     </BenchmarkPageShell>
   );
 }

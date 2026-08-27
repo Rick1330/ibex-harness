@@ -65,9 +65,11 @@ def _merge_entry(raw: dict, meta: RunMeta) -> dict:
     gate = compute_gate_summary(filtered)
     methodology = dict(raw.get("methodology") or {})
     methodology["note"] = (
-        "Published cells: ef_search=40, min_similarity=0.70, "
-        "iterative_scan=off, bulk index build. Full matrix retained under "
-        "benchmarks/memory/output/."
+        f"Published cells: ef_search={PUBLISH_EF_SEARCH}, "
+        f"min_similarity={PUBLISH_MIN_SIMILARITY:.2f}, "
+        f"iterative_scan={PUBLISH_ITERATIVE_SCAN}, "
+        f"index_build_mode={PUBLISH_INDEX_BUILD_MODE}. "
+        "Full matrix retained under benchmarks/memory/output/."
     )
     methodology["min_similarity_values"] = [PUBLISH_MIN_SIMILARITY]
     methodology["iterative_scan_modes"] = [PUBLISH_ITERATIVE_SCAN]

@@ -239,7 +239,8 @@ jobs:
 
       - name: Validate published HNSW data
         run: |
-          python benchmarks/scripts/validate_published_hnsw.py \
+          python -m pip install --disable-pip-version-check --no-cache-dir 'jsonschema==4.23.0'
+          python benchmarks/scripts/validate_published_hnsw.py --strict \
             web/public/benchmarks/hnsw-benchmark-data.json
 
       - name: Require benchmark bot pin (same-repo PR)

@@ -634,15 +634,14 @@ Used by `.github/workflows/benchmark.yml` for cross-repo benchmark publishing an
 **Cadence:**
 
 - **Every matching PR:**
-  - **Benchmarks** → sticky **Proxy** suite comment (`IBEX_BOT_COMMENT`). No data PR.
-  - **Memory Benchmarks** (smoke = 10K) → sticky **Memory HNSW** suite comment (`IBEX_BOT_COMMENT_HNSW` via `post-hnsw-pr-comment`). No data PR.
+  - **Benchmarks** and **Memory Benchmarks** upsert one shared sticky comment (`IBEX_BOT_COMMENT`) with Proxy and Memory HNSW sections. No data PR.
 - **Main / schedule collects:** notify jobs dispatch the bot; bot opens one data PR per suite (`benchmark-data.json` / `hnsw-benchmark-data.json`).
 
 **Pinning:** Keep these three in lockstep after each green bot merge:
 
 1. Bot repo `BOT_RELEASE_SHA` = squash commit on bot `main`
 2. Harness `BENCHMARK_BOT_SHA` = same SHA
-3. Tag `bot-<7-char-sha>`, run bot **Release binary**, set harness `BENCHMARK_BOT_RELEASE_TAG` to that tag
+3. Tag `bot-<7-char-sha>`, run bot **Release binary** (uploads binary + `.sha256`), set harness `BENCHMARK_BOT_RELEASE_TAG` to that tag, and update `.github/actions/setup-benchmark-bot/ibex-benchmark-bot-linux-amd64.sha256` to the new digest
 
 Legacy `BENCHMARK_COMMENT_RENDERER_SHA` is deprecated — use `BENCHMARK_BOT_SHA` only. The setup action can `require-subcommand` (Memory collect requires `post-hnsw-pr-comment`) so a stale release binary cannot silently break CI.
 

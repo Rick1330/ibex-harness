@@ -34,13 +34,13 @@ const hnswMethodologySchema = z
 const hnswGateSummarySchema = z
   .object({
     recall_ok: z.boolean().optional(),
-    recall_floor: z.number().optional(),
-    worst_recall_at_10: z.number().optional(),
+    recall_floor: z.number().min(0).max(1).optional(),
+    worst_recall_at_10: z.number().min(0).max(1).optional(),
     has_1m: z.boolean().optional(),
     p95_1m_ok: z.boolean().optional(),
     p99_1m_ok: z.boolean().optional(),
-    p95_ms_1m: z.number().optional(),
-    p99_ms_1m: z.number().optional(),
+    p95_ms_1m: z.number().nonnegative().optional(),
+    p99_ms_1m: z.number().nonnegative().optional(),
     note: z.string().optional(),
   })
   .passthrough();

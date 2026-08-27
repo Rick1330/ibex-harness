@@ -34,6 +34,12 @@ runs:
         set -euo pipefail
         mkdir -p benchmark-bot-bin
         asset="ibex-benchmark-bot-linux-amd64"
+        pin_file="${GITHUB_ACTION_PATH}/ibex-benchmark-bot-linux-amd64.sha256"
+        expected="$(awk 'NF { print $1; exit }' "$pin_file")"
+        if ! printf '%s' "$expected" | grep -Eq '^[0-9a-f]{64}$'; then
+          echo "Pinned SHA-256 missing or invalid in ${pin_file}" >&2
+          exit 1
+        fi
         short="${BENCHMARK_BOT_SHA:0:7}"
         tags=()
         if [ -n "${BENCHMARK_BOT_RELEASE_TAG:-}" ]; then
@@ -48,24 +54,42 @@ runs:
         source=build
         path=""
         for tag in "${tags[@]}"; do
-          rm -f "benchmark-bot-bin/$asset"
-          if gh release download "$tag" \
+          rm -f "benchmark-bot-bin/$asset" "benchmark-bot-bin/${asset}.sha256"
+          if ! gh release download "$tag" \
               --repo Rick1330/ibexharness-benchmark-bot \
               --pattern "$asset" \
               --dir benchmark-bot-bin 2>/dev/null; then
-            chmod +x "benchmark-bot-bin/$asset"
-            cand="${GITHUB_WORKSPACE}/benchmark-bot-bin/$asset"
-            if [ -n "${REQUIRE_SUBCOMMAND:-}" ]; then
-              if ! "$cand" --help 2>&1 | grep -q -- "$REQUIRE_SUBCOMMAND"; then
-                echo "Release $tag missing subcommand ${REQUIRE_SUBCOMMAND}; trying next / cargo build"
-                continue
-              fi
-            fi
-            path="$cand"
-            source=release
-            echo "Downloaded bot binary from release tag $tag"
-            break
+            continue
           fi
+          got="$(sha256sum "benchmark-bot-bin/$asset" | awk '{ print $1 }')"
+          if [ "$got" != "$expected" ]; then
+            echo "Release $tag SHA-256 mismatch (got ${got}, expected ${expected}); skipping unverified asset"
+            rm -f "benchmark-bot-bin/$asset"
+            continue
+          fi
+          if gh release download "$tag" \
+              --repo Rick1330/ibexharness-benchmark-bot \
+              --pattern "${asset}.sha256" \
+              --dir benchmark-bot-bin 2>/dev/null; then
+            published="$(awk 'NF { print $1; exit }' "benchmark-bot-bin/${asset}.sha256")"
+            if [ "$published" != "$expected" ]; then
+              echo "Release $tag checksum asset does not match repo pin; skipping"
+              rm -f "benchmark-bot-bin/$asset" "benchmark-bot-bin/${asset}.sha256"
+              continue
+            fi
+          fi
+          chmod +x "benchmark-bot-bin/$asset"
+          cand="${GITHUB_WORKSPACE}/benchmark-bot-bin/$asset"
+          if [ -n "${REQUIRE_SUBCOMMAND:-}" ]; then
+            if ! "$cand" --help 2>&1 | grep -q -- "$REQUIRE_SUBCOMMAND"; then
+              echo "Release $tag missing subcommand ${REQUIRE_SUBCOMMAND}; trying next / cargo build"
+              continue
+            fi
+          fi
+          path="$cand"
+          source=release
+          echo "Downloaded verified bot binary from release tag $tag"
+          break
         done
         echo "path=$path" >> "$GITHUB_OUTPUT"
         echo "source=$source" >> "$GITHUB_OUTPUT"

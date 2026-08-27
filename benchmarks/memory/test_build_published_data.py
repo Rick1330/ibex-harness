@@ -73,3 +73,25 @@ def test_status_fail_on_low_recall() -> None:
         }
     ]
     _expect(compute_status(compute_gate_summary(cells)) == "fail", "expected fail")
+
+
+def test_status_fail_when_1m_recall_ok_but_latency_exceeds_sla() -> None:
+    cells = [
+        {
+            "corpus_size": 1_000_000,
+            "recall_at_10": 0.99,
+            "latency_ms_p95": 40.0,
+            "latency_ms_p99": 120.0,
+        }
+    ]
+    gate = compute_gate_summary(cells)
+    _expect(gate["has_1m"] is True, "expected has_1m true")
+    _expect(compute_status(gate) == "fail", "expected fail from 1M latency SLA")
+
+
+if __name__ == "__main__":
+    test_filter_keeps_production_cells_only()
+    test_status_pass_without_1m_on_smoke_fast()
+    test_status_fail_on_low_recall()
+    test_status_fail_when_1m_recall_ok_but_latency_exceeds_sla()
+    print("ok")

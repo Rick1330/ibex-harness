@@ -33,6 +33,16 @@ export function findHnswRunBySha(
   );
 }
 
+export function findHnswRunByNumber(
+  runs: readonly HnswBenchmarkRun[],
+  runNumber: number,
+): HnswBenchmarkRun | null {
+  if (!Number.isInteger(runNumber) || runNumber < 0) {
+    return null;
+  }
+  return runs.find((run) => run.run_number === runNumber) ?? null;
+}
+
 export function filterHnswRunsByRange(
   runs: readonly HnswBenchmarkRun[],
   range: TimeRange,

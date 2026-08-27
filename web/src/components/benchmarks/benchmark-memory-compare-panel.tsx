@@ -13,7 +13,7 @@ import { findHnswRunBySha } from "@/lib/benchmarks/hnsw-runs";
 import { useHnswBenchmarkData } from "@/hooks/use-hnsw-benchmark-data";
 
 function MemoryCompareContent() {
-  const { runs, isLoading, isError, errorMessage } = useHnswBenchmarkData();
+  const { runs, isLoading, isError, errorMessage, refresh } = useHnswBenchmarkData();
   const router = useRouter();
   const searchParams = useSearchParams();
   const baseSha = searchParams.get("base") ?? "";
@@ -25,12 +25,25 @@ function MemoryCompareContent() {
 
   if (isError) {
     return (
-      <BenchmarkErrorState message={errorMessage ?? "Failed to load HNSW benchmark data"} />
+      <BenchmarkErrorState
+        message={errorMessage ?? "Failed to load HNSW benchmark data"}
+        onRetry={() => {
+          void refresh();
+        }}
+      />
     );
   }
 
   if (runs.length === 0) {
     return <BenchmarkEmptyState />;
+  }
+
+  if (runs.length === 1) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        Only one published run — deltas will appear once history accumulates.
+      </p>
+    );
   }
 
   const baseRun = baseSha ? findHnswRunBySha(runs, baseSha) : (runs[1] ?? runs[0]);
@@ -59,11 +72,6 @@ function MemoryCompareContent() {
           updateParam("head", value);
         }}
       />
-      {runs.length < 2 ? (
-        <p className="text-sm text-muted-foreground">
-          Only one published run — deltas will appear once history accumulates.
-        </p>
-      ) : null}
       <CompareMetricsTable
         baseSha={baseRun.short_sha}
         headSha={headRun.short_sha}
