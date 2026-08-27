@@ -10,6 +10,7 @@ import {
   corpusSizeLabel,
   findHnswRunByNumber,
   formatRecallPct,
+  parseHnswRunNumber,
 } from "@/lib/benchmarks/hnsw-runs";
 import { useHnswBenchmarkData } from "@/hooks/use-hnsw-benchmark-data";
 
@@ -37,8 +38,8 @@ export function BenchmarkMemoryRunDetailPanel({
     );
   }
 
-  const parsed = Number.parseInt(runNumber, 10);
-  const run = findHnswRunByNumber(runs, parsed);
+  const parsed = parseHnswRunNumber(runNumber);
+  const run = parsed === null ? null : findHnswRunByNumber(runs, parsed);
   if (!run) {
     return <BenchmarkEmptyState />;
   }

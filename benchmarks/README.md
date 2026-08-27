@@ -59,8 +59,8 @@ Do **not** merge suites into one mega-JSON. Site nav groups by suite; proxy-only
   Memory collect requires subcommand `post-hnsw-pr-comment`).
 - Bot dispatch: `memory_benchmark_main_complete` → artifact `hnsw-benchmark-data` only
   (does **not** touch proxy `benchmark-data.json` / `badge.svg`).
-- Same-repo PRs also get a **Memory HNSW** sticky PR comment (`post-hnsw-pr-comment`)
-  separate from the proxy comment (suite badge, corpus table, gate summary, site links).
+- Same-repo PRs upsert the **Memory HNSW** section of the shared sticky comment
+  (`post-hnsw-pr-comment` → `IBEX_BOT_COMMENT`; same thread as Proxy).
 - Published cells are production knobs only: `ef_search=40`, `min_similarity=0.70`,
   `iterative_scan=off`, `index_build_mode=bulk` (full matrix stays in raw output).
 - Site suite: `/benchmarks/memory` (+ latency / history / compare).

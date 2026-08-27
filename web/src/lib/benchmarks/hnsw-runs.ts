@@ -33,6 +33,18 @@ export function findHnswRunBySha(
   );
 }
 
+export function parseHnswRunNumber(raw: string): number | null {
+  // Require a canonical non-negative integer segment ("0", "12"). Reject "12x", "12.5", "012".
+  if (!/^(0|[1-9]\d*)$/.test(raw)) {
+    return null;
+  }
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value)) {
+    return null;
+  }
+  return value;
+}
+
 export function findHnswRunByNumber(
   runs: readonly HnswBenchmarkRun[],
   runNumber: number,

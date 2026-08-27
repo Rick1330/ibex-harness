@@ -7,6 +7,7 @@ import {
   findHnswRunByNumber,
   findHnswRunBySha,
   formatRecallPct,
+  parseHnswRunNumber,
 } from "@/lib/benchmarks/hnsw-runs";
 import type { HnswBenchmarkRun } from "@/lib/benchmarks/hnsw-schema";
 
@@ -53,6 +54,16 @@ describe("hnsw-runs helpers", () => {
     const second = sampleRun({ run_number: 2, timestamp: "2026-08-27T12:00:00.000Z" });
     expect(findHnswRunByNumber([first, second], 2)?.run_number).toBe(2);
     expect(findHnswRunByNumber([first, second], 9)).toBeNull();
+  });
+
+  it("parses only canonical run-number path segments", () => {
+    expect(parseHnswRunNumber("0")).toBe(0);
+    expect(parseHnswRunNumber("12")).toBe(12);
+    expect(parseHnswRunNumber("12x")).toBeNull();
+    expect(parseHnswRunNumber("12.5")).toBeNull();
+    expect(parseHnswRunNumber("012")).toBeNull();
+    expect(parseHnswRunNumber("-1")).toBeNull();
+    expect(parseHnswRunNumber("")).toBeNull();
   });
 
   it("filters by time range", () => {
