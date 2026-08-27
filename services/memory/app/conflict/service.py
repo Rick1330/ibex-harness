@@ -23,6 +23,15 @@ if TYPE_CHECKING:
 SubjectExtractor = Callable[[str], str]
 
 
+def _is_sequential_supersede(*, same_subject: bool, newer: bool, overlap: bool) -> bool:
+    """True when newer same-subject claim does not overlap the candidate interval."""
+    if not same_subject:
+        return False
+    if not newer:
+        return False
+    return not overlap
+
+
 class ConflictService:
     """Classify near-dup candidates: auto-supersede or escalate."""
 
@@ -66,13 +75,14 @@ class ConflictService:
         candidate: CandidateMemory,
     ) -> tuple[ConflictDecision, bool]:
         cand_subject = await asyncio.to_thread(self._extract, candidate.content)
-        same_subject = subjects_match(incoming_subject, cand_subject)
         subject_key = incoming_subject or cand_subject
-
         newer = incoming.interval.valid_from > candidate.interval.valid_from
         overlap = intervals_overlap(incoming.interval, candidate.interval)
-
-        if same_subject and newer and not overlap:
+        if _is_sequential_supersede(
+            same_subject=subjects_match(incoming_subject, cand_subject),
+            newer=newer,
+            overlap=overlap,
+        ):
             return (
                 ConflictDecision(
                     candidate_id=candidate.memory_id,
@@ -83,12 +93,10 @@ class ConflictService:
                 ),
                 False,
             )
-
         if overlap:
             return await self._escalate(
                 incoming, candidate, subject_key, "interval_overlap"
             )
-
         return (
             ConflictDecision(
                 candidate_id=candidate.memory_id,

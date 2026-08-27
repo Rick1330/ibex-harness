@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -13,6 +14,7 @@ from app.conflict.intervals import ValidityInterval
 from app.conflict.service import ConflictService
 from app.conflict.types import (
     CandidateMemory,
+    ConflictEvaluation,
     ConflictOutcome,
     IncomingMemory,
 )
@@ -39,28 +41,66 @@ class _FixedClassifier:
         return self.outcome
 
 
+def _incoming(
+    content: str,
+    *,
+    from_month: int,
+    until_month: int | None = None,
+) -> IncomingMemory:
+    until = None if until_month is None else _dt(until_month)
+    return IncomingMemory(
+        content=content,
+        interval=ValidityInterval(valid_from=_dt(from_month), valid_until=until),
+    )
+
+
+def _candidate(
+    content: str,
+    *,
+    from_month: int,
+    until_month: int | None = None,
+    memory_id: UUID | None = None,
+) -> CandidateMemory:
+    until = None if until_month is None else _dt(until_month)
+    return CandidateMemory(
+        memory_id=memory_id or uuid4(),
+        content=content,
+        interval=ValidityInterval(valid_from=_dt(from_month), valid_until=until),
+    )
+
+
+async def _evaluate(
+    *,
+    incoming: IncomingMemory,
+    candidates: list[CandidateMemory],
+    subject: Callable[[str], str] = _subject,
+    classifier: object | None = None,
+) -> ConflictEvaluation:
+    svc = ConflictService(
+        Settings(),
+        classifier=classifier,  # type: ignore[arg-type]
+        subject_extractor=subject,
+    )
+    return await svc.evaluate(incoming, candidates)
+
+
 @pytest.mark.asyncio
 async def test_sequential_fact_supersedes_without_llm() -> None:
     """Python (Mar–Jun) → Go (Jun+) same subject: supersedes, zero LLM."""
     classifier = _FixedClassifier(ConflictOutcome.CONTRADICTS)
-    svc = ConflictService(
-        Settings(),
-        classifier=classifier,
-        subject_extractor=_subject,
-    )
     old_id = uuid4()
-    incoming = IncomingMemory(
-        content="User is switching to Go",
-        interval=ValidityInterval(valid_from=_dt(6), valid_until=None),
+    result = await _evaluate(
+        incoming=_incoming("User is switching to Go", from_month=6),
+        candidates=[
+            _candidate(
+                "User prefers Python",
+                from_month=3,
+                until_month=6,
+                memory_id=old_id,
+            )
+        ],
+        classifier=classifier,
     )
-    candidates = [
-        CandidateMemory(
-            memory_id=old_id,
-            content="User prefers Python",
-            interval=ValidityInterval(valid_from=_dt(3), valid_until=_dt(6)),
-        )
-    ]
-    result = await svc.evaluate(incoming, candidates)
     assert result.llm_calls == 0
     assert classifier.calls == 0
     assert result.decisions[0].outcome == ConflictOutcome.SUPERSEDES
@@ -70,24 +110,11 @@ async def test_sequential_fact_supersedes_without_llm() -> None:
 @pytest.mark.asyncio
 async def test_overlapping_intervals_escalate_to_classifier() -> None:
     classifier = _FixedClassifier(ConflictOutcome.CONTRADICTS)
-    svc = ConflictService(
-        Settings(),
+    result = await _evaluate(
+        incoming=_incoming("User prefers Python", from_month=3),
+        candidates=[_candidate("User prefers Go", from_month=3)],
         classifier=classifier,
-        subject_extractor=_subject,
     )
-    cand_id = uuid4()
-    incoming = IncomingMemory(
-        content="User prefers Python",
-        interval=ValidityInterval(valid_from=_dt(3), valid_until=None),
-    )
-    candidates = [
-        CandidateMemory(
-            memory_id=cand_id,
-            content="User prefers Go",
-            interval=ValidityInterval(valid_from=_dt(3), valid_until=None),
-        )
-    ]
-    result = await svc.evaluate(incoming, candidates)
     assert result.llm_calls == 1
     assert classifier.calls == 1
     assert result.decisions[0].outcome == ConflictOutcome.CONTRADICTS
@@ -95,109 +122,68 @@ async def test_overlapping_intervals_escalate_to_classifier() -> None:
 
 
 @pytest.mark.asyncio
-async def test_distinct_subject_no_conflict_when_non_overlapping() -> None:
-    svc = ConflictService(
-        Settings(),
-        subject_extractor=lambda text: "python" if "Python" in text else "coffee",
+@pytest.mark.parametrize(
+    ("subject_fn", "incoming_text", "candidate_text", "expected"),
+    [
+        (
+            lambda text: "python" if "Python" in text else "coffee",
+            "User prefers coffee",
+            "User prefers Python",
+            ConflictOutcome.NO_CONFLICT,
+        ),
+        (
+            lambda text: (
+                "user prefer python" if "Python" in text else "user live seattle"
+            ),
+            "User lives in Seattle",
+            "User prefers Python",
+            ConflictOutcome.NO_CONFLICT,
+        ),
+    ],
+)
+async def test_non_matching_subjects_skip_supersede(
+    subject_fn: Callable[[str], str],
+    incoming_text: str,
+    candidate_text: str,
+    expected: ConflictOutcome,
+) -> None:
+    result = await _evaluate(
+        incoming=_incoming(incoming_text, from_month=6),
+        candidates=[
+            _candidate(candidate_text, from_month=3, until_month=6),
+        ],
+        subject=subject_fn,
     )
-    incoming = IncomingMemory(
-        content="User prefers coffee",
-        interval=ValidityInterval(valid_from=_dt(6), valid_until=None),
-    )
-    candidates = [
-        CandidateMemory(
-            memory_id=uuid4(),
-            content="User prefers Python",
-            interval=ValidityInterval(valid_from=_dt(3), valid_until=_dt(6)),
-        )
-    ]
-    result = await svc.evaluate(incoming, candidates)
     assert result.llm_calls == 0
-    assert result.decisions[0].outcome == ConflictOutcome.NO_CONFLICT
+    assert result.decisions[0].outcome == expected
 
 
 @pytest.mark.asyncio
 async def test_noop_classifier_returns_escalate_pending() -> None:
     clf = NoopConflictClassifier()
-    incoming = IncomingMemory(
-        content="a",
-        interval=ValidityInterval(valid_from=_dt(3), valid_until=None),
-    )
-    candidate = CandidateMemory(
-        memory_id=uuid4(),
-        content="b",
-        interval=ValidityInterval(valid_from=_dt(3), valid_until=None),
-    )
+    incoming = _incoming("a", from_month=3)
+    candidate = _candidate("b", from_month=3)
     assert await clf.classify(incoming, candidate) == ConflictOutcome.ESCALATE_PENDING
     assert clf.invokes_llm is False
 
 
 @pytest.mark.asyncio
 async def test_noop_escalation_does_not_count_llm_calls() -> None:
-    svc = ConflictService(
-        Settings(),
+    result = await _evaluate(
+        incoming=_incoming("User prefers Python", from_month=3),
+        candidates=[_candidate("User prefers Go", from_month=3)],
         classifier=NoopConflictClassifier(),
-        subject_extractor=_subject,
     )
-    incoming = IncomingMemory(
-        content="User prefers Python",
-        interval=ValidityInterval(valid_from=_dt(3), valid_until=None),
-    )
-    candidates = [
-        CandidateMemory(
-            memory_id=uuid4(),
-            content="User prefers Go",
-            interval=ValidityInterval(valid_from=_dt(3), valid_until=None),
-        )
-    ]
-    result = await svc.evaluate(incoming, candidates)
     assert result.llm_calls == 0
     assert result.decisions[0].outcome == ConflictOutcome.ESCALATE_PENDING
     assert result.decisions[0].llm_call_made is False
 
 
 @pytest.mark.asyncio
-async def test_same_entity_distinct_attributes_no_supersede() -> None:
-    svc = ConflictService(
-        Settings(),
-        subject_extractor=lambda text: (
-            "user prefer python" if "Python" in text else "user live seattle"
-        ),
-    )
-    incoming = IncomingMemory(
-        content="User lives in Seattle",
-        interval=ValidityInterval(valid_from=_dt(6), valid_until=None),
-    )
-    candidates = [
-        CandidateMemory(
-            memory_id=uuid4(),
-            content="User prefers Python",
-            interval=ValidityInterval(valid_from=_dt(3), valid_until=_dt(6)),
-        )
-    ]
-    result = await svc.evaluate(incoming, candidates)
-    assert result.llm_calls == 0
-    assert result.decisions[0].outcome == ConflictOutcome.NO_CONFLICT
-
-
-@pytest.mark.asyncio
 async def test_classifier_supersedes_rewritten_to_pending() -> None:
-    classifier = _FixedClassifier(ConflictOutcome.SUPERSEDES)
-    svc = ConflictService(
-        Settings(),
-        classifier=classifier,
-        subject_extractor=_subject,
+    result = await _evaluate(
+        incoming=_incoming("a", from_month=3),
+        candidates=[_candidate("b", from_month=3)],
+        classifier=_FixedClassifier(ConflictOutcome.SUPERSEDES),
     )
-    incoming = IncomingMemory(
-        content="a",
-        interval=ValidityInterval(valid_from=_dt(3), valid_until=None),
-    )
-    candidates = [
-        CandidateMemory(
-            memory_id=uuid4(),
-            content="b",
-            interval=ValidityInterval(valid_from=_dt(3), valid_until=None),
-        )
-    ]
-    result = await svc.evaluate(incoming, candidates)
     assert result.decisions[0].outcome == ConflictOutcome.ESCALATE_PENDING
