@@ -46,6 +46,16 @@ updates:
     golang-builder:
       patterns:
       - golang
+- package-ecosystem: pip
+  directory: /services/memory
+  schedule:
+    interval: weekly
+    day: monday
+  open-pull-requests-limit: 5
+  labels:
+  - dependencies
+  - python
+  - area/memory
 - package-ecosystem: npm
   directory: /
   schedule:

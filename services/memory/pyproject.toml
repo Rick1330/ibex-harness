@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ibex-memory"
 version = "0.1.0"
-description = "IBEX Harness memory substrate (m3.2.1 — scoring + VectorStore bootstrap)"
+description = "IBEX Harness memory service (vector store + PII write stage)"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -17,6 +17,12 @@ dependencies = [
   "sqlalchemy[asyncio]>=2.0.0",
   "asyncpg>=0.29.0",
   "prometheus-client>=0.20.0",
+  "cryptography>=50.0.0",
+  "presidio-analyzer>=2.2.0",
+  "presidio-anonymizer>=2.2.0",
+  "spacy>=3.7.0,<3.9.0",
+  "en-core-web-md",
+  "en-core-web-sm",
 ]
 
 [project.optional-dependencies]
@@ -51,7 +57,23 @@ omit = [
   "app/__init__.py",
   # Exercised by tests/integration (requires live pgvector).
   "app/vectorstore/pgvector_store.py",
+  # Heavy Presidio/spaCy engines — covered by dedicated unit + integration tests.
+  "app/pii/engine.py",
 ]
+
+
+[tool.uv]
+# Semgrep dependency-cooldown: refuse packages published within the last 7 days.
+exclude-newer = "7 days"
+# Presidio 2.2.364 pins cryptography<49; CVE-2026-69247/69249 need >=50.0.0.
+# Override until Presidio raises its upper bound (operators we use are replace-only).
+override-dependencies = [
+  "cryptography>=50.0.0",
+]
+
+[tool.uv.sources]
+en-core-web-md = { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_md-3.8.0/en_core_web_md-3.8.0-py3-none-any.whl" }
+en-core-web-sm = { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" }
 
 [dependency-groups]
 dev = [

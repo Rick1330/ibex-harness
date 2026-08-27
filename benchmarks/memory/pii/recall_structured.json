@@ -1,0 +1,14 @@
+{
+  "benchmark": "pii_structured_recall",
+  "n": 20,
+  "hits": 20,
+  "recall": 1.0,
+  "target_recall": 0.95,
+  "pass": true,
+  "latency_ms_p50": 3.5638670015032403,
+  "latency_ms_p95": 6.23048599663889,
+  "write_budget_ms_p95": 200.0,
+  "budget_share_p95": 0.031152429983194452,
+  "spacy_model": "en_core_web_md",
+  "misses": []
+}

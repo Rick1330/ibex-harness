@@ -9,6 +9,14 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _WEIGHT_EPS = 1e-9
 
+# Bundled CNN models in services/memory (uv.lock). Transformers / arbitrary names rejected.
+_ALLOWED_PII_SPACY_MODELS: frozenset[str] = frozenset(
+    {
+        "en_core_web_sm",
+        "en_core_web_md",
+    }
+)
+
 
 class Settings(BaseSettings):
     """Settings for the memory substrate service (Phase 3 Track B bootstrap).
@@ -106,6 +114,23 @@ class Settings(BaseSettings):
     embedding_connect_timeout_seconds: float = Field(default=2.0, gt=0)
     embedding_max_retries: int = Field(default=2, ge=0)
 
+    # PII stage (m3.C.1 / ADR-0054) — distinct from injection quarantine threshold.
+    pii_redact_min_confidence: float = Field(
+        default=0.70,
+        ge=0.0,
+        le=1.0,
+        description="Findings at/above this score are redacted; any below → quarantined",
+    )
+    pii_spacy_model: str = Field(
+        default="en_core_web_md",
+        description="spaCy CNN model for Presidio NER (trf forbidden — Semgrep)",
+    )
+    max_content_chars: int = Field(
+        default=10_000,
+        ge=1,
+        description="Reject writes whose content exceeds this length",
+    )
+
     @field_validator("database_url", mode="before")
     @classmethod
     def _empty_dsn_to_none(cls, value: object) -> object:
@@ -114,6 +139,26 @@ class Settings(BaseSettings):
         if isinstance(value, str) and not value.strip():
             return None
         return value
+
+    @field_validator("pii_spacy_model", mode="after")
+    @classmethod
+    def _reject_transformers_spacy_model(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            msg = "pii_spacy_model must be non-empty"
+            raise ValueError(msg)
+        lower = normalized.lower()
+        if "trf" in lower or "transformer" in lower:
+            msg = (
+                "transformer spaCy models are forbidden in services/memory "
+                "(ibex-memory-no-ml-imports / ADR-0054); use en_core_web_md"
+            )
+            raise ValueError(msg)
+        if normalized not in _ALLOWED_PII_SPACY_MODELS:
+            allowed = ", ".join(sorted(_ALLOWED_PII_SPACY_MODELS))
+            msg = f"unsupported pii_spacy_model {normalized!r}; allowed: {allowed}"
+            raise ValueError(msg)
+        return normalized
 
     @model_validator(mode="after")
     def _weights_sum_to_one(self) -> Settings:

@@ -1,0 +1,33 @@
+{
+  "benchmark": "pii_spacy_model_microbench",
+  "write_budget_ms_p95": 200,
+  "note": "NER-only pipe latency for candidate models. Default remains en_core_web_md (ADR-0054). Full Presidio stage cost measured in PR-C harness.",
+  "results": [
+    {
+      "model": "en_core_web_sm",
+      "n_samples": 5,
+      "iters": 25,
+      "n_measurements": 125,
+      "latency_ms_p50": 3.3901710012287367,
+      "latency_ms_p95": 19.993301000795327,
+      "latency_ms_mean": 6.695016671845224,
+      "pipes": [
+        "tok2vec",
+        "ner"
+      ]
+    },
+    {
+      "model": "en_core_web_md",
+      "n_samples": 5,
+      "iters": 25,
+      "n_measurements": 125,
+      "latency_ms_p50": 3.711368000949733,
+      "latency_ms_p95": 22.421304001909448,
+      "latency_ms_mean": 7.536071496026125,
+      "pipes": [
+        "tok2vec",
+        "ner"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,3 @@
+# PII stage microbench / recall artifacts (m3.C.1)
+*.pyc
+__pycache__/

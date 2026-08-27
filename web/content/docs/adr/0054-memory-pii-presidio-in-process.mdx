@@ -1,0 +1,84 @@
+---
+title: "ADR-0054: In-process Presidio PII detection in memory"
+description: "Architecture decision record 0054 — Presidio + spaCy run in-process in services/memory for write-path PII; Semgrep embedding-ML ban unchanged; en_core_web_md default; typed redaction placeholders."
+adrId: "0054"
+status: "Accepted"
+date: "2026-08-27"
+authors: "IBEX Harness team"
+---
+
+# ADR-0054: In-process Presidio PII detection in memory
+
+- **Status:** Accepted
+- **Date:** 2026-08-27
+- **Authors:** IBEX Harness team
+- **Milestone:** [3.C.1 PII detection and redaction](/roadmap/phase-3-memory-engine/milestones/3.c.1-pii-detection-redaction)
+
+## Context
+
+Milestone 3.2.1 added Semgrep rule `ibex-memory-no-ml-imports` so `services/memory/`
+cannot import `torch` / `tensorflow` / `transformers` / `sentence_transformers` /
+`sklearn` — embeddings must go through the Phase 2.5 embedder HTTP API
+([ADR-0046](/docs/adr/0046-embedder-interface-registry),
+[ADR-0053](/docs/adr/0053-vector-store-abstraction)).
+
+Milestone 3.C.1 needs Microsoft Presidio with a spaCy NLP model for Tier-2 NER,
+self-hosted and in-process, to avoid an external PII API. spaCy is an NLP library;
+this ADR records why that does **not** conflict with the Semgrep rule and which
+model/threshold/placeholder policies we adopt.
+
+## Options considered
+
+### 1) Semgrep vs Presidio
+
+1. Narrow `ibex-memory-no-ml-imports` path globs (e.g. only `app/clients/`).
+2. Run Presidio NLP out-of-process (sidecar / remote recognizer) to keep memory import-clean.
+3. **Keep the rule as written** — path `services/memory/`, banned packages are embedding/classic ML stacks only; admit Presidio + spaCy CNN models.
+
+Decision: **(3)**. The rule already excludes spaCy/Presidio by pattern list. Narrowing
+globs would weaken the embedder boundary. A sidecar adds a write-path network hop
+inside the p95 ≤ 200ms write budget without a Semgrep necessity.
+
+### 2) spaCy model
+
+1. Sketch `en_core_web_lg` (~560 MB).
+2. `en_core_web_trf` (higher NER accuracy; pulls `transformers`).
+3. **`en_core_web_md` (~40–50 MB)** default; `en_core_web_sm` allowed for microbench/dev.
+
+Decision: **`en_core_web_md`**. NER quality is close to `lg` for Presidio’s needs while
+keeping the memory image small. Settings allow-list is **`en_core_web_sm` / `en_core_web_md`
+only** (bundled wheels). **`en_core_web_trf` is forbidden** — it requires `transformers`,
+which Semgrep rejects under `services/memory/`.
+
+### 3) Quarantine threshold
+
+1. Reuse `IBEX_MEMORY_QUARANTINE_INJECTION_THRESHOLD` (prompt-injection risk).
+2. **Separate `IBEX_MEMORY_PII_REDACT_MIN_CONFIDENCE` (default 0.70).**
+
+Decision: **(2)**. Same numeric language as SECURITY.md §7.2’s 0.7 example, distinct
+reason and metric label (`reason=pii_low_confidence`).
+
+### 4) Redaction placeholders
+
+1. Generic `[REDACTED]`.
+2. **Typed placeholders** (`[EMAIL]`, `[PHONE]`, `[PERSON]`, …) via AnonymizerEngine.
+
+Decision: **Typed**. Preserves structure for later dedup/classification without leaking values.
+
+## Decision
+
+1. Leave `ibex-memory-no-ml-imports` patterns and `services/memory/` path unchanged.
+2. Ship `presidio-analyzer`, `presidio-anonymizer`, `spacy`, and `en-core-web-md` in
+   `services/memory` (pip wheels in `uv.lock`; no runtime `spacy download`).
+3. Default model `en_core_web_md` via `IBEX_MEMORY_PII_SPACY_MODEL`.
+4. Redact when finding score ≥ `IBEX_MEMORY_PII_REDACT_MIN_CONFIDENCE` (0.70); any
+   lower-confidence finding quarantines the memory (`status=quarantined`).
+5. Redaction completes before any embedder call (pipeline stage order + unit test).
+6. Never add `transformers` / torch / sentence-transformers to the memory service.
+
+## Consequences
+
+- Memory image grows by spaCy + md weights (~tens of MB), not hundreds (lg) or a
+  transformers stack (trf).
+- Operators may override the model name for sm/lg CNN pipelines; trf remains policy-banned.
+- Dependabot `pip` for `/services/memory` tracks Presidio/spaCy CVEs.
