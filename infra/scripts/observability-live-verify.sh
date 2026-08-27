@@ -22,6 +22,8 @@ DEV_AGENT="${IBEX_DEV_AGENT_ID:-00000000-0000-0000-0000-000000000003}"
 EMBED_TOKEN="${IBEX_EMBEDDING_API_TOKEN:-dev-embedder-metrics-token}"
 CHAT_BODY='{"model":"gpt-4o","messages":[{"role":"user","content":"obs live verify"}]}'
 KEEP="${IBEX_OBS_LIVE_KEEP:-1}"
+PORT_FROM_URL_SED='s#.*:([0-9]+).*#\1#'
+JSON_CONTENT_TYPE='Content-Type: application/json'
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 pass() { echo "PASS: $*"; }
@@ -53,8 +55,9 @@ wait_http() {
 }
 
 prom_query() {
+  local query="$1"
   curl -fsS --connect-timeout 2 --max-time 10 \
-    --get --data-urlencode "query=$1" "$PROM_URL/api/v1/query"
+    --get --data-urlencode "query=${query}" "$PROM_URL/api/v1/query"
 }
 
 assert_series() {
@@ -88,10 +91,10 @@ export OTEL_EXPORTER_OTLP_ENDPOINT=127.0.0.1:4317
 export OTEL_SAMPLE_RATIO=1.0
 unset CLICKHOUSE_DSN || true
 
-proxy_port="$(echo "$PROXY_ADDR" | sed -E 's#.*:([0-9]+).*#\1#')"
-auth_http_port="$(echo "$AUTH_HTTP" | sed -E 's#.*:([0-9]+).*#\1#')"
-embedder_port="$(echo "$EMBEDDER_ADDR" | sed -E 's#.*:([0-9]+).*#\1#')"
-mcp_port="$(echo "$MCP_ADDR" | sed -E 's#.*:([0-9]+).*#\1#')"
+proxy_port="$(echo "$PROXY_ADDR" | sed -E "$PORT_FROM_URL_SED")"
+auth_http_port="$(echo "$AUTH_HTTP" | sed -E "$PORT_FROM_URL_SED")"
+embedder_port="$(echo "$EMBEDDER_ADDR" | sed -E "$PORT_FROM_URL_SED")"
+mcp_port="$(echo "$MCP_ADDR" | sed -E "$PORT_FROM_URL_SED")"
 
 # Stop leftovers on demo ports
 for p in "$proxy_port" "$auth_http_port" "$embedder_port" "$mcp_port" "$AUTH_GRPC_PORT"; do
@@ -147,7 +150,7 @@ echo "=== generating Phase 1–2 style traffic ==="
 # Auth probes + chat (proxy critical path)
 for i in $(seq 1 25); do
   curl -fsS -o /dev/null -X POST "$PROXY_ADDR/v1/chat/completions" \
-    -H "Content-Type: application/json" \
+    -H "$JSON_CONTENT_TYPE" \
     -H "Authorization: Bearer $DEV_TOKEN" \
     -H "X-IBEX-Agent-ID: $DEV_AGENT" \
     -d "$CHAT_BODY" || true
@@ -157,11 +160,11 @@ for i in $(seq 1 25); do
 done
 # Intentional failures for error-rate panels
 curl -fsS -o /dev/null -X POST "$PROXY_ADDR/v1/chat/completions" \
-  -H "Content-Type: application/json" -d "$CHAT_BODY" || true
+  -H "$JSON_CONTENT_TYPE" -d "$CHAT_BODY" || true
 curl -fsS -o /dev/null -H "Authorization: Bearer bad" \
   -H "X-IBEX-Agent-ID: $DEV_AGENT" \
   -X POST "$PROXY_ADDR/v1/chat/completions" \
-  -H "Content-Type: application/json" -d "$CHAT_BODY" || true
+  -H "$JSON_CONTENT_TYPE" -d "$CHAT_BODY" || true
 
 # Auth HTTP + metrics scrape
 for i in $(seq 1 10); do
@@ -173,13 +176,13 @@ done
 for i in $(seq 1 15); do
   curl -fsS -o /dev/null -X POST "$EMBEDDER_ADDR/v1/embed" \
     -H "Authorization: Bearer $EMBED_TOKEN" \
-    -H "Content-Type: application/json" \
+    -H "$JSON_CONTENT_TYPE" \
     -d '{"texts":["obs live '"$i"'"],"org_id":"00000000-0000-0000-0000-000000000001"}' || true
 done
 curl -fsS -o /dev/null -H "Authorization: Bearer $EMBED_TOKEN" "$EMBEDDER_ADDR/metrics"
 
 # MCP tools (live auth)
-MCP_HEADERS=(-H "Authorization: Bearer $DEV_TOKEN" -H "Accept: application/json, text/event-stream" -H "Content-Type: application/json")
+MCP_HEADERS=(-H "Authorization: Bearer $DEV_TOKEN" -H "Accept: application/json, text/event-stream" -H "$JSON_CONTENT_TYPE")
 curl -fsS -o /dev/null -X POST "$MCP_ADDR/mcp" "${MCP_HEADERS[@]}" \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"obs-live","version":"0"}}}' || true
 curl -fsS -o /dev/null -X POST "$MCP_ADDR/mcp" "${MCP_HEADERS[@]}" \

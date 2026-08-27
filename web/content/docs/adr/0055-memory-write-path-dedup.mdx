@@ -61,8 +61,11 @@ Identical redacted payloads dedup; raw PII never enters the hash after redaction
    `ctx.stop`, skip embed/near-dup; metric `ibex_memory_dedup_total{result=exact_duplicate}`.
 3. Near-dup: attach `near_duplicate_candidates` for 3.C.3; metrics
    `near_duplicate` / `novel`.
-4. Migration `000018_memories_content_hash_unique_active` adds the partial unique index.
+4. Migration `000018_memories_content_hash_unique_active` adds the partial unique
+   index via `CREATE UNIQUE INDEX CONCURRENTLY` (same golang-migrate pattern as
+   `000011`).
 5. `agent_id` required for both dedup stages.
+6. Exact hit always invokes `bump_retrieval` (mandatory when a duplicate is found).
 
 ## Consequences
 

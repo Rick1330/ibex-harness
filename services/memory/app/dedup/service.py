@@ -58,8 +58,10 @@ class DedupService:
                 is_exact_duplicate=False,
                 content_hash=content_hash,
             )
-        if self._bump_retrieval is not None:
-            await self._bump_retrieval(org_id, existing)
+        if self._bump_retrieval is None:
+            msg = "bump_retrieval required when exact duplicate is found"
+            raise RuntimeError(msg)
+        await self._bump_retrieval(org_id, existing)
         return DedupResult(
             is_exact_duplicate=True,
             existing_memory_id=existing,

@@ -26,7 +26,7 @@ function suiteFolder(
     defaultOpen: true,
     index: index ? benchmarkPageItem(index.name, index.url) : undefined,
     children: pages
-      .filter((page) => !index || page.url !== index.url)
+      .filter((page) => index?.url !== page.url)
       .map((page) => benchmarkPageItem(page.name, page.url)),
   };
 }

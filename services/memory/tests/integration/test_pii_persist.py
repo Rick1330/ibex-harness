@@ -75,18 +75,16 @@ async def test_cross_tenant_update_does_not_touch_other_org(
     org_a, _, mem_a = await seed_org_agent_memory(session_factory, content="a@example.com")
     org_b, _, _mem_b = await seed_org_agent_memory(session_factory, content="b@example.com")
 
+    update = MemoryPiiUpdate(
+        org_id=org_b,
+        memory_id=mem_a,
+        content="[EMAIL_ADDRESS]",
+        status="active",
+        pii_detected=True,
+        pii_redacted=True,
+    )
     with pytest.raises(RuntimeError, match="expected 1 row"):
-        await update_memory_pii_flags(
-            session_factory,
-            MemoryPiiUpdate(
-                org_id=org_b,
-                memory_id=mem_a,
-                content="[EMAIL_ADDRESS]",
-                status="active",
-                pii_detected=True,
-                pii_redacted=True,
-            ),
-        )
+        await update_memory_pii_flags(session_factory, update)
 
     async with session_factory() as session:
         await session.execute(

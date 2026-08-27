@@ -24,8 +24,42 @@ from app.vectorstore.base import UpsertRequest
 from app.vectorstore.memory import InMemoryVectorStore
 
 
+def test_write_pipeline_stage_names() -> None:
+    settings = Settings()
+
+    async def embed(text: str) -> list[float]:
+        del text
+        return [0.0]
+
+    pipe = WritePipeline([ValidateStage(settings), EmbedStage(embed)])
+    assert pipe.stage_names == ["validate", "embed"]
+
+
 @pytest.mark.asyncio
-async def test_validate_rejects_too_long() -> None:
+async def test_near_stage_records_novel_when_no_candidates() -> None:
+    settings = Settings(near_duplicate_sim_threshold=0.92)
+    store = InMemoryVectorStore()
+
+    async def lookup(_o: UUID, _a: UUID, _h: str) -> UUID | None:
+        return None
+
+    async def embed(_text: str) -> list[float]:
+        return [0.0] * 1023 + [1.0]
+
+    dedup = DedupService(settings, store=store, exact_lookup=lookup)
+    pipe = WritePipeline(
+        [
+            ExactDedupStage(dedup),
+            EmbedStage(embed),
+            NearDedupStage(dedup),
+        ]
+    )
+    ctx = await pipe.run(
+        WriteContext(org_id=uuid4(), agent_id=uuid4(), content="lonely novel memory")
+    )
+    assert ctx.near_duplicate_candidates == []
+    assert ctx.is_exact_duplicate is False
+
     settings = Settings(max_content_chars=8)
     pipe = WritePipeline([ValidateStage(settings)])
     ctx = await pipe.run(WriteContext(org_id=uuid4(), content="0123456789"))
@@ -34,24 +68,47 @@ async def test_validate_rejects_too_long() -> None:
 
 
 @pytest.mark.asyncio
-async def test_near_requires_embedding() -> None:
+@pytest.mark.parametrize(
+    ("stage_factory", "ctx_kwargs", "want_error"),
+    [
+        (
+            lambda settings, lookup: ExactDedupStage(
+                DedupService(settings, exact_lookup=lookup)
+            ),
+            {"content": "x"},
+            "agent_id_required",
+        ),
+        (
+            lambda settings, lookup: NearDedupStage(
+                DedupService(settings, exact_lookup=lookup, store=InMemoryVectorStore())
+            ),
+            {"agent_id": uuid4(), "content": "x", "embedding": None},
+            "embedding_required",
+        ),
+        (
+            lambda settings, lookup: NearDedupStage(
+                DedupService(settings, exact_lookup=lookup, store=InMemoryVectorStore())
+            ),
+            {"content": "x", "embedding": [0.0] * 1024},
+            "agent_id_required",
+        ),
+    ],
+)
+async def test_dedup_stages_require_context(
+    stage_factory: object,
+    ctx_kwargs: dict,
+    want_error: str,
+) -> None:
     settings = Settings()
 
     async def lookup(_o: UUID, _a: UUID, _h: str) -> UUID | None:
         return None
 
-    pipe = WritePipeline(
-        [NearDedupStage(DedupService(settings, exact_lookup=lookup, store=InMemoryVectorStore()))]
-    )
-    ctx = await pipe.run(
-        WriteContext(org_id=uuid4(), agent_id=uuid4(), content="x", embedding=None)
-    )
+    pipe = WritePipeline([stage_factory(settings, lookup)])
+    ctx = await pipe.run(WriteContext(org_id=uuid4(), **ctx_kwargs))
     assert ctx.stop is True
-    assert ctx.error == "embedding_required"
+    assert ctx.error == want_error
 
-
-@pytest.mark.asyncio
-async def test_validate_rejects_empty() -> None:
     settings = Settings()
     pipe = WritePipeline([ValidateStage(settings)])
     ctx = await pipe.run(WriteContext(org_id=uuid4(), content="   "))
@@ -252,16 +309,3 @@ async def test_quarantine_skips_exact_and_embed() -> None:
     assert seen == []
     assert lookups == 0
     assert "Jordan" in ctx.content
-
-
-@pytest.mark.asyncio
-async def test_exact_requires_agent_id() -> None:
-    settings = Settings()
-
-    async def lookup(_o: UUID, _a: UUID, _h: str) -> UUID | None:
-        return None
-
-    pipe = WritePipeline([ExactDedupStage(DedupService(settings, exact_lookup=lookup))])
-    ctx = await pipe.run(WriteContext(org_id=uuid4(), content="x"))
-    assert ctx.stop is True
-    assert ctx.error == "agent_id_required"

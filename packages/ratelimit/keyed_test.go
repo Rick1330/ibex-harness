@@ -32,7 +32,13 @@ func TestUnit_RedisKeyed_setsTTLOnCreate(t *testing.T) {
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
-	limiter, err := NewRedisKeyed(client, RedisKeyedConfig{DefaultRPM: 10, KeyPrefix: "ratelimit:ttl"})
+	// OpTimeout must exceed DefaultRedisOpTimeout: bare NewRedisKeyed + -race
+	// parallel load can exceed 50ms (same flake class as ConcurrentBurst).
+	limiter, err := NewRedisKeyed(client, RedisKeyedConfig{
+		DefaultRPM: 10,
+		KeyPrefix:  "ratelimit:ttl",
+		OpTimeout:  time.Second,
+	})
 	if err != nil {
 		t.Fatalf("NewRedisKeyed: %v", err)
 	}

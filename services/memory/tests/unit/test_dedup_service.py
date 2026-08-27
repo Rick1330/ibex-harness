@@ -57,6 +57,18 @@ async def test_exact_hit_bumps_and_returns_id() -> None:
 
 
 @pytest.mark.asyncio
+async def test_exact_hit_requires_bump_callback() -> None:
+    existing = uuid4()
+
+    async def lookup(_org_id: UUID, _agent_id: UUID, _content_hash: str) -> UUID | None:
+        return existing
+
+    svc = DedupService(Settings(), exact_lookup=lookup)
+    with pytest.raises(RuntimeError, match="bump_retrieval required"):
+        await svc.check_exact(org_id=uuid4(), agent_id=uuid4(), content="same")
+
+
+@pytest.mark.asyncio
 async def test_exact_disabled_skips_lookup() -> None:
     called = False
 

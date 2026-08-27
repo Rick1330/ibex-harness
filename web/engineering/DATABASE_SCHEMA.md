@@ -592,7 +592,7 @@ CREATE INDEX idx_memories_content_hash
     ON ibex_core.memories(org_id, agent_id, content_hash);
 
 -- Exact dedup (m3.C.2 / ADR-0055): one live active row per hash per agent.
-CREATE UNIQUE INDEX idx_memories_org_agent_content_hash_active
+CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_memories_org_agent_content_hash_active
     ON ibex_core.memories (org_id, agent_id, content_hash)
     WHERE status = 'active' AND deleted_at IS NULL;
 

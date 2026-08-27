@@ -102,6 +102,12 @@ async def test_exact_hit_increments_retrieval_count(
                 "SELECT set_config('app.is_service_account', 'true', true)"
             )
         )
+        await session.execute(
+            text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+                "SELECT set_config('app.current_org_id', :org_id, true)"
+            ),
+            {"org_id": str(org_id)},
+        )
         count = (
             await session.execute(
                 text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text

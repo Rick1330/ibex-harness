@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, Protocol
 
 from app.dedup import metrics as dedup_metrics
@@ -17,6 +18,15 @@ class EmbedCallable(Protocol):
     async def __call__(self, text: str) -> list[float]: ...
 
 
+def _validate_content(content: str, max_chars: int) -> str | None:
+    """Return an error code, or None when content is acceptable."""
+    if not content or not content.strip():
+        return "content_empty"
+    if len(content) > max_chars:
+        return "content_too_long"
+    return None
+
+
 class ValidateStage:
     name = "validate"
 
@@ -24,15 +34,13 @@ class ValidateStage:
         self._settings = settings
 
     async def process(self, ctx: WriteContext) -> WriteContext:
-        text = ctx.content
-        if not text or not text.strip():
+        # Offload sync validation so the Stage Protocol stays async-uniform.
+        error = await asyncio.to_thread(
+            _validate_content, ctx.content, self._settings.max_content_chars
+        )
+        if error is not None:
             ctx.stop = True
-            ctx.error = "content_empty"
-            return ctx
-        if len(text) > self._settings.max_content_chars:
-            ctx.stop = True
-            ctx.error = "content_too_long"
-            return ctx
+            ctx.error = error
         return ctx
 
 
