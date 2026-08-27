@@ -46,7 +46,7 @@ separate from Phase 2 (actual LLM forwarding).
 |---|---|---|
 | A | Memory Schema & Data Foundation | 3.1.1 (schema v2: HNSW, temporal validity, multi-label) |
 | B | Vector Store & Embedding Integration | 3.2.1 (`VectorStore` interface, pgvector-HNSW impl, composite scoring v2) |
-| C | Memory Write Pipeline | 3.C.1 (PII detection/redaction), 3.C.2 (dedup), 3.C.3 (temporal conflict detection), 3.C.4 (multi-label classification) |
+| C | Memory Write Pipeline | 3.C.1 (PII), 3.C.2 (dedup), 3.C.3 (temporal conflict), **3.C.5** (write persistence / orchestration), 3.C.4 (multi-label) |
 | D | Read/Ranking Pipeline & Hot Cache | 3.D.1 (semantic search), 3.D.2 (category-conditional decay), 3.D.3 (Redis hot cache) |
 | E | Exit Gate | 3.E.1 (security integration), 3.E.2 (e2e lifecycle test), 3.E.3 (retrieval benchmark sign-off), 3.E.4 (ADR consolidation), 3.E.5 (exit audit) |
 
@@ -68,7 +68,7 @@ Track B (Vector store — after Track A):
  3.2.1 (VectorStore + pgvector-HNSW + composite scoring v2)
 
 Track C (Write pipeline — after Track A + B):
- 3.C.1 (PII) → 3.C.2 (dedup) → 3.C.3 (temporal conflict) → 3.C.4 (multi-label)
+ 3.C.1 (PII) → 3.C.2 (dedup) → 3.C.3 (temporal conflict) → 3.C.5 (write orchestration) → 3.C.4 (multi-label)
 
 Track D (Read/ranking — after Track B):
  3.D.1 (semantic search) → 3.D.2 (category-conditional decay) → 3.D.3 (hot cache)

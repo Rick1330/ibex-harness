@@ -1,0 +1,77 @@
+---
+title: "3.C.5 Write-path persistence and orchestration"
+description: "Pipeline steps 7–9: DB insert, apply pending_supersede_targets, unique-violation→bump, after-commit cache/index, durable conflict escalations. ADR-0057. Before 3.C.4."
+summary: "Pipeline steps 7–9: DB insert, apply pending supersessions, unique-violation→bump, after-commit cache/index, durable escalations. ADR-0057."
+status: "planned"
+milestoneId: "3.C.5"
+track: "C"
+trackTitle: "Write Pipeline"
+trackHref: "/roadmap/phase-3-memory-engine/tracks#track-c--write-pipeline"
+goal: "[Track C — Write Pipeline](/roadmap/phase-3-memory-engine/tracks#track-c--write-pipeline)"
+estimatedEffort: "5 days"
+phase: "phase-3-memory-engine"
+fullTitle: "Milestone 3.C.5 — Write-path persistence and orchestration"
+---
+
+# Milestone 3.C.5 — Write-path persistence and orchestration
+
+**Status:** Planned  
+**Goal:** [Track C — Write Pipeline](/roadmap/phase-3-memory-engine/tracks#track-c--write-pipeline)  
+**Phase:** 3 — Core Memory Substrate  
+**Estimated effort:** 5 days  
+**Track:** [Track C — Write Pipeline](/roadmap/phase-3-memory-engine/tracks#track-c--write-pipeline)  
+**ADR:** [ADR-0057](/docs/adr/0057-memory-write-orchestration)  
+**Tracking issue:** [#620](https://github.com/Rick1330/ibex-harness/issues/620)
+
+---
+
+<Callout type="note" title="Planning baseline">
+  This page is a planning sketch, not an implementation script. Prefer outcomes over matching
+  any particular file tree. Locked decisions live in ADR-0057.
+</Callout>
+
+## Why This Milestone Exists
+
+3.C.1–3.C.3 built stages 1–6 of the nine-step write pipeline. Steps **7–9**
+(DB write → cache update → index) had **no owner**. Without them, `POST /v1/memories`
+and exit gate 3.E.2 cannot ship. Multi-label (3.C.4) also needs a real insert
+transaction to attach `memory_labels`.
+
+## Scope
+
+1. Wire HTTP `POST /v1/memories` to the existing documented contract (no new REST shape).
+2. Single Postgres transaction: insert + apply `pending_supersede_targets` /
+   relationship edges.
+3. Unique-violation on active content hash → bump-retrieval → `409 DUPLICATE_CONTENT`.
+4. After-commit best-effort cache update + vector upsert.
+5. Migration for `memory_conflict_escalations`; persist `ESCALATE_PENDING` after insert.
+
+## Non-Goals
+
+- Changing published request/response field shapes beyond pipeline-backing docs
+- Production LLM conflict classifier worker (may consume escalations later)
+- Inventing `pending_review` on `memories.status`
+- Track D read-path work
+
+## Suggested naming (provisional)
+
+- Branch: `feature/m3-c-5-write-orchestration`
+- PR title: `feat(memory): write-path persistence and orchestration (m3.c.5)`
+
+## Success signals
+
+- [ ] ADR-0057 indexed; tracking issue #620 closed by the implementation PR
+- [ ] Insert + supersession atomic; unique-violation mapped to bump / 409
+- [ ] Escalation rows durable, org-scoped, cross-tenant tested
+- [ ] `POST /v1/memories` exercises stages 1–9 per API documentation
+- [ ] Cache/index after-commit path covered by tests
+
+## Prerequisites
+
+- Milestone 3.C.3 merged (conflict stage + `pending_supersede_targets`)
+- ADR-0054 / 0055 / 0056 accepted
+
+## Blocks
+
+- Milestone 3.C.4 (multi-label at insert time)
+- Milestone 3.E.2 (E2E write/dedup/conflict/retrieve via HTTP)
