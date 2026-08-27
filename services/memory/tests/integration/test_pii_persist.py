@@ -7,7 +7,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config import Settings
-from app.pii.persist import update_memory_pii_flags
+from app.pii.persist import MemoryPiiUpdate, update_memory_pii_flags
 from app.pii.service import PiiService
 from app.pipeline import PiiStage, ValidateStage, WriteContext, WritePipeline
 from tests.integration.conftest import seed_org_agent_memory
@@ -30,12 +30,14 @@ async def test_pii_flags_persist_after_pipeline(
 
     await update_memory_pii_flags(
         session_factory,
-        org_id=org_id,
-        memory_id=memory_id,
-        content=ctx.content,
-        status=ctx.status,
-        pii_detected=ctx.pii_detected,
-        pii_redacted=ctx.pii_redacted,
+        MemoryPiiUpdate(
+            org_id=org_id,
+            memory_id=memory_id,
+            content=ctx.content,
+            status=ctx.status,
+            pii_detected=ctx.pii_detected,
+            pii_redacted=ctx.pii_redacted,
+        ),
     )
 
     async with session_factory() as session:
@@ -76,12 +78,14 @@ async def test_cross_tenant_update_does_not_touch_other_org(
     with pytest.raises(RuntimeError, match="expected 1 row"):
         await update_memory_pii_flags(
             session_factory,
-            org_id=org_b,
-            memory_id=mem_a,
-            content="[EMAIL_ADDRESS]",
-            status="active",
-            pii_detected=True,
-            pii_redacted=True,
+            MemoryPiiUpdate(
+                org_id=org_b,
+                memory_id=mem_a,
+                content="[EMAIL_ADDRESS]",
+                status="active",
+                pii_detected=True,
+                pii_redacted=True,
+            ),
         )
 
     async with session_factory() as session:

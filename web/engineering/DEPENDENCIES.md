@@ -385,7 +385,7 @@ Avoid:
   plus **`pip` for `/services/memory`** (enabled for m3.C.1 / `uv.lock`). Automated dependency
   PRs are the primary CVE remediation between CI runs.
 
-**Enable when remaining services land** (add blocks in `.github/dependabot.yml`):
+**Dependabot coverage** (add blocks in `.github/dependabot.yml` as lockfiles land):
 
 | Ecosystem | Directory | Status |
 |-----------|-----------|--------|

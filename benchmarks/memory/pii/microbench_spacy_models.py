@@ -14,6 +14,7 @@ import json
 import statistics
 import time
 from pathlib import Path
+from typing import Any
 
 SAMPLES = [
     "Contact me at alice@example.com or +1-555-123-4567 about the invoice.",
@@ -26,6 +27,7 @@ SAMPLES = [
 MODELS = ("en_core_web_sm", "en_core_web_md")
 WARMUP = 2
 ITERS = 25
+_KEEP_PIPES = frozenset({"tok2vec", "ner"})
 
 
 def _percentile(sorted_vals: list[float], pct: float) -> float:
@@ -35,27 +37,40 @@ def _percentile(sorted_vals: list[float], pct: float) -> float:
     return sorted_vals[idx]
 
 
-def bench_model(name: str) -> dict[str, object]:
+def _load_ner_pipeline(name: str) -> Any:
     import spacy
 
     nlp = spacy.load(name)
-    # Disable non-NER pipes for write-path-shaped cost.
-    disable = [p for p in nlp.pipe_names if p not in {"tok2vec", "ner"}]
-    if disable:
-        nlp.disable_pipes(*disable)
+    disable = [p for p in nlp.pipe_names if p not in _KEEP_PIPES]
+    nlp.disable_pipes(*disable)
+    return nlp
 
+
+def _time_ents_ms(nlp: Any, text: str) -> float:
+    t0 = time.perf_counter()
+    _ = list(nlp(text).ents)
+    return (time.perf_counter() - t0) * 1000.0
+
+
+def _warmup(nlp: Any) -> None:
     for _ in range(WARMUP):
         for text in SAMPLES:
             _ = list(nlp(text).ents)
 
+
+def _measure_latencies_ms(nlp: Any) -> list[float]:
     times_ms: list[float] = []
     for _ in range(ITERS):
         for text in SAMPLES:
-            t0 = time.perf_counter()
-            _ = list(nlp(text).ents)
-            times_ms.append((time.perf_counter() - t0) * 1000.0)
-
+            times_ms.append(_time_ents_ms(nlp, text))
     times_ms.sort()
+    return times_ms
+
+
+def bench_model(name: str) -> dict[str, object]:
+    nlp = _load_ner_pipeline(name)
+    _warmup(nlp)
+    times_ms = _measure_latencies_ms(nlp)
     return {
         "model": name,
         "n_samples": len(SAMPLES),

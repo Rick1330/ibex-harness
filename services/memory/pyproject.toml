@@ -63,6 +63,8 @@ omit = [
 
 
 [tool.uv]
+# Semgrep dependency-cooldown: refuse packages published within the last 7 days.
+exclude-newer = "7 days"
 # Presidio 2.2.364 pins cryptography<49; CVE-2026-69247/69249 need >=50.0.0.
 # Override until Presidio raises its upper bound (operators we use are replace-only).
 override-dependencies = [
