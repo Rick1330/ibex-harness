@@ -13,23 +13,6 @@ from app.conflict.subjects import (
 )
 
 
-def _tok(
-    *,
-    dep: str,
-    lemma: str,
-    is_stop: bool = False,
-    is_alpha: bool = True,
-    children: list[object] | None = None,
-) -> SimpleNamespace:
-    return SimpleNamespace(
-        dep_=dep,
-        lemma_=lemma,
-        is_stop=is_stop,
-        is_alpha=is_alpha,
-        children=children or [],
-    )
-
-
 def _patch_nlp(monkeypatch: pytest.MonkeyPatch, tokens: list[object]) -> None:
     monkeypatch.setattr(
         "app.conflict.subjects._nlp",
@@ -38,30 +21,66 @@ def _patch_nlp(monkeypatch: pytest.MonkeyPatch, tokens: list[object]) -> None:
 
 
 def _nsubj_tokens() -> list[object]:
-    return [_tok(dep="nsubj", lemma="User"), _tok(dep="ROOT", lemma="prefer")]
+    return [
+        SimpleNamespace(
+            dep_="nsubj", lemma_="User", is_stop=False, is_alpha=True, children=[]
+        ),
+        SimpleNamespace(
+            dep_="ROOT", lemma_="prefer", is_stop=False, is_alpha=True, children=[]
+        ),
+    ]
 
 
 def _nsubj_obj_tokens() -> list[object]:
-    obj = _tok(dep="dobj", lemma="Python")
-    root = _tok(dep="ROOT", lemma="prefer", children=[obj])
-    return [_tok(dep="nsubj", lemma="User"), root, obj]
+    obj = SimpleNamespace(
+        dep_="dobj", lemma_="Python", is_stop=False, is_alpha=True, children=[]
+    )
+    root = SimpleNamespace(
+        dep_="ROOT", lemma_="prefer", is_stop=False, is_alpha=True, children=[obj]
+    )
+    nsubj = SimpleNamespace(
+        dep_="nsubj", lemma_="User", is_stop=False, is_alpha=True, children=[]
+    )
+    return [nsubj, root, obj]
 
 
 def _root_obj_tokens() -> list[object]:
-    obj = _tok(dep="dobj", lemma="Python")
-    root = _tok(dep="ROOT", lemma="prefer", children=[obj])
+    obj = SimpleNamespace(
+        dep_="dobj", lemma_="Python", is_stop=False, is_alpha=True, children=[]
+    )
+    root = SimpleNamespace(
+        dep_="ROOT", lemma_="prefer", is_stop=False, is_alpha=True, children=[obj]
+    )
     return [root, obj]
 
 
 def _root_only_tokens() -> list[object]:
-    return [_tok(dep="ROOT", lemma="prefer")]
+    return [
+        SimpleNamespace(
+            dep_="ROOT", lemma_="prefer", is_stop=False, is_alpha=True, children=[]
+        )
+    ]
 
 
 def _fallback_tokens() -> list[object]:
     return [
-        _tok(dep="punct", lemma="!", is_alpha=False),
-        _tok(dep="compound", lemma="language"),
-        _tok(dep="compound", lemma="preference"),
+        SimpleNamespace(
+            dep_="punct", lemma_="!", is_stop=False, is_alpha=False, children=[]
+        ),
+        SimpleNamespace(
+            dep_="compound",
+            lemma_="language",
+            is_stop=False,
+            is_alpha=True,
+            children=[],
+        ),
+        SimpleNamespace(
+            dep_="compound",
+            lemma_="preference",
+            is_stop=False,
+            is_alpha=True,
+            children=[],
+        ),
     ]
 
 

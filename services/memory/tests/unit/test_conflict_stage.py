@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
@@ -33,41 +34,67 @@ async def _empty_load(_org: UUID, _ids: object) -> list[CandidateMemory]:
     return []
 
 
-async def _run_conflict(
-    *,
+def _stage(load: CandidateLoader) -> SimpleNamespace:
+    """Mutable fixture bag — avoids multi-arg helpers CodeScene rejects."""
+    return SimpleNamespace(
+        load=load,
+        enabled=True,
+        agent_id=_MISSING,
+        candidates=[],
+        valid_from=_MISSING,
+        classifier=None,
+        subject="x",
+        content="x",
+    )
+
+
+def _early(
+    enabled: bool,
     load: CandidateLoader,
-    enabled: bool = True,
-    agent_id: object = _MISSING,
-    candidates: list[UUID] | None = None,
-    valid_from: datetime | None | object = _MISSING,
-    classifier: object | None = None,
-    subject: str = "x",
-    content: str = "x",
-) -> WriteContext:
+    candidates: tuple[UUID, ...],
+    expect: object = None,
+) -> SimpleNamespace:
+    """expect is None (ok), str error code, or (agent_id, error) tuple."""
+    agent_id: object = _MISSING
+    expect_error: str | None = None
+    if isinstance(expect, tuple):
+        agent_id, expect_error = expect
+    elif isinstance(expect, str):
+        expect_error = expect
+    return SimpleNamespace(
+        enabled=enabled,
+        load=load,
+        candidates=candidates,
+        agent_id=agent_id,
+        expect_error=expect_error,
+    )
+
+
+async def _run_conflict(case: SimpleNamespace) -> WriteContext:
     resolved_agent: UUID | None
-    if agent_id is _MISSING:
+    if case.agent_id is _MISSING:
         resolved_agent = uuid4()
     else:
-        resolved_agent = agent_id  # type: ignore[assignment]
+        resolved_agent = case.agent_id
     resolved_valid_from: datetime | None
-    if valid_from is _MISSING:
+    if case.valid_from is _MISSING:
         resolved_valid_from = _dt(6)
     else:
-        resolved_valid_from = valid_from  # type: ignore[assignment]
+        resolved_valid_from = case.valid_from
     svc = ConflictService(
         Settings(),
-        classifier=classifier,  # type: ignore[arg-type]
-        subject_extractor=lambda _: subject,
+        classifier=case.classifier,  # type: ignore[arg-type]
+        subject_extractor=lambda _: case.subject,
     )
     pipe = WritePipeline(
-        [ConflictStage(svc, load_candidates=load, enabled=enabled)]
+        [ConflictStage(svc, load_candidates=case.load, enabled=case.enabled)]
     )
     return await pipe.run(
         WriteContext(
             org_id=uuid4(),
             agent_id=resolved_agent,
-            content=content,
-            near_duplicate_candidates=candidates or [],
+            content=case.content,
+            near_duplicate_candidates=list(case.candidates),
             valid_from=resolved_valid_from,
         )
     )
@@ -75,33 +102,26 @@ async def _run_conflict(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("enabled", "candidates", "agent_id", "load", "expect_error"),
+    "case",
     [
-        (False, [uuid4()], _MISSING, _refuse_load, None),
-        (True, [], _MISSING, _refuse_load, None),
-        (True, [uuid4()], _MISSING, _empty_load, None),
-        (True, [uuid4()], None, _refuse_load, "agent_id_required"),
+        _early(False, _refuse_load, (uuid4(),)),
+        _early(True, _refuse_load, ()),
+        _early(True, _empty_load, (uuid4(),)),
+        _early(True, _refuse_load, (uuid4(),), expect=(None, "agent_id_required")),
     ],
 )
-async def test_conflict_stage_early_exits(
-    enabled: bool,
-    candidates: list[UUID],
-    agent_id: object,
-    load: CandidateLoader,
-    expect_error: str | None,
-) -> None:
-    ctx = await _run_conflict(
-        load=load,
-        enabled=enabled,
-        agent_id=agent_id,
-        candidates=candidates,
-    )
+async def test_conflict_stage_early_exits(case: SimpleNamespace) -> None:
+    stage = _stage(case.load)
+    stage.enabled = case.enabled
+    stage.agent_id = case.agent_id
+    stage.candidates = list(case.candidates)
+    ctx = await _run_conflict(stage)
     assert ctx.conflict_decisions == []
-    if expect_error is None:
+    if case.expect_error is None:
         assert ctx.stop is False
     else:
         assert ctx.stop is True
-        assert ctx.error == expect_error
+        assert ctx.error == case.expect_error
 
 
 @pytest.mark.asyncio
@@ -118,13 +138,12 @@ async def test_conflict_stage_records_supersede_targets() -> None:
             )
         ]
 
-    ctx = await _run_conflict(
-        load=load,
-        candidates=[old_id],
-        subject="pref",
-        content="User is switching to Go",
-        valid_from=_dt(6),
-    )
+    stage = _stage(load)
+    stage.candidates = [old_id]
+    stage.subject = "pref"
+    stage.content = "User is switching to Go"
+    stage.valid_from = _dt(6)
+    ctx = await _run_conflict(stage)
     assert ctx.pending_supersede_targets == [old_id]
     assert ctx.conflict_llm_calls == 0
     assert ctx.conflict_decisions[0].outcome == ConflictOutcome.SUPERSEDES
@@ -150,14 +169,13 @@ async def test_conflict_stage_missing_valid_from_escalates() -> None:
             )
         ]
 
-    ctx = await _run_conflict(
-        load=load,
-        candidates=[cand],
-        classifier=_Cls(),
-        subject="pref",
-        content="User prefers Go",
-        valid_from=None,
-    )
+    stage = _stage(load)
+    stage.candidates = [cand]
+    stage.classifier = _Cls()
+    stage.subject = "pref"
+    stage.content = "User prefers Go"
+    stage.valid_from = None
+    ctx = await _run_conflict(stage)
     assert ctx.conflict_llm_calls == 1
     assert ctx.conflict_decisions[0].outcome == ConflictOutcome.UNRELATED
     assert ctx.conflict_decisions[0].notes == "missing_validity"

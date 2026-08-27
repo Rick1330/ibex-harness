@@ -23,24 +23,27 @@ def _nlp(model_name: str) -> object:
 
 
 def extract_subject_key(content: str, *, model_name: str = "en_core_web_md") -> str:
-    """Return a stable subject+predicate/attribute key for conflict matching.
-
-    Combines nominal subject with ROOT lemma and object/attribute when present so
-    distinct properties of one entity (e.g. preference vs location) do not share
-    an automatic-supersession key.
-    """
+    """Return a stable subject+predicate/attribute key for conflict matching."""
     text = content.strip()
     if not text:
         return ""
-    doc = _nlp(model_name)(text)
+    return _subject_key_from_doc(_nlp(model_name)(text))
+
+
+def _subject_key_from_doc(doc: Any) -> str:
     root = _find_root(doc)
-    nsubj_key = _key_from_nominal_subject(doc, root)
-    if nsubj_key:
-        return nsubj_key
-    root_key = _key_from_root(root)
-    if root_key:
-        return root_key
-    return _key_from_content_tokens(doc)
+    return _first_nonempty(
+        _key_from_nominal_subject(doc, root),
+        _key_from_root(root),
+        _key_from_content_tokens(doc),
+    )
+
+
+def _first_nonempty(*parts: str) -> str:
+    for part in parts:
+        if part:
+            return part
+    return ""
 
 
 def _find_root(doc: Any) -> Any | None:
@@ -52,19 +55,22 @@ def _object_lemmas(root: Any) -> list[str]:
 
 
 def _key_from_nominal_subject(doc: Any, root: Any | None) -> str:
-    for token in doc:
-        if token.dep_ in _NSUBJ_DEPS and not token.is_stop:
-            return normalize_subject_key(_subject_predicate_key(token.lemma_, root))
-    return ""
+    token = next(
+        (t for t in doc if t.dep_ in _NSUBJ_DEPS and not t.is_stop),
+        None,
+    )
+    if token is None:
+        return ""
+    return normalize_subject_key(_subject_predicate_key(token.lemma_, root))
 
 
 def _key_from_root(root: Any | None) -> str:
     if root is None:
         return ""
     objs = _object_lemmas(root)
-    if objs:
-        return normalize_subject_key(f"{root.lemma_} {objs[0]}")
-    return normalize_subject_key(root.lemma_)
+    if not objs:
+        return normalize_subject_key(root.lemma_)
+    return normalize_subject_key(f"{root.lemma_} {objs[0]}")
 
 
 def _key_from_content_tokens(doc: Any) -> str:
