@@ -85,25 +85,62 @@ to bump** — never a bare 500.
    - Then best-effort cache update + vector upsert/index refresh
 4. On unique violation for active `(org_id, agent_id, content_hash)`: call the
    existing bump path and return `409` with `existing_memory_id` per API docs.
-5. Escalation durability schema sketch (implement in 3.C.5):
+5. Escalation durability — finalized schema (migration `000019`):
 
-   ```text
-   memory_conflict_escalations (
-     id UUID PK,
-     org_id UUID NOT NULL,
-     new_memory_id UUID NOT NULL,      -- after insert
-     candidate_memory_id UUID NOT NULL,
-     status TEXT NOT NULL,             -- pending | resolved | dismissed
-     reason TEXT,
-     subject_key TEXT,
-     created_at TIMESTAMPTZ,
-     resolved_at TIMESTAMPTZ NULL
-   )
+   ```sql
+   CREATE TABLE ibex_core.memory_conflict_escalations (
+       id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+       org_id              UUID NOT NULL REFERENCES ibex_core.organizations(id),
+       new_memory_id       UUID NOT NULL,
+       candidate_memory_id UUID NOT NULL,
+       conflict_type       TEXT NOT NULL,   -- ConflictOutcome (e.g. escalate_pending)
+       status              TEXT NOT NULL DEFAULT 'pending'
+                           CHECK (status IN ('pending', 'resolved', 'dismissed')),
+       subject_key         TEXT,
+       reason              TEXT,
+       created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+       resolved_at         TIMESTAMPTZ,
+       resolved_by         UUID             -- nullable; future human/LLM consumer
+   );
    ```
 
-   Rows are written **after** the new memory insert succeeds for
-   `ESCALATE_PENDING` decisions. Prefer RLS + explicit `org_id` filters.
-   Do **not** add `pending_review` to `memories.status` in this design.
+   **Composite org-scoped FKs** on `(new_memory_id, org_id)` and
+   `(candidate_memory_id, org_id)` → `memories (id, org_id)` — same defense-in-depth
+   pattern as `memory_relationships` (000016) and `memory_labels` (000015). Prevents
+   cross-tenant edge attachment even if application code omits an `org_id` filter.
+
+   **RLS:** `ENABLE` + `FORCE` + `rls_org_visible(org_id)` — identical to sibling tables.
+
+   **Worker poll index:** partial index on `(org_id, created_at DESC) WHERE status = 'pending'`.
+
+   Rows are written **in the same transaction** as the new memory insert for
+   `ESCALATE_PENDING` decisions — an escalation must never be lost if the insert
+   succeeds. Do **not** add `pending_review` to `memories.status` (ADR-0056 rejected).
+
+6. **Unique-violation race** (concurrent identical content after exact-dedup pre-check):
+
+   Catch Postgres `23505` on `idx_memories_org_agent_content_hash_active` inside the
+   persist transaction, roll back, call the existing bump-retrieval path, and return
+   the same `409 DUPLICATE_CONTENT` + `existing_memory_id` shape as the pre-check path.
+   Callers cannot distinguish which path fired.
+
+7. **After-commit cache and index** (steps 8–9):
+
+   Run **strictly after** the DB transaction commits. **Synchronous inline
+   best-effort** — not Celery (memory service has no task queue). Failure to update
+   Redis or the vector index does not fail the HTTP write; log + metric + retry-worthy.
+
+   | Step | Target |
+   |------|--------|
+   | Object cache | `{org_id}:memory:{memory_id}` (JSON, TTL 3600s) |
+   | Hot sorted set | `{org_id}:hot_memories:{agent_id}` (ZADD composite_score, TTL 3600s) |
+   | Vector index | `PgVectorStore.upsert` (UPDATE embedding on existing row) |
+
+   Skip after-commit for quarantined writes (no embedding) and exact-duplicate 409s.
+
+8. **HTTP wiring timing:** Stages 1–6 were built and testable as a pure pipeline
+   function without a DB insert path. Only with a real insert transaction does
+   `POST /v1/memories` make sense — wired in 3.C.5 per the existing API contract.
 
 ## Consequences
 

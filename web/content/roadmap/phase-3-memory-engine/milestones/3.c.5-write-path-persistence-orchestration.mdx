@@ -2,7 +2,7 @@
 title: "3.C.5 Write-path persistence and orchestration"
 description: "Pipeline steps 7–9: DB insert, apply pending_supersede_targets, unique-violation→bump, after-commit cache/index, durable conflict escalations. ADR-0057. Before 3.C.4."
 summary: "Pipeline steps 7–9: DB insert, apply pending supersessions, unique-violation→bump, after-commit cache/index, durable escalations. ADR-0057."
-status: "planned"
+status: "complete"
 milestoneId: "3.C.5"
 track: "C"
 trackTitle: "Write Pipeline"
@@ -15,7 +15,7 @@ fullTitle: "Milestone 3.C.5 — Write-path persistence and orchestration"
 
 # Milestone 3.C.5 — Write-path persistence and orchestration
 
-**Status:** Planned  
+**Status:** Complete  
 **Goal:** [Track C — Write Pipeline](/roadmap/phase-3-memory-engine/tracks#track-c--write-pipeline)  
 **Phase:** 3 — Core Memory Substrate  
 **Estimated effort:** 5 days  
@@ -60,11 +60,11 @@ transaction to attach `memory_labels`.
 
 ## Success signals
 
-- [ ] ADR-0057 indexed; tracking issue #620 closed by the implementation PR
-- [ ] Insert + supersession atomic; unique-violation mapped to bump / 409
-- [ ] Escalation rows durable, org-scoped, cross-tenant tested
-- [ ] `POST /v1/memories` exercises stages 1–9 per API documentation
-- [ ] Cache/index after-commit path covered by tests
+- [x] ADR-0057 indexed; tracking issue #620 closed by the implementation PR
+- [x] Insert + supersession atomic; unique-violation mapped to bump / 409
+- [x] Escalation rows durable, org-scoped, cross-tenant tested
+- [x] `POST /v1/memories` exercises stages 1–9 per API documentation
+- [x] Cache/index after-commit path covered by tests
 
 ## Prerequisites
 

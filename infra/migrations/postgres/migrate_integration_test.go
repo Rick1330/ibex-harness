@@ -91,6 +91,7 @@ func TestSchemaObjectsExist(t *testing.T) {
 		"organizations", "tokens", "users", "agents",
 		"directives", "directive_versions", "sessions", "checkpoints",
 		"memories", "memory_labels", "memory_relationships",
+		"memory_conflict_escalations",
 	}
 	assertCoreTablesExist(t, ctx, db, tables)
 	assertCoreTablesRLSEnabled(t, ctx, db, tables)

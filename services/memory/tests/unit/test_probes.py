@@ -3,6 +3,8 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 from prometheus_client import REGISTRY, generate_latest
 
+from app.auth.client import StaticTokenValidator
+from app.config import Settings
 from app.main import MemoryAppState, create_app
 
 
@@ -12,7 +14,13 @@ def _counter_value(name: str, labels: dict[str, str]) -> float:
 
 
 def test_health_and_ready() -> None:
-    with TestClient(create_app()) as client:
+    settings = Settings(
+        database_url="postgresql+asyncpg://ibex:ibex@127.0.0.1:5432/ibex",
+        embedding_api_token="unit-test-token",
+    )
+    with TestClient(
+        create_app(settings=settings, validator=StaticTokenValidator({}))
+    ) as client:
         assert client.get("/health").json() == {"status": "ok"}
         ready = client.get("/ready")
         assert ready.status_code == 200

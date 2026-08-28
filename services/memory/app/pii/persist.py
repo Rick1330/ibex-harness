@@ -8,6 +8,8 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.org_context import set_service_org
+
 
 @dataclass(frozen=True, slots=True)
 class MemoryPiiUpdate:
@@ -25,17 +27,7 @@ async def update_memory_pii_flags(
 ) -> None:
     """Update content/status/PII flags with explicit org_id filter (defense in depth)."""
     async with factory() as session, session.begin():
-        await session.execute(
-            text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-                "SELECT set_config('app.is_service_account', 'true', true)"
-            )
-        )
-        await session.execute(
-            text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-                "SELECT set_config('app.current_org_id', :org_id, true)"
-            ),
-            {"org_id": str(update.org_id)},
-        )
+        await set_service_org(session, update.org_id)
         result = await session.execute(
             text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
                 """

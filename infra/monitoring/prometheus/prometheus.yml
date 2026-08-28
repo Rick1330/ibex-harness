@@ -51,6 +51,14 @@ scrape_configs:
           service: mcp-memory
           port_profile: default
 
+  - job_name: memory
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["host.docker.internal:8005"]
+        labels:
+          service: memory
+          port_profile: default
+
   # Demo / e2e ports when 8080 is occupied on the host (Phase 2.5 exit live verify).
   - job_name: proxy-demo
     metrics_path: /metrics
