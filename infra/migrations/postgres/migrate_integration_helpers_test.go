@@ -33,8 +33,9 @@ var ibexCoreCountQueries = map[string]string{
 	"sessions":             `SELECT COUNT(*) FROM ibex_core.sessions`,
 	"checkpoints":          `SELECT COUNT(*) FROM ibex_core.checkpoints`,
 	"memories":             `SELECT COUNT(*) FROM ibex_core.memories`,
-	"memory_labels":        `SELECT COUNT(*) FROM ibex_core.memory_labels`,
-	"memory_relationships": `SELECT COUNT(*) FROM ibex_core.memory_relationships`,
+	"memory_labels":               `SELECT COUNT(*) FROM ibex_core.memory_labels`,
+	"memory_relationships":        `SELECT COUNT(*) FROM ibex_core.memory_relationships`,
+	"memory_conflict_escalations": `SELECT COUNT(*) FROM ibex_core.memory_conflict_escalations`,
 }
 
 type directiveSeed struct {

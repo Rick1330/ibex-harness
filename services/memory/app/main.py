@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 
 from fastapi import FastAPI
 from redis.asyncio import Redis
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.auth.client import GRPCTokenValidator, TokenValidator
@@ -114,12 +115,15 @@ def create_app(
             after_commit=after_commit,
         )
 
-        if await auth.ready():
-            state.ready = True
-            state.ready_error = None
-        else:
+        if not await auth.ready():
             state.ready = False
             state.ready_error = "auth gRPC not reachable"
+        elif not await _postgres_ready(engine):
+            state.ready = False
+            state.ready_error = "database not reachable"
+        else:
+            state.ready = True
+            state.ready_error = None
 
         try:
             yield
@@ -161,6 +165,19 @@ def _build_embed(
     client = EmbeddingClient(cfg.embedding_base_url, token)
     holder["client"] = client
     return build_embedding_callable(client)
+
+
+async def _postgres_ready(engine: AsyncEngine) -> bool:
+    try:
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+        return True
+    except Exception as exc:
+        logger.warning(
+            "postgres readiness check failed error_class=%s",
+            type(exc).__name__,
+        )
+        return False
 
 
 app = create_app()

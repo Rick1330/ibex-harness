@@ -31,7 +31,7 @@ async def test_build_embedding_callable() -> None:
         embed = build_embedding_callable(client)
         got = await embed("hello")
         assert got == vec
-        client.embed.assert_awaited_once()
+        client.embed.assert_awaited_once_with(["hello"], org_id=org)
     finally:
         reset_write_org_id(token)
 

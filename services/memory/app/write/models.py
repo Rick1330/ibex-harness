@@ -24,6 +24,9 @@ class CreateMemoryCommand:
     category: str = "factual"
     confidence: float = 0.80
     session_id: UUID | None = None
+    visibility: str = "agent"
+    tags: tuple[str, ...] = ()
+    pinned: bool = False
     metadata: dict[str, Any] | None = None
     valid_from: datetime | None = None
     valid_until: datetime | None = None
@@ -43,6 +46,9 @@ class MemoryRow:
     pii_detected: bool
     pii_redacted: bool
     session_id: UUID | None
+    visibility: str
+    pinned: bool
+    tags: tuple[str, ...]
     metadata: dict[str, Any]
     retrieval_count: int
     usefulness_score: float

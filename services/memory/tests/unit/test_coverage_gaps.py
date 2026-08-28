@@ -151,6 +151,9 @@ async def test_after_commit_skips_non_created() -> None:
         pii_detected=False,
         pii_redacted=False,
         session_id=None,
+        visibility="agent",
+        pinned=False,
+        tags=(),
         metadata={},
         retrieval_count=0,
         usefulness_score=0.5,
@@ -181,6 +184,9 @@ async def test_after_commit_writes_cache() -> None:
         pii_detected=False,
         pii_redacted=False,
         session_id=None,
+        visibility="agent",
+        pinned=False,
+        tags=(),
         metadata={},
         retrieval_count=0,
         usefulness_score=0.5,
@@ -289,6 +295,9 @@ async def test_orchestrator_quarantine_calls_after_commit() -> None:
         pii_detected=True,
         pii_redacted=False,
         session_id=None,
+        visibility="agent",
+        pinned=False,
+        tags=(),
         metadata={},
         retrieval_count=0,
         usefulness_score=0.5,
@@ -354,6 +363,7 @@ def test_main_auth_not_ready() -> None:
         patch("app.main.PgVectorStore", return_value=MagicMock()),
         patch("app.main.PiiService", return_value=MagicMock()),
         patch("app.main.build_write_orchestrator", return_value=MagicMock()),
+        patch("app.main._postgres_ready", AsyncMock(return_value=True)),
     ):
         app = create_app(settings=settings, validator=validator)
         with TestClient(app) as client:
@@ -406,6 +416,62 @@ async def test_begin_idempotency_conflict_and_in_progress() -> None:
             fingerprint="fp",
         )
     assert exc.value.detail["code"] == "IDEMPOTENCY_IN_PROGRESS"
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_after_commit_failure_does_not_propagate() -> None:
+    after_commit = AsyncMock(side_effect=RuntimeError("cache down"))
+
+    class _Pipe:
+        async def run(self, ctx: WriteContext) -> WriteContext:
+            ctx.status = "active"
+            ctx.content_hash = "abc"
+            return ctx
+
+    mock_session = MagicMock()
+    mock_begin = MagicMock()
+    mock_begin.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_begin.__aexit__ = AsyncMock(return_value=None)
+    mock_session.begin = MagicMock(return_value=mock_begin)
+    mock_cm = MagicMock()
+    mock_cm.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_cm.__aexit__ = AsyncMock(return_value=None)
+
+    orch = MemoryWriteOrchestrator(
+        _Pipe(),
+        MagicMock(return_value=mock_cm),
+        after_commit=after_commit,
+    )
+    fake_row = MemoryRow(
+        id=uuid4(),
+        org_id=uuid4(),
+        agent_id=uuid4(),
+        content="x",
+        content_tokens=1,
+        category="factual",
+        confidence=0.8,
+        status="active",
+        source="user_provided",
+        pii_detected=False,
+        pii_redacted=False,
+        session_id=None,
+        visibility="agent",
+        pinned=False,
+        tags=(),
+        metadata={},
+        retrieval_count=0,
+        usefulness_score=0.5,
+        valid_from=datetime.now(tz=UTC),
+        valid_until=None,
+        created_at=datetime.now(tz=UTC),
+        updated_at=datetime.now(tz=UTC),
+    )
+    with patch("app.write.orchestrator.insert_memory_session", AsyncMock(return_value=fake_row)):
+        outcome = await orch.create(
+            CreateMemoryCommand(org_id=uuid4(), agent_id=uuid4(), content="x")
+        )
+    assert outcome.kind == WriteOutcomeKind.CREATED
+    after_commit.assert_awaited_once()
 
 
 def test_map_rpc_error_unknown_code() -> None:

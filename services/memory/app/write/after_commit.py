@@ -22,8 +22,17 @@ class AfterCommitHandler:
     async def __call__(self, outcome: WriteOutcome) -> None:
         if outcome.kind != WriteOutcomeKind.CREATED:
             return
-        if self.cache is not None:
-            await self.cache.write_created(outcome)
+        try:
+            if self.cache is not None:
+                await self.cache.write_created(outcome)
+        except Exception:
+            WRITE_CACHE_ERRORS.labels(op="cache_write").inc()
+            logger.warning(
+                "cache write failed org_id=%s memory_id=%s",
+                outcome.memory.org_id,
+                outcome.memory.id,
+                exc_info=True,
+            )
         if self.store is None or outcome.embedding is None:
             return
         try:

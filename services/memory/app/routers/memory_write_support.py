@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 
 from app.exceptions import DuplicateMemoryError, EmbeddingServiceError, ValidationError
 from app.idempotency.redis_store import ClaimKind, ClaimOutcome, IdempotencyToken
+from app.schemas.limits import MAX_IDEMPOTENCY_KEY_LENGTH
 
 
 class IdempotencyHandle:
@@ -33,6 +34,26 @@ class IdempotencyHandle:
         return self.token is not None and self.store is not None
 
 
+def parse_idempotency_key(raw: str | None) -> str | None:
+    """Validate X-Idempotency-Key before it is used in Redis keys."""
+    if raw is None:
+        return None
+    key = raw.strip()
+    if not key:
+        return None
+    if len(key) > MAX_IDEMPOTENCY_KEY_LENGTH:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "VALIDATION_ERROR",
+                "message": (
+                    f"X-Idempotency-Key must be at most {MAX_IDEMPOTENCY_KEY_LENGTH} characters"
+                ),
+            },
+        )
+    return key
+
+
 async def begin_idempotency(
     *,
     store: object | None,
@@ -41,9 +62,10 @@ async def begin_idempotency(
     fingerprint: str,
 ) -> IdempotencyHandle | JSONResponse:
     handle = IdempotencyHandle(store=store, token=None, fingerprint=fingerprint)
-    if not idempotency_key or store is None:
+    validated_key = parse_idempotency_key(idempotency_key)
+    if not validated_key or store is None:
         return handle
-    handle.token = IdempotencyToken(org_id=org_id, key=idempotency_key)
+    handle.token = IdempotencyToken(org_id=org_id, key=validated_key)
     claim: ClaimOutcome = await store.claim(handle.token, fingerprint)
     if claim.kind == ClaimKind.HIT and claim.record is not None:
         return JSONResponse(

@@ -13,6 +13,7 @@ import grpc
 from app.auth.errors import AuthFailedError, AuthUnavailableError
 from app.auth.proto_wire import (
     ValidateTokenWire,
+    _MAX_TOKEN_BYTES,
     decode_validate_token_response,
     encode_validate_token_request,
 )
@@ -66,6 +67,8 @@ def parse_authorization_header(header: str | None) -> str:
     token = remainder.strip()
     if not token:
         raise AuthFailedError("authorization header must be Bearer <token>")
+    if len(token.encode("utf-8")) > _MAX_TOKEN_BYTES:
+        raise AuthFailedError("bearer token exceeds maximum length")
     return token
 
 

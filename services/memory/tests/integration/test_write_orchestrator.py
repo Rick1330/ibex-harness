@@ -449,3 +449,11 @@ async def test_orchestrator_cross_tenant_isolated(
         CreateMemoryCommand(org_id=org_b, agent_id=agent_b, content=content)
     )
     assert out_a.memory.id != out_b.memory.id
+
+    from app.conflict.persist import CandidateLoad, load_candidate_memories
+
+    cross_loaded = await load_candidate_memories(
+        session_factory,
+        CandidateLoad(org_id=org_b, memory_ids=(out_a.memory.id,)),
+    )
+    assert cross_loaded == []

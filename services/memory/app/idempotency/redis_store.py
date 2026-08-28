@@ -12,6 +12,20 @@ from redis.asyncio import Redis
 
 CURRENT_RECORD_VERSION = 1
 
+# Atomic check-and-set: only mutate when record is pending with matching fingerprint.
+_CAS_MUTATE_LUA = """
+local raw = redis.call('GET', KEYS[1])
+if not raw then return 0 end
+local ok, data = pcall(cjson.decode, raw)
+if not ok then return 0 end
+if data['state'] ~= 'pending' or data['fp'] ~= ARGV[1] then return 0 end
+if ARGV[2] == '' then
+  return redis.call('DEL', KEYS[1])
+end
+redis.call('SET', KEYS[1], ARGV[2], 'EX', tonumber(ARGV[3]))
+return 1
+"""
+
 
 class IdempotencyState(StrEnum):
     PENDING = "pending"
@@ -73,7 +87,7 @@ class ClaimOutcome:
 
 
 def redis_key(token: IdempotencyToken) -> str:
-    return f"idempotency:{token.org_id}:{token.key}"
+    return f"{token.org_id}:idempotency:{token.key}"
 
 
 class RedisIdempotencyStore:
@@ -87,6 +101,7 @@ class RedisIdempotencyStore:
         self._client = client
         self._ttl = ttl_seconds
         self._pending_ttl = pending_ttl_seconds
+        self._cas_mutate = client.register_script(_CAS_MUTATE_LUA)
 
     async def claim(self, token: IdempotencyToken, fingerprint: str) -> ClaimOutcome:
         key = redis_key(token)
@@ -121,25 +136,34 @@ class RedisIdempotencyStore:
         status: int,
         body: bytes,
     ) -> None:
-        key = redis_key(token)
         record = IdempotencyRecord(
             fingerprint=fingerprint,
             state=IdempotencyState.COMPLETED,
             status=status,
             body=body,
         )
-        await self._client.set(key, record.to_json(), ex=self._ttl)
+        await self._mutate_if_pending(
+            token,
+            fingerprint,
+            completed_json=record.to_json(),
+        )
 
     async def release(self, token: IdempotencyToken, fingerprint: str) -> None:
+        await self._mutate_if_pending(token, fingerprint, completed_json=None)
+
+    async def _mutate_if_pending(
+        self,
+        token: IdempotencyToken,
+        fingerprint: str,
+        *,
+        completed_json: str | None,
+    ) -> None:
         key = redis_key(token)
-        raw = await self._client.get(key)
-        if raw is None:
-            return
-        record = IdempotencyRecord.from_json(
-            raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
+        payload = completed_json or ""
+        await self._cas_mutate(
+            keys=[key],
+            args=[fingerprint, payload, str(self._ttl)],
         )
-        if record.state == IdempotencyState.PENDING and record.fingerprint == fingerprint:
-            await self._client.delete(key)
 
 
 def pending_record(fingerprint: str) -> IdempotencyRecord:

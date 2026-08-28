@@ -32,12 +32,33 @@ def content_token_count(content: str) -> int:
     return max(1, len(content.split()))
 
 
+def _persist_metadata(command: CreateMemoryCommand) -> dict[str, Any]:
+    meta = dict(command.metadata or {})
+    meta["visibility"] = command.visibility
+    meta["pinned"] = command.pinned
+    if command.tags:
+        meta["tags"] = list(command.tags)
+    return meta
+
+
+def _split_presentation_metadata(
+    meta: dict[str, Any],
+) -> tuple[str, bool, tuple[str, ...], dict[str, Any]]:
+    stored = dict(meta)
+    visibility = str(stored.pop("visibility", "agent"))
+    pinned = bool(stored.pop("pinned", False))
+    tags_raw = stored.pop("tags", [])
+    tags = tuple(str(tag) for tag in tags_raw) if isinstance(tags_raw, list) else ()
+    return visibility, pinned, tags, stored
+
+
 def _row_from_mapping(row: Any) -> MemoryRow:
     meta = row.metadata
     if isinstance(meta, str):
         meta = json.loads(meta)
     if not isinstance(meta, dict):
         meta = {}
+    visibility, pinned, tags, metadata = _split_presentation_metadata(meta)
     return MemoryRow(
         id=UUID(str(row.id)),
         org_id=UUID(str(row.org_id)),
@@ -51,7 +72,10 @@ def _row_from_mapping(row: Any) -> MemoryRow:
         pii_detected=bool(row.pii_detected),
         pii_redacted=bool(row.pii_redacted),
         session_id=UUID(str(row.session_id)) if row.session_id else None,
-        metadata=meta,
+        visibility=visibility,
+        pinned=pinned,
+        tags=tags,
+        metadata=metadata,
         retrieval_count=int(row.retrieval_count),
         usefulness_score=float(row.usefulness_score),
         valid_from=_aware(row.valid_from),
@@ -84,7 +108,7 @@ async def insert_memory_session(
         "source": "user_provided",
         "pii_detected": ctx.pii_detected,
         "pii_redacted": ctx.pii_redacted,
-        "metadata": json.dumps(command.metadata or {}),
+        "metadata": json.dumps(_persist_metadata(command)),
         "valid_from": valid_from,
         "valid_until": command.valid_until or ctx.valid_until,
     }

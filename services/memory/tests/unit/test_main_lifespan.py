@@ -43,6 +43,11 @@ def test_create_app_full_lifespan_mocked() -> None:
 
     mock_engine = MagicMock()
     mock_engine.dispose = AsyncMock()
+    mock_conn = MagicMock()
+    mock_conn.execute = AsyncMock()
+    mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
+    mock_conn.__aexit__ = AsyncMock(return_value=None)
+    mock_engine.connect = MagicMock(return_value=mock_conn)
     mock_factory = MagicMock()
     mock_store = MagicMock()
     mock_pii = MagicMock()
@@ -53,9 +58,9 @@ def test_create_app_full_lifespan_mocked() -> None:
 
     with (
         patch("app.main.create_engine", return_value=mock_engine),
-        patch("app.main.create_session_factory", return_value=mock_factory),
-        patch("app.main.PgVectorStore", return_value=mock_store),
-        patch("app.main.PiiService", return_value=mock_pii),
+        patch("app.main.create_session_factory", return_value=MagicMock()),
+        patch("app.main.PgVectorStore", return_value=MagicMock()),
+        patch("app.main.PiiService", return_value=MagicMock()),
         patch("app.main.Redis.from_url", return_value=mock_redis),
         patch("app.main.EmbeddingClient", return_value=mock_client),
         patch("app.main.build_write_orchestrator", return_value=MagicMock()),
@@ -63,3 +68,32 @@ def test_create_app_full_lifespan_mocked() -> None:
         app = create_app(settings=settings, validator=validator)
         with TestClient(app) as client:
             assert client.get("/health").status_code == 200
+
+
+def test_create_app_postgres_unreachable_not_ready() -> None:
+    settings = Settings(
+        database_url="postgresql+asyncpg://ibex:ibex@127.0.0.1:5432/ibex",
+        embedding_api_token="embed-tok",
+    )
+    validator = StaticTokenValidator({}, available=True)
+
+    mock_conn = MagicMock()
+    mock_conn.execute = AsyncMock(side_effect=OSError("connection refused"))
+    mock_conn.__aenter__ = AsyncMock(return_value=mock_conn)
+    mock_conn.__aexit__ = AsyncMock(return_value=None)
+    mock_engine = MagicMock()
+    mock_engine.connect = MagicMock(return_value=mock_conn)
+    mock_engine.dispose = AsyncMock()
+
+    with (
+        patch("app.main.create_engine", return_value=mock_engine),
+        patch("app.main.create_session_factory", return_value=MagicMock()),
+        patch("app.main.PgVectorStore", return_value=MagicMock()),
+        patch("app.main.PiiService", return_value=MagicMock()),
+        patch("app.main.build_write_orchestrator", return_value=MagicMock()),
+    ):
+        app = create_app(settings=settings, validator=validator)
+        with TestClient(app) as client:
+            assert app.state.memory.ready is False
+            assert app.state.memory.ready_error == "database not reachable"
+            assert client.get("/ready").status_code == 503

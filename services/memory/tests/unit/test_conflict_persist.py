@@ -139,6 +139,33 @@ async def test_apply_supersession_success() -> None:
         ),
     )
     assert len(session.executed) == 4
+    update_sql = str(session.executed[2][0])
+    assert "LEAST" in update_sql
+
+
+@pytest.mark.asyncio
+async def test_apply_supersession_preserves_earlier_valid_until() -> None:
+    """Regression: later valid_until is closed; earlier valid_until is kept."""
+    session = _FakeSession(
+        [
+            _FakeResult(),
+            _FakeResult(),
+            _FakeResult(rowcount=1),
+            _FakeResult(),
+        ]
+    )
+    closed_at = datetime(2026, 6, 1, tzinfo=UTC)
+    await apply_supersession(
+        _factory_for(session),  # type: ignore[arg-type]
+        SupersedeApply(
+            org_id=uuid4(),
+            new_memory_id=uuid4(),
+            target_memory_id=uuid4(),
+            closed_at=closed_at,
+        ),
+    )
+    update_sql = str(session.executed[2][0])
+    assert "LEAST(COALESCE(valid_until" in update_sql.replace("\n", " ")
 
 
 @pytest.mark.asyncio

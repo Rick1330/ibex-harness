@@ -1,8 +1,8 @@
-"""Unit tests for Redis idempotency store."""
+"""Unit tests for idempotency Redis store."""
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
@@ -14,7 +14,14 @@ from app.idempotency.redis_store import (
     IdempotencyToken,
     RedisIdempotencyStore,
     pending_record,
+    redis_key,
 )
+
+
+def _mock_redis(*, cas_result: int = 1) -> AsyncMock:
+    client = AsyncMock()
+    client.register_script = MagicMock(return_value=AsyncMock(return_value=cas_result))
+    return client
 
 
 @pytest.fixture
@@ -24,7 +31,7 @@ def token() -> IdempotencyToken:
 
 @pytest.mark.asyncio
 async def test_claim_miss_on_setnx(token: IdempotencyToken) -> None:
-    client = AsyncMock()
+    client = _mock_redis()
     client.set = AsyncMock(return_value=True)
     store = RedisIdempotencyStore(client)
     outcome = await store.claim(token, "fp1")
@@ -41,7 +48,7 @@ async def test_claim_hit_on_completed(token: IdempotencyToken) -> None:
         status=201,
         body=b"{}",
     )
-    client = AsyncMock()
+    client = _mock_redis()
     client.set = AsyncMock(return_value=False)
     client.get = AsyncMock(return_value=completed.to_json().encode())
     store = RedisIdempotencyStore(client)
@@ -54,7 +61,7 @@ async def test_claim_hit_on_completed(token: IdempotencyToken) -> None:
 @pytest.mark.asyncio
 async def test_claim_conflict_on_fingerprint_mismatch(token: IdempotencyToken) -> None:
     pending = pending_record("other-fp")
-    client = AsyncMock()
+    client = _mock_redis()
     client.set = AsyncMock(return_value=False)
     client.get = AsyncMock(return_value=pending.to_json().encode())
     store = RedisIdempotencyStore(client)
@@ -65,7 +72,7 @@ async def test_claim_conflict_on_fingerprint_mismatch(token: IdempotencyToken) -
 @pytest.mark.asyncio
 async def test_claim_in_progress(token: IdempotencyToken) -> None:
     pending = pending_record("fp1")
-    client = AsyncMock()
+    client = _mock_redis()
     client.set = AsyncMock(return_value=False)
     client.get = AsyncMock(return_value=pending.to_json().encode())
     store = RedisIdempotencyStore(client)
@@ -75,16 +82,26 @@ async def test_claim_in_progress(token: IdempotencyToken) -> None:
 
 @pytest.mark.asyncio
 async def test_commit_and_release(token: IdempotencyToken) -> None:
-    pending = pending_record("fp1")
-    client = AsyncMock()
-    client.set = AsyncMock()
-    client.get = AsyncMock(return_value=pending.to_json().encode())
-    client.delete = AsyncMock()
+    client = _mock_redis()
+    cas = client.register_script.return_value
     store = RedisIdempotencyStore(client)
     await store.commit(token, fingerprint="fp1", status=201, body=b"{}")
-    client.set.assert_awaited()
+    cas.assert_awaited()
     await store.release(token, "fp1")
-    client.delete.assert_awaited()
+    assert cas.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_commit_skips_stale_owner(token: IdempotencyToken) -> None:
+    client = _mock_redis(cas_result=0)
+    cas = client.register_script.return_value
+    store = RedisIdempotencyStore(client)
+    await store.commit(token, fingerprint="fp-old", status=200, body=b"old")
+    cas.assert_awaited_once()
+
+
+def test_redis_key_prefixes_org_id(token: IdempotencyToken) -> None:
+    assert redis_key(token) == f"{token.org_id}:idempotency:{token.key}"
 
 
 def test_record_roundtrip_json() -> None:
@@ -106,7 +123,7 @@ def test_record_rejects_unknown_version() -> None:
 
 @pytest.mark.asyncio
 async def test_claim_race_retry_miss(token: IdempotencyToken) -> None:
-    client = AsyncMock()
+    client = _mock_redis()
     client.set = AsyncMock(side_effect=[False, True])
     client.get = AsyncMock(return_value=None)
     store = RedisIdempotencyStore(client)
@@ -116,7 +133,7 @@ async def test_claim_race_retry_miss(token: IdempotencyToken) -> None:
 
 @pytest.mark.asyncio
 async def test_claim_returns_in_progress_when_still_missing(token: IdempotencyToken) -> None:
-    client = AsyncMock()
+    client = _mock_redis()
     client.set = AsyncMock(return_value=False)
     client.get = AsyncMock(return_value=None)
     store = RedisIdempotencyStore(client)
@@ -125,21 +142,9 @@ async def test_claim_returns_in_progress_when_still_missing(token: IdempotencyTo
 
 
 @pytest.mark.asyncio
-async def test_release_ignores_mismatched_fingerprint(token: IdempotencyToken) -> None:
-    pending = pending_record("other")
-    client = AsyncMock()
-    client.get = AsyncMock(return_value=pending.to_json().encode())
-    client.delete = AsyncMock()
+async def test_release_uses_cas(token: IdempotencyToken) -> None:
+    client = _mock_redis(cas_result=0)
+    cas = client.register_script.return_value
     store = RedisIdempotencyStore(client)
     await store.release(token, "fp1")
-    client.delete.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_release_ignores_missing_key(token: IdempotencyToken) -> None:
-    client = AsyncMock()
-    client.get = AsyncMock(return_value=None)
-    client.delete = AsyncMock()
-    store = RedisIdempotencyStore(client)
-    await store.release(token, "fp1")
-    client.delete.assert_not_awaited()
+    cas.assert_awaited_once()

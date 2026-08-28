@@ -6,7 +6,9 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+from app.schemas.limits import MAX_TAGS, validate_memory_metadata, validate_tags
 
 _CATEGORIES = Literal["factual", "preference", "behavioral", "episodic", "procedural"]
 _VISIBILITY = Literal["agent", "org", "session"]
@@ -19,9 +21,19 @@ class CreateMemoryRequest(BaseModel):
     confidence: float = Field(default=0.80, ge=0.0, le=1.0)
     session_id: UUID | None = None
     visibility: _VISIBILITY = "agent"
-    tags: list[str] = Field(default_factory=list, max_length=20)
+    tags: list[str] = Field(default_factory=list, max_length=MAX_TAGS)
     metadata: dict[str, Any] | None = None
     pinned: bool = False
+
+    @field_validator("tags")
+    @classmethod
+    def _validate_tags(cls, value: list[str]) -> list[str]:
+        return validate_tags(value)
+
+    @model_validator(mode="after")
+    def _validate_metadata_limits(self) -> CreateMemoryRequest:
+        validate_memory_metadata(self.metadata)
+        return self
 
 
 class MemoryData(BaseModel):

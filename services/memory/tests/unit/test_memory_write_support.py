@@ -77,3 +77,23 @@ def test_http_error_for_write_maps_duplicate() -> None:
 def test_http_error_for_write_maps_validation() -> None:
     exc = http_error_for_write(ValidationError("bad", field="content"))
     assert exc.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_parse_idempotency_key_rejects_too_long() -> None:
+    from app.routers.memory_write_support import parse_idempotency_key
+
+    with pytest.raises(HTTPException) as exc:
+        parse_idempotency_key("k" * 300)
+    assert exc.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_begin_idempotency_treats_whitespace_as_absent() -> None:
+    handle = await begin_idempotency(
+        store=AsyncMock(),
+        org_id=uuid4(),
+        idempotency_key="   ",
+        fingerprint="fp",
+    )
+    assert handle.token is None

@@ -85,14 +85,25 @@ class MemoryWriteOrchestrator:
 
         if ctx.status == "quarantined":
             outcome = await self._persist_quarantine(command, ctx)
-            if self._after_commit is not None:
-                await self._after_commit(outcome)
+            await self._run_after_commit(outcome)
             return outcome
 
         outcome = await self._persist_active(command, ctx)
-        if self._after_commit is not None:
-            await self._after_commit(outcome)
+        await self._run_after_commit(outcome)
         return outcome
+
+    async def _run_after_commit(self, outcome: WriteOutcome) -> None:
+        if self._after_commit is None:
+            return
+        try:
+            await self._after_commit(outcome)
+        except Exception:
+            logger.warning(
+                "after_commit failed org_id=%s memory_id=%s",
+                outcome.memory.org_id,
+                outcome.memory.id,
+                exc_info=True,
+            )
 
     async def _persist_quarantine(
         self, command: CreateMemoryCommand, ctx: WriteContext

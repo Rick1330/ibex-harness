@@ -59,9 +59,9 @@ def _memory_data_from_outcome(
         confidence=memory.confidence,
         source=memory.source,
         status=memory.status,
-        visibility=request.visibility,
-        pinned=request.pinned,
-        tags=list(request.tags),
+        visibility=memory.visibility,
+        pinned=memory.pinned,
+        tags=list(memory.tags),
         retrieval_count=memory.retrieval_count,
         usefulness_score=memory.usefulness_score,
         pii_detected=memory.pii_detected,
@@ -100,6 +100,9 @@ async def create_memory(
         category=request.category,
         confidence=request.confidence,
         session_id=request.session_id,
+        visibility=request.visibility,
+        tags=tuple(request.tags),
+        pinned=request.pinned,
         metadata=request.metadata,
     )
 

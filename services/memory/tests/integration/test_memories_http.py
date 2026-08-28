@@ -58,25 +58,30 @@ async def http_context(
     redis_url = _redis_url()
     cfg = settings.model_copy(update={"redis_url": redis_url}) if redis_url else settings
     orch = _orchestrator(session_factory, cfg, store, embed=probe)
-    if redis_url:
-        from app.write.after_commit import AfterCommitHandler
-        from app.write.cache import MemoryCacheWriter
+    redis_client: Redis | None = None
+    try:
+        if redis_url:
+            from app.write.after_commit import AfterCommitHandler
+            from app.write.cache import MemoryCacheWriter
 
-        redis_client = Redis.from_url(redis_url)
-        after_commit = AfterCommitHandler(
-            cache=MemoryCacheWriter(redis_client, cfg),
-            store=store,
-        ).__call__
-        orch._after_commit = after_commit
-    if hasattr(orch._pipeline._stages[1]._pii, "ensure_ready"):
-        await orch._pipeline._stages[1]._pii.ensure_ready()
+            redis_client = Redis.from_url(redis_url)
+            after_commit = AfterCommitHandler(
+                cache=MemoryCacheWriter(redis_client, cfg),
+                store=store,
+            ).__call__
+            orch._after_commit = after_commit
+        if hasattr(orch._pipeline._stages[1]._pii, "ensure_ready"):
+            await orch._pipeline._stages[1]._pii.ensure_ready()
 
-    app = create_app(settings=cfg, validator=validator)
-    async with app.router.lifespan_context(app):
-        app.state.memory.write_orchestrator = orch
-        transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            yield client, org_id, agent_id, probe
+        app = create_app(settings=cfg, validator=validator)
+        async with app.router.lifespan_context(app):
+            app.state.memory.write_orchestrator = orch
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
+                yield client, org_id, agent_id, probe
+    finally:
+        if redis_client is not None:
+            await redis_client.aclose()
 
 
 @pytest.mark.asyncio

@@ -34,6 +34,11 @@ def test_parse_authorization_header_empty_token() -> None:
         parse_authorization_header("Bearer   ")
 
 
+def test_parse_authorization_header_rejects_oversized_token() -> None:
+    with pytest.raises(AuthFailedError, match="maximum length"):
+        parse_authorization_header("Bearer " + ("x" * 9000))
+
+
 def test_assert_trusted_loopback() -> None:
     assert assert_trusted_insecure_auth_target("127.0.0.1:50051") == "127.0.0.1:50051"
     assert assert_trusted_insecure_auth_target("localhost:50051") == "localhost:50051"

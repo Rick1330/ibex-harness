@@ -109,6 +109,40 @@ async def test_insert_memory_session_non_dict_metadata_becomes_empty() -> None:
 
 
 @pytest.mark.asyncio
+async def test_insert_memory_session_persists_visibility_tags_pinned() -> None:
+    org_id = uuid4()
+    agent_id = uuid4()
+    row = _mapping_row(
+        org_id=org_id,
+        agent_id=agent_id,
+        metadata='{"visibility":"org","pinned":true,"tags":["a"],"note":"x"}',
+    )
+    session = AsyncMock()
+    result = MagicMock()
+    result.one.return_value = row
+    session.execute = AsyncMock(return_value=result)
+
+    command = CreateMemoryCommand(
+        org_id=org_id,
+        agent_id=agent_id,
+        content="hello",
+        visibility="org",
+        tags=("a",),
+        pinned=True,
+        metadata={"note": "x"},
+    )
+    ctx = WriteContext(org_id=org_id, agent_id=agent_id, content="hello", status="active")
+    memory = await insert_memory_session(session, command=command, ctx=ctx)
+    assert memory.visibility == "org"
+    assert memory.pinned is True
+    assert memory.tags == ("a",)
+    assert memory.metadata == {"note": "x"}
+    params = session.execute.await_args_list[-1].args[1]
+    assert '"visibility": "org"' in params["metadata"]
+    assert '"pinned": true' in params["metadata"]
+
+
+@pytest.mark.asyncio
 async def test_insert_escalations_session_empty_noop() -> None:
     session = AsyncMock()
     await insert_escalations_session(session, [])

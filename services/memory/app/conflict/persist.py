@@ -94,7 +94,7 @@ async def apply_supersession_session(
             UPDATE ibex_core.memories
             SET status = 'superseded',
                 superseded_by = :new_id,
-                valid_until = COALESCE(valid_until, :closed_at),
+                valid_until = LEAST(COALESCE(valid_until, :closed_at), :closed_at),
                 updated_at = NOW()
             WHERE id = :target_id
               AND org_id = :org_id
