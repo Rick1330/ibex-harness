@@ -22,12 +22,15 @@ from app.pipeline.context import WriteContext
 from app.pipeline.write import WritePipeline
 from app.write.embed_context import reset_write_org_id, set_write_org_id
 from app.write.errors import is_active_content_hash_violation
+from app.write.labels import labels_from_command
 from app.write.metrics import ESCALATIONS_INSERTED
 from app.write.models import CreateMemoryCommand, WriteOutcome, WriteOutcomeKind
 from app.write.persist import (
     escalations_from_decisions,
     insert_escalations_session,
+    insert_labels_session,
     insert_memory_session,
+    reload_memory_session,
 )
 
 logger = logging.getLogger(__name__)
@@ -115,6 +118,13 @@ class MemoryWriteOrchestrator:
     ) -> WriteOutcome:
         async with self._factory() as session, session.begin():
             memory = await insert_memory_session(session, command=command, ctx=ctx)
+            await insert_labels_session(
+                session,
+                labels_from_command(command.org_id, memory.id, command.labels),
+            )
+            memory = await reload_memory_session(
+                session, org_id=command.org_id, memory_id=memory.id
+            )
         return WriteOutcome(
             kind=WriteOutcomeKind.QUARANTINED,
             memory=memory,
@@ -143,12 +153,33 @@ class MemoryWriteOrchestrator:
         escalation_count = 0
         async with self._factory() as session, session.begin():
             memory = await insert_memory_session(session, command=command, ctx=ctx)
+            try:
+                await insert_labels_session(
+                    session,
+                    labels_from_command(command.org_id, memory.id, command.labels),
+                )
+            except IntegrityError as exc:
+                self._raise_duplicate_label_error(exc)
             escalation_count = await self._apply_supersession_and_escalations(
                 session, command, memory.id, ctx
+            )
+            memory = await reload_memory_session(
+                session, org_id=command.org_id, memory_id=memory.id
             )
         if escalation_count:
             ESCALATIONS_INSERTED.inc(escalation_count)
         return memory
+
+    def _raise_duplicate_label_error(self, exc: IntegrityError) -> None:
+        orig = getattr(exc, "orig", None)
+        constraint = getattr(orig, "constraint_name", None) or ""
+        if constraint == "memory_labels_pkey" or "memory_labels_pkey" in str(exc):
+            raise ValidationError(
+                "Duplicate label in request",
+                field="labels",
+                field_code="duplicate_label",
+            ) from exc
+        raise exc
 
     async def _raise_duplicate_on_hash_violation(
         self,

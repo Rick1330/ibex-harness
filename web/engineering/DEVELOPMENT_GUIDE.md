@@ -55,10 +55,10 @@ ibex-harness/
   services/                 # deployable processes
     proxy/                  # Go — shipped (Phase 2); grows in 2.5+
     auth/                   # Go — shipped (Phase 2); grows in 4
-    embedder/               # Python — planned 2.5
+    embedder/               # Python — shipped (Phase 2.5)
     tokenizer-service/      # Python — planned 2.5 (situational)
     mcp-memory/             # Python — MCP tools (2.5 → 3.5)
-    memory/                 # Python — planned 3
+    memory/                 # Python — in progress (Phase 3; write path shipped)
     worker/                 # Python Celery — planned 3.5+
     context/                # Python gRPC — planned 3.5
     api/                    # Python FastAPI — planned 4

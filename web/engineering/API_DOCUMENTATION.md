@@ -262,12 +262,13 @@ All endpoints prefixed with `/v1/`
 
 Creates a new memory for an agent. Automatically handles deduplication, embedding generation, and conflict detection.
 
-**Pipeline backing** (Track C):
+**Pipeline backing** (Track C — shipped):
 
 | Status | Stages / steps |
 |--------|----------------|
-| **Implemented** (service stages 1–6; not yet HTTP-wired) | `validate → PII → exact dedup → embed → near-dup → conflict` (ADR-0054–0056) |
-| **Lands in milestone 3.C.5** (ADR-0057, issue #620) | HTTP handler + **DB write** (insert + apply `pending_supersede_targets`) + unique-violation→bump/`409` + after-commit **cache update** + **index**/vector upsert |
+| **Implemented** (ADR-0054–0056) | `validate → PII → exact dedup → embed → near-dup → conflict` |
+| **Implemented** (ADR-0057, issue #620) | HTTP handler + **DB write** (insert + apply `pending_supersede_targets`) + unique-violation→bump/`409` + after-commit **cache update** + **index**/vector upsert |
+| **Implemented** (ADR-0048, issue #630) | Optional `labels[]` — transactional `memory_labels` insert; scalar `category` synced by DB trigger |
 
 Request/response shapes below are the **existing** contract — do not invent a parallel API.
 
@@ -286,6 +287,10 @@ X-Idempotency-Key: {uuid}
   "content": "User prefers dark mode in all interfaces",
   "category": "preference",
   "confidence": 0.95,
+  "labels": [
+    { "label": "preference", "confidence": 0.95 },
+    { "label": "behavioral", "confidence": 0.72 }
+  ],
   "session_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
   "visibility": "agent",
   "tags": ["ui", "preferences"],
@@ -302,8 +307,9 @@ X-Idempotency-Key: {uuid}
 |-------|------|----------|-------------|
 | `agent_id` | UUID | Yes | Agent this memory belongs to |
 | `content` | string | Yes | Memory content (1-10,000 chars) |
-| `category` | enum | No | `factual`, `preference`, `behavioral`, `episodic`, `procedural`. Default: `factual` |
-| `confidence` | float | No | 0.0-1.0. Default: 0.80 |
+| `category` | enum | No | `factual`, `preference`, `behavioral`, `episodic`, `procedural`. Default: `factual`. Ignored for label rows when `labels` is provided; used as fallback when `labels` is omitted |
+| `confidence` | float | No | 0.0-1.0. Default: 0.80. Used with scalar `category` when `labels` is omitted |
+| `labels` | object[] | No | Multi-label classification (1–5 labels). Each item: `label` (enum) + `confidence` (0.0–1.0). When omitted, one label is synthesized from `category` + `confidence`. `memories.category` in the response reflects the DB trigger winner (highest confidence; tie → `label` ASC) |
 | `session_id` | UUID | No | Session this memory was created in |
 | `visibility` | enum | No | `agent`, `org`, `session`. Default: `agent` |
 | `tags` | string[] | No | Searchable tags. Max 20 tags, 50 chars each |

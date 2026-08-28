@@ -256,7 +256,11 @@ async def test_orchestrator_quarantine_calls_after_commit() -> None:
         status="quarantined",
         pii_detected=True,
     )
-    with patch("app.write.orchestrator.insert_memory_session", AsyncMock(return_value=fake_row)):
+    with (
+        patch("app.write.orchestrator.insert_memory_session", AsyncMock(return_value=fake_row)),
+        patch("app.write.orchestrator.insert_labels_session", AsyncMock(return_value=1)),
+        patch("app.write.orchestrator.reload_memory_session", AsyncMock(return_value=fake_row)),
+    ):
         await orch.create(
             CreateMemoryCommand(org_id=org_id, agent_id=agent_id, content="quarantine")
         )
@@ -393,7 +397,11 @@ async def test_orchestrator_after_commit_failure_does_not_propagate() -> None:
         after_commit=after_commit,
     )
     fake_row = sample_memory_row(content="x")
-    with patch("app.write.orchestrator.insert_memory_session", AsyncMock(return_value=fake_row)):
+    with (
+        patch("app.write.orchestrator.insert_memory_session", AsyncMock(return_value=fake_row)),
+        patch("app.write.orchestrator.insert_labels_session", AsyncMock(return_value=1)),
+        patch("app.write.orchestrator.reload_memory_session", AsyncMock(return_value=fake_row)),
+    ):
         outcome = await orch.create(
             CreateMemoryCommand(org_id=uuid4(), agent_id=uuid4(), content="x")
         )

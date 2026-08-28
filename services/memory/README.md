@@ -45,6 +45,14 @@ workers (`services/worker/`).
 - Metrics: `ibex_memory_conflicts_total{outcome}`, `ibex_memory_conflict_llm_calls_total`
 - Toggle: `IBEX_MEMORY_CONFLICT_DETECTION_ENABLED` (default true)
 
+### m3.C.4 (Track C — Multi-label classification)
+
+- Optional `labels[]` on `POST /v1/memories` (1–5 labels, per-label confidence; ADR-0048)
+- `app/write/labels.py` — `resolve_write_labels`, validation, backward-compat synthesis from scalar `category` + `confidence` when `labels` omitted
+- Transactional `insert_labels_session` + `reload_memory_session` in orchestrator (same txn as memory insert); app never `UPDATE memories.category` — trigger `sync_memory_primary_category` only
+- Empty explicit `labels: []` → `ValidationError`; duplicate label → `409`-class validation error
+- Milestone: [3.C.4](../../web/content/roadmap/phase-3-memory-engine/milestones/3.c.4-multi-label-classification.mdx); tracking [#630](https://github.com/Rick1330/ibex-harness/issues/630)
+
 ### m3.C.5 (Track C — Write orchestration)
 
 - `POST /v1/memories` — documented contract ([API_DOCUMENTATION.md](../../web/engineering/API_DOCUMENTATION.md))

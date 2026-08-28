@@ -9,6 +9,7 @@ from typing import Any
 from uuid import UUID
 
 from app.conflict.types import ConflictDecision
+from app.write.labels import MemoryLabelInput
 
 
 class WriteOutcomeKind(StrEnum):
@@ -30,6 +31,15 @@ class CreateMemoryCommand:
     metadata: dict[str, Any] | None = None
     valid_from: datetime | None = None
     valid_until: datetime | None = None
+    labels: tuple[MemoryLabelInput, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self.labels:
+            object.__setattr__(
+                self,
+                "labels",
+                (MemoryLabelInput(label=self.category, confidence=self.confidence),),
+            )
 
 
 @dataclass(frozen=True, slots=True)

@@ -6,8 +6,9 @@ Go interface placement (consumer ports vs shared package APIs):
 ## Roadmap alignment (read this first)
 
 Phases **0–2.5 are complete** (auth, multi-provider proxy, tokenizer, response pipeline, embedder,
-MCP skeleton, local LGTM). **Phase 3** (memory substrate) is in progress — write pipeline Track C
-(PII → dedup → conflict), then classify / read path. Redesigned sequence:
+MCP skeleton, local LGTM). **Phase 3** (memory substrate) is in progress — Track C write pipeline
+complete (`POST /v1/memories`: PII → dedup → conflict → persist → multi-label); **next:** Track D
+read path. Redesigned sequence:
 
 | Phase | Focus | Status |
 | --- | --- | --- |

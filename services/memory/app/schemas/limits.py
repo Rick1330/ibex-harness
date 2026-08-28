@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+MAX_LABELS = 5
 MAX_IDEMPOTENCY_KEY_LENGTH = 256
 MAX_BEARER_TOKEN_BYTES = 8192
 MAX_TAGS = 20

@@ -11,14 +11,16 @@ from sqlalchemy.exc import IntegrityError
 
 from app.clients.embedding import EmbeddingUnavailableError
 from app.conflict.types import ConflictDecision, ConflictOutcome
-from app.exceptions import DuplicateMemoryError, EmbeddingServiceError
+from app.exceptions import DuplicateMemoryError, EmbeddingServiceError, ValidationError
 from app.pipeline.context import WriteContext
 from app.write.errors import is_active_content_hash_violation
 from app.write.models import CreateMemoryCommand, WriteOutcomeKind
 from app.write.orchestrator import MemoryWriteOrchestrator, _is_embedding_failure
 from tests.unit.memory_test_support import (
     HashViolationOpts,
+    LabelViolationOpts,
     hash_violation_integrity_error,
+    label_violation_integrity_error,
     mock_async_session_factory,
     sample_memory_row,
 )
@@ -154,6 +156,8 @@ async def test_orchestrator_active_persist_with_supersession_and_after_commit() 
 
     with (
         patch("app.write.orchestrator.insert_memory_session", AsyncMock(return_value=fake_row)),
+        patch("app.write.orchestrator.insert_labels_session", AsyncMock(return_value=1)),
+        patch("app.write.orchestrator.reload_memory_session", AsyncMock(return_value=fake_row)),
         patch("app.write.orchestrator.apply_supersession_session", AsyncMock()) as supersede,
         patch("app.write.orchestrator.insert_escalations_session", AsyncMock(return_value=0)),
     ):
@@ -207,6 +211,8 @@ async def test_orchestrator_escalations_metric_increments_after_commit() -> None
 
     with (
         patch("app.write.orchestrator.insert_memory_session", AsyncMock(return_value=fake_row)),
+        patch("app.write.orchestrator.insert_labels_session", AsyncMock(return_value=1)),
+        patch("app.write.orchestrator.reload_memory_session", AsyncMock(return_value=fake_row)),
         patch(
             "app.write.orchestrator.insert_escalations_session",
             AsyncMock(return_value=escalation_count),
@@ -260,32 +266,89 @@ async def test_orchestrator_race_without_existing_raises() -> None:
 
 
 @pytest.mark.asyncio
-async def test_orchestrator_re_raises_non_hash_integrity() -> None:
+@pytest.mark.parametrize(
+    ("patch_target", "side_effect", "expected_exc", "field_code"),
+    [
+        (
+            "insert_memory_session",
+            IntegrityError("insert", {}, Exception("other")),
+            IntegrityError,
+            None,
+        ),
+        (
+            "insert_labels_session",
+            label_violation_integrity_error(),
+            ValidationError,
+            "duplicate_label",
+        ),
+        (
+            "insert_labels_session",
+            label_violation_integrity_error(LabelViolationOpts(constraint_name="other_fk")),
+            IntegrityError,
+            None,
+        ),
+    ],
+)
+async def test_orchestrator_active_integrity_errors(
+    patch_target: str,
+    side_effect: BaseException,
+    expected_exc: type[BaseException],
+    field_code: str | None,
+) -> None:
     org_id = uuid4()
     agent_id = uuid4()
+    content = f"integrity probe {patch_target}"
     ctx = WriteContext(
         org_id=org_id,
         agent_id=agent_id,
-        content="content here",
-        content_hash="h",
+        content=content,
+        content_hash="hash-active-integrity",
         status="active",
     )
 
     async def _run(_c: WriteContext) -> WriteContext:
         return ctx
 
+    fake_row = sample_memory_row(org_id=org_id, agent_id=agent_id, content=content)
     orch = MemoryWriteOrchestrator(_Pipe(), mock_async_session_factory())
     orch._pipeline.run = _run  # type: ignore[method-assign]
 
+    if patch_target == "insert_memory_session":
+        if isinstance(side_effect, IntegrityError):
+            orig = MagicMock()
+            orig.sqlstate = "23503"
+            side_effect.orig = orig
+        patches = {patch_target: AsyncMock(side_effect=side_effect)}
+    else:
+        patches = {
+            "insert_memory_session": AsyncMock(return_value=fake_row),
+            patch_target: AsyncMock(side_effect=side_effect),
+        }
+
+    with (
+        patch.multiple("app.write.orchestrator", **patches),
+        pytest.raises(expected_exc) as err,
+    ):
+        await orch.create(
+            CreateMemoryCommand(org_id=org_id, agent_id=agent_id, content=content)
+        )
+    if field_code is not None:
+        assert err.value.field_code == field_code
+
+
+def test_raise_duplicate_label_error_maps_pkey() -> None:
+    orch = MemoryWriteOrchestrator(_Pipe(), MagicMock())
+    with pytest.raises(ValidationError) as err:
+        orch._raise_duplicate_label_error(label_violation_integrity_error())
+    assert err.value.field_code == "duplicate_label"
+    assert err.value.field == "labels"
+
+
+def test_raise_duplicate_label_error_reraises_other() -> None:
+    orch = MemoryWriteOrchestrator(_Pipe(), MagicMock())
     exc = IntegrityError("insert", {}, Exception("other"))
     orig = MagicMock()
-    orig.sqlstate = "23503"
+    orig.constraint_name = "other_constraint"
     exc.orig = orig
-
-    with patch(
-        "app.write.orchestrator.insert_memory_session",
-        AsyncMock(side_effect=exc),
-    ), pytest.raises(IntegrityError):
-        await orch.create(
-            CreateMemoryCommand(org_id=org_id, agent_id=agent_id, content=ctx.content)
-        )
+    with pytest.raises(IntegrityError):
+        orch._raise_duplicate_label_error(exc)

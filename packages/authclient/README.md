@@ -5,7 +5,7 @@ Shared helpers for calling `AuthService.ValidateToken` from IBEX Python services
 - bounded protobuf wire codec (no generated stubs; see ADR-0004)
 - insecure gRPC dial-target trust checks for local/mesh deployments
 
-Consumers: `services/memory`, `services/mcp-memory`.
+Consumers: `services/memory` (`POST /v1/memories` auth boundary, 3.C.5), `services/mcp-memory`.
 
 ## Layout
 
