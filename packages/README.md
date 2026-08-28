@@ -8,6 +8,14 @@ Scaffold guidance: [web/engineering/FILE_STRUCTURE.md](../web/engineering/FILE_S
 
 ---
 
+## Shipped (Python)
+
+| Directory | Role |
+| --- | --- |
+| `authclient/` | ValidateToken wire codec + insecure gRPC target guards for Python services (`services/memory`, `services/mcp-memory`) |
+
+---
+
 ## Shipped (Go / shared)
 
 | Directory | Role |

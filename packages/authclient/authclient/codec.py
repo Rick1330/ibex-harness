@@ -5,16 +5,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 from uuid import UUID
 
-from app.auth.errors import AuthUnavailableError
-
-_MAX_MESSAGE_BYTES = 4096
-_MAX_STRING_BYTES = 512
-_MAX_TOKEN_BYTES = 8192
+MAX_MESSAGE_BYTES = 4096
+MAX_STRING_BYTES = 512
+MAX_TOKEN_BYTES = 8192
 
 _WIRE_VARINT = 0
 _WIRE_64BIT = 1
 _WIRE_LEN = 2
 _WIRE_32BIT = 5
+
+
+class AuthCodecError(Exception):
+    """ValidateToken wire encode/decode failure."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,15 +39,27 @@ class _DecodeState:
 
 def encode_validate_token_request(access_token: str) -> bytes:
     data = access_token.encode("utf-8")
-    if len(data) > _MAX_TOKEN_BYTES:
-        raise AuthUnavailableError("access token exceeds codec limit")
-    return _tag(1, _WIRE_LEN) + _encode_varint(len(data)) + data
+    if len(data) > MAX_TOKEN_BYTES:
+        raise AuthCodecError("access token exceeds codec limit")
+    return _tag(1, _WIRE_LEN) + encode_varint(len(data)) + data
 
 
 def decode_validate_token_response(payload: bytes) -> ValidateTokenWire:
-    if len(payload) > _MAX_MESSAGE_BYTES:
-        raise AuthUnavailableError("auth response too large")
+    if len(payload) > MAX_MESSAGE_BYTES:
+        raise AuthCodecError("auth response too large")
     return _finish_decode(_decode_all_fields(payload))
+
+
+def encode_varint(value: int) -> bytes:
+    if value < 0:
+        raise AuthCodecError("negative varint")
+    out = bytearray()
+    while True:
+        bits = value & 0x7F
+        value >>= 7
+        out.append(bits | (0x80 if value else 0))
+        if not value:
+            return bytes(out)
 
 
 def _decode_all_fields(payload: bytes) -> _DecodeState:
@@ -73,7 +87,7 @@ def _decode_one_field(buf: bytes, idx: int, state: _DecodeState) -> int:
 
 def _finish_decode(state: _DecodeState) -> ValidateTokenWire:
     if state.org_id is None:
-        raise AuthUnavailableError("auth response missing org_id")
+        raise AuthCodecError("auth response missing org_id")
     return ValidateTokenWire(
         org_id=state.org_id,
         permissions=state.permissions,
@@ -103,19 +117,7 @@ def _apply_varint_field(state: _DecodeState, field: int, num: int) -> None:
 
 
 def _tag(field: int, wire: int) -> bytes:
-    return _encode_varint((field << 3) | wire)
-
-
-def _encode_varint(value: int) -> bytes:
-    if value < 0:
-        raise AuthUnavailableError("negative varint")
-    out = bytearray()
-    while True:
-        bits = value & 0x7F
-        value >>= 7
-        out.append(bits | (0x80 if value else 0))
-        if not value:
-            return bytes(out)
+    return encode_varint((field << 3) | wire)
 
 
 def _decode_varint(buf: bytes, idx: int) -> tuple[int, int]:
@@ -129,38 +131,42 @@ def _decode_varint(buf: bytes, idx: int) -> tuple[int, int]:
             return result, idx
         shift += 7
         if shift > 63:
-            raise AuthUnavailableError("invalid varint")
-    raise AuthUnavailableError("truncated varint")
+            raise AuthCodecError("invalid varint")
+    raise AuthCodecError("truncated varint")
 
 
 def _read_bytes(buf: bytes, idx: int) -> tuple[bytes, int]:
     length, idx = _decode_varint(buf, idx)
-    if length > _MAX_STRING_BYTES:
-        raise AuthUnavailableError("length-delimited field exceeds limit")
+    if length > MAX_STRING_BYTES:
+        raise AuthCodecError("length-delimited field exceeds limit")
     end = idx + length
     if end > len(buf):
-        raise AuthUnavailableError("truncated length-delimited field")
+        raise AuthCodecError("truncated length-delimited field")
     return buf[idx:end], end
 
 
 def _skip_unknown(buf: bytes, idx: int, wire: int) -> int:
     if wire == _WIRE_VARINT:
-        _, idx = _decode_varint(buf, idx)
-        return idx
+        return _skip_varint(buf, idx)
     if wire == _WIRE_64BIT:
-        return _skip_fixed(buf, idx, 8)
+        return _skip_fixed(buf, idx, 8, "fixed64")
     if wire == _WIRE_32BIT:
-        return _skip_fixed(buf, idx, 4)
+        return _skip_fixed(buf, idx, 4, "fixed32")
     if wire == _WIRE_LEN:
         _, idx = _read_bytes(buf, idx)
         return idx
-    raise AuthUnavailableError(f"unsupported wire type {wire}")
+    raise AuthCodecError(f"unsupported wire type {wire}")
 
 
-def _skip_fixed(buf: bytes, idx: int, size: int) -> int:
+def _skip_varint(buf: bytes, idx: int) -> int:
+    _, idx = _decode_varint(buf, idx)
+    return idx
+
+
+def _skip_fixed(buf: bytes, idx: int, size: int, label: str) -> int:
     end = idx + size
     if end > len(buf):
-        raise AuthUnavailableError("truncated fixed field")
+        raise AuthCodecError(f"truncated {label} field")
     return end
 
 
@@ -168,17 +174,17 @@ def _decode_utf8(raw: bytes) -> str:
     try:
         return raw.decode("utf-8")
     except UnicodeDecodeError as exc:
-        raise AuthUnavailableError("auth response is not utf-8") from exc
+        raise AuthCodecError("auth response is not utf-8") from exc
 
 
 def _parse_uuid(text: str, label: str) -> UUID:
     try:
         return UUID(text)
     except ValueError as exc:
-        raise AuthUnavailableError(f"invalid {label}") from exc
+        raise AuthCodecError(f"invalid {label}") from exc
 
 
 def _bounded_string(text: str, label: str) -> str:
-    if len(text) > _MAX_STRING_BYTES:
-        raise AuthUnavailableError(f"{label} exceeds limit")
+    if len(text) > MAX_STRING_BYTES:
+        raise AuthCodecError(f"{label} exceeds limit")
     return text

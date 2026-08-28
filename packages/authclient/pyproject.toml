@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "authclient"
+version = "0.1.0"
+description = "Shared AuthService.ValidateToken wire codec and gRPC target guards for Python services"
+readme = "README.md"
+requires-python = ">=3.12"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["authclient*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"

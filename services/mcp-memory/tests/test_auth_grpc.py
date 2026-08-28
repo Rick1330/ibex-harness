@@ -7,13 +7,13 @@ from uuid import UUID
 
 import grpc
 import pytest
+from authclient import decode_validate_token_response
 
 from app.auth import GRPCTokenValidator, ValidateResult
 from app.config import Settings
 from app.errors import AuthFailedError, AuthUnavailableError
 from app.permissions import MEMORY_READ
 from app.principal import Principal, get_principal, set_principal
-from app.proto_wire import decode_validate_token_response
 
 
 def test_invalid_transport() -> None:

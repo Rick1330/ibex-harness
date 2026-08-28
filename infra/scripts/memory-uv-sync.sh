@@ -14,4 +14,4 @@ if [[ ! -f "$MEMORY_DIR/uv.lock" ]]; then
 fi
 
 cd "$MEMORY_DIR"
-uv sync --frozen --no-build --extra dev --no-install-project
+uv sync --frozen --extra dev --no-install-project

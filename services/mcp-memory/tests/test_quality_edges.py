@@ -5,11 +5,11 @@ from __future__ import annotations
 from uuid import UUID
 
 import pytest
+from authclient import AuthCodecError, decode_validate_token_response, encode_validate_token_request
 
 from app.audit import AsyncAuditEmitter, MemoryAuditSink, ToolCallAuditEvent
-from app.errors import AuthUnavailableError, SchemaError
+from app.errors import SchemaError
 from app.middleware import _origin_from_resource
-from app.proto_wire import decode_validate_token_response, encode_validate_token_request
 from app.tools import parse_search_args
 
 ORG = UUID("11111111-1111-1111-1111-111111111111")
@@ -24,7 +24,7 @@ def test_origin_from_resource_strips_mcp() -> None:
 
 
 def test_encode_token_too_large() -> None:
-    with pytest.raises(AuthUnavailableError):
+    with pytest.raises(AuthCodecError):
         encode_validate_token_request("x" * 9000)
 
 

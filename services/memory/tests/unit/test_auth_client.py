@@ -7,6 +7,7 @@ from uuid import uuid4
 
 import grpc
 import pytest
+from authclient import ValidateTokenWire
 
 from app.auth.client import (
     GRPCTokenValidator,
@@ -16,7 +17,6 @@ from app.auth.client import (
     parse_authorization_header,
 )
 from app.auth.errors import AuthFailedError, AuthUnavailableError
-from app.auth.proto_wire import ValidateTokenWire
 from tests.unit.auth_test_support import encode_validate_token_wire, grpc_validator, rpc_error
 
 

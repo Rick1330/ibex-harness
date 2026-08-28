@@ -19,11 +19,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 COPY --from=uv /uv /usr/local/bin/uv
 
-WORKDIR /app
+WORKDIR /app/services/memory
 
+COPY packages/authclient /app/packages/authclient
 COPY services/memory/pyproject.toml services/memory/uv.lock ./
 
-RUN uv sync --frozen --no-build --no-install-project
+RUN uv sync --frozen --no-install-project
 
 FROM python@sha256:b64e9d3a71eddaa1b3f80c04abf292b3139e3b7c4dd272d19c31dc1f91194d1b AS runtime
 
@@ -39,7 +40,7 @@ RUN apt-get update \
 
 WORKDIR /app
 
-COPY --from=deps /app/.venv ./.venv
+COPY --from=deps /app/services/memory/.venv ./.venv
 
 COPY services/memory/app ./app
 

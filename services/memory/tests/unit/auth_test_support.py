@@ -6,24 +6,24 @@ from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import grpc
+from authclient import ValidateTokenWire, encode_varint
 
 from app.auth.client import GRPCTokenValidator
-from app.auth.proto_wire import ValidateTokenWire, _encode_varint
 
 
 def encode_validate_token_wire(wire: ValidateTokenWire) -> bytes:
     parts: list[bytes] = []
-    parts.append(bytes([0x0A]) + _encode_varint(len(str(wire.org_id))) + str(wire.org_id).encode())
-    parts.append(bytes([0x10]) + _encode_varint(wire.permissions))
+    parts.append(bytes([0x0A]) + encode_varint(len(str(wire.org_id))) + str(wire.org_id).encode())
+    parts.append(bytes([0x10]) + encode_varint(wire.permissions))
     if wire.agent_id is not None:
         aid = str(wire.agent_id).encode()
-        parts.append(bytes([0x1A]) + _encode_varint(len(aid)) + aid)
+        parts.append(bytes([0x1A]) + encode_varint(len(aid)) + aid)
     if wire.user_id is not None:
         uid = wire.user_id.encode()
-        parts.append(bytes([0x22]) + _encode_varint(len(uid)) + uid)
+        parts.append(bytes([0x22]) + encode_varint(len(uid)) + uid)
     if wire.token_id is not None:
         tid = wire.token_id.encode()
-        parts.append(bytes([0x2A]) + _encode_varint(len(tid)) + tid)
+        parts.append(bytes([0x2A]) + encode_varint(len(tid)) + tid)
     return b"".join(parts)
 
 
