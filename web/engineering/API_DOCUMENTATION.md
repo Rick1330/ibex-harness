@@ -262,12 +262,13 @@ All endpoints prefixed with `/v1/`
 
 Creates a new memory for an agent. Automatically handles deduplication, embedding generation, and conflict detection.
 
-**Pipeline backing** (Track C):
+**Pipeline backing** (Track C — shipped):
 
 | Status | Stages / steps |
 |--------|----------------|
-| **Implemented** (service stages 1–6; not yet HTTP-wired) | `validate → PII → exact dedup → embed → near-dup → conflict` (ADR-0054–0056) |
-| **Lands in milestone 3.C.5** (ADR-0057, issue #620) | HTTP handler + **DB write** (insert + apply `pending_supersede_targets`) + unique-violation→bump/`409` + after-commit **cache update** + **index**/vector upsert |
+| **Implemented** (ADR-0054–0056) | `validate → PII → exact dedup → embed → near-dup → conflict` |
+| **Implemented** (ADR-0057, issue #620) | HTTP handler + **DB write** (insert + apply `pending_supersede_targets`) + unique-violation→bump/`409` + after-commit **cache update** + **index**/vector upsert |
+| **Implemented** (ADR-0048, issue #630) | Optional `labels[]` — transactional `memory_labels` insert; scalar `category` synced by DB trigger |
 
 Request/response shapes below are the **existing** contract — do not invent a parallel API.
 

@@ -2,7 +2,7 @@
 
 PostgreSQL (OLTP + pgvector), Redis key patterns, and ClickHouse analytics schema. For system architecture and service flows, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
-**Roadmap note:** Phases **0–2.5** schema (orgs, users, agents, tokens, directives, sessions, `llm_traces`, temporal validity, multi-label readiness, relationship graph) is applied. Phase **3** is landing memory schema v2 with **HNSW** (expand migration + write-path uniqueness) plus write-pipeline stages. Phase **5** uses graph edges at query time (recursive CTEs) and hybrid retrieval — it does not require a separate graph database by default. See [`web/content/roadmap/`](../content/roadmap/).
+**Roadmap note:** Phases **0–2.5** schema (orgs, users, agents, tokens, directives, sessions, `llm_traces`, temporal validity, multi-label readiness, relationship graph) is applied. Phase **3** memory schema v2 with **HNSW** (expand migration `000017`), write-path uniqueness (`000018`), conflict escalations (`000019`), and **write-path `memory_labels` population** (3.C.4 / ADR-0048) are shipped. Phase **5** uses graph edges at query time (recursive CTEs) and hybrid retrieval — it does not require a separate graph database by default. See [`web/content/roadmap/`](../content/roadmap/).
 
 ## Schema Design Philosophy
 
@@ -503,7 +503,8 @@ CREATE INDEX idx_directive_scenarios_directive_id
 > and bi-temporal columns (`valid_from` / `valid_until` / `observed_at`).
 > **Shipped (2.5.G5.M2 / ADR-0048):** `ibex_core.memory_labels` multi-label join
 > table with per-label confidence; `memories.category` synced as primary when
-> labels exist.
+> labels exist. **Write-path population** (3.C.4): optional `labels[]` on
+> `POST /v1/memories`; transactional insert in memory service orchestrator.
 > **Shipped (2.5.G5.M3 / ADR-0049):** `ibex_core.memory_relationships` typed
 > edges with dual composite FKs, FORCE RLS, bidirectional traversal indexes,
 > `memory_supersession_edges` view, and `resolve_supersession_tip`.
