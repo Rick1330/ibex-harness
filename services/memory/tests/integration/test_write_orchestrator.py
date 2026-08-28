@@ -16,7 +16,9 @@ from app.exceptions import DuplicateMemoryError
 from app.write.models import CreateMemoryCommand, WriteOutcomeKind
 from tests.integration.conftest import fetch_memory_field, seed_org_agent_memory, with_service_org
 from tests.integration.write_orchestrator_support import (
+    OrchestratorTestDeps,
     QuarantinePii,
+    VectorMemorySeed,
     build_orchestrator,
     ensure_pii_ready,
     seed_vector_memory,
@@ -26,34 +28,67 @@ from tests.integration.write_orchestrator_support import (
 pytestmark = pytest.mark.integration
 
 
-@pytest.mark.asyncio
-async def test_orchestrator_novel_write_persists_row(
+async def _assert_memory_status(
     session_factory: async_sessionmaker[AsyncSession],
-    settings: Settings,
-    store,
+    *,
+    org_id,
+    memory_id,
+    status: str,
 ) -> None:
-    org_id, agent_id, _ = await seed_org_agent_memory(
-        session_factory, content="unrelated seed row"
-    )
-    orch = build_orchestrator(session_factory, settings, store)
-    await ensure_pii_ready(orch)
-    outcome = await orch.create(
-        CreateMemoryCommand(
-            org_id=org_id,
-            agent_id=agent_id,
-            content="User prefers dark mode dashboards for focus",
-            valid_from=datetime(2026, 6, 1, tzinfo=UTC),
-        )
-    )
-    assert outcome.kind == WriteOutcomeKind.CREATED
     assert (
         await fetch_memory_field(
             session_factory,
             org_id=org_id,
-            memory_id=outcome.memory.id,
+            memory_id=memory_id,
             field="status",
         )
-        == "active"
+        == status
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("content", "pii", "expected_status", "expected_kind"),
+    [
+        (
+            "User prefers dark mode dashboards for focus",
+            None,
+            "active",
+            WriteOutcomeKind.CREATED,
+        ),
+        ("Contact Jordan", QuarantinePii(), "quarantined", WriteOutcomeKind.QUARANTINED),
+    ],
+)
+async def test_orchestrator_persists_row_by_status(
+    session_factory: async_sessionmaker[AsyncSession],
+    settings: Settings,
+    store,
+    content: str,
+    pii: QuarantinePii | None,
+    expected_status: str,
+    expected_kind: WriteOutcomeKind,
+) -> None:
+    org_id, agent_id, _ = await seed_org_agent_memory(
+        session_factory, content=f"seed for {expected_status}"
+    )
+    deps = OrchestratorTestDeps(session_factory, settings, store, pii=pii)
+    orch = build_orchestrator(deps)
+    await ensure_pii_ready(orch)
+    valid_from = datetime(2026, 6, 1, tzinfo=UTC) if expected_kind == WriteOutcomeKind.CREATED else None
+    outcome = await orch.create(
+        CreateMemoryCommand(
+            org_id=org_id,
+            agent_id=agent_id,
+            content=content,
+            valid_from=valid_from,
+        )
+    )
+    assert outcome.kind == expected_kind
+    await _assert_memory_status(
+        session_factory,
+        org_id=org_id,
+        memory_id=outcome.memory.id,
+        status=expected_status,
     )
 
 
@@ -73,7 +108,7 @@ async def test_orchestrator_exact_duplicate_raises_409_path(
         memory_id=memory_id,
         content_hash=content_hash_sha256(content),
     )
-    orch = build_orchestrator(session_factory, settings, store)
+    orch = build_orchestrator(OrchestratorTestDeps(session_factory, settings, store))
     await ensure_pii_ready(orch)
     with pytest.raises(DuplicateMemoryError) as exc_info:
         await orch.create(
@@ -92,7 +127,7 @@ async def test_orchestrator_concurrent_identical_content_race(
     org_id, agent_id, _ = await seed_org_agent_memory(
         session_factory, content="race seed unrelated"
     )
-    orch = build_orchestrator(session_factory, settings, store)
+    orch = build_orchestrator(OrchestratorTestDeps(session_factory, settings, store))
     await ensure_pii_ready(orch)
     cmd = CreateMemoryCommand(org_id=org_id, agent_id=agent_id, content=content)
     results = await asyncio.gather(
@@ -105,31 +140,6 @@ async def test_orchestrator_concurrent_identical_content_race(
     assert len(successes) == 1
     assert len(failures) == 1
     assert isinstance(failures[0], DuplicateMemoryError)
-
-
-@pytest.mark.asyncio
-async def test_orchestrator_quarantine_persists_quarantined_row(
-    session_factory: async_sessionmaker[AsyncSession],
-    settings: Settings,
-    store,
-) -> None:
-    org_id, agent_id, _ = await seed_org_agent_memory(
-        session_factory, content="quarantine seed"
-    )
-    orch = build_orchestrator(session_factory, settings, store, pii=QuarantinePii())
-    outcome = await orch.create(
-        CreateMemoryCommand(org_id=org_id, agent_id=agent_id, content="Contact Jordan")
-    )
-    assert outcome.kind == WriteOutcomeKind.QUARANTINED
-    assert (
-        await fetch_memory_field(
-            session_factory,
-            org_id=org_id,
-            memory_id=outcome.memory.id,
-            field="status",
-        )
-        == "quarantined"
-    )
 
 
 @pytest.mark.asyncio
@@ -147,17 +157,20 @@ async def test_orchestrator_supersession_in_one_transaction(
     old_id, vec = await seed_vector_memory(
         session_factory,
         store,
-        org_id=org_id,
-        agent_id=agent_id,
-        content=old_content,
-        valid_from=march,
-        valid_until=june,
+        VectorMemorySeed(
+            org_id=org_id,
+            agent_id=agent_id,
+            content=old_content,
+            valid_from=march,
+            valid_until=june,
+        ),
     )
 
     async def embed(_text: str) -> list[float]:
         return list(vec)
 
-    orch = build_orchestrator(session_factory, settings, store, embed=embed)
+    deps = OrchestratorTestDeps(session_factory, settings, store, embed=embed)
+    orch = build_orchestrator(deps)
     await ensure_pii_ready(orch)
     outcome = await orch.create(
         CreateMemoryCommand(
@@ -168,11 +181,8 @@ async def test_orchestrator_supersession_in_one_transaction(
         )
     )
     assert outcome.kind == WriteOutcomeKind.CREATED
-    assert (
-        await fetch_memory_field(
-            session_factory, org_id=org_id, memory_id=old_id, field="status"
-        )
-        == "superseded"
+    await _assert_memory_status(
+        session_factory, org_id=org_id, memory_id=old_id, status="superseded"
     )
     assert (
         await fetch_memory_field(
@@ -197,18 +207,21 @@ async def test_orchestrator_escalation_row_persisted(
     old_id, vec = await seed_vector_memory(
         session_factory,
         store,
-        org_id=org_id,
-        agent_id=agent_id,
-        content=old_content,
-        valid_from=overlap_start,
-        valid_until=overlap_end,
-        hotspot=7,
+        VectorMemorySeed(
+            org_id=org_id,
+            agent_id=agent_id,
+            content=old_content,
+            valid_from=overlap_start,
+            valid_until=overlap_end,
+            hotspot=7,
+        ),
     )
 
     async def embed(_text: str) -> list[float]:
         return list(vec)
 
-    orch = build_orchestrator(session_factory, settings, store, embed=embed)
+    deps = OrchestratorTestDeps(session_factory, settings, store, embed=embed)
+    orch = build_orchestrator(deps)
     await ensure_pii_ready(orch)
     outcome = await orch.create(
         CreateMemoryCommand(
@@ -252,8 +265,8 @@ async def test_orchestrator_cross_tenant_isolated(
     content = "Shared preference text across tenants"
     org_a, agent_a, _ = await seed_org_agent_memory(session_factory, content="seed a")
     org_b, agent_b, _ = await seed_org_agent_memory(session_factory, content="seed b")
-    orch_a = build_orchestrator(session_factory, settings, store)
-    orch_b = build_orchestrator(session_factory, settings, store)
+    orch_a = build_orchestrator(OrchestratorTestDeps(session_factory, settings, store))
+    orch_b = build_orchestrator(OrchestratorTestDeps(session_factory, settings, store))
     await ensure_pii_ready(orch_a)
     await ensure_pii_ready(orch_b)
     out_a = await orch_a.create(

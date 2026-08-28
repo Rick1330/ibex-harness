@@ -20,6 +20,7 @@ from app.permissions import MEMORY_WRITE
 from tests.integration.conftest import seed_org_agent_memory
 from tests.integration.write_orchestrator_support import (
     EmbedProbe,
+    OrchestratorTestDeps,
     build_orchestrator,
     ensure_pii_ready,
     set_content_hash,
@@ -60,7 +61,7 @@ async def http_context(
     probe = EmbedProbe()
     redis_url = _redis_url()
     cfg = settings.model_copy(update={"redis_url": redis_url}) if redis_url else settings
-    orch = build_orchestrator(session_factory, cfg, store, embed=probe)
+    orch = build_orchestrator(OrchestratorTestDeps(session_factory, cfg, store, embed=probe))
     pii: PiiService = orch._pipeline._stages[1]._pii
     await ensure_pii_ready(orch)
 
@@ -141,7 +142,7 @@ async def test_create_memory_duplicate_409(
     from app.dedup.hash import content_hash_sha256
 
     probe = EmbedProbe()
-    orch = build_orchestrator(session_factory, settings, store, embed=probe)
+    orch = build_orchestrator(OrchestratorTestDeps(session_factory, settings, store, embed=probe))
     pii: PiiService = orch._pipeline._stages[1]._pii
     await ensure_pii_ready(orch)
 

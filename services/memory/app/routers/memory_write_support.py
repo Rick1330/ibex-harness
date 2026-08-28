@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass
 from uuid import UUID
 
 from fastapi import HTTPException, Response
@@ -46,6 +47,15 @@ class IdempotencyHandle:
     @property
     def active(self) -> bool:
         return self.token is not None and self.store is not None
+
+
+@dataclass(frozen=True, slots=True)
+class CreatedResponseContext:
+    outcome: WriteOutcome
+    org_id: UUID
+    elapsed_ms: int
+    idem: IdempotencyHandle
+    response: Response
 
 
 def parse_idempotency_key(raw: str | None) -> str | None:
@@ -246,25 +256,20 @@ async def finalize_quarantine_response(
 
 
 async def finalize_created_response(
-    *,
-    outcome: WriteOutcome,
-    org_id: UUID,
-    elapsed_ms: int,
-    idem: IdempotencyHandle,
-    response: Response,
+    ctx: CreatedResponseContext,
 ) -> CreateMemoryResponse:
-    response.headers["X-Idempotency-Replayed"] = "false"
+    ctx.response.headers["X-Idempotency-Replayed"] = "false"
     payload = CreateMemoryResponse(
-        data=memory_data_from_outcome(outcome, org_id),
+        data=memory_data_from_outcome(ctx.outcome, ctx.org_id),
         meta=CreateMemoryMeta(
             deduplication=DeduplicationMeta(
                 is_duplicate=False,
-                similar_memories=list(outcome.near_duplicate_candidates),
+                similar_memories=list(ctx.outcome.near_duplicate_candidates),
             ),
-            processing_time_ms=elapsed_ms,
+            processing_time_ms=ctx.elapsed_ms,
         ),
     )
     await commit_idempotency_or_log(
-        idem, status=201, body=payload.model_dump_json().encode("utf-8")
+        ctx.idem, status=201, body=payload.model_dump_json().encode("utf-8")
     )
     return payload

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID, uuid4
 
@@ -31,10 +32,7 @@ from app.pipeline import (
 )
 from app.vectorstore.base import UpsertRequest
 from app.write.orchestrator import MemoryWriteOrchestrator
-from tests.integration.conftest import (
-    insert_timed_memory,
-    zero_embedding,
-)
+from tests.integration.conftest import TimedMemorySeed, insert_timed_memory, zero_embedding
 
 
 class EmbedProbe:
@@ -58,26 +56,40 @@ class QuarantinePii:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class OrchestratorTestDeps:
+    session_factory: async_sessionmaker[AsyncSession]
+    settings: Settings
+    store: object
+    embed: Callable[[str], Awaitable[list[float]]] | None = None
+    pii: PiiService | QuarantinePii | None = None
+    subject_extractor: Callable[[str], str] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class VectorMemorySeed:
+    org_id: UUID
+    agent_id: UUID
+    content: str
+    valid_from: datetime
+    valid_until: datetime | None = None
+    hotspot: int = 5
+
+
 async def ensure_pii_ready(orch: MemoryWriteOrchestrator) -> None:
     pii = orch._pipeline._stages[1]._pii
     if hasattr(pii, "ensure_ready"):
         await pii.ensure_ready()
 
 
-def build_orchestrator(
-    session_factory: async_sessionmaker[AsyncSession],
-    settings: Settings,
-    store,
-    *,
-    embed: Callable[[str], Awaitable[list[float]]] | None = None,
-    pii: PiiService | QuarantinePii | None = None,
-    subject_extractor: Callable[[str], str] | None = None,
-) -> MemoryWriteOrchestrator:
+def build_orchestrator(deps: OrchestratorTestDeps) -> MemoryWriteOrchestrator:
     from app.conflict.persist import CandidateLoad, load_candidate_memories
 
-    probe = embed or EmbedProbe()
-    pii_svc = pii or PiiService(settings)
-    extract = subject_extractor or (lambda _: "shared-subject-key")
+    session_factory = deps.session_factory
+    settings = deps.settings
+    probe = deps.embed or EmbedProbe()
+    pii_svc = deps.pii or PiiService(settings)
+    extract = deps.subject_extractor or (lambda _: "shared-subject-key")
 
     async def lookup(org_id: UUID, agent_id: UUID, content_hash: str) -> UUID | None:
         return await find_active_by_content_hash(
@@ -91,7 +103,7 @@ def build_orchestrator(
         )
 
     dedup = DedupService(
-        settings, store=store, exact_lookup=lookup, bump_retrieval=bump
+        settings, store=deps.store, exact_lookup=lookup, bump_retrieval=bump
     )
     conflict = ConflictService(settings, subject_extractor=extract)
 
@@ -133,7 +145,7 @@ async def set_content_hash(
                 SET content_hash = :hash
                 WHERE id = :id AND org_id = :org_id
                 """
-            ),
+            ),  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
             {"hash": content_hash, "id": str(memory_id), "org_id": str(org_id)},
         )
 
@@ -141,30 +153,26 @@ async def set_content_hash(
 async def seed_vector_memory(
     session_factory: async_sessionmaker[AsyncSession],
     store,
-    *,
-    org_id: UUID,
-    agent_id: UUID,
-    content: str,
-    valid_from: datetime,
-    valid_until: datetime | None = None,
-    hotspot: int = 5,
+    seed: VectorMemorySeed,
 ) -> tuple[UUID, list[float]]:
     memory_id = uuid4()
-    vec = zero_embedding(hotspot=hotspot)
+    vec = zero_embedding(hotspot=seed.hotspot)
     await insert_timed_memory(
         session_factory,
-        org_id=org_id,
-        agent_id=agent_id,
-        memory_id=memory_id,
-        content=content,
-        content_hash=content_hash_sha256(content),
-        valid_from=valid_from,
-        valid_until=valid_until,
+        TimedMemorySeed(
+            org_id=seed.org_id,
+            agent_id=seed.agent_id,
+            memory_id=memory_id,
+            content=seed.content,
+            content_hash=content_hash_sha256(seed.content),
+            valid_from=seed.valid_from,
+            valid_until=seed.valid_until,
+        ),
     )
     await store.upsert(
         UpsertRequest(
             memory_id=memory_id,
-            org_id=org_id,
+            org_id=seed.org_id,
             embedding=vec,
             embedding_model="test-model",
         )

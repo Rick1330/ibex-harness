@@ -8,6 +8,10 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
+from sqlalchemy.exc import IntegrityError
+
+from app.idempotency.redis_store import IdempotencyToken
+from app.routers.memory_write_support import IdempotencyHandle
 from app.write.models import MemoryRow
 
 
@@ -82,3 +86,34 @@ def mapping_row(**overrides: object) -> SimpleNamespace:
     }
     base.update(overrides)
     return SimpleNamespace(**base)
+
+
+def active_idempotency_handle(*, store: MagicMock | None = None) -> IdempotencyHandle:
+    return IdempotencyHandle(
+        store=store or MagicMock(),
+        token=IdempotencyToken(org_id=uuid4(), key="k"),
+        fingerprint="fp",
+    )
+
+
+def hash_violation_integrity_error(
+    *,
+    sqlstate: str | None = "23505",
+    pgcode: str | None = None,
+    constraint_name: str = "",
+    detail: str = "",
+    message: str = (
+        'duplicate key value violates unique constraint '
+        '"idx_memories_org_agent_content_hash_active"'
+    ),
+) -> IntegrityError:
+    exc = IntegrityError("insert", {}, Exception("dup"))
+    orig = MagicMock()
+    orig.sqlstate = sqlstate
+    orig.pgcode = pgcode
+    orig.constraint_name = constraint_name
+    orig.diag = None
+    orig.detail = detail
+    orig.__str__ = lambda self: message
+    exc.orig = orig
+    return exc

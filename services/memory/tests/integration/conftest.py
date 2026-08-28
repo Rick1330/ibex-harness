@@ -91,6 +91,12 @@ async def with_service_org(session: AsyncSession, org_id: UUID) -> None:
 
 
 _ALLOWED_MEMORY_FIELDS = frozenset({"status", "valid_until"})
+_MEMORY_FIELD_SQL: dict[str, str] = {
+    "status": "SELECT status FROM ibex_core.memories WHERE id = :id AND org_id = :org",
+    "valid_until": (
+        "SELECT valid_until FROM ibex_core.memories WHERE id = :id AND org_id = :org"
+    ),
+}
 
 
 async def fetch_memory_field(
@@ -108,28 +114,32 @@ async def fetch_memory_field(
         row = (
             await session.execute(
                 text(
-                    f"SELECT {field} FROM ibex_core.memories WHERE id = :id AND org_id = :org"
-                ),
+                    _MEMORY_FIELD_SQL[field]
+                ),  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
                 {"id": str(memory_id), "org": str(org_id)},
             )
         ).one()
     return getattr(row, field)
 
 
+@dataclass(frozen=True, slots=True)
+class TimedMemorySeed:
+    org_id: UUID
+    agent_id: UUID
+    memory_id: UUID
+    content: str
+    content_hash: str
+    valid_from: datetime
+    valid_until: datetime | None = None
+    content_tokens: int = 5
+
+
 async def insert_timed_memory(
     factory: async_sessionmaker[AsyncSession],
-    *,
-    org_id: UUID,
-    agent_id: UUID,
-    memory_id: UUID,
-    content: str,
-    content_hash: str,
-    valid_from: datetime,
-    valid_until: datetime | None = None,
-    content_tokens: int = 5,
+    seed: TimedMemorySeed,
 ) -> None:
     async with factory() as session, session.begin():
-        await with_service_org(session, org_id)
+        await with_service_org(session, seed.org_id)
         await _exec_bound(
             session,
             """
@@ -141,14 +151,14 @@ async def insert_timed_memory(
             )
             """,
             {
-                "id": str(memory_id),
-                "org": str(org_id),
-                "agent": str(agent_id),
-                "content": content,
-                "hash": content_hash,
-                "tokens": content_tokens,
-                "vf": valid_from,
-                "vu": valid_until,
+                "id": str(seed.memory_id),
+                "org": str(seed.org_id),
+                "agent": str(seed.agent_id),
+                "content": seed.content,
+                "hash": seed.content_hash,
+                "tokens": seed.content_tokens,
+                "vf": seed.valid_from,
+                "vu": seed.valid_until,
             },
         )
 

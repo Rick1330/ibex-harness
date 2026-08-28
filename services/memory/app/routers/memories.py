@@ -6,13 +6,13 @@ import hashlib
 import time
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Header, Response
+from fastapi import APIRouter, Depends, Response
 from fastapi.responses import JSONResponse
 
-from app.auth.client import ValidateResult
-from app.deps import get_idempotency_store, get_write_orchestrator, require_memory_write
+from app.deps import CreateMemoryContext, get_create_memory_context
 from app.exceptions import DuplicateMemoryError, EmbeddingServiceError, ValidationError
 from app.routers.memory_write_support import (
+    CreatedResponseContext,
     begin_idempotency,
     finalize_created_response,
     finalize_quarantine_response,
@@ -22,7 +22,6 @@ from app.routers.memory_write_support import (
 )
 from app.schemas.memories import CreateMemoryRequest
 from app.write.models import WriteOutcomeKind
-from app.write.orchestrator import MemoryWriteOrchestrator
 
 router = APIRouter(prefix="/v1/memories", tags=["memories"])
 
@@ -41,25 +40,22 @@ def _fingerprint(method: str, path: str, body: bytes) -> str:
 async def create_memory(
     request: CreateMemoryRequest,
     response: Response,
-    token: Annotated[ValidateResult, Depends(require_memory_write)],
-    orchestrator: Annotated[MemoryWriteOrchestrator, Depends(get_write_orchestrator)],
-    idempotency_store: Annotated[object | None, Depends(get_idempotency_store)],
-    idempotency_key: Annotated[str | None, Header(alias="X-Idempotency-Key")] = None,
+    ctx: Annotated[CreateMemoryContext, Depends(get_create_memory_context)],
 ) -> Any:
     start = time.perf_counter()
     body_bytes = request.model_dump_json().encode("utf-8")
     idem = await begin_idempotency(
-        store=idempotency_store,
-        org_id=token.org_id,
-        idempotency_key=idempotency_key,
+        store=ctx.idempotency_store,
+        org_id=ctx.token.org_id,
+        idempotency_key=ctx.idempotency_key,
         fingerprint=_fingerprint("POST", "/v1/memories", body_bytes),
     )
     if isinstance(idem, JSONResponse):
         return idem
 
-    command = memory_command_from_request(request, token.org_id)
+    command = memory_command_from_request(request, ctx.token.org_id)
     try:
-        outcome = await orchestrator.create(command)
+        outcome = await ctx.orchestrator.create(command)
     except (DuplicateMemoryError, ValidationError, EmbeddingServiceError) as exc:
         await release_idempotency(idem)
         raise http_error_for_write(exc) from exc
@@ -68,9 +64,11 @@ async def create_memory(
     if outcome.kind == WriteOutcomeKind.QUARANTINED:
         return await finalize_quarantine_response(outcome=outcome, idem=idem, response=response)
     return await finalize_created_response(
-        outcome=outcome,
-        org_id=token.org_id,
-        elapsed_ms=elapsed_ms,
-        idem=idem,
-        response=response,
+        CreatedResponseContext(
+            outcome=outcome,
+            org_id=ctx.token.org_id,
+            elapsed_ms=elapsed_ms,
+            idem=idem,
+            response=response,
+        )
     )

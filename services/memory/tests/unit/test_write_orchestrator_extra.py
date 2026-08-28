@@ -14,7 +14,11 @@ from app.pipeline.context import WriteContext
 from app.write.errors import is_active_content_hash_violation
 from app.write.models import CreateMemoryCommand, WriteOutcomeKind
 from app.write.orchestrator import MemoryWriteOrchestrator, _is_embedding_failure
-from tests.unit.memory_test_support import mock_async_session_factory, sample_memory_row
+from tests.unit.memory_test_support import (
+    hash_violation_integrity_error,
+    mock_async_session_factory,
+    sample_memory_row,
+)
 
 
 class _Pipe:
@@ -54,12 +58,9 @@ async def test_orchestrator_active_persist_integrity_race() -> None:
 
     orch = MemoryWriteOrchestrator(_Pipe(), MagicMock())
     orch._pipeline.run = _run  # type: ignore[method-assign]
-
-    exc = IntegrityError("insert", {}, Exception("dup"))
-    orig = MagicMock()
-    orig.sqlstate = "23505"
-    orig.constraint_name = "idx_memories_org_agent_content_hash_active"
-    exc.orig = orig
+    exc = hash_violation_integrity_error(
+        constraint_name="idx_memories_org_agent_content_hash_active"
+    )
 
     mock_factory = mock_async_session_factory()
     orch._factory = mock_factory
@@ -90,44 +91,31 @@ def test_is_embedding_failure_names() -> None:
     assert _is_embedding_failure(RuntimeError("x")) is False
 
 
-def test_is_active_content_hash_violation_asyncpg_message() -> None:
-    exc = IntegrityError("insert", {}, Exception("dup"))
-    orig = MagicMock()
-    orig.sqlstate = None
-    orig.pgcode = "23505"
-    orig.constraint_name = ""
-    orig.diag = None
-    orig.detail = ""
-    orig.__str__ = lambda self: (
-        'duplicate key value violates unique constraint '
-        '"idx_memories_org_agent_content_hash_active"'
+@pytest.mark.parametrize(
+    ("sqlstate", "pgcode", "constraint_name", "detail", "message"),
+    [
+        (None, "23505", "", "", (
+            'duplicate key value violates unique constraint '
+            '"idx_memories_org_agent_content_hash_active"'
+        )),
+        ("23505", None, "", "", "Key (org_id, agent_id, content_hash)=(...) already exists."),
+        ("23505", None, "", "idx_memories_org_agent_content_hash_active violated", ""),
+    ],
+)
+def test_is_active_content_hash_violation_variants(
+    sqlstate: str | None,
+    pgcode: str | None,
+    constraint_name: str,
+    detail: str,
+    message: str,
+) -> None:
+    exc = hash_violation_integrity_error(
+        sqlstate=sqlstate,
+        pgcode=pgcode,
+        constraint_name=constraint_name,
+        detail=detail,
+        message=message or detail,
     )
-    exc.orig = orig
-    assert is_active_content_hash_violation(exc) is True
-
-
-def test_is_active_content_hash_violation_content_hash_key() -> None:
-    exc = IntegrityError("insert", {}, Exception("dup"))
-    orig = MagicMock()
-    orig.sqlstate = "23505"
-    orig.constraint_name = ""
-    orig.diag = None
-    orig.detail = ""
-    orig.__str__ = lambda self: (
-        "Key (org_id, agent_id, content_hash)=(...) already exists."
-    )
-    exc.orig = orig
-    assert is_active_content_hash_violation(exc) is True
-
-
-def test_is_active_content_hash_detail_fallback() -> None:
-    exc = IntegrityError("stmt", {}, Exception("dup"))
-    orig = MagicMock()
-    orig.sqlstate = "23505"
-    orig.constraint_name = ""
-    orig.diag = None
-    orig.detail = "idx_memories_org_agent_content_hash_active violated"
-    exc.orig = orig
     assert is_active_content_hash_violation(exc) is True
 
 

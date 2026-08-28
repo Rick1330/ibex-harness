@@ -19,6 +19,7 @@ from app.routers.memory_write_support import (
     http_error_for_write,
     release_idempotency,
 )
+from tests.unit.memory_test_support import active_idempotency_handle
 
 
 @pytest.mark.asyncio
@@ -55,15 +56,7 @@ async def test_begin_idempotency_hit_returns_json() -> None:
 @pytest.mark.asyncio
 async def test_release_and_commit_when_active() -> None:
     store = AsyncMock()
-    org_id = uuid4()
-    from app.idempotency.redis_store import IdempotencyToken
-    from app.routers.memory_write_support import IdempotencyHandle
-
-    handle = IdempotencyHandle(
-        store=store,
-        token=IdempotencyToken(org_id=org_id, key="k"),
-        fingerprint="fp",
-    )
+    handle = active_idempotency_handle(store=store)
     await release_idempotency(handle)
     store.release.assert_awaited_once()
     await commit_idempotency(handle, status=201, body=b"{}")
@@ -109,14 +102,7 @@ async def test_begin_idempotency_claim_unavailable() -> None:
 async def test_release_idempotency_swallows_redis_error() -> None:
     store = AsyncMock()
     store.release = AsyncMock(side_effect=RedisError("down"))
-    from app.idempotency.redis_store import IdempotencyToken
-    from app.routers.memory_write_support import IdempotencyHandle
-
-    handle = IdempotencyHandle(
-        store=store,
-        token=IdempotencyToken(org_id=uuid4(), key="k"),
-        fingerprint="fp",
-    )
+    handle = active_idempotency_handle(store=store)
     await release_idempotency(handle)
     store.release.assert_awaited_once()
 
@@ -125,14 +111,7 @@ async def test_release_idempotency_swallows_redis_error() -> None:
 async def test_commit_idempotency_or_log_swallows_redis_error() -> None:
     store = AsyncMock()
     store.commit = AsyncMock(side_effect=RedisError("down"))
-    from app.idempotency.redis_store import IdempotencyToken
-    from app.routers.memory_write_support import IdempotencyHandle
-
-    handle = IdempotencyHandle(
-        store=store,
-        token=IdempotencyToken(org_id=uuid4(), key="k"),
-        fingerprint="fp",
-    )
+    handle = active_idempotency_handle(store=store)
     await commit_idempotency_or_log(handle, status=201, body=b"{}")
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Annotated
 
 from fastapi import Depends, Header, HTTPException, Request
@@ -82,3 +83,25 @@ def get_idempotency_store(request: Request):
 
 def get_redis(request: Request):
     return getattr(request.app.state.memory, "redis", None)
+
+
+@dataclass(frozen=True, slots=True)
+class CreateMemoryContext:
+    token: ValidateResult
+    orchestrator: MemoryWriteOrchestrator
+    idempotency_store: object | None
+    idempotency_key: str | None
+
+
+async def get_create_memory_context(
+    token: Annotated[ValidateResult, Depends(require_memory_write)],
+    orchestrator: Annotated[MemoryWriteOrchestrator, Depends(get_write_orchestrator)],
+    idempotency_store: Annotated[object | None, Depends(get_idempotency_store)],
+    idempotency_key: Annotated[str | None, Header(alias="X-Idempotency-Key")] = None,
+) -> CreateMemoryContext:
+    return CreateMemoryContext(
+        token=token,
+        orchestrator=orchestrator,
+        idempotency_store=idempotency_store,
+        idempotency_key=idempotency_key,
+    )

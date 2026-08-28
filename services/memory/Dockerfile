@@ -27,7 +27,9 @@ RUN mkdir -p /wheels && UV_NO_BUILD=0 uv build --wheel --out-dir /wheels /app/pa
 COPY services/memory/pyproject.toml services/memory/uv.lock ./
 
 RUN uv sync --frozen --no-build --no-install-project --find-links /wheels --no-install-package authclient \
-    && uv pip install --find-links /wheels "authclient==0.1.0"
+    && AUTHCLIENT_WHEEL="$(find /wheels -maxdepth 1 -name 'authclient-*.whl' -print -quit)" \
+    && test -n "$AUTHCLIENT_WHEEL" \
+    && uv pip install --no-index "$AUTHCLIENT_WHEEL"
 
 FROM python@sha256:b64e9d3a71eddaa1b3f80c04abf292b3139e3b7c4dd272d19c31dc1f91194d1b AS runtime
 
