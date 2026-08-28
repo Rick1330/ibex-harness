@@ -6,14 +6,13 @@ import ssl
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import Settings
+from app.config import Settings, get_settings
 from app.db import (
     create_engine,
     create_session_factory,
     normalize_async_database_url,
     parse_async_database_url,
 )
-from app.deps import get_settings
 
 
 def test_create_engine_requires_database_url() -> None:

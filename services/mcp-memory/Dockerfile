@@ -26,12 +26,16 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 COPY --from=uv /uv /usr/local/bin/uv
 
-WORKDIR /app
+WORKDIR /app/services/mcp-memory
 
+COPY packages/authclient /app/packages/authclient
+# Trusted monorepo wheel only — UV_NO_BUILD=1 blocks uv build globally (Sonar S8541).
+RUN mkdir -p /wheels && UV_NO_BUILD=0 uv build --wheel --out-dir /wheels /app/packages/authclient
 COPY services/mcp-memory/pyproject.toml services/mcp-memory/uv.lock ./
 
 # Install third-party dependencies from lockfile (wheels only — Sonar S8541).
-RUN uv sync --frozen --no-build --no-install-project
+RUN uv sync --frozen --no-build --no-install-project --find-links /wheels --no-install-package authclient \
+    && uv pip install --no-index --find-links /wheels "authclient==0.1.0"
 
 # --------------------------------------------------------------------------- #
 # Stage 3 — runtime image                                                      #
@@ -52,7 +56,7 @@ RUN apt-get update \
 
 WORKDIR /app
 
-COPY --from=deps /app/.venv ./.venv
+COPY --from=deps /app/services/mcp-memory/.venv ./.venv
 COPY services/mcp-memory/app ./app
 
 USER ibex

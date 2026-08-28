@@ -8,6 +8,8 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.org_context import set_service_org
+
 
 @dataclass(frozen=True, slots=True)
 class ExactHashLookup:
@@ -22,27 +24,13 @@ class RetrievalBump:
     memory_id: UUID
 
 
-async def _set_service_org(session: AsyncSession, org_id: UUID) -> None:
-    await session.execute(
-        text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-            "SELECT set_config('app.is_service_account', 'true', true)"
-        )
-    )
-    await session.execute(
-        text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-            "SELECT set_config('app.current_org_id', :org_id, true)"
-        ),
-        {"org_id": str(org_id)},
-    )
-
-
 async def find_active_by_content_hash(
     factory: async_sessionmaker[AsyncSession],
     lookup: ExactHashLookup,
 ) -> UUID | None:
     """Return active memory id for org/agent/hash, or None."""
     async with factory() as session, session.begin():
-        await _set_service_org(session, lookup.org_id)
+        await set_service_org(session, lookup.org_id)
         row = (
             await session.execute(
                 text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
@@ -75,7 +63,7 @@ async def increment_retrieval_count(
 ) -> int:
     """Increment retrieval_count on exact-dedup hit; return new count."""
     async with factory() as session, session.begin():
-        await _set_service_org(session, bump.org_id)
+        await set_service_org(session, bump.org_id)
         row = (
             await session.execute(
                 text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text

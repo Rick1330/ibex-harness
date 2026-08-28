@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.conflict.intervals import ValidityInterval
 from app.conflict.types import CandidateMemory, SupersedeApply
+from app.org_context import set_service_org
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,20 +30,6 @@ class RelationshipInsert:
     resolution_notes: str | None = None
 
 
-async def _set_service_org(session: AsyncSession, org_id: UUID) -> None:
-    await session.execute(
-        text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-            "SELECT set_config('app.is_service_account', 'true', true)"
-        )
-    )
-    await session.execute(
-        text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-            "SELECT set_config('app.current_org_id', :org_id, true)"
-        ),
-        {"org_id": str(org_id)},
-    )
-
-
 async def load_candidate_memories(
     factory: async_sessionmaker[AsyncSession],
     load: CandidateLoad,
@@ -51,7 +38,7 @@ async def load_candidate_memories(
     if not load.memory_ids:
         return []
     async with factory() as session, session.begin():
-        await _set_service_org(session, load.org_id)
+        await set_service_org(session, load.org_id)
         rows = (
             await session.execute(
                 text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
@@ -94,60 +81,68 @@ async def load_candidate_memories(
     return out
 
 
+async def apply_supersession_session(
+    session: AsyncSession,
+    apply: SupersedeApply,
+) -> None:
+    """Mark target superseded, close interval, insert supersedes edge (caller txn)."""
+    closed_at = apply.closed_at or datetime.now(tz=UTC)
+    await set_service_org(session, apply.org_id)
+    result = await session.execute(
+        text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+            """
+            UPDATE ibex_core.memories
+            SET status = 'superseded',
+                superseded_by = :new_id,
+                valid_until = LEAST(COALESCE(valid_until, :closed_at), :closed_at),
+                updated_at = NOW()
+            WHERE id = :target_id
+              AND org_id = :org_id
+              AND status = 'active'
+              AND deleted_at IS NULL
+            """
+        ),
+        {
+            "new_id": str(apply.new_memory_id),
+            "closed_at": closed_at,
+            "target_id": str(apply.target_memory_id),
+            "org_id": str(apply.org_id),
+        },
+    )
+    if result.rowcount != 1:
+        msg = f"supersede update expected 1 row, got {result.rowcount}"
+        raise RuntimeError(msg)
+    await session.execute(
+        text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+            """
+            INSERT INTO ibex_core.memory_relationships (
+                org_id, source_memory_id, target_memory_id,
+                relationship_type, confidence, resolution_notes
+            ) VALUES (
+                :org_id, :source_id, :target_id,
+                'supersedes', :confidence, :notes
+            )
+            ON CONFLICT (source_memory_id, target_memory_id, relationship_type)
+            DO NOTHING
+            """
+        ),
+        {
+            "org_id": str(apply.org_id),
+            "source_id": str(apply.new_memory_id),
+            "target_id": str(apply.target_memory_id),
+            "confidence": apply.confidence,
+            "notes": "m3.c.3 auto-supersede",
+        },
+    )
+
+
 async def apply_supersession(
     factory: async_sessionmaker[AsyncSession],
     apply: SupersedeApply,
 ) -> None:
     """Mark target superseded, close interval, insert supersedes edge."""
-    closed_at = apply.closed_at or datetime.now(tz=UTC)
     async with factory() as session, session.begin():
-        await _set_service_org(session, apply.org_id)
-        result = await session.execute(
-            text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-                """
-                UPDATE ibex_core.memories
-                SET status = 'superseded',
-                    superseded_by = :new_id,
-                    valid_until = COALESCE(valid_until, :closed_at),
-                    updated_at = NOW()
-                WHERE id = :target_id
-                  AND org_id = :org_id
-                  AND status = 'active'
-                  AND deleted_at IS NULL
-                """
-            ),
-            {
-                "new_id": str(apply.new_memory_id),
-                "closed_at": closed_at,
-                "target_id": str(apply.target_memory_id),
-                "org_id": str(apply.org_id),
-            },
-        )
-        if result.rowcount != 1:
-            msg = f"supersede update expected 1 row, got {result.rowcount}"
-            raise RuntimeError(msg)
-        await session.execute(
-            text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-                """
-                INSERT INTO ibex_core.memory_relationships (
-                    org_id, source_memory_id, target_memory_id,
-                    relationship_type, confidence, resolution_notes
-                ) VALUES (
-                    :org_id, :source_id, :target_id,
-                    'supersedes', :confidence, :notes
-                )
-                ON CONFLICT (source_memory_id, target_memory_id, relationship_type)
-                DO NOTHING
-                """
-            ),
-            {
-                "org_id": str(apply.org_id),
-                "source_id": str(apply.new_memory_id),
-                "target_id": str(apply.target_memory_id),
-                "confidence": apply.confidence,
-                "notes": "m3.c.3 auto-supersede",
-            },
-        )
+        await apply_supersession_session(session, apply)
 
 
 async def insert_relationship(
@@ -156,7 +151,7 @@ async def insert_relationship(
 ) -> None:
     """Insert a typed memory_relationships edge (org-scoped)."""
     async with factory() as session, session.begin():
-        await _set_service_org(session, insert.org_id)
+        await set_service_org(session, insert.org_id)
         await session.execute(
             text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
                 """

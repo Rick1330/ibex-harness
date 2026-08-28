@@ -2,21 +2,22 @@
 
 from __future__ import annotations
 
-import ipaddress
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from uuid import UUID
 
 import grpc
-
-from app.errors import AuthFailedError, AuthUnavailableError
-from app.principal import Principal
-from app.proto_wire import (
+from authclient import (
+    AuthCodecError,
     ValidateTokenWire,
+    assert_trusted_insecure_auth_target,
     decode_validate_token_response,
     encode_validate_token_request,
 )
+
+from app.errors import AuthFailedError, AuthUnavailableError
+from app.principal import Principal
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,6 @@ logger = logging.getLogger(__name__)
 READINESS_PROBE_SENTINEL = "ibex_health_probe_invalid"
 
 _VALIDATE_METHOD = "/ibex.auth.v1.AuthService/ValidateToken"
-_LOOPBACK_DNS = frozenset({"localhost"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,71 +82,6 @@ def parse_authorization_header(header: str | None) -> str:
     return token
 
 
-def assert_trusted_insecure_auth_target(target: str) -> str:
-    """Allow insecure gRPC only to loopback, private IP, or mesh short name.
-
-    Public FQDNs must not receive bearer tokens over plaintext gRPC. Compose/k8s
-    short names (e.g. ``auth``) are treated as TLS-terminating mesh endpoints.
-    """
-    cleaned = target.strip()
-    if not cleaned:
-        raise ValueError("auth gRPC target is required")
-    host = _host_of(cleaned)
-    if _is_trusted_insecure_host(host):
-        return cleaned
-    raise ValueError(
-        "insecure Auth gRPC requires loopback/private address or mesh short name; "
-        f"refusing target host {host!r}"
-    )
-
-
-def _host_of(target: str) -> str:
-    cleaned = _strip_grpc_uri_prefix(target.strip())
-    bracketed = _host_from_brackets(cleaned)
-    if bracketed is not None:
-        return bracketed
-    return _host_from_hostport(cleaned)
-
-
-def _strip_grpc_uri_prefix(target: str) -> str:
-    lowered = target.lower()
-    for prefix in ("dns:///", "dns://", "unix://", "ipv4:", "ipv6:"):
-        if lowered.startswith(prefix):
-            return target[len(prefix) :]
-    return target
-
-
-def _host_from_brackets(target: str) -> str | None:
-    if not target.startswith("["):
-        return None
-    end = target.find("]")
-    if end <= 0:
-        return None
-    return target[1:end].lower().rstrip(".")
-
-
-def _host_from_hostport(target: str) -> str:
-    host, _, port = target.rpartition(":")
-    if host and port.isdigit():
-        return host.lower().rstrip(".")
-    return target.lower().rstrip(".")
-
-
-def _is_trusted_insecure_host(host: str) -> bool:
-    if not host:
-        return False
-    if host in _LOOPBACK_DNS:
-        return True
-    # Compose / k8s short service names (no dots).
-    if "." not in host and host.replace("-", "").isalnum():
-        return True
-    try:
-        ip = ipaddress.ip_address(host)
-    except ValueError:
-        return False
-    return bool(ip.is_loopback or ip.is_private)
-
-
 class GRPCTokenValidator(TokenValidator):
     """Bounded ValidateToken client. Never logs the access token."""
 
@@ -192,7 +127,11 @@ class GRPCTokenValidator(TokenValidator):
 def _decode_validate_payload(payload: object) -> ValidateResult:
     if not isinstance(payload, (bytes, bytearray)):
         raise AuthUnavailableError("auth response is not bytes")
-    return ValidateResult.from_wire(decode_validate_token_response(bytes(payload)))
+    try:
+        wire = decode_validate_token_response(bytes(payload))
+    except AuthCodecError as exc:
+        raise AuthUnavailableError(str(exc)) from exc
+    return ValidateResult.from_wire(wire)
 
 
 def _map_rpc_error(exc: grpc.aio.AioRpcError) -> AuthFailedError | AuthUnavailableError:

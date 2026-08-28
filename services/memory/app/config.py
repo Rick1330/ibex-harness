@@ -155,6 +155,25 @@ class Settings(BaseSettings):
         description="Run temporal conflict detection after near-dup",
     )
 
+    redis_url: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("IBEX_MEMORY_REDIS_URL", "REDIS_URL"),
+        description="Redis URL for hot cache + idempotency (optional)",
+    )
+    redis_timeout_seconds: float = Field(default=0.5, gt=0)
+
+    auth_grpc_addr: str = Field(
+        default="127.0.0.1:8081",
+        validation_alias=AliasChoices("IBEX_AUTH_GRPC_ADDR", "IBEX_MEMORY_AUTH_GRPC_ADDR"),
+        description="Auth service gRPC target for ValidateToken",
+    )
+    auth_timeout_ms: int = Field(default=50, ge=1)
+
+    idempotency_ttl_seconds: int = Field(default=86400, ge=60)
+    idempotency_pending_ttl_seconds: int = Field(default=540, ge=60)
+
+    memory_cache_ttl_seconds: int = Field(default=3600, ge=60)
+
     @field_validator("database_url", mode="before")
     @classmethod
     def _empty_dsn_to_none(cls, value: object) -> object:

@@ -7,6 +7,7 @@ PROXY_ADDR="${IBEX_PROXY_ADDR:-http://127.0.0.1:8080}"
 AUTH_ADDR="${IBEX_AUTH_HTTP_ADDR:-http://127.0.0.1:8081}"
 EMBEDDER_ADDR="${IBEX_EMBEDDER_ADDR:-http://127.0.0.1:8004}"
 MCP_ADDR="${IBEX_MCP_ADDR:-http://127.0.0.1:8090}"
+MEMORY_ADDR="${IBEX_MEMORY_ADDR:-http://127.0.0.1:8005}"
 EMBED_TOKEN="${IBEX_EMBEDDING_API_TOKEN:-dev-embedder-metrics-token}"
 
 hit() {
@@ -27,5 +28,9 @@ hit "embedder /health" "$EMBEDDER_ADDR/health"
 hit "embedder /metrics" -H "Authorization: Bearer $EMBED_TOKEN" "$EMBEDDER_ADDR/metrics"
 hit "mcp /health" "$MCP_ADDR/health"
 hit "mcp /metrics" "$MCP_ADDR/metrics"
+hit "memory /health" "$MEMORY_ADDR/health"
+hit "memory /ready" "$MEMORY_ADDR/ready"
+hit "memory /metrics" "$MEMORY_ADDR/metrics"
 
 echo "observability-traffic: done (wait ~15s for Prometheus scrape)"
+echo "For sustained memory charts run: bash infra/scripts/observability-memory-traffic.sh"

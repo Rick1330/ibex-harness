@@ -9,6 +9,7 @@ description = "IBEX Harness MCP memory resource server (G6.M1 skeleton — stub 
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+  "authclient",
   "fastapi>=0.115.0",
   "uvicorn[standard]>=0.30.0",
   "pydantic>=2.0.0",
@@ -45,6 +46,9 @@ target-version = "py312"
 
 [tool.coverage.run]
 omit = ["app/stdio_main.py"]
+
+[tool.uv.sources]
+authclient = { path = "../../packages/authclient" }
 
 [dependency-groups]
 dev = [

@@ -5,9 +5,7 @@ from __future__ import annotations
 from uuid import UUID
 
 import pytest
-
-from app.errors import AuthUnavailableError
-from app.proto_wire import decode_validate_token_response, encode_validate_token_request
+from authclient import AuthCodecError, decode_validate_token_response, encode_validate_token_request
 
 
 def test_encode_decode_roundtrip_shape() -> None:
@@ -26,7 +24,7 @@ def test_encode_request_contains_token_bytes() -> None:
 
 
 def test_decode_missing_org_fails() -> None:
-    with pytest.raises(AuthUnavailableError):
+    with pytest.raises(AuthCodecError):
         decode_validate_token_response(b"\x10\x01")
 
 
@@ -42,10 +40,10 @@ def test_decode_skips_unknown_len_binary_without_utf8() -> None:
 
 
 def test_decode_rejects_oversized_message() -> None:
-    with pytest.raises(AuthUnavailableError):
+    with pytest.raises(AuthCodecError):
         decode_validate_token_response(b"\x00" * 5000)
 
 
 def test_decode_rejects_truncated_len_field() -> None:
-    with pytest.raises(AuthUnavailableError):
+    with pytest.raises(AuthCodecError):
         decode_validate_token_response(b"\x0a\x05ab")

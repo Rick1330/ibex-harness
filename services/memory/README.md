@@ -45,6 +45,17 @@ workers (`services/worker/`).
 - Metrics: `ibex_memory_conflicts_total{outcome}`, `ibex_memory_conflict_llm_calls_total`
 - Toggle: `IBEX_MEMORY_CONFLICT_DETECTION_ENABLED` (default true)
 
+### m3.C.5 (Track C — Write orchestration)
+
+- `POST /v1/memories` — documented contract ([API_DOCUMENTATION.md](../../web/engineering/API_DOCUMENTATION.md))
+- Pipeline steps 7–9: transactional insert + supersession + escalations (`app/write/`, ADR-0057)
+- Unique-violation on active content hash → bump + `409 DUPLICATE_CONTENT`
+- After-commit Redis cache (`{org_id}:memory:{memory_id}`, `{org_id}:hot_memories:{agent_id}`) + vector upsert
+- `memory_conflict_escalations` table (migration `000019`)
+- Auth: gRPC `ValidateToken` (`IBEX_AUTH_GRPC_ADDR`); permission `memory:write`
+- Idempotency: `X-Idempotency-Key` via Redis (`idempotency:{org_id}:{key}`)
+- Observability: Prometheus job `memory` (:8005), Grafana dashboard `memory.json`
+
 ## HNSW benches
 
 Live under top-level [`benchmarks/memory/`](../../benchmarks/memory/) (publish-aligned),

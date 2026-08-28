@@ -49,6 +49,11 @@ wheels = [
 ]
 
 [[package]]
+name = "authclient"
+version = "0.1.0"
+source = { directory = "../../packages/authclient" }
+
+[[package]]
 name = "certifi"
 version = "2026.7.22"
 source = { registry = "https://pypi.org/simple" }
@@ -456,6 +461,7 @@ name = "ibex-mcp-memory"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "authclient" },
     { name = "fastapi" },
     { name = "grpcio" },
     { name = "httpx" },
@@ -481,6 +487,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "authclient", directory = "../../packages/authclient" },
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "grpcio", specifier = ">=1.62.0" },
     { name = "httpx", specifier = ">=0.27.0" },

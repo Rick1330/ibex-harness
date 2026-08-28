@@ -19,11 +19,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 COPY --from=uv /uv /usr/local/bin/uv
 
-WORKDIR /app
+WORKDIR /app/services/memory
 
+COPY packages/authclient /app/packages/authclient
+# Trusted monorepo wheel only — UV_NO_BUILD=1 blocks uv build globally (Sonar S8541).
+RUN mkdir -p /wheels && UV_NO_BUILD=0 uv build --wheel --out-dir /wheels /app/packages/authclient
 COPY services/memory/pyproject.toml services/memory/uv.lock ./
 
-RUN uv sync --frozen --no-build --no-install-project
+RUN uv sync --frozen --no-build --no-install-project --find-links /wheels --no-install-package authclient \
+    && uv pip install --no-index --find-links /wheels "authclient==0.1.0"
 
 FROM python@sha256:b64e9d3a71eddaa1b3f80c04abf292b3139e3b7c4dd272d19c31dc1f91194d1b AS runtime
 
@@ -39,7 +43,7 @@ RUN apt-get update \
 
 WORKDIR /app
 
-COPY --from=deps /app/.venv ./.venv
+COPY --from=deps /app/services/memory/.venv ./.venv
 
 COPY services/memory/app ./app
 

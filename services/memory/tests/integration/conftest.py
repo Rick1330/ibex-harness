@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from datetime import datetime
 from uuid import UUID, uuid4
 
 import pytest
@@ -78,6 +79,88 @@ async def _exec_bound(session: AsyncSession, sql: str, params: dict[str, object]
         text(sql),  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
         params,
     )
+
+
+async def with_service_org(session: AsyncSession, org_id: UUID) -> None:
+    await _exec_bound(session, "SELECT set_config('app.is_service_account', 'true', true)", {})
+    await _exec_bound(
+        session,
+        "SELECT set_config('app.current_org_id', :org_id, true)",
+        {"org_id": str(org_id)},
+    )
+
+
+_ALLOWED_MEMORY_FIELDS = frozenset({"status", "valid_until"})
+_MEMORY_FIELD_SQL: dict[str, str] = {
+    "status": "SELECT status FROM ibex_core.memories WHERE id = :id AND org_id = :org",
+    "valid_until": (
+        "SELECT valid_until FROM ibex_core.memories WHERE id = :id AND org_id = :org"
+    ),
+}
+
+
+async def fetch_memory_field(
+    factory: async_sessionmaker[AsyncSession],
+    *,
+    org_id: UUID,
+    memory_id: UUID,
+    field: str,
+):
+    if field not in _ALLOWED_MEMORY_FIELDS:
+        msg = f"unsupported memory field {field!r}"
+        raise ValueError(msg)
+    async with factory() as session:
+        await with_service_org(session, org_id)
+        row = (
+            await session.execute(
+                text(
+                    _MEMORY_FIELD_SQL[field]
+                ),  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+                {"id": str(memory_id), "org": str(org_id)},
+            )
+        ).one()
+    return getattr(row, field)
+
+
+@dataclass(frozen=True, slots=True)
+class TimedMemorySeed:
+    org_id: UUID
+    agent_id: UUID
+    memory_id: UUID
+    content: str
+    content_hash: str
+    valid_from: datetime
+    valid_until: datetime | None = None
+    content_tokens: int = 5
+
+
+async def insert_timed_memory(
+    factory: async_sessionmaker[AsyncSession],
+    seed: TimedMemorySeed,
+) -> None:
+    async with factory() as session, session.begin():
+        await with_service_org(session, seed.org_id)
+        await _exec_bound(
+            session,
+            """
+            INSERT INTO ibex_core.memories (
+                id, org_id, agent_id, content, content_hash, content_tokens,
+                valid_from, valid_until
+            ) VALUES (
+                :id, :org, :agent, :content, :hash, :tokens, :vf, :vu
+            )
+            """,
+            {
+                "id": str(seed.memory_id),
+                "org": str(seed.org_id),
+                "agent": str(seed.agent_id),
+                "content": seed.content,
+                "hash": seed.content_hash,
+                "tokens": seed.content_tokens,
+                "vf": seed.valid_from,
+                "vu": seed.valid_until,
+            },
+        )
 
 
 @dataclass(frozen=True, slots=True)
