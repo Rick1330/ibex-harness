@@ -137,6 +137,12 @@ async def test_grpc_validator_bad_response_type() -> None:
             await validator.validate("tok")
         await validator.aclose()
 
+    bad_payload = bytes([0x10, 0x05])  # permissions only, missing org_id
+    with grpc_validator(return_value=bad_payload) as validator:
+        with pytest.raises(AuthUnavailableError):
+            await validator.validate("tok")
+        await validator.aclose()
+
 
 @pytest.mark.asyncio
 async def test_grpc_validator_ready_probe() -> None:

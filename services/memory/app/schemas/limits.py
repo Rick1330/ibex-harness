@@ -41,12 +41,15 @@ def validate_memory_metadata(metadata: dict[str, Any] | None) -> None:
 
 
 def _validate_metadata_depth(value: Any, *, depth: int) -> None:
-    if depth > MAX_METADATA_DEPTH:
-        msg = f"metadata nesting must be at most {MAX_METADATA_DEPTH} levels deep"
-        raise ValueError(msg)
     if isinstance(value, dict):
+        if depth > MAX_METADATA_DEPTH:
+            msg = f"metadata nesting must be at most {MAX_METADATA_DEPTH} levels deep"
+            raise ValueError(msg)
         for nested in value.values():
             _validate_metadata_depth(nested, depth=depth + 1)
     elif isinstance(value, list):
+        if depth > MAX_METADATA_DEPTH:
+            msg = f"metadata nesting must be at most {MAX_METADATA_DEPTH} levels deep"
+            raise ValueError(msg)
         for nested in value:
             _validate_metadata_depth(nested, depth=depth + 1)

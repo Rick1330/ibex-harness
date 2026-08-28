@@ -8,12 +8,14 @@ from uuid import uuid4
 import pytest
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse
+from redis.exceptions import RedisError
 
 from app.exceptions import DuplicateMemoryError, ValidationError
 from app.idempotency.redis_store import ClaimKind, ClaimOutcome, IdempotencyRecord, IdempotencyState
 from app.routers.memory_write_support import (
     begin_idempotency,
     commit_idempotency,
+    commit_idempotency_or_log,
     http_error_for_write,
     release_idempotency,
 )
@@ -86,6 +88,58 @@ async def test_parse_idempotency_key_rejects_too_long() -> None:
     with pytest.raises(HTTPException) as exc:
         parse_idempotency_key("k" * 300)
     assert exc.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_begin_idempotency_claim_unavailable() -> None:
+    store = AsyncMock()
+    store.claim = AsyncMock(side_effect=RedisError("down"))
+    with pytest.raises(HTTPException) as exc:
+        await begin_idempotency(
+            store=store,
+            org_id=uuid4(),
+            idempotency_key="k",
+            fingerprint="fp",
+        )
+    assert exc.value.status_code == 503
+    assert exc.value.detail["code"] == "IDEMPOTENCY_UNAVAILABLE"
+
+
+@pytest.mark.asyncio
+async def test_release_idempotency_swallows_redis_error() -> None:
+    store = AsyncMock()
+    store.release = AsyncMock(side_effect=RedisError("down"))
+    from app.idempotency.redis_store import IdempotencyToken
+    from app.routers.memory_write_support import IdempotencyHandle
+
+    handle = IdempotencyHandle(
+        store=store,
+        token=IdempotencyToken(org_id=uuid4(), key="k"),
+        fingerprint="fp",
+    )
+    await release_idempotency(handle)
+    store.release.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_commit_idempotency_or_log_swallows_redis_error() -> None:
+    store = AsyncMock()
+    store.commit = AsyncMock(side_effect=RedisError("down"))
+    from app.idempotency.redis_store import IdempotencyToken
+    from app.routers.memory_write_support import IdempotencyHandle
+
+    handle = IdempotencyHandle(
+        store=store,
+        token=IdempotencyToken(org_id=uuid4(), key="k"),
+        fingerprint="fp",
+    )
+    await commit_idempotency_or_log(handle, status=201, body=b"{}")
+
+
+def test_http_error_for_write_preserved_when_release_fails() -> None:
+    exc = http_error_for_write(ValidationError("bad", field="content"))
+    assert exc.status_code == 400
+    assert exc.detail["code"] == "VALIDATION_ERROR"
 
 
 @pytest.mark.asyncio

@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import json
+import logging
 from uuid import UUID
 
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse
+from redis.exceptions import RedisError
 
 from app.exceptions import DuplicateMemoryError, EmbeddingServiceError, ValidationError
 from app.idempotency.redis_store import ClaimKind, ClaimOutcome, IdempotencyToken
 from app.schemas.limits import MAX_IDEMPOTENCY_KEY_LENGTH
+
+logger = logging.getLogger(__name__)
 
 
 class IdempotencyHandle:
@@ -66,7 +70,20 @@ async def begin_idempotency(
     if not validated_key or store is None:
         return handle
     handle.token = IdempotencyToken(org_id=org_id, key=validated_key)
-    claim: ClaimOutcome = await store.claim(handle.token, fingerprint)
+    try:
+        claim: ClaimOutcome = await store.claim(handle.token, fingerprint)
+    except (OSError, RedisError) as exc:
+        logger.warning(
+            "idempotency claim unavailable error_class=%s",
+            type(exc).__name__,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "IDEMPOTENCY_UNAVAILABLE",
+                "message": "Idempotency store unavailable",
+            },
+        ) from exc
     if claim.kind == ClaimKind.HIT and claim.record is not None:
         return JSONResponse(
             status_code=claim.record.status,
@@ -93,8 +110,15 @@ async def begin_idempotency(
 
 
 async def release_idempotency(handle: IdempotencyHandle) -> None:
-    if handle.active:
+    if not handle.active:
+        return
+    try:
         await handle.store.release(handle.token, handle.fingerprint)
+    except (OSError, RedisError) as exc:
+        logger.warning(
+            "idempotency release failed error_class=%s",
+            type(exc).__name__,
+        )
 
 
 async def commit_idempotency(handle: IdempotencyHandle, *, status: int, body: bytes) -> None:
@@ -104,6 +128,20 @@ async def commit_idempotency(handle: IdempotencyHandle, *, status: int, body: by
             fingerprint=handle.fingerprint,
             status=status,
             body=body,
+        )
+
+
+async def commit_idempotency_or_log(
+    handle: IdempotencyHandle, *, status: int, body: bytes
+) -> None:
+    if not handle.active:
+        return
+    try:
+        await commit_idempotency(handle, status=status, body=body)
+    except (OSError, RedisError) as exc:
+        logger.warning(
+            "idempotency commit failed after successful write error_class=%s",
+            type(exc).__name__,
         )
 
 

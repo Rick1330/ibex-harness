@@ -30,7 +30,7 @@ def _host_of(target: str) -> str:
 
 def _strip_grpc_uri_prefix(target: str) -> str:
     lowered = target.lower()
-    for prefix in ("dns:///", "dns://", "unix://", "ipv4:", "ipv6:"):
+    for prefix in ("dns:///", "dns://", "ipv4:", "ipv6:"):
         if lowered.startswith(prefix):
             return target[len(prefix) :]
     return target

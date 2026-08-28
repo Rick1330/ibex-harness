@@ -52,7 +52,6 @@ class MemoryData(BaseModel):
     retrieval_count: int
     usefulness_score: float
     pii_detected: bool
-    injection_risk_score: float = 0.02
     session_id: UUID | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime

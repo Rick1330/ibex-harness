@@ -14,7 +14,7 @@ from app.deps import get_idempotency_store, get_write_orchestrator, require_memo
 from app.exceptions import DuplicateMemoryError, EmbeddingServiceError, ValidationError
 from app.routers.memory_write_support import (
     begin_idempotency,
-    commit_idempotency,
+    commit_idempotency_or_log,
     http_error_for_write,
     release_idempotency,
 )
@@ -121,7 +121,7 @@ async def create_memory(
             data=QuarantineMemoryData(id=outcome.memory.id, status="quarantined"),
             meta={"message": "Memory quarantined for review due to PII detection"},
         )
-        await commit_idempotency(
+        await commit_idempotency_or_log(
             idem, status=202, body=payload.model_dump_json().encode("utf-8")
         )
         return payload
@@ -136,7 +136,7 @@ async def create_memory(
             processing_time_ms=elapsed_ms,
         ),
     )
-    await commit_idempotency(
+    await commit_idempotency_or_log(
         idem, status=201, body=payload.model_dump_json().encode("utf-8")
     )
     return payload

@@ -16,6 +16,11 @@ def test_validate_tags_rejects_empty_tag() -> None:
         validate_tags(["ok", "  "])
 
 
+def test_validate_metadata_allows_scalar_leaf_at_max_depth() -> None:
+    metadata = {"l1": {"l2": {"l3": {"l4": "leaf-value"}}}}
+    validate_memory_metadata(metadata)
+
+
 def test_validate_metadata_rejects_deep_nesting() -> None:
     nested: dict = {"a": {}}
     current = nested

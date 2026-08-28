@@ -1,4 +1,5 @@
 .venv/
+.wheels/
 coverage-mcp-memory.xml
 __pycache__/
 *.pyc

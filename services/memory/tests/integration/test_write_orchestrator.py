@@ -157,6 +157,28 @@ async def _fetch_memory_status(
     return str(row.status)
 
 
+async def _fetch_memory_valid_until(
+    factory: async_sessionmaker[AsyncSession], *, org_id: UUID, memory_id: UUID
+):
+    async with factory() as session:
+        await session.execute(
+            text("SELECT set_config('app.is_service_account', 'true', true)")
+        )
+        await session.execute(
+            text("SELECT set_config('app.current_org_id', :org_id, true)"),
+            {"org_id": str(org_id)},
+        )
+        row = (
+            await session.execute(
+                text(
+                    "SELECT valid_until FROM ibex_core.memories WHERE id = :id AND org_id = :org"
+                ),
+                {"id": str(memory_id), "org": str(org_id)},
+            )
+        ).one()
+    return row.valid_until
+
+
 @pytest.mark.asyncio
 async def test_orchestrator_novel_write_persists_row(
     session_factory: async_sessionmaker[AsyncSession],
@@ -328,6 +350,10 @@ async def test_orchestrator_supersession_in_one_transaction(
         session_factory, org_id=org_id, memory_id=old_id
     )
     assert old_status == "superseded"
+    old_valid_until = await _fetch_memory_valid_until(
+        session_factory, org_id=org_id, memory_id=old_id
+    )
+    assert old_valid_until == june
 
 
 @pytest.mark.asyncio

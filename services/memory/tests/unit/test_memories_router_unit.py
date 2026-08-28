@@ -8,6 +8,7 @@ from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
+from redis.exceptions import RedisError
 
 from app.auth.client import StaticTokenValidator, ValidateResult
 from app.config import Settings
@@ -134,6 +135,97 @@ def test_create_memory_503_embedding(client) -> None:
         resp = _post_memory(http, content="x")
     assert resp.status_code == 503
     assert resp.json()["detail"]["code"] == "EMBEDDING_FAILED"
+
+
+def test_create_memory_request_validation_bad_agent_id(client) -> None:
+    http, mock_orch = client
+    with http:
+        resp = http.post(
+            "/v1/memories",
+            headers={"Authorization": f"Bearer {TOKEN}"},
+            json={"agent_id": "not-a-uuid", "content": "hello"},
+        )
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["code"] == "VALIDATION_ERROR"
+    mock_orch.create.assert_not_called()
+
+
+def test_create_memory_request_validation_empty_content(client) -> None:
+    http, mock_orch = client
+    with http:
+        resp = http.post(
+            "/v1/memories",
+            headers={"Authorization": f"Bearer {TOKEN}"},
+            json={"agent_id": str(AGENT), "content": ""},
+        )
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["code"] == "VALIDATION_ERROR"
+    mock_orch.create.assert_not_called()
+
+
+def test_create_memory_request_validation_oversized_content(client) -> None:
+    http, mock_orch = client
+    with http:
+        resp = http.post(
+            "/v1/memories",
+            headers={"Authorization": f"Bearer {TOKEN}"},
+            json={"agent_id": str(AGENT), "content": "x" * 10_001},
+        )
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["code"] == "VALIDATION_ERROR"
+    mock_orch.create.assert_not_called()
+
+
+def test_create_memory_request_validation_metadata_depth(client) -> None:
+    http, mock_orch = client
+    nested: dict = {"a": {}}
+    current = nested
+    for _ in range(6):
+        current["child"] = {}
+        current = current["child"]
+    with http:
+        resp = http.post(
+            "/v1/memories",
+            headers={"Authorization": f"Bearer {TOKEN}"},
+            json={"agent_id": str(AGENT), "content": "hello", "metadata": nested},
+        )
+    assert resp.status_code == 400
+    assert resp.json()["detail"]["code"] == "VALIDATION_ERROR"
+    mock_orch.create.assert_not_called()
+
+
+def test_create_memory_duplicate_release_error_still_returns_domain_error(client) -> None:
+    http, mock_orch = client
+
+    class _FailingReleaseStore(_FakeStore):
+        async def release(self, token, fp):
+            raise RedisError("down")
+
+    store = _FailingReleaseStore(ClaimOutcome(kind=ClaimKind.MISS, record=None))
+    _with_idempotency_store(http, store)
+    mock_orch.create = AsyncMock(side_effect=DuplicateMemoryError(uuid4()))
+    with http:
+        resp = _post_memory(http, content="dup", idempotency_key="key-1")
+    assert resp.status_code == 409
+    assert resp.json()["detail"]["code"] == "DUPLICATE_CONTENT"
+
+
+def test_create_memory_commit_failure_still_returns_201(client) -> None:
+    http, mock_orch = client
+
+    class _FailingCommitStore(_FakeStore):
+        async def commit(self, token, *, fingerprint, status, body):
+            raise RedisError("down")
+
+    store = _FailingCommitStore(ClaimOutcome(kind=ClaimKind.MISS, record=None))
+    _with_idempotency_store(http, store)
+    mock_orch.create = AsyncMock(
+        return_value=WriteOutcome(kind=WriteOutcomeKind.CREATED, memory=_memory_row())
+    )
+    with http:
+        resp = _post_memory(http, idempotency_key="key-1")
+    assert resp.status_code == 201
+    assert resp.json()["data"]["content"] == "hello"
 
 
 def test_create_memory_idempotency_hit(client) -> None:

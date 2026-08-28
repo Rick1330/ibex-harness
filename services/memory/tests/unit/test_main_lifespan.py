@@ -65,6 +65,8 @@ def test_create_app_full_lifespan_mocked() -> None:
         app = create_app(settings=settings, validator=validator)
         with TestClient(app) as client:
             assert client.get("/health").status_code == 200
+            assert client.get("/ready").status_code == 200
+            assert app.state.memory.ready is True
 
 
 def test_create_app_postgres_unreachable_not_ready() -> None:

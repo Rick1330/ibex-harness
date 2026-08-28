@@ -144,8 +144,8 @@ async def test_apply_supersession_success() -> None:
 
 
 @pytest.mark.asyncio
-async def test_apply_supersession_preserves_earlier_valid_until() -> None:
-    """Regression: later valid_until is closed; earlier valid_until is kept."""
+async def test_apply_supersession_sql_uses_least_coalesce_valid_until() -> None:
+    """SQL-shape coverage: supersession UPDATE uses LEAST/COALESCE on valid_until."""
     session = _FakeSession(
         [
             _FakeResult(),
