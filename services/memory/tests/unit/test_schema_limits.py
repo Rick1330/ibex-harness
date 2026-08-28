@@ -7,8 +7,8 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
-from app.schemas.limits import validate_memory_metadata, validate_tags
-from app.schemas.memories import CreateMemoryRequest
+from app.schemas.limits import MAX_LABELS, validate_memory_metadata, validate_tags
+from app.schemas.memories import CreateMemoryRequest, MemoryLabelSchema
 
 
 def test_validate_tags_rejects_empty_tag() -> None:
@@ -37,4 +37,13 @@ def test_create_memory_request_rejects_oversized_metadata() -> None:
             agent_id=uuid4(),
             content="hello",
             metadata={"blob": "x" * 9000},
+        )
+
+
+def test_create_memory_request_rejects_too_many_labels() -> None:
+    with pytest.raises(ValidationError):
+        CreateMemoryRequest(
+            agent_id=uuid4(),
+            content="hello",
+            labels=[MemoryLabelSchema(label="factual", confidence=0.5)] * (MAX_LABELS + 1),
         )

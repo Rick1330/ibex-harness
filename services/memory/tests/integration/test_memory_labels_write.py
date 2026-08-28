@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from uuid import UUID, uuid4
 
@@ -32,6 +34,41 @@ TOKEN = "test-memory-labels-token"
 
 
 @dataclass(frozen=True, slots=True)
+class HttpLabelCase:
+    seed_content: str
+    payload: Mapping[str, object]
+    expected_category: str | None
+    expected_label_count: int
+    expected_primary_label: str | None = None
+
+
+@asynccontextmanager
+async def _labels_http_client(
+    session_factory: async_sessionmaker[AsyncSession],
+    settings: Settings,
+    store,
+    *,
+    seed_content: str,
+) -> AsyncIterator[tuple[AsyncClient, UUID, UUID]]:
+    probe = EmbedProbe()
+    orch = build_orchestrator(
+        OrchestratorTestDeps(session_factory, settings, store, embed=probe)
+    )
+    await ensure_pii_ready(orch)
+    org_id, agent_id, _ = await seed_org_agent_memory(session_factory, content=seed_content)
+    validator = StaticTokenValidator(
+        {TOKEN: ValidateResult(org_id=org_id, permissions=MEMORY_WRITE, agent_id=agent_id)}
+    )
+    app = create_app(settings=settings, validator=validator)
+    async with app.router.lifespan_context(app):
+        app.state.memory.write_orchestrator = orch
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            yield client, org_id, agent_id
+
+
+@dataclass(frozen=True, slots=True)
 class LabelRow:
     label: str
     confidence: float
@@ -50,27 +87,39 @@ async def _with_org_rls(session: AsyncSession, org_id: UUID) -> None:
     )  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
 
 
+async def _service_query(
+    factory: async_sessionmaker[AsyncSession],
+    org_id: UUID,
+    sql: str,
+    params: dict[str, str],
+):
+    async with factory() as session:
+        await with_service_org(session, org_id)
+        return await session.execute(
+            text(sql),  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+            params,
+        )
+
+
 async def _fetch_memory_labels(
     factory: async_sessionmaker[AsyncSession],
     *,
     org_id: UUID,
     memory_id: UUID,
 ) -> list[LabelRow]:
-    async with factory() as session:
-        await with_service_org(session, org_id)
-        rows = (
-            await session.execute(
-                text(
-                    """
-                    SELECT label, confidence::float8 AS confidence
-                    FROM ibex_core.memory_labels
-                    WHERE memory_id = :memory_id AND org_id = :org_id
-                    ORDER BY label
-                    """
-                ),  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-                {"memory_id": str(memory_id), "org_id": str(org_id)},
-            )
-        ).all()
+    rows = (
+        await _service_query(
+            factory,
+            org_id,
+            """
+            SELECT label, confidence::float8 AS confidence
+            FROM ibex_core.memory_labels
+            WHERE memory_id = :memory_id AND org_id = :org_id
+            ORDER BY label
+            """,
+            {"memory_id": str(memory_id), "org_id": str(org_id)},
+        )
+    ).all()
     return [LabelRow(label=str(row.label), confidence=float(row.confidence)) for row in rows]
 
 
@@ -80,19 +129,17 @@ async def _fetch_memory_category(
     org_id: UUID,
     memory_id: UUID,
 ) -> str:
-    async with factory() as session:
-        await with_service_org(session, org_id)
-        row = (
-            await session.execute(
-                text(
-                    """
-                    SELECT category FROM ibex_core.memories
-                    WHERE id = :memory_id AND org_id = :org_id
-                    """
-                ),  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-                {"memory_id": str(memory_id), "org_id": str(org_id)},
-            )
-        ).one()
+    row = (
+        await _service_query(
+            factory,
+            org_id,
+            """
+            SELECT category FROM ibex_core.memories
+            WHERE id = :memory_id AND org_id = :org_id
+            """,
+            {"memory_id": str(memory_id), "org_id": str(org_id)},
+        )
+    ).one()
     return str(row.category)
 
 
@@ -313,89 +360,58 @@ async def test_memory_labels_cascade_delete(
 
 
 @pytest.mark.asyncio
-async def test_http_post_multi_label(
+@pytest.mark.parametrize(
+    "case",
+    [
+        HttpLabelCase(
+            seed_content="http multi-label seed",
+            payload={
+                "content": HTTP_NOVEL_WRITE_CONTENT,
+                "labels": [
+                    {"label": "procedural", "confidence": 0.85},
+                    {"label": "factual", "confidence": 0.7},
+                ],
+            },
+            expected_category="procedural",
+            expected_label_count=2,
+        ),
+        HttpLabelCase(
+            seed_content="http legacy label seed",
+            payload={
+                "content": "Legacy scalar category write path",
+                "category": "preference",
+                "confidence": 0.88,
+            },
+            expected_category="preference",
+            expected_label_count=1,
+            expected_primary_label="preference",
+        ),
+    ],
+)
+async def test_http_post_labels(
     session_factory: async_sessionmaker[AsyncSession],
     settings: Settings,
     store,
+    case: HttpLabelCase,
 ) -> None:
-    probe = EmbedProbe()
-    orch = build_orchestrator(
-        OrchestratorTestDeps(session_factory, settings, store, embed=probe)
-    )
-    await ensure_pii_ready(orch)
-    org_id, agent_id, _ = await seed_org_agent_memory(
-        session_factory, content="http multi-label seed"
-    )
-    validator = StaticTokenValidator(
-        {TOKEN: ValidateResult(org_id=org_id, permissions=MEMORY_WRITE, agent_id=agent_id)}
-    )
-    app = create_app(settings=settings, validator=validator)
-    async with app.router.lifespan_context(app):
-        app.state.memory.write_orchestrator = orch
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
-            response = await client.post(
-                "/v1/memories",
-                headers={"Authorization": f"Bearer {TOKEN}"},
-                json={
-                    "agent_id": str(agent_id),
-                    "content": HTTP_NOVEL_WRITE_CONTENT,
-                    "labels": [
-                        {"label": "procedural", "confidence": 0.85},
-                        {"label": "factual", "confidence": 0.7},
-                    ],
-                },
-            )
+    async with _labels_http_client(
+        session_factory, settings, store, seed_content=case.seed_content
+    ) as (client, org_id, agent_id):
+        response = await client.post(
+            "/v1/memories",
+            headers={"Authorization": f"Bearer {TOKEN}"},
+            json={"agent_id": str(agent_id), **case.payload},
+        )
     assert response.status_code == 201
     memory_id = UUID(response.json()["data"]["id"])
-    assert response.json()["data"]["category"] == "procedural"
+    if case.expected_category is not None:
+        assert response.json()["data"]["category"] == case.expected_category
     labels = await _fetch_memory_labels(
         session_factory, org_id=org_id, memory_id=memory_id
     )
-    assert len(labels) == 2
-
-
-@pytest.mark.asyncio
-async def test_http_post_legacy_without_labels(
-    session_factory: async_sessionmaker[AsyncSession],
-    settings: Settings,
-    store,
-) -> None:
-    probe = EmbedProbe()
-    orch = build_orchestrator(
-        OrchestratorTestDeps(session_factory, settings, store, embed=probe)
-    )
-    await ensure_pii_ready(orch)
-    org_id, agent_id, _ = await seed_org_agent_memory(
-        session_factory, content="http legacy label seed"
-    )
-    validator = StaticTokenValidator(
-        {TOKEN: ValidateResult(org_id=org_id, permissions=MEMORY_WRITE, agent_id=agent_id)}
-    )
-    app = create_app(settings=settings, validator=validator)
-    async with app.router.lifespan_context(app):
-        app.state.memory.write_orchestrator = orch
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
-            response = await client.post(
-                "/v1/memories",
-                headers={"Authorization": f"Bearer {TOKEN}"},
-                json={
-                    "agent_id": str(agent_id),
-                    "content": "Legacy scalar category write path",
-                    "category": "preference",
-                    "confidence": 0.88,
-                },
-            )
-    assert response.status_code == 201
-    memory_id = UUID(response.json()["data"]["id"])
-    labels = await _fetch_memory_labels(
-        session_factory, org_id=org_id, memory_id=memory_id
-    )
-    assert len(labels) == 1
-    assert labels[0].label == "preference"
+    assert len(labels) == case.expected_label_count
+    if case.expected_primary_label is not None:
+        assert labels[0].label == case.expected_primary_label
 
 
 @pytest.mark.asyncio

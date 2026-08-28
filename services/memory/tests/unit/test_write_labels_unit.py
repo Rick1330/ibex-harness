@@ -116,6 +116,27 @@ def test_memory_command_from_request_multi_label() -> None:
     assert command.category == "behavioral"
 
 
+def test_resolve_write_labels_rejects_non_finite_confidence() -> None:
+    with pytest.raises(ValidationError) as exc_info:
+        resolve_write_labels(
+            category="factual",
+            confidence=float("nan"),
+            labels=None,
+        )
+    assert exc_info.value.field_code == "confidence_out_of_range"
+
+
+def test_resolve_write_labels_rejects_infinite_label_confidence() -> None:
+    with pytest.raises(ValidationError) as exc_info:
+        resolve_write_labels(
+            category="factual",
+            confidence=0.8,
+            labels=(MemoryLabelInput(label="factual", confidence=float("inf")),),
+        )
+    assert exc_info.value.field_code == "confidence_out_of_range"
+    assert exc_info.value.field == "labels[0].confidence"
+
+
 def test_persist_never_updates_category() -> None:
     persist_path = Path(__file__).resolve().parents[2] / "app" / "write" / "persist.py"
     source = persist_path.read_text(encoding="utf-8")

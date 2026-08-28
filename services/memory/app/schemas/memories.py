@@ -8,7 +8,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from app.schemas.limits import MAX_TAGS, validate_memory_metadata, validate_tags
+from app.schemas.limits import MAX_LABELS, MAX_TAGS, validate_memory_metadata, validate_tags
 
 _CATEGORIES = Literal["factual", "preference", "behavioral", "episodic", "procedural"]
 _VISIBILITY = Literal["agent", "org", "session"]
@@ -24,7 +24,7 @@ class CreateMemoryRequest(BaseModel):
     content: str = Field(min_length=1, max_length=10_000)
     category: _CATEGORIES = "factual"
     confidence: float = Field(default=0.80, ge=0.0, le=1.0)
-    labels: list[MemoryLabelSchema] | None = None
+    labels: list[MemoryLabelSchema] | None = Field(default=None, max_length=MAX_LABELS)
     session_id: UUID | None = None
     visibility: _VISIBILITY = "agent"
     tags: list[str] = Field(default_factory=list, max_length=MAX_TAGS)

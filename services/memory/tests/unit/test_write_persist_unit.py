@@ -8,6 +8,7 @@ from uuid import uuid4
 import pytest
 
 from app.pipeline.context import WriteContext
+from app.write.labels import LabelInsert
 from app.write.models import CreateMemoryCommand
 from app.write.persist import (
     EscalationInsert,
@@ -16,7 +17,6 @@ from app.write.persist import (
     insert_memory_session,
     reload_memory_session,
 )
-from app.write.labels import LabelInsert
 from tests.unit.memory_test_support import mapping_row
 
 

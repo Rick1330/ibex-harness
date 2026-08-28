@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from math import isfinite
 from uuid import UUID
 
 from app.exceptions import ValidationError
@@ -39,8 +40,14 @@ def _validate_label_taxonomy(label: str, *, index: int | None = None) -> None:
 
 
 def _validate_confidence(confidence: float, *, index: int | None = None) -> None:
+    field = "labels" if index is None else f"labels[{index}].confidence"
+    if not isfinite(confidence):
+        raise ValidationError(
+            "Confidence must be between 0.0 and 1.0",
+            field=field,
+            field_code="confidence_out_of_range",
+        )
     if confidence < 0.0 or confidence > 1.0:
-        field = "labels" if index is None else f"labels[{index}].confidence"
         raise ValidationError(
             "Confidence must be between 0.0 and 1.0",
             field=field,
