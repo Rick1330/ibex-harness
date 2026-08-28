@@ -15,13 +15,8 @@ fi
 
 WHEEL_DIR="$MEMORY_DIR/.wheels"
 bash "$(dirname "${BASH_SOURCE[0]}")/build-authclient-wheel.sh" "$WHEEL_DIR"
-AUTHCLIENT_WHEEL="$(find "$WHEEL_DIR" -maxdepth 1 -name 'authclient-*.whl' -print -quit)"
-if [[ -z "$AUTHCLIENT_WHEEL" ]]; then
-  echo "missing authclient wheel in $WHEEL_DIR" >&2
-  exit 1
-fi
 
 cd "$MEMORY_DIR"
 uv sync --frozen --no-build --extra dev --no-install-project \
   --find-links "$WHEEL_DIR" --no-install-package authclient
-uv pip install --no-index "$AUTHCLIENT_WHEEL"
+uv pip install --no-index --find-links "$WHEEL_DIR" "authclient==0.1.0"
