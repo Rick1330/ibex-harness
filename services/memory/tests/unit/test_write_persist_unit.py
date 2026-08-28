@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from collections.abc import Callable
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -20,16 +21,21 @@ from app.write.persist import (
 from tests.unit.memory_test_support import mapping_row, mock_session_returning_row
 
 
+async def _insert_memory(
+    *,
+    row,
+    command: CreateMemoryCommand,
+    ctx: WriteContext,
+):
+    session = mock_session_returning_row(row)
+    return await insert_memory_session(session, command=command, ctx=ctx), session
+
+
 @pytest.mark.asyncio
 async def test_insert_memory_session_maps_row() -> None:
     org_id = uuid4()
     agent_id = uuid4()
     row = mapping_row(org_id=org_id, agent_id=agent_id, metadata='{"k":"v"}')
-    session = AsyncMock()
-    result = MagicMock()
-    result.one.return_value = row
-    session.execute = AsyncMock(return_value=result)
-
     command = CreateMemoryCommand(
         org_id=org_id,
         agent_id=agent_id,
@@ -43,7 +49,7 @@ async def test_insert_memory_session_maps_row() -> None:
         status="active",
         content_hash="hash",
     )
-    memory = await insert_memory_session(session, command=command, ctx=ctx)
+    memory, session = await _insert_memory(row=row, command=command, ctx=ctx)
     assert memory.org_id == org_id
     assert memory.metadata == {"k": "v"}
     assert session.execute.await_count >= 1
@@ -54,14 +60,9 @@ async def test_insert_memory_session_metadata_dict() -> None:
     org_id = uuid4()
     agent_id = uuid4()
     row = mapping_row(org_id=org_id, agent_id=agent_id, metadata={"a": 1})
-    session = AsyncMock()
-    result = MagicMock()
-    result.one.return_value = row
-    session.execute = AsyncMock(return_value=result)
-
     command = CreateMemoryCommand(org_id=org_id, agent_id=agent_id, content="x")
     ctx = WriteContext(org_id=org_id, agent_id=agent_id, content="x", status="active")
-    memory = await insert_memory_session(session, command=command, ctx=ctx)
+    memory, _session = await _insert_memory(row=row, command=command, ctx=ctx)
     assert memory.metadata == {"a": 1}
 
 
@@ -70,14 +71,9 @@ async def test_insert_memory_session_non_dict_metadata_becomes_empty() -> None:
     org_id = uuid4()
     agent_id = uuid4()
     row = mapping_row(org_id=org_id, agent_id=agent_id, metadata=123)
-    session = AsyncMock()
-    result = MagicMock()
-    result.one.return_value = row
-    session.execute = AsyncMock(return_value=result)
-
     command = CreateMemoryCommand(org_id=org_id, agent_id=agent_id, content="x")
     ctx = WriteContext(org_id=org_id, agent_id=agent_id, content="x", status="quarantined")
-    memory = await insert_memory_session(session, command=command, ctx=ctx)
+    memory, _session = await _insert_memory(row=row, command=command, ctx=ctx)
     assert memory.metadata == {}
 
 
@@ -90,11 +86,6 @@ async def test_insert_memory_session_persists_visibility_tags_pinned() -> None:
         agent_id=agent_id,
         metadata='{"visibility":"org","pinned":true,"tags":["a"],"note":"x"}',
     )
-    session = AsyncMock()
-    result = MagicMock()
-    result.one.return_value = row
-    session.execute = AsyncMock(return_value=result)
-
     command = CreateMemoryCommand(
         org_id=org_id,
         agent_id=agent_id,
@@ -105,7 +96,7 @@ async def test_insert_memory_session_persists_visibility_tags_pinned() -> None:
         metadata={"note": "x"},
     )
     ctx = WriteContext(org_id=org_id, agent_id=agent_id, content="hello", status="active")
-    memory = await insert_memory_session(session, command=command, ctx=ctx)
+    memory, session = await _insert_memory(row=row, command=command, ctx=ctx)
     assert memory.visibility == "org"
     assert memory.pinned is True
     assert memory.tags == ("a",)
@@ -129,40 +120,49 @@ async def test_insert_session_empty_noop(insert_fn, inserts) -> None:
     session.execute.assert_not_awaited()
 
 
+async def _assert_single_insert(
+    insert_fn: Callable,
+    item: object,
+    expected_params: dict[str, str],
+) -> None:
+    session = AsyncMock()
+    assert await insert_fn(session, [item]) == 1
+    params = session.execute.await_args_list[-1].args[1]
+    for key, value in expected_params.items():
+        assert params[key] == value
+
+
 @pytest.mark.asyncio
 async def test_insert_escalations_session_inserts() -> None:
     org_id = uuid4()
-    session = AsyncMock()
-    item = EscalationInsert(
-        org_id=org_id,
-        new_memory_id=uuid4(),
-        candidate_memory_id=uuid4(),
-        conflict_type="escalate_pending",
-        subject_key="k",
-        reason="r",
+    await _assert_single_insert(
+        insert_escalations_session,
+        EscalationInsert(
+            org_id=org_id,
+            new_memory_id=uuid4(),
+            candidate_memory_id=uuid4(),
+            conflict_type="escalate_pending",
+            subject_key="k",
+            reason="r",
+        ),
+        {"org_id": str(org_id)},
     )
-    assert await insert_escalations_session(session, [item]) == 1
-    assert session.execute.await_count >= 1
-    params = session.execute.await_args_list[-1].args[1]
-    assert params["org_id"] == str(org_id)
 
 
 @pytest.mark.asyncio
 async def test_insert_labels_session_inserts() -> None:
     org_id = uuid4()
     memory_id = uuid4()
-    session = AsyncMock()
-    item = LabelInsert(
-        org_id=org_id,
-        memory_id=memory_id,
-        label="factual",
-        confidence=0.8,
+    await _assert_single_insert(
+        insert_labels_session,
+        LabelInsert(
+            org_id=org_id,
+            memory_id=memory_id,
+            label="factual",
+            confidence=0.8,
+        ),
+        {"label": "factual", "memory_id": str(memory_id)},
     )
-    assert await insert_labels_session(session, [item]) == 1
-    assert session.execute.await_count >= 1
-    params = session.execute.await_args_list[-1].args[1]
-    assert params["label"] == "factual"
-    assert params["memory_id"] == str(memory_id)
 
 
 @pytest.mark.asyncio

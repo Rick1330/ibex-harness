@@ -266,35 +266,74 @@ async def test_orchestrator_race_without_existing_raises() -> None:
 
 
 @pytest.mark.asyncio
-async def test_orchestrator_re_raises_non_hash_integrity() -> None:
+@pytest.mark.parametrize(
+    ("patch_target", "side_effect", "expected_exc", "field_code"),
+    [
+        (
+            "insert_memory_session",
+            IntegrityError("insert", {}, Exception("other")),
+            IntegrityError,
+            None,
+        ),
+        (
+            "insert_labels_session",
+            label_violation_integrity_error(),
+            ValidationError,
+            "duplicate_label",
+        ),
+        (
+            "insert_labels_session",
+            label_violation_integrity_error(LabelViolationOpts(constraint_name="other_fk")),
+            IntegrityError,
+            None,
+        ),
+    ],
+)
+async def test_orchestrator_active_integrity_errors(
+    patch_target: str,
+    side_effect: BaseException,
+    expected_exc: type[BaseException],
+    field_code: str | None,
+) -> None:
     org_id = uuid4()
     agent_id = uuid4()
+    content = f"integrity probe {patch_target}"
     ctx = WriteContext(
         org_id=org_id,
         agent_id=agent_id,
-        content="content here",
-        content_hash="h",
+        content=content,
+        content_hash="hash-active-integrity",
         status="active",
     )
 
     async def _run(_c: WriteContext) -> WriteContext:
         return ctx
 
+    fake_row = sample_memory_row(org_id=org_id, agent_id=agent_id, content=content)
     orch = MemoryWriteOrchestrator(_Pipe(), mock_async_session_factory())
     orch._pipeline.run = _run  # type: ignore[method-assign]
 
-    exc = IntegrityError("insert", {}, Exception("other"))
-    orig = MagicMock()
-    orig.sqlstate = "23503"
-    exc.orig = orig
+    if patch_target == "insert_memory_session":
+        if isinstance(side_effect, IntegrityError):
+            orig = MagicMock()
+            orig.sqlstate = "23503"
+            side_effect.orig = orig
+        patches = {patch_target: AsyncMock(side_effect=side_effect)}
+    else:
+        patches = {
+            "insert_memory_session": AsyncMock(return_value=fake_row),
+            patch_target: AsyncMock(side_effect=side_effect),
+        }
 
-    with patch(
-        "app.write.orchestrator.insert_memory_session",
-        AsyncMock(side_effect=exc),
-    ), pytest.raises(IntegrityError):
+    with (
+        patch.multiple("app.write.orchestrator", **patches),
+        pytest.raises(expected_exc) as err,
+    ):
         await orch.create(
-            CreateMemoryCommand(org_id=org_id, agent_id=agent_id, content=ctx.content)
+            CreateMemoryCommand(org_id=org_id, agent_id=agent_id, content=content)
         )
+    if field_code is not None:
+        assert err.value.field_code == field_code
 
 
 def test_raise_duplicate_label_error_maps_pkey() -> None:
@@ -313,66 +352,3 @@ def test_raise_duplicate_label_error_reraises_other() -> None:
     exc.orig = orig
     with pytest.raises(IntegrityError):
         orch._raise_duplicate_label_error(exc)
-
-
-@pytest.mark.asyncio
-async def test_orchestrator_duplicate_label_integrity_maps_validation_error() -> None:
-    org_id = uuid4()
-    agent_id = uuid4()
-    ctx = WriteContext(
-        org_id=org_id,
-        agent_id=agent_id,
-        content="duplicate label path",
-        content_hash="hash-dup-label",
-        status="active",
-    )
-
-    async def _run(_c: WriteContext) -> WriteContext:
-        return ctx
-
-    fake_row = sample_memory_row(org_id=org_id, agent_id=agent_id, content=ctx.content)
-    orch = MemoryWriteOrchestrator(_Pipe(), mock_async_session_factory())
-    orch._pipeline.run = _run  # type: ignore[method-assign]
-
-    with (
-        patch("app.write.orchestrator.insert_memory_session", AsyncMock(return_value=fake_row)),
-        patch(
-            "app.write.orchestrator.insert_labels_session",
-            AsyncMock(side_effect=label_violation_integrity_error()),
-        ),
-        pytest.raises(ValidationError) as err,
-    ):
-        await orch.create(
-            CreateMemoryCommand(org_id=org_id, agent_id=agent_id, content=ctx.content)
-        )
-    assert err.value.field_code == "duplicate_label"
-
-
-@pytest.mark.asyncio
-async def test_orchestrator_label_integrity_non_pkey_reraises() -> None:
-    org_id = uuid4()
-    agent_id = uuid4()
-    ctx = WriteContext(
-        org_id=org_id,
-        agent_id=agent_id,
-        content="other label integrity",
-        content_hash="hash-label-other",
-        status="active",
-    )
-
-    async def _run(_c: WriteContext) -> WriteContext:
-        return ctx
-
-    fake_row = sample_memory_row(org_id=org_id, agent_id=agent_id, content=ctx.content)
-    orch = MemoryWriteOrchestrator(_Pipe(), mock_async_session_factory())
-    orch._pipeline.run = _run  # type: ignore[method-assign]
-    exc = label_violation_integrity_error(LabelViolationOpts(constraint_name="other_fk"))
-
-    with (
-        patch("app.write.orchestrator.insert_memory_session", AsyncMock(return_value=fake_row)),
-        patch("app.write.orchestrator.insert_labels_session", AsyncMock(side_effect=exc)),
-        pytest.raises(IntegrityError),
-    ):
-        await orch.create(
-            CreateMemoryCommand(org_id=org_id, agent_id=agent_id, content=ctx.content)
-        )
