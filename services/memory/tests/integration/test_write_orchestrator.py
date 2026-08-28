@@ -158,6 +158,36 @@ async def test_orchestrator_concurrent_identical_content_race(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("concurrency", [30])
+async def test_orchestrator_mass_concurrent_identical_content(
+    session_factory: async_sessionmaker[AsyncSession],
+    settings: Settings,
+    store,
+    concurrency: int,
+) -> None:
+    """Stress hash-index race: exactly one success, remainder clean 409 path."""
+    content = f"mass race payload {uuid4().hex}"
+    org_id, agent_id, _ = await seed_org_agent_memory(
+        session_factory, content="mass race seed unrelated"
+    )
+    orch = build_orchestrator(OrchestratorTestDeps(session_factory, settings, store))
+    await ensure_pii_ready(orch)
+    cmd = CreateMemoryCommand(org_id=org_id, agent_id=agent_id, content=content)
+    results = await asyncio.gather(
+        *[orch.create(cmd) for _ in range(concurrency)],
+        return_exceptions=True,
+    )
+    successes = [r for r in results if not isinstance(r, BaseException)]
+    failures = [r for r in results if isinstance(r, BaseException)]
+    assert len(successes) == 1
+    assert len(failures) == concurrency - 1
+    winner_id = successes[0].memory.id
+    for failure in failures:
+        assert isinstance(failure, DuplicateMemoryError)
+        assert failure.existing_id == winner_id
+
+
+@pytest.mark.asyncio
 async def test_orchestrator_supersession_in_one_transaction(
     session_factory: async_sessionmaker[AsyncSession],
     settings: Settings,

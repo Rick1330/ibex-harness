@@ -15,6 +15,7 @@ from app.conflict.types import ConflictDecision, ConflictOutcome
 from app.dedup.hash import content_hash_sha256
 from app.org_context import set_service_org
 from app.pipeline.context import WriteContext
+from app.write.metrics import ESCALATIONS_INSERTED
 from app.write.models import CreateMemoryCommand, MemoryRow
 
 
@@ -166,6 +167,7 @@ async def insert_escalations_session(
                 "reason": item.reason,
             },
         )
+        ESCALATIONS_INSERTED.inc()
 
 
 def escalations_from_decisions(

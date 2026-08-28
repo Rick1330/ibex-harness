@@ -12,7 +12,7 @@ Scaffold guidance: [web/engineering/FILE_STRUCTURE.md](../web/engineering/FILE_S
 
 | Directory | Role |
 | --- | --- |
-| `authclient/` | ValidateToken wire codec + insecure gRPC target guards for Python services (`services/memory`, `services/mcp-memory`) |
+| `authclient/` | ValidateToken wire codec + insecure gRPC target guards for Python services (`services/memory`, `services/mcp-memory`). Extracted during milestone 3.C.5 because both services needed identical authclient wheel/Docker install paths; see PR #625. |
 
 ---
 

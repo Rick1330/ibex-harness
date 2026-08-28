@@ -2,7 +2,7 @@
 
 | Path | Role |
 |---|---|
-| `prometheus/` | Scrape config + Phase 2.5 alert rules |
+| `prometheus/` | Scrape config + Phase 2.5 and memory alert rules |
 | `alertmanager/` | Local null-receiver Alertmanager config |
 | `otel/` | Collector: OTLP → Tempo (+ Loki for OTLP logs) |
 | `tempo/` | Local filesystem Tempo |

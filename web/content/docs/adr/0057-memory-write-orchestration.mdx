@@ -147,4 +147,7 @@ to bump** — never a bare 500.
 - 3.C.4 and 3.E.2 are blocked on 3.C.5 for a correct write product surface.
 - Until 3.C.5 ships, stages 1–6 remain service-internal (composed integration
   tests exercise them without HTTP).
-- Conflict workers gain a pollable escalation table only when 3.C.5 lands.
+- Conflict workers gain a pollable escalation table when 3.C.5 lands; **consumption
+  is deferred** — tracked in [#627](https://github.com/Rick1330/ibex-harness/issues/627).
+- Worker poll query shape and partial-index `EXPLAIN` verification live in
+  `services/memory/tests/integration/test_premerge_guards.py`.

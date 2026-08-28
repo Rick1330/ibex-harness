@@ -9,3 +9,8 @@ WRITE_CACHE_ERRORS = Counter(
     "After-commit cache or vector index write failures",
     ["op"],
 )
+
+ESCALATIONS_INSERTED = Counter(
+    "ibex_memory_conflict_escalations_inserted_total",
+    "Conflict escalation rows inserted with status=pending (no consumer yet)",
+)

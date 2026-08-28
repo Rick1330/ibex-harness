@@ -1,0 +1,35 @@
+groups:
+  - name: ibex.memory
+    rules:
+      - alert: IbexMemoryDown
+        expr: up{job="memory"} == 0
+        for: 2m
+        labels:
+          severity: p2
+        annotations:
+          summary: "IBEX memory /metrics scrape is down"
+          description: "Prometheus cannot scrape the memory job for 2m."
+
+      - alert: IbexMemoryAfterCommitFailures
+        expr: sum(rate(ibex_memory_write_cache_errors_total[5m])) > 0
+        for: 10m
+        labels:
+          severity: p2
+        annotations:
+          summary: "Memory after-commit cache or vector upsert failures sustained"
+          description: >
+            ibex_memory_write_cache_errors_total has a non-zero rate for 10m.
+            DB rows may exist without matching Redis object cache or vector index.
+            See Grafana dashboard ibex-memory panel 'Memory write cache errors'.
+
+      - alert: IbexMemoryEscalationBacklogGrowth
+        expr: increase(ibex_memory_conflict_escalations_inserted_total[24h]) > 500
+        for: 1h
+        labels:
+          severity: p3
+        annotations:
+          summary: "Memory conflict escalation inserts high over 24h (no consumer yet)"
+          description: >
+            Pending escalation rows are accumulating; worker consumption is tracked in
+            GitHub issue for memory_conflict_escalations poll/resolve. Until a worker
+            ships, review table growth and retention policy.

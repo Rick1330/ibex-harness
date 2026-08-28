@@ -78,13 +78,19 @@ def parse_idempotency_key(raw: str | None) -> str | None:
     return key
 
 
-def _replay_response_for_claim(claim: ClaimOutcome) -> JSONResponse | None:
+def _replay_cached_response(claim: ClaimOutcome) -> JSONResponse | None:
+    """Return stored response body when this idempotency key already completed."""
     if claim.kind == ClaimKind.HIT and claim.record is not None:
         return JSONResponse(
             status_code=claim.record.status,
             content=json.loads(claim.record.body.decode("utf-8")),
             headers={"X-Idempotency-Replayed": "true"},
         )
+    return None
+
+
+def _reject_idempotency_conflict(claim: ClaimOutcome) -> None:
+    """Raise when the same key is reused with a different body or still in flight."""
     if claim.kind == ClaimKind.CONFLICT:
         raise HTTPException(
             status_code=409,
@@ -101,23 +107,28 @@ def _replay_response_for_claim(claim: ClaimOutcome) -> JSONResponse | None:
                 "message": "Request with this idempotency key is in progress",
             },
         )
-    return None
 
 
-async def begin_idempotency(
-    *,
-    store: object | None,
-    org_id: UUID,
-    idempotency_key: str | None,
-    fingerprint: str,
+def _finalize_idempotency_claim(
+    claim: ClaimOutcome,
+    handle: IdempotencyHandle,
 ) -> IdempotencyHandle | JSONResponse:
-    handle = IdempotencyHandle(store=store, token=None, fingerprint=fingerprint)
-    validated_key = parse_idempotency_key(idempotency_key)
-    if not validated_key or store is None:
-        return handle
-    handle.token = IdempotencyToken(org_id=org_id, key=validated_key)
+    """Map claim outcome to either a replay response or an active write handle."""
+    replay = _replay_cached_response(claim)
+    if replay is not None:
+        return replay
+    _reject_idempotency_conflict(claim)
+    return handle
+
+
+async def _claim_idempotency_slot(
+    store: object,
+    token: IdempotencyToken,
+    fingerprint: str,
+) -> ClaimOutcome:
+    """Atomically claim the idempotency key in Redis (or fail closed)."""
     try:
-        claim: ClaimOutcome = await store.claim(handle.token, fingerprint)
+        return await store.claim(token, fingerprint)
     except (OSError, RedisError) as exc:
         logger.warning(
             "idempotency claim unavailable error_class=%s",
@@ -130,10 +141,23 @@ async def begin_idempotency(
                 "message": "Idempotency store unavailable",
             },
         ) from exc
-    replay = _replay_response_for_claim(claim)
-    if replay is not None:
-        return replay
-    return handle
+
+
+async def begin_idempotency(
+    *,
+    store: object | None,
+    org_id: UUID,
+    idempotency_key: str | None,
+    fingerprint: str,
+) -> IdempotencyHandle | JSONResponse:
+    """Claim idempotency slot, replay cached result, or return handle for a new write."""
+    handle = IdempotencyHandle(store=store, token=None, fingerprint=fingerprint)
+    validated_key = parse_idempotency_key(idempotency_key)
+    if not validated_key or store is None:
+        return handle
+    handle.token = IdempotencyToken(org_id=org_id, key=validated_key)
+    claim = await _claim_idempotency_slot(store, handle.token, fingerprint)
+    return _finalize_idempotency_claim(claim, handle)
 
 
 async def release_idempotency(handle: IdempotencyHandle) -> None:

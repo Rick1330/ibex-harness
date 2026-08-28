@@ -202,8 +202,26 @@
     },
     {
       "type": "timeseries",
-      "title": "Memory dedup outcomes",
+      "title": "Conflict escalations inserted (pending backlog proxy)",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "increase(ibex_memory_conflict_escalations_inserted_total[$__range])",
+          "legendFormat": "inserted"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Memory dedup outcomes",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 28 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
