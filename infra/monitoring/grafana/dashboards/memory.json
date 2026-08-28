@@ -213,8 +213,8 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "short",
-          "decimals": 0
+          "unit": "reqps",
+          "decimals": 1
         }
       }
     },

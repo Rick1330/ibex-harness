@@ -17,6 +17,7 @@ from app.routers.memory_write_support import (
     finalize_created_response,
     finalize_quarantine_response,
     http_error_for_write,
+    http_internal_error_for_write,
     memory_command_from_request,
     release_idempotency,
 )
@@ -59,9 +60,9 @@ async def create_memory(
     except (DuplicateMemoryError, ValidationError, EmbeddingServiceError) as exc:
         await release_idempotency(idem)
         raise http_error_for_write(exc) from exc
-    except Exception:
+    except Exception as exc:
         await release_idempotency(idem)
-        raise
+        raise http_internal_error_for_write() from exc
 
     elapsed_ms = int((time.perf_counter() - start) * 1000)
     if outcome.kind == WriteOutcomeKind.QUARANTINED:

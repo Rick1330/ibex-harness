@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from sqlalchemy.exc import DBAPIError, OperationalError
+from sqlalchemy.exc import DBAPIError
 
 from app.vectorstore.base import UpsertRequest, VectorStore
 from app.write.cache import MemoryCacheWriter
@@ -46,7 +46,7 @@ class AfterCommitHandler:
                     embedding_model=outcome.embedding_model or self.embedding_model,
                 )
             )
-        except (LookupError, OSError, OperationalError, DBAPIError):
+        except (LookupError, OSError, DBAPIError):
             WRITE_CACHE_ERRORS.labels(op="vector_upsert").inc()
             logger.warning(
                 "vector upsert failed org_id=%s memory_id=%s",

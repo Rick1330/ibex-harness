@@ -8,7 +8,7 @@ from uuid import uuid4
 import pytest
 from prometheus_client import REGISTRY
 from redis.exceptions import RedisError
-from sqlalchemy.exc import IntegrityError, OperationalError
+from sqlalchemy.exc import DBAPIError, IntegrityError
 
 from app.config import Settings
 from app.conflict.types import ConflictDecision, ConflictOutcome
@@ -150,7 +150,7 @@ async def test_after_commit_vector_sqlalchemy_failure_records_metric() -> None:
     labels = {"op": "vector_upsert"}
     before = _counter_value("ibex_memory_write_cache_errors_total", labels)
     store = AsyncMock()
-    store.upsert = AsyncMock(side_effect=OperationalError("stmt", {}, Exception("db down")))
+    store.upsert = AsyncMock(side_effect=DBAPIError("stmt", {}, Exception("db down")))
     handler = AfterCommitHandler(cache=None, store=store)
     await handler(
         WriteOutcome(

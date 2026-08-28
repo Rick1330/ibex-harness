@@ -219,6 +219,13 @@ def http_error_for_write(exc: BaseException) -> HTTPException:
     raise exc
 
 
+def http_internal_error_for_write() -> HTTPException:
+    return HTTPException(
+        status_code=500,
+        detail={"code": "INTERNAL_ERROR", "message": "Memory write failed"},
+    )
+
+
 def memory_command_from_request(
     request: CreateMemoryRequest,
     org_id: UUID,
