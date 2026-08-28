@@ -23,6 +23,7 @@ from app.schemas.memories import (
     QuarantineMemoryData,
     QuarantineMemoryResponse,
 )
+from app.write.labels import MemoryLabelInput, resolve_write_labels
 from app.write.models import CreateMemoryCommand, WriteOutcome
 
 logger = logging.getLogger(__name__)
@@ -230,17 +231,29 @@ def memory_command_from_request(
     request: CreateMemoryRequest,
     org_id: UUID,
 ) -> CreateMemoryCommand:
+    label_inputs: tuple[MemoryLabelInput, ...] | None = None
+    if request.labels is not None:
+        label_inputs = tuple(
+            MemoryLabelInput(label=item.label, confidence=item.confidence)
+            for item in request.labels
+        )
+    resolved = resolve_write_labels(
+        category=request.category,
+        confidence=request.confidence,
+        labels=label_inputs,
+    )
     return CreateMemoryCommand(
         org_id=org_id,
         agent_id=request.agent_id,
         content=request.content,
-        category=request.category,
+        category=resolved[0].label,
         confidence=request.confidence,
         session_id=request.session_id,
         visibility=request.visibility,
         tags=tuple(request.tags),
         pinned=request.pinned,
         metadata=request.metadata,
+        labels=resolved,
     )
 
 

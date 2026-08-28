@@ -48,13 +48,17 @@ Labels are source of truth once present. No bidirectional sync from `category` �
 
 `INSERT … SELECT id, org_id, category, 1.00 FROM memories ON CONFLICT DO NOTHING` in the same `up` migration.
 
-### 5) No application writers
+### 5) Application writers (3.C.4)
 
-No ORM/REST/proto in this PR. Phase 3.C.4 owns write-path population beyond backfill.
+Phase 3.C.4 implements write-path population in the memory service orchestrator: optional `labels[]` on `POST /v1/memories`, validation in `resolve_write_labels`, `insert_labels_session` in the same transaction as memory insert, and `reload_memory_session` so HTTP responses reflect the trigger-updated scalar. The primary column remains **`memories.category`** (not `primary_category`; rename deferred per 3.1.1). Application code must not `UPDATE memories.category` directly — only the `sync_memory_primary_category` trigger updates it.
 
-### 6) Expand-contract with 3.1.1 / 3.C.4
+### 6) Expand-contract with 3.1.1
 
 Those milestones must **not** `CREATE TABLE memory_labels`. They may later rename `category` → `primary_category` if needed; M2 does not dual-column.
+
+## 3.C.4 implementation note (2026-08-28)
+
+Write-path population landed in milestone [3.C.4](/roadmap/phase-3-memory-engine/milestones/3.c.4-multi-label-classification): additive `labels[]` on memory create, backward-compatible scalar `category` synthesis when `labels` is omitted, and transactional insert into `ibex_core.memory_labels` inside the 3.C.5 orchestrator. Primary scalar remains `memories.category`; the existing trigger selects `ORDER BY confidence DESC, label ASC`.
 
 ## Consequences
 

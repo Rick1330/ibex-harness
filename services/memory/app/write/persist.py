@@ -15,6 +15,7 @@ from app.conflict.types import ConflictDecision, ConflictOutcome
 from app.dedup.hash import content_hash_sha256
 from app.org_context import set_service_org
 from app.pipeline.context import WriteContext
+from app.write.labels import LabelInsert
 from app.write.models import CreateMemoryCommand, MemoryRow
 
 
@@ -102,7 +103,7 @@ async def insert_memory_session(
         "content": ctx.content,
         "content_hash": content_hash,
         "content_tokens": content_token_count(ctx.content),
-        "category": command.category,
+        "category": command.labels[0].label,
         "status": ctx.status,
         "confidence": command.confidence,
         "source": "user_provided",
@@ -136,6 +137,61 @@ async def insert_memory_session(
         )
     ).one()
     return _row_from_mapping(row)
+
+
+async def insert_labels_session(
+    session: AsyncSession,
+    inserts: list[LabelInsert],
+) -> int:
+    if not inserts:
+        return 0
+    await set_service_org(session, inserts[0].org_id)
+    for item in inserts:
+        await session.execute(
+            text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+                """
+                INSERT INTO ibex_core.memory_labels (
+                    memory_id, org_id, label, confidence
+                ) VALUES (
+                    :memory_id, :org_id, :label, :confidence
+                )
+                """
+            ),
+            {
+                "memory_id": str(item.memory_id),
+                "org_id": str(item.org_id),
+                "label": item.label,
+                "confidence": item.confidence,
+            },
+        )
+    return len(inserts)
+
+
+async def reload_memory_session(
+    session: AsyncSession,
+    *,
+    org_id: UUID,
+    memory_id: UUID,
+) -> MemoryRow:
+    await set_service_org(session, org_id)
+    row = (
+        await session.execute(
+            text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+                """
+                SELECT
+                    id, org_id, agent_id, content, content_tokens, category, status,
+                    confidence, source, pii_detected, pii_redacted, session_id,
+                    metadata, retrieval_count, usefulness_score,
+                    valid_from, valid_until, created_at, updated_at
+                FROM ibex_core.memories
+                WHERE id = :memory_id AND org_id = :org_id
+                """
+            ),
+            {"memory_id": str(memory_id), "org_id": str(org_id)},
+        )
+    ).one()
+    return _row_from_mapping(row)
+
 
 async def insert_escalations_session(
     session: AsyncSession,

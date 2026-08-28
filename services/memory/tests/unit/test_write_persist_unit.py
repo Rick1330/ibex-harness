@@ -12,8 +12,11 @@ from app.write.models import CreateMemoryCommand
 from app.write.persist import (
     EscalationInsert,
     insert_escalations_session,
+    insert_labels_session,
     insert_memory_session,
+    reload_memory_session,
 )
+from app.write.labels import LabelInsert
 from tests.unit.memory_test_support import mapping_row
 
 
@@ -135,3 +138,45 @@ async def test_insert_escalations_session_inserts() -> None:
     assert session.execute.await_count >= 1
     params = session.execute.await_args_list[-1].args[1]
     assert params["org_id"] == str(org_id)
+
+
+@pytest.mark.asyncio
+async def test_insert_labels_session_inserts() -> None:
+    org_id = uuid4()
+    memory_id = uuid4()
+    session = AsyncMock()
+    item = LabelInsert(
+        org_id=org_id,
+        memory_id=memory_id,
+        label="factual",
+        confidence=0.8,
+    )
+    assert await insert_labels_session(session, [item]) == 1
+    assert session.execute.await_count >= 1
+    params = session.execute.await_args_list[-1].args[1]
+    assert params["label"] == "factual"
+    assert params["memory_id"] == str(memory_id)
+
+
+@pytest.mark.asyncio
+async def test_insert_labels_session_empty_noop() -> None:
+    session = AsyncMock()
+    assert await insert_labels_session(session, []) == 0
+    session.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_reload_memory_session_maps_row() -> None:
+    org_id = uuid4()
+    agent_id = uuid4()
+    memory_id = uuid4()
+    row = mapping_row(org_id=org_id, agent_id=agent_id, metadata="{}")
+    row.id = memory_id
+    row.category = "behavioral"
+    session = AsyncMock()
+    result = MagicMock()
+    result.one.return_value = row
+    session.execute = AsyncMock(return_value=result)
+    memory = await reload_memory_session(session, org_id=org_id, memory_id=memory_id)
+    assert memory.id == memory_id
+    assert memory.category == "behavioral"

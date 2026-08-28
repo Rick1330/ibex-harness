@@ -154,6 +154,8 @@ async def test_orchestrator_active_persist_with_supersession_and_after_commit() 
 
     with (
         patch("app.write.orchestrator.insert_memory_session", AsyncMock(return_value=fake_row)),
+        patch("app.write.orchestrator.insert_labels_session", AsyncMock(return_value=1)),
+        patch("app.write.orchestrator.reload_memory_session", AsyncMock(return_value=fake_row)),
         patch("app.write.orchestrator.apply_supersession_session", AsyncMock()) as supersede,
         patch("app.write.orchestrator.insert_escalations_session", AsyncMock(return_value=0)),
     ):
@@ -207,6 +209,8 @@ async def test_orchestrator_escalations_metric_increments_after_commit() -> None
 
     with (
         patch("app.write.orchestrator.insert_memory_session", AsyncMock(return_value=fake_row)),
+        patch("app.write.orchestrator.insert_labels_session", AsyncMock(return_value=1)),
+        patch("app.write.orchestrator.reload_memory_session", AsyncMock(return_value=fake_row)),
         patch(
             "app.write.orchestrator.insert_escalations_session",
             AsyncMock(return_value=escalation_count),
@@ -257,6 +261,68 @@ async def test_orchestrator_race_without_existing_raises() -> None:
             CreateMemoryCommand(org_id=org_id, agent_id=agent_id, content="x"),
             "hash",
         )
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_inserts_labels_in_active_and_quarantine_paths() -> None:
+    org_id = uuid4()
+    agent_id = uuid4()
+    fake_row = sample_memory_row(org_id=org_id, agent_id=agent_id)
+
+    async def _run(ctx: WriteContext) -> WriteContext:
+        if ctx.status == "quarantined":
+            return ctx
+        return WriteContext(
+            org_id=org_id,
+            agent_id=agent_id,
+            content="active labels",
+            content_hash="hash-labels",
+            status="active",
+        )
+
+    mock_factory = mock_async_session_factory()
+    orch = MemoryWriteOrchestrator(_Pipe(), mock_factory)
+    orch._pipeline.run = _run  # type: ignore[method-assign]
+
+    labels_mock = AsyncMock(return_value=1)
+    reload_mock = AsyncMock(return_value=fake_row)
+
+    with (
+        patch("app.write.orchestrator.insert_memory_session", AsyncMock(return_value=fake_row)),
+        patch("app.write.orchestrator.insert_labels_session", labels_mock),
+        patch("app.write.orchestrator.reload_memory_session", reload_mock),
+        patch("app.write.orchestrator.insert_escalations_session", AsyncMock(return_value=0)),
+    ):
+        await orch.create(
+            CreateMemoryCommand(org_id=org_id, agent_id=agent_id, content="active labels")
+        )
+        labels_mock.assert_awaited_once()
+        reload_mock.assert_awaited_once()
+
+    quarantine_ctx = WriteContext(
+        org_id=org_id,
+        agent_id=agent_id,
+        content="quarantine labels",
+        status="quarantined",
+    )
+
+    async def _quarantine(_c: WriteContext) -> WriteContext:
+        return quarantine_ctx
+
+    orch._pipeline.run = _quarantine  # type: ignore[method-assign]
+    labels_mock.reset_mock()
+    reload_mock.reset_mock()
+
+    with (
+        patch("app.write.orchestrator.insert_memory_session", AsyncMock(return_value=fake_row)),
+        patch("app.write.orchestrator.insert_labels_session", labels_mock),
+        patch("app.write.orchestrator.reload_memory_session", reload_mock),
+    ):
+        await orch.create(
+            CreateMemoryCommand(org_id=org_id, agent_id=agent_id, content="quarantine labels")
+        )
+        labels_mock.assert_awaited_once()
+        reload_mock.assert_awaited_once()
 
 
 @pytest.mark.asyncio

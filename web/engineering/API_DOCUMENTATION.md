@@ -286,6 +286,10 @@ X-Idempotency-Key: {uuid}
   "content": "User prefers dark mode in all interfaces",
   "category": "preference",
   "confidence": 0.95,
+  "labels": [
+    { "label": "preference", "confidence": 0.95 },
+    { "label": "behavioral", "confidence": 0.72 }
+  ],
   "session_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
   "visibility": "agent",
   "tags": ["ui", "preferences"],
@@ -302,8 +306,9 @@ X-Idempotency-Key: {uuid}
 |-------|------|----------|-------------|
 | `agent_id` | UUID | Yes | Agent this memory belongs to |
 | `content` | string | Yes | Memory content (1-10,000 chars) |
-| `category` | enum | No | `factual`, `preference`, `behavioral`, `episodic`, `procedural`. Default: `factual` |
-| `confidence` | float | No | 0.0-1.0. Default: 0.80 |
+| `category` | enum | No | `factual`, `preference`, `behavioral`, `episodic`, `procedural`. Default: `factual`. Ignored for label rows when `labels` is provided; used as fallback when `labels` is omitted |
+| `confidence` | float | No | 0.0-1.0. Default: 0.80. Used with scalar `category` when `labels` is omitted |
+| `labels` | object[] | No | Multi-label classification (1–5 labels). Each item: `label` (enum) + `confidence` (0.0–1.0). When omitted, one label is synthesized from `category` + `confidence`. `memories.category` in the response reflects the DB trigger winner (highest confidence; tie → `label` ASC) |
 | `session_id` | UUID | No | Session this memory was created in |
 | `visibility` | enum | No | `agent`, `org`, `session`. Default: `agent` |
 | `tags` | string[] | No | Searchable tags. Max 20 tags, 50 chars each |

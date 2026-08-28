@@ -14,11 +14,17 @@ _CATEGORIES = Literal["factual", "preference", "behavioral", "episodic", "proced
 _VISIBILITY = Literal["agent", "org", "session"]
 
 
+class MemoryLabelSchema(BaseModel):
+    label: _CATEGORIES
+    confidence: float = Field(ge=0.0, le=1.0)
+
+
 class CreateMemoryRequest(BaseModel):
     agent_id: UUID
     content: str = Field(min_length=1, max_length=10_000)
     category: _CATEGORIES = "factual"
     confidence: float = Field(default=0.80, ge=0.0, le=1.0)
+    labels: list[MemoryLabelSchema] | None = None
     session_id: UUID | None = None
     visibility: _VISIBILITY = "agent"
     tags: list[str] = Field(default_factory=list, max_length=MAX_TAGS)

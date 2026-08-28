@@ -2,7 +2,7 @@
 title: "3.C.4 Multi-label memory classification"
 description: "Fixes the single-enum category limitation by introducing a memory_labels join table supporting 1–N labels per memory with per-label confidence, while retaining primary_category for backward-compatible queries."
 summary: "Fixes the single-enum category limitation by introducing a memory_labels join table supporting 1–N labels per memory with per-label confidence, while retaining primary_category for backward-compatible queries."
-status: "planned"
+status: "complete"
 milestoneId: "3.C.4"
 track: "C"
 trackTitle: "Write Pipeline"
@@ -15,7 +15,7 @@ fullTitle: "Milestone 3.C.4 — Multi-label memory classification"
 
 # Milestone 3.C.4 — Multi-label memory classification
 
-**Status:** Planned  
+**Status:** Complete  
 **Goal:** [Track C — Write Pipeline](/roadmap/phase-3-memory-engine/tracks#track-c--write-pipeline)  
 **Phase:** 3 — Core Memory Substrate  
 **Estimated effort:** 2 days
@@ -113,11 +113,11 @@ The composite scoring formula in Track D (Milestone 3.D.2) reads `memory_labels`
 
 Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
 
-- [ ] `memory_labels` populated correctly for 1–3 labels per memory
-- [ ] `memories.category` (primary) updated correctly by DB trigger after label write
-- [ ] Multi-label write path tested: a memory can carry 1–3 labels with independent confidence scores
-- [ ] Scalar `category` backward-compatible simple queries still function
-- [ ] RLS verified: `memory_labels` rows not accessible cross-org
+- [x] `memory_labels` populated correctly for 1–3 labels per memory
+- [x] `memories.category` (primary) updated correctly by DB trigger after label write
+- [x] Multi-label write path tested: a memory can carry 1–3 labels with independent confidence scores
+- [x] Scalar `category` backward-compatible simple queries still function
+- [x] RLS verified: `memory_labels` rows not accessible cross-org
 
 ---
 
