@@ -7,7 +7,7 @@ from uuid import uuid4
 
 import pytest
 from redis.exceptions import RedisError
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 
 from app.config import Settings
 from app.conflict.types import ConflictDecision, ConflictOutcome
@@ -15,6 +15,7 @@ from app.write.after_commit import AfterCommitHandler
 from app.write.cache import MemoryCacheWriter
 from app.write.embed_context import get_write_org_id, reset_write_org_id, set_write_org_id
 from app.write.errors import is_active_content_hash_violation
+from app.write.metrics import WRITE_CACHE_ERRORS
 from app.write.models import WriteOutcome, WriteOutcomeKind
 from app.write.persist import (
     content_token_count,
@@ -137,3 +138,20 @@ async def test_after_commit_vector_failure_fail_open() -> None:
             embedding=(0.0,) * 1024,
         )
     )
+
+
+@pytest.mark.asyncio
+async def test_after_commit_vector_sqlalchemy_failure_records_metric() -> None:
+    before = WRITE_CACHE_ERRORS.labels(op="vector_upsert")._value.get()  # noqa: SLF001
+    store = AsyncMock()
+    store.upsert = AsyncMock(side_effect=OperationalError("stmt", {}, Exception("db down")))
+    handler = AfterCommitHandler(cache=None, store=store)
+    await handler(
+        WriteOutcome(
+            kind=WriteOutcomeKind.CREATED,
+            memory=_row(),
+            embedding=(0.0,) * 1024,
+        )
+    )
+    after = WRITE_CACHE_ERRORS.labels(op="vector_upsert")._value.get()  # noqa: SLF001
+    assert after == before + 1

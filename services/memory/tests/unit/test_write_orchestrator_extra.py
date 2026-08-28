@@ -148,7 +148,7 @@ async def test_orchestrator_active_persist_with_supersession_and_after_commit() 
     with (
         patch("app.write.orchestrator.insert_memory_session", AsyncMock(return_value=fake_row)),
         patch("app.write.orchestrator.apply_supersession_session", AsyncMock()) as supersede,
-        patch("app.write.orchestrator.insert_escalations_session", AsyncMock()),
+        patch("app.write.orchestrator.insert_escalations_session", AsyncMock(return_value=0)),
     ):
         outcome = await orch.create(
             CreateMemoryCommand(org_id=org_id, agent_id=agent_id, content=ctx.content)

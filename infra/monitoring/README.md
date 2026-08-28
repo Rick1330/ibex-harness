@@ -8,6 +8,6 @@
 | `tempo/` | Local filesystem Tempo |
 | `loki/` | Single-binary Loki |
 | `grafana/provisioning/` | Datasources + dashboard provider |
-| `grafana/dashboards/` | System Overview, Proxy Critical Path, Auth, Embedder/MCP |
+| `grafana/dashboards/` | System Overview, Proxy Critical Path, Auth, Embedder/MCP, Memory (`memory.json`) |
 
 Used by [`infra/compose/observability/`](../compose/observability/) and [`infra/helm/observability/`](../helm/observability/).

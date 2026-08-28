@@ -22,7 +22,7 @@ from tests.integration.http_pii_fixtures import (
     HTTP_NOVEL_WRITE_CONTENT,
     HTTP_REDIS_CACHE_CONTENT,
     HTTP_SEED_CONTENT,
-    HTTP_UNIQUE_SUFFIX_CONTENT,
+    HTTP_BROKEN_REDIS_WRITE_CONTENT,
 )
 from tests.integration.write_orchestrator_support import (
     EmbedProbe,
@@ -225,7 +225,7 @@ async def test_cache_failure_does_not_fail_write(
         headers={"Authorization": f"Bearer {TOKEN}"},
         json={
             "agent_id": str(agent_id),
-            "content": f"{HTTP_UNIQUE_SUFFIX_CONTENT} {uuid4().hex}",
+            "content": HTTP_BROKEN_REDIS_WRITE_CONTENT,
         },
     )
     assert response.status_code == 201

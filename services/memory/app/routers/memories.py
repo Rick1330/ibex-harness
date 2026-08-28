@@ -59,6 +59,9 @@ async def create_memory(
     except (DuplicateMemoryError, ValidationError, EmbeddingServiceError) as exc:
         await release_idempotency(idem)
         raise http_error_for_write(exc) from exc
+    except Exception:
+        await release_idempotency(idem)
+        raise
 
     elapsed_ms = int((time.perf_counter() - start) * 1000)
     if outcome.kind == WriteOutcomeKind.QUARANTINED:

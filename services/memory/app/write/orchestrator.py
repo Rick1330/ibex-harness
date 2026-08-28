@@ -22,6 +22,7 @@ from app.pipeline.context import WriteContext
 from app.pipeline.write import WritePipeline
 from app.write.embed_context import reset_write_org_id, set_write_org_id
 from app.write.errors import is_active_content_hash_violation
+from app.write.metrics import ESCALATIONS_INSERTED
 from app.write.models import CreateMemoryCommand, WriteOutcome, WriteOutcomeKind
 from app.write.persist import (
     escalations_from_decisions,
@@ -139,12 +140,15 @@ class MemoryWriteOrchestrator:
     async def _insert_active_memory_tx(
         self, command: CreateMemoryCommand, ctx: WriteContext
     ):
+        escalation_count = 0
         async with self._factory() as session, session.begin():
             memory = await insert_memory_session(session, command=command, ctx=ctx)
-            await self._apply_supersession_and_escalations(
+            escalation_count = await self._apply_supersession_and_escalations(
                 session, command, memory.id, ctx
             )
-            return memory
+        if escalation_count:
+            ESCALATIONS_INSERTED.inc(escalation_count)
+        return memory
 
     async def _raise_duplicate_on_hash_violation(
         self,
@@ -163,7 +167,7 @@ class MemoryWriteOrchestrator:
         command: CreateMemoryCommand,
         memory_id: UUID,
         ctx: WriteContext,
-    ) -> None:
+    ) -> int:
         for target_id in ctx.pending_supersede_targets:
             await apply_supersession_session(
                 session,
@@ -176,7 +180,7 @@ class MemoryWriteOrchestrator:
         escalations = escalations_from_decisions(
             command.org_id, memory_id, ctx.conflict_decisions
         )
-        await insert_escalations_session(session, escalations)
+        return await insert_escalations_session(session, escalations)
 
     def _created_outcome(self, memory, ctx: WriteContext) -> WriteOutcome:
         embedding_model: str | None = None

@@ -115,7 +115,7 @@ async def test_insert_memory_session_persists_visibility_tags_pinned() -> None:
 @pytest.mark.asyncio
 async def test_insert_escalations_session_empty_noop() -> None:
     session = AsyncMock()
-    await insert_escalations_session(session, [])
+    assert await insert_escalations_session(session, []) == 0
     session.execute.assert_not_awaited()
 
 
@@ -131,7 +131,7 @@ async def test_insert_escalations_session_inserts() -> None:
         subject_key="k",
         reason="r",
     )
-    await insert_escalations_session(session, [item])
+    assert await insert_escalations_session(session, [item]) == 1
     assert session.execute.await_count >= 1
     params = session.execute.await_args_list[-1].args[1]
     assert params["org_id"] == str(org_id)

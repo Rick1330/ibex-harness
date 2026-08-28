@@ -133,42 +133,17 @@ async def test_orchestrator_exact_duplicate_raises_409_path(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("concurrency", [2, 30])
 async def test_orchestrator_concurrent_identical_content_race(
-    session_factory: async_sessionmaker[AsyncSession],
-    settings: Settings,
-    store,
-) -> None:
-    content = f"race payload {uuid4().hex}"
-    org_id, agent_id, _ = await seed_org_agent_memory(
-        session_factory, content="race seed unrelated"
-    )
-    orch = build_orchestrator(OrchestratorTestDeps(session_factory, settings, store))
-    await ensure_pii_ready(orch)
-    cmd = CreateMemoryCommand(org_id=org_id, agent_id=agent_id, content=content)
-    results = await asyncio.gather(
-        orch.create(cmd),
-        orch.create(cmd),
-        return_exceptions=True,
-    )
-    successes = [r for r in results if not isinstance(r, BaseException)]
-    failures = [r for r in results if isinstance(r, BaseException)]
-    assert len(successes) == 1
-    assert len(failures) == 1
-    assert isinstance(failures[0], DuplicateMemoryError)
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("concurrency", [30])
-async def test_orchestrator_mass_concurrent_identical_content(
     session_factory: async_sessionmaker[AsyncSession],
     settings: Settings,
     store,
     concurrency: int,
 ) -> None:
-    """Stress hash-index race: exactly one success, remainder clean 409 path."""
-    content = f"mass race payload {uuid4().hex}"
+    """Hash-index race: exactly one success, remainder clean duplicate path."""
+    content = f"race payload {uuid4().hex}"
     org_id, agent_id, _ = await seed_org_agent_memory(
-        session_factory, content="mass race seed unrelated"
+        session_factory, content=f"race seed unrelated {concurrency}"
     )
     orch = build_orchestrator(OrchestratorTestDeps(session_factory, settings, store))
     await ensure_pii_ready(orch)

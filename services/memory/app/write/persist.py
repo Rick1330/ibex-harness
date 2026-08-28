@@ -15,7 +15,6 @@ from app.conflict.types import ConflictDecision, ConflictOutcome
 from app.dedup.hash import content_hash_sha256
 from app.org_context import set_service_org
 from app.pipeline.context import WriteContext
-from app.write.metrics import ESCALATIONS_INSERTED
 from app.write.models import CreateMemoryCommand, MemoryRow
 
 
@@ -141,9 +140,9 @@ async def insert_memory_session(
 async def insert_escalations_session(
     session: AsyncSession,
     inserts: list[EscalationInsert],
-) -> None:
+) -> int:
     if not inserts:
-        return
+        return 0
     await set_service_org(session, inserts[0].org_id)
     for item in inserts:
         await session.execute(
@@ -167,7 +166,7 @@ async def insert_escalations_session(
                 "reason": item.reason,
             },
         )
-        ESCALATIONS_INSERTED.inc()
+    return len(inserts)
 
 
 def escalations_from_decisions(

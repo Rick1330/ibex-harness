@@ -74,7 +74,7 @@
       "targets": [
         {
           "expr": "sum(increase(ibex_memory_http_requests_total{route=\"/ready\",status=~\"5..\"}[$__range]))",
-          "legendFormat": "503"
+          "legendFormat": "5xx"
         }
       ],
       "fieldConfig": {
@@ -207,7 +207,7 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "increase(ibex_memory_conflict_escalations_inserted_total[$__range])",
+          "expr": "rate(ibex_memory_conflict_escalations_inserted_total[$__rate_interval])",
           "legendFormat": "inserted"
         }
       ],
