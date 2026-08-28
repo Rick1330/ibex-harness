@@ -18,10 +18,11 @@ from app.config import Settings
 from app.main import create_app
 from app.permissions import MEMORY_WRITE
 from tests.integration.conftest import seed_org_agent_memory
-from tests.integration.test_write_orchestrator import (
-    _EmbedProbe,
-    _orchestrator,
-    _set_content_hash,
+from tests.integration.write_orchestrator_support import (
+    EmbedProbe,
+    build_orchestrator,
+    ensure_pii_ready,
+    set_content_hash,
 )
 
 if TYPE_CHECKING:
@@ -56,13 +57,12 @@ async def http_context(
     settings: Settings,
     store,
 ) -> AsyncIterator[tuple[AsyncClient, object, object, object, PiiService]]:
-    probe = _EmbedProbe()
+    probe = EmbedProbe()
     redis_url = _redis_url()
     cfg = settings.model_copy(update={"redis_url": redis_url}) if redis_url else settings
-    orch = _orchestrator(session_factory, cfg, store, embed=probe)
+    orch = build_orchestrator(session_factory, cfg, store, embed=probe)
     pii: PiiService = orch._pipeline._stages[1]._pii
-    if hasattr(pii, "ensure_ready"):
-        await pii.ensure_ready()
+    await ensure_pii_ready(orch)
 
     org_id, agent_id, _ = await seed_org_agent_memory(
         session_factory, content=await pii_safe_content("http seed", pii)
@@ -140,18 +140,17 @@ async def test_create_memory_duplicate_409(
 ) -> None:
     from app.dedup.hash import content_hash_sha256
 
-    probe = _EmbedProbe()
-    orch = _orchestrator(session_factory, settings, store, embed=probe)
+    probe = EmbedProbe()
+    orch = build_orchestrator(session_factory, settings, store, embed=probe)
     pii: PiiService = orch._pipeline._stages[1]._pii
-    if hasattr(pii, "ensure_ready"):
-        await pii.ensure_ready()
+    await ensure_pii_ready(orch)
 
     content = await pii_safe_content("Duplicate HTTP payload", pii)
     digest = content_hash_sha256(content)
     org_id, agent_id, memory_id = await seed_org_agent_memory(
         session_factory, content=content
     )
-    await _set_content_hash(
+    await set_content_hash(
         session_factory,
         org_id=org_id,
         memory_id=memory_id,

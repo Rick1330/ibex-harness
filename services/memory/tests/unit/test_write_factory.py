@@ -66,10 +66,12 @@ def test_build_write_pipeline_and_orchestrator() -> None:
         assert len(pipeline._stages) == 6
 
         orch = build_write_orchestrator(
-            settings,
-            session_factory=session_factory,
-            store=store,
-            pii=pii,
-            embed=embed,
+            WritePipelineDeps(
+                settings=settings,
+                session_factory=session_factory,
+                store=store,
+                pii=pii,
+                embed=embed,
+            )
         )
         assert orch is not None

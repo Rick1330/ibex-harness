@@ -29,6 +29,7 @@ from app.write.after_commit import AfterCommitHandler
 from app.write.cache import MemoryCacheWriter
 from app.write.factory import build_embedding_callable, build_write_orchestrator
 from app.write.orchestrator import MemoryWriteOrchestrator
+from app.write.pipeline_deps import WritePipelineDeps
 
 logger = logging.getLogger(__name__)
 
@@ -110,11 +111,13 @@ def create_app(
         ).__call__
 
         state.write_orchestrator = build_write_orchestrator(
-            cfg,
-            session_factory=session_factory,
-            store=store,
-            pii=pii,
-            embed=embed_callable,
+            WritePipelineDeps(
+                settings=cfg,
+                session_factory=session_factory,
+                store=store,
+                pii=pii,
+                embed=embed_callable,
+            ),
             after_commit=after_commit,
         )
 

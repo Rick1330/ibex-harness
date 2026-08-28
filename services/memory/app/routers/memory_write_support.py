@@ -68,6 +68,32 @@ def parse_idempotency_key(raw: str | None) -> str | None:
     return key
 
 
+def _replay_response_for_claim(claim: ClaimOutcome) -> JSONResponse | None:
+    if claim.kind == ClaimKind.HIT and claim.record is not None:
+        return JSONResponse(
+            status_code=claim.record.status,
+            content=json.loads(claim.record.body.decode("utf-8")),
+            headers={"X-Idempotency-Replayed": "true"},
+        )
+    if claim.kind == ClaimKind.CONFLICT:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "IDEMPOTENCY_CONFLICT",
+                "message": "Idempotency key reused with different request",
+            },
+        )
+    if claim.kind == ClaimKind.IN_PROGRESS:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "IDEMPOTENCY_IN_PROGRESS",
+                "message": "Request with this idempotency key is in progress",
+            },
+        )
+    return None
+
+
 async def begin_idempotency(
     *,
     store: object | None,
@@ -94,28 +120,9 @@ async def begin_idempotency(
                 "message": "Idempotency store unavailable",
             },
         ) from exc
-    if claim.kind == ClaimKind.HIT and claim.record is not None:
-        return JSONResponse(
-            status_code=claim.record.status,
-            content=json.loads(claim.record.body.decode("utf-8")),
-            headers={"X-Idempotency-Replayed": "true"},
-        )
-    if claim.kind == ClaimKind.CONFLICT:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "IDEMPOTENCY_CONFLICT",
-                "message": "Idempotency key reused with different request",
-            },
-        )
-    if claim.kind == ClaimKind.IN_PROGRESS:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "IDEMPOTENCY_IN_PROGRESS",
-                "message": "Request with this idempotency key is in progress",
-            },
-        )
+    replay = _replay_response_for_claim(claim)
+    if replay is not None:
+        return replay
     return handle
 
 

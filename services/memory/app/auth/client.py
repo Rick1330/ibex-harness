@@ -61,7 +61,11 @@ class TokenValidator(ABC):
 def parse_authorization_header(header: str | None) -> str:
     if header is None or not header.strip():
         raise AuthFailedError("missing authorization header")
-    scheme, _, remainder = header.strip().partition(" ")
+    return _extract_bearer_token(header.strip())
+
+
+def _extract_bearer_token(header: str) -> str:
+    scheme, _, remainder = header.partition(" ")
     if scheme.lower() != "bearer":
         raise AuthFailedError("authorization header must be Bearer <token>")
     token = remainder.strip()

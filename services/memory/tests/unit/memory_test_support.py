@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
@@ -52,3 +53,32 @@ def mock_async_session_factory() -> MagicMock:
     mock_cm.__aenter__ = AsyncMock(return_value=mock_session)
     mock_cm.__aexit__ = AsyncMock(return_value=None)
     return MagicMock(return_value=mock_cm)
+
+
+def mapping_row(**overrides: object) -> SimpleNamespace:
+    org_id = uuid4()
+    agent_id = uuid4()
+    now = datetime.now(tz=UTC)
+    base = {
+        "id": uuid4(),
+        "org_id": org_id,
+        "agent_id": agent_id,
+        "content": "hello world",
+        "content_tokens": 2,
+        "category": "factual",
+        "confidence": 0.8,
+        "status": "active",
+        "source": "user_provided",
+        "pii_detected": False,
+        "pii_redacted": False,
+        "session_id": None,
+        "metadata": "{}",
+        "retrieval_count": 0,
+        "usefulness_score": 0.5,
+        "valid_from": now,
+        "valid_until": None,
+        "created_at": now,
+        "updated_at": now,
+    }
+    base.update(overrides)
+    return SimpleNamespace(**base)

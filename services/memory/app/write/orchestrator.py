@@ -122,37 +122,55 @@ class MemoryWriteOrchestrator:
     async def _persist_active(
         self, command: CreateMemoryCommand, ctx: WriteContext
     ) -> WriteOutcome:
+        memory = await self._insert_active_memory(command, ctx)
+        return self._created_outcome(memory, ctx)
+
+    async def _insert_active_memory(
+        self, command: CreateMemoryCommand, ctx: WriteContext
+    ):
         if ctx.content_hash is None:
             msg = "content_hash required for active persist"
             raise RuntimeError(msg)
         try:
             async with self._factory() as session, session.begin():
                 memory = await insert_memory_session(session, command=command, ctx=ctx)
-                for target_id in ctx.pending_supersede_targets:
-                    await apply_supersession_session(
-                        session,
-                        SupersedeApply(
-                            org_id=command.org_id,
-                            new_memory_id=memory.id,
-                            target_memory_id=target_id,
-                        ),
-                    )
-                escalations = escalations_from_decisions(
-                    command.org_id, memory.id, ctx.conflict_decisions
+                await self._apply_supersession_and_escalations(
+                    session, command, memory.id, ctx
                 )
-                await insert_escalations_session(session, escalations)
+                return memory
         except IntegrityError as exc:
             if not is_active_content_hash_violation(exc):
                 raise
             existing_id = await self._handle_hash_race(command, ctx.content_hash)
             raise DuplicateMemoryError(existing_id) from exc
 
+    async def _apply_supersession_and_escalations(
+        self,
+        session,
+        command: CreateMemoryCommand,
+        memory_id: UUID,
+        ctx: WriteContext,
+    ) -> None:
+        for target_id in ctx.pending_supersede_targets:
+            await apply_supersession_session(
+                session,
+                SupersedeApply(
+                    org_id=command.org_id,
+                    new_memory_id=memory_id,
+                    target_memory_id=target_id,
+                ),
+            )
+        escalations = escalations_from_decisions(
+            command.org_id, memory_id, ctx.conflict_decisions
+        )
+        await insert_escalations_session(session, escalations)
+
+    def _created_outcome(self, memory, ctx: WriteContext) -> WriteOutcome:
         embedding_model: str | None = None
         embedding_tuple: tuple[float, ...] | None = None
         if ctx.embedding is not None:
             embedding_tuple = tuple(ctx.embedding)
             embedding_model = "bge-m3"
-
         return WriteOutcome(
             kind=WriteOutcomeKind.CREATED,
             memory=memory,

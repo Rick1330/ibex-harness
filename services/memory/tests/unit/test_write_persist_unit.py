@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
@@ -16,42 +14,14 @@ from app.write.persist import (
     insert_escalations_session,
     insert_memory_session,
 )
-
-
-def _mapping_row(**overrides):
-    org_id = uuid4()
-    agent_id = uuid4()
-    now = datetime.now(tz=UTC)
-    base = {
-        "id": uuid4(),
-        "org_id": org_id,
-        "agent_id": agent_id,
-        "content": "hello world",
-        "content_tokens": 2,
-        "category": "factual",
-        "confidence": 0.8,
-        "status": "active",
-        "source": "user_provided",
-        "pii_detected": False,
-        "pii_redacted": False,
-        "session_id": None,
-        "metadata": "{}",
-        "retrieval_count": 0,
-        "usefulness_score": 0.5,
-        "valid_from": now,
-        "valid_until": None,
-        "created_at": now,
-        "updated_at": now,
-    }
-    base.update(overrides)
-    return SimpleNamespace(**base)
+from tests.unit.memory_test_support import mapping_row
 
 
 @pytest.mark.asyncio
 async def test_insert_memory_session_maps_row() -> None:
     org_id = uuid4()
     agent_id = uuid4()
-    row = _mapping_row(org_id=org_id, agent_id=agent_id, metadata='{"k":"v"}')
+    row = mapping_row(org_id=org_id, agent_id=agent_id, metadata='{"k":"v"}')
     session = AsyncMock()
     result = MagicMock()
     result.one.return_value = row
@@ -80,7 +50,7 @@ async def test_insert_memory_session_maps_row() -> None:
 async def test_insert_memory_session_metadata_dict() -> None:
     org_id = uuid4()
     agent_id = uuid4()
-    row = _mapping_row(org_id=org_id, agent_id=agent_id, metadata={"a": 1})
+    row = mapping_row(org_id=org_id, agent_id=agent_id, metadata={"a": 1})
     session = AsyncMock()
     result = MagicMock()
     result.one.return_value = row
@@ -96,7 +66,7 @@ async def test_insert_memory_session_metadata_dict() -> None:
 async def test_insert_memory_session_non_dict_metadata_becomes_empty() -> None:
     org_id = uuid4()
     agent_id = uuid4()
-    row = _mapping_row(org_id=org_id, agent_id=agent_id, metadata=123)
+    row = mapping_row(org_id=org_id, agent_id=agent_id, metadata=123)
     session = AsyncMock()
     result = MagicMock()
     result.one.return_value = row
@@ -112,7 +82,7 @@ async def test_insert_memory_session_non_dict_metadata_becomes_empty() -> None:
 async def test_insert_memory_session_persists_visibility_tags_pinned() -> None:
     org_id = uuid4()
     agent_id = uuid4()
-    row = _mapping_row(
+    row = mapping_row(
         org_id=org_id,
         agent_id=agent_id,
         metadata='{"visibility":"org","pinned":true,"tags":["a"],"note":"x"}',

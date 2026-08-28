@@ -5,10 +5,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Sequence
 from uuid import UUID
 
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-
 from app.clients.embedding import EmbeddingClient
-from app.config import Settings
 from app.conflict.persist import CandidateLoad, load_candidate_memories
 from app.conflict.service import ConflictService
 from app.dedup.persist import (
@@ -18,7 +15,6 @@ from app.dedup.persist import (
     increment_retrieval_count,
 )
 from app.dedup.service import DedupService
-from app.pii.service import PiiService
 from app.pipeline import (
     ConflictStage,
     EmbedStage,
@@ -28,7 +24,6 @@ from app.pipeline import (
     ValidateStage,
     WritePipeline,
 )
-from app.vectorstore.base import VectorStore
 from app.write.embed_context import get_write_org_id
 from app.write.models import WriteOutcome
 from app.write.orchestrator import MemoryWriteOrchestrator
@@ -87,24 +82,13 @@ def build_embedding_callable(
 
 
 def build_write_orchestrator(
-    settings: Settings,
+    deps: WritePipelineDeps,
     *,
-    session_factory: async_sessionmaker[AsyncSession],
-    store: VectorStore,
-    pii: PiiService,
-    embed: Callable[[str], Awaitable[list[float]]],
     after_commit: Callable[[WriteOutcome], Awaitable[None]] | None = None,
 ) -> MemoryWriteOrchestrator:
-    deps = WritePipelineDeps(
-        settings=settings,
-        session_factory=session_factory,
-        store=store,
-        pii=pii,
-        embed=embed,
-    )
     pipeline = build_write_pipeline(deps)
     return MemoryWriteOrchestrator(
         pipeline,
-        session_factory,
+        deps.session_factory,
         after_commit=after_commit,
     )
