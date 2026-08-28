@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import os
 import secrets
-import string
 from collections.abc import AsyncIterator
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 import pytest
@@ -24,18 +24,26 @@ from tests.integration.test_write_orchestrator import (
     _set_content_hash,
 )
 
+if TYPE_CHECKING:
+    from app.pii.service import PiiService
+
 pytestmark = pytest.mark.integration
 
 TOKEN = "test-memory-write-token"
 
 
-_PII_SAFE_ALPHABET = string.ascii_lowercase
-
-
-def _pii_safe_content(prefix: str) -> str:
-    """Unique content that avoids Presidio false-positives on numeric/date patterns."""
-    suffix = "".join(secrets.choice(_PII_SAFE_ALPHABET) for _ in range(16))
-    return f"{prefix} token {suffix}"
+async def pii_safe_content(
+    prefix: str,
+    pii: PiiService,
+    *,
+    attempts: int = 32,
+) -> str:
+    """Unique content verified clean by the real Presidio pipeline."""
+    for _ in range(attempts):
+        candidate = f"{prefix} ref {secrets.token_hex(8)}"
+        if not (await pii.process_async(candidate)).pii_detected:
+            return candidate
+    pytest.fail("could not generate Presidio-clean integration content")
 
 
 def _redis_url() -> str | None:
@@ -47,9 +55,17 @@ async def http_context(
     session_factory: async_sessionmaker[AsyncSession],
     settings: Settings,
     store,
-) -> AsyncIterator[tuple[AsyncClient, object, object, object]]:
+) -> AsyncIterator[tuple[AsyncClient, object, object, object, PiiService]]:
+    probe = _EmbedProbe()
+    redis_url = _redis_url()
+    cfg = settings.model_copy(update={"redis_url": redis_url}) if redis_url else settings
+    orch = _orchestrator(session_factory, cfg, store, embed=probe)
+    pii: PiiService = orch._pipeline._stages[1]._pii
+    if hasattr(pii, "ensure_ready"):
+        await pii.ensure_ready()
+
     org_id, agent_id, _ = await seed_org_agent_memory(
-        session_factory, content=_pii_safe_content("http seed")
+        session_factory, content=await pii_safe_content("http seed", pii)
     )
     validator = StaticTokenValidator(
         {
@@ -60,10 +76,6 @@ async def http_context(
             )
         }
     )
-    probe = _EmbedProbe()
-    redis_url = _redis_url()
-    cfg = settings.model_copy(update={"redis_url": redis_url}) if redis_url else settings
-    orch = _orchestrator(session_factory, cfg, store, embed=probe)
     redis_client: Redis | None = None
     try:
         if redis_url:
@@ -76,15 +88,13 @@ async def http_context(
                 store=store,
             ).__call__
             orch._after_commit = after_commit
-        if hasattr(orch._pipeline._stages[1]._pii, "ensure_ready"):
-            await orch._pipeline._stages[1]._pii.ensure_ready()
 
         app = create_app(settings=cfg, validator=validator)
         async with app.router.lifespan_context(app):
             app.state.memory.write_orchestrator = orch
             transport = ASGITransport(app=app)
             async with AsyncClient(transport=transport, base_url="http://test") as client:
-                yield client, org_id, agent_id, probe
+                yield client, org_id, agent_id, probe, pii
     finally:
         if redis_client is not None:
             await redis_client.aclose()
@@ -108,8 +118,8 @@ async def test_create_memory_requires_auth(
 
 @pytest.mark.asyncio
 async def test_create_memory_happy_path_201(http_context) -> None:
-    client, org_id, agent_id, _probe = http_context
-    content = _pii_safe_content("Novel HTTP write")
+    client, org_id, agent_id, _probe, pii = http_context
+    content = await pii_safe_content("Novel HTTP write", pii)
     response = await client.post(
         "/v1/memories",
         headers={"Authorization": f"Bearer {TOKEN}"},
@@ -130,7 +140,13 @@ async def test_create_memory_duplicate_409(
 ) -> None:
     from app.dedup.hash import content_hash_sha256
 
-    content = _pii_safe_content("Duplicate HTTP payload")
+    probe = _EmbedProbe()
+    orch = _orchestrator(session_factory, settings, store, embed=probe)
+    pii: PiiService = orch._pipeline._stages[1]._pii
+    if hasattr(pii, "ensure_ready"):
+        await pii.ensure_ready()
+
+    content = await pii_safe_content("Duplicate HTTP payload", pii)
     digest = content_hash_sha256(content)
     org_id, agent_id, memory_id = await seed_org_agent_memory(
         session_factory, content=content
@@ -150,10 +166,6 @@ async def test_create_memory_duplicate_409(
             )
         }
     )
-    probe = _EmbedProbe()
-    orch = _orchestrator(session_factory, settings, store, embed=probe)
-    if hasattr(orch._pipeline._stages[1]._pii, "ensure_ready"):
-        await orch._pipeline._stages[1]._pii.ensure_ready()
 
     app = create_app(settings=settings, validator=validator)
     async with app.router.lifespan_context(app):
@@ -177,8 +189,8 @@ async def test_create_memory_redis_cache_populated(http_context) -> None:
     if not redis_url:
         pytest.skip("REDIS_URL not set")
 
-    client, org_id, agent_id, _probe = http_context
-    content = _pii_safe_content("Redis cache test")
+    client, org_id, agent_id, _probe, pii = http_context
+    content = await pii_safe_content("Redis cache test", pii)
     response = await client.post(
         "/v1/memories",
         headers={"Authorization": f"Bearer {TOKEN}"},
@@ -200,7 +212,7 @@ async def test_cache_failure_does_not_fail_write(
     settings: Settings,
     store,
 ) -> None:
-    client, _org_id, agent_id, _probe = http_context
+    client, _org_id, agent_id, _probe, _pii = http_context
     transport: ASGITransport = client._transport  # type: ignore[assignment]
     app = transport.app
     orch = app.state.memory.write_orchestrator
@@ -236,13 +248,16 @@ async def test_idempotency_replay(http_context) -> None:
     if not _redis_url():
         pytest.skip("REDIS_URL not set")
 
-    client, _org_id, agent_id, _probe = http_context
+    client, _org_id, agent_id, _probe, pii = http_context
     key = str(uuid4())
     headers = {
         "Authorization": f"Bearer {TOKEN}",
         "X-Idempotency-Key": key,
     }
-    body = {"agent_id": str(agent_id), "content": _pii_safe_content("Idempotent write")}
+    body = {
+        "agent_id": str(agent_id),
+        "content": await pii_safe_content("Idempotent write", pii),
+    }
     first = await client.post("/v1/memories", headers=headers, json=body)
     assert first.status_code == 201
     second = await client.post("/v1/memories", headers=headers, json=body)

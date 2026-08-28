@@ -54,28 +54,8 @@ class MemoryWriteOrchestrator:
         self._after_commit = after_commit
 
     async def create(self, command: CreateMemoryCommand) -> WriteOutcome:
-        ctx = WriteContext(
-            org_id=command.org_id,
-            agent_id=command.agent_id,
-            content=command.content,
-            valid_from=command.valid_from,
-            valid_until=command.valid_until,
-        )
-        token = set_write_org_id(command.org_id)
-        try:
-            ctx = await self._pipeline.run(ctx)
-        except Exception as exc:
-            if _is_embedding_failure(exc):
-                raise EmbeddingServiceError("Embedding service unavailable") from exc
-            raise
-        finally:
-            reset_write_org_id(token)
-
-        if ctx.error is not None:
-            message, field = _VALIDATION_ERRORS.get(
-                ctx.error, ("Invalid request", None)
-            )
-            raise ValidationError(message, field=field, field_code=ctx.error)
+        ctx = await self._run_pipeline(command)
+        self._raise_for_pipeline_ctx(ctx)
 
         if ctx.is_exact_duplicate:
             if ctx.existing_memory_id is None:
@@ -91,6 +71,30 @@ class MemoryWriteOrchestrator:
         outcome = await self._persist_active(command, ctx)
         await self._run_after_commit(outcome)
         return outcome
+
+    async def _run_pipeline(self, command: CreateMemoryCommand) -> WriteContext:
+        ctx = WriteContext(
+            org_id=command.org_id,
+            agent_id=command.agent_id,
+            content=command.content,
+            valid_from=command.valid_from,
+            valid_until=command.valid_until,
+        )
+        token = set_write_org_id(command.org_id)
+        try:
+            return await self._pipeline.run(ctx)
+        except Exception as exc:
+            if _is_embedding_failure(exc):
+                raise EmbeddingServiceError("Embedding service unavailable") from exc
+            raise
+        finally:
+            reset_write_org_id(token)
+
+    def _raise_for_pipeline_ctx(self, ctx: WriteContext) -> None:
+        if ctx.error is None:
+            return
+        message, field = _VALIDATION_ERRORS.get(ctx.error, ("Invalid request", None))
+        raise ValidationError(message, field=field, field_code=ctx.error)
 
     async def _run_after_commit(self, outcome: WriteOutcome) -> None:
         if self._after_commit is None:

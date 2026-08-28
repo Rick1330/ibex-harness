@@ -13,6 +13,7 @@ from app.write.factory import (
     build_write_orchestrator,
     build_write_pipeline,
 )
+from app.write.pipeline_deps import WritePipelineDeps
 
 
 @pytest.mark.asyncio
@@ -54,11 +55,13 @@ def test_build_write_pipeline_and_orchestrator() -> None:
         AsyncMock(return_value=[]),
     ):
         pipeline = build_write_pipeline(
-            settings,
-            session_factory=session_factory,
-            store=store,
-            pii=pii,
-            embed=embed,
+            WritePipelineDeps(
+                settings=settings,
+                session_factory=session_factory,
+                store=store,
+                pii=pii,
+                embed=embed,
+            )
         )
         assert len(pipeline._stages) == 6
 

@@ -32,16 +32,13 @@ from app.vectorstore.base import VectorStore
 from app.write.embed_context import get_write_org_id
 from app.write.models import WriteOutcome
 from app.write.orchestrator import MemoryWriteOrchestrator
+from app.write.pipeline_deps import WritePipelineDeps
 
 
-def build_write_pipeline(
-    settings: Settings,
-    *,
-    session_factory: async_sessionmaker[AsyncSession],
-    store: VectorStore,
-    pii: PiiService,
-    embed: Callable[[str], Awaitable[list[float]]],
-) -> WritePipeline:
+def build_write_pipeline(deps: WritePipelineDeps) -> WritePipeline:
+    settings = deps.settings
+    session_factory = deps.session_factory
+
     async def lookup(org_id: UUID, agent_id: UUID, content_hash: str) -> UUID | None:
         return await find_active_by_content_hash(
             session_factory,
@@ -54,7 +51,7 @@ def build_write_pipeline(
         )
 
     dedup = DedupService(
-        settings, store=store, exact_lookup=lookup, bump_retrieval=bump
+        settings, store=deps.store, exact_lookup=lookup, bump_retrieval=bump
     )
     conflict = ConflictService(settings)
 
@@ -66,9 +63,9 @@ def build_write_pipeline(
     return WritePipeline(
         [
             ValidateStage(settings),
-            PiiStage(pii),
+            PiiStage(deps.pii),
             ExactDedupStage(dedup),
-            EmbedStage(embed),
+            EmbedStage(deps.embed),
             NearDedupStage(dedup),
             ConflictStage(
                 conflict,
@@ -98,13 +95,14 @@ def build_write_orchestrator(
     embed: Callable[[str], Awaitable[list[float]]],
     after_commit: Callable[[WriteOutcome], Awaitable[None]] | None = None,
 ) -> MemoryWriteOrchestrator:
-    pipeline = build_write_pipeline(
-        settings,
+    deps = WritePipelineDeps(
+        settings=settings,
         session_factory=session_factory,
         store=store,
         pii=pii,
         embed=embed,
     )
+    pipeline = build_write_pipeline(deps)
     return MemoryWriteOrchestrator(
         pipeline,
         session_factory,

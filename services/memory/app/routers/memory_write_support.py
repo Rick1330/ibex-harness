@@ -6,13 +6,23 @@ import json
 import logging
 from uuid import UUID
 
-from fastapi import HTTPException
+from fastapi import HTTPException, Response
 from fastapi.responses import JSONResponse
 from redis.exceptions import RedisError
 
 from app.exceptions import DuplicateMemoryError, EmbeddingServiceError, ValidationError
 from app.idempotency.redis_store import ClaimKind, ClaimOutcome, IdempotencyToken
 from app.schemas.limits import MAX_IDEMPOTENCY_KEY_LENGTH
+from app.schemas.memories import (
+    CreateMemoryMeta,
+    CreateMemoryRequest,
+    CreateMemoryResponse,
+    DeduplicationMeta,
+    MemoryData,
+    QuarantineMemoryData,
+    QuarantineMemoryResponse,
+)
+from app.write.models import CreateMemoryCommand, WriteOutcome
 
 logger = logging.getLogger(__name__)
 
@@ -166,3 +176,88 @@ def http_error_for_write(exc: BaseException) -> HTTPException:
             detail={"code": "EMBEDDING_FAILED", "message": "Embedding service unavailable"},
         )
     raise exc
+
+
+def memory_command_from_request(
+    request: CreateMemoryRequest,
+    org_id: UUID,
+) -> CreateMemoryCommand:
+    return CreateMemoryCommand(
+        org_id=org_id,
+        agent_id=request.agent_id,
+        content=request.content,
+        category=request.category,
+        confidence=request.confidence,
+        session_id=request.session_id,
+        visibility=request.visibility,
+        tags=tuple(request.tags),
+        pinned=request.pinned,
+        metadata=request.metadata,
+    )
+
+
+def memory_data_from_outcome(outcome: WriteOutcome, org_id: UUID) -> MemoryData:
+    memory = outcome.memory
+    return MemoryData(
+        id=memory.id,
+        agent_id=memory.agent_id,
+        org_id=org_id,
+        content=memory.content,
+        content_tokens=memory.content_tokens,
+        category=memory.category,
+        confidence=memory.confidence,
+        source=memory.source,
+        status=memory.status,
+        visibility=memory.visibility,
+        pinned=memory.pinned,
+        tags=list(memory.tags),
+        retrieval_count=memory.retrieval_count,
+        usefulness_score=memory.usefulness_score,
+        pii_detected=memory.pii_detected,
+        session_id=memory.session_id,
+        metadata=memory.metadata,
+        created_at=memory.created_at,
+        updated_at=memory.updated_at,
+    )
+
+
+async def finalize_quarantine_response(
+    *,
+    outcome: WriteOutcome,
+    idem: IdempotencyHandle,
+    response: Response,
+) -> QuarantineMemoryResponse:
+    response.status_code = 202
+    payload = QuarantineMemoryResponse(
+        data=QuarantineMemoryData(id=outcome.memory.id, status="quarantined"),
+        meta={"message": "Memory quarantined for review due to PII detection"},
+    )
+    await commit_idempotency_or_log(
+        idem, status=202, body=payload.model_dump_json().encode("utf-8")
+    )
+    return payload
+
+
+async def finalize_created_response(
+    *,
+    outcome: WriteOutcome,
+    org_id: UUID,
+    elapsed_ms: int,
+    idem: IdempotencyHandle,
+    response: Response,
+) -> CreateMemoryResponse:
+    response.headers["X-Idempotency-Replayed"] = "false"
+    payload = CreateMemoryResponse(
+        data=memory_data_from_outcome(outcome, org_id),
+        meta=CreateMemoryMeta(
+            deduplication=DeduplicationMeta(
+                is_duplicate=False,
+                similar_memories=list(outcome.near_duplicate_candidates),
+            ),
+            processing_time_ms=elapsed_ms,
+        ),
+    )
+    await commit_idempotency_or_log(
+        idem, status=201, body=payload.model_dump_json().encode("utf-8")
+    )
+    return payload

@@ -35,6 +35,7 @@ from app.write.factory import build_write_pipeline
 from app.write.models import CreateMemoryCommand, WriteOutcome, WriteOutcomeKind
 from app.write.orchestrator import MemoryWriteOrchestrator
 from app.write.persist import _aware, _aware_opt
+from app.write.pipeline_deps import WritePipelineDeps
 from tests.unit.auth_test_support import encode_validate_token_wire, grpc_validator, rpc_error
 from tests.unit.memory_test_support import sample_memory_row
 
@@ -189,11 +190,13 @@ async def test_factory_inner_callbacks_invoked() -> None:
         ) as load_mock,
     ):
         pipeline = build_write_pipeline(
-            settings,
-            session_factory=session_factory,
-            store=store,
-            pii=pii,
-            embed=embed,
+            WritePipelineDeps(
+                settings=settings,
+                session_factory=session_factory,
+                store=store,
+                pii=pii,
+                embed=embed,
+            )
         )
         exact_stage = pipeline._stages[2]
         ctx = WriteContext(

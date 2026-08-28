@@ -14,20 +14,14 @@ from app.deps import get_idempotency_store, get_write_orchestrator, require_memo
 from app.exceptions import DuplicateMemoryError, EmbeddingServiceError, ValidationError
 from app.routers.memory_write_support import (
     begin_idempotency,
-    commit_idempotency_or_log,
+    finalize_created_response,
+    finalize_quarantine_response,
     http_error_for_write,
+    memory_command_from_request,
     release_idempotency,
 )
-from app.schemas.memories import (
-    CreateMemoryMeta,
-    CreateMemoryRequest,
-    CreateMemoryResponse,
-    DeduplicationMeta,
-    MemoryData,
-    QuarantineMemoryData,
-    QuarantineMemoryResponse,
-)
-from app.write.models import CreateMemoryCommand, WriteOutcomeKind
+from app.schemas.memories import CreateMemoryRequest
+from app.write.models import WriteOutcomeKind
 from app.write.orchestrator import MemoryWriteOrchestrator
 
 router = APIRouter(prefix="/v1/memories", tags=["memories"])
@@ -43,35 +37,6 @@ def _fingerprint(method: str, path: str, body: bytes) -> str:
     return digest.hexdigest()
 
 
-def _memory_data_from_outcome(
-    outcome,
-    request: CreateMemoryRequest,
-    org_id,
-) -> MemoryData:
-    memory = outcome.memory
-    return MemoryData(
-        id=memory.id,
-        agent_id=memory.agent_id,
-        org_id=org_id,
-        content=memory.content,
-        content_tokens=memory.content_tokens,
-        category=memory.category,
-        confidence=memory.confidence,
-        source=memory.source,
-        status=memory.status,
-        visibility=memory.visibility,
-        pinned=memory.pinned,
-        tags=list(memory.tags),
-        retrieval_count=memory.retrieval_count,
-        usefulness_score=memory.usefulness_score,
-        pii_detected=memory.pii_detected,
-        session_id=memory.session_id,
-        metadata=memory.metadata,
-        created_at=memory.created_at,
-        updated_at=memory.updated_at,
-    )
-
-
 @router.post("", status_code=201, summary="Create a memory")
 async def create_memory(
     request: CreateMemoryRequest,
@@ -83,29 +48,16 @@ async def create_memory(
 ) -> Any:
     start = time.perf_counter()
     body_bytes = request.model_dump_json().encode("utf-8")
-    fp = _fingerprint("POST", "/v1/memories", body_bytes)
     idem = await begin_idempotency(
         store=idempotency_store,
         org_id=token.org_id,
         idempotency_key=idempotency_key,
-        fingerprint=fp,
+        fingerprint=_fingerprint("POST", "/v1/memories", body_bytes),
     )
     if isinstance(idem, JSONResponse):
         return idem
 
-    command = CreateMemoryCommand(
-        org_id=token.org_id,
-        agent_id=request.agent_id,
-        content=request.content,
-        category=request.category,
-        confidence=request.confidence,
-        session_id=request.session_id,
-        visibility=request.visibility,
-        tags=tuple(request.tags),
-        pinned=request.pinned,
-        metadata=request.metadata,
-    )
-
+    command = memory_command_from_request(request, token.org_id)
     try:
         outcome = await orchestrator.create(command)
     except (DuplicateMemoryError, ValidationError, EmbeddingServiceError) as exc:
@@ -113,30 +65,12 @@ async def create_memory(
         raise http_error_for_write(exc) from exc
 
     elapsed_ms = int((time.perf_counter() - start) * 1000)
-    response.headers["X-Idempotency-Replayed"] = "false"
-
     if outcome.kind == WriteOutcomeKind.QUARANTINED:
-        response.status_code = 202
-        payload = QuarantineMemoryResponse(
-            data=QuarantineMemoryData(id=outcome.memory.id, status="quarantined"),
-            meta={"message": "Memory quarantined for review due to PII detection"},
-        )
-        await commit_idempotency_or_log(
-            idem, status=202, body=payload.model_dump_json().encode("utf-8")
-        )
-        return payload
-
-    payload = CreateMemoryResponse(
-        data=_memory_data_from_outcome(outcome, request, token.org_id),
-        meta=CreateMemoryMeta(
-            deduplication=DeduplicationMeta(
-                is_duplicate=False,
-                similar_memories=list(outcome.near_duplicate_candidates),
-            ),
-            processing_time_ms=elapsed_ms,
-        ),
+        return await finalize_quarantine_response(outcome=outcome, idem=idem, response=response)
+    return await finalize_created_response(
+        outcome=outcome,
+        org_id=token.org_id,
+        elapsed_ms=elapsed_ms,
+        idem=idem,
+        response=response,
     )
-    await commit_idempotency_or_log(
-        idem, status=201, body=payload.model_dump_json().encode("utf-8")
-    )
-    return payload

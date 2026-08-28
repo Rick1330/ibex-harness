@@ -29,7 +29,8 @@ COPY --from=uv /uv /usr/local/bin/uv
 WORKDIR /app/services/mcp-memory
 
 COPY packages/authclient /app/packages/authclient
-RUN mkdir -p /wheels && uv build --wheel --out-dir /wheels /app/packages/authclient
+# Trusted monorepo wheel only — UV_NO_BUILD=1 blocks uv build globally (Sonar S8541).
+RUN mkdir -p /wheels && UV_NO_BUILD=0 uv build --wheel --out-dir /wheels /app/packages/authclient
 COPY services/mcp-memory/pyproject.toml services/mcp-memory/uv.lock ./
 
 # Install third-party dependencies from lockfile (wheels only — Sonar S8541).

@@ -7,17 +7,30 @@ from uuid import uuid4
 
 import grpc
 import pytest
-from authclient import ValidateTokenWire
+from authclient import ValidateTokenWire, assert_trusted_insecure_auth_target
 
 from app.auth.client import (
     GRPCTokenValidator,
     StaticTokenValidator,
     ValidateResult,
-    assert_trusted_insecure_auth_target,
     parse_authorization_header,
 )
 from app.auth.errors import AuthFailedError, AuthUnavailableError
 from tests.unit.auth_test_support import encode_validate_token_wire, grpc_validator, rpc_error
+
+_TRUSTED_TARGETS = (
+    "127.0.0.1:50051",
+    "localhost:50051",
+    "auth:50051",
+    "10.0.0.5:50051",
+    "[::1]:50051",
+    "dns:///127.0.0.1:50051",
+)
+
+
+@pytest.mark.parametrize("target", _TRUSTED_TARGETS)
+def test_assert_trusted_insecure_auth_target_accepts(target: str) -> None:
+    assert assert_trusted_insecure_auth_target(target) == target
 
 
 def test_parse_authorization_header_bearer_case_insensitive() -> None:
@@ -37,27 +50,6 @@ def test_parse_authorization_header_empty_token() -> None:
 def test_parse_authorization_header_rejects_oversized_token() -> None:
     with pytest.raises(AuthFailedError, match="maximum length"):
         parse_authorization_header("Bearer " + ("x" * 9000))
-
-
-def test_assert_trusted_loopback() -> None:
-    assert assert_trusted_insecure_auth_target("127.0.0.1:50051") == "127.0.0.1:50051"
-    assert assert_trusted_insecure_auth_target("localhost:50051") == "localhost:50051"
-
-
-def test_assert_trusted_mesh_short_name() -> None:
-    assert assert_trusted_insecure_auth_target("auth:50051") == "auth:50051"
-
-
-def test_assert_trusted_private_ip() -> None:
-    assert assert_trusted_insecure_auth_target("10.0.0.5:50051") == "10.0.0.5:50051"
-
-
-def test_assert_trusted_ipv6_loopback() -> None:
-    assert assert_trusted_insecure_auth_target("[::1]:50051") == "[::1]:50051"
-
-
-def test_assert_trusted_dns_prefix() -> None:
-    assert assert_trusted_insecure_auth_target("dns:///127.0.0.1:50051") == "dns:///127.0.0.1:50051"
 
 
 def test_assert_trusted_rejects_public_host() -> None:

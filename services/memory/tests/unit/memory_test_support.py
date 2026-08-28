@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import UTC, datetime
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 from app.write.models import MemoryRow
@@ -38,3 +39,16 @@ def sample_memory_row(**overrides: object) -> MemoryRow:
     if overrides:
         return replace(row, **overrides)  # type: ignore[arg-type]
     return row
+
+
+def mock_async_session_factory() -> MagicMock:
+    """Async session factory with begin() context manager for orchestrator tests."""
+    mock_session = MagicMock()
+    mock_begin = MagicMock()
+    mock_begin.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_begin.__aexit__ = AsyncMock(return_value=None)
+    mock_session.begin = MagicMock(return_value=mock_begin)
+    mock_cm = MagicMock()
+    mock_cm.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_cm.__aexit__ = AsyncMock(return_value=None)
+    return MagicMock(return_value=mock_cm)

@@ -14,7 +14,7 @@ from app.pipeline.context import WriteContext
 from app.write.errors import is_active_content_hash_violation
 from app.write.models import CreateMemoryCommand, WriteOutcomeKind
 from app.write.orchestrator import MemoryWriteOrchestrator, _is_embedding_failure
-from tests.unit.memory_test_support import sample_memory_row
+from tests.unit.memory_test_support import mock_async_session_factory, sample_memory_row
 
 
 class _Pipe:
@@ -61,16 +61,7 @@ async def test_orchestrator_active_persist_integrity_race() -> None:
     orig.constraint_name = "idx_memories_org_agent_content_hash_active"
     exc.orig = orig
 
-    mock_session = MagicMock()
-    mock_begin = MagicMock()
-    mock_begin.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_begin.__aexit__ = AsyncMock(return_value=None)
-    mock_session.begin = MagicMock(return_value=mock_begin)
-    mock_cm = MagicMock()
-    mock_cm.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_cm.__aexit__ = AsyncMock(return_value=None)
-    mock_factory = MagicMock(return_value=mock_cm)
-
+    mock_factory = mock_async_session_factory()
     orch._factory = mock_factory
 
     with (
@@ -159,16 +150,7 @@ async def test_orchestrator_active_persist_with_supersession_and_after_commit() 
     async def _run(_c: WriteContext) -> WriteContext:
         return ctx
 
-    mock_session = MagicMock()
-    mock_begin = MagicMock()
-    mock_begin.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_begin.__aexit__ = AsyncMock(return_value=None)
-    mock_session.begin = MagicMock(return_value=mock_begin)
-    mock_cm = MagicMock()
-    mock_cm.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_cm.__aexit__ = AsyncMock(return_value=None)
-    mock_factory = MagicMock(return_value=mock_cm)
-
+    mock_factory = mock_async_session_factory()
     after_commit = AsyncMock()
     orch = MemoryWriteOrchestrator(_Pipe(), mock_factory, after_commit=after_commit)
     orch._pipeline.run = _run  # type: ignore[method-assign]
@@ -247,16 +229,7 @@ async def test_orchestrator_re_raises_non_hash_integrity() -> None:
     async def _run(_c: WriteContext) -> WriteContext:
         return ctx
 
-    mock_session = MagicMock()
-    mock_begin = MagicMock()
-    mock_begin.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_begin.__aexit__ = AsyncMock(return_value=None)
-    mock_session.begin = MagicMock(return_value=mock_begin)
-    mock_cm = MagicMock()
-    mock_cm.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_cm.__aexit__ = AsyncMock(return_value=None)
-
-    orch = MemoryWriteOrchestrator(_Pipe(), MagicMock(return_value=mock_cm))
+    orch = MemoryWriteOrchestrator(_Pipe(), mock_async_session_factory())
     orch._pipeline.run = _run  # type: ignore[method-assign]
 
     exc = IntegrityError("insert", {}, Exception("other"))

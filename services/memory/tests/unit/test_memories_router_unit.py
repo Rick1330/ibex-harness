@@ -137,40 +137,27 @@ def test_create_memory_503_embedding(client) -> None:
     assert resp.json()["detail"]["code"] == "EMBEDDING_FAILED"
 
 
-def test_create_memory_request_validation_bad_agent_id(client) -> None:
+def _post_validation(http: TestClient, payload: dict) -> object:
+    return http.post(
+        "/v1/memories",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+        json=payload,
+    )
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"agent_id": "not-a-uuid", "content": "hello"},
+        {"agent_id": str(AGENT), "content": ""},
+        {"agent_id": str(AGENT), "content": "x" * 10_001},
+    ],
+    ids=["bad_agent_id", "empty_content", "oversized_content"],
+)
+def test_create_memory_request_validation_errors(client, payload) -> None:
     http, mock_orch = client
     with http:
-        resp = http.post(
-            "/v1/memories",
-            headers={"Authorization": f"Bearer {TOKEN}"},
-            json={"agent_id": "not-a-uuid", "content": "hello"},
-        )
-    assert resp.status_code == 400
-    assert resp.json()["detail"]["code"] == "VALIDATION_ERROR"
-    mock_orch.create.assert_not_called()
-
-
-def test_create_memory_request_validation_empty_content(client) -> None:
-    http, mock_orch = client
-    with http:
-        resp = http.post(
-            "/v1/memories",
-            headers={"Authorization": f"Bearer {TOKEN}"},
-            json={"agent_id": str(AGENT), "content": ""},
-        )
-    assert resp.status_code == 400
-    assert resp.json()["detail"]["code"] == "VALIDATION_ERROR"
-    mock_orch.create.assert_not_called()
-
-
-def test_create_memory_request_validation_oversized_content(client) -> None:
-    http, mock_orch = client
-    with http:
-        resp = http.post(
-            "/v1/memories",
-            headers={"Authorization": f"Bearer {TOKEN}"},
-            json={"agent_id": str(AGENT), "content": "x" * 10_001},
-        )
+        resp = _post_validation(http, payload)
     assert resp.status_code == 400
     assert resp.json()["detail"]["code"] == "VALIDATION_ERROR"
     mock_orch.create.assert_not_called()
@@ -184,11 +171,7 @@ def test_create_memory_request_validation_metadata_depth(client) -> None:
         current["child"] = {}
         current = current["child"]
     with http:
-        resp = http.post(
-            "/v1/memories",
-            headers={"Authorization": f"Bearer {TOKEN}"},
-            json={"agent_id": str(AGENT), "content": "hello", "metadata": nested},
-        )
+        resp = _post_validation(http, {"agent_id": str(AGENT), "content": "hello", "metadata": nested})
     assert resp.status_code == 400
     assert resp.json()["detail"]["code"] == "VALIDATION_ERROR"
     mock_orch.create.assert_not_called()
@@ -267,36 +250,23 @@ def test_create_memory_idempotency_in_progress(client) -> None:
     assert resp.json()["detail"]["code"] == "IDEMPOTENCY_IN_PROGRESS"
 
 
-def test_create_memory_duplicate_releases_idempotency(client) -> None:
+@pytest.mark.parametrize(
+    ("side_effect", "expected_status"),
+    [
+        (DuplicateMemoryError(uuid4()), 409),
+        (ValidationError("bad", field="content"), 400),
+        (EmbeddingServiceError("down"), 503),
+    ],
+    ids=["duplicate", "validation", "embedding"],
+)
+def test_create_memory_error_releases_idempotency(client, side_effect, expected_status) -> None:
     http, mock_orch = client
     store = _FakeStore(ClaimOutcome(kind=ClaimKind.MISS, record=None))
     _with_idempotency_store(http, store)
-    mock_orch.create = AsyncMock(side_effect=DuplicateMemoryError(uuid4()))
-    with http:
-        resp = _post_memory(http, content="dup", idempotency_key="key-1")
-    assert resp.status_code == 409
-    assert len(store.released) == 1
-
-
-def test_create_memory_validation_releases_idempotency(client) -> None:
-    http, mock_orch = client
-    store = _FakeStore(ClaimOutcome(kind=ClaimKind.MISS, record=None))
-    _with_idempotency_store(http, store)
-    mock_orch.create = AsyncMock(side_effect=ValidationError("bad", field="content"))
+    mock_orch.create = AsyncMock(side_effect=side_effect)
     with http:
         resp = _post_memory(http, content="x", idempotency_key="key-1")
-    assert resp.status_code == 400
-    assert len(store.released) == 1
-
-
-def test_create_memory_embedding_releases_idempotency(client) -> None:
-    http, mock_orch = client
-    store = _FakeStore(ClaimOutcome(kind=ClaimKind.MISS, record=None))
-    _with_idempotency_store(http, store)
-    mock_orch.create = AsyncMock(side_effect=EmbeddingServiceError("down"))
-    with http:
-        resp = _post_memory(http, content="x", idempotency_key="key-1")
-    assert resp.status_code == 503
+    assert resp.status_code == expected_status
     assert len(store.released) == 1
 
 
