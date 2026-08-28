@@ -13,13 +13,20 @@ from sqlalchemy.exc import IntegrityError
 
 from app.auth.client import TokenValidator, _host_of
 from app.auth.errors import AuthUnavailableError
-from app.auth.proto_wire import ValidateTokenWire, _bounded_string, _encode_varint, _skip_unknown, decode_validate_token_response
-from app.auth.proto_wire import _MAX_STRING_BYTES, _WIRE_LEN, _WIRE_VARINT
+from app.auth.proto_wire import (
+    _MAX_STRING_BYTES,
+    _WIRE_LEN,
+    _WIRE_VARINT,
+    ValidateTokenWire,
+    _bounded_string,
+    _encode_varint,
+    _skip_unknown,
+    decode_validate_token_response,
+)
 from app.config import Settings
 from app.exceptions import EmbeddingServiceError
 from app.main import MemoryAppState, create_app
 from app.pipeline.context import WriteContext
-from tests.unit.auth_test_support import encode_validate_token_wire, grpc_validator, rpc_error
 from app.write.after_commit import AfterCommitHandler
 from app.write.embed_context import get_write_org_id
 from app.write.errors import is_active_content_hash_violation
@@ -27,6 +34,7 @@ from app.write.factory import build_write_pipeline
 from app.write.models import CreateMemoryCommand, MemoryRow, WriteOutcome, WriteOutcomeKind
 from app.write.orchestrator import MemoryWriteOrchestrator
 from app.write.persist import _aware, _aware_opt
+from tests.unit.auth_test_support import encode_validate_token_wire, grpc_validator, rpc_error
 
 
 def test_proto_wire_skips_unknown_len_field_and_token_id() -> None:
@@ -127,7 +135,7 @@ def test_is_active_content_hash_violation_no_orig() -> None:
 
 
 def test_aware_helpers() -> None:
-    naive = datetime(2026, 1, 1, 12, 0, 0)
+    naive = datetime(2026, 1, 1, 12, 0, 0)  # noqa: DTZ001 — intentional naive input
     assert _aware(naive).tzinfo == UTC
     assert _aware_opt(None) is None
     aware = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)

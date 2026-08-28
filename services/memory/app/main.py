@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from fastapi import FastAPI
 from redis.asyncio import Redis
 from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.auth.client import GRPCTokenValidator, TokenValidator
@@ -172,7 +173,7 @@ async def _postgres_ready(engine: AsyncEngine) -> bool:
         async with engine.connect() as conn:
             await conn.execute(text("SELECT 1"))
         return True
-    except Exception as exc:
+    except (OSError, SQLAlchemyError) as exc:
         logger.warning(
             "postgres readiness check failed error_class=%s",
             type(exc).__name__,

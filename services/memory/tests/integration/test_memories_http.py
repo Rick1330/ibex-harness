@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import secrets
+import string
 from collections.abc import AsyncIterator
 from uuid import uuid4
 
@@ -27,9 +29,13 @@ pytestmark = pytest.mark.integration
 TOKEN = "test-memory-write-token"
 
 
+_PII_SAFE_ALPHABET = string.ascii_lowercase
+
+
 def _pii_safe_content(prefix: str) -> str:
-    """Unique content that avoids Presidio DATE_TIME false-positives on hex strings."""
-    return f"{prefix} case {uuid4().int % 10_000_000}"
+    """Unique content that avoids Presidio false-positives on numeric/date patterns."""
+    suffix = "".join(secrets.choice(_PII_SAFE_ALPHABET) for _ in range(16))
+    return f"{prefix} token {suffix}"
 
 
 def _redis_url() -> str | None:

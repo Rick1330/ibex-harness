@@ -12,8 +12,8 @@ import grpc
 
 from app.auth.errors import AuthFailedError, AuthUnavailableError
 from app.auth.proto_wire import (
-    ValidateTokenWire,
     _MAX_TOKEN_BYTES,
+    ValidateTokenWire,
     decode_validate_token_response,
     encode_validate_token_request,
 )
