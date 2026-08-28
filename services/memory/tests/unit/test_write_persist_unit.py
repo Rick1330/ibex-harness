@@ -17,7 +17,7 @@ from app.write.persist import (
     insert_memory_session,
     reload_memory_session,
 )
-from tests.unit.memory_test_support import mapping_row
+from tests.unit.memory_test_support import mapping_row, mock_session_returning_row
 
 
 @pytest.mark.asyncio
@@ -116,9 +116,16 @@ async def test_insert_memory_session_persists_visibility_tags_pinned() -> None:
 
 
 @pytest.mark.asyncio
-async def test_insert_escalations_session_empty_noop() -> None:
+@pytest.mark.parametrize(
+    ("insert_fn", "inserts"),
+    [
+        (insert_escalations_session, []),
+        (insert_labels_session, []),
+    ],
+)
+async def test_insert_session_empty_noop(insert_fn, inserts) -> None:
     session = AsyncMock()
-    assert await insert_escalations_session(session, []) == 0
+    assert await insert_fn(session, inserts) == 0
     session.execute.assert_not_awaited()
 
 
@@ -159,13 +166,6 @@ async def test_insert_labels_session_inserts() -> None:
 
 
 @pytest.mark.asyncio
-async def test_insert_labels_session_empty_noop() -> None:
-    session = AsyncMock()
-    assert await insert_labels_session(session, []) == 0
-    session.execute.assert_not_awaited()
-
-
-@pytest.mark.asyncio
 async def test_reload_memory_session_maps_row() -> None:
     org_id = uuid4()
     agent_id = uuid4()
@@ -173,10 +173,7 @@ async def test_reload_memory_session_maps_row() -> None:
     row = mapping_row(org_id=org_id, agent_id=agent_id, metadata="{}")
     row.id = memory_id
     row.category = "behavioral"
-    session = AsyncMock()
-    result = MagicMock()
-    result.one.return_value = row
-    session.execute = AsyncMock(return_value=result)
+    session = mock_session_returning_row(row)
     memory = await reload_memory_session(session, org_id=org_id, memory_id=memory_id)
     assert memory.id == memory_id
     assert memory.category == "behavioral"

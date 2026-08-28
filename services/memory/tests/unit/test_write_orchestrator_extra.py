@@ -11,14 +11,16 @@ from sqlalchemy.exc import IntegrityError
 
 from app.clients.embedding import EmbeddingUnavailableError
 from app.conflict.types import ConflictDecision, ConflictOutcome
-from app.exceptions import DuplicateMemoryError, EmbeddingServiceError
+from app.exceptions import DuplicateMemoryError, EmbeddingServiceError, ValidationError
 from app.pipeline.context import WriteContext
 from app.write.errors import is_active_content_hash_violation
 from app.write.models import CreateMemoryCommand, WriteOutcomeKind
 from app.write.orchestrator import MemoryWriteOrchestrator, _is_embedding_failure
 from tests.unit.memory_test_support import (
     HashViolationOpts,
+    LabelViolationOpts,
     hash_violation_integrity_error,
+    label_violation_integrity_error,
     mock_async_session_factory,
     sample_memory_row,
 )
@@ -264,68 +266,6 @@ async def test_orchestrator_race_without_existing_raises() -> None:
 
 
 @pytest.mark.asyncio
-async def test_orchestrator_inserts_labels_in_active_and_quarantine_paths() -> None:
-    org_id = uuid4()
-    agent_id = uuid4()
-    fake_row = sample_memory_row(org_id=org_id, agent_id=agent_id)
-
-    async def _run(ctx: WriteContext) -> WriteContext:
-        if ctx.status == "quarantined":
-            return ctx
-        return WriteContext(
-            org_id=org_id,
-            agent_id=agent_id,
-            content="active labels",
-            content_hash="hash-labels",
-            status="active",
-        )
-
-    mock_factory = mock_async_session_factory()
-    orch = MemoryWriteOrchestrator(_Pipe(), mock_factory)
-    orch._pipeline.run = _run  # type: ignore[method-assign]
-
-    labels_mock = AsyncMock(return_value=1)
-    reload_mock = AsyncMock(return_value=fake_row)
-
-    with (
-        patch("app.write.orchestrator.insert_memory_session", AsyncMock(return_value=fake_row)),
-        patch("app.write.orchestrator.insert_labels_session", labels_mock),
-        patch("app.write.orchestrator.reload_memory_session", reload_mock),
-        patch("app.write.orchestrator.insert_escalations_session", AsyncMock(return_value=0)),
-    ):
-        await orch.create(
-            CreateMemoryCommand(org_id=org_id, agent_id=agent_id, content="active labels")
-        )
-        labels_mock.assert_awaited_once()
-        reload_mock.assert_awaited_once()
-
-    quarantine_ctx = WriteContext(
-        org_id=org_id,
-        agent_id=agent_id,
-        content="quarantine labels",
-        status="quarantined",
-    )
-
-    async def _quarantine(_c: WriteContext) -> WriteContext:
-        return quarantine_ctx
-
-    orch._pipeline.run = _quarantine  # type: ignore[method-assign]
-    labels_mock.reset_mock()
-    reload_mock.reset_mock()
-
-    with (
-        patch("app.write.orchestrator.insert_memory_session", AsyncMock(return_value=fake_row)),
-        patch("app.write.orchestrator.insert_labels_session", labels_mock),
-        patch("app.write.orchestrator.reload_memory_session", reload_mock),
-    ):
-        await orch.create(
-            CreateMemoryCommand(org_id=org_id, agent_id=agent_id, content="quarantine labels")
-        )
-        labels_mock.assert_awaited_once()
-        reload_mock.assert_awaited_once()
-
-
-@pytest.mark.asyncio
 async def test_orchestrator_re_raises_non_hash_integrity() -> None:
     org_id = uuid4()
     agent_id = uuid4()
@@ -352,6 +292,87 @@ async def test_orchestrator_re_raises_non_hash_integrity() -> None:
         "app.write.orchestrator.insert_memory_session",
         AsyncMock(side_effect=exc),
     ), pytest.raises(IntegrityError):
+        await orch.create(
+            CreateMemoryCommand(org_id=org_id, agent_id=agent_id, content=ctx.content)
+        )
+
+
+def test_raise_duplicate_label_error_maps_pkey() -> None:
+    orch = MemoryWriteOrchestrator(_Pipe(), MagicMock())
+    with pytest.raises(ValidationError) as err:
+        orch._raise_duplicate_label_error(label_violation_integrity_error())
+    assert err.value.field_code == "duplicate_label"
+    assert err.value.field == "labels"
+
+
+def test_raise_duplicate_label_error_reraises_other() -> None:
+    orch = MemoryWriteOrchestrator(_Pipe(), MagicMock())
+    exc = IntegrityError("insert", {}, Exception("other"))
+    orig = MagicMock()
+    orig.constraint_name = "other_constraint"
+    exc.orig = orig
+    with pytest.raises(IntegrityError):
+        orch._raise_duplicate_label_error(exc)
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_duplicate_label_integrity_maps_validation_error() -> None:
+    org_id = uuid4()
+    agent_id = uuid4()
+    ctx = WriteContext(
+        org_id=org_id,
+        agent_id=agent_id,
+        content="duplicate label path",
+        content_hash="hash-dup-label",
+        status="active",
+    )
+
+    async def _run(_c: WriteContext) -> WriteContext:
+        return ctx
+
+    fake_row = sample_memory_row(org_id=org_id, agent_id=agent_id, content=ctx.content)
+    orch = MemoryWriteOrchestrator(_Pipe(), mock_async_session_factory())
+    orch._pipeline.run = _run  # type: ignore[method-assign]
+
+    with (
+        patch("app.write.orchestrator.insert_memory_session", AsyncMock(return_value=fake_row)),
+        patch(
+            "app.write.orchestrator.insert_labels_session",
+            AsyncMock(side_effect=label_violation_integrity_error()),
+        ),
+        pytest.raises(ValidationError) as err,
+    ):
+        await orch.create(
+            CreateMemoryCommand(org_id=org_id, agent_id=agent_id, content=ctx.content)
+        )
+    assert err.value.field_code == "duplicate_label"
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_label_integrity_non_pkey_reraises() -> None:
+    org_id = uuid4()
+    agent_id = uuid4()
+    ctx = WriteContext(
+        org_id=org_id,
+        agent_id=agent_id,
+        content="other label integrity",
+        content_hash="hash-label-other",
+        status="active",
+    )
+
+    async def _run(_c: WriteContext) -> WriteContext:
+        return ctx
+
+    fake_row = sample_memory_row(org_id=org_id, agent_id=agent_id, content=ctx.content)
+    orch = MemoryWriteOrchestrator(_Pipe(), mock_async_session_factory())
+    orch._pipeline.run = _run  # type: ignore[method-assign]
+    exc = label_violation_integrity_error(LabelViolationOpts(constraint_name="other_fk"))
+
+    with (
+        patch("app.write.orchestrator.insert_memory_session", AsyncMock(return_value=fake_row)),
+        patch("app.write.orchestrator.insert_labels_session", AsyncMock(side_effect=exc)),
+        pytest.raises(IntegrityError),
+    ):
         await orch.create(
             CreateMemoryCommand(org_id=org_id, agent_id=agent_id, content=ctx.content)
         )

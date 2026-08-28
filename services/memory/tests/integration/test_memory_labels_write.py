@@ -2,290 +2,106 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Mapping
-from contextlib import asynccontextmanager
-from dataclasses import dataclass
-from uuid import UUID, uuid4
+from unittest.mock import AsyncMock, patch
+from uuid import uuid4
 
 import pytest
-from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.auth.client import StaticTokenValidator, ValidateResult
 from app.config import Settings
-from app.main import create_app
-from app.permissions import MEMORY_WRITE
 from app.write.labels import MemoryLabelInput
 from app.write.models import CreateMemoryCommand, WriteOutcomeKind
 from tests.integration.conftest import seed_org_agent_memory, with_service_org
 from tests.integration.http_pii_fixtures import HTTP_NOVEL_WRITE_CONTENT
+from tests.integration.memory_labels_write_support import (
+    LABEL_HTTP_TOKEN,
+    HttpLabelCase,
+    OrchestratorLabelCase,
+    count_label_rows,
+    fetch_memory_category,
+    fetch_memory_labels,
+    labels_http_client,
+    run_orchestrator_label_write,
+    with_org_rls,
+)
 from tests.integration.write_orchestrator_support import (
-    EmbedProbe,
     OrchestratorTestDeps,
-    QuarantinePii,
     build_orchestrator,
     ensure_pii_ready,
 )
 
 pytestmark = pytest.mark.integration
 
-TOKEN = "test-memory-labels-token"
-
-
-@dataclass(frozen=True, slots=True)
-class HttpLabelCase:
-    seed_content: str
-    payload: Mapping[str, object]
-    expected_category: str | None
-    expected_label_count: int
-    expected_primary_label: str | None = None
-
-
-@asynccontextmanager
-async def _labels_http_client(
-    session_factory: async_sessionmaker[AsyncSession],
-    settings: Settings,
-    store,
-    *,
-    seed_content: str,
-) -> AsyncIterator[tuple[AsyncClient, UUID, UUID]]:
-    probe = EmbedProbe()
-    orch = build_orchestrator(
-        OrchestratorTestDeps(session_factory, settings, store, embed=probe)
-    )
-    await ensure_pii_ready(orch)
-    org_id, agent_id, _ = await seed_org_agent_memory(session_factory, content=seed_content)
-    validator = StaticTokenValidator(
-        {TOKEN: ValidateResult(org_id=org_id, permissions=MEMORY_WRITE, agent_id=agent_id)}
-    )
-    app = create_app(settings=settings, validator=validator)
-    async with app.router.lifespan_context(app):
-        app.state.memory.write_orchestrator = orch
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"
-        ) as client:
-            yield client, org_id, agent_id
-
-
-@dataclass(frozen=True, slots=True)
-class LabelRow:
-    label: str
-    confidence: float
-
-
-async def _with_org_rls(session: AsyncSession, org_id: UUID) -> None:
-    await session.execute(
-        text("SET LOCAL ROLE ibex_app"),
-    )  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-    await session.execute(
-        text("SELECT set_config('app.is_service_account', 'false', true)"),
-    )  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-    await session.execute(
-        text("SELECT set_config('app.current_org_id', :org_id, true)"),
-        {"org_id": str(org_id)},
-    )  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-
-
-async def _service_query(
-    factory: async_sessionmaker[AsyncSession],
-    org_id: UUID,
-    sql: str,
-    params: dict[str, str],
-):
-    async with factory() as session:
-        await with_service_org(session, org_id)
-        return await session.execute(
-            text(sql),  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-            params,
-        )
-
-
-async def _fetch_memory_labels(
-    factory: async_sessionmaker[AsyncSession],
-    *,
-    org_id: UUID,
-    memory_id: UUID,
-) -> list[LabelRow]:
-    rows = (
-        await _service_query(
-            factory,
-            org_id,
-            """
-            SELECT label, confidence::float8 AS confidence
-            FROM ibex_core.memory_labels
-            WHERE memory_id = :memory_id AND org_id = :org_id
-            ORDER BY label
-            """,
-            {"memory_id": str(memory_id), "org_id": str(org_id)},
-        )
-    ).all()
-    return [LabelRow(label=str(row.label), confidence=float(row.confidence)) for row in rows]
-
-
-async def _fetch_memory_category(
-    factory: async_sessionmaker[AsyncSession],
-    *,
-    org_id: UUID,
-    memory_id: UUID,
-) -> str:
-    row = (
-        await _service_query(
-            factory,
-            org_id,
-            """
-            SELECT category FROM ibex_core.memories
-            WHERE id = :memory_id AND org_id = :org_id
-            """,
-            {"memory_id": str(memory_id), "org_id": str(org_id)},
-        )
-    ).one()
-    return str(row.category)
-
-
-async def _count_rows(
-    factory: async_sessionmaker[AsyncSession],
-    *,
-    org_id: UUID,
-    memory_id: UUID | None = None,
-) -> tuple[int, int]:
-    async with factory() as session:
-        await with_service_org(session, org_id)
-        mem_params: dict[str, str] = {"org_id": str(org_id)}
-        label_params: dict[str, str] = {"org_id": str(org_id)}
-        mem_sql = "SELECT COUNT(*) FROM ibex_core.memories WHERE org_id = :org_id"
-        label_sql = "SELECT COUNT(*) FROM ibex_core.memory_labels WHERE org_id = :org_id"
-        if memory_id is not None:
-            mem_sql += " AND id = :memory_id"
-            label_sql += " AND memory_id = :memory_id"
-            mem_params["memory_id"] = str(memory_id)
-            label_params["memory_id"] = str(memory_id)
-        mem_count = int(
-            (await session.execute(text(mem_sql), mem_params)).scalar_one()
-        )
-        label_count = int(
-            (await session.execute(text(label_sql), label_params)).scalar_one()
-        )
-    return mem_count, label_count
-
 
 @pytest.mark.asyncio
-async def test_orchestrator_writes_multiple_labels_and_syncs_category(
-    session_factory: async_sessionmaker[AsyncSession],
-    settings: Settings,
-    store,
-) -> None:
-    org_id, agent_id, _ = await seed_org_agent_memory(
-        session_factory, content="seed for multi-label"
-    )
-    orch = build_orchestrator(OrchestratorTestDeps(session_factory, settings, store))
-    await ensure_pii_ready(orch)
-    outcome = await orch.create(
-        CreateMemoryCommand(
-            org_id=org_id,
-            agent_id=agent_id,
+@pytest.mark.parametrize(
+    "case",
+    [
+        OrchestratorLabelCase(
+            seed_content="seed for multi-label",
             content="User prefers concise summaries for technical docs",
             labels=(
                 MemoryLabelInput(label="preference", confidence=0.9),
                 MemoryLabelInput(label="factual", confidence=0.7),
             ),
-        )
-    )
-    assert outcome.kind == WriteOutcomeKind.CREATED
-    labels = await _fetch_memory_labels(
-        session_factory, org_id=org_id, memory_id=outcome.memory.id
-    )
-    assert len(labels) == 2
-    category = await _fetch_memory_category(
-        session_factory, org_id=org_id, memory_id=outcome.memory.id
-    )
-    assert category == "preference"
-    assert outcome.memory.category == "preference"
-
-
-@pytest.mark.asyncio
-async def test_orchestrator_legacy_single_label_from_scalar(
-    session_factory: async_sessionmaker[AsyncSession],
-    settings: Settings,
-    store,
-) -> None:
-    org_id, agent_id, _ = await seed_org_agent_memory(
-        session_factory, content="seed for legacy label"
-    )
-    orch = build_orchestrator(OrchestratorTestDeps(session_factory, settings, store))
-    await ensure_pii_ready(orch)
-    outcome = await orch.create(
-        CreateMemoryCommand(
-            org_id=org_id,
-            agent_id=agent_id,
+            expected_category="preference",
+            expected_label_count=2,
+        ),
+        OrchestratorLabelCase(
+            seed_content="seed for legacy label",
             content="Weekly planning happens on Monday mornings",
             category="episodic",
             confidence=0.82,
-        )
-    )
-    labels = await _fetch_memory_labels(
-        session_factory, org_id=org_id, memory_id=outcome.memory.id
-    )
-    assert len(labels) == 1
-    assert labels[0].label == "episodic"
-    assert labels[0].confidence == pytest.approx(0.82)
-    assert outcome.memory.category == "episodic"
-
-
-@pytest.mark.asyncio
-async def test_orchestrator_confidence_tie_break_label_asc(
-    session_factory: async_sessionmaker[AsyncSession],
-    settings: Settings,
-    store,
-) -> None:
-    org_id, agent_id, _ = await seed_org_agent_memory(
-        session_factory, content="seed for tie break"
-    )
-    orch = build_orchestrator(OrchestratorTestDeps(session_factory, settings, store))
-    await ensure_pii_ready(orch)
-    outcome = await orch.create(
-        CreateMemoryCommand(
-            org_id=org_id,
-            agent_id=agent_id,
+            expected_category="episodic",
+            expected_label_count=1,
+            expected_label="episodic",
+            expected_label_confidence=0.82,
+        ),
+        OrchestratorLabelCase(
+            seed_content="seed for tie break",
             content="Team standups follow a fixed agenda template",
             labels=(
                 MemoryLabelInput(label="factual", confidence=0.8),
                 MemoryLabelInput(label="behavioral", confidence=0.8),
             ),
-        )
-    )
-    category = await _fetch_memory_category(
-        session_factory, org_id=org_id, memory_id=outcome.memory.id
-    )
-    assert category == "behavioral"
-    assert outcome.memory.category == "behavioral"
-
-
-@pytest.mark.asyncio
-async def test_orchestrator_quarantine_path_inserts_labels(
+            expected_category="behavioral",
+        ),
+        OrchestratorLabelCase(
+            seed_content="seed for quarantine labels",
+            content="Contact Jordan",
+            labels=(MemoryLabelInput(label="factual", confidence=0.9),),
+            expected_kind=WriteOutcomeKind.QUARANTINED,
+            expected_label_count=1,
+            quarantine=True,
+        ),
+    ],
+)
+async def test_orchestrator_label_write_paths(
     session_factory: async_sessionmaker[AsyncSession],
     settings: Settings,
     store,
+    case: OrchestratorLabelCase,
 ) -> None:
-    org_id, agent_id, _ = await seed_org_agent_memory(
-        session_factory, content="seed for quarantine labels"
+    outcome, org_id, _agent_id = await run_orchestrator_label_write(
+        session_factory, settings, store, case
     )
-    deps = OrchestratorTestDeps(session_factory, settings, store, pii=QuarantinePii())
-    orch = build_orchestrator(deps)
-    await ensure_pii_ready(orch)
-    outcome = await orch.create(
-        CreateMemoryCommand(
-            org_id=org_id,
-            agent_id=agent_id,
-            content="Contact Jordan",
-            labels=(MemoryLabelInput(label="factual", confidence=0.9),),
+    assert outcome.kind == case.expected_kind
+    if case.expected_label_count is not None:
+        labels = await fetch_memory_labels(
+            session_factory, org_id=org_id, memory_id=outcome.memory.id
         )
-    )
-    assert outcome.kind == WriteOutcomeKind.QUARANTINED
-    labels = await _fetch_memory_labels(
-        session_factory, org_id=org_id, memory_id=outcome.memory.id
-    )
-    assert len(labels) == 1
+        assert len(labels) == case.expected_label_count
+        if case.expected_label is not None:
+            assert labels[0].label == case.expected_label
+        if case.expected_label_confidence is not None:
+            assert labels[0].confidence == pytest.approx(case.expected_label_confidence)
+    if case.expected_category is not None:
+        category = await fetch_memory_category(
+            session_factory, org_id=org_id, memory_id=outcome.memory.id
+        )
+        assert category == case.expected_category
+        assert outcome.memory.category == case.expected_category
 
 
 @pytest.mark.asyncio
@@ -307,7 +123,7 @@ async def test_memory_labels_rls_cross_org_isolation(
         )
     )
     async with session_factory() as session, session.begin():
-        await _with_org_rls(session, org_b)
+        await with_org_rls(session, org_b)
         count = (
             await session.execute(
                 text(
@@ -328,21 +144,19 @@ async def test_memory_labels_cascade_delete(
     settings: Settings,
     store,
 ) -> None:
-    org_id, agent_id, _ = await seed_org_agent_memory(
-        session_factory, content="seed for cascade"
-    )
-    orch = build_orchestrator(OrchestratorTestDeps(session_factory, settings, store))
-    await ensure_pii_ready(orch)
-    outcome = await orch.create(
-        CreateMemoryCommand(
-            org_id=org_id,
-            agent_id=agent_id,
+    outcome, org_id, _agent_id = await run_orchestrator_label_write(
+        session_factory,
+        settings,
+        store,
+        OrchestratorLabelCase(
+            seed_content="seed for cascade",
             content="Temporary note for cascade proof",
             labels=(
                 MemoryLabelInput(label="factual", confidence=0.8),
                 MemoryLabelInput(label="episodic", confidence=0.6),
             ),
-        )
+            expected_label_count=2,
+        ),
     )
     async with session_factory() as session, session.begin():
         await with_service_org(session, org_id)
@@ -352,7 +166,7 @@ async def test_memory_labels_cascade_delete(
             ),  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
             {"id": str(outcome.memory.id), "org_id": str(org_id)},
         )
-    mem_count, label_count = await _count_rows(
+    mem_count, label_count = await count_label_rows(
         session_factory, org_id=org_id, memory_id=outcome.memory.id
     )
     assert mem_count == 0
@@ -394,19 +208,19 @@ async def test_http_post_labels(
     store,
     case: HttpLabelCase,
 ) -> None:
-    async with _labels_http_client(
+    async with labels_http_client(
         session_factory, settings, store, seed_content=case.seed_content
     ) as (client, org_id, agent_id):
         response = await client.post(
             "/v1/memories",
-            headers={"Authorization": f"Bearer {TOKEN}"},
+            headers={"Authorization": f"Bearer {LABEL_HTTP_TOKEN}"},
             json={"agent_id": str(agent_id), **case.payload},
         )
     assert response.status_code == 201
-    memory_id = UUID(response.json()["data"]["id"])
+    memory_id = response.json()["data"]["id"]
     if case.expected_category is not None:
         assert response.json()["data"]["category"] == case.expected_category
-    labels = await _fetch_memory_labels(
+    labels = await fetch_memory_labels(
         session_factory, org_id=org_id, memory_id=memory_id
     )
     assert len(labels) == case.expected_label_count
@@ -420,15 +234,13 @@ async def test_orchestrator_label_insert_failure_rolls_back_memory(
     settings: Settings,
     store,
 ) -> None:
-    from unittest.mock import AsyncMock, patch
-
     org_id, agent_id, _ = await seed_org_agent_memory(
         session_factory, content="rollback seed"
     )
     orch = build_orchestrator(OrchestratorTestDeps(session_factory, settings, store))
     await ensure_pii_ready(orch)
 
-    before_mem, before_labels = await _count_rows(session_factory, org_id=org_id)
+    before_mem, before_labels = await count_label_rows(session_factory, org_id=org_id)
     with (
         patch(
             "app.write.orchestrator.insert_labels_session",
@@ -443,6 +255,6 @@ async def test_orchestrator_label_insert_failure_rolls_back_memory(
                 content=f"rollback probe {uuid4().hex}",
             )
         )
-    after_mem, after_labels = await _count_rows(session_factory, org_id=org_id)
+    after_mem, after_labels = await count_label_rows(session_factory, org_id=org_id)
     assert after_mem == before_mem
     assert after_labels == before_labels

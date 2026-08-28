@@ -10,7 +10,11 @@ import pytest
 from app.exceptions import ValidationError
 from app.routers.memory_write_support import memory_command_from_request
 from app.schemas.memories import CreateMemoryRequest, MemoryLabelSchema
-from app.write.labels import MemoryLabelInput, resolve_write_labels
+from app.write.labels import (
+    MemoryLabelInput,
+    labels_from_command,
+    resolve_write_labels,
+)
 
 
 def test_resolve_write_labels_synthesizes_from_category() -> None:
@@ -135,6 +139,28 @@ def test_resolve_write_labels_rejects_infinite_label_confidence() -> None:
         )
     assert exc_info.value.field_code == "confidence_out_of_range"
     assert exc_info.value.field == "labels[0].confidence"
+
+
+def test_resolve_write_labels_rejects_invalid_scalar_category() -> None:
+    with pytest.raises(ValidationError) as exc_info:
+        resolve_write_labels(category="invalid", confidence=0.8, labels=None)
+    assert exc_info.value.field_code == "invalid_label"
+    assert exc_info.value.field == "labels"
+
+
+def test_labels_from_command_maps_rows() -> None:
+    org_id = uuid4()
+    memory_id = uuid4()
+    rows = labels_from_command(
+        org_id,
+        memory_id,
+        (MemoryLabelInput(label="factual", confidence=0.7),),
+    )
+    assert len(rows) == 1
+    assert rows[0].org_id == org_id
+    assert rows[0].memory_id == memory_id
+    assert rows[0].label == "factual"
+    assert rows[0].confidence == 0.7
 
 
 def test_persist_never_updates_category() -> None:

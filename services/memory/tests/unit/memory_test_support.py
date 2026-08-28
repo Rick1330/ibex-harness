@@ -108,6 +108,20 @@ class HashViolationOpts:
     )
 
 
+@dataclass(frozen=True, slots=True)
+class LabelViolationOpts:
+    constraint_name: str = "memory_labels_pkey"
+    message: str = 'duplicate key value violates unique constraint "memory_labels_pkey"'
+
+
+def mock_session_returning_row(row: SimpleNamespace) -> AsyncMock:
+    session = AsyncMock()
+    result = MagicMock()
+    result.one.return_value = row
+    session.execute = AsyncMock(return_value=result)
+    return session
+
+
 def hash_violation_integrity_error(
     opts: HashViolationOpts | None = None,
 ) -> IntegrityError:
@@ -119,6 +133,18 @@ def hash_violation_integrity_error(
     orig.constraint_name = cfg.constraint_name
     orig.diag = None
     orig.detail = cfg.detail
+    orig.__str__ = lambda self: cfg.message
+    exc.orig = orig
+    return exc
+
+
+def label_violation_integrity_error(
+    opts: LabelViolationOpts | None = None,
+) -> IntegrityError:
+    cfg = opts or LabelViolationOpts()
+    exc = IntegrityError("insert", {}, Exception("dup"))
+    orig = MagicMock()
+    orig.constraint_name = cfg.constraint_name
     orig.__str__ = lambda self: cfg.message
     exc.orig = orig
     return exc
