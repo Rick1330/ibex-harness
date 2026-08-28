@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -96,24 +96,29 @@ def active_idempotency_handle(*, store: MagicMock | None = None) -> IdempotencyH
     )
 
 
-def hash_violation_integrity_error(
-    *,
-    sqlstate: str | None = "23505",
-    pgcode: str | None = None,
-    constraint_name: str = "",
-    detail: str = "",
+@dataclass(frozen=True, slots=True)
+class HashViolationOpts:
+    sqlstate: str | None = "23505"
+    pgcode: str | None = None
+    constraint_name: str = ""
+    detail: str = ""
     message: str = (
         'duplicate key value violates unique constraint '
         '"idx_memories_org_agent_content_hash_active"'
-    ),
+    )
+
+
+def hash_violation_integrity_error(
+    opts: HashViolationOpts | None = None,
 ) -> IntegrityError:
+    cfg = opts or HashViolationOpts()
     exc = IntegrityError("insert", {}, Exception("dup"))
     orig = MagicMock()
-    orig.sqlstate = sqlstate
-    orig.pgcode = pgcode
-    orig.constraint_name = constraint_name
+    orig.sqlstate = cfg.sqlstate
+    orig.pgcode = cfg.pgcode
+    orig.constraint_name = cfg.constraint_name
     orig.diag = None
-    orig.detail = detail
-    orig.__str__ = lambda self: message
+    orig.detail = cfg.detail
+    orig.__str__ = lambda self: cfg.message
     exc.orig = orig
     return exc

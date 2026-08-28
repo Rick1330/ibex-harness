@@ -132,17 +132,30 @@ class MemoryWriteOrchestrator:
             msg = "content_hash required for active persist"
             raise RuntimeError(msg)
         try:
-            async with self._factory() as session, session.begin():
-                memory = await insert_memory_session(session, command=command, ctx=ctx)
-                await self._apply_supersession_and_escalations(
-                    session, command, memory.id, ctx
-                )
-                return memory
+            return await self._insert_active_memory_tx(command, ctx)
         except IntegrityError as exc:
-            if not is_active_content_hash_violation(exc):
-                raise
-            existing_id = await self._handle_hash_race(command, ctx.content_hash)
-            raise DuplicateMemoryError(existing_id) from exc
+            await self._raise_duplicate_on_hash_violation(command, ctx, exc)
+
+    async def _insert_active_memory_tx(
+        self, command: CreateMemoryCommand, ctx: WriteContext
+    ):
+        async with self._factory() as session, session.begin():
+            memory = await insert_memory_session(session, command=command, ctx=ctx)
+            await self._apply_supersession_and_escalations(
+                session, command, memory.id, ctx
+            )
+            return memory
+
+    async def _raise_duplicate_on_hash_violation(
+        self,
+        command: CreateMemoryCommand,
+        ctx: WriteContext,
+        exc: IntegrityError,
+    ) -> None:
+        if not is_active_content_hash_violation(exc):
+            raise exc
+        existing_id = await self._handle_hash_race(command, ctx.content_hash)
+        raise DuplicateMemoryError(existing_id) from exc
 
     async def _apply_supersession_and_escalations(
         self,

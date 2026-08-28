@@ -15,6 +15,7 @@ from app.write.errors import is_active_content_hash_violation
 from app.write.models import CreateMemoryCommand, WriteOutcomeKind
 from app.write.orchestrator import MemoryWriteOrchestrator, _is_embedding_failure
 from tests.unit.memory_test_support import (
+    HashViolationOpts,
     hash_violation_integrity_error,
     mock_async_session_factory,
     sample_memory_row,
@@ -59,7 +60,7 @@ async def test_orchestrator_active_persist_integrity_race() -> None:
     orch = MemoryWriteOrchestrator(_Pipe(), MagicMock())
     orch._pipeline.run = _run  # type: ignore[method-assign]
     exc = hash_violation_integrity_error(
-        constraint_name="idx_memories_org_agent_content_hash_active"
+        HashViolationOpts(constraint_name="idx_memories_org_agent_content_hash_active")
     )
 
     mock_factory = mock_async_session_factory()
@@ -92,30 +93,24 @@ def test_is_embedding_failure_names() -> None:
 
 
 @pytest.mark.parametrize(
-    ("sqlstate", "pgcode", "constraint_name", "detail", "message"),
+    "opts",
     [
-        (None, "23505", "", "", (
-            'duplicate key value violates unique constraint '
-            '"idx_memories_org_agent_content_hash_active"'
-        )),
-        ("23505", None, "", "", "Key (org_id, agent_id, content_hash)=(...) already exists."),
-        ("23505", None, "", "idx_memories_org_agent_content_hash_active violated", ""),
+        HashViolationOpts(
+            sqlstate=None,
+            pgcode="23505",
+            message=(
+                'duplicate key value violates unique constraint '
+                '"idx_memories_org_agent_content_hash_active"'
+            ),
+        ),
+        HashViolationOpts(
+            message="Key (org_id, agent_id, content_hash)=(...) already exists."
+        ),
+        HashViolationOpts(detail="idx_memories_org_agent_content_hash_active violated"),
     ],
 )
-def test_is_active_content_hash_violation_variants(
-    sqlstate: str | None,
-    pgcode: str | None,
-    constraint_name: str,
-    detail: str,
-    message: str,
-) -> None:
-    exc = hash_violation_integrity_error(
-        sqlstate=sqlstate,
-        pgcode=pgcode,
-        constraint_name=constraint_name,
-        detail=detail,
-        message=message or detail,
-    )
+def test_is_active_content_hash_violation_variants(opts: HashViolationOpts) -> None:
+    exc = hash_violation_integrity_error(opts)
     assert is_active_content_hash_violation(exc) is True
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -28,6 +29,14 @@ from tests.integration.write_orchestrator_support import (
 pytestmark = pytest.mark.integration
 
 
+@dataclass(frozen=True, slots=True)
+class PersistRowCase:
+    content: str
+    pii: QuarantinePii | None
+    expected_status: str
+    expected_kind: WriteOutcomeKind
+
+
 async def _assert_memory_status(
     session_factory: async_sessionmaker[AsyncSession],
     *,
@@ -48,47 +57,53 @@ async def _assert_memory_status(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("content", "pii", "expected_status", "expected_kind"),
+    "case",
     [
-        (
-            "User prefers dark mode dashboards for focus",
-            None,
-            "active",
-            WriteOutcomeKind.CREATED,
+        PersistRowCase(
+            content="User prefers dark mode dashboards for focus",
+            pii=None,
+            expected_status="active",
+            expected_kind=WriteOutcomeKind.CREATED,
         ),
-        ("Contact Jordan", QuarantinePii(), "quarantined", WriteOutcomeKind.QUARANTINED),
+        PersistRowCase(
+            content="Contact Jordan",
+            pii=QuarantinePii(),
+            expected_status="quarantined",
+            expected_kind=WriteOutcomeKind.QUARANTINED,
+        ),
     ],
 )
 async def test_orchestrator_persists_row_by_status(
     session_factory: async_sessionmaker[AsyncSession],
     settings: Settings,
     store,
-    content: str,
-    pii: QuarantinePii | None,
-    expected_status: str,
-    expected_kind: WriteOutcomeKind,
+    case: PersistRowCase,
 ) -> None:
     org_id, agent_id, _ = await seed_org_agent_memory(
-        session_factory, content=f"seed for {expected_status}"
+        session_factory, content=f"seed for {case.expected_status}"
     )
-    deps = OrchestratorTestDeps(session_factory, settings, store, pii=pii)
+    deps = OrchestratorTestDeps(session_factory, settings, store, pii=case.pii)
     orch = build_orchestrator(deps)
     await ensure_pii_ready(orch)
-    valid_from = datetime(2026, 6, 1, tzinfo=UTC) if expected_kind == WriteOutcomeKind.CREATED else None
+    valid_from = (
+        datetime(2026, 6, 1, tzinfo=UTC)
+        if case.expected_kind == WriteOutcomeKind.CREATED
+        else None
+    )
     outcome = await orch.create(
         CreateMemoryCommand(
             org_id=org_id,
             agent_id=agent_id,
-            content=content,
+            content=case.content,
             valid_from=valid_from,
         )
     )
-    assert outcome.kind == expected_kind
+    assert outcome.kind == case.expected_kind
     await _assert_memory_status(
         session_factory,
         org_id=org_id,
         memory_id=outcome.memory.id,
-        status=expected_status,
+        status=case.expected_status,
     )
 
 
