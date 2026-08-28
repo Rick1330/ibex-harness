@@ -275,9 +275,8 @@ def test_create_memory_unexpected_error_releases_idempotency(client) -> None:
     store = _FakeStore(ClaimOutcome(kind=ClaimKind.MISS, record=None))
     _with_idempotency_store(http, store)
     mock_orch.create = AsyncMock(side_effect=RuntimeError("boom"))
-    with http:
-        with pytest.raises(RuntimeError, match="boom"):
-            _post_memory(http, content="x", idempotency_key="key-1")
+    with http, pytest.raises(RuntimeError, match="boom"):
+        _post_memory(http, content="x", idempotency_key="key-1")
     assert len(store.released) == 1
 
 

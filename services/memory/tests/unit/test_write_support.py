@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
+from prometheus_client import REGISTRY
 from redis.exceptions import RedisError
 from sqlalchemy.exc import IntegrityError, OperationalError
 
@@ -15,7 +16,6 @@ from app.write.after_commit import AfterCommitHandler
 from app.write.cache import MemoryCacheWriter
 from app.write.embed_context import get_write_org_id, reset_write_org_id, set_write_org_id
 from app.write.errors import is_active_content_hash_violation
-from app.write.metrics import WRITE_CACHE_ERRORS
 from app.write.models import WriteOutcome, WriteOutcomeKind
 from app.write.persist import (
     content_token_count,
@@ -26,6 +26,11 @@ from tests.unit.memory_test_support import sample_memory_row
 
 def _row():
     return sample_memory_row(content="hello world", content_tokens=2)
+
+
+def _counter_value(name: str, labels: dict[str, str]) -> float:
+    value = REGISTRY.get_sample_value(name, labels)
+    return float(value) if value is not None else 0.0
 
 
 def test_content_token_count_minimum_one() -> None:
@@ -142,7 +147,8 @@ async def test_after_commit_vector_failure_fail_open() -> None:
 
 @pytest.mark.asyncio
 async def test_after_commit_vector_sqlalchemy_failure_records_metric() -> None:
-    before = WRITE_CACHE_ERRORS.labels(op="vector_upsert")._value.get()  # noqa: SLF001
+    labels = {"op": "vector_upsert"}
+    before = _counter_value("ibex_memory_write_cache_errors_total", labels)
     store = AsyncMock()
     store.upsert = AsyncMock(side_effect=OperationalError("stmt", {}, Exception("db down")))
     handler = AfterCommitHandler(cache=None, store=store)
@@ -153,5 +159,5 @@ async def test_after_commit_vector_sqlalchemy_failure_records_metric() -> None:
             embedding=(0.0,) * 1024,
         )
     )
-    after = WRITE_CACHE_ERRORS.labels(op="vector_upsert")._value.get()  # noqa: SLF001
+    after = _counter_value("ibex_memory_write_cache_errors_total", labels)
     assert after == before + 1

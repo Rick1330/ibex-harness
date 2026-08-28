@@ -17,12 +17,12 @@ from app.main import create_app
 from app.permissions import MEMORY_WRITE
 from tests.integration.conftest import seed_org_agent_memory
 from tests.integration.http_pii_fixtures import (
+    HTTP_BROKEN_REDIS_WRITE_CONTENT,
     HTTP_DUPLICATE_PAYLOAD_CONTENT,
     HTTP_IDEMPOTENT_WRITE_CONTENT,
     HTTP_NOVEL_WRITE_CONTENT,
     HTTP_REDIS_CACHE_CONTENT,
     HTTP_SEED_CONTENT,
-    HTTP_BROKEN_REDIS_WRITE_CONTENT,
 )
 from tests.integration.write_orchestrator_support import (
     EmbedProbe,
