@@ -13,22 +13,7 @@ from app.auth.proto_wire import (
     decode_validate_token_response,
     encode_validate_token_request,
 )
-
-
-def _encode_response(wire: ValidateTokenWire) -> bytes:
-    parts: list[bytes] = []
-    parts.append(bytes([0x0A]) + _encode_varint(len(str(wire.org_id))) + str(wire.org_id).encode())
-    parts.append(bytes([0x10]) + _encode_varint(wire.permissions))
-    if wire.agent_id is not None:
-        aid = str(wire.agent_id).encode()
-        parts.append(bytes([0x1A]) + _encode_varint(len(aid)) + aid)
-    if wire.user_id is not None:
-        uid = wire.user_id.encode()
-        parts.append(bytes([0x22]) + _encode_varint(len(uid)) + uid)
-    if wire.token_id is not None:
-        tid = wire.token_id.encode()
-        parts.append(bytes([0x2A]) + _encode_varint(len(tid)) + tid)
-    return b"".join(parts)
+from tests.unit.auth_test_support import encode_validate_token_wire
 
 
 def test_encode_validate_token_request_roundtrip() -> None:
@@ -53,7 +38,7 @@ def test_decode_validate_token_response_full() -> None:
         user_id="user-1",
         token_id="tok-1",
     )
-    decoded = decode_validate_token_response(_encode_response(wire))
+    decoded = decode_validate_token_response(encode_validate_token_wire(wire))
     assert decoded.org_id == org_id
     assert decoded.permissions == 42
     assert decoded.agent_id == agent_id

@@ -19,6 +19,7 @@ from app.config import Settings
 from app.exceptions import EmbeddingServiceError
 from app.main import MemoryAppState, create_app
 from app.pipeline.context import WriteContext
+from tests.unit.auth_test_support import encode_validate_token_wire, grpc_validator, rpc_error
 from app.write.after_commit import AfterCommitHandler
 from app.write.embed_context import get_write_org_id
 from app.write.errors import is_active_content_hash_violation
@@ -78,11 +79,9 @@ def test_host_of_without_port() -> None:
 
 @pytest.mark.asyncio
 async def test_grpc_validator_ready_success() -> None:
-    from tests.unit.test_auth_client import _encode_response, _grpc_validator
-
     org_id = uuid4()
     wire = ValidateTokenWire(org_id=org_id, permissions=1)
-    with _grpc_validator(return_value=_encode_response(wire)) as validator:
+    with grpc_validator(return_value=encode_validate_token_wire(wire)) as validator:
         assert await validator.ready() is True
         await validator.aclose()
 
@@ -410,11 +409,9 @@ async def test_begin_idempotency_conflict_and_in_progress() -> None:
 
 
 def test_map_rpc_error_unknown_code() -> None:
-    from tests.unit.test_auth_client import _rpc_error
-
     from app.auth.client import _map_rpc_error
 
-    mapped = _map_rpc_error(_rpc_error(grpc.StatusCode.UNAVAILABLE))
+    mapped = _map_rpc_error(rpc_error(grpc.StatusCode.UNAVAILABLE))
     assert isinstance(mapped, AuthUnavailableError)
 
 
