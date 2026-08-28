@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -13,8 +12,9 @@ from app.clients.embedding import EmbeddingUnavailableError
 from app.exceptions import DuplicateMemoryError, EmbeddingServiceError
 from app.pipeline.context import WriteContext
 from app.write.errors import is_active_content_hash_violation
-from app.write.models import CreateMemoryCommand, MemoryRow, WriteOutcomeKind
+from app.write.models import CreateMemoryCommand, WriteOutcomeKind
 from app.write.orchestrator import MemoryWriteOrchestrator, _is_embedding_failure
+from tests.unit.memory_test_support import sample_memory_row
 
 
 class _Pipe:
@@ -173,29 +173,11 @@ async def test_orchestrator_active_persist_with_supersession_and_after_commit() 
     orch = MemoryWriteOrchestrator(_Pipe(), mock_factory, after_commit=after_commit)
     orch._pipeline.run = _run  # type: ignore[method-assign]
 
-    fake_row = MemoryRow(
-        id=uuid4(),
+    fake_row = sample_memory_row(
         org_id=org_id,
         agent_id=agent_id,
         content=ctx.content,
         content_tokens=4,
-        category="factual",
-        confidence=0.8,
-        status="active",
-        source="user_provided",
-        pii_detected=False,
-        pii_redacted=False,
-        session_id=None,
-        visibility="agent",
-        pinned=False,
-        tags=(),
-        metadata={},
-        retrieval_count=0,
-        usefulness_score=0.5,
-        valid_from=datetime.now(tz=UTC),
-        valid_until=None,
-        created_at=datetime.now(tz=UTC),
-        updated_at=datetime.now(tz=UTC),
     )
 
     with (

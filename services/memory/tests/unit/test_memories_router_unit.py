@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import UTC, datetime
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
@@ -23,7 +22,8 @@ from app.idempotency.redis_store import (
 )
 from app.main import create_app
 from app.permissions import MEMORY_WRITE
-from app.write.models import MemoryRow, WriteOutcome, WriteOutcomeKind
+from app.write.models import WriteOutcome, WriteOutcomeKind
+from tests.unit.memory_test_support import sample_memory_row
 
 ORG = uuid4()
 AGENT = uuid4()
@@ -52,32 +52,8 @@ def _with_idempotency_store(http: TestClient, store: object) -> None:
     http.app.dependency_overrides[get_idempotency_store] = lambda: store
 
 
-def _memory_row() -> MemoryRow:
-    now = datetime.now(tz=UTC)
-    return MemoryRow(
-        id=uuid4(),
-        org_id=ORG,
-        agent_id=AGENT,
-        content="hello",
-        content_tokens=1,
-        category="factual",
-        confidence=0.8,
-        status="active",
-        source="user_provided",
-        pii_detected=False,
-        pii_redacted=False,
-        session_id=None,
-        visibility="agent",
-        pinned=False,
-        tags=(),
-        metadata={},
-        retrieval_count=0,
-        usefulness_score=0.5,
-        valid_from=now,
-        valid_until=None,
-        created_at=now,
-        updated_at=now,
-    )
+def _memory_row():
+    return sample_memory_row(org_id=ORG, agent_id=AGENT, content="hello")
 
 
 @pytest.fixture

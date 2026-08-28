@@ -31,10 +31,11 @@ from app.write.after_commit import AfterCommitHandler
 from app.write.embed_context import get_write_org_id
 from app.write.errors import is_active_content_hash_violation
 from app.write.factory import build_write_pipeline
-from app.write.models import CreateMemoryCommand, MemoryRow, WriteOutcome, WriteOutcomeKind
+from app.write.models import CreateMemoryCommand, WriteOutcome, WriteOutcomeKind
 from app.write.orchestrator import MemoryWriteOrchestrator
 from app.write.persist import _aware, _aware_opt
 from tests.unit.auth_test_support import encode_validate_token_wire, grpc_validator, rpc_error
+from tests.unit.memory_test_support import sample_memory_row
 
 
 def test_proto_wire_skips_unknown_len_field_and_token_id() -> None:
@@ -146,30 +147,7 @@ def test_aware_helpers() -> None:
 async def test_after_commit_skips_non_created() -> None:
     cache = AsyncMock()
     handler = AfterCommitHandler(cache=cache, store=None)
-    row = MemoryRow(
-        id=uuid4(),
-        org_id=uuid4(),
-        agent_id=uuid4(),
-        content="hello",
-        content_tokens=1,
-        category="factual",
-        confidence=0.8,
-        status="active",
-        source="user_provided",
-        pii_detected=False,
-        pii_redacted=False,
-        session_id=None,
-        visibility="agent",
-        pinned=False,
-        tags=(),
-        metadata={},
-        retrieval_count=0,
-        usefulness_score=0.5,
-        valid_from=datetime.now(tz=UTC),
-        valid_until=None,
-        created_at=datetime.now(tz=UTC),
-        updated_at=datetime.now(tz=UTC),
-    )
+    row = sample_memory_row()
     await handler(WriteOutcome(kind=WriteOutcomeKind.QUARANTINED, memory=row))
     cache.write_created.assert_not_awaited()
 
@@ -179,30 +157,7 @@ async def test_after_commit_writes_cache() -> None:
     cache = AsyncMock()
     cache.write_created = AsyncMock()
     handler = AfterCommitHandler(cache=cache, store=None)
-    row = MemoryRow(
-        id=uuid4(),
-        org_id=uuid4(),
-        agent_id=uuid4(),
-        content="hello",
-        content_tokens=1,
-        category="factual",
-        confidence=0.8,
-        status="active",
-        source="user_provided",
-        pii_detected=False,
-        pii_redacted=False,
-        session_id=None,
-        visibility="agent",
-        pinned=False,
-        tags=(),
-        metadata={},
-        retrieval_count=0,
-        usefulness_score=0.5,
-        valid_from=datetime.now(tz=UTC),
-        valid_until=None,
-        created_at=datetime.now(tz=UTC),
-        updated_at=datetime.now(tz=UTC),
-    )
+    row = sample_memory_row()
     await handler(WriteOutcome(kind=WriteOutcomeKind.CREATED, memory=row))
     cache.write_created.assert_awaited_once()
 
@@ -290,29 +245,12 @@ async def test_orchestrator_quarantine_calls_after_commit() -> None:
     mock_cm.__aexit__ = AsyncMock(return_value=None)
 
     orch = MemoryWriteOrchestrator(_Pipe(), MagicMock(return_value=mock_cm), after_commit=after_commit)
-    fake_row = MemoryRow(
-        id=uuid4(),
+    fake_row = sample_memory_row(
         org_id=org_id,
         agent_id=agent_id,
         content="quarantine",
-        content_tokens=1,
-        category="factual",
-        confidence=0.8,
         status="quarantined",
-        source="user_provided",
         pii_detected=True,
-        pii_redacted=False,
-        session_id=None,
-        visibility="agent",
-        pinned=False,
-        tags=(),
-        metadata={},
-        retrieval_count=0,
-        usefulness_score=0.5,
-        valid_from=datetime.now(tz=UTC),
-        valid_until=None,
-        created_at=datetime.now(tz=UTC),
-        updated_at=datetime.now(tz=UTC),
     )
     with patch("app.write.orchestrator.insert_memory_session", AsyncMock(return_value=fake_row)):
         await orch.create(
@@ -450,30 +388,7 @@ async def test_orchestrator_after_commit_failure_does_not_propagate() -> None:
         MagicMock(return_value=mock_cm),
         after_commit=after_commit,
     )
-    fake_row = MemoryRow(
-        id=uuid4(),
-        org_id=uuid4(),
-        agent_id=uuid4(),
-        content="x",
-        content_tokens=1,
-        category="factual",
-        confidence=0.8,
-        status="active",
-        source="user_provided",
-        pii_detected=False,
-        pii_redacted=False,
-        session_id=None,
-        visibility="agent",
-        pinned=False,
-        tags=(),
-        metadata={},
-        retrieval_count=0,
-        usefulness_score=0.5,
-        valid_from=datetime.now(tz=UTC),
-        valid_until=None,
-        created_at=datetime.now(tz=UTC),
-        updated_at=datetime.now(tz=UTC),
-    )
+    fake_row = sample_memory_row(content="x")
     with patch("app.write.orchestrator.insert_memory_session", AsyncMock(return_value=fake_row)):
         outcome = await orch.create(
             CreateMemoryCommand(org_id=uuid4(), agent_id=uuid4(), content="x")

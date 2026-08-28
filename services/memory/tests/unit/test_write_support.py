@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
@@ -16,39 +15,16 @@ from app.write.after_commit import AfterCommitHandler
 from app.write.cache import MemoryCacheWriter
 from app.write.embed_context import get_write_org_id, reset_write_org_id, set_write_org_id
 from app.write.errors import is_active_content_hash_violation
-from app.write.models import MemoryRow, WriteOutcome, WriteOutcomeKind
+from app.write.models import WriteOutcome, WriteOutcomeKind
 from app.write.persist import (
     content_token_count,
     escalations_from_decisions,
 )
+from tests.unit.memory_test_support import sample_memory_row
 
 
-def _row() -> MemoryRow:
-    now = datetime.now(tz=UTC)
-    return MemoryRow(
-        id=uuid4(),
-        org_id=uuid4(),
-        agent_id=uuid4(),
-        content="hello world",
-        content_tokens=2,
-        category="factual",
-        confidence=0.8,
-        status="active",
-        source="user_provided",
-        pii_detected=False,
-        pii_redacted=False,
-        session_id=None,
-        visibility="agent",
-        pinned=False,
-        tags=(),
-        metadata={},
-        retrieval_count=0,
-        usefulness_score=0.5,
-        valid_from=now,
-        valid_until=None,
-        created_at=now,
-        updated_at=now,
-    )
+def _row():
+    return sample_memory_row(content="hello world", content_tokens=2)
 
 
 def test_content_token_count_minimum_one() -> None:
