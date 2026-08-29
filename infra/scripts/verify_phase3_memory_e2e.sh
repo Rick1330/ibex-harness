@@ -49,6 +49,11 @@ expect_http() {
   if [[ "$got" == "$want" ]]; then
     pass "$ok_msg"
   else
+    if [[ -n "${BODY_FILE:-}" && -f "$BODY_FILE" ]]; then
+      echo "response body:" >&2
+      head -c 4096 "$BODY_FILE" >&2 || true
+      echo >&2
+    fi
     fail "$fail_msg"
   fi
 }
@@ -217,6 +222,7 @@ start_stack() {
   wait_http "auth" "$AUTH_HTTP/health"
 
   echo "e2e-phase3-memory: starting stub TEI (1024-d) on :${STUB_TEI_PORT}..."
+  export PYTHONPATH="$EMBEDDER_DIR${PYTHONPATH:+:$PYTHONPATH}"
   (
     cd "$EMBEDDER_DIR"
     if [[ ! -d .venv ]]; then
@@ -224,30 +230,35 @@ start_stack() {
     fi
     # shellcheck disable=SC1091
     source .venv/bin/activate
-    export PYTHONPATH="$EMBEDDER_DIR${PYTHONPATH:+:$PYTHONPATH}"
     exec python "$STUB_TEI_PY" --host 127.0.0.1 --port "$STUB_TEI_PORT"
   ) >"$LOG_DIR/stub-tei.log" 2>&1 &
   PIDS+=("$!")
   wait_http "stub-tei" "http://127.0.0.1:${STUB_TEI_PORT}/health"
 
   echo "e2e-phase3-memory: starting embedder (gpu→stub TEI) on :${embedder_port}..."
+  export IBEX_EMBEDDING_PROFILE=gpu
+  export IBEX_EMBEDDING_TEI_BASE_URL="http://127.0.0.1:${STUB_TEI_PORT}"
+  export IBEX_EMBEDDING_TEI_ALLOW_INSECURE=true
+  export IBEX_EMBEDDING_DIM=1024
+  export IBEX_EMBEDDING_MODEL=BAAI/bge-m3
+  export IBEX_EMBEDDING_API_TOKEN="$EMBED_TOKEN"
+  export IBEX_EMBEDDING_CACHE_ENABLED=false
   (
     cd "$EMBEDDER_DIR"
     # shellcheck disable=SC1091
     source .venv/bin/activate
-    export IBEX_EMBEDDING_PROFILE=gpu
-    export IBEX_EMBEDDING_TEI_BASE_URL="http://127.0.0.1:${STUB_TEI_PORT}"
-    export IBEX_EMBEDDING_TEI_ALLOW_INSECURE=true
-    export IBEX_EMBEDDING_DIM=1024
-    export IBEX_EMBEDDING_MODEL=BAAI/bge-m3
-    export IBEX_EMBEDDING_API_TOKEN="$EMBED_TOKEN"
-    export IBEX_EMBEDDING_CACHE_ENABLED=false
     exec uvicorn app.main:app --host 127.0.0.1 --port "$embedder_port"
   ) >"$LOG_DIR/embedder.log" 2>&1 &
   PIDS+=("$!")
   wait_http "embedder" "$EMBEDDER_ADDR/health"
 
   echo "e2e-phase3-memory: starting memory on :${memory_port}..."
+  export IBEX_MEMORY_DATABASE_URL="${POSTGRES_DSN}"
+  export IBEX_MEMORY_REDIS_URL="${REDIS_URL}"
+  export IBEX_AUTH_GRPC_ADDR="127.0.0.1:${AUTH_GRPC_PORT}"
+  export IBEX_MEMORY_AUTH_TIMEOUT_MS="${IBEX_MEMORY_AUTH_TIMEOUT_MS:-2000}"
+  export IBEX_MEMORY_EMBEDDING_BASE_URL="$EMBEDDER_ADDR"
+  export IBEX_MEMORY_NEAR_DUPLICATE_SIM_THRESHOLD="$NEAR_DUP_MIN_SIM"
   (
     cd "$MEMORY_DIR"
     if [[ ! -d .venv ]]; then
@@ -255,12 +266,6 @@ start_stack() {
     fi
     # shellcheck disable=SC1091
     source .venv/bin/activate
-    export IBEX_MEMORY_DATABASE_URL="${POSTGRES_DSN}"
-    export IBEX_MEMORY_REDIS_URL="${REDIS_URL}"
-    export IBEX_AUTH_GRPC_ADDR="127.0.0.1:${AUTH_GRPC_PORT}"
-    export IBEX_MEMORY_EMBEDDING_BASE_URL="$EMBEDDER_ADDR"
-    export IBEX_EMBEDDING_API_TOKEN="$EMBED_TOKEN"
-    export IBEX_MEMORY_NEAR_DUPLICATE_SIM_THRESHOLD="$NEAR_DUP_MIN_SIM"
     exec uvicorn app.main:app --host 127.0.0.1 --port "$memory_port"
   ) >"$LOG_DIR/memory.log" 2>&1 &
   PIDS+=("$!")
@@ -286,7 +291,8 @@ else
 fi
 
 export EMBEDDER_ADDR DEV_ORG EMBED_TOKEN
-export POSTGRES_DSN IBEX_MEMORY_DATABASE_URL="${POSTGRES_DSN:-postgres://ibex:ibex@localhost:5433/ibex_test?sslmode=disable}"
+export POSTGRES_DSN="${POSTGRES_DSN:-postgres://ibex:ibex@localhost:5433/ibex_test?sslmode=disable}"
+export IBEX_MEMORY_DATABASE_URL="$POSTGRES_DSN"
 memory_seed fixture-cleanup --org-id "$DEV_ORG" --agent-id "$DEV_AGENT"
 pass "fixture cleanup complete"
 

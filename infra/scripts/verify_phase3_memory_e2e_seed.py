@@ -10,7 +10,7 @@ import os
 import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from uuid import UUID, uuid4
+from uuid import UUID
 
 _ROOT = Path(__file__).resolve().parents[2]
 _MEMORY_DIR = _ROOT / "services" / "memory"
@@ -25,8 +25,11 @@ from app.db import create_engine, create_session_factory  # noqa: E402
 from app.vectorstore.pgvector_store import PgVectorStore  # noqa: E402
 from tests.integration.conftest import with_service_org  # noqa: E402
 from tests.integration.find_similar_support import (  # noqa: E402
+    InsertActiveMemoryParams,
     InsertScoredMemoryParams,
     SeedCompositeRankingParams,
+    insert_active_memory,
+    insert_scored_memory,
     upsert_embedding,
 )
 
@@ -61,7 +64,7 @@ async def cmd_ranking_seed() -> None:
     agent_id = UUID(os.getenv("IBEX_E2E_DEV_AGENT_ID", str(DEV_AGENT_ID)))
     factory, store = await _session_stack()
     now = datetime.now(tz=UTC)
-    factual_id = await _insert_scored_memory(
+    factual_id = await insert_scored_memory(
         factory,
         InsertScoredMemoryParams(
             org_id=org_id,
@@ -71,7 +74,7 @@ async def cmd_ranking_seed() -> None:
             valid_from=now - timedelta(days=90),
         ),
     )
-    episodic_id = await _insert_scored_memory(
+    episodic_id = await insert_scored_memory(
         factory,
         InsertScoredMemoryParams(
             org_id=org_id,
@@ -96,45 +99,16 @@ async def cmd_ranking_seed() -> None:
     )
 
 
-async def _insert_scored_memory(
-    session_factory: async_sessionmaker[AsyncSession],
-    params: InsertScoredMemoryParams,
-) -> UUID:
-    memory_id = uuid4()
-    async with session_factory() as session, session.begin():
-        await with_service_org(session, params.org_id)
-        await session.execute(
-            text(
-                """
-                INSERT INTO ibex_core.memories (
-                    id, org_id, agent_id, content, content_hash, content_tokens,
-                    category, confidence, usefulness_score, status, valid_from
-                ) VALUES (
-                    :id, :org_id, :agent_id, :content, :hash, :tokens,
-                    :category, :confidence, :usefulness, :status, :valid_from
-                )
-                """
-            ),
-            {
-                "id": str(memory_id),
-                "org_id": str(params.org_id),
-                "agent_id": str(params.agent_id),
-                "content": params.content,
-                "hash": f"hash-{memory_id.hex}",
-                "tokens": max(1, len(params.content.split())),
-                "category": params.category,
-                "confidence": params.confidence,
-                "usefulness": params.usefulness_score,
-                "status": params.status,
-                "valid_from": params.valid_from,
-            },
-        )
-    return memory_id
-
-
 async def cmd_cascade_setup(memory_id: UUID, org_id: UUID, agent_id: UUID) -> None:
     factory, _ = await _session_stack()
-    related_id = await _insert_related_memory(factory, org_id, agent_id)
+    related_id = await insert_active_memory(
+        factory,
+        InsertActiveMemoryParams(
+            org_id=org_id,
+            agent_id=agent_id,
+            content="phase3 e2e cascade related memory",
+        ),
+    )
     async with factory() as session, session.begin():
         await with_service_org(session, org_id)
         await session.execute(
@@ -178,36 +152,6 @@ async def cmd_cascade_setup(memory_id: UUID, org_id: UUID, agent_id: UUID) -> No
                 "candidate_id": str(related_id),
             },
         )
-
-
-async def _insert_related_memory(
-    session_factory: async_sessionmaker[AsyncSession],
-    org_id: UUID,
-    agent_id: UUID,
-) -> UUID:
-    memory_id = uuid4()
-    async with session_factory() as session, session.begin():
-        await with_service_org(session, org_id)
-        await session.execute(
-            text(
-                """
-                INSERT INTO ibex_core.memories (
-                    id, org_id, agent_id, content, content_hash, content_tokens
-                ) VALUES (
-                    :id, :org_id, :agent_id, :content, :hash, :tokens
-                )
-                """
-            ),
-            {
-                "id": str(memory_id),
-                "org_id": str(org_id),
-                "agent_id": str(agent_id),
-                "content": "phase3 e2e cascade related memory",
-                "hash": f"hash-{memory_id.hex}",
-                "tokens": 5,
-            },
-        )
-    return memory_id
 
 
 async def cmd_fixture_cleanup(org_id: UUID, agent_id: UUID) -> None:
