@@ -174,6 +174,11 @@ class Settings(BaseSettings):
 
     memory_cache_ttl_seconds: int = Field(default=3600, ge=60)
 
+    search_fallback_enabled: bool = Field(
+        default=True,
+        description="Supplement sparse vector hits with GIN full-text search (3.D.1)",
+    )
+
     @field_validator("database_url", mode="before")
     @classmethod
     def _empty_dsn_to_none(cls, value: object) -> object:

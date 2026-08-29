@@ -52,3 +52,7 @@ class ExternalServiceError(IBEXError):
 
 class EmbeddingServiceError(ExternalServiceError):
     code = "EMBEDDING_FAILED"
+
+
+class MemoryDatabaseError(ExternalServiceError):
+    code = "DATABASE_UNAVAILABLE"

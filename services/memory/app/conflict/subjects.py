@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from functools import lru_cache
 from typing import Any
 
@@ -16,7 +17,7 @@ def normalize_subject_key(raw: str) -> str:
 
 
 @lru_cache(maxsize=2)
-def _nlp(model_name: str) -> object:
+def _nlp(model_name: str) -> Callable[[str], Any]:
     import spacy
 
     return spacy.load(model_name)

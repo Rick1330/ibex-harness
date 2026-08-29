@@ -28,11 +28,13 @@ def test_candidate_confidence_boundaries(confidence: float) -> None:
 
 @pytest.mark.parametrize("confidence", [-0.01, 1.01])
 def test_candidate_confidence_rejects_out_of_range(confidence: float) -> None:
+    memory_id = uuid4()
+    interval = _interval()
     with pytest.raises(ValueError, match="confidence"):
         CandidateMemory(
-            memory_id=uuid4(),
+            memory_id=memory_id,
             content="x",
-            interval=_interval(),
+            interval=interval,
             confidence=confidence,
         )
 
@@ -45,5 +47,6 @@ def test_incoming_confidence_boundaries(confidence: float) -> None:
 
 @pytest.mark.parametrize("confidence", [-1.0, 2.0])
 def test_incoming_confidence_rejects_out_of_range(confidence: float) -> None:
+    interval = _interval()
     with pytest.raises(ValueError, match="confidence"):
-        IncomingMemory(content="x", interval=_interval(), confidence=confidence)
+        IncomingMemory(content="x", interval=interval, confidence=confidence)

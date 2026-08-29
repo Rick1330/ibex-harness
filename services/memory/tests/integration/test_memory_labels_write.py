@@ -241,6 +241,11 @@ async def test_orchestrator_label_insert_failure_rolls_back_memory(
     await ensure_pii_ready(orch)
 
     before_mem, before_labels = await count_label_rows(session_factory, org_id=org_id)
+    cmd = CreateMemoryCommand(
+        org_id=org_id,
+        agent_id=agent_id,
+        content=f"rollback probe {uuid4().hex}",
+    )
     with (
         patch(
             "app.write.orchestrator.insert_labels_session",
@@ -248,13 +253,7 @@ async def test_orchestrator_label_insert_failure_rolls_back_memory(
         ),
         pytest.raises(RuntimeError, match="label insert failed"),
     ):
-        await orch.create(
-            CreateMemoryCommand(
-                org_id=org_id,
-                agent_id=agent_id,
-                content=f"rollback probe {uuid4().hex}",
-            )
-        )
+        await orch.create(cmd)
     after_mem, after_labels = await count_label_rows(session_factory, org_id=org_id)
     assert after_mem == before_mem
     assert after_labels == before_labels

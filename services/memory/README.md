@@ -53,6 +53,19 @@ workers (`services/worker/`).
 - Empty explicit `labels: []` → `ValidationError`; duplicate label → `409`-class validation error
 - Milestone: [3.C.4](../../web/content/roadmap/phase-3-memory-engine/milestones/3.c.4-multi-label-classification.mdx); tracking [#630](https://github.com/Rick1330/ibex-harness/issues/630)
 
+### m3.D.1 (Track D — Semantic search read path)
+
+- `POST /v1/memories/search` — embed query, HNSW vector search via `VectorStore`, GIN
+  full-text fallback when `len(vector_hits) < limit` (toggle:
+  `IBEX_MEMORY_SEARCH_FALLBACK_ENABLED`)
+- `app/read/` — `MemoryReadRepository.find_similar`, `full_text_search`, merge + hydrate
+- Auth: `memory:read`; org/agent scoped; active rows only (`status=active`, `deleted_at IS NULL`)
+- Metric: `ibex_memory_search_fallback_total{triggered}`
+- Tests: unit merge/boundary + integration cross-org/agent/status/fallback/HTTP + index
+  gates: HNSW `pg_stat idx_scan` runtime (`test_hnsw_index_scan_at_runtime`) and GIN `pg_stat idx_scan` runtime
+  (`test_gin_index_scan_at_runtime` in `tests/integration/test_find_similar_plans.py`)
+- Milestone: [3.D.1](../../web/content/roadmap/phase-3-memory-engine/milestones/3.d.1-semantic-search-read-path.mdx)
+
 ### m3.C.5 (Track C — Write orchestration)
 
 - `POST /v1/memories` — documented contract ([API_DOCUMENTATION.md](../../web/engineering/API_DOCUMENTATION.md))

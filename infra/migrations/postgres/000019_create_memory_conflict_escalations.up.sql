@@ -10,7 +10,7 @@ CREATE TABLE ibex_core.memory_conflict_escalations (
     new_memory_id       UUID NOT NULL,
     candidate_memory_id UUID NOT NULL,
     conflict_type       TEXT NOT NULL,
-    status              TEXT NOT NULL DEFAULT 'pending'
+    status              TEXT NOT NULL DEFAULT 'pending' -- NOSONAR
                         CHECK (status IN (
                             'pending', -- NOSONAR
                             'resolved',

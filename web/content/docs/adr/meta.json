@@ -55,6 +55,7 @@
     "0054-memory-pii-presidio-in-process",
     "0055-memory-write-path-dedup",
     "0056-temporal-conflict-detection",
-    "0057-memory-write-orchestration"
+    "0057-memory-write-orchestration",
+    "0058-semantic-search-fts-fallback-trigger"
   ]
 }

@@ -623,9 +623,9 @@ X-MFA-Code: 123456
 
 ### POST /v1/memories/search
 
-**Semantic search over memories**
+**Semantic search over memories (milestone 3.D.1)**
 
-Searches memories using vector similarity. More powerful than the list endpoint's `search` parameter because it uses embeddings rather than full-text search.
+Embeds the query via the embedder service, runs HNSW vector search through `VectorStore.search()`, and supplements with GIN full-text search when vector hits are sparse (`len(vector_hits) < limit`). Raw cosine similarity / `ts_rank_cd` only — composite scoring is milestone **3.D.2**.
 
 **Required Permission:** `memory:read`
 
@@ -641,19 +641,7 @@ Content-Type: application/json
   "query": "What are the user's UI preferences?",
   "limit": 10,
   "min_similarity": 0.7,
-  "filters": {
-    "category": ["preference", "behavioral"],
-    "tags": ["ui"],
-    "min_confidence": 0.6,
-    "created_after": "2024-01-01T00:00:00Z"
-  },
-  "ranking": {
-    "recency_weight": 0.25,
-    "relevance_weight": 0.40,
-    "usefulness_weight": 0.20,
-    "confidence_weight": 0.10,
-    "frequency_weight": 0.05
-  }
+  "min_confidence": 0.0
 }
 ```
 
@@ -662,13 +650,12 @@ Content-Type: application/json
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `agent_id` | UUID | Yes | Agent to search memories of |
-| `query` | string | Yes | Natural language query |
-| `limit` | integer | No | 1-50, default 10 |
-| `min_similarity` | float | No | 0.0-1.0 similarity threshold |
-| `filters` | object | No | Additional filters |
-| `ranking` | object | No | Custom ranking weights (must sum to 1.0) |
-| `session_id` | UUID | No | Include session-specific memories |
-| `include_archived` | boolean | No | Include archived memories |
+| `query` | string | Yes | Natural language query (1–10,000 chars) |
+| `limit` | integer | No | 1–50, default 10 |
+| `min_similarity` | float | No | 0.0–1.0 cosine similarity floor (passed to VectorStore) |
+| `min_confidence` | float | No | 0.0–1.0 memory confidence floor, default 0.0 |
+
+**Deferred to 3.D.2+:** `filters`, `ranking`, `session_id`, `include_archived`.
 
 **Response: 200 OK**
 
@@ -679,27 +666,31 @@ Content-Type: application/json
       {
         "memory": {
           "id": "a1b2c3d4-...",
+          "org_id": "550e8400-e29b-41d4-a716-446655440000",
+          "agent_id": "550e8400-e29b-41d4-a716-446655440000",
           "content": "User prefers dark mode in all interfaces",
           "category": "preference",
           "confidence": 0.95,
-          "created_at": "2024-01-15T10:30:45.123Z"
+          "status": "active",
+          "created_at": "2024-01-15T10:30:45.123Z",
+          "updated_at": "2024-01-15T10:30:45.123Z"
         },
-        "scores": {
-          "similarity": 0.94,
-          "recency": 0.72,
-          "usefulness": 0.82,
-          "confidence": 0.95,
-          "frequency": 0.47,
-          "composite": 0.87
-        },
-        "rank": 1
+        "similarity": 0.94,
+        "rank": 1,
+        "source": "vector"
       }
-    ],
-    "total_candidates_evaluated": 847,
-    "search_time_ms": 42
+    ]
   }
 }
 ```
+
+`source` is `vector` or `full_text` (GIN fallback hit). Results are merged: vector hits first (desc similarity), then FTS hits (desc `ts_rank_cd`), deduped by memory id.
+
+**Errors:** `400` validation, `401`/`403` auth, `503` embedder unavailable (`EMBEDDING_FAILED`) or read path not configured.
+
+**Observability:** `ibex_memory_search_fallback_total{triggered="true|false"}` — Grafana panel on Memory Service dashboard.
+
+**Toggle:** `IBEX_MEMORY_SEARCH_FALLBACK_ENABLED` (default `true`).
 
 ---
 

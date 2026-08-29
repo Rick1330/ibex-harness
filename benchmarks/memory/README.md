@@ -18,6 +18,19 @@ Synthetic semi-dense unit-vector corpus against live `pgvector` HNSW
 - **plan gate** — `EXPLAIN (ANALYZE, BUFFERS)` must use `idx_memories_embedding_hnsw`
 - **pg_stat gate** — `idx_scan` on that index must increase across the timed batch
 
+### GIN gate (integration)
+
+`services/memory/tests/integration/test_find_similar_plans.py` validates the production
+`full_text_search()` query path and runtime GIN index usage via **`pg_stat idx_scan`**
+on `idx_memories_search_vector` (helpers in `benchmarks/memory/corpus.py` /
+`plan_assert.py`). It does **not** exercise sparse-vector retrieval or the repository
+fallback decision — those are covered by `test_find_similar_sparse_agent_triggers_fallback`
+and related integration tests.
+EXPLAIN is not used for GIN: under org+agent filters the planner may prefer btree or
+bitmap combinations that do not show a bare GIN node in EXPLAIN, especially when
+`enable_bitmapscan` is restricted. Runtime `pg_stat` on the real FTS path matches the HNSW
+bench dual-gate philosophy (plan shape + index exercised at runtime).
+
 ### Hard methodology rules
 
 1. `TRUNCATE ibex_core.memories CASCADE` at script start and before every size

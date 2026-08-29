@@ -1,0 +1,84 @@
+---
+title: "ADR-0058: Semantic search FTS fallback trigger"
+description: "Architecture decision record 0058 — when GIN full-text supplements vector search in find_similar, merge rules, and latency tradeoffs."
+adrId: "0058"
+status: "Accepted"
+date: "2026-08-29"
+authors: "IBEX Harness team"
+---
+
+# ADR-0058: Semantic search FTS fallback trigger
+
+- **Status:** Accepted
+- **Date:** 2026-08-29
+- **Authors:** IBEX Harness team
+- **Milestone:** [3.D.1 Semantic search read path](/roadmap/phase-3-memory-engine/milestones/3.d.1-semantic-search-read-path)
+
+## Context
+
+Milestone 3.D.1 ships `MemoryReadRepository.find_similar()` with HNSW vector search as the primary path and GIN `ts_rank_cd` full-text search as a supplement when vector results do not fill the caller's requested page.
+
+Phase 3 goals describe fallback when "vector results &lt; K". During implementation review, a fixed sparse threshold (decoupled from caller `limit`) was considered to avoid running FTS when an agent's corpus is smaller than the requested page size.
+
+## Options Considered
+
+### 1) Fixed sparse threshold (e.g. supplement only when `len(vector_results) < 3`)
+
+**Pros:** Avoids FTS on agents whose corpus is smaller than `limit` but still semantically well-covered by vector hits.
+
+**Cons:** Misses `min_confidence`-driven sparsity (vector ANN returns candidates that hydrate filters out). Fires FTS when vector already returned ≥ `limit` hits but a fixed threshold is low. Adds a magic constant unrelated to caller intent.
+
+### 2) Caller-relative trigger: `len(hydrated_vector_results) < limit` (chosen)
+
+**Pros:** "Sparse" means the caller's page is unfilled — regardless of whether the shortfall is due to corpus size, `min_similarity` filtering, or `min_confidence` dropping rows during hydrate. No magic constant. Matches API contract: return up to `limit` best results.
+
+**Cons:** When `limit` exceeds corpus size (e.g. `limit=20`, 15 memories), FTS runs on every search for that agent. Measured FTS overhead at integration scale is small (see Consequences).
+
+## Decision
+
+1. **Trigger:** `settings.search_fallback_enabled` AND `is_searchable_query(query_text)` AND `len(hydrated_vector_results) < limit`.
+2. **No fixed `VECTOR_FALLBACK_THRESHOLD` constant** — the milestone sketch constant was illustrative, not a design requirement.
+3. **Merge:** Vector hits first (desc similarity), FTS append (desc `ts_rank_cd`), dedupe by `memory_id`, cap at `limit`.
+4. **Metric:** `ibex_memory_search_fallback_total{triggered="true"}` increments only when FTS returns at least one new candidate (not on every trigger evaluation).
+5. **Toggle:** `IBEX_MEMORY_SEARCH_FALLBACK_ENABLED` (default `true`).
+
+## Index verification (Semgrep relocation)
+
+- HNSW runtime gate: `PgVectorStore.search` + `pg_stat idx_scan` on `idx_memories_embedding_hnsw` (`test_hnsw_index_scan_at_runtime`). EXPLAIN helpers remain in `benchmarks/memory/plan_explain.py` for `hnsw_bench` only.
+- GIN verification: runtime `pg_stat idx_scan` on `idx_memories_search_vector` (`test_gin_index_scan_at_runtime`). GIN EXPLAIN was removed because EXPLAIN is unreliable when btree and GIN compete under org/agent scope filters.
+
+## Consequences
+
+### Frequency (typical agents)
+
+| Scenario | limit | Condition | FTS fires? |
+| --- | --- | --- | --- |
+| Default agent | 10 | 15 memories, all pass filters | No (10 vector hits) |
+| Small agent | 10 | 8 memories | Yes (8 &lt; 10) |
+| Large limit | 20 | 15 memories | Yes (15 &lt; 20) |
+| Full page | 3 | ≥3 vector hits after hydrate | No |
+| Confidence filter | 10 | 12 memories, 5 pass `min_confidence` | Yes (5 &lt; 10) |
+
+With default `limit=10`, agents holding 10–30 memories do **not** run FTS on every search unless filters shrink results below `limit`.
+
+### Latency
+
+Phase 3 budgets ([latency table](/roadmap/phase-3-memory-engine/index.mdx)):
+
+| Operation | Budget |
+| --- | --- |
+| pgvector HNSW search | p95 &lt; 30ms @ 1M vectors |
+| Memory write (full pipeline) | p95 &lt; 200ms |
+
+Operational alert ([DEPLOYMENT.md](/engineering/DEPLOYMENT.md)): memory search p95 &gt; 100ms for 10 minutes.
+
+Integration smoke test (`test_find_similar_latency_smoke`) seeds 500 rows and asserts vector-only `find_similar` p95 &lt; 100ms on CI hardware (not 1M scale). FTS supplement adds a small delta measured in the same test; the hard gate is vector-only p95.
+
+### 3.D.2 handoff
+
+Ranking today uses raw cosine similarity / `ts_rank_cd` only — no `composite_score()`. Milestone 3.D.2 wires composite scoring after merge/dedupe in `find_similar()`.
+
+## Related
+
+- [ADR-0053](/docs/adr/0053-vector-store-abstraction) — VectorStore ABC and HNSW SQL
+- [ADR-0057](/docs/adr/0057-memory-write-orchestration) — write path (separate broad-exception cleanup tracked in GitHub #634)

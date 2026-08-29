@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Protocol
 
 from app.conflict.types import CandidateMemory, ConflictOutcome, IncomingMemory
@@ -38,4 +39,5 @@ class NoopConflictClassifier:
         candidate: CandidateMemory,
     ) -> ConflictOutcome:
         del incoming, candidate
+        await asyncio.sleep(0)
         return ConflictOutcome.ESCALATE_PENDING

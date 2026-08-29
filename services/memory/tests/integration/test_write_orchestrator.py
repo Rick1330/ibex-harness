@@ -125,10 +125,9 @@ async def test_orchestrator_exact_duplicate_raises_409_path(
     )
     orch = build_orchestrator(OrchestratorTestDeps(session_factory, settings, store))
     await ensure_pii_ready(orch)
+    cmd = CreateMemoryCommand(org_id=org_id, agent_id=agent_id, content=content)
     with pytest.raises(DuplicateMemoryError) as exc_info:
-        await orch.create(
-            CreateMemoryCommand(org_id=org_id, agent_id=agent_id, content=content)
-        )
+        await orch.create(cmd)
     assert exc_info.value.existing_id == memory_id
 
 

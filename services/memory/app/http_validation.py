@@ -39,7 +39,7 @@ def validation_error_response(exc: RequestValidationError) -> JSONResponse:
     )
 
 
-async def request_validation_error_handler(
+def request_validation_error_handler(
     _: Request, exc: RequestValidationError
 ) -> JSONResponse:
     return validation_error_response(exc)

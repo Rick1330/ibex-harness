@@ -11,11 +11,14 @@ from fastapi import HTTPException
 from app.auth.client import StaticTokenValidator, ValidateResult, parse_authorization_header
 from app.auth.errors import AuthFailedError
 from app.deps import (
+    get_embedding_client,
     get_idempotency_store,
+    get_read_repository,
     get_redis,
     get_session_factory,
     get_validator,
     get_write_orchestrator,
+    require_memory_read,
     require_memory_write,
     require_token,
 )
@@ -80,6 +83,34 @@ async def test_require_memory_write_forbidden() -> None:
     with pytest.raises(HTTPException) as exc:
         require_memory_write(token)
     assert exc.value.status_code == 403
+
+
+def test_require_memory_read_forbidden() -> None:
+    token = ValidateResult(org_id=uuid4(), permissions=MEMORY_WRITE)
+    with pytest.raises(HTTPException) as exc:
+        require_memory_read(token)
+    assert exc.value.status_code == 403
+
+
+def test_require_memory_read_success() -> None:
+    token = ValidateResult(org_id=uuid4(), permissions=MEMORY_READ)
+    assert require_memory_read(token) is token
+
+
+def test_get_read_repository_missing_returns_503() -> None:
+    request = MagicMock()
+    request.app.state.memory = MemoryAppState()
+    with pytest.raises(HTTPException) as exc:
+        get_read_repository(request)
+    assert exc.value.status_code == 503
+
+
+def test_get_embedding_client_missing_returns_503() -> None:
+    request = MagicMock()
+    request.app.state.memory = MemoryAppState()
+    with pytest.raises(HTTPException) as exc:
+        get_embedding_client(request)
+    assert exc.value.status_code == 503
 
 
 def test_get_idempotency_and_redis_from_state() -> None:

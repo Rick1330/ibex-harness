@@ -32,18 +32,17 @@ def test_validate_metadata_rejects_deep_nesting() -> None:
 
 
 def test_create_memory_request_rejects_oversized_metadata() -> None:
+    agent_id = uuid4()
     with pytest.raises(ValidationError):
         CreateMemoryRequest(
-            agent_id=uuid4(),
+            agent_id=agent_id,
             content="hello",
             metadata={"blob": "x" * 9000},
         )
 
 
 def test_create_memory_request_rejects_too_many_labels() -> None:
+    agent_id = uuid4()
+    labels = [MemoryLabelSchema(label="factual", confidence=0.5)] * (MAX_LABELS + 1)
     with pytest.raises(ValidationError):
-        CreateMemoryRequest(
-            agent_id=uuid4(),
-            content="hello",
-            labels=[MemoryLabelSchema(label="factual", confidence=0.5)] * (MAX_LABELS + 1),
-        )
+        CreateMemoryRequest(agent_id=agent_id, content="hello", labels=labels)

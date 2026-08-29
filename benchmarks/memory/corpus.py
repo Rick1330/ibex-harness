@@ -16,6 +16,7 @@ from synth import unit_vector, vec_literal
 _DIM = 1024
 _COPY_CHUNK = 20_000
 _HNSW_INDEX = "idx_memories_embedding_hnsw"
+_GIN_INDEX = "idx_memories_search_vector"
 _SET_SERVICE_ACCOUNT = "SELECT set_config('app.is_service_account', 'true', true)"
 _HNSW_CREATE_SQL = """
 CREATE INDEX idx_memories_embedding_hnsw
@@ -107,7 +108,7 @@ async def count_memories(engine: AsyncEngine) -> int:
     return int(value or 0)
 
 
-async def idx_scan_count(engine: AsyncEngine) -> int:
+async def idx_scan_count(engine: AsyncEngine, *, index_name: str = _HNSW_INDEX) -> int:
     await scalar(engine, "SELECT pg_stat_force_next_flush()")
     value = await scalar(
         engine,
@@ -116,9 +117,14 @@ async def idx_scan_count(engine: AsyncEngine) -> int:
         FROM pg_stat_all_indexes
         WHERE indexrelname = :name
         """,
-        {"name": _HNSW_INDEX},
+        {"name": index_name},
     )
     return int(value or 0)
+
+
+async def gin_idx_scan_count(engine: AsyncEngine) -> int:
+    """Flush pg_stat and return idx_scan for idx_memories_search_vector."""
+    return await idx_scan_count(engine, index_name=_GIN_INDEX)
 
 
 async def ensure_hnsw_index(engine: AsyncEngine, *, maintenance_work_mem: str) -> None:
