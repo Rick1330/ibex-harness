@@ -18,6 +18,19 @@ Synthetic semi-dense unit-vector corpus against live `pgvector` HNSW
 - **plan gate** — `EXPLAIN (ANALYZE, BUFFERS)` must use `idx_memories_embedding_hnsw`
 - **pg_stat gate** — `idx_scan` on that index must increase across the timed batch
 
+### GIN gate (integration)
+
+`services/memory/tests/integration/test_find_similar_plans.py` validates the production
+`full_text_search()` SQL via **`EXPLAIN (ANALYZE)`** on a test-only probe transaction that
+drops competing partial btree indexes (rolled back with the session), disables RLS, and
+applies planner hints (`explain_gin_probe_plan` + `assert_gin_index_used` in
+`plan_explain.py` / `plan_assert.py`), plus a production-path hit assertion in the
+same test. It does **not** exercise sparse-vector retrieval or the repository
+fallback decision — those are covered by `test_find_similar_sparse_agent_triggers_fallback`
+and related integration tests.
+Partial btree indexes sharing the probe's `status`/`deleted_at` predicate otherwise satisfy
+`@@` via heap filters without touching `idx_memories_search_vector`.
+
 ### Hard methodology rules
 
 1. `TRUNCATE ibex_core.memories CASCADE` at script start and before every size

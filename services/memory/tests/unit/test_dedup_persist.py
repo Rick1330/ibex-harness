@@ -84,8 +84,7 @@ async def test_increment_retrieval_count_success() -> None:
 @pytest.mark.asyncio
 async def test_increment_retrieval_count_missing_row() -> None:
     session = _FakeSession([None, None, None])
+    factory = _factory_for(session)  # type: ignore[arg-type]
+    bump = RetrievalBump(org_id=uuid4(), memory_id=uuid4())
     with pytest.raises(RuntimeError, match="expected 1 row"):
-        await increment_retrieval_count(
-            _factory_for(session),  # type: ignore[arg-type]
-            RetrievalBump(org_id=uuid4(), memory_id=uuid4()),
-        )
+        await increment_retrieval_count(factory, bump)

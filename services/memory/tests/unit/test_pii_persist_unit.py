@@ -55,18 +55,17 @@ async def test_update_memory_pii_flags_success() -> None:
 @pytest.mark.asyncio
 async def test_update_memory_pii_flags_wrong_rowcount() -> None:
     session = _FakeSession(rowcount=0)
+    factory = _factory_for(session)  # type: ignore[arg-type]
+    update = MemoryPiiUpdate(
+        org_id=uuid4(),
+        memory_id=uuid4(),
+        content="x",
+        status="active",
+        pii_detected=False,
+        pii_redacted=False,
+    )
     with pytest.raises(RuntimeError, match="expected 1 row"):
-        await update_memory_pii_flags(
-            _factory_for(session),  # type: ignore[arg-type]
-            MemoryPiiUpdate(
-                org_id=uuid4(),
-                memory_id=uuid4(),
-                content="x",
-                status="active",
-                pii_detected=False,
-                pii_redacted=False,
-            ),
-        )
+        await update_memory_pii_flags(factory, update)
 
 
 def test_memory_pii_update_fields() -> None:

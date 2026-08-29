@@ -8,9 +8,24 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Response
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import SQLAlchemyError
 
-from app.deps import CreateMemoryContext, get_create_memory_context
+from app.deps import (
+    CreateMemoryContext,
+    SearchMemoryContext,
+    get_create_memory_context,
+    get_search_memory_context,
+)
 from app.exceptions import DuplicateMemoryError, EmbeddingServiceError, ValidationError
+from app.routers.memory_search_support import (
+    SearchMemoriesExecution,
+    embed_query_text,
+    http_error_for_search,
+    log_search_database_failure,
+    resolve_search_agent_id,
+    run_memory_search,
+    search_response_from_results,
+)
 from app.routers.memory_write_support import (
     CreatedResponseContext,
     begin_idempotency,
@@ -22,6 +37,7 @@ from app.routers.memory_write_support import (
     release_idempotency,
 )
 from app.schemas.memories import CreateMemoryRequest
+from app.schemas.search import SearchMemoriesRequest, SearchMemoriesResponse
 from app.write.models import WriteOutcomeKind
 
 router = APIRouter(prefix="/v1/memories", tags=["memories"])
@@ -76,3 +92,32 @@ async def create_memory(
             response=response,
         )
     )
+
+
+@router.post("/search", summary="Semantic search over memories")
+async def search_memories(
+    request: SearchMemoriesRequest,
+    ctx: Annotated[SearchMemoryContext, Depends(get_search_memory_context)],
+) -> SearchMemoriesResponse:
+    agent_id = resolve_search_agent_id(ctx.token, request.agent_id)
+    try:
+        embedding = await embed_query_text(
+            ctx.embedding_client,
+            org_id=ctx.token.org_id,
+            query=request.query,
+        )
+        results = await run_memory_search(
+            ctx.read_repository,
+            SearchMemoriesExecution.from_request(
+                org_id=ctx.token.org_id,
+                agent_id=agent_id,
+                request=request,
+                query_embedding=embedding,
+            ),
+        )
+    except (EmbeddingServiceError, ValueError) as exc:
+        raise http_error_for_search(exc) from exc
+    except SQLAlchemyError as exc:
+        log_search_database_failure(exc, org_id=ctx.token.org_id)
+        raise http_error_for_search(exc) from exc
+    return search_response_from_results(results)

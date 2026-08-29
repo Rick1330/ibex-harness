@@ -124,12 +124,14 @@ async def test_exact_duplicate_skips_embed_and_near() -> None:
     content = "User prefers typed placeholders"
 
     async def lookup(o: UUID, a: UUID, h: str) -> UUID | None:
-        assert o == org and a == agent
+        assert o == org
+        assert a == agent
         assert h == content_hash_sha256(content)
         return existing
 
     async def bump(o: UUID, mid: UUID) -> int:
-        assert o == org and mid == existing
+        assert o == org
+        assert mid == existing
         return 2
 
     seen: list[str] = []

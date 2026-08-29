@@ -44,10 +44,9 @@ async def test_orchestrator_embedding_failure_mapped() -> None:
         raise EmbeddingUnavailableError("down")
 
     orch._pipeline.run = _boom  # type: ignore[method-assign]
+    cmd = CreateMemoryCommand(org_id=uuid4(), agent_id=uuid4(), content="x")
     with pytest.raises(EmbeddingServiceError):
-        await orch.create(
-            CreateMemoryCommand(org_id=uuid4(), agent_id=uuid4(), content="x")
-        )
+        await orch.create(cmd)
 
 
 @pytest.mark.asyncio
@@ -89,10 +88,9 @@ async def test_orchestrator_active_persist_integrity_race() -> None:
             AsyncMock(return_value=1),
         ),
     ):
+        cmd = CreateMemoryCommand(org_id=org_id, agent_id=agent_id, content=ctx.content)
         with pytest.raises(DuplicateMemoryError) as err:
-            await orch.create(
-                CreateMemoryCommand(org_id=org_id, agent_id=agent_id, content=ctx.content)
-            )
+            await orch.create(cmd)
         assert err.value.existing_id == existing
 
 
@@ -244,10 +242,9 @@ async def test_orchestrator_exact_duplicate_missing_id_raises() -> None:
 
     orch = MemoryWriteOrchestrator(_Pipe(), MagicMock())
     orch._pipeline.run = _run  # type: ignore[method-assign]
+    cmd = CreateMemoryCommand(org_id=org_id, agent_id=agent_id, content="dup")
     with pytest.raises(RuntimeError, match="existing_memory_id"):
-        await orch.create(
-            CreateMemoryCommand(org_id=org_id, agent_id=agent_id, content="dup")
-        )
+        await orch.create(cmd)
 
 
 @pytest.mark.asyncio
@@ -255,14 +252,15 @@ async def test_orchestrator_race_without_existing_raises() -> None:
     org_id = uuid4()
     agent_id = uuid4()
     orch = MemoryWriteOrchestrator(_Pipe(), MagicMock())
-    with patch(
-        "app.write.orchestrator.find_active_by_content_hash",
-        AsyncMock(return_value=None),
-    ), pytest.raises(RuntimeError, match="unique violation"):
-        await orch._handle_hash_race(
-            CreateMemoryCommand(org_id=org_id, agent_id=agent_id, content="x"),
-            "hash",
-        )
+    cmd = CreateMemoryCommand(org_id=org_id, agent_id=agent_id, content="x")
+    with (
+        patch(
+            "app.write.orchestrator.find_active_by_content_hash",
+            AsyncMock(return_value=None),
+        ),
+        pytest.raises(RuntimeError, match="unique violation"),
+    ):
+        await orch._handle_hash_race(cmd, "hash")
 
 
 @pytest.mark.asyncio
@@ -325,21 +323,21 @@ async def test_orchestrator_active_integrity_errors(
             patch_target: AsyncMock(side_effect=side_effect),
         }
 
+    cmd = CreateMemoryCommand(org_id=org_id, agent_id=agent_id, content=content)
     with (
         patch.multiple("app.write.orchestrator", **patches),
         pytest.raises(expected_exc) as err,
     ):
-        await orch.create(
-            CreateMemoryCommand(org_id=org_id, agent_id=agent_id, content=content)
-        )
+        await orch.create(cmd)
     if field_code is not None:
         assert err.value.field_code == field_code
 
 
 def test_raise_duplicate_label_error_maps_pkey() -> None:
     orch = MemoryWriteOrchestrator(_Pipe(), MagicMock())
+    exc = label_violation_integrity_error()
     with pytest.raises(ValidationError) as err:
-        orch._raise_duplicate_label_error(label_violation_integrity_error())
+        orch._raise_duplicate_label_error(exc)
     assert err.value.field_code == "duplicate_label"
     assert err.value.field == "labels"
 

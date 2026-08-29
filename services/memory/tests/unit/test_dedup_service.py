@@ -153,9 +153,12 @@ async def test_exact_requires_lookup_when_enabled() -> None:
 @pytest.mark.asyncio
 async def test_near_requires_store() -> None:
     svc = DedupService(Settings())
+    org_id = uuid4()
+    agent_id = uuid4()
+    embedding = _axis(0)
     with pytest.raises(RuntimeError, match="VectorStore required"):
         await svc.find_near_duplicates(
-            org_id=uuid4(), agent_id=uuid4(), embedding=_axis(0)
+            org_id=org_id, agent_id=agent_id, embedding=embedding
         )
 
     store = InMemoryVectorStore()

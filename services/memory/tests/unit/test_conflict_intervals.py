@@ -32,8 +32,10 @@ def test_disjoint_closed_intervals() -> None:
 
 
 def test_rejects_until_not_after_from() -> None:
+    valid_from = _dt(6)
+    valid_until = _dt(3)
     with pytest.raises(ValueError, match="valid_until"):
-        ValidityInterval(valid_from=_dt(6), valid_until=_dt(3))
+        ValidityInterval(valid_from=valid_from, valid_until=valid_until)
 
 
 def test_naive_datetimes_become_utc() -> None:
