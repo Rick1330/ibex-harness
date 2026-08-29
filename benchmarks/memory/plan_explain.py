@@ -6,10 +6,9 @@ Reachability / safety (milestone 3.D.1, Semgrep relocation):
 - `text()` + interpolated `SEARCH_SQL` is acceptable here because `org_id`, `agent_id`, and
   query vectors are supplied by test fixtures with bounded, controlled literals (same rigor as
   a justified `nosemgrep` annotation).
-- GIN plan-shape verification uses EXPLAIN (ANALYZE) with seqscan/bitmapscan disabled
-  in the integration gate (`test_gin_index_used_at_runtime`); raw pg_stat idx_scan was
-  dropped because the planner often satisfies org/agent filters via btree without
-  incrementing the GIN index counter.
+- GIN plan-shape verification uses a scoped probe query under RLS (no org/agent btree
+  filters in SQL) with planner hints in `test_gin_index_used_at_runtime`; production
+  `full_text_search()` correctness is asserted separately in the same test.
 """
 
 from __future__ import annotations
@@ -20,17 +19,23 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.read.full_text import FTS_SQL
 from app.vectorstore.pgvector_store import SEARCH_SQL
+
+# RLS-scoped probe: omits org_id/agent_id predicates so the planner cannot satisfy
+# the FTS predicate via idx_memories_agent_active alone.
+GIN_PROBE_SQL = """
+SELECT id::text AS memory_id
+FROM ibex_core.memories
+WHERE status = 'active'
+  AND deleted_at IS NULL
+  AND search_vector @@ plainto_tsquery('english', :query_text)
+LIMIT 1
+"""
 
 
 @dataclass(frozen=True, slots=True)
 class GinExplainParams:
-    org_id: UUID
-    agent_id: UUID
     query_text: str
-    limit: int = 10
-    min_confidence: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,11 +77,11 @@ async def explain_hnsw_search_plan(
     return result.scalar_one()
 
 
-async def explain_gin_search_plan(
+async def explain_gin_probe_plan(
     session: AsyncSession,
     params: GinExplainParams,
 ) -> object:
-    """Run EXPLAIN for FTS SQL with planner hints that force GIN index access."""
+    """EXPLAIN FTS probe under RLS with hints that force GIN bitmap access."""
     await session.execute(
         text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
             "SET LOCAL enable_seqscan = OFF"
@@ -87,15 +92,9 @@ async def explain_gin_search_plan(
             "SET LOCAL enable_indexscan = OFF"
         )
     )
-    explain_sql = f"EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) {FTS_SQL}"
+    explain_sql = f"EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) {GIN_PROBE_SQL}"
     result = await session.execute(
         text(explain_sql),  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-        {
-            "org_id": str(params.org_id),
-            "agent_id": str(params.agent_id),
-            "query_text": params.query_text.strip(),
-            "min_confidence": params.min_confidence,
-            "limit": params.limit,
-        },
+        {"query_text": params.query_text.strip()},
     )
     return result.scalar_one()

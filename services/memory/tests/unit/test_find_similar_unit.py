@@ -116,19 +116,33 @@ async def test_find_similar_vector_only_at_limit() -> None:
 
 
 @pytest.mark.asyncio
-async def test_find_similar_triggers_fallback_when_sparse() -> None:
-    vector_id = uuid4()
+@pytest.mark.parametrize(
+    ("vector_count", "limit", "fts_rank", "expected_len"),
+    [
+        (1, 3, 0.42, 2),
+        (15, 20, 0.55, 16),
+    ],
+)
+async def test_find_similar_sparse_fts_fallback(
+    vector_count: int,
+    limit: int,
+    fts_rank: float,
+    expected_len: int,
+) -> None:
+    vector_ids = [uuid4() for _ in range(vector_count)]
     fts_id = uuid4()
     results = await _run_sparse_fts_fallback(
         SparseFtsFallbackCase(
-            vector_ids=[vector_id],
+            vector_ids=vector_ids,
             fts_id=fts_id,
-            limit=3,
+            limit=limit,
+            fts_rank=fts_rank,
         )
     )
-    assert len(results) == 2
+    assert len(results) == expected_len
     assert results[0].source == "vector"
-    assert results[1].source == "full_text"
+    if expected_len > 1:
+        assert any(item.source == "full_text" for item in results)
 
 
 @pytest.mark.asyncio
@@ -174,23 +188,6 @@ async def test_find_similar_no_fts_when_vector_fills_limit() -> None:
     fts_mock.assert_not_awaited()
     assert len(results) == 3
     assert all(item.source == "vector" for item in results)
-
-
-@pytest.mark.asyncio
-async def test_find_similar_fts_when_limit_exceeds_corpus() -> None:
-    vector_ids = [uuid4() for _ in range(15)]
-    fts_id = uuid4()
-    results = await _run_sparse_fts_fallback(
-        SparseFtsFallbackCase(
-            vector_ids=vector_ids,
-            fts_id=fts_id,
-            limit=20,
-            fts_rank=0.55,
-        )
-    )
-    assert len(results) == 16
-    assert results[0].source == "vector"
-    assert any(item.source == "full_text" for item in results)
 
 
 @pytest.mark.asyncio

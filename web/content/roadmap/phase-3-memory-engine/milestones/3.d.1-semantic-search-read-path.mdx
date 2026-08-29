@@ -86,7 +86,7 @@ Confirmed in `000017_memory_schema_v2_expand.up.sql`:
 ## Success signals
 
 - [x] Semantic search uses the HNSW path (`pg_stat idx_scan` runtime gate in `test_hnsw_index_scan_at_runtime`)
-- [x] GIN full-text fallback uses `idx_memories_search_vector` at runtime (`test_gin_index_used_at_runtime` via EXPLAIN with planner hints; HNSW uses `pg_stat idx_scan` in `test_hnsw_index_scan_at_runtime`)
+- [x] GIN full-text fallback uses `idx_memories_search_vector` at runtime (`test_gin_index_used_at_runtime`: production `full_text_search()` + RLS-scoped `explain_gin_probe_plan`; HNSW uses `pg_stat idx_scan` in `test_hnsw_index_scan_at_runtime`)
 - [x] Cross-org result leakage covered by integration isolation test
 - [x] Full-text fallback triggers when vector results are sparse
 - [x] Search calls are always org/agent scoped — no unscoped queries

@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from app.read.full_text import FullTextSearchQuery, full_text_search
 from app.vectorstore.base import SearchRequest
 from app.vectorstore.pgvector_store import PgVectorStore
 from tests.integration.conftest import with_service_org
@@ -13,7 +14,7 @@ from tests.integration.plan_assert import (
     GinExplainParams,
     assert_gin_index_used,
     assert_hnsw_index_scanned,
-    explain_gin_search_plan,
+    explain_gin_probe_plan,
     hnsw_idx_scan_count,
 )
 
@@ -50,16 +51,22 @@ async def test_gin_index_used_at_runtime(
     store: PgVectorStore,
 ) -> None:
     plan_seed = await bulk_seed_for_plans(session_factory, store)
+    fts_query = FullTextSearchQuery(
+        org_id=plan_seed.seeded.org_id,
+        agent_id=plan_seed.seeded.agent_id,
+        query_text=plan_seed.gin_query_text,
+        limit=10,
+        min_confidence=0.0,
+    )
+
+    hits = await full_text_search(session_factory, fts_query)
+    assert len(hits) >= 1
 
     async with session_factory() as session, session.begin():
         await with_service_org(session, plan_seed.seeded.org_id)
-        explain_json = await explain_gin_search_plan(
+        explain_json = await explain_gin_probe_plan(
             session,
-            GinExplainParams(
-                org_id=plan_seed.seeded.org_id,
-                agent_id=plan_seed.seeded.agent_id,
-                query_text=plan_seed.gin_query_text,
-            ),
+            GinExplainParams(query_text=plan_seed.gin_query_text),
         )
 
     summary = assert_gin_index_used(explain_json)

@@ -21,7 +21,7 @@ from benchmarks.memory.plan_assert import (
 from benchmarks.memory.plan_explain import (
     GinExplainParams,
     HnswExplainParams,
-    explain_gin_search_plan,
+    explain_gin_probe_plan,
     explain_hnsw_search_plan,
 )
 
@@ -34,7 +34,7 @@ __all__ = [
     "assert_gin_index_used",
     "assert_hnsw_index_scanned",
     "assert_hnsw_index_used",
-    "explain_gin_search_plan",
+    "explain_gin_probe_plan",
     "explain_hnsw_search_plan",
     "gin_idx_scan_count",
     "hnsw_idx_scan_count",
