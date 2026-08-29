@@ -20,6 +20,7 @@ from app.exceptions import DuplicateMemoryError, EmbeddingServiceError, Validati
 from app.routers.memory_search_support import (
     SearchMemoriesExecution,
     embed_query_text,
+    ensure_search_agent_authorized,
     http_error_for_search,
     log_search_database_failure,
     resolve_search_agent_id,
@@ -101,6 +102,11 @@ async def search_memories(
 ) -> SearchMemoriesResponse:
     agent_id = resolve_search_agent_id(ctx.token, request.agent_id)
     try:
+        await ensure_search_agent_authorized(
+            ctx.session_factory,
+            org_id=ctx.token.org_id,
+            agent_id=agent_id,
+        )
         embedding = await embed_query_text(
             ctx.embedding_client,
             org_id=ctx.token.org_id,

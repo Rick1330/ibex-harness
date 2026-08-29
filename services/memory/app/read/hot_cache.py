@@ -16,6 +16,7 @@ from app.cache.hot_keys import HOT_CACHE_CAPACITY, hot_memories_key
 from app.org_context import set_service_org
 from app.read.metrics import HOT_CACHE_READ
 from app.read.models import HotMemoryQuery, MemorySearchResult
+from app.read.pii_guard import filter_pii_blocked_results
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +112,8 @@ class MemoryHotCacheReader:
             return []
 
         HOT_CACHE_READ.labels(result="hit").inc()
-        return [hydrated[memory_id] for memory_id in ordered_ids if memory_id in hydrated]
+        ordered = [hydrated[memory_id] for memory_id in ordered_ids if memory_id in hydrated]
+        return filter_pii_blocked_results(ordered)
 
     async def _hydrate_hot(self, request: _HydrateHotRequest) -> dict[UUID, MemorySearchResult]:
         if not request.memory_ids:
