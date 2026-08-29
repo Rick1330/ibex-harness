@@ -13,7 +13,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.auth.client import StaticTokenValidator, ValidateResult
 from app.config import Settings
 from app.permissions import MEMORY_READ
-from app.read.models import HotMemoryQuery
 from app.vectorstore.base import SearchRequest, UpsertRequest
 from tests.integration.conftest import with_service_org, zero_embedding
 from tests.integration.find_similar_support import (
@@ -29,8 +28,12 @@ from tests.integration.hot_cache_support import (
     insert_and_write_hot,
     scored_params,
 )
-from tests.integration.memory_labels_write_support import with_org_rls
 from tests.integration.security.env import MemorySecurityTestEnv
+from tests.integration.security.iso_support import (
+    RlsCountQuery,
+    assert_hot_cache_empty,
+    assert_rls_count_zero,
+)
 from tests.integration.security.seed import (
     SHARED_ISO_QUERY_TEXT,
     seed_org_agent,
@@ -128,21 +131,18 @@ async def test_memory_iso_1_3_rls_floor_malformed_where(
 ) -> None:
     org_a = security_env.orgs.org_a
     org_b = security_env.orgs.org_b
-    async with session_factory() as session, session.begin():
-        await with_org_rls(session, org_a.org_id)
-        count = (
-            await session.execute(
-                text(
-                    """
-                    SELECT COUNT(*)::int AS c
-                    FROM ibex_core.memories
-                    WHERE id = :target_id
-                    """
-                ),
-                {"target_id": str(org_b.memory_id)},
-            )
-        ).one()
-    assert int(count.c) == 0
+    await assert_rls_count_zero(
+        session_factory,
+        RlsCountQuery(
+            org_id=org_a.org_id,
+            sql="""
+                SELECT COUNT(*)::int AS c
+                FROM ibex_core.memories
+                WHERE id = :target_id
+                """,
+            params={"target_id": str(org_b.memory_id)},
+        ),
+    )
 
 
 @pytest.mark.asyncio
@@ -237,14 +237,11 @@ async def test_memory_iso_1_6_hot_cache_cross_org_same_agent_id(
         ),
     )
     try:
-        results = await security_env.hot_reader.get_hot_memories(
-            HotMemoryQuery(
-                org_id=security_env.orgs.org_b.org_id,
-                agent_id=shared_agent_id,
-                limit=10,
-            )
+        await assert_hot_cache_empty(
+            security_env.hot_reader,
+            org_id=security_env.orgs.org_b.org_id,
+            agent_id=shared_agent_id,
         )
-        assert results == []
     finally:
         await flush_hot_key(security_env.redis, org_a.org_id, org_a.agent_id)
         await flush_hot_key(
@@ -285,21 +282,18 @@ async def test_memory_iso_1_7_conflict_escalations_rls_isolation(
                 "candidate_id": str(candidate_id),
             },
         )
-    async with session_factory() as session, session.begin():
-        await with_org_rls(session, org_b.org_id)
-        count = (
-            await session.execute(
-                text(
-                    """
-                    SELECT COUNT(*)::int AS c
-                    FROM ibex_core.memory_conflict_escalations
-                    WHERE new_memory_id = :new_id
-                    """
-                ),
-                {"new_id": str(org_a.memory_id)},
-            )
-        ).one()
-    assert int(count.c) == 0
+    await assert_rls_count_zero(
+        session_factory,
+        RlsCountQuery(
+            org_id=org_b.org_id,
+            sql="""
+                SELECT COUNT(*)::int AS c
+                FROM ibex_core.memory_conflict_escalations
+                WHERE new_memory_id = :new_id
+                """,
+            params={"new_id": str(org_a.memory_id)},
+        ),
+    )
 
 
 @pytest.mark.asyncio
@@ -326,9 +320,10 @@ async def test_memory_iso_1_8_hot_cache_same_org_cross_agent(
         ),
     )
     try:
-        results = await security_env.hot_reader.get_hot_memories(
-            HotMemoryQuery(org_id=org_a.org_id, agent_id=agent_b, limit=10)
+        await assert_hot_cache_empty(
+            security_env.hot_reader,
+            org_id=org_a.org_id,
+            agent_id=agent_b,
         )
-        assert results == []
     finally:
         await flush_hot_key(security_env.redis, org_a.org_id, org_a.agent_id)

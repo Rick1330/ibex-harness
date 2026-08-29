@@ -40,6 +40,23 @@ class OrgSeed:
     slug: str
 
 
+@dataclass(frozen=True, slots=True)
+class AgentInsertRow:
+    org_id: UUID
+    user_id: UUID
+    agent_id: UUID
+    name: str = "Agent"
+    slug: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class DirectMemoryInsertParams:
+    org_id: UUID
+    agent_id: UUID
+    content: str
+    status: str = "active"
+
+
 async def _insert_organization(
     session: AsyncSession,
     *,
@@ -80,16 +97,8 @@ async def _insert_user(
     )
 
 
-async def _insert_agent(
-    session: AsyncSession,
-    *,
-    org_id: UUID,
-    user_id: UUID,
-    agent_id: UUID,
-    name: str = "Agent",
-    slug: str | None = None,
-) -> None:
-    resolved_slug = slug or f"agent-{agent_id.hex[:8]}"
+async def _insert_agent(session: AsyncSession, row: AgentInsertRow) -> None:
+    resolved_slug = row.slug or f"agent-{row.agent_id.hex[:8]}"
     await session.execute(
         text(
             """
@@ -98,10 +107,10 @@ async def _insert_agent(
             """
         ),
         {
-            "id": str(agent_id),
-            "org_id": str(org_id),
-            "created_by": str(user_id),
-            "name": name,
+            "id": str(row.agent_id),
+            "org_id": str(row.org_id),
+            "created_by": str(row.user_id),
+            "name": row.name,
             "slug": resolved_slug,
         },
     )
@@ -157,9 +166,11 @@ async def seed_org_agent(
         await _insert_user(session, org_id=org_id, user_id=user_id, slug=slug)
         await _insert_agent(
             session,
-            org_id=org_id,
-            user_id=user_id,
-            agent_id=resolved_agent_id,
+            AgentInsertRow(
+                org_id=org_id,
+                user_id=user_id,
+                agent_id=resolved_agent_id,
+            ),
         )
         await _insert_memory(
             session,
@@ -189,11 +200,13 @@ async def seed_second_agent_same_org(
         await with_service_org(session, org_id)
         await _insert_agent(
             session,
-            org_id=org_id,
-            user_id=user_id,
-            agent_id=agent_id,
-            name="Agent B",
-            slug=f"{slug_prefix}-b-{agent_id.hex[:8]}",
+            AgentInsertRow(
+                org_id=org_id,
+                user_id=user_id,
+                agent_id=agent_id,
+                name="Agent B",
+                slug=f"{slug_prefix}-b-{agent_id.hex[:8]}",
+            ),
         )
     return agent_id
 
@@ -216,3 +229,35 @@ async def seed_two_orgs(
         session_factory, slug_prefix="iso-org-b", content=shared_content
     )
     return TwoOrgSeed(org_a=org_a, org_b=org_b)
+
+
+async def insert_direct_memory(
+    session_factory: async_sessionmaker[AsyncSession],
+    params: DirectMemoryInsertParams,
+) -> UUID:
+    from uuid import uuid4
+
+    memory_id = uuid4()
+    async with session_factory() as session, session.begin():
+        await with_service_org(session, params.org_id)
+        await session.execute(
+            text(
+                """
+                INSERT INTO ibex_core.memories (
+                    id, org_id, agent_id, content, content_hash, content_tokens, status
+                ) VALUES (
+                    :id, :org_id, :agent_id, :content, :hash, :tokens, :status
+                )
+                """
+            ),
+            {
+                "id": str(memory_id),
+                "org_id": str(params.org_id),
+                "agent_id": str(params.agent_id),
+                "content": params.content,
+                "hash": f"hash-{memory_id.hex}",
+                "tokens": max(1, len(params.content.split())),
+                "status": params.status,
+            },
+        )
+    return memory_id
