@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 from httpx import ASGITransport, AsyncClient
@@ -39,6 +40,41 @@ class InsertActiveMemoryParams:
     content: str
     confidence: float = 0.85
     status: str = "active"
+
+
+@dataclass(frozen=True, slots=True)
+class InsertScoredMemoryParams:
+    org_id: UUID
+    agent_id: UUID
+    content: str
+    category: str
+    valid_from: datetime
+    confidence: float = 0.85
+    usefulness_score: float = 0.5
+    status: str = "active"
+
+
+@dataclass(frozen=True, slots=True)
+class CompositeRankingSeed:
+    org_id: UUID
+    agent_id: UUID
+    factual_id: UUID
+    episodic_id: UUID
+    query_vec: list[float]
+
+
+@dataclass(frozen=True, slots=True)
+class SeedCompositeRankingParams:
+    hotspot: int = 3
+    factual_age_days: float = 90.0
+    episodic_age_days: float = 14.0
+
+
+@dataclass(frozen=True, slots=True)
+class SeedCompositeRankingRequest:
+    session_factory: async_sessionmaker[AsyncSession]
+    store: PgVectorStore
+    params: SeedCompositeRankingParams = field(default_factory=SeedCompositeRankingParams)
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,6 +137,86 @@ async def insert_active_memory(
             },
         )
     return memory_id
+
+
+async def insert_scored_memory(
+    session_factory: async_sessionmaker[AsyncSession],
+    params: InsertScoredMemoryParams,
+) -> UUID:
+    memory_id = uuid4()
+    async with session_factory() as session, session.begin():
+        await with_service_org(session, params.org_id)
+        await session.execute(
+            text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+                """
+                INSERT INTO ibex_core.memories (
+                    id, org_id, agent_id, content, content_hash, content_tokens,
+                    category, confidence, usefulness_score, status, valid_from
+                ) VALUES (
+                    :id, :org_id, :agent_id, :content, :hash, :tokens,
+                    :category, :confidence, :usefulness, :status, :valid_from
+                )
+                """
+            ),
+            {
+                "id": str(memory_id),
+                "org_id": str(params.org_id),
+                "agent_id": str(params.agent_id),
+                "content": params.content,
+                "hash": f"hash-{memory_id.hex}",
+                "tokens": max(1, len(params.content.split())),
+                "category": params.category,
+                "confidence": params.confidence,
+                "usefulness": params.usefulness_score,
+                "status": params.status,
+                "valid_from": params.valid_from,
+            },
+        )
+    return memory_id
+
+
+async def seed_composite_ranking_pair(
+    request: SeedCompositeRankingRequest,
+) -> CompositeRankingSeed:
+    """Two memories with the same embedding hotspot; ages/categories differ for composite rank."""
+    opts = request.params
+    org_id, agent_id, _ = await seed_org_agent_memory(
+        request.session_factory, content="composite ranking seed placeholder"
+    )
+    now = datetime.now(tz=UTC)
+    factual_id = await insert_scored_memory(
+        request.session_factory,
+        InsertScoredMemoryParams(
+            org_id=org_id,
+            agent_id=agent_id,
+            content="composite ranking factual memory dark mode preference",
+            category="factual",
+            valid_from=now - timedelta(days=opts.factual_age_days),
+        ),
+    )
+    episodic_id = await insert_scored_memory(
+        request.session_factory,
+        InsertScoredMemoryParams(
+            org_id=org_id,
+            agent_id=agent_id,
+            content="composite ranking episodic memory dark mode preference",
+            category="episodic",
+            valid_from=now - timedelta(days=opts.episodic_age_days),
+        ),
+    )
+    query_vec = await upsert_embedding(
+        request.store, org_id=org_id, memory_id=factual_id, hotspot=opts.hotspot
+    )
+    await upsert_embedding(
+        request.store, org_id=org_id, memory_id=episodic_id, hotspot=opts.hotspot
+    )
+    return CompositeRankingSeed(
+        org_id=org_id,
+        agent_id=agent_id,
+        factual_id=factual_id,
+        episodic_id=episodic_id,
+        query_vec=query_vec,
+    )
 
 
 async def upsert_embedding(

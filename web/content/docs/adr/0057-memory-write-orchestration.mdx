@@ -153,3 +153,5 @@ to bump** — never a bare 500.
 ## Implementation note (2026-08-28)
 
 Milestone [3.C.5](/roadmap/phase-3-memory-engine/milestones/3.c.5-write-path-persistence-orchestration) landed `POST /v1/memories`, transactional insert + supersession, after-commit cache/index, and `memory_conflict_escalations`. Milestone [3.C.4](/roadmap/phase-3-memory-engine/milestones/3.c.4-multi-label-classification) adds optional `labels[]` in the same insert transaction (`insert_labels_session`); scalar `memories.category` remains trigger-maintained only.
+
+Milestone [3.D.2](/roadmap/phase-3-memory-engine/milestones/3.d.2-composite-scoring-v2) wires the same `CompositeInputs` shape used by hot-cache ZADD into the search read path (`find_similar` composite ranking).

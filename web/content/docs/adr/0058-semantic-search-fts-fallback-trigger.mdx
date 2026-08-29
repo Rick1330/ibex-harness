@@ -38,7 +38,7 @@ Phase 3 goals describe fallback when "vector results &lt; K". During implementat
 
 1. **Trigger:** `settings.search_fallback_enabled` AND `is_searchable_query(query_text)` AND `len(hydrated_vector_results) < limit`.
 2. **No fixed `VECTOR_FALLBACK_THRESHOLD` constant** — the milestone sketch constant was illustrative, not a design requirement.
-3. **Merge:** Vector hits first (desc similarity), FTS append (desc `ts_rank_cd`), dedupe by `memory_id`, cap at `limit`.
+3. **Merge:** Dedupe by `memory_id` (vector wins). Hydrate scoring fields, apply `composite_score()`, sort descending, cap at `limit`. HTTP `similarity` remains the retrieval metric (cosine or raw `ts_rank_cd`); ordering reflects composite. FTS supplemental hits use relevance sentinel `0.5` for composite scoring only ([3.D.2](/roadmap/phase-3-memory-engine/milestones/3.d.2-composite-scoring-v2)).
 4. **Metric:** `ibex_memory_search_fallback_total{triggered="true"}` increments only when FTS returns at least one new candidate (not on every trigger evaluation).
 5. **Toggle:** `IBEX_MEMORY_SEARCH_FALLBACK_ENABLED` (default `true`).
 
@@ -78,9 +78,9 @@ Operational alert ([DEPLOYMENT.md](/engineering/DEPLOYMENT.md)): memory search p
 
 Integration smoke test (`test_find_similar_latency_smoke`) seeds 500 rows and asserts vector-only `find_similar` p95 &lt; 100ms on CI hardware (not 1M scale). FTS supplement adds a small delta measured in the same test; the hard gate is vector-only p95.
 
-### 3.D.2 handoff
+### 3.D.2 (shipped)
 
-Ranking today uses raw cosine similarity / `ts_rank_cd` only — no `composite_score()`. Milestone 3.D.2 wires composite scoring after merge/dedupe in `find_similar()`.
+Search ranking uses `composite_score()` after merge/dedupe and hydrate in `find_similar()` (`app/read/ranking.py`). FTS supplemental rows use fixed relevance `0.5` for the composite relevance component only; response `similarity` is unchanged.
 
 ## Related
 
