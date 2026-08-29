@@ -50,6 +50,23 @@ class AgentInsertRow:
 
 
 @dataclass(frozen=True, slots=True)
+class MemoryInsertRow:
+    org_id: UUID
+    agent_id: UUID
+    memory_id: UUID
+    content: str
+
+
+@dataclass(frozen=True, slots=True)
+class OrgFixtureIds:
+    org_id: UUID
+    user_id: UUID
+    agent_id: UUID
+    memory_id: UUID
+    slug: str
+
+
+@dataclass(frozen=True, slots=True)
 class DirectMemoryInsertParams:
     org_id: UUID
     agent_id: UUID
@@ -116,14 +133,39 @@ async def _insert_agent(session: AsyncSession, row: AgentInsertRow) -> None:
     )
 
 
-async def _insert_memory(
+async def _insert_org_fixture(
     session: AsyncSession,
+    fixture: OrgFixtureIds,
     *,
-    org_id: UUID,
-    agent_id: UUID,
-    memory_id: UUID,
     content: str,
 ) -> None:
+    await _insert_organization(session, org_id=fixture.org_id, slug=fixture.slug)
+    await _insert_user(
+        session,
+        org_id=fixture.org_id,
+        user_id=fixture.user_id,
+        slug=fixture.slug,
+    )
+    await _insert_agent(
+        session,
+        AgentInsertRow(
+            org_id=fixture.org_id,
+            user_id=fixture.user_id,
+            agent_id=fixture.agent_id,
+        ),
+    )
+    await _insert_memory(
+        session,
+        MemoryInsertRow(
+            org_id=fixture.org_id,
+            agent_id=fixture.agent_id,
+            memory_id=fixture.memory_id,
+            content=content,
+        ),
+    )
+
+
+async def _insert_memory(session: AsyncSession, row: MemoryInsertRow) -> None:
     await session.execute(
         text(
             """
@@ -135,12 +177,12 @@ async def _insert_memory(
             """
         ),
         {
-            "id": str(memory_id),
-            "org_id": str(org_id),
-            "agent_id": str(agent_id),
-            "content": content,
-            "hash": f"hash-{memory_id.hex}",
-            "tokens": max(1, len(content.split())),
+            "id": str(row.memory_id),
+            "org_id": str(row.org_id),
+            "agent_id": str(row.agent_id),
+            "content": row.content,
+            "hash": f"hash-{row.memory_id.hex}",
+            "tokens": max(1, len(row.content.split())),
         },
     )
 
@@ -157,28 +199,19 @@ async def seed_org_agent(
     resolved_agent_id = agent_id or uuid4()
     memory_id = uuid4()
     slug = f"{slug_prefix}-{org_id.hex[:8]}"
+    fixture = OrgFixtureIds(
+        org_id=org_id,
+        user_id=user_id,
+        agent_id=resolved_agent_id,
+        memory_id=memory_id,
+        slug=slug,
+    )
     async with session_factory() as session, session.begin():
         await session.execute(
             text("SELECT set_config('app.is_service_account', 'true', true)"),
         )
         await with_service_org(session, org_id)
-        await _insert_organization(session, org_id=org_id, slug=slug)
-        await _insert_user(session, org_id=org_id, user_id=user_id, slug=slug)
-        await _insert_agent(
-            session,
-            AgentInsertRow(
-                org_id=org_id,
-                user_id=user_id,
-                agent_id=resolved_agent_id,
-            ),
-        )
-        await _insert_memory(
-            session,
-            org_id=org_id,
-            agent_id=resolved_agent_id,
-            memory_id=memory_id,
-            content=content,
-        )
+        await _insert_org_fixture(session, fixture, content=content)
     return OrgSeed(
         org_id=org_id,
         user_id=user_id,

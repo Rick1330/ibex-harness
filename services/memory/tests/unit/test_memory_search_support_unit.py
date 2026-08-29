@@ -132,12 +132,8 @@ def _mock_session_factory(scalar: object | None) -> MagicMock:
     return factory
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("scalar", "expect_forbidden"),
-    [(None, True), (1, False)],
-)
-async def test_ensure_search_agent_authorized(
+async def _assert_ensure_search_agent_authorized(
+    *,
     scalar: object | None,
     expect_forbidden: bool,
 ) -> None:
@@ -158,6 +154,21 @@ async def test_ensure_search_agent_authorized(
     if expect_forbidden:
         assert exc_info.value.status_code == 403
         assert exc_info.value.detail["code"] == "AGENT_NOT_AUTHORIZED"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("scalar", "expect_forbidden"),
+    [(None, True), (1, False)],
+)
+async def test_ensure_search_agent_authorized(
+    scalar: object | None,
+    expect_forbidden: bool,
+) -> None:
+    await _assert_ensure_search_agent_authorized(
+        scalar=scalar,
+        expect_forbidden=expect_forbidden,
+    )
 
 
 @pytest.mark.asyncio
