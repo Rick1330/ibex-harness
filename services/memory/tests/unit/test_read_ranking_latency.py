@@ -6,8 +6,6 @@ import time
 from datetime import UTC, datetime
 from uuid import uuid4
 
-import pytest
-
 from app.read.ranking import RankedCandidate, rank_hydrated_hits
 from tests.unit.read_ranking_support import HydratedHitSeed, hydrated_hit
 

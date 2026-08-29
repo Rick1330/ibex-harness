@@ -72,6 +72,8 @@ class RankScenario:
     hydrated: dict[UUID, HydratedHit]
     expected_first: UUID
     fixed_now: datetime
+    expect_first_similarity_higher: bool = False
+    expect_similarity_inverted: bool = False
 
 
 def assert_first_ranked(scenario: RankScenario) -> None:
@@ -81,3 +83,7 @@ def assert_first_ranked(scenario: RankScenario) -> None:
         now=scenario.fixed_now,
     )
     assert ranked[0].id == scenario.expected_first
+    if scenario.expect_first_similarity_higher:
+        assert ranked[0].similarity > ranked[1].similarity
+    if scenario.expect_similarity_inverted:
+        assert ranked[0].similarity < ranked[1].similarity
