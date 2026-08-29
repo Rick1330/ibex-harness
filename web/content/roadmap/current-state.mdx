@@ -16,7 +16,8 @@ summary: "Phases 0–2.5 complete. Phase 3 Tracks A–B and Track C write pipeli
   Track A (**3.1.1** / ADR-0052), Track B (**3.2.1** / ADR-0053), and Track C
   **3.C.1** (PII / ADR-0054), **3.C.2** (dedup / ADR-0055), **3.C.3** (conflict /
   ADR-0056), **3.C.5** (write orchestration / ADR-0057), and **3.C.4** (multi-label /
-  ADR-0048) are delivered. **Next:** Track D — semantic search read path (**3.D.1**).
+  ADR-0048) are delivered. Track D **3.D.1** (semantic search read path) is delivered.
+  **Next:** **3.D.2** composite scoring in search ranking.
 </Callout>
 
 ## Snapshot
@@ -33,9 +34,9 @@ summary: "Phases 0–2.5 complete. Phase 3 Tracks A–B and Track C write pipeli
 <StatusBadge status="new" /> **Phase 5 — Advanced Retrieval & Graph Memory:** planned
 
 **Last updated:** 2026-08-28  
-**Branch:** `feature/m3-c-4-multi-label-classification`  
-**Current focus:** [3.D.1 Semantic search read path](/roadmap/phase-3-memory-engine/milestones/3.d.1-semantic-search-read-path)  
-**Completed (recent):** 3.C.4 multi-label write (ADR-0048); 3.C.5 write orchestration (ADR-0057); 3.C.3 temporal conflict (ADR-0056); 3.C.2 exact + near-dup; 3.C.1 PII; 3.2.1 VectorStore; 3.1.1 schema expand
+**Branch:** `feature/m3-d-1-semantic-search`  
+**Current focus:** [3.D.2 Composite scoring v2](/roadmap/phase-3-memory-engine/milestones/3.d.2-composite-scoring-v2)  
+**Completed (recent):** 3.D.1 semantic search read path; 3.C.4 multi-label write (ADR-0048); 3.C.5 write orchestration (ADR-0057); 3.C.3 temporal conflict (ADR-0056); 3.C.2 exact + near-dup; 3.C.1 PII; 3.2.1 VectorStore; 3.1.1 schema expand
 
 <QuickLinks
   links={[
@@ -45,9 +46,14 @@ summary: "Phases 0–2.5 complete. Phase 3 Tracks A–B and Track C write pipeli
       description: "Live phase cards and milestone progress.",
     },
     {
+      title: "3.D.2 Composite scoring",
+      href: "/roadmap/phase-3-memory-engine/milestones/3.d.2-composite-scoring-v2",
+      description: "Wire composite_score into search ranking (Track D).",
+    },
+    {
       title: "3.D.1 Semantic search",
       href: "/roadmap/phase-3-memory-engine/milestones/3.d.1-semantic-search-read-path",
-      description: "Read path: VectorStore.search + GIN fallback (Track D).",
+      description: "Shipped: VectorStore.search + GIN fallback.",
     },
     {
       title: "3.C.4 Multi-label write",
@@ -64,6 +70,7 @@ summary: "Phases 0–2.5 complete. Phase 3 Tracks A–B and Track C write pipeli
 
 ## Shipped Since Last Update
 
+- **Phase 3 Track D 3.D.1:** Semantic search read path — `POST /v1/memories/search`, `MemoryReadRepository.find_similar`, HNSW + GIN fallback, `ibex_memory_search_fallback_total`
 - **Phase 3 Track C 3.C.4:** Multi-label write path — optional `labels[]` on `POST /v1/memories`, transactional `memory_labels` insert, trigger-synced scalar `memories.category` (ADR-0048 / [#630](https://github.com/Rick1330/ibex-harness/issues/630))
 - **Phase 3 Track C 3.C.5:** Write orchestration — `POST /v1/memories`, steps 7–9, idempotency, after-commit cache + vector upsert, conflict escalations table (ADR-0057 / [#620](https://github.com/Rick1330/ibex-harness/issues/620))
 - **Phase 3 Track C 3.C.3:** Interval-overlap-first conflict + ADR-0056
@@ -77,14 +84,15 @@ summary: "Phases 0–2.5 complete. Phase 3 Tracks A–B and Track C write pipeli
 <Callout type="note" title="Current capability boundary">
   **Shipped:** Auth, Proxy, embedder, MCP skeleton, observability, memories schema,
   full memory write pipeline (stages 1–9 via `POST /v1/memories`), multi-label write
-  (`labels[]`), PII/dedup/conflict stages, after-commit cache + vector upsert.
-  **Not yet:** Track D read path / hot cache, context assembly (3.5), management API/dashboard (Phase 4).
+  (`labels[]`), PII/dedup/conflict stages, after-commit cache + vector upsert,
+  semantic search read path (`POST /v1/memories/search`).
+  **Not yet:** Composite scoring in search ranking (3.D.2), hot cache (3.D.3), context assembly (3.5), management API/dashboard (Phase 4).
 </Callout>
 
 ## Next
 
-1. Implement **3.D.1** semantic search read path (Track D).  
-2. Then **3.D.2** category-conditional decay and **3.D.3** hot cache.  
+1. Implement **3.D.2** — wire composite scoring into search ranking.  
+2. Then **3.D.3** hot cache.  
 3. Track E exit gate after Tracks A–D.
 
 See [Phase 3](/roadmap/phase-3-memory-engine).

@@ -72,9 +72,17 @@ Rename freely to match the change that actually lands.
 
 ## Working notes
 
-Preferred starting points and open questions — situational, and expected to evolve with further research during implementation.
+<Callout type="warning" title="Step 0 reconciliation (from 3.D.1)">
+  Category-conditional half-life **already ships** in `app/scoring/half_life.py` (Track B /
+  3.2.1). This milestone page originally described a single 14-day half-life bug — that is
+  stale. Remaining 3.D.2 work: wire `composite_score()` into the search read path (after raw
+  retrieval) and align docs/tests with live behavior. A **config-driven** half-life table is
+  **optional** follow-up (the code table is already data in `half_life.py`; env-backed tuning
+  is not required to close 3.D.2).
+  See [3.D.1 handoff](/roadmap/phase-3-memory-engine/milestones/3.d.1-semantic-search-read-path#step-0--scoring-reconciliation-handoff-to-3d2).
+</Callout>
 
-### Per-category half-life table
+### Per-category half-life table (reference — implemented in 3.2.1)
 
 ```python
 CATEGORY_HALF_LIFE_DAYS: Final[dict[str, float]] = {
@@ -86,7 +94,8 @@ CATEGORY_HALF_LIFE_DAYS: Final[dict[str, float]] = {
 }
 ```
 
-The half-life table should be data (config-driven), not hardcoded per-branch logic — trivially tunable without a redeploy if backed by environment variables.
+The half-life table lives in `app/scoring/half_life.py` today. Optional follow-up: expose
+values via environment variables for ops tuning without redeploy — **not** a 3.D.2 blocker.
 
 ---
 
@@ -95,8 +104,9 @@ The half-life table should be data (config-driven), not hardcoded per-branch log
 Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
 
 - [ ] Formula weights unchanged (0.40/0.25/0.20/0.10/0.05) — only recency component is category-conditional
-- [ ] Regression test proves the specific bug (old factual outranked by fresh episodic of equal relevance) is fixed
-- [ ] Half-life table is data, not hardcoded per-branch logic — trivially tunable without a redeploy if backed by config
+- [x] Regression test proves the specific bug (old factual outranked by fresh episodic of equal relevance) is fixed — shipped in 3.2.1 (`test_composite.py`)
+- [x] Half-life table is data, not hardcoded per-branch logic — `CATEGORY_HALF_LIFE_DAYS` in `half_life.py` (3.2.1)
+- [ ] Composite scoring applied to search ranking results (primary 3.D.2 deliverable)
 - [ ] Repo guards / CI checks still pass
 
 ## Prerequisites

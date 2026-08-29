@@ -1,5 +1,9 @@
 name: Docker Publish
 
+env:
+  # Primary GHCR DB + mirror fallback (comma-separated per Trivy docs).
+  TRIVY_DB_REPOSITORY: ghcr.io/aquasecurity/trivy-db:2,mirror.gcr.io/aquasec/trivy-db:2
+
 on:
   pull_request:
     branches: [main]

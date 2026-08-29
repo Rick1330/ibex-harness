@@ -55,10 +55,9 @@ async def test_orchestrator_raises_validation_error() -> None:
     orch._pipeline = _StopPipeline()
     orch._pipeline.run = _run  # type: ignore[method-assign]
 
+    cmd = CreateMemoryCommand(org_id=org_id, agent_id=agent_id, content="")
     with pytest.raises(ValidationError):
-        await orch.create(
-            CreateMemoryCommand(org_id=org_id, agent_id=agent_id, content="")
-        )
+        await orch.create(cmd)
 
 
 @pytest.mark.asyncio
@@ -83,10 +82,9 @@ async def test_orchestrator_exact_duplicate_raises_without_insert() -> None:
     orch._pipeline.run = _run  # type: ignore[method-assign]
 
     with patch("app.write.orchestrator.insert_memory_session", AsyncMock()) as insert_mock:
+        cmd = CreateMemoryCommand(org_id=org_id, agent_id=agent_id, content="dup")
         with pytest.raises(DuplicateMemoryError) as exc_info:
-            await orch.create(
-                CreateMemoryCommand(org_id=org_id, agent_id=agent_id, content="dup")
-            )
+            await orch.create(cmd)
         insert_mock.assert_not_awaited()
         assert exc_info.value.existing_id == existing
 

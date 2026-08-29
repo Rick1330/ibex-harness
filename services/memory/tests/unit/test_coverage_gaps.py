@@ -110,20 +110,23 @@ class _CallsSuperValidator(TokenValidator):
 
 @pytest.mark.asyncio
 async def test_token_validator_validate_not_implemented() -> None:
+    validator = _CallsSuperValidator()
     with pytest.raises(NotImplementedError):
-        await _CallsSuperValidator().validate("x")
+        await validator.validate("x")
 
 
 @pytest.mark.asyncio
 async def test_token_validator_ready_not_implemented() -> None:
+    validator = _CallsSuperValidator()
     with pytest.raises(NotImplementedError):
-        await _CallsSuperValidator().ready()
+        await validator.ready()
 
 
 @pytest.mark.asyncio
 async def test_token_validator_aclose_not_implemented() -> None:
+    validator = _CallsSuperValidator()
     with pytest.raises(NotImplementedError):
-        await _CallsSuperValidator().aclose()
+        await validator.aclose()
 
 
 def test_get_write_org_id_missing_raises() -> None:
@@ -222,10 +225,9 @@ async def test_orchestrator_reraises_non_embedding_errors() -> None:
             raise RuntimeError("boom")
 
     orch = MemoryWriteOrchestrator(_Boom(), MagicMock())
+    cmd = CreateMemoryCommand(org_id=uuid4(), agent_id=uuid4(), content="x")
     with pytest.raises(RuntimeError, match="boom"):
-        await orch.create(
-            CreateMemoryCommand(org_id=uuid4(), agent_id=uuid4(), content="x")
-        )
+        await orch.create(cmd)
 
 
 @pytest.mark.asyncio
@@ -276,10 +278,9 @@ async def test_orchestrator_active_missing_content_hash() -> None:
             return ctx
 
     orch = MemoryWriteOrchestrator(_Pipe(), MagicMock())
+    cmd = CreateMemoryCommand(org_id=uuid4(), agent_id=uuid4(), content="active")
     with pytest.raises(RuntimeError, match="content_hash required"):
-        await orch.create(
-            CreateMemoryCommand(org_id=uuid4(), agent_id=uuid4(), content="active")
-        )
+        await orch.create(cmd)
 
 
 def test_deps_success_paths() -> None:
@@ -329,8 +330,9 @@ def test_main_auth_not_ready() -> None:
 def test_http_error_for_write_reraises_unknown() -> None:
     from app.routers.memory_write_support import http_error_for_write
 
+    err = ValueError("nope")
     with pytest.raises(ValueError, match="nope"):
-        http_error_for_write(ValueError("nope"))
+        http_error_for_write(err)
 
 
 def test_http_error_for_write_maps_embedding() -> None:
@@ -350,10 +352,11 @@ async def test_begin_idempotency_conflict_and_in_progress() -> None:
     store.claim = AsyncMock(
         return_value=ClaimOutcome(kind=ClaimKind.CONFLICT, record=pending_record("fp"))
     )
+    org_id = uuid4()
     with pytest.raises(HTTPException) as exc:
         await begin_idempotency(
             store=store,
-            org_id=uuid4(),
+            org_id=org_id,
             idempotency_key="k",
             fingerprint="fp",
         )
@@ -362,10 +365,11 @@ async def test_begin_idempotency_conflict_and_in_progress() -> None:
     store.claim = AsyncMock(
         return_value=ClaimOutcome(kind=ClaimKind.IN_PROGRESS, record=pending_record("fp"))
     )
+    org_id = uuid4()
     with pytest.raises(HTTPException) as exc:
         await begin_idempotency(
             store=store,
-            org_id=uuid4(),
+            org_id=org_id,
             idempotency_key="k",
             fingerprint="fp",
         )

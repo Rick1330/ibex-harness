@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -23,6 +24,7 @@ from app.http_validation import request_validation_error_handler
 from app.idempotency.redis_store import RedisIdempotencyStore
 from app.pii.service import PiiService
 from app.probes import probe_router
+from app.read.repository import MemoryReadRepository
 from app.routers.memories import router as memories_router
 from app.vectorstore.pgvector_store import PgVectorStore
 from app.write.after_commit import AfterCommitHandler
@@ -46,8 +48,27 @@ class MemoryAppState:
     redis: Redis | None = field(default=None, repr=False)
     idempotency_store: RedisIdempotencyStore | None = field(default=None, repr=False)
     write_orchestrator: MemoryWriteOrchestrator | None = field(default=None, repr=False)
+    read_repository: MemoryReadRepository | None = field(default=None, repr=False)
     embedding_client: EmbeddingClient | None = field(default=None, repr=False)
     pii: PiiService | None = field(default=None, repr=False)
+
+
+@dataclass(frozen=True, slots=True)
+class _RedisResources:
+    client: Redis | None
+    cache_writer: MemoryCacheWriter | None
+    idempotency_store: RedisIdempotencyStore | None
+
+
+@dataclass(frozen=True, slots=True)
+class _WriteReadBootstrap:
+    state: MemoryAppState
+    cfg: Settings
+    session_factory: async_sessionmaker[AsyncSession]
+    store: PgVectorStore
+    pii: PiiService
+    redis: _RedisResources
+    embed_callable: object
 
 
 def create_app(
@@ -60,89 +81,8 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
-        logger.info("memory service starting port=%s", cfg.port)
-        auth = validator or GRPCTokenValidator(
-            cfg.auth_grpc_addr,
-            timeout_seconds=cfg.auth_timeout_ms / 1000.0,
-        )
-        state.validator = auth
-
-        if not cfg.database_url:
-            state.ready = False
-            state.ready_error = "IBEX_MEMORY_DATABASE_URL not set"
-            logger.error("memory not ready: %s", state.ready_error)
+        async with _memory_service_lifespan(state, cfg, validator):
             yield
-            await auth.aclose()
-            return
-
-        engine = create_engine(cfg)
-        session_factory = create_session_factory(engine)
-        store = PgVectorStore(session_factory, cfg)
-        pii = PiiService(cfg)
-        state.engine = engine
-        state.session_factory = session_factory
-        state.store = store
-        state.pii = pii
-
-        redis_client: Redis | None = None
-        cache_writer: MemoryCacheWriter | None = None
-        idempotency_store: RedisIdempotencyStore | None = None
-        if cfg.redis_url:
-            redis_client = Redis.from_url(
-                cfg.redis_url,
-                socket_connect_timeout=cfg.redis_timeout_seconds,
-                socket_timeout=cfg.redis_timeout_seconds,
-            )
-            state.redis = redis_client
-            cache_writer = MemoryCacheWriter(redis_client, cfg)
-            idempotency_store = RedisIdempotencyStore(
-                redis_client,
-                ttl_seconds=cfg.idempotency_ttl_seconds,
-                pending_ttl_seconds=cfg.idempotency_pending_ttl_seconds,
-            )
-            state.idempotency_store = idempotency_store
-
-        embedding_holder: dict[str, EmbeddingClient | None] = {"client": None}
-        embed_callable = _build_embed(cfg, embedding_holder)
-
-        after_commit = AfterCommitHandler(
-            cache=cache_writer,
-            store=store,
-        ).__call__
-
-        state.write_orchestrator = build_write_orchestrator(
-            WritePipelineDeps(
-                settings=cfg,
-                session_factory=session_factory,
-                store=store,
-                pii=pii,
-                embed=embed_callable,
-            ),
-            after_commit=after_commit,
-        )
-
-        if not await auth.ready():
-            state.ready = False
-            state.ready_error = "auth gRPC not reachable"
-        elif not await _postgres_ready(engine):
-            state.ready = False
-            state.ready_error = "database not reachable"
-        else:
-            state.ready = True
-            state.ready_error = None
-
-        try:
-            yield
-        finally:
-            state.ready = False
-            client = embedding_holder.get("client")
-            if client is not None:
-                await client.aclose()
-            if redis_client is not None:
-                await redis_client.aclose()
-            await auth.aclose()
-            await engine.dispose()
-            logger.info("memory service shutdown complete")
 
     application = FastAPI(
         title="IBEX Memory",
@@ -158,12 +98,147 @@ def create_app(
     return application
 
 
+@asynccontextmanager
+async def _memory_service_lifespan(
+    state: MemoryAppState,
+    cfg: Settings,
+    validator: TokenValidator | None,
+) -> AsyncGenerator[None, None]:
+    logger.info("memory service starting port=%s", cfg.port)
+    auth = validator or GRPCTokenValidator(
+        cfg.auth_grpc_addr,
+        timeout_seconds=cfg.auth_timeout_ms / 1000.0,
+    )
+    state.validator = auth
+
+    if not cfg.database_url:
+        state.ready = False
+        state.ready_error = "IBEX_MEMORY_DATABASE_URL not set"
+        logger.error("memory not ready: %s", state.ready_error)
+        yield
+        await auth.aclose()
+        return
+
+    engine = create_engine(cfg)
+    session_factory = create_session_factory(engine)
+    store = PgVectorStore(session_factory, cfg)
+    pii = PiiService(cfg)
+    state.engine = engine
+    state.session_factory = session_factory
+    state.store = store
+    state.pii = pii
+
+    redis = _configure_redis(cfg, state)
+    embedding_holder: dict[str, EmbeddingClient | None] = {"client": None}
+    embed_callable = _build_embed(cfg, embedding_holder)
+    state.embedding_client = embedding_holder.get("client")
+    _configure_write_and_read_paths(
+        _WriteReadBootstrap(
+            state=state,
+            cfg=cfg,
+            session_factory=session_factory,
+            store=store,
+            pii=pii,
+            redis=redis,
+            embed_callable=embed_callable,
+        )
+    )
+    await _refresh_readiness(state, auth=auth, engine=engine)
+
+    try:
+        yield
+    finally:
+        await _shutdown_memory(state, auth=auth, engine=engine, embedding_holder=embedding_holder)
+
+
+def _configure_redis(cfg: Settings, state: MemoryAppState) -> _RedisResources:
+    if not cfg.redis_url:
+        return _RedisResources(client=None, cache_writer=None, idempotency_store=None)
+
+    redis_client = Redis.from_url(
+        cfg.redis_url,
+        socket_connect_timeout=cfg.redis_timeout_seconds,
+        socket_timeout=cfg.redis_timeout_seconds,
+    )
+    state.redis = redis_client
+    cache_writer = MemoryCacheWriter(redis_client, cfg)
+    idempotency_store = RedisIdempotencyStore(
+        redis_client,
+        ttl_seconds=cfg.idempotency_ttl_seconds,
+        pending_ttl_seconds=cfg.idempotency_pending_ttl_seconds,
+    )
+    state.idempotency_store = idempotency_store
+    return _RedisResources(
+        client=redis_client,
+        cache_writer=cache_writer,
+        idempotency_store=idempotency_store,
+    )
+
+
+def _configure_write_and_read_paths(bootstrap: _WriteReadBootstrap) -> None:
+    after_commit = AfterCommitHandler(
+        cache=bootstrap.redis.cache_writer,
+        store=bootstrap.store,
+    ).__call__
+    bootstrap.state.write_orchestrator = build_write_orchestrator(
+        WritePipelineDeps(
+            settings=bootstrap.cfg,
+            session_factory=bootstrap.session_factory,
+            store=bootstrap.store,
+            pii=bootstrap.pii,
+            embed=bootstrap.embed_callable,
+        ),
+        after_commit=after_commit,
+    )
+    bootstrap.state.read_repository = MemoryReadRepository(
+        bootstrap.session_factory,
+        bootstrap.store,
+        bootstrap.cfg,
+    )
+
+
+async def _refresh_readiness(
+    state: MemoryAppState,
+    *,
+    auth: TokenValidator,
+    engine: AsyncEngine,
+) -> None:
+    if not await auth.ready():
+        state.ready = False
+        state.ready_error = "auth gRPC not reachable"
+    elif not await _postgres_ready(engine):
+        state.ready = False
+        state.ready_error = "database not reachable"
+    else:
+        state.ready = True
+        state.ready_error = None
+
+
+async def _shutdown_memory(
+    state: MemoryAppState,
+    *,
+    auth: TokenValidator,
+    engine: AsyncEngine,
+    embedding_holder: dict[str, EmbeddingClient | None],
+) -> None:
+    state.ready = False
+    client = embedding_holder.get("client")
+    if client is not None:
+        await client.aclose()
+    if state.redis is not None:
+        await state.redis.aclose()
+    await auth.aclose()
+    await engine.dispose()
+    logger.info("memory service shutdown complete")
+
+
 def _build_embed(
     cfg: Settings, holder: dict[str, EmbeddingClient | None]
 ) -> object:
     token = cfg.embedding_api_token.get_secret_value() if cfg.embedding_api_token else ""
     if not token:
         async def _noop_embed(_text: str) -> list[float]:
+            await asyncio.sleep(0)
             msg = "embedding client not configured"
             raise RuntimeError(msg)
 

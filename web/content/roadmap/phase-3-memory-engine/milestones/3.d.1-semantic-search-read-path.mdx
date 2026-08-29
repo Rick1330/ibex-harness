@@ -2,7 +2,7 @@
 title: "3.D.1 Semantic search read path"
 description: "find_similar read path using VectorStore.search() with HNSW index and GIN full-text fallback when vector results are sparse. EXPLAIN ANALYZE verification of index usage required."
 summary: "find_similar read path using VectorStore.search() with HNSW index and GIN full-text fallback when vector results are sparse. EXPLAIN ANALYZE verification of index usage required."
-status: "planned"
+status: "complete"
 milestoneId: "3.D.1"
 track: "D"
 trackTitle: "Read/Ranking Pipeline"
@@ -15,131 +15,82 @@ fullTitle: "Milestone 3.D.1 — Semantic search read path"
 
 # Milestone 3.D.1 — Semantic search read path
 
-**Status:** Planned  
+**Status:** Complete  
 **Goal:** [Track D — Read/Ranking Pipeline](/roadmap/phase-3-memory-engine/tracks#track-d--readranking-pipeline)  
 **Phase:** 3 — Core Memory Substrate  
 **Estimated effort:** 2 days
 
 ---
 
-<Callout type="note" title="Planning baseline">
-  This page is a planning sketch, not an implementation script. Named paths, package layouts,
-  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
-  that are expected to change once the live code, constraints, and research during implementation
-  make a better shape clear. Prefer outcomes over matching any particular file tree.
-</Callout>
+## Step 0 — Scoring reconciliation (handoff to 3.D.2)
 
-## Why This Milestone Exists
+Before implementing the read path, reconcile composite scoring state:
 
-Semantic search should use cosine distance with org/agent filtering and a confidence threshold. Preferred starting shape: route through a pluggable vector-store interface (HNSW search settings benchmarked rather than copied from IVFFlat), and keep a GIN full-text fallback when vector results are sparse. Exact SQL and helper layout should follow live repository patterns.
+| Item | Finding |
+|------|---------|
+| Scoring module | `services/memory/app/scoring/` (`composite.py`, `half_life.py`) |
+| Category half-life | **Already category-conditional** in `half_life.py` (factual=180d … episodic=14d); multi-label uses shortest half-life |
+| 3.2.1 vs 3.D.2 page | **3.2.1 checklist is correct; the 3.D.2 milestone page described a bug that was fixed in Track B.** Regression: `test_old_factual_outranks_fresh_episodic_at_equal_relevance` in `test_composite.py` |
+| **3.D.1 scope** | Must **not** call `composite_score()` — raw similarity / `ts_rank_cd` only |
+| **3.D.2 remaining** | Wire composite into search ranking, optional config-driven half-life table, doc updates |
+
+### Ranking state for 3.D.2 (handoff)
+
+| Topic | Current state |
+| --- | --- |
+| Ranking today | Vector hits first by raw cosine similarity; FTS append by `ts_rank_cd`; **no `composite_score()`** |
+| Score field | `MemorySearchResult.similarity` holds raw similarity or FTS rank depending on `source` |
+| Source values | `"vector"` \| `"full_text"` |
+| Wire point | After merge/dedupe in `repository.py` `find_similar()` — apply `composite_score()` before final ordering |
+| Half-life | Already category-conditional in `app/scoring/half_life.py` |
+| Regression test | `test_old_factual_outranks_fresh_episodic_at_equal_relevance` in `test_composite.py` |
+| Fallback interaction | Composite scoring applies to merged vector+FTS candidates; preserve dedupe by `memory_id` |
 
 ---
 
-## Non-Goals
+## Delivered
 
-- Composite scoring (Milestone 3.D.2)
-- Hot cache (Milestone 3.D.3)
-- Context assembly integration (Phase 3.5)
+- `MemoryReadRepository.find_similar()` — vector primary, GIN supplemental when sparse
+- `POST /v1/memories/search` — `memory:read`, minimal request (`agent_id`, `query`, `limit`, `min_similarity`, `min_confidence`)
+- Fallback trigger: `len(hydrated_vector_results) < limit` — caller-relative, not a fixed constant ([ADR-0058](/docs/adr/0058-semantic-search-fts-fallback-trigger))
+- Merge: vector hits first (desc similarity), FTS append (desc `ts_rank_cd`), dedupe by id, cap at `limit`
+- Metric: `ibex_memory_search_fallback_total{triggered}` (increments only when FTS returns new candidates)
+- Toggle: `IBEX_MEMORY_SEARCH_FALLBACK_ENABLED` (default true)
 
----
+### Fallback trigger semantics
 
-## Orientation (indicative)
+"Sparse" means the caller's page is unfilled after vector search + hydrate — whether because corpus &lt; `limit`, `min_similarity` filtered ANN hits, or `min_confidence` dropped rows. There is **no** fixed `VECTOR_FALLBACK_THRESHOLD`; Phase 3 goals "vector results &lt; K" means caller `limit` (K), not a magic number.
 
-Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
-**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+| Scenario | limit | Condition | FTS fires? |
+| --- | --- | --- | --- |
+| Typical agent | 10 (default) | 15 memories, all pass filters | No |
+| Small agent | 10 | 8 memories | Yes |
+| Large limit | 20 | 15 memories | Yes |
+| Full page | 3 | ≥3 vector hits after hydrate | No |
 
-During implementation, expect to:
+### Latency (integration smoke, 500-row corpus, CI hardware)
 
-- open the live tree and follow existing patterns before inventing new ones
-- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
-- advance the design beyond the sketch where measurement or code reality says so
-- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+- Vector-only `find_similar` p95 gate: &lt; 100ms (`test_find_similar_latency_smoke`; aligns with DEPLOYMENT alert threshold)
+- Phase 3 HNSW component budget: p95 &lt; 30ms @ 1M vectors ([latency table](/roadmap/phase-3-memory-engine/index.mdx))
+- FTS supplement adds a small measured delta on the same smoke test; hard gate is vector-only p95
 
-Prefer outcomes over matching any particular file tree or command sequence.
+### Schema (no new migration)
 
-**Areas that may be involved** (situational — not a checklist):
+Confirmed in `000017_memory_schema_v2_expand.up.sql`:
 
-- Memory service / repositories
-- Vector store / search
-- Caching / Redis
-
-## Suggested naming (provisional)
-
-Rename freely to match the change that actually lands.
-
-- Branch: `feature/m3-d-1-semantic-search`
-- PR title: `feat(memory): semantic search read path with HNSW and GIN fallback (m3.D.1)`
-
-## Design
-
-### Primary path: HNSW vector search
-
-`find_similar` delegates to `VectorStore.search()`. The repository layer does not embed raw SQL vector queries — all vector operations go through the `VectorStore` interface.
-
-```python
-# Illustrative — exact path may differ
-
-VECTOR_FALLBACK_THRESHOLD = 5 # if vector results < K, supplement with full-text
-
-class MemoryRepository:
- def __init__(
- self,
- session_factory: AsyncSessionFactory,
- vector_store: VectorStore,
- ) -> None: ...
-
- async def find_similar(
- self,
- org_id: UUID,
- agent_id: UUID,
- query_embedding: list[float],
- limit: int = 10,
- min_confidence: float = 0.0,
- ) -> list[MemorySearchResult]:
- vector_results = await self.vector_store.search(
- org_id=org_id,
- agent_id=agent_id,
- query_embedding=query_embedding,
- limit=limit,
- min_confidence=min_confidence,
- )
-
- if len(vector_results) < VECTOR_FALLBACK_THRESHOLD:
- # Hybrid search: supplement with GIN full-text results
- full_text_results = await self._full_text_search(org_id, agent_id, limit)
- vector_ids = {mid for mid, _ in vector_results}
- supplemental = [r for r in full_text_results if r.id not in vector_ids]
- # Merge and return up to limit
- ...
-
- return await self._fetch_memories(org_id, [mid for mid, _ in vector_results])
-```
-
-### Fallback path: GIN full-text search
-
-When vector search returns fewer than K results (sparse memory store for a new agent), supplement with GIN full-text search using the `search_vector` column (created in Milestone 3.1.1):
-
-```sql
-SELECT id FROM ibex_core.memories
-WHERE org_id = :org_id
- AND agent_id = :agent_id
- AND status = 'active'
- AND deleted_at IS NULL
- AND search_vector @@ plainto_tsquery('english', :query_text)
-ORDER BY ts_rank_cd(search_vector, plainto_tsquery('english', :query_text)) DESC
-LIMIT :limit
-```
+- `search_vector` (generated tsvector) + `idx_memories_search_vector` (GIN)
+- `idx_memories_embedding_hnsw` (m=16, ef_construction=64)
 
 ---
 
 ## Success signals
 
-Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
-
-- [ ] Semantic search uses the HNSW path (confirmed via query plans in tests, not assumed)
-- [ ] Cross-org result leakage is covered by an integration isolation test
-- [ ] Full-text fallback triggers when vector results are sparse
-- [ ] Search calls are always org/agent scoped — no unscoped queries
+- [x] Semantic search uses the HNSW path (`pg_stat idx_scan` runtime gate in `test_hnsw_index_scan_at_runtime`)
+- [x] GIN full-text fallback uses `idx_memories_search_vector` at runtime (`test_gin_index_used_at_runtime`: production `full_text_search()` + test-only `explain_gin_probe_plan`; HNSW uses `pg_stat idx_scan` in `test_hnsw_index_scan_at_runtime`)
+- [x] Cross-org result leakage covered by integration isolation test
+- [x] Full-text fallback triggers when vector results are sparse
+- [x] Search calls are always org/agent scoped — no unscoped queries
+- [x] Unit coverage ≥95% on `app/read/` (100% at merge)
 
 ---
 
@@ -147,5 +98,4 @@ Outcome-oriented signals that the milestone is in good shape. Exact filenames, p
 
 - Milestone 3.1.1 merged (HNSW index and `search_vector` GIN index in schema)
 - Milestone 3.2.1 merged (`VectorStore` ABC and `PgVectorStore` implementation available)
-- Track C milestones (write path should be in place for test fixtures to be loadable)
-
+- Track C milestones (write path in place for test fixtures)

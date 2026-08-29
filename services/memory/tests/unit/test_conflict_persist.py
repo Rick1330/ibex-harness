@@ -173,15 +173,14 @@ async def test_apply_supersession_missing_row() -> None:
     session = _FakeSession(
         [_FakeResult(), _FakeResult(), _FakeResult(rowcount=0)]
     )
+    factory = _factory_for(session)  # type: ignore[arg-type]
+    apply = SupersedeApply(
+        org_id=uuid4(),
+        new_memory_id=uuid4(),
+        target_memory_id=uuid4(),
+    )
     with pytest.raises(RuntimeError, match="expected 1 row"):
-        await apply_supersession(
-            _factory_for(session),  # type: ignore[arg-type]
-            SupersedeApply(
-                org_id=uuid4(),
-                new_memory_id=uuid4(),
-                target_memory_id=uuid4(),
-            ),
-        )
+        await apply_supersession(factory, apply)
 
 
 @pytest.mark.asyncio

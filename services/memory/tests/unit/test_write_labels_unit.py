@@ -131,11 +131,12 @@ def test_resolve_write_labels_rejects_non_finite_confidence() -> None:
 
 
 def test_resolve_write_labels_rejects_infinite_label_confidence() -> None:
+    labels = (MemoryLabelInput(label="factual", confidence=float("inf")),)
     with pytest.raises(ValidationError) as exc_info:
         resolve_write_labels(
             category="factual",
             confidence=0.8,
-            labels=(MemoryLabelInput(label="factual", confidence=float("inf")),),
+            labels=labels,
         )
     assert exc_info.value.field_code == "confidence_out_of_range"
     assert exc_info.value.field == "labels[0].confidence"

@@ -399,6 +399,7 @@ Preferred starting models in the roadmap: **GPU/prod** `bge-m3` (1024-dim); **CP
 | `IBEX_MEMORY_NEAR_DUPLICATE_CANDIDATE_LIMIT` | No | `10` | Max near-dup candidates from `VectorStore.search` | |
 | `IBEX_MEMORY_CONFLICT_DETECTION_ENABLED` | No | `true` | Run temporal conflict stage after near-dup (ADR-0056) | |
 | `IBEX_MEMORY_VECTOR_SEARCH_MIN_SIMILARITY` | No | `0.70` | Default min similarity | |
+| `IBEX_MEMORY_SEARCH_FALLBACK_ENABLED` | No | `true` | Supplement sparse vector hits with GIN full-text search (m3.D.1) | Metric: `ibex_memory_search_fallback_total{triggered}` |
 | `IBEX_MEMORY_HOT_CACHE_TTL_SECONDS` | No | `3600` | Cache TTL for hot memories | |
 | `IBEX_HNSW_EF_SEARCH` | No | `40` | Default per-query HNSW `ef_search` | Tune from recall/latency benches; applied via `SET LOCAL` |
 | `IBEX_MEMORY_EMBEDDING_BASE_URL` | No | `http://127.0.0.1:8004` | Embedder service base URL | Client: `app/clients/embedding.py` |
