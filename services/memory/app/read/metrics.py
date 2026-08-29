@@ -9,3 +9,9 @@ SEARCH_FALLBACK = Counter(
     "Full-text search fallback invocations on find_similar",
     ["triggered"],
 )
+
+HOT_CACHE_READ = Counter(
+    "ibex_memory_hot_cache_read_total",
+    "Hot cache read invocations via get_hot_memories",
+    ["result"],
+)

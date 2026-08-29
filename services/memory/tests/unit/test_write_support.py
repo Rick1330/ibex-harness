@@ -93,21 +93,23 @@ async def test_cache_writer_skips_non_created() -> None:
 
 @pytest.mark.asyncio
 async def test_cache_writer_object_cache_success() -> None:
-    redis = AsyncMock()
+    redis = MagicMock()
     redis.set = AsyncMock()
-    redis.zadd = AsyncMock()
-    redis.expire = AsyncMock()
+    script = AsyncMock(return_value=1)
+    redis.register_script = MagicMock(return_value=script)
     writer = MemoryCacheWriter(redis, Settings())
     outcome = WriteOutcome(kind=WriteOutcomeKind.CREATED, memory=_row())
     await writer.write_created(outcome)
     redis.set.assert_awaited_once()
+    script.assert_awaited_once()
 
 
 @pytest.mark.asyncio
 async def test_cache_writer_redis_error_fail_open() -> None:
     redis = AsyncMock()
     redis.set = AsyncMock(side_effect=RedisError("down"))
-    redis.zadd = AsyncMock(side_effect=RedisError("down"))
+    script = AsyncMock(side_effect=RedisError("down"))
+    redis.register_script = MagicMock(return_value=script)
     writer = MemoryCacheWriter(redis, Settings())
     await writer.write_created(
         WriteOutcome(kind=WriteOutcomeKind.CREATED, memory=_row())
