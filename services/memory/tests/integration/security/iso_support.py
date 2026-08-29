@@ -59,6 +59,14 @@ async def assert_hot_cache_empty(
 
 
 @dataclass(frozen=True, slots=True)
+class HotCacheProbeSpec:
+    scored_seed: ScoredMemorySeed
+    probe_org_id: UUID
+    probe_agent_id: UUID
+    flush_keys: tuple[tuple[UUID, UUID], ...]
+
+
+@dataclass(frozen=True, slots=True)
 class HotCacheIsolationProbe:
     session_factory: async_sessionmaker[AsyncSession]
     cache_writer: MemoryCacheWriter
@@ -87,24 +95,20 @@ async def run_hot_cache_isolation_probe(probe: HotCacheIsolationProbe) -> None:
             await flush_hot_key(probe.redis, org_id, agent_id)
 
 
-def _hot_cache_probe(
+def hot_cache_probe_from_env(
     security_env: MemorySecurityTestEnv,
-    *,
     session_factory: async_sessionmaker[AsyncSession],
-    scored_seed: ScoredMemorySeed,
-    probe_org_id: UUID,
-    probe_agent_id: UUID,
-    flush_keys: tuple[tuple[UUID, UUID], ...],
+    spec: HotCacheProbeSpec,
 ) -> HotCacheIsolationProbe:
     return HotCacheIsolationProbe(
         session_factory=session_factory,
         cache_writer=security_env.cache_writer,
         hot_reader=security_env.hot_reader,
         redis=security_env.redis,
-        scored_seed=scored_seed,
-        probe_org_id=probe_org_id,
-        probe_agent_id=probe_agent_id,
-        flush_keys=flush_keys,
+        scored_seed=spec.scored_seed,
+        probe_org_id=spec.probe_org_id,
+        probe_agent_id=spec.probe_agent_id,
+        flush_keys=spec.flush_keys,
     )
 
 
@@ -119,19 +123,21 @@ async def build_iso_1_6_hot_cache_probe(
         content="org a hot cache probe",
         agent_id=shared_agent_id,
     )
-    return _hot_cache_probe(
+    return hot_cache_probe_from_env(
         security_env,
-        session_factory=session_factory,
-        scored_seed=ScoredMemorySeed(
-            org_id=org_a.org_id,
-            agent_id=org_a.agent_id,
-            content="org a exclusive hot memory",
-        ),
-        probe_org_id=security_env.orgs.org_b.org_id,
-        probe_agent_id=shared_agent_id,
-        flush_keys=(
-            (org_a.org_id, org_a.agent_id),
-            (security_env.orgs.org_b.org_id, shared_agent_id),
+        session_factory,
+        HotCacheProbeSpec(
+            scored_seed=ScoredMemorySeed(
+                org_id=org_a.org_id,
+                agent_id=org_a.agent_id,
+                content="org a exclusive hot memory",
+            ),
+            probe_org_id=security_env.orgs.org_b.org_id,
+            probe_agent_id=shared_agent_id,
+            flush_keys=(
+                (org_a.org_id, org_a.agent_id),
+                (security_env.orgs.org_b.org_id, shared_agent_id),
+            ),
         ),
     )
 
@@ -147,17 +153,19 @@ async def build_iso_1_8_hot_cache_probe(
         user_id=org_a.user_id,
         slug_prefix="iso-same-org",
     )
-    return _hot_cache_probe(
+    return hot_cache_probe_from_env(
         security_env,
-        session_factory=session_factory,
-        scored_seed=ScoredMemorySeed(
-            org_id=org_a.org_id,
-            agent_id=org_a.agent_id,
-            content="agent a hot only",
+        session_factory,
+        HotCacheProbeSpec(
+            scored_seed=ScoredMemorySeed(
+                org_id=org_a.org_id,
+                agent_id=org_a.agent_id,
+                content="agent a hot only",
+            ),
+            probe_org_id=org_a.org_id,
+            probe_agent_id=agent_b,
+            flush_keys=((org_a.org_id, org_a.agent_id),),
         ),
-        probe_org_id=org_a.org_id,
-        probe_agent_id=agent_b,
-        flush_keys=((org_a.org_id, org_a.agent_id),),
     )
 
 
