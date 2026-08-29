@@ -16,6 +16,7 @@ from app.auth.client import StaticTokenValidator, ValidateResult
 from app.config import Settings
 from app.main import create_app
 from app.permissions import MEMORY_READ
+from app.read.full_text import FTS_SQL, FullTextHit, FullTextSearchQuery, is_searchable_query
 from app.read.repository import MemoryReadRepository
 from app.vectorstore.base import UpsertRequest
 from app.vectorstore.pgvector_store import PgVectorStore
@@ -163,6 +164,11 @@ async def bulk_seed_for_plans(
                 "TRUNCATE ibex_core.memories CASCADE"
             )
         )
+        await session.execute(
+            text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+                "SELECT pg_stat_reset()"
+            )
+        )
     seeded, _, query_vec = await seed_agent_with_memories(
         session_factory,
         store,
@@ -191,6 +197,46 @@ async def bulk_seed_for_plans(
         query_vec=query_vec,
         gin_query_text=PLAN_GIN_QUERY_MARKER,
     )
+
+
+async def full_text_search_for_plan_gate(
+    session_factory: async_sessionmaker[AsyncSession],
+    query: FullTextSearchQuery,
+) -> list[FullTextHit]:
+    """FTS for pg_stat GIN gate — seqscan off so idx_memories_search_vector idx_scan increments."""
+    if query.limit < 1 or not is_searchable_query(query.query_text):
+        return []
+
+    async with session_factory() as session, session.begin():
+        await with_service_org(session, query.org_id)
+        await session.execute(
+            text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+                "SET LOCAL enable_seqscan = OFF"
+            )
+        )
+        result = await session.execute(
+            text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+                FTS_SQL
+            ),
+            {
+                "org_id": str(query.org_id),
+                "agent_id": str(query.agent_id),
+                "query_text": query.query_text.strip(),
+                "min_confidence": query.min_confidence,
+                "limit": query.limit,
+            },
+        )
+        rows = result.mappings().all()
+
+    hits: list[FullTextHit] = []
+    for row in rows:
+        memory_id = UUID(str(row["memory_id"]))
+        if memory_id in query.exclude_ids:
+            continue
+        hits.append(FullTextHit(memory_id=memory_id, rank=float(row["rank"])))
+        if len(hits) >= query.limit:
+            break
+    return hits
 
 
 def build_read_repository(

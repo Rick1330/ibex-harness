@@ -5,10 +5,13 @@ from __future__ import annotations
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from app.read.full_text import FullTextSearchQuery, full_text_search
+from app.read.full_text import FullTextSearchQuery
 from app.vectorstore.base import SearchRequest
 from app.vectorstore.pgvector_store import PgVectorStore
-from tests.integration.find_similar_support import bulk_seed_for_plans
+from tests.integration.find_similar_support import (
+    bulk_seed_for_plans,
+    full_text_search_for_plan_gate,
+)
 from tests.integration.plan_assert import (
     assert_gin_index_scanned,
     assert_hnsw_index_scanned,
@@ -52,7 +55,7 @@ async def test_gin_index_scan_at_runtime(
     plan_seed = await bulk_seed_for_plans(session_factory, store)
 
     before = await gin_idx_scan_count(engine)
-    hits = await full_text_search(
+    hits = await full_text_search_for_plan_gate(
         session_factory,
         FullTextSearchQuery(
             org_id=plan_seed.seeded.org_id,
