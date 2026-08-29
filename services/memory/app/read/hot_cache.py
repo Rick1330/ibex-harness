@@ -41,6 +41,15 @@ class _HydrateHotRequest:
     score_by_id: dict[UUID, float]
 
 
+def _validate_min_confidence(value: float) -> None:
+    if not math.isfinite(value):
+        msg = "min_confidence must be in [0, 1]"
+        raise ValueError(msg)
+    if value < 0.0 or value > 1.0:
+        msg = "min_confidence must be in [0, 1]"
+        raise ValueError(msg)
+
+
 def _validate_hot_query(query: HotMemoryQuery) -> None:
     if query.limit < 1:
         msg = "limit must be >= 1"
@@ -48,13 +57,7 @@ def _validate_hot_query(query: HotMemoryQuery) -> None:
     if query.limit > HOT_CACHE_CAPACITY:
         msg = f"limit must be <= {HOT_CACHE_CAPACITY}"
         raise ValueError(msg)
-    if (
-        not math.isfinite(query.min_confidence)
-        or query.min_confidence < 0.0
-        or query.min_confidence > 1.0
-    ):
-        msg = "min_confidence must be in [0, 1]"
-        raise ValueError(msg)
+    _validate_min_confidence(query.min_confidence)
 
 
 @dataclass(frozen=True, slots=True)
