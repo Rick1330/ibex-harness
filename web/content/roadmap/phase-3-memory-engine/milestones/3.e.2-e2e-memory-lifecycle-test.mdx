@@ -2,7 +2,7 @@
 title: "3.E.2 End-to-end memory lifecycle test"
 description: "Full HTTP-level lifecycle test: PII redaction, exact dedup, near-dup conflict escalation, composite search ranking, and FK-cascade teardown (org GDPR deferred)."
 summary: "Full HTTP-level lifecycle test: PII redaction, exact dedup, near-dup conflict escalation, composite search ranking, and FK-cascade teardown (org GDPR deferred)."
-status: "complete"
+status: "in_progress"
 milestoneId: "3.E.2"
 track: "E"
 trackTitle: "Exit Gate"
@@ -15,7 +15,7 @@ fullTitle: "Milestone 3.E.2 — End-to-End Memory Lifecycle Test"
 
 # Milestone 3.E.2 — End-to-End Memory Lifecycle Test
 
-**Status:** Complete  
+**Status:** In progress (gate implemented; CI/local verification pending)  
 **Goal:** [Track E — Exit Gate](/roadmap/phase-3-memory-engine/tracks#track-e--exit-gate)  
 **Phase:** 3 — Core Memory Substrate  
 **Estimated effort:** 2 days
@@ -65,9 +65,9 @@ Prefer outcomes over matching any particular file tree or command sequence.
 
 Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
 
-- [x] Script exits 0 in CI against a fresh compose-test stack
-- [x] Wired as `make e2e-smoke-p3-memory` (distinct from the deferred `make e2e-smoke-p3` which bundled context assembly — that moves to Phase 3.5's own e2e gate)
-- [x] Repo guards / CI checks still pass
+- [ ] Script exits 0 in CI against a fresh compose-test stack
+- [ ] Wired as `make e2e-smoke-p3-memory` (distinct from the deferred `make e2e-smoke-p3` which bundled context assembly — that moves to Phase 3.5's own e2e gate)
+- [ ] Repo guards / CI checks still pass
 
 ## Prerequisites
 

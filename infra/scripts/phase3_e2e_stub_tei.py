@@ -7,7 +7,6 @@ Not production inference — satisfies embedder gpu profile geometry for local/C
 from __future__ import annotations
 
 import argparse
-import asyncio
 
 import uvicorn
 from fastapi import FastAPI, Request

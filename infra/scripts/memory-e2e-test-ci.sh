@@ -29,6 +29,7 @@ cd "$ROOT"
 bash "$ROOT/infra/scripts/db-migrate.sh" up
 bash "$ROOT/infra/scripts/db-seed.sh"
 bash "$ROOT/infra/scripts/memory-uv-sync.sh"
+bash "$ROOT/infra/scripts/embedder-uv-sync.sh"
 
 export IBEX_E2E_PHASE3_MANAGE=1
 bash "$ROOT/infra/scripts/verify_phase3_memory_e2e.sh"

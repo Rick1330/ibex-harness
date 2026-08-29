@@ -88,7 +88,7 @@ http_code() {
   if [[ -z "${BODY_FILE:-}" ]]; then
     BODY_FILE="$(mktemp "${TMPDIR:-/tmp}/ibex-e2e-p3-body.XXXXXX")"
   fi
-  curl -sS -o "$BODY_FILE" -w "%{http_code}" "$@" || true
+  curl -sS --connect-timeout 2 --max-time 30 -o "$BODY_FILE" -w "%{http_code}" "$@" || true
 }
 
 normalize_psql_dsn() {
@@ -109,11 +109,46 @@ run_psql() {
     docker exec ibex-test-postgres psql -U ibex -d ibex_test -v ON_ERROR_STOP=1 "$@"
     return 0
   fi
+  if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx test-postgres-1; then
+    docker exec test-postgres-1 psql -U ibex -d ibex_test -v ON_ERROR_STOP=1 "$@"
+    return 0
+  fi
   if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx ibex-dev-postgres; then
     docker exec ibex-dev-postgres psql -U ibex -d ibex -v ON_ERROR_STOP=1 "$@"
     return 0
   fi
   fail "psql not available for cascade DELETE"
+}
+
+postgres_preflight() {
+  local dsn
+  dsn="$(normalize_psql_dsn "${POSTGRES_DSN}")"
+  if command -v psql >/dev/null 2>&1; then
+    if psql "$dsn" -v ON_ERROR_STOP=1 -c 'SELECT 1' >/dev/null 2>&1; then
+      pass "postgres reachable ($dsn)"
+      return 0
+    fi
+    fail "Postgres not reachable at POSTGRES_DSN (check host/port and migrations)"
+  fi
+  if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx ibex-test-postgres; then
+    if docker exec ibex-test-postgres psql -U ibex -d ibex_test -v ON_ERROR_STOP=1 -c 'SELECT 1' >/dev/null 2>&1; then
+      pass "postgres reachable (ibex-test-postgres)"
+      return 0
+    fi
+  fi
+  if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx test-postgres-1; then
+    if docker exec test-postgres-1 psql -U ibex -d ibex_test -v ON_ERROR_STOP=1 -c 'SELECT 1' >/dev/null 2>&1; then
+      pass "postgres reachable (test-postgres-1)"
+      return 0
+    fi
+  fi
+  if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx ibex-dev-postgres; then
+    if docker exec ibex-dev-postgres psql -U ibex -d ibex -v ON_ERROR_STOP=1 -c 'SELECT 1' >/dev/null 2>&1; then
+      pass "postgres reachable (ibex-dev-postgres)"
+      return 0
+    fi
+  fi
+  fail "Postgres not reachable at POSTGRES_DSN (make compose-test-up && make db-migrate)"
 }
 
 memory_seed() {
@@ -189,6 +224,7 @@ start_stack() {
     fi
     # shellcheck disable=SC1091
     source .venv/bin/activate
+    export PYTHONPATH="$EMBEDDER_DIR${PYTHONPATH:+:$PYTHONPATH}"
     exec python "$STUB_TEI_PY" --host 127.0.0.1 --port "$STUB_TEI_PORT"
   ) >"$LOG_DIR/stub-tei.log" 2>&1 &
   PIDS+=("$!")
@@ -236,10 +272,9 @@ echo "=== Phase 3 memory HTTP lifecycle e2e (m3.E.2) ==="
 echo "  manage=$MANAGE logs=$LOG_DIR"
 
 if [[ "$MANAGE" == "1" ]]; then
-  if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -qx ibex-test-postgres \
-    && ! docker ps --format '{{.Names}}' 2>/dev/null | grep -qx ibex-dev-postgres; then
-    fail "compose Postgres not available (make compose-test-up && make db-migrate && make db-seed)"
-  fi
+  export POSTGRES_DSN="${POSTGRES_DSN:-postgres://ibex:ibex@localhost:5433/ibex_test?sslmode=disable}"
+  export REDIS_URL="${REDIS_URL:-redis://127.0.0.1:6380/0}"
+  postgres_preflight
   bash "$ROOT_DIR/infra/scripts/db-seed.sh" >/dev/null
   bash "$ROOT_DIR/infra/scripts/memory-uv-sync.sh" >/dev/null
   start_stack
@@ -251,6 +286,10 @@ else
 fi
 
 export EMBEDDER_ADDR DEV_ORG EMBED_TOKEN
+export POSTGRES_DSN IBEX_MEMORY_DATABASE_URL="${POSTGRES_DSN:-postgres://ibex:ibex@localhost:5433/ibex_test?sslmode=disable}"
+memory_seed fixture-cleanup --org-id "$DEV_ORG" --agent-id "$DEV_AGENT"
+pass "fixture cleanup complete"
+
 CALIB="$(verify_near_dup_calibration)"
 pass "near-dup pair calibrated ($CALIB)"
 
@@ -316,7 +355,7 @@ run_psql <<SQL
 SELECT set_config('app.is_service_account', 'true', true);
 DELETE FROM ibex_core.memories WHERE id = '${PII_MEMORY_ID}' AND org_id = '${DEV_ORG}';
 SQL
-memory_seed cascade-check --memory-id "$PII_MEMORY_ID"
+memory_seed cascade-check --memory-id "$PII_MEMORY_ID" --org-id "$DEV_ORG"
 pass "step 5: FK cascade teardown (SQL DELETE, not HTTP)"
 
 echo "=== Phase 3 memory e2e complete ==="

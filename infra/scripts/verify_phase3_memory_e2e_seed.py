@@ -210,16 +210,35 @@ async def _insert_related_memory(
     return memory_id
 
 
-async def cmd_cascade_check(memory_id: UUID) -> None:
+async def cmd_fixture_cleanup(org_id: UUID, agent_id: UUID) -> None:
+    """Remove all memories for the dev seed agent so repeated e2e runs are idempotent."""
+    factory, _ = await _session_stack()
+    async with factory() as session, session.begin():
+        await session.execute(text("SELECT set_config('app.is_service_account', 'true', true)"))
+        await session.execute(
+            text(
+                """
+                DELETE FROM ibex_core.memories
+                WHERE org_id = :org_id AND agent_id = :agent_id
+                """
+            ),
+            {"org_id": str(org_id), "agent_id": str(agent_id)},
+        )
+
+
+async def cmd_cascade_check(memory_id: UUID, org_id: UUID) -> None:
     factory, _ = await _session_stack()
     async with factory() as session:
-        await session.execute(text("SELECT set_config('app.is_service_account', 'true', true)"))
+        await with_service_org(session, org_id)
         label_count = (
             await session.execute(
                 text(
-                    "SELECT COUNT(*)::int AS c FROM ibex_core.memory_labels WHERE memory_id = :id"
+                    """
+                    SELECT COUNT(*)::int AS c FROM ibex_core.memory_labels
+                    WHERE memory_id = :id AND org_id = :org_id
+                    """
                 ),
-                {"id": str(memory_id)},
+                {"id": str(memory_id), "org_id": str(org_id)},
             )
         ).one()
         rel_count = (
@@ -227,10 +246,11 @@ async def cmd_cascade_check(memory_id: UUID) -> None:
                 text(
                     """
                     SELECT COUNT(*)::int AS c FROM ibex_core.memory_relationships
-                    WHERE source_memory_id = :id OR target_memory_id = :id
+                    WHERE org_id = :org_id
+                      AND (source_memory_id = :id OR target_memory_id = :id)
                     """
                 ),
-                {"id": str(memory_id)},
+                {"id": str(memory_id), "org_id": str(org_id)},
             )
         ).one()
         esc_count = (
@@ -239,10 +259,11 @@ async def cmd_cascade_check(memory_id: UUID) -> None:
                     """
                     SELECT COUNT(*)::int AS c
                     FROM ibex_core.memory_conflict_escalations
-                    WHERE new_memory_id = :id OR candidate_memory_id = :id
+                    WHERE org_id = :org_id
+                      AND (new_memory_id = :id OR candidate_memory_id = :id)
                     """
                 ),
-                {"id": str(memory_id)},
+                {"id": str(memory_id), "org_id": str(org_id)},
             )
         ).one()
     total = int(label_count.c) + int(rel_count.c) + int(esc_count.c)
@@ -288,6 +309,13 @@ def main() -> None:
 
     sub.add_parser("ranking-seed", help="Insert composite-ranking pair for dev org/agent")
 
+    fixture_cleanup = sub.add_parser(
+        "fixture-cleanup",
+        help="Delete all memories for dev org/agent (idempotent e2e runs)",
+    )
+    fixture_cleanup.add_argument("--org-id", type=UUID, required=True)
+    fixture_cleanup.add_argument("--agent-id", type=UUID, required=True)
+
     cascade_setup = sub.add_parser("cascade-setup", help="Insert FK children for cascade test")
     cascade_setup.add_argument("--memory-id", type=UUID, required=True)
     cascade_setup.add_argument("--org-id", type=UUID, required=True)
@@ -295,6 +323,7 @@ def main() -> None:
 
     cascade_check = sub.add_parser("cascade-check", help="Assert zero FK children remain")
     cascade_check.add_argument("--memory-id", type=UUID, required=True)
+    cascade_check.add_argument("--org-id", type=UUID, required=True)
 
     esc = sub.add_parser("escalation-check", help="Assert pending escalation row exists")
     esc.add_argument("--org-id", type=UUID, required=True)
@@ -304,10 +333,12 @@ def main() -> None:
     args = parser.parse_args()
     if args.command == "ranking-seed":
         asyncio.run(cmd_ranking_seed())
+    elif args.command == "fixture-cleanup":
+        asyncio.run(cmd_fixture_cleanup(args.org_id, args.agent_id))
     elif args.command == "cascade-setup":
         asyncio.run(cmd_cascade_setup(args.memory_id, args.org_id, args.agent_id))
     elif args.command == "cascade-check":
-        asyncio.run(cmd_cascade_check(args.memory_id))
+        asyncio.run(cmd_cascade_check(args.memory_id, args.org_id))
     elif args.command == "escalation-check":
         asyncio.run(cmd_escalation_check(args.org_id, args.new_id, args.candidate_id))
 
