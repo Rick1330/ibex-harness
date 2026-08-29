@@ -483,7 +483,12 @@ jobs:
       - uses: ./.github/actions/setup-buf
       - name: Generate protobuf stubs
         working-directory: packages/proto
-        run: buf generate
+        run: |
+          for attempt in 1 2 3; do
+            buf generate && break
+            if [ "$attempt" -eq 3 ]; then exit 1; fi
+            sleep 15
+          done
       - name: Migrate up
         env:
           POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable

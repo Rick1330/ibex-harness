@@ -84,7 +84,7 @@ async def explain_gin_search_plan(
     )
     await session.execute(
         text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-            "SET LOCAL enable_bitmapscan = OFF"
+            "SET LOCAL enable_indexscan = OFF"
         )
     )
     explain_sql = f"EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) {FTS_SQL}"

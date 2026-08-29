@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -55,30 +56,34 @@ def _repo(
     return MemoryReadRepository(MagicMock(), store or MagicMock(), settings or _settings())
 
 
-async def _run_sparse_fts_fallback(
-    *,
-    vector_ids: list,
-    fts_id,
-    limit: int,
-    fts_rank: float = 0.42,
-    query_text: str = "dark mode preference",
-) -> list[MemorySearchResult]:
+@dataclass(frozen=True, slots=True)
+class SparseFtsFallbackCase:
+    vector_ids: list[UUID]
+    fts_id: UUID
+    limit: int
+    fts_rank: float = 0.42
+    query_text: str = "dark mode preference"
+
+
+async def _run_sparse_fts_fallback(case: SparseFtsFallbackCase) -> list[MemorySearchResult]:
     store = MagicMock()
     store.search = AsyncMock(
-        return_value=[SearchHit(memory_id=mid, similarity=0.9) for mid in vector_ids]
+        return_value=[SearchHit(memory_id=mid, similarity=0.9) for mid in case.vector_ids]
     )
     repo = _repo(store)
     repo._hydrate_ordered = AsyncMock(  # type: ignore[method-assign]
         side_effect=[
-            [_result(mid) for mid in vector_ids],
-            [_result(fts_id, source="full_text")],
+            [_result(mid) for mid in case.vector_ids],
+            [_result(case.fts_id, source="full_text")],
         ]
     )
     with patch(
         "app.read.repository.full_text_search",
-        AsyncMock(return_value=[FullTextHit(memory_id=fts_id, rank=fts_rank)]),
+        AsyncMock(return_value=[FullTextHit(memory_id=case.fts_id, rank=case.fts_rank)]),
     ) as fts_mock:
-        results = await repo.find_similar(_query(query_text=query_text, limit=limit))
+        results = await repo.find_similar(
+            _query(query_text=case.query_text, limit=case.limit)
+        )
     fts_mock.assert_awaited_once()
     return results
 
@@ -115,9 +120,11 @@ async def test_find_similar_triggers_fallback_when_sparse() -> None:
     vector_id = uuid4()
     fts_id = uuid4()
     results = await _run_sparse_fts_fallback(
-        vector_ids=[vector_id],
-        fts_id=fts_id,
-        limit=3,
+        SparseFtsFallbackCase(
+            vector_ids=[vector_id],
+            fts_id=fts_id,
+            limit=3,
+        )
     )
     assert len(results) == 2
     assert results[0].source == "vector"
@@ -174,10 +181,12 @@ async def test_find_similar_fts_when_limit_exceeds_corpus() -> None:
     vector_ids = [uuid4() for _ in range(15)]
     fts_id = uuid4()
     results = await _run_sparse_fts_fallback(
-        vector_ids=vector_ids,
-        fts_id=fts_id,
-        limit=20,
-        fts_rank=0.55,
+        SparseFtsFallbackCase(
+            vector_ids=vector_ids,
+            fts_id=fts_id,
+            limit=20,
+            fts_rank=0.55,
+        )
     )
     assert len(results) == 16
     assert results[0].source == "vector"
