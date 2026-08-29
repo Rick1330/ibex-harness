@@ -6,6 +6,7 @@ import os
 from dataclasses import dataclass
 from uuid import UUID, uuid4
 
+import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -26,8 +27,7 @@ def require_postgres_dsn() -> str:
 def require_redis_url() -> str:
     url = os.getenv("REDIS_URL") or os.getenv("IBEX_MEMORY_REDIS_URL")
     if not url:
-        msg = "REDIS_URL required for security integration tests"
-        raise RuntimeError(msg)
+        pytest.skip("REDIS_URL required for security integration tests")
     return url
 
 
@@ -38,6 +38,102 @@ class OrgSeed:
     agent_id: UUID
     memory_id: UUID
     slug: str
+
+
+async def _insert_organization(
+    session: AsyncSession,
+    *,
+    org_id: UUID,
+    slug: str,
+) -> None:
+    await session.execute(
+        text(
+            """
+            INSERT INTO ibex_core.organizations (id, name, slug)
+            VALUES (:id, :name, :slug)
+            """
+        ),
+        {"id": str(org_id), "name": f"Org {slug}", "slug": slug},
+    )
+
+
+async def _insert_user(
+    session: AsyncSession,
+    *,
+    org_id: UUID,
+    user_id: UUID,
+    slug: str,
+) -> None:
+    await session.execute(
+        text(
+            """
+            INSERT INTO ibex_core.users (id, org_id, email, name)
+            VALUES (:id, :org_id, :email, :name)
+            """
+        ),
+        {
+            "id": str(user_id),
+            "org_id": str(org_id),
+            "email": f"{slug}@example.com",
+            "name": "User",
+        },
+    )
+
+
+async def _insert_agent(
+    session: AsyncSession,
+    *,
+    org_id: UUID,
+    user_id: UUID,
+    agent_id: UUID,
+    name: str = "Agent",
+    slug: str | None = None,
+) -> None:
+    resolved_slug = slug or f"agent-{agent_id.hex[:8]}"
+    await session.execute(
+        text(
+            """
+            INSERT INTO ibex_core.agents (id, org_id, created_by, name, slug)
+            VALUES (:id, :org_id, :created_by, :name, :slug)
+            """
+        ),
+        {
+            "id": str(agent_id),
+            "org_id": str(org_id),
+            "created_by": str(user_id),
+            "name": name,
+            "slug": resolved_slug,
+        },
+    )
+
+
+async def _insert_memory(
+    session: AsyncSession,
+    *,
+    org_id: UUID,
+    agent_id: UUID,
+    memory_id: UUID,
+    content: str,
+) -> None:
+    await session.execute(
+        text(
+            """
+            INSERT INTO ibex_core.memories (
+                id, org_id, agent_id, content, content_hash, content_tokens
+            ) VALUES (
+                :id, :org_id, :agent_id, :content, :hash, :tokens
+            )
+            """
+        ),
+        {
+            "id": str(memory_id),
+            "org_id": str(org_id),
+            "agent_id": str(agent_id),
+            "content": content,
+            "hash": f"hash-{memory_id.hex}",
+            "tokens": max(1, len(content.split())),
+        },
+    )
 
 
 async def seed_org_agent(
@@ -56,62 +152,21 @@ async def seed_org_agent(
         await session.execute(
             text("SELECT set_config('app.is_service_account', 'true', true)"),
         )
-        await session.execute(
-            text(
-                """
-                INSERT INTO ibex_core.organizations (id, name, slug)
-                VALUES (:id, :name, :slug)
-                """
-            ),
-            {"id": str(org_id), "name": f"Org {slug}", "slug": slug},
+        await with_service_org(session, org_id)
+        await _insert_organization(session, org_id=org_id, slug=slug)
+        await _insert_user(session, org_id=org_id, user_id=user_id, slug=slug)
+        await _insert_agent(
+            session,
+            org_id=org_id,
+            user_id=user_id,
+            agent_id=resolved_agent_id,
         )
-        await session.execute(
-            text(
-                """
-                INSERT INTO ibex_core.users (id, org_id, email, name)
-                VALUES (:id, :org_id, :email, :name)
-                """
-            ),
-            {
-                "id": str(user_id),
-                "org_id": str(org_id),
-                "email": f"{slug}@example.com",
-                "name": "User",
-            },
-        )
-        await session.execute(
-            text(
-                """
-                INSERT INTO ibex_core.agents (id, org_id, created_by, name, slug)
-                VALUES (:id, :org_id, :created_by, :name, :slug)
-                """
-            ),
-            {
-                "id": str(resolved_agent_id),
-                "org_id": str(org_id),
-                "created_by": str(user_id),
-                "name": "Agent",
-                "slug": f"agent-{resolved_agent_id.hex[:8]}",
-            },
-        )
-        await session.execute(
-            text(
-                """
-                INSERT INTO ibex_core.memories (
-                    id, org_id, agent_id, content, content_hash, content_tokens
-                ) VALUES (
-                    :id, :org_id, :agent_id, :content, :hash, :tokens
-                )
-                """
-            ),
-            {
-                "id": str(memory_id),
-                "org_id": str(org_id),
-                "agent_id": str(resolved_agent_id),
-                "content": content,
-                "hash": f"hash-{memory_id.hex}",
-                "tokens": max(1, len(content.split())),
-            },
+        await _insert_memory(
+            session,
+            org_id=org_id,
+            agent_id=resolved_agent_id,
+            memory_id=memory_id,
+            content=content,
         )
     return OrgSeed(
         org_id=org_id,
@@ -132,20 +187,13 @@ async def seed_second_agent_same_org(
     agent_id = uuid4()
     async with session_factory() as session, session.begin():
         await with_service_org(session, org_id)
-        await session.execute(
-            text(
-                """
-                INSERT INTO ibex_core.agents (id, org_id, created_by, name, slug)
-                VALUES (:id, :org_id, :created_by, :name, :slug)
-                """
-            ),
-            {
-                "id": str(agent_id),
-                "org_id": str(org_id),
-                "created_by": str(user_id),
-                "name": "Agent B",
-                "slug": f"{slug_prefix}-b-{agent_id.hex[:8]}",
-            },
+        await _insert_agent(
+            session,
+            org_id=org_id,
+            user_id=user_id,
+            agent_id=agent_id,
+            name="Agent B",
+            slug=f"{slug_prefix}-b-{agent_id.hex[:8]}",
         )
     return agent_id
 

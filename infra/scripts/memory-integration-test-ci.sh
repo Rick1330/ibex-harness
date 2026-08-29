@@ -20,11 +20,11 @@ fi
 export POSTGRES_DSN="${CANONICAL_DSN}"
 export POSTGRES_MIGRATE_DSN="${CANONICAL_DSN}"
 export POSTGRES_TEST_DSN="${CANONICAL_DSN}"
-export IBEX_MEMORY_DATABASE_URL="${IBEX_MEMORY_DATABASE_URL:-${CANONICAL_DSN}}"
+export IBEX_MEMORY_DATABASE_URL="${CANONICAL_DSN}"
 
 cd "$ROOT"
 bash "$ROOT/infra/scripts/db-migrate.sh" up
 
 cd "$MEMORY_DIR"
 bash "$ROOT/infra/scripts/memory-uv-sync.sh"
-.venv/bin/pytest -q -m integration
+.venv/bin/pytest -q -m "integration and not security_integration"

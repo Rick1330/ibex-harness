@@ -13,6 +13,12 @@ def test_tier1_skips_email_placeholder() -> None:
     assert not tier1_structured_pii_present("Contact [EMAIL_ADDRESS] for help")
 
 
+def test_tier1_blocks_mixed_placeholder_and_raw_email() -> None:
+    assert tier1_structured_pii_present(
+        "Contact [EMAIL_ADDRESS] or billing@example.com for help"
+    )
+
+
 def test_tier1_detects_ssn() -> None:
     assert tier1_structured_pii_present("SSN on file: 123-45-6789")
 

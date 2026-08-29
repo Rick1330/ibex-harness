@@ -13,15 +13,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Typed placeholders from write-path Presidio redaction — content is already scrubbed.
-_TYPED_PLACEHOLDER_MARKERS: tuple[str, ...] = (
-    "[EMAIL_ADDRESS]",
-    "[PHONE_NUMBER]",
-    "[US_SSN]",
-    "[CREDIT_CARD]",
-    "[IP_ADDRESS]",
-)
-
 _EMAIL_RE = re.compile(
     r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b",
 )
@@ -44,14 +35,9 @@ _TIER1_CHECKS: tuple[re.Pattern[str], ...] = (
 )
 
 
-def _content_has_typed_placeholders(content: str) -> bool:
-    return any(marker in content for marker in _TYPED_PLACEHOLDER_MARKERS)
-
-
 def tier1_structured_pii_present(content: str) -> bool:
     """Return True when Tier-1 structured PII patterns are present (regex-only, no spaCy)."""
-    if _content_has_typed_placeholders(content):
-        return False
+    # Always scan for raw structured PII. Placeholder-only content passes when no pattern matches.
     return any(pattern.search(content) for pattern in _TIER1_CHECKS)
 
 

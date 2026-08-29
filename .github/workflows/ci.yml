@@ -1001,7 +1001,8 @@ jobs:
           --health-timeout 5s
           --health-retries 10
       redis:
-        image: redis:7
+        # redis 7.4.2 — immutable pin (mutable :7 must not be used in CI).
+        image: redis:7.4.2@sha256:fbdbaea47b9ae4ecc2082ecdb4e1cea81e32176ffb1dcf643d422ad07427e5d9
         ports:
           - 6379:6379
         options: >-
