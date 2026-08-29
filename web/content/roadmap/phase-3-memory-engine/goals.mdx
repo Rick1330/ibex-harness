@@ -72,7 +72,7 @@ phase: "phase-3-memory-engine"
 
 **Milestones:**
 - **3.D.1 — Semantic search read path:** `find_similar` via `VectorStore.search()`, GIN full-text fallback when vector results < K.
-- **3.D.2 — Composite scoring v2:** Category-conditional recency decay. Formula weights unchanged (0.40/0.25/0.20/0.10/0.05), only recency component is category-conditional. Regression test proves old factual outranks fresh episodic at equal relevance.
+- **3.D.2 — Composite scoring in search ranking:** Wire existing `composite_score()` (category-conditional half-life from 3.2.1) into `find_similar` after retrieval. HTTP `similarity` stays the retrieval metric; ordering uses composite. HTTP regression proves old factual outranks fresh episodic at equal vector relevance.
 - **3.D.3 — Hot cache (Redis sorted set):** `ZADD`/`ZREVRANGE` per agent, top-50 capacity, TTL-based eviction. Cache score uses category-conditional recency for consistency.
 
 **Acceptance criteria:**

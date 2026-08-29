@@ -1,8 +1,8 @@
 ---
-title: "3.D.2 Composite scoring v2 (category-conditional decay)"
-description: "Fix the recency-decay bug — replace the single fixed 14-day half-life with a per-category half-life table so factual/procedural memories don't decay as fast as episodic ones."
-summary: "Fix the recency-decay bug — replace the single fixed 14-day half-life with a per-category half-life table so factual/procedural memories don't decay as fast as episodic ones."
-status: "planned"
+title: "3.D.2 Composite scoring in search ranking"
+description: "Wire existing composite_score() into the semantic search read path so find_similar ranks by category-conditional composite score after retrieval — not raw cosine or ts_rank_cd order."
+summary: "Wire composite_score() into find_similar ranking after vector + FTS retrieval; HTTP similarity stays the retrieval metric."
+status: "complete"
 milestoneId: "3.D.2"
 track: "D"
 trackTitle: "Read/Ranking Pipeline"
@@ -10,12 +10,12 @@ trackHref: "/roadmap/phase-3-memory-engine/tracks#track-d--readranking-pipeline"
 goal: "[Track D — Read/Ranking Pipeline](/roadmap/phase-3-memory-engine/tracks#track-d--readranking-pipeline)"
 estimatedEffort: "2 days"
 phase: "phase-3-memory-engine"
-fullTitle: "Milestone 3.D.2 — Composite Scoring v2 (Category-Conditional Decay)"
+fullTitle: "Milestone 3.D.2 — Composite Scoring in Search Ranking"
 ---
 
-# Milestone 3.D.2 — Composite Scoring v2 (Category-Conditional Decay)
+# Milestone 3.D.2 — Composite Scoring in Search Ranking
 
-**Status:** Planned  
+**Status:** Complete  
 **Goal:** [Track D — Read/Ranking Pipeline](/roadmap/phase-3-memory-engine/tracks#track-d--readranking-pipeline)  
 **Phase:** 3 — Core Memory Substrate  
 **Estimated effort:** 2 days
@@ -31,15 +31,19 @@ fullTitle: "Milestone 3.D.2 — Composite Scoring v2 (Category-Conditional Decay
 
 ## Why This Milestone Exists
 
-A single fixed 14-day half-life applied to every category is wrong for `factual`/`procedural` memories, which shouldn't meaningfully decay over weeks the way `episodic` memories should. This milestone fixes the `recency_score` component only — the composite formula structure and weights (0.40/0.25/0.20/0.10/0.05) are unchanged.
+Milestone 3.D.1 returns search hits in raw retrieval order (cosine similarity for vector, `ts_rank_cd` for GIN supplemental rows). Category-conditional composite scoring and the per-category half-life table already ship in Track B (`app/scoring/`, write hot-cache ZADD). **3.D.2 wires that scorer into the read path** so `find_similar` and `POST /v1/memories/search` order results by `composite_score()` after merge/hydrate. HTTP `similarity` remains the retrieval metric; `rank` reflects post-composite order.
+
+FTS supplemental hits use a fixed relevance sentinel (`0.5`) for composite scoring only — they have no cosine score. See [ADR-0058](/docs/adr/0058-semantic-search-fts-fallback-trigger).
 
 ---
 
 ## Non-Goals
 
-- Changing the composite formula weights (validated separately in Phase 3.5's benchmark)
+- Re-implementing decay math or changing `CATEGORY_HALF_LIFE_DAYS` (shipped in 3.2.1)
+- Changing composite formula weights (validated separately in Phase 3.5's benchmark)
 - Introducing a relevance gate (that's Phase 3.5, milestone 3.5.C.3)
-- Changing any scoring component other than recency
+- Read-side hot cache consumer (3.D.3)
+- Changing write hot-cache scoring (`write/cache.py`)
 
 ---
 
@@ -68,7 +72,7 @@ Prefer outcomes over matching any particular file tree or command sequence.
 Rename freely to match the change that actually lands.
 
 - Branch: `feature/m3-d-2-composite-scoring-v2`
-- PR title: `feat(memory): category-conditional recency decay in composite scorer (m3.D.2)`
+- PR title: `feat(memory): wire composite scoring into search ranking (m3.D.2)`
 
 ## Working notes
 
@@ -103,11 +107,11 @@ values via environment variables for ops tuning without redeploy — **not** a 3
 
 Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
 
-- [ ] Formula weights unchanged (0.40/0.25/0.20/0.10/0.05) — only recency component is category-conditional
-- [x] Regression test proves the specific bug (old factual outranked by fresh episodic of equal relevance) is fixed — shipped in 3.2.1 (`test_composite.py`)
+- [x] Formula weights unchanged (0.40/0.25/0.20/0.10/0.05) — scorer reused from 3.2.1
+- [x] Regression test proves old factual outranks fresh episodic at equal vector relevance — unit (`test_read_ranking_unit.py`) + HTTP integration (`test_composite_ranking_http.py`)
 - [x] Half-life table is data, not hardcoded per-branch logic — `CATEGORY_HALF_LIFE_DAYS` in `half_life.py` (3.2.1)
-- [ ] Composite scoring applied to search ranking results (primary 3.D.2 deliverable)
-- [ ] Repo guards / CI checks still pass
+- [x] Composite scoring applied to search ranking results (`app/read/ranking.py`, `find_similar`)
+- [x] Repo guards / CI checks still pass
 
 ## Prerequisites
 

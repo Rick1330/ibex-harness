@@ -110,7 +110,7 @@ ops notes. Search latency after a correct HNSW build is comparable; the cost dif
 
 1. Ship `VectorStore` ABC + `UpsertRequest` / `SearchRequest` dataclasses, `InMemoryVectorStore`, and `PgVectorStore` with explicit `org_id`/`agent_id` filters plus RLS GUC.
 2. Upsert updates embeddings on **existing** rows only (row create is Track C).
-3. Ship scoring v2 (`app/scoring/`) as pure functions reused later by Track D.
+3. Ship scoring v2 (`app/scoring/`) as pure functions reused by Track D read ranking ([3.D.2](/roadmap/phase-3-memory-engine/milestones/3.d.2-composite-scoring-v2): `app/read/ranking.py` applies `composite_score()` after vector/FTS retrieval).
 4. Ship `EmbeddingClient` (`app/clients/embedding.py`) for `POST /v1/embed`.
 5. Commit HNSW recall/latency benches under `benchmarks/memory/` (published JSON at
    `web/public/benchmarks/hnsw-benchmark-data.json`; CI smoke = 10K; 1M = schedule/dispatch).

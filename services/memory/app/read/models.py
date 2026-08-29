@@ -25,7 +25,10 @@ class FindSimilarQuery:
 
 @dataclass(frozen=True, slots=True)
 class MemorySearchResult:
-    """Single search hit — similarity is cosine for vector, ts_rank for full-text."""
+    """Single search hit — similarity is the retrieval metric (cosine or ts_rank_cd).
+
+    Result ordering uses composite_score(); this field is not the composite value.
+    """
 
     id: UUID
     org_id: UUID

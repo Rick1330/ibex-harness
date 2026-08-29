@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
@@ -12,6 +12,7 @@ import pytest
 from app.config import Settings
 from app.read.full_text import FullTextHit
 from app.read.models import FindSimilarQuery, MemorySearchResult
+from app.read.ranking import HydratedHit
 from app.read.repository import MemoryReadRepository
 from app.vectorstore.base import SearchHit
 
@@ -37,6 +38,19 @@ def _result(memory_id, *, confidence: float = 0.9, source: str = "vector") -> Me
     )
 
 
+def _hydrated_map(results: list[MemorySearchResult]) -> dict[UUID, HydratedHit]:
+    now = datetime.now(UTC)
+    return {
+        item.id: HydratedHit(
+            result=item,
+            valid_from=now - timedelta(days=30),
+            usefulness_score=0.5,
+            retrieval_count=0,
+        )
+        for item in results
+    }
+
+
 def _query(**kwargs: object) -> FindSimilarQuery:
     defaults: dict[str, object] = {
         "org_id": uuid4(),
@@ -56,6 +70,37 @@ def _repo(
     return MemoryReadRepository(MagicMock(), store or MagicMock(), settings or _settings())
 
 
+def _vector_repo(
+    memory_ids: list[UUID],
+    *,
+    similarities: list[float] | None = None,
+    confidences: list[float] | None = None,
+) -> tuple[MemoryReadRepository, MagicMock]:
+    store = MagicMock()
+    store.search = AsyncMock(
+        return_value=[
+            SearchHit(
+                memory_id=memory_id,
+                similarity=similarities[index] if similarities is not None else 0.9,
+            )
+            for index, memory_id in enumerate(memory_ids)
+        ]
+    )
+    repo = _repo(store)
+    repo._hydrate_hits = AsyncMock(  # type: ignore[method-assign]
+        return_value=_hydrated_map(
+            [
+                _result(
+                    memory_id,
+                    confidence=confidences[index] if confidences is not None else 0.9,
+                )
+                for index, memory_id in enumerate(memory_ids)
+            ]
+        )
+    )
+    return repo, store
+
+
 @dataclass(frozen=True, slots=True)
 class SparseFtsFallbackCase:
     vector_ids: list[UUID]
@@ -71,10 +116,12 @@ async def _run_sparse_fts_fallback(case: SparseFtsFallbackCase) -> list[MemorySe
         return_value=[SearchHit(memory_id=mid, similarity=0.9) for mid in case.vector_ids]
     )
     repo = _repo(store)
-    repo._hydrate_ordered = AsyncMock(  # type: ignore[method-assign]
+    vector_results = [_result(mid) for mid in case.vector_ids]
+    fts_result = _result(case.fts_id, source="full_text")
+    repo._hydrate_hits = AsyncMock(  # type: ignore[method-assign]
         side_effect=[
-            [_result(mid) for mid in case.vector_ids],
-            [_result(case.fts_id, source="full_text")],
+            _hydrated_map(vector_results),
+            _hydrated_map([fts_result]),
         ]
     )
     with patch(
@@ -93,14 +140,7 @@ async def test_find_similar_vector_only_at_limit() -> None:
     org_id = uuid4()
     agent_id = uuid4()
     ids = [uuid4() for _ in range(3)]
-    store = MagicMock()
-    store.search = AsyncMock(
-        return_value=[SearchHit(memory_id=mid, similarity=0.9) for mid in ids]
-    )
-    repo = _repo(store)
-    repo._hydrate_ordered = AsyncMock(  # type: ignore[method-assign]
-        return_value=[_result(mid) for mid in ids]
-    )
+    repo, store = _vector_repo(ids)
 
     results = await repo.find_similar(
         _query(
@@ -112,7 +152,7 @@ async def test_find_similar_vector_only_at_limit() -> None:
     )
     assert len(results) == 3
     store.search.assert_awaited_once()
-    repo._hydrate_ordered.assert_awaited_once()
+    repo._hydrate_hits.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -140,8 +180,8 @@ async def test_find_similar_sparse_fts_fallback(
         )
     )
     assert len(results) == expected_len
-    assert results[0].source == "vector"
-    if expected_len > 1:
+    assert any(item.source == "vector" for item in results)
+    if expected_len > vector_count:
         assert any(item.source == "full_text" for item in results)
 
 
@@ -153,7 +193,9 @@ async def test_find_similar_no_fallback_at_exact_limit() -> None:
         return_value=[SearchHit(memory_id=mid, similarity=0.88) for mid in ids]
     )
     repo = _repo(store)
-    repo._hydrate_ordered = AsyncMock(return_value=[_result(mid) for mid in ids])  # type: ignore[method-assign]
+    repo._hydrate_hits = AsyncMock(  # type: ignore[method-assign]
+        return_value=_hydrated_map([_result(mid) for mid in ids])
+    )
 
     with patch(
         "app.read.repository.full_text_search",
@@ -173,8 +215,8 @@ async def test_find_similar_no_fts_when_vector_fills_limit() -> None:
         return_value=[SearchHit(memory_id=mid, similarity=0.95 - index * 0.01) for index, mid in enumerate(ids)]
     )
     repo = _repo(store)
-    repo._hydrate_ordered = AsyncMock(  # type: ignore[method-assign]
-        return_value=[_result(mid) for mid in ids[:3]]
+    repo._hydrate_hits = AsyncMock(  # type: ignore[method-assign]
+        return_value=_hydrated_map([_result(mid) for mid in ids[:3]])
     )
 
     with patch("app.read.repository.full_text_search", AsyncMock()) as fts_mock:
@@ -195,7 +237,7 @@ async def test_find_similar_both_empty() -> None:
     store = MagicMock()
     store.search = AsyncMock(return_value=[])
     repo = _repo(store)
-    repo._hydrate_ordered = AsyncMock(return_value=[])  # type: ignore[method-assign]
+    repo._hydrate_hits = AsyncMock(return_value={})  # type: ignore[method-assign]
 
     with patch("app.read.repository.full_text_search", AsyncMock(return_value=[])):
         results = await repo.find_similar(_query(query_text="nothing here"))
@@ -207,7 +249,7 @@ async def test_find_similar_skips_fts_for_blank_query() -> None:
     store = MagicMock()
     store.search = AsyncMock(return_value=[])
     repo = _repo(store)
-    repo._hydrate_ordered = AsyncMock(return_value=[])  # type: ignore[method-assign]
+    repo._hydrate_hits = AsyncMock(return_value={})  # type: ignore[method-assign]
 
     with patch("app.read.repository.full_text_search", AsyncMock()) as fts_mock:
         results = await repo.find_similar(_query(query_text="   "))
@@ -227,10 +269,7 @@ async def test_find_similar_min_confidence_boundary() -> None:
     org_id = uuid4()
     agent_id = uuid4()
     mid = uuid4()
-    store = MagicMock()
-    store.search = AsyncMock(return_value=[SearchHit(memory_id=mid, similarity=0.99)])
-    repo = _repo(store)
-    repo._hydrate_ordered = AsyncMock(return_value=[_result(mid, confidence=1.0)])  # type: ignore[method-assign]
+    repo, _store = _vector_repo([mid], similarities=[0.99], confidences=[1.0])
 
     results = await repo.find_similar(
         _query(
@@ -242,8 +281,8 @@ async def test_find_similar_min_confidence_boundary() -> None:
         )
     )
     assert len(results) == 1
-    repo._hydrate_ordered.assert_awaited_once()
-    assert repo._hydrate_ordered.await_args.kwargs["min_confidence"] == 1.0
+    repo._hydrate_hits.assert_awaited_once()
+    assert repo._hydrate_hits.await_args.kwargs["min_confidence"] == 1.0
 
 
 @pytest.mark.asyncio
@@ -252,7 +291,9 @@ async def test_find_similar_fallback_disabled() -> None:
     store = MagicMock()
     store.search = AsyncMock(return_value=[SearchHit(memory_id=vector_id, similarity=0.9)])
     repo = _repo(store, settings=_settings(search_fallback_enabled=False))
-    repo._hydrate_ordered = AsyncMock(return_value=[_result(vector_id)])  # type: ignore[method-assign]
+    repo._hydrate_hits = AsyncMock(  # type: ignore[method-assign]
+        return_value=_hydrated_map([_result(vector_id)])
+    )
 
     with patch("app.read.repository.full_text_search", AsyncMock()) as fts_mock:
         results = await repo.find_similar(_query(query_text="dark mode"))
@@ -281,11 +322,14 @@ async def test_find_similar_drops_unhydrated_candidates() -> None:
         ]
     )
     repo = _repo(store)
-    repo._hydrate_ordered = AsyncMock(return_value=[_result(vector_id)])  # type: ignore[method-assign]
+    repo._hydrate_hits = AsyncMock(  # type: ignore[method-assign]
+        return_value=_hydrated_map([_result(vector_id)])
+    )
 
-    with patch("app.read.repository.full_text_search", AsyncMock()) as fts_mock:
+    with patch("app.read.repository.full_text_search", AsyncMock(return_value=[])) as fts_mock:
         results = await repo.find_similar(_query(limit=2))
 
     fts_mock.assert_awaited_once()
+    repo._hydrate_hits.assert_awaited_once()
     assert len(results) == 1
     assert results[0].id == vector_id
