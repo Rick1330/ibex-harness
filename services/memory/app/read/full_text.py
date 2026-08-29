@@ -61,7 +61,7 @@ async def full_text_search(
     async with session_factory() as session, session.begin():
         await set_service_org(session, query.org_id)
         result = await session.execute(
-            text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+            text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text  # nosec B608
                 FTS_SQL
             ),
             {

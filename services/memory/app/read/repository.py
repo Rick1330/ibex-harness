@@ -168,7 +168,7 @@ class MemoryReadRepository:
         async with self._session_factory() as session, session.begin():
             await set_service_org(session, org_id)
             result = await session.execute(
-                text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+                text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text  # nosec B608
                     _HYDRATE_SQL
                 ),
                 {
