@@ -19,7 +19,7 @@ from tests.unit.memory_test_support import sample_memory_row
 def test_hot_memories_key_namespaces_org_and_agent() -> None:
     org_id = uuid4()
     agent_id = uuid4()
-    assert hot_memories_key(org_id, agent_id) == f"org_id:{org_id}:hot_memories:{agent_id}"
+    assert hot_memories_key(org_id, agent_id) == f"{org_id}:hot_memories:{agent_id}"
 
 
 def test_hot_cache_capacity_frozen() -> None:

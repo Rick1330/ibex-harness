@@ -8,4 +8,4 @@ HOT_CACHE_CAPACITY = 50
 
 
 def hot_memories_key(org_id: UUID, agent_id: UUID) -> str:
-    return f"org_id:{org_id}:hot_memories:{agent_id}"
+    return f"{org_id}:hot_memories:{agent_id}"

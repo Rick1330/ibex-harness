@@ -309,6 +309,7 @@ Write-path PII detection and redaction run in the memory pipeline ([ADR-0054](/d
 - **Covered:** structured patterns (email, phone, US SSN, credit card, IPv4) via regex — no spaCy on the hot read path.
 - **Skipped:** content containing only typed placeholders (`[EMAIL_ADDRESS]`, etc.) from write-path redaction — regex still runs; mixed placeholder + raw PII is blocked.
 - **On hit:** memory is excluded from the result set (fail-closed); metric `ibex_memory_read_pii_reconfirm_total{result="blocked"}` increments.
+- **On clean pass:** `ibex_memory_read_pii_reconfirm_total{result="passed"}` increments once per hydrated candidate evaluated (not once per search/hot-cache request). Two label values only — observe guard hit-rate without cardinality risk.
 
 **Residual risk:** contextual PII (names, addresses via Tier-2 NER) bypassing the write pipeline via direct DB write is **not** caught synchronously on read — Tier-2 per-query would violate Phase 3 latency budgets. Mitigations: write-path invariant (3.C.1), RLS/service-layer access controls, and deferred async-sampled Tier-2 re-scan ([#642](https://github.com/Rick1330/ibex-harness/issues/642)).
 

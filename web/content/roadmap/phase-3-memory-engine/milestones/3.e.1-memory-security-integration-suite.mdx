@@ -44,10 +44,10 @@ Mirrors Phase 1's `1.5.1` pattern: prove the *composed* system (real Postgres wi
 | ISO-1.3 | Direct SQL query bypassing service layer, `SET LOCAL app.current_org_id` to Org A | Org B rows invisible even with malformed `WHERE` clause (RLS floor) |
 | ISO-1.4 | `memory_relationships` edge referencing a memory from a different org | Insert rejected |
 | ISO-1.5 | HNSW ANN search across a mixed corpus (Org A + Org B rows in same index) | Zero cross-org leakage in top-K at every `ef_search` value |
-| ISO-1.6 | Redis hot cache: same `agent_id` UUID in two orgs | No cross-tenant cache read possible (`org_id:{org_id}:hot_memories:{agent_id}` namespacing) |
+| ISO-1.6 | Redis hot cache: same `agent_id` UUID in two orgs | No cross-tenant cache read possible (`{org_id}:hot_memories:{agent_id}` namespacing — org_id is leading segment) |
 | ISO-1.7 | `memory_conflict_escalations` row for Org A queried under Org B RLS | Count 0 |
 | ISO-1.8 | Hot cache: Org A agent B cannot read Org A agent A hot memories | Empty result set |
-| ISO-2.1 | Hard `DELETE` of a `memories` row | `memory_labels` and `memory_relationships` cascade per FK (`ON DELETE CASCADE`) |
+| ISO-2.1 | Hard `DELETE` of a `memories` row | `memory_labels`, `memory_relationships`, and `memory_conflict_escalations` cascade per FK (`ON DELETE CASCADE`) |
 | ISO-2.2 | Org-scope GDPR delete + MinIO archive removal | **Deferred to Phase 4.A.2** ([#641](https://github.com/Rick1330/ibex-harness/issues/641)) — not Phase 3 |
 | ISO-3.1 | PII write-path bypass via direct DB write (Tier-1 structured PII, e.g. email) | Read-path Tier-1 regex re-check blocks return; Tier-2 contextual bypass is a documented residual risk ([#642](https://github.com/Rick1330/ibex-harness/issues/642)) |
 | ISO-3.2 | Quarantined memory (`status='quarantined'`) | Never returned by search, regardless of similarity score |
