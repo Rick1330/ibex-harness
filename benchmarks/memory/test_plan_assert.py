@@ -6,6 +6,7 @@ import pytest
 
 from plan_assert import (
     PlanAssertionError,
+    _summarize_nodes,
     assert_gin_index_used,
     walk_plan_nodes,
 )
@@ -83,6 +84,19 @@ def test_assert_gin_index_used_accepts_bitmap_index_scan() -> None:
 def test_assert_gin_index_used_accepts_nested_bitmap_tree() -> None:
     summary = assert_gin_index_used(_NESTED_PLAN)
     assert summary["index_name"] == "idx_memories_search_vector"
+
+
+def test_summarize_nodes_prefers_index_name_over_relation() -> None:
+    summary = _summarize_nodes(
+        [
+            {
+                "Node Type": "Bitmap Index Scan",
+                "Index Name": "idx_memories_search_vector",
+                "Relation Name": "memories",
+            }
+        ]
+    )
+    assert summary == "Bitmap Index Scan@idx_memories_search_vector"
 
 
 def test_assert_gin_index_used_rejects_btree_plan() -> None:

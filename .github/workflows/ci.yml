@@ -1112,16 +1112,32 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Run Trivy filesystem scan
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+      - uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.0
         with:
-          scan-type: fs
-          scan-ref: .
-          severity: CRITICAL,HIGH
-          ignore-unfixed: true
-          format: sarif
-          output: trivy-results.sarif
-          exit-code: "1"
+          version: v0.70.0
+      - name: Run Trivy filesystem scan
+        run: |
+          set +e
+          # Table first so failing CVEs are visible in job logs (SARIF alone is opaque).
+          trivy fs . \
+            --severity CRITICAL,HIGH \
+            --ignore-unfixed \
+            --scanners vuln \
+            --format table \
+            --exit-code 1
+          table_rc=$?
+          trivy fs . \
+            --severity CRITICAL,HIGH \
+            --ignore-unfixed \
+            --scanners vuln \
+            --format sarif \
+            --output trivy-results.sarif \
+            --exit-code 0
+          sarif_rc=$?
+          set -e
+          if [ "$table_rc" -ne 0 ] || [ "$sarif_rc" -ne 0 ]; then
+            exit 1
+          fi
       - name: Upload Trivy SARIF
         uses: github/codeql-action/upload-sarif@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28 # v4.37.8
         if: always()

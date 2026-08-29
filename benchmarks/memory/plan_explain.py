@@ -35,11 +35,13 @@ LIMIT 1
 
 # Partial btree indexes sharing the probe's status/deleted_at predicate; dropped inside the
 # probe transaction so EXPLAIN must use idx_memories_search_vector (restored on rollback).
-_GIN_COMPETING_INDEXES = (
-    "ibex_core.idx_memories_agent_active",
-    "ibex_core.idx_memories_org_agent_content_hash_active",
-    "ibex_core.idx_memories_validity",
+_DROP_GIN_COMPETING_INDEXES_SQL = (
+    "DROP INDEX IF EXISTS ibex_core.idx_memories_agent_active",
+    "DROP INDEX IF EXISTS ibex_core.idx_memories_org_agent_content_hash_active",
+    "DROP INDEX IF EXISTS ibex_core.idx_memories_validity",
 )
+
+_EXPLAIN_PREFIX = "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) "
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,7 +62,7 @@ async def explain_hnsw_search_plan(
     params: HnswExplainParams,
 ) -> object:
     """Run EXPLAIN for vector search SQL (shared with integration plan gates)."""
-    explain_sql = f"EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) {SEARCH_SQL}"
+    explain_sql = _EXPLAIN_PREFIX + SEARCH_SQL
     vector_literal = "[" + ",".join(str(float(v)) for v in params.query_vec) + "]"
     await session.execute(
         text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
@@ -88,11 +90,9 @@ async def explain_hnsw_search_plan(
 
 async def _hide_gin_competing_indexes(session: AsyncSession) -> None:
     """Drop btree indexes that compete with the partial GIN index for the probe shape."""
-    for index_name in _GIN_COMPETING_INDEXES:
+    for stmt in _DROP_GIN_COMPETING_INDEXES_SQL:
         await session.execute(
-            text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-                f"DROP INDEX IF EXISTS {index_name}"
-            )
+            text(stmt),  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
         )
 
 
@@ -124,7 +124,7 @@ async def explain_gin_probe_plan(
     nested = await session.begin_nested()
     try:
         await prepare_gin_probe_session(session)
-        explain_sql = f"EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) {GIN_PROBE_SQL}"
+        explain_sql = _EXPLAIN_PREFIX + GIN_PROBE_SQL
         result = await session.execute(
             text(explain_sql),  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
             {"query_text": params.query_text.strip()},

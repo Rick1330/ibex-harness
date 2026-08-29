@@ -50,19 +50,19 @@ def _is_seq_on_memories(node: dict[str, Any]) -> bool:
     return ntype == "Seq Scan" and relation in {"memories", "ibex_core.memories"}
 
 
+def _format_plan_node(node: dict[str, Any]) -> str:
+    ntype = str(node.get(_NODE_TYPE) or "")
+    index_name = str(node.get(_INDEX_NAME) or "")
+    relation = str(node.get(_RELATION_NAME) or "")
+    if index_name:
+        return f"{ntype}@{index_name}"
+    if relation:
+        return f"{ntype}@{relation}"
+    return ntype or "?"
+
+
 def _summarize_nodes(nodes: list[dict[str, Any]]) -> str:
-    parts: list[str] = []
-    for node in nodes[:12]:
-        ntype = str(node.get(_NODE_TYPE) or "")
-        index_name = str(node.get(_INDEX_NAME) or "")
-        relation = str(node.get(_RELATION_NAME) or "")
-        if index_name:
-            parts.append(f"{ntype}@{index_name}")
-        elif relation:
-            parts.append(f"{ntype}@{relation}")
-        else:
-            parts.append(ntype or "?")
-    return ", ".join(parts)
+    return ", ".join(_format_plan_node(node) for node in nodes[:12])
 
 
 def _root_plan(explain_json: list[Any] | dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
