@@ -48,6 +48,7 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 markers = [
   "integration: requires Postgres with pgvector",
+  "security_integration: memory ISO-* security gate (m3.E.1)",
 ]
 
 [tool.ruff]
