@@ -33,9 +33,6 @@ from tests.integration.find_similar_support import (  # noqa: E402
     upsert_embedding,
 )
 
-DEV_ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
-DEV_AGENT_ID = UUID("00000000-0000-0000-0000-000000000003")
-
 
 def _async_dsn() -> str:
     raw = os.getenv("IBEX_MEMORY_DATABASE_URL") or os.getenv("POSTGRES_DSN") or os.getenv(
@@ -59,9 +56,7 @@ async def _session_stack() -> tuple[async_sessionmaker[AsyncSession], PgVectorSt
     return factory, store
 
 
-async def cmd_ranking_seed() -> None:
-    org_id = UUID(os.getenv("IBEX_E2E_DEV_ORG_ID", str(DEV_ORG_ID)))
-    agent_id = UUID(os.getenv("IBEX_E2E_DEV_AGENT_ID", str(DEV_AGENT_ID)))
+async def cmd_ranking_seed(org_id: UUID, agent_id: UUID) -> None:
     factory, store = await _session_stack()
     now = datetime.now(tz=UTC)
     factual_id = await insert_scored_memory(
@@ -158,7 +153,7 @@ async def cmd_fixture_cleanup(org_id: UUID, agent_id: UUID) -> None:
     """Remove all memories for the dev seed agent so repeated e2e runs are idempotent."""
     factory, _ = await _session_stack()
     async with factory() as session, session.begin():
-        await session.execute(text("SELECT set_config('app.is_service_account', 'true', true)"))
+        await with_service_org(session, org_id)
         await session.execute(
             text(
                 """
@@ -251,7 +246,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Phase 3 memory e2e seed helpers")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    sub.add_parser("ranking-seed", help="Insert composite-ranking pair for dev org/agent")
+    ranking = sub.add_parser("ranking-seed", help="Insert composite-ranking pair for dev org/agent")
+    ranking.add_argument("--org-id", type=UUID, required=True)
+    ranking.add_argument("--agent-id", type=UUID, required=True)
 
     fixture_cleanup = sub.add_parser(
         "fixture-cleanup",
@@ -276,7 +273,7 @@ def main() -> None:
 
     args = parser.parse_args()
     if args.command == "ranking-seed":
-        asyncio.run(cmd_ranking_seed())
+        asyncio.run(cmd_ranking_seed(args.org_id, args.agent_id))
     elif args.command == "fixture-cleanup":
         asyncio.run(cmd_fixture_cleanup(args.org_id, args.agent_id))
     elif args.command == "cascade-setup":

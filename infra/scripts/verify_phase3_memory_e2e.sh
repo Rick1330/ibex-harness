@@ -38,6 +38,8 @@ PII_CONTENT='My SSN is 856-45-6789 on file'
 
 PIDS=()
 BODY_FILE=""
+LAST_HTTP_CODE=""
+CODE=""
 fail() { echo "FAIL: $*" >&2; exit 1; }
 pass() { echo "PASS: $*"; }
 
@@ -93,7 +95,12 @@ http_code() {
   if [[ -z "${BODY_FILE:-}" ]]; then
     BODY_FILE="$(mktemp "${TMPDIR:-/tmp}/ibex-e2e-p3-body.XXXXXX")"
   fi
-  curl -sS --connect-timeout 2 --max-time 30 -o "$BODY_FILE" -w "%{http_code}" "$@" || true
+  LAST_HTTP_CODE="$(curl -sS --connect-timeout 2 --max-time 30 -o "$BODY_FILE" -w "%{http_code}" "$@" || true)"
+}
+
+do_http() {
+  http_code "$@"
+  CODE="$LAST_HTTP_CODE"
 }
 
 normalize_psql_dsn() {
@@ -304,7 +311,7 @@ AUTH_HEADER=(-H "Authorization: Bearer $DEV_TOKEN" -H "Content-Type: application
 # --- Step 1: PII redaction on write ---
 STEP1_PAYLOAD="$(jq -nc --arg agent "$DEV_AGENT" --arg content "$PII_CONTENT" \
   '{agent_id:$agent, content:$content}')"
-CODE="$(http_code -X POST "$MEMORY_ADDR/v1/memories" "${AUTH_HEADER[@]}" -d "$STEP1_PAYLOAD")"
+do_http -X POST "$MEMORY_ADDR/v1/memories" "${AUTH_HEADER[@]}" -d "$STEP1_PAYLOAD"
 expect_http "$CODE" "201" "step 1: POST /v1/memories (PII)" "step 1: expected 201 got $CODE"
 PII_MEMORY_ID="$(jq -r '.data.id' "$BODY_FILE")"
 PII_DETECTED="$(jq -r '.data.pii_detected' "$BODY_FILE")"
@@ -315,7 +322,7 @@ PII_CONTENT_OUT="$(jq -r '.data.content' "$BODY_FILE")"
 pass "step 1: PII redacted in data.content"
 
 # --- Step 2: exact dedup 409 ---
-CODE="$(http_code -X POST "$MEMORY_ADDR/v1/memories" "${AUTH_HEADER[@]}" -d "$STEP1_PAYLOAD")"
+do_http -X POST "$MEMORY_ADDR/v1/memories" "${AUTH_HEADER[@]}" -d "$STEP1_PAYLOAD"
 expect_http "$CODE" "409" "step 2: duplicate content 409" "step 2: expected 409 got $CODE"
 DUP_CODE="$(jq -r '.detail.code // .error.code // empty' "$BODY_FILE")"
 EXISTING_ID="$(jq -r '.detail.existing_memory_id // empty' "$BODY_FILE")"
@@ -326,27 +333,28 @@ pass "step 2: exact dedup returns existing id"
 # --- Step 3: near-dup conflict escalation ---
 NEAR_A_PAYLOAD="$(jq -nc --arg agent "$DEV_AGENT" --arg content "$NEAR_DUP_A" \
   '{agent_id:$agent, content:$content}')"
-CODE="$(http_code -X POST "$MEMORY_ADDR/v1/memories" "${AUTH_HEADER[@]}" -d "$NEAR_A_PAYLOAD")"
+do_http -X POST "$MEMORY_ADDR/v1/memories" "${AUTH_HEADER[@]}" -d "$NEAR_A_PAYLOAD"
 expect_http "$CODE" "201" "step 3a: near-dup seed memory A" "step 3a: expected 201 got $CODE"
 NEAR_A_ID="$(jq -r '.data.id' "$BODY_FILE")"
 
 NEAR_B_PAYLOAD="$(jq -nc --arg agent "$DEV_AGENT" --arg content "$NEAR_DUP_B" \
   '{agent_id:$agent, content:$content}')"
-CODE="$(http_code -X POST "$MEMORY_ADDR/v1/memories" "${AUTH_HEADER[@]}" -d "$NEAR_B_PAYLOAD")"
+do_http -X POST "$MEMORY_ADDR/v1/memories" "${AUTH_HEADER[@]}" -d "$NEAR_B_PAYLOAD"
 expect_http "$CODE" "201" "step 3b: near-dup memory B" "step 3b: expected 201 got $CODE"
 NEAR_B_ID="$(jq -r '.data.id' "$BODY_FILE")"
 SIMILAR="$(jq -r --arg aid "$NEAR_A_ID" '.meta.deduplication.similar_memories | index($aid) != null' "$BODY_FILE")"
 [[ "$SIMILAR" == "true" ]] || fail "step 3: similar_memories must include memory A"
-export POSTGRES_DSN IBEX_MEMORY_DATABASE_URL="$POSTGRES_DSN"
+export POSTGRES_DSN="${POSTGRES_DSN}"
+export IBEX_MEMORY_DATABASE_URL="$POSTGRES_DSN"
 memory_seed escalation-check --org-id "$DEV_ORG" --new-id "$NEAR_B_ID" --candidate-id "$NEAR_A_ID"
 pass "step 3: pending memory_conflict_escalations row"
 
 # --- Step 4: composite search ranking (SQL seed + HTTP search) ---
-RANK_JSON="$(memory_seed ranking-seed)"
+RANK_JSON="$(memory_seed ranking-seed --org-id "$DEV_ORG" --agent-id "$DEV_AGENT")"
 FACTUAL_ID="$(echo "$RANK_JSON" | jq -r '.factual_id')"
 SEARCH_PAYLOAD="$(jq -nc --arg agent "$DEV_AGENT" \
   '{agent_id:$agent, query:"dark mode preference", limit:5, min_similarity:0.0}')"
-CODE="$(http_code -X POST "$MEMORY_ADDR/v1/memories/search" "${AUTH_HEADER[@]}" -d "$SEARCH_PAYLOAD")"
+do_http -X POST "$MEMORY_ADDR/v1/memories/search" "${AUTH_HEADER[@]}" -d "$SEARCH_PAYLOAD"
 expect_http "$CODE" "200" "step 4: POST /v1/memories/search" "step 4: expected 200 got $CODE"
 TOP_CATEGORY="$(jq -r '.data.results[0].memory.category // empty' "$BODY_FILE")"
 TOP_ID="$(jq -r '.data.results[0].memory.id // empty' "$BODY_FILE")"
@@ -358,8 +366,10 @@ pass "step 4: old factual outranks fresh episodic"
 echo "SKIP: org-scope GDPR cascade + MinIO purge deferred to Phase 4.A.2 (#641)"
 memory_seed cascade-setup --memory-id "$PII_MEMORY_ID" --org-id "$DEV_ORG" --agent-id "$DEV_AGENT"
 run_psql <<SQL
+BEGIN;
 SELECT set_config('app.is_service_account', 'true', true);
 DELETE FROM ibex_core.memories WHERE id = '${PII_MEMORY_ID}' AND org_id = '${DEV_ORG}';
+COMMIT;
 SQL
 memory_seed cascade-check --memory-id "$PII_MEMORY_ID" --org-id "$DEV_ORG"
 pass "step 5: FK cascade teardown (SQL DELETE, not HTTP)"

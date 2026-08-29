@@ -7,6 +7,7 @@ Not production inference — satisfies embedder gpu profile geometry for local/C
 from __future__ import annotations
 
 import argparse
+from typing import Any
 
 import uvicorn
 from fastapi import FastAPI, Request
@@ -16,9 +17,15 @@ from app.backends.stub import StubBackend
 
 _MODEL_ID = "BAAI/bge-m3"
 _DIMENSIONS = 1024
+_MAX_BATCH_TEXTS = 64
+_MAX_TEXT_BYTES = 32 * 1024
 _STUB = StubBackend.for_profile("gpu")  # type: ignore[arg-type]
 
 app = FastAPI()
+
+
+def _invalid_inputs(message: str) -> JSONResponse:
+    return JSONResponse(status_code=422, content={"error": message})
 
 
 @app.get("/health")
@@ -33,14 +40,25 @@ async def info() -> dict[str, object]:
 
 @app.post("/embed")
 async def embed(request: Request) -> JSONResponse:
-    body = await request.json()
+    try:
+        body: Any = await request.json()
+    except Exception:
+        return _invalid_inputs("request body must be JSON")
+    if not isinstance(body, dict):
+        return _invalid_inputs("request body must be a JSON object")
     inputs = body.get("inputs")
     if not isinstance(inputs, list) or not inputs:
-        return JSONResponse(
-            status_code=422,
-            content={"error": "inputs must be a non-empty list"},
-        )
-    vectors = await _STUB.embed([str(item) for item in inputs])
+        return _invalid_inputs("inputs must be a non-empty list")
+    if len(inputs) > _MAX_BATCH_TEXTS:
+        return _invalid_inputs(f"inputs batch size exceeds {_MAX_BATCH_TEXTS}")
+    texts: list[str] = []
+    for index, item in enumerate(inputs):
+        if not isinstance(item, str):
+            return _invalid_inputs(f"inputs[{index}] must be a string")
+        if len(item.encode("utf-8")) > _MAX_TEXT_BYTES:
+            return _invalid_inputs(f"inputs[{index}] exceeds {_MAX_TEXT_BYTES} bytes")
+        texts.append(item)
+    vectors = await _STUB.embed(texts)
     return JSONResponse(content=vectors.tolist())
 
 
