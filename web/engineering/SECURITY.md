@@ -310,7 +310,7 @@ Write-path PII detection and redaction run in the memory pipeline ([ADR-0054](/d
 - **Skipped:** content containing only typed placeholders (`[EMAIL_ADDRESS]`, etc.) from write-path redaction — regex still runs; mixed placeholder + raw PII is blocked.
 - **On hit:** memory is excluded from the result set (fail-closed); metric `ibex_memory_read_pii_reconfirm_total{result="blocked"}` increments.
 
-**Residual risk:** contextual PII (names, addresses via Tier-2 NER) bypassing the write pipeline via direct DB write is **not** caught synchronously on read — Tier-2 per-query would violate Phase 3 latency budgets. Mitigations: write-path invariant (3.C.1), RLS/service-layer access controls, and deferred async sampled Tier-2 re-scan ([#642](https://github.com/Rick1330/ibex-harness/issues/642)).
+**Residual risk:** contextual PII (names, addresses via Tier-2 NER) bypassing the write pipeline via direct DB write is **not** caught synchronously on read — Tier-2 per-query would violate Phase 3 latency budgets. Mitigations: write-path invariant (3.C.1), RLS/service-layer access controls, and deferred async-sampled Tier-2 re-scan ([#642](https://github.com/Rick1330/ibex-harness/issues/642)).
 
 ---
 
