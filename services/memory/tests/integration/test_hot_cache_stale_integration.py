@@ -12,6 +12,7 @@ from app.cache.hot_keys import hot_memories_key
 from app.cache.hot_score import compute_hot_cache_score
 from tests.integration.conftest import with_service_org
 from tests.integration.hot_cache_support import (
+    ScoredMemorySeed,
     flush_hot_key,
     insert_and_write_hot,
     read_hot,
@@ -36,9 +37,11 @@ async def test_hot_cache_hydrate_filters_soft_deleted_memory(
             session_factory,
             writer,
             scored_params(
-                org_id=org_id,
-                agent_id=agent_id,
-                content="will be soft deleted",
+                ScoredMemorySeed(
+                    org_id=org_id,
+                    agent_id=agent_id,
+                    content="will be soft deleted",
+                )
             ),
         )
         key = hot_memories_key(org_id, agent_id)
@@ -48,9 +51,10 @@ async def test_hot_cache_hydrate_filters_soft_deleted_memory(
             await with_service_org(session, org_id)
             await session.execute(
                 text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-                    "UPDATE ibex_core.memories SET deleted_at = NOW() WHERE id = :id"
+                    "UPDATE ibex_core.memories SET deleted_at = NOW() "
+                    "WHERE id = :id AND org_id = :org_id"
                 ),
-                {"id": str(row.id)},
+                {"id": str(row.id), "org_id": str(org_id)},
             )
 
         results = await read_hot(reader, org_id, agent_id, limit=10)
@@ -73,18 +77,21 @@ async def test_hot_cache_hydrate_filters_superseded_memory(
             session_factory,
             writer,
             scored_params(
-                org_id=org_id,
-                agent_id=agent_id,
-                content="superseded hot cache row",
+                ScoredMemorySeed(
+                    org_id=org_id,
+                    agent_id=agent_id,
+                    content="superseded hot cache row",
+                )
             ),
         )
         async with session_factory() as session, session.begin():
             await with_service_org(session, org_id)
             await session.execute(
                 text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-                    "UPDATE ibex_core.memories SET status = 'superseded' WHERE id = :id"
+                    "UPDATE ibex_core.memories SET status = 'superseded' "
+                    "WHERE id = :id AND org_id = :org_id"
                 ),
-                {"id": str(row.id)},
+                {"id": str(row.id), "org_id": str(org_id)},
             )
 
         results = await read_hot(reader, org_id, agent_id, limit=10)

@@ -31,7 +31,7 @@ fullTitle: "Milestone 3.D.3 — Hot Cache (Redis Sorted Set)"
 
 ## Why This Milestone Exists
 
-The hot cache provides sub-millisecond access to an agent's top memories by write-time composite score. Before 3.D.3 the write path ZADDed to `{org_id}:hot_memories:{agent_id}` but **never trimmed** (unbounded past 50) and **nothing read** the sorted set. This milestone adds atomic top-50 trim on write and the first read consumer for Phase 3.5 parallel retrieval.
+The hot cache provides fast access to an agent's top memories by write-time composite score. Before 3.D.3 the write path ZADDed to `{org_id}:hot_memories:{agent_id}` but **never trimmed** (unbounded past 50) and **nothing read** the sorted set. This milestone adds atomic top-50 trim on write and the first read consumer for Phase 3.5 parallel retrieval.
 
 **Design correction:** Hot cache is **not** wired into `find_similar()` — semantic search and hot memories are parallel, separately-budgeted inputs per [ARCHITECTURE.md](/engineering/ARCHITECTURE.md). See [ADR-0059](/docs/adr/0059-hot-cache-read-path).
 

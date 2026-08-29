@@ -9,7 +9,7 @@ import pytest
 
 from app.cache.hot_keys import HOT_CACHE_CAPACITY, hot_memories_key
 from app.cache.hot_score import compute_hot_cache_score
-from app.cache.hot_write import register_hot_zadd_trim_script, zadd_hot_memory
+from app.cache.hot_write import HotZaddRequest, register_hot_zadd_trim_script, zadd_hot_memory
 from app.scoring import CompositeInputs, composite_score
 from app.write.cache import MemoryCacheWriter
 from app.write.models import WriteOutcome, WriteOutcomeKind
@@ -52,10 +52,12 @@ async def test_zadd_hot_memory_invokes_lua_script() -> None:
     memory_id = uuid4()
     card = await zadd_hot_memory(
         script,
-        key="org:hot_memories:agent",
-        memory_id=memory_id,
-        score=0.88,
-        ttl_seconds=3600,
+        HotZaddRequest(
+            key="org:hot_memories:agent",
+            memory_id=memory_id,
+            score=0.88,
+            ttl_seconds=3600,
+        ),
     )
     script.assert_awaited_once_with(
         keys=["org:hot_memories:agent"],

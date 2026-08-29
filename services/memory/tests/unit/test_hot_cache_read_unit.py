@@ -115,3 +115,18 @@ async def test_get_hot_memories_redis_error_returns_empty() -> None:
         HotMemoryQuery(org_id=uuid4(), agent_id=uuid4(), limit=5)
     )
     assert results == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("min_confidence", [float("nan"), float("inf"), -0.1, 1.1])
+async def test_get_hot_memories_rejects_bad_min_confidence(min_confidence: float) -> None:
+    reader = MemoryHotCacheReader(AsyncMock(), MagicMock())
+    with pytest.raises(ValueError, match="min_confidence"):
+        await reader.get_hot_memories(
+            HotMemoryQuery(
+                org_id=uuid4(),
+                agent_id=uuid4(),
+                limit=10,
+                min_confidence=min_confidence,
+            )
+        )

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
@@ -107,23 +108,25 @@ async def read_hot(
     )
 
 
-def scored_params(
-    *,
-    org_id: UUID,
-    agent_id: UUID,
-    content: str,
-    category: str = "factual",
-    usefulness_score: float = 0.5,
-    confidence: float = 0.8,
-    age_days: float = 1.0,
-) -> InsertScoredMemoryParams:
+@dataclass(frozen=True, slots=True)
+class ScoredMemorySeed:
+    org_id: UUID
+    agent_id: UUID
+    content: str
+    category: str = "factual"
+    usefulness_score: float = 0.5
+    confidence: float = 0.8
+    age_days: float = 1.0
+
+
+def scored_params(seed: ScoredMemorySeed) -> InsertScoredMemoryParams:
     now = datetime.now(tz=UTC)
     return InsertScoredMemoryParams(
-        org_id=org_id,
-        agent_id=agent_id,
-        content=content,
-        category=category,
-        usefulness_score=usefulness_score,
-        confidence=confidence,
-        valid_from=now - timedelta(days=age_days),
+        org_id=seed.org_id,
+        agent_id=seed.agent_id,
+        content=seed.content,
+        category=seed.category,
+        usefulness_score=seed.usefulness_score,
+        confidence=seed.confidence,
+        valid_from=now - timedelta(days=seed.age_days),
     )

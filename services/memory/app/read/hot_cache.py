@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -31,6 +32,15 @@ WHERE org_id = :org_id
 """
 
 
+@dataclass(frozen=True, slots=True)
+class _HydrateHotRequest:
+    org_id: UUID
+    agent_id: UUID
+    memory_ids: list[UUID]
+    min_confidence: float
+    score_by_id: dict[UUID, float]
+
+
 def _validate_hot_query(query: HotMemoryQuery) -> None:
     if query.limit < 1:
         msg = "limit must be >= 1"
@@ -38,7 +48,11 @@ def _validate_hot_query(query: HotMemoryQuery) -> None:
     if query.limit > HOT_CACHE_CAPACITY:
         msg = f"limit must be <= {HOT_CACHE_CAPACITY}"
         raise ValueError(msg)
-    if query.min_confidence < 0.0 or query.min_confidence > 1.0:
+    if (
+        not math.isfinite(query.min_confidence)
+        or query.min_confidence < 0.0
+        or query.min_confidence > 1.0
+    ):
         msg = "min_confidence must be in [0, 1]"
         raise ValueError(msg)
 
@@ -81,11 +95,13 @@ class MemoryHotCacheReader:
             score_by_id[memory_id] = float(score)
 
         hydrated = await self._hydrate_hot(
-            org_id=query.org_id,
-            agent_id=query.agent_id,
-            memory_ids=ordered_ids,
-            min_confidence=query.min_confidence,
-            score_by_id=score_by_id,
+            _HydrateHotRequest(
+                org_id=query.org_id,
+                agent_id=query.agent_id,
+                memory_ids=ordered_ids,
+                min_confidence=query.min_confidence,
+                score_by_id=score_by_id,
+            )
         )
         if not hydrated:
             HOT_CACHE_READ.labels(result="empty").inc()
@@ -94,29 +110,21 @@ class MemoryHotCacheReader:
         HOT_CACHE_READ.labels(result="hit").inc()
         return [hydrated[memory_id] for memory_id in ordered_ids if memory_id in hydrated]
 
-    async def _hydrate_hot(
-        self,
-        *,
-        org_id: UUID,
-        agent_id: UUID,
-        memory_ids: list[UUID],
-        min_confidence: float,
-        score_by_id: dict[UUID, float],
-    ) -> dict[UUID, MemorySearchResult]:
-        if not memory_ids:
+    async def _hydrate_hot(self, request: _HydrateHotRequest) -> dict[UUID, MemorySearchResult]:
+        if not request.memory_ids:
             return {}
-        ids = [str(memory_id) for memory_id in memory_ids]
+        ids = [str(memory_id) for memory_id in request.memory_ids]
         async with self.session_factory() as session, session.begin():
-            await set_service_org(session, org_id)
+            await set_service_org(session, request.org_id)
             result = await session.execute(
                 text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text  # nosec B608
                     _HYDRATE_HOT_SQL
                 ),
                 {
-                    "org_id": str(org_id),
-                    "agent_id": str(agent_id),
+                    "org_id": str(request.org_id),
+                    "agent_id": str(request.agent_id),
                     "memory_ids": ids,
-                    "min_confidence": min_confidence,
+                    "min_confidence": request.min_confidence,
                 },
             )
             rows = result.mappings().all()
@@ -132,7 +140,7 @@ class MemoryHotCacheReader:
                 category=str(row["category"]),
                 confidence=float(row["confidence"]),
                 status=str(row["status"]),
-                similarity=score_by_id[memory_id],
+                similarity=request.score_by_id[memory_id],
                 source="hot_cache",
                 created_at=row["created_at"],
                 updated_at=row["updated_at"],

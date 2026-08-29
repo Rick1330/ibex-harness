@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from uuid import UUID
 
 from redis.asyncio import Redis
@@ -19,14 +20,18 @@ def register_hot_zadd_trim_script(redis: Redis):
     return redis.register_script(_HOT_ZADD_TRIM_LUA)
 
 
-async def zadd_hot_memory(
-    script,
-    *,
-    key: str,
-    memory_id: UUID,
-    score: float,
-    ttl_seconds: int,
-) -> int:
+@dataclass(frozen=True, slots=True)
+class HotZaddRequest:
+    key: str
+    memory_id: UUID
+    score: float
+    ttl_seconds: int
+
+
+async def zadd_hot_memory(script, request: HotZaddRequest) -> int:
     """Atomically ZADD, trim to top 50, refresh TTL. Returns ZCARD after write."""
-    result = await script(keys=[key], args=[score, str(memory_id), ttl_seconds])
+    result = await script(
+        keys=[request.key],
+        args=[request.score, str(request.memory_id), request.ttl_seconds],
+    )
     return int(result)

@@ -16,6 +16,7 @@ from app.read.models import HotMemoryQuery
 from app.write.cache import MemoryCacheWriter
 from tests.integration.conftest import seed_org_agent_memory
 from tests.integration.hot_cache_support import (
+    ScoredMemorySeed,
     flush_hot_key,
     insert_and_write_hot,
     read_hot,
@@ -40,13 +41,15 @@ async def test_hot_cache_trims_to_fifty_by_score_not_insertion_order(
             session_factory,
             writer,
             scored_params(
-                org_id=org_id,
-                agent_id=agent_id,
-                content="high-score factual memory",
-                category="factual",
-                usefulness_score=0.95,
-                confidence=0.95,
-                age_days=1.0,
+                ScoredMemorySeed(
+                    org_id=org_id,
+                    agent_id=agent_id,
+                    content="high-score factual memory",
+                    category="factual",
+                    usefulness_score=0.95,
+                    confidence=0.95,
+                    age_days=1.0,
+                )
             ),
             retrieval_count=10,
         )
@@ -56,13 +59,15 @@ async def test_hot_cache_trims_to_fifty_by_score_not_insertion_order(
                 session_factory,
                 writer,
                 scored_params(
-                    org_id=org_id,
-                    agent_id=agent_id,
-                    content=f"low-score filler {index}",
-                    category="episodic",
-                    usefulness_score=0.1,
-                    confidence=0.5,
-                    age_days=120.0,
+                    ScoredMemorySeed(
+                        org_id=org_id,
+                        agent_id=agent_id,
+                        content=f"low-score filler {index}",
+                        category="episodic",
+                        usefulness_score=0.1,
+                        confidence=0.5,
+                        age_days=120.0,
+                    )
                 ),
             )
 
@@ -100,13 +105,15 @@ async def test_hot_cache_read_order_matches_composite_score(
                 session_factory,
                 writer,
                 scored_params(
-                    org_id=org_id,
-                    agent_id=agent_id,
-                    content=content,
-                    category=category,
-                    usefulness_score=usefulness,
-                    confidence=confidence,
-                    age_days=age,
+                    ScoredMemorySeed(
+                        org_id=org_id,
+                        agent_id=agent_id,
+                        content=content,
+                        category=category,
+                        usefulness_score=usefulness,
+                        confidence=confidence,
+                        age_days=age,
+                    )
                 ),
                 retrieval_count=retrieval,
             )
@@ -135,10 +142,12 @@ async def test_concurrent_hot_writes_do_not_corrupt_set(
     try:
         params_list = [
             scored_params(
-                org_id=org_id,
-                agent_id=agent_id,
-                content=f"concurrent hot {index}",
-                age_days=float(index % 30) + 1.0,
+                ScoredMemorySeed(
+                    org_id=org_id,
+                    agent_id=agent_id,
+                    content=f"concurrent hot {index}",
+                    age_days=float(index % 30) + 1.0,
+                )
             )
             for index in range(80)
         ]
@@ -171,7 +180,13 @@ async def test_hot_cache_cross_tenant_key_isolation(
         row = await insert_and_write_hot(
             session_factory,
             writer,
-            scored_params(org_id=org_a, agent_id=agent_a, content="org a hot only"),
+            scored_params(
+                ScoredMemorySeed(
+                    org_id=org_a,
+                    agent_id=agent_a,
+                    content="org a hot only",
+                )
+            ),
         )
         assert row.id is not None
         results_b = await reader.get_hot_memories(

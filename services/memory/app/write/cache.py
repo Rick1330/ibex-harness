@@ -13,7 +13,7 @@ from redis.exceptions import RedisError
 
 from app.cache.hot_keys import hot_memories_key
 from app.cache.hot_score import compute_hot_cache_score
-from app.cache.hot_write import register_hot_zadd_trim_script, zadd_hot_memory
+from app.cache.hot_write import HotZaddRequest, register_hot_zadd_trim_script, zadd_hot_memory
 from app.config import Settings
 from app.write.metrics import WRITE_CACHE_ERRORS
 from app.write.models import MemoryRow, WriteOutcome, WriteOutcomeKind
@@ -81,8 +81,10 @@ class MemoryCacheWriter:
         key = self.hot_key(memory.org_id, memory.agent_id)
         await zadd_hot_memory(
             self._hot_zadd_trim,
-            key=key,
-            memory_id=memory.id,
-            score=score,
-            ttl_seconds=ttl,
+            HotZaddRequest(
+                key=key,
+                memory_id=memory.id,
+                score=score,
+                ttl_seconds=ttl,
+            ),
         )
