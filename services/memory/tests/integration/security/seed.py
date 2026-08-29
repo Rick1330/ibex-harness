@@ -41,6 +41,19 @@ class OrgSeed:
 
 
 @dataclass(frozen=True, slots=True)
+class OrgInsertRow:
+    org_id: UUID
+    slug: str
+
+
+@dataclass(frozen=True, slots=True)
+class UserInsertRow:
+    org_id: UUID
+    user_id: UUID
+    slug: str
+
+
+@dataclass(frozen=True, slots=True)
 class AgentInsertRow:
     org_id: UUID
     user_id: UUID
@@ -74,12 +87,7 @@ class DirectMemoryInsertParams:
     status: str = "active"
 
 
-async def _insert_organization(
-    session: AsyncSession,
-    *,
-    org_id: UUID,
-    slug: str,
-) -> None:
+async def _insert_organization(session: AsyncSession, row: OrgInsertRow) -> None:
     await session.execute(
         text(
             """
@@ -87,17 +95,11 @@ async def _insert_organization(
             VALUES (:id, :name, :slug)
             """
         ),
-        {"id": str(org_id), "name": f"Org {slug}", "slug": slug},
+        {"id": str(row.org_id), "name": f"Org {row.slug}", "slug": row.slug},
     )
 
 
-async def _insert_user(
-    session: AsyncSession,
-    *,
-    org_id: UUID,
-    user_id: UUID,
-    slug: str,
-) -> None:
+async def _insert_user(session: AsyncSession, row: UserInsertRow) -> None:
     await session.execute(
         text(
             """
@@ -106,9 +108,9 @@ async def _insert_user(
             """
         ),
         {
-            "id": str(user_id),
-            "org_id": str(org_id),
-            "email": f"{slug}@example.com",
+            "id": str(row.user_id),
+            "org_id": str(row.org_id),
+            "email": f"{row.slug}@example.com",
             "name": "User",
         },
     )
@@ -139,12 +141,17 @@ async def _insert_org_fixture(
     *,
     content: str,
 ) -> None:
-    await _insert_organization(session, org_id=fixture.org_id, slug=fixture.slug)
+    await _insert_organization(
+        session,
+        OrgInsertRow(org_id=fixture.org_id, slug=fixture.slug),
+    )
     await _insert_user(
         session,
-        org_id=fixture.org_id,
-        user_id=fixture.user_id,
-        slug=fixture.slug,
+        UserInsertRow(
+            org_id=fixture.org_id,
+            user_id=fixture.user_id,
+            slug=fixture.slug,
+        ),
     )
     await _insert_agent(
         session,

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from uuid import uuid4
-
 import pytest
 from pydantic import SecretStr
 from sqlalchemy import text
@@ -22,18 +20,15 @@ from tests.integration.find_similar_support import (
     search_http_client,
     upsert_embedding,
 )
-from tests.integration.hot_cache_support import ScoredMemorySeed
 from tests.integration.security.env import MemorySecurityTestEnv
 from tests.integration.security.iso_support import (
-    HotCacheIsolationProbe,
+    HOT_CACHE_ISOLATION_SCENARIOS,
     RlsCountQuery,
     assert_rls_count_zero,
     run_hot_cache_isolation_probe,
 )
 from tests.integration.security.seed import (
     SHARED_ISO_QUERY_TEXT,
-    seed_org_agent,
-    seed_second_agent_same_org,
 )
 
 pytestmark = [pytest.mark.integration, pytest.mark.security_integration]
@@ -209,36 +204,19 @@ async def test_memory_iso_1_5_hnsw_no_cross_org_leakage(
 
 
 @pytest.mark.asyncio
-async def test_memory_iso_1_6_hot_cache_cross_org_same_agent_id(
+@pytest.mark.parametrize(
+    "scenario_id",
+    list(HOT_CACHE_ISOLATION_SCENARIOS),
+    ids=list(HOT_CACHE_ISOLATION_SCENARIOS),
+)
+async def test_memory_iso_1_hot_cache_agent_isolation(
     session_factory: async_sessionmaker[AsyncSession],
     security_env: MemorySecurityTestEnv,
+    scenario_id: str,
 ) -> None:
-    shared_agent_id = uuid4()
-    org_a = await seed_org_agent(
-        session_factory,
-        slug_prefix="iso-hot-a",
-        content="org a hot cache probe",
-        agent_id=shared_agent_id,
-    )
-    await run_hot_cache_isolation_probe(
-        HotCacheIsolationProbe(
-            session_factory=session_factory,
-            cache_writer=security_env.cache_writer,
-            hot_reader=security_env.hot_reader,
-            redis=security_env.redis,
-            scored_seed=ScoredMemorySeed(
-                org_id=org_a.org_id,
-                agent_id=org_a.agent_id,
-                content="org a exclusive hot memory",
-            ),
-            probe_org_id=security_env.orgs.org_b.org_id,
-            probe_agent_id=shared_agent_id,
-            flush_keys=(
-                (org_a.org_id, org_a.agent_id),
-                (security_env.orgs.org_b.org_id, shared_agent_id),
-            ),
-        )
-    )
+    build_probe = HOT_CACHE_ISOLATION_SCENARIOS[scenario_id]
+    probe = await build_probe(session_factory, security_env)
+    await run_hot_cache_isolation_probe(probe)
 
 
 @pytest.mark.asyncio
@@ -285,34 +263,4 @@ async def test_memory_iso_1_7_conflict_escalations_rls_isolation(
                 """,
             params={"new_id": str(org_a.memory_id)},
         ),
-    )
-
-
-@pytest.mark.asyncio
-async def test_memory_iso_1_8_hot_cache_same_org_cross_agent(
-    session_factory: async_sessionmaker[AsyncSession],
-    security_env: MemorySecurityTestEnv,
-) -> None:
-    org_a = security_env.orgs.org_a
-    agent_b = await seed_second_agent_same_org(
-        session_factory,
-        org_id=org_a.org_id,
-        user_id=org_a.user_id,
-        slug_prefix="iso-same-org",
-    )
-    await run_hot_cache_isolation_probe(
-        HotCacheIsolationProbe(
-            session_factory=session_factory,
-            cache_writer=security_env.cache_writer,
-            hot_reader=security_env.hot_reader,
-            redis=security_env.redis,
-            scored_seed=ScoredMemorySeed(
-                org_id=org_a.org_id,
-                agent_id=org_a.agent_id,
-                content="agent a hot only",
-            ),
-            probe_org_id=org_a.org_id,
-            probe_agent_id=agent_b,
-            flush_keys=((org_a.org_id, org_a.agent_id),),
-        )
     )

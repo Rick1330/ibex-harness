@@ -157,18 +157,13 @@ async def _assert_ensure_search_agent_authorized(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("scalar", "expect_forbidden"),
-    [(None, True), (1, False)],
-)
-async def test_ensure_search_agent_authorized(
-    scalar: object | None,
-    expect_forbidden: bool,
-) -> None:
-    await _assert_ensure_search_agent_authorized(
-        scalar=scalar,
-        expect_forbidden=expect_forbidden,
-    )
+async def test_ensure_search_agent_authorized_rejects_missing_agent() -> None:
+    await _assert_ensure_search_agent_authorized(scalar=None, expect_forbidden=True)
+
+
+@pytest.mark.asyncio
+async def test_ensure_search_agent_authorized_allows_member_agent() -> None:
+    await _assert_ensure_search_agent_authorized(scalar=1, expect_forbidden=False)
 
 
 @pytest.mark.asyncio
