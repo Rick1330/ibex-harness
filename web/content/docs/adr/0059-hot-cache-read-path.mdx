@@ -1,0 +1,58 @@
+---
+title: "ADR-0059: Hot cache read path"
+description: "Architecture decision record 0059 — distinct MemoryHotCacheReader (not find_similar hijack), top-50 atomic trim, hydrate-time invalidation, deferred HTTP."
+adrId: "0059"
+status: "Accepted"
+date: "2026-08-29"
+authors: "IBEX Harness team"
+---
+
+# ADR-0059: Hot cache read path
+
+- **Status:** Accepted
+- **Date:** 2026-08-29
+- **Authors:** IBEX Harness team
+- **Milestone:** [3.D.3 Hot cache (Redis sorted set)](/roadmap/phase-3-memory-engine/milestones/3.d.3-hot-cache-redis-sorted-set)
+
+## Context
+
+Milestone 3.C.5 / [ADR-0057](/docs/adr/0057-memory-write-orchestration) writes per-agent hot sorted sets (`{org_id}:hot_memories:{agent_id}`) on memory create using `composite_score()` with `relevance=1.0` (no query at write time). Before 3.D.3:
+
+1. **No trim** — ZSETs grew unbounded past the spec'd top-50 capacity.
+2. **No read consumer** — hot cache was write-only; context assembly's parallel retrieval design ([ARCHITECTURE.md](/engineering/ARCHITECTURE.md)) expects a distinct hot-memory source separate from semantic search.
+
+## Options Considered
+
+### 1) Blend hot cache into `find_similar()` as cache-first semantic search
+
+**Pros:** Single read API for callers.
+
+**Cons:** Hot ZSET scores lack query relevance (`relevance=1.0` at write time). Serving cache hits as semantic search results would return frequently-accessed but query-irrelevant memories — violates `POST /v1/memories/search` contract. Conflicts with Phase 3.5 parallel retrieval (hot + cold are separately budgeted inputs).
+
+### 2) Distinct `MemoryHotCacheReader.get_hot_memories()` (chosen)
+
+**Pros:** Matches context assembly architecture; preserves semantic search contract; service-layer API ready for Phase 3.5.C.2 and Track E ISO-* tests without proxy changes (Phase 3 exit #10).
+
+**Cons:** No HTTP surface in 3.D.3 (deferred like VectorStore before 3.D.1).
+
+## Decision
+
+1. **Read API:** `MemoryHotCacheReader.get_hot_memories(HotMemoryQuery)` — `ZREVRANGE` + Postgres hydrate with `org_id` + `agent_id` defense-in-depth filters. `find_similar()` unchanged.
+2. **HTTP:** Deferred — internal service API only until Phase 3.5 context assembly consumes it.
+3. **Write trim:** Atomic Lua script — `ZADD`, `ZREMRANGEBYRANK 0 -51`, `EXPIRE` — keeps top 50 by score per write ([`app/cache/hot_write.py`](/services/memory/app/cache/hot_write.py)).
+4. **Scoring:** Reuse `compute_hot_cache_score()` → shared `composite_score()` / `CATEGORY_HALF_LIFE_DAYS` ([ADR-0057](/docs/adr/0057-memory-write-orchestration)).
+5. **Invalidation:** Hydrate-time filter (`status='active'`, `deleted_at IS NULL`) — stale ZSET members dropped on read. Explicit `ZREM` on delete/supersede deferred until unified write-path invalidation (Track E GDPR cascade).
+6. **Metrics:** `ibex_memory_hot_cache_read_total{result="hit|empty|error"}`.
+7. **Result shape:** `MemorySearchResult` with `source="hot_cache"`; `similarity` = write-time ZSET composite score (not query relevance).
+
+## Consequences
+
+- Phase 3.5.C.2 parallel retriever wires `get_hot_memories` alongside cold semantic search.
+- Track E 3.E.1 ISO-* matrix can assert Redis key + hydrate isolation without new HTTP routes.
+- Hot cache capacity remains fixed at 50 (non-goal to change).
+
+## Related
+
+- [ADR-0057](/docs/adr/0057-memory-write-orchestration) — write-path ZADD
+- [ADR-0058](/docs/adr/0058-semantic-search-fts-fallback-trigger) — semantic search (orthogonal)
+- [3.5.C.2 Parallel retrieval](/roadmap/phase-3-5-extraction-assembly/milestones/3.5.c.2-parallel-retrieval-orchestration) — consumer milestone
