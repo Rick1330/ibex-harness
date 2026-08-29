@@ -8,7 +8,6 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from app.read.full_text import FullTextSearchQuery, full_text_search
 from app.vectorstore.base import SearchRequest
 from app.vectorstore.pgvector_store import PgVectorStore
-from tests.integration.conftest import with_service_org
 from tests.integration.find_similar_support import bulk_seed_for_plans
 from tests.integration.plan_assert import (
     GinExplainParams,
@@ -51,6 +50,7 @@ async def test_gin_index_used_at_runtime(
     store: PgVectorStore,
 ) -> None:
     plan_seed = await bulk_seed_for_plans(session_factory, store)
+    probe = GinExplainParams(query_text=plan_seed.gin_query_text)
     fts_query = FullTextSearchQuery(
         org_id=plan_seed.seeded.org_id,
         agent_id=plan_seed.seeded.agent_id,
@@ -63,11 +63,7 @@ async def test_gin_index_used_at_runtime(
     assert len(hits) >= 1
 
     async with session_factory() as session, session.begin():
-        await with_service_org(session, plan_seed.seeded.org_id)
-        explain_json = await explain_gin_probe_plan(
-            session,
-            GinExplainParams(query_text=plan_seed.gin_query_text),
-        )
+        explain_json = await explain_gin_probe_plan(session, probe)
 
     summary = assert_gin_index_used(explain_json)
     assert int(summary.get("actual_rows") or 0) >= 1

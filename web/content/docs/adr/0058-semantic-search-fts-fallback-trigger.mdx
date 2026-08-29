@@ -45,7 +45,10 @@ Phase 3 goals describe fallback when "vector results &lt; K". During implementat
 ## Index verification (Semgrep relocation)
 
 - HNSW runtime gate: `PgVectorStore.search` + `pg_stat idx_scan` on `idx_memories_embedding_hnsw` (`test_hnsw_index_scan_at_runtime`). EXPLAIN helpers remain in `benchmarks/memory/plan_explain.py` for `hnsw_bench` only.
-- GIN verification: RLS-scoped EXPLAIN probe (`explain_gin_probe_plan` + `assert_gin_index_used`) plus production `full_text_search()` hit count in `test_gin_index_used_at_runtime`. Raw `pg_stat idx_scan` was dropped because the planner often satisfies org/agent filters via btree without incrementing the GIN counter.
+- GIN verification: test-only probe with `row_security` disabled and planner hints
+  (`explain_gin_probe_plan` + `assert_gin_index_used`) plus production `full_text_search()`
+  hit count in `test_gin_index_used_at_runtime`. Service-account RLS bypass otherwise
+  routes `@@` through `idx_memories_agent_active` without exercising the GIN index.
 
 ## Consequences
 

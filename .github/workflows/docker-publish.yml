@@ -1,8 +1,8 @@
 name: Docker Publish
 
 env:
-  # Avoid mirror.gcr.io 403 flakes when setup-trivy downloads the vulnerability DB.
-  TRIVY_DB_REPOSITORY: ghcr.io/aquasecurity/trivy-db
+  # Primary GHCR DB + mirror fallback (comma-separated per Trivy docs).
+  TRIVY_DB_REPOSITORY: ghcr.io/aquasecurity/trivy-db:2,mirror.gcr.io/aquasec/trivy-db:2
 
 on:
   pull_request:

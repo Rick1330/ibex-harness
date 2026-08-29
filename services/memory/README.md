@@ -63,7 +63,8 @@ workers (`services/worker/`).
 - Metric: `ibex_memory_search_fallback_total{triggered}`
 - Tests: unit merge/boundary + integration cross-org/agent/status/fallback/HTTP + index
   gates: HNSW `pg_stat idx_scan` runtime (`test_hnsw_index_scan_at_runtime`) and GIN EXPLAIN
-  (`test_gin_index_used_at_runtime` in `tests/integration/test_find_similar_plans.py`)
+  on a test-only probe (`test_gin_index_used_at_runtime` in
+  `tests/integration/test_find_similar_plans.py`)
 - Milestone: [3.D.1](../../web/content/roadmap/phase-3-memory-engine/milestones/3.d.1-semantic-search-read-path.mdx)
 
 ### m3.C.5 (Track C — Write orchestration)

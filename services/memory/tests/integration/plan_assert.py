@@ -23,6 +23,7 @@ from benchmarks.memory.plan_explain import (
     HnswExplainParams,
     explain_gin_probe_plan,
     explain_hnsw_search_plan,
+    run_gin_probe,
 )
 
 hnsw_idx_scan_count = idx_scan_count
@@ -38,4 +39,5 @@ __all__ = [
     "explain_hnsw_search_plan",
     "gin_idx_scan_count",
     "hnsw_idx_scan_count",
+    "run_gin_probe",
 ]

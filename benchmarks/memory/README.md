@@ -21,15 +21,14 @@ Synthetic semi-dense unit-vector corpus against live `pgvector` HNSW
 ### GIN gate (integration)
 
 `services/memory/tests/integration/test_find_similar_plans.py` validates the production
-`full_text_search()` SQL via **`EXPLAIN (ANALYZE)`** on an RLS-scoped probe that omits
-org/agent btree predicates (`explain_gin_probe_plan` + `assert_gin_index_used` in
+`full_text_search()` SQL via **`EXPLAIN (ANALYZE)`** on a test-only probe that disables
+RLS and btree-friendly plans (`explain_gin_probe_plan` + `assert_gin_index_used` in
 `plan_explain.py` / `plan_assert.py`), plus a production-path hit assertion in the
 same test. It does **not** exercise sparse-vector retrieval or the repository
 fallback decision — those are covered by `test_find_similar_sparse_agent_triggers_fallback`
 and related integration tests.
-Raw `pg_stat idx_scan` on `idx_memories_search_vector` was dropped: under org+agent
-filters the planner often satisfies FTS via btree heap filters without incrementing the
-GIN counter, which made the gate flaky in CI.
+Service-account RLS bypass otherwise lets the planner satisfy `@@` via
+`idx_memories_agent_active` without incrementing the GIN counter or showing GIN in EXPLAIN.
 
 ### Hard methodology rules
 
