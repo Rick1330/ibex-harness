@@ -623,9 +623,9 @@ X-MFA-Code: 123456
 
 ### POST /v1/memories/search
 
-**Semantic search over memories (milestone 3.D.1)**
+**Semantic search over memories (milestone 3.D.1 retrieval, 3.D.2 composite ranking)**
 
-Embeds the query via the embedder service, runs HNSW vector search through `VectorStore.search()`, and supplements with GIN full-text search when vector hits are sparse (`len(vector_hits) < limit`). Raw cosine similarity / `ts_rank_cd` only — composite scoring is milestone **3.D.2**.
+Embeds the query via the embedder service, runs HNSW vector search through `VectorStore.search()`, and supplements with GIN full-text search when hydrated vector hits are sparse (`len(hydrated_vector_results) < limit`, per ADR-0058). Results are **ordered by composite rank** — a weighted sum of relevance, category-conditional recency, usefulness, confidence, and access frequency (`composite_score()` from Track B). **Do not re-sort client-side by `similarity`.**
 
 **Required Permission:** `memory:read`
 
@@ -655,7 +655,50 @@ Content-Type: application/json
 | `min_similarity` | float | No | 0.0–1.0 cosine similarity floor (passed to VectorStore) |
 | `min_confidence` | float | No | 0.0–1.0 memory confidence floor, default 0.0 |
 
-**Deferred to 3.D.2+:** `filters`, `ranking`, `session_id`, `include_archived`.
+**Deferred:** `filters`, `session_id`, `include_archived`.
+
+**Response ordering (3.D.2):**
+
+| Field | Meaning |
+|-------|---------|
+| `rank` | 1-based position after **composite** ranking (authoritative order) |
+| `similarity` | **Retrieval-stage metric only** — cosine similarity for `source=vector`, raw `ts_rank_cd` for `source=full_text` supplemental hits. Not the composite score. |
+| `source` | `vector` or `full_text` |
+
+FTS supplemental hits use fixed relevance `0.5` inside `composite_score()` only; HTTP `similarity` still reports raw `ts_rank_cd`.
+
+**Example where `rank` order ≠ `similarity` order** (same agent, composite ranking applied):
+
+```json
+{
+  "data": {
+    "results": [
+      {
+        "memory": {
+          "id": "f1111111-1111-4111-8111-111111111111",
+          "category": "factual",
+          "content": "User requires dark mode in all dashboards"
+        },
+        "similarity": 0.88,
+        "rank": 1,
+        "source": "vector"
+      },
+      {
+        "memory": {
+          "id": "e2222222-2222-4222-8222-222222222222",
+          "category": "episodic",
+          "content": "User mentioned dark mode yesterday"
+        },
+        "similarity": 0.91,
+        "rank": 2,
+        "source": "vector"
+      }
+    ]
+  }
+}
+```
+
+Here the episodic memory has **higher cosine similarity** (0.91) but ranks **second** because composite scoring weights category-conditional recency and other factors — older factual memories can outrank fresher episodic hits at similar vector relevance.
 
 **Response: 200 OK**
 
@@ -683,8 +726,6 @@ Content-Type: application/json
   }
 }
 ```
-
-`source` is `vector` or `full_text` (GIN fallback hit). Results are merged: vector hits first (desc similarity), then FTS hits (desc `ts_rank_cd`), deduped by memory id.
 
 **Errors:** `400` validation, `401`/`403` auth, `503` embedder unavailable (`EMBEDDING_FAILED`) or read path not configured.
 

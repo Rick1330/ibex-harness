@@ -83,6 +83,7 @@ def rank_hydrated_hits(
     now: datetime | None = None,
 ) -> list[MemorySearchResult]:
     """Sort by composite score descending; stable tie-break on memory_id."""
+    reference = now or datetime.now(tz=UTC)
     scored: list[tuple[float, UUID, MemorySearchResult]] = []
     candidate_by_id = {item.memory_id: item for item in candidates}
     for memory_id, hit in hydrated.items():
@@ -91,7 +92,7 @@ def rank_hydrated_hits(
             continue
         relevance = relevance_for_composite(ranked)
         composite = composite_score(
-            hit.composite_inputs(relevance, now=now)
+            hit.composite_inputs(relevance, now=reference)
         )
         scored.append((composite, memory_id, hit.result))
     scored.sort(key=lambda item: (-item[0], str(item[1])))
