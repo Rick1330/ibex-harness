@@ -17,6 +17,7 @@ from app.read.full_text import (
 )
 from app.read.metrics import SEARCH_FALLBACK
 from app.read.models import FindSimilarQuery, MemorySearchResult
+from app.read.pii_guard import filter_pii_blocked_results
 from app.read.ranking import (
     HydratedHit,
     RankedCandidate,
@@ -83,11 +84,11 @@ class MemoryReadRepository:
         )
         vector_ranked = rank_hydrated_hits(vector_candidates, vector_hydrated)
         if len(vector_ranked) >= query.limit:
-            return vector_ranked[: query.limit]
+            return filter_pii_blocked_results(vector_ranked[: query.limit])
 
         fts_candidates = await self._fts_candidates(query, vector_ranked=vector_ranked)
         if not fts_candidates:
-            return vector_ranked
+            return filter_pii_blocked_results(vector_ranked)
 
         merged = merge_candidates(vector_candidates, fts_candidates)
         fts_hydrated = await self._hydrate_hits(
@@ -96,7 +97,9 @@ class MemoryReadRepository:
             min_confidence=query.min_confidence,
         )
         all_hydrated = {**fts_hydrated, **vector_hydrated}
-        return rank_hydrated_hits(merged, all_hydrated)[: query.limit]
+        return filter_pii_blocked_results(
+            rank_hydrated_hits(merged, all_hydrated)[: query.limit]
+        )
 
     async def _vector_candidates(self, query: FindSimilarQuery) -> list[RankedCandidate]:
         vector_hits = await self._vector_store.search(

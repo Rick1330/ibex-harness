@@ -132,17 +132,20 @@ class SearchMemoryContext:
     token: ValidateResult
     read_repository: MemoryReadRepository
     embedding_client: object
+    session_factory: async_sessionmaker[AsyncSession]
 
 
 def get_search_memory_context(
     token: Annotated[ValidateResult, Depends(require_memory_read)],
     read_repository: Annotated[MemoryReadRepository, Depends(get_read_repository)],
     embedding_client: Annotated[object, Depends(get_embedding_client)],
+    session_factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
 ) -> SearchMemoryContext:
     return SearchMemoryContext(
         token=token,
         read_repository=read_repository,
         embedding_client=embedding_client,
+        session_factory=session_factory,
     )
 
 

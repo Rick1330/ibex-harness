@@ -15,3 +15,9 @@ HOT_CACHE_READ = Counter(
     "Hot cache read invocations via get_hot_memories",
     ["result"],
 )
+
+PII_RECONFIRM = Counter(
+    "ibex_memory_read_pii_reconfirm_total",
+    "Tier-1 structured PII read-path re-check on hydrated results",
+    ["result"],
+)

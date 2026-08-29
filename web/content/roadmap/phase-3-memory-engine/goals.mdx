@@ -87,7 +87,7 @@ phase: "phase-3-memory-engine"
 ### Goal 3.E: Prove the composed system enforces isolation and meets quality bars
 
 **Milestones:**
-- **3.E.1 — Memory security integration suite (`TestMemory_ISO_*`):** 10+ cross-tenant isolation cases against real Postgres+pgvector+Redis.
+- **3.E.1 — Memory security integration suite (`TestMemory_ISO_*`):** **Shipped** — 12 ISO cases, `memory-security-integration` CI, Tier-1 read-path PII guard.
 - **3.E.2 — End-to-end memory lifecycle test:** Full write/dedup/conflict/retrieve round trip via HTTP API. `make e2e-smoke-p3-memory`.
 - **3.E.3 — Retrieval-quality benchmark sign-off:** Recall@10, p50/p95/p99 latency, precision@k. CI regression gate.
 - **3.E.4 — ADR consolidation:** Phase 3 memory ADRs published and indexed (next free numbers after ADR-0047; 0040–0046 are Phase 2.5).
