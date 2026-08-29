@@ -110,8 +110,6 @@ async def _apply_gin_probe_planner_hints(session: AsyncSession) -> None:
     for stmt in (
         "SET LOCAL enable_seqscan = OFF",
         "SET LOCAL enable_bitmapscan = OFF",
-        "SET LOCAL enable_parallel_seqscan = OFF",
-        "SET LOCAL enable_parallel_bitmapscan = OFF",
         "SET LOCAL max_parallel_workers_per_gather = 0",
     ):
         await session.execute(
