@@ -1,21 +1,19 @@
-"""pg_stat plan gates for find_similar SQL (milestone 3.D.1)."""
+"""Plan gates for find_similar SQL (milestone 3.D.1)."""
 
 from __future__ import annotations
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from app.read.full_text import FullTextSearchQuery
 from app.vectorstore.base import SearchRequest
 from app.vectorstore.pgvector_store import PgVectorStore
-from tests.integration.find_similar_support import (
-    bulk_seed_for_plans,
-    full_text_search_for_plan_gate,
-)
+from tests.integration.conftest import with_service_org
+from tests.integration.find_similar_support import bulk_seed_for_plans
 from tests.integration.plan_assert import (
-    assert_gin_index_scanned,
+    GinExplainParams,
+    assert_gin_index_used,
     assert_hnsw_index_scanned,
-    gin_idx_scan_count,
+    explain_gin_search_plan,
     hnsw_idx_scan_count,
 )
 
@@ -47,25 +45,22 @@ async def test_hnsw_index_scan_at_runtime(
 
 
 @pytest.mark.asyncio
-async def test_gin_index_scan_at_runtime(
-    engine: AsyncEngine,
+async def test_gin_index_used_at_runtime(
     session_factory: async_sessionmaker[AsyncSession],
     store: PgVectorStore,
 ) -> None:
     plan_seed = await bulk_seed_for_plans(session_factory, store)
 
-    before = await gin_idx_scan_count(engine)
-    hits = await full_text_search_for_plan_gate(
-        session_factory,
-        FullTextSearchQuery(
-            org_id=plan_seed.seeded.org_id,
-            agent_id=plan_seed.seeded.agent_id,
-            query_text=plan_seed.gin_query_text,
-            limit=10,
-            min_confidence=0.0,
-        ),
-    )
-    after = await gin_idx_scan_count(engine)
+    async with session_factory() as session, session.begin():
+        await with_service_org(session, plan_seed.seeded.org_id)
+        explain_json = await explain_gin_search_plan(
+            session,
+            GinExplainParams(
+                org_id=plan_seed.seeded.org_id,
+                agent_id=plan_seed.seeded.agent_id,
+                query_text=plan_seed.gin_query_text,
+            ),
+        )
 
-    assert_gin_index_scanned(before=before, after=after)
-    assert len(hits) >= 1
+    summary = assert_gin_index_used(explain_json)
+    assert int(summary.get("actual_rows") or 0) >= 1

@@ -55,6 +55,34 @@ def _repo(
     return MemoryReadRepository(MagicMock(), store or MagicMock(), settings or _settings())
 
 
+async def _run_sparse_fts_fallback(
+    *,
+    vector_ids: list,
+    fts_id,
+    limit: int,
+    fts_rank: float = 0.42,
+    query_text: str = "dark mode preference",
+) -> list[MemorySearchResult]:
+    store = MagicMock()
+    store.search = AsyncMock(
+        return_value=[SearchHit(memory_id=mid, similarity=0.9) for mid in vector_ids]
+    )
+    repo = _repo(store)
+    repo._hydrate_ordered = AsyncMock(  # type: ignore[method-assign]
+        side_effect=[
+            [_result(mid) for mid in vector_ids],
+            [_result(fts_id, source="full_text")],
+        ]
+    )
+    with patch(
+        "app.read.repository.full_text_search",
+        AsyncMock(return_value=[FullTextHit(memory_id=fts_id, rank=fts_rank)]),
+    ) as fts_mock:
+        results = await repo.find_similar(_query(query_text=query_text, limit=limit))
+    fts_mock.assert_awaited_once()
+    return results
+
+
 @pytest.mark.asyncio
 async def test_find_similar_vector_only_at_limit() -> None:
     org_id = uuid4()
@@ -84,36 +112,13 @@ async def test_find_similar_vector_only_at_limit() -> None:
 
 @pytest.mark.asyncio
 async def test_find_similar_triggers_fallback_when_sparse() -> None:
-    org_id = uuid4()
-    agent_id = uuid4()
     vector_id = uuid4()
     fts_id = uuid4()
-    store = MagicMock()
-    store.search = AsyncMock(return_value=[SearchHit(memory_id=vector_id, similarity=0.91)])
-    repo = _repo(store)
-    repo._hydrate_ordered = AsyncMock(  # type: ignore[method-assign]
-        side_effect=[
-            [_result(vector_id, source="vector")],
-            [_result(fts_id, source="full_text")],
-        ]
+    results = await _run_sparse_fts_fallback(
+        vector_ids=[vector_id],
+        fts_id=fts_id,
+        limit=3,
     )
-
-    with patch(
-        "app.read.repository.full_text_search",
-        AsyncMock(
-            return_value=[FullTextHit(memory_id=fts_id, rank=0.42)],
-        ),
-    ) as fts_mock:
-        results = await repo.find_similar(
-            _query(
-                org_id=org_id,
-                agent_id=agent_id,
-                query_text="dark mode preference",
-                limit=3,
-            )
-        )
-
-    fts_mock.assert_awaited_once()
     assert len(results) == 2
     assert results[0].source == "vector"
     assert results[1].source == "full_text"
@@ -168,30 +173,12 @@ async def test_find_similar_no_fts_when_vector_fills_limit() -> None:
 async def test_find_similar_fts_when_limit_exceeds_corpus() -> None:
     vector_ids = [uuid4() for _ in range(15)]
     fts_id = uuid4()
-    store = MagicMock()
-    store.search = AsyncMock(
-        return_value=[SearchHit(memory_id=mid, similarity=0.9) for mid in vector_ids]
+    results = await _run_sparse_fts_fallback(
+        vector_ids=vector_ids,
+        fts_id=fts_id,
+        limit=20,
+        fts_rank=0.55,
     )
-    repo = _repo(store)
-    repo._hydrate_ordered = AsyncMock(  # type: ignore[method-assign]
-        side_effect=[
-            [_result(mid) for mid in vector_ids],
-            [_result(fts_id, source="full_text")],
-        ]
-    )
-
-    with patch(
-        "app.read.repository.full_text_search",
-        AsyncMock(return_value=[FullTextHit(memory_id=fts_id, rank=0.55)]),
-    ) as fts_mock:
-        results = await repo.find_similar(
-            _query(
-                query_text="dark mode preference",
-                limit=20,
-            )
-        )
-
-    fts_mock.assert_awaited_once()
     assert len(results) == 16
     assert results[0].source == "vector"
     assert any(item.source == "full_text" for item in results)
