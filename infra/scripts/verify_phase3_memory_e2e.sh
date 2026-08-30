@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Phase 3 memory HTTP lifecycle e2e (m3.E.2): PII, dedup, near-dup escalation,
-# composite search ranking, FK-cascade teardown (org GDPR deferred #641).
+# sequential auto-supersede, composite search ranking, FK-cascade teardown,
+# Redis stale-cache visibility (org GDPR deferred #641).
 #
 # Modes:
 #   IBEX_E2E_PHASE3_MANAGE=1 (default) — start/stop auth + stub TEI + embedder + memory
@@ -39,6 +40,11 @@ NEAR_DUP_A='ibex phase three memory lifecycle near duplicate neutral marker toke
 NEAR_DUP_B='ibex phase three memory lifecycle near duplicate neutral marker token slot 606'
 NEAR_DUP_MIN_SIM='0.08'
 PII_CONTENT='My SSN is 856-45-6789 on file'
+# ADR-0056 sequential supersede pair (stub-calibrated adjacent slots; isolated from 605/606).
+SUPERSEDE_OLD='ibex phase three memory lifecycle near duplicate neutral marker token slot 621'
+SUPERSEDE_NEW='ibex phase three memory lifecycle near duplicate neutral marker token slot 622'
+# Redis delete-path invalidation deferred — see ADR-0059 / tracking issue in step 5 comment.
+REDIS_INVALIDATION_ISSUE='647'
 
 PIDS=()
 BODY_FILE=""
@@ -67,6 +73,12 @@ expect_http() {
     echo "http_status=${got} expected=${want} error_code=$(sanitized_error_code)" >&2
     fail "$fail_msg"
   fi
+}
+
+prom_counter_total() {
+  local name="$1"
+  curl -fsS --connect-timeout 2 --max-time 10 "$MEMORY_ADDR/metrics" \
+    | awk -v n="$name" '$1 == n { print $2; exit }'
 }
 
 cleanup() {
@@ -246,6 +258,69 @@ asyncio.run(main())
 PY
 }
 
+verify_supersede_calibration() {
+  cd "$EMBEDDER_DIR"
+  # shellcheck disable=SC1091
+  source .venv/bin/activate
+  python - <<PY
+import asyncio, json, os, sys
+import httpx
+
+old = ${SUPERSEDE_OLD@Q}
+new = ${SUPERSEDE_NEW@Q}
+min_sim = float(${NEAR_DUP_MIN_SIM@Q})
+url = os.environ["EMBEDDER_ADDR"].rstrip("/") + "/v1/embed"
+token = os.environ["EMBED_TOKEN"]
+org = os.environ["DEV_ORG"]
+
+async def main():
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        r = await client.post(
+            url,
+            headers={"Authorization": f"Bearer {token}"},
+            json={"texts": [old, new], "org_id": org},
+        )
+    if r.status_code != 200:
+        print(f"supersede calibration: embedder returned {r.status_code}", file=sys.stderr)
+        sys.exit(1)
+    body = r.json()
+    va, vb = body["vectors"][0], body["vectors"][1]
+    sim = sum(x * y for x, y in zip(va, vb, strict=True))
+    if sim <= min_sim:
+        print(
+            f"supersede calibration failed: cosine={sim:.6f} threshold>{min_sim}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    print(json.dumps({"similarity": sim, "threshold": min_sim}))
+
+asyncio.run(main())
+PY
+}
+
+verify_supersede_subjects() {
+  cd "$MEMORY_DIR"
+  # shellcheck disable=SC1091
+  source .venv/bin/activate
+  python - <<PY
+import sys
+from app.config import Settings
+from app.conflict.subjects import extract_subject_key, subjects_match
+
+old = ${SUPERSEDE_OLD@Q}
+new = ${SUPERSEDE_NEW@Q}
+model = Settings(database_url="postgresql+asyncpg://x").pii_spacy_model
+left = extract_subject_key(old, model_name=model)
+right = extract_subject_key(new, model_name=model)
+if not subjects_match(left, right):
+    print(
+        f"supersede subject guard: no match ({left!r} vs {right!r})",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+PY
+}
+
 start_stack() {
   mkdir -p "$LOG_DIR"
   export IBEX_ENV=development
@@ -369,6 +444,31 @@ EXISTING_ID="$(jq -r '.detail.existing_memory_id // empty' "$BODY_FILE")"
 [[ "$EXISTING_ID" == "$PII_MEMORY_ID" ]] || fail "step 2: existing_memory_id mismatch"
 pass "step 2: exact dedup returns existing id"
 
+# --- Step 3c: sequential auto-supersede (ADR-0056) — before near-dup escalation ---
+# Memory A is SQL-seeded with closed [valid_from, valid_until): POST /v1/memories has no
+# valid_from field today. Memory B is the HTTP write under test. Runs before step 3 so
+# overlapping-interval near-dup candidates from 605/606 do not interfere.
+verify_supersede_subjects
+pass "step 3c: supersede pair subjects match"
+verify_supersede_calibration >/dev/null
+pass "step 3c: supersede pair calibrated for near-dup gate"
+LLM_BEFORE_3C="$(prom_counter_total ibex_memory_conflict_llm_calls_total)"
+[[ -n "$LLM_BEFORE_3C" ]] || fail "step 3c: could not read ibex_memory_conflict_llm_calls_total"
+SUPERSEDE_JSON="$(memory_seed supersede-seed --org-id "$DEV_ORG" --agent-id "$DEV_AGENT" \
+  --old-content "$SUPERSEDE_OLD")"
+SUPERSEDE_OLD_ID="$(echo "$SUPERSEDE_JSON" | jq -r '.old_id')"
+SUPERSEDE_PAYLOAD="$(jq -nc --arg agent "$DEV_AGENT" --arg content "$SUPERSEDE_NEW" \
+  '{agent_id:$agent, content:$content}')"
+do_http -X POST "$MEMORY_ADDR/v1/memories" "${AUTH_HEADER[@]}" -d "$SUPERSEDE_PAYLOAD"
+expect_http "$CODE" "201" "step 3c: POST superseding memory B" "step 3c: expected 201 got $CODE"
+SUPERSEDE_NEW_ID="$(jq -r '.data.id' "$BODY_FILE")"
+memory_seed supersede-check --org-id "$DEV_ORG" --old-id "$SUPERSEDE_OLD_ID" \
+  --new-id "$SUPERSEDE_NEW_ID"
+LLM_AFTER_3C="$(prom_counter_total ibex_memory_conflict_llm_calls_total)"
+[[ "$LLM_BEFORE_3C" == "$LLM_AFTER_3C" ]] \
+  || fail "step 3c: ibex_memory_conflict_llm_calls_total changed ${LLM_BEFORE_3C} -> ${LLM_AFTER_3C}"
+pass "step 3c: sequential auto-supersede (zero LLM calls for pair)"
+
 # --- Step 3: near-dup conflict escalation ---
 NEAR_A_PAYLOAD="$(jq -nc --arg agent "$DEV_AGENT" --arg content "$NEAR_DUP_A" \
   '{agent_id:$agent, content:$content}')"
@@ -388,6 +488,7 @@ export IBEX_MEMORY_DATABASE_URL="$POSTGRES_DSN"
 memory_seed escalation-check --org-id "$DEV_ORG" --new-id "$NEAR_B_ID" --candidate-id "$NEAR_A_ID"
 pass "step 3: pending memory_conflict_escalations row"
 
+
 # --- Step 4: composite search ranking (SQL seed + HTTP search) ---
 RANK_JSON="$(memory_seed ranking-seed --org-id "$DEV_ORG" --agent-id "$DEV_AGENT")"
 FACTUAL_ID="$(echo "$RANK_JSON" | jq -r '.factual_id')"
@@ -401,9 +502,13 @@ TOP_ID="$(jq -r '.data.results[0].memory.id // empty' "$BODY_FILE")"
 [[ "$TOP_ID" == "$FACTUAL_ID" ]] || fail "step 4: top result id must be factual seed"
 pass "step 4: old factual outranks fresh episodic"
 
-# --- Step 5: skip org GDPR (#641) + FK cascade DELETE ---
+# --- Step 5: skip org GDPR (#641) + FK cascade DELETE + Redis stale-cache visibility ---
 echo "SKIP: org-scope GDPR cascade + MinIO purge deferred to Phase 4.A.2 (#641)"
 memory_seed cascade-setup --memory-id "$PII_MEMORY_ID" --org-id "$DEV_ORG" --agent-id "$DEV_AGENT"
+export REDIS_URL="${REDIS_URL:-redis://127.0.0.1:6380/0}"
+memory_seed redis-cache-check --org-id "$DEV_ORG" --agent-id "$DEV_AGENT" \
+  --memory-id "$PII_MEMORY_ID" --phase before-delete
+pass "step 5: Redis object cache + hot ZSET populated after HTTP create"
 run_psql <<SQL
 BEGIN;
 SELECT set_config('app.is_service_account', 'true', true);
@@ -412,6 +517,16 @@ DELETE FROM ibex_core.memories WHERE id = '${PII_MEMORY_ID}' AND org_id = '${DEV
 COMMIT;
 SQL
 memory_seed cascade-check --memory-id "$PII_MEMORY_ID" --org-id "$DEV_ORG"
+# MemoryHotCacheReader has no HTTP route; exercise hydrate read path via seed helper.
+memory_seed hot-cache-read-check --org-id "$DEV_ORG" --agent-id "$DEV_AGENT" \
+  --memory-id "$PII_MEMORY_ID" --expect-absent
+pass "step 5: MemoryHotCacheReader omits deleted memory (hydrate filter)"
+# Explicit ZREM / object-cache DEL on delete is deferred (ADR-0059). Stale entries are safe:
+# MemoryHotCacheReader hydrates from Postgres and drops non-active rows — stale cache cannot
+# leak deleted content, only omit results. Tracked: https://github.com/Rick1330/ibex-harness/issues/${REDIS_INVALIDATION_ISSUE}
+memory_seed redis-cache-check --org-id "$DEV_ORG" --agent-id "$DEV_AGENT" \
+  --memory-id "$PII_MEMORY_ID" --phase after-delete
+pass "step 5: Redis stale cache after SQL DELETE (known gap #${REDIS_INVALIDATION_ISSUE})"
 pass "step 5: FK cascade teardown (SQL DELETE, not HTTP)"
 
 echo "=== Phase 3 memory e2e complete ==="
