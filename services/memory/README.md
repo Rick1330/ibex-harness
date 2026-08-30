@@ -74,6 +74,7 @@ workers (`services/worker/`).
 - Unique-violation on active content hash → bump + `409 DUPLICATE_CONTENT`
 - After-commit Redis cache (`{org_id}:memory:{memory_id}`, `{org_id}:hot_memories:{agent_id}`) + vector upsert
 - `memory_conflict_escalations` table (migration `000019`)
+- Migration `000020` — `memory_conflict_escalations.status` enum type (follow-up to `000019`; PR #649)
 - Auth: gRPC `ValidateToken` (`IBEX_AUTH_GRPC_ADDR`); permission `memory:write`
 - Idempotency: `X-Idempotency-Key` via Redis (`idempotency:{org_id}:{key}`)
 - Observability: Prometheus job `memory` (:8005), Grafana dashboard `memory.json`
