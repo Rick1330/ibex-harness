@@ -28,6 +28,27 @@ def _invalid_inputs(message: str) -> JSONResponse:
     return JSONResponse(status_code=422, content={"error": message})
 
 
+def _parse_json_object(body: Any) -> dict[str, Any] | JSONResponse:
+    if not isinstance(body, dict):
+        return _invalid_inputs("request body must be a JSON object")
+    return body
+
+
+def _parse_embed_texts(inputs: Any) -> list[str] | JSONResponse:
+    if not isinstance(inputs, list) or not inputs:
+        return _invalid_inputs("inputs must be a non-empty list")
+    if len(inputs) > _MAX_BATCH_TEXTS:
+        return _invalid_inputs(f"inputs batch size exceeds {_MAX_BATCH_TEXTS}")
+    texts: list[str] = []
+    for index, item in enumerate(inputs):
+        if not isinstance(item, str):
+            return _invalid_inputs(f"inputs[{index}] must be a string")
+        if len(item.encode("utf-8")) > _MAX_TEXT_BYTES:
+            return _invalid_inputs(f"inputs[{index}] exceeds {_MAX_TEXT_BYTES} bytes")
+        texts.append(item)
+    return texts
+
+
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -44,20 +65,12 @@ async def embed(request: Request) -> JSONResponse:
         body: Any = await request.json()
     except Exception:
         return _invalid_inputs("request body must be JSON")
-    if not isinstance(body, dict):
-        return _invalid_inputs("request body must be a JSON object")
-    inputs = body.get("inputs")
-    if not isinstance(inputs, list) or not inputs:
-        return _invalid_inputs("inputs must be a non-empty list")
-    if len(inputs) > _MAX_BATCH_TEXTS:
-        return _invalid_inputs(f"inputs batch size exceeds {_MAX_BATCH_TEXTS}")
-    texts: list[str] = []
-    for index, item in enumerate(inputs):
-        if not isinstance(item, str):
-            return _invalid_inputs(f"inputs[{index}] must be a string")
-        if len(item.encode("utf-8")) > _MAX_TEXT_BYTES:
-            return _invalid_inputs(f"inputs[{index}] exceeds {_MAX_TEXT_BYTES} bytes")
-        texts.append(item)
+    parsed = _parse_json_object(body)
+    if isinstance(parsed, JSONResponse):
+        return parsed
+    texts = _parse_embed_texts(parsed.get("inputs"))
+    if isinstance(texts, JSONResponse):
+        return texts
     vectors = await _STUB.embed(texts)
     return JSONResponse(content=vectors.tolist())
 
