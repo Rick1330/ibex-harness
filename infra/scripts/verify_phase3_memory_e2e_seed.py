@@ -110,7 +110,8 @@ async def cmd_cascade_setup(memory_id: UUID, org_id: UUID, agent_id: UUID) -> No
             text(
                 """
                 INSERT INTO ibex_core.memory_labels (memory_id, org_id, label, confidence)
-                VALUES (:memory_id, :org_id, 'factual', 0.9)
+                VALUES (:memory_id, :org_id, 'preference', 0.9)
+                ON CONFLICT (memory_id, label) DO NOTHING
                 """
             ),
             {"memory_id": str(memory_id), "org_id": str(org_id)},
