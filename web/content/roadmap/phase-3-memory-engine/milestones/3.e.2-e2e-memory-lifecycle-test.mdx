@@ -1,8 +1,8 @@
 ---
 title: "3.E.2 End-to-end memory lifecycle test"
-description: "Full HTTP-level lifecycle test: write with PII → redaction verified, dedup → no duplicate, near-dup → supersession, search → ranked correctly, GDPR delete → clean cascade."
-summary: "Full HTTP-level lifecycle test: write with PII → redaction verified, dedup → no duplicate, near-dup → supersession, search → ranked correctly, GDPR delete → clean cascade."
-status: "planned"
+description: "Full HTTP-level lifecycle test: PII redaction, exact dedup, near-dup conflict escalation, sequential auto-supersede, composite search ranking, FK-cascade teardown, and Redis stale-cache visibility (org GDPR deferred)."
+summary: "Full HTTP-level lifecycle test: PII redaction, exact dedup, near-dup conflict escalation, sequential auto-supersede, composite search ranking, FK-cascade teardown, and Redis stale-cache visibility (org GDPR deferred)."
+status: "complete"
 milestoneId: "3.E.2"
 track: "E"
 trackTitle: "Exit Gate"
@@ -15,19 +15,12 @@ fullTitle: "Milestone 3.E.2 — End-to-End Memory Lifecycle Test"
 
 # Milestone 3.E.2 — End-to-End Memory Lifecycle Test
 
-**Status:** Planned  
+**Status:** Complete  
 **Goal:** [Track E — Exit Gate](/roadmap/phase-3-memory-engine/tracks#track-e--exit-gate)  
 **Phase:** 3 — Core Memory Substrate  
 **Estimated effort:** 2 days
 
 ---
-
-<Callout type="note" title="Planning baseline">
-  This page is a planning sketch, not an implementation script. Named paths, package layouts,
-  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
-  that are expected to change once the live code, constraints, and research during implementation
-  make a better shape clear. Prefer outcomes over matching any particular file tree.
-</Callout>
 
 ## Why This Milestone Exists
 
@@ -37,15 +30,20 @@ One real HTTP-level test proving the full lifecycle works through the actual ser
 
 ## Script
 
-`infra/scripts/verify_phase3_memory_e2e.sh` (new, sibling to `verify_phase15.sh`)
+`infra/scripts/verify_phase3_memory_e2e.sh` (sibling to `e2e_phase25.sh`)
 
-### Flow
+### Flow (as implemented)
 
-1. `POST /v1/memories` with plaintext content containing a fake SSN → assert response shows redacted content
-2. `POST /v1/memories` with identical `content_hash` → assert `200` with existing memory ID (no duplicate insert)
-3. `POST /v1/memories` with content &gt;0.92 cosine-similar to an existing memory → assert supersession/merge workflow triggered (`superseded_by` populated)
-4. `GET /v1/memories/search?query=...` → assert results ranked by composite scoring formula, ordering verified against precomputed expected ranking
-5. Trigger GDPR org deletion → poll until `memories` count for that org = 0, MinIO archive objects = 0
+1. `POST /v1/memories` with plaintext content containing a fake SSN → assert **201** and `data.content` shows `[US_SSN]` placeholder (not raw digits); `data.pii_detected == true`
+2. `POST /v1/memories` with identical content → assert **409** `DUPLICATE_CONTENT` with `detail.existing_memory_id` (not 200)
+3. `POST /v1/memories` with content above the harness near-dup floor (`NEAR_DUP_MIN_SIM=0.08`, lowered on the memory process only for this gate) → assert `meta.deduplication.similar_memories` includes the candidate id **and** a pending `memory_conflict_escalations` row (not `superseded_by`). Production default remains **0.92** (`IBEX_MEMORY_NEAR_DUPLICATE_SIM_THRESHOLD`); the hash-based stub cannot reach 0.92 between distinct Presidio-clean strings, so the e2e harness uses a pinned adjacent-slot pair (~0.12 cosine) verified at script start. **Correctness of the real 0.92 threshold is not re-proven here** — it is covered at unit/integration level in milestone [3.C.2](/roadmap/phase-3-memory-engine/milestones/3.c.2-content-near-duplicate-detection) (`services/memory/tests/unit/test_dedup_service.py`, `services/memory/tests/integration/test_dedup.py`).
+3c. **Sequential auto-supersede ([ADR-0056](/docs/adr/0056-temporal-conflict-detection)):** SQL-seed memory A with a closed `[valid_from, valid_until)` interval (HTTP `POST` has no `valid_from` field today), then `POST /v1/memories` for memory B with a newer, non-overlapping claim on the same subject. Assert via SQL helper: A `status='superseded'`, `superseded_by=B.id`, `supersedes` relationship row, **zero** `ibex_memory_conflict_llm_calls_total` increment for the pair. Near-dup similarity still gates the conflict stage; interval + subject checks select auto-supersede vs escalation.
+4. `POST /v1/memories/search` with query text → assert composite ranking: old **factual** memory outranks fresh **episodic** (setup via SQL seed for `valid_from` ages; mirrors 3.D.2 regression)
+5. **Teardown (not org GDPR):** log skip for org-scope GDPR cascade + MinIO purge — deferred to Phase 4.A.2 ([#641](https://github.com/Rick1330/ibex-harness/issues/641)). Then `DELETE` the step-1 memory via service-account SQL and assert FK children (`memory_labels`, `memory_relationships`, `memory_conflict_escalations`) are zero — same precedent as 3.E.1 ISO-2.1. **Redis:** assert `{org_id}:memory:{memory_id}` and `{org_id}:hot_memories:{agent_id}` **still exist after SQL DELETE** (known gap — explicit invalidation tracked in [#647](https://github.com/Rick1330/ibex-harness/issues/647); [ADR-0059](/docs/adr/0059-hot-cache-read-path) hydrate-on-read drops non-active rows). No HTTP delete API exists today.
+
+### Out of scope (by design)
+
+**Security and tenant-isolation negative cases** (auth failures, cross-org `agent_id`, malformed input, ISO-style adversarial probes) are **[3.E.1](/roadmap/phase-3-memory-engine/milestones/3.e.1-memory-security-integration-suite)** responsibility, not this happy-path lifecycle gate.
 
 ---
 
@@ -72,12 +70,11 @@ Prefer outcomes over matching any particular file tree or command sequence.
 
 Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
 
-- [ ] Script exits 0 in CI against a fresh compose-test stack
-- [ ] Wired as `make e2e-smoke-p3-memory` (distinct from the deferred `make e2e-smoke-p3` which bundled context assembly — that moves to Phase 3.5's own e2e gate)
-- [ ] Repo guards / CI checks still pass
+- [x] Script exits 0 in CI against a fresh compose-test stack
+- [x] Wired as `make e2e-smoke-p3-memory` (distinct from the deferred `make e2e-smoke-p3` which bundled context assembly — that moves to Phase 3.5's own e2e gate)
+- [x] Repo guards / CI checks still pass
 
 ## Prerequisites
 
 - Milestone 3.E.1 (security integration suite)
 - All Track C and D milestones
-

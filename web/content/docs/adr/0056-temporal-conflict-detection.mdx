@@ -81,3 +81,15 @@ Decision: **spaCy**. Weak fixtures trigger follow-up, not an initial LLM subject
    [#620](https://github.com/Rick1330/ibex-harness/issues/620).
 3. Until 3.C.5 ships, a conflict-resolution worker has nothing queryable to poll for escalations —
    that gap is intentional and ticketed, not silent.
+
+## Implementation note (2026-08-30)
+
+- `POST /v1/memories` has no `valid_from` request field. `MemoryWriteOrchestrator._run_pipeline`
+  defaults `valid_from` to `NOW()` (UTC) before `ConflictStage` runs (PR #649).
+- Therefore the "missing valid_from → escalate" branch in `ConflictStage` is **not reachable**
+  via the documented HTTP write contract.
+- Intentional: aligns interval-based supersede detection with the persist-layer default
+  (`insert_memory_session`).
+- The escalate-on-missing path remains in force for **direct `WritePipeline` callers** that
+  construct `WriteContext(valid_from=None)` without orchestrator defaulting (tests only in
+  production today; guarded by `test_conflict_stage_missing_valid_from_escalates`).

@@ -977,6 +977,125 @@ jobs:
           POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
         run: bash infra/scripts/memory-integration-test-ci.sh
 
+  memory-security-integration:
+    name: memory-security-integration
+    needs: changes
+    if: needs.changes.outputs.run_go == 'true' || needs.changes.outputs.run_python == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      REDIS_URL: redis://127.0.0.1:6379/0
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.6-pg16@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b
+        env:
+          POSTGRES_USER: ibex
+          POSTGRES_PASSWORD: ibex
+          POSTGRES_DB: ibex
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ibex -d ibex"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        # redis 7.4.2 — immutable pin (mutable :7 must not be used in CI).
+        image: redis:7.4.2@sha256:fbdbaea47b9ae4ecc2082ecdb4e1cea81e32176ffb1dcf643d422ad07427e5d9
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+      - name: Memory security integration tests (m3.E.1 ISO-*)
+        env:
+          POSTGRES_TEST_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+        run: bash infra/scripts/memory-security-integration-test-ci.sh
+
+  e2e-smoke-p3-memory:
+    name: e2e-smoke-p3-memory
+    needs: changes
+    if: needs.changes.outputs.run_go == 'true' || needs.changes.outputs.run_python == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      REDIS_URL: redis://127.0.0.1:6379/0
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.6-pg16@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b
+        env:
+          POSTGRES_USER: ibex
+          POSTGRES_PASSWORD: ibex
+          POSTGRES_DB: ibex
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ibex -d ibex"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7.4.2@sha256:fbdbaea47b9ae4ecc2082ecdb4e1cea81e32176ffb1dcf643d422ad07427e5d9
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+      - uses: ./.github/actions/setup-buf
+      - name: Generate protobuf stubs
+        working-directory: packages/proto
+        run: buf generate
+      - name: Phase 3 memory HTTP lifecycle e2e (m3.E.2)
+        env:
+          POSTGRES_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+          POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+        run: bash infra/scripts/memory-e2e-test-ci.sh
+
   verify-phase25:
     name: verify-phase25
     needs: changes
@@ -1747,6 +1866,7 @@ jobs:
       - memory-test
       - memory-coverage
       - memory-integration
+      - memory-security-integration
       - verify-phase25
       - golangci-lint
       - coverage
@@ -1778,6 +1898,7 @@ jobs:
             "${{ needs.memory-test.result }}" \
             "${{ needs.memory-coverage.result }}" \
             "${{ needs.memory-integration.result }}" \
+            "${{ needs.memory-security-integration.result }}" \
             "${{ needs.verify-phase25.result }}" \
             "${{ needs.golangci-lint.result }}" \
             "${{ needs.coverage.result }}" \
@@ -1836,6 +1957,8 @@ jobs:
       - memory-test
       - memory-coverage
       - memory-integration
+      - memory-security-integration
+      - e2e-smoke-p3-memory
       - verify-phase25
     if: always()
     runs-on: ubuntu-latest
@@ -1855,4 +1978,6 @@ jobs:
             "${{ needs.memory-test.result }}" \
             "${{ needs.memory-coverage.result }}" \
             "${{ needs.memory-integration.result }}" \
+            "${{ needs.memory-security-integration.result }}" \
+            "${{ needs.e2e-smoke-p3-memory.result }}" \
             "${{ needs.verify-phase25.result }}"

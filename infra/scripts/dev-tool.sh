@@ -63,6 +63,7 @@ case "${1:-help}" in
       "  verify-phase15         Run Phase 1.5 public site verification (IBEX_SITE_URL)" \
       "  verify-phase25         Phase 2.5 exit gate verification" \
       "  e2e-phase25            Multi-service e2e (auth+proxy+embedder+mcp)" \
+      "  e2e-smoke-p3-memory    Phase 3 memory HTTP lifecycle e2e gate" \
       "  mcp-conformance        MCP stub protocol conformance checks"
     ;;
   lint-docs)

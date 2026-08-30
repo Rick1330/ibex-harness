@@ -37,7 +37,7 @@ def _search(http: TestClient, *, query: str = "dark mode", limit: int = 5):
 
 
 @pytest.fixture
-def client() -> tuple[TestClient, AsyncMock, MagicMock]:
+def client(monkeypatch) -> tuple[TestClient, AsyncMock, MagicMock]:
     settings = Settings(
         database_url="postgresql+asyncpg://ibex:ibex@127.0.0.1:5432/ibex",
         embedding_api_token="unit-test-token",
@@ -53,6 +53,14 @@ def client() -> tuple[TestClient, AsyncMock, MagicMock]:
     )
     app.dependency_overrides[get_read_repository] = lambda: mock_repo
     app.dependency_overrides[get_embedding_client] = lambda: mock_embed
+
+    async def _skip_agent_org_check(*_args, **_kwargs) -> None:
+        return None
+
+    monkeypatch.setattr(
+        "app.routers.memories.ensure_search_agent_authorized",
+        _skip_agent_org_check,
+    )
     return TestClient(app), mock_repo, mock_embed
 
 

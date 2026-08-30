@@ -755,7 +755,7 @@ Value: JSON {org_id, permissions, expiry}
 **2. Sorted Sets**: Hot memories (ordered by composite score)
 
 ```text
-Key: hot_memories:{agent_id}
+Key: {org_id}:hot_memories:{agent_id}
 Score: composite_score (relevance * recency * usefulness)
 Member: memory_id
 TTL: 1 hour

@@ -76,6 +76,9 @@ docker_seed_matches_compose() {
     postgres://ibex:ibex@localhost:5432/ibex*|postgres://ibex:ibex@127.0.0.1:5432/ibex*)
       return 0
       ;;
+    postgres://ibex:ibex@localhost:5433/ibex_test*|postgres://ibex:ibex@127.0.0.1:5433/ibex_test*)
+      return 0
+      ;;
   esac
   return 1
 }
@@ -94,6 +97,13 @@ run_seed_sql() {
     echo "psql not on PATH; using docker exec ibex-dev-postgres"
     docker exec -i ibex-dev-postgres \
       psql -U "${POSTGRES_USER:-ibex}" -d "${POSTGRES_DB:-ibex}" -v ON_ERROR_STOP=1 \
+      <"$SEED_SQL"
+    return
+  fi
+  if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx test-postgres-1; then
+    echo "psql not on PATH; using docker exec test-postgres-1"
+    docker exec -i test-postgres-1 \
+      psql -U ibex -d ibex_test -v ON_ERROR_STOP=1 \
       <"$SEED_SQL"
     return
   fi

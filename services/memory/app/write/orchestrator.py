@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy.exc import IntegrityError
@@ -77,11 +78,15 @@ class MemoryWriteOrchestrator:
         return outcome
 
     async def _run_pipeline(self, command: CreateMemoryCommand) -> WriteContext:
+        # HTTP create has no valid_from field; align conflict evaluation with persist default.
+        valid_from = command.valid_from
+        if valid_from is None:
+            valid_from = datetime.now(tz=UTC)
         ctx = WriteContext(
             org_id=command.org_id,
             agent_id=command.agent_id,
             content=command.content,
-            valid_from=command.valid_from,
+            valid_from=valid_from,
             valid_until=command.valid_until,
         )
         token = set_write_org_id(command.org_id)

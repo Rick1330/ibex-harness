@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -17,6 +18,7 @@ from app.read.models import FindSimilarQuery, MemorySearchResult
 from app.routers.memory_search_support import (
     SearchMemoriesExecution,
     embed_query_text,
+    ensure_search_agent_authorized,
     find_similar_query_from_execution,
     http_error_for_search,
     log_search_database_failure,
@@ -119,6 +121,49 @@ def test_resolve_search_agent_id_rejects_mismatch() -> None:
         resolve_search_agent_id(token, uuid4())
     assert exc.value.status_code == 403
     assert exc.value.detail["code"] == "AGENT_NOT_AUTHORIZED"
+
+
+def _mock_session_factory(scalar: object | None) -> MagicMock:
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=MagicMock(scalar=MagicMock(return_value=scalar)))
+    factory = MagicMock()
+    factory.return_value.__aenter__ = AsyncMock(return_value=session)
+    factory.return_value.__aexit__ = AsyncMock(return_value=None)
+    return factory
+
+
+async def _assert_ensure_search_agent_authorized(
+    *,
+    scalar: object | None,
+    expect_forbidden: bool,
+) -> None:
+    factory = _mock_session_factory(scalar)
+    raises = pytest.raises(HTTPException) if expect_forbidden else nullcontext()
+    with (
+        patch(
+            "app.routers.memory_search_support.set_service_org",
+            new_callable=AsyncMock,
+        ),
+        raises as exc_info,
+    ):
+        await ensure_search_agent_authorized(
+            factory,
+            org_id=uuid4(),
+            agent_id=uuid4(),
+        )
+    if expect_forbidden:
+        assert exc_info.value.status_code == 403
+        assert exc_info.value.detail["code"] == "AGENT_NOT_AUTHORIZED"
+
+
+@pytest.mark.asyncio
+async def test_ensure_search_agent_authorized_rejects_missing_agent() -> None:
+    await _assert_ensure_search_agent_authorized(scalar=None, expect_forbidden=True)
+
+
+@pytest.mark.asyncio
+async def test_ensure_search_agent_authorized_allows_member_agent() -> None:
+    await _assert_ensure_search_agent_authorized(scalar=1, expect_forbidden=False)
 
 
 @pytest.mark.asyncio

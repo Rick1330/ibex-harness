@@ -7,11 +7,14 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from fastapi import HTTPException
+from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.auth.client import ValidateResult
 from app.clients.embedding import EmbeddingClient, EmbeddingClientError
 from app.exceptions import EmbeddingServiceError, MemoryDatabaseError
+from app.org_context import set_service_org
 from app.read.models import FindSimilarQuery, MemorySearchResult
 from app.read.repository import MemoryReadRepository
 from app.schemas.search import (
@@ -67,6 +70,42 @@ def resolve_search_agent_id(token: ValidateResult, requested_agent_id: UUID) -> 
             },
         )
     return requested_agent_id
+
+
+_AGENT_ORG_CHECK_SQL = """
+SELECT 1
+FROM ibex_core.agents
+WHERE id = :agent_id
+  AND org_id = :org_id
+LIMIT 1
+"""
+
+
+async def ensure_search_agent_authorized(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    org_id: UUID,
+    agent_id: UUID,
+) -> None:
+    """Reject search when the requested agent does not belong to the token org."""
+    async with session_factory() as session:
+        await set_service_org(session, org_id)
+        found = (
+            await session.execute(
+                text(
+                    _AGENT_ORG_CHECK_SQL
+                ),  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+                {"agent_id": str(agent_id), "org_id": str(org_id)},
+            )
+        ).scalar()
+    if found is None:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "AGENT_NOT_AUTHORIZED",
+                "message": "Agent does not belong to the authenticated organization",
+            },
+        )
 
 
 async def embed_query_text(

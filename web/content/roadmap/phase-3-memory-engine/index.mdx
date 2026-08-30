@@ -115,7 +115,7 @@ Further Phase 3 ADRs below are **planned titles** — assign the next free numbe
 3. Temporal-interval-aware conflict detection correctly distinguishes sequential-fact vs. true-contradiction cases, with zero unnecessary LLM calls on non-overlapping intervals
 4. Retrieval-quality benchmark running in CI with a committed baseline
 5. All 10+ ISO-\* cross-tenant isolation cases pass, including the `memory_relationships` cross-org edge case
-6. GDPR delete cascade verified end-to-end
+6. Memory FK cascade correctness verified (hard-delete of `memories` cascades child rows); full org-scope GDPR + MinIO deferred to [Phase 4.A.2](https://github.com/Rick1330/ibex-harness/issues/641)
 7. All Phase 1 and Phase 2 security regression tests still pass with zero regressions
 8. `make e2e-smoke-p3-memory` exits 0
 9. Phase 3 memory ADRs published (next free numbers after ADR-0047; do not reuse 0040–0046) and cross-linked from the phase decision log

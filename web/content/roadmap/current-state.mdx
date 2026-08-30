@@ -16,8 +16,9 @@ summary: "Phases 0–2.5 complete. Phase 3 Tracks A–B and Track C write pipeli
   Track A (**3.1.1** / ADR-0052), Track B (**3.2.1** / ADR-0053), and Track C
   **3.C.1** (PII / ADR-0054), **3.C.2** (dedup / ADR-0055), **3.C.3** (conflict /
   ADR-0056), **3.C.5** (write orchestration / ADR-0057), and **3.C.4** (multi-label /
-  ADR-0048) are delivered.   Track D **3.D.1** (semantic search read path) and **3.D.2** (composite scoring in search ranking) are delivered.
-  **Next:** **3.D.3** hot cache (Redis sorted set).
+  ADR-0048) are delivered. Track D **3.D.1**–**3.D.3** are delivered (semantic search, composite ranking, hot cache read).
+  Track E **3.E.1** memory security integration suite is delivered.
+  **Next:** Track E **3.E.2** end-to-end memory lifecycle test.
 </Callout>
 
 ## Snapshot
@@ -27,7 +28,7 @@ summary: "Phases 0–2.5 complete. Phase 3 Tracks A–B and Track C write pipeli
 <StatusBadge status="stable" /> **Phase 1.5 — Public Web Product:** complete  
 <StatusBadge status="stable" /> **Phase 2 — Single Provider:** complete  
 <StatusBadge status="stable" /> **Phase 2.5 — Provider Generalization:** complete  
-<StatusBadge status="new" /> **Phase 3 — Core Memory Substrate:** in progress (Track D)  
+<StatusBadge status="new" /> **Phase 3 — Core Memory Substrate:** in progress (Track E exit gate)  
 <StatusBadge status="new" /> **Phase 3.5 — Extraction & Context Assembly:** planned  
 <StatusBadge status="new" /> **Phase 4 — Operator Platform & Multi-Provider:** planned  
 <StatusBadge status="new" /> **Phase 4.5 — Intelligence Layer:** planned  
@@ -35,8 +36,8 @@ summary: "Phases 0–2.5 complete. Phase 3 Tracks A–B and Track C write pipeli
 
 **Last updated:** 2026-08-29  
 **Branch:** `main`  
-**Current focus:** [3.D.3 Hot cache](/roadmap/phase-3-memory-engine/milestones/3.d.3-hot-cache-redis-sorted-set)  
-**Completed (recent):** 3.D.2 composite scoring in search ranking; 3.D.1 semantic search read path; 3.C.4 multi-label write (ADR-0048); 3.C.5 write orchestration (ADR-0057); 3.C.3 temporal conflict (ADR-0056); 3.C.2 exact + near-dup; 3.C.1 PII; 3.2.1 VectorStore; 3.1.1 schema expand
+**Current focus:** [3.E.2 End-to-end memory lifecycle test](/roadmap/phase-3-memory-engine/milestones/3.e.2-e2e-memory-lifecycle-test)  
+**Completed (recent):** 3.E.1 ISO-* security suite + Tier-1 read PII guard; 3.D.3 hot cache; 3.D.2 composite scoring; 3.D.1 semantic search
 
 <QuickLinks
   links={[
@@ -46,9 +47,19 @@ summary: "Phases 0–2.5 complete. Phase 3 Tracks A–B and Track C write pipeli
       description: "Live phase cards and milestone progress.",
     },
     {
+      title: "3.E.2 E2E lifecycle",
+      href: "/roadmap/phase-3-memory-engine/milestones/3.e.2-e2e-memory-lifecycle-test",
+      description: "Full write/dedup/conflict/retrieve round trip.",
+    },
+    {
+      title: "3.E.1 Security integration",
+      href: "/roadmap/phase-3-memory-engine/milestones/3.e.1-memory-security-integration-suite",
+      description: "Shipped: TestMemory_ISO_* + memory-security-integration CI.",
+    },
+    {
       title: "3.D.3 Hot cache",
       href: "/roadmap/phase-3-memory-engine/milestones/3.d.3-hot-cache-redis-sorted-set",
-      description: "ZREVRANGE read-side consumer for write hot-cache sorted sets.",
+      description: "Shipped: MemoryHotCacheReader + atomic top-50 trim.",
     },
     {
       title: "3.D.2 Composite scoring",
@@ -68,14 +79,16 @@ summary: "Phases 0–2.5 complete. Phase 3 Tracks A–B and Track C write pipeli
     {
       title: "Architecture decisions",
       href: "/docs/adr",
-      description: "Accepted ADRs through ADR-0057.",
+      description: "Accepted ADRs through ADR-0059.",
     },
   ]}
 />
 
 ## Shipped Since Last Update
 
-- **Phase 3 Track D 3.D.2:** Composite scoring in search ranking — `app/read/ranking.py`, `composite_score()` after hydrate in `find_similar`, FTS relevance sentinel 0.5 for scoring only
+- **Phase 3 Track E 3.E.1:** Memory security integration — `TestMemory_ISO_*` (12 cases), Tier-1 read-path PII guard, `memory-security-integration` CI job ([#641](https://github.com/Rick1330/ibex-harness/issues/641) / [#642](https://github.com/Rick1330/ibex-harness/issues/642) deferred follow-ups)
+- **Phase 3 Track D 3.D.3:** Hot cache — `MemoryHotCacheReader`, atomic Lua trim to top-50, `ibex_memory_hot_cache_read_total` (ADR-0059)
+- **Phase 3 Track D 3.D.2:** Composite scoring in search ranking — `app/read/ranking.py`, FTS relevance sentinel 0.5
 - **Phase 3 Track D 3.D.1:** Semantic search read path — `POST /v1/memories/search`, `MemoryReadRepository.find_similar`, HNSW + GIN fallback, `ibex_memory_search_fallback_total`
 - **Phase 3 Track C 3.C.4:** Multi-label write path — optional `labels[]` on `POST /v1/memories`, transactional `memory_labels` insert, trigger-synced scalar `memories.category` (ADR-0048 / [#630](https://github.com/Rick1330/ibex-harness/issues/630))
 - **Phase 3 Track C 3.C.5:** Write orchestration — `POST /v1/memories`, steps 7–9, idempotency, after-commit cache + vector upsert, conflict escalations table (ADR-0057 / [#620](https://github.com/Rick1330/ibex-harness/issues/620))
@@ -91,13 +104,14 @@ summary: "Phases 0–2.5 complete. Phase 3 Tracks A–B and Track C write pipeli
   **Shipped:** Auth, Proxy, embedder, MCP skeleton, observability, memories schema,
   full memory write pipeline (stages 1–9 via `POST /v1/memories`), multi-label write
   (`labels[]`), PII/dedup/conflict stages, after-commit cache + vector upsert,
-  semantic search read path (`POST /v1/memories/search`), composite scoring in search ranking (3.D.2).
-  **Not yet:** Hot cache read consumer (3.D.3), context assembly (3.5), management API/dashboard (Phase 4).
+  semantic search read path (`POST /v1/memories/search`), composite scoring in search ranking (3.D.2),
+  hot cache read consumer (3.D.3), Tier-1 read-path PII re-check on search/hot-cache (3.E.1).
+  **Not yet:** Context assembly (3.5), management API/dashboard (Phase 4).
 </Callout>
 
 ## Next
 
-1. Implement **3.D.3** — hot cache read-side consumer.  
-2. Track E exit gate after Tracks A–D.
+1. Implement **3.E.2** — end-to-end memory lifecycle test (`make e2e-smoke-p3-memory`).  
+2. Track E exit gate: 3.E.3 benchmark sign-off, 3.E.4 ADR consolidation, 3.E.5 exit audit.
 
 See [Phase 3](/roadmap/phase-3-memory-engine).

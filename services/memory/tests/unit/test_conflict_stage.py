@@ -151,6 +151,11 @@ async def test_conflict_stage_records_supersede_targets() -> None:
 
 @pytest.mark.asyncio
 async def test_conflict_stage_missing_valid_from_escalates() -> None:
+    """ADR-0056 direct-pipeline path: WriteContext(valid_from=None) still escalates.
+
+    Production HTTP writes go through MemoryWriteOrchestrator._run_pipeline, which
+    defaults valid_from before ConflictStage runs (see test_write_orchestrator_extra).
+    """
     cand = uuid4()
 
     class _Cls:
