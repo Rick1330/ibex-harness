@@ -11,10 +11,10 @@ from prometheus_client import REGISTRY
 from sqlalchemy.exc import IntegrityError
 
 from app.clients.embedding import EmbeddingUnavailableError
+from app.config import Settings
 from app.conflict.intervals import ValidityInterval
 from app.conflict.service import ConflictService
 from app.conflict.types import CandidateMemory, ConflictDecision, ConflictOutcome
-from app.config import Settings
 from app.exceptions import DuplicateMemoryError, EmbeddingServiceError, ValidationError
 from app.pipeline import ConflictStage, WritePipeline
 from app.pipeline.context import WriteContext
