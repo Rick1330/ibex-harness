@@ -6,7 +6,7 @@ endif
 
 DEV_TOOL := infra/scripts/dev-tool.sh
 
-.PHONY: help lint-docs lint-go security-scan repo-guards proto-lint proto-breaking proto-gen proto-test proto-test-integration test-integration test-embedder test-mcp-memory test-memory test-memory-integration test-clickhouse-migrate test-clickhouse-migrate-integration coverage-embedder-gate coverage-mcp-memory-gate coverage-memory-gate memory-bench memory-bench-smoke coverage-report coverage-gate coverage-responsepipeline-gate compose-dev-up compose-dev-down compose-dev-reset compose-dev-logs compose-dev-ps compose-test-up compose-test-down observability-up observability-down observability-smoke observability-traffic observability-live-verify db-migrate db-migrate-down db-version db-seed db-repair-token-fks clickhouse-migrate clickhouse-migrate-down clickhouse-version dev-smoke dev-smoke-live e2e-wave2b-token-fks e2e-phase25 verify-phase15 verify-phase25 mcp-conformance
+.PHONY: help lint-docs lint-go security-scan repo-guards proto-lint proto-breaking proto-gen proto-test proto-test-integration test-integration test-embedder test-mcp-memory test-memory test-memory-integration test-clickhouse-migrate test-clickhouse-migrate-integration coverage-embedder-gate coverage-mcp-memory-gate coverage-memory-gate memory-bench memory-bench-smoke coverage-report coverage-gate coverage-responsepipeline-gate compose-dev-up compose-dev-down compose-dev-reset compose-dev-logs compose-dev-ps compose-test-up compose-test-down observability-up observability-down observability-smoke observability-traffic observability-live-verify db-migrate db-migrate-down db-version db-seed db-repair-token-fks clickhouse-migrate clickhouse-migrate-down clickhouse-version dev-smoke dev-smoke-live e2e-wave2b-token-fks e2e-phase25 e2e-smoke-p3-memory verify-phase15 verify-phase25 mcp-conformance
 
 help: ## Show available commands
 	@"$(BASH)" "$(DEV_TOOL)" help
@@ -164,6 +164,9 @@ verify-phase25: ## Phase 2.5 exit gate verification (packages + Python services 
 
 e2e-phase25: ## Multi-service e2e (auth+proxy+embedder+mcp) against local processes
 	@"$(BASH)" infra/scripts/e2e_phase25.sh
+
+e2e-smoke-p3-memory: ## Phase 3 memory HTTP lifecycle e2e (compose-test stack)
+	@"$(BASH)" infra/scripts/verify_phase3_memory_e2e.sh
 
 mcp-conformance: ## MCP stub HTTP protocol checks (G6.M1 / exit criterion 7 evidence)
 	@"$(BASH)" infra/scripts/mcp-conformance.sh
