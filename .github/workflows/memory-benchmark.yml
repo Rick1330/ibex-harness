@@ -12,6 +12,8 @@ on:
     paths:
       - 'services/memory/**'
       - 'benchmarks/memory/**'
+      - 'benchmarks/memory/ranking_quality/**'
+      - 'benchmarks/memory/write_pipeline/**'
       - 'benchmarks/data-schema/hnsw-benchmark-data.schema.json'
       - 'infra/scripts/memory-bench.sh'
       - '.github/workflows/memory-benchmark.yml'
@@ -20,6 +22,8 @@ on:
     paths:
       - 'services/memory/**'
       - 'benchmarks/memory/**'
+      - 'benchmarks/memory/ranking_quality/**'
+      - 'benchmarks/memory/write_pipeline/**'
       - 'benchmarks/data-schema/hnsw-benchmark-data.schema.json'
       - 'infra/scripts/memory-bench.sh'
       - '.github/workflows/memory-benchmark.yml'
@@ -237,6 +241,13 @@ jobs:
           fi
           exit "$rc"
 
+      - name: Enforce HNSW gate status
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+        run: |
+          python3 benchmarks/scripts/check_hnsw_gate_status.py \
+            --published web/public/benchmarks/hnsw-benchmark-data.json
+
       - name: Validate published HNSW data
         run: |
           python -m pip install --disable-pip-version-check --no-cache-dir 'jsonschema==4.23.0'
@@ -334,6 +345,156 @@ jobs:
           DISPATCH_RUN_ID: ${{ github.run_id }}
           DISPATCH_HEAD_SHA: ${{ github.sha }}
           DISPATCH_RUN_NUMBER: ${{ github.run_number }}
+
+  collect-ranking-quality:
+    name: collect-ranking-quality
+    needs: detect-memory-bench-profile
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      POSTGRES_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+      POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+      POSTGRES_TEST_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+      IBEX_MEMORY_DATABASE_URL: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.6-pg16@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b
+        env:
+          POSTGRES_USER: ibex
+          POSTGRES_PASSWORD: ibex
+          POSTGRES_DB: ibex
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ibex -d ibex"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+
+      - name: Install psql client
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+
+      - name: Migrate database
+        run: bash infra/scripts/db-migrate.sh up
+
+      - name: Install memory service deps
+        working-directory: services/memory
+        run: uv sync --frozen
+
+      - name: Run ranking-quality bench
+        run: |
+          set -euo pipefail
+          cd services/memory
+          uv run python ../../benchmarks/memory/ranking_quality/bench_ranking_quality.py
+
+      - name: Enforce ranking-quality regression gate
+        run: |
+          cd services/memory
+          uv run python ../../benchmarks/memory/ranking_quality/regression_gate.py
+
+      - name: Upload ranking-quality artifact
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ranking-quality-benchmark
+          path: |
+            benchmarks/memory/ranking_quality/output/latest.json
+            benchmarks/memory/ranking_quality/output/gate-result.json
+          retention-days: 14
+          if-no-files-found: error
+
+  collect-write-pipeline-bench:
+    name: collect-write-pipeline-bench
+    needs: detect-memory-bench-profile
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      POSTGRES_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+      POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+      POSTGRES_TEST_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+      IBEX_MEMORY_DATABASE_URL: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.6-pg16@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b
+        env:
+          POSTGRES_USER: ibex
+          POSTGRES_PASSWORD: ibex
+          POSTGRES_DB: ibex
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ibex -d ibex"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+
+      - name: Install psql client
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+
+      - name: Migrate database
+        run: bash infra/scripts/db-migrate.sh up
+
+      - name: Install memory service deps
+        working-directory: services/memory
+        run: uv sync --frozen
+
+      - name: Run write-pipeline bench
+        run: |
+          set -euo pipefail
+          cd services/memory
+          uv run python ../../benchmarks/memory/write_pipeline/bench_write_pipeline.py
+
+      - name: Enforce write-pipeline regression gate
+        run: |
+          cd services/memory
+          uv run python ../../benchmarks/memory/write_pipeline/regression_gate.py
+
+      - name: Upload write-pipeline artifact
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: write-pipeline-benchmark
+          path: |
+            benchmarks/memory/write_pipeline/output/latest.json
+            benchmarks/memory/write_pipeline/output/gate-result.json
+          retention-days: 14
+          if-no-files-found: error
         run: |
           set -euo pipefail
           gh api repos/Rick1330/ibexharness-benchmark-bot/dispatches \
