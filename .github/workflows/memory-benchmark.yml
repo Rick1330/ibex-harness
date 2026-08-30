@@ -399,6 +399,10 @@ jobs:
         working-directory: services/memory
         run: uv sync --frozen
 
+      - name: Validate gold set
+        working-directory: services/memory
+        run: uv run python ../../benchmarks/memory/ranking_quality/validate_gold_set.py
+
       - name: Run ranking-quality bench
         run: |
           set -euo pipefail
