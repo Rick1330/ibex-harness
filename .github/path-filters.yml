@@ -4,6 +4,10 @@ python:
   - 'services/**/uv.lock'
   - 'services/**/app/**'
   - 'services/**/tests/**'
+  - 'infra/scripts/verify_phase3_memory_e2e.sh'
+  - 'infra/scripts/verify_phase3_memory_e2e_seed.py'
+  - 'infra/scripts/memory-e2e-test-ci.sh'
+  - 'infra/scripts/phase3_e2e_stub_tei.py'
 go:
   - 'services/**'
   - 'packages/**'
@@ -58,5 +62,7 @@ compose:
   - 'infra/helm/observability/**'
   - 'infra/scripts/verify_phase25.sh'
   - 'infra/scripts/e2e_phase25.sh'
+  - 'infra/scripts/verify_phase3_memory_e2e.sh'
+  - 'infra/scripts/memory-e2e-test-ci.sh'
   - 'infra/scripts/mcp-conformance.sh'
   - 'infra/scripts/observability-*.sh'

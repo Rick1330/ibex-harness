@@ -87,11 +87,11 @@ func TestNormalizePostgresDSN(t *testing.T) {
 	}{
 		{
 			in:   "postgresql+asyncpg://ibex:secret@localhost:5432/ibex",
-			want: "postgres://ibex:secret@localhost:5432/ibex?sslmode=disable",
+			want: "postgres://ibex:secret@localhost:5432/ibex?sslmode=disable&x-multi-statement=true",
 		},
 		{
 			in:   "postgres://u:p@db.example.com:5432/mydb?sslmode=require",
-			want: "postgres://u:p@db.example.com:5432/mydb?sslmode=require",
+			want: "postgres://u:p@db.example.com:5432/mydb?sslmode=require&x-multi-statement=true",
 		},
 	}
 	for _, tc := range tests {

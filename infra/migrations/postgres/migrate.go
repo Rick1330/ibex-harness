@@ -16,7 +16,7 @@ import (
 //go:embed *.sql
 var migrationFiles embed.FS
 
-const defaultMigrateDSN = "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable"
+const defaultMigrateDSN = "postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable&x-multi-statement=true"
 
 // ResolveDSN returns the database URL for golang-migrate (lib/pq / postgres driver).
 func ResolveDSN() string {
@@ -47,6 +47,13 @@ func normalizePostgresDSN(dsn string) string {
 			sep = "&"
 		}
 		dsn += sep + "sslmode=disable"
+	}
+	if !strings.Contains(dsn, "x-multi-statement=") {
+		sep := "?"
+		if strings.Contains(dsn, "?") {
+			sep = "&"
+		}
+		dsn += sep + "x-multi-statement=true"
 	}
 	return dsn
 }
