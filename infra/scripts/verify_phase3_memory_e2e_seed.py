@@ -47,7 +47,7 @@ def _async_dsn() -> str:
     return raw
 
 
-async def _session_stack() -> tuple[async_sessionmaker[AsyncSession], PgVectorStore]:
+def _session_stack() -> tuple[async_sessionmaker[AsyncSession], PgVectorStore]:
     dsn = _async_dsn()
     settings = Settings(database_url=dsn)
     engine = create_engine(settings)
@@ -57,7 +57,7 @@ async def _session_stack() -> tuple[async_sessionmaker[AsyncSession], PgVectorSt
 
 
 async def cmd_ranking_seed(org_id: UUID, agent_id: UUID) -> None:
-    factory, store = await _session_stack()
+    factory, store = _session_stack()
     now = datetime.now(tz=UTC)
     factual_id = await insert_scored_memory(
         factory,
@@ -95,7 +95,7 @@ async def cmd_ranking_seed(org_id: UUID, agent_id: UUID) -> None:
 
 
 async def cmd_cascade_setup(memory_id: UUID, org_id: UUID, agent_id: UUID) -> None:
-    factory, _ = await _session_stack()
+    factory, _ = _session_stack()
     related_id = await insert_active_memory(
         factory,
         InsertActiveMemoryParams(
@@ -151,7 +151,7 @@ async def cmd_cascade_setup(memory_id: UUID, org_id: UUID, agent_id: UUID) -> No
 
 async def cmd_fixture_cleanup(org_id: UUID, agent_id: UUID) -> None:
     """Remove all memories for the dev seed agent so repeated e2e runs are idempotent."""
-    factory, _ = await _session_stack()
+    factory, _ = _session_stack()
     async with factory() as session, session.begin():
         await with_service_org(session, org_id)
         await session.execute(
@@ -166,7 +166,7 @@ async def cmd_fixture_cleanup(org_id: UUID, agent_id: UUID) -> None:
 
 
 async def cmd_cascade_check(memory_id: UUID, org_id: UUID) -> None:
-    factory, _ = await _session_stack()
+    factory, _ = _session_stack()
     async with factory() as session:
         await with_service_org(session, org_id)
         label_count = (
@@ -214,7 +214,7 @@ async def cmd_cascade_check(memory_id: UUID, org_id: UUID) -> None:
 
 
 async def cmd_escalation_check(org_id: UUID, new_id: UUID, candidate_id: UUID) -> None:
-    factory, _ = await _session_stack()
+    factory, _ = _session_stack()
     async with factory() as session:
         await with_service_org(session, org_id)
         count = (

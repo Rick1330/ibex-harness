@@ -28,12 +28,16 @@ STUB_TEI_PY="$ROOT_DIR/infra/scripts/phase3_e2e_stub_tei.py"
 MEMORY_DIR="$ROOT_DIR/services/memory"
 EMBEDDER_DIR="$ROOT_DIR/services/embedder"
 PORT_FROM_URL_SED='s#.*:([0-9]+).*#\1#'
+DOCKER_PS_FORMAT='{{.Names}}'
+PSQL_PING='SELECT 1'
+SERVICE_MEMORY='memory'
 
 # Calibrated against gpu-profile StubBackend (1024-d) via phase3_e2e_stub_tei.
 # Hash-based stub cannot reach production 0.92; e2e uses lowered threshold (see below).
-NEAR_DUP_A='ibex-p3-e2e-near-dup-797-5'
-NEAR_DUP_B='ibex-p3-e2e-near-dup-797-36'
-NEAR_DUP_MIN_SIM='0.15'
+# Strings must be Presidio-clean (no quarantine on write); digit-dash patterns false-positive.
+NEAR_DUP_A='ibex phase three memory lifecycle near duplicate neutral marker token slot 605'
+NEAR_DUP_B='ibex phase three memory lifecycle near duplicate neutral marker token slot 606'
+NEAR_DUP_MIN_SIM='0.08'
 PII_CONTENT='My SSN is 856-45-6789 on file'
 
 PIDS=()
@@ -43,6 +47,15 @@ CODE=""
 fail() { echo "FAIL: $*" >&2; exit 1; }
 pass() { echo "PASS: $*"; }
 
+sanitized_error_code() {
+  if [[ -n "${BODY_FILE:-}" && -f "$BODY_FILE" ]]; then
+    jq -r '.detail.code // .error.code // .data.status // "unknown"' "$BODY_FILE" 2>/dev/null \
+      || echo "unknown"
+  else
+    echo "unknown"
+  fi
+}
+
 expect_http() {
   local got="$1"
   local want="$2"
@@ -51,11 +64,7 @@ expect_http() {
   if [[ "$got" == "$want" ]]; then
     pass "$ok_msg"
   else
-    if [[ -n "${BODY_FILE:-}" && -f "$BODY_FILE" ]]; then
-      echo "response body:" >&2
-      head -c 4096 "$BODY_FILE" >&2 || true
-      echo >&2
-    fi
+    echo "http_status=${got} expected=${want} error_code=$(sanitized_error_code)" >&2
     fail "$fail_msg"
   fi
 }
@@ -117,48 +126,50 @@ run_psql() {
     psql "$dsn" -v ON_ERROR_STOP=1 "$@"
     return 0
   fi
-  if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx ibex-test-postgres; then
+  if docker ps --format "$DOCKER_PS_FORMAT" 2>/dev/null | grep -qx ibex-test-postgres; then
     docker exec ibex-test-postgres psql -U ibex -d ibex_test -v ON_ERROR_STOP=1 "$@"
     return 0
   fi
-  if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx test-postgres-1; then
+  if docker ps --format "$DOCKER_PS_FORMAT" 2>/dev/null | grep -qx test-postgres-1; then
     docker exec test-postgres-1 psql -U ibex -d ibex_test -v ON_ERROR_STOP=1 "$@"
     return 0
   fi
-  if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx ibex-dev-postgres; then
+  if docker ps --format "$DOCKER_PS_FORMAT" 2>/dev/null | grep -qx ibex-dev-postgres; then
     docker exec ibex-dev-postgres psql -U ibex -d ibex -v ON_ERROR_STOP=1 "$@"
     return 0
   fi
   fail "psql not available for cascade DELETE"
 }
 
+docker_postgres_ping() {
+  local container="$1"
+  local label="$2"
+  if docker ps --format "$DOCKER_PS_FORMAT" 2>/dev/null | grep -qx "$container" \
+    && docker exec "$container" psql -U ibex -d ibex_test -v ON_ERROR_STOP=1 -c "$PSQL_PING" >/dev/null 2>&1; then
+    pass "postgres reachable ($label)"
+    return 0
+  fi
+  return 1
+}
+
 postgres_preflight() {
   local dsn
   dsn="$(normalize_psql_dsn "${POSTGRES_DSN}")"
   if command -v psql >/dev/null 2>&1; then
-    if psql "$dsn" -v ON_ERROR_STOP=1 -c 'SELECT 1' >/dev/null 2>&1; then
+    if psql "$dsn" -v ON_ERROR_STOP=1 -c "$PSQL_PING" >/dev/null 2>&1; then
       pass "postgres reachable ($dsn)"
       return 0
     fi
     fail "Postgres not reachable at POSTGRES_DSN (check host/port and migrations)"
   fi
-  if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx ibex-test-postgres; then
-    if docker exec ibex-test-postgres psql -U ibex -d ibex_test -v ON_ERROR_STOP=1 -c 'SELECT 1' >/dev/null 2>&1; then
-      pass "postgres reachable (ibex-test-postgres)"
-      return 0
-    fi
+  if docker_postgres_ping ibex-test-postgres ibex-test-postgres; then
+    return 0
   fi
-  if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx test-postgres-1; then
-    if docker exec test-postgres-1 psql -U ibex -d ibex_test -v ON_ERROR_STOP=1 -c 'SELECT 1' >/dev/null 2>&1; then
-      pass "postgres reachable (test-postgres-1)"
-      return 0
-    fi
+  if docker_postgres_ping test-postgres-1 test-postgres-1; then
+    return 0
   fi
-  if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx ibex-dev-postgres; then
-    if docker exec ibex-dev-postgres psql -U ibex -d ibex -v ON_ERROR_STOP=1 -c 'SELECT 1' >/dev/null 2>&1; then
-      pass "postgres reachable (ibex-dev-postgres)"
-      return 0
-    fi
+  if docker_postgres_ping ibex-dev-postgres ibex-dev-postgres; then
+    return 0
   fi
   fail "Postgres not reachable at POSTGRES_DSN (make compose-test-up && make db-migrate)"
 }
@@ -168,6 +179,31 @@ memory_seed() {
   # shellcheck disable=SC1091
   source .venv/bin/activate
   python "$SEED_PY" "$@"
+}
+
+verify_near_dup_pii_clean() {
+  cd "$MEMORY_DIR"
+  # shellcheck disable=SC1091
+  source .venv/bin/activate
+  python - <<PY
+import asyncio, sys
+from app.config import Settings
+from app.pii.service import PiiService
+
+a = ${NEAR_DUP_A@Q}
+b = ${NEAR_DUP_B@Q}
+
+async def main():
+    pii = PiiService(Settings(database_url="postgresql+asyncpg://x"))
+    await pii.ensure_ready()
+    for label, text in (("A", a), ("B", b)):
+        result = await pii.process_async(text)
+        if result.pii_detected:
+            print(f"near-dup PII guard: {label} flagged", file=sys.stderr)
+            sys.exit(1)
+
+asyncio.run(main())
+PY
 }
 
 verify_near_dup_calibration() {
@@ -276,8 +312,8 @@ start_stack() {
     exec uvicorn app.main:app --host 127.0.0.1 --port "$memory_port"
   ) >"$LOG_DIR/memory.log" 2>&1 &
   PIDS+=("$!")
-  wait_http "memory" "$MEMORY_ADDR/health" 180
-  wait_http "memory" "$MEMORY_ADDR/ready" 180
+  wait_http "$SERVICE_MEMORY" "$MEMORY_ADDR/health" 180
+  wait_http "$SERVICE_MEMORY" "$MEMORY_ADDR/ready" 180
 }
 
 echo "=== Phase 3 memory HTTP lifecycle e2e (m3.E.2) ==="
@@ -293,8 +329,8 @@ if [[ "$MANAGE" == "1" ]]; then
 else
   wait_http "auth" "$AUTH_HTTP/health"
   wait_http "embedder" "$EMBEDDER_ADDR/health"
-  wait_http "memory" "$MEMORY_ADDR/health"
-  wait_http "memory" "$MEMORY_ADDR/ready"
+  wait_http "$SERVICE_MEMORY" "$MEMORY_ADDR/health"
+  wait_http "$SERVICE_MEMORY" "$MEMORY_ADDR/ready"
 fi
 
 export EMBEDDER_ADDR DEV_ORG EMBED_TOKEN
@@ -302,6 +338,9 @@ export POSTGRES_DSN="${POSTGRES_DSN:-postgres://ibex:ibex@localhost:5433/ibex_te
 export IBEX_MEMORY_DATABASE_URL="$POSTGRES_DSN"
 memory_seed fixture-cleanup --org-id "$DEV_ORG" --agent-id "$DEV_AGENT"
 pass "fixture cleanup complete"
+
+verify_near_dup_pii_clean
+pass "near-dup pair PII-clean"
 
 CALIB="$(verify_near_dup_calibration)"
 pass "near-dup pair calibrated ($CALIB)"
@@ -368,6 +407,7 @@ memory_seed cascade-setup --memory-id "$PII_MEMORY_ID" --org-id "$DEV_ORG" --age
 run_psql <<SQL
 BEGIN;
 SELECT set_config('app.is_service_account', 'true', true);
+SELECT set_config('app.current_org_id', '${DEV_ORG}', true);
 DELETE FROM ibex_core.memories WHERE id = '${PII_MEMORY_ID}' AND org_id = '${DEV_ORG}';
 COMMIT;
 SQL
