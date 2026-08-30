@@ -2,16 +2,21 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from prometheus_client import REGISTRY
 from sqlalchemy.exc import IntegrityError
 
 from app.clients.embedding import EmbeddingUnavailableError
-from app.conflict.types import ConflictDecision, ConflictOutcome
+from app.conflict.intervals import ValidityInterval
+from app.conflict.service import ConflictService
+from app.conflict.types import CandidateMemory, ConflictDecision, ConflictOutcome
+from app.config import Settings
 from app.exceptions import DuplicateMemoryError, EmbeddingServiceError, ValidationError
+from app.pipeline import ConflictStage, WritePipeline
 from app.pipeline.context import WriteContext
 from app.write.errors import is_active_content_hash_violation
 from app.write.models import CreateMemoryCommand, WriteOutcomeKind
@@ -29,6 +34,71 @@ from tests.unit.memory_test_support import (
 class _Pipe:
     async def run(self, ctx: WriteContext) -> WriteContext:
         return ctx
+
+
+class _InjectNearDup:
+    """Injects near-dup candidate ids before conflict evaluation."""
+
+    name = "inject_near_dup"
+
+    def __init__(self, candidate_ids: list[UUID]) -> None:
+        self._candidate_ids = candidate_ids
+
+    async def process(self, ctx: WriteContext) -> WriteContext:
+        ctx.near_duplicate_candidates = list(self._candidate_ids)
+        return ctx
+
+
+def _conflict_dt(month: int) -> datetime:
+    return datetime(2026, month, 1, tzinfo=UTC)
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_none_valid_from_supersedes_via_interval_evaluation() -> None:
+    """HTTP-style command (valid_from=None) uses interval supersede, not missing_validity."""
+    old_id = uuid4()
+
+    async def load(_org: UUID, ids: object) -> list[CandidateMemory]:
+        assert list(ids) == [old_id]
+        return [
+            CandidateMemory(
+                memory_id=old_id,
+                content="User prefers Python",
+                interval=ValidityInterval(
+                    valid_from=_conflict_dt(3),
+                    valid_until=_conflict_dt(6),
+                ),
+            )
+        ]
+
+    conflict_stage = ConflictStage(
+        ConflictService(Settings(), subject_extractor=lambda _: "pref"),
+        load_candidates=load,
+    )
+    pipe = WritePipeline([_InjectNearDup([old_id]), conflict_stage])
+    orch = MemoryWriteOrchestrator(pipe, MagicMock())
+    org_id = uuid4()
+    agent_id = uuid4()
+    cmd = CreateMemoryCommand(
+        org_id=org_id,
+        agent_id=agent_id,
+        content="User is switching to Go",
+        valid_from=None,
+    )
+
+    with patch.object(
+        conflict_stage,
+        "_escalate_missing_validity",
+        new_callable=AsyncMock,
+    ) as escalate_mock:
+        ctx = await orch._run_pipeline(cmd)
+
+    escalate_mock.assert_not_awaited()
+    assert ctx.valid_from is not None
+    assert ctx.pending_supersede_targets == [old_id]
+    assert ctx.conflict_llm_calls == 0
+    assert ctx.conflict_decisions[0].outcome == ConflictOutcome.SUPERSEDES
+    assert ctx.conflict_decisions[0].notes != "missing_validity"
 
 
 def _counter_value(name: str) -> float:
