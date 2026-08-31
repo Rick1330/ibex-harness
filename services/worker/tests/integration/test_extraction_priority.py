@@ -42,6 +42,7 @@ def priority_context(celery_app: Celery) -> tuple[list[int], threading.Event]:
 
 @pytest.fixture
 def priority_worker(celery_app: Celery, priority_context: tuple[list[int], threading.Event]) -> Iterator[object]:
+    celery_app.conf.worker_prefetch_multiplier = 1
     with start_worker(
         celery_app,
         perform_ping_check=False,
