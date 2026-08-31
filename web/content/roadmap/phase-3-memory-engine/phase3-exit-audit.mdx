@@ -1,0 +1,105 @@
+---
+title: "Phase 3 Exit Audit — Summary"
+description: "Date: 2026-08-31 Gate milestone: 3.E.5 Phase 3 exit audit Detailed register: /roadmap/archive/032-phase3-exit-audit"
+summary: "Date: 2026-08-31 Gate milestone: 3.E.5 Phase 3 exit audit Detailed register: /roadmap/archive/032-phase3-exit-audit"
+phase: "phase-3-memory-engine"
+status: "completed"
+---
+
+# Phase 3 Exit Audit — Summary
+
+**Date:** 2026-08-31  
+**Gate milestone:** [3.E.5 Phase 3 exit audit](/roadmap/phase-3-memory-engine/milestones/3.e.5-phase3-exit-audit)  
+**Detailed register:** [docs/archive/032-phase3-exit-audit.md](/roadmap/archive/032-phase3-exit-audit)  
+**Git SHA (`main` at audit):** `45696a2`
+
+---
+
+## Verdict
+
+**Phase 3 is complete.** Zero open P0 gaps. The composed memory substrate (schema → write pipeline → semantic search + composite ranking → hot cache) is validated by unit/integration tests, 12 ISO-* security cases, e2e lifecycle smoke, and three CI benchmark regression gates (HNSW, ranking-quality, write-pipeline).
+
+<Callout type="info" title="Verified complete — AC hygiene">
+  Phase 3 acceptance criteria are verified via this exit audit and merged PRs.
+  Older milestone pages may still show unchecked boxes; treat this audit and
+  frontmatter `status: completed` as authoritative.
+</Callout>
+
+<Callout type="note" title="Corrected exit criteria">
+  The original 3.E.5 list included MCP E2E tooling (Phase 3.5.E.2) and org-scope GDPR language.
+  The unified **10-item** exit criteria in the detailed register reflects actual Phase 3 scope.
+</Callout>
+
+---
+
+## Gap summary
+
+| Severity | Count at audit | Resolved / disposition |
+|----------|----------------|------------------------|
+| P0 Blocker | 0 | — |
+| P1 High | 0 | — |
+| P2 Hygiene | 6 | 1 resolved (criteria wording); 5 open documented |
+| P3 Defer | 7 | Documented |
+
+### P0 (none)
+
+No blockers found.
+
+### P1 (none)
+
+No high-severity gaps found.
+
+### P2 (hygiene — open documented)
+
+| ID | Gap | Disposition |
+|----|-----|-------------|
+| GAP-3-P2-001 | `DATABASE_SCHEMA.md` missing `memory_conflict_escalations` | Open — schema doc PR |
+| GAP-3-P2-002 | `memory_versions` doc-only (no migration) | Open — aspirational |
+| GAP-3-P2-003 | ADR-0057 TEXT status vs 000020 ENUM | Open — doc drift |
+| GAP-3-P2-004 | PII `recall_structured` not CI-gated | Open — manual fixture |
+| GAP-3-P2-005 | No labeled conflict precision benchmark | Open — unit tests only |
+| GAP-3-P2-006 | Stale exit criteria on 3.E.5 page | **Resolved** in sign-off PR |
+
+### P3 (deferred — documented)
+
+| ID | Gap | Destination |
+|----|-----|-------------|
+| GAP-3-P3-001 | Org-scope GDPR + MinIO cascade | Phase 4.A.2 ([#641](https://github.com/Rick1330/ibex-harness/issues/641)) |
+| GAP-3-P3-002 | Escalation worker | Phase 3.5+ ([#627](https://github.com/Rick1330/ibex-harness/issues/627)) |
+| GAP-3-P3-003 | Tier-2 async PII re-scan | Phase 3.5+ ([#642](https://github.com/Rick1330/ibex-harness/issues/642)) |
+| GAP-3-P3-004 | Redis explicit invalidation on delete | Phase 3.5+ ([#647](https://github.com/Rick1330/ibex-harness/issues/647)) |
+| GAP-3-P3-005 | HNSW 1M full-profile on default CI | Informational deferral (smoke/fast by design) |
+| GAP-3-P3-006 | Advisory PR review backlog | Manual review |
+| GAP-3-P3-007 | MCP `search_memory`/`write_memory` E2E | Phase 3.5.E.2 |
+
+---
+
+## What was already solid
+
+- HNSW from greenfield schema (ADR-0052) — no IVFFlat migration
+- Twelve ISO-* integration cases with real pgvector + Redis (`memory-security-integration`)
+- Nine-step write pipeline including temporal conflict and multi-label
+- Composite scoring v2 in search ranking and hot cache (ADR-0053, ADR-0059)
+- Committed benchmark baselines with CI regression gates (ADR-0061)
+- Per-memory FK cascade proven (ISO-2.1); org-scope GDPR explicitly deferred (ADR-0060)
+- No proxy hot-path handler/middleware changes during Phase 3
+
+---
+
+## Sign-off checklist
+
+- [x] Gap register complete (`032-phase3-exit-audit.md`)
+- [x] This summary published
+- [x] Zero open P0 gaps
+- [x] All 12 ISO-* cases pass (`pytest -m security_integration`)
+- [x] `memory-security-integration` required on `main`
+- [x] HNSW + ranking + write benchmark gates pass on `main`
+- [x] `e2e-smoke-p3-memory` required on `ci-gate-python`
+- [x] Corrected 10-item exit criteria verified
+- [x] CURRENT_STATE reflects Phase 3 complete
+
+---
+
+## Next phase
+
+Begin [Phase 3.5: Extraction & Context Assembly](/roadmap/phase-3-5-extraction-assembly) — milestone [3.5.A.1 Celery worker skeleton](/roadmap/phase-3-5-extraction-assembly/milestones/3.5.a.1-celery-worker-skeleton).
