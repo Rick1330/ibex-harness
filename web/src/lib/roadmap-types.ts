@@ -18,8 +18,10 @@ export type PhaseSlug = (typeof PHASE_SLUGS)[number];
 const STATUS_BY_RAW: Record<string, MilestoneStatus> = {
   completed: "completed",
   complete: "completed",
+  shipped: "completed",
   superseded: "completed",
   "in-progress": "in-progress",
+  in_progress: "in-progress",
   partial: "in-progress",
   planned: "planned",
 };
