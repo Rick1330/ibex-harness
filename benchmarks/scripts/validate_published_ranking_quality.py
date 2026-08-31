@@ -3,15 +3,16 @@
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
-try:
-    import jsonschema
-except ImportError:
-    jsonschema = None  # type: ignore[assignment]
+from published_suite_validate import (
+    fail,
+    resolve_published_data_path,
+    validate_published_payload,
+)
 
+SCRIPT_NAME = "validate_published_ranking_quality"
 DATA_NAME = "ranking-quality-benchmark-data.json"
 _SCHEMA_PATH = (
     Path(__file__).resolve().parents[1]
@@ -20,41 +21,12 @@ _SCHEMA_PATH = (
 )
 
 
-def fail(message: str) -> None:
-    print(f"validate_published_ranking_quality: {message}", file=sys.stderr)
-    raise SystemExit(1)
-
-
-def resolve_path(raw: str) -> Path:
-    if not raw or raw != raw.strip():
-        fail("path must not be empty or whitespace")
-    candidate = Path(raw)
-    if candidate.is_absolute() or ".." in candidate.parts:
-        fail("path must be workspace-relative without parent references")
-    if candidate.name != DATA_NAME:
-        fail(f"path must name {DATA_NAME}")
-    resolved = (Path.cwd() / candidate).resolve()
-    try:
-        resolved.relative_to(Path.cwd().resolve())
-    except ValueError:
-        fail("path escapes workspace")
-    if not resolved.is_file():
-        fail(f"file not found: {candidate}")
-    return resolved
-
-
 def main(argv: list[str] | None = None) -> None:
     args = argv if argv is not None else sys.argv[1:]
     if len(args) != 1:
-        fail("usage: validate_published_ranking_quality.py <path>")
-    path = resolve_path(args[0])
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    if jsonschema is None:
-        print("jsonschema not installed; skipping schema validation", file=sys.stderr)
-        return
-    schema = json.loads(_SCHEMA_PATH.read_text(encoding="utf-8"))
-    jsonschema.validate(payload, schema)
-    print(f"ok: {path}")
+        fail(SCRIPT_NAME, f"usage: {SCRIPT_NAME}.py <path>")
+    path = resolve_published_data_path(args[0], data_name=DATA_NAME, script_name=SCRIPT_NAME)
+    validate_published_payload(path, _SCHEMA_PATH, script_name=SCRIPT_NAME)
 
 
 if __name__ == "__main__":

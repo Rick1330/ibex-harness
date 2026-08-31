@@ -8,13 +8,9 @@ import {
   type RankingQualityBenchmarkDataParsed,
   type RankingQualityBenchmarkRun,
 } from "@/lib/benchmarks/ranking-quality-schema";
+import { benchmarkDataErrorMessage } from "@/hooks/benchmark-data-error";
 
 const LOAD_ERROR = "Failed to load ranking-quality benchmark data";
-
-function rankingQualityErrorMessage(error: unknown): string | null {
-  if (!error) return null;
-  return error instanceof Error ? error.message : LOAD_ERROR;
-}
 
 async function fetchRankingQualityData(
   url: string,
@@ -53,7 +49,7 @@ export function useRankingQualityBenchmarkData(): {
     latest: runs[0] ?? null,
     isLoading,
     isError: Boolean(error),
-    errorMessage: rankingQualityErrorMessage(error),
+    errorMessage: benchmarkDataErrorMessage(error, LOAD_ERROR),
     refresh: mutate,
   };
 }

@@ -147,6 +147,66 @@ def _validate_memory_row(row: dict[str, Any], prefix: str) -> list[str]:
     return errors
 
 
+def _validate_expected_content_keys(
+    expected: list[object],
+    *,
+    prefix: str,
+    mem_by_key: dict[str, dict[str, Any]],
+) -> list[str]:
+    errors: list[str] = []
+    for key in expected:
+        if not isinstance(key, str):
+            errors.append(f"{prefix} expected_content_keys items must be strings")
+            continue
+        if key not in mem_by_key:
+            errors.append(f"{prefix} references unknown content_key {key!r}")
+    return errors
+
+
+def _validate_query_composite_order(
+    row: dict[str, Any],
+    *,
+    prefix: str,
+    qid: str,
+    hotspot: int,
+    expected: list[object],
+    mem_by_key: dict[str, dict[str, Any]],
+) -> list[str]:
+    cluster = [m for m in mem_by_key.values() if int(m["embedding_hotspot"]) == hotspot]
+    if any(_composite_safe(m) is None for m in cluster):
+        return []
+    ranked = sorted(cluster, key=lambda m: (-_composite(m), m["content_key"]))
+    actual_order = [m["content_key"] for m in ranked]
+    if actual_order == expected:
+        return []
+    return [
+        f"{prefix} ({qid}) expected order does not match composite simulation\n"
+        f"  expected: {expected}\n"
+        f"  composite: {actual_order}"
+    ]
+
+
+def _validate_top_category(
+    expected: list[object],
+    row: dict[str, Any],
+    *,
+    prefix: str,
+    mem_by_key: dict[str, dict[str, Any]],
+) -> list[str]:
+    top_key = expected[0]
+    if not isinstance(top_key, str):
+        return [f"{prefix} first expected_content_key must be a string"]
+    top_cat = row.get("expected_top_category")
+    if top_key not in mem_by_key:
+        return [f"{prefix} references unknown first expected content_key {top_key!r}"]
+    if mem_by_key[top_key]["category"] == top_cat:
+        return []
+    return [
+        f"{prefix} expected_top_category {top_cat!r} != "
+        f"first key category {mem_by_key[top_key]['category']!r}"
+    ]
+
+
 def _validate_query_row(
     row: dict[str, Any],
     *,
@@ -178,57 +238,32 @@ def _validate_query_row(
     if not isinstance(expected, list) or not expected:
         errors.append(f"{prefix} expected_content_keys must be non-empty array")
         return errors
-    for key in expected:
-        if not isinstance(key, str):
-            errors.append(f"{prefix} expected_content_keys items must be strings")
-            continue
-        if key not in mem_by_key:
-            errors.append(f"{prefix} references unknown content_key {key!r}")
+    errors.extend(
+        _validate_expected_content_keys(expected, prefix=prefix, mem_by_key=mem_by_key)
+    )
 
     if hotspot is None:
         return errors
-    cluster = [m for m in mem_by_key.values() if int(m["embedding_hotspot"]) == hotspot]
-    if any(_composite_safe(m) is None for m in cluster):
-        return errors
-    ranked = sorted(cluster, key=lambda m: (-_composite(m), m["content_key"]))
-    actual_order = [m["content_key"] for m in ranked]
-    if actual_order != expected:
-        errors.append(
-            f"{prefix} ({qid}) expected order does not match composite simulation\n"
-            f"  expected: {expected}\n"
-            f"  composite: {actual_order}"
+    errors.extend(
+        _validate_query_composite_order(
+            row,
+            prefix=prefix,
+            qid=qid,
+            hotspot=hotspot,
+            expected=expected,
+            mem_by_key=mem_by_key,
         )
-    top_key = expected[0]
-    if not isinstance(top_key, str):
-        errors.append(f"{prefix} first expected_content_key must be a string")
-        return errors
-    top_cat = row.get("expected_top_category")
-    if top_key not in mem_by_key:
-        errors.append(f"{prefix} references unknown first expected content_key {top_key!r}")
-    elif mem_by_key[top_key]["category"] != top_cat:
-        errors.append(
-            f"{prefix} expected_top_category {top_cat!r} != "
-            f"first key category {mem_by_key[top_key]['category']!r}"
-        )
+    )
+    errors.extend(
+        _validate_top_category(expected, row, prefix=prefix, mem_by_key=mem_by_key)
+    )
     return errors
 
 
-def validate_gold_set(payload: dict[str, Any]) -> list[str]:
-    errors: list[str] = []
-    memories = payload.get("memories")
-    queries = payload.get("queries")
-    if not isinstance(memories, list):
-        return ["memories must be an array"]
-    if not isinstance(queries, list):
-        return ["queries must be an array"]
-    if not (MIN_MEMORIES <= len(memories) <= MAX_MEMORIES):
-        errors.append(f"memory count {len(memories)} outside [{MIN_MEMORIES}, {MAX_MEMORIES}]")
-    if not (MIN_QUERIES <= len(queries) <= MAX_QUERIES):
-        errors.append(f"query count {len(queries)} outside [{MIN_QUERIES}, {MAX_QUERIES}]")
-
+def _index_memories(memories: list[object]) -> tuple[dict[str, dict[str, Any]], Counter[str], list[str]]:
     mem_by_key: dict[str, dict[str, Any]] = {}
     cat_counts: Counter[str] = Counter()
-    hotspots: set[int] = set()
+    errors: list[str] = []
 
     for index, row in enumerate(memories):
         prefix = f"memories[{index}]"
@@ -244,7 +279,25 @@ def validate_gold_set(payload: dict[str, Any]) -> list[str]:
             continue
         mem_by_key[key] = row
         cat_counts[str(row["category"])] += 1
-        hotspots.add(int(row["embedding_hotspot"]))
+
+    return mem_by_key, cat_counts, errors
+
+
+def validate_gold_set(payload: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    memories = payload.get("memories")
+    queries = payload.get("queries")
+    if not isinstance(memories, list):
+        return ["memories must be an array"]
+    if not isinstance(queries, list):
+        return ["queries must be an array"]
+    if not (MIN_MEMORIES <= len(memories) <= MAX_MEMORIES):
+        errors.append(f"memory count {len(memories)} outside [{MIN_MEMORIES}, {MAX_MEMORIES}]")
+    if not (MIN_QUERIES <= len(queries) <= MAX_QUERIES):
+        errors.append(f"query count {len(queries)} outside [{MIN_QUERIES}, {MAX_QUERIES}]")
+
+    mem_by_key, cat_counts, memory_errors = _index_memories(memories)
+    errors.extend(memory_errors)
 
     for cat in CATEGORIES:
         if cat_counts[cat] < 3:
