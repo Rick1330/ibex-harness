@@ -24,9 +24,9 @@ Memory schema with temporal validity, multi-label categories, and HNSW-ready vec
 
 Pluggable vector store interface with pgvector HNSW as the starting backend preference (replacing the earlier IVFFlat plan). Alternatives can be investigated if latency/recall measurements require it.
 
-**Preferred sequencing within track:** depends on Track A schema.
+**Preferred sequencing within track:** depends on Track A schema. **Status:** 3.2.1 **complete** (ADR-0053).
 
-- [3.2.1 — Vector Store Interface & pgvector HNSW](/roadmap/phase-3-memory-engine/milestones/3.2.1-vector-store-interface-pgvector-hnsw)
+- [3.2.1 — Vector Store Interface & pgvector HNSW](/roadmap/phase-3-memory-engine/milestones/3.2.1-vector-store-interface-pgvector-hnsw) (completed)
 
 ## Track C — Write Pipeline
 
@@ -44,25 +44,25 @@ Memory write pipeline stages: validate → PII detect/redact → dedup → embed
 | 8 | cache update | **3.C.5** (write-time; 3.D.3 is read hot cache) |
 | 9 | index / vector upsert | **3.C.5** |
 
-Multi-label classification (**3.C.4**) is write-path logic that runs at insert time and therefore **follows 3.C.5**. **Track C write pipeline is complete** (3.C.1–3.C.5 + 3.C.4); next work is [Track D](#track-d--readranking-pipeline).
+Multi-label classification (**3.C.4**) is write-path logic that runs at insert time and therefore **follows 3.C.5**. **Track C write pipeline is complete** (3.C.1–3.C.5 + 3.C.4).
 
 **Preferred sequencing within track:** `3.C.1 → 3.C.2 → 3.C.3 → 3.C.5 → 3.C.4` after Tracks A/B.
 
-- [3.C.1 — PII Detection & Redaction](/roadmap/phase-3-memory-engine/milestones/3.c.1-pii-detection-redaction)
-- [3.C.2 — Content Near-Duplicate Detection](/roadmap/phase-3-memory-engine/milestones/3.c.2-content-near-duplicate-detection)
-- [3.C.3 — Temporal Conflict Detection](/roadmap/phase-3-memory-engine/milestones/3.c.3-temporal-conflict-detection)
-- [3.C.5 — Write-path Persistence & Orchestration](/roadmap/phase-3-memory-engine/milestones/3.c.5-write-path-persistence-orchestration)
-- [3.C.4 — Multi-Label Classification](/roadmap/phase-3-memory-engine/milestones/3.c.4-multi-label-classification)
+- [3.C.1 — PII Detection & Redaction](/roadmap/phase-3-memory-engine/milestones/3.c.1-pii-detection-redaction) (completed)
+- [3.C.2 — Content Near-Duplicate Detection](/roadmap/phase-3-memory-engine/milestones/3.c.2-content-near-duplicate-detection) (completed)
+- [3.C.3 — Temporal Conflict Detection](/roadmap/phase-3-memory-engine/milestones/3.c.3-temporal-conflict-detection) (completed)
+- [3.C.5 — Write-path Persistence & Orchestration](/roadmap/phase-3-memory-engine/milestones/3.c.5-write-path-persistence-orchestration) (completed)
+- [3.C.4 — Multi-Label Classification](/roadmap/phase-3-memory-engine/milestones/3.c.4-multi-label-classification) (completed)
 
 ## Track D — Read/Ranking Pipeline
 
 Semantic search read path, composite scoring with category-conditional decay, and Redis sorted-set hot cache.
 
-**Preferred sequencing within track:** `3.D.1 → 3.D.2 → 3.D.3` after Track B.
+**Preferred sequencing within track:** `3.D.1 → 3.D.2 → 3.D.3` after Track B. **Status:** Track D **complete**.
 
-- [3.D.1 — Semantic Search Read Path](/roadmap/phase-3-memory-engine/milestones/3.d.1-semantic-search-read-path)
-- [3.D.2 — Composite Scoring v2](/roadmap/phase-3-memory-engine/milestones/3.d.2-composite-scoring-v2)
-- [3.D.3 — Hot Cache (Redis Sorted Set)](/roadmap/phase-3-memory-engine/milestones/3.d.3-hot-cache-redis-sorted-set)
+- [3.D.1 — Semantic Search Read Path](/roadmap/phase-3-memory-engine/milestones/3.d.1-semantic-search-read-path) (completed)
+- [3.D.2 — Composite Scoring v2](/roadmap/phase-3-memory-engine/milestones/3.d.2-composite-scoring-v2) (completed)
+- [3.D.3 — Hot Cache (Redis Sorted Set)](/roadmap/phase-3-memory-engine/milestones/3.d.3-hot-cache-redis-sorted-set) (completed)
 
 ## Track E — Exit Gate
 
