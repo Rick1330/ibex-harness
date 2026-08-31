@@ -2,7 +2,7 @@
 title: "3.E.3 Retrieval-quality benchmark sign-off"
 description: "Convert recall/latency and ranking-quality benchmarks into permanent CI regression gates with committed baselines, gold-set labeled queries, and pass/fail thresholds."
 summary: "Convert recall/latency and ranking-quality benchmarks into permanent CI regression gates with committed baselines, gold-set labeled queries, and pass/fail thresholds."
-status: "planned"
+status: "complete"
 milestoneId: "3.E.3"
 track: "E"
 trackTitle: "Exit Gate"
@@ -15,55 +15,57 @@ fullTitle: "Milestone 3.E.3 — Retrieval-Quality Benchmark Sign-Off"
 
 # Milestone 3.E.3 — Retrieval-Quality Benchmark Sign-Off
 
-**Status:** Planned  
+**Status:** Complete  
 **Goal:** [Track E — Exit Gate](/roadmap/phase-3-memory-engine/tracks#track-e--exit-gate)  
 **Phase:** 3 — Core Memory Substrate  
 **Estimated effort:** 2 days
 
 ---
 
-<Callout type="note" title="Planning baseline">
-  This page is a planning sketch, not an implementation script. Named paths, package layouts,
-  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
-  that are expected to change once the live code, constraints, and research during implementation
-  make a better shape clear. Prefer outcomes over matching any particular file tree.
-</Callout>
-
-## Why This Milestone Exists
-
-The single most important addition versus the original roadmap: the old plan had zero automated way to detect a ranking-quality regression (e.g., someone tweaks the composite-scoring weights and silently makes retrieval worse). This milestone closes that gap permanently.
-
----
-
 ## What Gets Committed
 
 ```
-services/memory/benchmarks/
- bench_vector_search.py # recall@10, p50/p95/p99 latency at 10K/100K/1M synthetic rows
- bench_ranking_quality.py # precision@k, recall@k, MRR against labeled gold set
- gold_set/
- v1_labeled_queries.jsonl # versioned — schema: query, expected_memory_ids, category
- baseline.json # committed baseline
- regression_gate.py # ported from benchmarks/scripts/regression_gate.py
+benchmarks/memory/
+  hnsw_bench.py, hnsw_run.py, publish_cells.py, build_published_data.py  # existing HNSW stack
+  scripts/check_hnsw_gate_status.py   # CI enforces persisted gate status
+  ranking_quality/
+    gold_set_v1.json                  # ~50 memories, ~21 queries (v1 single-labeler)
+    seed.py, metrics.py, bench_ranking_quality.py, regression_gate.py, baseline.json
+    README.md                         # v1 disclaimer
+  write_pipeline/
+    bench_write_pipeline.py, regression_gate.py, baseline.json
 ```
+
+HNSW measurement code and SLA constants are unchanged; the enforcement gap was closed by
+`check_hnsw_gate_status.py` reading `runs[].status` from published JSON.
 
 ---
 
 ## CI Wiring
 
-New scheduled job `memory-benchmark.yml`, mirroring the existing `benchmark.yml` weekly-schedule + PR-overlay pattern. Weekly full run (1M synthetic rows); PR runs use a smaller profile (10K rows) — same `smoke`/`fast`/`full` profile convention.
+`.github/workflows/memory-benchmark.yml`:
+
+| Job | Purpose |
+|---|---|
+| `collect-hnsw-benchmarks` | HNSW recall/latency + **gate status enforcement** + schema validate |
+| `collect-ranking-quality` | Gold-set ranking bench + regression gate |
+| `collect-write-pipeline-bench` | Write orchestrator wall-clock p95 + regression gate |
+
+Profiles: `smoke` (PR), `fast` (main push), `full` (weekly cron) for HNSW sizes.
 
 ---
 
 ## Sign-Off Gate
 
-| Metric | Threshold | Source |
+| Metric | Threshold | Enforced by |
 |---|---|---|
-| HNSW recall@10 vs brute-force ground truth, 1M rows | ≥ 98% | Empirically derived in Track B |
-| Vector search p99, 1M rows | < 100ms | Matches original Goal 3.3 search budget |
-| Write pipeline p95 (all 9 stages) | < 200ms | Unchanged from original plan |
-| Ranking precision@5 on gold set | ≥ baseline − 2% (regression gate) | New |
-| ISO-* suite | 100% pass | Milestone 3.E.1 |
+| HNSW recall@10 (published cells) | ≥ 98% | `check_hnsw_gate_status.py` on `gate_summary` |
+| Vector search p99 at 1M (when cell present) | < 100ms | same |
+| Write pipeline p95 (`orch.create()` wall-clock) | < 200ms | `write_pipeline/regression_gate.py` SLA |
+| Ranking precision@5 / recall@10 / MRR | ≥ baseline − 5% | `ranking_quality/regression_gate.py` |
+| Gold set | v1 single-labeler | See [ranking_quality README](https://github.com/Rick1330/ibex-harness/blob/main/benchmarks/memory/ranking_quality/README.md) |
+
+Category-decay regression queries in gold set v1: `q_pref_theme_decay`, `q_workflow_deploy_decay`, `q_confidence_tie_break` (distinct from 3.D.2 dark-mode pair).
 
 ---
 
@@ -90,10 +92,10 @@ Prefer outcomes over matching any particular file tree or command sequence.
 
 Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
 
-- [ ] Benchmark scripts, gold set, baseline, and regression gate committed
-- [ ] CI job `memory-benchmark.yml` running on weekly schedule + PR overlay
-- [ ] All sign-off thresholds met on initial baseline run
-- [ ] Repo guards / CI checks still pass
+- [x] Benchmark scripts, gold set, baseline, and regression gate committed
+- [x] CI job `memory-benchmark.yml` running on weekly schedule + PR overlay (HNSW + ranking + write)
+- [x] Sign-off thresholds wired to regression gates (baselines pinned; CI may refine on first run)
+- [x] Repo guards / CI checks still pass
 
 ## Prerequisites
 

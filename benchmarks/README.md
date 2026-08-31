@@ -32,16 +32,20 @@ Published proxy data is committed via the benchmark bot after successful **main*
 
 Each suite keeps its own JSON file and bot modules. Shared seams:
 
-| Field | Proxy | Memory HNSW | Future suite |
-| --- | --- | --- | --- |
-| `suite_id` | `proxy` | `hnsw` | e.g. `extraction` |
-| Artifact | `benchmark-data` | `hnsw-benchmark-data` | `<suite>-benchmark-data` |
-| Public path | `web/public/benchmarks/benchmark-data.json` | `…/hnsw-benchmark-data.json` | under same dir |
-| Dispatch | `benchmark_main_complete` | `memory_benchmark_main_complete` | new event type |
-| PR comment | shared sticky `IBEX_BOT_COMMENT` (Proxy + Memory sections) | same | same marker, new section |
-| Data PR | shared upsert on `chore/bench-data-publish` (1–2 suite files) | same branch | same |
-| Bot pin helper | `.github/actions/setup-benchmark-bot` | same | same |
-| Site registry | `web/src/lib/benchmarks/suites.ts` | same | add suite + nav pages |
+| Field | Proxy | Memory HNSW | Ranking quality | Write pipeline |
+| --- | --- | --- | --- | --- |
+| `suite_id` | `proxy` | `hnsw` | `rankingQuality` | `writePipeline` |
+| Artifact | `benchmark-data` | `hnsw-benchmark-data` | `ranking-quality-benchmark-data` | `write-pipeline-benchmark-data` |
+| Public path | `web/public/benchmarks/benchmark-data.json` | `…/hnsw-benchmark-data.json` | `…/ranking-quality-benchmark-data.json` | `…/write-pipeline-benchmark-data.json` |
+| Dispatch | `benchmark_main_complete` | `memory_benchmark_main_complete` | same (bot publishes all memory suites) | same |
+| PR comment | shared sticky `IBEX_BOT_COMMENT` | same | `post-ranking-pr-comment` | `post-write-pr-comment` |
+| Data PR | shared upsert on `chore/bench-data-publish` | same branch | same | same |
+| Bot pin helper | `.github/actions/setup-benchmark-bot` | same | same | same |
+| Site registry | `web/src/lib/benchmarks/suites.ts` | same | `/benchmarks/memory/ranking-quality` | `/benchmarks/memory/write-pipeline` |
+
+**Memory CI gates (3.E.3):** `collect-ranking-quality` and `collect-write-pipeline-bench`
+in `memory-benchmark.yml` publish history JSON, upload `*-benchmark-data` artifacts, and
+upsert PR comment sections via the benchmark bot (same suite contract as HNSW).
 
 Do **not** merge suites into one mega-JSON. Site nav groups by suite; proxy-only concepts
 (waterfall / k6 load) are not invented for HNSW.

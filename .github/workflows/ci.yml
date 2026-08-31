@@ -1368,6 +1368,22 @@ jobs:
           cp /tmp/hnsw-benchmark-data/hnsw-benchmark-data.json \
             web/public/benchmarks/hnsw-benchmark-data.json
           echo "Overlaid HNSW artifact from run ${run_id}"
+          if gh run download "$run_id" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --name ranking-quality-benchmark-data \
+            --dir /tmp/ranking-quality-benchmark-data 2>/dev/null; then
+            cp /tmp/ranking-quality-benchmark-data/ranking-quality-benchmark-data.json \
+              web/public/benchmarks/ranking-quality-benchmark-data.json
+            echo "Overlaid ranking-quality artifact from run ${run_id}"
+          fi
+          if gh run download "$run_id" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --name write-pipeline-benchmark-data \
+            --dir /tmp/write-pipeline-benchmark-data 2>/dev/null; then
+            cp /tmp/write-pipeline-benchmark-data/write-pipeline-benchmark-data.json \
+              web/public/benchmarks/write-pipeline-benchmark-data.json
+            echo "Overlaid write-pipeline artifact from run ${run_id}"
+          fi
 
       - uses: ./.github/actions/setup-pnpm-web
 

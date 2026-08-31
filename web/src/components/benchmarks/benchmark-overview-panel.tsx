@@ -2,6 +2,7 @@
 
 import { BenchmarkEmptyState } from "@/components/benchmarks/empty-state";
 import { BenchmarkErrorState } from "@/components/benchmarks/benchmark-error-state";
+import { MemoryCiGatesCallout } from "@/components/benchmarks/memory-ci-gates-callout";
 import { MemorySuiteSummaryCard } from "@/components/benchmarks/benchmark-memory-panel";
 import { OverviewKpiGrid } from "@/components/benchmarks/overview-kpi-grid";
 import { OverviewSlaSection } from "@/components/benchmarks/overview-sla-section";
@@ -56,6 +57,7 @@ export function BenchmarkOverviewPanel() {
         <OverviewSlaSection latest={latest} />
       </section>
       <MemorySuiteSummaryCard />
+      <MemoryCiGatesCallout />
     </div>
   );
 }

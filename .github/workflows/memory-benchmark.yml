@@ -12,7 +12,11 @@ on:
     paths:
       - 'services/memory/**'
       - 'benchmarks/memory/**'
+      - 'benchmarks/memory/ranking_quality/**'
+      - 'benchmarks/memory/write_pipeline/**'
       - 'benchmarks/data-schema/hnsw-benchmark-data.schema.json'
+      - 'benchmarks/data-schema/ranking-quality-benchmark-data.schema.json'
+      - 'benchmarks/data-schema/write-pipeline-benchmark-data.schema.json'
       - 'infra/scripts/memory-bench.sh'
       - '.github/workflows/memory-benchmark.yml'
   push:
@@ -20,7 +24,11 @@ on:
     paths:
       - 'services/memory/**'
       - 'benchmarks/memory/**'
+      - 'benchmarks/memory/ranking_quality/**'
+      - 'benchmarks/memory/write_pipeline/**'
       - 'benchmarks/data-schema/hnsw-benchmark-data.schema.json'
+      - 'benchmarks/data-schema/ranking-quality-benchmark-data.schema.json'
+      - 'benchmarks/data-schema/write-pipeline-benchmark-data.schema.json'
       - 'infra/scripts/memory-bench.sh'
       - '.github/workflows/memory-benchmark.yml'
   schedule:
@@ -237,6 +245,13 @@ jobs:
           fi
           exit "$rc"
 
+      - name: Enforce HNSW gate status
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+        run: |
+          python3 benchmarks/scripts/check_hnsw_gate_status.py \
+            --published web/public/benchmarks/hnsw-benchmark-data.json
+
       - name: Validate published HNSW data
         run: |
           python -m pip install --disable-pip-version-check --no-cache-dir 'jsonschema==4.23.0'
@@ -341,3 +356,450 @@ jobs:
             -f "client_payload[run_id]=${DISPATCH_RUN_ID}" \
             -f "client_payload[head_sha]=${DISPATCH_HEAD_SHA}" \
             -f "client_payload[run_number]=${DISPATCH_RUN_NUMBER}"
+
+  collect-ranking-quality:
+    name: collect-ranking-quality
+    needs: detect-memory-bench-profile
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      POSTGRES_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+      POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+      POSTGRES_TEST_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+      IBEX_MEMORY_DATABASE_URL: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.6-pg16@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b
+        env:
+          POSTGRES_USER: ibex
+          POSTGRES_PASSWORD: ibex
+          POSTGRES_DB: ibex
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ibex -d ibex"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+
+      - name: Install psql client
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+
+      - name: Migrate database
+        run: bash infra/scripts/db-migrate.sh up
+
+      - name: Install memory service deps
+        run: bash infra/scripts/memory-uv-sync.sh
+
+      - name: Validate gold set
+        run: |
+          set -euo pipefail
+          PYTHONPATH=services/memory services/memory/.venv/bin/python \
+            benchmarks/memory/ranking_quality/validate_gold_set.py
+
+      - name: Run ranking-quality bench
+        run: |
+          set -euo pipefail
+          PYTHONPATH=services/memory services/memory/.venv/bin/python \
+            benchmarks/memory/ranking_quality/bench_ranking_quality.py
+
+      - name: Enforce ranking-quality regression gate
+        run: |
+          set -euo pipefail
+          PYTHONPATH=services/memory services/memory/.venv/bin/python \
+            benchmarks/memory/ranking_quality/regression_gate.py
+
+      - name: Build published ranking-quality data
+        if: always()
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          GITHUB_RUN_NUMBER: ${{ github.run_number }}
+          GITHUB_SERVER_URL: ${{ github.server_url }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          latest="benchmarks/memory/ranking_quality/output/latest.json"
+          gate="benchmarks/memory/ranking_quality/output/gate-result.json"
+          if [ ! -f "$latest" ] || [ ! -f "$gate" ]; then
+            echo "Skipping published ranking-quality build (missing latest or gate output)"
+            exit 0
+          fi
+          PYTHONPATH=services/memory services/memory/.venv/bin/python \
+            benchmarks/memory/build_quality_suite_published.py \
+            --suite ranking_quality \
+            --latest "$latest" \
+            --gate "$gate" \
+            --published web/public/benchmarks/ranking-quality-benchmark-data.json \
+            --sha "$GITHUB_SHA" \
+            --branch "$GITHUB_REF_NAME" \
+            --run-number "$GITHUB_RUN_NUMBER" \
+            --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+      - name: Validate published ranking-quality data
+        if: always()
+        run: |
+          set -euo pipefail
+          published="web/public/benchmarks/ranking-quality-benchmark-data.json"
+          if [ ! -f "$published" ]; then
+            echo "Skipping published ranking-quality validation (file missing)"
+            exit 0
+          fi
+          python -m pip install --disable-pip-version-check --no-cache-dir 'jsonschema==4.23.0'
+          python benchmarks/scripts/validate_published_memory_suite.py \
+            --suite ranking_quality \
+            "$published"
+
+      - name: Summarize ranking-quality gate
+        if: always()
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          latest_path = Path("benchmarks/memory/ranking_quality/output/latest.json")
+          gate_path = Path("benchmarks/memory/ranking_quality/output/gate-result.json")
+          lines = ["## Ranking-quality benchmark", ""]
+          if not latest_path.is_file() or not gate_path.is_file():
+              missing = []
+              if not latest_path.is_file():
+                  missing.append(str(latest_path))
+              if not gate_path.is_file():
+                  missing.append(str(gate_path))
+              lines.extend(
+                  [
+                      f"- gate: **fail** (missing output: {', '.join(missing)})",
+                      "",
+                  ]
+              )
+          else:
+              latest = json.loads(latest_path.read_text(encoding="utf-8"))
+              gate = json.loads(gate_path.read_text(encoding="utf-8"))
+              m = latest["metrics"]
+              lines.extend(
+                  [
+                      f"- precision@5: {m['precision_at_5']:.4f}",
+                      f"- recall@10: {m['recall_at_10']:.4f}",
+                      f"- mrr: {m['mrr']:.4f}",
+                      f"- expected order match: {m.get('expected_order_match', 0):.4f}",
+                      f"- queries: {latest['query_count']} / memories: {latest['memory_count']}",
+                      f"- gate: **{gate['status']}**",
+                      "",
+                  ]
+              )
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as fh:
+              fh.write("\n".join(lines) + "\n")
+          PY
+
+      - name: Upload ranking-quality artifact
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ranking-quality-benchmark
+          path: |
+            benchmarks/memory/ranking_quality/output/latest.json
+            benchmarks/memory/ranking_quality/output/gate-result.json
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Upload ranking-quality published data
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ranking-quality-benchmark-data
+          path: web/public/benchmarks/ranking-quality-benchmark-data.json
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Require benchmark bot pin (same-repo PR)
+        if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          BENCHMARK_BOT_SHA: ${{ vars.BENCHMARK_BOT_SHA }}
+        run: test -n "$BENCHMARK_BOT_SHA"
+
+      - name: Require benchmark bot App credentials (same-repo PR)
+        if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          APP_ID: ${{ secrets.BENCHMARK_BOT_APP_ID }}
+          APP_PRIVATE_KEY: ${{ secrets.BENCHMARK_BOT_APP_PRIVATE_KEY }}
+          INSTALLATION_ID: ${{ secrets.BENCHMARK_BOT_INSTALLATION_ID }}
+        run: |
+          test -n "$APP_ID" && test -n "$APP_PRIVATE_KEY" && test -n "$INSTALLATION_ID"
+
+      - name: Setup benchmark bot
+        id: setup_bot_ranking
+        if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        uses: ./.github/actions/setup-benchmark-bot
+        with:
+          bot-sha: ${{ vars.BENCHMARK_BOT_SHA }}
+          release-tag: ${{ vars.BENCHMARK_BOT_RELEASE_TAG }}
+          require-subcommand: post-ranking-pr-comment
+
+      - name: Post ranking-quality PR comment
+        if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          APP_ID: ${{ secrets.BENCHMARK_BOT_APP_ID }}
+          APP_PRIVATE_KEY: ${{ secrets.BENCHMARK_BOT_APP_PRIVATE_KEY }}
+          INSTALLATION_ID: ${{ secrets.BENCHMARK_BOT_INSTALLATION_ID }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          RANKING_QUALITY_BENCHMARK_DATA_PATH: ${{ github.workspace }}/web/public/benchmarks/ranking-quality-benchmark-data.json
+          BOT_PATH: ${{ steps.setup_bot_ranking.outputs.bot-path }}
+        run: |
+          set -euo pipefail
+          if [ ! -f "$RANKING_QUALITY_BENCHMARK_DATA_PATH" ]; then
+            echo "ranking-quality published JSON missing; skipping PR comment"
+            exit 0
+          fi
+          "$BOT_PATH" post-ranking-pr-comment \
+            --ranking-benchmark-data "$RANKING_QUALITY_BENCHMARK_DATA_PATH"
+
+      - name: Note fork PR publish limitation
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
+        run: |
+          {
+            echo "## Ranking-quality PR comment skipped"
+            echo "Fork PRs upload the \`ranking-quality-benchmark-data\` artifact only (no bot comment)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  collect-write-pipeline-bench:
+    name: collect-write-pipeline-bench
+    needs: detect-memory-bench-profile
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      POSTGRES_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+      POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+      POSTGRES_TEST_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+      IBEX_MEMORY_DATABASE_URL: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.6-pg16@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b
+        env:
+          POSTGRES_USER: ibex
+          POSTGRES_PASSWORD: ibex
+          POSTGRES_DB: ibex
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ibex -d ibex"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+
+      - name: Install psql client
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+
+      - name: Migrate database
+        run: bash infra/scripts/db-migrate.sh up
+
+      - name: Install memory service deps
+        run: bash infra/scripts/memory-uv-sync.sh
+
+      - name: Run write-pipeline bench
+        run: |
+          set -euo pipefail
+          PYTHONPATH=services/memory services/memory/.venv/bin/python \
+            benchmarks/memory/write_pipeline/bench_write_pipeline.py
+
+      - name: Enforce write-pipeline regression gate
+        run: |
+          set -euo pipefail
+          PYTHONPATH=services/memory services/memory/.venv/bin/python \
+            benchmarks/memory/write_pipeline/regression_gate.py
+
+      - name: Build published write-pipeline data
+        if: always()
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          GITHUB_RUN_NUMBER: ${{ github.run_number }}
+          GITHUB_SERVER_URL: ${{ github.server_url }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          latest="benchmarks/memory/write_pipeline/output/latest.json"
+          gate="benchmarks/memory/write_pipeline/output/gate-result.json"
+          if [ ! -f "$latest" ] || [ ! -f "$gate" ]; then
+            echo "Skipping published write-pipeline build (missing latest or gate output)"
+            exit 0
+          fi
+          PYTHONPATH=services/memory services/memory/.venv/bin/python \
+            benchmarks/memory/build_quality_suite_published.py \
+            --suite write_pipeline \
+            --latest "$latest" \
+            --gate "$gate" \
+            --published web/public/benchmarks/write-pipeline-benchmark-data.json \
+            --sha "$GITHUB_SHA" \
+            --branch "$GITHUB_REF_NAME" \
+            --run-number "$GITHUB_RUN_NUMBER" \
+            --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+      - name: Validate published write-pipeline data
+        if: always()
+        run: |
+          set -euo pipefail
+          published="web/public/benchmarks/write-pipeline-benchmark-data.json"
+          if [ ! -f "$published" ]; then
+            echo "Skipping published write-pipeline validation (file missing)"
+            exit 0
+          fi
+          python -m pip install --disable-pip-version-check --no-cache-dir 'jsonschema==4.23.0'
+          python benchmarks/scripts/validate_published_memory_suite.py \
+            --suite write_pipeline \
+            "$published"
+
+      - name: Summarize write-pipeline gate
+        if: always()
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          latest_path = Path("benchmarks/memory/write_pipeline/output/latest.json")
+          gate_path = Path("benchmarks/memory/write_pipeline/output/gate-result.json")
+          lines = ["## Write-pipeline benchmark", ""]
+          if not latest_path.is_file() or not gate_path.is_file():
+              missing = []
+              if not latest_path.is_file():
+                  missing.append(str(latest_path))
+              if not gate_path.is_file():
+                  missing.append(str(gate_path))
+              lines.extend(
+                  [
+                      f"- gate: **fail** (missing output: {', '.join(missing)})",
+                      "",
+                  ]
+              )
+          else:
+              latest = json.loads(latest_path.read_text(encoding="utf-8"))
+              gate = json.loads(gate_path.read_text(encoding="utf-8"))
+              m = latest["metrics"]
+              lines.extend(
+                  [
+                      f"- p50: {m['latency_ms_p50']:.2f} ms",
+                      f"- p95: {m['latency_ms_p95']:.2f} ms (SLA <= 200 ms)",
+                      f"- p99: {m['latency_ms_p99']:.2f} ms",
+                      f"- iterations: {latest['iterations']}",
+                      f"- gate: **{gate['status']}**",
+                      "",
+                  ]
+              )
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as fh:
+              fh.write("\n".join(lines) + "\n")
+          PY
+
+      - name: Upload write-pipeline artifact
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: write-pipeline-benchmark
+          path: |
+            benchmarks/memory/write_pipeline/output/latest.json
+            benchmarks/memory/write_pipeline/output/gate-result.json
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Upload write-pipeline published data
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: write-pipeline-benchmark-data
+          path: web/public/benchmarks/write-pipeline-benchmark-data.json
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Require benchmark bot pin (same-repo PR)
+        if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          BENCHMARK_BOT_SHA: ${{ vars.BENCHMARK_BOT_SHA }}
+        run: test -n "$BENCHMARK_BOT_SHA"
+
+      - name: Require benchmark bot App credentials (same-repo PR)
+        if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          APP_ID: ${{ secrets.BENCHMARK_BOT_APP_ID }}
+          APP_PRIVATE_KEY: ${{ secrets.BENCHMARK_BOT_APP_PRIVATE_KEY }}
+          INSTALLATION_ID: ${{ secrets.BENCHMARK_BOT_INSTALLATION_ID }}
+        run: |
+          test -n "$APP_ID" && test -n "$APP_PRIVATE_KEY" && test -n "$INSTALLATION_ID"
+
+      - name: Setup benchmark bot
+        id: setup_bot_write
+        if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        uses: ./.github/actions/setup-benchmark-bot
+        with:
+          bot-sha: ${{ vars.BENCHMARK_BOT_SHA }}
+          release-tag: ${{ vars.BENCHMARK_BOT_RELEASE_TAG }}
+          require-subcommand: post-write-pr-comment
+
+      - name: Post write-pipeline PR comment
+        if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          APP_ID: ${{ secrets.BENCHMARK_BOT_APP_ID }}
+          APP_PRIVATE_KEY: ${{ secrets.BENCHMARK_BOT_APP_PRIVATE_KEY }}
+          INSTALLATION_ID: ${{ secrets.BENCHMARK_BOT_INSTALLATION_ID }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          WRITE_PIPELINE_BENCHMARK_DATA_PATH: ${{ github.workspace }}/web/public/benchmarks/write-pipeline-benchmark-data.json
+          BOT_PATH: ${{ steps.setup_bot_write.outputs.bot-path }}
+        run: |
+          set -euo pipefail
+          if [ ! -f "$WRITE_PIPELINE_BENCHMARK_DATA_PATH" ]; then
+            echo "write-pipeline published JSON missing; skipping PR comment"
+            exit 0
+          fi
+          "$BOT_PATH" post-write-pr-comment \
+            --write-benchmark-data "$WRITE_PIPELINE_BENCHMARK_DATA_PATH"
+
+      - name: Note fork PR publish limitation
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
+        run: |
+          {
+            echo "## Write-pipeline PR comment skipped"
+            echo "Fork PRs upload the \`write-pipeline-benchmark-data\` artifact only (no bot comment)."
+          } >> "$GITHUB_STEP_SUMMARY"
