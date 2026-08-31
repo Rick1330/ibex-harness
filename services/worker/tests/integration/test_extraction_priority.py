@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-import threading
+import os
 import time
 from collections.abc import Iterator
 
 import pytest
+import redis as redis_sync
 from celery import Celery
 from celery.contrib.testing.worker import start_worker
 
@@ -16,17 +17,35 @@ pytestmark = pytest.mark.integration
 
 _GATE_TASK = "ibex.worker.test.priority_gate"
 _RECORDER_TASK = "ibex.worker.test.priority_recorder"
+_GATE_KEY = "ibex:test:priority_gate"
 
 
 @pytest.fixture
-def priority_context(celery_app: Celery) -> tuple[list[int], threading.Event]:
+def priority_context(celery_app: Celery) -> tuple[list[int], redis_sync.Redis]:
     """Register gate + recorder tasks before the worker starts."""
     recorded: list[int] = []
-    gate = threading.Event()
+    gate_client = redis_sync.Redis.from_url(
+        os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0"),
+        db=0,
+    )
+    gate_client.delete(_GATE_KEY)
 
     @celery_app.task(name=_GATE_TASK, bind=True)
     def _gate(self) -> None:
-        gate.wait(timeout=5)
+        client = redis_sync.Redis.from_url(
+            os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0"),
+            db=0,
+        )
+        try:
+            deadline = time.monotonic() + 10.0
+            while time.monotonic() < deadline:
+                if client.exists(_GATE_KEY):
+                    return
+                time.sleep(0.05)
+            msg = "priority gate was not released"
+            raise TimeoutError(msg)
+        finally:
+            client.close()
 
     @celery_app.task(name=_RECORDER_TASK, bind=True)
     def _record(self, priority: int) -> None:
@@ -37,11 +56,11 @@ def priority_context(celery_app: Celery) -> tuple[list[int], threading.Event]:
         _GATE_TASK: {"queue": "extraction"},
         _RECORDER_TASK: {"queue": "extraction"},
     }
-    return recorded, gate
+    return recorded, gate_client
 
 
 @pytest.fixture
-def priority_worker(celery_app: Celery, priority_context: tuple[list[int], threading.Event]) -> Iterator[object]:
+def priority_worker(celery_app: Celery, priority_context: tuple[list[int], redis_sync.Redis]) -> Iterator[object]:
     celery_app.conf.worker_prefetch_multiplier = 1
     with start_worker(
         celery_app,
@@ -55,10 +74,10 @@ def priority_worker(celery_app: Celery, priority_context: tuple[list[int], threa
 
 def test_extraction_priority_order(
     celery_app: Celery,
-    priority_context: tuple[list[int], threading.Event],
+    priority_context: tuple[list[int], redis_sync.Redis],
     priority_worker: object,
 ) -> None:
-    recorded, gate = priority_context
+    recorded, gate_client = priority_context
 
     gate_result = celery_app.send_task(_GATE_TASK, queue="extraction")
     time.sleep(0.2)
@@ -75,9 +94,11 @@ def test_extraction_priority_order(
         priority=9,
     )
 
-    gate.set()
+    gate_client.set(_GATE_KEY, "1")
     wait_for_task_success(gate_result)
     wait_for_task_success(high)
     wait_for_task_success(low)
 
     assert recorded.index(9) < recorded.index(1)
+    gate_client.delete(_GATE_KEY)
+    gate_client.close()
