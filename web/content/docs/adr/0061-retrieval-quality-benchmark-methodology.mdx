@@ -1,0 +1,140 @@
+---
+title: "ADR-0061: Retrieval-quality benchmark methodology"
+description: "Architecture decision record 0061 — HNSW, ranking-quality gold set, and write-pipeline CI regression gates with committed baselines and published history."
+adrId: "0061"
+status: "Accepted"
+date: "2026-08-31"
+authors: "IBEX Harness team"
+---
+
+# ADR-0061: Retrieval-quality benchmark methodology
+
+- **Status:** Accepted
+- **Date:** 2026-08-31
+- **Authors:** IBEX Harness team
+- **Milestone:** [3.E.3 Retrieval-quality benchmark sign-off](/roadmap/phase-3-memory-engine/milestones/3.e.3-retrieval-quality-benchmark)
+
+## Context
+
+Phase 3 Track B ships HNSW recall/latency methodology in
+[ADR-0053](/docs/adr/0053-vector-store-abstraction) §10 (strict corpus reset, production cells,
+`ef_search=40`). Milestone 3.E.3 adds **permanent CI regression gates** for:
+
+1. **HNSW recall/latency** — enforce persisted `status` on published runs
+2. **Ranking quality** — gold-set precision/recall/MRR vs committed baseline
+3. **Write pipeline** — wall-clock `MemoryWriteOrchestrator.create()` p95 vs SLA + baseline
+
+Proxy load benchmarks remain [ADR-0034](/docs/adr/0034-performance-methodology) /
+[ADR-0024](/docs/adr/0024-benchmark-data-publishing-model). This ADR covers the **memory
+substrate** suites only.
+
+## Options considered
+
+### 1) Gate enforcement location
+
+1. Schema-validate published JSON only — gates could pass with `status: fail` in history.
+2. **Dedicated enforce steps that exit non-zero** before merge (chosen).
+
+Decision: **(2)**. HNSW: [`check_hnsw_gate_status.py`](/benchmarks/scripts/check_hnsw_gate_status.py)
+reads top-level `runs[].status` from `hnsw-benchmark-data.json`. Ranking/write:
+[`regression_gate.py`](/benchmarks/memory/ranking_quality/regression_gate.py) /
+[`write_pipeline/regression_gate.py`](/benchmarks/memory/write_pipeline/regression_gate.py)
+return exit code 1 on policy failure.
+
+### 2) Ranking gold set design
+
+1. Live embedder + human labels at CI time — non-deterministic, costly.
+2. **Committed `gold_set_v1.json` with deterministic `zero_embedding(hotspot)`** (chosen).
+
+Decision: **(2)**. Fifty memories, twenty queries, single-labeler v1 disclaimer
+([`ranking_quality/README.md`](/benchmarks/memory/ranking_quality/README.md)).
+`validate_gold_set.py` runs in CI before the bench; composite-ground-truth order is validated
+against production `composite_score()`.
+
+### 3) Regression tolerance policy
+
+1. Hard-fail only in bench (100% metrics) — regression gate never exercised on real variance.
+2. **Committed `baseline.json` + `max_regression_pct` policy** with synthetic gate tests (chosen).
+
+Decision: **(2)**. Ranking: `max_regression_pct: 5.0` on precision@5, recall@10, MRR,
+`top_category_accuracy`. Write: `max_latency_ms_p95: 200` absolute SLA plus
+`max_regression_pct: 20.0` on p95 latency. Synthetic failure paths tested in
+[`test_regression_gate.py`](/benchmarks/memory/ranking_quality/test_regression_gate.py) and
+[`write_pipeline/test_regression_gate.py`](/benchmarks/memory/write_pipeline/test_regression_gate.py).
+
+### 4) Published history delivery
+
+1. Per-suite data PRs on contributor branches.
+2. **Single bot PR on `chore/bench-data-publish`** upserting all suite JSON files (chosen).
+
+Decision: **(2)** per [ADR-0024](/docs/adr/0024-benchmark-data-publishing-model). Bot posts one
+sticky PR comment with per-suite matrix + deep dives.
+
+## Decision
+
+### HNSW suite (`benchmarks/memory/`)
+
+| Constant | Value | Source |
+| --- | --- | --- |
+| Published `ef_search` | 40 | [`publish_cells.py`](/benchmarks/memory/publish_cells.py) |
+| Published `min_similarity` | 0.70 | same |
+| Recall floor | 0.98 | `_RECALL_SLA` |
+| 1M p95 / p99 SLA | &lt; 30 ms / &lt; 100 ms | when 1M cell present (full profile) |
+| CI profiles | smoke (PR), fast (main), full (weekly) | [`.github/workflows/memory-benchmark.yml`](/.github/workflows/memory-benchmark.yml) |
+
+Enforcement: `check_hnsw_gate_status.py` after publish build; fails CI when `status != pass`.
+
+### Ranking-quality suite (`benchmarks/memory/ranking_quality/`)
+
+| Item | Shipped value |
+| --- | --- |
+| Gold set | `gold_set_v1.json` — 50 memories, 20 queries |
+| Embeddings | `zero_embedding(hotspot)` — deterministic cosine geometry |
+| Metrics | precision@5, recall@10, MRR, `expected_order_match`, `top_category_accuracy` ([`metrics.py`](/benchmarks/memory/ranking_quality/metrics.py)) |
+| Baseline | all metrics 1.0 ([`baseline.json`](/benchmarks/memory/ranking_quality/baseline.json)) |
+| Regression policy | `max_regression_pct: 5.0` |
+| Published path | `web/public/benchmarks/ranking-quality-benchmark-data.json` |
+
+Bench hard-fails when any query misses perfect metrics; regression gate compares latest run to
+baseline for hardware variance tolerance.
+
+### Write-pipeline suite (`benchmarks/memory/write_pipeline/`)
+
+| Item | Shipped value |
+| --- | --- |
+| Measurement | Wall-clock `orch.create()` over 40 iterations |
+| SLA | p95 &lt; 200 ms (`max_latency_ms_p95: 200`) |
+| Baseline p95 | 199 ms ([`baseline.json`](/benchmarks/memory/write_pipeline/baseline.json)) |
+| Regression policy | `max_regression_pct: 20.0` on p95 |
+| Published path | `web/public/benchmarks/write-pipeline-benchmark-data.json` |
+
+### CI wiring
+
+- Workflow: [`.github/workflows/memory-benchmark.yml`](/.github/workflows/memory-benchmark.yml)
+- Jobs: `collect-hnsw-benchmarks`, `collect-ranking-quality`, `collect-write-pipeline-bench`
+- Publish on gate failure: build steps use `if: always()` so failed runs still record `status: fail`
+  in published JSON
+- Bot: ranking/write/HNSW PR comments + combined data PR ([#660](https://github.com/Rick1330/ibex-harness/pull/660) pattern)
+
+## Consequences
+
+**Positive**
+
+- Three memory suites share one enforcement pattern: run bench → regression gate → publish → validate.
+- Synthetic gate tests prove failure paths without relying on live-data luck.
+- Dashboard history JSON is bot-published on `main` only — PR branches use artifacts + comments.
+
+**Negative**
+
+- Gold set v1 is single-labeler, small-N — not a Phase 5 inter-rater gold standard.
+- Ranking bench always expects 100% metrics; the 5% regression band only helps CI hardware drift, not partial quality regressions caught solely by the bench script.
+- HNSW 1M cells run on full profile only; smoke/fast PR CI defers 1M (documented in bot comments as "1M deferred").
+- Stub published JSON on feature branches can conflict with bot `chore/bench-data-publish` until merged — resolve by keeping bot branch rebased on `main`.
+
+## References
+
+- [3.E.3 milestone](/roadmap/phase-3-memory-engine/milestones/3.e.3-retrieval-quality-benchmark)
+- [ADR-0053](/docs/adr/0053-vector-store-abstraction) §10 — HNSW bench methodology (Track B)
+- [ADR-0024](/docs/adr/0024-benchmark-data-publishing-model) — bot publish model
+- PR [#654](https://github.com/Rick1330/ibex-harness/pull/654) — 3.E.3 implementation
+- [`benchmarks/memory/README.md`](/benchmarks/memory/README.md) — suite index

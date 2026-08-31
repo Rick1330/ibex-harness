@@ -1,0 +1,121 @@
+---
+title: "ADR-0060: Memory service tenant isolation architecture"
+description: "Architecture decision record 0060 — composed Postgres RLS + app-layer org_id filters, Redis namespacing, HNSW isolation, read-path Tier-1 PII guard, and ISO-* security integration gate."
+adrId: "0060"
+status: "Accepted"
+date: "2026-08-31"
+authors: "IBEX Harness team"
+---
+
+# ADR-0060: Memory service tenant isolation architecture
+
+- **Status:** Accepted
+- **Date:** 2026-08-31
+- **Authors:** IBEX Harness team
+- **Milestone:** [3.E.1 Memory security integration test suite](/roadmap/phase-3-memory-engine/milestones/3.e.1-memory-security-integration-suite)
+
+## Context
+
+Phase 3 memory milestones each enforced tenant scoping locally (schema RLS in
+[ADR-0047](/docs/adr/0047-memory-temporal-validity)–[ADR-0049](/docs/adr/0049-memory-relationship-graph),
+vector filters in [ADR-0053](/docs/adr/0053-vector-store-abstraction), Redis keys in
+[ADR-0057](/docs/adr/0057-memory-write-orchestration) / [ADR-0059](/docs/adr/0059-hot-cache-read-path)).
+No single ADR described the **composed** isolation model that milestone 3.E.1 proves with
+real Postgres + pgvector + Redis in CI.
+
+Milestone 3.E.1 ships twelve ISO-* integration cases (`services/memory/tests/integration/security/`)
+gated by the `memory-security-integration` job in [`.github/workflows/ci.yml`](/.github/workflows/ci.yml).
+This ADR is the authoritative record for that architecture — not a replacement for table-level
+RLS decisions in ADR-0047–0049.
+
+Write-path PII is [ADR-0054](/docs/adr/0054-memory-pii-presidio-in-process). Milestone 3.E.1 adds a
+**read-path Tier-1 structured PII re-check** on hydrated search and hot-cache results (ISO-3.1) —
+defense-in-depth when content bypasses the write pipeline (direct SQL insert).
+
+## Options considered
+
+### 1) RLS-only vs RLS + explicit `org_id` in queries
+
+1. Rely on Postgres RLS alone — fewer predicates in application SQL.
+2. **FORCE RLS + explicit `org_id` / composite FK filters in every repository query** (chosen).
+
+Decision: **(2)**. AGENTS.md requires defense-in-depth even when RLS exists. Integration tests
+assert both service-layer behavior (ISO-1.1, 1.2) and RLS floor behavior (ISO-1.3).
+
+### 2) Redis tenant namespacing
+
+1. Global keys keyed by `agent_id` only — same UUID in two orgs would collide.
+2. **`{org_id}` as the leading key segment** for all tenant Redis data (chosen).
+
+Decision: **(2)**. Hot sorted sets: `{org_id}:hot_memories:{agent_id}`
+([`app/cache/hot_keys.py`](/services/memory/app/cache/hot_keys.py)). Object cache:
+`{org_id}:memory:{memory_id}` ([ADR-0057](/docs/adr/0057-memory-write-orchestration)).
+
+### 3) Read-path PII bypass (ISO-3.1)
+
+1. Trust write-path Presidio only — no read re-check.
+2. **Tier-1 regex re-check on every hydrated result** before returning from search/hot cache (chosen).
+3. Async Tier-2 Presidio re-scan on read — accurate but adds latency and duplicates write-path NLP.
+
+Decision: **(2)** for Phase 3. Implementation: [`app/read/pii_guard.py`](/services/memory/app/read/pii_guard.py)
+(email, phone, SSN, credit-card, IPv4 patterns). Tier-2 contextual bypass remains a documented
+residual risk ([#642](https://github.com/Rick1330/ibex-harness/issues/642)).
+
+### 4) Org-scope GDPR delete (ISO-2.2)
+
+1. Implement full org cascade + MinIO purge in Phase 3.
+2. **Defer to Phase 4.A.2** ([#641](https://github.com/Rick1330/ibex-harness/issues/641)) (chosen).
+
+Decision: **(2)**. Phase 3 proves per-memory FK cascade (ISO-2.1) only.
+
+## Decision
+
+1. **Postgres session:** Every memory-service transaction sets `SET LOCAL app.current_org_id`
+   to the authenticated org UUID before queries. Missing org context fails closed.
+2. **Application queries:** All read/write repositories filter `org_id` explicitly (and
+   `agent_id` where scoped to an agent), even on tables with FORCE RLS.
+3. **HNSW / vector search:** `PgVectorStore` predicates include `org_id` and `agent_id` on
+   every ANN query; ISO-1.5 asserts zero cross-org leakage in top-K across `ef_search` values.
+4. **Redis:** Keys are org-prefixed; ISO-1.6 asserts identical `agent_id` UUIDs in two orgs
+   cannot read each other's hot cache; ISO-1.8 asserts same-org cross-agent isolation.
+5. **Graph edges:** `memory_relationships` composite `(memory_id, org_id)` FKs reject cross-org
+   attachment (ISO-1.4). `memory_conflict_escalations` uses the same pattern (ISO-1.7).
+6. **AuthZ:** Org A PAT cannot use Org B's `agent_id` — HTTP 403 semantics mirroring proxy
+   `AGENT_NOT_AUTHORIZED` (ISO-1.2).
+7. **Read-path Tier-1 PII guard:** `filter_pii_blocked_results()` drops hydrated rows whose
+   content still matches structured PII regexes; metric `ibex_memory_pii_reconfirm_total`.
+   Quarantined memories never return from search (ISO-3.2).
+8. **CI gate:** `memory-security-integration` runs
+   `infra/scripts/memory-security-integration-test-ci.sh` with digest-pinned
+   `pgvector/pgvector:0.8.6-pg16` and `redis:7.4.2` service containers — same pattern as
+   Phase 1 `security-integration`.
+9. **Explicit Phase 3 non-goals:**
+   - Org-scope GDPR delete + MinIO archive removal → [#641](https://github.com/Rick1330/ibex-harness/issues/641)
+   - Explicit Redis `ZREM` / object-cache invalidation on SQL delete → [#647](https://github.com/Rick1330/ibex-harness/issues/647);
+     stale ZSET members are dropped at hydrate time ([ADR-0059](/docs/adr/0059-hot-cache-read-path)).
+
+## Consequences
+
+**Positive**
+
+- Composed isolation is regression-tested on every PR touching Go or Python (`ci-gate-python` / `ci-gate-go`).
+- Read-path Tier-1 guard closes the direct-DB-write bypass class without adding spaCy latency on the hot read path.
+- Redis and Postgres isolation models are consistent (`org_id` first).
+
+**Negative**
+
+- Hydrate-on-read means deleted or superseded memories may linger in Redis until TTL or trim;
+  callers never see them, but keys are not eagerly purged ([#647](https://github.com/Rick1330/ibex-harness/issues/647)).
+- Tier-1 regex guard does not catch contextual Tier-2 PII (names in prose without structured
+  patterns) — tracked in [#642](https://github.com/Rick1330/ibex-harness/issues/642).
+- No org-wide delete API in Phase 3; operators cannot satisfy GDPR erasure at org scope until Phase 4.A.2.
+- ISO-* tests use service-account SQL for RLS floor cases — production apps must still set org GUC per request.
+
+## References
+
+- [3.E.1 milestone](/roadmap/phase-3-memory-engine/milestones/3.e.1-memory-security-integration-suite) — ISO-* matrix
+- [3.E.2 milestone](/roadmap/phase-3-memory-engine/milestones/3.e.2-e2e-memory-lifecycle-test) — lifecycle e2e (ISO-2.1 teardown)
+- PR [#643](https://github.com/Rick1330/ibex-harness/pull/643) — 3.E.1 implementation
+- [#641](https://github.com/Rick1330/ibex-harness/issues/641) — org-scope GDPR deferral
+- [#642](https://github.com/Rick1330/ibex-harness/issues/642) — Tier-2 read-path PII residual risk
+- [#647](https://github.com/Rick1330/ibex-harness/issues/647) — Redis explicit invalidation gap
