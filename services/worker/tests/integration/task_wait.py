@@ -26,6 +26,12 @@ def wait_for_task_success(result: AsyncResult, timeout: float = 10.0) -> None:
         raise AssertionError(msg)
 
 
+def _stats_task_total(stats: dict | None, task_name: str) -> int:
+    if not stats:
+        return 0
+    return sum(node.get("total", {}).get(task_name, 0) for node in stats.values())
+
+
 def wait_for_task_total(
     celery_app: Celery,
     task_name: str,
@@ -34,15 +40,11 @@ def wait_for_task_total(
 ) -> None:
     """Wait until worker stats show at least *minimum* runs of *task_name*."""
     deadline = time.monotonic() + timeout
-    while True:
+    while time.monotonic() < deadline:
         remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            break
         stats = celery_app.control.inspect(timeout=min(1.0, remaining)).stats()
-        if stats:
-            total = sum(node.get("total", {}).get(task_name, 0) for node in stats.values())
-            if total >= minimum:
-                return
+        if _stats_task_total(stats, task_name) >= minimum:
+            return
         time.sleep(0.05)
     msg = f"task {task_name!r} did not reach {minimum} runs within {timeout}s"
     raise TimeoutError(msg)
@@ -51,6 +53,4 @@ def wait_for_task_total(
 def worker_task_total(celery_app: Celery, task_name: str) -> int:
     """Return cumulative worker stats total for *task_name* (0 when unknown)."""
     stats = celery_app.control.inspect(timeout=1.0).stats()
-    if not stats:
-        return 0
-    return sum(node.get("total", {}).get(task_name, 0) for node in stats.values())
+    return _stats_task_total(stats, task_name)
