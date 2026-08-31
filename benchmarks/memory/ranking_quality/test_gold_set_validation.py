@@ -121,6 +121,27 @@ class GoldSetValidationTests(unittest.TestCase):
         errors = validate_mod.validate_gold_set(payload)
         self.assertTrue(any("query_text must be non-empty" in e for e in errors))
 
+    def test_rejects_non_object_root(self) -> None:
+        self.assertEqual(validate_mod.validate_gold_set([]), ["gold set must be an object"])
+        self.assertEqual(validate_mod.validate_gold_set("bad"), ["gold set must be an object"])
+
+    def test_rejects_non_string_content(self) -> None:
+        payload = json.loads((_DIR / "gold_set_v1.json").read_text(encoding="utf-8"))
+        payload["memories"][0] = {**payload["memories"][0], "content": ["not", "a", "string"]}
+        errors = validate_mod.validate_gold_set(payload)
+        self.assertTrue(any("content must be a string" in e for e in errors))
+
+    def test_rejects_query_hotspot_out_of_range(self) -> None:
+        payload = json.loads((_DIR / "gold_set_v1.json").read_text(encoding="utf-8"))
+        payload["queries"][0]["query_hotspot"] = -1
+        errors = validate_mod.validate_gold_set(payload)
+        self.assertTrue(any("query_hotspot -1 out of range" in e for e in errors))
+        payload["queries"][0]["query_hotspot"] = validate_mod.EMBEDDING_DIM
+        errors = validate_mod.validate_gold_set(payload)
+        self.assertTrue(
+            any(f"query_hotspot {validate_mod.EMBEDDING_DIM} out of range" in e for e in errors)
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

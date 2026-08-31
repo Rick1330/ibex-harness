@@ -428,7 +428,7 @@ jobs:
             benchmarks/memory/ranking_quality/regression_gate.py
 
       - name: Build published ranking-quality data
-        if: success()
+        if: always()
         env:
           GITHUB_SHA: ${{ github.sha }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
@@ -438,11 +438,17 @@ jobs:
           GITHUB_RUN_ID: ${{ github.run_id }}
         run: |
           set -euo pipefail
+          latest="benchmarks/memory/ranking_quality/output/latest.json"
+          gate="benchmarks/memory/ranking_quality/output/gate-result.json"
+          if [ ! -f "$latest" ] || [ ! -f "$gate" ]; then
+            echo "Skipping published ranking-quality build (missing latest or gate output)"
+            exit 0
+          fi
           PYTHONPATH=services/memory services/memory/.venv/bin/python \
             benchmarks/memory/build_quality_suite_published.py \
             --suite ranking_quality \
-            --latest benchmarks/memory/ranking_quality/output/latest.json \
-            --gate benchmarks/memory/ranking_quality/output/gate-result.json \
+            --latest "$latest" \
+            --gate "$gate" \
             --published web/public/benchmarks/ranking-quality-benchmark-data.json \
             --sha "$GITHUB_SHA" \
             --branch "$GITHUB_REF_NAME" \
@@ -450,12 +456,18 @@ jobs:
             --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
 
       - name: Validate published ranking-quality data
-        if: success()
+        if: always()
         run: |
+          set -euo pipefail
+          published="web/public/benchmarks/ranking-quality-benchmark-data.json"
+          if [ ! -f "$published" ]; then
+            echo "Skipping published ranking-quality validation (file missing)"
+            exit 0
+          fi
           python -m pip install --disable-pip-version-check --no-cache-dir 'jsonschema==4.23.0'
           python benchmarks/scripts/validate_published_memory_suite.py \
             --suite ranking_quality \
-            web/public/benchmarks/ranking-quality-benchmark-data.json
+            "$published"
 
       - name: Summarize ranking-quality gate
         if: always()
@@ -521,13 +533,13 @@ jobs:
           if-no-files-found: warn
 
       - name: Require benchmark bot pin (same-repo PR)
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
         env:
           BENCHMARK_BOT_SHA: ${{ vars.BENCHMARK_BOT_SHA }}
         run: test -n "$BENCHMARK_BOT_SHA"
 
       - name: Require benchmark bot App credentials (same-repo PR)
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
         env:
           APP_ID: ${{ secrets.BENCHMARK_BOT_APP_ID }}
           APP_PRIVATE_KEY: ${{ secrets.BENCHMARK_BOT_APP_PRIVATE_KEY }}
@@ -537,7 +549,7 @@ jobs:
 
       - name: Setup benchmark bot
         id: setup_bot_ranking
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
         uses: ./.github/actions/setup-benchmark-bot
         with:
           bot-sha: ${{ vars.BENCHMARK_BOT_SHA }}
@@ -545,7 +557,7 @@ jobs:
           require-subcommand: post-ranking-pr-comment
 
       - name: Post ranking-quality PR comment
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
         env:
           APP_ID: ${{ secrets.BENCHMARK_BOT_APP_ID }}
           APP_PRIVATE_KEY: ${{ secrets.BENCHMARK_BOT_APP_PRIVATE_KEY }}
@@ -637,7 +649,7 @@ jobs:
             benchmarks/memory/write_pipeline/regression_gate.py
 
       - name: Build published write-pipeline data
-        if: success()
+        if: always()
         env:
           GITHUB_SHA: ${{ github.sha }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
@@ -647,11 +659,17 @@ jobs:
           GITHUB_RUN_ID: ${{ github.run_id }}
         run: |
           set -euo pipefail
+          latest="benchmarks/memory/write_pipeline/output/latest.json"
+          gate="benchmarks/memory/write_pipeline/output/gate-result.json"
+          if [ ! -f "$latest" ] || [ ! -f "$gate" ]; then
+            echo "Skipping published write-pipeline build (missing latest or gate output)"
+            exit 0
+          fi
           PYTHONPATH=services/memory services/memory/.venv/bin/python \
             benchmarks/memory/build_quality_suite_published.py \
             --suite write_pipeline \
-            --latest benchmarks/memory/write_pipeline/output/latest.json \
-            --gate benchmarks/memory/write_pipeline/output/gate-result.json \
+            --latest "$latest" \
+            --gate "$gate" \
             --published web/public/benchmarks/write-pipeline-benchmark-data.json \
             --sha "$GITHUB_SHA" \
             --branch "$GITHUB_REF_NAME" \
@@ -659,12 +677,18 @@ jobs:
             --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
 
       - name: Validate published write-pipeline data
-        if: success()
+        if: always()
         run: |
+          set -euo pipefail
+          published="web/public/benchmarks/write-pipeline-benchmark-data.json"
+          if [ ! -f "$published" ]; then
+            echo "Skipping published write-pipeline validation (file missing)"
+            exit 0
+          fi
           python -m pip install --disable-pip-version-check --no-cache-dir 'jsonschema==4.23.0'
           python benchmarks/scripts/validate_published_memory_suite.py \
             --suite write_pipeline \
-            web/public/benchmarks/write-pipeline-benchmark-data.json
+            "$published"
 
       - name: Summarize write-pipeline gate
         if: always()
@@ -729,13 +753,13 @@ jobs:
           if-no-files-found: warn
 
       - name: Require benchmark bot pin (same-repo PR)
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
         env:
           BENCHMARK_BOT_SHA: ${{ vars.BENCHMARK_BOT_SHA }}
         run: test -n "$BENCHMARK_BOT_SHA"
 
       - name: Require benchmark bot App credentials (same-repo PR)
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
         env:
           APP_ID: ${{ secrets.BENCHMARK_BOT_APP_ID }}
           APP_PRIVATE_KEY: ${{ secrets.BENCHMARK_BOT_APP_PRIVATE_KEY }}
@@ -745,7 +769,7 @@ jobs:
 
       - name: Setup benchmark bot
         id: setup_bot_write
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
         uses: ./.github/actions/setup-benchmark-bot
         with:
           bot-sha: ${{ vars.BENCHMARK_BOT_SHA }}
@@ -753,7 +777,7 @@ jobs:
           require-subcommand: post-write-pr-comment
 
       - name: Post write-pipeline PR comment
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
         env:
           APP_ID: ${{ secrets.BENCHMARK_BOT_APP_ID }}
           APP_PRIVATE_KEY: ${{ secrets.BENCHMARK_BOT_APP_PRIVATE_KEY }}

@@ -12,7 +12,7 @@ export function BenchmarkSuiteMetaLine({ runUrl, children }: BenchmarkSuiteMetaL
   return (
     <p className="text-sm text-muted-foreground">
       {children}
-      {isSafeBenchmarkRunUrl(runUrl ?? "") ? (
+      {runUrl && isSafeBenchmarkRunUrl(runUrl) ? (
         <>
           {" · "}
           <BenchmarkWorkflowRunLink runUrl={runUrl} />

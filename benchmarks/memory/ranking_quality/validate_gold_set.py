@@ -170,7 +170,11 @@ def _validate_memory_scalar_fields(row: dict[str, Any], prefix: str) -> list[str
 
 
 def _validate_memory_content(row: dict[str, Any], prefix: str) -> list[str]:
-    content = str(row.get("content", ""))
+    content = row.get("content")
+    if not isinstance(content, str):
+        return [f"{prefix} content must be a string"]
+    if not content.strip():
+        return [f"{prefix} content must be non-empty"]
     errors: list[str] = []
     if len(content) < 20:
         errors.append(f"{prefix} content too short")
@@ -276,6 +280,8 @@ def _validate_query_expectations(
     errors: list[str] = []
     hotspot, hotspot_errors = _parse_int(row.get("query_hotspot"), "query_hotspot", prefix)
     errors.extend(hotspot_errors)
+    if hotspot is not None and not (0 <= hotspot < EMBEDDING_DIM):
+        errors.append(f"{prefix} query_hotspot {hotspot} out of range")
     expected = row.get("expected_content_keys")
     if not isinstance(expected, list) or not expected:
         errors.append(f"{prefix} expected_content_keys must be non-empty array")
@@ -390,7 +396,9 @@ def _validate_queries(
     return errors, state.decay_found
 
 
-def validate_gold_set(payload: dict[str, Any]) -> list[str]:
+def validate_gold_set(payload: object) -> list[str]:
+    if not isinstance(payload, dict):
+        return ["gold set must be an object"]
     memories = payload.get("memories")
     queries = payload.get("queries")
     if not isinstance(memories, list):
