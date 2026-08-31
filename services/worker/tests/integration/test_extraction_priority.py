@@ -74,9 +74,9 @@ def test_extraction_priority_order(
         priority=9,
     )
 
-    wait_for_task_success(high)
-    wait_for_task_success(low)
     gate.set()
     wait_for_task_success(gate_result)
+    wait_for_task_success(high)
+    wait_for_task_success(low)
 
     assert recorded.index(9) < recorded.index(1)

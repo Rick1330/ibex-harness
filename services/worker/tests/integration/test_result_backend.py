@@ -8,7 +8,11 @@ from celery import Celery
 
 from app.config import Settings
 from app.task_names import TASK_EXTRACTION_NOOP, TASK_RESULT_PROBE
-from tests.integration.task_wait import wait_for_task_success
+from tests.integration.task_wait import (
+    wait_for_task_success,
+    wait_for_task_total,
+    worker_task_total,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -22,8 +26,13 @@ def test_ignore_result_default(
     worker: object,
     integration_settings: Settings,
 ) -> None:
-    result = celery_app.send_task(TASK_EXTRACTION_NOOP, queue="extraction")
-    wait_for_task_success(result)
+    baseline = worker_task_total(celery_app, TASK_EXTRACTION_NOOP)
+    celery_app.send_task(
+        TASK_EXTRACTION_NOOP,
+        queue="extraction",
+        ignore_result=True,
+    )
+    wait_for_task_total(celery_app, TASK_EXTRACTION_NOOP, baseline + 1)
     client = redis_sync.Redis.from_url(integration_settings.resolved_result_backend)
     try:
         assert _result_keys(client) == []

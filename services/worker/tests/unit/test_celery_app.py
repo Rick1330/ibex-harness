@@ -38,6 +38,10 @@ def test_celery_app_queues() -> None:
         assert q.routing_key == q.name
         assert q.exchange.name == q.name
         assert not q.queue_arguments
+        if q.name == "extraction":
+            assert q.max_priority == EXTRACTION_MAX_PRIORITY - 1
+        else:
+            assert q.max_priority is None
 
 
 def test_extraction_queue_priority_config() -> None:

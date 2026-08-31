@@ -33,7 +33,15 @@ def _build_task_queues() -> tuple[Queue, ...]:
     queues: list[Queue] = []
     for name in queue_names():
         exchange = Exchange(name, type="direct")
-        queues.append(Queue(name, exchange, routing_key=name))
+        max_priority = EXTRACTION_MAX_PRIORITY - 1 if name == "extraction" else None
+        queues.append(
+            Queue(
+                name,
+                exchange,
+                routing_key=name,
+                max_priority=max_priority,
+            )
+        )
     return tuple(queues)
 
 
