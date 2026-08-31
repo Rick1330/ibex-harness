@@ -69,6 +69,40 @@ services:
       retries: 10
       start_period: 10s
 
+  worker:
+    build:
+      context: ../..
+      dockerfile: services/worker/Dockerfile
+    container_name: ibex-dev-worker
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      REDIS_DB_QUEUE: "1"
+      REDIS_DB_RESULTS: "3"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  worker-beat:
+    build:
+      context: ../..
+      dockerfile: services/worker/Dockerfile
+    container_name: ibex-dev-worker-beat
+    command:
+      [
+        "celery",
+        "-A",
+        "app.celery_app:celery_app",
+        "beat",
+        "--loglevel=info",
+      ]
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      REDIS_DB_QUEUE: "1"
+      REDIS_DB_RESULTS: "3"
+    depends_on:
+      redis:
+        condition: service_healthy
+
 volumes:
   ibex_postgres_data:
   ibex_redis_data:

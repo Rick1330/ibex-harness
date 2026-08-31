@@ -2,7 +2,7 @@
 title: "3.5.A.1 Celery Worker Skeleton"
 description: "Establish the async execution substrate for memory extraction. Without it, extraction has nowhere to run — a session can be completed but nothing turns it into memory."
 summary: "Establish the async execution substrate for memory extraction. Without it, extraction has nowhere to run — a session can be completed but nothing turns it into memory."
-status: "planned"
+status: "completed"
 milestoneId: "3.5.A.1"
 track: "A"
 trackTitle: "Worker Infrastructure"
@@ -15,7 +15,7 @@ fullTitle: "Milestone 3.5.A.1 — Celery Worker Skeleton with Redis Broker and T
 
 # Milestone 3.5.A.1 — Celery Worker Skeleton with Redis Broker and Task Routing
 
-**Status:** Planned  
+**Status:** Completed (m3.5.A.1)  
 **Goal:** [Track A — Worker Infrastructure](/roadmap/phase-3-5-extraction-assembly/tracks#track-a--worker-infrastructure)  
 **Phase:** 3.5 — Extraction & Context Assembly  
 **Estimated effort:** 3 days
@@ -105,15 +105,27 @@ Celery / Redis / kombu are already in the free/open-source stack — no new lice
 
 ---
 
+## Delivered shape (m3.5.A.1)
+
+- **Package:** `services/worker/app/` (flat `app/` layout, mirrors `services/memory/`)
+- **Queues:** `extraction`, `embedding`, `maintenance`, `mcp_audit` — explicit `task_routes`; no default `celery` queue fallback
+- **Redis:** shared instance; broker DB `1` (`REDIS_DB_QUEUE`), results DB `3` (`REDIS_DB_RESULTS`); **not** `x-max-priority` (RabbitMQ-only)
+- **Priority:** cross-queue via worker `-Q` order; intra-extraction via Celery Redis `priority_steps` (0–9)
+- **Results:** `task_ignore_result=True` globally; `result_expires=3600` when opted in
+- **Beat:** `ibex.worker.maintenance.noop_sweep` on `IBEX_WORKER_MAINTENANCE_BEAT_SECONDS` (default 300s)
+- **3.5.A.2 seam:** `IbexTask` base + `app/observability.py` stub (no `on_failure` override)
+
+---
+
 ## Success signals
 
 Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
 
-- [ ] Worker process starts cleanly against local Redis with the intended queues
-- [ ] Task routing sends work to the intended queue (not a silent default-queue fallback)
-- [ ] Result retention defaults avoid unbounded Redis growth for fire-and-forget extraction
-- [ ] Scheduled maintenance hooks exist and can be triggered in tests without waiting on real cron
-- [ ] Unit coverage exists for app bootstrap and queue routing
+- [x] Worker process starts cleanly against local Redis with the intended queues
+- [x] Task routing sends work to the intended queue (not a silent default-queue fallback)
+- [x] Result retention defaults avoid unbounded Redis growth for fire-and-forget extraction
+- [x] Scheduled maintenance hooks exist and can be triggered in tests without waiting on real cron
+- [x] Unit coverage exists for app bootstrap and queue routing
 
 ## Prerequisites
 

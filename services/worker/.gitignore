@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+coverage*.xml
+*.egg-info/
+dist/
+build/
+celerybeat-schedule
+celerybeat.pid

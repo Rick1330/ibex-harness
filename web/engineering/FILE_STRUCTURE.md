@@ -239,33 +239,25 @@ Canonical layout (illustrative — exact module names may differ):
 
 ```text
 services/worker/
-  src/
-    ibex_worker/
+  app/
+    __init__.py
+    config.py                # IBEX_WORKER_* + shared Redis DB knobs
+    logging.py               # structured JSON logging
+    celery_app.py              # Celery app factory + queue routing + beat
+    task_names.py              # stable ibex.worker.* task name constants
+    observability.py           # m3.5.A.2 OTel/DLQ hook point (stub in A.1)
+    tasks/
       __init__.py
-      config.py
-      celery_app.py            # Celery app + routing + retry policies
-      tasks/
-        __init__.py
-        memory_extraction.py   # Phase 3.5
-        embedding_jobs.py
-        maintenance.py
-        fingerprinting.py      # Phase 4.5
-        drift_detection.py     # Phase 4.5
-        regression.py          # Phase 4.5
-      clients/                 # HTTP/gRPC clients to other services
-        __init__.py
-        memory_client.py
-        embedder_client.py
-        clickhouse_client.py
-      core/
-        __init__.py
-        logging.py
-        telemetry.py
-        idempotency.py
-        errors.py
+      base.py                  # IbexTask retry policy
+      stubs.py                 # noop queue consumers (A.1 harness)
+      maintenance.py           # beat noop sweep
+      memory_extraction.py     # Phase 3.5 Track B (later)
+      embedding_jobs.py        # Phase 3.5 (later)
   tests/
     unit/
     integration/
+  scripts/
+    healthcheck.sh             # celery inspect ping for Docker HEALTHCHECK
   pyproject.toml
   uv.lock
   .env.example

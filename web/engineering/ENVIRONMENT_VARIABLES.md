@@ -151,8 +151,9 @@ These are not env vars, but mandatory behavior:
 |----------|----------|---------|-------------|----------------|
 | `REDIS_URL` | Conditional | (empty) | e.g. `redis://:password@host:6379/0` | Secret if password present; proxy: empty → Noop limiter |
 | `REDIS_DB_CACHE` | No | `0` | DB index for caches | Keep consistent |
-| `REDIS_DB_QUEUE` | No | `1` | DB index for queues/streams | Keep consistent |
+| `REDIS_DB_QUEUE` | No | `1` | DB index for queues/streams (Celery broker lists) | Keep consistent |
 | `REDIS_DB_RATE_LIMIT` | No | `2` | DB index for rate limiting | Optional separation |
+| `REDIS_DB_RESULTS` | No | `3` | DB index for Celery result backend keys | Short TTL; separate from broker |
 | `REDIS_CONNECT_TIMEOUT_MS` | No | `200` | Connection timeout | Critical path needs low |
 | `REDIS_READ_TIMEOUT_MS` | No | `200` | Read timeout | Critical path needs low |
 | `REDIS_WRITE_TIMEOUT_MS` | No | `200` | Write timeout | |
@@ -409,6 +410,23 @@ Preferred starting models in the roadmap: **GPU/prod** `bge-m3` (1024-dim); **CP
 | `IBEX_MEMORY_EMBEDDING_MAX_RETRIES` | No | `2` | Retries for 429/502/503 + transport | |
 | `IBEX_MEMORY_HYBRID_ENABLED` | Planned **5** | `false` | Enable dense+sparse hybrid retrieval | Feature flag |
 | `IBEX_MEMORY_RERANK_ENABLED` | Planned **5** | `false` | Cross-encoder rerank on fused top-K | Degrade if TEI unavailable |
+
+### Worker service (Celery — m3.5.A.1+)
+
+Used by: **`services/worker/`** — see [services/worker/README.md](../../services/worker/README.md).
+
+| Variable | Required | Default | Description | Notes |
+|----------|----------|---------|-------------|-------|
+| `IBEX_WORKER_BROKER_URL` | Conditional | derived | Full Celery broker URL | Overrides `REDIS_URL` + `REDIS_DB_QUEUE` |
+| `IBEX_WORKER_RESULT_BACKEND` | Conditional | derived | Full Celery result-backend URL | Overrides `REDIS_URL` + `REDIS_DB_RESULTS` |
+| `IBEX_EXTRACTION_REDIS_URL` | No | falls back to `REDIS_URL` | Optional dedicated Redis host for broker derivation | Secret if password present |
+| `IBEX_WORKER_MAINTENANCE_BEAT_SECONDS` | No | `300` | Beat interval for maintenance noop sweep | Tunable in tests |
+| `IBEX_WORKER_RESULT_EXPIRES_SECONDS` | No | `3600` | Result TTL when `ignore_result=False` | Global default ignores results |
+| `IBEX_WORKER_WORKER_CONCURRENCY` | No | `4` | Default worker concurrency hint | Compose/Makefile may override |
+| `REDIS_DB_QUEUE` | No | `1` | Broker logical DB (see §6) | Celery list keys |
+| `REDIS_DB_RESULTS` | No | `3` | Result backend logical DB (see §6) | `celery-task-meta-*` keys |
+
+Production (`IBEX_ENV=production`): require `IBEX_WORKER_BROKER_URL` or `REDIS_URL` / `IBEX_EXTRACTION_REDIS_URL` in the environment.
 
 ### Context assembly knobs (Phase 3.5+)
 

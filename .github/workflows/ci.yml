@@ -929,6 +929,72 @@ jobs:
       - name: Memory unit tests (pytest + ruff)
         run: bash infra/scripts/memory-test-ci.sh
 
+  worker-test:
+    name: worker-test
+    needs: changes
+    if: needs.changes.outputs.run_go == 'true' || needs.changes.outputs.run_python == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+      - name: Worker unit tests (pytest + ruff)
+        run: bash infra/scripts/worker-test-ci.sh
+
+  worker-integration:
+    name: worker-integration
+    needs: changes
+    if: needs.changes.outputs.run_go == 'true' || needs.changes.outputs.run_python == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      REDIS_URL: redis://127.0.0.1:6379/0
+      REDIS_DB_QUEUE: "1"
+      REDIS_DB_RESULTS: "3"
+    services:
+      redis:
+        image: redis:7.4.2@sha256:fbdbaea47b9ae4ecc2082ecdb4e1cea81e32176ffb1dcf643d422ad07427e5d9
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+      - name: Worker Redis integration tests
+        run: bash infra/scripts/worker-integration-test-ci.sh
+
   memory-integration:
     name: memory-integration
     needs: changes
@@ -1646,6 +1712,42 @@ jobs:
           flags: memory,python
           fail_ci_if_error: false
 
+  worker-coverage:
+    name: worker-coverage
+    needs: changes
+    if: needs.changes.outputs.run_go == 'true' || needs.changes.outputs.run_python == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+      - name: Worker pytest coverage
+        run: bash infra/scripts/worker-test-ci.sh
+      - name: Worker coverage gate
+        run: bash infra/scripts/coverage-worker-gate.sh
+      - name: Upload coverage reports to Codecov
+        continue-on-error: true
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: services/worker/coverage-worker.xml
+          flags: worker,python
+          fail_ci_if_error: false
+
   bandit:
     name: bandit
     needs: changes
@@ -1671,7 +1773,7 @@ jobs:
         id: bandit
         run: |
           targets=()
-          for svc in memory embedder mcp-memory; do
+          for svc in memory embedder mcp-memory worker; do
             app_dir="services/${svc}/app"
             if [ -d "$app_dir" ]; then
               targets+=("$app_dir")
@@ -1974,6 +2076,9 @@ jobs:
       - memory-coverage
       - memory-integration
       - memory-security-integration
+      - worker-test
+      - worker-integration
+      - worker-coverage
       - e2e-smoke-p3-memory
       - verify-phase25
     if: always()
@@ -1995,5 +2100,8 @@ jobs:
             "${{ needs.memory-coverage.result }}" \
             "${{ needs.memory-integration.result }}" \
             "${{ needs.memory-security-integration.result }}" \
+            "${{ needs.worker-test.result }}" \
+            "${{ needs.worker-integration.result }}" \
+            "${{ needs.worker-coverage.result }}" \
             "${{ needs.e2e-smoke-p3-memory.result }}" \
             "${{ needs.verify-phase25.result }}"
