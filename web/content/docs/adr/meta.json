@@ -56,6 +56,9 @@
     "0055-memory-write-path-dedup",
     "0056-temporal-conflict-detection",
     "0057-memory-write-orchestration",
-    "0058-semantic-search-fts-fallback-trigger"
+    "0058-semantic-search-fts-fallback-trigger",
+    "0059-hot-cache-read-path",
+    "0060-memory-service-tenant-isolation",
+    "0061-retrieval-quality-benchmark-methodology"
   ]
 }

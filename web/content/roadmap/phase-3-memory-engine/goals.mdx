@@ -88,9 +88,9 @@ phase: "phase-3-memory-engine"
 
 **Milestones:**
 - **3.E.1 — Memory security integration suite (`TestMemory_ISO_*`):** **Shipped** — 12 ISO cases, `memory-security-integration` CI, Tier-1 read-path PII guard.
-- **3.E.2 — End-to-end memory lifecycle test:** Full write/dedup/conflict/retrieve round trip via HTTP API. `make e2e-smoke-p3-memory`.
-- **3.E.3 — Retrieval-quality benchmark sign-off:** Recall@10, p50/p95/p99 latency, precision@k. CI regression gate.
-- **3.E.4 — ADR consolidation:** Phase 3 memory ADRs published and indexed (next free numbers after ADR-0047; 0040–0046 are Phase 2.5).
+- **3.E.2 — End-to-end memory lifecycle test:** **Shipped** — `make e2e-smoke-p3-memory`, `e2e-smoke-p3-memory` CI job.
+- **3.E.3 — Retrieval-quality benchmark sign-off:** **Shipped** — HNSW + ranking + write CI regression gates ([ADR-0061](/docs/adr/0061-retrieval-quality-benchmark-methodology)).
+- **3.E.4 — ADR consolidation:** **Shipped** — [ADR-0060](/docs/adr/0060-memory-service-tenant-isolation), [ADR-0061](/docs/adr/0061-retrieval-quality-benchmark-methodology); phase register/index reconciled ([decisions](/roadmap/phase-3-memory-engine/decisions)).
 - **3.E.5 — Phase 3 exit audit:** Severity-tiered gap register (P0–P3), same format as Phase 1 exit audit.
 
 **Acceptance criteria:**
