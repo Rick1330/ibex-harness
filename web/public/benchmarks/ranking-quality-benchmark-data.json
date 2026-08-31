@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "benchmark": "ranking_quality",
+  "runs": [
+    {
+      "sha": "b57e9a567d6b5a189a446401c2e77f8c40103d1a",
+      "short_sha": "b57e9a5",
+      "timestamp": "2026-08-31T11:20:32.350148+00:00",
+      "branch": "main",
+      "run_number": 140,
+      "run_url": "https://github.com/Rick1330/ibex-harness/actions/runs/33386400892",
+      "gold_set": "v1",
+      "query_count": 20,
+      "memory_count": 50,
+      "metrics": {
+        "precision_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "expected_order_match": 1.0,
+        "top_category_accuracy": 1.0
+      },
+      "status": "pass",
+      "gate_summary": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "precision_at_5 regression (%)",
+            "value": 0.0,
+            "limit": -5.0,
+            "ok": true
+          },
+          {
+            "name": "recall_at_10 regression (%)",
+            "value": 0.0,
+            "limit": -5.0,
+            "ok": true
+          },
+          {
+            "name": "mrr regression (%)",
+            "value": 0.0,
+            "limit": -5.0,
+            "ok": true
+          },
+          {
+            "name": "top_category_accuracy regression (%)",
+            "value": 0.0,
+            "limit": -5.0,
+            "ok": true
+          }
+        ]
+      }
+    }
+  ]
+}
