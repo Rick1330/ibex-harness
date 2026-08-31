@@ -23,6 +23,7 @@ GOLD_ORG_ID = UUID("11111111-2222-3333-4444-555555555501")
 GOLD_AGENT_ID = UUID("11111111-2222-3333-4444-555555555502")
 GOLD_USER_ID = UUID("11111111-2222-3333-4444-555555555503")
 GOLD_SET_PATH = Path(__file__).resolve().parent / "gold_set_v1.json"
+_SERVICE_ACCOUNT_SQL = "SELECT set_config('app.is_service_account', 'true', true)"
 
 from validate_gold_set import validate_gold_set  # noqa: E402
 
@@ -42,7 +43,7 @@ def load_gold_set(path: Path | None = None) -> dict:
 async def _ensure_org_agent(session_factory: async_sessionmaker[AsyncSession]) -> None:
     async with session_factory() as session, session.begin():
         await session.execute(
-            text("SELECT set_config('app.is_service_account', 'true', true)")  # nosemgrep
+            text(_SERVICE_ACCOUNT_SQL)  # nosemgrep
         )
         await with_service_org(session, GOLD_ORG_ID)
         await session.execute(
@@ -95,7 +96,7 @@ async def _ensure_org_agent(session_factory: async_sessionmaker[AsyncSession]) -
 async def _purge_org_memories(session_factory: async_sessionmaker[AsyncSession]) -> None:
     async with session_factory() as session, session.begin():
         await session.execute(
-            text("SELECT set_config('app.is_service_account', 'true', true)")  # nosemgrep
+            text(_SERVICE_ACCOUNT_SQL)  # nosemgrep
         )
         await with_service_org(session, GOLD_ORG_ID)
         await session.execute(
@@ -172,7 +173,7 @@ async def seed_gold_set(
 
     async with session_factory() as session, session.begin():
         await session.execute(
-            text("SELECT set_config('app.is_service_account', 'true', true)")  # nosemgrep
+            text(_SERVICE_ACCOUNT_SQL)  # nosemgrep
         )
         await with_service_org(session, GOLD_ORG_ID)
         await session.execute(text("ANALYZE ibex_core.memories"))  # nosemgrep

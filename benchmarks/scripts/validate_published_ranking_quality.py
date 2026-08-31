@@ -43,7 +43,7 @@ def resolve_path(raw: str) -> Path:
     return resolved
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None) -> None:
     args = argv if argv is not None else sys.argv[1:]
     if len(args) != 1:
         fail("usage: validate_published_ranking_quality.py <path>")
@@ -51,12 +51,11 @@ def main(argv: list[str] | None = None) -> int:
     payload = json.loads(path.read_text(encoding="utf-8"))
     if jsonschema is None:
         print("jsonschema not installed; skipping schema validation", file=sys.stderr)
-        return 0
+        return
     schema = json.loads(_SCHEMA_PATH.read_text(encoding="utf-8"))
     jsonschema.validate(payload, schema)
     print(f"ok: {path}")
-    return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()

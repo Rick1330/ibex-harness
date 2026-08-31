@@ -142,8 +142,74 @@ def _validate_memory_row(row: dict[str, Any], prefix: str) -> list[str]:
     content = str(row.get("content", ""))
     if len(content) < 20:
         errors.append(f"{prefix} content too short")
-    if content.startswith("gold ranking") or content.startswith("gold distractor"):
+    if content.startswith(("gold ranking", "gold distractor")):
         errors.append(f"{prefix} content looks like placeholder text")
+    return errors
+
+
+def _validate_query_row(
+    row: dict[str, Any],
+    *,
+    index: int,
+    mem_by_key: dict[str, dict[str, Any]],
+    query_ids: set[str],
+    decay_found: set[str],
+) -> list[str]:
+    prefix = f"queries[{index}]"
+    errors: list[str] = []
+    qid, qid_errors = _require_non_empty_str(row.get("query_id"), "query_id", prefix)
+    errors.extend(qid_errors)
+    if qid is None:
+        return errors
+    if qid in query_ids:
+        errors.append(f"duplicate query_id: {qid}")
+    query_ids.add(qid)
+    if qid in DECAY_QUERY_IDS:
+        decay_found.add(qid)
+
+    _, query_text_errors = _require_non_empty_str(
+        row.get("query_text"), "query_text", prefix
+    )
+    errors.extend(query_text_errors)
+
+    hotspot, hotspot_errors = _parse_int(row.get("query_hotspot"), "query_hotspot", prefix)
+    errors.extend(hotspot_errors)
+    expected = row.get("expected_content_keys")
+    if not isinstance(expected, list) or not expected:
+        errors.append(f"{prefix} expected_content_keys must be non-empty array")
+        return errors
+    for key in expected:
+        if not isinstance(key, str):
+            errors.append(f"{prefix} expected_content_keys items must be strings")
+            continue
+        if key not in mem_by_key:
+            errors.append(f"{prefix} references unknown content_key {key!r}")
+
+    if hotspot is None:
+        return errors
+    cluster = [m for m in mem_by_key.values() if int(m["embedding_hotspot"]) == hotspot]
+    if any(_composite_safe(m) is None for m in cluster):
+        return errors
+    ranked = sorted(cluster, key=lambda m: (-_composite(m), m["content_key"]))
+    actual_order = [m["content_key"] for m in ranked]
+    if actual_order != expected:
+        errors.append(
+            f"{prefix} ({qid}) expected order does not match composite simulation\n"
+            f"  expected: {expected}\n"
+            f"  composite: {actual_order}"
+        )
+    top_key = expected[0]
+    if not isinstance(top_key, str):
+        errors.append(f"{prefix} first expected_content_key must be a string")
+        return errors
+    top_cat = row.get("expected_top_category")
+    if top_key not in mem_by_key:
+        errors.append(f"{prefix} references unknown first expected content_key {top_key!r}")
+    elif mem_by_key[top_key]["category"] != top_cat:
+        errors.append(
+            f"{prefix} expected_top_category {top_cat!r} != "
+            f"first key category {mem_by_key[top_key]['category']!r}"
+        )
     return errors
 
 
@@ -188,63 +254,18 @@ def validate_gold_set(payload: dict[str, Any]) -> list[str]:
     decay_found: set[str] = set()
 
     for index, row in enumerate(queries):
-        prefix = f"queries[{index}]"
         if not isinstance(row, dict):
-            errors.append(f"{prefix} must be an object")
+            errors.append(f"queries[{index}] must be an object")
             continue
-        qid, qid_errors = _require_non_empty_str(row.get("query_id"), "query_id", prefix)
-        errors.extend(qid_errors)
-        if qid is None:
-            continue
-        if qid in query_ids:
-            errors.append(f"duplicate query_id: {qid}")
-        query_ids.add(qid)
-        if qid in DECAY_QUERY_IDS:
-            decay_found.add(qid)
-
-        _, query_text_errors = _require_non_empty_str(
-            row.get("query_text"), "query_text", prefix
+        errors.extend(
+            _validate_query_row(
+                row,
+                index=index,
+                mem_by_key=mem_by_key,
+                query_ids=query_ids,
+                decay_found=decay_found,
+            )
         )
-        errors.extend(query_text_errors)
-
-        hotspot, hotspot_errors = _parse_int(row.get("query_hotspot"), "query_hotspot", prefix)
-        errors.extend(hotspot_errors)
-        expected = row.get("expected_content_keys")
-        if not isinstance(expected, list) or not expected:
-            errors.append(f"{prefix} expected_content_keys must be non-empty array")
-            continue
-        for key in expected:
-            if not isinstance(key, str):
-                errors.append(f"{prefix} expected_content_keys items must be strings")
-                continue
-            if key not in mem_by_key:
-                errors.append(f"{prefix} references unknown content_key {key!r}")
-
-        if hotspot is None:
-            continue
-        cluster = [m for m in mem_by_key.values() if int(m["embedding_hotspot"]) == hotspot]
-        if any(_composite_safe(m) is None for m in cluster):
-            continue
-        ranked = sorted(cluster, key=lambda m: (-_composite(m), m["content_key"]))
-        actual_order = [m["content_key"] for m in ranked]
-        if actual_order != expected:
-            errors.append(
-                f"{prefix} ({qid}) expected order does not match composite simulation\n"
-                f"  expected: {expected}\n"
-                f"  composite: {actual_order}"
-            )
-        top_key = expected[0]
-        if not isinstance(top_key, str):
-            errors.append(f"{prefix} first expected_content_key must be a string")
-            continue
-        top_cat = row.get("expected_top_category")
-        if top_key not in mem_by_key:
-            errors.append(f"{prefix} references unknown first expected content_key {top_key!r}")
-        elif mem_by_key[top_key]["category"] != top_cat:
-            errors.append(
-                f"{prefix} expected_top_category {top_cat!r} != "
-                f"first key category {mem_by_key[top_key]['category']!r}"
-            )
 
     missing_decay = DECAY_QUERY_IDS - decay_found
     if missing_decay:

@@ -43,7 +43,6 @@ def main() -> int:
     p95_raw = parse_finite_float(latest_metrics.get("latency_ms_p95"))
     base_p95_raw = parse_finite_float(baseline_metrics.get("latency_ms_p95"))
     p95 = p95_raw if p95_raw is not None else 0.0
-    base_p95 = base_p95_raw if base_p95_raw is not None else 0.0
 
     checks: list[Check] = [
         (
