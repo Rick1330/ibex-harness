@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
   "benchmark": "ranking_quality",
-  "notes": "Baseline pinned after composite-order alignment on gold_set_v1. CI may refine on first ubuntu-latest run; max_regression_pct=5 allows small hardware variance.",
+  "notes": "E2E gate-failure test: impossible baseline to force regression gate fail in CI",
   "policy": {
     "max_regression_pct": 5.0
   },
   "baseline": {
-    "precision_at_5": 1.0,
+    "precision_at_5": 2.0,
     "recall_at_10": 1.0,
     "mrr": 1.0,
     "top_category_accuracy": 1.0
