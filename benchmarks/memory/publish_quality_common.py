@@ -8,6 +8,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from path_guard import PathResolveOptions, resolve_workspace_path
+
 
 @dataclass(frozen=True, slots=True)
 class RunMeta:
@@ -21,14 +23,30 @@ def gate_status(gate: dict[str, Any]) -> str:
     return "pass" if gate.get("status") == "pass" else "fail"
 
 
+def _resolve_existing_json_path(path: Path) -> Path:
+    return resolve_workspace_path(
+        path,
+        options=PathResolveOptions(must_exist=True),
+    )
+
+
+def _resolve_output_json_path(path: Path) -> Path:
+    return resolve_workspace_path(
+        path,
+        options=PathResolveOptions(allow_create_parent=True),
+    )
+
+
 def load_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
+    resolved = _resolve_existing_json_path(path)
+    return json.loads(resolved.read_text(encoding="utf-8"))
 
 
 def load_or_init_published(published_path: Path, *, benchmark: str) -> dict[str, Any]:
-    if not published_path.exists():
+    resolved = _resolve_output_json_path(published_path)
+    if not resolved.exists():
         return {"schema_version": 1, "benchmark": benchmark, "runs": []}
-    data = load_json(published_path)
+    data = load_json(resolved)
     data.setdefault("schema_version", 1)
     data["benchmark"] = benchmark
     data.setdefault("runs", [])
@@ -36,8 +54,9 @@ def load_or_init_published(published_path: Path, *, benchmark: str) -> dict[str,
 
 
 def write_published(published_path: Path, published: dict[str, Any]) -> None:
-    published_path.parent.mkdir(parents=True, exist_ok=True)
-    published_path.write_text(  # NOSONAR pythonsecurity:S2083,pythonsecurity:S8707
+    resolved = _resolve_output_json_path(published_path)
+    resolved.parent.mkdir(parents=True, exist_ok=True)
+    resolved.write_text(  # NOSONAR pythonsecurity:S2083,pythonsecurity:S8707
         json.dumps(published, indent=2) + "\n",
         encoding="utf-8",
     )
