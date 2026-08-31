@@ -48,7 +48,7 @@ def test_extraction_queue_priority_config() -> None:
     app = create_celery_app(_test_settings())
     assert app.conf.task_queue_max_priority == EXTRACTION_MAX_PRIORITY
     transport = app.conf.broker_transport_options or {}
-    assert transport.get("priority_steps") == list(reversed(range(EXTRACTION_MAX_PRIORITY)))
+    assert transport.get("priority_steps") == list(range(EXTRACTION_MAX_PRIORITY))
     assert transport.get("queue_order_strategy") == "priority"
 
 

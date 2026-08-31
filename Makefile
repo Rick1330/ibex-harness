@@ -186,8 +186,9 @@ worker-dev: ## Run Celery worker locally (all queues; needs Redis)
 		-Q extraction,embedding,maintenance,mcp_audit --loglevel=info
 
 worker-beat-dev: ## Run Celery beat locally (maintenance noop sweep; needs Redis)
+	@mkdir -p services/worker/.local/celerybeat
 	@cd services/worker && .venv/bin/celery -A app.celery_app:celery_app beat \
-		--loglevel=info --schedule=/var/lib/ibex/celerybeat/celerybeat-schedule
+		--loglevel=info --schedule=.local/celerybeat/celerybeat-schedule
 
 worker-ping: ## Celery inspect ping against local worker broker
 	@cd services/worker && .venv/bin/celery -A app.celery_app:celery_app inspect ping --timeout=5

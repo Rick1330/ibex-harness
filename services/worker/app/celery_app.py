@@ -70,8 +70,7 @@ def create_celery_app(settings: Settings | None = None) -> Celery:
         task_default_queue="maintenance",
         task_create_missing_queues=False,
         broker_transport_options={
-            # BRPOP checks keys in list order; highest priority first.
-            "priority_steps": list(reversed(range(EXTRACTION_MAX_PRIORITY))),
+            "priority_steps": list(range(EXTRACTION_MAX_PRIORITY)),
             "queue_order_strategy": "priority",
         },
         task_queue_max_priority=EXTRACTION_MAX_PRIORITY,

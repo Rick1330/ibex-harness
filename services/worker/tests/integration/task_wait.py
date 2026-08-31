@@ -9,7 +9,12 @@ from celery.result import AsyncResult
 
 
 def wait_for_task_success(result: AsyncResult, timeout: float = 10.0) -> None:
-    """Poll until the task reaches a terminal state (works with ignore_result=True)."""
+    """Poll AsyncResult until SUCCESS; task must have been sent with ignore_result=False."""
+    if getattr(result, "ignored", False):
+        msg = (
+            f"task {result.id!r} ignores results; use wait_for_task_total for fire-and-forget tasks"
+        )
+        raise ValueError(msg)
     deadline = time.monotonic() + timeout
     while not result.ready():
         if time.monotonic() > deadline:
@@ -29,8 +34,11 @@ def wait_for_task_total(
 ) -> None:
     """Wait until worker stats show at least *minimum* runs of *task_name*."""
     deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        stats = celery_app.control.inspect(timeout=1.0).stats()
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        stats = celery_app.control.inspect(timeout=min(1.0, remaining)).stats()
         if stats:
             total = sum(node.get("total", {}).get(task_name, 0) for node in stats.values())
             if total >= minimum:

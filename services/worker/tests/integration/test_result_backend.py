@@ -27,11 +27,7 @@ def test_ignore_result_default(
     integration_settings: Settings,
 ) -> None:
     baseline = worker_task_total(celery_app, TASK_EXTRACTION_NOOP)
-    celery_app.send_task(
-        TASK_EXTRACTION_NOOP,
-        queue="extraction",
-        ignore_result=True,
-    )
+    celery_app.send_task(TASK_EXTRACTION_NOOP, queue="extraction")
     wait_for_task_total(celery_app, TASK_EXTRACTION_NOOP, baseline + 1)
     client = redis_sync.Redis.from_url(integration_settings.resolved_result_backend)
     try:

@@ -86,19 +86,21 @@ def test_extraction_priority_order(
     """
     recorded, gate_client = priority_context
 
-    gate_result = celery_app.send_task(_GATE_TASK, queue="extraction")
+    gate_result = celery_app.send_task(_GATE_TASK, queue="extraction", ignore_result=False)
     time.sleep(0.2)
     low = celery_app.send_task(
         _RECORDER_TASK,
         args=(1,),
         queue="extraction",
         priority=1,
+        ignore_result=False,
     )
     high = celery_app.send_task(
         _RECORDER_TASK,
         args=(9,),
         queue="extraction",
         priority=9,
+        ignore_result=False,
     )
 
     gate_client.set(_GATE_KEY, "1")

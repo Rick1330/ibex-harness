@@ -19,6 +19,12 @@ _REDIS_BASE = os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0")
 _QUEUE_DB = int(os.environ.get("REDIS_DB_QUEUE", "1"))
 _RESULTS_DB = int(os.environ.get("REDIS_DB_RESULTS", "3"))
 _FORBIDDEN_FLUSH_DB = 0
+_INTEGRATION_OPT_IN_ENV = "IBEX_WORKER_INTEGRATION_TESTS"
+_LOCAL_REDIS_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
+def _truthy_env(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes"}
 
 
 def _redis_db_index(url: str) -> int:
@@ -32,7 +38,30 @@ def _redis_db_index(url: str) -> int:
     raise ValueError(msg)
 
 
+def _assert_integration_redis_opt_in() -> None:
+    if _truthy_env("CI") or _truthy_env(_INTEGRATION_OPT_IN_ENV):
+        return
+    pytest.fail(
+        f"Worker integration tests flush dedicated Redis DBs. "
+        f"Set {_INTEGRATION_OPT_IN_ENV}=1 or run under CI before executing them."
+    )
+
+
+def _assert_local_redis_base(redis_url: str) -> None:
+    parsed = urlparse(redis_url)
+    host = (parsed.hostname or "").lower()
+    if host in _LOCAL_REDIS_HOSTS:
+        return
+    pytest.fail(
+        f"integration tests refuse non-local Redis endpoint {redis_url!r}; "
+        f"use 127.0.0.1/localhost or set {_INTEGRATION_OPT_IN_ENV}=1 to opt in"
+    )
+
+
 def _assert_dedicated_worker_redis_urls(settings: Settings) -> None:
+    _assert_integration_redis_opt_in()
+    if not _truthy_env(_INTEGRATION_OPT_IN_ENV):
+        _assert_local_redis_base(settings.redis_url)
     broker_url = settings.resolved_broker_url
     result_url = settings.resolved_result_backend
     broker_db = _redis_db_index(broker_url)
