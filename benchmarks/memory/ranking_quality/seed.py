@@ -94,6 +94,9 @@ async def _ensure_org_agent(session_factory: async_sessionmaker[AsyncSession]) -
 
 async def _purge_org_memories(session_factory: async_sessionmaker[AsyncSession]) -> None:
     async with session_factory() as session, session.begin():
+        await session.execute(
+            text("SELECT set_config('app.is_service_account', 'true', true)")  # nosemgrep
+        )
         await with_service_org(session, GOLD_ORG_ID)
         await session.execute(
             text(
@@ -104,6 +107,35 @@ async def _purge_org_memories(session_factory: async_sessionmaker[AsyncSession])
             ),
             {"org_id": str(GOLD_ORG_ID)},
         )
+
+
+async def _seed_memory_row(
+    session_factory: async_sessionmaker[AsyncSession],
+    store: PgVectorStore,
+    row: dict,
+    *,
+    now: datetime,
+) -> tuple[str, UUID]:
+    content_key = str(row["content_key"])
+    age_days = int(row.get("valid_from_days_ago", 30))
+    memory_id = await insert_scored_memory(
+        session_factory,
+        InsertScoredMemoryParams(
+            org_id=GOLD_ORG_ID,
+            agent_id=GOLD_AGENT_ID,
+            content=str(row["content"]),
+            category=str(row["category"]),
+            valid_from=now - timedelta(days=age_days),
+            confidence=float(row.get("confidence", 0.85)),
+            usefulness_score=float(row.get("usefulness_score", 0.5)),
+        ),
+    )
+    hotspot = int(row.get("embedding_hotspot", 0))
+    if hotspot < 0 or hotspot >= len(zero_embedding()):
+        msg = f"embedding_hotspot out of range for {content_key}"
+        raise ValueError(msg)
+    await upsert_embedding(store, org_id=GOLD_ORG_ID, memory_id=memory_id, hotspot=hotspot)
+    return content_key, memory_id
 
 
 async def seed_gold_set(
@@ -133,30 +165,15 @@ async def seed_gold_set(
         if not isinstance(row, dict):
             msg = "memory row must be an object"
             raise ValueError(msg)
-        content_key = str(row["content_key"])
-        age_days = int(row.get("valid_from_days_ago", 30))
-        memory_id = await insert_scored_memory(
-            session_factory,
-            InsertScoredMemoryParams(
-                org_id=GOLD_ORG_ID,
-                agent_id=GOLD_AGENT_ID,
-                content=str(row["content"]),
-                category=str(row["category"]),
-                valid_from=now - timedelta(days=age_days),
-                confidence=float(row.get("confidence", 0.85)),
-                usefulness_score=float(row.get("usefulness_score", 0.5)),
-            ),
-        )
-        hotspot = int(row.get("embedding_hotspot", 0))
-        if hotspot < 0 or hotspot >= len(zero_embedding()):
-            msg = f"embedding_hotspot out of range for {content_key}"
-            raise ValueError(msg)
-        await upsert_embedding(
-            store, org_id=GOLD_ORG_ID, memory_id=memory_id, hotspot=hotspot
+        content_key, memory_id = await _seed_memory_row(
+            session_factory, store, row, now=now
         )
         content_key_to_id[content_key] = memory_id
 
     async with session_factory() as session, session.begin():
+        await session.execute(
+            text("SELECT set_config('app.is_service_account', 'true', true)")  # nosemgrep
+        )
         await with_service_org(session, GOLD_ORG_ID)
         await session.execute(text("ANALYZE ibex_core.memories"))  # nosemgrep
 

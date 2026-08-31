@@ -42,7 +42,15 @@ DEFAULT_OUTPUT = _DIR / "output" / "latest.json"
 DEFAULT_ITERATIONS = 40
 
 
-def _async_dsn() -> str:
+def _to_asyncpg_dsn(raw: str) -> str:
+    if raw.startswith("postgres://"):
+        return "postgresql+asyncpg://" + raw[len("postgres://") :]
+    if raw.startswith("postgresql://") and "+asyncpg" not in raw.split("://", 1)[0]:
+        return "postgresql+asyncpg://" + raw[len("postgresql://") :]
+    return raw
+
+
+def _resolve_bench_dsn() -> str:
     allow_prod = os.getenv("IBEX_BENCH_ALLOW_PRODUCTION_DSN", "").strip() in {
         "1",
         "true",
@@ -57,11 +65,11 @@ def _async_dsn() -> str:
             "(set IBEX_BENCH_ALLOW_PRODUCTION_DSN=1 to use POSTGRES_DSN)"
         )
         raise RuntimeError(msg)
-    if raw.startswith("postgres://"):
-        return "postgresql+asyncpg://" + raw[len("postgres://") :]
-    if raw.startswith("postgresql://") and "+asyncpg" not in raw.split("://", 1)[0]:
-        return "postgresql+asyncpg://" + raw[len("postgresql://") :]
-    return raw
+    return _to_asyncpg_dsn(raw)
+
+
+def _async_dsn() -> str:
+    return _resolve_bench_dsn()
 
 
 def _percentile(values: list[float], pct: float) -> float:

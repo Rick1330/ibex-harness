@@ -63,6 +63,15 @@ class RegressionGateCommonTests(unittest.TestCase):
         )
         self.assertFalse(all(passed for *_, passed in checks))
 
+    def test_invalid_baseline_metric_fails(self) -> None:
+        checks = gate.build_metric_checks(
+            {"precision_at_5": 0.97},
+            {"precision_at_5": None},
+            max_regression_pct=5.0,
+        )
+        self.assertFalse(all(passed for *_, passed in checks))
+        self.assertTrue(any("baseline valid" in name for name, *_ in checks))
+
 
 if __name__ == "__main__":
     unittest.main()

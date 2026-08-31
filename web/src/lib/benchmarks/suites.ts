@@ -34,7 +34,7 @@ export const PROXY_SUITE: BenchmarkSuite = {
 
 export const HNSW_SUITE: BenchmarkSuite = {
   id: "hnsw",
-  label: "Memory HNSW",
+  label: "HNSW",
   basePath: "/benchmarks/memory",
   dataUrl: "/benchmarks/hnsw-benchmark-data.json",
   navPages: [
