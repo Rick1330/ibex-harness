@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from functools import lru_cache
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -13,9 +13,18 @@ _QUEUE_NAMES: tuple[str, ...] = ("extraction", "embedding", "maintenance", "mcp_
 
 
 def redis_url_with_db(base_url: str, db_index: int) -> str:
-    """Return *base_url* with its path replaced by ``/{db_index}``."""
+    """Return Redis URL with logical DB *db_index* applied.
+
+    - ``redis://`` / ``rediss://`` — replace path ``/{db}``
+    - ``unix://`` — convert to Celery ``redis+socket://`` with ``virtual_host``
+    """
     parsed = urlparse(base_url.strip())
-    if parsed.scheme not in {"redis", "rediss", "unix"}:
+    if parsed.scheme == "unix":
+        socket_path = parsed.path
+        query = parse_qs(parsed.query)
+        query["virtual_host"] = [str(db_index)]
+        return f"redis+socket://{socket_path}?{urlencode(query, doseq=True)}"
+    if parsed.scheme not in {"redis", "rediss"}:
         msg = f"unsupported Redis URL scheme: {parsed.scheme!r}"
         raise ValueError(msg)
     return urlunparse(parsed._replace(path=f"/{db_index}"))
@@ -83,14 +92,31 @@ class Settings(BaseSettings):
     worker_concurrency: int = Field(default=4, ge=1)
     worker_prefetch_multiplier: int = Field(default=4, ge=1)
     worker_max_tasks_per_child: int = Field(default=1000, ge=1)
+    worker_hostname: str = Field(
+        default="ibex-worker@%h",
+        description="Stable Celery nodename (%h expands to hostname)",
+    )
+    beat_schedule_file: str = Field(
+        default="/var/lib/ibex/celerybeat/celerybeat-schedule",
+        description="Path for Celery beat schedule persistence",
+    )
 
-    @field_validator("broker_url", "result_backend", "redis_url", mode="before")
+    @field_validator("broker_url", "result_backend", mode="before")
     @classmethod
-    def _empty_to_none(cls, value: object) -> object:
+    def _empty_optional_to_none(cls, value: object) -> object:
         if value is None:
             return None
         if isinstance(value, str) and not value.strip():
             return None
+        return value
+
+    @field_validator("redis_url", mode="before")
+    @classmethod
+    def _empty_redis_to_default(cls, value: object) -> object:
+        if value is None:
+            return "redis://127.0.0.1:6379/0"
+        if isinstance(value, str) and not value.strip():
+            return "redis://127.0.0.1:6379/0"
         return value
 
     @property
@@ -113,9 +139,13 @@ class Settings(BaseSettings):
         has_redis_env = bool(
             os.getenv("REDIS_URL", "").strip()
             or os.getenv("IBEX_EXTRACTION_REDIS_URL", "").strip()
+            or os.getenv("IBEX_WORKER_REDIS_URL", "").strip()
         )
         if not has_broker_env and not has_redis_env:
-            msg = "IBEX_WORKER_BROKER_URL or REDIS_URL required when IBEX_ENV=production"
+            msg = (
+                "IBEX_WORKER_BROKER_URL or REDIS_URL / IBEX_EXTRACTION_REDIS_URL / "
+                "IBEX_WORKER_REDIS_URL required when IBEX_ENV=production"
+            )
             raise ValueError(msg)
         return self
 

@@ -10,6 +10,8 @@ import pytest
 from celery import Celery
 from celery.contrib.testing.worker import start_worker
 
+from tests.integration.task_wait import wait_for_task_success
+
 pytestmark = pytest.mark.integration
 
 _GATE_TASK = "ibex.worker.test.priority_gate"
@@ -72,9 +74,9 @@ def test_extraction_priority_order(
         priority=9,
     )
 
-    high.get(timeout=10)
-    low.get(timeout=10)
+    wait_for_task_success(high)
+    wait_for_task_success(low)
     gate.set()
-    gate_result.get(timeout=10)
+    wait_for_task_success(gate_result)
 
     assert recorded.index(9) < recorded.index(1)

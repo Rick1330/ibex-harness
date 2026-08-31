@@ -30,6 +30,7 @@ class JsonFormatter(logging.Formatter):
             "agent_id",
             "duration_ms",
             "queue",
+            "trace_id",
         ):
             if hasattr(record, key):
                 payload[key] = getattr(record, key)

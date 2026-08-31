@@ -62,3 +62,4 @@ def test_result_policy_defaults() -> None:
     app = create_celery_app(_test_settings())
     assert app.conf.task_ignore_result is True
     assert app.conf.result_expires == 3600
+    assert app.conf.worker_concurrency == 4

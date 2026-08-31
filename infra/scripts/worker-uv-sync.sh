@@ -14,4 +14,5 @@ if [[ ! -f "$WORKER_DIR/uv.lock" ]]; then
 fi
 
 cd "$WORKER_DIR"
-uv sync --frozen --extra dev --no-install-project
+# Wheels only: --no-build blocks third-party sdist setup.py execution (Sonar S8541).
+uv sync --frozen --no-build --extra dev --no-install-project

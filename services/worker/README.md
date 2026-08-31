@@ -12,8 +12,10 @@ audit tasks. **Skeleton only in m3.5.A.1** — business logic lands in Tracks B�
 | Rate limiting | 2 | `REDIS_DB_RATE_LIMIT` |
 | **Celery results** | 3 | `REDIS_DB_RESULTS` |
 
-Override full URLs with `IBEX_WORKER_BROKER_URL` / `IBEX_WORKER_RESULT_BACKEND`, or set
-`IBEX_EXTRACTION_REDIS_URL` for a dedicated broker host (falls back to `REDIS_URL`).
+Override broker-only with `IBEX_WORKER_BROKER_URL` or result-only with
+`IBEX_WORKER_RESULT_BACKEND`. Set `IBEX_EXTRACTION_REDIS_URL` (or `REDIS_URL`) to change
+the **shared base host** used to derive **both** broker and result-backend URLs
+(unless overridden individually).
 
 > **Note:** `TECH_STACK.md` shows broker `/0` and result `/1` — worker uses the
 > `ENVIRONMENT_VARIABLES.md` DB allocation above to avoid cache key collisions.
@@ -58,9 +60,9 @@ Or use Makefile targets: `make worker-dev`, `make worker-beat-dev`, `make test-w
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `IBEX_WORKER_BROKER_URL` | derived | Full Celery broker URL |
-| `IBEX_WORKER_RESULT_BACKEND` | derived | Full result backend URL |
-| `REDIS_URL` | — | Base URL for derived broker/results |
+| `IBEX_WORKER_BROKER_URL` | derived | Full Celery broker URL (broker-only override) |
+| `IBEX_WORKER_RESULT_BACKEND` | derived | Full result backend URL (result-only override) |
+| `REDIS_URL` | `redis://127.0.0.1:6379/0` | Shared base URL for derived broker/results |
 | `REDIS_DB_QUEUE` | `1` | Broker logical DB |
 | `REDIS_DB_RESULTS` | `3` | Result backend logical DB |
 | `IBEX_WORKER_MAINTENANCE_BEAT_SECONDS` | `300` | Beat interval for noop sweep |

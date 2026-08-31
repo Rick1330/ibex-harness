@@ -6,7 +6,7 @@ endif
 
 DEV_TOOL := infra/scripts/dev-tool.sh
 
-.PHONY: help lint-docs lint-go security-scan repo-guards proto-lint proto-breaking proto-gen proto-test proto-test-integration test-integration test-embedder test-mcp-memory test-memory test-memory-integration test-worker test-worker-integration coverage-embedder-gate coverage-mcp-memory-gate coverage-memory-gate coverage-worker-gate memory-bench memory-bench-smoke coverage-report coverage-gate coverage-responsepipeline-gate compose-dev-up compose-dev-down compose-dev-reset compose-dev-logs compose-dev-ps compose-test-up compose-test-down observability-up observability-down observability-smoke observability-traffic observability-live-verify db-migrate db-migrate-down db-version db-seed db-repair-token-fks clickhouse-migrate clickhouse-migrate-down clickhouse-version dev-smoke dev-smoke-live e2e-wave2b-token-fks e2e-phase25 e2e-smoke-p3-memory verify-phase15 verify-phase25 mcp-conformance worker-dev worker-beat-dev worker-ping
+.PHONY: help lint-docs lint-go security-scan repo-guards proto-lint proto-breaking proto-gen proto-test proto-test-integration test-integration test-embedder test-mcp-memory test-memory test-memory-integration test-worker test-worker-integration test-clickhouse-migrate test-clickhouse-migrate-integration coverage-embedder-gate coverage-mcp-memory-gate coverage-memory-gate coverage-worker-gate memory-bench memory-bench-smoke coverage-report coverage-gate coverage-responsepipeline-gate compose-dev-up compose-dev-down compose-dev-reset compose-dev-logs compose-dev-ps compose-test-up compose-test-down observability-up observability-down observability-smoke observability-traffic observability-live-verify db-migrate db-migrate-down db-version db-seed db-repair-token-fks clickhouse-migrate clickhouse-migrate-down clickhouse-version dev-smoke dev-smoke-live e2e-wave2b-token-fks e2e-phase25 e2e-smoke-p3-memory verify-phase15 verify-phase25 mcp-conformance worker-dev worker-beat-dev worker-ping
 
 help: ## Show available commands
 	@"$(BASH)" "$(DEV_TOOL)" help
@@ -182,10 +182,12 @@ mcp-conformance: ## MCP stub HTTP protocol checks (G6.M1 / exit criterion 7 evid
 
 worker-dev: ## Run Celery worker locally (all queues; needs Redis)
 	@cd services/worker && .venv/bin/celery -A app.celery_app:celery_app worker \
+		-n ibex-worker@%h \
 		-Q extraction,embedding,maintenance,mcp_audit --loglevel=info
 
 worker-beat-dev: ## Run Celery beat locally (maintenance noop sweep; needs Redis)
-	@cd services/worker && .venv/bin/celery -A app.celery_app:celery_app beat --loglevel=info
+	@cd services/worker && .venv/bin/celery -A app.celery_app:celery_app beat \
+		--loglevel=info --schedule=/var/lib/ibex/celerybeat/celerybeat-schedule
 
 worker-ping: ## Celery inspect ping against local worker broker
 	@cd services/worker && .venv/bin/celery -A app.celery_app:celery_app inspect ping --timeout=5

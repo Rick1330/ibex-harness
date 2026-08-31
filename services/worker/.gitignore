@@ -8,5 +8,5 @@ coverage*.xml
 *.egg-info/
 dist/
 build/
-celerybeat-schedule
+celerybeat-schedule*
 celerybeat.pid

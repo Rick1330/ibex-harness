@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterator
+from urllib.parse import urlparse
 
 import pytest
 import redis as redis_sync
@@ -17,6 +18,33 @@ from app.config import Settings, get_settings
 _REDIS_BASE = os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0")
 _QUEUE_DB = int(os.environ.get("REDIS_DB_QUEUE", "1"))
 _RESULTS_DB = int(os.environ.get("REDIS_DB_RESULTS", "3"))
+_FORBIDDEN_FLUSH_DB = 0
+
+
+def _redis_db_index(url: str) -> int:
+    parsed = urlparse(url)
+    if parsed.scheme in {"redis", "rediss"}:
+        return int(parsed.path.lstrip("/") or "0")
+    if parsed.scheme == "redis+socket":
+        query = dict(part.split("=", 1) for part in parsed.query.split("&") if "=" in part)
+        return int(query.get("virtual_host", "0"))
+    msg = f"unsupported Redis URL for integration flush guard: {url!r}"
+    raise ValueError(msg)
+
+
+def _assert_dedicated_worker_redis_urls(settings: Settings) -> None:
+    broker_url = settings.resolved_broker_url
+    result_url = settings.resolved_result_backend
+    broker_db = _redis_db_index(broker_url)
+    result_db = _redis_db_index(result_url)
+    if broker_db == _FORBIDDEN_FLUSH_DB:
+        pytest.fail(f"broker URL must not target cache DB {_FORBIDDEN_FLUSH_DB}: {broker_url}")
+    if result_db == _FORBIDDEN_FLUSH_DB:
+        pytest.fail(f"result URL must not target cache DB {_FORBIDDEN_FLUSH_DB}: {result_url}")
+    if broker_db == result_db:
+        pytest.fail(
+            f"broker and result backends must use separate DB indices (both {broker_db})"
+        )
 
 
 @pytest.fixture(scope="session")
@@ -54,6 +82,7 @@ def celery_app(integration_settings: Settings) -> Celery:
 @pytest.fixture(autouse=True)
 def flush_worker_redis_dbs(integration_settings: Settings) -> Iterator[None]:
     """Flush only broker/result DBs — never DB 0 (shared cache)."""
+    _assert_dedicated_worker_redis_urls(integration_settings)
     clients = [
         redis_sync.Redis.from_url(integration_settings.resolved_broker_url),
         redis_sync.Redis.from_url(integration_settings.resolved_result_backend),

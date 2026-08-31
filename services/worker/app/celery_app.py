@@ -42,8 +42,8 @@ def create_celery_app(settings: Settings | None = None) -> Celery:
     configure_logging()
     cfg = settings or get_settings()
 
-    app = Celery("ibex_worker")
-    app.conf.update(
+    celery = Celery("ibex_worker")
+    celery.conf.update(
         broker_url=cfg.resolved_broker_url,
         result_backend=cfg.resolved_result_backend,
         task_serializer="json",
@@ -53,8 +53,10 @@ def create_celery_app(settings: Settings | None = None) -> Celery:
         result_expires=cfg.result_expires_seconds,
         task_acks_late=True,
         task_reject_on_worker_lost=True,
+        worker_concurrency=cfg.worker_concurrency,
         worker_prefetch_multiplier=cfg.worker_prefetch_multiplier,
         worker_max_tasks_per_child=cfg.worker_max_tasks_per_child,
+        worker_hostname=cfg.worker_hostname,
         task_queues=_build_task_queues(),
         task_routes=TASK_ROUTES,
         task_default_queue=None,
@@ -73,18 +75,18 @@ def create_celery_app(settings: Settings | None = None) -> Celery:
         },
         imports=("app.tasks",),
     )
-    app.set_default()
-    return app
+    celery.set_default()
+    return celery
 
 
-def registered_task_names(app: Celery) -> tuple[str, ...]:
+def registered_task_names(celery_app: Celery) -> tuple[str, ...]:
     """Return sorted registered task names (excluding Celery builtins)."""
-    return tuple(sorted(name for name in app.tasks if name.startswith("ibex.worker.")))
+    return tuple(sorted(name for name in celery_app.tasks if name.startswith("ibex.worker.")))
 
 
-def route_for_task(app: Celery, task_name: str) -> str:
+def route_for_task(celery_app: Celery, task_name: str) -> str:
     """Resolve the queue a task name routes to (raises if unmapped)."""
-    routes = app.conf.task_routes or {}
+    routes = celery_app.conf.task_routes or {}
     entry = routes.get(task_name)
     if entry is None:
         msg = f"no route for task {task_name!r}"

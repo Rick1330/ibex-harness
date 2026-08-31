@@ -30,6 +30,22 @@ def test_ibex_task_after_return_logs_failure(caplog: pytest.LogCaptureFixture) -
     assert any(record.levelname == "ERROR" for record in caplog.records)
 
 
+def test_ibex_task_after_return_logs_success_with_context(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.INFO)
+    task = IbexTask()
+    task.name = "ibex.worker.test.sample"
+    task.before_start("task-id-4", (), {"org_id": "org-1", "agent_id": "agent-1"})
+    task.after_return(
+        "SUCCESS",
+        {"ok": True},
+        "task-id-4",
+        (),
+        {"org_id": "org-1", "agent_id": "agent-1"},
+        None,
+    )
+    assert any("task_complete" in record.message for record in caplog.records)
+
+
 def test_ibex_task_after_return_logs_success(caplog: pytest.LogCaptureFixture) -> None:
     caplog.set_level(logging.INFO)
     task = IbexTask()

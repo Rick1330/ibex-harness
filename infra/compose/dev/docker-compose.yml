@@ -94,6 +94,7 @@ services:
         "app.celery_app:celery_app",
         "beat",
         "--loglevel=info",
+        "--schedule=/var/lib/ibex/celerybeat/celerybeat-schedule",
       ]
     environment:
       REDIS_URL: redis://redis:6379/0

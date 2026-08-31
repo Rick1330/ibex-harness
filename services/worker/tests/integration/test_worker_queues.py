@@ -12,6 +12,7 @@ from app.task_names import (
     TASK_MAINTENANCE_NOOP_SWEEP,
     TASK_MCP_AUDIT_NOOP,
 )
+from tests.integration.task_wait import wait_for_task_success
 
 pytestmark = pytest.mark.integration
 
@@ -31,8 +32,13 @@ def test_noop_consumed_per_queue(
     task_name: str,
     queue: str,
 ) -> None:
-    result: AsyncResult = celery_app.send_task(task_name, queue=queue)
-    payload = result.get(timeout=10)
+    result: AsyncResult = celery_app.send_task(
+        task_name,
+        queue=queue,
+        ignore_result=False,
+    )
+    wait_for_task_success(result)
+    payload = result.get(timeout=1)
     assert payload is not None
     if task_name == TASK_MAINTENANCE_NOOP_SWEEP:
         assert payload["status"] == "noop"

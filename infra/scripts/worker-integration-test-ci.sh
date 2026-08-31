@@ -6,8 +6,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WORKER_DIR="$ROOT/services/worker"
 
 if [[ ! -f "$WORKER_DIR/pyproject.toml" ]]; then
-  echo "services/worker not present — skipping worker integration tests"
-  exit 0
+  echo "services/worker not present — worker integration tests required in CI" >&2
+  exit 1
 fi
 
 export REDIS_URL="${REDIS_URL:-redis://127.0.0.1:6379/0}"

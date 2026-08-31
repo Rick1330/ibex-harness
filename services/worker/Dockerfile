@@ -31,13 +31,16 @@ FROM python@sha256:b64e9d3a71eddaa1b3f80c04abf292b3139e3b7c4dd272d19c31dc1f91194
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PATH="/app/.venv/bin:$PATH"
+    PATH="/app/.venv/bin:$PATH" \
+    IBEX_WORKER_BEAT_SCHEDULE_FILE=/var/lib/ibex/celerybeat/celerybeat-schedule
 
 RUN apt-get update \
     && apt-get upgrade -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd -g 10001 ibex \
-    && useradd -u 10001 -g ibex -r -s /sbin/nologin ibex
+    && useradd -u 10001 -g ibex -r -s /sbin/nologin ibex \
+    && mkdir -p /var/lib/ibex/celerybeat \
+    && chown -R ibex:ibex /var/lib/ibex
 
 WORKDIR /app
 
@@ -53,5 +56,6 @@ HEALTHCHECK --interval=15s --timeout=10s --start-period=30s --retries=3 \
     CMD ["./scripts/healthcheck.sh"]
 
 CMD ["celery", "-A", "app.celery_app:celery_app", "worker", \
+     "-n", "ibex-worker@%h", \
      "-Q", "extraction,embedding,maintenance,mcp_audit", \
      "--loglevel=info"]

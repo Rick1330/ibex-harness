@@ -414,19 +414,26 @@ Preferred starting models in the roadmap: **GPU/prod** `bge-m3` (1024-dim); **CP
 ### Worker service (Celery — m3.5.A.1+)
 
 Used by: **`services/worker/`** — see [services/worker/README.md](../../services/worker/README.md).
+Canonical settings use `IBEX_WORKER_*`. Legacy `CELERY_*` names in §13 are **not read** by the
+worker unless explicitly aliased in a future milestone.
 
 | Variable | Required | Default | Description | Notes |
 |----------|----------|---------|-------------|-------|
-| `IBEX_WORKER_BROKER_URL` | Conditional | derived | Full Celery broker URL | Overrides `REDIS_URL` + `REDIS_DB_QUEUE` |
-| `IBEX_WORKER_RESULT_BACKEND` | Conditional | derived | Full Celery result-backend URL | Overrides `REDIS_URL` + `REDIS_DB_RESULTS` |
-| `IBEX_EXTRACTION_REDIS_URL` | No | falls back to `REDIS_URL` | Optional dedicated Redis host for broker derivation | Secret if password present |
+| `IBEX_WORKER_BROKER_URL` | Conditional | derived | Full Celery broker URL | Broker-only override |
+| `IBEX_WORKER_RESULT_BACKEND` | Conditional | derived | Full Celery result-backend URL | Result-only override |
+| `IBEX_EXTRACTION_REDIS_URL` | No | falls back to `REDIS_URL` | Shared Redis base for **both** derived broker and result URLs | Not broker-only |
+| `IBEX_WORKER_REDIS_URL` | No | falls back to `REDIS_URL` | Alias of shared Redis base | Same derivation as `REDIS_URL` |
 | `IBEX_WORKER_MAINTENANCE_BEAT_SECONDS` | No | `300` | Beat interval for maintenance noop sweep | Tunable in tests |
 | `IBEX_WORKER_RESULT_EXPIRES_SECONDS` | No | `3600` | Result TTL when `ignore_result=False` | Global default ignores results |
-| `IBEX_WORKER_WORKER_CONCURRENCY` | No | `4` | Default worker concurrency hint | Compose/Makefile may override |
+| `IBEX_WORKER_WORKER_CONCURRENCY` | No | `4` | Worker concurrency | Compose/Makefile may override |
+| `IBEX_WORKER_WORKER_HOSTNAME` | No | `ibex-worker@%h` | Celery nodename for inspect/health | `%h` = hostname |
+| `IBEX_WORKER_BEAT_SCHEDULE_FILE` | No | `/var/lib/ibex/celerybeat/celerybeat-schedule` | Beat persistence path | Writable in container image |
+| `REDIS_URL` | No | `redis://127.0.0.1:6379/0` | Shared Redis base when worker URL unset | Dev default in `Settings` |
 | `REDIS_DB_QUEUE` | No | `1` | Broker logical DB (see §6) | Celery list keys |
 | `REDIS_DB_RESULTS` | No | `3` | Result backend logical DB (see §6) | `celery-task-meta-*` keys |
 
-Production (`IBEX_ENV=production`): require `IBEX_WORKER_BROKER_URL` or `REDIS_URL` / `IBEX_EXTRACTION_REDIS_URL` in the environment.
+Production (`IBEX_ENV=production`): require `IBEX_WORKER_BROKER_URL` or one of
+`REDIS_URL` / `IBEX_EXTRACTION_REDIS_URL` / `IBEX_WORKER_REDIS_URL` in the environment.
 
 ### Context assembly knobs (Phase 3.5+)
 
@@ -505,10 +512,14 @@ Used by: **api**, **proxy**, **workers**, **dashboard**
 
 Used by: **worker service** (preferred start: Phase **3.5** extraction; Phase **4.5** intelligence jobs)
 
+**Shipped m3.5.A.1:** the worker reads **`IBEX_WORKER_*`** settings (§11 Worker service), not the
+generic `CELERY_*` names below. Treat this table as legacy / cross-project reference until
+aliases are added explicitly.
+
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `CELERY_BROKER_URL` | Yes | (none) | Redis broker URL | Secret if includes password |
-| `CELERY_RESULT_BACKEND` | No | (same as broker) | Where results stored | Prefer short TTL / ignore-result for fire-and-forget extraction |
+| `CELERY_BROKER_URL` | Legacy | (none) | **Not read by worker** — use `IBEX_WORKER_BROKER_URL` |
+| `CELERY_RESULT_BACKEND` | Legacy | (same as broker) | **Not read by worker** — use `IBEX_WORKER_RESULT_BACKEND` |
 | `CELERY_RESULT_EXPIRES` | No | `3600` | Result key TTL (seconds) | Avoid unbounded Redis growth |
 | `CELERY_TASK_IGNORE_RESULT` | No | `true` | Default ignore-result for extraction | Opt in per task when visibility needed |
 | `CELERY_CONCURRENCY` | No | `4` | Worker processes/threads | Tune per CPU |

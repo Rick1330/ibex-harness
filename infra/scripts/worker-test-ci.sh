@@ -6,8 +6,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 WORKER_DIR="$ROOT/services/worker"
 
 if [[ ! -f "$WORKER_DIR/pyproject.toml" ]]; then
-  echo "services/worker not present — skipping worker tests"
-  exit 0
+  echo "services/worker not present — worker tests required in CI" >&2
+  exit 1
 fi
 
 cd "$WORKER_DIR"
