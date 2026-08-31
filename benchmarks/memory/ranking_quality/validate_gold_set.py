@@ -164,7 +164,6 @@ def _validate_expected_content_keys(
 
 
 def _validate_query_composite_order(
-    row: dict[str, Any],
     *,
     prefix: str,
     qid: str,
@@ -246,7 +245,6 @@ def _validate_query_row(
         return errors
     errors.extend(
         _validate_query_composite_order(
-            row,
             prefix=prefix,
             qid=qid,
             hotspot=hotspot,
