@@ -6,7 +6,7 @@ endif
 
 DEV_TOOL := infra/scripts/dev-tool.sh
 
-.PHONY: help lint-docs lint-go security-scan repo-guards proto-lint proto-breaking proto-gen proto-test proto-test-integration test-integration test-embedder test-mcp-memory test-memory test-memory-integration test-clickhouse-migrate test-clickhouse-migrate-integration coverage-embedder-gate coverage-mcp-memory-gate coverage-memory-gate memory-bench memory-bench-smoke coverage-report coverage-gate coverage-responsepipeline-gate compose-dev-up compose-dev-down compose-dev-reset compose-dev-logs compose-dev-ps compose-test-up compose-test-down observability-up observability-down observability-smoke observability-traffic observability-live-verify db-migrate db-migrate-down db-version db-seed db-repair-token-fks clickhouse-migrate clickhouse-migrate-down clickhouse-version dev-smoke dev-smoke-live e2e-wave2b-token-fks e2e-phase25 e2e-smoke-p3-memory verify-phase15 verify-phase25 mcp-conformance
+.PHONY: help lint-docs lint-go security-scan repo-guards proto-lint proto-breaking proto-gen proto-test proto-test-integration test-integration test-embedder test-mcp-memory test-memory test-memory-integration test-worker test-worker-integration test-clickhouse-migrate test-clickhouse-migrate-integration coverage-embedder-gate coverage-mcp-memory-gate coverage-memory-gate coverage-worker-gate memory-bench memory-bench-smoke coverage-report coverage-gate coverage-responsepipeline-gate compose-dev-up compose-dev-down compose-dev-reset compose-dev-logs compose-dev-ps compose-test-up compose-test-down observability-up observability-down observability-smoke observability-traffic observability-live-verify db-migrate db-migrate-down db-version db-seed db-repair-token-fks clickhouse-migrate clickhouse-migrate-down clickhouse-version dev-smoke dev-smoke-live e2e-wave2b-token-fks e2e-phase25 e2e-smoke-p3-memory verify-phase15 verify-phase25 mcp-conformance worker-dev worker-beat-dev worker-ping
 
 help: ## Show available commands
 	@"$(BASH)" "$(DEV_TOOL)" help
@@ -53,6 +53,12 @@ test-memory: ## Run Python memory service unit tests (services/memory)
 test-memory-integration: ## Run memory PgVectorStore integration tests (needs Postgres + migrate)
 	@"$(BASH)" infra/scripts/memory-integration-test-ci.sh
 
+test-worker: ## Run Python worker service unit tests (services/worker)
+	@"$(BASH)" infra/scripts/worker-test-ci.sh
+
+test-worker-integration: ## Run worker Redis integration tests (needs Redis)
+	@"$(BASH)" infra/scripts/worker-integration-test-ci.sh
+
 memory-bench-smoke: ## Run memory HNSW bench at 10K (needs Postgres + migrate)
 	@MEMORY_BENCH_SIZES="10000" "$(BASH)" infra/scripts/memory-bench.sh
 
@@ -73,6 +79,9 @@ coverage-embedder-gate: ## Fail if embedder app coverage is below MIN_COVERAGE (
 
 coverage-memory-gate: ## Fail if memory app coverage is below MIN_COVERAGE (default 90)
 	@"$(BASH)" infra/scripts/coverage-memory-gate.sh
+
+coverage-worker-gate: ## Fail if worker app coverage is below MIN_COVERAGE (default 90)
+	@"$(BASH)" infra/scripts/coverage-worker-gate.sh
 
 coverage-mcp-memory-gate: ## Fail if mcp-memory app coverage is below MIN_COVERAGE (default 90)
 	@"$(BASH)" infra/scripts/coverage-mcp-memory-gate.sh
@@ -170,3 +179,16 @@ e2e-smoke-p3-memory: ## Phase 3 memory HTTP lifecycle e2e (compose-test stack)
 
 mcp-conformance: ## MCP stub HTTP protocol checks (G6.M1 / exit criterion 7 evidence)
 	@"$(BASH)" infra/scripts/mcp-conformance.sh
+
+worker-dev: ## Run Celery worker locally (all queues; needs Redis)
+	@cd services/worker && .venv/bin/celery -A app.celery_app:celery_app worker \
+		-n ibex-worker@%h \
+		-Q extraction,embedding,maintenance,mcp_audit --loglevel=info
+
+worker-beat-dev: ## Run Celery beat locally (maintenance noop sweep; needs Redis)
+	@mkdir -p services/worker/.local/celerybeat
+	@cd services/worker && .venv/bin/celery -A app.celery_app:celery_app beat \
+		--loglevel=info --schedule=.local/celerybeat/celerybeat-schedule
+
+worker-ping: ## Celery inspect ping against local worker broker
+	@cd services/worker && .venv/bin/celery -A app.celery_app:celery_app inspect ping --timeout=5

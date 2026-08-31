@@ -17,6 +17,7 @@ The public marketing/docs/benchmarks site lives in `web/` (Phase 1.5+), not unde
 | `embedder/` | Python FastAPI — embedding contract + backends (stub / TEI / hosted profiles), `/health`/`/ready` | **Shipped (Phase 2.5 / ADR-0046)** |
 | `mcp-memory/` | Python — MCP resource server: Streamable HTTP, Auth gRPC fail-closed boundary, stub `search_memory`/`write_memory`, `mcp_tool_calls` audit | **Partial (2.5.G6.M1 / ADR-0050)** — real tool bodies in 3.5 |
 | `memory/` | Python FastAPI — memory substrate: probes, scoring v2, VectorStore/PgVectorStore, embedder HTTP client, full write pipeline (`POST /v1/memories`: PII → dedup → conflict → persist → cache/index, multi-label `labels[]`) | **In progress (Phase 3)** — Tracks A–B + C complete; Track D read path next |
+| `worker/` | Python Celery — extraction, embedding, maintenance, mcp_audit queues; beat skeleton; `IbexTask` retry base | **In progress (Phase 3.5.A.1)** — skeleton shipped; observability/DLQ in A.2 |
 
 ---
 
@@ -25,7 +26,6 @@ The public marketing/docs/benchmarks site lives in `web/` (Phase 1.5+), not unde
 | Directory | Role | Preferred phase | Notes |
 | --- | --- | --- | --- |
 | `tokenizer-service/` | Python FastAPI — accurate token counts via Hugging Face `tokenizers` (optional dual-path with in-process Go/CGo in the proxy) | **2.5** | Situational: may be deferred if proxy-side counting alone proves sufficient for early budgets |
-| `worker/` | Python Celery (+ Redis) — extraction, embedding jobs, maintenance, later fingerprint/drift/regression tasks | **3.5** (intelligence jobs continue in **4.5**) | Preferred starting worker stack; alternatives (e.g. Temporal) only with evidence |
 | `context/` | Python gRPC — context assembly (budget, retrieve, score, pack, format) with degradation contract | **3.5** | Hot-path dependency of the proxy via `packages/contextclient` |
 | `api/` | Python FastAPI — management plane CRUD (orgs, users, agents, tokens, provider credentials, rate-limit config, …) | **4** | Operator/control plane; not the LLM proxy |
 | `dashboard/` | Next.js — operator UI (agents, memories, traces, drift, directives, analytics, cost governance) | **4** | Separate from the public `web/` site |
