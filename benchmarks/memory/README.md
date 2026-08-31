@@ -63,6 +63,20 @@ CI validates the published file with `benchmarks/scripts/validate_published_hnsw
 `post-hnsw-pr-comment` (stale `BENCHMARK_BOT_RELEASE_TAG` is ignored when it does not
 match `BENCHMARK_BOT_SHA`).
 
+## Memory CI regression gates (3.E.3)
+
+`collect-ranking-quality` and `collect-write-pipeline-bench` run in parallel with HNSW in
+`memory-benchmark.yml`. They enforce regression gates and upload workflow artifacts only —
+**not** published JSON, benchmark-bot PR comments, or `/benchmarks` pages yet.
+
+| Suite | Directory | Gate |
+| --- | --- | --- |
+| Ranking quality | `ranking_quality/` | Gold-set precision@5, recall@10, MRR, expected order |
+| Write pipeline | `write_pipeline/` | `MemoryWriteOrchestrator.create` p95 <= 200 ms |
+
+See `ranking_quality/README.md` for the gold set. Future bot/site wiring follows the
+[suite contract](../README.md#suite-contract-multi-bench).
+
 ## Run
 
 From repo root (compose-test Postgres on `:5433`):

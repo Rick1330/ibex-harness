@@ -403,23 +403,57 @@ jobs:
         run: bash infra/scripts/db-migrate.sh up
 
       - name: Install memory service deps
-        working-directory: services/memory
-        run: uv sync --frozen --no-build
+        run: bash infra/scripts/memory-uv-sync.sh
 
       - name: Validate gold set
-        working-directory: services/memory
-        run: uv run --no-build --frozen python ../../benchmarks/memory/ranking_quality/validate_gold_set.py
+        run: |
+          set -euo pipefail
+          PYTHONPATH=services/memory services/memory/.venv/bin/python \
+            benchmarks/memory/ranking_quality/validate_gold_set.py
 
       - name: Run ranking-quality bench
         run: |
           set -euo pipefail
-          cd services/memory
-          uv run --no-build --frozen python ../../benchmarks/memory/ranking_quality/bench_ranking_quality.py
+          PYTHONPATH=services/memory services/memory/.venv/bin/python \
+            benchmarks/memory/ranking_quality/bench_ranking_quality.py
 
       - name: Enforce ranking-quality regression gate
         run: |
-          cd services/memory
-          uv run --no-build --frozen python ../../benchmarks/memory/ranking_quality/regression_gate.py
+          set -euo pipefail
+          PYTHONPATH=services/memory services/memory/.venv/bin/python \
+            benchmarks/memory/ranking_quality/regression_gate.py
+
+      - name: Summarize ranking-quality gate
+        if: success()
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          latest = json.loads(
+              Path("benchmarks/memory/ranking_quality/output/latest.json").read_text()
+          )
+          gate = json.loads(
+              Path("benchmarks/memory/ranking_quality/output/gate-result.json").read_text()
+          )
+          m = latest["metrics"]
+          lines = [
+              "## Ranking-quality benchmark",
+              "",
+              f"- precision@5: {m['precision_at_5']:.4f}",
+              f"- recall@10: {m['recall_at_10']:.4f}",
+              f"- mrr: {m['mrr']:.4f}",
+              f"- expected order match: {m.get('expected_order_match', 0):.4f}",
+              f"- queries: {latest['query_count']} / memories: {latest['memory_count']}",
+              f"- gate: **{gate['status']}**",
+              "",
+              "CI regression gate only — not published to `/benchmarks` yet.",
+          ]
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as fh:
+              fh.write("\n".join(lines) + "\n")
+          PY
 
       - name: Upload ranking-quality artifact
         if: always()
@@ -482,19 +516,50 @@ jobs:
         run: bash infra/scripts/db-migrate.sh up
 
       - name: Install memory service deps
-        working-directory: services/memory
-        run: uv sync --frozen --no-build
+        run: bash infra/scripts/memory-uv-sync.sh
 
       - name: Run write-pipeline bench
         run: |
           set -euo pipefail
-          cd services/memory
-          uv run --no-build --frozen python ../../benchmarks/memory/write_pipeline/bench_write_pipeline.py
+          PYTHONPATH=services/memory services/memory/.venv/bin/python \
+            benchmarks/memory/write_pipeline/bench_write_pipeline.py
 
       - name: Enforce write-pipeline regression gate
         run: |
-          cd services/memory
-          uv run --no-build --frozen python ../../benchmarks/memory/write_pipeline/regression_gate.py
+          set -euo pipefail
+          PYTHONPATH=services/memory services/memory/.venv/bin/python \
+            benchmarks/memory/write_pipeline/regression_gate.py
+
+      - name: Summarize write-pipeline gate
+        if: success()
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          latest = json.loads(
+              Path("benchmarks/memory/write_pipeline/output/latest.json").read_text()
+          )
+          gate = json.loads(
+              Path("benchmarks/memory/write_pipeline/output/gate-result.json").read_text()
+          )
+          m = latest["metrics"]
+          lines = [
+              "## Write-pipeline benchmark",
+              "",
+              f"- p50: {m['latency_ms_p50']:.2f} ms",
+              f"- p95: {m['latency_ms_p95']:.2f} ms (SLA <= 200 ms)",
+              f"- p99: {m['latency_ms_p99']:.2f} ms",
+              f"- iterations: {latest['iterations']}",
+              f"- gate: **{gate['status']}**",
+              "",
+              "CI regression gate only — not published to `/benchmarks` yet.",
+          ]
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as fh:
+              fh.write("\n".join(lines) + "\n")
+          PY
 
       - name: Upload write-pipeline artifact
         if: always()

@@ -43,6 +43,11 @@ Each suite keeps its own JSON file and bot modules. Shared seams:
 | Bot pin helper | `.github/actions/setup-benchmark-bot` | same | same |
 | Site registry | `web/src/lib/benchmarks/suites.ts` | same | add suite + nav pages |
 
+**CI-only memory gates (3.E.3):** `collect-ranking-quality` and `collect-write-pipeline-bench`
+in `memory-benchmark.yml` enforce regression gates and upload artifacts; they do **not** use
+the benchmark bot or `web/public/benchmarks/` until a published history format and bot
+subcommand are added (same suite contract as above).
+
 Do **not** merge suites into one mega-JSON. Site nav groups by suite; proxy-only concepts
 (waterfall / k6 load) are not invented for HNSW.
 
