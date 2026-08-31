@@ -11,7 +11,7 @@ export function memorySuiteDataSchema<TBenchmark extends string, TRun extends z.
   benchmark: TBenchmark,
   runShape: TRun,
 ) {
-  const runSchema = z.object({
+  const baseRunSchema = z.object({
     sha: shaSchema,
     short_sha: shaSchema,
     timestamp: z.string(),
@@ -20,12 +20,11 @@ export function memorySuiteDataSchema<TBenchmark extends string, TRun extends z.
     run_url: benchmarkRunUrlSchema,
     status: statusSchema,
     gate_summary: gateSummarySchema,
-    ...runShape,
   });
 
   return z.object({
     schema_version: z.literal(1),
     benchmark: z.literal(benchmark),
-    runs: z.array(runSchema),
+    runs: z.array(baseRunSchema.extend(runShape)),
   });
 }

@@ -4,11 +4,9 @@
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
 
 from published_suite_validate import (
-    fail,
     resolve_published_data_path,
     validate_published_payload,
 )

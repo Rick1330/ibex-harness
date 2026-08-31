@@ -4,9 +4,11 @@ import useSWR, { type KeyedMutator } from "swr";
 import type { ZodType } from "zod";
 
 import { benchmarkDataErrorMessage } from "@/hooks/benchmark-data-error";
+import { assertSafeBenchmarkDataUrl } from "@/lib/benchmarks/benchmark-data-url";
 
 async function fetchParsedJson<T>(url: string, schema: ZodType<T>): Promise<T> {
-  const response = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+  const safeUrl = assertSafeBenchmarkDataUrl(url);
+  const response = await fetch(safeUrl, { signal: AbortSignal.timeout(10_000) });
   if (!response.ok) {
     throw new Error(`Failed to load benchmark data (${response.status})`);
   }
