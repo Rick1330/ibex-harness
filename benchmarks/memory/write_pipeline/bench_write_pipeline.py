@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import os
 import statistics
 import sys
@@ -26,7 +25,7 @@ from app.config import Settings  # noqa: E402
 from app.db import create_engine, create_session_factory  # noqa: E402
 from app.vectorstore.pgvector_store import PgVectorStore  # noqa: E402
 from app.write.models import CreateMemoryCommand  # noqa: E402
-from path_guard import resolve_bench_output_path  # noqa: E402
+from path_guard import resolve_bench_output_path, write_bench_output_json  # noqa: E402
 from tests.integration.conftest import seed_org_agent_memory  # noqa: E402
 from tests.integration.write_orchestrator_support import (  # noqa: E402
     OrchestratorTestDeps,
@@ -66,7 +65,7 @@ def _percentile(values: list[float], pct: float) -> float:
     return ordered[low] * (1 - weight) + ordered[high] * weight
 
 
-async def run_bench(*, iterations: int, output_path: Path) -> dict:
+async def run_bench(*, iterations: int) -> dict:
     settings = Settings(database_url=_async_dsn())
     engine = create_engine(settings)
     try:
@@ -114,8 +113,6 @@ async def run_bench(*, iterations: int, output_path: Path) -> dict:
             },
             "latencies_ms": latencies_ms,
         }
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
         return result
     finally:
         await engine.dispose()
@@ -126,8 +123,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--iterations", type=int, default=DEFAULT_ITERATIONS)
     args = parser.parse_args(argv)
-    output_path = resolve_bench_output_path(args.output, bench_dir=_DIR)
-    result = asyncio.run(run_bench(iterations=args.iterations, output_path=output_path))
+    resolve_bench_output_path(args.output, bench_dir=_DIR)
+    result = asyncio.run(run_bench(iterations=args.iterations))
+    write_bench_output_json(args.output, bench_dir=_DIR, payload=result)
     metrics = result["metrics"]
     print(
         f"write_pipeline: p50={metrics['latency_ms_p50']:.2f}ms "

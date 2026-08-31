@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import os
 import sys
 from datetime import UTC, datetime
@@ -24,7 +23,7 @@ from app.db import create_engine, create_session_factory  # noqa: E402
 from app.read.models import FindSimilarQuery  # noqa: E402
 from app.read.repository import MemoryReadRepository  # noqa: E402
 from app.vectorstore.pgvector_store import PgVectorStore  # noqa: E402
-from path_guard import resolve_bench_input_path, resolve_bench_output_path  # noqa: E402
+from path_guard import resolve_bench_input_path, write_bench_output_json  # noqa: E402
 from tests.integration.conftest import zero_embedding  # noqa: E402
 
 _RANK_DIR = Path(__file__).resolve().parent
@@ -60,7 +59,7 @@ def _async_dsn() -> str:
     return raw
 
 
-async def run_bench(*, output_path: Path, gold_path: Path) -> dict:
+async def run_bench(*, gold_path: Path) -> dict:
     settings = Settings(database_url=_async_dsn()).model_copy(
         update={"search_fallback_enabled": False},
     )
@@ -168,8 +167,6 @@ async def run_bench(*, output_path: Path, gold_path: Path) -> dict:
         "metrics": aggregate,
         "queries": per_query,
     }
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     await engine.dispose()
     return result
 
@@ -179,9 +176,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--gold", type=Path, default=GOLD_SET_PATH)
     args = parser.parse_args(argv)
-    output_path = resolve_bench_output_path(args.output, bench_dir=_RANK_DIR)
     gold_path = resolve_bench_input_path(args.gold, bench_dir=_RANK_DIR)
-    result = asyncio.run(run_bench(output_path=output_path, gold_path=gold_path))
+    result = asyncio.run(run_bench(gold_path=gold_path))
+    write_bench_output_json(args.output, bench_dir=_RANK_DIR, payload=result)
     metrics = result["metrics"]
     print(
         f"ranking_quality: precision@5={metrics['precision_at_5']:.4f} "

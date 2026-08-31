@@ -404,22 +404,22 @@ jobs:
 
       - name: Install memory service deps
         working-directory: services/memory
-        run: uv sync --frozen
+        run: uv sync --frozen --no-build
 
       - name: Validate gold set
         working-directory: services/memory
-        run: uv run python ../../benchmarks/memory/ranking_quality/validate_gold_set.py
+        run: uv run --no-build --frozen python ../../benchmarks/memory/ranking_quality/validate_gold_set.py
 
       - name: Run ranking-quality bench
         run: |
           set -euo pipefail
           cd services/memory
-          uv run python ../../benchmarks/memory/ranking_quality/bench_ranking_quality.py
+          uv run --no-build --frozen python ../../benchmarks/memory/ranking_quality/bench_ranking_quality.py
 
       - name: Enforce ranking-quality regression gate
         run: |
           cd services/memory
-          uv run python ../../benchmarks/memory/ranking_quality/regression_gate.py
+          uv run --no-build --frozen python ../../benchmarks/memory/ranking_quality/regression_gate.py
 
       - name: Upload ranking-quality artifact
         if: always()
@@ -483,18 +483,18 @@ jobs:
 
       - name: Install memory service deps
         working-directory: services/memory
-        run: uv sync --frozen
+        run: uv sync --frozen --no-build
 
       - name: Run write-pipeline bench
         run: |
           set -euo pipefail
           cd services/memory
-          uv run python ../../benchmarks/memory/write_pipeline/bench_write_pipeline.py
+          uv run --no-build --frozen python ../../benchmarks/memory/write_pipeline/bench_write_pipeline.py
 
       - name: Enforce write-pipeline regression gate
         run: |
           cd services/memory
-          uv run python ../../benchmarks/memory/write_pipeline/regression_gate.py
+          uv run --no-build --frozen python ../../benchmarks/memory/write_pipeline/regression_gate.py
 
       - name: Upload write-pipeline artifact
         if: always()
