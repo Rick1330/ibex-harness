@@ -1,0 +1,685 @@
+{
+  "schema_version": 1,
+  "gold_set": "v1",
+  "labeler": "single",
+  "persona": "senior backend engineer on memory platform team",
+  "decay_cases": {
+    "q_pref_theme_decay": "100d factual theme vs 14d episodic \u2014 factual should outrank (distinct from 3.D.2 dark-mode pair)",
+    "q_workflow_deploy_decay": "60d procedural deploy workflow vs 21d behavioral habit \u2014 procedural should outrank",
+    "q_confidence_tie_break": "same-age preference pair \u2014 higher confidence (0.95) should outrank 0.70"
+  },
+  "memories": [
+    {
+      "content_key": "gold.factual.notification_channel",
+      "category": "factual",
+      "valid_from_days_ago": 90,
+      "confidence": 0.92,
+      "usefulness_score": 0.7,
+      "embedding_hotspot": 1,
+      "content": "Urgent engineering alerts are routed to the #eng-oncall Slack channel; email is fallback only."
+    },
+    {
+      "content_key": "gold.preference.notification_sound",
+      "category": "preference",
+      "valid_from_days_ago": 30,
+      "confidence": 0.88,
+      "usefulness_score": 0.6,
+      "embedding_hotspot": 1,
+      "content": "Prefers a short chime for desktop notifications during work hours."
+    },
+    {
+      "content_key": "gold.episodic.notification_mute",
+      "category": "episodic",
+      "valid_from_days_ago": 14,
+      "confidence": 0.8,
+      "usefulness_score": 0.4,
+      "embedding_hotspot": 1,
+      "content": "Muted Slack notifications during a two-hour deep-work block on Tuesday."
+    },
+    {
+      "content_key": "gold.factual.review_policy",
+      "category": "factual",
+      "valid_from_days_ago": 45,
+      "confidence": 0.95,
+      "usefulness_score": 0.8,
+      "embedding_hotspot": 2,
+      "content": "Organization policy requires security review for any authentication or authorization code changes."
+    },
+    {
+      "content_key": "gold.procedural.review_checklist",
+      "category": "procedural",
+      "valid_from_days_ago": 60,
+      "confidence": 0.9,
+      "usefulness_score": 0.75,
+      "embedding_hotspot": 2,
+      "content": "Before approving a PR, verify tests, migration safety, and rollback notes in the description."
+    },
+    {
+      "content_key": "gold.behavioral.review_habit",
+      "category": "behavioral",
+      "valid_from_days_ago": 21,
+      "confidence": 0.82,
+      "usefulness_score": 0.5,
+      "embedding_hotspot": 2,
+      "content": "Typically leaves inline suggestions on error-handling and observability in peer reviews."
+    },
+    {
+      "content_key": "gold.episodic.review_comment",
+      "category": "episodic",
+      "valid_from_days_ago": 7,
+      "confidence": 0.78,
+      "usefulness_score": 0.35,
+      "embedding_hotspot": 2,
+      "content": "Commented on pagination defaults in the memory search API pull request last week."
+    },
+    {
+      "content_key": "gold.factual.testing_framework",
+      "category": "factual",
+      "valid_from_days_ago": 120,
+      "confidence": 0.93,
+      "usefulness_score": 0.7,
+      "embedding_hotspot": 3,
+      "content": "The memory service uses pytest with async fixtures; integration tests require Postgres with pgvector."
+    },
+    {
+      "content_key": "gold.procedural.testing_ci",
+      "category": "procedural",
+      "valid_from_days_ago": 50,
+      "confidence": 0.91,
+      "usefulness_score": 0.72,
+      "embedding_hotspot": 3,
+      "content": "CI runs unit and integration suites on every pull request before merge to main."
+    },
+    {
+      "content_key": "gold.behavioral.testing_tdd",
+      "category": "behavioral",
+      "valid_from_days_ago": 18,
+      "confidence": 0.84,
+      "usefulness_score": 0.55,
+      "embedding_hotspot": 3,
+      "content": "Writes failing tests first when fixing ranking or retrieval regressions."
+    },
+    {
+      "content_key": "gold.procedural.doc_update",
+      "category": "procedural",
+      "valid_from_days_ago": 70,
+      "confidence": 0.9,
+      "usefulness_score": 0.7,
+      "embedding_hotspot": 4,
+      "content": "Update API and ADR docs whenever a public memory contract or schema changes."
+    },
+    {
+      "content_key": "gold.preference.doc_style",
+      "category": "preference",
+      "valid_from_days_ago": 35,
+      "confidence": 0.86,
+      "usefulness_score": 0.5,
+      "embedding_hotspot": 4,
+      "content": "Prefers short bullet lists and worked examples over long narrative docs."
+    },
+    {
+      "content_key": "gold.episodic.doc_session",
+      "category": "episodic",
+      "valid_from_days_ago": 10,
+      "confidence": 0.79,
+      "usefulness_score": 0.4,
+      "embedding_hotspot": 4,
+      "content": "Drafted onboarding steps for the context-assembly team during last sprint planning."
+    },
+    {
+      "content_key": "gold.factual.meeting_standup",
+      "category": "factual",
+      "valid_from_days_ago": 100,
+      "confidence": 0.94,
+      "usefulness_score": 0.65,
+      "embedding_hotspot": 5,
+      "content": "Daily engineering standup is at 10:00 UTC in the memory-platform video room."
+    },
+    {
+      "content_key": "gold.preference.meeting_camera",
+      "category": "preference",
+      "valid_from_days_ago": 28,
+      "confidence": 0.87,
+      "usefulness_score": 0.45,
+      "embedding_hotspot": 5,
+      "content": "Keeps camera off in all-hands but on for small design reviews."
+    },
+    {
+      "content_key": "gold.behavioral.meeting_late",
+      "category": "behavioral",
+      "valid_from_days_ago": 16,
+      "confidence": 0.8,
+      "usefulness_score": 0.4,
+      "embedding_hotspot": 5,
+      "content": "Sometimes joins sprint planning five minutes late when prior meetings overrun."
+    },
+    {
+      "content_key": "gold.factual.db_postgres",
+      "category": "factual",
+      "valid_from_days_ago": 150,
+      "confidence": 0.96,
+      "usefulness_score": 0.8,
+      "embedding_hotspot": 6,
+      "content": "Production OLTP is PostgreSQL 16 with pgvector; tenant isolation uses RLS plus explicit org_id filters."
+    },
+    {
+      "content_key": "gold.procedural.db_migration",
+      "category": "procedural",
+      "valid_from_days_ago": 55,
+      "confidence": 0.92,
+      "usefulness_score": 0.75,
+      "embedding_hotspot": 6,
+      "content": "Apply schema changes only through infra/scripts/db-migrate.sh in CI and locally."
+    },
+    {
+      "content_key": "gold.episodic.db_incident",
+      "category": "episodic",
+      "valid_from_days_ago": 12,
+      "confidence": 0.81,
+      "usefulness_score": 0.42,
+      "embedding_hotspot": 6,
+      "content": "Investigated elevated p95 on vector queries during last week's partial index rebuild."
+    },
+    {
+      "content_key": "gold.factual.security_mfa",
+      "category": "factual",
+      "valid_from_days_ago": 110,
+      "confidence": 0.97,
+      "usefulness_score": 0.85,
+      "embedding_hotspot": 7,
+      "content": "MFA is mandatory for all admin and production-break-glass accounts."
+    },
+    {
+      "content_key": "gold.procedural.security_rotate",
+      "category": "procedural",
+      "valid_from_days_ago": 40,
+      "confidence": 0.91,
+      "usefulness_score": 0.7,
+      "embedding_hotspot": 7,
+      "content": "Rotate service API keys every 90 days and record rotation in the security runbook."
+    },
+    {
+      "content_key": "gold.behavioral.security_phish",
+      "category": "behavioral",
+      "valid_from_days_ago": 15,
+      "confidence": 0.83,
+      "usefulness_score": 0.5,
+      "embedding_hotspot": 7,
+      "content": "Reports suspected phishing to security@ and does not click unverified links."
+    },
+    {
+      "content_key": "gold.factual.deploy_window",
+      "category": "factual",
+      "valid_from_days_ago": 95,
+      "confidence": 0.93,
+      "usefulness_score": 0.7,
+      "embedding_hotspot": 8,
+      "content": "Production deploys for memory services are allowed Tuesday through Thursday only."
+    },
+    {
+      "content_key": "gold.procedural.deploy_staging",
+      "category": "procedural",
+      "valid_from_days_ago": 48,
+      "confidence": 0.9,
+      "usefulness_score": 0.72,
+      "embedding_hotspot": 8,
+      "content": "Always deploy to staging and run smoke tests before promoting to production."
+    },
+    {
+      "content_key": "gold.episodic.deploy_rollback",
+      "category": "episodic",
+      "valid_from_days_ago": 9,
+      "confidence": 0.8,
+      "usefulness_score": 0.38,
+      "embedding_hotspot": 8,
+      "content": "Rolled back a proxy release after error-rate spike on the canary slice."
+    },
+    {
+      "content_key": "gold.factual.api_versioning",
+      "category": "factual",
+      "valid_from_days_ago": 85,
+      "confidence": 0.94,
+      "usefulness_score": 0.75,
+      "embedding_hotspot": 9,
+      "content": "Public REST APIs use URL path versioning (/v1/) with additive-only changes within a major."
+    },
+    {
+      "content_key": "gold.procedural.api_review",
+      "category": "procedural",
+      "valid_from_days_ago": 52,
+      "confidence": 0.89,
+      "usefulness_score": 0.68,
+      "embedding_hotspot": 9,
+      "content": "OpenAPI specs must be reviewed in PR before exposing new memory endpoints."
+    },
+    {
+      "content_key": "gold.preference.api_json",
+      "category": "preference",
+      "valid_from_days_ago": 27,
+      "confidence": 0.86,
+      "usefulness_score": 0.48,
+      "embedding_hotspot": 9,
+      "content": "Prefers JSON request and response bodies; avoids XML integrations."
+    },
+    {
+      "content_key": "gold.factual.error_codes",
+      "category": "factual",
+      "valid_from_days_ago": 130,
+      "confidence": 0.95,
+      "usefulness_score": 0.78,
+      "embedding_hotspot": 10,
+      "content": "Rate-limited memory API calls return HTTP 429 with Retry-After per the error envelope spec."
+    },
+    {
+      "content_key": "gold.procedural.error_retry",
+      "category": "procedural",
+      "valid_from_days_ago": 44,
+      "confidence": 0.9,
+      "usefulness_score": 0.7,
+      "embedding_hotspot": 10,
+      "content": "Retry transient upstream failures with exponential backoff and jitter; never retry 4xx."
+    },
+    {
+      "content_key": "gold.behavioral.error_logging",
+      "category": "behavioral",
+      "valid_from_days_ago": 19,
+      "confidence": 0.84,
+      "usefulness_score": 0.52,
+      "embedding_hotspot": 10,
+      "content": "Logs structured errors with trace_id and org_id; never logs raw memory content."
+    },
+    {
+      "content_key": "gold.factual.cache_redis",
+      "category": "factual",
+      "valid_from_days_ago": 88,
+      "confidence": 0.93,
+      "usefulness_score": 0.74,
+      "embedding_hotspot": 11,
+      "content": "Hot memory cache lives in Redis with org_id-prefixed keys and explicit TTLs."
+    },
+    {
+      "content_key": "gold.procedural.cache_invalidate",
+      "category": "procedural",
+      "valid_from_days_ago": 42,
+      "confidence": 0.91,
+      "usefulness_score": 0.71,
+      "embedding_hotspot": 11,
+      "content": "Invalidate agent hot-cache entries on memory write and conflict resolution."
+    },
+    {
+      "content_key": "gold.episodic.cache_miss",
+      "category": "episodic",
+      "valid_from_days_ago": 11,
+      "confidence": 0.79,
+      "usefulness_score": 0.4,
+      "embedding_hotspot": 11,
+      "content": "Observed a brief hot-cache miss spike during a rolling worker deploy."
+    },
+    {
+      "content_key": "gold.procedural.onboard_checklist",
+      "category": "procedural",
+      "valid_from_days_ago": 75,
+      "confidence": 0.92,
+      "usefulness_score": 0.73,
+      "embedding_hotspot": 12,
+      "content": "New hires complete the memory-platform onboarding checklist in Notion week one."
+    },
+    {
+      "content_key": "gold.preference.onboard_pair",
+      "category": "preference",
+      "valid_from_days_ago": 32,
+      "confidence": 0.87,
+      "usefulness_score": 0.5,
+      "embedding_hotspot": 12,
+      "content": "Prefers pair programming for the first two memory-service changes."
+    },
+    {
+      "content_key": "gold.behavioral.onboard_questions",
+      "category": "behavioral",
+      "valid_from_days_ago": 14,
+      "confidence": 0.82,
+      "usefulness_score": 0.45,
+      "embedding_hotspot": 12,
+      "content": "Asks clarifying questions about tenant isolation and RLS in the first week."
+    },
+    {
+      "content_key": "gold.factual.theme_color_pref",
+      "category": "factual",
+      "valid_from_days_ago": 100,
+      "confidence": 0.9,
+      "usefulness_score": 0.65,
+      "embedding_hotspot": 15,
+      "content": "IDE color theme preference is Solarized Dark for all backend development work."
+    },
+    {
+      "content_key": "gold.episodic.theme_color_pref",
+      "category": "episodic",
+      "valid_from_days_ago": 14,
+      "confidence": 0.82,
+      "usefulness_score": 0.4,
+      "embedding_hotspot": 15,
+      "content": "Temporarily switched to a high-contrast theme during a demo rehearsal."
+    },
+    {
+      "content_key": "gold.preference.theme_color_alt",
+      "category": "preference",
+      "valid_from_days_ago": 30,
+      "confidence": 0.78,
+      "usefulness_score": 0.5,
+      "embedding_hotspot": 15,
+      "content": "Uses light theme when presenting slides to reduce projector glare."
+    },
+    {
+      "content_key": "gold.procedural.deploy_steps",
+      "category": "procedural",
+      "valid_from_days_ago": 60,
+      "confidence": 0.92,
+      "usefulness_score": 0.75,
+      "embedding_hotspot": 16,
+      "content": "Production deploy workflow uses blue-green with automatic health checks on the new slice."
+    },
+    {
+      "content_key": "gold.behavioral.deploy_habit",
+      "category": "behavioral",
+      "valid_from_days_ago": 21,
+      "confidence": 0.81,
+      "usefulness_score": 0.48,
+      "embedding_hotspot": 16,
+      "content": "Checks latency dashboards for ten minutes after every production deploy."
+    },
+    {
+      "content_key": "gold.episodic.deploy_note",
+      "category": "episodic",
+      "valid_from_days_ago": 8,
+      "confidence": 0.77,
+      "usefulness_score": 0.35,
+      "embedding_hotspot": 16,
+      "content": "Ran a canary deploy for the ranking gate change on Thursday evening."
+    },
+    {
+      "content_key": "gold.preference.editor_font_high",
+      "category": "preference",
+      "valid_from_days_ago": 30,
+      "confidence": 0.95,
+      "usefulness_score": 0.6,
+      "embedding_hotspot": 17,
+      "content": "Primary editor font is JetBrains Mono 14pt with ligatures disabled."
+    },
+    {
+      "content_key": "gold.preference.editor_font_low",
+      "category": "preference",
+      "valid_from_days_ago": 30,
+      "confidence": 0.7,
+      "usefulness_score": 0.6,
+      "embedding_hotspot": 17,
+      "content": "Generic preference for monospace fonts in the terminal and editor."
+    },
+    {
+      "content_key": "gold.factual.distractor_office",
+      "category": "factual",
+      "valid_from_days_ago": 60,
+      "confidence": 0.85,
+      "usefulness_score": 0.5,
+      "embedding_hotspot": 21,
+      "content": "Engineering office is in Building C, floor 3; visitor badge required at reception."
+    },
+    {
+      "content_key": "gold.procedural.distractor_expense",
+      "category": "procedural",
+      "valid_from_days_ago": 45,
+      "confidence": 0.85,
+      "usefulness_score": 0.5,
+      "embedding_hotspot": 22,
+      "content": "Submit expense reports within 30 days via the finance portal with receipts attached."
+    },
+    {
+      "content_key": "gold.preference.distractor_tea",
+      "category": "preference",
+      "valid_from_days_ago": 30,
+      "confidence": 0.85,
+      "usefulness_score": 0.5,
+      "embedding_hotspot": 23,
+      "content": "Prefers green tea over coffee during afternoon meetings."
+    },
+    {
+      "content_key": "gold.behavioral.distractor_walk",
+      "category": "behavioral",
+      "valid_from_days_ago": 20,
+      "confidence": 0.85,
+      "usefulness_score": 0.5,
+      "embedding_hotspot": 24,
+      "content": "Takes a short walk after lunch on most weekdays."
+    },
+    {
+      "content_key": "gold.episodic.distractor_lunch",
+      "category": "episodic",
+      "valid_from_days_ago": 10,
+      "confidence": 0.85,
+      "usefulness_score": 0.5,
+      "embedding_hotspot": 25,
+      "content": "Team lunch at the cafe downstairs after the release celebration."
+    }
+  ],
+  "queries": [
+    {
+      "query_id": "q_notification_rank",
+      "query_text": "notification preferences",
+      "query_hotspot": 1,
+      "expected_content_keys": [
+        "gold.factual.notification_channel",
+        "gold.preference.notification_sound",
+        "gold.episodic.notification_mute"
+      ],
+      "expected_top_category": "factual"
+    },
+    {
+      "query_id": "q_code_review_rank",
+      "query_text": "code review process",
+      "query_hotspot": 2,
+      "expected_content_keys": [
+        "gold.factual.review_policy",
+        "gold.procedural.review_checklist",
+        "gold.behavioral.review_habit",
+        "gold.episodic.review_comment"
+      ],
+      "expected_top_category": "factual"
+    },
+    {
+      "query_id": "q_testing_rank",
+      "query_text": "testing approach",
+      "query_hotspot": 3,
+      "expected_content_keys": [
+        "gold.procedural.testing_ci",
+        "gold.factual.testing_framework",
+        "gold.behavioral.testing_tdd"
+      ],
+      "expected_top_category": "procedural"
+    },
+    {
+      "query_id": "q_documentation_rank",
+      "query_text": "documentation style",
+      "query_hotspot": 4,
+      "expected_content_keys": [
+        "gold.procedural.doc_update",
+        "gold.preference.doc_style",
+        "gold.episodic.doc_session"
+      ],
+      "expected_top_category": "procedural"
+    },
+    {
+      "query_id": "q_meeting_rank",
+      "query_text": "meeting habits",
+      "query_hotspot": 5,
+      "expected_content_keys": [
+        "gold.factual.meeting_standup",
+        "gold.preference.meeting_camera",
+        "gold.behavioral.meeting_late"
+      ],
+      "expected_top_category": "factual"
+    },
+    {
+      "query_id": "q_database_rank",
+      "query_text": "database operations",
+      "query_hotspot": 6,
+      "expected_content_keys": [
+        "gold.procedural.db_migration",
+        "gold.factual.db_postgres",
+        "gold.episodic.db_incident"
+      ],
+      "expected_top_category": "procedural"
+    },
+    {
+      "query_id": "q_security_rank",
+      "query_text": "security practices",
+      "query_hotspot": 7,
+      "expected_content_keys": [
+        "gold.factual.security_mfa",
+        "gold.procedural.security_rotate",
+        "gold.behavioral.security_phish"
+      ],
+      "expected_top_category": "factual"
+    },
+    {
+      "query_id": "q_deployment_rank",
+      "query_text": "deployment workflow",
+      "query_hotspot": 8,
+      "expected_content_keys": [
+        "gold.procedural.deploy_staging",
+        "gold.factual.deploy_window",
+        "gold.episodic.deploy_rollback"
+      ],
+      "expected_top_category": "procedural"
+    },
+    {
+      "query_id": "q_api_rank",
+      "query_text": "api design preferences",
+      "query_hotspot": 9,
+      "expected_content_keys": [
+        "gold.factual.api_versioning",
+        "gold.procedural.api_review",
+        "gold.preference.api_json"
+      ],
+      "expected_top_category": "factual"
+    },
+    {
+      "query_id": "q_error_rank",
+      "query_text": "error handling",
+      "query_hotspot": 10,
+      "expected_content_keys": [
+        "gold.procedural.error_retry",
+        "gold.factual.error_codes",
+        "gold.behavioral.error_logging"
+      ],
+      "expected_top_category": "procedural"
+    },
+    {
+      "query_id": "q_cache_rank",
+      "query_text": "cache behavior",
+      "query_hotspot": 11,
+      "expected_content_keys": [
+        "gold.procedural.cache_invalidate",
+        "gold.factual.cache_redis",
+        "gold.episodic.cache_miss"
+      ],
+      "expected_top_category": "procedural"
+    },
+    {
+      "query_id": "q_onboarding_rank",
+      "query_text": "onboarding process",
+      "query_hotspot": 12,
+      "expected_content_keys": [
+        "gold.procedural.onboard_checklist",
+        "gold.behavioral.onboard_questions",
+        "gold.preference.onboard_pair"
+      ],
+      "expected_top_category": "procedural"
+    },
+    {
+      "query_id": "q_pref_theme_decay",
+      "query_text": "theme color preference",
+      "query_hotspot": 15,
+      "expected_content_keys": [
+        "gold.factual.theme_color_pref",
+        "gold.preference.theme_color_alt",
+        "gold.episodic.theme_color_pref"
+      ],
+      "expected_top_category": "factual"
+    },
+    {
+      "query_id": "q_workflow_deploy_decay",
+      "query_text": "deploy workflow steps",
+      "query_hotspot": 16,
+      "expected_content_keys": [
+        "gold.procedural.deploy_steps",
+        "gold.behavioral.deploy_habit",
+        "gold.episodic.deploy_note"
+      ],
+      "expected_top_category": "procedural"
+    },
+    {
+      "query_id": "q_confidence_tie_break",
+      "query_text": "editor font preference",
+      "query_hotspot": 17,
+      "expected_content_keys": [
+        "gold.preference.editor_font_high",
+        "gold.preference.editor_font_low"
+      ],
+      "expected_top_category": "preference"
+    },
+    {
+      "query_id": "q_standup_time",
+      "query_text": "standup schedule time",
+      "query_hotspot": 5,
+      "expected_content_keys": [
+        "gold.factual.meeting_standup",
+        "gold.preference.meeting_camera",
+        "gold.behavioral.meeting_late"
+      ],
+      "expected_top_category": "factual"
+    },
+    {
+      "query_id": "q_mfa_requirement",
+      "query_text": "mfa admin accounts",
+      "query_hotspot": 7,
+      "expected_content_keys": [
+        "gold.factual.security_mfa",
+        "gold.procedural.security_rotate",
+        "gold.behavioral.security_phish"
+      ],
+      "expected_top_category": "factual"
+    },
+    {
+      "query_id": "q_blue_green",
+      "query_text": "blue green deploy",
+      "query_hotspot": 16,
+      "expected_content_keys": [
+        "gold.procedural.deploy_steps",
+        "gold.behavioral.deploy_habit",
+        "gold.episodic.deploy_note"
+      ],
+      "expected_top_category": "procedural"
+    },
+    {
+      "query_id": "q_jetbrains_font",
+      "query_text": "jetbrains mono font",
+      "query_hotspot": 17,
+      "expected_content_keys": [
+        "gold.preference.editor_font_high",
+        "gold.preference.editor_font_low"
+      ],
+      "expected_top_category": "preference"
+    },
+    {
+      "query_id": "q_security_review_auth",
+      "query_text": "security review auth changes",
+      "query_hotspot": 2,
+      "expected_content_keys": [
+        "gold.factual.review_policy",
+        "gold.procedural.review_checklist",
+        "gold.behavioral.review_habit",
+        "gold.episodic.review_comment"
+      ],
+      "expected_top_category": "factual"
+    }
+  ]
+}

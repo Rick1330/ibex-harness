@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "benchmark": "write_pipeline",
+  "notes": "Initial baseline — p95 SLA 200ms per PERFORMANCE.md. Re-pin after first CI collect on ubuntu-latest + service Postgres.",
+  "policy": {
+    "max_latency_ms_p95": 200.0,
+    "max_regression_pct": 20.0
+  },
+  "baseline": {
+    "latency_ms_p50": 50.0,
+    "latency_ms_p95": 199.0,
+    "latency_ms_p99": 199.0
+  }
+}

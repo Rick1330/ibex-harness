@@ -27,10 +27,24 @@ export const GO_MICROBENCH_STAGE_MODEL = GO_MICROBENCH_WARM_PATH_STAGE_MODEL;
 
 export const BENCHMARK_DATA_URL = "/benchmarks/benchmark-data.json";
 export const HNSW_BENCHMARK_DATA_URL = "/benchmarks/hnsw-benchmark-data.json";
+export const RANKING_QUALITY_BENCHMARK_DATA_URL =
+  "/benchmarks/ranking-quality-benchmark-data.json";
+export const WRITE_PIPELINE_BENCHMARK_DATA_URL =
+  "/benchmarks/write-pipeline-benchmark-data.json";
 
 /** Track B / Track E HNSW SLAs (roadmap + published gate_summary). */
 export const HNSW_SLA_TARGETS = {
   recall_at_10: 0.98,
   p95_ms_1m: 30,
   p99_ms_1m: 100,
+} as const;
+
+export const RANKING_QUALITY_SLA_TARGETS = {
+  precision_at_5: 1.0,
+  recall_at_10: 1.0,
+  mrr: 1.0,
+} as const;
+
+export const WRITE_PIPELINE_SLA_TARGETS = {
+  latency_ms_p95: 200,
 } as const;

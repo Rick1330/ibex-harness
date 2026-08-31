@@ -57,8 +57,31 @@ CI (`memory-benchmark.yml`) always measures with production publish knobs:
 **not** published.
 
 CI validates the published file with `benchmarks/scripts/validate_published_hnsw.py` and
-fails the Memory collect artifact upload if the bot binary lacks `post-hnsw-pr-comment`
-(stale `BENCHMARK_BOT_RELEASE_TAG` is ignored when it does not match `BENCHMARK_BOT_SHA`).
+**enforces** the persisted `status` field via `benchmarks/scripts/check_hnsw_gate_status.py`
+(recall@10 ≥ 98%; 1M p99 < 100ms when a 1M cell is present — fails the workflow on
+`status: fail`). Fails the Memory collect artifact upload if the bot binary lacks
+`post-hnsw-pr-comment`, `post-ranking-pr-comment`, and `post-write-pr-comment` (stale
+`BENCHMARK_BOT_RELEASE_TAG` is ignored when it does not match `BENCHMARK_BOT_SHA`).
+
+## Memory CI regression gates (3.E.3)
+
+`collect-ranking-quality` and `collect-write-pipeline-bench` run in parallel with HNSW in
+`memory-benchmark.yml`. They enforce regression gates, merge published history JSON under
+`web/public/benchmarks/`, upload `*-benchmark-data` artifacts, and upsert sticky PR comment
+sections via the benchmark bot.
+
+| Suite | Directory | Published JSON | Bot subcommand |
+| --- | --- | --- | --- |
+| Ranking quality | `ranking_quality/` | `ranking-quality-benchmark-data.json` | `post-ranking-pr-comment` |
+| Write pipeline | `write_pipeline/` | `write-pipeline-benchmark-data.json` | `post-write-pr-comment` |
+
+| Suite | Gate |
+| --- | --- |
+| Ranking quality | Gold-set precision@5, recall@10, MRR, expected order |
+| Write pipeline | `MemoryWriteOrchestrator.create` p95 <= 200 ms |
+
+See `ranking_quality/README.md` for the gold set. Bot publish on main uses
+`publish-ranking` / `publish-write` (same `memory_benchmark_main_complete` dispatch as HNSW).
 
 ## Run
 

@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ibexharness.com/schemas/ranking-quality-benchmark-data.schema.json",
+  "title": "Ranking-quality benchmark published data",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "benchmark", "runs"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "benchmark": { "const": "ranking_quality" },
+    "runs": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "sha",
+          "short_sha",
+          "timestamp",
+          "branch",
+          "run_number",
+          "run_url",
+          "metrics",
+          "status"
+        ],
+        "properties": {
+          "sha": { "type": "string", "minLength": 7 },
+          "short_sha": { "type": "string", "minLength": 7 },
+          "timestamp": { "type": "string" },
+          "branch": { "type": "string" },
+          "run_number": { "type": "integer", "minimum": 0 },
+          "run_url": { "type": "string" },
+          "gold_set": { "type": "string" },
+          "query_count": { "type": "integer", "minimum": 0 },
+          "memory_count": { "type": "integer", "minimum": 0 },
+          "metrics": {
+            "type": "object",
+            "required": ["precision_at_5", "recall_at_10", "mrr"],
+            "properties": {
+              "precision_at_5": { "type": "number", "minimum": 0, "maximum": 1 },
+              "recall_at_10": { "type": "number", "minimum": 0, "maximum": 1 },
+              "mrr": { "type": "number", "minimum": 0, "maximum": 1 },
+              "expected_order_match": { "type": "number", "minimum": 0, "maximum": 1 },
+              "top_category_accuracy": { "type": "number", "minimum": 0, "maximum": 1 }
+            }
+          },
+          "status": { "type": "string", "enum": ["pass", "fail"] },
+          "gate_summary": { "type": "object" }
+        }
+      }
+    }
+  }
+}

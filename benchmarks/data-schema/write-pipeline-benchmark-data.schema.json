@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ibexharness.com/schemas/write-pipeline-benchmark-data.schema.json",
+  "title": "Write-pipeline benchmark published data",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "benchmark", "runs"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "benchmark": { "const": "write_pipeline" },
+    "runs": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "sha",
+          "short_sha",
+          "timestamp",
+          "branch",
+          "run_number",
+          "run_url",
+          "metrics",
+          "status"
+        ],
+        "properties": {
+          "sha": { "type": "string", "minLength": 7 },
+          "short_sha": { "type": "string", "minLength": 7 },
+          "timestamp": { "type": "string" },
+          "branch": { "type": "string" },
+          "run_number": { "type": "integer", "minimum": 0 },
+          "run_url": { "type": "string" },
+          "iterations": { "type": "integer", "minimum": 1 },
+          "metrics": {
+            "type": "object",
+            "required": ["latency_ms_p50", "latency_ms_p95", "latency_ms_p99"],
+            "properties": {
+              "latency_ms_p50": { "type": "number", "minimum": 0 },
+              "latency_ms_p95": { "type": "number", "minimum": 0 },
+              "latency_ms_p99": { "type": "number", "minimum": 0 }
+            }
+          },
+          "status": { "type": "string", "enum": ["pass", "fail"] },
+          "gate_summary": { "type": "object" }
+        }
+      }
+    }
+  }
+}

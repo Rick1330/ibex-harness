@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 _ALLOWED_RAW_NAMES = frozenset({"hnsw_recall_latency.json"})
-_ALLOWED_PUBLISHED_NAMES = frozenset({"hnsw-benchmark-data.json"})
 
 
 class UnsafePathError(ValueError):
@@ -96,6 +97,65 @@ def resolve_published_hnsw_path(raw: Path | str) -> Path:
         raw,
         options=PathResolveOptions(
             allow_create_parent=True,
-            allowed_names=_ALLOWED_PUBLISHED_NAMES,
+            allowed_names=frozenset({"hnsw-benchmark-data.json"}),
         ),
     )
+
+
+def resolve_published_ranking_quality_path(raw: Path | str) -> Path:
+    return resolve_workspace_path(
+        raw,
+        options=PathResolveOptions(
+            allow_create_parent=True,
+            allowed_names=frozenset({"ranking-quality-benchmark-data.json"}),
+        ),
+    )
+
+
+def resolve_published_write_pipeline_path(raw: Path | str) -> Path:
+    return resolve_workspace_path(
+        raw,
+        options=PathResolveOptions(
+            allow_create_parent=True,
+            allowed_names=frozenset({"write-pipeline-benchmark-data.json"}),
+        ),
+    )
+
+
+def resolve_bench_output_path(raw: Path | str, *, bench_dir: Path) -> Path:
+    """Resolve a benchmark output path under ``bench_dir`` (rejects escapes)."""
+    return resolve_workspace_path(
+        raw,
+        workspace=bench_dir.resolve(),
+        options=PathResolveOptions(allow_create_parent=True),
+    )
+
+
+def resolve_bench_input_path(raw: Path | str, *, bench_dir: Path) -> Path:
+    """Resolve an existing benchmark input file under ``bench_dir``."""
+    return resolve_workspace_path(
+        raw,
+        workspace=bench_dir.resolve(),
+        options=PathResolveOptions(must_exist=True),
+    )
+
+
+def write_bench_output_json(
+    raw: Path | str,
+    *,
+    bench_dir: Path,
+    payload: dict[str, Any] | str,
+) -> Path:
+    """Validate CLI output path under ``bench_dir`` and write benchmark JSON."""
+    resolved = resolve_bench_output_path(raw, bench_dir=bench_dir)
+    content = (
+        json.dumps(payload, indent=2) + "\n"
+        if isinstance(payload, dict)
+        else payload
+    )
+    resolved.parent.mkdir(parents=True, exist_ok=True)
+    resolved.write_text(  # NOSONAR pythonsecurity:S2083,pythonsecurity:S8707
+        content,
+        encoding="utf-8",
+    )
+    return resolved

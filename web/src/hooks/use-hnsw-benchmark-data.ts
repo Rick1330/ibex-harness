@@ -2,27 +2,28 @@
 
 import useSWR, { type KeyedMutator } from "swr";
 
+import { benchmarkDataErrorMessage } from "@/hooks/benchmark-data-error";
 import { HNSW_BENCHMARK_DATA_URL } from "@/lib/benchmarks/constants";
 import {
   hnswBenchmarkDataSchema,
   type HnswBenchmarkDataParsed,
   type HnswBenchmarkRun,
 } from "@/lib/benchmarks/hnsw-schema";
+import {
+  BENCHMARK_JSON_SWR_OPTIONS,
+  loadBenchmarkJson,
+} from "@/lib/benchmarks/parse-json-response";
 
-const HNSW_LOAD_ERROR = "Failed to load HNSW benchmark data";
+const LOAD_ERROR = "Failed to load HNSW benchmark data";
 
-async function fetchHnswBenchmarkData(url: string): Promise<HnswBenchmarkDataParsed> {
-  const response = await fetch(url, { signal: AbortSignal.timeout(10_000) });
-  if (!response.ok) {
-    throw new Error(`Failed to load HNSW benchmark data (${response.status})`);
-  }
-  const json: unknown = await response.json();
-  return hnswBenchmarkDataSchema.parse(json);
-}
-
-function hnswErrorMessage(error: unknown): string | null {
-  if (!error) return null;
-  return error instanceof Error ? error.message : HNSW_LOAD_ERROR;
+function fetchHnswBenchmarkData(): Promise<HnswBenchmarkDataParsed> {
+  return loadBenchmarkJson(
+    () =>
+      fetch(HNSW_BENCHMARK_DATA_URL, {
+        signal: AbortSignal.timeout(10_000),
+      }),
+    hnswBenchmarkDataSchema,
+  );
 }
 
 export function useHnswBenchmarkData(): {
@@ -31,31 +32,23 @@ export function useHnswBenchmarkData(): {
   latest: HnswBenchmarkRun | null;
   isLoading: boolean;
   isError: boolean;
-  error: unknown;
   errorMessage: string | null;
   refresh: KeyedMutator<HnswBenchmarkDataParsed>;
 } {
-  const { data, error, isLoading, mutate } = useSWR<HnswBenchmarkDataParsed>(
+  const { data, error, isLoading, mutate } = useSWR(
     HNSW_BENCHMARK_DATA_URL,
     fetchHnswBenchmarkData,
-    {
-      revalidateOnFocus: false,
-      revalidateOnReconnect: false,
-      dedupingInterval: 60_000,
-    },
+    BENCHMARK_JSON_SWR_OPTIONS,
   );
 
   const runs = data?.runs ?? [];
-  const latest: HnswBenchmarkRun | null = runs[0] ?? null;
-
   return {
     data,
     runs,
-    latest,
+    latest: runs[0] ?? null,
     isLoading,
     isError: Boolean(error),
-    error,
-    errorMessage: hnswErrorMessage(error),
+    errorMessage: benchmarkDataErrorMessage(error, LOAD_ERROR),
     refresh: mutate,
   };
 }
