@@ -345,6 +345,13 @@ jobs:
           DISPATCH_RUN_ID: ${{ github.run_id }}
           DISPATCH_HEAD_SHA: ${{ github.sha }}
           DISPATCH_RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          set -euo pipefail
+          gh api repos/Rick1330/ibexharness-benchmark-bot/dispatches \
+            -f event_type=memory_benchmark_main_complete \
+            -f "client_payload[run_id]=${DISPATCH_RUN_ID}" \
+            -f "client_payload[head_sha]=${DISPATCH_HEAD_SHA}" \
+            -f "client_payload[run_number]=${DISPATCH_RUN_NUMBER}"
 
   collect-ranking-quality:
     name: collect-ranking-quality
@@ -499,10 +506,3 @@ jobs:
             benchmarks/memory/write_pipeline/output/gate-result.json
           retention-days: 14
           if-no-files-found: error
-        run: |
-          set -euo pipefail
-          gh api repos/Rick1330/ibexharness-benchmark-bot/dispatches \
-            -f event_type=memory_benchmark_main_complete \
-            -f "client_payload[run_id]=${DISPATCH_RUN_ID}" \
-            -f "client_payload[head_sha]=${DISPATCH_HEAD_SHA}" \
-            -f "client_payload[run_number]=${DISPATCH_RUN_NUMBER}"

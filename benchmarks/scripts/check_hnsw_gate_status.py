@@ -36,6 +36,7 @@ def _select_run(runs: list[Any], sha: str) -> dict[str, Any]:
         for run in runs:
             if isinstance(run, dict) and run.get("sha") == sha:
                 return run
+        _fail(f"no published run found for sha {sha!r}")
     first = runs[0]
     if not isinstance(first, dict):
         _fail("run entry must be an object")

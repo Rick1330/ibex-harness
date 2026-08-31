@@ -46,6 +46,23 @@ class RegressionGateCommonTests(unittest.TestCase):
         )
         self.assertFalse(all(passed for *_, passed in checks))
 
+    def test_missing_latest_metric_fails(self) -> None:
+        checks = gate.build_metric_checks(
+            {"precision_at_5": None},
+            {"precision_at_5": 1.0},
+            max_regression_pct=5.0,
+        )
+        self.assertFalse(all(passed for *_, passed in checks))
+
+    def test_nan_latest_metric_fails(self) -> None:
+        checks = gate.build_metric_checks(
+            {"latency_ms_p95": float("nan")},
+            {"latency_ms_p95": 100.0},
+            max_regression_pct=20.0,
+            higher_is_better=False,
+        )
+        self.assertFalse(all(passed for *_, passed in checks))
+
 
 if __name__ == "__main__":
     unittest.main()

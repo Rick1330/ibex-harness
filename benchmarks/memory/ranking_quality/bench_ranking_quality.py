@@ -10,18 +10,21 @@ import os
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
-from uuid import UUID
 
-_BENCH_ROOT = Path(__file__).resolve().parents[2]
+_BENCH_ROOT = Path(__file__).resolve().parents[3]
 _MEMORY_DIR = _BENCH_ROOT / "services" / "memory"
+_BENCH_MEMORY = _BENCH_ROOT / "benchmarks" / "memory"
 if str(_MEMORY_DIR) not in sys.path:
     sys.path.insert(0, str(_MEMORY_DIR))
+if str(_BENCH_MEMORY) not in sys.path:
+    sys.path.insert(0, str(_BENCH_MEMORY))
 
 from app.config import Settings  # noqa: E402
 from app.db import create_engine, create_session_factory  # noqa: E402
 from app.read.models import FindSimilarQuery  # noqa: E402
 from app.read.repository import MemoryReadRepository  # noqa: E402
 from app.vectorstore.pgvector_store import PgVectorStore  # noqa: E402
+from path_guard import resolve_bench_input_path, resolve_bench_output_path  # noqa: E402
 from tests.integration.conftest import zero_embedding  # noqa: E402
 
 _RANK_DIR = Path(__file__).resolve().parent
@@ -52,7 +55,9 @@ def _async_dsn() -> str:
 
 
 async def run_bench(*, output_path: Path, gold_path: Path) -> dict:
-    settings = Settings(database_url=_async_dsn())
+    settings = Settings(database_url=_async_dsn()).model_copy(
+        update={"search_fallback_enabled": False},
+    )
     engine = create_engine(settings)
     session_factory = create_session_factory(engine)
     store = PgVectorStore(session_factory, settings)
@@ -128,12 +133,12 @@ async def run_bench(*, output_path: Path, gold_path: Path) -> dict:
     failed_queries = [
         q["query_id"]
         for q in per_query
-        if q["recall_at_10"] < 1.0 or q["mrr"] < 1.0
+        if q["precision_at_5"] < 1.0 or q["recall_at_10"] < 1.0 or q["mrr"] < 1.0
     ]
     if failed_queries:
         sample = ", ".join(failed_queries[:5])
         raise RuntimeError(
-            f"ranking bench: {len(failed_queries)} queries below perfect recall/MRR: {sample}"
+            f"ranking bench: {len(failed_queries)} queries below perfect metrics: {sample}"
         )
     result = {
         "benchmark": "ranking_quality",
@@ -158,7 +163,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--gold", type=Path, default=GOLD_SET_PATH)
     args = parser.parse_args(argv)
-    result = asyncio.run(run_bench(output_path=args.output.resolve(), gold_path=args.gold.resolve()))
+    output_path = resolve_bench_output_path(args.output, bench_dir=_RANK_DIR)
+    gold_path = resolve_bench_input_path(args.gold, bench_dir=_RANK_DIR)
+    result = asyncio.run(run_bench(output_path=output_path, gold_path=gold_path))
     metrics = result["metrics"]
     print(
         f"ranking_quality: precision@5={metrics['precision_at_5']:.4f} "

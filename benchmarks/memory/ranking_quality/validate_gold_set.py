@@ -32,6 +32,31 @@ MAX_AGE_DAYS = 180
 EMBEDDING_DIM = 1024
 
 
+def _unit_interval(value: object, field: str, prefix: str) -> list[str]:
+    errors: list[str] = []
+    if value is None:
+        errors.append(f"{prefix} missing {field}")
+        return errors
+    try:
+        parsed = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        errors.append(f"{prefix} {field} must be numeric")
+        return errors
+    if parsed < 0.0 or parsed > 1.0:
+        errors.append(f"{prefix} {field} must be in [0, 1], got {parsed!r}")
+    return errors
+
+
+def _is_unit_interval(value: object) -> bool:
+    if value is None:
+        return False
+    try:
+        parsed = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return False
+    return 0.0 <= parsed <= 1.0
+
+
 def _composite(mem: dict[str, Any]) -> float:
     return composite_score(
         CompositeInputs(
@@ -43,6 +68,18 @@ def _composite(mem: dict[str, Any]) -> float:
             access_frequency=0.0,
         )
     )
+
+
+def _composite_safe(mem: dict[str, Any]) -> float | None:
+    """Return composite score when required fields are present and valid."""
+    if not _is_unit_interval(mem.get("confidence")):
+        return None
+    if not _is_unit_interval(mem.get("usefulness_score")):
+        return None
+    try:
+        return _composite(mem)
+    except (KeyError, TypeError, ValueError):
+        return None
 
 
 def validate_gold_set(payload: dict[str, Any]) -> list[str]:
@@ -73,9 +110,15 @@ def validate_gold_set(payload: dict[str, Any]) -> list[str]:
             "category",
             "valid_from_days_ago",
             "embedding_hotspot",
+            "confidence",
+            "usefulness_score",
         ):
             if field not in row:
                 errors.append(f"{prefix} missing {field}")
+        errors.extend(_unit_interval(row.get("confidence"), "confidence", prefix))
+        errors.extend(
+            _unit_interval(row.get("usefulness_score"), "usefulness_score", prefix)
+        )
         key = str(row.get("content_key", ""))
         if key in mem_by_key:
             errors.append(f"duplicate content_key: {key}")
@@ -125,6 +168,8 @@ def validate_gold_set(payload: dict[str, Any]) -> list[str]:
                 errors.append(f"{prefix} references unknown content_key {key!r}")
 
         cluster = [m for m in memories if int(m["embedding_hotspot"]) == hotspot]
+        if any(_composite_safe(m) is None for m in cluster):
+            continue
         ranked = sorted(cluster, key=lambda m: (-_composite(m), m["content_key"]))
         actual_order = [m["content_key"] for m in ranked]
         if actual_order != expected:

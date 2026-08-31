@@ -50,6 +50,20 @@ class GoldSetValidationTests(unittest.TestCase):
         errors = validate_mod.validate_gold_set(payload)
         self.assertTrue(any("decay" in e for e in errors))
 
+    def test_rejects_missing_confidence(self) -> None:
+        payload = json.loads((_DIR / "gold_set_v1.json").read_text(encoding="utf-8"))
+        row = dict(payload["memories"][0])
+        del row["confidence"]
+        payload["memories"][0] = row
+        errors = validate_mod.validate_gold_set(payload)
+        self.assertTrue(any("missing confidence" in e for e in errors))
+
+    def test_rejects_invalid_confidence(self) -> None:
+        payload = json.loads((_DIR / "gold_set_v1.json").read_text(encoding="utf-8"))
+        payload["memories"][0] = {**payload["memories"][0], "confidence": 1.5}
+        errors = validate_mod.validate_gold_set(payload)
+        self.assertTrue(any("confidence must be in [0, 1]" in e for e in errors))
+
 
 if __name__ == "__main__":
     unittest.main()

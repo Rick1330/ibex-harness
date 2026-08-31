@@ -3,17 +3,30 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Any
 
 Check = tuple[str, float, float, bool]
 
 
-def read_float(value: object, default: float = 0.0) -> float:
+def parse_finite_float(value: object) -> float | None:
+    """Parse a metric value; return None when missing or non-finite."""
+    if value is None:
+        return None
     try:
-        return float(value)  # type: ignore[arg-type]
+        parsed = float(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
-        return default
+        return None
+    if not math.isfinite(parsed):
+        return None
+    return parsed
+
+
+def read_float(value: object, default: float = 0.0) -> float:
+    """Legacy helper — prefer parse_finite_float for gate checks."""
+    parsed = parse_finite_float(value)
+    return default if parsed is None else parsed
 
 
 def pct_change(cur: float, base: float) -> float:
@@ -27,17 +40,22 @@ def load_json(path: Path) -> dict[str, Any]:
 
 
 def build_metric_checks(
-    latest_metrics: dict[str, float],
-    baseline_metrics: dict[str, float],
+    latest_metrics: dict[str, float | None],
+    baseline_metrics: dict[str, float | None],
     *,
     max_regression_pct: float,
     higher_is_better: bool = True,
 ) -> list[Check]:
     checks: list[Check] = []
-    for name, base_val in baseline_metrics.items():
-        cur_val = latest_metrics.get(name)
+    for name, base_raw in baseline_metrics.items():
+        cur_raw = latest_metrics.get(name)
+        cur_val = parse_finite_float(cur_raw)
+        base_val = parse_finite_float(base_raw)
         if cur_val is None:
             checks.append((f"{name} present", 0.0, 1.0, False))
+            continue
+        if base_val is None:
+            checks.append((f"{name} baseline valid", 0.0, 1.0, False))
             continue
         if base_val == 0:
             checks.append((f"{name} regression (%)", 0.0, max_regression_pct, True))

@@ -61,6 +61,14 @@ class CheckHnswGateStatusTests(unittest.TestCase):
             rc = check_mod.check_gate_status(path, sha="abc123def456")
             self.assertEqual(rc, 1)
 
+    def test_non_matching_sha_exits_nonzero(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "hnsw-benchmark-data.json"
+            path.write_text(json.dumps(_published_payload(status="pass")), encoding="utf-8")
+            with self.assertRaises(SystemExit) as ctx:
+                check_mod.check_gate_status(path, sha="deadbeef000000")
+            self.assertEqual(ctx.exception.code, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

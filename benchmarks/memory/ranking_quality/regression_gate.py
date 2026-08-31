@@ -15,6 +15,7 @@ from regression_gate_common import (  # noqa: E402
     build_metric_checks,
     format_check_lines,
     load_json,
+    parse_finite_float,
     read_float,
     write_gate_result,
 )
@@ -40,8 +41,12 @@ def main() -> int:
         print("latest.metrics must be an object", file=sys.stderr)
         return 1
 
-    float_metrics = {k: read_float(v) for k, v in baseline_metrics.items()}
-    latest_float = {k: read_float(latest_metrics.get(k)) for k in float_metrics}
+    float_metrics = {
+        k: parse_finite_float(v) for k, v in baseline_metrics.items()
+    }
+    latest_float = {
+        k: parse_finite_float(latest_metrics.get(k)) for k in float_metrics
+    }
     checks = build_metric_checks(
         latest_float,
         float_metrics,
@@ -52,9 +57,9 @@ def main() -> int:
     summary = [
         "## Ranking-quality regression gate",
         "",
-        f"- precision@5: {latest_float.get('precision_at_5', 0):.4f}",
-        f"- recall@10: {latest_float.get('recall_at_10', 0):.4f}",
-        f"- mrr: {latest_float.get('mrr', 0):.4f}",
+        f"- precision@5: {(latest_float.get('precision_at_5') or 0):.4f}",
+        f"- recall@10: {(latest_float.get('recall_at_10') or 0):.4f}",
+        f"- mrr: {(latest_float.get('mrr') or 0):.4f}",
         "",
         *check_lines,
         "",

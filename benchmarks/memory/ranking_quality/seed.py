@@ -44,6 +44,7 @@ async def _ensure_org_agent(session_factory: async_sessionmaker[AsyncSession]) -
         await session.execute(
             text("SELECT set_config('app.is_service_account', 'true', true)")  # nosemgrep
         )
+        await with_service_org(session, GOLD_ORG_ID)
         await session.execute(
             text(
                 """

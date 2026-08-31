@@ -7,22 +7,26 @@ import argparse
 import asyncio
 import json
 import os
+import secrets
 import statistics
 import sys
 import time
 from datetime import UTC, datetime
 from pathlib import Path
-from uuid import uuid4
 
-_BENCH_ROOT = Path(__file__).resolve().parents[2]
+_BENCH_ROOT = Path(__file__).resolve().parents[3]
 _MEMORY_DIR = _BENCH_ROOT / "services" / "memory"
+_BENCH_MEMORY = _BENCH_ROOT / "benchmarks" / "memory"
 if str(_MEMORY_DIR) not in sys.path:
     sys.path.insert(0, str(_MEMORY_DIR))
+if str(_BENCH_MEMORY) not in sys.path:
+    sys.path.insert(0, str(_BENCH_MEMORY))
 
 from app.config import Settings  # noqa: E402
 from app.db import create_engine, create_session_factory  # noqa: E402
 from app.vectorstore.pgvector_store import PgVectorStore  # noqa: E402
 from app.write.models import CreateMemoryCommand  # noqa: E402
+from path_guard import resolve_bench_output_path  # noqa: E402
 from tests.integration.conftest import seed_org_agent_memory  # noqa: E402
 from tests.integration.write_orchestrator_support import (  # noqa: E402
     OrchestratorTestDeps,
@@ -81,11 +85,11 @@ async def run_bench(*, iterations: int, output_path: Path) -> dict:
 
     latencies_ms: list[float] = []
     for index in range(iterations):
-        token = uuid4().hex
+        token = secrets.token_hex(32)
         cmd = CreateMemoryCommand(
             org_id=org_id,
             agent_id=agent_id,
-            content=f"write pipeline bench unique content {index} {token}",
+            content=f"{token} write-pipeline-bench-{index}-{time.time_ns()}",
             category="factual",
             confidence=0.85,
         )
@@ -117,9 +121,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--iterations", type=int, default=DEFAULT_ITERATIONS)
     args = parser.parse_args(argv)
-    result = asyncio.run(
-        run_bench(iterations=args.iterations, output_path=args.output.resolve())
-    )
+    output_path = resolve_bench_output_path(args.output, bench_dir=_DIR)
+    result = asyncio.run(run_bench(iterations=args.iterations, output_path=output_path))
     metrics = result["metrics"]
     print(
         f"write_pipeline: p50={metrics['latency_ms_p50']:.2f}ms "

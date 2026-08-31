@@ -99,3 +99,21 @@ def resolve_published_hnsw_path(raw: Path | str) -> Path:
             allowed_names=_ALLOWED_PUBLISHED_NAMES,
         ),
     )
+
+
+def resolve_bench_output_path(raw: Path | str, *, bench_dir: Path) -> Path:
+    """Resolve a benchmark output path under ``bench_dir`` (rejects escapes)."""
+    return resolve_workspace_path(
+        raw,
+        workspace=bench_dir.resolve(),
+        options=PathResolveOptions(allow_create_parent=True),
+    )
+
+
+def resolve_bench_input_path(raw: Path | str, *, bench_dir: Path) -> Path:
+    """Resolve an existing benchmark input file under ``bench_dir``."""
+    return resolve_workspace_path(
+        raw,
+        workspace=bench_dir.resolve(),
+        options=PathResolveOptions(must_exist=True),
+    )
