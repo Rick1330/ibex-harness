@@ -1,55 +1,60 @@
-"""Unit tests for IbexTask lifecycle logging."""
+"""Unit tests for task lifecycle signal logging."""
 
 from __future__ import annotations
 
 import logging
+from types import SimpleNamespace
 
 import pytest
 
-from app.tasks.base import IbexTask
+from app import task_lifecycle
 
 
-def test_ibex_task_before_start_logs_context(caplog: pytest.LogCaptureFixture) -> None:
+def test_log_task_start_emits_context(caplog: pytest.LogCaptureFixture) -> None:
     caplog.set_level(logging.INFO)
-    task = IbexTask()
-    task.name = "ibex.worker.test.sample"
-    task.before_start(
-        "task-id-1",
-        (),
-        {"org_id": "org-1", "agent_id": "agent-1"},
+    task = SimpleNamespace(name="ibex.worker.test.sample")
+    task_lifecycle._log_task_start(
+        task_id="task-id-1",
+        task=task,
+        kwargs={"org_id": "org-1", "agent_id": "agent-1"},
     )
     assert any("task_start" in record.message for record in caplog.records)
 
 
-def test_ibex_task_after_return_logs_failure(caplog: pytest.LogCaptureFixture) -> None:
+def test_log_task_complete_failure(caplog: pytest.LogCaptureFixture) -> None:
     caplog.set_level(logging.INFO)
-    task = IbexTask()
-    task.name = "ibex.worker.test.sample"
-    task.before_start("task-id-2", (), {})
-    task.after_return("FAILURE", None, "task-id-2", (), {}, None)
+    task = SimpleNamespace(name="ibex.worker.test.sample")
+    task_lifecycle._start_times["task-id-2"] = 0.0
+    task_lifecycle._log_task_complete(
+        task_id="task-id-2",
+        task=task,
+        kwargs={},
+        state="FAILURE",
+    )
     assert any(record.levelname == "ERROR" for record in caplog.records)
 
 
-def test_ibex_task_after_return_logs_success_with_context(caplog: pytest.LogCaptureFixture) -> None:
+def test_log_task_complete_success_with_context(caplog: pytest.LogCaptureFixture) -> None:
     caplog.set_level(logging.INFO)
-    task = IbexTask()
-    task.name = "ibex.worker.test.sample"
-    task.before_start("task-id-4", (), {"org_id": "org-1", "agent_id": "agent-1"})
-    task.after_return(
-        "SUCCESS",
-        {"ok": True},
-        "task-id-4",
-        (),
-        {"org_id": "org-1", "agent_id": "agent-1"},
-        None,
+    task = SimpleNamespace(name="ibex.worker.test.sample")
+    task_lifecycle._start_times["task-id-4"] = 0.0
+    task_lifecycle._log_task_complete(
+        task_id="task-id-4",
+        task=task,
+        kwargs={"org_id": "org-1", "agent_id": "agent-1"},
+        state="SUCCESS",
     )
     assert any("task_complete" in record.message for record in caplog.records)
 
 
-def test_ibex_task_after_return_logs_success(caplog: pytest.LogCaptureFixture) -> None:
+def test_log_task_complete_success(caplog: pytest.LogCaptureFixture) -> None:
     caplog.set_level(logging.INFO)
-    task = IbexTask()
-    task.name = "ibex.worker.test.sample"
-    task.before_start("task-id-3", (), {})
-    task.after_return("SUCCESS", {"ok": True}, "task-id-3", (), {}, None)
+    task = SimpleNamespace(name="ibex.worker.test.sample")
+    task_lifecycle._start_times["task-id-3"] = 0.0
+    task_lifecycle._log_task_complete(
+        task_id="task-id-3",
+        task=task,
+        kwargs={},
+        state="SUCCESS",
+    )
     assert any("task_complete" in record.message for record in caplog.records)

@@ -29,6 +29,8 @@ def test_celery_app_queues() -> None:
     assert queues is not None
     names = {q.name for q in queues}
     assert names == {"extraction", "embedding", "maintenance", "mcp_audit"}
+    assert DEFAULT_QUEUE_NAME not in names
+    assert app.conf.task_create_missing_queues is False
     for q in queues:
         assert isinstance(q, Queue)
         assert isinstance(q.exchange, Exchange)

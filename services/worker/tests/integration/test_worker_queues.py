@@ -50,4 +50,4 @@ def test_noop_consumed_per_queue(
 def test_worker_starts_and_pings(celery_app: Celery, worker: object) -> None:
     replies = celery_app.control.ping(timeout=5.0)
     assert replies
-    assert any("ok" in node.get("ok", "").lower() for reply in replies for node in reply.values())
+    assert any(node.get("ok") == "pong" for reply in replies for node in reply.values())

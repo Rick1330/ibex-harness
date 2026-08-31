@@ -59,7 +59,6 @@ def create_celery_app(settings: Settings | None = None) -> Celery:
         worker_hostname=cfg.worker_hostname,
         task_queues=_build_task_queues(),
         task_routes=TASK_ROUTES,
-        task_default_queue=None,
         task_create_missing_queues=False,
         broker_transport_options={
             "priority_steps": list(range(EXTRACTION_MAX_PRIORITY)),
@@ -101,4 +100,5 @@ def route_for_task(celery_app: Celery, task_name: str) -> str:
 celery_app = create_celery_app()
 
 # Register task modules (decorators bind to celery_app above).
+import app.task_lifecycle  # noqa: F401
 import app.tasks  # noqa: F401
