@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -23,8 +24,14 @@ GOLD_ORG_ID = UUID("11111111-2222-3333-4444-555555555501")
 GOLD_AGENT_ID = UUID("11111111-2222-3333-4444-555555555502")
 GOLD_USER_ID = UUID("11111111-2222-3333-4444-555555555503")
 GOLD_SET_PATH = Path(__file__).resolve().parent / "gold_set_v1.json"
+_RANK_DIR = GOLD_SET_PATH.parent
+_BENCH_MEMORY = _RANK_DIR.parent
 _SERVICE_ACCOUNT_SQL = "SELECT set_config('app.is_service_account', 'true', true)"
 
+if str(_BENCH_MEMORY) not in sys.path:
+    sys.path.insert(0, str(_BENCH_MEMORY))
+
+from path_guard import resolve_bench_input_path  # noqa: E402
 from validate_gold_set import validate_gold_set  # noqa: E402
 
 
@@ -37,7 +44,28 @@ class GoldSeedResult:
 
 def load_gold_set(path: Path | None = None) -> dict:
     payload_path = path or GOLD_SET_PATH
-    return json.loads(payload_path.read_text(encoding="utf-8"))
+    resolved = resolve_bench_input_path(payload_path, bench_dir=_RANK_DIR)
+    return json.loads(resolved.read_text(encoding="utf-8"))  # NOSONAR pythonsecurity:S2083
+
+
+def _raise_validation_errors(errors: list[str]) -> None:
+    if not errors:
+        return
+    joined = "\n".join(f"  - {e}" for e in errors)
+    raise ValueError(f"gold set validation failed:\n{joined}")
+
+
+def _parse_memory_rows(memories: object) -> list[dict]:
+    if not isinstance(memories, list) or not memories:
+        msg = "gold set memories must be a non-empty array"
+        raise ValueError(msg)
+    rows: list[dict] = []
+    for row in memories:
+        if not isinstance(row, dict):
+            msg = "memory row must be an object"
+            raise ValueError(msg)
+        rows.append(row)
+    return rows
 
 
 async def _ensure_org_agent(session_factory: async_sessionmaker[AsyncSession]) -> None:
@@ -141,21 +169,8 @@ async def _seed_memory_row(
 
 def _validated_memories(gold_path: Path | None) -> list[dict]:
     payload = load_gold_set(gold_path)
-    errors = validate_gold_set(payload)
-    if errors:
-        joined = "\n".join(f"  - {e}" for e in errors)
-        raise ValueError(f"gold set validation failed:\n{joined}")
-    memories = payload.get("memories")
-    if not isinstance(memories, list) or not memories:
-        msg = "gold set memories must be a non-empty array"
-        raise ValueError(msg)
-    rows: list[dict] = []
-    for row in memories:
-        if not isinstance(row, dict):
-            msg = "memory row must be an object"
-            raise ValueError(msg)
-        rows.append(row)
-    return rows
+    _raise_validation_errors(validate_gold_set(payload))
+    return _parse_memory_rows(payload["memories"])
 
 
 async def _seed_memory_rows(

@@ -62,21 +62,23 @@ def write_published(published_path: Path, published: dict[str, Any]) -> None:
     )
 
 
-def merge_run(
-    published_path: Path,
-    *,
-    benchmark: str,
-    entry: dict[str, Any],
-    sha: str,
-    max_runs: int = 50,
-) -> dict[str, Any]:
-    published = load_or_init_published(published_path, benchmark=benchmark)
-    runs = [r for r in published.get("runs", []) if r.get("sha") != sha]
-    runs.insert(0, entry)
+@dataclass(frozen=True, slots=True)
+class MergeRunRequest:
+    published_path: Path
+    benchmark: str
+    entry: dict[str, Any]
+    sha: str
+    max_runs: int = 50
+
+
+def merge_run(request: MergeRunRequest) -> dict[str, Any]:
+    published = load_or_init_published(request.published_path, benchmark=request.benchmark)
+    runs = [r for r in published.get("runs", []) if r.get("sha") != request.sha]
+    runs.insert(0, request.entry)
     published["schema_version"] = 1
-    published["benchmark"] = benchmark
-    published["runs"] = runs[:max_runs]
-    write_published(published_path, published)
+    published["benchmark"] = request.benchmark
+    published["runs"] = runs[: request.max_runs]
+    write_published(request.published_path, published)
     return published
 
 

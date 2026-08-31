@@ -7,6 +7,7 @@ import argparse
 import asyncio
 import os
 import sys
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -43,6 +44,13 @@ from validate_gold_set import validate_gold_set  # noqa: E402
 DEFAULT_OUTPUT = _RANK_DIR / "output" / "latest.json"
 
 
+@dataclass(frozen=True, slots=True)
+class QueryEvalContext:
+    seed: GoldSeedResult
+    id_to_key: dict[str, str]
+    mem_by_key: dict[str, dict]
+
+
 def _async_dsn() -> str:
     raw = (
         os.getenv("IBEX_MEMORY_DATABASE_URL")
@@ -61,11 +69,8 @@ def _async_dsn() -> str:
 
 async def _evaluate_query(
     repo: MemoryReadRepository,
-    *,
-    seed: GoldSeedResult,
     row: dict,
-    id_to_key: dict[str, str],
-    mem_by_key: dict[str, dict],
+    ctx: QueryEvalContext,
 ) -> tuple[dict, bool]:
     query_id = str(row["query_id"])
     hotspot = int(row["query_hotspot"])
@@ -75,8 +80,8 @@ async def _evaluate_query(
 
     results = await repo.find_similar(
         FindSimilarQuery(
-            org_id=seed.org_id,
-            agent_id=seed.agent_id,
+            org_id=ctx.seed.org_id,
+            agent_id=ctx.seed.agent_id,
             query_embedding=query_vec,
             query_text=str(row["query_text"]),
             limit=10,
@@ -84,14 +89,14 @@ async def _evaluate_query(
         )
     )
     ranked_keys = [
-        id_to_key[str(hit.id)] for hit in results if str(hit.id) in id_to_key
+        ctx.id_to_key[str(hit.id)] for hit in results if str(hit.id) in ctx.id_to_key
     ]
     p5 = precision_at_k(ranked_keys, expected_keys, 5)
     r10 = recall_at_k(ranked_keys, expected_keys, 10)
     mrr = mean_reciprocal_rank(ranked_keys, expected_keys)
     order_ok = expected_order_match(ranked_keys, expected_keys)
     top_ok = (
-        bool(ranked_keys) and mem_by_key[ranked_keys[0]]["category"] == expected_top
+        bool(ranked_keys) and ctx.mem_by_key[ranked_keys[0]]["category"] == expected_top
     )
     return (
         {
@@ -161,14 +166,13 @@ async def run_bench(*, gold_path: Path) -> dict:
 
         per_query: list[dict] = []
         top_cat_hits = 0
+        eval_ctx = QueryEvalContext(
+            seed=seed,
+            id_to_key=id_to_key,
+            mem_by_key=mem_by_key,
+        )
         for row in queries:
-            query_result, top_ok = await _evaluate_query(
-                repo,
-                seed=seed,
-                row=row,
-                id_to_key=id_to_key,
-                mem_by_key=mem_by_key,
-            )
+            query_result, top_ok = await _evaluate_query(repo, row, eval_ctx)
             per_query.append(query_result)
             if top_ok:
                 top_cat_hits += 1

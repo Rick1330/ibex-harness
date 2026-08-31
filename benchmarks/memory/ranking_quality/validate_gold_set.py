@@ -6,14 +6,19 @@ from __future__ import annotations
 import json
 import sys
 from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 _MEMORY_DIR = Path(__file__).resolve().parents[3] / "services" / "memory"
-if str(_MEMORY_DIR) not in sys.path:
-    sys.path.insert(0, str(_MEMORY_DIR))
+_BENCH_MEMORY = Path(__file__).resolve().parents[1]
+_RANK_DIR = Path(__file__).resolve().parent
+for path in (_MEMORY_DIR, _BENCH_MEMORY):
+    if str(path) not in sys.path:
+        sys.path.insert(0, str(path))
 
 from app.scoring.composite import CompositeInputs, composite_score  # noqa: E402
+from path_guard import resolve_bench_input_path  # noqa: E402
 
 CATEGORIES = frozenset({"factual", "procedural", "preference", "behavioral", "episodic"})
 DECAY_QUERY_IDS = frozenset(
@@ -30,6 +35,31 @@ MAX_QUERIES = 25
 MIN_AGE_DAYS = 7
 MAX_AGE_DAYS = 180
 EMBEDDING_DIM = 1024
+REQUIRED_MEMORY_FIELDS = (
+    "content_key",
+    "content",
+    "category",
+    "valid_from_days_ago",
+    "embedding_hotspot",
+    "confidence",
+    "usefulness_score",
+)
+
+
+@dataclass
+class QueryValidationState:
+    mem_by_key: dict[str, dict[str, Any]]
+    query_ids: set[str]
+    decay_found: set[str]
+
+
+@dataclass(frozen=True)
+class CompositeOrderCheck:
+    prefix: str
+    qid: str
+    hotspot: int
+    expected: list[object]
+    mem_by_key: dict[str, dict[str, Any]]
 
 
 def _unit_interval(value: object, field: str, prefix: str) -> list[str]:
@@ -104,19 +134,16 @@ def _require_non_empty_str(value: object, field: str, prefix: str) -> tuple[str 
     return value, []
 
 
-def _validate_memory_row(row: dict[str, Any], prefix: str) -> list[str]:
+def _validate_memory_required_keys(row: dict[str, Any], prefix: str) -> list[str]:
+    return [
+        f"{prefix} missing {field}"
+        for field in REQUIRED_MEMORY_FIELDS
+        if field not in row
+    ]
+
+
+def _validate_memory_scalar_fields(row: dict[str, Any], prefix: str) -> list[str]:
     errors: list[str] = []
-    for field in (
-        "content_key",
-        "content",
-        "category",
-        "valid_from_days_ago",
-        "embedding_hotspot",
-        "confidence",
-        "usefulness_score",
-    ):
-        if field not in row:
-            errors.append(f"{prefix} missing {field}")
     errors.extend(_unit_interval(row.get("confidence"), "confidence", prefix))
     errors.extend(
         _unit_interval(row.get("usefulness_score"), "usefulness_score", prefix)
@@ -139,11 +166,23 @@ def _validate_memory_row(row: dict[str, Any], prefix: str) -> list[str]:
     errors.extend(hotspot_errors)
     if hotspot is not None and not (0 <= hotspot < EMBEDDING_DIM):
         errors.append(f"{prefix} hotspot {hotspot} out of range")
+    return errors
+
+
+def _validate_memory_content(row: dict[str, Any], prefix: str) -> list[str]:
     content = str(row.get("content", ""))
+    errors: list[str] = []
     if len(content) < 20:
         errors.append(f"{prefix} content too short")
     if content.startswith(("gold ranking", "gold distractor")):
         errors.append(f"{prefix} content looks like placeholder text")
+    return errors
+
+
+def _validate_memory_row(row: dict[str, Any], prefix: str) -> list[str]:
+    errors = _validate_memory_required_keys(row, prefix)
+    errors.extend(_validate_memory_scalar_fields(row, prefix))
+    errors.extend(_validate_memory_content(row, prefix))
     return errors
 
 
@@ -163,24 +202,21 @@ def _validate_expected_content_keys(
     return errors
 
 
-def _validate_query_composite_order(
-    *,
-    prefix: str,
-    qid: str,
-    hotspot: int,
-    expected: list[object],
-    mem_by_key: dict[str, dict[str, Any]],
-) -> list[str]:
-    cluster = [m for m in mem_by_key.values() if int(m["embedding_hotspot"]) == hotspot]
+def _validate_query_composite_order(check: CompositeOrderCheck) -> list[str]:
+    cluster = [
+        m
+        for m in check.mem_by_key.values()
+        if int(m["embedding_hotspot"]) == check.hotspot
+    ]
     if any(_composite_safe(m) is None for m in cluster):
         return []
     ranked = sorted(cluster, key=lambda m: (-_composite(m), m["content_key"]))
     actual_order = [m["content_key"] for m in ranked]
-    if actual_order == expected:
+    if actual_order == check.expected:
         return []
     return [
-        f"{prefix} ({qid}) expected order does not match composite simulation\n"
-        f"  expected: {expected}\n"
+        f"{check.prefix} ({check.qid}) expected order does not match composite simulation\n"
+        f"  expected: {check.expected}\n"
         f"  composite: {actual_order}"
     ]
 
@@ -235,7 +271,7 @@ def _validate_query_expectations(
     *,
     prefix: str,
     qid: str,
-    mem_by_key: dict[str, dict[str, Any]],
+    state: QueryValidationState,
 ) -> list[str]:
     errors: list[str] = []
     hotspot, hotspot_errors = _parse_int(row.get("query_hotspot"), "query_hotspot", prefix)
@@ -245,21 +281,27 @@ def _validate_query_expectations(
         errors.append(f"{prefix} expected_content_keys must be non-empty array")
         return errors
     errors.extend(
-        _validate_expected_content_keys(expected, prefix=prefix, mem_by_key=mem_by_key)
+        _validate_expected_content_keys(
+            expected, prefix=prefix, mem_by_key=state.mem_by_key
+        )
     )
     if hotspot is None:
         return errors
     errors.extend(
         _validate_query_composite_order(
-            prefix=prefix,
-            qid=qid,
-            hotspot=hotspot,
-            expected=expected,
-            mem_by_key=mem_by_key,
+            CompositeOrderCheck(
+                prefix=prefix,
+                qid=qid,
+                hotspot=hotspot,
+                expected=expected,
+                mem_by_key=state.mem_by_key,
+            )
         )
     )
     errors.extend(
-        _validate_top_category(expected, row, prefix=prefix, mem_by_key=mem_by_key)
+        _validate_top_category(
+            expected, row, prefix=prefix, mem_by_key=state.mem_by_key
+        )
     )
     return errors
 
@@ -268,16 +310,14 @@ def _validate_query_row(
     row: dict[str, Any],
     *,
     index: int,
-    mem_by_key: dict[str, dict[str, Any]],
-    query_ids: set[str],
-    decay_found: set[str],
+    state: QueryValidationState,
 ) -> list[str]:
     prefix = f"queries[{index}]"
     qid, errors = _validate_query_identity(
         row,
         prefix=prefix,
-        query_ids=query_ids,
-        decay_found=decay_found,
+        query_ids=state.query_ids,
+        decay_found=state.decay_found,
     )
     if qid is None:
         return errors
@@ -286,7 +326,7 @@ def _validate_query_row(
             row,
             prefix=prefix,
             qid=qid,
-            mem_by_key=mem_by_key,
+            state=state,
         )
     )
     return errors
@@ -337,22 +377,17 @@ def _validate_queries(
     mem_by_key: dict[str, dict[str, Any]],
 ) -> tuple[list[str], set[str]]:
     errors: list[str] = []
-    query_ids: set[str] = set()
-    decay_found: set[str] = set()
+    state = QueryValidationState(
+        mem_by_key=mem_by_key,
+        query_ids=set(),
+        decay_found=set(),
+    )
     for index, row in enumerate(queries):
         if not isinstance(row, dict):
             errors.append(f"queries[{index}] must be an object")
             continue
-        errors.extend(
-            _validate_query_row(
-                row,
-                index=index,
-                mem_by_key=mem_by_key,
-                query_ids=query_ids,
-                decay_found=decay_found,
-            )
-        )
-    return errors, decay_found
+        errors.extend(_validate_query_row(row, index=index, state=state))
+    return errors, state.decay_found
 
 
 def validate_gold_set(payload: dict[str, Any]) -> list[str]:
@@ -379,10 +414,10 @@ def validate_gold_set(payload: dict[str, Any]) -> list[str]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    path = Path(__file__).resolve().parent / "gold_set_v1.json"
+    path = _RANK_DIR / "gold_set_v1.json"
     if argv and len(argv) > 1:
-        path = Path(argv[1])
-    payload = json.loads(path.read_text(encoding="utf-8"))
+        path = resolve_bench_input_path(Path(argv[1]), bench_dir=_RANK_DIR)
+    payload = json.loads(path.read_text(encoding="utf-8"))  # NOSONAR pythonsecurity:S2083
     errors = validate_gold_set(payload)
     if errors:
         print(f"gold set validation failed ({len(errors)} errors):", file=sys.stderr)

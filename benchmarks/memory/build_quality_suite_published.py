@@ -19,6 +19,7 @@ from path_guard import (  # noqa: E402
     resolve_published_write_pipeline_path,
 )
 from publish_quality_common import (  # noqa: E402
+    MergeRunRequest,
     RunMeta,
     load_json,
     merge_ranking_quality_entry,
@@ -78,10 +79,12 @@ def main() -> int:
         ),
     )
     merge_run(
-        published_path,
-        benchmark=benchmark,
-        entry=entry,
-        sha=args.sha,
+        MergeRunRequest(
+            published_path=published_path,
+            benchmark=benchmark,
+            entry=entry,
+            sha=args.sha,
+        )
     )
     print(f"wrote {published_path} status={entry['status']}", flush=True)
     return 0
