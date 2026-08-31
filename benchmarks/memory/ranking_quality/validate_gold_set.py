@@ -206,31 +206,38 @@ def _validate_top_category(
     ]
 
 
-def _validate_query_row(
+def _validate_query_identity(
     row: dict[str, Any],
     *,
-    index: int,
-    mem_by_key: dict[str, dict[str, Any]],
+    prefix: str,
     query_ids: set[str],
     decay_found: set[str],
-) -> list[str]:
-    prefix = f"queries[{index}]"
+) -> tuple[str | None, list[str]]:
     errors: list[str] = []
     qid, qid_errors = _require_non_empty_str(row.get("query_id"), "query_id", prefix)
     errors.extend(qid_errors)
     if qid is None:
-        return errors
+        return None, errors
     if qid in query_ids:
         errors.append(f"duplicate query_id: {qid}")
     query_ids.add(qid)
     if qid in DECAY_QUERY_IDS:
         decay_found.add(qid)
-
     _, query_text_errors = _require_non_empty_str(
         row.get("query_text"), "query_text", prefix
     )
     errors.extend(query_text_errors)
+    return qid, errors
 
+
+def _validate_query_expectations(
+    row: dict[str, Any],
+    *,
+    prefix: str,
+    qid: str,
+    mem_by_key: dict[str, dict[str, Any]],
+) -> list[str]:
+    errors: list[str] = []
     hotspot, hotspot_errors = _parse_int(row.get("query_hotspot"), "query_hotspot", prefix)
     errors.extend(hotspot_errors)
     expected = row.get("expected_content_keys")
@@ -240,7 +247,6 @@ def _validate_query_row(
     errors.extend(
         _validate_expected_content_keys(expected, prefix=prefix, mem_by_key=mem_by_key)
     )
-
     if hotspot is None:
         return errors
     errors.extend(
@@ -254,6 +260,34 @@ def _validate_query_row(
     )
     errors.extend(
         _validate_top_category(expected, row, prefix=prefix, mem_by_key=mem_by_key)
+    )
+    return errors
+
+
+def _validate_query_row(
+    row: dict[str, Any],
+    *,
+    index: int,
+    mem_by_key: dict[str, dict[str, Any]],
+    query_ids: set[str],
+    decay_found: set[str],
+) -> list[str]:
+    prefix = f"queries[{index}]"
+    qid, errors = _validate_query_identity(
+        row,
+        prefix=prefix,
+        query_ids=query_ids,
+        decay_found=decay_found,
+    )
+    if qid is None:
+        return errors
+    errors.extend(
+        _validate_query_expectations(
+            row,
+            prefix=prefix,
+            qid=qid,
+            mem_by_key=mem_by_key,
+        )
     )
     return errors
 
@@ -281,29 +315,30 @@ def _index_memories(memories: list[object]) -> tuple[dict[str, dict[str, Any]], 
     return mem_by_key, cat_counts, errors
 
 
-def validate_gold_set(payload: dict[str, Any]) -> list[str]:
+def _validate_collection_sizes(memories: list[object], queries: list[object]) -> list[str]:
     errors: list[str] = []
-    memories = payload.get("memories")
-    queries = payload.get("queries")
-    if not isinstance(memories, list):
-        return ["memories must be an array"]
-    if not isinstance(queries, list):
-        return ["queries must be an array"]
     if not (MIN_MEMORIES <= len(memories) <= MAX_MEMORIES):
         errors.append(f"memory count {len(memories)} outside [{MIN_MEMORIES}, {MAX_MEMORIES}]")
     if not (MIN_QUERIES <= len(queries) <= MAX_QUERIES):
         errors.append(f"query count {len(queries)} outside [{MIN_QUERIES}, {MAX_QUERIES}]")
+    return errors
 
-    mem_by_key, cat_counts, memory_errors = _index_memories(memories)
-    errors.extend(memory_errors)
 
-    for cat in CATEGORIES:
-        if cat_counts[cat] < 3:
-            errors.append(f"category {cat!r} has only {cat_counts[cat]} memories (need >= 3)")
+def _validate_category_coverage(cat_counts: Counter[str]) -> list[str]:
+    return [
+        f"category {cat!r} has only {cat_counts[cat]} memories (need >= 3)"
+        for cat in CATEGORIES
+        if cat_counts[cat] < 3
+    ]
 
+
+def _validate_queries(
+    queries: list[object],
+    mem_by_key: dict[str, dict[str, Any]],
+) -> tuple[list[str], set[str]]:
+    errors: list[str] = []
     query_ids: set[str] = set()
     decay_found: set[str] = set()
-
     for index, row in enumerate(queries):
         if not isinstance(row, dict):
             errors.append(f"queries[{index}] must be an object")
@@ -317,6 +352,24 @@ def validate_gold_set(payload: dict[str, Any]) -> list[str]:
                 decay_found=decay_found,
             )
         )
+    return errors, decay_found
+
+
+def validate_gold_set(payload: dict[str, Any]) -> list[str]:
+    memories = payload.get("memories")
+    queries = payload.get("queries")
+    if not isinstance(memories, list):
+        return ["memories must be an array"]
+    if not isinstance(queries, list):
+        return ["queries must be an array"]
+
+    errors = _validate_collection_sizes(memories, queries)
+    mem_by_key, cat_counts, memory_errors = _index_memories(memories)
+    errors.extend(memory_errors)
+    errors.extend(_validate_category_coverage(cat_counts))
+
+    query_errors, decay_found = _validate_queries(queries, mem_by_key)
+    errors.extend(query_errors)
 
     missing_decay = DECAY_QUERY_IDS - decay_found
     if missing_decay:

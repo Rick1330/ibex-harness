@@ -115,6 +115,12 @@ class GoldSetValidationTests(unittest.TestCase):
         errors = validate_mod.validate_gold_set(payload)
         self.assertTrue(any("query_id must be non-empty" in e for e in errors))
 
+    def test_rejects_empty_query_text(self) -> None:
+        payload = json.loads((_DIR / "gold_set_v1.json").read_text(encoding="utf-8"))
+        payload["queries"][0]["query_text"] = ""
+        errors = validate_mod.validate_gold_set(payload)
+        self.assertTrue(any("query_text must be non-empty" in e for e in errors))
+
 
 if __name__ == "__main__":
     unittest.main()

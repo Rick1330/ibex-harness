@@ -139,13 +139,7 @@ async def _seed_memory_row(
     return content_key, memory_id
 
 
-async def seed_gold_set(
-    session_factory: async_sessionmaker[AsyncSession],
-    store: PgVectorStore,
-    *,
-    gold_path: Path | None = None,
-) -> GoldSeedResult:
-    """Insert gold memories + embeddings; return content_key → memory_id map."""
+def _validated_memories(gold_path: Path | None) -> list[dict]:
     payload = load_gold_set(gold_path)
     errors = validate_gold_set(payload)
     if errors:
@@ -155,22 +149,32 @@ async def seed_gold_set(
     if not isinstance(memories, list) or not memories:
         msg = "gold set memories must be a non-empty array"
         raise ValueError(msg)
-
-    await _ensure_org_agent(session_factory)
-    await _purge_org_memories(session_factory)
-
-    now = datetime.now(tz=UTC)
-    content_key_to_id: dict[str, UUID] = {}
-
+    rows: list[dict] = []
     for row in memories:
         if not isinstance(row, dict):
             msg = "memory row must be an object"
             raise ValueError(msg)
+        rows.append(row)
+    return rows
+
+
+async def _seed_memory_rows(
+    session_factory: async_sessionmaker[AsyncSession],
+    store: PgVectorStore,
+    memories: list[dict],
+    *,
+    now: datetime,
+) -> dict[str, UUID]:
+    content_key_to_id: dict[str, UUID] = {}
+    for row in memories:
         content_key, memory_id = await _seed_memory_row(
             session_factory, store, row, now=now
         )
         content_key_to_id[content_key] = memory_id
+    return content_key_to_id
 
+
+async def _analyze_memories(session_factory: async_sessionmaker[AsyncSession]) -> None:
     async with session_factory() as session, session.begin():
         await session.execute(
             text(_SERVICE_ACCOUNT_SQL)  # nosemgrep
@@ -178,6 +182,24 @@ async def seed_gold_set(
         await with_service_org(session, GOLD_ORG_ID)
         await session.execute(text("ANALYZE ibex_core.memories"))  # nosemgrep
 
+
+async def seed_gold_set(
+    session_factory: async_sessionmaker[AsyncSession],
+    store: PgVectorStore,
+    *,
+    gold_path: Path | None = None,
+) -> GoldSeedResult:
+    """Insert gold memories + embeddings; return content_key → memory_id map."""
+    memories = _validated_memories(gold_path)
+    await _ensure_org_agent(session_factory)
+    await _purge_org_memories(session_factory)
+    content_key_to_id = await _seed_memory_rows(
+        session_factory,
+        store,
+        memories,
+        now=datetime.now(tz=UTC),
+    )
+    await _analyze_memories(session_factory)
     return GoldSeedResult(
         org_id=GOLD_ORG_ID,
         agent_id=GOLD_AGENT_ID,

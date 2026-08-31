@@ -1,6 +1,6 @@
 "use client";
 
-import useSWR, { type KeyedMutator } from "swr";
+import type { KeyedMutator } from "swr";
 
 import { WRITE_PIPELINE_BENCHMARK_DATA_URL } from "@/lib/benchmarks/constants";
 import {
@@ -8,20 +8,9 @@ import {
   type WritePipelineBenchmarkDataParsed,
   type WritePipelineBenchmarkRun,
 } from "@/lib/benchmarks/write-pipeline-schema";
-import { benchmarkDataErrorMessage } from "@/hooks/benchmark-data-error";
+import { useJsonBenchmarkData } from "@/hooks/use-json-benchmark-data";
 
 const LOAD_ERROR = "Failed to load write-pipeline benchmark data";
-
-async function fetchWritePipelineData(
-  url: string,
-): Promise<WritePipelineBenchmarkDataParsed> {
-  const response = await fetch(url, { signal: AbortSignal.timeout(10_000) });
-  if (!response.ok) {
-    throw new Error(`Failed to load write-pipeline benchmark data (${response.status})`);
-  }
-  const json: unknown = await response.json();
-  return writePipelineBenchmarkDataSchema.parse(json);
-}
 
 export function useWritePipelineBenchmarkData(): {
   data: WritePipelineBenchmarkDataParsed | undefined;
@@ -32,24 +21,9 @@ export function useWritePipelineBenchmarkData(): {
   errorMessage: string | null;
   refresh: KeyedMutator<WritePipelineBenchmarkDataParsed>;
 } {
-  const { data, error, isLoading, mutate } = useSWR(
+  return useJsonBenchmarkData(
     WRITE_PIPELINE_BENCHMARK_DATA_URL,
-    fetchWritePipelineData,
-    {
-      revalidateOnFocus: false,
-      revalidateOnReconnect: false,
-      dedupingInterval: 60_000,
-    },
+    writePipelineBenchmarkDataSchema,
+    LOAD_ERROR,
   );
-
-  const runs = data?.runs ?? [];
-  return {
-    data,
-    runs,
-    latest: runs[0] ?? null,
-    isLoading,
-    isError: Boolean(error),
-    errorMessage: benchmarkDataErrorMessage(error, LOAD_ERROR),
-    refresh: mutate,
-  };
 }

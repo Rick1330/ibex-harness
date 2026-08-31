@@ -1,6 +1,6 @@
 "use client";
 
-import useSWR, { type KeyedMutator } from "swr";
+import type { KeyedMutator } from "swr";
 
 import { RANKING_QUALITY_BENCHMARK_DATA_URL } from "@/lib/benchmarks/constants";
 import {
@@ -8,20 +8,9 @@ import {
   type RankingQualityBenchmarkDataParsed,
   type RankingQualityBenchmarkRun,
 } from "@/lib/benchmarks/ranking-quality-schema";
-import { benchmarkDataErrorMessage } from "@/hooks/benchmark-data-error";
+import { useJsonBenchmarkData } from "@/hooks/use-json-benchmark-data";
 
 const LOAD_ERROR = "Failed to load ranking-quality benchmark data";
-
-async function fetchRankingQualityData(
-  url: string,
-): Promise<RankingQualityBenchmarkDataParsed> {
-  const response = await fetch(url, { signal: AbortSignal.timeout(10_000) });
-  if (!response.ok) {
-    throw new Error(`Failed to load ranking-quality benchmark data (${response.status})`);
-  }
-  const json: unknown = await response.json();
-  return rankingQualityBenchmarkDataSchema.parse(json);
-}
 
 export function useRankingQualityBenchmarkData(): {
   data: RankingQualityBenchmarkDataParsed | undefined;
@@ -32,24 +21,9 @@ export function useRankingQualityBenchmarkData(): {
   errorMessage: string | null;
   refresh: KeyedMutator<RankingQualityBenchmarkDataParsed>;
 } {
-  const { data, error, isLoading, mutate } = useSWR(
+  return useJsonBenchmarkData(
     RANKING_QUALITY_BENCHMARK_DATA_URL,
-    fetchRankingQualityData,
-    {
-      revalidateOnFocus: false,
-      revalidateOnReconnect: false,
-      dedupingInterval: 60_000,
-    },
+    rankingQualityBenchmarkDataSchema,
+    LOAD_ERROR,
   );
-
-  const runs = data?.runs ?? [];
-  return {
-    data,
-    runs,
-    latest: runs[0] ?? null,
-    isLoading,
-    isError: Boolean(error),
-    errorMessage: benchmarkDataErrorMessage(error, LOAD_ERROR),
-    refresh: mutate,
-  };
 }
