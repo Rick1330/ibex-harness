@@ -2,8 +2,10 @@
 
 import Link from "next/link";
 
+import { BenchmarkWorkflowRunLink } from "@/components/benchmarks/benchmark-workflow-run-link";
 import { cn } from "@/lib/cn";
 import { formatBytes, formatDeltaPct, formatMs, formatReqPerSec, formatTimestamp } from "@/lib/benchmarks/format";
+import { isSafeBenchmarkRunUrl } from "@/lib/benchmarks/run-url";
 import type { BenchmarkRun, RunStatus } from "@/lib/benchmarks/types";
 
 type HistoryTableRowProps = Readonly<{
@@ -64,15 +66,12 @@ export function HistoryTableRow({
         {formatDeltaPct(run.regression_vs_baseline_pct)}
       </td>
       <td className="px-4 py-3 text-muted-foreground">
-        {run.run_url ? (
-          <a
-            href={run.run_url}
-            target="_blank"
-            rel="noreferrer"
+        {run.run_url && isSafeBenchmarkRunUrl(run.run_url) ? (
+          <BenchmarkWorkflowRunLink
+            runUrl={run.run_url}
+            label={formatTimestamp(run.timestamp)}
             className="underline-offset-4 hover:underline"
-          >
-            {formatTimestamp(run.timestamp)}
-          </a>
+          />
         ) : (
           formatTimestamp(run.timestamp)
         )}
