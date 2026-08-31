@@ -51,3 +51,27 @@ def test_worker_starts_and_pings(celery_app: Celery, worker: object) -> None:
     replies = celery_app.control.ping(timeout=5.0)
     assert replies
     assert any(node.get("ok") == "pong" for reply in replies for node in reply.values())
+
+
+def test_routed_task_without_explicit_queue_kwarg(
+    celery_app: Celery,
+    worker: object,
+) -> None:
+    """task_routes must deliver work without per-send queue= override."""
+    result: AsyncResult = celery_app.send_task(
+        TASK_EXTRACTION_NOOP,
+        ignore_result=False,
+    )
+    wait_for_task_success(result)
+    payload = result.get(timeout=1)
+    assert payload == {"status": "noop", "queue": "extraction"}
+
+
+def test_publish_to_stock_celery_queue_fails(celery_app: Celery, worker: object) -> None:
+    """Negative: the stock ``celery`` queue is not declared — publish must fail closed."""
+    with pytest.raises(KeyError, match="celery"):
+        celery_app.send_task(
+            TASK_EXTRACTION_NOOP,
+            queue="celery",
+            ignore_result=False,
+        )

@@ -69,4 +69,15 @@ def test_result_policy_defaults() -> None:
     app = create_celery_app(_test_settings())
     assert app.conf.task_ignore_result is True
     assert app.conf.result_expires == 3600
+    assert app.conf.task_acks_late is True
+    assert app.conf.task_reject_on_worker_lost is True
     assert app.conf.worker_concurrency == 4
+
+
+def test_task_default_queue_is_not_celery_named_queue() -> None:
+    """Negative guard: Celery's stock default queue name must not exist in topology."""
+    app = create_celery_app(_test_settings())
+    queue_names_set = {q.name for q in app.conf.task_queues or ()}
+    assert DEFAULT_QUEUE_NAME not in queue_names_set
+    assert app.conf.task_default_queue != DEFAULT_QUEUE_NAME
+    assert app.conf.task_create_missing_queues is False
