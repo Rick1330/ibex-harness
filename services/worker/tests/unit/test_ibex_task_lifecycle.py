@@ -7,16 +7,18 @@ from types import SimpleNamespace
 
 import pytest
 
-from app import task_lifecycle
+from app.task_lifecycle import TaskRunContext, _log_task_complete, _log_task_start
 
 
 def test_log_task_start_emits_context(caplog: pytest.LogCaptureFixture) -> None:
     caplog.set_level(logging.INFO)
     task = SimpleNamespace(name="ibex.worker.test.sample")
-    task_lifecycle._log_task_start(
-        task_id="task-id-1",
-        task=task,
-        kwargs={"org_id": "org-1", "agent_id": "agent-1"},
+    _log_task_start(
+        TaskRunContext(
+            task_id="task-id-1",
+            task=task,
+            kwargs={"org_id": "org-1", "agent_id": "agent-1"},
+        )
     )
     assert any("task_start" in record.message for record in caplog.records)
 
@@ -24,12 +26,11 @@ def test_log_task_start_emits_context(caplog: pytest.LogCaptureFixture) -> None:
 def test_log_task_complete_failure(caplog: pytest.LogCaptureFixture) -> None:
     caplog.set_level(logging.INFO)
     task = SimpleNamespace(name="ibex.worker.test.sample")
+    from app import task_lifecycle
+
     task_lifecycle._start_times["task-id-2"] = 0.0
-    task_lifecycle._log_task_complete(
-        task_id="task-id-2",
-        task=task,
-        kwargs={},
-        state="FAILURE",
+    _log_task_complete(
+        TaskRunContext(task_id="task-id-2", task=task, kwargs={}, state="FAILURE")
     )
     assert any(record.levelname == "ERROR" for record in caplog.records)
 
@@ -37,12 +38,16 @@ def test_log_task_complete_failure(caplog: pytest.LogCaptureFixture) -> None:
 def test_log_task_complete_success_with_context(caplog: pytest.LogCaptureFixture) -> None:
     caplog.set_level(logging.INFO)
     task = SimpleNamespace(name="ibex.worker.test.sample")
+    from app import task_lifecycle
+
     task_lifecycle._start_times["task-id-4"] = 0.0
-    task_lifecycle._log_task_complete(
-        task_id="task-id-4",
-        task=task,
-        kwargs={"org_id": "org-1", "agent_id": "agent-1"},
-        state="SUCCESS",
+    _log_task_complete(
+        TaskRunContext(
+            task_id="task-id-4",
+            task=task,
+            kwargs={"org_id": "org-1", "agent_id": "agent-1"},
+            state="SUCCESS",
+        )
     )
     assert any("task_complete" in record.message for record in caplog.records)
 
@@ -50,11 +55,10 @@ def test_log_task_complete_success_with_context(caplog: pytest.LogCaptureFixture
 def test_log_task_complete_success(caplog: pytest.LogCaptureFixture) -> None:
     caplog.set_level(logging.INFO)
     task = SimpleNamespace(name="ibex.worker.test.sample")
+    from app import task_lifecycle
+
     task_lifecycle._start_times["task-id-3"] = 0.0
-    task_lifecycle._log_task_complete(
-        task_id="task-id-3",
-        task=task,
-        kwargs={},
-        state="SUCCESS",
+    _log_task_complete(
+        TaskRunContext(task_id="task-id-3", task=task, kwargs={}, state="SUCCESS")
     )
     assert any("task_complete" in record.message for record in caplog.records)
