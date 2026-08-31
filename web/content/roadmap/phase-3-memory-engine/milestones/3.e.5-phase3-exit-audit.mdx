@@ -40,7 +40,7 @@ Following the Phase 1 precedent exactly — a standalone gap register with sever
 Verified against live evidence at `45696a2`. MCP E2E criterion removed (Phase 3.5.E.2).
 
 1. Memory write pipeline (9 steps) passes all unit + ISO-\* integration tests
-2. HNSW recall@10 ≥ 98% on committed CI profile; 1M cell optional on smoke/fast per ADR-0061
+2. HNSW recall@10 ≥ 98% on committed CI profile; 1M full-profile benchmark (p95 &lt; 30 ms / p99 &lt; 100 ms per ADR-0061) optional on smoke/fast profiles
 3. Temporal-interval-aware conflict detection: sequential-fact auto-supersedes; overlapping intervals escalate; zero LLM on non-overlapping intervals
 4. Retrieval-quality benchmarks in CI with committed baselines (HNSW, ranking-quality, write-pipeline)
 5. All 12 ISO-\* cross-tenant isolation cases pass, including the `memory_relationships` cross-org edge case

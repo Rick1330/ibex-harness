@@ -37,7 +37,7 @@ The original 3.E.5 exit-criteria list included a misplaced MCP E2E criterion and
 
 ## P0 — Blockers
 
-**None found.** All memory CI gates (`memory-test`, `memory-integration`, `memory-security-integration`, `e2e-smoke-p3-memory`) are wired into `ci-gate-python` / `ci-gate-go`. Published benchmark JSON on `main` (2026-08-31) reports `status: pass` for HNSW, ranking-quality, and write-pipeline suites.
+**None found.** `memory-test`, `memory-integration`, and `memory-security-integration` are required on both `ci-gate-python` and `ci-gate-go`; `e2e-smoke-p3-memory` is required on `ci-gate-python` only. Published benchmark JSON on `main` (2026-08-31) reports `status: pass` for HNSW, ranking-quality, and write-pipeline suites.
 
 ---
 
@@ -127,7 +127,7 @@ The original 3.E.5 exit-criteria list included a misplaced MCP E2E criterion and
 | 2 | HNSW recall@10 ≥ 98% on committed CI profile; 1M optional on smoke/fast | `hnsw-benchmark-data.json` latest run `worst_recall_at_10: 1.0`, `gate_summary.recall_ok: true`, `has_1m: false` (expected) | **Pass** (smoke/fast profile) |
 | 3 | Temporal conflict: sequential supersede, overlapping escalate, no LLM on non-overlap | `test_sequential_fact_supersedes_without_llm`, `test_overlapping_intervals_escalate_to_classifier`; `verify_phase3_memory_e2e.sh` | **Pass** |
 | 4 | Retrieval-quality benchmarks in CI with baselines | `ranking-quality-benchmark-data.json`, `write-pipeline-benchmark-data.json` — `status: pass` 2026-08-31; `memory-benchmark.yml` regression gates | **Pass** |
-| 5 | All 12 ISO-* cross-tenant cases pass | `memory-security-integration-test-ci.sh` requires ≥12 `test_memory_iso_*`; includes ISO-1.4 relationships cross-org | **Pass** |
+| 5 | All 12 ISO-* security cases pass | `memory-security-integration-test-ci.sh` requires ≥12 `test_memory_iso_*`; includes ISO-1.4 relationships cross-org | **Pass** |
 | 6 | Per-memory FK cascade (ISO-2.1); org-scope GDPR deferred | `test_memory_iso_2_1_memory_delete_cascades_fk_children`; ADR-0060 §4; #641 deferred | **Pass** (per-memory only) |
 | 7 | Phase 1 + 2 security regression tests pass | `security-integration` in `ci-gate-go` | **Pass** |
 | 8 | `make e2e-smoke-p3-memory` exits 0 | CI job `e2e-smoke-p3-memory` in `ci-gate-python` | **Pass** |
