@@ -7,12 +7,12 @@ import argparse
 import asyncio
 import json
 import os
-import secrets
 import statistics
 import sys
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+from uuid import uuid4
 
 _BENCH_ROOT = Path(__file__).resolve().parents[3]
 _MEMORY_DIR = _BENCH_ROOT / "services" / "memory"
@@ -69,51 +69,56 @@ def _percentile(values: list[float], pct: float) -> float:
 async def run_bench(*, iterations: int, output_path: Path) -> dict:
     settings = Settings(database_url=_async_dsn())
     engine = create_engine(settings)
-    session_factory = create_session_factory(engine)
-    store = PgVectorStore(session_factory, settings)
-    org_id, agent_id, _ = await seed_org_agent_memory(
-        session_factory, content="write pipeline bench seed"
-    )
-    orch = build_orchestrator(
-        OrchestratorTestDeps(
-            session_factory=session_factory,
-            settings=settings,
-            store=store,
+    try:
+        session_factory = create_session_factory(engine)
+        store = PgVectorStore(session_factory, settings)
+        org_id, agent_id, _ = await seed_org_agent_memory(
+            session_factory, content="write pipeline bench seed"
         )
-    )
-    await ensure_pii_ready(orch)
-
-    latencies_ms: list[float] = []
-    for index in range(iterations):
-        token = secrets.token_hex(32)
-        cmd = CreateMemoryCommand(
-            org_id=org_id,
-            agent_id=agent_id,
-            content=f"{token} write-pipeline-bench-{index}-{time.time_ns()}",
-            category="factual",
-            confidence=0.85,
+        orch = build_orchestrator(
+            OrchestratorTestDeps(
+                session_factory=session_factory,
+                settings=settings,
+                store=store,
+            )
         )
-        start = time.perf_counter()
-        await orch.create(cmd)
-        elapsed_ms = (time.perf_counter() - start) * 1000.0
-        latencies_ms.append(elapsed_ms)
+        await ensure_pii_ready(orch)
 
-    result = {
-        "benchmark": "write_pipeline",
-        "schema_version": 1,
-        "timestamp": datetime.now(tz=UTC).isoformat(),
-        "iterations": iterations,
-        "metrics": {
-            "latency_ms_p50": statistics.median(latencies_ms),
-            "latency_ms_p95": _percentile(latencies_ms, 95),
-            "latency_ms_p99": _percentile(latencies_ms, 99),
-        },
-        "latencies_ms": latencies_ms,
-    }
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
-    await engine.dispose()
-    return result
+        latencies_ms: list[float] = []
+        for index in range(iterations):
+            cmd = CreateMemoryCommand(
+                org_id=org_id,
+                agent_id=agent_id,
+                content=(
+                    f"Wall-clock benchmark iteration {index} "
+                    f"with unique marker {uuid4().hex} "
+                    f"recorded at nanosecond {time.time_ns()}."
+                ),
+                category="factual",
+                confidence=0.85,
+            )
+            start = time.perf_counter()
+            await orch.create(cmd)
+            elapsed_ms = (time.perf_counter() - start) * 1000.0
+            latencies_ms.append(elapsed_ms)
+
+        result = {
+            "benchmark": "write_pipeline",
+            "schema_version": 1,
+            "timestamp": datetime.now(tz=UTC).isoformat(),
+            "iterations": iterations,
+            "metrics": {
+                "latency_ms_p50": statistics.median(latencies_ms),
+                "latency_ms_p95": _percentile(latencies_ms, 95),
+                "latency_ms_p99": _percentile(latencies_ms, 99),
+            },
+            "latencies_ms": latencies_ms,
+        }
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+        return result
+    finally:
+        await engine.dispose()
 
 
 def main(argv: list[str] | None = None) -> int:

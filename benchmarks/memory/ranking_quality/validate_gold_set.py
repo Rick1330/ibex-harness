@@ -82,6 +82,56 @@ def _composite_safe(mem: dict[str, Any]) -> float | None:
         return None
 
 
+def _parse_int(value: object, field: str, prefix: str) -> tuple[int | None, list[str]]:
+    if value is None:
+        return None, [f"{prefix} missing {field}"]
+    try:
+        return int(value), []  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None, [f"{prefix} {field} must be an integer"]
+
+
+def _validate_memory_row(row: dict[str, Any], prefix: str) -> list[str]:
+    errors: list[str] = []
+    for field in (
+        "content_key",
+        "content",
+        "category",
+        "valid_from_days_ago",
+        "embedding_hotspot",
+        "confidence",
+        "usefulness_score",
+    ):
+        if field not in row:
+            errors.append(f"{prefix} missing {field}")
+    errors.extend(_unit_interval(row.get("confidence"), "confidence", prefix))
+    errors.extend(
+        _unit_interval(row.get("usefulness_score"), "usefulness_score", prefix)
+    )
+    key = str(row.get("content_key", ""))
+    if not key:
+        errors.append(f"{prefix} content_key must be non-empty")
+    category = row.get("category")
+    if category not in CATEGORIES:
+        errors.append(f"{prefix} invalid category {category!r}")
+    age, age_errors = _parse_int(row.get("valid_from_days_ago"), "valid_from_days_ago", prefix)
+    errors.extend(age_errors)
+    if age is not None and not (MIN_AGE_DAYS <= age <= MAX_AGE_DAYS):
+        errors.append(f"{prefix} age {age} outside [{MIN_AGE_DAYS}, {MAX_AGE_DAYS}]")
+    hotspot, hotspot_errors = _parse_int(
+        row.get("embedding_hotspot"), "embedding_hotspot", prefix
+    )
+    errors.extend(hotspot_errors)
+    if hotspot is not None and not (0 <= hotspot < EMBEDDING_DIM):
+        errors.append(f"{prefix} hotspot {hotspot} out of range")
+    content = str(row.get("content", ""))
+    if len(content) < 20:
+        errors.append(f"{prefix} content too short")
+    if content.startswith("gold ranking") or content.startswith("gold distractor"):
+        errors.append(f"{prefix} content looks like placeholder text")
+    return errors
+
+
 def validate_gold_set(payload: dict[str, Any]) -> list[str]:
     errors: list[str] = []
     memories = payload.get("memories")
@@ -104,40 +154,16 @@ def validate_gold_set(payload: dict[str, Any]) -> list[str]:
         if not isinstance(row, dict):
             errors.append(f"{prefix} must be an object")
             continue
-        for field in (
-            "content_key",
-            "content",
-            "category",
-            "valid_from_days_ago",
-            "embedding_hotspot",
-            "confidence",
-            "usefulness_score",
-        ):
-            if field not in row:
-                errors.append(f"{prefix} missing {field}")
-        errors.extend(_unit_interval(row.get("confidence"), "confidence", prefix))
-        errors.extend(
-            _unit_interval(row.get("usefulness_score"), "usefulness_score", prefix)
-        )
+        row_errors = _validate_memory_row(row, prefix)
         key = str(row.get("content_key", ""))
-        if key in mem_by_key:
-            errors.append(f"duplicate content_key: {key}")
-        if row.get("category") not in CATEGORIES:
-            errors.append(f"{prefix} invalid category {row.get('category')!r}")
-        age = int(row.get("valid_from_days_ago", -1))
-        if not (MIN_AGE_DAYS <= age <= MAX_AGE_DAYS):
-            errors.append(f"{prefix} age {age} outside [{MIN_AGE_DAYS}, {MAX_AGE_DAYS}]")
-        hotspot = int(row.get("embedding_hotspot", -1))
-        if not (0 <= hotspot < EMBEDDING_DIM):
-            errors.append(f"{prefix} hotspot {hotspot} out of range")
-        content = str(row.get("content", ""))
-        if len(content) < 20:
-            errors.append(f"{prefix} content too short")
-        if content.startswith("gold ranking") or content.startswith("gold distractor"):
-            errors.append(f"{prefix} content looks like placeholder text")
+        if key and key in mem_by_key:
+            row_errors.append(f"duplicate content_key: {key}")
+        if row_errors:
+            errors.extend(row_errors)
+            continue
         mem_by_key[key] = row
         cat_counts[str(row["category"])] += 1
-        hotspots.add(hotspot)
+        hotspots.add(int(row["embedding_hotspot"]))
 
     for cat in CATEGORIES:
         if cat_counts[cat] < 3:
@@ -158,7 +184,8 @@ def validate_gold_set(payload: dict[str, Any]) -> list[str]:
         if qid in DECAY_QUERY_IDS:
             decay_found.add(qid)
 
-        hotspot = int(row.get("query_hotspot", -1))
+        hotspot, hotspot_errors = _parse_int(row.get("query_hotspot"), "query_hotspot", prefix)
+        errors.extend(hotspot_errors)
         expected = row.get("expected_content_keys")
         if not isinstance(expected, list) or not expected:
             errors.append(f"{prefix} expected_content_keys must be non-empty array")
@@ -167,7 +194,9 @@ def validate_gold_set(payload: dict[str, Any]) -> list[str]:
             if key not in mem_by_key:
                 errors.append(f"{prefix} references unknown content_key {key!r}")
 
-        cluster = [m for m in memories if int(m["embedding_hotspot"]) == hotspot]
+        if hotspot is None:
+            continue
+        cluster = [m for m in mem_by_key.values() if int(m["embedding_hotspot"]) == hotspot]
         if any(_composite_safe(m) is None for m in cluster):
             continue
         ranked = sorted(cluster, key=lambda m: (-_composite(m), m["content_key"]))
@@ -180,7 +209,9 @@ def validate_gold_set(payload: dict[str, Any]) -> list[str]:
             )
         top_key = expected[0]
         top_cat = row.get("expected_top_category")
-        if mem_by_key[top_key]["category"] != top_cat:
+        if top_key not in mem_by_key:
+            errors.append(f"{prefix} references unknown first expected content_key {top_key!r}")
+        elif mem_by_key[top_key]["category"] != top_cat:
             errors.append(
                 f"{prefix} expected_top_category {top_cat!r} != "
                 f"first key category {mem_by_key[top_key]['category']!r}"

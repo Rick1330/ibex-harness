@@ -44,6 +44,15 @@ def mean_reciprocal_rank(ranked: Sequence[str], expected: Sequence[str]) -> floa
     return 0.0
 
 
+def expected_order_match(ranked: Sequence[str], expected: Sequence[str]) -> float:
+    """1.0 when expected keys appear among ranked hits in the same order."""
+    if not expected:
+        return 0.0
+    expected_set = set(expected)
+    filtered = [key for key in ranked if key in expected_set]
+    return 1.0 if filtered == list(expected) else 0.0
+
+
 def macro_mean(values: Sequence[float]) -> float:
     if not values:
         return 0.0

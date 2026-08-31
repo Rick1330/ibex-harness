@@ -64,6 +64,27 @@ class GoldSetValidationTests(unittest.TestCase):
         errors = validate_mod.validate_gold_set(payload)
         self.assertTrue(any("confidence must be in [0, 1]" in e for e in errors))
 
+    def test_invalid_memory_row_skips_catalog_updates(self) -> None:
+        payload = json.loads((_DIR / "gold_set_v1.json").read_text(encoding="utf-8"))
+        bad_key = payload["memories"][0]["content_key"]
+        payload["memories"][0] = {**payload["memories"][0], "category": "not-a-category"}
+        payload["queries"][0]["expected_content_keys"] = [bad_key]
+        errors = validate_mod.validate_gold_set(payload)
+        self.assertTrue(any("invalid category" in e for e in errors))
+        self.assertTrue(
+            any("references unknown content_key" in e for e in errors),
+            "invalid memory must not be indexed for query lookups",
+        )
+
+    def test_unknown_first_expected_key_reports_error(self) -> None:
+        payload = json.loads((_DIR / "gold_set_v1.json").read_text(encoding="utf-8"))
+        payload["queries"][0]["expected_content_keys"] = ["missing-content-key"]
+        errors = validate_mod.validate_gold_set(payload)
+        self.assertTrue(
+            any("unknown first expected content_key" in e for e in errors),
+            "\n".join(errors),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

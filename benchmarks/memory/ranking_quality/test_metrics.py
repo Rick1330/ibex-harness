@@ -35,6 +35,19 @@ class MetricsTests(unittest.TestCase):
     def test_mrr_zero_when_missing(self) -> None:
         self.assertEqual(metrics.mean_reciprocal_rank(["a"], ["b"]), 0.0)
 
+    def test_expected_order_match_perfect(self) -> None:
+        ranked = ["a", "b", "c", "noise"]
+        expected = ["a", "b", "c"]
+        self.assertEqual(metrics.expected_order_match(ranked, expected), 1.0)
+
+    def test_expected_order_match_detects_swapped_non_leading_keys(self) -> None:
+        ranked = ["a", "c", "b", "noise", "extra"]
+        expected = ["a", "b", "c"]
+        self.assertEqual(metrics.expected_order_match(ranked, expected), 0.0)
+        self.assertAlmostEqual(metrics.precision_at_k(ranked, expected, 5), 3 / 5)
+        self.assertAlmostEqual(metrics.recall_at_k(ranked, expected, 10), 1.0)
+        self.assertAlmostEqual(metrics.mean_reciprocal_rank(ranked, expected), 1.0)
+
 
 if __name__ == "__main__":
     unittest.main()

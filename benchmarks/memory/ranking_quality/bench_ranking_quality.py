@@ -31,7 +31,13 @@ _RANK_DIR = Path(__file__).resolve().parent
 if str(_RANK_DIR) not in sys.path:
     sys.path.insert(0, str(_RANK_DIR))
 
-from metrics import macro_mean, mean_reciprocal_rank, precision_at_k, recall_at_k  # noqa: E402
+from metrics import (  # noqa: E402
+    expected_order_match,
+    macro_mean,
+    mean_reciprocal_rank,
+    precision_at_k,
+    recall_at_k,
+)
 from seed import GOLD_SET_PATH, load_gold_set, seed_gold_set  # noqa: E402
 from validate_gold_set import validate_gold_set  # noqa: E402
 
@@ -77,6 +83,7 @@ async def run_bench(*, output_path: Path, gold_path: Path) -> dict:
     p5_vals: list[float] = []
     r10_vals: list[float] = []
     mrr_vals: list[float] = []
+    order_vals: list[float] = []
     top_cat_hits = 0
 
     for row in queries:
@@ -104,9 +111,11 @@ async def run_bench(*, output_path: Path, gold_path: Path) -> dict:
         p5 = precision_at_k(ranked_keys, expected_keys, 5)
         r10 = recall_at_k(ranked_keys, expected_keys, 10)
         mrr = mean_reciprocal_rank(ranked_keys, expected_keys)
+        order_ok = expected_order_match(ranked_keys, expected_keys)
         p5_vals.append(p5)
         r10_vals.append(r10)
         mrr_vals.append(mrr)
+        order_vals.append(order_ok)
         top_ok = (
             bool(ranked_keys)
             and mem_by_key[ranked_keys[0]]["category"] == expected_top
@@ -119,6 +128,7 @@ async def run_bench(*, output_path: Path, gold_path: Path) -> dict:
                 "precision_at_5": p5,
                 "recall_at_10": r10,
                 "mrr": mrr,
+                "expected_order_match": order_ok,
                 "top_category_ok": top_ok,
                 "ranked_content_keys": ranked_keys,
             }
@@ -128,12 +138,18 @@ async def run_bench(*, output_path: Path, gold_path: Path) -> dict:
         "precision_at_5": macro_mean(p5_vals),
         "recall_at_10": macro_mean(r10_vals),
         "mrr": macro_mean(mrr_vals),
+        "expected_order_match": macro_mean(order_vals),
         "top_category_accuracy": top_cat_hits / len(queries) if queries else 0.0,
     }
     failed_queries = [
         q["query_id"]
         for q in per_query
-        if q["precision_at_5"] < 1.0 or q["recall_at_10"] < 1.0 or q["mrr"] < 1.0
+        if (
+            q["precision_at_5"] < 1.0
+            or q["recall_at_10"] < 1.0
+            or q["mrr"] < 1.0
+            or q["expected_order_match"] < 1.0
+        )
     ]
     if failed_queries:
         sample = ", ".join(failed_queries[:5])
