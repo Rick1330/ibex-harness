@@ -1,40 +1,55 @@
 #!/usr/bin/env python3
-"""Merge write-pipeline bench output into published history JSON."""
+"""Merge ranking-quality or write-pipeline bench output into published history JSON."""
 
 from __future__ import annotations
 
 import argparse
 import sys
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
-_BENCH_DIR = Path(__file__).resolve().parents[1]
+_BENCH_DIR = Path(__file__).resolve().parent
 if str(_BENCH_DIR) not in sys.path:
     sys.path.insert(0, str(_BENCH_DIR))
 
-from path_guard import UnsafePathError, resolve_published_write_pipeline_path  # noqa: E402
+from path_guard import (  # noqa: E402
+    UnsafePathError,
+    resolve_published_ranking_quality_path,
+    resolve_published_write_pipeline_path,
+)
 from publish_quality_common import (  # noqa: E402
     RunMeta,
-    gate_status,
     load_json,
+    merge_ranking_quality_entry,
     merge_run,
-    run_entry_base,
+    merge_write_pipeline_entry,
 )
 
-_BENCHMARK = "write_pipeline"
+SuiteConfig = tuple[str, Callable[[Path | str], Path], Callable[[dict[str, Any], dict[str, Any], RunMeta], dict[str, Any]]]
 
-
-def _merge_entry(latest: dict, gate: dict, meta: RunMeta) -> dict:
-    return {
-        **run_entry_base(meta, timestamp=str(latest.get("timestamp") or None)),
-        "iterations": latest.get("iterations", 0),
-        "metrics": dict(latest.get("metrics") or {}),
-        "status": gate_status(gate),
-        "gate_summary": gate,
-    }
+SUITES: dict[str, SuiteConfig] = {
+    "ranking_quality": (
+        "ranking_quality",
+        resolve_published_ranking_quality_path,
+        merge_ranking_quality_entry,
+    ),
+    "write_pipeline": (
+        "write_pipeline",
+        resolve_published_write_pipeline_path,
+        merge_write_pipeline_entry,
+    ),
+}
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--suite",
+        required=True,
+        choices=sorted(SUITES),
+        help="Memory quality suite to publish",
+    )
     parser.add_argument("--latest", type=Path, required=True)
     parser.add_argument("--gate", type=Path, required=True)
     parser.add_argument("--published", type=Path, required=True)
@@ -44,14 +59,15 @@ def main() -> int:
     parser.add_argument("--run-url", default="")
     args = parser.parse_args()
 
+    benchmark, resolve_published, merge_entry = SUITES[args.suite]
     try:
-        published_path = resolve_published_write_pipeline_path(args.published)
+        published_path = resolve_published(args.published)
     except UnsafePathError as exc:
         parser.error(str(exc))
 
     latest = load_json(args.latest)
     gate = load_json(args.gate)
-    entry = _merge_entry(
+    entry = merge_entry(
         latest,
         gate,
         RunMeta(
@@ -63,7 +79,7 @@ def main() -> int:
     )
     merge_run(
         published_path,
-        benchmark=_BENCHMARK,
+        benchmark=benchmark,
         entry=entry,
         sha=args.sha,
     )

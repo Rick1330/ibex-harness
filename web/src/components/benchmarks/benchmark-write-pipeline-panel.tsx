@@ -1,12 +1,15 @@
 "use client";
 
-import { BenchmarkEmptyState } from "@/components/benchmarks/empty-state";
-import { BenchmarkErrorState } from "@/components/benchmarks/benchmark-error-state";
 import { KpiCard } from "@/components/benchmarks/kpi-card";
-import { ChartSkeleton } from "@/components/benchmarks/skeleton";
+import {
+  BenchmarkHistoryTable,
+  BenchmarkSuitePanelShell,
+} from "@/components/benchmarks/benchmark-suite-panel-shell";
 import { useWritePipelineBenchmarkData } from "@/hooks/use-write-pipeline-benchmark-data";
 import { WRITE_PIPELINE_SLA_TARGETS } from "@/lib/benchmarks/constants";
 import type { WritePipelineBenchmarkRun } from "@/lib/benchmarks/write-pipeline-schema";
+
+const LOAD_ERROR = "Failed to load write-pipeline benchmark data";
 
 function OverviewKpis({ latest }: { readonly latest: WritePipelineBenchmarkRun }) {
   const m = latest.metrics;
@@ -22,106 +25,93 @@ function OverviewKpis({ latest }: { readonly latest: WritePipelineBenchmarkRun }
 export function BenchmarkWritePipelinePanel() {
   const { latest, isLoading, isError, errorMessage, refresh } = useWritePipelineBenchmarkData();
 
-  if (isLoading) {
-    return <ChartSkeleton className="h-[240px]" />;
-  }
-
-  if (isError) {
-    return (
-      <BenchmarkErrorState
-        message={errorMessage ?? "Failed to load write-pipeline benchmark data"}
-        onRetry={() => {
-          void refresh();
-        }}
-      />
-    );
-  }
-
-  if (!latest) {
-    return <BenchmarkEmptyState />;
-  }
-
-  const slaOk = latest.metrics.latency_ms_p95 <= WRITE_PIPELINE_SLA_TARGETS.latency_ms_p95;
-
   return (
-    <div className="space-y-8">
-      <p className="font-mono text-sm uppercase text-muted-foreground">
-        Status: {latest.status ?? "unknown"} · run #{latest.run_number} · {latest.short_sha}
-      </p>
-      <OverviewKpis latest={latest} />
-      <p className="text-sm text-muted-foreground">
-        {latest.iterations != null ? `${latest.iterations} iterations` : "—"}
-        {slaOk ? " · p95 within SLA" : " · p95 above SLA"}
-        {latest.run_url ? (
-          <>
-            {" "}
-            ·{" "}
-            <a className="underline underline-offset-2" href={latest.run_url}>
-              workflow run
-            </a>
-          </>
-        ) : null}
-      </p>
-    </div>
+    <BenchmarkSuitePanelShell
+      isLoading={isLoading}
+      isError={isError}
+      errorMessage={errorMessage}
+      loadErrorLabel={LOAD_ERROR}
+      isEmpty={!latest}
+      onRetry={() => {
+        void refresh();
+      }}
+    >
+      {latest ? (
+        <div className="space-y-8">
+          <p className="font-mono text-sm uppercase text-muted-foreground">
+            Status: {latest.status ?? "unknown"} · run #{latest.run_number} · {latest.short_sha}
+          </p>
+          <OverviewKpis latest={latest} />
+          <p className="text-sm text-muted-foreground">
+            {latest.iterations != null ? `${latest.iterations} iterations` : "—"}
+            {latest.metrics.latency_ms_p95 <= WRITE_PIPELINE_SLA_TARGETS.latency_ms_p95
+              ? " · p95 within SLA"
+              : " · p95 above SLA"}
+            {latest.run_url ? (
+              <>
+                {" "}
+                ·{" "}
+                <a className="underline underline-offset-2" href={latest.run_url}>
+                  workflow run
+                </a>
+              </>
+            ) : null}
+          </p>
+        </div>
+      ) : null}
+    </BenchmarkSuitePanelShell>
   );
 }
 
 export function BenchmarkWritePipelineHistoryPanel() {
   const { runs, isLoading, isError, errorMessage, refresh } = useWritePipelineBenchmarkData();
 
-  if (isLoading) {
-    return <ChartSkeleton className="h-[200px]" />;
-  }
-
-  if (isError) {
-    return (
-      <BenchmarkErrorState
-        message={errorMessage ?? "Failed to load write-pipeline benchmark data"}
-        onRetry={() => {
-          void refresh();
-        }}
-      />
-    );
-  }
-
-  if (runs.length === 0) {
-    return <BenchmarkEmptyState />;
-  }
-
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full min-w-[40rem] text-left">
-        <thead>
-          <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
-            <th className="py-2 font-medium">Run #</th>
-            <th className="py-2 font-medium">SHA</th>
-            <th className="py-2 font-medium">Status</th>
-            <th className="py-2 font-medium">p50</th>
-            <th className="py-2 font-medium">p95</th>
-            <th className="py-2 font-medium">p99</th>
-            <th className="py-2 font-medium">When</th>
-          </tr>
-        </thead>
-        <tbody>
-          {runs.map((run) => (
-            <tr key={run.run_number} className="border-b border-border/60">
-              <td className="py-2 font-mono text-sm tabular-nums">{run.run_number}</td>
-              <td className="py-2 font-mono text-sm">{run.short_sha}</td>
-              <td className="py-2 font-mono text-sm uppercase">{run.status ?? "unknown"}</td>
-              <td className="py-2 font-mono text-sm tabular-nums">
-                {run.metrics.latency_ms_p50.toFixed(2)} ms
-              </td>
-              <td className="py-2 font-mono text-sm tabular-nums">
-                {run.metrics.latency_ms_p95.toFixed(2)} ms
-              </td>
-              <td className="py-2 font-mono text-sm tabular-nums">
-                {run.metrics.latency_ms_p99.toFixed(2)} ms
-              </td>
-              <td className="py-2 font-mono text-xs text-muted-foreground">{run.timestamp}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <BenchmarkSuitePanelShell
+      isLoading={isLoading}
+      isError={isError}
+      errorMessage={errorMessage}
+      loadErrorLabel={LOAD_ERROR}
+      isEmpty={runs.length === 0}
+      skeletonClassName="h-[200px]"
+      onRetry={() => {
+        void refresh();
+      }}
+    >
+      <BenchmarkHistoryTable
+        rows={runs}
+        rowKey={(run) => run.run_number}
+        columns={[
+          { header: "Run #", cell: (run) => run.run_number },
+          {
+            header: "SHA",
+            cell: (run) => run.short_sha,
+            className: "py-2 font-mono text-sm",
+          },
+          {
+            header: "Status",
+            cell: (run) => (run.status ?? "unknown").toUpperCase(),
+            className: "py-2 font-mono text-sm uppercase",
+          },
+          {
+            header: "p50",
+            cell: (run) => `${run.metrics.latency_ms_p50.toFixed(2)} ms`,
+          },
+          {
+            header: "p95",
+            cell: (run) => `${run.metrics.latency_ms_p95.toFixed(2)} ms`,
+          },
+          {
+            header: "p99",
+            cell: (run) => `${run.metrics.latency_ms_p99.toFixed(2)} ms`,
+          },
+          {
+            header: "When",
+            cell: (run) => run.timestamp,
+            className: "py-2 font-mono text-xs text-muted-foreground",
+          },
+        ]}
+      />
+    </BenchmarkSuitePanelShell>
   );
 }

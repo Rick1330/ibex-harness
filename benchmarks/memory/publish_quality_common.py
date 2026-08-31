@@ -71,3 +71,29 @@ def run_entry_base(meta: RunMeta, *, timestamp: str | None = None) -> dict[str, 
         "run_number": meta.run_number,
         "run_url": meta.run_url,
     }
+
+
+def merge_ranking_quality_entry(
+    latest: dict[str, Any], gate: dict[str, Any], meta: RunMeta
+) -> dict[str, Any]:
+    return {
+        **run_entry_base(meta, timestamp=str(latest.get("timestamp") or None)),
+        "gold_set": latest.get("gold_set", "v1"),
+        "query_count": latest.get("query_count", 0),
+        "memory_count": latest.get("memory_count", 0),
+        "metrics": dict(latest.get("metrics") or {}),
+        "status": gate_status(gate),
+        "gate_summary": gate,
+    }
+
+
+def merge_write_pipeline_entry(
+    latest: dict[str, Any], gate: dict[str, Any], meta: RunMeta
+) -> dict[str, Any]:
+    return {
+        **run_entry_base(meta, timestamp=str(latest.get("timestamp") or None)),
+        "iterations": latest.get("iterations", 0),
+        "metrics": dict(latest.get("metrics") or {}),
+        "status": gate_status(gate),
+        "gate_summary": gate,
+    }
