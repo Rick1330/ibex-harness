@@ -36,10 +36,10 @@ def resolve_published_data_path(raw: str, *, data_name: str, script_name: str) -
 
 
 def validate_published_payload(path: Path, schema_path: Path, *, script_name: str) -> None:
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload = json.loads(path.read_text(encoding="utf-8"))  # NOSONAR pythonsecurity:S2083
     if jsonschema is None:
         print(f"{script_name}: jsonschema not installed; skipping schema validation", file=sys.stderr)
         return
-    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))  # NOSONAR pythonsecurity:S2083
     jsonschema.validate(payload, schema)
     print(f"ok: {path}")

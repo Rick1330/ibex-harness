@@ -14,6 +14,12 @@ import sys
 from pathlib import Path
 from typing import Any
 
+_BENCH_MEMORY = Path(__file__).resolve().parents[1] / "memory"
+if str(_BENCH_MEMORY) not in sys.path:
+    sys.path.insert(0, str(_BENCH_MEMORY))
+
+from path_guard import UnsafePathError, resolve_published_hnsw_path  # noqa: E402
+
 
 def _fail(message: str) -> None:
     print(f"check_hnsw_gate_status: {message}", file=sys.stderr)
@@ -23,7 +29,7 @@ def _fail(message: str) -> None:
 def _load_published(path: Path) -> dict[str, Any]:
     if not path.is_file():
         _fail(f"published file not found: {path}")
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload = json.loads(path.read_text(encoding="utf-8"))  # NOSONAR pythonsecurity:S2083
     if not isinstance(payload, dict):
         _fail("published root must be an object")
     return payload
@@ -101,7 +107,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Commit SHA to match (default: GITHUB_SHA, else runs[0])",
     )
     args = parser.parse_args(argv)
-    return check_gate_status(args.published.resolve(), sha=args.sha.strip())
+    try:
+        published_path = resolve_published_hnsw_path(args.published)
+    except UnsafePathError as exc:
+        _fail(str(exc))
+    return check_gate_status(published_path, sha=args.sha.strip())
 
 
 if __name__ == "__main__":

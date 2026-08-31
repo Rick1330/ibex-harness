@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { benchmarkRunUrlSchema } from "./run-url";
+
 const shaSchema = z.string().min(7);
 const runNumberSchema = z.number().int().nonnegative();
 const gateSummarySchema = z.object({}).passthrough().optional();
@@ -15,7 +17,7 @@ export function memorySuiteDataSchema<TBenchmark extends string, TRun extends z.
     timestamp: z.string(),
     branch: z.string(),
     run_number: runNumberSchema,
-    run_url: z.string(),
+    run_url: benchmarkRunUrlSchema,
     status: statusSchema,
     gate_summary: gateSummarySchema,
     ...runShape,
