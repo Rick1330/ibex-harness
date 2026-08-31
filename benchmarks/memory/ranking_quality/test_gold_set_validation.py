@@ -85,6 +85,36 @@ class GoldSetValidationTests(unittest.TestCase):
             "\n".join(errors),
         )
 
+    def test_rejects_fractional_age(self) -> None:
+        payload = json.loads((_DIR / "gold_set_v1.json").read_text(encoding="utf-8"))
+        payload["memories"][0] = {**payload["memories"][0], "valid_from_days_ago": 3.5}
+        errors = validate_mod.validate_gold_set(payload)
+        self.assertTrue(any("must be an integer" in e for e in errors))
+
+    def test_rejects_bool_hotspot(self) -> None:
+        payload = json.loads((_DIR / "gold_set_v1.json").read_text(encoding="utf-8"))
+        payload["memories"][0] = {**payload["memories"][0], "embedding_hotspot": True}
+        errors = validate_mod.validate_gold_set(payload)
+        self.assertTrue(any("must be an integer" in e for e in errors))
+
+    def test_rejects_non_string_category(self) -> None:
+        payload = json.loads((_DIR / "gold_set_v1.json").read_text(encoding="utf-8"))
+        payload["memories"][0] = {**payload["memories"][0], "category": 42}
+        errors = validate_mod.validate_gold_set(payload)
+        self.assertTrue(any("category must be a string" in e for e in errors))
+
+    def test_rejects_non_string_expected_key(self) -> None:
+        payload = json.loads((_DIR / "gold_set_v1.json").read_text(encoding="utf-8"))
+        payload["queries"][0]["expected_content_keys"] = [123]
+        errors = validate_mod.validate_gold_set(payload)
+        self.assertTrue(any("expected_content_keys items must be strings" in e for e in errors))
+
+    def test_rejects_empty_query_id(self) -> None:
+        payload = json.loads((_DIR / "gold_set_v1.json").read_text(encoding="utf-8"))
+        payload["queries"][0]["query_id"] = ""
+        errors = validate_mod.validate_gold_set(payload)
+        self.assertTrue(any("query_id must be non-empty" in e for e in errors))
+
 
 if __name__ == "__main__":
     unittest.main()

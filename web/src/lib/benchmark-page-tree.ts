@@ -33,6 +33,8 @@ function suiteFolder(
 
 const proxySuite = BENCHMARK_SUITES.find((s) => s.id === "proxy")!;
 const hnswSuite = BENCHMARK_SUITES.find((s) => s.id === "hnsw")!;
+const rankingSuite = BENCHMARK_SUITES.find((s) => s.id === "rankingQuality")!;
+const writeSuite = BENCHMARK_SUITES.find((s) => s.id === "writePipeline")!;
 
 export const benchmarkPageTree: PageTree.Root = {
   name: "Benchmarks",
@@ -40,6 +42,8 @@ export const benchmarkPageTree: PageTree.Root = {
     benchmarkPageItem(BENCHMARK_HUB_PAGE.name, BENCHMARK_HUB_PAGE.url),
     suiteFolder(proxySuite.label, proxySuite.navPages),
     suiteFolder(hnswSuite.label, hnswSuite.navPages, hnswSuite.navPages[0]),
+    suiteFolder(rankingSuite.label, rankingSuite.navPages, rankingSuite.navPages[0]),
+    suiteFolder(writeSuite.label, writeSuite.navPages, writeSuite.navPages[0]),
   ],
 };
 
@@ -48,4 +52,6 @@ export const BENCHMARK_NAV_PAGES: readonly SuiteNavPage[] = [
   BENCHMARK_HUB_PAGE,
   ...proxySuite.navPages,
   ...hnswSuite.navPages,
+  ...rankingSuite.navPages,
+  ...writeSuite.navPages,
 ];

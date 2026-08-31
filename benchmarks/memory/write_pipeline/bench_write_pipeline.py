@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Write-pipeline wall-clock benchmark (MemoryWriteOrchestrator.create)."""
+"""Write-pipeline wall-clock benchmark (MemoryWriteOrchestrator.create).
+
+Requires POSTGRES_TEST_DSN or IBEX_MEMORY_DATABASE_URL. POSTGRES_DSN is accepted
+only when IBEX_BENCH_ALLOW_PRODUCTION_DSN=1 (destructive-run opt-in).
+"""
 
 from __future__ import annotations
 
@@ -39,13 +43,19 @@ DEFAULT_ITERATIONS = 40
 
 
 def _async_dsn() -> str:
-    raw = (
-        os.getenv("IBEX_MEMORY_DATABASE_URL")
-        or os.getenv("POSTGRES_TEST_DSN")
-        or os.getenv("POSTGRES_DSN")
-    )
+    allow_prod = os.getenv("IBEX_BENCH_ALLOW_PRODUCTION_DSN", "").strip() in {
+        "1",
+        "true",
+        "yes",
+    }
+    raw = os.getenv("IBEX_MEMORY_DATABASE_URL") or os.getenv("POSTGRES_TEST_DSN")
+    if raw is None and allow_prod:
+        raw = os.getenv("POSTGRES_DSN")
     if not raw:
-        msg = "IBEX_MEMORY_DATABASE_URL or POSTGRES_TEST_DSN required"
+        msg = (
+            "IBEX_MEMORY_DATABASE_URL or POSTGRES_TEST_DSN required "
+            "(set IBEX_BENCH_ALLOW_PRODUCTION_DSN=1 to use POSTGRES_DSN)"
+        )
         raise RuntimeError(msg)
     if raw.startswith("postgres://"):
         return "postgresql+asyncpg://" + raw[len("postgres://") :]
@@ -123,6 +133,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--iterations", type=int, default=DEFAULT_ITERATIONS)
     args = parser.parse_args(argv)
+    if args.iterations <= 0:
+        parser.error("--iterations must be a positive integer")
     resolve_bench_output_path(args.output, bench_dir=_DIR)
     result = asyncio.run(run_bench(iterations=args.iterations))
     write_bench_output_json(args.output, bench_dir=_DIR, payload=result)

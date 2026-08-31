@@ -15,6 +15,8 @@ on:
       - 'benchmarks/memory/ranking_quality/**'
       - 'benchmarks/memory/write_pipeline/**'
       - 'benchmarks/data-schema/hnsw-benchmark-data.schema.json'
+      - 'benchmarks/data-schema/ranking-quality-benchmark-data.schema.json'
+      - 'benchmarks/data-schema/write-pipeline-benchmark-data.schema.json'
       - 'infra/scripts/memory-bench.sh'
       - '.github/workflows/memory-benchmark.yml'
   push:
@@ -25,6 +27,8 @@ on:
       - 'benchmarks/memory/ranking_quality/**'
       - 'benchmarks/memory/write_pipeline/**'
       - 'benchmarks/data-schema/hnsw-benchmark-data.schema.json'
+      - 'benchmarks/data-schema/ranking-quality-benchmark-data.schema.json'
+      - 'benchmarks/data-schema/write-pipeline-benchmark-data.schema.json'
       - 'infra/scripts/memory-bench.sh'
       - '.github/workflows/memory-benchmark.yml'
   schedule:
@@ -423,8 +427,36 @@ jobs:
           PYTHONPATH=services/memory services/memory/.venv/bin/python \
             benchmarks/memory/ranking_quality/regression_gate.py
 
-      - name: Summarize ranking-quality gate
+      - name: Build published ranking-quality data
         if: success()
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          GITHUB_RUN_NUMBER: ${{ github.run_number }}
+          GITHUB_SERVER_URL: ${{ github.server_url }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          PYTHONPATH=services/memory services/memory/.venv/bin/python \
+            benchmarks/memory/ranking_quality/build_published_data.py \
+            --latest benchmarks/memory/ranking_quality/output/latest.json \
+            --gate benchmarks/memory/ranking_quality/output/gate-result.json \
+            --published web/public/benchmarks/ranking-quality-benchmark-data.json \
+            --sha "$GITHUB_SHA" \
+            --branch "$GITHUB_REF_NAME" \
+            --run-number "$GITHUB_RUN_NUMBER" \
+            --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+      - name: Validate published ranking-quality data
+        if: success()
+        run: |
+          python -m pip install --disable-pip-version-check --no-cache-dir 'jsonschema==4.23.0'
+          python benchmarks/scripts/validate_published_ranking_quality.py \
+            web/public/benchmarks/ranking-quality-benchmark-data.json
+
+      - name: Summarize ranking-quality gate
+        if: always()
         run: |
           set -euo pipefail
           python3 - <<'PY'
@@ -432,25 +464,36 @@ jobs:
           import os
           from pathlib import Path
 
-          latest = json.loads(
-              Path("benchmarks/memory/ranking_quality/output/latest.json").read_text()
-          )
-          gate = json.loads(
-              Path("benchmarks/memory/ranking_quality/output/gate-result.json").read_text()
-          )
-          m = latest["metrics"]
-          lines = [
-              "## Ranking-quality benchmark",
-              "",
-              f"- precision@5: {m['precision_at_5']:.4f}",
-              f"- recall@10: {m['recall_at_10']:.4f}",
-              f"- mrr: {m['mrr']:.4f}",
-              f"- expected order match: {m.get('expected_order_match', 0):.4f}",
-              f"- queries: {latest['query_count']} / memories: {latest['memory_count']}",
-              f"- gate: **{gate['status']}**",
-              "",
-              "CI regression gate only — not published to `/benchmarks` yet.",
-          ]
+          latest_path = Path("benchmarks/memory/ranking_quality/output/latest.json")
+          gate_path = Path("benchmarks/memory/ranking_quality/output/gate-result.json")
+          lines = ["## Ranking-quality benchmark", ""]
+          if not latest_path.is_file() or not gate_path.is_file():
+              missing = []
+              if not latest_path.is_file():
+                  missing.append(str(latest_path))
+              if not gate_path.is_file():
+                  missing.append(str(gate_path))
+              lines.extend(
+                  [
+                      f"- gate: **fail** (missing output: {', '.join(missing)})",
+                      "",
+                  ]
+              )
+          else:
+              latest = json.loads(latest_path.read_text(encoding="utf-8"))
+              gate = json.loads(gate_path.read_text(encoding="utf-8"))
+              m = latest["metrics"]
+              lines.extend(
+                  [
+                      f"- precision@5: {m['precision_at_5']:.4f}",
+                      f"- recall@10: {m['recall_at_10']:.4f}",
+                      f"- mrr: {m['mrr']:.4f}",
+                      f"- expected order match: {m.get('expected_order_match', 0):.4f}",
+                      f"- queries: {latest['query_count']} / memories: {latest['memory_count']}",
+                      f"- gate: **{gate['status']}**",
+                      "",
+                  ]
+              )
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as fh:
               fh.write("\n".join(lines) + "\n")
           PY
@@ -465,6 +508,67 @@ jobs:
             benchmarks/memory/ranking_quality/output/gate-result.json
           retention-days: 14
           if-no-files-found: error
+
+      - name: Upload ranking-quality published data
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ranking-quality-benchmark-data
+          path: web/public/benchmarks/ranking-quality-benchmark-data.json
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Require benchmark bot pin (same-repo PR)
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          BENCHMARK_BOT_SHA: ${{ vars.BENCHMARK_BOT_SHA }}
+        run: test -n "$BENCHMARK_BOT_SHA"
+
+      - name: Require benchmark bot App credentials (same-repo PR)
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          APP_ID: ${{ secrets.BENCHMARK_BOT_APP_ID }}
+          APP_PRIVATE_KEY: ${{ secrets.BENCHMARK_BOT_APP_PRIVATE_KEY }}
+          INSTALLATION_ID: ${{ secrets.BENCHMARK_BOT_INSTALLATION_ID }}
+        run: |
+          test -n "$APP_ID" && test -n "$APP_PRIVATE_KEY" && test -n "$INSTALLATION_ID"
+
+      - name: Setup benchmark bot
+        id: setup_bot_ranking
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        uses: ./.github/actions/setup-benchmark-bot
+        with:
+          bot-sha: ${{ vars.BENCHMARK_BOT_SHA }}
+          release-tag: ${{ vars.BENCHMARK_BOT_RELEASE_TAG }}
+          require-subcommand: post-ranking-pr-comment
+
+      - name: Post ranking-quality PR comment
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          APP_ID: ${{ secrets.BENCHMARK_BOT_APP_ID }}
+          APP_PRIVATE_KEY: ${{ secrets.BENCHMARK_BOT_APP_PRIVATE_KEY }}
+          INSTALLATION_ID: ${{ secrets.BENCHMARK_BOT_INSTALLATION_ID }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          RANKING_QUALITY_BENCHMARK_DATA_PATH: ${{ github.workspace }}/web/public/benchmarks/ranking-quality-benchmark-data.json
+          BOT_PATH: ${{ steps.setup_bot_ranking.outputs.bot-path }}
+        run: |
+          set -euo pipefail
+          if [ ! -f "$RANKING_QUALITY_BENCHMARK_DATA_PATH" ]; then
+            echo "ranking-quality published JSON missing; skipping PR comment"
+            exit 0
+          fi
+          "$BOT_PATH" post-ranking-pr-comment \
+            --ranking-benchmark-data "$RANKING_QUALITY_BENCHMARK_DATA_PATH"
+
+      - name: Note fork PR publish limitation
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
+        run: |
+          {
+            echo "## Ranking-quality PR comment skipped"
+            echo "Fork PRs upload the \`ranking-quality-benchmark-data\` artifact only (no bot comment)."
+          } >> "$GITHUB_STEP_SUMMARY"
 
   collect-write-pipeline-bench:
     name: collect-write-pipeline-bench
@@ -530,8 +634,36 @@ jobs:
           PYTHONPATH=services/memory services/memory/.venv/bin/python \
             benchmarks/memory/write_pipeline/regression_gate.py
 
-      - name: Summarize write-pipeline gate
+      - name: Build published write-pipeline data
         if: success()
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          GITHUB_RUN_NUMBER: ${{ github.run_number }}
+          GITHUB_SERVER_URL: ${{ github.server_url }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          PYTHONPATH=services/memory services/memory/.venv/bin/python \
+            benchmarks/memory/write_pipeline/build_published_data.py \
+            --latest benchmarks/memory/write_pipeline/output/latest.json \
+            --gate benchmarks/memory/write_pipeline/output/gate-result.json \
+            --published web/public/benchmarks/write-pipeline-benchmark-data.json \
+            --sha "$GITHUB_SHA" \
+            --branch "$GITHUB_REF_NAME" \
+            --run-number "$GITHUB_RUN_NUMBER" \
+            --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+      - name: Validate published write-pipeline data
+        if: success()
+        run: |
+          python -m pip install --disable-pip-version-check --no-cache-dir 'jsonschema==4.23.0'
+          python benchmarks/scripts/validate_published_write_pipeline.py \
+            web/public/benchmarks/write-pipeline-benchmark-data.json
+
+      - name: Summarize write-pipeline gate
+        if: always()
         run: |
           set -euo pipefail
           python3 - <<'PY'
@@ -539,24 +671,35 @@ jobs:
           import os
           from pathlib import Path
 
-          latest = json.loads(
-              Path("benchmarks/memory/write_pipeline/output/latest.json").read_text()
-          )
-          gate = json.loads(
-              Path("benchmarks/memory/write_pipeline/output/gate-result.json").read_text()
-          )
-          m = latest["metrics"]
-          lines = [
-              "## Write-pipeline benchmark",
-              "",
-              f"- p50: {m['latency_ms_p50']:.2f} ms",
-              f"- p95: {m['latency_ms_p95']:.2f} ms (SLA <= 200 ms)",
-              f"- p99: {m['latency_ms_p99']:.2f} ms",
-              f"- iterations: {latest['iterations']}",
-              f"- gate: **{gate['status']}**",
-              "",
-              "CI regression gate only — not published to `/benchmarks` yet.",
-          ]
+          latest_path = Path("benchmarks/memory/write_pipeline/output/latest.json")
+          gate_path = Path("benchmarks/memory/write_pipeline/output/gate-result.json")
+          lines = ["## Write-pipeline benchmark", ""]
+          if not latest_path.is_file() or not gate_path.is_file():
+              missing = []
+              if not latest_path.is_file():
+                  missing.append(str(latest_path))
+              if not gate_path.is_file():
+                  missing.append(str(gate_path))
+              lines.extend(
+                  [
+                      f"- gate: **fail** (missing output: {', '.join(missing)})",
+                      "",
+                  ]
+              )
+          else:
+              latest = json.loads(latest_path.read_text(encoding="utf-8"))
+              gate = json.loads(gate_path.read_text(encoding="utf-8"))
+              m = latest["metrics"]
+              lines.extend(
+                  [
+                      f"- p50: {m['latency_ms_p50']:.2f} ms",
+                      f"- p95: {m['latency_ms_p95']:.2f} ms (SLA <= 200 ms)",
+                      f"- p99: {m['latency_ms_p99']:.2f} ms",
+                      f"- iterations: {latest['iterations']}",
+                      f"- gate: **{gate['status']}**",
+                      "",
+                  ]
+              )
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as fh:
               fh.write("\n".join(lines) + "\n")
           PY
@@ -571,3 +714,64 @@ jobs:
             benchmarks/memory/write_pipeline/output/gate-result.json
           retention-days: 14
           if-no-files-found: error
+
+      - name: Upload write-pipeline published data
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: write-pipeline-benchmark-data
+          path: web/public/benchmarks/write-pipeline-benchmark-data.json
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Require benchmark bot pin (same-repo PR)
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          BENCHMARK_BOT_SHA: ${{ vars.BENCHMARK_BOT_SHA }}
+        run: test -n "$BENCHMARK_BOT_SHA"
+
+      - name: Require benchmark bot App credentials (same-repo PR)
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          APP_ID: ${{ secrets.BENCHMARK_BOT_APP_ID }}
+          APP_PRIVATE_KEY: ${{ secrets.BENCHMARK_BOT_APP_PRIVATE_KEY }}
+          INSTALLATION_ID: ${{ secrets.BENCHMARK_BOT_INSTALLATION_ID }}
+        run: |
+          test -n "$APP_ID" && test -n "$APP_PRIVATE_KEY" && test -n "$INSTALLATION_ID"
+
+      - name: Setup benchmark bot
+        id: setup_bot_write
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        uses: ./.github/actions/setup-benchmark-bot
+        with:
+          bot-sha: ${{ vars.BENCHMARK_BOT_SHA }}
+          release-tag: ${{ vars.BENCHMARK_BOT_RELEASE_TAG }}
+          require-subcommand: post-write-pr-comment
+
+      - name: Post write-pipeline PR comment
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          APP_ID: ${{ secrets.BENCHMARK_BOT_APP_ID }}
+          APP_PRIVATE_KEY: ${{ secrets.BENCHMARK_BOT_APP_PRIVATE_KEY }}
+          INSTALLATION_ID: ${{ secrets.BENCHMARK_BOT_INSTALLATION_ID }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          WRITE_PIPELINE_BENCHMARK_DATA_PATH: ${{ github.workspace }}/web/public/benchmarks/write-pipeline-benchmark-data.json
+          BOT_PATH: ${{ steps.setup_bot_write.outputs.bot-path }}
+        run: |
+          set -euo pipefail
+          if [ ! -f "$WRITE_PIPELINE_BENCHMARK_DATA_PATH" ]; then
+            echo "write-pipeline published JSON missing; skipping PR comment"
+            exit 0
+          fi
+          "$BOT_PATH" post-write-pr-comment \
+            --write-benchmark-data "$WRITE_PIPELINE_BENCHMARK_DATA_PATH"
+
+      - name: Note fork PR publish limitation
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
+        run: |
+          {
+            echo "## Write-pipeline PR comment skipped"
+            echo "Fork PRs upload the \`write-pipeline-benchmark-data\` artifact only (no bot comment)."
+          } >> "$GITHUB_STEP_SUMMARY"

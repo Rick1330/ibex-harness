@@ -85,10 +85,23 @@ def _composite_safe(mem: dict[str, Any]) -> float | None:
 def _parse_int(value: object, field: str, prefix: str) -> tuple[int | None, list[str]]:
     if value is None:
         return None, [f"{prefix} missing {field}"]
+    if isinstance(value, bool):
+        return None, [f"{prefix} {field} must be an integer"]
+    if isinstance(value, float) and not value.is_integer():
+        return None, [f"{prefix} {field} must be an integer"]
     try:
-        return int(value), []  # type: ignore[arg-type]
+        parsed = int(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return None, [f"{prefix} {field} must be an integer"]
+    return parsed, []
+
+
+def _require_non_empty_str(value: object, field: str, prefix: str) -> tuple[str | None, list[str]]:
+    if not isinstance(value, str):
+        return None, [f"{prefix} {field} must be a string"]
+    if not value.strip():
+        return None, [f"{prefix} {field} must be non-empty"]
+    return value, []
 
 
 def _validate_memory_row(row: dict[str, Any], prefix: str) -> list[str]:
@@ -112,7 +125,9 @@ def _validate_memory_row(row: dict[str, Any], prefix: str) -> list[str]:
     if not key:
         errors.append(f"{prefix} content_key must be non-empty")
     category = row.get("category")
-    if category not in CATEGORIES:
+    if not isinstance(category, str):
+        errors.append(f"{prefix} category must be a string")
+    elif category not in CATEGORIES:
         errors.append(f"{prefix} invalid category {category!r}")
     age, age_errors = _parse_int(row.get("valid_from_days_ago"), "valid_from_days_ago", prefix)
     errors.extend(age_errors)
@@ -177,12 +192,20 @@ def validate_gold_set(payload: dict[str, Any]) -> list[str]:
         if not isinstance(row, dict):
             errors.append(f"{prefix} must be an object")
             continue
-        qid = str(row.get("query_id", ""))
+        qid, qid_errors = _require_non_empty_str(row.get("query_id"), "query_id", prefix)
+        errors.extend(qid_errors)
+        if qid is None:
+            continue
         if qid in query_ids:
             errors.append(f"duplicate query_id: {qid}")
         query_ids.add(qid)
         if qid in DECAY_QUERY_IDS:
             decay_found.add(qid)
+
+        _, query_text_errors = _require_non_empty_str(
+            row.get("query_text"), "query_text", prefix
+        )
+        errors.extend(query_text_errors)
 
         hotspot, hotspot_errors = _parse_int(row.get("query_hotspot"), "query_hotspot", prefix)
         errors.extend(hotspot_errors)
@@ -191,6 +214,9 @@ def validate_gold_set(payload: dict[str, Any]) -> list[str]:
             errors.append(f"{prefix} expected_content_keys must be non-empty array")
             continue
         for key in expected:
+            if not isinstance(key, str):
+                errors.append(f"{prefix} expected_content_keys items must be strings")
+                continue
             if key not in mem_by_key:
                 errors.append(f"{prefix} references unknown content_key {key!r}")
 
@@ -208,6 +234,9 @@ def validate_gold_set(payload: dict[str, Any]) -> list[str]:
                 f"  composite: {actual_order}"
             )
         top_key = expected[0]
+        if not isinstance(top_key, str):
+            errors.append(f"{prefix} first expected_content_key must be a string")
+            continue
         top_cat = row.get("expected_top_category")
         if top_key not in mem_by_key:
             errors.append(f"{prefix} references unknown first expected content_key {top_key!r}")

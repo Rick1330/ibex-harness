@@ -422,6 +422,20 @@ pass "near-dup pair calibrated ($CALIB)"
 
 AUTH_HEADER=(-H "Authorization: Bearer $DEV_TOKEN" -H "Content-Type: application/json")
 
+# --- Step 4: composite search ranking (SQL seed + HTTP search) — before steps 1–3 ---
+# Isolated ranking pair on a clean org (matches integration test_composite_ranking_http).
+RANK_JSON="$(memory_seed ranking-seed --org-id "$DEV_ORG" --agent-id "$DEV_AGENT")"
+FACTUAL_ID="$(echo "$RANK_JSON" | jq -r '.factual_id')"
+SEARCH_PAYLOAD="$(jq -nc --arg agent "$DEV_AGENT" \
+  '{agent_id:$agent, query:"dark mode preference", limit:5, min_similarity:0.0}')"
+do_http -X POST "$MEMORY_ADDR/v1/memories/search" "${AUTH_HEADER[@]}" -d "$SEARCH_PAYLOAD"
+expect_http "$CODE" "200" "step 4: POST /v1/memories/search" "step 4: expected 200 got $CODE"
+TOP_CATEGORY="$(jq -r '.data.results[0].memory.category // empty' "$BODY_FILE")"
+TOP_ID="$(jq -r '.data.results[0].memory.id // empty' "$BODY_FILE")"
+[[ "$TOP_CATEGORY" == "factual" ]] || fail "step 4: top result category must be factual"
+[[ "$TOP_ID" == "$FACTUAL_ID" ]] || fail "step 4: top result id must be factual seed"
+pass "step 4: old factual outranks fresh episodic"
+
 # --- Step 1: PII redaction on write ---
 STEP1_PAYLOAD="$(jq -nc --arg agent "$DEV_AGENT" --arg content "$PII_CONTENT" \
   '{agent_id:$agent, content:$content}')"
@@ -487,20 +501,6 @@ export POSTGRES_DSN="${POSTGRES_DSN}"
 export IBEX_MEMORY_DATABASE_URL="$POSTGRES_DSN"
 memory_seed escalation-check --org-id "$DEV_ORG" --new-id "$NEAR_B_ID" --candidate-id "$NEAR_A_ID"
 pass "step 3: pending memory_conflict_escalations row"
-
-
-# --- Step 4: composite search ranking (SQL seed + HTTP search) ---
-RANK_JSON="$(memory_seed ranking-seed --org-id "$DEV_ORG" --agent-id "$DEV_AGENT")"
-FACTUAL_ID="$(echo "$RANK_JSON" | jq -r '.factual_id')"
-SEARCH_PAYLOAD="$(jq -nc --arg agent "$DEV_AGENT" \
-  '{agent_id:$agent, query:"dark mode preference", limit:5, min_similarity:0.0}')"
-do_http -X POST "$MEMORY_ADDR/v1/memories/search" "${AUTH_HEADER[@]}" -d "$SEARCH_PAYLOAD"
-expect_http "$CODE" "200" "step 4: POST /v1/memories/search" "step 4: expected 200 got $CODE"
-TOP_CATEGORY="$(jq -r '.data.results[0].memory.category // empty' "$BODY_FILE")"
-TOP_ID="$(jq -r '.data.results[0].memory.id // empty' "$BODY_FILE")"
-[[ "$TOP_CATEGORY" == "factual" ]] || fail "step 4: top result category must be factual"
-[[ "$TOP_ID" == "$FACTUAL_ID" ]] || fail "step 4: top result id must be factual seed"
-pass "step 4: old factual outranks fresh episodic"
 
 # --- Step 5: skip org GDPR (#641) + FK cascade DELETE + Redis stale-cache visibility ---
 echo "SKIP: org-scope GDPR cascade + MinIO purge deferred to Phase 4.A.2 (#641)"

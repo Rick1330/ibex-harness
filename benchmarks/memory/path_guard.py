@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any
 
 _ALLOWED_RAW_NAMES = frozenset({"hnsw_recall_latency.json"})
-_ALLOWED_PUBLISHED_NAMES = frozenset({"hnsw-benchmark-data.json"})
 
 
 class UnsafePathError(ValueError):
@@ -98,7 +97,27 @@ def resolve_published_hnsw_path(raw: Path | str) -> Path:
         raw,
         options=PathResolveOptions(
             allow_create_parent=True,
-            allowed_names=_ALLOWED_PUBLISHED_NAMES,
+            allowed_names=frozenset({"hnsw-benchmark-data.json"}),
+        ),
+    )
+
+
+def resolve_published_ranking_quality_path(raw: Path | str) -> Path:
+    return resolve_workspace_path(
+        raw,
+        options=PathResolveOptions(
+            allow_create_parent=True,
+            allowed_names=frozenset({"ranking-quality-benchmark-data.json"}),
+        ),
+    )
+
+
+def resolve_published_write_pipeline_path(raw: Path | str) -> Path:
+    return resolve_workspace_path(
+        raw,
+        options=PathResolveOptions(
+            allow_create_parent=True,
+            allowed_names=frozenset({"write-pipeline-benchmark-data.json"}),
         ),
     )
 

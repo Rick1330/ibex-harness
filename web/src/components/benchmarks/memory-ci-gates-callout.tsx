@@ -1,14 +1,32 @@
 import Link from "next/link";
 
-/** Static note: ranking-quality and write-pipeline gates run in CI only (m3.E.3). */
+import {
+  RANKING_QUALITY_SUITE,
+  WRITE_PIPELINE_SUITE,
+} from "@/lib/benchmarks/suites";
+
+/** Links to memory CI suites with published history on /benchmarks. */
 export function MemoryCiGatesCallout() {
   return (
     <div className="rounded-md border border-dashed border-border bg-muted/30 p-4 text-sm text-muted-foreground">
       <p className="font-medium text-foreground">Memory CI regression gates</p>
       <p className="mt-2">
-        Ranking-quality (gold-set precision/recall/MRR) and write-pipeline (p95 create latency)
-        benchmarks run on every Memory Benchmarks workflow but are not published here yet.
-        Results appear in the GitHub Actions job summary and workflow artifacts.
+        Ranking-quality and write-pipeline suites run on every Memory Benchmarks workflow.
+        Published history is available under{" "}
+        <Link
+          href={RANKING_QUALITY_SUITE.basePath}
+          className="underline underline-offset-2 hover:text-foreground"
+        >
+          ranking quality
+        </Link>{" "}
+        and{" "}
+        <Link
+          href={WRITE_PIPELINE_SUITE.basePath}
+          className="underline underline-offset-2 hover:text-foreground"
+        >
+          write pipeline
+        </Link>
+        .
       </p>
       <p className="mt-2">
         <Link
@@ -17,8 +35,8 @@ export function MemoryCiGatesCallout() {
         >
           Milestone 3.E.3
         </Link>{" "}
-        tracks sign-off; published history and benchmark-bot integration follow the same
-        suite contract as proxy and HNSW when needed.
+        tracks sign-off; artifacts and bot publish follow the same suite contract as proxy and
+        HNSW.
       </p>
     </div>
   );

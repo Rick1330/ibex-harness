@@ -1,9 +1,9 @@
 /**
  * Bench suite registry — UI + data URLs only.
- * Collect/publish schemas stay per-suite (proxy vs HNSW vs future).
+ * Collect/publish schemas stay per-suite (proxy vs HNSW vs ranking vs write).
  */
 
-export type BenchmarkSuiteId = "proxy" | "hnsw";
+export type BenchmarkSuiteId = "proxy" | "hnsw" | "rankingQuality" | "writePipeline";
 
 export type SuiteNavPage = Readonly<{
   name: string;
@@ -34,7 +34,7 @@ export const PROXY_SUITE: BenchmarkSuite = {
 
 export const HNSW_SUITE: BenchmarkSuite = {
   id: "hnsw",
-  label: "Memory",
+  label: "Memory HNSW",
   basePath: "/benchmarks/memory",
   dataUrl: "/benchmarks/hnsw-benchmark-data.json",
   navPages: [
@@ -45,7 +45,34 @@ export const HNSW_SUITE: BenchmarkSuite = {
   ],
 };
 
-export const BENCHMARK_SUITES: readonly BenchmarkSuite[] = [PROXY_SUITE, HNSW_SUITE];
+export const RANKING_QUALITY_SUITE: BenchmarkSuite = {
+  id: "rankingQuality",
+  label: "Ranking quality",
+  basePath: "/benchmarks/memory/ranking-quality",
+  dataUrl: "/benchmarks/ranking-quality-benchmark-data.json",
+  navPages: [
+    { name: "Overview", url: "/benchmarks/memory/ranking-quality" },
+    { name: "History", url: "/benchmarks/memory/ranking-quality/history" },
+  ],
+};
+
+export const WRITE_PIPELINE_SUITE: BenchmarkSuite = {
+  id: "writePipeline",
+  label: "Write pipeline",
+  basePath: "/benchmarks/memory/write-pipeline",
+  dataUrl: "/benchmarks/write-pipeline-benchmark-data.json",
+  navPages: [
+    { name: "Overview", url: "/benchmarks/memory/write-pipeline" },
+    { name: "History", url: "/benchmarks/memory/write-pipeline/history" },
+  ],
+};
+
+export const BENCHMARK_SUITES: readonly BenchmarkSuite[] = [
+  PROXY_SUITE,
+  HNSW_SUITE,
+  RANKING_QUALITY_SUITE,
+  WRITE_PIPELINE_SUITE,
+];
 
 /** Hub page — suite-aware overview (not nested under Proxy). */
 export const BENCHMARK_HUB_PAGE: SuiteNavPage = {
