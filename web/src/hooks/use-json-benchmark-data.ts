@@ -4,11 +4,44 @@ import useSWR, { type KeyedMutator } from "swr";
 import type { ZodType } from "zod";
 
 import { benchmarkDataErrorMessage } from "@/hooks/benchmark-data-error";
-import { assertSafeBenchmarkDataUrl } from "@/lib/benchmarks/benchmark-data-url";
+import {
+  HNSW_BENCHMARK_DATA_URL,
+  RANKING_QUALITY_BENCHMARK_DATA_URL,
+  WRITE_PIPELINE_BENCHMARK_DATA_URL,
+} from "@/lib/benchmarks/constants";
 
-async function fetchParsedJson<T>(url: string, schema: ZodType<T>): Promise<T> {
-  const safeUrl = assertSafeBenchmarkDataUrl(url);
-  const response = await fetch(safeUrl, { signal: AbortSignal.timeout(10_000) });
+const BENCHMARK_DATA_URLS = [
+  HNSW_BENCHMARK_DATA_URL,
+  RANKING_QUALITY_BENCHMARK_DATA_URL,
+  WRITE_PIPELINE_BENCHMARK_DATA_URL,
+] as const;
+
+export type BenchmarkJsonDataUrl = (typeof BENCHMARK_DATA_URLS)[number];
+
+async function fetchWithTimeout(url: BenchmarkJsonDataUrl): Promise<Response> {
+  switch (url) {
+    case HNSW_BENCHMARK_DATA_URL:
+      return fetch(HNSW_BENCHMARK_DATA_URL, { signal: AbortSignal.timeout(10_000) });
+    case RANKING_QUALITY_BENCHMARK_DATA_URL:
+      return fetch(RANKING_QUALITY_BENCHMARK_DATA_URL, {
+        signal: AbortSignal.timeout(10_000),
+      });
+    case WRITE_PIPELINE_BENCHMARK_DATA_URL:
+      return fetch(WRITE_PIPELINE_BENCHMARK_DATA_URL, {
+        signal: AbortSignal.timeout(10_000),
+      });
+    default: {
+      const _exhaustive: never = url;
+      throw new Error(`Unsupported benchmark data URL: ${String(_exhaustive)}`);
+    }
+  }
+}
+
+async function fetchParsedJson<T>(
+  url: BenchmarkJsonDataUrl,
+  schema: ZodType<T>,
+): Promise<T> {
+  const response = await fetchWithTimeout(url);
   if (!response.ok) {
     throw new Error(`Failed to load benchmark data (${response.status})`);
   }
@@ -17,7 +50,7 @@ async function fetchParsedJson<T>(url: string, schema: ZodType<T>): Promise<T> {
 }
 
 export function useJsonBenchmarkData<TData extends { runs: unknown[] }>(
-  url: string,
+  url: BenchmarkJsonDataUrl,
   schema: ZodType<TData>,
   loadErrorMessage: string,
 ): {
@@ -31,7 +64,7 @@ export function useJsonBenchmarkData<TData extends { runs: unknown[] }>(
 } {
   const { data, error, isLoading, mutate } = useSWR(
     url,
-    (fetchUrl: string) => fetchParsedJson(fetchUrl, schema),
+    () => fetchParsedJson(url, schema),
     {
       revalidateOnFocus: false,
       revalidateOnReconnect: false,

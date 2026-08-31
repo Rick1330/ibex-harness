@@ -1,13 +1,12 @@
 "use client";
 
 import { KpiCard } from "@/components/benchmarks/kpi-card";
-import { BenchmarkWorkflowRunLink } from "@/components/benchmarks/benchmark-workflow-run-link";
+import { BenchmarkSuiteMetaLine } from "@/components/benchmarks/benchmark-suite-meta-line";
 import {
   BenchmarkHistoryTable,
   BenchmarkSuitePanelShell,
 } from "@/components/benchmarks/benchmark-suite-panel-shell";
 import { useRankingQualityBenchmarkData } from "@/hooks/use-memory-suite-benchmark-data";
-import { isSafeBenchmarkRunUrl } from "@/lib/benchmarks/run-url";
 import type { RankingQualityBenchmarkRun } from "@/lib/benchmarks/ranking-quality-schema";
 
 const LOAD_ERROR = "Failed to load ranking-quality benchmark data";
@@ -51,16 +50,10 @@ export function BenchmarkRankingQualityPanel() {
             Status: {latest.status ?? "unknown"} · run #{latest.run_number} · {latest.short_sha}
           </p>
           <OverviewKpis latest={latest} />
-          <p className="text-sm text-muted-foreground">
+          <BenchmarkSuiteMetaLine runUrl={latest.run_url}>
             Gold set {latest.gold_set ?? "v1"}
             {latest.memory_count != null ? ` · ${latest.memory_count} memories` : ""}
-            {isSafeBenchmarkRunUrl(latest.run_url) ? (
-              <>
-                {" · "}
-                <BenchmarkWorkflowRunLink runUrl={latest.run_url} />
-              </>
-            ) : null}
-          </p>
+          </BenchmarkSuiteMetaLine>
         </div>
       ) : null}
     </BenchmarkSuitePanelShell>

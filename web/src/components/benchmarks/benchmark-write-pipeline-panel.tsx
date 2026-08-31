@@ -1,14 +1,13 @@
 "use client";
 
 import { KpiCard } from "@/components/benchmarks/kpi-card";
-import { BenchmarkWorkflowRunLink } from "@/components/benchmarks/benchmark-workflow-run-link";
+import { BenchmarkSuiteMetaLine } from "@/components/benchmarks/benchmark-suite-meta-line";
 import {
   BenchmarkHistoryTable,
   BenchmarkSuitePanelShell,
 } from "@/components/benchmarks/benchmark-suite-panel-shell";
 import { useWritePipelineBenchmarkData } from "@/hooks/use-memory-suite-benchmark-data";
 import { WRITE_PIPELINE_SLA_TARGETS } from "@/lib/benchmarks/constants";
-import { isSafeBenchmarkRunUrl } from "@/lib/benchmarks/run-url";
 import type { WritePipelineBenchmarkRun } from "@/lib/benchmarks/write-pipeline-schema";
 
 const LOAD_ERROR = "Failed to load write-pipeline benchmark data";
@@ -44,18 +43,12 @@ export function BenchmarkWritePipelinePanel() {
             Status: {latest.status ?? "unknown"} · run #{latest.run_number} · {latest.short_sha}
           </p>
           <OverviewKpis latest={latest} />
-          <p className="text-sm text-muted-foreground">
+          <BenchmarkSuiteMetaLine runUrl={latest.run_url}>
             {latest.iterations != null ? `${latest.iterations} iterations` : "—"}
             {latest.metrics.latency_ms_p95 <= WRITE_PIPELINE_SLA_TARGETS.latency_ms_p95
               ? " · p95 within SLA"
               : " · p95 above SLA"}
-            {isSafeBenchmarkRunUrl(latest.run_url) ? (
-              <>
-                {" · "}
-                <BenchmarkWorkflowRunLink runUrl={latest.run_url} />
-              </>
-            ) : null}
-          </p>
+          </BenchmarkSuiteMetaLine>
         </div>
       ) : null}
     </BenchmarkSuitePanelShell>
