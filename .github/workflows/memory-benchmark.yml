@@ -54,6 +54,9 @@ concurrency:
   group: memory-benchmarks-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   detect-memory-bench-profile:
     name: detect-memory-bench-profile
@@ -254,7 +257,10 @@ jobs:
 
       - name: Validate published HNSW data
         run: |
-          python -m pip install --disable-pip-version-check --no-cache-dir 'jsonschema==4.23.0'
+          pip install --disable-pip-version-check --no-cache-dir \
+            --only-binary :all: \
+            --require-hashes \
+            -r .github/requirements/jsonschema.txt
           python benchmarks/scripts/validate_published_hnsw.py --strict \
             web/public/benchmarks/hnsw-benchmark-data.json
 
@@ -464,7 +470,10 @@ jobs:
             echo "Skipping published ranking-quality validation (file missing)"
             exit 0
           fi
-          python -m pip install --disable-pip-version-check --no-cache-dir 'jsonschema==4.23.0'
+          pip install --disable-pip-version-check --no-cache-dir \
+            --only-binary :all: \
+            --require-hashes \
+            -r .github/requirements/jsonschema.txt
           python benchmarks/scripts/validate_published_memory_suite.py \
             --suite ranking_quality \
             "$published"
@@ -685,7 +694,10 @@ jobs:
             echo "Skipping published write-pipeline validation (file missing)"
             exit 0
           fi
-          python -m pip install --disable-pip-version-check --no-cache-dir 'jsonschema==4.23.0'
+          pip install --disable-pip-version-check --no-cache-dir \
+            --only-binary :all: \
+            --require-hashes \
+            -r .github/requirements/jsonschema.txt
           python benchmarks/scripts/validate_published_memory_suite.py \
             --suite write_pipeline \
             "$published"
