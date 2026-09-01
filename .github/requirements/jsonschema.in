@@ -1,4 +1,10 @@
 # jsonschema for memory-benchmark published-data validation in CI.
-# Maintenance: pip-compile --generate-hashes when refreshing jsonschema.txt.
+# Target: Python 3.12 (matches memory-benchmark.yml setup-python).
+#
+# Maintenance: regenerate jsonschema.txt with Python 3.12:
+#   python3.12 -m venv /tmp/jsonschema-compile && \
+#   /tmp/jsonschema-compile/bin/pip install pip-tools && \
+#   /tmp/jsonschema-compile/bin/pip-compile --generate-hashes \
+#     --output-file=.github/requirements/jsonschema.txt .github/requirements/jsonschema.in
 jsonschema==4.23.0
 typing-extensions>=4.4.0

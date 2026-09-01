@@ -69,7 +69,14 @@ Because release PRs are created by `github-actions[bot]`, the standalone **Seman
 
 ## Workflow permissions
 
-`VERSION_RELEASE_TOKEN` is **required** for [`.github/workflows/version-release-pr.yml`](../../.github/workflows/version-release-pr.yml) and [`.github/workflows/release.yml`](../../.github/workflows/release.yml) so `GITHUB_TOKEN` stays read-only (OpenSSF Scorecard Token-Permissions). Create a fine-grained or classic PAT with **`contents`**, **`pull-requests`**, and **`checks`** (write) on this repository and add it as the `VERSION_RELEASE_TOKEN` repository secret.
+`VERSION_RELEASE_TOKEN` is **required** for [`.github/workflows/version-release-pr.yml`](../../.github/workflows/version-release-pr.yml) and [`.github/workflows/release.yml`](../../.github/workflows/release.yml) so `GITHUB_TOKEN` stays read-only (OpenSSF Scorecard Token-Permissions).
+
+Use a **GitHub App installation token** (recommended) or a **classic PAT** with **`contents`**, **`pull-requests`**, and **`checks`** (write) on this repository. Store it as the `VERSION_RELEASE_TOKEN` repository secret.
+
+- **release-please** and **`gh release upload`** need `contents` + `pull-requests` write.
+- [`report-semantic-pr-title-check.sh`](../../.github/scripts/report-semantic-pr-title-check.sh) posts a check run via `gh api repos/.../check-runs`, which requires **`checks: write`** — fine-grained PATs do not support the Checks API; use a GitHub App or classic PAT.
+
+Do not rely on workflow `permissions: checks: write` on `GITHUB_TOKEN`; the script authenticates with `GH_TOKEN` (`VERSION_RELEASE_TOKEN`).
 
 ## Hotfix releases
 
