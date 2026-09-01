@@ -258,6 +258,7 @@ jobs:
       - name: Validate published HNSW data
         run: |
           pip install --disable-pip-version-check --no-cache-dir \
+            --only-binary :all: \
             --require-hashes \
             -r .github/requirements/jsonschema.txt
           python benchmarks/scripts/validate_published_hnsw.py --strict \
@@ -470,6 +471,7 @@ jobs:
             exit 0
           fi
           pip install --disable-pip-version-check --no-cache-dir \
+            --only-binary :all: \
             --require-hashes \
             -r .github/requirements/jsonschema.txt
           python benchmarks/scripts/validate_published_memory_suite.py \
@@ -693,6 +695,7 @@ jobs:
             exit 0
           fi
           pip install --disable-pip-version-check --no-cache-dir \
+            --only-binary :all: \
             --require-hashes \
             -r .github/requirements/jsonschema.txt
           python benchmarks/scripts/validate_published_memory_suite.py \
