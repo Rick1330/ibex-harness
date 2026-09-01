@@ -15,12 +15,6 @@ concurrency:
 jobs:
   tagged-docker-publish:
     name: tagged-docker-publish
-    permissions:
-      packages: write
-      id-token: write
-      attestations: write
-      security-events: write
-      contents: read
     secrets: inherit
     uses: ./.github/workflows/docker-publish.yml
     with:

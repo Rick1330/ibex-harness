@@ -1,0 +1,3 @@
+# jsonschema for memory-benchmark published-data validation in CI.
+# Maintenance: pip-compile --generate-hashes when refreshing jsonschema.txt.
+jsonschema==4.23.0

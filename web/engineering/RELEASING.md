@@ -69,7 +69,7 @@ Because release PRs are created by `github-actions[bot]`, the standalone **Seman
 
 ## Workflow permissions
 
-If the Version Release PR workflow cannot open PRs, enable **Settings → Actions → General → Workflow permissions → Read and write permissions** and **Allow GitHub Actions to create and approve pull requests**, or add a `VERSION_RELEASE_TOKEN` secret (`contents` + `pull-requests` scope).
+`VERSION_RELEASE_TOKEN` is **required** for [`.github/workflows/version-release-pr.yml`](../../.github/workflows/version-release-pr.yml) and [`.github/workflows/release.yml`](../../.github/workflows/release.yml) so `GITHUB_TOKEN` stays read-only (OpenSSF Scorecard Token-Permissions). Create a fine-grained or classic PAT with **`contents`**, **`pull-requests`**, and **`checks`** (write) on this repository and add it as the `VERSION_RELEASE_TOKEN` repository secret.
 
 ## Hotfix releases
 

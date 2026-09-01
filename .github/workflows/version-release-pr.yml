@@ -33,9 +33,7 @@ jobs:
       (github.event_name == 'push' && contains(github.event.head_commit.message, 'chore(release): prepare v'))
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-      pull-requests: write
-      checks: write
+      contents: read
     env:
       RELEASE_MODE: ${{ github.event_name == 'schedule' && 'propose' || (github.event_name == 'workflow_dispatch' && github.event.inputs.mode) || (github.event_name == 'push' && 'publish') || 'propose' }}
       VERSION_RELEASE_BRANCH: release--branches--main
@@ -50,11 +48,21 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
 
+      - name: Require VERSION_RELEASE_TOKEN
+        env:
+          VERSION_RELEASE_TOKEN: ${{ secrets.VERSION_RELEASE_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${VERSION_RELEASE_TOKEN:-}" ]; then
+            echo "::error title=Missing secret::VERSION_RELEASE_TOKEN is required (contents + pull-requests + checks scope). See web/engineering/RELEASING.md"
+            exit 1
+          fi
+
       - name: Run version release engine
         id: version_release
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
-          token: ${{ secrets.VERSION_RELEASE_TOKEN || github.token }}
+          token: ${{ secrets.VERSION_RELEASE_TOKEN }}
           config-file: version-release.config.json
           manifest-file: .version-release-manifest.json
 
@@ -62,7 +70,7 @@ jobs:
         if: steps.version_release.outcome == 'success' && env.RELEASE_MODE == 'propose'
         continue-on-error: true
         env:
-          GH_TOKEN: ${{ secrets.VERSION_RELEASE_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.VERSION_RELEASE_TOKEN }}
         run: bash .github/scripts/normalize-version-release-branch.sh
 
       - name: Resolve version release PR number
@@ -71,13 +79,13 @@ jobs:
         env:
           PR_JSON: ${{ steps.version_release.outputs.pr }}
           PRS_CREATED: ${{ steps.version_release.outputs.prs_created || 'false' }}
-          GH_TOKEN: ${{ secrets.VERSION_RELEASE_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.VERSION_RELEASE_TOKEN }}
         run: bash .github/scripts/resolve-version-release-pr-number.sh
 
       - name: Report semantic-pr-title check on release PR
         if: steps.version_release.outcome == 'success' && env.RELEASE_MODE == 'propose' && steps.release_pr.outputs.resolved == 'true'
         env:
-          GH_TOKEN: ${{ secrets.VERSION_RELEASE_TOKEN || github.token }}
+          GH_TOKEN: ${{ secrets.VERSION_RELEASE_TOKEN }}
           PR_NUMBER: ${{ steps.release_pr.outputs.number }}
         run: bash .github/scripts/report-semantic-pr-title-check.sh "$PR_NUMBER"
 
