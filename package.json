@@ -26,7 +26,7 @@
       "postcss": ">=8.5.23",
       "sharp": ">=0.35.0",
       "undici": ">=7.29.0 <8",
-      "browserslist": ">=4.28.7"
+      "browserslist": "4.28.7"
     },
     "patchedDependencies": {
       "image-size@1.2.1": "patches/image-size@1.2.1.patch"
