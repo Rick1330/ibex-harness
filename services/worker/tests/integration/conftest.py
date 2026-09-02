@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import socket
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import Iterator
 from urllib.parse import urlparse
 
 import pytest
@@ -180,7 +180,7 @@ def worker(celery_app: Celery) -> Iterator[object]:
 
 
 @pytest.fixture
-async def truncate_failed_tasks(integration_settings: Settings) -> AsyncIterator[None]:
+async def truncate_failed_tasks(integration_settings: Settings) -> None:
     if not integration_settings.database_url:
         pytest.skip("database_url not configured")
     _assert_destructive_postgres_opt_in()
@@ -192,4 +192,3 @@ async def truncate_failed_tasks(integration_settings: Settings) -> AsyncIterator
             )
         )
     await engine.dispose()
-    yield

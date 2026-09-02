@@ -1007,7 +1007,7 @@ jobs:
           enable-cache: true
       - name: Worker Redis integration tests
         env:
-          POSTGRES_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
+          POSTGRES_TEST_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
           POSTGRES_MIGRATE_DSN: postgres://ibex:ibex@localhost:5432/ibex?sslmode=disable
         run: bash infra/scripts/worker-integration-test-ci.sh
 

@@ -120,31 +120,28 @@ async def test_insert_failed_task_propagates_unknown_org_fk(
     pg_session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     unknown_org = UUID("00000000-0000-0000-0000-000000000001")
+    record = FailedTaskRecord(
+        task_name=TASK_MAINTENANCE_ALWAYS_FAIL,
+        task_id="unknown-org-task",
+        args=[],
+        kwargs={},
+        exception_type="E",
+        exception_message="m",
+        traceback_text="t",
+        retry_count=1,
+        org_id=unknown_org,
+    )
     with pytest.raises(IntegrityError):
-        await insert_failed_task(
-            pg_session_factory,
-            FailedTaskRecord(
-                task_name=TASK_MAINTENANCE_ALWAYS_FAIL,
-                task_id="unknown-org-task",
-                args=[],
-                kwargs={},
-                exception_type="E",
-                exception_message="m",
-                traceback_text="t",
-                retry_count=1,
-                org_id=unknown_org,
-            ),
-        )
+        await insert_failed_task(pg_session_factory, record)
 
 
 @pytest.mark.asyncio
 async def test_ibex_app_role_cannot_select_failed_tasks(pg_engine: AsyncEngine) -> None:
+    select_sql = text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+        "SELECT 1 FROM ibex_core.failed_tasks LIMIT 1"
+    )
     async with pg_engine.connect() as conn:
         await conn.execute(text("SET ROLE ibex_app"))
         with pytest.raises(Exception, match="permission denied"):
-            await conn.execute(
-                text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-                    "SELECT 1 FROM ibex_core.failed_tasks LIMIT 1"
-                )
-            )
+            await conn.execute(select_sql)
         await conn.rollback()
