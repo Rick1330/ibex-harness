@@ -100,8 +100,23 @@ class Settings(BaseSettings):
         default="/var/lib/ibex/celerybeat/celerybeat-schedule",
         description="Path for Celery beat schedule persistence",
     )
+    database_url: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "POSTGRES_DSN",
+            "IBEX_WORKER_DATABASE_URL",
+        ),
+        description="Postgres DSN for dead-letter persistence (asyncpg SQLAlchemy URL)",
+    )
+    metrics_port: int = Field(
+        default=8006,
+        ge=1024,
+        le=65535,
+        validation_alias=AliasChoices("IBEX_WORKER_METRICS_PORT"),
+        description="Prometheus /metrics HTTP port for worker process",
+    )
 
-    @field_validator("broker_url", "result_backend", mode="before")
+    @field_validator("broker_url", "result_backend", "database_url", mode="before")
     @classmethod
     def _empty_optional_to_none(cls, value: object) -> object:
         if value is None:

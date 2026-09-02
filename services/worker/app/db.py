@@ -1,4 +1,4 @@
-"""Async SQLAlchemy engine / session helpers (VectorStore in m3.2.1 PR-B)."""
+"""Async SQLAlchemy engine / session helpers for worker dead-letter persistence."""
 
 from __future__ import annotations
 
@@ -35,14 +35,7 @@ class AsyncDatabaseTarget:
 
 
 def parse_async_database_url(url: str) -> AsyncDatabaseTarget:
-    """Map libpq-style DSNs to asyncpg URL + ssl connect_args.
-
-    ``sslmode`` is not a valid asyncpg connect kwarg when SQLAlchemy parses the
-    URL, so it is translated into ``connect_args["ssl"]`` and removed from the
-    query string. Encrypting modes always use a verified TLS context (hostname
-    + certificate checks); weaker libpq ``require`` semantics are intentionally
-    strengthened.
-    """
+    """Map libpq-style DSNs to asyncpg URL + ssl connect_args."""
     raw = url.strip()
     if raw.startswith("postgres://"):
         raw = _PG_SCHEME + raw[len("postgres://") :]
@@ -65,14 +58,9 @@ def parse_async_database_url(url: str) -> AsyncDatabaseTarget:
     return AsyncDatabaseTarget(url=cleaned, connect_args=connect_args)
 
 
-def normalize_async_database_url(url: str) -> str:
-    """Return the asyncpg SQLAlchemy URL with libpq SSL params removed."""
-    return parse_async_database_url(url).url
-
-
 def create_engine(settings: Settings) -> AsyncEngine:
     if not settings.database_url:
-        msg = "IBEX_MEMORY_DATABASE_URL is required for database access"
+        msg = "IBEX_WORKER_DATABASE_URL or POSTGRES_DSN is required for database access"
         raise RuntimeError(msg)
     target = parse_async_database_url(settings.database_url)
     return create_async_engine(
@@ -87,19 +75,17 @@ def create_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSessi
 
 
 @asynccontextmanager
-async def session_with_org(
+async def session_as_service_account(
     factory: async_sessionmaker[AsyncSession],
-    org_id: str,
 ) -> AsyncIterator[AsyncSession]:
-    """Open a transaction, set RLS org GUC, yield session, commit/rollback."""
+    """Open a transaction with service-account GUC (no tenant RLS on failed_tasks)."""
     async with factory() as session:
         try:
             async with session.begin():
                 await session.execute(
                     text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-                        "SELECT set_config('app.current_org_id', :org_id, true)"
-                    ),
-                    {"org_id": org_id},
+                        "SELECT set_config('app.is_service_account', 'true', true)"
+                    )
                 )
                 yield session
         except Exception:
@@ -124,21 +110,13 @@ def _ssl_connect_arg(
 
 
 def _verified_tls_context(query: dict[str, str]) -> bool | ssl.SSLContext:
-    """Verified TLS for asyncpg: default context, or custom CA/client certs.
-
-    When no cert paths are set, return ``True`` so asyncpg uses its verified
-    default SSL context. Custom paths build an explicit context with TLS ≥ 1.2.
-    """
     if not _has_tls_material(query):
         return True
     return _build_tls_context(query)
 
 
 def _has_tls_material(query: dict[str, str]) -> bool:
-    for key in _TLS_MATERIAL_KEYS:
-        if query.get(key):
-            return True
-    return False
+    return any(query.get(key) for key in _TLS_MATERIAL_KEYS)
 
 
 def _build_tls_context(query: dict[str, str]) -> ssl.SSLContext:
@@ -146,9 +124,6 @@ def _build_tls_context(query: dict[str, str]) -> ssl.SSLContext:
     ctx.minimum_version = ssl.TLSVersion.TLSv1_2
     certfile = query.get("sslcert")
     keyfile = query.get("sslkey")
-    if certfile is None:
-        return ctx
-    if keyfile is None:
-        return ctx
-    ctx.load_cert_chain(certfile, keyfile=keyfile)
+    if certfile and keyfile:
+        ctx.load_cert_chain(certfile, keyfile=keyfile)
     return ctx

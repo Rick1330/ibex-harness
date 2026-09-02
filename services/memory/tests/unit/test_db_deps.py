@@ -32,6 +32,14 @@ def test_normalize_plaintext_sslmode_disable() -> None:
     ) == target.url
 
 
+def test_normalize_prefer_sslmode() -> None:
+    target = parse_async_database_url(
+        "postgresql://ibex:ibex@db.example:5432/ibex?sslmode=prefer"
+    )
+    assert "sslmode" not in target.url
+    assert target.connect_args == {"ssl": "prefer"}
+
+
 def test_normalize_require_uses_verified_tls() -> None:
     target = parse_async_database_url(
         "postgresql://ibex:ibex@db.example:5432/ibex?sslmode=require"

@@ -46,6 +46,8 @@ CREATE SCHEMA ibex_analytics; -- Summary analytics
 > **Milestone 1.1.7:** `ibex_core.users` and `ibex_core.agents` are applied as the Phase-1 column subset (see migrations `000006`–`000007`). `tokens.revoked_by` remains a single-column FK (`000008`). `tokens.user_id` / `tokens.agent_id` enforce tenant ownership via composite FKs `(user_id, org_id)` / `(agent_id, org_id)` (`000012`; `users` and `agents` expose `UNIQUE (id, org_id)`). Full-schema columns deferred to Phase 3+ remain documented below but are not yet migrated.
 >
 > **Milestone 2.3.1:** `ibex_core.directives` and `ibex_core.directive_versions` are applied as the Phase-2 agent-scoped subset (`000009`; see [ADR-0030](../content/docs/adr/0030-directive-versioning.mdx)). The marketplace-oriented columns documented in the DIRECTIVES sections below are not yet migrated.
+>
+> **Milestone 3.5.A.2:** `ibex_core.failed_tasks` stores exhausted-retry Celery task failures (`000021`; see [ADR-0062](../content/docs/adr/0062-worker-task-observability-dead-letter.mdx)). **No RLS** — operator forensics table (audit-log pattern); worker inserts via service-account GUC.
 
 ```sql
 -- ================================================================
@@ -1962,6 +1964,42 @@ PARTITION BY toYYYYMM(created_at)
 ORDER BY (org_id, created_at)
 TTL created_at + INTERVAL 30 DAY;
 ```
+
+---
+
+### FAILED TASKS (worker dead-letter)
+
+Migration `000021`. Durable store for Celery tasks that exhausted retries (m3.5.A.2). Queryable via SQL for operator dashboards; complements Prometheus `ibex_worker_task_dead_letter_total` and optional Flower for live debugging.
+
+```sql
+CREATE TABLE ibex_core.failed_tasks (
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    task_name           TEXT NOT NULL,
+    task_id             TEXT NOT NULL,
+    args                JSONB NOT NULL DEFAULT '[]',
+    kwargs              JSONB NOT NULL DEFAULT '{}',
+    exception_type      TEXT NOT NULL,
+    exception_message   TEXT NOT NULL,
+    traceback           TEXT NOT NULL,
+    retry_count         INTEGER NOT NULL DEFAULT 0,
+    failed_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    org_id              UUID REFERENCES ibex_core.organizations(id) ON DELETE SET NULL
+);
+
+CREATE INDEX idx_failed_tasks_failed_at
+    ON ibex_core.failed_tasks (failed_at DESC);
+
+CREATE INDEX idx_failed_tasks_org_failed_at
+    ON ibex_core.failed_tasks (org_id, failed_at DESC)
+    WHERE org_id IS NOT NULL;
+
+CREATE UNIQUE INDEX idx_failed_tasks_task_id
+    ON ibex_core.failed_tasks (task_id);
+```
+
+**RLS:** disabled (same rationale as `ibex_audit.audit_log` — cross-org forensics during incidents). Application layer restricts reads to operators; inserts use `app.is_service_account = true`.
+
+**Idempotency:** `UNIQUE (task_id)` — duplicate `task_failure` signal delivery does not create duplicate rows.
 
 ---
 

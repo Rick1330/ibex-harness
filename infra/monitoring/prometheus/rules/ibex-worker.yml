@@ -1,0 +1,11 @@
+groups:
+  - name: ibex.worker
+    rules:
+      - alert: IBEXWorkerTaskDeadLettered
+        expr: rate(ibex_worker_task_dead_letter_total[5m]) > 0
+        for: 1m
+        labels:
+          severity: page
+        annotations:
+          summary: "Worker task dead-lettered after max retries"
+          description: "Task {{ $labels.task_name }} dead-lettered. Check ibex_core.failed_tasks."

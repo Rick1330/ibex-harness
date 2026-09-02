@@ -2,7 +2,7 @@
 title: "3.5.A.2 Task Observability and Dead-Letter Handling"
 description: "Close the silent-failure gap: route exhausted-retry task payloads to Postgres, emit OTel spans, and fire Prometheus alerts so a systematically-failing extraction is caught before customers notice."
 summary: "Close the silent-failure gap: route exhausted-retry task payloads to Postgres, emit OTel spans, and fire Prometheus alerts so a systematically-failing extraction is caught before customers notice."
-status: "planned"
+status: "completed"
 milestoneId: "3.5.A.2"
 track: "A"
 trackTitle: "Worker Infrastructure"
@@ -15,7 +15,7 @@ fullTitle: "Milestone 3.5.A.2 — Task Observability and Dead-Letter Handling"
 
 # Milestone 3.5.A.2 — Task Observability and Dead-Letter Handling
 
-**Status:** Planned  
+**Status:** Completed  
 **Goal:** [Track A — Worker Infrastructure](/roadmap/phase-3-5-extraction-assembly/tracks#track-a--worker-infrastructure)  
 **Phase:** 3.5 — Extraction & Context Assembly  
 **Estimated effort:** 2 days  
@@ -139,10 +139,12 @@ Rather than a bespoke dead-letter queue (which needs its own consumer/UI to be u
 
 Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
 
-- [ ] Every task in `tasks/*.py` wrapped with `@traced_task`; span visible in local Jaeger/OTel collector during integration tests
-- [ ] `task_failure` signal handler writes a row to `ibex_core.failed_tasks` with full traceback
-- [ ] Prometheus counter `ibex_worker_task_dead_letter_total` increments exactly once per exhausted-retry failure (not once per retry attempt) — tested by forcing 3 failures and asserting counter == 1, not 3
-- [ ] Alert rule documented (Prometheus alerting rule YAML) for `rate(ibex_worker_task_dead_letter_total[5m]) > 0` — this closes the "silent failure" gap explicitly
+- [x] OTel spans wrap every task via `IbexTask.__call__` / `run_task_in_span` (ADR-0062); span visible in local Jaeger/OTel collector during integration tests
+- [x] `task_failure` signal handler writes a row to `ibex_core.failed_tasks` with redacted diagnostics (exception type + bounded `[redacted]` traceback placeholder)
+- [x] Prometheus counter `ibex_worker_task_dead_letter_total` increments exactly once per exhausted-retry failure (not once per retry attempt) — tested by forcing 3 failures and asserting counter == 1, not 3
+- [x] Alert rule documented (Prometheus alerting rule YAML) for `rate(ibex_worker_task_dead_letter_total[5m]) > 0` — this closes the "silent failure" gap explicitly
+
+**ADR:** [ADR-0062 — Worker task observability and dead-letter handling](/docs/adr/0062-worker-task-observability-dead-letter)
 
 ---
 
