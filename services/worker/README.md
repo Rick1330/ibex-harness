@@ -121,5 +121,4 @@ make test-worker-integration   # requires Redis + POSTGRES_TEST_DSN (or POSTGRES
 ```
 
 Integration tests that `TRUNCATE ibex_core.failed_tasks` require `POSTGRES_TEST_DSN` pointing at a
-dedicated test database (or `IBEX_WORKER_DESTRUCTIVE_INTEGRATION_TESTS=1` to opt in). CI sets
-`POSTGRES_TEST_DSN` via `infra/scripts/worker-integration-test-ci.sh`.
+dedicated test database. CI sets `POSTGRES_TEST_DSN` via `infra/scripts/worker-integration-test-ci.sh`.

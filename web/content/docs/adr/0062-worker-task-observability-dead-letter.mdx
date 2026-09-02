@@ -72,9 +72,10 @@ if request is not None and request.retries < sender.max_retries:
 
 On terminal failure:
 
-1. Increment `ibex_worker_task_dead_letter_total{task_name}` (always, even if DB down)
-2. `asyncio.run(insert_failed_task(...))` with `SQLAlchemyError` / `asyncpg.PostgresError` caught and logged
-3. Does not suppress the original task exception
+1. Increment `ibex_worker_task_dead_letter_total{task_name}` when a new `failed_tasks` row is inserted
+2. Increment `ibex_worker_task_dead_letter_persist_failed_total{task_name}` when persistence is unavailable or errors
+3. `asyncio.run(insert_failed_task(...))` with `SQLAlchemyError` / `asyncpg.PostgresError` caught and logged
+4. Does not suppress the original task exception
 
 **Idempotency:** `UNIQUE(task_id)` on `failed_tasks`; `IntegrityError` → no-op.
 

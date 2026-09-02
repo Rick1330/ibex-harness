@@ -17,9 +17,14 @@ def test_parse_postgres_url_to_asyncpg() -> None:
     assert target.connect_args.get("ssl") is False
 
 
-def test_parse_prefer_sslmode() -> None:
+def test_parse_prefer_sslmode_local_host() -> None:
     target = parse_async_database_url("postgresql://u:p@localhost/ibex?sslmode=prefer")
     assert target.connect_args.get("ssl") == "prefer"
+
+
+def test_parse_prefer_sslmode_rejects_remote_host() -> None:
+    with pytest.raises(ValueError, match="sslmode=prefer is only allowed"):
+        parse_async_database_url("postgresql://u:p@db.example/ibex?sslmode=prefer")
 
 
 def test_parse_require_uses_verified_tls() -> None:

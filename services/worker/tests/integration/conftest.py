@@ -25,19 +25,15 @@ _RESULTS_DB = int(os.environ.get("REDIS_DB_RESULTS", "3"))
 _FORBIDDEN_FLUSH_DB = 0
 _INTEGRATION_OPT_IN_ENV = "IBEX_WORKER_INTEGRATION_TESTS"
 _LOCAL_REDIS_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
-_DESTRUCTIVE_POSTGRES_ENV = "IBEX_WORKER_DESTRUCTIVE_INTEGRATION_TESTS"
 _POSTGRES_TEST_DSN_ENV = "POSTGRES_TEST_DSN"
 
 
 def _assert_destructive_postgres_opt_in() -> None:
     if os.environ.get(_POSTGRES_TEST_DSN_ENV):
         return
-    if _truthy_env(_DESTRUCTIVE_POSTGRES_ENV) or _truthy_env("CI"):
-        return
     pytest.fail(
         f"Worker integration tests TRUNCATE ibex_core.failed_tasks. "
-        f"Set {_POSTGRES_TEST_DSN_ENV} to a dedicated test database or "
-        f"{_DESTRUCTIVE_POSTGRES_ENV}=1 to opt in."
+        f"Set {_POSTGRES_TEST_DSN_ENV} to a dedicated test database."
     )
 
 
@@ -127,6 +123,7 @@ def integration_settings(require_redis: str, require_postgres: str) -> Iterator[
     reset_observability_for_tests()
     os.environ["REDIS_URL"] = require_redis
     os.environ["POSTGRES_DSN"] = require_postgres
+    os.environ["POSTGRES_TEST_DSN"] = require_postgres
     os.environ["IBEX_WORKER_METRICS_PORT"] = str(_free_tcp_port())
     settings = get_settings()
     yield settings

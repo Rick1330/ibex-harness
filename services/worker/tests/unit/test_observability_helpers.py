@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -103,6 +104,21 @@ def test_persist_dead_letter_persists_with_database(monkeypatch: pytest.MonkeyPa
     assert record.exception_message == "[redacted]"
     assert record.traceback_text == "[redacted]"
     assert record.retry_count == 3
+
+
+def test_start_metrics_server_multiprocess(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from app.observability import _start_metrics_server, reset_observability_for_tests
+
+    reset_observability_for_tests()
+    monkeypatch.setenv("PROMETHEUS_MULTIPROC_DIR", str(tmp_path))
+    start_http_server_mock = MagicMock()
+    collector_mock = MagicMock()
+    monkeypatch.setattr("app.observability.start_http_server", start_http_server_mock)
+    monkeypatch.setattr("app.observability.multiprocess.MultiProcessCollector", collector_mock)
+    _start_metrics_server(18006)
+    registry = start_http_server_mock.call_args.kwargs["registry"]
+    collector_mock.assert_called_once_with(registry)
+    start_http_server_mock.assert_called_once_with(18006, registry=registry)
 
 
 def test_start_metrics_server_idempotent(monkeypatch: pytest.MonkeyPatch) -> None:

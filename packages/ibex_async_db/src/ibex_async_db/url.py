@@ -13,6 +13,7 @@ _PG_SCHEME = "postgresql://"
 _ASYNCPG_SCHEME = "postgresql+asyncpg://"
 _PLAINTEXT_SSLMODES = frozenset({"disable", "allow"})
 _VERIFIED_SSLMODES = frozenset({"require", "verify-ca", "verify-full"})
+_LOCAL_DB_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,7 +42,7 @@ def parse_async_database_url(url: str) -> AsyncDatabaseTarget:
     parts = urlsplit(raw)
     query = dict(parse_qsl(parts.query, keep_blank_values=True))
     sslmode = query.pop("sslmode", None)
-    ssl_arg = _ssl_connect_arg(sslmode, query)
+    ssl_arg = _ssl_connect_arg(sslmode, query, parts.hostname)
     for key in _SSL_QUERY_KEYS:
         query.pop(key, None)
 
@@ -60,13 +61,19 @@ def normalize_async_database_url(url: str) -> str:
 
 
 def _ssl_connect_arg(
-    sslmode: str | None, query: dict[str, str]
+    sslmode: str | None, query: dict[str, str], hostname: str | None
 ) -> bool | str | ssl.SSLContext | None:
     if sslmode is None:
         return None
     mode = sslmode.lower()
     if mode == "prefer":
-        return "prefer"
+        if _is_local_host(hostname):
+            return "prefer"
+        msg = (
+            "sslmode=prefer is only allowed for local development hosts "
+            f"({', '.join(sorted(_LOCAL_DB_HOSTS))}); use require or verify-full"
+        )
+        raise ValueError(msg)
     if mode in _PLAINTEXT_SSLMODES:
         return False
     if mode not in _VERIFIED_SSLMODES:
@@ -83,6 +90,10 @@ def _verified_tls_context(query: dict[str, str]) -> bool | ssl.SSLContext:
 
 def _has_tls_material(query: dict[str, str]) -> bool:
     return any(query.get(key) for key in _TLS_MATERIAL_KEYS)
+
+
+def _is_local_host(hostname: str | None) -> bool:
+    return (hostname or "").lower() in _LOCAL_DB_HOSTS
 
 
 def _build_tls_context(query: dict[str, str]) -> ssl.SSLContext:

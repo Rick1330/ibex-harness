@@ -15,16 +15,13 @@ export REDIS_DB_QUEUE="${REDIS_DB_QUEUE:-1}"
 export REDIS_DB_RESULTS="${REDIS_DB_RESULTS:-3}"
 export IBEX_WORKER_INTEGRATION_TESTS="${IBEX_WORKER_INTEGRATION_TESTS:-1}"
 
-CANONICAL_DSN="${POSTGRES_DSN:-${POSTGRES_TEST_DSN:-}}"
-if [[ -z "${CANONICAL_DSN}" ]]; then
-  echo "POSTGRES_DSN or POSTGRES_TEST_DSN required for worker dead-letter integration tests" >&2
+if [[ -z "${POSTGRES_TEST_DSN:-}" ]]; then
+  echo "POSTGRES_TEST_DSN required for worker dead-letter integration tests" >&2
   exit 1
 fi
 
-export POSTGRES_DSN="${CANONICAL_DSN}"
-export POSTGRES_MIGRATE_DSN="${POSTGRES_MIGRATE_DSN:-${CANONICAL_DSN}}"
-export POSTGRES_TEST_DSN="${CANONICAL_DSN}"
-export IBEX_WORKER_DESTRUCTIVE_INTEGRATION_TESTS="${IBEX_WORKER_DESTRUCTIVE_INTEGRATION_TESTS:-1}"
+export POSTGRES_DSN="${POSTGRES_TEST_DSN}"
+export POSTGRES_MIGRATE_DSN="${POSTGRES_MIGRATE_DSN:-${POSTGRES_TEST_DSN}}"
 
 cd "$ROOT"
 bash "$ROOT/infra/scripts/db-migrate.sh" up

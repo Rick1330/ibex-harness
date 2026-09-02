@@ -9,7 +9,11 @@ import asyncpg
 import pytest
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.observability import dead_letter_total_for_task, on_task_failure
+from app.observability import (
+    dead_letter_persist_failed_total_for_task,
+    dead_letter_total_for_task,
+    on_task_failure,
+)
 from app.task_names import TASK_MAINTENANCE_ALWAYS_FAIL
 
 
@@ -39,7 +43,7 @@ def test_task_failure_skips_when_retries_remaining() -> None:
 
 def test_task_failure_increments_counter_when_retries_exhausted() -> None:
     baseline = dead_letter_total_for_task(TASK_MAINTENANCE_ALWAYS_FAIL)
-    with patch("app.observability._persist_dead_letter") as persist:
+    with patch("app.observability._persist_dead_letter", return_value=True) as persist:
         on_task_failure(
             sender=_FakeSender(retries=3),
             task_id="t-final",
@@ -52,8 +56,24 @@ def test_task_failure_increments_counter_when_retries_exhausted() -> None:
     persist.assert_called_once()
 
 
-def test_task_failure_counter_increments_when_db_persist_fails() -> None:
+def test_task_failure_skips_counter_for_duplicate_delivery() -> None:
     baseline = dead_letter_total_for_task(TASK_MAINTENANCE_ALWAYS_FAIL)
+    with patch("app.observability._persist_dead_letter", return_value=False):
+        on_task_failure(
+            sender=_FakeSender(retries=3),
+            task_id="t-dup",
+            exception=RuntimeError("final"),
+            args=(),
+            kwargs={},
+        )
+    assert dead_letter_total_for_task(TASK_MAINTENANCE_ALWAYS_FAIL) == baseline
+
+
+def test_task_failure_persist_failed_counter_on_db_error() -> None:
+    dead_letter_baseline = dead_letter_total_for_task(TASK_MAINTENANCE_ALWAYS_FAIL)
+    persist_failed_baseline = dead_letter_persist_failed_total_for_task(
+        TASK_MAINTENANCE_ALWAYS_FAIL
+    )
     with patch(
         "app.observability._persist_dead_letter",
         side_effect=SQLAlchemyError("db down"),
@@ -65,11 +85,17 @@ def test_task_failure_counter_increments_when_db_persist_fails() -> None:
             args=(),
             kwargs={},
         )
-    assert dead_letter_total_for_task(TASK_MAINTENANCE_ALWAYS_FAIL) == baseline + 1
+    assert dead_letter_total_for_task(TASK_MAINTENANCE_ALWAYS_FAIL) == dead_letter_baseline
+    assert (
+        dead_letter_persist_failed_total_for_task(TASK_MAINTENANCE_ALWAYS_FAIL)
+        == persist_failed_baseline + 1
+    )
 
 
 def test_task_failure_logs_db_error_without_suppressing(caplog: pytest.LogCaptureFixture) -> None:
-    baseline = dead_letter_total_for_task(TASK_MAINTENANCE_ALWAYS_FAIL)
+    persist_failed_baseline = dead_letter_persist_failed_total_for_task(
+        TASK_MAINTENANCE_ALWAYS_FAIL
+    )
     with patch(
         "app.observability._persist_dead_letter",
         side_effect=asyncpg.PostgresError("connection refused"),
@@ -81,7 +107,10 @@ def test_task_failure_logs_db_error_without_suppressing(caplog: pytest.LogCaptur
             args=(),
             kwargs={},
         )
-    assert dead_letter_total_for_task(TASK_MAINTENANCE_ALWAYS_FAIL) == baseline + 1
+    assert (
+        dead_letter_persist_failed_total_for_task(TASK_MAINTENANCE_ALWAYS_FAIL)
+        == persist_failed_baseline + 1
+    )
     assert any(
         record.message == "dead_letter_persist_failed" for record in caplog.records
     )
@@ -92,7 +121,7 @@ def test_should_dead_letter_without_request() -> None:
     sender.request = None
     sender.name = TASK_MAINTENANCE_ALWAYS_FAIL
     baseline = dead_letter_total_for_task(TASK_MAINTENANCE_ALWAYS_FAIL)
-    with patch("app.observability._persist_dead_letter"):
+    with patch("app.observability._persist_dead_letter", return_value=True):
         on_task_failure(
             sender=sender,
             task_id="t-no-req",
