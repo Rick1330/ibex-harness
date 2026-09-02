@@ -8,10 +8,10 @@ from typing import Mapping
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 _SSL_QUERY_KEYS = frozenset({"sslmode", "sslrootcert", "sslcert", "sslkey", "sslcrl"})
-_TLS_MATERIAL_KEYS = ("sslrootcert", "sslcert", "sslkey")
+_TLS_MATERIAL_KEYS = ("sslrootcert", "sslcert", "sslkey", "sslcrl")
 _PG_SCHEME = "postgresql://"
 _ASYNCPG_SCHEME = "postgresql+asyncpg://"
-_PLAINTEXT_SSLMODES = frozenset({"disable", "allow"})
+_PLAINTEXT_SSLMODES = frozenset({"disable"})
 _VERIFIED_SSLMODES = frozenset({"require", "verify-ca", "verify-full"})
 _LOCAL_DB_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
@@ -74,6 +74,8 @@ def _ssl_connect_arg(
             f"({', '.join(sorted(_LOCAL_DB_HOSTS))}); use require or verify-full"
         )
         raise ValueError(msg)
+    if mode == "allow":
+        return "allow"
     if mode in _PLAINTEXT_SSLMODES:
         return False
     if mode not in _VERIFIED_SSLMODES:
@@ -103,4 +105,8 @@ def _build_tls_context(query: dict[str, str]) -> ssl.SSLContext:
     keyfile = query.get("sslkey")
     if certfile and keyfile:
         ctx.load_cert_chain(certfile, keyfile=keyfile)
+    crlfile = query.get("sslcrl")
+    if crlfile:
+        ctx.load_verify_locations(crlfile=crlfile)
+        ctx.verify_flags |= ssl.VERIFY_CRL_CHECK_CHAIN
     return ctx
