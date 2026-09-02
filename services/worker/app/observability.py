@@ -50,6 +50,8 @@ DEAD_LETTER_PERSIST_FAILED_COUNTER = Counter(
     ["task_name"],
 )
 
+_MAINTENANCE_TASK_PREFIX = "ibex.worker.maintenance."
+
 _engine: AsyncEngine | None = None
 _session_factory: async_sessionmaker[AsyncSession] | None = None
 _metrics_started = False
@@ -195,6 +197,17 @@ def _persist_dead_letter(settings: Settings, payload: DeadLetterPayload) -> bool
         return None
 
     org_id = parse_org_id(payload.kwargs)
+    if not payload.task_name.startswith(_MAINTENANCE_TASK_PREFIX) and org_id is None:
+        logger.error(
+            "dead_letter_skipped_missing_org_id",
+            extra={
+                "task_name": payload.task_name,
+                "task_id": payload.task_id,
+                **task_context_from_kwargs(payload.kwargs),
+            },
+        )
+        return None
+
     exc = payload.exception or RuntimeError("unknown task failure")
     return _run_on_worker_loop(
         insert_failed_task(

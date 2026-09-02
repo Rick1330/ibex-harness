@@ -10,6 +10,19 @@ import pytest
 from ibex_async_db import normalize_async_database_url, parse_async_database_url
 
 
+def _parse_tls_context_url(query_suffix: str) -> ssl.SSLContext:
+    default_ca = ssl.get_default_verify_paths().cafile
+    if not default_ca or not os.path.isfile(default_ca):
+        pytest.skip("no system CA file available")
+    target = parse_async_database_url(
+        "postgresql://ibex:ibex@db.example:5432/ibex"
+        f"?sslmode=verify-full&sslrootcert={default_ca}{query_suffix}"
+    )
+    ctx = target.connect_args["ssl"]
+    assert isinstance(ctx, ssl.SSLContext)
+    return ctx
+
+
 def test_parse_postgres_url_to_asyncpg() -> None:
     target = parse_async_database_url("postgres://u:p@localhost:5432/ibex?sslmode=disable")
     assert target.url.startswith("postgresql+asyncpg://")
@@ -65,28 +78,18 @@ def test_normalize_verify_full_enables_hostname_checks() -> None:
 
 
 def test_normalize_custom_ca_builds_tls12_context() -> None:
-    default_ca = ssl.get_default_verify_paths().cafile
-    if not default_ca or not os.path.isfile(default_ca):
-        pytest.skip("no system CA file available")
-    target = parse_async_database_url(
-        "postgresql://ibex:ibex@db.example:5432/ibex"
-        f"?sslmode=verify-full&sslrootcert={default_ca}"
-    )
-    ctx = target.connect_args["ssl"]
-    assert isinstance(ctx, ssl.SSLContext)
+    ctx = _parse_tls_context_url("")
     assert ctx.verify_mode == ssl.CERT_REQUIRED
     assert ctx.check_hostname is True
     assert ctx.minimum_version == ssl.TLSVersion.TLSv1_2
 
 
-def test_normalize_custom_crl_enables_crl_check() -> None:
+def test_sslcrl_rejected() -> None:
     default_ca = ssl.get_default_verify_paths().cafile
     if not default_ca or not os.path.isfile(default_ca):
         pytest.skip("no system CA file available")
-    target = parse_async_database_url(
-        "postgresql://ibex:ibex@db.example:5432/ibex"
-        f"?sslmode=verify-full&sslrootcert={default_ca}&sslcrl={default_ca}"
-    )
-    ctx = target.connect_args["ssl"]
-    assert isinstance(ctx, ssl.SSLContext)
-    assert ctx.verify_flags & ssl.VERIFY_CRL_CHECK_CHAIN
+    with pytest.raises(ValueError, match="sslcrl"):
+        parse_async_database_url(
+            "postgresql://ibex:ibex@db.example:5432/ibex"
+            f"?sslmode=verify-full&sslrootcert={default_ca}&sslcrl={default_ca}"
+        )

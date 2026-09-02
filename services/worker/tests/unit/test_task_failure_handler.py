@@ -10,11 +10,13 @@ import pytest
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.observability import (
+    DeadLetterPayload,
+    _persist_dead_letter,
     dead_letter_persist_failed_total_for_task,
     dead_letter_total_for_task,
     on_task_failure,
 )
-from app.task_names import TASK_MAINTENANCE_ALWAYS_FAIL
+from app.task_names import TASK_EXTRACTION_NOOP, TASK_MAINTENANCE_ALWAYS_FAIL
 
 
 class _FakeRequest:
@@ -130,3 +132,44 @@ def test_should_dead_letter_without_request() -> None:
             kwargs={},
         )
     assert dead_letter_total_for_task(TASK_MAINTENANCE_ALWAYS_FAIL) == baseline + 1
+
+
+def test_persist_dead_letter_skips_tenant_task_without_org_id() -> None:
+    payload = DeadLetterPayload(
+        task_name=TASK_EXTRACTION_NOOP,
+        task_id="t-no-org",
+        kwargs={},
+        exception=RuntimeError("final"),
+        traceback_text="",
+        retry_count=3,
+    )
+    settings = MagicMock()
+    settings.database_url = "postgresql://localhost/ibex"
+    with patch("app.observability._session_factory", MagicMock()):
+        assert _persist_dead_letter(settings, payload) is None
+
+
+def test_task_failure_persist_failed_when_tenant_task_missing_org_id() -> None:
+    task_name = TASK_EXTRACTION_NOOP
+    persist_failed_baseline = dead_letter_persist_failed_total_for_task(task_name)
+    dead_letter_baseline = dead_letter_total_for_task(task_name)
+    sender = _FakeSender(retries=3)
+    sender.name = task_name
+    settings = MagicMock()
+    settings.database_url = "postgresql://localhost/ibex"
+    with (
+        patch("app.observability.get_settings", return_value=settings),
+        patch("app.observability._session_factory", MagicMock()),
+    ):
+        on_task_failure(
+            sender=sender,
+            task_id="t-tenant-no-org",
+            exception=RuntimeError("final"),
+            args=(),
+            kwargs={},
+        )
+    assert dead_letter_total_for_task(task_name) == dead_letter_baseline
+    assert (
+        dead_letter_persist_failed_total_for_task(task_name)
+        == persist_failed_baseline + 1
+    )

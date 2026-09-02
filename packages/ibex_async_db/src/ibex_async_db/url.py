@@ -8,7 +8,7 @@ from typing import Mapping
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 _SSL_QUERY_KEYS = frozenset({"sslmode", "sslrootcert", "sslcert", "sslkey", "sslcrl"})
-_TLS_MATERIAL_KEYS = ("sslrootcert", "sslcert", "sslkey", "sslcrl")
+_TLS_MATERIAL_KEYS = ("sslrootcert", "sslcert", "sslkey")
 _PG_SCHEME = "postgresql://"
 _ASYNCPG_SCHEME = "postgresql+asyncpg://"
 _PLAINTEXT_SSLMODES = frozenset({"disable"})
@@ -67,13 +67,7 @@ def _ssl_connect_arg(
         return None
     mode = sslmode.lower()
     if mode == "prefer":
-        if _is_local_host(hostname):
-            return "prefer"
-        msg = (
-            "sslmode=prefer is only allowed for local development hosts "
-            f"({', '.join(sorted(_LOCAL_DB_HOSTS))}); use require or verify-full"
-        )
-        raise ValueError(msg)
+        return _sslmode_prefer(hostname)
     if mode == "allow":
         return "allow"
     if mode in _PLAINTEXT_SSLMODES:
@@ -84,10 +78,27 @@ def _ssl_connect_arg(
     return _verified_tls_context(query)
 
 
+def _sslmode_prefer(hostname: str | None) -> str:
+    if _is_local_host(hostname):
+        return "prefer"
+    msg = (
+        "sslmode=prefer is only allowed for local development hosts "
+        f"({', '.join(sorted(_LOCAL_DB_HOSTS))}); use require or verify-full"
+    )
+    raise ValueError(msg)
+
+
 def _verified_tls_context(query: dict[str, str]) -> bool | ssl.SSLContext:
+    _reject_sslcrl(query)
     if not _has_tls_material(query):
         return True
     return _build_tls_context(query)
+
+
+def _reject_sslcrl(query: dict[str, str]) -> None:
+    if query.get("sslcrl"):
+        msg = "sslcrl is not supported by the Python ssl module; remove sslcrl from the DSN"
+        raise ValueError(msg)
 
 
 def _has_tls_material(query: dict[str, str]) -> bool:
@@ -105,8 +116,4 @@ def _build_tls_context(query: dict[str, str]) -> ssl.SSLContext:
     keyfile = query.get("sslkey")
     if certfile and keyfile:
         ctx.load_cert_chain(certfile, keyfile=keyfile)
-    crlfile = query.get("sslcrl")
-    if crlfile:
-        ctx.load_verify_locations(crlfile=crlfile)
-        ctx.verify_flags |= ssl.VERIFY_CRL_CHECK_CHAIN
     return ctx
