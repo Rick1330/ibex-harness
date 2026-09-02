@@ -12,7 +12,10 @@ from sqlalchemy import text
 
 from app.config import Settings
 from app.db import create_engine, create_session_factory, session_as_service_account
-from app.observability import dead_letter_total_for_task
+from app.observability import (
+    dead_letter_persist_failed_total_for_task,
+    dead_letter_total_for_task,
+)
 from app.task_names import TASK_MAINTENANCE_ALWAYS_FAIL
 
 pytestmark = pytest.mark.integration
@@ -76,7 +79,7 @@ def test_dead_letter_counter_increments_when_db_unavailable(
 ) -> None:
     from sqlalchemy.exc import SQLAlchemyError
 
-    baseline = dead_letter_total_for_task(TASK_MAINTENANCE_ALWAYS_FAIL)
+    baseline = dead_letter_persist_failed_total_for_task(TASK_MAINTENANCE_ALWAYS_FAIL)
 
     def _raise_db_error(*_args: object, **_kwargs: object) -> None:
         raise SQLAlchemyError("simulated db outage")
@@ -85,4 +88,7 @@ def test_dead_letter_counter_increments_when_db_unavailable(
     task = eager_celery_app.tasks[TASK_MAINTENANCE_ALWAYS_FAIL]
     result: AsyncResult = task.apply_async()
     _wait_for_failure(result, timeout=5.0)
-    assert dead_letter_total_for_task(TASK_MAINTENANCE_ALWAYS_FAIL) == baseline + 1
+    assert (
+        dead_letter_persist_failed_total_for_task(TASK_MAINTENANCE_ALWAYS_FAIL)
+        == baseline + 1
+    )
