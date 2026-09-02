@@ -9,6 +9,7 @@ import pytest
 
 from app.config import Settings
 from app.observability import (
+    DeadLetterPayload,
     _format_traceback,
     _on_worker_process_init,
     _on_worker_ready,
@@ -59,13 +60,14 @@ def test_persist_dead_letter_skips_without_database() -> None:
     settings = Settings(database_url=None)
     _persist_dead_letter(
         settings,
-        task_name="t",
-        task_id="id",
-        args=(),
-        kwargs={},
-        exception=RuntimeError("x"),
-        traceback_text="tb",
-        retry_count=0,
+        DeadLetterPayload(
+            task_name="t",
+            task_id="id",
+            kwargs={},
+            exception=RuntimeError("x"),
+            traceback_text="tb",
+            retry_count=0,
+        ),
     )
 
 
@@ -78,28 +80,29 @@ def test_persist_dead_letter_persists_with_database(monkeypatch: pytest.MonkeyPa
     org_id = "550e8400-e29b-41d4-a716-446655440000"
     _persist_dead_letter(
         settings,
-        task_name="t",
-        task_id="id",
-        args=("secret-arg",),
-        kwargs={
-            "org_id": org_id,
-            "memory_content": "must not persist",
-        },
-        exception=RuntimeError("secret-token-abc"),
-        traceback_text="Traceback with secrets",
-        retry_count=3,
+        DeadLetterPayload(
+            task_name="t",
+            task_id="id",
+            kwargs={
+                "org_id": org_id,
+                "memory_content": "must not persist",
+            },
+            exception=RuntimeError("secret-token-abc"),
+            traceback_text="Traceback with secrets",
+            retry_count=3,
+        ),
     )
 
     insert_mock.assert_awaited_once()
-    call_kwargs = insert_mock.await_args.kwargs
-    assert call_kwargs["task_name"] == "t"
-    assert call_kwargs["task_id"] == "id"
-    assert call_kwargs["args"] == ()
-    assert call_kwargs["kwargs"] == {"org_id": org_id}
-    assert call_kwargs["exception_type"] == "RuntimeError"
-    assert call_kwargs["exception_message"] == "[redacted]"
-    assert call_kwargs["traceback_text"] == "[redacted]"
-    assert call_kwargs["retry_count"] == 3
+    record = insert_mock.await_args.args[1]
+    assert record.task_name == "t"
+    assert record.task_id == "id"
+    assert record.args == ()
+    assert record.kwargs == {"org_id": org_id}
+    assert record.exception_type == "RuntimeError"
+    assert record.exception_message == "[redacted]"
+    assert record.traceback_text == "[redacted]"
+    assert record.retry_count == 3
 
 
 def test_start_metrics_server_idempotent(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.repositories.failed_tasks import _truncate_traceback, insert_failed_task
+from app.repositories.failed_tasks import FailedTaskRecord, _truncate_traceback, insert_failed_task
 
 
 def test_truncate_traceback_short_circuit() -> None:
@@ -41,15 +41,17 @@ async def test_insert_failed_task_executes_insert() -> None:
         ctx.return_value.__aexit__.return_value = None
         inserted = await insert_failed_task(
             MagicMock(),
-            task_name="ibex.worker.maintenance.always_fail",
-            task_id="task-1",
-            args=[],
-            kwargs={},
-            exception_type="E",
-            exception_message="m",
-            traceback_text="t",
-            retry_count=1,
-            org_id=None,
+            FailedTaskRecord(
+                task_name="ibex.worker.maintenance.always_fail",
+                task_id="task-1",
+                args=[],
+                kwargs={},
+                exception_type="E",
+                exception_message="m",
+                traceback_text="t",
+                retry_count=1,
+                org_id=None,
+            ),
         )
 
     assert inserted is True
@@ -69,15 +71,17 @@ async def test_insert_failed_task_duplicate_returns_false() -> None:
         ctx.return_value.__aexit__.return_value = None
         inserted = await insert_failed_task(
             MagicMock(),
-            task_name="t",
-            task_id="dup",
-            args=[],
-            kwargs={},
-            exception_type="E",
-            exception_message="m",
-            traceback_text="t",
-            retry_count=0,
-            org_id=None,
+            FailedTaskRecord(
+                task_name="t",
+                task_id="dup",
+                args=[],
+                kwargs={},
+                exception_type="E",
+                exception_message="m",
+                traceback_text="t",
+                retry_count=0,
+                org_id=None,
+            ),
         )
 
     assert inserted is False

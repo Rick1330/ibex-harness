@@ -9,6 +9,7 @@ exclude_paths:
   - "**/*.test.mjs"
   # Pytest uses assert for expectations; Codacy flags S101 in test bodies.
   - "services/**/tests/**"
+  - "packages/**/tests/**"
   # Plan-gate / benchmark helpers use static parameterized SQL outside app/ hot paths
   # (see benchmarks/memory/README.md — not production request handlers).
   - "benchmarks/memory/**"

@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.config import Settings
 from app.db import create_engine, create_session_factory, session_as_service_account
-from app.repositories.failed_tasks import insert_failed_task
+from app.repositories.failed_tasks import FailedTaskRecord, insert_failed_task
 from app.task_names import TASK_MAINTENANCE_ALWAYS_FAIL
 
 pytestmark = pytest.mark.usefixtures("migrated_postgres")
@@ -47,15 +47,17 @@ async def test_insert_failed_task_persists_row(
 ) -> None:
     inserted = await insert_failed_task(
         pg_session_factory,
-        task_name=TASK_MAINTENANCE_ALWAYS_FAIL,
-        task_id="celery-task-abc",
-        args=["x"],
-        kwargs={},
-        exception_type="ForcedFailureError",
-        exception_message="forced failure",
-        traceback_text="Traceback (most recent call last):\n  ...",
-        retry_count=3,
-        org_id=None,
+        FailedTaskRecord(
+            task_name=TASK_MAINTENANCE_ALWAYS_FAIL,
+            task_id="celery-task-abc",
+            args=["x"],
+            kwargs={},
+            exception_type="ForcedFailureError",
+            exception_message="forced failure",
+            traceback_text="Traceback (most recent call last):\n  ...",
+            retry_count=3,
+            org_id=None,
+        ),
     )
     assert inserted is True
 
@@ -83,27 +85,31 @@ async def test_insert_failed_task_idempotent_on_duplicate_task_id(
 ) -> None:
     first = await insert_failed_task(
         pg_session_factory,
-        task_name=TASK_MAINTENANCE_ALWAYS_FAIL,
-        task_id="dup-id",
-        args=[],
-        kwargs={},
-        exception_type="E",
-        exception_message="m",
-        traceback_text="t",
-        retry_count=1,
-        org_id=None,
+        FailedTaskRecord(
+            task_name=TASK_MAINTENANCE_ALWAYS_FAIL,
+            task_id="dup-id",
+            args=[],
+            kwargs={},
+            exception_type="E",
+            exception_message="m",
+            traceback_text="t",
+            retry_count=1,
+            org_id=None,
+        ),
     )
     second = await insert_failed_task(
         pg_session_factory,
-        task_name=TASK_MAINTENANCE_ALWAYS_FAIL,
-        task_id="dup-id",
-        args=[],
-        kwargs={},
-        exception_type="E",
-        exception_message="m",
-        traceback_text="t",
-        retry_count=1,
-        org_id=None,
+        FailedTaskRecord(
+            task_name=TASK_MAINTENANCE_ALWAYS_FAIL,
+            task_id="dup-id",
+            args=[],
+            kwargs={},
+            exception_type="E",
+            exception_message="m",
+            traceback_text="t",
+            retry_count=1,
+            org_id=None,
+        ),
     )
     assert first is True
     assert second is False
@@ -117,15 +123,17 @@ async def test_insert_failed_task_propagates_unknown_org_fk(
     with pytest.raises(IntegrityError):
         await insert_failed_task(
             pg_session_factory,
-            task_name=TASK_MAINTENANCE_ALWAYS_FAIL,
-            task_id="unknown-org-task",
-            args=[],
-            kwargs={},
-            exception_type="E",
-            exception_message="m",
-            traceback_text="t",
-            retry_count=1,
-            org_id=unknown_org,
+            FailedTaskRecord(
+                task_name=TASK_MAINTENANCE_ALWAYS_FAIL,
+                task_id="unknown-org-task",
+                args=[],
+                kwargs={},
+                exception_type="E",
+                exception_message="m",
+                traceback_text="t",
+                retry_count=1,
+                org_id=unknown_org,
+            ),
         )
 
 

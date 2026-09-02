@@ -6,6 +6,7 @@ import asyncio
 import logging
 import traceback
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any, TypeVar
 
 import asyncpg
@@ -18,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.config import Settings, get_settings
 from app.db import create_engine, create_session_factory
-from app.repositories.failed_tasks import insert_failed_task
+from app.repositories.failed_tasks import FailedTaskRecord, insert_failed_task
 from app.task_context import (
     parse_org_id,
     redact_exception_message,
@@ -129,88 +130,106 @@ def _format_traceback(einfo: Any, exc: BaseException | None) -> str:
     return ""
 
 
-def _persist_dead_letter(
-    settings: Settings,
-    *,
-    task_name: str,
-    task_id: str,
-    args: tuple[Any, ...] | list[Any],
-    kwargs: dict[str, Any],
-    exception: BaseException | None,
-    traceback_text: str,
-    retry_count: int,
-) -> None:
+@dataclass(frozen=True, slots=True)
+class DeadLetterPayload:
+    """Sanitized dead-letter fields collected from a Celery task_failure signal."""
+
+    task_name: str
+    task_id: str
+    kwargs: dict[str, Any]
+    exception: BaseException | None
+    traceback_text: str
+    retry_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class TaskFailureContext:
+    """Celery task_failure signal payload."""
+
+    sender: Any
+    task_id: str | None
+    exception: BaseException | None
+    kwargs: dict[str, Any] | None
+    einfo: Any
+
+    @classmethod
+    def from_signal(cls, signal_kwargs: dict[str, Any]) -> TaskFailureContext:
+        return cls(
+            sender=signal_kwargs.get("sender"),
+            task_id=signal_kwargs.get("task_id"),
+            exception=signal_kwargs.get("exception"),
+            kwargs=signal_kwargs.get("kwargs"),
+            einfo=signal_kwargs.get("einfo"),
+        )
+
+
+def _persist_dead_letter(settings: Settings, payload: DeadLetterPayload) -> None:
     if not settings.database_url or _session_factory is None:
         logger.error(
             "dead_letter_skipped_no_database",
-            extra={"task_name": task_name, "task_id": task_id},
+            extra={"task_name": payload.task_name, "task_id": payload.task_id},
         )
         return
 
-    org_id = parse_org_id(kwargs)
-    exc = exception or RuntimeError("unknown task failure")
+    org_id = parse_org_id(payload.kwargs)
+    exc = payload.exception or RuntimeError("unknown task failure")
     asyncio.run(
         insert_failed_task(
             _session_factory,
-            task_name=task_name,
-            task_id=task_id,
-            args=(),
-            kwargs=sanitize_kwargs_for_persistence(kwargs),
-            exception_type=type(exc).__name__,
-            exception_message=redact_exception_message(exc),
-            traceback_text=redact_traceback_for_persistence(traceback_text),
-            retry_count=retry_count,
-            org_id=org_id,
+            FailedTaskRecord(
+                task_name=payload.task_name,
+                task_id=payload.task_id,
+                args=(),
+                kwargs=sanitize_kwargs_for_persistence(payload.kwargs),
+                exception_type=type(exc).__name__,
+                exception_message=redact_exception_message(exc),
+                traceback_text=redact_traceback_for_persistence(payload.traceback_text),
+                retry_count=payload.retry_count,
+                org_id=org_id,
+            ),
         )
     )
 
 
-@task_failure.connect
-def on_task_failure(
-    sender: Any = None,
-    task_id: str | None = None,
-    exception: BaseException | None = None,
-    args: tuple[Any, ...] | None = None,
-    kwargs: dict[str, Any] | None = None,
-    einfo: Any = None,
-    **signal_kwargs: Any,
-) -> None:
-    """Dead-letter handler — fires once per exhausted-retry failure."""
-    del signal_kwargs
-    if sender is None or task_id is None:
+def _handle_task_failure(ctx: TaskFailureContext) -> None:
+    if ctx.sender is None or ctx.task_id is None:
         return
-    if not _should_dead_letter(sender):
+    if not _should_dead_letter(ctx.sender):
         return
 
-    task_name = getattr(sender, "name", "unknown")
+    task_name = getattr(ctx.sender, "name", "unknown")
     DEAD_LETTER_COUNTER.labels(task_name=task_name).inc()
 
-    request = getattr(sender, "request", None)
+    request = getattr(ctx.sender, "request", None)
     retry_count = int(getattr(request, "retries", 0)) if request is not None else 0
-    traceback_text = _format_traceback(einfo, exception)
-    task_kwargs = kwargs if kwargs is not None else {}
+    task_kwargs = ctx.kwargs if ctx.kwargs is not None else {}
+    payload = DeadLetterPayload(
+        task_name=task_name,
+        task_id=ctx.task_id,
+        kwargs=task_kwargs,
+        exception=ctx.exception,
+        traceback_text=_format_traceback(ctx.einfo, ctx.exception),
+        retry_count=retry_count,
+    )
 
     settings = get_settings()
     try:
-        _persist_dead_letter(
-            settings,
-            task_name=task_name,
-            task_id=task_id,
-            args=args if args is not None else (),
-            kwargs=task_kwargs,
-            exception=exception,
-            traceback_text=traceback_text,
-            retry_count=retry_count,
-        )
+        _persist_dead_letter(settings, payload)
     except (SQLAlchemyError, asyncpg.PostgresError, OSError, RuntimeError):
         logger.exception(
             "dead_letter_persist_failed",
             extra={
                 "task_name": task_name,
-                "task_id": task_id,
+                "task_id": ctx.task_id,
                 **task_context_from_kwargs(task_kwargs),
             },
         )
+
+
+@task_failure.connect
+def on_task_failure(**signal_kwargs: Any) -> None:
+    """Dead-letter handler — fires once per exhausted-retry failure."""
+    _handle_task_failure(TaskFailureContext.from_signal(signal_kwargs))
 
 
 def _start_metrics_server(port: int) -> None:

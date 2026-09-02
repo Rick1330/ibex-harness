@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
@@ -40,6 +41,21 @@ RETURNING id
 """
 
 
+@dataclass(frozen=True, slots=True)
+class FailedTaskRecord:
+    """Row payload for ibex_core.failed_tasks inserts."""
+
+    task_name: str
+    task_id: str
+    args: tuple[Any, ...] | list[Any]
+    kwargs: dict[str, Any]
+    exception_type: str
+    exception_message: str
+    traceback_text: str
+    retry_count: int
+    org_id: UUID | None
+
+
 def _json_text(value: Any) -> str:
     return json.dumps(value, default=str)
 
@@ -52,28 +68,19 @@ def _truncate_traceback(traceback_text: str) -> str:
 
 async def insert_failed_task(
     factory: async_sessionmaker[AsyncSession],
-    *,
-    task_name: str,
-    task_id: str,
-    args: tuple[Any, ...] | list[Any],
-    kwargs: dict[str, Any],
-    exception_type: str,
-    exception_message: str,
-    traceback_text: str,
-    retry_count: int,
-    org_id: UUID | None,
+    record: FailedTaskRecord,
 ) -> bool:
     """Insert a dead-letter row. Returns False when task_id already exists."""
     params = {
-        "task_name": task_name,
-        "task_id": task_id,
-        "args": _json_text(list(args)),
-        "kwargs": _json_text(kwargs),
-        "exception_type": exception_type,
-        "exception_message": exception_message[:8192],
-        "traceback": _truncate_traceback(traceback_text),
-        "retry_count": retry_count,
-        "org_id": str(org_id) if org_id else None,
+        "task_name": record.task_name,
+        "task_id": record.task_id,
+        "args": _json_text(list(record.args)),
+        "kwargs": _json_text(record.kwargs),
+        "exception_type": record.exception_type,
+        "exception_message": record.exception_message[:8192],
+        "traceback": _truncate_traceback(record.traceback_text),
+        "retry_count": record.retry_count,
+        "org_id": str(record.org_id) if record.org_id else None,
     }
     async with session_as_service_account(factory) as session, session.begin_nested():
         result = await session.execute(
