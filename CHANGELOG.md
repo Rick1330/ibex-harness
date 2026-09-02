@@ -12,7 +12,7 @@ Release notes are human-readable summaries of user-visible changes, security fix
 
 ---
 
-## [0.1.5](https://github.com/Rick1330/ibex-harness/compare/v0.1.4...v0.1.5) (2026-08-30)
+## [0.1.5](https://github.com/Rick1330/ibex-harness/compare/v0.1.4...v0.1.5) (2026-09-02)
 
 
 ### Features
@@ -23,6 +23,7 @@ Release notes are human-readable summaries of user-visible changes, security fix
 * **memory:** content and near-duplicate detection (m3.c.2) ([#614](https://github.com/Rick1330/ibex-harness/issues/614)) ([0e85abe](https://github.com/Rick1330/ibex-harness/commit/0e85abecdc54621f951f5f9817b36e92117a57c2))
 * **memory:** embed client, HNSW benches, and ADR-0053 (m3.2.1 PR-C) ([#600](https://github.com/Rick1330/ibex-harness/issues/600)) ([7f3f95d](https://github.com/Rick1330/ibex-harness/commit/7f3f95d90006e85e7f0f5f7ec7cc535f4ee560a9))
 * **memory:** milestone 3.E.1 security integration suite ([#643](https://github.com/Rick1330/ibex-harness/issues/643)) ([f167d46](https://github.com/Rick1330/ibex-harness/commit/f167d4607d6ef97df71fda1b91cba9916841e862))
+* **memory:** milestone 3.E.3 retrieval-quality benchmark sign-off ([#654](https://github.com/Rick1330/ibex-harness/issues/654)) ([b57e9a5](https://github.com/Rick1330/ibex-harness/commit/b57e9a567d6b5a189a446401c2e77f8c40103d1a))
 * **memory:** multi-label memory classification write path (m3.C.4) ([#629](https://github.com/Rick1330/ibex-harness/issues/629)) ([e97eec0](https://github.com/Rick1330/ibex-harness/commit/e97eec0d344e7e08188ad270af7f5589d0245b65))
 * **memory:** redis hot-cache read consumer and top-50 trim (m3.D.3) ([#640](https://github.com/Rick1330/ibex-harness/issues/640)) ([8119233](https://github.com/Rick1330/ibex-harness/commit/81192338e347cf2628d3350d875e14ad4cb75a65))
 * **memory:** schema v2 expand — HNSW, quality columns (m3.1.1) ([#595](https://github.com/Rick1330/ibex-harness/issues/595)) ([06d8b74](https://github.com/Rick1330/ibex-harness/commit/06d8b74f461d47ce2fd645344df462dff2bbb87a))
@@ -30,6 +31,13 @@ Release notes are human-readable summaries of user-visible changes, security fix
 * **memory:** temporal-interval-aware conflict detection (m3.c.3) ([#618](https://github.com/Rick1330/ibex-harness/issues/618)) ([6e5fd99](https://github.com/Rick1330/ibex-harness/commit/6e5fd9971ce3e4a77bba3b7e7367f0a3a1d98e1d))
 * **memory:** wire composite scoring into search ranking (m3.D.2) ([#636](https://github.com/Rick1330/ibex-harness/issues/636)) ([675c733](https://github.com/Rick1330/ibex-harness/commit/675c7333fd6d3dacc01b16a114a05268a6a1b6e3))
 * **memory:** write-path persistence and orchestration (m3.c.5) ([#625](https://github.com/Rick1330/ibex-harness/issues/625)) ([26ea098](https://github.com/Rick1330/ibex-harness/commit/26ea098e8fb66ded03b445b68e611df1acbfa260))
+* **worker:** Celery worker skeleton with Redis broker and task routing (m3.5.A.1) ([4a6793b](https://github.com/Rick1330/ibex-harness/commit/4a6793b3081ac102fb5a601117a23e81a6e59dc4))
+* **worker:** task observability and dead-letter handling (m3.5.A.2) ([#673](https://github.com/Rick1330/ibex-harness/issues/673)) ([e426b46](https://github.com/Rick1330/ibex-harness/commit/e426b464b18044aedba7e5595b9a1320d56a8400))
+
+
+### Bug Fixes
+
+* **ci:** remediate CVE-2026-56854 and close Scorecard security alerts ([#670](https://github.com/Rick1330/ibex-harness/issues/670)) ([39e4cff](https://github.com/Rick1330/ibex-harness/commit/39e4cffb0718fe165b92087b6f7dd29b581c6f26))
 
 ## [0.1.4](https://github.com/Rick1330/ibex-harness/compare/v0.1.3...v0.1.4) (2026-08-25)
 
