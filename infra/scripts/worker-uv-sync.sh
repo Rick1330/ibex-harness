@@ -13,6 +13,10 @@ if [[ ! -f "$WORKER_DIR/uv.lock" ]]; then
   exit 1
 fi
 
+WHEEL_DIR="$WORKER_DIR/.wheels"
+bash "$(dirname "${BASH_SOURCE[0]}")/build-ibex-async-db-wheel.sh" "$WHEEL_DIR"
+
 cd "$WORKER_DIR"
-# Wheels only: --no-build blocks third-party sdist setup.py execution (Sonar S8541).
-uv sync --frozen --no-build --extra dev --no-install-project
+uv sync --frozen --no-build --extra dev --no-install-project \
+  --find-links "$WHEEL_DIR" --no-install-package ibex-async-db
+uv pip install --no-index --find-links "$WHEEL_DIR" "ibex-async-db==0.1.0"

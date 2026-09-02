@@ -379,12 +379,18 @@ wheels = [
 ]
 
 [[package]]
+name = "ibex-async-db"
+version = "0.1.0"
+source = { directory = "../../packages/ibex_async_db" }
+
+[[package]]
 name = "ibex-worker"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "asyncpg" },
     { name = "celery" },
+    { name = "ibex-async-db" },
     { name = "kombu" },
     { name = "opentelemetry-api" },
     { name = "opentelemetry-exporter-otlp-proto-grpc" },
@@ -408,6 +414,7 @@ dev = [
 requires-dist = [
     { name = "asyncpg", specifier = ">=0.29.0" },
     { name = "celery", specifier = ">=5.4,<6" },
+    { name = "ibex-async-db", directory = "../../packages/ibex_async_db" },
     { name = "kombu", specifier = ">=5.4,<6" },
     { name = "opentelemetry-api", specifier = ">=1.27.0" },
     { name = "opentelemetry-exporter-otlp-proto-grpc", specifier = ">=1.27.0" },

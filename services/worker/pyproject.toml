@@ -9,6 +9,7 @@ description = "IBEX Harness Celery worker (extraction, embedding, maintenance, m
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+  "ibex-async-db",
   "celery>=5.4,<6",
   "kombu>=5.4,<6",
   "pydantic>=2.0.0",
@@ -57,3 +58,6 @@ fail_under = 90
 
 [tool.uv]
 exclude-newer = "7 days"
+
+[tool.uv.sources]
+ibex-async-db = { path = "../../packages/ibex_async_db" }
