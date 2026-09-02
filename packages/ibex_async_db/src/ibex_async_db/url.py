@@ -41,6 +41,7 @@ def parse_async_database_url(url: str) -> AsyncDatabaseTarget:
 
     parts = urlsplit(raw)
     query = dict(parse_qsl(parts.query, keep_blank_values=True))
+    _reject_sslcrl(query)
     sslmode = query.pop("sslmode", None)
     ssl_arg = _ssl_connect_arg(sslmode, query, parts.hostname)
     for key in _SSL_QUERY_KEYS:
@@ -89,7 +90,6 @@ def _sslmode_prefer(hostname: str | None) -> str:
 
 
 def _verified_tls_context(query: dict[str, str]) -> bool | ssl.SSLContext:
-    _reject_sslcrl(query)
     if not _has_tls_material(query):
         return True
     return _build_tls_context(query)
@@ -97,7 +97,10 @@ def _verified_tls_context(query: dict[str, str]) -> bool | ssl.SSLContext:
 
 def _reject_sslcrl(query: dict[str, str]) -> None:
     if query.get("sslcrl"):
-        msg = "sslcrl is not supported by the Python ssl module; remove sslcrl from the DSN"
+        msg = (
+            "sslcrl is not supported by ibex_async_db URL parsing; "
+            "remove sslcrl from the DSN or configure CRL on a custom SSLContext"
+        )
         raise ValueError(msg)
 
 

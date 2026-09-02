@@ -84,7 +84,7 @@ def test_normalize_custom_ca_builds_tls12_context() -> None:
     assert ctx.minimum_version == ssl.TLSVersion.TLSv1_2
 
 
-def test_sslcrl_rejected() -> None:
+def test_sslcrl_rejected_for_verify_full_mode() -> None:
     default_ca = ssl.get_default_verify_paths().cafile
     if not default_ca or not os.path.isfile(default_ca):
         pytest.skip("no system CA file available")
@@ -93,3 +93,17 @@ def test_sslcrl_rejected() -> None:
             "postgresql://ibex:ibex@db.example:5432/ibex"
             f"?sslmode=verify-full&sslrootcert={default_ca}&sslcrl={default_ca}"
         )
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "postgresql://u:p@localhost/ibex?sslcrl=/tmp/ibex-test.crl",
+        "postgresql://u:p@localhost/ibex?sslmode=disable&sslcrl=/tmp/ibex-test.crl",
+        "postgresql://u:p@localhost/ibex?sslmode=allow&sslcrl=/tmp/ibex-test.crl",
+        "postgresql://u:p@localhost/ibex?sslmode=prefer&sslcrl=/tmp/ibex-test.crl",
+    ],
+)
+def test_sslcrl_rejected_for_non_verified_ssl_modes(url: str) -> None:
+    with pytest.raises(ValueError, match="sslcrl"):
+        parse_async_database_url(url)
