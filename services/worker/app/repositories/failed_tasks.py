@@ -75,11 +75,10 @@ async def insert_failed_task(
         "retry_count": retry_count,
         "org_id": str(org_id) if org_id else None,
     }
-    async with session_as_service_account(factory) as session:
-        async with session.begin_nested():
-            result = await session.execute(
-                text(_INSERT_SQL),  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-                params,
-            )
-            inserted = result.first() is not None
+    async with session_as_service_account(factory) as session, session.begin_nested():
+        result = await session.execute(
+            text(_INSERT_SQL),  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+            params,
+        )
+        inserted = result.first() is not None
     return inserted
