@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -41,6 +42,23 @@ def test_task_failure_skips_when_retries_remaining() -> None:
         kwargs={},
     )
     assert dead_letter_total_for_task(TASK_MAINTENANCE_ALWAYS_FAIL) == baseline
+
+
+def test_dead_letter_counter_increments_once_after_three_failures_not_per_attempt() -> None:
+    """Milestone bar: max_retries=2 → 3 attempts; counter +1, not +3."""
+    task_name = TASK_MAINTENANCE_ALWAYS_FAIL
+    baseline = dead_letter_total_for_task(task_name)
+    with patch("app.observability._persist_dead_letter", return_value=True) as persist:
+        for retries in (0, 1, 2):
+            on_task_failure(
+                sender=_FakeSender(retries=retries, max_retries=2),
+                task_id="t-three-attempts",
+                exception=RuntimeError("fail"),
+                args=(),
+                kwargs={},
+            )
+    assert dead_letter_total_for_task(task_name) == baseline + 1
+    persist.assert_called_once()
 
 
 def test_task_failure_increments_counter_when_retries_exhausted() -> None:
@@ -134,7 +152,9 @@ def test_should_dead_letter_without_request() -> None:
     assert dead_letter_total_for_task(TASK_MAINTENANCE_ALWAYS_FAIL) == baseline + 1
 
 
-def test_persist_dead_letter_skips_tenant_task_without_org_id() -> None:
+def test_persist_dead_letter_skips_tenant_task_without_org_id(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     payload = DeadLetterPayload(
         task_name=TASK_EXTRACTION_NOOP,
         task_id="t-no-org",
@@ -145,11 +165,21 @@ def test_persist_dead_letter_skips_tenant_task_without_org_id() -> None:
     )
     settings = MagicMock()
     settings.database_url = "postgresql://localhost/ibex"
-    with patch("app.observability._session_factory", MagicMock()):
+    with (
+        patch("app.observability._session_factory", MagicMock()),
+        caplog.at_level(logging.ERROR),
+    ):
         assert _persist_dead_letter(settings, payload) is None
+    assert any(
+        record.message == "dead_letter_skipped_missing_org_id"
+        and record.levelno == logging.ERROR
+        for record in caplog.records
+    )
 
 
-def test_task_failure_persist_failed_when_tenant_task_missing_org_id() -> None:
+def test_task_failure_persist_failed_when_tenant_task_missing_org_id(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     task_name = TASK_EXTRACTION_NOOP
     persist_failed_baseline = dead_letter_persist_failed_total_for_task(task_name)
     dead_letter_baseline = dead_letter_total_for_task(task_name)
@@ -160,6 +190,8 @@ def test_task_failure_persist_failed_when_tenant_task_missing_org_id() -> None:
     with (
         patch("app.observability.get_settings", return_value=settings),
         patch("app.observability._session_factory", MagicMock()),
+        patch("app.observability.insert_failed_task") as insert_mock,
+        caplog.at_level(logging.ERROR),
     ):
         on_task_failure(
             sender=sender,
@@ -168,8 +200,14 @@ def test_task_failure_persist_failed_when_tenant_task_missing_org_id() -> None:
             args=(),
             kwargs={},
         )
+    insert_mock.assert_not_called()
     assert dead_letter_total_for_task(task_name) == dead_letter_baseline
     assert (
         dead_letter_persist_failed_total_for_task(task_name)
         == persist_failed_baseline + 1
+    )
+    assert any(
+        record.message == "dead_letter_skipped_missing_org_id"
+        and record.levelno == logging.ERROR
+        for record in caplog.records
     )

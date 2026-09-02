@@ -77,7 +77,7 @@ On terminal failure:
 3. Persist via `_run_on_worker_loop(insert_failed_task(...))` — uses the per-child event loop from `worker_process_init` (`_worker_loop.run_until_complete`); `asyncio.run()` is fallback only when no worker loop exists (tests / edge cases). `SQLAlchemyError` / `asyncpg.PostgresError` caught and logged.
 4. Does not suppress the original task exception
 
-**Tenant context:** `org_id` is required for tenant-scoped tasks; `ibex.worker.maintenance.*` tasks may persist with `NULL` org_id (system/maintenance failures).
+**Tenant context:** `org_id` is required for tenant-scoped tasks; `ibex.worker.maintenance.*` tasks may persist with `NULL` org_id (system/maintenance failures). When a non-maintenance task exhausts retries without a valid `org_id`, persistence is skipped (no row inserted), `ibex_worker_task_dead_letter_persist_failed_total` increments, and an **ERROR** log (`dead_letter_skipped_missing_org_id`) is emitted — fail-closed, not a silent drop.
 
 **Idempotency:** `UNIQUE(task_id)` on `failed_tasks`; `IntegrityError` → no-op.
 
@@ -96,6 +96,7 @@ Migration `000021_create_failed_tasks` — see [DATABASE_SCHEMA.md](/engineering
 - Worker integration CI requires Postgres + `db-migrate` (mirrors memory-integration pattern).
 - Dead-letter persistence reuses the per-child Celery event loop; `asyncio.run()` is fallback only — not a new loop per failure.
 - Flower remains optional for live debugging; Postgres is the source of truth.
+- Prefork Prometheus multi-process metrics (`PROMETHEUS_MULTIPROC_DIR` + `MultiProcessCollector`) are wired in code but lack a full scrape-after-fork integration test in CI — tracked in [GitHub #675](https://github.com/Rick1330/ibex-harness/issues/675) (prefork Prometheus multi-process metrics validation).
 
 ## References
 
