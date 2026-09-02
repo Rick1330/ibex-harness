@@ -306,12 +306,19 @@ Every service must publish these metrics:
 
 ### 7.6 Workers (Celery)
 
-- `ibex_worker_tasks_total{task_name,status}`
-- `ibex_worker_task_duration_seconds_bucket{task_name,status}`
-- `ibex_worker_retries_total{task_name}`
-- `ibex_worker_dlq_total{task_name}`
-- `ibex_worker_queue_depth_current{queue_name}`
-- `ibex_worker_idempotency_replays_total{task_name}`
+**Shipped m3.5.A.2:** per-task OTel spans (`ibex-worker` tracer), Prometheus `/metrics` on `IBEX_WORKER_METRICS_PORT` (default **8006**), dead-letter counter, and Postgres `ibex_core.failed_tasks` persistence.
+
+- `ibex_process_up` — worker process metrics server healthy
+- `ibex_worker_task_dead_letter_total{task_name}` — increments once per exhausted-retry failure (not per intermediate retry)
+- `ibex_worker_tasks_total{task_name,status}` (planned)
+- `ibex_worker_task_duration_seconds_bucket{task_name,status}` (planned)
+- `ibex_worker_retries_total{task_name}` (planned)
+- `ibex_worker_queue_depth_current{queue_name}` (planned)
+- `ibex_worker_idempotency_replays_total{task_name}` (planned)
+
+**Prometheus scrape (local):** job `worker` → `host.docker.internal:8006` (`infra/monitoring/prometheus/prometheus.yml`).
+
+**Alert:** `IBEXWorkerTaskDeadLettered` — `rate(ibex_worker_task_dead_letter_total[5m]) > 0` for 1m (`infra/monitoring/prometheus/rules/ibex-worker.yml`).
 
 ### 7.7 API Server (Python management plane)
 

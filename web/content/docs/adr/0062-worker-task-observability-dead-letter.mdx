@@ -1,0 +1,106 @@
+---
+title: "ADR-0062: Worker task observability and dead-letter handling"
+description: "Architecture decision record 0062 — OTel per-task spans, Postgres failed_tasks dead-letter store, Prometheus counter + alert."
+adrId: "0062"
+status: "Accepted"
+date: "2026-09-02"
+authors: "IBEX Harness team"
+---
+
+# ADR-0062: Worker task observability and dead-letter handling
+
+- **Status:** Accepted
+- **Date:** 2026-09-02
+- **Authors:** IBEX Harness team
+- **Milestone:** [3.5.A.2 Task observability and dead-letter handling](/roadmap/phase-3-5-extraction-assembly/milestones/3.5.a.2-task-observability-dead-letter)
+
+## Context
+
+Milestone 3.5.A.1 shipped the Celery worker skeleton with retry policy on `IbexTask` but no visibility into terminal failures. Without dead-letter handling, a systematically-failing task (misconfigured upstream, bad credentials) accumulates silently in Redis unacked state.
+
+Requirements:
+
+1. Every task execution emits an OTel span compatible with Go services ([ADR-0019](/docs/adr/0019-opentelemetry-provider-configuration)).
+2. After retries are exhausted, persist failure context durably and increment a low-cardinality Prometheus counter.
+3. Page operators when dead-letter rate is non-zero.
+
+## Options considered
+
+### 1) Dead-letter destination
+
+1. **Redis / Celery native DLQ** — requires a consumer and admin UI to be useful.
+2. **Flower as source of truth** — operational convenience only; not a production dependency.
+3. **Postgres `ibex_core.failed_tasks`** (chosen) — SQL-queryable immediately; survives Flower downtime; aligns with Phase 4 operator dashboard.
+
+### 2) Span wrapping strategy
+
+1. Decorate every task function with `@traced_task` manually — error-prone as task count grows.
+2. **Override `IbexTask.__call__`** to call `run_task_in_span` (chosen) — guarantees coverage for all tasks using the base class.
+
+### 3) RLS on `failed_tasks`
+
+1. Enable RLS with org filter — blocks cross-org forensics during incidents.
+2. **No RLS** (chosen) — follows `ibex_audit.audit_log` pattern; inserts use `app.is_service_account = true`; reads restricted at application layer.
+
+## Decision
+
+### OpenTelemetry (first Python bootstrap)
+
+- Module: `services/worker/app/telemetry.py`
+- Tracer name: `ibex-worker`
+- Resource attributes mirror ADR-0019 (`service.name`, `service.version`, `deployment.environment`)
+- Sampling: `ParentBased(TraceIDRatioBased(OTEL_SAMPLE_RATIO))`, default `0.01`
+- Exporter: OTLP gRPC when `OTEL_EXPORTER_OTLP_ENDPOINT` set; no-op provider otherwise (CI/unit tests)
+- Init: Celery `worker_ready` signal (once per child process)
+
+Per-task spans (`run_task_in_span`):
+
+- Attributes: `worker.task`, `celery.task_id`, `ibex.org_id` / `ibex.agent_id` / `ibex.session_id` when present in kwargs
+- Never log or span memory content
+- On exception: `record_exception`, `StatusCode.ERROR`, re-raise
+
+### Dead-letter handler
+
+Celery `task_failure` signal in `app/observability.py`:
+
+**Retry guard (critical):**
+
+```python
+if request is not None and request.retries < sender.max_retries:
+    return  # intermediate attempt — autoretry follows
+```
+
+On terminal failure:
+
+1. Increment `ibex_worker_task_dead_letter_total{task_name}` when a new `failed_tasks` row is inserted
+2. Increment `ibex_worker_task_dead_letter_persist_failed_total{task_name}` when persistence is unavailable or errors
+3. Persist via `_run_on_worker_loop(insert_failed_task(...))` — uses the per-child event loop from `worker_process_init` (`_worker_loop.run_until_complete`); `asyncio.run()` is fallback only when no worker loop exists (tests / edge cases). `SQLAlchemyError` / `asyncpg.PostgresError` caught and logged.
+4. Does not suppress the original task exception
+
+**Tenant context:** `org_id` is required for tenant-scoped tasks; `ibex.worker.maintenance.*` tasks may persist with `NULL` org_id (system/maintenance failures). When a non-maintenance task exhausts retries without a valid `org_id`, persistence is skipped (no row inserted), `ibex_worker_task_dead_letter_persist_failed_total` increments, and an **ERROR** log (`dead_letter_skipped_missing_org_id`) is emitted — fail-closed, not a silent drop.
+
+**Idempotency:** `UNIQUE(task_id)` on `failed_tasks`; `IntegrityError` → no-op.
+
+### Prometheus
+
+- HTTP `/metrics` via `prometheus_client.start_http_server` on `IBEX_WORKER_METRICS_PORT` (default **8006**)
+- Gauge `ibex_process_up = 1` when metrics server started
+- Alert `IBEXWorkerTaskDeadLettered`: `rate(ibex_worker_task_dead_letter_total[5m]) > 0` for 1m, severity `page`
+
+### Schema
+
+Migration `000021_create_failed_tasks` — see [DATABASE_SCHEMA.md](/engineering/DATABASE_SCHEMA.md) § FAILED TASKS.
+
+## Consequences
+
+- Worker integration CI requires Postgres + `db-migrate` (mirrors memory-integration pattern).
+- Dead-letter persistence reuses the per-child Celery event loop; `asyncio.run()` is fallback only — not a new loop per failure.
+- Flower remains optional for live debugging; Postgres is the source of truth.
+- Prefork Prometheus multi-process metrics (`PROMETHEUS_MULTIPROC_DIR` + `MultiProcessCollector`) are wired in code but lack a full scrape-after-fork integration test in CI — tracked in [GitHub #675](https://github.com/Rick1330/ibex-harness/issues/675) (prefork Prometheus multi-process metrics validation).
+
+## References
+
+- [ADR-0019: OpenTelemetry provider configuration](/docs/adr/0019-opentelemetry-provider-configuration)
+- [ADR-0021: Prometheus metric catalog](/docs/adr/0021-prometheus-metric-catalog)
+- Migration: `infra/migrations/postgres/000021_create_failed_tasks.up.sql`
+- Alert rule: `infra/monitoring/prometheus/rules/ibex-worker.yml`
