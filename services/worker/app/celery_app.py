@@ -11,6 +11,7 @@ from app.logging import configure_logging
 from app.task_names import (
     TASK_EMBEDDING_NOOP,
     TASK_EXTRACTION_NOOP,
+    TASK_MAINTENANCE_ALWAYS_FAIL,
     TASK_MAINTENANCE_NOOP_SWEEP,
     TASK_MCP_AUDIT_NOOP,
     TASK_RESULT_PROBE,
@@ -23,6 +24,7 @@ TASK_ROUTES: dict[str, dict[str, str]] = {
     TASK_EMBEDDING_NOOP: {"queue": "embedding"},
     TASK_MCP_AUDIT_NOOP: {"queue": "mcp_audit"},
     TASK_MAINTENANCE_NOOP_SWEEP: {"queue": "maintenance"},
+    TASK_MAINTENANCE_ALWAYS_FAIL: {"queue": "maintenance"},
     TASK_RESULT_PROBE: {"queue": "maintenance"},
 }
 
@@ -109,5 +111,6 @@ def route_for_task(celery_app: Celery, task_name: str) -> str:
 celery_app = create_celery_app()
 
 # Register task modules (decorators bind to celery_app above).
+import app.observability  # registers worker_ready, task_failure, metrics
 import app.task_lifecycle
 import app.tasks  # noqa: F401

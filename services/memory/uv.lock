@@ -814,6 +814,11 @@ wheels = [
 ]
 
 [[package]]
+name = "ibex-async-db"
+version = "0.1.0"
+source = { directory = "../../packages/ibex_async_db" }
+
+[[package]]
 name = "ibex-memory"
 version = "0.1.0"
 source = { editable = "." }
@@ -826,6 +831,7 @@ dependencies = [
     { name = "fastapi" },
     { name = "grpcio" },
     { name = "httpx" },
+    { name = "ibex-async-db" },
     { name = "presidio-analyzer" },
     { name = "presidio-anonymizer" },
     { name = "prometheus-client" },
@@ -862,6 +868,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "grpcio", specifier = ">=1.62.0" },
     { name = "httpx", specifier = ">=0.27.0" },
+    { name = "ibex-async-db", directory = "../../packages/ibex_async_db" },
     { name = "presidio-analyzer", specifier = ">=2.2.0" },
     { name = "presidio-anonymizer", specifier = ">=2.2.0" },
     { name = "prometheus-client", specifier = ">=0.20.0" },

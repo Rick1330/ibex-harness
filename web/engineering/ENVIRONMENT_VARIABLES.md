@@ -428,6 +428,12 @@ worker unless explicitly aliased in a future milestone.
 | `IBEX_WORKER_WORKER_CONCURRENCY` | No | `4` | Worker concurrency | Compose/Makefile may override |
 | `IBEX_WORKER_WORKER_HOSTNAME` | No | `ibex-worker@%h` | Celery nodename for inspect/health | `%h` = hostname |
 | `IBEX_WORKER_BEAT_SCHEDULE_FILE` | No | `/var/lib/ibex/celerybeat/celerybeat-schedule` | Beat persistence path | Writable in container image |
+| `IBEX_WORKER_DATABASE_URL` | Conditional | (none) | Postgres DSN for dead-letter persistence | Alias: `POSTGRES_DSN` |
+| `IBEX_WORKER_METRICS_PORT` | No | `8006` | Prometheus `/metrics` HTTP port | Memory service uses `8005` |
+| `POSTGRES_DSN` | Conditional | (none) | Alias for worker dead-letter DSN | Required when dead-letter persistence enabled |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | No | (none) | OTLP gRPC collector endpoint | Same semantics as Go services (ADR-0019) |
+| `OTEL_SAMPLE_RATIO` | No | `0.01` | Trace sampling ratio (0–1) | Worker reads directly (no `IBEX_WORKER_` prefix) |
+| `OTEL_SERVICE_NAME` | No | `ibex-worker` | OTel resource `service.name` | Fallback when unset |
 | `REDIS_URL` | No | `redis://127.0.0.1:6379/0` | Shared Redis base when worker URL unset | Dev default in `Settings` |
 | `REDIS_DB_QUEUE` | No | `1` | Broker logical DB (see §6) | Celery list keys |
 | `REDIS_DB_RESULTS` | No | `3` | Result backend logical DB (see §6) | `celery-task-meta-*` keys |
