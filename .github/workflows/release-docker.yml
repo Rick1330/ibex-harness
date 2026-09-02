@@ -15,6 +15,13 @@ concurrency:
 jobs:
   tagged-docker-publish:
     name: tagged-docker-publish
+    # Callee jobs need packages/id-token/attestations; caller must grant them (cannot elevate).
+    permissions:
+      packages: write
+      id-token: write
+      attestations: write
+      security-events: write
+      contents: read
     secrets: inherit
     uses: ./.github/workflows/docker-publish.yml
     with:
