@@ -136,10 +136,12 @@ CI has no GPU runner. To exercise the self-hosted path locally:
 ```bash
 # Example: OpenAI-compatible vLLM server (adjust GPU flags / model to your hardware)
 docker run --gpus all -p 8000:8000 vllm/vllm-openai:latest \
-  --model Qwen/Qwen2.5-14B-Instruct
+  --model Qwen/Qwen2.5-14B-Instruct \
+  --served-model-name Qwen2.5-14B-Instruct
 
 # If 14B VRAM does not fit, substitute Qwen2.5-7B-Instruct and set:
 # IBEX_WORKER_EXTRACTION_VLLM_MODEL=Qwen2.5-7B-Instruct
+# with --served-model-name Qwen2.5-7B-Instruct (must match the env value)
 
 export IBEX_WORKER_EXTRACTION_PROVIDER=vllm
 export IBEX_WORKER_EXTRACTION_BASE_URL=http://127.0.0.1:8000/v1

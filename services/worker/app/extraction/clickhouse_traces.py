@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -31,6 +32,8 @@ _INSERT_SQL = (
     ") FORMAT JSONEachRow"
 )
 
+_process_client: httpx.Client | None = None
+
 
 class MissingOrgIdError(ValueError):
     """ClickHouse llm_traces insert refused without org_id."""
@@ -55,6 +58,14 @@ class ExtractionTraceRow:
     completed_at: datetime
 
 
+def shared_clickhouse_client() -> httpx.Client:
+    """Process-level HTTP client; never closed per insert."""
+    global _process_client
+    if _process_client is None:
+        _process_client = httpx.Client()
+    return _process_client
+
+
 def insert_extraction_trace(
     *,
     dsn: str | None,
@@ -64,14 +75,22 @@ def insert_extraction_trace(
     """Insert one llm_traces row. Empty DSN fail-opens. Never stores prompt text."""
     if row.org_id is None:
         raise MissingOrgIdError("org_id is required for llm_traces insert")
-    if dsn is None or not dsn.strip():
-        CLICKHOUSE_SKIP_COUNTER.labels(reason="empty_dsn").inc()
-        logger.info("extraction_clickhouse_skipped", extra={"reason": "empty_dsn"})
+    if _skip_empty_dsn(dsn):
         return False
-    payload = _row_json(row)
+    http = client or shared_clickhouse_client()
+    return _post_row(http, dsn or "", _row_json(row))
+
+
+def _skip_empty_dsn(dsn: str | None) -> bool:
+    if dsn is not None and dsn.strip():
+        return False
+    CLICKHOUSE_SKIP_COUNTER.labels(reason="empty_dsn").inc()
+    logger.info("extraction_clickhouse_skipped", extra={"reason": "empty_dsn"})
+    return True
+
+
+def _post_row(http: httpx.Client, dsn: str, payload: str) -> bool:
     url, auth = _http_endpoint(dsn)
-    own = client is None
-    http = client or httpx.Client()
     try:
         response = http.post(
             url,
@@ -81,28 +100,23 @@ def insert_extraction_trace(
             auth=auth,
             timeout=5.0,
         )
-        if response.status_code >= 400:
-            CLICKHOUSE_SKIP_COUNTER.labels(reason="http_error").inc()
-            logger.warning(
-                "extraction_clickhouse_insert_failed",
-                extra={"status_code": response.status_code},
-            )
-            return False
-        return True
     except httpx.HTTPError:
-        CLICKHOUSE_SKIP_COUNTER.labels(reason="http_error").inc()
-        logger.warning("extraction_clickhouse_insert_failed", extra={"reason": "transport"})
-        return False
-    finally:
-        if own:
-            http.close()
+        return _record_http_error("transport")
+    if response.status_code >= 400:
+        return _record_http_error(str(response.status_code))
+    return True
+
+
+def _record_http_error(reason: str) -> bool:
+    CLICKHOUSE_SKIP_COUNTER.labels(reason="http_error").inc()
+    logger.warning("extraction_clickhouse_insert_failed", extra={"reason": reason})
+    return False
 
 
 def _row_json(row: ExtractionTraceRow) -> str:
-    import json
-
+    if row.org_id is None:
+        raise MissingOrgIdError("org_id is required for llm_traces insert")
     total = int(row.input_tokens) + int(row.output_tokens)
-    assert row.org_id is not None
     body: dict[str, Any] = {
         "request_id": row.request_id,
         "org_id": str(row.org_id),

@@ -104,3 +104,23 @@ def test_config_prod_allows_explicit_broker(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setenv("IBEX_WORKER_RESULT_BACKEND", "redis://prod:6379/3")
     settings = Settings()
     assert settings.resolved_broker_url == "redis://prod:6379/1"
+
+
+def test_extraction_base_url_https_ok() -> None:
+    settings = Settings(extraction_openai_base_url="https://api.openai.com/v1")
+    assert settings.extraction_openai_base_url == "https://api.openai.com/v1"
+
+
+def test_extraction_base_url_http_loopback_ok() -> None:
+    settings = Settings(extraction_vllm_base_url="http://127.0.0.1:8000/v1")
+    assert settings.extraction_vllm_base_url == "http://127.0.0.1:8000/v1"
+
+
+def test_extraction_base_url_rejects_remote_http() -> None:
+    with pytest.raises(ValidationError, match="https:// or http:// on loopback"):
+        Settings(extraction_openai_base_url="http://evil.example/v1")
+
+
+def test_extraction_base_url_unset_ok() -> None:
+    settings = Settings(extraction_openai_base_url=None)
+    assert settings.extraction_openai_base_url is None

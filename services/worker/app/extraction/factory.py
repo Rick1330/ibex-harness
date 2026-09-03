@@ -21,20 +21,28 @@ VALID_PROFILES = frozenset({"openai", "vllm"})
 def build_extraction_provider(settings: Settings) -> ExtractionProvider:
     """Construct the provider for settings.extraction_provider. Never stubs."""
     profile = settings.extraction_provider.strip().lower()
-    if profile not in VALID_PROFILES:
-        raise ValueError(f"unknown extraction provider: {settings.extraction_provider!r}")
     if profile == "openai":
-        key = settings.openai_api_key
-        if key is None or not key.get_secret_value().strip():
-            raise ValueError("openai extraction requires OPENAI_API_KEY")
-        return OpenAIExtractionProvider(
-            CompatEndpoint(
-                base_url=settings.extraction_openai_base_url or DEFAULT_OPENAI_BASE_URL,
-                model=settings.extraction_openai_model or DEFAULT_OPENAI_MODEL,
-                api_key=key.get_secret_value(),
-                timeout_seconds=settings.extraction_timeout_seconds,
-            )
+        return _build_openai(settings)
+    if profile == "vllm":
+        return _build_vllm(settings)
+    raise ValueError(f"unknown extraction provider: {settings.extraction_provider!r}")
+
+
+def _build_openai(settings: Settings) -> OpenAIExtractionProvider:
+    key = settings.openai_api_key
+    if key is None or not key.get_secret_value().strip():
+        raise ValueError("openai extraction requires OPENAI_API_KEY")
+    return OpenAIExtractionProvider(
+        CompatEndpoint(
+            base_url=settings.extraction_openai_base_url or DEFAULT_OPENAI_BASE_URL,
+            model=settings.extraction_openai_model or DEFAULT_OPENAI_MODEL,
+            api_key=key.get_secret_value(),
+            timeout_seconds=settings.extraction_timeout_seconds,
         )
+    )
+
+
+def _build_vllm(settings: Settings) -> VLLMExtractionProvider:
     base = settings.extraction_vllm_base_url
     if not base or not base.strip():
         raise ValueError(

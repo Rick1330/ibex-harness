@@ -10,6 +10,23 @@ from pydantic import AliasChoices, Field, SecretStr, field_validator, model_vali
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _QUEUE_NAMES: tuple[str, ...] = ("extraction", "embedding", "maintenance", "mcp_audit")
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
+def require_https_or_loopback(url: str | None) -> str | None:
+    """Remote extraction URLs must be HTTPS; HTTP is allowed only on loopback."""
+    if url is None:
+        return None
+    parsed = urlparse(url.strip())
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme == "https":
+        return url
+    if parsed.scheme == "http" and host in _LOOPBACK_HOSTS:
+        return url
+    raise ValueError(
+        "extraction base URL must use https:// or http:// on loopback "
+        "(127.0.0.1, localhost, ::1)"
+    )
 
 
 def redis_url_with_db(base_url: str, db_index: int) -> str:
@@ -226,6 +243,11 @@ class Settings(BaseSettings):
         if isinstance(value, str) and not value.strip():
             return "redis://127.0.0.1:6379/0"
         return value
+
+    @field_validator("extraction_openai_base_url", "extraction_vllm_base_url")
+    @classmethod
+    def _https_or_loopback_extraction_url(cls, value: str | None) -> str | None:
+        return require_https_or_loopback(value)
 
     @property
     def resolved_broker_url(self) -> str:

@@ -12,7 +12,9 @@ import pytest
 from app.extraction.clickhouse_traces import (
     ExtractionTraceRow,
     MissingOrgIdError,
+    _row_json,
     insert_extraction_trace,
+    shared_clickhouse_client,
 )
 
 
@@ -84,6 +86,56 @@ def test_http_error_fail_open() -> None:
     )
 
 
+def test_transport_error_fail_open() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("down")
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    assert (
+        insert_extraction_trace(
+            dsn="clickhouse://default:@localhost:8123/ibex",
+            row=_row(),
+            client=client,
+        )
+        is False
+    )
+
+
+def test_unsupported_dsn_scheme() -> None:
+    with pytest.raises(ValueError, match="unsupported ClickHouse DSN scheme"):
+        insert_extraction_trace(
+            dsn="ftp://localhost:8123/ibex",
+            row=_row(),
+            client=httpx.Client(transport=httpx.MockTransport(lambda _r: httpx.Response(200))),
+        )
+
+
 def test_refuse_without_org_id() -> None:
+    row = _row(org_id=None)
     with pytest.raises(MissingOrgIdError, match="org_id"):
-        insert_extraction_trace(dsn="clickhouse://default:@localhost:8123/ibex", row=_row(org_id=None))
+        insert_extraction_trace(dsn="clickhouse://default:@localhost:8123/ibex", row=row)
+
+
+def test_row_json_refuses_without_org_id() -> None:
+    with pytest.raises(MissingOrgIdError, match="org_id"):
+        _row_json(_row(org_id=None))
+
+
+def test_shared_client_used_when_none_injected(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = {"n": 0}
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        return httpx.Response(200, text="ok")
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    monkeypatch.setattr(
+        "app.extraction.clickhouse_traces.shared_clickhouse_client",
+        lambda: client,
+    )
+    assert insert_extraction_trace(
+        dsn="clickhouse://default:@localhost:8123/ibex",
+        row=_row(),
+    )
+    assert calls["n"] == 1
+    assert shared_clickhouse_client() is not None

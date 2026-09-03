@@ -8,9 +8,34 @@ from uuid import uuid4
 import httpx
 import pytest
 
-from app.extraction.memory_writer import HttpMemoryWriter
+from app.extraction.memory_writer import HttpMemoryWriter, MemoryHttpConfig, MemoryWriteRequest
 from app.extraction.provider import ExtractionTransportError
 from app.extraction.schema import ExtractedMemory
+
+
+def _memory() -> ExtractedMemory:
+    return ExtractedMemory.model_validate(
+        {
+            "content": "User prefers dark mode in the IDE",
+            "categories": [
+                {"label": "preference", "confidence": 0.9},
+                {"label": "behavioral", "confidence": 0.6},
+            ],
+            "confidence": 0.88,
+            "valid_from": datetime(2026, 9, 1, tzinfo=UTC),
+            "valid_until": datetime(2026, 9, 8, tzinfo=UTC),
+        }
+    )
+
+
+def _request(memory: ExtractedMemory | None = None) -> MemoryWriteRequest:
+    return MemoryWriteRequest(
+        org_id=uuid4(),
+        agent_id=uuid4(),
+        session_id=uuid4(),
+        turn_index=3,
+        memory=memory or _memory(),
+    )
 
 
 def test_writer_posts_labels_and_temporal_fields() -> None:
@@ -25,30 +50,10 @@ def test_writer_posts_labels_and_temporal_fields() -> None:
 
     client = httpx.Client(transport=httpx.MockTransport(handler))
     writer = HttpMemoryWriter(
-        base_url="http://memory.example",
-        token="mem-token",
+        MemoryHttpConfig(base_url="http://memory.example", token="mem-token"),
         client=client,
     )
-    memory = ExtractedMemory.model_validate(
-        {
-            "content": "User prefers dark mode in the IDE",
-            "categories": [
-                {"label": "preference", "confidence": 0.9},
-                {"label": "behavioral", "confidence": 0.6},
-            ],
-            "confidence": 0.88,
-            "valid_from": datetime(2026, 9, 1, tzinfo=UTC),
-            "valid_until": datetime(2026, 9, 8, tzinfo=UTC),
-        }
-    )
-    org = uuid4()
-    writer.write(
-        org_id=org,
-        agent_id=uuid4(),
-        session_id=uuid4(),
-        turn_index=3,
-        memory=memory,
-    )
+    writer.write(_request())
     import json
 
     body = json.loads(captured["json"])  # type: ignore[arg-type]
@@ -67,22 +72,60 @@ def test_writer_retries_on_503() -> None:
         return httpx.Response(503, text="no")
 
     writer = HttpMemoryWriter(
-        base_url="http://memory.example",
-        token="t",
+        MemoryHttpConfig(base_url="http://memory.example", token="t"),
         client=httpx.Client(transport=httpx.MockTransport(handler)),
     )
-    memory = ExtractedMemory.model_validate(
-        {
-            "content": "User prefers dark mode in the IDE",
-            "categories": [{"label": "preference", "confidence": 0.9}],
-            "confidence": 0.9,
-        }
-    )
     with pytest.raises(ExtractionTransportError):
-        writer.write(
-            org_id=uuid4(),
-            agent_id=uuid4(),
-            session_id=uuid4(),
-            turn_index=0,
-            memory=memory,
-        )
+        writer.write(_request())
+
+
+def test_writer_rejects_empty_base_url() -> None:
+    with pytest.raises(ValueError, match="memory_base_url"):
+        HttpMemoryWriter(MemoryHttpConfig(base_url="  ", token="t"))
+
+
+def test_writer_rejects_empty_token() -> None:
+    with pytest.raises(ValueError, match="memory_api_token"):
+        HttpMemoryWriter(MemoryHttpConfig(base_url="http://memory.example", token=""))
+
+
+def test_writer_4xx_raises_value_error() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, text="bad")
+
+    writer = HttpMemoryWriter(
+        MemoryHttpConfig(base_url="http://memory.example", token="t"),
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    with pytest.raises(ValueError, match="400"):
+        writer.write(_request())
+
+
+def test_writer_timeout_is_transport_error() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("slow")
+
+    writer = HttpMemoryWriter(
+        MemoryHttpConfig(base_url="http://memory.example", token="t"),
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    with pytest.raises(ExtractionTransportError, match="timeout"):
+        writer.write(_request())
+
+
+def test_writer_transport_error() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("down")
+
+    writer = HttpMemoryWriter(
+        MemoryHttpConfig(base_url="http://memory.example", token="t"),
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    with pytest.raises(ExtractionTransportError, match="transport"):
+        writer.write(_request())
+
+
+def test_writer_close_owned_client() -> None:
+    writer = HttpMemoryWriter(MemoryHttpConfig(base_url="http://memory.example", token="t"))
+    writer.close()
+    writer.close()

@@ -19,6 +19,8 @@ class OpenAIExtractionProvider(ExtractionProvider):
         endpoint: CompatEndpoint,
         client: httpx.Client | None = None,
     ) -> None:
+        if not endpoint.base_url.strip():
+            raise ValueError("openai extraction requires a base_url")
         if not endpoint.api_key or not endpoint.api_key.strip():
             raise ValueError("openai extraction requires an API key")
         self._endpoint = endpoint

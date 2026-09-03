@@ -35,6 +35,22 @@ def post_chat_completion(
 ) -> ExtractionCall:
     """POST /chat/completions and map the response to ExtractionCall."""
     system_prompt, user_content = prompts
+    started = time.monotonic()
+    response = _post_completion(client, endpoint, system_prompt, user_content)
+    _raise_for_http_status(response)
+    try:
+        body = response.json()
+    except json.JSONDecodeError as exc:
+        raise ExtractionProviderError("extraction provider returned invalid JSON") from exc
+    return _parse_completion_body(body, fallback_model=endpoint.model, started=started)
+
+
+def _post_completion(
+    client: httpx.Client,
+    endpoint: CompatEndpoint,
+    system_prompt: str,
+    user_content: str,
+) -> httpx.Response:
     url = endpoint.base_url.rstrip("/") + "/chat/completions"
     headers = {"Content-Type": "application/json"}
     if endpoint.api_key:
@@ -47,47 +63,31 @@ def post_chat_completion(
         ],
         "temperature": 0.0,
     }
-    started = time.monotonic()
     try:
-        response = client.post(
+        return client.post(
             url, headers=headers, json=payload, timeout=endpoint.timeout_seconds
         )
     except httpx.TimeoutException as exc:
         raise ExtractionTransportError("extraction provider timeout") from exc
     except httpx.TransportError as exc:
         raise ExtractionTransportError("extraction provider transport error") from exc
+
+
+def _raise_for_http_status(response: httpx.Response) -> None:
     if response.status_code in _RETRYABLE_STATUS:
         raise ExtractionTransportError(
             f"extraction provider HTTP {response.status_code}"
         )
     if response.status_code >= 400:
         raise ExtractionProviderError(f"extraction provider HTTP {response.status_code}")
-    return _parse_completion_body(
-        response.json(), fallback_model=endpoint.model, started=started
-    )
 
 
 def _parse_completion_body(
     body: Any, *, fallback_model: str, started: float
 ) -> ExtractionCall:
-    if not isinstance(body, dict):
-        raise ExtractionProviderError("extraction provider returned non-object JSON")
-    choices = body.get("choices")
-    if not isinstance(choices, list) or not choices:
-        raise ExtractionProviderError("extraction provider response missing choices")
-    first = choices[0]
-    if not isinstance(first, dict):
-        raise ExtractionProviderError("extraction provider choice is not an object")
-    message = first.get("message")
-    if not isinstance(message, dict):
-        raise ExtractionProviderError("extraction provider message missing")
-    content = message.get("content")
-    if not isinstance(content, str) or not content.strip():
-        raise ExtractionProviderError("extraction provider content empty")
-    usage = body.get("usage") if isinstance(body.get("usage"), dict) else {}
-    input_tokens = int(usage.get("prompt_tokens") or 0)
-    output_tokens = int(usage.get("completion_tokens") or 0)
-    model = str(body.get("model") or fallback_model)
+    content = _message_content(body)
+    input_tokens, output_tokens = _usage_tokens(body)
+    model = str(body.get("model") or fallback_model) if isinstance(body, dict) else fallback_model
     latency_ms = int((time.monotonic() - started) * 1000)
     raw = content.strip()
     if raw.startswith("```"):
@@ -103,6 +103,31 @@ def _parse_completion_body(
         output_tokens=output_tokens,
         latency_ms=latency_ms,
     )
+
+
+def _message_content(body: Any) -> str:
+    if not isinstance(body, dict):
+        raise ExtractionProviderError("extraction provider returned non-object JSON")
+    choices = body.get("choices")
+    if not isinstance(choices, list) or not choices:
+        raise ExtractionProviderError("extraction provider response missing choices")
+    first = choices[0]
+    if not isinstance(first, dict):
+        raise ExtractionProviderError("extraction provider choice is not an object")
+    message = first.get("message")
+    if not isinstance(message, dict):
+        raise ExtractionProviderError("extraction provider message missing")
+    content = message.get("content")
+    if not isinstance(content, str) or not content.strip():
+        raise ExtractionProviderError("extraction provider content empty")
+    return content
+
+
+def _usage_tokens(body: Any) -> tuple[int, int]:
+    usage = body.get("usage") if isinstance(body, dict) else None
+    if not isinstance(usage, dict):
+        return 0, 0
+    return int(usage.get("prompt_tokens") or 0), int(usage.get("completion_tokens") or 0)
 
 
 def _strip_fence(raw: str) -> str:

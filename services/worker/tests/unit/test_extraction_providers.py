@@ -77,6 +77,7 @@ def test_vllm_omits_authorization_when_key_empty() -> None:
     call = provider.extract("sys", "user")
     assert call.model == "returned-model"
     assert provider.name == "vllm"
+    assert provider.supported_models == ("Qwen2.5-14B-Instruct",)
 
 
 def test_retryable_status_raises_transport_error() -> None:
@@ -136,6 +137,7 @@ def test_registry_for_profile() -> None:
     )
     registry = build_registry(settings)
     assert registry.for_profile("openai").name == "openai"
+    assert registry.profiles() == ["openai"]
     with pytest.raises(UnknownExtractionProviderError):
         registry.for_profile("vllm")
 
@@ -156,3 +158,146 @@ def test_factory_builds_openai_and_vllm() -> None:
     vllm.close()  # type: ignore[union-attr]
     with pytest.raises(ValueError, match="empty"):
         ExtractionProviderRegistry({})
+
+
+def test_openai_rejects_empty_base_url() -> None:
+    with pytest.raises(ValueError, match="base_url"):
+        OpenAIExtractionProvider(
+            CompatEndpoint(
+                base_url="  ",
+                model="gpt-4o-mini",
+                api_key="sk",
+                timeout_seconds=1.0,
+            )
+        )
+
+
+def test_openai_rejects_empty_api_key() -> None:
+    with pytest.raises(ValueError, match="API key"):
+        OpenAIExtractionProvider(
+            CompatEndpoint(
+                base_url="https://api.openai.com/v1",
+                model="gpt-4o-mini",
+                api_key="  ",
+                timeout_seconds=1.0,
+            )
+        )
+
+
+def test_vllm_rejects_empty_base_url() -> None:
+    with pytest.raises(ValueError, match="base_url"):
+        VLLMExtractionProvider(
+            CompatEndpoint(
+                base_url="",
+                model="Qwen2.5-14B-Instruct",
+                api_key=None,
+                timeout_seconds=1.0,
+            )
+        )
+
+
+def test_timeout_raises_transport_error() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("slow")
+
+    provider = _openai(httpx.Client(transport=httpx.MockTransport(handler)))
+    with pytest.raises(ExtractionTransportError, match="timeout"):
+        provider.extract("s", "u")
+
+
+def test_connect_error_raises_transport_error() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("down")
+
+    provider = _openai(httpx.Client(transport=httpx.MockTransport(handler)))
+    with pytest.raises(ExtractionTransportError, match="transport"):
+        provider.extract("s", "u")
+
+
+def test_non_object_body_rejected() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=["not", "object"])
+
+    provider = _openai(httpx.Client(transport=httpx.MockTransport(handler)))
+    with pytest.raises(ExtractionProviderError, match="non-object"):
+        provider.extract("s", "u")
+
+
+def test_missing_choices_rejected() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"choices": []})
+
+    provider = _openai(httpx.Client(transport=httpx.MockTransport(handler)))
+    with pytest.raises(ExtractionProviderError, match="choices"):
+        provider.extract("s", "u")
+
+
+def test_missing_message_rejected() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"choices": [{"message": None}]})
+
+    provider = _openai(httpx.Client(transport=httpx.MockTransport(handler)))
+    with pytest.raises(ExtractionProviderError, match="message"):
+        provider.extract("s", "u")
+
+
+def test_choice_not_object_rejected() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"choices": ["bad"]})
+
+    provider = _openai(httpx.Client(transport=httpx.MockTransport(handler)))
+    with pytest.raises(ExtractionProviderError, match="choice is not an object"):
+        provider.extract("s", "u")
+
+
+def test_missing_usage_defaults_to_zero_tokens() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"model": "m", "choices": [{"message": {"content": '{"turns":[]}'}}]},
+        )
+
+    provider = _openai(httpx.Client(transport=httpx.MockTransport(handler)))
+    call = provider.extract("s", "u")
+    assert call.input_tokens == 0
+    assert call.output_tokens == 0
+
+
+def test_empty_content_rejected() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_completion("   "))
+
+    provider = _openai(httpx.Client(transport=httpx.MockTransport(handler)))
+    with pytest.raises(ExtractionProviderError, match="content empty"):
+        provider.extract("s", "u")
+
+
+def test_non_json_content_rejected() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=_completion("not-json"))
+
+    provider = _openai(httpx.Client(transport=httpx.MockTransport(handler)))
+    with pytest.raises(ExtractionProviderError, match="not JSON"):
+        provider.extract("s", "u")
+
+
+def test_malformed_response_json_rejected() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="{not-json", headers={"Content-Type": "application/json"})
+
+    provider = _openai(httpx.Client(transport=httpx.MockTransport(handler)))
+    with pytest.raises(ExtractionProviderError, match="invalid JSON"):
+        provider.extract("s", "u")
+
+
+def test_load_active_extraction_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.extraction.factory import load_active_extraction_provider
+
+    load_active_extraction_provider.cache_clear()
+    monkeypatch.setattr(
+        "app.extraction.factory.get_settings",
+        lambda: Settings(extraction_provider="openai", openai_api_key="sk-live"),
+    )
+    provider = load_active_extraction_provider()
+    assert provider.name == "openai"
+    load_active_extraction_provider.cache_clear()
