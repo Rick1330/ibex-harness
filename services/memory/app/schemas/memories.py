@@ -30,6 +30,8 @@ class CreateMemoryRequest(BaseModel):
     tags: list[str] = Field(default_factory=list, max_length=MAX_TAGS)
     metadata: dict[str, Any] | None = None
     pinned: bool = False
+    valid_from: datetime | None = None
+    valid_until: datetime | None = None
 
     @field_validator("tags")
     @classmethod
@@ -37,8 +39,21 @@ class CreateMemoryRequest(BaseModel):
         return validate_tags(value)
 
     @model_validator(mode="after")
-    def _validate_metadata_limits(self) -> CreateMemoryRequest:
+    def _validate_metadata_and_interval(self) -> CreateMemoryRequest:
         validate_memory_metadata(self.metadata)
+        start = self.valid_from
+        end = self.valid_until
+        if start is None or end is None:
+            return self
+        if (start.tzinfo is None) != (end.tzinfo is None):
+            raise ValueError(
+                "valid_from and valid_until must both be timezone-aware or both naive"
+            )
+        if end <= start:
+            raise ValueError(
+                "valid_until must be greater than valid_from "
+                "(matches memories_valid_interval_chk)"
+            )
         return self
 
 

@@ -75,6 +75,12 @@ Or use Makefile targets: `make worker-dev`, `make worker-beat-dev`, `make test-w
 | `OTEL_SAMPLE_RATIO` | `0.01` | Trace sampling ratio |
 | `IBEX_WORKER_MAINTENANCE_BEAT_SECONDS` | `300` | Beat interval for noop sweep |
 | `IBEX_WORKER_RESULT_EXPIRES_SECONDS` | `3600` | Result TTL when `ignore_result=False` |
+| `IBEX_WORKER_EXTRACTION_PROVIDER` | `openai` | `openai` or `vllm` |
+| `OPENAI_API_KEY` | (none) | Required for `openai` |
+| `IBEX_WORKER_EXTRACTION_BASE_URL` | (none) | Required for `vllm` |
+| `IBEX_WORKER_MEMORY_BASE_URL` | (none) | Memory service origin |
+| `IBEX_WORKER_MEMORY_API_TOKEN` | (none) | Bearer with `memory:write` |
+| `CLICKHOUSE_DSN` | (none) | Empty skips `llm_traces` insert |
 
 Global default: `task_ignore_result=True` (fire-and-forget). Opt in per task for retry
 visibility.
@@ -122,3 +128,49 @@ make test-worker-integration   # requires Redis + POSTGRES_TEST_DSN (or POSTGRES
 
 Integration tests that `TRUNCATE ibex_core.failed_tasks` require `POSTGRES_TEST_DSN` pointing at a
 dedicated test database. CI sets `POSTGRES_TEST_DSN` via `infra/scripts/worker-integration-test-ci.sh`.
+
+## Manual vLLM verification (not CI)
+
+CI has **no GPU runner**. The self-hosted path (`IBEX_WORKER_EXTRACTION_PROVIDER=vllm`) is
+covered in unit tests with `httpx.MockTransport` only. Live verification against a real
+vLLM process is **manual** — do not treat the mocked unit tests as satisfying a live
+integration signal.
+
+### Stand up Qwen2.5-14B-Instruct
+
+```bash
+# Example: OpenAI-compatible vLLM server (adjust GPU flags / model to your hardware)
+docker run --gpus all -p 8000:8000 vllm/vllm-openai:latest \
+  --model Qwen/Qwen2.5-14B-Instruct \
+  --served-model-name Qwen2.5-14B-Instruct
+
+# If 14B VRAM does not fit, substitute Qwen2.5-7B-Instruct and set:
+# IBEX_WORKER_EXTRACTION_VLLM_MODEL=Qwen2.5-7B-Instruct
+# with --served-model-name Qwen2.5-7B-Instruct (must match the env value)
+```
+
+### Point the worker at vLLM
+
+```bash
+export IBEX_WORKER_EXTRACTION_PROVIDER=vllm
+export IBEX_WORKER_EXTRACTION_BASE_URL=http://127.0.0.1:8000/v1
+export IBEX_WORKER_MEMORY_BASE_URL=http://127.0.0.1:8005
+export IBEX_WORKER_MEMORY_API_TOKEN='…'  # memory:write PAT; never commit
+# Optional: CLICKHOUSE_DSN for llm_traces; empty skips insert fail-open
+```
+
+Enqueue `ibex.worker.extraction.extract_session_memories` with a completed-session payload
+(`org_id`, `agent_id`, `session_id`, `turns` list).
+
+### What confirms correctness
+
+1. Worker task returns `status=ok` (or `skipped` only for intentional session gates).
+2. Model content is JSON matching `BatchExtractionResult`:
+   `{"turns":[{"turn_index":0,"memories":[…]}]}` with **no** markdown fences.
+3. Memory service receives one POST per extracted memory with matching `session_id` /
+   labels / optional temporal fields.
+4. If `CLICKHOUSE_DSN` is set, `ibex.llm_traces` gains a row with `provider=vllm`,
+   token counts, and **no** prompt/completion text.
+
+This path is **not run in CI**. A GPU-backed integration job remains an explicit follow-up
+when a GPU runner exists — do not silently check that box.

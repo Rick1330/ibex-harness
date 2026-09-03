@@ -48,3 +48,26 @@ to let the caller default it to the turn timestamp.
 Safety: emit at most 10 memories per turn. Prefer fewer high-quality memories over \
 many weak ones.
 """
+
+EXTRACTION_BATCH_PROMPT_SUFFIX = """\
+
+The input contains multiple conversation turns in order, each tagged with a turn index.
+Extract memories with awareness of the full sequence — if a later turn contradicts \
+or supersedes an earlier one, prefer the later turn's information and set the earlier \
+memory's valid_until to the timestamp of the superseding turn when the conversation \
+signals an end bound.
+
+Return ONLY valid JSON matching this shape (no markdown fences):
+{
+  "turns": [
+    {
+      "turn_index": 0,
+      "memories": [ { "...ExtractedMemory fields as above..." } ]
+    }
+  ]
+}
+Include one object per input turn_index even when memories is an empty list.
+"""
+
+EXTRACTION_SYSTEM_PROMPT_BATCH = EXTRACTION_SYSTEM_PROMPT_V2 + EXTRACTION_BATCH_PROMPT_SUFFIX
+
