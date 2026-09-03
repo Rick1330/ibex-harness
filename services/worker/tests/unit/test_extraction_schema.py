@@ -185,7 +185,8 @@ def test_more_than_ten_memories_rejected_not_silently_truncated() -> None:
         ExtractionResult.model_validate({"memories": memories})
 
 
-def test_turn_extraction_rejects_more_than_ten_memories() -> None:
+@pytest.mark.parametrize("count", [MAX_MEMORIES_PER_TURN, MAX_MEMORIES_PER_TURN + 1])
+def test_turn_extraction_memory_cap(count: int) -> None:
     from app.extraction.schema import TurnExtraction
 
     memories = [
@@ -194,24 +195,14 @@ def test_turn_extraction_rejects_more_than_ten_memories() -> None:
             "categories": [{"label": "factual", "confidence": 0.8}],
             "confidence": 0.8,
         }
-        for i in range(MAX_MEMORIES_PER_TURN + 1)
+        for i in range(count)
     ]
-    with pytest.raises(ValidationError, match="at most 10"):
-        TurnExtraction.model_validate({"turn_index": 0, "memories": memories})
-
-
-def test_turn_extraction_accepts_ten_memories() -> None:
-    from app.extraction.schema import TurnExtraction
-
-    memories = [
-        {
-            "content": f"Memory number {i:02d} content here",
-            "categories": [{"label": "factual", "confidence": 0.8}],
-            "confidence": 0.8,
-        }
-        for i in range(MAX_MEMORIES_PER_TURN)
-    ]
-    parsed = TurnExtraction.model_validate({"turn_index": 0, "memories": memories})
+    payload = {"turn_index": 0, "memories": memories}
+    if count > MAX_MEMORIES_PER_TURN:
+        with pytest.raises(ValidationError, match="at most 10"):
+            TurnExtraction.model_validate(payload)
+        return
+    parsed = TurnExtraction.model_validate(payload)
     assert len(parsed.memories) == MAX_MEMORIES_PER_TURN
 
 

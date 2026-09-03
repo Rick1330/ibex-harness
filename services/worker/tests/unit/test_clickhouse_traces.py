@@ -71,34 +71,24 @@ def test_insert_posts_json_each_row_without_content() -> None:
     assert "FORMAT JSONEachRow" in str(captured["query"]["query"])
 
 
-def test_http_error_fail_open() -> None:
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(503, text="busy")
-
-    client = httpx.Client(transport=httpx.MockTransport(handler))
-    assert (
-        insert_extraction_trace(
-            dsn="clickhouse://default:@localhost:8123/ibex",
-            row=_row(),
-            client=client,
-        )
-        is False
+def _dsn_client(handler) -> tuple[str, httpx.Client]:
+    return (
+        "clickhouse://default:@localhost:8123/ibex",
+        httpx.Client(transport=httpx.MockTransport(handler)),
     )
+
+
+def test_http_error_fail_open() -> None:
+    dsn, client = _dsn_client(lambda _r: httpx.Response(503, text="busy"))
+    assert insert_extraction_trace(dsn=dsn, row=_row(), client=client) is False
 
 
 def test_transport_error_fail_open() -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("down")
 
-    client = httpx.Client(transport=httpx.MockTransport(handler))
-    assert (
-        insert_extraction_trace(
-            dsn="clickhouse://default:@localhost:8123/ibex",
-            row=_row(),
-            client=client,
-        )
-        is False
-    )
+    dsn, client = _dsn_client(handler)
+    assert insert_extraction_trace(dsn=dsn, row=_row(), client=client) is False
 
 
 def test_unsupported_dsn_scheme() -> None:

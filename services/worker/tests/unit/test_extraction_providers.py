@@ -196,58 +196,65 @@ def test_vllm_rejects_empty_base_url() -> None:
         )
 
 
-def test_timeout_raises_transport_error() -> None:
-    def handler(_request: httpx.Request) -> httpx.Response:
-        raise httpx.ReadTimeout("slow")
-
-    provider = _openai(httpx.Client(transport=httpx.MockTransport(handler)))
-    with pytest.raises(ExtractionTransportError, match="timeout"):
-        provider.extract("s", "u")
+def _provider_with(handler) -> OpenAIExtractionProvider:
+    return _openai(httpx.Client(transport=httpx.MockTransport(handler)))
 
 
-def test_connect_error_raises_transport_error() -> None:
-    def handler(_request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError("down")
-
-    provider = _openai(httpx.Client(transport=httpx.MockTransport(handler)))
-    with pytest.raises(ExtractionTransportError, match="transport"):
-        provider.extract("s", "u")
+def _timeout_handler(_request: httpx.Request) -> httpx.Response:
+    raise httpx.ReadTimeout("slow")
 
 
-def test_non_object_body_rejected() -> None:
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json=["not", "object"])
-
-    provider = _openai(httpx.Client(transport=httpx.MockTransport(handler)))
-    with pytest.raises(ExtractionProviderError, match="non-object"):
-        provider.extract("s", "u")
+def _connect_handler(_request: httpx.Request) -> httpx.Response:
+    raise httpx.ConnectError("down")
 
 
-def test_missing_choices_rejected() -> None:
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"choices": []})
-
-    provider = _openai(httpx.Client(transport=httpx.MockTransport(handler)))
-    with pytest.raises(ExtractionProviderError, match="choices"):
-        provider.extract("s", "u")
-
-
-def test_missing_message_rejected() -> None:
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"choices": [{"message": None}]})
-
-    provider = _openai(httpx.Client(transport=httpx.MockTransport(handler)))
-    with pytest.raises(ExtractionProviderError, match="message"):
-        provider.extract("s", "u")
-
-
-def test_choice_not_object_rejected() -> None:
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"choices": ["bad"]})
-
-    provider = _openai(httpx.Client(transport=httpx.MockTransport(handler)))
-    with pytest.raises(ExtractionProviderError, match="choice is not an object"):
-        provider.extract("s", "u")
+@pytest.mark.parametrize(
+    ("handler", "exc_type", "match"),
+    [
+        (_timeout_handler, ExtractionTransportError, "timeout"),
+        (_connect_handler, ExtractionTransportError, "transport"),
+        (
+            lambda _r: httpx.Response(200, json=["not", "object"]),
+            ExtractionProviderError,
+            "non-object",
+        ),
+        (
+            lambda _r: httpx.Response(200, json={"choices": []}),
+            ExtractionProviderError,
+            "choices",
+        ),
+        (
+            lambda _r: httpx.Response(200, json={"choices": [{"message": None}]}),
+            ExtractionProviderError,
+            "message",
+        ),
+        (
+            lambda _r: httpx.Response(200, json={"choices": ["bad"]}),
+            ExtractionProviderError,
+            "choice is not an object",
+        ),
+        (
+            lambda _r: httpx.Response(200, json=_completion("   ")),
+            ExtractionProviderError,
+            "content empty",
+        ),
+        (
+            lambda _r: httpx.Response(200, json=_completion("not-json")),
+            ExtractionProviderError,
+            "not JSON",
+        ),
+        (
+            lambda _r: httpx.Response(
+                200, text="{not-json", headers={"Content-Type": "application/json"}
+            ),
+            ExtractionProviderError,
+            "invalid JSON",
+        ),
+    ],
+)
+def test_provider_error_paths(handler, exc_type: type[Exception], match: str) -> None:
+    with pytest.raises(exc_type, match=match):
+        _provider_with(handler).extract("s", "u")
 
 
 def test_missing_usage_defaults_to_zero_tokens() -> None:
@@ -257,37 +264,9 @@ def test_missing_usage_defaults_to_zero_tokens() -> None:
             json={"model": "m", "choices": [{"message": {"content": '{"turns":[]}'}}]},
         )
 
-    provider = _openai(httpx.Client(transport=httpx.MockTransport(handler)))
-    call = provider.extract("s", "u")
+    call = _provider_with(handler).extract("s", "u")
     assert call.input_tokens == 0
     assert call.output_tokens == 0
-
-
-def test_empty_content_rejected() -> None:
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json=_completion("   "))
-
-    provider = _openai(httpx.Client(transport=httpx.MockTransport(handler)))
-    with pytest.raises(ExtractionProviderError, match="content empty"):
-        provider.extract("s", "u")
-
-
-def test_non_json_content_rejected() -> None:
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json=_completion("not-json"))
-
-    provider = _openai(httpx.Client(transport=httpx.MockTransport(handler)))
-    with pytest.raises(ExtractionProviderError, match="not JSON"):
-        provider.extract("s", "u")
-
-
-def test_malformed_response_json_rejected() -> None:
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, text="{not-json", headers={"Content-Type": "application/json"})
-
-    provider = _openai(httpx.Client(transport=httpx.MockTransport(handler)))
-    with pytest.raises(ExtractionProviderError, match="invalid JSON"):
-        provider.extract("s", "u")
 
 
 def test_load_active_extraction_provider(monkeypatch: pytest.MonkeyPatch) -> None:

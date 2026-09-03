@@ -42,39 +42,36 @@ def test_create_memory_request_rejects_oversized_metadata() -> None:
         )
 
 
-def test_create_memory_request_rejects_inverted_valid_interval() -> None:
-    agent_id = uuid4()
+@pytest.mark.parametrize(
+    ("valid_from", "valid_until", "match"),
+    [
+        (
+            datetime(2026, 9, 8, tzinfo=UTC),
+            datetime(2026, 9, 1, tzinfo=UTC),
+            "valid_until",
+        ),
+        (
+            datetime(2026, 9, 1, tzinfo=UTC),
+            datetime(2026, 9, 1, tzinfo=UTC),
+            "valid_until",
+        ),
+        (
+            datetime(2026, 9, 1, 0, 0, 0, tzinfo=UTC).replace(tzinfo=None),
+            datetime(2026, 9, 2, 0, 0, 0, tzinfo=UTC),
+            "timezone-aware or both naive",
+        ),
+    ],
+)
+def test_create_memory_request_rejects_invalid_interval(
+    valid_from: datetime, valid_until: datetime, match: str
+) -> None:
     payload = {
-        "agent_id": agent_id,
+        "agent_id": uuid4(),
         "content": "hello",
-        "valid_from": datetime(2026, 9, 8, tzinfo=UTC),
-        "valid_until": datetime(2026, 9, 1, tzinfo=UTC),
+        "valid_from": valid_from,
+        "valid_until": valid_until,
     }
-    with pytest.raises(ValidationError, match="valid_until"):
-        CreateMemoryRequest(**payload)
-
-
-def test_create_memory_request_rejects_equal_valid_interval() -> None:
-    agent_id = uuid4()
-    payload = {
-        "agent_id": agent_id,
-        "content": "hello",
-        "valid_from": datetime(2026, 9, 1, tzinfo=UTC),
-        "valid_until": datetime(2026, 9, 1, tzinfo=UTC),
-    }
-    with pytest.raises(ValidationError, match="valid_until"):
-        CreateMemoryRequest(**payload)
-
-
-def test_create_memory_request_rejects_mixed_timezone_awareness() -> None:
-    agent_id = uuid4()
-    payload = {
-        "agent_id": agent_id,
-        "content": "hello",
-        "valid_from": datetime(2026, 9, 1, 0, 0, 0),
-        "valid_until": datetime(2026, 9, 2, 0, 0, 0, tzinfo=UTC),
-    }
-    with pytest.raises(ValidationError, match="timezone-aware or both naive"):
+    with pytest.raises(ValidationError, match=match):
         CreateMemoryRequest(**payload)
 
 

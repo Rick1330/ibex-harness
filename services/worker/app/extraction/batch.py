@@ -71,15 +71,24 @@ def select_unprocessed_turns(
 
 
 def parse_turns(raw: Any) -> list[TurnPayload]:
+    items = _require_turn_list(raw)
+    parsed = [TurnPayload.model_validate(item) for item in items]
+    _enforce_content_budget(parsed)
+    return parsed
+
+
+def _require_turn_list(raw: Any) -> list[Any]:
     if not isinstance(raw, list):
         raise TypeError("turns must be a list")
     if len(raw) > MAX_TURNS_PER_BATCH:
         raise ValueError(f"turns must contain at most {MAX_TURNS_PER_BATCH} items")
-    parsed = [TurnPayload.model_validate(item) for item in raw]
+    return raw
+
+
+def _enforce_content_budget(parsed: list[TurnPayload]) -> None:
     total = sum(len(item.content.encode("utf-8")) for item in parsed)
     if total > MAX_BATCH_CONTENT_BYTES:
         raise ValueError("turns content exceeds UTF-8 byte cap")
-    return parsed
 
 
 def require_exact_turn_indexes(

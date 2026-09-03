@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -110,23 +111,26 @@ def _turns(n: int) -> list[TurnPayload]:
     ]
 
 
-def _job(
-    *,
-    turns: list[TurnPayload] | None = None,
-    provider: object | None = None,
-    writer: _RecordingWriter | None = None,
-    session_store: object | None = None,
-    clickhouse_dsn: str | None = None,
-) -> BatchJob:
+@dataclass
+class _JobParts:
+    turns: list[TurnPayload] | None = None
+    provider: object | None = None
+    writer: _RecordingWriter | None = None
+    session_store: object | None = None
+    clickhouse_dsn: str | None = None
+
+
+def _job(parts: _JobParts | None = None) -> BatchJob:
+    cfg = parts or _JobParts()
     return BatchJob(
         org_id=uuid4(),
         agent_id=uuid4(),
         session_id=uuid4(),
-        turns=turns if turns is not None else _turns(1),
-        provider=provider or _FakeProvider(),  # type: ignore[arg-type]
-        memory_writer=writer or _RecordingWriter(),
-        clickhouse_dsn=clickhouse_dsn,
-        session_store=session_store,  # type: ignore[arg-type]
+        turns=cfg.turns if cfg.turns is not None else _turns(1),
+        provider=cfg.provider or _FakeProvider(),  # type: ignore[arg-type]
+        memory_writer=cfg.writer or _RecordingWriter(),
+        clickhouse_dsn=cfg.clickhouse_dsn,
+        session_store=cfg.session_store,  # type: ignore[arg-type]
     )
 
 
@@ -134,7 +138,7 @@ def _job(
 def test_batch_sizes_map_turn_indexes(size: int) -> None:
     provider = _FakeProvider()
     writer = _RecordingWriter()
-    result = run_batch_extraction(_job(turns=_turns(size), provider=provider, writer=writer))
+    result = run_batch_extraction(_job(_JobParts(turns=_turns(size), provider=provider, writer=writer)))
     assert result.skipped is None
     assert result.turns_processed == size
     assert result.memories_written == size
@@ -156,7 +160,7 @@ def test_skips_turns_at_or_below_last_extracted_turn() -> None:
         TurnPayload(turn_index=9, role="user", content="new turn nine content"),
     ]
     result = run_batch_extraction(
-        _job(turns=turns, provider=provider, writer=writer, session_store=store)
+        _job(_JobParts(turns=turns, provider=provider, writer=writer, session_store=store))
     )
     assert result.turns_processed == 2
     assert store.updated == 9
@@ -171,7 +175,7 @@ def test_incomplete_session_skipped_without_provider_or_writer() -> None:
         SessionSnapshot(last_extracted_turn=0, status="active", deleted_at=None)
     )
     result = run_batch_extraction(
-        _job(turns=_turns(1), provider=provider, writer=writer, session_store=store)
+        _job(_JobParts(turns=_turns(1), provider=provider, writer=writer, session_store=store))
     )
     assert result.skipped == "session_not_ready"
     assert writer.writes == []
@@ -183,10 +187,12 @@ def test_session_not_found_skips_without_provider() -> None:
     writer = _RecordingWriter()
     result = run_batch_extraction(
         _job(
-            turns=_turns(1),
-            provider=provider,
-            writer=writer,
-            session_store=_SessionStore(None),
+            _JobParts(
+                turns=_turns(1),
+                provider=provider,
+                writer=writer,
+                session_store=_SessionStore(None),
+            )
         )
     )
     assert result.skipped == "session_not_found"
@@ -195,7 +201,7 @@ def test_session_not_found_skips_without_provider() -> None:
 
 
 def test_empty_turns_without_store_skips() -> None:
-    result = run_batch_extraction(_job(turns=[]))
+    result = run_batch_extraction(_job(_JobParts(turns=[])))
     assert result.skipped == "no_unprocessed_turns"
 
 
@@ -206,7 +212,7 @@ def test_all_turns_already_extracted_skips() -> None:
         SessionSnapshot(last_extracted_turn=9, status="completed", deleted_at=None)
     )
     result = run_batch_extraction(
-        _job(turns=_turns(3), provider=provider, writer=writer, session_store=store)
+        _job(_JobParts(turns=_turns(3), provider=provider, writer=writer, session_store=store))
     )
     assert result.skipped == "no_unprocessed_turns"
     assert provider.calls == 0
@@ -234,7 +240,7 @@ def test_missing_turn_index_rejected(size: int) -> None:
         override = indexes[:-1]
     with pytest.raises(ValueError, match="turn_index set"):
         run_batch_extraction(
-            _job(turns=_turns(size), provider=_FakeProvider(override_indexes=override))
+            _job(_JobParts(turns=_turns(size), provider=_FakeProvider(override_indexes=override)))
         )
 
 
@@ -243,7 +249,7 @@ def test_surplus_turn_index_rejected(size: int) -> None:
     override = list(range(size)) + [size + 99]
     with pytest.raises(ValueError, match="turn_index set"):
         run_batch_extraction(
-            _job(turns=_turns(size), provider=_FakeProvider(override_indexes=override))
+            _job(_JobParts(turns=_turns(size), provider=_FakeProvider(override_indexes=override)))
         )
 
 
@@ -290,8 +296,10 @@ def test_parse_failure_records_fail_trace(monkeypatch: pytest.MonkeyPatch) -> No
     with pytest.raises(ValidationError):
         run_batch_extraction(
             _job(
-                provider=_FakeProvider(raw_json="not-json"),
-                clickhouse_dsn="clickhouse://default:@localhost:8123/ibex",
+                _JobParts(
+                    provider=_FakeProvider(raw_json="not-json"),
+                    clickhouse_dsn="clickhouse://default:@localhost:8123/ibex",
+                )
             )
         )
     assert len(rows) == 1
@@ -308,7 +316,7 @@ def test_clickhouse_error_does_not_mask_parse_failure(
 
     monkeypatch.setattr("app.extraction.batch.insert_extraction_trace", boom)
     with pytest.raises(ValidationError):
-        run_batch_extraction(_job(provider=_FakeProvider(raw_json="{")))
+        run_batch_extraction(_job(_JobParts(provider=_FakeProvider(raw_json="{"))))
 
 
 def test_select_unprocessed() -> None:
