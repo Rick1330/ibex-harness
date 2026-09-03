@@ -13,13 +13,13 @@ Return ONLY valid JSON matching this shape (no markdown fences, no commentary):
 {
   "memories": [
     {
-      "content": "<string, 5–10000 characters>",
+      "content": "<string, 5–10000 characters and at most 10000 UTF-8 bytes>",
       "categories": [
         {"label": "<factual|preference|behavioral|episodic|procedural>", "confidence": <0.0–1.0>}
       ],
       "confidence": <0.0–1.0>,
-      "valid_from": "<ISO-8601 datetime or null>",
-      "valid_until": "<ISO-8601 datetime or null>"
+      "valid_from": "<timezone-aware ISO-8601 datetime, e.g. 2026-09-01T00:00:00Z, or null>",
+      "valid_until": "<timezone-aware ISO-8601 datetime, e.g. 2026-09-05T23:59:59Z, or null>"
     }
   ]
 }
@@ -39,9 +39,11 @@ Emit each as {"label": "<enum>", "confidence": <0..1>}. Avoid forcing a single \
 category when multi-label is accurate. Do not invent labels outside the taxonomy.
 6. If the memory describes something true only for a limited time or scope \
 (e.g. "for this migration", "until Friday"), set valid_until to the best estimate \
-ISO-8601 end datetime. Otherwise omit valid_until or set it null (indefinite). \
-When both valid_from and valid_until are set, valid_until must be strictly after \
-valid_from. Omit valid_from to let the caller default it to the turn timestamp.
+timezone-aware ISO-8601 end datetime (include a Z or numeric offset; do not emit \
+naive datetimes). Otherwise omit valid_until or set it null (indefinite). \
+When both valid_from and valid_until are set, they must use the same timezone \
+representation and valid_until must be strictly after valid_from. Omit valid_from \
+to let the caller default it to the turn timestamp.
 
 Safety: emit at most 10 memories per turn. Prefer fewer high-quality memories over \
 many weak ones.

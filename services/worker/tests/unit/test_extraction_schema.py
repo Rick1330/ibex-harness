@@ -11,6 +11,7 @@ from pydantic import ValidationError
 
 from app.extraction.prompt_v2 import EXTRACTION_SYSTEM_PROMPT_V2
 from app.extraction.schema import (
+    CONTENT_MAX_BYTES,
     CONTENT_MAX_LENGTH,
     CONTENT_MIN_LENGTH,
     MAX_MEMORIES_PER_TURN,
@@ -222,6 +223,48 @@ def test_content_too_long_rejected() -> None:
 def test_content_bounds_constants_match_write_path() -> None:
     assert CONTENT_MIN_LENGTH == 5
     assert CONTENT_MAX_LENGTH == 10_000
+    assert CONTENT_MAX_BYTES == 10_000
+
+
+def test_multibyte_content_at_utf8_byte_limit_accepted() -> None:
+    content = "é" * (CONTENT_MAX_BYTES // 2)
+    assert len(content) < CONTENT_MAX_LENGTH
+    assert len(content.encode("utf-8")) == CONTENT_MAX_BYTES
+    mem = ExtractedMemory.model_validate(
+        {
+            "content": content,
+            "categories": [{"label": "factual", "confidence": 0.5}],
+            "confidence": 0.5,
+        }
+    )
+    assert mem.content == content
+
+
+def test_multibyte_content_over_utf8_byte_limit_rejected() -> None:
+    content = "é" * (CONTENT_MAX_BYTES // 2 + 1)
+    assert len(content) <= CONTENT_MAX_LENGTH
+    assert len(content.encode("utf-8")) > CONTENT_MAX_BYTES
+    with pytest.raises(ValidationError, match="UTF-8 bytes"):
+        ExtractedMemory.model_validate(
+            {
+                "content": content,
+                "categories": [{"label": "factual", "confidence": 0.5}],
+                "confidence": 0.5,
+            }
+        )
+
+
+def test_mixed_naive_and_aware_datetimes_rejected() -> None:
+    with pytest.raises(ValidationError, match="timezone-aware or both naive"):
+        ExtractedMemory.model_validate(
+            {
+                "content": "Mixed timezone representations are invalid",
+                "categories": [{"label": "factual", "confidence": 0.9}],
+                "confidence": 0.9,
+                "valid_from": datetime(2026, 9, 1, 0, 0, 0, tzinfo=UTC).replace(tzinfo=None),
+                "valid_until": datetime(2026, 9, 2, 0, 0, 0, tzinfo=UTC),
+            }
+        )
 
 
 def test_empty_memories_list_allowed() -> None:
@@ -232,6 +275,8 @@ def test_empty_memories_list_allowed() -> None:
 def test_prompt_v2_includes_multi_label_and_temporal_rules() -> None:
     assert "1–3 categories" in EXTRACTION_SYSTEM_PROMPT_V2 or "1-3" in EXTRACTION_SYSTEM_PROMPT_V2
     assert "valid_until" in EXTRACTION_SYSTEM_PROMPT_V2
+    assert "timezone-aware ISO-8601" in EXTRACTION_SYSTEM_PROMPT_V2
+    assert "10000 UTF-8 bytes" in EXTRACTION_SYSTEM_PROMPT_V2
     for label in sorted(VALID_LABELS):
         assert label in EXTRACTION_SYSTEM_PROMPT_V2
 

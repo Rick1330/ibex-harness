@@ -22,7 +22,8 @@ MemoryLabelName = Literal[
 ]
 
 CONTENT_MIN_LENGTH = 5
-CONTENT_MAX_LENGTH = 10_000  # memories.content_max / octet_length <= 10000
+CONTENT_MAX_LENGTH = 10_000
+CONTENT_MAX_BYTES = 10_000  # memories_content_max: octet_length(content) <= 10000
 MAX_CATEGORIES_PER_MEMORY = 3
 MAX_MEMORIES_PER_TURN = 10
 
@@ -45,6 +46,17 @@ class ExtractedMemory(BaseModel):
     valid_from: datetime | None = None
     valid_until: datetime | None = None
 
+    @field_validator("content")
+    @classmethod
+    def content_utf8_byte_limit(cls, value: str) -> str:
+        encoded_len = len(value.encode("utf-8"))
+        if encoded_len > CONTENT_MAX_BYTES:
+            raise ValueError(
+                f"content exceeds {CONTENT_MAX_BYTES} UTF-8 bytes "
+                f"(got {encoded_len}; matches memories_content_max)"
+            )
+        return value
+
     @field_validator("categories")
     @classmethod
     def categories_unique_and_known(
@@ -62,12 +74,19 @@ class ExtractedMemory(BaseModel):
     @model_validator(mode="after")
     def valid_interval_matches_db(self) -> ExtractedMemory:
         """Mirror memories_valid_interval_chk: valid_until IS NULL OR valid_until > valid_from."""
-        if self.valid_until is not None and self.valid_from is not None:
-            if self.valid_until <= self.valid_from:
-                raise ValueError(
-                    "valid_until must be greater than valid_from "
-                    "(matches memories_valid_interval_chk)"
-                )
+        start = self.valid_from
+        end = self.valid_until
+        if start is None or end is None:
+            return self
+        if (start.tzinfo is None) != (end.tzinfo is None):
+            raise ValueError(
+                "valid_from and valid_until must both be timezone-aware or both naive"
+            )
+        if end <= start:
+            raise ValueError(
+                "valid_until must be greater than valid_from "
+                "(matches memories_valid_interval_chk)"
+            )
         return self
 
 

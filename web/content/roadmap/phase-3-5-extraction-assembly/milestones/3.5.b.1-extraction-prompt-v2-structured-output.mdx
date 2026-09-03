@@ -101,7 +101,7 @@ class ExtractedMemoryLabel(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
 
 class ExtractedMemory(BaseModel):
-    content: str = Field(min_length=5, max_length=10_000)  # matches memories.content_max
+    content: str = Field(min_length=5, max_length=10_000)  # plus UTF-8 octet_length <= 10000
     categories: list[ExtractedMemoryLabel] = Field(min_length=1, max_length=3)
     confidence: float = Field(ge=0.0, le=1.0)
     valid_from: datetime | None = None
