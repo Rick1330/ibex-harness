@@ -241,19 +241,17 @@ def test_missing_turn_index_rejected(size: int) -> None:
         override = []
     else:
         override = indexes[:-1]
+    job = _job(_JobParts(turns=_turns(size), provider=_FakeProvider(override_indexes=override)))
     with pytest.raises(ValueError, match="turn_index set"):
-        run_batch_extraction(
-            _job(_JobParts(turns=_turns(size), provider=_FakeProvider(override_indexes=override)))
-        )
+        run_batch_extraction(job)
 
 
 @pytest.mark.parametrize("size", [1, 10, 50])
 def test_surplus_turn_index_rejected(size: int) -> None:
     override = list(range(size)) + [size + 99]
+    job = _job(_JobParts(turns=_turns(size), provider=_FakeProvider(override_indexes=override)))
     with pytest.raises(ValueError, match="turn_index set"):
-        run_batch_extraction(
-            _job(_JobParts(turns=_turns(size), provider=_FakeProvider(override_indexes=override)))
-        )
+        run_batch_extraction(job)
 
 
 def test_format_escapes_untrusted_markup() -> None:
@@ -296,15 +294,14 @@ def test_parse_failure_records_fail_trace(monkeypatch: pytest.MonkeyPatch) -> No
         return True
 
     monkeypatch.setattr("app.extraction.batch.insert_extraction_trace", fake_insert)
-    with pytest.raises(ValidationError):
-        run_batch_extraction(
-            _job(
-                _JobParts(
-                    provider=_FakeProvider(raw_json="not-json"),
-                    clickhouse_dsn="clickhouse://default:@localhost:8123/ibex",
-                )
-            )
+    job = _job(
+        _JobParts(
+            provider=_FakeProvider(raw_json="not-json"),
+            clickhouse_dsn="clickhouse://default:@localhost:8123/ibex",
         )
+    )
+    with pytest.raises(ValidationError):
+        run_batch_extraction(job)
     assert len(rows) == 1
     assert rows[0].is_complete is False  # type: ignore[attr-defined]
     assert rows[0].error_code  # type: ignore[attr-defined]
@@ -318,8 +315,9 @@ def test_clickhouse_error_does_not_mask_parse_failure(
         raise RuntimeError("clickhouse down")
 
     monkeypatch.setattr("app.extraction.batch.insert_extraction_trace", boom)
+    job = _job(_JobParts(provider=_FakeProvider(raw_json="{")))
     with pytest.raises(ValidationError):
-        run_batch_extraction(_job(_JobParts(provider=_FakeProvider(raw_json="{"))))
+        run_batch_extraction(job)
 
 
 def test_select_unprocessed() -> None:
@@ -352,32 +350,35 @@ def test_extract_task_routing_and_retry() -> None:
     assert task.max_retries == 3
 
 
+def _extract_kwargs(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "org_id": str(uuid4()),
+        "agent_id": str(uuid4()),
+        "session_id": str(uuid4()),
+        "turns": [{"turn_index": 0, "role": "user", "content": "hello world xx"}],
+    }
+    payload.update(overrides)
+    return payload
+
+
 def test_extract_task_requires_org_id() -> None:
+    kwargs = _extract_kwargs()
+    del kwargs["org_id"]
     with pytest.raises(ValueError, match="org_id is required"):
-        extract_session_memories.run(
-            agent_id=str(uuid4()),
-            session_id=str(uuid4()),
-            turns=[{"turn_index": 0, "role": "user", "content": "hello world xx"}],
-        )
+        extract_session_memories.run(**kwargs)
 
 
 def test_extract_task_rejects_bad_agent_id() -> None:
+    kwargs = _extract_kwargs(agent_id="not-a-uuid")
     with pytest.raises(ValueError, match="agent_id must be a UUID"):
-        extract_session_memories.run(
-            org_id=str(uuid4()),
-            agent_id="not-a-uuid",
-            session_id=str(uuid4()),
-            turns=[{"turn_index": 0, "role": "user", "content": "hello world xx"}],
-        )
+        extract_session_memories.run(**kwargs)
 
 
 def test_extract_task_rejects_missing_agent_id() -> None:
+    kwargs = _extract_kwargs()
+    del kwargs["agent_id"]
     with pytest.raises(ValueError, match="agent_id is required"):
-        extract_session_memories.run(
-            org_id=str(uuid4()),
-            session_id=str(uuid4()),
-            turns=[{"turn_index": 0, "role": "user", "content": "hello world xx"}],
-        )
+        extract_session_memories.run(**kwargs)
 
 
 def test_extract_task_rejects_blank_memory_token(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -390,13 +391,9 @@ def test_extract_task_rejects_blank_memory_token(monkeypatch: pytest.MonkeyPatch
         clickhouse_dsn = None
 
     monkeypatch.setattr("app.tasks.extraction.get_settings", lambda: _Settings())
+    kwargs = _extract_kwargs()
     with pytest.raises(ValueError, match="memory_api_token is required"):
-        extract_session_memories.run(
-            org_id=str(uuid4()),
-            agent_id=str(uuid4()),
-            session_id=str(uuid4()),
-            turns=[{"turn_index": 0, "role": "user", "content": "hello world xx"}],
-        )
+        extract_session_memories.run(**kwargs)
 
 
 def test_extract_task_runs_with_injected_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -466,13 +463,9 @@ def test_extract_task_closes_writer_on_error(monkeypatch: pytest.MonkeyPatch) ->
         "app.tasks.extraction.run_batch_extraction",
         lambda _job: (_ for _ in ()).throw(RuntimeError("boom")),
     )
+    kwargs = _extract_kwargs()
     with pytest.raises(RuntimeError, match="boom"):
-        extract_session_memories.run(
-            org_id=str(uuid4()),
-            agent_id=str(uuid4()),
-            session_id=str(uuid4()),
-            turns=[{"turn_index": 0, "role": "user", "content": "hello world xx"}],
-        )
+        extract_session_memories.run(**kwargs)
     assert closed["n"] == 1
 
 
@@ -484,13 +477,9 @@ def test_extract_task_requires_memory_token(monkeypatch: pytest.MonkeyPatch) -> 
         clickhouse_dsn = None
 
     monkeypatch.setattr("app.tasks.extraction.get_settings", lambda: _Settings())
+    kwargs = _extract_kwargs()
     with pytest.raises(ValueError, match="memory_base_url and memory_api_token"):
-        extract_session_memories.run(
-            org_id=str(uuid4()),
-            agent_id=str(uuid4()),
-            session_id=str(uuid4()),
-            turns=[{"turn_index": 0, "role": "user", "content": "hello world xx"}],
-        )
+        extract_session_memories.run(**kwargs)
 
 
 def test_extract_task_builds_session_store(monkeypatch: pytest.MonkeyPatch) -> None:

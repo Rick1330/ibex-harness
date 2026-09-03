@@ -75,18 +75,21 @@ def test_writer_retries_on_503() -> None:
         MemoryHttpConfig(base_url="http://memory.example", token="t"),
         client=httpx.Client(transport=httpx.MockTransport(handler)),
     )
+    request = _request()
     with pytest.raises(ExtractionTransportError):
-        writer.write(_request())
+        writer.write(request)
 
 
 def test_writer_rejects_empty_base_url() -> None:
+    config = MemoryHttpConfig(base_url="  ", token="t")
     with pytest.raises(ValueError, match="memory_base_url"):
-        HttpMemoryWriter(MemoryHttpConfig(base_url="  ", token="t"))
+        HttpMemoryWriter(config)
 
 
 def test_writer_rejects_empty_token() -> None:
+    config = MemoryHttpConfig(base_url="http://memory.example", token="")
     with pytest.raises(ValueError, match="memory_api_token"):
-        HttpMemoryWriter(MemoryHttpConfig(base_url="http://memory.example", token=""))
+        HttpMemoryWriter(config)
 
 
 def test_writer_4xx_raises_value_error() -> None:
@@ -97,8 +100,9 @@ def test_writer_4xx_raises_value_error() -> None:
         MemoryHttpConfig(base_url="http://memory.example", token="t"),
         client=httpx.Client(transport=httpx.MockTransport(handler)),
     )
+    request = _request()
     with pytest.raises(ValueError, match="400"):
-        writer.write(_request())
+        writer.write(request)
 
 
 def test_writer_timeout_is_transport_error() -> None:
@@ -109,8 +113,9 @@ def test_writer_timeout_is_transport_error() -> None:
         MemoryHttpConfig(base_url="http://memory.example", token="t"),
         client=httpx.Client(transport=httpx.MockTransport(handler)),
     )
+    request = _request()
     with pytest.raises(ExtractionTransportError, match="timeout"):
-        writer.write(_request())
+        writer.write(request)
 
 
 def test_writer_transport_error() -> None:
@@ -121,8 +126,9 @@ def test_writer_transport_error() -> None:
         MemoryHttpConfig(base_url="http://memory.example", token="t"),
         client=httpx.Client(transport=httpx.MockTransport(handler)),
     )
+    request = _request()
     with pytest.raises(ExtractionTransportError, match="transport"):
-        writer.write(_request())
+        writer.write(request)
 
 
 def test_writer_close_owned_client() -> None:

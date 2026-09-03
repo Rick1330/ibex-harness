@@ -161,25 +161,26 @@ def test_factory_builds_openai_and_vllm() -> None:
 
 
 def test_openai_rejects_empty_base_url() -> None:
+    endpoint = _endpoint(base_url="  ", api_key="sk")
     with pytest.raises(ValueError, match="base_url"):
-        OpenAIExtractionProvider(_endpoint(base_url="  ", api_key="sk"))
+        OpenAIExtractionProvider(endpoint)
 
 
 def test_openai_rejects_empty_api_key() -> None:
+    endpoint = _endpoint(api_key="  ")
     with pytest.raises(ValueError, match="API key"):
-        OpenAIExtractionProvider(_endpoint(api_key="  "))
+        OpenAIExtractionProvider(endpoint)
 
 
 def test_vllm_rejects_empty_base_url() -> None:
+    endpoint = CompatEndpoint(
+        base_url="",
+        model="Qwen2.5-14B-Instruct",
+        api_key=None,
+        timeout_seconds=1.0,
+    )
     with pytest.raises(ValueError, match="base_url"):
-        VLLMExtractionProvider(
-            CompatEndpoint(
-                base_url="",
-                model="Qwen2.5-14B-Instruct",
-                api_key=None,
-                timeout_seconds=1.0,
-            )
-        )
+        VLLMExtractionProvider(endpoint)
 
 
 def _endpoint(*, base_url: str = "https://api.openai.com/v1", api_key: str) -> CompatEndpoint:
@@ -248,8 +249,9 @@ def _connect_handler(_request: httpx.Request) -> httpx.Response:
     ],
 )
 def test_provider_error_paths(handler, exc_type: type[Exception], match: str) -> None:
+    provider = _provider_with(handler)
     with pytest.raises(exc_type, match=match):
-        _provider_with(handler).extract("s", "u")
+        provider.extract("s", "u")
 
 
 def test_missing_usage_defaults_to_zero_tokens() -> None:

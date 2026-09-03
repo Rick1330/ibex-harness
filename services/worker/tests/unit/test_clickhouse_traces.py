@@ -92,12 +92,10 @@ def test_transport_error_fail_open() -> None:
 
 
 def test_unsupported_dsn_scheme() -> None:
+    row = _row()
+    client = httpx.Client(transport=httpx.MockTransport(lambda _r: httpx.Response(200)))
     with pytest.raises(ValueError, match="unsupported ClickHouse DSN scheme"):
-        insert_extraction_trace(
-            dsn="ftp://localhost:8123/ibex",
-            row=_row(),
-            client=httpx.Client(transport=httpx.MockTransport(lambda _r: httpx.Response(200))),
-        )
+        insert_extraction_trace(dsn="ftp://localhost:8123/ibex", row=row, client=client)
 
 
 def test_refuse_without_org_id() -> None:
@@ -107,8 +105,9 @@ def test_refuse_without_org_id() -> None:
 
 
 def test_row_json_refuses_without_org_id() -> None:
+    row = _row(org_id=None)
     with pytest.raises(MissingOrgIdError, match="org_id"):
-        _row_json(_row(org_id=None))
+        _row_json(row)
 
 
 def test_shared_client_used_when_none_injected(monkeypatch: pytest.MonkeyPatch) -> None:
