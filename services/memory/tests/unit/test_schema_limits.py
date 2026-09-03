@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
@@ -38,6 +39,17 @@ def test_create_memory_request_rejects_oversized_metadata() -> None:
             agent_id=agent_id,
             content="hello",
             metadata={"blob": "x" * 9000},
+        )
+
+
+def test_create_memory_request_rejects_inverted_valid_interval() -> None:
+    agent_id = uuid4()
+    with pytest.raises(ValidationError, match="valid_until"):
+        CreateMemoryRequest(
+            agent_id=agent_id,
+            content="hello",
+            valid_from=datetime(2026, 9, 8, tzinfo=UTC),
+            valid_until=datetime(2026, 9, 1, tzinfo=UTC),
         )
 
 

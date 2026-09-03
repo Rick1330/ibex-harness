@@ -91,7 +91,7 @@ class ExtractedMemory(BaseModel):
 
 
 class ExtractionResult(BaseModel):
-    """Structured LLM extraction output for one turn or batch."""
+    """Structured LLM extraction output for one turn (B.1)."""
 
     memories: list[ExtractedMemory] = Field(default_factory=list)
 
@@ -103,4 +103,37 @@ class ExtractionResult(BaseModel):
                 f"at most {MAX_MEMORIES_PER_TURN} memories per turn "
                 f"(got {len(value)})"
             )
+        return value
+
+
+class TurnExtraction(BaseModel):
+    """Extraction for one turn index inside a session batch (B.2)."""
+
+    turn_index: int = Field(ge=0)
+    memories: list[ExtractedMemory] = Field(default_factory=list)
+
+    @field_validator("memories")
+    @classmethod
+    def cap_per_turn(cls, value: list[ExtractedMemory]) -> list[ExtractedMemory]:
+        if len(value) > MAX_MEMORIES_PER_TURN:
+            raise ValueError(
+                f"at most {MAX_MEMORIES_PER_TURN} memories per turn "
+                f"(got {len(value)})"
+            )
+        return value
+
+
+class BatchExtractionResult(BaseModel):
+    """Session-close batch extraction keyed by turn_index."""
+
+    turns: list[TurnExtraction] = Field(default_factory=list)
+
+    @field_validator("turns")
+    @classmethod
+    def unique_turn_indexes(cls, value: list[TurnExtraction]) -> list[TurnExtraction]:
+        seen: set[int] = set()
+        for item in value:
+            if item.turn_index in seen:
+                raise ValueError(f"duplicate turn_index: {item.turn_index}")
+            seen.add(item.turn_index)
         return value

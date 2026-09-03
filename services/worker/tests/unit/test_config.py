@@ -90,6 +90,14 @@ def test_config_empty_redis_url_uses_dev_default(monkeypatch: pytest.MonkeyPatch
     assert settings.redis_url == "redis://127.0.0.1:6379/0"
 
 
+def test_config_extraction_provider_aliases(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("EXTRACTION_PROVIDER", "vllm")
+    monkeypatch.setenv("IBEX_WORKER_EXTRACTION_BASE_URL", "http://127.0.0.1:8000/v1")
+    settings = Settings(_env_file=None)
+    assert settings.extraction_provider == "vllm"
+    assert settings.extraction_vllm_base_url == "http://127.0.0.1:8000/v1"
+
+
 def test_config_prod_allows_explicit_broker(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("IBEX_ENV", "production")
     monkeypatch.setenv("IBEX_WORKER_BROKER_URL", "redis://prod:6379/1")

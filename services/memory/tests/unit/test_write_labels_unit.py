@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
@@ -100,6 +101,27 @@ def test_memory_command_from_request_legacy_backward_compat() -> None:
     )
     assert command.labels == (MemoryLabelInput(label="behavioral", confidence=0.77),)
     assert command.category == "behavioral"
+
+
+def test_memory_command_from_request_passes_temporal_and_caller_org() -> None:
+    org_a = uuid4()
+    org_b = uuid4()
+    start = datetime(2026, 9, 1, tzinfo=UTC)
+    end = datetime(2026, 9, 8, tzinfo=UTC)
+    request = CreateMemoryRequest(
+        agent_id=uuid4(),
+        content="User prefers dark mode in the IDE",
+        confidence=0.4,
+        valid_from=start,
+        valid_until=end,
+    )
+    command_a = memory_command_from_request(request, org_a)
+    command_b = memory_command_from_request(request, org_b)
+    assert command_a.org_id == org_a
+    assert command_b.org_id == org_b
+    assert command_a.valid_from == start
+    assert command_a.valid_until == end
+    assert command_a.confidence == 0.4
 
 
 def test_memory_command_from_request_multi_label() -> None:

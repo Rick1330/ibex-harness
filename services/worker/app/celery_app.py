@@ -10,6 +10,7 @@ from app.config import Settings, get_settings, queue_names
 from app.logging import configure_logging
 from app.task_names import (
     TASK_EMBEDDING_NOOP,
+    TASK_EXTRACT_SESSION_MEMORIES,
     TASK_EXTRACTION_NOOP,
     TASK_MAINTENANCE_ALWAYS_FAIL,
     TASK_MAINTENANCE_NOOP_SWEEP,
@@ -21,6 +22,7 @@ EXTRACTION_MAX_PRIORITY = 10
 
 TASK_ROUTES: dict[str, dict[str, str]] = {
     TASK_EXTRACTION_NOOP: {"queue": "extraction"},
+    TASK_EXTRACT_SESSION_MEMORIES: {"queue": "extraction"},
     TASK_EMBEDDING_NOOP: {"queue": "embedding"},
     TASK_MCP_AUDIT_NOOP: {"queue": "mcp_audit"},
     TASK_MAINTENANCE_NOOP_SWEEP: {"queue": "maintenance"},

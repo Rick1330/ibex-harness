@@ -315,6 +315,8 @@ X-Idempotency-Key: {uuid}
 | `tags` | string[] | No | Searchable tags. Max 20 tags, 50 chars each |
 | `metadata` | object | No | Arbitrary JSON metadata. Max 10KB |
 | `pinned` | boolean | No | Always include in context. Default: false |
+| `valid_from` | ISO8601 datetime | No | World-time start of the fact (ADR-0047). Omitted → write path defaults to now. |
+| `valid_until` | ISO8601 datetime | No | Exclusive end of validity. Must be strictly after `valid_from` when both are set. |
 
 **Response: 201 Created**
 

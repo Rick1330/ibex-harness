@@ -1,0 +1,75 @@
+---
+title: "ADR-0064: Extraction provider registry and batch execution"
+description: "Architecture decision record 0064 — cost-tiered OpenAI/vLLM extraction, session-close batching, ClickHouse llm_traces, and confidence policy."
+adrId: "0064"
+status: "Accepted"
+date: "2026-09-03"
+authors: "IBEX Harness team"
+---
+
+# ADR-0064: Extraction provider registry and batch execution
+
+- **Status:** Accepted
+- **Date:** 2026-09-03
+- **Authors:** IBEX Harness team
+- **Milestone:** [3.5.B.2 Cost-tiered extraction execution](/roadmap/phase-3-5-extraction-assembly/milestones/3.5.b.2-cost-tiered-extraction-execution)
+- **Depends on:** [ADR-0063](/docs/adr/0063-extraction-output-schema-v2), [ADR-0020](/docs/adr/0020-shared-package-boundaries), [ADR-0032](/docs/adr/0032-session-data-model)
+
+## Context
+
+3.5.B.1 shipped the extraction JSON contract in the worker ([PR #680](https://github.com/Rick1330/ibex-harness/pull/680) / `078d837`). B.2 must call a real LLM, write memories, and record token usage without:
+
+- importing Go `packages/provider` or `services/memory` (ADR-0020)
+- stacking `@traced_task` on Celery (spans already wrap `IbexTask.__call__`)
+- inventing `pending_review` on `memories.status`
+- loading turn text from checkpoints (hashes only, ADR-0032)
+- citing ADR-0036 (that number is unpublished)
+
+No GPU/`vllm` runner exists in CI (`ubuntu-latest` only).
+
+## Decision
+
+### 1) Provider ABC in the worker
+
+`ExtractionProvider` exposes `name`, `supported_models`, and `extract(system, user) -> ExtractionCall` (raw JSON + usage). OpenAI and vLLM share one OpenAI-compatible HTTP client (`httpx`). vLLM omits `Authorization` when the key is empty.
+
+Registry is startup-once, keyed by `openai` | `vllm` (`IBEX_WORKER_EXTRACTION_PROVIDER` / `EXTRACTION_PROVIDER`), fail-closed: openai without `OPENAI_API_KEY` raises; vllm without `IBEX_WORKER_EXTRACTION_BASE_URL` raises. No stub fallback.
+
+Default cloud model is **`gpt-4o-mini`** (still listed on OpenAI’s public API pricing as of 2026-09-03). Default vLLM model is **`Qwen2.5-14B-Instruct`**; operators may substitute **`Qwen2.5-7B-Instruct`** when 14B VRAM does not fit. Manual verification only — **not run in CI**.
+
+### 2) Confidence policy (a)
+
+Extraction confidence is recorded on the memory row; it does not gate persistence or invent a review status (ADR-0056/0057).
+
+Overall `ExtractedMemory.confidence` is forwarded as `POST /v1/memories` `confidence`. Safety remains Track C (PII, dedup, temporal conflict).
+
+### 3) Taxonomy duplication
+
+Worker `VALID_LABELS` stays local. If migration `000015` / memory `VALID_LABELS` changes, update `services/worker/app/extraction/schema.py` in the same PR ([issue #681](https://github.com/Rick1330/ibex-harness/issues/681)).
+
+### 4) Batch task and turn source
+
+Task `ibex.worker.extraction.extract_session_memories` (`queue=extraction`, `IbexTask`, soft/hard 120/180s). `autoretry_for` is transport/5xx (`ExtractionTransportError`) only. `org_id` is required in kwargs.
+
+Turns arrive in the payload (`turn_index`, `role`, `content`) because checkpoints have no message text. Payload archival is still missing (ADR-0032). Optional Postgres: `SELECT`/`UPDATE` `ibex_core.sessions` with explicit `org_id` + RLS GUC; skip `turn_index <= last_extracted_turn`; require `status=completed` and `deleted_at IS NULL`. After successful writes, **non-atomic** `UPDATE last_extracted_turn`. Crash window is accepted until 3.5.B.3. Do not claim idempotency.
+
+Batch JSON: `BatchExtractionResult` / `TurnExtraction`. Prompt is `EXTRACTION_SYSTEM_PROMPT_V2` plus a batch suffix. Single-turn uses `turns` length 1.
+
+### 5) Memory HTTP temporal fields
+
+`CreateMemoryRequest` gained optional `valid_from` / `valid_until` (already on `CreateMemoryCommand`). Mapping is pass-through. `org_id` is never accepted in the body.
+
+### 6) ClickHouse `llm_traces`
+
+Worker HTTP insert uses the same columns as Go `TraceRecord`. `org_id` is required (refuse). Never store prompt/completion. Empty `CLICKHOUSE_DSN` skips insert and increments `ibex_worker_extraction_clickhouse_skip_total`. `httpx` is used instead of `clickhouse-connect` so LLM mocks and CH mocks share one HTTP stack; stdlib `urllib` lacks `MockTransport` and first-class timeout typing.
+
+### 7) Cost estimate (dated, not ADR-0036)
+
+OpenAI public prices for `gpt-4o-mini` as of **2026-09-03**: **$0.15 / 1M input tokens**, **$0.60 / 1M output tokens**. A representative 10-turn session-close call (~1.2k input + ~400 output) is about **$0.00042** — same order of magnitude as the old “~$0.0008/10-turn” sketch, not a guarantee.
+
+## Consequences
+
+- Extraction HTTP stays in the worker (no `packages/` Python LLM library).
+- Operators must enqueue turns in the task payload until archival exists.
+- vLLM quality is operator-verified; CI only mocks HTTP.
+- `httpx` is a justified worker dependency (timeouts + `MockTransport`).

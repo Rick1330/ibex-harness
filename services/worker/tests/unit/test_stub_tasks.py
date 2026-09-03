@@ -6,6 +6,7 @@ import app.tasks  # noqa: F401 — register tasks on module celery_app
 from app.celery_app import celery_app
 from app.task_names import (
     TASK_EMBEDDING_NOOP,
+    TASK_EXTRACT_SESSION_MEMORIES,
     TASK_EXTRACTION_NOOP,
     TASK_MAINTENANCE_NOOP_SWEEP,
     TASK_MCP_AUDIT_NOOP,
@@ -29,6 +30,7 @@ def test_registered_tasks_bind_expected_queues() -> None:
     """Decorator queue= must match milestone topology (not import-only smoke)."""
     expected = {
         TASK_EXTRACTION_NOOP: "extraction",
+        TASK_EXTRACT_SESSION_MEMORIES: "extraction",
         TASK_EMBEDDING_NOOP: "embedding",
         TASK_MCP_AUDIT_NOOP: "mcp_audit",
         TASK_MAINTENANCE_NOOP_SWEEP: "maintenance",
