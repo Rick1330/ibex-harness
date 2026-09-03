@@ -62,6 +62,7 @@
     "0061-retrieval-quality-benchmark-methodology",
     "0062-worker-task-observability-dead-letter",
     "0063-extraction-output-schema-v2",
-    "0064-extraction-provider-and-batch-execution"
+    "0064-extraction-provider-and-batch-execution",
+    "0065-extraction-batch-idempotency"
   ]
 }

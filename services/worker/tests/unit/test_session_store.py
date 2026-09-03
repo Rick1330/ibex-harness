@@ -92,3 +92,5 @@ async def test_update_binds_turn_and_org() -> None:
         "session_id": session_id,
         "org_id": org_id,
     }
+    update_sql = execute.await_args_list[1].args[0].text
+    assert "GREATEST(last_extracted_turn" in update_sql

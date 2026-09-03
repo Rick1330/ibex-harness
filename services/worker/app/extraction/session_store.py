@@ -1,4 +1,8 @@
-"""Optional org-scoped session lookup for last_extracted_turn (non-atomic)."""
+"""Org-scoped session lookup for last_extracted_turn (mandatory for extraction).
+
+Pointer advances after each completed turn's HTTP writes (ADR-0065). Still not
+a shared cross-service transaction with services/memory.
+"""
 
 from __future__ import annotations
 
@@ -72,7 +76,7 @@ class PostgresSessionStore:
                 text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
                     """
                     UPDATE ibex_core.sessions
-                    SET last_extracted_turn = :turn
+                    SET last_extracted_turn = GREATEST(last_extracted_turn, :turn)
                     WHERE id = :session_id AND org_id = :org_id
                     """
                 ),

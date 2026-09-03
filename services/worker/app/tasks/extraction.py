@@ -1,4 +1,4 @@
-"""Batched session-close memory extraction (m3.5.B.2)."""
+"""Batched session-close memory extraction (m3.5.B.2 / m3.5.B.3)."""
 
 from __future__ import annotations
 
@@ -42,11 +42,12 @@ def _memory_writer(settings: Settings) -> HttpMemoryWriter:
     )
 
 
-def _optional_session_store(
+def _require_session_store(
     settings: Settings,
-) -> tuple[SessionStore | None, AsyncEngine | None]:
+) -> tuple[SessionStore, AsyncEngine]:
+    """SessionStore is mandatory for turn-tracking correctness (ADR-0065)."""
     if not settings.database_url:
-        return None, None
+        raise ValueError("database_url is required for extract_session_memories")
     engine = create_engine(settings)
     return PostgresSessionStore(create_session_factory(engine)), engine
 
@@ -87,8 +88,10 @@ def extract_session_memories(self: IbexTask, **kwargs: Any) -> dict[str, Any]:
     turns = parse_turns(kwargs.get("turns"))
     settings = get_settings()
     writer = _memory_writer(settings)
-    session_store, engine = _optional_session_store(settings)
+    engine: AsyncEngine | None = None
     try:
+        # SessionStore setup stays inside try so writer.close() always runs.
+        session_store, engine = _require_session_store(settings)
         result = run_batch_extraction(
             BatchJob(
                 org_id=org_id,

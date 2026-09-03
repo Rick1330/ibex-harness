@@ -51,7 +51,7 @@ Worker `VALID_LABELS` stays local. If migration `000015` / memory `VALID_LABELS`
 
 Task `ibex.worker.extraction.extract_session_memories` (`queue=extraction`, `IbexTask`, soft/hard 120/180s). `autoretry_for` is transport/5xx (`ExtractionTransportError`) only. `org_id` is required in kwargs.
 
-Turns arrive in the payload (`turn_index`, `role`, `content`) because checkpoints have no message text. Payload archival is still missing (ADR-0032). Optional Postgres: `SELECT`/`UPDATE` `ibex_core.sessions` with explicit `org_id` + RLS GUC; skip `turn_index <= last_extracted_turn`; require `status=completed` and `deleted_at IS NULL`. After successful writes, **non-atomic** `UPDATE last_extracted_turn`. Crash window is accepted until 3.5.B.3. Do not claim idempotency.
+Turns arrive in the payload (`turn_index`, `role`, `content`) because checkpoints have no message text. Payload archival is still missing (ADR-0032). Postgres SessionStore is **mandatory** for `extract_session_memories` (fail closed without `database_url`): `SELECT`/`UPDATE` `ibex_core.sessions` with explicit `org_id` + RLS GUC; skip `turn_index <= last_extracted_turn`; require `status=completed` and `deleted_at IS NULL`. After each turn's HTTP writes succeed, **non-atomic** `UPDATE last_extracted_turn = GREATEST(...)` for that turn (not a shared cross-service transaction). Identity-based idempotency keys and crash-window semantics are resolved by [ADR-0065](/docs/adr/0065-extraction-batch-idempotency) in 3.5.B.3.
 
 Batch JSON: `BatchExtractionResult` / `TurnExtraction`. Prompt is `EXTRACTION_SYSTEM_PROMPT_V2` plus a batch suffix. Single-turn uses `turns` length 1.
 
