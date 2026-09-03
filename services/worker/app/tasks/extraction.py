@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 from uuid import UUID
+
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.celery_app import celery_app
 from app.config import Settings, get_settings
@@ -39,11 +42,19 @@ def _memory_writer(settings: Settings) -> HttpMemoryWriter:
     )
 
 
-def _optional_session_store(settings: Settings) -> SessionStore | None:
+def _optional_session_store(
+    settings: Settings,
+) -> tuple[SessionStore | None, AsyncEngine | None]:
     if not settings.database_url:
-        return None
+        return None, None
     engine = create_engine(settings)
-    return PostgresSessionStore(create_session_factory(engine))
+    return PostgresSessionStore(create_session_factory(engine)), engine
+
+
+def _dispose_engine(engine: AsyncEngine | None) -> None:
+    if engine is None:
+        return
+    asyncio.run(engine.dispose())
 
 
 def _task_payload(result: BatchRunResult) -> dict[str, Any]:
@@ -76,6 +87,7 @@ def extract_session_memories(self: IbexTask, **kwargs: Any) -> dict[str, Any]:
     turns = parse_turns(kwargs.get("turns"))
     settings = get_settings()
     writer = _memory_writer(settings)
+    session_store, engine = _optional_session_store(settings)
     try:
         result = run_batch_extraction(
             BatchJob(
@@ -86,9 +98,10 @@ def extract_session_memories(self: IbexTask, **kwargs: Any) -> dict[str, Any]:
                 provider=load_active_extraction_provider(),
                 memory_writer=writer,
                 clickhouse_dsn=settings.clickhouse_dsn,
-                session_store=_optional_session_store(settings),
+                session_store=session_store,
             )
         )
         return _task_payload(result)
     finally:
         writer.close()
+        _dispose_engine(engine)

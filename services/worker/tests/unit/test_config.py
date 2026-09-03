@@ -124,3 +124,13 @@ def test_extraction_base_url_rejects_remote_http() -> None:
 def test_extraction_base_url_unset_ok() -> None:
     settings = Settings(extraction_openai_base_url=None)
     assert settings.extraction_openai_base_url is None
+
+
+def test_extraction_base_url_rejects_hostless_https() -> None:
+    with pytest.raises(ValidationError, match="hostname"):
+        Settings(extraction_openai_base_url="https:///v1")
+
+
+def test_extraction_base_url_trims_whitespace() -> None:
+    settings = Settings(extraction_openai_base_url="  https://api.openai.com/v1  ")
+    assert settings.extraction_openai_base_url == "https://api.openai.com/v1"

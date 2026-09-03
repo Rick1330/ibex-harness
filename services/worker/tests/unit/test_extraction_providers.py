@@ -266,6 +266,31 @@ def test_missing_usage_defaults_to_zero_tokens() -> None:
     assert call.output_tokens == 0
 
 
+@pytest.mark.parametrize(
+    ("prompt_tokens", "match"),
+    [
+        (-1, "non-negative"),
+        (True, "integer"),
+        (1.5, "integer"),
+        ("nope", "integer"),
+    ],
+)
+def test_usage_tokens_rejects_invalid_values(prompt_tokens: object, match: str) -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "model": "m",
+                "choices": [{"message": {"content": '{"turns":[]}'}}],
+                "usage": {"prompt_tokens": prompt_tokens, "completion_tokens": 1},
+            },
+        )
+
+    provider = _provider_with(handler)
+    with pytest.raises(ExtractionProviderError, match=match):
+        provider.extract("s", "u")
+
+
 def test_response_model_fallback_for_non_object() -> None:
     from app.extraction.openai_compat_parse import response_model
 

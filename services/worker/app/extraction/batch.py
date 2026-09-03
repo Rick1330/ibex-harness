@@ -73,7 +73,8 @@ def select_unprocessed_turns(
 def parse_turns(raw: Any) -> list[TurnPayload]:
     items = _require_turn_list(raw)
     parsed = [TurnPayload.model_validate(item) for item in items]
-    _enforce_content_budget(parsed)
+    _reject_duplicate_indexes([item.turn_index for item in parsed], "turns")
+    _enforce_serialized_budget(parsed)
     return parsed
 
 
@@ -85,18 +86,25 @@ def _require_turn_list(raw: Any) -> list[Any]:
     return raw
 
 
-def _enforce_content_budget(parsed: list[TurnPayload]) -> None:
-    total = sum(len(item.content.encode("utf-8")) for item in parsed)
-    if total > MAX_BATCH_CONTENT_BYTES:
+def _enforce_serialized_budget(parsed: list[TurnPayload]) -> None:
+    serialized = format_batch_user_content(parsed)
+    if len(serialized.encode("utf-8")) > MAX_BATCH_CONTENT_BYTES:
         raise ValueError("turns content exceeds UTF-8 byte cap")
+
+
+def _reject_duplicate_indexes(indexes: list[int], label: str) -> None:
+    if len(indexes) != len(set(indexes)):
+        raise ValueError(f"duplicate turn_index in {label}")
 
 
 def require_exact_turn_indexes(
     pending: list[TurnPayload], batch: BatchExtractionResult
 ) -> None:
-    expected = {item.turn_index for item in pending}
-    got = {item.turn_index for item in batch.turns}
-    if expected != got:
+    expected = [item.turn_index for item in pending]
+    got = [item.turn_index for item in batch.turns]
+    _reject_duplicate_indexes(expected, "pending turns")
+    _reject_duplicate_indexes(got, "provider results")
+    if len(expected) != len(got) or set(expected) != set(got):
         raise ValueError("provider turn_index set must match pending turns exactly")
 
 
@@ -106,9 +114,12 @@ def run_batch_extraction(job: BatchJob) -> BatchRunResult:
     if isinstance(pending, BatchRunResult):
         return pending
     started = datetime.now(UTC)
+    user_content = format_batch_user_content(pending)
+    if len(user_content.encode("utf-8")) > MAX_BATCH_CONTENT_BYTES:
+        raise ValueError("turns content exceeds UTF-8 byte cap")
     call = job.provider.extract(
         EXTRACTION_SYSTEM_PROMPT_BATCH,
-        format_batch_user_content(pending),
+        user_content,
     )
     completed = datetime.now(UTC)
     try:

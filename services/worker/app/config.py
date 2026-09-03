@@ -17,12 +17,19 @@ def require_https_or_loopback(url: str | None) -> str | None:
     """Remote extraction URLs must be HTTPS; HTTP is allowed only on loopback."""
     if url is None:
         return None
-    parsed = urlparse(url.strip())
-    host = (parsed.hostname or "").lower()
+    trimmed = url.strip()
+    parsed = urlparse(trimmed)
+    host = parsed.hostname
+    if host is None:
+        raise ValueError(
+            "extraction base URL must include a hostname "
+            "(https:// or http:// on loopback)"
+        )
+    host = host.lower()
     if parsed.scheme == "https":
-        return url
+        return trimmed
     if parsed.scheme == "http" and host in _LOOPBACK_HOSTS:
-        return url
+        return trimmed
     raise ValueError(
         "extraction base URL must use https:// or http:// on loopback "
         "(127.0.0.1, localhost, ::1)"

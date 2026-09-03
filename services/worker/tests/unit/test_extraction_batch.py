@@ -234,6 +234,35 @@ def test_duplicate_turn_index_rejected() -> None:
         )
 
 
+def test_parse_turns_rejects_duplicate_indexes() -> None:
+    raw = [
+        {"turn_index": 0, "role": "user", "content": "first turn body xx"},
+        {"turn_index": 0, "role": "user", "content": "duplicate turn body"},
+    ]
+    with pytest.raises(ValueError, match="duplicate turn_index"):
+        parse_turns(raw)
+
+
+def test_provider_duplicate_indexes_rejected() -> None:
+    job = _job(
+        _JobParts(
+            turns=_turns(1),
+            provider=_FakeProvider(
+                raw_json=json.dumps(
+                    {
+                        "turns": [
+                            {"turn_index": 0, "memories": []},
+                            {"turn_index": 0, "memories": []},
+                        ]
+                    }
+                )
+            ),
+        )
+    )
+    with pytest.raises(ValidationError, match="duplicate turn_index"):
+        run_batch_extraction(job)
+
+
 @pytest.mark.parametrize("size", [1, 10, 50])
 def test_missing_turn_index_rejected(size: int) -> None:
     indexes = list(range(size))
@@ -494,10 +523,15 @@ def test_extract_task_builds_session_store(monkeypatch: pytest.MonkeyPatch) -> N
         clickhouse_dsn = None
 
     seen: dict[str, object] = {}
+    disposed = {"n": 0}
 
     class _Writer:
         def close(self) -> None:
             return None
+
+    class _Engine:
+        async def dispose(self) -> None:
+            disposed["n"] += 1
 
     monkeypatch.setattr("app.tasks.extraction.get_settings", lambda: _Settings())
     monkeypatch.setattr("app.tasks.extraction.load_active_extraction_provider", lambda: object())
@@ -505,7 +539,7 @@ def test_extract_task_builds_session_store(monkeypatch: pytest.MonkeyPatch) -> N
         "app.tasks.extraction.HttpMemoryWriter",
         lambda *_a, **_k: _Writer(),
     )
-    monkeypatch.setattr("app.tasks.extraction.create_engine", lambda _s: object())
+    monkeypatch.setattr("app.tasks.extraction.create_engine", lambda _s: _Engine())
     monkeypatch.setattr(
         "app.tasks.extraction.create_session_factory",
         lambda _e: object(),
@@ -521,14 +555,10 @@ def test_extract_task_builds_session_store(monkeypatch: pytest.MonkeyPatch) -> N
         return BatchRunResult(0, 0, skipped="no_unprocessed_turns")
 
     monkeypatch.setattr("app.tasks.extraction.run_batch_extraction", capture)
-    payload = extract_session_memories.run(
-        org_id=str(uuid4()),
-        agent_id=str(uuid4()),
-        session_id=str(uuid4()),
-        turns=[{"turn_index": 0, "role": "user", "content": "hello world xx"}],
-    )
+    payload = extract_session_memories.run(**_extract_kwargs())
     assert payload["status"] == "skipped"
     assert isinstance(seen["store"], _Store)
+    assert disposed["n"] == 1
 
 
 def test_extracted_memory_confidence_is_forwarded() -> None:

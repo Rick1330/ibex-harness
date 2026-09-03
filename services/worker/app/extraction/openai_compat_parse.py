@@ -71,7 +71,20 @@ def usage_tokens(body: Any) -> tuple[int, int]:
     usage = body.get("usage") if isinstance(body, dict) else None
     if not isinstance(usage, dict):
         return 0, 0
-    return int(usage.get("prompt_tokens") or 0), int(usage.get("completion_tokens") or 0)
+    return (
+        _nonneg_int_token(usage.get("prompt_tokens"), "prompt_tokens"),
+        _nonneg_int_token(usage.get("completion_tokens"), "completion_tokens"),
+    )
+
+
+def _nonneg_int_token(value: Any, field: str) -> int:
+    if value is None:
+        return 0
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ExtractionProviderError(f"extraction provider {field} must be an integer")
+    if value < 0:
+        raise ExtractionProviderError(f"extraction provider {field} must be non-negative")
+    return value
 
 
 def _strip_fence(raw: str) -> str:
