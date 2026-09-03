@@ -38,23 +38,15 @@ def _memory(*, content: str = "User prefers dark mode in the IDE") -> ExtractedM
     )
 
 
-def _request(
-    memory: ExtractedMemory | None = None,
-    *,
-    org_id=None,
-    session_id=None,
-    turn_index: int = 3,
-    batch_fingerprint: str = "fp",
-    ordinal: int = 0,
-) -> MemoryWriteRequest:
+def _request(memory: ExtractedMemory | None = None) -> MemoryWriteRequest:
     return MemoryWriteRequest(
-        org_id=org_id or uuid4(),
+        org_id=uuid4(),
         agent_id=uuid4(),
-        session_id=session_id or uuid4(),
-        turn_index=turn_index,
+        session_id=uuid4(),
+        turn_index=3,
         memory=memory or _memory(),
-        batch_fingerprint=batch_fingerprint,
-        ordinal=ordinal,
+        batch_fingerprint="fp",
+        ordinal=0,
     )
 
 
@@ -75,28 +67,21 @@ def test_writer_posts_labels_and_temporal_fields() -> None:
         captured["json"] = request.content
         return httpx.Response(201, json={"data": {"id": str(uuid4())}})
 
-    org_id = uuid4()
-    session_id = uuid4()
-    writer = _writer(handler, token="mem-token")
-    writer.write(
-        _request(
-            org_id=org_id,
-            session_id=session_id,
-            batch_fingerprint="abc",
-            ordinal=2,
-            turn_index=5,
-        )
+    req = MemoryWriteRequest(
+        org_id=uuid4(),
+        agent_id=uuid4(),
+        session_id=uuid4(),
+        turn_index=5,
+        memory=_memory(),
+        batch_fingerprint="abc",
+        ordinal=2,
     )
+    writer = _writer(handler, token="mem-token")
+    writer.write(req)
     body = json.loads(captured["json"])  # type: ignore[arg-type]
     assert captured["path"] == "/v1/memories"
     assert captured["auth"] == "Bearer mem-token"
-    assert captured["idem"] == memory_idempotency_key(
-        org_id=org_id,
-        session_id=session_id,
-        batch_fp="abc",
-        turn_index=5,
-        ordinal=2,
-    )
+    assert captured["idem"] == memory_idempotency_key(req)
     assert "org_id" not in body
     assert body["confidence"] == 0.88
     assert body["labels"][0]["label"] == "preference"
@@ -122,21 +107,25 @@ def test_batch_position_key_stable_when_llm_wording_differs() -> None:
         org_id=org_id, session_id=session_id, turn_index=0, content=wording_b
     )
     assert old_a != old_b
-    new_a = memory_idempotency_digest(
+    slot_a = MemoryWriteRequest(
         org_id=org_id,
+        agent_id=uuid4(),
         session_id=session_id,
-        batch_fp=batch_fp,
         turn_index=0,
+        memory=_memory(content="User prefers dark mode"),
+        batch_fingerprint=batch_fp,
         ordinal=0,
     )
-    new_b = memory_idempotency_digest(
+    slot_b = MemoryWriteRequest(
         org_id=org_id,
+        agent_id=uuid4(),
         session_id=session_id,
-        batch_fp=batch_fp,
         turn_index=0,
+        memory=_memory(content="The user likes dark theme"),
+        batch_fingerprint=batch_fp,
         ordinal=0,
     )
-    assert new_a == new_b
+    assert memory_idempotency_digest(slot_a) == memory_idempotency_digest(slot_b)
 
 
 def test_writer_treats_idempotency_conflict_as_success() -> None:

@@ -62,37 +62,17 @@ def batch_fingerprint(turns: Sequence[TurnContentRef]) -> str:
     return sha256("|".join(parts).encode("utf-8")).hexdigest()
 
 
-def memory_idempotency_digest(
-    *,
-    org_id: UUID,
-    session_id: UUID,
-    batch_fp: str,
-    turn_index: int,
-    ordinal: int,
-) -> str:
+def memory_idempotency_digest(request: MemoryWriteRequest) -> str:
     """SHA-256 hex digest for batch-position idempotency (no LLM content)."""
     return sha256(
-        f"{org_id}:{session_id}:{batch_fp}:{turn_index}:{ordinal}".encode()
+        f"{request.org_id}:{request.session_id}:{request.batch_fingerprint}:"
+        f"{request.turn_index}:{request.ordinal}".encode()
     ).hexdigest()
 
 
-def memory_idempotency_key(
-    *,
-    org_id: UUID,
-    session_id: UUID,
-    batch_fp: str,
-    turn_index: int,
-    ordinal: int,
-) -> str:
+def memory_idempotency_key(request: MemoryWriteRequest) -> str:
     """X-Idempotency-Key value for one memory write in a batch."""
-    digest = memory_idempotency_digest(
-        org_id=org_id,
-        session_id=session_id,
-        batch_fp=batch_fp,
-        turn_index=turn_index,
-        ordinal=ordinal,
-    )
-    return str(uuid5(_IDEM_NS, digest))
+    return str(uuid5(_IDEM_NS, memory_idempotency_digest(request)))
 
 
 def content_derived_idempotency_digest(
@@ -126,14 +106,9 @@ class HttpMemoryWriter:
 
     def write(self, request: MemoryWriteRequest) -> None:
         payload = _memory_payload(request)
-        key = memory_idempotency_key(
-            org_id=request.org_id,
-            session_id=request.session_id,
-            batch_fp=request.batch_fingerprint,
-            turn_index=request.turn_index,
-            ordinal=request.ordinal,
+        response = _post_memory(
+            self._client, self._config, payload, memory_idempotency_key(request)
         )
-        response = _post_memory(self._client, self._config, payload, key)
         _raise_for_memory_status(response)
 
     def close(self) -> None:
@@ -188,12 +163,18 @@ def _raise_for_memory_status(response: httpx.Response) -> None:
         return
     if response.status_code in _RETRYABLE:
         raise ExtractionTransportError(f"memory service HTTP {response.status_code}")
-    if response.status_code == 409 and _is_definitive_409_success(response):
+    if response.status_code == 409:
+        _raise_for_memory_conflict(response)
         return
-    if response.status_code == 409 and _detail_code(response) == "IDEMPOTENCY_IN_PROGRESS":
+    raise ValueError(f"memory service HTTP {response.status_code}")
+
+
+def _raise_for_memory_conflict(response: httpx.Response) -> None:
+    if _is_definitive_409_success(response):
+        return
+    if _detail_code(response) == "IDEMPOTENCY_IN_PROGRESS":
         raise ExtractionTransportError("memory service HTTP 409 IDEMPOTENCY_IN_PROGRESS")
-    if response.status_code >= 400:
-        raise ValueError(f"memory service HTTP {response.status_code}")
+    raise ValueError("memory service HTTP 409")
 
 
 def _is_definitive_409_success(response: httpx.Response) -> bool:
