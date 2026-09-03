@@ -255,16 +255,15 @@ def test_multibyte_content_over_utf8_byte_limit_rejected() -> None:
 
 
 def test_mixed_naive_and_aware_datetimes_rejected() -> None:
+    payload = {
+        "content": "Mixed timezone representations are invalid",
+        "categories": [{"label": "factual", "confidence": 0.9}],
+        "confidence": 0.9,
+        "valid_from": datetime(2026, 9, 1, 0, 0, 0, tzinfo=UTC).replace(tzinfo=None),
+        "valid_until": datetime(2026, 9, 2, 0, 0, 0, tzinfo=UTC),
+    }
     with pytest.raises(ValidationError, match="timezone-aware or both naive"):
-        ExtractedMemory.model_validate(
-            {
-                "content": "Mixed timezone representations are invalid",
-                "categories": [{"label": "factual", "confidence": 0.9}],
-                "confidence": 0.9,
-                "valid_from": datetime(2026, 9, 1, 0, 0, 0, tzinfo=UTC).replace(tzinfo=None),
-                "valid_until": datetime(2026, 9, 2, 0, 0, 0, tzinfo=UTC),
-            }
-        )
+        ExtractedMemory.model_validate(payload)
 
 
 def test_empty_memories_list_allowed() -> None:
