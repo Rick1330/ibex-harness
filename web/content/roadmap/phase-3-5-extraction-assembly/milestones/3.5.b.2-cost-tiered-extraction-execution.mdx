@@ -161,8 +161,8 @@ def extract_session_memories(self, session_id: str, org_id: str) -> dict:
 Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
 
 - [x] `ExtractionProvider` ABC with both `OpenAIExtractionProvider` and `VLLMExtractionProvider` implementations, unit-tested against a mocked HTTP transport (no real API calls in CI)
-- [x] Batch extraction call handles sessions with 1, 10, and 50 unprocessed turns correctly, with turn-index mapping verified
+- [x] Batch extraction call handles sessions with 1, 10, and 50 unprocessed turns correctly, with turn-index mapping verified (`test_batch_sizes_map_turn_indexes` in `services/worker/tests/unit/test_extraction_batch.py`)
 - [x] Token cost per session logged (input + output tokens, model name) to the same ClickHouse trace table the proxy already writes to
-- [x] Self-hosted path (`EXTRACTION_PROVIDER=vllm`) documented as **manual verification** (no GPU CI runners) — see `services/worker/README.md` and ADR-0064
+- [x] Self-hosted path (`EXTRACTION_PROVIDER=vllm` / `IBEX_WORKER_EXTRACTION_PROVIDER=vllm`) — **path (a) manual verification**, not silent skip: runbook in `services/worker/README.md` § Manual vLLM verification and ADR-0064; **no live vLLM in CI** (no GPU runner). GPU-backed integration remains deferred until a GPU CI runner exists (do not treat mocked unit tests as the live signal).
 
 ---

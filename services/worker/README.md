@@ -131,7 +131,12 @@ dedicated test database. CI sets `POSTGRES_TEST_DSN` via `infra/scripts/worker-i
 
 ## Manual vLLM verification (not CI)
 
-CI has no GPU runner. To exercise the self-hosted path locally:
+CI has **no GPU runner**. The self-hosted path (`IBEX_WORKER_EXTRACTION_PROVIDER=vllm`) is
+covered in unit tests with `httpx.MockTransport` only. Live verification against a real
+vLLM process is **manual** — do not treat the mocked unit tests as satisfying a live
+integration signal.
+
+### Stand up Qwen2.5-14B-Instruct
 
 ```bash
 # Example: OpenAI-compatible vLLM server (adjust GPU flags / model to your hardware)
@@ -142,13 +147,30 @@ docker run --gpus all -p 8000:8000 vllm/vllm-openai:latest \
 # If 14B VRAM does not fit, substitute Qwen2.5-7B-Instruct and set:
 # IBEX_WORKER_EXTRACTION_VLLM_MODEL=Qwen2.5-7B-Instruct
 # with --served-model-name Qwen2.5-7B-Instruct (must match the env value)
+```
 
+### Point the worker at vLLM
+
+```bash
 export IBEX_WORKER_EXTRACTION_PROVIDER=vllm
 export IBEX_WORKER_EXTRACTION_BASE_URL=http://127.0.0.1:8000/v1
 export IBEX_WORKER_MEMORY_BASE_URL=http://127.0.0.1:8005
 export IBEX_WORKER_MEMORY_API_TOKEN='…'  # memory:write PAT; never commit
+# Optional: CLICKHOUSE_DSN for llm_traces; empty skips insert fail-open
 ```
 
-Expected model output is JSON matching `BatchExtractionResult`:
-`{"turns":[{"turn_index":0,"memories":[…]}]}` with no markdown fences.
-This path is **not run in CI**.
+Enqueue `ibex.worker.extraction.extract_session_memories` with a completed-session payload
+(`org_id`, `agent_id`, `session_id`, `turns` list).
+
+### What confirms correctness
+
+1. Worker task returns `status=ok` (or `skipped` only for intentional session gates).
+2. Model content is JSON matching `BatchExtractionResult`:
+   `{"turns":[{"turn_index":0,"memories":[…]}]}` with **no** markdown fences.
+3. Memory service receives one POST per extracted memory with matching `session_id` /
+   labels / optional temporal fields.
+4. If `CLICKHOUSE_DSN` is set, `ibex.llm_traces` gains a row with `provider=vllm`,
+   token counts, and **no** prompt/completion text.
+
+This path is **not run in CI**. A GPU-backed integration job remains an explicit follow-up
+when a GPU runner exists — do not silently check that box.

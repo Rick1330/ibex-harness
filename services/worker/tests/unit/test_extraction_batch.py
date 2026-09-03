@@ -136,14 +136,17 @@ def _job(parts: _JobParts | None = None) -> BatchJob:
 
 @pytest.mark.parametrize("size", [1, 10, 50])
 def test_batch_sizes_map_turn_indexes(size: int) -> None:
+    """Milestone 3.5.B.2: batch correctness at 1 / 10 / 50 turns with index mapping."""
     provider = _FakeProvider()
     writer = _RecordingWriter()
     result = run_batch_extraction(_job(_JobParts(turns=_turns(size), provider=provider, writer=writer)))
     assert result.skipped is None
     assert result.turns_processed == size
     assert result.memories_written == size
-    indexes = [idx for idx, _ in writer.writes]
-    assert indexes == list(range(size))
+    # turn_index → memory mapping (not only aggregate counts)
+    assert writer.writes == [
+        (i, f"Durable preference recorded from turn {i:02d}") for i in range(size)
+    ]
     for i in range(size):
         assert f'index="{i}"' in provider.last_user
 
