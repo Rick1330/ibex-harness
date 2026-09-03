@@ -8,19 +8,21 @@ from app.extraction.session_store import SessionSnapshot
 
 
 class IdempotentSlotWriter:
-    """Simulates memory Redis: first body per batch-position key wins."""
+    """Simulates memory Redis: first body per identity key wins."""
 
     def __init__(self, *, fail_on_nth: int | None = None) -> None:
         self.fail_on_nth = fail_on_nth
         self.attempt = 0
-        self.slots: dict[tuple[str, int, int], str] = {}
+        self.slots: dict[tuple[int, int], str] = {}
         self.write_attempts: list[tuple[int, int, str]] = []
+        self.requests: list[MemoryWriteRequest] = []
 
     def write(self, request: MemoryWriteRequest) -> None:
         self.attempt += 1
+        self.requests.append(request)
         if self.fail_on_nth is not None and self.attempt == self.fail_on_nth:
             raise ExtractionTransportError("memory service HTTP 503")
-        key = (request.batch_fingerprint, request.turn_index, request.ordinal)
+        key = (request.turn_index, request.ordinal)
         self.write_attempts.append(
             (request.turn_index, request.ordinal, request.memory.content)
         )
@@ -39,6 +41,7 @@ class FakeSessionStore:
         self.updated: int | None = None
         self._fail_updates = fail_updates
         self.update_attempts = 0
+        self.update_history: list[int] = []
 
     def load(self, org_id, session_id) -> SessionSnapshot | None:
         del org_id, session_id
@@ -62,6 +65,7 @@ class FakeSessionStore:
         elif current is None:
             current = -1
         self.updated = max(last_extracted_turn, current)
+        self.update_history.append(self.updated)
         if self.snapshot is not None:
             self.snapshot = SessionSnapshot(
                 last_extracted_turn=self.updated,

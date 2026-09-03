@@ -1,7 +1,7 @@
-"""Optional org-scoped session lookup for last_extracted_turn.
+"""Org-scoped session lookup for last_extracted_turn (mandatory for extraction).
 
-Ordered after HTTP memory writes (not a shared cross-service transaction).
-Idempotency and crash-window semantics: ADR-0065.
+Pointer advances after each completed turn's HTTP writes (ADR-0065). Still not
+a shared cross-service transaction with services/memory.
 """
 
 from __future__ import annotations

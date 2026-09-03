@@ -1,4 +1,4 @@
-"""Unit tests for batched session extraction mapping."""
+"""Unit tests for batched session extraction mapping (m3.5.B.3)."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
-from pydantic import ValidationError
+from pydantic import SecretStr, ValidationError
 
 from app.celery_app import celery_app
 from app.extraction.batch import (
@@ -99,6 +99,16 @@ class _RecordingWriter:
         self.writes.append((request.turn_index, request.memory.content))
 
 
+def _completed_store(*, last_extracted_turn: int = -1) -> FakeSessionStore:
+    return FakeSessionStore(
+        SessionSnapshot(
+            last_extracted_turn=last_extracted_turn,
+            status="completed",
+            deleted_at=None,
+        )
+    )
+
+
 def _turns(n: int) -> list[TurnPayload]:
     return [
         TurnPayload(turn_index=i, role="user", content=f"turn body {i} durable")
@@ -111,7 +121,7 @@ class _JobParts:
     turns: list[TurnPayload] | None = None
     provider: object | None = None
     writer: object | None = None
-    session_store: object | None = None
+    session_store: FakeSessionStore | None = None
     clickhouse_dsn: str | None = None
 
 
@@ -125,25 +135,29 @@ def _job(parts: _JobParts | None = None) -> BatchJob:
         provider=cfg.provider or _FakeProvider(),  # type: ignore[arg-type]
         memory_writer=cfg.writer or _RecordingWriter(),  # type: ignore[arg-type]
         clickhouse_dsn=cfg.clickhouse_dsn,
-        session_store=cfg.session_store,  # type: ignore[arg-type]
+        session_store=cfg.session_store or _completed_store(),
     )
 
 
 @pytest.mark.parametrize("size", [1, 10, 50])
 def test_batch_sizes_map_turn_indexes(size: int) -> None:
-    """Milestone 3.5.B.2: batch correctness at 1 / 10 / 50 turns with index mapping."""
+    """Milestone 3.5.B.3: batch correctness at 1 / 10 / 50 turns with index mapping."""
     provider = _FakeProvider()
     writer = _RecordingWriter()
-    result = run_batch_extraction(_job(_JobParts(turns=_turns(size), provider=provider, writer=writer)))
+    store = _completed_store()
+    result = run_batch_extraction(
+        _job(_JobParts(turns=_turns(size), provider=provider, writer=writer, session_store=store))
+    )
     assert result.skipped is None
     assert result.turns_processed == size
     assert result.memories_written == size
-    # turn_index → memory mapping (not only aggregate counts)
     assert writer.writes == [
         (i, f"Durable preference recorded from turn {i:02d}") for i in range(size)
     ]
     for i in range(size):
         assert f'index="{i}"' in provider.last_user
+    assert store.updated == size - 1
+    assert store.update_history == list(range(size))
 
 
 def test_skips_turns_at_or_below_last_extracted_turn() -> None:
@@ -162,6 +176,7 @@ def test_skips_turns_at_or_below_last_extracted_turn() -> None:
     )
     assert result.turns_processed == 2
     assert store.updated == 9
+    assert store.update_history == [8, 9]
     assert 'index="8"' in provider.last_user
     assert 'index="7"' not in provider.last_user
 
@@ -182,7 +197,7 @@ def test_session_not_found_skips_without_provider() -> None:
     )
 
 
-def test_empty_turns_without_store_skips() -> None:
+def test_empty_turns_with_store_skips() -> None:
     result = run_batch_extraction(_job(_JobParts(turns=[])))
     assert result.skipped == "no_unprocessed_turns"
 
@@ -409,8 +424,6 @@ def test_extract_task_rejects_missing_agent_id() -> None:
 
 
 def test_extract_task_rejects_blank_memory_token(monkeypatch: pytest.MonkeyPatch) -> None:
-    from pydantic import SecretStr
-
     class _Settings:
         memory_base_url = "http://memory.example"
         memory_api_token = SecretStr("   ")
@@ -423,15 +436,26 @@ def test_extract_task_rejects_blank_memory_token(monkeypatch: pytest.MonkeyPatch
         extract_session_memories.run(**kwargs)
 
 
-def test_extract_task_runs_with_injected_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
-    from pydantic import SecretStr
+def test_extract_task_requires_database_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _Settings:
+        memory_base_url = "http://memory.example"
+        memory_api_token = SecretStr("tok")
+        database_url = None
+        clickhouse_dsn = None
 
+    monkeypatch.setattr("app.tasks.extraction.get_settings", lambda: _Settings())
+    kwargs = _extract_kwargs()
+    with pytest.raises(ValueError, match="database_url is required"):
+        extract_session_memories.run(**kwargs)
+
+
+def test_extract_task_runs_with_injected_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
     from app.extraction.batch import BatchRunResult
 
     class _Settings:
         memory_base_url = "http://memory.example"
         memory_api_token = SecretStr("tok")
-        database_url = None
+        database_url = "postgresql+asyncpg://u:p@localhost/db"
         clickhouse_dsn = None
 
     closed = {"n": 0}
@@ -440,11 +464,18 @@ def test_extract_task_runs_with_injected_dependencies(monkeypatch: pytest.Monkey
         def close(self) -> None:
             closed["n"] += 1
 
+    class _Store:
+        pass
+
     monkeypatch.setattr("app.tasks.extraction.get_settings", lambda: _Settings())
     monkeypatch.setattr("app.tasks.extraction.load_active_extraction_provider", lambda: object())
     monkeypatch.setattr(
         "app.tasks.extraction.HttpMemoryWriter",
         lambda *_a, **_k: _Writer(),
+    )
+    monkeypatch.setattr(
+        "app.tasks.extraction._require_session_store",
+        lambda _s: (_Store(), None),
     )
     monkeypatch.setattr(
         "app.tasks.extraction.run_batch_extraction",
@@ -466,12 +497,10 @@ def test_extract_task_runs_with_injected_dependencies(monkeypatch: pytest.Monkey
 
 
 def test_extract_task_closes_writer_on_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    from pydantic import SecretStr
-
     class _Settings:
         memory_base_url = "http://memory.example"
         memory_api_token = SecretStr("tok")
-        database_url = None
+        database_url = "postgresql+asyncpg://u:p@localhost/db"
         clickhouse_dsn = None
 
     closed = {"n": 0}
@@ -485,6 +514,10 @@ def test_extract_task_closes_writer_on_error(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr(
         "app.tasks.extraction.HttpMemoryWriter",
         lambda *_a, **_k: _Writer(),
+    )
+    monkeypatch.setattr(
+        "app.tasks.extraction._require_session_store",
+        lambda _s: (object(), None),
     )
     monkeypatch.setattr(
         "app.tasks.extraction.run_batch_extraction",
@@ -509,9 +542,9 @@ def test_extract_task_requires_memory_token(monkeypatch: pytest.MonkeyPatch) -> 
         extract_session_memories.run(**kwargs)
 
 
-def test_extract_task_builds_session_store(monkeypatch: pytest.MonkeyPatch) -> None:
-    from pydantic import SecretStr
-
+def test_extract_task_requires_session_store_from_database(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from app.extraction.batch import BatchRunResult
 
     class _Settings:
@@ -531,6 +564,9 @@ def test_extract_task_builds_session_store(monkeypatch: pytest.MonkeyPatch) -> N
         async def dispose(self) -> None:
             disposed["n"] += 1
 
+    class _Store:
+        pass
+
     monkeypatch.setattr("app.tasks.extraction.get_settings", lambda: _Settings())
     monkeypatch.setattr("app.tasks.extraction.load_active_extraction_provider", lambda: object())
     monkeypatch.setattr(
@@ -542,10 +578,6 @@ def test_extract_task_builds_session_store(monkeypatch: pytest.MonkeyPatch) -> N
         "app.tasks.extraction.create_session_factory",
         lambda _e: object(),
     )
-
-    class _Store:
-        pass
-
     monkeypatch.setattr("app.tasks.extraction.PostgresSessionStore", lambda _f: _Store())
 
     def capture(job: BatchJob) -> BatchRunResult:
@@ -571,39 +603,27 @@ def test_extracted_memory_confidence_is_forwarded() -> None:
     assert mem.confidence == 0.4
 
 
-def test_crash_after_writes_before_pointer_retry_is_idempotent() -> None:
-    """3.5.B.3: crash window → one extra LLM call, no duplicate memory slots."""
-    provider = _FakeProvider(wording_suffixes=[" wording-a", " wording-b"])
-    writer = IdempotentSlotWriter()
-    store = FakeSessionStore(
-        SessionSnapshot(last_extracted_turn=-1, status="completed", deleted_at=None),
-        fail_updates=1,
-    )
-    turns = _turns(3)
+def test_crash_mid_batch_advances_only_completed_turns() -> None:
+    """Writer fails mid-batch; pointer reflects only fully completed turns."""
+    provider = _FakeProvider()
+    writer = IdempotentSlotWriter(fail_on_nth=3)
+    store = _completed_store()
+    turns = _turns(5)
     job = _job(
         _JobParts(turns=turns, provider=provider, writer=writer, session_store=store)
     )
-    with pytest.raises(ExtractionTransportError, match="session pointer update failed"):
+    with pytest.raises(ExtractionTransportError, match="503"):
         run_batch_extraction(job)
     assert provider.calls == 1
-    assert store.updated is None
-    assert len(writer.slots) == 3
-    first_slots = dict(writer.slots)
-
-    result = run_batch_extraction(job)
-    assert result.skipped is None
-    assert provider.calls == 2  # exactly one additional extraction call
-    assert store.updated == 2
-    assert writer.slots == first_slots  # first wording wins; no new slots
-    assert all(content.endswith("wording-a") for content in writer.slots.values())
+    assert store.updated == 1
+    assert store.update_history == [0, 1]
+    assert len(writer.slots) == 2
 
 
-def test_extract_twice_in_succession_identical_state() -> None:
+def test_extract_twice_in_succession_is_noop() -> None:
     provider = _FakeProvider()
     writer = IdempotentSlotWriter()
-    store = FakeSessionStore(
-        SessionSnapshot(last_extracted_turn=-1, status="completed", deleted_at=None)
-    )
+    store = _completed_store()
     turns = _turns(2)
     job = _job(
         _JobParts(turns=turns, provider=provider, writer=writer, session_store=store)
@@ -620,44 +640,74 @@ def test_extract_twice_in_succession_identical_state() -> None:
     assert store.updated == pointer_after_first == 1
 
 
-def test_partial_batch_write_failure_does_not_advance_pointer() -> None:
+def test_writes_include_ordinal() -> None:
+    writer = _RecordingWriter()
+    run_batch_extraction(_job(_JobParts(turns=_turns(2), writer=writer)))
+    assert len(writer.requests) == 2
+    assert all(req.ordinal == 0 for req in writer.requests)
+    assert {req.turn_index for req in writer.requests} == {0, 1}
+    for req in writer.requests:
+        assert hasattr(req, "org_id")
+        assert hasattr(req, "agent_id")
+        assert hasattr(req, "session_id")
+        assert not hasattr(req, "batch_fingerprint")
+
+
+def test_crash_after_writes_before_pointer_retry_is_idempotent() -> None:
+    """Pointer failure after turn 0 → retry re-extracts pending turns without dup slots."""
+    provider = _FakeProvider(wording_suffixes=[" wording-a", " wording-b"])
+    writer = IdempotentSlotWriter()
+    store = FakeSessionStore(
+        SessionSnapshot(last_extracted_turn=-1, status="completed", deleted_at=None),
+        fail_updates=1,
+    )
+    turns = _turns(3)
+    job = _job(
+        _JobParts(turns=turns, provider=provider, writer=writer, session_store=store)
+    )
+    with pytest.raises(ExtractionTransportError, match="session pointer update failed"):
+        run_batch_extraction(job)
+    assert provider.calls == 1
+    assert store.updated is None
+    assert len(writer.slots) == 1
+    first_slots = dict(writer.slots)
+
+    result = run_batch_extraction(job)
+    assert result.skipped is None
+    assert provider.calls == 2
+    assert store.updated == 2
+    assert len(writer.slots) == 3
+    assert writer.slots[(0, 0)] == first_slots[(0, 0)]
+    assert writer.slots[(0, 0)].endswith("wording-a")
+    assert writer.slots[(1, 0)].endswith("wording-b")
+    assert writer.slots[(2, 0)].endswith("wording-b")
+
+
+def test_partial_batch_write_failure_does_not_advance_past_completed_turns() -> None:
     provider = _FakeProvider()
     writer = IdempotentSlotWriter(fail_on_nth=3)
-    store = FakeSessionStore(
-        SessionSnapshot(last_extracted_turn=-1, status="completed", deleted_at=None)
-    )
+    store = _completed_store()
     turns = _turns(5)
     job = _job(
         _JobParts(turns=turns, provider=provider, writer=writer, session_store=store)
     )
     with pytest.raises(ExtractionTransportError, match="503"):
         run_batch_extraction(job)
-    assert store.updated is None
-    assert store.update_attempts == 0
-    assert len(writer.slots) == 2  # first two succeeded before failure
+    assert store.updated == 1
+    assert store.update_history == [0, 1]
+    assert len(writer.slots) == 2
 
     writer.fail_on_nth = None
     result = run_batch_extraction(job)
-    assert result.memories_written == 5
+    assert result.memories_written == 3
+    assert result.turns_processed == 3
     assert provider.calls == 2
     assert store.updated == 4
     assert len(writer.slots) == 5
-    # Full retry re-sends all five attempts; slots 0–1 keep first wording
-    assert len(writer.write_attempts) == 2 + 5
     assert all(
-        writer.slots[(fp, turn, 0)].endswith(f"turn {turn:02d}")
-        for fp, turn, _ord in writer.slots
+        writer.slots[(turn, 0)].endswith(f"turn {turn:02d}")
+        for turn in range(5)
     )
-
-
-def test_writes_include_batch_fingerprint_and_ordinal() -> None:
-    writer = _RecordingWriter()
-    run_batch_extraction(_job(_JobParts(turns=_turns(2), writer=writer)))
-    assert len(writer.requests) == 2
-    fingerprints = {req.batch_fingerprint for req in writer.requests}
-    assert len(fingerprints) == 1
-    assert all(req.ordinal == 0 for req in writer.requests)
-    assert {req.turn_index for req in writer.requests} == {0, 1}
 
 
 def test_pointer_update_oserror_maps_to_transport_error() -> None:

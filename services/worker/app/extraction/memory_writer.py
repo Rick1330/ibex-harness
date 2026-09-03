@@ -1,12 +1,20 @@
 """HTTP writer for POST /v1/memories from extraction results.
 
-Idempotency keys are batch-position derived (org, session, pending-turn
-fingerprint, turn_index, ordinal) — not LLM output content. See ADR-0065.
+Idempotency keys are identity-based, not content-based (ADR-0065):
+
+  key_material = f"{org_id}:{session_id}:{turn_index}:{memory_ordinal}"
+
+where memory_ordinal is the 0-based index in TurnExtraction.memories for that
+turn in a single provider result. Retries with different LLM wording for the
+same ordinal reuse the same X-Idempotency-Key.
+
+Residual limitation (accepted, not solved here): if a retry's LLM call returns
+a different NUMBER of memories for the same turn, ordinals can misalign.
+Exact/near-dedup in services/memory is defense-in-depth for that residual case.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from dataclasses import dataclass
 from hashlib import sha256
 from typing import Protocol
@@ -24,21 +32,12 @@ _SUCCESS_409_CODES = frozenset({"IDEMPOTENCY_CONFLICT", "DUPLICATE_CONTENT"})
 
 
 @dataclass(frozen=True, slots=True)
-class TurnContentRef:
-    """Minimal turn identity for batch fingerprinting (input side)."""
-
-    turn_index: int
-    content: str
-
-
-@dataclass(frozen=True, slots=True)
 class MemoryWriteRequest:
     org_id: UUID
     agent_id: UUID
     session_id: UUID
     turn_index: int
     memory: ExtractedMemory
-    batch_fingerprint: str
     ordinal: int
 
 
@@ -53,25 +52,17 @@ class MemoryWriter(Protocol):
     def write(self, request: MemoryWriteRequest) -> None: ...
 
 
-def batch_fingerprint(turns: Sequence[TurnContentRef]) -> str:
-    """Stable fingerprint of the pending turn set (indexes + content digests)."""
-    parts = [
-        f"{item.turn_index}:{sha256(item.content.encode('utf-8')).hexdigest()}"
-        for item in sorted(turns, key=lambda t: t.turn_index)
-    ]
-    return sha256("|".join(parts).encode("utf-8")).hexdigest()
-
-
 def memory_idempotency_digest(request: MemoryWriteRequest) -> str:
-    """SHA-256 hex digest for batch-position idempotency (no LLM content)."""
+    """SHA-256 hex digest for identity-based idempotency (no LLM content)."""
+    # Residual: ordinal misaligns if retry returns a different memory COUNT.
     return sha256(
-        f"{request.org_id}:{request.session_id}:{request.batch_fingerprint}:"
-        f"{request.turn_index}:{request.ordinal}".encode()
+        f"{request.org_id}:{request.session_id}:{request.turn_index}:"
+        f"{request.ordinal}".encode()
     ).hexdigest()
 
 
 def memory_idempotency_key(request: MemoryWriteRequest) -> str:
-    """X-Idempotency-Key value for one memory write in a batch."""
+    """X-Idempotency-Key value for one memory write."""
     return str(uuid5(_IDEM_NS, memory_idempotency_digest(request)))
 
 
@@ -170,15 +161,11 @@ def _raise_for_memory_status(response: httpx.Response) -> None:
 
 
 def _raise_for_memory_conflict(response: httpx.Response) -> None:
-    if _is_definitive_409_success(response):
+    if _detail_code(response) in _SUCCESS_409_CODES:
         return
     if _detail_code(response) == "IDEMPOTENCY_IN_PROGRESS":
         raise ExtractionTransportError("memory service HTTP 409 IDEMPOTENCY_IN_PROGRESS")
     raise ValueError("memory service HTTP 409")
-
-
-def _is_definitive_409_success(response: httpx.Response) -> bool:
-    return _detail_code(response) in _SUCCESS_409_CODES
 
 
 def _detail_code(response: httpx.Response) -> str | None:

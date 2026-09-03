@@ -1,7 +1,7 @@
 ---
 title: "3.5.B.3 Incremental Turn Tracking and Idempotency"
-description: "Input-keyed batch idempotency for extraction memory writes and ordered last_extracted_turn updates — no duplicate memories on retry; bounded (not zero) extra LLM cost on the pointer crash window."
-summary: "Input-keyed batch idempotency for extraction memory writes and ordered last_extracted_turn updates — no duplicate memories on retry; bounded (not zero) extra LLM cost on the pointer crash window."
+description: "Identity-based X-Idempotency-Key for extraction memory writes, mandatory SessionStore, and per-turn last_extracted_turn advance — no duplicate slots on wording-drift retry; residual ordinal misalignment if memory count changes."
+summary: "Identity-based X-Idempotency-Key for extraction memory writes, mandatory SessionStore, and per-turn last_extracted_turn advance — no duplicate slots on wording-drift retry; residual ordinal misalignment if memory count changes."
 status: "in-progress"
 milestoneId: "3.5.B.3"
 track: "B"
@@ -31,13 +31,15 @@ fullTitle: "Milestone 3.5.B.3 — Incremental Turn Tracking and Idempotency"
 
 Pre-3.5.B.3, `X-Idempotency-Key` was derived from LLM **output** content. Retries with different wording produced different keys and different `content_hash` values, allowing duplicate memories and wasted extraction spend.
 
-This milestone closes that gap with **distributed, input-keyed idempotency** plus ordered pointer updates. Content-hash exact dedup (m3.C.2) remains a complementary backstop, not a substitute.
+This milestone closes that gap with **identity-based HTTP idempotency**, mandatory SessionStore, and **per-turn** pointer advances. Content-hash exact dedup (m3.C.2) remains a complementary backstop, not a substitute.
 
 ---
 
 ## Non-Goals
 
 - Distributed two-phase commit / outbox between worker and memory service
+- Batch write API on services/memory
+- Changes to memory-service dedup algorithms
 - Quality evaluation (3.5.B.4)
 - Operator-dashboard-visible turn-level status tracking (Phase 4)
 - Moving `last_extracted_turn` mutation behind a new memory-service HTTP endpoint
@@ -47,11 +49,12 @@ This milestone closes that gap with **distributed, input-keyed idempotency** plu
 
 ## Design (as implemented)
 
-1. **Batch-position idempotency keys** — `X-Idempotency-Key` derived from `(org_id, session_id, batch_fingerprint, turn_index, ordinal)` where `batch_fingerprint` hashes sorted pending turn indexes + input content digests. Does **not** include LLM output text.
-2. **Memory HTTP retry semantics** — treat `409 IDEMPOTENCY_CONFLICT` and `409 DUPLICATE_CONTENT` as definitive success (first-commit wording wins); replay and 2xx unchanged.
-3. **Ordered pointer update** — `last_extracted_turn` advances only after every write in the batch succeeds; pointer UPDATE failures are retryable via Celery `autoretry_for`.
+1. **Identity-based idempotency keys** — `X-Idempotency-Key = uuid5(ns, sha256(f"{org_id}:{session_id}:{turn_index}:{memory_ordinal}"))`. Does **not** include LLM output text or a batch content fingerprint.
+2. **Memory HTTP retry semantics** — treat `409 IDEMPOTENCY_CONFLICT` and `409 DUPLICATE_CONTENT` as definitive success (first-commit wording wins); `IDEMPOTENCY_IN_PROGRESS` and 5xx remain retryable.
+3. **Mandatory SessionStore** — `extract_session_memories` fails closed without `database_url`.
+4. **Per-turn pointer advance** — after each turn's memories succeed, `UPDATE last_extracted_turn = GREATEST(...)` for that turn index. Mid-batch crashes keep completed turns skipped on retry.
 
-**Residual limitation (documented, not oversold):** crash after all writes succeed but before pointer UPDATE causes **one additional** `provider.extract` call on retry — bounded, not zero LLM cost. Zero-cost retry would require an outbox design (explicitly deferred).
+**Residual limitation (documented):** if a retry returns a different **count** of memories for the same turn, ordinals can misalign. Exact/near-dedup is the backstop. Crash after writes but before that turn's pointer UPDATE may incur one additional `provider.extract` — bounded, not zero LLM cost.
 
 See [ADR-0065](/docs/adr/0065-extraction-batch-idempotency) for full rationale.
 
@@ -59,10 +62,11 @@ See [ADR-0065](/docs/adr/0065-extraction-batch-idempotency) for full rationale.
 
 ## Success signals
 
-- [x] Crash-injection test: exception after all memory writes, before pointer update — retry produces no duplicate memory slots, pointer advances, **exactly one** additional provider call (not zero, not more than one)
-- [x] `extract_session_memories` run twice in immediate succession on the same session → identical final state (pointer unchanged, no extra writes)
-- [x] Regression test: old content-derived keys diverge on LLM wording change; new batch-position keys do not
-- [x] Partial batch failure: mid-batch 5xx → pointer not advanced; full retry safe for already-committed slots
+- [x] Same turn+ordinal, different wording → same `X-Idempotency-Key` (regression vs content-derived keys)
+- [x] Crash mid-batch → pointer only for fully completed turns; retry safe for committed slots
+- [x] `extract_session_memories` run twice in immediate succession → second run noop (pointer unchanged, no extra writes)
+- [x] `409 IDEMPOTENCY_CONFLICT` and `409 DUPLICATE_CONTENT` treated as non-fatal success
+- [x] Missing `database_url` → hard failure (SessionStore mandatory)
 
 ---
 

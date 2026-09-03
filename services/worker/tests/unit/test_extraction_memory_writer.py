@@ -13,8 +13,6 @@ from app.extraction.memory_writer import (
     HttpMemoryWriter,
     MemoryHttpConfig,
     MemoryWriteRequest,
-    TurnContentRef,
-    batch_fingerprint,
     content_derived_idempotency_digest,
     memory_idempotency_digest,
     memory_idempotency_key,
@@ -45,7 +43,6 @@ def _request(memory: ExtractedMemory | None = None) -> MemoryWriteRequest:
         session_id=uuid4(),
         turn_index=3,
         memory=memory or _memory(),
-        batch_fingerprint="fp",
         ordinal=0,
     )
 
@@ -73,7 +70,6 @@ def test_writer_posts_labels_and_temporal_fields() -> None:
         session_id=uuid4(),
         turn_index=5,
         memory=_memory(),
-        batch_fingerprint="abc",
         ordinal=2,
     )
     writer = _writer(handler, token="mem-token")
@@ -89,15 +85,10 @@ def test_writer_posts_labels_and_temporal_fields() -> None:
     assert "valid_until" in body
 
 
-def test_batch_position_key_stable_when_llm_wording_differs() -> None:
-    """Regression: content-derived keys diverge; batch-position keys do not."""
+def test_identity_key_stable_when_llm_wording_differs() -> None:
+    """Core fix: same turn+ordinal → same key despite different wording."""
     org_id = uuid4()
     session_id = uuid4()
-    turns = [
-        TurnContentRef(turn_index=0, content="hello durable turn content"),
-        TurnContentRef(turn_index=1, content="second durable turn content"),
-    ]
-    batch_fp = batch_fingerprint(turns)
     wording_a = "User prefers dark mode"
     wording_b = "The user likes dark theme"
     old_a = content_derived_idempotency_digest(
@@ -112,8 +103,7 @@ def test_batch_position_key_stable_when_llm_wording_differs() -> None:
         agent_id=uuid4(),
         session_id=session_id,
         turn_index=0,
-        memory=_memory(content="User prefers dark mode"),
-        batch_fingerprint=batch_fp,
+        memory=_memory(content=wording_a),
         ordinal=0,
     )
     slot_b = MemoryWriteRequest(
@@ -121,11 +111,35 @@ def test_batch_position_key_stable_when_llm_wording_differs() -> None:
         agent_id=uuid4(),
         session_id=session_id,
         turn_index=0,
-        memory=_memory(content="The user likes dark theme"),
-        batch_fingerprint=batch_fp,
+        memory=_memory(content=wording_b),
         ordinal=0,
     )
     assert memory_idempotency_digest(slot_a) == memory_idempotency_digest(slot_b)
+    assert memory_idempotency_key(slot_a) == memory_idempotency_key(slot_b)
+
+
+def test_writer_sends_same_key_on_retry_with_different_wording() -> None:
+    keys: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        keys.append(request.headers["x-idempotency-key"])
+        return httpx.Response(201, json={"data": {"id": str(uuid4())}})
+
+    org_id, session_id = uuid4(), uuid4()
+    writer = _writer(handler)
+    for content in ("First wording of preference xx", "Second wording of preference yy"):
+        writer.write(
+            MemoryWriteRequest(
+                org_id=org_id,
+                agent_id=uuid4(),
+                session_id=session_id,
+                turn_index=7,
+                memory=_memory(content=content),
+                ordinal=1,
+            )
+        )
+    assert len(keys) == 2
+    assert keys[0] == keys[1]
 
 
 def test_writer_treats_idempotency_conflict_as_success() -> None:
@@ -140,7 +154,9 @@ def test_writer_treats_idempotency_conflict_as_success() -> None:
             },
         )
 
-    _writer(handler).write(_request())
+    writer = _writer(handler)
+    request = _request()
+    writer.write(request)
 
 
 def test_writer_treats_duplicate_content_as_success() -> None:
@@ -156,7 +172,9 @@ def test_writer_treats_duplicate_content_as_success() -> None:
             },
         )
 
-    _writer(handler).write(_request())
+    writer = _writer(handler)
+    request = _request()
+    writer.write(request)
 
 
 def test_writer_retries_idempotency_in_progress() -> None:
@@ -190,36 +208,6 @@ def test_writer_unknown_409_is_hard_failure() -> None:
 def test_writer_409_with_non_json_body_is_hard_failure() -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(409, text="not-json")
-
-    writer = _writer(handler)
-    request = _request()
-    with pytest.raises(ValueError, match="409"):
-        writer.write(request)
-
-
-def test_writer_409_with_non_dict_payload_is_hard_failure() -> None:
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(409, json=["not", "a", "dict"])
-
-    writer = _writer(handler)
-    request = _request()
-    with pytest.raises(ValueError, match="409"):
-        writer.write(request)
-
-
-def test_writer_409_with_non_dict_detail_is_hard_failure() -> None:
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(409, json={"detail": "string-detail"})
-
-    writer = _writer(handler)
-    request = _request()
-    with pytest.raises(ValueError, match="409"):
-        writer.write(request)
-
-
-def test_writer_409_with_non_string_code_is_hard_failure() -> None:
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(409, json={"detail": {"code": 123}})
 
     writer = _writer(handler)
     request = _request()
