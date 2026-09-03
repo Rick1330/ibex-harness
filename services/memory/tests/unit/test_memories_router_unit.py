@@ -99,6 +99,29 @@ def test_create_memory_201(client) -> None:
     assert resp.json()["data"]["content"] == "hello"
 
 
+def test_create_memory_passes_valid_interval_and_token_org(client) -> None:
+    http, mock_orch = client
+    mock_orch.create = AsyncMock(
+        return_value=WriteOutcome(kind=WriteOutcomeKind.CREATED, memory=_memory_row())
+    )
+    with http:
+        resp = http.post(
+            "/v1/memories",
+            headers={"Authorization": f"Bearer {TOKEN}"},
+            json={
+                "agent_id": str(AGENT),
+                "content": "hello",
+                "valid_from": "2026-09-01T00:00:00Z",
+                "valid_until": "2026-09-08T00:00:00Z",
+            },
+        )
+    assert resp.status_code == 201
+    command = mock_orch.create.await_args.args[0]
+    assert command.org_id == ORG
+    assert command.valid_from is not None
+    assert command.valid_until is not None
+
+
 def test_create_memory_202_quarantine(client) -> None:
     http, mock_orch = client
     row = replace(_memory_row(), status="quarantined", pii_detected=True)

@@ -430,6 +430,14 @@ worker unless explicitly aliased in a future milestone.
 | `IBEX_WORKER_BEAT_SCHEDULE_FILE` | No | `/var/lib/ibex/celerybeat/celerybeat-schedule` | Beat persistence path | Writable in container image |
 | `IBEX_WORKER_DATABASE_URL` | Conditional | (none) | Postgres DSN for dead-letter persistence | Alias: `POSTGRES_DSN` |
 | `IBEX_WORKER_METRICS_PORT` | No | `8006` | Prometheus `/metrics` HTTP port | Memory service uses `8005` |
+| `IBEX_WORKER_EXTRACTION_PROVIDER` | No | `openai` | Extraction LLM backend: `openai` or `vllm` | Alias: `EXTRACTION_PROVIDER`. Fail-closed at first extract if required secrets/URL missing |
+| `OPENAI_API_KEY` | Conditional | (none) | Bearer token for hosted OpenAI extraction | Required when provider=`openai`. Alias: `IBEX_WORKER_OPENAI_API_KEY` |
+| `IBEX_WORKER_EXTRACTION_OPENAI_MODEL` | No | `gpt-4o-mini` | OpenAI model id | |
+| `IBEX_WORKER_EXTRACTION_VLLM_MODEL` | No | `Qwen2.5-14B-Instruct` | vLLM served model id | Use `Qwen2.5-7B-Instruct` if 14B VRAM is too large |
+| `IBEX_WORKER_EXTRACTION_BASE_URL` | Conditional | (none) | vLLM OpenAI-compatible base URL | Required when provider=`vllm`. Aliases: `IBEX_WORKER_EXTRACTION_VLLM_BASE_URL`, `EXTRACTION_BASE_URL` |
+| `IBEX_WORKER_MEMORY_BASE_URL` | Conditional | (none) | Memory service origin for `POST /v1/memories` | Alias: `MEMORY_BASE_URL` |
+| `IBEX_WORKER_MEMORY_API_TOKEN` | Conditional | (none) | Bearer token with `memory:write` | Alias: `MEMORY_API_TOKEN` |
+| `CLICKHOUSE_DSN` | No | (none) | HTTP DSN for `ibex.llm_traces` | Empty → skip insert (fail-open) + metric. Alias: `IBEX_WORKER_CLICKHOUSE_DSN` |
 | `POSTGRES_DSN` | Conditional | (none) | Alias for worker dead-letter DSN | Required when dead-letter persistence enabled |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | No | (none) | OTLP gRPC collector endpoint | Same semantics as Go services (ADR-0019) |
 | `OTEL_SAMPLE_RATIO` | No | `0.01` | Trace sampling ratio (0–1) | Worker reads directly (no `IBEX_WORKER_` prefix) |

@@ -2,7 +2,7 @@
 title: "3.5.B.2 Cost-Tiered, Provider-Agnostic Extraction Execution"
 description: "Replace the original hardcoded OpenAI call with an ExtractionProvider ABC and batch-session extraction — reducing cost, enabling local vLLM deployments, and giving the model cross-turn context."
 summary: "Replace the original hardcoded OpenAI call with an ExtractionProvider ABC and batch-session extraction — reducing cost, enabling local vLLM deployments, and giving the model cross-turn context."
-status: "planned"
+status: "implemented"
 milestoneId: "3.5.B.2"
 track: "B"
 trackTitle: "Extraction Pipeline"
@@ -15,7 +15,8 @@ fullTitle: "Milestone 3.5.B.2 — Cost-Tiered, Provider-Agnostic Extraction Exec
 
 # Milestone 3.5.B.2 — Cost-Tiered, Provider-Agnostic Extraction Execution
 
-**Status:** Planned  
+**Status:** Implemented  
+**ADR:** [ADR-0064](/docs/adr/0064-extraction-provider-and-batch-execution)  
 **Goal:** [Track B — Extraction Pipeline](/roadmap/phase-3-5-extraction-assembly/tracks#track-b--extraction-pipeline)  
 **Phase:** 3.5 — Extraction & Context Assembly  
 **Estimated effort:** 3 days  
@@ -23,6 +24,17 @@ fullTitle: "Milestone 3.5.B.2 — Cost-Tiered, Provider-Agnostic Extraction Exec
 **Depends on:** [3.5.B.1](/roadmap/phase-3-5-extraction-assembly/milestones/3.5.b.1-extraction-prompt-v2-structured-output)
 
 ---
+
+<Callout type="note" title="As implemented (ADR-0064)">
+  - **3.5.B.1** is merged (`#680` / `078d837`).
+  - Provider profile env is `IBEX_WORKER_EXTRACTION_PROVIDER` / `EXTRACTION_PROVIDER` (mirror `IBEX_EMBEDDING_PROFILE`, not `EMBEDDER_PROFILE`).
+  - Celery uses `IbexTask` only — **do not** stack `@traced_task` on the task (double spans).
+  - Turns come from the **task payload**, not Postgres checkpoints (hashes only, ADR-0032).
+  - `last_extracted_turn` update is **non-atomic** (crash window until 3.5.B.3).
+  - Optional `valid_from` / `valid_until` on `CreateMemoryRequest`.
+  - Cost math is dated in ADR-0064; **do not cite ADR-0036** (unpublished).
+  - vLLM is **manual verification only** — no GPU CI.
+</Callout>
 
 <Callout type="note" title="Planning baseline">
   This page is a planning sketch, not an implementation script. Named paths, package layouts,
@@ -101,7 +113,7 @@ class VLLMExtractionProvider(ExtractionProvider):
 
 | Deployment mode | Model | Reasoning |
 | --- | --- | --- |
-| **Cloud / default** | `gpt-4o-mini` | Cheapest model with acceptable structured-extraction quality; the original ADR-0036 cost math (~$0.0008/10-turn session) still holds |
+| **Cloud / default** | `gpt-4o-mini` | Cheapest hosted model with acceptable structured-extraction quality; dated cost estimate in [ADR-0064](/docs/adr/0064-extraction-provider-and-batch-execution) (~$0.00042/10-turn at 2026-09-03 public prices) |
 | **Self-hosted / air-gapped** | `Qwen2.5-14B-Instruct` (or `Llama-3.1-8B-Instruct` for smaller GPU budgets) served via vLLM | Both have strong structured-JSON-output reliability at this size class; 14B for quality-sensitive deployments, 8B where GPU memory is the binding constraint. Reject sub-7B models — measurably worse instruction-following for multi-label structured extraction |
 | **Cost/latency-sensitive at scale** | Same model as cloud tier, but batched: accumulate multiple turns per session into a single extraction call | Real cost lever the original plan missed entirely — turn-by-turn extraction wastes ~150–200 tokens of repeated system-prompt overhead per call |
 
@@ -140,7 +152,7 @@ def extract_session_memories(self, session_id: str, org_id: str) -> dict:
  raise self.retry(exc=exc)
 ```
 
-**Provider selection at runtime:** `EXTRACTION_PROVIDER` env var (`openai` | `vllm`), resolved once at worker startup — mirrors the `EMBEDDER_PROFILE` pattern established in Phase 2.5.
+**Provider selection at runtime:** `IBEX_WORKER_EXTRACTION_PROVIDER` / `EXTRACTION_PROVIDER` (`openai` | `vllm`), resolved once at extract time from worker Settings — mirrors `IBEX_EMBEDDING_PROFILE`, not `EMBEDDER_PROFILE`.
 
 ---
 
@@ -148,9 +160,9 @@ def extract_session_memories(self, session_id: str, org_id: str) -> dict:
 
 Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
 
-- [ ] `ExtractionProvider` ABC with both `OpenAIExtractionProvider` and `VLLMExtractionProvider` implementations, unit-tested against a mocked HTTP transport (no real API calls in CI)
-- [ ] Batch extraction call handles sessions with 1, 10, and 50 unprocessed turns correctly, with turn-index mapping verified
-- [ ] Token cost per session logged (input + output tokens, model name) to the same ClickHouse trace table the proxy already writes to
-- [ ] Self-hosted path (`EXTRACTION_PROVIDER=vllm`) integration-tested against a real local vLLM instance running `Qwen2.5-14B-Instruct` in CI (or a documented manual verification step if GPU CI runners aren't available yet — flag this explicitly rather than skipping silently)
+- [x] `ExtractionProvider` ABC with both `OpenAIExtractionProvider` and `VLLMExtractionProvider` implementations, unit-tested against a mocked HTTP transport (no real API calls in CI)
+- [x] Batch extraction call handles sessions with 1, 10, and 50 unprocessed turns correctly, with turn-index mapping verified (`test_batch_sizes_map_turn_indexes` in `services/worker/tests/unit/test_extraction_batch.py`)
+- [x] Token cost per session logged (input + output tokens, model name) to the same ClickHouse trace table the proxy already writes to
+- [x] Self-hosted path (`EXTRACTION_PROVIDER=vllm` / `IBEX_WORKER_EXTRACTION_PROVIDER=vllm`) — **path (a) manual verification**, not silent skip: runbook in `services/worker/README.md` § Manual vLLM verification and ADR-0064; **no live vLLM in CI** (no GPU runner). GPU-backed integration remains deferred until a GPU CI runner exists (do not treat mocked unit tests as the live signal).
 
 ---

@@ -253,6 +253,8 @@ def memory_command_from_request(
         tags=tuple(request.tags),
         pinned=request.pinned,
         metadata=request.metadata,
+        valid_from=request.valid_from,
+        valid_until=request.valid_until,
         labels=resolved,
     )
 

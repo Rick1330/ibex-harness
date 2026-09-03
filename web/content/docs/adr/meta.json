@@ -60,6 +60,8 @@
     "0059-hot-cache-read-path",
     "0060-memory-service-tenant-isolation",
     "0061-retrieval-quality-benchmark-methodology",
-    "0062-worker-task-observability-dead-letter"
+    "0062-worker-task-observability-dead-letter",
+    "0063-extraction-output-schema-v2",
+    "0064-extraction-provider-and-batch-execution"
   ]
 }

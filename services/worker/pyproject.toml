@@ -21,6 +21,7 @@ dependencies = [
   "prometheus-client>=0.20.0",
   "sqlalchemy[asyncio]>=2.0.0",
   "asyncpg>=0.29.0",
+  "httpx>=0.28.1",
 ]
 
 [project.optional-dependencies]
