@@ -6,7 +6,6 @@ fingerprint, turn_index, ordinal) — not LLM output content. See ADR-0065.
 
 from __future__ import annotations
 
-import json
 from collections.abc import Sequence
 from dataclasses import dataclass
 from hashlib import sha256
@@ -204,7 +203,7 @@ def _is_definitive_409_success(response: httpx.Response) -> bool:
 def _detail_code(response: httpx.Response) -> str | None:
     try:
         payload = response.json()
-    except (json.JSONDecodeError, ValueError):
+    except ValueError:
         return None
     if not isinstance(payload, dict):
         return None

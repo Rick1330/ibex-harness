@@ -76,7 +76,7 @@ class PostgresSessionStore:
                 text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
                     """
                     UPDATE ibex_core.sessions
-                    SET last_extracted_turn = :turn
+                    SET last_extracted_turn = GREATEST(last_extracted_turn, :turn)
                     WHERE id = :session_id AND org_id = :org_id
                     """
                 ),

@@ -182,16 +182,60 @@ def test_writer_retries_idempotency_in_progress() -> None:
             },
         )
 
+    writer = _writer(handler)
+    request = _request()
     with pytest.raises(ExtractionTransportError, match="IDEMPOTENCY_IN_PROGRESS"):
-        _writer(handler).write(_request())
+        writer.write(request)
 
 
 def test_writer_unknown_409_is_hard_failure() -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(409, json={"detail": {"code": "OTHER", "message": "nope"}})
 
+    writer = _writer(handler)
+    request = _request()
     with pytest.raises(ValueError, match="409"):
-        _writer(handler).write(_request())
+        writer.write(request)
+
+
+def test_writer_409_with_non_json_body_is_hard_failure() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(409, text="not-json")
+
+    writer = _writer(handler)
+    request = _request()
+    with pytest.raises(ValueError, match="409"):
+        writer.write(request)
+
+
+def test_writer_409_with_non_dict_payload_is_hard_failure() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(409, json=["not", "a", "dict"])
+
+    writer = _writer(handler)
+    request = _request()
+    with pytest.raises(ValueError, match="409"):
+        writer.write(request)
+
+
+def test_writer_409_with_non_dict_detail_is_hard_failure() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(409, json={"detail": "string-detail"})
+
+    writer = _writer(handler)
+    request = _request()
+    with pytest.raises(ValueError, match="409"):
+        writer.write(request)
+
+
+def test_writer_409_with_non_string_code_is_hard_failure() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(409, json={"detail": {"code": 123}})
+
+    writer = _writer(handler)
+    request = _request()
+    with pytest.raises(ValueError, match="409"):
+        writer.write(request)
 
 
 def test_writer_rejects_empty_base_url() -> None:

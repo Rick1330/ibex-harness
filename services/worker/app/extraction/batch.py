@@ -197,7 +197,7 @@ def _update_pointer_after_writes(job: BatchJob, max_turn: int) -> None:
         return
     try:
         job.session_store.update_last_extracted_turn(job.org_id, job.session_id, max_turn)
-    except (SQLAlchemyError, OSError, TimeoutError) as exc:
+    except (SQLAlchemyError, OSError) as exc:
         raise ExtractionTransportError("session pointer update failed") from exc
 
 

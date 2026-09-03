@@ -149,10 +149,15 @@ class _SessionStore:
         if self._fail_updates > 0:
             self._fail_updates -= 1
             raise OSError("simulated crash before pointer commit")
-        self.updated = last_extracted_turn
+        current = self.updated
+        if current is None and self.snapshot is not None:
+            current = self.snapshot.last_extracted_turn
+        elif current is None:
+            current = -1
+        self.updated = max(last_extracted_turn, current)
         if self.snapshot is not None:
             self.snapshot = SessionSnapshot(
-                last_extracted_turn=last_extracted_turn,
+                last_extracted_turn=self.updated,
                 status=self.snapshot.status,
                 deleted_at=self.snapshot.deleted_at,
             )
@@ -724,9 +729,8 @@ def test_pointer_update_oserror_maps_to_transport_error() -> None:
         SessionSnapshot(last_extracted_turn=-1, status="completed", deleted_at=None),
         fail_updates=1,
     )
+    job = _job(_JobParts(turns=_turns(1), session_store=store))
     with pytest.raises(ExtractionTransportError, match="session pointer update failed"):
-        run_batch_extraction(
-            _job(_JobParts(turns=_turns(1), session_store=store))
-        )
+        run_batch_extraction(job)
     assert store.updated is None
     assert store.update_attempts == 1
