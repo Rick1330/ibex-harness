@@ -1,0 +1,85 @@
+---
+title: "ADR-0065: Extraction batch idempotency and turn pointer ordering"
+description: "Architecture decision record 0065 — input-keyed X-Idempotency-Key for batch extraction writes, ordered last_extracted_turn update, and explicit crash-window limits."
+adrId: "0065"
+status: "Accepted"
+date: "2026-09-03"
+authors: "IBEX Harness team"
+---
+
+# ADR-0065: Extraction batch idempotency and turn pointer ordering
+
+- **Status:** Accepted
+- **Date:** 2026-09-03
+- **Authors:** IBEX Harness team
+- **Milestone:** [3.5.B.3 Incremental turn tracking and idempotency](/roadmap/phase-3-5-extraction-assembly/milestones/3.5.b.3-incremental-turn-tracking-idempotency)
+- **Depends on:** [ADR-0064](/docs/adr/0064-extraction-provider-and-batch-execution), [ADR-0035](/docs/adr/0035-chat-idempotency-key), [ADR-0055](/docs/adr/0055-memory-write-path-dedup)
+
+## Context
+
+3.5.B.2 ships batch session-close extraction: the worker calls an LLM, then writes memories over HTTP to `POST /v1/memories` (services/memory), then optionally updates `ibex_core.sessions.last_extracted_turn` via a separate worker Postgres connection ([ADR-0064](/docs/adr/0064-extraction-provider-and-batch-execution)).
+
+The milestone planning sketch proposed wrapping memory writes and pointer update in one worker-local `async with db.transaction()` block. That is **architecturally impossible**: memory rows commit inside services/memory after a separate HTTP request completes; a worker Postgres transaction cannot roll back rows another process already committed.
+
+Pre-3.5.B.3, the worker derived `X-Idempotency-Key` from LLM **output** content (`org:session:turn_index:memory.content`). Retries after partial failure with non-deterministic LLM wording produced **different** keys and **different** `content_hash` values — defeating both the HTTP idempotency layer and exact dedup (migration `000018`).
+
+Memory-service idempotency ([ADR-0035](/docs/adr/0035-chat-idempotency-key), `memory_write_support.py`) fingerprints `POST|/v1/memories|{body}`. Same key + different body → `409 IDEMPOTENCY_CONFLICT`, not replay. Input-keyed keys alone are insufficient unless the worker treats that conflict (and `DUPLICATE_CONTENT`) as definitive success so first-commit wording wins.
+
+## Decision
+
+### 1) Batch-position idempotency keys (input side)
+
+Derive `X-Idempotency-Key` from batch **input identity**, not LLM output content:
+
+```text
+batch_fingerprint(pending) =
+  sha256("|".join(
+    f"{turn_index}:{sha256(content).hexdigest()}"
+    for turn in sorted(pending, key=turn_index)
+  )).hexdigest()
+
+digest = sha256(
+  f"{org_id}:{session_id}:{batch_fingerprint}:{turn_index}:{ordinal}"
+).hexdigest()
+
+X-Idempotency-Key = str(uuid5(NAMESPACE_DNS, digest))
+```
+
+- `ordinal` = 0-based index within that turn's `memories[]` in the provider result.
+- `batch_fingerprint` binds the key to the exact pending turn set (indexes + input content digests).
+
+Implementation: `services/worker/app/extraction/memory_writer.py` (`batch_fingerprint`, `memory_idempotency_key`).
+
+### 2) Memory HTTP success semantics on retry
+
+| Response | Worker behavior |
+| --- | --- |
+| 2xx (incl. `X-Idempotency-Replayed: true`) | success |
+| 409 `IDEMPOTENCY_CONFLICT` | success (first wording wins) |
+| 409 `DUPLICATE_CONTENT` | success (exact-hash backstop, ADR-0055) |
+| 409 `IDEMPOTENCY_IN_PROGRESS` | retryable (`ExtractionTransportError`) |
+| 408/429/5xx | retryable (`ExtractionTransportError`) |
+| other 4xx | hard failure |
+
+### 3) Ordered pointer update (still not cross-service atomic)
+
+Keep optional worker-side `UPDATE ibex_core.sessions SET last_extracted_turn = …` after **all** memory writes return definitive success ([ADR-0064](/docs/adr/0064-extraction-provider-and-batch-execution) SessionStore-optional stance unchanged).
+
+- Pointer update failures (`SQLAlchemyError`, `OSError`, `TimeoutError`) map to `ExtractionTransportError` so Celery `autoretry_for` retries the task.
+- Retries are safe via (1) and (2): no duplicate memory slots for the same batch position.
+
+**Explicit residual limitation:** if the process crashes after all writes succeed but before the pointer UPDATE, the retry performs **one additional** `provider.extract` call. This is bounded (not unbounded duplicate spend) but **not zero** LLM cost. Zero-cost retry would require a distributed outbox / two-phase design — explicitly out of scope for this milestone.
+
+### 4) Non-goals
+
+- No distributed two-phase commit or outbox between worker and memory service.
+- No new memory-service HTTP endpoint for pointer mutation.
+- No change to worker→memory PAT auth (static Bearer `memory:write`).
+- Content-hash exact dedup remains a complementary backstop, not a substitute for batch-position keys.
+
+## Consequences
+
+- Retries of the same pending batch collide on idempotency keys regardless of LLM wording drift.
+- First-commit memory wording wins when retry wording differs (`IDEMPOTENCY_CONFLICT` treated as success).
+- Operators must understand the one-extra-LLM-call crash window; milestone and ADR-0064 deferral text is updated accordingly.
+- Idempotency records expire after 24h (memory Redis TTL); keys older than TTL behave as new writes — same as all `POST /v1/memories` idempotency.

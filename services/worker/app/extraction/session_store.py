@@ -1,4 +1,8 @@
-"""Optional org-scoped session lookup for last_extracted_turn (non-atomic)."""
+"""Optional org-scoped session lookup for last_extracted_turn.
+
+Ordered after HTTP memory writes (not a shared cross-service transaction).
+Idempotency and crash-window semantics: ADR-0065.
+"""
 
 from __future__ import annotations
 

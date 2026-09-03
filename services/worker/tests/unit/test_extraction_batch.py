@@ -35,9 +35,11 @@ class _FakeProvider:
         *,
         override_indexes: list[int] | None = None,
         raw_json: str | None = None,
+        wording_suffixes: list[str] | None = None,
     ) -> None:
         self.override_indexes = override_indexes
         self.raw_json = raw_json
+        self.wording_suffixes = wording_suffixes or [""]
         self.last_user = ""
         self.calls = 0
 
@@ -59,12 +61,16 @@ class _FakeProvider:
             indexes = self.override_indexes
             if indexes is None:
                 indexes = [int(m) for m in re.findall(r'index="(\d+)"', user_content)]
+            suffix_idx = min(self.calls - 1, len(self.wording_suffixes) - 1)
+            suffix = self.wording_suffixes[suffix_idx]
             turns = [
                 {
                     "turn_index": i,
                     "memories": [
                         {
-                            "content": f"Durable preference recorded from turn {i:02d}",
+                            "content": (
+                                f"Durable preference recorded from turn {i:02d}{suffix}"
+                            ),
                             "categories": [{"label": "preference", "confidence": 0.9}],
                             "confidence": 0.91,
                         }
@@ -85,23 +91,71 @@ class _FakeProvider:
 class _RecordingWriter:
     def __init__(self) -> None:
         self.writes: list[tuple[int, str]] = []
+        self.requests: list[MemoryWriteRequest] = []
 
     def write(self, request: MemoryWriteRequest) -> None:
+        self.requests.append(request)
         self.writes.append((request.turn_index, request.memory.content))
 
 
+class _IdempotentSlotWriter:
+    """Simulates memory Redis: first body per batch-position key wins."""
+
+    def __init__(self, *, fail_on_nth: int | None = None) -> None:
+        self.fail_on_nth = fail_on_nth
+        self.attempt = 0
+        self.slots: dict[tuple[str, int, int], str] = {}
+        self.write_attempts: list[tuple[int, int, str]] = []
+
+    def write(self, request: MemoryWriteRequest) -> None:
+        self.attempt += 1
+        if self.fail_on_nth is not None and self.attempt == self.fail_on_nth:
+            raise ExtractionTransportError("memory service HTTP 503")
+        key = (request.batch_fingerprint, request.turn_index, request.ordinal)
+        self.write_attempts.append(
+            (request.turn_index, request.ordinal, request.memory.content)
+        )
+        if key not in self.slots:
+            self.slots[key] = request.memory.content
+            return
+        # IDEMPOTENCY_CONFLICT / replay — first wording wins
+
+
 class _SessionStore:
-    def __init__(self, snapshot: SessionSnapshot | None) -> None:
+    def __init__(
+        self,
+        snapshot: SessionSnapshot | None,
+        *,
+        fail_updates: int = 0,
+    ) -> None:
         self.snapshot = snapshot
         self.updated: int | None = None
+        self._fail_updates = fail_updates
+        self.update_attempts = 0
 
     def load(self, org_id, session_id) -> SessionSnapshot | None:
         del org_id, session_id
+        if self.updated is not None and self.snapshot is not None:
+            return SessionSnapshot(
+                last_extracted_turn=self.updated,
+                status=self.snapshot.status,
+                deleted_at=self.snapshot.deleted_at,
+            )
         return self.snapshot
 
     def update_last_extracted_turn(self, org_id, session_id, last_extracted_turn: int) -> None:
         del org_id, session_id
+        self.update_attempts += 1
+        if self._fail_updates > 0:
+            self._fail_updates -= 1
+            raise OSError("simulated crash before pointer commit")
         self.updated = last_extracted_turn
+        if self.snapshot is not None:
+            self.snapshot = SessionSnapshot(
+                last_extracted_turn=last_extracted_turn,
+                status=self.snapshot.status,
+                deleted_at=self.snapshot.deleted_at,
+            )
 
 
 def _turns(n: int) -> list[TurnPayload]:
@@ -115,7 +169,7 @@ def _turns(n: int) -> list[TurnPayload]:
 class _JobParts:
     turns: list[TurnPayload] | None = None
     provider: object | None = None
-    writer: _RecordingWriter | None = None
+    writer: object | None = None
     session_store: object | None = None
     clickhouse_dsn: str | None = None
 
@@ -128,7 +182,7 @@ def _job(parts: _JobParts | None = None) -> BatchJob:
         session_id=uuid4(),
         turns=cfg.turns if cfg.turns is not None else _turns(1),
         provider=cfg.provider or _FakeProvider(),  # type: ignore[arg-type]
-        memory_writer=cfg.writer or _RecordingWriter(),
+        memory_writer=cfg.writer or _RecordingWriter(),  # type: ignore[arg-type]
         clickhouse_dsn=cfg.clickhouse_dsn,
         session_store=cfg.session_store,  # type: ignore[arg-type]
     )
@@ -574,3 +628,105 @@ def test_extracted_memory_confidence_is_forwarded() -> None:
         }
     )
     assert mem.confidence == 0.4
+
+
+def test_crash_after_writes_before_pointer_retry_is_idempotent() -> None:
+    """3.5.B.3: crash window → one extra LLM call, no duplicate memory slots."""
+    provider = _FakeProvider(wording_suffixes=[" wording-a", " wording-b"])
+    writer = _IdempotentSlotWriter()
+    store = _SessionStore(
+        SessionSnapshot(last_extracted_turn=-1, status="completed", deleted_at=None),
+        fail_updates=1,
+    )
+    turns = _turns(3)
+    job = _job(
+        _JobParts(turns=turns, provider=provider, writer=writer, session_store=store)
+    )
+    with pytest.raises(ExtractionTransportError, match="session pointer update failed"):
+        run_batch_extraction(job)
+    assert provider.calls == 1
+    assert store.updated is None
+    assert len(writer.slots) == 3
+    first_slots = dict(writer.slots)
+
+    result = run_batch_extraction(job)
+    assert result.skipped is None
+    assert provider.calls == 2  # exactly one additional extraction call
+    assert store.updated == 2
+    assert writer.slots == first_slots  # first wording wins; no new slots
+    assert all(content.endswith("wording-a") for content in writer.slots.values())
+
+
+def test_extract_twice_in_succession_identical_state() -> None:
+    provider = _FakeProvider()
+    writer = _IdempotentSlotWriter()
+    store = _SessionStore(
+        SessionSnapshot(last_extracted_turn=-1, status="completed", deleted_at=None)
+    )
+    turns = _turns(2)
+    job = _job(
+        _JobParts(turns=turns, provider=provider, writer=writer, session_store=store)
+    )
+    first = run_batch_extraction(job)
+    slots_after_first = dict(writer.slots)
+    pointer_after_first = store.updated
+    second = run_batch_extraction(job)
+    assert first.memories_written == 2
+    assert second.skipped == "no_unprocessed_turns"
+    assert second.memories_written == 0
+    assert provider.calls == 1
+    assert writer.slots == slots_after_first
+    assert store.updated == pointer_after_first == 1
+
+
+def test_partial_batch_write_failure_does_not_advance_pointer() -> None:
+    provider = _FakeProvider()
+    writer = _IdempotentSlotWriter(fail_on_nth=3)
+    store = _SessionStore(
+        SessionSnapshot(last_extracted_turn=-1, status="completed", deleted_at=None)
+    )
+    turns = _turns(5)
+    job = _job(
+        _JobParts(turns=turns, provider=provider, writer=writer, session_store=store)
+    )
+    with pytest.raises(ExtractionTransportError, match="503"):
+        run_batch_extraction(job)
+    assert store.updated is None
+    assert store.update_attempts == 0
+    assert len(writer.slots) == 2  # first two succeeded before failure
+
+    writer.fail_on_nth = None
+    result = run_batch_extraction(job)
+    assert result.memories_written == 5
+    assert provider.calls == 2
+    assert store.updated == 4
+    assert len(writer.slots) == 5
+    # Full retry re-sends all five attempts; slots 0–1 keep first wording
+    assert len(writer.write_attempts) == 2 + 5
+    assert all(
+        writer.slots[(fp, turn, 0)].endswith(f"turn {turn:02d}")
+        for fp, turn, _ord in writer.slots
+    )
+
+
+def test_writes_include_batch_fingerprint_and_ordinal() -> None:
+    writer = _RecordingWriter()
+    run_batch_extraction(_job(_JobParts(turns=_turns(2), writer=writer)))
+    assert len(writer.requests) == 2
+    fingerprints = {req.batch_fingerprint for req in writer.requests}
+    assert len(fingerprints) == 1
+    assert all(req.ordinal == 0 for req in writer.requests)
+    assert {req.turn_index for req in writer.requests} == {0, 1}
+
+
+def test_pointer_update_oserror_maps_to_transport_error() -> None:
+    store = _SessionStore(
+        SessionSnapshot(last_extracted_turn=-1, status="completed", deleted_at=None),
+        fail_updates=1,
+    )
+    with pytest.raises(ExtractionTransportError, match="session pointer update failed"):
+        run_batch_extraction(
+            _job(_JobParts(turns=_turns(1), session_store=store))
+        )
+    assert store.updated is None
+    assert store.update_attempts == 1

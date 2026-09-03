@@ -1,4 +1,8 @@
-"""Session-close batch extraction orchestration (provider + memory + traces)."""
+"""Session-close batch extraction orchestration (provider + memory + traces).
+
+Pointer update is ordered after definitive memory writes but not in a shared
+cross-service transaction (ADR-0065). Idempotency is batch-position keyed.
+"""
 
 from __future__ import annotations
 
@@ -10,11 +14,17 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.extraction.clickhouse_traces import ExtractionTraceRow, insert_extraction_trace
-from app.extraction.memory_writer import MemoryWriter, MemoryWriteRequest
+from app.extraction.memory_writer import (
+    MemoryWriter,
+    MemoryWriteRequest,
+    TurnContentRef,
+    batch_fingerprint,
+)
 from app.extraction.prompt_v2 import EXTRACTION_SYSTEM_PROMPT_BATCH
-from app.extraction.provider import ExtractionCall, ExtractionProvider
+from app.extraction.provider import ExtractionCall, ExtractionProvider, ExtractionTransportError
 from app.extraction.schema import BatchExtractionResult
 from app.extraction.session_store import SessionStore
 
@@ -129,8 +139,7 @@ def run_batch_extraction(job: BatchJob) -> BatchRunResult:
         raise
     _log_trace(job, call, (started, completed), (True, ""))
     max_turn = max(item.turn_index for item in pending)
-    if job.session_store is not None:
-        job.session_store.update_last_extracted_turn(job.org_id, job.session_id, max_turn)
+    _update_pointer_after_writes(job, max_turn)
     return BatchRunResult(written, len(pending))
 
 
@@ -139,7 +148,7 @@ def _persist_parsed(
 ) -> int:
     batch = parse_batch_result(call.raw_json)
     require_exact_turn_indexes(pending, batch)
-    return _write_memories(job, batch)
+    return _write_memories(job, pending, batch)
 
 
 def _filter_pending(job: BatchJob) -> list[TurnPayload] | BatchRunResult:
@@ -158,10 +167,15 @@ def _filter_pending(job: BatchJob) -> list[TurnPayload] | BatchRunResult:
     return pending
 
 
-def _write_memories(job: BatchJob, batch: BatchExtractionResult) -> int:
+def _write_memories(
+    job: BatchJob, pending: list[TurnPayload], batch: BatchExtractionResult
+) -> int:
+    fingerprint = batch_fingerprint(
+        [TurnContentRef(turn_index=t.turn_index, content=t.content) for t in pending]
+    )
     count = 0
     for turn in batch.turns:
-        for memory in turn.memories:
+        for ordinal, memory in enumerate(turn.memories):
             job.memory_writer.write(
                 MemoryWriteRequest(
                     org_id=job.org_id,
@@ -169,10 +183,22 @@ def _write_memories(job: BatchJob, batch: BatchExtractionResult) -> int:
                     session_id=job.session_id,
                     turn_index=turn.turn_index,
                     memory=memory,
+                    batch_fingerprint=fingerprint,
+                    ordinal=ordinal,
                 )
             )
             count += 1
     return count
+
+
+def _update_pointer_after_writes(job: BatchJob, max_turn: int) -> None:
+    """Advance last_extracted_turn only after all writes succeeded (ADR-0065)."""
+    if job.session_store is None:
+        return
+    try:
+        job.session_store.update_last_extracted_turn(job.org_id, job.session_id, max_turn)
+    except (SQLAlchemyError, OSError, TimeoutError) as exc:
+        raise ExtractionTransportError("session pointer update failed") from exc
 
 
 def _log_trace(

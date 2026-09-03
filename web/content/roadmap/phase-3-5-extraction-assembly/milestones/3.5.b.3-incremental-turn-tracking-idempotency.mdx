@@ -1,8 +1,8 @@
 ---
 title: "3.5.B.3 Incremental Turn Tracking and Idempotency"
-description: "Ensure last_extracted_turn is updated atomically with memory writes in the same DB transaction, preventing duplicate LLM spend on retry without requiring duplicate-memory guards alone."
-summary: "Ensure last_extracted_turn is updated atomically with memory writes in the same DB transaction, preventing duplicate LLM spend on retry without requiring duplicate-memory guards alone."
-status: "planned"
+description: "Input-keyed batch idempotency for extraction memory writes and ordered last_extracted_turn updates — no duplicate memories on retry; bounded (not zero) extra LLM cost on the pointer crash window."
+summary: "Input-keyed batch idempotency for extraction memory writes and ordered last_extracted_turn updates — no duplicate memories on retry; bounded (not zero) extra LLM cost on the pointer crash window."
+status: "in-progress"
 milestoneId: "3.5.B.3"
 track: "B"
 trackTitle: "Extraction Pipeline"
@@ -15,93 +15,57 @@ fullTitle: "Milestone 3.5.B.3 — Incremental Turn Tracking and Idempotency"
 
 # Milestone 3.5.B.3 — Incremental Turn Tracking and Idempotency
 
-**Status:** Planned  
+**Status:** In progress  
 **Goal:** [Track B — Extraction Pipeline](/roadmap/phase-3-5-extraction-assembly/tracks#track-b--extraction-pipeline)  
 **Phase:** 3.5 — Extraction & Context Assembly  
 **Estimated effort:** 2 days  
 **Track:** [Track B — Extraction Pipeline](/roadmap/phase-3-5-extraction-assembly/tracks#track-b--extraction-pipeline)  
-**Depends on:** [3.5.B.2](/roadmap/phase-3-5-extraction-assembly/milestones/3.5.b.2-cost-tiered-extraction-execution)
+**Depends on:** [3.5.B.2](/roadmap/phase-3-5-extraction-assembly/milestones/3.5.b.2-cost-tiered-extraction-execution)  
+**ADR:** [ADR-0065](/docs/adr/0065-extraction-batch-idempotency)
 
 ---
 
-<Callout type="note" title="Planning baseline">
-  This page is a planning sketch, not an implementation script. Named paths, package layouts,
-  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
-  that are expected to change once the live code, constraints, and research during implementation
-  make a better shape clear. Prefer outcomes over matching any particular file tree.
-</Callout>
-
 ## Why This Milestone Exists
 
-The original idempotency design (content_hash dedup at the DB layer handles double-processing) is still correct, but needs one addition given the batch-extraction redesign in 3.5.B.2: **`last_extracted_turn` should be updated atomically with the batch's memory writes, in the same DB transaction**, not as a separate step after — otherwise a crash between "memories written" and "pointer updated" causes duplicate extraction on retry.
+3.5.B.2 writes extracted memories over HTTP to services/memory and updates `last_extracted_turn` in a **separate** worker Postgres UPDATE afterward. A worker-local Postgres transaction **cannot** roll back memory rows another service already committed — the original “single `async with db.transaction()`” sketch is architecturally impossible.
 
-Content-hash dedup prevents *duplicate memories*, but not *wasted re-extraction cost* — more important once extraction is a single batched paid LLM call instead of many small ones.
+Pre-3.5.B.3, `X-Idempotency-Key` was derived from LLM **output** content. Retries with different wording produced different keys and different `content_hash` values, allowing duplicate memories and wasted extraction spend.
+
+This milestone closes that gap with **distributed, input-keyed idempotency** plus ordered pointer updates. Content-hash exact dedup (m3.C.2) remains a complementary backstop, not a substitute.
 
 ---
 
 ## Non-Goals
 
+- Distributed two-phase commit / outbox between worker and memory service
 - Quality evaluation (3.5.B.4)
-- Providing explicit turn-level status tracking visible in the operator dashboard (Phase 4)
+- Operator-dashboard-visible turn-level status tracking (Phase 4)
+- Moving `last_extracted_turn` mutation behind a new memory-service HTTP endpoint
+- Changing worker→memory PAT auth
 
 ---
 
-## Orientation (indicative)
+## Design (as implemented)
 
-Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
-**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+1. **Batch-position idempotency keys** — `X-Idempotency-Key` derived from `(org_id, session_id, batch_fingerprint, turn_index, ordinal)` where `batch_fingerprint` hashes sorted pending turn indexes + input content digests. Does **not** include LLM output text.
+2. **Memory HTTP retry semantics** — treat `409 IDEMPOTENCY_CONFLICT` and `409 DUPLICATE_CONTENT` as definitive success (first-commit wording wins); replay and 2xx unchanged.
+3. **Ordered pointer update** — `last_extracted_turn` advances only after every write in the batch succeeds; pointer UPDATE failures are retryable via Celery `autoretry_for`.
 
-During implementation, expect to:
+**Residual limitation (documented, not oversold):** crash after all writes succeed but before pointer UPDATE causes **one additional** `provider.extract` call on retry — bounded, not zero LLM cost. Zero-cost retry would require an outbox design (explicitly deferred).
 
-- open the live tree and follow existing patterns before inventing new ones
-- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
-- advance the design beyond the sketch where measurement or code reality says so
-- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
-
-Prefer outcomes over matching any particular file tree or command sequence.
-
-**Areas that may be involved** (situational — not a checklist):
-
-- Extraction pipeline
-- Workers / task runtime
-
-## Suggested naming (provisional)
-
-Rename freely to match the change that actually lands.
-
-- Branch: `feature/m3-5-b3-turn-tracking-idempotency`
-- PR title: `feat(worker): atomic turn-pointer update + idempotency for batch extraction (m3.5.B.3)`
-
-## Design
-
-```python
-async def _run_batch_extraction(session_id: UUID, org_id: UUID) -> dict:
- async with db.transaction():
- turns = await load_unprocessed_turns(session_id)
- if not turns:
- return {"status": "noop", "extracted": 0}
- result = await extraction_provider.extract_batch(turns)
- for turn_result in result.turns:
- for mem in turn_result.memories:
- await write_pipeline.write(org_id=org_id, session_id=session_id, memory=mem)
- await update_last_extracted_turn(session_id, max(t.turn_index for t in turns))
- return {"status": "ok", "extracted": sum(len(t.memories) for t in result.turns)}
-```
-
-The critical invariant: `update_last_extracted_turn` is called inside the same `async with db.transaction()` block as the memory writes. If the process crashes after writes but before the pointer update, Postgres rolls back the entire transaction — the retry starts clean with zero wasted LLM cost beyond the single retry.
+See [ADR-0065](/docs/adr/0065-extraction-batch-idempotency) for full rationale.
 
 ---
 
 ## Success signals
 
-Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
-
-- [ ] Crash-injection test: kill the process between memory write and pointer update (simulate via forced exception after write, before pointer update) — verify the transaction rolls back fully, and retry re-processes correctly with no duplicate memories AND no double LLM spend beyond the single retry
-- [ ] `extract_session_memories` run twice in immediate succession on the same session produces identical DB state (idempotency test)
+- [x] Crash-injection test: exception after all memory writes, before pointer update — retry produces no duplicate memory slots, pointer advances, **exactly one** additional provider call (not zero, not more than one)
+- [x] `extract_session_memories` run twice in immediate succession on the same session → identical final state (pointer unchanged, no extra writes)
+- [x] Regression test: old content-derived keys diverge on LLM wording change; new batch-position keys do not
+- [x] Partial batch failure: mid-batch 5xx → pointer not advanced; full retry safe for already-committed slots
 
 ---
 
 ## Prerequisites
 
 - [3.5.B.2 Cost-tiered extraction execution](/roadmap/phase-3-5-extraction-assembly/milestones/3.5.b.2-cost-tiered-extraction-execution)
-
