@@ -27,6 +27,7 @@ from app.extraction.schema import BatchExtractionResult, ExtractedMemory
 from app.extraction.session_store import SessionSnapshot
 from app.task_names import TASK_EXTRACT_SESSION_MEMORIES
 from app.tasks.extraction import extract_session_memories
+from tests.unit.extraction_fakes import FakeSessionStore, IdempotentSlotWriter
 
 
 class _FakeProvider:
@@ -98,71 +99,6 @@ class _RecordingWriter:
         self.writes.append((request.turn_index, request.memory.content))
 
 
-class _IdempotentSlotWriter:
-    """Simulates memory Redis: first body per batch-position key wins."""
-
-    def __init__(self, *, fail_on_nth: int | None = None) -> None:
-        self.fail_on_nth = fail_on_nth
-        self.attempt = 0
-        self.slots: dict[tuple[str, int, int], str] = {}
-        self.write_attempts: list[tuple[int, int, str]] = []
-
-    def write(self, request: MemoryWriteRequest) -> None:
-        self.attempt += 1
-        if self.fail_on_nth is not None and self.attempt == self.fail_on_nth:
-            raise ExtractionTransportError("memory service HTTP 503")
-        key = (request.batch_fingerprint, request.turn_index, request.ordinal)
-        self.write_attempts.append(
-            (request.turn_index, request.ordinal, request.memory.content)
-        )
-        if key not in self.slots:
-            self.slots[key] = request.memory.content
-            return
-        # IDEMPOTENCY_CONFLICT / replay — first wording wins
-
-
-class _SessionStore:
-    def __init__(
-        self,
-        snapshot: SessionSnapshot | None,
-        *,
-        fail_updates: int = 0,
-    ) -> None:
-        self.snapshot = snapshot
-        self.updated: int | None = None
-        self._fail_updates = fail_updates
-        self.update_attempts = 0
-
-    def load(self, org_id, session_id) -> SessionSnapshot | None:
-        del org_id, session_id
-        if self.updated is not None and self.snapshot is not None:
-            return SessionSnapshot(
-                last_extracted_turn=self.updated,
-                status=self.snapshot.status,
-                deleted_at=self.snapshot.deleted_at,
-            )
-        return self.snapshot
-
-    def update_last_extracted_turn(self, org_id, session_id, last_extracted_turn: int) -> None:
-        del org_id, session_id
-        self.update_attempts += 1
-        if self._fail_updates > 0:
-            self._fail_updates -= 1
-            raise OSError("simulated crash before pointer commit")
-        current = self.updated
-        if current is None and self.snapshot is not None:
-            current = self.snapshot.last_extracted_turn
-        elif current is None:
-            current = -1
-        self.updated = max(last_extracted_turn, current)
-        if self.snapshot is not None:
-            self.snapshot = SessionSnapshot(
-                last_extracted_turn=self.updated,
-                status=self.snapshot.status,
-                deleted_at=self.snapshot.deleted_at,
-            )
-
-
 def _turns(n: int) -> list[TurnPayload]:
     return [
         TurnPayload(turn_index=i, role="user", content=f"turn body {i} durable")
@@ -213,7 +149,7 @@ def test_batch_sizes_map_turn_indexes(size: int) -> None:
 def test_skips_turns_at_or_below_last_extracted_turn() -> None:
     provider = _FakeProvider()
     writer = _RecordingWriter()
-    store = _SessionStore(
+    store = FakeSessionStore(
         SessionSnapshot(last_extracted_turn=7, status="completed", deleted_at=None)
     )
     turns = [
@@ -232,7 +168,7 @@ def test_skips_turns_at_or_below_last_extracted_turn() -> None:
 
 def test_incomplete_session_skipped_without_provider_or_writer() -> None:
     _assert_skipped_without_side_effects(
-        store=_SessionStore(
+        store=FakeSessionStore(
             SessionSnapshot(last_extracted_turn=0, status="active", deleted_at=None)
         ),
         expected="session_not_ready",
@@ -241,7 +177,7 @@ def test_incomplete_session_skipped_without_provider_or_writer() -> None:
 
 def test_session_not_found_skips_without_provider() -> None:
     _assert_skipped_without_side_effects(
-        store=_SessionStore(None),
+        store=FakeSessionStore(None),
         expected="session_not_found",
     )
 
@@ -253,7 +189,7 @@ def test_empty_turns_without_store_skips() -> None:
 
 def test_all_turns_already_extracted_skips() -> None:
     _assert_skipped_without_side_effects(
-        store=_SessionStore(
+        store=FakeSessionStore(
             SessionSnapshot(last_extracted_turn=9, status="completed", deleted_at=None)
         ),
         turns=_turns(3),
@@ -263,7 +199,7 @@ def test_all_turns_already_extracted_skips() -> None:
 
 def _assert_skipped_without_side_effects(
     *,
-    store: _SessionStore,
+    store: FakeSessionStore,
     expected: str,
     turns: list[TurnPayload] | None = None,
 ) -> None:
@@ -638,8 +574,8 @@ def test_extracted_memory_confidence_is_forwarded() -> None:
 def test_crash_after_writes_before_pointer_retry_is_idempotent() -> None:
     """3.5.B.3: crash window → one extra LLM call, no duplicate memory slots."""
     provider = _FakeProvider(wording_suffixes=[" wording-a", " wording-b"])
-    writer = _IdempotentSlotWriter()
-    store = _SessionStore(
+    writer = IdempotentSlotWriter()
+    store = FakeSessionStore(
         SessionSnapshot(last_extracted_turn=-1, status="completed", deleted_at=None),
         fail_updates=1,
     )
@@ -664,8 +600,8 @@ def test_crash_after_writes_before_pointer_retry_is_idempotent() -> None:
 
 def test_extract_twice_in_succession_identical_state() -> None:
     provider = _FakeProvider()
-    writer = _IdempotentSlotWriter()
-    store = _SessionStore(
+    writer = IdempotentSlotWriter()
+    store = FakeSessionStore(
         SessionSnapshot(last_extracted_turn=-1, status="completed", deleted_at=None)
     )
     turns = _turns(2)
@@ -686,8 +622,8 @@ def test_extract_twice_in_succession_identical_state() -> None:
 
 def test_partial_batch_write_failure_does_not_advance_pointer() -> None:
     provider = _FakeProvider()
-    writer = _IdempotentSlotWriter(fail_on_nth=3)
-    store = _SessionStore(
+    writer = IdempotentSlotWriter(fail_on_nth=3)
+    store = FakeSessionStore(
         SessionSnapshot(last_extracted_turn=-1, status="completed", deleted_at=None)
     )
     turns = _turns(5)
@@ -725,7 +661,7 @@ def test_writes_include_batch_fingerprint_and_ordinal() -> None:
 
 
 def test_pointer_update_oserror_maps_to_transport_error() -> None:
-    store = _SessionStore(
+    store = FakeSessionStore(
         SessionSnapshot(last_extracted_turn=-1, status="completed", deleted_at=None),
         fail_updates=1,
     )
