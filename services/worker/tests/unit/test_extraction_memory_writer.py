@@ -142,77 +142,39 @@ def test_writer_sends_same_key_on_retry_with_different_wording() -> None:
     assert keys[0] == keys[1]
 
 
-def test_writer_treats_idempotency_conflict_as_success() -> None:
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            409,
-            json={
-                "detail": {
-                    "code": "IDEMPOTENCY_CONFLICT",
-                    "message": "Idempotency key reused with different request",
-                }
-            },
-        )
-
-    writer = _writer(handler)
-    request = _request()
-    writer.write(request)
+def _409(code: str, **extra: object) -> httpx.Response:
+    detail: dict[str, object] = {"code": code, "message": code}
+    detail.update(extra)
+    return httpx.Response(409, json={"detail": detail})
 
 
-def test_writer_treats_duplicate_content_as_success() -> None:
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            409,
-            json={
-                "detail": {
-                    "code": "DUPLICATE_CONTENT",
-                    "message": "A memory with identical content already exists",
-                    "existing_memory_id": str(uuid4()),
-                }
-            },
-        )
-
-    writer = _writer(handler)
-    request = _request()
-    writer.write(request)
+@pytest.mark.parametrize(
+    "code",
+    ["IDEMPOTENCY_CONFLICT", "DUPLICATE_CONTENT"],
+)
+def test_writer_treats_definitive_409_as_success(code: str) -> None:
+    extra = {"existing_memory_id": str(uuid4())} if code == "DUPLICATE_CONTENT" else {}
+    writer = _writer(lambda _r: _409(code, **extra))
+    writer.write(_request())
 
 
 def test_writer_retries_idempotency_in_progress() -> None:
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            409,
-            json={
-                "detail": {
-                    "code": "IDEMPOTENCY_IN_PROGRESS",
-                    "message": "Request with this idempotency key is in progress",
-                }
-            },
-        )
-
-    writer = _writer(handler)
-    request = _request()
+    writer = _writer(lambda _r: _409("IDEMPOTENCY_IN_PROGRESS"))
     with pytest.raises(ExtractionTransportError, match="IDEMPOTENCY_IN_PROGRESS"):
-        writer.write(request)
+        writer.write(_request())
 
 
-def test_writer_unknown_409_is_hard_failure() -> None:
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(409, json={"detail": {"code": "OTHER", "message": "nope"}})
-
-    writer = _writer(handler)
-    request = _request()
+@pytest.mark.parametrize(
+    "response",
+    [
+        httpx.Response(409, json={"detail": {"code": "OTHER", "message": "nope"}}),
+        httpx.Response(409, text="not-json"),
+    ],
+)
+def test_writer_unknown_or_unparsed_409_is_hard_failure(response: httpx.Response) -> None:
+    writer = _writer(lambda _r: response)
     with pytest.raises(ValueError, match="409"):
-        writer.write(request)
-
-
-def test_writer_409_with_non_json_body_is_hard_failure() -> None:
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(409, text="not-json")
-
-    writer = _writer(handler)
-    request = _request()
-    with pytest.raises(ValueError, match="409"):
-        writer.write(request)
+        writer.write(_request())
 
 
 def test_writer_rejects_empty_base_url() -> None:

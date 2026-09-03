@@ -88,8 +88,10 @@ def extract_session_memories(self: IbexTask, **kwargs: Any) -> dict[str, Any]:
     turns = parse_turns(kwargs.get("turns"))
     settings = get_settings()
     writer = _memory_writer(settings)
-    session_store, engine = _require_session_store(settings)
+    engine: AsyncEngine | None = None
     try:
+        # SessionStore setup stays inside try so writer.close() always runs.
+        session_store, engine = _require_session_store(settings)
         result = run_batch_extraction(
             BatchJob(
                 org_id=org_id,
