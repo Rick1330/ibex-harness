@@ -38,6 +38,13 @@ def _request(memory: ExtractedMemory | None = None) -> MemoryWriteRequest:
     )
 
 
+def _writer(handler, *, token: str = "t") -> HttpMemoryWriter:
+    return HttpMemoryWriter(
+        MemoryHttpConfig(base_url="http://memory.example", token=token),
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+
 def test_writer_posts_labels_and_temporal_fields() -> None:
     captured: dict[str, object] = {}
 
@@ -48,11 +55,7 @@ def test_writer_posts_labels_and_temporal_fields() -> None:
         captured["json"] = request.content
         return httpx.Response(201, json={"data": {"id": str(uuid4())}})
 
-    client = httpx.Client(transport=httpx.MockTransport(handler))
-    writer = HttpMemoryWriter(
-        MemoryHttpConfig(base_url="http://memory.example", token="mem-token"),
-        client=client,
-    )
+    writer = _writer(handler, token="mem-token")
     writer.write(_request())
     import json
 
@@ -67,19 +70,6 @@ def test_writer_posts_labels_and_temporal_fields() -> None:
     assert "valid_until" in body
 
 
-def test_writer_retries_on_503() -> None:
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(503, text="no")
-
-    writer = HttpMemoryWriter(
-        MemoryHttpConfig(base_url="http://memory.example", token="t"),
-        client=httpx.Client(transport=httpx.MockTransport(handler)),
-    )
-    request = _request()
-    with pytest.raises(ExtractionTransportError):
-        writer.write(request)
-
-
 def test_writer_rejects_empty_base_url() -> None:
     config = MemoryHttpConfig(base_url="  ", token="t")
     with pytest.raises(ValueError, match="memory_base_url"):
@@ -92,42 +82,37 @@ def test_writer_rejects_empty_token() -> None:
         HttpMemoryWriter(config)
 
 
-def test_writer_4xx_raises_value_error() -> None:
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(400, text="bad")
+def _status_503(_request: httpx.Request) -> httpx.Response:
+    return httpx.Response(503, text="no")
 
-    writer = HttpMemoryWriter(
-        MemoryHttpConfig(base_url="http://memory.example", token="t"),
-        client=httpx.Client(transport=httpx.MockTransport(handler)),
-    )
+
+def _status_400(_request: httpx.Request) -> httpx.Response:
+    return httpx.Response(400, text="bad")
+
+
+def _timeout(_request: httpx.Request) -> httpx.Response:
+    raise httpx.ReadTimeout("slow")
+
+
+def _connect_error(_request: httpx.Request) -> httpx.Response:
+    raise httpx.ConnectError("down")
+
+
+@pytest.mark.parametrize(
+    ("handler", "exc_type", "match"),
+    [
+        (_status_503, ExtractionTransportError, None),
+        (_status_400, ValueError, "400"),
+        (_timeout, ExtractionTransportError, "timeout"),
+        (_connect_error, ExtractionTransportError, "transport"),
+    ],
+)
+def test_writer_error_paths(
+    handler, exc_type: type[Exception], match: str | None
+) -> None:
+    writer = _writer(handler)
     request = _request()
-    with pytest.raises(ValueError, match="400"):
-        writer.write(request)
-
-
-def test_writer_timeout_is_transport_error() -> None:
-    def handler(_request: httpx.Request) -> httpx.Response:
-        raise httpx.ReadTimeout("slow")
-
-    writer = HttpMemoryWriter(
-        MemoryHttpConfig(base_url="http://memory.example", token="t"),
-        client=httpx.Client(transport=httpx.MockTransport(handler)),
-    )
-    request = _request()
-    with pytest.raises(ExtractionTransportError, match="timeout"):
-        writer.write(request)
-
-
-def test_writer_transport_error() -> None:
-    def handler(_request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError("down")
-
-    writer = HttpMemoryWriter(
-        MemoryHttpConfig(base_url="http://memory.example", token="t"),
-        client=httpx.Client(transport=httpx.MockTransport(handler)),
-    )
-    request = _request()
-    with pytest.raises(ExtractionTransportError, match="transport"):
+    with pytest.raises(exc_type, match=match):
         writer.write(request)
 
 
