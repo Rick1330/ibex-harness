@@ -162,26 +162,12 @@ def test_factory_builds_openai_and_vllm() -> None:
 
 def test_openai_rejects_empty_base_url() -> None:
     with pytest.raises(ValueError, match="base_url"):
-        OpenAIExtractionProvider(
-            CompatEndpoint(
-                base_url="  ",
-                model="gpt-4o-mini",
-                api_key="sk",
-                timeout_seconds=1.0,
-            )
-        )
+        OpenAIExtractionProvider(_endpoint(base_url="  ", api_key="sk"))
 
 
 def test_openai_rejects_empty_api_key() -> None:
     with pytest.raises(ValueError, match="API key"):
-        OpenAIExtractionProvider(
-            CompatEndpoint(
-                base_url="https://api.openai.com/v1",
-                model="gpt-4o-mini",
-                api_key="  ",
-                timeout_seconds=1.0,
-            )
-        )
+        OpenAIExtractionProvider(_endpoint(api_key="  "))
 
 
 def test_vllm_rejects_empty_base_url() -> None:
@@ -194,6 +180,15 @@ def test_vllm_rejects_empty_base_url() -> None:
                 timeout_seconds=1.0,
             )
         )
+
+
+def _endpoint(*, base_url: str = "https://api.openai.com/v1", api_key: str) -> CompatEndpoint:
+    return CompatEndpoint(
+        base_url=base_url,
+        model="gpt-4o-mini",
+        api_key=api_key,
+        timeout_seconds=1.0,
+    )
 
 
 def _provider_with(handler) -> OpenAIExtractionProvider:
@@ -267,6 +262,12 @@ def test_missing_usage_defaults_to_zero_tokens() -> None:
     call = _provider_with(handler).extract("s", "u")
     assert call.input_tokens == 0
     assert call.output_tokens == 0
+
+
+def test_response_model_fallback_for_non_object() -> None:
+    from app.extraction.openai_compat_parse import response_model
+
+    assert response_model(["not-a-dict"], "fallback-model") == "fallback-model"
 
 
 def test_load_active_extraction_provider(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -169,35 +169,19 @@ def test_skips_turns_at_or_below_last_extracted_turn() -> None:
 
 
 def test_incomplete_session_skipped_without_provider_or_writer() -> None:
-    writer = _RecordingWriter()
-    provider = _FakeProvider()
-    store = _SessionStore(
-        SessionSnapshot(last_extracted_turn=0, status="active", deleted_at=None)
+    _assert_skipped_without_side_effects(
+        store=_SessionStore(
+            SessionSnapshot(last_extracted_turn=0, status="active", deleted_at=None)
+        ),
+        expected="session_not_ready",
     )
-    result = run_batch_extraction(
-        _job(_JobParts(turns=_turns(1), provider=provider, writer=writer, session_store=store))
-    )
-    assert result.skipped == "session_not_ready"
-    assert writer.writes == []
-    assert provider.calls == 0
 
 
 def test_session_not_found_skips_without_provider() -> None:
-    provider = _FakeProvider()
-    writer = _RecordingWriter()
-    result = run_batch_extraction(
-        _job(
-            _JobParts(
-                turns=_turns(1),
-                provider=provider,
-                writer=writer,
-                session_store=_SessionStore(None),
-            )
-        )
+    _assert_skipped_without_side_effects(
+        store=_SessionStore(None),
+        expected="session_not_found",
     )
-    assert result.skipped == "session_not_found"
-    assert provider.calls == 0
-    assert writer.writes == []
 
 
 def test_empty_turns_without_store_skips() -> None:
@@ -206,15 +190,34 @@ def test_empty_turns_without_store_skips() -> None:
 
 
 def test_all_turns_already_extracted_skips() -> None:
+    _assert_skipped_without_side_effects(
+        store=_SessionStore(
+            SessionSnapshot(last_extracted_turn=9, status="completed", deleted_at=None)
+        ),
+        turns=_turns(3),
+        expected="no_unprocessed_turns",
+    )
+
+
+def _assert_skipped_without_side_effects(
+    *,
+    store: _SessionStore,
+    expected: str,
+    turns: list[TurnPayload] | None = None,
+) -> None:
     provider = _FakeProvider()
     writer = _RecordingWriter()
-    store = _SessionStore(
-        SessionSnapshot(last_extracted_turn=9, status="completed", deleted_at=None)
-    )
     result = run_batch_extraction(
-        _job(_JobParts(turns=_turns(3), provider=provider, writer=writer, session_store=store))
+        _job(
+            _JobParts(
+                turns=turns if turns is not None else _turns(1),
+                provider=provider,
+                writer=writer,
+                session_store=store,
+            )
+        )
     )
-    assert result.skipped == "no_unprocessed_turns"
+    assert result.skipped == expected
     assert provider.calls == 0
     assert writer.writes == []
 
