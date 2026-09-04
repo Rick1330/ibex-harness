@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -74,21 +75,17 @@ def _header(max_pp: float, latest: dict[str, Any], providers: dict[str, Any]) ->
     ]
 
 
-def _run_ci_checks(
-    providers: dict[str, Any],
-    latest_provider: str,
-    latest_metrics: dict[str, Any],
-    max_pp: float,
-) -> tuple[bool, list[dict[str, Any]], list[str]]:
+def _run_ci_checks(cfg: _GateCfg) -> tuple[bool, list[dict[str, Any]], list[str]]:
     ok = True
     checks: list[dict[str, Any]] = []
     summary: list[str] = []
-    for name, block in providers.items():
-        if not is_matching_ci_block(name, block, latest_provider):
+    for name, block in cfg.providers.items():
+        if not is_matching_ci_block(name, block, cfg.latest_provider):
             continue
-        assert isinstance(block, dict)
+        if not isinstance(block, dict):
+            continue
         block_ok, block_checks, block_lines = check_ci_block(
-            name, block, latest_metrics, max_pp
+            name, block, cfg.latest_metrics, cfg.max_pp
         )
         checks.extend(block_checks)
         summary.extend(block_lines)
@@ -96,28 +93,45 @@ def _run_ci_checks(
     return ok, checks, summary
 
 
-def evaluate_gate(
+@dataclass(frozen=True, slots=True)
+class _GateCfg:
+    max_pp: float
+    providers: dict[str, Any]
+    latest_metrics: dict[str, Any]
+    latest_provider: str
+
+
+def _gate_cfg_or_error(
     latest: dict[str, Any],
     baseline: dict[str, Any],
-) -> tuple[bool, list[dict[str, Any]], list[str]]:
+) -> _GateCfg | tuple[bool, list[dict[str, Any]], list[str]]:
     policy = baseline.get("policy") or {}
     max_pp = resolve_max_pp(policy if isinstance(policy, dict) else {})
     if max_pp is None:
         return _invalid_max_pp_result()
-
     providers = baseline.get("providers") or {}
     if not isinstance(providers, dict):
         return False, [], ["baseline.providers must be an object"]
-
     latest_metrics = latest.get("metrics") or {}
     if not isinstance(latest_metrics, dict):
         return False, [], ["latest.metrics must be an object"]
-
-    latest_provider = str(latest.get("provider") or "openai")
-    summary = _header(max_pp, latest, providers)
-    ok, checks, check_lines = _run_ci_checks(
-        providers, latest_provider, latest_metrics, max_pp
+    return _GateCfg(
+        max_pp=max_pp,
+        providers=providers,
+        latest_metrics=latest_metrics,
+        latest_provider=str(latest.get("provider") or "openai"),
     )
+
+
+def evaluate_gate(
+    latest: dict[str, Any],
+    baseline: dict[str, Any],
+) -> tuple[bool, list[dict[str, Any]], list[str]]:
+    cfg = _gate_cfg_or_error(latest, baseline)
+    if not isinstance(cfg, _GateCfg):
+        return cfg
+    summary = _header(cfg.max_pp, latest, cfg.providers)
+    ok, checks, check_lines = _run_ci_checks(cfg)
     summary.extend(check_lines)
     if not checks:
         ok = False

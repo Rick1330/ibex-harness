@@ -130,6 +130,12 @@ def _score_temporal_pair(
     return 0, 1
 
 
+def _labels_match(pred: dict[str, Any] | None, exp: dict[str, Any] | None) -> bool:
+    if pred is None or exp is None:
+        return False
+    return label_set(pred) == label_set(exp)
+
+
 def _apply_pair(
     accum: _TurnAccum,
     pair: tuple[int | None, int | None],
@@ -141,12 +147,22 @@ def _apply_pair(
     exp = expected[ei] if ei is not None else None
     pred_labels = label_set(pred) if pred is not None else frozenset()
     exp_labels = label_set(exp) if exp is not None else frozenset()
-    if pi is not None and ei is not None and pred_labels == exp_labels:
+    if _labels_match(pred, exp):
         accum.assign_correct += 1
     _update_category_counts(accum.counts, pred_labels, exp_labels)
     t_ok, t_total = _score_temporal_pair(pred, exp)
     accum.temporal_correct += t_ok
     accum.temporal_total += t_total
+
+
+def _empty_turn_score() -> TurnScore:
+    return TurnScore(
+        category_counts={cat: CategoryCounts() for cat in CATEGORIES},
+        category_assignment_correct=1,
+        category_assignment_total=1,
+        temporal_correct=0,
+        temporal_total=0,
+    )
 
 
 def score_turn(
@@ -159,21 +175,17 @@ def score_turn(
     kinds = temporal_kinds or ["indefinite"] * len(expected)
     if len(kinds) != len(expected):
         raise ValueError("temporal_kinds length must match expected memories")
+    if not predicted and not expected:
+        return _empty_turn_score()
 
     accum = _TurnAccum(counts={cat: CategoryCounts() for cat in CATEGORIES})
     for pair in match_memories(predicted, expected):
         _apply_pair(accum, pair, predicted, expected)
 
-    assign_total = max(len(predicted), len(expected), 1)
-    assign_correct = accum.assign_correct
-    if not predicted and not expected:
-        assign_correct = 1
-        assign_total = 1
-
     return TurnScore(
         category_counts=accum.counts,
-        category_assignment_correct=assign_correct,
-        category_assignment_total=assign_total,
+        category_assignment_correct=accum.assign_correct,
+        category_assignment_total=max(len(predicted), len(expected), 1),
         temporal_correct=accum.temporal_correct,
         temporal_total=accum.temporal_total,
     )

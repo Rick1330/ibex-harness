@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 PUBLISHED_NAME = "extraction-quality-benchmark-data.json"
@@ -13,6 +14,14 @@ _ALLOWED_BASELINE = frozenset({"baseline_results.json", "baseline.json"})
 
 class UnsafePathError(ValueError):
     """Raised when a CLI path escapes the allowed workspace."""
+
+
+@dataclass(frozen=True, slots=True)
+class PathOpts:
+    allowed_names: frozenset[str] | None = None
+    must_exist: bool = False
+    allow_create_parent: bool = False
+    workspace: Path | None = None
 
 
 def _cwd() -> Path:
@@ -62,52 +71,49 @@ def _enforce_parent(resolved: Path, root: Path, *, allow_create_parent: bool) ->
         raise UnsafePathError("parent path escapes workspace") from exc
 
 
-def resolve_workspace_path(
-    raw: Path | str,
-    *,
-    allowed_names: frozenset[str] | None = None,
-    must_exist: bool = False,
-    allow_create_parent: bool = False,
-    workspace: Path | None = None,
-) -> Path:
+def resolve_workspace_path(raw: Path | str, opts: PathOpts | None = None) -> Path:
+    cfg = opts or PathOpts()
     candidate = Path(_require_text(raw))
-    root = (workspace or _cwd()).resolve()
+    root = (cfg.workspace or _cwd()).resolve()
     resolved = _resolve_candidate(candidate, root)
     _ensure_under_root(resolved, root)
-    _enforce_basename(resolved, allowed_names)
-    _enforce_exists(resolved, candidate, must_exist=must_exist)
-    _enforce_parent(resolved, root, allow_create_parent=allow_create_parent)
+    _enforce_basename(resolved, cfg.allowed_names)
+    _enforce_exists(resolved, candidate, must_exist=cfg.must_exist)
+    _enforce_parent(resolved, root, allow_create_parent=cfg.allow_create_parent)
     return Path(*resolved.parts)
 
 
 def resolve_published_extraction_path(raw: Path | str) -> Path:
     return resolve_workspace_path(
         raw,
-        allowed_names=frozenset({PUBLISHED_NAME}),
-        allow_create_parent=True,
+        PathOpts(allowed_names=frozenset({PUBLISHED_NAME}), allow_create_parent=True),
     )
 
 
 def resolve_latest_path(raw: Path | str, *, must_exist: bool = True) -> Path:
     return resolve_workspace_path(
         raw,
-        allowed_names=_ALLOWED_LATEST,
-        must_exist=must_exist,
-        allow_create_parent=not must_exist,
+        PathOpts(
+            allowed_names=_ALLOWED_LATEST,
+            must_exist=must_exist,
+            allow_create_parent=not must_exist,
+        ),
     )
 
 
 def resolve_gate_input_path(raw: Path | str) -> Path:
-    return resolve_workspace_path(raw, allowed_names=_ALLOWED_GATE_IN, must_exist=True)
+    return resolve_workspace_path(
+        raw, PathOpts(allowed_names=_ALLOWED_GATE_IN, must_exist=True)
+    )
 
 
 def resolve_gate_result_path(raw: Path | str) -> Path:
     return resolve_workspace_path(
-        raw,
-        allowed_names=_ALLOWED_GATE_OUT,
-        allow_create_parent=True,
+        raw, PathOpts(allowed_names=_ALLOWED_GATE_OUT, allow_create_parent=True)
     )
 
 
 def resolve_baseline_path(raw: Path | str) -> Path:
-    return resolve_workspace_path(raw, allowed_names=_ALLOWED_BASELINE, must_exist=True)
+    return resolve_workspace_path(
+        raw, PathOpts(allowed_names=_ALLOWED_BASELINE, must_exist=True)
+    )

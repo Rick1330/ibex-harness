@@ -224,24 +224,27 @@ class _RecordBuf:
     rows: list[dict[str, Any]]
 
 
-def _maybe_record_cassette(
-    buf: _RecordBuf,
-    pname: str | None,
-    cid: str,
-    model_used: str,
-    by_turn: dict[int, list[dict[str, Any]]],
-) -> None:
-    if buf.mode != "record" or pname != "openai":
+@dataclass(frozen=True, slots=True)
+class _RecordEvent:
+    pname: str | None
+    cid: str
+    model_used: str
+    by_turn: dict[int, list[dict[str, Any]]]
+
+
+def _maybe_record_cassette(buf: _RecordBuf, event: _RecordEvent) -> None:
+    if buf.mode != "record" or event.pname != "openai":
         return
     batch_payload = {
         "turns": [
-            {"turn_index": ti, "memories": by_turn.get(ti, [])} for ti in sorted(by_turn)
+            {"turn_index": ti, "memories": event.by_turn.get(ti, [])}
+            for ti in sorted(event.by_turn)
         ]
     }
     buf.rows.append(
         {
-            "conversation_id": cid,
-            "model": model_used,
+            "conversation_id": event.cid,
+            "model": event.model_used,
             "raw_json": json.dumps(batch_payload, separators=(",", ":")),
         }
     )
@@ -273,7 +276,15 @@ def _score_conversations(
         cid = str(conv["conversation_id"])
         turns = [TurnPayload.model_validate(t) for t in conv["turns"]]
         by_turn, model_used, pname = _predict_for_mode(ctx, cid, turns)
-        _maybe_record_cassette(buf, pname, cid, model_used, by_turn)
+        _maybe_record_cassette(
+            buf,
+            _RecordEvent(
+                pname=pname,
+                cid=cid,
+                model_used=model_used,
+                by_turn=by_turn,
+            ),
+        )
         _score_expected_rows(expected_by_conv[cid], by_turn, turn_scores)
 
     return turn_scores, model_used, buf.rows
