@@ -104,48 +104,33 @@ def test_list_hot_memories_scopes_org_from_token(client) -> None:
     assert query.org_id != OTHER_ORG
 
 
-def test_list_hot_memories_403_without_read_permission() -> None:
+def _app_with_token(*, permissions: int, agent_id=AGENT) -> TestClient:
     settings = Settings(
         database_url="postgresql+asyncpg://ibex:ibex@127.0.0.1:5432/ibex",
         embedding_api_token="unit-test-token",
     )
     validator = StaticTokenValidator(
-        {TOKEN: ValidateResult(org_id=ORG, permissions=MEMORY_WRITE, agent_id=AGENT)}
+        {TOKEN: ValidateResult(org_id=ORG, permissions=permissions, agent_id=agent_id)}
     )
-    app = create_app(settings=settings, validator=validator)
-    with TestClient(app) as http:
+    return TestClient(create_app(settings=settings, validator=validator))
+
+
+def test_list_hot_memories_403_without_read_permission() -> None:
+    with _app_with_token(permissions=MEMORY_WRITE) as http:
         resp = _hot(http)
     assert resp.status_code == 403
 
 
 def test_list_hot_memories_403_agent_mismatch() -> None:
     other_agent = uuid4()
-    settings = Settings(
-        database_url="postgresql+asyncpg://ibex:ibex@127.0.0.1:5432/ibex",
-        embedding_api_token="unit-test-token",
-    )
-    validator = StaticTokenValidator(
-        {TOKEN: ValidateResult(org_id=ORG, permissions=MEMORY_READ, agent_id=AGENT)}
-    )
-    app = create_app(settings=settings, validator=validator)
-    with TestClient(app) as http:
+    with _app_with_token(permissions=MEMORY_READ) as http:
         resp = _hot(http, agent_id=other_agent)
     assert resp.status_code == 403
     assert resp.json()["detail"]["code"] == "AGENT_NOT_AUTHORIZED"
 
 
 def test_list_hot_memories_401_missing_token() -> None:
-    settings = Settings(
-        database_url="postgresql+asyncpg://ibex:ibex@127.0.0.1:5432/ibex",
-        embedding_api_token="unit-test-token",
-    )
-    app = create_app(
-        settings=settings,
-        validator=StaticTokenValidator(
-            {TOKEN: ValidateResult(org_id=ORG, permissions=MEMORY_READ, agent_id=AGENT)}
-        ),
-    )
-    with TestClient(app) as http:
+    with _app_with_token(permissions=MEMORY_READ) as http:
         resp = http.get("/v1/memories/hot", params={"agent_id": str(AGENT)})
     assert resp.status_code == 401
 

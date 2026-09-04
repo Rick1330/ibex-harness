@@ -1,7 +1,7 @@
 """Parallel retrieval orchestration (milestone 3.5.C.2).
 
 Three concurrent branches — not four
-=====================================
+------------------------------------
 The milestone MDX originally sketched a fourth ``history_task`` that would
 read conversation text from the session-checkpoint store. That branch is
 **not implemented** and must not be reintroduced:
@@ -19,7 +19,7 @@ read conversation text from the session-checkpoint store. That branch is
 itself (would double-pay latency inside the ~45ms budget).
 
 Forward mapping for 3.5.C.6 (gRPC AssembleContextResponse)
-==========================================================
+----------------------------------------------------------
 - ``history_tokens`` → ``AssembleContextResponse.history_tokens``
 - ``hot_memories`` + ``cold_memories`` → ``memories_used`` / ``memory_tokens``
 - branch ``latency_ms`` → ``AssemblyMetrics`` fields
@@ -46,10 +46,12 @@ from app.clients.directive import (
     EmptyDirectiveLookup,
 )
 from app.clients.memory import (
+    HotMemoriesRequest,
     MemoryHitPayload,
     MemoryHttpClient,
     MemoryHttpError,
     MemoryHttpTimeout,
+    SearchMemoriesRequest,
 )
 from app.config import ContextSettings
 
@@ -230,51 +232,54 @@ class ParallelRetriever:
         )
 
     async def _hot_branch(self, request: RetrievalRequest) -> _BranchResult:
-        timeout_s = self._settings.hot_timeout_ms / 1000.0
-        started = time.perf_counter()
-        try:
-            hits = await asyncio.wait_for(
-                self._memory.get_hot_memories(
+        return await self._memory_branch(
+            name="hot",
+            timeout_ms=self._settings.hot_timeout_ms,
+            fetch=lambda timeout_s: self._memory.get_hot_memories(
+                HotMemoriesRequest(
                     agent_id=request.agent_id,
+                    timeout_seconds=timeout_s,
                     limit=request.hot_limit,
                     min_confidence=request.min_confidence,
-                    timeout_seconds=timeout_s,
-                ),
-                timeout=timeout_s,
-            )
-        except TimeoutError:
-            return _timeout_memories("hot", started, "hot_timeout")
-        except MemoryHttpTimeout:
-            return _timeout_memories("hot", started, "hot_http_timeout")
-        except MemoryHttpError as exc:
-            return _error_memories("hot", started, str(exc))
-        except Exception as exc:  # noqa: BLE001 — fail-open
-            return _error_memories("hot", started, type(exc).__name__)
-        return _success_memories("hot", started, hits)
+                )
+            ),
+        )
 
     async def _cold_branch(self, request: RetrievalRequest) -> _BranchResult:
-        timeout_s = self._settings.cold_timeout_ms / 1000.0
-        started = time.perf_counter()
-        try:
-            hits = await asyncio.wait_for(
-                self._memory.search_memories(
+        return await self._memory_branch(
+            name="cold",
+            timeout_ms=self._settings.cold_timeout_ms,
+            fetch=lambda timeout_s: self._memory.search_memories(
+                SearchMemoriesRequest(
                     agent_id=request.agent_id,
                     query=request.query,
+                    timeout_seconds=timeout_s,
                     limit=request.cold_limit,
                     min_confidence=request.min_confidence,
-                    timeout_seconds=timeout_s,
-                ),
-                timeout=timeout_s,
-            )
+                )
+            ),
+        )
+
+    async def _memory_branch(
+        self,
+        *,
+        name: SourceName,
+        timeout_ms: float,
+        fetch,
+    ) -> _BranchResult:
+        timeout_s = timeout_ms / 1000.0
+        started = time.perf_counter()
+        try:
+            hits = await asyncio.wait_for(fetch(timeout_s), timeout=timeout_s)
         except TimeoutError:
-            return _timeout_memories("cold", started, "cold_timeout")
+            return _timeout_memories(name, started, f"{name}_timeout")
         except MemoryHttpTimeout:
-            return _timeout_memories("cold", started, "cold_http_timeout")
+            return _timeout_memories(name, started, f"{name}_http_timeout")
         except MemoryHttpError as exc:
-            return _error_memories("cold", started, str(exc))
+            return _error_memories(name, started, str(exc))
         except Exception as exc:  # noqa: BLE001 — fail-open
-            return _error_memories("cold", started, type(exc).__name__)
-        return _success_memories("cold", started, hits)
+            return _error_memories(name, started, type(exc).__name__)
+        return _success_memories(name, started, hits)
 
 
 def _directive_from_payload(payload: DirectivePayload) -> ResolvedDirective:

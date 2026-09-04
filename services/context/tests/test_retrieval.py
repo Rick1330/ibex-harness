@@ -83,7 +83,7 @@ class _StubMemory:
         self.hot_calls = 0
         self.cold_calls = 0
 
-    async def get_hot_memories(self, **_kwargs):
+    async def get_hot_memories(self, *_args, **_kwargs):
         self.hot_calls += 1
         if self._hot_delay_s:
             await asyncio.sleep(self._hot_delay_s)
@@ -91,7 +91,7 @@ class _StubMemory:
             raise self._hot
         return self._hot
 
-    async def search_memories(self, **_kwargs):
+    async def search_memories(self, *_args, **_kwargs):
         self.cold_calls += 1
         if self._cold_delay_s:
             await asyncio.sleep(self._cold_delay_s)

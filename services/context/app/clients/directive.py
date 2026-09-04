@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 from uuid import UUID
 
 from redis.asyncio import Redis
@@ -57,26 +57,42 @@ class RedisDirectiveLookup:
         except (OSError, RedisError) as exc:
             raise DirectiveLookupError("directive redis get failed") from exc
         if raw is None:
-            return DirectivePayload(
-                content="",
-                injection_mode=_DEFAULT_INJECTION_MODE,
-                version_id=None,
-            )
-        if isinstance(raw, bytes):
-            raw = raw.decode("utf-8")
-        return _parse_envelope(raw)
+            return _empty_payload()
+        text = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
+        return _parse_envelope(text)
+
+
+def _empty_payload() -> DirectivePayload:
+    return DirectivePayload(
+        content="",
+        injection_mode=_DEFAULT_INJECTION_MODE,
+        version_id=None,
+    )
 
 
 def _parse_envelope(raw: str) -> DirectivePayload:
+    data = _load_envelope_object(raw)
+    _require_envelope_version(data)
+    return _payload_from_envelope(data)
+
+
+def _load_envelope_object(raw: str) -> dict[str, Any]:
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as exc:
         raise DirectiveLookupError("directive envelope is not JSON") from exc
     if not isinstance(data, dict):
         raise DirectiveLookupError("directive envelope is not an object")
+    return data
+
+
+def _require_envelope_version(data: dict[str, Any]) -> None:
     version = data.get("v")
     if version != _ENVELOPE_VERSION:
         raise DirectiveLookupError(f"unsupported directive envelope version {version!r}")
+
+
+def _payload_from_envelope(data: dict[str, Any]) -> DirectivePayload:
     content = str(data.get("content") or "")
     mode = str(data.get("injection_mode") or "") or _DEFAULT_INJECTION_MODE
     version_id = data.get("version_id")

@@ -14,7 +14,12 @@ from app.clients.directive import (
     EmptyDirectiveLookup,
     RedisDirectiveLookup,
 )
-from app.clients.memory import MemoryHttpClient, MemoryHttpConfig, MemoryHttpError
+from app.clients.memory import (
+    HotMemoriesRequest,
+    MemoryHttpClient,
+    MemoryHttpConfig,
+    MemoryHttpError,
+)
 from app.config import _parse_timeout_ms
 from app.retrieval import (
     BranchOutcome,
@@ -40,11 +45,16 @@ async def test_redis_directive_redis_error() -> None:
 
 
 @pytest.mark.asyncio
-async def test_redis_directive_invalid_json_and_shape() -> None:
+async def test_redis_directive_invalid_json() -> None:
     redis = AsyncMock()
     redis.get = AsyncMock(return_value=b"not-json")
     with pytest.raises(DirectiveLookupError):
         await RedisDirectiveLookup(redis).lookup(uuid4(), uuid4())
+
+
+@pytest.mark.asyncio
+async def test_redis_directive_non_object() -> None:
+    redis = AsyncMock()
     redis.get = AsyncMock(return_value=b'["not","object"]')
     with pytest.raises(DirectiveLookupError):
         await RedisDirectiveLookup(redis).lookup(uuid4(), uuid4())
@@ -70,53 +80,69 @@ def test_memory_http_client_requires_config() -> None:
         MemoryHttpClient(MemoryHttpConfig(base_url="http://x", token=""))
 
 
+def _error_handler(request: httpx.Request) -> httpx.Response:
+    path = request.url.path
+    responses: dict[str, httpx.Response | Exception] = {
+        "/timeout/v1/memories/hot": httpx.ReadTimeout("slow"),
+        "/transport/v1/memories/hot": httpx.ConnectError("nope"),
+        "/badjson/v1/memories/hot": httpx.Response(200, content=b"not-json"),
+        "/nodata/v1/memories/hot": httpx.Response(200, json=["x"]),
+        "/noresults/v1/memories/hot": httpx.Response(200, json={"data": {}}),
+        "/baddata/v1/memories/hot": httpx.Response(200, json={"data": "x"}),
+        "/skip/v1/memories/hot": httpx.Response(
+            200,
+            json={"data": {"results": ["bad", {"similarity": 1}, {"memory": "x"}]}},
+        ),
+    }
+    for suffix, value in responses.items():
+        if path.endswith(suffix):
+            if isinstance(value, Exception):
+                raise value
+            return value
+    return httpx.Response(503, json={"detail": "down"})
+
+
+async def _assert_hot_raises(base: str, http: httpx.AsyncClient) -> None:
+    mem = MemoryHttpClient(MemoryHttpConfig(base_url=base, token="t"), client=http)
+    with pytest.raises(MemoryHttpError):
+        await mem.get_hot_memories(
+            HotMemoriesRequest(agent_id=uuid4(), timeout_seconds=0.05)
+        )
+
+
 @pytest.mark.asyncio
-async def test_memory_http_error_paths() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        path = request.url.path
-        if path.endswith("/timeout/v1/memories/hot"):
-            raise httpx.ReadTimeout("slow")
-        if path.endswith("/transport/v1/memories/hot"):
-            raise httpx.ConnectError("nope")
-        if path.endswith("/badjson/v1/memories/hot"):
-            return httpx.Response(200, content=b"not-json")
-        if path.endswith("/nodata/v1/memories/hot"):
-            return httpx.Response(200, json=["x"])
-        if path.endswith("/noresults/v1/memories/hot"):
-            return httpx.Response(200, json={"data": {}})
-        if path.endswith("/baddata/v1/memories/hot"):
-            return httpx.Response(200, json={"data": "x"})
-        if path.endswith("/skip/v1/memories/hot"):
-            return httpx.Response(
-                200,
-                json={"data": {"results": ["bad", {"similarity": 1}, {"memory": "x"}]}},
-            )
-        return httpx.Response(503, json={"detail": "down"})
-
-    transport = httpx.MockTransport(handler)
+async def test_memory_http_status_and_transport_errors() -> None:
+    transport = httpx.MockTransport(_error_handler)
     async with httpx.AsyncClient(transport=transport) as http:
-        cases = [
-            ("http://memory.example", MemoryHttpError),
-            ("http://memory.example/timeout", MemoryHttpError),
-            ("http://memory.example/transport", MemoryHttpError),
-            ("http://memory.example/badjson", MemoryHttpError),
-            ("http://memory.example/nodata", MemoryHttpError),
-            ("http://memory.example/noresults", MemoryHttpError),
-            ("http://memory.example/baddata", MemoryHttpError),
-        ]
-        for base, exc_type in cases:
-            mem = MemoryHttpClient(
-                MemoryHttpConfig(base_url=base, token="t"),
-                client=http,
-            )
-            with pytest.raises(exc_type):
-                await mem.get_hot_memories(agent_id=uuid4(), timeout_seconds=0.05)
+        await _assert_hot_raises("http://memory.example", http)
+        await _assert_hot_raises("http://memory.example/timeout", http)
+        await _assert_hot_raises("http://memory.example/transport", http)
 
+
+@pytest.mark.asyncio
+async def test_memory_http_malformed_json_bodies() -> None:
+    transport = httpx.MockTransport(_error_handler)
+    async with httpx.AsyncClient(transport=transport) as http:
+        await _assert_hot_raises("http://memory.example/badjson", http)
+        await _assert_hot_raises("http://memory.example/nodata", http)
+        await _assert_hot_raises("http://memory.example/noresults", http)
+        await _assert_hot_raises("http://memory.example/baddata", http)
+
+
+@pytest.mark.asyncio
+async def test_memory_http_skips_malformed_result_items() -> None:
+    transport = httpx.MockTransport(_error_handler)
+    async with httpx.AsyncClient(transport=transport) as http:
         mem = MemoryHttpClient(
             MemoryHttpConfig(base_url="http://memory.example/skip", token="t"),
             client=http,
         )
-        assert await mem.get_hot_memories(agent_id=uuid4(), timeout_seconds=0.05) == []
+        assert (
+            await mem.get_hot_memories(
+                HotMemoriesRequest(agent_id=uuid4(), timeout_seconds=0.05)
+            )
+            == []
+        )
 
 
 @pytest.mark.asyncio

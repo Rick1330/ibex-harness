@@ -10,7 +10,12 @@ import pytest
 
 from app.budget import Message
 from app.clients.directive import DirectivePayload
-from app.clients.memory import MemoryHttpClient, MemoryHttpConfig
+from app.clients.memory import (
+    HotMemoriesRequest,
+    MemoryHttpClient,
+    MemoryHttpConfig,
+    SearchMemoriesRequest,
+)
 from app.config import ContextSettings
 from app.retrieval import ParallelRetriever, RetrievalRequest
 
@@ -78,10 +83,10 @@ async def test_memory_http_client_hot_and_search_via_mock_transport() -> None:
             client=client,
         )
         hot = await memory.get_hot_memories(
-            agent_id=AGENT, timeout_seconds=0.1
+            HotMemoriesRequest(agent_id=AGENT, timeout_seconds=0.1)
         )
         cold = await memory.search_memories(
-            agent_id=AGENT, query="theme", timeout_seconds=0.1
+            SearchMemoriesRequest(agent_id=AGENT, query="theme", timeout_seconds=0.1)
         )
 
     assert captured["auth"] == f"Bearer {TOKEN}"
