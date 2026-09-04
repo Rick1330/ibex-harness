@@ -3,6 +3,54 @@
   "benchmark": "ranking_quality",
   "runs": [
     {
+      "sha": "649fb61aadbb87067eaf93ea4e8d7e123d4074c7",
+      "short_sha": "649fb61",
+      "timestamp": "2026-09-04T17:57:13.389440+00:00",
+      "branch": "main",
+      "run_number": 172,
+      "run_url": "https://github.com/Rick1330/ibex-harness/actions/runs/33903165569",
+      "gold_set": "v1",
+      "query_count": 20,
+      "memory_count": 50,
+      "metrics": {
+        "precision_at_5": 1.0,
+        "recall_at_10": 1.0,
+        "mrr": 1.0,
+        "expected_order_match": 1.0,
+        "top_category_accuracy": 1.0
+      },
+      "status": "pass",
+      "gate_summary": {
+        "status": "pass",
+        "checks": [
+          {
+            "name": "precision_at_5 regression (%)",
+            "value": 0.0,
+            "limit": -5.0,
+            "ok": true
+          },
+          {
+            "name": "recall_at_10 regression (%)",
+            "value": 0.0,
+            "limit": -5.0,
+            "ok": true
+          },
+          {
+            "name": "mrr regression (%)",
+            "value": 0.0,
+            "limit": -5.0,
+            "ok": true
+          },
+          {
+            "name": "top_category_accuracy regression (%)",
+            "value": 0.0,
+            "limit": -5.0,
+            "ok": true
+          }
+        ]
+      }
+    },
+    {
       "sha": "9dcefa8d475ac52f7b7a6994d5643608bb5222bf",
       "short_sha": "9dcefa8",
       "timestamp": "2026-09-03T11:48:48.715574+00:00",
