@@ -347,7 +347,7 @@ jobs:
             --exit-code 1
       - name: Upload Trivy auth SARIF
         if: always() && hashFiles('trivy-image-auth.sarif') != ''
-        uses: github/codeql-action/upload-sarif@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28 # v4.37.8
+        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
         with:
           sarif_file: trivy-image-auth.sarif
           category: trivy-image-auth
@@ -383,7 +383,7 @@ jobs:
             --exit-code 1
       - name: Upload Trivy proxy SARIF
         if: always() && hashFiles('trivy-image-proxy.sarif') != ''
-        uses: github/codeql-action/upload-sarif@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28 # v4.37.8
+        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
         with:
           sarif_file: trivy-image-proxy.sarif
           category: trivy-image-proxy
@@ -432,7 +432,7 @@ jobs:
           fi
       - name: Upload Trivy embedder SARIF
         if: always() && hashFiles('trivy-image-embedder.sarif') != ''
-        uses: github/codeql-action/upload-sarif@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28 # v4.37.8
+        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
         with:
           sarif_file: trivy-image-embedder.sarif
           category: trivy-image-embedder
@@ -480,7 +480,7 @@ jobs:
           fi
       - name: Upload Trivy mcp-memory SARIF
         if: always() && hashFiles('trivy-image-mcp-memory.sarif') != ''
-        uses: github/codeql-action/upload-sarif@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28 # v4.37.8
+        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
         with:
           sarif_file: trivy-image-mcp-memory.sarif
           category: trivy-image-mcp-memory
@@ -529,7 +529,7 @@ jobs:
           fi
       - name: Upload Trivy memory SARIF
         if: always() && hashFiles('trivy-image-memory.sarif') != ''
-        uses: github/codeql-action/upload-sarif@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28 # v4.37.8
+        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
         with:
           sarif_file: trivy-image-memory.sarif
           category: trivy-image-memory
