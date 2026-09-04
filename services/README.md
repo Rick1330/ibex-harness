@@ -18,7 +18,7 @@ The public marketing/docs/benchmarks site lives in `web/` (Phase 1.5+), not unde
 | `mcp-memory/` | Python — MCP resource server: Streamable HTTP, Auth gRPC fail-closed boundary, stub `search_memory`/`write_memory`, `mcp_tool_calls` audit | **Partial (2.5.G6.M1 / ADR-0050)** — real tool bodies in 3.5 |
 | `memory/` | Python FastAPI — memory substrate: probes, scoring v2, VectorStore/PgVectorStore, embedder HTTP client, full write pipeline (`POST /v1/memories`: PII → dedup → conflict → persist → cache/index, multi-label `labels[]`) | **In progress (Phase 3)** — Tracks A–B + C complete; Track D read path next |
 | `worker/` | Python Celery — extraction, embedding, maintenance, mcp_audit queues; beat skeleton; `IbexTask` retry base | **In progress (Phase 3.5)** — A/B tracks shipping; C.1 budget library under `context/` |
-| `context/` | Python library — token budget calculator + generate-and-diff capability catalog (gRPC assembly deferred to 3.5.C.6) | **In progress (Phase 3.5.C.1 / ADR-0067)** |
+| `context/` | Python library — token budget calculator + generate-and-diff capability catalog (gRPC assembly deferred to 3.5.C.6) | **Shipped (Phase 3.5.C.1 / ADR-0067)** — gRPC assembly deferred to 3.5.C.6 |
 
 ---
 

@@ -49,14 +49,14 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if *outPath != "" && *checkPath != "" {
-		fmt.Fprintln(stderr, "export_capabilities: use -o or -check, not both")
+		_, _ = fmt.Fprintln(stderr, "export_capabilities: use -o or -check, not both")
 		return 2
 	}
 
 	doc := buildExport(provider.BuiltInCapabilityCatalog())
 	raw, err := marshalCanonical(doc)
 	if err != nil {
-		fmt.Fprintf(stderr, "export_capabilities: marshal: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "export_capabilities: marshal: %v\n", err)
 		return 2
 	}
 
@@ -64,14 +64,22 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return checkFresh(*checkPath, raw, stderr)
 	}
 	if *outPath != "" {
-		if err := os.WriteFile(*outPath, raw, 0o644); err != nil {
-			fmt.Fprintf(stderr, "export_capabilities: write %s: %v\n", *outPath, err)
+		if err := writeAtomic(*outPath, raw, 0o644); err != nil {
+			_, _ = fmt.Fprintf(stderr, "export_capabilities: write %s: %v\n", *outPath, err)
 			return 2
 		}
-		fmt.Fprintf(stderr, "wrote %s (%d models)\n", *outPath, len(doc.Models))
+		_, _ = fmt.Fprintf(stderr, "wrote %s (%d models)\n", *outPath, len(doc.Models))
 		return 0
 	}
-	_, _ = stdout.Write(raw)
+	n, err := stdout.Write(raw)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "export_capabilities: stdout write: %v\n", err)
+		return 2
+	}
+	if n != len(raw) {
+		_, _ = fmt.Fprintf(stderr, "export_capabilities: short stdout write: %d/%d\n", n, len(raw))
+		return 2
+	}
 	return 0
 }
 
@@ -126,17 +134,50 @@ func marshalCanonical(doc exportDoc) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+func writeAtomic(path string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	if dir == "" {
+		dir = "."
+	}
+	tmp, err := os.CreateTemp(dir, ".model_capabilities.*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(tmpName)
+		}
+	}()
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmpName, perm); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return err
+	}
+	cleanup = false
+	return nil
+}
+
 func checkFresh(committedPath string, fresh []byte, stderr io.Writer) int {
 	committed, err := os.ReadFile(committedPath) // NOSONAR — maintainer path from CLI
 	if err != nil {
-		fmt.Fprintf(stderr, "export_capabilities: read %s: %v\n", committedPath, err)
+		_, _ = fmt.Fprintf(stderr, "export_capabilities: read %s: %v\n", committedPath, err)
 		return 2
 	}
 	if bytes.Equal(normalizeNewline(committed), normalizeNewline(fresh)) {
-		fmt.Fprintf(stderr, "OK: %s matches BuiltInCapabilityCatalog export\n", filepath.Base(committedPath))
+		_, _ = fmt.Fprintf(stderr, "OK: %s matches BuiltInCapabilityCatalog export\n", filepath.Base(committedPath))
 		return 0
 	}
-	fmt.Fprintf(
+	_, _ = fmt.Fprintf(
 		stderr,
 		"export_capabilities: %s is stale — run:\n  go run ./packages/provider/scripts/export_capabilities -o %s\n",
 		committedPath,

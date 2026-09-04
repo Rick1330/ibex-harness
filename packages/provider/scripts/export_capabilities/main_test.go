@@ -92,6 +92,58 @@ func TestUnit_Run_CheckMode(t *testing.T) {
 	}
 }
 
+func TestUnit_WriteAtomic_AndStdoutChecks(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "model_capabilities.v1.json")
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"-o", path}, &stdout, &stderr); code != 0 {
+		t.Fatalf("run -o exit=%d stderr=%s", code, stderr.String())
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := marshalCanonical(buildExport(provider.BuiltInCapabilityCatalog()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(normalizeNewline(got), normalizeNewline(want)) {
+		t.Fatalf("atomic write mismatch")
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := run(nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("stdout export exit=%d stderr=%s", code, stderr.String())
+	}
+	if !bytes.Equal(normalizeNewline(stdout.Bytes()), normalizeNewline(want)) {
+		t.Fatalf("stdout export mismatch")
+	}
+
+	stderr.Reset()
+	if code := run(nil, shortWriter{}, &stderr); code != 2 {
+		t.Fatalf("short write exit=%d want 2 stderr=%s", code, stderr.String())
+	}
+	stderr.Reset()
+	if code := run(nil, errWriter{}, &stderr); code != 2 {
+		t.Fatalf("error write exit=%d want 2 stderr=%s", code, stderr.String())
+	}
+}
+
 type ioDiscard struct{}
 
 func (ioDiscard) Write(p []byte) (int, error) { return len(p), nil }
+
+type shortWriter struct{}
+
+func (shortWriter) Write(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	return len(p) - 1, nil
+}
+
+type errWriter struct{}
+
+func (errWriter) Write([]byte) (int, error) { return 0, os.ErrClosed }

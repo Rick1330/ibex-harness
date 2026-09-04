@@ -32,7 +32,7 @@ A live `TokenizerClient` / `CapabilityRegistry` in the C.1 sketch would invent a
 ### 1) Generate-and-diff JSON export (not a network call)
 
 - Maintainer tool: `go run ./packages/provider/scripts/export_capabilities`
-- Committed artifact: `services/context/data/model_capabilities.v1.json`
+- Committed artifact: `services/context/app/data/model_capabilities.v1.json` (package data for installed wheels)
 - Contents: sorted `BuiltInCapabilityCatalog` rows + `tokenizer_families` estimate policy (`estimate_kind`, `safety_buffer_fraction`)
 - CI job `capability-catalog-freshness` runs `-check` and fails when the committed JSON drifts from the Go catalog
 

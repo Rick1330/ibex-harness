@@ -10,10 +10,10 @@ trackHref: "/roadmap/phase-3-5-extraction-assembly/tracks#track-c--context-assem
 goal: "[Track C — Context Assembly Engine](/roadmap/phase-3-5-extraction-assembly/tracks#track-c--context-assembly-engine)"
 estimatedEffort: "2 days"
 phase: "phase-3-5-extraction-assembly"
-fullTitle: "Milestone 3.5.C.1 — Token Budget Calculator (Model-Aware, Tokenizer-Correct)"
+fullTitle: "Milestone 3.5.C.1 — Token Budget Calculator (Model-Aware, Estimate-Based)"
 ---
 
-# Milestone 3.5.C.1 — Token Budget Calculator (Model-Aware, Tokenizer-Correct)
+# Milestone 3.5.C.1 — Token Budget Calculator (Model-Aware, Estimate-Based)
 
 **Status:** Completed  
 **Goal:** [Track C — Context Assembly Engine](/roadmap/phase-3-5-extraction-assembly/tracks#track-c--context-assembly-engine)  
@@ -45,10 +45,10 @@ Every downstream stage in context assembly depends on knowing the usable token b
 
 ```
 services/context/
-  data/model_capabilities.v1.json   # generate-and-diff from Go catalog
-  app/budget.py                     # BudgetCalculator / TokenBudget
-  app/capability_catalog.py         # load/validate JSON
-  app/estimate.py                   # labeled chars_div_4 / runes_div_3_5
+  app/data/model_capabilities.v1.json   # generate-and-diff from Go catalog (package data)
+  app/budget.py                         # BudgetCalculator / TokenBudget
+  app/capability_catalog.py             # load/validate JSON
+  app/estimate.py                       # labeled chars_div_4 / runes_div_3_5
 packages/provider/scripts/export_capabilities/  # Go exporter + -check
 ```
 
@@ -56,7 +56,7 @@ Regenerate:
 
 ```bash
 go run ./packages/provider/scripts/export_capabilities \
-  -o services/context/data/model_capabilities.v1.json
+  -o services/context/app/data/model_capabilities.v1.json
 ```
 
 ---

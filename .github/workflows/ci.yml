@@ -231,7 +231,7 @@ jobs:
         run: |
           set -euo pipefail
           go run ./packages/provider/scripts/export_capabilities \
-            -check services/context/data/model_capabilities.v1.json
+            -check services/context/app/data/model_capabilities.v1.json
 
   shellcheck:
     name: shellcheck
