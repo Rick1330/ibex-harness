@@ -146,6 +146,23 @@ class ExtractionRegressionGateTests(unittest.TestCase):
         self.assertFalse(ok2)
         self.assertTrue(any("max_regression_pp" in line for line in lines2))
 
+    def test_out_of_range_latest_metric_fails(self) -> None:
+        latest = _latest(precision_factual=2.0)
+        ok, checks, _ = gate_mod.evaluate_gate(latest, _baseline())
+        self.assertFalse(ok)
+        failed = [c for c in checks if "precision_factual" in c["name"] and not c["ok"]]
+        self.assertTrue(failed)
+        self.assertIsNone(failed[0].get("current"))
+
+    def test_out_of_range_baseline_metric_fails(self) -> None:
+        baseline = _baseline()
+        baseline["providers"]["openai"]["metrics"]["precision_factual"] = -0.1
+        ok, checks, _ = gate_mod.evaluate_gate(_latest(precision_factual=1.0), baseline)
+        self.assertFalse(ok)
+        failed = [c for c in checks if "precision_factual" in c["name"] and not c["ok"]]
+        self.assertTrue(failed)
+        self.assertIsNone(failed[0].get("baseline"))
+
     def test_missing_baseline_gated_metric_fails(self) -> None:
         baseline = _baseline()
         del baseline["providers"]["openai"]["metrics"]["temporal_field_accuracy"]

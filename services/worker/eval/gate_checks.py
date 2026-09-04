@@ -23,6 +23,16 @@ def parse_float(value: object) -> float | None:
     return parsed
 
 
+def parse_unit_interval(value: object) -> float | None:
+    """Parse a finite float and require inclusive [0.0, 1.0]."""
+    parsed = parse_float(value)
+    if parsed is None:
+        return None
+    if parsed < 0.0 or parsed > 1.0:
+        return None
+    return parsed
+
+
 def pp_drop(cur: float, base: float) -> float:
     return (base - cur) * 100.0
 
@@ -48,8 +58,8 @@ def one_metric_check(ctx: MetricCtx, metric_name: str) -> tuple[bool, dict[str, 
         check = fail_check(f"{ctx.provider_name}.{metric_name} missing from baseline")
         line = f"- FAIL: {ctx.provider_name}.{metric_name} missing from baseline metrics"
         return False, check, line
-    base_val = parse_float(ctx.base_metrics.get(metric_name))
-    cur_val = parse_float(ctx.latest_metrics.get(metric_name))
+    base_val = parse_unit_interval(ctx.base_metrics.get(metric_name))
+    cur_val = parse_unit_interval(ctx.latest_metrics.get(metric_name))
     if base_val is None or cur_val is None:
         passed = False
         drop = 0.0

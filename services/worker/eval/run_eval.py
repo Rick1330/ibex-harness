@@ -109,7 +109,26 @@ def _assert_conversation_cardinality(
         )
     if conv_ids != exp_ids:
         raise SystemExit("conversation_id set mismatch between conversations and expected_memories")
+    _assert_expected_turn_coverage(conversations, expected_rows)
     return conv_ids
+
+
+def _assert_expected_turn_coverage(
+    conversations: list[dict[str, Any]],
+    expected_rows: list[dict[str, Any]],
+) -> None:
+    expected_turns: dict[str, set[int]] = defaultdict(set)
+    for row in expected_rows:
+        expected_turns[str(row["conversation_id"])].add(int(row["turn_index"]))
+    for conv in conversations:
+        cid = str(conv["conversation_id"])
+        conv_turns = {int(turn["turn_index"]) for turn in conv["turns"]}
+        exp_turns = expected_turns.get(cid, set())
+        if exp_turns != conv_turns:
+            raise SystemExit(
+                f"turn_index set mismatch for {cid}: "
+                f"conversation={sorted(conv_turns)} expected_memories={sorted(exp_turns)}"
+            )
 
 
 def _assert_cassette_integrity(

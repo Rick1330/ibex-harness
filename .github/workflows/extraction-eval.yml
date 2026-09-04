@@ -182,19 +182,24 @@ jobs:
             echo "No published file — skip schema validate"
             exit 0
           fi
+          pip install --disable-pip-version-check --no-cache-dir \
+            --only-binary :all: \
+            --require-hashes \
+            -r .github/requirements/jsonschema.txt
           python3 - <<'PY'
-          import json, sys
+          import json
           from pathlib import Path
-          try:
-              import jsonschema
-          except ImportError:
-              print("jsonschema not installed — structural check only")
-              data = json.loads(Path("web/public/benchmarks/extraction-quality-benchmark-data.json").read_text())
-              assert data.get("benchmark") == "extraction_quality"
-              assert isinstance(data.get("runs"), list)
-              sys.exit(0)
-          schema = json.loads(Path("benchmarks/data-schema/extraction-quality-benchmark-data.schema.json").read_text())
-          data = json.loads(Path("web/public/benchmarks/extraction-quality-benchmark-data.json").read_text())
+
+          import jsonschema
+
+          schema = json.loads(
+              Path("benchmarks/data-schema/extraction-quality-benchmark-data.schema.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+          data = json.loads(Path("web/public/benchmarks/extraction-quality-benchmark-data.json").read_text(
+              encoding="utf-8"
+          ))
           jsonschema.validate(data, schema)
           print("schema ok")
           PY
