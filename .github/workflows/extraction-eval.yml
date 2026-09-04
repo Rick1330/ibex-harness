@@ -234,7 +234,7 @@ jobs:
           EXTRACTION_BENCHMARK_DATA_PATH: web/public/benchmarks/extraction-quality-benchmark-data.json
           PR_NUMBER: ${{ github.event.pull_request.number }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          BOT_BIN: ${{ steps.bot.outputs.bot-bin }}
+          BOT_BIN: ${{ steps.bot.outputs.bot-path }}
         run: |
           set -euo pipefail
           if [ ! -f "$EXTRACTION_BENCHMARK_DATA_PATH" ]; then

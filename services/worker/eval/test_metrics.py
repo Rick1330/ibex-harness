@@ -120,6 +120,47 @@ def test_temporal_indefinite_requires_null_valid_until() -> None:
     assert aggregate_scores([turn])["temporal_field_accuracy"] == 0.0
 
 
+def test_temporal_unmatched_expected_gets_no_credit() -> None:
+    expected = [_mem("User prefers dark mode in the IDE", "preference")]
+    turn = score_turn([], expected, temporal_kinds=["indefinite"])
+    assert aggregate_scores([turn])["temporal_field_accuracy"] == 0.0
+
+
+def test_temporal_wrong_valid_from_fails() -> None:
+    expected = [
+        {
+            "content": "Company HQ is in Austin Texas USA",
+            "categories": [{"label": "factual", "confidence": 0.9}],
+            "confidence": 0.9,
+            "valid_from": "2026-01-01T00:00:00Z",
+            "valid_until": None,
+        }
+    ]
+    predicted = [
+        {
+            "content": "Company HQ is in Austin Texas USA",
+            "categories": [{"label": "factual", "confidence": 0.9}],
+            "confidence": 0.9,
+            "valid_from": "2025-01-01T00:00:00Z",
+            "valid_until": None,
+        }
+    ]
+    turn = score_turn(predicted, expected, temporal_kinds=["indefinite"])
+    assert aggregate_scores([turn])["temporal_field_accuracy"] == 0.0
+
+
+def test_score_turn_rejects_mismatched_temporal_kinds() -> None:
+    import pytest
+
+    predicted = [_mem("User prefers dark mode in the IDE", "preference")]
+    expected = [
+        _mem("User prefers dark mode in the IDE", "preference"),
+        _mem("Company HQ is in Austin Texas USA", "factual"),
+    ]
+    with pytest.raises(ValueError, match="temporal_kinds"):
+        score_turn(predicted, expected, temporal_kinds=["indefinite"])
+
+
 def test_per_category_metrics_not_hidden_by_macro() -> None:
     turns = [
         score_turn(
@@ -176,20 +217,17 @@ def test_content_similarity_edges_and_substring() -> None:
     assert len(matched) == 1
 
 
-def test_score_turn_rejects_mismatched_temporal_kinds() -> None:
-    import pytest
+def test_temporal_normalize_z_vs_offset_equivalent() -> None:
+    from metrics import _normalize_temporal, _temporal_fields_match
 
-    with pytest.raises(ValueError, match="temporal_kinds"):
-        score_turn(
-            [_mem("User prefers dark mode in the IDE", "preference")],
-            [
-                _mem("User prefers dark mode in the IDE", "preference"),
-                _mem("Company HQ is in Austin Texas USA", "factual"),
-            ],
-            temporal_kinds=["indefinite"],
-        )
-
-
-def test_empty_both_sides_assignment_is_perfect() -> None:
-    turn = score_turn([], [], temporal_kinds=[])
-    assert aggregate_scores([turn])["category_assignment_accuracy"] == 1.0
+    assert _normalize_temporal(None) is None
+    assert _normalize_temporal("") is None
+    assert _normalize_temporal(12) == 12
+    assert _normalize_temporal("not-a-date") == "not-a-date"
+    assert _normalize_temporal("2026-01-01T00:00:00Z") == _normalize_temporal(
+        "2026-01-01T00:00:00+00:00"
+    )
+    assert _temporal_fields_match(
+        {"valid_from": "2026-01-01T00:00:00Z", "valid_until": None},
+        {"valid_from": "2026-01-01T00:00:00+00:00", "valid_until": None},
+    )

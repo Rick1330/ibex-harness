@@ -9,6 +9,8 @@ from pathlib import Path
 
 import regression_gate as gate_mod
 
+_DIR = Path(__file__).resolve().parent
+
 
 def _baseline(*, precision_factual: float = 1.0) -> dict:
     metrics = {
@@ -61,37 +63,55 @@ def _latest(*, precision_factual: float) -> dict:
     }
 
 
+def _write_gate_inputs(
+    out: Path, *, latest: dict, baseline: dict
+) -> tuple[Path, Path, Path]:
+    latest_path = out / "latest.json"
+    baseline_path = out / "baseline_results.json"
+    gate_path = out / "gate-result.json"
+    latest_path.write_text(json.dumps(latest), encoding="utf-8")
+    baseline_path.write_text(json.dumps(baseline), encoding="utf-8")
+    gate_mod.LATEST_PATH = latest_path
+    gate_mod.BASELINE_PATH = baseline_path
+    gate_mod.GATE_RESULT_PATH = gate_path
+    return latest_path, baseline_path, gate_path
+
+
 class ExtractionRegressionGateTests(unittest.TestCase):
     def test_main_exits_zero_within_three_pp(self) -> None:
         """0.98 is a 2pp drop from 1.0 — within 3pp policy."""
-        with tempfile.TemporaryDirectory() as tmp:
-            out = Path(tmp)
-            latest_path = out / "latest.json"
-            baseline_path = out / "baseline.json"
-            gate_path = out / "gate-result.json"
-            latest_path.write_text(json.dumps(_latest(precision_factual=0.98)), encoding="utf-8")
-            baseline_path.write_text(json.dumps(_baseline()), encoding="utf-8")
-            gate_mod.LATEST_PATH = latest_path
-            gate_mod.BASELINE_PATH = baseline_path
-            gate_mod.GATE_RESULT_PATH = gate_path
+        with tempfile.TemporaryDirectory(dir=_DIR) as tmp:
+            _write_gate_inputs(
+                Path(tmp),
+                latest=_latest(precision_factual=0.98),
+                baseline=_baseline(),
+            )
             self.assertEqual(gate_mod.main(), 0)
-            result = json.loads(gate_path.read_text(encoding="utf-8"))
+            result = json.loads(gate_mod.GATE_RESULT_PATH.read_text(encoding="utf-8"))
             self.assertEqual(result["status"], "pass")
+
+    def test_main_exits_zero_at_exact_three_pp_boundary(self) -> None:
+        """0.97 is exactly 3pp from 1.0 — inclusive boundary must pass."""
+        drop = gate_mod._pp_drop(0.97, 1.0)
+        self.assertTrue(gate_mod._within_max_pp(drop, 3.0))
+        self.assertAlmostEqual(drop, 3.0, places=9)
+        ok, checks, _ = gate_mod.evaluate_gate(
+            _latest(precision_factual=0.97),
+            _baseline(),
+        )
+        self.assertTrue(ok)
+        self.assertTrue(all(c["ok"] for c in checks))
 
     def test_main_exits_nonzero_when_metric_regresses_beyond_three_pp(self) -> None:
         """0.96 is a 4pp drop from 1.0 — must fail the build (not warn-only)."""
-        with tempfile.TemporaryDirectory() as tmp:
-            out = Path(tmp)
-            latest_path = out / "latest.json"
-            baseline_path = out / "baseline.json"
-            gate_path = out / "gate-result.json"
-            latest_path.write_text(json.dumps(_latest(precision_factual=0.96)), encoding="utf-8")
-            baseline_path.write_text(json.dumps(_baseline()), encoding="utf-8")
-            gate_mod.LATEST_PATH = latest_path
-            gate_mod.BASELINE_PATH = baseline_path
-            gate_mod.GATE_RESULT_PATH = gate_path
+        with tempfile.TemporaryDirectory(dir=_DIR) as tmp:
+            _write_gate_inputs(
+                Path(tmp),
+                latest=_latest(precision_factual=0.96),
+                baseline=_baseline(),
+            )
             self.assertEqual(gate_mod.main(), 1)
-            result = json.loads(gate_path.read_text(encoding="utf-8"))
+            result = json.loads(gate_mod.GATE_RESULT_PATH.read_text(encoding="utf-8"))
             self.assertEqual(result["status"], "fail")
             failed = [c["name"] for c in result["checks"] if not c["ok"]]
             self.assertTrue(any("precision_factual" in name for name in failed))
@@ -104,11 +124,35 @@ class ExtractionRegressionGateTests(unittest.TestCase):
         self.assertTrue(ok)
         self.assertTrue(all("vllm" not in c["name"] for c in checks))
 
-    def test_parse_float_rejects_nan_and_garbage(self) -> None:
+    def test_parse_float_rejects_nan_inf_and_garbage(self) -> None:
         self.assertIsNone(gate_mod._parse_float(None))
         self.assertIsNone(gate_mod._parse_float("nope"))
         self.assertIsNone(gate_mod._parse_float(float("nan")))
+        self.assertIsNone(gate_mod._parse_float(float("inf")))
+        self.assertIsNone(gate_mod._parse_float("-inf"))
         self.assertEqual(gate_mod._parse_float("1.5"), 1.5)
+
+    def test_max_regression_pp_inf_rejected(self) -> None:
+        baseline = _baseline()
+        baseline["policy"] = {"max_regression_pp": "inf"}
+        ok, checks, lines = gate_mod.evaluate_gate(_latest(precision_factual=1.0), baseline)
+        self.assertFalse(ok)
+        self.assertEqual(checks, [])
+        self.assertTrue(any("max_regression_pp" in line for line in lines))
+
+        baseline2 = _baseline()
+        baseline2["policy"] = {"max_regression_pp": float("inf")}
+        ok2, _, lines2 = gate_mod.evaluate_gate(_latest(precision_factual=1.0), baseline2)
+        self.assertFalse(ok2)
+        self.assertTrue(any("max_regression_pp" in line for line in lines2))
+
+    def test_missing_baseline_gated_metric_fails(self) -> None:
+        baseline = _baseline()
+        del baseline["providers"]["openai"]["metrics"]["temporal_field_accuracy"]
+        ok, checks, summary = gate_mod.evaluate_gate(_latest(precision_factual=1.0), baseline)
+        self.assertFalse(ok)
+        self.assertTrue(any("temporal_field_accuracy" in c["name"] for c in checks))
+        self.assertTrue(any("missing from baseline" in line for line in summary))
 
     def test_evaluate_gate_rejects_bad_shapes_and_missing_metrics(self) -> None:
         ok, _checks, lines = gate_mod.evaluate_gate({"metrics": {}}, {"providers": []})

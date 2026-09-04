@@ -671,7 +671,7 @@ Used by `.github/workflows/benchmark.yml` for cross-repo benchmark publishing an
 
 | Variable | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
-| `BENCHMARK_BOT_ENABLED` | repo variable | No | unset (disabled) | When `true`, notify jobs dispatch to `ibexharness-benchmark-bot` after successful main collects (proxy + Memory HNSW + ranking-quality + write-pipeline) |
+| `BENCHMARK_BOT_ENABLED` | repo variable | No | unset (disabled) | When `true`, notify jobs dispatch to `ibexharness-benchmark-bot` after successful main collects (proxy + Memory HNSW + ranking-quality + write-pipeline). Extraction Quality uses a separate notify path (`extraction_benchmark_main_complete`) from `.github/workflows/extraction-eval.yml` |
 | `BENCHMARK_BOT_SHA` | repo variable | Yes when PR comments enabled | — | Pinned commit SHA of `ibexharness-benchmark-bot` (no `main` fallback). Used by `.github/actions/setup-benchmark-bot` |
 | `BENCHMARK_BOT_RELEASE_TAG` | repo variable | Recommended | — | Release tag for prebuilt `ibex-benchmark-bot-linux-amd64` (e.g. `bot-<7-char-sha>`). Must match `BENCHMARK_BOT_SHA` short SHA or the setup action ignores it and cargo-builds |
 | `BENCHMARK_BOT_DISPATCH_TOKEN` | repo secret | Yes when `BENCHMARK_BOT_ENABLED=true` | — | Fine-grained PAT with **Contents: Read and write** on `ibexharness-benchmark-bot` (required for `repository_dispatch`) |
@@ -683,7 +683,8 @@ Used by `.github/workflows/benchmark.yml` for cross-repo benchmark publishing an
 
 - **Every matching PR:**
   - **Benchmarks** and **Memory Benchmarks** upsert one shared sticky comment (`IBEX_BOT_COMMENT`) with Proxy, Memory HNSW, ranking-quality, and write-pipeline sections. No data PR.
-- **Main / schedule collects:** notify jobs dispatch the bot; bot upserts **one** shared data PR on branch `chore/bench-data-publish` (proxy and/or memory suite JSON files in the same PR).
+  - **Extraction Quality Eval** upserts its own sticky comment via `post-extraction-pr-comment` (setup action `require-subcommand`).
+- **Main / schedule collects:** notify jobs dispatch the bot; bot upserts **one** shared data PR on branch `chore/bench-data-publish` (proxy and/or memory suite JSON files in the same PR). Extraction Quality main collects dispatch `extraction_benchmark_main_complete` for the extraction-quality publish path.
 
 **Pinning:** Keep these three in lockstep after each green bot merge:
 

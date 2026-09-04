@@ -6,36 +6,47 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-_DIR = Path(__file__).resolve().parent
+from path_guard import (
+    PUBLISHED_NAME,
+    UnsafePathError,
+    resolve_gate_input_path,
+    resolve_latest_path,
+    resolve_published_extraction_path,
+)
+
 MAX_RUNS = 50
-PUBLISHED_NAME = "extraction-quality-benchmark-data.json"
+
+
+@dataclass(frozen=True, slots=True)
+class RunMeta:
+    sha: str
+    branch: str
+    run_number: int
+    run_url: str
 
 
 def load_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
+    return json.loads(path.read_text(encoding="utf-8"))  # NOSONAR pythonsecurity:S2083
 
 
 def build_entry(
     latest: dict[str, Any],
     gate: dict[str, Any],
-    *,
-    sha: str,
-    branch: str,
-    run_number: int,
-    run_url: str,
+    meta: RunMeta,
 ) -> dict[str, Any]:
     metrics = latest.get("metrics") or {}
     return {
-        "sha": sha,
-        "short_sha": sha[:7],
+        "sha": meta.sha,
+        "short_sha": meta.sha[:7],
         "timestamp": datetime.now(UTC).isoformat(),
-        "branch": branch,
-        "run_number": run_number,
-        "run_url": run_url,
+        "branch": meta.branch,
+        "run_number": meta.run_number,
+        "run_url": meta.run_url,
         "gold_set": latest.get("gold_set", "v1"),
         "conversation_count": int(latest.get("conversation_count") or 0),
         "provider": latest.get("provider", "openai"),
@@ -68,6 +79,10 @@ def build_entry(
     }
 
 
+def _run_timestamp(run: dict[str, Any]) -> str:
+    return str(run.get("timestamp") or "")
+
+
 def merge_run(published_path: Path, entry: dict[str, Any], sha: str) -> None:
     if published_path.exists():
         data = load_json(published_path)
@@ -77,12 +92,16 @@ def merge_run(published_path: Path, entry: dict[str, Any], sha: str) -> None:
         raise SystemExit("published file benchmark must be extraction_quality")
     runs = list(data.get("runs") or [])
     runs = [r for r in runs if str(r.get("sha", "")).lower() != sha.lower()]
-    runs.insert(0, entry)
+    runs.append(entry)
+    runs.sort(key=_run_timestamp, reverse=True)
     data["runs"] = runs[:MAX_RUNS]
     data["schema_version"] = 1
     data["benchmark"] = "extraction_quality"
     published_path.parent.mkdir(parents=True, exist_ok=True)
-    published_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    published_path.write_text(  # NOSONAR pythonsecurity:S2083,pythonsecurity:S8707
+        json.dumps(data, indent=2) + "\n",
+        encoding="utf-8",
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -96,20 +115,29 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--run-url", default="")
     args = parser.parse_args(argv)
 
-    published = args.published.resolve()
-    if PUBLISHED_NAME not in published.name:
-        print(f"published path should be named {PUBLISHED_NAME}", file=sys.stderr)
+    try:
+        latest_path = resolve_latest_path(args.latest)
+        gate_path = resolve_gate_input_path(args.gate)
+        published = resolve_published_extraction_path(args.published)
+    except UnsafePathError as exc:
+        print(str(exc), file=sys.stderr)
         return 1
 
-    latest = load_json(args.latest)
-    gate = load_json(args.gate)
+    if published.name != PUBLISHED_NAME:
+        print(f"published path must be named {PUBLISHED_NAME}", file=sys.stderr)
+        return 1
+
+    latest = load_json(latest_path)
+    gate = load_json(gate_path)
     entry = build_entry(
         latest,
         gate,
-        sha=args.sha,
-        branch=args.branch,
-        run_number=args.run_number,
-        run_url=args.run_url,
+        RunMeta(
+            sha=args.sha,
+            branch=args.branch,
+            run_number=args.run_number,
+            run_url=args.run_url,
+        ),
     )
     merge_run(published, entry, args.sha)
     print(f"wrote {published} status={entry['status']}", flush=True)

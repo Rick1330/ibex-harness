@@ -24,7 +24,9 @@ const extractionRunShape = {
   conversation_count: z.number().int().nonnegative().optional(),
   provider: z.string().optional(),
   enforcement: z.enum(["ci", "manual"]).optional(),
-  mode: z.string().optional(),
+  mode: z
+    .enum(["cassette", "smoke", "fast", "live", "record", "full", "vllm"])
+    .optional(),
   model: z.string().nullable().optional(),
   metrics: extractionMetricsSchema,
 } satisfies z.ZodRawShape;

@@ -29,7 +29,7 @@ Harness lives under `services/worker/eval/` with versioned gold data in `gold_se
 
 ### 2) vLLM conflict → path (a)
 
-- **CI-enforced:** OpenAI cassette (and optional live on weekly `full` only).
+- **CI-enforced:** OpenAI cassette (and optional live on weekly `full` / `workflow_dispatch` only).
 - **Manual:** vLLM numbers committed in `baseline_results.json` with `enforcement: manual` and `last_refreshed`.
 - Side-by-side requirement is satisfied by publishing both blocks; summaries always label enforcement so manual/stale vLLM is never mistaken for CI.
 

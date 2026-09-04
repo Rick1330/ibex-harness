@@ -191,4 +191,3 @@ cd services/worker
 - Site: `/benchmarks/extraction-quality`
 - Manual vLLM metrics: run `--mode vllm` after the section above, then update
   `baseline_results.json` `providers.vllm` (`enforcement` stays `manual`)
-

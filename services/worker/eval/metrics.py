@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Iterable
 
 CATEGORIES = (
@@ -69,13 +70,12 @@ def _content_similarity(a: str, b: str) -> float:
     return len(ta & tb) / len(ta | tb)
 
 
-def match_memories(
+def _greedy_match_pairs(
     predicted: list[dict[str, Any]],
     expected: list[dict[str, Any]],
     *,
-    min_similarity: float = 0.55,
-) -> list[tuple[int | None, int | None]]:
-    """Greedy 1:1 matches; unmatched appear as (pred_i, None) or (None, exp_j)."""
+    min_similarity: float,
+) -> list[tuple[int, int]]:
     pairs: list[tuple[float, int, int]] = []
     for pi, pred in enumerate(predicted):
         for ei, exp in enumerate(expected):
@@ -85,20 +85,89 @@ def match_memories(
     pairs.sort(reverse=True)
     used_p: set[int] = set()
     used_e: set[int] = set()
-    matches: list[tuple[int | None, int | None]] = []
+    matched: list[tuple[int, int]] = []
     for _sim, pi, ei in pairs:
         if pi in used_p or ei in used_e:
             continue
         used_p.add(pi)
         used_e.add(ei)
-        matches.append((pi, ei))
-    for pi in range(len(predicted)):
-        if pi not in used_p:
-            matches.append((pi, None))
-    for ei in range(len(expected)):
-        if ei not in used_e:
-            matches.append((None, ei))
+        matched.append((pi, ei))
+    return matched
+
+
+def match_memories(
+    predicted: list[dict[str, Any]],
+    expected: list[dict[str, Any]],
+    *,
+    min_similarity: float = 0.55,
+) -> list[tuple[int | None, int | None]]:
+    """Greedy 1:1 matches; unmatched appear as (pred_i, None) or (None, exp_j)."""
+    matched = _greedy_match_pairs(predicted, expected, min_similarity=min_similarity)
+    used_p = {pi for pi, _ei in matched}
+    used_e = {ei for _pi, ei in matched}
+    matches: list[tuple[int | None, int | None]] = [(pi, ei) for pi, ei in matched]
+    matches.extend((pi, None) for pi in range(len(predicted)) if pi not in used_p)
+    matches.extend((None, ei) for ei in range(len(expected)) if ei not in used_e)
     return matches
+
+
+def _update_category_counts(
+    counts: dict[str, CategoryCounts],
+    pred_labels: frozenset[str],
+    exp_labels: frozenset[str],
+) -> None:
+    for cat in CATEGORIES:
+        in_p = cat in pred_labels
+        in_e = cat in exp_labels
+        cur = counts[cat]
+        if in_p and in_e:
+            counts[cat] = CategoryCounts(cur.tp + 1, cur.fp, cur.fn)
+        elif in_p and not in_e:
+            counts[cat] = CategoryCounts(cur.tp, cur.fp + 1, cur.fn)
+        elif in_e and not in_p:
+            counts[cat] = CategoryCounts(cur.tp, cur.fp, cur.fn + 1)
+
+
+def _normalize_temporal(value: object) -> object:
+    """Normalize temporal fields so Z and +00:00 compare equal."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        return value
+    text = value.strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        return text
+
+
+def _temporal_fields_match(pred: dict[str, Any], exp: dict[str, Any]) -> bool:
+    return _normalize_temporal(pred.get("valid_from")) == _normalize_temporal(
+        exp.get("valid_from")
+    ) and _normalize_temporal(pred.get("valid_until")) == _normalize_temporal(
+        exp.get("valid_until")
+    )
+
+
+def _score_temporal_pair(
+    *,
+    pi: int | None,
+    ei: int | None,
+    pred: dict[str, Any] | None,
+    exp: dict[str, Any] | None,
+) -> tuple[int, int]:
+    """Return (correct_delta, total_delta). Credit only for matched pairs with exact fields."""
+    if ei is None or exp is None:
+        return 0, 0
+    if pi is None or pred is None:
+        return 0, 1
+    if _temporal_fields_match(pred, exp):
+        return 1, 1
+    return 0, 1
 
 
 def score_turn(
@@ -128,27 +197,12 @@ def score_turn(
         if pi is not None and ei is not None and pred_labels == exp_labels:
             assign_correct += 1
 
-        for cat in CATEGORIES:
-            in_p = cat in pred_labels
-            in_e = cat in exp_labels
-            cur = counts[cat]
-            if in_p and in_e:
-                counts[cat] = CategoryCounts(cur.tp + 1, cur.fp, cur.fn)
-            elif in_p and not in_e:
-                counts[cat] = CategoryCounts(cur.tp, cur.fp + 1, cur.fn)
-            elif in_e and not in_p:
-                counts[cat] = CategoryCounts(cur.tp, cur.fp, cur.fn + 1)
+        _update_category_counts(counts, pred_labels, exp_labels)
 
-        if ei is not None and exp is not None:
-            kind = kinds[ei]
-            temporal_total += 1
-            until = None if pred is None else pred.get("valid_until")
-            if kind == "supersession" and until is not None:
-                temporal_correct += 1
-            elif kind == "indefinite" and until is None:
-                temporal_correct += 1
+        ok_delta, total_delta = _score_temporal_pair(pi=pi, ei=ei, pred=pred, exp=exp)
+        temporal_correct += ok_delta
+        temporal_total += total_delta
 
-    # Cap assign_total when both empty → already 1; when both empty correct stays 0
     if not predicted and not expected:
         assign_correct = 1
         assign_total = 1
@@ -164,9 +218,9 @@ def score_turn(
 
 def aggregate_scores(turns: Iterable[TurnScore]) -> dict[str, float]:
     """Flatten turn scores into gate metrics (fractions 0..1)."""
-    cat_tp = {c: 0 for c in CATEGORIES}
-    cat_fp = {c: 0 for c in CATEGORIES}
-    cat_fn = {c: 0 for c in CATEGORIES}
+    cat_tp = dict.fromkeys(CATEGORIES, 0)
+    cat_fp = dict.fromkeys(CATEGORIES, 0)
+    cat_fn = dict.fromkeys(CATEGORIES, 0)
     assign_ok = 0
     assign_n = 0
     temp_ok = 0

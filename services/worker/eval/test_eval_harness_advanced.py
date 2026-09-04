@@ -15,8 +15,10 @@ if str(_WORKER) not in sys.path:
     sys.path.insert(0, str(_WORKER))
 
 import build_published
+import path_guard
 import run_eval
 from app.extraction.prompt_v2 import EXTRACTION_SYSTEM_PROMPT_BATCH
+from build_published import RunMeta
 
 
 class PromptManifestTests(unittest.TestCase):
@@ -27,6 +29,12 @@ class PromptManifestTests(unittest.TestCase):
         expected = hashlib.sha256(EXTRACTION_SYSTEM_PROMPT_BATCH.encode()).hexdigest()
         self.assertEqual(manifest["prompt_sha256"], expected)
         self.assertGreaterEqual(int(manifest["conversation_count"]), 100)
+        for key in (
+            "conversations_sha256",
+            "expected_memories_sha256",
+            "cassettes_sha256",
+        ):
+            self.assertEqual(len(manifest[key]), 64)
 
     def test_cassette_count_matches_conversations(self) -> None:
         gold = _DIR / "gold_set" / "v1"
@@ -48,7 +56,7 @@ class PromptManifestTests(unittest.TestCase):
 
 class BuildPublishedTests(unittest.TestCase):
     def test_merge_prepends_and_dedupes_sha(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(dir=_DIR) as tmp:
             published = Path(tmp) / "extraction-quality-benchmark-data.json"
             latest = {
                 "gold_set": "v1",
@@ -79,19 +87,23 @@ class BuildPublishedTests(unittest.TestCase):
             entry = build_published.build_entry(
                 latest,
                 gate,
-                sha="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                branch="main",
-                run_number=1,
-                run_url="https://example/runs/1",
+                RunMeta(
+                    sha="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    branch="main",
+                    run_number=1,
+                    run_url="https://example/runs/1",
+                ),
             )
             build_published.merge_run(published, entry, entry["sha"])
             entry2 = build_published.build_entry(
                 latest,
                 gate,
-                sha="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                branch="main",
-                run_number=2,
-                run_url="https://example/runs/2",
+                RunMeta(
+                    sha="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    branch="main",
+                    run_number=2,
+                    run_url="https://example/runs/2",
+                ),
             )
             build_published.merge_run(published, entry2, entry2["sha"])
             data = json.loads(published.read_text(encoding="utf-8"))
@@ -99,8 +111,93 @@ class BuildPublishedTests(unittest.TestCase):
             self.assertEqual(len(data["runs"]), 1)
             self.assertEqual(data["runs"][0]["run_number"], 2)
 
+    def test_merge_sorts_newest_first_regardless_of_input_order(self) -> None:
+        with tempfile.TemporaryDirectory(dir=_DIR) as tmp:
+            published = Path(tmp) / "extraction-quality-benchmark-data.json"
+            older = {
+                "sha": "a" * 40,
+                "timestamp": "2026-01-01T00:00:00+00:00",
+                "run_number": 1,
+            }
+            newer = {
+                "sha": "b" * 40,
+                "timestamp": "2026-06-01T00:00:00+00:00",
+                "run_number": 2,
+            }
+            published.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "benchmark": "extraction_quality",
+                        "runs": [older],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            build_published.merge_run(published, newer, newer["sha"])
+            # Reverse-order seed then merge should still emit newest-first.
+            data = json.loads(published.read_text(encoding="utf-8"))
+            self.assertEqual([r["sha"] for r in data["runs"]], ["b" * 40, "a" * 40])
+
+            published.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "benchmark": "extraction_quality",
+                        "runs": [newer, older],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            mid = {
+                "sha": "c" * 40,
+                "timestamp": "2026-03-01T00:00:00+00:00",
+                "run_number": 3,
+            }
+            build_published.merge_run(published, mid, mid["sha"])
+            data = json.loads(published.read_text(encoding="utf-8"))
+            self.assertEqual(
+                [r["timestamp"] for r in data["runs"]],
+                [
+                    "2026-06-01T00:00:00+00:00",
+                    "2026-03-01T00:00:00+00:00",
+                    "2026-01-01T00:00:00+00:00",
+                ],
+            )
+
+    def test_path_guard_rejects_escape_and_wrong_basename(self) -> None:
+        with self.assertRaises(path_guard.UnsafePathError):
+            path_guard.resolve_published_extraction_path("../etc/passwd")
+        with self.assertRaises(path_guard.UnsafePathError):
+            path_guard.resolve_published_extraction_path("wrong-name.json")
+        with self.assertRaises(path_guard.UnsafePathError):
+            path_guard.resolve_workspace_path("  ")
+        with self.assertRaises(path_guard.UnsafePathError):
+            path_guard.resolve_latest_path("missing-latest.json")
+
+    def test_main_rejects_unsafe_published_path(self) -> None:
+        with tempfile.TemporaryDirectory(dir=_DIR) as tmp:
+            latest = Path(tmp) / "latest.json"
+            gate = Path(tmp) / "gate-result.json"
+            latest.write_text(json.dumps({"metrics": {}}), encoding="utf-8")
+            gate.write_text(json.dumps({"status": "pass"}), encoding="utf-8")
+            self.assertEqual(
+                build_published.main(
+                    [
+                        "--latest",
+                        str(latest),
+                        "--gate",
+                        str(gate),
+                        "--published",
+                        str(Path(tmp) / ".." / "wrong-name.json"),
+                        "--sha",
+                        "d" * 40,
+                    ]
+                ),
+                1,
+            )
     def test_merge_rejects_wrong_benchmark_and_main_cli(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(dir=_DIR) as tmp:
             bad = Path(tmp) / "extraction-quality-benchmark-data.json"
             bad.write_text(
                 json.dumps({"schema_version": 1, "benchmark": "other", "runs": []}),
@@ -110,7 +207,7 @@ class BuildPublishedTests(unittest.TestCase):
                 build_published.merge_run(bad, {"sha": "b" * 40}, "b" * 40)
 
             latest = Path(tmp) / "latest.json"
-            gate = Path(tmp) / "gate.json"
+            gate = Path(tmp) / "gate-result.json"
             published = Path(tmp) / "extraction-quality-benchmark-data.json"
             latest.write_text(
                 json.dumps(
@@ -166,8 +263,12 @@ class BuildPublishedTests(unittest.TestCase):
 
 class RunEvalCassetteSmokeTests(unittest.TestCase):
     def test_cassette_eval_reaches_perfect_baseline(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(dir=_DIR) as tmp:
             out = Path(tmp)
+            original_out = run_eval.OUTPUT_DIR
+            original_latest = run_eval.LATEST_PATH
+            self.addCleanup(setattr, run_eval, "OUTPUT_DIR", original_out)
+            self.addCleanup(setattr, run_eval, "LATEST_PATH", original_latest)
             run_eval.OUTPUT_DIR = out
             run_eval.LATEST_PATH = out / "latest.json"
             report = run_eval.run_eval(mode="cassette", provider="openai")

@@ -35,7 +35,10 @@
           "conversation_count": { "type": "integer", "minimum": 0 },
           "provider": { "type": "string" },
           "enforcement": { "type": "string", "enum": ["ci", "manual"] },
-          "mode": { "type": "string" },
+          "mode": {
+            "type": "string",
+            "enum": ["cassette", "smoke", "fast", "live", "record", "full", "vllm"]
+          },
           "model": { "type": ["string", "null"] },
           "metrics": {
             "type": "object",
