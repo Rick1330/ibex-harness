@@ -256,7 +256,7 @@ Used by: **proxy** (`services/proxy`)
 | `IBEX_PROVIDER_CIRCUIT_BREAKER_COOLDOWN_SECONDS` | No | `30` | Breaker cool-down in seconds | Integer seconds (not Go duration string) |
 | `IBEX_CONTEXT_ENABLED` | Planned **3.5** | `false` | Master switch for context-assembly injection; `false` = Phase 2 directive-only behavior | Additive; fail-open |
 | `IBEX_CONTEXT_GRPC_ADDR` | Conditional | `127.0.0.1:9092` | Context Assembly Engine gRPC target | Required when context enabled |
-| `IBEX_CONTEXT_TIMEOUT` | Planned **3.5** | `45ms` | Client-side assembly deadline (independent of server internal budget) | Fail-open on timeout |
+| `IBEX_CONTEXT_TIMEOUT` | No (**3.5.C.2**) | `45ms` | Outer parallel-retrieval deadline for context library (`ContextSettings.timeout_ms`); accepts `45` or `45ms` | Fail-open on timeout — return partial sources |
 | `IBEX_CONTEXT_EMBED_METADATA` | Planned **3.5** | `false` | Embed assembly metadata JSON in response (costs a decode) | Off by default |
 | `IBEX_EXTRACTION_REDIS_URL` | Planned **3.5** | (falls back to `REDIS_URL`) | Optional separate Redis for Celery broker | Secret if password present |
 | `IBEX_TOKENIZER_MODE` | No | `local` | `local` \| `service` \| `dual` — how proxy counts tokens | **Shipped 2.5.G2.M1:** `local` only; `service`/`dual` rejected at validate |
@@ -453,7 +453,14 @@ Production (`IBEX_ENV=production`): require `IBEX_WORKER_BROKER_URL` or one of
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `IBEX_CONTEXT_DEADLINE_MS` | No | `40` | Server-side assembly budget |
+| `IBEX_CONTEXT_TIMEOUT` | No | `45ms` | Outer retrieval deadline (also in §9); shared by context library |
+| `IBEX_CONTEXT_DIRECTIVE_TIMEOUT_MS` | No | `5` | Directive Redis GET branch budget |
+| `IBEX_CONTEXT_HOT_TIMEOUT_MS` | No | `15` | Hot-memory HTTP branch budget |
+| `IBEX_CONTEXT_COLD_TIMEOUT_MS` | No | `45` | Cold search HTTP branch budget (embeds server-side) |
+| `IBEX_CONTEXT_MEMORY_BASE_URL` | Conditional | (none) | Memory service base URL for hot/cold HTTP |
+| `IBEX_CONTEXT_MEMORY_API_TOKEN` | Conditional | (none) | Bearer token with `memory:read` |
+| `IBEX_CONTEXT_REDIS_URL` / `REDIS_URL` | Conditional | (none) | Redis for directive cache envelope |
+| `IBEX_CONTEXT_DEADLINE_MS` | No | `40` | Server-side assembly budget (future gRPC service) |
 | `IBEX_CONTEXT_P95_TARGET_MS` | No | `50` | Target p95 | Alerting/benchmarks |
 | `IBEX_CONTEXT_MAX_MEMORIES` | No | `20` | Max memories injected |
 | `IBEX_CONTEXT_RESPONSE_RESERVE_RATIO` | No | `0.15` | Reserve for model output |
