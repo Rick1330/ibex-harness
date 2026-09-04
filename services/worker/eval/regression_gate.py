@@ -1,22 +1,21 @@
 #!/usr/bin/env python3
-"""Regression gate for extraction quality eval (absolute percentage points).
-
-CI-enforced provider blocks only (baseline providers.*.enforcement == \"ci\").
-Fails the process (exit 1) when any gated metric drops by more than
-policy.max_regression_pp absolute percentage points (default 3.0).
-
-Manual/vLLM blocks are printed for side-by-side visibility but never fail CI.
-"""
+"""Regression gate for extraction quality eval (absolute percentage points)."""
 
 from __future__ import annotations
 
 import json
-import math
 import sys
 from pathlib import Path
 from typing import Any
 
-from metrics import gated_metric_names
+from gate_checks import (
+    check_ci_block,
+    is_matching_ci_block,
+    parse_float,
+    pp_drop,
+    resolve_max_pp,
+    within_max_pp,
+)
 from path_guard import (
     UnsafePathError,
     resolve_baseline_path,
@@ -29,28 +28,10 @@ LATEST_PATH = _DIR / "output" / "latest.json"
 BASELINE_PATH = _DIR / "gold_set" / "v1" / "baseline_results.json"
 GATE_RESULT_PATH = _DIR / "output" / "gate-result.json"
 
-_PP_TOLERANCE = 1e-9
-
-
-def _parse_float(value: object) -> float | None:
-    if value is None:
-        return None
-    try:
-        parsed = float(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        return None
-    if not math.isfinite(parsed):
-        return None
-    return parsed
-
-
-def _pp_drop(cur: float, base: float) -> float:
-    """Absolute percentage-point drop (positive means regression for higher-is-better)."""
-    return (base - cur) * 100.0
-
-
-def _within_max_pp(drop: float, max_pp: float) -> bool:
-    return drop <= max_pp + _PP_TOLERANCE
+# Compat aliases for tests.
+_parse_float = parse_float
+_pp_drop = pp_drop
+_within_max_pp = within_max_pp
 
 
 def _provider_summary_lines(providers: dict[str, Any]) -> list[str]:
@@ -67,80 +48,34 @@ def _provider_summary_lines(providers: dict[str, Any]) -> list[str]:
     return lines
 
 
-def _fail_check(name: str) -> dict[str, Any]:
-    return {"name": name, "value": 0.0, "limit": 0.0, "ok": False}
-
-
-def _one_metric_check(
-    *,
-    provider_name: str,
-    metric_name: str,
-    base_metrics: dict[str, Any],
-    latest_metrics: dict[str, Any],
-    max_pp: float,
-) -> tuple[bool, dict[str, Any], str]:
-    if metric_name not in base_metrics:
-        check = _fail_check(f"{provider_name}.{metric_name} missing from baseline")
-        line = f"- FAIL: {provider_name}.{metric_name} missing from baseline metrics"
-        return False, check, line
-    base_val = _parse_float(base_metrics.get(metric_name))
-    cur_val = _parse_float(latest_metrics.get(metric_name))
-    if base_val is None or cur_val is None:
-        passed = False
-        drop = 0.0
-    else:
-        drop = _pp_drop(cur_val, base_val)
-        passed = _within_max_pp(drop, max_pp)
-    check = {
-        "name": f"{provider_name}.{metric_name} regression (pp)",
-        "value": drop,
-        "limit": max_pp,
-        "ok": passed,
-        "current": cur_val,
-        "baseline": base_val,
-    }
-    mark = "PASS" if passed else "FAIL"
-    line = (
-        f"- {mark}: {provider_name}.{metric_name} "
-        f"(current={cur_val}, baseline={base_val}, drop_pp={drop:.3f}, limit={max_pp})"
+def _invalid_max_pp_result() -> tuple[bool, list[dict[str, Any]], list[str]]:
+    return (
+        False,
+        [],
+        [
+            "## Extraction quality regression gate",
+            "",
+            "- FAIL: policy.max_regression_pp must be a finite number",
+        ],
     )
-    return passed, check, line
 
 
-def _ci_metric_checks(
-    *,
-    provider_name: str,
-    base_metrics: dict[str, Any],
-    latest_metrics: dict[str, Any],
-    max_pp: float,
-) -> tuple[bool, list[dict[str, Any]], list[str]]:
-    checks: list[dict[str, Any]] = []
-    summary: list[str] = []
-    ok = True
-    for metric_name in gated_metric_names():
-        passed, check, line = _one_metric_check(
-            provider_name=provider_name,
-            metric_name=metric_name,
-            base_metrics=base_metrics,
-            latest_metrics=latest_metrics,
-            max_pp=max_pp,
-        )
-        checks.append(check)
-        summary.append(line)
-        ok = ok and passed
-    return ok, checks, summary
+def _header(max_pp: float, latest: dict[str, Any], providers: dict[str, Any]) -> list[str]:
+    return [
+        "## Extraction quality regression gate",
+        "",
+        f"- max_regression_pp: {max_pp}",
+        f"- latest_provider: {latest.get('provider') or 'openai'}",
+        f"- latest_enforcement: {latest.get('enforcement')}",
+        "",
+        *_provider_summary_lines(providers),
+        "",
+        "### Checks (CI-enforced only)",
+    ]
 
 
-def _resolve_max_pp(policy: dict[str, Any]) -> float | None:
-    """Return max_pp, or None when present but non-finite."""
-    if "max_regression_pp" not in policy or policy.get("max_regression_pp") is None:
-        return 3.0
-    return _parse_float(policy.get("max_regression_pp"))
-
-
-def _ci_provider_blocks(
+def _run_ci_checks(
     providers: dict[str, Any],
-    *,
     latest_provider: str,
     latest_metrics: dict[str, Any],
     max_pp: float,
@@ -149,22 +84,11 @@ def _ci_provider_blocks(
     checks: list[dict[str, Any]] = []
     summary: list[str] = []
     for name, block in providers.items():
-        if not isinstance(block, dict):
+        if not is_matching_ci_block(name, block, latest_provider):
             continue
-        if str(block.get("enforcement") or "") != "ci":
-            continue
-        if name != latest_provider:
-            continue
-        base_metrics = block.get("metrics") or {}
-        if not isinstance(base_metrics, dict):
-            ok = False
-            checks.append(_fail_check(f"{name} metrics object"))
-            continue
-        block_ok, block_checks, block_lines = _ci_metric_checks(
-            provider_name=name,
-            base_metrics=base_metrics,
-            latest_metrics=latest_metrics,
-            max_pp=max_pp,
+        assert isinstance(block, dict)
+        block_ok, block_checks, block_lines = check_ci_block(
+            name, block, latest_metrics, max_pp
         )
         checks.extend(block_checks)
         summary.extend(block_lines)
@@ -177,17 +101,9 @@ def evaluate_gate(
     baseline: dict[str, Any],
 ) -> tuple[bool, list[dict[str, Any]], list[str]]:
     policy = baseline.get("policy") or {}
-    max_pp = _resolve_max_pp(policy if isinstance(policy, dict) else {})
+    max_pp = resolve_max_pp(policy if isinstance(policy, dict) else {})
     if max_pp is None:
-        return (
-            False,
-            [],
-            [
-                "## Extraction quality regression gate",
-                "",
-                "- FAIL: policy.max_regression_pp must be a finite number",
-            ],
-        )
+        return _invalid_max_pp_result()
 
     providers = baseline.get("providers") or {}
     if not isinstance(providers, dict):
@@ -198,30 +114,14 @@ def evaluate_gate(
         return False, [], ["latest.metrics must be an object"]
 
     latest_provider = str(latest.get("provider") or "openai")
-    summary: list[str] = [
-        "## Extraction quality regression gate",
-        "",
-        f"- max_regression_pp: {max_pp}",
-        f"- latest_provider: {latest_provider}",
-        f"- latest_enforcement: {latest.get('enforcement')}",
-        "",
-        *_provider_summary_lines(providers),
-        "",
-        "### Checks (CI-enforced only)",
-    ]
-
-    ok, checks, check_lines = _ci_provider_blocks(
-        providers,
-        latest_provider=latest_provider,
-        latest_metrics=latest_metrics,
-        max_pp=max_pp,
+    summary = _header(max_pp, latest, providers)
+    ok, checks, check_lines = _run_ci_checks(
+        providers, latest_provider, latest_metrics, max_pp
     )
     summary.extend(check_lines)
-
     if not checks:
         ok = False
         summary.append("- FAIL: no CI-enforced checks ran (provider mismatch or empty baseline)")
-
     return ok, checks, summary
 
 

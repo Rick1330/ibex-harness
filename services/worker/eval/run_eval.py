@@ -21,6 +21,7 @@ import json
 import os
 import sys
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -189,42 +190,55 @@ _CASSETTE_MODES = frozenset({"cassette", "smoke", "fast"})
 _LIVE_MODES = frozenset({"live", "record", "full", "vllm"})
 
 
+@dataclass(frozen=True, slots=True)
+class _EvalCtx:
+    mode: str
+    provider: str
+    cassettes: dict[str, dict[str, Any]]
+
+
+def _live_provider_name(mode: str, provider: str) -> str:
+    if mode == "vllm" or provider == "vllm":
+        return "vllm"
+    return "openai"
+
+
 def _predict_for_mode(
-    *,
-    mode: str,
-    provider: str,
+    ctx: _EvalCtx,
     cid: str,
     turns: list[TurnPayload],
-    cassettes: dict[str, dict[str, Any]],
 ) -> tuple[dict[int, list[dict[str, Any]]], str, str | None]:
-    """Return by_turn, model, optional record provider name."""
-    if mode in _CASSETTE_MODES:
-        by_turn, model = _predict_cassette(cid, cassettes)
+    if ctx.mode in _CASSETTE_MODES:
+        by_turn, model = _predict_cassette(cid, ctx.cassettes)
         return by_turn, model, None
-    if mode in _LIVE_MODES:
-        pname = "vllm" if mode == "vllm" or provider == "vllm" else "openai"
+    if ctx.mode in _LIVE_MODES:
+        pname = _live_provider_name(ctx.mode, ctx.provider)
         by_turn, model = _predict_live(turns, provider_name=pname)
         return by_turn, model, pname
-    raise SystemExit(f"unknown mode: {mode}")
+    raise SystemExit(f"unknown mode: {ctx.mode}")
+
+
+@dataclass(slots=True)
+class _RecordBuf:
+    mode: str
+    rows: list[dict[str, Any]]
 
 
 def _maybe_record_cassette(
-    *,
-    mode: str,
+    buf: _RecordBuf,
     pname: str | None,
     cid: str,
     model_used: str,
     by_turn: dict[int, list[dict[str, Any]]],
-    recorded: list[dict[str, Any]],
 ) -> None:
-    if mode != "record" or pname != "openai":
+    if buf.mode != "record" or pname != "openai":
         return
     batch_payload = {
         "turns": [
             {"turn_index": ti, "memories": by_turn.get(ti, [])} for ti in sorted(by_turn)
         ]
     }
-    recorded.append(
+    buf.rows.append(
         {
             "conversation_id": cid,
             "model": model_used,
@@ -249,65 +263,52 @@ def _score_expected_rows(
 def _score_conversations(
     conversations: list[dict[str, Any]],
     expected_by_conv: dict[str, list[dict[str, Any]]],
-    *,
-    mode: str,
-    provider: str,
-    cassettes: dict[str, dict[str, Any]],
+    ctx: _EvalCtx,
 ) -> tuple[list[Any], str, list[dict[str, Any]]]:
     turn_scores: list[Any] = []
     model_used = "unknown"
-    recorded: list[dict[str, Any]] = []
+    buf = _RecordBuf(mode=ctx.mode, rows=[])
 
     for conv in conversations:
         cid = str(conv["conversation_id"])
         turns = [TurnPayload.model_validate(t) for t in conv["turns"]]
-        by_turn, model_used, pname = _predict_for_mode(
-            mode=mode,
-            provider=provider,
-            cid=cid,
-            turns=turns,
-            cassettes=cassettes,
-        )
-        _maybe_record_cassette(
-            mode=mode,
-            pname=pname,
-            cid=cid,
-            model_used=model_used,
-            by_turn=by_turn,
-            recorded=recorded,
-        )
+        by_turn, model_used, pname = _predict_for_mode(ctx, cid, turns)
+        _maybe_record_cassette(buf, pname, cid, model_used, by_turn)
         _score_expected_rows(expected_by_conv[cid], by_turn, turn_scores)
 
-    return turn_scores, model_used, recorded
+    return turn_scores, model_used, buf.rows
 
 
-def _build_report(
-    *,
-    mode: str,
-    provider: str,
-    model_used: str,
-    conversation_count: int,
-    metrics: dict[str, float],
-) -> dict[str, Any]:
-    enforcement = "manual" if provider == "vllm" or mode == "vllm" else "ci"
+@dataclass(frozen=True, slots=True)
+class _ReportMeta:
+    mode: str
+    provider: str
+    model_used: str
+    conversation_count: int
+
+
+def _build_report(meta: _ReportMeta, metrics: dict[str, float]) -> dict[str, Any]:
+    enforcement = "manual" if meta.provider == "vllm" or meta.mode == "vllm" else "ci"
+    provider = "vllm" if meta.provider == "vllm" or meta.mode == "vllm" else "openai"
+    notes = (
+        "OpenAI cassette/CI metrics are CI-enforced. "
+        "vLLM metrics are manual-only (no GPU CI runner; ADR-0066)."
+        if enforcement == "ci"
+        else "vLLM result is manual / not CI-enforced (ADR-0066 path a)."
+    )
     return {
         "benchmark": "extraction_quality",
         "gold_set": "v1",
-        "mode": mode,
-        "provider": "vllm" if mode == "vllm" or provider == "vllm" else "openai",
-        "model": model_used,
+        "mode": meta.mode,
+        "provider": provider,
+        "model": meta.model_used,
         "enforcement": enforcement,
-        "conversation_count": conversation_count,
+        "conversation_count": meta.conversation_count,
         "generated_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "prompt_sha256": _prompt_sha256(),
         "metrics": metrics,
         "gated_metrics": gated_metric_names(),
-        "notes": (
-            "OpenAI cassette/CI metrics are CI-enforced. "
-            "vLLM metrics are manual-only (no GPU CI runner; ADR-0066)."
-            if enforcement == "ci"
-            else "vLLM result is manual / not CI-enforced (ADR-0066 path a)."
-        ),
+        "notes": notes,
     }
 
 
@@ -353,20 +354,21 @@ def run_eval(*, mode: str, provider: str) -> dict[str, Any]:
     else:
         _assert_gold_integrity(manifest, conversations, expected_rows, cassettes=None)
 
+    ctx = _EvalCtx(mode=mode, provider=provider, cassettes=cassettes)
     turn_scores, model_used, recorded = _score_conversations(
         conversations,
         expected_by_conv,
-        mode=mode,
-        provider=provider,
-        cassettes=cassettes,
+        ctx,
     )
     metrics = aggregate_scores(turn_scores)
     report = _build_report(
-        mode=mode,
-        provider=provider,
-        model_used=model_used,
-        conversation_count=len(conversations),
-        metrics=metrics,
+        _ReportMeta(
+            mode=mode,
+            provider=provider,
+            model_used=model_used,
+            conversation_count=len(conversations),
+        ),
+        metrics,
     )
 
     if mode == "record" and recorded:

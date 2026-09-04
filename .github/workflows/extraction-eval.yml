@@ -113,7 +113,7 @@ jobs:
           cd eval
           PYTHONPATH=.:.. ../.venv/bin/pytest -q \
             test_metrics.py test_regression_gate.py test_eval_harness_advanced.py \
-            --cov=metrics --cov=regression_gate --cov=build_published \
+            --cov=metrics --cov=match --cov=regression_gate --cov=gate_checks --cov=build_published --cov=path_guard \
             --cov-report=term-missing --cov-fail-under=95
 
       - name: Resolve eval mode

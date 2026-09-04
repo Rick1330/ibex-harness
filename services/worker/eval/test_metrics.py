@@ -202,10 +202,11 @@ def test_all_categories_present_in_aggregate_keys() -> None:
 
 
 def test_content_similarity_edges_and_substring() -> None:
-    from metrics import _content_similarity, match_memories
+    from match import content_similarity
+    from metrics import match_memories
 
-    assert _content_similarity("", "x") == 0.0
-    assert _content_similarity("user prefers dark mode", "user prefers dark") == 0.85
+    assert content_similarity("", "x") == 0.0
+    assert content_similarity("user prefers dark mode", "user prefers dark") == 0.85
     # Two predicted compete for one expected — only one match kept
     predicted = [
         _mem("User prefers dark mode in the IDE", "preference"),

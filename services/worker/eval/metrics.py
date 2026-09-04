@@ -1,16 +1,12 @@
-"""Pure scoring for extraction quality eval (m3.5.B.4).
-
-Deterministic: no LLM calls. Align predicted vs expected memories within a turn
-by normalized content, then score per-category P/R, exact category-set accuracy,
-and temporal-field accuracy separately.
-"""
+"""Pure scoring for extraction quality eval (m3.5.B.4)."""
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Iterable
+
+from match import label_set, match_memories, normalize_content
 
 CATEGORIES = (
     "factual",
@@ -20,16 +16,17 @@ CATEGORIES = (
     "procedural",
 )
 
-_WS = re.compile(r"\s+")
-
-
-def normalize_content(text: str) -> str:
-    return _WS.sub(" ", text.strip().lower())
-
-
-def label_set(memory: dict[str, Any]) -> frozenset[str]:
-    cats = memory.get("categories") or []
-    return frozenset(str(item.get("label")) for item in cats if item.get("label"))
+# Re-export for existing tests/imports.
+__all__ = [
+    "CATEGORIES",
+    "CategoryCounts",
+    "TurnScore",
+    "aggregate_scores",
+    "gated_metric_names",
+    "match_memories",
+    "normalize_content",
+    "score_turn",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,59 +53,30 @@ class TurnScore:
     temporal_total: int
 
 
-def _content_similarity(a: str, b: str) -> float:
-    na, nb = normalize_content(a), normalize_content(b)
-    if not na or not nb:
-        return 0.0
-    if na == nb:
-        return 1.0
-    if na in nb or nb in na:
-        return 0.85
-    ta, tb = set(na.split()), set(nb.split())
-    if not ta or not tb:
-        return 0.0
-    return len(ta & tb) / len(ta | tb)
+@dataclass(slots=True)
+class _TurnAccum:
+    counts: dict[str, CategoryCounts]
+    assign_correct: int = 0
+    temporal_correct: int = 0
+    temporal_total: int = 0
 
 
-def _greedy_match_pairs(
-    predicted: list[dict[str, Any]],
-    expected: list[dict[str, Any]],
+def _bump_category(
+    counts: dict[str, CategoryCounts],
+    cat: str,
     *,
-    min_similarity: float,
-) -> list[tuple[int, int]]:
-    pairs: list[tuple[float, int, int]] = []
-    for pi, pred in enumerate(predicted):
-        for ei, exp in enumerate(expected):
-            sim = _content_similarity(str(pred.get("content", "")), str(exp.get("content", "")))
-            if sim >= min_similarity:
-                pairs.append((sim, pi, ei))
-    pairs.sort(reverse=True)
-    used_p: set[int] = set()
-    used_e: set[int] = set()
-    matched: list[tuple[int, int]] = []
-    for _sim, pi, ei in pairs:
-        if pi in used_p or ei in used_e:
-            continue
-        used_p.add(pi)
-        used_e.add(ei)
-        matched.append((pi, ei))
-    return matched
-
-
-def match_memories(
-    predicted: list[dict[str, Any]],
-    expected: list[dict[str, Any]],
-    *,
-    min_similarity: float = 0.55,
-) -> list[tuple[int | None, int | None]]:
-    """Greedy 1:1 matches; unmatched appear as (pred_i, None) or (None, exp_j)."""
-    matched = _greedy_match_pairs(predicted, expected, min_similarity=min_similarity)
-    used_p = {pi for pi, _ei in matched}
-    used_e = {ei for _pi, ei in matched}
-    matches: list[tuple[int | None, int | None]] = [(pi, ei) for pi, ei in matched]
-    matches.extend((pi, None) for pi in range(len(predicted)) if pi not in used_p)
-    matches.extend((None, ei) for ei in range(len(expected)) if ei not in used_e)
-    return matches
+    in_p: bool,
+    in_e: bool,
+) -> None:
+    cur = counts[cat]
+    if in_p and in_e:
+        counts[cat] = CategoryCounts(cur.tp + 1, cur.fp, cur.fn)
+        return
+    if in_p:
+        counts[cat] = CategoryCounts(cur.tp, cur.fp + 1, cur.fn)
+        return
+    if in_e:
+        counts[cat] = CategoryCounts(cur.tp, cur.fp, cur.fn + 1)
 
 
 def _update_category_counts(
@@ -117,19 +85,15 @@ def _update_category_counts(
     exp_labels: frozenset[str],
 ) -> None:
     for cat in CATEGORIES:
-        in_p = cat in pred_labels
-        in_e = cat in exp_labels
-        cur = counts[cat]
-        if in_p and in_e:
-            counts[cat] = CategoryCounts(cur.tp + 1, cur.fp, cur.fn)
-        elif in_p and not in_e:
-            counts[cat] = CategoryCounts(cur.tp, cur.fp + 1, cur.fn)
-        elif in_e and not in_p:
-            counts[cat] = CategoryCounts(cur.tp, cur.fp, cur.fn + 1)
+        _bump_category(
+            counts,
+            cat,
+            in_p=cat in pred_labels,
+            in_e=cat in exp_labels,
+        )
 
 
 def _normalize_temporal(value: object) -> object:
-    """Normalize temporal fields so Z and +00:00 compare equal."""
     if value is None:
         return None
     if not isinstance(value, str):
@@ -154,41 +118,35 @@ def _temporal_fields_match(pred: dict[str, Any], exp: dict[str, Any]) -> bool:
 
 
 def _score_temporal_pair(
-    *,
-    pi: int | None,
-    ei: int | None,
     pred: dict[str, Any] | None,
     exp: dict[str, Any] | None,
 ) -> tuple[int, int]:
-    """Return (correct_delta, total_delta). Credit only for matched pairs with exact fields."""
-    if ei is None or exp is None:
+    if exp is None:
         return 0, 0
-    if pi is None or pred is None:
+    if pred is None:
         return 0, 1
     if _temporal_fields_match(pred, exp):
         return 1, 1
     return 0, 1
 
 
-def _accumulate_match(
-    *,
-    pi: int | None,
-    ei: int | None,
+def _apply_pair(
+    accum: _TurnAccum,
+    pair: tuple[int | None, int | None],
     predicted: list[dict[str, Any]],
     expected: list[dict[str, Any]],
-    counts: dict[str, CategoryCounts],
-) -> tuple[int, int, int]:
-    """Return (assign_delta, temporal_correct_delta, temporal_total_delta)."""
+) -> None:
+    pi, ei = pair
     pred = predicted[pi] if pi is not None else None
     exp = expected[ei] if ei is not None else None
     pred_labels = label_set(pred) if pred is not None else frozenset()
     exp_labels = label_set(exp) if exp is not None else frozenset()
-    assign_delta = (
-        1 if pi is not None and ei is not None and pred_labels == exp_labels else 0
-    )
-    _update_category_counts(counts, pred_labels, exp_labels)
-    temp_ok, temp_total = _score_temporal_pair(pi=pi, ei=ei, pred=pred, exp=exp)
-    return assign_delta, temp_ok, temp_total
+    if pi is not None and ei is not None and pred_labels == exp_labels:
+        accum.assign_correct += 1
+    _update_category_counts(accum.counts, pred_labels, exp_labels)
+    t_ok, t_total = _score_temporal_pair(pred, exp)
+    accum.temporal_correct += t_ok
+    accum.temporal_total += t_total
 
 
 def score_turn(
@@ -197,40 +155,27 @@ def score_turn(
     *,
     temporal_kinds: list[str] | None = None,
 ) -> TurnScore:
-    """Score one turn. temporal_kinds[i] is 'supersession' | 'indefinite' for expected[i]."""
+    """Score one turn. temporal_kinds length must match expected memories."""
     kinds = temporal_kinds or ["indefinite"] * len(expected)
     if len(kinds) != len(expected):
         raise ValueError("temporal_kinds length must match expected memories")
 
-    matches = match_memories(predicted, expected)
-    counts = {cat: CategoryCounts() for cat in CATEGORIES}
-    assign_correct = 0
+    accum = _TurnAccum(counts={cat: CategoryCounts() for cat in CATEGORIES})
+    for pair in match_memories(predicted, expected):
+        _apply_pair(accum, pair, predicted, expected)
+
     assign_total = max(len(predicted), len(expected), 1)
-    temporal_correct = 0
-    temporal_total = 0
-
-    for pi, ei in matches:
-        a_delta, t_ok, t_total = _accumulate_match(
-            pi=pi,
-            ei=ei,
-            predicted=predicted,
-            expected=expected,
-            counts=counts,
-        )
-        assign_correct += a_delta
-        temporal_correct += t_ok
-        temporal_total += t_total
-
+    assign_correct = accum.assign_correct
     if not predicted and not expected:
         assign_correct = 1
         assign_total = 1
 
     return TurnScore(
-        category_counts=counts,
+        category_counts=accum.counts,
         category_assignment_correct=assign_correct,
         category_assignment_total=assign_total,
-        temporal_correct=temporal_correct,
-        temporal_total=temporal_total,
+        temporal_correct=accum.temporal_correct,
+        temporal_total=accum.temporal_total,
     )
 
 
@@ -266,9 +211,7 @@ def aggregate_scores(turns: Iterable[TurnScore]) -> dict[str, float]:
         recalls.append(r)
     metrics["precision_macro"] = sum(precisions) / len(precisions)
     metrics["recall_macro"] = sum(recalls) / len(recalls)
-    metrics["category_assignment_accuracy"] = (
-        assign_ok / assign_n if assign_n else 1.0
-    )
+    metrics["category_assignment_accuracy"] = assign_ok / assign_n if assign_n else 1.0
     metrics["temporal_field_accuracy"] = temp_ok / temp_n if temp_n else 1.0
     return metrics
 
