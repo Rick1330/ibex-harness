@@ -1,8 +1,8 @@
 ---
 title: "3.5.B.3 Incremental Turn Tracking and Idempotency"
-description: "Ensure last_extracted_turn is updated atomically with memory writes in the same DB transaction, preventing duplicate LLM spend on retry without requiring duplicate-memory guards alone."
-summary: "Ensure last_extracted_turn is updated atomically with memory writes in the same DB transaction, preventing duplicate LLM spend on retry without requiring duplicate-memory guards alone."
-status: "planned"
+description: "Identity-based X-Idempotency-Key for extraction memory writes, mandatory SessionStore, and per-turn last_extracted_turn advance — no duplicate slots on wording-drift retry; residual ordinal misalignment if memory count changes."
+summary: "Identity-based X-Idempotency-Key for extraction memory writes, mandatory SessionStore, and per-turn last_extracted_turn advance — no duplicate slots on wording-drift retry; residual ordinal misalignment if memory count changes."
+status: "in-progress"
 milestoneId: "3.5.B.3"
 track: "B"
 trackTitle: "Extraction Pipeline"
@@ -15,93 +15,61 @@ fullTitle: "Milestone 3.5.B.3 — Incremental Turn Tracking and Idempotency"
 
 # Milestone 3.5.B.3 — Incremental Turn Tracking and Idempotency
 
-**Status:** Planned  
+**Status:** In progress  
 **Goal:** [Track B — Extraction Pipeline](/roadmap/phase-3-5-extraction-assembly/tracks#track-b--extraction-pipeline)  
 **Phase:** 3.5 — Extraction & Context Assembly  
 **Estimated effort:** 2 days  
 **Track:** [Track B — Extraction Pipeline](/roadmap/phase-3-5-extraction-assembly/tracks#track-b--extraction-pipeline)  
-**Depends on:** [3.5.B.2](/roadmap/phase-3-5-extraction-assembly/milestones/3.5.b.2-cost-tiered-extraction-execution)
+**Depends on:** [3.5.B.2](/roadmap/phase-3-5-extraction-assembly/milestones/3.5.b.2-cost-tiered-extraction-execution)  
+**ADR:** [ADR-0065](/docs/adr/0065-extraction-batch-idempotency)
 
 ---
 
-<Callout type="note" title="Planning baseline">
-  This page is a planning sketch, not an implementation script. Named paths, package layouts,
-  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
-  that are expected to change once the live code, constraints, and research during implementation
-  make a better shape clear. Prefer outcomes over matching any particular file tree.
-</Callout>
-
 ## Why This Milestone Exists
 
-The original idempotency design (content_hash dedup at the DB layer handles double-processing) is still correct, but needs one addition given the batch-extraction redesign in 3.5.B.2: **`last_extracted_turn` should be updated atomically with the batch's memory writes, in the same DB transaction**, not as a separate step after — otherwise a crash between "memories written" and "pointer updated" causes duplicate extraction on retry.
+3.5.B.2 writes extracted memories over HTTP to services/memory and updates `last_extracted_turn` in a **separate** worker Postgres UPDATE afterward. A worker-local Postgres transaction **cannot** roll back memory rows another service already committed — the original “single `async with db.transaction()`” sketch is architecturally impossible.
 
-Content-hash dedup prevents *duplicate memories*, but not *wasted re-extraction cost* — more important once extraction is a single batched paid LLM call instead of many small ones.
+Pre-3.5.B.3, `X-Idempotency-Key` was derived from LLM **output** content. Retries with different wording produced different keys and different `content_hash` values, allowing duplicate memories and wasted extraction spend.
+
+This milestone closes that gap with **identity-based HTTP idempotency**, mandatory SessionStore, and **per-turn** pointer advances. Content-hash exact dedup (m3.C.2) remains a complementary backstop, not a substitute.
 
 ---
 
 ## Non-Goals
 
+- Distributed two-phase commit / outbox between worker and memory service
+- Batch write API on services/memory
+- Changes to memory-service dedup algorithms
 - Quality evaluation (3.5.B.4)
-- Providing explicit turn-level status tracking visible in the operator dashboard (Phase 4)
+- Operator-dashboard-visible turn-level status tracking (Phase 4)
+- Moving `last_extracted_turn` mutation behind a new memory-service HTTP endpoint
+- Changing worker→memory PAT auth
 
 ---
 
-## Orientation (indicative)
+## Design (as implemented)
 
-Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
-**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+1. **Identity-based idempotency keys** — `X-Idempotency-Key = uuid5(ns, sha256(f"{org_id}:{session_id}:{turn_index}:{memory_ordinal}"))`. Does **not** include LLM output text or a batch content fingerprint.
+2. **Memory HTTP retry semantics** — treat `409 IDEMPOTENCY_CONFLICT` and `409 DUPLICATE_CONTENT` as definitive success (first-commit wording wins); `IDEMPOTENCY_IN_PROGRESS` and 5xx remain retryable.
+3. **Mandatory SessionStore** — `extract_session_memories` fails closed without `database_url`.
+4. **Per-turn pointer advance** — after each turn's memories succeed, `UPDATE last_extracted_turn = GREATEST(...)` for that turn index. Mid-batch crashes keep completed turns skipped on retry.
 
-During implementation, expect to:
+**Residual limitation (documented):** if a retry returns a different **count** of memories for the same turn, ordinals can misalign. Exact/near-dedup is the backstop. Crash after writes but before that turn's pointer UPDATE may incur one additional `provider.extract` — bounded, not zero LLM cost.
 
-- open the live tree and follow existing patterns before inventing new ones
-- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
-- advance the design beyond the sketch where measurement or code reality says so
-- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
-
-Prefer outcomes over matching any particular file tree or command sequence.
-
-**Areas that may be involved** (situational — not a checklist):
-
-- Extraction pipeline
-- Workers / task runtime
-
-## Suggested naming (provisional)
-
-Rename freely to match the change that actually lands.
-
-- Branch: `feature/m3-5-b3-turn-tracking-idempotency`
-- PR title: `feat(worker): atomic turn-pointer update + idempotency for batch extraction (m3.5.B.3)`
-
-## Design
-
-```python
-async def _run_batch_extraction(session_id: UUID, org_id: UUID) -> dict:
- async with db.transaction():
- turns = await load_unprocessed_turns(session_id)
- if not turns:
- return {"status": "noop", "extracted": 0}
- result = await extraction_provider.extract_batch(turns)
- for turn_result in result.turns:
- for mem in turn_result.memories:
- await write_pipeline.write(org_id=org_id, session_id=session_id, memory=mem)
- await update_last_extracted_turn(session_id, max(t.turn_index for t in turns))
- return {"status": "ok", "extracted": sum(len(t.memories) for t in result.turns)}
-```
-
-The critical invariant: `update_last_extracted_turn` is called inside the same `async with db.transaction()` block as the memory writes. If the process crashes after writes but before the pointer update, Postgres rolls back the entire transaction — the retry starts clean with zero wasted LLM cost beyond the single retry.
+See [ADR-0065](/docs/adr/0065-extraction-batch-idempotency) for full rationale.
 
 ---
 
 ## Success signals
 
-Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
-
-- [ ] Crash-injection test: kill the process between memory write and pointer update (simulate via forced exception after write, before pointer update) — verify the transaction rolls back fully, and retry re-processes correctly with no duplicate memories AND no double LLM spend beyond the single retry
-- [ ] `extract_session_memories` run twice in immediate succession on the same session produces identical DB state (idempotency test)
+- [x] Same turn+ordinal, different wording → same `X-Idempotency-Key` (regression vs content-derived keys)
+- [x] Crash mid-batch → pointer only for fully completed turns; retry safe for committed slots
+- [x] `extract_session_memories` run twice in immediate succession → second run noop (pointer unchanged, no extra writes)
+- [x] `409 IDEMPOTENCY_CONFLICT` and `409 DUPLICATE_CONTENT` treated as non-fatal success
+- [x] Missing `database_url` → hard failure (SessionStore mandatory)
 
 ---
 
 ## Prerequisites
 
 - [3.5.B.2 Cost-tiered extraction execution](/roadmap/phase-3-5-extraction-assembly/milestones/3.5.b.2-cost-tiered-extraction-execution)
-

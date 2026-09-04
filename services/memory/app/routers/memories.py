@@ -5,18 +5,23 @@ from __future__ import annotations
 import hashlib
 import time
 from typing import Annotated, Any
+from uuid import UUID
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, Query, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 
+from app.cache.hot_keys import HOT_CACHE_CAPACITY
 from app.deps import (
     CreateMemoryContext,
+    HotMemoryContext,
     SearchMemoryContext,
     get_create_memory_context,
+    get_hot_memory_context,
     get_search_memory_context,
 )
 from app.exceptions import DuplicateMemoryError, EmbeddingServiceError, ValidationError
+from app.read.models import HotMemoryQuery
 from app.routers.memory_search_support import (
     SearchMemoriesExecution,
     embed_query_text,
@@ -122,6 +127,41 @@ async def search_memories(
             ),
         )
     except (EmbeddingServiceError, ValueError) as exc:
+        raise http_error_for_search(exc) from exc
+    except SQLAlchemyError as exc:
+        log_search_database_failure(exc, org_id=ctx.token.org_id)
+        raise http_error_for_search(exc) from exc
+    return search_response_from_results(results)
+
+
+@router.get("/hot", summary="List hot-cache memories for an agent")
+async def list_hot_memories(
+    ctx: Annotated[HotMemoryContext, Depends(get_hot_memory_context)],
+    agent_id: Annotated[UUID, Query()],
+    limit: Annotated[int, Query(ge=1, le=HOT_CACHE_CAPACITY)] = 20,
+    min_confidence: Annotated[float, Query(ge=0.0, le=1.0)] = 0.0,
+) -> SearchMemoriesResponse:
+    """Expose MemoryHotCacheReader over HTTP for context assembly (3.5.C.2).
+
+    Response shape matches POST /v1/memories/search so assemblers can treat
+    hot and cold hits uniformly (``source=hot_cache``).
+    """
+    resolved_agent_id = resolve_search_agent_id(ctx.token, agent_id)
+    try:
+        await ensure_search_agent_authorized(
+            ctx.session_factory,
+            org_id=ctx.token.org_id,
+            agent_id=resolved_agent_id,
+        )
+        results = await ctx.hot_cache_reader.get_hot_memories(
+            HotMemoryQuery(
+                org_id=ctx.token.org_id,
+                agent_id=resolved_agent_id,
+                limit=limit,
+                min_confidence=min_confidence,
+            )
+        )
+    except ValueError as exc:
         raise http_error_for_search(exc) from exc
     except SQLAlchemyError as exc:
         log_search_database_failure(exc, org_id=ctx.token.org_id)

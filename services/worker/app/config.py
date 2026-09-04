@@ -6,10 +6,34 @@ import os
 from functools import lru_cache
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
-from pydantic import AliasChoices, Field, field_validator, model_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _QUEUE_NAMES: tuple[str, ...] = ("extraction", "embedding", "maintenance", "mcp_audit")
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
+def require_https_or_loopback(url: str | None) -> str | None:
+    """Remote extraction URLs must be HTTPS; HTTP is allowed only on loopback."""
+    if url is None:
+        return None
+    trimmed = url.strip()
+    parsed = urlparse(trimmed)
+    host = parsed.hostname
+    if host is None:
+        raise ValueError(
+            "extraction base URL must include a hostname "
+            "(https:// or http:// on loopback)"
+        )
+    host = host.lower()
+    if parsed.scheme == "https":
+        return trimmed
+    if parsed.scheme == "http" and host in _LOOPBACK_HOSTS:
+        return trimmed
+    raise ValueError(
+        "extraction base URL must use https:// or http:// on loopback "
+        "(127.0.0.1, localhost, ::1)"
+    )
 
 
 def redis_url_with_db(base_url: str, db_index: int) -> str:
@@ -100,8 +124,116 @@ class Settings(BaseSettings):
         default="/var/lib/ibex/celerybeat/celerybeat-schedule",
         description="Path for Celery beat schedule persistence",
     )
+    database_url: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "POSTGRES_DSN",
+            "IBEX_WORKER_DATABASE_URL",
+        ),
+        description="Postgres DSN for dead-letter persistence (asyncpg SQLAlchemy URL)",
+    )
+    metrics_port: int = Field(
+        default=8006,
+        ge=1024,
+        le=65535,
+        validation_alias=AliasChoices("IBEX_WORKER_METRICS_PORT"),
+        description="Prometheus /metrics HTTP port for worker process",
+    )
+    extraction_provider: str = Field(
+        default="openai",
+        validation_alias=AliasChoices(
+            "IBEX_WORKER_EXTRACTION_PROVIDER",
+            "EXTRACTION_PROVIDER",
+        ),
+        description="Extraction LLM backend: openai | vllm (startup-once)",
+    )
+    openai_api_key: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "OPENAI_API_KEY",
+            "IBEX_WORKER_OPENAI_API_KEY",
+        ),
+        description="Bearer token for hosted OpenAI extraction",
+    )
+    extraction_openai_model: str = Field(
+        default="gpt-4o-mini",
+        validation_alias=AliasChoices(
+            "IBEX_WORKER_EXTRACTION_OPENAI_MODEL",
+            "EXTRACTION_OPENAI_MODEL",
+        ),
+        description="OpenAI model id for extraction",
+    )
+    extraction_openai_base_url: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "IBEX_WORKER_EXTRACTION_OPENAI_BASE_URL",
+        ),
+        description="OpenAI-compatible base URL (default api.openai.com/v1)",
+    )
+    extraction_vllm_base_url: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "IBEX_WORKER_EXTRACTION_VLLM_BASE_URL",
+            "IBEX_WORKER_EXTRACTION_BASE_URL",
+            "EXTRACTION_BASE_URL",
+        ),
+        description="vLLM OpenAI-compatible base URL (required when provider=vllm)",
+    )
+    extraction_vllm_model: str = Field(
+        default="Qwen2.5-14B-Instruct",
+        validation_alias=AliasChoices(
+            "IBEX_WORKER_EXTRACTION_VLLM_MODEL",
+            "EXTRACTION_VLLM_MODEL",
+        ),
+        description="vLLM served model id",
+    )
+    extraction_vllm_api_key: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("IBEX_WORKER_EXTRACTION_VLLM_API_KEY"),
+        description="Optional vLLM key; omitted from Authorization when empty",
+    )
+    extraction_timeout_seconds: float = Field(
+        default=60.0,
+        gt=0,
+        le=180,
+        validation_alias=AliasChoices("IBEX_WORKER_EXTRACTION_TIMEOUT_SECONDS"),
+        description="HTTP timeout for extraction chat-completions",
+    )
+    memory_base_url: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "IBEX_WORKER_MEMORY_BASE_URL",
+            "MEMORY_BASE_URL",
+        ),
+        description="Memory service origin for POST /v1/memories",
+    )
+    memory_api_token: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "IBEX_WORKER_MEMORY_API_TOKEN",
+            "MEMORY_API_TOKEN",
+        ),
+        description="Bearer token with memory:write for extraction writes",
+    )
+    clickhouse_dsn: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "CLICKHOUSE_DSN",
+            "IBEX_WORKER_CLICKHOUSE_DSN",
+        ),
+        description="ClickHouse HTTP DSN for llm_traces; empty skips insert",
+    )
 
-    @field_validator("broker_url", "result_backend", mode="before")
+    @field_validator(
+        "broker_url",
+        "result_backend",
+        "database_url",
+        "extraction_openai_base_url",
+        "extraction_vllm_base_url",
+        "memory_base_url",
+        "clickhouse_dsn",
+        mode="before",
+    )
     @classmethod
     def _empty_optional_to_none(cls, value: object) -> object:
         if value is None:
@@ -118,6 +250,11 @@ class Settings(BaseSettings):
         if isinstance(value, str) and not value.strip():
             return "redis://127.0.0.1:6379/0"
         return value
+
+    @field_validator("extraction_openai_base_url", "extraction_vllm_base_url")
+    @classmethod
+    def _https_or_loopback_extraction_url(cls, value: str | None) -> str | None:
+        return require_https_or_loopback(value)
 
     @property
     def resolved_broker_url(self) -> str:

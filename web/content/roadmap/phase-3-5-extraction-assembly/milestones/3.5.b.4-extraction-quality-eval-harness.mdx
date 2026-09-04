@@ -1,8 +1,8 @@
 ---
 title: "3.5.B.4 Extraction Quality Evaluation Harness"
-description: "Gold-set eval harness measuring extraction precision/recall per category, category-assignment accuracy, and temporal-field accuracy — a CI-gated regression check for every prompt or model change."
-summary: "Gold-set eval harness measuring extraction precision/recall per category, category-assignment accuracy, and temporal-field accuracy — a CI-gated regression check for every prompt or model change."
-status: "planned"
+description: "Gold-set eval harness measuring extraction precision/recall per category, category-assignment accuracy, and temporal-field accuracy — CI-gated OpenAI cassette eval with manual vLLM side-by-side baselines."
+summary: "Gold-set eval harness measuring extraction precision/recall per category, category-assignment accuracy, and temporal-field accuracy — CI-gated OpenAI cassette eval with manual vLLM side-by-side baselines."
+status: "completed"
 milestoneId: "3.5.B.4"
 track: "B"
 trackTitle: "Extraction Pipeline"
@@ -15,27 +15,19 @@ fullTitle: "Milestone 3.5.B.4 — Extraction Quality Evaluation Harness"
 
 # Milestone 3.5.B.4 — Extraction Quality Evaluation Harness
 
-**Status:** Planned  
+**Status:** Completed  
 **Goal:** [Track B — Extraction Pipeline](/roadmap/phase-3-5-extraction-assembly/tracks#track-b--extraction-pipeline)  
 **Phase:** 3.5 — Extraction & Context Assembly  
 **Estimated effort:** 3 days  
 **Track:** [Track B — Extraction Pipeline](/roadmap/phase-3-5-extraction-assembly/tracks#track-b--extraction-pipeline)  
-**Depends on:** [3.5.B.2](/roadmap/phase-3-5-extraction-assembly/milestones/3.5.b.2-cost-tiered-extraction-execution)
+**Depends on:** [3.5.B.2](/roadmap/phase-3-5-extraction-assembly/milestones/3.5.b.2-cost-tiered-extraction-execution)  
+**ADR:** [ADR-0066](/docs/adr/0066-extraction-quality-evaluation-harness)
 
 ---
 
-<Callout type="note" title="Planning baseline">
-  This page is a planning sketch, not an implementation script. Named paths, package layouts,
-  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
-  that are expected to change once the live code, constraints, and research during implementation
-  make a better shape clear. Prefer outcomes over matching any particular file tree.
-</Callout>
-
 ## Why This Milestone Exists
 
-The original plan's only quality signal was "extraction prompt produces valid JSON in > 99% of test cases" — that measures *parseability*, not *correctness*. There was no way to know if extraction actually captures the right facts, misses important ones, or hallucinates.
-
-This milestone closes that gap, and it's the extraction-side counterpart to the retrieval-quality benchmark already planned for Phase 3's memory service.
+Parseability checks do not measure extraction correctness. This milestone is the extraction-side counterpart to Phase 3 retrieval-quality gating ([ADR-0061](/docs/adr/0061-retrieval-quality-benchmark-methodology)).
 
 ---
 
@@ -43,87 +35,34 @@ This milestone closes that gap, and it's the extraction-side counterpart to the 
 
 - Real-time extraction quality monitoring in the operator dashboard (Phase 4)
 - A/B testing infrastructure for prompt variants
+- GPU CI runners (still none — mirrors 3.5.B.2)
 
 ---
 
-## Orientation (indicative)
+## Design (as implemented)
 
-Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
-**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+Layout: [`services/worker/eval/`](/services/worker/eval) with versioned [`gold_set/v1/`](/services/worker/eval/gold_set/v1).
 
-During implementation, expect to:
+| Decision | Choice |
+| --- | --- |
+| vLLM side-by-side | **Path (a):** CI OpenAI only; vLLM `enforcement: manual` in baseline + runbook |
+| Live vs cassette | Hybrid: PR/smoke/fast = cassette ($0); full = optional live OpenAI |
+| Gate | Absolute **3pp** on CI-enforced metrics; exit code 1 (unit-tested) |
+| Publish | `web/public/benchmarks/extraction-quality-benchmark-data.json` + bot suite |
 
-- open the live tree and follow existing patterns before inventing new ones
-- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
-- advance the design beyond the sketch where measurement or code reality says so
-- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
-
-Prefer outcomes over matching any particular file tree or command sequence.
-
-**Areas that may be involved** (situational — not a checklist):
-
-- Extraction pipeline
-- Workers / task runtime
-
-## Suggested naming (provisional)
-
-Rename freely to match the change that actually lands.
-
-- Branch: `feature/m3-5-b4-extraction-eval-harness`
-- PR title: `feat(worker): extraction quality evaluation harness with gold-set (m3.5.B.4)`
-
-## Design
-
-A versioned gold-set of ~100–200 hand-labeled synthetic conversations (multi-turn, covering all 5 categories, including intentionally ambiguous/multi-label cases and temporal-supersession cases), stored as fixture data:
-
-```
-services/worker/eval/
- gold_set/
- v1/
- conversations.jsonl # {conversation_id, turns: [...]}
- expected_memories.jsonl # {conversation_id, turn_index, expected: [ExtractedMemory]}
- baseline_results.json # committed baseline metrics per provider
- run_eval.py # computes precision/recall against gold set
- README.md # how to add new gold-set cases, versioning policy
-```
-
----
-
-## Metrics
-
-**Extraction precision/recall per category:** did the model extract the right memories for each category?
-
-**Category-assignment accuracy:** did it multi-label correctly (not over-label, not under-label)?
-
-**Temporal-field accuracy:** did it correctly identify supersession cases and set `valid_until` appropriately vs. leaving it as `None` for indefinite facts?
-
-This becomes a CI-gated regression check — any prompt change or model swap should not drop below the committed baseline, mirroring the same "benchmark becomes a permanent regression gate" pattern established for retrieval quality in Phase 3.
-
----
-
-## CI Integration
-
-`run_eval.py` is added to CI with a trigger on any PR that touches:
-- `extraction_provider.py`
-- `extraction_schema.py`
-- The system prompt constants
-
-Baseline tolerances (e.g., no regression of more than 3 percentage points on any metric) are committed to `baseline_results.json`.
+See [ADR-0066](/docs/adr/0066-extraction-quality-evaluation-harness) and the gold-set [README](/services/worker/eval/gold_set/v1/README.md).
 
 ---
 
 ## Success signals
 
-Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
-
-- [ ] Gold set v1 committed with ≥100 conversations, reviewed by at least one human for label correctness
-- [ ] `run_eval.py` produces precision/recall/category-accuracy report, runs in CI on every PR touching `extraction_provider.py`, `extraction_schema.py`, or the system prompt
-- [ ] Baseline metrics committed to `services/worker/eval/gold_set/v1/baseline_results.json`; CI fails if a new run regresses any metric by more than the documented tolerance (3 percentage points)
-- [ ] Both `OpenAIExtractionProvider` (gpt-4o-mini) and `VLLMExtractionProvider` (Qwen2.5-14B) evaluated against the same gold set, with results published side by side
+- [x] Gold set v1 ≥100 conversations, reviewed (Elshaday Mengesha, 2026-09-03)
+- [x] `run_eval.py` produces per-category P/R + category-assignment + temporal metrics; CI on extraction/prompt paths
+- [x] Baseline + 3pp absolute gate; `test_regression_gate.py` asserts exit 1 on >3pp drop
+- [x] OpenAI CI numbers + vLLM manual block side-by-side in `baseline_results.json` (enforcement labels)
 
 ---
 
 ## Prerequisites
 
 - [3.5.B.2 Cost-tiered extraction execution](/roadmap/phase-3-5-extraction-assembly/milestones/3.5.b.2-cost-tiered-extraction-execution)
-

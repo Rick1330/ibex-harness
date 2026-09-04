@@ -78,7 +78,7 @@ class MemoryWriteOrchestrator:
         return outcome
 
     async def _run_pipeline(self, command: CreateMemoryCommand) -> WriteContext:
-        # HTTP create has no valid_from field; align conflict evaluation with persist default.
+        # Default valid_from to now when HTTP/extraction omit it (conflict eval = persist).
         valid_from = command.valid_from
         if valid_from is None:
             valid_from = datetime.now(tz=UTC)

@@ -18,7 +18,9 @@ describe("benchmark navigation", () => {
     expect(urls).toContain("/benchmarks/memory/ranking-quality/history");
     expect(urls).toContain("/benchmarks/memory/write-pipeline");
     expect(urls).toContain("/benchmarks/memory/write-pipeline/history");
-    expect(BENCHMARK_NAV_PAGES).toHaveLength(14);
+    expect(urls).toContain("/benchmarks/extraction-quality");
+    expect(urls).toContain("/benchmarks/extraction-quality/history");
+    expect(BENCHMARK_NAV_PAGES).toHaveLength(16);
   });
 });
 

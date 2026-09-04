@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import socket
 from collections.abc import Iterator
 from urllib.parse import urlparse
 
@@ -11,9 +12,12 @@ import redis as redis_sync
 from celery import Celery
 from celery.contrib.testing.worker import start_worker
 from redis.exceptions import RedisError
+from sqlalchemy import text
 
 from app.celery_app import create_celery_app
 from app.config import Settings, get_settings
+from app.db import create_engine
+from app.observability import reset_observability_for_tests
 
 _REDIS_BASE = os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0")
 _QUEUE_DB = int(os.environ.get("REDIS_DB_QUEUE", "1"))
@@ -21,6 +25,16 @@ _RESULTS_DB = int(os.environ.get("REDIS_DB_RESULTS", "3"))
 _FORBIDDEN_FLUSH_DB = 0
 _INTEGRATION_OPT_IN_ENV = "IBEX_WORKER_INTEGRATION_TESTS"
 _LOCAL_REDIS_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+_POSTGRES_TEST_DSN_ENV = "POSTGRES_TEST_DSN"
+
+
+def _assert_destructive_postgres_opt_in() -> None:
+    if os.environ.get(_POSTGRES_TEST_DSN_ENV):
+        return
+    pytest.fail(
+        f"Worker integration tests TRUNCATE ibex_core.failed_tasks. "
+        f"Set {_POSTGRES_TEST_DSN_ENV} to a dedicated test database."
+    )
 
 
 def _truthy_env(name: str) -> bool:
@@ -92,20 +106,49 @@ def require_redis() -> str:
     return _REDIS_BASE
 
 
+@pytest.fixture(scope="session")
+def require_postgres(postgres_dsn: str) -> str:
+    return postgres_dsn
+
+
+def _free_tcp_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
 @pytest.fixture
-def integration_settings(require_redis: str) -> Settings:
+def integration_settings(require_redis: str, require_postgres: str) -> Iterator[Settings]:
     get_settings.cache_clear()
-    return Settings(
-        redis_url=require_redis,
-        redis_db_queue=_QUEUE_DB,
-        redis_db_results=_RESULTS_DB,
-        env="development",
-    )
+    reset_observability_for_tests()
+    os.environ["REDIS_URL"] = require_redis
+    os.environ["POSTGRES_DSN"] = require_postgres
+    os.environ["POSTGRES_TEST_DSN"] = require_postgres
+    os.environ["IBEX_WORKER_METRICS_PORT"] = str(_free_tcp_port())
+    settings = get_settings()
+    yield settings
+    get_settings.cache_clear()
+    reset_observability_for_tests()
 
 
 @pytest.fixture
 def celery_app(integration_settings: Settings) -> Celery:
     return create_celery_app(integration_settings)
+
+
+@pytest.fixture
+def eager_celery_app(integration_settings: Settings) -> Celery:
+    """Eager Celery app for dead-letter tests (synchronous retries)."""
+    from app.observability import _on_worker_process_init, _on_worker_ready
+
+    app = create_celery_app(integration_settings)
+    app.conf.update(
+        task_always_eager=True,
+        task_store_eager_result=True,
+    )
+    _on_worker_process_init()
+    _on_worker_ready()
+    return app
 
 
 @pytest.fixture(autouse=True)
@@ -134,3 +177,18 @@ def worker(celery_app: Celery) -> Iterator[object]:
         loglevel="WARNING",
     ) as worker_instance:
         yield worker_instance
+
+
+@pytest.fixture
+async def truncate_failed_tasks(integration_settings: Settings) -> None:
+    if not integration_settings.database_url:
+        pytest.skip("database_url not configured")
+    _assert_destructive_postgres_opt_in()
+    engine = create_engine(integration_settings)
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+                "TRUNCATE ibex_core.failed_tasks"
+            )
+        )
+    await engine.dispose()
