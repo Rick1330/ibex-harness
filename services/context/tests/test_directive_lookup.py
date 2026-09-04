@@ -45,27 +45,22 @@ async def test_redis_directive_lookup_miss_is_empty() -> None:
 
 
 @pytest.mark.asyncio
-async def test_redis_directive_lookup_bad_envelope_raises() -> None:
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b'{"v":99,"content":"x"}',
+        b'{"v":1,"content":"x","injection_mode":"system_first","version_id":"not-a-uuid"}',
+        b'{"v":1,"content":123,"injection_mode":"system_first"}',
+        b'{"v":1,"content":"x","injection_mode":1}',
+        b"\xff\xfe not utf8",
+        b'{"v":1,"content":"x","injection_mode":"system_first","version_id":123}',
+    ],
+)
+async def test_redis_directive_rejects_invalid_envelopes(raw: bytes) -> None:
     redis = AsyncMock()
-    redis.get = AsyncMock(return_value=b'{"v":99,"content":"x"}')
-    lookup = RedisDirectiveLookup(redis)
-    org_id = uuid4()
-    agent_id = uuid4()
+    redis.get = AsyncMock(return_value=raw)
     with pytest.raises(DirectiveLookupError):
-        await lookup.lookup(org_id, agent_id)
-
-
-@pytest.mark.asyncio
-async def test_redis_directive_rejects_bad_version_id() -> None:
-    redis = AsyncMock()
-    redis.get = AsyncMock(
-        return_value=b'{"v":1,"content":"x","injection_mode":"system_first","version_id":"not-a-uuid"}'
-    )
-    lookup = RedisDirectiveLookup(redis)
-    org_id = uuid4()
-    agent_id = uuid4()
-    with pytest.raises(DirectiveLookupError):
-        await lookup.lookup(org_id, agent_id)
+        await RedisDirectiveLookup(redis).lookup(uuid4(), uuid4())
 
 
 @pytest.mark.asyncio
@@ -79,19 +74,6 @@ async def test_redis_directive_normalizes_unknown_mode() -> None:
 
 
 @pytest.mark.asyncio
-async def test_redis_directive_rejects_non_string_content() -> None:
-    redis = AsyncMock()
-    redis.get = AsyncMock(
-        return_value=b'{"v":1,"content":123,"injection_mode":"system_first"}'
-    )
-    lookup = RedisDirectiveLookup(redis)
-    org_id = uuid4()
-    agent_id = uuid4()
-    with pytest.raises(DirectiveLookupError):
-        await lookup.lookup(org_id, agent_id)
-
-
-@pytest.mark.asyncio
 async def test_redis_directive_null_content_and_mode() -> None:
     redis = AsyncMock()
     redis.get = AsyncMock(
@@ -100,43 +82,6 @@ async def test_redis_directive_null_content_and_mode() -> None:
     got = await RedisDirectiveLookup(redis).lookup(uuid4(), uuid4())
     assert got.content == ""
     assert got.injection_mode == "system_first"
-
-
-@pytest.mark.asyncio
-async def test_redis_directive_rejects_non_string_mode() -> None:
-    redis = AsyncMock()
-    redis.get = AsyncMock(
-        return_value=b'{"v":1,"content":"x","injection_mode":1}'
-    )
-    lookup = RedisDirectiveLookup(redis)
-    org_id = uuid4()
-    agent_id = uuid4()
-    with pytest.raises(DirectiveLookupError):
-        await lookup.lookup(org_id, agent_id)
-
-
-@pytest.mark.asyncio
-async def test_redis_directive_rejects_non_utf8_bytes() -> None:
-    redis = AsyncMock()
-    redis.get = AsyncMock(return_value=b"\xff\xfe not utf8")
-    lookup = RedisDirectiveLookup(redis)
-    org_id = uuid4()
-    agent_id = uuid4()
-    with pytest.raises(DirectiveLookupError):
-        await lookup.lookup(org_id, agent_id)
-
-
-@pytest.mark.asyncio
-async def test_redis_directive_rejects_non_string_version_id() -> None:
-    redis = AsyncMock()
-    redis.get = AsyncMock(
-        return_value=b'{"v":1,"content":"x","injection_mode":"system_first","version_id":123}'
-    )
-    lookup = RedisDirectiveLookup(redis)
-    org_id = uuid4()
-    agent_id = uuid4()
-    with pytest.raises(DirectiveLookupError):
-        await lookup.lookup(org_id, agent_id)
 
 
 def test_config_parses_timeout_ms_suffix() -> None:

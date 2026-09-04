@@ -158,37 +158,11 @@ class ParallelRetriever:
             ("cold", asyncio.create_task(self._cold_branch(request))),
         )
         tasks = {task: name for name, task in named}
-        task_set = set(tasks.keys())
-        outer_s = self._settings.timeout_ms / 1000.0
-        done: set[asyncio.Task[Any]] = set()
-        try:
-            done, _pending = await asyncio.wait(task_set, timeout=outer_s)
-        finally:
-            unfinished = [task for task in task_set if not task.done()]
-            for task in unfinished:
-                task.cancel()
-            if unfinished:
-                await asyncio.gather(*unfinished, return_exceptions=True)
-
-        results: dict[str, _BranchResult] = {}
-        for task, name in tasks.items():
-            if task in done and not task.cancelled():
-                try:
-                    results[name] = _coerce_branch(name, task.result())  # type: ignore[arg-type]
-                except Exception as exc:  # noqa: BLE001
-                    results[name] = _BranchResult(
-                        name=name,  # type: ignore[arg-type]
-                        outcome=BranchOutcome("error", 0.0, type(exc).__name__),
-                    )
-            else:
-                results[name] = _BranchResult(
-                    name=name,  # type: ignore[arg-type]
-                    outcome=BranchOutcome(
-                        "timeout",
-                        self._settings.timeout_ms,
-                        "outer_deadline",
-                    ),
-                )
+        done = await _wait_with_cancel(set(tasks.keys()), self._settings.timeout_ms / 1000.0)
+        results = {
+            name: _result_for_task(name, task, done, self._settings.timeout_ms)
+            for task, name in tasks.items()
+        }
         return (results["directive"], results["hot"], results["cold"])
 
     async def _directive_branch(self, request: RetrievalRequest) -> _BranchResult:
@@ -347,6 +321,42 @@ def _error_memories(name: SourceName, started: float, detail: str) -> _BranchRes
     return _BranchResult(
         name=name,
         outcome=BranchOutcome("error", (time.perf_counter() - started) * 1000.0, detail),
+    )
+
+
+async def _wait_with_cancel(
+    task_set: set[asyncio.Task[Any]],
+    timeout_s: float,
+) -> set[asyncio.Task[Any]]:
+    done: set[asyncio.Task[Any]] = set()
+    try:
+        done, _pending = await asyncio.wait(task_set, timeout=timeout_s)
+    finally:
+        unfinished = [task for task in task_set if not task.done()]
+        for task in unfinished:
+            task.cancel()
+        if unfinished:
+            await asyncio.gather(*unfinished, return_exceptions=True)
+    return done
+
+
+def _result_for_task(
+    name: SourceName,
+    task: asyncio.Task[Any],
+    done: set[asyncio.Task[Any]],
+    outer_timeout_ms: float,
+) -> _BranchResult:
+    if task in done and not task.cancelled():
+        try:
+            return _coerce_branch(name, task.result())
+        except Exception as exc:  # noqa: BLE001
+            return _BranchResult(
+                name=name,
+                outcome=BranchOutcome("error", 0.0, type(exc).__name__),
+            )
+    return _BranchResult(
+        name=name,
+        outcome=BranchOutcome("timeout", outer_timeout_ms, "outer_deadline"),
     )
 
 

@@ -15,17 +15,19 @@ def _parse_timeout_ms(value: object) -> float:
     if isinstance(value, (int, float)):
         parsed = float(value)
     else:
-        text = str(value).strip().lower()
-        if text.endswith("ms"):
-            text = text[:-2].strip()
-            parsed = float(text)
-        elif text.endswith("s") and not text.endswith("ms"):
-            parsed = float(text[:-1].strip()) * 1000.0
-        else:
-            parsed = float(text)
+        parsed = _parse_timeout_text(str(value))
     if not math.isfinite(parsed):
         raise ValueError("timeout must be finite")
     return parsed
+
+
+def _parse_timeout_text(text: str) -> float:
+    normalized = text.strip().lower()
+    if normalized.endswith("ms"):
+        return float(normalized[:-2].strip())
+    if normalized.endswith("s"):
+        return float(normalized[:-1].strip()) * 1000.0
+    return float(normalized)
 
 
 class ContextSettings(BaseSettings):

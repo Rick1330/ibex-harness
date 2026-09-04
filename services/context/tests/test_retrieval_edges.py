@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
@@ -42,33 +43,20 @@ async def test_empty_directive_lookup() -> None:
 async def test_redis_directive_redis_error() -> None:
     redis = AsyncMock()
     redis.get = AsyncMock(side_effect=RedisError("down"))
-    lookup = RedisDirectiveLookup(redis)
-    org_id = uuid4()
-    agent_id = uuid4()
     with pytest.raises(DirectiveLookupError):
-        await lookup.lookup(org_id, agent_id)
+        await RedisDirectiveLookup(redis).lookup(uuid4(), uuid4())
 
 
 @pytest.mark.asyncio
-async def test_redis_directive_invalid_json() -> None:
+@pytest.mark.parametrize(
+    "raw",
+    [b"not-json", b'["not","object"]'],
+)
+async def test_redis_directive_parse_failures(raw: bytes) -> None:
     redis = AsyncMock()
-    redis.get = AsyncMock(return_value=b"not-json")
-    lookup = RedisDirectiveLookup(redis)
-    org_id = uuid4()
-    agent_id = uuid4()
+    redis.get = AsyncMock(return_value=raw)
     with pytest.raises(DirectiveLookupError):
-        await lookup.lookup(org_id, agent_id)
-
-
-@pytest.mark.asyncio
-async def test_redis_directive_non_object() -> None:
-    redis = AsyncMock()
-    redis.get = AsyncMock(return_value=b'["not","object"]')
-    lookup = RedisDirectiveLookup(redis)
-    org_id = uuid4()
-    agent_id = uuid4()
-    with pytest.raises(DirectiveLookupError):
-        await lookup.lookup(org_id, agent_id)
+        await RedisDirectiveLookup(redis).lookup(uuid4(), uuid4())
 
 
 @pytest.mark.asyncio
@@ -94,114 +82,72 @@ def test_memory_http_client_requires_token() -> None:
         MemoryHttpClient(MemoryHttpConfig(base_url="http://x", token=""))
 
 
-def _error_handler(request: httpx.Request) -> httpx.Response:
-    path = request.url.path
-    responses: dict[str, httpx.Response | Exception] = {
+def _memory_fields(**overrides: Any) -> dict[str, Any]:
+    mid = str(uuid4())
+    base: dict[str, Any] = {
+        "id": mid,
+        "org_id": mid,
+        "agent_id": mid,
+        "content": "x",
+        "category": "factual",
+        "confidence": 0.5,
+    }
+    base.update(overrides)
+    return base
+
+
+def _result_item(**overrides: Any) -> dict[str, Any]:
+    item: dict[str, Any] = {
+        "memory": _memory_fields(),
+        "similarity": 0.1,
+        "rank": 1,
+        "source": "hot_cache",
+    }
+    memory_overrides = overrides.pop("memory", None)
+    item.update(overrides)
+    if memory_overrides is not None:
+        item["memory"] = _memory_fields(**memory_overrides)
+    return item
+
+
+def _results_response(*items: object) -> httpx.Response:
+    return httpx.Response(200, json={"data": {"results": list(items)}})
+
+
+def _nan_similarity_response() -> httpx.Response:
+    return httpx.Response(
+        200,
+        content=json.dumps(
+            {"data": {"results": [_result_item(similarity=float("nan"))]}},
+            allow_nan=True,
+        ).encode(),
+        headers={"content-type": "application/json"},
+    )
+
+
+def _error_routes() -> dict[str, httpx.Response | Exception]:
+    return {
         "/timeout/v1/memories/hot": httpx.ReadTimeout("slow"),
         "/transport/v1/memories/hot": httpx.ConnectError("nope"),
         "/badjson/v1/memories/hot": httpx.Response(200, content=b"not-json"),
         "/nodata/v1/memories/hot": httpx.Response(200, json=["x"]),
         "/noresults/v1/memories/hot": httpx.Response(200, json={"data": {}}),
         "/baddata/v1/memories/hot": httpx.Response(200, json={"data": "x"}),
-        "/skip/v1/memories/hot": httpx.Response(
-            200,
-            json={"data": {"results": ["bad"]}},
+        "/skip/v1/memories/hot": _results_response("bad"),
+        "/badrank/v1/memories/hot": _results_response(_result_item(rank=0)),
+        "/baduuid/v1/memories/hot": _results_response(
+            _result_item(memory={"id": "not-a-uuid"})
         ),
-        "/badrank/v1/memories/hot": httpx.Response(
-            200,
-            json={
-                "data": {
-                    "results": [
-                        {
-                            "memory": {
-                                "id": str(uuid4()),
-                                "org_id": str(uuid4()),
-                                "agent_id": str(uuid4()),
-                                "content": "x",
-                                "category": "factual",
-                                "confidence": 0.5,
-                            },
-                            "similarity": 0.1,
-                            "rank": 0,
-                            "source": "hot_cache",
-                        }
-                    ]
-                }
-            },
+        "/badconf/v1/memories/hot": _results_response(
+            _result_item(memory={"confidence": 1.5})
         ),
-        "/baduuid/v1/memories/hot": httpx.Response(
-            200,
-            json={
-                "data": {
-                    "results": [
-                        {
-                            "memory": {
-                                "id": "not-a-uuid",
-                                "org_id": str(uuid4()),
-                                "agent_id": str(uuid4()),
-                                "content": "x",
-                                "category": "factual",
-                                "confidence": 0.5,
-                            },
-                            "similarity": 0.1,
-                            "rank": 1,
-                            "source": "hot_cache",
-                        }
-                    ]
-                }
-            },
-        ),
-        "/badconf/v1/memories/hot": httpx.Response(
-            200,
-            json={
-                "data": {
-                    "results": [
-                        {
-                            "memory": {
-                                "id": str(uuid4()),
-                                "org_id": str(uuid4()),
-                                "agent_id": str(uuid4()),
-                                "content": "x",
-                                "category": "factual",
-                                "confidence": 1.5,
-                            },
-                            "similarity": 0.1,
-                            "rank": 1,
-                            "source": "hot_cache",
-                        }
-                    ]
-                }
-            },
-        ),
-        "/nansim/v1/memories/hot": httpx.Response(
-            200,
-            content=json.dumps(
-                {
-                    "data": {
-                        "results": [
-                            {
-                                "memory": {
-                                    "id": str(uuid4()),
-                                    "org_id": str(uuid4()),
-                                    "agent_id": str(uuid4()),
-                                    "content": "x",
-                                    "category": "factual",
-                                    "confidence": 0.5,
-                                },
-                                "similarity": float("nan"),
-                                "rank": 1,
-                                "source": "hot_cache",
-                            }
-                        ]
-                    }
-                },
-                allow_nan=True,
-            ).encode(),
-            headers={"content-type": "application/json"},
-        ),
+        "/nansim/v1/memories/hot": _nan_similarity_response(),
     }
-    for suffix, value in responses.items():
-        if path.endswith(suffix):
+
+
+def _error_handler(request: httpx.Request) -> httpx.Response:
+    for suffix, value in _error_routes().items():
+        if request.url.path.endswith(suffix):
             if isinstance(value, Exception):
                 raise value
             return value
@@ -216,152 +162,45 @@ async def _assert_hot_raises(base: str, http: httpx.AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_memory_http_status_error() -> None:
+@pytest.mark.parametrize(
+    "base",
+    [
+        "http://memory.example",
+        "http://memory.example/timeout",
+        "http://memory.example/transport",
+        "http://memory.example/badjson",
+        "http://memory.example/nodata",
+        "http://memory.example/noresults",
+        "http://memory.example/baddata",
+        "http://memory.example/skip",
+        "http://memory.example/badrank",
+        "http://memory.example/baduuid",
+        "http://memory.example/badconf",
+        "http://memory.example/nansim",
+    ],
+)
+async def test_memory_http_error_paths(base: str) -> None:
     transport = httpx.MockTransport(_error_handler)
     async with httpx.AsyncClient(transport=transport) as http:
-        await _assert_hot_raises("http://memory.example", http)
+        await _assert_hot_raises(base, http)
 
 
-@pytest.mark.asyncio
-async def test_memory_http_timeout_error() -> None:
-    transport = httpx.MockTransport(_error_handler)
-    async with httpx.AsyncClient(transport=transport) as http:
-        await _assert_hot_raises("http://memory.example/timeout", http)
+def _valid_hit(**overrides: Any) -> dict[str, Any]:
+    return _result_item(**overrides)
 
 
-@pytest.mark.asyncio
-async def test_memory_http_transport_error() -> None:
-    transport = httpx.MockTransport(_error_handler)
-    async with httpx.AsyncClient(transport=transport) as http:
-        await _assert_hot_raises("http://memory.example/transport", http)
-
-
-@pytest.mark.asyncio
-async def test_memory_http_malformed_json_bodies() -> None:
-    transport = httpx.MockTransport(_error_handler)
-    async with httpx.AsyncClient(transport=transport) as http:
-        await _assert_hot_raises("http://memory.example/badjson", http)
-
-
-@pytest.mark.asyncio
-async def test_memory_http_missing_data_object() -> None:
-    transport = httpx.MockTransport(_error_handler)
-    async with httpx.AsyncClient(transport=transport) as http:
-        await _assert_hot_raises("http://memory.example/nodata", http)
-
-
-@pytest.mark.asyncio
-async def test_memory_http_missing_results() -> None:
-    transport = httpx.MockTransport(_error_handler)
-    async with httpx.AsyncClient(transport=transport) as http:
-        await _assert_hot_raises("http://memory.example/noresults", http)
-
-
-@pytest.mark.asyncio
-async def test_memory_http_bad_data_type() -> None:
-    transport = httpx.MockTransport(_error_handler)
-    async with httpx.AsyncClient(transport=transport) as http:
-        await _assert_hot_raises("http://memory.example/baddata", http)
-
-
-@pytest.mark.asyncio
-async def test_memory_http_rejects_malformed_result_items() -> None:
-    transport = httpx.MockTransport(_error_handler)
-    async with httpx.AsyncClient(transport=transport) as http:
-        await _assert_hot_raises("http://memory.example/skip", http)
-
-
-@pytest.mark.asyncio
-async def test_memory_http_rejects_invalid_rank() -> None:
-    transport = httpx.MockTransport(_error_handler)
-    async with httpx.AsyncClient(transport=transport) as http:
-        await _assert_hot_raises("http://memory.example/badrank", http)
-
-
-@pytest.mark.asyncio
-async def test_memory_http_rejects_bad_uuid() -> None:
-    transport = httpx.MockTransport(_error_handler)
-    async with httpx.AsyncClient(transport=transport) as http:
-        await _assert_hot_raises("http://memory.example/baduuid", http)
-
-
-@pytest.mark.asyncio
-async def test_memory_http_rejects_confidence_out_of_range() -> None:
-    transport = httpx.MockTransport(_error_handler)
-    async with httpx.AsyncClient(transport=transport) as http:
-        await _assert_hot_raises("http://memory.example/badconf", http)
-
-
-@pytest.mark.asyncio
-async def test_memory_http_rejects_non_finite_similarity() -> None:
-    transport = httpx.MockTransport(_error_handler)
-    async with httpx.AsyncClient(transport=transport) as http:
-        await _assert_hot_raises("http://memory.example/nansim", http)
-
-
-def test_hit_from_item_rejects_missing_memory() -> None:
+@pytest.mark.parametrize(
+    "item",
+    [
+        {"similarity": 0.1, "rank": 1, "source": "hot_cache"},
+        _valid_hit(memory={"content": 1}),
+        _valid_hit(similarity=True),
+        _valid_hit(rank=True),
+    ],
+)
+def test_hit_from_item_rejects_invalid(item: object) -> None:
     with pytest.raises(MemoryHttpError):
-        _hit_from_item({"similarity": 0.1, "rank": 1, "source": "hot_cache"})
-
-
-def test_hit_from_item_rejects_non_string_fields() -> None:
-    mid = str(uuid4())
-    with pytest.raises(MemoryHttpError):
-        _hit_from_item(
-            {
-                "memory": {
-                    "id": mid,
-                    "org_id": mid,
-                    "agent_id": mid,
-                    "content": 1,
-                    "category": "factual",
-                    "confidence": 0.5,
-                },
-                "similarity": 0.1,
-                "rank": 1,
-                "source": "hot_cache",
-            }
-        )
-
-
-def test_hit_from_item_rejects_bool_similarity() -> None:
-    mid = str(uuid4())
-    with pytest.raises(MemoryHttpError):
-        _hit_from_item(
-            {
-                "memory": {
-                    "id": mid,
-                    "org_id": mid,
-                    "agent_id": mid,
-                    "content": "x",
-                    "category": "factual",
-                    "confidence": 0.5,
-                },
-                "similarity": True,
-                "rank": 1,
-                "source": "hot_cache",
-            }
-        )
-
-
-def test_hit_from_item_rejects_bool_rank() -> None:
-    mid = str(uuid4())
-    with pytest.raises(MemoryHttpError):
-        _hit_from_item(
-            {
-                "memory": {
-                    "id": mid,
-                    "org_id": mid,
-                    "agent_id": mid,
-                    "content": "x",
-                    "category": "factual",
-                    "confidence": 0.5,
-                },
-                "similarity": 0.1,
-                "rank": True,
-                "source": "hot_cache",
-            }
-        )
+        _hit_from_item(item)
 
 
 @pytest.mark.asyncio
