@@ -31,6 +31,8 @@ export const RANKING_QUALITY_BENCHMARK_DATA_URL =
   "/benchmarks/ranking-quality-benchmark-data.json";
 export const WRITE_PIPELINE_BENCHMARK_DATA_URL =
   "/benchmarks/write-pipeline-benchmark-data.json";
+export const EXTRACTION_QUALITY_BENCHMARK_DATA_URL =
+  "/benchmarks/extraction-quality-benchmark-data.json";
 
 /** Track B / Track E HNSW SLAs (roadmap + published gate_summary). */
 export const HNSW_SLA_TARGETS = {
@@ -47,4 +49,11 @@ export const RANKING_QUALITY_SLA_TARGETS = {
 
 export const WRITE_PIPELINE_SLA_TARGETS = {
   latency_ms_p95: 200,
+} as const;
+
+export const EXTRACTION_QUALITY_SLA_TARGETS = {
+  precision_macro: 1.0,
+  recall_macro: 1.0,
+  category_assignment_accuracy: 1.0,
+  temporal_field_accuracy: 1.0,
 } as const;

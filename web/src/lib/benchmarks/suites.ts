@@ -3,7 +3,12 @@
  * Collect/publish schemas stay per-suite (proxy vs HNSW vs ranking vs write).
  */
 
-export type BenchmarkSuiteId = "proxy" | "hnsw" | "rankingQuality" | "writePipeline";
+export type BenchmarkSuiteId =
+  | "proxy"
+  | "hnsw"
+  | "rankingQuality"
+  | "writePipeline"
+  | "extractionQuality";
 
 export type SuiteNavPage = Readonly<{
   name: string;
@@ -67,11 +72,23 @@ export const WRITE_PIPELINE_SUITE: BenchmarkSuite = {
   ],
 };
 
+export const EXTRACTION_QUALITY_SUITE: BenchmarkSuite = {
+  id: "extractionQuality",
+  label: "Extraction quality",
+  basePath: "/benchmarks/extraction-quality",
+  dataUrl: "/benchmarks/extraction-quality-benchmark-data.json",
+  navPages: [
+    { name: "Overview", url: "/benchmarks/extraction-quality" },
+    { name: "History", url: "/benchmarks/extraction-quality/history" },
+  ],
+};
+
 export const BENCHMARK_SUITES: readonly BenchmarkSuite[] = [
   PROXY_SUITE,
   HNSW_SUITE,
   RANKING_QUALITY_SUITE,
   WRITE_PIPELINE_SUITE,
+  EXTRACTION_QUALITY_SUITE,
 ];
 
 /** Hub page — suite-aware overview (not nested under Proxy). */

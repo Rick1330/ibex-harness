@@ -1,0 +1,69 @@
+---
+title: "ADR-0066: Extraction quality evaluation harness"
+description: "Architecture decision record 0066 — gold-set extraction eval, cassette CI, manual vLLM side-by-side, and 3pp absolute regression gate."
+adrId: "0066"
+status: "Accepted"
+date: "2026-09-03"
+authors: "IBEX Harness team"
+---
+
+# ADR-0066: Extraction quality evaluation harness
+
+- **Status:** Accepted
+- **Date:** 2026-09-03
+- **Authors:** IBEX Harness team
+- **Milestone:** [3.5.B.4 Extraction quality evaluation harness](/roadmap/phase-3-5-extraction-assembly/milestones/3.5.b.4-extraction-quality-eval-harness)
+- **Depends on:** [ADR-0064](/docs/adr/0064-extraction-provider-and-batch-execution), [ADR-0065](/docs/adr/0065-extraction-batch-idempotency), [ADR-0061](/docs/adr/0061-retrieval-quality-benchmark-methodology)
+
+## Context
+
+Parseability checks (“valid JSON > 99%”) do not measure extraction correctness. Phase 3 already gates retrieval quality ([ADR-0061](/docs/adr/0061-retrieval-quality-benchmark-methodology)). Track B needs the extraction counterpart: per-category precision/recall, exact category-set accuracy, and temporal-field accuracy.
+
+Milestone wording asks for OpenAI and vLLM evaluated side-by-side, but [3.5.B.2](/roadmap/phase-3-5-extraction-assembly/milestones/3.5.b.2-cost-tiered-extraction-execution) established there is **no GPU CI runner**. Live LLM calls on every PR would also be costly and flaky.
+
+## Decision
+
+### 1) Layout
+
+Harness lives under `services/worker/eval/` with versioned gold data in `gold_set/v1/` (subdirectory versioning; ranking-quality used `gold_set_v1.json` filenames — B.4 follows the milestone `v1/` layout).
+
+### 2) vLLM conflict → path (a)
+
+- **CI-enforced:** OpenAI cassette (and optional live on weekly `full` / `workflow_dispatch` only).
+- **Manual:** vLLM numbers committed in `baseline_results.json` with `enforcement: manual` and `last_refreshed`.
+- Side-by-side requirement is satisfied by publishing both blocks; summaries always label enforcement so manual/stale vLLM is never mistaken for CI.
+
+### 3) Cassette hybrid (cost / flakiness)
+
+| Profile | Behavior |
+| --- | --- |
+| smoke (PR) / fast (main) | Cassette replay — $0, deterministic |
+| full (Sunday / dispatch) | Live OpenAI if secret present; else cassette + explicit skip note |
+
+Manifest contract hashes (fail-closed on cassette profiles):
+
+- `prompt_sha256` tracks `EXTRACTION_SYSTEM_PROMPT_BATCH`
+- `schema_sha256` tracks canonical `BatchExtractionResult.model_json_schema()` (structural contract, not raw `schema.py` bytes)
+
+`cassette_kind` distinguishes `oracle_aligned_expected_json` (deterministic scoring/gate baseline) from `live_openai_recorded` (written by `EXTRACTION_EVAL_MODE=record`). This is a **documented process + fail-closed hash/kind gate**, not cryptographic proof that cassette bytes were produced by a particular model call.
+
+CI additionally fails PRs that change `prompt_v2.py` / `schema.py` while `cassette_kind` remains oracle-aligned, unless the PR body contains `EXTRACTION_EVAL_ORACLE_OK=1` (explicit reviewer-visible exception). `EXTRACTION_EVAL_ALLOW_PROMPT_DRIFT` must not appear in the extraction-eval workflow.
+
+### 4) Metrics and gate
+
+- Per-category precision/recall for all five `VALID_LABELS`.
+- Category-assignment accuracy = exact label-set equality (over- and under-label fail).
+- Temporal-field accuracy scored separately (supersession ⇒ `valid_until` set; indefinite ⇒ `None`).
+- Gate uses **absolute** `max_regression_pp: 3.0` (unlike ranking-quality’s relative 5%). Exit code **1** on fail — proven by unit test, not status-field-only.
+- End-to-end cassette regression detection is covered by a corrupted-cassette fixture test (not only isolated `metrics.py` units).
+
+### 5) Benchmark bot / publish
+
+Published history: `web/public/benchmarks/extraction-quality-benchmark-data.json`. Bot suite + `extraction_benchmark_main_complete` dispatch mirror memory ranking/write publishing (see `ibexharness-benchmark-bot`).
+
+## Consequences
+
+- Contributors do not spend OpenAI budget on routine PRs.
+- Prompt/schema drift without cassette refresh fails via contract hashes; oracle + contract-file PR diffs fail unless live-recorded or explicitly overridden in the PR body.
+- Operators must refresh vLLM baselines manually when comparing providers.
+- Pin `BENCHMARK_BOT_SHA` must include `post-extraction-pr-comment` before PR comments render for this suite.

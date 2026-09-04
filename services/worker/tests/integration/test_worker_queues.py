@@ -47,6 +47,23 @@ def test_noop_consumed_per_queue(
         assert payload["queue"] == queue
 
 
+def test_extract_session_memories_registered_on_extraction_queue(
+    celery_app: Celery,
+    worker: object,
+) -> None:
+    """Live worker must register m3.5.B.2 extraction without calling a provider."""
+    del worker
+    from app.celery_app import TASK_ROUTES
+    from app.task_names import TASK_EXTRACT_SESSION_MEMORIES
+
+    assert TASK_EXTRACT_SESSION_MEMORIES in celery_app.tasks
+    assert TASK_ROUTES[TASK_EXTRACT_SESSION_MEMORIES]["queue"] == "extraction"
+    replies = celery_app.control.inspect().registered()
+    assert replies
+    registered = {name for names in replies.values() for name in names}
+    assert TASK_EXTRACT_SESSION_MEMORIES in registered
+
+
 def test_worker_starts_and_pings(celery_app: Celery, worker: object) -> None:
     replies = celery_app.control.ping(timeout=5.0)
     assert replies

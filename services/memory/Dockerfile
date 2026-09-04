@@ -22,12 +22,16 @@ COPY --from=uv /uv /usr/local/bin/uv
 WORKDIR /app/services/memory
 
 COPY packages/authclient /app/packages/authclient
+COPY packages/ibex_async_db /app/packages/ibex_async_db
 # Trusted monorepo wheel only — UV_NO_BUILD=1 blocks uv build globally (Sonar S8541).
-RUN mkdir -p /wheels && UV_NO_BUILD=0 uv build --wheel --out-dir /wheels /app/packages/authclient
+RUN mkdir -p /wheels && UV_NO_BUILD=0 uv build --wheel --out-dir /wheels /app/packages/authclient \
+    && UV_NO_BUILD=0 uv build --wheel --out-dir /wheels /app/packages/ibex_async_db
 COPY services/memory/pyproject.toml services/memory/uv.lock ./
 
-RUN uv sync --frozen --no-build --no-install-project --find-links /wheels --no-install-package authclient \
-    && uv pip install --no-index --find-links /wheels "authclient==0.1.0"
+RUN uv sync --frozen --no-build --no-install-project --find-links /wheels \
+    --no-install-package authclient --no-install-package ibex-async-db \
+    && uv pip install --no-index --find-links /wheels \
+    "authclient==0.1.0" "ibex-async-db==0.1.0"
 
 FROM python@sha256:b64e9d3a71eddaa1b3f80c04abf292b3139e3b7c4dd272d19c31dc1f91194d1b AS runtime
 

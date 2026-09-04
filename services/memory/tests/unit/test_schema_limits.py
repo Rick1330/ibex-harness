@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
@@ -39,6 +40,39 @@ def test_create_memory_request_rejects_oversized_metadata() -> None:
             content="hello",
             metadata={"blob": "x" * 9000},
         )
+
+
+@pytest.mark.parametrize(
+    ("valid_from", "valid_until", "match"),
+    [
+        (
+            datetime(2026, 9, 8, tzinfo=UTC),
+            datetime(2026, 9, 1, tzinfo=UTC),
+            "valid_until",
+        ),
+        (
+            datetime(2026, 9, 1, tzinfo=UTC),
+            datetime(2026, 9, 1, tzinfo=UTC),
+            "valid_until",
+        ),
+        (
+            datetime(2026, 9, 1, 0, 0, 0, tzinfo=UTC).replace(tzinfo=None),
+            datetime(2026, 9, 2, 0, 0, 0, tzinfo=UTC),
+            "timezone-aware or both naive",
+        ),
+    ],
+)
+def test_create_memory_request_rejects_invalid_interval(
+    valid_from: datetime, valid_until: datetime, match: str
+) -> None:
+    payload = {
+        "agent_id": uuid4(),
+        "content": "hello",
+        "valid_from": valid_from,
+        "valid_until": valid_until,
+    }
+    with pytest.raises(ValidationError, match=match):
+        CreateMemoryRequest(**payload)
 
 
 def test_create_memory_request_rejects_too_many_labels() -> None:

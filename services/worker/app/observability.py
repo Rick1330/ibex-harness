@@ -1,12 +1,331 @@
-"""Observability hooks for Celery tasks (m3.5.A.2).
+"""Observability hooks for Celery tasks (OTel, dead-letter, Prometheus)."""
 
-OTel span wrapping, ``task_failure`` dead-letter handling, and Prometheus counters
-land here in milestone 3.5.A.2. This module is intentionally empty for A.1 so
-signal handlers can attach without changing task signatures.
+from __future__ import annotations
 
-**A.1 exception (m3.5.A.1 milestone):** MONITORING.md worker metrics
-(``ibex_worker_tasks_total``, queue depth, DLQ counters) are deferred to A.2;
-the empty ``__all__`` stub is the approved seam until then.
-"""
+import asyncio
+import logging
+import os
+import traceback
+from collections.abc import Callable
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, TypeVar
 
-__all__: list[str] = []
+import asyncpg
+from celery.exceptions import Retry
+from celery.signals import task_failure, worker_process_init, worker_ready
+from opentelemetry.trace import Status, StatusCode
+from prometheus_client import CollectorRegistry, Counter, Gauge, multiprocess, start_http_server
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+
+from app.config import Settings, get_settings
+from app.db import create_engine, create_session_factory
+from app.repositories.failed_tasks import FailedTaskRecord, insert_failed_task
+from app.task_context import (
+    parse_org_id,
+    redact_exception_message,
+    redact_traceback_for_persistence,
+    sanitize_kwargs_for_persistence,
+    task_context_from_kwargs,
+)
+from app.telemetry import TRACER_NAME, get_tracer, init_tracing
+
+logger = logging.getLogger(__name__)
+
+F = TypeVar("F", bound=Callable[..., Any])
+
+PROCESS_UP = Gauge(
+    "ibex_process_up",
+    "1 when the worker process is serving metrics",
+)
+DEAD_LETTER_COUNTER = Counter(
+    "ibex_worker_task_dead_letter_total",
+    "Celery tasks dead-lettered after retries exhausted (new failed_tasks row)",
+    ["task_name"],
+)
+DEAD_LETTER_PERSIST_FAILED_COUNTER = Counter(
+    "ibex_worker_task_dead_letter_persist_failed_total",
+    "Dead-letter persistence failures (DB unavailable or insert error)",
+    ["task_name"],
+)
+
+_MAINTENANCE_TASK_PREFIX = "ibex.worker.maintenance."
+
+_engine: AsyncEngine | None = None
+_session_factory: async_sessionmaker[AsyncSession] | None = None
+_metrics_started = False
+_worker_loop: asyncio.AbstractEventLoop | None = None
+
+__all__ = [
+    "DEAD_LETTER_COUNTER",
+    "DEAD_LETTER_PERSIST_FAILED_COUNTER",
+    "PROCESS_UP",
+    "dead_letter_persist_failed_total_for_task",
+    "dead_letter_total_for_task",
+    "on_task_failure",
+    "reset_observability_for_tests",
+    "run_task_in_span",
+    "traced_task",
+]
+
+
+def traced_task(name: str) -> Callable[[F], F]:
+    """Decorator wrapping a callable in an OTel span (used by IbexTask.__call__)."""
+
+    def decorator(fn: F) -> F:
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            return run_task_in_span(name, None, kwargs or {}, lambda: fn(*args, **kwargs))
+
+        wrapper.__name__ = getattr(fn, "__name__", name)
+        wrapper.__doc__ = fn.__doc__
+        return wrapper  # type: ignore[return-value]
+
+    return decorator
+
+
+def run_task_in_span(
+    name: str,
+    task_id: str | None,
+    task_kwargs: dict[str, Any],
+    fn: Callable[[], Any],
+) -> Any:
+    """Execute *fn* inside a span tagged with safe task metadata."""
+    tracer = get_tracer()
+    with tracer.start_as_current_span(
+        name,
+        set_status_on_exception=False,
+        record_exception=False,
+    ) as span:
+        span.set_attribute("worker.task", name)
+        if task_id:
+            span.set_attribute("celery.task_id", task_id)
+        for key, value in task_context_from_kwargs(task_kwargs).items():
+            span.set_attribute(f"ibex.{key}", value)
+        try:
+            return fn()
+        except Retry:
+            raise
+        except BaseException as exc:
+            span.record_exception(exc)
+            span.set_status(Status(StatusCode.ERROR, type(exc).__name__))
+            raise
+
+
+def dead_letter_total_for_task(task_name: str) -> float:
+    """Return current counter value for tests."""
+    return DEAD_LETTER_COUNTER.labels(task_name=task_name)._value.get()  # type: ignore[attr-defined]
+
+
+def dead_letter_persist_failed_total_for_task(task_name: str) -> float:
+    """Return current persist-failure counter value for tests."""
+    return DEAD_LETTER_PERSIST_FAILED_COUNTER.labels(task_name=task_name)._value.get()  # type: ignore[attr-defined]
+
+
+def reset_observability_for_tests() -> None:
+    """Test-only reset of module globals (DB pool, metrics server flag)."""
+    global _engine, _session_factory, _metrics_started, _worker_loop
+    _engine = None
+    _session_factory = None
+    _metrics_started = False
+    _worker_loop = None
+
+
+def _should_dead_letter(sender: Any) -> bool:
+    request = getattr(sender, "request", None)
+    if request is None:
+        return True
+    retries = getattr(request, "retries", 0)
+    max_retries = getattr(sender, "max_retries", 0)
+    return retries >= max_retries
+
+
+def _format_traceback(einfo: Any, exc: BaseException | None) -> str:
+    if einfo is not None and getattr(einfo, "traceback", None):
+        return str(einfo.traceback)
+    if exc is not None:
+        return "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    return ""
+
+
+@dataclass(frozen=True, slots=True)
+class DeadLetterPayload:
+    """Sanitized dead-letter fields collected from a Celery task_failure signal."""
+
+    task_name: str
+    task_id: str
+    kwargs: dict[str, Any]
+    exception: BaseException | None
+    traceback_text: str
+    retry_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class TaskFailureContext:
+    """Celery task_failure signal payload."""
+
+    sender: Any
+    task_id: str | None
+    exception: BaseException | None
+    kwargs: dict[str, Any] | None
+    einfo: Any
+
+    @classmethod
+    def from_signal(cls, signal_kwargs: dict[str, Any]) -> TaskFailureContext:
+        return cls(
+            sender=signal_kwargs.get("sender"),
+            task_id=signal_kwargs.get("task_id"),
+            exception=signal_kwargs.get("exception"),
+            kwargs=signal_kwargs.get("kwargs"),
+            einfo=signal_kwargs.get("einfo"),
+        )
+
+
+def _run_on_worker_loop(coro: Any) -> Any:
+    if _worker_loop is not None:
+        return _worker_loop.run_until_complete(coro)
+    return asyncio.run(coro)
+
+
+def _persist_dead_letter(settings: Settings, payload: DeadLetterPayload) -> bool | None:
+    """Persist dead-letter row. True=new row, False=duplicate, None=no database."""
+    if not settings.database_url or _session_factory is None:
+        logger.error(
+            "dead_letter_skipped_no_database",
+            extra={"task_name": payload.task_name, "task_id": payload.task_id},
+        )
+        return None
+
+    org_id = parse_org_id(payload.kwargs)
+    if not payload.task_name.startswith(_MAINTENANCE_TASK_PREFIX) and org_id is None:
+        logger.error(
+            "dead_letter_skipped_missing_org_id",
+            extra={
+                "task_name": payload.task_name,
+                "task_id": payload.task_id,
+                **task_context_from_kwargs(payload.kwargs),
+            },
+        )
+        return None
+
+    exc = payload.exception or RuntimeError("unknown task failure")
+    return _run_on_worker_loop(
+        insert_failed_task(
+            _session_factory,
+            FailedTaskRecord(
+                task_name=payload.task_name,
+                task_id=payload.task_id,
+                args=(),
+                kwargs=sanitize_kwargs_for_persistence(payload.kwargs),
+                exception_type=type(exc).__name__,
+                exception_message=redact_exception_message(exc),
+                traceback_text=redact_traceback_for_persistence(payload.traceback_text),
+                retry_count=payload.retry_count,
+                org_id=org_id,
+            ),
+        )
+    )
+
+
+def _handle_task_failure(ctx: TaskFailureContext) -> None:
+    if ctx.sender is None or ctx.task_id is None:
+        return
+    if not _should_dead_letter(ctx.sender):
+        return
+
+    task_name = getattr(ctx.sender, "name", "unknown")
+    request = getattr(ctx.sender, "request", None)
+    retry_count = int(getattr(request, "retries", 0)) if request is not None else 0
+    task_kwargs = ctx.kwargs if ctx.kwargs is not None else {}
+    payload = DeadLetterPayload(
+        task_name=task_name,
+        task_id=ctx.task_id,
+        kwargs=task_kwargs,
+        exception=ctx.exception,
+        traceback_text=_format_traceback(ctx.einfo, ctx.exception),
+        retry_count=retry_count,
+    )
+
+    settings = get_settings()
+    try:
+        inserted = _persist_dead_letter(settings, payload)
+    except (SQLAlchemyError, asyncpg.PostgresError, OSError, RuntimeError):
+        DEAD_LETTER_PERSIST_FAILED_COUNTER.labels(task_name=task_name).inc()
+        logger.exception(
+            "dead_letter_persist_failed",
+            extra={
+                "task_name": task_name,
+                "task_id": ctx.task_id,
+                **task_context_from_kwargs(task_kwargs),
+            },
+        )
+        return
+
+    if inserted is True:
+        DEAD_LETTER_COUNTER.labels(task_name=task_name).inc()
+    elif inserted is None:
+        DEAD_LETTER_PERSIST_FAILED_COUNTER.labels(task_name=task_name).inc()
+
+
+@task_failure.connect
+def on_task_failure(**signal_kwargs: Any) -> None:
+    """Dead-letter handler — fires once per exhausted-retry failure."""
+    _handle_task_failure(TaskFailureContext.from_signal(signal_kwargs))
+
+
+def _clear_multiproc_dir(multiproc_dir: str) -> None:
+    path = Path(multiproc_dir)
+    path.mkdir(parents=True, exist_ok=True)
+    for child in path.glob("*.db"):
+        child.unlink(missing_ok=True)
+
+
+def _start_metrics_server(port: int) -> None:
+    global _metrics_started
+    if _metrics_started:
+        return
+    multiproc_dir = os.environ.get("PROMETHEUS_MULTIPROC_DIR")
+    if multiproc_dir:
+        _clear_multiproc_dir(multiproc_dir)
+        registry = CollectorRegistry()
+        multiprocess.MultiProcessCollector(registry)
+        start_http_server(port, registry=registry)
+    else:
+        start_http_server(port)
+    PROCESS_UP.set(1)
+    _metrics_started = True
+
+
+def _init_database(settings: Settings) -> None:
+    global _engine, _session_factory
+    if not settings.database_url:
+        return
+    if _session_factory is not None:
+        return
+    _engine = create_engine(settings)
+    _session_factory = create_session_factory(_engine)
+
+
+@worker_process_init.connect
+def _on_worker_process_init(**signal_kwargs: Any) -> None:
+    global _worker_loop
+    del signal_kwargs
+    _worker_loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(_worker_loop)
+    init_tracing()
+    _init_database(get_settings())
+
+
+@worker_ready.connect
+def _on_worker_ready(**signal_kwargs: Any) -> None:
+    del signal_kwargs
+    settings = get_settings()
+    _start_metrics_server(settings.metrics_port)
+    logger.info(
+        "worker_observability_ready",
+        extra={
+            "metrics_port": settings.metrics_port,
+            "database_configured": bool(settings.database_url),
+            "tracer": TRACER_NAME,
+        },
+    )

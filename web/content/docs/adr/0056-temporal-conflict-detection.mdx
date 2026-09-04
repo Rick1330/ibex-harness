@@ -84,8 +84,8 @@ Decision: **spaCy**. Weak fixtures trigger follow-up, not an initial LLM subject
 
 ## Implementation note (2026-08-30)
 
-- `POST /v1/memories` has no `valid_from` request field. `MemoryWriteOrchestrator._run_pipeline`
-  defaults `valid_from` to `NOW()` (UTC) before `ConflictStage` runs (PR #649).
+- POST `/v1/memories` now accepts optional `valid_from` / `valid_until` (3.5.B.2 / ADR-0064).
+  `MemoryWriteOrchestrator._run_pipeline` still defaults `valid_from` to `NOW()` (UTC) when omitted.
 - Therefore the "missing valid_from → escalate" branch in `ConflictStage` is **not reachable**
   via the documented HTTP write contract.
 - Intentional: aligns interval-based supersede detection with the persist-layer default

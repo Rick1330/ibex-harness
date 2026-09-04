@@ -9,6 +9,8 @@ from typing import Any
 
 from celery.signals import task_postrun, task_prerun
 
+from app.task_context import task_context_from_kwargs
+
 logger = logging.getLogger(__name__)
 
 _start_times: dict[str, float] = {}
@@ -25,17 +27,6 @@ class TaskRunContext:
     extra: dict[str, str] = field(default_factory=dict)
 
 
-def _context_from_kwargs(kwargs: dict[str, Any] | None) -> dict[str, str]:
-    extra: dict[str, str] = {}
-    if kwargs is None:
-        return extra
-    if org_id := kwargs.get("org_id"):
-        extra["org_id"] = str(org_id)
-    if agent_id := kwargs.get("agent_id"):
-        extra["agent_id"] = str(agent_id)
-    return extra
-
-
 def _log_task_start(ctx: TaskRunContext) -> None:
     if ctx.task_id is None or ctx.task is None:
         return
@@ -43,7 +34,7 @@ def _log_task_start(ctx: TaskRunContext) -> None:
     extra: dict[str, Any] = {
         "task_name": ctx.task.name,
         "task_id": ctx.task_id,
-        **_context_from_kwargs(ctx.kwargs),
+        **task_context_from_kwargs(ctx.kwargs),
     }
     logger.info("task_start", extra=extra)
 
@@ -59,7 +50,7 @@ def _log_task_complete(ctx: TaskRunContext) -> None:
         "task_name": ctx.task.name,
         "task_id": ctx.task_id,
         "duration_ms": duration_ms,
-        **_context_from_kwargs(ctx.kwargs),
+        **task_context_from_kwargs(ctx.kwargs),
     }
     if ctx.state == "FAILURE":
         logger.error("task_failure", extra=extra)
