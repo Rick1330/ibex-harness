@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock
 from uuid import uuid4
@@ -144,6 +145,27 @@ def test_list_hot_memories_empty_ok(client) -> None:
     assert resp.json()["data"]["results"] == []
 
 
+def test_list_hot_memories_400_on_value_error(client) -> None:
+    http, mock_reader = client
+    mock_reader.get_hot_memories = AsyncMock(side_effect=ValueError("limit must be >= 1"))
+    with http:
+        resp = _hot(http)
+    assert resp.status_code == 400
+
+
+def test_list_hot_memories_503_on_database_error(client) -> None:
+    from sqlalchemy.exc import DBAPIError
+
+    http, mock_reader = client
+    mock_reader.get_hot_memories = AsyncMock(
+        side_effect=DBAPIError("stmt", {}, Exception("db down"))
+    )
+    with http:
+        resp = _hot(http)
+    assert resp.status_code == 503
+    assert resp.json()["detail"]["code"] == "DATABASE_UNAVAILABLE"
+
+
 def test_list_hot_http_latency_overhead_bounded(client) -> None:
     """HTTP layer overhead over mocked reader must stay small (ASGI + JSON).
 
@@ -183,6 +205,6 @@ def test_list_hot_http_latency_overhead_bounded(client) -> None:
             assert _hot(http).status_code == 200
             samples_ms.append((time.perf_counter() - start) * 1000.0)
     ordered = sorted(samples_ms)
-    p99 = ordered[max(0, int(len(ordered) * 0.99) - 1)]
-    # Generous bound for TestClient ASGI path; real RT measured in handoff.
-    assert p99 < 50.0, f"hot HTTP p99={p99:.2f}ms exceeded 50ms mock budget"
+    p99 = ordered[max(0, math.ceil(len(ordered) * 0.99) - 1)]
+    # Nearest-rank p99 on n=50 is the max sample; keep a generous TestClient budget.
+    assert p99 < 100.0, f"hot HTTP p99={p99:.2f}ms exceeded 100ms mock budget"

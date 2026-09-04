@@ -20,6 +20,9 @@ from redis.exceptions import RedisError
 
 _ENVELOPE_VERSION = 1
 _DEFAULT_INJECTION_MODE = "system_first"
+_KNOWN_INJECTION_MODES = frozenset(
+    {"system_first", "system_append", "user_prepend"}
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,7 +40,8 @@ class EmptyDirectiveLookup:
     """Test / disabled stub — always returns empty content."""
 
     async def lookup(self, org_id: UUID, agent_id: UUID) -> DirectivePayload:
-        return DirectivePayload(content="", injection_mode=_DEFAULT_INJECTION_MODE, version_id=None)
+        # Keep Protocol awaitable shape without I/O; params identify the key space.
+        return await _empty_lookup_result(org_id, agent_id)
 
 
 class DirectiveLookupError(Exception):
@@ -58,8 +62,17 @@ class RedisDirectiveLookup:
             raise DirectiveLookupError("directive redis get failed") from exc
         if raw is None:
             return _empty_payload()
-        text = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
+        try:
+            text = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
+        except UnicodeDecodeError as exc:
+            raise DirectiveLookupError("directive envelope is not valid UTF-8") from exc
         return _parse_envelope(text)
+
+
+async def _empty_lookup_result(org_id: UUID, agent_id: UUID) -> DirectivePayload:
+    """Awaitable empty result; org/agent retained for Protocol symmetry."""
+    _ = f"{org_id}:{agent_id}"
+    return _empty_payload()
 
 
 def _empty_payload() -> DirectivePayload:
@@ -93,8 +106,41 @@ def _require_envelope_version(data: dict[str, Any]) -> None:
 
 
 def _payload_from_envelope(data: dict[str, Any]) -> DirectivePayload:
-    content = str(data.get("content") or "")
-    mode = str(data.get("injection_mode") or "") or _DEFAULT_INJECTION_MODE
-    version_id = data.get("version_id")
-    version_id_str = str(version_id) if version_id else None
+    content = _require_string_field(data, "content", allow_empty=True)
+    mode_raw = data.get("injection_mode", "")
+    if mode_raw is None:
+        mode_raw = ""
+    if not isinstance(mode_raw, str):
+        raise DirectiveLookupError("directive injection_mode must be a string")
+    mode = _normalize_injection_mode(mode_raw)
+    version_id_str = _optional_version_id(data.get("version_id"))
     return DirectivePayload(content=content, injection_mode=mode, version_id=version_id_str)
+
+
+def _require_string_field(data: dict[str, Any], key: str, *, allow_empty: bool) -> str:
+    value = data.get(key, "")
+    if value is None:
+        value = ""
+    if not isinstance(value, str):
+        raise DirectiveLookupError(f"directive {key} must be a string")
+    if not allow_empty and not value:
+        raise DirectiveLookupError(f"directive {key} must not be empty")
+    return value
+
+
+def _normalize_injection_mode(raw: str) -> str:
+    mode = raw.strip() or _DEFAULT_INJECTION_MODE
+    if mode not in _KNOWN_INJECTION_MODES:
+        return _DEFAULT_INJECTION_MODE
+    return mode
+
+
+def _optional_version_id(value: object) -> str | None:
+    if value is None or value == "":
+        return None
+    if not isinstance(value, str):
+        raise DirectiveLookupError("directive version_id must be a string")
+    try:
+        return str(UUID(value))
+    except ValueError as exc:
+        raise DirectiveLookupError("directive version_id must be a UUID") from exc

@@ -35,7 +35,7 @@ import asyncio
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from app.budget import BudgetCalculator, Message
@@ -158,33 +158,37 @@ class ParallelRetriever:
             ("cold", asyncio.create_task(self._cold_branch(request))),
         )
         tasks = {task: name for name, task in named}
+        task_set = set(tasks.keys())
         outer_s = self._settings.timeout_ms / 1000.0
-        done, pending = await asyncio.wait(tasks.keys(), timeout=outer_s)
-        for task in pending:
-            task.cancel()
-        if pending:
-            await asyncio.gather(*pending, return_exceptions=True)
+        done: set[asyncio.Task[Any]] = set()
+        try:
+            done, _pending = await asyncio.wait(task_set, timeout=outer_s)
+        finally:
+            unfinished = [task for task in task_set if not task.done()]
+            for task in unfinished:
+                task.cancel()
+            if unfinished:
+                await asyncio.gather(*unfinished, return_exceptions=True)
 
         results: dict[str, _BranchResult] = {}
-        for task in done:
-            name = tasks[task]
-            try:
-                results[name] = _coerce_branch(name, task.result())  # type: ignore[arg-type]
-            except Exception as exc:  # noqa: BLE001
+        for task, name in tasks.items():
+            if task in done and not task.cancelled():
+                try:
+                    results[name] = _coerce_branch(name, task.result())  # type: ignore[arg-type]
+                except Exception as exc:  # noqa: BLE001
+                    results[name] = _BranchResult(
+                        name=name,  # type: ignore[arg-type]
+                        outcome=BranchOutcome("error", 0.0, type(exc).__name__),
+                    )
+            else:
                 results[name] = _BranchResult(
                     name=name,  # type: ignore[arg-type]
-                    outcome=BranchOutcome("error", 0.0, type(exc).__name__),
+                    outcome=BranchOutcome(
+                        "timeout",
+                        self._settings.timeout_ms,
+                        "outer_deadline",
+                    ),
                 )
-        for task in pending:
-            name = tasks[task]
-            results[name] = _BranchResult(
-                name=name,  # type: ignore[arg-type]
-                outcome=BranchOutcome(
-                    "timeout",
-                    self._settings.timeout_ms,
-                    "outer_deadline",
-                ),
-            )
         return (results["directive"], results["hot"], results["cold"])
 
     async def _directive_branch(self, request: RetrievalRequest) -> _BranchResult:
@@ -232,32 +236,48 @@ class ParallelRetriever:
         )
 
     async def _hot_branch(self, request: RetrievalRequest) -> _BranchResult:
+        return await self._memory_source_branch("hot", request)
+
+    async def _cold_branch(self, request: RetrievalRequest) -> _BranchResult:
+        return await self._memory_source_branch("cold", request)
+
+    async def _memory_source_branch(
+        self,
+        name: SourceName,
+        request: RetrievalRequest,
+    ) -> _BranchResult:
+        timeout_ms = (
+            self._settings.hot_timeout_ms if name == "hot" else self._settings.cold_timeout_ms
+        )
         return await self._memory_branch(
-            name="hot",
-            timeout_ms=self._settings.hot_timeout_ms,
-            fetch=lambda timeout_s: self._memory.get_hot_memories(
+            name=name,
+            timeout_ms=timeout_ms,
+            fetch=lambda timeout_s: self._fetch_memories(name, request, timeout_s),
+        )
+
+    def _fetch_memories(
+        self,
+        name: SourceName,
+        request: RetrievalRequest,
+        timeout_s: float,
+    ):
+        if name == "hot":
+            return self._memory.get_hot_memories(
                 HotMemoriesRequest(
                     agent_id=request.agent_id,
                     timeout_seconds=timeout_s,
                     limit=request.hot_limit,
                     min_confidence=request.min_confidence,
                 )
-            ),
-        )
-
-    async def _cold_branch(self, request: RetrievalRequest) -> _BranchResult:
-        return await self._memory_branch(
-            name="cold",
-            timeout_ms=self._settings.cold_timeout_ms,
-            fetch=lambda timeout_s: self._memory.search_memories(
-                SearchMemoriesRequest(
-                    agent_id=request.agent_id,
-                    query=request.query,
-                    timeout_seconds=timeout_s,
-                    limit=request.cold_limit,
-                    min_confidence=request.min_confidence,
-                )
-            ),
+            )
+        return self._memory.search_memories(
+            SearchMemoriesRequest(
+                agent_id=request.agent_id,
+                query=request.query,
+                timeout_seconds=timeout_s,
+                limit=request.cold_limit,
+                min_confidence=request.min_confidence,
+            )
         )
 
     async def _memory_branch(

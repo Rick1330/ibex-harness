@@ -2,20 +2,30 @@
 
 from __future__ import annotations
 
+import math
+
 from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 def _parse_timeout_ms(value: object) -> float:
     """Accept plain milliseconds or Go-style duration suffixes used in docs (``45ms``)."""
+    if isinstance(value, bool):
+        raise TypeError("timeout must be a number")
     if isinstance(value, (int, float)):
-        return float(value)
-    text = str(value).strip().lower()
-    if text.endswith("ms"):
-        text = text[:-2].strip()
-    elif text.endswith("s") and not text.endswith("ms"):
-        return float(text[:-1].strip()) * 1000.0
-    return float(text)
+        parsed = float(value)
+    else:
+        text = str(value).strip().lower()
+        if text.endswith("ms"):
+            text = text[:-2].strip()
+            parsed = float(text)
+        elif text.endswith("s") and not text.endswith("ms"):
+            parsed = float(text[:-1].strip()) * 1000.0
+        else:
+            parsed = float(text)
+    if not math.isfinite(parsed):
+        raise ValueError("timeout must be finite")
+    return parsed
 
 
 class ContextSettings(BaseSettings):
@@ -32,21 +42,25 @@ class ContextSettings(BaseSettings):
     timeout_ms: float = Field(
         default=45.0,
         gt=0,
+        allow_inf_nan=False,
         validation_alias=AliasChoices("IBEX_CONTEXT_TIMEOUT", "IBEX_CONTEXT_TIMEOUT_MS"),
     )
     directive_timeout_ms: float = Field(
         default=5.0,
         gt=0,
+        allow_inf_nan=False,
         validation_alias="IBEX_CONTEXT_DIRECTIVE_TIMEOUT_MS",
     )
     hot_timeout_ms: float = Field(
         default=15.0,
         gt=0,
+        allow_inf_nan=False,
         validation_alias="IBEX_CONTEXT_HOT_TIMEOUT_MS",
     )
     cold_timeout_ms: float = Field(
         default=45.0,
         gt=0,
+        allow_inf_nan=False,
         validation_alias="IBEX_CONTEXT_COLD_TIMEOUT_MS",
     )
     memory_base_url: str = Field(

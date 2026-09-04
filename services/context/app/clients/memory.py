@@ -7,6 +7,7 @@ retry — assembly fail-opens on branch failure.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -157,45 +158,86 @@ class MemoryHttpClient:
 
 
 def _hits_from_search_response(response: httpx.Response) -> list[MemoryHitPayload]:
-    results = _results_list(response)
-    hits: list[MemoryHitPayload] = []
-    for item in results:
-        hit = _hit_from_item(item)
-        if hit is not None:
-            hits.append(hit)
-    return hits
+    return [_hit_from_item(item) for item in _results_list(response)]
 
 
 def _results_list(response: httpx.Response) -> list[object]:
-    try:
-        payload = response.json()
-    except ValueError as exc:
-        raise MemoryHttpError("memory service returned invalid JSON") from exc
-    if not isinstance(payload, dict):
-        raise MemoryHttpError("memory service returned non-object JSON")
-    data = payload.get("data")
-    if not isinstance(data, dict):
-        raise MemoryHttpError("memory service response missing data")
+    payload = _json_object(response)
+    data = _require_mapping(payload.get("data"), "data")
     results = data.get("results")
     if not isinstance(results, list):
         raise MemoryHttpError("memory service response missing results")
     return results
 
 
-def _hit_from_item(item: object) -> MemoryHitPayload | None:
+def _json_object(response: httpx.Response) -> dict[str, Any]:
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise MemoryHttpError("memory service returned invalid JSON") from exc
+    if not isinstance(payload, dict):
+        raise MemoryHttpError("memory service returned non-object JSON")
+    return payload
+
+
+def _require_mapping(value: object, label: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise MemoryHttpError(f"memory service response missing {label}")
+    return value
+
+
+def _hit_from_item(item: object) -> MemoryHitPayload:
     if not isinstance(item, dict):
-        return None
+        raise MemoryHttpError("memory search result item must be an object")
     memory = item.get("memory")
     if not isinstance(memory, dict):
-        return None
+        raise MemoryHttpError("memory search result missing memory object")
     return MemoryHitPayload(
-        memory_id=str(memory.get("id", "")),
-        org_id=str(memory.get("org_id", "")),
-        agent_id=str(memory.get("agent_id", "")),
-        content=str(memory.get("content", "")),
-        category=str(memory.get("category", "")),
-        confidence=float(memory.get("confidence", 0.0)),
-        similarity=float(item.get("similarity", 0.0)),
-        rank=int(item.get("rank", 0)),
-        source=str(item.get("source", "")),
+        memory_id=_require_uuid_str(memory.get("id"), "memory.id"),
+        org_id=_require_uuid_str(memory.get("org_id"), "memory.org_id"),
+        agent_id=_require_uuid_str(memory.get("agent_id"), "memory.agent_id"),
+        content=_require_str(memory.get("content"), "memory.content"),
+        category=_require_str(memory.get("category"), "memory.category"),
+        confidence=_require_unit_float(memory.get("confidence"), "memory.confidence"),
+        similarity=_require_finite_float(item.get("similarity"), "similarity"),
+        rank=_require_positive_int(item.get("rank"), "rank"),
+        source=_require_str(item.get("source"), "source"),
     )
+
+
+def _require_str(value: object, label: str) -> str:
+    if not isinstance(value, str):
+        raise MemoryHttpError(f"{label} must be a string")
+    return value
+
+
+def _require_uuid_str(value: object, label: str) -> str:
+    text = _require_str(value, label)
+    try:
+        return str(UUID(text))
+    except ValueError as exc:
+        raise MemoryHttpError(f"{label} must be a UUID") from exc
+
+
+def _require_finite_float(value: object, label: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise MemoryHttpError(f"{label} must be a number")
+    number = float(value)
+    if not math.isfinite(number):
+        raise MemoryHttpError(f"{label} must be finite")
+    return number
+
+
+def _require_unit_float(value: object, label: str) -> float:
+    number = _require_finite_float(value, label)
+    if number < 0.0 or number > 1.0:
+        raise MemoryHttpError(f"{label} must be in [0, 1]")
+    return number
+
+
+def _require_positive_int(value: object, label: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise MemoryHttpError(f"{label} must be an integer")
+    if value < 1:
+        raise MemoryHttpError(f"{label} must be >= 1")
+    return value
