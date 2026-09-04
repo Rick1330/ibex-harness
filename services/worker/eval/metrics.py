@@ -170,6 +170,27 @@ def _score_temporal_pair(
     return 0, 1
 
 
+def _accumulate_match(
+    *,
+    pi: int | None,
+    ei: int | None,
+    predicted: list[dict[str, Any]],
+    expected: list[dict[str, Any]],
+    counts: dict[str, CategoryCounts],
+) -> tuple[int, int, int]:
+    """Return (assign_delta, temporal_correct_delta, temporal_total_delta)."""
+    pred = predicted[pi] if pi is not None else None
+    exp = expected[ei] if ei is not None else None
+    pred_labels = label_set(pred) if pred is not None else frozenset()
+    exp_labels = label_set(exp) if exp is not None else frozenset()
+    assign_delta = (
+        1 if pi is not None and ei is not None and pred_labels == exp_labels else 0
+    )
+    _update_category_counts(counts, pred_labels, exp_labels)
+    temp_ok, temp_total = _score_temporal_pair(pi=pi, ei=ei, pred=pred, exp=exp)
+    return assign_delta, temp_ok, temp_total
+
+
 def score_turn(
     predicted: list[dict[str, Any]],
     expected: list[dict[str, Any]],
@@ -189,19 +210,16 @@ def score_turn(
     temporal_total = 0
 
     for pi, ei in matches:
-        pred = predicted[pi] if pi is not None else None
-        exp = expected[ei] if ei is not None else None
-        pred_labels = label_set(pred) if pred is not None else frozenset()
-        exp_labels = label_set(exp) if exp is not None else frozenset()
-
-        if pi is not None and ei is not None and pred_labels == exp_labels:
-            assign_correct += 1
-
-        _update_category_counts(counts, pred_labels, exp_labels)
-
-        ok_delta, total_delta = _score_temporal_pair(pi=pi, ei=ei, pred=pred, exp=exp)
-        temporal_correct += ok_delta
-        temporal_total += total_delta
+        a_delta, t_ok, t_total = _accumulate_match(
+            pi=pi,
+            ei=ei,
+            predicted=predicted,
+            expected=expected,
+            counts=counts,
+        )
+        assign_correct += a_delta
+        temporal_correct += t_ok
+        temporal_total += t_total
 
     if not predicted and not expected:
         assign_correct = 1

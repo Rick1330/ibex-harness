@@ -86,26 +86,18 @@ def _conversation_ids(rows: list[dict[str, Any]]) -> set[str]:
     return {str(row["conversation_id"]) for row in rows}
 
 
-def _assert_gold_integrity(
+def _assert_hash(manifest: dict[str, Any], key: str, path: Path) -> None:
+    actual = _file_sha256(path)
+    declared = str(manifest.get(key) or "")
+    if declared != actual:
+        raise SystemExit(f"gold-set {key} mismatch: manifest={declared[:16]}… actual={actual[:16]}…")
+
+
+def _assert_conversation_cardinality(
     manifest: dict[str, Any],
     conversations: list[dict[str, Any]],
     expected_rows: list[dict[str, Any]],
-    *,
-    cassettes: dict[str, dict[str, Any]] | None,
-) -> None:
-    conv_path = GOLD_DIR / _CONVERSATIONS_NAME
-    exp_path = GOLD_DIR / _EXPECTED_NAME
-    cas_path = GOLD_DIR / _CASSETTES_NAME
-
-    expected_hashes = {
-        "conversations_sha256": _file_sha256(conv_path),
-        "expected_memories_sha256": _file_sha256(exp_path),
-    }
-    for key, actual in expected_hashes.items():
-        declared = str(manifest.get(key) or "")
-        if declared != actual:
-            raise SystemExit(f"gold-set {key} mismatch: manifest={declared[:16]}… actual={actual[:16]}…")
-
+) -> set[str]:
     conv_ids = _conversation_ids(conversations)
     exp_ids = _conversation_ids(expected_rows)
     declared_count = int(manifest.get("conversation_count") or 0)
@@ -116,22 +108,38 @@ def _assert_gold_integrity(
         )
     if conv_ids != exp_ids:
         raise SystemExit("conversation_id set mismatch between conversations and expected_memories")
+    return conv_ids
 
+
+def _assert_cassette_integrity(
+    manifest: dict[str, Any],
+    cassettes: dict[str, dict[str, Any]],
+    conv_ids: set[str],
+) -> None:
+    _assert_hash(manifest, "cassettes_sha256", GOLD_DIR / _CASSETTES_NAME)
+    declared_count = int(manifest.get("conversation_count") or 0)
+    cassette_count = int(manifest.get("cassette_count") or 0)
+    if len(cassettes) != cassette_count or cassette_count != declared_count:
+        raise SystemExit(
+            f"cassette cardinality mismatch: declared={cassette_count} "
+            f"loaded={len(cassettes)} conversations={declared_count}"
+        )
+    if set(cassettes) != conv_ids:
+        raise SystemExit("conversation_id set mismatch between conversations and cassettes")
+
+
+def _assert_gold_integrity(
+    manifest: dict[str, Any],
+    conversations: list[dict[str, Any]],
+    expected_rows: list[dict[str, Any]],
+    *,
+    cassettes: dict[str, dict[str, Any]] | None,
+) -> None:
+    _assert_hash(manifest, "conversations_sha256", GOLD_DIR / _CONVERSATIONS_NAME)
+    _assert_hash(manifest, "expected_memories_sha256", GOLD_DIR / _EXPECTED_NAME)
+    conv_ids = _assert_conversation_cardinality(manifest, conversations, expected_rows)
     if cassettes is not None:
-        cas_hash = _file_sha256(cas_path)
-        declared_cas = str(manifest.get("cassettes_sha256") or "")
-        if declared_cas != cas_hash:
-            raise SystemExit(
-                f"gold-set cassettes_sha256 mismatch: manifest={declared_cas[:16]}… actual={cas_hash[:16]}…"
-            )
-        cassette_count = int(manifest.get("cassette_count") or 0)
-        if len(cassettes) != cassette_count or cassette_count != declared_count:
-            raise SystemExit(
-                f"cassette cardinality mismatch: declared={cassette_count} "
-                f"loaded={len(cassettes)} conversations={declared_count}"
-            )
-        if set(cassettes) != conv_ids:
-            raise SystemExit("conversation_id set mismatch between conversations and cassettes")
+        _assert_cassette_integrity(manifest, cassettes, conv_ids)
 
 
 def _memory_to_dict(memory: Any) -> dict[str, Any]:
@@ -177,6 +185,67 @@ def _load_cassettes() -> dict[str, dict[str, Any]]:
     return cassettes
 
 
+_CASSETTE_MODES = frozenset({"cassette", "smoke", "fast"})
+_LIVE_MODES = frozenset({"live", "record", "full", "vllm"})
+
+
+def _predict_for_mode(
+    *,
+    mode: str,
+    provider: str,
+    cid: str,
+    turns: list[TurnPayload],
+    cassettes: dict[str, dict[str, Any]],
+) -> tuple[dict[int, list[dict[str, Any]]], str, str | None]:
+    """Return by_turn, model, optional record provider name."""
+    if mode in _CASSETTE_MODES:
+        by_turn, model = _predict_cassette(cid, cassettes)
+        return by_turn, model, None
+    if mode in _LIVE_MODES:
+        pname = "vllm" if mode == "vllm" or provider == "vllm" else "openai"
+        by_turn, model = _predict_live(turns, provider_name=pname)
+        return by_turn, model, pname
+    raise SystemExit(f"unknown mode: {mode}")
+
+
+def _maybe_record_cassette(
+    *,
+    mode: str,
+    pname: str | None,
+    cid: str,
+    model_used: str,
+    by_turn: dict[int, list[dict[str, Any]]],
+    recorded: list[dict[str, Any]],
+) -> None:
+    if mode != "record" or pname != "openai":
+        return
+    batch_payload = {
+        "turns": [
+            {"turn_index": ti, "memories": by_turn.get(ti, [])} for ti in sorted(by_turn)
+        ]
+    }
+    recorded.append(
+        {
+            "conversation_id": cid,
+            "model": model_used,
+            "raw_json": json.dumps(batch_payload, separators=(",", ":")),
+        }
+    )
+
+
+def _score_expected_rows(
+    expected_rows: list[dict[str, Any]],
+    by_turn: dict[int, list[dict[str, Any]]],
+    turn_scores: list[Any],
+) -> None:
+    for row in expected_rows:
+        ti = int(row["turn_index"])
+        predicted = by_turn.get(ti, [])
+        expected = list(row["expected"])
+        kinds = list(row.get("temporal_kinds") or ["indefinite"] * len(expected))
+        turn_scores.append(score_turn(predicted, expected, temporal_kinds=kinds))
+
+
 def _score_conversations(
     conversations: list[dict[str, Any]],
     expected_by_conv: dict[str, list[dict[str, Any]]],
@@ -185,41 +254,29 @@ def _score_conversations(
     provider: str,
     cassettes: dict[str, dict[str, Any]],
 ) -> tuple[list[Any], str, list[dict[str, Any]]]:
-    turn_scores = []
+    turn_scores: list[Any] = []
     model_used = "unknown"
     recorded: list[dict[str, Any]] = []
 
     for conv in conversations:
         cid = str(conv["conversation_id"])
         turns = [TurnPayload.model_validate(t) for t in conv["turns"]]
-        if mode in {"cassette", "smoke", "fast"}:
-            by_turn, model_used = _predict_cassette(cid, cassettes)
-        elif mode in {"live", "record", "full", "vllm"}:
-            pname = "vllm" if mode == "vllm" or provider == "vllm" else "openai"
-            by_turn, model_used = _predict_live(turns, provider_name=pname)
-            if mode == "record" and pname == "openai":
-                batch_payload = {
-                    "turns": [
-                        {"turn_index": ti, "memories": by_turn.get(ti, [])}
-                        for ti in sorted(by_turn)
-                    ]
-                }
-                recorded.append(
-                    {
-                        "conversation_id": cid,
-                        "model": model_used,
-                        "raw_json": json.dumps(batch_payload, separators=(",", ":")),
-                    }
-                )
-        else:
-            raise SystemExit(f"unknown mode: {mode}")
-
-        for row in expected_by_conv[cid]:
-            ti = int(row["turn_index"])
-            predicted = by_turn.get(ti, [])
-            expected = list(row["expected"])
-            kinds = list(row.get("temporal_kinds") or ["indefinite"] * len(expected))
-            turn_scores.append(score_turn(predicted, expected, temporal_kinds=kinds))
+        by_turn, model_used, pname = _predict_for_mode(
+            mode=mode,
+            provider=provider,
+            cid=cid,
+            turns=turns,
+            cassettes=cassettes,
+        )
+        _maybe_record_cassette(
+            mode=mode,
+            pname=pname,
+            cid=cid,
+            model_used=model_used,
+            by_turn=by_turn,
+            recorded=recorded,
+        )
+        _score_expected_rows(expected_by_conv[cid], by_turn, turn_scores)
 
     return turn_scores, model_used, recorded
 
