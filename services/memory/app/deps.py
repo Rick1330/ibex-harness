@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.auth.client import TokenValidator, ValidateResult, parse_authorization_header
 from app.auth.errors import AuthFailedError, AuthUnavailableError
 from app.permissions import MEMORY_READ, MEMORY_WRITE, has_permission
+from app.read.hot_cache import MemoryHotCacheReader
 from app.read.repository import MemoryReadRepository
 from app.write.orchestrator import MemoryWriteOrchestrator
 
@@ -135,6 +136,19 @@ class SearchMemoryContext:
     session_factory: async_sessionmaker[AsyncSession]
 
 
+@dataclass(frozen=True, slots=True)
+class HotMemoryContext:
+    token: ValidateResult
+    hot_cache_reader: MemoryHotCacheReader
+    session_factory: async_sessionmaker[AsyncSession]
+
+
+def get_hot_cache_reader(request: Request) -> MemoryHotCacheReader:
+    return _require_memory_component(
+        request, "hot_cache_reader", message="Hot cache read path not configured"
+    )
+
+
 def get_search_memory_context(
     token: Annotated[ValidateResult, Depends(require_memory_read)],
     read_repository: Annotated[MemoryReadRepository, Depends(get_read_repository)],
@@ -145,6 +159,18 @@ def get_search_memory_context(
         token=token,
         read_repository=read_repository,
         embedding_client=embedding_client,
+        session_factory=session_factory,
+    )
+
+
+def get_hot_memory_context(
+    token: Annotated[ValidateResult, Depends(require_memory_read)],
+    hot_cache_reader: Annotated[MemoryHotCacheReader, Depends(get_hot_cache_reader)],
+    session_factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
+) -> HotMemoryContext:
+    return HotMemoryContext(
+        token=token,
+        hot_cache_reader=hot_cache_reader,
         session_factory=session_factory,
     )
 

@@ -1,8 +1,8 @@
 ---
 title: "3.5.C.2 Parallel Retrieval Orchestration"
-description: "Four-way concurrent retrieval (directive, hot memories, history, cold search) with per-branch timeouts, outer 40ms deadline enforcement, and org_id/agent_id scoping at the SQL/Redis-key layer."
-summary: "Four-way concurrent retrieval (directive, hot memories, history, cold search) with per-branch timeouts, outer 40ms deadline enforcement, and org_id/agent_id scoping at the SQL/Redis-key layer."
-status: "planned"
+description: "Three-way concurrent retrieval (directive Redis, hot memories HTTP, cold search HTTP) with per-branch timeouts, outer IBEX_CONTEXT_TIMEOUT (45ms) fail-open, and history_tokens from request recent_messages."
+summary: "Three-way concurrent retrieval (directive Redis, hot memories HTTP, cold search HTTP) with per-branch timeouts, outer IBEX_CONTEXT_TIMEOUT (45ms) fail-open, and history_tokens from request recent_messages."
+status: "in-progress"
 milestoneId: "3.5.C.2"
 track: "C"
 trackTitle: "Context Assembly Engine"
@@ -15,7 +15,7 @@ fullTitle: "Milestone 3.5.C.2 — Parallel Retrieval Orchestration"
 
 # Milestone 3.5.C.2 — Parallel Retrieval Orchestration
 
-**Status:** Planned  
+**Status:** In progress  
 **Goal:** [Track C — Context Assembly Engine](/roadmap/phase-3-5-extraction-assembly/tracks#track-c--context-assembly-engine)  
 **Phase:** 3.5 — Extraction & Context Assembly  
 **Estimated effort:** 3 days  
@@ -41,6 +41,8 @@ The Phase 3 Track B work already specified the `ContextRetriever.retrieve()` com
 
 - Scoring and ranking (3.5.C.3)
 - Packing (3.5.C.4)
+- gRPC `ContextAssemblyService` wiring (3.5.C.6)
+- Postgres/session-checkpoint history fetch (impossible — see Additions §1)
 
 ---
 
@@ -60,55 +62,58 @@ Prefer outcomes over matching any particular file tree or command sequence.
 
 **Areas that may be involved** (situational — not a checklist):
 
-- Context assembly service
-- Tokenizer registry / counting
+- Context assembly library (`services/context`)
+- Memory hot-cache HTTP surface
+- Token budget calculator (3.5.C.1)
 
 ## Suggested naming (provisional)
 
 Rename freely to match the change that actually lands.
 
 - Branch: `feature/m3-5-c2-parallel-retrieval`
-- PR title: `feat(context): parallel retrieval orchestration with four-way concurrency (m3.5.C.2)`
+- PR title: `feat(context): parallel retrieval orchestration with three-way concurrency (m3.5.C.2)`
 
 ## Additions on Top of the Existing Retriever Design
 
-### 1. History retrieval (missing from original design)
+### 1. History is request input — not a fourth I/O branch (correction)
 
-The three sources originally named are directive, hot memories, and cold search — but "recent conversation history" is explicitly one of context assembly's stated inputs and one of ARCHITECTURE.md's parallel-retrieval branches. This is a genuine internal contradiction in the original design. **Fix:** add a fourth concurrent task, `history_task`, querying the session-checkpoint store (Postgres, keyed by `session_id`), bounded by the same 40ms envelope, with its own independent timeout (10ms — it's a single indexed row read).
+An earlier sketch proposed a fourth concurrent `history_task` reading conversation text from the
+session-checkpoint store. **That branch must not be implemented:**
 
-### 2. Outer deadline enforcement is the caller's job
+1. `AssembleContextRequest.recent_messages` already carries history (zero I/O).
+2. `ibex_core.checkpoints` stores `messages_hash` only — not message text.
+3. `packages/session.Store` has no history-read API (proxy owns session checkpoints).
 
-```python
-# Illustrative — exact path may differ
-class ContextAssembler:
- async def assemble(self, request: AssembleContextRequest) -> AssembleContextResponse:
- t0 = time.monotonic()
- budget = await self._budget_calc.calculate(request.model, request.recent_messages, directive="")
- try:
- retrieval = await asyncio.wait_for(
- self._retriever.retrieve(request.org_id, request.agent_id, request.session_id,
- request.recent_messages, budget),
- timeout=0.040,
- )
- except asyncio.TimeoutError:
- return self._directive_only_fallback(request, budget, reason="retrieval_timeout")
- ...
-```
+**Fix:** treat `recent_messages` as already-available input; count tokens into `history_tokens`
+via `BudgetCalculator` (3.5.C.1). The orchestrator has **exactly three** concurrent I/O branches:
+directive (Redis cache envelope), hot memories (`GET /v1/memories/hot`), and cold search
+(`POST /v1/memories/search`, which embeds **server-side** — context must not pre-embed).
+
+### 2. Outer deadline + per-branch timeouts
+
+`IBEX_CONTEXT_TIMEOUT` defaults to **45ms** (fail-open). Directive (~5ms) and hot (~15ms) use
+tighter budgets; cold uses the outer budget and often times out when the embedder is 100–500ms —
+partial results (directive + hot) are the intended degradation.
 
 ### 3. Tenant scoping enforced at the data layer
 
-Every hot-cache key and cold-search query should be namespaced (`{org_id}:hot_memories:{agent_id}`) per the established Redis convention, and this is the exact surface the Phase 3.5 ISO-* isolation test matrix (Track F) targets. `org_id`/`agent_id` scoping is enforced at the retriever's SQL/Redis-key layer, not just passed through.
+Every hot-cache key and cold-search query is namespaced (`{org_id}:hot_memories:{agent_id}`) /
+filtered by token `org_id`. Directive Redis keys use `{org_id}:directive:{agent_id}`.
 
-### 4. `RetrievalResult` extension
+### 4. `RetrievalResult` (internal Python; proto mapping deferred to 3.5.C.6)
 
 ```python
 @dataclass
 class RetrievalResult:
- directive: str
- hot_memories: list[dict]
- cold_memories: list[dict]
- history: list[Message] # NEW — conversation history from session store
- sources_available: set[str] # which sources responded within deadline
+    directive: ResolvedDirective | None
+    directive_outcome: BranchOutcome
+    hot_memories: list[MemoryHit]
+    hot_outcome: BranchOutcome
+    cold_memories: list[MemoryHit]
+    cold_outcome: BranchOutcome
+    recent_messages: list[Message]
+    history_tokens: int
+    sources_available: frozenset[str]  # subset of {"directive","hot","cold"}
 ```
 
 ---
@@ -117,9 +122,7 @@ class RetrievalResult:
 
 Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
 
-- [ ] Four-way concurrent retrieval (directive, hot memories, history, cold search — cold search gated on embedding completion)
-- [ ] Each branch has its own timeout; total wall-clock bounded by the outer `wait_for(0.040)`
-- [ ] `RetrievalResult` extended with a `history: list[Message]` field
-- [ ] Integration test: kill the memory-service dependency mid-retrieval → assembler still returns within the 40ms envelope using partial results (no cascading timeout)
-
----
+- [x] Three-way concurrent retrieval (directive, hot memories, cold search — cold embeds server-side)
+- [x] Each branch has its own timeout; total wall-clock bounded by outer `IBEX_CONTEXT_TIMEOUT` (45ms)
+- [x] `RetrievalResult` with `history_tokens` / `recent_messages` (not a Postgres history fetch)
+- [x] Integration test: memory HTTP failure / timeout → retriever returns partial results without crashing
