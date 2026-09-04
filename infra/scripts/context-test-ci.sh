@@ -17,4 +17,4 @@ bash "$ROOT/infra/scripts/context-uv-sync.sh"
   --cov=app \
   --cov-report=xml:coverage-context.xml \
   --cov-report=term-missing \
-  --cov-fail-under=90
+  --cov-fail-under=95

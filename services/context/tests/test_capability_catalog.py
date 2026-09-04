@@ -27,6 +27,33 @@ class CapabilityCatalogTests(unittest.TestCase):
         with self.assertRaises(UnknownModelError):
             catalog.for_model("missing-model")
 
+    def test_family_policy_unknown(self) -> None:
+        catalog = default_catalog()
+        with self.assertRaises(UnknownModelError):
+            catalog.family_policy("not-a-family")
+
+    def test_load_rejects_buffer_out_of_range(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "bad.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "source": "x",
+                        "models": [],
+                        "tokenizer_families": {
+                            "o200k_base": {
+                                "estimate_kind": "chars_div_4",
+                                "safety_buffer_fraction": 1.5,
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaises(ValueError):
+                load_catalog(path)
+
     def test_load_rejects_bad_schema(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "bad.json"

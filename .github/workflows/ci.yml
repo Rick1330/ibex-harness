@@ -1005,6 +1005,14 @@ jobs:
           enable-cache: true
       - name: Context unit tests (pytest + ruff)
         run: bash infra/scripts/context-test-ci.sh
+      - name: Upload coverage reports to Codecov
+        continue-on-error: true
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: services/context/coverage-context.xml
+          flags: context,python
+          fail_ci_if_error: false
 
   worker-integration:
     name: worker-integration

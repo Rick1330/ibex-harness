@@ -14,6 +14,11 @@ from app.estimate import (
 
 
 class EstimateTests(unittest.TestCase):
+    def test_estimate_unsupported_kind_raises(self) -> None:
+        policy = TokenizerFamilyPolicy("not_a_real_kind", 0.02)
+        with self.assertRaises(ValueError):
+            estimate_tokens("hello", policy)
+
     def test_estimate_bounds_chars_div_4(self) -> None:
         policy = TokenizerFamilyPolicy(ESTIMATE_CHARS_DIV_4, 0.02)
         self.assertEqual(estimate_tokens("", policy), (0, ESTIMATE_CHARS_DIV_4))
