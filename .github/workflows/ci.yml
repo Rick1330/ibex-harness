@@ -114,6 +114,7 @@ jobs:
       benchmarks: ${{ steps.detect.outputs.benchmarks }}
       docs: ${{ steps.detect.outputs.docs }}
       compose: ${{ steps.detect.outputs.compose }}
+      memory: ${{ steps.detect.outputs.memory }}
       full: ${{ steps.detect.outputs.full }}
       run_go: ${{ steps.detect.outputs.run_go }}
       run_python: ${{ steps.detect.outputs.run_python }}
@@ -121,6 +122,7 @@ jobs:
       run_security: ${{ steps.detect.outputs.run_security }}
       run_docker: ${{ steps.detect.outputs.run_docker }}
       run_compose: ${{ steps.detect.outputs.run_compose }}
+      run_memory: ${{ steps.detect.outputs.run_memory }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1073,7 +1075,8 @@ jobs:
   memory-integration:
     name: memory-integration
     needs: changes
-    if: needs.changes.outputs.run_go == 'true' || needs.changes.outputs.run_python == 'true'
+    if: needs.changes.outputs.run_memory == 'true'
+    timeout-minutes: 15
     runs-on: ubuntu-latest
     permissions:
       contents: read
