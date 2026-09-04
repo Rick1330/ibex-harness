@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "gold_set": "v1",
+  "policy": {
+    "max_regression_pp": 3.0
+  },
+  "providers": {
+    "openai": {
+      "model": "gpt-4o-mini",
+      "enforcement": "ci",
+      "source": "cassette",
+      "last_refreshed": "2026-09-03",
+      "notes": "v1 CI baseline from oracle-aligned cassettes. Live refresh updates cassettes+metrics together.",
+      "metrics": {
+        "precision_factual": 1.0,
+        "recall_factual": 1.0,
+        "precision_procedural": 1.0,
+        "recall_procedural": 1.0,
+        "precision_preference": 1.0,
+        "recall_preference": 1.0,
+        "precision_behavioral": 1.0,
+        "recall_behavioral": 1.0,
+        "precision_episodic": 1.0,
+        "recall_episodic": 1.0,
+        "precision_macro": 1.0,
+        "recall_macro": 1.0,
+        "category_assignment_accuracy": 1.0,
+        "temporal_field_accuracy": 1.0
+      }
+    },
+    "vllm": {
+      "model": "Qwen2.5-14B-Instruct",
+      "enforcement": "manual",
+      "source": "manual_runbook",
+      "last_refreshed": null,
+      "notes": "Not CI-enforced (no GPU runner; mirrors 3.5.B.2). Refresh via manual eval runbook.",
+      "metrics": {
+        "precision_factual": null,
+        "recall_factual": null,
+        "precision_procedural": null,
+        "recall_procedural": null,
+        "precision_preference": null,
+        "recall_preference": null,
+        "precision_behavioral": null,
+        "recall_behavioral": null,
+        "precision_episodic": null,
+        "recall_episodic": null,
+        "precision_macro": null,
+        "recall_macro": null,
+        "category_assignment_accuracy": null,
+        "temporal_field_accuracy": null
+      }
+    }
+  }
+}

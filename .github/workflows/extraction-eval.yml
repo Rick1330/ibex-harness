@@ -1,0 +1,283 @@
+name: Extraction Quality Eval
+
+# Profiles (mirror memory-benchmark.yml):
+#   smoke — PRs (cassette replay, $0)
+#   fast  — main push (cassette; no live spend by default)
+#   full  — Sunday cron + workflow_dispatch (live OpenAI if secret present)
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'services/worker/app/extraction/**'
+      - 'services/worker/eval/**'
+      - 'benchmarks/data-schema/extraction-quality-benchmark-data.schema.json'
+      - 'web/public/benchmarks/extraction-quality-benchmark-data.json'
+      - '.github/workflows/extraction-eval.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'services/worker/app/extraction/**'
+      - 'services/worker/eval/**'
+      - 'benchmarks/data-schema/extraction-quality-benchmark-data.schema.json'
+      - 'web/public/benchmarks/extraction-quality-benchmark-data.json'
+      - '.github/workflows/extraction-eval.yml'
+  schedule:
+    - cron: '30 5 * * 0'
+  workflow_dispatch:
+    inputs:
+      bench_profile:
+        description: Eval profile (smoke / fast / full)
+        required: false
+        default: full
+        type: choice
+        options:
+          - smoke
+          - fast
+          - full
+
+concurrency:
+  group: extraction-eval-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  detect-extraction-eval-profile:
+    name: detect-extraction-eval-profile
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      bench_profile: ${{ steps.profile.outputs.bench_profile }}
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: audit
+
+      - id: profile
+        name: Resolve eval profile
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BENCH_PROFILE_INPUT: ${{ github.event.inputs.bench_profile }}
+        run: |
+          set -euo pipefail
+          profile="fast"
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            profile="smoke"
+          elif [ "$EVENT_NAME" = "schedule" ]; then
+            profile="full"
+          elif [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            profile="${BENCH_PROFILE_INPUT:-full}"
+          fi
+          echo "bench_profile=$profile" >> "$GITHUB_OUTPUT"
+          echo "Resolved EXTRACTION_EVAL_PROFILE=$profile"
+
+  collect-extraction-quality:
+    name: collect-extraction-quality
+    needs: detect-extraction-eval-profile
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      EXTRACTION_EVAL_PROFILE: ${{ needs.detect-extraction-eval-profile.outputs.bench_profile }}
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+
+      - name: Install worker deps
+        run: bash infra/scripts/worker-uv-sync.sh
+
+      - name: Unit tests (scoring + gate enforcement)
+        run: |
+          set -euo pipefail
+          cd services/worker
+          # Run from eval/ so --cov measures metrics.py / regression_gate.py / build_published.py
+          cd eval
+          PYTHONPATH=.:.. ../.venv/bin/pytest -q \
+            test_metrics.py test_regression_gate.py test_eval_harness_advanced.py \
+            --cov=metrics --cov=regression_gate --cov=build_published \
+            --cov-report=term-missing --cov-fail-under=95
+
+      - name: Resolve eval mode
+        id: mode
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          set -euo pipefail
+          profile="${EXTRACTION_EVAL_PROFILE:-smoke}"
+          mode="cassette"
+          if [ "$profile" = "full" ] && [ -n "${OPENAI_API_KEY:-}" ]; then
+            mode="live"
+            echo "full profile with OPENAI_API_KEY — live OpenAI eval"
+          else
+            echo "profile=$profile — cassette replay (no contributor API spend)"
+          fi
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+
+      - name: Run extraction quality eval
+        env:
+          EXTRACTION_EVAL_MODE: ${{ steps.mode.outputs.mode }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          set -euo pipefail
+          cd services/worker
+          .venv/bin/python eval/run_eval.py --mode "${EXTRACTION_EVAL_MODE}"
+
+      - name: Enforce extraction-quality regression gate
+        run: |
+          set -euo pipefail
+          cd services/worker
+          .venv/bin/python eval/regression_gate.py
+
+      - name: Build published extraction-quality data
+        if: always()
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          GITHUB_RUN_NUMBER: ${{ github.run_number }}
+          GITHUB_SERVER_URL: ${{ github.server_url }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          latest="services/worker/eval/output/latest.json"
+          gate="services/worker/eval/output/gate-result.json"
+          if [ ! -f "$latest" ] || [ ! -f "$gate" ]; then
+            echo "Skipping published build (missing latest or gate output)"
+            exit 0
+          fi
+          services/worker/.venv/bin/python services/worker/eval/build_published.py \
+            --latest "$latest" \
+            --gate "$gate" \
+            --published web/public/benchmarks/extraction-quality-benchmark-data.json \
+            --sha "$GITHUB_SHA" \
+            --branch "$GITHUB_REF_NAME" \
+            --run-number "$GITHUB_RUN_NUMBER" \
+            --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+      - name: Validate published extraction-quality schema
+        if: always()
+        run: |
+          set -euo pipefail
+          published="web/public/benchmarks/extraction-quality-benchmark-data.json"
+          if [ ! -f "$published" ]; then
+            echo "No published file — skip schema validate"
+            exit 0
+          fi
+          python3 - <<'PY'
+          import json, sys
+          from pathlib import Path
+          try:
+              import jsonschema
+          except ImportError:
+              print("jsonschema not installed — structural check only")
+              data = json.loads(Path("web/public/benchmarks/extraction-quality-benchmark-data.json").read_text())
+              assert data.get("benchmark") == "extraction_quality"
+              assert isinstance(data.get("runs"), list)
+              sys.exit(0)
+          schema = json.loads(Path("benchmarks/data-schema/extraction-quality-benchmark-data.schema.json").read_text())
+          data = json.loads(Path("web/public/benchmarks/extraction-quality-benchmark-data.json").read_text())
+          jsonschema.validate(data, schema)
+          print("schema ok")
+          PY
+
+      - name: Upload extraction-quality artifacts
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: extraction-quality-benchmark
+          path: |
+            services/worker/eval/output/latest.json
+            services/worker/eval/output/gate-result.json
+          if-no-files-found: ignore
+
+      - name: Upload extraction-quality published data artifact
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: extraction-quality-benchmark-data
+          path: web/public/benchmarks/extraction-quality-benchmark-data.json
+          if-no-files-found: ignore
+
+      - name: Setup benchmark bot
+        if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        id: bot
+        uses: ./.github/actions/setup-benchmark-bot
+        with:
+          bot-sha: ${{ vars.BENCHMARK_BOT_SHA }}
+          release-tag: ${{ vars.BENCHMARK_BOT_RELEASE_TAG }}
+          require-subcommand: post-extraction-pr-comment
+        continue-on-error: true
+
+      - name: Post extraction-quality PR comment
+        if: always() && steps.bot.outcome == 'success' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GITHUB_TOKEN: ${{ secrets.BENCHMARK_BOT_APP_PRIVATE_KEY != '' && secrets.GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+          EXTRACTION_BENCHMARK_DATA_PATH: web/public/benchmarks/extraction-quality-benchmark-data.json
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          BOT_BIN: ${{ steps.bot.outputs.bot-bin }}
+        run: |
+          set -euo pipefail
+          if [ ! -f "$EXTRACTION_BENCHMARK_DATA_PATH" ]; then
+            echo "No published data — skip PR comment"
+            exit 0
+          fi
+          if [ -z "${BOT_BIN:-}" ] || [ ! -x "${BOT_BIN}" ]; then
+            echo "Benchmark bot binary unavailable — skip PR comment"
+            exit 0
+          fi
+          "$BOT_BIN" post-extraction-pr-comment \
+            --extraction-benchmark-data "$EXTRACTION_BENCHMARK_DATA_PATH" \
+            --github-token "$GITHUB_TOKEN" \
+            --github-repository "$GITHUB_REPOSITORY" \
+            --pr-number "$PR_NUMBER"
+
+  notify-extraction-benchmark-bot:
+    name: notify-extraction-benchmark-bot
+    needs: collect-extraction-quality
+    if: github.event_name != 'pull_request' && vars.BENCHMARK_BOT_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: audit
+
+      - name: Dispatch extraction_benchmark_main_complete
+        env:
+          GH_TOKEN: ${{ secrets.BENCHMARK_BOT_DISPATCH_TOKEN }}
+          DISPATCH_RUN_ID: ${{ github.run_id }}
+          DISPATCH_HEAD_SHA: ${{ github.sha }}
+          DISPATCH_RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "BENCHMARK_BOT_DISPATCH_TOKEN unset — skip dispatch"
+            exit 0
+          fi
+          gh api repos/Rick1330/ibexharness-benchmark-bot/dispatches \
+            -f event_type=extraction_benchmark_main_complete \
+            -f "client_payload[run_id]=${DISPATCH_RUN_ID}" \
+            -f "client_payload[head_sha]=${DISPATCH_HEAD_SHA}" \
+            -f "client_payload[run_number]=${DISPATCH_RUN_NUMBER}"

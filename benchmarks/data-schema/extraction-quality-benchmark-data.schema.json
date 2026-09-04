@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ibexharness.com/schemas/extraction-quality-benchmark-data.schema.json",
+  "title": "Extraction-quality benchmark published data",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "benchmark", "runs"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "benchmark": { "const": "extraction_quality" },
+    "runs": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "sha",
+          "short_sha",
+          "timestamp",
+          "branch",
+          "run_number",
+          "run_url",
+          "metrics",
+          "status"
+        ],
+        "properties": {
+          "sha": { "type": "string", "minLength": 7 },
+          "short_sha": { "type": "string", "minLength": 7 },
+          "timestamp": { "type": "string" },
+          "branch": { "type": "string" },
+          "run_number": { "type": "integer", "minimum": 0 },
+          "run_url": { "type": "string" },
+          "gold_set": { "type": "string" },
+          "conversation_count": { "type": "integer", "minimum": 0 },
+          "provider": { "type": "string" },
+          "enforcement": { "type": "string", "enum": ["ci", "manual"] },
+          "mode": { "type": "string" },
+          "model": { "type": ["string", "null"] },
+          "metrics": {
+            "type": "object",
+            "required": [
+              "precision_macro",
+              "recall_macro",
+              "category_assignment_accuracy",
+              "temporal_field_accuracy"
+            ],
+            "properties": {
+              "precision_macro": { "type": "number", "minimum": 0, "maximum": 1 },
+              "recall_macro": { "type": "number", "minimum": 0, "maximum": 1 },
+              "category_assignment_accuracy": { "type": "number", "minimum": 0, "maximum": 1 },
+              "temporal_field_accuracy": { "type": "number", "minimum": 0, "maximum": 1 },
+              "precision_factual": { "type": "number", "minimum": 0, "maximum": 1 },
+              "recall_factual": { "type": "number", "minimum": 0, "maximum": 1 },
+              "precision_preference": { "type": "number", "minimum": 0, "maximum": 1 },
+              "recall_preference": { "type": "number", "minimum": 0, "maximum": 1 },
+              "precision_behavioral": { "type": "number", "minimum": 0, "maximum": 1 },
+              "recall_behavioral": { "type": "number", "minimum": 0, "maximum": 1 },
+              "precision_episodic": { "type": "number", "minimum": 0, "maximum": 1 },
+              "recall_episodic": { "type": "number", "minimum": 0, "maximum": 1 },
+              "precision_procedural": { "type": "number", "minimum": 0, "maximum": 1 },
+              "recall_procedural": { "type": "number", "minimum": 0, "maximum": 1 }
+            }
+          },
+          "status": { "type": "string", "enum": ["pass", "fail"] },
+          "gate_summary": { "type": "object" }
+        }
+      }
+    }
+  }
+}

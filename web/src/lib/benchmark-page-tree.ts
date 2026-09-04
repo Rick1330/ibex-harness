@@ -35,6 +35,7 @@ const proxySuite = BENCHMARK_SUITES.find((s) => s.id === "proxy")!;
 const hnswSuite = BENCHMARK_SUITES.find((s) => s.id === "hnsw")!;
 const rankingSuite = BENCHMARK_SUITES.find((s) => s.id === "rankingQuality")!;
 const writeSuite = BENCHMARK_SUITES.find((s) => s.id === "writePipeline")!;
+const extractionSuite = BENCHMARK_SUITES.find((s) => s.id === "extractionQuality")!;
 
 const memoryFolder: PageTree.Folder = {
   type: "folder",
@@ -55,6 +56,11 @@ export const benchmarkPageTree: PageTree.Root = {
     benchmarkPageItem(BENCHMARK_HUB_PAGE.name, BENCHMARK_HUB_PAGE.url),
     suiteFolder(proxySuite.label, proxySuite.navPages),
     memoryFolder,
+    suiteFolder(
+      extractionSuite.label,
+      extractionSuite.navPages,
+      extractionSuite.navPages[0],
+    ),
   ],
 };
 
@@ -65,4 +71,5 @@ export const BENCHMARK_NAV_PAGES: readonly SuiteNavPage[] = [
   ...hnswSuite.navPages,
   ...rankingSuite.navPages,
   ...writeSuite.navPages,
+  ...extractionSuite.navPages,
 ];

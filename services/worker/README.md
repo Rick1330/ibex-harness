@@ -174,3 +174,21 @@ Enqueue `ibex.worker.extraction.extract_session_memories` with a completed-sessi
 
 This path is **not run in CI**. A GPU-backed integration job remains an explicit follow-up
 when a GPU runner exists — do not silently check that box.
+
+## Extraction quality eval (m3.5.B.4 / ADR-0066)
+
+Gold-set harness under `eval/` (cassette CI for OpenAI; vLLM manual side-by-side).
+
+```bash
+cd services/worker
+.venv/bin/pytest -q eval/
+.venv/bin/python eval/run_eval.py --mode cassette
+.venv/bin/python eval/regression_gate.py   # exit 1 on >3pp CI regression
+```
+
+- Gold set docs: [`eval/gold_set/v1/README.md`](eval/gold_set/v1/README.md)
+- Workflow: `.github/workflows/extraction-eval.yml` (smoke/fast/full)
+- Site: `/benchmarks/extraction-quality`
+- Manual vLLM metrics: run `--mode vllm` after the section above, then update
+  `baseline_results.json` `providers.vllm` (`enforcement` stays `manual`)
+

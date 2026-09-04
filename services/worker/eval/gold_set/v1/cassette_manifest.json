@@ -1,0 +1,19 @@
+{
+  "gold_set": "v1",
+  "model": "gpt-4o-mini",
+  "recorded_at": "2026-09-03T21:10:26Z",
+  "prompt_sha256": "d20180ec73fca87ea49ae976eb0e452d91c3104c1704454c28003b55d54d4f19",
+  "conversation_count": 125,
+  "cassette_count": 125,
+  "category_memory_counts": {
+    "factual": 33,
+    "procedural": 25,
+    "preference": 32,
+    "behavioral": 27,
+    "episodic": 23
+  },
+  "multi_label_memories": 10,
+  "supersession_memories": 10,
+  "cassette_kind": "oracle_aligned_expected_json",
+  "notes": "Oracle-aligned cassettes for deterministic CI. Re-record with EXTRACTION_EVAL_MODE=record."
+}

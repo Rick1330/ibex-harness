@@ -691,9 +691,9 @@ Used by `.github/workflows/benchmark.yml` for cross-repo benchmark publishing an
 2. Harness `BENCHMARK_BOT_SHA` = same SHA
 3. Tag `bot-<7-char-sha>`, run bot **Release binary** (uploads binary + `.sha256`), set harness `BENCHMARK_BOT_RELEASE_TAG` to that tag, and update `.github/actions/setup-benchmark-bot/ibex-benchmark-bot-linux-amd64.sha256` to the new digest
 
-Legacy `BENCHMARK_COMMENT_RENDERER_SHA` is deprecated — use `BENCHMARK_BOT_SHA` only. The setup action can `require-subcommand` (Memory collect jobs require `post-hnsw-pr-comment`, `post-ranking-pr-comment`, or `post-write-pr-comment`) so a stale release binary cannot silently break CI.
+Legacy `BENCHMARK_COMMENT_RENDERER_SHA` is deprecated — use `BENCHMARK_BOT_SHA` only. The setup action can `require-subcommand` (Memory collect jobs require `post-hnsw-pr-comment`, `post-ranking-pr-comment`, or `post-write-pr-comment`; Extraction Quality Eval requires `post-extraction-pr-comment`) so a stale release binary cannot silently break CI.
 
-**Rotation:** Rotate `BENCHMARK_BOT_DISPATCH_TOKEN` quarterly. Rotate App private key per bot repo runbook. Update `BENCHMARK_BOT_SHA`, `BENCHMARK_BOT_RELEASE_TAG`, and bot `BOT_RELEASE_SHA` together after security-reviewed bot releases.
+**Rotation:** Rotate `BENCHMARK_BOT_DISPATCH_TOKEN` quarterly. Rotate App private key per bot repo runbook. Update `BENCHMARK_BOT_SHA`, `BENCHMARK_BOT_RELEASE_TAG`, and bot `BOT_RELEASE_SHA` together after security-reviewed bot releases. Current pin after m3.5.B.4 bot suite: tag `bot-14bf45c` (SHA `14bf45c989c28324aad195484914a6540830c770`) with digest in `.github/actions/setup-benchmark-bot/ibex-benchmark-bot-linux-amd64.sha256`.
 
 ---
 

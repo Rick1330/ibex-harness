@@ -63,6 +63,7 @@
     "0062-worker-task-observability-dead-letter",
     "0063-extraction-output-schema-v2",
     "0064-extraction-provider-and-batch-execution",
-    "0065-extraction-batch-idempotency"
+    "0065-extraction-batch-idempotency",
+    "0066-extraction-quality-evaluation-harness"
   ]
 }
