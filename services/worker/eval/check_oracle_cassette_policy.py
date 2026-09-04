@@ -53,7 +53,11 @@ def _oracle_override_present(pr_body: str) -> bool:
 
 
 def _is_safe_rel_path(text: str) -> bool:
-    if not text or text.startswith("/") or ".." in text.split("/"):
+    if not text:
+        return False
+    if text.startswith("/"):
+        return False
+    if ".." in text.split("/"):
         return False
     return bool(_SAFE_REL_PATH.fullmatch(text))
 
