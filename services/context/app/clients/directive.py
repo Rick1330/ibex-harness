@@ -10,6 +10,7 @@ No Postgres fallback — proxy owns cache fill; miss/error fail-opens empty.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -40,8 +41,10 @@ class EmptyDirectiveLookup:
     """Test / disabled stub — always returns empty content."""
 
     async def lookup(self, org_id: UUID, agent_id: UUID) -> DirectivePayload:
-        # Keep Protocol awaitable shape without I/O; params identify the key space.
-        return await _empty_lookup_result(org_id, agent_id)
+        # Yield once so the Protocol stay awaitable without a fake async helper.
+        await asyncio.sleep(0)
+        _ = f"{org_id}:{agent_id}"
+        return _empty_payload()
 
 
 class DirectiveLookupError(Exception):
@@ -67,12 +70,6 @@ class RedisDirectiveLookup:
         except UnicodeDecodeError as exc:
             raise DirectiveLookupError("directive envelope is not valid UTF-8") from exc
         return _parse_envelope(text)
-
-
-async def _empty_lookup_result(org_id: UUID, agent_id: UUID) -> DirectivePayload:
-    """Awaitable empty result; org/agent retained for Protocol symmetry."""
-    _ = f"{org_id}:{agent_id}"
-    return _empty_payload()
 
 
 def _empty_payload() -> DirectivePayload:

@@ -59,8 +59,11 @@ async def test_redis_directive_lookup_miss_is_empty() -> None:
 async def test_redis_directive_rejects_invalid_envelopes(raw: bytes) -> None:
     redis = AsyncMock()
     redis.get = AsyncMock(return_value=raw)
+    lookup = RedisDirectiveLookup(redis)
+    org_id = uuid4()
+    agent_id = uuid4()
     with pytest.raises(DirectiveLookupError):
-        await RedisDirectiveLookup(redis).lookup(uuid4(), uuid4())
+        await lookup.lookup(org_id, agent_id)
 
 
 @pytest.mark.asyncio

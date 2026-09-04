@@ -74,6 +74,29 @@ class _MemoryCall:
     json: Mapping[str, Any] | None = None
 
 
+def _build_memory_call(request: HotMemoriesRequest | SearchMemoriesRequest) -> _MemoryCall:
+    if isinstance(request, HotMemoriesRequest):
+        return _MemoryCall(
+            method="GET",
+            path="/v1/memories/hot",
+            params={
+                "agent_id": str(request.agent_id),
+                "limit": request.limit,
+                "min_confidence": request.min_confidence,
+            },
+        )
+    return _MemoryCall(
+        method="POST",
+        path="/v1/memories/search",
+        json={
+            "agent_id": str(request.agent_id),
+            "query": request.query,
+            "limit": request.limit,
+            "min_confidence": request.min_confidence,
+        },
+    )
+
+
 class MemoryHttpClient:
     """GET /v1/memories/hot and POST /v1/memories/search."""
 
@@ -95,10 +118,14 @@ class MemoryHttpClient:
             await self._client.aclose()
 
     async def get_hot_memories(self, request: HotMemoriesRequest) -> list[MemoryHitPayload]:
-        return await self._execute(_hot_call(request), request.timeout_seconds)
+        call = _build_memory_call(request)
+        return await self._execute(call, request.timeout_seconds)
 
     async def search_memories(self, request: SearchMemoriesRequest) -> list[MemoryHitPayload]:
-        return await self._execute(_search_call(request), request.timeout_seconds)
+        return await self._execute(
+            _build_memory_call(request),
+            request.timeout_seconds,
+        )
 
     async def _execute(self, call: _MemoryCall, timeout_seconds: float) -> list[MemoryHitPayload]:
         url = f"{self._config.base_url.rstrip('/')}{call.path}"
@@ -136,31 +163,6 @@ class MemoryHttpClient:
                 status_code=response.status_code,
             )
         return response
-
-
-def _hot_call(request: HotMemoriesRequest) -> _MemoryCall:
-    return _MemoryCall(
-        method="GET",
-        path="/v1/memories/hot",
-        params={
-            "agent_id": str(request.agent_id),
-            "limit": request.limit,
-            "min_confidence": request.min_confidence,
-        },
-    )
-
-
-def _search_call(request: SearchMemoriesRequest) -> _MemoryCall:
-    return _MemoryCall(
-        method="POST",
-        path="/v1/memories/search",
-        json={
-            "agent_id": str(request.agent_id),
-            "query": request.query,
-            "limit": request.limit,
-            "min_confidence": request.min_confidence,
-        },
-    )
 
 
 def _hits_from_search_response(response: httpx.Response) -> list[MemoryHitPayload]:

@@ -43,8 +43,11 @@ async def test_empty_directive_lookup() -> None:
 async def test_redis_directive_redis_error() -> None:
     redis = AsyncMock()
     redis.get = AsyncMock(side_effect=RedisError("down"))
+    lookup = RedisDirectiveLookup(redis)
+    org_id = uuid4()
+    agent_id = uuid4()
     with pytest.raises(DirectiveLookupError):
-        await RedisDirectiveLookup(redis).lookup(uuid4(), uuid4())
+        await lookup.lookup(org_id, agent_id)
 
 
 @pytest.mark.asyncio
@@ -55,8 +58,11 @@ async def test_redis_directive_redis_error() -> None:
 async def test_redis_directive_parse_failures(raw: bytes) -> None:
     redis = AsyncMock()
     redis.get = AsyncMock(return_value=raw)
+    lookup = RedisDirectiveLookup(redis)
+    org_id = uuid4()
+    agent_id = uuid4()
     with pytest.raises(DirectiveLookupError):
-        await RedisDirectiveLookup(redis).lookup(uuid4(), uuid4())
+        await lookup.lookup(org_id, agent_id)
 
 
 @pytest.mark.asyncio
@@ -73,14 +79,15 @@ def test_parse_timeout_seconds_suffix() -> None:
 
 
 def test_memory_http_client_requires_base_url() -> None:
+    config = MemoryHttpConfig(base_url="", token="t")
     with pytest.raises(ValueError):
-        MemoryHttpClient(MemoryHttpConfig(base_url="", token="t"))
+        MemoryHttpClient(config)
 
 
 def test_memory_http_client_requires_token() -> None:
+    config = MemoryHttpConfig(base_url="http://x", token="")
     with pytest.raises(ValueError):
-        MemoryHttpClient(MemoryHttpConfig(base_url="http://x", token=""))
-
+        MemoryHttpClient(config)
 
 def _memory_fields(**overrides: Any) -> dict[str, Any]:
     mid = str(uuid4())
