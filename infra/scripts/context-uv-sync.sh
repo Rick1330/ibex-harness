@@ -14,4 +14,6 @@ if [[ ! -f "$CONTEXT_DIR/uv.lock" ]]; then
 fi
 
 cd "$CONTEXT_DIR"
-uv sync --frozen --extra dev
+# Wheels only: --no-build blocks third-party sdist setup.py execution (Sonar S8541).
+# --no-install-project: tests import via pyproject pythonpath=["."].
+uv sync --frozen --no-build --extra dev --no-install-project

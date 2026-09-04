@@ -19,13 +19,24 @@ class CapabilityCatalogTests(unittest.TestCase):
         self.assertEqual(catalog.for_model("gpt-4o").tokenizer_family, "o200k_base")
 
     def test_for_model_unknown(self) -> None:
+        catalog = default_catalog()
         with self.assertRaises(UnknownModelError):
-            default_catalog().for_model("missing-model")
+            catalog.for_model("missing-model")
 
     def test_load_rejects_bad_schema(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "bad.json"
-            path.write_text(json.dumps({"schema_version": 99, "models": [], "tokenizer_families": {}, "source": "x"}), encoding="utf-8")
+            path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 99,
+                        "models": [],
+                        "tokenizer_families": {},
+                        "source": "x",
+                    }
+                ),
+                encoding="utf-8",
+            )
             with self.assertRaises(ValueError):
                 load_catalog(path)
 
