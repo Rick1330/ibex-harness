@@ -1,0 +1,72 @@
+---
+title: "ADR-0067: Context capability catalog generate-and-diff for token budgets"
+description: "Architecture decision record 0067 — export Go ModelCapability catalog to committed JSON for Python BudgetCalculator; labeled char/rune estimates until exact HF tokenization lands."
+adrId: "0067"
+status: "Accepted"
+date: "2026-09-04"
+authors: "IBEX Harness team"
+---
+
+# ADR-0067: Context capability catalog generate-and-diff for token budgets
+
+- **Status:** Accepted
+- **Date:** 2026-09-04
+- **Authors:** IBEX Harness team
+- **Milestone:** [3.5.C.1 Token budget calculator](/roadmap/phase-3-5-extraction-assembly/milestones/3.5.c.1-token-budget-calculator)
+- **Depends on:** [ADR-0041](/docs/adr/0041-model-capability-registry), [ADR-0043](/docs/adr/0043-tokenizer-registry)
+- **Follow-up:** [#690](https://github.com/Rick1330/ibex-harness/issues/690) Exact HF/Qwen tokenizer-family counting
+
+## Context
+
+Milestone 3.5.C.1 needs model-aware token budgets inside the future Python context-assembly package. Discovery confirmed:
+
+- `services/context/` did not exist yet; Track C defers the gRPC wrapper to **3.5.C.6**.
+- Go `packages/provider` / `packages/tokenizer` are **proxy-in-process** only — no RPC/HTTP surface for capability lookup or counting ([ADR-0041](/docs/adr/0041-model-capability-registry), [ADR-0043](/docs/adr/0043-tokenizer-registry)).
+- Python services have no `tiktoken` / HF `tokenizers` dependencies today.
+- The only Go→Python network precedent is Auth gRPC via `packages/authclient` — not applicable until a tokenizer/capability **service** exists.
+
+A live `TokenizerClient` / `CapabilityRegistry` in the C.1 sketch would invent a network boundary that 3.5.C.6 must own.
+
+## Decision
+
+### 1) Generate-and-diff JSON export (not a network call)
+
+- Maintainer tool: `go run ./packages/provider/scripts/export_capabilities`
+- Committed artifact: `services/context/data/model_capabilities.v1.json`
+- Contents: sorted `BuiltInCapabilityCatalog` rows + `tokenizer_families` estimate policy (`estimate_kind`, `safety_buffer_fraction`)
+- CI job `capability-catalog-freshness` runs `-check` and fails when the committed JSON drifts from the Go catalog
+
+### 2) Python `BudgetCalculator` loads the artifact locally
+
+- Package layout under `services/context/app/` (library only — **no** gRPC server in C.1)
+- Constructor takes an optional in-memory catalog; default loads the committed JSON
+- Unknown model IDs raise explicitly (no silent fallback model)
+
+### 3) Labeled character/rune estimates (not exact tokenization)
+
+| `estimate_kind` | Formula | Families |
+| --- | --- | --- |
+| `chars_div_4` | `ceil(len(text) / 4)` | `o200k_base`, `cl100k_base`, `unknown` |
+| `runes_div_3_5` | ADR-0043 Claude estimate `(runes*2+6)//7` | `claude` |
+
+`TokenBudget.estimate_kind` always records which formula ran. Exact OpenAI/HF counting is **out of scope** — tracked in [#690](https://github.com/Rick1330/ibex-harness/issues/690).
+
+### 4) Explicit non-goals for C.1
+
+- No tokenizer/capability gRPC or HTTP service
+- No `packages/contextclient` / `ContextAssemblyService` implementation (3.5.C.6)
+- No hand-maintained duplicate of the Go catalog in Python source
+
+## Consequences
+
+**Positive:**
+
+- Python budgets stay aligned with the Go catalog via CI fail-closed drift detection
+- C.1 stays within Track C sequencing (assembly math before the gRPC façade)
+- Estimate error is visible (`estimate_kind` + family safety buffers)
+
+**Negative / follow-ups:**
+
+- Estimates are approximate; do not treat them as tiktoken-ground-truth
+- Operator `IBEX_MODEL_CAPABILITY_OVERLAYS` on the proxy are **not** mirrored into the JSON export (built-in catalog only) until a later milestone extends the export
+- [#690](https://github.com/Rick1330/ibex-harness/issues/690) for exact HF/Qwen (and tighter OpenAI) counting
