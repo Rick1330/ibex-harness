@@ -32,20 +32,24 @@ Published proxy data is committed via the benchmark bot after successful **main*
 
 Each suite keeps its own JSON file and bot modules. Shared seams:
 
-| Field | Proxy | Memory HNSW | Ranking quality | Write pipeline |
-| --- | --- | --- | --- | --- |
-| `suite_id` | `proxy` | `hnsw` | `rankingQuality` | `writePipeline` |
-| Artifact | `benchmark-data` | `hnsw-benchmark-data` | `ranking-quality-benchmark-data` | `write-pipeline-benchmark-data` |
-| Public path | `web/public/benchmarks/benchmark-data.json` | `…/hnsw-benchmark-data.json` | `…/ranking-quality-benchmark-data.json` | `…/write-pipeline-benchmark-data.json` |
-| Dispatch | `benchmark_main_complete` | `memory_benchmark_main_complete` | same (bot publishes all memory suites) | same |
-| PR comment | shared sticky `IBEX_BOT_COMMENT` | same | `post-ranking-pr-comment` | `post-write-pr-comment` |
-| Data PR | shared upsert on `chore/bench-data-publish` | same branch | same | same |
-| Bot pin helper | `.github/actions/setup-benchmark-bot` | same | same | same |
-| Site registry | `web/src/lib/benchmarks/suites.ts` | same | `/benchmarks/memory/ranking-quality` | `/benchmarks/memory/write-pipeline` |
+| Field | Proxy | Memory HNSW | Ranking quality | Write pipeline | Extraction quality |
+| --- | --- | --- | --- | --- | --- |
+| `suite_id` | `proxy` | `hnsw` | `rankingQuality` | `writePipeline` | `extractionQuality` |
+| Artifact | `benchmark-data` | `hnsw-benchmark-data` | `ranking-quality-benchmark-data` | `write-pipeline-benchmark-data` | `extraction-quality-benchmark-data` |
+| Public path | `web/public/benchmarks/benchmark-data.json` | `…/hnsw-benchmark-data.json` | `…/ranking-quality-benchmark-data.json` | `…/write-pipeline-benchmark-data.json` | `…/extraction-quality-benchmark-data.json` |
+| Dispatch | `benchmark_main_complete` | `memory_benchmark_main_complete` | same (bot publishes all memory suites) | same | `extraction_benchmark_main_complete` |
+| PR comment | shared sticky `IBEX_BOT_COMMENT` | same | `post-ranking-pr-comment` | `post-write-pr-comment` | `post-extraction-pr-comment` |
+| Data PR | shared upsert on `chore/bench-data-publish` | same branch | same | same | same |
+| Bot pin helper | `.github/actions/setup-benchmark-bot` | same | same | same | same |
+| Site registry | `web/src/lib/benchmarks/suites.ts` | same | `/benchmarks/memory/ranking-quality` | `/benchmarks/memory/write-pipeline` | `/benchmarks/extraction-quality` |
 
 **Memory CI gates (3.E.3):** `collect-ranking-quality` and `collect-write-pipeline-bench`
 in `memory-benchmark.yml` publish history JSON, upload `*-benchmark-data` artifacts, and
 upsert PR comment sections via the benchmark bot (same suite contract as HNSW).
+
+**Extraction CI gates (3.5.B.4):** `.github/workflows/extraction-eval.yml` — cassette smoke/fast,
+optional live `full`, hard 3pp absolute gate, publish + `extraction_benchmark_main_complete`.
+Harness under `services/worker/eval/` ([ADR-0066](/docs/adr/0066-extraction-quality-evaluation-harness)).
 
 Do **not** merge suites into one mega-JSON. Site nav groups by suite; proxy-only concepts
 (waterfall / k6 load) are not invented for HNSW.
@@ -103,13 +107,13 @@ Stack helper seeds the DB and exports `IBEX_DEV_TOKEN` / `IBEX_DEV_AGENT_ID`; `I
 
 | Concern | Preferred phase | Likely home (orientation) |
 | --- | --- | --- |
-| Extraction quality gold-set / regression gate | **3.5** | Under `services/worker/eval/` |
 | Context-assembly latency under degradation ladder | **3.5** | Proxy + context integration suites |
 | Multi-provider resilience / breaker benches | **4** | Proxy + k6 scenarios |
 | Drift / regression-suite CI gates | **4.5** | Worker + API |
 | Hybrid retrieval / shadow eval | **5** | Memory/context + optional production shadow sampler |
 
-When those land, update this README, ADR-0034 (or a follow-on ADR), and the public `/benchmarks` docs in the same change set.
+Extraction quality gold-set / regression gate landed in **3.5.B.4** under `services/worker/eval/`
+(see suite contract table above).
 
 ## Verification
 
