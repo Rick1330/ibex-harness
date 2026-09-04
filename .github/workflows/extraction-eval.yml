@@ -269,6 +269,12 @@ jobs:
             echo "Benchmark bot binary unavailable — skip PR comment"
             exit 0
           fi
+          # Seeded public JSON may have runs:[]; bot requires ≥1 run to render.
+          if ! python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); raise SystemExit(0 if d.get("runs") else 1)' \
+            "$EXTRACTION_BENCHMARK_DATA_PATH"; then
+            echo "Published extraction-quality data has no runs yet — skip PR comment"
+            exit 0
+          fi
           "$BOT_BIN" post-extraction-pr-comment \
             --extraction-benchmark-data "$EXTRACTION_BENCHMARK_DATA_PATH" \
             --github-token "$GITHUB_TOKEN" \

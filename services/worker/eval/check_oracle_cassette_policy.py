@@ -44,11 +44,18 @@ _ORACLE_KIND = "oracle_aligned_expected_json"
 _ORACLE_OVERRIDE_NAME = "EXTRACTION_EVAL_ORACLE_OK"
 _ORACLE_OVERRIDE_MARKER = f"{_ORACLE_OVERRIDE_NAME}=1"
 _DRIFT_ENV = "EXTRACTION_EVAL_ALLOW_PROMPT_DRIFT"
-_SAFE_REL_PATH = re.compile(r"^[A-Za-z0-9_./+-]+$")
+# Allow Next.js route-group parens and common repo path chars.
+_SAFE_REL_PATH = re.compile(r"^[A-Za-z0-9_./+()\[\]-]+$")
 
 
 def _oracle_override_present(pr_body: str) -> bool:
     return _ORACLE_OVERRIDE_MARKER in pr_body
+
+
+def _is_safe_rel_path(text: str) -> bool:
+    if not text or text.startswith("/") or ".." in text.split("/"):
+        return False
+    return bool(_SAFE_REL_PATH.fullmatch(text))
 
 
 def _load_changed_paths(changed_files: Path) -> set[str]:
@@ -61,9 +68,7 @@ def _load_changed_paths(changed_files: Path) -> set[str]:
         text = line.strip()
         if not text:
             continue
-        if text.startswith("/") or ".." in text.split("/"):
-            raise SystemExit(f"refusing unsafe changed path: {text!r}")
-        if not _SAFE_REL_PATH.fullmatch(text):
+        if not _is_safe_rel_path(text):
             raise SystemExit(f"refusing unsafe changed path: {text!r}")
         paths.add(text)
     return paths

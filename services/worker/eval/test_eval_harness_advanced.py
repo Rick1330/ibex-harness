@@ -311,9 +311,15 @@ class RunEvalCassetteSmokeTests(unittest.TestCase):
             _assert_c001_empty_metrics(self, metrics)
 
 
-def _build_c001_empty_cassette_gold(gold_src: Path, gold_dir: Path) -> Path:
-    shutil.copytree(gold_src, gold_dir)
-    cas_path = gold_dir / "openai_cassettes.jsonl"
+def _empty_c001_cassette_row(row: dict) -> dict:
+    payload = json.loads(row["raw_json"])
+    for turn in payload["turns"]:
+        turn["memories"] = []
+    row["raw_json"] = json.dumps(payload, separators=(",", ":"))
+    return row
+
+
+def _rewrite_cassettes_empty_c001(cas_path: Path) -> None:
     rows: list[dict] = []
     mutated = False
     for line in cas_path.read_text(encoding="utf-8").splitlines():
@@ -321,10 +327,7 @@ def _build_c001_empty_cassette_gold(gold_src: Path, gold_dir: Path) -> Path:
             continue
         row = json.loads(line)
         if row["conversation_id"] == "c001":
-            payload = json.loads(row["raw_json"])
-            for turn in payload["turns"]:
-                turn["memories"] = []
-            row["raw_json"] = json.dumps(payload, separators=(",", ":"))
+            row = _empty_c001_cassette_row(row)
             mutated = True
         rows.append(row)
     if not mutated:
@@ -333,6 +336,12 @@ def _build_c001_empty_cassette_gold(gold_src: Path, gold_dir: Path) -> Path:
         "\n".join(json.dumps(r, separators=(",", ":")) for r in rows) + "\n",
         encoding="utf-8",
     )
+
+
+def _build_c001_empty_cassette_gold(gold_src: Path, gold_dir: Path) -> Path:
+    shutil.copytree(gold_src, gold_dir)
+    cas_path = gold_dir / "openai_cassettes.jsonl"
+    _rewrite_cassettes_empty_c001(cas_path)
     manifest_path = gold_dir / "cassette_manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest["cassettes_sha256"] = hashlib.sha256(cas_path.read_bytes()).hexdigest()
@@ -401,6 +410,12 @@ class OracleCassettePolicyTests(unittest.TestCase):
             changed = self._write_changed_files(Path(tmp), {"../etc/passwd"})
             with self.assertRaises(SystemExit):
                 oracle_policy._load_changed_paths(changed)
+
+    def test_policy_allows_next_route_group_paths(self) -> None:
+        with tempfile.TemporaryDirectory(dir=_DIR) as tmp:
+            path = "web/src/app/(site)/benchmarks/extraction-quality/page.tsx"
+            changed = self._write_changed_files(Path(tmp), {path})
+            self.assertEqual(oracle_policy._load_changed_paths(changed), {path})
 
     def test_policy_rejects_drift_env_in_workflow_file(self) -> None:
         with tempfile.TemporaryDirectory(dir=_DIR) as tmp:
