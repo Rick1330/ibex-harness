@@ -40,7 +40,14 @@ Harness lives under `services/worker/eval/` with versioned gold data in `gold_se
 | smoke (PR) / fast (main) | Cassette replay — $0, deterministic |
 | full (Sunday / dispatch) | Live OpenAI if secret present; else cassette + explicit skip note |
 
-`cassette_manifest.prompt_sha256` tracks `EXTRACTION_SYSTEM_PROMPT_BATCH`. Drift fails CI unless cassettes are re-recorded in the same change.
+Manifest contract hashes (fail-closed on cassette profiles):
+
+- `prompt_sha256` tracks `EXTRACTION_SYSTEM_PROMPT_BATCH`
+- `schema_sha256` tracks canonical `BatchExtractionResult.model_json_schema()` (structural contract, not raw `schema.py` bytes)
+
+`cassette_kind` distinguishes `oracle_aligned_expected_json` (deterministic scoring/gate baseline) from `live_openai_recorded` (written by `EXTRACTION_EVAL_MODE=record`). This is a **documented process + fail-closed hash/kind gate**, not cryptographic proof that cassette bytes were produced by a particular model call.
+
+CI additionally fails PRs that change `prompt_v2.py` / `schema.py` while `cassette_kind` remains oracle-aligned, unless the PR body contains `EXTRACTION_EVAL_ORACLE_OK=1` (explicit reviewer-visible exception). `EXTRACTION_EVAL_ALLOW_PROMPT_DRIFT` must not appear in the extraction-eval workflow.
 
 ### 4) Metrics and gate
 
@@ -48,6 +55,7 @@ Harness lives under `services/worker/eval/` with versioned gold data in `gold_se
 - Category-assignment accuracy = exact label-set equality (over- and under-label fail).
 - Temporal-field accuracy scored separately (supersession ⇒ `valid_until` set; indefinite ⇒ `None`).
 - Gate uses **absolute** `max_regression_pp: 3.0` (unlike ranking-quality’s relative 5%). Exit code **1** on fail — proven by unit test, not status-field-only.
+- End-to-end cassette regression detection is covered by a corrupted-cassette fixture test (not only isolated `metrics.py` units).
 
 ### 5) Benchmark bot / publish
 
@@ -56,6 +64,6 @@ Published history: `web/public/benchmarks/extraction-quality-benchmark-data.json
 ## Consequences
 
 - Contributors do not spend OpenAI budget on routine PRs.
-- Prompt/schema changes that forget cassette refresh fail loudly via prompt hash.
+- Prompt/schema drift without cassette refresh fails via contract hashes; oracle + contract-file PR diffs fail unless live-recorded or explicitly overridden in the PR body.
 - Operators must refresh vLLM baselines manually when comparing providers.
 - Pin `BENCHMARK_BOT_SHA` must include `post-extraction-pr-comment` before PR comments render for this suite.

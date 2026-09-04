@@ -178,6 +178,9 @@ when a GPU runner exists — do not silently check that box.
 ## Extraction quality eval (m3.5.B.4 / ADR-0066)
 
 Gold-set harness under `eval/` (cassette CI for OpenAI; vLLM manual side-by-side).
+Contract hashes (`prompt_sha256` / `schema_sha256`), `cassette_kind`, and the oracle +
+prompt/schema PR gate: see [`eval/gold_set/v1/README.md`](eval/gold_set/v1/README.md) and
+`eval/check_oracle_cassette_policy.py`.
 
 ```bash
 cd services/worker

@@ -28,7 +28,7 @@ added without breaking baseline comparability.
 | `conversations.jsonl` | `{conversation_id, turns:[{turn_index, role, content}]}` |
 | `expected_memories.jsonl` | `{conversation_id, turn_index, expected:[ExtractedMemory], temporal_kinds:[]}` |
 | `openai_cassettes.jsonl` | Deterministic provider `raw_json` per conversation |
-| `cassette_manifest.json` | `prompt_sha256` of `EXTRACTION_SYSTEM_PROMPT_BATCH`, counts, cassette kind |
+| `cassette_manifest.json` | `prompt_sha256`, `schema_sha256`, file hashes, counts, `cassette_kind` |
 | `baseline_results.json` | Per-provider metrics with `enforcement: ci \| manual` |
 
 ## CI vs manual (vLLM conflict → path a)
@@ -44,8 +44,13 @@ Harness summaries always print `enforcement=` so manual/stale vLLM numbers canno
 
 - **PR / smoke / fast:** replay `openai_cassettes.jsonl` only — **$0**, deterministic, no contributor API spend.
 - **full (Sunday / dispatch):** if `OPENAI_API_KEY` is present, run live OpenAI; otherwise fall back to cassette and note the skip in the job log.
-- Cassettes are **oracle-aligned** in v1 (`cassette_kind=oracle_aligned_expected_json`): each cassette embeds the gold expected `BatchExtractionResult` so CI measures scoring + gate wiring with a perfect baseline. Live re-record replaces them with real model output.
-- `cassette_manifest.prompt_sha256` must match `sha256(EXTRACTION_SYSTEM_PROMPT_BATCH)`. Prompt drift **fails smoke** unless you re-record in the same PR (or set `EXTRACTION_EVAL_ALLOW_PROMPT_DRIFT=1` for local experiments only — never in CI).
+- **`cassette_kind`** (provenance stamp, not cryptographic proof of model output):
+  - `oracle_aligned_expected_json` — each cassette embeds gold expected JSON so CI measures scoring + gate wiring with a perfect baseline.
+  - `live_openai_recorded` — written by `EXTRACTION_EVAL_MODE=record` (live OpenAI).
+- Contract hashes (fail-closed on cassette/smoke/fast unless `EXTRACTION_EVAL_ALLOW_PROMPT_DRIFT=1` locally — **never in CI**):
+  - `prompt_sha256` = `sha256(EXTRACTION_SYSTEM_PROMPT_BATCH)`
+  - `schema_sha256` = `sha256(canonical BatchExtractionResult.model_json_schema())`
+- **Oracle + contract-change CI gate:** if `cassette_kind` is still `oracle_aligned_expected_json` and the PR touches `app/extraction/prompt_v2.py` or `app/extraction/schema.py`, CI fails unless the PR body contains `EXTRACTION_EVAL_ORACLE_OK=1` (reviewer-visible exception) or cassettes were re-recorded live (`cassette_kind=live_openai_recorded`). Hash bumps alone do not satisfy this gate.
 
 ### Re-record OpenAI cassettes
 
@@ -55,6 +60,7 @@ export OPENAI_API_KEY=…   # budgeted; never commit
 export EXTRACTION_EVAL_MODE=record
 .venv/bin/python eval/run_eval.py --mode record
 # Updates openai_cassettes.jsonl + cassette_manifest.json
+# (sets cassette_kind=live_openai_recorded and refreshes prompt_sha256 + schema_sha256)
 # Then re-run cassette eval, update baseline_results.json openai.metrics / last_refreshed
 ```
 

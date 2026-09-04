@@ -7,10 +7,15 @@ Profiles:
   vllm — call VLLMExtractionProvider (manual; not CI-enforced).
 
 Fails closed if cassette_manifest.prompt_sha256 != sha256(EXTRACTION_SYSTEM_PROMPT_BATCH)
-unless EXTRACTION_EVAL_ALLOW_PROMPT_DRIFT=1 (operators only).
+or cassette_manifest.schema_sha256 != sha256(canonical BatchExtractionResult JSON schema)
+unless EXTRACTION_EVAL_ALLOW_PROMPT_DRIFT=1 (operators only; never set in CI).
 
 Also fails closed when gold-set file hashes, conversation ID sets, or declared
 cardinalities diverge from cassette_manifest.json.
+
+``cassette_kind`` values:
+  - oracle_aligned_expected_json — deterministic CI baseline (not live model output)
+  - live_openai_recorded — produced via EXTRACTION_EVAL_MODE=record
 """
 
 from __future__ import annotations
@@ -35,6 +40,7 @@ if str(_DIR) not in sys.path:
 
 from app.extraction.batch import TurnPayload, format_batch_user_content, parse_batch_result
 from app.extraction.prompt_v2 import EXTRACTION_SYSTEM_PROMPT_BATCH
+from app.extraction.schema import BatchExtractionResult
 from metrics import aggregate_scores, gated_metric_names, score_turn
 
 GOLD_DIR = _DIR / "gold_set" / "v1"
@@ -44,6 +50,10 @@ LATEST_PATH = OUTPUT_DIR / "latest.json"
 _CONVERSATIONS_NAME = "conversations.jsonl"
 _EXPECTED_NAME = "expected_memories.jsonl"
 _CASSETTES_NAME = "openai_cassettes.jsonl"
+_MANIFEST_NAME = "cassette_manifest.json"
+
+CASSETTE_KIND_ORACLE = "oracle_aligned_expected_json"
+CASSETTE_KIND_LIVE = "live_openai_recorded"
 
 
 def _load_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -64,23 +74,53 @@ def _prompt_sha256() -> str:
     return hashlib.sha256(EXTRACTION_SYSTEM_PROMPT_BATCH.encode()).hexdigest()
 
 
-def _assert_prompt_matches_manifest(manifest: dict[str, Any]) -> None:
-    expected = str(manifest.get("prompt_sha256") or "")
-    actual = _prompt_sha256()
-    if expected == actual:
+def _schema_sha256() -> str:
+    """Hash of the canonical Pydantic JSON schema for BatchExtractionResult.
+
+    Uses model_json_schema() (not raw schema.py bytes) so unrelated formatting/
+    comment edits do not trip the gate; structural contract changes do.
+    """
+    canonical = json.dumps(
+        BatchExtractionResult.model_json_schema(),
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def _assert_contract_hashes_match_manifest(manifest: dict[str, Any]) -> None:
+    checks = (
+        ("prompt_sha256", _prompt_sha256()),
+        ("schema_sha256", _schema_sha256()),
+    )
+    mismatches = [
+        (key, str(manifest.get(key) or ""), actual)
+        for key, actual in checks
+        if str(manifest.get(key) or "") != actual
+    ]
+    if not mismatches:
         return
     if os.environ.get("EXTRACTION_EVAL_ALLOW_PROMPT_DRIFT") == "1":
-        print(
-            "WARNING: prompt_sha256 drift allowed via EXTRACTION_EVAL_ALLOW_PROMPT_DRIFT=1",
-            file=sys.stderr,
-        )
+        for key, _expected, _actual in mismatches:
+            print(
+                f"WARNING: {key} drift allowed via EXTRACTION_EVAL_ALLOW_PROMPT_DRIFT=1",
+                file=sys.stderr,
+            )
         return
-    raise SystemExit(
-        "cassette prompt_sha256 mismatch — EXTRACTION_SYSTEM_PROMPT_BATCH changed without "
-        "re-recording cassettes. Re-run with EXTRACTION_EVAL_MODE=record (live OpenAI) and "
-        "update cassette_manifest.json + openai_cassettes.jsonl in the same PR. "
-        f"manifest={expected[:16]}… actual={actual[:16]}…"
+    detail = "; ".join(
+        f"{key} manifest={expected[:16]}… actual={actual[:16]}…"
+        for key, expected, actual in mismatches
     )
+    raise SystemExit(
+        "cassette contract hash mismatch — EXTRACTION_SYSTEM_PROMPT_BATCH and/or "
+        "BatchExtractionResult JSON schema changed without re-recording cassettes. "
+        "Re-run with EXTRACTION_EVAL_MODE=record (live OpenAI) and update "
+        f"cassette_manifest.json + openai_cassettes.jsonl in the same PR. ({detail})"
+    )
+
+
+# Back-compat alias for callers/tests that imported the old name.
+_assert_prompt_matches_manifest = _assert_contract_hashes_match_manifest
 
 
 def _conversation_ids(rows: list[dict[str, Any]]) -> set[str]:
@@ -135,8 +175,10 @@ def _assert_cassette_integrity(
     manifest: dict[str, Any],
     cassettes: dict[str, dict[str, Any]],
     conv_ids: set[str],
+    *,
+    gold_dir: Path,
 ) -> None:
-    _assert_hash(manifest, "cassettes_sha256", GOLD_DIR / _CASSETTES_NAME)
+    _assert_hash(manifest, "cassettes_sha256", gold_dir / _CASSETTES_NAME)
     declared_count = int(manifest.get("conversation_count") or 0)
     cassette_count = int(manifest.get("cassette_count") or 0)
     if len(cassettes) != cassette_count or cassette_count != declared_count:
@@ -153,13 +195,14 @@ def _assert_gold_integrity(
     conversations: list[dict[str, Any]],
     expected_rows: list[dict[str, Any]],
     *,
+    gold_dir: Path,
     cassettes: dict[str, dict[str, Any]] | None,
 ) -> None:
-    _assert_hash(manifest, "conversations_sha256", GOLD_DIR / _CONVERSATIONS_NAME)
-    _assert_hash(manifest, "expected_memories_sha256", GOLD_DIR / _EXPECTED_NAME)
+    _assert_hash(manifest, "conversations_sha256", gold_dir / _CONVERSATIONS_NAME)
+    _assert_hash(manifest, "expected_memories_sha256", gold_dir / _EXPECTED_NAME)
     conv_ids = _assert_conversation_cardinality(manifest, conversations, expected_rows)
     if cassettes is not None:
-        _assert_cassette_integrity(manifest, cassettes, conv_ids)
+        _assert_cassette_integrity(manifest, cassettes, conv_ids, gold_dir=gold_dir)
 
 
 def _memory_to_dict(memory: Any) -> dict[str, Any]:
@@ -198,9 +241,9 @@ def _predict_live(turns: list[TurnPayload], *, provider_name: str) -> tuple[dict
     return by_turn, call.model
 
 
-def _load_cassettes() -> dict[str, dict[str, Any]]:
+def _load_cassettes(gold_dir: Path) -> dict[str, dict[str, Any]]:
     cassettes: dict[str, dict[str, Any]] = {}
-    for row in _load_jsonl(GOLD_DIR / _CASSETTES_NAME):
+    for row in _load_jsonl(gold_dir / _CASSETTES_NAME):
         cassettes[str(row["conversation_id"])] = row
     return cassettes
 
@@ -336,22 +379,30 @@ def _build_report(meta: _ReportMeta, metrics: dict[str, float]) -> dict[str, Any
         "conversation_count": meta.conversation_count,
         "generated_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "prompt_sha256": _prompt_sha256(),
+        "schema_sha256": _schema_sha256(),
         "metrics": metrics,
         "gated_metrics": gated_metric_names(),
         "notes": notes,
     }
 
 
-def _refresh_manifest_hashes(manifest: dict[str, Any], *, model_used: str, generated_at: str) -> None:
-    cas_path = GOLD_DIR / _CASSETTES_NAME
+def _refresh_manifest_hashes(
+    manifest: dict[str, Any],
+    *,
+    gold_dir: Path,
+    model_used: str,
+    generated_at: str,
+) -> None:
+    cas_path = gold_dir / _CASSETTES_NAME
     manifest["prompt_sha256"] = _prompt_sha256()
+    manifest["schema_sha256"] = _schema_sha256()
     manifest["recorded_at"] = generated_at
     manifest["model"] = model_used
-    manifest["cassette_kind"] = "live_openai_recorded"
+    manifest["cassette_kind"] = CASSETTE_KIND_LIVE
     manifest["cassettes_sha256"] = _file_sha256(cas_path)
-    manifest["conversations_sha256"] = _file_sha256(GOLD_DIR / _CONVERSATIONS_NAME)
-    manifest["expected_memories_sha256"] = _file_sha256(GOLD_DIR / _EXPECTED_NAME)
-    (GOLD_DIR / "cassette_manifest.json").write_text(
+    manifest["conversations_sha256"] = _file_sha256(gold_dir / _CONVERSATIONS_NAME)
+    manifest["expected_memories_sha256"] = _file_sha256(gold_dir / _EXPECTED_NAME)
+    (gold_dir / _MANIFEST_NAME).write_text(
         json.dumps(manifest, indent=2) + "\n",
         encoding="utf-8",
     )
@@ -365,11 +416,18 @@ def _write_latest(report: dict[str, Any]) -> None:
     )
 
 
-def run_eval(*, mode: str, provider: str) -> dict[str, Any]:
-    conversations = _load_jsonl(GOLD_DIR / _CONVERSATIONS_NAME)
-    expected_rows = _load_jsonl(GOLD_DIR / _EXPECTED_NAME)
+def run_eval(
+    *,
+    mode: str,
+    provider: str,
+    gold_dir: Path | None = None,
+) -> dict[str, Any]:
+    """Run gold-set eval. ``gold_dir`` defaults to committed ``gold_set/v1`` (overridable in tests)."""
+    gdir = gold_dir if gold_dir is not None else GOLD_DIR
+    conversations = _load_jsonl(gdir / _CONVERSATIONS_NAME)
+    expected_rows = _load_jsonl(gdir / _EXPECTED_NAME)
     manifest = json.loads(
-        (GOLD_DIR / "cassette_manifest.json").read_text(encoding="utf-8")  # NOSONAR
+        (gdir / _MANIFEST_NAME).read_text(encoding="utf-8")  # NOSONAR
     )
 
     expected_by_conv: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -378,11 +436,23 @@ def run_eval(*, mode: str, provider: str) -> dict[str, Any]:
 
     cassettes: dict[str, dict[str, Any]] = {}
     if mode in {"cassette", "smoke", "fast"}:
-        _assert_prompt_matches_manifest(manifest)
-        cassettes = _load_cassettes()
-        _assert_gold_integrity(manifest, conversations, expected_rows, cassettes=cassettes)
+        _assert_contract_hashes_match_manifest(manifest)
+        cassettes = _load_cassettes(gdir)
+        _assert_gold_integrity(
+            manifest,
+            conversations,
+            expected_rows,
+            gold_dir=gdir,
+            cassettes=cassettes,
+        )
     else:
-        _assert_gold_integrity(manifest, conversations, expected_rows, cassettes=None)
+        _assert_gold_integrity(
+            manifest,
+            conversations,
+            expected_rows,
+            gold_dir=gdir,
+            cassettes=None,
+        )
 
     ctx = _EvalCtx(mode=mode, provider=provider, cassettes=cassettes)
     turn_scores, model_used, recorded = _score_conversations(
@@ -402,12 +472,15 @@ def run_eval(*, mode: str, provider: str) -> dict[str, Any]:
     )
 
     if mode == "record" and recorded:
-        (GOLD_DIR / _CASSETTES_NAME).write_text(
+        (gdir / _CASSETTES_NAME).write_text(
             "\n".join(json.dumps(r) for r in recorded) + "\n",
             encoding="utf-8",
         )
         _refresh_manifest_hashes(
-            manifest, model_used=model_used, generated_at=report["generated_at"]
+            manifest,
+            gold_dir=gdir,
+            model_used=model_used,
+            generated_at=report["generated_at"],
         )
         print(f"re-recorded {len(recorded)} OpenAI cassettes", file=sys.stderr)
 

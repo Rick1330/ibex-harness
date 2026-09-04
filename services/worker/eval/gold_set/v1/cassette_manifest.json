@@ -3,6 +3,7 @@
   "model": "gpt-4o-mini",
   "recorded_at": "2026-09-03T21:10:26Z",
   "prompt_sha256": "d20180ec73fca87ea49ae976eb0e452d91c3104c1704454c28003b55d54d4f19",
+  "schema_sha256": "0e91794e8b2e56298bf350bdcc26a4e87cd226e523a2f964b229ae5e0e222620",
   "conversations_sha256": "4659b16cabef207b6e9216a0c913dfcb51d5f49351cfa1f5ff669b9299f8460f",
   "expected_memories_sha256": "edec77e289259a7358438e759cd3c693d7eadb23fe38bf3a0cac5e8468264a8d",
   "cassettes_sha256": "4dc56a90598473f0d5af65e36932a99e2ad42df10e76fc09cf4d04887b716126",
@@ -18,5 +19,5 @@
   "multi_label_memories": 10,
   "supersession_memories": 10,
   "cassette_kind": "oracle_aligned_expected_json",
-  "notes": "Oracle-aligned cassettes for deterministic CI. Re-record with EXTRACTION_EVAL_MODE=record."
+  "notes": "Oracle-aligned cassettes for deterministic CI. Re-record with EXTRACTION_EVAL_MODE=record to set cassette_kind=live_openai_recorded."
 }

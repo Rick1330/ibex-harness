@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 _DIR = Path(__file__).resolve().parent
 _WORKER = _DIR.parent
@@ -15,6 +17,7 @@ if str(_WORKER) not in sys.path:
     sys.path.insert(0, str(_WORKER))
 
 import build_published
+import check_oracle_cassette_policy as oracle_policy
 import path_guard
 import run_eval
 from app.extraction.prompt_v2 import EXTRACTION_SYSTEM_PROMPT_BATCH
@@ -28,11 +31,18 @@ class PromptManifestTests(unittest.TestCase):
         )
         expected = hashlib.sha256(EXTRACTION_SYSTEM_PROMPT_BATCH.encode()).hexdigest()
         self.assertEqual(manifest["prompt_sha256"], expected)
+        self.assertEqual(manifest["schema_sha256"], run_eval._schema_sha256())
+        self.assertIn(
+            manifest["cassette_kind"],
+            {run_eval.CASSETTE_KIND_ORACLE, run_eval.CASSETTE_KIND_LIVE},
+        )
         self.assertGreaterEqual(int(manifest["conversation_count"]), 100)
         for key in (
             "conversations_sha256",
             "expected_memories_sha256",
             "cassettes_sha256",
+            "prompt_sha256",
+            "schema_sha256",
         ):
             self.assertEqual(len(manifest[key]), 64)
 
@@ -276,6 +286,125 @@ class RunEvalCassetteSmokeTests(unittest.TestCase):
             self.assertEqual(report["provider"], "openai")
             for name, value in report["metrics"].items():
                 self.assertGreaterEqual(value, 0.999, msg=name)
+
+    def test_cassette_eval_detects_corrupted_predictions_end_to_end(self) -> None:
+        """Full run_eval cassette path must score an injected miss analytically.
+
+        Mutation (documented, fixed):
+          - Copy committed gold_set/v1 into a temp gold_dir.
+          - Empty memories for conversation ``c001`` only (oracle cassette had
+            one factual memory on turn 0; gold expected has 130 memories total,
+            of which 33 are factual label occurrences).
+        Expected deltas from a perfect (all-1.0) oracle baseline:
+          - recall_factual = 32/33
+          - category_assignment_accuracy = 129/130
+          - temporal_field_accuracy = 129/130
+          - recall_macro = (32/33 + 1 + 1 + 1 + 1) / 5
+          - precision_* remain 1.0 (no false positives)
+        """
+        gold_src = _DIR / "gold_set" / "v1"
+        expected_recall_factual = 32 / 33
+        expected_assign = 129 / 130
+        expected_temporal = 129 / 130
+        expected_recall_macro = (expected_recall_factual + 4.0) / 5.0
+
+        with tempfile.TemporaryDirectory(dir=_DIR) as tmp:
+            root = Path(tmp)
+            gold_dir = root / "gold"
+            shutil.copytree(gold_src, gold_dir)
+            cas_path = gold_dir / "openai_cassettes.jsonl"
+            rows: list[dict] = []
+            mutated = False
+            for line in cas_path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                row = json.loads(line)
+                if row["conversation_id"] == "c001":
+                    payload = json.loads(row["raw_json"])
+                    for turn in payload["turns"]:
+                        turn["memories"] = []
+                    row["raw_json"] = json.dumps(payload, separators=(",", ":"))
+                    mutated = True
+                rows.append(row)
+            self.assertTrue(mutated, "c001 cassette row missing — fixture assumption broken")
+            cas_path.write_text(
+                "\n".join(json.dumps(r, separators=(",", ":")) for r in rows) + "\n",
+                encoding="utf-8",
+            )
+            manifest_path = gold_dir / "cassette_manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["cassettes_sha256"] = hashlib.sha256(cas_path.read_bytes()).hexdigest()
+            manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+
+            out = root / "out"
+            out.mkdir()
+            original_out = run_eval.OUTPUT_DIR
+            original_latest = run_eval.LATEST_PATH
+            self.addCleanup(setattr, run_eval, "OUTPUT_DIR", original_out)
+            self.addCleanup(setattr, run_eval, "LATEST_PATH", original_latest)
+            run_eval.OUTPUT_DIR = out
+            run_eval.LATEST_PATH = out / "latest.json"
+
+            report = run_eval.run_eval(mode="cassette", provider="openai", gold_dir=gold_dir)
+            metrics = report["metrics"]
+            self.assertAlmostEqual(metrics["recall_factual"], expected_recall_factual, places=9)
+            self.assertAlmostEqual(metrics["category_assignment_accuracy"], expected_assign, places=9)
+            self.assertAlmostEqual(metrics["temporal_field_accuracy"], expected_temporal, places=9)
+            self.assertAlmostEqual(metrics["recall_macro"], expected_recall_macro, places=9)
+            for cat in (
+                "factual",
+                "procedural",
+                "preference",
+                "behavioral",
+                "episodic",
+            ):
+                self.assertAlmostEqual(metrics[f"precision_{cat}"], 1.0, places=9, msg=cat)
+            for cat in ("procedural", "preference", "behavioral", "episodic"):
+                self.assertAlmostEqual(metrics[f"recall_{cat}"], 1.0, places=9, msg=cat)
+
+
+class OracleCassettePolicyTests(unittest.TestCase):
+    def test_policy_passes_when_contract_files_unchanged(self) -> None:
+        with mock.patch.object(oracle_policy, "_git_changed_paths", return_value=set()):
+            code = oracle_policy.main(
+                ["--base", "aaaa", "--head", "bbbb", "--pr-body", ""]
+            )
+        self.assertEqual(code, 0)
+
+    def test_policy_fails_on_prompt_change_with_oracle_cassettes(self) -> None:
+        touched = {"services/worker/app/extraction/prompt_v2.py"}
+        with mock.patch.object(oracle_policy, "_git_changed_paths", return_value=touched):
+            code = oracle_policy.main(
+                ["--base", "aaaa", "--head", "bbbb", "--pr-body", "no override"]
+            )
+        self.assertEqual(code, 1)
+
+    def test_policy_override_token_allows_oracle_with_schema_change(self) -> None:
+        touched = {"services/worker/app/extraction/schema.py"}
+        with mock.patch.object(oracle_policy, "_git_changed_paths", return_value=touched):
+            code = oracle_policy.main(
+                [
+                    "--base",
+                    "aaaa",
+                    "--head",
+                    "bbbb",
+                    "--pr-body",
+                    "Ack: EXTRACTION_EVAL_ORACLE_OK=1 for this PR",
+                ]
+            )
+        self.assertEqual(code, 0)
+
+    def test_policy_rejects_drift_env_in_workflow_file(self) -> None:
+        with tempfile.TemporaryDirectory(dir=_DIR) as tmp:
+            fake = Path(tmp) / "extraction-eval.yml"
+            fake.write_text(
+                'env:\n  EXTRACTION_EVAL_ALLOW_PROMPT_DRIFT: "1"\n',
+                encoding="utf-8",
+            )
+            with mock.patch.object(oracle_policy, "_WORKFLOW", fake):
+                with self.assertRaises(SystemExit) as ctx:
+                    oracle_policy._assert_workflow_forbids_drift_env()
+            self.assertIn("EXTRACTION_EVAL_ALLOW_PROMPT_DRIFT", str(ctx.exception))
 
 
 if __name__ == "__main__":
