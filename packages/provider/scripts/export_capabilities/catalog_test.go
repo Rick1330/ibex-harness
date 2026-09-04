@@ -39,35 +39,69 @@ func TestUnit_BuildExport_SortedAndComplete(t *testing.T) {
 	}
 }
 
-func TestUnit_ParseExportArgs(t *testing.T) {
+func TestUnit_ParseExportArgs_RejectsBothFlags(t *testing.T) {
 	t.Parallel()
 	var stderr bytes.Buffer
 	out, check, code := parseExportArgs([]string{"-o", "a.json", "-check", "b.json"}, &stderr)
-	if code != 2 || out != "" || check != "" {
-		t.Fatalf("both flags: code=%d out=%q check=%q", code, out, check)
-	}
-	stderr.Reset()
-	out, check, code = parseExportArgs([]string{"-bogus"}, &stderr)
 	if code != 2 {
-		t.Fatalf("bad flag exit=%d", code)
+		t.Fatalf("code=%d want 2", code)
 	}
-	out, check, code = parseExportArgs([]string{"-o", filepath.Join("x", catalogFileName)}, &stderr)
-	if code != 0 || out == "" || check != "" {
-		t.Fatalf("out only: code=%d out=%q check=%q", code, out, check)
+	if out != "" {
+		t.Fatalf("out=%q want empty", out)
+	}
+	if check != "" {
+		t.Fatalf("check=%q want empty", check)
 	}
 }
 
-func TestUnit_ResolveCatalogPath(t *testing.T) {
+func TestUnit_ParseExportArgs_RejectsUnknownFlag(t *testing.T) {
+	t.Parallel()
+	var stderr bytes.Buffer
+	_, _, code := parseExportArgs([]string{"-bogus"}, &stderr)
+	if code != 2 {
+		t.Fatalf("code=%d want 2", code)
+	}
+}
+
+func TestUnit_ParseExportArgs_OutOnly(t *testing.T) {
+	t.Parallel()
+	var stderr bytes.Buffer
+	path := filepath.Join("x", catalogFileName)
+	out, check, code := parseExportArgs([]string{"-o", path}, &stderr)
+	if code != 0 {
+		t.Fatalf("code=%d want 0", code)
+	}
+	if out != path {
+		t.Fatalf("out=%q want %q", out, path)
+	}
+	if check != "" {
+		t.Fatalf("check=%q want empty", check)
+	}
+}
+
+func TestUnit_ResolveCatalogPath_RejectsEmpty(t *testing.T) {
 	t.Parallel()
 	if _, err := resolveCatalogPath(""); err == nil {
 		t.Fatal("empty path should fail")
 	}
+}
+
+func TestUnit_ResolveCatalogPath_RejectsDot(t *testing.T) {
+	t.Parallel()
 	if _, err := resolveCatalogPath("."); err == nil {
 		t.Fatal("dot path should fail")
 	}
+}
+
+func TestUnit_ResolveCatalogPath_RejectsWrongLeaf(t *testing.T) {
+	t.Parallel()
 	if _, err := resolveCatalogPath("evil.txt"); err == nil {
 		t.Fatal("wrong leaf should fail")
 	}
+}
+
+func TestUnit_ResolveCatalogPath_AcceptsCatalogLeaf(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), catalogFileName)
 	got, err := resolveCatalogPath(path)
 	if err != nil {

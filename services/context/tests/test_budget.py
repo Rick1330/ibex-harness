@@ -109,14 +109,15 @@ class BudgetCalculatorTests(unittest.TestCase):
 
     def test_estimate_kind_mismatch_fails_closed(self) -> None:
         """Defensive: directive/messages must share one labeled estimate_kind."""
-        with (
-            patch(
-                "app.budget.estimate_tokens",
-                side_effect=[(1, ESTIMATE_CHARS_DIV_4), (1, ESTIMATE_RUNES_DIV_3_5)],
-            ),
-            self.assertRaises(RuntimeError),
-        ):
-            self.calc.calculate("gpt-4o", [Message(role="user", content="x")], "y")
+        messages = [Message(role="user", content="x")]
+        patcher = patch(
+            "app.budget.estimate_tokens",
+            side_effect=[(1, ESTIMATE_CHARS_DIV_4), (1, ESTIMATE_RUNES_DIV_3_5)],
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        with self.assertRaises(RuntimeError):
+            self.calc.calculate("gpt-4o", messages, "y")
 
 
 if __name__ == "__main__":
