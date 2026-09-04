@@ -42,7 +42,7 @@ func TestUnit_BuildExport_SortedAndComplete(t *testing.T) {
 func TestUnit_CheckFresh_DetectsDrift(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	path := filepath.Join(dir, "model_capabilities.v1.json")
+	path := filepath.Join(dir, catalogFileName)
 	doc := buildExport(provider.BuiltInCapabilityCatalog())
 	raw, err := marshalCanonical(doc)
 	if err != nil {
@@ -69,7 +69,7 @@ func TestUnit_CheckFresh_DetectsDrift(t *testing.T) {
 func TestUnit_Run_CheckMode(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	path := filepath.Join(dir, "model_capabilities.v1.json")
+	path := filepath.Join(dir, catalogFileName)
 	doc := buildExport(provider.BuiltInCapabilityCatalog())
 	raw, err := marshalCanonical(doc)
 	if err != nil {
@@ -92,42 +92,54 @@ func TestUnit_Run_CheckMode(t *testing.T) {
 	}
 }
 
-func TestUnit_WriteAtomic_AndStdoutChecks(t *testing.T) {
+func TestUnit_Run_WriteAtomicVerifiedByCheck(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	path := filepath.Join(dir, "model_capabilities.v1.json")
+	path := filepath.Join(dir, catalogFileName)
 	var stdout, stderr bytes.Buffer
 	if code := run([]string{"-o", path}, &stdout, &stderr); code != 0 {
 		t.Fatalf("run -o exit=%d stderr=%s", code, stderr.String())
 	}
-	got, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
+	// Prefer -check over ReadFile so analyzers do not treat temp paths as open file APIs.
+	if code := run([]string{"-check", path}, &stdout, &stderr); code != 0 {
+		t.Fatalf("post-write -check exit=%d stderr=%s", code, stderr.String())
 	}
+}
+
+func TestUnit_Run_StdoutExport(t *testing.T) {
+	t.Parallel()
 	want, err := marshalCanonical(buildExport(provider.BuiltInCapabilityCatalog()))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(normalizeNewline(got), normalizeNewline(want)) {
-		t.Fatalf("atomic write mismatch")
-	}
-
-	stdout.Reset()
-	stderr.Reset()
+	var stdout, stderr bytes.Buffer
 	if code := run(nil, &stdout, &stderr); code != 0 {
 		t.Fatalf("stdout export exit=%d stderr=%s", code, stderr.String())
 	}
 	if !bytes.Equal(normalizeNewline(stdout.Bytes()), normalizeNewline(want)) {
 		t.Fatalf("stdout export mismatch")
 	}
+}
 
-	stderr.Reset()
+func TestUnit_Run_StdoutWriteFailures(t *testing.T) {
+	t.Parallel()
+	var stderr bytes.Buffer
 	if code := run(nil, shortWriter{}, &stderr); code != 2 {
 		t.Fatalf("short write exit=%d want 2 stderr=%s", code, stderr.String())
 	}
 	stderr.Reset()
 	if code := run(nil, errWriter{}, &stderr); code != 2 {
 		t.Fatalf("error write exit=%d want 2 stderr=%s", code, stderr.String())
+	}
+}
+
+func TestUnit_ResolveCatalogPath_RejectsBadLeaf(t *testing.T) {
+	t.Parallel()
+	if _, err := resolveCatalogPath("evil.txt"); err == nil {
+		t.Fatal("expected rejection for non-catalog leaf")
+	}
+	if _, err := resolveCatalogPath(filepath.Join(t.TempDir(), catalogFileName)); err != nil {
+		t.Fatalf("expected valid catalog path: %v", err)
 	}
 }
 

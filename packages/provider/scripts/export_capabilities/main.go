@@ -17,8 +17,9 @@ import (
 )
 
 const (
-	schemaVersion = 1
-	sourceLabel   = "packages/provider.BuiltInCapabilityCatalog"
+	schemaVersion   = 1
+	sourceLabel     = "packages/provider.BuiltInCapabilityCatalog"
+	catalogFileName = "model_capabilities.v1.json"
 )
 
 // exitFunc is swapped in tests so main can be exercised without os.Exit.
@@ -41,16 +42,9 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("export_capabilities", flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	outPath := fs.String("o", "", "write JSON to this path (default: stdout)")
-	checkPath := fs.String("check", "", "exit 1 if committed JSON at path differs from freshly generated export")
-	if err := fs.Parse(args); err != nil {
-		return 2
-	}
-	if *outPath != "" && *checkPath != "" {
-		_, _ = fmt.Fprintln(stderr, "export_capabilities: use -o or -check, not both")
-		return 2
+	outPath, checkPath, code := parseExportArgs(args, stderr)
+	if code != 0 {
+		return code
 	}
 
 	doc := buildExport(provider.BuiltInCapabilityCatalog())
@@ -60,17 +54,46 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	if *checkPath != "" {
-		return checkFresh(*checkPath, raw, stderr)
+	switch {
+	case checkPath != "":
+		return checkFresh(checkPath, raw, stderr)
+	case outPath != "":
+		return writeExportFile(outPath, raw, len(doc.Models), stderr)
+	default:
+		return writeExportStdout(stdout, stderr, raw)
 	}
-	if *outPath != "" {
-		if err := writeAtomic(*outPath, raw, 0o644); err != nil {
-			_, _ = fmt.Fprintf(stderr, "export_capabilities: write %s: %v\n", *outPath, err)
-			return 2
-		}
-		_, _ = fmt.Fprintf(stderr, "wrote %s (%d models)\n", *outPath, len(doc.Models))
-		return 0
+}
+
+func parseExportArgs(args []string, stderr io.Writer) (outPath, checkPath string, code int) {
+	fs := flag.NewFlagSet("export_capabilities", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	out := fs.String("o", "", "write JSON to this path (default: stdout)")
+	check := fs.String("check", "", "exit 1 if committed JSON at path differs from freshly generated export")
+	if err := fs.Parse(args); err != nil {
+		return "", "", 2
 	}
+	if *out != "" && *check != "" {
+		_, _ = fmt.Fprintln(stderr, "export_capabilities: use -o or -check, not both")
+		return "", "", 2
+	}
+	return *out, *check, 0
+}
+
+func writeExportFile(path string, raw []byte, modelCount int, stderr io.Writer) int {
+	resolved, err := resolveCatalogPath(path)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "export_capabilities: path: %v\n", err)
+		return 2
+	}
+	if err := writeAtomic(resolved, raw, 0o644); err != nil {
+		_, _ = fmt.Fprintf(stderr, "export_capabilities: write %s: %v\n", resolved, err)
+		return 2
+	}
+	_, _ = fmt.Fprintf(stderr, "wrote %s (%d models)\n", resolved, modelCount)
+	return 0
+}
+
+func writeExportStdout(stdout, stderr io.Writer, raw []byte) int {
 	n, err := stdout.Write(raw)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "export_capabilities: stdout write: %v\n", err)
@@ -134,6 +157,26 @@ func marshalCanonical(doc exportDoc) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// resolveCatalogPath requires the leaf name model_capabilities.v1.json and returns
+// an absolute cleaned path so CLI -o/-check cannot be used as an open-ended file API.
+func resolveCatalogPath(path string) (string, error) {
+	trimmed := filepath.Clean(path)
+	if trimmed == "." || trimmed == "" {
+		return "", fmt.Errorf("empty path")
+	}
+	if filepath.Base(trimmed) != catalogFileName {
+		return "", fmt.Errorf("path must end with %s", catalogFileName)
+	}
+	abs, err := filepath.Abs(trimmed)
+	if err != nil {
+		return "", err
+	}
+	if filepath.Base(abs) != catalogFileName {
+		return "", fmt.Errorf("path must end with %s", catalogFileName)
+	}
+	return abs, nil
+}
+
 func writeAtomic(path string, data []byte, perm os.FileMode) error {
 	dir := filepath.Dir(path)
 	if dir == "" {
@@ -168,20 +211,25 @@ func writeAtomic(path string, data []byte, perm os.FileMode) error {
 }
 
 func checkFresh(committedPath string, fresh []byte, stderr io.Writer) int {
-	committed, err := os.ReadFile(committedPath) // NOSONAR — maintainer path from CLI
+	resolved, err := resolveCatalogPath(committedPath)
 	if err != nil {
-		_, _ = fmt.Fprintf(stderr, "export_capabilities: read %s: %v\n", committedPath, err)
+		_, _ = fmt.Fprintf(stderr, "export_capabilities: path: %v\n", err)
+		return 2
+	}
+	committed, err := os.ReadFile(resolved) // #nosec G304 -- path constrained by resolveCatalogPath
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "export_capabilities: read %s: %v\n", resolved, err)
 		return 2
 	}
 	if bytes.Equal(normalizeNewline(committed), normalizeNewline(fresh)) {
-		_, _ = fmt.Fprintf(stderr, "OK: %s matches BuiltInCapabilityCatalog export\n", filepath.Base(committedPath))
+		_, _ = fmt.Fprintf(stderr, "OK: %s matches BuiltInCapabilityCatalog export\n", filepath.Base(resolved))
 		return 0
 	}
 	_, _ = fmt.Fprintf(
 		stderr,
 		"export_capabilities: %s is stale — run:\n  go run ./packages/provider/scripts/export_capabilities -o %s\n",
-		committedPath,
-		committedPath,
+		resolved,
+		resolved,
 	)
 	return 1
 }
