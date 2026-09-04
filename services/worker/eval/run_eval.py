@@ -101,17 +101,25 @@ def _assert_contract_hashes_match_manifest(manifest: dict[str, Any]) -> None:
     if not mismatches:
         return
     if os.environ.get("EXTRACTION_EVAL_ALLOW_PROMPT_DRIFT") == "1":
-        for key, _expected, _actual in mismatches:
-            print(
-                f"WARNING: {key} drift allowed via EXTRACTION_EVAL_ALLOW_PROMPT_DRIFT=1",
-                file=sys.stderr,
-            )
+        _warn_contract_drift(mismatches)
         return
+    raise SystemExit(_contract_mismatch_message(mismatches))
+
+
+def _warn_contract_drift(mismatches: list[tuple[str, str, str]]) -> None:
+    for key, _expected, _actual in mismatches:
+        print(
+            f"WARNING: {key} drift allowed via EXTRACTION_EVAL_ALLOW_PROMPT_DRIFT=1",
+            file=sys.stderr,
+        )
+
+
+def _contract_mismatch_message(mismatches: list[tuple[str, str, str]]) -> str:
     detail = "; ".join(
         f"{key} manifest={expected[:16]}… actual={actual[:16]}…"
         for key, expected, actual in mismatches
     )
-    raise SystemExit(
+    return (
         "cassette contract hash mismatch — EXTRACTION_SYSTEM_PROMPT_BATCH and/or "
         "BatchExtractionResult JSON schema changed without re-recording cassettes. "
         "Re-run with EXTRACTION_EVAL_MODE=record (live OpenAI) and update "
@@ -171,16 +179,22 @@ def _assert_expected_turn_coverage(
             )
 
 
+@dataclass(frozen=True, slots=True)
+class _GoldBundle:
+    manifest: dict[str, Any]
+    conversations: list[dict[str, Any]]
+    expected_rows: list[dict[str, Any]]
+    gold_dir: Path
+
+
 def _assert_cassette_integrity(
-    manifest: dict[str, Any],
+    bundle: _GoldBundle,
     cassettes: dict[str, dict[str, Any]],
     conv_ids: set[str],
-    *,
-    gold_dir: Path,
 ) -> None:
-    _assert_hash(manifest, "cassettes_sha256", gold_dir / _CASSETTES_NAME)
-    declared_count = int(manifest.get("conversation_count") or 0)
-    cassette_count = int(manifest.get("cassette_count") or 0)
+    _assert_hash(bundle.manifest, "cassettes_sha256", bundle.gold_dir / _CASSETTES_NAME)
+    declared_count = int(bundle.manifest.get("conversation_count") or 0)
+    cassette_count = int(bundle.manifest.get("cassette_count") or 0)
     if len(cassettes) != cassette_count or cassette_count != declared_count:
         raise SystemExit(
             f"cassette cardinality mismatch: declared={cassette_count} "
@@ -191,18 +205,19 @@ def _assert_cassette_integrity(
 
 
 def _assert_gold_integrity(
-    manifest: dict[str, Any],
-    conversations: list[dict[str, Any]],
-    expected_rows: list[dict[str, Any]],
+    bundle: _GoldBundle,
     *,
-    gold_dir: Path,
     cassettes: dict[str, dict[str, Any]] | None,
 ) -> None:
-    _assert_hash(manifest, "conversations_sha256", gold_dir / _CONVERSATIONS_NAME)
-    _assert_hash(manifest, "expected_memories_sha256", gold_dir / _EXPECTED_NAME)
-    conv_ids = _assert_conversation_cardinality(manifest, conversations, expected_rows)
+    _assert_hash(bundle.manifest, "conversations_sha256", bundle.gold_dir / _CONVERSATIONS_NAME)
+    _assert_hash(bundle.manifest, "expected_memories_sha256", bundle.gold_dir / _EXPECTED_NAME)
+    conv_ids = _assert_conversation_cardinality(
+        bundle.manifest,
+        bundle.conversations,
+        bundle.expected_rows,
+    )
     if cassettes is not None:
-        _assert_cassette_integrity(manifest, cassettes, conv_ids, gold_dir=gold_dir)
+        _assert_cassette_integrity(bundle, cassettes, conv_ids)
 
 
 def _memory_to_dict(memory: Any) -> dict[str, Any]:
@@ -434,25 +449,19 @@ def run_eval(
     for row in expected_rows:
         expected_by_conv[str(row["conversation_id"])].append(row)
 
+    bundle = _GoldBundle(
+        manifest=manifest,
+        conversations=conversations,
+        expected_rows=expected_rows,
+        gold_dir=gdir,
+    )
     cassettes: dict[str, dict[str, Any]] = {}
     if mode in {"cassette", "smoke", "fast"}:
         _assert_contract_hashes_match_manifest(manifest)
         cassettes = _load_cassettes(gdir)
-        _assert_gold_integrity(
-            manifest,
-            conversations,
-            expected_rows,
-            gold_dir=gdir,
-            cassettes=cassettes,
-        )
+        _assert_gold_integrity(bundle, cassettes=cassettes)
     else:
-        _assert_gold_integrity(
-            manifest,
-            conversations,
-            expected_rows,
-            gold_dir=gdir,
-            cassettes=None,
-        )
+        _assert_gold_integrity(bundle, cassettes=None)
 
     ctx = _EvalCtx(mode=mode, provider=provider, cassettes=cassettes)
     turn_scores, model_used, recorded = _score_conversations(

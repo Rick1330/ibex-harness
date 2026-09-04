@@ -272,15 +272,18 @@ class BuildPublishedTests(unittest.TestCase):
 
 
 class RunEvalCassetteSmokeTests(unittest.TestCase):
+    def _redirect_eval_output(self, out: Path) -> None:
+        original_out = run_eval.OUTPUT_DIR
+        original_latest = run_eval.LATEST_PATH
+        self.addCleanup(setattr, run_eval, "OUTPUT_DIR", original_out)
+        self.addCleanup(setattr, run_eval, "LATEST_PATH", original_latest)
+        run_eval.OUTPUT_DIR = out
+        run_eval.LATEST_PATH = out / "latest.json"
+
     def test_cassette_eval_reaches_perfect_baseline(self) -> None:
         with tempfile.TemporaryDirectory(dir=_DIR) as tmp:
             out = Path(tmp)
-            original_out = run_eval.OUTPUT_DIR
-            original_latest = run_eval.LATEST_PATH
-            self.addCleanup(setattr, run_eval, "OUTPUT_DIR", original_out)
-            self.addCleanup(setattr, run_eval, "LATEST_PATH", original_latest)
-            run_eval.OUTPUT_DIR = out
-            run_eval.LATEST_PATH = out / "latest.json"
+            self._redirect_eval_output(out)
             report = run_eval.run_eval(mode="cassette", provider="openai")
             self.assertEqual(report["enforcement"], "ci")
             self.assertEqual(report["provider"], "openai")
@@ -290,109 +293,114 @@ class RunEvalCassetteSmokeTests(unittest.TestCase):
     def test_cassette_eval_detects_corrupted_predictions_end_to_end(self) -> None:
         """Full run_eval cassette path must score an injected miss analytically.
 
-        Mutation (documented, fixed):
-          - Copy committed gold_set/v1 into a temp gold_dir.
-          - Empty memories for conversation ``c001`` only (oracle cassette had
-            one factual memory on turn 0; gold expected has 130 memories total,
-            of which 33 are factual label occurrences).
-        Expected deltas from a perfect (all-1.0) oracle baseline:
-          - recall_factual = 32/33
-          - category_assignment_accuracy = 129/130
-          - temporal_field_accuracy = 129/130
-          - recall_macro = (32/33 + 1 + 1 + 1 + 1) / 5
-          - precision_* remain 1.0 (no false positives)
+        Mutation: empty memories for conversation ``c001`` only (1 factual of 130 /
+        33 factual labels). Expected: recall_factual=32/33, assignment/temporal=
+        129/130, recall_macro=(32/33+4)/5, all precision=1.0.
         """
-        gold_src = _DIR / "gold_set" / "v1"
-        expected_recall_factual = 32 / 33
-        expected_assign = 129 / 130
-        expected_temporal = 129 / 130
-        expected_recall_macro = (expected_recall_factual + 4.0) / 5.0
-
         with tempfile.TemporaryDirectory(dir=_DIR) as tmp:
             root = Path(tmp)
-            gold_dir = root / "gold"
-            shutil.copytree(gold_src, gold_dir)
-            cas_path = gold_dir / "openai_cassettes.jsonl"
-            rows: list[dict] = []
-            mutated = False
-            for line in cas_path.read_text(encoding="utf-8").splitlines():
-                if not line.strip():
-                    continue
-                row = json.loads(line)
-                if row["conversation_id"] == "c001":
-                    payload = json.loads(row["raw_json"])
-                    for turn in payload["turns"]:
-                        turn["memories"] = []
-                    row["raw_json"] = json.dumps(payload, separators=(",", ":"))
-                    mutated = True
-                rows.append(row)
-            self.assertTrue(mutated, "c001 cassette row missing — fixture assumption broken")
-            cas_path.write_text(
-                "\n".join(json.dumps(r, separators=(",", ":")) for r in rows) + "\n",
-                encoding="utf-8",
-            )
-            manifest_path = gold_dir / "cassette_manifest.json"
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            manifest["cassettes_sha256"] = hashlib.sha256(cas_path.read_bytes()).hexdigest()
-            manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-
+            gold_dir = _build_c001_empty_cassette_gold(_DIR / "gold_set" / "v1", root / "gold")
             out = root / "out"
             out.mkdir()
-            original_out = run_eval.OUTPUT_DIR
-            original_latest = run_eval.LATEST_PATH
-            self.addCleanup(setattr, run_eval, "OUTPUT_DIR", original_out)
-            self.addCleanup(setattr, run_eval, "LATEST_PATH", original_latest)
-            run_eval.OUTPUT_DIR = out
-            run_eval.LATEST_PATH = out / "latest.json"
+            self._redirect_eval_output(out)
+            metrics = run_eval.run_eval(
+                mode="cassette",
+                provider="openai",
+                gold_dir=gold_dir,
+            )["metrics"]
+            _assert_c001_empty_metrics(self, metrics)
 
-            report = run_eval.run_eval(mode="cassette", provider="openai", gold_dir=gold_dir)
-            metrics = report["metrics"]
-            self.assertAlmostEqual(metrics["recall_factual"], expected_recall_factual, places=9)
-            self.assertAlmostEqual(metrics["category_assignment_accuracy"], expected_assign, places=9)
-            self.assertAlmostEqual(metrics["temporal_field_accuracy"], expected_temporal, places=9)
-            self.assertAlmostEqual(metrics["recall_macro"], expected_recall_macro, places=9)
-            for cat in (
-                "factual",
-                "procedural",
-                "preference",
-                "behavioral",
-                "episodic",
-            ):
-                self.assertAlmostEqual(metrics[f"precision_{cat}"], 1.0, places=9, msg=cat)
-            for cat in ("procedural", "preference", "behavioral", "episodic"):
-                self.assertAlmostEqual(metrics[f"recall_{cat}"], 1.0, places=9, msg=cat)
+
+def _build_c001_empty_cassette_gold(gold_src: Path, gold_dir: Path) -> Path:
+    shutil.copytree(gold_src, gold_dir)
+    cas_path = gold_dir / "openai_cassettes.jsonl"
+    rows: list[dict] = []
+    mutated = False
+    for line in cas_path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        row = json.loads(line)
+        if row["conversation_id"] == "c001":
+            payload = json.loads(row["raw_json"])
+            for turn in payload["turns"]:
+                turn["memories"] = []
+            row["raw_json"] = json.dumps(payload, separators=(",", ":"))
+            mutated = True
+        rows.append(row)
+    if not mutated:
+        raise AssertionError("c001 cassette row missing — fixture assumption broken")
+    cas_path.write_text(
+        "\n".join(json.dumps(r, separators=(",", ":")) for r in rows) + "\n",
+        encoding="utf-8",
+    )
+    manifest_path = gold_dir / "cassette_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["cassettes_sha256"] = hashlib.sha256(cas_path.read_bytes()).hexdigest()
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    return gold_dir
+
+
+def _assert_c001_empty_metrics(test: unittest.TestCase, metrics: dict) -> None:
+    expected_recall_factual = 32 / 33
+    expected_assign = 129 / 130
+    test.assertAlmostEqual(metrics["recall_factual"], expected_recall_factual, places=9)
+    test.assertAlmostEqual(metrics["category_assignment_accuracy"], expected_assign, places=9)
+    test.assertAlmostEqual(metrics["temporal_field_accuracy"], expected_assign, places=9)
+    test.assertAlmostEqual(
+        metrics["recall_macro"],
+        (expected_recall_factual + 4.0) / 5.0,
+        places=9,
+    )
+    for cat in ("factual", "procedural", "preference", "behavioral", "episodic"):
+        test.assertAlmostEqual(metrics[f"precision_{cat}"], 1.0, places=9, msg=cat)
+    for cat in ("procedural", "preference", "behavioral", "episodic"):
+        test.assertAlmostEqual(metrics[f"recall_{cat}"], 1.0, places=9, msg=cat)
 
 
 class OracleCassettePolicyTests(unittest.TestCase):
+    def _write_changed_files(self, root: Path, paths: set[str]) -> Path:
+        path = root / "changed.txt"
+        path.write_text("\n".join(sorted(paths)) + ("\n" if paths else ""), encoding="utf-8")
+        return path
+
     def test_policy_passes_when_contract_files_unchanged(self) -> None:
-        with mock.patch.object(oracle_policy, "_git_changed_paths", return_value=set()):
-            code = oracle_policy.main(
-                ["--base", "aaaa", "--head", "bbbb", "--pr-body", ""]
-            )
+        with tempfile.TemporaryDirectory(dir=_DIR) as tmp:
+            changed = self._write_changed_files(Path(tmp), set())
+            code = oracle_policy.main(["--changed-files", str(changed), "--pr-body", ""])
         self.assertEqual(code, 0)
 
     def test_policy_fails_on_prompt_change_with_oracle_cassettes(self) -> None:
-        touched = {"services/worker/app/extraction/prompt_v2.py"}
-        with mock.patch.object(oracle_policy, "_git_changed_paths", return_value=touched):
+        with tempfile.TemporaryDirectory(dir=_DIR) as tmp:
+            changed = self._write_changed_files(
+                Path(tmp),
+                {"services/worker/app/extraction/prompt_v2.py"},
+            )
             code = oracle_policy.main(
-                ["--base", "aaaa", "--head", "bbbb", "--pr-body", "no override"]
+                ["--changed-files", str(changed), "--pr-body", "no override"]
             )
         self.assertEqual(code, 1)
 
     def test_policy_override_token_allows_oracle_with_schema_change(self) -> None:
-        touched = {"services/worker/app/extraction/schema.py"}
-        with mock.patch.object(oracle_policy, "_git_changed_paths", return_value=touched):
+        with tempfile.TemporaryDirectory(dir=_DIR) as tmp:
+            changed = self._write_changed_files(
+                Path(tmp),
+                {"services/worker/app/extraction/schema.py"},
+            )
             code = oracle_policy.main(
                 [
-                    "--base",
-                    "aaaa",
-                    "--head",
-                    "bbbb",
+                    "--changed-files",
+                    str(changed),
                     "--pr-body",
-                    "Ack: EXTRACTION_EVAL_ORACLE_OK=1 for this PR",
+                    f"Ack: {oracle_policy._ORACLE_OVERRIDE_MARKER} for this PR",
                 ]
             )
         self.assertEqual(code, 0)
+
+    def test_policy_rejects_unsafe_changed_path(self) -> None:
+        with tempfile.TemporaryDirectory(dir=_DIR) as tmp:
+            changed = self._write_changed_files(Path(tmp), {"../etc/passwd"})
+            with self.assertRaises(SystemExit):
+                oracle_policy._load_changed_paths(changed)
 
     def test_policy_rejects_drift_env_in_workflow_file(self) -> None:
         with tempfile.TemporaryDirectory(dir=_DIR) as tmp:

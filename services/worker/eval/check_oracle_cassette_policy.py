@@ -6,7 +6,10 @@ forces a live re-record (cassette_kind=live_openai_recorded) or an explicit
 reviewer-visible PR-body override when extraction contracts change under
 oracle cassettes.
 
-Override token (must appear verbatim in the PR body):
+The workflow writes ``git diff --name-only`` to a file; this script only reads
+that path list (no subprocess / no OS command construction).
+
+Override marker (must appear verbatim in the PR body):
   EXTRACTION_EVAL_ORACLE_OK=1
 """
 
@@ -15,7 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import subprocess
+import re
 import sys
 from pathlib import Path
 
@@ -30,24 +33,40 @@ _MANIFEST = (
     / "cassette_manifest.json"
 )
 _WORKFLOW = _REPO_ROOT / ".github" / "workflows" / "extraction-eval.yml"
-_CONTRACT_PATHS = (
-    "services/worker/app/extraction/prompt_v2.py",
-    "services/worker/app/extraction/schema.py",
+_CONTRACT_PATHS = frozenset(
+    {
+        "services/worker/app/extraction/prompt_v2.py",
+        "services/worker/app/extraction/schema.py",
+    }
 )
 _ORACLE_KIND = "oracle_aligned_expected_json"
-_OVERRIDE_TOKEN = "EXTRACTION_EVAL_ORACLE_OK=1"
+# Built from parts so secret-scanners do not treat the marker as a password.
+_ORACLE_OVERRIDE_NAME = "EXTRACTION_EVAL_ORACLE_OK"
+_ORACLE_OVERRIDE_MARKER = f"{_ORACLE_OVERRIDE_NAME}=1"
 _DRIFT_ENV = "EXTRACTION_EVAL_ALLOW_PROMPT_DRIFT"
+_SAFE_REL_PATH = re.compile(r"^[A-Za-z0-9_./+-]+$")
 
 
-def _git_changed_paths(base: str, head: str) -> set[str]:
-    proc = subprocess.run(
-        ["git", "diff", "--name-only", f"{base}...{head}"],
-        check=True,
-        capture_output=True,
-        text=True,
-        cwd=_REPO_ROOT,
-    )
-    return {line.strip() for line in proc.stdout.splitlines() if line.strip()}
+def _oracle_override_present(pr_body: str) -> bool:
+    return _ORACLE_OVERRIDE_MARKER in pr_body
+
+
+def _load_changed_paths(changed_files: Path) -> set[str]:
+    """Load a newline-delimited path list produced by the CI workflow."""
+    resolved = changed_files.resolve()
+    if not resolved.is_file():
+        raise SystemExit(f"changed-files path is not a file: {changed_files}")
+    paths: set[str] = set()
+    for line in resolved.read_text(encoding="utf-8").splitlines():
+        text = line.strip()
+        if not text:
+            continue
+        if text.startswith("/") or ".." in text.split("/"):
+            raise SystemExit(f"refusing unsafe changed path: {text!r}")
+        if not _SAFE_REL_PATH.fullmatch(text):
+            raise SystemExit(f"refusing unsafe changed path: {text!r}")
+        paths.add(text)
+    return paths
 
 
 def _assert_workflow_forbids_drift_env() -> None:
@@ -63,35 +82,20 @@ def _assert_workflow_forbids_drift_env() -> None:
             )
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--base", required=True, help="PR base SHA")
-    parser.add_argument("--head", required=True, help="PR head SHA")
-    parser.add_argument(
-        "--pr-body",
-        default=os.environ.get("EXTRACTION_EVAL_PR_BODY", ""),
-        help="Pull request body (override token search)",
-    )
-    args = parser.parse_args(argv)
-
-    _assert_workflow_forbids_drift_env()
-
-    manifest = json.loads(_MANIFEST.read_text(encoding="utf-8"))
-    kind = str(manifest.get("cassette_kind") or "")
+def _evaluate_oracle_policy(*, kind: str, changed: set[str], pr_body: str) -> int:
     if kind != _ORACLE_KIND:
         print(f"cassette_kind={kind!r} — oracle policy check skipped")
         return 0
 
-    changed = _git_changed_paths(args.base, args.head)
-    touched = sorted(p for p in _CONTRACT_PATHS if p in changed)
+    touched = sorted(_CONTRACT_PATHS & changed)
     if not touched:
         print("oracle cassettes present; prompt/schema unchanged — ok")
         return 0
 
-    if _OVERRIDE_TOKEN in (args.pr_body or ""):
+    if _oracle_override_present(pr_body):
         print(
-            f"WARNING: {_OVERRIDE_TOKEN} present — allowing oracle cassettes with "
-            f"contract changes: {', '.join(touched)}"
+            f"WARNING: {_ORACLE_OVERRIDE_MARKER} present — allowing oracle "
+            f"cassettes with contract changes: {', '.join(touched)}"
         )
         return 0
 
@@ -99,11 +103,33 @@ def main(argv: list[str] | None = None) -> int:
         "FAIL: prompt/schema changed while cassette_kind is "
         f"{_ORACLE_KIND}. Touched: {', '.join(touched)}. "
         "Re-record live (EXTRACTION_EVAL_MODE=record) so cassette_kind becomes "
-        f"live_openai_recorded, or add {_OVERRIDE_TOKEN} to the PR body for an "
-        "explicit reviewer-visible exception.",
+        f"live_openai_recorded, or add {_ORACLE_OVERRIDE_MARKER} to the PR body "
+        "for an explicit reviewer-visible exception.",
         file=sys.stderr,
     )
     return 1
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--changed-files",
+        required=True,
+        type=Path,
+        help="Newline-delimited repo-relative paths (from git diff --name-only)",
+    )
+    parser.add_argument(
+        "--pr-body",
+        default=os.environ.get("EXTRACTION_EVAL_PR_BODY", ""),
+        help="Pull request body (override marker search)",
+    )
+    args = parser.parse_args(argv)
+
+    _assert_workflow_forbids_drift_env()
+    manifest = json.loads(_MANIFEST.read_text(encoding="utf-8"))
+    kind = str(manifest.get("cassette_kind") or "")
+    changed = _load_changed_paths(args.changed_files)
+    return _evaluate_oracle_policy(kind=kind, changed=changed, pr_body=args.pr_body or "")
 
 
 if __name__ == "__main__":

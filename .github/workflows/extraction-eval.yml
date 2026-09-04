@@ -94,18 +94,25 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          # Needed for check_oracle_cassette_policy.py base...head diff on PRs.
+          # Needed so git can resolve PR base...head for the oracle policy path list.
           fetch-depth: 0
 
       - name: Enforce oracle cassette policy (prompt/schema + oracle kind)
         if: github.event_name == 'pull_request'
         env:
           EXTRACTION_EVAL_PR_BODY: ${{ github.event.pull_request.body }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
+          # Validate SHAs before interpolating into git (shell-safety / sandbox escape).
+          echo "$PR_BASE_SHA" | grep -Eq '^[0-9a-f]{40}$'
+          echo "$PR_HEAD_SHA" | grep -Eq '^[0-9a-f]{40}$'
+          changed="$(mktemp)"
+          trap 'rm -f "$changed"' EXIT
+          git diff --name-only "${PR_BASE_SHA}...${PR_HEAD_SHA}" > "$changed"
           python3 services/worker/eval/check_oracle_cassette_policy.py \
-            --base "${{ github.event.pull_request.base.sha }}" \
-            --head "${{ github.event.pull_request.head.sha }}"
+            --changed-files "$changed"
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
