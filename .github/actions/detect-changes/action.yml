@@ -46,6 +46,9 @@ outputs:
   compose:
     description: Raw compose path filter match
     value: ${{ steps.filter.outputs.compose }}
+  memory:
+    description: Raw memory path filter match
+    value: ${{ steps.filter.outputs.memory }}
   full:
     description: Force full CI (workflows or deps changed)
     value: ${{ steps.effective.outputs.full }}
@@ -67,6 +70,9 @@ outputs:
   run_compose:
     description: Run compose validation
     value: ${{ steps.effective.outputs.run_compose }}
+  run_memory:
+    description: Run memory Postgres PgVectorStore integration tests
+    value: ${{ steps.effective.outputs.run_memory }}
 runs:
   using: composite
   steps:
@@ -99,6 +105,7 @@ runs:
         FILTER_WORKFLOWS: ${{ steps.filter.outputs.workflows }}
         FILTER_DEPS: ${{ steps.filter.outputs.deps }}
         FILTER_COMPOSE: ${{ steps.filter.outputs.compose }}
+        FILTER_MEMORY: ${{ steps.filter.outputs.memory }}
         EVENT_NAME: ${{ github.event_name }}
         FORCE_FULL: ${{ inputs.force-full }}
       run: |
@@ -110,6 +117,7 @@ runs:
         run_security=false
         run_docker=false
         run_compose=false
+        run_memory=false
 
         if [ "${FORCE_FULL}" = "true" ]; then
           full=true
@@ -119,6 +127,7 @@ runs:
           run_security=true
           run_docker=true
           run_compose=true
+          run_memory=true
         fi
 
         if [ "$FILTER_WORKFLOWS" = "true" ] || [ "$FILTER_DEPS" = "true" ]; then
@@ -127,6 +136,7 @@ runs:
           run_python=true
           run_web=true
           run_security=true
+          run_memory=true
         fi
 
         if [ "$FILTER_GO" = "true" ]; then
@@ -158,6 +168,10 @@ runs:
           run_compose=true
         fi
 
+        if [ "$FILTER_MEMORY" = "true" ]; then
+          run_memory=true
+        fi
+
         {
           echo "full=$full"
           echo "run_go=$run_go"
@@ -166,4 +180,5 @@ runs:
           echo "run_security=$run_security"
           echo "run_docker=$run_docker"
           echo "run_compose=$run_compose"
+          echo "run_memory=$run_memory"
         } >> "$GITHUB_OUTPUT"
