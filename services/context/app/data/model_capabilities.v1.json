@@ -1,0 +1,94 @@
+{
+  "schema_version": 1,
+  "source": "packages/provider.BuiltInCapabilityCatalog",
+  "models": [
+    {
+      "model_id": "claude-haiku-4-5",
+      "provider": "anthropic",
+      "context_window": 200000,
+      "max_output_tokens": 64000,
+      "supports_tools": true,
+      "supports_vision": true,
+      "supports_streaming": true,
+      "tokenizer_family": "claude"
+    },
+    {
+      "model_id": "claude-opus-4-5",
+      "provider": "anthropic",
+      "context_window": 200000,
+      "max_output_tokens": 64000,
+      "supports_tools": true,
+      "supports_vision": true,
+      "supports_streaming": true,
+      "tokenizer_family": "claude"
+    },
+    {
+      "model_id": "claude-sonnet-4-5",
+      "provider": "anthropic",
+      "context_window": 200000,
+      "max_output_tokens": 64000,
+      "supports_tools": true,
+      "supports_vision": true,
+      "supports_streaming": true,
+      "tokenizer_family": "claude"
+    },
+    {
+      "model_id": "gpt-3.5-turbo",
+      "provider": "openai",
+      "context_window": 16385,
+      "max_output_tokens": 4096,
+      "supports_tools": true,
+      "supports_vision": false,
+      "supports_streaming": true,
+      "tokenizer_family": "cl100k_base"
+    },
+    {
+      "model_id": "gpt-4-turbo",
+      "provider": "openai",
+      "context_window": 128000,
+      "max_output_tokens": 4096,
+      "supports_tools": true,
+      "supports_vision": true,
+      "supports_streaming": true,
+      "tokenizer_family": "cl100k_base"
+    },
+    {
+      "model_id": "gpt-4o",
+      "provider": "openai",
+      "context_window": 128000,
+      "max_output_tokens": 16384,
+      "supports_tools": true,
+      "supports_vision": true,
+      "supports_streaming": true,
+      "tokenizer_family": "o200k_base"
+    },
+    {
+      "model_id": "gpt-4o-mini",
+      "provider": "openai",
+      "context_window": 128000,
+      "max_output_tokens": 16384,
+      "supports_tools": true,
+      "supports_vision": true,
+      "supports_streaming": true,
+      "tokenizer_family": "o200k_base"
+    }
+  ],
+  "tokenizer_families": {
+    "cl100k_base": {
+      "estimate_kind": "chars_div_4",
+      "safety_buffer_fraction": 0.02
+    },
+    "claude": {
+      "estimate_kind": "runes_div_3_5",
+      "safety_buffer_fraction": 0.05
+    },
+    "o200k_base": {
+      "estimate_kind": "chars_div_4",
+      "safety_buffer_fraction": 0.02
+    },
+    "unknown": {
+      "estimate_kind": "chars_div_4",
+      "safety_buffer_fraction": 0.1
+    }
+  }
+}

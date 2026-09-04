@@ -66,3 +66,9 @@ compose:
   - 'infra/scripts/memory-e2e-test-ci.sh'
   - 'infra/scripts/mcp-conformance.sh'
   - 'infra/scripts/observability-*.sh'
+# Heavy Postgres PgVectorStore integration (memory-integration job).
+memory:
+  - 'services/memory/**'
+  - 'infra/migrations/postgres/**'
+  - 'infra/scripts/memory-*.sh'
+  - 'infra/scripts/db-migrate.sh'

@@ -256,7 +256,7 @@ Used by: **proxy** (`services/proxy`)
 | `IBEX_PROVIDER_CIRCUIT_BREAKER_COOLDOWN_SECONDS` | No | `30` | Breaker cool-down in seconds | Integer seconds (not Go duration string) |
 | `IBEX_CONTEXT_ENABLED` | Planned **3.5** | `false` | Master switch for context-assembly injection; `false` = Phase 2 directive-only behavior | Additive; fail-open |
 | `IBEX_CONTEXT_GRPC_ADDR` | Conditional | `127.0.0.1:9092` | Context Assembly Engine gRPC target | Required when context enabled |
-| `IBEX_CONTEXT_TIMEOUT` | Planned **3.5** | `45ms` | Client-side assembly deadline (independent of server internal budget) | Fail-open on timeout |
+| `IBEX_CONTEXT_TIMEOUT` | No (**3.5.C.2**) | `45ms` | Outer parallel-retrieval deadline for context library (`ContextSettings.timeout_ms`); accepts `45` or `45ms` | Fail-open on timeout — return partial sources |
 | `IBEX_CONTEXT_EMBED_METADATA` | Planned **3.5** | `false` | Embed assembly metadata JSON in response (costs a decode) | Off by default |
 | `IBEX_EXTRACTION_REDIS_URL` | Planned **3.5** | (falls back to `REDIS_URL`) | Optional separate Redis for Celery broker | Secret if password present |
 | `IBEX_TOKENIZER_MODE` | No | `local` | `local` \| `service` \| `dual` — how proxy counts tokens | **Shipped 2.5.G2.M1:** `local` only; `service`/`dual` rejected at validate |
@@ -453,7 +453,14 @@ Production (`IBEX_ENV=production`): require `IBEX_WORKER_BROKER_URL` or one of
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `IBEX_CONTEXT_DEADLINE_MS` | No | `40` | Server-side assembly budget |
+| `IBEX_CONTEXT_TIMEOUT` | No | `45ms` | Outer retrieval deadline (also in §9); shared by context library |
+| `IBEX_CONTEXT_DIRECTIVE_TIMEOUT_MS` | No | `5` | Directive Redis GET branch budget |
+| `IBEX_CONTEXT_HOT_TIMEOUT_MS` | No | `15` | Hot-memory HTTP branch budget |
+| `IBEX_CONTEXT_COLD_TIMEOUT_MS` | No | `45` | Cold search HTTP branch budget (embeds server-side) |
+| `IBEX_CONTEXT_MEMORY_BASE_URL` | Conditional | (none) | Memory service base URL for hot/cold HTTP |
+| `IBEX_CONTEXT_MEMORY_API_TOKEN` | Conditional | (none) | Bearer token with `memory:read` |
+| `IBEX_CONTEXT_REDIS_URL` / `REDIS_URL` | Conditional | (none) | Redis for directive cache envelope |
+| `IBEX_CONTEXT_DEADLINE_MS` | No | `40` | Server-side assembly budget (future gRPC service) |
 | `IBEX_CONTEXT_P95_TARGET_MS` | No | `50` | Target p95 | Alerting/benchmarks |
 | `IBEX_CONTEXT_MAX_MEMORIES` | No | `20` | Max memories injected |
 | `IBEX_CONTEXT_RESPONSE_RESERVE_RATIO` | No | `0.15` | Reserve for model output |
@@ -671,7 +678,7 @@ Used by `.github/workflows/benchmark.yml` for cross-repo benchmark publishing an
 
 | Variable | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
-| `BENCHMARK_BOT_ENABLED` | repo variable | No | unset (disabled) | When `true`, notify jobs dispatch to `ibexharness-benchmark-bot` after successful main collects (proxy + Memory HNSW + ranking-quality + write-pipeline) |
+| `BENCHMARK_BOT_ENABLED` | repo variable | No | unset (disabled) | When `true`, notify jobs dispatch to `ibexharness-benchmark-bot` after successful main collects (proxy + Memory HNSW + ranking-quality + write-pipeline). Extraction Quality uses a separate notify path (`extraction_benchmark_main_complete`) from `.github/workflows/extraction-eval.yml` |
 | `BENCHMARK_BOT_SHA` | repo variable | Yes when PR comments enabled | — | Pinned commit SHA of `ibexharness-benchmark-bot` (no `main` fallback). Used by `.github/actions/setup-benchmark-bot` |
 | `BENCHMARK_BOT_RELEASE_TAG` | repo variable | Recommended | — | Release tag for prebuilt `ibex-benchmark-bot-linux-amd64` (e.g. `bot-<7-char-sha>`). Must match `BENCHMARK_BOT_SHA` short SHA or the setup action ignores it and cargo-builds |
 | `BENCHMARK_BOT_DISPATCH_TOKEN` | repo secret | Yes when `BENCHMARK_BOT_ENABLED=true` | — | Fine-grained PAT with **Contents: Read and write** on `ibexharness-benchmark-bot` (required for `repository_dispatch`) |
@@ -683,7 +690,8 @@ Used by `.github/workflows/benchmark.yml` for cross-repo benchmark publishing an
 
 - **Every matching PR:**
   - **Benchmarks** and **Memory Benchmarks** upsert one shared sticky comment (`IBEX_BOT_COMMENT`) with Proxy, Memory HNSW, ranking-quality, and write-pipeline sections. No data PR.
-- **Main / schedule collects:** notify jobs dispatch the bot; bot upserts **one** shared data PR on branch `chore/bench-data-publish` (proxy and/or memory suite JSON files in the same PR).
+  - **Extraction Quality Eval** upserts its own sticky comment via `post-extraction-pr-comment` (setup action `require-subcommand`).
+- **Main / schedule collects:** notify jobs dispatch the bot; bot upserts **one** shared data PR on branch `chore/bench-data-publish` (proxy and/or memory suite JSON files in the same PR). Extraction Quality main collects dispatch `extraction_benchmark_main_complete` for the extraction-quality publish path.
 
 **Pinning:** Keep these three in lockstep after each green bot merge:
 
@@ -691,9 +699,9 @@ Used by `.github/workflows/benchmark.yml` for cross-repo benchmark publishing an
 2. Harness `BENCHMARK_BOT_SHA` = same SHA
 3. Tag `bot-<7-char-sha>`, run bot **Release binary** (uploads binary + `.sha256`), set harness `BENCHMARK_BOT_RELEASE_TAG` to that tag, and update `.github/actions/setup-benchmark-bot/ibex-benchmark-bot-linux-amd64.sha256` to the new digest
 
-Legacy `BENCHMARK_COMMENT_RENDERER_SHA` is deprecated — use `BENCHMARK_BOT_SHA` only. The setup action can `require-subcommand` (Memory collect jobs require `post-hnsw-pr-comment`, `post-ranking-pr-comment`, or `post-write-pr-comment`) so a stale release binary cannot silently break CI.
+Legacy `BENCHMARK_COMMENT_RENDERER_SHA` is deprecated — use `BENCHMARK_BOT_SHA` only. The setup action can `require-subcommand` (Memory collect jobs require `post-hnsw-pr-comment`, `post-ranking-pr-comment`, or `post-write-pr-comment`; Extraction Quality Eval requires `post-extraction-pr-comment`) so a stale release binary cannot silently break CI.
 
-**Rotation:** Rotate `BENCHMARK_BOT_DISPATCH_TOKEN` quarterly. Rotate App private key per bot repo runbook. Update `BENCHMARK_BOT_SHA`, `BENCHMARK_BOT_RELEASE_TAG`, and bot `BOT_RELEASE_SHA` together after security-reviewed bot releases.
+**Rotation:** Rotate `BENCHMARK_BOT_DISPATCH_TOKEN` quarterly. Rotate App private key per bot repo runbook. Update `BENCHMARK_BOT_SHA`, `BENCHMARK_BOT_RELEASE_TAG`, and bot `BOT_RELEASE_SHA` together after security-reviewed bot releases. Current pin after m3.5.B.4 bot suite: tag `bot-14bf45c` (SHA `14bf45c989c28324aad195484914a6540830c770`) with digest in `.github/actions/setup-benchmark-bot/ibex-benchmark-bot-linux-amd64.sha256`.
 
 ---
 

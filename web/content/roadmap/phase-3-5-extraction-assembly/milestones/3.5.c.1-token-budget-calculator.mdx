@@ -1,8 +1,8 @@
 ---
 title: "3.5.C.1 Token Budget Calculator"
-description: "Model-aware, tokenizer-correct budget calculation derived from the Phase 2.5 ModelCapability registry — replacing the original flat 10% safety-buffer guess with tokenizer-family-specific tolerances."
-summary: "Model-aware, tokenizer-correct budget calculation derived from the Phase 2.5 ModelCapability registry — replacing the original flat 10% safety-buffer guess with tokenizer-family-specific tolerances."
-status: "planned"
+description: "Model-aware token budgets from a generate-and-diff export of the Go ModelCapability catalog, with labeled character/rune estimates (ADR-0067)."
+summary: "Model-aware token budgets from a generate-and-diff export of the Go ModelCapability catalog, with labeled character/rune estimates (ADR-0067)."
+status: "completed"
 milestoneId: "3.5.C.1"
 track: "C"
 trackTitle: "Context Assembly Engine"
@@ -10,72 +10,53 @@ trackHref: "/roadmap/phase-3-5-extraction-assembly/tracks#track-c--context-assem
 goal: "[Track C — Context Assembly Engine](/roadmap/phase-3-5-extraction-assembly/tracks#track-c--context-assembly-engine)"
 estimatedEffort: "2 days"
 phase: "phase-3-5-extraction-assembly"
-fullTitle: "Milestone 3.5.C.1 — Token Budget Calculator (Model-Aware, Tokenizer-Correct)"
+fullTitle: "Milestone 3.5.C.1 — Token Budget Calculator (Model-Aware, Estimate-Based)"
 ---
 
-# Milestone 3.5.C.1 — Token Budget Calculator (Model-Aware, Tokenizer-Correct)
+# Milestone 3.5.C.1 — Token Budget Calculator (Model-Aware, Estimate-Based)
 
-**Status:** Planned  
+**Status:** Completed  
 **Goal:** [Track C — Context Assembly Engine](/roadmap/phase-3-5-extraction-assembly/tracks#track-c--context-assembly-engine)  
 **Phase:** 3.5 — Extraction & Context Assembly  
 **Estimated effort:** 2 days  
 **Track:** [Track C — Context Assembly Engine](/roadmap/phase-3-5-extraction-assembly/tracks#track-c--context-assembly-engine)  
-**Depends on:** Phase 3 exit (Phase 2.5 tokenizer service + ModelCapability registry)
+**Depends on:** Phase 2.5 ModelCapability registry ([ADR-0041](/docs/adr/0041-model-capability-registry)) + tokenizer family keys ([ADR-0043](/docs/adr/0043-tokenizer-registry))  
+**ADR:** [ADR-0067](/docs/adr/0067-context-capability-catalog-generate-and-diff)  
+**Follow-up:** [#690](https://github.com/Rick1330/ibex-harness/issues/690) exact HF/Qwen tokenization
 
 ---
 
-<Callout type="note" title="Planning baseline">
-  This page is a planning sketch, not an implementation script. Named paths, package layouts,
-  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
-  that are expected to change once the live code, constraints, and research during implementation
-  make a better shape clear. Prefer outcomes over matching any particular file tree.
-</Callout>
-
 ## Why This Milestone Exists
 
-Every downstream stage in context assembly depends on knowing the real usable token budget for the *specific* model being called. The original design used a flat percentage-reservation scheme without wiring in the multi-tokenizer work already built in Phase 2.5 (`packages/tokenizer` Go package and/or the tokenizer-service). This milestone closes that gap explicitly.
+Every downstream stage in context assembly depends on knowing the usable token budget for the *specific* model being called. Phase 2.5 already curates that metadata in Go (`BuiltInCapabilityCatalog`). This milestone wires Python budget math to that catalog **without** inventing a live tokenizer/capability RPC (reserved for 3.5.C.6).
 
 ---
 
 ## Non-Goals
 
 - Retrieval orchestration itself (3.5.C.2)
+- gRPC `ContextAssemblyService` / degradation contract (3.5.C.6)
+- Exact tiktoken or Hugging Face token counting ([#690](https://github.com/Rick1330/ibex-harness/issues/690))
 - Cross-model comparison analytics
 
 ---
 
-## Orientation (indicative)
-
-Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
-**rough sketches for orientation** — inspiration and a baseline, not a required change list.
-
-During implementation, expect to:
-
-- open the live tree and follow existing patterns before inventing new ones
-- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
-- advance the design beyond the sketch where measurement or code reality says so
-- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
-
-Prefer outcomes over matching any particular file tree or command sequence.
-
-**Areas that may be involved** (situational — not a checklist):
-
-- Context assembly service
-- Tokenizer registry / counting
-
-## Suggested naming (provisional)
-
-Rename freely to match the change that actually lands.
-
-- Branch: `feature/m3-5-c1-token-budget-calculator`
-- PR title: `feat(context): tokenizer-aware token budget calculator (m3.5.C.1)`
-
-## File Layout
+## File layout (as shipped)
 
 ```
-services/context/src/context/services/budget.py # NEW
-services/context/src/context/services/budget_test.py
-services/context/src/context/models/capability.py # shared with Phase 2.5's ModelCapability registry
+services/context/
+  app/data/model_capabilities.v1.json   # generate-and-diff from Go catalog (package data)
+  app/budget.py                         # BudgetCalculator / TokenBudget
+  app/capability_catalog.py             # load/validate JSON
+  app/estimate.py                       # labeled chars_div_4 / runes_div_3_5
+packages/provider/scripts/export_capabilities/  # Go exporter + -check
+```
+
+Regenerate:
+
+```bash
+go run ./packages/provider/scripts/export_capabilities \
+  -o services/context/app/data/model_capabilities.v1.json
 ```
 
 ---
@@ -85,44 +66,40 @@ services/context/src/context/models/capability.py # shared with Phase 2.5's Mode
 ```python
 @dataclass(frozen=True)
 class TokenBudget:
- context_window: int # model's total context window
- response_reserve: int # reserved for the LLM's own output
- safety_buffer: int # % headroom against tokenizer estimation error
- usable_budget: int # context_window - response_reserve - safety_buffer
- directive_tokens: int = 0
- messages_tokens: int = 0
- is_constrained: bool = False # true when usable_budget for memories < MIN_VIABLE_MEMORY_BUDGET
+    context_window: int
+    response_reserve: int
+    safety_buffer: int
+    usable_budget: int
+    directive_tokens: int
+    messages_tokens: int
+    is_constrained: bool
+    estimate_kind: str  # labeled: chars_div_4 | runes_div_3_5
 
 class BudgetCalculator:
- def __init__(self, tokenizer_client: TokenizerClient, capability_registry: CapabilityRegistry): ...
+    def __init__(self, catalog: CapabilityCatalog | None = None): ...
 
- async def calculate(self, model: str, messages: list[Message], directive: str) -> TokenBudget:
- cap = self._capabilities.for_model(model) # from Phase 2.5's registry, not a hardcoded table
- directive_tokens = await self._tokenizer.count(model, directive)
- messages_tokens = await self._tokenizer.count(model, _concat(messages))
- response_reserve = max(cap.default_response_reserve, min(int(cap.context_window * 0.15), 4096))
- safety_buffer = int(cap.context_window * 0.05) # tokenizer-family-specific tolerance, not a magic 10%
- usable = cap.context_window - response_reserve - safety_buffer - directive_tokens - messages_tokens
- return TokenBudget(..., is_constrained=usable < MIN_VIABLE_MEMORY_BUDGET)
+    def calculate(self, model: str, messages: list[Message], directive: str) -> TokenBudget:
+        cap = self._catalog.for_model(model)  # generated JSON; unknown model raises
+        # estimate_tokens uses family policy from the same JSON (not a live TokenizerClient)
+        ...
 ```
+
+There is **no** `TokenizerClient` or network `CapabilityRegistry` in C.1. The catalog is the committed generate-and-diff artifact of `packages/provider.BuiltInCapabilityCatalog`.
 
 ---
 
 ## Design note
 
-The original 10% "safety buffer" was a flat guess. Here it's derived from `cap.tokenizer_family` — a tiktoken-counted model (OpenAI) needs a much smaller buffer (near-exact counts) than an HF-tokenizer-counted local model where drift from prompt template rendering is more likely. This is a direct consequence of Phase 2.5's tokenizer abstraction paying off downstream.
+Safety buffers are **tokenizer-family-specific fractions** from the export (`o200k_base`/`cl100k_base` 2%, `claude` 5%, `unknown` 10%), not a flat 10% guess. Token counts are **labeled approximations** (`estimate_kind` on every `TokenBudget`) until [#690](https://github.com/Rick1330/ibex-harness/issues/690) lands exact backends.
 
-**Failure mode:** if the tokenizer client is unreachable, fall back to a conservative `len(text) // 3` character-based estimate and set `is_constrained=True` — never crash the budget calculation, since everything downstream depends on it.
+**Failure mode:** unknown model IDs raise `UnknownModelError` (fail closed). Estimates always run locally — there is no “tokenizer unreachable” network path in C.1.
 
 ---
 
 ## Success signals
 
-Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
-
-- [ ] `TokenBudget` computed per real model capability, not a static table
-- [ ] Tokenizer failures degrade to char-estimate, never raise
-- [ ] Unit tests: budget for GPT-4o vs. a local Llama-3.1-8B model produce materially different `safety_buffer` values (proves the tokenizer-family branch is exercised)
-- [ ] `is_constrained` correctly triggers the "skip cold search" fast-path used in Track C's retriever
-
----
+- [x] `TokenBudget` computed from generate-and-diff catalog rows (not a hand-copied Python table)
+- [x] Unknown models fail closed; estimates always labeled via `estimate_kind`
+- [x] Unit tests: `gpt-4o` vs `claude-sonnet-4-5` produce different `safety_buffer` values (catalog has no Llama row yet)
+- [x] `is_constrained` when usable budget is below `MIN_VIABLE_MEMORY_BUDGET` (256)
+- [x] CI `capability-catalog-freshness` fails on catalog/JSON drift
