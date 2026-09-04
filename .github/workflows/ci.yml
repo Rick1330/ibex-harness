@@ -208,6 +208,31 @@ jobs:
           go mod tidy
           git diff --exit-code go.mod go.sum
 
+  capability-catalog-freshness:
+    name: capability-catalog-freshness
+    needs: changes
+    if: needs.changes.outputs.run_go == 'true' || needs.changes.outputs.run_python == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Fail if model_capabilities.v1.json drifts from Go catalog
+        run: |
+          set -euo pipefail
+          go run ./packages/provider/scripts/export_capabilities \
+            -check services/context/app/data/model_capabilities.v1.json
+
   shellcheck:
     name: shellcheck
     runs-on: ubuntu-latest
@@ -954,6 +979,40 @@ jobs:
           enable-cache: true
       - name: Worker unit tests (pytest + ruff)
         run: bash infra/scripts/worker-test-ci.sh
+
+  context-test:
+    name: context-test
+    needs: changes
+    if: needs.changes.outputs.run_go == 'true' || needs.changes.outputs.run_python == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+      - name: Context unit tests (pytest + ruff)
+        run: bash infra/scripts/context-test-ci.sh
+      - name: Upload coverage reports to Codecov
+        continue-on-error: true
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: services/context/coverage-context.xml
+          flags: context,python
+          fail_ci_if_error: false
 
   worker-integration:
     name: worker-integration
@@ -1961,6 +2020,7 @@ jobs:
       - markdown
       - compose-validate
       - go-mod-tidy
+      - capability-catalog-freshness
       - license-check
     if: always()
     runs-on: ubuntu-latest
@@ -1978,6 +2038,7 @@ jobs:
             "${{ needs.markdown.result }}" \
             "${{ needs.compose-validate.result }}" \
             "${{ needs.go-mod-tidy.result }}" \
+            "${{ needs.capability-catalog-freshness.result }}" \
             "${{ needs.license-check.result }}"
 
   ci-gate-go:
@@ -2095,6 +2156,7 @@ jobs:
       - worker-test
       - worker-integration
       - worker-coverage
+      - context-test
       - e2e-smoke-p3-memory
       - verify-phase25
     if: always()
@@ -2119,5 +2181,6 @@ jobs:
             "${{ needs.worker-test.result }}" \
             "${{ needs.worker-integration.result }}" \
             "${{ needs.worker-coverage.result }}" \
+            "${{ needs.context-test.result }}" \
             "${{ needs.e2e-smoke-p3-memory.result }}" \
             "${{ needs.verify-phase25.result }}"

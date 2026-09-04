@@ -64,6 +64,7 @@
     "0063-extraction-output-schema-v2",
     "0064-extraction-provider-and-batch-execution",
     "0065-extraction-batch-idempotency",
-    "0066-extraction-quality-evaluation-harness"
+    "0066-extraction-quality-evaluation-harness",
+    "0067-context-capability-catalog-generate-and-diff"
   ]
 }

@@ -17,3 +17,6 @@ coverage:
     embedder:
       paths:
         - services/embedder/app/
+    context:
+      paths:
+        - services/context/app/
