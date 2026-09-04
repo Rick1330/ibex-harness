@@ -63,6 +63,24 @@ class PromptManifestTests(unittest.TestCase):
         ids_k = {json.loads(ln)["conversation_id"] for ln in cassettes}
         self.assertEqual(ids_c, ids_k)
 
+    def test_cassette_turn_coverage_mismatch_fails_closed(self) -> None:
+        conversations = [
+            {
+                "conversation_id": "cX",
+                "turns": [{"turn_index": 0, "role": "user", "content": "a"}],
+            }
+        ]
+        cassettes = {
+            "cX": {
+                "conversation_id": "cX",
+                "model": "gpt-4o-mini",
+                "raw_json": json.dumps({"turns": []}),
+            }
+        }
+        with self.assertRaises(SystemExit) as ctx:
+            run_eval._assert_cassette_turn_coverage(conversations, cassettes)
+        self.assertIn("cassette turn_index set mismatch", str(ctx.exception))
+
 
 class BuildPublishedTests(unittest.TestCase):
     def test_merge_prepends_and_dedupes_sha(self) -> None:

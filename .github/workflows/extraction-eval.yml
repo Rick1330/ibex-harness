@@ -193,6 +193,7 @@ jobs:
             --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
 
       - name: Validate published extraction-quality schema
+        id: validate-published-schema
         if: always()
         run: |
           set -euo pipefail
@@ -234,7 +235,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Upload extraction-quality published data artifact
-        if: always()
+        if: always() && steps.validate-published-schema.outcome == 'success'
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: extraction-quality-benchmark-data
@@ -252,7 +253,7 @@ jobs:
         continue-on-error: true
 
       - name: Post extraction-quality PR comment
-        if: always() && steps.bot.outcome == 'success' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        if: always() && steps.validate-published-schema.outcome == 'success' && steps.bot.outcome == 'success' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
         env:
           GITHUB_TOKEN: ${{ secrets.BENCHMARK_BOT_APP_PRIVATE_KEY != '' && secrets.GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
           EXTRACTION_BENCHMARK_DATA_PATH: web/public/benchmarks/extraction-quality-benchmark-data.json

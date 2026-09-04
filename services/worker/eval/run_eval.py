@@ -202,6 +202,25 @@ def _assert_cassette_integrity(
         )
     if set(cassettes) != conv_ids:
         raise SystemExit("conversation_id set mismatch between conversations and cassettes")
+    _assert_cassette_turn_coverage(bundle.conversations, cassettes)
+
+
+def _assert_cassette_turn_coverage(
+    conversations: list[dict[str, Any]],
+    cassettes: dict[str, dict[str, Any]],
+) -> None:
+    """Fail closed when a cassette omits/extra turns vs its source conversation."""
+    for conv in conversations:
+        cid = str(conv["conversation_id"])
+        conv_turns = {int(turn["turn_index"]) for turn in conv["turns"]}
+        row = cassettes[cid]
+        batch = parse_batch_result(str(row["raw_json"]))
+        cas_turns = {int(turn.turn_index) for turn in batch.turns}
+        if cas_turns != conv_turns:
+            raise SystemExit(
+                f"cassette turn_index set mismatch for {cid}: "
+                f"conversation={sorted(conv_turns)} cassette={sorted(cas_turns)}"
+            )
 
 
 def _assert_gold_integrity(
