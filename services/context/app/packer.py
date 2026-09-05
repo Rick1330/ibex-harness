@@ -77,6 +77,15 @@ class _FinalizeArgs:
     path: PackPath
 
 
+@dataclass(frozen=True, slots=True)
+class _RepairArgs:
+    selected: list[int]
+    candidates: list[ScoredMemory]
+    tokens: list[int]
+    token_budget: int
+    values: list[float]
+
+
 class ContextPacker:
     """Bucketed 0/1 knapsack with greedy fallback."""
 
@@ -147,7 +156,13 @@ class ContextPacker:
         else:
             selected = _dp_select(weights, values, buckets)
             selected = self._repair_exact_budget(
-                selected, candidates, tokens, token_budget, values
+                _RepairArgs(
+                    selected=selected,
+                    candidates=candidates,
+                    tokens=tokens,
+                    token_budget=token_budget,
+                    values=values,
+                )
             )
             path = "dp"
         return self._finalize(
@@ -213,16 +228,13 @@ class ContextPacker:
                 break
         return selected
 
-    def _repair_exact_budget(
-        self,
-        selected: list[int],
-        candidates: list[ScoredMemory],
-        tokens: list[int],
-        token_budget: int,
-        values: list[float],
-    ) -> list[int]:
+    def _repair_exact_budget(self, args: _RepairArgs) -> list[int]:
         """Drop over-budget picks, then refill freed capacity from rejects."""
-        chosen = list(selected)
+        chosen = list(args.selected)
+        tokens = args.tokens
+        values = args.values
+        candidates = args.candidates
+        token_budget = args.token_budget
         while chosen and sum(tokens[i] for i in chosen) > token_budget:
             drop_at = min(
                 range(len(chosen)),
