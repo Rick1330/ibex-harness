@@ -38,6 +38,7 @@ from metrics import (  # noqa: E402
     precision_at_k,
     recall_at_k,
 )
+from relevance_gate_probe import evaluate_relevance_gate_probe  # noqa: E402
 from seed import GOLD_SET_PATH, GoldSeedResult, load_gold_set, seed_gold_set  # noqa: E402
 from validate_gold_set import validate_gold_set  # noqa: E402
 
@@ -179,6 +180,7 @@ async def run_bench(*, gold_path: Path) -> dict:
 
         aggregate = _aggregate_metrics(per_query, top_cat_hits=top_cat_hits)
         _assert_perfect_metrics(per_query)
+        gate_probe = await evaluate_relevance_gate_probe(repo, eval_ctx)
         return {
             "benchmark": "ranking_quality",
             "schema_version": 1,
@@ -190,6 +192,7 @@ async def run_bench(*, gold_path: Path) -> dict:
             "memory_count": len(seed.content_key_to_memory_id),
             "metrics": aggregate,
             "queries": per_query,
+            "relevance_gate_probe": gate_probe,
         }
     finally:
         await engine.dispose()

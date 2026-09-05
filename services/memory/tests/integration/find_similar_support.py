@@ -52,6 +52,7 @@ class InsertScoredMemoryParams:
     confidence: float = 0.85
     usefulness_score: float = 0.5
     status: str = "active"
+    retrieval_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -151,10 +152,12 @@ async def insert_scored_memory(
                 """
                 INSERT INTO ibex_core.memories (
                     id, org_id, agent_id, content, content_hash, content_tokens,
-                    category, confidence, usefulness_score, status, valid_from
+                    category, confidence, usefulness_score, status, valid_from,
+                    retrieval_count
                 ) VALUES (
                     :id, :org_id, :agent_id, :content, :hash, :tokens,
-                    :category, :confidence, :usefulness, :status, :valid_from
+                    :category, :confidence, :usefulness, :status, :valid_from,
+                    :retrieval_count
                 )
                 """
             ),
@@ -170,6 +173,7 @@ async def insert_scored_memory(
                 "usefulness": params.usefulness_score,
                 "status": params.status,
                 "valid_from": params.valid_from,
+                "retrieval_count": params.retrieval_count,
             },
         )
     return memory_id

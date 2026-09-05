@@ -70,7 +70,8 @@ def test_hydrated_hit_composite_inputs_matches_write_cache_shape() -> None:
             confidence=0.8,
             retrieval_count=5,
             age_days=10.0,
-        )
+        ),
+        now=now,
     )
     inputs = hit.composite_inputs(1.0, now=now)
     assert inputs.categories == ("factual",)

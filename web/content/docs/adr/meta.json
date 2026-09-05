@@ -65,6 +65,7 @@
     "0064-extraction-provider-and-batch-execution",
     "0065-extraction-batch-idempotency",
     "0066-extraction-quality-evaluation-harness",
-    "0067-context-capability-catalog-generate-and-diff"
+    "0067-context-capability-catalog-generate-and-diff",
+    "0068-composite-relevance-gate"
   ]
 }

@@ -458,6 +458,16 @@
       "usefulness_score": 0.5,
       "embedding_hotspot": 25,
       "content": "Team lunch at the cafe downstairs after the release celebration."
+    },
+    {
+      "content_key": "gold.noise.relevance_gate_bait",
+      "category": "factual",
+      "valid_from_days_ago": 7,
+      "confidence": 1.0,
+      "usefulness_score": 1.0,
+      "retrieval_count": 1000,
+      "embedding_hotspot": 26,
+      "content": "Synthetic relevance-gate bait: stale-but-frequent orthogonal noise that must be excluded when retrieval is opened below the gold-set ANN cutoff (m3.5.C.3)."
     }
   ],
   "queries": [
