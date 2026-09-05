@@ -30,7 +30,7 @@ Track C needs a formatter that turns a resolved directive, recent messages, and 
 ### 1) Locked injection order
 
 ```
-1. Directive (plain text + untrusted-data instruction naming the session nonce)
+1. Directive (plain text + untrusted-data instruction naming the assembly nonce)
 2. Conversation history (native `role: content` lines — not XML-wrapped)
 3. Memories by category: procedural → factual → preference → behavioral → episodic
 4. Tool schemas (optional; omitted when empty)
@@ -46,12 +46,12 @@ Unknown categories (if any) append after the five known buckets, sorted by `(cat
 - Consumes `ResolvedDirective | None`, `Sequence[Message]`, `PackedMemories`, optional `tool_schemas`
 - Does **not** orchestrate budget → retrieve → pack (3.5.C.6)
 
-### 3) Session nonce
+### 3) Per-assembly nonce + XML-escaped memory bodies
 
 - Generate with Python stdlib **`secrets.token_urlsafe(nbytes)`** (OS CSPRNG) — no home-grown crypto ([SECURITY.md](/engineering/SECURITY) §6.4 / AGENTS §5.4).
-- Default `nbytes=16` (~128 bits of entropy); env `IBEX_CONTEXT_FORMATTER_NONCE_BYTES`.
-- Scope: **one nonce per `format()` call** (one assembly). Spoofed tags inside memory content that use a different nonce cannot satisfy a consumer that only trusts the real nonce.
-- Memory content is emitted as-is; the nonce (not HTML escaping) is the delimiter spoof defense.
+- Default `nbytes=16` (~128 bits of entropy); env `IBEX_CONTEXT_FORMATTER_NONCE_BYTES` (allowed **1..64**).
+- Scope: **one nonce per `format()` call** (one assembly). Open tags carry `nonce="{assembly}"`; consumers must only trust tags whose nonce matches this assembly.
+- **Boundary contract:** memory body text is **XML-escaped** (`&`, `<`, `>` → entities) before emission so untrusted content cannot forge `</ibex_memory>` (or any tag) and prematurely close the authenticated block. The nonce alone does **not** protect against close-tag injection inside raw content — escaping does. The nonce prevents *spoofed open tags* that claim authenticity without the assembly secret.
 
 ### 4) Doc supersession
 
@@ -67,5 +67,5 @@ This ADR **supersedes** the stale ARCHITECTURE.md “Format and inject” histor
 
 1. **Amend ADR-0042** — rejected: wrong document (Phase 2.5 self-hosted adapter).
 2. **Amend ADR-0038** — rejected: mixes gRPC contract with formatting policy; 0038 has no ordering section.
-3. **HTML-escape memory content instead of nonce** — insufficient alone for spoofed delimiter tags; nonce is the SECURITY.md §7.3 contract.
+3. **Nonce alone without body escaping** — rejected for close-tag forgery: raw `</ibex_memory>` in content could terminate the block; escaping is required in addition to the per-assembly open-tag nonce.
 4. **XML-wrap history** — rejected: milestone success signal requires native role messages for trusted history.

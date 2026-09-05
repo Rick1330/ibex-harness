@@ -101,10 +101,11 @@ class ContextSettings(BaseSettings):
     formatter_nonce_bytes: int = Field(
         default=16,
         ge=1,
+        le=64,
         validation_alias="IBEX_CONTEXT_FORMATTER_NONCE_BYTES",
         description=(
-            "Byte length for secrets.token_urlsafe session nonce on memory "
-            "delimiters (ADR-0070)."
+            "Byte length for secrets.token_urlsafe per-assembly nonce on memory "
+            "delimiters (ADR-0070); allowed range 1..64."
         ),
     )
 
