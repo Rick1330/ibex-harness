@@ -51,6 +51,23 @@ class Settings(BaseSettings):
         description="Default min cosine similarity for vector search",
     )
 
+    # Scoring-time relevance floor (ADR-0068) — distinct from vector_search_min_similarity.
+    # Must stay strictly below FTS_COMPOSITE_RELEVANCE (0.5) so FTS hits are not mass-excluded.
+    composite_relevance_floor: float = Field(
+        default=0.15,
+        ge=0.0,
+        lt=0.5,
+        validation_alias=AliasChoices(
+            "IBEX_COMPOSITE_RELEVANCE_FLOOR",
+            "IBEX_MEMORY_COMPOSITE_RELEVANCE_FLOOR",
+        ),
+        description=(
+            "Scoring-time floor on the composite relevance component; candidates below "
+            "are excluded before composite_score (not the ANN min_similarity cutoff). "
+            "Must be < 0.5 (FTS composite relevance sentinel)"
+        ),
+    )
+
     hnsw_ef_search: int = Field(
         default=40,
         ge=1,

@@ -257,6 +257,8 @@ Used by: **proxy** (`services/proxy`)
 | `IBEX_CONTEXT_ENABLED` | Planned **3.5** | `false` | Master switch for context-assembly injection; `false` = Phase 2 directive-only behavior | Additive; fail-open |
 | `IBEX_CONTEXT_GRPC_ADDR` | Conditional | `127.0.0.1:9092` | Context Assembly Engine gRPC target | Required when context enabled |
 | `IBEX_CONTEXT_TIMEOUT` | No (**3.5.C.2**) | `45ms` | Outer parallel-retrieval deadline for context library (`ContextSettings.timeout_ms`); accepts `45` or `45ms` | Fail-open on timeout — return partial sources |
+| `IBEX_CONTEXT_PACKER_DP_CELL_CEILING` | No (**3.5.C.4**) | `437570` (`70×6251`) | If `n × (buckets+1)` exceeds this, `ContextPacker` falls back to greedy ([ADR-0069](../content/docs/adr/0069-context-packer-dp-knapsack)) | Safety valve for pathological DP table sizes |
+| `IBEX_CONTEXT_PACKER_MAX_CONSECUTIVE_SKIPS` | No (**3.5.C.4**) | `5` | Greedy fallback consecutive-skip limit before stopping | Used only on greedy path |
 | `IBEX_CONTEXT_EMBED_METADATA` | Planned **3.5** | `false` | Embed assembly metadata JSON in response (costs a decode) | Off by default |
 | `IBEX_EXTRACTION_REDIS_URL` | Planned **3.5** | (falls back to `REDIS_URL`) | Optional separate Redis for Celery broker | Secret if password present |
 | `IBEX_TOKENIZER_MODE` | No | `local` | `local` \| `service` \| `dual` — how proxy counts tokens | **Shipped 2.5.G2.M1:** `local` only; `service`/`dual` rejected at validate |
@@ -457,6 +459,8 @@ Production (`IBEX_ENV=production`): require `IBEX_WORKER_BROKER_URL` or one of
 | `IBEX_CONTEXT_DIRECTIVE_TIMEOUT_MS` | No | `5` | Directive Redis GET branch budget |
 | `IBEX_CONTEXT_HOT_TIMEOUT_MS` | No | `15` | Hot-memory HTTP branch budget |
 | `IBEX_CONTEXT_COLD_TIMEOUT_MS` | No | `45` | Cold search HTTP branch budget (embeds server-side) |
+| `IBEX_CONTEXT_PACKER_DP_CELL_CEILING` | No | `437570` | DP→greedy fallback when `n×(buckets+1)` exceeds ceiling ([ADR-0069](../content/docs/adr/0069-context-packer-dp-knapsack)) |
+| `IBEX_CONTEXT_PACKER_MAX_CONSECUTIVE_SKIPS` | No | `5` | Greedy consecutive-skip stop (also in §9) |
 | `IBEX_CONTEXT_MEMORY_BASE_URL` | Conditional | (none) | Memory service base URL for hot/cold HTTP |
 | `IBEX_CONTEXT_MEMORY_API_TOKEN` | Conditional | (none) | Bearer token with `memory:read` |
 | `IBEX_CONTEXT_REDIS_URL` / `REDIS_URL` | Conditional | (none) | Redis for directive cache envelope |
@@ -477,6 +481,7 @@ Proxy client switches for assembly live in §9 (`IBEX_CONTEXT_ENABLED`, `IBEX_CO
 | `IBEX_RANK_WEIGHT_USEFULNESS` | No | `0.20` | Usefulness / feedback weight |
 | `IBEX_RANK_WEIGHT_CONFIDENCE` | No | `0.10` | Confidence weight |
 | `IBEX_RANK_WEIGHT_FREQUENCY` | No | `0.05` | Access frequency weight |
+| `IBEX_COMPOSITE_RELEVANCE_FLOOR` | No | `0.15` | Scoring-time floor on the composite relevance component; candidates below are excluded before `composite_score` ([ADR-0068](../content/docs/adr/0068-composite-relevance-gate)). Distinct from retrieval `min_similarity` ([ADR-0053](../content/docs/adr/0053-vector-store-abstraction)). Alias: `IBEX_MEMORY_COMPOSITE_RELEVANCE_FLOOR`. Must be &lt; `0.5` (settings); values &gt; `0.5` would exclude FTS hits. |
 
 **Rule:** weights must sum to 1.0; validate at startup.
 

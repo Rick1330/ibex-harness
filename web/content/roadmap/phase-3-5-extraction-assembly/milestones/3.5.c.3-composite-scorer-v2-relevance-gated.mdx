@@ -1,8 +1,8 @@
 ---
 title: "3.5.C.3 Composite Scorer v2 — Relevance-Gated"
-description: "Fix the acknowledged scoring bug with a hard relevance floor gate and category-conditional decay half-lives, making it structurally impossible for an irrelevant memory to outrank a relevant one."
-summary: "Fix the acknowledged scoring bug with a hard relevance floor gate and category-conditional decay half-lives, making it structurally impossible for an irrelevant memory to outrank a relevant one."
-status: "planned"
+description: "Scoring-time relevance floor on the memory read path before composite_score (ADR-0068), distinct from ADR-0053 retrieval min_similarity."
+summary: "Scoring-time relevance floor on the memory read path before composite_score (ADR-0068), distinct from ADR-0053 retrieval min_similarity."
+status: "completed"
 milestoneId: "3.5.C.3"
 track: "C"
 trackTitle: "Context Assembly Engine"
@@ -10,35 +10,26 @@ trackHref: "/roadmap/phase-3-5-extraction-assembly/tracks#track-c--context-assem
 goal: "[Track C — Context Assembly Engine](/roadmap/phase-3-5-extraction-assembly/tracks#track-c--context-assembly-engine)"
 estimatedEffort: "2 days"
 phase: "phase-3-5-extraction-assembly"
-fullTitle: "Milestone 3.5.C.3 — Composite Scorer v2 (Relevance-Gated, Category-Conditional Decay)"
+fullTitle: "Milestone 3.5.C.3 — Composite Scorer v2 (Relevance-Gated)"
 ---
 
-# Milestone 3.5.C.3 — Composite Scorer v2 (Relevance-Gated, Category-Conditional Decay)
+# Milestone 3.5.C.3 — Composite Scorer v2 (Relevance-Gated)
 
-**Status:** Planned  
+**Status:** Completed  
 **Goal:** [Track C — Context Assembly Engine](/roadmap/phase-3-5-extraction-assembly/tracks#track-c--context-assembly-engine)  
 **Phase:** 3.5 — Extraction & Context Assembly  
 **Estimated effort:** 2 days  
 **Track:** [Track C — Context Assembly Engine](/roadmap/phase-3-5-extraction-assembly/tracks#track-c--context-assembly-engine)  
-**ADR required:** ADR-0040 (rewritten) — Memory scoring formula v2
-**Depends on:** [3.5.C.2](/roadmap/phase-3-5-extraction-assembly/milestones/3.5.c.2-parallel-retrieval-orchestration)
+**Depends on:** [3.5.C.2](/roadmap/phase-3-5-extraction-assembly/milestones/3.5.c.2-parallel-retrieval-orchestration) + composite ranking from 3.D.2  
+**ADR:** [ADR-0068](/docs/adr/0068-composite-relevance-gate)
 
 ---
 
-<Callout type="note" title="Planning baseline">
-  This page is a planning sketch, not an implementation script. Named paths, package layouts,
-  libraries, schemas, env vars, and checklists are **orientation aids** — useful starting points
-  that are expected to change once the live code, constraints, and research during implementation
-  make a better shape clear. Prefer outcomes over matching any particular file tree.
-</Callout>
-
 ## Why This Milestone Exists
 
-The original design's own scorer test documents its own flaw and just shrugs at it:
+Without a scoring-time gate, a near-zero relevance candidate with high confidence / usefulness / access frequency can outrank a highly relevant memory when retrieval is opened below the production ANN cutoff. Reweighting alone leaves that failure mode open. A **hard relevance floor** excludes irrelevant candidates before they enter the weighted sum.
 
-> "`test_relevance_dominates`: ... First must score higher (0.40 > 0.25+0.20+0.10+0.05 = 0.60... wait actually 0.40 < 0.60 — this means a very old, frequently accessed, high-confidence memory can outscore a highly relevant one). Document this in ADR."
-
-That's not a documented tradeoff — it's a bug being pre-emptively excused. A memory scorer where irrelevant-but-old-and-frequently-accessed content can outrank the single most relevant memory to the current query is a **retrieval-quality regression by design**. This redesign fixes it with a **relevance gate**, not just a reweighting.
+Category-conditional half-lives and formula weights already shipped in **3.D.2** and are **out of scope** here (see 3.D.2 Non-Goals, which deferred this gate to 3.5.C.3).
 
 ---
 
@@ -46,92 +37,56 @@ That's not a documented tradeoff — it's a bug being pre-emptively excused. A m
 
 - Packing (3.5.C.4)
 - Changing the proto wire contract
+- Changing `CATEGORY_HALF_LIFE_DAYS` or composite formula weights
+- Adding scoring code under `services/context/`
 
 ---
 
-## Orientation (indicative)
+## File layout (as shipped)
 
-Named paths, package layouts, libraries, schemas, env vars, and commands anywhere on this page are
-**rough sketches for orientation** — inspiration and a baseline, not a required change list.
+```
+services/memory/app/scoring/relevance_gate.py   # passes_relevance_floor()
+services/memory/app/scoring/composite.py        # score() / composite_score() unchanged (pure sum)
+services/memory/app/read/ranking.py             # gate inside rank_hydrated_hits before composite_score
+services/memory/app/read/repository.py          # passes Settings.composite_relevance_floor
+services/memory/app/config.py                   # composite_relevance_floor (default 0.15)
+```
 
-During implementation, expect to:
+Settings / env:
 
-- open the live tree and follow existing patterns before inventing new ones
-- research current constraints (latency, tenancy, deploy shape, libraries) more deeply than this page can
-- advance the design beyond the sketch where measurement or code reality says so
-- land work in different filenames, merged packages, deferred docs, or new surfaces when the situation calls for it
+- `IBEX_COMPOSITE_RELEVANCE_FLOOR` / `IBEX_MEMORY_COMPOSITE_RELEVANCE_FLOOR` (default **0.15**)
 
-Prefer outcomes over matching any particular file tree or command sequence.
+This is **distinct** from retrieval-time `vector_search_min_similarity` / `min_similarity` ([ADR-0053](/docs/adr/0053-vector-store-abstraction), default 0.70).
 
-**Areas that may be involved** (situational — not a checklist):
+Planning sketches that placed a `MemoryScorer` under `services/context` or reused **ADR-0040** were stale: ADR-0040 is the Anthropic provider adapter; context assembly consumes already-ranked results and does not own scoring.
 
-- Context assembly service
-- Tokenizer registry / counting
-
-## Suggested naming (provisional)
-
-Rename freely to match the change that actually lands.
-
-- Branch: `feature/m3-5-c3-composite-scorer-v2`
-- PR title: `fix(context): composite scorer v2 with relevance gate and category-conditional decay (m3.5.C.3)`
+---
 
 ## Design
 
 ```python
-# Illustrative — exact path may differ
-
-RELEVANCE_FLOOR = 0.15 # memories below this cosine similarity are excluded before scoring, period
-
-# Category-conditional half-lives (days) — replaces the single global λ=0.05
-CATEGORY_HALF_LIFE_DAYS: dict[str, float] = {
- "factual": 180.0, # "user's DB is Postgres" — barely decays
- "procedural": 365.0, # "how to deploy" — decays even slower; correctness-critical
- "preference": 90.0,
- "behavioral": 45.0,
- "episodic": 14.0, # original λ=0.05 value, now scoped to where it's actually correct
-}
-
-class MemoryScorer:
- def score(self, memories: list[dict], query_embedding: list[float]) -> list[ScoredMemory]:
- # Gate FIRST: never let a stale-but-frequent memory outcompete a relevant one
- # by simply not scoring irrelevant candidates at all.
- candidates = [m for m in memories if m.get("similarity", 0.0) >= RELEVANCE_FLOOR]
- scored = [self._score_one(m) for m in candidates]
- scored.sort(key=lambda m: m.composite_score, reverse=True)
- return scored
-
- def _recency(self, memory: dict) -> float:
- half_life = CATEGORY_HALF_LIFE_DAYS.get(memory.get("category", "episodic"), 14.0)
- lam = math.log(2) / half_life
- age_days = _age_days(memory.get("created_at"))
- return math.exp(-lam * age_days)
+# Gate FIRST in rank_hydrated_hits — before composite_score
+relevance = relevance_for_composite(ranked)  # vector cosine or FTS sentinel 0.5
+if not passes_relevance_floor(relevance, relevance_floor):
+    continue  # never scored
+composite = composite_score(hit.composite_inputs(relevance, now=reference))
 ```
 
----
-
-## Why a Hard Relevance Floor Instead of Just Reweighting
-
-Reweighting (e.g., bumping relevance to 0.60) still leaves an unbounded failure mode — with enough accumulated `retrieval_count` and `confidence`, a stale memory can eventually cross any fixed weight threshold. A **gate** is a hard invariant: irrelevant content structurally cannot be scored, let alone win. This is the standard pattern used by real retrieval-ranking systems (BM25/vector prefilter → rerank), not a novel idea — it's what the original design should have had from the start.
+Floor must be **&lt; 0.5** (settings enforce this). Gate semantics: FTS sentinel `0.5` fails only when floor **&gt; 0.5**.
 
 ---
 
-## ADR-0040 (Rewritten) — Memory Scoring Formula v2
+## Empirical floor choice
 
-Must document, verbatim as an ADR section:
-- The relevance-floor rationale and the exact failure mode it prevents (cite the original test's own admission as the motivating bug report).
-- Category half-life table with justification per category (reference the retrieval-quality gold-set benchmark from Phase 3 Track B as the empirical validation source).
-- Formula weights unchanged (0.40/0.25/0.20/0.10/0.05) — validated, not redesigned, since the gate is what fixes the failure mode, not the weights themselves.
-- Explicit compatibility note: `AssemblyOptions` per-request weight overrides now apply *after* the relevance gate; callers cannot use weight overrides to bypass the gate.
+Swept `{0.10, 0.15, 0.20, 0.25, 0.30}` against gold-set **default** retrieval semantics (`min_similarity=0.5` in `bench_ranking_quality.py`). Neutrality of precision@5 / recall@10 / MRR versus baseline **1.0** under that cutoff is **by construction** (hits already have relevance ≥ 0.5). The gold set also includes `gold.noise.relevance_gate_bait`; the bench runs a separate opened-retrieval **relevance_gate_probe** (`min_similarity=0.0`) that fails unless the bait is excluded — see [ADR-0068](/docs/adr/0068-composite-relevance-gate). Default floor **0.15**.
 
 ---
 
 ## Success signals
 
-Outcome-oriented signals that the milestone is in good shape. Exact filenames, package layouts, and commands may differ from any sketches above.
-
-- [ ] `RELEVANCE_FLOOR` gate implemented and unit-tested: a memory with similarity=0.05, confidence=1.0, retrieval_count=1000 must score **zero / be excluded**, not merely rank low
-- [ ] Category half-life table implemented; unit test proves a 60-day-old `factual` memory scores higher on recency than a 60-day-old `episodic` memory
-- [ ] Regression test against the Phase 3 Track B retrieval-quality gold set — this scorer change should not decrease precision@k on the committed baseline
-- [ ] ADR-0040 rewritten and cross-linked from this milestone
-
----
+- [x] Relevance floor gate unit-tested: below excluded; at/above scored; empty / all-below → `[]`
+- [x] Classic noise case (similarity≈0.05, high non-relevance components) excluded, not merely ranked low
+- [x] Gold-set metrics preserved on default queries (precision@5 / recall@10 / MRR = 1.0); opened-retrieval gate probe excludes synthetic bait
+- [x] ADR-0068 accepted and linked; half-lives / weights untouched
+- [x] No scoring or proto changes under `services/context/`
+- [x] AssemblyOptions weight overrides documented as unwired until 3.5.C.6 (apply after the gate when connected)

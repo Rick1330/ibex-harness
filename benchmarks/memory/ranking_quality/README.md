@@ -30,6 +30,12 @@ Embeddings use deterministic `zero_embedding(hotspot=…)` so vector similarity 
 stable without a live embedder. Category-decay cases use distinct topics/ages from
 the 3.D.2 90d factual / 14d episodic dark-mode pair.
 
+**Relevance-gate probe (m3.5.C.3):** gold set includes `gold.noise.relevance_gate_bait`
+(orthogonal hotspot, high confidence/usefulness/`retrieval_count`). Default queries keep
+`min_similarity=0.5` (floors ≤0.30 never filter those hits). After the query loop,
+`bench_ranking_quality.py` opens retrieval (`min_similarity=0.0`, `limit=50`) and fails
+unless the bait is excluded while a same-hotspot relevant memory remains.
+
 ## Run locally
 
 From repo root (migrated Postgres on `POSTGRES_TEST_DSN`):

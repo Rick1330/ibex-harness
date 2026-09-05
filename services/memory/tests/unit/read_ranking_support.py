@@ -32,8 +32,12 @@ class HydratedHitSeed:
     retrieval_count: int = 0
 
 
-def memory_search_result(seed: MemoryResultSeed) -> MemorySearchResult:
-    now = datetime.now(UTC)
+def memory_search_result(
+    seed: MemoryResultSeed,
+    *,
+    now: datetime | None = None,
+) -> MemorySearchResult:
+    reference = now or datetime.now(UTC)
     return MemorySearchResult(
         id=seed.memory_id,
         org_id=uuid4(),
@@ -44,13 +48,23 @@ def memory_search_result(seed: MemoryResultSeed) -> MemorySearchResult:
         status="active",
         similarity=seed.similarity,
         source=seed.source,  # type: ignore[arg-type]
-        created_at=now,
-        updated_at=now,
+        created_at=reference,
+        updated_at=reference,
     )
 
 
-def hydrated_hit(seed: HydratedHitSeed) -> HydratedHit:
-    now = datetime.now(UTC)
+def hydrated_hit(
+    seed: HydratedHitSeed,
+    *,
+    now: datetime | None = None,
+) -> HydratedHit:
+    """Build a hit whose ``valid_from`` is ``now - age_days``.
+
+    Callers that pass a fixed ``now`` into ``rank_hydrated_hits`` must pass the
+    same reference here; otherwise wall-clock drift vs the fixed rank clock
+    silently changes ages and can invert category half-life ordering.
+    """
+    reference = now or datetime.now(UTC)
     return HydratedHit(
         result=memory_search_result(
             MemoryResultSeed(
@@ -59,9 +73,10 @@ def hydrated_hit(seed: HydratedHitSeed) -> HydratedHit:
                 confidence=seed.confidence,
                 similarity=seed.similarity,
                 source=seed.source,
-            )
+            ),
+            now=reference,
         ),
-        valid_from=now - timedelta(days=seed.age_days),
+        valid_from=reference - timedelta(days=seed.age_days),
         usefulness_score=seed.usefulness,
         retrieval_count=seed.retrieval_count,
     )
@@ -140,7 +155,8 @@ def episodic_vector_fts_scenario(seed: EpisodicVectorFtsSeed) -> RankScenario:
                 usefulness=usefulness,
                 confidence=confidence,
                 retrieval_count=retrieval_count,
-            )
+            ),
+            now=_FIXED_RANK_NOW,
         )
 
     vector_hit = _hit(
@@ -196,7 +212,8 @@ def factual_beats_episodic_scenario() -> RankScenario:
                     category="episodic",
                     similarity=0.90,
                     age_days=14.0,
-                )
+                ),
+                now=_FIXED_RANK_NOW,
             ),
             factual_id: hydrated_hit(
                 HydratedHitSeed(
@@ -204,7 +221,8 @@ def factual_beats_episodic_scenario() -> RankScenario:
                     category="factual",
                     similarity=0.90,
                     age_days=90.0,
-                )
+                ),
+                now=_FIXED_RANK_NOW,
             ),
         },
         expected_first=factual_id,

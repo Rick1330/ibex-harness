@@ -1,0 +1,92 @@
+---
+title: "ADR-0068: Composite scoring-time relevance gate"
+description: "Architecture decision record 0068 — exclude candidates below a configurable relevance floor before composite_score on the memory read path; distinct from ADR-0053 retrieval min_similarity."
+adrId: "0068"
+status: "Accepted"
+date: "2026-09-05"
+authors: "IBEX Harness team"
+---
+
+# ADR-0068: Composite scoring-time relevance gate
+
+- **Status:** Accepted
+- **Date:** 2026-09-05
+- **Authors:** IBEX Harness team
+- **Milestone:** [3.5.C.3 Composite Scorer v2 — Relevance-Gated](/roadmap/phase-3-5-extraction-assembly/milestones/3.5.c.3-composite-scorer-v2-relevance-gated)
+- **Depends on:** [ADR-0053](/docs/adr/0053-vector-store-abstraction) (retrieval `min_similarity` + composite weights / half-lives via 3.D.2)
+- **Supersedes sketch:** Milestone planning text that proposed ADR-0040 rewrite and a `services/context` `MemoryScorer` — ADR-0040 remains Anthropic provider adapter; scoring stays in memory.
+
+## Context
+
+Composite ranking (`composite_score`) is a pure weighted sum over relevance, recency, usefulness, confidence, and access frequency (weights 0.40 / 0.25 / 0.20 / 0.10 / 0.05). Without a scoring-time gate, a near-zero relevance candidate with high non-relevance components can outrank a highly relevant one when retrieval is opened below the production ANN cutoff (tests and some callers set `min_similarity=0.0`).
+
+[ADR-0053](/docs/adr/0053-vector-store-abstraction) already defines a **retrieval-time** cosine cutoff (`vector_search_min_similarity`, default **0.70**) applied in pgvector **before** hydrate. That does **not** replace a scoring-time floor:
+
+| Mechanism | Stage | Input | Default |
+| --- | --- | --- | --- |
+| `min_similarity` (ADR-0053) | ANN search | cosine similarity | 0.70 |
+| `composite_relevance_floor` (this ADR) | After hydrate, before `composite_score` | composite relevance component (vector cosine or FTS sentinel 0.5) | **0.15** |
+
+Category-conditional half-lives (`CATEGORY_HALF_LIFE_DAYS`) and formula weights shipped in 3.D.2 and are **out of scope** here.
+
+## Decision
+
+### 1) Gate in memory read ranking, not in pure `score()`
+
+- Helper: `passes_relevance_floor(relevance, floor)` in `services/memory/app/scoring/relevance_gate.py`
+- Applied in `rank_hydrated_hits(..., relevance_floor=...)` **before** calling `composite_score`
+- `MemoryReadRepository.find_similar` passes `Settings.composite_relevance_floor`
+- Write-path hot-cache scoring (`relevance=1.0`) is unaffected
+- `score()` / `composite_score()` remain pure weighted sums (existing unit contracts unchanged)
+
+### 2) Configurable floor
+
+- Setting: `composite_relevance_floor` (default **0.15**)
+- Env: `IBEX_COMPOSITE_RELEVANCE_FLOOR` / `IBEX_MEMORY_COMPOSITE_RELEVANCE_FLOOR`
+- Floor must be **&lt; 0.5** (settings reject ≥ FTS sentinel) so FTS supplemental hits are not mass-excluded; gate semantics would only drop FTS when floor **&gt; 0.5**
+
+### 3) Chosen floor value and evidence
+
+Candidate floors swept: `{0.10, 0.15, 0.20, 0.25, 0.30}`.
+
+**Default gold-set queries use `min_similarity=0.5`.** Under that retrieval cutoff every vector hit that reaches scoring already has relevance ≥ 0.5, so floors in `{0.10…0.30}` never filter those candidates. Neutrality of precision@5 / recall@10 / MRR versus floor=`0.0` on the default query loop is therefore **by construction**, not proof that the gate is safe under looser retrieval cutoffs:
+
+| Floor | precision@5 (default queries) | recall@10 | MRR | Notes |
+| --- | --- | --- | --- | --- |
+| 0.0 (baseline) | 1.0 | 1.0 | 1.0 | Committed `baseline.json` |
+| 0.10 … 0.30 | 1.0 | 1.0 | 1.0 | No candidate filtered under gold-set `min_similarity=0.5` |
+
+To exercise the gate inside the ranking-quality harness, gold set v1 includes synthetic bait `gold.noise.relevance_gate_bait` (orthogonal hotspot, confidence=1.0, usefulness=1.0, retrieval_count=1000). `bench_ranking_quality.py` runs a separate **relevance_gate_probe** with `min_similarity=0.0` / `limit=50` and fails closed unless the bait is excluded while a same-hotspot relevant memory remains. Unit coverage additionally lives in `test_relevance_gate.py` / `test_relevance_floor_sweep.py`.
+
+**Chosen default: 0.15** — below the FTS sentinel, filters near-zero noise when retrieval is opened, and preserves gold-set default-query metrics.
+
+### 4) Why not `services/context`
+
+Context assembly consumes already-ranked memory search results. It does not own composite scoring. No scoring module or proto changes under `services/context/`.
+
+### 5) `AssemblyOptions` weight fields (not wired yet)
+
+`packages/proto/.../context.proto` defines `AssemblyOptions` weight fields (`recency_weight`, `relevance_weight`, …). Those fields are **unconsumed today**: no Python/Go path applies them to `composite_score` or `rank_hydrated_hits`. Track C Non-Goals for this milestone exclude proto wire-contract changes. When **3.5.C.6** connects `AssemblyOptions` to composite scoring, per-request weight overrides must apply **after** the relevance gate (callers must not bypass exclusion by reweighting). Until that wiring exists, this is a forward-looking contract — not current runtime behavior.
+
+### 6) Explicit non-goals
+
+- Do not change `CATEGORY_HALF_LIFE_DAYS` or `recency_decay`
+- Do not change `RankWeights` defaults
+- Do not reuse ADR-0040
+- Do not invent a context-side `MemoryScorer`
+- Do not change the context assembly proto in this milestone
+
+## Consequences
+
+**Positive:**
+
+- Irrelevant candidates never enter the weighted sum when below the floor
+- Retrieval and scoring cutoffs remain independently tunable
+- Hot-cache write path and pure scorer unit tests stay stable
+- Ranking-quality harness probes the gate under opened retrieval, not only under `min_similarity=0.5`
+
+**Negative / follow-ups:**
+
+- With production `min_similarity=0.70`, the scoring floor is mostly a safety net until retrieval is lowered
+- Operators who raise the floor **&gt; 0.5** would exclude all FTS hits — settings reject floor ≥ 0.5 so this cannot be set via env without a code change
+- `AssemblyOptions` weight overrides remain deferred to 3.5.C.6

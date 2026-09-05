@@ -28,6 +28,9 @@ DECAY_QUERY_IDS = frozenset(
         "q_confidence_tie_break",
     }
 )
+RELEVANCE_GATE_BAIT_KEY = "gold.noise.relevance_gate_bait"
+# Must saturate access-frequency cap in composite scoring (retrieval_count / 10).
+RELEVANCE_GATE_BAIT_MIN_RETRIEVAL_COUNT = 1000
 MIN_MEMORIES = 30
 MAX_MEMORIES = 55
 MIN_QUERIES = 15
@@ -142,20 +145,36 @@ def _validate_memory_required_keys(row: dict[str, Any], prefix: str) -> list[str
     ]
 
 
-def _validate_memory_scalar_fields(row: dict[str, Any], prefix: str) -> list[str]:
+def _validate_memory_identity(row: dict[str, Any], prefix: str) -> list[str]:
     errors: list[str] = []
-    errors.extend(_unit_interval(row.get("confidence"), "confidence", prefix))
-    errors.extend(
-        _unit_interval(row.get("usefulness_score"), "usefulness_score", prefix)
-    )
-    key = str(row.get("content_key", ""))
-    if not key:
+    if not str(row.get("content_key", "")):
         errors.append(f"{prefix} content_key must be non-empty")
     category = row.get("category")
     if not isinstance(category, str):
         errors.append(f"{prefix} category must be a string")
     elif category not in CATEGORIES:
         errors.append(f"{prefix} invalid category {category!r}")
+    return errors
+
+
+def _validate_optional_retrieval_count(row: dict[str, Any], prefix: str) -> list[str]:
+    if "retrieval_count" not in row:
+        return []
+    retrieval_count, rc_errors = _parse_int(
+        row.get("retrieval_count"), "retrieval_count", prefix
+    )
+    if retrieval_count is not None and retrieval_count < 0:
+        rc_errors.append(f"{prefix} retrieval_count must be >= 0")
+    return rc_errors
+
+
+def _validate_memory_scalar_fields(row: dict[str, Any], prefix: str) -> list[str]:
+    errors: list[str] = []
+    errors.extend(_unit_interval(row.get("confidence"), "confidence", prefix))
+    errors.extend(
+        _unit_interval(row.get("usefulness_score"), "usefulness_score", prefix)
+    )
+    errors.extend(_validate_memory_identity(row, prefix))
     age, age_errors = _parse_int(row.get("valid_from_days_ago"), "valid_from_days_ago", prefix)
     errors.extend(age_errors)
     if age is not None and not (MIN_AGE_DAYS <= age <= MAX_AGE_DAYS):
@@ -166,6 +185,7 @@ def _validate_memory_scalar_fields(row: dict[str, Any], prefix: str) -> list[str
     errors.extend(hotspot_errors)
     if hotspot is not None and not (0 <= hotspot < EMBEDDING_DIM):
         errors.append(f"{prefix} hotspot {hotspot} out of range")
+    errors.extend(_validate_optional_retrieval_count(row, prefix))
     return errors
 
 
@@ -418,6 +438,37 @@ def validate_gold_set(payload: object) -> list[str]:
     if missing_decay:
         errors.append(f"missing decay queries: {sorted(missing_decay)}")
 
+    errors.extend(_validate_relevance_gate_bait(mem_by_key))
+    return errors
+
+
+def _validate_relevance_gate_bait(mem_by_key: dict[str, dict[str, Any]]) -> list[str]:
+    """Require the opened-retrieval bait row with saturated retrieval_count."""
+    if RELEVANCE_GATE_BAIT_KEY not in mem_by_key:
+        return [
+            f"missing relevance-gate bait memory {RELEVANCE_GATE_BAIT_KEY!r} "
+            "(required for opened-retrieval gate probe)"
+        ]
+
+    bait = mem_by_key[RELEVANCE_GATE_BAIT_KEY]
+    prefix = f"memory[{RELEVANCE_GATE_BAIT_KEY}]"
+    if "retrieval_count" not in bait:
+        return [
+            f"{prefix} missing retrieval_count "
+            f"(must be >= {RELEVANCE_GATE_BAIT_MIN_RETRIEVAL_COUNT})"
+        ]
+
+    retrieval_count, errors = _parse_int(
+        bait.get("retrieval_count"), "retrieval_count", prefix
+    )
+    if (
+        retrieval_count is not None
+        and retrieval_count < RELEVANCE_GATE_BAIT_MIN_RETRIEVAL_COUNT
+    ):
+        errors.append(
+            f"{prefix} retrieval_count {retrieval_count} below probe minimum "
+            f"{RELEVANCE_GATE_BAIT_MIN_RETRIEVAL_COUNT}"
+        )
     return errors
 
 

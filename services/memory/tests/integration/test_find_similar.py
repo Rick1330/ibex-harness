@@ -336,7 +336,7 @@ async def test_http_post_search(
     org_id, agent_id, mem_id = await seed_org_agent_memory(
         session_factory, content="http search dark mode preference"
     )
-    await upsert_embedding(store, org_id=org_id, memory_id=mem_id, hotspot=7)
+    await upsert_embedding(store, org_id=org_id, memory_id=mem_id, hotspot=3)
 
     async with search_http_client(
         session_factory, settings, store, org_id=org_id
