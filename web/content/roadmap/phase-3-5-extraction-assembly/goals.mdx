@@ -52,7 +52,7 @@ phase: "phase-3-5-extraction-assembly"
 **Milestones:**
 - **3.5.C.1 — Token budget calculator:** Model-aware via Phase 2.5's capability registry and tokenizer. Tokenizer-family-specific safety buffer. Fallback to character estimate on tokenizer failure.
 - **3.5.C.2 — Parallel retrieval orchestration:** Four-way concurrent retrieval (directive, hot memories, history, cold search). Each branch has independent timeout; total bounded by 40ms `wait_for`.
-- **3.5.C.3 — Composite scorer v2 (relevance-gated):** `RELEVANCE_FLOOR = 0.15` hard gate. Category-conditional half-life table. Memories below the floor structurally cannot be scored.
+- **3.5.C.3 — Composite scorer v2 (relevance-gated):** Scoring-time `composite_relevance_floor` (default 0.15) in memory `rank_hydrated_hits` ([ADR-0068](/docs/adr/0068-composite-relevance-gate)); distinct from retrieval `min_similarity`. Half-lives already shipped in 3.D.2.
 - **3.5.C.4 — Packer v2 (bounded DP knapsack):** Discretized to 16-token buckets. numpy-vectorized. Fallback to greedy on pathological input size.
 - **3.5.C.5 — Context formatter:** XML-style delimiters, session nonce, locked ordering (directive → history → memories → tools). ADR-0042 amendment.
 - **3.5.C.6 — gRPC service skeleton and degradation contract:** `ContextAssemblyService` with four degradation levels (L0–L3), each independently testable. 500 RPS load test target.

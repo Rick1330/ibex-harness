@@ -82,7 +82,12 @@ class MemoryReadRepository:
             candidates=vector_candidates,
             min_confidence=query.min_confidence,
         )
-        vector_ranked = rank_hydrated_hits(vector_candidates, vector_hydrated)
+        floor = self._settings.composite_relevance_floor
+        vector_ranked = rank_hydrated_hits(
+            vector_candidates,
+            vector_hydrated,
+            relevance_floor=floor,
+        )
         if len(vector_ranked) >= query.limit:
             return filter_pii_blocked_results(vector_ranked[: query.limit])
 
@@ -98,7 +103,7 @@ class MemoryReadRepository:
         )
         all_hydrated = {**fts_hydrated, **vector_hydrated}
         return filter_pii_blocked_results(
-            rank_hydrated_hits(merged, all_hydrated)[: query.limit]
+            rank_hydrated_hits(merged, all_hydrated, relevance_floor=floor)[: query.limit]
         )
 
     async def _vector_candidates(self, query: FindSimilarQuery) -> list[RankedCandidate]:

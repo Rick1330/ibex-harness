@@ -18,6 +18,13 @@ def test_default_rank_weights_sum_to_one() -> None:
     assert total == pytest.approx(1.0)
     assert settings.hnsw_ef_search == 40
     assert settings.vector_search_min_similarity == pytest.approx(0.70)
+    assert settings.composite_relevance_floor == pytest.approx(0.15)
+
+
+def test_composite_relevance_floor_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("IBEX_COMPOSITE_RELEVANCE_FLOOR", "0.20")
+    settings = Settings()
+    assert settings.composite_relevance_floor == pytest.approx(0.20)
 
 
 def test_empty_database_url_becomes_none() -> None:

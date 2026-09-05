@@ -477,6 +477,7 @@ Proxy client switches for assembly live in §9 (`IBEX_CONTEXT_ENABLED`, `IBEX_CO
 | `IBEX_RANK_WEIGHT_USEFULNESS` | No | `0.20` | Usefulness / feedback weight |
 | `IBEX_RANK_WEIGHT_CONFIDENCE` | No | `0.10` | Confidence weight |
 | `IBEX_RANK_WEIGHT_FREQUENCY` | No | `0.05` | Access frequency weight |
+| `IBEX_COMPOSITE_RELEVANCE_FLOOR` | No | `0.15` | Scoring-time floor on the composite relevance component; candidates below are excluded before `composite_score` ([ADR-0068](../content/docs/adr/0068-composite-relevance-gate)). Distinct from retrieval `min_similarity` ([ADR-0053](../content/docs/adr/0053-vector-store-abstraction)). Alias: `IBEX_MEMORY_COMPOSITE_RELEVANCE_FLOOR`. Must stay &lt; FTS sentinel `0.5`. |
 
 **Rule:** weights must sum to 1.0; validate at startup.
 

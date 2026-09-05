@@ -1,0 +1,86 @@
+---
+title: "ADR-0068: Composite scoring-time relevance gate"
+description: "Architecture decision record 0068 — exclude candidates below a configurable relevance floor before composite_score on the memory read path; distinct from ADR-0053 retrieval min_similarity."
+adrId: "0068"
+status: "Accepted"
+date: "2026-09-05"
+authors: "IBEX Harness team"
+---
+
+# ADR-0068: Composite scoring-time relevance gate
+
+- **Status:** Accepted
+- **Date:** 2026-09-05
+- **Authors:** IBEX Harness team
+- **Milestone:** [3.5.C.3 Composite Scorer v2 — Relevance-Gated](/roadmap/phase-3-5-extraction-assembly/milestones/3.5.c.3-composite-scorer-v2-relevance-gated)
+- **Depends on:** [ADR-0053](/docs/adr/0053-vector-store-abstraction) (retrieval `min_similarity` + composite weights / half-lives via 3.D.2)
+- **Supersedes sketch:** Milestone planning text that proposed ADR-0040 rewrite and a `services/context` `MemoryScorer` — ADR-0040 remains Anthropic provider adapter; scoring stays in memory.
+
+## Context
+
+Composite ranking (`composite_score`) is a pure weighted sum over relevance, recency, usefulness, confidence, and access frequency (weights 0.40 / 0.25 / 0.20 / 0.10 / 0.05). Without a scoring-time gate, a near-zero relevance candidate with high non-relevance components can outrank a highly relevant one when retrieval is opened below the production ANN cutoff (tests and some callers set `min_similarity=0.0`).
+
+[ADR-0053](/docs/adr/0053-vector-store-abstraction) already defines a **retrieval-time** cosine cutoff (`vector_search_min_similarity`, default **0.70**) applied in pgvector **before** hydrate. That does **not** replace a scoring-time floor:
+
+| Mechanism | Stage | Input | Default |
+| --- | --- | --- | --- |
+| `min_similarity` (ADR-0053) | ANN search | cosine similarity | 0.70 |
+| `composite_relevance_floor` (this ADR) | After hydrate, before `composite_score` | composite relevance component (vector cosine or FTS sentinel 0.5) | **0.15** |
+
+Category-conditional half-lives (`CATEGORY_HALF_LIFE_DAYS`) and formula weights shipped in 3.D.2 and are **out of scope** here.
+
+## Decision
+
+### 1) Gate in memory read ranking, not in pure `score()`
+
+- Helper: `passes_relevance_floor(relevance, floor)` in `services/memory/app/scoring/relevance_gate.py`
+- Applied in `rank_hydrated_hits(..., relevance_floor=...)` **before** calling `composite_score`
+- `MemoryReadRepository.find_similar` passes `Settings.composite_relevance_floor`
+- Write-path hot-cache scoring (`relevance=1.0`) is unaffected
+- `score()` / `composite_score()` remain pure weighted sums (existing unit contracts unchanged)
+
+### 2) Configurable floor
+
+- Setting: `composite_relevance_floor` (default **0.15**)
+- Env: `IBEX_COMPOSITE_RELEVANCE_FLOOR` / `IBEX_MEMORY_COMPOSITE_RELEVANCE_FLOOR`
+- Floor must stay **strictly below** `FTS_COMPOSITE_RELEVANCE` (0.5) so FTS supplemental hits are not mass-excluded
+
+### 3) Chosen floor value and evidence
+
+Candidate floors swept: `{0.10, 0.15, 0.20, 0.25, 0.30}`.
+
+The ranking-quality gold set (`benchmarks/memory/ranking_quality/gold_set_v1.json`) is evaluated with **`min_similarity=0.5`**. Every vector hit that reaches scoring therefore has relevance ≥ 0.5. All candidate floors are strictly below that cutoff (and below the FTS sentinel), so they are **neutral** on gold-set metrics versus floor=`0.0`:
+
+| Floor | precision@5 | recall@10 | MRR | Notes |
+| --- | --- | --- | --- | --- |
+| 0.0 (baseline) | 1.0 | 1.0 | 1.0 | Committed `baseline.json` |
+| 0.10 … 0.30 | 1.0 | 1.0 | 1.0 | No candidate filtered under gold-set retrieval |
+
+Evidence is encoded in unit tests (`test_relevance_floor_sweep.py`): gold-set-compatible relevances pass every sweep floor; ranking order of a gold-set-like slate is identical across the sweep; floor **0.15** excludes classic low-relevance noise when retrieval is opened.
+
+**Chosen default: 0.15** — highest practical pick among neutrals that (a) stays well below the FTS sentinel, (b) filters near-zero noise in the open-retrieval regime where the classic bug appears, (c) matches the milestone’s intended invariant without regressing gold-set precision/recall.
+
+### 4) Why not `services/context`
+
+Context assembly consumes already-ranked memory search results. It does not own composite scoring. No scoring module or proto changes under `services/context/`.
+
+### 5) Explicit non-goals
+
+- Do not change `CATEGORY_HALF_LIFE_DAYS` or `recency_decay`
+- Do not change `RankWeights` defaults
+- Do not reuse ADR-0040
+- Do not invent a context-side `MemoryScorer`
+
+## Consequences
+
+**Positive:**
+
+- Irrelevant candidates never enter the weighted sum when below the floor
+- Retrieval and scoring cutoffs remain independently tunable
+- Hot-cache write path and pure scorer unit tests stay stable
+
+**Negative / follow-ups:**
+
+- With production `min_similarity=0.70`, the scoring floor is mostly a safety net until retrieval is lowered
+- Operators who raise the floor ≥ 0.5 would exclude all FTS hits — document and keep defaults below 0.5
+- Live Postgres floor-sweep in CI remains available via `memory-benchmark.yml` when settings change; offline sweep tests cover the neutrality invariant without Docker
