@@ -13,6 +13,7 @@ Scaffold guidance: [web/engineering/FILE_STRUCTURE.md](../web/engineering/FILE_S
 | Directory | Role |
 | --- | --- |
 | `authclient/` | ValidateToken wire codec + insecure gRPC target guards for Python services (`services/memory`, `services/mcp-memory`). Extracted during milestone 3.C.5 because both services needed identical authclient wheel/Docker install paths; see PR #625. Used by `POST /v1/memories` auth boundary (3.C.5) and future MCP write tools (3.5). |
+| `ibex_async_db/` | Shared libpq→asyncpg URL translation + TLS `connect_args` for SQLAlchemy + asyncpg (`services/worker`, `services/memory`). Package docs: [`ibex_async_db/README.md`](ibex_async_db/README.md). Extracted from duplicated worker/memory DB helpers during milestone 3.5.A.2; see PR [#673](https://github.com/Rick1330/ibex-harness/pull/673). |
 
 ---
 
