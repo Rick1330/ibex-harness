@@ -40,6 +40,8 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
+import { buildBenchmarkFolderIcons, buildBenchmarkPageIcons } from "@/lib/benchmarks/suites";
+
 /** Lucide export name → component */
 export const LUCIDE_BY_NAME: Record<string, LucideIcon> = {
   Activity,
@@ -223,16 +225,8 @@ export const ROADMAP_PAGE_ICONS: Record<string, LucideIcon> = {
   "phase-1-5-docs-site/phase-1-5-docs-site-milestones": Flag,
 };
 
-/** Benchmark dashboard sidebar pages */
-export const BENCHMARK_PAGE_ICONS: Record<string, LucideIcon> = {
-  "/benchmarks": LayoutDashboard,
-  "/benchmarks/latency": Activity,
-  "/benchmarks/waterfall": Layers,
-  "/benchmarks/load": Zap,
-  "/benchmarks/history": History,
-  "/benchmarks/compare": GitCompareArrows,
-  "/benchmarks/memory": Brain,
-  "/benchmarks/memory/latency": Activity,
-  "/benchmarks/memory/history": History,
-  "/benchmarks/memory/compare": GitCompareArrows,
-};
+/** Benchmark dashboard sidebar pages — derived from suite registry. */
+export const BENCHMARK_PAGE_ICONS: Record<string, LucideIcon> = buildBenchmarkPageIcons();
+
+/** Benchmark sidebar folder headers — suite/group icons, not Overview leaf icons. */
+export const BENCHMARK_FOLDER_ICONS: Record<string, LucideIcon> = buildBenchmarkFolderIcons();

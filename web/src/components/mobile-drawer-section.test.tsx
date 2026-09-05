@@ -23,7 +23,15 @@ vi.mock("next/link", () => ({
 }));
 
 vi.mock("@/components/layout/mobile-page-tree-nav", () => ({
-  MobilePageTreeNav: () => <div data-testid="mobile-page-tree-nav" />,
+  MobilePageTreeNav: ({
+    nodes,
+  }: Readonly<{ nodes: ReadonlyArray<{ kind: string; name: string }> }>) => (
+    <div data-testid="mobile-page-tree-nav">
+      {nodes.map((node) => (
+        <div key={node.name}>{node.name}</div>
+      ))}
+    </div>
+  ),
 }));
 
 vi.mock("@/components/layout/docs-sidebar", () => ({
@@ -33,16 +41,34 @@ vi.mock("@/components/layout/docs-sidebar", () => ({
 const mobileNavData: MobileNavData = {
   docsTree: [],
   roadmapTree: [],
+  benchmarkTree: [
+    { kind: "page", name: "Overview", url: "/benchmarks" },
+    { kind: "page", name: "Suites compare", url: "/benchmarks/suites-compare" },
+    {
+      kind: "folder",
+      name: "Proxy",
+      children: [
+        { kind: "page", name: "Latency", url: "/benchmarks/latency" },
+        { kind: "page", name: "Waterfall", url: "/benchmarks/waterfall" },
+      ],
+    },
+    {
+      kind: "folder",
+      name: "Memory",
+      children: [
+        {
+          kind: "folder",
+          name: "HNSW",
+          children: [
+            { kind: "page", name: "Overview", url: "/benchmarks/memory" },
+          ],
+        },
+      ],
+    },
+  ],
   blogPosts: [],
   releasePages: [],
-  benchmarkPages: [
-    { url: "/benchmarks", title: "Overview" },
-    { url: "/benchmarks/latency", title: "Latency" },
-    { url: "/benchmarks/waterfall", title: "Waterfall" },
-    { url: "/benchmarks/load", title: "Load test" },
-    { url: "/benchmarks/history", title: "History" },
-    { url: "/benchmarks/compare", title: "Compare" },
-  ],
+  benchmarkPages: [],
 };
 
 const benchmarkSection: MobileNavSectionConfig = {
@@ -50,15 +76,15 @@ const benchmarkSection: MobileNavSectionConfig = {
   title: "Benchmarks",
   match: "/benchmarks",
   href: "/benchmarks",
-  description: "Proxy performance and regression",
+  description: "Proxy and memory performance suites",
   iconId: "benchmarks",
-  kind: "list",
-  dataKey: "benchmarkPages",
-  hub: { href: "/benchmarks", label: "Overview" },
+  kind: "tree",
+  dataKey: "benchmarkTree",
+  baseUrl: "/benchmarks",
 };
 
 describe("MobileDrawerSectionContent", () => {
-  it("renders all benchmark sub-pages in the mobile drawer", () => {
+  it("renders the nested benchmark tree (not a flat leaf list)", () => {
     render(
       <MobileDrawerSectionContent
         section={benchmarkSection}
@@ -68,11 +94,9 @@ describe("MobileDrawerSectionContent", () => {
       />,
     );
 
-    expect(screen.getAllByText("Overview")).toHaveLength(1);
-    expect(screen.getByText("Latency")).toBeInTheDocument();
-    expect(screen.getByText("Waterfall")).toBeInTheDocument();
-    expect(screen.getByText("Load test")).toBeInTheDocument();
-    expect(screen.getByText("History")).toBeInTheDocument();
-    expect(screen.getByText("Compare")).toBeInTheDocument();
+    expect(screen.getByTestId("mobile-page-tree-nav")).toBeInTheDocument();
+    expect(screen.getByText("Proxy")).toBeInTheDocument();
+    expect(screen.getByText("Memory")).toBeInTheDocument();
+    expect(screen.getByText("Suites compare")).toBeInTheDocument();
   });
 });

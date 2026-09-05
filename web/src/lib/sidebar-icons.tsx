@@ -17,6 +17,7 @@ export {
   docPathFromUrl,
   folderSectionSlugFromUrl,
   getBenchmarkIconForUrl,
+  getBenchmarkFolderIconForName,
   getNavIconForUrl,
   getRoadmapIconForUrl,
   getSectionIconForSlug,

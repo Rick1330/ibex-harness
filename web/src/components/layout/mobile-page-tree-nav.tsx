@@ -2,9 +2,10 @@
 
 import type { ContentBaseUrl } from "@/lib/sidebar-icon-resolvers";
 import type { MobileNavNode } from "@/lib/mobile-nav-data";
+import { Brain, ClipboardCheck, Gauge, PenLine, Target } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useMemo } from "react";
+import { useMemo, type ReactNode } from "react";
 
 import {
   docsNestedFolderHeaderClassName,
@@ -14,6 +15,7 @@ import {
 import { PathSyncedSidebarFolder } from "@/components/layout/path-synced-sidebar-folder";
 import { cn } from "@/lib/cn";
 import { resolveLeafNavIcon } from "@/lib/sidebar-page-icon";
+import { SidebarIcon } from "@/lib/sidebar-icons";
 import { navUrlsMatch } from "@/lib/sidebar-nav-pages";
 
 type MobilePageTreeNavProps = Readonly<{
@@ -62,6 +64,45 @@ function collectActiveFolderKeys(
   return keys;
 }
 
+function firstPageUrl(nodes: readonly MobileNavNode[]): string | undefined {
+  for (const node of nodes) {
+    if (node.kind === "page") {
+      return node.url;
+    }
+    if (node.kind === "folder") {
+      const nested = firstPageUrl(node.children);
+      if (nested) {
+        return nested;
+      }
+    }
+  }
+  return undefined;
+}
+
+function folderHeaderIcon(
+  folderName: string,
+  children: readonly MobileNavNode[],
+  baseUrl: ContentBaseUrl,
+): ReactNode {
+  if (baseUrl === "/benchmarks") {
+    const byName = {
+      Proxy: Gauge,
+      Memory: Brain,
+      "Extraction quality": ClipboardCheck,
+      HNSW: Brain,
+      "Ranking quality": Target,
+      "Write pipeline": PenLine,
+    } as const;
+    const Icon = byName[folderName as keyof typeof byName];
+    if (Icon) {
+      return <SidebarIcon className="sidebar-section-icon" icon={Icon} />;
+    }
+  }
+
+  const url = firstPageUrl(children);
+  return url ? resolveLeafNavIcon(url, baseUrl) : null;
+}
+
 function MobilePageTreeNav({
   nodes,
   baseUrl,
@@ -95,9 +136,12 @@ function MobilePageTreeNav({
               containsPath={folderKeys.has(folderKey)}
               headerClassName={headerClass}
               header={
-                <span className="min-w-0 flex-1 text-left break-words">
-                  {node.name}
-                </span>
+                <>
+                  {folderHeaderIcon(node.name, node.children, baseUrl)}
+                  <span className="min-w-0 flex-1 text-left break-words">
+                    {node.name}
+                  </span>
+                </>
               }
               depth={level}
             >

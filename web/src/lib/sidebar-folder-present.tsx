@@ -1,11 +1,10 @@
 import type { PageTree } from "fumadocs-core/server";
 import type { ReactNode } from "react";
 
+import type { ContentBaseUrl } from "@/lib/sidebar-icon-resolvers";
 import {
+  getBenchmarkFolderIconForName,
   getSectionIconForSlug,
-  type ContentBaseUrl,
-} from "@/lib/sidebar-icon-resolvers";
-import {
   navIconElement,
   roadmapNavIconElement,
   SidebarIcon,
@@ -25,10 +24,23 @@ export function resolveFolderDefaultOpen(
   level: number,
   pathname: string,
 ): boolean {
-  return folderContainsPath(item, pathname) || (level > 1 && (item.defaultOpen ?? false));
+  if (folderContainsPath(item, pathname)) {
+    return true;
+  }
+  return level > 1 && (item.defaultOpen ?? false);
 }
 
-export function resolveFolderHeaderIcon(
+function resolveBenchmarkFolderIcon(item: PageTree.Folder): ReactNode {
+  const name = typeof item.name === "string" ? item.name : String(item.name);
+  return (
+    <SidebarIcon
+      className="sidebar-section-icon"
+      icon={getBenchmarkFolderIconForName(name)}
+    />
+  );
+}
+
+function resolveDocsOrRoadmapFolderIcon(
   item: PageTree.Folder,
   level: number,
   baseUrl: ContentBaseUrl,
@@ -54,4 +66,16 @@ export function resolveFolderHeaderIcon(
     baseUrl === "/roadmap" ? roadmapNavIconElement : navIconElement;
 
   return folderUrl ? iconResolver(undefined, folderUrl) : undefined;
+}
+
+export function resolveFolderHeaderIcon(
+  item: PageTree.Folder,
+  level: number,
+  baseUrl: ContentBaseUrl,
+  sectionSlug: string,
+): ReactNode {
+  if (baseUrl === "/benchmarks") {
+    return resolveBenchmarkFolderIcon(item);
+  }
+  return resolveDocsOrRoadmapFolderIcon(item, level, baseUrl, sectionSlug);
 }

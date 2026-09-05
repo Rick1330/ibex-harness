@@ -37,7 +37,9 @@ function HubLink({ href, label, pathname, onNavigate }: HubLinkProps) {
 }
 
 function shouldSkipHubLink(section: MobileNavSectionConfig): boolean {
-  return section.dataKey === "benchmarkPages";
+  return (
+    section.dataKey === "benchmarkPages" || section.dataKey === "benchmarkTree"
+  );
 }
 
 function renderHubLink(
@@ -66,6 +68,18 @@ type MobileDrawerTreeSectionProps = Readonly<{
   onClose: () => void;
 }>;
 
+function treeDataKey(
+  section: MobileNavSectionConfig,
+): "docsTree" | "roadmapTree" | "benchmarkTree" {
+  if (section.dataKey === "docsTree") {
+    return "docsTree";
+  }
+  if (section.dataKey === "benchmarkTree") {
+    return "benchmarkTree";
+  }
+  return "roadmapTree";
+}
+
 function MobileDrawerTreeSection({
   section,
   data,
@@ -76,8 +90,7 @@ function MobileDrawerTreeSection({
     return null;
   }
 
-  const treeKey = section.dataKey === "docsTree" ? "docsTree" : "roadmapTree";
-  const nodes = getSectionTree(data, treeKey);
+  const nodes = getSectionTree(data, treeDataKey(section));
 
   return (
     <>
