@@ -11,7 +11,6 @@ import pytest
 from app.config import Settings
 from app.read.full_text import FullTextHit
 from app.read.models import FindSimilarQuery
-from app.read.ranking import RankedCandidate
 from app.read.repository import MemoryReadRepository
 from app.vectorstore.base import SearchHit
 
